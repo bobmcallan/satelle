@@ -11,10 +11,12 @@ import (
 	"github.com/bobmcallan/satelle/internal/verb"
 )
 
-// dispatch invokes a verb with the given request value (marshalled to JSON) and
-// prints the response as indented JSON to the command's stdout. This is the one
-// path every data command takes — CLI command → verb.Dispatch → store —
-// mirroring how the web server will render from the same verbs.
+// dispatch invokes a verb with the given request value (marshalled to JSON)
+// and renders the response to the command's stdout. This is the one path
+// every data command takes — CLI command → verb.Dispatch → store — mirroring
+// how the web server will render from the same verbs. Rendering is plain
+// indented JSON unless the verb opts into compact mode (render, in
+// render.go) — configuration, not this function's concern.
 func dispatch(cmd *cobra.Command, name string, req any) error {
 	var body json.RawMessage
 	if req != nil {
@@ -28,7 +30,26 @@ func dispatch(cmd *cobra.Command, name string, req any) error {
 	if err != nil {
 		return err
 	}
-	return printJSON(cmd, resp)
+	return renderResponse(cmd, name, requestStoryID(req), resp)
+}
+
+// requestStoryID extracts the id/story_id a request body already names, so a
+// compact fold that offloads content (a long cell, a noisy diff hunk) links
+// the stored blob to the story it came from — the same ref semantics every
+// other retrieve.Store.Put call in this codebase uses. "" when the request
+// carries neither (or isn't a map) — Put still works, it just leaves the blob
+// unlinked (an orphan; harmless, content-addressed).
+func requestStoryID(req any) string {
+	m, ok := req.(map[string]any)
+	if !ok {
+		return ""
+	}
+	for _, k := range []string{"id", "story_id"} {
+		if v, ok := m[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // printJSON pretty-prints a raw JSON message to the command's stdout.

@@ -34,6 +34,9 @@ satelle story docs <id> # hold-reason, prior triage, plans
 satelle ledger list --story <id>
 ```
 
+A repo may render these two compact (`[N]{col:kind,...}` table instead of a
+JSON array — `satelle help compact-output`); `--json` forces the plain form.
+
 Read gate/hook deny text named in the reason, and enough repo/substrate state to
 ground the cause (the route's two halves for declared steps; `agents.toml` only if binding
 is implicated). Classify **exactly one**:

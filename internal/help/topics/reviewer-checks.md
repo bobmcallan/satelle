@@ -72,6 +72,11 @@ Output is JSON: `files` (sorted, includes untracked), `stat`, optional `patch`.
 **Report only** — no pass/fail. The gate skill decides. Missing baseline → clear
 error (pre-feature stories degrade gracefully).
 
+With `[output]` compact mode on for `story-diff` (see `satelle help
+compact-output`), `patch` loses its `index` lines and offloads noisy/
+whitespace-only hunks behind a `<<ccr:HASH,KIND,SIZE>>` marker that `satelle
+retrieve <hash>` resolves exactly — `--json` prints the plain form instead.
+
 Implementation-exit reviewers also receive that same enumeration on the
 transition payload as `diff` (files, stat, patch) whenever a baseline exists —
 no executor attachment and no shell. `docs`, `prior_verdicts`, `route_drift`,

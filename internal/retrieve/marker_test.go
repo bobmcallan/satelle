@@ -35,6 +35,34 @@ func TestMarkerRENoFalsePositives(t *testing.T) {
 	}
 }
 
+func TestMarkerKindDetectedByMarkerRE(t *testing.T) {
+	hash := Hash([]byte("hello world"))
+	marker := MarkerKind(hash, "str", 4096)
+
+	if got := FindHashes(marker); len(got) != 1 || got[0] != hash {
+		t.Fatalf("FindHashes(MarkerKind) = %v, want [%s]", got, hash)
+	}
+	gotHash, gotKind, gotSize, ok := ParseMarkerKind(marker)
+	if !ok || gotHash != hash || gotKind != "str" || gotSize != 4096 {
+		t.Fatalf("ParseMarkerKind(%q) = (%q, %q, %d, %v), want (%q, %q, %d, true)",
+			marker, gotHash, gotKind, gotSize, ok, hash, "str", 4096)
+	}
+}
+
+func TestParseMarkerKindRejectsNonMarkers(t *testing.T) {
+	hash := Hash([]byte("x"))
+	for _, s := range []string{
+		"",
+		Marker(hash), // plain form, no kind/size
+		MarkerKind(hash, "str", 4) + " trailing text",
+		"not a marker at all",
+	} {
+		if _, _, _, ok := ParseMarkerKind(s); ok {
+			t.Errorf("ParseMarkerKind(%q) = ok, want not-a-marker", s)
+		}
+	}
+}
+
 func TestFindHashesMultipleDistinct(t *testing.T) {
 	h1 := Hash([]byte("a"))
 	h2 := Hash([]byte("b"))

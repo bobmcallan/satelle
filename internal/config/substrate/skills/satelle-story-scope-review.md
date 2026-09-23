@@ -28,7 +28,10 @@ satelle story diff <story.id>
 ```
 
 That command is **report-only** (files + stat; optional --patch). You decide
-accept/reject.
+accept/reject. With --patch, a repo may render it compact: `index` lines
+dropped and noisy/whitespace-only hunks offloaded behind a `<<ccr:HASH,KIND,
+SIZE>>` marker `satelle retrieve <hash>` resolves exactly (`satelle help
+compact-output`); --json gives the plain form.
 
 - **No engagement baseline** (`diff.no_baseline` is true, or error from story
   diff / never recorded) →

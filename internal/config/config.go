@@ -144,6 +144,84 @@ type Config struct {
 	// only the leftover-file sweep (sty_e7aaf8b1). Kept separate from
 	// [gate] because it runs at session close, not the PreToolUse hook.
 	Dispatch DispatchConfig `toml:"dispatch"`
+	// Output tunes compact CLI rendering for the list/diff commands an agent
+	// pulls through Bash(satelle:*) (sty_75b76691). The zero value keeps
+	// compact mode OFF everywhere — plain indented JSON, unchanged, until a
+	// repo opts in.
+	Output OutputConfig `toml:"output"`
+}
+
+// OutputConfig is the [output] table: which verbs get compact rendering, when
+// that is the default for an agent caller, and the fold thresholds. See
+// internal/compact for the mechanism this configures and IsAgentCaller for
+// how an agent caller is detected.
+type OutputConfig struct {
+	// CompactForAgents turns compact mode on by default, for the verbs listed
+	// in CompactCommands, when the caller looks like a dispatched or in-loop
+	// agent (IsAgentCaller). A human or script gets plain JSON regardless,
+	// unless it passes --compact itself.
+	CompactForAgents bool `toml:"compact_for_agents"`
+	// CompactCommands lists the verb names (e.g. "ledger-list", "story-diff")
+	// compact rendering applies to. A verb absent from this list always
+	// prints plain JSON, --compact or not — compaction is opt-in per command.
+	CompactCommands []string `toml:"compact_commands"`
+	// LongCellBytes is the per-cell offload threshold a table fold applies to
+	// a string cell's JSON literal; <= 0 means DefaultLongCellBytes.
+	LongCellBytes int `toml:"long_cell_bytes"`
+	// RepeatMin is the minimum consecutive-identical-line run FoldRepeats
+	// collapses; <= 0 means DefaultRepeatMin.
+	RepeatMin int `toml:"repeat_min"`
+	// NoisePatterns are globs (basename match unless the pattern contains
+	// "/", the same split as [gate] edit_exempt_globs) identifying generated
+	// or lockfile diff noise a story diff --patch offloads whole. Empty means
+	// no file is treated as noise — the binary ships no filename pattern of
+	// its own (sty_75b76691 AC2); a repo seeds its own (e.g. "go.sum").
+	NoisePatterns []string `toml:"noise_patterns"`
+}
+
+// Compact-rendering defaults applied when the corresponding OutputConfig
+// field is unset (<= 0).
+const (
+	DefaultLongCellBytes = 200
+	DefaultRepeatMin     = 3
+)
+
+// ResolveLongCellBytes returns the effective per-cell offload threshold.
+func (c OutputConfig) ResolveLongCellBytes() int {
+	if c.LongCellBytes > 0 {
+		return c.LongCellBytes
+	}
+	return DefaultLongCellBytes
+}
+
+// ResolveRepeatMin returns the effective repeated-line fold threshold.
+func (c OutputConfig) ResolveRepeatMin() int {
+	if c.RepeatMin > 0 {
+		return c.RepeatMin
+	}
+	return DefaultRepeatMin
+}
+
+// IsCompactCommand reports whether verb is opted into compact rendering.
+func (c OutputConfig) IsCompactCommand(verb string) bool {
+	for _, v := range c.CompactCommands {
+		if v == verb {
+			return true
+		}
+	}
+	return false
+}
+
+// IsAgentCaller detects a dispatched or in-loop agent process by environment:
+// SATELLE_SCRATCH (every dispatched agent gets one — sty_e7aaf8b1) or
+// CLAUDECODE=1 (an in-loop Claude Code session). Mechanism only — whether to
+// default compact mode ON for one is OutputConfig.CompactForAgents, authored
+// configuration.
+func IsAgentCaller() bool {
+	if strings.TrimSpace(os.Getenv(ScratchEnv)) != "" {
+		return true
+	}
+	return os.Getenv("CLAUDECODE") == "1"
 }
 
 // DispatchConfig tunes per-dispatch/session mechanism: today, only the

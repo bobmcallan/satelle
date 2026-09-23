@@ -62,6 +62,9 @@ invoke it from functional checks or reviewer prompts (`Bash(satelle:*)`). The
 embedded **`satelle-story-scope-review`** gate (implementation exit / close)
 consumes this enumeration to reject bundled sibling work.
 
+A repo may render `--patch` compact (noise/index-line stripped, see `satelle
+help compact-output`) — `--json` always gets the plain form.
+
 ## 3. Reach done through the workflow's gates
 
 The exact path to `done` is whatever the active workflow declares — `done` is

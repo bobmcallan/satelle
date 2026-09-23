@@ -1622,6 +1622,23 @@ stale_after = "24h"
 # [vars] — operator KV substituted into agents.toml binding env values via
 # ${NAME}. NON-secret vars may live here; SECRETS go in gitignored
 # satelle.local.toml (per-key overlay wins). Never pushed with substrate sync.
+
+# [output] — compact CLI rendering for the list/diff commands an agent pulls
+# through Bash(satelle:*) (sty_75b76691). A fold only ever applies when it
+# round-trips to the exact original and is smaller — otherwise the command
+# prints the same indented JSON it always has. Unset = off everywhere (this
+# table's zero value); a repo opts a verb in by name. compact_for_agents
+# makes that the default for a dispatched or in-loop agent caller
+# (SATELLE_SCRATCH set, or CLAUDECODE=1); --json on any command always forces
+# plain JSON regardless. noise_patterns are globs (basename match unless the
+# pattern contains "/") identifying generated/lockfile files a story diff
+# --patch offloads whole — the binary ships none of its own.
+# [output]
+# compact_for_agents = true
+# compact_commands = ["ledger-list", "story-list", "story-doc-list", "story-messages", "story-diff"]
+# long_cell_bytes = 200
+# repeat_min = 3
+# noise_patterns = ["go.sum"]
 `
 
 // scaffoldAgentsToml is the documented agents layer a fresh init writes. The

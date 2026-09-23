@@ -61,6 +61,13 @@ dependency. See https://github.com/bobmcallan/satelle for docs.`,
 		},
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
+	// Compact-rendering overrides (sty_75b76691 AC4), global so any command's
+	// dispatch() call can read them: --json always forces plain indented JSON;
+	// --compact forces compact mode for a configured compact_commands verb
+	// even when [output].compact_for_agents is off or the caller is not
+	// detected as an agent. See internal/cli/render.go.
+	root.PersistentFlags().Bool("json", false, "force plain indented JSON, skipping compact rendering")
+	root.PersistentFlags().Bool("compact", false, "force compact rendering for a configured command (see satelle help compact-output)")
 	for _, c := range registered {
 		root.AddCommand(c)
 	}

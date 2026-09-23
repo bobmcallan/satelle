@@ -77,7 +77,8 @@ nothing yourself.
  alone; a rubric-less dispatched step (`agent` set with no `skills`) gets
  only the charter and the item, rarely enough — flag it. The **attached
  documents** — the plan and per-transition step summaries the agent pulls by id
- (`satelle story doc <id> <name>`, `satelle ledger list --story <id>`) — are
+ (`satelle story doc <id> <name>`, `satelle ledger list --story <id>` — the
+ latter may render compact, see `satelle help compact-output`) — are
  the sanctioned channel for carrying context to an isolated step; the
  conversation is not.
 

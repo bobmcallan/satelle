@@ -418,7 +418,14 @@ func gitDiffSince(dir, baseline string, wantPatch bool) (files []string, stat, p
 	}
 
 	if wantPatch {
-		patchOut, err := exec.Command("git", "-C", dir, "diff", baseline).Output()
+		// Force a/ b/ headers regardless of the operator's git config: compact.CompactPatch's
+		// noise/whitespace offload keys off "diff --git a/X b/Y" and the ---/+++ paths, so a
+		// machine with diff.mnemonicPrefix or diff.noprefix set must not change the header shape
+		// underneath it (sty_75b76691 AC2).
+		patchOut, err := exec.Command("git", "-C", dir,
+			"-c", "diff.mnemonicPrefix=false",
+			"-c", "diff.noprefix=false",
+			"diff", "--src-prefix=a/", "--dst-prefix=b/", baseline).Output()
 		if err != nil {
 			return nil, "", "", fmt.Errorf("git diff %s: %w", baseline, err)
 		}

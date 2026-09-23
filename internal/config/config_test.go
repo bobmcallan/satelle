@@ -329,3 +329,73 @@ func TestLoadDispatchLeftovers(t *testing.T) {
 		t.Error("zero-value rule must ship with no patterns and no regex — the binary has no opinion")
 	}
 }
+
+// TestLoadOutputConfig covers sty_75b76691 AC4: [output] parses from
+// satelle.toml, and the zero value keeps compact mode off with no noise
+// pattern of the binary's own.
+func TestLoadOutputConfig(t *testing.T) {
+	repo := t.TempDir()
+	satelleDir := filepath.Join(repo, ".satelle")
+	if err := os.MkdirAll(satelleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	committed := "[output]\n" +
+		"compact_for_agents = true\n" +
+		"compact_commands = [\"ledger-list\", \"story-list\", \"story-doc-list\", \"story-messages\", \"story-diff\"]\n" +
+		"long_cell_bytes = 500\n" +
+		"repeat_min = 5\n" +
+		"noise_patterns = [\"go.sum\"]\n"
+	if err := os.WriteFile(filepath.Join(satelleDir, ConfigName), []byte(committed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(filepath.Join(satelleDir, ConfigName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Output.CompactForAgents {
+		t.Error("compact_for_agents did not parse true")
+	}
+	if !cfg.Output.IsCompactCommand("ledger-list") || !cfg.Output.IsCompactCommand("story-diff") {
+		t.Errorf("compact_commands = %v, want ledger-list and story-diff included", cfg.Output.CompactCommands)
+	}
+	if cfg.Output.IsCompactCommand("story-get") {
+		t.Error("story-get must not be a compact command — it was never listed")
+	}
+	if got := cfg.Output.ResolveLongCellBytes(); got != 500 {
+		t.Errorf("ResolveLongCellBytes = %d, want 500", got)
+	}
+	if got := cfg.Output.ResolveRepeatMin(); got != 5 {
+		t.Errorf("ResolveRepeatMin = %d, want 5", got)
+	}
+	if len(cfg.Output.NoisePatterns) != 1 || cfg.Output.NoisePatterns[0] != "go.sum" {
+		t.Errorf("noise_patterns = %v, want [go.sum]", cfg.Output.NoisePatterns)
+	}
+
+	var empty Config
+	if empty.Output.CompactForAgents || len(empty.Output.CompactCommands) != 0 || len(empty.Output.NoisePatterns) != 0 {
+		t.Error("zero-value Output must ship compact mode off and no filename pattern of its own")
+	}
+	if got := empty.Output.ResolveLongCellBytes(); got != DefaultLongCellBytes {
+		t.Errorf("zero-value ResolveLongCellBytes = %d, want default %d", got, DefaultLongCellBytes)
+	}
+	if got := empty.Output.ResolveRepeatMin(); got != DefaultRepeatMin {
+		t.Errorf("zero-value ResolveRepeatMin = %d, want default %d", got, DefaultRepeatMin)
+	}
+}
+
+func TestIsAgentCaller(t *testing.T) {
+	t.Setenv(ScratchEnv, "")
+	t.Setenv("CLAUDECODE", "")
+	if IsAgentCaller() {
+		t.Error("IsAgentCaller() = true with no env set, want false")
+	}
+	t.Setenv(ScratchEnv, "/tmp/satelle/scratch")
+	if !IsAgentCaller() {
+		t.Error("IsAgentCaller() = false with SATELLE_SCRATCH set, want true")
+	}
+	t.Setenv(ScratchEnv, "")
+	t.Setenv("CLAUDECODE", "1")
+	if !IsAgentCaller() {
+		t.Error("IsAgentCaller() = false with CLAUDECODE=1, want true")
+	}
+}

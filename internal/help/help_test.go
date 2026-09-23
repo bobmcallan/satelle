@@ -17,9 +17,36 @@ func TestListContainsCoreTopics(t *testing.T) {
 			t.Errorf("topic %q has empty body", top.Name)
 		}
 	}
-	for _, want := range []string{"create-story", "reviewer-checks", "principles", "projects", "create-review", "agent-dispatch", "workflow-convert", "retrieve"} {
+	for _, want := range []string{"create-story", "reviewer-checks", "principles", "projects", "create-review", "agent-dispatch", "workflow-convert", "retrieve", "compact-output"} {
 		if !names[want] {
 			t.Errorf("missing help topic %q", want)
+		}
+	}
+}
+
+// TestCompactOutputTopic (sty_75b76691 AC5): the config keys, the flags, the
+// table/diff fold shapes, and the marker/retrieve tie-in are all documented so
+// `satelle help compact-output` is the single reference for what an agent sees
+// when a pulled command renders compact.
+func TestCompactOutputTopic(t *testing.T) {
+	top, ok := Get("compact-output")
+	if !ok {
+		t.Fatal("compact-output topic not found")
+	}
+	for _, want := range []string{
+		"compact_for_agents",
+		"compact_commands",
+		"noise_patterns",
+		"SATELLE_SCRATCH",
+		"CLAUDECODE=1",
+		"--compact",
+		"--json",
+		"<<ccr:HASH,KIND,SIZE>>",
+		"satelle retrieve <hash>",
+		"... (repeated N times)",
+	} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("compact-output topic missing %q", want)
 		}
 	}
 }

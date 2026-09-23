@@ -1,3 +1,21 @@
+## [0.0.522] - 2026-09-23
+
+### Added
+- **Compact, lossless CLI output for what agents pull.** When `[output]` in satelle.toml enables it (`compact_commands`, `compact_for_agents`, `long_cell_bytes`, `repeat_min`, `noise_patterns`), `ledger list`, `story list`, `story docs`, `story messages` and `story diff` render compactly.
+  - **Lists** become a `[N]{col:type,…}` header plus CSV rows that decode back to exactly the original records. Long cells are offloaded to the retrieval store behind `<<ccr:HASH,str,SIZE>>`.
+  - **`story diff --patch`** drops `index` lines and offloads whitespace-only hunks, and files matching `noise_patterns`, behind markers that `satelle retrieve` resolves byte-exactly.
+  - **Round-trip guard.** A fold applies only when it round-trips and is smaller.
+  - **Opt-in.** The binary ships compact off and no filename patterns. Compact applies for agent callers (dispatched, or an in-loop Claude session) when enabled, and `--json` always forces plain JSON.
+  - **Help.** `satelle help compact-output` documents the format. (sty_75b76691)
+
+### Fixed
+- **`story diff --patch` always emits `a/` / `b/` path prefixes.** Git config such as `diff.mnemonicPrefix` no longer changes the headers. (sty_75b76691)
+
+## [serve-v0.0.57] - 2026-09-23
+
+### Changed
+- **Serve channel picks up the `[output]` config and the pinned diff prefixes.** (sty_75b76691)
+
 ## [0.0.521] - 2026-09-23
 
 ### Added

@@ -798,6 +798,14 @@ Do **not** use in-repo `.satelle/stories/` — that path is obsolete
 post-relocation. **Fetch before concluding a document or a prior step is
 missing** (payload first, then CLI when available).
 
+`story docs`, `story messages`, and `ledger list` may render a compact
+`[N]{col:kind,...}` table instead of a JSON array — this repo's `[output]`
+config defaults compact mode on for a dispatched or in-loop caller (see
+`satelle help compact-output`); parse it the same way, or pass `--json` for
+the plain form. `story diff --patch` similarly loses its `index` lines and
+offloads noisy/whitespace-only hunks behind a `<<ccr:HASH,KIND,SIZE>>` marker
+that `satelle retrieve <hash>` resolves exactly.
+
 ## Scratch directory, attaching without a file, and leftover files (sty_e7aaf8b1)
 
 A dispatched or live agent session never has to be told where scratch work
