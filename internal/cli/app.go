@@ -113,6 +113,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetAuthoredDirs(a.AuthoredDirs())
 	verb.SetSubstrateConfigDir(a.Config.ResolveDataDir(a.RepoRoot))
 	verb.SetLeaseStore(a.Store.Leases)
+	verb.SetRetrieveStore(a.Store.Retrieve)
 	// UI push drain (sty_9ba3d709 / sty_126228b2 / sty_21a7d16d): machine
 	// [service] endpoint (env > config > derived localhost:port). SATELLE_SERVER_ENDPOINT=none
 	// disables push (hermetic tests). Clear first so a prior test/process state
@@ -141,6 +142,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// Archive-retention policy for the closed-story attachment dirs — a no-op
 	// unless satelle.toml sets a count/age policy (sty_aba7200c).
 	verb.SetStoryRetention(a.Config.StoriesKeepClosed, a.Config.StoriesKeepDays)
+	// CCR retrieval-store retention (sty_b0577532): a no-op unless satelle.toml
+	// sets retrieve_keep_days.
+	verb.SetRetrieveRetention(a.Config.RetrieveKeepDays)
 	// Binary attachment cap + content-type allowlist (sty_40e5a305): enforced
 	// in the verb so CLI and any future hosted/MCP caller share one rule.
 	verb.SetAttachmentPolicy(a.Config.ResolveAttachmentMaxBytes(), a.Config.ResolveAttachmentAllowTypes())

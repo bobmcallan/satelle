@@ -1,3 +1,17 @@
+## [0.0.521] - 2026-09-23
+
+### Added
+- **Retrieval store and `satelle retrieve <hash>`.** Content that a later compressor condenses can be stored by content hash (sha256, first 24 hex characters) in the repo's SQLite store. It is deduplicated across stories and linked to each story that stored it.
+  - `satelle retrieve <hash>` prints the exact original bytes, and exits non-zero on an unknown or malformed hash.
+  - The marker grammar (`<<ccr:HASH>>` and `[N lines compressed to M. Retrieve more: satelle retrieve HASH]`) has one exported detection regex.
+  - Retention is `retrieve_keep_days` in satelle.toml. The default 0 keeps everything. When it is set, an original is pruned only once every story referencing it is terminal and older than the setting.
+  - `satelle help retrieve` documents which reviewer seats can reach the verb. Configured command-transport reviewers with `Bash(satelle:*)` can. The embedded default reviewer template, which denies Bash, and read-only live sessions cannot. (sty_b0577532)
+
+## [serve-v0.0.56] - 2026-09-23
+
+### Changed
+- **The serve channel picks up the retrieval store migration and the retention setting.** (sty_b0577532)
+
 ## [0.0.520] - 2026-09-23
 
 ### Added

@@ -54,6 +54,11 @@ func SyncStoryBacklog(ctx context.Context, store *workitem.Store, now time.Time)
 		return len(items), pruned, aerr
 	}
 	pruned += archived
+	// CCR retrieval retention (sty_b0577532) — same sweep point, a no-op unless
+	// satelle.toml sets retrieve_keep_days.
+	if _, perr := pruneRetrievalStore(ctx, store, now); perr != nil {
+		return len(items), pruned, perr
+	}
 	return len(items), pruned, nil
 }
 

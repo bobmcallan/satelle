@@ -95,6 +95,30 @@ func TestResolveAuthoredDirs(t *testing.T) {
 	}
 }
 
+func TestRetrieveKeepDaysDefaultZeroAndReadFromToml(t *testing.T) {
+	var zero Config
+	if zero.RetrieveKeepDays != 0 {
+		t.Errorf("zero-value RetrieveKeepDays = %d, want 0 (keep forever)", zero.RetrieveKeepDays)
+	}
+
+	repo := t.TempDir()
+	satelleDir := filepath.Join(repo, ".satelle")
+	if err := os.MkdirAll(satelleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	committed := "retrieve_keep_days = 45\n"
+	if err := os.WriteFile(filepath.Join(satelleDir, ConfigName), []byte(committed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(filepath.Join(satelleDir, ConfigName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RetrieveKeepDays != 45 {
+		t.Errorf("RetrieveKeepDays = %d, want 45", cfg.RetrieveKeepDays)
+	}
+}
+
 func TestLoadWithLocalOverlay(t *testing.T) {
 	repo := t.TempDir()
 	satelleDir := filepath.Join(repo, ".satelle")

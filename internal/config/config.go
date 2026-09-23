@@ -85,6 +85,12 @@ type Config struct {
 	// .satelle/backups/stories/ (never deletes in place). (sty_aba7200c)
 	StoriesKeepClosed int `toml:"stories_keep_closed"`
 	StoriesKeepDays   int `toml:"stories_keep_days"`
+	// RetrieveKeepDays prunes a CCR retrieval ref (and its blob, once no ref
+	// remains) once the owning story is terminal and its terminal update is
+	// older than N days; 0 (default) keeps every original forever, so gate
+	// evidence audited later is never pulled out from under a reviewer
+	// (sty_b0577532). A non-terminal story's ref is always kept regardless.
+	RetrieveKeepDays int `toml:"retrieve_keep_days"`
 	// Review opts this repo into reviewer-gated create. satelle init seeds
 	// gate_create = true (misclassification is cheapest to catch at create —
 	// sty_83782ffb); set false to opt out. Absent key stays false so older

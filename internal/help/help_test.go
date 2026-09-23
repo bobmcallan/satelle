@@ -17,9 +17,33 @@ func TestListContainsCoreTopics(t *testing.T) {
 			t.Errorf("topic %q has empty body", top.Name)
 		}
 	}
-	for _, want := range []string{"create-story", "reviewer-checks", "principles", "projects", "create-review", "agent-dispatch", "workflow-convert"} {
+	for _, want := range []string{"create-story", "reviewer-checks", "principles", "projects", "create-review", "agent-dispatch", "workflow-convert", "retrieve"} {
 		if !names[want] {
 			t.Errorf("missing help topic %q", want)
+		}
+	}
+}
+
+// TestRetrieveTopic (AC4): the marker grammar, the verb, retention, and the
+// reachability rules are all documented so `satelle help retrieve` can be the
+// single reference a compressor author or a reviewing agent reaches for.
+func TestRetrieveTopic(t *testing.T) {
+	top, ok := Get("retrieve")
+	if !ok {
+		t.Fatal("retrieve topic not found")
+	}
+	for _, want := range []string{
+		"<<ccr:HASH>>",
+		"Retrieve more: satelle retrieve HASH",
+		"retrieve.MarkerRE",
+		"retrieve.FindHashes",
+		"satelle retrieve <hash>",
+		"retrieve_keep_days",
+		"Bash(satelle:*)",
+		"GrantAllowsMutators",
+	} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("retrieve topic missing %q", want)
 		}
 	}
 }

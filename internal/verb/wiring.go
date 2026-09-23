@@ -9,6 +9,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/oplog"
+	"github.com/bobmcallan/satelle/internal/retrieve"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -25,6 +26,7 @@ var (
 	ledgerStore   *ledger.Store
 	docIndexStore *docindex.Store
 	leaseStore    *lease.Store
+	retrieveStore *retrieve.Store
 	// txRunner runs a func inside one sqlite transaction spanning Stories and
 	// Ledger. Required whenever ledgerStore is set: a missing runner refuses
 	// the transition rather than writing the two sides separately.
@@ -55,6 +57,9 @@ func SetDocIndexStore(s *docindex.Store) { docIndexStore = s }
 
 // SetLeaseStore wires the engagement-lease store (sty_8426b9c0).
 func SetLeaseStore(s *lease.Store) { leaseStore = s }
+
+// SetRetrieveStore wires the CCR retrieval store (sty_b0577532).
+func SetRetrieveStore(s *retrieve.Store) { retrieveStore = s }
 
 // Realtime change topics — coarse, panel-level. A mutating verb publishes one
 // after it commits so an open web page refetches just that panel.
@@ -124,4 +129,11 @@ func requireLease() (*lease.Store, error) {
 		return nil, ErrStoreNotConfigured
 	}
 	return leaseStore, nil
+}
+
+func requireRetrieve() (*retrieve.Store, error) {
+	if retrieveStore == nil {
+		return nil, ErrStoreNotConfigured
+	}
+	return retrieveStore, nil
 }

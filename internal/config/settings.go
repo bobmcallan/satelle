@@ -53,6 +53,7 @@ var Settings = []Setting{
 	{Key: "logs_max_files", Label: "Log files kept", Help: "Rotations retained.", Kind: kindInt},
 	{Key: "stories_keep_closed", Label: "Keep closed stories (count)", Help: "0 = no count pruning.", Kind: kindInt},
 	{Key: "stories_keep_days", Label: "Keep closed stories (days)", Help: "0 = no age pruning.", Kind: kindInt},
+	{Key: "retrieve_keep_days", Label: "Keep retrieval originals (days)", Help: "0 = keep forever. Prunes a CCR original once its owning story is terminal and past this age.", Kind: kindInt},
 	{Section: "review", Key: "gate_create", Label: "Gate create", Help: "Run structure + create_review on story/task create (default on at init).", Kind: kindBool},
 	{Section: "gate", Key: "edit_exempt_paths", Label: "Edit-gate exempt paths", Help: "Path prefixes exempt from the engaged-story edit gate. Init seeds .satelle/ (authored substrate) plus the footprint satelle deploys itself (.gitignore block, harness scaffolds).", Kind: kindList},
 	{Section: "gate", Key: "edit_exempt_globs", Label: "Edit-gate exempt globs", Help: "Filename globs exempt from the engaged-story edit gate (basename match; a pattern containing / is repo-relative). Init seeds sty_*_body.md and sty_*_ac.md for agent story-reference dumps.", Kind: kindList},
@@ -120,6 +121,8 @@ func SettingDisplay(cfg Config, s Setting) string {
 		return intStr(cfg.StoriesKeepClosed)
 	case "stories_keep_days":
 		return intStr(cfg.StoriesKeepDays)
+	case "retrieve_keep_days":
+		return intStr(cfg.RetrieveKeepDays)
 	case "review.gate_create":
 		return boolStr(cfg.Review.GateCreate)
 	case "gate.edit_exempt_paths":
