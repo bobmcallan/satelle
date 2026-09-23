@@ -77,7 +77,47 @@ func renderCompact(cmd *cobra.Command, verbName, storyID string, raw json.RawMes
 	if verbName == "story-diff" {
 		return renderCompactDiff(a.Config.Output, raw, off)
 	}
-	return compact.FoldTable(raw, a.Config.Output.ResolveLongCellBytes(), off, off)
+	cell := a.Config.Output.ResolveLongCellBytes()
+	out, ok := compact.FoldTable(raw, cell, off, off)
+	size := len(raw)
+	if ok {
+		size = len(out)
+	}
+	// Lossy last resort (sty_aa34491d): only for a marked command whose
+	// lossless form is still over the configured budget.
+	if crushCfg := a.Config.Output.Crush.Resolve(); crushCfg.Over(size) {
+		if crushed, cok := compact.CrushArray(raw, crushCfg, off); cok {
+			return renderCrushed(crushed, cell, off), true
+		}
+	}
+	return out, ok
+}
+
+// renderCrushed renders a crushed array: the kept rows table-folded when they
+// still fold, the trailing marker element appended as its own line (never
+// part of the table, which needs uniform rows), else the crushed JSON indented.
+func renderCrushed(crushed json.RawMessage, cell int, off retrieveAdapter) string {
+	var elems []json.RawMessage
+	if err := json.Unmarshal(crushed, &elems); err == nil && len(elems) > 1 {
+		last := len(elems) - 1
+		kept := append(append([]byte{'['}, bytes.Join(rawSlices(elems[:last]), []byte{','})...), ']')
+		if tbl, ok := compact.FoldTable(kept, cell, off, off); ok {
+			return tbl + "\n" + string(elems[last])
+		}
+	}
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, crushed, "", "  "); err != nil {
+		return string(crushed)
+	}
+	return buf.String()
+}
+
+func rawSlices(in []json.RawMessage) [][]byte {
+	out := make([][]byte, len(in))
+	for i, e := range in {
+		out[i] = e
+	}
+	return out
 }
 
 // renderCompactDiff compacts a story-diff response's "patch" field in place

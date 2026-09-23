@@ -1,3 +1,18 @@
+## [0.0.527] - 2026-09-24
+
+### Added
+- **A JSON array crusher, the lossy last resort for oversized list output.** When `[output.crush]` in satelle.toml enables it, a `compact_commands` list whose lossless table form is still over `size_threshold_bytes` is sampled down to a budget of `max_kept` rows.
+  - **Selection.** It keeps the first and last fractions of the budget and fills the rest by stride sampling, with duplicate rows removed.
+  - **Always kept, outside the budget:** rows whose string values contain a configured error keyword, rows beyond `variance_sigma` on length or any numeric field, rows carrying a rare key (`structural_outlier_fraction`), and rows with a rare `status_fields` value (`rare_status_fraction`).
+  - **Output.** Kept rows are emitted unchanged, in original order. One trailing `{"_crushed": "<<ccr:HASH,rows,SIZE>>", "dropped": N, "total": T}` element follows, and `satelle retrieve HASH` returns the full original array.
+  - **Configuration.** The binary ships no keywords or thresholds. An absent or disabled table does nothing, `--json` and `--full` always bypass the crusher, and nonsensical values are refused at load. K is a configured value; adaptive K is not shipped.
+  - **Example.** A real 200-row `ledger list` goes from 99 KB (lossless) to 70 KB, with every `review_reject` row kept. (sty_aa34491d)
+
+## [serve-v0.0.62] - 2026-09-24
+
+### Changed
+- **The serve channel picks up the `[output.crush]` config.** (sty_aa34491d)
+
 ## [0.0.526] - 2026-09-24
 
 ### Added

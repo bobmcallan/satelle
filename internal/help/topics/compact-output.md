@@ -135,6 +135,19 @@ unchanged by this story.
 the verb's raw patch untouched — reach for it when you need to see exactly
 what git produced rather than what a reviewer would.
 
+## Crushing an oversized list (lossy)
+
+When `[output.crush]` is enabled and a compact command's list is STILL larger
+than `size_threshold_bytes` after the lossless table fold, the rows are
+sampled: the first/last fractions of `max_kept`, rows matching an error
+keyword, length/numeric outliers, structural outliers and rare status values
+are kept (the forced ones outside the budget), the rest is stride-sampled.
+Kept rows are untouched; one trailing `{"_crushed": "<<ccr:HASH,rows,SIZE>>",
+"dropped": N, "total": T}` element records the rest, and
+`satelle retrieve HASH` returns the FULL original array. Lists under
+`min_items`, and `--json`, are never crushed. Every value is authored
+configuration.
+
 ## Retrieving offloaded content
 
 An offloaded cell or hunk leaves an EXTENDED retrieve marker:
