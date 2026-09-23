@@ -271,9 +271,13 @@ func lookupRunner(iface, command string) (agentcli.Runner, error) {
 }
 
 // defaultAgentTimeout bounds one nested agent invocation. A real review takes
-// ~3-6 minutes; ten gives honest slack while turning a wedged subprocess into a
-// bounded, legible failure instead of an indefinite block (sty_6c88ca10).
-const defaultAgentTimeout = 10 * time.Minute
+// ~3-6 minutes, but the coded step now dispatches a whole implementation to a
+// coder (converge-then-gate) under this same bound, so ten minutes is too
+// tight — a real implementation was cut off mid-AC (sty_87b86044). Twenty
+// gives that step honest slack while still turning a wedged subprocess into a
+// bounded, legible failure instead of an indefinite block (sty_6c88ca10,
+// sty_a7089cb6).
+const defaultAgentTimeout = 20 * time.Minute
 
 // SetProgress wires the sink for one-line gate progress messages (the CLI
 // prints them to stderr). nil disables emission.

@@ -1,3 +1,8 @@
+## [0.0.514] - 2026-09-23
+
+### Changed
+- **The default bound on one nested agent invocation is now 20 minutes, up from 10.** A binding with no `timeout` now gets 20m. The coded step dispatches a whole implementation to a coder under this bound, and 10m cut a real implementation off partway through. An explicit per-binding `timeout` still wins. The gate check timeout (20m) is unchanged. (sty_a7089cb6)
+
 ## [0.0.513] - 2026-09-23
 
 ### Added

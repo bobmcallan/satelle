@@ -932,6 +932,30 @@ func TestGate_emitsActivity(t *testing.T) {
 	}
 }
 
+// TestDefaultAgentTimeoutIsTwentyMinutes pins the fallback bound on one nested
+// agent invocation at 20m (sty_a7089cb6): a whole coded step now dispatches to
+// a coder under this bound, and 10m cut a real implementation off mid-AC
+// (sty_87b86044).
+func TestDefaultAgentTimeoutIsTwentyMinutes(t *testing.T) {
+	if defaultAgentTimeout != 20*time.Minute {
+		t.Fatalf("defaultAgentTimeout = %v, want 20m", defaultAgentTimeout)
+	}
+	g := New(nil, fakeDocs{}, "/repo", "")
+	if g.agentTimeout != 20*time.Minute {
+		t.Errorf("New() seeded agentTimeout = %v, want 20m", g.agentTimeout)
+	}
+	got, err := config.AgentBinding{}.TimeoutDuration(defaultAgentTimeout)
+	if err != nil {
+		t.Fatalf("TimeoutDuration: %v", err)
+	}
+	if got != 20*time.Minute {
+		t.Errorf("no-timeout binding resolved to %v, want 20m", got)
+	}
+	if explicit, err := (config.AgentBinding{Timeout: "5m"}).TimeoutDuration(defaultAgentTimeout); err != nil || explicit != 5*time.Minute {
+		t.Errorf("explicit timeout should still win, got %v, err %v", explicit, err)
+	}
+}
+
 // A wedged reviewer subprocess is BOUNDED by the per-invocation deadline: the
 // gate fails fast with a legible timeout (no blind retries of another full
 // window) and does not enact (sty_6c88ca10).
