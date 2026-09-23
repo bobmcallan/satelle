@@ -264,3 +264,44 @@ func TestLoadSyncOverlay(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadDispatchLeftovers covers the [dispatch.leftovers] table
+// (sty_e7aaf8b1 AC6): the leftover-sweep rule loads from committed config,
+// and an absent table leaves the zero value (sweep disabled).
+func TestLoadDispatchLeftovers(t *testing.T) {
+	repo := t.TempDir()
+	satelleDir := filepath.Join(repo, ".satelle")
+	if err := os.MkdirAll(satelleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	committed := "[dispatch.leftovers]\n" +
+		"patterns = [\".ac-evidence*\"]\n" +
+		"content_regex = '^\\s*package \\w+\\s*$'\n" +
+		"max_bytes = 64\n" +
+		"action = \"flag\"\n"
+	if err := os.WriteFile(filepath.Join(satelleDir, ConfigName), []byte(committed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(filepath.Join(satelleDir, ConfigName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := cfg.Dispatch.Leftovers
+	if len(rule.Patterns) != 1 || rule.Patterns[0] != ".ac-evidence*" {
+		t.Errorf("patterns = %v", rule.Patterns)
+	}
+	if rule.MaxBytes != 64 {
+		t.Errorf("max_bytes = %d", rule.MaxBytes)
+	}
+	if rule.ResolveAction() != LeftoverActionFlag {
+		t.Errorf("ResolveAction = %q, want flag", rule.ResolveAction())
+	}
+
+	var empty Config
+	if empty.Dispatch.Leftovers.ResolveAction() != LeftoverActionMove {
+		t.Errorf("zero-value rule ResolveAction = %q, want move (the default)", empty.Dispatch.Leftovers.ResolveAction())
+	}
+	if len(empty.Dispatch.Leftovers.Patterns) != 0 || empty.Dispatch.Leftovers.ContentRegex != "" {
+		t.Error("zero-value rule must ship with no patterns and no regex — the binary has no opinion")
+	}
+}

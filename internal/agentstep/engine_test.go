@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -718,6 +719,86 @@ func TestSummarise_failsFastOnDeadline(t *testing.T) {
 	}
 	if r.calls != 1 {
 		t.Fatalf("a deadline must fail fast (no retry), got %d calls", r.calls)
+	}
+}
+
+// TestSummariseScratchEnvAndCharter (sty_e7aaf8b1 AC1/AC2, step-summariser
+// carve-out): the summariser dispatch — buildRequest+runOnce directly, outside
+// invokePrimary and OpenSessionAsWithModel — gets the SAME scratch treatment as
+// every other isolated agent: TMPDIR==SATELLE_SCRATCH under os.TempDir()/satelle,
+// and its system prompt (rubric-only, no charter) still names the scratch dir via
+// the generated briefing.
+func TestSummariseScratchEnvAndCharter(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("0700 mode / os.TempDir() layout assertion is POSIX-specific")
+	}
+	docs := fakeDocs{workflow: summaryWorkflow, skillBody: "summarise rubric", skillFound: true}
+	r := &fakeRunner{out: "the step recap"}
+	g := New(r, docs, "/repo", "")
+
+	got, err := g.Summarise(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "in_progress", "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Text != "the step recap" {
+		t.Fatalf("summary = %q", got.Text)
+	}
+	dir := r.got.Env["TMPDIR"]
+	if dir == "" || dir != r.got.Env[config.ScratchEnv] {
+		t.Fatalf("summariser env TMPDIR/SATELLE_SCRATCH = %q/%q, want equal and non-empty", dir, r.got.Env[config.ScratchEnv])
+	}
+	if !strings.HasPrefix(dir, filepath.Join(os.TempDir(), "satelle")) {
+		t.Errorf("scratch dir %q not under os.TempDir()/satelle", dir)
+	}
+	if !strings.Contains(r.got.SystemPrompt, dir) {
+		t.Errorf("summariser system prompt missing its scratch dir %q:\n%s", dir, r.got.SystemPrompt)
+	}
+	if !strings.Contains(r.got.SystemPrompt, "never in the repository tree") {
+		t.Errorf("summariser system prompt missing the never-in-tree instruction:\n%s", r.got.SystemPrompt)
+	}
+	// A successful summary disposes of its scratch dir exactly like a
+	// successful one-shot Invoke dispatch.
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("scratch dir must be removed after a successful summarise, got err=%v", err)
+	}
+}
+
+// TestSummariseScratchKeptOnMandatoryFailure (sty_e7aaf8b1 AC3, step-summariser
+// carve-out): when a MANDATORY step summary fails (here: a fail-fast deadline),
+// its scratch dir survives for diagnosis and a scratch_kept row is ledgered with
+// the path — the same contract invokePrimary and a live session's Close already
+// honour.
+func TestSummariseScratchKeptOnMandatoryFailure(t *testing.T) {
+	docs := fakeDocs{workflow: summaryWorkflow, skillBody: "r", skillFound: true}
+	r := &fakeRunner{err: context.DeadlineExceeded}
+	g := New(r, docs, "/repo", "")
+	g.backoff = func(int) time.Duration { return 0 }
+	var rows []map[string]any
+	g.SetInvocationRecorder(func(_ context.Context, _ string, payload map[string]any) error {
+		rows = append(rows, payload)
+		return nil
+	})
+
+	_, err := g.Summarise(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "in_progress", "done")
+	if err == nil {
+		t.Fatal("a deadline should surface an error for a mandatory summary")
+	}
+	dir := r.got.Env[config.ScratchEnv]
+	if dir == "" {
+		t.Fatal("no scratch dir recorded on the request")
+	}
+	if _, statErr := os.Stat(dir); statErr != nil {
+		t.Errorf("scratch dir must survive a mandatory summary failure: %v", statErr)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	var kept bool
+	for _, row := range rows {
+		if row["phase"] == "scratch_kept" && row["scratch_dir"] == dir {
+			kept = true
+		}
+	}
+	if !kept {
+		t.Errorf("no scratch_kept ledger row for %q: %#v", dir, rows)
 	}
 }
 

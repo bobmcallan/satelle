@@ -138,6 +138,116 @@ func TestStoryAttachFromStdin(t *testing.T) {
 	}
 }
 
+// TestAttachMultilineBodyNoFile (sty_e7aaf8b1 AC4): an agent whose grant is
+// only Bash(satelle:*) — no pipe, no file write — can attach a multi-line
+// markdown document via --body alone, round-tripping byte for byte, with no
+// new file appearing anywhere under the repo dir.
+func TestAttachMultilineBodyNoFile(t *testing.T) {
+	repo := tempRepo(t)
+
+	out, err := runRoot(t, "story", "create",
+		"--title", "Body-only evidence",
+		"--body", "Attach a doc via --body, no file.",
+		"--acceptance", "1. round trip",
+	)
+	if err != nil {
+		t.Fatalf("create: %v\n%s", err, out)
+	}
+	var created map[string]any
+	if err := json.Unmarshal([]byte(out), &created); err != nil {
+		t.Fatalf("parse create: %v\n%s", err, out)
+	}
+	id, _ := created["id"].(string)
+	if id == "" {
+		t.Fatalf("no id in %s", out)
+	}
+
+	before := untrackedFiles(t, repo)
+
+	const body = "# AC evidence\n\n- AC1 ok\n- AC2 `inline code`\n\n```go\nx := 1\n```\n\n> a quote\n"
+	if out, err := runRoot(t, "story", "attach", id,
+		"--name", "ac-evidence", "--type", "output", "--body", body,
+	); err != nil {
+		t.Fatalf("attach --body: %v\n%s", err, out)
+	}
+
+	doc, err := runRoot(t, "story", "doc", id, "ac-evidence")
+	if err != nil {
+		t.Fatalf("doc: %v\n%s", err, doc)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(doc), &got); err != nil {
+		t.Fatalf("parse doc: %v\n%s", err, doc)
+	}
+	// story doc wraps the stored body with a frontmatter header (story/type/name);
+	// the CONTENT after it must be byte-for-byte what --body sent — newlines,
+	// backticks, headings and fences preserved verbatim.
+	gotBody, _ := got["body"].(string)
+	if !strings.HasSuffix(gotBody, body) {
+		t.Fatalf("body did not round-trip byte for byte:\ngot:  %q\nwant suffix: %q", gotBody, body)
+	}
+
+	after := untrackedFiles(t, repo)
+	if len(after) > len(before) {
+		t.Errorf("attach --body must create no new file in the repo: before=%v after=%v", before, after)
+	}
+
+	// --file pointing outside the repo (standing in for $SATELLE_SCRATCH) is
+	// the documented alternative for a very large document.
+	scratch := t.TempDir()
+	scratchFile := filepath.Join(scratch, "big.md")
+	if err := os.WriteFile(scratchFile, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runRoot(t, "story", "attach", id,
+		"--name", "ac-evidence-2", "--type", "output", "--file", scratchFile,
+	); err != nil {
+		t.Fatalf("attach --file (scratch): %v\n%s", err, out)
+	}
+	doc2, err := runRoot(t, "story", "doc", id, "ac-evidence-2")
+	if err != nil {
+		t.Fatalf("doc2: %v\n%s", err, doc2)
+	}
+	var got2 map[string]any
+	if err := json.Unmarshal([]byte(doc2), &got2); err != nil {
+		t.Fatalf("parse doc2: %v\n%s", err, doc2)
+	}
+	gotBody2, _ := got2["body"].(string)
+	if !strings.HasSuffix(gotBody2, body) {
+		t.Fatalf("scratch-file body did not round-trip:\ngot:  %q\nwant suffix: %q", gotBody2, body)
+	}
+}
+
+// untrackedFiles walks repo (excluding .satelle, satelle's own store/runtime
+// dir) and returns the repo-relative file paths present — used to assert a
+// CLI operation created no stray file in the tree. tempRepo fixtures are not
+// git repos, so this is a plain filesystem snapshot, not `git ls-files`.
+func untrackedFiles(t *testing.T, repo string) []string {
+	t.Helper()
+	var files []string
+	err := filepath.WalkDir(repo, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, rerr := filepath.Rel(repo, path)
+		if rerr != nil {
+			return rerr
+		}
+		if d.IsDir() {
+			if rel == ".satelle" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		files = append(files, rel)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk repo: %v", err)
+	}
+	return files
+}
+
 // TestStoryAmendSurface (sty_81aa4d8f AC1/AC3) pins the CLI half of the amend
 // path: the command exists on the story group, --reason is mandatory (the gate
 // and the ledger both read it), and --acceptance takes "-" for stdin so a

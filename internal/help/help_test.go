@@ -152,6 +152,27 @@ func TestAgentDispatchTopicModelSelection(t *testing.T) {
 	}
 }
 
+// TestAgentDispatchTopicMentionsScratch (sty_e7aaf8b1 AC7): the scratch
+// directory, the file-free attach path, and the leftover-sweep config must be
+// teachable from deployed docs alone.
+func TestAgentDispatchTopicMentionsScratch(t *testing.T) {
+	top, ok := Get("agent-dispatch")
+	if !ok {
+		t.Fatal("agent-dispatch topic not found")
+	}
+	for _, want := range []string{
+		"SATELLE_SCRATCH",
+		"TMPDIR",
+		"--body",
+		"dispatch.leftovers",
+		"scratch_kept",
+	} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("agent-dispatch topic missing %q", want)
+		}
+	}
+}
+
 // TestReworkMarkerContractStatedIdentically: the READY contract appears in the
 // help topic AND in `satelle story rework --help`. A contract stated in two
 // places is a contract that drifts, so both are pinned to the same literals —

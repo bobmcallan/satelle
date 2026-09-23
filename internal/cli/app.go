@@ -293,6 +293,11 @@ func openAppForCmd(cmd *cobra.Command) error {
 			rev.SetModelRanking(agents.Models.Ranking)
 			rev.SetSessionModelsResolver(verb.SessionModels)
 			rev.SetInvocationRecorder(verb.AppendAgentInvocation)
+			// Leftover-file sweep config (sty_e7aaf8b1): what a coder/driving
+			// session leaves in the tree that this repo wants moved to scratch
+			// (or flagged) at session close. Unset by default — the binary ships
+			// no opinion about what a leftover looks like.
+			rev.SetLeftoverRule(a.Config.Dispatch.Leftovers)
 			// A live session (story chat, the rework relay's coder seat and
 			// rework.consult binding) resolves an unset interface= to the
 			// binding CLI's best live transport, not always command
@@ -415,6 +420,7 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 	rev.SetModelRanking(eff.Agents.Models.Ranking)
 	rev.SetSessionModelsResolver(verb.SessionModels)
 	rev.SetInvocationRecorder(verb.AppendAgentInvocation)
+	rev.SetLeftoverRule(a.Config.Dispatch.Leftovers)
 	return rev, a, nil
 }
 

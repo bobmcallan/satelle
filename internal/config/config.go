@@ -134,6 +134,57 @@ type Config struct {
 	// size and the content-type allowlist. Defaults ship in code as mechanism
 	// bounds; a repo may override either in satelle.toml.
 	Attachments AttachmentsConfig `toml:"attachments"`
+	// Dispatch tunes per-dispatch mechanism that is not gate policy: today,
+	// only the leftover-file sweep (sty_e7aaf8b1). Kept separate from
+	// [gate] because it runs at session close, not the PreToolUse hook.
+	Dispatch DispatchConfig `toml:"dispatch"`
+}
+
+// DispatchConfig tunes per-dispatch/session mechanism: today, only the
+// leftover-file sweep a coder session runs at close (sty_e7aaf8b1).
+type DispatchConfig struct {
+	Leftovers LeftoverRule `toml:"leftovers"`
+}
+
+// Leftover actions — the closed set LeftoverRule.Action accepts. Empty
+// resolves to LeftoverActionMove (ResolveAction).
+const (
+	LeftoverActionMove = "move"
+	LeftoverActionFlag = "flag"
+)
+
+// LeftoverRule is language-neutral configuration for what counts as debris a
+// coder session left in the working tree (sty_e7aaf8b1, satelle-story-
+// architecture-review revision 2: the binary ships no patterns, no regex, and
+// no opinion about any language — e.g. Go test files — of its own). A file is
+// a leftover when it is untracked, was created during the session being
+// swept (a before/after snapshot diff — never a pre-existing untracked file),
+// and matches a glob in Patterns (against its repo-relative path or its
+// basename) OR its content matches ContentRegex within MaxBytes. Empty
+// Patterns and empty ContentRegex mean "sweep nothing" — the default, since
+// the binary ships no opinion.
+type LeftoverRule struct {
+	// Patterns are globs (filepath.Match) matched against the repo-relative
+	// path and against the basename.
+	Patterns []string `toml:"patterns"`
+	// ContentRegex, when set, flags a file whose FULL content matches it.
+	ContentRegex string `toml:"content_regex"`
+	// MaxBytes bounds which files are read for the ContentRegex check; 0
+	// means unbounded. Patterns matching never consult MaxBytes.
+	MaxBytes int `toml:"max_bytes"`
+	// Action is "move" (default) or "flag". Move relocates the file under the
+	// dispatch's scratch directory (<scratch>/leftovers/<relpath>); flag
+	// leaves it in place and only records it on the ledger.
+	Action string `toml:"action"`
+}
+
+// ResolveAction returns the effective leftover action: the configured value,
+// or LeftoverActionMove when unset.
+func (r LeftoverRule) ResolveAction() string {
+	if r.Action == LeftoverActionFlag {
+		return LeftoverActionFlag
+	}
+	return LeftoverActionMove
 }
 
 // AttachmentsConfig is the [attachments] table: size cap and content-type

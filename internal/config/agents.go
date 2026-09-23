@@ -120,6 +120,13 @@ const (
 	// status. Same honest-posture boundary as the dispatch markers.
 	RelayBindingEnv = "SATELLE_RELAY_BINDING"
 	RelayItemEnv    = "SATELLE_RELAY_ITEM"
+
+	// ScratchEnv names the per-dispatch scratch directory every isolated or
+	// live agent session receives (sty_e7aaf8b1) — set alongside TMPDIR so an
+	// agent never has to be told separately where scratch work goes. A
+	// RESERVED key: it overrides any binding-authored [env] value of the
+	// same name.
+	ScratchEnv = "SATELLE_SCRATCH"
 )
 
 // Principles selector tokens for AgentBinding.Principles — which principles ride

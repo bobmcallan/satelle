@@ -222,7 +222,16 @@ type Engine struct {
 	// shows up in `satelle story cost` and the web timeline the same way a
 	// one-shot dispatch does. Nil-safe: an unwired recorder writes no rows.
 	invocationRecorder func(ctx context.Context, itemID string, payload map[string]any) error
+	// leftoverRule is the repo's [dispatch.leftovers] config (sty_e7aaf8b1) —
+	// what counts as debris a coder session left in the tree. Zero value
+	// (empty Patterns, empty ContentRegex) disables the sweep entirely: the
+	// binary ships no opinion about what a leftover looks like.
+	leftoverRule config.LeftoverRule
 }
+
+// SetLeftoverRule wires the repo's leftover-sweep configuration
+// (sty_e7aaf8b1). Unset (the zero value) disables the sweep.
+func (g *Engine) SetLeftoverRule(rule config.LeftoverRule) { g.leftoverRule = rule }
 
 // TelemetryFunc records one typed telemetry/quality event for storyID. Callers
 // pass the event's outcome/kind and its typed data (never env/secrets — the
@@ -1933,6 +1942,12 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 	// else cli-default.
 	modelResolved, modelSource := g.selectModel(ctx, binding, item.ID, modelOverride, config.ModelSourceAgent)
 	binding.Model = modelResolved
+	// Every live session gets its own scratch dir (sty_e7aaf8b1 AC1), exactly
+	// like a one-shot Invoke dispatch.
+	scratchDir, screrr := newScratch(g.repoRoot, item.ID)
+	if screrr != nil {
+		return nil, screrr
+	}
 	req, err := g.buildRequest(ctx, invocation{
 		charter:    charter,
 		payload:    payload,
@@ -1942,8 +1957,10 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 		settings:   binding.Settings,
 		env:        binding.Env,
 		principles: binding.ResolvedPrinciples(),
+		scratch:    scratchDir,
 	})
 	if err != nil {
+		finishScratch(scratchDir, false)
 		return nil, err
 	}
 	// A live session ledgers its own open as an agent_invocation row
@@ -1961,6 +1978,18 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 	if sid := strings.TrimSpace(os.Getenv(config.SessionEnv)); sid != "" {
 		req.Env[config.SessionEnv] = sid
 	}
+	for k, v := range scratchEnv(scratchDir) {
+		req.Env[k] = v
+	}
+	// A DRIVING session (the coder rework seat, story chat) may edit the tree,
+	// so it is the one that can leave debris; snapshot the untracked files at
+	// open so Close can tell what THIS session created (sty_e7aaf8b1 AC5).
+	// Consult-role sessions are read-only and are never swept.
+	var leftoverBefore map[string]bool
+	sweepConfigured := len(g.leftoverRule.Patterns) > 0 || strings.TrimSpace(g.leftoverRule.ContentRegex) != ""
+	if role == SessionRoleDriving && sweepConfigured {
+		leftoverBefore, _ = untrackedSnapshot(g.repoRoot)
+	}
 	// usageTracker captures the session's LAST EventUsage (sty_7069bced) — the
 	// same signal runOneShotUsage reads for a one-shot dispatch — so the close
 	// row below can report what the live session actually resolved/spent, not
@@ -1969,10 +1998,12 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 	req.OnEvent = tracker.wrap(onEvent)
 	sess, err := opener(ctx, req, pol)
 	if err != nil {
+		finishScratch(scratchDir, false)
 		return nil, err
 	}
 	return &liveModelSession{Session: sess, engine: g, ctx: ctx, storyID: item.ID, agent: name,
-		model: binding.Model, modelSource: modelSource, tracker: tracker}, nil
+		model: binding.Model, modelSource: modelSource, tracker: tracker,
+		scratch: scratchDir, repoRoot: g.repoRoot, sweepBefore: leftoverBefore}, nil
 }
 
 // liveUsageTracker records the last EventUsage a live session reports, so its
@@ -2018,6 +2049,13 @@ type liveModelSession struct {
 	model, modelSource string
 	tracker            *liveUsageTracker
 	closeOnce          sync.Once
+	// scratch/repoRoot/sweepBefore back the scratch-dir lifecycle and leftover
+	// sweep this session owns at Close (sty_e7aaf8b1). sweepBefore is nil for a
+	// consult-role session or when no leftover rule is configured — either way
+	// Close sweeps nothing.
+	scratch     string
+	repoRoot    string
+	sweepBefore map[string]bool
 }
 
 func (s *liveModelSession) Close() error {
@@ -2035,6 +2073,32 @@ func (s *liveModelSession) Close() error {
 			data["model_usage"] = models
 		}
 		s.engine.recordInvocation(s.ctx, s.storyID, data)
+
+		var swept []string
+		var sweepFailed bool
+		if s.sweepBefore != nil {
+			files, serr := SweepLeftovers(s.repoRoot, s.scratch, s.sweepBefore, s.engine.leftoverRule)
+			if serr != nil {
+				// A partial move before this error must not be lost: SweepLeftovers
+				// still reports every matched file it attempted, and the scratch dir
+				// below is kept — never deleted — on this path (sty_e7aaf8b1 AC5).
+				sweepFailed = true
+				s.engine.recordInvocation(s.ctx, s.storyID, map[string]any{
+					"phase": "leftovers_failed", "scratch_dir": s.scratch, "agent": s.agent,
+					"files": files, "error": serr.Error(),
+				})
+			} else if len(files) > 0 {
+				swept = files
+				s.engine.ledgerLeftovers(s.ctx, s.storyID, s.scratch, s.engine.leftoverRule.ResolveAction(), files)
+			}
+		}
+		keep := err != nil || sweepFailed || (len(swept) > 0 && s.engine.leftoverRule.ResolveAction() == config.LeftoverActionMove)
+		if err != nil {
+			s.engine.recordInvocation(s.ctx, s.storyID, map[string]any{
+				"phase": "scratch_kept", "scratch_dir": s.scratch, "agent": s.agent,
+			})
+		}
+		finishScratch(s.scratch, keep)
 	})
 	return err
 }
@@ -2476,7 +2540,7 @@ type summaryPayload struct {
 // TODO(sty_ba860c8a): fold onto Invoke once a soft-fail/empty-retry expect mode
 // exists without ballooning ExpectVerdict/ExpectPerform. Today it still uses
 // buildRequest+runOnce directly (AC1 carve-out).
-func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to string) (verb.SummaryResult, error) {
+func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to string) (result verb.SummaryResult, err error) {
 	// The summariser runs ONLY when the active workflow DECLARES a step-summary
 	// node (transparent opt-in via the DOT) — there is no hidden always-on
 	// summariser (sty_9a139c78). A non-declaring workflow records nothing.
@@ -2538,6 +2602,35 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 	selectBinding := binding
 	selectBinding.Model = model
 	model, modelSource := g.selectModel(ctx, selectBinding, item.ID, "", "")
+	// The summariser dispatch gets its own scratch dir exactly like any other
+	// isolated agent (sty_e7aaf8b1 AC1) — it is still a subprocess that can be
+	// tempted to write evidence/debris somewhere, and the charter briefing
+	// below is generated from inv.scratch, not a skill/principle edit.
+	scratchDir, screrr := newScratch(g.repoRoot, item.ID)
+	if screrr != nil {
+		return verb.SummaryResult{}, screrr
+	}
+	// Removed when this call returns a summary; kept — and ledgered — when it
+	// returns an error, exactly like a one-shot Invoke dispatch (sty_e7aaf8b1
+	// AC3). A non-mandatory soft() failure returns err==nil, so it is disposed
+	// like a success: the caller already has no visibility into it either way.
+	defer func() {
+		if err == nil {
+			finishScratch(scratchDir, false)
+			return
+		}
+		g.recordInvocation(ctx, item.ID, map[string]any{
+			"phase": "scratch_kept", "scratch_dir": scratchDir, "agent": section,
+		})
+		finishScratch(scratchDir, true)
+	}()
+	scratchedEnv := make(map[string]string, len(env)+2)
+	for k, v := range env {
+		scratchedEnv[k] = v
+	}
+	for k, v := range scratchEnv(scratchDir) {
+		scratchedEnv[k] = v
+	}
 	// The summariser prompt is rubric-only (no charter, principles=none) so it
 	// stays a plain narrator — buildRequest omits empty sections. Grant is read-only.
 	req, err := g.buildRequest(ctx, invocation{
@@ -2548,7 +2641,8 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 		model:      model,
 		effort:     binding.Effort,
 		settings:   binding.Settings,
-		env:        env,
+		env:        scratchedEnv,
+		scratch:    scratchDir,
 	})
 	if err != nil {
 		return verb.SummaryResult{}, err

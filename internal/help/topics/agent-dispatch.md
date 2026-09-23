@@ -798,6 +798,58 @@ Do **not** use in-repo `.satelle/stories/` — that path is obsolete
 post-relocation. **Fetch before concluding a document or a prior step is
 missing** (payload first, then CLI when available).
 
+## Scratch directory, attaching without a file, and leftover files (sty_e7aaf8b1)
+
+A dispatched or live agent session never has to be told where scratch work
+goes, and never has to write evidence into the repo tree to hand it to
+satelle:
+
+- **Every dispatch gets a scratch directory by mechanism.** A one-shot
+  `Invoke` (reviewer, named executor, retrospective), the step-summary
+  dispatch (`Summarise`, its own `buildRequest`/`runOnce` call outside
+  `Invoke`), and every live session (`satelle story chat`, the rework relay's
+  coder and consult seats) each get their own
+  `<tmp>/satelle/<repo-key>/<story>/<dispatch-id>/`, mode `0700`.
+  It is exported as both `TMPDIR` and `SATELLE_SCRATCH` — RESERVED keys that
+  override any binding-authored `[env]` value of the same name — and named in
+  the generated charter every binding receives, so no skill or principle file
+  carries the instruction.
+- **Success removes it; failure keeps it.** A dispatch or live session that
+  ends cleanly has its scratch directory removed. One that errors (a failed
+  run, a session whose `Close()` returns an error) keeps the directory and
+  records a `scratch_kept` ledger row naming its path, so a failure stays
+  inspectable.
+- **Attach without a file.** `satelle story attach <id> --name <n> --type <t>
+  --body "..."` takes the document body inline — no pipe, no file, works
+  under a `Bash(satelle:*)`-only grant. `--body`/`--file` are mutually
+  exclusive; `--file -` reads stdin, and `--file $SATELLE_SCRATCH/<f>` is the
+  alternative for a very large document (the scratch path sits outside the
+  repo tree and is already edit-gate exempt under `/tmp/`). `satelle story
+  log <id> --kind <k> --data key=value` takes typed telemetry the same way —
+  a `--data` value may itself be a multi-line string.
+- **Leftover files are swept before the next gate.** A DRIVING-role session
+  (a named coder's one-shot perform dispatch, or a live coder/orchestrator
+  session — never a read-only consult/reviewer session) that leaves an
+  untracked file matching `[dispatch.leftovers]` is caught at the dispatch's
+  end, before the next gate sees the diff:
+
+  ```toml
+  [dispatch.leftovers]
+  patterns = [".ac-evidence*", "*_debug_test.go"]  # globs, path or basename
+  content_regex = '^\s*package \w+\s*$'            # optional: full-content match
+  max_bytes = 64                                    # bounds the content_regex read
+  action = "move"                                   # "move" (default) | "flag"
+  ```
+
+  Only files **this session created** count — a snapshot of untracked files is
+  taken before the session runs, so a pre-existing untracked file is never
+  touched. A match is moved to `<scratch>/leftovers/<relpath>` (kept there,
+  inspectable, even though the run itself succeeded) or, with `action =
+  "flag"`, left in place and only reported. Either way a `leftovers` ledger
+  row names the files and the scratch directory. Empty `patterns` and empty
+  `content_regex` (the default — the binary ships no opinion, not even a Go
+  test-file rule) disable the sweep entirely, with no extra `git` cost.
+
 ## What makes a step safe to dispatch (sufficiency)
 
 - **Give the step a rubric.** A dispatched step needs `skills: <name>`.

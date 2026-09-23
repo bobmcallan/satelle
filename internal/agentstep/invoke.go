@@ -105,6 +105,7 @@ type invocation struct {
 	effort     string // optional reasoning effort (sty_657f77b9)
 	settings   map[string]any
 	env        map[string]string
+	scratch    string // this dispatch's scratch dir; "" → no scratch briefing (sty_e7aaf8b1)
 }
 
 // buildRequest composes an isolated agent's system prompt in ONE canonical order —
@@ -130,6 +131,13 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 	}
 	if inv.charter != "" {
 		b.WriteString(inv.charter)
+		b.WriteString("\n\n")
+	}
+	// The scratch briefing rides whenever this dispatch has a scratch dir,
+	// charter or not — a charter-less perform dispatch still needs to know
+	// where to put evidence (sty_e7aaf8b1 AC2).
+	if brief := scratchBriefing(inv.scratch); brief != "" {
+		b.WriteString(brief)
 		b.WriteString("\n\n")
 	}
 	// The pull-context call-to-action rides in EVERY isolated-agent prompt.
@@ -267,8 +275,26 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		inv.env = env
 	}
 
+	// Every dispatch gets its own scratch directory (sty_e7aaf8b1 AC1): TMPDIR
+	// and SATELLE_SCRATCH are RESERVED keys and win over any binding env of the
+	// same name, so overlay them last.
+	scratchDir, screrr := newScratch(g.repoRoot, req.StoryID)
+	if screrr != nil {
+		return InvokeResult{Err: screrr}
+	}
+	inv.scratch = scratchDir
+	env := make(map[string]string, len(inv.env)+2)
+	for k, v := range inv.env {
+		env[k] = v
+	}
+	for k, v := range scratchEnv(scratchDir) {
+		env[k] = v
+	}
+	inv.env = env
+
 	agentReq, err := g.buildRequest(ctx, inv)
 	if err != nil {
+		finishScratch(scratchDir, false)
 		return InvokeResult{Err: err}
 	}
 	if req.Sink != nil {
@@ -337,9 +363,11 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	if runner == nil {
 		r, rerr := g.newRunner(binding.ResolvedInterface(), binding.CommandTemplate())
 		if rerr != nil {
+			finishScratch(scratchDir, false)
 			return InvokeResult{Err: fmt.Errorf("broken command for binding %q: %w", section, rerr)}
 		}
 		if r == nil {
+			finishScratch(scratchDir, false)
 			return InvokeResult{Err: fmt.Errorf(
 				"binding %q is command=in-loop and cannot produce an isolated agent run", section)}
 		}
@@ -356,18 +384,57 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		idle = g.idleTimeout
 	}
 
+	// A leftover sweep only ever runs for a PERFORM dispatch — reviewers are
+	// read-only — and only when this repo configured a rule, so a repo with no
+	// [dispatch.leftovers] pays no extra git cost (sty_e7aaf8b1 AC5/AC6).
+	var leftoverBefore map[string]bool
+	sweepConfigured := len(g.leftoverRule.Patterns) > 0 || strings.TrimSpace(g.leftoverRule.ContentRegex) != ""
+	if expect == ExpectPerform && sweepConfigured {
+		leftoverBefore, _ = untrackedSnapshot(g.repoRoot)
+	}
+
+	var res InvokeResult
 	switch expect {
 	case ExpectPerform:
 		out, usage, runErr := g.runOnce(ctx, runner, agentReq, timeout, idle)
 		if se := asStallError(runErr); se != nil {
-			res := g.stallResult(ctx, req, cmdStr, se)
+			res = g.stallResult(ctx, req, cmdStr, se)
 			res.Usage = usage
-			return res
+		} else {
+			res = InvokeResult{Stdout: out, Usage: usage, Command: cmdStr, Err: runErr}
 		}
-		return InvokeResult{Stdout: out, Usage: usage, Command: cmdStr, Err: runErr}
 	default: // ExpectVerdict
-		return g.invokeVerdict(ctx, req, runner, agentReq, cmdStr, timeout, idle)
+		res = g.invokeVerdict(ctx, req, runner, agentReq, cmdStr, timeout, idle)
 	}
+
+	var swept []string
+	var sweepFailed bool
+	if expect == ExpectPerform && leftoverBefore != nil {
+		files, serr := SweepLeftovers(g.repoRoot, scratchDir, leftoverBefore, g.leftoverRule)
+		if serr != nil {
+			// SweepLeftovers may have already moved SOME matched files out of the
+			// tree before hitting this error — files still reports every match it
+			// attempted. Never delete scratch on this path: that would silently
+			// destroy whatever it already moved, with nothing left to recover it
+			// from (sty_e7aaf8b1 AC5).
+			sweepFailed = true
+			g.recordInvocation(ctx, req.StoryID, map[string]any{
+				"phase": "leftovers_failed", "scratch_dir": scratchDir, "agent": section,
+				"files": files, "error": serr.Error(),
+			})
+		} else if len(files) > 0 {
+			swept = files
+			g.ledgerLeftovers(ctx, req.StoryID, scratchDir, g.leftoverRule.ResolveAction(), files)
+		}
+	}
+	keepScratch := res.Err != nil || sweepFailed || (len(swept) > 0 && g.leftoverRule.ResolveAction() == config.LeftoverActionMove)
+	if res.Err != nil {
+		g.recordInvocation(ctx, req.StoryID, map[string]any{
+			"phase": "scratch_kept", "scratch_dir": scratchDir, "agent": section,
+		})
+	}
+	finishScratch(scratchDir, keepScratch)
+	return res
 }
 
 // asStallError extracts a *StallError from err via errors.As, or nil.

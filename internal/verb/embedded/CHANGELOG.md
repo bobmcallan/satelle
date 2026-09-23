@@ -1,3 +1,16 @@
+## [0.0.518] - 2026-09-23
+
+### Added
+- **Every dispatched agent gets its own scratch directory, and the leftovers it strands in the repo are cleared before a gate runs.**
+  - **Scratch directory.** Every one-shot dispatch (reviewer, executor, planner, summariser) and every live session (`story chat`, rework coder and consult) runs with `TMPDIR` and `SATELLE_SCRATCH` set to a per-dispatch directory under the system temp root (mode 0700). The instructions satelle generates for every agent name that directory, so no skill or principle has to say it. The directory is removed on success and kept, with its path ledgered as `scratch_kept`, on failure.
+  - **Attaching without a file.** Agents attach text with `satelle story attach --body "…"`, or with `--file $SATELLE_SCRATCH/…`, so no file is needed in the repo.
+  - **Leftovers.** When a coder or driving session ends, files it created in the tree that match `[dispatch.leftovers]` in satelle.toml (`patterns`, optional `content_regex` within `max_bytes`, `action = move|flag`) are moved into scratch or flagged, and ledgered, before the next gate. A failed sweep never deletes what it already moved. The binary ships no patterns. (sty_e7aaf8b1)
+
+## [serve-v0.0.53] - 2026-09-23
+
+### Changed
+- **Serve channel picks up the `[dispatch.leftovers]` config and the scratch help text.** (sty_e7aaf8b1)
+
 ## [0.0.517] - 2026-09-23
 
 ### Added
