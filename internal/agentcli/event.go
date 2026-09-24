@@ -31,7 +31,18 @@ const (
 	// reads. Only the stream transport emits it (ACP/command report no model
 	// at open); a caller that never sees one records the session as unknown.
 	EventSessionInit EventKind = "session_init"
+	// EventInteractiveDenied fires when an agent asked an interactive
+	// ask-the-user question (a permission request for an Ask tool, or an
+	// elicitation request) and the transport denied or auto-answered it instead
+	// of waiting on a human (sty_32795645). Tool names the tool or method, Text
+	// carries the question, Meta[EventMetaResponse] is "denied" or
+	// "auto-answered".
+	EventInteractiveDenied EventKind = "interactive_denied"
 )
+
+// EventMetaResponse is the Meta key on EventInteractiveDenied naming what the
+// transport did with the question.
+const EventMetaResponse = "response"
 
 // Event is the normalized execution record emitted by command and ACP runners.
 // Text and Error are sanitized and bounded before emission. Metadata must contain

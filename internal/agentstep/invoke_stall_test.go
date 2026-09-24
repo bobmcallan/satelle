@@ -233,6 +233,53 @@ func TestHeartbeatOnlyAgentStalls_ExpectVerdict(t *testing.T) {
 	}
 }
 
+// askingRunner reports a denied interactive question mid-turn, then answers.
+type askingRunner struct{}
+
+func (askingRunner) Name() string    { return "asking" }
+func (askingRunner) Command() string { return "asking" }
+func (askingRunner) Run(_ context.Context, req agentcli.Request) ([]byte, error) {
+	if req.OnEvent != nil {
+		req.OnEvent(agentcli.Event{
+			Kind: agentcli.EventInteractiveDenied, Tool: "Ask", Text: "which story?",
+			Meta: map[string]string{agentcli.EventMetaResponse: "denied"},
+		})
+	}
+	return []byte(`{"decision":"accept","notes":"ok"}`), nil
+}
+
+// TestInvokeLedgersInteractiveDenied (sty_32795645 AC2): a denied or
+// auto-answered ask-the-user question is ledgered with tool and question text.
+func TestInvokeLedgersInteractiveDenied(t *testing.T) {
+	g := New(askingRunner{}, fakeDocs{}, "/repo", "")
+	var mu sync.Mutex
+	var got []map[string]any
+	g.SetTelemetry(func(_ context.Context, storyID, actor, kind string, data map[string]any) {
+		if kind == "agent-interactive-denied" {
+			mu.Lock()
+			got = append(got, data)
+			mu.Unlock()
+		}
+	})
+	res := g.Invoke(context.Background(), InvokeRequest{
+		Binding: config.AgentBinding{Command: "claude", Principles: config.PrinciplesNone},
+		Section: "reviewer",
+		Rubric:  "judge",
+		Payload: map[string]string{},
+		Expect:  ExpectVerdict,
+		Runner:  askingRunner{},
+		StoryID: "sty_1",
+	})
+	if res.Err != nil {
+		t.Fatalf("Invoke: %v", res.Err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 || got[0]["tool"] != "Ask" || got[0]["question"] != "which story?" || got[0]["response"] != "denied" {
+		t.Fatalf("ledgered = %+v, want one entry with tool Ask, question, response denied", got)
+	}
+}
+
 // TestIdleTimeoutConfigMovesStallPoint (AC3): idle_timeout is read from
 // configuration; changing it moves the stall point with no code change.
 func TestIdleTimeoutConfigMovesStallPoint(t *testing.T) {

@@ -43,7 +43,7 @@ func StallCause(ctx context.Context) *StallError {
 func isRealEvent(kind agentcli.EventKind) bool {
 	switch kind {
 	case agentcli.EventStart, agentcli.EventToolStart, agentcli.EventToolEnd,
-		agentcli.EventMessage, agentcli.EventUsage:
+		agentcli.EventMessage, agentcli.EventUsage, agentcli.EventInteractiveDenied:
 		return true
 	default:
 		return false

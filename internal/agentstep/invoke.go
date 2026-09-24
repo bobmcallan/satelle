@@ -308,6 +308,9 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	var actPid int
 	var lastActivityPush time.Time
 	trackActivity := expect == ExpectPerform && g.activityDetail != nil && req.StoryID != ""
+	// Interactive ask-the-user questions the transport denied or auto-answered,
+	// ledgered after the run (sty_32795645) — never from inside the callback.
+	var asked []agentcli.Event
 	agentReq.OnEvent = func(ev agentcli.Event) {
 		eventMu.Lock()
 		defer eventMu.Unlock()
@@ -335,6 +338,9 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 			}
 		case agentcli.EventFailed:
 			g.emitProgress("agent %s failed: %s", section, progressLabel(ev.Error))
+		case agentcli.EventInteractiveDenied:
+			g.emitProgress("agent %s asked a question (%s): %s", section, ev.Meta[agentcli.EventMetaResponse], progressLabel(ev.Text))
+			asked = append(asked, ev)
 		}
 		if trackActivity && isRealEvent(ev.Kind) {
 			actCount++
@@ -409,6 +415,10 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	// or stall) since the request was already dispatched by this point.
 	res.SystemPromptBytes = len(agentReq.SystemPrompt)
 	res.PayloadBytes = len(agentReq.Payload)
+	eventMu.Lock()
+	askedNow := append([]agentcli.Event(nil), asked...)
+	eventMu.Unlock()
+	g.ledgerInteractiveDenied(ctx, req, section, askedNow)
 
 	var swept []string
 	var sweepFailed bool
@@ -438,6 +448,23 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	}
 	finishScratch(scratchDir, keepScratch)
 	return res
+}
+
+// ledgerInteractiveDenied records one "agent-interactive-denied" entry per
+// ask-the-user question the transport denied or auto-answered, with the tool
+// name and question text, so an Ask that would once have stalled the dispatch is
+// visible (sty_32795645).
+func (g *Engine) ledgerInteractiveDenied(ctx context.Context, req InvokeRequest, section string, asked []agentcli.Event) {
+	actor := req.Actor
+	if actor == "" {
+		actor = "executor"
+	}
+	for _, ev := range asked {
+		g.telemetryEvent(ctx, req.StoryID, actor, "agent-interactive-denied", map[string]any{
+			"agent": section, "step": req.Step, "tool": ev.Tool, "question": ev.Text,
+			"response": ev.Meta[agentcli.EventMetaResponse],
+		})
+	}
 }
 
 // asStallError extracts a *StallError from err via errors.As, or nil.

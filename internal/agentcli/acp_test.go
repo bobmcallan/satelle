@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -271,6 +272,92 @@ func TestACPRunner_PermissionDenyMutator(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "accept") {
 		t.Fatalf("out = %q", out)
+	}
+}
+
+// runACPAsk runs a one-shot dispatch against a peer that sends extra mid-turn,
+// under a short deadline (a stall would hit it) and returns the output plus the
+// InteractiveDenied events seen.
+func runACPAsk(t *testing.T, extra string) ([]byte, []Event) {
+	t.Helper()
+	peer := writeFakeACPPeer(t, extra)
+	r, err := RunnerFromBinding(InterfaceACP, peer+" stdio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var denied []Event
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	out, err := r.Run(ctx, Request{
+		SystemPrompt: "r",
+		Payload:      "{}",
+		AllowedTools: "read_file,grep,list_dir",
+		OnEvent: func(ev Event) {
+			if ev.Kind == EventInteractiveDenied {
+				mu.Lock()
+				denied = append(denied, ev)
+				mu.Unlock()
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run stalled or failed: %v", err)
+	}
+	if !strings.Contains(string(out), "accept") {
+		t.Fatalf("out = %q, want the verdict", out)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	return out, append([]Event(nil), denied...)
+}
+
+func TestACPRunner_AskPermissionDenied(t *testing.T) {
+	extra := `
+        send({"jsonrpc":"2.0","id":98,"method":"session/request_permission","params":{"sessionId":"sess_test","toolCall":{"toolCallId":"c1","kind":"other","title":"Ask: which story?"},"options":[{"optionId":"allow-once","name":"Allow","kind":"allow_once"},{"optionId":"reject-once","name":"Reject","kind":"reject_once"}]}})
+        resp = read()
+        if resp is None or resp.get("result",{}).get("outcome",{}).get("optionId") != "reject-once":
+            send({"jsonrpc":"2.0","id":mid,"error":{"code":1,"message":"expected reject-once, got %s" % (resp,)}})
+            continue
+`
+	_, denied := runACPAsk(t, extra)
+	if len(denied) != 1 {
+		t.Fatalf("interactive_denied events = %d, want 1", len(denied))
+	}
+	if !strings.Contains(denied[0].Tool, "Ask") || denied[0].Text != "which story?" || denied[0].Meta[EventMetaResponse] != "denied" {
+		t.Errorf("event = %+v, want tool Ask, text %q, response denied", denied[0], "which story?")
+	}
+}
+
+func TestACPRunner_ElicitationAutoAnswered(t *testing.T) {
+	for _, method := range []string{"session/elicitation", "_x.ai/ask_user"} {
+		t.Run(method, func(t *testing.T) {
+			extra := `
+        send({"jsonrpc":"2.0","id":77,"method":"` + method + `","params":{"question":"pick one?"}})
+        resp = read()
+        if resp is None or resp.get("id") != 77 or "result" not in resp or "no user is available" not in json.dumps(resp):
+            send({"jsonrpc":"2.0","id":mid,"error":{"code":1,"message":"expected auto-answer, got %s" % (resp,)}})
+            continue
+`
+			_, denied := runACPAsk(t, extra)
+			if len(denied) != 1 || denied[0].Tool != method || denied[0].Text != "pick one?" || denied[0].Meta[EventMetaResponse] != "auto-answered" {
+				t.Fatalf("events = %+v, want one auto-answered %s / pick one?", denied, method)
+			}
+		})
+	}
+}
+
+func TestACPRunner_UnknownRequestGetsMethodNotFound(t *testing.T) {
+	extra := `
+        send({"jsonrpc":"2.0","id":55,"method":"fs/unheard_of","params":{}})
+        resp = read()
+        if resp is None or resp.get("id") != 55 or resp.get("error",{}).get("code") != -32601:
+            send({"jsonrpc":"2.0","id":mid,"error":{"code":1,"message":"expected -32601, got %s" % (resp,)}})
+            continue
+`
+	_, denied := runACPAsk(t, extra)
+	if len(denied) != 0 {
+		t.Errorf("non-ask unknown method emitted %d interactive_denied events", len(denied))
 	}
 }
 

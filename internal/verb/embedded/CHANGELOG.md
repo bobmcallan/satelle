@@ -1,3 +1,18 @@
+## [0.0.529] - 2026-09-24
+
+### Fixed
+- **An ACP agent's interactive "ask the user" tool can no longer hang a satelle dispatch.** No human is attached to a satelle ACP session, so the ACP client now handles these itself:
+  - a permission request for an Ask-shaped tool (`Ask`, `ask_user_question`, `AskUserQuestion`) is denied;
+  - an elicitation or ask request is auto-answered with "no user is available; decide from the payload and state your assumption";
+  - **any** other unanswered request from the agent gets JSON-RPC "method not found" rather than silence.
+
+  Each denial emits an `interactive_denied` event, and one-shot dispatches record an `agent-interactive-denied` ledger row with the tool and question. This was observed on the Grok `[reviewer]`: two create-reviews stalled for 5m01s on `ask_user_question`, and a provoked Ask now ends in about 10 ms. Grok's ACP agent cannot exclude the tool at session setup: `--tools` and `--disallowed-tools` are headless-only. (sty_32795645)
+
+## [serve-v0.0.63] - 2026-09-24
+
+### Fixed
+- **The serve channel picks up the ACP interactive-ask handling.** (sty_32795645)
+
 ## [0.0.528] - 2026-09-24
 
 ### Fixed

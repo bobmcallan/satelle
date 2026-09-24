@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode"
 )
 
 // acpRunner runs an Agent Client Protocol agent over stdio (epic:agent-dispatch-transport).
@@ -335,6 +336,11 @@ func (s *acpSession) handshake(ctx context.Context, req Request) error {
 		}
 	}
 
+	// The binding's tools grant is NOT sent here: session/new carries only cwd
+	// and mcpServers, so the peer offers every built-in tool (including an
+	// interactive Ask). The grant is applied after the fact, through the
+	// permission policy (handlePermission), and interactive asks are denied or
+	// auto-answered at runtime (sty_32795645).
 	sessRes, err := c.request(ctx, "session/new", map[string]any{
 		"cwd":        cwd,
 		"mcpServers": []any{},
@@ -519,6 +525,12 @@ func (c *acpClient) readLoop(r io.Reader) {
 			c.handlePermission(*msg.ID, msg.Params)
 			continue
 		}
+		if msg.Method != "" && msg.ID != nil {
+			// Any other request FROM the peer: never leave it unanswered — an
+			// agent waiting on a reply we never send stalls the dispatch.
+			c.handleUnknownRequest(*msg.ID, msg.Method, msg.Params)
+			continue
+		}
 		if msg.ID != nil {
 			c.mu.Lock()
 			ch := c.pending[*msg.ID]
@@ -620,10 +632,91 @@ func (c *acpClient) capturedLocked() string {
 	return full
 }
 
+// noUserAnswer is the fixed reply to an interactive question: no human is
+// attached to an isolated or relay dispatch (sty_32795645).
+const noUserAnswer = "no user is available; decide from the payload and state your assumption"
+
+// isInteractiveAskTool reports whether a tool's title or kind names an
+// interactive ask-the-user tool ("Ask", "Ask: which story?", "AskUserQuestion",
+// "ask_user"). Matching is by name shape, never by provider binary.
+func isInteractiveAskTool(title, kind string) bool {
+	head, _, _ := strings.Cut(title, ":")
+	for _, s := range []string{head, kind} {
+		var b strings.Builder
+		for _, r := range strings.ToLower(s) {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
+				b.WriteRune(r)
+			}
+		}
+		switch b.String() {
+		case "ask", "askuser", "askuserquestion", "askquestion", "question", "userquestion":
+			return true
+		}
+	}
+	return false
+}
+
+// isInteractiveAskMethod reports whether a peer-initiated JSON-RPC method is an
+// elicitation or ask-the-user request ("session/elicitation", "_x.ai/ask_user").
+func isInteractiveAskMethod(method string) bool {
+	m := strings.ToLower(method)
+	if strings.Contains(m, "elicit") || strings.Contains(m, "question") {
+		return true
+	}
+	for _, seg := range strings.FieldsFunc(m, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
+		if seg == "ask" || seg == "askuser" || seg == "input" {
+			return true
+		}
+	}
+	return false
+}
+
+// questionText pulls the question an ask carried from its raw input or params,
+// falling back to fallback.
+func questionText(raw json.RawMessage, fallback string) string {
+	var in struct {
+		Question string `json:"question"`
+		Prompt   string `json:"prompt"`
+		Message  string `json:"message"`
+	}
+	_ = json.Unmarshal(raw, &in)
+	for _, s := range []string{in.Question, in.Prompt, in.Message, fallback} {
+		if strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func (c *acpClient) emitInteractiveDenied(tool, question, response string) {
+	ev := newEvent(EventInteractiveDenied)
+	ev.Tool = tool
+	ev.Text = SafeText(question)
+	ev.Meta = map[string]string{EventMetaResponse: response}
+	emitEvent(c.onEvent, ev)
+}
+
+// handleUnknownRequest answers a peer-initiated request the client has no
+// handler for. An ask/elicitation is auto-answered (declined, with the fixed
+// no-user text); anything else gets JSON-RPC "method not found". Either way the
+// peer is unblocked.
+func (c *acpClient) handleUnknownRequest(id int64, method string, params json.RawMessage) {
+	if !isInteractiveAskMethod(method) {
+		_ = c.respondError(id, -32601, "Method not found: "+method)
+		return
+	}
+	// One result carries both common shapes: an elicitation reads "action", an
+	// ask-style request reads "answer"/"text".
+	_ = c.respond(id, map[string]any{"action": "decline", "answer": noUserAnswer, "text": noUserAnswer})
+	c.emitInteractiveDenied(method, questionText(params, ""), "auto-answered")
+}
+
 func (c *acpClient) handlePermission(id int64, params json.RawMessage) {
 	var p struct {
 		ToolCall struct {
-			Kind string `json:"kind"`
+			Kind     string          `json:"kind"`
+			Title    string          `json:"title"`
+			RawInput json.RawMessage `json:"rawInput"`
 		} `json:"toolCall"`
 		Options []struct {
 			OptionID string `json:"optionId"`
@@ -636,7 +729,14 @@ func (c *acpClient) handlePermission(id int64, params json.RawMessage) {
 	pol := c.pol
 	c.mu.Unlock()
 	var deny bool
-	if pol != nil {
+	ask := isInteractiveAskTool(p.ToolCall.Title, p.ToolCall.Kind)
+	if ask {
+		// No human is attached to any satelle ACP session (story chat is
+		// agent-to-agent): an interactive question is always denied.
+		deny = true
+		_, after, _ := strings.Cut(p.ToolCall.Title, ":")
+		c.emitInteractiveDenied(p.ToolCall.Title, questionText(p.ToolCall.RawInput, strings.TrimSpace(after)), "denied")
+	} else if pol != nil {
 		deny = !pol(PermissionRequest{ToolName: p.ToolCall.Kind, Kind: p.ToolCall.Kind}).Allow
 	} else {
 		deny = isMutatorToolKind(p.ToolCall.Kind) && !c.allowMutators()
@@ -680,6 +780,14 @@ func (c *acpClient) respond(id int64, result any) error {
 		"jsonrpc": "2.0",
 		"id":      id,
 		"result":  result,
+	})
+}
+
+func (c *acpClient) respondError(id int64, code int, message string) error {
+	return c.writeMsg(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error":   map[string]any{"code": code, "message": message},
 	})
 }
 
