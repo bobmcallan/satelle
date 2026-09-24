@@ -275,6 +275,7 @@ func (g *Engine) recordArtifactAttempt(
 	if len(models) > 0 {
 		data["model_usage"] = models
 	}
+	addUsageNote(data, usage)
 	if usage.Available {
 		data["tokens_in"] = usage.InputTokens
 		data["tokens_out"] = usage.OutputTokens

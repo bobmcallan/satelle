@@ -61,7 +61,7 @@ func adaptJSONEvent(v map[string]any) []Event {
 		ev := newEvent(EventToolEnd)
 		ev.Status = "completed"
 		return []Event{ev}
-	case "result":
+	case "result", "turn.completed":
 		if usage := usageFromMap(v); usage != nil {
 			ev := newEvent(EventUsage)
 			ev.Usage = usage
@@ -140,34 +140,22 @@ func textValue(v any) string {
 }
 
 // usageFromMap extracts token usage from a progressive/stream event that carries
-// a nested "usage" object. Cache fields fold into InputTokens on the same rule
-// as UnwrapUsage (sty_8178f1c6): input + cache_creation + cache_read.
-// A provider-reported total_tokens is trusted only when it is ≥ the derived
-// in+out sum; otherwise we derive, so a pre-cache total cannot re-understate.
+// a nested "usage" object, mapping it with the provider adapter whose field
+// names the object uses (usage_adapters.go, sty_c8d45201). modelUsage, when
+// present, rides along on the same event.
 func usageFromMap(v map[string]any) *UsageResult {
 	raw, _ := v["usage"].(map[string]any)
 	if raw == nil {
 		return nil
 	}
-	fresh := intValue(raw["input_tokens"])
-	cacheCreate := intValue(raw["cache_creation_input_tokens"])
-	cacheRead := intValue(raw["cache_read_input_tokens"])
-	in := fresh + cacheCreate + cacheRead
-	out := intValue(raw["output_tokens"])
-	u := &UsageResult{
-		InputTokens:              in,
-		FreshInputTokens:         fresh,
-		CacheCreationInputTokens: cacheCreate,
-		CacheReadInputTokens:     cacheRead,
-		OutputTokens:             out,
-		Available:                true,
-	}
-	derived := in + out
-	reported := intValue(raw["total_tokens"])
-	if reported >= derived && reported > 0 {
-		u.TotalTokens = reported
-	} else {
-		u.TotalTokens = derived
+	var u *UsageResult
+	switch lowerString(v, "type") {
+	case "turn.completed":
+		u = codexUsageFromMap(raw) // codex's per-turn carrier, whatever fields it names
+	case "usage", "end":
+		u = claudeUsageFromMap(raw, "grok") // grok streaming-json usage/end lines
+	default:
+		u = usageForShape(raw)
 	}
 	if primary, models, ok := parseModelUsage(v["modelUsage"]); ok {
 		u.ModelResolved = primary

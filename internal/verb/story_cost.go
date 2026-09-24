@@ -26,6 +26,11 @@ type StoryCostRow struct {
 	TokensTotal    int    `json:"tokens_total"`
 	DurationMs     int64  `json:"duration_ms"`
 	UsageAvailable bool   `json:"usage_available"`
+	// UsageUnavailableReason names the adapter and why usage is unavailable;
+	// CacheSplitUnavailable marks a provider that reported no cache fields, so
+	// the zero split below is unreported rather than measured (sty_c8d45201).
+	UsageUnavailableReason string `json:"usage_unavailable_reason,omitempty"`
+	CacheSplitUnavailable  bool   `json:"cache_split_unavailable,omitempty"`
 	// TokensInFresh/TokensCacheWrite/TokensCacheRead split TokensIn into its
 	// disjoint components (sty_363eaf55). Zero on a row recorded before this
 	// split existed — reported as "unsplit" by the --by-skill roll-up rather
@@ -194,20 +199,22 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 			}
 			tel := ledger.EventTelemetry(e)
 			row := StoryCostRow{
-				From:             meta.From,
-				To:               meta.To,
-				Agent:            meta.Agent,
-				Skill:            meta.Skill,
-				Model:            meta.Model,
-				ModelResolved:    tel.ModelResolved,
-				TokensIn:         tel.TokensIn,
-				TokensOut:        tel.TokensOut,
-				TokensTotal:      tel.TokensTotal,
-				DurationMs:       tel.DurationMs,
-				UsageAvailable:   tel.UsageAvailable,
-				TokensInFresh:    tel.TokensInFresh,
-				TokensCacheWrite: tel.TokensCacheWrite,
-				TokensCacheRead:  tel.TokensCacheRead,
+				From:                   meta.From,
+				To:                     meta.To,
+				Agent:                  meta.Agent,
+				Skill:                  meta.Skill,
+				Model:                  meta.Model,
+				ModelResolved:          tel.ModelResolved,
+				TokensIn:               tel.TokensIn,
+				TokensOut:              tel.TokensOut,
+				TokensTotal:            tel.TokensTotal,
+				DurationMs:             tel.DurationMs,
+				UsageAvailable:         tel.UsageAvailable,
+				UsageUnavailableReason: tel.UsageUnavailableReason,
+				CacheSplitUnavailable:  tel.CacheSplitUnavailable,
+				TokensInFresh:          tel.TokensInFresh,
+				TokensCacheWrite:       tel.TokensCacheWrite,
+				TokensCacheRead:        tel.TokensCacheRead,
 			}
 			// Prefer telemetry agent/model when meta left them empty (defensive).
 			if row.Agent == "" {

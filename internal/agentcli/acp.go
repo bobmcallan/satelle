@@ -83,6 +83,44 @@ func (a acpRunner) Run(ctx context.Context, req Request) ([]byte, error) {
 	return runOneShot(ctx, sess, req)
 }
 
+// RunUsage implements UsageRunner: the ACP transport reports usage on the
+// session/prompt response (when the peer supplies it), never in the captured
+// text. A peer that supplies none records unavailable with this adapter's
+// reason (sty_c8d45201).
+func (a acpRunner) RunUsage(ctx context.Context, req Request) ([]byte, UsageResult, error) {
+	pol := defaultPermissionPolicy(toolsAllowMutators(req.AllowedTools))
+	sess, err := openACPSession(ctx, a, req, pol)
+	if err != nil {
+		return nil, UsageResult{}, err
+	}
+	out, usage, err := runOneShotUsage(ctx, sess, req)
+	if !usage.Available && usage.UnavailableReason == "" {
+		usage = unavailableUsage("acp", "session/prompt response carried no usage token fields")
+	}
+	return out, usage, err
+}
+
+// acpUsageFromResult maps `_meta.usage` of a session/prompt response
+// (camelCase inputTokens / outputTokens / cachedReadTokens /
+// cacheCreationTokens / totalTokens), or nil when the peer reported none.
+func acpUsageFromResult(result json.RawMessage) *UsageResult {
+	if len(result) == 0 {
+		return nil
+	}
+	var r struct {
+		Meta struct {
+			Usage map[string]any `json:"usage"`
+		} `json:"_meta"`
+	}
+	if json.Unmarshal(result, &r) != nil || len(r.Meta.Usage) == 0 {
+		return nil
+	}
+	if u := grokUsageFromMap(r.Meta.Usage); u.Available {
+		return u
+	}
+	return nil
+}
+
 type acpSession struct {
 	cmd       *exec.Cmd
 	stdin     io.WriteCloser
@@ -215,12 +253,18 @@ func (s *acpSession) Send(ctx context.Context, turn Turn) error {
 	c.mu.Lock()
 	sid := c.session
 	c.mu.Unlock()
-	if _, err := c.request(ctx, "session/prompt", map[string]any{
+	result, err := c.request(ctx, "session/prompt", map[string]any{
 		"sessionId": sid,
 		"prompt":    blocks,
-	}); err != nil {
+	})
+	if err != nil {
 		s.promptErr = fmt.Errorf("session/prompt: %w", err)
 		return s.promptErr
+	}
+	if u := acpUsageFromResult(result); u != nil {
+		ev := newEvent(EventUsage)
+		ev.Usage = u
+		emitEvent(s.onEvent, ev)
 	}
 	emitEvent(s.onEvent, newEvent(EventCompleted))
 	return nil

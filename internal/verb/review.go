@@ -57,6 +57,7 @@ type GateDecision struct {
 	TokensInFresh    int
 	TokensCacheWrite int
 	TokensCacheRead  int
+	UsageNote
 	// SystemPromptBytes/PayloadBytes are the byte lengths of the system prompt
 	// and stdin payload satelle sent for this invocation (sty_363eaf55) —
 	// lengths only, never content.
@@ -110,10 +111,23 @@ type ReviewerVerdict struct {
 	TokensInFresh    int `json:"tokens_in_fresh,omitempty"`
 	TokensCacheWrite int `json:"tokens_cache_write,omitempty"`
 	TokensCacheRead  int `json:"tokens_cache_read,omitempty"`
+	UsageNote
 	// SystemPromptBytes/PayloadBytes are the byte lengths satelle sent — lengths
 	// only, never content (sty_363eaf55).
 	SystemPromptBytes int `json:"system_prompt_bytes,omitempty"`
 	PayloadBytes      int `json:"payload_bytes,omitempty"`
+}
+
+// UsageNote is the explicit-unavailable evidence beside a row's token numbers
+// (sty_c8d45201). It is embedded in every usage-carrying record so the JSON is
+// flat: usage_unavailable_reason names the adapter and why usage was not
+// reported (set only when usage_available is false), and
+// cache_split_unavailable marks a provider that reported no cache fields —
+// its zero split is unreported, not measured. Both are absent on a row whose
+// provider reported its own split, and on rows written before this existed.
+type UsageNote struct {
+	UsageUnavailableReason string `json:"usage_unavailable_reason,omitempty"`
+	CacheSplitUnavailable  bool   `json:"cache_split_unavailable,omitempty"`
 }
 
 // ModelUsage is one model's token/cost entry from a transport's resolved-model
@@ -262,6 +276,7 @@ type DispatchResult struct {
 	TokensInFresh    int `json:"-"`
 	TokensCacheWrite int `json:"-"`
 	TokensCacheRead  int `json:"-"`
+	UsageNote        `json:"-"`
 	// SystemPromptBytes/PayloadBytes are the byte lengths satelle sent — lengths
 	// only, never content (sty_363eaf55).
 	SystemPromptBytes int    `json:"-"`
@@ -328,6 +343,7 @@ type SummaryResult struct {
 	TokensInFresh    int
 	TokensCacheWrite int
 	TokensCacheRead  int
+	UsageNote
 	// SystemPromptBytes/PayloadBytes are the byte lengths satelle sent — lengths
 	// only, never content (sty_363eaf55).
 	SystemPromptBytes int

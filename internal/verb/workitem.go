@@ -506,7 +506,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 				ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 				TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 				UsageAvailable: dec.UsageAvailable,
-				TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead,
+				TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
 				SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes}}
 		}
 		// Ledger ALL verdicts first (accepts and rejects), then refuse if any
@@ -1482,6 +1482,7 @@ func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
 		TokensInFresh    int `json:"tokens_in_fresh,omitempty"`
 		TokensCacheWrite int `json:"tokens_cache_write,omitempty"`
 		TokensCacheRead  int `json:"tokens_cache_read,omitempty"`
+		UsageNote
 		// SystemPromptBytes/PayloadBytes: byte lengths satelle sent, never content.
 		SystemPromptBytes int    `json:"system_prompt_bytes,omitempty"`
 		PayloadBytes      int    `json:"payload_bytes,omitempty"`
@@ -1491,7 +1492,7 @@ func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
 		ModelResolved: res.ModelResolved, ModelSource: res.ModelSource, Models: res.Models,
 		TokensIn: res.TokensIn, TokensOut: res.TokensOut, TokensTotal: res.TokensTotal, DurationMs: res.DurationMs,
 		UsageAvailable: res.UsageAvailable,
-		TokensInFresh:  res.TokensInFresh, TokensCacheWrite: res.TokensCacheWrite, TokensCacheRead: res.TokensCacheRead,
+		TokensInFresh:  res.TokensInFresh, TokensCacheWrite: res.TokensCacheWrite, TokensCacheRead: res.TokensCacheRead, UsageNote: res.UsageNote,
 		SystemPromptBytes: res.SystemPromptBytes, PayloadBytes: res.PayloadBytes,
 		ArtifactName: res.ArtifactName, ArtifactType: res.ArtifactType}
 	b, err := json.Marshal(p)
@@ -1552,6 +1553,7 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		TokensInFresh    int `json:"tokens_in_fresh,omitempty"`
 		TokensCacheWrite int `json:"tokens_cache_write,omitempty"`
 		TokensCacheRead  int `json:"tokens_cache_read,omitempty"`
+		UsageNote
 		// SystemPromptBytes/PayloadBytes: byte lengths satelle sent, never content.
 		SystemPromptBytes int `json:"system_prompt_bytes,omitempty"`
 		PayloadBytes      int `json:"payload_bytes,omitempty"`
@@ -1559,7 +1561,7 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models,
 		TokensIn: rv.TokensIn, TokensOut: rv.TokensOut, TokensTotal: rv.TokensTotal, DurationMs: rv.DurationMs,
 		UsageAvailable: rv.UsageAvailable,
-		TokensInFresh:  rv.TokensInFresh, TokensCacheWrite: rv.TokensCacheWrite, TokensCacheRead: rv.TokensCacheRead,
+		TokensInFresh:  rv.TokensInFresh, TokensCacheWrite: rv.TokensCacheWrite, TokensCacheRead: rv.TokensCacheRead, UsageNote: rv.UsageNote,
 		SystemPromptBytes: rv.SystemPromptBytes, PayloadBytes: rv.PayloadBytes}
 	b, err := json.Marshal(p)
 	if err != nil {
@@ -1593,6 +1595,7 @@ func summariserInvocationPayload(from, to string, result SummaryResult) json.Raw
 		TokensInFresh    int `json:"tokens_in_fresh,omitempty"`
 		TokensCacheWrite int `json:"tokens_cache_write,omitempty"`
 		TokensCacheRead  int `json:"tokens_cache_read,omitempty"`
+		UsageNote
 		// SystemPromptBytes/PayloadBytes: byte lengths satelle sent, never content.
 		SystemPromptBytes int `json:"system_prompt_bytes,omitempty"`
 		PayloadBytes      int `json:"payload_bytes,omitempty"`
@@ -1600,7 +1603,7 @@ func summariserInvocationPayload(from, to string, result SummaryResult) json.Raw
 		ModelResolved: result.ModelResolved, ModelSource: result.ModelSource, Models: result.Models,
 		TokensIn: result.TokensIn, TokensOut: result.TokensOut, TokensTotal: result.TokensTotal, DurationMs: result.DurationMs,
 		UsageAvailable: result.UsageAvailable,
-		TokensInFresh:  result.TokensInFresh, TokensCacheWrite: result.TokensCacheWrite, TokensCacheRead: result.TokensCacheRead,
+		TokensInFresh:  result.TokensInFresh, TokensCacheWrite: result.TokensCacheWrite, TokensCacheRead: result.TokensCacheRead, UsageNote: result.UsageNote,
 		SystemPromptBytes: result.SystemPromptBytes, PayloadBytes: result.PayloadBytes}
 	b, err := json.Marshal(p)
 	if err != nil {

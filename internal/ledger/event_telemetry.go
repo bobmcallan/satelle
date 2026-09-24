@@ -60,6 +60,12 @@ type Telemetry struct {
 	// (legacy) tokens_total > 0 when the field is absent. False means
 	// unreported, never "measured zero".
 	UsageAvailable bool
+	// UsageUnavailableReason names the adapter and why usage was not reported
+	// (sty_c8d45201); empty on a measured row or a row written before it existed.
+	UsageUnavailableReason string
+	// CacheSplitUnavailable marks a provider that reported no cache fields: the
+	// zero split below is unreported, not measured (sty_c8d45201).
+	CacheSplitUnavailable bool
 	// TokensInFresh/TokensCacheWrite/TokensCacheRead split TokensIn into its
 	// disjoint components (sty_363eaf55). Zero on a row written before this
 	// field existed (an "unsplit" legacy row) or on a transport that reports
@@ -159,6 +165,8 @@ func invocationTelemetry(payload []byte) Telemetry {
 		TokensTotal       int    `json:"tokens_total"`
 		DurationMs        int64  `json:"duration_ms"`
 		UsageAvailable    *bool  `json:"usage_available"`
+		UnavailableReason string `json:"usage_unavailable_reason"`
+		SplitUnavailable  bool   `json:"cache_split_unavailable"`
 		TokensInFresh     int    `json:"tokens_in_fresh"`
 		TokensCacheWrite  int    `json:"tokens_cache_write"`
 		TokensCacheRead   int    `json:"tokens_cache_read"`
@@ -175,20 +183,22 @@ func invocationTelemetry(payload []byte) Telemetry {
 		avail = true
 	}
 	return Telemetry{
-		Agent:             row.Agent,
-		Model:             row.Model,
-		ModelResolved:     row.ModelResolved,
-		ModelSource:       row.ModelSource,
-		TokensIn:          row.TokensIn,
-		TokensOut:         row.TokensOut,
-		TokensTotal:       row.TokensTotal,
-		DurationMs:        row.DurationMs,
-		UsageAvailable:    avail,
-		TokensInFresh:     row.TokensInFresh,
-		TokensCacheWrite:  row.TokensCacheWrite,
-		TokensCacheRead:   row.TokensCacheRead,
-		SystemPromptBytes: row.SystemPromptBytes,
-		PayloadBytes:      row.PayloadBytes,
+		Agent:                  row.Agent,
+		Model:                  row.Model,
+		ModelResolved:          row.ModelResolved,
+		ModelSource:            row.ModelSource,
+		TokensIn:               row.TokensIn,
+		TokensOut:              row.TokensOut,
+		TokensTotal:            row.TokensTotal,
+		DurationMs:             row.DurationMs,
+		UsageAvailable:         avail,
+		UsageUnavailableReason: row.UnavailableReason,
+		CacheSplitUnavailable:  row.SplitUnavailable,
+		TokensInFresh:          row.TokensInFresh,
+		TokensCacheWrite:       row.TokensCacheWrite,
+		TokensCacheRead:        row.TokensCacheRead,
+		SystemPromptBytes:      row.SystemPromptBytes,
+		PayloadBytes:           row.PayloadBytes,
 	}
 }
 

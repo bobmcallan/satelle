@@ -642,6 +642,17 @@ func (g *Engine) runOnce(ctx context.Context, runner agentcli.Runner, req agentc
 // elapsed since its last real event. Stream and ACP transports never emit the
 // probe's EventProgress, so they are unaffected.
 func (g *Engine) runOnceBusy(ctx context.Context, runner agentcli.Runner, req agentcli.Request, hard, idle, busy time.Duration) ([]byte, agentcli.UsageResult, error) {
+	out, usage, err := g.runOnceBusyRaw(ctx, runner, req, hard, idle, busy)
+	if !usage.Available && usage.UnavailableReason == "" {
+		// An adapter that knows why names it; every other unreported run still
+		// names the adapter (the runner's CLI) rather than a bare false
+		// (sty_c8d45201).
+		usage.UnavailableReason = runner.Name() + " adapter: transport reported no usage"
+	}
+	return out, usage, err
+}
+
+func (g *Engine) runOnceBusyRaw(ctx context.Context, runner agentcli.Runner, req agentcli.Request, hard, idle, busy time.Duration) ([]byte, agentcli.UsageResult, error) {
 	if hard > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, hard)

@@ -1253,6 +1253,7 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		result.ModelSource = dec.ModelSource
 		result.TokensIn, result.TokensOut, result.TokensTotal = dec.TokensIn, dec.TokensOut, dec.TokensTotal
 		result.TokensInFresh, result.TokensCacheWrite, result.TokensCacheRead = dec.TokensInFresh, dec.TokensCacheWrite, dec.TokensCacheRead
+		result.UsageNote = dec.UsageNote
 		result.SystemPromptBytes, result.PayloadBytes = dec.SystemPromptBytes, dec.PayloadBytes
 		result.DurationMs = dec.DurationMs
 		result.UsageAvailable = dec.UsageAvailable
@@ -1262,7 +1263,7 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 			ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 			TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 			UsageAvailable: dec.UsageAvailable,
-			TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead,
+			TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
 			SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
 		})
 		if !dec.Accept {
@@ -1350,7 +1351,7 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 			ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 			TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 			UsageAvailable: dec.UsageAvailable,
-			TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead,
+			TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
 			SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
 		})
 		d := dec
@@ -1378,6 +1379,7 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 		result.ModelSource = pick.ModelSource
 		result.TokensIn, result.TokensOut, result.TokensTotal = pick.TokensIn, pick.TokensOut, pick.TokensTotal
 		result.TokensInFresh, result.TokensCacheWrite, result.TokensCacheRead = pick.TokensInFresh, pick.TokensCacheWrite, pick.TokensCacheRead
+		result.UsageNote = pick.UsageNote
 		result.SystemPromptBytes, result.PayloadBytes = pick.SystemPromptBytes, pick.PayloadBytes
 		result.DurationMs = pick.DurationMs
 		result.UsageAvailable = pick.UsageAvailable
@@ -1752,7 +1754,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		ModelResolved: dispatchModelResolved, Models: dispatchModels, ModelSource: modelChoice.Source,
 		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
 		DurationMs: invRes.Usage.Duration.Milliseconds(), UsageAvailable: invRes.Usage.Available,
-		TokensInFresh: invRes.Usage.FreshInputTokens, TokensCacheWrite: invRes.Usage.CacheCreationInputTokens, TokensCacheRead: invRes.Usage.CacheReadInputTokens,
+		TokensInFresh: invRes.Usage.FreshInputTokens, TokensCacheWrite: invRes.Usage.CacheCreationInputTokens, TokensCacheRead: invRes.Usage.CacheReadInputTokens, UsageNote: usageNote(invRes.Usage),
 		SystemPromptBytes: invRes.SystemPromptBytes, PayloadBytes: invRes.PayloadBytes,
 		Output: string(invRes.Stdout),
 	}
@@ -1909,7 +1911,7 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item, modelOverri
 		ModelResolved: retroModelResolved, Models: retroModels, ModelSource: retroModelSource,
 		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
 		DurationMs: invRes.Usage.Duration.Milliseconds(), UsageAvailable: invRes.Usage.Available,
-		TokensInFresh: invRes.Usage.FreshInputTokens, TokensCacheWrite: invRes.Usage.CacheCreationInputTokens, TokensCacheRead: invRes.Usage.CacheReadInputTokens,
+		TokensInFresh: invRes.Usage.FreshInputTokens, TokensCacheWrite: invRes.Usage.CacheCreationInputTokens, TokensCacheRead: invRes.Usage.CacheReadInputTokens, UsageNote: usageNote(invRes.Usage),
 		SystemPromptBytes: invRes.SystemPromptBytes, PayloadBytes: invRes.PayloadBytes,
 		Output: string(invRes.Stdout),
 	}
@@ -2127,6 +2129,8 @@ type liveUsageTracker struct {
 	mu    sync.Mutex
 	usage agentcli.UsageResult
 	turns int
+	// splitMissing latches when any turn's provider reported no cache split.
+	splitMissing bool
 }
 
 // wrap returns an EventHandler that folds each EventUsage into the running
@@ -2145,6 +2149,14 @@ func (t *liveUsageTracker) wrap(next agentcli.EventHandler) agentcli.EventHandle
 			t.usage.FreshInputTokens += u.FreshInputTokens
 			t.usage.CacheCreationInputTokens += u.CacheCreationInputTokens
 			t.usage.CacheReadInputTokens += u.CacheReadInputTokens
+			// The split is a measurement only while every turn reported one.
+			if !u.CacheSplitAvailable {
+				t.splitMissing = true
+			}
+			t.usage.CacheSplitAvailable = !t.splitMissing
+			if u.UnavailableReason != "" {
+				t.usage.UnavailableReason = u.UnavailableReason
+			}
 			t.usage.Duration += u.Duration
 			if u.ModelResolved != "" {
 				t.usage.ModelResolved = u.ModelResolved
@@ -2239,6 +2251,10 @@ func (s *liveModelSession) Close() error {
 			"duration_ms": u.Duration.Milliseconds(),
 			"turns":       turns,
 		}
+		if !u.Available && u.UnavailableReason == "" {
+			u.UnavailableReason = s.agent + " adapter: session reported no usage event"
+		}
+		addUsageNote(data, u)
 		if len(models) > 0 {
 			data["model_usage"] = models
 		}
@@ -2283,12 +2299,40 @@ func (g *Engine) setDecisionUsage(d *verb.GateDecision, u agentcli.UsageResult, 
 		u.FreshInputTokens, u.CacheCreationInputTokens, u.CacheReadInputTokens
 	d.DurationMs = u.Duration.Milliseconds()
 	d.UsageAvailable = u.Available
+	d.UsageNote = usageNote(u)
 	if model != "" {
 		d.Model = model
 	} else {
 		d.Model = g.model
 	}
 	d.ModelResolved, d.Models = toVerbModels(u)
+}
+
+// usageNote derives the explicit-unavailable evidence for one invocation's
+// usage (sty_c8d45201): the adapter-named reason when usage is unavailable, and
+// the unreported-cache-split marker when the provider named no cache fields.
+// An unavailable usage with no adapter reason (a path that bypassed
+// runOnceBusy) still records a reason — never a bare unexplained false.
+func usageNote(u agentcli.UsageResult) verb.UsageNote {
+	n := verb.UsageNote{CacheSplitUnavailable: !u.CacheSplitAvailable}
+	if !u.Available {
+		n.UsageUnavailableReason = u.UnavailableReason
+		if n.UsageUnavailableReason == "" {
+			n.UsageUnavailableReason = "transport reported no usage"
+		}
+	}
+	return n
+}
+
+// addUsageNote stamps usageNote's fields onto a map-shaped ledger row.
+func addUsageNote(data map[string]any, u agentcli.UsageResult) {
+	n := usageNote(u)
+	if n.UsageUnavailableReason != "" {
+		data["usage_unavailable_reason"] = n.UsageUnavailableReason
+	}
+	if n.CacheSplitUnavailable {
+		data["cache_split_unavailable"] = true
+	}
 }
 
 // toVerbModels converts a transport's resolved-model usage into the verb
@@ -2877,7 +2921,7 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 				ModelResolved: summaryModelResolved, Models: summaryModels, ModelSource: modelSource,
 				TokensIn: usage.InputTokens, TokensOut: usage.OutputTokens, TokensTotal: usage.TotalTokens,
 				DurationMs: usage.Duration.Milliseconds(), UsageAvailable: usage.Available,
-				TokensInFresh: usage.FreshInputTokens, TokensCacheWrite: usage.CacheCreationInputTokens, TokensCacheRead: usage.CacheReadInputTokens,
+				TokensInFresh: usage.FreshInputTokens, TokensCacheWrite: usage.CacheCreationInputTokens, TokensCacheRead: usage.CacheReadInputTokens, UsageNote: usageNote(usage),
 				SystemPromptBytes: len(req.SystemPrompt), PayloadBytes: len(req.Payload),
 			}, nil
 		}

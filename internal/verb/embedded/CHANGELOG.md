@@ -1,3 +1,20 @@
+## [0.0.534] - 2026-09-24
+
+### Fixed
+- **Token usage and the cache split are recorded for Grok and Codex, not only Claude.** When a provider gives no usage, it is recorded as unavailable with a reason, never as zeros that look like measurements.
+  - Each provider's usage mapping now lives in `internal/agentcli/usage_adapters.go`, and each mapper reads that provider's own field names:
+    - Grok `-p --output-format json` reads the snake_case envelope `usage`, where the counts are separate. `streaming-json` reads the `usage` and `end` lines, and the last line wins.
+    - Grok ACP reads `session/prompt` `result._meta.usage`. That is camelCase, and `inputTokens` already includes the cache read. Codex reads `turn.completed` usage.
+  - Fixtures captured from grok 1.0.41 pin the real numbers. The Codex fixture is synthetic and labelled as such, because codex is not authenticated here.
+  - A `usage` object with none of the provider's token fields is recorded as unavailable, never as available zeros.
+  - The reason for missing usage (`usage_unavailable_reason`, which names the adapter) and the `cache_split_unavailable` flag are stored on gate, verdict, dispatch, summary, attempt and live-session rows, and `satelle story cost --json` returns them.
+  - Dogfood: a Grok `[reviewer]` ACP gate recorded 572661 in / 5521 out, where it used to show `—/—`. (sty_c8d45201)
+
+## [serve-v0.0.66] - 2026-09-24
+
+### Fixed
+- **The serve channel picks up per-provider usage mapping and the recorded reason when usage is unavailable.** (sty_c8d45201)
+
 ## [0.0.533] - 2026-09-24
 
 ### Fixed

@@ -213,7 +213,15 @@ type UsageResult struct {
 	FreshInputTokens         int
 	CacheCreationInputTokens int
 	CacheReadInputTokens     int
-	Duration                 time.Duration
+	// CacheSplitAvailable is true only when the provider itself reported cache
+	// tokens (under its own field names), so a zero split is a measurement.
+	// False means the provider gave no cache fields and the three split fields
+	// above are unreported, not zero (sty_c8d45201).
+	CacheSplitAvailable bool
+	Duration            time.Duration
+	// UnavailableReason names the adapter and why usage is unavailable when
+	// Available is false (sty_c8d45201).
+	UnavailableReason string
 	// Available distinguishes a transport-reported zero from usage that was not
 	// reported at all.
 	Available bool
@@ -257,6 +265,10 @@ type claudeJSONEnvelope struct {
 // usage is not consistently present on this envelope; when absent, Usage is zero.
 type grokJSONEnvelope struct {
 	Text string `json:"text"`
+	// Usage is grok's snake_case (Anthropic-shaped) usage, mapped by claudeUsageFromMap
+	// when present (sty_c8d45201); an envelope without them records unavailable.
+	Usage      map[string]any  `json:"usage"`
+	ModelUsage json.RawMessage `json:"modelUsage"`
 }
 
 // UnwrapUsage splits an agent's raw stdout into the INNER result text (what verdict
@@ -273,11 +285,21 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 	if len(trimmed) == 0 || trimmed[0] != '{' {
 		return stdout, UsageResult{}
 	}
+	// JSONL (codex exec --json, grok streaming-json, claude stream-json): the
+	// whole stdout is not one JSON document, so read usage off its event lines.
+	// The text is returned verbatim, as before.
+	if !json.Valid(trimmed) {
+		if u, ok := jsonlUsage(trimmed); ok {
+			return stdout, u
+		}
+		return stdout, UsageResult{}
+	}
 	var claude claudeJSONEnvelope
 	if err := json.Unmarshal(trimmed, &claude); err == nil && claude.Result != "" {
 		u := UsageResult{}
 		if claude.Usage != nil {
 			u.Available = true
+			u.CacheSplitAvailable = true
 			// Sum uncached + cache-creation + cache-read: the three fields are
 			// disjoint components of one prompt (sty_8178f1c6).
 			u.FreshInputTokens = claude.Usage.InputTokens
@@ -297,10 +319,22 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 	}
 	var grok grokJSONEnvelope
 	if err := json.Unmarshal(trimmed, &grok); err == nil && strings.TrimSpace(grok.Text) != "" {
-		// The grok envelope carries no usage or model, but it IS a recognized
-		// envelope — mark the model explicitly unavailable rather than leaving
-		// the zero value for a caller to guess at (sty_87b86044).
-		return []byte(grok.Text), UsageResult{ModelResolved: ModelUnavailable}
+		// A grok envelope reports usage only when grok put a `usage` object on
+		// it; otherwise record it unavailable with the adapter's reason rather
+		// than a zero (sty_c8d45201), and the model explicitly unavailable
+		// rather than a zero value for a caller to guess at (sty_87b86044).
+		if grok.Usage != nil {
+			u := claudeUsageFromMap(grok.Usage, "grok")
+			u.ModelResolved = ModelUnavailable
+			if primary, models, ok := parseModelUsage(grok.ModelUsage); ok {
+				u.ModelResolved = primary
+				u.Models = models
+			}
+			return []byte(grok.Text), *u
+		}
+		u := unavailableUsage("grok", "--output-format json envelope carries no usage object")
+		u.ModelResolved = ModelUnavailable
+		return []byte(grok.Text), u
 	}
 	return stdout, UsageResult{}
 }

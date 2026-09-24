@@ -73,8 +73,10 @@ func parseModelUsage(v any) (primary string, models []ModelUsage, reported bool)
 		if entry != nil {
 			mu.InputTokens = intValue(entry["inputTokens"])
 			mu.OutputTokens = intValue(entry["outputTokens"])
-			mu.CacheCreationInputTokens = intValue(entry["cacheCreationInputTokens"])
-			mu.CacheReadInputTokens = intValue(entry["cacheReadInputTokens"])
+			// Anthropic spells the cache fields cache*InputTokens; grok spells
+			// them cacheCreationTokens / cachedReadTokens (sty_c8d45201).
+			mu.CacheCreationInputTokens = firstInt(entry, "cacheCreationInputTokens", "cacheCreationTokens")
+			mu.CacheReadInputTokens = firstInt(entry, "cacheReadInputTokens", "cachedReadTokens")
 			if c, ok := entry["costUSD"].(float64); ok {
 				cost := c
 				mu.CostUSD = &cost
