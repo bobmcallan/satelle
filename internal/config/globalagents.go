@@ -67,18 +67,19 @@ type GlobalAgentsConfig struct {
 // typo. Deliberately excludes the retired `harness` and `inject_principles`
 // aliases: the catalog is new, so it starts on the current field names.
 var globalAgentsBindingKeys = map[string]bool{
-	"profile":    true, // one profile may extend another
-	"role":       true,
-	"interface":  true,
-	"command":    true,
-	"tools":      true,
-	"model":      true,
-	"effort":     true,
-	"timeout":    true,
-	"principles": true,
-	"env":        true,
-	"settings":   true,
-	"secondary":  true,
+	"profile":      true, // one profile may extend another
+	"role":         true,
+	"interface":    true,
+	"command":      true,
+	"tools":        true,
+	"model":        true,
+	"effort":       true,
+	"timeout":      true,
+	"idle_timeout": true,
+	"principles":   true,
+	"env":          true,
+	"settings":     true,
+	"secondary":    true,
 }
 
 // globalAgentsPolicyKeys are keys that would make a profile decide PROCESS

@@ -456,6 +456,7 @@ func bindingTable(b AgentBinding) map[string]any {
 	set("role", b.Role)
 	set("principles", b.Principles)
 	set("timeout", b.Timeout)
+	set("idle_timeout", b.IdleTimeout)
 	set("effort", b.Effort)
 	set("secondary", b.Secondary)
 	set("profile", b.Profile)

@@ -1,3 +1,15 @@
+## [0.0.530] - 2026-09-24
+
+### Fixed
+- **A repo binding that names a machine-wide profile keeps its own `idle_timeout`.** Profile resolution (`config.overlayBinding`) merged every execution field except `idle_timeout`, so a per-binding idle bound on a profile-backed binding was silently dropped.
+  - It now carries across profile, global-role and workspace layering, and `satelle agent validate` shows its source.
+  - A completeness test reflects over every TOML-tagged `AgentBinding` field and fails if one is not merged, so a future key cannot be dropped the same way. (sty_407158e4)
+
+## [serve-v0.0.64] - 2026-09-24
+
+### Fixed
+- **The serve channel picks up the idle_timeout profile-merge fix.** (sty_407158e4)
+
 ## [0.0.529] - 2026-09-24
 
 ### Fixed

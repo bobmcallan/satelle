@@ -138,15 +138,16 @@ func RenderGrantSources(w io.Writer, indent string, g agentvalidate.Grant) {
 		return
 	}
 	vals := map[string]string{
-		"interface":  g.Interface,
-		"command":    g.Command,
-		"tools":      g.Tools,
-		"model":      g.Model,
-		"effort":     g.Effort,
-		"timeout":    g.Timeout,
-		"role":       g.Role,
-		"principles": g.Principles,
-		"secondary":  g.Secondary,
+		"interface":    g.Interface,
+		"command":      g.Command,
+		"tools":        g.Tools,
+		"model":        g.Model,
+		"effort":       g.Effort,
+		"timeout":      g.Timeout,
+		"idle_timeout": g.IdleTimeout,
+		"role":         g.Role,
+		"principles":   g.Principles,
+		"secondary":    g.Secondary,
 	}
 	fields := make([]string, 0, len(g.Sources))
 	for f := range g.Sources {
