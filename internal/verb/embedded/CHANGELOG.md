@@ -1,3 +1,9 @@
+## [0.0.533] - 2026-09-24
+
+### Fixed
+- **A dispatch scratch directory is short enough for Chromium's Unix socket.** The dispatch id is 8 hex with no timestamp, and the leaf directory is created exclusively, with a retry on collision. Under `/tmp` the worst-case chromedp path (`chromedp-runner` plus 10 digits plus `SingletonSocket`) is at most 91 bytes for a story id and for an empty story id, 16 bytes under the Linux `sun_path` limit of 107. (sty_b666bc6e)
+- **Route pins follow the ready stage.** Container lanes close backlog → ready → done, and the working lane's intent review gates ready → plan. (sty_b666bc6e)
+
 ## [0.0.532] - 2026-09-24
 
 ### Fixed

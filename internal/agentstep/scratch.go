@@ -11,37 +11,63 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
 )
 
-// dispatchID is a timestamp plus a random suffix — unique per call, and sortable.
+// dispatchID is 8 random hex — unique per call, and deliberately short: the
+// scratch path must leave room for a Unix socket (108-byte sun_path) beneath
+// it, e.g. chromedp's <TMPDIR>/chromedp-runner<n>/SingletonSocket. It is not
+// sortable; diagnosis ordering comes from the scratch_kept ledger row and the
+// directory mtime. Uniqueness is guaranteed by the exclusive create in
+// newScratch, not by the id alone.
 func dispatchID() string {
 	buf := make([]byte, 4)
 	_, _ = rand.Read(buf)
-	return fmt.Sprintf("%d-%s", time.Now().UnixNano(), hex.EncodeToString(buf))
+	return hex.EncodeToString(buf)
 }
+
+// newDispatchID is the id source newScratch draws from; a var so tests can
+// force a collision.
+var newDispatchID = dispatchID
 
 // storyComponent is the path segment for a scratch dir's story leg. An empty
 // storyID (a dispatch with no item, e.g. a bootstrap check) still gets an
 // isolated directory rather than colliding with every other adhoc caller.
 func storyComponent(storyID string) string {
 	if storyID == "" {
-		return "adhoc-" + dispatchID()
+		return "adhoc-" + newDispatchID()
 	}
 	return storyID
 }
 
+// scratchParentIn is the story-level parent of a dispatch scratch directory
+// under an explicit temp root. newScratch and the path-budget tests share it so
+// the construction cannot drift.
+func scratchParentIn(base, repoRoot, storyID string) string {
+	return config.StoryScratchDirIn(base, repoRoot, storyComponent(storyID))
+}
+
 // newScratch creates <tmp>/satelle/<repo-key>/<story>/<dispatch-id>/, mode
-// 0700, and returns its path. repoRoot may be empty in tests; os.TempDir()
-// still anchors the tree.
+// 0700, and returns its path. The leaf is created exclusively, so no two
+// dispatches share a directory; a collision regenerates the id. repoRoot may be
+// empty in tests; os.TempDir() still anchors the tree.
 func newScratch(repoRoot, storyID string) (string, error) {
-	dir := filepath.Join(config.StoryScratchDirIn(os.TempDir(), repoRoot, storyComponent(storyID)), dispatchID())
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("scratch: create %s: %w", dir, err)
+	parent := scratchParentIn(os.TempDir(), repoRoot, storyID)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return "", fmt.Errorf("scratch: create %s: %w", parent, err)
 	}
-	return dir, nil
+	for range 8 {
+		dir := filepath.Join(parent, newDispatchID())
+		err := os.Mkdir(dir, 0o700)
+		if err == nil {
+			return dir, nil
+		}
+		if !os.IsExist(err) {
+			return "", fmt.Errorf("scratch: create %s: %w", dir, err)
+		}
+	}
+	return "", fmt.Errorf("scratch: no unique directory under %s", parent)
 }
 
 // scratchEnv returns the TMPDIR / SATELLE_SCRATCH pair for dir. Both keys are

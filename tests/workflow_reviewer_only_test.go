@@ -11,8 +11,9 @@ import (
 // TestProjectWorkflowReviewerFirst asserts this repo's project workflow is
 // reviewer-first: a reviewer gates every transition on the spine. Plan
 // dispatches to an isolated read-only planner; integration and release run
-// IN-LOOP on the driving session (agent=executor). backlog -> plan is gated by
-// satelle-story-intent-review (sty_3437b803). The former commit/push/committed
+// IN-LOOP on the driving session (agent=executor). backlog -> ready is gated by
+// satelle-story-ready-review, and ready -> plan by satelle-story-intent-review
+// (sty_3437b803, sty_bb2d1542). The former commit/push/committed
 // states are merged into one `release` state, and there are recovery edges back
 // to in_progress (no dead-end). `integration` is an explicit, visible testing
 // step (sty_15dbc0dd).
@@ -105,7 +106,8 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 		}
 	}
 	for _, want := range []edge{
-		{"backlog", "plan", "satelle-story-intent-review"},
+		{"backlog", "ready", "satelle-story-ready-review"},
+		{"ready", "plan", "satelle-story-intent-review"},
 		{"plan", "in_progress", "satelle-story-plan-review"},
 		{"in_progress", "integration", "satelle-ac-evidence-check"},
 		{"in_progress", "integration", "satelle-code-ac-review"},

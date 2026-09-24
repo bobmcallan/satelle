@@ -547,6 +547,10 @@ func TestTempDraftTarget(t *testing.T) {
 	if !tempDraftTarget(outside, filepath.Join(tmp, "anything.txt")) {
 		t.Errorf("temp draft under os.TempDir must allow for a repo outside the temp dir")
 	}
+	// A short-layout dispatch scratch dir under /tmp (sty_b666bc6e).
+	if !tempDraftTarget(outside, "/tmp/satelle/0123456789ab/sty_0123abcd/89abcdef/note.md") {
+		t.Error("write inside a dispatch scratch dir must stay a temp draft")
+	}
 	if !tempDraftTarget(outside, "/tmp/scratch-notes.md") {
 		t.Error("/tmp draft must allow even when TMPDIR differs")
 	}
