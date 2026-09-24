@@ -198,6 +198,11 @@ type Engine struct {
 	// back to this engine-wide default.
 	idleTimeout        time.Duration
 	resolveIdleTimeout func(section string, b config.AgentBinding) (time.Duration, error)
+	// busyTimeout / resolveBusyTimeout bound how long CPU-liveness may keep a
+	// silent command-transport run alive past idle_timeout (sty_db62a3b9);
+	// same wiring shape as idleTimeout. Zero disables CPU liveness.
+	busyTimeout        time.Duration
+	resolveBusyTimeout func(section string, b config.AgentBinding) (time.Duration, error)
 	// namedAgents resolves a NAMED agent binding from the agents layer
 	// (.satelle/workflows/agents.toml [<name>] sections) for executor dispatch
 	// (sty_fd427546). Nil keeps every step in-loop.
@@ -300,8 +305,9 @@ func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Engine
 		checkTimeout: defaultCheckTimeout, check: execCheck, injectPrinciples: true,
 		attempts: defaultReviewerAttempts, backoff: defaultReviewerBackoff,
 		agentTimeout: defaultHardTimeout, idleTimeout: defaultIdleTimeout,
-		newRunner: lookupRunner,
-		newOpener: agentcli.OpenerFromBinding,
+		busyTimeout: config.DefaultBusyTimeout,
+		newRunner:   lookupRunner,
+		newOpener:   agentcli.OpenerFromBinding,
 	}
 }
 
@@ -1492,6 +1498,22 @@ func (g *Engine) idleTimeoutFor(section string, b config.AgentBinding) (time.Dur
 		return g.resolveIdleTimeout(section, b)
 	}
 	return b.IdleTimeoutDuration(g.idleTimeout)
+}
+
+// SetBusyTimeoutResolver wires the resolver a binding's busy_timeout (the CPU
+// liveness cap for a silent command-transport run, sty_db62a3b9) is resolved
+// through — normally config.AgentsConfig.ResolveBusyTimeout. Nil falls back to
+// the binding alone against the engine default.
+func (g *Engine) SetBusyTimeoutResolver(fn func(section string, b config.AgentBinding) (time.Duration, error)) {
+	g.resolveBusyTimeout = fn
+}
+
+// busyTimeoutFor resolves section/b's busy cap; 0 means CPU liveness is off.
+func (g *Engine) busyTimeoutFor(section string, b config.AgentBinding) (time.Duration, error) {
+	if g.resolveBusyTimeout != nil {
+		return g.resolveBusyTimeout(section, b)
+	}
+	return b.BusyTimeoutDuration(g.busyTimeout)
 }
 
 // DispatchExecutor implements verb.ExecutorDispatcher: when the TARGET state of
@@ -2812,13 +2834,17 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 	if ierr != nil {
 		return soft("step summary invalid idle_timeout in .satelle/workflows/agents.toml [%s]: %v", section, ierr)
 	}
+	busy, berr := g.busyTimeoutFor(section, binding)
+	if berr != nil {
+		return soft("step summary invalid busy_timeout in .satelle/workflows/agents.toml [%s]: %v", section, berr)
+	}
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
 		if werr := g.retryWait(ctx, attempt); werr != nil {
 			lastErr = werr
 			break
 		}
-		out, usage, rerr := g.runOnce(ctx, runner, req, g.agentTimeout, idle)
+		out, usage, rerr := g.runOnceBusy(ctx, runner, req, g.agentTimeout, idle, busy)
 		if rerr != nil {
 			var se *StallError
 			if errors.As(rerr, &se) {

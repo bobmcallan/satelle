@@ -76,6 +76,7 @@ var globalAgentsBindingKeys = map[string]bool{
 	"effort":       true,
 	"timeout":      true,
 	"idle_timeout": true,
+	"busy_timeout": true,
 	"principles":   true,
 	"env":          true,
 	"settings":     true,
@@ -327,6 +328,9 @@ func checkBindingTimeout(file, section string, b AgentBinding) error {
 	}
 	if _, err := b.IdleTimeoutDuration(0); err != nil {
 		return fmt.Errorf("%s [%s] idle_timeout: %w", file, section, err)
+	}
+	if _, err := b.BusyTimeoutDuration(0); err != nil {
+		return fmt.Errorf("%s [%s] busy_timeout: %w", file, section, err)
 	}
 	return nil
 }

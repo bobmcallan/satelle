@@ -197,6 +197,13 @@ type AgentBinding struct {
 	// dispatch by default: a progressing agent is never cut off by elapsed
 	// time alone.
 	IdleTimeout string `toml:"idle_timeout"`
+	// BusyTimeout bounds how long CPU-liveness may keep a SILENT command-
+	// transport run (a one-shot CLI that prints nothing until exit) alive past
+	// idle_timeout, measured from its last real output (sty_db62a3b9). A Go
+	// duration string; "0" or "off" disables CPU liveness (strict idle_timeout).
+	// Empty inherits [defaults] busy_timeout, then the binary's shipped default.
+	// Stream and ACP transports ignore it.
+	BusyTimeout string `toml:"busy_timeout"`
 	// InjectPrinciples is retired (MigrateAgents → principles=). Not used at runtime.
 	InjectPrinciples *bool `toml:"inject_principles"`
 	// Settings MIRRORS claude's settings.local.json schema (env, model, permissions)
@@ -265,6 +272,9 @@ type AgentsDefaults struct {
 	// binding that omits its own idle_timeout=. Empty falls to the binary's
 	// shipped default.
 	IdleTimeout string `toml:"idle_timeout"`
+	// BusyTimeout is the repo-wide CPU-liveness cap (sty_db62a3b9) for a
+	// binding that omits its own busy_timeout=. Empty falls to the shipped default.
+	BusyTimeout string `toml:"busy_timeout"`
 }
 
 // LiveInterfaces returns the preference order ResolveInterface walks for a
@@ -291,6 +301,22 @@ func (b AgentBinding) TimeoutDuration(def time.Duration) (time.Duration, error) 
 // not at first dispatch.
 func (b AgentBinding) IdleTimeoutDuration(def time.Duration) (time.Duration, error) {
 	return parsePositiveDuration(b.IdleTimeout, "idle_timeout", def)
+}
+
+// BusyTimeoutDuration resolves this binding's CPU-liveness cap: the parsed
+// BusyTimeout when set, else def. "0"/"off" yield 0 (CPU liveness disabled).
+func (b AgentBinding) BusyTimeoutDuration(def time.Duration) (time.Duration, error) {
+	return parseBusyDuration(b.BusyTimeout, def)
+}
+
+// parseBusyDuration is parsePositiveDuration that also accepts "0"/"off" as an
+// explicit disable (returns 0).
+func parseBusyDuration(raw string, def time.Duration) (time.Duration, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "0", "off":
+		return 0, nil
+	}
+	return parsePositiveDuration(raw, "busy_timeout", def)
 }
 
 // parsePositiveDuration parses raw (a toml duration string) when non-empty,
@@ -725,6 +751,21 @@ func (a AgentsConfig) ResolveIdleTimeout(b AgentBinding, def time.Duration) (tim
 	return def, nil
 }
 
+// DefaultBusyTimeout is the shipped CPU-liveness cap (sty_db62a3b9): how long a
+// silent command-transport run whose process tree keeps consuming CPU stays
+// exempt from idle_timeout, measured from its last real output. It is the
+// backstop against a runaway spin when no hard timeout is set.
+const DefaultBusyTimeout = 60 * time.Minute
+
+// ResolveBusyTimeout resolves b's CPU-liveness cap: b.BusyTimeout wins, else
+// Defaults.BusyTimeout, else def. 0 means disabled ("0"/"off").
+func (a AgentsConfig) ResolveBusyTimeout(b AgentBinding, def time.Duration) (time.Duration, error) {
+	if b.BusyTimeout != "" {
+		return b.BusyTimeoutDuration(def)
+	}
+	return parseBusyDuration(a.Defaults.BusyTimeout, def)
+}
+
 // ResolveSecondary returns the fallback binding for section/b when secondary is
 // configured (per-binding wins over [defaults] secondary). ok is false when
 // unconfigured or the named binding is missing (sty_5bf61f89).
@@ -900,6 +941,9 @@ func (a AgentsConfig) validateTimeouts() error {
 		if _, err := parsePositiveDuration(a.Defaults.IdleTimeout, "idle_timeout", 0); err != nil {
 			return fmt.Errorf("%s [defaults] idle_timeout: %w", AgentsConfigName, err)
 		}
+	}
+	if _, err := parseBusyDuration(a.Defaults.BusyTimeout, 0); err != nil {
+		return fmt.Errorf("%s [defaults] busy_timeout: %w", AgentsConfigName, err)
 	}
 	return nil
 }

@@ -229,6 +229,35 @@ event is still judged stalled.
   session's own turn (a `story chat` reply, a rework relay coder/consult
   round) — not only the one-shot dispatch path.
 
+### Silent one-shot command bindings (`busy_timeout`, sty_db62a3b9)
+
+A `command`-transport binding whose CLI prints one envelope at exit (for
+example `claude -p --output-format json`, `grok -p … plain`, `codex exec`)
+emits nothing while it works, so output alone cannot tell a thinking run from a
+hung one. For the command transport only, satelle also samples the CPU time of
+the child's **process tree** (Linux: `/proc`); each time it advances, that
+counts as liveness and resets the `idle_timeout` clock. A process that makes no
+CPU progress (a hang, a sleep) still stalls at `idle_timeout` exactly as before.
+
+- **`busy_timeout`** caps that exemption, measured from the last *real* output
+  event (the start event when the CLI printed nothing). Past it, CPU progress no
+  longer keeps the run alive and the stall message ends `(busy cap exceeded)`.
+  A Go duration string set per binding or under `[defaults]`; binding wins over
+  `[defaults]`, which wins over the shipped default (60 minutes). `"0"` or
+  `"off"` disables CPU liveness and restores strict `idle_timeout` behaviour.
+
+  ```toml
+  [defaults]
+  busy_timeout = "60m"   # shipped default when neither level sets one
+
+  [planner]
+  busy_timeout = "off"   # strict idle_timeout for this binding
+  ```
+- Stream and ACP transports are unchanged — they never use the probe.
+- On a platform where process CPU time cannot be read (anything but Linux) the
+  probe reports that it is unavailable and the run keeps the strict behaviour.
+- An explicit `timeout` (hard ceiling) still wins over both.
+
 ### Structured step artifacts
 
 A skill can ask Satelle to own a dispatched step's final artifact by declaring a

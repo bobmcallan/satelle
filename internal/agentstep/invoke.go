@@ -387,6 +387,11 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	if idle <= 0 {
 		idle = g.idleTimeout
 	}
+	busy, berr := g.busyTimeoutFor(section, binding)
+	if berr != nil {
+		finishScratch(scratchDir, false)
+		return InvokeResult{Err: fmt.Errorf("binding %q: invalid busy_timeout: %w", section, berr)}
+	}
 
 	// A leftover sweep only ever runs for a PERFORM dispatch — reviewers are
 	// read-only — and only when this repo configured a rule, so a repo with no
@@ -400,7 +405,7 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	var res InvokeResult
 	switch expect {
 	case ExpectPerform:
-		out, usage, runErr := g.runOnce(ctx, runner, agentReq, timeout, idle)
+		out, usage, runErr := g.runOnceBusy(ctx, runner, agentReq, timeout, idle, busy)
 		if se := asStallError(runErr); se != nil {
 			res = g.stallResult(ctx, req, cmdStr, se)
 			res.Usage = usage
@@ -408,7 +413,7 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 			res = InvokeResult{Stdout: out, Usage: usage, Command: cmdStr, Err: runErr}
 		}
 	default: // ExpectVerdict
-		res = g.invokeVerdict(ctx, req, runner, agentReq, cmdStr, timeout, idle)
+		res = g.invokeVerdict(ctx, req, runner, agentReq, cmdStr, timeout, idle, busy)
 	}
 	// Byte lengths of what satelle actually sent (sty_363eaf55) — lengths only,
 	// never content. Stamped uniformly regardless of outcome (success, failure,
@@ -531,7 +536,7 @@ func IsRateLimitOrUnavailable(err error, stdout []byte) bool {
 
 // invokeVerdict runs the ExpectVerdict retry loop: parse JSON/prose decision,
 // retry transient no-verdict, fail loud on timeout after attempts.
-func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner agentcli.Runner, agentReq agentcli.Request, cmdStr string, timeout, idle time.Duration) InvokeResult {
+func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner agentcli.Runner, agentReq agentcli.Request, cmdStr string, timeout, idle, busy time.Duration) InvokeResult {
 	skill := req.Skill
 	if skill == "" {
 		skill = "reviewer"
@@ -557,7 +562,7 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 			return InvokeResult{Command: cmdStr, Err: werr}
 		}
 		g.emitProgress("running reviewer %s (attempt %d/%d, may take several minutes)…", skill, attempt, attempts)
-		out, usage, rerr := g.runOnce(ctx, runner, agentReq, timeout, idle)
+		out, usage, rerr := g.runOnceBusy(ctx, runner, agentReq, timeout, idle, busy)
 		if rerr != nil {
 			if se := asStallError(rerr); se != nil {
 				return g.stallResult(ctx, req, cmdStr, se)
@@ -628,6 +633,15 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 // caller maps to the "stalled" outcome and refusal text instead of a bare
 // context.Canceled.
 func (g *Engine) runOnce(ctx context.Context, runner agentcli.Runner, req agentcli.Request, hard, idle time.Duration) ([]byte, agentcli.UsageResult, error) {
+	return g.runOnceBusy(ctx, runner, req, hard, idle, 0)
+}
+
+// runOnceBusy is runOnce plus a busy cap (sty_db62a3b9): busy>0 (with idle>0)
+// turns on the command transport's CPU-liveness probe, so a silent one-shot CLI
+// whose process tree keeps burning CPU is not judged stalled until busy has
+// elapsed since its last real event. Stream and ACP transports never emit the
+// probe's EventProgress, so they are unaffected.
+func (g *Engine) runOnceBusy(ctx context.Context, runner agentcli.Runner, req agentcli.Request, hard, idle, busy time.Duration) ([]byte, agentcli.UsageResult, error) {
 	if hard > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, hard)
@@ -635,6 +649,10 @@ func (g *Engine) runOnce(ctx context.Context, runner agentcli.Runner, req agentc
 	}
 	if idle > 0 {
 		wd := NewWatchdog(idle)
+		if busy > 0 {
+			wd.SetBusyCap(busy)
+			req.LivenessInterval = watchdogTick(idle)
+		}
 		var stop func()
 		ctx, stop = wd.Start(ctx)
 		defer stop()

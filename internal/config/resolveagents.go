@@ -305,6 +305,7 @@ func overlayBinding(base AgentBinding, baseSrc map[string]string, top AgentBindi
 	setScalar("principles", &out.Principles, top.Principles)
 	setScalar("timeout", &out.Timeout, top.Timeout)
 	setScalar("idle_timeout", &out.IdleTimeout, top.IdleTimeout)
+	setScalar("busy_timeout", &out.BusyTimeout, top.BusyTimeout)
 	setScalar("effort", &out.Effort, top.Effort)
 	setScalar("secondary", &out.Secondary, top.Secondary)
 

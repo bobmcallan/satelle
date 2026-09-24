@@ -55,7 +55,9 @@ type Grant struct {
 	Secondary string
 	// IdleTimeout is the raw idle_timeout= (sty_752c4ef2), empty when the
 	// binding inherits [defaults]/the shipped default.
-	IdleTimeout       string
+	IdleTimeout string
+	// BusyTimeout is the raw busy_timeout= (sty_db62a3b9), empty when unset.
+	BusyTimeout       string
 	Tools             string
 	Model             string
 	Effort            string // optional reasoning effort (sty_657f77b9)
@@ -785,6 +787,7 @@ func checkBinding(section string, b config.AgentBinding, vars map[string]string)
 		Effort:            b.Effort,
 		Timeout:           b.Timeout,
 		IdleTimeout:       b.IdleTimeout,
+		BusyTimeout:       b.BusyTimeout,
 		InjectsPrinciples: b.InjectsPrinciples(),
 		Role:              role,
 		Principles:        b.ResolvedPrinciples(),
@@ -800,6 +803,11 @@ func checkBinding(section string, b config.AgentBinding, vars map[string]string)
 			bindingWarn(fmt.Sprintf(
 				"agents.toml [%s] idle_timeout %s exceeds timeout %s — the hard ceiling fires first and the stall detector never gets a chance",
 				section, b.IdleTimeout, b.Timeout))
+		}
+		if busy, berr := b.BusyTimeoutDuration(0); berr == nil && busy > 0 && busy > hard {
+			bindingWarn(fmt.Sprintf(
+				"agents.toml [%s] busy_timeout %s exceeds timeout %s — the hard ceiling fires first",
+				section, b.BusyTimeout, b.Timeout))
 		}
 	}
 	if g.RoleInferred {

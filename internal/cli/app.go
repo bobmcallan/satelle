@@ -333,6 +333,11 @@ func openAppForCmd(cmd *cobra.Command) error {
 			rev.SetIdleTimeoutResolver(func(section string, b config.AgentBinding) (time.Duration, error) {
 				return agentsCfg.ResolveIdleTimeout(b, agentstep.DefaultIdleTimeout)
 			})
+			// CPU-liveness cap for a silent command-transport run (sty_db62a3b9),
+			// same binding → [defaults] → shipped-default ladder.
+			rev.SetBusyTimeoutResolver(func(section string, b config.AgentBinding) (time.Duration, error) {
+				return agentsCfg.ResolveBusyTimeout(b, config.DefaultBusyTimeout)
+			})
 			verb.SetExecutorDispatcher(rev)
 			// The retrospective dispatcher (sty_b53730e2): `satelle story retrospect`
 			// runs the [retrospective] agent over a finished story to file proposals.

@@ -32,6 +32,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -156,6 +157,12 @@ type Request struct {
 	// HeartbeatInterval controls liveness events while the transport is silent.
 	// Zero uses the production default; a negative value disables heartbeats.
 	HeartbeatInterval time.Duration
+	// LivenessInterval, when positive, makes the COMMAND transport sample the
+	// child process tree's CPU time at that cadence and emit an EventProgress
+	// each time it advances, so a one-shot CLI that prints nothing until exit
+	// is distinguishable from a hung one (sty_db62a3b9). Zero disables the
+	// probe. Stream and ACP ignore it.
+	LivenessInterval time.Duration
 	// Capture selects what an ACP runner returns from streamed session/update
 	// chunks (sty_844b6ab1). Zero value is CaptureAnswer: keep only the final
 	// agent_message run after tool_call fences, so narration before tools does
@@ -661,7 +668,9 @@ func runProcess(ctx context.Context, binary string, args []string, req Request) 
 		defer wg.Done()
 		teeEventLines(stderrPipe, &stderr, req.Sink, "[stderr] ", true, adapter, onEvent)
 	}()
+	stopProbe := startLivenessProbe(cmd.Process.Pid, req.LivenessInterval, onEvent)
 	wg.Wait()
+	stopProbe()
 
 	if err := cmd.Wait(); err != nil {
 		ev := newEvent(EventFailed)
@@ -682,6 +691,44 @@ func runProcess(ctx context.Context, binary string, args []string, req Request) 
 
 const defaultHeartbeatInterval = 15 * time.Second
 
+// startLivenessProbe samples pid's process-tree CPU time every interval and
+// emits an EventProgress whenever it advanced. It is transport mechanism, not
+// a provider adapter: every command binding gets it. interval<=0 or a nil
+// handler disables it; where the platform cannot read CPU time it emits one
+// explicit "unavailable" failure-free note and stops (behaviour stays strict).
+func startLivenessProbe(pid int, interval time.Duration, onEvent EventHandler) func() {
+	if interval <= 0 || onEvent == nil {
+		return func() {}
+	}
+	last, ok := procTreeCPU(pid)
+	if !ok && runtime.GOOS != "linux" {
+		ev := newEvent(EventProgress)
+		ev.Text = "liveness probe unavailable on " + runtime.GOOS
+		emitEvent(onEvent, ev)
+		return func() {}
+	}
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				if cur, ok := procTreeCPU(pid); ok && cur > last {
+					last = cur
+					emitEvent(onEvent, newEvent(EventProgress))
+				}
+			}
+		}
+	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(done); <-stopped }) }
+}
+
 func eventStream(req Request) (EventHandler, func()) {
 	if req.OnEvent == nil || req.HeartbeatInterval < 0 {
 		return req.OnEvent, func() {}
@@ -693,7 +740,7 @@ func eventStream(req Request) (EventHandler, func()) {
 	var mu sync.Mutex
 	lastActivity := time.Now()
 	handler := func(ev Event) {
-		if ev.Kind != EventHeartbeat {
+		if ev.Kind != EventHeartbeat && ev.Kind != EventProgress {
 			mu.Lock()
 			lastActivity = time.Now()
 			mu.Unlock()

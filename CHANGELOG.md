@@ -1,3 +1,18 @@
+## [0.0.531] - 2026-09-24
+
+### Fixed
+- **A one-shot command binding that prints nothing until it exits is no longer killed as a stall while its process is working.** `claude -p --output-format json` and similar headless CLIs are silent while they think, so the idle watchdog cancelled any healthy run longer than `idle_timeout` (5m by default).
+  - The command transport now samples the CPU time of the child's process tree (Linux `/proc`) and treats a rising total as a sign of life. A process with no CPU progress still stalls at `idle_timeout`.
+  - The exemption is capped by the new `busy_timeout` (binding, then `[defaults]`, then a 60m shipped default; `"0"` or `"off"` restores strict behaviour), measured from the last real output. A stall past the cap says `(busy cap exceeded)`.
+  - `busy_timeout` carries across machine-wide profiles like every other binding field.
+  - Stream and ACP transports are unchanged. Platforms other than Linux report the probe as unavailable and stay strict.
+  - Dogfood: a real planner dispatch with `idle_timeout = "5s"` was killed after 6 s on 0.0.530 and ran 18 s to completion on this build. (sty_db62a3b9)
+
+## [serve-v0.0.65] - 2026-09-24
+
+### Fixed
+- **The serve channel picks up the command-transport CPU-liveness probe and `busy_timeout`.** (sty_db62a3b9)
+
 ## [0.0.530] - 2026-09-24
 
 ### Fixed

@@ -38,6 +38,12 @@ const (
 	// carries the question, Meta[EventMetaResponse] is "denied" or
 	// "auto-answered".
 	EventInteractiveDenied EventKind = "interactive_denied"
+	// EventProgress is emitted by the command transport's liveness probe when
+	// the child process tree's CPU time advanced while the CLI printed nothing
+	// (sty_db62a3b9). It carries no text and is NOT a real event: a watchdog
+	// may count it as bounded liveness for a silent one-shot binding, never as
+	// agent output. Stream and ACP never emit it.
+	EventProgress EventKind = "progress"
 )
 
 // EventMetaResponse is the Meta key on EventInteractiveDenied naming what the

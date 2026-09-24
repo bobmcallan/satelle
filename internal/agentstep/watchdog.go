@@ -18,6 +18,9 @@ type StallError struct {
 	Idle        time.Duration
 	LastEvent   string
 	LastEventAt time.Time
+	// BusyCapExceeded is set when CPU-liveness had been keeping a silent
+	// command run alive and its busy cap ran out (sty_db62a3b9).
+	BusyCapExceeded bool
 }
 
 func (e *StallError) Error() string {
@@ -25,7 +28,11 @@ func (e *StallError) Error() string {
 	if last == "" {
 		last = "none"
 	}
-	return fmt.Sprintf("stalled: no activity for %s (last event: %s)", e.Idle.Round(time.Second), last)
+	msg := fmt.Sprintf("stalled: no activity for %s (last event: %s)", e.Idle.Round(time.Second), last)
+	if e.BusyCapExceeded {
+		msg += " (busy cap exceeded)"
+	}
+	return msg
 }
 
 // StallCause returns ctx's cancellation cause as a *StallError, or nil when
@@ -106,6 +113,21 @@ type Watchdog struct {
 	lastLabel string
 	lastAt    time.Time
 	realCount int
+
+	// busyCap bounds how long EventProgress (CPU liveness of a silent command
+	// run) may keep the idle clock alive, measured from lastRealAt — the last
+	// real event. Zero disables CPU liveness (strict behaviour). sty_db62a3b9.
+	busyCap    time.Duration
+	lastRealAt time.Time
+}
+
+// SetBusyCap enables CPU-liveness for a command-transport run: EventProgress
+// resets the idle clock while less than d has passed since the last real event.
+// d<=0 disables it. Call before Start.
+func (w *Watchdog) SetBusyCap(d time.Duration) {
+	w.mu.Lock()
+	w.busyCap = d
+	w.mu.Unlock()
 }
 
 // NewWatchdog builds a Watchdog bounding idle. idle must be > 0 — callers
@@ -124,6 +146,7 @@ func (w *Watchdog) Start(ctx context.Context) (context.Context, func()) {
 	w.mu.Lock()
 	w.lastAt = w.now()
 	w.lastLabel = "start"
+	w.lastRealAt = w.lastAt
 	w.mu.Unlock()
 
 	done := make(chan struct{})
@@ -139,10 +162,11 @@ func (w *Watchdog) Start(ctx context.Context) (context.Context, func()) {
 			case now := <-t.C:
 				w.mu.Lock()
 				idleFor := now.Sub(w.lastAt)
-				label, at := w.lastLabel, w.lastAt
+				label, at := w.lastLabel, w.lastRealAt
+				capHit := w.busyCap > 0 && now.Sub(w.lastRealAt) >= w.busyCap
 				w.mu.Unlock()
 				if idleFor >= w.idle {
-					cancel(&StallError{Idle: idleFor, LastEvent: label, LastEventAt: at})
+					cancel(&StallError{Idle: idleFor, LastEvent: label, LastEventAt: at, BusyCapExceeded: capHit})
 					return
 				}
 			}
@@ -160,14 +184,31 @@ func (w *Watchdog) Start(ctx context.Context) (context.Context, func()) {
 func (w *Watchdog) Touch(label string) {
 	w.mu.Lock()
 	w.lastAt = w.now()
+	w.lastRealAt = w.lastAt
 	w.lastLabel = label
 	w.realCount++
 	w.mu.Unlock()
 }
 
+// touchProgress resets only the idle clock for a CPU-liveness EventProgress,
+// and only while the busy cap (from the last real event) has not run out. The
+// last-event label, timestamp and count keep naming the last REAL event.
+func (w *Watchdog) touchProgress() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	now := w.now()
+	if w.busyCap > 0 && now.Sub(w.lastRealAt) < w.busyCap {
+		w.lastAt = now
+	}
+}
+
 // TouchEvent resets the idle clock only for a real event (isRealEvent);
 // EventHeartbeat and other synthetic/status events pass through untouched.
 func (w *Watchdog) TouchEvent(ev agentcli.Event) {
+	if ev.Kind == agentcli.EventProgress {
+		w.touchProgress()
+		return
+	}
 	if !isRealEvent(ev.Kind) {
 		return
 	}
@@ -187,5 +228,5 @@ type WatchdogSnapshot struct {
 func (w *Watchdog) Snapshot() WatchdogSnapshot {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return WatchdogSnapshot{LastEvent: w.lastLabel, LastEventAt: w.lastAt, EventCount: w.realCount}
+	return WatchdogSnapshot{LastEvent: w.lastLabel, LastEventAt: w.lastRealAt, EventCount: w.realCount}
 }

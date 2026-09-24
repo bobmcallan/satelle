@@ -116,3 +116,37 @@ func TestWatchdogKillsRealSubprocessPromptly(t *testing.T) {
 		t.Errorf("context.Cause(ctx) = %v, want a *StallError", context.Cause(ctx))
 	}
 }
+
+// TestWatchdogProgressBoundedByBusyCap (sty_db62a3b9): an EventProgress resets
+// the idle clock only while under the busy cap from the last real event, and
+// never counts as a real event.
+func TestWatchdogProgressBoundedByBusyCap(t *testing.T) {
+	if isRealEvent(agentcli.EventProgress) {
+		t.Fatal("EventProgress must not be a real event")
+	}
+	wd := NewWatchdog(80 * time.Millisecond)
+	wd.SetBusyCap(200 * time.Millisecond)
+	ctx, stop := wd.Start(context.Background())
+	defer stop()
+
+	ev := agentcli.Event{Kind: agentcli.EventProgress}
+	for end := time.Now().Add(150 * time.Millisecond); time.Now().Before(end); {
+		time.Sleep(20 * time.Millisecond)
+		wd.TouchEvent(ev)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("watchdog fired under the busy cap: %v", context.Cause(ctx))
+	}
+	if snap := wd.Snapshot(); snap.EventCount != 0 || snap.LastEvent != "start" {
+		t.Errorf("progress leaked into real-event state: %+v", snap)
+	}
+	// Past the cap, progress no longer helps.
+	for end := time.Now().Add(400 * time.Millisecond); time.Now().Before(end) && ctx.Err() == nil; {
+		time.Sleep(20 * time.Millisecond)
+		wd.TouchEvent(ev)
+	}
+	se := StallCause(ctx)
+	if se == nil || !se.BusyCapExceeded {
+		t.Fatalf("cause = %v, want a stall with the busy cap exceeded", context.Cause(ctx))
+	}
+}
