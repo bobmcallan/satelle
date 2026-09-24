@@ -15,6 +15,11 @@ import (
 
 // busyScript writes an executable sh script and returns a command-interface
 // Runner for it.
+//
+// Invariant (sty_2d2c4c03): the command transport kills only the script's own
+// pid (no process group), so every body must do its work in that process —
+// shell builtins or `exec`, never `&` or `( )` — or the stall kill leaves
+// orphans behind.
 func busyScript(t *testing.T, body string) agentcli.Runner {
 	t.Helper()
 	script := filepath.Join(t.TempDir(), "agent.sh")

@@ -1,3 +1,10 @@
+## [0.0.532] - 2026-09-24
+
+### Fixed
+- **The process-tree CPU tests no longer leave busy-loop shells spinning after `go test`.** Their cleanup killed only the outer `sh`, so the forked `(while :; do :; done)` subshell (and a `sleep 30`) was orphaned to the user's systemd and ran forever. Every test run leaked one more, and 23 of them overloaded the owner's machine.
+  - The tests now start their shell in its own process group and SIGKILL the whole group on cleanup. A new test proves no group member survives.
+  - The busy-cap stall tests were checked: their scripts do the work in the script's own process, so the stall kill leaves nothing behind. The invariant is now documented on `busyScript`. (sty_2d2c4c03)
+
 ## [0.0.531] - 2026-09-24
 
 ### Fixed
