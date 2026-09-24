@@ -43,6 +43,18 @@ func TestReviewerModelActorsBoots(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// This repo's bindings name machine-wide profiles (profile = "…",
+	// sty_6388f140), which resolve only against the operator's catalog. Install a
+	// READ-ONLY copy of it into this test's isolated SATELLE_HOME — like the
+	// dummy [vars] above, it mirrors what a real clone's machine must supply.
+	if home, herr := os.UserHomeDir(); herr == nil {
+		if cat, cerr := os.ReadFile(filepath.Join(home, ".satelle", "agents.toml")); cerr == nil {
+			if err := os.WriteFile(filepath.Join(isolatedHome(t), "agents.toml"), cat, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
 	// The binary opens the store (applyAgentGrants resolves the [reviewer] binding
 	// + its env) on every command — these must succeed with the activated config.
 	mustRun(t, bin, repo, "reindex")
