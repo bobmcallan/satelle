@@ -11,9 +11,9 @@ import (
 // TestProjectWorkflowReviewerFirst asserts this repo's project workflow is
 // reviewer-first: a reviewer gates every transition on the spine. Plan
 // dispatches to an isolated read-only planner; integration and release run
-// IN-LOOP on the driving session (agent=executor). backlog -> ready is gated by
-// satelle-story-ready-review, and ready -> plan by satelle-story-intent-review
-// (sty_3437b803, sty_bb2d1542). The former commit/push/committed
+// IN-LOOP on the driving session (agent=executor). backlog -> ready is performed by
+// ready-reviewer running ready-review (sty_e1d93a2c), and ready -> plan is gated
+// by satelle-story-intent-review (sty_3437b803, sty_bb2d1542). The former commit/push/committed
 // states are merged into one `release` state, and there are recovery edges back
 // to in_progress (no dead-end). `integration` is an explicit, visible testing
 // step (sty_15dbc0dd).
@@ -80,6 +80,14 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 		t.Errorf("plan step must dispatch agent=planner @skill:plan, got agent=%q skill=%q", p.Agent, p.Skill)
 	}
 
+	// ready is performed by ready-reviewer; the read-only reviewer must not
+	// judge backlog -> ready (sty_e1d93a2c).
+	if r, present := states["ready"]; !present {
+		t.Error("missing ready state")
+	} else if r.Agent != "ready-reviewer" || r.Skill != "ready-review" {
+		t.Errorf("ready step must be agent=ready-reviewer @skill:ready-review, got agent=%q skill=%q", r.Agent, r.Skill)
+	}
+
 	// The dispatched executor experiment states are gone (merged into release).
 	for _, gone := range []string{"commit", "push", "committed"} {
 		if _, present := states[gone]; present {
@@ -106,7 +114,6 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 		}
 	}
 	for _, want := range []edge{
-		{"backlog", "ready", "satelle-story-ready-review"},
 		{"ready", "plan", "satelle-story-intent-review"},
 		{"plan", "in_progress", "satelle-story-plan-review"},
 		{"in_progress", "integration", "satelle-ac-evidence-check"},
@@ -117,6 +124,9 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 		if !got[want] {
 			t.Errorf("missing gated edge %s -> %s [%s]", want.from, want.to, want.skill)
 		}
+	}
+	if got[edge{"backlog", "ready", "satelle-story-ready-review"}] {
+		t.Error("backlog -> ready must not be gated by the read-only satelle-story-ready-review")
 	}
 	if !hasRecovery {
 		t.Error("missing release -> in_progress recovery edge (a reject must have a back-edge)")

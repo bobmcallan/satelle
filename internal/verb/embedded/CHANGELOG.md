@@ -1,3 +1,8 @@
+## [0.0.535] - 2026-09-25
+
+### Changed
+- **The ready step is performed by `ready-reviewer`, not the read-only reviewer.** The binding may run `satelle` (order tags, a child for an acceptance criterion the story already states, a vocabulary tag) and may not edit product code. A premise reject omits the required review artifact, so the dispatch fails and the story stays in backlog. The route pin expects that performer. (sty_e1d93a2c)
+
 ## [0.0.534] - 2026-09-24
 
 ### Fixed
