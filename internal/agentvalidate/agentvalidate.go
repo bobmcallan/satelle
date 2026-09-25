@@ -309,6 +309,11 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 			iface, reason = agents.ResolveInterface(raw, use)
 			if use == config.UseLive {
 				b = agents.EffectiveBinding(raw, use)
+				if strings.TrimSpace(b.Command) == "" {
+					r.record(health.Warn(health.IDAgentsBinding, "Live binding has no command",
+						config.LiveCommandRequiredError(sec.name).Error()).
+						About(sec.name).WithRemediation("set command= or profile= on [" + sec.name + "] in .satelle/workflows/agents.toml"))
+				}
 			}
 		}
 		g, _, _, fs := checkBinding(sec.name, b, vars)
@@ -592,6 +597,9 @@ func liveUsedSections(workflows []docindex.Doc) map[string]bool {
 func notLiveCapable(name string, b config.AgentBinding) string {
 	if config.IsInLoopCommand(b.CommandTemplate()) {
 		return fmt.Sprintf("[%s] is command=in-loop — the hook channel cannot be relayed", name)
+	}
+	if strings.TrimSpace(b.Command) == "" {
+		return config.LiveCommandRequiredError(name).Error()
 	}
 	if _, err := agentcli.OpenerFromBinding(b.ResolvedInterface(), b.CommandTemplate()); err != nil {
 		return fmt.Sprintf("[%s] interface=%s cannot open a session: %v", name, b.ResolvedInterface(), err)

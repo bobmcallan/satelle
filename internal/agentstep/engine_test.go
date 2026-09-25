@@ -4105,8 +4105,8 @@ func TestOpenSessionAsResolvesLiveInterfaceFromSetLiveNamedAgents(t *testing.T) 
 		// shipped default order picks stream, and stream's default command line
 		// is filled in (AC1's "a resolved default supplies the matching default
 		// command line when command is also unset").
-		{name: "no command yet", binding: "coder",
-			wantIface: "stream", wantCommand: agentcli.DefaultClaudeStreamCommand},
+		{name: "no command yet is refused", binding: "coder",
+			wantErrIs: "no command and no profile"},
 		// An authored ONE-SHOT claude command (the [reviewer]/DefaultReviewerCommand
 		// shape: `-p --output-format json … {system}`) cannot serve stream — it has
 		// no --input-format stream-json and carries {system}, which the real

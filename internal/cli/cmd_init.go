@@ -1808,6 +1808,8 @@ model   = ""                   # empty is selected deliberately, not left to the
 # (satelle story chat, satelle story rework), not allocated by a workflow node.
 # Uncomment and wire a step's rework = { consult, rounds } to use them. A read-only
 # consultant vs a mutating coder is the usual pair; both must be live-capable.
+# A live binding needs an authored command= (or a profile=): satelle compiles no
+# live default, so one with neither is refused.
 #
 # [orchestrator]
 # role      = "agent"

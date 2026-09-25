@@ -2026,6 +2026,9 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 	if !found {
 		return nil, fmt.Errorf("no [%s] binding in .satelle/workflows/agents.toml — define interface=acp or stream to open a live session", name)
 	}
+	if strings.TrimSpace(binding.Command) == "" {
+		return nil, config.LiveCommandRequiredError(name)
+	}
 	if config.IsInLoopCommand(binding.CommandTemplate()) {
 		return nil, fmt.Errorf("satelle: cannot open a live session: [%s] is in-loop — the hook channel remains the orchestrator; set interface=acp or stream to open a live session", name)
 	}

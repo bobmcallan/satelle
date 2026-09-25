@@ -692,12 +692,21 @@ func TestResolveInterface_LivePreferenceFromConfig(t *testing.T) {
 		t.Fatal("critic binding not found")
 	}
 	iface, reason := acDefault.ResolveInterface(critic, UseLive)
-	if iface != InterfaceStream || reason != "live use" {
-		t.Fatalf("default order: got (%q, %q), want (stream, live use)", iface, reason)
+	if iface != InterfaceCommand || reason != "live use: no command" {
+		t.Fatalf("default order: got (%q, %q), want (command, live use: no command)", iface, reason)
 	}
-	eb := acDefault.EffectiveBinding(critic, UseLive)
-	if eb.Command != agentcli.DefaultClaudeStreamCommand {
-		t.Errorf("default order: effective command = %q, want the stream default", eb.Command)
+	if eb := acDefault.EffectiveBinding(critic, UseLive); eb.Command != "" {
+		t.Errorf("default order: effective command = %q, want empty — no compiled live default", eb.Command)
+	}
+	// An authored command still resolves by the configured order.
+	critic.Command = agentcli.DefaultClaudeStreamCommand
+	if iface, reason = acDefault.ResolveInterface(critic, UseLive); iface != InterfaceStream || reason != "live use" {
+		t.Fatalf("authored stream command: got (%q, %q), want (stream, live use)", iface, reason)
+	}
+	// One-shot still fills the command default.
+	critic.Command = ""
+	if eb := acDefault.EffectiveBinding(critic, UseOneShot); eb.Command != DefaultReviewerCommand {
+		t.Errorf("one-shot effective command = %q, want the reviewer default", eb.Command)
 	}
 
 	bodyACPOnly := "[defaults]\nlive_interfaces = [\"acp\"]\n\n[critic]\nrole = \"reviewer\"\n"
@@ -710,12 +719,11 @@ func TestResolveInterface_LivePreferenceFromConfig(t *testing.T) {
 		t.Fatal("critic binding not found (acp-only)")
 	}
 	iface, reason = acACPOnly.ResolveInterface(criticACPOnly, UseLive)
-	if iface != InterfaceCommand || reason != "live use: not live-capable" {
-		t.Fatalf("acp-only order: got (%q, %q), want (command, live use: not live-capable) — acp has no default spawn line for an unauthored command", iface, reason)
+	if iface != InterfaceCommand || reason != "live use: no command" {
+		t.Fatalf("acp-only order: got (%q, %q), want (command, live use: no command) — no compiled live default", iface, reason)
 	}
-	ebACPOnly := acACPOnly.EffectiveBinding(criticACPOnly, UseLive)
-	if ebACPOnly.Command != DefaultReviewerCommand {
-		t.Errorf("acp-only order: effective command = %q, want the command default — never a blank acp spawn line", ebACPOnly.Command)
+	if eb := acACPOnly.EffectiveBinding(criticACPOnly, UseLive); eb.Command != "" {
+		t.Errorf("acp-only order: effective command = %q, want empty — never a fabricated spawn line", eb.Command)
 	}
 
 	// A command actually SHAPED for acp (a non-claude token) resolves to acp
@@ -740,8 +748,8 @@ func TestResolveInterface_LivePreferenceFromConfig(t *testing.T) {
 	}
 }
 
-// TestLiveBinding_NoCommandYet — a live binding with no command authored gets
-// the resolved interface's default command line filled in.
+// TestLiveBinding_NoCommandYet — a live binding with no command authored is
+// never filled in with a provider's line: it stays empty so the open refuses.
 func TestLiveBinding_NoCommandYet(t *testing.T) {
 	ac, err := loadAgentsBody("[coder]\nrole = \"agent\"\n")
 	if err != nil {
@@ -751,11 +759,17 @@ func TestLiveBinding_NoCommandYet(t *testing.T) {
 	if !ok {
 		t.Fatal("coder binding not found")
 	}
-	if b.Interface != InterfaceStream {
-		t.Errorf("interface = %q, want stream", b.Interface)
+	if b.Command != "" {
+		t.Errorf("command = %q, want empty (no compiled live default)", b.Command)
 	}
-	if b.Command != agentcli.DefaultClaudeStreamCommand {
-		t.Errorf("command = %q, want the stream default", b.Command)
+}
+
+func TestLiveCommandRequiredErrorNamesEveryTransport(t *testing.T) {
+	msg := LiveCommandRequiredError("coder").Error()
+	for _, want := range []string{"[coder]", "no command and no profile", InterfaceStream, InterfaceACP, "command=", "profile="} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message %q missing %q", msg, want)
+		}
 	}
 }
 

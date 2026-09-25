@@ -266,7 +266,8 @@ type AgentsDefaults struct {
 
 // LiveInterfaces returns the preference order ResolveInterface walks for a
 // live use: the configured live_interfaces when set, else the shipped default
-// [stream, acp].
+// [stream, acp]. It only orders transports an authored command can serve; it
+// never supplies a command.
 func (d AgentsDefaults) LiveInterfaces() []string {
 	if len(d.LiveInterfaceOrder) > 0 {
 		return d.LiveInterfaceOrder
@@ -381,17 +382,13 @@ const (
 //     waved through on "first token is claude" and failing (or opening
 //     broken) at session-open time.
 //
-// An empty command has no shape yet, so the transport still needs to supply
-// its OWN default command line (DefaultCommandFor) for the binding to ever
-// open — acp has none (satelle cannot guess an ACP spawn line), so an empty
-// command is a candidate only for a transport DefaultCommandFor actually
-// fills in. Without this, live_interfaces = ["acp", "stream"] would resolve
-// an empty-command binding to acp with an empty spawn line — a "resolution"
-// that can never open, exactly the kind of broken result this function
-// exists to rule out.
+// An empty command is never live-capable: satelle compiles no live default
+// command (not for stream, and it cannot guess an ACP spawn line), so an
+// unauthored binding is refused rather than resolved to a provider
+// (LiveCommandRequiredError).
 func liveCapableInterface(command, iface string) bool {
 	if strings.TrimSpace(command) == "" {
-		return DefaultCommandFor(iface) != ""
+		return false
 	}
 	token := ExecutableToken(command)
 	switch iface {
@@ -444,6 +441,9 @@ func (a AgentsConfig) ResolveInterface(b AgentBinding, use InterfaceUse) (iface,
 	if IsInLoopCommand(b.Command) {
 		return b.ResolvedInterface(), "live use: in-loop"
 	}
+	if strings.TrimSpace(b.Command) == "" {
+		return InterfaceCommand, "live use: no command"
+	}
 	for _, cand := range a.Defaults.LiveInterfaces() {
 		if liveCapableInterface(b.Command, cand) {
 			return cand, "live use"
@@ -452,13 +452,18 @@ func (a AgentsConfig) ResolveInterface(b AgentBinding, use InterfaceUse) (iface,
 	return InterfaceCommand, "live use: not live-capable"
 }
 
-// DefaultCommandFor returns the command template a resolved interface supplies
-// when a binding has no command of its own — "" for acp, which needs an
-// authored spawn line (satelle cannot guess one).
+// LiveCommandRequiredError is the refusal for a live binding that authors no
+// command and no profile: satelle compiles no live default, so the operator
+// must name the spawn line (or a profile that supplies one).
+func LiveCommandRequiredError(section string) error {
+	return fmt.Errorf("[%s] has no command and no profile= — a live session needs an authored spawn line; set command= to a stream-json CLI (interface=stream) or an ACP agent spawn line (interface=acp), or set profile= to a catalog profile that supplies one", section)
+}
+
+// DefaultCommandFor returns the one-shot command template a resolved interface
+// supplies when a binding has no command of its own. Live transports (stream,
+// acp) have no compiled default — the spawn line is authored configuration.
 func DefaultCommandFor(iface string) string {
 	switch iface {
-	case InterfaceStream:
-		return agentcli.DefaultClaudeStreamCommand
 	case InterfaceCommand:
 		return DefaultReviewerCommand
 	default:
@@ -476,7 +481,7 @@ func (a AgentsConfig) EffectiveBinding(b AgentBinding, use InterfaceUse) AgentBi
 	iface, _ := a.ResolveInterface(b, use)
 	eb := b
 	eb.Interface = iface
-	if strings.TrimSpace(eb.Command) == "" {
+	if strings.TrimSpace(eb.Command) == "" && use == UseOneShot {
 		eb.Command = DefaultCommandFor(iface)
 	}
 	return eb

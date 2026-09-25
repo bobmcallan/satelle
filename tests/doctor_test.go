@@ -18,10 +18,16 @@ func TestDoctorHealthyRepo(t *testing.T) {
 	mustRun(t, testBin, repo, "reindex")
 
 	out := mustRun(t, testBin, repo, "doctor")
-	for _, want := range []string{"HEALTHY", "Agent grants (effective value → source)", "(repo)", "PASS  no problems found"} {
+	for _, want := range []string{"HEALTHY", "Agent grants (effective value → source)", "(repo)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("doctor output missing %q:\n%s", want, out)
 		}
+	}
+	// The baseline [orchestrator] seat authors no command, and satelle compiles
+	// no live default (sty_a762f3bd): a fresh repo warns rather than silently
+	// resolving the live seat to a provider.
+	if !strings.Contains(out, "[orchestrator] has no command and no profile=") {
+		t.Errorf("doctor should warn that the unauthored [orchestrator] live seat has no command:\n%s", out)
 	}
 	// Lifecycle hooks are surfaced, since they fire outside the status graph.
 	if !strings.Contains(out, "Lifecycle hooks") || !strings.Contains(out, "create_review") {

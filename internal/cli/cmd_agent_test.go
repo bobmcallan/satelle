@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 )
 
@@ -45,10 +46,12 @@ model = "opus"
 
 [coder]
 role = "agent"
+command = "` + agentcli.DefaultClaudeStreamCommand + `"
 tools = "Read,Grep,Glob,Edit,Write,Bash(satelle:*)"
 
 [consultant]
 role  = "reviewer"
+command = "` + agentcli.DefaultClaudeStreamCommand + `"
 tools = "Read,Grep,Glob,Bash(satelle:*)"
 `
 	if err := os.WriteFile(filepath.Join(wfDir, config.AgentsConfigName), []byte(agentsBody), 0o644); err != nil {

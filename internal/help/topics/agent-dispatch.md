@@ -115,7 +115,7 @@ runtime refusal and validate, so they cannot disagree.
 |-------------|---------|
 | **`command`** (default for a one-shot use) | Full multi-token argv template; any CLI (Claude Code, `grok -p`, wrappers, custom). One-shot stdin/argv; reviewers stay here. |
 | **`acp`** | Agent Client Protocol over stdio; `command` is the **spawn line only** (e.g. `grok agent stdio`). System/payload ride the session, not `{placeholders}`. |
-| **`stream`** | Claude stream-json live session (`DefaultClaudeStreamCommand`). `{system}`/`{payload}` are rejected — they ride the first user message; `{tools}`/`{model}`/`{effort}` remain argv. For the orchestrator binding (live turns), not reviewers. |
+| **`stream`** | Stream-json live session (Claude preset, opt-in: `DefaultClaudeStreamCommand`). `{system}`/`{payload}` are rejected — they ride the first user message; `{tools}`/`{model}`/`{effort}` remain argv. For the orchestrator binding (live turns), not reviewers. |
 
 Shared fields on all three: `role`, `tools`, `model`, `effort`, `secondary`,
 `principles`, `env`, `timeout`, `idle_timeout`, `settings`. Reviewers keep Claude on
@@ -141,12 +141,14 @@ transport now depends on **how the binding is used**:
   `--append-system-prompt {system}`, fails both `stream` and `acp`
   construction, since `{system}`/`{payload}` ride the live protocol, not
   argv, so it is correctly excluded rather than waved through on "first token
-  is claude"). A binding with **no `command` yet** is a candidate only for a
-  transport that has a shipped default command line to fill in —
-  `DefaultClaudeStreamCommand` for `stream`; `acp` has none (it needs an
-  authored spawn line satelle cannot guess), so an unauthored command never
-  resolves to `acp`, whatever the configured order. When no candidate can
-  open the command, it falls back to `command` and names the gap:
+  is claude"). A binding with **no `command` and no `profile=`** is refused, never
+  resolved to a provider: satelle compiles no live default command. It reports
+  `live use: no command` (`satelle agent validate` warns; opening the session
+  refuses) with a message naming both live options — `stream` (a stream-json
+  CLI spawn line) and `acp` (an ACP agent spawn line). Any default comes from
+  authored configuration: a `profile=` in the machine catalog or the `[roles]`
+  opt-in. When no candidate can open an authored command, it falls back to
+  `command` and names the gap:
   `live use: in-loop` when the command is the in-loop preset (no live
   transport exists for it at all), or `live use: not live-capable` otherwise
   — the existing not-live-capable WARN/refusal then fires with that reason.
@@ -182,7 +184,8 @@ live_interfaces = ["stream", "acp"]   # shipped default — list only "acp" (or
 `satelle agent validate` prints each binding's resolved interface and why:
 `interface=stream (live use)`, `interface=command (one-shot default)`,
 `interface=acp (explicit)`, `interface=command (live use: in-loop)`,
-`interface=command (live use: not live-capable)`.
+`interface=command (live use: not live-capable)`,
+`interface=command (live use: no command)`.
 
 ### Progressive execution diagnostics
 
@@ -415,7 +418,7 @@ system prompt and payload as the first user message, answers `control_request`
 permission asks with the same mutator policy as ACP, and unwraps the terminal
 `{"type":"result","result":"…"}` so `parseDecision` sees the verdict JSON.
 
-Preset: `DefaultClaudeStreamCommand` —
+Opt-in preset for Claude (never an implicit default), `DefaultClaudeStreamCommand`:
 
 ```
 claude -p --input-format stream-json --output-format stream-json --verbose --disallowedTools Write,Edit,NotebookEdit,Bash --allowedTools {tools} --model {model} --effort {effort}

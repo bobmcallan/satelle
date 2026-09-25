@@ -1,3 +1,13 @@
+## [0.0.543] - 2026-09-25
+
+### Changed
+- **A live binding with no command no longer becomes Claude.** A live seat that authors no `command=` and no `profile=`, such as the baseline `[orchestrator]`, used to resolve to the Claude stream-json command. It now resolves to `live use: no command`. `satelle agent validate` and `satelle doctor` warn about it, and opening the session refuses with a message that names both live options: `stream` (a stream-json CLI spawn line) and `acp` (an ACP agent spawn line). To heal, set `command=` or `profile=` on the seat in `.satelle/workflows/agents.toml`. satelle compiles no live default command. `DefaultClaudeStreamCommand` is still available as an opt-in Claude preset. (sty_a762f3bd)
+
+## [serve-v0.0.74] - 2026-09-25
+
+### Changed
+- **The service uses the same live-binding resolution.** A live binding with no command is refused and never resolved to Claude. (sty_a762f3bd)
+
 ## [0.0.542] - 2026-09-25
 
 ### Fixed

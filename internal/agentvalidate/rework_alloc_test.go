@@ -169,10 +169,10 @@ func TestValidate_ReworkConsultNotLiveCapableWarns(t *testing.T) {
 // the same seam OpenSessionAs opens it through.
 func TestValidate_ReworkUnsetInterfaceLiveNoWarn(t *testing.T) {
 	agents := reworkAgents(config.AgentBinding{
-		Role: config.RoleReviewer, Tools: "Read,Grep,Glob", Model: "opus",
+		Role: config.RoleReviewer, Command: agentcli.DefaultClaudeStreamCommand, Tools: "Read,Grep,Glob", Model: "opus",
 	})
 	agents.Agents["coder"] = config.AgentBinding{
-		Role:  config.RoleAgent,
+		Role: config.RoleAgent, Command: agentcli.DefaultClaudeStreamCommand,
 		Tools: "Read,Grep,Glob,Edit,Write,Bash(satelle:*)", Model: "opus",
 	}
 	r := Validate(agents, nil, routeDocs(reworkDone, reworkStep("consultant")))
@@ -192,10 +192,10 @@ func TestValidate_ReworkUnsetInterfaceLiveNoWarn(t *testing.T) {
 // to stream with reason "live use".
 func TestValidate_GrantsReportInterfaceReason(t *testing.T) {
 	agents := reworkAgents(config.AgentBinding{
-		Role: config.RoleReviewer, Tools: "Read,Grep,Glob", Model: "opus",
+		Role: config.RoleReviewer, Command: agentcli.DefaultClaudeStreamCommand, Tools: "Read,Grep,Glob", Model: "opus",
 	})
 	agents.Agents["coder"] = config.AgentBinding{
-		Role:  config.RoleAgent,
+		Role: config.RoleAgent, Command: agentcli.DefaultClaudeStreamCommand,
 		Tools: "Read,Grep,Glob,Edit,Write,Bash(satelle:*)", Model: "opus",
 	}
 	r := Validate(agents, nil, routeDocs(reworkDone, reworkStep("consultant")))
@@ -249,7 +249,7 @@ func TestValidate_GrantsAgreeWithRuntimeForLiveExecutor(t *testing.T) {
 // elsewhere — not an empty grant computed from the bare RawBinding.
 func TestValidate_GrantsAgreeWithRuntimeForLiveReviewer(t *testing.T) {
 	agents := reworkAgents(liveConsultant())
-	agents.Reviewer = config.AgentBinding{Role: config.RoleReviewer} // no tools, no command authored
+	agents.Reviewer = config.AgentBinding{Role: config.RoleReviewer, Command: agentcli.DefaultClaudeStreamCommand} // no tools authored
 	r := Validate(agents, nil, routeDocs(reworkDone, reworkStep("reviewer")))
 	var found bool
 	for _, g := range r.Grants {
@@ -266,6 +266,31 @@ func TestValidate_GrantsAgreeWithRuntimeForLiveReviewer(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no grant reported for reviewer")
+	}
+}
+
+// TestValidate_LiveSeatWithNoCommandWarnsNamingTransports (sty_a762f3bd): a
+// live-used seat that authors no command warns naming both live transports;
+// the same seat with a command is clean.
+func TestValidate_LiveSeatWithNoCommandWarnsNamingTransports(t *testing.T) {
+	agents := reworkAgents(liveConsultant())
+	agents.Agents["coder"] = config.AgentBinding{Role: config.RoleAgent, Tools: "Read,Grep,Glob,Edit,Write,Bash(satelle:*)"}
+	r := Validate(agents, nil, routeDocs(reworkDone, reworkStep("consultant")))
+	var named bool
+	for _, w := range r.Warnings {
+		if strings.Contains(w, "no command and no profile") && strings.Contains(w, "stream") && strings.Contains(w, "acp") {
+			named = true
+		}
+	}
+	if !named {
+		t.Fatalf("no warning names the missing live command and both transports: %v", r.Warnings)
+	}
+	agents.Agents["coder"] = config.AgentBinding{Role: config.RoleAgent, Command: agentcli.DefaultClaudeStreamCommand, Tools: "Read,Grep,Glob,Edit,Write,Bash(satelle:*)"}
+	r = Validate(agents, nil, routeDocs(reworkDone, reworkStep("consultant")))
+	for _, w := range r.Warnings {
+		if strings.Contains(w, "no command and no profile") {
+			t.Errorf("a seat with a command must not warn: %q", w)
+		}
 	}
 }
 
