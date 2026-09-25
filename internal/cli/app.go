@@ -438,6 +438,12 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 	rev.SetSessionModelsResolver(verb.SessionModels)
 	rev.SetInvocationRecorder(verb.AppendAgentInvocation)
 	rev.SetLeftoverRule(a.Config.Dispatch.Leftovers)
+	// The live sessions this engine opens (story chat, the rework relay) ledger
+	// a denied ask-the-user through this sink (sty_ff50f788); unwired, the row
+	// is silently dropped.
+	rev.SetTelemetry(func(ctx context.Context, storyID, actor, kind string, data map[string]any) {
+		_ = verb.AppendTelemetry(ctx, storyID, actor, kind, data)
+	})
 	return rev, a, nil
 }
 

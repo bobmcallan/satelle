@@ -346,3 +346,95 @@ while True:
 	}
 	assertMessagePair(t, msgs, "developer-agent", "consultant")
 }
+
+// TestStoryChatE2EAskDeniedIsLedgered (sty_ff50f788): a live `story chat`
+// session whose agent asks the user writes an agent-interactive-denied row
+// through the CLI's own engine wiring, not only an engine a test hand-wires.
+func TestStoryChatE2EAskDeniedIsLedgered(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available")
+	}
+	repo := tempRepo(t)
+	t.Chdir(repo)
+	wfDir := filepath.Join(repo, ".satelle", "workflows")
+	writeRoute(t, wfDir,
+		`["*"]
+obligations = ["raised", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[closed]
+status = "done"
+terminal = true
+requires = ["raised"]
+`)
+
+	// A consultant that asks the user before it answers.
+	peer := filepath.Join(t.TempDir(), "fake-asker")
+	script := `#!/usr/bin/env python3
+import json, sys
+def send(o):
+    sys.stdout.write(json.dumps(o) + "\n"); sys.stdout.flush()
+while True:
+    line = sys.stdin.readline()
+    if not line:
+        break
+    msg = json.loads(line)
+    if msg.get("type") != "user":
+        continue
+    send({"type":"control_request","request_id":"ask1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","input":{"questions":[{"question":"which file first?"}]}}})
+    sys.stdin.readline()
+    send({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"asked-ok"}]}})
+    send({"type":"result","result":"asked-ok"})
+`
+	if err := os.WriteFile(peer, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agents := "[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n" +
+		"[orchestrator]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n" +
+		"[consultant]\nrole = \"reviewer\"\ninterface = \"stream\"\n" +
+		"command = \"" + peer + " --output-format stream-json\"\n" +
+		"tools = \"Read,Grep,Glob\"\n"
+	if err := os.WriteFile(filepath.Join(wfDir, config.AgentsConfigName), []byte(agents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(filepath.Join(repo, ".satelle", config.AgentsConfigName))
+
+	out, err := runRoot(t, "story", "create",
+		"--title", "chat ask e2e",
+		"--body", "the consulted agent asks the user",
+		"--acceptance", "1. the denied ask is ledgered",
+		"--category", "chore",
+	)
+	if err != nil {
+		t.Fatalf("create: %v\n%s", err, out)
+	}
+	var created map[string]any
+	if err := json.NewDecoder(strings.NewReader(out)).Decode(&created); err != nil {
+		t.Fatalf("parse create: %v\n%s", err, out)
+	}
+	id, _ := created["id"].(string)
+	if id == "" {
+		t.Fatalf("no id in %s", out)
+	}
+
+	chatOut, err := runRootIn(t, "go\n/quit\n", "story", "chat", id, "--agent", "consultant")
+	if err != nil {
+		t.Fatalf("chat: %v\n%s", err, chatOut)
+	}
+	if !strings.Contains(chatOut, "asked-ok") {
+		t.Fatalf("consultant reply missing:\n%s", chatOut)
+	}
+
+	led, err := runRoot(t, "ledger", "list", "--story", id)
+	if err != nil {
+		t.Fatalf("ledger: %v\n%s", err, led)
+	}
+	for _, want := range []string{"agent-interactive-denied", "AskUserQuestion", "which file first?", `"response": "denied"`} {
+		if !strings.Contains(led, want) {
+			t.Errorf("ledger missing %q:\n%s", want, led)
+		}
+	}
+}

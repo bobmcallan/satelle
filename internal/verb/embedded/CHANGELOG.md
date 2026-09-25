@@ -1,3 +1,8 @@
+## [0.0.545] - 2026-09-25
+
+### Fixed
+- **`satelle story chat` and the rework relay now write the denied-ask row.** 0.0.544 added the row, but the engine these two verbs open sessions with had no ledger sink wired, so on a real chat the row was dropped. It is now wired, and an end-to-end chat test covers it. (sty_ff50f788)
+
 ## [0.0.544] - 2026-09-25
 
 ### Fixed
