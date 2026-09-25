@@ -149,13 +149,21 @@ func usageFromMap(v map[string]any) *UsageResult {
 		return nil
 	}
 	var u *UsageResult
+	var adapter string // names the no-model reason for this event's provider
 	switch lowerString(v, "type") {
 	case "turn.completed":
 		u = codexUsageFromMap(raw) // codex's per-turn carrier, whatever fields it names
+		adapter = "codex command"
+		u.ModelResolved = codexModelID(v, raw)
 	case "usage", "end":
 		u = claudeUsageFromMap(raw, "grok") // grok streaming-json usage/end lines
+		adapter = "grok stream"
 	default:
 		u = usageForShape(raw)
+		adapter = "claude stream"
+	}
+	if u.ModelResolved == "" {
+		u.ModelResolved = noModelReport(adapter)
 	}
 	if primary, models, ok := parseModelUsage(v["modelUsage"]); ok {
 		u.ModelResolved = primary

@@ -229,7 +229,7 @@ type UsageResult struct {
 	// (sty_87b86044) — e.g. "claude-opus-5-5" for the configured alias "opus".
 	// Empty when the transport did not report it (ACP, plain text, or a JSON
 	// envelope without a modelUsage map); callers normalize that to
-	// ModelUnavailable before recording it, so a stored value is never empty.
+	// ModelUnavailable (or an adapter-named ModelUnavailableFor reason) before recording it, so a stored value is never empty.
 	ModelResolved string
 	// Models is every entry a transport's modelUsage map reported — several
 	// when a background model ran beside the main one. Nil when unreported.
@@ -311,6 +311,7 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 			u.OutputTokens = claude.Usage.OutputTokens
 			u.TotalTokens = u.InputTokens + u.OutputTokens
 		}
+		u.ModelResolved = noModelReport("claude command")
 		if primary, models, ok := parseModelUsage(claude.ModelUsage); ok {
 			u.ModelResolved = primary
 			u.Models = models
@@ -325,7 +326,7 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 		// rather than a zero value for a caller to guess at (sty_87b86044).
 		if grok.Usage != nil {
 			u := claudeUsageFromMap(grok.Usage, "grok")
-			u.ModelResolved = ModelUnavailable
+			u.ModelResolved = noModelReport("grok command")
 			if primary, models, ok := parseModelUsage(grok.ModelUsage); ok {
 				u.ModelResolved = primary
 				u.Models = models
@@ -333,7 +334,7 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 			return []byte(grok.Text), *u
 		}
 		u := unavailableUsage("grok", "--output-format json envelope carries no usage object")
-		u.ModelResolved = ModelUnavailable
+		u.ModelResolved = noModelReport("grok command")
 		return []byte(grok.Text), u
 	}
 	return stdout, UsageResult{}

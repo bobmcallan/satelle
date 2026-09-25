@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
@@ -89,15 +90,15 @@ func TestACPDispatch_ModelUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runOnce: %v", err)
 	}
-	if usage.ModelResolved != "" {
+	if !agentcli.IsModelUnavailable(usage.ModelResolved) {
 		t.Fatalf("agentcli should report no resolved model for a bare ACP decision, got %q", usage.ModelResolved)
 	}
 	resolved, models := toVerbModels(usage)
 	if resolved == "" {
 		t.Fatal("toVerbModels must never normalize to empty")
 	}
-	if resolved != agentcli.ModelUnavailable {
-		t.Errorf("resolved = %q, want %q", resolved, agentcli.ModelUnavailable)
+	if !agentcli.IsModelUnavailable(resolved) || !strings.HasPrefix(resolved, "unavailable: acp ") {
+		t.Errorf("resolved = %q, want an adapter-named unavailable reason", resolved)
 	}
 	if resolved == alias {
 		t.Errorf("resolved must not equal the configured alias %q", alias)

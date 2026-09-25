@@ -81,7 +81,7 @@ func TestUsageAdapter_GrokCommandJSONNoUsage(t *testing.T) {
 	if !strings.HasPrefix(u.UnavailableReason, "grok adapter:") {
 		t.Errorf("reason = %q, want grok adapter reason", u.UnavailableReason)
 	}
-	if u.ModelResolved != ModelUnavailable {
+	if u.ModelResolved != "unavailable: grok command reports no model" {
 		t.Errorf("model = %q", u.ModelResolved)
 	}
 }
@@ -172,15 +172,20 @@ func acpFixtureResult(t *testing.T) json.RawMessage {
 // grok ACP (REAL capture): usage lives at result._meta.usage in camelCase and
 // inputTokens INCLUDES cachedReadTokens (19663 = 11855 fresh + 7808 read).
 func TestUsageAdapter_ACPResultUsage(t *testing.T) {
-	u := acpUsageFromResult(acpFixtureResult(t))
+	u := acpUsageFromResult(acpFixtureResult(t), "", "grok acp")
 	if u == nil || !u.Available || u.InputTokens != 19663 || u.OutputTokens != 32 || u.TotalTokens != 19695 {
 		t.Fatalf("usage = %+v, want in=19663 out=32 total=19695", u)
+	}
+	// The prompt result's _meta.modelId is the id the peer states it ran; the
+	// modelUsage key (grok-4.7-build) is only the fallback.
+	if u.ModelResolved != "grok-4.7" {
+		t.Errorf("ModelResolved = %q, want grok-4.7", u.ModelResolved)
 	}
 	if !u.CacheSplitAvailable || u.CacheReadInputTokens != 7808 || u.CacheCreationInputTokens != 0 || u.FreshInputTokens != 11855 {
 		t.Errorf("split = %+v, want fresh=11855 read=7808 write=0", u)
 	}
-	if acpUsageFromResult(json.RawMessage(`{"stopReason":"end_turn"}`)) != nil {
-		t.Error("a response without _meta.usage must map to nil, not zeros")
+	if acpUsageFromResult(json.RawMessage(`{"stopReason":"end_turn"}`), "", "grok acp") != nil {
+		t.Error("a response without _meta.usage or a model must map to nil, not zeros")
 	}
 }
 
@@ -198,7 +203,7 @@ func TestUsageAdapter_EmptyUsageObjectIsUnavailable(t *testing.T) {
 		t.Errorf("grok headless foreign-only usage = %+v", u)
 	}
 	// grok ACP: _meta.usage without token fields maps to nil (-> acp reason)
-	if acpUsageFromResult(json.RawMessage(`{"_meta":{"usage":{"modelCalls":1}}}`)) != nil {
+	if acpUsageFromResult(json.RawMessage(`{"_meta":{"usage":{"modelCalls":1}}}`), "", "grok acp") != nil {
 		t.Error("ACP usage without token fields must map to nil, not zeros")
 	}
 	if g := grokUsageFromMap(map[string]any{"modelCalls": 1.0}); g.Available || !strings.HasPrefix(g.UnavailableReason, "acp adapter:") {
@@ -273,6 +278,24 @@ func TestUsageAdapter_ACPRunUsage(t *testing.T) {
 			if !c.wantAvail && !strings.HasPrefix(u.UnavailableReason, "acp adapter:") {
 				t.Errorf("reason = %q, want acp adapter reason", u.UnavailableReason)
 			}
+			if !IsModelUnavailable(u.ModelResolved) || !strings.HasPrefix(u.ModelResolved, "unavailable: acp ") {
+				t.Errorf("ModelResolved = %q, want an adapter-named reason", u.ModelResolved)
+			}
 		})
+	}
+}
+
+// A peer that names its model on the prompt result has it recorded end to end.
+func TestUsageAdapter_ACPRunUsageRecordsModelID(t *testing.T) {
+	r, err := RunnerFromBinding(InterfaceACP, writeUsageACPPeer(t, `{"stopReason":"end_turn","_meta":{"modelId":"grok-4.7","usage":{"inputTokens":5,"outputTokens":2}}}`)+" stdio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, u, err := r.(UsageRunner).RunUsage(context.Background(), Request{Payload: "{}", Model: "grok-4.5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.ModelResolved != "grok-4.7" {
+		t.Errorf("ModelResolved = %q, want grok-4.7", u.ModelResolved)
 	}
 }

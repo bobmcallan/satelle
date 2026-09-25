@@ -1,3 +1,13 @@
+## [0.0.540] - 2026-09-25
+
+### Fixed
+- **Grok and Codex runs record the model that actually ran.** A Grok ACP session reads the model id the peer reports on its prompt result (falling back to its modelUsage, then its session reply). Grok command and streaming output keep reading modelUsage, and a Codex run reads a model named on its exec events and keeps it across summed turns. When a provider reports no model, `model_resolved` names the adapter, for example `unavailable: grok acp reports no model` or `unavailable: codex command reports no model`, instead of the bare `unavailable`. Model labels never show such a reason as a model id, and a later reason never overwrites a measured id. (sty_8e422d47)
+
+## [serve-v0.0.71] - 2026-09-25
+
+### Fixed
+- **The service shows the same resolved-model record.** It does not display an adapter-named no-model reason as a model id. (sty_8e422d47)
+
 ## [0.0.539] - 2026-09-25
 
 ### Changed

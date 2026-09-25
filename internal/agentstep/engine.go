@@ -2155,7 +2155,7 @@ func (t *liveUsageTracker) wrap(next agentcli.EventHandler) agentcli.EventHandle
 			}
 			t.usage.Duration += u.Duration
 			if u.ModelResolved != "" {
-				t.usage.ModelResolved = u.ModelResolved
+				t.usage.ModelResolved = agentcli.KeepModel(t.usage.ModelResolved, u.ModelResolved)
 			}
 			t.mergeModelsLocked(u.Models)
 			t.mu.Unlock()

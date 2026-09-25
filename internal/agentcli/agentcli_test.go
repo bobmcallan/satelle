@@ -544,8 +544,8 @@ func TestUnwrapUsage(t *testing.T) {
 	if u.TotalTokens != 0 {
 		t.Errorf("grok envelope has no usage fields in this shape: %+v", u)
 	}
-	if u.ModelResolved != ModelUnavailable {
-		t.Errorf("grok envelope should mark model unavailable, got %q", u.ModelResolved)
+	if u.ModelResolved != ModelUnavailableFor("grok command", "reports no model") {
+		t.Errorf("grok envelope should mark model unavailable for grok command, got %q", u.ModelResolved)
 	}
 }
 

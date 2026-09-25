@@ -97,28 +97,127 @@ func (a acpRunner) RunUsage(ctx context.Context, req Request) ([]byte, UsageResu
 	if !usage.Available && usage.UnavailableReason == "" {
 		usage = unavailableUsage("acp", "session/prompt response carried no usage token fields")
 	}
+	if usage.ModelResolved == "" {
+		usage.ModelResolved = noModelReport(acpAdapterLabel(a.binary, a.args))
+	}
 	return out, usage, err
+}
+
+// acpAdapterLabel names the adapter behind an ACP spawn for a no-model reason
+// (ModelUnavailableFor): "grok acp", "codex acp", or "acp <binary>" for a peer
+// satelle has no name for. Derived from the spawn, never assumed.
+func acpAdapterLabel(binary string, args []string) string {
+	if acpEffortArgvSupported(binary, args) {
+		return "grok acp"
+	}
+	base := strings.ToLower(filepath.Base(binary))
+	if strings.Contains(base, "codex") {
+		return "codex acp"
+	}
+	for _, a := range args {
+		if strings.Contains(strings.ToLower(a), "codex") {
+			return "codex acp"
+		}
+	}
+	return "acp " + filepath.Base(binary)
+}
+
+// acpModelFromResult reads the model a peer states it ran from a session/prompt
+// result: `_meta.modelId` first (the id the peer names), then the primary entry
+// of a `modelUsage` map on `_meta` or `_meta.usage` (grok keys it by build id,
+// e.g. "grok-4.7-build"). Empty when the peer reports neither.
+func acpModelFromResult(result json.RawMessage) string {
+	var r struct {
+		Meta struct {
+			ModelID    string          `json:"modelId"`
+			ModelUsage json.RawMessage `json:"modelUsage"`
+			Usage      struct {
+				ModelUsage json.RawMessage `json:"modelUsage"`
+			} `json:"usage"`
+		} `json:"_meta"`
+	}
+	if len(result) == 0 || json.Unmarshal(result, &r) != nil {
+		return ""
+	}
+	if id := strings.TrimSpace(r.Meta.ModelID); id != "" {
+		return id
+	}
+	for _, mu := range []json.RawMessage{r.Meta.ModelUsage, r.Meta.Usage.ModelUsage} {
+		if primary, _, ok := parseModelUsage(mu); ok {
+			return primary
+		}
+	}
+	return ""
+}
+
+// acpModelFromReply reads a model id off a session/new or session/set_config_option
+// reply: `_meta.modelId`, `models.currentModelId` or a `model` config option's
+// currentValue. Empty when the reply names none.
+func acpModelFromReply(reply json.RawMessage) string {
+	var r struct {
+		Meta struct {
+			ModelID string `json:"modelId"`
+		} `json:"_meta"`
+		Models struct {
+			CurrentModelID string `json:"currentModelId"`
+		} `json:"models"`
+		ConfigOptions []struct {
+			ID           string `json:"id"`
+			CurrentValue string `json:"currentValue"`
+		} `json:"configOptions"`
+	}
+	if len(reply) == 0 || json.Unmarshal(reply, &r) != nil {
+		return ""
+	}
+	if id := strings.TrimSpace(r.Meta.ModelID); id != "" {
+		return id
+	}
+	if id := strings.TrimSpace(r.Models.CurrentModelID); id != "" {
+		return id
+	}
+	for _, o := range r.ConfigOptions {
+		if o.ID == "model" && strings.TrimSpace(o.CurrentValue) != "" {
+			return strings.TrimSpace(o.CurrentValue)
+		}
+	}
+	return ""
 }
 
 // acpUsageFromResult maps `_meta.usage` of a session/prompt response
 // (camelCase inputTokens / outputTokens / cachedReadTokens /
-// cacheCreationTokens / totalTokens), or nil when the peer reported none.
-func acpUsageFromResult(result json.RawMessage) *UsageResult {
-	if len(result) == 0 {
-		return nil
-	}
+// cacheCreationTokens / totalTokens) and the model the peer ran. The model is
+// the prompt result's own (acpModelFromResult), else fallbackModel — what
+// session/new or set_config_option reported — else the adapter-named no-model
+// reason for adapter. Returns nil only when the peer reported neither usage nor
+// a model.
+func acpUsageFromResult(result json.RawMessage, fallbackModel, adapter string) *UsageResult {
+	var u *UsageResult
 	var r struct {
 		Meta struct {
 			Usage map[string]any `json:"usage"`
 		} `json:"_meta"`
 	}
-	if json.Unmarshal(result, &r) != nil || len(r.Meta.Usage) == 0 {
-		return nil
+	if len(result) > 0 && json.Unmarshal(result, &r) == nil && len(r.Meta.Usage) > 0 {
+		if got := grokUsageFromMap(r.Meta.Usage); got.Available {
+			u = got
+		}
 	}
-	if u := grokUsageFromMap(r.Meta.Usage); u.Available {
-		return u
+	model := acpModelFromResult(result)
+	if model == "" {
+		model = fallbackModel
 	}
-	return nil
+	if u == nil {
+		if model == "" {
+			return nil
+		}
+		x := unavailableUsage("acp", "session/prompt response carried no usage token fields")
+		u = &x
+	}
+	if model == "" {
+		model = noModelReport(adapter)
+	}
+	u.ModelResolved = model
+	return u
 }
 
 type acpSession struct {
@@ -136,6 +235,8 @@ type acpSession struct {
 	sendMu    sync.Mutex
 	promptErr error
 	ctx       context.Context
+	// adapter names the ACP peer (acpAdapterLabel) for a no-model reason.
+	adapter string
 }
 
 func openACPSession(ctx context.Context, a acpRunner, req Request, pol PermissionPolicy) (Session, error) {
@@ -199,6 +300,7 @@ func openACPSession(ctx context.Context, a acpRunner, req Request, pol Permissio
 		cmd: cmd, stdin: stdin, pol: pol,
 		onEvent: fanout, ev: evCh, closeEv: closeEv, stopHB: stopHB,
 		stderrBuf: &stderrBuf, ctx: ctx,
+		adapter: acpAdapterLabel(a.binary, a.args),
 	}
 	sess.wg.Add(1)
 	go func() {
@@ -261,7 +363,10 @@ func (s *acpSession) Send(ctx context.Context, turn Turn) error {
 		s.promptErr = fmt.Errorf("session/prompt: %w", err)
 		return s.promptErr
 	}
-	if u := acpUsageFromResult(result); u != nil {
+	c.mu.Lock()
+	sessModel := c.model
+	c.mu.Unlock()
+	if u := acpUsageFromResult(result, sessModel, s.adapter); u != nil {
 		ev := newEvent(EventUsage)
 		ev.Usage = u
 		emitEvent(s.onEvent, ev)
@@ -400,6 +505,7 @@ func (s *acpSession) handshake(ctx context.Context, req Request) error {
 	}
 	c.mu.Lock()
 	c.session = sessObj.SessionID
+	c.model = acpModelFromReply(sessRes)
 	c.mu.Unlock()
 
 	// Optional model config (sty_a476a2f8). A peer that explicitly rejects the
@@ -408,11 +514,17 @@ func (s *acpSession) handshake(ctx context.Context, req Request) error {
 	// are a soft miss — log and continue; the binding still spawned with its
 	// default model (same as before for those peers).
 	if m := strings.TrimSpace(req.Model); m != "" {
-		if _, err := c.request(ctx, "session/set_config_option", map[string]any{
+		if cfgRes, err := c.request(ctx, "session/set_config_option", map[string]any{
 			"sessionId": sessObj.SessionID,
 			"configId":  "model",
 			"value":     m,
-		}); err != nil {
+		}); err == nil {
+			if id := acpModelFromReply(cfgRes); id != "" {
+				c.mu.Lock()
+				c.model = id
+				c.mu.Unlock()
+			}
+		} else {
 			es := err.Error()
 			if strings.Contains(strings.ToLower(es), "method not found") ||
 				strings.Contains(strings.ToLower(es), "not supported") ||
@@ -482,9 +594,12 @@ type acpClient struct {
 	// cur is the open agent_message run; segments holds closed runs in order.
 	// A tool_call / tool_call_update closes cur into segments (sty_844b6ab1).
 	// agent_thought_chunk is neither captured nor segmenting.
-	cur        strings.Builder
-	segments   []string
-	session    string
+	cur      strings.Builder
+	segments []string
+	session  string
+	// model is the resolved model id the peer named on session/new or a
+	// set_config_option reply; empty when it named none.
+	model      string
 	mutatorsOK bool
 	pol        PermissionPolicy
 	sink       io.Writer

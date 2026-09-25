@@ -10,6 +10,11 @@ import (
 // cannot share a definition — keep this string in sync with agentcli's by hand.
 const modelUnavailable = "unavailable"
 
+// modelUnavailablePrefix leads an adapter-named reason such as
+// "unavailable: codex command reports no model" (agentcli.ModelUnavailableFor,
+// sty_8e422d47) — a reason, never a measured id. Keep in sync by hand.
+const modelUnavailablePrefix = modelUnavailable + ":"
+
 // ModelLabel renders the display string for a row's model fields: the
 // resolved canonical id when one was recorded, the configured alias marked
 // unknown when only that was, or a bare "unknown" when neither was (a legacy
@@ -20,7 +25,7 @@ const modelUnavailable = "unavailable"
 func ModelLabel(alias, resolved string) string {
 	alias = strings.TrimSpace(alias)
 	resolved = strings.TrimSpace(resolved)
-	if resolved != "" && resolved != modelUnavailable {
+	if resolved != "" && resolved != modelUnavailable && !strings.HasPrefix(resolved, modelUnavailablePrefix) {
 		return resolved
 	}
 	if alias != "" {

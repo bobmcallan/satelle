@@ -118,6 +118,18 @@ func codexUsageFromMap(raw map[string]any) *UsageResult {
 	return u
 }
 
+// codexModelID reads the model id off a codex event: `model` on the event
+// itself (thread.started / session_configured / turn.completed) or on its usage
+// object. The real `codex exec --json` capture in testdata/usage carries none,
+// so this is empty unless a build emits one; the caller then records the
+// adapter-named no-model reason.
+func codexModelID(ev, usage map[string]any) string {
+	if id := firstString(ev, "model", "model_id"); id != "" {
+		return id
+	}
+	return firstString(usage, "model", "model_id")
+}
+
 // usageForShape picks the provider mapper from the usage object's own field
 // names: camelCase inputTokens is grok's spelling, cached_input_tokens (or a
 // turn.completed carrier) is codex's, anything else is Anthropic-shaped.
@@ -153,6 +165,9 @@ func unavailableUsage(adapter, why string) UsageResult {
 // per-turn and summed; any other usage line (a result event) is a final
 // figure, so the last one wins. ok is false when no line carried usage.
 func jsonlUsage(stdout []byte) (u UsageResult, ok bool) {
+	// codex names its model on rows that carry no usage; remember it for the
+	// turn.completed sum.
+	var codexModel string
 	for _, line := range bytes.Split(stdout, []byte("\n")) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 || line[0] != '{' {
@@ -163,6 +178,12 @@ func jsonlUsage(stdout []byte) (u UsageResult, ok bool) {
 			continue
 		}
 		typ := lowerString(v, "type")
+		if typ == "thread.started" || typ == "session_configured" || typ == "turn.started" {
+			if id := codexModelID(v, nil); id != "" {
+				codexModel = id
+			}
+			continue
+		}
 		if typ != "turn.completed" && typ != "result" && typ != "usage" && typ != "end" {
 			continue
 		}
@@ -177,6 +198,9 @@ func jsonlUsage(stdout []byte) (u UsageResult, ok bool) {
 		}
 		ok = true
 	}
+	if ok && codexModel != "" {
+		u.ModelResolved = KeepModel(codexModel, u.ModelResolved)
+	}
 	return u, ok
 }
 
@@ -190,6 +214,12 @@ func addUsage(a, b UsageResult) UsageResult {
 	a.CacheCreationInputTokens += b.CacheCreationInputTokens
 	a.CacheReadInputTokens += b.CacheReadInputTokens
 	a.CacheSplitAvailable = a.CacheSplitAvailable && b.CacheSplitAvailable
+	// A model id seen on any turn survives the sum; a later no-model reason
+	// never replaces it.
+	a.ModelResolved = KeepModel(a.ModelResolved, b.ModelResolved)
+	if len(a.Models) == 0 {
+		a.Models = b.Models
+	}
 	return a
 }
 

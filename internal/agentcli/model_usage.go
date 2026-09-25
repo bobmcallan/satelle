@@ -3,6 +3,7 @@ package agentcli
 import (
 	"encoding/json"
 	"sort"
+	"strings"
 )
 
 // ModelUnavailable marks an invocation whose transport reported no resolved
@@ -12,6 +13,41 @@ import (
 // ledger.ModelLabel; internal/ledger imports no other internal package, so the
 // two constants cannot share a definition — keep them in sync by hand.
 const ModelUnavailable = "unavailable"
+
+// modelUnavailablePrefix leads an adapter-named reason (ModelUnavailableFor).
+// ledger.ModelLabel checks the same prefix by hand — keep them in sync.
+const modelUnavailablePrefix = ModelUnavailable + ":"
+
+// ModelUnavailableFor is the adapter-named no-model marker, e.g.
+// "unavailable: codex command reports no model" — it says which adapter ran and
+// found no model to report, where the bare ModelUnavailable literal says only
+// that none was recorded (sty_8e422d47). It is never a measured id;
+// IsModelUnavailable recognises both spellings.
+func ModelUnavailableFor(adapter, reason string) string {
+	return modelUnavailablePrefix + " " + adapter + " " + reason
+}
+
+// noModelReport is the adapter-named marker for an adapter whose output
+// carried no model id.
+func noModelReport(adapter string) string {
+	return ModelUnavailableFor(adapter, "reports no model")
+}
+
+// IsModelUnavailable reports whether s is a no-model marker (empty, the bare
+// literal, or an adapter-named reason) rather than a measured model id.
+func IsModelUnavailable(s string) bool {
+	s = strings.TrimSpace(s)
+	return s == "" || s == ModelUnavailable || strings.HasPrefix(s, modelUnavailablePrefix)
+}
+
+// KeepModel merges a later model value into the current one: a measured id is
+// never replaced by a no-model marker, and any later measured id wins.
+func KeepModel(cur, next string) string {
+	if next == "" || (IsModelUnavailable(next) && !IsModelUnavailable(cur)) {
+		return cur
+	}
+	return next
+}
 
 // ModelUsage is one model's token/cost entry from a transport's modelUsage
 // map (e.g. `claude -p --output-format json`, which keys usage by canonical
