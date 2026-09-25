@@ -1,3 +1,8 @@
+## [0.0.553] - 2026-09-25
+
+### Fixed
+- **A fresh repo's doctor check no longer expects an orchestrator live-seat warning.** `story chat` no longer opens that seat, so the warning is gone. (sty_6f9ba7ca)
+
 ## [0.0.552] - 2026-09-25
 
 ### Removed

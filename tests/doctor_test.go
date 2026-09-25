@@ -23,11 +23,10 @@ func TestDoctorHealthyRepo(t *testing.T) {
 			t.Errorf("doctor output missing %q:\n%s", want, out)
 		}
 	}
-	// The baseline [orchestrator] seat authors no command, and satelle compiles
-	// no live default (sty_a762f3bd): a fresh repo warns rather than silently
-	// resolving the live seat to a provider.
-	if !strings.Contains(out, "[orchestrator] has no command and no profile=") {
-		t.Errorf("doctor should warn that the unauthored [orchestrator] live seat has no command:\n%s", out)
+	// story chat is gone (sty_6f9ba7ca), so the baseline [orchestrator] seat is
+	// not opened as a live session and a fresh repo does not warn about it.
+	if strings.Contains(out, "[orchestrator] has no command and no profile=") {
+		t.Errorf("doctor should not warn about an orchestrator live seat:\n%s", out)
 	}
 	// Lifecycle hooks are surfaced, since they fire outside the status graph.
 	if !strings.Contains(out, "Lifecycle hooks") || !strings.Contains(out, "create_review") {
