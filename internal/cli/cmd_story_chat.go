@@ -160,7 +160,7 @@ func runStoryChat(cmd *cobra.Command, args []string) error {
 // EventHandler may be called from concurrent stdout/stderr reader goroutines
 // (agentcli.EventHandler's own contract), so capture is guarded and one-shot
 // via initCaptured. The returned closeUnrecorded records "unknown" once, if
-// no init event ever arrived (ACP, or a stream transport that never reached
+// no init event ever arrived (the command transport, or a stream transport that never reached
 // the init line) — callers run it when the session closes, alongside
 // sess.Close.
 func orchestratorModelCapture(ctx context.Context, storyID, sid, executable string, base agentcli.EventHandler) (handler agentcli.EventHandler, closeUnrecorded func()) {

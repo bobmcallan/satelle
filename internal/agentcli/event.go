@@ -26,10 +26,11 @@ const (
 	EventCompleted         EventKind = "completed"
 	EventFailed            EventKind = "failed"
 	// EventSessionInit fires once, when a stream-json transport's system/init
-	// message names the model the session actually opened with (sty_7069bced)
-	// — the orchestrator-session capture config.SelectModel's inherited tier
-	// reads. Only the stream transport emits it (ACP/command report no model
-	// at open); a caller that never sees one records the session as unknown.
+	// message, or the ACP handshake's settled model, names the model the
+	// session actually opened with (sty_7069bced) — the orchestrator-session
+	// capture config.SelectModel's inherited tier reads. Stream and ACP emit
+	// it (ACP with an empty Model when none is known); the command transport
+	// does not, and a caller that never sees one records the session as unknown.
 	EventSessionInit EventKind = "session_init"
 	// EventInteractiveDenied fires when an agent asked an interactive
 	// ask-the-user question (a permission request for an Ask tool, or an

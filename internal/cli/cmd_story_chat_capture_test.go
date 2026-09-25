@@ -51,6 +51,21 @@ func TestOrchestratorModelCaptureRecordsKnownModelOnce(t *testing.T) {
 	}
 }
 
+// TestOrchestratorModelCaptureRecordsACPInit: an ACP session emits its init
+// at open (sty_bb92973f), so the model is recorded and closeUnrecorded does
+// not overwrite it with unknown.
+func TestOrchestratorModelCaptureRecordsACPInit(t *testing.T) {
+	wireLedgerOnly(t)
+	handler, closeUnrecorded := orchestratorModelCapture(context.Background(), "sty_chat3", "sess-3", "grok", nil)
+	handler(agentcli.Event{Kind: agentcli.EventSessionInit, Model: "grok-4.5"})
+	closeUnrecorded()
+
+	orch, _, _ := verb.SessionModels(context.Background(), "sty_chat3")
+	if orch.Model != "grok-4.5" || orch.Executable != "grok" {
+		t.Fatalf("orchestrator session model = %+v, want grok-4.5/grok", orch)
+	}
+}
+
 // TestOrchestratorModelCaptureRecordsUnknownWhenSessionNeverInits pins the
 // close-time fallback: a session that closes with no EventSessionInit (ACP,
 // or a stream transport that never reached the init line) records "unknown"

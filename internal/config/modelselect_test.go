@@ -115,6 +115,24 @@ func TestSelectModelPrecedence(t *testing.T) {
 			wantSource: ModelSourceCLIDefault,
 		},
 		{
+			name: "in-protocol model session applies inherited model without a slot",
+			in: SelectInput{
+				HasModelSlot: false, ModelViaSession: true, CommandExecutable: "grok",
+				Orchestrator: SessionModel{Model: "grok-4.5", Executable: "grok"},
+			},
+			wantModel:  "grok-4.5",
+			wantSource: ModelSourceInheritedOrchestrator,
+		},
+		{
+			name: "in-protocol model session still blocks a mismatched executable",
+			in: SelectInput{
+				HasModelSlot: false, ModelViaSession: true, CommandExecutable: "grok",
+				Orchestrator: SessionModel{Model: "claude-opus-5-5", Executable: "claude"},
+			},
+			wantModel:  "",
+			wantSource: ModelSourceCLIDefault,
+		},
+		{
 			name: "cross-provider guard blocks a mismatched executable, falls to creator",
 			in: SelectInput{
 				HasModelSlot: true, CommandExecutable: "codex",

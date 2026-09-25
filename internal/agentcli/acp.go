@@ -547,6 +547,18 @@ func (s *acpSession) handshake(ctx context.Context, req Request) error {
 			"value":     e,
 		})
 	}
+	// The session's starting model, once, before any prompt: the peer's own
+	// id when it named one, else the model this handshake applied. Empty when
+	// neither is known — the capture then records explicit unknown.
+	c.mu.Lock()
+	started := c.model
+	c.mu.Unlock()
+	if started == "" {
+		started = strings.TrimSpace(req.Model)
+	}
+	ev := newEvent(EventSessionInit)
+	ev.Model = started
+	emitEvent(s.onEvent, ev)
 	return nil
 }
 

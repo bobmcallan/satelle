@@ -647,6 +647,7 @@ func (g *Engine) selectModel(ctx context.Context, binding config.AgentBinding, s
 		DispatchSource:    overrideSource,
 		CommandExecutable: binding.ExecutableToken(),
 		HasModelSlot:      config.HasModelSlot(binding.CommandTemplate()),
+		ModelViaSession:   binding.IsACP(),
 	}
 	if g.sessionModels != nil && strings.TrimSpace(storyID) != "" {
 		in.Orchestrator, in.InLoop, in.Creator = g.sessionModels(ctx, storyID)

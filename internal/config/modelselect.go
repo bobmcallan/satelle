@@ -64,6 +64,11 @@ type SelectInput struct {
 	// {model} placeholder at all (HasModelSlot helper). An inherited or
 	// creator model is never applied when there is no slot to fill.
 	HasModelSlot bool
+	// ModelViaSession reports that the binding's transport applies a model
+	// in-protocol (ACP session/set_config_option) rather than through a
+	// {model} argv slot, so an inherited or creator model is applicable
+	// without one. The executable-match guard still applies.
+	ModelViaSession bool
 }
 
 // SelectModel resolves the model for one dispatch and names why
@@ -108,12 +113,12 @@ func inheritedModel(in SelectInput) (model, source string, ok bool) {
 }
 
 // crossProviderApplied returns s.Model when it is known AND safe to apply to
-// this dispatch: the binding's command carries a {model} slot, and s's
+// this dispatch: the binding can accept a model (a {model} slot or an in-protocol session config), and s's
 // executable matches the binding's own command executable. An inherited or
 // creator model that fails either check falls through rather than crossing
 // providers (sty_7069bced).
 func crossProviderApplied(s SessionModel, in SelectInput) (string, bool) {
-	if !s.known() || !in.HasModelSlot {
+	if !s.known() || (!in.HasModelSlot && !in.ModelViaSession) {
 		return "", false
 	}
 	if !strings.EqualFold(strings.TrimSpace(s.Executable), strings.TrimSpace(in.CommandExecutable)) {

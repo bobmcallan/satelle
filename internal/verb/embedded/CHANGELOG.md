@@ -1,3 +1,13 @@
+## [0.0.541] - 2026-09-25
+
+### Fixed
+- **ACP bindings receive the selected or inherited model.** An ACP binding with no `model=` and no `{model}` slot now gets the orchestrator, in-loop, or creator model when its executable matches, and applies it through ACP session configuration (`session/set_config_option`), not argv. An ACP live session records the model it started with at open, instead of `unknown`. (sty_bb92973f)
+
+## [serve-v0.0.72] - 2026-09-25
+
+### Fixed
+- **The service uses the same ACP model selection.** An ACP binding can inherit a model without a `{model}` slot, and an ACP session reports its starting model. (sty_bb92973f)
+
 ## [0.0.540] - 2026-09-25
 
 ### Fixed

@@ -468,6 +468,44 @@ func TestArtifactAttemptsInheritedOrchestratorModel(t *testing.T) {
 	}
 }
 
+// TestArtifactAttemptsInheritedModelReachesACPRequest pins sty_bb92973f: an
+// ACP binding has no {model} slot, yet the inherited orchestrator model
+// (same executable) is selected and lands on the agentcli.Request the ACP
+// session configuration is built from.
+func TestArtifactAttemptsInheritedModelReachesACPRequest(t *testing.T) {
+	primary := &attemptRunner{runs: []attemptRun{{out: validAttempt("## AC1\nok\n## AC2\nok")}}}
+	docs := fakeDocs{workflow: modelSourceDispatchWFNoOverride, skillBody: attemptedDispatchSkill, skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name == "architect" {
+			return config.AgentBinding{Command: "primary stdio", Interface: config.InterfaceACP, Tools: "read_file"}, true
+		}
+		return config.AgentBinding{}, false
+	})
+	g.newRunner = func(_iface, command string) (agentcli.Runner, error) {
+		if command == "primary stdio" {
+			return primary, nil
+		}
+		return nil, nil
+	}
+	g.SetSessionModelsResolver(func(context.Context, string) (orch, inLoop, creator config.SessionModel) {
+		return config.SessionModel{Model: "grok-4.5", Executable: "primary"}, config.SessionModel{}, config.SessionModel{}
+	})
+	g.SetArtifactAttacher(func(context.Context, workitem.Item, string, string, string) (string, string, error) {
+		return "design", "design-note", nil
+	})
+	res, err := g.DispatchExecutor(context.Background(), attemptedItem(), "plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Model != "grok-4.5" || res.ModelSource != config.ModelSourceInheritedOrchestrator {
+		t.Fatalf("dispatch result = model=%q source=%q, want grok-4.5/inherited-orchestrator", res.Model, res.ModelSource)
+	}
+	if len(primary.requests) != 1 || primary.requests[0].Model != "grok-4.5" {
+		t.Fatalf("ACP runner requests = %+v, want one request carrying Model grok-4.5", primary.requests)
+	}
+}
+
 // TestArtifactAttemptsInheritedInLoopModel pins the same wiring for the
 // IN-LOOP session's model (the orchestrator's is unknown), and — the specific
 // gap this test closes — that the choice applies uniformly to the dispatch
