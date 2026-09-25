@@ -29,18 +29,20 @@ func appAt(t *testing.T) (*app.App, string) {
 	}, dataDir
 }
 
-// A missing agents.toml in an initialized repo is a BROKEN deployment — the
-// bootstrap refuses with the fix (`satelle init`), never silently falling back
-// to compiled defaults (sty_d0d6bb67).
-func TestRequireAgentsMissingRefuses(t *testing.T) {
+// A missing agents.toml runs the embedded baseline seats (sty_6602bb44).
+func TestRequireAgentsMissingRunsBaseline(t *testing.T) {
 	a, _ := appAt(t)
-	_, err := requireAgents(a)
-	if err == nil {
-		t.Fatal("want refusal for a missing agents.toml")
+	eff, err := requireAgents(a)
+	if err != nil {
+		t.Fatalf("missing agents.toml should run the baseline: %v", err)
 	}
-	for _, want := range []string{config.AgentsConfigName, "satelle init"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error should carry %q: %v", want, err)
+	base, err := config.BaselineAgents()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name := range base.Agents {
+		if _, ok := eff.Agents.Agents[name]; !ok {
+			t.Errorf("baseline seat %q missing from the effective layer", name)
 		}
 	}
 }

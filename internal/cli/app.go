@@ -638,11 +638,10 @@ func skillResolver(a *app.App) func(skill string) bool {
 }
 
 // requireAgents loads the EFFECTIVE agents layer for an INITIALIZED repo and
-// refuses when it is broken (sty_d0d6bb67): a malformed file, or an absent one —
-// `satelle init` always seeds it, so absence means a broken deployment, not "use
-// compiled defaults". The error names the file and the fix; the compiled defaults
-// remain only the pre-init bootstrap (a repo with no .satelle at all never
-// reaches this — init is not store-backed).
+// refuses when it is broken (sty_d0d6bb67): a malformed file, or the retired
+// actors.toml with no agents.toml. An absent agents.toml is NOT broken: the
+// embedded baseline seats run and a repo file names only the seats it changes
+// (sty_6602bb44). The error names the file and the fix.
 //
 // "Effective" means the repo file folded with the machine-wide profile catalog
 // by the documented precedence (sty_c7dfeedf) — resolved through the single
@@ -666,8 +665,7 @@ func requireAgents(a *app.App) (config.EffectiveAgents, error) {
 				"missing %s but found the retired %s/%s — rename it to %s (the legacy filename is no longer loaded)",
 				rel, config.DefaultDataDir, config.ActorsConfigName, config.AgentsConfigName)
 		}
-		return config.EffectiveAgents{}, fmt.Errorf(
-			"missing %s — an initialized repo must define its agents layer; run `satelle init` to seed the default", rel)
+		// No repo file: the embedded baseline seats run (sty_6602bb44).
 	}
 	eff, err := config.LoadEffectiveAgents(dataDir, a.Config.Vars)
 	if err != nil {

@@ -11,8 +11,8 @@ import (
 
 // TestInitSeedsCommentedReworkBindingsAndDocs pins sty_cec967b5 AC1/AC2:
 // after satelle init, agents.toml carries commented [orchestrator]/[coder]
-// examples (inert — validate stays healthy and does not grant them), and the
-// seeded workflows README documents rework = { consult, rounds }.
+// examples (the file does not name those seats). The shipped baseline still
+// grants them. The seeded workflows README documents rework = { consult, rounds }.
 func TestInitSeedsCommentedReworkBindingsAndDocs(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
@@ -39,8 +39,15 @@ func TestInitSeedsCommentedReworkBindingsAndDocs(t *testing.T) {
 	if !strings.Contains(out, "PASS  agent validate green") {
 		t.Errorf("fresh init with commented examples must validate healthy:\n%s", out)
 	}
-	if strings.Contains(out, "GRANT [orchestrator]") || strings.Contains(out, "GRANT [coder]") {
-		t.Errorf("commented examples must not appear as grants:\n%s", out)
+	// The seed keeps the tables commented. The grants come from the baseline,
+	// which is what runs for a seat the repo file does not name.
+	for _, seat := range []string{"orchestrator", "coder"} {
+		if !strings.Contains(out, "GRANT ["+seat+"]") {
+			t.Errorf("baseline seat %s must be granted:\n%s", seat, out)
+		}
+	}
+	if !strings.Contains(out, `(baseline)`) {
+		t.Errorf("baseline seats must record baseline provenance:\n%s", out)
 	}
 	for _, want := range []string{"GRANT [executor]", "GRANT [reviewer]"} {
 		if !strings.Contains(out, want) {

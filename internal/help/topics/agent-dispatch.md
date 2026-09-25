@@ -156,6 +156,15 @@ transport now depends on **how the binding is used**:
   transport its CLI cannot serve live still produces the not-live-capable WARN
   from `satelle agent validate` and is refused at session open, unchanged.
 
+**Baseline seats.** The logical seats (executor, reviewer, planner, coder,
+orchestrator, and the rest the shipped route names) ship embedded. A repo
+`agents.toml` names only the seats it changes: a named seat overrides just the
+fields it writes, an unnamed seat stays the baseline's, and with no repo file the
+baseline runs. A baseline seat carries role and principles only; its command,
+tools and model come from a `profile=` the seat names, or from the catalog's
+`[roles]` when the repo sets `[defaults] use_global_roles`. Without either, the
+embedded fallback stands. A catalog never retargets a repo that did not ask.
+
 The preference order between `stream` and `acp` for a live binding is
 configuration, not a compiled opinion — `[defaults] live_interfaces` in
 `.satelle/workflows/agents.toml`:

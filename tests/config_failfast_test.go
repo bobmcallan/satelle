@@ -62,25 +62,17 @@ func TestMalformedAgentsTomlRefuses(t *testing.T) {
 	}
 }
 
-// TestMissingAgentsTomlRefusesAndInitReseeds: an initialized repo whose
-// agents.toml is gone refuses store-backed commands with the fix, and re-running
-// init reseeds it (AC3) — while a repo with no .satelle at all still bootstraps
-// (init is the thing that runs).
-func TestMissingAgentsTomlRefusesAndInitReseeds(t *testing.T) {
+// TestMissingAgentsTomlRunsBaselineAndInitReseeds: an initialized repo whose
+// agents.toml is gone still runs — the baseline seats are the layer — and
+// re-running init reseeds the file.
+func TestMissingAgentsTomlRunsBaselineAndInitReseeds(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	if err := os.Remove(filepath.Join(repo, ".satelle", "workflows", "agents.toml")); err != nil {
 		t.Fatal(err)
 	}
-	out, err := run(t, testBin, repo, "status")
-	if err == nil {
-		t.Fatalf("status must refuse when agents.toml is missing in an initialized repo:\n%s", out)
-	}
-	for _, want := range []string{"agents.toml", "satelle init"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("refusal should carry %q:\n%s", want, out)
-		}
-	}
+	// Absent is the baseline seats, not a broken deployment.
+	mustRun(t, testBin, repo, "status")
 	// The prescribed fix works: init reseeds, the command runs again.
 	mustRun(t, testBin, repo, "init")
 	mustRun(t, testBin, repo, "status")

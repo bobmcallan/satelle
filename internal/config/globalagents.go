@@ -349,7 +349,7 @@ func StarterGlobalAgents(cli string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf(starterGlobalAgentsTemplate, cli, cli, runner.Command(), DefaultReviewerTools, cli), nil
+	return fmt.Sprintf(starterGlobalAgentsTemplate, cli, cli, runner.Command(), DefaultReviewerTools, cli, runner.Command(), cli, cli), nil
 }
 
 const starterGlobalAgentsTemplate = `# satelle machine-wide agent PROFILE catalog (~/.satelle/agents.toml).
@@ -390,11 +390,20 @@ principles = "session"
 # timeout = "20m"     # dispatch bound
 # env     = { ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
 
+[profiles.%s-agent]
+role       = "agent"
+interface  = "command"
+command    = %q
+principles = "session"
+# tools   = "..."     # per-profile tool grant
+# model   = "..."     # per-profile model
+
 [roles]
-# OPT-IN per-role defaults. These reach ONLY a repo that sets
-# [defaults] use_global_roles = true in its own .satelle/workflows/agents.toml, and only
-# for a binding that names no profile= of its own. Leave commented out to keep
-# every repo explicit.
+# OPT-IN per-role defaults. These reach a binding — repo-authored or baseline —
+# only when the repo sets [defaults] use_global_roles = true in its own
+# .satelle/workflows/agents.toml, and only for a binding that names no profile=
+# of its own. Leave commented out to keep every repo explicit.
+# agent    = "%s-agent"
 # reviewer = "%s-reviewer"
 `
 

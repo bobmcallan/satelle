@@ -246,7 +246,13 @@ func hookGrantIndex(a *app.App, dataDir string) (map[string]agentvalidate.Grant,
 	}
 	// Workflows are passed as nil: this is a DISPLAY of binding facts, not a
 	// re-run of the allocation checks `agent validate` owns.
-	for _, g := range agentvalidate.ValidateEffective(repo, global, a.Config.Vars, nil).Grants {
+	// Layered, so the baseline seats (and the workspace layer) that actually run
+	// are indexed too — a hook on a baseline seat is not UNRESOLVED.
+	workspace, err := config.LoadWorkspaceAgents(dataDir)
+	if err != nil {
+		workspace = config.AgentsConfig{}
+	}
+	for _, g := range agentvalidate.ValidateEffectiveLayered(repo, workspace, global, a.Config.Vars, nil, nil).Grants {
 		index[g.Name] = g
 	}
 	return index, agentsFile, catalogFile

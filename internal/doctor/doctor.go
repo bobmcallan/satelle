@@ -102,17 +102,10 @@ func Check(ctx context.Context, o Opts) Report {
 	// 1. The effective agents layer, resolved against the machine-wide catalog,
 	//    with every binding/allocation/hook rule owned by agentvalidate.
 	repoAgents, agentsErr := config.LoadAgents(dataDir)
-	agentsPath, _ := config.AgentsPath(dataDir)
 	if agentsErr != nil {
 		rep.Findings = append(rep.Findings, health.Error(health.IDAgentsLoad, "Unreadable agents layer",
 			fmt.Sprintf("%s/%s: %v", config.DefaultDataDir, config.AgentsRel, agentsErr)).
 			WithRemediation("fix the file, or delete it and run `satelle init` to reseed the default").
-			About(config.DefaultDataDir+"/"+config.AgentsRel))
-	} else if !fileExists(agentsPath) {
-		rep.Findings = append(rep.Findings, health.Error(health.IDAgentsLoad, "Missing agents layer",
-			fmt.Sprintf("missing %s/%s — an initialized repo must define its agents layer",
-				config.DefaultDataDir, config.AgentsRel)).
-			WithRemediation("run `satelle init` to seed the default").
 			About(config.DefaultDataDir+"/"+config.AgentsRel))
 	}
 	global, globalErr := config.LoadGlobalAgents()

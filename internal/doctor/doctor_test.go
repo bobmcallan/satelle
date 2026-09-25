@@ -284,11 +284,6 @@ park = { state = "blocked", agent = "reviewer", gate = "satelle-story-blocked-re
 			want: health.IDWorkflowStructure,
 		},
 		{
-			name: "missing agents layer",
-			opts: fixtureOpts{omitAgents: true},
-			want: health.IDAgentsLoad,
-		},
-		{
 			name: "unresolved env var",
 			opts: fixtureOpts{agents: healthyAgentsTOML +
 				"\n[judge]\nrole = \"reviewer\"\ncommand = \"sh -c --disallowedTools Write {system}\"\ntools = \"Read\"\nenv = { TOKEN = \"${NOWHERE_DEFINED}\" }\n"},
@@ -341,9 +336,18 @@ requires = ["raised"]
 	}
 }
 
-// TestScaffoldFindingsAreInjectedNotImported pins the dependency direction:
-// doctor never imports the harness-scaffold writer, it consumes the detector as
-// an injected authority. A nil injection skips the check rather than guessing.
+// TestAbsentAgentsLayerIsTheBaseline: no repo agents file is the baseline seats,
+// not a defect — doctor must not report the layer missing or the seats unbound.
+func TestAbsentAgentsLayerIsTheBaseline(t *testing.T) {
+	r := check(t, newFixtureRepo(t, fixtureOpts{omitAgents: true}))
+	if ids(r)[health.IDAgentsLoad] {
+		t.Fatalf("absent agents.toml must not be an agents.load finding: %v", r.Findings)
+	}
+	for _, d := range r.Findings.Details(health.SeverityError) {
+		t.Errorf("baseline-only repo must be free of errors: %s", d)
+	}
+}
+
 func TestStatusDriftFindingsAreInjected(t *testing.T) {
 	root := newFixtureRepo(t, fixtureOpts{})
 	base := check(t, root)
@@ -369,6 +373,9 @@ func TestStatusDriftFindingsAreInjected(t *testing.T) {
 	}
 }
 
+// TestScaffoldFindingsAreInjectedNotImported pins the dependency direction:
+// doctor never imports the harness-scaffold writer, it consumes the detector as
+// an injected authority. A nil injection skips the check rather than guessing.
 func TestScaffoldFindingsAreInjectedNotImported(t *testing.T) {
 	root := newFixtureRepo(t, fixtureOpts{})
 	base := check(t, root)

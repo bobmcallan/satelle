@@ -1,3 +1,8 @@
+## [Unreleased]
+
+### Changed
+- **A repo agents file overrides named seats and keeps the baseline seats.** The logical seats ship embedded; a repo `agents.toml` names only the seats it changes, and an unnamed seat stays on the baseline. A missing repo agents file no longer refuses: the baseline seats run. A seat's command, tools and model resolve from a machine profile, and the starter machine catalog now carries an agent profile beside the reviewer profile for each supported CLI. (sty_6602bb44)
+
 ## [0.0.537] - 2026-09-25
 
 ### Changed

@@ -184,11 +184,26 @@ func ValidateEffective(repo config.AgentsConfig, global config.GlobalAgentsConfi
 // repo has pulled workspace bindings. Surfaces that read a deployed repo from
 // disk (doctor, `satelle agent validate`) pass config.LoadWorkspaceAgents.
 func ValidateEffectiveLayered(repo, workspace config.AgentsConfig, global config.GlobalAgentsConfig, repoVars map[string]string, workflows []docindex.Doc, skills SkillBody) Report {
-	return validateEffective(repo, workspace, global, repoVars, workflows, skills)
+	baseline, err := config.BaselineAgents()
+	if err != nil {
+		f := health.Error(health.IDAgentsLoad, "Unreadable baseline agent seats", err.Error())
+		r := validate(repo, config.LayerVars(global.Vars, repoVars), workflows, nil, skills)
+		r.Problems = append([]string{f.Detail}, r.Problems...)
+		r.Findings = append(health.Findings{f}, r.Findings...)
+		return r
+	}
+	return validateEffectiveBaseline(baseline, repo, workspace, global, repoVars, workflows, skills)
 }
 
 func validateEffective(repo, workspace config.AgentsConfig, global config.GlobalAgentsConfig, repoVars map[string]string, workflows []docindex.Doc, skills SkillBody) Report {
-	eff, err := config.ResolveEffectiveAgentsLayered(repo, workspace, global, repoVars)
+	return validateEffectiveBaseline(config.AgentsConfig{}, repo, workspace, global, repoVars, workflows, skills)
+}
+
+// validateEffectiveBaseline judges the layers as LoadEffectiveAgents resolves
+// them, with the embedded baseline seats beneath the repo's file.
+func validateEffectiveBaseline(baseline, repo, workspace config.AgentsConfig, global config.GlobalAgentsConfig, repoVars map[string]string, workflows []docindex.Doc, skills SkillBody) Report {
+	agents, prov, err := config.ResolveAgentsBaseline(baseline, repo, workspace, global)
+	eff := config.EffectiveAgents{Agents: agents, Provenance: prov, Vars: config.LayerVars(global.Vars, repoVars)}
 	if err != nil {
 		r := validate(repo, config.LayerVars(global.Vars, repoVars), workflows, nil, skills)
 		f := health.Error(health.IDAgentsProfileBroken, "Broken machine-wide profile reference", err.Error()).
@@ -197,7 +212,17 @@ func validateEffective(repo, workspace config.AgentsConfig, global config.Global
 		r.Findings = append(health.Findings{f}, r.Findings...)
 		return r
 	}
-	return validate(eff.Agents, eff.Vars, workflows, eff.Provenance, skills)
+	// A seat only the baseline names is shipped, not authored by this repo: the
+	// shipped route decides whether a node uses it, so it is never an orphan here.
+	shipped := map[string]bool{}
+	for n := range baseline.Agents {
+		if _, ok := repo.Agents[n]; !ok {
+			if _, ok := workspace.Agents[n]; !ok {
+				shipped[n] = true
+			}
+		}
+	}
+	return validateShipped(eff.Agents, eff.Vars, workflows, eff.Provenance, skills, shipped)
 }
 
 // Validate checks every agents.toml binding and each workflow's agent= node
@@ -227,6 +252,12 @@ func ValidateEffectiveWithSkills(repo config.AgentsConfig, global config.GlobalA
 }
 
 func validate(agents config.AgentsConfig, vars map[string]string, workflows []docindex.Doc, prov config.Provenance, skills SkillBody) Report {
+	return validateShipped(agents, vars, workflows, prov, skills, nil)
+}
+
+// validateShipped is validate with the set of baseline-only seats, which are
+// exempt from the orphan advisory.
+func validateShipped(agents config.AgentsConfig, vars map[string]string, workflows []docindex.Doc, prov config.Provenance, skills SkillBody, shipped map[string]bool) Report {
 	var r Report
 	r.Provenance = prov
 
@@ -496,7 +527,7 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 	}
 
 	for _, name := range sortedNames(agents.Agents) {
-		if !usedNamed[name] {
+		if !usedNamed[name] && !shipped[name] {
 			// Advisory only: a binding may serve a non-workflow verb (e.g.
 			// [retrospective] for `satelle story retrospect`) without an agent=
 			// node. The satelle-workflow-drift skill judges semantics; validate

@@ -5,7 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -51,18 +53,28 @@ func TestOrdinaryDoctorNeverProbes(t *testing.T) {
 // exactly once per isolated binding when --live is set.
 func TestLiveProbeRunsOnlyWhenAskedFor(t *testing.T) {
 	root := newFixtureRepo(t, fixtureOpts{})
-	var calls int
+	var (
+		mu     sync.Mutex
+		probed []string
+	)
 	Check(context.Background(), Opts{
 		RepoRoot: root,
 		DataDir:  filepath.Join(root, ".satelle"),
 		Live:     true,
-		probe: func(context.Context, agentvalidate.Grant, time.Duration) health.Findings {
-			calls++
+		probe: func(_ context.Context, g agentvalidate.Grant, _ time.Duration) health.Findings {
+			mu.Lock()
+			probed = append(probed, g.Name)
+			mu.Unlock()
 			return nil
 		},
 	})
-	if calls != 1 {
-		t.Errorf("want one probe for the single isolated binding, got %d", calls)
+	// Every isolated seat that runs is probed exactly once: the fixture's own
+	// binding (reviewer) plus the baseline seats beneath it; the in-loop executor
+	// has nothing to spawn.
+	sort.Strings(probed)
+	const want = "blocked-triage,coder,orchestrator,planner,ready-reviewer,retrospective,reviewer,reviewer-consult,reviewer-summary"
+	if got := strings.Join(probed, ","); got != want {
+		t.Errorf("probed seats = %s, want %s", got, want)
 	}
 }
 
