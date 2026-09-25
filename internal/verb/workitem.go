@@ -572,6 +572,28 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	if transitioning && executorDispatcher != nil {
 		res, derr := executorDispatcher.DispatchExecutor(ctx, current, *req.Status)
 		if derr != nil {
+			// A performer that judged the premise wrong parks the story: the
+			// notes go on the timeline and the set re-enters for the park edge,
+			// so blocked-review, park origin and the seat run as for any other
+			// park (sty_b8a0d062). Any other failure is a plain refusal.
+			var rejected *PerformerReject
+			if errors.As(derr, &rejected) && strings.TrimSpace(rejected.Notes) != "" {
+				if park := resumeParkName(ctx, current); park != "" && park != *req.Status {
+					author := res.Agent
+					if author == "" {
+						author = "executor"
+					}
+					appendLedgerEntry(ctx, current.ID, ledger.KindComment, author,
+						rejected.Notes, transitionPayload(current.Status, park, res.Skill), now)
+					var parked map[string]json.RawMessage
+					if json.Unmarshal(raw, &parked) == nil {
+						parked["status"], _ = json.Marshal(park)
+						if reraw, merr := json.Marshal(parked); merr == nil {
+							return workItemSet(ctx, reraw)
+						}
+					}
+				}
+			}
 			appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "executor",
 				fmt.Sprintf("named-agent dispatch failed for %s→%s: %v", current.Status, *req.Status, derr),
 				transitionPayload(current.Status, *req.Status, res.Skill), now)

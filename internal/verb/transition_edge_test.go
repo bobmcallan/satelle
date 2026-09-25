@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -81,8 +82,9 @@ requires = ["coded"]
 	if strings.TrimSpace(ref.Why) == "" {
 		t.Error("a structured refusal must say WHY the rule applied here")
 	}
-	if len(ref.Alternatives) != 1 || ref.Alternatives[0] != "plan" {
-		t.Errorf("alternatives = %v; want the legal moves ([plan])", ref.Alternatives)
+	// The start state can park (sty_b8a0d062), so blocked is a legal move too.
+	if !slices.Equal(ref.Alternatives, []string{"blocked", "plan"}) {
+		t.Errorf("alternatives = %v; want the legal moves ([blocked plan])", ref.Alternatives)
 	}
 
 	// Legal edge: backlog → plan (may fail later gates; must not be edge fence).

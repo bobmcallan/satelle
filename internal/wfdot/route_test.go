@@ -100,9 +100,11 @@ func TestSynthesisedTopologyValidates(t *testing.T) {
 			t.Errorf("synthesised edge %s missing", want)
 		}
 	}
-	// Nothing has begun at the start state, and a terminal cannot be abandoned.
-	if spec.HasEdge("backlog", "blocked") {
-		t.Error("start state must not gain a park edge")
+	// The start state can park (sty_b8a0d062): a wrong premise at ready
+	// sets blocked instead of leaving a green backlog pill. A terminal
+	// still cannot be abandoned.
+	if !spec.HasEdge("backlog", "blocked") {
+		t.Error("start state must be able to park as blocked")
 	}
 	if spec.HasEdge("done", "cancelled") || spec.HasEdge("done", "blocked") {
 		t.Error("terminal state must not gain cancel or park edges")
@@ -117,6 +119,9 @@ func TestSynthesisedTopologyValidates(t *testing.T) {
 	}
 	if got := idx["in_progress->blocked"].Skill; got != "satelle-story-blocked-review" {
 		t.Errorf("park edge gate = %q, want satelle-story-blocked-review", got)
+	}
+	if got := idx["backlog->blocked"].Skill; got != "satelle-story-blocked-review" {
+		t.Errorf("start park edge gate = %q, want satelle-story-blocked-review", got)
 	}
 	// The park advisor is DECLARED (`park.advisor` in done.toml) but is
 	// deliberately absent from the Spec: flat dispatch means entry fires nothing,

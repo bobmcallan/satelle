@@ -3,6 +3,8 @@ package agentstep
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
@@ -222,6 +224,69 @@ Do the planning work.`
 	}
 	if len(res.Models) != 1 || res.Models[0].ID != "claude-opus-5-5" {
 		t.Errorf("Models = %+v", res.Models)
+	}
+}
+
+func TestDispatchExecutor_RejectVerdictParks(t *testing.T) {
+	const rubric = `---
+name: ready-review
+type: skill
+description: test rubric
+---
+Judge premise.`
+	wf := spineWF("", "", "",
+		"ready|ready-reviewer|ready-review",
+		"plan|executor",
+		"done")
+	docs := fakeDocs{workflow: wf, skillBody: rubric, skillFound: true}
+	reject := &fakeRunner{out: modelEnvelopeText(t, `{"decision":"reject","notes":"body claims scratch.go:40 is 64 bytes; it is 67"}`, "claude-opus-5-5")}
+	g, _ := newEngine(t, "", docs)
+	g.newRunner = func(string, string) (agentcli.Runner, error) { return reject, nil }
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Command: "fake -p {system}", Model: "opus", Tools: "read_file,grep,list_dir"}, true
+	})
+	_, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_ready", Status: "backlog"}, "ready")
+	var rej *verb.PerformerReject
+	if !errors.As(err, &rej) {
+		t.Fatalf("reject verdict must be a PerformerReject, got %v", err)
+	}
+	if !strings.Contains(rej.Notes, "scratch.go:40") {
+		t.Fatalf("notes = %q", rej.Notes)
+	}
+}
+
+// A performer whose output carries no decision object, or an accept, is not a
+// reject: the step proceeds as before (sty_b8a0d062).
+func TestDispatchExecutor_NonRejectOutputProceeds(t *testing.T) {
+	const rubric = `---
+name: ready-review
+type: skill
+description: test rubric
+---
+Judge premise.`
+	for name, out := range map[string]string{
+		"artifact only": `{"applied":"none","premise":"holds"}`,
+		"accept":        `{"decision":"accept","notes":"ok"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			wf := spineWF("", "", "",
+				"ready|ready-reviewer|ready-review",
+				"plan|executor",
+				"done")
+			docs := fakeDocs{workflow: wf, skillBody: rubric, skillFound: true}
+			g, _ := newEngine(t, "", docs)
+			g.newRunner = func(string, string) (agentcli.Runner, error) {
+				return &fakeRunner{out: modelEnvelopeText(t, out, "claude-opus-5-5")}, nil
+			}
+			g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+				return config.AgentBinding{Command: "fake -p {system}", Model: "opus", Tools: "read_file,grep,list_dir"}, true
+			})
+			_, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_ready", Status: "backlog"}, "ready")
+			var rej *verb.PerformerReject
+			if errors.As(err, &rej) {
+				t.Fatalf("must not be a reject: %v", err)
+			}
+		})
 	}
 }
 

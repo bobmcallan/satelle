@@ -435,9 +435,10 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 		})
 		// Park-from-anywhere: From holds the wildcard, but every consumer reads
 		// explicit inbound edges, so the constructor expands it here. The start
-		// state is excluded — nothing has begun there to park.
+		// state is included so a wrong premise at ready can park as blocked
+		// (sty_b8a0d062). A terminal still cannot be abandoned.
 		for _, st := range spine {
-			if st.Terminal || st.Start {
+			if st.Terminal {
 				continue
 			}
 			spec.Transitions = append(spec.Transitions, roleEdge(st.Name, l.Park, l.ParkGate))

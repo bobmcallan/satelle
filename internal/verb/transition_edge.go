@@ -212,7 +212,9 @@ func ParkOrigin(item workitem.Item, spec wfdot.Spec, entries []ledger.Entry) str
 		if from == "" {
 			continue
 		}
-		if spec.IsPerformingState(from) {
+		// The start state is a legal origin: a wrong premise at ready parks
+		// straight from backlog and resumes there (sty_b8a0d062).
+		if spec.IsPerformingState(from) || from == spec.Start() {
 			return from
 		}
 		return ""
@@ -254,6 +256,44 @@ func brokenRouteTrackingStory(ctx context.Context, wfs []docindex.Doc) string {
 		}
 		if id := docstory.IDForDoc(refs, "workflows", w.Name); id != "" {
 			return id
+		}
+	}
+	return ""
+}
+
+// PerformerReject is a ready performer that judged the premise wrong.
+// Notes are the incorrect content for the operator. The transition parks
+// the story as blocked instead of leaving it in backlog (sty_b8a0d062).
+// Any other dispatch error stays a refusal with status unchanged.
+type PerformerReject struct {
+	Notes string
+}
+
+func (e *PerformerReject) Error() string {
+	if e == nil || strings.TrimSpace(e.Notes) == "" {
+		return "performer rejected the premise"
+	}
+	return e.Notes
+}
+
+// resumeParkName is the synthesised from="*" park state for this item's
+// lane, or "" when the lane has none.
+func resumeParkName(ctx context.Context, current workitem.Item) string {
+	idx, err := requireDocIndex()
+	if err != nil {
+		return ""
+	}
+	wfs, err := idx.List(ctx, "workflows")
+	if err != nil {
+		return ""
+	}
+	spec, _, _, serr := wfgovern.SpecFor(wfs, current)
+	if serr != nil {
+		return ""
+	}
+	for _, st := range spec.States {
+		if spec.IsResumePark(st.Name) {
+			return st.Name
 		}
 	}
 	return ""

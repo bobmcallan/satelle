@@ -1,3 +1,13 @@
+## [0.0.536] - 2026-09-25
+
+### Changed
+- **A wrong premise at ready parks the story blocked.** Configuration is repaired on that same pass. The incorrect content is written on the timeline. Any other dispatch failure leaves the status unchanged. The start state can park, and the resume origin of that park is backlog. (sty_b8a0d062)
+
+## [serve-v0.0.67] - 2026-09-25
+
+### Changed
+- **The service ships the same park edge.** A story still in backlog can be set to blocked, so a ready-step premise reject shows the blocked pill instead of staying in backlog. (sty_b8a0d062)
+
 ## [0.0.535] - 2026-09-25
 
 ### Changed

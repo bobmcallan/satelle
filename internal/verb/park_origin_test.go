@@ -70,11 +70,20 @@ func TestParkOriginEmptyLedgerDoesNotInvent(t *testing.T) {
 	}
 }
 
+func TestParkOriginFromStartIsStart(t *testing.T) {
+	spec := parkSpec(t)
+	item := workitem.Item{Status: "blocked", ParkOrigin: ""}
+	// A wrong premise at ready parks from backlog and resumes there (sty_b8a0d062).
+	if got := ParkOrigin(item, spec, []ledger.Entry{trans("backlog", "blocked")}); got != "backlog" {
+		t.Errorf("ParkOrigin = %q, want backlog", got)
+	}
+}
+
 func TestParkOriginIgnoresNonPerformingFrom(t *testing.T) {
 	spec := parkSpec(t)
 	item := workitem.Item{Status: "blocked", ParkOrigin: ""}
-	// backlog is start, not performing — do not resume onto it.
-	if got := ParkOrigin(item, spec, []ledger.Entry{trans("backlog", "blocked")}); got != "" {
+	// A terminal from is neither performing nor the start — do not resume onto it.
+	if got := ParkOrigin(item, spec, []ledger.Entry{trans("done", "blocked")}); got != "" {
 		t.Errorf("ParkOrigin = %q, want empty for non-performing from", got)
 	}
 }

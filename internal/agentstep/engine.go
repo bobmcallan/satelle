@@ -1770,6 +1770,12 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		g.telemetryEvent(ctx, item.ID, "executor", "agent-failure", failData)
 		return res, fmt.Errorf("named agent %q failed performing step %q: %w", dispatchAgent, toStatus, invRes.Err)
 	}
+	// A performer reject is not a crash. The verb parks the story as blocked
+	// and puts the notes on the timeline (sty_b8a0d062). No verdict is a
+	// normal performer. An accept proceeds.
+	if dec, derr := parseDecision(invRes.Stdout); derr == nil && !dec.Accept {
+		return res, &verb.PerformerReject{Notes: dec.Notes}
+	}
 	if outputContract.Active() {
 		if !attemptPolicy.Active() {
 			artifact, derr := agentartifact.Decode(invRes.Stdout)
