@@ -1,3 +1,13 @@
+## [0.0.548] - 2026-09-25
+
+### Added
+- **`satelle help agent-dispatch` has a per-adapter capability table.** One row per adapter (claude command, claude stream, grok command, grok acp, codex command, codex acp) says whether usage, cache split, resolved model, model inheritance and live session are available. Each unavailable cell gives an adapter-named reason. The table comes from `internal/agentcli/capabilities.go`. Tests check every cell against the code that produces it, check the help topic against the matrix, and fail when an unavailable is a silent zero rather than an explicit reason. The "What each harness reports" prose now matches the code: Codex hooks carry a model, and ACP live sessions record the model they opened with. (sty_52a8cb4a)
+
+## [serve-v0.0.78] - 2026-09-25
+
+### Changed
+- **The service embeds the updated agent-dispatch help topic.** Its behaviour is unchanged. (sty_52a8cb4a)
+
 ## [0.0.547] - 2026-09-25
 
 ### Fixed

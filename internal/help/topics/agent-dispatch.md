@@ -1066,15 +1066,43 @@ captured session's executable matches the binding's own command executable
 into a Claude dispatch, or the reverse — a guard failure simply falls through
 to the next precedence tier instead of erroring.
 
+### Per-adapter capabilities
+
+What each adapter gives satelle. An unavailable is recorded explicitly — an
+adapter-named reason on the ledger row, never a silent zero or a Claude default
+(`satelle-agent-agnostic`). `internal/agentcli/capabilities.go` is the source of
+this table and a test checks every cell against the code that produces it.
+
+| adapter | usage | cache split | resolved model | model inheritance | live session |
+| --- | --- | --- | --- | --- | --- |
+| claude command | yes | yes | yes | yes | unavailable: interface=command is one-shot only |
+| claude stream | yes | yes | yes | yes | yes |
+| grok command | yes | yes | yes | yes | unavailable: interface=command is one-shot only |
+| grok acp | yes | yes | yes | yes | yes |
+| codex command | yes | yes | unavailable: codex exec --json names no model | yes | unavailable: interface=command is one-shot only |
+| codex acp | unavailable: no captured usage report from the peer | unavailable: no captured usage report from the peer | unavailable: codex acp reports no model | yes | yes |
+
 ### What each harness reports
 
 - **Claude Code** — the in-loop hook payload's `model` field (or the
   transcript's last assistant entry) captures the in-loop tier; a `stream`
   session's own `system`/`init` record captures the orchestrator tier
   (`satelle story chat`).
-- **Codex** — reports a model only when its own payload happens to carry one;
-  otherwise the session is recorded `unknown` and the rule falls through.
-- **Grok / ACP** — report no model at all; always recorded `unknown`.
+- **Codex** — its hook payload carries `model`, so the in-loop tier is
+  captured; if a payload omits it the session is recorded `unknown` and the
+  rule falls through.
+- **Grok** — its hook payload carries no model, so the in-loop tier is recorded
+  `unknown`.
+- **ACP (Grok, Codex)** — a live session (`satelle story chat`) records the
+  model it opened with (the peer's own id, else the model the handshake
+  applied) as the orchestrator tier, under the binding's own executable. That
+  tier applies to any dispatch whose binding has the same executable and can
+  take a model, so grok command inherits from a `grok agent stdio`
+  orchestrator. When no model is known the session is recorded `unknown`.
+
+Model inheritance in the capability table is "available" when either tier can
+apply; it needs a live session or a hook that carries a model, so with neither
+the dispatch falls through to `cli-default`, recorded explicitly.
 
 An explicit `model =` on a binding is unaffected by any of this — it wins
 outright, unchanged from before this story, and no session capture or ranking
