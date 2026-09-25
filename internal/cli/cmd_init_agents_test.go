@@ -32,13 +32,24 @@ func TestScaffoldAgentsTomlFullyDefined(t *testing.T) {
 	}
 	// Live-capable examples stay commented (sty_cec967b5): a fresh repo's
 	// behaviour is unchanged until the operator uncomments them.
-	for _, want := range []string{"# [orchestrator]", "# [coder]", "satelle story rework", "interface = \"acp\" or \"stream\""} {
+	// The route is in-loop: the scaffold teaches the driving session as the
+	// executor, an optional one-shot coder, and rework as the only live relay
+	// (sty_462603f0) — never a live [orchestrator] or `story chat`.
+	for _, want := range []string{
+		"driving session is the in-loop executor", "integration", "release",
+		"ONE-SHOT coder", "# [coder]", "satelle story rework", `interface = "acp" or "stream"`,
+	} {
 		if !strings.Contains(scaffoldAgentsToml, want) {
-			t.Errorf("scaffold missing commented live-capable example %q", want)
+			t.Errorf("scaffold missing %q", want)
 		}
 	}
-	if strings.Contains(scaffoldAgentsToml, "\n[orchestrator]\n") || strings.Contains(scaffoldAgentsToml, "\n[coder]\n") {
-		t.Error("scaffold [orchestrator]/[coder] examples must stay fully commented")
+	for _, ban := range []string{"story chat", "[orchestrator]", "stream-json"} {
+		if strings.Contains(scaffoldAgentsToml, ban) {
+			t.Errorf("scaffold must not contain %q", ban)
+		}
+	}
+	if strings.Contains(scaffoldAgentsToml, "\n[coder]\n") {
+		t.Error("scaffold [coder] example must stay fully commented")
 	}
 	// Failed Jev/typesafe prototype removed (sty_e3eca0b7): scaffold must not
 	// ship a dormant reviewer-typesafe / interface=typesafe switch.

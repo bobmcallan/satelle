@@ -130,8 +130,7 @@ enacts after gates.
 Omitting `interface` no longer means "always command" — the resolved
 transport now depends on **how the binding is used**:
 
-- **Live** (a rework relay's coder seat, a `rework.consult` binding, or the
-  binding `satelle story chat` opens) resolves to the first entry in
+- **Live** (a rework relay's coder seat or a `rework.consult` binding) resolves to the first entry in
   `[defaults] live_interfaces` that can actually open the binding's AUTHORED
   command — two questions, both must hold: MECHANISM (which CLI is this? only
   `stream` for a Claude command, `ExecutableToken` == `claude`; `acp` for any
@@ -238,7 +237,7 @@ event is still judged stalled.
   `agent-stalled` telemetry, and the refusal text names the stall (`"stalled:
   no activity for 5m0s (last event: tool: Bash)"`), not a generic deadline.
 - Applies to every transport (`command`, `stream`, `acp`) and to a live
-  session's own turn (a `story chat` reply, a rework relay coder/consult
+  session's own turn (a rework relay coder/consult
   round) — not only the one-shot dispatch path.
 
 ### Silent one-shot command bindings (`busy_timeout`, sty_db62a3b9)
@@ -427,68 +426,36 @@ claude -p --input-format stream-json --output-format stream-json --verbose --dis
 `{system}` and `{payload}` are rejected on the spawn line; `{tools}` /
 `{model}` / `{effort}` stay argv (empty drops the preceding flag). **Reviewers
 stay `command`** — a live channel does not help a cold one-shot verdict.
-`stream` exists for the orchestrator binding (order:4 of epic:agent-messaging).
+`stream` exists for live seats such as a rework relay's coder or consult binding.
 
-#### Consultation sessions — `satelle story chat`
+#### Who performs a step
 
-Any live-capable binding (`interface = "acp"` or `"stream"`) can be opened as a
-session; `command = "in-loop"` is today's hook channel and is refused. The
-default is `[orchestrator]` — a named binding consumed by a verb, not a third
-Role constant.
+- The **driving session is the in-loop executor**. The shipped `[coded]` step is
+  `agent = "executor"`, so the session that engaged the story performs
+  `in_progress`, integration, release and the close itself.
+- A **one-shot coder** (`interface = "command"`, a `claude -p` style line with
+  no `interface = "stream"`) runs only when the route names it on a step's
+  `agent =`. It is optional; nothing requires one.
+- **`satelle story rework` is the only live relay.** It is off unless the step
+  declares `rework = { consult, rounds }`, and its consult binding must be
+  live-capable (`acp` or `stream`). A consulting reviewer is
+  **consulting, not judging** — its reply is context, not a verdict; the gate
+  that judges the edge still runs cold and one-shot over the payload satelle
+  builds. See
+  `satelle doc get principles satelle-agent-consultation`.
 
-```toml
-[orchestrator]
-role      = "agent"
-interface = "stream"   # or "acp"; explicit "command" / in-loop = hook channel
-                        # (omitting interface here also resolves to stream — a
-                        # story-chat binding is always a live use)
-command   = "claude -p --input-format stream-json --output-format stream-json --verbose --allowedTools {tools} --model {model} --effort {effort}"
-tools     = "Read,Grep,Glob,Bash(satelle:*)"
-model     = "opus"
-effort    = "high"
-```
-
-`satelle story chat <id>` opens that session, forwards typed lines as turns,
-streams replies, and records every turn on the story ledger (`agent_message`
-for the turn pair; `agent_invocation` for tool boundaries and permission
-decisions, actored by the binding). It does not change story status.
-`command = "in-loop"` (or no binding) keeps the SessionStart / PreToolUse /
-Stop hook channel — chat refuses rather than opening a process.
-
-**`--agent <binding>`** (default `orchestrator`) chooses *who you talk to*. The
-binding must be live-capable; `command`/in-loop and a missing binding refuse by
-name (`no [reviewer] binding …`, `[reviewer] is in-loop …`,
-`[reviewer] interface=command is not live-capable …`). The session runs on that
-binding's own tool grant — a consulted reviewer keeps its read-only
-`Read,Grep,Glob`.
-
-**`--from <role>`** (default `developer-agent` when `SATELLE_SESSION` is set,
-else `human`) names *who is speaking*. Both ledger directions carry it — the
-driving turn is `<from> → <binding>`, the reply `<binding> → <from>` — and
-`satelle story messages <id>` shows both. The first turn's inbox is the
-messages addressed to the chosen binding's role or to `*`; a message to another
-role is not delivered.
-
-This is the consultation mechanism the in-repo agent uses to raise
-implementation quality: interrogate a rejection with the *rejecting reviewer's*
-binding, take a second opinion to a block, converge an implementation with a
-consulting reviewer. A non-orchestrator binding is told in its charter that it
-is **consulting, not judging** — its reply is context, not a verdict; the gate
-that judges the edge still runs cold and one-shot over the payload satelle
-builds, and the consultant does not run `satelle story set`. The orchestrator
-is the scheduler and is *driving*, so it keeps the executor charter. See
-`satelle doc get principles satelle-agent-consultation`.
-
-The permission channel is the same policy as PreToolUse (see **PreToolUse deny
-channels** below): a mutator tool ask is denied by satelle without prompting
-the human when the story is not in an executor-owned performing state (or a
-transition is in flight). Otherwise the human is asked allow/deny.
+A live session's permission channel is the same policy as PreToolUse (see
+**PreToolUse deny channels** below): a mutator tool ask is denied by satelle
+without prompting the human when the story is not in an executor-owned
+performing state (or a transition is in flight). Otherwise the human is asked
+allow/deny.
 
 ### Converge then gate
 
 Two loops, contrasted. The **expensive** loop is present-edge → gate rejects →
 re-present until the gate accepts. The **cheap** loop is warm convergence
-between a coder session and a consulting reviewer, then **one** cold gate. The
+between a coder session and a consulting reviewer (the rework relay, when the
+step sets `rework`), then **one** cold gate. The
 second does not replace the first — it precedes it. Authority stays with the
 gate: a consultant's `READY` is a signal to the orchestrator, never a verdict
 (see the READY contract under **Rework relay** below).
@@ -856,7 +823,7 @@ satelle:
 - **Every dispatch gets a scratch directory by mechanism.** A one-shot
   `Invoke` (reviewer, named executor, retrospective), the step-summary
   dispatch (`Summarise`, its own `buildRequest`/`runOnce` call outside
-  `Invoke`), and every live session (`satelle story chat`, the rework relay's
+  `Invoke`), and every live session (the rework relay's
   coder and consult seats) each get their own
   `<tmp>/satelle/<repo-key>/<story>/<dispatch-id>/`, mode `0700`.
   It is exported as both `TMPDIR` and `SATELLE_SCRATCH` — RESERVED keys that
@@ -1034,11 +1001,11 @@ web timeline). Precedence, first match wins:
 2. **step** or **agent** — a model named for THIS ONE dispatch: a workflow
    step's `model =` in `step.toml` (a spine performer node only — a gate/edge
    has no step tier of its own), or a dispatching agent's `--model` flag
-   (`satelle story rework --model`, `satelle story chat --model`, `satelle
+   (`satelle story rework --model`, `satelle
    story retrospect --model`). An agent flag wins over a step default when
    both would apply to the same dispatch.
 3. **inherited-orchestrator** / **inherited-in-loop** — the orchestrator
-   session's (`satelle story chat`) model on this story, else the in-loop
+   live-session model on this story, else the in-loop
    engaging session's. The orchestrator wins whenever both are eligible (it
    is the live driving session). Both are guarded so a Claude session's
    model id can never reach a Codex/Grok dispatch — see "cross-provider
@@ -1110,13 +1077,13 @@ this table and a test checks every cell against the code that produces it.
 - **Claude Code** — the in-loop hook payload's `model` field (or the
   transcript's last assistant entry) captures the in-loop tier; a `stream`
   session's own `system`/`init` record captures the orchestrator tier
-  (`satelle story chat`).
+  (a live orchestrator session).
 - **Codex** — its hook payload carries `model`, so the in-loop tier is
   captured; if a payload omits it the session is recorded `unknown` and the
   rule falls through.
 - **Grok** — its hook payload carries no model, so the in-loop tier is recorded
   `unknown`.
-- **ACP (Grok, Codex)** — a live session (`satelle story chat`) records the
+- **ACP (Grok, Codex)** — a live session records the
   model it opened with (the peer's own id, else the model the handshake
   applied) as the orchestrator tier, under the binding's own executable. That
   tier applies to any dispatch whose binding has the same executable and can

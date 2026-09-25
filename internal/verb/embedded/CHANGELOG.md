@@ -1,3 +1,13 @@
+## [0.0.550] - 2026-09-25
+
+### Changed
+- **Init and help no longer teach story chat as the way a story is driven.** The agents scaffold does not show a live `[orchestrator]`. A commented coder example, when present, is a one-shot `claude -p` command a repo may point `[coded]` at. `satelle help agent-dispatch` says the driving session is the in-loop executor, a one-shot coder runs only when the route names one, and `satelle story rework` is the only live relay and is off unless the step sets `rework`. The shipped `*` lane is unchanged: `in_progress` is still performed by `executor`, with no rework key. (sty_462603f0)
+
+## [serve-v0.0.80] - 2026-09-25
+
+### Changed
+- **The service embeds the updated agent-dispatch help topic.** Its behaviour is otherwise unchanged. (sty_462603f0)
+
 ## [0.0.549] - 2026-09-25
 
 ### Added

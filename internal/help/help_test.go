@@ -114,8 +114,9 @@ func TestAgentDispatchTopic(t *testing.T) {
 		"stream",
 		"DefaultClaudeStreamCommand",
 		"no `command` and no `profile=`",
-		"story chat",
-		"[orchestrator]",
+		"driving session is the in-loop executor",
+		"one-shot coder",
+		"only live relay",
 		"CLI verbs",
 		"Claude",
 		"MCP",
@@ -136,9 +137,6 @@ func TestAgentDispatchTopic(t *testing.T) {
 		// Consultation sessions (sty_a0372443): chat is a generic consultation
 		// mechanism — pick the binding, name the speaker, and a consulted
 		// binding is told its reply is context, not a verdict.
-		"Consultation sessions",
-		"--agent <binding>",
-		"--from <role>",
 		"consulting, not judging",
 		"satelle-agent-consultation",
 		// Rework relay (sty_8e0b29a0): the step key, the verb, the termination
@@ -176,6 +174,13 @@ func TestAgentDispatchTopic(t *testing.T) {
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("agent-dispatch topic missing %q", want)
+		}
+	}
+	// story chat is not how a story is driven or how quality is raised
+	// (sty_462603f0).
+	for _, ban := range []string{"story chat", "Consultation sessions", "raise implementation quality"} {
+		if strings.Contains(top.Body, ban) {
+			t.Errorf("agent-dispatch topic must not contain %q", ban)
 		}
 	}
 }

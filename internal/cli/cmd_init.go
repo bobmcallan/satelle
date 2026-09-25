@@ -1747,7 +1747,7 @@ var scaffoldAgentsToml = strings.NewReplacer("MODEL_ORDER_BLOCK\n", scaffoldMode
 #
 # DEFAULT LIVE TRANSPORT (epic:model-selection child 2) — a binding with no
 # interface= that is opened as a LIVE session (a rework relay seat, a
-# rework.consult binding, or satelle story chat) resolves to the first
+# rework.consult binding) resolves to the first
 # transport below that can actually open its AUTHORED command: stream only for
 # a Claude command whose argv really parses as a live stream session (a
 # one-shot command, e.g. one carrying --append-system-prompt {system}, does
@@ -1805,26 +1805,21 @@ MODEL_ORDER_BLOCK
 # command = "claude -p --append-system-prompt {system} --allowedTools {tools}"
 # tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*)"
 #
-# LIVE-CAPABLE BINDINGS (interface = "acp" or "stream") — consumed by verbs
-# (satelle story chat, satelle story rework), not allocated by a workflow node.
-# Uncomment and wire a step's rework = { consult, rounds } to use them. A read-only
-# consultant vs a mutating coder is the usual pair; both must be live-capable.
-# A live binding needs an authored command= (or a profile=): satelle compiles no
-# live default, so one with neither is refused.
+# WHO PERFORMS A STEP — the driving session is the in-loop executor: the shipped
+# route's coded step is agent = "executor", so that session performs in_progress,
+# integration, release and the close itself. Nothing below is required.
 #
-# [orchestrator]
-# role      = "agent"
-# interface = "stream"
-# command   = "claude -p --input-format stream-json --output-format stream-json --verbose --allowedTools {tools} --model {model} --effort {effort}"
-# tools     = "Read,Grep,Glob,Bash(satelle:*)"
-# model     = "opus"
+# An optional ONE-SHOT coder a repo may point the coded step's agent= at (no
+# interface = "stream"; it runs once per dispatch):
 #
 # [coder]
-# role      = "agent"
-# interface = "stream"
-# command   = "claude -p --input-format stream-json --output-format stream-json --verbose --allowedTools {tools} --model {model} --effort {effort}"
-# tools     = "Read,Grep,Glob,Edit,Write,Bash(satelle:*)"
-# model     = "opus"
+# role    = "agent"
+# command = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model} --effort {effort}"
+# tools   = "Read,Grep,Glob,Edit,Write,Bash(satelle:*)"
+#
+# The only live relay is satelle story rework: off unless a step sets
+# rework = { consult, rounds }, and its consult binding must be live-capable
+# (interface = "acp" or "stream", with an authored command= or profile=).
 `)
 
 // withModelOrder appends the scaffold [model_order] block to an existing
