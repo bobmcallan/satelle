@@ -300,12 +300,10 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// agent=<name> allocation runs that binding's harness at the transition.
 			// agents.toml defines WHO, the DOT defines WHERE, the binary only runs it.
 			rev.SetNamedAgents(agents.NamedBinding)
-			// Model selection (sty_7069bced): the [models] ranking table and the
-			// session-model resolver feed config.SelectModel's inherited/creator
-			// tiers. Without these two, tiers 3 and 4 of the precedence never
-			// apply — every dispatch with no explicit/step/agent model falls
-			// straight to cli-default.
-			rev.SetModelRanking(agents.Models.Ranking)
+			// Model selection (sty_7069bced): the session-model resolver feeds
+			// config.SelectModel's inherited/creator tiers. Without it, tiers 3
+			// and 4 of the precedence never apply — every dispatch with no
+			// explicit/step/agent model falls straight to cli-default.
 			rev.SetSessionModelsResolver(verb.SessionModels)
 			rev.SetInvocationRecorder(verb.AppendAgentInvocation)
 			// Leftover-file sweep config (sty_e7aaf8b1): what a coder/driving
@@ -437,7 +435,6 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 	}
 	rev.SetNamedAgents(eff.Agents.NamedBinding)
 	rev.SetLiveNamedAgents(eff.Agents.LiveBinding)
-	rev.SetModelRanking(eff.Agents.Models.Ranking)
 	rev.SetSessionModelsResolver(verb.SessionModels)
 	rev.SetInvocationRecorder(verb.AppendAgentInvocation)
 	rev.SetLeftoverRule(a.Config.Dispatch.Leftovers)

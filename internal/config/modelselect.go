@@ -38,8 +38,8 @@ func (s SessionModel) known() bool {
 //  1. Binding — the agents.toml binding's own model=.
 //  2. DispatchOverride — a step= model or an --model agent flag naming this one
 //     dispatch; DispatchSource says which (ModelSourceStep or ModelSourceAgent).
-//  3. Inherited — the higher-ranked of Orchestrator and InLoop, cross-provider
-//     guarded; the orchestrator wins a tie.
+//  3. Inherited — the Orchestrator's model, else the InLoop session's, each
+//     cross-provider guarded; the orchestrator wins when both are eligible.
 //  4. Creator — the story-creating session's model, same guard.
 //  5. Empty — cli-default: the caller drops {model} and the CLI's own default runs.
 type SelectInput struct {
@@ -57,10 +57,6 @@ type SelectInput struct {
 	Orchestrator   SessionModel
 	InLoop         SessionModel
 	Creator        SessionModel
-	// Ranking is the [models] ranking table (strongest first). An unranked
-	// model loses to any ranked one; with neither ranked, the orchestrator
-	// wins the inherited tie (it is the live driving session).
-	Ranking []string
 	// CommandExecutable is the dispatch binding's own command executable
 	// (ExecutableToken) — the cross-provider guard's comparison target.
 	CommandExecutable string
@@ -94,18 +90,14 @@ func SelectModel(in SelectInput) (model, source string) {
 	return "", ModelSourceCLIDefault
 }
 
-// inheritedModel resolves tier 3: the higher-ranked of the orchestrator and
-// in-loop session models, both cross-provider guarded. The orchestrator wins
-// when only one is guard-eligible, and wins a rank tie when both are.
+// inheritedModel resolves tier 3: the orchestrator and in-loop session models,
+// both cross-provider guarded. The orchestrator wins whenever it is eligible
+// (it is the live driving session); the in-loop model applies only when the
+// orchestrator's does not.
 func inheritedModel(in SelectInput) (model, source string, ok bool) {
 	orch, orchOK := crossProviderApplied(in.Orchestrator, in)
 	loop, loopOK := crossProviderApplied(in.InLoop, in)
 	switch {
-	case orchOK && loopOK:
-		if higherOrEqual(orch, loop, in.Ranking) {
-			return orch, ModelSourceInheritedOrchestrator, true
-		}
-		return loop, ModelSourceInheritedInLoop, true
 	case orchOK:
 		return orch, ModelSourceInheritedOrchestrator, true
 	case loopOK:
@@ -128,35 +120,6 @@ func crossProviderApplied(s SessionModel, in SelectInput) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(s.Model), true
-}
-
-// higherOrEqual reports whether a should win over b by rank: lower index is
-// stronger; an unranked model loses to a ranked one; when neither ranks, a
-// wins (callers pass the orchestrator's model as a so it wins the tie).
-func higherOrEqual(a, b string, ranking []string) bool {
-	ai, aok := rankIndex(a, ranking)
-	bi, bok := rankIndex(b, ranking)
-	switch {
-	case aok && bok:
-		return ai <= bi
-	case aok:
-		return true
-	case bok:
-		return false
-	default:
-		return true
-	}
-}
-
-// rankIndex returns model's position in ranking (0 = strongest), case
-// insensitive, or ok=false when model is not listed.
-func rankIndex(model string, ranking []string) (int, bool) {
-	for i, r := range ranking {
-		if strings.EqualFold(strings.TrimSpace(r), strings.TrimSpace(model)) {
-			return i, true
-		}
-	}
-	return 0, false
 }
 
 // HasModelSlot reports whether command carries a {model} placeholder anywhere

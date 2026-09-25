@@ -431,8 +431,8 @@ func modelSlotNamedAgents(name string) (config.AgentBinding, bool) {
 // TestArtifactAttemptsInheritedOrchestratorModel pins AC1/AC4/AC5 wired
 // together at the engine level (not just the pure config.SelectModel
 // function): a binding with no model= and a {model} slot resolves the
-// higher-ranked ORCHESTRATOR session's model, via SetModelRanking +
-// SetSessionModelsResolver, on the dispatch result.
+// ORCHESTRATOR session's model, via SetSessionModelsResolver, on the dispatch
+// result.
 func TestArtifactAttemptsInheritedOrchestratorModel(t *testing.T) {
 	primary := &attemptRunner{runs: []attemptRun{{out: validAttempt("## AC1\nok\n## AC2\nok")}}}
 	docs := fakeDocs{workflow: modelSourceDispatchWFNoOverride, skillBody: attemptedDispatchSkill, skillFound: true}
@@ -444,7 +444,6 @@ func TestArtifactAttemptsInheritedOrchestratorModel(t *testing.T) {
 		}
 		return nil, nil
 	}
-	g.SetModelRanking([]string{"claude-opus-5-5", "claude-sonnet-5"})
 	g.SetSessionModelsResolver(func(context.Context, string) (orch, inLoop, creator config.SessionModel) {
 		return config.SessionModel{Model: "claude-opus-5-5", Executable: "primary"},
 			config.SessionModel{Model: "claude-sonnet-5", Executable: "primary"},

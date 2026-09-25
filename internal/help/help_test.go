@@ -180,7 +180,7 @@ func TestAgentDispatchTopic(t *testing.T) {
 }
 
 // TestAgentDispatchTopicModelSelection (sty_7069bced / epic:model-selection
-// order:3 AC7): the precedence, the [models] ranking table, the step/agent
+// order:3 AC7): the precedence, the step/agent
 // override syntax, and the cli-default fallback must all be teachable from
 // deployed docs alone.
 func TestAgentDispatchTopicModelSelection(t *testing.T) {
@@ -190,8 +190,6 @@ func TestAgentDispatchTopicModelSelection(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Model selection",
-		"[models]",
-		"ranking",
 		"agents.toml",
 		"model =",
 		"--model",

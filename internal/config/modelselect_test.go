@@ -2,42 +2,21 @@ package config
 
 import "testing"
 
-// TestModelsRankingLoadedFromAgentsToml pins AC2 at the DECODE boundary, not
-// just the pure SelectModel function: two agents.toml bodies differing only
-// in [models] ranking feed a SelectInput identically, and the inherited pick
-// flips with no code change — proving the table actually round-trips from
-// the file an operator edits into what SelectModel reads.
-func TestModelsRankingLoadedFromAgentsToml(t *testing.T) {
-	body := func(ranking string) string {
-		return "[models]\nranking = " + ranking + "\n\n[executor]\ncommand = \"in-loop\"\n"
-	}
-	in := SelectInput{
-		HasModelSlot: true, CommandExecutable: "claude",
-		Orchestrator: SessionModel{Model: "haiku", Executable: "claude"},
-		InLoop:       SessionModel{Model: "sonnet", Executable: "claude"},
-	}
-
-	ac, err := decodeAgents(body(`["haiku", "sonnet", "opus"]`), false)
+// TestModelsSectionIgnored: the retired [models] ranking table still loads in
+// an older repo's agents.toml, is not read as an agent binding, and feeds
+// nothing.
+func TestModelsSectionIgnored(t *testing.T) {
+	ac, err := decodeAgents("[models]\nranking = [\"opus\", \"sonnet\", \"haiku\"]\n\n[executor]\ncommand = \"in-loop\"\n", false)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	in.Ranking = ac.Models.Ranking
-	if model, source := SelectModel(in); model != "haiku" || source != ModelSourceInheritedOrchestrator {
-		t.Fatalf("ranking [haiku,sonnet,opus] via agents.toml: got (%q, %q)", model, source)
+	if _, ok := ac.Agents["models"]; ok {
+		t.Errorf("[models] was read as an agent binding: %+v", ac.Agents)
 	}
-
-	ac, err = decodeAgents(body(`["sonnet", "haiku", "opus"]`), false)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	in.Ranking = ac.Models.Ranking
-	if model, source := SelectModel(in); model != "sonnet" || source != ModelSourceInheritedInLoop {
-		t.Fatalf("ranking [sonnet,haiku,opus] via agents.toml: got (%q, %q)", model, source)
+	if ac.Executor.Command != "in-loop" {
+		t.Errorf("executor lost: %+v", ac.Executor)
 	}
 }
-
-// defaultRanking mirrors this repo's own [models] ranking.
-var defaultRanking = []string{"opus", "sonnet", "haiku"}
 
 // TestSelectModelPrecedence pins AC1: first match wins across every tier, and
 // each level falls through cleanly when unset/unknown/guard-failed.
@@ -84,7 +63,6 @@ func TestSelectModelPrecedence(t *testing.T) {
 				HasModelSlot: true, CommandExecutable: "claude",
 				Orchestrator: SessionModel{Model: "opus", Executable: "claude"},
 				InLoop:       SessionModel{Model: "unknown", Executable: "claude"},
-				Ranking:      defaultRanking,
 			},
 			wantModel:  "opus",
 			wantSource: ModelSourceInheritedOrchestrator,
@@ -95,31 +73,18 @@ func TestSelectModelPrecedence(t *testing.T) {
 				HasModelSlot: true, CommandExecutable: "claude",
 				Orchestrator: SessionModel{Model: "unknown", Executable: "claude"},
 				InLoop:       SessionModel{Model: "sonnet", Executable: "claude"},
-				Ranking:      defaultRanking,
 			},
 			wantModel:  "sonnet",
 			wantSource: ModelSourceInheritedInLoop,
 		},
 		{
-			name: "inherited picks higher-ranked of the two sessions",
+			name: "orchestrator wins when both sessions are eligible, whatever the model",
 			in: SelectInput{
 				HasModelSlot: true, CommandExecutable: "claude",
 				Orchestrator: SessionModel{Model: "haiku", Executable: "claude"},
 				InLoop:       SessionModel{Model: "opus", Executable: "claude"},
-				Ranking:      defaultRanking,
 			},
-			wantModel:  "opus",
-			wantSource: ModelSourceInheritedInLoop,
-		},
-		{
-			name: "inherited tie goes to orchestrator",
-			in: SelectInput{
-				HasModelSlot: true, CommandExecutable: "claude",
-				Orchestrator: SessionModel{Model: "opus", Executable: "claude"},
-				InLoop:       SessionModel{Model: "opus", Executable: "claude"},
-				Ranking:      defaultRanking,
-			},
-			wantModel:  "opus",
+			wantModel:  "haiku",
 			wantSource: ModelSourceInheritedOrchestrator,
 		},
 		{
@@ -129,7 +94,6 @@ func TestSelectModelPrecedence(t *testing.T) {
 				Orchestrator: SessionModel{Model: "unknown", Executable: "claude"},
 				InLoop:       SessionModel{Model: "", Executable: "claude"},
 				Creator:      SessionModel{Model: "sonnet", Executable: "claude"},
-				Ranking:      defaultRanking,
 			},
 			wantModel:  "sonnet",
 			wantSource: ModelSourceCreator,
@@ -180,42 +144,6 @@ func TestSelectModelPrecedence(t *testing.T) {
 	}
 }
 
-// TestSelectModelRankingFromConfig pins AC2: changing the ranking flips the
-// inherited pick with no code change.
-func TestSelectModelRankingFromConfig(t *testing.T) {
-	in := SelectInput{
-		HasModelSlot: true, CommandExecutable: "claude",
-		Orchestrator: SessionModel{Model: "haiku", Executable: "claude"},
-		InLoop:       SessionModel{Model: "sonnet", Executable: "claude"},
-	}
-
-	in.Ranking = []string{"haiku", "sonnet", "opus"}
-	model, source := SelectModel(in)
-	if model != "haiku" || source != ModelSourceInheritedOrchestrator {
-		t.Fatalf("ranking [haiku,sonnet,opus]: got (%q, %q)", model, source)
-	}
-
-	in.Ranking = []string{"sonnet", "haiku", "opus"}
-	model, source = SelectModel(in)
-	if model != "sonnet" || source != ModelSourceInheritedInLoop {
-		t.Fatalf("ranking [sonnet,haiku,opus]: got (%q, %q)", model, source)
-	}
-}
-
-// TestUnrankedLosesToRanked pins AC2's explicit clause.
-func TestUnrankedLosesToRanked(t *testing.T) {
-	in := SelectInput{
-		HasModelSlot: true, CommandExecutable: "claude",
-		Orchestrator: SessionModel{Model: "glm-4.6", Executable: "claude"}, // unranked
-		InLoop:       SessionModel{Model: "haiku", Executable: "claude"},   // ranked, weakest
-		Ranking:      defaultRanking,
-	}
-	model, source := SelectModel(in)
-	if model != "haiku" || source != ModelSourceInheritedInLoop {
-		t.Fatalf("unranked-vs-ranked: got (%q, %q), want (haiku, inherited-in-loop)", model, source)
-	}
-}
-
 // TestSelectModelExplicitBindingUnchanged pins AC6: an explicit binding model
 // behaves exactly as before, regardless of every other tier.
 func TestSelectModelExplicitBindingUnchanged(t *testing.T) {
@@ -225,7 +153,6 @@ func TestSelectModelExplicitBindingUnchanged(t *testing.T) {
 		Orchestrator: SessionModel{Model: "haiku", Executable: "claude"},
 		Creator:      SessionModel{Model: "haiku", Executable: "claude"},
 		HasModelSlot: true, CommandExecutable: "claude",
-		Ranking: defaultRanking,
 	}
 	model, source := SelectModel(in)
 	if model != "opus" || source != ModelSourceBinding {

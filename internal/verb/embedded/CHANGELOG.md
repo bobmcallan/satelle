@@ -1,3 +1,13 @@
+## [0.0.539] - 2026-09-25
+
+### Changed
+- **`[models]` ranking is no longer an agents.toml section.** A leftover table is ignored and is not a seat. Model selection no longer compares opus, sonnet, and haiku. When both the orchestrator and the in-loop session are eligible, the orchestrator wins. The init scaffold and `satelle help agent-dispatch` do not tell a repo to add a ranking. (sty_10a1303a)
+
+## [serve-v0.0.70] - 2026-09-25
+
+### Changed
+- **The service uses the same model selection.** It does not read a `[models]` ranking. When both sessions are eligible, the orchestrator model wins. (sty_10a1303a)
+
 ## [0.0.538] - 2026-09-25
 
 ### Changed

@@ -9,9 +9,6 @@ const unredactedAgents = `
 [defaults]
 secondary = "reviewer"
 
-[models]
-ranking = ["opus", "sonnet", "haiku"]
-
 [executor]
 role = "agent"
 command = "in-loop"
@@ -59,9 +56,6 @@ func TestRedactAgentsTransport(t *testing.T) {
 	ac, err := loadAgentsBody(s)
 	if err != nil {
 		t.Fatalf("redacted body does not load: %v\n%s", err, s)
-	}
-	if got := ac.Models.Ranking; len(got) != 3 || got[0] != "opus" {
-		t.Errorf("[models] ranking did not survive redaction: %v", got)
 	}
 	rb := ac.Reviewer
 	if rb.Env["ANTHROPIC_AUTH_TOKEN"] != "${GLM_API_KEY}" {

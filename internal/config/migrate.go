@@ -56,7 +56,7 @@ func MigrateAgents(content string) (out string, changes []string, err error) {
 	harnessN, expandN, roleN := 0, 0, 0
 
 	for _, s := range sections {
-		// [defaults] and [models] are not agent bindings — they carry no
+		// [defaults] and the retired [models] are not agent bindings — they carry no
 		// command/role/principles of their own, so the per-binding migrations
 		// below must not touch them (a bare header would otherwise fall
 		// through bindingForHeader's default case and get a spurious
@@ -194,9 +194,9 @@ func decodeAgents(content string, legacyNested bool) (AgentsConfig, error) {
 				return AgentsConfig{}, fmt.Errorf("parse [defaults]: %w", err)
 			}
 		case "models":
-			if err := md.PrimitiveDecode(prim, &ac.Models); err != nil {
-				return AgentsConfig{}, fmt.Errorf("parse [models]: %w", err)
-			}
+			// Retired [models] ranking table: ignored so an older repo still
+			// loads, and never read as an agent binding.
+			continue
 		case "executor":
 			var b AgentBinding
 			if err := md.PrimitiveDecode(prim, &b); err != nil {

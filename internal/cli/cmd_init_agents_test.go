@@ -89,19 +89,19 @@ func TestScaffoldAgentsTomlFullyDefined(t *testing.T) {
 	}
 	// Model selection (sty_7069bced): the scaffold must document that an empty
 	// model= is selected deliberately, not left to the CLI's own default, and
-	// must ship a commented [models] ranking example pointing at the help topic.
+	// point at the help topic, without telling a repo to add a [models] ranking.
 	for _, want := range []string{
 		"selected deliberately, not left to the CLI's own default",
 		"§ Model selection",
-		"# [models]",
-		`# ranking = ["opus", "sonnet", "haiku"]`,
 	} {
 		if !strings.Contains(scaffoldAgentsToml, want) {
 			t.Errorf("scaffold missing model-selection doc %q", want)
 		}
 	}
-	if strings.Contains(scaffoldAgentsToml, "\n[models]\n") {
-		t.Error("scaffold [models] ranking example must stay commented")
+	for _, banned := range []string{"[models]", "ranking"} {
+		if strings.Contains(scaffoldAgentsToml, banned) {
+			t.Errorf("scaffold must not mention %q", banned)
+		}
 	}
 	// Parity: loading the scaffold yields the same effective reviewer binding as
 	// the coded defaults for an absent file.

@@ -232,10 +232,6 @@ type Engine struct {
 	// transition status commits. Nil refuses a contracted dispatch rather than
 	// silently dropping required output.
 	attachArtifact func(context.Context, workitem.Item, string, string, string) (string, string, error)
-	// modelRanking is the [models] ranking table (sty_7069bced) — strongest
-	// first. Nil/empty means no model ranks; config.SelectModel's inherited
-	// tie-break falls back to "orchestrator wins".
-	modelRanking []string
 	// sessionModels resolves the latest captured model per role (orchestrator,
 	// in-loop, creator) for a story — config.SelectModel's inherited/creator
 	// tiers (sty_7069bced). Nil-safe: an unwired resolver leaves every role
@@ -602,11 +598,6 @@ func (g *Engine) SetCheckLogCompressor(fn func(ctx context.Context, itemID, log 
 	g.checkLogCompressor = fn
 }
 
-// SetModelRanking wires the [models] ranking table (sty_7069bced /
-// epic:model-selection order:3) — the power order config.SelectModel's
-// inherited tie-break reads. Nil/empty means no configured ranking.
-func (g *Engine) SetModelRanking(ranking []string) { g.modelRanking = ranking }
-
 // SetSessionModelsResolver wires the resolver that returns the latest
 // captured model per role (orchestrator, in-loop, creator) for a story
 // (sty_7069bced). Nil-safe: an unwired resolver leaves every role unknown, so
@@ -654,7 +645,6 @@ func (g *Engine) selectModel(ctx context.Context, binding config.AgentBinding, s
 		Binding:           binding.Model,
 		DispatchOverride:  override,
 		DispatchSource:    overrideSource,
-		Ranking:           g.modelRanking,
 		CommandExecutable: binding.ExecutableToken(),
 		HasModelSlot:      config.HasModelSlot(binding.CommandTemplate()),
 	}

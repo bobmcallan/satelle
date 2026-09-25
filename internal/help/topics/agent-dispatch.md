@@ -1034,11 +1034,10 @@ web timeline). Precedence, first match wins:
    (`satelle story rework --model`, `satelle story chat --model`, `satelle
    story retrospect --model`). An agent flag wins over a step default when
    both would apply to the same dispatch.
-3. **inherited-orchestrator** / **inherited-in-loop** — the higher-ranked (by
-   `[models] ranking`, below) of the orchestrator session's (`satelle story
-   chat`) and the in-loop engaging session's models on this story. An
-   unranked model always loses to a ranked one; the orchestrator wins a tie
-   (it is the live driving session). Both are guarded so a Claude session's
+3. **inherited-orchestrator** / **inherited-in-loop** — the orchestrator
+   session's (`satelle story chat`) model on this story, else the in-loop
+   engaging session's. The orchestrator wins whenever both are eligible (it
+   is the live driving session); no ranking is consulted. Both are guarded so a Claude session's
    model id can never reach a Codex/Grok dispatch — see "cross-provider
    guard" below.
 4. **creator** — the model of the session that created the story, same guard.
@@ -1054,23 +1053,6 @@ of these seven values (`binding`, `step`, `agent`, `inherited-orchestrator`,
 carries `model_resolved`. `satelle agent validate` reports a step's
 `model =` as the node's effective model (source `step`) whenever the
 allocated binding itself has no `model =` (source `binding` wins outright).
-
-### `[models] ranking` — the power order, in configuration
-
-Tier 3's "higher-ranked" reads a table the OPERATOR authors — the binary only
-compares two model names against it, never hardcodes an opinion about which
-model beats which (constitution: no opinion as code):
-
-```toml
-# .satelle/workflows/agents.toml
-[models]
-ranking = ["opus", "sonnet", "haiku"]   # strongest first
-```
-
-Change the list and the next dispatch's inherited pick changes with it, no
-recompile. A model absent from `ranking` is unranked and always loses to a
-ranked one, however capable it may actually be — name every model you want the
-inherited tier to prefer.
 
 ### The cross-provider guard
 
