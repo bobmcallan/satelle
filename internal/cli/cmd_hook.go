@@ -29,6 +29,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,14 +53,6 @@ import (
 // skill or workflow references it, never auto-injected. No other frontmatter
 // field (including legacy scope:) participates in injection.
 const sessionTag = "principles:session"
-
-// alwaysContextCeiling is THE SessionStart budget (bytes) for constitution +
-// system-resident principle bodies + the on-demand pointer. There is no second
-// budget — this constant IS the ceiling (epic:substrate-convergence order:4 /
-// sty_cd5e341c). Keep the resident set to the operating triad (agent-goals,
-// edits-require-a-story, recognise-blockage) plus the order-zero constitution.
-// Overflow truncates with a stderr note; the hook still fails open.
-const alwaysContextCeiling = 16384
 
 // alwaysIndexInstruction is the standing "pull, don't preload" directive
 // appended to every injection — the pivot of the session-context model: the
@@ -97,9 +90,11 @@ byte ceiling (overflow noted on stderr); fails open so it never blocks a session
 			// `satelle story set` in this harness tree can stamp the same id.
 			raw, _ := io.ReadAll(cmd.InOrStdin())
 			_ = bindSessionID(raw)
-			return runHookContext(cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runHookContext(cmd.OutOrStdout(), cmd.ErrOrStderr(),
+				resolveContextHarness(hookHarnessFlag, raw, os.Environ()))
 		},
 	}
+	context.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex — selects the injection limit (default: sniff event, then environment)")
 	gate := &cobra.Command{
 		Use:   "gate",
 		Short: "PreToolUse edit gate — block code edits unless a story is engaged",
@@ -1835,7 +1830,7 @@ func withinRoot(root, target string) bool {
 // any error opening the store or listing docs injects nothing and returns nil.
 // When any engagement lease exists, appends a seat block so the agent sees the
 // holder without digging (sty_1738f973 AC6) — also fail-open on lease read errors.
-func runHookContext(out, stderr io.Writer) error {
+func runHookContext(out, stderr io.Writer, harness string) error {
 	a, err := app.Open()
 	if err != nil {
 		return nil // fail open — unconfigured repo / unopenable db blocks nothing
@@ -1847,48 +1842,79 @@ func runHookContext(out, stderr io.Writer) error {
 		return nil // fail open
 	}
 	always := selectAlwaysDocs(docs)
-	constitution := readConstitution(a.Config.ResolveConstitution(a.RepoRoot))
-	content, truncated := renderAlwaysContent(constitution, always, alwaysContextCeiling)
-	if truncated {
-		fmt.Fprintf(stderr,
-			"satelle hook context: always-content exceeded %d bytes and was truncated — trim an always-tagged doc or drop its %s tag\n",
-			alwaysContextCeiling, sessionTag)
-	}
+	constPath := a.Config.ResolveConstitution(a.RepoRoot)
+	constitution := readConstitution(constPath)
+
+	// Everything that rides around the principles (advisories, seat) is measured
+	// first, so the principles are rendered into what is LEFT of the harness
+	// limit and the whole injection lands inside it (sty_ce1a2733).
+	//
 	// Web availability (sty_fb5e6d96): ONE line naming the URL and whether
 	// anything answers on it, ahead of the constitution so a new user sees where
 	// the server is without asking. Fail-open: probeWebAvailability never errors
-	// and renders "unknown" rather than a fabricated "live". This reaches Claude,
-	// Grok and Codex through the SessionStart wiring all three already carry.
-	content = prependContextLine(content, probeWebAvailability().hookLine())
+	// and renders "unknown" rather than a fabricated "live".
+	webLine := probeWebAvailability().hookLine()
 	// Scaffold drift (sty_ac25b787): fail-open warning — never blocks SessionStart.
 	// Names `satelle init` as the heal. DetectScaffoldDrift is pure comparison.
-	if warn := formatScaffoldDriftWarning(DetectScaffoldDrift(a.RepoRoot)); warn != "" {
-		if content == "" {
-			content = warn
-		} else {
-			content = warn + "\n\n" + content
-		}
-	}
+	scaffoldWarn := formatScaffoldDriftWarning(DetectScaffoldDrift(a.RepoRoot))
 	// VERSION-STAMP drift (sty_8ecdae90): a separate, one-line advisory beside
 	// the scaffold block above — different trigger, different text, neither
-	// replacing the other. The binary is machine-wide, so a repo can sit behind
-	// it indefinitely and learn nothing until a store-backed verb fails closed.
-	// Advisory only: versionDriftAdvisory has no error channel, so `hook context`
-	// keeps its fail-open contract and a stale repo still receives its context.
-	content = prependContextLine(content, versionDriftAdvisory(a.RepoRoot))
+	// replacing the other. Advisory only: versionDriftAdvisory has no error
+	// channel, so `hook context` keeps its fail-open contract.
+	versionLine := versionDriftAdvisory(a.RepoRoot)
 	// An auto-raised diagnosis is worth nothing unread (sty_88d40a60): when the
 	// indexer has filed a high-priority system story about an authored document
-	// that fails its structure check, name it here. A session that opens against
-	// broken governance then starts from the diagnosis instead of the symptom.
-	// Fail-open and silent when there is none, like every other line above.
-	content = prependContextLine(content, systemDocStoryAdvisory(openDocStories(a)))
+	// that fails its structure check, name it here. Silent when there is none.
+	docStoryLine := systemDocStoryAdvisory(openDocStories(a))
 	// Seat inject: prefer a live seat; else name any non-live residue so the agent
 	// can release a stuck holder. Fail open — a seat-read error injects nothing.
-	content = appendSeatToContext(content, sessionSeatBlock(a), alwaysContextCeiling)
+	seat := sessionSeatBlock(a)
+	wrap := func(body string) string {
+		content := prependContextLine(body, webLine)
+		if scaffoldWarn != "" {
+			if content == "" {
+				content = scaffoldWarn
+			} else {
+				content = scaffoldWarn + "\n\n" + content
+			}
+		}
+		content = prependContextLine(content, versionLine)
+		content = prependContextLine(content, docStoryLine)
+		return appendSeatToContext(content, seat, 0)
+	}
+
+	limit := a.Config.ContextLimit(harness)
+	budget := limit - (len(wrap("X")) - 1)
+	content, omitted := renderAlwaysContent(constitution, always, alwaysRender{
+		Budget: budget, Harness: harness, ConstitutionPath: constPath,
+	})
+	if len(omitted) > 0 {
+		fmt.Fprintf(stderr,
+			"satelle hook context: %s exceeded the %s harness limit (%d bytes) — indexed with a read instruction: %s\n",
+			"always-content", harness, limit, strings.Join(omitted, ", "))
+	}
+	content = wrap(content)
 	if strings.TrimSpace(content) == "" {
 		return nil
 	}
 	return emitAdditionalContext(out, "SessionStart", "", content)
+}
+
+// resolveContextHarness names the in-loop harness a SessionStart injection is
+// for: the explicit --harness flag, else the hook payload's fingerprint, else
+// the session markers in the environment. Anything unrecognised is "unknown" —
+// never assumed to be Claude — and takes the neutral limit.
+func resolveContextHarness(flag string, raw []byte, environ []string) string {
+	if h := strings.ToLower(strings.TrimSpace(flag)); h != "" {
+		return h
+	}
+	if h := agentcli.HarnessFromHookEvent(raw); h != agentcli.HarnessUnknown {
+		return h
+	}
+	if h, ok := agentcli.InLoopHarnessFromEnv(environ); ok {
+		return h
+	}
+	return agentcli.HarnessUnknown
 }
 
 // openDocStories reads the open document-diagnosis stories for a, or nothing
@@ -2023,50 +2049,130 @@ func selectAlwaysDocs(docs []docindex.Doc) []docindex.Doc {
 	return out
 }
 
-// renderAlwaysContent assembles the bounded injection body + the standing index
-// instruction. The project constitution (when present) rides FIRST as order-zero
-// context, then the session-resident principles. Each doc's frontmatter is
-// stripped; content is added whole until the next block would breach the ceiling,
-// at which point truncated=true and the rest are dropped (reported by the caller
-// on stderr). The instruction is always present, even with no session content, so
-// the pull-on-reference discipline is taught from day one.
-func renderAlwaysContent(constitution string, docs []docindex.Doc, ceiling int) (string, bool) {
-	var b strings.Builder
-	truncated := false
-	used := 0
-	// Order-zero: the project constitution — the repo's definition — rides first.
-	if constitution != "" {
-		part := "# Project constitution\n\n" + constitution
-		b.WriteString(part + "\n\n")
-		used += len(part)
-		if used > ceiling {
-			truncated = true // the constitution alone rides, but flag it
+// alwaysRender carries the inputs of one SessionStart render that are not the
+// content itself: the byte budget the harness delivers inline, the harness it
+// is for (named to the agent when content is omitted), and where the
+// constitution can be read back.
+type alwaysRender struct {
+	Budget           int
+	Harness          string
+	ConstitutionPath string
+}
+
+// principleIndexLine is the one-line stand-in for a principle whose body does
+// not fit: its name, its description (falling back to its first heading), and
+// the exact command that pulls the whole rule.
+func principleIndexLine(d docindex.Doc) string {
+	desc := strings.Trim(frontmatterLine(d.Body, "description"), `"'`)
+	if desc == "" {
+		for _, ln := range strings.Split(stripFrontmatter(d.Body), "\n") {
+			if t := strings.TrimSpace(ln); strings.HasPrefix(t, "#") {
+				desc = strings.TrimSpace(strings.TrimLeft(t, "#"))
+				break
+			}
 		}
 	}
-	var parts []string
+	const maxDesc = 160
+	if r := []rune(desc); len(r) > maxDesc {
+		desc = string(r[:maxDesc-1]) + "…"
+	}
+	line := "- `" + d.Name + "`"
+	if desc != "" {
+		line += " — " + desc
+	}
+	return line + " — read: `satelle doc get principles " + d.Name + "`"
+}
+
+// renderAlwaysContent assembles the bounded injection body + the standing index
+// instruction. The project constitution (when present) rides FIRST as order-zero
+// context, then the session-resident principles, each in full while the budget
+// holds. A body that does not fit is never silently cut: it is replaced by an
+// index line carrying its pull command, under a directive that tells the agent
+// what was omitted for which harness limit and to read it before working
+// (sty_ce1a2733). Returns the content and the names omitted (nil when all fit;
+// "constitution" when the constitution itself was indexed). The instruction is
+// always present, even with no session content, so the pull-on-reference
+// discipline is taught from day one.
+func renderAlwaysContent(constitution string, docs []docindex.Doc, r alwaysRender) (string, []string) {
+	const principlesHeading = "# Always-resident principles (satelle)\n\n"
+	type entry struct{ name, full, index string }
+	var entries []entry
 	for _, d := range docs {
 		body := strings.TrimSpace(stripFrontmatter(d.Body))
 		if body == "" {
 			continue
 		}
-		part := "### " + d.Name + "\n\n" + body
-		if used > 0 && used+len(part) > ceiling {
-			truncated = true
-			break
+		entries = append(entries, entry{d.Name, "### " + d.Name + "\n\n" + body, principleIndexLine(d)})
+	}
+	consPath := r.ConstitutionPath
+	if consPath == "" {
+		consPath = ".satelle/constitution.md"
+	}
+	consFull := "# Project constitution\n\n" + constitution
+	consIndex := "- `constitution` — the project constitution — read: the file `" + consPath + "`"
+
+	// Everything in full, when it fits.
+	total := len(alwaysIndexInstruction)
+	if constitution != "" {
+		total += len(consFull) + 2
+	}
+	if len(entries) > 0 {
+		total += len(principlesHeading)
+		for _, e := range entries {
+			total += len(e.full) + 2
 		}
-		parts = append(parts, part)
-		used += len(part)
-		if used > ceiling {
-			truncated = true // a single oversized doc still rides, but flag it
+	}
+	all := total <= r.Budget
+
+	header := "OMITTED FOR THE " + strings.ToUpper(r.Harness) + " CONTEXT LIMIT (" + strconv.Itoa(r.Budget) +
+		" bytes): the following are not inlined — read each now with the command shown, before doing any work."
+	// Reserve the fixed parts and every index line not yet decided; a body goes
+	// in full only if the remainder still fits with the rest indexed.
+	reserve := len(alwaysIndexInstruction) + len(header) + len(principlesHeading) + 8
+	if constitution != "" {
+		reserve += len(consIndex) + 1
+	}
+	for _, e := range entries {
+		reserve += len(e.index) + 1
+	}
+	used := 0
+	fits := func(full, index string) bool {
+		return all || used+len(full)+2+reserve-len(index)-1 <= r.Budget
+	}
+	var omitted, parts, idx []string
+	var b strings.Builder
+	if constitution != "" {
+		if fits(consFull, consIndex) {
+			b.WriteString(consFull + "\n\n")
+			used += len(consFull) + 2
+			reserve -= len(consIndex) + 1
+		} else {
+			idx = append(idx, consIndex)
+			omitted = append(omitted, "constitution")
+		}
+	}
+	for _, e := range entries {
+		if fits(e.full, e.index) {
+			parts = append(parts, e.full)
+			used += len(e.full) + 2
+			reserve -= len(e.index) + 1
+		} else {
+			idx = append(idx, e.index)
+			omitted = append(omitted, e.name)
 		}
 	}
 	if len(parts) > 0 {
-		b.WriteString("# Always-resident principles (satelle)\n\n")
+		b.WriteString(principlesHeading)
 		b.WriteString(strings.Join(parts, "\n\n"))
 		b.WriteString("\n\n")
 	}
+	if len(idx) > 0 {
+		b.WriteString(header + "\n")
+		b.WriteString(strings.Join(idx, "\n"))
+		b.WriteString("\n\n")
+	}
 	b.WriteString(alwaysIndexInstruction)
-	return b.String(), truncated
+	return b.String(), omitted
 }
 
 // readConstitution returns the project constitution body (frontmatter stripped),

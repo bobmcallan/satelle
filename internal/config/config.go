@@ -140,6 +140,10 @@ type Config struct {
 	// may extend (extra) or replace (vocabulary). Enforce is off|warn|reject
 	// (default warn). Values are never a Go literal.
 	Categories CategoriesConfig `toml:"categories"`
+	// Harness holds per-harness [harness.<name>] tables — today the SessionStart
+	// injection limit (sty_ce1a2733). Embedded defaults live in
+	// substrate/config/harness.toml; a key here overrides them per harness.
+	Harness map[string]HarnessConfig `toml:"harness"`
 	// Attachments bounds binary story attachments (sty_40e5a305): max decoded
 	// size and the content-type allowlist. Defaults ship in code as mechanism
 	// bounds; a repo may override either in satelle.toml.

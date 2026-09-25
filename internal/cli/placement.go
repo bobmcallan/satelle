@@ -6,7 +6,8 @@
 //     embedded_sha (order:1 provenance)
 //  2. the only legal principles:* tag is principles:session (order:3 residency)
 //  3. no inert scope: key on principles (order:3 removed that axis)
-//  4. resident set + constitution stay under alwaysContextCeiling (order:4 diet)
+//  4. resident set + constitution fit the largest per-harness SessionStart
+//     limit (order:4 diet; config.Config.ContextLimit)
 //
 // Anchored under `satelle principle validate` (whole-set, nameFilter empty) —
 // same pattern as workflow consistency. Complements the semantic
@@ -136,7 +137,7 @@ func checkPrincipleScope(dataDir string) []string {
 }
 
 // checkResidentCeiling: constitution + session-tagged principles must fit under
-// alwaysContextCeiling (same renderer as SessionStart injection).
+// the largest configured harness limit (same renderer as SessionStart injection).
 func checkResidentCeiling(dataDir string, constitution string) []string {
 	var docs []docindex.Doc
 	for _, path := range principleFiles(dataDir) {
@@ -150,11 +151,17 @@ func checkResidentCeiling(dataDir string, constitution string) []string {
 		name := strings.TrimSuffix(filepath.Base(path), ".md")
 		docs = append(docs, docindex.Doc{Kind: "principles", Name: name, Body: string(body)})
 	}
-	_, truncated := renderAlwaysContent(constitution, docs, alwaysContextCeiling)
-	if truncated {
+	// A set that overflows one harness's limit degrades to an index there (the
+	// agent is told in-context); it is a placement defect only when it overflows
+	// even the roomiest configured harness, where nothing would ride inline.
+	// Judged against the embedded per-harness defaults: this check is store- and
+	// config-free, like every other placement invariant.
+	limit := config.Config{}.MaxContextLimit()
+	_, omitted := renderAlwaysContent(constitution, docs, alwaysRender{Budget: limit, Harness: "largest configured"})
+	if len(omitted) > 0 {
 		return []string{fmt.Sprintf(
-			"resident principle set + constitution exceeds the SessionStart ceiling (%d bytes); trim a session-tagged principle",
-			alwaysContextCeiling)}
+			"resident principle set + constitution exceeds the largest SessionStart harness limit (%d bytes; omitted: %s); trim a session-tagged principle",
+			limit, strings.Join(omitted, ", "))}
 	}
 	return nil
 }

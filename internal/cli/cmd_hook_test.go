@@ -90,9 +90,9 @@ func TestSelectAlwaysDocs_scopeIsNotClassifier(t *testing.T) {
 }
 
 func TestRenderAlwaysContent_bodyStrippedPlusInstruction(t *testing.T) {
-	content, truncated := renderAlwaysContent("", []docindex.Doc{doc("c", sessionFM)}, alwaysContextCeiling)
-	if truncated {
-		t.Fatalf("unexpected truncation")
+	content, omitted := renderAlwaysContent("", []docindex.Doc{doc("c", sessionFM)}, alwaysRender{Budget: 16384})
+	if len(omitted) > 0 {
+		t.Fatalf("unexpected omission: %v", omitted)
 	}
 	if strings.Contains(content, "principles:session") {
 		t.Fatalf("frontmatter leaked into injected content:\n%s", content)
@@ -106,7 +106,7 @@ func TestRenderAlwaysContent_bodyStrippedPlusInstruction(t *testing.T) {
 }
 
 func TestRenderAlwaysContent_emptySetStillTeachesIndex(t *testing.T) {
-	content, _ := renderAlwaysContent("", nil, alwaysContextCeiling)
+	content, _ := renderAlwaysContent("", nil, alwaysRender{Budget: 16384})
 	if strings.Contains(content, "Always-resident") {
 		t.Fatalf("no header expected with empty set:\n%s", content)
 	}
@@ -117,9 +117,9 @@ func TestRenderAlwaysContent_emptySetStillTeachesIndex(t *testing.T) {
 
 // The project constitution rides FIRST (order-zero), ahead of the principles.
 func TestRenderAlwaysContent_constitutionFirst(t *testing.T) {
-	content, truncated := renderAlwaysContent("This repo's constitution.", []docindex.Doc{doc("c", sessionFM)}, alwaysContextCeiling)
-	if truncated {
-		t.Fatalf("unexpected truncation")
+	content, omitted := renderAlwaysContent("This repo's constitution.", []docindex.Doc{doc("c", sessionFM)}, alwaysRender{Budget: 16384})
+	if len(omitted) > 0 {
+		t.Fatalf("unexpected omission: %v", omitted)
 	}
 	if !strings.Contains(content, "# Project constitution") || !strings.Contains(content, "This repo's constitution.") {
 		t.Fatalf("constitution not injected:\n%s", content)
@@ -129,15 +129,122 @@ func TestRenderAlwaysContent_constitutionFirst(t *testing.T) {
 	}
 }
 
-func TestRenderAlwaysContent_ceilingTruncates(t *testing.T) {
-	big := "---\ntags: [principles:session]\n---\n" + strings.Repeat("x", 200)
+// A budget too small for every body degrades to an index — never a silent cut
+// (sty_ce1a2733 AC3): the agent is told what was omitted and how to pull it.
+func TestRenderAlwaysContent_overLimitIndexesWithReadInstruction(t *testing.T) {
+	big := "---\ndescription: a big rule\ntags: [principles:session]\n---\n" + strings.Repeat("x", 300)
 	docs := []docindex.Doc{doc("a", big), doc("b", big), doc("c", big)}
-	content, truncated := renderAlwaysContent("", docs, 250) // fits one, not three
-	if !truncated {
-		t.Fatalf("expected truncation under a tight ceiling")
+	const budget = 1200 // fits one body once the other two are indexed, not two
+	content, omitted := renderAlwaysContent("", docs, alwaysRender{Budget: budget, Harness: "claude"})
+	if len(omitted) == 0 || len(omitted) == 3 {
+		t.Fatalf("want some but not all omitted, got %v", omitted)
 	}
-	if strings.Count(content, "### ") > 1 {
-		t.Fatalf("ceiling not enforced — too many docs injected:\n%s", content)
+	if len(content) > budget {
+		t.Fatalf("content %d bytes exceeds the %d budget:\n%s", len(content), budget, content)
+	}
+	if !strings.Contains(content, "OMITTED FOR THE CLAUDE CONTEXT LIMIT (1200 bytes)") {
+		t.Fatalf("directive header missing:\n%s", content)
+	}
+	for _, name := range omitted {
+		if !strings.Contains(content, "satelle doc get principles "+name) {
+			t.Errorf("no pull command for omitted %q:\n%s", name, content)
+		}
+		if strings.Contains(content, "### "+name) {
+			t.Errorf("omitted %q was also inlined", name)
+		}
+	}
+	if got := strings.Count(content, "### "); got != 3-len(omitted) {
+		t.Errorf("inlined %d bodies, want %d", got, 3-len(omitted))
+	}
+	if !strings.Contains(content, "a big rule") {
+		t.Errorf("index line lost the description:\n%s", content)
+	}
+}
+
+// An oversized constitution gets a read directive, not a silent truncation.
+func TestRenderAlwaysContent_oversizedConstitutionIndexed(t *testing.T) {
+	cons := strings.Repeat("c", 3000)
+	content, omitted := renderAlwaysContent(cons, []docindex.Doc{doc("c", sessionFM)},
+		alwaysRender{Budget: 1200, Harness: "grok", ConstitutionPath: "/repo/.satelle/constitution.md"})
+	if len(omitted) == 0 || omitted[0] != "constitution" {
+		t.Fatalf("constitution not reported omitted: %v", omitted)
+	}
+	if !strings.Contains(content, "/repo/.satelle/constitution.md") || strings.Contains(content, cons) {
+		t.Fatalf("want a read pointer and no inlined constitution:\n%s", content)
+	}
+	if len(content) > 1200 {
+		t.Fatalf("content %d bytes exceeds the budget", len(content))
+	}
+}
+
+// The same content renders in full under a large limit and indexed under a
+// small one, and the limit is configuration per harness, not a constant
+// (sty_ce1a2733 AC2).
+func TestRenderAlwaysContent_perHarnessLimit(t *testing.T) {
+	cfg := config.Config{Harness: map[string]config.HarnessConfig{
+		"claude": {ContextLimitBytes: 700},
+		"grok":   {ContextLimitBytes: 64000},
+	}}
+	big := "---\ntags: [principles:session]\n---\n" + strings.Repeat("x", 300)
+	docs := []docindex.Doc{doc("a", big), doc("b", big), doc("c", big)}
+	small, smallOmit := renderAlwaysContent("", docs, alwaysRender{Budget: cfg.ContextLimit("claude"), Harness: "claude"})
+	large, largeOmit := renderAlwaysContent("", docs, alwaysRender{Budget: cfg.ContextLimit("grok"), Harness: "grok"})
+	if len(smallOmit) == 0 || !strings.Contains(small, "OMITTED FOR THE CLAUDE") {
+		t.Fatalf("claude's small limit should index:\n%s", small)
+	}
+	if len(largeOmit) != 0 || strings.Contains(large, "OMITTED") || strings.Count(large, "### ") != 3 {
+		t.Fatalf("grok's large limit should inline everything:\n%s", large)
+	}
+}
+
+// This repo's real constitution and session set fit the claude default, every
+// principle either inlined or indexed with its pull command (AC1 backstop).
+func TestRenderAlwaysContent_realSubstrateFitsClaudeLimit(t *testing.T) {
+	root := filepath.Join("..", "..", ".satelle")
+	constPath := filepath.Join(root, "constitution.md")
+	constitution := readConstitution(constPath)
+	if constitution == "" {
+		t.Skip("no constitution in this tree")
+	}
+	var docs []docindex.Doc
+	for _, p := range principleFiles(root) {
+		body, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if docHasTag(string(body), sessionTag) {
+			docs = append(docs, docindex.Doc{Kind: "principles", Name: strings.TrimSuffix(filepath.Base(p), ".md"), Body: string(body)})
+		}
+	}
+	limit := config.Config{}.ContextLimit("claude")
+	content, _ := renderAlwaysContent(constitution, docs, alwaysRender{Budget: limit, Harness: "claude", ConstitutionPath: constPath})
+	if len(content) > limit {
+		t.Fatalf("content %d bytes exceeds the claude limit %d", len(content), limit)
+	}
+	for _, d := range docs {
+		if !strings.Contains(content, "### "+d.Name+"\n") && !strings.Contains(content, "satelle doc get principles "+d.Name) {
+			t.Errorf("principle %q neither inlined nor indexed", d.Name)
+		}
+	}
+}
+
+func TestResolveContextHarness(t *testing.T) {
+	claudeEvt := []byte(`{"hook_event_name":"SessionStart","transcript_path":"/home/u/.claude/projects/x/s.jsonl"}`)
+	cases := []struct {
+		name, flag string
+		raw        []byte
+		env        []string
+		want       string
+	}{
+		{"flag wins", "grok", claudeEvt, nil, "grok"},
+		{"event sniff", "", claudeEvt, nil, "claude"},
+		{"env marker", "", []byte(`{}`), []string{"CODEX_THREAD_ID=abc"}, "codex"},
+		{"nothing recognised is unknown, not claude", "", []byte(`{}`), nil, "unknown"},
+	}
+	for _, c := range cases {
+		if got := resolveContextHarness(c.flag, c.raw, c.env); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
 	}
 }
 
@@ -1142,7 +1249,7 @@ func TestSeatInjectHelpers(t *testing.T) {
 		t.Fatalf("block missing release path: %q", block)
 	}
 
-	merged := appendSeatToContext("principles here", block, alwaysContextCeiling)
+	merged := appendSeatToContext("principles here", block, 16384)
 	if !strings.Contains(merged, "## Engagement seat") || !strings.HasPrefix(merged, "principles here") {
 		t.Fatalf("appendSeatToContext = %q", merged)
 	}
@@ -1152,7 +1259,7 @@ func TestSeatInjectHelpers(t *testing.T) {
 		t.Fatalf("ceiling should drop seat: %q", tight)
 	}
 	// Empty content still injects seat.
-	only := appendSeatToContext("", block, alwaysContextCeiling)
+	only := appendSeatToContext("", block, 16384)
 	if only != block {
 		t.Fatalf("empty content: %q", only)
 	}

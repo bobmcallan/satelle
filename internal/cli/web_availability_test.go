@@ -224,7 +224,7 @@ func TestStatusReportsRealAvailability(t *testing.T) {
 func hookContent(t *testing.T) string {
 	t.Helper()
 	var out, errb bytes.Buffer
-	if err := runHookContext(&out, &errb); err != nil {
+	if err := runHookContext(&out, &errb, "grok"); err != nil {
 		t.Fatalf("runHookContext must fail open, got %v", err)
 	}
 	if strings.TrimSpace(out.String()) == "" {

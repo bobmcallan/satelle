@@ -1,3 +1,13 @@
+## [0.0.547] - 2026-09-25
+
+### Fixed
+- **In-loop sessions now get the constitution and session principles at SessionStart.** Before, `satelle hook context` capped its output at a compiled 16384 bytes. Claude Code keeps only a ~2 KB preview of hook context over about 10 KB, so in-loop Claude sessions saw a preview and not the rules. The injection limit is now set per harness in `[harness.<name>] context_limit_bytes`. Embedded defaults: claude 9500, grok 16384, codex 16384, unknown 9500. A repo can override any of them in `satelle.toml`. When the constitution and principles do not fit, the ones left out are listed under an `OMITTED FOR THE <HARNESS> CONTEXT LIMIT` heading, each with the command to read it (`satelle doc get principles <name>`). Nothing is cut silently. Advisory lines and the seat block count toward the limit. `satelle hook context` takes `--harness`. Without it, the harness is detected from the hook event and then the session environment; anything unrecognised is `unknown`. The placement diet check compares against the largest configured limit. Grok ignores SessionStart hook output entirely, so an in-loop Grok session gets none of this injection. That is recorded on the story and left for a follow-up. (sty_ce1a2733)
+
+## [serve-v0.0.77] - 2026-09-25
+
+### Changed
+- **The service picks up the per-harness `[harness.<name>]` config table.** The table comes with the config changes above; the service's behaviour is unchanged. (sty_ce1a2733)
+
 ## [0.0.546] - 2026-09-25
 
 ### Fixed

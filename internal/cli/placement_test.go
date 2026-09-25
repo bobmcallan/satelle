@@ -95,12 +95,12 @@ func TestAuditPlacementFlagsPrincipleScope(t *testing.T) {
 func TestAuditPlacementFlagsOverCeiling(t *testing.T) {
 	dataDir := t.TempDir()
 	// One huge session-tagged principle forces truncation.
-	big := "---\nname: huge\ntype: principle\ntags: [type:principle, principles:session]\n---\n\n# Huge\n\n" + strings.Repeat("x", alwaysContextCeiling+100)
+	big := "---\nname: huge\ntype: principle\ntags: [type:principle, principles:session]\n---\n\n# Huge\n\n" + strings.Repeat("x", config.Config{}.MaxContextLimit()+100)
 	writePrinciple(t, dataDir, "huge", big)
 	probs := auditPlacement(dataDir, nil, "")
 	found := false
 	for _, p := range probs {
-		if strings.Contains(p, "SessionStart ceiling") {
+		if strings.Contains(p, "SessionStart harness limit") {
 			found = true
 		}
 	}

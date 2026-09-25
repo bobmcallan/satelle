@@ -198,7 +198,7 @@ func TestHookContextVersionDriftAdvisoryNeverRefuses(t *testing.T) {
 	}
 	t.Chdir(repo)
 	var out, errBuf bytes.Buffer
-	if err := runHookContext(&out, &errBuf); err != nil {
+	if err := runHookContext(&out, &errBuf, "grok"); err != nil {
 		t.Fatalf("hook context must never refuse a stale repo: %v", err)
 	}
 	if strings.Contains(out.String(), "STOP BLOCKED") || strings.Contains(out.String(), "\"decision\":\"block\"") {
