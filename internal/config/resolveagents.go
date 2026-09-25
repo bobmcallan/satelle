@@ -224,7 +224,28 @@ func ResolveAgentsBaseline(baseline, repo, workspace AgentsConfig, global Global
 		}
 		out.Agents[name] = b
 	}
+	out.ModelOrder = layerModelOrder(baseline.ModelOrder, workspace.ModelOrder, repo.ModelOrder)
 	return out, prov, nil
+}
+
+// layerModelOrder folds the [model_order] layers per executable key: the
+// highest layer that names an executable wins that executable's list, so a repo
+// writing only claude still inherits the workspace's or baseline's grok and
+// codex lists. Layers are passed lowest first.
+func layerModelOrder(layers ...map[string][]ModelRank) map[string][]ModelRank {
+	var out map[string][]ModelRank
+	for _, l := range layers {
+		for exe, ranks := range l {
+			if len(ranks) == 0 {
+				continue
+			}
+			if out == nil {
+				out = map[string][]ModelRank{}
+			}
+			out[strings.ToLower(strings.TrimSpace(exe))] = ranks
+		}
+	}
+	return out
 }
 
 // resolveBindingProfile merges one binding against the workspace layer and the

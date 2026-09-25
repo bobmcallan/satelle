@@ -506,6 +506,47 @@ func TestArtifactAttemptsInheritedModelReachesACPRequest(t *testing.T) {
 	}
 }
 
+// TestDispatchModelOrderTier pins sty_4fde0a50 at the engine level: with no
+// pin and no inherited model, the dispatch takes the first entry of its OWN
+// executable's order and records source=order; a list keyed to another
+// executable is never applied.
+func TestDispatchModelOrderTier(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		order     map[string][]config.ModelRank
+		wantModel string
+		wantSrc   string
+	}{
+		{"own executable", map[string][]config.ModelRank{"primary": {{"m-first"}, {"m-second"}}}, "m-first", config.ModelSourceOrder},
+		{"other executable only", map[string][]config.ModelRank{"claude": {{"opus"}}}, "", config.ModelSourceCLIDefault},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			primary := &attemptRunner{runs: []attemptRun{{out: validAttempt("## AC1\nok\n## AC2\nok")}}}
+			docs := fakeDocs{workflow: modelSourceDispatchWFNoOverride, skillBody: attemptedDispatchSkill, skillFound: true}
+			g, _ := newEngine(t, "", docs)
+			g.SetNamedAgents(modelSlotNamedAgents)
+			g.newRunner = func(_iface, command string) (agentcli.Runner, error) {
+				if command == "primary --model {model}" {
+					return primary, nil
+				}
+				return nil, nil
+			}
+			cfg := config.AgentsConfig{ModelOrder: tc.order}
+			g.SetModelOrder(cfg.OrderFor)
+			g.SetArtifactAttacher(func(context.Context, workitem.Item, string, string, string) (string, string, error) {
+				return "design", "design-note", nil
+			})
+			res, err := g.DispatchExecutor(context.Background(), attemptedItem(), "plan")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Model != tc.wantModel || res.ModelSource != tc.wantSrc {
+				t.Fatalf("model=%q source=%q, want %q/%q", res.Model, res.ModelSource, tc.wantModel, tc.wantSrc)
+			}
+		})
+	}
+}
+
 // TestArtifactAttemptsInheritedInLoopModel pins the same wiring for the
 // IN-LOOP session's model (the orchestrator's is unknown), and — the specific
 // gap this test closes — that the choice applies uniformly to the dispatch

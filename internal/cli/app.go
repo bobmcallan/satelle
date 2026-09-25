@@ -691,6 +691,9 @@ func requireAgents(a *app.App) (config.EffectiveAgents, error) {
 // A broken harness value is an error — the configuration executes as defined or
 // refuses (sty_d0d6bb67).
 func applyAgentGrants(rev *agentstep.Engine, a *app.App, agents config.AgentsConfig) error {
+	// The per-executable [model_order] feeds config.SelectModel's order tier
+	// (sty_4fde0a50); every engine that resolves a model gets it here.
+	rev.SetModelOrder(agents.OrderFor)
 	rb := agents.ReviewerBinding()
 	// Store the whole binding as the single resolution shape for Invoke
 	// (sty_ba860c8a); scalar caches are synced from it.

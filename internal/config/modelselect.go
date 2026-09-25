@@ -12,6 +12,7 @@ const (
 	ModelSourceInheritedOrchestrator = "inherited-orchestrator"
 	ModelSourceInheritedInLoop       = "inherited-in-loop"
 	ModelSourceCreator               = "creator"
+	ModelSourceOrder                 = "order"
 	ModelSourceCLIDefault            = "cli-default"
 )
 
@@ -41,7 +42,9 @@ func (s SessionModel) known() bool {
 //  3. Inherited — the Orchestrator's model, else the InLoop session's, each
 //     cross-provider guarded; the orchestrator wins when both are eligible.
 //  4. Creator — the story-creating session's model, same guard.
-//  5. Empty — cli-default: the caller drops {model} and the CLI's own default runs.
+//  5. Order — the first entry of the dispatch executable's [model_order] list,
+//     when the binding can accept a model. Never another executable's list.
+//  6. Empty — cli-default: the caller drops {model} and the CLI's own default runs.
 type SelectInput struct {
 	// Binding is the resolved agents.toml binding's model= value.
 	Binding string
@@ -57,6 +60,9 @@ type SelectInput struct {
 	Orchestrator   SessionModel
 	InLoop         SessionModel
 	Creator        SessionModel
+	// Order is the [model_order] list for CommandExecutable only (the caller
+	// looks it up with AgentsConfig.OrderFor); empty means none is configured.
+	Order []ModelRank
 	// CommandExecutable is the dispatch binding's own command executable
 	// (ExecutableToken) — the cross-provider guard's comparison target.
 	CommandExecutable string
@@ -91,6 +97,13 @@ func SelectModel(in SelectInput) (model, source string) {
 	}
 	if m, ok := crossProviderApplied(in.Creator, in); ok {
 		return m, ModelSourceCreator
+	}
+	if in.HasModelSlot || in.ModelViaSession {
+		for _, r := range in.Order {
+			if m := r.First(); m != "" {
+				return m, ModelSourceOrder
+			}
+		}
 	}
 	return "", ModelSourceCLIDefault
 }

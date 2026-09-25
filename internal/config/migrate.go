@@ -61,7 +61,7 @@ func MigrateAgents(content string) (out string, changes []string, err error) {
 		// below must not touch them (a bare header would otherwise fall
 		// through bindingForHeader's default case and get a spurious
 		// role="agent" injected).
-		if s.header == "defaults" || s.header == "models" {
+		if s.header == "defaults" || s.header == "models" || s.header == "model_order" {
 			continue
 		}
 		// harness → command
@@ -197,6 +197,10 @@ func decodeAgents(content string, legacyNested bool) (AgentsConfig, error) {
 			// Retired [models] ranking table: ignored so an older repo still
 			// loads, and never read as an agent binding.
 			continue
+		case "model_order":
+			if err := md.PrimitiveDecode(prim, &ac.ModelOrder); err != nil {
+				return AgentsConfig{}, fmt.Errorf("parse [model_order]: %w", err)
+			}
 		case "executor":
 			var b AgentBinding
 			if err := md.PrimitiveDecode(prim, &b); err != nil {

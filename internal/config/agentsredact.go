@@ -68,7 +68,7 @@ func RedactAgentsTransport(body []byte) ([]byte, error) {
 // RedactAgents returns a deep copy of a with every binding redacted for
 // transport. The Defaults table carries no secrets and is kept.
 func RedactAgents(a AgentsConfig) AgentsConfig {
-	out := AgentsConfig{Defaults: a.Defaults, Executor: redactBinding(a.Executor), Reviewer: redactBinding(a.Reviewer)}
+	out := AgentsConfig{Defaults: a.Defaults, ModelOrder: a.ModelOrder, Executor: redactBinding(a.Executor), Reviewer: redactBinding(a.Reviewer)}
 	if len(a.Agents) > 0 {
 		out.Agents = make(map[string]AgentBinding, len(a.Agents))
 		for name, b := range a.Agents {
@@ -250,9 +250,10 @@ func RehydrateAgents(store, local []byte) (out []byte, keepLocal bool, err error
 		return nil, false, fmt.Errorf("local agents layer: %w", err)
 	}
 	merged := AgentsConfig{
-		Defaults: sc.Defaults,
-		Executor: rehydrateBinding(sc.Executor, lc.Executor),
-		Reviewer: rehydrateBinding(sc.Reviewer, lc.Reviewer),
+		Defaults:   sc.Defaults,
+		ModelOrder: sc.ModelOrder,
+		Executor:   rehydrateBinding(sc.Executor, lc.Executor),
+		Reviewer:   rehydrateBinding(sc.Reviewer, lc.Reviewer),
 	}
 	if len(sc.Agents) > 0 {
 		merged.Agents = make(map[string]AgentBinding, len(sc.Agents))
@@ -364,6 +365,27 @@ func rehydrateScalar(s, l any) any {
 	return s
 }
 
+// modelOrderTable renders [model_order]: a single-name rank as a string, a
+// multi-name rank as an array, so the bytes decode back to the same ranks.
+func modelOrderTable(mo map[string][]ModelRank) map[string]any {
+	t := map[string]any{}
+	for exe, ranks := range mo {
+		if len(ranks) == 0 {
+			continue
+		}
+		list := make([]any, 0, len(ranks))
+		for _, r := range ranks {
+			if len(r) == 1 {
+				list = append(list, r[0])
+			} else {
+				list = append(list, []string(r))
+			}
+		}
+		t[exe] = list
+	}
+	return t
+}
+
 // EncodeAgents marshals an agents layer to TOML in the flat form LoadAgents
 // reads: [defaults] when set, [executor], [reviewer], then every named binding
 // as a top-level table (never the retired nested [agents.<name>]). Only
@@ -375,6 +397,9 @@ func EncodeAgents(a AgentsConfig) ([]byte, error) {
 	if d := defaultsTable(a.Defaults); len(d) > 0 {
 		tables["defaults"] = d
 	}
+	if t := modelOrderTable(a.ModelOrder); len(t) > 0 {
+		tables["model_order"] = t
+	}
 	if t := bindingTable(a.Executor); len(t) > 0 {
 		tables["executor"] = t
 	}
@@ -383,7 +408,7 @@ func EncodeAgents(a AgentsConfig) ([]byte, error) {
 	}
 	for name, b := range a.Agents {
 		switch name {
-		case "defaults", "models", "executor", "reviewer", "agents":
+		case "defaults", "models", "model_order", "executor", "reviewer", "agents":
 			continue // cannot be a named binding in the flat form
 		}
 		t := bindingTable(b)

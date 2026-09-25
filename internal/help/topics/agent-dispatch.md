@@ -1040,22 +1040,45 @@ web timeline). Precedence, first match wins:
 3. **inherited-orchestrator** / **inherited-in-loop** — the orchestrator
    session's (`satelle story chat`) model on this story, else the in-loop
    engaging session's. The orchestrator wins whenever both are eligible (it
-   is the live driving session); no ranking is consulted. Both are guarded so a Claude session's
+   is the live driving session). Both are guarded so a Claude session's
    model id can never reach a Codex/Grok dispatch — see "cross-provider
    guard" below.
 4. **creator** — the model of the session that created the story, same guard.
-5. **cli-default** — none of the above resolved: the `{model}` placeholder is
+5. **order** — the first entry of the `[model_order]` list for THIS binding's
+   executable (see "The model order" below). Applied only when the binding can
+   accept a model, and never from another executable's list.
+6. **cli-default** — none of the above resolved: the `{model}` placeholder is
    dropped and the CLI's own default runs. Recorded as `cli-default`, not left
    silent.
 
 Every dispatch — a gate, a named-agent step, a live chat/rework session, a
 retrospective, quality escalation — records BOTH the resolved model and which
-of these seven values (`binding`, `step`, `agent`, `inherited-orchestrator`,
-`inherited-in-loop`, `creator`, `cli-default`) picked it, on the same
+of these eight values (`binding`, `step`, `agent`, `inherited-orchestrator`,
+`inherited-in-loop`, `creator`, `order`, `cli-default`) picked it, on the same
 `agent_invocation` / `review_accept` / `review_reject` row that already
 carries `model_resolved`. `satelle agent validate` reports a step's
 `model =` as the node's effective model (source `step`) whenever the
 allocated binding itself has no `model =` (source `binding` wins outright).
+
+### The model order
+
+An empty `model =` stays a real choice: it lets a dispatch follow the driving
+session of the same CLI. When no same-CLI session model applies, the order tier
+uses `[model_order]` in agents.toml — one list per executable, first entry
+first. An entry is a name, or an array of names that are one rank (an alias and
+its resolved id); the first name is applied. `satelle init` writes these lists
+into a fresh agents.toml and appends them to an existing one that has no
+`[model_order]` table:
+
+| executable | order (first applies) |
+| --- | --- |
+| claude | opus, sonnet, haiku |
+| grok | grok-4.7 |
+| codex | gpt-5-codex |
+
+The codex id comes from a captured `codex exec --json` fixture and the grok id
+from a captured ACP `modelId`; claude uses the CLI's own aliases. An executable
+with no list falls through to `cli-default`, recorded as such.
 
 ### The cross-provider guard
 

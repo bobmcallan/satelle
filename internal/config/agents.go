@@ -717,6 +717,64 @@ type AgentsConfig struct {
 	Executor AgentBinding            `toml:"executor"`
 	Reviewer AgentBinding            `toml:"reviewer"`
 	Agents   map[string]AgentBinding `toml:"agents"`
+	// ModelOrder is the [model_order] table (sty_4fde0a50): one ordered list
+	// of models per executable token (claude, grok, codex). It is what an
+	// unpinned dispatch with no same-executable inherited model follows.
+	ModelOrder map[string][]ModelRank `toml:"model_order"`
+}
+
+// ModelRank is one rank in an executable's model order: the names that are the
+// same model (an alias and its resolved id). The first name is the value
+// applied. In agents.toml a rank is a plain string, or an array of strings
+// when several names share the rank.
+type ModelRank []string
+
+// UnmarshalTOML decodes a rank written as a string or an array of strings.
+func (r *ModelRank) UnmarshalTOML(data any) error {
+	switch v := data.(type) {
+	case string:
+		*r = ModelRank{v}
+	case []any:
+		out := make(ModelRank, 0, len(v))
+		for _, e := range v {
+			s, ok := e.(string)
+			if !ok {
+				return fmt.Errorf("model_order rank entries must be strings, got %T", e)
+			}
+			out = append(out, s)
+		}
+		*r = out
+	default:
+		return fmt.Errorf("model_order rank must be a string or an array of strings, got %T", data)
+	}
+	return nil
+}
+
+// First returns the name applied for this rank, or "" when the rank is empty.
+func (r ModelRank) First() string {
+	for _, n := range r {
+		if n = strings.TrimSpace(n); n != "" {
+			return n
+		}
+	}
+	return ""
+}
+
+// OrderFor returns the model order configured for executable — an exact,
+// case-insensitive match on the executable token and nothing else, so one
+// executable's list is never applied to another and an unrecognised executable
+// gets nil rather than a Claude default.
+func (a AgentsConfig) OrderFor(executable string) []ModelRank {
+	exe := strings.TrimSpace(executable)
+	if exe == "" {
+		return nil
+	}
+	for k, v := range a.ModelOrder {
+		if strings.EqualFold(strings.TrimSpace(k), exe) {
+			return v
+		}
+	}
+	return nil
 }
 
 // DefaultIdleTimeout is the shipped default idle-stall bound (sty_752c4ef2):

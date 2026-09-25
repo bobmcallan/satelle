@@ -1,3 +1,13 @@
+## [0.0.549] - 2026-09-25
+
+### Added
+- **A binding with no model follows its own CLI's model order.** agents.toml has a new `[model_order]` table with one list per executable: `claude`, `grok` and `codex`. When a binding leaves `model =` empty and no same-executable session model (orchestrator, in-loop or story creator) applies, the dispatch takes the first entry of its own executable's list. The ledger records the source as `order`. A binding's `model =` pin still wins. A name from one executable's list is never applied to another executable. An executable with no list falls through to `cli-default`, which is recorded as such. An entry can be a group of names that count as one rank, such as an alias and its resolved id; the first name is the one applied. `satelle init` writes the three lists (claude: opus, sonnet, haiku; grok: grok-4.7; codex: gpt-5-codex) into a fresh agents.toml, and appends them to an existing one that has no `[model_order]`. An operator's own table is never changed. The Grok and Codex ids come from captured CLI fixtures. `satelle help agent-dispatch` lists the same three orders. The table survives encode, redact, rehydrate and the repo/workspace/baseline layering: per executable, the highest layer that names it wins. (sty_4fde0a50)
+
+## [serve-v0.0.79] - 2026-09-25
+
+### Changed
+- **The service reads the `[model_order]` table in agents.toml and embeds the updated agent-dispatch help topic.** Its behaviour is otherwise unchanged. (sty_4fde0a50)
+
 ## [0.0.548] - 2026-09-25
 
 ### Added

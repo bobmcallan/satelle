@@ -237,6 +237,9 @@ type Engine struct {
 	// tiers (sty_7069bced). Nil-safe: an unwired resolver leaves every role
 	// unknown, so selection falls through those tiers to cli-default.
 	sessionModels func(ctx context.Context, storyID string) (orchestrator, inLoop, creator config.SessionModel)
+	// modelOrder returns an executable's configured [model_order] list
+	// (sty_4fde0a50); the order tier of config.SelectModel.
+	modelOrder func(executable string) []config.ModelRank
 	// invocationRecorder appends an agent_invocation ledger row directly
 	// (sty_7069bced 4.2) — the seam a LIVE session's open/close uses, so it
 	// shows up in `satelle story cost` and the web timeline the same way a
@@ -606,6 +609,13 @@ func (g *Engine) SetSessionModelsResolver(fn func(ctx context.Context, storyID s
 	g.sessionModels = fn
 }
 
+// SetModelOrder wires the lookup of an executable's [model_order] list
+// (config.AgentsConfig.OrderFor, sty_4fde0a50). Nil-safe: unwired, selectModel
+// has no order tier and falls through to cli-default.
+func (g *Engine) SetModelOrder(fn func(executable string) []config.ModelRank) {
+	g.modelOrder = fn
+}
+
 // SetInvocationRecorder wires the seam a live session's open/close uses to
 // ledger its own agent_invocation rows directly (sty_7069bced 4.2), bypassing
 // the transition-gated appendLedgerEntry path a one-shot dispatch runs
@@ -638,7 +648,8 @@ type ModelChoice struct {
 // alias first, then a per-dispatch override (a workflow step's model= or a
 // dispatching agent's --model flag, named by overrideSource), then the
 // higher-ranked of the orchestrator/in-loop session models for storyID, then
-// the story-creating session's, else empty (cli-default). It never mutates
+// the story-creating session's, then the first entry of the executable's
+// [model_order] list, else empty (cli-default). It never mutates
 // binding — callers apply the result to their own per-dispatch copy.
 func (g *Engine) selectModel(ctx context.Context, binding config.AgentBinding, storyID, override, overrideSource string) (model, source string) {
 	in := config.SelectInput{
@@ -648,6 +659,9 @@ func (g *Engine) selectModel(ctx context.Context, binding config.AgentBinding, s
 		CommandExecutable: binding.ExecutableToken(),
 		HasModelSlot:      config.HasModelSlot(binding.CommandTemplate()),
 		ModelViaSession:   binding.IsACP(),
+	}
+	if g.modelOrder != nil {
+		in.Order = g.modelOrder(in.CommandExecutable)
 	}
 	if g.sessionModels != nil && strings.TrimSpace(storyID) != "" {
 		in.Orchestrator, in.InLoop, in.Creator = g.sessionModels(ctx, storyID)

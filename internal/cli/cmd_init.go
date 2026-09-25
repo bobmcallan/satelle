@@ -297,7 +297,7 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 			fmt.Fprintln(out, initLine(false, agentsRel))
 		} else if migrated, notes, merr := config.MigrateAgents(string(raw)); merr != nil {
 			fmt.Fprintf(out, "= %s (left intact: %v)\n", agentsRel, merr)
-		} else if len(notes) > 0 {
+		} else if migrated, notes = withModelOrder(migrated, notes); len(notes) > 0 {
 			if werr := os.WriteFile(agentsPath, []byte(migrated), 0o644); werr != nil {
 				return fmt.Errorf("init: write migrated %s: %w", agentsPath, werr)
 			}
@@ -1651,7 +1651,7 @@ stale_after = "24h"
 // compiled defaults — the configuration executes as defined. A repo may widen
 // or rebind transparently — the override is a committed file, the operator's
 // choice.
-var scaffoldAgentsToml = strings.ReplaceAll(`# workflows/agents.toml — the agents layer: how each agent runs (backend + tool
+var scaffoldAgentsToml = strings.NewReplacer("MODEL_ORDER_BLOCK\n", scaffoldModelOrderToml+"\n", "REVIEWER_COMMAND_TEMPLATE", agentcli.DefaultClaudeCommand).Replace(`# workflows/agents.toml — the agents layer: how each agent runs (backend + tool
 # grant). It sits beside done.toml and step.toml because it is the other half of what
 # those declare: step.toml names a performer and its gates by SECTION NAME, and the
 # [<name>] sections here say what those names actually run (sty_10f732ed).
@@ -1795,8 +1795,9 @@ command = "in-loop"            # the orchestrator/driving session itself
 role    = "reviewer"           # declared contract; inference is a fallback, not the norm
 command = "REVIEWER_COMMAND_TEMPLATE"
 tools   = "Read,Grep,Glob"     # read-only grant — widen at your own risk (claude template default; a grok full template bakes its own grok-named read-only grant)
-model   = ""                   # empty is selected deliberately, not left to the CLI's own default (sty_7069bced): binding > step/agent > inherited orchestrator/in-loop session (the orchestrator's model first) > story creator's session > cli-default, each recorded as the source next to the resolved id. Each binding may still pin its own (e.g. "sonnet"). A workflow gate/node model="…" overrides this for that gate only without a second binding (sty_19456622). See "satelle help agent-dispatch" § Model selection.
+model   = ""                   # empty is selected deliberately, not left to the CLI's own default (sty_7069bced): binding > step/agent > inherited orchestrator/in-loop session (the orchestrator's model first) > story creator's session > the first entry of this executable's [model_order] list > cli-default, each recorded as the source next to the resolved id. Each binding may still pin its own (e.g. "sonnet"). A workflow gate/node model="…" overrides this for that gate only without a second binding (sty_19456622). See "satelle help agent-dispatch" § Model selection.
 
+MODEL_ORDER_BLOCK
 # A named EXECUTOR agent for isolated mutating steps (e.g. a commit/push step),
 # with an explicit full command template and a wide grant:
 # [commit-agent]
@@ -1824,7 +1825,44 @@ model   = ""                   # empty is selected deliberately, not left to the
 # command   = "claude -p --input-format stream-json --output-format stream-json --verbose --allowedTools {tools} --model {model} --effort {effort}"
 # tools     = "Read,Grep,Glob,Edit,Write,Bash(satelle:*)"
 # model     = "opus"
-`, "REVIEWER_COMMAND_TEMPLATE", agentcli.DefaultClaudeCommand)
+`)
+
+// withModelOrder appends the scaffold [model_order] block to an existing
+// agents.toml that does not declare the table, and records it in notes. A file
+// that already has the table is returned untouched, so an
+// operator's edited order is never overwritten.
+func withModelOrder(content string, notes []string) (string, []string) {
+	for _, ln := range strings.Split(content, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(ln), "[model_order]") {
+			return content, notes
+		}
+	}
+	sep := "\n"
+	if !strings.HasSuffix(content, "\n") {
+		sep = "\n\n"
+	}
+	return content + sep + scaffoldModelOrderToml, append(notes, "added [model_order]")
+}
+
+// scaffoldModelOrderToml is the [model_order] block init writes into a fresh
+// agents.toml and appends to an existing one that lacks the table
+// (sty_4fde0a50). It is the single source of the seeded lists: the names are
+// configuration, and the ids come from captured fixtures under
+// internal/agentcli/testdata/usage (codex exec, grok ACP modelId) and the
+// claude CLI's own aliases.
+const scaffoldModelOrderToml = `# [model_order] — the order an UNSET model follows (sty_4fde0a50), one list per
+# executable (claude, grok, codex). A binding that leaves model= empty and has no
+# same-executable inherited or creator session model takes the FIRST entry of ITS
+# OWN executable's list; a name from one list is never applied to another
+# executable. An entry is a name, or an array of names that are one rank (an
+# alias and its resolved id, e.g. ["opus", "claude-opus-5-5"]); the first name is
+# applied. An executable with no list falls back to the CLI's own default. A
+# binding's model= pin always wins. See "satelle help agent-dispatch" § Model selection.
+[model_order]
+claude = ["opus", "sonnet", "haiku"]
+grok   = ["grok-4.7"]
+codex  = ["gpt-5-codex"]
+`
 
 // scaffoldConstitution is the project-constitution template a fresh init writes to
 // .satelle/constitution.md — the order-zero doc injected into every session
