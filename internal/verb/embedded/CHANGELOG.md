@@ -1,3 +1,13 @@
+## [0.0.544] - 2026-09-25
+
+### Fixed
+- **Live sessions ledger a denied ask-the-user request.** A `satelle story chat` or rework-relay session (stream or ACP) whose agent asks the user now writes an `agent-interactive-denied` ledger row with the tool, question and response when it happens, as a one-shot dispatch already did. A stream-json agent's ask tool (for example `AskUserQuestion`) is now always denied with the no-user message, whatever the permission policy allows, and the `questions[].question` input shape is read as the question text. (sty_ff50f788)
+
+## [serve-v0.0.75] - 2026-09-25
+
+### Fixed
+- **The service denies and reports ask-the-user requests the same way.** It shares the stream and ACP transport changes above. (sty_ff50f788)
+
 ## [0.0.543] - 2026-09-25
 
 ### Changed

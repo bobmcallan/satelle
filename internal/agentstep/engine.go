@@ -2109,7 +2109,22 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 	// row below can report what the live session actually resolved/spent, not
 	// just what open intended. The caller's own onEvent still fires unchanged.
 	tracker := &liveUsageTracker{}
-	req.OnEvent = tracker.wrap(onEvent)
+	// A denied ask-the-user is ledgered as it happens (not at Close, so a
+	// killed session keeps the row), exactly as a one-shot dispatch does
+	// (sty_ff50f788). A consult session acts as its own binding; a driving one
+	// as the executor.
+	askActor := ""
+	if role == SessionRoleConsult {
+		askActor = name
+	}
+	req.OnEvent = tracker.wrap(func(ev agentcli.Event) {
+		if ev.Kind == agentcli.EventInteractiveDenied {
+			g.ledgerInteractiveDeniedFor(ctx, item.ID, askActor, name, "", ev)
+		}
+		if onEvent != nil {
+			onEvent(ev)
+		}
+	})
 	sess, err := opener(ctx, req, pol)
 	if err != nil {
 		finishScratch(scratchDir, false)

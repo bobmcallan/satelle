@@ -460,16 +460,21 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 // name and question text, so an Ask that would once have stalled the dispatch is
 // visible (sty_32795645).
 func (g *Engine) ledgerInteractiveDenied(ctx context.Context, req InvokeRequest, section string, asked []agentcli.Event) {
-	actor := req.Actor
+	for _, ev := range asked {
+		g.ledgerInteractiveDeniedFor(ctx, req.StoryID, req.Actor, section, req.Step, ev)
+	}
+}
+
+// ledgerInteractiveDeniedFor writes the row for one denied ask; shared by the
+// one-shot and live-session paths. An empty actor defaults to "executor".
+func (g *Engine) ledgerInteractiveDeniedFor(ctx context.Context, storyID, actor, section, step string, ev agentcli.Event) {
 	if actor == "" {
 		actor = "executor"
 	}
-	for _, ev := range asked {
-		g.telemetryEvent(ctx, req.StoryID, actor, "agent-interactive-denied", map[string]any{
-			"agent": section, "step": req.Step, "tool": ev.Tool, "question": ev.Text,
-			"response": ev.Meta[agentcli.EventMetaResponse],
-		})
-	}
+	g.telemetryEvent(ctx, storyID, actor, "agent-interactive-denied", map[string]any{
+		"agent": section, "step": step, "tool": ev.Tool, "question": ev.Text,
+		"response": ev.Meta[agentcli.EventMetaResponse],
+	})
 }
 
 // asStallError extracts a *StallError from err via errors.As, or nil.

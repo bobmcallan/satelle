@@ -75,6 +75,13 @@ while True:
         pout = os.environ.get("PERM_OUT")
         if pout:
             open(pout, "w").write(behavior)
+    if os.environ.get("STREAM_ASK") == "1" and n == 1:
+        send({"type":"control_request","request_id":"req2","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","input":{"questions":[{"question":"which story?"}]}}})
+        resp = read()
+        inner = ((resp or {}).get("response") or {}).get("response") or {}
+        pout = os.environ.get("PERM_OUT")
+        if pout:
+            open(pout, "w").write(inner.get("behavior", "") + "|" + inner.get("message", ""))
     send({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"turn-%d" % n}]}})
     result = os.environ.get("STREAM_RESULT")
     if result and n == 1:
@@ -340,6 +347,52 @@ func TestStreamSession_PermissionAllowMutatorGrant(t *testing.T) {
 	}
 	if strings.TrimSpace(string(got)) != "allow" {
 		t.Fatalf("behavior = %q, want allow", got)
+	}
+}
+
+// TestStreamSession_AskDeniedEvenWhenPolicyAllows pins sty_ff50f788 AC1: an
+// ask-the-user tool is denied (with the no-user message) whatever the policy
+// grants, and one EventInteractiveDenied carries the tool and question.
+func TestStreamSession_AskDeniedEvenWhenPolicyAllows(t *testing.T) {
+	skipWithoutPython3(t)
+	peer := writeFakeStreamPeer(t)
+	permOut := filepath.Join(t.TempDir(), "perm.txt")
+	r, err := RunnerFromBinding(InterfaceStream, peer+" --output-format stream-json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var denied []Event
+	_, err = r.Run(context.Background(), Request{
+		SystemPrompt: "r",
+		Payload:      "{}",
+		AllowedTools: "Read,Edit,Write,Bash,AskUserQuestion",
+		Env:          map[string]string{"STREAM_ASK": "1", "PERM_OUT": permOut, "STREAM_RESULT": `{"decision":"accept","notes":"ok"}`},
+		OnEvent: func(ev Event) {
+			if ev.Kind == EventInteractiveDenied {
+				mu.Lock()
+				denied = append(denied, ev)
+				mu.Unlock()
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got, err := os.ReadFile(permOut)
+	if err != nil {
+		t.Fatalf("perm out: %v", err)
+	}
+	if want := "deny|" + noUserAnswer; string(got) != want {
+		t.Fatalf("control response = %q, want %q", got, want)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(denied) != 1 {
+		t.Fatalf("interactive_denied events = %d, want 1", len(denied))
+	}
+	if d := denied[0]; d.Tool != "AskUserQuestion" || d.Text != "which story?" || d.Meta[EventMetaResponse] != "denied" {
+		t.Errorf("event = %+v", d)
 	}
 }
 

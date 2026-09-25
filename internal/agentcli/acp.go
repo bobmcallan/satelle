@@ -849,9 +849,17 @@ func questionText(raw json.RawMessage, fallback string) string {
 		Question string `json:"question"`
 		Prompt   string `json:"prompt"`
 		Message  string `json:"message"`
+		// Questions is the AskUserQuestion shape: questions[].question.
+		Questions []struct {
+			Question string `json:"question"`
+		} `json:"questions"`
 	}
 	_ = json.Unmarshal(raw, &in)
-	for _, s := range []string{in.Question, in.Prompt, in.Message, fallback} {
+	var first string
+	if len(in.Questions) > 0 {
+		first = in.Questions[0].Question
+	}
+	for _, s := range []string{in.Question, in.Prompt, in.Message, first, fallback} {
 		if strings.TrimSpace(s) != "" {
 			return s
 		}
@@ -859,12 +867,17 @@ func questionText(raw json.RawMessage, fallback string) string {
 	return ""
 }
 
-func (c *acpClient) emitInteractiveDenied(tool, question, response string) {
+// interactiveDeniedEvent builds the EventInteractiveDenied both transports emit.
+func interactiveDeniedEvent(tool, question, response string) Event {
 	ev := newEvent(EventInteractiveDenied)
 	ev.Tool = tool
 	ev.Text = SafeText(question)
 	ev.Meta = map[string]string{EventMetaResponse: response}
-	emitEvent(c.onEvent, ev)
+	return ev
+}
+
+func (c *acpClient) emitInteractiveDenied(tool, question, response string) {
+	emitEvent(c.onEvent, interactiveDeniedEvent(tool, question, response))
 }
 
 // handleUnknownRequest answers a peer-initiated request the client has no

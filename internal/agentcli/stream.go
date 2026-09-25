@@ -359,18 +359,26 @@ func (s *streamSession) handleControl(raw map[string]any) {
 		tool, _ = req["toolName"].(string)
 	}
 	behavior := "allow"
+	answer := map[string]any{}
 	if subtype == "can_use_tool" || subtype == "permission" {
-		dec := s.pol(PermissionRequest{ToolName: tool, Kind: toolNameKind(tool)})
-		if !dec.Allow {
+		if isInteractiveAskTool(tool, "") {
+			// No human is attached to any satelle session: an interactive
+			// question is always denied, whatever the policy says.
+			behavior = "deny"
+			answer["message"] = noUserAnswer
+			input, _ := json.Marshal(req["input"])
+			emitEvent(s.onEvent, interactiveDeniedEvent(tool, questionText(input, ""), "denied"))
+		} else if dec := s.pol(PermissionRequest{ToolName: tool, Kind: toolNameKind(tool)}); !dec.Allow {
 			behavior = "deny"
 		}
 	}
+	answer["behavior"] = behavior
 	_ = s.writeJSON(map[string]any{
 		"type": "control_response",
 		"response": map[string]any{
 			"subtype":    "success",
 			"request_id": reqID,
-			"response":   map[string]any{"behavior": behavior},
+			"response":   answer,
 		},
 	})
 }
