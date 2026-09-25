@@ -193,14 +193,18 @@ verify loop below.
 ### 1. Which categories get a `done.toml` table
 
 The binary ships a route, and a repo with no `.satelle/workflows/done.toml`
-inherits it. **An authored done.toml overrides the shipped one WHOLLY** — not
-table by table. So the override re-declares every category it wants, and the ones
-easiest to lose are the ones nobody converted by hand:
+inherits it. **An authored done.toml overlays the shipped one BY NAME**: a
+category table it declares replaces that category whole, and the categories it
+does not name stay on the shipped route. The same holds for step.toml (a step
+key replaces that step) and for its `[[gate]]` list (a repo gate replaces the
+shipped gates with the same `skill`; a new skill appends). So the override only
+declares what it changes. What is worth checking is what the shipped route
+does NOT carry:
 
-- `[execution]` and `[task]` — a repo with tasks in its store loses task-run
-  routing without them.
 - `[substrate]` — there is **no shipped substrate lane at all**, so a
   markdown-only lane has to be authored, not inherited.
+- A shipped gate you do not want stays on until you override its `skill` (for
+  example with a `for` no category uses).
 
 `satelle substrate edit workflows done` materialises the shipped halves into the
 repo so you can edit from them rather than starting blank. That is also what

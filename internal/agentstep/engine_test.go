@@ -20,6 +20,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/retrieve"
 	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/testutil"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
@@ -46,7 +47,7 @@ func wfDoc(done, step string) string {
 			what + "\"\nscope = \"system\"\n\n"
 	}
 	return head("done", "test declaration of done") + done + routeHalfSplit +
-		head("step", "test step catalogue") + step
+		head("step", "test step catalogue") + testutil.UngatedStep(step)
 }
 
 // tomlList renders a CSV fixture field as a TOML array.
@@ -117,13 +118,20 @@ func spineWF(park, cancel string, gates string, steps ...string) string {
 		cat.WriteString("requires = [\"" + prev + "\"]\n\n")
 		prev = ob
 	}
+	// A repo done.toml overlays the shipped one by name (sty_a4603ea2), so the
+	// shipped categories stay in force unless the fixture declares them. The lane
+	// is declared under each, keeping every category on the fixture's route as it
+	// was when the fixture replaced the shipped file wholesale.
 	var done strings.Builder
-	done.WriteString("[\"*\"]\nobligations = [" + strings.Join(obligations, ", ") + "]\n")
-	if park != "" {
-		done.WriteString("park = " + roleRef(park) + "\n")
-	}
-	if cancel != "" {
-		done.WriteString("cancel = " + roleRef(cancel) + "\n")
+	for _, cat := range []string{`"*"`, "docs", "epic-parent", "parent", "execution", "task"} {
+		done.WriteString("[" + cat + "]\nobligations = [" + strings.Join(obligations, ", ") + "]\n")
+		if park != "" {
+			done.WriteString("park = " + roleRef(park) + "\n")
+		}
+		if cancel != "" {
+			done.WriteString("cancel = " + roleRef(cancel) + "\n")
+		}
+		done.WriteString("\n")
 	}
 	cat.WriteString(gates)
 	return wfDoc(done.String(), cat.String())

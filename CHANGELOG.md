@@ -1,3 +1,13 @@
+## [0.0.537] - 2026-09-25
+
+### Changed
+- **A repo workflow file overrides by name.** A category table or a step key in the repo's done.toml or step.toml replaces that unit. Names the repo does not mention stay on the shipped route. A repo that declares any `[[gate]]` owns the gate list; a repo that declares none keeps the baseline gates. A repo with no workflow file still runs the shipped route. (sty_a4603ea2)
+
+## [serve-v0.0.68] - 2026-09-25
+
+### Changed
+- **The service resolves the same by-name route overlay.** An authored category or step replaces that baseline unit and leaves the rest. (sty_a4603ea2)
+
 ## [0.0.536] - 2026-09-25
 
 ### Changed

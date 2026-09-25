@@ -71,6 +71,13 @@ start = true
 		step += "requires = [\"" + prev + "\"]\n\n"
 		prev = ob
 	}
+	// A fixture route is a complete catalogue. The name-merge keeps every
+	// baseline gate whose skill the fixture does not name, and the shipped
+	// estimate and summary gates would then reject these transitions.
+	// Naming them here replaces those baseline gates with ones that never fire.
+	// Declaring a gate list replaces the baseline list. Without this, the
+	// shipped estimate fence and step summary land on every fixture route.
+	step += "[[gate]]\nskill = \"satelle-estimate-actual-review\"\non = [\"__never__\"]\n\n"
 	done = "[\"*\"]\nobligations = [" + strings.Join(obligations, ", ") + "]\n"
 	if park != "" {
 		done += "park = " + roleRefTOML(park) + "\n"

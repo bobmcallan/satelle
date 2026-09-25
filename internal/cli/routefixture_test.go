@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // A lifecycle is a DERIVED ROUTE — done.toml + step.toml — and there is no DOT
@@ -28,5 +30,5 @@ func writeRoute(t *testing.T, wfDir, done, step string) {
 		}
 	}
 	write("done", "fixture declaration of done", done)
-	write("step", "fixture step catalogue", step)
+	write("step", "fixture step catalogue", testutil.UngatedStep(step))
 }

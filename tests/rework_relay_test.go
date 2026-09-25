@@ -71,7 +71,8 @@ func reworkFixture(t *testing.T) (repo, id, coderScript, consultScript string) {
 			"[raised]\nstatus = \"backlog\"\nstart = true\n\n"+
 			"[coded]\nstatus = \"in_progress\"\nagent = \"coder\"\nskills = [\"code\"]\nrequires = [\"raised\"]\n"+
 			"rework = { consult = \"consultant\", rounds = 2 }\n\n"+
-			"[closed]\nstatus = \"done\"\nterminal = true\nrequires = [\"coded\"]\n")
+			"[closed]\nstatus = \"done\"\nterminal = true\nrequires = [\"coded\"]\n\n"+
+			"[[gate]]\nskill = \"satelle-estimate-actual-review\"\non = [\"__never__\"]\n")
 
 	agents := filepath.Join(repo, ".satelle", "workflows", "agents.toml")
 	f, err := os.OpenFile(agents, os.O_APPEND|os.O_WRONLY, 0o644)

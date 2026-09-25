@@ -24,6 +24,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/retrieve"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -88,6 +89,21 @@ func Open(path string) (*DB, error) {
 		Leases:   lease.New(sqldb),
 		Retrieve: retrieve.New(sqldb),
 	}, nil
+}
+
+func init() {
+	wfgovern.EmbeddedRoute = embeddedWorkflowBody
+}
+
+// embeddedWorkflowBody is the shipped body of a workflow default by name, the
+// baseline wfgovern overlays a repo's route halves onto.
+func embeddedWorkflowBody(name string) string {
+	for _, d := range config.EmbeddedDefaults() {
+		if d.Kind == "workflows" && d.Name == name {
+			return d.Body
+		}
+	}
+	return ""
 }
 
 // embeddedDefaultDocs maps the binary's canonical default substrate into

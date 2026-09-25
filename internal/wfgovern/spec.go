@@ -151,6 +151,15 @@ func RouteSourceOf(workflows []docindex.Doc) RouteSource {
 		}
 	}
 	rs.Embedded = seenDone && seenStep && doneEmbedded && stepEmbedded
+	// A repo half overlays the shipped one by name rather than replacing it
+	// (sty_a4603ea2). The baseline is read from the binary, not the doc list,
+	// because the doc list already dropped it in favour of the authored file.
+	if seenDone && !doneEmbedded {
+		rs.Done = mergeRouteHalf(embeddedRouteBody(RouteSourceDone), rs.Done)
+	}
+	if seenStep && !stepEmbedded {
+		rs.Step = mergeRouteHalf(embeddedRouteBody(RouteSourceStep), rs.Step)
+	}
 	return rs
 }
 

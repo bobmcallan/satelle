@@ -462,7 +462,7 @@ func TestWorkflowConvertTopicCoversTheWild(t *testing.T) {
 	// them decisions rather than lookups.
 	for _, want := range []string{
 		"The two decisions only you can make",
-		"WHOLLY", "[execution]", "[task]", "[substrate]", "ungated",
+		"BY NAME", "[substrate]", "ungated",
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("the decisions section is missing %q", want)

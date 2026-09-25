@@ -671,6 +671,11 @@ func TestAnyEngagedCountsTasks(t *testing.T) {
 	wfs := routeWFs(
 		`["*"]
 obligations = ["raised", "coded", "pushed", "closed"]
+
+# The shipped task category stays in force under a repo file (sty_a4603ea2), so
+# the task rides the same lane explicitly.
+[task]
+obligations = ["raised", "coded", "pushed", "closed"]
 `,
 		`[raised]
 status = "backlog"
@@ -779,30 +784,12 @@ requires = ["feat-coded"]
 }
 
 // TestAnyEngagedFailClosedNoWorkflow: anyEngaged returns (false, error) — NOT
-// (false, nil) — when an item has NO resolving workflow (AC3 fail-closed). A chore
-// item with only a feature-applies workflow and no wildcard has no governing
-// workflow, so the hook blocks the edit rather than silently allowing it.
+// (false, nil) — when an item has NO resolving workflow (AC3 fail-closed). With
+// no workflow docs at all nothing governs the item, so the hook blocks the edit
+// rather than silently allowing it. (A repo route file overlays the shipped route
+// by name, so a partial file can no longer leave a category unresolved.)
 func TestAnyEngagedFailClosedNoWorkflow(t *testing.T) {
-	// No wildcard section: a chore item resolves to nothing, which is the
-	// fail-closed case under test.
-	wfs := routeWFs(
-		`[feature]
-obligations = ["raised", "coded", "closed"]
-`,
-		`[raised]
-status = "backlog"
-start = true
-
-[coded]
-status = "in_progress"
-agent = "executor"
-requires = ["raised"]
-
-[closed]
-status = "done"
-terminal = true
-requires = ["coded"]
-`)
+	var wfs []docindex.Doc
 	engaged, err := anyEngaged([]workitem.Item{{Kind: workitem.KindStory, Category: "chore", Status: "in_progress"}}, wfs)
 	if engaged {
 		t.Error("a chore item with no resolving workflow must not be engaged")
