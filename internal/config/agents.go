@@ -351,8 +351,8 @@ func (b AgentBinding) ResolvedInterface() string {
 // InterfaceUse says how a binding will be invoked, so ResolveInterface can pick
 // the best transport for an unset interface= (epic:model-selection child 2):
 // a one-shot dispatch (gate reviewer, planner, edge advisor) always resolves to
-// command; a live session (rework relay seat, rework.consult, story chat /
-// orchestrator) resolves to the CLI's best live transport.
+// command; a live session (rework relay seat, rework.consult)
+// resolves to the CLI's best live transport.
 type InterfaceUse int
 
 const (
@@ -553,7 +553,7 @@ func (a AgentsConfig) LiveRawBinding(name string) (AgentBinding, bool) {
 
 // LiveBinding resolves name's binding as EffectiveBinding(UseLive) over
 // LiveRawBinding(name) — the transport and command a live session
-// (agentstep.Engine.OpenSessionAs, and so `satelle story chat` and the rework
+// (agentstep.Engine.OpenSessionAs, and so the rework
 // relay) actually opens, and what `satelle agent validate` reports for a live
 // use of that binding.
 func (a AgentsConfig) LiveBinding(name string) (AgentBinding, bool) {

@@ -545,24 +545,17 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 	return r
 }
 
-// orchestratorSection is the binding name `satelle story chat` opens by
-// default (agentstep.ChatSessionBinding("")) — always a live use, whether or
-// not any workflow names it (it is consumed by a VERB, not a node).
-const orchestratorSection = "orchestrator"
-
 // liveUsedSections returns the binding names used as a LIVE session across the
 // given workflows — validate's own usage signal for
 // config.AgentsConfig.ResolveInterface's `use` parameter (epic:model-selection
 // child 2), not a general "is this binding live" authority:
 //   - a rework's consult= binding (the relay opens it live to converge),
 //   - the agent= seat on the step that declares the rework (the relay's coder
-//     seat, opened live alongside its consultant),
-//   - "orchestrator", always — `satelle story chat` opens it live regardless
-//     of workflow wiring.
+//     seat, opened live alongside its consultant).
 //
 // Everything else in the agents layer resolves one-shot.
 func liveUsedSections(workflows []docindex.Doc) map[string]bool {
-	live := map[string]bool{orchestratorSection: true}
+	live := map[string]bool{}
 	for _, doc := range expandRouteSources(workflows) {
 		if len(doc.reworks) == 0 {
 			continue

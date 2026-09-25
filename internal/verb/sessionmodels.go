@@ -11,11 +11,12 @@ import (
 )
 
 // Session-model roles (sty_7069bced / epic:model-selection order:3) — the
-// three sessions the model-selection resolver's inherited/creator tiers read.
+// sessions the model-selection resolver's inherited/creator tiers read. An
+// old session_model row with any other role (the retired orchestrator tier)
+// is ignored.
 const (
-	SessionModelRoleOrchestrator = "orchestrator"
-	SessionModelRoleInLoop       = "in-loop"
-	SessionModelRoleCreator      = "creator"
+	SessionModelRoleInLoop  = "in-loop"
+	SessionModelRoleCreator = "creator"
 )
 
 // sessionModelRow is the session_model ledger row's payload shape.
@@ -70,13 +71,13 @@ func recordEngageSessionModel(ctx context.Context, itemID string) {
 	RecordSessionModel(ctx, itemID, "", SessionModelRoleInLoop, model, exe)
 }
 
-// SessionModels resolves the latest published model per role — orchestrator,
-// in-loop, creator — for itemID from the evidence ledger. It is the resolver
+// SessionModels resolves the latest published model per role — in-loop,
+// creator — for itemID from the evidence ledger. It is the resolver
 // agentstep.Engine.SetSessionModelsResolver wires so config.SelectModel's
 // inherited/creator tiers have something to read (sty_7069bced). Nil-safe: no
 // ledger wired, or no rows recorded, yields the zero (unknown) SessionModel
 // for every role, and SelectModel falls through cleanly to the next tier.
-func SessionModels(ctx context.Context, itemID string) (orchestrator, inLoop, creator config.SessionModel) {
+func SessionModels(ctx context.Context, itemID string) (inLoop, creator config.SessionModel) {
 	if ledgerStore == nil || strings.TrimSpace(itemID) == "" {
 		return
 	}
@@ -93,13 +94,11 @@ func SessionModels(ctx context.Context, itemID string) (orchestrator, inLoop, cr
 		}
 		sm := config.SessionModel{Model: row.Model, Executable: row.Executable}
 		switch row.Role {
-		case SessionModelRoleOrchestrator:
-			orchestrator = sm
 		case SessionModelRoleInLoop:
 			inLoop = sm
 		case SessionModelRoleCreator:
 			creator = sm
 		}
 	}
-	return orchestrator, inLoop, creator
+	return inLoop, creator
 }

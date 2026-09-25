@@ -36,7 +36,19 @@ func init() {
 // subcommands dispatching to the <group>-* verbs. plural is used only in help
 // text (e.g. "List stories").
 func workItemGroup(group, plural, short string) *cobra.Command {
-	parent := &cobra.Command{Use: group, Short: short, Long: groupParentLong(group)}
+	parent := &cobra.Command{
+		Use: group, Short: short, Long: groupParentLong(group),
+		// A group with no subcommand shows its help; an unknown subcommand (a
+		// removed one such as `story chat`) is refused rather than silently
+		// printing help and exiting 0 (sty_6f9ba7ca).
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return cmd.Help()
+			}
+			return fmt.Errorf("unknown command %q for %q", args[0], cmd.CommandPath())
+		},
+	}
 
 	// create
 	var cTitle, cBody, cStatus, cPriority, cCategory, cParent, cAccept string
@@ -226,7 +238,6 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyTidyCommands()...)
 		parent.AddCommand(storyMessageCommand())
 		parent.AddCommand(storyMessagesCommand())
-		parent.AddCommand(storyChatCommand())
 		parent.AddCommand(storyReworkCommand())
 	}
 	if group == "task" {

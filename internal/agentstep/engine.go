@@ -232,11 +232,11 @@ type Engine struct {
 	// transition status commits. Nil refuses a contracted dispatch rather than
 	// silently dropping required output.
 	attachArtifact func(context.Context, workitem.Item, string, string, string) (string, string, error)
-	// sessionModels resolves the latest captured model per role (orchestrator,
-	// in-loop, creator) for a story — config.SelectModel's inherited/creator
-	// tiers (sty_7069bced). Nil-safe: an unwired resolver leaves every role
-	// unknown, so selection falls through those tiers to cli-default.
-	sessionModels func(ctx context.Context, storyID string) (orchestrator, inLoop, creator config.SessionModel)
+	// sessionModels resolves the latest captured model per role (in-loop,
+	// creator) for a story — config.SelectModel's inherited/creator tiers
+	// (sty_7069bced). Nil-safe: an unwired resolver leaves every role unknown,
+	// so selection falls through those tiers to [model_order] / cli-default.
+	sessionModels func(ctx context.Context, storyID string) (inLoop, creator config.SessionModel)
 	// modelOrder returns an executable's configured [model_order] list
 	// (sty_4fde0a50); the order tier of config.SelectModel.
 	modelOrder func(executable string) []config.ModelRank
@@ -602,10 +602,10 @@ func (g *Engine) SetCheckLogCompressor(fn func(ctx context.Context, itemID, log 
 }
 
 // SetSessionModelsResolver wires the resolver that returns the latest
-// captured model per role (orchestrator, in-loop, creator) for a story
-// (sty_7069bced). Nil-safe: an unwired resolver leaves every role unknown, so
-// selectModel falls through those tiers to cli-default.
-func (g *Engine) SetSessionModelsResolver(fn func(ctx context.Context, storyID string) (orchestrator, inLoop, creator config.SessionModel)) {
+// captured model per role (in-loop, creator) for a story (sty_7069bced).
+// Nil-safe: an unwired resolver leaves every role unknown, so selectModel
+// falls through those tiers to [model_order] / cli-default.
+func (g *Engine) SetSessionModelsResolver(fn func(ctx context.Context, storyID string) (inLoop, creator config.SessionModel)) {
 	g.sessionModels = fn
 }
 
@@ -647,7 +647,7 @@ type ModelChoice struct {
 // selectModel resolves the model for one dispatch (sty_7069bced): binding
 // alias first, then a per-dispatch override (a workflow step's model= or a
 // dispatching agent's --model flag, named by overrideSource), then the
-// higher-ranked of the orchestrator/in-loop session models for storyID, then
+// in-loop session's model for storyID, then
 // the story-creating session's, then the first entry of the executable's
 // [model_order] list, else empty (cli-default). It never mutates
 // binding — callers apply the result to their own per-dispatch copy.
@@ -664,7 +664,7 @@ func (g *Engine) selectModel(ctx context.Context, binding config.AgentBinding, s
 		in.Order = g.modelOrder(in.CommandExecutable)
 	}
 	if g.sessionModels != nil && strings.TrimSpace(storyID) != "" {
-		in.Orchestrator, in.InLoop, in.Creator = g.sessionModels(ctx, storyID)
+		in.InLoop, in.Creator = g.sessionModels(ctx, storyID)
 	}
 	return config.SelectModel(in)
 }
@@ -1933,20 +1933,8 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item, modelOverri
 	return res, nil
 }
 
-const orchestratorBinding = "orchestrator"
-
-// ChatSessionBinding normalises a `satelle story chat --agent` value: empty
-// means the default [orchestrator] console, any other name is a consultation
-// binding (sty_a0372443).
-func ChatSessionBinding(name string) string {
-	if n := strings.TrimSpace(name); n != "" {
-		return n
-	}
-	return orchestratorBinding
-}
-
-// ChatPayload is the first-turn payload for satelle story chat: the same
-// transitionPayload shape as a gate/executor dispatch, with from == to ==
+// ChatPayload is the first-turn payload for a hand-opened live session: the
+// same transitionPayload shape as a gate/executor dispatch, with from == to ==
 // current status, plus messages[] for the chosen binding's address set —
 // messages addressed to that role, or to "*" (verb.MessagesSince unions the
 // wildcard). A message to another role is not delivered (sty_a0372443).
@@ -1956,7 +1944,7 @@ func (g *Engine) ChatPayload(ctx context.Context, item workitem.Item, binding st
 		tp.Children = g.children(ctx, item.ID)
 	}
 	g.fillPayloadDocs(ctx, item.ID, &tp)
-	g.fillMessages(ctx, item.ID, []string{ChatSessionBinding(binding)}, &tp)
+	g.fillMessages(ctx, item.ID, []string{strings.TrimSpace(binding)}, &tp)
 	return tp, nil
 }
 
@@ -1978,57 +1966,43 @@ func (g *Engine) SessionSeed(ctx context.Context, item workitem.Item, binding st
 	return string(b), nil
 }
 
-// OpenSession opens a live Session for a named binding — [orchestrator] by
-// default (empty name), any other binding when the caller is CONSULTING it.
-// in-loop / command / missing bindings return a clear error; they do not fall
-// back to a guessed spawn (sty_1de7494c). onEvent, when non-nil, is installed
-// as the request's OnEvent: transports call it inline from their reader
-// goroutine BEFORE the lossy Events() fan-out, so a caller that must record
-// every tool boundary (the chat transcript) hangs its ledger writer here, not
-// on the drained channel.
-//
-// Charter selection is by binding NAME, not a flag: the orchestrator is the
-// scheduler and is DRIVING, so it keeps the executor charter; any other binding
-// opened by hand is being CONSULTED and gets consultCharter — its reply is
-// context, never a verdict ([[satelle-agent-consultation]]). Tools stay the
-// binding's own grant either way, so a consulted reviewer keeps its read-only
-// grant (sty_a0372443).
-func (g *Engine) OpenSession(ctx context.Context, name string, item workitem.Item, pol agentcli.PermissionPolicy, onEvent agentcli.EventHandler) (agentcli.Session, error) {
-	role := SessionRoleConsult
-	if ChatSessionBinding(name) == orchestratorBinding {
-		role = SessionRoleDriving
-	}
-	return g.OpenSessionAs(ctx, name, role, item, pol, onEvent)
-}
-
 // SessionRole says which CHARTER a live session opens under. It is a parameter
 // rather than an inference from the binding name because the two are not the
-// same question: a repo may name its coder binding anything, including
-// "orchestrator", and a coder driving a rework relay must not be handed the
-// consultant's "your reply is not a verdict" charter — nor the reverse
-// (sty_8e0b29a0).
+// same question: a repo may name its coder binding anything, and a coder
+// driving a rework relay must not be handed the consultant's "your reply is
+// not a verdict" charter — nor the reverse (sty_8e0b29a0).
 type SessionRole int
 
 const (
-	// SessionRoleDriving is the scheduler's own console: the executor charter.
+	// SessionRoleDriving is a session that performs: the executor charter.
 	SessionRoleDriving SessionRole = iota
 	// SessionRoleConsult is a binding opened to be ASKED: its reply is context,
-	// never a verdict, and it does not move status.
+	// never a verdict ([[satelle-agent-consultation]]), and it does not move
+	// status. Tools stay the binding's own grant, so a consulted reviewer keeps
+	// its read-only grant (sty_a0372443).
 	SessionRoleConsult
 )
 
-// OpenSessionAs is OpenSession with the charter role stated. OpenSession keeps
-// today's name-based selection so `satelle story chat` is byte-identical.
+// OpenSessionAs opens a live Session for a named binding under the given
+// charter role. in-loop / command / missing bindings return a clear error;
+// they do not fall back to a guessed spawn (sty_1de7494c). onEvent, when
+// non-nil, is installed as the request's OnEvent: transports call it inline
+// from their reader goroutine BEFORE the lossy Events() fan-out, so a caller
+// that must record every tool boundary (the relay transcript) hangs its ledger
+// writer here, not on the drained channel.
 func (g *Engine) OpenSessionAs(ctx context.Context, name string, role SessionRole, item workitem.Item, pol agentcli.PermissionPolicy, onEvent agentcli.EventHandler) (agentcli.Session, error) {
 	return g.OpenSessionAsWithModel(ctx, name, role, item, pol, onEvent, "")
 }
 
 // OpenSessionAsWithModel is OpenSessionAs with an explicit per-open model
-// override (sty_7069bced) — what `satelle story chat --model` / `satelle
-// story rework --model` feed through, recorded with source=agent. Empty
+// override (sty_7069bced) — what `satelle story rework --model` feeds
+// through, recorded with source=agent. Empty
 // modelOverride behaves exactly as OpenSessionAs.
 func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role SessionRole, item workitem.Item, pol agentcli.PermissionPolicy, onEvent agentcli.EventHandler, modelOverride string) (agentcli.Session, error) {
-	name = ChatSessionBinding(name)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("satelle: cannot open a live session: no binding named")
+	}
 	if g.namedAgents == nil {
 		return nil, fmt.Errorf("no agents layer is wired — cannot open the %q session", name)
 	}
@@ -2061,7 +2035,7 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 	if err != nil {
 		return nil, err
 	}
-	charter := executorCharter(name, item.Status, "orchestrator live session")
+	charter := executorCharter(name, item.Status, "live session")
 	if role == SessionRoleConsult {
 		charter = consultCharter(name, config.ResolvedRole(name, binding), item.Status)
 	}
@@ -2109,7 +2083,7 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 		req.Env[config.SessionEnv] = sid
 	}
 	req.Env = overlayScratchEnv(req.Env, scratchDir)
-	// A DRIVING session (the coder rework seat, story chat) may edit the tree,
+	// A DRIVING session (the coder rework seat) may edit the tree,
 	// so it is the one that can leave debris; snapshot the untracked files at
 	// open so Close can tell what THIS session created (sty_e7aaf8b1 AC5).
 	// Consult-role sessions are read-only and are never swept.

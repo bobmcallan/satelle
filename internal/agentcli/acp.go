@@ -968,8 +968,8 @@ func (c *acpClient) handlePermission(id int64, params json.RawMessage) {
 	var deny bool
 	ask := isInteractiveAskTool(p.ToolCall.Title, p.ToolCall.Kind)
 	if ask {
-		// No human is attached to any satelle ACP session (story chat is
-		// agent-to-agent): an interactive question is always denied.
+		// No human is attached to any satelle ACP session (the rework relay
+		// is agent-to-agent): an interactive question is always denied.
 		deny = true
 		_, after, _ := strings.Cut(p.ToolCall.Title, ":")
 		c.emitInteractiveDenied(p.ToolCall.Title, questionText(p.ToolCall.RawInput, strings.TrimSpace(after)), "denied")

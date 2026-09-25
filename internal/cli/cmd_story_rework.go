@@ -165,8 +165,8 @@ func runStoryRework(cmd *cobra.Command, args []string) error {
 	seat := func() (seatInfo, bool, error) { return resolveSeat(true, sid) }
 
 	out := cmd.OutOrStdout()
-	coderLedger := &storeChatLedger{ctx: ctx, storyID: it.ID, ls: a.Store.Ledger, actor: rw.CoderBinding}
-	consultLedger := &storeChatLedger{ctx: ctx, storyID: it.ID, ls: a.Store.Ledger, actor: rw.ConsultBinding}
+	coderLedger := &storeSessionLedger{ctx: ctx, storyID: it.ID, ls: a.Store.Ledger, actor: rw.CoderBinding}
+	consultLedger := &storeSessionLedger{ctx: ctx, storyID: it.ID, ls: a.Store.Ledger, actor: rw.ConsultBinding}
 
 	// The coder DRIVES its own edits (executor charter, own grant, seat-checked);
 	// the consultant is ASKED (consult charter, mutators refused outright). The
@@ -294,9 +294,9 @@ func recordReworkResult(ctx context.Context, ls *ledger.Store, storyID string, r
 	}, time.Now())
 }
 
-// invocationRecorder adapts a chatLedger to the permission-decision callback,
+// invocationRecorder adapts a sessionLedger to the permission-decision callback,
 // so a relay's allow/deny rows land beside the chat loop's in the same shape.
-func invocationRecorder(l chatLedger) func(agentcli.PermissionRequest, bool, string) {
+func invocationRecorder(l sessionLedger) func(agentcli.PermissionRequest, bool, string) {
 	return func(req agentcli.PermissionRequest, allow bool, by string) {
 		if l == nil {
 			return
@@ -312,7 +312,7 @@ func invocationRecorder(l chatLedger) func(agentcli.PermissionRequest, bool, str
 // reworkEventHandler ledgers a session's tool boundaries. Installed as the
 // request's OnEvent for the same reason the chat loop does it there: transports
 // call it inline before the lossy Events() fan-out, so no boundary is lost.
-func reworkEventHandler(l chatLedger) agentcli.EventHandler {
+func reworkEventHandler(l sessionLedger) agentcli.EventHandler {
 	return func(ev agentcli.Event) {
 		if l == nil {
 			return

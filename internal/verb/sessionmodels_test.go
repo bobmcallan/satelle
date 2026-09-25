@@ -26,7 +26,7 @@ func TestStoryCreateRecordsCreatorSessionModel(t *testing.T) {
 		"title": "T", "body": "b", "acceptance": "1. x", "category": "feature",
 	}), &created)
 
-	_, _, creator := verb.SessionModels(context.Background(), created.ID)
+	_, creator := verb.SessionModels(context.Background(), created.ID)
 	if creator.Model != "claude-opus-5-5" || creator.Executable != "claude" {
 		t.Fatalf("creator session model = %+v, want claude-opus-5-5/claude", creator)
 	}
@@ -43,7 +43,7 @@ func TestStoryCreateRecordsCreatorSessionModelUnknown(t *testing.T) {
 		"title": "T", "body": "b", "acceptance": "1. x", "category": "feature",
 	}), &created)
 
-	_, _, creator := verb.SessionModels(context.Background(), created.ID)
+	_, creator := verb.SessionModels(context.Background(), created.ID)
 	if creator.Model != "unknown" {
 		t.Fatalf("creator session model = %+v, want unknown", creator)
 	}
@@ -64,7 +64,7 @@ func TestStorySetEngagingRecordsInLoopSessionModel(t *testing.T) {
 	if a.Status != "plan" {
 		t.Fatalf("status = %q", a.Status)
 	}
-	_, inLoop, _ := verb.SessionModels(context.Background(), a.ID)
+	inLoop, _ := verb.SessionModels(context.Background(), a.ID)
 	if inLoop.Model != "sonnet" || inLoop.Executable != "claude" {
 		t.Fatalf("in-loop session model = %+v, want sonnet/claude", inLoop)
 	}
@@ -84,7 +84,7 @@ func TestStorySetEngagingRecordsInLoopSessionModelUnknown(t *testing.T) {
 	if a.Status != "plan" {
 		t.Fatalf("status = %q", a.Status)
 	}
-	_, inLoop, _ := verb.SessionModels(context.Background(), a.ID)
+	inLoop, _ := verb.SessionModels(context.Background(), a.ID)
 	if inLoop.Model != "unknown" {
 		t.Fatalf("in-loop session model = %+v, want unknown", inLoop)
 	}
@@ -102,9 +102,36 @@ func TestSessionModelsLatestPerRole(t *testing.T) {
 	verb.RecordSessionModel(context.Background(), created.ID, "", verb.SessionModelRoleInLoop, "haiku", "claude")
 	verb.RecordSessionModel(context.Background(), created.ID, "", verb.SessionModelRoleInLoop, "opus", "claude")
 
-	_, inLoop, _ := verb.SessionModels(context.Background(), created.ID)
+	inLoop, _ := verb.SessionModels(context.Background(), created.ID)
 	if inLoop.Model != "opus" {
 		t.Fatalf("in-loop session model = %+v, want the LAST recorded (opus)", inLoop)
+	}
+}
+
+// TestSessionModelsIgnoresRetiredOrchestratorRow (sty_6f9ba7ca AC3): a
+// session_model row under the retired "orchestrator" role — written by a
+// story-chat session before the command was removed — is not read by any
+// tier, so an in-loop model still resolves and nothing inherits the stale
+// orchestrator's.
+func TestSessionModelsIgnoresRetiredOrchestratorRow(t *testing.T) {
+	wire(t)
+	var created workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{
+		"title": "T", "body": "b", "acceptance": "1. x", "category": "feature",
+	}), &created)
+
+	verb.RecordSessionModel(context.Background(), created.ID, "", "orchestrator", "opus", "claude")
+	verb.RecordSessionModel(context.Background(), created.ID, "", verb.SessionModelRoleInLoop, "haiku", "claude")
+
+	inLoop, _ := verb.SessionModels(context.Background(), created.ID)
+	if inLoop.Model != "haiku" {
+		t.Fatalf("in-loop session model = %+v, want haiku (the orchestrator row must not be read)", inLoop)
+	}
+	model, source := config.SelectModel(config.SelectInput{
+		CommandExecutable: "claude", HasModelSlot: true, InLoop: inLoop,
+	})
+	if model != "haiku" || source != config.ModelSourceInheritedInLoop {
+		t.Fatalf("SelectModel = %q/%q, want haiku/inherited-in-loop", model, source)
 	}
 }
 

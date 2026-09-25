@@ -1319,7 +1319,7 @@ func appendLedger(ctx context.Context, storyID, kind, body string, now time.Time
 
 // AppendAgentInvocation records one agent_invocation ledger row for itemID
 // (sty_7069bced 4.2) — the seam agentstep.Engine.SetInvocationRecorder wires
-// so a LIVE session (story chat, the rework relay's coder seat) can ledger its
+// so a LIVE session (the rework relay's coder seat) can ledger its
 // own open/close directly, the same way a one-shot dispatch's transition-gated
 // appendLedgerEntry does, so it shows up in `satelle story cost` and the web
 // timeline identically. actor is payload's own "agent" key — the binding the

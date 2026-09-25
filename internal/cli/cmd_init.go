@@ -1795,7 +1795,7 @@ command = "in-loop"            # the orchestrator/driving session itself
 role    = "reviewer"           # declared contract; inference is a fallback, not the norm
 command = "REVIEWER_COMMAND_TEMPLATE"
 tools   = "Read,Grep,Glob"     # read-only grant — widen at your own risk (claude template default; a grok full template bakes its own grok-named read-only grant)
-model   = ""                   # empty is selected deliberately, not left to the CLI's own default (sty_7069bced): binding > step/agent > inherited orchestrator/in-loop session (the orchestrator's model first) > story creator's session > the first entry of this executable's [model_order] list > cli-default, each recorded as the source next to the resolved id. Each binding may still pin its own (e.g. "sonnet"). A workflow gate/node model="…" overrides this for that gate only without a second binding (sty_19456622). See "satelle help agent-dispatch" § Model selection.
+model   = ""                   # empty is selected deliberately, not left to the CLI's own default (sty_7069bced): binding > step/agent > inherited in-loop session > story creator's session > the first entry of this executable's [model_order] list > cli-default, each recorded as the source next to the resolved id. Each binding may still pin its own (e.g. "sonnet"). A workflow gate/node model="…" overrides this for that gate only without a second binding (sty_19456622). See "satelle help agent-dispatch" § Model selection.
 
 MODEL_ORDER_BLOCK
 # A named EXECUTOR agent for isolated mutating steps (e.g. a commit/push step),

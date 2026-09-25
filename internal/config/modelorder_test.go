@@ -64,9 +64,9 @@ func TestSelectModel_OrderFirstEntry(t *testing.T) {
 	// A same-executable inherited model beats the order.
 	in = SelectInput{
 		Order: ac.OrderFor("claude"), HasModelSlot: true, CommandExecutable: "claude",
-		Orchestrator: SessionModel{Model: "claude-sonnet-5", Executable: "claude"},
+		InLoop: SessionModel{Model: "claude-sonnet-5", Executable: "claude"},
 	}
-	if m, src := SelectModel(in); m != "claude-sonnet-5" || src != ModelSourceInheritedOrchestrator {
+	if m, src := SelectModel(in); m != "claude-sonnet-5" || src != ModelSourceInheritedInLoop {
 		t.Errorf("inherited: got (%q, %q)", m, src)
 	}
 	// A rank group applies its first name.

@@ -311,7 +311,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// (or flagged) at session close. Unset by default — the binary ships
 			// no opinion about what a leftover looks like.
 			rev.SetLeftoverRule(a.Config.Dispatch.Leftovers)
-			// A live session (story chat, the rework relay's coder seat and
+			// A live session (the rework relay's coder seat and
 			// rework.consult binding) resolves an unset interface= to the
 			// binding CLI's best live transport, not always command
 			// (epic:model-selection child 2) — the seam agent validate shares.
@@ -438,7 +438,7 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 	rev.SetSessionModelsResolver(verb.SessionModels)
 	rev.SetInvocationRecorder(verb.AppendAgentInvocation)
 	rev.SetLeftoverRule(a.Config.Dispatch.Leftovers)
-	// The live sessions this engine opens (story chat, the rework relay) ledger
+	// The live sessions this engine opens (the rework relay) ledger
 	// a denied ask-the-user through this sink (sty_ff50f788); unwired, the row
 	// is silently dropped.
 	rev.SetTelemetry(func(ctx context.Context, storyID, actor, kind string, data map[string]any) {

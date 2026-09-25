@@ -96,8 +96,8 @@ const (
 	// reject decision belongs to the authored amend_review gate.
 	KindDefinitionAmended = "definition_amended"
 	// KindSessionModel records one session role's captured model for a story —
-	// the in-loop engaging/creating session, the orchestrator (story chat)
-	// session, or the story-creating session (sty_7069bced /
+	// the in-loop engaging session or the story-creating session
+	// (an old row under the retired orchestrator role is ignored) (sty_7069bced /
 	// epic:model-selection order:3). Payload: {role, model, executable}. model
 	// is "unknown" when the harness reported none. Enumeration only: the
 	// model-selection resolver reads the latest row per role and falls through

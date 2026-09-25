@@ -50,7 +50,8 @@ type Telemetry struct {
 	// "unavailable" marker.
 	ModelResolved string
 	// ModelSource names why Model/ModelResolved were chosen — binding, step,
-	// agent, inherited-orchestrator, inherited-in-loop, creator, or
+	// agent, inherited-in-loop, creator, or (an old row may say
+	// inherited-orchestrator, a retired tier) order,
 	// cli-default (config.SelectModel, sty_7069bced). Empty on a row written
 	// before this field existed, or a functional-check row that invokes no
 	// agent and so selects no model.

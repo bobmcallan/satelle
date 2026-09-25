@@ -38,7 +38,7 @@ func TestSelectModelPrecedence(t *testing.T) {
 			in: SelectInput{
 				DispatchOverride: "sonnet", DispatchSource: ModelSourceStep,
 				HasModelSlot: true, CommandExecutable: "claude",
-				Orchestrator: SessionModel{Model: "opus", Executable: "claude"},
+				InLoop: SessionModel{Model: "opus", Executable: "claude"},
 			},
 			wantModel:  "sonnet",
 			wantSource: ModelSourceStep,
@@ -58,42 +58,31 @@ func TestSelectModelPrecedence(t *testing.T) {
 			wantSource: ModelSourceAgent,
 		},
 		{
-			name: "inherited orchestrator when no binding/override",
+			name: "inherited in-loop when no binding/override",
 			in: SelectInput{
 				HasModelSlot: true, CommandExecutable: "claude",
-				Orchestrator: SessionModel{Model: "opus", Executable: "claude"},
-				InLoop:       SessionModel{Model: "unknown", Executable: "claude"},
-			},
-			wantModel:  "opus",
-			wantSource: ModelSourceInheritedOrchestrator,
-		},
-		{
-			name: "inherited in-loop when orchestrator unknown",
-			in: SelectInput{
-				HasModelSlot: true, CommandExecutable: "claude",
-				Orchestrator: SessionModel{Model: "unknown", Executable: "claude"},
-				InLoop:       SessionModel{Model: "sonnet", Executable: "claude"},
+				InLoop: SessionModel{Model: "sonnet", Executable: "claude"},
 			},
 			wantModel:  "sonnet",
 			wantSource: ModelSourceInheritedInLoop,
 		},
 		{
-			name: "orchestrator wins when both sessions are eligible, whatever the model",
+			name: "in-loop beats creator and order",
 			in: SelectInput{
 				HasModelSlot: true, CommandExecutable: "claude",
-				Orchestrator: SessionModel{Model: "haiku", Executable: "claude"},
-				InLoop:       SessionModel{Model: "opus", Executable: "claude"},
+				InLoop:  SessionModel{Model: "haiku", Executable: "claude"},
+				Creator: SessionModel{Model: "opus", Executable: "claude"},
+				Order:   []ModelRank{{"opus"}},
 			},
 			wantModel:  "haiku",
-			wantSource: ModelSourceInheritedOrchestrator,
+			wantSource: ModelSourceInheritedInLoop,
 		},
 		{
-			name: "creator when orchestrator and in-loop both unknown",
+			name: "creator when in-loop unknown",
 			in: SelectInput{
 				HasModelSlot: true, CommandExecutable: "claude",
-				Orchestrator: SessionModel{Model: "unknown", Executable: "claude"},
-				InLoop:       SessionModel{Model: "", Executable: "claude"},
-				Creator:      SessionModel{Model: "sonnet", Executable: "claude"},
+				InLoop:  SessionModel{Model: "unknown", Executable: "claude"},
+				Creator: SessionModel{Model: "sonnet", Executable: "claude"},
 			},
 			wantModel:  "sonnet",
 			wantSource: ModelSourceCreator,
@@ -108,8 +97,8 @@ func TestSelectModelPrecedence(t *testing.T) {
 			name: "cli-default when no model slot even with known sessions",
 			in: SelectInput{
 				HasModelSlot: false, CommandExecutable: "claude",
-				Orchestrator: SessionModel{Model: "opus", Executable: "claude"},
-				Creator:      SessionModel{Model: "opus", Executable: "claude"},
+				InLoop:  SessionModel{Model: "opus", Executable: "claude"},
+				Creator: SessionModel{Model: "opus", Executable: "claude"},
 			},
 			wantModel:  "",
 			wantSource: ModelSourceCLIDefault,
@@ -118,16 +107,16 @@ func TestSelectModelPrecedence(t *testing.T) {
 			name: "in-protocol model session applies inherited model without a slot",
 			in: SelectInput{
 				HasModelSlot: false, ModelViaSession: true, CommandExecutable: "grok",
-				Orchestrator: SessionModel{Model: "grok-4.5", Executable: "grok"},
+				InLoop: SessionModel{Model: "grok-4.5", Executable: "grok"},
 			},
 			wantModel:  "grok-4.5",
-			wantSource: ModelSourceInheritedOrchestrator,
+			wantSource: ModelSourceInheritedInLoop,
 		},
 		{
 			name: "in-protocol model session still blocks a mismatched executable",
 			in: SelectInput{
 				HasModelSlot: false, ModelViaSession: true, CommandExecutable: "grok",
-				Orchestrator: SessionModel{Model: "claude-opus-5-5", Executable: "claude"},
+				InLoop: SessionModel{Model: "claude-opus-5-5", Executable: "claude"},
 			},
 			wantModel:  "",
 			wantSource: ModelSourceCLIDefault,
@@ -136,8 +125,8 @@ func TestSelectModelPrecedence(t *testing.T) {
 			name: "cross-provider guard blocks a mismatched executable, falls to creator",
 			in: SelectInput{
 				HasModelSlot: true, CommandExecutable: "codex",
-				Orchestrator: SessionModel{Model: "claude-opus-5-5", Executable: "claude"},
-				Creator:      SessionModel{Model: "gpt-5-codex", Executable: "codex"},
+				InLoop:  SessionModel{Model: "claude-opus-5-5", Executable: "claude"},
+				Creator: SessionModel{Model: "gpt-5-codex", Executable: "codex"},
 			},
 			wantModel:  "gpt-5-codex",
 			wantSource: ModelSourceCreator,
@@ -168,7 +157,7 @@ func TestSelectModelExplicitBindingUnchanged(t *testing.T) {
 	in := SelectInput{
 		Binding:          "opus",
 		DispatchOverride: "sonnet", DispatchSource: ModelSourceStep,
-		Orchestrator: SessionModel{Model: "haiku", Executable: "claude"},
+		InLoop:       SessionModel{Model: "haiku", Executable: "claude"},
 		Creator:      SessionModel{Model: "haiku", Executable: "claude"},
 		HasModelSlot: true, CommandExecutable: "claude",
 	}

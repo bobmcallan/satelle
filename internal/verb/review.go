@@ -37,7 +37,7 @@ type GateDecision struct {
 	ModelResolved string
 	Models        []ModelUsage
 	// ModelSource names why ModelResolved was chosen — binding, step, agent,
-	// inherited-orchestrator, inherited-in-loop, creator, or cli-default
+	// inherited-in-loop, creator, order, or cli-default
 	// (config.SelectModel, sty_7069bced). Empty for a functional-check gate,
 	// which invokes no agent and so selects no model.
 	ModelSource string

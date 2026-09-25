@@ -843,8 +843,8 @@ func executorCharter(agent, step, workflow string) string {
 }
 
 // consultCharter is the charter for a named binding opened as a CONSULTANT by
-// `satelle story chat --agent <binding>` — a reviewer interrogated about a
-// rejection, a second opinion on a block. Consultation is not review
+// the rework relay (`rework.consult`) — a reviewer consulted while the coder
+// converges. Consultation is not review
 // ([[satelle-agent-consultation]]): the reply is context the caller may act on,
 // the gate that judges the edge still runs cold and one-shot over the payload
 // satelle builds, and the consultant never touches story state (sty_a0372443).

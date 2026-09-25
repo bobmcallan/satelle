@@ -44,7 +44,7 @@ type AdapterCapabilities struct {
 	// ResolvedModel: the model id the run actually used.
 	ResolvedModel Capability
 	// ModelInheritance: a session model of this provider can be inherited into
-	// a dispatch of this adapter (config.SelectModel tiers 3-4).
+	// a dispatch of this adapter (config.SelectModel's in-loop tier).
 	ModelInheritance Capability
 	// LiveSession: the adapter can be opened as a live session
 	// (OpenerFromBinding).
@@ -54,6 +54,7 @@ type AdapterCapabilities struct {
 // CapabilityTable returns the table in the order help prints it.
 func CapabilityTable() []AdapterCapabilities {
 	const notLive = "interface=command is one-shot only"
+	const noGrokHookModel = "grok's hook payload carries no model, so the in-loop tier is unknown"
 	return []AdapterCapabilities{
 		{
 			Adapter: "claude command", Usage: yes(), CacheSplit: yes(), ResolvedModel: yes(),
@@ -65,11 +66,11 @@ func CapabilityTable() []AdapterCapabilities {
 		},
 		{
 			Adapter: "grok command", Usage: yes(), CacheSplit: yes(), ResolvedModel: yes(),
-			ModelInheritance: yes(), LiveSession: no(notLive),
+			ModelInheritance: no(noGrokHookModel), LiveSession: no(notLive),
 		},
 		{
 			Adapter: "grok acp", Usage: yes(), CacheSplit: yes(), ResolvedModel: yes(),
-			ModelInheritance: yes(), LiveSession: yes(),
+			ModelInheritance: no(noGrokHookModel), LiveSession: yes(),
 		},
 		{
 			Adapter: "codex command", Usage: yes(), CacheSplit: yes(),
@@ -81,7 +82,8 @@ func CapabilityTable() []AdapterCapabilities {
 			Usage:            no("no captured usage report from the peer"),
 			CacheSplit:       no("no captured usage report from the peer"),
 			ResolvedModel:    no("codex acp reports no model"),
-			ModelInheritance: yes(), LiveSession: yes(),
+			ModelInheritance: no("the in-loop model is recorded under harness codex, but the default binding's executable is npx, so the cross-provider guard does not match"),
+			LiveSession:      yes(),
 		},
 	}
 }

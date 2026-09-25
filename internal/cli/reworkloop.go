@@ -1,12 +1,8 @@
 // The rework relay's transport-free core (sty_8e0b29a0).
 //
-// Deliberately a SIBLING of chatloop.go rather than an extension of it. chat is
-// human↔agent: an interactive scanner, a prompt, an inbox watermark, a human
-// permission ask. The relay is agent↔agent and headless: no reader, no prompt,
-// a fixed turn protocol and a termination rule. What the two genuinely share —
-// accumulating one turn's reply off a session — is shared as drainReply; what
-// they do not share stays apart, because folding prompt semantics into a
-// headless loop is how both stop being readable.
+// The relay is agent↔agent and headless: no reader, no prompt, a fixed turn
+// protocol and a termination rule. It accumulates one turn's reply off a
+// session with drainReply (sessionledger.go).
 //
 // The relay decides TERMINATION (a rule: the marker, or the budget). It never
 // decides a verdict and never moves status: the orchestrator presents the edge
@@ -49,7 +45,7 @@ type reworkLoop struct {
 	CoderRole, ConsultRole string
 	// Rounds is the budget: the maximum number of consultant→coder exchanges.
 	Rounds int
-	Ledger chatLedger
+	Ledger sessionLedger
 	Out    io.Writer
 	// Seed is the first turn handed to the consultant — the story payload, the
 	// ask, and the marker contract. CoderSeed is prepended to the coder's FIRST

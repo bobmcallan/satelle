@@ -428,48 +428,54 @@ func modelSlotNamedAgents(name string) (config.AgentBinding, bool) {
 	}
 }
 
-// TestArtifactAttemptsInheritedOrchestratorModel pins AC1/AC4/AC5 wired
-// together at the engine level (not just the pure config.SelectModel
-// function): a binding with no model= and a {model} slot resolves the
-// ORCHESTRATOR session's model, via SetSessionModelsResolver, on the dispatch
-// result.
-func TestArtifactAttemptsInheritedOrchestratorModel(t *testing.T) {
-	primary := &attemptRunner{runs: []attemptRun{{out: validAttempt("## AC1\nok\n## AC2\nok")}}}
-	docs := fakeDocs{workflow: modelSourceDispatchWFNoOverride, skillBody: attemptedDispatchSkill, skillFound: true}
-	g, _ := newEngine(t, "", docs)
-	g.SetNamedAgents(modelSlotNamedAgents)
-	g.newRunner = func(_iface, command string) (agentcli.Runner, error) {
-		if command == "primary --model {model}" {
-			return primary, nil
-		}
-		return nil, nil
-	}
-	g.SetSessionModelsResolver(func(context.Context, string) (orch, inLoop, creator config.SessionModel) {
-		return config.SessionModel{Model: "claude-opus-5-5", Executable: "primary"},
-			config.SessionModel{Model: "claude-sonnet-5", Executable: "primary"},
-			config.SessionModel{}
-	})
-	var events []attemptEvent
-	g.SetTelemetry(func(_ context.Context, _, _, kind string, data map[string]any) {
-		events = append(events, attemptEvent{kind: kind, data: data})
-	})
-	g.SetArtifactAttacher(func(context.Context, workitem.Item, string, string, string) (string, string, error) {
-		return "design", "design-note", nil
-	})
-	res, err := g.DispatchExecutor(context.Background(), attemptedItem(), "plan")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Model != "claude-opus-5-5" || res.ModelSource != config.ModelSourceInheritedOrchestrator {
-		t.Fatalf("dispatch result = model=%q source=%q, want claude-opus-5-5/inherited-orchestrator", res.Model, res.ModelSource)
-	}
-	if len(events) != 1 || events[0].data["model"] != "claude-opus-5-5" || events[0].data["model_source"] != config.ModelSourceInheritedOrchestrator {
-		t.Fatalf("initial attempt event = %#v", events)
+// TestArtifactAttemptsResolveWithoutChatSession pins sty_6f9ba7ca AC3 at the
+// engine level: with no story chat (there is no orchestrator tier to capture
+// into), a binding with no model= and a {model} slot resolves the in-loop
+// session's model ahead of [model_order], and falls to [model_order] when
+// there is no in-loop model either.
+func TestArtifactAttemptsResolveWithoutChatSession(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		inLoop     config.SessionModel
+		wantModel  string
+		wantSource string
+	}{
+		{"in-loop session wins", config.SessionModel{Model: "claude-sonnet-5", Executable: "primary"}, "claude-sonnet-5", config.ModelSourceInheritedInLoop},
+		{"no session falls to order", config.SessionModel{}, "opus", config.ModelSourceOrder},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			primary := &attemptRunner{runs: []attemptRun{{out: validAttempt("## AC1\nok\n## AC2\nok")}}}
+			docs := fakeDocs{workflow: modelSourceDispatchWFNoOverride, skillBody: attemptedDispatchSkill, skillFound: true}
+			g, _ := newEngine(t, "", docs)
+			g.SetNamedAgents(modelSlotNamedAgents)
+			g.newRunner = func(_iface, command string) (agentcli.Runner, error) {
+				if command == "primary --model {model}" {
+					return primary, nil
+				}
+				return nil, nil
+			}
+			g.SetModelOrder(func(string) []config.ModelRank {
+				return []config.ModelRank{{"opus"}}
+			})
+			g.SetSessionModelsResolver(func(context.Context, string) (inLoop, creator config.SessionModel) {
+				return tc.inLoop, config.SessionModel{}
+			})
+			g.SetArtifactAttacher(func(context.Context, workitem.Item, string, string, string) (string, string, error) {
+				return "design", "design-note", nil
+			})
+			res, err := g.DispatchExecutor(context.Background(), attemptedItem(), "plan")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Model != tc.wantModel || res.ModelSource != tc.wantSource {
+				t.Fatalf("dispatch result = model=%q source=%q, want %s/%s", res.Model, res.ModelSource, tc.wantModel, tc.wantSource)
+			}
+		})
 	}
 }
 
 // TestArtifactAttemptsInheritedModelReachesACPRequest pins sty_bb92973f: an
-// ACP binding has no {model} slot, yet the inherited orchestrator model
+// ACP binding has no {model} slot, yet the inherited in-loop model
 // (same executable) is selected and lands on the agentcli.Request the ACP
 // session configuration is built from.
 func TestArtifactAttemptsInheritedModelReachesACPRequest(t *testing.T) {
@@ -488,8 +494,8 @@ func TestArtifactAttemptsInheritedModelReachesACPRequest(t *testing.T) {
 		}
 		return nil, nil
 	}
-	g.SetSessionModelsResolver(func(context.Context, string) (orch, inLoop, creator config.SessionModel) {
-		return config.SessionModel{Model: "grok-4.5", Executable: "primary"}, config.SessionModel{}, config.SessionModel{}
+	g.SetSessionModelsResolver(func(context.Context, string) (inLoop, creator config.SessionModel) {
+		return config.SessionModel{Model: "grok-4.5", Executable: "primary"}, config.SessionModel{}
 	})
 	g.SetArtifactAttacher(func(context.Context, workitem.Item, string, string, string) (string, string, error) {
 		return "design", "design-note", nil
@@ -498,8 +504,8 @@ func TestArtifactAttemptsInheritedModelReachesACPRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Model != "grok-4.5" || res.ModelSource != config.ModelSourceInheritedOrchestrator {
-		t.Fatalf("dispatch result = model=%q source=%q, want grok-4.5/inherited-orchestrator", res.Model, res.ModelSource)
+	if res.Model != "grok-4.5" || res.ModelSource != config.ModelSourceInheritedInLoop {
+		t.Fatalf("dispatch result = model=%q source=%q, want grok-4.5/inherited-in-loop", res.Model, res.ModelSource)
 	}
 	if len(primary.requests) != 1 || primary.requests[0].Model != "grok-4.5" {
 		t.Fatalf("ACP runner requests = %+v, want one request carrying Model grok-4.5", primary.requests)
@@ -566,8 +572,8 @@ func TestArtifactAttemptsInheritedInLoopModel(t *testing.T) {
 		}
 		return nil, nil
 	}
-	g.SetSessionModelsResolver(func(context.Context, string) (orch, inLoop, creator config.SessionModel) {
-		return config.SessionModel{}, config.SessionModel{Model: "claude-sonnet-5", Executable: "primary"}, config.SessionModel{}
+	g.SetSessionModelsResolver(func(context.Context, string) (inLoop, creator config.SessionModel) {
+		return config.SessionModel{Model: "claude-sonnet-5", Executable: "primary"}, config.SessionModel{}
 	})
 	var events []attemptEvent
 	g.SetTelemetry(func(_ context.Context, _, _, kind string, data map[string]any) {
@@ -608,8 +614,8 @@ func TestArtifactAttemptsCreatorModel(t *testing.T) {
 		}
 		return nil, nil
 	}
-	g.SetSessionModelsResolver(func(context.Context, string) (orch, inLoop, creator config.SessionModel) {
-		return config.SessionModel{}, config.SessionModel{}, config.SessionModel{Model: "claude-haiku-4-5", Executable: "primary"}
+	g.SetSessionModelsResolver(func(context.Context, string) (inLoop, creator config.SessionModel) {
+		return config.SessionModel{}, config.SessionModel{Model: "claude-haiku-4-5", Executable: "primary"}
 	})
 	g.SetArtifactAttacher(func(context.Context, workitem.Item, string, string, string) (string, string, error) {
 		return "design", "design-note", nil
@@ -666,8 +672,8 @@ func TestGate_InheritedInLoopModelSource(t *testing.T) {
 	docs := fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true}
 	g, _ := newEngine(t, `{"decision":"accept"}`, docs)
 	g.SetReviewerBinding(config.AgentBinding{Command: "fake --model {model}", Tools: "Read,Grep,Glob"})
-	g.SetSessionModelsResolver(func(context.Context, string) (orch, inLoop, creator config.SessionModel) {
-		return config.SessionModel{}, config.SessionModel{Model: "claude-sonnet-5", Executable: "fake"}, config.SessionModel{}
+	g.SetSessionModelsResolver(func(context.Context, string) (inLoop, creator config.SessionModel) {
+		return config.SessionModel{Model: "claude-sonnet-5", Executable: "fake"}, config.SessionModel{}
 	})
 	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done")
 	if err != nil {
@@ -692,8 +698,8 @@ func TestSummarise_CreatorModelSource(t *testing.T) {
 	docs := fakeDocs{workflow: summaryWorkflow, skillBody: "summarise rubric", skillFound: true}
 	g, _ := newEngine(t, "the step recap", docs)
 	g.SetReviewerBinding(config.AgentBinding{Command: "fake --model {model}", Tools: "Read,Grep,Glob"})
-	g.SetSessionModelsResolver(func(context.Context, string) (orch, inLoop, creator config.SessionModel) {
-		return config.SessionModel{}, config.SessionModel{}, config.SessionModel{Model: "claude-haiku-4-5", Executable: "fake"}
+	g.SetSessionModelsResolver(func(context.Context, string) (inLoop, creator config.SessionModel) {
+		return config.SessionModel{}, config.SessionModel{Model: "claude-haiku-4-5", Executable: "fake"}
 	})
 	got, err := g.Summarise(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "in_progress", "done")
 	if err != nil {

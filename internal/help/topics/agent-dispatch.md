@@ -1004,12 +1004,9 @@ web timeline). Precedence, first match wins:
    (`satelle story rework --model`, `satelle
    story retrospect --model`). An agent flag wins over a step default when
    both would apply to the same dispatch.
-3. **inherited-orchestrator** / **inherited-in-loop** — the orchestrator
-   live-session model on this story, else the in-loop
-   engaging session's. The orchestrator wins whenever both are eligible (it
-   is the live driving session). Both are guarded so a Claude session's
-   model id can never reach a Codex/Grok dispatch — see "cross-provider
-   guard" below.
+3. **inherited-in-loop** — the in-loop engaging session's model on this
+   story. It is guarded so a Claude session's model id can never reach a
+   Codex/Grok dispatch — see "cross-provider guard" below.
 4. **creator** — the model of the session that created the story, same guard.
 5. **order** — the first entry of the `[model_order]` list for THIS binding's
    executable (see "The model order" below). Applied only when the binding can
@@ -1018,9 +1015,9 @@ web timeline). Precedence, first match wins:
    dropped and the CLI's own default runs. Recorded as `cli-default`, not left
    silent.
 
-Every dispatch — a gate, a named-agent step, a live chat/rework session, a
+Every dispatch — a gate, a named-agent step, a live rework session, a
 retrospective, quality escalation — records BOTH the resolved model and which
-of these eight values (`binding`, `step`, `agent`, `inherited-orchestrator`,
+of these seven values (`binding`, `step`, `agent`,
 `inherited-in-loop`, `creator`, `order`, `cli-default`) picked it, on the same
 `agent_invocation` / `review_accept` / `review_reject` row that already
 carries `model_resolved`. `satelle agent validate` reports a step's
@@ -1067,32 +1064,24 @@ this table and a test checks every cell against the code that produces it.
 | --- | --- | --- | --- | --- | --- |
 | claude command | yes | yes | yes | yes | unavailable: interface=command is one-shot only |
 | claude stream | yes | yes | yes | yes | yes |
-| grok command | yes | yes | yes | yes | unavailable: interface=command is one-shot only |
-| grok acp | yes | yes | yes | yes | yes |
+| grok command | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | unavailable: interface=command is one-shot only |
+| grok acp | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | yes |
 | codex command | yes | yes | unavailable: codex exec --json names no model | yes | unavailable: interface=command is one-shot only |
-| codex acp | unavailable: no captured usage report from the peer | unavailable: no captured usage report from the peer | unavailable: codex acp reports no model | yes | yes |
+| codex acp | unavailable: no captured usage report from the peer | unavailable: no captured usage report from the peer | unavailable: codex acp reports no model | unavailable: the in-loop model is recorded under harness codex, but the default binding's executable is npx, so the cross-provider guard does not match | yes |
 
 ### What each harness reports
 
 - **Claude Code** — the in-loop hook payload's `model` field (or the
-  transcript's last assistant entry) captures the in-loop tier; a `stream`
-  session's own `system`/`init` record captures the orchestrator tier
-  (a live orchestrator session).
+  transcript's last assistant entry) captures the in-loop tier.
 - **Codex** — its hook payload carries `model`, so the in-loop tier is
   captured; if a payload omits it the session is recorded `unknown` and the
   rule falls through.
 - **Grok** — its hook payload carries no model, so the in-loop tier is recorded
   `unknown`.
-- **ACP (Grok, Codex)** — a live session records the
-  model it opened with (the peer's own id, else the model the handshake
-  applied) as the orchestrator tier, under the binding's own executable. That
-  tier applies to any dispatch whose binding has the same executable and can
-  take a model, so grok command inherits from a `grok agent stdio`
-  orchestrator. When no model is known the session is recorded `unknown`.
 
-Model inheritance in the capability table is "available" when either tier can
-apply; it needs a live session or a hook that carries a model, so with neither
-the dispatch falls through to `cli-default`, recorded explicitly.
+Model inheritance in the capability table is "available" when the in-loop tier
+can apply; it needs a hook that carries a model, so without one the dispatch
+falls through to `[model_order]` and then `cli-default`, recorded explicitly.
 
 An explicit `model =` on a binding is unaffected by any of this — it wins
 outright, unchanged from before this story, and no session capture or ranking

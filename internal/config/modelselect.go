@@ -6,14 +6,13 @@ import "strings"
 // — recorded beside the alias and the resolved id (order:1) on every dispatch,
 // so the ledger names not just WHAT ran but WHY that model was chosen.
 const (
-	ModelSourceBinding               = "binding"
-	ModelSourceStep                  = "step"
-	ModelSourceAgent                 = "agent"
-	ModelSourceInheritedOrchestrator = "inherited-orchestrator"
-	ModelSourceInheritedInLoop       = "inherited-in-loop"
-	ModelSourceCreator               = "creator"
-	ModelSourceOrder                 = "order"
-	ModelSourceCLIDefault            = "cli-default"
+	ModelSourceBinding         = "binding"
+	ModelSourceStep            = "step"
+	ModelSourceAgent           = "agent"
+	ModelSourceInheritedInLoop = "inherited-in-loop"
+	ModelSourceCreator         = "creator"
+	ModelSourceOrder           = "order"
+	ModelSourceCLIDefault      = "cli-default"
 )
 
 // SessionModel is one session's captured model and the executable that
@@ -39,8 +38,7 @@ func (s SessionModel) known() bool {
 //  1. Binding — the agents.toml binding's own model=.
 //  2. DispatchOverride — a step= model or an --model agent flag naming this one
 //     dispatch; DispatchSource says which (ModelSourceStep or ModelSourceAgent).
-//  3. Inherited — the Orchestrator's model, else the InLoop session's, each
-//     cross-provider guarded; the orchestrator wins when both are eligible.
+//  3. Inherited — the InLoop session's model, cross-provider guarded.
 //  4. Creator — the story-creating session's model, same guard.
 //  5. Order — the first entry of the dispatch executable's [model_order] list,
 //     when the binding can accept a model. Never another executable's list.
@@ -57,7 +55,6 @@ type SelectInput struct {
 	// default when both apply — the caller resolves that tie-break before
 	// calling SelectModel and passes the winner here.
 	DispatchSource string
-	Orchestrator   SessionModel
 	InLoop         SessionModel
 	Creator        SessionModel
 	// Order is the [model_order] list for CommandExecutable only (the caller
@@ -92,8 +89,8 @@ func SelectModel(in SelectInput) (model, source string) {
 		}
 		return m, src
 	}
-	if m, src, ok := inheritedModel(in); ok {
-		return m, src
+	if m, ok := crossProviderApplied(in.InLoop, in); ok {
+		return m, ModelSourceInheritedInLoop
 	}
 	if m, ok := crossProviderApplied(in.Creator, in); ok {
 		return m, ModelSourceCreator
@@ -106,23 +103,6 @@ func SelectModel(in SelectInput) (model, source string) {
 		}
 	}
 	return "", ModelSourceCLIDefault
-}
-
-// inheritedModel resolves tier 3: the orchestrator and in-loop session models,
-// both cross-provider guarded. The orchestrator wins whenever it is eligible
-// (it is the live driving session); the in-loop model applies only when the
-// orchestrator's does not.
-func inheritedModel(in SelectInput) (model, source string, ok bool) {
-	orch, orchOK := crossProviderApplied(in.Orchestrator, in)
-	loop, loopOK := crossProviderApplied(in.InLoop, in)
-	switch {
-	case orchOK:
-		return orch, ModelSourceInheritedOrchestrator, true
-	case loopOK:
-		return loop, ModelSourceInheritedInLoop, true
-	default:
-		return "", "", false
-	}
 }
 
 // crossProviderApplied returns s.Model when it is known AND safe to apply to

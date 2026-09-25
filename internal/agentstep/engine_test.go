@@ -3898,12 +3898,12 @@ func TestChatPayloadFromEqualsTo(t *testing.T) {
 		if itemID != "sty_chat" {
 			t.Errorf("item %s", itemID)
 		}
-		if len(addrs) != 1 || addrs[0] != "orchestrator" {
+		if len(addrs) != 1 || addrs[0] != "coder" {
 			t.Errorf("addrs = %v", addrs)
 		}
-		return []MessageState{{From: "human", To: "orchestrator", Body: "hi"}}
+		return []MessageState{{From: "human", To: "coder", Body: "hi"}}
 	})
-	tp, err := g.ChatPayload(context.Background(), workitem.Item{ID: "sty_chat", Status: "in_progress"}, "")
+	tp, err := g.ChatPayload(context.Background(), workitem.Item{ID: "sty_chat", Status: "in_progress"}, "coder")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3982,7 +3982,7 @@ func TestOpenSessionConsultingReviewer(t *testing.T) {
 			return closedSess{}, nil
 		}, nil
 	}
-	sess, err := g.OpenSession(context.Background(), "reviewer", workitem.Item{ID: "sty_1", Status: "integration"}, nil, nil)
+	sess, err := g.OpenSessionAs(context.Background(), "reviewer", SessionRoleConsult, workitem.Item{ID: "sty_1", Status: "integration"}, nil, nil)
 	if err != nil {
 		t.Fatalf("a live-capable [reviewer] must open: %v", err)
 	}
@@ -4000,12 +4000,12 @@ func TestOpenSessionConsultingReviewer(t *testing.T) {
 	}
 }
 
-// TestOpenSessionOrchestratorKeepsExecutorCharter: the default console is
-// DRIVING, not consulting — charter selection is by binding name.
-func TestOpenSessionOrchestratorKeepsExecutorCharter(t *testing.T) {
+// TestOpenSessionDrivingKeepsExecutorCharter: a DRIVING session is not
+// consulting — charter selection is by the stated role, not the binding name.
+func TestOpenSessionDrivingKeepsExecutorCharter(t *testing.T) {
 	g, _ := newEngine(t, "", fakeDocs{})
 	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
-		if name != "orchestrator" {
+		if name != "coder" {
 			return config.AgentBinding{}, false
 		}
 		return config.AgentBinding{Interface: "stream", Tools: "Read,Grep,Glob,Bash(satelle:*)", Command: "claude -p {tools}"}, true
@@ -4017,22 +4017,36 @@ func TestOpenSessionOrchestratorKeepsExecutorCharter(t *testing.T) {
 			return closedSess{}, nil
 		}, nil
 	}
-	if _, err := g.OpenSession(context.Background(), "", workitem.Item{ID: "sty_1", Status: "in_progress"}, nil, nil); err != nil {
+	if _, err := g.OpenSessionAs(context.Background(), "coder", SessionRoleDriving, workitem.Item{ID: "sty_1", Status: "in_progress"}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(got.SystemPrompt, "isolated satelle executor agent") {
-		t.Fatalf("default binding must keep the executor charter: %q", got.SystemPrompt)
+		t.Fatalf("a driving session must keep the executor charter: %q", got.SystemPrompt)
 	}
 	if strings.Contains(got.SystemPrompt, "consulting, NOT judging") {
-		t.Fatalf("the orchestrator drives; it is not consulted: %q", got.SystemPrompt)
+		t.Fatalf("a driving session performs; it is not consulted: %q", got.SystemPrompt)
 	}
 }
 
-func TestOpenOrchestratorInjectsSessionEnv(t *testing.T) {
+// TestOpenSessionRefusesUnnamedBinding (sty_6f9ba7ca): there is no default
+// console binding any more — an empty name is refused, not resolved to an
+// [orchestrator].
+func TestOpenSessionRefusesUnnamedBinding(t *testing.T) {
+	g, _ := newEngine(t, "", fakeDocs{})
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Interface: "stream", Command: "claude -p {tools}"}, true
+	})
+	_, err := g.OpenSessionAs(context.Background(), "", SessionRoleDriving, workitem.Item{ID: "sty_1", Status: "in_progress"}, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "no binding named") {
+		t.Fatalf("want a no-binding-named refusal, got %v", err)
+	}
+}
+
+func TestOpenSessionInjectsSessionEnv(t *testing.T) {
 	t.Setenv("SATELLE_SESSION", "sess-chat")
 	g, _ := newEngine(t, "", fakeDocs{})
 	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
-		if name != "orchestrator" {
+		if name != "coder" {
 			return config.AgentBinding{}, false
 		}
 		return config.AgentBinding{Interface: "stream", Command: "claude -p --input-format stream-json --output-format stream-json --allowedTools {tools}"}, true
@@ -4056,7 +4070,7 @@ func TestOpenOrchestratorInjectsSessionEnv(t *testing.T) {
 			return closedSess{}, nil
 		}, nil
 	}
-	sess, err := g.OpenSession(context.Background(), "", workitem.Item{ID: "sty_1", Status: "in_progress"}, nil, handler)
+	sess, err := g.OpenSessionAs(context.Background(), "coder", SessionRoleDriving, workitem.Item{ID: "sty_1", Status: "in_progress"}, nil, handler)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4065,7 +4079,7 @@ func TestOpenOrchestratorInjectsSessionEnv(t *testing.T) {
 		t.Fatalf("env = %#v, want SATELLE_SESSION=sess-chat", gotEnv)
 	}
 	if gotOnEvent == nil {
-		t.Fatal("OpenSession must install the caller's OnEvent on the request (synchronous transcript sink)")
+		t.Fatal("OpenSessionAs must install the caller's OnEvent on the request (synchronous transcript sink)")
 	}
 }
 
@@ -4074,8 +4088,8 @@ func TestOpenOrchestratorInjectsSessionEnv(t *testing.T) {
 // SetLiveNamedAgents resolves via AgentsConfig.LiveBinding opens with the
 // CLI's best live transport — stream for a claude command, acp for any other
 // spawn line — covering the rework relay's coder seat, its rework.consult
-// binding, and the story-chat/orchestrator binding alike, since all three
-// open through this one method.
+// binding and any other live use alike, since they all open through this one
+// method.
 func TestOpenSessionAsResolvesLiveInterfaceFromSetLiveNamedAgents(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
@@ -4099,7 +4113,7 @@ func TestOpenSessionAsResolvesLiveInterfaceFromSetLiveNamedAgents(t *testing.T) 
 			command:     "claude -p --input-format stream-json --output-format stream-json --allowedTools {tools}",
 			wantIface:   "stream",
 			wantCommand: "claude -p --input-format stream-json --output-format stream-json --allowedTools {tools}"},
-		{name: "story chat orchestrator (acp spawn)", binding: "orchestrator",
+		{name: "rework coder (acp spawn)", binding: "coder",
 			command: "gemini --experimental-acp", wantIface: "acp", wantCommand: "gemini --experimental-acp"},
 		// No command authored yet: every live transport is a candidate, the
 		// shipped default order picks stream, and stream's default command line

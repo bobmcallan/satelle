@@ -1,3 +1,13 @@
+## [0.0.552] - 2026-09-25
+
+### Removed
+- **`satelle story chat` is gone.** The command, its `[orchestrator]` chat console and the inherited-orchestrator model tier are removed. `satelle story <unknown>` refuses an unknown subcommand. `satelle story rework` and the live sessions it opens are unchanged. An unset model still resolves by binding, step or `--model`, the in-loop session, `[model_order]`, then `cli-default`. A `session_model` row left under the old orchestrator role is ignored. Model inheritance comes from the in-loop tier alone, so the capability table lists it unavailable for grok and for codex acp, each with an adapter-named reason. (sty_6f9ba7ca)
+
+## [serve-v0.0.81] - 2026-09-25
+
+### Removed
+- **The service no longer has a story-chat path.** It embeds the help, model-selection, and ledger changes above. (sty_6f9ba7ca)
+
 ## [0.0.551] - 2026-09-25
 
 ### Fixed
