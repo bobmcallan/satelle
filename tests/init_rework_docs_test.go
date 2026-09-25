@@ -9,10 +9,11 @@ import (
 	"testing"
 )
 
-// TestInitSeedsCommentedReworkBindingsAndDocs pins sty_cec967b5 AC1/AC2:
-// after satelle init, agents.toml carries commented [orchestrator]/[coder]
-// examples (the file does not name those seats). The shipped baseline still
-// grants them. The seeded workflows README documents rework = { consult, rounds }.
+// TestInitSeedsCommentedReworkBindingsAndDocs pins the init seed after
+// sty_462603f0: a fresh agents.toml does not teach a live orchestrator or
+// story chat as the driver. A commented one-shot [coder] may remain. The
+// shipped baseline still grants the seats the file does not name. The seeded
+// workflows README documents rework = { consult, rounds }.
 func TestInitSeedsCommentedReworkBindingsAndDocs(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
@@ -23,15 +24,19 @@ func TestInitSeedsCommentedReworkBindingsAndDocs(t *testing.T) {
 		t.Fatalf("read agents.toml: %v", err)
 	}
 	body := string(agents)
-	for _, want := range []string{"# [orchestrator]", "# [coder]", "interface = \"stream\"", "satelle story rework"} {
+	for _, want := range []string{
+		"driving session is the in-loop executor",
+		"# [coder]",
+		"ONE-SHOT coder",
+		"satelle story rework",
+	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("seeded agents.toml missing %q", want)
 		}
 	}
-	// Uncommented live tables must not appear — comments stay comments.
-	for _, bad := range []string{"\n[orchestrator]\n", "\n[coder]\n"} {
+	for _, bad := range []string{"# [orchestrator]", "satelle story chat", "\n[orchestrator]\n", "\n[coder]\n"} {
 		if strings.Contains(body, bad) {
-			t.Errorf("seeded agents.toml must keep %q commented; found live table", strings.TrimSpace(bad))
+			t.Errorf("seeded agents.toml must not contain %q", strings.TrimSpace(bad))
 		}
 	}
 

@@ -1,3 +1,8 @@
+## [0.0.551] - 2026-09-25
+
+### Fixed
+- **The init integration test matches the seed that no longer shows a live orchestrator.** `TestInitSeedsCommentedReworkBindingsAndDocs` was still requiring `# [orchestrator]` in a fresh agents.toml. (sty_462603f0)
+
 ## [0.0.550] - 2026-09-25
 
 ### Changed
