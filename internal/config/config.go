@@ -20,6 +20,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/compact"
 )
 
@@ -392,15 +393,17 @@ func (c OutputConfig) IsCompactCommand(verb string) bool {
 }
 
 // IsAgentCaller detects a dispatched or in-loop agent process by environment:
-// SATELLE_SCRATCH (every dispatched agent gets one — sty_e7aaf8b1) or
-// CLAUDECODE=1 (an in-loop Claude Code session). Mechanism only — whether to
-// default compact mode ON for one is OutputConfig.CompactForAgents, authored
-// configuration.
+// SATELLE_SCRATCH (every dispatched agent gets one — sty_e7aaf8b1),
+// SATELLE_SESSION (satelle's own harness-neutral session marker), or an
+// in-loop harness's own marker as recognised by the agentcli adapters.
+// Mechanism only — whether to default compact mode ON for one is
+// OutputConfig.CompactForAgents, authored configuration.
 func IsAgentCaller() bool {
-	if strings.TrimSpace(os.Getenv(ScratchEnv)) != "" {
+	if strings.TrimSpace(os.Getenv(ScratchEnv)) != "" || strings.TrimSpace(os.Getenv(SessionEnv)) != "" {
 		return true
 	}
-	return os.Getenv("CLAUDECODE") == "1"
+	_, ok := agentcli.InLoopHarnessFromEnv(os.Environ())
+	return ok
 }
 
 // DispatchConfig tunes per-dispatch/session mechanism: today, only the

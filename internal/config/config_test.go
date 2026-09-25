@@ -532,19 +532,53 @@ func TestLoadRefusesInvalidCheckLogPattern(t *testing.T) {
 	}
 }
 
-func TestIsAgentCaller(t *testing.T) {
-	t.Setenv(ScratchEnv, "")
-	t.Setenv("CLAUDECODE", "")
-	if IsAgentCaller() {
-		t.Error("IsAgentCaller() = true with no env set, want false")
+// useFixtureEnv replaces the whole process environment with an agentcli
+// harness fixture (restored on cleanup), so the test never depends on the
+// harness it happens to run under.
+func useFixtureEnv(t *testing.T, name string) {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "agentcli", "testdata", "harness", name+".env"))
+	if err != nil {
+		t.Fatal(err)
 	}
+	saved := os.Environ()
+	os.Clearenv()
+	t.Cleanup(func() {
+		os.Clearenv()
+		for _, e := range saved {
+			k, v, _ := strings.Cut(e, "=")
+			_ = os.Setenv(k, v)
+		}
+	})
+	for _, e := range strings.Fields(string(b)) {
+		k, v, _ := strings.Cut(e, "=")
+		_ = os.Setenv(k, v)
+	}
+}
+
+func TestIsAgentCaller(t *testing.T) {
+	for _, c := range []struct {
+		fixture string
+		want    bool
+	}{
+		{"plain", false},
+		{"claude", true},
+		{"grok", true},
+		{"codex", true},
+	} {
+		useFixtureEnv(t, c.fixture)
+		if got := IsAgentCaller(); got != c.want {
+			t.Errorf("IsAgentCaller() under %s fixture = %v, want %v", c.fixture, got, c.want)
+		}
+	}
+	useFixtureEnv(t, "plain")
 	t.Setenv(ScratchEnv, "/tmp/satelle/scratch")
 	if !IsAgentCaller() {
 		t.Error("IsAgentCaller() = false with SATELLE_SCRATCH set, want true")
 	}
 	t.Setenv(ScratchEnv, "")
-	t.Setenv("CLAUDECODE", "1")
+	t.Setenv(SessionEnv, "sess-1")
 	if !IsAgentCaller() {
-		t.Error("IsAgentCaller() = false with CLAUDECODE=1, want true")
+		t.Error("IsAgentCaller() = false with SATELLE_SESSION set, want true")
 	}
 }

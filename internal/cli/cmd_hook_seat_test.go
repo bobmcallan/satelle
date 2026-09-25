@@ -194,13 +194,19 @@ func TestBindSessionIDPublishesInLoopModel(t *testing.T) {
 
 	t.Setenv("SATELLE_HOME", t.TempDir())
 	t.Setenv(config.SessionEnv, "sess-model-a")
-	bindSessionID([]byte(`{"session_id":"sess-model-a","model":"claude-opus-5-5"}`))
+	bindSessionID([]byte(`{"session_id":"sess-model-a","model":"claude-opus-5-5","permission_mode":"default"}`))
 	model, exe := config.ResolveSessionModel("sess-model-a", verb.SessionModelRoleInLoop)
 	if model != "claude-opus-5-5" {
 		t.Fatalf("in-loop model = %q, want claude-opus-5-5", model)
 	}
 	if exe != "claude" {
-		t.Fatalf("in-loop executable = %q, want claude (harnessFromEvent default)", exe)
+		t.Fatalf("in-loop executable = %q, want claude (Claude-fingerprinted envelope)", exe)
+	}
+	// An unrecognised envelope is recorded "unknown", never claude by default.
+	t.Setenv(config.SessionEnv, "sess-model-c")
+	bindSessionID([]byte(`{"session_id":"sess-model-c","model":"some-model"}`))
+	if _, exe := config.ResolveSessionModel("sess-model-c", verb.SessionModelRoleInLoop); exe != "unknown" {
+		t.Fatalf("unrecognised envelope executable = %q, want unknown", exe)
 	}
 
 	t.Setenv(config.SessionEnv, "sess-model-b")

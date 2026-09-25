@@ -1,0 +1,1 @@
+{"session_id":"s1","turn_id":"t1","transcript_path":"/home/u/.codex/sessions/s1.jsonl","cwd":"/repo","hook_event_name":"PreToolUse","model":"gpt-5","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** End Patch"},"tool_use_id":"call_2"}

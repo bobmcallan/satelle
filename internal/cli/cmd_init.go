@@ -57,8 +57,8 @@ func init() {
     scaffolds only when the repo already has .claude/ or .grok/, or when
     --harness names them (claude,grok,codex). Never from PATH and never a silent
     claude default. An empty repo with no flag gets zero harness scaffolds.
-    Use-time lazy install: store-backed verbs detect CLAUDE_CODE_* / GROK_AGENT
-    session markers and install the matching scaffold if missing (first session
+    Use-time lazy install: store-backed verbs detect the harness session
+    marker and install the matching scaffold if missing (first session
     of a new harness may run without hooks; they take effect next session).
   - registration of this repo in the local workspace registry (opt out with
     --no-workspace) so 'satelle serve' and the /workspace view see it.
@@ -824,27 +824,16 @@ func detectProcessHarnesses(repoRoot string, forced []string) (claude, grok, cod
 }
 
 // detectSessionHarnesses probes the process environment for harness session
-// markers (never PATH). Claude: any CLAUDE_CODE_* env key. Grok: GROK_AGENT
-// non-empty (Grok Build sets GROK_AGENT=1 in agent sessions).
+// markers (never PATH); the marker names live in the agentcli adapters.
 func detectSessionHarnesses() (claude, grok bool) {
 	return detectSessionHarnessesFrom(os.Environ())
 }
 
 // detectSessionHarnessesFrom is the testable core (environ as KEY=VALUE entries).
+// Codex is not reported: lazy install has no codex scaffold path.
 func detectSessionHarnessesFrom(environ []string) (claude, grok bool) {
-	for _, e := range environ {
-		key, val, _ := strings.Cut(e, "=")
-		if strings.HasPrefix(key, "CLAUDE_CODE_") {
-			claude = true
-		}
-		if key == "GROK_AGENT" {
-			v := strings.TrimSpace(val)
-			if v != "" && v != "0" {
-				grok = true
-			}
-		}
-	}
-	return claude, grok
+	found := agentcli.DetectSessionHarnesses(environ)
+	return found[agentcli.HarnessClaude], found[agentcli.HarnessGrok]
 }
 
 func dirExists(path string) bool {
@@ -1629,7 +1618,8 @@ stale_after = "24h"
 # prints the same indented JSON it always has. Unset = off everywhere (this
 # table's zero value); a repo opts a verb in by name. compact_for_agents
 # makes that the default for a dispatched or in-loop agent caller
-# (SATELLE_SCRATCH set, or CLAUDECODE=1); --json on any command always forces
+# (SATELLE_SCRATCH or SATELLE_SESSION set, or an in-loop harness's own
+# session marker); --json on any command always forces
 # plain JSON regardless. noise_patterns are globs (basename match unless the
 # pattern contains "/") identifying generated/lockfile files a story diff
 # --patch offloads whole — the binary ships none of its own.

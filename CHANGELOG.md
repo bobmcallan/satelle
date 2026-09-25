@@ -1,3 +1,13 @@
+## [0.0.542] - 2026-09-25
+
+### Fixed
+- **Agent and harness detection no longer assumes Claude.** An in-loop Grok or Codex session now counts as an agent caller, so `compact_for_agents` applies to it. It is detected by the harness's own session marker or satelle's `SATELLE_SESSION`, not only `CLAUDECODE=1`. A hook envelope that carries Codex's `turn_id` is recorded as `codex`, and an unrecognised envelope is recorded as `unknown` instead of `claude`. Denies keep the strict shape for every non-Grok harness. Provider env-var names and envelope fingerprints now live in the `agentcli` adapter package. (sty_37fd5470)
+
+## [serve-v0.0.73] - 2026-09-25
+
+### Fixed
+- **The service uses the same provider-neutral detection.** It shares the agent-caller and hook-harness detection above. (sty_37fd5470)
+
 ## [0.0.541] - 2026-09-25
 
 ### Fixed

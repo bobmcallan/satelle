@@ -106,6 +106,33 @@ func TestDenyPreToolUseRespectsHarnessFlag(t *testing.T) {
 	}
 }
 
+// TestDenyPreToolUseUnknownHarnessStaysStrict (sty_37fd5470): an unrecognised
+// envelope is recorded "unknown" but still gets the strict hookSpecificOutput
+// deny shape and an error, so the sniff change cannot reopen the inert-gate bug.
+func TestDenyPreToolUseUnknownHarnessStaysStrict(t *testing.T) {
+	prev := hookHarnessFlag
+	hookHarnessFlag = ""
+	t.Cleanup(func() { hookHarnessFlag = prev })
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	raw := []byte(`{"tool_input":{"file_path":"/tmp/x.go"}}`)
+	if harnessFromEvent(raw) != "unknown" {
+		t.Fatalf("precondition: envelope must sniff unknown")
+	}
+	if err := denyPreToolUse(cmd, raw, "no engaged story"); err == nil {
+		t.Fatal("denyPreToolUse must return error")
+	}
+	var doc map[string]any
+	if jerr := json.Unmarshal(buf.Bytes(), &doc); jerr != nil {
+		t.Fatalf("json: %v body=%s", jerr, buf.String())
+	}
+	if hso, _ := doc["hookSpecificOutput"].(map[string]any); hso["permissionDecision"] != "deny" {
+		t.Fatalf("unknown harness deny not strict: %s", buf.String())
+	}
+}
+
 // TestCodexInfraDenyUsesClaudeEnvelope: parameterized wrapper static deny for
 // harness=codex matches Claude shape (used when satelle binary is missing).
 func TestCodexInfraDenyUsesClaudeEnvelope(t *testing.T) {

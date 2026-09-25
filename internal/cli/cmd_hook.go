@@ -34,6 +34,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
@@ -1586,25 +1587,14 @@ func denyPreToolUse(cmd *cobra.Command, raw []byte, reason string) error {
 	return fmt.Errorf("%s", reason)
 }
 
-// harnessFromEvent returns "grok" or "claude" from a PreToolUse event envelope
-// (sty_5e4bc568). Claude Code uses snake_case tool_input; Grok Build uses
-// camelCase toolInput. Presence is tested with json.RawMessage so a Bash
-// commitgate event (tool_input.command only) classifies correctly.
-//
-// "grok" only when toolInput is present AND tool_input is absent. Default is
-// "claude" (the strict validator): mis-detecting Grok as Claude is safe (Grok
-// is lenient and exit 2 still blocks); mis-detecting Claude as Grok reintroduces
-// the inert-gate bug. Bias to the strict shape on ambiguity/empty input.
+// harnessFromEvent classifies a hook event envelope as claude, grok, codex or
+// unknown (sty_5e4bc568, sty_37fd5470). The per-provider fingerprints live in
+// agentcli.HarnessFromHookEvent. Unrecognised input is "unknown", never
+// "claude"; emitPreToolUseDeny still gives every non-Grok harness (unknown
+// included) the strict hookSpecificOutput shape, so the deny stays effective
+// and the sty_5e4bc568 inert-gate bug is not reopened.
 func harnessFromEvent(raw []byte) string {
-	var top struct {
-		ToolInputSnake json.RawMessage `json:"tool_input"`
-		ToolInputCamel json.RawMessage `json:"toolInput"`
-	}
-	_ = json.Unmarshal(raw, &top)
-	if len(top.ToolInputCamel) > 0 && len(top.ToolInputSnake) == 0 {
-		return "grok"
-	}
-	return "claude"
+	return agentcli.HarnessFromHookEvent(raw)
 }
 
 // claudePreToolUseDenyOut is Claude Code's PreToolUse deny shape (sty_5e4bc568).

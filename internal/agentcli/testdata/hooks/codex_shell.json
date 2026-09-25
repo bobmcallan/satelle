@@ -1,0 +1,1 @@
+{"session_id":"s1","turn_id":"t1","transcript_path":"/home/u/.codex/sessions/s1.jsonl","cwd":"/repo","hook_event_name":"PreToolUse","model":"gpt-5","tool_name":"Bash","tool_input":{"command":"git commit -m x"},"tool_use_id":"call_1"}

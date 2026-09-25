@@ -434,20 +434,24 @@ func TestEmitPreToolUseDenyGrok(t *testing.T) {
 }
 
 // TestHarnessFromEvent (sty_5e4bc568 AC2): snake_case tool_input → claude;
-// camelCase-only toolInput → grok; ambiguous/empty → claude (strict default).
+// camelCase-only toolInput → grok; turn_id → codex; ambiguous/empty → unknown,
+// never claude by default (sty_37fd5470). The deny shape for unknown stays
+// strict (TestDenyPreToolUseUnknownHarnessStaysStrict).
 func TestHarnessFromEvent(t *testing.T) {
 	cases := []struct {
 		name string
 		raw  string
 		want string
 	}{
-		{"claude snake_case", `{"tool_input":{"file_path":"/x.go"}}`, "claude"},
-		{"claude bash", `{"tool_input":{"command":"git commit -m x"}}`, "claude"},
+		{"claude envelope", `{"permission_mode":"default","tool_input":{"file_path":"/x.go"}}`, "claude"},
+		{"claude tool name", `{"tool_name":"Edit","tool_input":{"command":"git commit -m x"}}`, "claude"},
+		{"codex envelope", `{"turn_id":"t1","tool_input":{"command":"git commit -m x"}}`, "codex"},
 		{"grok camelCase", `{"toolInput":{"path":"internal/x.go"}}`, "grok"},
 		{"grok bash", `{"toolInput":{"command":"git push"}}`, "grok"},
-		{"both present → claude", `{"tool_input":{},"toolInput":{}}`, "claude"},
-		{"empty", `{}`, "claude"},
-		{"null tool_input", `{"tool_input":null}`, "claude"},
+		{"bare snake_case → unknown", `{"tool_input":{"file_path":"/x.go"}}`, "unknown"},
+		{"both present → unknown", `{"tool_input":{},"toolInput":{}}`, "unknown"},
+		{"empty", `{}`, "unknown"},
+		{"null tool_input", `{"tool_input":null}`, "unknown"},
 	}
 	for _, c := range cases {
 		if got := harnessFromEvent([]byte(c.raw)); got != c.want {

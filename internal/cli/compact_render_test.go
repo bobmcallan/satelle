@@ -71,8 +71,7 @@ func TestCompactModeMatrix(t *testing.T) {
 	}
 
 	// 1. No flags, compact_for_agents unset (false) and no agent env: plain JSON.
-	t.Setenv("SATELLE_SCRATCH", "")
-	t.Setenv("CLAUDECODE", "")
+	scrubAgentEnv(t)
 	out, err := runRoot(t, "ledger", "list", "--story", id, "--kind", "note")
 	if err != nil {
 		t.Fatalf("ledger list: %v\n%s", err, out)
@@ -109,6 +108,24 @@ func TestCompactModeMatrix(t *testing.T) {
 	}
 }
 
+// scrubAgentEnv unsets every agent marker (restored on cleanup): this suite
+// itself may run inside a harness session (SATELLE_SESSION, CLAUDECODE,
+// CLAUDE_CODE_*, GROK_AGENT, CODEX_*).
+func scrubAgentEnv(t *testing.T) {
+	t.Helper()
+	keys := []string{"SATELLE_SCRATCH", "SATELLE_SESSION", "CLAUDECODE", "GROK_AGENT"}
+	for _, e := range os.Environ() {
+		k, _, _ := strings.Cut(e, "=")
+		if strings.HasPrefix(k, "CLAUDE_CODE_") || strings.HasPrefix(k, "CODEX_") {
+			keys = append(keys, k)
+		}
+	}
+	for _, k := range keys {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
+}
+
 // TestCompactForAgentsDefaultsOnForAgentEnv (sty_75b76691 AC4): with
 // compact_for_agents = true, an agent-looking caller (SATELLE_SCRATCH set)
 // gets compact mode with no flag; a caller with neither agent env still gets
@@ -124,8 +141,7 @@ func TestCompactForAgentsDefaultsOnForAgentEnv(t *testing.T) {
 		}
 	}
 
-	t.Setenv("SATELLE_SCRATCH", "")
-	t.Setenv("CLAUDECODE", "")
+	scrubAgentEnv(t)
 	out, err := runRoot(t, "ledger", "list", "--story", id, "--kind", "note")
 	if err != nil {
 		t.Fatalf("ledger list: %v\n%s", err, out)
