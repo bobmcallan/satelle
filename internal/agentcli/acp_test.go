@@ -347,6 +347,41 @@ func TestACPRunner_ElicitationAutoAnswered(t *testing.T) {
 	}
 }
 
+func TestACPRunner_GrokAskUserQuestionGetsOutcomeShape(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/grok_ask_user_question.request.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra := "\n        send(json.loads('''" + strings.TrimSpace(string(fixture)) + `'''))
+        resp = read()
+        want = {"outcome": "accepted", "answers": {"Which colour should I pick, red or blue?": "no user is available; decide from the payload and state your assumption"}}
+        if resp is None or resp.get("id") != 0 or resp.get("result") != want:
+            send({"jsonrpc":"2.0","id":mid,"error":{"code":1,"message":"expected grok outcome shape, got %s" % (resp,)}})
+            continue
+`
+	_, denied := runACPAsk(t, extra)
+	if len(denied) != 1 || denied[0].Tool != "_x.ai/ask_user_question" || denied[0].Text != "Which colour should I pick, red or blue?" || denied[0].Meta[EventMetaResponse] != "auto-answered" {
+		t.Fatalf("events = %+v, want one auto-answered grok ask", denied)
+	}
+}
+
+func TestACPRunner_TraceRecordsPeerRequests(t *testing.T) {
+	trace := filepath.Join(t.TempDir(), "trace.jsonl")
+	t.Setenv(acpTraceEnv, trace)
+	extra := `
+        send({"jsonrpc":"2.0","id":77,"method":"_x.ai/ask_user","params":{"question":"pick one?"}})
+        read()
+`
+	runACPAsk(t, extra)
+	b, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatalf("trace not written: %v", err)
+	}
+	if s := string(b); !strings.Contains(s, `"method":"_x.ai/ask_user"`) || !strings.Contains(s, `"question":"pick one?"`) {
+		t.Errorf("trace = %q, want the ask method and params", s)
+	}
+}
+
 func TestACPRunner_UnknownRequestGetsMethodNotFound(t *testing.T) {
 	extra := `
         send({"jsonrpc":"2.0","id":55,"method":"fs/unheard_of","params":{}})

@@ -692,6 +692,9 @@ func (c *acpClient) readLoop(r io.Reader) {
 			c.handleUpdate(msg.Params)
 			continue
 		}
+		if msg.Method != "" && msg.ID != nil {
+			traceACPRequest(msg.Method, *msg.ID, msg.Params)
+		}
 		if msg.Method == "session/request_permission" && msg.ID != nil {
 			c.handlePermission(*msg.ID, msg.Params)
 			continue
@@ -867,6 +870,28 @@ func questionText(raw json.RawMessage, fallback string) string {
 	return ""
 }
 
+// acpTraceEnv names a file that, when set, receives one JSONL line per
+// peer-initiated ACP request (method, id, params) so an agent's real request
+// shapes can be captured for fixtures. Off by default; params are redacted.
+const acpTraceEnv = "SATELLE_ACP_TRACE"
+
+func traceACPRequest(method string, id int64, params json.RawMessage) {
+	path := os.Getenv(acpTraceEnv)
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	line, err := json.Marshal(map[string]any{"method": method, "id": id, "params": params})
+	if err != nil {
+		return
+	}
+	_, _ = f.Write(append([]byte(RedactSecrets(string(line))), '\n'))
+}
+
 // interactiveDeniedEvent builds the EventInteractiveDenied both transports emit.
 func interactiveDeniedEvent(tool, question, response string) Event {
 	ev := newEvent(EventInteractiveDenied)
@@ -880,6 +905,36 @@ func (c *acpClient) emitInteractiveDenied(tool, question, response string) {
 	emitEvent(c.onEvent, interactiveDeniedEvent(tool, question, response))
 }
 
+// askReplyBuilders maps an ask method to the reply shape that method defines.
+// A method absent here gets the generic reply.
+var askReplyBuilders = map[string]func(params json.RawMessage) any{
+	// Grok: the result is tagged by outcome; answers maps each question's text
+	// to its answer and must be a JSON object.
+	"_x.ai/ask_user_question": func(params json.RawMessage) any {
+		var in struct {
+			Questions []struct {
+				Question string `json:"question"`
+			} `json:"questions"`
+		}
+		_ = json.Unmarshal(params, &in)
+		answers := map[string]string{}
+		for _, q := range in.Questions {
+			answers[q.Question] = noUserAnswer
+		}
+		return map[string]any{"outcome": "accepted", "answers": answers}
+	},
+}
+
+// askReply builds the auto-answer for an ask method. The generic fallback
+// carries both common shapes: an elicitation reads "action", an ask-style
+// request reads "answer"/"text".
+func askReply(method string, params json.RawMessage) any {
+	if build, ok := askReplyBuilders[method]; ok {
+		return build(params)
+	}
+	return map[string]any{"action": "decline", "answer": noUserAnswer, "text": noUserAnswer}
+}
+
 // handleUnknownRequest answers a peer-initiated request the client has no
 // handler for. An ask/elicitation is auto-answered (declined, with the fixed
 // no-user text); anything else gets JSON-RPC "method not found". Either way the
@@ -889,9 +944,7 @@ func (c *acpClient) handleUnknownRequest(id int64, method string, params json.Ra
 		_ = c.respondError(id, -32601, "Method not found: "+method)
 		return
 	}
-	// One result carries both common shapes: an elicitation reads "action", an
-	// ask-style request reads "answer"/"text".
-	_ = c.respond(id, map[string]any{"action": "decline", "answer": noUserAnswer, "text": noUserAnswer})
+	_ = c.respond(id, askReply(method, params))
 	c.emitInteractiveDenied(method, questionText(params, ""), "auto-answered")
 }
 

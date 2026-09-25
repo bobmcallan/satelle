@@ -1,3 +1,13 @@
+## [0.0.546] - 2026-09-25
+
+### Fixed
+- **Grok now gets the no-user answer instead of a tool error.** When Grok asks the user (`_x.ai/ask_user_question`) in an ACP session, satelle now replies in the shape Grok expects: `{"outcome":"accepted","answers":{"<question>":"no user is available; decide from the payload and state your assumption"}}`. Before, Grok logged "Client returned an invalid response" and lost the instruction. The reply shape is chosen by request method in the ACP adapter. Any other ask or elicitation method still gets the generic reply. A test replays a captured Grok request. For capturing an agent's requests, `SATELLE_ACP_TRACE=<file>` appends each request the agent sends (method, id, redacted params) as a JSONL line. (sty_068fce04)
+
+## [serve-v0.0.76] - 2026-09-25
+
+### Fixed
+- **The service's ACP sessions answer Grok's ask-the-user request in Grok's shape.** It shares the ACP adapter change above. (sty_068fce04)
+
 ## [0.0.545] - 2026-09-25
 
 ### Fixed
