@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/costview"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -170,6 +171,47 @@ type detailData struct {
 	Executions []executionVM // populated only for a TASK — its runs (sty_30a917f8)
 	TopBar     topBar
 	Standalone bool
+	// Cost is the costview headline for a STORY only (nil for a task, matching
+	// the CLI's `satelle story cost` scope) — the same costview.Figures/Family
+	// computation the CLI and the actual-* tags read, pre-formatted with the
+	// costview formatters so the template renders, never recomputes, a figure
+	// (sty_b8542a3a AC7).
+	Cost *costVM
+}
+
+// costVM is one story's pre-formatted cost headline plus its family roll-up
+// (nil when the story has no children). Every string is already rendered
+// through a costview formatter, so the template and the CLI can never
+// disagree on a number's presentation.
+type costVM struct {
+	USD, EstUSD           string
+	FreshIn, EstFreshIn   string
+	Out, EstOut           string
+	CacheRead, CacheWrite string
+	Unsplit               string
+	Elapsed, EstElapsed   string
+	AgentTime             string
+	LegacyEstimate        string
+	Family                []familyRowVM
+	FamilyTotal           *familyRowVM
+	// DriverRows/DriverTotal are the driving (in-loop) session's own recorded
+	// usage — its own section, separate from the dispatch figures above, same
+	// as the CLI's DRIVER SESSION table (sty_81caa41b, sty_b8542a3a AC4/AC7).
+	// costview.FormatDriverRows is the ONE formatting pass both surfaces call,
+	// so they cannot render different strings for the same ledger data. Nil/
+	// empty when the story has no driver_usage rows.
+	DriverRows  []costview.DriverRowView
+	DriverTotal *costview.DriverRowView
+}
+
+// familyRowVM is one family member's pre-formatted cost line — a child, or
+// (as FamilyTotal) the whole family's fold.
+type familyRowVM struct {
+	ID                    string
+	USD                   string
+	FreshIn, Out          string
+	CacheRead, CacheWrite string
+	Elapsed               string
 }
 
 type executionVM struct {

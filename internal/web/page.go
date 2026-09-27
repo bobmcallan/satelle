@@ -420,6 +420,34 @@ const templatesSrc = `
     <div class="run-meta">created {{ftime .CreatedAt}} · updated {{ftime .UpdatedAt}}</div>
     {{if .Output}}<pre class="run-output prose">{{.Output}}</pre>{{else}}<div class="run-noout">no output recorded</div>{{end}}
   </li>{{end}}</ol>{{else}}<div class="empty">No runs yet — create one with <code>satelle execution create --parent {{.Item.ID}}</code>.</div>{{end}}{{end}}
+  {{with .Cost}}<h4>Cost</h4>
+  <dl class="cost-summary">
+    <dt>$</dt><dd>{{.USD}}{{if .EstUSD}} <span class="cost-est">({{.EstUSD}})</span>{{end}}</dd>
+    <dt>Fresh in</dt><dd>{{.FreshIn}}{{if .EstFreshIn}} <span class="cost-est">({{.EstFreshIn}})</span>{{end}}</dd>
+    <dt>Out</dt><dd>{{.Out}}{{if .EstOut}} <span class="cost-est">({{.EstOut}})</span>{{end}}</dd>
+    <dt>Cache read</dt><dd>{{.CacheRead}}</dd>
+    <dt>Cache write</dt><dd>{{.CacheWrite}}</dd>
+    {{if .Unsplit}}<dt>Unsplit (legacy)</dt><dd>{{.Unsplit}}</dd>{{end}}
+    <dt>Elapsed (wall)</dt><dd>{{.Elapsed}}{{if .EstElapsed}} <span class="cost-est">({{.EstElapsed}})</span>{{end}}</dd>
+    <dt>Agent time (dispatch+driver)</dt><dd>{{.AgentTime}}</dd>
+  </dl>
+  {{if .LegacyEstimate}}<div class="cost-legacy-estimate">{{.LegacyEstimate}}</div>{{end}}
+  {{if .Family}}<h4>Family</h4>
+  <table class="panel-table cost-family">
+    <thead><tr><th>Child</th><th>$</th><th>Fresh in</th><th>Out</th><th>Cache read</th><th>Cache write</th><th>Elapsed</th></tr></thead>
+    <tbody>
+      {{range .Family}}<tr><td class="id">{{.ID}}</td><td>{{.USD}}</td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Elapsed}}</td></tr>{{end}}
+      {{with .FamilyTotal}}<tr class="cost-family-total"><td>{{.ID}}</td><td>{{.USD}}</td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Elapsed}}</td></tr>{{end}}
+    </tbody>
+  </table>{{end}}
+  {{if .DriverRows}}<h4>Driver sessions</h4>
+  <table class="panel-table cost-driver">
+    <thead><tr><th>Session</th><th>Executable</th><th>Trigger</th><th>Fresh in</th><th>Out</th><th>Cache read</th><th>Cache write</th><th>$</th><th>Agent time</th></tr></thead>
+    <tbody>
+      {{range .DriverRows}}<tr><td class="id">{{.SessionID}}</td><td>{{.Executable}}</td><td>{{.Trigger}}</td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.USD}}</td><td>{{.AgentTime}}</td></tr>{{end}}
+      {{with .DriverTotal}}<tr class="cost-driver-total"><td>{{.SessionID}}</td><td></td><td></td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.USD}}</td><td>{{.AgentTime}}</td></tr>{{end}}
+    </tbody>
+  </table>{{end}}{{end}}
   {{with .Route}}<h4>Route</h4>
   <article class="doc-article route-doc" id="doc-route">{{.HTML}}</article>{{end}}
   {{if .Docs}}<h4>Documents</h4>

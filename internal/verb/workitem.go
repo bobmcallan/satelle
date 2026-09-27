@@ -1082,12 +1082,19 @@ func recordActual(ctx context.Context, current workitem.Item, at time.Time) (wor
 		"actual-output":      strconv.Itoa(tot.Output),
 		"actual-cache-read":  strconv.Itoa(tot.CacheRead),
 		"actual-cache-write": strconv.Itoa(tot.CacheWrite),
-		"actual-minutes":     strconv.Itoa(costMinutes(time.Duration(tot.ElapsedMs) * time.Millisecond)),
 		// The summary token tag: fresh input + unsplit input + output + cache
 		// write, cache read excluded — reused context is not new work
 		// (sty_8eae81ac purpose note). Unsplit input folds in so a legacy row
 		// with no fresh/cache split never silently vanishes from the total.
 		"actual-tokens": strconv.Itoa(tot.FreshInput + tot.UnsplitTokens + tot.Output + tot.CacheWrite),
+	}
+	// ElapsedMs is a negative sentinel (never a measured span) when the story
+	// never entered an engaging state at all — "unavailable", never a bogus
+	// negative minute count (sty_b8542a3a rework).
+	if tot.ElapsedMs < 0 {
+		kv["actual-minutes"] = "unavailable"
+	} else {
+		kv["actual-minutes"] = strconv.Itoa(costMinutes(time.Duration(tot.ElapsedMs) * time.Millisecond))
 	}
 	// A story with no priced row (e.g. a codex-driven session whose adapter
 	// never reports cost_usd) must never read as "$0" — that claims a free

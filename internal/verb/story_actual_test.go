@@ -250,6 +250,53 @@ func TestComputeStoryActualEpicRollup(t *testing.T) {
 	}
 }
 
+// TestComputeStoryActualEpicRollupExcludesNonStoryChildren pins the AC7 rework
+// fix: the family walk (collectDescendants) is pinned to kind=story, the SAME
+// kind filter internal/web's mirrorBuildCostVM uses (decodeItems(..., "story")).
+// A task child under the same parent must never show up in Children or Total —
+// otherwise the CLI and web pages would report different family totals for the
+// same epic (sty_b8542a3a AC7 rework).
+func TestComputeStoryActualEpicRollupExcludesNonStoryChildren(t *testing.T) {
+	db := wireActualWF(t)
+	ctx := context.Background()
+	parent, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "epic", Status: "backlog",
+	}, time.Unix(1_700_000_000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	storyChild, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "story child", Status: "backlog", ParentID: parent.ID,
+	}, time.Unix(1_700_000_010, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskChild, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindTask, Title: "task child", Status: "backlog", ParentID: parent.ID,
+	}, time.Unix(1_700_000_020, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sc, tc := 2.0, 100.0
+	appendInvocation(t, db, storyChild.ID, map[string]any{"from": "a", "to": "b", "agent": "x", "usage_available": true, "cost_usd": sc}, time.Now())
+	appendInvocation(t, db, taskChild.ID, map[string]any{"from": "a", "to": "b", "agent": "x", "usage_available": true, "cost_usd": tc}, time.Now())
+
+	actual, err := verb.ComputeStoryActual(ctx, parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actual.Children) != 1 {
+		t.Fatalf("Children = %d, want 1 (the story child only, task excluded)", len(actual.Children))
+	}
+	if actual.Children[0].ID != storyChild.ID {
+		t.Errorf("Children[0].ID = %q, want %q", actual.Children[0].ID, storyChild.ID)
+	}
+	if actual.Total.CostUSD != sc {
+		t.Errorf("Total.CostUSD = %v, want %v (the task child's cost must not roll up)", actual.Total.CostUSD, sc)
+	}
+}
+
 // TestComputeStoryActualEpicFamilySpan pins revision 2 point 4: an epic's
 // Total.ElapsedMs is the family's wall span (earliest engage to latest
 // terminal across the parent and every child) — never the sum of each

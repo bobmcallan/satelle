@@ -13,10 +13,12 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/costview"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/syncstate"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -466,6 +468,15 @@ func mirrorLoadDetail(ctx context.Context, s *mirror.Store, repoKey, group, id s
 	}
 
 	entriesByStory, _ := decodeLedgerByStory(ctx, s, repoKey)
+
+	// Cost headline — a STORY only (nil for a task, matching the CLI's
+	// `satelle story cost` scope), computed via costview BEFORE the timeline
+	// reversal below mutates entriesByStory[id] in place (sty_b8542a3a AC7).
+	var cost *costVM
+	if group != "task" {
+		cost = mirrorBuildCostVM(ctx, s, repoKey, item, entriesByStory)
+	}
+
 	events := entriesByStory[id]
 	// Reverse for timeline (newest first) — same as loadDetail.
 	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
@@ -506,8 +517,100 @@ func mirrorLoadDetail(ctx context.Context, s *mirror.Store, repoKey, group, id s
 	idMeta := mirrorIdentity(ctx, s, repoKey)
 	return detailData{
 		Item: item, Events: evs, Route: route, Docs: docs, Executions: executions,
-		TopBar: mirrorTopBar("", idMeta.FooterEmail),
+		TopBar: mirrorTopBar("", idMeta.FooterEmail), Cost: cost,
 	}, idMeta, nil
+}
+
+// mirrorBuildCostVM computes item's costview headline plus its family
+// roll-up (nil when item has no children) — the SAME costview.Own/
+// costview.Family computation ComputeStoryActual and `satelle story cost` use,
+// with the workflow's Clock resolved through the one front door,
+// wfgovern.ClockFor, off the mirror's own indexed workflow docs so the web
+// page needs no link to verb or serve.
+func mirrorBuildCostVM(ctx context.Context, s *mirror.Store, repoKey string, item workitem.Item, entriesByStory map[string][]ledger.Entry) *costVM {
+	docs, err := decodeDocs(ctx, s, repoKey)
+	if err != nil {
+		return nil
+	}
+	var workflows []docindex.Doc
+	for _, d := range docs {
+		if d.Kind == "workflows" {
+			workflows = append(workflows, d.Doc)
+		}
+	}
+	clockFor := func(it workitem.Item) costview.Clock {
+		clk, _ := wfgovern.ClockFor(workflows, it)
+		return clk
+	}
+
+	now := time.Now()
+	own := costview.Own(item, entriesByStory[item.ID], clockFor(item), now)
+
+	stories, err := decodeItems(ctx, s, repoKey, "story")
+	if err != nil {
+		return costVMFromStory(own, nil)
+	}
+	hasChildren := false
+	for _, it := range stories {
+		if it.ParentID == item.ID {
+			hasChildren = true
+			break
+		}
+	}
+	if !hasChildren {
+		return costVMFromStory(own, nil)
+	}
+	fam := costview.Family(item, stories, entriesByStory, clockFor, now)
+	return costVMFromStory(own, &fam)
+}
+
+// costVMFromStory renders one item's costview.Story (plus its family roll-up,
+// when non-nil) into the pre-formatted costVM the template reads. It performs
+// no I/O — every figure comes through a costview formatter, the SAME ones the
+// CLI's printCostSummary calls, so a shared fixture produces byte-identical
+// strings on both surfaces (sty_b8542a3a AC7).
+func costVMFromStory(own costview.Story, fam *costview.FamilyCost) *costVM {
+	splitRows := own.Figures.UsageRows - own.Figures.UnsplitRows
+	vm := &costVM{
+		USD:            costview.FormatUSD(own.Figures.CostUSD, own.Figures.CostRows, own.Figures.CostUnavailableRows),
+		EstUSD:         costview.FormatEstimate(own.Estimates, "usd"),
+		FreshIn:        costview.FormatSplitTokens(own.Figures.FreshInput, splitRows, own.Figures.UnsplitRows, own.Figures.UsageUnavailableRows),
+		EstFreshIn:     costview.FormatEstimate(own.Estimates, "fresh-input"),
+		Out:            costview.FormatTokensMeasured(own.Figures.Output, own.Figures.UsageRows, own.Figures.UsageUnavailableRows),
+		EstOut:         costview.FormatEstimate(own.Estimates, "output"),
+		CacheRead:      costview.FormatSplitTokens(own.Figures.CacheRead, splitRows, own.Figures.UnsplitRows, own.Figures.UsageUnavailableRows),
+		CacheWrite:     costview.FormatSplitTokens(own.Figures.CacheWrite, splitRows, own.Figures.UnsplitRows, own.Figures.UsageUnavailableRows),
+		Elapsed:        costview.FormatDuration(own.Figures.ElapsedMs),
+		EstElapsed:     costview.FormatEstimate(own.Estimates, "minutes"),
+		AgentTime:      costview.FormatDuration(own.Figures.AgentMs),
+		LegacyEstimate: costview.FormatLegacyTokenEstimate(own.Estimates),
+	}
+	if own.Figures.UnsplitTokens > 0 {
+		vm.Unsplit = costview.FormatTokens(own.Figures.UnsplitTokens)
+	}
+	vm.DriverRows, vm.DriverTotal = costview.FormatDriverRows(own.DriverRows)
+	if fam == nil {
+		return vm
+	}
+	for _, c := range fam.Children {
+		vm.Family = append(vm.Family, familyRowFromFigures(c.ID, c.Figures))
+	}
+	total := familyRowFromFigures("FAMILY TOTAL", fam.Total)
+	vm.FamilyTotal = &total
+	return vm
+}
+
+func familyRowFromFigures(id string, f costview.Figures) familyRowVM {
+	splitRows := f.UsageRows - f.UnsplitRows
+	return familyRowVM{
+		ID:         id,
+		USD:        costview.FormatUSD(f.CostUSD, f.CostRows, f.CostUnavailableRows),
+		FreshIn:    costview.FormatSplitTokens(f.FreshInput, splitRows, f.UnsplitRows, f.UsageUnavailableRows),
+		Out:        costview.FormatTokensMeasured(f.Output, f.UsageRows, f.UsageUnavailableRows),
+		CacheRead:  costview.FormatSplitTokens(f.CacheRead, splitRows, f.UnsplitRows, f.UsageUnavailableRows),
+		CacheWrite: costview.FormatSplitTokens(f.CacheWrite, splitRows, f.UnsplitRows, f.UsageUnavailableRows),
+		Elapsed:    costview.FormatDuration(f.ElapsedMs),
+	}
 }
 
 // routeDocName is the name verb.RouteDocName writes the route document under.

@@ -1,3 +1,17 @@
+## [0.0.562] - 2026-09-28
+
+### Added
+- **`satelle story cost --gate-value`** reports, per skill and per seat, invocations, dollars (priced subtotal plus the unpriced count), fresh tokens, accepts, rejects and dollars per reject. Filter with `--story`, `--epic` (the item and every descendant) or `--since`/`--until`; `--json` gives the same rows, with `cost_usd` null when nothing was priced. It reports only; it recommends nothing and writes no configuration. (sty_b8542a3a)
+
+### Changed
+- **`satelle story cost` leads with dollars and fresh tokens.** The summary headlines dollars (priced rows only, with the unpriced count — never `$0`), fresh input and output, with cache read and cache write as separate columns. Unreported usage reads `unavailable (N unreported)`, never `0`. Elapsed wall time (the story clock) and agent time (dispatch plus driver) are separate lines; an estimate is shown in the unit it was written in. Each driver session is its own row with the same columns, and an item with children shows each child and the family total. Existing `--json` fields are kept; the new figures are additive. (sty_b8542a3a)
+- **One computation for cost figures.** `internal/costview` now owns the figures behind `story cost`, `story actual`, the `actual-*` tags, `measured_actual` in gate payloads and the web story page, so they cannot drift apart. (sty_b8542a3a)
+
+## [serve-v0.0.89] - 2026-09-28
+
+### Changed
+- **The story page shows the same cost figures as `satelle story cost`**: dollars and fresh tokens first, cache columns, elapsed and agent time, estimate, driver rows and the family roll-up. (sty_b8542a3a)
+
 ## [0.0.561] - 2026-09-28
 
 ### Added

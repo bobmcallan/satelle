@@ -39,6 +39,14 @@ func TestRowTokensRender(t *testing.T) {
 	if got := measuredTotalLabel(100, 2, 0); got != "100" {
 		t.Errorf("measuredTotalLabel all measured = %q", got)
 	}
+	// Nothing measured must never print a literal 0 (sty_b8542a3a AC1 rework):
+	// totalTokens is the sum of an empty set here, not a real zero.
+	if got := measuredTotalLabel(0, 0, 3); got != "unavailable (3 invocations unreported)" {
+		t.Errorf("measuredTotalLabel nothing measured, some unreported = %q", got)
+	}
+	if got := measuredTotalLabel(0, 0, 0); got != "unavailable" {
+		t.Errorf("measuredTotalLabel no rows at all = %q", got)
+	}
 }
 
 // TestRowCostUSDRender pins the $ column rendering (sty_c4df7376): a known

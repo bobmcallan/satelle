@@ -16,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/costview"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/verb"
 )
@@ -793,23 +794,37 @@ prior entry.`,
 	// plan's own time/token figures) — this is measured runtime cost.
 	var bySkill, allStories bool
 	var skillStoryID, sessionID string
+	var gateValue bool
+	var gateEpicID, gateSince, gateUntil string
+	var gateJSON bool
 	cost := &cobra.Command{
 		Use:   "cost [id]",
 		Short: "Show the measured per-gate token + wall-time cost recorded for a story",
-		Long: `Show what a story actually cost to run: per-gate tokens and wall time, taken
-from the agent-invocation ledger entries, plus a per-step roll-up and the
-driving session's own recorded usage with its reconciliation.
+		Long: `Show what a story actually cost to run: dollars and fresh tokens headline,
+cache read/write as secondary columns, elapsed wall time and agent time, any
+legacy plan estimate beside the measured figure it matches, the driving
+session's own line, and — for an epic-parent — the family roll-up. Below that,
+the per-gate token + wall-time detail taken from the agent-invocation ledger
+entries, plus a per-step roll-up.
 
 This is MEASURED transport cost, distinct from the estimate/actual tags. A row
 printed as "—" is unmeasured, never free.
 
 --by-skill rolls up agent_invocation rows by skill (--all or --story <id>).
---session <id> lists every story that session drove, plus its remainder.`,
+--session <id> lists every story that session drove, plus its remainder.
+--gate-value reports invocations/dollars/fresh tokens/accepts/rejects/$-per-
+reject per skill and seat, scoped by --story, --epic, or --since/--until.`,
 		Args:        cobra.MaximumNArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if _, err := appFrom(cmd); err != nil {
 				return err
+			}
+			if gateValue {
+				return runGateValue(cmd, gateValueArgs{
+					storyID: skillStoryID, epicID: gateEpicID,
+					since: gateSince, until: gateUntil, asJSON: gateJSON,
+				})
 			}
 			if sessionID != "" {
 				recon, err := verb.ComputeSessionReconciliation(cmd.Context(), sessionID)
@@ -857,6 +872,7 @@ printed as "—" is unmeasured, never free.
 			if err != nil {
 				return err
 			}
+			printCostSummary(cmd, sc)
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			// Dispatched/reviewed invocations — the precise sub-process cost.
 			// Unreported usage renders as — (sty_56aae77a), never a confident 0.
@@ -900,27 +916,8 @@ printed as "—" is unmeasured, never free.
 			// Driver section (sty_81caa41b): the driving session's own recorded
 			// usage, kept separate from the dispatched/reviewer rows above.
 			if len(sc.DriverRows) > 0 {
-				dw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-				fmt.Fprintln(dw, "\nDRIVER SESSION\tEXECUTABLE\tTRIGGER\tTOKENS\t$")
-				for _, d := range sc.DriverRows {
-					tokens := "—"
-					if d.Available {
-						tokens = fmt.Sprintf("%d", d.FreshInput+d.CacheRead+d.CacheWrite+d.Output)
-					}
-					fmt.Fprintf(dw, "%s\t%s\t%s\t%s\t%s\n",
-						d.SessionID, d.Executable, d.Trigger, tokens, rowCostUSD(d.CostUSD))
-				}
-				fmt.Fprintf(dw, "TOTAL\t\t\t%s\t%s\n",
-					measuredTotalLabel(sc.DriverTotalTokens, sc.DriverMeasuredRows, sc.DriverUnmeasuredRows),
-					costTotalLabel(sc.DriverTotalCostUSD, sc.DriverCostedRows, sc.DriverUncostedRows))
-				if err := dw.Flush(); err != nil {
+				if err := printDriverSection(cmd, sc); err != nil {
 					return err
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "\nGRAND TOTAL (agent_invocation + driver): %s tokens, %s\n",
-					measuredTotalLabel(sc.GrandTotalTokens, sc.MeasuredRows+sc.DriverMeasuredRows, sc.UnmeasuredRows+sc.DriverUnmeasuredRows),
-					costTotalLabel(sc.GrandTotalCostUSD, sc.CostedRows+sc.DriverCostedRows, sc.UncostedRows+sc.DriverUncostedRows))
-				for _, recon := range sc.Sessions {
-					printSessionReconciliation(cmd, recon)
 				}
 			}
 			fmt.Fprintln(cmd.OutOrStdout(),
@@ -930,8 +927,13 @@ printed as "—" is unmeasured, never free.
 	}
 	cost.Flags().BoolVar(&bySkill, "by-skill", false, "roll up agent_invocation rows by skill instead of by story (needs --all or --story)")
 	cost.Flags().BoolVar(&allStories, "all", false, "with --by-skill, roll up across every story")
-	cost.Flags().StringVar(&skillStoryID, "story", "", "with --by-skill, roll up one story only")
+	cost.Flags().StringVar(&skillStoryID, "story", "", "with --by-skill or --gate-value, scope to one story only")
 	cost.Flags().StringVar(&sessionID, "session", "", "list every story this driving session drove, plus its unattributed remainder")
+	cost.Flags().BoolVar(&gateValue, "gate-value", false, "report invocations/dollars/fresh tokens/accepts/rejects/$-per-reject per skill and seat")
+	cost.Flags().StringVar(&gateEpicID, "epic", "", "with --gate-value, scope to an epic-parent and every descendant found by parent_id")
+	cost.Flags().StringVar(&gateSince, "since", "", "with --gate-value, only entries at/after this date (YYYY-MM-DD)")
+	cost.Flags().StringVar(&gateUntil, "until", "", "with --gate-value, only entries at/before this date (YYYY-MM-DD)")
+	cost.Flags().BoolVar(&gateJSON, "json", false, "with --gate-value, emit the GateValueReport as JSON")
 
 	// resummarise — re-run the step summariser for one edge to close a missing-
 	// summary gap (sty_a1151fb0). The remediation `satelle story cost`/the done-time
@@ -1035,8 +1037,18 @@ func rowTokensTotal(total int, available bool) string {
 
 // measuredTotalLabel renders the TOTAL column for the cost table. When some
 // invocations are unreported, the count is inline so the number is never
-// mistaken for a full-story total (sty_56aae77a).
+// mistaken for a full-story total (sty_56aae77a). When NOTHING was measured
+// (measured == 0), totalTokens is the sum of an empty set, not a real zero —
+// printing it bare would misrepresent "nothing measured" as "measured zero"
+// (sty_b8542a3a AC1 rework), so this renders "unavailable" instead, same as
+// the rest of the cost view's never-implied-zero convention.
 func measuredTotalLabel(totalTokens, measured, unmeasured int) string {
+	if measured == 0 {
+		if unmeasured > 0 {
+			return fmt.Sprintf("unavailable (%d invocations unreported)", unmeasured)
+		}
+		return "unavailable"
+	}
 	if unmeasured <= 0 {
 		return strconv.Itoa(totalTokens)
 	}
@@ -1064,6 +1076,72 @@ func costTotalLabel(total float64, costed, uncosted int) string {
 		return fmt.Sprintf("$%.4f", total)
 	}
 	return fmt.Sprintf("$%.4f (%d rows unknown)", total, uncosted)
+}
+
+// driverRowsToCostview converts verb's richer DriverUsagePayload rows (the
+// driver_usage ledger payload, which also carries fields printDriverSection
+// has no use for — WindowKey, Cumulative, Late/Pending — owned by the
+// recorder in driver_usage.go) down to costview.DriverRow: the figures-only
+// shape costview.FormatDriverRows renders, so the CLI table and the web
+// page's Driver sessions table are built from the same rows through the
+// same formatting pass and can never disagree (sty_b8542a3a AC7 rework).
+func driverRowsToCostview(rows []verb.DriverUsagePayload) []costview.DriverRow {
+	out := make([]costview.DriverRow, len(rows))
+	for i, d := range rows {
+		out[i] = costview.DriverRow{
+			SessionID: d.SessionID, Executable: d.Executable, Model: d.Model,
+			FreshInput: d.FreshInput, CacheRead: d.CacheRead, CacheWrite: d.CacheWrite, Output: d.Output,
+			CostUSD: d.CostUSD, CostUnavailableReason: d.CostUnavailableReason,
+			Available: d.Available, WallSeconds: d.WallSeconds, Trigger: d.Trigger,
+			From: d.From, To: d.To,
+		}
+	}
+	return out
+}
+
+// printDriverSection renders the DRIVER SESSION table — the driving (in-loop)
+// session's own recorded usage, kept separate from the dispatched/reviewer
+// Rows above (sty_81caa41b, sty_b8542a3a AC1/AC7 rework). costview.
+// FormatDriverRows is the SAME formatting pass the web page's Driver sessions
+// table calls: fresh input, output, cache read and cache write are separate
+// columns, never folded into one cache-inclusive figure, and a TOTAL column
+// with nothing measured at all renders "unavailable" rather than a literal 0.
+func printDriverSection(cmd *cobra.Command, sc verb.StoryCost) error {
+	rowViews, totalView := costview.FormatDriverRows(driverRowsToCostview(sc.DriverRows))
+	dw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(dw, "\nDRIVER SESSION\tEXECUTABLE\tTRIGGER\tFRESH IN\tOUT\tCACHE READ\tCACHE WRITE\t$\tAGENT TIME")
+	for _, d := range rowViews {
+		fmt.Fprintf(dw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			d.SessionID, d.Executable, d.Trigger, d.FreshIn, d.Out, d.CacheRead, d.CacheWrite, d.USD, d.AgentTime)
+	}
+	if totalView != nil {
+		fmt.Fprintf(dw, "%s\t\t\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			totalView.SessionID, totalView.FreshIn, totalView.Out, totalView.CacheRead, totalView.CacheWrite,
+			totalView.USD, totalView.AgentTime)
+	}
+	if err := dw.Flush(); err != nil {
+		return err
+	}
+	// GRAND TOTAL reads off sc.Figures — costview.Own's single accumulation
+	// over BOTH agent_invocation and driver_usage rows (figures.go addDispatchRow/
+	// addDriverRow feed the same accumulator) — rather than the legacy
+	// GrandTotalTokens/GrandTotalCostUSD fields (a second, cache-inclusive sum
+	// kept only for JSON back-compat). Fresh/out/cache stay separate columns
+	// and never blend into one cache-inclusive figure, and "unavailable" never
+	// reads as a literal 0 (sty_b8542a3a AC1 rework).
+	f := sc.Figures
+	splitRows := f.UsageRows - f.UnsplitRows
+	fmt.Fprintf(cmd.OutOrStdout(), "\nGRAND TOTAL (agent_invocation + driver): %s | fresh in %s | out %s | cache read %s | cache write %s | agent time %s\n",
+		costview.FormatUSD(f.CostUSD, f.CostRows, f.CostUnavailableRows),
+		costview.FormatSplitTokens(f.FreshInput, splitRows, f.UnsplitRows, f.UsageUnavailableRows),
+		costview.FormatTokensMeasured(f.Output, f.UsageRows, f.UsageUnavailableRows),
+		costview.FormatSplitTokens(f.CacheRead, splitRows, f.UnsplitRows, f.UsageUnavailableRows),
+		costview.FormatSplitTokens(f.CacheWrite, splitRows, f.UnsplitRows, f.UsageUnavailableRows),
+		costview.FormatDuration(f.AgentMs))
+	for _, recon := range sc.Sessions {
+		printSessionReconciliation(cmd, recon)
+	}
+	return nil
 }
 
 // printSessionReconciliation renders one driving session's reconciliation
@@ -1096,6 +1174,109 @@ func printSessionReconciliation(cmd *cobra.Command, recon verb.SessionReconcilia
 	}
 	fmt.Fprintf(w, "SESSION TOTAL\t%s\t\nUNATTRIBUTED\t%s\t\n", total, unattributed)
 	_ = w.Flush()
+}
+
+// printCostSummary renders the costview headline (sty_b8542a3a AC1-AC4): $
+// and fresh tokens lead, cache read/write are secondary columns, elapsed wall
+// time and agent time are both shown (never substituted for each other), any
+// legacy estimate prints in its own unit beside the figure it matches, and —
+// when the story has children — the family roll-up (AC5). It is the SAME
+// costview.Figures the actual-* tags and the web page read, so all three
+// agree on every number.
+func printCostSummary(cmd *cobra.Command, sc verb.StoryCost) {
+	out := cmd.OutOrStdout()
+	f := sc.Figures
+	fmt.Fprintln(out, "COST SUMMARY")
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	splitRows := f.UsageRows - f.UnsplitRows
+	fmt.Fprintf(w, "$\t%s\t%s\n", costview.FormatUSD(f.CostUSD, f.CostRows, f.CostUnavailableRows), costview.FormatEstimate(sc.Estimates, "usd"))
+	fmt.Fprintf(w, "FRESH IN\t%s\t%s\n", costview.FormatSplitTokens(f.FreshInput, splitRows, f.UnsplitRows, f.UsageUnavailableRows), costview.FormatEstimate(sc.Estimates, "fresh-input"))
+	fmt.Fprintf(w, "OUT\t%s\t%s\n", costview.FormatTokensMeasured(f.Output, f.UsageRows, f.UsageUnavailableRows), costview.FormatEstimate(sc.Estimates, "output"))
+	fmt.Fprintf(w, "CACHE READ\t%s\t\n", costview.FormatSplitTokens(f.CacheRead, splitRows, f.UnsplitRows, f.UsageUnavailableRows))
+	fmt.Fprintf(w, "CACHE WRITE\t%s\t\n", costview.FormatSplitTokens(f.CacheWrite, splitRows, f.UnsplitRows, f.UsageUnavailableRows))
+	if f.UnsplitTokens > 0 {
+		fmt.Fprintf(w, "UNSPLIT (legacy)\t%s\t\n", costview.FormatTokens(f.UnsplitTokens))
+	}
+	fmt.Fprintf(w, "elapsed (wall)\t%s\t%s\n", costview.FormatDuration(f.ElapsedMs), costview.FormatEstimate(sc.Estimates, "minutes"))
+	fmt.Fprintf(w, "agent time (dispatch+driver)\t%s\t\n", costview.FormatDuration(f.AgentMs))
+	_ = w.Flush()
+	if legacy := costview.FormatLegacyTokenEstimate(sc.Estimates); legacy != "" {
+		fmt.Fprintln(out, legacy)
+	}
+	if sc.Family != nil {
+		fmt.Fprintln(out, "\nFAMILY")
+		fw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(fw, "CHILD\t$\tFRESH IN\tOUT\tCACHE READ\tCACHE WRITE\tELAPSED")
+		for _, c := range sc.Family.Children {
+			cf := c.Figures
+			cfSplitRows := cf.UsageRows - cf.UnsplitRows
+			fmt.Fprintf(fw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", c.ID,
+				costview.FormatUSD(cf.CostUSD, cf.CostRows, cf.CostUnavailableRows),
+				costview.FormatSplitTokens(cf.FreshInput, cfSplitRows, cf.UnsplitRows, cf.UsageUnavailableRows), costview.FormatTokensMeasured(cf.Output, cf.UsageRows, cf.UsageUnavailableRows),
+				costview.FormatSplitTokens(cf.CacheRead, cfSplitRows, cf.UnsplitRows, cf.UsageUnavailableRows), costview.FormatSplitTokens(cf.CacheWrite, cfSplitRows, cf.UnsplitRows, cf.UsageUnavailableRows),
+				costview.FormatDuration(cf.ElapsedMs))
+		}
+		ft := sc.Family.Total
+		ftSplitRows := ft.UsageRows - ft.UnsplitRows
+		fmt.Fprintf(fw, "FAMILY TOTAL\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			costview.FormatUSD(ft.CostUSD, ft.CostRows, ft.CostUnavailableRows),
+			costview.FormatSplitTokens(ft.FreshInput, ftSplitRows, ft.UnsplitRows, ft.UsageUnavailableRows), costview.FormatTokensMeasured(ft.Output, ft.UsageRows, ft.UsageUnavailableRows),
+			costview.FormatSplitTokens(ft.CacheRead, ftSplitRows, ft.UnsplitRows, ft.UsageUnavailableRows), costview.FormatSplitTokens(ft.CacheWrite, ftSplitRows, ft.UnsplitRows, ft.UsageUnavailableRows),
+			costview.FormatDuration(ft.ElapsedMs))
+		_ = fw.Flush()
+	}
+	fmt.Fprintln(out)
+}
+
+// gateValueArgs is the parsed input to runGateValue — one of storyID or
+// epicID scopes the story set (storyID wins if both are set); since/until
+// (either may be empty) bound the date range.
+type gateValueArgs struct {
+	storyID, epicID string
+	since, until    string
+	asJSON          bool
+}
+
+// runGateValue renders `satelle story cost --gate-value` (sty_b8542a3a AC6):
+// invocations, dollars, fresh tokens, accepts, rejects and dollars-per-reject
+// per skill/seat. It is a read-only query over stored evidence — it
+// recommends nothing and changes no configuration.
+func runGateValue(cmd *cobra.Command, args gateValueArgs) error {
+	opts := verb.GateValueOptions{StoryID: args.storyID, EpicID: args.epicID}
+	if args.since != "" {
+		t, err := time.Parse("2006-01-02", args.since)
+		if err != nil {
+			return fmt.Errorf("story cost --gate-value: --since: %w", err)
+		}
+		opts.Since = t
+	}
+	if args.until != "" {
+		t, err := time.Parse("2006-01-02", args.until)
+		if err != nil {
+			return fmt.Errorf("story cost --gate-value: --until: %w", err)
+		}
+		opts.Until = t.Add(24*time.Hour - time.Nanosecond) // inclusive of the whole day
+	}
+	report, err := verb.ComputeGateValue(cmd.Context(), opts)
+	if err != nil {
+		return err
+	}
+	if args.asJSON {
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "SKILL\tSEAT\tINVOCATIONS\t$\tFRESH TOKENS\tUNSPLIT (legacy)\tACCEPTS\tREJECTS\t$/REJECT")
+	for _, r := range report.Rows {
+		splitRows := r.UsageRows - r.UnsplitRows
+		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%d\t%d\t%s\n",
+			r.Skill, r.Seat, r.Invocations,
+			costview.FormatUSD(r.CostUSD, r.Costed, r.Uncosted), costview.FormatSplitTokens(r.FreshTokens, splitRows, r.UnsplitRows, r.UsageUnavailableRows),
+			dashIfZero(r.UnsplitTokens),
+			r.Accepts, r.Rejects, costview.FormatCostPerReject(r.CostUSD, r.Costed, r.Uncosted, r.Rejects))
+	}
+	return w.Flush()
 }
 
 // stepSelfReportNudge is the step-edge advisory printed after a real status

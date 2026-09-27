@@ -9,7 +9,6 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/lease"
-	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -246,15 +245,17 @@ func targetIsExitState(ctx context.Context, item workitem.Item, status string) b
 }
 
 // targetIsTerminalStateOnly reports terminal (never park) via the governing
-// workflow DOT — the story clock's end predicate (sty_8eae81ac A1): a park
-// (blocked) leaves the story open, so it must not stop the clock the way
-// targetIsExitState's broader terminal-or-park test would.
+// workflow's costview.Clock — the story clock's end predicate (sty_8eae81ac
+// A1): a park (blocked) leaves the story open, so it must not stop the clock
+// the way targetIsExitState's broader terminal-or-park test would. A thin
+// wrapper over wfgovern.ClockFor (sty_b8542a3a) so this classification has one
+// owner, shared with storyStatusIsEngaging and costview's own accumulation.
 func targetIsTerminalStateOnly(ctx context.Context, item workitem.Item, status string) bool {
-	spec, _, _, ok := governingSpec(ctx, item)
+	clk, ok := clockFor(ctx, item)
 	if !ok {
 		return false
 	}
-	return spec.IsTerminalState(status)
+	return clk.Terminal(status)
 }
 
 // statusIsParkState reports whether status is a park state of item's workflow.
@@ -388,24 +389,13 @@ func refuseSecondEngagingStory(ctx context.Context, excludeID, targetStatus stri
 // storyStatusIsEngaging reports whether status is a non-terminal engaging state
 // of the workflow that governs item (same shape predicate as the edit-gate:
 // NonTerminalEngagingStates). ok is false when governance cannot be resolved.
+// A thin wrapper over wfgovern.ClockFor (sty_b8542a3a) so this classification
+// has one owner, shared with targetIsTerminalStateOnly and costview's own
+// accumulation.
 func storyStatusIsEngaging(ctx context.Context, item workitem.Item, status string) (engaging bool, ok bool) {
-	idx, err := requireDocIndex()
-	if err != nil {
+	clk, ok := clockFor(ctx, item)
+	if !ok {
 		return false, false
 	}
-	wfs, err := idx.List(ctx, "workflows")
-	if err != nil {
-		return false, false
-	}
-	spec, _, _, serr := wfgovern.SpecFor(wfs, item)
-	parsed := serr == nil
-	if !parsed {
-		return false, false
-	}
-	for _, s := range spec.NonTerminalEngagingStates() {
-		if s == status {
-			return true, true
-		}
-	}
-	return false, true
+	return clk.Engaging(status), true
 }

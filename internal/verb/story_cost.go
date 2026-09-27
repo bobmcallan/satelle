@@ -3,47 +3,20 @@ package verb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sort"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/costview"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-// StoryCostRow is one dispatched/reviewed step's recorded cost — the per-gate
-// tokens + wall-time captured on an agent_invocation ledger entry (sty_a699ad14).
-// UsageAvailable is true only when the transport reported usage (or, for legacy
-// rows without the field, when tokens_total > 0). False means unreported —
-// never a measured zero (sty_56aae77a).
-type StoryCostRow struct {
-	From           string `json:"from"`
-	To             string `json:"to"`
-	Agent          string `json:"agent"`
-	Skill          string `json:"skill,omitempty"`
-	Model          string `json:"model,omitempty"`
-	ModelResolved  string `json:"model_resolved,omitempty"`
-	TokensIn       int    `json:"tokens_in"`
-	TokensOut      int    `json:"tokens_out"`
-	TokensTotal    int    `json:"tokens_total"`
-	DurationMs     int64  `json:"duration_ms"`
-	UsageAvailable bool   `json:"usage_available"`
-	// UsageUnavailableReason names the adapter and why usage is unavailable;
-	// CacheSplitUnavailable marks a provider that reported no cache fields, so
-	// the zero split below is unreported rather than measured (sty_c8d45201).
-	UsageUnavailableReason string `json:"usage_unavailable_reason,omitempty"`
-	CacheSplitUnavailable  bool   `json:"cache_split_unavailable,omitempty"`
-	// TokensInFresh/TokensCacheWrite/TokensCacheRead split TokensIn into its
-	// disjoint components (sty_363eaf55). Zero on a row recorded before this
-	// split existed — reported as "unsplit" by the --by-skill roll-up rather
-	// than mistaken for a measured zero.
-	TokensInFresh    int `json:"tokens_in_fresh,omitempty"`
-	TokensCacheWrite int `json:"tokens_cache_write,omitempty"`
-	TokensCacheRead  int `json:"tokens_cache_read,omitempty"`
-	// CostUSD is the row's dollar cost (sty_c4df7376); nil (never a measured
-	// zero) when the provider reported none, with CostUnavailableReason naming
-	// the adapter and why.
-	CostUSD               *float64 `json:"cost_usd,omitempty"`
-	CostUnavailableReason string   `json:"cost_unavailable_reason,omitempty"`
-}
+// StoryCostRow is costview's Row — kept as a verb-local alias so every
+// existing caller (JSON field names, the CLI renderer) is unaffected by the
+// move to costview (sty_b8542a3a): it is the single decode point for an
+// agent_invocation ledger entry.
+type StoryCostRow = costview.Row
 
 // EventTelemetry is the verb-package façade over ledger.EventTelemetry so
 // story-cost and the web timeline share one reader (sty_43d228e4). Ownership of
@@ -128,6 +101,17 @@ type StoryCost struct {
 	// caller reading those two fields is unaffected by this addition.
 	GrandTotalTokens  int     `json:"grand_total_tokens,omitempty"`
 	GrandTotalCostUSD float64 `json:"grand_total_cost_usd,omitempty"`
+
+	// Figures is the costview headline: dollars, fresh input/output, cache
+	// read/write, and the shape-derived elapsed/agent time — the SAME
+	// computation ComputeStoryActual uses, so the cost view and the actual-*
+	// tags never disagree (sty_b8542a3a AC1/AC2). Estimates are the item's
+	// plan estimate tags, kept in their own units. Family is populated only
+	// when the item has children (AC5) — the epic roll-up, sourced from the
+	// same costview.Family walk ComputeStoryActual uses.
+	Figures   costview.Figures     `json:"figures"`
+	Estimates []costview.Estimate  `json:"estimates,omitempty"`
+	Family    *costview.FamilyCost `json:"family,omitempty"`
 }
 
 // mergeStepCost folds a self-reported actual + estimate onto r — the last
@@ -149,57 +133,12 @@ func mergeStepCost(r *StoryStepRow, d stepCostData) {
 	}
 }
 
-// buildCostRow decodes one agent_invocation ledger entry into a StoryCostRow,
-// or ok=false when e carries no payload, fails to decode, or is a
-// tool-permission event masquerading as an invocation (ledger.
-// IsToolPermissionRow, sty_8eae81ac AC4) — the single accumulation point
-// ComputeStoryCost and ComputeStoryActual both call so their agent_invocation
-// handling cannot drift apart.
+// buildCostRow decodes one agent_invocation ledger entry into a StoryCostRow —
+// a thin wrapper over costview.DecodeRow, the single decode point costview,
+// ComputeStoryCost and ComputeStoryActual all share so their agent_invocation
+// handling cannot drift apart (sty_8eae81ac AC4, sty_b8542a3a).
 func buildCostRow(e ledger.Entry) (StoryCostRow, bool) {
-	if len(e.Payload) == 0 || ledger.IsToolPermissionRow(e) {
-		return StoryCostRow{}, false
-	}
-	// Edge identity (from/to/skill) from the payload; token totals and usage
-	// availability from the sole ledger reader (sty_56aae77a).
-	var meta struct {
-		From  string `json:"from"`
-		To    string `json:"to"`
-		Agent string `json:"agent"`
-		Skill string `json:"skill"`
-		Model string `json:"model"`
-	}
-	if err := json.Unmarshal(e.Payload, &meta); err != nil {
-		return StoryCostRow{}, false
-	}
-	tel := ledger.EventTelemetry(e)
-	row := StoryCostRow{
-		From:                   meta.From,
-		To:                     meta.To,
-		Agent:                  meta.Agent,
-		Skill:                  meta.Skill,
-		Model:                  meta.Model,
-		ModelResolved:          tel.ModelResolved,
-		TokensIn:               tel.TokensIn,
-		TokensOut:              tel.TokensOut,
-		TokensTotal:            tel.TokensTotal,
-		DurationMs:             tel.DurationMs,
-		UsageAvailable:         tel.UsageAvailable,
-		UsageUnavailableReason: tel.UsageUnavailableReason,
-		CacheSplitUnavailable:  tel.CacheSplitUnavailable,
-		TokensInFresh:          tel.TokensInFresh,
-		TokensCacheWrite:       tel.TokensCacheWrite,
-		TokensCacheRead:        tel.TokensCacheRead,
-		CostUSD:                tel.CostUSD,
-		CostUnavailableReason:  tel.CostUnavailableReason,
-	}
-	// Prefer telemetry agent/model when meta left them empty (defensive).
-	if row.Agent == "" {
-		row.Agent = tel.Agent
-	}
-	if row.Model == "" {
-		row.Model = tel.Model
-	}
-	return row, true
+	return costview.DecodeRow(e)
 }
 
 // ComputeStoryCost reads the story's ledger and builds two complementary views:
@@ -226,6 +165,26 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 	}
 
 	sc := StoryCost{StoryID: storyID}
+	// A repo with no work-item store, or a ledger id with no item, still gets
+	// its per-row cost detail (ledger-only callers and fixtures); any OTHER
+	// store failure is surfaced rather than silently dropping the headline.
+	if wi, werr := requireWorkItem(); werr == nil {
+		item, ierr := wi.Get(ctx, storyID)
+		switch {
+		case ierr == nil:
+			clk, _ := clockFor(ctx, item)
+			own := costview.Own(item, entries, clk, time.Now())
+			sc.Figures = own.Figures
+			sc.Estimates = own.Estimates
+			family, ferr := computeFamilyCost(ctx, wi, ls, item)
+			if ferr != nil {
+				return StoryCost{}, ferr
+			}
+			sc.Family = family
+		case !errors.Is(ierr, workitem.ErrNotFound):
+			return StoryCost{}, ierr
+		}
+	}
 	wall := map[string]int64{}          // state -> summed occupancy ms (across re-entries)
 	steps := map[string]*StoryStepRow{} // state -> report row
 	var order []string                  // first-occurrence order of steps

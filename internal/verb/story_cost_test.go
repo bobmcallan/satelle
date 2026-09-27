@@ -11,6 +11,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // TestComputeStoryCost pins the cost rollup (sty_a699ad14 / sty_56aae77a):
@@ -612,5 +613,90 @@ func TestComputeStoryCostStepCostDurationOverride(t *testing.T) {
 		if s.Step == "in_progress" && s.WallTimeMs != 5000 {
 			t.Errorf("explicit step-cost --time must override derived wall-time: got %d ms, want 5000", s.WallTimeMs)
 		}
+	}
+}
+
+// TestComputeStoryCostFamilyFiguresAndEstimates pins the costview-backed part
+// of ComputeStoryCost (sty_b8542a3a AC1/AC3/AC5): a parent's own Figures are
+// its own rows only (dollars = known-cost sum, uncosted counted not zeroed,
+// fresh/output/cache split), its plan estimates keep their own units, and its
+// Family lists the child and a total that folds both — while a childless
+// story carries no Family at all.
+func TestComputeStoryCostFamilyFiguresAndEstimates(t *testing.T) {
+	db := wireActualWF(t)
+	ctx := context.Background()
+	parent, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "epic", Status: "backlog",
+		Tags: []string{"estimate-usd:25", "estimate-tokens:9000"},
+	}, time.Unix(1_700_000_000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "child", Status: "backlog", ParentID: parent.ID,
+	}, time.Unix(1_700_000_010, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	appendInvocation(t, db, parent.ID, map[string]any{
+		"from": "a", "to": "b", "agent": "coder", "usage_available": true,
+		"tokens_in_fresh": 100, "tokens_out": 20, "tokens_cache_read": 30, "tokens_cache_write": 4,
+		"cost_usd": 1.5,
+	}, now)
+	appendInvocation(t, db, parent.ID, map[string]any{
+		"from": "b", "to": "c", "agent": "coder", "usage_available": true,
+		"tokens_in_fresh": 10, "tokens_out": 2, // no cost_usd: unavailable, never $0
+	}, now)
+	appendInvocation(t, db, child.ID, map[string]any{
+		"from": "a", "to": "b", "agent": "coder", "usage_available": true,
+		"tokens_in_fresh": 1000, "tokens_out": 200, "cost_usd": 2.0,
+	}, now)
+
+	sc, err := verb.ComputeStoryCost(ctx, parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := sc.Figures
+	if f.CostUSD != 1.5 || f.CostRows != 1 || f.CostUnavailableRows != 1 {
+		t.Errorf("own dollars = %v (%d costed, %d unavailable), want 1.5 (1 costed, 1 unavailable)", f.CostUSD, f.CostRows, f.CostUnavailableRows)
+	}
+	if f.FreshInput != 110 || f.Output != 22 || f.CacheRead != 30 || f.CacheWrite != 4 {
+		t.Errorf("own tokens fresh/out/read/write = %d/%d/%d/%d, want 110/22/30/4 (child excluded, cache write not folded)",
+			f.FreshInput, f.Output, f.CacheRead, f.CacheWrite)
+	}
+
+	units := map[string]float64{}
+	for _, e := range sc.Estimates {
+		units[e.Unit] = e.Value
+	}
+	if units["usd"] != 25 || units["tokens"] != 9000 || len(units) != 2 {
+		t.Errorf("estimates = %+v, want usd:25 and legacy tokens:9000, each in its own unit", sc.Estimates)
+	}
+
+	if sc.Family == nil {
+		t.Fatal("a parent with a child must carry a Family roll-up")
+	}
+	if len(sc.Family.Children) != 1 || sc.Family.Children[0].ID != child.ID {
+		t.Fatalf("Family.Children = %+v, want just %s", sc.Family.Children, child.ID)
+	}
+	tot := sc.Family.Total
+	if tot.CostUSD != 3.5 || tot.CostRows != 2 || tot.CostUnavailableRows != 1 {
+		t.Errorf("family dollars = %v (%d costed, %d unavailable), want 3.5 (2 costed, 1 unavailable)", tot.CostUSD, tot.CostRows, tot.CostUnavailableRows)
+	}
+	if tot.FreshInput != 1110 || tot.Output != 222 {
+		t.Errorf("family fresh/out = %d/%d, want 1110/222", tot.FreshInput, tot.Output)
+	}
+
+	leaf, err := verb.ComputeStoryCost(ctx, child.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leaf.Family != nil {
+		t.Errorf("a childless story must have no Family, got %+v", leaf.Family)
+	}
+	if leaf.Figures.CostUSD != 2.0 || leaf.Figures.FreshInput != 1000 {
+		t.Errorf("child figures = %+v, want $2 / 1000 fresh", leaf.Figures)
 	}
 }
