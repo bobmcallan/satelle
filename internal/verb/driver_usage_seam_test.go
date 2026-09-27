@@ -4,11 +4,52 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
+
+// TestDriverUsageHarnessFromPublishedSessionOverEnv pins the dogfood defect
+// found at release: a grok session launched from a Claude Code shell inherits
+// CLAUDECODE=1, so env sniffing named it claude and the recorder read a Claude
+// transcript that does not exist. The session's own published in-loop row
+// (written by hooks that name their harness) wins over the environment.
+func TestDriverUsageHarnessFromPublishedSessionOverEnv(t *testing.T) {
+	db := wireDU(t)
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	t.Setenv(config.SessionEnv, "01a0e397-grok-session")
+	t.Setenv("CLAUDECODE", "1")
+	config.PublishSessionModel("01a0e397-grok-session", SessionModelRoleInLoop, "unknown", agentcli.HarnessGrok, "grok's hook payload carries no model")
+
+	var sawHarness string
+	prev := driverSnapshotter
+	driverSnapshotter = func(harness, sessionID, repoRoot string) agentcli.DriverSnapshot {
+		sawHarness = harness
+		return agentcli.DriverSnapshot{Available: true, FreshInputTokens: 10, OutputTokens: 1, Turns: 1}
+	}
+	t.Cleanup(func() { driverSnapshotter = prev })
+
+	item := workitem.Item{ID: "sty_du_harness", Kind: workitem.KindStory, Status: "ready"}
+	recordDriverUsage(context.Background(), item, "backlog", "ready", time.Unix(1_700_000_000, 0))
+
+	if sawHarness != agentcli.HarnessGrok {
+		t.Fatalf("reader asked for harness %q, want grok (published row beats inherited CLAUDECODE)", sawHarness)
+	}
+	rows := driverUsageRows(t, db, item.ID)
+	if len(rows) != 1 || rows[0].Executable != agentcli.HarnessGrok {
+		t.Fatalf("rows = %+v, want one row with executable grok", rows)
+	}
+
+	// With nothing published for the session, the environment is the fallback.
+	t.Setenv(config.SessionEnv, "unpublished-session")
+	other := workitem.Item{ID: "sty_du_harness_env", Kind: workitem.KindStory, Status: "ready"}
+	recordDriverUsage(context.Background(), other, "backlog", "ready", time.Unix(1_700_000_100, 0))
+	if sawHarness != agentcli.HarnessClaude {
+		t.Fatalf("unpublished session: harness %q, want claude from the environment", sawHarness)
+	}
+}
 
 // TestStorySetWritesDriverUsageThroughDispatch pins AC3 and AC7 end to end
 // (sty_81caa41b): real story-set transitions through the verb dispatch seam —

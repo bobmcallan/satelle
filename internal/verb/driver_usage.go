@@ -209,6 +209,22 @@ func driverUsageTrigger(ctx context.Context, item workitem.Item, from, to string
 // this function's existing per-session high-water mark already attributes
 // only the usage after whatever the last recorded snapshot saw, resume or
 // not — pinned by TestRecordDriverUsageResumeSameSessionIDAttributesOnlyNewUsage.
+// driverSessionHarness names the harness whose record holds sessionID's usage.
+// The session's own published in-loop row wins: its hooks name their harness
+// (sty_719c4a7b), while the environment can carry a parent agent's markers —
+// a grok session started from a Claude Code shell inherits CLAUDECODE=1.
+// The environment is the fallback when the session published nothing.
+func driverSessionHarness(sessionID string) string {
+	switch _, exe, _ := config.ResolveSessionModel(sessionID, SessionModelRoleInLoop); exe {
+	case agentcli.HarnessClaude, agentcli.HarnessGrok, agentcli.HarnessCodex:
+		return exe
+	}
+	if h, ok := agentcli.InLoopHarnessFromEnv(os.Environ()); ok {
+		return h
+	}
+	return agentcli.HarnessUnknown
+}
+
 func recordDriverUsage(ctx context.Context, item workitem.Item, from, to string, now time.Time) {
 	if ledgerStore == nil || strings.TrimSpace(item.ID) == "" {
 		return
@@ -217,10 +233,7 @@ func recordDriverUsage(ctx context.Context, item workitem.Item, from, to string,
 	if sessionID == "" {
 		return // no session identity to attribute usage to (ordinary unstamped use)
 	}
-	harness, ok := agentcli.InLoopHarnessFromEnv(os.Environ())
-	if !ok {
-		harness = agentcli.HarnessUnknown
-	}
+	harness := driverSessionHarness(sessionID)
 	trigger := driverUsageTrigger(ctx, item, from, to)
 
 	prev, prevFound, prevAvail, prevAvailFound := sessionDriverUsageState(ctx, sessionID)

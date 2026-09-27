@@ -1,3 +1,14 @@
+## [0.0.557] - 2026-09-28
+
+### Fixed
+- **Driver usage is read from the right harness when agents are nested.** A grok session started from a Claude Code shell inherits `CLAUDECODE=1`, so the recorder named it claude and looked for a Claude transcript. The session's own published in-loop row, written by hooks that name their harness, now decides; the environment is only the fallback. (sty_81caa41b)
+- **A move between two engaged states is recorded as a transition, not an engage.** (sty_81caa41b)
+
+## [serve-v0.0.85] - 2026-09-28
+
+### Fixed
+- **The service embeds the driver-usage harness fix above.** (sty_81caa41b)
+
 ## [0.0.556] - 2026-09-28
 
 ### Added
