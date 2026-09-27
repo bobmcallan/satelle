@@ -245,6 +245,18 @@ func targetIsExitState(ctx context.Context, item workitem.Item, status string) b
 	return spec.IsTerminalState(status) || spec.IsParkState(status)
 }
 
+// targetIsTerminalStateOnly reports terminal (never park) via the governing
+// workflow DOT — the story clock's end predicate (sty_8eae81ac A1): a park
+// (blocked) leaves the story open, so it must not stop the clock the way
+// targetIsExitState's broader terminal-or-park test would.
+func targetIsTerminalStateOnly(ctx context.Context, item workitem.Item, status string) bool {
+	spec, _, _, ok := governingSpec(ctx, item)
+	if !ok {
+		return false
+	}
+	return spec.IsTerminalState(status)
+}
+
 // statusIsParkState reports whether status is a park state of item's workflow.
 // Shape-derived, so re-anchoring keys to the route rather than a status literal.
 func statusIsParkState(ctx context.Context, item workitem.Item, status string) bool {

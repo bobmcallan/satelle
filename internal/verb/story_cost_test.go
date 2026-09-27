@@ -94,6 +94,54 @@ func TestComputeStoryCost(t *testing.T) {
 	}
 }
 
+// TestComputeStoryCostExcludesToolPermissionRows pins sty_8eae81ac AC4: a
+// legacy agent_invocation row carrying the decided_by/decision/tool
+// tool-permission shape must never surface as a cost row, and must never
+// inflate UnmeasuredRows — the mechanism it used to before it got its own
+// ledger kind.
+func TestComputeStoryCostExcludesToolPermissionRows(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
+	defer verb.SetLedgerStore(nil)
+	verb.SetTxRunner(nil)
+
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+	if _, err := db.Ledger.Append(ctx, ledger.AppendInput{
+		StoryID: "sty_perm_cost", Kind: ledger.KindAgentInvocation, Actor: "coder",
+		Payload: json.RawMessage(`{"tool":"Edit","kind":"permission","decision":"allow","decided_by":"policy"}`),
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	// One real invocation alongside it, so a non-empty result still excludes
+	// only the permission row.
+	if _, err := db.Ledger.Append(ctx, ledger.AppendInput{
+		StoryID: "sty_perm_cost", Kind: ledger.KindAgentInvocation, Actor: "coder",
+		Payload: json.RawMessage(`{"agent":"coder","tokens_total":100,"usage_available":true}`),
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+
+	sc, err := verb.ComputeStoryCost(ctx, "sty_perm_cost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sc.Rows) != 1 {
+		t.Fatalf("rows = %d, want 1 (the permission row must be excluded)", len(sc.Rows))
+	}
+	if sc.UnmeasuredRows != 0 {
+		t.Errorf("UnmeasuredRows = %d, want 0 — a permission row must never count as unmeasured", sc.UnmeasuredRows)
+	}
+	if sc.MeasuredRows != 1 {
+		t.Errorf("MeasuredRows = %d, want 1", sc.MeasuredRows)
+	}
+}
+
 // TestComputeStoryCostDollars pins sty_c4df7376 AC5: a row with its own
 // cost_usd totals into TotalCostUSD; a row with no cost at all (nil, not
 // zero) counts as uncosted; and a legacy row recorded before cost_usd existed,

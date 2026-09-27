@@ -793,6 +793,14 @@ type transitionPayload struct {
 	// verdict input a reviewer must obey. Absent when none qualify or the
 	// resolver is unwired (omitempty matches prior_verdicts).
 	Messages []MessageState `json:"messages,omitempty"`
+	// MeasuredActual is the read-only computed actual (verb.ComputeStoryActual)
+	// for the story under review — attached to EVERY gate payload generically,
+	// never conditioned on the gate's skill name (sty_8eae81ac): mechanism, not
+	// a skill literal in Go. A shipped or repo-authored gate can compare a
+	// self-reported estimate tag against it in its own unit. Enumeration, not a
+	// verdict — the binary computes it and decides nothing. Nil when the
+	// computation fails (unwired store, missing item) — never a fabricated zero.
+	MeasuredActual *verb.StoryActual `json:"measured_actual,omitempty"`
 }
 
 // MessageState is one agent_message as injected into a transition payload.
@@ -981,6 +989,24 @@ func (g *Engine) fillDiff(ctx context.Context, itemID string, tp *transitionPayl
 		cp.Patch = ""
 	}
 	tp.Diff = &cp
+}
+
+// fillMeasuredActual attaches the read-only computed actual (verb.
+// ComputeStoryActual) to the gate payload, generically for every gate —
+// mechanism, never conditioned on the skill under way (sty_8eae81ac
+// architecture note: the measured_actual block must not depend on the
+// review_skill name, or it becomes a skill literal in Go). Best-effort: a
+// computation failure (unwired store, missing item) leaves MeasuredActual nil
+// rather than failing the gate.
+func (g *Engine) fillMeasuredActual(ctx context.Context, itemID string, tp *transitionPayload) {
+	if itemID == "" {
+		return
+	}
+	actual, err := verb.ComputeStoryActual(ctx, itemID)
+	if err != nil {
+		return
+	}
+	tp.MeasuredActual = &actual
 }
 
 const (
@@ -2611,6 +2637,7 @@ func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStat
 		gateAddrs = append(gateAddrs, gateAgent)
 	}
 	g.fillMessages(ctx, item.ID, gateAddrs, &tp)
+	g.fillMeasuredActual(ctx, item.ID, &tp)
 	// Route drift rides the payload ONLY when it exists, so a repo that names a
 	// drift gate has the enumeration without shelling for it, and every other
 	// reviewer's payload is byte-for-byte unchanged (sty_6e4f7fd8).

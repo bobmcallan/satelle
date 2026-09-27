@@ -684,17 +684,20 @@ so an empty tests list is not confused with a classifier miss.`,
 }
 
 // storyCostCommands builds `satelle story estimate` and `satelle story actual`:
-// the agent records a plan estimate at begin-work and the actual cost at close.
-// Each dispatches to the story-estimate / story-actual verb, which writes the
-// estimate-*/actual-* tags and a ledger row.
+// the driving session records a plan estimate at begin-work; the actual is
+// COMPUTED, never entered (sty_8eae81ac AC1). Each dispatches to the
+// story-estimate / story-actual verb.
 func storyCostCommands() []*cobra.Command {
 	var eTime, eBasis string
-	var eTokens int
+	var eTokens, eFreshInput, eOutput int
+	var eUSD float64
 	estimate := &cobra.Command{
 		Use:   "estimate <id>",
-		Short: "Record a story's plan estimate (time/tokens)",
-		Long: `Record the plan's estimate for a story as estimate-minutes / estimate-tokens
-tags.
+		Short: "Record a story's plan estimate (usd, fresh-input/output, or legacy tokens/time)",
+		Long: `Record the plan's estimate for a story: --usd for dollars, --fresh-input/
+--output for tokens — the CURRENT units. --tokens and --time are LEGACY units,
+kept readable and writable for stories already written in them, but never
+converted into usd or fresh input.
 
 The driving session records it — not the planner — and a workflow that gates on
 the estimate greps those TAGS, not a plan section, so a figure written only into
@@ -711,39 +714,43 @@ transition the gate fires on.
 			if eTokens > 0 {
 				req["tokens"] = eTokens
 			}
+			if eUSD > 0 {
+				req["usd"] = eUSD
+			}
+			if eFreshInput > 0 {
+				req["fresh_input"] = eFreshInput
+			}
+			if eOutput > 0 {
+				req["output"] = eOutput
+			}
 			return dispatch(cmd, "story-estimate", req)
 		},
 	}
-	estimate.Flags().StringVar(&eTime, "time", "", "estimated duration: 30m, 2h, or a bare number of minutes (38)")
-	estimate.Flags().IntVar(&eTokens, "tokens", 0, "estimated tokens")
+	estimate.Flags().Float64Var(&eUSD, "usd", 0, "estimated dollars")
+	estimate.Flags().IntVar(&eFreshInput, "fresh-input", 0, "estimated fresh input tokens")
+	estimate.Flags().IntVar(&eOutput, "output", 0, "estimated output tokens")
+	estimate.Flags().StringVar(&eTime, "time", "", "legacy unit: estimated duration (30m, 2h, or a bare number of minutes)")
+	estimate.Flags().IntVar(&eTokens, "tokens", 0, "legacy unit: a bare estimated token count (never usd or fresh input)")
 	estimate.Flags().StringVar(&eBasis, "basis", "", "optional note on the estimate basis")
 
-	var aTime string
-	var aTokens int
 	actual := &cobra.Command{
 		Use:   "actual <id>",
-		Short: "Record a story's actual cost (time/tokens)",
-		Long: `Record what the story actually cost as actual-minutes / actual-tokens tags,
-the counterpart to estimate.
+		Short: "Compute and record a story's actual cost from its ledger",
+		Long: `Compute the story's actual from its ledger (dispatch + driver-usage rows) and
+record it as actual-usd / actual-fresh-input / actual-output / actual-cache-read
+/ actual-cache-write / actual-minutes / actual-tokens tags, plus the full
+actual_recorded ledger payload.
 
-These are SELF-REPORT, not measurement: satelle story cost shows the transport
-cost it measured per gate. A workflow that gates the close on actuals greps
-these tags, so record them before requesting the closing transition.
-
---time takes a duration (50m, 2h, 1h30m) or a bare number of MINUTES (38).`,
+The actual is COMPUTED, never entered: this command takes no figures — pass
+none. A hand-typed actual-* tag is overwritten by the computed one. This is
+also run automatically when the story reaches its workflow's terminal state, so
+running it by hand is for an early look, not a requirement.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			req := map[string]any{"id": args[0]}
-			putIf(req, "time", aTime)
-			if aTokens > 0 {
-				req["tokens"] = aTokens
-			}
-			return dispatch(cmd, "story-actual", req)
+			return dispatch(cmd, "story-actual", map[string]any{"id": args[0]})
 		},
 	}
-	actual.Flags().StringVar(&aTime, "time", "", "actual duration: 50m, 2h, or a bare number of minutes (38)")
-	actual.Flags().IntVar(&aTokens, "tokens", 0, "actual tokens")
 
 	// log — the generic typed telemetry/quality event write primitive (AC1,
 	// sty_b73c3236), retiring `story step-cost`: any typed event — an in-loop
@@ -917,7 +924,7 @@ printed as "—" is unmeasured, never free.
 				}
 			}
 			fmt.Fprintln(cmd.OutOrStdout(),
-				"note: '—' means unmeasured, never free. Dispatched rows without provider usage are unknown; in-loop ACTUAL TOKENS need satelle story log --kind step-self-report. actual-* tags and step-self-report figures are session self-report, not measured transport cost. TOKENS in includes cache-creation and cache-read tokens when the provider reports them (the full prompt, not the uncached remainder); rows recorded before that accounting omit cache and understate input.")
+				"note: '—' means unmeasured, never free. Dispatched rows without provider usage are unknown; in-loop ACTUAL TOKENS need satelle story log --kind step-self-report. actual-* tags are computed from the ledger by `satelle story actual` (never hand-entered); step-self-report figures remain session self-report, not measured transport cost. TOKENS in includes cache-creation and cache-read tokens when the provider reports them (the full prompt, not the uncached remainder); rows recorded before that accounting omit cache and understate input.")
 			return nil
 		},
 	}

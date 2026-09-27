@@ -99,6 +99,12 @@ type Telemetry struct {
 func EventTelemetry(e Entry) Telemetry {
 	switch e.Kind {
 	case KindAgentInvocation:
+		if IsToolPermissionRow(e) {
+			// A legacy permission row carries no usage — never fed through the
+			// invocation decoder, which would otherwise render it as an
+			// unmeasured "unknown model" invocation (sty_8eae81ac AC4).
+			return Telemetry{}
+		}
 		return invocationTelemetry(e.Payload)
 	case KindTelemetryEvent:
 		var env struct {

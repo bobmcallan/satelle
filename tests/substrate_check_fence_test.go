@@ -52,10 +52,14 @@ var fenceFixtures = map[string][]fenceCase{
 			wantStdout: "",
 		},
 		{
-			name:       "reject enter done without actual",
+			// sty_8eae81ac: the actual is computed from the ledger and written
+			// when the terminal transition commits, so the shipped check never
+			// rejects for a missing or large actual; with no measured_actual in
+			// the payload it says so rather than printing zeros.
+			name:       "accept enter done without actual, saying measured actual unavailable",
 			stdin:      `{"story":{"id":"sty_est00004","tags":["estimate-minutes:10"]},"from":"release","to":"done"}`,
-			wantExit:   1,
-			wantStdout: "no actual recorded",
+			wantExit:   0,
+			wantStdout: "measured actual unavailable",
 		},
 		{
 			name:     "untargeted edge (cancelled) is n/a accept",

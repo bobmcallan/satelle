@@ -32,8 +32,8 @@ func init() {
 	}
 	// Estimate/actual are story-only: an agent records the plan estimate at
 	// begin-work and the actual cost at close, scoped to the story.
-	Register(&Verb{Name: "story-estimate", Description: "Record a story's plan estimate (time/tokens)", Invoke: storyEstimate})
-	Register(&Verb{Name: "story-actual", Description: "Record a story's actual cost (time/tokens)", Invoke: storyActual})
+	Register(&Verb{Name: "story-estimate", Description: "Record a story's plan estimate (usd, fresh-input/output, or legacy tokens/time)", Invoke: storyEstimate})
+	Register(&Verb{Name: "story-actual", Description: "Compute and record a story's actual cost from its ledger", Invoke: storyActual})
 	Register(&Verb{Name: "story-resummarise", Description: "Re-run the step summariser for one edge to close a missing-summary gap", Invoke: storyResummarise})
 	Register(&Verb{Name: "story-retrospect", Description: "Run the retrospective agent over a finished story to file improvement proposals", Invoke: storyRetrospect})
 	// Restamp is story-only too: tasks/executions are unstamped by design
@@ -734,6 +734,21 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		// a snapshot from the harness's own session record, delta-ed against the
 		// last snapshot for this session. Best-effort, like the change set below.
 		recordDriverUsage(ctx, it, current.Status, *req.Status, now)
+		// On reaching a terminal state (by shape, never park — architecture
+		// revision A4, sty_8eae81ac), compute and persist the actual from the
+		// ledger, AFTER the driver-usage row above so it is included in the
+		// total. Right after the guarded write commits, never before it, so a
+		// transient failure here cannot poison the transition's own CAS
+		// (TestTransitionAppendFailureRollsBackRow). Best-effort: a computation
+		// failure is recorded, never reverts the already-enacted transition.
+		if targetIsTerminalStateOnly(ctx, it, *req.Status) {
+			if actualIt, aerr := recordActual(ctx, it, now); aerr == nil {
+				it = actualIt
+			} else {
+				appendLedgerEntry(ctx, it.ID, ledger.KindActualRecorded, "executor",
+					"actual computation failed: "+aerr.Error(), nil, now)
+			}
+		}
 		// Record the change set for the step just closed (sty_948ad5df).
 		// Enumeration only; best-effort; never blocks the transition.
 		recordChangeSet(ctx, it, current.Status, *req.Status, now)
@@ -814,8 +829,8 @@ type restampReq struct {
 	Workflow string `json:"workflow,omitempty"`
 }
 
-// afterTagCASGetHook runs after a tags-only writer (recordCost / storyRestamp)
-// has Get'd the row and before it Update's with ExpectStatus. Tests inject a
+// afterTagCASGetHook runs after a tags-only writer (storyEstimate / recordActual
+// / storyRestamp) has Get'd the row and before it Update's with ExpectStatus. Tests inject a
 // SetStatus here to prove the CAS refuses when the row moved under the verb
 // (sty_38915987 AC3). Production leaves it nil.
 var afterTagCASGetHook func(ctx context.Context, id, statusAtGet string)
@@ -915,26 +930,201 @@ func containsState(states []string, s string) bool {
 	return false
 }
 
-// estimateReq is the request body for story-estimate / story-actual: a token
-// count and/or a duration string (e.g. "30m", "2h"), with an optional basis note
-// recorded only on the ledger row.
+// estimateReq is the request body for story-estimate: a plan estimate in
+// dollars and/or fresh-input + output tokens (the current units, sty_8eae81ac
+// AC7), or the legacy --tokens/--time units kept for stories already written
+// in them. Never accepted by story-actual: the actual is computed from the
+// ledger, never hand-entered (AC1) — see actualReq.
 type estimateReq struct {
-	ID     string `json:"id"`
-	Time   string `json:"time,omitempty"`
-	Tokens int    `json:"tokens,omitempty"`
-	Basis  string `json:"basis,omitempty"`
+	ID   string `json:"id"`
+	Time string `json:"time,omitempty"`
+	// Tokens is the legacy unit: a bare token count with no dollar or
+	// fresh/output split. Kept readable and writable, never converted into usd
+	// or fresh_input — a different unit is never silently treated as this one.
+	Tokens     int     `json:"tokens,omitempty"`
+	USD        float64 `json:"usd,omitempty"`
+	FreshInput int     `json:"fresh_input,omitempty"`
+	Output     int     `json:"output,omitempty"`
+	Basis      string  `json:"basis,omitempty"`
 }
 
-// storyEstimate records a story's plan estimate as estimate-minutes/estimate-tokens
-// tags; storyActual records the actual as actual-minutes/actual-tokens. Both
-// preserve the story's other tags and append a ledger row so the close-out can
-// compare estimate vs actual.
+// storyEstimate records a story's plan estimate as tags — estimate-usd,
+// estimate-fresh-input/estimate-output, and/or the legacy estimate-minutes/
+// estimate-tokens — preserving every other tag, and appends an
+// estimate_recorded ledger row carrying the same fields with their units
+// (sty_8eae81ac AC7).
 func storyEstimate(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
-	return recordCost(ctx, raw, "estimate", ledger.KindEstimateRecorded)
+	store, err := requireWorkItem()
+	if err != nil {
+		return nil, err
+	}
+	var req estimateReq
+	if err := decode(raw, &req); err != nil {
+		return nil, err
+	}
+	if req.ID == "" {
+		return nil, fmt.Errorf("verb: id required")
+	}
+	if req.Tokens <= 0 && req.Time == "" && req.USD <= 0 && req.FreshInput <= 0 && req.Output <= 0 {
+		return nil, fmt.Errorf("verb: estimate requires at least one of --usd, --fresh-input/--output, --time, or the legacy --tokens")
+	}
+	current, err := store.Get(ctx, req.ID)
+	if err != nil {
+		return nil, err
+	}
+	kv := map[string]string{}
+	if req.Tokens > 0 {
+		kv["estimate-tokens"] = strconv.Itoa(req.Tokens) // legacy unit — never usd or fresh_input
+	}
+	if req.Time != "" {
+		d, perr := parseCostDuration(req.Time)
+		if perr != nil {
+			return nil, perr
+		}
+		kv["estimate-minutes"] = strconv.Itoa(costMinutes(d))
+	}
+	if req.USD > 0 {
+		kv["estimate-usd"] = strconv.FormatFloat(req.USD, 'f', -1, 64)
+	}
+	if req.FreshInput > 0 {
+		kv["estimate-fresh-input"] = strconv.Itoa(req.FreshInput)
+	}
+	if req.Output > 0 {
+		kv["estimate-output"] = strconv.Itoa(req.Output)
+	}
+	merged := upsertKeyedTags(current.Tags, kv)
+	now := time.Now()
+	// Tags-only write with CAS (sty_38915987): estimate never sets status, and
+	// refuses if the row moved under the Get→Update window.
+	runAfterTagCASGet(ctx, req.ID, current.Status)
+	it, err := store.Update(ctx, req.ID, workitem.UpdateInput{
+		Tags: &merged, ExpectStatus: &current.Status,
+	}, now)
+	if err != nil {
+		return nil, err
+	}
+	body := fmt.Sprintf("estimate recorded: %s", joinKeyedTags(kv))
+	if req.Basis != "" {
+		body += " (basis: " + req.Basis + ")"
+	}
+	payload, _ := json.Marshal(kv)
+	appendLedgerEntry(ctx, it.ID, ledger.KindEstimateRecorded, "executor", body, payload, now)
+	appendOpLog("story-estimate", it.ID, body, now)
+	notifyChange(panelTopic(it.Kind))
+	return json.Marshal(it)
 }
 
+// actualReq is the request body for story-actual: the story id ALONE. Any
+// cost figure in the request is refused (sty_8eae81ac AC1) — the actual is
+// computed from the ledger (ComputeStoryActual), never hand-entered; a driver
+// or gate that used to pass --tokens/--time gets a clear refusal naming the
+// replacement instead of a silently ignored figure.
+type actualReq struct {
+	ID         string  `json:"id"`
+	Time       string  `json:"time,omitempty"`
+	Tokens     int     `json:"tokens,omitempty"`
+	USD        float64 `json:"usd,omitempty"`
+	FreshInput int     `json:"fresh_input,omitempty"`
+	Output     int     `json:"output,omitempty"`
+}
+
+// storyActual computes the story's actual from its ledger (ComputeStoryActual)
+// and writes it: actual-usd (or "unavailable" when no row carries a cost),
+// actual-fresh-input/actual-output/actual-cache-read/actual-cache-write,
+// actual-cost-unavailable-rows and actual-unsplit-input (each only when
+// non-zero), actual-minutes and — for the summary tag the close-out gate
+// greps — actual-tokens (fresh input + unsplit input + output + cache write;
+// cache read excluded, since it is reused context, not new work). Overwrites
+// any prior hand-typed actual-* tag (sty_218fb3a3 regression: a computed
+// figure always wins over a stale manual one). Records the full StoryActual as
+// the actual_recorded ledger payload (AC2/AC3).
 func storyActual(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
-	return recordCost(ctx, raw, "actual", ledger.KindActualRecorded)
+	store, err := requireWorkItem()
+	if err != nil {
+		return nil, err
+	}
+	var req actualReq
+	if err := decode(raw, &req); err != nil {
+		return nil, err
+	}
+	if req.ID == "" {
+		return nil, fmt.Errorf("verb: id required")
+	}
+	if req.Time != "" || req.Tokens > 0 || req.USD > 0 || req.FreshInput > 0 || req.Output > 0 {
+		return nil, fmt.Errorf("verb: actual is computed from the ledger — run `satelle story actual %s` with no figures", req.ID)
+	}
+	current, err := store.Get(ctx, req.ID)
+	if err != nil {
+		return nil, err
+	}
+	it, err := recordActual(ctx, current, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(it)
+}
+
+// recordActual computes current's actual from the ledger and writes the
+// actual-* tags plus the actual_recorded payload (sty_8eae81ac AC1/AC2/AC3).
+// Shared by the story-actual verb and the post-commit terminal-transition hook
+// (architecture revision A4) so an actual is written from exactly one place.
+func recordActual(ctx context.Context, current workitem.Item, at time.Time) (workitem.Item, error) {
+	store, err := requireWorkItem()
+	if err != nil {
+		return workitem.Item{}, err
+	}
+	actual, err := ComputeStoryActual(ctx, current.ID)
+	if err != nil {
+		return workitem.Item{}, err
+	}
+	tot := actual.Total
+	kv := map[string]string{
+		"actual-output":      strconv.Itoa(tot.Output),
+		"actual-cache-read":  strconv.Itoa(tot.CacheRead),
+		"actual-cache-write": strconv.Itoa(tot.CacheWrite),
+		"actual-minutes":     strconv.Itoa(costMinutes(time.Duration(tot.ElapsedMs) * time.Millisecond)),
+		// The summary token tag: fresh input + unsplit input + output + cache
+		// write, cache read excluded — reused context is not new work
+		// (sty_8eae81ac purpose note). Unsplit input folds in so a legacy row
+		// with no fresh/cache split never silently vanishes from the total.
+		"actual-tokens": strconv.Itoa(tot.FreshInput + tot.UnsplitTokens + tot.Output + tot.CacheWrite),
+	}
+	// A story with no priced row (e.g. a codex-driven session whose adapter
+	// never reports cost_usd) must never read as "$0" — that claims a free
+	// story rather than an unmeasured one (revision 2, no silent zeros).
+	if tot.CostRows > 0 {
+		kv["actual-usd"] = strconv.FormatFloat(tot.CostUSD, 'f', -1, 64)
+	} else {
+		kv["actual-usd"] = "unavailable"
+	}
+	if tot.CostUnavailableRows > 0 {
+		kv["actual-cost-unavailable-rows"] = strconv.Itoa(tot.CostUnavailableRows)
+	}
+	// actual-fresh-input is the split-only figure; when every input row was
+	// unsplit (no adapter-reported fresh/cache split at all) there is no split
+	// figure to report, so say so rather than showing a false zero.
+	if tot.FreshInput == 0 && tot.UnsplitTokens > 0 {
+		kv["actual-fresh-input"] = "unavailable"
+	} else {
+		kv["actual-fresh-input"] = strconv.Itoa(tot.FreshInput)
+	}
+	if tot.UnsplitTokens > 0 {
+		kv["actual-unsplit-input"] = strconv.Itoa(tot.UnsplitTokens)
+	}
+	merged := upsertKeyedTags(current.Tags, kv)
+	runAfterTagCASGet(ctx, current.ID, current.Status)
+	it, err := store.Update(ctx, current.ID, workitem.UpdateInput{
+		Tags: &merged, ExpectStatus: &current.Status,
+	}, at)
+	if err != nil {
+		return workitem.Item{}, err
+	}
+	body := fmt.Sprintf("actual recorded: %s", joinKeyedTags(kv))
+	payload, _ := json.Marshal(actual)
+	appendLedgerEntry(ctx, it.ID, ledger.KindActualRecorded, "executor", body, payload, at)
+	appendOpLog("story-actual", it.ID, body, at)
+	notifyChange(panelTopic(it.Kind))
+	return it, nil
 }
 
 // recordStepSummary writes the outcome of a step-summary run to the ledger, and on
@@ -1120,61 +1310,6 @@ func storyRetrospect(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		out["tokens_total"] = res.TokensTotal
 	}
 	return json.Marshal(out)
-}
-
-// recordCost upserts the prefix-minutes/prefix-tokens tags on a story (prefix is
-// "estimate" or "actual"), leaving every other tag intact, and records the
-// change on the ledger. At least one of tokens/time must be given.
-func recordCost(ctx context.Context, raw json.RawMessage, prefix, kind string) (json.RawMessage, error) {
-	store, err := requireWorkItem()
-	if err != nil {
-		return nil, err
-	}
-	var req estimateReq
-	if err := decode(raw, &req); err != nil {
-		return nil, err
-	}
-	if req.ID == "" {
-		return nil, fmt.Errorf("verb: id required")
-	}
-	if req.Tokens <= 0 && req.Time == "" {
-		return nil, fmt.Errorf("verb: %s requires --tokens and/or --time", prefix)
-	}
-	current, err := store.Get(ctx, req.ID)
-	if err != nil {
-		return nil, err
-	}
-	kv := map[string]string{}
-	if req.Tokens > 0 {
-		kv[prefix+"-tokens"] = strconv.Itoa(req.Tokens)
-	}
-	if req.Time != "" {
-		d, perr := parseCostDuration(req.Time)
-		if perr != nil {
-			return nil, perr
-		}
-		kv[prefix+"-minutes"] = strconv.Itoa(costMinutes(d))
-	}
-	merged := upsertKeyedTags(current.Tags, kv)
-	now := time.Now()
-	// Tags-only write with CAS (sty_38915987): estimate/actual never set status,
-	// and refuse if the row moved under the Get→Update window so they cannot sit
-	// adjacent to a silent revert.
-	runAfterTagCASGet(ctx, req.ID, current.Status)
-	it, err := store.Update(ctx, req.ID, workitem.UpdateInput{
-		Tags: &merged, ExpectStatus: &current.Status,
-	}, now)
-	if err != nil {
-		return nil, err
-	}
-	body := fmt.Sprintf("%s recorded: %s", prefix, joinKeyedTags(kv))
-	if req.Basis != "" {
-		body += " (basis: " + req.Basis + ")"
-	}
-	appendLedger(ctx, it.ID, kind, body, now)
-	appendOpLog("story-"+prefix, it.ID, body, now)
-	notifyChange(panelTopic(it.Kind))
-	return json.Marshal(it)
 }
 
 // parseCostDuration parses the --time value shared by story estimate and story

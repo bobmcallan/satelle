@@ -40,7 +40,8 @@ Move the story into work:
 
 On the seeded default workflow this edge carries one CODED gate: the
 estimate/actual check rejects begin-work until a plan estimate is recorded
-(`satelle story estimate <id> --time <dur> --tokens <n>`). A repo that authors
+(`satelle story estimate <id> --usd <n> [--fresh-input <n> --output <n>]`, or
+the legacy `--tokens <n>` / `--time <dur>`). A repo that authors
 richer gates (e.g. `satelle-story-intent-review`, judging the story is
 well-formed enough to start) adds them to its workflow; a reject keeps the story
 in backlog with notes on what to clarify.

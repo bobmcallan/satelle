@@ -149,6 +149,59 @@ func mergeStepCost(r *StoryStepRow, d stepCostData) {
 	}
 }
 
+// buildCostRow decodes one agent_invocation ledger entry into a StoryCostRow,
+// or ok=false when e carries no payload, fails to decode, or is a
+// tool-permission event masquerading as an invocation (ledger.
+// IsToolPermissionRow, sty_8eae81ac AC4) — the single accumulation point
+// ComputeStoryCost and ComputeStoryActual both call so their agent_invocation
+// handling cannot drift apart.
+func buildCostRow(e ledger.Entry) (StoryCostRow, bool) {
+	if len(e.Payload) == 0 || ledger.IsToolPermissionRow(e) {
+		return StoryCostRow{}, false
+	}
+	// Edge identity (from/to/skill) from the payload; token totals and usage
+	// availability from the sole ledger reader (sty_56aae77a).
+	var meta struct {
+		From  string `json:"from"`
+		To    string `json:"to"`
+		Agent string `json:"agent"`
+		Skill string `json:"skill"`
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(e.Payload, &meta); err != nil {
+		return StoryCostRow{}, false
+	}
+	tel := ledger.EventTelemetry(e)
+	row := StoryCostRow{
+		From:                   meta.From,
+		To:                     meta.To,
+		Agent:                  meta.Agent,
+		Skill:                  meta.Skill,
+		Model:                  meta.Model,
+		ModelResolved:          tel.ModelResolved,
+		TokensIn:               tel.TokensIn,
+		TokensOut:              tel.TokensOut,
+		TokensTotal:            tel.TokensTotal,
+		DurationMs:             tel.DurationMs,
+		UsageAvailable:         tel.UsageAvailable,
+		UsageUnavailableReason: tel.UsageUnavailableReason,
+		CacheSplitUnavailable:  tel.CacheSplitUnavailable,
+		TokensInFresh:          tel.TokensInFresh,
+		TokensCacheWrite:       tel.TokensCacheWrite,
+		TokensCacheRead:        tel.TokensCacheRead,
+		CostUSD:                tel.CostUSD,
+		CostUnavailableReason:  tel.CostUnavailableReason,
+	}
+	// Prefer telemetry agent/model when meta left them empty (defensive).
+	if row.Agent == "" {
+		row.Agent = tel.Agent
+	}
+	if row.Model == "" {
+		row.Model = tel.Model
+	}
+	return row, true
+}
+
 // ComputeStoryCost reads the story's ledger and builds two complementary views:
 //   - Rows: the dispatched/reviewer agent_invocation cost (precise tokens + agent
 //     wall-time). Token totals and usage availability come solely from
@@ -214,48 +267,9 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 			}
 			prevAt, prevSet = e.CreatedAt, true
 		case ledger.KindAgentInvocation:
-			if len(e.Payload) == 0 {
+			row, ok := buildCostRow(e)
+			if !ok {
 				continue
-			}
-			// Edge identity (from/to/skill) from the payload; token totals and
-			// usage availability from the sole ledger reader (sty_56aae77a).
-			var meta struct {
-				From  string `json:"from"`
-				To    string `json:"to"`
-				Agent string `json:"agent"`
-				Skill string `json:"skill"`
-				Model string `json:"model"`
-			}
-			if err := json.Unmarshal(e.Payload, &meta); err != nil {
-				continue
-			}
-			tel := ledger.EventTelemetry(e)
-			row := StoryCostRow{
-				From:                   meta.From,
-				To:                     meta.To,
-				Agent:                  meta.Agent,
-				Skill:                  meta.Skill,
-				Model:                  meta.Model,
-				ModelResolved:          tel.ModelResolved,
-				TokensIn:               tel.TokensIn,
-				TokensOut:              tel.TokensOut,
-				TokensTotal:            tel.TokensTotal,
-				DurationMs:             tel.DurationMs,
-				UsageAvailable:         tel.UsageAvailable,
-				UsageUnavailableReason: tel.UsageUnavailableReason,
-				CacheSplitUnavailable:  tel.CacheSplitUnavailable,
-				TokensInFresh:          tel.TokensInFresh,
-				TokensCacheWrite:       tel.TokensCacheWrite,
-				TokensCacheRead:        tel.TokensCacheRead,
-				CostUSD:                tel.CostUSD,
-				CostUnavailableReason:  tel.CostUnavailableReason,
-			}
-			// Prefer telemetry agent/model when meta left them empty (defensive).
-			if row.Agent == "" {
-				row.Agent = tel.Agent
-			}
-			if row.Model == "" {
-				row.Model = tel.Model
 			}
 			sc.Rows = append(sc.Rows, row)
 			sc.TotalDurationMs += row.DurationMs
@@ -447,6 +461,9 @@ func ComputeSkillRollup(ctx context.Context, storyID string) (SkillRollup, error
 	// --all's scan of every story's agent_invocation rows is never silently
 	// truncated to the oldest page (sty_363eaf55 rework).
 	err = store.ForEachKind(ctx, storyID, ledger.KindAgentInvocation, func(e ledger.Entry) error {
+		if ledger.IsToolPermissionRow(e) {
+			return nil
+		}
 		var meta struct {
 			Skill string `json:"skill"`
 			Agent string `json:"agent"`

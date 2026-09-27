@@ -172,7 +172,7 @@ func TestNoDriftCostsNoDispatch(t *testing.T) {
 	}
 	mustRun(t, testBin, repo, "story", "estimate", id, "--time", "10m", "--tokens", "1000")
 	mustRun(t, testBin, repo, "story", "set", id, "--status", "in_progress")
-	mustRun(t, testBin, repo, "story", "actual", id, "--time", "9m", "--tokens", "900")
+	mustRun(t, testBin, repo, "story", "actual", id)
 	mustRun(t, testBin, repo, "story", "set", id, "--status", "done")
 
 	if got := mustRun(t, testBin, repo, "story", "get", id); !strings.Contains(got, `"status": "done"`) {

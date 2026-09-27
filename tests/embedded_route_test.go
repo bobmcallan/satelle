@@ -73,7 +73,7 @@ func TestFreshRepoDrivesAStoryOnTheShippedRoute(t *testing.T) {
 	mustRun(t, testBin, repo, "story", "set", id, "--status", "in_progress")
 
 	// in_progress → done, through the route's three-reviewer close.
-	mustRun(t, testBin, repo, "story", "actual", id, "--time", "9m", "--tokens", "900")
+	mustRun(t, testBin, repo, "story", "actual", id)
 	mustRun(t, testBin, repo, "story", "set", id, "--status", "done")
 	if got := mustRun(t, testBin, repo, "story", "get", id); !strings.Contains(got, `"status": "done"`) {
 		t.Fatalf("story did not reach done:\n%s", got)

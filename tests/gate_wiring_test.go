@@ -261,27 +261,15 @@ func TestGateWiringDoneAcceptReject(t *testing.T) {
 	// engage
 	mustRun(t, testBin, repo, "story", "set", id, "--status", "in_progress")
 
-	// done without actual → estimate fence rejects (fence path, not stub)
-	rej, err := run(t, testBin, repo, "story", "set", id, "--status", "done")
-	if err == nil {
-		t.Fatalf("done without actual should reject:\n%s", rej)
-	}
-	if !strings.Contains(rej, "actual") {
-		t.Errorf("estimate fence should mention actual:\n%s", rej)
-	}
-	got := mustRun(t, testBin, repo, "story", "get", id)
-	if !strings.Contains(got, `"status": "in_progress"`) {
-		t.Errorf("status unchanged after fence reject:\n%s", got)
-	}
-
-	// record actual, reject done via LLM stub
-	mustRun(t, testBin, repo, "story", "actual", id, "--time", "5m", "--tokens", "400")
+	// The actual is computed from the ledger (sty_8eae81ac): the estimate
+	// fence no longer demands a hand-typed actual at done, so no actual is
+	// recorded here. Reject done via the LLM stub first.
 	t.Setenv("SATELLE_TEST_REJECT", "satelle-story-done-review")
-	rej, err = run(t, testBin, repo, "story", "set", id, "--status", "done")
+	rej, err := run(t, testBin, repo, "story", "set", id, "--status", "done")
 	if err == nil {
 		t.Fatalf("done LLM reject should fail:\n%s", rej)
 	}
-	got = mustRun(t, testBin, repo, "story", "get", id)
+	got := mustRun(t, testBin, repo, "story", "get", id)
 	if !strings.Contains(got, `"status": "in_progress"`) {
 		t.Errorf("status unchanged after done reject:\n%s", got)
 	}
@@ -296,6 +284,10 @@ func TestGateWiringDoneAcceptReject(t *testing.T) {
 	got = mustRun(t, testBin, repo, "story", "get", id)
 	if !strings.Contains(got, `"status": "done"`) {
 		t.Errorf("accept should close:\n%s", got)
+	}
+	// Closing records the computed actual after the transition commits.
+	if !strings.Contains(got, `"actual-tokens:`) || !strings.Contains(got, `"actual-minutes:`) {
+		t.Errorf("close should write the computed actual-* tags:\n%s", got)
 	}
 }
 
@@ -404,7 +396,7 @@ func TestGateWiringScopeOnDone(t *testing.T) {
 	id := extractID(out, "sty_")
 	mustRun(t, testBin, repo, "story", "estimate", id, "--time", "5m", "--tokens", "500")
 	mustRun(t, testBin, repo, "story", "set", id, "--status", "in_progress")
-	mustRun(t, testBin, repo, "story", "actual", id, "--time", "5m", "--tokens", "400")
+	mustRun(t, testBin, repo, "story", "actual", id)
 
 	t.Setenv("SATELLE_TEST_REJECT", "satelle-story-scope-review")
 	rej, err := run(t, testBin, repo, "story", "set", id, "--status", "done")

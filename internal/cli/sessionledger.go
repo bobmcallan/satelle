@@ -62,7 +62,7 @@ func (s *storeSessionLedger) WriteInvocation(tool, kind, decision, decidedBy str
 	body := fmt.Sprintf("session %s %s by %s", decision, tool, decidedBy)
 	_, err = s.ls.Append(s.ctx, ledger.AppendInput{
 		StoryID: s.storyID,
-		Kind:    ledger.KindAgentInvocation,
+		Kind:    ledger.KindToolPermission,
 		Actor:   s.actor,
 		Body:    body,
 		Payload: payload,

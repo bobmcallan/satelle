@@ -583,7 +583,7 @@ func eventChips(e ledger.Entry) []chipVM {
 	// (sty_87b86044). The agent-name fallback for a model-less row is gone —
 	// an agent name is not a model.
 	isVerdict := tel.Outcome == "accept" || tel.Outcome == "reject"
-	isInvocation := e.Kind == ledger.KindAgentInvocation
+	isInvocation := e.Kind == ledger.KindAgentInvocation && !ledger.IsToolPermissionRow(e)
 	if isVerdict || isInvocation {
 		chips = append(chips, chipVM{Type: "model", Label: ledger.ModelLabel(tel.Model, tel.ModelResolved)})
 	}

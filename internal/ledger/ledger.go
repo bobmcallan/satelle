@@ -123,6 +123,13 @@ const (
 	// row's WindowKey plus Cumulative decide whether a later snapshot is a
 	// no-op (AC7). Enumeration only — no pass/fail in Go.
 	KindDriverUsage = "driver_usage"
+	// KindToolPermission records one tool-permission decision (tool/kind/
+	// decision/decided_by) for a live session — moved off KindAgentInvocation
+	// (sty_8eae81ac AC4), which it used to inflate: a permission event carries
+	// no usage, so counting it as an invocation made every cost/unmeasured-row
+	// view over-count. See IsToolPermissionRow for the read-time filter that
+	// also excludes the legacy rows written before this kind existed.
+	KindToolPermission = "tool_permission"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional

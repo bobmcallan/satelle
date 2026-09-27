@@ -180,3 +180,17 @@ func TestTimelineDotPaletteReused(t *testing.T) {
 		}
 	}
 }
+
+// TestTimelineChipsExcludeToolPermissionRows pins sty_8eae81ac AC4: a legacy
+// agent_invocation row carrying the decided_by/decision/tool tool-permission
+// shape must never render the unconditional invocation model chip (it used to
+// show "unknown" for every such row before it got its own ledger kind).
+func TestTimelineChipsExcludeToolPermissionRows(t *testing.T) {
+	perm, _ := json.Marshal(map[string]any{"tool": "Edit", "kind": "permission", "decision": "allow", "decided_by": "policy"})
+	chips := eventChips(ledger.Entry{Kind: ledger.KindAgentInvocation, Payload: perm})
+	for _, c := range chips {
+		if c.Type == "model" {
+			t.Errorf("a tool-permission row rendered a model chip: %+v", chips)
+		}
+	}
+}

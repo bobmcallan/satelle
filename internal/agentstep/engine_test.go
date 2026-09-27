@@ -3783,11 +3783,10 @@ func TestWorkflowConsistency(t *testing.T) {
 	}
 }
 
-// TestCodedEstimateGate runs the EMBEDDED estimate/actual skill's self-contained
-// check end-to-end — real bash, the transition payload on stdin (sty_f804caaa):
-// begin-work without an estimate tag rejects, close without an actual tag
-// rejects, other edges pass — and the agent is never invoked.
-func TestCodedEstimateGate(t *testing.T) {
+// estimateActualCheckBody returns the embedded estimate/actual skill's body,
+// failing the test if it is missing its self-contained check block.
+func estimateActualCheckBody(t *testing.T) string {
+	t.Helper()
 	var body string
 	for _, d := range config.EmbeddedDefaults() {
 		if d.Kind == "skills" && d.Name == "satelle-estimate-actual-review" {
@@ -3797,6 +3796,18 @@ func TestCodedEstimateGate(t *testing.T) {
 	if body == "" || !strings.Contains(body, "```check") {
 		t.Fatalf("embedded estimate skill must carry a self-contained check block")
 	}
+	return body
+}
+
+// TestCodedEstimateGate runs the EMBEDDED estimate/actual skill's self-contained
+// check end-to-end — real bash, the transition payload on stdin (sty_f804caaa,
+// sty_8eae81ac): entering in_progress without any estimate tag rejects, any
+// accepted unit accepts; entering done NEVER rejects — an actual is no longer a
+// tag this gate requires, since the mechanism computes and persists it on the
+// terminal commit itself (architecture revision A4) — and other edges pass.
+// The agent is never invoked.
+func TestCodedEstimateGate(t *testing.T) {
+	body := estimateActualCheckBody(t)
 	g, r := newEngine(t, `{"decision":"reject"}`, fakeDocs{skillBody: body, skillFound: true})
 	g.repoRoot = t.TempDir() // the check runs in the repo root — use a real dir
 
@@ -3808,9 +3819,12 @@ func TestCodedEstimateGate(t *testing.T) {
 		want   string // substring of the reject notes
 	}{
 		{"in_progress without estimate rejects", "in_progress", []string{"cli"}, false, "no plan estimate recorded"},
-		{"in_progress with estimate accepts", "in_progress", []string{"estimate-minutes:30"}, true, ""},
-		{"done without actual rejects", "done", []string{"estimate-tokens:5000"}, false, "no actual recorded"},
-		{"done with actual accepts", "done", []string{"actual-tokens:9000"}, true, ""},
+		{"in_progress with legacy minutes accepts", "in_progress", []string{"estimate-minutes:30"}, true, ""},
+		{"in_progress with legacy tokens accepts", "in_progress", []string{"estimate-tokens:5000"}, true, ""},
+		{"in_progress with usd accepts", "in_progress", []string{"estimate-usd:2.5"}, true, ""},
+		{"in_progress with fresh-input accepts", "in_progress", []string{"estimate-fresh-input:100000"}, true, ""},
+		{"done with no estimate never rejects", "done", nil, true, ""},
+		{"done with a huge overrun never rejects", "done", []string{"estimate-tokens:1"}, true, ""},
 		{"other edges pass", "integration", nil, true, ""},
 	}
 	for _, c := range cases {
@@ -3831,6 +3845,137 @@ func TestCodedEstimateGate(t *testing.T) {
 	}
 	if r.got.SystemPrompt != "" {
 		t.Error("the coded gate must never invoke the agent")
+	}
+}
+
+// TestCodedEstimateGateDonePrintsUnitAwareSummary asserts on the check's own
+// STDOUT (never dec.Notes, which on accept carries only the check's source,
+// see Engine.runCheck) — pinning AC5: the shipped check prints a legacy token
+// estimate labelled as such, never as dollars or fresh input, beside the
+// ledger-computed measured_actual it always receives generically on the gate
+// payload (Engine.fillMeasuredActual), and accepts regardless of the size of
+// the overrun.
+func TestCodedEstimateGateDonePrintsUnitAwareSummary(t *testing.T) {
+	body := estimateActualCheckBody(t)
+	command := skillCheck(body)
+	if command == "" {
+		t.Fatal("embedded estimate skill must resolve a check command")
+	}
+	g, _ := newEngine(t, "", fakeDocs{})
+	g.repoRoot = t.TempDir()
+
+	payload := `{"story":{"tags":["estimate-tokens:200000"]},"from":"release","to":"done",` +
+		`"measured_actual":{"story_id":"sty_x",` +
+		`"own":{"cost_usd":0.10,"cost_rows":1,"fresh_input":1000,"output":200,"cache_read":500,"cache_write":10},` +
+		`"total":{"cost_usd":50.5,"cost_rows":9,"cost_unavailable_rows":2,"fresh_input":9000000,"output":100000,"cache_read":1000000,"cache_write":50000}}}`
+
+	out, err := g.check(context.Background(), g.repoRoot, command, payload)
+	if err != nil {
+		t.Fatalf("check rejected a huge overrun: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "200000 tokens") {
+		t.Errorf("stdout = %q, want the legacy estimate labelled in tokens", out)
+	}
+	if !strings.Contains(out, "legacy unit") {
+		t.Errorf("stdout = %q, want the legacy estimate marked as a legacy unit", out)
+	}
+	if !strings.Contains(out, "$50.5") {
+		t.Errorf("stdout = %q, want the TOTAL measured actual in dollars (not own's 0.10)", out)
+	}
+	if !strings.Contains(out, "2 rows cost unavailable") {
+		t.Errorf("stdout = %q, want the TOTAL's unavailable-row count shown beside the dollars", out)
+	}
+	if strings.Contains(out, "$200000") {
+		t.Errorf("stdout = %q, must never render the token estimate as dollars", out)
+	}
+}
+
+// TestCodedEstimateGateMeasuredActualUnavailable pins revision 2 point 3: when
+// the payload carries no measured_actual block at all (a computation
+// failure), the check says so plainly rather than inventing a $0/fresh-0
+// figure nothing measured, and still accepts.
+func TestCodedEstimateGateMeasuredActualUnavailable(t *testing.T) {
+	body := estimateActualCheckBody(t)
+	command := skillCheck(body)
+	if command == "" {
+		t.Fatal("embedded estimate skill must resolve a check command")
+	}
+	g, _ := newEngine(t, "", fakeDocs{})
+	g.repoRoot = t.TempDir()
+
+	payload := `{"story":{"tags":["estimate-minutes:30"]},"from":"release","to":"done"}`
+
+	out, err := g.check(context.Background(), g.repoRoot, command, payload)
+	if err != nil {
+		t.Fatalf("check rejected with no measured_actual: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "measured actual unavailable") {
+		t.Errorf("stdout = %q, want an explicit unavailable notice", out)
+	}
+	if strings.Contains(out, "$0") || strings.Contains(out, "fresh 0") {
+		t.Errorf("stdout = %q, must never invent a $0/fresh-0 figure when nothing was measured", out)
+	}
+}
+
+// TestCodedEstimateGateAllUnpricedRows pins revision 2 point 3's other
+// branch: measured_actual is present but no row was priced (cost_rows == 0),
+// so the dollar figure reads "cost unavailable", never a false "$0".
+func TestCodedEstimateGateAllUnpricedRows(t *testing.T) {
+	body := estimateActualCheckBody(t)
+	command := skillCheck(body)
+	if command == "" {
+		t.Fatal("embedded estimate skill must resolve a check command")
+	}
+	g, _ := newEngine(t, "", fakeDocs{})
+	g.repoRoot = t.TempDir()
+
+	payload := `{"story":{"tags":["estimate-usd:5"]},"from":"release","to":"done",` +
+		`"measured_actual":{"story_id":"sty_x",` +
+		`"own":{"cost_usd":0,"cost_rows":0,"cost_unavailable_rows":1,"fresh_input":0,"output":0},` +
+		`"total":{"cost_usd":0,"cost_rows":0,"cost_unavailable_rows":3,"fresh_input":0,"output":0}}}`
+
+	out, err := g.check(context.Background(), g.repoRoot, command, payload)
+	if err != nil {
+		t.Fatalf("check rejected an all-unpriced actual: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "cost unavailable (3 rows)") {
+		t.Errorf("stdout = %q, want an explicit unpriced notice naming the unavailable row count", out)
+	}
+	if strings.Contains(out, "$0") {
+		t.Errorf("stdout = %q, must never render an all-unpriced actual as a false $0", out)
+	}
+}
+
+// TestCodedEstimateGateRepoToleranceGate pins that a repo may author its own
+// gate, in its own unit, over the same generically-attached measured_actual
+// block — the shipped gate never compares across units, but a repo one may
+// compare usd-to-usd (AC5).
+func TestCodedEstimateGateRepoToleranceGate(t *testing.T) {
+	repoCheck := `
+IN=$(cat)
+est=$(printf '%s' "$IN" | grep -o '"estimate-usd:[^"]*"' | head -1)
+est=${est#\"estimate-usd:}; est=${est%\"}
+actual=$(printf '%s' "$IN" | grep -o '"cost_usd":[0-9.]*' | tail -1 | cut -d: -f2)
+limit=$(awk -v e="$est" 'BEGIN{print e*1.5}')
+ok=$(awk -v a="$actual" -v l="$limit" 'BEGIN{print (a<=l)?1:0}')
+if [ "$ok" = "1" ]; then
+  echo "within tolerance: \$$actual <= \$$limit"
+  exit 0
+fi
+echo "over tolerance: \$$actual > \$$limit (estimate \$$est x1.5)"
+exit 1
+`
+	g, _ := newEngine(t, "", fakeDocs{})
+	g.repoRoot = t.TempDir()
+
+	within := `{"story":{"tags":["estimate-usd:10"]},"to":"done","measured_actual":{"total":{"cost_usd":12.0}}}`
+	if out, err := g.check(context.Background(), g.repoRoot, repoCheck, within); err != nil {
+		t.Fatalf("expected accept within tolerance: %v\n%s", err, out)
+	}
+
+	over := `{"story":{"tags":["estimate-usd:10"]},"to":"done","measured_actual":{"total":{"cost_usd":100.0}}}`
+	if out, err := g.check(context.Background(), g.repoRoot, repoCheck, over); err == nil {
+		t.Fatalf("expected reject over tolerance, accepted: %s", out)
 	}
 }
 
