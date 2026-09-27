@@ -1,3 +1,8 @@
+## [0.0.561] - 2026-09-28
+
+### Added
+- **A frozen reviewer corpus for judging review changes.** `tests/reviewcorpus` holds, for each proof rubric (ready, start, integration, implementation, coverage, done), at least one frozen change a gate rejected — citing the recorded reject by story, skill and ledger id — and one it accepted. A coverage test fails if any rubric lacks a defect or a valid case. Later reviewer-cost changes (isolation, bundling, audit, warm resume) are judged against it. (sty_51a04b93)
+
 ## [0.0.560] - 2026-09-28
 
 ### Changed
