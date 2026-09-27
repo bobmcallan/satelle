@@ -50,10 +50,12 @@ func ResolveSession() string {
 
 // PublishSessionModel records the model a session role reported, alongside
 // the executable that reported it (the cross-provider guard's evidence,
-// sty_7069bced). role is "in-loop" | "orchestrator" | "creator". Unlike
+// sty_7069bced) and an optional reason — set when model is the explicit
+// "unknown" marker, naming why (an adapter-named capability-table entry,
+// sty_719c4a7b AC6). role is "in-loop" | "orchestrator" | "creator". Unlike
 // PublishSession this needs no pid-walk: the caller already knows sessionID
 // (from ResolveSession/bindSessionID), so the file is keyed directly.
-func PublishSessionModel(sessionID, role, model, executable string) {
+func PublishSessionModel(sessionID, role, model, executable, reason string) {
 	sessionID = strings.TrimSpace(sessionID)
 	role = strings.TrimSpace(role)
 	if sessionID == "" || role == "" {
@@ -63,30 +65,34 @@ func PublishSessionModel(sessionID, role, model, executable string) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return
 	}
-	body := strings.TrimSpace(model) + "\t" + strings.TrimSpace(executable) + "\n"
+	body := strings.TrimSpace(model) + "\t" + strings.TrimSpace(executable) + "\t" + strings.TrimSpace(reason) + "\n"
 	_ = os.WriteFile(filepath.Join(dir, sessionModelFile(sessionID, role)), []byte(body), 0o600)
 }
 
 // ResolveSessionModel returns the model a session role previously published
-// via PublishSessionModel, and the executable that reported it. Both are
-// empty when nothing was published for that (sessionID, role) pair — the
-// caller treats that exactly like an explicit "unknown".
-func ResolveSessionModel(sessionID, role string) (model, executable string) {
+// via PublishSessionModel, the executable that reported it, and the reason
+// (empty unless model is "unknown" and a reason was published). Both model and
+// executable are empty when nothing was published for that (sessionID, role)
+// pair — the caller treats that exactly like an explicit "unknown".
+func ResolveSessionModel(sessionID, role string) (model, executable, reason string) {
 	sessionID = strings.TrimSpace(sessionID)
 	role = strings.TrimSpace(role)
 	if sessionID == "" || role == "" {
-		return "", ""
+		return "", "", ""
 	}
 	b, err := os.ReadFile(filepath.Join(sessionModelDir(), sessionModelFile(sessionID, role)))
 	if err != nil {
-		return "", ""
+		return "", "", ""
 	}
-	parts := strings.SplitN(strings.TrimSpace(string(b)), "\t", 2)
+	parts := strings.SplitN(strings.TrimSpace(string(b)), "\t", 3)
 	model = parts[0]
 	if len(parts) > 1 {
 		executable = parts[1]
 	}
-	return model, executable
+	if len(parts) > 2 {
+		reason = parts[2]
+	}
+	return model, executable, reason
 }
 
 // sessionModelFile is the on-disk name for one (sessionID, role) pair. role is

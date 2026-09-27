@@ -19,19 +19,28 @@ const (
 	SessionModelRoleCreator = "creator"
 )
 
-// sessionModelRow is the session_model ledger row's payload shape.
+// sessionModelRow is the session_model ledger row's payload shape. SessionID
+// and Reason are additive (sty_719c4a7b AC5/AC6): both omitempty, so a row
+// written before this change still unmarshals — a legacy row simply resolves
+// them as empty rather than failing to parse.
 type sessionModelRow struct {
 	Role       string `json:"role"`
 	Model      string `json:"model"`
 	Executable string `json:"executable,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 // RecordSessionModel appends a session_model ledger row for itemID's role —
 // the capture half of the model-selection resolver's inherited/creator tiers
-// (sty_7069bced). model is "unknown" when the harness reported none; empty is
-// normalised to "unknown" so a row always names a definite state. Best-effort:
+// (sty_7069bced), now carrying the session id that reported it (sty_719c4a7b
+// AC5) — the only way a row can be traced back to the session that drove it.
+// model is "unknown" when the harness reported none; empty is normalised to
+// "unknown" so a row always names a definite state. reason is set only
+// alongside "unknown" and names why (an adapter-named capability-table entry,
+// AC6); empty is fine when the harness resolved a real model. Best-effort:
 // nil-safe when no ledger is wired.
-func RecordSessionModel(ctx context.Context, itemID, actor, role, model, executable string) {
+func RecordSessionModel(ctx context.Context, itemID, actor, role, model, executable, sessionID, reason string) {
 	if ledgerStore == nil || strings.TrimSpace(itemID) == "" || strings.TrimSpace(role) == "" {
 		return
 	}
@@ -39,7 +48,10 @@ func RecordSessionModel(ctx context.Context, itemID, actor, role, model, executa
 	if m == "" {
 		m = "unknown"
 	}
-	payload, err := json.Marshal(sessionModelRow{Role: role, Model: m, Executable: strings.TrimSpace(executable)})
+	payload, err := json.Marshal(sessionModelRow{
+		Role: role, Model: m, Executable: strings.TrimSpace(executable),
+		SessionID: strings.TrimSpace(sessionID), Reason: strings.TrimSpace(reason),
+	})
 	if err != nil {
 		return
 	}
@@ -57,8 +69,8 @@ func RecordSessionModel(ctx context.Context, itemID, actor, role, model, executa
 // records "unknown" via RecordSessionModel rather than skipping the write.
 func recordCreatorSessionModel(ctx context.Context, itemID string) {
 	sid := config.ResolveSession()
-	model, exe := config.ResolveSessionModel(sid, SessionModelRoleInLoop)
-	RecordSessionModel(ctx, itemID, "", SessionModelRoleCreator, model, exe)
+	model, exe, reason := config.ResolveSessionModel(sid, SessionModelRoleInLoop)
+	RecordSessionModel(ctx, itemID, "", SessionModelRoleCreator, model, exe, sid, reason)
 }
 
 // recordEngageSessionModel captures the engaging session's model for itemID
@@ -67,8 +79,8 @@ func recordCreatorSessionModel(ctx context.Context, itemID string) {
 // blocked → in_progress) may be driven by a different session than before.
 func recordEngageSessionModel(ctx context.Context, itemID string) {
 	sid := config.ResolveSession()
-	model, exe := config.ResolveSessionModel(sid, SessionModelRoleInLoop)
-	RecordSessionModel(ctx, itemID, "", SessionModelRoleInLoop, model, exe)
+	model, exe, reason := config.ResolveSessionModel(sid, SessionModelRoleInLoop)
+	RecordSessionModel(ctx, itemID, "", SessionModelRoleInLoop, model, exe, sid, reason)
 }
 
 // SessionModels resolves the latest published model per role — in-loop,

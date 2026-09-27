@@ -163,6 +163,19 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 		}
 		settings = string(sb)
 	}
+	// Every request buildRequest assembles is satelle's own spawn, never the
+	// in-loop driving session (sty_719c4a7b AC4) — invoke.go, OpenSessionAs and
+	// Summarise are its only three callers, and none of them build the
+	// interactive session itself. Stamped here, the one seam all three share,
+	// so a caller that forgets its own SATELLE_DISPATCH_* markers (the step
+	// summariser has no agent/step/item three-tuple to carry) still marks
+	// itself. Copy before writing: inv.env may be a shared map (g.reviewerEnv,
+	// a binding's own env) that other callers reuse.
+	env := make(map[string]string, len(inv.env)+1)
+	for k, v := range inv.env {
+		env[k] = v
+	}
+	env[config.SpawnEnv] = "1"
 	return agentcli.Request{
 		SystemPrompt: b.String(),
 		Payload:      string(payload),
@@ -170,7 +183,7 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 		Model:        inv.model,
 		Effort:       inv.effort,
 		Settings:     settings,
-		Env:          inv.env,
+		Env:          env,
 		Dir:          g.repoRoot,
 	}, nil
 }
@@ -261,24 +274,28 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	if len(inv.env) == 0 {
 		inv.env = g.reviewerEnv
 	}
-	if expect == ExpectPerform {
-		// Mark isolated performers so PreToolUse can distinguish the child that
-		// the workflow deliberately dispatched from the driving session trying
-		// to work ahead while that transition is in flight. Copy before overlay
-		// so binding-owned environment remains intact and reserved marker keys
-		// cannot accidentally identify a different dispatch.
-		env := make(map[string]string, len(inv.env)+3)
-		for k, v := range inv.env {
-			env[k] = v
-		}
-		env[config.DispatchAgentEnv] = section
-		env[config.DispatchStepEnv] = req.Step
-		env[config.DispatchItemEnv] = req.StoryID
-		if id := config.SessionFromEnv(); id != "" {
-			env[config.SessionEnv] = id
-		}
-		inv.env = env
+	// Mark every isolated dispatch — perform AND verdict alike (sty_719c4a7b
+	// AC4): a verdict reviewer's child process inherits the driver's
+	// SATELLE_SESSION from the OS environment exactly as a performer's does
+	// (agentcli's composeEnv bases every transport on os.Environ()), so an
+	// unmarked verdict dispatch would still trip bindSessionID's in-loop
+	// publish and overwrite the driver's own file. PreToolUse also reads this
+	// marker to distinguish the child the workflow deliberately dispatched
+	// from the driving session trying to work ahead while a transition is in
+	// flight. Copy before overlay so binding-owned environment remains intact
+	// and reserved marker keys cannot accidentally identify a different
+	// dispatch.
+	env := make(map[string]string, len(inv.env)+3)
+	for k, v := range inv.env {
+		env[k] = v
 	}
+	env[config.DispatchAgentEnv] = section
+	env[config.DispatchStepEnv] = req.Step
+	env[config.DispatchItemEnv] = req.StoryID
+	if id := config.SessionFromEnv(); id != "" {
+		env[config.SessionEnv] = id
+	}
+	inv.env = env
 
 	// Every dispatch gets its own scratch directory (sty_e7aaf8b1 AC1): TMPDIR
 	// and SATELLE_SCRATCH are RESERVED keys and win over any binding env of the

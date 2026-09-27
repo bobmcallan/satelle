@@ -47,6 +47,10 @@ func DetectScaffoldDrift(repoRoot string) []ScaffoldFinding {
 			})
 		}
 	}
+	// Grok's SessionStart/UserPromptSubmit/Stop hooks must each name --harness
+	// grok explicitly (sty_719c4a7b AC2/AC7) — PreToolUse already carries it via
+	// renderHookCommand's positional arg, checked above through driftHarnessSettings.
+	findings = append(findings, driftGrokHarnessFlag(repoRoot)...)
 	// Legacy per-harness scripts on disk are drift (should have been retired).
 	for _, harness := range []string{"claude", "grok", "kimi"} {
 		for _, sub := range []string{"gate", "commitgate"} {
@@ -61,6 +65,41 @@ func DetectScaffoldDrift(repoRoot string) []ScaffoldFinding {
 		}
 	}
 	return dedupeScaffoldFindings(findings)
+}
+
+// driftGrokHarnessFlag reports a deployed .grok/hooks/satelle.json whose
+// SessionStart, UserPromptSubmit or Stop satelle hook command omits --harness
+// grok (sty_719c4a7b AC7). Skips silently when the file is absent, unparseable,
+// or that event's satelle hook isn't installed at all — those are other
+// findings' concern, not this one's.
+func driftGrokHarnessFlag(repoRoot string) []ScaffoldFinding {
+	raw, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(grokHooksRel)))
+	if err != nil {
+		return nil
+	}
+	var root map[string]any
+	if json.Unmarshal(raw, &root) != nil {
+		return nil
+	}
+	hooks, _ := root["hooks"].(map[string]any)
+	checks := []struct{ event, marker string }{
+		{"SessionStart", "satelle hook context"},
+		{"UserPromptSubmit", "satelle hook prompt"},
+		{"Stop", "satelle hook stopcheck"},
+	}
+	var findings []ScaffoldFinding
+	for _, c := range checks {
+		ev := hooks[c.event]
+		if !hookEventHasMarker(ev, c.marker) || hookEventHasMarker(ev, "--harness grok") {
+			continue
+		}
+		findings = append(findings, ScaffoldFinding{
+			Path:   grokHooksRel,
+			Kind:   "command",
+			Detail: fmt.Sprintf("%s command is missing --harness grok", c.event),
+		})
+	}
+	return findings
 }
 
 func driftHarnessSettings(repoRoot, absPath, harness, relPath string) []ScaffoldFinding {

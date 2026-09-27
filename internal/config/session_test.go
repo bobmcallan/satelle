@@ -44,26 +44,51 @@ func TestPublishSessionIgnoresEmpty(t *testing.T) {
 
 func TestPublishSessionModelRoundTrip(t *testing.T) {
 	t.Setenv("SATELLE_HOME", t.TempDir())
-	model, exe := ResolveSessionModel("sess-A", "in-loop")
-	if model != "" || exe != "" {
-		t.Fatalf("unpublished pair must resolve empty, got (%q, %q)", model, exe)
+	model, exe, reason := ResolveSessionModel("sess-A", "in-loop")
+	if model != "" || exe != "" || reason != "" {
+		t.Fatalf("unpublished pair must resolve empty, got (%q, %q, %q)", model, exe, reason)
 	}
-	PublishSessionModel("sess-A", "in-loop", "claude-opus-5-5", "claude")
-	model, exe = ResolveSessionModel("sess-A", "in-loop")
-	if model != "claude-opus-5-5" || exe != "claude" {
-		t.Fatalf("got (%q, %q), want (claude-opus-5-5, claude)", model, exe)
+	PublishSessionModel("sess-A", "in-loop", "claude-opus-5-5", "claude", "")
+	model, exe, reason = ResolveSessionModel("sess-A", "in-loop")
+	if model != "claude-opus-5-5" || exe != "claude" || reason != "" {
+		t.Fatalf("got (%q, %q, %q), want (claude-opus-5-5, claude, \"\")", model, exe, reason)
 	}
 	// A different role for the same session is a distinct slot.
-	if model, _ := ResolveSessionModel("sess-A", "orchestrator"); model != "" {
+	if model, _, _ := ResolveSessionModel("sess-A", "orchestrator"); model != "" {
 		t.Fatalf("orchestrator role must not see the in-loop publish, got %q", model)
 	}
 }
 
 func TestPublishSessionModelIgnoresEmpty(t *testing.T) {
 	t.Setenv("SATELLE_HOME", t.TempDir())
-	PublishSessionModel("", "in-loop", "opus", "claude")
-	PublishSessionModel("sess-A", "", "opus", "claude")
-	if model, _ := ResolveSessionModel("sess-A", "in-loop"); model != "" {
+	PublishSessionModel("", "in-loop", "opus", "claude", "")
+	PublishSessionModel("sess-A", "", "opus", "claude", "")
+	if model, _, _ := ResolveSessionModel("sess-A", "in-loop"); model != "" {
 		t.Fatalf("empty sessionID/role must not publish, got %q", model)
+	}
+}
+
+func TestPublishSessionModelReasonRoundTrip(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	PublishSessionModel("sess-B", "in-loop", "unknown", "grok", "grok's hook payload carries no model, so the in-loop tier is unknown")
+	model, exe, reason := ResolveSessionModel("sess-B", "in-loop")
+	if model != "unknown" || exe != "grok" || reason == "" {
+		t.Fatalf("got (%q, %q, %q), want (unknown, grok, non-empty reason)", model, exe, reason)
+	}
+}
+
+func TestResolveSessionModelReadsLegacyTwoFieldFile(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	dir := sessionModelDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-change rows carried no third (reason) field.
+	if err := os.WriteFile(dir+"/"+sessionModelFile("sess-legacy", "in-loop"), []byte("claude-opus-5-5\tclaude\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model, exe, reason := ResolveSessionModel("sess-legacy", "in-loop")
+	if model != "claude-opus-5-5" || exe != "claude" || reason != "" {
+		t.Fatalf("got (%q, %q, %q), want (claude-opus-5-5, claude, \"\")", model, exe, reason)
 	}
 }

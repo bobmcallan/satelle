@@ -43,12 +43,16 @@ func TestInLoopHarnessFromEnv(t *testing.T) {
 
 func TestHarnessFromHookEvent(t *testing.T) {
 	fixtures := map[string]string{
-		"claude_bash":       HarnessClaude,
-		"claude_edit":       HarnessClaude,
-		"grok_bash":         HarnessGrok,
-		"grok_edit":         HarnessGrok,
-		"codex_shell":       HarnessCodex,
-		"codex_apply_patch": HarnessCodex,
+		"claude_bash":        HarnessClaude,
+		"claude_edit":        HarnessClaude,
+		"grok_bash":          HarnessGrok,
+		"grok_edit":          HarnessGrok,
+		"grok_session_start": HarnessGrok, // real capture, sty_719c4a7b AC1/AC3
+		"grok_prompt_submit": HarnessGrok, // real capture — the AC3 regression case
+		"grok_pre_tool_use":  HarnessGrok, // real capture
+		"grok_stop":          HarnessGrok, // real capture
+		"codex_shell":        HarnessCodex,
+		"codex_apply_patch":  HarnessCodex,
 	}
 	for name, want := range fixtures {
 		b, err := os.ReadFile(filepath.Join("testdata", "hooks", name+".json"))
@@ -60,12 +64,14 @@ func TestHarnessFromHookEvent(t *testing.T) {
 		}
 	}
 	for name, raw := range map[string]string{
-		"empty":           `{}`,
-		"null tool_input": `{"tool_input":null}`,
-		"unrelated":       `{"foo":1}`,
-		"bare snake":      `{"tool_input":{"file_path":"/x.go"}}`,
-		"both keys":       `{"tool_input":{},"toolInput":{}}`,
-		"not json":        `nope`,
+		"empty":                        `{}`,
+		"null tool_input":              `{"tool_input":null}`,
+		"unrelated":                    `{"foo":1}`,
+		"bare snake":                   `{"tool_input":{"file_path":"/x.go"}}`,
+		"both keys":                    `{"tool_input":{},"toolInput":{}}`,
+		"not json":                     `nope`,
+		"bare permission_mode":         `{"permission_mode":"default"}`,
+		"permission_mode + tool_input": `{"permission_mode":"default","tool_input":{"file_path":"/x.go"}}`,
 	} {
 		if got := HarnessFromHookEvent([]byte(raw)); got != HarnessUnknown {
 			t.Errorf("%s: HarnessFromHookEvent = %q, want unknown", name, got)

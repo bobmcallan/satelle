@@ -114,6 +114,15 @@ const (
 	DispatchStepEnv  = "SATELLE_DISPATCH_STEP"
 	DispatchItemEnv  = "SATELLE_DISPATCH_ITEM"
 
+	// SpawnEnv marks every process satelle's own buildRequest assembles — the
+	// one seam every isolated dispatch, live session and step-summary run
+	// through — as satelle's own spawn rather than the in-loop driving session
+	// (sty_719c4a7b AC4). Unlike DispatchAgentEnv/StepEnv/ItemEnv it carries no
+	// agent/step/item context (a step summary has no PreToolUse edit grant to
+	// scope), so it exists only for bindSessionID's isDispatchedProcess check —
+	// never for editPermitted, which still needs the three-tuple.
+	SpawnEnv = "SATELLE_DISPATCH_SPAWN"
+
 	// Relay marker environment keys identify a rework-relay coder spawn to
 	// harness hooks (sty_7567f047). Distinct from SATELLE_DISPATCH_*: the
 	// dispatch branch requires InFlight, and the relay runs at a committed

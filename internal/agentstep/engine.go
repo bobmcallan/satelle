@@ -2082,6 +2082,18 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 	if sid := strings.TrimSpace(os.Getenv(config.SessionEnv)); sid != "" {
 		req.Env[config.SessionEnv] = sid
 	}
+	// Every live session satelle itself opens — the rework relay's coder AND
+	// consultant alike — is a dispatch, not the in-loop driver, even though it
+	// inherits the driver's SATELLE_SESSION stamp above (sty_719c4a7b AC4): a
+	// live session's own hooks otherwise see that inherited id with no
+	// dispatch marker, take isDispatchedProcess() as false, and publish role
+	// in-loop over the driver's own file. Marking it here — the one path both
+	// SessionRoleDriving and SessionRoleConsult opens go through — matches
+	// what agentstep.Invoke already does for a command/ACP ExpectPerform or
+	// ExpectVerdict child.
+	req.Env[config.DispatchAgentEnv] = name
+	req.Env[config.DispatchStepEnv] = item.Status
+	req.Env[config.DispatchItemEnv] = item.ID
 	req.Env = overlayScratchEnv(req.Env, scratchDir)
 	// A DRIVING session (the coder rework seat) may edit the tree,
 	// so it is the one that can leave debris; snapshot the untracked files at

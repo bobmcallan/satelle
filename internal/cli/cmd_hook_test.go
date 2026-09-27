@@ -540,8 +540,12 @@ func TestEmitPreToolUseDenyGrok(t *testing.T) {
 	}
 }
 
-// TestHarnessFromEvent (sty_5e4bc568 AC2): snake_case tool_input → claude;
-// camelCase-only toolInput → grok; turn_id → codex; ambiguous/empty → unknown,
+// TestHarnessFromEvent (sty_5e4bc568 AC2, sty_719c4a7b AC3): a snake_case
+// envelope corroborated by a .claude transcript or a Claude-only tool name →
+// claude; camelCase-only toolInput → grok; turn_id → codex; a bare
+// permission_mode with no such corroboration → unknown, because Grok's
+// Claude-compat shim echoes that key too (real captured grok payloads carry
+// it — see agentcli/testdata/hooks/README.md); ambiguous/empty → unknown,
 // never claude by default (sty_37fd5470). The deny shape for unknown stays
 // strict (TestDenyPreToolUseUnknownHarnessStaysStrict).
 func TestHarnessFromEvent(t *testing.T) {
@@ -550,7 +554,7 @@ func TestHarnessFromEvent(t *testing.T) {
 		raw  string
 		want string
 	}{
-		{"claude envelope", `{"permission_mode":"default","tool_input":{"file_path":"/x.go"}}`, "claude"},
+		{"claude envelope", `{"session_id":"s1","transcript_path":"/home/u/.claude/projects/p/s1.jsonl","hook_event_name":"PreToolUse","permission_mode":"default","tool_input":{"file_path":"/x.go"}}`, "claude"},
 		{"claude tool name", `{"tool_name":"Edit","tool_input":{"command":"git commit -m x"}}`, "claude"},
 		{"codex envelope", `{"turn_id":"t1","tool_input":{"command":"git commit -m x"}}`, "codex"},
 		{"grok camelCase", `{"toolInput":{"path":"internal/x.go"}}`, "grok"},
@@ -559,6 +563,8 @@ func TestHarnessFromEvent(t *testing.T) {
 		{"both present → unknown", `{"tool_input":{},"toolInput":{}}`, "unknown"},
 		{"empty", `{}`, "unknown"},
 		{"null tool_input", `{"tool_input":null}`, "unknown"},
+		{"bare permission_mode → unknown", `{"permission_mode":"default"}`, "unknown"},
+		{"permission_mode + tool_input, no transcript → unknown", `{"permission_mode":"default","tool_input":{"file_path":"/x.go"}}`, "unknown"},
 	}
 	for _, c := range cases {
 		if got := harnessFromEvent([]byte(c.raw)); got != c.want {

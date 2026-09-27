@@ -1,3 +1,18 @@
+## [0.0.554] - 2026-09-27
+
+### Fixed
+- **Every hook names its own harness, so a grok driver is no longer recorded as Claude.** The grok hook scaffold now passes `--harness grok` on SessionStart, UserPromptSubmit and Stop, as PreToolUse already did, and Stop now publishes the session like the other hooks. Harness sniffing no longer treats `permission_mode` or snake_case keys as proof of Claude: grok sends Claude-compatible aliases alongside its own camelCase keys, so grok is recognised by those keys or a `.grok/` transcript, and an envelope with nothing to go on is unknown. Tests use real captured grok hook payloads. (sty_719c4a7b)
+- **A dispatched agent never records itself as the driving session.** Every satelle-spawned process (one-shot, reviewer, rework relay, step summary) carries a spawn marker, and its hooks skip the in-loop publish, so a `claude -p` or ACP dispatch can no longer overwrite the driver's model file. (sty_719c4a7b)
+- **`session_model` rows carry the session id, and an unknown model says why.** The row records `session_id`, and a model the harness did not report is `unknown` with an adapter-named reason. Rows written before this still parse. (sty_719c4a7b)
+
+### Changed
+- **`satelle doctor` flags a grok hooks file missing `--harness grok`.** Heal: run `satelle init` in the repo, which rewrites `.grok/hooks/satelle.json`. (sty_719c4a7b)
+
+## [serve-v0.0.82] - 2026-09-27
+
+### Changed
+- **The service embeds the session-identity changes above.** Its behaviour is otherwise unchanged. (sty_719c4a7b)
+
 ## [0.0.553] - 2026-09-25
 
 ### Fixed

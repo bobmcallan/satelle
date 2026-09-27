@@ -746,9 +746,20 @@ func buildClaudeHookSettings(repoRoot string) []byte {
 	return append(b, '\n')
 }
 
+// withGrokHarness appends the explicit --harness grok flag to a satelle hook
+// command (sty_719c4a7b AC2). The installed hook then authoritatively names
+// its own harness on every invocation rather than leaning solely on the event
+// sniff, which stays correct even if a future grok payload shape changes.
+// "satelle reindex" is not a hook subcommand and is exempt.
+func withGrokHarness(cmd string) string {
+	return cmd + " --harness grok"
+}
+
 // buildGrokHookSettings returns the .grok/hooks/satelle.json scaffold bytes.
 // Matchers cover Grok-native tool ids and Claude aliases Grok maps (sty_2fad11b0).
-// repoRoot makes PreToolUse script paths absolute (cwd-safe).
+// repoRoot makes PreToolUse script paths absolute (cwd-safe). SessionStart,
+// UserPromptSubmit and Stop all pass --harness grok (sty_719c4a7b AC2);
+// PreToolUse already does via renderHookCommand's positional harness arg.
 func buildGrokHookSettings(repoRoot string) []byte {
 	hs := harnessHooks("grok")
 	doc := map[string]any{
@@ -756,7 +767,7 @@ func buildGrokHookSettings(repoRoot string) []byte {
 			"SessionStart": []any{
 				map[string]any{"hooks": []any{
 					map[string]any{"type": "command", "command": "satelle reindex"},
-					map[string]any{"type": "command", "command": "satelle hook context"},
+					map[string]any{"type": "command", "command": withGrokHarness("satelle hook context")},
 				}},
 			},
 			"PreToolUse": []any{
@@ -771,12 +782,12 @@ func buildGrokHookSettings(repoRoot string) []byte {
 			},
 			"UserPromptSubmit": []any{
 				map[string]any{"hooks": []any{
-					map[string]any{"type": "command", "command": promptHookCommand},
+					map[string]any{"type": "command", "command": withGrokHarness(promptHookCommand)},
 				}},
 			},
 			"Stop": []any{
 				map[string]any{"hooks": []any{
-					map[string]any{"type": "command", "command": stopcheckHookCommand},
+					map[string]any{"type": "command", "command": withGrokHarness(stopcheckHookCommand)},
 				}},
 			},
 		},
@@ -1029,6 +1040,38 @@ func reconcileHookFile(path string) ([]string, error) {
 // (kept for existing tests and call sites).
 func reconcileClaudeHooks(path string) ([]string, error) { return reconcileHookFile(path) }
 
+// retrofitGrokHarnessFlag appends --harness grok to an already-present
+// SessionStart/UserPromptSubmit/Stop satelle hook command that predates
+// sty_719c4a7b — the counterpart of ensureReinforcementHooks, which only
+// carries the flag on an event it adds fresh. Without this, `satelle init`
+// would never heal what doctor's driftGrokHarnessFlag reports on a repo whose
+// grok file already has all three events (just without the flag), leaving the
+// printed "run satelle init to heal" remediation false. Idempotent: a command
+// already carrying --harness (any value) is left alone.
+func retrofitGrokHarnessFlag(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	s := string(data)
+	var changed []string
+	for _, cmd := range []string{"satelle hook context", promptHookCommand, stopcheckHookCommand} {
+		re := regexp.MustCompile(`"` + regexp.QuoteMeta(cmd) + `"`)
+		if re.MatchString(s) {
+			s = re.ReplaceAllString(s, `"`+cmd+` --harness grok"`)
+			changed = append(changed, cmd+" -> +--harness grok")
+		}
+	}
+	if len(changed) == 0 {
+		return nil, nil
+	}
+	if err := os.WriteFile(path, []byte(s), 0o644); err != nil {
+		return nil, err
+	}
+	sort.Strings(changed)
+	return changed, nil
+}
+
 // The reinforcement hook commands (the PATH-prefixed form the scaffolds embed).
 // Kept as named constants so the HEAL that adds them to an already-initialized
 // repo appends exactly what a fresh init writes; the scaffold constants embed the
@@ -1069,13 +1112,21 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 	}
 	var added []string
 
+	// contextCmd/simpleCmd carry --harness grok when healing a grok file
+	// (sty_719c4a7b AC2) — a healed file must match what a fresh scaffold would
+	// have written, or doctor's drift check would immediately re-flag it.
+	contextCmd := "satelle hook context"
+	if harness == "grok" {
+		contextCmd = withGrokHarness(contextCmd)
+	}
+
 	// SessionStart: need context (and reindex alongside on a full scaffold add).
 	if !hookEventHasMarker(hooks["SessionStart"], "satelle hook context") &&
 		!hookEventHasMarker(hooks["SessionStart"], "satelle reindex") {
 		group := map[string]any{
 			"hooks": []any{
 				map[string]any{"type": "command", "command": "satelle reindex"},
-				map[string]any{"type": "command", "command": "satelle hook context"},
+				map[string]any{"type": "command", "command": contextCmd},
 			},
 		}
 		arr, _ := hooks["SessionStart"].([]any)
@@ -1085,7 +1136,7 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 		// reindex present but context missing — append context only.
 		group := map[string]any{
 			"hooks": []any{
-				map[string]any{"type": "command", "command": "satelle hook context"},
+				map[string]any{"type": "command", "command": contextCmd},
 			},
 		}
 		arr, _ := hooks["SessionStart"].([]any)
@@ -1142,9 +1193,13 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 		if hookEventHasMarker(hooks[rh.event], rh.marker) {
 			continue
 		}
+		cmd := rh.command
+		if harness == "grok" {
+			cmd = withGrokHarness(cmd)
+		}
 		group := map[string]any{
 			"hooks": []any{
-				map[string]any{"type": "command", "command": rh.command},
+				map[string]any{"type": "command", "command": cmd},
 			},
 		}
 		arr, _ := hooks[rh.event].([]any)
@@ -1325,6 +1380,17 @@ func healExistingHookFile(path, harness, repoRoot string) (updated []string, inc
 		return nil, nil, fmt.Errorf("init: reconcile %s: %w", path, err)
 	}
 	updated = append(updated, renames...)
+	if harness == "grok" {
+		// ensureReinforcementHooks only carries --harness grok on an event it
+		// ADDS fresh; a pre-sty_719c4a7b installed file already has
+		// SessionStart/UserPromptSubmit/Stop present and needs the flag
+		// retrofitted onto what's already there.
+		flagged, ferr := retrofitGrokHarnessFlag(path)
+		if ferr != nil {
+			return nil, nil, fmt.Errorf("init: retrofit harness flag %s: %w", path, ferr)
+		}
+		updated = append(updated, flagged...)
+	}
 	healed, err := ensureReinforcementHooks(path, harness, repoRoot)
 	if err != nil {
 		return nil, nil, fmt.Errorf("init: reinforce %s: %w", path, err)

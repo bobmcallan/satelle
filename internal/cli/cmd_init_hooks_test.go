@@ -289,6 +289,92 @@ func TestEnsureGrokHooksCreateReconcileIdempotent(t *testing.T) {
 	}
 }
 
+// TestBuildGrokHookSettingsPassesHarnessFlag pins AC2 (sty_719c4a7b): the
+// grok scaffold satelle init writes passes --harness grok on SessionStart,
+// UserPromptSubmit and Stop, alongside PreToolUse which already carries it
+// through renderHookCommand's positional harness argument.
+func TestBuildGrokHookSettingsPassesHarnessFlag(t *testing.T) {
+	repo := t.TempDir()
+	body := string(buildGrokHookSettings(repo))
+	var root map[string]any
+	if err := json.Unmarshal([]byte(body), &root); err != nil {
+		t.Fatal(err)
+	}
+	hooks := root["hooks"].(map[string]any)
+	for _, event := range []string{"SessionStart", "UserPromptSubmit", "Stop"} {
+		if !hookEventHasMarker(hooks[event], "--harness grok") {
+			t.Errorf("%s command missing --harness grok:\n%s", event, body)
+		}
+	}
+	// PreToolUse (gate + commitgate) already carries harness positionally.
+	if !hookEventHasMarker(hooks["PreToolUse"], "grok") {
+		t.Errorf("PreToolUse missing grok harness:\n%s", body)
+	}
+	// satelle reindex is not a hook subcommand and must not gain the flag.
+	if hookEventHasMarker(hooks["SessionStart"], "reindex --harness") {
+		t.Errorf("satelle reindex must not carry --harness:\n%s", body)
+	}
+}
+
+// TestHealGrokHooksRetrofitsHarnessFlag pins the heal half of AC2/AC7
+// (sty_719c4a7b): a pre-existing grok hooks file whose SessionStart,
+// UserPromptSubmit and Stop commands are already present but predate the
+// --harness grok flag gets it retrofitted by `satelle init`'s heal path — the
+// doctor drift check must not still fire, and the printed "run satelle init
+// to heal" remediation must actually be true.
+func TestHealGrokHooksRetrofitsHarnessFlag(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, filepath.FromSlash(grokHooksRel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	partial := `{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "satelle reindex" }, { "type": "command", "command": "satelle hook context" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook prompt" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook stopcheck" } ] }
+    ]
+  }
+}
+`
+	if err := os.WriteFile(path, []byte(partial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if fs := driftGrokHarnessFlag(repo); len(fs) != 3 {
+		t.Fatalf("pre-heal drift = %v, want 3 findings (SessionStart/UserPromptSubmit/Stop)", fs)
+	}
+	if _, _, err := healExistingHookFile(path, "grok", repo); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(path)
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		t.Fatal(err)
+	}
+	hooks := root["hooks"].(map[string]any)
+	for _, event := range []string{"SessionStart", "UserPromptSubmit", "Stop"} {
+		if !hookEventHasMarker(hooks[event], "--harness grok") {
+			t.Errorf("healed %s command missing --harness grok:\n%s", event, body)
+		}
+	}
+	if fs := driftGrokHarnessFlag(repo); len(fs) != 0 {
+		t.Errorf("post-heal must not still drift: %v", fs)
+	}
+	// Idempotent: healing again must not double-append the flag.
+	if _, _, err := healExistingHookFile(path, "grok", repo); err != nil {
+		t.Fatal(err)
+	}
+	body2, _ := os.ReadFile(path)
+	if strings.Count(string(body2), "--harness grok --harness grok") > 0 {
+		t.Fatalf("heal must be idempotent, got:\n%s", body2)
+	}
+}
+
 func TestEnsureProcessHooksBoth(t *testing.T) {
 	repo := t.TempDir()
 	home := t.TempDir()

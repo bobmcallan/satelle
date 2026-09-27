@@ -772,6 +772,27 @@ func TestSummariseScratchEnvAndCharter(t *testing.T) {
 	}
 }
 
+// TestSummariseCarriesSpawnMarker pins AC4 (sty_719c4a7b): the step-summary
+// dispatch goes through buildRequest directly (not Invoke, not
+// OpenSessionAsWithModel), so it never carried its own SATELLE_DISPATCH_*
+// three-tuple — its child process still inherits the driver's SATELLE_SESSION
+// via the OS environment, so without a marker its own hooks would publish
+// role in-loop over the driver's file. buildRequest now stamps
+// SATELLE_DISPATCH_SPAWN unconditionally, so isDispatchedProcess recognises
+// it even with no agent/step/item context.
+func TestSummariseCarriesSpawnMarker(t *testing.T) {
+	docs := fakeDocs{workflow: summaryWorkflow, skillBody: "summarise rubric", skillFound: true}
+	r := &fakeRunner{out: "the step recap"}
+	g := New(r, docs, "/repo", "")
+
+	if _, err := g.Summarise(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "in_progress", "done"); err != nil {
+		t.Fatal(err)
+	}
+	if r.got.Env[config.SpawnEnv] != "1" {
+		t.Fatalf("summariser request Env[%s] = %q, want %q; full env=%v", config.SpawnEnv, r.got.Env[config.SpawnEnv], "1", r.got.Env)
+	}
+}
+
 // TestSummariseScratchKeptOnMandatoryFailure (sty_e7aaf8b1 AC3, step-summariser
 // carve-out): when a MANDATORY step summary fails (here: a fail-fast deadline),
 // its scratch dir survives for diagnosis and a scratch_kept row is ledgered with

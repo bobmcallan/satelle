@@ -354,7 +354,14 @@ func TestInvokeExpectPerformCarriesDispatchMarkers(t *testing.T) {
 	}
 }
 
-func TestInvokeVerdictOmitsDispatchMarkers(t *testing.T) {
+// TestInvokeVerdictCarriesDispatchMarkers pins AC4 (sty_719c4a7b): a verdict
+// (reviewer) dispatch's child process inherits the driver's SATELLE_SESSION
+// from the OS environment exactly as a performer's does — composeEnv bases
+// every transport on os.Environ() regardless of Expect — so a verdict
+// dispatch must carry the same SATELLE_DISPATCH_* markers a performer does,
+// or its own hooks would publish role in-loop over the driver's file.
+func TestInvokeVerdictCarriesDispatchMarkers(t *testing.T) {
+	t.Setenv(config.SessionEnv, "sess-A")
 	r := &fakeRunner{out: `{"decision":"accept","notes":"ok"}`}
 	g := New(r, fakeDocs{workflow: testWorkflow}, "/repo", "")
 	res := g.Invoke(context.Background(), InvokeRequest{
@@ -368,9 +375,16 @@ func TestInvokeVerdictOmitsDispatchMarkers(t *testing.T) {
 	if res.Err != nil {
 		t.Fatal(res.Err)
 	}
-	for _, k := range []string{config.DispatchAgentEnv, config.DispatchStepEnv, config.DispatchItemEnv} {
-		if _, ok := r.got.Env[k]; ok {
-			t.Errorf("verdict request unexpectedly carries %s: %v", k, r.got.Env)
+	want := map[string]string{
+		"KEEP":                  "binding",
+		config.DispatchAgentEnv: "reviewer",
+		config.DispatchStepEnv:  "plan",
+		config.DispatchItemEnv:  "sty_mark",
+		config.SessionEnv:       "sess-A",
+	}
+	for k, v := range want {
+		if r.got.Env[k] != v {
+			t.Errorf("Env[%q] = %q, want %q; full env=%v", k, r.got.Env[k], v, r.got.Env)
 		}
 	}
 }

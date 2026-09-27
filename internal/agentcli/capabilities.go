@@ -88,6 +88,29 @@ func CapabilityTable() []AdapterCapabilities {
 	}
 }
 
+// ReasonForNoModel names why a hook-time in-loop publish found no model to
+// report for harness — the ModelInheritance reason of the first CapabilityTable
+// row whose adapter is this harness (any transport), since a hook payload only
+// carries the harness token, never the transport (sty_719c4a7b AC6). A harness
+// with every row available, or with no row at all, still gets an adapter-named
+// fallback — never a silent "unknown" with nothing behind it
+// (satelle-agent-agnostic §2).
+func ReasonForNoModel(harness string) string {
+	h := strings.TrimSpace(harness)
+	if h == "" {
+		h = HarnessUnknown
+	}
+	for _, a := range CapabilityTable() {
+		if !strings.HasPrefix(a.Adapter, h+" ") {
+			continue
+		}
+		if !a.ModelInheritance.Available {
+			return a.ModelInheritance.Reason
+		}
+	}
+	return h + ": model not reported by hook payload"
+}
+
 // capabilityColumns are the table headings, in cell order.
 var capabilityColumns = []string{"usage", "cache split", "resolved model", "model inheritance", "live session"}
 

@@ -84,23 +84,40 @@ var claudeToolNames = map[string]bool{
 // HarnessFromHookEvent classifies a hook event envelope, each adapter
 // fingerprinting its own shape:
 //
-//   - grok: camelCase toolInput with no snake_case tool_input.
 //   - codex: snake_case envelope carrying turn_id (Claude Code's envelope has
-//     no turn_id).
-//   - claude: snake_case envelope carrying a Claude-only field — permission_mode,
-//     a .claude transcript_path, or a Claude-only tool name.
+//     no turn_id). Checked first because it is unambiguous.
+//   - grok: any of its own camelCase-only field names — hookEventName,
+//     workspaceRoot, transcriptPath, permissionMode, a camelCase sessionId
+//     with no snake_case session_id, or a camelCase toolInput with no
+//     snake_case tool_input — or a transcript_path under /.grok/. Checked
+//     before the claude fingerprint below because real grok hook payloads
+//     carry Claude-compatible snake_case aliases (session_id,
+//     hook_event_name, permission_mode, transcript_path, tool_input)
+//     alongside grok's own camelCase keys — captured 2026-09-27 from a real
+//     grok CLI hook firing in this repo, sty_719c4a7b AC1/AC3; see
+//     testdata/hooks/README.md for exact provenance. So a snake_case alias
+//     riding alongside a camelCase key is never claude evidence.
+//   - claude: a snake_case envelope with none of the grok fingerprints above,
+//     carrying a .claude transcript_path or a Claude-only tool name.
+//     permission_mode alone is NOT sufficient — Grok's Claude-compat shim can
+//     echo that key too, so a bare {permission_mode} envelope is unknown.
 //   - anything else: unknown. Never claude by default.
 //
 // This is a sniff for unflagged invocations; the scaffolded wrapper's
 // --harness flag stays authoritative.
 func HarnessFromHookEvent(raw []byte) string {
 	var top struct {
-		ToolInputSnake json.RawMessage `json:"tool_input"`
-		ToolInputCamel json.RawMessage `json:"toolInput"`
-		TurnID         json.RawMessage `json:"turn_id"`
-		PermissionMode json.RawMessage `json:"permission_mode"`
-		Transcript     string          `json:"transcript_path"`
-		ToolName       string          `json:"tool_name"`
+		ToolInputSnake      json.RawMessage `json:"tool_input"`
+		ToolInputCamel      json.RawMessage `json:"toolInput"`
+		TurnID              json.RawMessage `json:"turn_id"`
+		Transcript          string          `json:"transcript_path"`
+		ToolName            string          `json:"tool_name"`
+		SessionIDSnake      json.RawMessage `json:"session_id"`
+		SessionIDCamel      json.RawMessage `json:"sessionId"`
+		HookEventNameCamel  json.RawMessage `json:"hookEventName"`
+		WorkspaceRoot       json.RawMessage `json:"workspaceRoot"`
+		TranscriptPathCamel json.RawMessage `json:"transcriptPath"`
+		PermissionModeCamel json.RawMessage `json:"permissionMode"`
 	}
 	if json.Unmarshal(raw, &top) != nil {
 		return HarnessUnknown
@@ -109,17 +126,24 @@ func HarnessFromHookEvent(raw []byte) string {
 		s := strings.TrimSpace(string(m))
 		return s != "" && s != "null"
 	}
-	snake, camel := present(top.ToolInputSnake), present(top.ToolInputCamel)
-	if camel && !snake {
-		return HarnessGrok
-	}
-	if camel && snake {
-		return HarnessUnknown
-	}
 	if present(top.TurnID) {
 		return HarnessCodex
 	}
-	if present(top.PermissionMode) || strings.Contains(top.Transcript, "/.claude/") || claudeToolNames[top.ToolName] {
+
+	toolInputSnake, toolInputCamel := present(top.ToolInputSnake), present(top.ToolInputCamel)
+	sessionIDSnake, sessionIDCamel := present(top.SessionIDSnake), present(top.SessionIDCamel)
+	if present(top.HookEventNameCamel) || present(top.WorkspaceRoot) ||
+		present(top.TranscriptPathCamel) || present(top.PermissionModeCamel) ||
+		(sessionIDCamel && !sessionIDSnake) || (toolInputCamel && !toolInputSnake) ||
+		strings.Contains(top.Transcript, "/.grok/") {
+		return HarnessGrok
+	}
+	if toolInputCamel && toolInputSnake {
+		// Both present with none of grok's other fingerprints above: cannot
+		// tell (sty_5e4bc568's ambiguous case).
+		return HarnessUnknown
+	}
+	if strings.Contains(top.Transcript, "/.claude/") || claudeToolNames[top.ToolName] {
 		return HarnessClaude
 	}
 	return HarnessUnknown

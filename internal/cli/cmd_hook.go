@@ -351,6 +351,11 @@ session holds the seat.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
+			// Bind identity (and, unless this process is a dispatch, publish the
+			// in-loop model) before the stop question — the Stop event is one of
+			// the three the scaffold now names --harness on (sty_719c4a7b AC1/AC2),
+			// and stays fail-open: bindSessionID never errors.
+			_ = bindSessionID(raw)
 			return runHookStopcheck(raw, cmd.OutOrStdout())
 		},
 	}
@@ -359,6 +364,12 @@ session holds the seat.`,
 	// --harness claude|grok|codex; empty falls back to harnessFromEvent.
 	gate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex — deny envelope (default: sniff event)")
 	commitgate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex — deny envelope (default: sniff event)")
+	// Same explicit --harness on prompt/stopcheck (sty_719c4a7b AC2): the
+	// installed hook names its own harness rather than relying only on the
+	// event sniff, so bindSessionID's in-loop publish stays correct even if a
+	// future payload shape changes.
+	prompt.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex — in-loop publish (default: sniff event)")
+	stopcheck.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex — in-loop publish (default: sniff event)")
 	explain := &cobra.Command{
 		Use:   "explain",
 		Short: "Show how the PreToolUse model rule would decide for a payload",
@@ -485,18 +496,48 @@ func sessionIDFromHook(raw []byte) string {
 // bindSessionID is the hook identity: prefer SATELLE_SESSION (dispatch and
 // operator stamp) so a performer inherits the lease stamp; otherwise take the
 // harness payload and publish it for a later Acquire in this process tree.
+//
+// The identity is always bound — a dispatched performer still needs the lease
+// stamp — but the in-loop MODEL publish is skipped for a dispatched process
+// (sty_719c4a7b AC4): SATELLE_SESSION is inherited from the driver that
+// dispatched it, so an unguarded publish here would overwrite the DRIVER's own
+// in-loop file with the dispatch's harness/model instead of recording
+// anything about the dispatch itself.
 func bindSessionID(raw []byte) string {
+	dispatched := isDispatchedProcess()
 	if id := config.SessionFromEnv(); id != "" {
 		config.PublishSession(id)
-		publishInLoopModel(raw, id)
+		if !dispatched {
+			publishInLoopModel(raw, id)
+		}
 		return id
 	}
 	if id := sessionIDFromHook(raw); id != "" {
 		config.PublishSession(id)
-		publishInLoopModel(raw, id)
+		if !dispatched {
+			publishInLoopModel(raw, id)
+		}
 		return id
 	}
 	return config.ResolveSession()
+}
+
+// isDispatchedProcess reports whether this process is a satelle-dispatched
+// agent/reviewer/live-session/step-summary rather than the in-loop driving
+// session (sty_719c4a7b AC4): agentstep.Invoke and OpenSessionAsWithModel set
+// SATELLE_DISPATCH_AGENT/STEP/ITEM on every child they spawn, and every
+// request satelle's buildRequest assembles — including a step-summary run,
+// which carries no agent/step/item three-tuple of its own — also carries
+// SATELLE_DISPATCH_SPAWN (config.SpawnEnv). Either marker sits alongside the
+// inherited SATELLE_SESSION stamp bindSessionID otherwise treats as this
+// process's own identity.
+func isDispatchedProcess() bool {
+	for _, k := range []string{config.DispatchAgentEnv, config.DispatchStepEnv, config.DispatchItemEnv, config.SpawnEnv} {
+		if strings.TrimSpace(os.Getenv(k)) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // publishInLoopModel captures this hook invocation's caller model as the
@@ -510,18 +551,28 @@ func bindSessionID(raw []byte) string {
 // never hardcoded to "claude", so a wrapper or a non-Claude harness is not
 // misreported as Claude's own executable (architecture review advisory,
 // sty_7069bced). Best-effort and fail-open: an unresolvable model publishes
-// "unknown" rather than skipping the write, so the resolver sees a definite
-// "nothing reported" instead of stale/absent data.
+// "unknown" (plus an adapter-named reason, sty_719c4a7b AC6) rather than
+// skipping the write, so the resolver sees a definite "nothing reported"
+// instead of stale/absent data.
 func publishInLoopModel(raw []byte, sessionID string) {
-	model := strings.TrimSpace(resolveCaller(raw, osCallerFS{}).Model)
-	if model == "" {
-		model = "unknown"
-	}
 	h := hookHarnessFlag
 	if h == "" {
 		h = harnessFromEvent(raw)
 	}
-	config.PublishSessionModel(sessionID, verb.SessionModelRoleInLoop, model, h)
+	model, reason := resolveInLoopModel(raw, h)
+	config.PublishSessionModel(sessionID, verb.SessionModelRoleInLoop, model, h, reason)
+}
+
+// resolveInLoopModel is publishInLoopModel's pure half: the caller's reported
+// model when resolveCaller finds one, else the explicit "unknown" marker plus
+// the adapter-named reason from agentcli's capability table for harness
+// (sty_719c4a7b AC6) — never a silent zero, never a Claude default
+// (satelle-agent-agnostic §2).
+func resolveInLoopModel(raw []byte, harness string) (model, reason string) {
+	if m := strings.TrimSpace(resolveCaller(raw, osCallerFS{}).Model); m != "" {
+		return m, ""
+	}
+	return "unknown", agentcli.ReasonForNoModel(harness)
 }
 
 // resolveSeat is the shared seat lookup. When touch is true and a seat is

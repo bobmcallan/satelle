@@ -30,6 +30,52 @@ func TestDetectScaffoldDrift_CleanAfterWrite(t *testing.T) {
 	}
 }
 
+// TestDetectScaffoldDrift_GrokMissingHarnessFlag pins AC7 (sty_719c4a7b):
+// doctor reports a deployed grok hooks file whose SessionStart,
+// UserPromptSubmit or Stop command omits --harness grok, even though the
+// freshly built scaffold (asserted clean above) never does.
+func TestDetectScaffoldDrift_GrokMissingHarnessFlag(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".grok", "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := `{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "satelle reindex" }, { "type": "command", "command": "satelle hook context" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook prompt" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook stopcheck" } ] }
+    ]
+  }
+}
+`
+	if err := os.WriteFile(filepath.Join(repo, filepath.FromSlash(grokHooksRel)), []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fs := DetectScaffoldDrift(repo)
+	var events []string
+	for _, f := range fs {
+		if f.Path == grokHooksRel {
+			events = append(events, f.Detail)
+		}
+	}
+	for _, want := range []string{"SessionStart", "UserPromptSubmit", "Stop"} {
+		found := false
+		for _, d := range events {
+			if strings.Contains(d, want) && strings.Contains(d, "--harness grok") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected a --harness grok finding naming %s, got: %v", want, events)
+		}
+	}
+}
+
 func TestDetectScaffoldDrift_LegacyInlineCommand(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".claude"), 0o755); err != nil {

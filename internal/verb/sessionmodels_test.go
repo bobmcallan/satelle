@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -18,7 +19,7 @@ import (
 func TestStoryCreateRecordsCreatorSessionModel(t *testing.T) {
 	t.Setenv("SATELLE_HOME", t.TempDir())
 	t.Setenv(config.SessionEnv, "sess-creator")
-	config.PublishSessionModel("sess-creator", verb.SessionModelRoleInLoop, "claude-opus-5-5", "claude")
+	config.PublishSessionModel("sess-creator", verb.SessionModelRoleInLoop, "claude-opus-5-5", "claude", "")
 	wire(t)
 
 	var created workitem.Item
@@ -56,7 +57,7 @@ func TestStoryCreateRecordsCreatorSessionModelUnknown(t *testing.T) {
 func TestStorySetEngagingRecordsInLoopSessionModel(t *testing.T) {
 	wireWithWorkflows(t, singleStoryWF)
 	t.Setenv(config.SessionEnv, "sess-engage-1")
-	config.PublishSessionModel("sess-engage-1", verb.SessionModelRoleInLoop, "sonnet", "claude")
+	config.PublishSessionModel("sess-engage-1", verb.SessionModelRoleInLoop, "sonnet", "claude", "")
 
 	var a workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "First", "category": "feature"}), &a)
@@ -99,8 +100,8 @@ func TestSessionModelsLatestPerRole(t *testing.T) {
 		"title": "T", "body": "b", "acceptance": "1. x", "category": "feature",
 	}), &created)
 
-	verb.RecordSessionModel(context.Background(), created.ID, "", verb.SessionModelRoleInLoop, "haiku", "claude")
-	verb.RecordSessionModel(context.Background(), created.ID, "", verb.SessionModelRoleInLoop, "opus", "claude")
+	verb.RecordSessionModel(context.Background(), created.ID, "", verb.SessionModelRoleInLoop, "haiku", "claude", "sess-x", "")
+	verb.RecordSessionModel(context.Background(), created.ID, "", verb.SessionModelRoleInLoop, "opus", "claude", "sess-x", "")
 
 	inLoop, _ := verb.SessionModels(context.Background(), created.ID)
 	if inLoop.Model != "opus" {
@@ -120,8 +121,8 @@ func TestSessionModelsIgnoresRetiredOrchestratorRow(t *testing.T) {
 		"title": "T", "body": "b", "acceptance": "1. x", "category": "feature",
 	}), &created)
 
-	verb.RecordSessionModel(context.Background(), created.ID, "", "orchestrator", "opus", "claude")
-	verb.RecordSessionModel(context.Background(), created.ID, "", verb.SessionModelRoleInLoop, "haiku", "claude")
+	verb.RecordSessionModel(context.Background(), created.ID, "", "orchestrator", "opus", "claude", "sess-x", "")
+	verb.RecordSessionModel(context.Background(), created.ID, "", verb.SessionModelRoleInLoop, "haiku", "claude", "sess-x", "")
 
 	inLoop, _ := verb.SessionModels(context.Background(), created.ID)
 	if inLoop.Model != "haiku" {
@@ -132,6 +133,61 @@ func TestSessionModelsIgnoresRetiredOrchestratorRow(t *testing.T) {
 	})
 	if model != "haiku" || source != config.ModelSourceInheritedInLoop {
 		t.Fatalf("SelectModel = %q/%q, want haiku/inherited-in-loop", model, source)
+	}
+}
+
+// TestRecordSessionModelCarriesSessionID pins AC5 (sty_719c4a7b): every
+// session_model ledger row records the session id that reported it, so the
+// column can be traced back to a driver rather than only a role/model pair.
+func TestRecordSessionModelCarriesSessionID(t *testing.T) {
+	db := wire(t)
+	ctx := context.Background()
+	var created workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{
+		"title": "T", "body": "b", "acceptance": "1. x", "category": "feature",
+	}), &created)
+
+	verb.RecordSessionModel(ctx, created.ID, "", verb.SessionModelRoleInLoop, "grok-4.7", "grok", "01a0d2d8", "")
+
+	entries, err := db.Ledger.ListByStory(ctx, created.ID, ledger.KindSessionModel)
+	if err != nil {
+		t.Fatalf("ListByStory: %v", err)
+	}
+	var row struct {
+		SessionID string `json:"session_id"`
+		Reason    string `json:"reason"`
+	}
+	found := false
+	for _, e := range entries {
+		if json.Unmarshal(e.Payload, &row) == nil && row.SessionID == "01a0d2d8" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no session_model row carried session_id=01a0d2d8, entries=%+v", entries)
+	}
+}
+
+// TestSessionModelsParsesLegacyRowWithoutSessionID: a row written before
+// sty_719c4a7b (no session_id/reason keys) still parses — the new fields are
+// additive, not a breaking schema change.
+func TestSessionModelsParsesLegacyRowWithoutSessionID(t *testing.T) {
+	db := wire(t)
+	ctx := context.Background()
+	var created workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{
+		"title": "T", "body": "b", "acceptance": "1. x", "category": "feature",
+	}), &created)
+
+	legacy, _ := json.Marshal(map[string]string{"role": verb.SessionModelRoleInLoop, "model": "unknown", "executable": "claude"})
+	if _, err := db.Ledger.Append(ctx, ledger.AppendInput{
+		StoryID: created.ID, Kind: ledger.KindSessionModel, Payload: legacy,
+	}, time.Now()); err != nil {
+		t.Fatalf("append legacy row: %v", err)
+	}
+	inLoop, _ := verb.SessionModels(ctx, created.ID)
+	if inLoop.Model != "unknown" || inLoop.Executable != "claude" {
+		t.Fatalf("legacy row must still parse, got %+v", inLoop)
 	}
 }
 

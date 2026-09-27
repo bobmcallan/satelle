@@ -39,7 +39,7 @@ func TestMain(m *testing.M) {
 	// one sets it itself via t.Setenv.
 	for _, k := range []string{
 		config.DispatchAgentEnv, config.DispatchStepEnv, config.DispatchItemEnv,
-		config.RelayBindingEnv, config.RelayItemEnv,
+		config.RelayBindingEnv, config.RelayItemEnv, config.SpawnEnv,
 	} {
 		_ = os.Unsetenv(k)
 	}
