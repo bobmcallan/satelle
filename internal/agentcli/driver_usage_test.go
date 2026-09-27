@@ -201,6 +201,26 @@ func TestGrokDriverSnapshotUnreadable(t *testing.T) {
 	}
 }
 
+// TestGrokDriverSnapshotFirstTurnNotFlushed pins the dogfood case found at
+// release: grok writes usage.json when a turn ends, so a session directory
+// with no usage.json is a session still in its first turn — available with
+// nothing counted yet and flagged as possibly undercounting, not unreadable.
+func TestGrokDriverSnapshotFirstTurnNotFlushed(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("GROK_HOME", home)
+	repo := "/home/example/Development/satelle"
+	if err := os.MkdirAll(filepath.Join(home, "sessions", grokRepoDirName(repo), "sess-first-turn"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	snap := SessionUsageSnapshot(HarnessGrok, "sess-first-turn", repo)
+	if !snap.Available || !snap.MayUndercountInFlightTurn || snap.Turns != 0 || snap.FreshInputTokens != 0 {
+		t.Fatalf("snapshot = %+v, want available, zero turns, MayUndercountInFlightTurn", snap)
+	}
+	if !strings.HasPrefix(snap.CostUnavailableReason, "grok:") {
+		t.Fatalf("CostUnavailableReason = %q, want an adapter-named grok: reason", snap.CostUnavailableReason)
+	}
+}
+
 // TestCodexDriverSnapshotDelta pins AC2 for codex against a real rollout
 // capture that holds exactly one completed turn (one token_count event):
 // snapshot A on the prefix before that event (session_meta + turn_context

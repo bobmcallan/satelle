@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -256,6 +258,17 @@ func grokDriverSnapshot(sessionID, repoRoot string) DriverSnapshot {
 	snap := DriverSnapshot{SessionID: sessionID, Executable: HarnessGrok}
 	path := filepath.Join(grokHomeDir(), "sessions", grokRepoDirName(repoRoot), sessionID, "usage.json")
 	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		if info, derr := os.Stat(filepath.Dir(path)); derr == nil && info.IsDir() {
+			// grok writes usage.json when a turn ends, so a session directory
+			// without it is a session still inside its first turn: nothing
+			// flushed yet, and that turn may be the one making this call.
+			snap.Available = true
+			snap.MayUndercountInFlightTurn = true
+			snap.CostUnavailableReason = "grok: first turn not yet flushed to usage.json"
+			return snap
+		}
+	}
 	if err != nil {
 		snap.UnavailableReason = fmt.Sprintf("grok: session usage.json unreadable: %v", err)
 		snap.CostUnavailableReason = snap.UnavailableReason

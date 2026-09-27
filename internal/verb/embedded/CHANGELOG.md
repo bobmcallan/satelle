@@ -1,3 +1,13 @@
+## [0.0.558] - 2026-09-28
+
+### Fixed
+- **A grok session still in its first turn reads as "nothing yet", not unreadable.** grok writes `usage.json` when a turn ends, so a session directory without it is a session inside its first turn; its driver row is now available with zero usage so far instead of an unreadable-record row. (sty_81caa41b)
+
+## [serve-v0.0.86] - 2026-09-28
+
+### Fixed
+- **The service embeds the grok first-turn fix above.** (sty_81caa41b)
+
 ## [0.0.557] - 2026-09-28
 
 ### Fixed
