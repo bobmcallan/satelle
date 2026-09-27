@@ -41,6 +41,29 @@ func TestRowTokensRender(t *testing.T) {
 	}
 }
 
+// TestRowCostUSDRender pins the $ column rendering (sty_c4df7376): a known
+// cost prints as a dollar figure, an unknown one prints "unknown" — never a
+// confident $0. costTotalLabel additionally names how many rows were uncosted
+// when the set is a mix.
+func TestRowCostUSDRender(t *testing.T) {
+	known := 0.0095
+	if got := rowCostUSD(&known); got != "$0.0095" {
+		t.Errorf("rowCostUSD(known) = %q, want $0.0095", got)
+	}
+	if got := rowCostUSD(nil); got != "unknown" {
+		t.Errorf("rowCostUSD(nil) = %q, want unknown", got)
+	}
+	if got := costTotalLabel(0, 0, 3); got != "unknown" {
+		t.Errorf("costTotalLabel(no costed rows) = %q, want unknown", got)
+	}
+	if got := costTotalLabel(0.1095, 2, 0); got != "$0.1095" {
+		t.Errorf("costTotalLabel(all costed) = %q, want $0.1095", got)
+	}
+	if got := costTotalLabel(0.1095, 2, 1); got != "$0.1095 (1 rows unknown)" {
+		t.Errorf("costTotalLabel(mixed) = %q, want $0.1095 (1 rows unknown)", got)
+	}
+}
+
 // TestStepSelfReportNudge pins the step-edge advisory (sty_56aae77a AC3): it
 // names the previous status on a real change, and is suppressed when a report
 // already exists or inputs are empty (title-only / no-op sets never call it).

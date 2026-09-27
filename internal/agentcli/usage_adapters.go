@@ -62,6 +62,13 @@ func claudeUsageFromMap(raw map[string]any, adapter string) *UsageResult {
 	return u
 }
 
+// grokUSDPerTick is grok's costUsdTicks unit: 1 tick = 1e-10 USD. Confirmed
+// against the real captures — grok_acp.jsonl's costUsdTicks:94540400 and
+// grok_json.json's total_cost_usd_ticks:44769840 both match their sibling
+// dollar figure (0.0094540400 / 0.004476984) at this factor. This is the
+// provider's own reporting unit, not a price satelle assigns.
+const grokUSDPerTick = 1e-10
+
 // grokUsageFromMap maps grok's camelCase usage, which only the ACP transport
 // uses (session/prompt result._meta.usage, turn_completed). inputTokens
 // includes the cached share (19663 = 11855 fresh + 7808 read), so
@@ -91,6 +98,12 @@ func grokUsageFromMap(raw map[string]any) *UsageResult {
 		u.FreshInputTokens = max(in-read-write, 0)
 	}
 	u.TotalTokens = trustedTotal(intValue(raw["totalTokens"]), in+out)
+	if ticks, ok := raw["costUsdTicks"]; ok {
+		cost := floatValue(ticks) * grokUSDPerTick
+		u.CostUSD = &cost
+	} else {
+		u.CostUnavailableReason = "acp: _meta.usage carries no costUsdTicks"
+	}
 	return u
 }
 
@@ -155,9 +168,11 @@ func hasAnyKey(m map[string]any, keys ...string) bool {
 }
 
 // unavailableUsage builds the explicit "no usage" result, naming the adapter
-// and why. Model stays unavailable-marked by the caller when appropriate.
+// and why. Model stays unavailable-marked by the caller when appropriate. No
+// tokens means no cost either, so CostUnavailableReason mirrors the same why.
 func unavailableUsage(adapter, why string) UsageResult {
-	return UsageResult{UnavailableReason: fmt.Sprintf("%s adapter: %s", adapter, why)}
+	reason := fmt.Sprintf("%s adapter: %s", adapter, why)
+	return UsageResult{UnavailableReason: reason, CostUnavailableReason: reason}
 }
 
 // jsonlUsage scans a JSONL stdout (codex exec --json, grok streaming-json,
@@ -219,6 +234,21 @@ func addUsage(a, b UsageResult) UsageResult {
 	a.ModelResolved = KeepModel(a.ModelResolved, b.ModelResolved)
 	if len(a.Models) == 0 {
 		a.Models = b.Models
+	}
+	// Cost sums only the turns that reported one; an all-nil sum stays nil
+	// rather than becoming a measured zero, keeping the later turn's reason.
+	if a.CostUSD != nil || b.CostUSD != nil {
+		var sum float64
+		if a.CostUSD != nil {
+			sum += *a.CostUSD
+		}
+		if b.CostUSD != nil {
+			sum += *b.CostUSD
+		}
+		a.CostUSD = &sum
+		a.CostUnavailableReason = ""
+	} else {
+		a.CostUnavailableReason = b.CostUnavailableReason
 	}
 	return a
 }

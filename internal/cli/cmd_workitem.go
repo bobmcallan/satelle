@@ -822,12 +822,13 @@ before the fresh/cache-write/cache-read split (sty_363eaf55) report as
 					return err
 				}
 				rw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-				fmt.Fprintln(rw, "SKILL\tINVOCATIONS\tFRESH\tCACHE-WRITE\tCACHE-READ\tUNSPLIT\tTOTAL IN\tTOTAL OUT\tAVG SYS BYTES\tAVG PAYLOAD BYTES")
+				fmt.Fprintln(rw, "SKILL\tINVOCATIONS\tFRESH\tCACHE-WRITE\tCACHE-READ\tUNSPLIT\tTOTAL IN\tTOTAL OUT\tAVG SYS BYTES\tAVG PAYLOAD BYTES\t$")
 				for _, r := range rollup.Rows {
-					fmt.Fprintf(rw, "%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
+					fmt.Fprintf(rw, "%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",
 						r.Skill, r.Invocations, r.FreshTokens, r.CacheWriteTokens, r.CacheReadTokens,
 						r.UnsplitTokens, r.TotalInputTokens, r.TotalOutputTokens,
-						r.AvgSystemPromptBytes, r.AvgPayloadBytes)
+						r.AvgSystemPromptBytes, r.AvgPayloadBytes,
+						costTotalLabel(r.TotalCostUSD, r.Invocations-r.UncostedRows, r.UncostedRows))
 				}
 				if err := rw.Flush(); err != nil {
 					return err
@@ -846,21 +847,23 @@ before the fresh/cache-write/cache-read split (sty_363eaf55) report as
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			// Dispatched/reviewed invocations — the precise sub-process cost.
 			// Unreported usage renders as — (sty_56aae77a), never a confident 0.
-			fmt.Fprintln(w, "TRANSITION\tSTEP\tMODEL\tTOKENS in/out\tTOTAL\tDURATION")
+			fmt.Fprintln(w, "TRANSITION\tSTEP\tMODEL\tTOKENS in/out\tTOTAL\tDURATION\t$")
 			for _, r := range sc.Rows {
 				step := r.Agent
 				if r.Skill != "" {
 					step = r.Skill
 				}
-				fmt.Fprintf(w, "%s→%s\t%s\t%s\t%s\t%s\t%s\n",
+				fmt.Fprintf(w, "%s→%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 					r.From, r.To, step, ledger.ModelLabel(r.Model, r.ModelResolved),
 					rowTokensIO(r.TokensIn, r.TokensOut, r.UsageAvailable),
 					rowTokensTotal(r.TokensTotal, r.UsageAvailable),
-					fmtDurationMs(r.DurationMs))
+					fmtDurationMs(r.DurationMs),
+					rowCostUSD(r.CostUSD))
 			}
-			fmt.Fprintf(w, "TOTAL\t\t\t\t%s\t%s\n",
+			fmt.Fprintf(w, "TOTAL\t\t\t\t%s\t%s\t%s\n",
 				measuredTotalLabel(sc.TotalTokens, sc.MeasuredRows, sc.UnmeasuredRows),
-				fmtDurationMs(sc.TotalDurationMs))
+				fmtDurationMs(sc.TotalDurationMs),
+				costTotalLabel(sc.TotalCostUSD, sc.CostedRows, sc.UncostedRows))
 			if err := w.Flush(); err != nil {
 				return err
 			}
@@ -999,6 +1002,28 @@ func measuredTotalLabel(totalTokens, measured, unmeasured int) string {
 	}
 	return fmt.Sprintf("%d (measured; %d of %d invocations unreported)",
 		totalTokens, unmeasured, measured+unmeasured)
+}
+
+// rowCostUSD renders a row's $ column. Nil means the provider reported no
+// cost — "unknown", never a confident $0 (sty_c4df7376).
+func rowCostUSD(cost *float64) string {
+	if cost == nil {
+		return "unknown"
+	}
+	return fmt.Sprintf("$%.4f", *cost)
+}
+
+// costTotalLabel renders a TOTAL/rollup $ figure. costed==0 means nothing in
+// the set priced at all — unknown, never $0. A nonzero uncosted count prints
+// inline so the total is never mistaken for the full set's cost.
+func costTotalLabel(total float64, costed, uncosted int) string {
+	if costed == 0 {
+		return "unknown"
+	}
+	if uncosted == 0 {
+		return fmt.Sprintf("$%.4f", total)
+	}
+	return fmt.Sprintf("$%.4f (%d rows unknown)", total, uncosted)
 }
 
 // stepSelfReportNudge is the step-edge advisory printed after a real status

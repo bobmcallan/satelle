@@ -1259,6 +1259,7 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		result.TokensIn, result.TokensOut, result.TokensTotal = dec.TokensIn, dec.TokensOut, dec.TokensTotal
 		result.TokensInFresh, result.TokensCacheWrite, result.TokensCacheRead = dec.TokensInFresh, dec.TokensCacheWrite, dec.TokensCacheRead
 		result.UsageNote = dec.UsageNote
+		result.CostUSD, result.CostUnavailableReason = dec.CostUSD, dec.CostUnavailableReason
 		result.SystemPromptBytes, result.PayloadBytes = dec.SystemPromptBytes, dec.PayloadBytes
 		result.DurationMs = dec.DurationMs
 		result.UsageAvailable = dec.UsageAvailable
@@ -1269,6 +1270,7 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 			TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 			UsageAvailable: dec.UsageAvailable,
 			TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
+			CostUSD: dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
 			SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
 		})
 		if !dec.Accept {
@@ -1357,6 +1359,7 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 			TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 			UsageAvailable: dec.UsageAvailable,
 			TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
+			CostUSD: dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
 			SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
 		})
 		d := dec
@@ -1385,6 +1388,7 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 		result.TokensIn, result.TokensOut, result.TokensTotal = pick.TokensIn, pick.TokensOut, pick.TokensTotal
 		result.TokensInFresh, result.TokensCacheWrite, result.TokensCacheRead = pick.TokensInFresh, pick.TokensCacheWrite, pick.TokensCacheRead
 		result.UsageNote = pick.UsageNote
+		result.CostUSD, result.CostUnavailableReason = pick.CostUSD, pick.CostUnavailableReason
 		result.SystemPromptBytes, result.PayloadBytes = pick.SystemPromptBytes, pick.PayloadBytes
 		result.DurationMs = pick.DurationMs
 		result.UsageAvailable = pick.UsageAvailable
@@ -1760,6 +1764,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
 		DurationMs: invRes.Usage.Duration.Milliseconds(), UsageAvailable: invRes.Usage.Available,
 		TokensInFresh: invRes.Usage.FreshInputTokens, TokensCacheWrite: invRes.Usage.CacheCreationInputTokens, TokensCacheRead: invRes.Usage.CacheReadInputTokens, UsageNote: usageNote(invRes.Usage),
+		CostUSD: invRes.Usage.CostUSD, CostUnavailableReason: invRes.Usage.CostUnavailableReason,
 		SystemPromptBytes: invRes.SystemPromptBytes, PayloadBytes: invRes.PayloadBytes,
 		Output: string(invRes.Stdout),
 	}
@@ -1923,6 +1928,7 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item, modelOverri
 		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
 		DurationMs: invRes.Usage.Duration.Milliseconds(), UsageAvailable: invRes.Usage.Available,
 		TokensInFresh: invRes.Usage.FreshInputTokens, TokensCacheWrite: invRes.Usage.CacheCreationInputTokens, TokensCacheRead: invRes.Usage.CacheReadInputTokens, UsageNote: usageNote(invRes.Usage),
+		CostUSD: invRes.Usage.CostUSD, CostUnavailableReason: invRes.Usage.CostUnavailableReason,
 		SystemPromptBytes: invRes.SystemPromptBytes, PayloadBytes: invRes.PayloadBytes,
 		Output: string(invRes.Stdout),
 	}
@@ -2176,6 +2182,18 @@ func (t *liveUsageTracker) wrap(next agentcli.EventHandler) agentcli.EventHandle
 			if u.ModelResolved != "" {
 				t.usage.ModelResolved = agentcli.KeepModel(t.usage.ModelResolved, u.ModelResolved)
 			}
+			// Cost sums only the turns that reported one; an all-nil sum stays
+			// nil rather than becoming a measured zero (mirrors addUsage).
+			if u.CostUSD != nil {
+				sum := *u.CostUSD
+				if t.usage.CostUSD != nil {
+					sum += *t.usage.CostUSD
+				}
+				t.usage.CostUSD = &sum
+				t.usage.CostUnavailableReason = ""
+			} else if t.usage.CostUSD == nil {
+				t.usage.CostUnavailableReason = u.CostUnavailableReason
+			}
 			t.mergeModelsLocked(u.Models)
 			t.mu.Unlock()
 		}
@@ -2270,6 +2288,7 @@ func (s *liveModelSession) Close() error {
 			u.UnavailableReason = s.agent + " adapter: session reported no usage event"
 		}
 		addUsageNote(data, u)
+		addCostNote(data, u)
 		if len(models) > 0 {
 			data["model_usage"] = models
 		}
@@ -2315,6 +2334,7 @@ func (g *Engine) setDecisionUsage(d *verb.GateDecision, u agentcli.UsageResult, 
 	d.DurationMs = u.Duration.Milliseconds()
 	d.UsageAvailable = u.Available
 	d.UsageNote = usageNote(u)
+	d.CostUSD, d.CostUnavailableReason = u.CostUSD, u.CostUnavailableReason
 	if model != "" {
 		d.Model = model
 	} else {
@@ -2347,6 +2367,19 @@ func addUsageNote(data map[string]any, u agentcli.UsageResult) {
 	}
 	if n.CacheSplitUnavailable {
 		data["cache_split_unavailable"] = true
+	}
+}
+
+// addCostNote stamps a map-shaped ledger row with the invocation's dollar
+// cost when the provider reported one, else the adapter-named reason it
+// did not — never a zero (sty_c4df7376).
+func addCostNote(data map[string]any, u agentcli.UsageResult) {
+	if u.CostUSD != nil {
+		data["cost_usd"] = *u.CostUSD
+		return
+	}
+	if u.CostUnavailableReason != "" {
+		data["cost_unavailable_reason"] = u.CostUnavailableReason
 	}
 }
 
@@ -2937,6 +2970,7 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 				TokensIn: usage.InputTokens, TokensOut: usage.OutputTokens, TokensTotal: usage.TotalTokens,
 				DurationMs: usage.Duration.Milliseconds(), UsageAvailable: usage.Available,
 				TokensInFresh: usage.FreshInputTokens, TokensCacheWrite: usage.CacheCreationInputTokens, TokensCacheRead: usage.CacheReadInputTokens, UsageNote: usageNote(usage),
+				CostUSD: usage.CostUSD, CostUnavailableReason: usage.CostUnavailableReason,
 				SystemPromptBytes: len(req.SystemPrompt), PayloadBytes: len(req.Payload),
 			}, nil
 		}

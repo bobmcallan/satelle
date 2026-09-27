@@ -507,6 +507,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 				TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 				UsageAvailable: dec.UsageAvailable,
 				TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
+				CostUSD: dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
 				SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes}}
 		}
 		// Ledger ALL verdicts first (accepts and rejects), then refuse if any
@@ -1505,6 +1506,8 @@ func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
 		TokensCacheWrite int `json:"tokens_cache_write,omitempty"`
 		TokensCacheRead  int `json:"tokens_cache_read,omitempty"`
 		UsageNote
+		CostUSD               *float64 `json:"cost_usd,omitempty"`
+		CostUnavailableReason string   `json:"cost_unavailable_reason,omitempty"`
 		// SystemPromptBytes/PayloadBytes: byte lengths satelle sent, never content.
 		SystemPromptBytes int    `json:"system_prompt_bytes,omitempty"`
 		PayloadBytes      int    `json:"payload_bytes,omitempty"`
@@ -1515,6 +1518,7 @@ func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
 		TokensIn: res.TokensIn, TokensOut: res.TokensOut, TokensTotal: res.TokensTotal, DurationMs: res.DurationMs,
 		UsageAvailable: res.UsageAvailable,
 		TokensInFresh:  res.TokensInFresh, TokensCacheWrite: res.TokensCacheWrite, TokensCacheRead: res.TokensCacheRead, UsageNote: res.UsageNote,
+		CostUSD: res.CostUSD, CostUnavailableReason: res.CostUnavailableReason,
 		SystemPromptBytes: res.SystemPromptBytes, PayloadBytes: res.PayloadBytes,
 		ArtifactName: res.ArtifactName, ArtifactType: res.ArtifactType}
 	b, err := json.Marshal(p)
@@ -1576,6 +1580,8 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		TokensCacheWrite int `json:"tokens_cache_write,omitempty"`
 		TokensCacheRead  int `json:"tokens_cache_read,omitempty"`
 		UsageNote
+		CostUSD               *float64 `json:"cost_usd,omitempty"`
+		CostUnavailableReason string   `json:"cost_unavailable_reason,omitempty"`
 		// SystemPromptBytes/PayloadBytes: byte lengths satelle sent, never content.
 		SystemPromptBytes int `json:"system_prompt_bytes,omitempty"`
 		PayloadBytes      int `json:"payload_bytes,omitempty"`
@@ -1584,6 +1590,7 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		TokensIn: rv.TokensIn, TokensOut: rv.TokensOut, TokensTotal: rv.TokensTotal, DurationMs: rv.DurationMs,
 		UsageAvailable: rv.UsageAvailable,
 		TokensInFresh:  rv.TokensInFresh, TokensCacheWrite: rv.TokensCacheWrite, TokensCacheRead: rv.TokensCacheRead, UsageNote: rv.UsageNote,
+		CostUSD: rv.CostUSD, CostUnavailableReason: rv.CostUnavailableReason,
 		SystemPromptBytes: rv.SystemPromptBytes, PayloadBytes: rv.PayloadBytes}
 	b, err := json.Marshal(p)
 	if err != nil {
@@ -1618,6 +1625,8 @@ func summariserInvocationPayload(from, to string, result SummaryResult) json.Raw
 		TokensCacheWrite int `json:"tokens_cache_write,omitempty"`
 		TokensCacheRead  int `json:"tokens_cache_read,omitempty"`
 		UsageNote
+		CostUSD               *float64 `json:"cost_usd,omitempty"`
+		CostUnavailableReason string   `json:"cost_unavailable_reason,omitempty"`
 		// SystemPromptBytes/PayloadBytes: byte lengths satelle sent, never content.
 		SystemPromptBytes int `json:"system_prompt_bytes,omitempty"`
 		PayloadBytes      int `json:"payload_bytes,omitempty"`
@@ -1626,6 +1635,7 @@ func summariserInvocationPayload(from, to string, result SummaryResult) json.Raw
 		TokensIn: result.TokensIn, TokensOut: result.TokensOut, TokensTotal: result.TokensTotal, DurationMs: result.DurationMs,
 		UsageAvailable: result.UsageAvailable,
 		TokensInFresh:  result.TokensInFresh, TokensCacheWrite: result.TokensCacheWrite, TokensCacheRead: result.TokensCacheRead, UsageNote: result.UsageNote,
+		CostUSD: result.CostUSD, CostUnavailableReason: result.CostUnavailableReason,
 		SystemPromptBytes: result.SystemPromptBytes, PayloadBytes: result.PayloadBytes}
 	b, err := json.Marshal(p)
 	if err != nil {

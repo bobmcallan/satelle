@@ -123,6 +123,39 @@ func parseModelUsage(v any) (primary string, models []ModelUsage, reported bool)
 	return pickPrimary(models), models, true
 }
 
+// costFromModels sums Models' own CostUSD when at least one entry reported
+// one; nil when none did, so a caller never invents a zero total from an
+// unpriced model list.
+func costFromModels(models []ModelUsage) *float64 {
+	var sum float64
+	found := false
+	for _, m := range models {
+		if m.CostUSD != nil {
+			sum += *m.CostUSD
+			found = true
+		}
+	}
+	if !found {
+		return nil
+	}
+	return &sum
+}
+
+// applyCost sets u.CostUSD from topLevel (an envelope/event's own dollar
+// field) when reported, else from the sum of u.Models' own costUSD; otherwise
+// it records CostUnavailableReason naming adapter. Never invents a zero.
+func applyCost(u *UsageResult, topLevel *float64, adapter string) {
+	if topLevel != nil {
+		u.CostUSD = topLevel
+		return
+	}
+	if c := costFromModels(u.Models); c != nil {
+		u.CostUSD = c
+		return
+	}
+	u.CostUnavailableReason = adapter + ": no cost reported"
+}
+
 // pickPrimary returns the id of the entry with the highest OutputTokens.
 // models must already be sorted by id ascending — a tie then resolves to the
 // smallest id by construction (the first entry seen at the max wins).

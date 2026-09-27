@@ -58,6 +58,11 @@ type GateDecision struct {
 	TokensCacheWrite int
 	TokensCacheRead  int
 	UsageNote
+	// CostUSD/CostUnavailableReason are the invocation's dollar cost (sty_c4df7376),
+	// read from the provider's own figure — never a token count times a rate.
+	// CostUnavailableReason names the adapter and why when CostUSD is nil.
+	CostUSD               *float64
+	CostUnavailableReason string
 	// SystemPromptBytes/PayloadBytes are the byte lengths of the system prompt
 	// and stdin payload satelle sent for this invocation (sty_363eaf55) —
 	// lengths only, never content.
@@ -112,6 +117,10 @@ type ReviewerVerdict struct {
 	TokensCacheWrite int `json:"tokens_cache_write,omitempty"`
 	TokensCacheRead  int `json:"tokens_cache_read,omitempty"`
 	UsageNote
+	// CostUSD/CostUnavailableReason mirror GateDecision's fields of the same
+	// name (sty_c4df7376), stamped on this verdict's own ledger row.
+	CostUSD               *float64 `json:"cost_usd,omitempty"`
+	CostUnavailableReason string   `json:"cost_unavailable_reason,omitempty"`
 	// SystemPromptBytes/PayloadBytes are the byte lengths satelle sent — lengths
 	// only, never content (sty_363eaf55).
 	SystemPromptBytes int `json:"system_prompt_bytes,omitempty"`
@@ -277,6 +286,10 @@ type DispatchResult struct {
 	TokensCacheWrite int `json:"-"`
 	TokensCacheRead  int `json:"-"`
 	UsageNote        `json:"-"`
+	// CostUSD/CostUnavailableReason mirror GateDecision's fields of the same
+	// name (sty_c4df7376).
+	CostUSD               *float64 `json:"-"`
+	CostUnavailableReason string   `json:"-"`
 	// SystemPromptBytes/PayloadBytes are the byte lengths satelle sent — lengths
 	// only, never content (sty_363eaf55).
 	SystemPromptBytes int    `json:"-"`
@@ -344,6 +357,10 @@ type SummaryResult struct {
 	TokensCacheWrite int
 	TokensCacheRead  int
 	UsageNote
+	// CostUSD/CostUnavailableReason mirror GateDecision's fields of the same
+	// name (sty_c4df7376).
+	CostUSD               *float64
+	CostUnavailableReason string
 	// SystemPromptBytes/PayloadBytes are the byte lengths satelle sent — lengths
 	// only, never content (sty_363eaf55).
 	SystemPromptBytes int

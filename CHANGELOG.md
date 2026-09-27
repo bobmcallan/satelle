@@ -1,3 +1,17 @@
+## [0.0.555] - 2026-09-27
+
+### Fixed
+- **Grok ACP invocations record their dollar cost.** Grok's ACP usage reports `costUsdTicks` (1e-10 USD), which was dropped, so every grok ACP review row had no dollars. It is now converted to `cost_usd`. (sty_c4df7376)
+
+### Changed
+- **Every agent invocation row carries a dollar cost or says why not.** Each adapter records the provider's own figure — Claude and grok command/stream `total_cost_usd` or the model `costUSD` sum, grok ACP ticks — or `cost_unavailable_reason` naming the adapter (codex reports none). No price table is used. (sty_c4df7376)
+- **`satelle story cost` and `--by-skill` total dollars.** Each row shows `$` or `unknown`, and totals sum only rows with a known cost and count the rest (`$0.1095 (1 rows unknown)`); a missing cost is never shown as `$0`. Rows recorded before this take their cost from the per-model figures when present. (sty_c4df7376)
+
+## [serve-v0.0.83] - 2026-09-27
+
+### Changed
+- **The service embeds the cost-recording changes above.** (sty_c4df7376)
+
 ## [0.0.554] - 2026-09-27
 
 ### Fixed

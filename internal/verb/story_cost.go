@@ -38,6 +38,11 @@ type StoryCostRow struct {
 	TokensInFresh    int `json:"tokens_in_fresh,omitempty"`
 	TokensCacheWrite int `json:"tokens_cache_write,omitempty"`
 	TokensCacheRead  int `json:"tokens_cache_read,omitempty"`
+	// CostUSD is the row's dollar cost (sty_c4df7376); nil (never a measured
+	// zero) when the provider reported none, with CostUnavailableReason naming
+	// the adapter and why.
+	CostUSD               *float64 `json:"cost_usd,omitempty"`
+	CostUnavailableReason string   `json:"cost_unavailable_reason,omitempty"`
 }
 
 // EventTelemetry is the verb-package façade over ledger.EventTelemetry so
@@ -96,6 +101,12 @@ type StoryCost struct {
 	TotalWallMs     int64          `json:"total_wall_ms,omitempty"`
 	MeasuredRows    int            `json:"measured_rows,omitempty"`
 	UnmeasuredRows  int            `json:"unmeasured_rows,omitempty"`
+	// TotalCostUSD sums only rows with a known cost (sty_c4df7376); CostedRows/
+	// UncostedRows count which rows fed it — an uncosted row is unknown, never
+	// folded into the total as a zero.
+	TotalCostUSD float64 `json:"total_cost_usd,omitempty"`
+	CostedRows   int     `json:"costed_rows,omitempty"`
+	UncostedRows int     `json:"uncosted_rows,omitempty"`
 }
 
 // mergeStepCost folds a self-reported actual + estimate onto r — the last
@@ -215,6 +226,8 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 				TokensInFresh:          tel.TokensInFresh,
 				TokensCacheWrite:       tel.TokensCacheWrite,
 				TokensCacheRead:        tel.TokensCacheRead,
+				CostUSD:                tel.CostUSD,
+				CostUnavailableReason:  tel.CostUnavailableReason,
 			}
 			// Prefer telemetry agent/model when meta left them empty (defensive).
 			if row.Agent == "" {
@@ -230,6 +243,12 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 				sc.MeasuredRows++
 			} else {
 				sc.UnmeasuredRows++
+			}
+			if row.CostUSD != nil {
+				sc.TotalCostUSD += *row.CostUSD
+				sc.CostedRows++
+			} else {
+				sc.UncostedRows++
 			}
 		case ledger.KindStepCost:
 			// Legacy writer (retired, sty_b73c3236) — kept readable for history.
@@ -331,6 +350,10 @@ type SkillRollupRow struct {
 	TotalOutputTokens    int    `json:"total_output_tokens"`
 	AvgSystemPromptBytes int    `json:"avg_system_prompt_bytes"`
 	AvgPayloadBytes      int    `json:"avg_payload_bytes"`
+	// TotalCostUSD sums only invocations with a known cost (sty_c4df7376);
+	// UncostedRows counts the rest — never folded in as a zero.
+	TotalCostUSD float64 `json:"total_cost_usd,omitempty"`
+	UncostedRows int     `json:"uncosted_rows,omitempty"`
 }
 
 // SkillRollup is the `--by-skill` view: every skill's SkillRollupRow, sorted
@@ -357,6 +380,8 @@ func ComputeSkillRollup(ctx context.Context, storyID string) (SkillRollup, error
 		totalIn, totalOut                     int
 		sysBytesSum, payloadBytesSum          int
 		bytesRows                             int
+		totalCostUSD                          float64
+		costedRows, uncostedRows              int
 	}
 	bySkill := map[string]*acc{}
 	var order []string
@@ -405,6 +430,12 @@ func ComputeSkillRollup(ctx context.Context, storyID string) (SkillRollup, error
 			a.payloadBytesSum += tel.PayloadBytes
 			a.bytesRows++
 		}
+		if tel.CostUSD != nil {
+			a.totalCostUSD += *tel.CostUSD
+			a.costedRows++
+		} else {
+			a.uncostedRows++
+		}
 		return nil
 	})
 	if err != nil {
@@ -420,6 +451,7 @@ func ComputeSkillRollup(ctx context.Context, storyID string) (SkillRollup, error
 			MeasuredRows: a.measured, UnmeasuredRows: a.unmeasured,
 			FreshTokens: a.fresh, CacheWriteTokens: a.cacheWrite, CacheReadTokens: a.cacheRead,
 			UnsplitTokens: a.unsplit, TotalInputTokens: a.totalIn, TotalOutputTokens: a.totalOut,
+			TotalCostUSD: a.totalCostUSD, UncostedRows: a.uncostedRows,
 		}
 		if a.bytesRows > 0 {
 			row.AvgSystemPromptBytes = a.sysBytesSum / a.bytesRows

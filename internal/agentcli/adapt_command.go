@@ -169,6 +169,7 @@ func usageFromMap(v map[string]any) *UsageResult {
 		u.ModelResolved = primary
 		u.Models = models
 	}
+	applyCost(u, floatPtr(v["total_cost_usd"]), adapter)
 	return u
 }
 
@@ -216,4 +217,26 @@ func intValue(v any) int {
 	default:
 		return 0
 	}
+}
+
+func floatValue(v any) float64 {
+	switch x := v.(type) {
+	case float64:
+		return x
+	case json.Number:
+		f, _ := x.Float64()
+		return f
+	default:
+		return 0
+	}
+}
+
+// floatPtr reads a JSON number field into a *float64, or nil when the field
+// is absent or not a number — distinct from a reported zero.
+func floatPtr(v any) *float64 {
+	f, ok := v.(float64)
+	if !ok {
+		return nil
+	}
+	return &f
 }

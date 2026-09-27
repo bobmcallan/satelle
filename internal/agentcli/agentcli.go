@@ -234,6 +234,15 @@ type UsageResult struct {
 	// Models is every entry a transport's modelUsage map reported — several
 	// when a background model ran beside the main one. Nil when unreported.
 	Models []ModelUsage
+	// CostUSD is the invocation's dollar cost, read from the provider's own
+	// figure (a top-level total_cost_usd, grok's costUsdTicks, or the sum of
+	// Models' own costUSD) — never derived from a token count and a rate
+	// (sty_c4df7376). Nil means the provider reported no cost; CostUnavailableReason
+	// then names the adapter and why.
+	CostUSD *float64
+	// CostUnavailableReason names the adapter and why CostUSD is nil. Set only
+	// when CostUSD is nil.
+	CostUnavailableReason string
 }
 
 // claudeJSONEnvelope is the shape of `claude -p --output-format json` output: the
@@ -256,6 +265,10 @@ type claudeJSONEnvelope struct {
 	// Parsed lazily via parseModelUsage — kept raw here so an absent field
 	// unmarshals as nil without needing a second pass.
 	ModelUsage json.RawMessage `json:"modelUsage"`
+	// TotalCostUSD is the envelope's own top-level dollar figure, when reported.
+	// Absent on the captured claude_result.json fixture — cost then falls back
+	// to the sum of ModelUsage's own costUSD (costFromModels).
+	TotalCostUSD *float64 `json:"total_cost_usd"`
 }
 
 // grokJSONEnvelope is the shape of `grok -p … --output-format json` headless
@@ -269,6 +282,10 @@ type grokJSONEnvelope struct {
 	// when present (sty_c8d45201); an envelope without them records unavailable.
 	Usage      map[string]any  `json:"usage"`
 	ModelUsage json.RawMessage `json:"modelUsage"`
+	// TotalCostUSD is grok's own top-level dollar figure (matches
+	// total_cost_usd_ticks * 1e-10 on the real capture); falls back to
+	// costFromModels when absent.
+	TotalCostUSD *float64 `json:"total_cost_usd"`
 }
 
 // UnwrapUsage splits an agent's raw stdout into the INNER result text (what verdict
@@ -316,6 +333,7 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 			u.ModelResolved = primary
 			u.Models = models
 		}
+		applyCost(&u, claude.TotalCostUSD, "claude command")
 		return []byte(claude.Result), u
 	}
 	var grok grokJSONEnvelope
@@ -331,10 +349,12 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 				u.ModelResolved = primary
 				u.Models = models
 			}
+			applyCost(u, grok.TotalCostUSD, "grok command")
 			return []byte(grok.Text), *u
 		}
 		u := unavailableUsage("grok", "--output-format json envelope carries no usage object")
 		u.ModelResolved = noModelReport("grok command")
+		applyCost(&u, grok.TotalCostUSD, "grok command")
 		return []byte(grok.Text), u
 	}
 	return stdout, UsageResult{}

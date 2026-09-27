@@ -86,6 +86,13 @@ type Telemetry struct {
 	// existed.
 	SystemPromptBytes int
 	PayloadBytes      int
+	// CostUSD is the invocation's dollar cost (sty_c4df7376), read from the
+	// row's own cost_usd, or — for a legacy row recorded before that field
+	// existed but carrying per-model costs — the sum of model_usage's own
+	// cost_usd. Nil means no cost is known; CostUnavailableReason then names
+	// the adapter and why, when the row recorded one.
+	CostUSD               *float64
+	CostUnavailableReason string
 }
 
 // EventTelemetry extracts Telemetry from a single ledger entry.
@@ -162,22 +169,29 @@ func invocationTelemetry(payload []byte) Telemetry {
 		return Telemetry{}
 	}
 	var row struct {
-		Agent             string `json:"agent"`
-		Model             string `json:"model"`
-		ModelResolved     string `json:"model_resolved"`
-		ModelSource       string `json:"model_source"`
-		TokensIn          int    `json:"tokens_in"`
-		TokensOut         int    `json:"tokens_out"`
-		TokensTotal       int    `json:"tokens_total"`
-		DurationMs        int64  `json:"duration_ms"`
-		UsageAvailable    *bool  `json:"usage_available"`
-		UnavailableReason string `json:"usage_unavailable_reason"`
-		SplitUnavailable  bool   `json:"cache_split_unavailable"`
-		TokensInFresh     int    `json:"tokens_in_fresh"`
-		TokensCacheWrite  int    `json:"tokens_cache_write"`
-		TokensCacheRead   int    `json:"tokens_cache_read"`
-		SystemPromptBytes int    `json:"system_prompt_bytes"`
-		PayloadBytes      int    `json:"payload_bytes"`
+		Agent             string   `json:"agent"`
+		Model             string   `json:"model"`
+		ModelResolved     string   `json:"model_resolved"`
+		ModelSource       string   `json:"model_source"`
+		TokensIn          int      `json:"tokens_in"`
+		TokensOut         int      `json:"tokens_out"`
+		TokensTotal       int      `json:"tokens_total"`
+		DurationMs        int64    `json:"duration_ms"`
+		UsageAvailable    *bool    `json:"usage_available"`
+		UnavailableReason string   `json:"usage_unavailable_reason"`
+		SplitUnavailable  bool     `json:"cache_split_unavailable"`
+		TokensInFresh     int      `json:"tokens_in_fresh"`
+		TokensCacheWrite  int      `json:"tokens_cache_write"`
+		TokensCacheRead   int      `json:"tokens_cache_read"`
+		SystemPromptBytes int      `json:"system_prompt_bytes"`
+		PayloadBytes      int      `json:"payload_bytes"`
+		CostUSD           *float64 `json:"cost_usd"`
+		CostUnavailable   string   `json:"cost_unavailable_reason"`
+		// ModelUsage is read only for its per-model cost_usd — a legacy row's
+		// fallback when it predates the top-level cost_usd field (sty_c4df7376).
+		ModelUsage []struct {
+			CostUSD *float64 `json:"cost_usd"`
+		} `json:"model_usage"`
 	}
 	if err := json.Unmarshal(payload, &row); err != nil {
 		return Telemetry{}
@@ -187,6 +201,13 @@ func invocationTelemetry(payload []byte) Telemetry {
 		avail = *row.UsageAvailable
 	} else if row.TokensTotal > 0 {
 		avail = true
+	}
+	cost, costReason := row.CostUSD, row.CostUnavailable
+	if cost == nil {
+		if c := sumModelCost(row.ModelUsage); c != nil {
+			cost = c
+			costReason = ""
+		}
 	}
 	return Telemetry{
 		Agent:                  row.Agent,
@@ -205,7 +226,28 @@ func invocationTelemetry(payload []byte) Telemetry {
 		TokensCacheRead:        row.TokensCacheRead,
 		SystemPromptBytes:      row.SystemPromptBytes,
 		PayloadBytes:           row.PayloadBytes,
+		CostUSD:                cost,
+		CostUnavailableReason:  costReason,
 	}
+}
+
+// sumModelCost sums a legacy row's per-model cost_usd entries, nil when none
+// reported one — never a measured zero from an unpriced model list.
+func sumModelCost(models []struct {
+	CostUSD *float64 `json:"cost_usd"`
+}) *float64 {
+	var sum float64
+	found := false
+	for _, m := range models {
+		if m.CostUSD != nil {
+			sum += *m.CostUSD
+			found = true
+		}
+	}
+	if !found {
+		return nil
+	}
+	return &sum
 }
 
 func mapNum(m map[string]any, k string) int64 {

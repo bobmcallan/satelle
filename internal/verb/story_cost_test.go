@@ -3,6 +3,7 @@ package verb_test
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"path/filepath"
 	"testing"
 	"time"
@@ -90,6 +91,80 @@ func TestComputeStoryCost(t *testing.T) {
 	}
 	if !unreported {
 		t.Errorf("expected unreported integration→release row: %+v", sc.Rows)
+	}
+}
+
+// TestComputeStoryCostDollars pins sty_c4df7376 AC5: a row with its own
+// cost_usd totals into TotalCostUSD; a row with no cost at all (nil, not
+// zero) counts as uncosted; and a legacy row recorded before cost_usd existed,
+// but carrying per-model costUSD, derives its cost from that per-model sum
+// (ledger.EventTelemetry's fallback) rather than reporting unknown.
+func TestComputeStoryCostDollars(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
+	defer verb.SetLedgerStore(nil)
+	verb.SetTxRunner(nil)
+
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+	appendInv := func(payload json.RawMessage) {
+		if _, err := db.Ledger.Append(ctx, ledger.AppendInput{
+			StoryID: "sty_cost_usd", Kind: ledger.KindAgentInvocation, Actor: "reviewer", Body: "invoked", Payload: payload,
+		}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A costed row with its own top-level cost_usd.
+	costed, _ := json.Marshal(map[string]any{
+		"from": "plan", "to": "in_progress", "agent": "reviewer",
+		"usage_available": true, "cost_usd": 0.0095,
+	})
+	appendInv(costed)
+	// A row whose provider reported no cost at all — nil, never a measured zero.
+	uncosted, _ := json.Marshal(map[string]any{
+		"from": "in_progress", "to": "integration", "agent": "reviewer",
+		"usage_available": true, "cost_unavailable_reason": "codex command: no cost reported",
+	})
+	appendInv(uncosted)
+	// A legacy row recorded before cost_usd existed, but with per-model costUSD —
+	// EventTelemetry derives the invocation cost from the model sum.
+	legacy, _ := json.Marshal(map[string]any{
+		"from": "integration", "to": "release", "agent": "reviewer", "usage_available": true,
+		"model_usage": []map[string]any{{"id": "claude-opus-5-5", "cost_usd": 0.1}},
+	})
+	appendInv(legacy)
+
+	sc, err := verb.ComputeStoryCost(ctx, "sty_cost_usd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sc.Rows) != 3 {
+		t.Fatalf("rows = %d, want 3", len(sc.Rows))
+	}
+	if sc.CostedRows != 2 || sc.UncostedRows != 1 {
+		t.Errorf("costed/uncosted = %d/%d, want 2/1", sc.CostedRows, sc.UncostedRows)
+	}
+	want := 0.0095 + 0.1
+	if diff := sc.TotalCostUSD - want; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("total cost = %v, want %v", sc.TotalCostUSD, want)
+	}
+	byEdge := map[string]verb.StoryCostRow{}
+	for _, r := range sc.Rows {
+		byEdge[r.From+"→"+r.To] = r
+	}
+	if r := byEdge["plan→in_progress"]; r.CostUSD == nil || *r.CostUSD != 0.0095 {
+		t.Errorf("costed row = %+v, want cost_usd=0.0095", r)
+	}
+	if r := byEdge["in_progress→integration"]; r.CostUSD != nil || r.CostUnavailableReason == "" {
+		t.Errorf("uncosted row = %+v, want nil cost with a reason", r)
+	}
+	if r := byEdge["integration→release"]; r.CostUSD == nil || *r.CostUSD != 0.1 {
+		t.Errorf("legacy per-model row = %+v, want cost derived to 0.1", r)
 	}
 }
 
@@ -192,6 +267,73 @@ func TestComputeSkillRollup(t *testing.T) {
 // ledger.ForEachKindPageSize is lowered as a test seam so pagination across
 // several pages (including a final partial page, where the newest rows land)
 // is exercised without seeding thousands of real rows.
+// TestComputeSkillRollupDollars pins the --by-skill dollar roll-up
+// (sty_c4df7376 AC5): costed invocations sum across stories, a legacy row's
+// per-model cost counts, and a row with no cost is counted as uncosted —
+// never folded into the total as zero.
+func TestComputeSkillRollupDollars(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
+	defer verb.SetLedgerStore(nil)
+	verb.SetTxRunner(nil)
+
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+	appendInv := func(storyID string, payload map[string]any) {
+		b, _ := json.Marshal(payload)
+		if _, err := db.Ledger.Append(ctx, ledger.AppendInput{
+			StoryID: storyID, Kind: ledger.KindAgentInvocation, Actor: "reviewer", Body: "invoked", Payload: b,
+		}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendInv("sty_a", map[string]any{"agent": "reviewer", "skill": "satelle-story-done-review", "usage_available": true, "cost_usd": 0.01})
+	appendInv("sty_b", map[string]any{"agent": "reviewer", "skill": "satelle-story-done-review", "usage_available": true, "cost_usd": 0.02})
+	appendInv("sty_b", map[string]any{"agent": "reviewer", "skill": "satelle-story-done-review", "usage_available": true, "cost_unavailable_reason": "codex command: no cost reported"})
+	appendInv("sty_a", map[string]any{
+		"agent": "reviewer", "skill": "satelle-story-plan-review", "usage_available": true,
+		"model_usage": []map[string]any{{"id": "claude-opus-5-5", "cost_usd": 0.1}},
+	})
+	appendInv("sty_a", map[string]any{"agent": "reviewer", "skill": "satelle-story-plan-review", "usage_available": false})
+	// A skill with no costed row at all: its costed count (Invocations -
+	// UncostedRows) is zero, which the CLI renders as "unknown", not "$0".
+	appendInv("sty_a", map[string]any{"agent": "reviewer", "skill": "satelle-story-intent-review", "usage_available": true, "cost_unavailable_reason": "codex command: no cost reported"})
+
+	rollup, err := verb.ComputeSkillRollup(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySkill := map[string]verb.SkillRollupRow{}
+	for _, r := range rollup.Rows {
+		bySkill[r.Skill] = r
+	}
+	done, plan := bySkill["satelle-story-done-review"], bySkill["satelle-story-plan-review"]
+	if math.Abs(done.TotalCostUSD-0.03) > 1e-12 || done.UncostedRows != 1 {
+		t.Errorf("done-review: total $%v uncosted %d, want $0.03 and 1", done.TotalCostUSD, done.UncostedRows)
+	}
+	if math.Abs(plan.TotalCostUSD-0.1) > 1e-12 || plan.UncostedRows != 1 {
+		t.Errorf("plan-review: total $%v uncosted %d, want $0.1 (legacy per-model) and 1 (unmeasured)", plan.TotalCostUSD, plan.UncostedRows)
+	}
+	intent := bySkill["satelle-story-intent-review"]
+	if intent.Invocations != 1 || intent.UncostedRows != 1 || intent.Invocations-intent.UncostedRows != 0 || intent.TotalCostUSD != 0 {
+		t.Errorf("intent-review = %+v, want 1 invocation, 1 uncosted, costed count 0 (renders unknown)", intent)
+	}
+
+	// Scoped to one story, only that story's rows feed the dollars.
+	one, err := verb.ComputeSkillRollup(ctx, "sty_b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(one.Rows) != 1 || math.Abs(one.Rows[0].TotalCostUSD-0.02) > 1e-12 || one.Rows[0].UncostedRows != 1 {
+		t.Errorf("sty_b rollup = %+v, want one done-review row at $0.02 with 1 uncosted", one.Rows)
+	}
+}
+
 func TestComputeSkillRollupPagesBeyondOnePage(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {

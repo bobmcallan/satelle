@@ -31,6 +31,11 @@ func TestUsageAdapter_ClaudeCommand(t *testing.T) {
 	if !u.CacheSplitAvailable || u.FreshInputTokens != 22 || u.CacheCreationInputTokens != 11000 || u.CacheReadInputTokens != 2500 {
 		t.Errorf("split = %+v", u)
 	}
+	// No top-level total_cost_usd on this fixture: cost falls back to the sum
+	// of modelUsage's own costUSD (claude-opus-5-5: 0.1).
+	if u.CostUSD == nil || !almostEqual(*u.CostUSD, 0.1) || u.CostUnavailableReason != "" {
+		t.Errorf("cost = %+v, want 0.1 from modelUsage costUSD", u.CostUSD)
+	}
 }
 
 // claude stream transport: the same shape arrives on a result event.
@@ -46,6 +51,9 @@ func TestUsageAdapter_ClaudeStreamEvent(t *testing.T) {
 	u := evs[0].Usage
 	if !u.CacheSplitAvailable || u.CacheReadInputTokens != 2500 || u.ModelResolved != "claude-opus-5-5" {
 		t.Errorf("usage = %+v", u)
+	}
+	if u.CostUSD == nil || !almostEqual(*u.CostUSD, 0.1) || u.CostUnavailableReason != "" {
+		t.Errorf("cost = %+v, want 0.1 from modelUsage costUSD", u.CostUSD)
 	}
 }
 
@@ -69,6 +77,18 @@ func TestUsageAdapter_GrokCommandJSON(t *testing.T) {
 	if u.ModelResolved != "grok-4.5-build" || len(u.Models) != 1 || u.Models[0].CacheReadInputTokens != 512 {
 		t.Errorf("model = %q %+v", u.ModelResolved, u.Models)
 	}
+	if u.CostUSD == nil || !almostEqual(*u.CostUSD, 0.004476984) || u.CostUnavailableReason != "" {
+		t.Errorf("cost = %+v, want 0.004476984", u.CostUSD)
+	}
+}
+
+// almostEqual compares dollar figures within float64 rounding noise.
+func almostEqual(a, b float64) bool {
+	d := a - b
+	if d < 0 {
+		d = -d
+	}
+	return d < 1e-9
 }
 
 // A grok envelope with no usage object (synthetic fixture) records unavailable
@@ -83,6 +103,9 @@ func TestUsageAdapter_GrokCommandJSONNoUsage(t *testing.T) {
 	}
 	if u.ModelResolved != "unavailable: grok command reports no model" {
 		t.Errorf("model = %q", u.ModelResolved)
+	}
+	if u.CostUSD != nil || !strings.Contains(u.CostUnavailableReason, "grok") {
+		t.Errorf("cost = %+v, want nil with a grok-named reason", u.CostUSD)
 	}
 }
 
@@ -99,6 +122,9 @@ func TestUsageAdapter_GrokStreamingJSON(t *testing.T) {
 	if u.ModelResolved != "grok-4.5-build" {
 		t.Errorf("model = %q", u.ModelResolved)
 	}
+	if u.CostUSD == nil || !almostEqual(*u.CostUSD, 0.004604552) || u.CostUnavailableReason != "" {
+		t.Errorf("cost = %+v, want 0.004604552 (last/end line wins)", u.CostUSD)
+	}
 }
 
 // codex command transport, exec --json: turn.completed carries usage whose
@@ -110,6 +136,10 @@ func TestUsageAdapter_CodexExecJSONL(t *testing.T) {
 	}
 	if !u.CacheSplitAvailable || u.CacheReadInputTokens != 24448 || u.FreshInputTokens != 315 || u.CacheCreationInputTokens != 0 {
 		t.Errorf("split = %+v, want read=24448 fresh=315 write=0", u)
+	}
+	// codex's turn.completed carries no cost field: unavailable, adapter-named.
+	if u.CostUSD != nil || !strings.Contains(u.CostUnavailableReason, "codex") {
+		t.Errorf("cost = %+v, want nil with a codex-named reason", u.CostUSD)
 	}
 	// The same line through the event adapter yields the shared usage event.
 	var line string
@@ -186,6 +216,22 @@ func TestUsageAdapter_ACPResultUsage(t *testing.T) {
 	}
 	if acpUsageFromResult(json.RawMessage(`{"stopReason":"end_turn"}`), "", "grok acp") != nil {
 		t.Error("a response without _meta.usage or a model must map to nil, not zeros")
+	}
+	// costUsdTicks (94540400) maps to cost_usd at 1 tick = 1e-10 USD.
+	if u.CostUSD == nil || !almostEqual(*u.CostUSD, 0.00945404) || u.CostUnavailableReason != "" {
+		t.Errorf("cost = %+v, want 0.00945404 from costUsdTicks", u.CostUSD)
+	}
+}
+
+// A grok ACP peer that reports usage but no costUsdTicks records unavailable
+// with an adapter-named reason — never a zero.
+func TestUsageAdapter_ACPResultCostUnavailable(t *testing.T) {
+	u := acpUsageFromResult(json.RawMessage(`{"_meta":{"usage":{"inputTokens":5,"outputTokens":2}}}`), "", "grok acp")
+	if u == nil || !u.Available {
+		t.Fatalf("usage = %+v, want available", u)
+	}
+	if u.CostUSD != nil || !strings.Contains(u.CostUnavailableReason, "costUsdTicks") {
+		t.Errorf("cost = %+v, want nil with a costUsdTicks reason", u.CostUSD)
 	}
 }
 

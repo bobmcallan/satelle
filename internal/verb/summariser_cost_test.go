@@ -114,3 +114,71 @@ func TestSummariserNoCostRowWhenNoCommand(t *testing.T) {
 		t.Errorf("a summariser with no billable command must write no agent_invocation row, got %d", len(inv))
 	}
 }
+
+// costUSDSummariser is costSummariser plus a dollar figure, to pin that
+// SummaryResult.CostUSD (sty_c4df7376) rides all the way onto the
+// agent_invocation ledger row's cost_usd field, and into story cost totals.
+type costUSDSummariser struct{}
+
+func (costUSDSummariser) Summarise(_ context.Context, _ workitem.Item, _, _ string) (verb.SummaryResult, error) {
+	cost := 0.0095
+	return verb.SummaryResult{
+		Text: "the recap", Command: "grok agent stdio", Context: "satelle-step-summary", Model: "grok-4.7",
+		TokensIn: 100, TokensOut: 50, TokensTotal: 150, DurationMs: 1000,
+		UsageAvailable: true, CostUSD: &cost,
+	}, nil
+}
+func (costUSDSummariser) MandatorySummary(_ context.Context, _ workitem.Item) bool { return true }
+
+// TestSummariserCostUSDFoldsIntoAgentInvocation pins sty_c4df7376 AC5: an
+// invocation's dollar cost reaches the ledger's agent_invocation row
+// (cost_usd) and story cost totals it — not just tokens.
+func TestSummariserCostUSDFoldsIntoAgentInvocation(t *testing.T) {
+	dir := t.TempDir()
+	db, err := store.Open(filepath.Join(dir, "satelle.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	verb.SetWorkItemStore(db.Stories)
+	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
+	verb.SetDocIndexStore(db.DocIndex)
+	verb.SetStoryDir(filepath.Join(dir, "stories"))
+	verb.SetStepSummariser(costUSDSummariser{})
+	t.Cleanup(func() {
+		db.Close()
+		verb.SetWorkItemStore(nil)
+		verb.SetLedgerStore(nil)
+		verb.SetTxRunner(nil)
+		verb.SetDocIndexStore(nil)
+		verb.SetStoryDir("")
+		verb.SetStepSummariser(nil)
+	})
+
+	var st workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "CostUSD", "acceptance_criteria": "1. ok"}), &st)
+	call(t, "story-resummarise", map[string]any{"id": st.ID, "from": "plan", "to": "in_progress"})
+
+	var inv []ledger.Entry
+	json.Unmarshal(call(t, "ledger-list", map[string]any{"story_id": st.ID, "kind": ledger.KindAgentInvocation}), &inv)
+	if len(inv) != 1 {
+		t.Fatalf("want exactly 1 agent_invocation row, got %d", len(inv))
+	}
+	var payload struct {
+		CostUSD *float64 `json:"cost_usd"`
+	}
+	if err := json.Unmarshal(inv[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload.CostUSD == nil || *payload.CostUSD != 0.0095 {
+		t.Fatalf("ledger row cost_usd = %v, want 0.0095", payload.CostUSD)
+	}
+
+	cost, err := verb.ComputeStoryCost(context.Background(), st.ID)
+	if err != nil {
+		t.Fatalf("story cost: %v", err)
+	}
+	if cost.CostedRows != 1 || cost.TotalCostUSD != 0.0095 {
+		t.Errorf("story cost = costed=%d total=%v, want costed=1 total=0.0095", cost.CostedRows, cost.TotalCostUSD)
+	}
+}
