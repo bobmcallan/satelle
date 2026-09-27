@@ -1,15 +1,13 @@
-## [0.0.559] - 2026-09-28
-
-### Breaking
-- **`satelle story actual` no longer takes figures.** `--tokens` and `--time` are refused; run `satelle story actual <id>` to compute and record the actual from the ledger. Scripts or skills that pass figures must drop them.
-- **The shipped estimate/actual check no longer requires hand-typed `actual-*` tags at the terminal edge.** A repo that keeps its own copy of `satelle-estimate-actual-review` under `.satelle/skills/` still demands them: run `satelle restore` (or delete the local copy) to take the shipped check, or run `satelle story actual <id>` before the terminal transition.
+## [0.0.560] - 2026-09-28
 
 ### Changed
+- **Migration: `satelle story actual` no longer takes figures.** `--tokens` and `--time` are refused; run `satelle story actual <id>` to compute and record the actual from the ledger. Scripts or skills that pass figures must drop them.
+- **Migration: the shipped estimate/actual check no longer requires hand-typed `actual-*` tags at the terminal edge.** A repo that keeps its own copy of `satelle-estimate-actual-review` under `.satelle/skills/` still demands them: run `satelle restore` (or delete the local copy) to take the shipped check, or run `satelle story actual <id>` before the terminal transition.
 - **A story's actual is computed from the ledger.** Dispatch rows plus driver-usage rows give dollars (summed only over priced rows, with the count of unpriced rows), fresh input, unsplit input, output, cache read and cache write as separate figures, elapsed wall time (engage to terminal state, found by the workflow's shape) and agent time. It is written as `actual-*` tags and an `actual_recorded` payload right after a transition into a terminal state commits. A missing cost is `actual-usd:unavailable`, never `$0`. An item with children rolls them up by parent id. (sty_8eae81ac)
 - **Tool-permission events are their own ledger kind (`tool_permission`)** and no longer count as agent invocations in `story cost`, `--by-skill` or the web timeline; older rows are filtered on read. (sty_8eae81ac)
 - **`satelle story estimate` takes `--usd` and `--fresh-input` / `--output`.** `--tokens` stays as a legacy unit and is shown in its own unit, never compared to dollars or fresh input. (sty_8eae81ac)
 
-## [serve-v0.0.87] - 2026-09-28
+## [serve-v0.0.88] - 2026-09-28
 
 ### Changed
 - **The service embeds the computed actual and filters tool-permission rows out of the timeline's model view.** (sty_8eae81ac)
