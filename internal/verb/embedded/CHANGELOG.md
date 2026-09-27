@@ -1,3 +1,15 @@
+## [0.0.556] - 2026-09-28
+
+### Added
+- **The driving session's own usage is recorded against the story.** On every status transition, satelle reads the in-loop session's usage from its harness's own record — the Claude transcript, grok's `usage.json`, the codex rollout — and appends a `driver_usage` ledger row with the delta since that session's last snapshot: session id, executable, model, fresh input, cache read, cache write, output and cost (or an adapter-named unavailable reason). A session's usage is split between the stories it drives by a per-session high-water mark, and each harness turn is credited to at most one story. (sty_81caa41b)
+- **Killed sessions, late flushes and resumes are accounted for.** Reaping or stealing a dead seat records the dead session's usage up to its last record (or an adapter-named "no partial-turn usage" row with its wall time); usage flushed after a story closed is written onto that story as a late row; a resumed session is attributed only its post-resume usage. (sty_81caa41b)
+- **`satelle story cost` shows the driver line and a session reconciliation**, and `satelle story cost --session <id>` lists every story a session drove plus the unattributed remainder. Unavailable amounts stay unavailable, never zero. (sty_81caa41b)
+
+## [serve-v0.0.84] - 2026-09-28
+
+### Changed
+- **The service embeds the driver-usage recording above; its seat list reaps dead seats with a kill row.** (sty_81caa41b)
+
 ## [0.0.555] - 2026-09-27
 
 ### Fixed

@@ -785,26 +785,32 @@ prior entry.`,
 	// sees which reviewer/dispatch spent what. Distinct from estimate/actual (the
 	// plan's own time/token figures) — this is measured runtime cost.
 	var bySkill, allStories bool
-	var skillStoryID string
+	var skillStoryID, sessionID string
 	cost := &cobra.Command{
 		Use:   "cost [id]",
 		Short: "Show the measured per-gate token + wall-time cost recorded for a story",
 		Long: `Show what a story actually cost to run: per-gate tokens and wall time, taken
-from the agent-invocation ledger entries, plus a per-step roll-up.
+from the agent-invocation ledger entries, plus a per-step roll-up and the
+driving session's own recorded usage with its reconciliation.
 
-This is MEASURED transport cost, distinct from the estimate/actual tags, which
-are the session's own figures. A row printed as "—" is unmeasured, never free:
-an in-loop step reports nothing unless a step self-report was logged.
+This is MEASURED transport cost, distinct from the estimate/actual tags. A row
+printed as "—" is unmeasured, never free.
 
---by-skill rolls up agent_invocation rows by gate/dispatch skill instead of by
-story — pass --all for every story, or --story <id> for one. Rows recorded
-before the fresh/cache-write/cache-read split (sty_363eaf55) report as
-"unsplit" input so the totals still reconcile.`,
+--by-skill rolls up agent_invocation rows by skill (--all or --story <id>).
+--session <id> lists every story that session drove, plus its remainder.`,
 		Args:        cobra.MaximumNArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if _, err := appFrom(cmd); err != nil {
 				return err
+			}
+			if sessionID != "" {
+				recon, err := verb.ComputeSessionReconciliation(cmd.Context(), sessionID)
+				if err != nil {
+					return err
+				}
+				printSessionReconciliation(cmd, recon)
+				return nil
 			}
 			if bySkill {
 				scope := skillStoryID
@@ -884,6 +890,32 @@ before the fresh/cache-write/cache-read split (sty_363eaf55) report as
 					return err
 				}
 			}
+			// Driver section (sty_81caa41b): the driving session's own recorded
+			// usage, kept separate from the dispatched/reviewer rows above.
+			if len(sc.DriverRows) > 0 {
+				dw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+				fmt.Fprintln(dw, "\nDRIVER SESSION\tEXECUTABLE\tTRIGGER\tTOKENS\t$")
+				for _, d := range sc.DriverRows {
+					tokens := "—"
+					if d.Available {
+						tokens = fmt.Sprintf("%d", d.FreshInput+d.CacheRead+d.CacheWrite+d.Output)
+					}
+					fmt.Fprintf(dw, "%s\t%s\t%s\t%s\t%s\n",
+						d.SessionID, d.Executable, d.Trigger, tokens, rowCostUSD(d.CostUSD))
+				}
+				fmt.Fprintf(dw, "TOTAL\t\t\t%s\t%s\n",
+					measuredTotalLabel(sc.DriverTotalTokens, sc.DriverMeasuredRows, sc.DriverUnmeasuredRows),
+					costTotalLabel(sc.DriverTotalCostUSD, sc.DriverCostedRows, sc.DriverUncostedRows))
+				if err := dw.Flush(); err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "\nGRAND TOTAL (agent_invocation + driver): %s tokens, %s\n",
+					measuredTotalLabel(sc.GrandTotalTokens, sc.MeasuredRows+sc.DriverMeasuredRows, sc.UnmeasuredRows+sc.DriverUnmeasuredRows),
+					costTotalLabel(sc.GrandTotalCostUSD, sc.CostedRows+sc.DriverCostedRows, sc.UncostedRows+sc.DriverUncostedRows))
+				for _, recon := range sc.Sessions {
+					printSessionReconciliation(cmd, recon)
+				}
+			}
 			fmt.Fprintln(cmd.OutOrStdout(),
 				"note: '—' means unmeasured, never free. Dispatched rows without provider usage are unknown; in-loop ACTUAL TOKENS need satelle story log --kind step-self-report. actual-* tags and step-self-report figures are session self-report, not measured transport cost. TOKENS in includes cache-creation and cache-read tokens when the provider reports them (the full prompt, not the uncached remainder); rows recorded before that accounting omit cache and understate input.")
 			return nil
@@ -892,6 +924,7 @@ before the fresh/cache-write/cache-read split (sty_363eaf55) report as
 	cost.Flags().BoolVar(&bySkill, "by-skill", false, "roll up agent_invocation rows by skill instead of by story (needs --all or --story)")
 	cost.Flags().BoolVar(&allStories, "all", false, "with --by-skill, roll up across every story")
 	cost.Flags().StringVar(&skillStoryID, "story", "", "with --by-skill, roll up one story only")
+	cost.Flags().StringVar(&sessionID, "session", "", "list every story this driving session drove, plus its unattributed remainder")
 
 	// resummarise — re-run the step summariser for one edge to close a missing-
 	// summary gap (sty_a1151fb0). The remediation `satelle story cost`/the done-time
@@ -1024,6 +1057,38 @@ func costTotalLabel(total float64, costed, uncosted int) string {
 		return fmt.Sprintf("$%.4f", total)
 	}
 	return fmt.Sprintf("$%.4f (%d rows unknown)", total, uncosted)
+}
+
+// printSessionReconciliation renders one driving session's reconciliation
+// (sty_81caa41b AC9/AC11): every story it drove plus the unattributed
+// remainder — session time the ledger cannot pin to any story (e.g. between
+// one story's close and the next story's engage).
+func printSessionReconciliation(cmd *cobra.Command, recon verb.SessionReconciliation) {
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintf(cmd.OutOrStdout(), "\nSession %s (%s) reconciliation:\n", recon.SessionID, recon.Executable)
+	fmt.Fprintln(w, "STORY\tTOKENS\t$")
+	for _, s := range recon.Stories {
+		tokens, cost := "—", "unknown"
+		if s.Available {
+			tokens = strconv.Itoa(s.FreshInput + s.CacheRead + s.CacheWrite + s.Output)
+			cost = rowCostUSD(s.CostUSD)
+		} else {
+			tokens = fmt.Sprintf("unavailable (%s)", s.UnavailableReason)
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\n", s.StoryID, tokens, cost)
+	}
+	total := "unavailable"
+	if recon.TotalAvailable {
+		total = strconv.Itoa(recon.Total.FreshInput + recon.Total.CacheRead + recon.Total.CacheWrite + recon.Total.Output)
+	} else if recon.TotalUnavailableReason != "" {
+		total = fmt.Sprintf("unavailable (%s)", recon.TotalUnavailableReason)
+	}
+	unattributed := "partial (an attributed story is unavailable)"
+	if recon.UnattributedAvailable {
+		unattributed = strconv.Itoa(recon.Unattributed.FreshInput + recon.Unattributed.CacheRead + recon.Unattributed.CacheWrite + recon.Unattributed.Output)
+	}
+	fmt.Fprintf(w, "SESSION TOTAL\t%s\t\nUNATTRIBUTED\t%s\t\n", total, unattributed)
+	_ = w.Flush()
 }
 
 // stepSelfReportNudge is the step-edge advisory printed after a real status

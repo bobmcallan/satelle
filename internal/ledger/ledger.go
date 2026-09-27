@@ -113,6 +113,16 @@ const (
 	// action — both absolute, so a restore needs nothing else.
 	KindTidy        = "tidy"
 	KindTidyRestore = "tidy_restore"
+	// KindDriverUsage records the driving (in-loop) session's measured
+	// token/dollar usage at engage, at every transition, and at park/close
+	// (sty_81caa41b) — captured from that harness's OWN session record
+	// (agentcli.SessionUsageSnapshot), unlike KindAgentInvocation which records
+	// a dispatched one-shot's usage. Payload is verb.DriverUsagePayload: the
+	// delta since the previous driver_usage row for the same session, or an
+	// adapter-named unavailable reason. Append-only, never rewritten — a
+	// row's WindowKey plus Cumulative decide whether a later snapshot is a
+	// no-op (AC7). Enumeration only — no pass/fail in Go.
+	KindDriverUsage = "driver_usage"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional

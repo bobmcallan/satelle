@@ -22,6 +22,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/substrate"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -299,12 +300,20 @@ func listSeatsJSON(ctx context.Context, a *app.App) ([]json.RawMessage, error) {
 	if a.Store.Leases == nil {
 		return nil, nil
 	}
-	_, _ = a.Store.Leases.Reap(ctx)
+	now := time.Now().UTC()
+	reaped, _ := a.Store.Leases.Reap(ctx)
+	// AC5/AC6 (sty_81caa41b): this is the web-push mirror's OWN seat listing,
+	// straight off a.Store rather than the verb dispatch seam story-seat-list
+	// uses — so a lease this call reaps (a driving session found dead) would
+	// otherwise never get a final driver_usage row, and a session's still-open
+	// Pending row would never get swept, if the operator only ever looks at
+	// the web UI and never runs `satelle story seat`.
+	verb.RecordDriverUsageOnReap(ctx, reaped, now)
+	verb.SweepPendingDriverUsage(ctx, now)
 	all, err := a.Store.Leases.List(ctx)
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
 	// Best-effort idle_timeout resolution per dispatched binding (sty_752c4ef2
 	// AC6): the mirror-side render needs it to decide the warn threshold, and
 	// the push-fed web has no other access to this repo's agents.toml. A

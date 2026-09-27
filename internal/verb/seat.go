@@ -63,20 +63,29 @@ type seatRow struct {
 
 // storySeatList reaps stale leases then lists remaining rows with age/stale flags
 // (sty_1738f973 AC4). Reap is opportunistic honesty; gate correctness does not
-// depend on it.
+// depend on it. Each reaped story-seat lease also gets a final driver_usage
+// row (sty_81caa41b AC5): a driving session found dead here never ran its own
+// park/close snapshot, so this is the only place that usage and wall time
+// would ever get recorded. Also sweeps any session whose latest driver_usage
+// row is still Pending confirmation (AC6) — the general "session's tail never
+// gets swept after its last close" case, not just a dead one: there is no
+// daemon in this binary, so this frequently-invoked command is where it runs.
 func storySeatList(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
 	ls, err := requireLease()
 	if err != nil {
 		return nil, err
 	}
-	if _, err := ls.Reap(ctx); err != nil {
-		return nil, err
-	}
-	all, err := ls.List(ctx)
+	reaped, err := ls.Reap(ctx)
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
+	recordDriverUsageOnReap(ctx, reaped, now)
+	sweepPendingDriverUsage(ctx, now)
+	all, err := ls.List(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]seatRow, 0, len(all))
 	for _, l := range all {
 		out = append(out, seatRowFromLease(l, now))

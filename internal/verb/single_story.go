@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/lease"
@@ -64,6 +65,14 @@ func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatu
 	}
 	switch outcome {
 	case lease.OutcomeAcquired, lease.OutcomeStolen:
+		if outcome == lease.OutcomeStolen && holder != nil {
+			// AC5: the holder we just replaced never ran its own park/close
+			// snapshot — it was dead (stale heartbeat), which is exactly what
+			// "stolen" means. Record its final usage now, before it is gone
+			// from the lease table for good; storySeatList's own Reap sweep
+			// never sees a lease this call already overwrote.
+			recordDriverUsageOnReap(ctx, []lease.Lease{*holder}, time.Now().UTC())
+		}
 		_ = l
 		return true, false, nil
 	case lease.OutcomeInFlight:

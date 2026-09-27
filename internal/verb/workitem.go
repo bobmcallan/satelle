@@ -730,6 +730,10 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		if engaging, ok := storyStatusIsEngaging(ctx, it, *req.Status); ok && engaging {
 			recordEngageSessionModel(ctx, it.ID)
 		}
+		// The driving session's measured usage at this transition (sty_81caa41b):
+		// a snapshot from the harness's own session record, delta-ed against the
+		// last snapshot for this session. Best-effort, like the change set below.
+		recordDriverUsage(ctx, it, current.Status, *req.Status, now)
 		// Record the change set for the step just closed (sty_948ad5df).
 		// Enumeration only; best-effort; never blocks the transition.
 		recordChangeSet(ctx, it, current.Status, *req.Status, now)

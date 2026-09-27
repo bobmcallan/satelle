@@ -107,6 +107,27 @@ type StoryCost struct {
 	TotalCostUSD float64 `json:"total_cost_usd,omitempty"`
 	CostedRows   int     `json:"costed_rows,omitempty"`
 	UncostedRows int     `json:"uncosted_rows,omitempty"`
+
+	// Driver* covers the driving (in-loop) session's own recorded usage
+	// (sty_81caa41b) — kept as its own section rather than folded into Rows/
+	// TotalTokens/TotalCostUSD above, which are agent_invocation-only figures
+	// for dispatched/reviewer calls. Sessions carries, for every distinct
+	// session that produced a DriverRows entry, that session's full
+	// reconciliation against every story it drove (not just this one).
+	DriverRows           []DriverUsagePayload    `json:"driver_rows,omitempty"`
+	DriverTotalTokens    int                     `json:"driver_total_tokens,omitempty"`
+	DriverMeasuredRows   int                     `json:"driver_measured_rows,omitempty"`
+	DriverUnmeasuredRows int                     `json:"driver_unmeasured_rows,omitempty"`
+	DriverTotalCostUSD   float64                 `json:"driver_total_cost_usd,omitempty"`
+	DriverCostedRows     int                     `json:"driver_costed_rows,omitempty"`
+	DriverUncostedRows   int                     `json:"driver_uncosted_rows,omitempty"`
+	Sessions             []SessionReconciliation `json:"sessions,omitempty"`
+
+	// GrandTotal* combines the agent_invocation figures above with the driver
+	// figures — kept separate from TotalTokens/TotalCostUSD so an existing
+	// caller reading those two fields is unaffected by this addition.
+	GrandTotalTokens  int     `json:"grand_total_tokens,omitempty"`
+	GrandTotalCostUSD float64 `json:"grand_total_cost_usd,omitempty"`
 }
 
 // mergeStepCost folds a self-reported actual + estimate onto r — the last
@@ -250,6 +271,27 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 			} else {
 				sc.UncostedRows++
 			}
+		case ledger.KindDriverUsage:
+			if len(e.Payload) == 0 {
+				continue
+			}
+			var d DriverUsagePayload
+			if err := json.Unmarshal(e.Payload, &d); err != nil {
+				continue
+			}
+			sc.DriverRows = append(sc.DriverRows, d)
+			if d.Available {
+				sc.DriverTotalTokens += d.FreshInput + d.CacheRead + d.CacheWrite + d.Output
+				sc.DriverMeasuredRows++
+			} else {
+				sc.DriverUnmeasuredRows++
+			}
+			if d.CostUSD != nil {
+				sc.DriverTotalCostUSD += *d.CostUSD
+				sc.DriverCostedRows++
+			} else {
+				sc.DriverUncostedRows++
+			}
 		case ledger.KindStepCost:
 			// Legacy writer (retired, sty_b73c3236) — kept readable for history.
 			if len(e.Payload) == 0 {
@@ -287,6 +329,22 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 		}
 		sc.Steps = append(sc.Steps, *r)
 		sc.TotalWallMs += r.WallTimeMs
+	}
+
+	sc.GrandTotalTokens = sc.TotalTokens + sc.DriverTotalTokens
+	sc.GrandTotalCostUSD = sc.TotalCostUSD + sc.DriverTotalCostUSD
+
+	seenSession := map[string]bool{}
+	for _, d := range sc.DriverRows {
+		if d.SessionID == "" || seenSession[d.SessionID] {
+			continue
+		}
+		seenSession[d.SessionID] = true
+		recon, err := ComputeSessionReconciliation(ctx, d.SessionID)
+		if err != nil {
+			continue // best-effort surface, like the rest of this view
+		}
+		sc.Sessions = append(sc.Sessions, recon)
 	}
 	return sc, nil
 }
