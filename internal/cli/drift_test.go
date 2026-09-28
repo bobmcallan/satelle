@@ -322,8 +322,10 @@ func TestShippedChangelogSparesCurrentRepos(t *testing.T) {
 		{"0.0.395", true, "same — every pre-TOML stamp is warned across 0.0.401"},
 		{"0.0.401", true, "converted to TOML, but still predates the harness removal at 0.0.568"},
 		{"0.0.567", true, "the release just before the harness removal"},
-		{"0.0.568", false, "stamped AT the newest Breaking release"},
-		{"0.0.569", false, "past it"},
+		{"0.0.568", true, "stamped at the harness removal, but predates reviewer isolation at 0.0.575"},
+		{"0.0.574", true, "the release just before reviewer isolation"},
+		{"0.0.575", false, "stamped AT the newest Breaking release"},
+		{"0.0.576", false, "past it"},
 	}
 	for _, c := range cases {
 		entries, err := verb.ChangelogRange(c.deployed, future)
