@@ -29,14 +29,21 @@ func TestCapabilityTable_ModelInheritanceMatchesCode(t *testing.T) {
 	const claudeTranscript = `{"message":{"model":"claude-opus-5-5","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash"}]}}`
 	type shape struct {
 		hook, iface, command string
+		hookDir              string // defaults to agentcli's captured hooks
 	}
 	shapes := map[string]shape{
-		"claude command": {"claude_bash.json", agentcli.InterfaceCommand, agentcli.DefaultClaudeCommand},
-		"claude stream":  {"claude_bash.json", agentcli.InterfaceStream, agentcli.DefaultClaudeStreamCommand},
-		"grok command":   {"grok_bash.json", agentcli.InterfaceCommand, agentcli.DefaultGrokCommand},
-		"grok acp":       {"grok_bash.json", agentcli.InterfaceACP, "grok agent stdio"},
-		"codex command":  {"codex_shell.json", agentcli.InterfaceCommand, agentcli.DefaultCodexExecCommand},
-		"codex acp":      {"codex_shell.json", agentcli.InterfaceACP, agentcli.DefaultCodexACPCommand},
+		"claude command": {hook: "claude_bash.json", iface: agentcli.InterfaceCommand, command: agentcli.DefaultClaudeCommand},
+		"claude stream":  {hook: "claude_bash.json", iface: agentcli.InterfaceStream, command: agentcli.DefaultClaudeStreamCommand},
+		"grok command":   {hook: "grok_bash.json", iface: agentcli.InterfaceCommand, command: agentcli.DefaultGrokCommand},
+		"grok acp":       {hook: "grok_bash.json", iface: agentcli.InterfaceACP, command: "grok agent stdio"},
+		"codex command":  {hook: "codex_shell.json", iface: agentcli.InterfaceCommand, command: agentcli.DefaultCodexExecCommand},
+		"codex acp":      {hook: "codex_shell.json", iface: agentcli.InterfaceACP, command: agentcli.DefaultCodexACPCommand},
+		// No default agy binding exists; an agy binding with a {model} slot has
+		// executable agy, which never equals the antigravity harness token.
+		"antigravity command": {
+			hook: "pretooluse_write_to_file.json", iface: agentcli.InterfaceCommand, command: "agy --model {model}",
+			hookDir: filepath.Join("testdata", "antigravity"),
+		},
 	}
 	for _, row := range agentcli.CapabilityTable() {
 		t.Run(row.Adapter, func(t *testing.T) {
@@ -44,7 +51,10 @@ func TestCapabilityTable_ModelInheritanceMatchesCode(t *testing.T) {
 			if !ok {
 				t.Fatalf("no inheritance probe for adapter %q", row.Adapter)
 			}
-			raw, err := os.ReadFile(filepath.Join("..", "agentcli", "testdata", "hooks", s.hook))
+			if s.hookDir == "" {
+				s.hookDir = filepath.Join("..", "agentcli", "testdata", "hooks")
+			}
+			raw, err := os.ReadFile(filepath.Join(s.hookDir, s.hook))
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -55,6 +55,7 @@ type AdapterCapabilities struct {
 func CapabilityTable() []AdapterCapabilities {
 	const notLive = "interface=command is one-shot only"
 	const noGrokHookModel = "grok's hook payload carries no model, so the in-loop tier is unknown"
+	const antigravityNoUsage = "agy hook payloads report no token usage"
 	return []AdapterCapabilities{
 		{
 			Adapter: "claude command", Usage: yes(), CacheSplit: yes(), ResolvedModel: yes(),
@@ -85,6 +86,16 @@ func CapabilityTable() []AdapterCapabilities {
 			ModelInheritance: no("the in-loop model is recorded under harness codex, but the default binding's executable is npx, so the cross-provider guard does not match"),
 			LiveSession:      yes(),
 		},
+		{
+			// Antigravity is integrated through its hooks only; satelle has no agy
+			// runner, so the cells read what the hook payload carries. The hook
+			// publishes the in-loop model (modelName), but inheritance into an agy
+			// dispatch is guarded on executable == harness token.
+			Adapter: "antigravity command", Usage: no(antigravityNoUsage), CacheSplit: no(antigravityNoUsage),
+			ResolvedModel:    no("no captured agy print-mode output names a model"),
+			ModelInheritance: no("the in-loop model is recorded under harness antigravity, but an agy binding's executable is agy, so the cross-provider guard does not match"),
+			LiveSession:      no(notLive),
+		},
 	}
 }
 
@@ -99,6 +110,12 @@ func ReasonForNoModel(harness string) string {
 	h := strings.TrimSpace(harness)
 	if h == "" {
 		h = HarnessUnknown
+	}
+	if h == HarnessAntigravity {
+		// Its row's inheritance reason is about the executable guard, not about a
+		// payload with no model: agy payloads carry modelName, so say what was
+		// missing from this one.
+		return "antigravity: hook payload carried no modelName"
 	}
 	for _, a := range CapabilityTable() {
 		if !strings.HasPrefix(a.Adapter, h+" ") {

@@ -1,3 +1,13 @@
+## [0.0.566] - 2026-09-28
+
+### Added
+- **satelle recognises Antigravity (agy) sessions.** A command run by an agy driver carries `ANTIGRAVITY_AGENT=1`, which satelle now reads as an in-loop agy session; agy hook payloads (`conversationId`, `toolCall`) classify as antigravity without matching claude, grok or codex payloads; the caller's model is taken from the payload's `modelName` as reported (agy may report `auto`). The capability table carries an `antigravity command` row with an agy-named reason for every capability agy does not report (token usage, cache split, resolved model, live session). (sty_68a24884)
+
+## [serve-v0.0.91] - 2026-09-28
+
+### Changed
+- **The service embeds the Antigravity detection and capability row above.** (sty_68a24884)
+
 ## [0.0.565] - 2026-09-28
 
 ### Added

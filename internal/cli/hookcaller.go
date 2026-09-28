@@ -39,8 +39,11 @@ func (osCallerFS) ModTime(name string) (int64, error) {
 }
 
 type hookCallerPayload struct {
-	Model               string `json:"model"`
-	ModelID             string `json:"modelId"`
+	Model   string `json:"model"`
+	ModelID string `json:"modelId"`
+	// ModelName is Antigravity's wire field. It is published verbatim, whatever
+	// the harness reports (its fixtures carry "auto"), never mapped to a guess.
+	ModelName           string `json:"modelName"`
 	ToolUseID           string `json:"tool_use_id"`
 	ToolUseIDCamel      string `json:"toolUseId"`
 	TranscriptPath      string `json:"transcript_path"`
@@ -56,7 +59,7 @@ func resolveCaller(raw []byte, fs callerFS) callerID {
 	}
 	var p hookCallerPayload
 	_ = json.Unmarshal(raw, &p)
-	if m := firstNonEmpty(p.Model, p.ModelID, p.Agent.Model); m != "" {
+	if m := firstNonEmpty(p.Model, p.ModelID, p.Agent.Model, p.ModelName); m != "" {
 		return callerID{Key: "payload_model", Model: m, Reason: "caller model from payload field"}
 	}
 	transcript := firstNonEmpty(p.TranscriptPath, p.TranscriptPathCamel)

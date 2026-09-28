@@ -54,6 +54,8 @@ func liveOpenable(adapter string) bool {
 		"grok acp":       {InterfaceACP, "grok agent stdio"},
 		"codex command":  {InterfaceCommand, DefaultCodexExecCommand},
 		"codex acp":      {InterfaceACP, DefaultCodexACPCommand},
+		// Hook-only: satelle has no agy runner, so there is no default command.
+		"antigravity command": {InterfaceCommand, "agy"},
 	}
 	c := commands[adapter]
 	_, err := OpenerFromBinding(c[0], c[1])
@@ -63,7 +65,7 @@ func liveOpenable(adapter string) bool {
 // The table names the six adapters the epic lists, each once, and every cell is
 // either available (no reason) or unavailable with a reason.
 func TestCapabilityTable_ShapeIsExplicit(t *testing.T) {
-	want := []string{"claude command", "claude stream", "grok command", "grok acp", "codex command", "codex acp"}
+	want := []string{"claude command", "claude stream", "grok command", "grok acp", "codex command", "codex acp", "antigravity command"}
 	table := CapabilityTable()
 	if len(table) != len(want) {
 		t.Fatalf("table has %d rows, want %d", len(table), len(want))
@@ -89,6 +91,9 @@ func TestCapabilityTable_ShapeIsExplicit(t *testing.T) {
 // the code reports as a bare zero instead of an explicit adapter-named reason.
 func TestCapabilityTable_MatchesCode(t *testing.T) {
 	for _, row := range CapabilityTable() {
+		if row.Adapter == antigravityAdapter {
+			continue // hook-only, no runner output to probe: TestCapabilityTable_AntigravityRow
+		}
 		t.Run(row.Adapter, func(t *testing.T) {
 			u := capabilityProbe(t, row.Adapter)
 
@@ -120,6 +125,47 @@ func TestCapabilityTable_MatchesCode(t *testing.T) {
 				t.Errorf("live session: table available=%v, OpenerFromBinding ok=%v", row.LiveSession.Available, got)
 			}
 		})
+	}
+}
+
+const antigravityAdapter = "antigravity command"
+
+// Antigravity is integrated through hooks only, so its row is checked against
+// what a hook payload carries (the fixtures are synthetic — see their README)
+// rather than against runner output; every unavailable cell names agy. The
+// inheritance cell is checked against config.SelectModel in
+// internal/cli's TestCapabilityTable_ModelInheritanceMatchesCode.
+func TestCapabilityTable_AntigravityRow(t *testing.T) {
+	var row *AdapterCapabilities
+	for _, a := range CapabilityTable() {
+		if a.Adapter == antigravityAdapter {
+			row = &a
+			break
+		}
+	}
+	if row == nil {
+		t.Fatalf("no %q row", antigravityAdapter)
+	}
+	for name, c := range map[string]Capability{
+		"usage": row.Usage, "cache split": row.CacheSplit, "resolved model": row.ResolvedModel,
+		"model inheritance": row.ModelInheritance, "live session": row.LiveSession,
+	} {
+		if c.Available {
+			t.Errorf("%s: want unavailable for a hook-only adapter", name)
+		}
+	}
+	for name, c := range map[string]Capability{
+		"usage": row.Usage, "cache split": row.CacheSplit, "resolved model": row.ResolvedModel, "model inheritance": row.ModelInheritance,
+	} {
+		if !strings.Contains(c.Reason, "agy") {
+			t.Errorf("%s reason %q does not name agy", name, c.Reason)
+		}
+	}
+	if got := liveOpenable(antigravityAdapter); got != row.LiveSession.Available {
+		t.Errorf("live session: table available=%v, OpenerFromBinding ok=%v", row.LiveSession.Available, got)
+	}
+	if got := ReasonForNoModel(HarnessAntigravity); !strings.Contains(got, HarnessAntigravity) {
+		t.Errorf("ReasonForNoModel(antigravity) = %q, want an antigravity-named reason", got)
 	}
 }
 

@@ -1068,6 +1068,7 @@ this table and a test checks every cell against the code that produces it.
 | grok acp | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | yes |
 | codex command | yes | yes | unavailable: codex exec --json names no model | yes | unavailable: interface=command is one-shot only |
 | codex acp | unavailable: no captured usage report from the peer | unavailable: no captured usage report from the peer | unavailable: codex acp reports no model | unavailable: the in-loop model is recorded under harness codex, but the default binding's executable is npx, so the cross-provider guard does not match | yes |
+| antigravity command | unavailable: agy hook payloads report no token usage | unavailable: agy hook payloads report no token usage | unavailable: no captured agy print-mode output names a model | unavailable: the in-loop model is recorded under harness antigravity, but an agy binding's executable is agy, so the cross-provider guard does not match | unavailable: interface=command is one-shot only |
 
 ### What each harness reports
 
@@ -1078,6 +1079,10 @@ this table and a test checks every cell against the code that produces it.
   rule falls through.
 - **Grok** — its hook payload carries no model, so the in-loop tier is recorded
   `unknown`.
+- **Antigravity** — its hook payload's `modelName` is published verbatim as the
+  in-loop tier (it may be an alias such as `auto`); the session marker is
+  `ANTIGRAVITY_AGENT`. The tier is recorded under harness `antigravity`, so an
+  `agy` binding does not inherit it (executable `agy` ≠ harness token).
 
 Model inheritance in the capability table is "available" when the in-loop tier
 can apply; it needs a hook that carries a model, so without one the dispatch

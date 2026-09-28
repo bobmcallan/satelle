@@ -130,6 +130,44 @@ func TestResolveCaller_PayloadModelWins(t *testing.T) {
 	}
 }
 
+// failFS proves no transcript, glob or mtime lookup runs.
+type failFS struct{ t *testing.T }
+
+func (f failFS) ReadFile(name string) ([]byte, error) {
+	f.t.Errorf("unexpected ReadFile(%q)", name)
+	return nil, os.ErrNotExist
+}
+func (f failFS) Glob(pattern string) ([]string, error) {
+	f.t.Errorf("unexpected Glob(%q)", pattern)
+	return nil, nil
+}
+func (f failFS) ModTime(name string) (int64, error) {
+	f.t.Errorf("unexpected ModTime(%q)", name)
+	return 0, os.ErrNotExist
+}
+
+// Antigravity names the caller model in modelName; it is published verbatim
+// and never sends resolveCaller to a transcript.
+func TestResolveCaller_AntigravityModelName(t *testing.T) {
+	fixture, err := os.ReadFile(filepath.Join("testdata", "antigravity", "pretooluse_write_to_file.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]struct{ raw, want string }{
+		"fixture": {string(fixture), "auto"},
+		"named":   {`{"conversationId":"c","modelName":"gemini-3-pro","transcriptPath":"/t.jsonl"}`, "gemini-3-pro"},
+		"trimmed": {`{"modelName":"  gemini-3-pro "}`, "gemini-3-pro"},
+	} {
+		got := resolveCaller([]byte(c.raw), failFS{t})
+		if got.Key != "payload_model" || got.Model != c.want {
+			t.Errorf("%s: got %+v, want payload_model %q", name, got, c.want)
+		}
+	}
+	if got := resolveCaller([]byte(`{"conversationId":"c","modelName":"  "}`), memFS{files: map[string][]byte{}}); got.Model != "" || got.Reason == "" {
+		t.Errorf("blank modelName must be unresolved with a reason, got %+v", got)
+	}
+}
+
 func TestResolveCaller_Unresolved(t *testing.T) {
 	got := resolveCaller([]byte(`{"toolInput":{"filePath":"x.go"}}`), memFS{files: map[string][]byte{}})
 	if got.Model != "" || got.Key != "" {

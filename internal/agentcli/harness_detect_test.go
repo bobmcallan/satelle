@@ -41,6 +41,73 @@ func TestInLoopHarnessFromEnv(t *testing.T) {
 	}
 }
 
+func TestDetectSessionHarnesses_Antigravity(t *testing.T) {
+	for _, c := range []struct {
+		env  []string
+		want map[string]bool
+	}{
+		{[]string{"ANTIGRAVITY_AGENT=1"}, map[string]bool{HarnessAntigravity: true}},
+		{[]string{"ANTIGRAVITY_AGENT=true"}, map[string]bool{HarnessAntigravity: true}},
+		{[]string{"ANTIGRAVITY_AGENT=0"}, map[string]bool{}},
+		{[]string{"ANTIGRAVITY_AGENT="}, map[string]bool{}},
+		{[]string{"ANTIGRAVITY_AGENT_X=1"}, map[string]bool{}},
+		{[]string{"CLAUDECODE=1", "ANTIGRAVITY_AGENT=1"}, map[string]bool{HarnessClaude: true, HarnessAntigravity: true}},
+	} {
+		got := DetectSessionHarnesses(c.env)
+		if len(got) != len(c.want) {
+			t.Errorf("%v: DetectSessionHarnesses = %v, want %v", c.env, got, c.want)
+			continue
+		}
+		for h := range c.want {
+			if !got[h] {
+				t.Errorf("%v: DetectSessionHarnesses = %v, want %v", c.env, got, c.want)
+			}
+		}
+	}
+	if h, ok := InLoopHarnessFromEnv([]string{"ANTIGRAVITY_AGENT=1"}); !ok || h != HarnessAntigravity {
+		t.Errorf("InLoopHarnessFromEnv = (%q,%v), want antigravity", h, ok)
+	}
+	if _, ok := InLoopHarnessFromEnv([]string{"ANTIGRAVITY_AGENT=0"}); ok {
+		t.Error("ANTIGRAVITY_AGENT=0 must not count as an in-loop session")
+	}
+}
+
+// The antigravity fixtures live with the hook tests in internal/cli; they are
+// synthetic (see their README), not live captures.
+func TestHarnessFromHookEvent_Antigravity(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "cli", "testdata", "antigravity", "*.json"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no antigravity fixtures found: %v", err)
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := HarnessFromHookEvent(b); got != HarnessAntigravity {
+			t.Errorf("%s: HarnessFromHookEvent = %q, want antigravity", filepath.Base(f), got)
+		}
+	}
+	for name, raw := range map[string]string{
+		"toolCall only":       `{"toolCall":{"name":"run_command","args":{}}}`,
+		"conversationId only": `{"conversationId":"abc"}`,
+	} {
+		if got := HarnessFromHookEvent([]byte(raw)); got != HarnessAntigravity {
+			t.Errorf("%s: HarnessFromHookEvent = %q, want antigravity", name, got)
+		}
+	}
+	// A toolCall riding beside a claude/grok tool input key is not antigravity.
+	for name, raw := range map[string]string{
+		"toolCall with tool_input": `{"toolCall":{},"tool_input":{"file_path":"/x.go"},"tool_name":"Edit"}`,
+		"toolCall with toolInput":  `{"toolCall":{},"toolInput":{"filePath":"/x.go"}}`,
+		"null conversationId":      `{"conversationId":null}`,
+	} {
+		if got := HarnessFromHookEvent([]byte(raw)); got == HarnessAntigravity {
+			t.Errorf("%s: classified antigravity", name)
+		}
+	}
+}
+
 func TestHarnessFromHookEvent(t *testing.T) {
 	fixtures := map[string]string{
 		"claude_bash":        HarnessClaude,

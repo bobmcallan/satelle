@@ -9,10 +9,12 @@ import (
 // the answer for anything unrecognised — nothing is assumed to be Claude
 // (satelle-agent-agnostic §3).
 const (
-	HarnessClaude  = "claude"
-	HarnessGrok    = "grok"
-	HarnessCodex   = "codex"
-	HarnessUnknown = "unknown"
+	HarnessClaude = "claude"
+	HarnessGrok   = "grok"
+	HarnessCodex  = "codex"
+	// HarnessAntigravity is Google's Antigravity CLI (agy).
+	HarnessAntigravity = "antigravity"
+	HarnessUnknown     = "unknown"
 )
 
 // sessionMarker is one provider's in-loop environment marker. The provider's
@@ -39,6 +41,7 @@ var sessionMarkers = []sessionMarker{
 	{harness: HarnessClaude, key: "CLAUDECODE", match: func(v string) bool { return strings.TrimSpace(v) == "1" }},
 	{harness: HarnessClaude, key: "CLAUDE_CODE_", prefix: true, match: func(string) bool { return true }},
 	{harness: HarnessGrok, key: "GROK_AGENT", match: nonEmptyNotZero},
+	{harness: HarnessAntigravity, key: "ANTIGRAVITY_AGENT", match: nonEmptyNotZero},
 	{harness: HarnessCodex, key: "CODEX_THREAD_ID", match: nonEmpty},
 	{harness: HarnessCodex, key: "CODEX_SANDBOX", match: nonEmpty},
 	{harness: HarnessCodex, key: "CODEX_SANDBOX_NETWORK_DISABLED", match: nonEmpty},
@@ -64,10 +67,11 @@ func DetectSessionHarnesses(environ []string) map[string]bool {
 }
 
 // InLoopHarnessFromEnv reports whether environ carries any in-loop harness
-// marker, and the first harness it names (claude, grok, codex order).
+// marker, and the first harness it names (claude, grok, codex, antigravity
+// order).
 func InLoopHarnessFromEnv(environ []string) (string, bool) {
 	found := DetectSessionHarnesses(environ)
-	for _, h := range []string{HarnessClaude, HarnessGrok, HarnessCodex} {
+	for _, h := range []string{HarnessClaude, HarnessGrok, HarnessCodex, HarnessAntigravity} {
 		if found[h] {
 			return h, true
 		}
@@ -86,6 +90,10 @@ var claudeToolNames = map[string]bool{
 //
 //   - codex: snake_case envelope carrying turn_id (Claude Code's envelope has
 //     no turn_id). Checked first because it is unambiguous.
+//   - antigravity: camelCase envelope carrying conversationId, or a toolCall
+//     with no toolInput/tool_input (the tool payload key of grok and claude).
+//     None of these keys appear in the codex, grok or claude envelopes, so it
+//     is checked right after codex and before the grok fingerprint.
 //   - grok: any of its own camelCase-only field names — hookEventName,
 //     workspaceRoot, transcriptPath, permissionMode, a camelCase sessionId
 //     with no snake_case session_id, or a camelCase toolInput with no
@@ -118,6 +126,8 @@ func HarnessFromHookEvent(raw []byte) string {
 		WorkspaceRoot       json.RawMessage `json:"workspaceRoot"`
 		TranscriptPathCamel json.RawMessage `json:"transcriptPath"`
 		PermissionModeCamel json.RawMessage `json:"permissionMode"`
+		ConversationID      json.RawMessage `json:"conversationId"`
+		ToolCall            json.RawMessage `json:"toolCall"`
 	}
 	if json.Unmarshal(raw, &top) != nil {
 		return HarnessUnknown
@@ -131,6 +141,9 @@ func HarnessFromHookEvent(raw []byte) string {
 	}
 
 	toolInputSnake, toolInputCamel := present(top.ToolInputSnake), present(top.ToolInputCamel)
+	if present(top.ConversationID) || (present(top.ToolCall) && !toolInputSnake && !toolInputCamel) {
+		return HarnessAntigravity
+	}
 	sessionIDSnake, sessionIDCamel := present(top.SessionIDSnake), present(top.SessionIDCamel)
 	if present(top.HookEventNameCamel) || present(top.WorkspaceRoot) ||
 		present(top.TranscriptPathCamel) || present(top.PermissionModeCamel) ||
