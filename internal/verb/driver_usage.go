@@ -45,6 +45,39 @@ type driverCumulative struct {
 	CacheWrite int      `json:"cache_write"`
 	Output     int      `json:"output"`
 	CostUSD    *float64 `json:"cost_usd,omitempty"`
+	// ModelCalls is the session's absolute count of model requests at this
+	// snapshot; nil when the harness reports none (or the row predates the
+	// field) — a difference of two rows is only a count when both carry it.
+	ModelCalls *int `json:"model_calls,omitempty"`
+}
+
+// cumulativeFromSnap is the harness-reported running total of one snapshot.
+func cumulativeFromSnap(s agentcli.DriverSnapshot) driverCumulative {
+	c := driverCumulative{
+		FreshInput: s.FreshInputTokens, CacheRead: s.CacheReadInputTokens,
+		CacheWrite: s.CacheCreationInputTokens, Output: s.OutputTokens, CostUSD: s.CostUSD,
+	}
+	if s.ModelCallsUnavailableReason == "" {
+		n := s.ModelCalls
+		c.ModelCalls = &n
+	}
+	return c
+}
+
+// stampModelCalls records on p the model requests made between base and cur, or
+// the adapter-named reason it cannot: a harness whose record has no count, or a
+// base row written before the count existed. Never a zero that reads as a
+// measurement (satelle-agent-agnostic §2).
+func stampModelCalls(p *DriverUsagePayload, snap agentcli.DriverSnapshot, cur, base driverCumulative) {
+	switch {
+	case snap.ModelCallsUnavailableReason != "":
+		p.ModelCallsUnavailableReason = snap.ModelCallsUnavailableReason
+	case cur.ModelCalls == nil || base.ModelCalls == nil:
+		p.ModelCallsUnavailableReason = "driver_usage: the base row predates model-call recording"
+	default:
+		n := *cur.ModelCalls - *base.ModelCalls
+		p.ModelCalls = &n
+	}
 }
 
 // DriverUsagePayload is the driver_usage ledger row's payload shape: the
@@ -65,6 +98,12 @@ type DriverUsagePayload struct {
 	CostUSD               *float64 `json:"cost_usd,omitempty"`
 	CostUnavailableReason string   `json:"cost_unavailable_reason,omitempty"`
 
+	// ModelCalls is the model requests this row's window made (the delta, like
+	// the token fields); nil with ModelCallsUnavailableReason when the harness
+	// cannot say (sty_c4b92c9e).
+	ModelCalls                  *int   `json:"model_calls,omitempty"`
+	ModelCallsUnavailableReason string `json:"model_calls_unavailable_reason,omitempty"`
+
 	Available         bool   `json:"available"`
 	UnavailableReason string `json:"unavailable_reason,omitempty"`
 
@@ -77,6 +116,11 @@ type DriverUsagePayload struct {
 	WindowKey  string           `json:"window_key"`
 
 	Late bool `json:"late,omitempty"`
+	// Unflushed marks a row read from a harness that records a turn's usage only
+	// when the turn ends (agentcli.DriverSnapshot.MayUndercountInFlightTurn): its
+	// cumulative excludes the turn that was running when it was read. A gate
+	// wait's count is only readable from a row taken after that turn flushed.
+	Unflushed bool `json:"unflushed,omitempty"`
 	// Pending marks a close/park row read from a harness that reported
 	// agentcli.DriverSnapshot.MayUndercountInFlightTurn (grok, codex — NEVER
 	// claude, see that field's doc comment) — the read may undercount the
@@ -226,15 +270,21 @@ func driverSessionHarness(sessionID string) string {
 }
 
 func recordDriverUsage(ctx context.Context, item workitem.Item, from, to string, now time.Time) {
-	if ledgerStore == nil || strings.TrimSpace(item.ID) == "" {
-		return
-	}
 	sessionID := config.ResolveSession()
 	if sessionID == "" {
 		return // no session identity to attribute usage to (ordinary unstamped use)
 	}
-	harness := driverSessionHarness(sessionID)
-	trigger := driverUsageTrigger(ctx, item, from, to)
+	recordDriverUsageAs(ctx, item, sessionID, driverSessionHarness(sessionID), driverUsageTrigger(ctx, item, from, to), from, to, now)
+}
+
+// recordDriverUsageAs is recordDriverUsage with the session, its harness and the
+// trigger already decided — a transition's trigger is derived from its edge, a
+// gate wait's is DriverTriggerGate, and a gate wait may be settled by a process
+// that is not the driving session.
+func recordDriverUsageAs(ctx context.Context, item workitem.Item, sessionID, harness, trigger, from, to string, now time.Time) {
+	if ledgerStore == nil || strings.TrimSpace(item.ID) == "" || sessionID == "" {
+		return
+	}
 
 	prev, prevFound, prevAvail, prevAvailFound := sessionDriverUsageState(ctx, sessionID)
 	snap := driverSnapshotter(harness, sessionID, changeRecordRepoRoot())
@@ -242,6 +292,7 @@ func recordDriverUsage(ctx context.Context, item workitem.Item, from, to string,
 	payload := DriverUsagePayload{
 		SessionID: sessionID, Executable: harness, Model: snap.Model,
 		Trigger: trigger, From: from, To: to,
+		Unflushed: snap.MayUndercountInFlightTurn,
 	}
 	payload.WindowKey = fmt.Sprintf("%s|%s|%s|%s|%s", item.ID, sessionID, trigger, from, to)
 	if prevFound {
@@ -264,15 +315,8 @@ func recordDriverUsage(ctx context.Context, item workitem.Item, from, to string,
 
 	payload.Available = true
 	payload.Turns = snap.Turns
-	payload.Cumulative = driverCumulative{
-		FreshInput: snap.FreshInputTokens, CacheRead: snap.CacheReadInputTokens,
-		CacheWrite: snap.CacheCreationInputTokens, Output: snap.OutputTokens, CostUSD: snap.CostUSD,
-	}
-
-	fresh := driverCumulative{
-		FreshInput: snap.FreshInputTokens, CacheRead: snap.CacheReadInputTokens,
-		CacheWrite: snap.CacheCreationInputTokens, Output: snap.OutputTokens, CostUSD: snap.CostUSD,
-	}
+	fresh := cumulativeFromSnap(snap)
+	payload.Cumulative = fresh
 	// A retry/re-invocation of the SAME transition (identical WindowKey) must
 	// reuse prev's own cumulative as base regardless of Pending — retrying A's
 	// OWN close is not "the next snapshot after A", so it must not trigger a
@@ -339,6 +383,7 @@ func recordDriverUsage(ctx context.Context, item workitem.Item, from, to string,
 	payload.CacheRead = snap.CacheReadInputTokens - base.CacheRead
 	payload.CacheWrite = snap.CacheCreationInputTokens - base.CacheWrite
 	payload.Output = snap.OutputTokens - base.Output
+	stampModelCalls(&payload, snap, fresh, base)
 	if snap.CostUSD != nil {
 		cost := *snap.CostUSD
 		if base.CostUSD != nil {
@@ -473,6 +518,7 @@ func recordLateDriverUsageCatchup(ctx context.Context, sessionID, harness string
 	late.CacheRead = fresh.CacheRead - lateBase.CacheRead
 	late.CacheWrite = fresh.CacheWrite - lateBase.CacheWrite
 	late.Output = fresh.Output - lateBase.Output
+	stampModelCalls(&late, snap, fresh, lateBase)
 	if fresh.CostUSD != nil {
 		c := *fresh.CostUSD
 		if lateBase.CostUSD != nil {
@@ -529,18 +575,22 @@ func recordPendingCatchupFromTurnBreakdown(ctx context.Context, sessionID, harne
 	late := DriverUsagePayload{
 		SessionID: sessionID, Executable: harness, Model: snap.Model,
 		Trigger: DriverTriggerLate, To: prev.payload.To, Late: true,
-		Available:   true,
-		WindowKey:   prev.payload.WindowKey + "|late",
-		WallSeconds: now.Sub(prev.at).Seconds(),
-		Cumulative: driverCumulative{
-			FreshInput: snap.FreshInputTokens, CacheRead: snap.CacheReadInputTokens,
-			CacheWrite: snap.CacheCreationInputTokens, Output: snap.OutputTokens, CostUSD: snap.CostUSD,
-		},
+		Available:     true,
+		WindowKey:     prev.payload.WindowKey + "|late",
+		WallSeconds:   now.Sub(prev.at).Seconds(),
+		Cumulative:    cumulativeFromSnap(snap),
 		BaseTurns:     idx,
 		Turns:         idx + 1,
 		CreditedTurns: []int{idx},
 		FreshInput:    t.FreshInput, CacheRead: t.CacheRead, CacheWrite: t.CacheWrite, Output: t.Output,
 		CostUSD: t.CostUSD,
+	}
+	// The credited turn's own request count, from the same breakdown entry.
+	if snap.ModelCallsUnavailableReason != "" {
+		late.ModelCallsUnavailableReason = snap.ModelCallsUnavailableReason
+	} else {
+		n := t.ModelCalls
+		late.ModelCalls = &n
 	}
 	appendDriverUsageRow(ctx, prev.storyID, late, now)
 }
@@ -601,6 +651,10 @@ func adjustBaseForClaimedTurns(base driverCumulative, breakdown []agentcli.Drive
 		adjusted.CacheRead += t.CacheRead
 		adjusted.CacheWrite += t.CacheWrite
 		adjusted.Output += t.Output
+		if adjusted.ModelCalls != nil {
+			n := *adjusted.ModelCalls + t.ModelCalls
+			adjusted.ModelCalls = &n
+		}
 		if t.CostUSD != nil {
 			v := 0.0
 			if adjusted.CostUSD != nil {
@@ -738,10 +792,7 @@ func recordDriverUsageOnReap(ctx context.Context, reaped []lease.Lease, now time
 			continue
 		}
 
-		cum := driverCumulative{
-			FreshInput: snap.FreshInputTokens, CacheRead: snap.CacheReadInputTokens,
-			CacheWrite: snap.CacheCreationInputTokens, Output: snap.OutputTokens, CostUSD: snap.CostUSD,
-		}
+		cum := cumulativeFromSnap(snap)
 		// The base to diff against is the session's latest AVAILABLE row, not
 		// necessarily its literal latest row: when the latest row is itself
 		// unavailable (e.g. a prior reap already wrote a no-partial-turn row
@@ -787,6 +838,7 @@ func recordDriverUsageOnReap(ctx context.Context, reaped []lease.Lease, now time
 		payload.Cumulative = cum
 		payload.BaseTurns, payload.Turns = baseTurns, snap.Turns
 		payload.FreshInput, payload.CacheRead, payload.CacheWrite, payload.Output = fresh, cacheRead, cacheWrite, output
+		stampModelCalls(&payload, snap, cum, base)
 		if cum.CostUSD != nil {
 			c := *cum.CostUSD
 			if base.CostUSD != nil {

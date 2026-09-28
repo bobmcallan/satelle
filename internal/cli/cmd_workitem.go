@@ -868,6 +868,9 @@ reject per skill and seat, scoped by --story, --epic, or --since/--until.`,
 			if len(args) != 1 {
 				return fmt.Errorf("story cost: a story id is required (or pass --by-skill)")
 			}
+			// A gate wait the harness has since flushed is closed here, by the read
+			// that wants its count (sty_c4b92c9e).
+			verb.SettleGateWaits(cmd.Context(), args[0], time.Now().UTC())
 			sc, err := verb.ComputeStoryCost(cmd.Context(), args[0])
 			if err != nil {
 				return err
@@ -1094,7 +1097,10 @@ func driverRowsToCostview(rows []verb.DriverUsagePayload) []costview.DriverRow {
 			CostUSD: d.CostUSD, CostUnavailableReason: d.CostUnavailableReason,
 			Available: d.Available, WallSeconds: d.WallSeconds, Trigger: d.Trigger,
 			From: d.From, To: d.To,
+			ModelCalls: d.ModelCalls, ModelCallsUnavailableReason: d.ModelCallsUnavailableReason,
+			Turns: d.Turns, Unflushed: d.Unflushed,
 		}
+		out[i].Cumulative.ModelCalls = d.Cumulative.ModelCalls
 	}
 	return out
 }
@@ -1109,19 +1115,20 @@ func driverRowsToCostview(rows []verb.DriverUsagePayload) []costview.DriverRow {
 func printDriverSection(cmd *cobra.Command, sc verb.StoryCost) error {
 	rowViews, totalView := costview.FormatDriverRows(driverRowsToCostview(sc.DriverRows))
 	dw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(dw, "\nDRIVER SESSION\tEXECUTABLE\tTRIGGER\tFRESH IN\tOUT\tCACHE READ\tCACHE WRITE\t$\tAGENT TIME")
+	fmt.Fprintln(dw, "\nDRIVER SESSION\tEXECUTABLE\tTRIGGER\tFRESH IN\tOUT\tCALLS\tCACHE READ\tCACHE WRITE\t$\tAGENT TIME")
 	for _, d := range rowViews {
-		fmt.Fprintf(dw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			d.SessionID, d.Executable, d.Trigger, d.FreshIn, d.Out, d.CacheRead, d.CacheWrite, d.USD, d.AgentTime)
+		fmt.Fprintf(dw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			d.SessionID, d.Executable, d.Trigger, d.FreshIn, d.Out, d.Calls, d.CacheRead, d.CacheWrite, d.USD, d.AgentTime)
 	}
 	if totalView != nil {
-		fmt.Fprintf(dw, "%s\t\t\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			totalView.SessionID, totalView.FreshIn, totalView.Out, totalView.CacheRead, totalView.CacheWrite,
+		fmt.Fprintf(dw, "%s\t\t\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			totalView.SessionID, totalView.FreshIn, totalView.Out, totalView.Calls, totalView.CacheRead, totalView.CacheWrite,
 			totalView.USD, totalView.AgentTime)
 	}
 	if err := dw.Flush(); err != nil {
 		return err
 	}
+	printGateWaits(cmd, sc.GateWaits)
 	// GRAND TOTAL reads off sc.Figures — costview.Own's single accumulation
 	// over BOTH agent_invocation and driver_usage rows (figures.go addDispatchRow/
 	// addDriverRow feed the same accumulator) — rather than the legacy
@@ -1142,6 +1149,21 @@ func printDriverSection(cmd *cobra.Command, sc verb.StoryCost) error {
 		printSessionReconciliation(cmd, recon)
 	}
 	return nil
+}
+
+// printGateWaits renders the driver's model calls across each handed-off gate
+// wait (sty_c4b92c9e): the count read from the gate rows, or why there is none
+// yet — open while the harness has not flushed the turn, "—" where it cannot say.
+func printGateWaits(cmd *cobra.Command, waits []costview.GateWait) {
+	if len(waits) == 0 {
+		return
+	}
+	gw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(gw, "\nGATE WAIT\tEXECUTABLE\tDRIVER MODEL CALLS\tNOTE")
+	for _, w := range waits {
+		fmt.Fprintf(gw, "%s\t%s\t%s\t%s\n", w.Handle, w.Executable, costview.FormatModelCalls(w), w.Reason)
+	}
+	_ = gw.Flush()
 }
 
 // printSessionReconciliation renders one driving session's reconciliation
@@ -1768,8 +1790,10 @@ func groupSetLong(group string) string {
 rewrites the body by accident.
 
 --status is a workflow transition, not an assignment. Its gates run and can
-REFUSE it, and a status that skips a step is refused before any gate. Engaging
-statuses also take the engagement seat, which is arbitrated per project.
+REFUSE it, and a status that skips a step is refused before any gate. Called by
+an agent, a gate that outlasts the call returns a handle and delivers its verdict
+by notification: never poll (satelle help agent-dispatch). Engaging statuses
+also take the engagement seat, which is arbitrated per project.
 title/body/acceptance/category are FROZEN once the story leaves its entry
 state; status, tags, priority, estimate and actual stay mutable. --tags
 replaces the whole set, while --add-tags/--remove-tags are additive and may not

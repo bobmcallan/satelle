@@ -2375,7 +2375,15 @@ func emitAdditionalContext(out io.Writer, event, permissionDecision, context str
 // principle injected at SessionStart). It keeps the engaged-story discipline in
 // front of the agent between session starts — a single PreToolUse gate is not the
 // only line of defence (sty_949e8739).
-const hookPromptReminder = "satelle: edits require an ENGAGED story. Before any Edit/Write/create/delete, engage a story in a performing state — `satelle story create …` then `satelle story set <id> --status plan` — and drive it through its workflow. Research uses read tools (Read/grep/Glob), never Edit/Write. The edit gate enforces this; never route around it."
+const hookPromptReminder = "satelle: edits require an ENGAGED story. Before any Edit/Write/create/delete, engage a story in a performing state — `satelle story create …` then `satelle story set <id> --status plan` — and drive it through its workflow. Research uses read tools (Read/grep/Glob), never Edit/Write. The edit gate enforces this; never route around it. " + gateWaitNote
+
+// gateWaitNote is the one sentence every agent-facing surface carries about a
+// gate that outlasts the call (sty_c4b92c9e): the command returns a handle, the
+// verdict arrives by the harness's own hook, and the driver waits for it instead
+// of asking. It rides the standing reminder and the engaged form so an agent
+// reads it on every turn it could be tempted to poll on, and the help topic
+// carries the same two phrases (gate_wait_text_test.go asserts both).
+const gateWaitNote = "A slow gate returns a handle and its verdict is delivered into this session as a notification — never poll, sleep-loop, or re-run a backgrounded command."
 
 // gateNotWiredWarning is the LOUD banner the UserPromptSubmit self-check prepends
 // when it can confidently see the PreToolUse edit gate is NOT wired into the
@@ -2438,7 +2446,7 @@ func formatEngagedPrompt(info seatInfo, now time.Time) string {
 		if withSeat {
 			msg += ". Seat: `satelle story seat`"
 		}
-		return msg
+		return msg + ". " + gateWaitNote
 	}
 
 	// Degradation ladder: full → cap gates at 3 → drop gates → drop seat → give up.
@@ -2494,6 +2502,11 @@ func runHookPrompt(out io.Writer) error {
 			body = gateNotWiredWarning + "\n\n" + body
 		}
 	}
+	// A gate that finished between turns (sty_c4b92c9e): put its verdict in front
+	// of the model with this prompt. No waiting — the Stop hook owns the wait.
+	if verdicts := gateDeliveryFor(0); verdicts != "" {
+		body += "\n\n" + verdicts
+	}
 	return emitAdditionalContext(out, "UserPromptSubmit", "", body)
 }
 
@@ -2515,6 +2528,14 @@ func runHookPrompt(out io.Writer) error {
 // check runs before the other-holder note so a sibling session that edited
 // nothing gets no chatter on every Stop.
 func runHookStopcheck(raw []byte, out io.Writer) error {
+	// A gate the session handed off (sty_c4b92c9e) is what it is waiting on: wait
+	// for it here and answer with its verdict, which the harness feeds back as the
+	// session's next input — the wake that costs the driver no call to ask. This
+	// runs before the anti-loop guard, which protects only stopcheck's own block:
+	// a delivery is consumed once, so it cannot loop.
+	if text := gateDeliveryFor(stopGateWait()); text != "" {
+		return emitStopBlock(out, text)
+	}
 	if stopHookActive(raw) {
 		return nil // anti-loop: never re-block a stop we already blocked
 	}

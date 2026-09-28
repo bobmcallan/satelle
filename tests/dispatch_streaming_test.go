@@ -96,7 +96,10 @@ func TestDispatchStreamsLiveOutputBeforeExit(t *testing.T) {
 
 	cmd := exec.Command(testBin, "story", "set", id, "--status", "plan")
 	cmd.Dir = repo
-	cmd.Env = isolatedEnv(t)
+	// A person at a terminal (sty_c4b92c9e): no terminal is attached under
+	// `go test`, so the caller says so — an agent-facing call keeps progress off
+	// its stream and would not print the line asserted below.
+	cmd.Env = append(isolatedEnv(t), "SATELLE_GATE_MODE=interactive")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

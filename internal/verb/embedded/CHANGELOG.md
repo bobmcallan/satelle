@@ -1,3 +1,16 @@
+## [0.0.563] - 2026-09-28
+
+### Changed
+- **Migration: re-run `satelle init` in each repo** so its Claude and grok Stop hooks carry the new timeout (`satelle init --all --yes` heals every registered repo). Without it, a finished gate's verdict still arrives, but at the next prompt instead of when the turn ends.
+- **Migration: a script that calls `satelle story set` without a terminal now gets a handle for a slow gate.** Set `SATELLE_GATE_MODE=interactive` to keep the old foreground run with progress lines.
+- **Gate-running verbs return fast to an agent and deliver the verdict as a notification.** Called with no terminal or from a detected agent session, `story set`, `story create` under `gate_create`, `story amend`, `story resummarise`, `story retrospect` and `story rework` return within a bound set below the shortest background cutoff of any configured harness (grok: 15s). They print no reviewer progress and return either the finished verdict or `{"gate":"pending","handle":"gw_…"}`. The gate keeps running detached, and the harness's Stop hook (or the next prompt) delivers only the verdict into the driving session. No command reports a pending handle's result, so polling cannot complete a wait. A terminal user sees the same progress as before. Completion notification per harness: claude yes, grok yes (observed on grok 1.0.41), codex an adapter-named limitation (no Stop hook). (sty_c4b92c9e)
+- **Driver-usage rows record model calls, and `story cost` shows each gate wait's driver model calls**, read from rows taken at issue, at delivery and once the turn is recorded. On a grok dogfood run, one 25s gate wait cost the driver 2 model calls. (sty_c4b92c9e)
+
+## [serve-v0.0.90] - 2026-09-28
+
+### Changed
+- **The service embeds the gate hand-off and the model-call columns above.** (sty_c4b92c9e)
+
 ## [0.0.562] - 2026-09-28
 
 ### Added

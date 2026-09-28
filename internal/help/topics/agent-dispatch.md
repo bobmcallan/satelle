@@ -1086,3 +1086,67 @@ falls through to `[model_order]` and then `cli-default`, recorded explicitly.
 An explicit `model =` on a binding is unaffected by any of this — it wins
 outright, unchanged from before this story, and no session capture or ranking
 lookup ever runs for that dispatch.
+
+## Waiting on a gate — agent-facing calls (sty_c4b92c9e)
+
+A command that runs a reviewer — `story set` to a gated status, `story create`
+under `gate_create`, `story amend`, `story resummarise`, `story retrospect`,
+`story rework` (and the `task`/`execution` forms of set and create) — can hold
+its caller for minutes. A driving harness backgrounds any command that runs
+past its own cutoff, and the driver then re-enters the model to learn how the
+command ended: every re-entry is a full model call. So an **agent-facing call**
+(no terminal on stderr, or a session a harness identifies) does not wait out the
+gate:
+
+1. It starts the real run detached and waits a bounded time — the shortest
+   background cutoff of any harness configured for the repo, less a margin, so
+   it always returns before that harness can background it.
+2. If the gate finished inside the bound it prints the finished verdict block —
+   each gate's decision and notes, plus the id a create made, and nothing else:
+   not the record the command would have printed and not its advisory notes —
+   with no reviewer progress lines.
+3. Otherwise it prints one JSON object, `{"gate":"pending","handle":"gw_…",…}`,
+   and exits 0. The gate keeps running.
+
+The verdict is then **delivered into this session as a notification**, by the
+harness's own hooks — the driver never calls back to learn it. The Stop hook
+(`satelle hook stopcheck`) waits for the running gate when the driver ends its
+turn and answers with the verdict, which the harness feeds back as the
+session's next input; the UserPromptSubmit hook puts a gate that finished
+between turns in front of the model with the next prompt. What is delivered is
+the handle, the command it ran, and the verdict lines — the same block an inline
+return carries. Each finished run is delivered once. **Do not poll, sleep-loop, or re-run a backgrounded command** —
+there is no status verb to poll, a re-run starts a second gate, and the only
+thing to do with a pending handle is end the turn.
+
+A person at an interactive terminal is unaffected: the gate runs in the
+foreground and the reviewer's progress prints on stderr as before.
+`SATELLE_GATE_MODE=interactive` gives a script or an operator the same
+foreground behaviour where no terminal is attached; `SATELLE_GATE_MODE=agent`
+forces the hand-off. `SATELLE_GATE_WAIT=<duration>` overrides the bound.
+
+What each harness can do is a fact about the harness, recorded in
+`internal/agentcli/harness_facts.go`. A harness with no notification path is
+recorded with a harness-named limitation — the pending line quotes it — and is
+never given a polling fallback; a limitation is not a claim that the adapter is
+fixed.
+
+| harness | background cutoff | completion notification |
+| --- | --- | --- |
+| claude | 2m0s — the Bash tool's default timeout (120s) | yes |
+| grok | 15s — grok backgrounds any command past 15s (sty_c4b92c9e) | yes |
+| codex | 10s — not measured — the conservative floor | unavailable: codex: the satelle scaffold installs no Stop hook, so nothing fires when the turn ends; delivery lands only at the next UserPromptSubmit |
+
+What a wait cost the driver is read from `driver_usage` rows, not asserted:
+`satelle story cost <id>` carries a CALLS column (the driving session's model
+requests in each row's window; `—` where the harness reports none) and a GATE
+WAIT table with the driver's model calls across each delivered hand-off. A wait
+is bounded by a row taken as the command is issued, a row taken when the hook
+delivers the verdict, and a row that has read the turn the wait happened in: grok
+records a turn's usage only when the turn ends, so its wait reads `open` until a
+later read (`story cost` settles it) sees that turn. The count is an upper bound
+on the wait's own requests, never a zero for one that was not measured.
+
+The Stop hook the scaffold writes carries a timeout longer than its wait
+(`satelle init` raises an older, shorter one), so it answers instead of being
+killed by the harness's default.

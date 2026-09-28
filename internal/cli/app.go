@@ -239,7 +239,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// A gated transition legitimately blocks for minutes while the nested
 			// reviewer runs — emit progress to stderr so it is visibly distinct from
 			// a hang (sty_6c88ca10). stderr keeps stdout's JSON payload clean.
-			rev.SetProgress(func(msg string) { fmt.Fprintln(os.Stderr, msg) })
+			// An agent-facing call keeps it off the agent's stream (sty_c4b92c9e):
+			// the sink is stderr only for a person at a terminal.
+			rev.SetProgress(gateProgressSink(a.RuntimeDir))
 			// Queryable gate progress on the engagement lease (sty_598a8e1b).
 			// Best-effort: a SetActivity failure must never fail a transition.
 			leases := a.Store.Leases

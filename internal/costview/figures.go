@@ -224,6 +224,19 @@ type DriverRow struct {
 	Trigger     string  `json:"trigger"`
 	From        string  `json:"from,omitempty"`
 	To          string  `json:"to,omitempty"`
+
+	// ModelCalls is the row's own delta of model requests; Cumulative.ModelCalls
+	// is the session's absolute count when it was read (what a gate wait diffs).
+	// Both are nil when the harness reports none.
+	ModelCalls                  *int   `json:"model_calls,omitempty"`
+	ModelCallsUnavailableReason string `json:"model_calls_unavailable_reason,omitempty"`
+	Cumulative                  struct {
+		ModelCalls *int `json:"model_calls,omitempty"`
+	} `json:"cumulative"`
+	// Turns is the harness turn count the cumulative reflects; Unflushed marks a
+	// harness that records a turn's usage only when the turn ends.
+	Turns     int  `json:"turns,omitempty"`
+	Unflushed bool `json:"unflushed,omitempty"`
 }
 
 // DecodeDriverRow decodes one driver_usage ledger entry into a DriverRow, or

@@ -1,0 +1,647 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/gatehandle"
+	"github.com/bobmcallan/satelle/internal/verb"
+)
+
+// The hand-off is tested against a test-only verb that declares
+// DispatchesReviewer and sleeps: it is the same seam every real reviewer-running
+// verb goes through (dispatch → handOffGate), without needing a live reviewer. The
+// real verbs are exercised against a slow stub reviewer in tests/gate_handoff_test.go.
+
+const gateTestVerb = "gatetest-run"
+
+// gateTestAdvisory stands for the step-self-report note a real `story set`
+// writes to stderr; the record it prints to stdout carries `"say"`.
+const gateTestAdvisory = "note: log a step-self-report for the step just left"
+
+// assertVerdictOnly fails if block carries anything but the verdict: the
+// command's printed record or its advisory stderr note.
+func assertVerdictOnly(t *testing.T, what, block, verdict string) {
+	t.Helper()
+	if !strings.Contains(block, verdict) {
+		t.Errorf("%s lacks the verdict %q:\n%s", what, verdict, block)
+	}
+	if strings.Contains(block, `"say"`) || strings.Contains(block, `"ok"`) {
+		t.Errorf("%s carries the record the command printed, not just the verdict:\n%s", what, block)
+	}
+	if strings.Contains(block, gateTestAdvisory) {
+		t.Errorf("%s carries the command's advisory stderr note:\n%s", what, block)
+	}
+}
+
+type gateTestReq struct {
+	Ms   int    `json:"ms"`
+	Fail bool   `json:"fail"`
+	Say  string `json:"say"`
+}
+
+func init() {
+	verb.Register(&verb.Verb{
+		Name:               gateTestVerb,
+		Description:        "test-only: a verb that dispatches a slow reviewer",
+		DispatchesReviewer: func(json.RawMessage) bool { return true },
+		Invoke: func(_ context.Context, raw json.RawMessage) (json.RawMessage, error) {
+			var r gateTestReq
+			_ = json.Unmarshal(raw, &r)
+			time.Sleep(time.Duration(r.Ms) * time.Millisecond)
+			// What the real transition prints: the verdict through the verdict sink,
+			// and an advisory note on stderr that a delivery must leave out.
+			verb.EmitVerdict("accepted: " + r.Say)
+			fmt.Fprintln(os.Stderr, gateTestAdvisory)
+			if r.Fail {
+				return nil, fmt.Errorf("rejected: %s", r.Say)
+			}
+			b, _ := json.Marshal(map[string]any{"ok": true, "say": r.Say})
+			return b, nil
+		},
+	})
+	c := &cobra.Command{
+		Use: "gatetest", Hidden: true, Short: "test only",
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ms, _ := cmd.Flags().GetInt("ms")
+			fail, _ := cmd.Flags().GetBool("fail")
+			say, _ := cmd.Flags().GetString("say")
+			return dispatch(cmd, gateTestVerb, map[string]any{"ms": ms, "fail": fail, "say": say})
+		},
+	}
+	c.Flags().Int("ms", 0, "")
+	c.Flags().Bool("fail", false, "")
+	c.Flags().String("say", "", "")
+	register(c)
+}
+
+// clearHarnessEnv removes every marker that makes this process look like it runs
+// inside a harness, so caller-mode tests see a bare shell whatever runs them.
+func clearHarnessEnv(t *testing.T) {
+	t.Helper()
+	for _, e := range os.Environ() {
+		k, v, _ := strings.Cut(e, "=")
+		if k == "CLAUDECODE" || strings.HasPrefix(k, "CLAUDE_CODE_") || k == "GROK_AGENT" ||
+			strings.HasPrefix(k, "CODEX_") || k == config.ScratchEnv || k == config.SessionEnv {
+			key, val := k, v
+			_ = os.Unsetenv(key)
+			t.Cleanup(func() { _ = os.Setenv(key, val) })
+		}
+	}
+}
+
+// useGateHandOff turns the hand-off on for a test: agent mode, the detached copy
+// is this test binary re-executed as the CLI, and the bounded wait is `wait`.
+func useGateHandOff(t *testing.T, wait string, args []string) {
+	t.Helper()
+	clearHarnessEnv(t)
+	t.Setenv(gateModeEnv, string(gateModeAgent))
+	t.Setenv(gateWaitEnv, wait)
+	oldArgv, oldChild := gateArgv, gateChildCommand
+	gateArgv = func() []string { return args }
+	gateChildCommand = func(argv []string) (*exec.Cmd, error) {
+		c := exec.Command(os.Args[0], argv...)
+		c.Env = append(os.Environ(), "SATELLE_CLI_REEXEC=1")
+		return c, nil
+	}
+	t.Cleanup(func() { gateArgv, gateChildCommand = oldArgv, oldChild })
+}
+
+func gateStoreForTest(t *testing.T) *gatehandle.Store {
+	t.Helper()
+	s, ok := hookGateStore()
+	if !ok {
+		t.Fatal("no gate store resolvable from the temp repo")
+	}
+	return s
+}
+
+// --- caller mode ----------------------------------------------------------
+
+func TestGateCallerMode(t *testing.T) {
+	clearHarnessEnv(t)
+	t.Setenv(gateModeEnv, "")
+	old := stderrIsTerminal
+	t.Cleanup(func() { stderrIsTerminal = old })
+
+	stderrIsTerminal = func() bool { return true }
+	if got := gateCallerMode(); got != gateModeInteractive {
+		t.Errorf("a person at a terminal = %s, want interactive", got)
+	}
+	stderrIsTerminal = func() bool { return false }
+	if got := gateCallerMode(); got != gateModeAgent {
+		t.Errorf("no terminal = %s, want agent", got)
+	}
+	stderrIsTerminal = func() bool { return true }
+	t.Setenv("GROK_AGENT", "1")
+	if got := gateCallerMode(); got != gateModeAgent {
+		t.Errorf("a harness-identified session at a terminal = %s, want agent", got)
+	}
+	// The override wins both ways.
+	t.Setenv(gateModeEnv, "interactive")
+	stderrIsTerminal = func() bool { return false }
+	if got := gateCallerMode(); got != gateModeInteractive {
+		t.Errorf("SATELLE_GATE_MODE=interactive = %s", got)
+	}
+	_ = os.Unsetenv("GROK_AGENT")
+	t.Setenv(gateModeEnv, "agent")
+	stderrIsTerminal = func() bool { return true }
+	if got := gateCallerMode(); got != gateModeAgent {
+		t.Errorf("SATELLE_GATE_MODE=agent = %s", got)
+	}
+}
+
+// A grok session started from a Claude Code shell inherits CLAUDECODE=1. The
+// pending line must quote grok's limitation, not claude's wake — the session's
+// own published in-loop row decides, the environment is the fallback.
+func TestDrivingHarness_PublishedRowBeatsInheritedMarkers(t *testing.T) {
+	clearHarnessEnv(t)
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	t.Setenv("CLAUDECODE", "1")
+	if got := drivingHarness(); got != agentcli.HarnessClaude {
+		t.Fatalf("with only claude's marker the fallback is %q, want claude", got)
+	}
+	t.Setenv(config.SessionEnv, "sess-nested")
+	config.PublishSessionModel("sess-nested", verb.SessionModelRoleInLoop, "unknown", agentcli.HarnessGrok, "")
+	if got := drivingHarness(); got != agentcli.HarnessGrok {
+		t.Fatalf("a grok session's published row must beat the inherited claude marker, got %q", got)
+	}
+}
+
+// AC1: the bound is derived from the repo's configured harnesses; grok among
+// them keeps it under grok's 15s cutoff. This repo scaffolds both.
+func TestGateWaitBound_FollowsConfiguredHarnesses(t *testing.T) {
+	clearHarnessEnv(t)
+	t.Setenv(gateWaitEnv, "")
+	repo := t.TempDir()
+	for _, d := range []string{".claude", ".grok"} {
+		if err := os.MkdirAll(repo+"/"+d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := gateWaitBound(repo); got >= 15*time.Second {
+		t.Errorf("a claude+grok repo waits %s, want under grok's 15s cutoff", got)
+	}
+	claudeOnly := t.TempDir()
+	_ = os.MkdirAll(claudeOnly+"/.claude", 0o755)
+	if got := gateWaitBound(claudeOnly); got <= 15*time.Second {
+		t.Errorf("a claude-only repo waits %s, want the longer claude bound", got)
+	}
+	// An in-loop grok session bounds a repo that scaffolds only claude.
+	t.Setenv("GROK_AGENT", "1")
+	if got := gateWaitBound(claudeOnly); got >= 15*time.Second {
+		t.Errorf("a grok driver in a claude-scaffolded repo waits %s, want under 15s", got)
+	}
+}
+
+// --- the hand-off, end to end --------------------------------------------
+
+// AC1: a gate that finishes inside the bound returns its verdict block inline,
+// exactly as it would have, with nothing left for a hook to deliver.
+func TestHandOff_FastGateReturnsVerdictInline(t *testing.T) {
+	_ = tempRepo(t)
+	args := []string{"gatetest", "--ms", "0", "--say", "fast"}
+	useGateHandOff(t, "20s", args)
+
+	start := time.Now()
+	out, err := runRoot(t, args...)
+	if err != nil && !errors.Is(err, errGateHandedOff) {
+		t.Fatalf("a finished accept must return cleanly: %v\n%s", err, out)
+	}
+	assertVerdictOnly(t, "the inline return", out, "accepted: fast")
+	if strings.Contains(out, `"gate":"pending"`) {
+		t.Fatalf("a fast gate must not report pending:\n%s", out)
+	}
+	store := gateStoreForTest(t)
+	if left := store.Undelivered(); len(left) != 0 {
+		t.Fatalf("an inline replay must mark the run delivered, left: %v", left)
+	}
+	// It really went through a detached run: exactly one handle, replayed.
+	entries, _ := os.ReadDir(store.Dir())
+	if len(entries) != 1 || !store.Delivered(entries[0].Name()) {
+		t.Fatalf("expected one handle, delivered by the inline replay; got %v", entries)
+	}
+	if time.Since(start) > 15*time.Second {
+		t.Fatalf("a fast gate took %s", time.Since(start))
+	}
+}
+
+// AC1/AC2: a gate that outlasts the bound returns a handle inside it — with no
+// progress — and its verdict is then delivered exactly once, by the hook side.
+func TestHandOff_SlowGateReturnsHandleThenDeliversOnce(t *testing.T) {
+	_ = tempRepo(t)
+	args := []string{"gatetest", "--ms", "2500", "--say", "slow"}
+	useGateHandOff(t, "300ms", args)
+
+	start := time.Now()
+	out, err := runRoot(t, args...)
+	took := time.Since(start)
+	if err != nil && !errors.Is(err, errGateHandedOff) {
+		t.Fatalf("pending must exit clean: %v\n%s", err, out)
+	}
+	if took > 2*time.Second {
+		t.Fatalf("returned after %s, want inside the bound plus start-up, well under the gate's 2.5s", took)
+	}
+	var p pendingPayload
+	if jerr := json.Unmarshal([]byte(strings.TrimSpace(out)), &p); jerr != nil {
+		t.Fatalf("pending output is not the pending payload: %v\n%s", jerr, out)
+	}
+	if p.Gate != "pending" || !strings.HasPrefix(p.Handle, gatehandle.Prefix) {
+		t.Fatalf("payload = %+v", p)
+	}
+	// Nothing the reviewer prints while running reaches the agent's stream.
+	if strings.Contains(out, "accepted: slow") {
+		t.Fatalf("the still-running gate's output leaked into the pending return:\n%s", out)
+	}
+
+	store := gateStoreForTest(t)
+	// A delivery that does not wait, while it is running, says nothing.
+	if got := deliverFinishedGates(store, "", 0); got != "" {
+		t.Fatalf("delivered a run that had not finished:\n%s", got)
+	}
+	// The wake: a delivery that waits gets the verdict.
+	got := deliverFinishedGates(store, "", 15*time.Second)
+	if !strings.Contains(got, p.Handle) {
+		t.Fatalf("delivery missing the handle:\n%s", got)
+	}
+	assertVerdictOnly(t, "the delivery", got, "accepted: slow")
+	// Exactly once.
+	if again := deliverFinishedGates(store, "", 0); again != "" {
+		t.Fatalf("a delivered run was delivered again:\n%s", again)
+	}
+}
+
+// AC1: a rejected gate replays its failure — the child already printed the error
+// to the stderr the caller now sees, so it must not be printed twice.
+func TestHandOff_FailedGateReplaysAsFailure(t *testing.T) {
+	_ = tempRepo(t)
+	args := []string{"gatetest", "--fail", "--say", "no"}
+	useGateHandOff(t, "20s", args)
+
+	out, err := runRoot(t, args...)
+	var ge *gateExitError
+	if !errors.As(err, &ge) {
+		t.Fatalf("a rejected gate must return a replayed failure, got %v\n%s", err, out)
+	}
+	if strings.Count(out, "rejected: no") != 1 {
+		t.Fatalf("the rejection text must appear exactly once in what the caller sees:\n%s", out)
+	}
+	if _, show := finishExecute(err); show {
+		t.Error("Execute must not print a replayed failure a second time")
+	}
+}
+
+// `story rework` runs a consulting reviewer for minutes and is not a verb, so it
+// reaches the hand-off through its own call to handOffGate. A step with no
+// rework loop makes the detached run fail fast and deterministically — enough to
+// show the relay is handed off and its outcome replayed.
+func TestHandOff_ReworkRelayIsHandedOff(t *testing.T) {
+	_ = tempRepo(t)
+	created, err := runRoot(t, "story", "create", "--title", "Rework fixture", "--acceptance", "1. x")
+	if err != nil {
+		t.Fatalf("create: %v\n%s", err, created)
+	}
+	var st struct {
+		ID string `json:"id"`
+	}
+	if jerr := json.Unmarshal([]byte(created), &st); jerr != nil || st.ID == "" {
+		t.Fatalf("parse create: %v\n%s", jerr, created)
+	}
+	args := []string{"story", "rework", st.ID}
+	useGateHandOff(t, "20s", args)
+
+	out, err := runRoot(t, args...)
+	var ge *gateExitError
+	if !errors.As(err, &ge) {
+		t.Fatalf("the detached relay's failure must be replayed, got %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "declares no rework loop") {
+		t.Fatalf("the relay's own message did not come back through the hand-off:\n%s", out)
+	}
+	store := gateStoreForTest(t)
+	entries, _ := os.ReadDir(store.Dir())
+	if len(entries) != 1 {
+		t.Fatalf("expected the relay to run as one handed-off handle, got %d", len(entries))
+	}
+	if m, _ := store.Meta(entries[0].Name()); m.Verb != "story-rework" || m.Story != st.ID {
+		t.Fatalf("handle = %+v", m)
+	}
+}
+
+// A CLI command that builds its own reviewer engine (engineForCmd) bypasses the
+// verb registry, so it must reach the hand-off itself. Guard: every non-test file
+// that does so — other than the wiring in app.go — also calls handOffGate, so a
+// new reviewer-running command cannot skip the contract (sty_c4b92c9e AC6).
+func TestEveryEngineBuildingCommandHandsOff(t *testing.T) {
+	files, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		name := f.Name()
+		if f.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == "app.go" {
+			continue
+		}
+		b, _ := os.ReadFile(name)
+		src := string(b)
+		if strings.Contains(src, "engineForCmd(") && !strings.Contains(src, "handOffGate(") {
+			t.Errorf("%s builds a reviewer engine (engineForCmd) but never calls handOffGate — an agent calling it would sit through the whole run", name)
+		}
+	}
+}
+
+// The bound holds for a verb that dispatches nothing: it never hands off.
+func TestHandOff_NonDispatchingVerbRunsInline(t *testing.T) {
+	_ = tempRepo(t)
+	useGateHandOff(t, "1ms", []string{"story", "list"})
+	if _, err := runRoot(t, "story", "list"); err != nil {
+		t.Fatal(err)
+	}
+	if got := gateStoreForTest(t).Undelivered(); len(got) != 0 {
+		t.Fatalf("a read verb created a handle: %v", got)
+	}
+}
+
+// AC4: from an interactive terminal the gate runs in the foreground — no handle,
+// no detached copy — and the progress sink is the stderr it always was.
+func TestInteractive_RunsInForegroundWithoutAHandle(t *testing.T) {
+	_ = tempRepo(t)
+	clearHarnessEnv(t)
+	t.Setenv(gateModeEnv, string(gateModeInteractive))
+	oldChild := gateChildCommand
+	gateChildCommand = func([]string) (*exec.Cmd, error) {
+		t.Error("an interactive call started a detached copy")
+		return nil, errors.New("must not start")
+	}
+	t.Cleanup(func() { gateChildCommand = oldChild })
+
+	var out string
+	var err error
+	stderr := captureStderr(t, func() { out, err = runRoot(t, "gatetest", "--ms", "0", "--say", "here") })
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	// The verb speaks on the real stderr and the payload on stdout, as before.
+	if !strings.Contains(stderr, "accepted: here") || !strings.Contains(out, `"say": "here"`) {
+		t.Fatalf("interactive run lost its output:\nstdout=%s\nstderr=%s", out, stderr)
+	}
+	if got := gateStoreForTest(t).Undelivered(); len(got) != 0 {
+		t.Fatalf("an interactive call created a handle: %v", got)
+	}
+}
+
+func TestGateProgressSink_ByCaller(t *testing.T) {
+	dir := t.TempDir()
+	clearHarnessEnv(t)
+
+	// Interactive: stderr, exactly as before.
+	t.Setenv(gateModeEnv, string(gateModeInteractive))
+	got := captureStderr(t, func() { gateProgressSink(dir)("gate 1/2: reviewing") })
+	if got != "gate 1/2: reviewing\n" {
+		t.Errorf("interactive progress = %q, want the line on stderr", got)
+	}
+	// Agent-facing: nothing on the agent's stream.
+	t.Setenv(gateModeEnv, string(gateModeAgent))
+	if got := captureStderr(t, func() { gateProgressSink(dir)("gate 1/2: reviewing") }); got != "" {
+		t.Errorf("agent-facing progress reached stderr: %q", got)
+	}
+	// A detached run keeps it in the handle's progress log.
+	old := gateRun
+	gateRun.id, gateRun.runtime = "gw_test", dir
+	t.Cleanup(func() { gateRun = old })
+	m, err := gatehandle.New(dir).Create(gatehandle.Meta{ID: "gw_test", Verb: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := captureStderr(t, func() { gateProgressSink(dir)("gate 2/2: judging") }); got != "" {
+		t.Errorf("a detached run's progress reached stderr: %q", got)
+	}
+	b, _ := os.ReadFile(gatehandle.New(dir).ProgressPath(m.ID))
+	if string(b) != "gate 2/2: judging\n" {
+		t.Errorf("progress log = %q", b)
+	}
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	fn()
+	os.Stderr = old
+	_ = w.Close()
+	b, _ := io.ReadAll(r)
+	return string(b)
+}
+
+// --- the pending line -----------------------------------------------------
+
+// AC3/AC5: the pending line quotes the notification path when the harness has
+// one and the harness-named limitation when it does not — and never a polling
+// instruction either way.
+func TestPendingMessage_NamesPathOrLimitation_NeverAPollInstruction(t *testing.T) {
+	for _, h := range []string{agentcli.HarnessClaude, agentcli.HarnessGrok, agentcli.HarnessCodex, "", "mystery"} {
+		msg := pendingMessage("gw_abc", h)
+		facts := agentcli.FactsFor(h)
+		if !strings.Contains(msg, "gw_abc") {
+			t.Errorf("%q: pending line lacks the handle: %s", h, msg)
+		}
+		if strings.Contains(strings.ToLower(msg), "poll with") || strings.Contains(strings.ToLower(msg), "check with") {
+			t.Errorf("%q: pending line carries a polling instruction: %s", h, msg)
+		}
+		if !strings.Contains(msg, "do not poll") {
+			t.Errorf("%q: pending line does not forbid polling: %s", h, msg)
+		}
+		if facts.CompletionNotification.Available {
+			if !strings.Contains(msg, "delivered into this session as a notification") {
+				t.Errorf("%q: available harness does not name the notification path: %s", h, msg)
+			}
+		} else if !strings.Contains(msg, facts.CompletionNotification.Reason) {
+			t.Errorf("%q: unavailable harness does not quote its limitation %q: %s", h, facts.CompletionNotification.Reason, msg)
+		}
+	}
+}
+
+// --- the notification path ------------------------------------------------
+
+// AC3: a harness recorded as able to wake its driver must actually have the hook
+// the wake rides on installed by the scaffold — the capability cell is tied to
+// the code, so it cannot claim a wake nothing wired.
+func TestCompletionNotification_CellsMatchTheScaffold(t *testing.T) {
+	for _, f := range agentcli.HarnessFactsTable() {
+		wired := harnessHooks(f.Harness).hasEvent("Stop")
+		if f.CompletionNotification.Available && !wired {
+			t.Errorf("%s is recorded as delivering a completion notification but its scaffold installs no Stop hook", f.Harness)
+		}
+		if f.Harness == agentcli.HarnessCodex && wired {
+			t.Errorf("codex now installs a Stop hook: revisit its recorded limitation in harness_facts.go")
+		}
+	}
+	// And the Stop hook the scaffold writes waits long enough for a gate.
+	for name, doc := range map[string][]byte{"claude": buildClaudeHookSettings(t.TempDir()), "grok": buildGrokHookSettings(t.TempDir())} {
+		var s struct {
+			Hooks struct {
+				Stop []struct {
+					Hooks []struct {
+						Command string  `json:"command"`
+						Timeout float64 `json:"timeout"`
+					} `json:"hooks"`
+				} `json:"Stop"`
+			} `json:"hooks"`
+		}
+		if err := json.Unmarshal(doc, &s); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, g := range s.Hooks.Stop {
+			for _, h := range g.Hooks {
+				if strings.Contains(h.Command, "satelle hook stopcheck") {
+					found = true
+					if h.Timeout < float64(stopGateWaitDefault/time.Second) {
+						t.Errorf("%s: the Stop hook timeout %vs is shorter than its %s wait", name, h.Timeout, stopGateWaitDefault)
+					}
+				}
+			}
+		}
+		if !found {
+			t.Errorf("%s: no stopcheck Stop hook in the scaffold", name)
+		}
+	}
+}
+
+func TestRaiseStopHookTimeout(t *testing.T) {
+	mk := func(timeout any) any {
+		h := map[string]any{"type": "command", "command": stopcheckHookCommand}
+		if timeout != nil {
+			h["timeout"] = timeout
+		}
+		return []any{map[string]any{"hooks": []any{h}}}
+	}
+	if ev := mk(nil); !raiseStopHookTimeout(ev) {
+		t.Error("a Stop hook with no timeout was not raised")
+	}
+	if ev := mk(float64(60)); !raiseStopHookTimeout(ev) {
+		t.Error("a shorter timeout was not raised")
+	}
+	if ev := mk(float64(stopHookTimeoutSec * 2)); raiseStopHookTimeout(ev) {
+		t.Error("a longer operator-set timeout was lowered")
+	}
+	if raiseStopHookTimeout(nil) {
+		t.Error("no Stop event reported a change")
+	}
+}
+
+// The Stop hook is the wake: a running gate is waited for and its verdict comes
+// back as the block reason; with nothing running it stays out of the way.
+func TestStopHook_WaitsForRunningGateAndAnswersWithVerdict(t *testing.T) {
+	_ = tempRepo(t)
+	clearHarnessEnv(t)
+	t.Setenv(stopGateWaitEnv, "10s")
+	store := gateStoreForTest(t)
+
+	var quiet strings.Builder
+	if err := runHookStopcheck(nil, &quiet); err != nil || strings.Contains(quiet.String(), "gate gw_") {
+		t.Fatalf("with no gate the hook must not deliver: %v %q", err, quiet.String())
+	}
+
+	m, err := store.Create(gatehandle.Meta{Verb: gateTestVerb, Story: "sty_wake", Argv: []string{"story", "set", "sty_wake"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.SetPID(m.ID, os.Getpid()) // alive: a running gate
+	go func() {
+		time.Sleep(400 * time.Millisecond)
+		_ = os.WriteFile(store.VerdictPath(m.ID), []byte("accepted plan→in_progress by satelle-story-plan-review\n"), 0o644)
+		_ = os.WriteFile(store.ErrPath(m.ID), []byte(gateTestAdvisory+"\n"), 0o644)
+		_ = os.WriteFile(store.OutPath(m.ID), []byte(`{"id":"sty_wake","status":"in_progress"}`), 0o644)
+		_ = store.Finish(m.ID, gatehandle.Result{})
+	}()
+
+	var out strings.Builder
+	start := time.Now()
+	if err := runHookStopcheck(nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) < 300*time.Millisecond {
+		t.Fatalf("the Stop hook did not wait for the running gate (returned in %s)", time.Since(start))
+	}
+	var blk stopBlockOut
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out.String())), &blk); err != nil {
+		t.Fatalf("Stop hook output is not a block: %v\n%s", err, out.String())
+	}
+	if blk.Decision != "block" || !strings.Contains(blk.Reason, m.ID) || !strings.Contains(blk.Reason, "accepted plan→in_progress") {
+		t.Fatalf("block = %+v, want the verdict as the reason", blk)
+	}
+	if strings.Contains(blk.Reason, "sty_wake\",\"status") || strings.Contains(blk.Reason, gateTestAdvisory) {
+		t.Fatalf("the Stop-hook block carries the story record or advisory note, not only the verdict:\n%s", blk.Reason)
+	}
+	var again strings.Builder
+	_ = runHookStopcheck(nil, &again)
+	if strings.Contains(again.String(), m.ID) {
+		t.Fatalf("the verdict was delivered twice:\n%s", again.String())
+	}
+}
+
+// UserPromptSubmit is the catch-up for a gate that finished between turns.
+func TestPromptHook_DeliversFinishedGateOnce(t *testing.T) {
+	_ = tempRepo(t)
+	clearHarnessEnv(t)
+	store := gateStoreForTest(t)
+	m, _ := store.Create(gatehandle.Meta{Verb: gateTestVerb, Story: "sty_prompt", Argv: []string{"story", "set", "sty_prompt"}})
+	_ = os.WriteFile(store.ErrPath(m.ID), []byte("rejected plan→in_progress: no estimate\n"), 0o644)
+	_ = store.Finish(m.ID, gatehandle.Result{ExitCode: 1, Error: "rejected plan→in_progress: no estimate"})
+
+	var first strings.Builder
+	if err := runHookPrompt(&first); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(first.String(), m.ID) || !strings.Contains(first.String(), "no estimate") {
+		t.Fatalf("the finished gate was not put in front of the model:\n%s", first.String())
+	}
+	var second strings.Builder
+	_ = runHookPrompt(&second)
+	if strings.Contains(second.String(), m.ID) {
+		t.Fatalf("the finished gate was delivered twice:\n%s", second.String())
+	}
+}
+
+// A session is told about its own runs, not a sibling's.
+func TestDelivery_ScopedToTheOwningSession(t *testing.T) {
+	store := gatehandle.New(t.TempDir())
+	m, _ := store.Create(gatehandle.Meta{Verb: "x", Session: "sess-A"})
+	_ = store.Finish(m.ID, gatehandle.Result{})
+	if got := deliverFinishedGates(store, "sess-B", 0); got != "" {
+		t.Fatalf("session B was told about session A's gate:\n%s", got)
+	}
+	if got := deliverFinishedGates(store, "sess-A", 0); !strings.Contains(got, m.ID) {
+		t.Fatalf("session A was not told about its own gate: %q", got)
+	}
+}
+
+// A run whose process died without a result is delivered as a failure — the
+// session is never left waiting on a gate that can no longer answer.
+func TestDelivery_DiedRunIsDeliveredAsFailure(t *testing.T) {
+	store := gatehandle.New(t.TempDir())
+	m, _ := store.Create(gatehandle.Meta{Verb: "x", Argv: []string{"story", "set", "sty_d"}, Story: "sty_d"})
+	_ = store.SetPID(m.ID, 0x7ffffff0) // no such process
+	got := deliverFinishedGates(store, "", 5*time.Second)
+	if !strings.Contains(got, "DIED") || !strings.Contains(got, m.ID) {
+		t.Fatalf("a died run must be delivered as a failure:\n%s", got)
+	}
+}

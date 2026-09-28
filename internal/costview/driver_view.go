@@ -1,5 +1,7 @@
 package costview
 
+import "fmt"
+
 // DriverRowView is one driver_usage row (or the TOTAL fold across every row
 // for a story) pre-formatted through the SAME formatters the headline
 // Figures use. It is the single formatting pass FormatDriverRows produces —
@@ -9,9 +11,12 @@ package costview
 type DriverRowView struct {
 	SessionID, Executable, Trigger string
 	FreshIn, Out                   string
-	CacheRead, CacheWrite          string
-	USD                            string
-	AgentTime                      string
+	// Calls is the driver's model requests in this row's window ("—" when the
+	// harness reports none, never a zero for an uncounted row).
+	Calls                 string
+	CacheRead, CacheWrite string
+	USD                   string
+	AgentTime             string
 }
 
 // FormatDriverRows renders rows into per-session DriverRowView lines plus a
@@ -27,7 +32,7 @@ func FormatDriverRows(rows []DriverRow) ([]DriverRowView, *DriverRowView) {
 		return nil, nil
 	}
 	var out []DriverRowView
-	var totalFresh, totalOut, totalCacheRead, totalCacheWrite, measured int
+	var totalFresh, totalOut, totalCacheRead, totalCacheWrite, measured, totalCalls, counted int
 	var totalUSD float64
 	var costed, uncosted int
 	var totalWallMs int64
@@ -42,6 +47,12 @@ func FormatDriverRows(rows []DriverRow) ([]DriverRowView, *DriverRowView) {
 			totalCacheWrite += d.CacheWrite
 			measured++
 		}
+		calls := "—"
+		if d.Available && d.ModelCalls != nil {
+			calls = fmt.Sprintf("%d", *d.ModelCalls)
+			totalCalls += *d.ModelCalls
+			counted++
+		}
 		usd := FormatUSD(0, 0, 1)
 		if d.CostUSD != nil {
 			usd = FormatUSD(*d.CostUSD, 1, 0)
@@ -54,14 +65,22 @@ func FormatDriverRows(rows []DriverRow) ([]DriverRowView, *DriverRowView) {
 		totalWallMs += wallMs
 		out = append(out, DriverRowView{
 			SessionID: d.SessionID, Executable: d.Executable, Trigger: d.Trigger,
-			FreshIn: freshIn, Out: outCol, CacheRead: cacheRead, CacheWrite: cacheWrite,
+			FreshIn: freshIn, Out: outCol, Calls: calls, CacheRead: cacheRead, CacheWrite: cacheWrite,
 			USD: usd, AgentTime: FormatDuration(wallMs),
 		})
+	}
+	totalCallsCol := "—"
+	if counted > 0 {
+		totalCallsCol = fmt.Sprintf("%d", totalCalls)
+		if counted < measured {
+			totalCallsCol += fmt.Sprintf(" (%d of %d rows counted)", counted, measured)
+		}
 	}
 	total := DriverRowView{
 		SessionID:  "TOTAL",
 		FreshIn:    FormatTokensFigure(totalFresh, measured > 0),
 		Out:        FormatTokensFigure(totalOut, measured > 0),
+		Calls:      totalCallsCol,
 		CacheRead:  FormatTokensFigure(totalCacheRead, measured > 0),
 		CacheWrite: FormatTokensFigure(totalCacheWrite, measured > 0),
 		USD:        FormatUSD(totalUSD, costed, uncosted),

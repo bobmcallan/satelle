@@ -14,18 +14,28 @@ import (
 // the package's tests.
 func TestMain(m *testing.M) {
 	if os.Getenv("SATELLE_CLI_REEXEC") == "1" {
+		initGateRun()
 		root := NewRootCmd()
 		root.SetArgs(os.Args[1:])
 		c, err := root.ExecuteC()
 		if c != nil {
 			closeAppForCmd(c)
 		}
-		if err != nil {
+		err, show := finishExecute(err)
+		if err != nil && show {
 			fmt.Fprintln(os.Stderr, err)
+		}
+		finishGateRun(err)
+		if err != nil {
 			os.Exit(1)
 		}
 		os.Exit(0)
 	}
+	// The suite runs with no terminal, which is an agent-facing caller: every
+	// gated command would hand off to a detached copy of the test binary. The
+	// hand-off has its own tests and turns itself on there (gatecaller_test.go);
+	// everything else keeps the synchronous path it was written against.
+	_ = os.Setenv(gateModeEnv, string(gateModeInteractive))
 	// Isolate gate/seat tests from the AMBIENT process environment: when this
 	// test binary itself runs under a real satelle dispatch (a named-agent
 	// step, or — as when this test was written — a rework-relay coder session

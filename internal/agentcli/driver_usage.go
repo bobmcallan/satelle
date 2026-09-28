@@ -33,6 +33,14 @@ type DriverSnapshot struct {
 	CostUSD               *float64
 	CostUnavailableReason string
 
+	// ModelCalls is the session's cumulative count of model requests — the unit
+	// a driver is charged in, and the one a gate wait is judged by
+	// (sty_c4b92c9e). It is only meaningful when ModelCallsUnavailableReason is
+	// empty; a harness whose record carries no such count says so, adapter-named,
+	// rather than reporting a zero that reads as a measurement.
+	ModelCalls                  int
+	ModelCallsUnavailableReason string
+
 	// Available distinguishes a record that yielded a real cumulative figure
 	// from one that could not be read/parsed, or carries no usage yet.
 	Available         bool
@@ -82,6 +90,7 @@ type DriverTurn struct {
 	CacheWrite int
 	Output     int
 	CostUSD    *float64
+	ModelCalls int
 }
 
 // SessionUsageSnapshot reads harness's own session record for sessionID and
@@ -234,6 +243,9 @@ func claudeDriverSnapshot(sessionID, repoRoot string) DriverSnapshot {
 	snap.Available = true
 	snap.Model = lastModel
 	snap.Turns = len(order)
+	// One message id is one API request, however many transcript lines its
+	// content blocks were streamed as — the same de-duplication the token sums use.
+	snap.ModelCalls = len(order)
 	// A claude transcript reports no dollar figure at all (sty_c4df7376: never
 	// derive cost from a price table) — cost stays named-unavailable here.
 	snap.CostUnavailableReason = "claude: session transcript reports no cost field"
@@ -266,6 +278,7 @@ func grokDriverSnapshot(sessionID, repoRoot string) DriverSnapshot {
 			snap.Available = true
 			snap.MayUndercountInFlightTurn = true
 			snap.CostUnavailableReason = "grok: first turn not yet flushed to usage.json"
+			// Nothing flushed is a real zero: no completed turn has made a request.
 			return snap
 		}
 	}
@@ -307,6 +320,11 @@ func grokDriverSnapshot(sessionID, repoRoot string) DriverSnapshot {
 		snap.Turns = 1
 	}
 	snap.TurnBreakdown = grokTurnBreakdown(raw)
+	if mc, ok := session["modelCalls"]; ok {
+		snap.ModelCalls = intValue(mc)
+	} else {
+		snap.ModelCallsUnavailableReason = "grok: session usage.json carries no modelCalls"
+	}
 	return snap
 }
 
@@ -334,6 +352,7 @@ func grokTurnBreakdown(raw map[string]any) []DriverTurn {
 		dt := DriverTurn{
 			FreshInput: freshOf(u), CacheRead: u.CacheReadInputTokens,
 			CacheWrite: u.CacheCreationInputTokens, Output: u.OutputTokens, CostUSD: u.CostUSD,
+			ModelCalls: intValue(tm["modelCalls"]),
 		}
 		if ea, ok := tm["endedAt"].(string); ok {
 			if t, err := time.Parse(time.RFC3339, ea); err == nil {
@@ -493,6 +512,9 @@ func codexDriverSnapshot(sessionID string) DriverSnapshot {
 	// codex has no cache-write concept (OpenAI prompt caching bills no write
 	// share) and its rollout carries no dollar figure.
 	snap.CostUnavailableReason = "codex: session rollout reports no cost field"
+	// The rollout's token_count events carry token totals and no model-request
+	// count, so there is nothing to read.
+	snap.ModelCallsUnavailableReason = "codex: session rollout carries no model-call count"
 	return snap
 }
 

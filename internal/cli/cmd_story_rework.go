@@ -85,6 +85,11 @@ func resolveReworkPlan(d wfgovern.DerivedRoute, status string) (reworkPlan, erro
 
 func runStoryRework(cmd *cobra.Command, args []string) error {
 	id := strings.TrimSpace(args[0])
+	// The relay runs a consulting reviewer for minutes: an agent-facing call is
+	// handed to a detached run like any other gate (sty_c4b92c9e).
+	if handled, herr := handOffGate(cmd, "story-rework", id); handled {
+		return herr
+	}
 	eng, a, err := engineForCmd(cmd)
 	if err != nil {
 		return err

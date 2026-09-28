@@ -120,6 +120,9 @@ func Execute() error {
 			return fmt.Errorf("%s", msg)
 		}
 	}
+	// A detached gate run claims its hand-off environment first, so nothing it
+	// spawns can mistake itself for the run (sty_c4b92c9e).
+	initGateRun()
 	root := NewRootCmd()
 	// ExecuteC returns the leaf command so we can drain/close even when RunE
 	// failed — Cobra skips PersistentPostRunE on error (sty_9ba3d709).
@@ -127,12 +130,14 @@ func Execute() error {
 	if c != nil {
 		closeAppForCmd(c)
 	}
-	if err != nil {
+	err, show := finishExecute(err)
+	if err != nil && show {
 		fmt.Fprintln(root.ErrOrStderr(), err)
 		if isUnknownCommandErr(err) {
 			printUnknownCommandHelp(root.ErrOrStderr(), root)
 		}
 	}
+	finishGateRun(err)
 	return err
 }
 

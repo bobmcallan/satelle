@@ -95,6 +95,10 @@ type StoryCost struct {
 	DriverCostedRows     int                     `json:"driver_costed_rows,omitempty"`
 	DriverUncostedRows   int                     `json:"driver_uncosted_rows,omitempty"`
 	Sessions             []SessionReconciliation `json:"sessions,omitempty"`
+	// GateWaits is, per delivered gate hand-off, the driver's model calls between
+	// issuing the command and consuming the verdict, folded from the gate rows in
+	// DriverRows (sty_c4b92c9e). Open while no row has read the turn it ran in.
+	GateWaits []costview.GateWait `json:"gate_waits,omitempty"`
 
 	// GrandTotal* combines the agent_invocation figures above with the driver
 	// figures — kept separate from TotalTokens/TotalCostUSD so an existing
@@ -205,6 +209,7 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 		return r
 	}
 
+	var gateRows []costview.DriverRow
 	var prevAt time.Time
 	prevSet := false
 	for _, e := range entries {
@@ -253,6 +258,9 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 				continue
 			}
 			sc.DriverRows = append(sc.DriverRows, d)
+			if dr, ok := costview.DecodeDriverRow(e); ok {
+				gateRows = append(gateRows, dr)
+			}
 			if d.Available {
 				sc.DriverTotalTokens += d.FreshInput + d.CacheRead + d.CacheWrite + d.Output
 				sc.DriverMeasuredRows++
@@ -304,6 +312,7 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 		sc.TotalWallMs += r.WallTimeMs
 	}
 
+	sc.GateWaits = costview.GateWaits(gateRows)
 	sc.GrandTotalTokens = sc.TotalTokens + sc.DriverTotalTokens
 	sc.GrandTotalCostUSD = sc.TotalCostUSD + sc.DriverTotalCostUSD
 

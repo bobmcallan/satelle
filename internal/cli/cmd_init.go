@@ -733,9 +733,7 @@ func buildClaudeHookSettings(repoRoot string) []byte {
 				}},
 			},
 			"Stop": []any{
-				map[string]any{"hooks": []any{
-					map[string]any{"type": "command", "command": stopcheckHookCommand},
-				}},
+				map[string]any{"hooks": []any{stopHookEntry(stopcheckHookCommand)}},
 			},
 		},
 		// No statusLine (sty_325df80c): it is an operator preference and this file
@@ -786,9 +784,7 @@ func buildGrokHookSettings(repoRoot string) []byte {
 				}},
 			},
 			"Stop": []any{
-				map[string]any{"hooks": []any{
-					map[string]any{"type": "command", "command": withGrokHarness(stopcheckHookCommand)},
-				}},
+				map[string]any{"hooks": []any{stopHookEntry(withGrokHarness(stopcheckHookCommand))}},
 			},
 		},
 	}
@@ -1081,6 +1077,37 @@ const (
 	stopcheckHookCommand = "PATH=$HOME/.local/bin:$PATH satelle hook stopcheck"
 )
 
+// stopHookEntry is the Stop hook's command entry. It carries a timeout longer
+// than the wait stopcheck makes for a running gate (stopGateWaitDefault), so the
+// hook answers with the verdict instead of being killed by the harness's default
+// (sty_c4b92c9e).
+func stopHookEntry(command string) map[string]any {
+	return map[string]any{"type": "command", "command": command, "timeout": stopHookTimeoutSec}
+}
+
+// raiseStopHookTimeout raises the timeout of an installed satelle stopcheck
+// command to stopHookTimeoutSec when it has none or a shorter one, and reports
+// whether it changed anything. A longer operator-set timeout is left alone.
+func raiseStopHookTimeout(event any) bool {
+	groups, _ := event.([]any)
+	changed := false
+	for _, g := range groups {
+		gm, _ := g.(map[string]any)
+		hs, _ := gm["hooks"].([]any)
+		for _, h := range hs {
+			hm, _ := h.(map[string]any)
+			if cmd, _ := hm["command"].(string); !strings.Contains(cmd, "satelle hook stopcheck") {
+				continue
+			}
+			if cur, _ := hm["timeout"].(float64); cur < stopHookTimeoutSec {
+				hm["timeout"] = stopHookTimeoutSec
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
 // reinforcementSimpleHooks are event→command entries with a single command and
 // no matcher (UserPromptSubmit, Stop). SessionStart and PreToolUse are handled
 // separately because they need multi-command groups / harness matchers
@@ -1197,14 +1224,20 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 		if harness == "grok" {
 			cmd = withGrokHarness(cmd)
 		}
-		group := map[string]any{
-			"hooks": []any{
-				map[string]any{"type": "command", "command": cmd},
-			},
+		entry := map[string]any{"type": "command", "command": cmd}
+		if rh.event == "Stop" {
+			entry = stopHookEntry(cmd)
 		}
+		group := map[string]any{"hooks": []any{entry}}
 		arr, _ := hooks[rh.event].([]any)
 		hooks[rh.event] = append(arr, group)
 		added = append(added, rh.event)
+	}
+	// A Stop hook installed before gate hand-off (sty_c4b92c9e) carries no
+	// timeout, so the harness's default would cut its wait for a running gate
+	// short. Raise it in place — never lowering one the operator set.
+	if hs.hasEvent("Stop") && raiseStopHookTimeout(hooks["Stop"]) {
+		added = append(added, "Stop timeout")
 	}
 	if len(added) == 0 {
 		return nil, nil

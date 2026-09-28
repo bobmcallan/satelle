@@ -442,10 +442,10 @@ const templatesSrc = `
   </table>{{end}}
   {{if .DriverRows}}<h4>Driver sessions</h4>
   <table class="panel-table cost-driver">
-    <thead><tr><th>Session</th><th>Executable</th><th>Trigger</th><th>Fresh in</th><th>Out</th><th>Cache read</th><th>Cache write</th><th>$</th><th>Agent time</th></tr></thead>
+    <thead><tr><th>Session</th><th>Executable</th><th>Trigger</th><th>Fresh in</th><th>Out</th><th>Calls</th><th>Cache read</th><th>Cache write</th><th>$</th><th>Agent time</th></tr></thead>
     <tbody>
-      {{range .DriverRows}}<tr><td class="id">{{.SessionID}}</td><td>{{.Executable}}</td><td>{{.Trigger}}</td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.USD}}</td><td>{{.AgentTime}}</td></tr>{{end}}
-      {{with .DriverTotal}}<tr class="cost-driver-total"><td>{{.SessionID}}</td><td></td><td></td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.USD}}</td><td>{{.AgentTime}}</td></tr>{{end}}
+      {{range .DriverRows}}<tr><td class="id">{{.SessionID}}</td><td>{{.Executable}}</td><td>{{.Trigger}}</td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.Calls}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.USD}}</td><td>{{.AgentTime}}</td></tr>{{end}}
+      {{with .DriverTotal}}<tr class="cost-driver-total"><td>{{.SessionID}}</td><td></td><td></td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.Calls}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.USD}}</td><td>{{.AgentTime}}</td></tr>{{end}}
     </tbody>
   </table>{{end}}{{end}}
   {{with .Route}}<h4>Route</h4>

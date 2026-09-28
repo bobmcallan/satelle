@@ -25,17 +25,17 @@ import (
 func init() {
 	for _, kind := range []workitem.Kind{workitem.KindStory, workitem.KindTask, workitem.KindExecution} {
 		group := string(kind)
-		Register(&Verb{Name: group + "-create", Description: "Create a " + group, Invoke: workItemCreate(kind)})
+		Register(&Verb{Name: group + "-create", Description: "Create a " + group, Invoke: workItemCreate(kind), DispatchesReviewer: dispatchesOnGatedCreate})
 		Register(&Verb{Name: group + "-list", Description: "List " + group + "s", Invoke: workItemList(kind)})
 		Register(&Verb{Name: group + "-get", Description: "Get a " + group + " by id", Invoke: workItemGet})
-		Register(&Verb{Name: group + "-set", Description: "Update a " + group, Invoke: workItemSet})
+		Register(&Verb{Name: group + "-set", Description: "Update a " + group, Invoke: workItemSet, DispatchesReviewer: dispatchesOnStatusChange})
 	}
 	// Estimate/actual are story-only: an agent records the plan estimate at
 	// begin-work and the actual cost at close, scoped to the story.
 	Register(&Verb{Name: "story-estimate", Description: "Record a story's plan estimate (usd, fresh-input/output, or legacy tokens/time)", Invoke: storyEstimate})
 	Register(&Verb{Name: "story-actual", Description: "Compute and record a story's actual cost from its ledger", Invoke: storyActual})
-	Register(&Verb{Name: "story-resummarise", Description: "Re-run the step summariser for one edge to close a missing-summary gap", Invoke: storyResummarise})
-	Register(&Verb{Name: "story-retrospect", Description: "Run the retrospective agent over a finished story to file improvement proposals", Invoke: storyRetrospect})
+	Register(&Verb{Name: "story-resummarise", Description: "Re-run the step summariser for one edge to close a missing-summary gap", Invoke: storyResummarise, DispatchesReviewer: dispatchesOnResummarise})
+	Register(&Verb{Name: "story-retrospect", Description: "Run the retrospective agent over a finished story to file improvement proposals", Invoke: storyRetrospect, DispatchesReviewer: dispatchesOnRetrospect})
 	// Restamp is story-only too: tasks/executions are unstamped by design
 	// (sty_3800ac23 / sty_ef08ce2a) — they resolve their workflow at gate time.
 	Register(&Verb{Name: "story-restamp", Description: "Re-stamp a story's governing workflow (re-resolve by category, or an explicit workflow)", Invoke: storyRestamp})
@@ -121,6 +121,9 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 			}
 			if dec.Gated && !dec.Accept {
 				return nil, fmt.Errorf("%s rejected by %s: %s", kind, dec.Skill, dec.Notes)
+			}
+			if dec.Gated {
+				RecordVerdict(fmt.Sprintf("accepted %s create by %s: decision=accept notes=%s", kind, dec.Skill, dec.Notes))
 			}
 		}
 
@@ -538,7 +541,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 				acceptBody, reviewerPayload(current.Status, *req.Status, rv), now)
 			// Transparency (design §6.2 / epic AC): surface accept verdicts too —
 			// decision, notes, reasoning on stderr (reject already returns as error).
-			fmt.Fprintln(os.Stderr, acceptBody)
+			EmitVerdict(acceptBody)
 		}
 		if len(rejects) > 0 {
 			notifyChange(panelTopic(current.Kind))
@@ -555,7 +558,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 				current.Status, *req.Status, skill)
 			appendLedgerEntry(ctx, current.ID, ledger.KindGateSkipped, "reviewer",
 				skippedBody, transitionPayload(current.Status, *req.Status, skill), now)
-			fmt.Fprintln(os.Stderr, skippedBody)
+			EmitVerdict(skippedBody)
 		}
 		if len(reviewers) > 0 {
 			gatedAccepted = true

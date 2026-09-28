@@ -26,6 +26,14 @@ type Verb struct {
 	Name        string
 	Description string
 	Invoke      func(ctx context.Context, req json.RawMessage) (json.RawMessage, error)
+	// DispatchesReviewer, when set, reports whether THIS request will run a
+	// reviewer or another isolated agent (a gated transition, a gated create, an
+	// amend, a re-summarise, a retrospective). It is the one declaration a caller
+	// that must not sit through a long gate reads: an agent-facing CLI hands such
+	// a request to a detached run instead of blocking (sty_c4b92c9e). Nil means
+	// the verb never dispatches. The predicate reads only the request and the
+	// wiring — it never dispatches, and a wrong "true" costs one process start.
+	DispatchesReviewer func(req json.RawMessage) bool
 }
 
 var (

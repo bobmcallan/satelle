@@ -18,6 +18,8 @@ func init() {
 		Name:        "story-amend",
 		Description: "Amend a story's frozen definition fields under the amend gate",
 		Invoke:      storyAmend,
+		// An amendment is always judged by the amend gate (sty_c4b92c9e).
+		DispatchesReviewer: dispatchesOnAmend,
 	})
 }
 
@@ -164,6 +166,7 @@ func runAmendGate(ctx context.Context, current workitem.Item, fields []AmendFiel
 	if !dec.Accept {
 		return GateDecision{}, fmt.Errorf("amendment of %s rejected by %s: %s", current.ID, dec.Skill, dec.Notes)
 	}
+	RecordVerdict(fmt.Sprintf("accepted amendment of %s by %s: decision=accept notes=%s", current.ID, dec.Skill, dec.Notes))
 	return dec, nil
 }
 

@@ -62,9 +62,13 @@ func TestProseVerdictGatesTransition(t *testing.T) {
 
 	// Prose ACCEPT advances — and the gate emits progress to stderr while the
 	// reviewer runs, so a slow gate is visibly distinct from a hang (sty_6c88ca10;
-	// mustRun captures combined output, so stderr progress appears here).
+	// the run captures combined output, so stderr progress appears here). That is
+	// what a person at a terminal sees: no terminal is attached under `go test`,
+	// so the caller says so — an agent-facing call keeps progress off its stream
+	// (sty_c4b92c9e; tests/gate_handoff_test.go covers that side).
 	stubReviewerProse(t, repo, "All good. Verdict: accept.")
-	setOut := mustRun(t, testBin, repo, "story", "set", id, "--status", "in_progress")
+	setOut := mustRunEnv(t, testBin, repo, []string{"SATELLE_GATE_MODE=interactive"},
+		"story", "set", id, "--status", "in_progress")
 	if !strings.Contains(setOut, "running reviewer") {
 		t.Errorf("gated set should emit 'running reviewer …' progress to stderr:\n%s", setOut)
 	}

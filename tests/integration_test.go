@@ -524,6 +524,12 @@ func isolatedEnv(t *testing.T) []string {
 	return append(os.Environ(),
 		"SATELLE_HOME="+isolatedHome(t),
 		"SATELLE_SERVER_ENDPOINT=none",
+		// The suite drives the CLI as a script with no terminal, which is an
+		// agent-facing call to a gate-running verb: it would return a verdict
+		// block or a handle, not the record these tests read (sty_c4b92c9e).
+		// Scripts run the gate in the foreground; the hand-off tests opt back in
+		// through the extra env runEnv appends after this.
+		"SATELLE_GATE_MODE=interactive",
 	)
 }
 
