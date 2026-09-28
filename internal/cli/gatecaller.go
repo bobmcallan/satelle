@@ -259,6 +259,8 @@ func handOffGate(cmd *cobra.Command, verbName, storyID string) (handled bool, er
 		// refuse the call. Progress stays off the agent's stream either way.
 		return false, nil
 	}
+	// Before child.Wait below: SetPID records the process's creation identity, and
+	// until the child is reaped its pid cannot have been reused.
 	_ = store.SetPID(meta.ID, child.Process.Pid)
 	// The first of the rows a wait's model-call count is read from: the driving
 	// session's request count as the gate command is issued.

@@ -2530,10 +2530,14 @@ func runHookPrompt(out io.Writer) error {
 func runHookStopcheck(raw []byte, out io.Writer) error {
 	// A gate the session handed off (sty_c4b92c9e) is what it is waiting on: wait
 	// for it here and answer with its verdict, which the harness feeds back as the
-	// session's next input — the wake that costs the driver no call to ask. This
-	// runs before the anti-loop guard, which protects only stopcheck's own block:
-	// a delivery is consumed once, so it cannot loop.
-	if text := gateDeliveryFor(stopGateWait()); text != "" {
+	// session's next input — the wake that costs the driver no call to ask. A gate
+	// still running at the end of the wait is answered too, with a still-running
+	// note, so the session is never released to idle while its gate goes on and
+	// nothing would wake it. This runs before the anti-loop guard, which protects
+	// only stopcheck's own block: a verdict is consumed once, so it cannot loop,
+	// and a still-running note ends with the run (finished, died, or — where the
+	// platform cannot verify liveness — noted once).
+	if text := stopGateDeliveryFor(stopGateWait()); text != "" {
 		return emitStopBlock(out, text)
 	}
 	if stopHookActive(raw) {

@@ -1,3 +1,8 @@
+## [0.0.564] - 2026-09-28
+
+### Fixed
+- **A driving session waiting on a handed-off gate is never released to idle while the gate is still running.** The Stop hook used to wait up to 25 minutes for a gate this session handed off and then allow the stop, so a longer gate stranded the driver until someone typed. It now blocks the stop with a one-line still-running note (handle, elapsed time, "end your turn to keep waiting; do not poll"), and the next stop waits again; the verdict is delivered exactly once when the gate finishes. The loop ends when a gate is found dead or unfinishable (process gone, a reused process id, unreadable handle files), which is reported as died, never skipped. Process identity is checked on Linux, macOS and FreeBSD (start time) and Windows (exit code and creation time); where the platform offers neither, the stop is allowed at the bound with that reason stated. `SATELLE_GATE_STOP_WAIT` is clamped below the installed Stop-hook timeout, and prompts are never told about running gates. (sty_5f15f263)
+
 ## [0.0.563] - 2026-09-28
 
 ### Changed

@@ -13,6 +13,14 @@ func newStore(t *testing.T) *Store {
 	return New(t.TempDir())
 }
 
+// stubProbe stands in for the platform's process probe for one test.
+func stubProbe(t *testing.T, f func(int) (Liveness, string)) {
+	t.Helper()
+	old := probe
+	probe = f
+	t.Cleanup(func() { probe = old })
+}
+
 func TestLifecycle_RunningThenFinished(t *testing.T) {
 	s := newStore(t)
 	m, err := s.Create(Meta{Verb: "story-set", Story: "sty_x", Argv: []string{"story", "set"}})
@@ -58,9 +66,7 @@ func TestFinish_WritesOnce(t *testing.T) {
 // A process that vanished without recording a result is delivered as a
 // failure, not left running forever.
 func TestState_DiedWhenProcessGoneWithoutResult(t *testing.T) {
-	old := PidAlive
-	PidAlive = func(int) bool { return false }
-	t.Cleanup(func() { PidAlive = old })
+	stubProbe(t, func(int) (Liveness, string) { return Gone, "" })
 
 	s := newStore(t)
 	m, _ := s.Create(Meta{Verb: "story-set"})
@@ -135,12 +141,10 @@ func TestState_FinishedBetweenChecksIsNotDead(t *testing.T) {
 	s := newStore(t)
 	m, _ := s.Create(Meta{Verb: "x"})
 	_ = s.SetPID(m.ID, 424242)
-	old := PidAlive
-	PidAlive = func(int) bool {
+	stubProbe(t, func(int) (Liveness, string) {
 		_ = s.Finish(m.ID, Result{}) // the run records its result as its process exits
-		return false
-	}
-	t.Cleanup(func() { PidAlive = old })
+		return Gone, ""
+	})
 	if got := s.State(m.ID); got != Finished {
 		t.Fatalf("state = %s, want finished", got)
 	}

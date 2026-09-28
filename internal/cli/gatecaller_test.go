@@ -494,6 +494,18 @@ func TestCompletionNotification_CellsMatchTheScaffold(t *testing.T) {
 		}
 	}
 	// And the Stop hook the scaffold writes waits long enough for a gate.
+	for name, timeout := range installedStopTimeouts(t) {
+		if timeout < float64(stopGateWaitDefault/time.Second) {
+			t.Errorf("%s: the Stop hook timeout %vs is shorter than its %s wait", name, timeout, stopGateWaitDefault)
+		}
+	}
+}
+
+// installedStopTimeouts is the timeout, in seconds, the scaffold installs on the
+// stopcheck Stop hook of each harness that has one.
+func installedStopTimeouts(t *testing.T) map[string]float64 {
+	t.Helper()
+	got := map[string]float64{}
 	for name, doc := range map[string][]byte{"claude": buildClaudeHookSettings(t.TempDir()), "grok": buildGrokHookSettings(t.TempDir())} {
 		var s struct {
 			Hooks struct {
@@ -508,21 +520,18 @@ func TestCompletionNotification_CellsMatchTheScaffold(t *testing.T) {
 		if err := json.Unmarshal(doc, &s); err != nil {
 			t.Fatal(err)
 		}
-		found := false
 		for _, g := range s.Hooks.Stop {
 			for _, h := range g.Hooks {
 				if strings.Contains(h.Command, "satelle hook stopcheck") {
-					found = true
-					if h.Timeout < float64(stopGateWaitDefault/time.Second) {
-						t.Errorf("%s: the Stop hook timeout %vs is shorter than its %s wait", name, h.Timeout, stopGateWaitDefault)
-					}
+					got[name] = h.Timeout
 				}
 			}
 		}
-		if !found {
+		if _, ok := got[name]; !ok {
 			t.Errorf("%s: no stopcheck Stop hook in the scaffold", name)
 		}
 	}
+	return got
 }
 
 func TestRaiseStopHookTimeout(t *testing.T) {

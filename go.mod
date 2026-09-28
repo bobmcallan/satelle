@@ -7,6 +7,7 @@ require (
 	github.com/chromedp/chromedp v0.15.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
+	golang.org/x/sys v0.45.0
 	google.golang.org/grpc v1.83.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.53.0
@@ -26,7 +27,6 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	golang.org/x/net v0.55.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	modernc.org/libc v1.73.4 // indirect
