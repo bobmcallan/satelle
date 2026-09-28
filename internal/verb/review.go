@@ -70,6 +70,12 @@ type GateDecision struct {
 	PayloadBytes      int
 	// ToolIsolation records what the reviewer's harness offered (sty_ef3efb51).
 	ToolIsolation
+	// BundleID/BundleSkills mark a verdict that came from ONE reviewer session
+	// judging several rubrics (sty_23e10d92): the bundle's id and every skill it
+	// judged, in run order. Both are empty for a gate that ran alone. Usage rides
+	// the FIRST verdict of a bundle only — it is one measured invocation.
+	BundleID     string
+	BundleSkills []string
 	// Unresolved names gate skills this edge DECLARED that do not resolve in the
 	// substrate. Those gates degrade to advisory — the edge advances with no
 	// reviewer and no verdict — which is deliberate, so a fresh repo works before
@@ -129,6 +135,11 @@ type ReviewerVerdict struct {
 	PayloadBytes      int `json:"payload_bytes,omitempty"`
 	// ToolIsolation mirrors GateDecision's, stamped on this verdict's ledger row.
 	ToolIsolation
+	// BundleID/BundleSkills mirror GateDecision's: the verdict came from one
+	// bundled session (sty_23e10d92). Only the first verdict of a bundle carries
+	// the invocation's usage; the rest carry none.
+	BundleID     string   `json:"bundle_id,omitempty"`
+	BundleSkills []string `json:"bundle_skills,omitempty"`
 }
 
 // ToolIsolation is what a reviewer invocation's harness offered

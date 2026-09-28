@@ -53,6 +53,10 @@ type Step struct {
 	Parallel int
 	// ParallelSet distinguishes an authored parallel: 0 from an absent one.
 	ParallelSet bool
+	// Bundle asks that the entry gates which share a binding, model, effort and
+	// tool grant run as ONE reviewer session returning one verdict per rubric
+	// (sty_23e10d92). Absent or false leaves every gate its own session.
+	Bundle bool
 	// Provides is the obligation this step discharges. A step with no Provides
 	// is a role state (start or terminal marker), not an obligation-bearer.
 	Provides string
@@ -459,6 +463,7 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			Skills:   to.Reviewers,
 			Agent:    to.ReviewerAgent,
 			Parallel: parallelFor(to),
+			Bundle:   to.Bundle && len(to.Reviewers) > 1,
 		})
 	}
 

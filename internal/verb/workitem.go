@@ -549,15 +549,25 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		// (sty_4f0a15db AC2). Serial short-circuit still only returns reviewers
 		// up to the first reject, so single-reject message format is unchanged.
 		var rejects []ReviewerVerdict
+		bundled := map[string]bool{}
 		for _, rv := range reviewers {
 			// Record HOW the isolated agent was invoked before its verdict — the
 			// resolved command/harness and the injected skill/rubric file — so the
 			// timeline shows what command ran with what context (sty_fb3e0873). Only
 			// an LLM reviewer carries a Command; a functional check invokes no agent.
-			if rv.Command != "" {
+			// A bundled session is ONE invocation however many rubrics it judged
+			// (sty_23e10d92): its row is written once, with the bundle's usage, on
+			// the first of its verdicts.
+			if rv.Command != "" && !(rv.BundleID != "" && bundled[rv.BundleID]) {
+				inv, rubrics := rv, rv.Context
+				if rv.BundleID != "" {
+					bundled[rv.BundleID] = true
+					inv.Skill = strings.Join(rv.BundleSkills, "+")
+					rubrics = strings.Join(rv.BundleSkills, ",")
+				}
 				appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "reviewer",
-					fmt.Sprintf("invoked reviewer (%s) for %s→%s with @skill:%s", rv.Command, current.Status, *req.Status, rv.Context),
-					invocationPayload(current.Status, *req.Status, rv), now)
+					fmt.Sprintf("invoked reviewer (%s) for %s→%s with @skill:%s", rv.Command, current.Status, *req.Status, rubrics),
+					invocationPayload(current.Status, *req.Status, inv), now)
 			}
 			if !rv.Accept {
 				appendLedgerEntry(ctx, current.ID, ledger.KindReviewReject, "reviewer",
@@ -1703,9 +1713,15 @@ func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.R
 		ModelResolved string       `json:"model_resolved,omitempty"`
 		ModelSource   string       `json:"model_source,omitempty"`
 		Models        []ModelUsage `json:"model_usage,omitempty"`
+		// BundleID/BundleSize: this verdict came from one bundled session judging
+		// BundleSize rubrics (sty_23e10d92). The verdict row carries no usage — the
+		// bundle's single agent_invocation row does.
+		BundleID   string `json:"bundle_id,omitempty"`
+		BundleSize int    `json:"bundle_size,omitempty"`
 	}{From: from, To: to, Attempt: attempt, Skill: rv.Skill, Order: rv.Order, System: rv.System,
 		Notes: rv.Notes, Reasoning: rv.Reasoning, Accept: rv.Accept,
-		Model: rv.Model, ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models}
+		Model: rv.Model, ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models,
+		BundleID: rv.BundleID, BundleSize: len(rv.BundleSkills)}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil
@@ -1819,6 +1835,10 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		// ToolIsolation: offered tool count/source and the adapter limitation
 		// (sty_ef3efb51).
 		ToolIsolation
+		// BundleID/BundleSkills: this one invocation judged every listed rubric
+		// (sty_23e10d92); costview allocates its usage across them.
+		BundleID     string   `json:"bundle_id,omitempty"`
+		BundleSkills []string `json:"bundle_skills,omitempty"`
 	}{From: from, To: to, Agent: "reviewer", Skill: rv.Skill, Command: rv.Command, Context: rv.Context, Model: rv.Model,
 		ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models,
 		TokensIn: rv.TokensIn, TokensOut: rv.TokensOut, TokensTotal: rv.TokensTotal, DurationMs: rv.DurationMs,
@@ -1826,7 +1846,8 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		TokensInFresh:  rv.TokensInFresh, TokensCacheWrite: rv.TokensCacheWrite, TokensCacheRead: rv.TokensCacheRead, UsageNote: rv.UsageNote,
 		CostUSD: rv.CostUSD, CostUnavailableReason: rv.CostUnavailableReason,
 		SystemPromptBytes: rv.SystemPromptBytes, PayloadBytes: rv.PayloadBytes,
-		ToolIsolation: rv.ToolIsolation}
+		ToolIsolation: rv.ToolIsolation,
+		BundleID:      rv.BundleID, BundleSkills: rv.BundleSkills}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil

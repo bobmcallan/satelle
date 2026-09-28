@@ -1323,14 +1323,32 @@ func runGateValue(cmd *cobra.Command, args gateValueArgs) error {
 		return enc.Encode(report)
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "SKILL\tSEAT\tINVOCATIONS\t$\tFRESH TOKENS\tUNSPLIT (legacy)\tACCEPTS\tREJECTS\t$/REJECT")
+	// A bundled reviewer session is one measured call judging several rubrics;
+	// each rubric's row carries an ALLOCATED share of it, and the NOTE column
+	// says so (sty_23e10d92). The column only appears when a row carries one.
+	allocated := false
+	for _, r := range report.Rows {
+		allocated = allocated || r.AllocationNote != ""
+	}
+	header := "SKILL\tSEAT\tINVOCATIONS\t$\tFRESH TOKENS\tUNSPLIT (legacy)\tACCEPTS\tREJECTS\t$/REJECT"
+	if allocated {
+		header += "\tNOTE"
+	}
+	fmt.Fprintln(w, header)
 	for _, r := range report.Rows {
 		splitRows := r.UsageRows - r.UnsplitRows
-		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%d\t%d\t%s\n",
+		line := fmt.Sprintf("%s\t%s\t%d\t%s\t%s\t%s\t%d\t%d\t%s",
 			r.Skill, r.Seat, r.Invocations,
 			costview.FormatUSD(r.CostUSD, r.Costed, r.Uncosted), costview.FormatSplitTokens(r.FreshTokens, splitRows, r.UnsplitRows, r.UsageUnavailableRows),
 			dashIfZero(r.UnsplitTokens),
 			r.Accepts, r.Rejects, costview.FormatCostPerReject(r.CostUSD, r.Costed, r.Uncosted, r.Rejects))
+		if allocated {
+			line += "\t" + r.AllocationNote
+			if r.AllocationUnavailableReason != "" {
+				line += " (unavailable: " + r.AllocationUnavailableReason + ")"
+			}
+		}
+		fmt.Fprintln(w, line)
 	}
 	return w.Flush()
 }

@@ -89,6 +89,9 @@ func renderRouteSteps(out io.Writer, route wfroute.Route, l wfdot.List) {
 				cap = fmt.Sprintf("up to %d concurrent", st.Parallel)
 			}
 			fmt.Fprintf(out, "                    (%s, all must accept)\n", cap)
+			if st.Bundle {
+				fmt.Fprintln(out, "                    bundled: gates sharing binding, model, effort and tool grant run as one session, one verdict per rubric")
+			}
 		}
 		for _, sk := range st.Skipped {
 			fmt.Fprintf(out, "       not run:    %s — needs tag %s\n", sk.Skill, strings.Join(sk.ByTag, "|"))

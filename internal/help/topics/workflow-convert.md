@@ -96,8 +96,22 @@ while in the step, and stage names REPEAT by design: several route families reac
 does not make obvious, and the one every conversion gets wrong.**
 
 Step keys: `status`, `agent`, `skills`, `reviewers`, `reviewer_agent`,
-`parallel`, `requires`, `applies_to`, `advise`, `rework`, `propose`, `freeze`,
-`reject_budget`, `waits_on_children`, `start`, `terminal`.
+`parallel`, `bundle`, `requires`, `applies_to`, `advise`, `rework`, `propose`,
+`freeze`, `reject_budget`, `waits_on_children`, `start`, `terminal`.
+
+`bundle = true` runs the step's entry reviewers that can share one session as
+ONE reviewer session: every rubric rides the prompt verbatim under its own
+heading and the session returns one verdict per rubric, each recorded under its
+own skill (any reject rejects the edge). Absent or `false` is the default — every
+reviewer its own session. Only LLM reviewers bundle; a reviewer that carries a
+functional check, or whose skill sets `independent: true` in its frontmatter,
+always runs on its own, as does one whose binding, model, effort or tool grant
+differs from the rest. A rubric the session names no verdict for is rejected. The
+bundle is one usage row; `satelle story cost --gate-value` shows each rubric's
+share of it as an **allocation**, not a second measured call. The shipped
+catalogue leaves `bundle` off wherever the frozen review corpus
+(`tests/reviewcorpus`) does not hold a known defect and a known-valid case for
+every rubric the bundle would carry.
 
 `waits_on_children = true` marks the step a **container** (a parent or epic)
 idles at while its child stories are driven. The container holds the status but

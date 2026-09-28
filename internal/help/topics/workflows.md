@@ -132,6 +132,11 @@ requires = ["coded"]
   every reviewer. Set `parallel = 0` for sequential, or `parallel = N` (cap 4) to
   bound the fan-out. Aggregation stays all-must-accept in the binary; a
   multi-reject refusal names every rejecting reviewer.
+- **`bundle = true` shares a session.** The LLM reviewers that share binding,
+  model, effort and tool grant run as one session with a verdict per rubric,
+  instead of one session each (see `satelle help workflow-convert`). Off by
+  default; `parallel` then schedules the bundles and any reviewer left alone.
+  A rubric that must judge alone sets `independent: true` in its frontmatter.
 
 ### An always-on `[[gate]]` — multi-step only
 

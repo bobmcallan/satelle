@@ -75,7 +75,8 @@ func roleRef(spec string) string {
 
 // spineWF is the fixture shorthand most cases want: a wildcard lane whose steps
 // run in the given order, each discharging an obligation named for it. steps are
-// "status|agent|skill|reviewers(csv)|reviewer_agent|parallel"; a trailing step is
+// "status|agent|skill|reviewers(csv)|reviewer_agent|parallel|extra" (extra is one
+// raw step line, e.g. "bundle = true"); a trailing step is
 // terminal. An omitted parallel leaves the route's own default (concurrent above
 // one reviewer); "0" asks for sequential first-reject.
 // park and cancel are "state @gate" (empty to omit).
@@ -90,10 +91,10 @@ func spineWF(park, cancel string, gates string, steps ...string) string {
 	prev := "raised"
 	for i, spec := range steps {
 		f := strings.Split(spec, "|")
-		for len(f) < 6 {
+		for len(f) < 7 {
 			f = append(f, "")
 		}
-		status, agent, skill, reviewers, ragent, par := f[0], f[1], f[2], f[3], f[4], f[5]
+		status, agent, skill, reviewers, ragent, par, extra := f[0], f[1], f[2], f[3], f[4], f[5], f[6]
 		ob := "ob-" + status
 		obligations = append(obligations, `"`+ob+`"`)
 		cat.WriteString("[" + ob + "]\nstatus = \"" + status + "\"\n")
@@ -111,6 +112,9 @@ func spineWF(park, cancel string, gates string, steps ...string) string {
 		}
 		if par != "" {
 			cat.WriteString("parallel = " + par + "\n")
+		}
+		if extra != "" { // a raw step line, e.g. "bundle = true" (sty_23e10d92)
+			cat.WriteString(extra + "\n")
 		}
 		if i == len(steps)-1 {
 			cat.WriteString("terminal = true\n")

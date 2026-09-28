@@ -48,6 +48,18 @@ func CheckCommand(body string) string {
 	return fmScalar(fm, "check")
 }
 
+// Independent reports whether a reviewer skill's frontmatter carries
+// `independent: true` — the rubric's own declaration that it must judge in its
+// own session and never share one with another rubric (sty_23e10d92). The
+// rubric owns the marker: a workflow cannot subtract a rubric's independence.
+func Independent(body string) bool {
+	fm, _, ok := splitFM(body)
+	if !ok {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(fmScalar(fm, "independent")), "true")
+}
+
 // IsCodedCheck reports whether a skill body is a functional-check skill.
 func IsCodedCheck(body string) bool {
 	return CheckCommand(body) != ""

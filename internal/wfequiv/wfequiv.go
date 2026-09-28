@@ -199,6 +199,9 @@ func diffGates(want, got wfdot.Spec) []string {
 		if wt.Parallel != gt.Parallel {
 			out = append(out, fmt.Sprintf("edge %s parallel: want %d, got %d", k, wt.Parallel, gt.Parallel))
 		}
+		if wt.Bundle != gt.Bundle {
+			out = append(out, fmt.Sprintf("edge %s bundle: want %t, got %t", k, wt.Bundle, gt.Bundle))
+		}
 	}
 	return out
 }

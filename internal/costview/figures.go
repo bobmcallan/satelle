@@ -148,6 +148,12 @@ type Row struct {
 	// and why.
 	CostUSD               *float64 `json:"cost_usd,omitempty"`
 	CostUnavailableReason string   `json:"cost_unavailable_reason,omitempty"`
+	// BundleID/BundleSkills mark ONE measured invocation that judged several
+	// rubrics in a single reviewer session (sty_23e10d92). The row's usage is the
+	// measured figure for the whole call; a per-rubric split of it is an
+	// allocation (see GateValue), never a second measured call.
+	BundleID     string   `json:"bundle_id,omitempty"`
+	BundleSkills []string `json:"bundle_skills,omitempty"`
 }
 
 // DecodeRow decodes one agent_invocation ledger entry into a Row, or ok=false
@@ -165,6 +171,9 @@ func DecodeRow(e ledger.Entry) (Row, bool) {
 		Agent string `json:"agent"`
 		Skill string `json:"skill"`
 		Model string `json:"model"`
+
+		BundleID     string   `json:"bundle_id"`
+		BundleSkills []string `json:"bundle_skills"`
 	}
 	if err := json.Unmarshal(e.Payload, &meta); err != nil {
 		return Row{}, false
@@ -189,6 +198,8 @@ func DecodeRow(e ledger.Entry) (Row, bool) {
 		TokensCacheRead:        tel.TokensCacheRead,
 		CostUSD:                tel.CostUSD,
 		CostUnavailableReason:  tel.CostUnavailableReason,
+		BundleID:               meta.BundleID,
+		BundleSkills:           meta.BundleSkills,
 	}
 	if row.Agent == "" {
 		row.Agent = tel.Agent

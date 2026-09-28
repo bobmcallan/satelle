@@ -1,3 +1,18 @@
+## [0.0.576] - 2026-09-29
+
+### Added
+- **Reviewer gates on one edge can run bundled: one session judges every rubric and returns one verdict per rubric.** A step opts in with `bundle = true` in `step.toml`; without it, gates run as separate sessions exactly as before.
+  - Each rubric's verdict is recorded under its own skill, any reject rejects the edge, and a rubric the bundled reply leaves out fails closed.
+  - Gates bundle only when they share binding, model, effort and tool grant. A rubric whose front matter says `independent: true` keeps its own session, and a gate backed by a command check never enters the bundle.
+  - A bundle writes one usage row. `satelle story cost --gate-value` shows each rubric's share labelled as an allocation of that row, and an unavailable usage stays unavailable in every share.
+
+  **Bundling is opt-in, and the embedded default does not enable it.** The parity run over the frozen reviewer corpus (3 runs per case per mode, claude and grok command) found that the bundle missed no defect the separate sessions caught, but rejected known-valid cases the separate sessions accepted (claude: 8 of 9 valid runs; grok: 6 of 9). The corpus also has no cases yet for the intent, architecture, scope and workflow-change rubrics. (sty_23e10d92)
+
+## [serve-v0.0.98] - 2026-09-29
+
+### Changed
+- **The service embeds reviewer bundling above.** (sty_23e10d92)
+
 ## [0.0.575] - 2026-09-28
 
 ### Breaking

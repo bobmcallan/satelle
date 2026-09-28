@@ -21,6 +21,11 @@ import (
 // however many reviewers the gate fanned out to (parallel or serial).
 func NewAttemptID() string { return fmt.Sprintf("att_%s", uuid.NewV4().String()[:8]) }
 
+// NewBundleID returns a fresh id for ONE bundled reviewer session (sty_23e10d92):
+// stamped on the session's single agent_invocation row and on every verdict row
+// it produced, so the rows of one measured call can be found together.
+func NewBundleID() string { return fmt.Sprintf("bun_%s", uuid.NewV4().String()[:8]) }
+
 // edgeRow is the from/to/attempt/notes shape a review or transition row's
 // payload carries. Extra keys are ignored.
 type edgeRow struct {

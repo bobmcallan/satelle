@@ -118,6 +118,7 @@ type stepWire struct {
 	// as "unset" (which defaults to DefaultParallelCap concurrent). This is the
 	// old ParallelSet bool, preserved deliberately.
 	Parallel  *int       `toml:"parallel"`
+	Bundle    bool       `toml:"bundle"`
 	Provides  string     `toml:"provides"`
 	Requires  []string   `toml:"requires"`
 	AppliesTo []string   `toml:"applies_to"`
@@ -368,6 +369,7 @@ func ParseSteps(body string) (Catalogue, error) {
 		if s.Parallel != nil {
 			st.Parallel, st.ParallelSet = *s.Parallel, true
 		}
+		st.Bundle = s.Bundle
 		if s.Advise != nil {
 			st.Advisor, st.AdvisorSkill = s.Advise.Agent, s.Advise.Skill
 		}

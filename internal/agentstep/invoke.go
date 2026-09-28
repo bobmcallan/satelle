@@ -29,7 +29,16 @@ const (
 	ExpectVerdict Expect = iota
 	// ExpectPerform: performer — raw stdout, no verdict parse, no retry.
 	ExpectPerform
+	// ExpectVerdicts: isolated judge over SEVERAL rubrics in one session
+	// (sty_23e10d92) — output must parse to a verdict for at least one of
+	// InvokeRequest.Skills; a skill it names no verdict for fails closed. It
+	// shares ExpectVerdict's isolation, timeout and retry/repair loop.
+	ExpectVerdicts
 )
+
+// judges reports whether the contract is an isolated reviewer's — one verdict or
+// several — so isolation, capture and timeout treat both identically.
+func (e Expect) judges() bool { return e == ExpectVerdict || e == ExpectVerdicts }
 
 // ExpectFromRole maps a resolved binding role to an Expect.
 // role=reviewer → verdict; everything else → perform.
@@ -81,6 +90,9 @@ type InvokeRequest struct {
 	Step    string // to-status or step name
 	Skill   string // rubric skill name for telemetry/logging
 	Actor   string // ledger/telemetry actor (default "reviewer" for verdict)
+	// Skills names every rubric a bundled (ExpectVerdicts) run judges, in the
+	// order its verdicts are wanted. Ignored by the other contracts.
+	Skills []string
 }
 
 // InvokeResult is the outcome of one Invoke call.
@@ -89,7 +101,11 @@ type InvokeResult struct {
 	Usage    agentcli.UsageResult
 	Command  string             // resolved harness command for ledger evidence
 	Decision *verb.GateDecision // non-nil when ExpectVerdict and parse succeeded
-	Err      error
+	// Decisions holds one decision per requested skill, in request order, when
+	// ExpectVerdicts parsed (sty_23e10d92). A skill the response named no verdict
+	// for is present as a fail-closed reject, never absent.
+	Decisions []verb.GateDecision
+	Err       error
 	// SystemPromptBytes/PayloadBytes are the byte lengths of the system prompt
 	// and stdin payload satelle sent for this invocation (sty_363eaf55) —
 	// lengths only, never content.
@@ -245,7 +261,7 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	charter := req.Charter
 	if charter == "" {
 		switch expect {
-		case ExpectVerdict:
+		case ExpectVerdict, ExpectVerdicts:
 			charter = reviewerCharter()
 		case ExpectPerform:
 			// Perform charter is call-site specific (agent/step/workflow names);
@@ -387,7 +403,7 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	// trailing chatter is not dropped by the answer-only segment rule
 	// (sty_844b6ab1 AC6). Prose paths (summariser, perform) keep the zero
 	// value CaptureAnswer so narration before tool fences is stripped.
-	if expect == ExpectVerdict {
+	if expect.judges() {
 		agentReq.Capture = agentcli.CaptureFull
 	}
 
@@ -414,7 +430,7 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	// tool outside the grant by name.
 	var isolation verb.ToolIsolation
 	var attested bool // operator-attested reviewer on an unrecognised harness: never a count
-	if expect == ExpectVerdict {
+	if expect.judges() {
 		var perr error
 		isolation, attested, perr = g.isolateReviewer(ctx, reviewerDispatch{
 			StoryID: req.StoryID, Actor: req.Actor, Skill: req.Skill, Step: req.Step, Section: section,
@@ -426,7 +442,7 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	}
 
 	timeout := req.Timeout
-	if timeout <= 0 && expect == ExpectVerdict {
+	if timeout <= 0 && expect.judges() {
 		timeout = g.agentTimeout
 	}
 	idle := req.IdleTimeout
@@ -458,7 +474,7 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		} else {
 			res = InvokeResult{Stdout: out, Usage: usage, Command: cmdStr, Err: runErr}
 		}
-	default: // ExpectVerdict
+	default: // ExpectVerdict, ExpectVerdicts
 		res = g.invokeVerdict(ctx, req, runner, agentReq, cmdStr, timeout, idle, busy)
 	}
 	// Byte lengths of what satelle actually sent (sty_363eaf55) — lengths only,
@@ -470,7 +486,7 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	askedNow := append([]agentcli.Event(nil), asked...)
 	reported := harnessTools
 	eventMu.Unlock()
-	if expect == ExpectVerdict {
+	if expect.judges() {
 		if reported != nil && !attested {
 			// The harness's own report wins over the rendered allow-list.
 			n := agentcli.OfferedToolCount(reported)
@@ -628,7 +644,14 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 
 	var lastErr error
 	var lastOut []byte
+	// lastNoVerdict is true when the LAST attempt ran to completion but a bundled
+	// response named no verdict for any rubric — as opposed to a runner failure.
+	// Only that case fails every rubric closed; a runner failure stays an error,
+	// exactly as it does for a lone gate.
+	var lastNoVerdict bool
+	var lastUsage agentcli.UsageResult
 	for attempt := 1; attempt <= attempts; attempt++ {
+		lastNoVerdict = false
 		if werr := g.retryWait(ctx, attempt); werr != nil {
 			return InvokeResult{Command: cmdStr, Err: werr}
 		}
@@ -663,6 +686,25 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 			})
 			continue
 		}
+		if req.Expect == ExpectVerdicts {
+			// Bundled: the same retry/repair loop, a different parse — one verdict
+			// per requested rubric, a missing one failing closed (sty_23e10d92).
+			decs, perr := parseBundleDecisions(out, req.Skills)
+			if perr != nil {
+				lastErr, lastOut, lastUsage, lastNoVerdict = perr, out, usage, true
+				g.logReviewerFailure(skill, attempt, attempts, perr, out)
+				g.telemetryEvent(ctx, storyID, actor, "agent-retry", map[string]any{
+					"skill": skill, "step": step, "attempt": attempt, "attempts": attempts, "outcome": "no-verdict",
+				})
+				continue
+			}
+			for i := range decs {
+				decs[i].Gated = true
+				decs[i].Command = cmdStr
+				decs[i].Context = decs[i].Skill
+			}
+			return InvokeResult{Stdout: out, Usage: usage, Command: cmdStr, Decisions: decs}
+		}
 		dec, perr := parseDecision(out)
 		if perr != nil {
 			if pd, ok := parseProseDecision(out); ok {
@@ -695,6 +737,19 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 	g.telemetryEvent(ctx, storyID, actor, "agent-failure", map[string]any{
 		"skill": skill, "step": step, "attempts": attempts, "outcome": classifyOutcome(lastErr),
 	})
+	if req.Expect == ExpectVerdicts && lastNoVerdict {
+		// The session ran but named no verdict for any rubric, and the repair
+		// attempts did not change that: every rubric fails closed (sty_23e10d92).
+		why := fmt.Sprintf("no parseable verdict after %d attempts", attempts)
+		decs := make([]verb.GateDecision, len(req.Skills))
+		for i, s := range req.Skills {
+			decs[i] = failClosedDecision(s, why)
+			decs[i].Gated = true
+			decs[i].Command = cmdStr
+			decs[i].Context = s
+		}
+		return InvokeResult{Stdout: lastOut, Usage: lastUsage, Command: cmdStr, Decisions: decs}
+	}
 	return InvokeResult{Command: cmdStr, Err: fmt.Errorf(
 		"reviewer: %s produced no verdict after %d attempts (empty/ambiguous reviewer output or a transient agent failure — e.g. a rate-limited or killed subprocess under concurrent sessions; retry, or reduce concurrent satelle sessions): %w%s%s",
 		skill, attempts, lastErr, outputTail(lastOut), where)}

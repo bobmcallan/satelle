@@ -2,7 +2,9 @@ package costview
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -76,6 +78,19 @@ type GateValueRow struct {
 	Accepts              int      `json:"accepts"`
 	Rejects              int      `json:"rejects"`
 	CostPerRejectUSD     *float64 `json:"cost_per_reject_usd,omitempty"`
+	// AllocatedRows counts the bundled-session shares folded into this row's
+	// dollars and tokens (sty_23e10d92). A bundled reviewer session is ONE
+	// measured invocation judging several rubrics; its usage is divided evenly
+	// across those rubrics so each skill row has a figure, and that figure is an
+	// ALLOCATION, never a second measured call. Invocations counts measured
+	// calls only, so an allocated share never inflates it. AllocationNote labels
+	// the allocation; AllocatedBundles names the bundles it came from;
+	// AllocationUnavailableReason is the adapter-named reason when a bundle's
+	// usage or cost was not reported, so those shares read as unavailable, never 0.
+	AllocatedRows               int      `json:"allocated_rows,omitempty"`
+	AllocatedBundles            []string `json:"allocated_bundles,omitempty"`
+	AllocationNote              string   `json:"allocation_note,omitempty"`
+	AllocationUnavailableReason string   `json:"allocation_unavailable_reason,omitempty"`
 }
 
 // MarshalJSON renders CostUSD as null when Costed is 0 — an uncosted row's
@@ -167,28 +182,21 @@ func GateValue(entriesByID map[string][]ledger.Entry, filter GateFilter) GateVal
 				if !ok {
 					continue
 				}
-				r := get(normalizeSkill(row.Skill), seatOf(row.Agent, modelOf(row.Model, row.ModelResolved)))
-				r.Invocations++
-				if row.CostUSD != nil {
-					r.CostUSD += *row.CostUSD
-					r.Costed++
-				} else {
-					r.Uncosted++
-				}
-				if row.UsageAvailable {
-					r.UsageRows++
-					if row.TokensInFresh > 0 || row.TokensCacheWrite > 0 || row.TokensCacheRead > 0 {
-						r.FreshTokens += row.TokensInFresh
-					} else {
-						// Recorded before the fresh/cache split existed: TokensIn is
-						// cache-inclusive, so it is legacy UNSPLIT input, never fresh
-						// (AC1's split applies here too — cache reuse is not fresh work).
-						r.UnsplitTokens += row.TokensIn
-						r.UnsplitRows++
+				seat := seatOf(row.Agent, modelOf(row.Model, row.ModelResolved))
+				if n := len(row.BundleSkills); n > 1 {
+					// One measured bundled call, divided across the rubrics it
+					// judged — an allocation, labelled as one (sty_23e10d92).
+					for i, sk := range row.BundleSkills {
+						r := get(normalizeSkill(sk), seat)
+						r.AllocatedRows++
+						r.noteBundle(row)
+						r.addUsage(bundleShare(row, i, n))
 					}
-				} else {
-					r.UsageUnavailableRows++
+					continue
 				}
+				r := get(normalizeSkill(row.Skill), seat)
+				r.Invocations++
+				r.addUsage(row)
 			case ledger.KindReviewAccept, ledger.KindReviewReject:
 				var v struct {
 					Skill         string `json:"skill"`
@@ -223,6 +231,7 @@ func GateValue(entriesByID map[string][]ledger.Entry, filter GateFilter) GateVal
 	report := GateValueReport{}
 	for _, k := range order {
 		r := *rows[k]
+		r.AllocationNote = allocationNote(r.AllocatedBundles)
 		if r.Rejects > 0 && r.Costed > 0 {
 			per := r.CostUSD / float64(r.Rejects)
 			r.CostPerRejectUSD = &per
@@ -230,6 +239,103 @@ func GateValue(entriesByID map[string][]ledger.Entry, filter GateFilter) GateVal
 		report.Rows = append(report.Rows, r)
 	}
 	return report
+}
+
+// addUsage folds one invocation row's dollars and tokens into r: a priced row
+// into the known-dollar subtotal, an unpriced one into Uncosted, and usage
+// split into fresh versus legacy-unsplit tokens. Shared by a measured row and a
+// bundled share so the two can never account differently.
+func (r *GateValueRow) addUsage(row Row) {
+	if row.CostUSD != nil {
+		r.CostUSD += *row.CostUSD
+		r.Costed++
+	} else {
+		r.Uncosted++
+	}
+	if row.UsageAvailable {
+		r.UsageRows++
+		if row.TokensInFresh > 0 || row.TokensCacheWrite > 0 || row.TokensCacheRead > 0 {
+			r.FreshTokens += row.TokensInFresh
+		} else {
+			// Recorded before the fresh/cache split existed: TokensIn is
+			// cache-inclusive, so it is legacy UNSPLIT input, never fresh
+			// (AC1's split applies here too — cache reuse is not fresh work).
+			r.UnsplitTokens += row.TokensIn
+			r.UnsplitRows++
+		}
+	} else {
+		r.UsageUnavailableRows++
+	}
+}
+
+// noteBundle records that r carries an allocated share of row's bundle, and —
+// when the bundle's usage or cost was not reported — the adapter's reason, so
+// an unavailable share is explained rather than silently zero.
+func (r *GateValueRow) noteBundle(row Row) {
+	seen := false
+	for _, id := range r.AllocatedBundles {
+		seen = seen || id == row.BundleID
+	}
+	if !seen {
+		r.AllocatedBundles = append(r.AllocatedBundles, row.BundleID)
+	}
+	if r.AllocationUnavailableReason != "" {
+		return
+	}
+	switch {
+	case !row.UsageAvailable && row.UsageUnavailableReason != "":
+		r.AllocationUnavailableReason = row.UsageUnavailableReason
+	case row.CostUSD == nil && row.CostUnavailableReason != "":
+		r.AllocationUnavailableReason = row.CostUnavailableReason
+	}
+}
+
+// allocationNote labels a row that carries bundled-session shares — empty when
+// it carries none.
+func allocationNote(bundles []string) string {
+	switch len(bundles) {
+	case 0:
+		return ""
+	case 1:
+		return "allocated share of bundle " + bundles[0]
+	default:
+		return fmt.Sprintf("allocated share of %d bundles (%s)", len(bundles), strings.Join(bundles, ", "))
+	}
+}
+
+// bundleShare is rubric i's (of n) share of a bundled row's measured usage: an
+// even split whose remainder goes to the earliest shares, so the shares of one
+// row sum EXACTLY to the measured figure. Cost gives the last share whatever the
+// earlier ones left, for the same reason. Unavailable usage or cost stays
+// unavailable in every share.
+func bundleShare(row Row, i, n int) Row {
+	s := row
+	s.TokensIn = splitInt(row.TokensIn, i, n)
+	s.TokensOut = splitInt(row.TokensOut, i, n)
+	s.TokensTotal = splitInt(row.TokensTotal, i, n)
+	s.TokensInFresh = splitInt(row.TokensInFresh, i, n)
+	s.TokensCacheWrite = splitInt(row.TokensCacheWrite, i, n)
+	s.TokensCacheRead = splitInt(row.TokensCacheRead, i, n)
+	s.DurationMs = int64(splitInt(int(row.DurationMs), i, n))
+	if row.CostUSD != nil {
+		each := *row.CostUSD / float64(n)
+		v := each
+		if i == n-1 {
+			v = *row.CostUSD - each*float64(n-1)
+		}
+		s.CostUSD = &v
+	}
+	return s
+}
+
+// splitInt is the i'th of n near-equal integer parts of total; the parts sum to
+// total.
+func splitInt(total, i, n int) int {
+	q := total / n
+	if i < total%n {
+		q++
+	}
+	return q
 }
 
 // normalizeSkill maps an empty skill to "unknown" — applied identically to an

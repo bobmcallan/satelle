@@ -768,6 +768,10 @@ type transitionPayload struct {
 	From        string        `json:"from"`
 	To          string        `json:"to"`
 	ReviewSkill string        `json:"review_skill"`
+	// ReviewSkills names every rubric a BUNDLED session judges over this one
+	// payload (sty_23e10d92); ReviewSkill is empty then. Absent for a gate that
+	// runs alone, so its payload is byte-for-byte unchanged.
+	ReviewSkills []string `json:"review_skills,omitempty"`
 	// Children carries a container's child stories (id + status) so a parent/epic
 	// close gate judges the children-resolved rule from the PAYLOAD — satelle does
 	// the context selection — rather than reading any on-disk story mirror. Empty
@@ -1333,6 +1337,15 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 	// Parallel opt-in (sty_4f0a15db): edge parallel=N|true runs reviewers
 	// concurrently (no short-circuit). Absent/0 or a single reviewer keeps the
 	// sequential first-reject loop byte-for-byte.
+	// Bundle opt-in (sty_23e10d92): an edge that declares `bundle` runs the gates
+	// that share a session's shape as ONE reviewer session with a verdict per
+	// rubric. Absent — the default — never enters this branch, so gates run as
+	// separate sessions exactly as before.
+	if len(ordered) >= 2 && g.edgeBundle(ctx, item, item.Status, toStatus) {
+		if dec, handled, berr := g.runGateBundled(ctx, item, toStatus, ordered, sysStart, parallelCap); handled {
+			return dec, berr
+		}
+	}
 	if parallelCap > 0 && len(ordered) >= 2 {
 		return g.runGateParallel(ctx, item, toStatus, ordered, sysStart, parallelCap)
 	}
@@ -1375,17 +1388,7 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		result.ToolIsolation = dec.ToolIsolation
 		result.DurationMs = dec.DurationMs
 		result.UsageAvailable = dec.UsageAvailable
-		result.Reviewers = append(result.Reviewers, verb.ReviewerVerdict{
-			Skill: skill, Order: i, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, System: i >= sysStart,
-			Command: dec.Command, Context: dec.Context, Model: dec.Model,
-			ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
-			TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
-			UsageAvailable: dec.UsageAvailable,
-			TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
-			CostUSD: dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
-			SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
-			ToolIsolation: dec.ToolIsolation,
-		})
+		result.Reviewers = append(result.Reviewers, reviewerVerdictOf(skill, i, i >= sysStart, dec))
 		if !dec.Accept {
 			return result, nil // a reject blocks the edge — do not run later reviewers
 		}
@@ -1404,11 +1407,7 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 	if cap > len(ordered) {
 		cap = len(ordered)
 	}
-	type slot struct {
-		dec verb.GateDecision
-		err error
-	}
-	results := make([]slot, len(ordered))
+	results := make([]gateSlot, len(ordered))
 	sem := make(chan struct{}, cap)
 	var wg sync.WaitGroup
 	nGates := len(ordered)
@@ -1438,11 +1437,43 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 			doneN++
 			g.emitActivity(item.ID, ref.skill+" (parallel)", doneN, nGates)
 			doneMu.Unlock()
-			results[i] = slot{dec: dec, err: rerr}
+			results[i] = gateSlot{dec: dec, err: rerr}
 		}(i, ref)
 	}
 	wg.Wait()
+	return assembleGate(ordered, results, sysStart)
+}
 
+// gateSlot is one gate's outcome awaiting assembly into the edge's decision.
+type gateSlot struct {
+	dec verb.GateDecision
+	err error
+}
+
+// reviewerVerdictOf is one gate's decision as the verdict row the ledger writes —
+// the single place that maps a GateDecision onto a ReviewerVerdict, shared by
+// the serial, parallel and bundled paths.
+func reviewerVerdictOf(skill string, order int, system bool, dec verb.GateDecision) verb.ReviewerVerdict {
+	return verb.ReviewerVerdict{
+		Skill: skill, Order: order, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, System: system,
+		Command: dec.Command, Context: dec.Context, Model: dec.Model,
+		ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
+		TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
+		UsageAvailable: dec.UsageAvailable,
+		TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
+		CostUSD: dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
+		SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
+		ToolIsolation: dec.ToolIsolation,
+		BundleID:      dec.BundleID, BundleSkills: dec.BundleSkills,
+	}
+}
+
+// assembleGate folds every gate's outcome, in ordered's index order, into the
+// edge's decision: no short-circuit, the lowest-index ERROR wins (a reviewer
+// error is not a reject), and the top-level fields mirror the first reject, or
+// the last gated verdict when all accept. Shared by the parallel and bundled
+// paths.
+func assembleGate(ordered []reviewerRef, results []gateSlot, sysStart int) (verb.GateDecision, error) {
 	// Prefer lowest-index non-nil error (reviewer ERROR ≠ reject).
 	for i := range results {
 		if results[i].err != nil {
@@ -1465,17 +1496,7 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 			continue
 		}
 		result.Gated = true
-		result.Reviewers = append(result.Reviewers, verb.ReviewerVerdict{
-			Skill: ref.skill, Order: i, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, System: i >= sysStart,
-			Command: dec.Command, Context: dec.Context, Model: dec.Model,
-			ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
-			TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
-			UsageAvailable: dec.UsageAvailable,
-			TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
-			CostUSD: dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
-			SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
-			ToolIsolation: dec.ToolIsolation,
-		})
+		result.Reviewers = append(result.Reviewers, reviewerVerdictOf(ref.skill, i, i >= sysStart, dec))
 		d := dec
 		lastGated = &d
 		if !dec.Accept && firstReject == nil {
@@ -2702,67 +2723,12 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 // before/after (sty_81aa4d8f). Everything else about the run is identical, so a
 // decorated gate is not a second reviewer path.
 func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStatus, skill, gateAgent string, decorate func(*transitionPayload)) (verb.GateDecision, error) {
-	body, err := g.skillBody(ctx, skill)
-	if err != nil {
-		if errors.Is(err, docindex.ErrNotFound) {
-			// Advisory degradation: the edge DECLARED this gate but its rubric is
-			// not installed, so nothing judges the transition and it advances.
-			// Fail-open is deliberate (a fresh repo must work before every gate is
-			// authored) — but it must not be SILENT, so name the skill that was
-			// skipped (sty_d59ec6a9).
-			return verb.GateDecision{Gated: false, Skill: skill, Unresolved: []string{skill}}, nil
-		}
-		return verb.GateDecision{}, err
-	}
-	// Broken substrate refuses to run (sty_d0d6bb67): a PRESENT reviewer skill
-	// that fails its deterministic structure check must not judge the edge. An
-	// ABSENT rubric stays advisory by design (fresh repos keep working); an
-	// invalid one is a broken definition and refuses, naming the problems.
-	if problems := structure.Doc("skills", skill, body, nil); len(problems) > 0 {
-		return verb.GateDecision{}, fmt.Errorf(
-			"gate refused: reviewer skill %q fails structure validation: %s — fix the substrate (`satelle skill validate %s`)",
-			skill, strings.Join(problems, "; "), skill)
-	}
-	// Reviewer skill contract check (design §6.3): the body must specify the
-	// verdict contract (at least decision + notes). reasoning is recommended.
-	if problems := structure.ReviewerSkillContract(body); len(problems) > 0 {
-		return verb.GateDecision{}, fmt.Errorf(
-			"gate refused: reviewer skill %q does not specify the verdict contract: %s — the skill must document returning JSON {decision, notes} (reasoning recommended)",
-			skill, strings.Join(problems, "; "))
-	}
-	tp := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: skill}
-	if g.children != nil {
-		tp.Children = g.children(ctx, item.ID)
-	}
-	g.fillPayloadDocs(ctx, item.ID, &tp)
-	// Prior verdicts ride ONLY the gate payload (sty_0f5e600c): they are re-review
-	// context, so the executor and retrospective payloads deliberately go without —
-	// a performer optimising for the last rejection instead of the story is the
-	// failure mode that would create.
-	g.fillPriorVerdicts(ctx, item.ID, item.Status, toStatus, &tp)
-	g.fillDefinitionEdits(ctx, item.ID, &tp)
-	// Engagement diff rides the GATE payload only (sty_a125b440): reviewers
-	// without a shell need the slice; executors have one. fillDiff never
-	// errors — a missing baseline is a marker, not a refused transition.
-	g.fillDiff(ctx, item.ID, &tp)
-	gateAddrs := []string{"reviewer"}
-	if strings.TrimSpace(gateAgent) != "" && gateAgent != "reviewer" {
-		gateAddrs = append(gateAddrs, gateAgent)
-	}
-	g.fillMessages(ctx, item.ID, gateAddrs, &tp)
-	g.fillMeasuredActual(ctx, item.ID, &tp)
-	// Route drift rides the payload ONLY when it exists, so a repo that names a
-	// drift gate has the enumeration without shelling for it, and every other
-	// reviewer's payload is byte-for-byte unchanged (sty_6e4f7fd8).
-	if d, drifted := g.routeDriftFor(ctx, item); drifted {
-		tp.RouteDrift = &d
-	}
-	if decorate != nil {
-		decorate(&tp)
-	}
-	payload, err := json.Marshal(tp)
+	prep, err := g.prepareReviewer(ctx, item, toStatus, skill, gateAgent, decorate)
 	if err != nil {
 		return verb.GateDecision{}, err
+	}
+	if prep.unresolved {
+		return verb.GateDecision{Gated: false, Skill: skill, Unresolved: []string{skill}}, nil
 	}
 	// Functional-check gate: when the skill carries a check — an embedded ```check
 	// script block in its body, or a single-line `check:` in frontmatter — the
@@ -2771,85 +2737,30 @@ func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStat
 	// transition payload on stdin, exit 0 accepts, non-zero rejects with the
 	// output tail as notes. No LLM (the command IS the decision). This is the
 	// constitution's "skill + functional check" gate. Stays OUTSIDE Invoke (design §4.2).
-	if command := skillCheck(body); command != "" {
-		return g.runCheck(ctx, item.ID, skill, command, string(payload)), nil
+	if command := skillCheck(prep.body); command != "" {
+		return g.runCheck(ctx, item.ID, skill, command, string(prep.payload)), nil
 	}
 	// LLM path: shared Invoke (sty_ba860c8a / sty_e21cbc08). Pre-flight (skill,
-	// structure, functional-check, missing-rubric advisory) stays here.
-	binding, section, berr := g.gateBinding(gateAgent)
-	if berr != nil {
-		return verb.GateDecision{Gated: true, Skill: skill}, berr
-	}
-	// Engine-wide caches fill only the default [reviewer] binding. Named
-	// bindings must be self-contained in agents.toml (sty_a476a2f8).
-	if section == "reviewer" {
-		if binding.Tools == "" {
-			binding.Tools = g.tools
-		}
-		if binding.Model == "" {
-			binding.Model = g.model
-		}
-		if len(binding.Env) == 0 {
-			binding.Env = g.reviewerEnv
-		}
-		if binding.Principles == "" && binding.InjectPrinciples == nil {
-			if g.injectPrinciples {
-				binding.Principles = config.PrinciplesSession
-			} else {
-				binding.Principles = config.PrinciplesNone
-			}
-		}
-	}
-	// Model selection (sty_7069bced): binding.Model already carries the
-	// explicit configured model or the engine-wide g.model fallback filled
-	// above, so this only descends the ladder (inherited/creator/cli-default)
-	// when BOTH are empty — an explicit model behaves exactly as before (AC6).
-	// A gate has no step/agent override tier of its own (edges superseded
-	// their DOT model= at sty_a476a2f8; this does not reverse that).
-	modelResolved, modelSource := g.selectModel(ctx, binding, item.ID, "", "")
-	binding.Model = modelResolved
-	// Mechanism: a gate needs an isolated verdict. command=in-loop cannot produce
-	// one — fail loud at gate time (design §6.4), not by policing tools/model.
-	if config.IsInLoopCommand(binding.CommandTemplate()) {
-		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
-			"gate refused: reviewer binding %q is command=in-loop and cannot produce an isolated verdict — set [%s] command to an isolated agent CLI (claude|grok or a full template)", section, section)
-	}
-	// Role must resolve to reviewer for the gate binding (design §4.4 / §8 / sty_a476a2f8).
-	if config.ResolvedRole(section, binding) != config.RoleReviewer {
-		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
-			"gate refused: binding [%s] has role=%q (want role=reviewer) — a named performer never advances status; allocate a role=\"reviewer\" binding on gated edges",
-			section, config.ResolvedRole(section, binding))
-	}
-	// Default [reviewer] uses the bootstrap runner (g.runner). A named
-	// role=reviewer binding must run its OWN harness — leave Runner nil so
-	// Invoke builds from the binding (sty_68dafd5f; runner must follow agent=).
-	var gateRunner agentcli.Runner
-	if section == "reviewer" {
-		if g.runner == nil {
-			return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
-				"reviewer: transition %s→%s is gated by %q but no agent runner is configured", item.Status, toStatus, skill)
-		}
-		gateRunner = g.runner
-	}
-	idle, ierr := g.idleTimeoutFor(section, binding)
-	if ierr != nil {
-		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf("reviewer: invalid idle_timeout in .satelle/workflows/agents.toml [%s]: %w", section, ierr)
+	// structure, functional-check, missing-rubric advisory) stays above.
+	seat, serr := g.reviewerSeatFor(ctx, item, toStatus, skill, gateAgent)
+	if serr != nil {
+		return verb.GateDecision{Gated: true, Skill: skill}, serr
 	}
 	res := g.Invoke(ctx, InvokeRequest{
-		Binding:     binding,
-		Section:     section,
-		Rubric:      body,
-		Payload:     tp,
+		Binding:     seat.binding,
+		Section:     seat.section,
+		Rubric:      prep.body,
+		Payload:     prep.tp,
 		Charter:     reviewerCharter(),
 		Expect:      ExpectVerdict,
 		Timeout:     g.agentTimeout,
-		IdleTimeout: idle,
-		Runner:      gateRunner,
+		IdleTimeout: seat.idle,
+		Runner:      seat.runner,
 		Attempts:    g.attempts,
 		StoryID:     item.ID,
 		Step:        toStatus,
 		Skill:       skill,
-		Actor:       section,
+		Actor:       seat.section,
 	})
 	if res.Err != nil {
 		return verb.GateDecision{Gated: true, Skill: skill}, res.Err
@@ -2858,10 +2769,7 @@ func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStat
 		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
 			"reviewer: %s produced no decision", skill)
 	}
-	res.Decision.ModelSource = modelSource
-	res.Decision.SystemPromptBytes = res.SystemPromptBytes
-	res.Decision.PayloadBytes = res.PayloadBytes
-	res.Decision.ToolIsolation = res.ToolIsolation
+	stampInvocation(res.Decision, res, seat.modelSource)
 	return *res.Decision, nil
 }
 

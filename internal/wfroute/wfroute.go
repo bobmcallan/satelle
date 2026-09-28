@@ -127,6 +127,10 @@ type Step struct {
 	// edge — recovery and role edges carry 0 and would otherwise mask an authored
 	// cap. 0 means the gates run serially, which a route may author deliberately.
 	Parallel int `json:"parallel,omitempty"`
+	// Bundle is true when the entry gates that share a binding, model, effort and
+	// tool grant run as one reviewer session with a verdict per rubric
+	// (sty_23e10d92). Read from the same spine inbound edge as Parallel.
+	Bundle bool `json:"bundle,omitempty"`
 	// Terminal marks the route's success end.
 	Terminal bool `json:"terminal,omitempty"`
 	// Advisor is the agent the orchestrator may consult at this step.
@@ -265,6 +269,9 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 		// from it and not from a recovery or park edge, which carry none.
 		if len(tr.Skills) > 0 && tr.Parallel > step.Parallel {
 			step.Parallel = tr.Parallel
+		}
+		if len(tr.Skills) > 0 && tr.Bundle {
+			step.Bundle = true
 		}
 		for _, sk := range tr.Skills {
 			if sk == "" || seen[sk] {
@@ -501,5 +508,9 @@ func renderGates(s Step) string {
 	for _, rv := range s.Skipped {
 		parts = append(parts, rv.Skill+" (skipped: needs tag "+strings.Join(rv.ByTag, "|")+")")
 	}
-	return " · entry gated by " + strings.Join(parts, ", ")
+	out := " · entry gated by " + strings.Join(parts, ", ")
+	if s.Bundle {
+		out += " (bundled: gates sharing binding, model, effort and tool grant run as one session)"
+	}
+	return out
 }

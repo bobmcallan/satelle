@@ -839,6 +839,11 @@ type Transition struct {
 	// parallel=true → DefaultParallelCap; parallel=N (N≥1) → cap N. Edge-only —
 	// not a node attribute (scoped nodes join many transitions).
 	Parallel int
+	// Bundle is the opt-in that this edge's LLM reviewer gates run bundled — one
+	// session per group of gates sharing binding, model, effort and tool grant,
+	// returning one verdict per rubric (sty_23e10d92). False is today's default:
+	// every gate is its own session. Edge-only, like Parallel.
+	Bundle bool
 }
 
 // Spec is the parsed lifecycle: states and gated transitions.
