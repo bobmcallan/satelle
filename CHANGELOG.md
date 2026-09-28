@@ -1,3 +1,13 @@
+## [0.0.574] - 2026-09-28
+
+### Fixed
+- **A readiness performer proposing from backlog now receives the orchestrator's messages.** Under a `propose = true` step (0.0.571) the planner runs while the story is still in backlog, before any engagement baseline exists, and the message window returned nothing there, so a `satelle story message --to planner` sent after a rejected round never reached the next plan. The engagement window now has a pre-engagement period: while a story sits at its route's start state and has re-entered it since its last baseline (or has none), messages are stamped and read against that period, by one function for both sides, so messages from an earlier engagement still stay out. A decision message is no longer cut at 2 KiB: bodies up to 8 KiB reach the performer whole, and a longer one is marked truncated with the `satelle story messages <id> --to <addr> --since <time>` command that fetches it. (sty_36ac4319)
+
+## [serve-v0.0.96] - 2026-09-28
+
+### Changed
+- **The service embeds the message-window fix above.** (sty_36ac4319)
+
 ## [0.0.573] - 2026-09-28
 
 ### Changed

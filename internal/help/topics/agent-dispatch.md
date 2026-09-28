@@ -722,8 +722,13 @@ sty_a125b440) — no disk path required. Both are enumeration, not verdict.
 The payload also carries `messages[]` (sty_2db624d0): engagement-windowed
 `agent_message` rows whose `to` is the dispatched binding name, the protocol
 role (`reviewer` on a gate, `executor` on a named performer), or `*`, oldest
-first, at most 20, each body capped at 2 KiB. A message is **context**, never
-a verdict input a reviewer must obey. Absent when none qualify (`omitempty`).
+first, at most 20, each body capped at 8 KiB (a longer body is cut, marked
+`truncated`, and ends with the `satelle story messages` command that fetches
+it whole). A story still at its start state (backlog) has no engagement yet;
+its window opens at its latest entry into that state, so a performer that
+proposes from backlog (`propose = true`) receives the messages sent to it there
+(sty_36ac4319). A message is **context**, never a verdict input a reviewer must
+obey. Absent when none qualify (`omitempty`).
 Shell-granted agents may also pull more via the satelle CLI.
 Do **not** use in-repo `.satelle/stories/` — that path is obsolete
 post-relocation. **Fetch before concluding a document or a prior step is

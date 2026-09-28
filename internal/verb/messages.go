@@ -199,8 +199,9 @@ func rowToAgentMessage(e ledger.Entry) AgentMessage {
 }
 
 // MessagesSince returns engagement-windowed agent messages whose `to` is in
-// addresses or is "*". Nil on any read error or missing baseline — never fails
-// a transition. Oldest first. The engine owns budget truncation.
+// addresses or is "*". Nil on any read error, or when the story is engaged but
+// has no baseline — never fails a transition. Oldest first. The engine owns
+// budget truncation.
 func MessagesSince(ctx context.Context, itemID string, addresses []string) []AgentMessage {
 	if strings.TrimSpace(itemID) == "" {
 		return nil
@@ -240,8 +241,12 @@ func MessagesSince(ctx context.Context, itemID string, addresses []string) []Age
 
 // currentEngagementWindow is the SHA and time MessagesSince windows on, and
 // the SHA story-message stamps. Resume re-anchor wins over the first
-// baseline so write and read cannot diverge (sty_2db624d0).
+// baseline so write and read cannot diverge (sty_2db624d0). The pre-engagement
+// choice is made here too, so the stamp and the read share one decision.
 func currentEngagementWindow(ctx context.Context, storyID string) (sha string, at time.Time, ok bool) {
+	if at, pre := preEngagementWindow(ctx, storyID); pre {
+		return "", at, true
+	}
 	p, _, baseAt, err := firstEngagementBaseline(ctx, storyID)
 	if err != nil {
 		return "", time.Time{}, false
@@ -251,4 +256,54 @@ func currentEngagementWindow(ctx context.Context, storyID string) (sha string, a
 		return rsha, rat, true
 	}
 	return sha, at, true
+}
+
+// preEngagementWindow reports the window start for a story sitting at the
+// START state of its derived route with no engagement under way: it has never
+// been engaged (no baseline), or it returned to the start state after its
+// newest baseline or resume re-anchor (cancel or park, then re-entry). A
+// performer that proposes from that state (sty_5262592e) is then reachable,
+// and messages from an earlier engagement stay outside the window because at
+// is the latest entry into the start state. Time is the only filter in this
+// window; no SHA is stamped. An engaged story is never at the start state, so
+// it falls through to the SHA-stamped window unchanged.
+func preEngagementWindow(ctx context.Context, storyID string) (at time.Time, ok bool) {
+	store, err := requireWorkItem()
+	if err != nil {
+		return time.Time{}, false
+	}
+	item, err := store.Get(ctx, storyID)
+	if err != nil {
+		return time.Time{}, false
+	}
+	spec, _, _, sok := governingSpec(ctx, item)
+	if !sok || spec.Start() == "" || item.Status != spec.Start() {
+		return time.Time{}, false
+	}
+	entered, hasEntry := latestEntryInto(ctx, storyID, item.Status)
+	var anchor time.Time
+	if _, _, baseAt, berr := firstEngagementBaseline(ctx, storyID); berr == nil {
+		anchor = baseAt
+	}
+	if _, rat, rok := latestResumeReanchorExcept(ctx, storyID, item.Status); rok && rat.After(anchor) {
+		anchor = rat
+	}
+	if !anchor.IsZero() && !(hasEntry && entered.After(anchor)) {
+		return time.Time{}, false
+	}
+	if hasEntry {
+		return entered, true
+	}
+	return item.CreatedAt, true
+}
+
+// latestEntryInto is the time of the newest status_transition into state.
+func latestEntryInto(ctx context.Context, storyID, state string) (time.Time, bool) {
+	entries := parkOriginEntries(ctx, storyID)
+	for i := len(entries) - 1; i >= 0; i-- {
+		if TransitionTo(entries[i]) == state {
+			return entries[i].CreatedAt, true
+		}
+	}
+	return time.Time{}, false
 }

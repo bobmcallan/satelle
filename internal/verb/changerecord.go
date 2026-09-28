@@ -187,6 +187,14 @@ func recordResumeReanchor(ctx context.Context, item workitem.Item, from, to stri
 // latestResumeReanchor returns the newest re-anchor row's SHA and time, if any.
 // ok is false when the story never parked, or git was unavailable at resume.
 func latestResumeReanchor(ctx context.Context, storyID string) (sha string, at time.Time, ok bool) {
+	return latestResumeReanchorExcept(ctx, storyID, "")
+}
+
+// latestResumeReanchorExcept is latestResumeReanchor ignoring re-anchors that
+// resumed INTO skipTo ("" skips none). A resume into a state is written in the
+// same instant as its status_transition, so a caller asking "did anything
+// engage after entering that state" must not count it.
+func latestResumeReanchorExcept(ctx context.Context, storyID, skipTo string) (sha string, at time.Time, ok bool) {
 	ls, err := requireLedger()
 	if err != nil {
 		return "", time.Time{}, false
@@ -200,7 +208,7 @@ func latestResumeReanchor(ctx context.Context, storyID string) (sha string, at t
 		if json.Unmarshal(recs[i].Payload, &p) != nil {
 			continue
 		}
-		if p.ReanchorResume && p.HeadSHA != "" {
+		if p.ReanchorResume && p.HeadSHA != "" && (skipTo == "" || p.To != skipTo) {
 			return p.HeadSHA, recs[i].CreatedAt, true
 		}
 	}

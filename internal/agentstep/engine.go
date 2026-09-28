@@ -830,6 +830,9 @@ type MessageState struct {
 	Body          string `json:"body"`
 	CreatedAt     string `json:"created_at"`
 	EngagementSHA string `json:"engagement_sha"`
+	// Truncated marks a body cut at messageBodyBudget; the body then ends with
+	// the command that fetches the whole of it.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // DiffState is the engagement-slice enumeration handed to a reviewer. JSON
@@ -1070,13 +1073,16 @@ func (g *Engine) fillMeasuredActual(ctx context.Context, itemID string, tp *tran
 }
 
 const (
-	messagesCount       = 20
-	messagesBodyCeiling = 2 << 10
+	messagesCount = 20
+	// messageBodyBudget is sized so a consolidated decision message reaches the
+	// performer whole; only a longer body is cut and marked Truncated.
+	messageBodyBudget = 8 << 10
 )
 
 // fillMessages attaches engagement-windowed agent messages for recipient.
 // Runs AFTER fillPayloadDocs / fillDiff and never touches those counters.
-// Oldest 20 kept; each body excerpted. Nil-safe; never errors.
+// Oldest 20 kept; each body cut at messageBodyBudget with a fetch hint.
+// Nil-safe; never errors.
 func (g *Engine) fillMessages(ctx context.Context, itemID string, addresses []string, tp *transitionPayload) {
 	if g.itemMessages == nil || itemID == "" {
 		return
@@ -1089,9 +1095,28 @@ func (g *Engine) fillMessages(ctx context.Context, itemID string, addresses []st
 		msgs = msgs[:messagesCount]
 	}
 	for i := range msgs {
-		msgs[i].Body = excerpt(msgs[i].Body, messagesBodyCeiling)
+		msgs[i] = budgetMessage(itemID, msgs[i])
 	}
 	tp.Messages = msgs
+}
+
+// budgetMessage cuts a message body longer than messageBodyBudget, sets
+// Truncated, and names the command that fetches the whole body. A body within
+// the budget is returned untouched.
+func budgetMessage(itemID string, m MessageState) MessageState {
+	if len(m.Body) <= messageBodyBudget {
+		return m
+	}
+	fetch := "satelle story messages " + itemID
+	if m.To != "" {
+		fetch += " --to " + m.To
+	}
+	if m.CreatedAt != "" {
+		fetch += " --since " + m.CreatedAt
+	}
+	m.Body = excerpt(m.Body, messageBodyBudget) + " — fetch the full body: " + fetch
+	m.Truncated = true
+	return m
 }
 
 // excerpt cuts s to at most limit bytes on a rune boundary, marking the cut so

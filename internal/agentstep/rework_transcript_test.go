@@ -107,7 +107,7 @@ func TestReworkTranscriptRespectsTheExistingBudget(t *testing.T) {
 	for i := 0; i < messagesCount+7; i++ {
 		many = append(many, MessageState{
 			ID: "m" + string(rune('a'+i%26)), From: "consult", To: "coder",
-			Body: "NOT READY: " + strings.Repeat("y", messagesBodyCeiling+10),
+			Body: "NOT READY: " + strings.Repeat("y", messageBodyBudget+10),
 		})
 	}
 	g.SetMessagesResolver(func(context.Context, string, []string) []MessageState { return many })

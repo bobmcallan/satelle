@@ -20,9 +20,52 @@ func TestPayloadUnchangedWithoutMessages(t *testing.T) {
 	}
 }
 
+// sty_36ac4319 AC3: a body up to the budget reaches the performer whole; a longer
+// one (cut on a rune boundary) is marked truncated and names the command that
+// fetches the rest.
+func TestMessageBodyBudget(t *testing.T) {
+	whole := strings.Repeat("a", messageBodyBudget)
+	// "é" is two bytes, so the cut lands inside a rune and must back off.
+	over := strings.Repeat("a", messageBodyBudget-1) + "é" + strings.Repeat("b", 10)
+	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
+	g.SetMessagesResolver(func(context.Context, string, []string) []MessageState {
+		return []MessageState{
+			{ID: "m1", From: "orchestrator", To: "planner", Body: whole, CreatedAt: "2026-09-28T12:54:00Z"},
+			{ID: "m2", From: "orchestrator", To: "planner", Body: over, CreatedAt: "2026-09-28T12:55:00Z"},
+		}
+	})
+	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_budget", Status: "in_progress"}, "done"); err != nil {
+		t.Fatal(err)
+	}
+	var wrap struct {
+		Messages []MessageState `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(r.got.Payload), &wrap); err != nil {
+		t.Fatal(err)
+	}
+	if len(wrap.Messages) != 2 {
+		t.Fatalf("messages = %d, want 2", len(wrap.Messages))
+	}
+	if m := wrap.Messages[0]; m.Body != whole || m.Truncated {
+		t.Errorf("a body of exactly the budget must arrive whole and unmarked (len %d, truncated %v)", len(m.Body), m.Truncated)
+	}
+	m := wrap.Messages[1]
+	if !m.Truncated {
+		t.Fatal("a body over the budget must be marked truncated")
+	}
+	if !strings.HasPrefix(m.Body, strings.Repeat("a", messageBodyBudget-1)+"…") {
+		t.Errorf("the cut must back off the split rune: %q", m.Body[len(m.Body)-120:])
+	}
+	for _, want := range []string{"satelle story messages sty_budget", "--to planner", "--since 2026-09-28T12:55:00Z"} {
+		if !strings.Contains(m.Body, want) {
+			t.Errorf("fetch hint missing %q in %q", want, m.Body[messageBodyBudget-1:])
+		}
+	}
+}
+
 func TestGatePayloadIncludesMessages(t *testing.T) {
 	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
-	long := strings.Repeat("x", messagesBodyCeiling+50)
+	long := strings.Repeat("x", messageBodyBudget+50)
 	var many []MessageState
 	for i := 0; i < messagesCount+5; i++ {
 		many = append(many, MessageState{
