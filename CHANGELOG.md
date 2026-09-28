@@ -1,4 +1,9 @@
-## [0.0.566] - 2026-09-28
+## [0.0.567] - 2026-09-28
+
+### Fixed
+- **Two timing-flaky tests from the Stop-wait change no longer fail on slow runners.** The killed-child lifecycle test polls to a deadline instead of probing fifty times back to back, and the unverified-liveness Stop test proves "did not wait" against a 5-second bound instead of a 40ms one. The flake failed CI for 0.0.566, so that version was never tagged; its changes ship in this release. (sty_154a7b88)
+
+## [0.0.566] - 2026-09-28 (not tagged; shipped in 0.0.567)
 
 ### Added
 - **satelle recognises Antigravity (agy) sessions.** A command run by an agy driver carries `ANTIGRAVITY_AGENT=1`, which satelle now reads as an in-loop agy session; agy hook payloads (`conversationId`, `toolCall`) classify as antigravity without matching claude, grok or codex payloads; the caller's model is taken from the payload's `modelName` as reported (agy may report `auto`). The capability table carries an `antigravity command` row with an agy-named reason for every capability agy does not report (token usage, cache split, resolved model, live session). (sty_68a24884)

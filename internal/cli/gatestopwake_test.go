@@ -230,13 +230,17 @@ func TestStopHookUnverifiedLivenessBlocksOnceThenAllows(t *testing.T) {
 			t.Errorf("no %s marker: %v", marker, err)
 		}
 	}
+	// From here the wait bound is far larger than any scheduling delay, so a Stop
+	// that returns well under a tenth of it provably did not wait the bound.
+	const bound = 5 * time.Second
+	t.Setenv(stopGateWaitEnv, bound.String())
 	for i := 0; i < 2; i++ {
 		start := time.Now()
 		if blk, ok := stopOnce(t, ""); ok {
 			t.Fatalf("Stop %d after the unverified note blocked again:\n%s", i+2, blk.Reason)
 		}
-		if time.Since(start) > 40*time.Millisecond {
-			t.Errorf("an unverified run held Stop %d for %s", i+2, time.Since(start))
+		if took := time.Since(start); took > bound/10 {
+			t.Errorf("an unverified run held Stop %d for %s (bound %s)", i+2, took, bound)
 		}
 	}
 
