@@ -118,7 +118,8 @@ runtime refusal and validate, so they cannot disagree.
 | **`stream`** | Stream-json live session (Claude preset, opt-in: `DefaultClaudeStreamCommand`). `{system}`/`{payload}` are rejected — they ride the first user message; `{tools}`/`{model}`/`{effort}` remain argv. For the orchestrator binding (live turns), not reviewers. |
 
 Shared fields on all three: `role`, `tools`, `model`, `effort`, `secondary`,
-`principles`, `env`, `timeout`, `idle_timeout`, `settings`. Reviewers keep Claude on
+`principles`, `env`, `timeout`, `idle_timeout`, `settings`, and — reviewers
+only — `isolation = "operator-attested"` (see *Reviewer tool isolation*). Reviewers keep Claude on
 `interface = command` (cold one-shot, verdict contract). `stream` is the
 live-session option for an orchestrator binding. An ACP-capable CLI is usable
 when it implements ACP agent stdio **and** the binding sets `interface = "acp"`.
@@ -987,12 +988,94 @@ adapter-named reason on the ledger row, never a silent zero or a Claude default
 (`satelle-agent-agnostic`). `internal/agentcli/capabilities.go` is the source of
 this table and a test checks every cell against the code that produces it.
 
-| adapter | usage | cache split | resolved model | model inheritance | live session |
-| --- | --- | --- | --- | --- | --- |
-| claude command | yes | yes | yes | yes | unavailable: interface=command is one-shot only |
-| claude stream | yes | yes | yes | yes | yes |
-| grok command | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | unavailable: interface=command is one-shot only |
-| grok acp | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | yes |
+| adapter | usage | cache split | resolved model | model inheritance | live session | tool trim | offered tools |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| claude command | yes | yes | yes | yes | unavailable: interface=command is one-shot only | yes | yes |
+| claude stream | yes | yes | yes | yes | yes | yes | yes |
+| grok command | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | unavailable: interface=command is one-shot only | yes | yes |
+| grok acp | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | yes | unavailable: grok agent stdio has no tool-list flag and reports no permission mode, so a grok acp reviewer is refused as a reviewer | unavailable: grok agent stdio neither trims nor reports offered tools |
+
+### Reviewer tool isolation
+
+A reviewer is read-only, and satelle keeps it inside its `tools` grant whatever
+permission mode the harness runs in:
+
+- **Every role=reviewer dispatch, one path.** A gate verdict, the step summariser
+  (`[reviewer-summary]`) and the rework consultant's live session
+  (`[reviewer-consult]`) all pass the same preflight, the same read-only trim and
+  the same `agent_invocation` recording; a refused binding starts no process on
+  any of them. The consultant keeps its own mutator ceiling as well — the grant
+  policy narrows it, never widens it.
+
+- **Tool classes.** Every tool a harness can offer is classed `read`, `write`,
+  `edit`, `shell`, `subprocess`, `network`, `mcp` or `unknown` by the adapter
+  (`internal/agentcli/isolation.go`). A tool outside the grant is denied by class;
+  a tool no table names is `unknown` and denied unless the grant lists that exact
+  name. A scoped grant entry such as `Bash(satelle:*)` is enforced by claude
+  itself; grok cannot enforce a specifier, so it admits nothing there.
+- **Trimmed where the harness can.** Claude reviewers are spawned with
+  `--tools <the grant's base tool names>` (the AVAILABLE built-in tools;
+  `--allowedTools` only pre-approves), `--strict-mcp-config` (no MCP servers,
+  so no `mcp__*` tool is offered) and, when the template sets no
+  `--permission-mode`, `--permission-mode default` — so a user-settings
+  `defaultMode` of `bypassPermissions` cannot switch off a scoped grant such as
+  `Bash(satelle:*)` (under `-p`, an ask `--allowedTools` does not pre-approve is
+  denied). A template-set mode is left alone. A grok command reviewer must carry its own
+  `--tools` allow-list (the stock preset does: `--always-approve` is safe there
+  because only the granted tools are offered). Grok ACP (`grok agent stdio`) has
+  no tool-list flag and no way to force a permission ask, so a grok ACP reviewer
+  is not dispatched (next bullet).
+- **Refused before the process starts** when no path can deny an out-of-grant
+  tool: a binding that skips permission requests (`--always-approve`, `--yolo`,
+  `--dangerously-skip-permissions`, a bypass mode) without a `--tools` allow-list
+  inside its grant; a **claude** binding that skips permissions
+  (`--dangerously-skip-permissions`, `--permission-mode bypassPermissions` or
+  `acceptEdits`) while its offered tools include one the grant only scopes
+  (`Bash` under `Bash(satelle:*)`) — refused as `claude/<transport>`, class
+  `shell`, because the specifier is not enforced when permissions are skipped
+  (an unscoped grant with no shell is unaffected); a grok command binding with no allow-list (a
+  blank one — `--tools=`, `--tools` before another flag, or `--tools {tools}`
+  rendered from a grant naming no tool — is not an allow-list); a harness satelle
+  has no adapter for, unless the binding carries `isolation = "operator-attested"`
+  (next bullet); **every grok ACP reviewer binding** — grok 1.0.41's
+  `session/new` reports no permission mode, offers no permission option and has
+  no ask flag, and the user's own grok config may set `always-approve`, so
+  satelle can neither confirm nor force ask mode. The refusal names the adapter
+  (`grok/acp`), the tool classes, and the reason: the peer reports no permission
+  mode and cannot be forced to ask. Use the grok command transport instead. As
+  defence in depth for any other ACP reviewer peer: a peer that reports no modes
+  block is refused before `session/prompt`; one that opens, or switches, into a
+  never-ask mode is moved to an ask mode or refused before any prompt; a tool
+  that runs without being asked and is not positively identified as inside the
+  grant, or that runs after a deny, cancels the session and stops the peer.
+- **`isolation = "operator-attested"`** is a binding key in `agents.toml` (and in
+  a machine-wide `[profiles.<name>]`): the operator's explicit declaration that
+  the command offers no tool outside the binding's grant — a script, or a harness
+  satelle has no adapter for. Preflight admits an unrecognised-harness reviewer
+  only when its binding carries it; with no key the refusal above stands. The
+  invocation is recorded with `offered_tools_source = "operator-attested"` and an
+  `isolation_limitation` naming the binding — never a count — and `satelle
+  doctor` reports the binding (a warning naming it), so it is never silent. The
+  key has no effect on a claude or grok binding: the adapter decides those, and a
+  grok ACP or skip-permissions refusal stands whatever the key says. It is the
+  only accepted value; any other value fails at load.
+  ```toml
+  [judge]
+  role      = "reviewer"
+  command   = "./scripts/verdict.sh {system} {tools} {model}"
+  tools     = "Read,Grep,Glob"
+  isolation = "operator-attested"
+  ```
+- **Recorded.** Each reviewer `agent_invocation` row carries
+  `system_prompt_bytes`, `offered_tool_count` and `offered_tools_source`
+  (`flag`, `harness` — claude stream's own `system/init` tool list — or
+  `operator-attested` — no count — or `unavailable: <adapter reason>`, in which
+  case there is no count), and, for
+  grok ACP and operator-attested bindings, `isolation_limitation`. The grant
+  length is never written in place of a count.
+- **`satelle doctor`** warns, naming the binding, when a configured reviewer
+  binding fails this preflight — including every grok ACP reviewer binding, which
+  the dispatch will refuse. The stock grok command preset does not warn.
 
 ### What each harness reports
 

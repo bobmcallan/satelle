@@ -49,28 +49,39 @@ type AdapterCapabilities struct {
 	// LiveSession: the adapter can be opened as a live session
 	// (OpenerFromBinding).
 	LiveSession Capability
+	// ToolTrim: the harness can be launched offering only the reviewer's granted
+	// tools (sty_ef3efb51). Where it cannot, every out-of-grant tool is denied by
+	// permission instead, and the adapter names why.
+	ToolTrim Capability
+	// OfferedTools: the harness or the rendered allow-list reports the tools it
+	// offers, so a ledger row can record a real offered-tool count. Where it
+	// cannot, the row records this adapter-named reason and no number.
+	OfferedTools Capability
 }
 
 // CapabilityTable returns the table in the order help prints it.
 func CapabilityTable() []AdapterCapabilities {
 	const notLive = "interface=command is one-shot only"
 	const noGrokHookModel = "grok's hook payload carries no model, so the in-loop tier is unknown"
+	const grokACPNoTrim = "grok agent stdio has no tool-list flag and reports no permission mode, so a grok acp reviewer is refused as a reviewer"
 	return []AdapterCapabilities{
 		{
 			Adapter: "claude command", Usage: yes(), CacheSplit: yes(), ResolvedModel: yes(),
-			ModelInheritance: yes(), LiveSession: no(notLive),
+			ModelInheritance: yes(), LiveSession: no(notLive), ToolTrim: yes(), OfferedTools: yes(),
 		},
 		{
 			Adapter: "claude stream", Usage: yes(), CacheSplit: yes(), ResolvedModel: yes(),
-			ModelInheritance: yes(), LiveSession: yes(),
+			ModelInheritance: yes(), LiveSession: yes(), ToolTrim: yes(), OfferedTools: yes(),
 		},
 		{
 			Adapter: "grok command", Usage: yes(), CacheSplit: yes(), ResolvedModel: yes(),
-			ModelInheritance: no(noGrokHookModel), LiveSession: no(notLive),
+			ModelInheritance: no(noGrokHookModel), LiveSession: no(notLive), ToolTrim: yes(), OfferedTools: yes(),
 		},
 		{
 			Adapter: "grok acp", Usage: yes(), CacheSplit: yes(), ResolvedModel: yes(),
 			ModelInheritance: no(noGrokHookModel), LiveSession: yes(),
+			ToolTrim:     no(grokACPNoTrim),
+			OfferedTools: no("grok agent stdio neither trims nor reports offered tools"),
 		},
 	}
 }
@@ -99,11 +110,11 @@ func ReasonForNoModel(harness string) string {
 }
 
 // capabilityColumns are the table headings, in cell order.
-var capabilityColumns = []string{"usage", "cache split", "resolved model", "model inheritance", "live session"}
+var capabilityColumns = []string{"usage", "cache split", "resolved model", "model inheritance", "live session", "tool trim", "offered tools"}
 
 // cells returns the row's cells in capabilityColumns order.
 func (a AdapterCapabilities) cells() []Capability {
-	return []Capability{a.Usage, a.CacheSplit, a.ResolvedModel, a.ModelInheritance, a.LiveSession}
+	return []Capability{a.Usage, a.CacheSplit, a.ResolvedModel, a.ModelInheritance, a.LiveSession, a.ToolTrim, a.OfferedTools}
 }
 
 // CapabilityTableMarkdown renders CapabilityTable as the markdown table

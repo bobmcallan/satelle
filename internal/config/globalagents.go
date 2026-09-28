@@ -81,6 +81,7 @@ var globalAgentsBindingKeys = map[string]bool{
 	"env":          true,
 	"settings":     true,
 	"secondary":    true,
+	"isolation":    true,
 }
 
 // globalAgentsPolicyKeys are keys that would make a profile decide PROCESS
@@ -247,6 +248,9 @@ func (g GlobalAgentsConfig) validate() error {
 		if err := checkBindingInterface(GlobalAgentsLabel, section, b); err != nil {
 			return err
 		}
+		if err := checkBindingIsolation(GlobalAgentsLabel, section, b); err != nil {
+			return err
+		}
 		if err := checkBindingTimeout(GlobalAgentsLabel, section, b); err != nil {
 			return err
 		}
@@ -317,6 +321,15 @@ func checkBindingInterface(file, section string, b AgentBinding) error {
 		return fmt.Errorf("%s [%s] interface %q: want %q, %q, or %q",
 			file, section, raw, InterfaceCommand, InterfaceACP, InterfaceStream)
 	}
+}
+
+// checkBindingIsolation is the shared isolation= check (see checkBindingInterface):
+// empty or "operator-attested", nothing else.
+func checkBindingIsolation(file, section string, b AgentBinding) error {
+	if raw := strings.TrimSpace(b.Isolation); raw != "" && !b.OperatorAttested() {
+		return fmt.Errorf("%s [%s] isolation %q: want %q", file, section, raw, IsolationOperatorAttested)
+	}
+	return nil
 }
 
 // checkBindingTimeout is the shared timeout check (see checkBindingInterface).

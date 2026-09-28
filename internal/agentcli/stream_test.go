@@ -38,8 +38,14 @@ def send(obj):
     sys.stdout.flush()
 
 init_model = os.environ.get("STREAM_INIT_MODEL")
-if init_model:
-    send({"type":"system","subtype":"init","model":init_model,"session_id":"fake-sess"})
+init_tools = os.environ.get("STREAM_INIT_TOOLS")
+if init_model or init_tools is not None:
+    init = {"type":"system","subtype":"init","session_id":"fake-sess"}
+    if init_model:
+        init["model"] = init_model
+    if init_tools is not None:
+        init["tools"] = [t for t in init_tools.split(",") if t]
+    send(init)
 
 def read():
     line = sys.stdin.readline()
@@ -69,7 +75,7 @@ while True:
         send({"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu2","name":"Bash","input":{"command":"false"}}]}})
         send({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu2","is_error":True,"content":"boom"}]}})
     if os.environ.get("STREAM_PERM") == "1" and n == 1:
-        send({"type":"control_request","request_id":"req1","request":{"subtype":"can_use_tool","tool_name":"Edit"}})
+        send({"type":"control_request","request_id":"req1","request":{"subtype":"can_use_tool","tool_name":os.environ.get("STREAM_PERM_TOOL","Edit")}})
         resp = read()
         behavior = ((((resp or {}).get("response") or {}).get("response") or {}).get("behavior")) or ""
         pout = os.environ.get("PERM_OUT")

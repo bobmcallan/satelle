@@ -1,3 +1,24 @@
+## [0.0.575] - 2026-09-28
+
+### Breaking
+- **A reviewer that cannot be held to its tool grant is refused before it starts.** Every reviewer dispatch — edge gates, the step summariser and the rework consultant — now goes through one isolation check:
+  - **claude:** reviewer spawns add `--tools <grant>`, `--strict-mcp-config` and `--permission-mode default`, so only granted built-in tools are offered, no MCP server loads, and a settings-level bypass mode cannot switch off a scoped grant such as `Bash(satelle:*)`. A claude reviewer that skips permissions while its grant scopes a tool is refused.
+  - **grok command:** admitted when `--tools` lists only granted tools. `--always-approve` with no `--tools`, a blank `--tools`, or a wider one is refused.
+  - **grok ACP (`grok agent stdio`):** refused as a reviewer. The peer reports no permission mode and cannot be forced to ask, and `~/.grok/config.toml` can set always-approve, so an out-of-grant tool could run without a permission request. Use the grok command transport.
+  - **Any other command** (a script, or a harness satelle has no adapter for) is refused unless its binding declares `isolation = "operator-attested"`, the operator's statement that it offers nothing outside the grant.
+
+  The refusal names the adapter and the tool classes, and no process is started. `satelle doctor` warns about any binding that will be refused, and names it. Each reviewer invocation now records its system prompt bytes and the number of tools actually offered, with the source (`flag` or `harness`), or an adapter-named "unavailable". It is never the grant length and never a silent zero. (sty_ef3efb51)
+- **Migration:** a repo whose `.satelle/workflows/agents.toml` or `~/.satelle/agents.toml` binds a reviewer, reviewer-summary or reviewer-consult seat to `grok agent stdio`, to a grok command without `--tools`, or to a custom script must change it:
+  - move grok reviewers to the grok command template with `--tools read_file,grep,list_dir`;
+  - add `isolation = "operator-attested"` to a custom reviewer command you vouch for.
+
+  Run `satelle doctor` to list the affected bindings.
+
+## [serve-v0.0.97] - 2026-09-28
+
+### Changed
+- **The service embeds the reviewer isolation above.** (sty_ef3efb51)
+
 ## [0.0.574] - 2026-09-28
 
 ### Fixed

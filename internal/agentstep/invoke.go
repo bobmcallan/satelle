@@ -95,6 +95,9 @@ type InvokeResult struct {
 	// lengths only, never content.
 	SystemPromptBytes int
 	PayloadBytes      int
+	// ToolIsolation records what a reviewer's harness offered (sty_ef3efb51):
+	// stamped for ExpectVerdict invocations only.
+	verb.ToolIsolation
 }
 
 // invocation is the internal prompt-assembly shape used by buildRequest.
@@ -328,6 +331,10 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	// Interactive ask-the-user questions the transport denied or auto-answered,
 	// ledgered after the run (sty_32795645) — never from inside the callback.
 	var asked []agentcli.Event
+	// The tool list the harness itself reported offering (claude stream-json
+	// system/init), when it does — the source of offered_tool_count over the
+	// rendered allow-list (sty_ef3efb51).
+	var harnessTools []string
 	agentReq.OnEvent = func(ev agentcli.Event) {
 		eventMu.Lock()
 		defer eventMu.Unlock()
@@ -358,6 +365,10 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		case agentcli.EventInteractiveDenied:
 			g.emitProgress("agent %s asked a question (%s): %s", section, ev.Meta[agentcli.EventMetaResponse], progressLabel(ev.Text))
 			asked = append(asked, ev)
+		case agentcli.EventSessionInit:
+			if ev.Tools != nil {
+				harnessTools = append([]string(nil), ev.Tools...)
+			}
 		}
 		if trackActivity && isRealEvent(ev.Kind) {
 			actCount++
@@ -395,6 +406,24 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		runner = r
 	}
 	cmdStr := runner.Command()
+
+	// Reviewer tool isolation (sty_ef3efb51): a reviewer judges, so it may use
+	// only the tools its binding grants. Refuse — before any process starts — a
+	// binding no adapter path can keep inside that grant, then mark the request so
+	// the adapter trims what the harness offers and every live transport denies a
+	// tool outside the grant by name.
+	var isolation verb.ToolIsolation
+	var attested bool // operator-attested reviewer on an unrecognised harness: never a count
+	if expect == ExpectVerdict {
+		var perr error
+		isolation, attested, perr = g.isolateReviewer(ctx, reviewerDispatch{
+			StoryID: req.StoryID, Actor: req.Actor, Skill: req.Skill, Step: req.Step, Section: section,
+		}, runner, binding.OperatorAttested(), &agentReq)
+		if perr != nil {
+			finishScratch(scratchDir, false)
+			return InvokeResult{Command: cmdStr, Err: perr}
+		}
+	}
 
 	timeout := req.Timeout
 	if timeout <= 0 && expect == ExpectVerdict {
@@ -439,7 +468,16 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	res.PayloadBytes = len(agentReq.Payload)
 	eventMu.Lock()
 	askedNow := append([]agentcli.Event(nil), asked...)
+	reported := harnessTools
 	eventMu.Unlock()
+	if expect == ExpectVerdict {
+		if reported != nil && !attested {
+			// The harness's own report wins over the rendered allow-list.
+			n := agentcli.OfferedToolCount(reported)
+			isolation.OfferedToolCount, isolation.OfferedToolsSource = &n, agentcli.OfferedSourceHarness
+		}
+		res.ToolIsolation = isolation
+	}
 	g.ledgerInteractiveDenied(ctx, req, section, askedNow)
 
 	var swept []string
@@ -470,6 +508,17 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	}
 	finishScratch(scratchDir, keepScratch)
 	return res
+}
+
+// toolIsolation maps an adapter's reviewer description onto the ledger shape: a
+// count only where the adapter has a real offered-tool figure.
+func toolIsolation(iso agentcli.ReviewerIsolation) verb.ToolIsolation {
+	out := verb.ToolIsolation{OfferedToolsSource: iso.OfferedSource, IsolationLimitation: iso.Limitation}
+	if iso.OfferedTools != nil {
+		n := agentcli.OfferedToolCount(iso.OfferedTools)
+		out.OfferedToolCount = &n
+	}
+	return out
 }
 
 // ledgerInteractiveDenied records one "agent-interactive-denied" entry per
@@ -588,6 +637,16 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 		if rerr != nil {
 			if se := asStallError(rerr); se != nil {
 				return g.stallResult(ctx, req, cmdStr, se)
+			}
+			// A peer that ran a tool outside the grant, or opened in a mode that
+			// never asks, is not a transient failure: retrying it re-runs the
+			// breach (sty_ef3efb51).
+			var refusal *agentcli.RefusalError
+			if errors.As(rerr, &refusal) {
+				g.telemetryEvent(ctx, storyID, actor, "reviewer-isolation-refused", map[string]any{
+					"skill": skill, "step": step, "reason": refusal.Error(),
+				})
+				return InvokeResult{Command: cmdStr, Err: rerr}
 			}
 			if errors.Is(rerr, context.DeadlineExceeded) && ctx.Err() == nil {
 				g.logReviewerFailure(skill, attempt, attempts, rerr, nil)

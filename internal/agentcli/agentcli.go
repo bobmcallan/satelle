@@ -141,6 +141,12 @@ type Request struct {
 	// verdict path so parseDecision still sees a decision emitted before
 	// trailing chatter. Command-transport runners ignore this field entirely.
 	Capture CaptureMode
+	// ReadOnly marks a reviewer dispatch (sty_ef3efb51): the run may use only the
+	// tools AllowedTools grants. The adapter then trims the tools the harness
+	// offers where it can (claude --tools, --strict-mcp-config) and every live
+	// transport denies a tool outside the grant by name, whatever permission mode
+	// the harness reports. Zero value: an ordinary performer request, unchanged.
+	ReadOnly bool
 }
 
 // CaptureMode selects which ACP agent_message_chunk text is returned as the
@@ -496,7 +502,7 @@ func (t templateRunner) Command() string {
 }
 
 func (t templateRunner) Run(ctx context.Context, req Request) ([]byte, error) {
-	return runProcess(ctx, t.binary, buildArgs(t.argTemplate, req), req)
+	return runProcess(ctx, t.binary, reviewerArgs(t.binary, buildArgs(t.argTemplate, req), req), req)
 }
 
 // buildArgs substitutes the placeholders in an argv template against req.

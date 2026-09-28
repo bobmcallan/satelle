@@ -58,6 +58,9 @@ func (s streamRunner) Run(ctx context.Context, req Request) ([]byte, error) {
 // (sty_87b86044 AC2).
 func (s streamRunner) RunUsage(ctx context.Context, req Request) ([]byte, UsageResult, error) {
 	pol := defaultPermissionPolicy(toolsAllowMutators(req.AllowedTools))
+	if req.ReadOnly {
+		pol = ReviewerPermissionPolicy(req.AllowedTools)
+	}
 	sess, err := openStreamSession(ctx, s, req, pol)
 	if err != nil {
 		return nil, UsageResult{}, err
@@ -89,7 +92,7 @@ func openStreamSession(ctx context.Context, s streamRunner, req Request, pol Per
 	if pol == nil {
 		pol = defaultPermissionPolicy(toolsAllowMutators(req.AllowedTools))
 	}
-	args := buildArgs(s.args, req)
+	args := reviewerArgs(s.binary, buildArgs(s.args, req), req)
 	cmd := exec.CommandContext(ctx, s.binary, args...)
 	if req.Dir != "" {
 		cmd.Dir = req.Dir
@@ -205,9 +208,12 @@ func (s *streamSession) readLoop() {
 			// session actually opened with (sty_7069bced) — the orchestrator
 			// session capture (cmd_story_chat) reads this once, before any turn.
 			if subtype, _ := raw["subtype"].(string); subtype == "init" {
-				if m, _ := raw["model"].(string); strings.TrimSpace(m) != "" {
+				m, _ := raw["model"].(string)
+				tools := streamInitTools(raw)
+				if strings.TrimSpace(m) != "" || tools != nil {
 					ev := newEvent(EventSessionInit)
 					ev.Model = strings.TrimSpace(m)
+					ev.Tools = tools
 					emitEvent(s.onEvent, ev)
 				}
 			}
@@ -271,6 +277,28 @@ func (s *streamSession) readLoop() {
 	if s.closeEv != nil {
 		s.closeEv()
 	}
+}
+
+// streamInitTools reads the tool names the harness offers the session off a
+// system/init record's `tools` array. Nil when the record carries none; a
+// present empty array is non-nil (the harness offers no tools).
+func streamInitTools(raw map[string]any) []string {
+	arr, ok := raw["tools"].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, t := range arr {
+		switch v := t.(type) {
+		case string:
+			out = append(out, v)
+		case map[string]any:
+			if n, _ := v["name"].(string); n != "" {
+				out = append(out, n)
+			}
+		}
+	}
+	return out
 }
 
 func streamAssistantText(raw map[string]any) string {

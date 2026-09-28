@@ -201,7 +201,7 @@ requires = ["coded"]
 		"tools = \"Read,Grep,Glob,Edit,Write,Bash(satelle:*)\"\n\n" +
 		"[consultant]\nrole = \"reviewer\"\ninterface = \"stream\"\n" +
 		"command = \"" + consultPeer + " --output-format stream-json\"\n" +
-		"tools = \"Read,Grep,Glob\"\n"
+		"tools = \"Read,Grep,Glob\"\nisolation = \"operator-attested\"\n"
 	if err := os.WriteFile(filepath.Join(wfDir, config.AgentsConfigName), []byte(agents), 0o644); err != nil {
 		t.Fatal(err)
 	}

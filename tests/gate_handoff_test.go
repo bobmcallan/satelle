@@ -27,12 +27,12 @@ const (
 // slowReviewer makes the stub reviewer take `seconds` before accepting.
 func slowReviewer(t *testing.T, repo string, seconds int) {
 	t.Helper()
-	verdict := filepath.Join(repo, "verdict.sh")
+	verdict := filepath.Join(repo, "claude-verdict.sh")
 	writeFile(t, verdict, fmt.Sprintf(
 		"#!/bin/sh\nsleep %d\necho '{\"decision\":\"accept\",\"notes\":\"stub accepted after a slow review\"}'\n", seconds))
 	_ = os.Chmod(verdict, 0o755)
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
-		fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\n", verdict))
+		fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\nisolation = \"operator-attested\"\n", verdict))
 }
 
 var agentGateEnv = []string{"SATELLE_GATE_MODE=agent", "SATELLE_GATE_WAIT=" + handoffWait}

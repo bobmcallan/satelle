@@ -1372,6 +1372,7 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		result.UsageNote = dec.UsageNote
 		result.CostUSD, result.CostUnavailableReason = dec.CostUSD, dec.CostUnavailableReason
 		result.SystemPromptBytes, result.PayloadBytes = dec.SystemPromptBytes, dec.PayloadBytes
+		result.ToolIsolation = dec.ToolIsolation
 		result.DurationMs = dec.DurationMs
 		result.UsageAvailable = dec.UsageAvailable
 		result.Reviewers = append(result.Reviewers, verb.ReviewerVerdict{
@@ -1383,6 +1384,7 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 			TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
 			CostUSD: dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
 			SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
+			ToolIsolation: dec.ToolIsolation,
 		})
 		if !dec.Accept {
 			return result, nil // a reject blocks the edge — do not run later reviewers
@@ -1472,6 +1474,7 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 			TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
 			CostUSD: dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
 			SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
+			ToolIsolation: dec.ToolIsolation,
 		})
 		d := dec
 		lastGated = &d
@@ -1501,6 +1504,7 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 		result.UsageNote = pick.UsageNote
 		result.CostUSD, result.CostUnavailableReason = pick.CostUSD, pick.CostUnavailableReason
 		result.SystemPromptBytes, result.PayloadBytes = pick.SystemPromptBytes, pick.PayloadBytes
+		result.ToolIsolation = pick.ToolIsolation
 		result.DurationMs = pick.DurationMs
 		result.UsageAvailable = pick.UsageAvailable
 		if firstReject == nil {
@@ -2183,16 +2187,39 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 		finishScratch(scratchDir, false)
 		return nil, err
 	}
+	// Reviewer tool isolation (sty_ef3efb51): a live session bound to a
+	// role=reviewer binding (the rework consultant) takes the same
+	// refuse-before-start / trim / describe path as a gate verdict, in addition
+	// to the caller's own policy, before any process starts.
+	var isolation verb.ToolIsolation
+	if config.ResolvedRole(name, binding) == config.RoleReviewer {
+		runner, rerr := agentcli.RunnerFromBinding(binding.ResolvedInterface(), binding.CommandTemplate())
+		if rerr != nil {
+			finishScratch(scratchDir, false)
+			return nil, rerr
+		}
+		var perr error
+		isolation, _, perr = g.isolateReviewer(ctx, reviewerDispatch{
+			StoryID: item.ID, Actor: name, Skill: "live-session", Step: item.Status, Section: name,
+		}, runner, binding.OperatorAttested(), &req)
+		if perr != nil {
+			finishScratch(scratchDir, false)
+			return nil, perr
+		}
+		pol = agentcli.ReviewerSessionPolicy(req.AllowedTools, pol)
+	}
 	// A live session ledgers its own open as an agent_invocation row
 	// (sty_7069bced 4.2): the model chosen and why, so a live dispatch is as
 	// inspectable in `satelle story cost` and the web timeline as a one-shot
 	// one. model_resolved is "unavailable" at open — nothing has run yet; the
 	// close row (liveModelSession.Close) reports what actually happened.
-	g.recordInvocation(ctx, item.ID, map[string]any{
+	openRow := map[string]any{
 		"agent": name, "phase": "open", "model": binding.Model, "model_source": modelSource,
 		"model_resolved": agentcli.ModelUnavailable, "usage_available": false,
 		"system_prompt_bytes": len(req.SystemPrompt), "payload_bytes": len(req.Payload),
-	})
+	}
+	isolationFields(openRow, isolation)
+	g.recordInvocation(ctx, item.ID, openRow)
 	if req.Env == nil {
 		req.Env = map[string]string{}
 	}
@@ -2834,6 +2861,7 @@ func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStat
 	res.Decision.ModelSource = modelSource
 	res.Decision.SystemPromptBytes = res.SystemPromptBytes
 	res.Decision.PayloadBytes = res.PayloadBytes
+	res.Decision.ToolIsolation = res.ToolIsolation
 	return *res.Decision, nil
 }
 
@@ -3024,6 +3052,15 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 	if err != nil {
 		return verb.SummaryResult{}, err
 	}
+	// Reviewer tool isolation (sty_ef3efb51): the summariser is a role=reviewer
+	// dispatch, so it takes the same refuse-before-start / trim / describe path
+	// as a gate verdict.
+	isolation, _, isoErr := g.isolateReviewer(ctx, reviewerDispatch{
+		StoryID: item.ID, Actor: section, Skill: summariserSkill, Step: to, Section: section,
+	}, runner, binding.OperatorAttested(), &req)
+	if isoErr != nil {
+		return soft("step summary agent=%s: %v", section, isoErr)
+	}
 	g.emitActivity(item.ID, "summary", 1, 1)
 	g.emitProgress("summarising step %s→%s via [%s] (may take a minute)…", from, to, section)
 	// Retry the SAME transient a reviewer retries (a rate-limited/killed/empty
@@ -3085,6 +3122,7 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 				TokensInFresh: usage.FreshInputTokens, TokensCacheWrite: usage.CacheCreationInputTokens, TokensCacheRead: usage.CacheReadInputTokens, UsageNote: usageNote(usage),
 				CostUSD: usage.CostUSD, CostUnavailableReason: usage.CostUnavailableReason,
 				SystemPromptBytes: len(req.SystemPrompt), PayloadBytes: len(req.Payload),
+				ToolIsolation: isolation,
 			}, nil
 		}
 		lastErr = fmt.Errorf("empty summary output")

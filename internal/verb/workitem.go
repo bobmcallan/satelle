@@ -541,7 +541,8 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 				UsageAvailable: dec.UsageAvailable,
 				TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
 				CostUSD: dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
-				SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes}}
+				SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
+				ToolIsolation: dec.ToolIsolation}}
 		}
 		// Ledger ALL verdicts first (accepts and rejects), then refuse if any
 		// rejected — so parallel multi-reviewer rounds record every row
@@ -1815,13 +1816,17 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		// SystemPromptBytes/PayloadBytes: byte lengths satelle sent, never content.
 		SystemPromptBytes int `json:"system_prompt_bytes,omitempty"`
 		PayloadBytes      int `json:"payload_bytes,omitempty"`
+		// ToolIsolation: offered tool count/source and the adapter limitation
+		// (sty_ef3efb51).
+		ToolIsolation
 	}{From: from, To: to, Agent: "reviewer", Skill: rv.Skill, Command: rv.Command, Context: rv.Context, Model: rv.Model,
 		ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models,
 		TokensIn: rv.TokensIn, TokensOut: rv.TokensOut, TokensTotal: rv.TokensTotal, DurationMs: rv.DurationMs,
 		UsageAvailable: rv.UsageAvailable,
 		TokensInFresh:  rv.TokensInFresh, TokensCacheWrite: rv.TokensCacheWrite, TokensCacheRead: rv.TokensCacheRead, UsageNote: rv.UsageNote,
 		CostUSD: rv.CostUSD, CostUnavailableReason: rv.CostUnavailableReason,
-		SystemPromptBytes: rv.SystemPromptBytes, PayloadBytes: rv.PayloadBytes}
+		SystemPromptBytes: rv.SystemPromptBytes, PayloadBytes: rv.PayloadBytes,
+		ToolIsolation: rv.ToolIsolation}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil
@@ -1860,13 +1865,17 @@ func summariserInvocationPayload(from, to string, result SummaryResult) json.Raw
 		// SystemPromptBytes/PayloadBytes: byte lengths satelle sent, never content.
 		SystemPromptBytes int `json:"system_prompt_bytes,omitempty"`
 		PayloadBytes      int `json:"payload_bytes,omitempty"`
+		// ToolIsolation: offered tool count/source and the adapter limitation
+		// (sty_ef3efb51).
+		ToolIsolation
 	}{From: from, To: to, Agent: "reviewer", Skill: result.Context, Command: result.Command, Context: result.Context, Model: result.Model,
 		ModelResolved: result.ModelResolved, ModelSource: result.ModelSource, Models: result.Models,
 		TokensIn: result.TokensIn, TokensOut: result.TokensOut, TokensTotal: result.TokensTotal, DurationMs: result.DurationMs,
 		UsageAvailable: result.UsageAvailable,
 		TokensInFresh:  result.TokensInFresh, TokensCacheWrite: result.TokensCacheWrite, TokensCacheRead: result.TokensCacheRead, UsageNote: result.UsageNote,
 		CostUSD: result.CostUSD, CostUnavailableReason: result.CostUnavailableReason,
-		SystemPromptBytes: result.SystemPromptBytes, PayloadBytes: result.PayloadBytes}
+		SystemPromptBytes: result.SystemPromptBytes, PayloadBytes: result.PayloadBytes,
+		ToolIsolation: result.ToolIsolation}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil

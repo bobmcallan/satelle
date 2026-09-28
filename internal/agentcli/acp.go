@@ -74,8 +74,7 @@ func acpEffortArgvSupported(binary string, args []string) bool {
 }
 
 func (a acpRunner) Run(ctx context.Context, req Request) ([]byte, error) {
-	pol := defaultPermissionPolicy(toolsAllowMutators(req.AllowedTools))
-	sess, err := openACPSession(ctx, a, req, pol)
+	sess, err := openACPSession(ctx, a, req, acpPolicyFor(req))
 	if err != nil {
 		return nil, err
 	}
@@ -87,8 +86,7 @@ func (a acpRunner) Run(ctx context.Context, req Request) ([]byte, error) {
 // text. A peer that supplies none records unavailable with this adapter's
 // reason (sty_c8d45201).
 func (a acpRunner) RunUsage(ctx context.Context, req Request) ([]byte, UsageResult, error) {
-	pol := defaultPermissionPolicy(toolsAllowMutators(req.AllowedTools))
-	sess, err := openACPSession(ctx, a, req, pol)
+	sess, err := openACPSession(ctx, a, req, acpPolicyFor(req))
 	if err != nil {
 		return nil, UsageResult{}, err
 	}
@@ -100,6 +98,16 @@ func (a acpRunner) RunUsage(ctx context.Context, req Request) ([]byte, UsageResu
 		usage.ModelResolved = noModelReport(acpAdapterLabel(a.binary, a.args))
 	}
 	return out, usage, err
+}
+
+// acpPolicyFor is the one-shot permission policy of an ACP request: a reviewer
+// (req.ReadOnly) allows only tools inside its grant; anything else keeps the
+// mutator ceiling.
+func acpPolicyFor(req Request) PermissionPolicy {
+	if req.ReadOnly {
+		return ReviewerPermissionPolicy(req.AllowedTools)
+	}
+	return defaultPermissionPolicy(toolsAllowMutators(req.AllowedTools))
 }
 
 // acpAdapterLabel names the adapter behind an ACP spawn for a no-model reason
@@ -231,7 +239,7 @@ type acpSession struct {
 
 func openACPSession(ctx context.Context, a acpRunner, req Request, pol PermissionPolicy) (Session, error) {
 	if pol == nil {
-		pol = defaultPermissionPolicy(toolsAllowMutators(req.AllowedTools))
+		pol = acpPolicyFor(req)
 	}
 	onEvent, stopHB := eventStream(req)
 	args := append([]string(nil), a.args...)
@@ -301,6 +309,14 @@ func openACPSession(ctx context.Context, a acpRunner, req Request, pol Permissio
 	client.setMutatorsOK(toolsAllowMutators(req.AllowedTools))
 	client.setPolicy(pol)
 	client.setCapture(req.Capture)
+	if req.ReadOnly {
+		client.setReviewer(req.AllowedTools, strings.ReplaceAll(sess.adapter, " ", "/"), func() {
+			// The peer ran (or is running) a tool outside the grant: stop it now.
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+		})
+	}
 	sess.client = client
 
 	if err := sess.handshake(ctx, req); err != nil {
@@ -344,10 +360,20 @@ func (s *acpSession) Send(ctx context.Context, turn Turn) error {
 	c.mu.Lock()
 	sid := c.session
 	c.mu.Unlock()
+	// A reviewer whose peer is in a never-ask mode, or that already ran a tool
+	// outside its grant, never gets a prompt.
+	if b := c.breachErr(); b != nil {
+		s.promptErr = b
+		return b
+	}
 	result, err := c.request(ctx, "session/prompt", map[string]any{
 		"sessionId": sid,
 		"prompt":    blocks,
 	})
+	if b := c.breachErr(); b != nil {
+		s.promptErr = b
+		return b
+	}
 	if err != nil {
 		s.promptErr = fmt.Errorf("session/prompt: %w", err)
 		return s.promptErr
@@ -496,6 +522,14 @@ func (s *acpSession) handshake(ctx context.Context, req Request) error {
 	c.session = sessObj.SessionID
 	c.model = acpModelFromReply(sessRes)
 	c.mu.Unlock()
+	if req.ReadOnly {
+		// A reviewer session must ASK before it runs a tool: a peer that opens in a
+		// never-ask (yolo) mode is moved to an ask mode, or the run is refused
+		// before any prompt is sent (sty_ef3efb51).
+		if err := s.enforceAskMode(ctx, sessRes, sessObj.SessionID); err != nil {
+			return err
+		}
+	}
 
 	// Optional model config (sty_a476a2f8). A peer that explicitly rejects the
 	// model value fails the run (so a reported model is the model that ran).
@@ -548,6 +582,58 @@ func (s *acpSession) handshake(ctx context.Context, req Request) error {
 	ev := newEvent(EventSessionInit)
 	ev.Model = started
 	emitEvent(s.onEvent, ev)
+	return nil
+}
+
+// acpModes is the mode block of a session/new reply.
+type acpModes struct {
+	Modes struct {
+		Current   string `json:"currentModeId"`
+		Available []struct {
+			ID string `json:"id"`
+		} `json:"availableModes"`
+	} `json:"modes"`
+}
+
+// enforceAskMode makes sure a reviewer's ACP peer will send session/request_permission
+// for a tool it wants to run. A peer advertising no modes is refused: satelle can
+// neither confirm nor force ask mode on it. A peer whose current mode never asks
+// is switched to an ask mode — "default" when offered, else the first mode that
+// is not a skip mode — and refused when none exists or the switch is rejected. In
+// every refusal no session/prompt is ever sent.
+func (s *acpSession) enforceAskMode(ctx context.Context, sessRes json.RawMessage, sessionID string) error {
+	label := strings.ReplaceAll(s.adapter, " ", "/")
+	refuse := func(why string) error {
+		return &RefusalError{Adapter: label, Classes: allOutOfGrant(), Why: why}
+	}
+	var m acpModes
+	if json.Unmarshal(sessRes, &m) != nil || (m.Modes.Current == "" && len(m.Modes.Available) == 0) {
+		return refuse(noAskModeWhy)
+	}
+	if m.Modes.Current != "" && !skipModeName(m.Modes.Current) {
+		return nil
+	}
+	target := ""
+	for _, a := range m.Modes.Available {
+		if strings.EqualFold(a.ID, "default") {
+			target = a.ID
+			break
+		}
+	}
+	if target == "" {
+		for _, a := range m.Modes.Available {
+			if !skipModeName(a.ID) {
+				target = a.ID
+				break
+			}
+		}
+	}
+	if target == "" {
+		return refuse(fmt.Sprintf("the peer opened in %q, a mode that never asks permission, and offers no ask mode", m.Modes.Current))
+	}
+	if _, err := s.client.request(ctx, "session/set_mode", map[string]any{"sessionId": sessionID, "modeId": target}); err != nil {
+		return refuse(fmt.Sprintf("the peer opened in %q, a mode that never asks permission, and refused to switch to %q: %v", m.Modes.Current, target, err))
+	}
 	return nil
 }
 
@@ -608,6 +694,19 @@ type acpClient struct {
 	readerDone chan struct{}
 	// capture is set from Request.Capture before handshake returns.
 	capture CaptureMode
+
+	// Reviewer isolation (sty_ef3efb51). reviewer is set by setReviewer for a
+	// ReadOnly request: handlePermission then allows only a tool inside admits,
+	// and handleUpdate cancels the run when a tool outside it executes without a
+	// permission ask (a peer in a never-ask mode) or after a deny.
+	reviewer bool
+	admits   grantAdmits
+	calls    map[string]acpToolCall
+	asked    map[string]bool
+	denied   map[string]bool
+	breach   error
+	onBreach func()
+	label    string // "<provider>/acp" for a refusal
 }
 
 type acpRPC struct {
@@ -644,6 +743,49 @@ func (c *acpClient) setCapture(m CaptureMode) {
 	c.mu.Lock()
 	c.capture = m
 	c.mu.Unlock()
+}
+
+// setReviewer switches the client to reviewer isolation over grant. onBreach
+// stops the peer process when an out-of-grant tool runs.
+func (c *acpClient) setReviewer(grant, label string, onBreach func()) {
+	c.mu.Lock()
+	c.reviewer = true
+	c.label = label
+	c.admits = admitsFromGrant(grant, false)
+	c.calls = map[string]acpToolCall{}
+	c.asked = map[string]bool{}
+	c.denied = map[string]bool{}
+	c.onBreach = onBreach
+	c.mu.Unlock()
+}
+
+func (c *acpClient) isReviewer() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reviewer
+}
+
+func (c *acpClient) breachErr() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.breach
+}
+
+// recordBreachLocked notes the first breach, cancels the session and stops the
+// peer. Caller holds c.mu; the stop runs after it is released by the caller via
+// the returned func.
+func (c *acpClient) recordBreachLocked(err error) func() {
+	if c.breach != nil {
+		return func() {}
+	}
+	c.breach = err
+	stop := c.onBreach
+	return func() {
+		_ = c.tryCancel()
+		if stop != nil {
+			stop()
+		}
+	}
 }
 
 func (c *acpClient) setPolicy(pol PermissionPolicy) {
@@ -711,11 +853,19 @@ func (c *acpClient) readLoop(r io.Reader) {
 func (c *acpClient) handleUpdate(params json.RawMessage) {
 	var p struct {
 		Update struct {
-			SessionUpdate string `json:"sessionUpdate"`
-			ToolCallID    string `json:"toolCallId"`
-			Title         string `json:"title"`
-			Kind          string `json:"kind"`
-			Status        string `json:"status"`
+			SessionUpdate string          `json:"sessionUpdate"`
+			ToolCallID    string          `json:"toolCallId"`
+			Title         string          `json:"title"`
+			Kind          string          `json:"kind"`
+			Status        string          `json:"status"`
+			RawInput      json.RawMessage `json:"rawInput"`
+			ToolName      string          `json:"toolName"`
+			Name          string          `json:"name"`
+			Meta          struct {
+				ToolName string `json:"toolName"`
+				Name     string `json:"name"`
+			} `json:"_meta"`
+			CurrentModeID string `json:"currentModeId"`
 			Content       struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
@@ -738,13 +888,34 @@ func (c *acpClient) handleUpdate(params json.RawMessage) {
 		ev := newEvent(EventMessage)
 		ev.Text = p.Update.Content.Text
 		emitEvent(c.onEvent, ev)
+	case "current_mode_update":
+		c.mu.Lock()
+		var stop func()
+		if c.reviewer && skipModeName(p.Update.CurrentModeID) {
+			stop = c.recordBreachLocked(&RefusalError{Adapter: c.label, Classes: allOutOfGrant(),
+				Why: fmt.Sprintf("the peer switched to %q, a mode that never asks permission, mid-session", p.Update.CurrentModeID)})
+		}
+		c.mu.Unlock()
+		if stop != nil {
+			stop()
+		}
 	case "tool_call", "tool_call_update":
 		// Close the open message run so post-tool answer is a new segment.
 		// agent_thought_chunk deliberately does NOT close — only the tool
 		// fence the wire establishes (sty_844b6ab1 AC1).
 		c.mu.Lock()
 		c.closeSegmentLocked()
+		var stop func()
+		if c.reviewer {
+			stop = c.noteReviewerToolLocked(p.Update.ToolCallID, acpToolCall{
+				Kind: p.Update.Kind, Title: p.Update.Title, RawInput: p.Update.RawInput,
+				Names: []string{p.Update.ToolName, p.Update.Name, p.Update.Meta.ToolName, p.Update.Meta.Name},
+			}, p.Update.Status)
+		}
 		c.mu.Unlock()
+		if stop != nil {
+			stop()
+		}
 		ev := newEvent(EventToolStart)
 		if su == "tool_call_update" {
 			ev.Kind = EventToolEnd
@@ -764,6 +935,58 @@ func (c *acpClient) handleUpdate(params json.RawMessage) {
 		// agent_thought_chunk and every other sessionUpdate: ignore (not captured,
 		// not segmenting). AC7 locks thought exclusion at the capture boundary.
 	}
+}
+
+// noteReviewerToolLocked folds one tool_call / tool_call_update into the
+// per-call record and declares a breach when a tool that is not positively
+// identified as inside the grant is running (or has finished) without the peer
+// having asked permission, or after satelle denied it. A tool no signal
+// identifies is a breach too: only a granted read tool may run unasked. Caller
+// holds c.mu.
+func (c *acpClient) noteReviewerToolLocked(id string, in acpToolCall, status string) func() {
+	if id == "" {
+		return nil
+	}
+	call := c.calls[id]
+	if in.Kind != "" {
+		call.Kind = in.Kind
+	}
+	if in.Title != "" {
+		call.Title = in.Title
+	}
+	if len(in.RawInput) > 0 {
+		call.RawInput = in.RawInput
+	}
+	call.Names = append(call.Names, in.Names...)
+	c.calls[id] = call
+	switch strings.ToLower(status) {
+	case "in_progress", "completed":
+	default:
+		return nil
+	}
+	class, name := classifyACPCall(call)
+	if c.admits.allows(class, name) {
+		return nil
+	}
+	if c.asked[id] && !c.denied[id] {
+		return nil
+	}
+	why := "ran without the peer asking permission"
+	if c.denied[id] {
+		why = "ran after permission was denied"
+	}
+	return c.recordBreachLocked(&RefusalError{Adapter: c.label, Classes: []ToolClass{class},
+		Why: fmt.Sprintf("a %s tool call (%s) %s", class, describeCall(call, name), why)})
+}
+
+func describeCall(call acpToolCall, name string) string {
+	if name != "" {
+		return name
+	}
+	if call.Title != "" {
+		return SafeText(call.Title)
+	}
+	return "unnamed"
 }
 
 // closeSegmentLocked pushes cur into segments when non-empty and resets cur.
@@ -940,9 +1163,16 @@ func (c *acpClient) handleUnknownRequest(id int64, method string, params json.Ra
 func (c *acpClient) handlePermission(id int64, params json.RawMessage) {
 	var p struct {
 		ToolCall struct {
-			Kind     string          `json:"kind"`
-			Title    string          `json:"title"`
-			RawInput json.RawMessage `json:"rawInput"`
+			ToolCallID string          `json:"toolCallId"`
+			Kind       string          `json:"kind"`
+			Title      string          `json:"title"`
+			RawInput   json.RawMessage `json:"rawInput"`
+			ToolName   string          `json:"toolName"`
+			Name       string          `json:"name"`
+			Meta       struct {
+				ToolName string `json:"toolName"`
+				Name     string `json:"name"`
+			} `json:"_meta"`
 		} `json:"toolCall"`
 		Options []struct {
 			OptionID string `json:"optionId"`
@@ -962,6 +1192,25 @@ func (c *acpClient) handlePermission(id int64, params json.RawMessage) {
 		deny = true
 		_, after, _ := strings.Cut(p.ToolCall.Title, ":")
 		c.emitInteractiveDenied(p.ToolCall.Title, questionText(p.ToolCall.RawInput, strings.TrimSpace(after)), "denied")
+	} else if c.isReviewer() {
+		// A reviewer tool is allowed only when a signal on the call POSITIVELY
+		// puts it inside the grant. The kind is not trusted alone (a shell tool
+		// labelled kind=read), and an unidentified or empty-kind call is denied.
+		call := acpToolCall{
+			Kind: p.ToolCall.Kind, Title: p.ToolCall.Title, RawInput: p.ToolCall.RawInput,
+			Names: []string{p.ToolCall.ToolName, p.ToolCall.Name, p.ToolCall.Meta.ToolName, p.ToolCall.Meta.Name},
+		}
+		class, name := classifyACPCall(call)
+		c.mu.Lock()
+		allowed := c.admits.allows(class, name)
+		if id := p.ToolCall.ToolCallID; id != "" {
+			c.asked[id] = true
+			if !allowed {
+				c.denied[id] = true
+			}
+		}
+		c.mu.Unlock()
+		deny = !allowed
 	} else if pol != nil {
 		deny = !pol(PermissionRequest{ToolName: p.ToolCall.Kind, Kind: p.ToolCall.Kind}).Allow
 	} else {

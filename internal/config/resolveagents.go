@@ -375,6 +375,7 @@ func overlayBinding(base AgentBinding, baseSrc map[string]string, top AgentBindi
 	setScalar("busy_timeout", &out.BusyTimeout, top.BusyTimeout)
 	setScalar("effort", &out.Effort, top.Effort)
 	setScalar("secondary", &out.Secondary, top.Secondary)
+	setScalar("isolation", &out.Isolation, top.Isolation)
 
 	if len(top.Env) > 0 {
 		out.Env = mergeStringMap(base.Env, top.Env)

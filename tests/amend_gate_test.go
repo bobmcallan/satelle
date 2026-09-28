@@ -14,13 +14,13 @@ import (
 // a setter that flips its verdict. Hermetic by construction: no model is called.
 func stubAmendVerdict(t *testing.T, repo string) func(decision, notes string) {
 	t.Helper()
-	verdict := filepath.Join(repo, "verdict.sh")
+	verdict := filepath.Join(repo, "claude-verdict.sh")
 	set := func(decision, notes string) {
 		writeFile(t, verdict, fmt.Sprintf("#!/bin/sh\necho '{\"decision\":\"%s\",\"notes\":\"%s\"}'\n", decision, notes))
 		_ = os.Chmod(verdict, 0o755)
 	}
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
-		fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\n", verdict))
+		fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\nisolation = \"operator-attested\"\n", verdict))
 	set("accept", "ok")
 	return set
 }

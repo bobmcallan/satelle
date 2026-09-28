@@ -137,12 +137,12 @@ func TestDispatchTelemetryOnReviewerFailure(t *testing.T) {
 
 	// A reviewer stub that echoes non-JSON — no parseable verdict, so runReviewer
 	// treats every attempt as a transient no-verdict and retries, then fails.
-	stub := filepath.Join(repo, "noverdict.sh")
+	stub := filepath.Join(repo, "claude-noverdict.sh")
 	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho 'no verdict here'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
-		"[reviewer]\ncommand = \""+stub+" {system}\"\ntools = \"Read\"\n")
+		"[reviewer]\ncommand = \""+stub+" {system}\"\ntools = \"Read\"\nisolation = \"operator-attested\"\n")
 	writeGateTelemetryRoute(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 
@@ -175,12 +175,12 @@ func TestStoryCostUnreportedIsNotZero(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 
 	// Reviewer stub: emit a valid accept with no usage envelope (plain text).
-	stub := filepath.Join(repo, "accept.sh")
+	stub := filepath.Join(repo, "claude-accept-stub.sh")
 	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho '{\"decision\":\"accept\",\"notes\":\"ok\"}'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
-		"[reviewer]\ncommand = \""+stub+" {system}\"\ntools = \"Read\"\n")
+		"[reviewer]\ncommand = \""+stub+" {system}\"\ntools = \"Read\"\nisolation = \"operator-attested\"\n")
 	writeGateTelemetryRoute(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 
@@ -245,7 +245,7 @@ echo '{"result":"{\"decision\":\"accept\",\"notes\":\"ok\"}","usage":{"input_tok
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
-		"[reviewer]\ncommand = \""+stub+" {system}\"\ntools = \"Read\"\n")
+		"[reviewer]\ncommand = \""+stub+" {system}\"\ntools = \"Read\"\nisolation = \"operator-attested\"\n")
 	writeGateTelemetryRoute(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 

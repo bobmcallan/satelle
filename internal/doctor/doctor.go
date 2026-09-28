@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/agentvalidate"
 	"github.com/bobmcallan/satelle/internal/config"
@@ -167,6 +168,10 @@ func Check(ctx context.Context, o Opts) Report {
 	// 4. Required binaries: every isolated binding's executable must be runnable.
 	rep.Findings = append(rep.Findings, checkBinaries(av.Grants)...)
 
+	// 4b. Reviewer tool isolation (sty_ef3efb51): a reviewer binding dispatch would
+	// refuse is surfaced before an upgrade turns it into a refused gate.
+	rep.Findings = append(rep.Findings, checkReviewerIsolation(av.Grants)...)
+
 	// 5. Hook scaffold integrity (injected authority; skipped when unavailable).
 	if o.ScaffoldDrift != nil && strings.TrimSpace(o.RepoRoot) != "" {
 		rep.Findings = append(rep.Findings, o.ScaffoldDrift(o.RepoRoot)...)
@@ -240,6 +245,42 @@ func checkBinaries(grants []agentvalidate.Grant) health.Findings {
 			out = append(out, health.Warn(health.IDBinaryMissing, "Missing executable",
 				fmt.Sprintf("agents.toml [%s] needs %q, which is not on PATH", g.Name, bin)).
 				About(g.Name).WithRemediation("install "+bin+", or point ["+g.Name+"] at a CLI you have"))
+		}
+	}
+	return out
+}
+
+// checkReviewerIsolation warns once per role=reviewer binding — a gate reviewer,
+// the step summariser and the rework consultant alike, since all three dispatch
+// through the one isolation path — whose command the
+// dispatch preflight (agentcli.PreflightReviewer) would refuse — it skips
+// permission requests without a tool allow-list inside its grant, or no adapter
+// can deny an out-of-grant tool (a grok acp reviewer: the peer reports no
+// permission mode and cannot be forced to ask). A warning, not an error: the gate
+// refuses at dispatch, and an operator may not yet have upgraded. The stock grok
+// command preset carries a --tools allow-list equal to the grant and does not warn.
+// A binding on a harness no adapter recognises that declares isolation =
+// "operator-attested" is admitted at dispatch and reported here by name, so the
+// declaration is never silent.
+func checkReviewerIsolation(grants []agentvalidate.Grant) health.Findings {
+	var out health.Findings
+	for _, g := range grants {
+		if g.Role != config.RoleReviewer || g.Backend == "in-loop" || g.Backend == "invalid" {
+			continue
+		}
+		attested := strings.EqualFold(strings.TrimSpace(g.Isolation), config.IsolationOperatorAttested)
+		if attested && agentcli.UnrecognisedCommand(g.Command) {
+			// Visible, never silent: satelle neither trims nor verifies this
+			// command's tools; the operator has declared it safe.
+			out = append(out, health.Warn(health.IDReviewerIsolation, "Reviewer tool isolation attested",
+				fmt.Sprintf("reviewer binding %q is operator-attested (isolation = %q): no adapter recognises its harness, so satelle neither trims nor verifies the tools it offers — it must offer none outside the grant %q", g.Name, config.IsolationOperatorAttested, g.Tools)).
+				About(g.Name))
+			continue
+		}
+		if err := agentcli.PreflightReviewer(g.Interface, g.Command, g.Tools, false); err != nil {
+			out = append(out, health.Warn(health.IDReviewerIsolation, "Reviewer tool isolation",
+				fmt.Sprintf("reviewer binding %q will be refused at dispatch: it skips permission requests without a tool allow-list equal to its grant, or its adapter cannot deny out-of-grant tools (a grok acp peer reports no permission mode and cannot be forced to ask): %v", g.Name, err)).
+				About(g.Name).WithRemediation("give ["+g.Name+"] a --tools allow-list inside its grant and drop always-approve/yolo, or point it at an adapter that can deny (claude, grok command with --tools; not grok acp)"))
 		}
 	}
 	return out

@@ -134,7 +134,7 @@ while True:
     elif method == "authenticate":
         send({"jsonrpc":"2.0","id":mid,"result":{}})
     elif method == "session/new":
-        send({"jsonrpc":"2.0","id":mid,"result":{"sessionId":"sess_test"}})
+        send({"jsonrpc":"2.0","id":mid,"result":{"sessionId":"sess_test","modes":{"currentModeId":"default","availableModes":[{"id":"default"}]}}})
     elif method == "session/set_config_option":
         send({"jsonrpc":"2.0","id":mid,"result":{}})
     elif method == "session/prompt":

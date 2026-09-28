@@ -85,7 +85,7 @@ func reworkFixture(t *testing.T) (repo, id, coderScript, consultScript string) {
 			"tools = \"Read,Grep,Glob,Edit,Write,Bash(satelle:*)\"\nmodel = \"opus\"\n" +
 			"\n[consultant]\nrole = \"reviewer\"\ninterface = \"stream\"\n" +
 			"command = \"" + consultPeer + " --output-format stream-json\"\n" +
-			"tools = \"Read,Grep,Glob\"\nmodel = \"opus\"\n"); err != nil {
+			"tools = \"Read,Grep,Glob\"\nmodel = \"opus\"\nisolation = \"operator-attested\"\n"); err != nil {
 		t.Fatal(err)
 	}
 	_ = f.Close()

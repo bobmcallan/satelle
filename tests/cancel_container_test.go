@@ -17,7 +17,7 @@ import (
 // (sty_de8e8e2c AC-6).
 func stubReviewerChildrenResolved(t *testing.T, repo string) {
 	t.Helper()
-	script := filepath.Join(repo, "verdict-children.sh")
+	script := filepath.Join(repo, "claude-verdict-children.sh")
 	// ChildState marshals as {"id":"...","status":"..."}. Flag any object whose
 	// status is not done/cancelled as unresolved.
 	body := `#!/bin/sh
@@ -35,7 +35,7 @@ fi
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
-		[]byte(fmt.Sprintf("[reviewer]\nrole = \"reviewer\"\ncommand = \"%s {system} {tools} {model}\"\n", script)), 0o644); err != nil {
+		[]byte(fmt.Sprintf("[reviewer]\nrole = \"reviewer\"\ncommand = \"%s {system} {tools} {model}\"\nisolation = \"operator-attested\"\n", script)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

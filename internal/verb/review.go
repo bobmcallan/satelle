@@ -68,6 +68,8 @@ type GateDecision struct {
 	// lengths only, never content.
 	SystemPromptBytes int
 	PayloadBytes      int
+	// ToolIsolation records what the reviewer's harness offered (sty_ef3efb51).
+	ToolIsolation
 	// Unresolved names gate skills this edge DECLARED that do not resolve in the
 	// substrate. Those gates degrade to advisory — the edge advances with no
 	// reviewer and no verdict — which is deliberate, so a fresh repo works before
@@ -125,6 +127,24 @@ type ReviewerVerdict struct {
 	// only, never content (sty_363eaf55).
 	SystemPromptBytes int `json:"system_prompt_bytes,omitempty"`
 	PayloadBytes      int `json:"payload_bytes,omitempty"`
+	// ToolIsolation mirrors GateDecision's, stamped on this verdict's ledger row.
+	ToolIsolation
+}
+
+// ToolIsolation is what a reviewer invocation's harness offered
+// (sty_ef3efb51), embedded flat like UsageNote. OfferedToolCount is a pointer
+// so "no count is available" (nil, with the reason in OfferedToolsSource) is
+// never confused with a measured zero. The count is the number of tools the
+// harness offers — from the harness's own report, or the allow-list satelle
+// rendered — never the length of the grant.
+type ToolIsolation struct {
+	OfferedToolCount *int `json:"offered_tool_count,omitempty"`
+	// OfferedToolsSource is "flag", "harness", "operator-attested" (no count), or
+	// "unavailable: <adapter reason>".
+	OfferedToolsSource string `json:"offered_tools_source,omitempty"`
+	// IsolationLimitation is an adapter-named limitation (prompt trim / skills
+	// list / tool trim unavailable), empty when there is none.
+	IsolationLimitation string `json:"isolation_limitation,omitempty"`
 }
 
 // UsageNote is the explicit-unavailable evidence beside a row's token numbers
@@ -365,6 +385,8 @@ type SummaryResult struct {
 	// only, never content (sty_363eaf55).
 	SystemPromptBytes int
 	PayloadBytes      int
+	// ToolIsolation is what the summariser's harness offered (sty_ef3efb51).
+	ToolIsolation
 }
 
 // StepSummariser produces a read-only prose recap of an enacted transition,

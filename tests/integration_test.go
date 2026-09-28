@@ -459,12 +459,12 @@ func stubReviewerAccept(t *testing.T, repo string) {
 	// Outside the repo: a worktree-resident stub is an untracked non-substrate
 	// path and would fail satelle-substrate-only-check once that gate unions
 	// the live worktree (sty_6469025e).
-	verdict := filepath.Join(t.TempDir(), "verdict-accept.sh")
+	verdict := filepath.Join(t.TempDir(), "claude-verdict-accept.sh")
 	if err := os.WriteFile(verdict, []byte("#!/bin/sh\necho '{\"decision\":\"accept\",\"notes\":\"\"}'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
-		[]byte(fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\n", verdict)), 0o644); err != nil {
+		[]byte(fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\nisolation = \"operator-attested\"\n", verdict)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -62,9 +62,13 @@ const (
 	IDEnvUnresolved       = "env.unresolved"        // a ${VAR} in env/settings resolves to nothing
 
 	// Reviewer / allocation safety.
-	IDReviewerUnsafe = "reviewer.unsafe"       // a reviewer's permission ceiling is escaped
-	IDNodeAlloc      = "node.alloc"            // a workflow node/edge allocates a binding that does not resolve
-	IDHookAlloc      = "hook.alloc.unresolved" // a lifecycle hook's agent allocation is unusable
+	IDReviewerUnsafe = "reviewer.unsafe" // a reviewer's permission ceiling is escaped
+	// IDReviewerIsolation: a reviewer binding skips permission requests without a
+	// tool allow-list inside its grant, or its adapter cannot deny an
+	// out-of-grant tool — dispatch would refuse it (sty_ef3efb51).
+	IDReviewerIsolation = "reviewer.isolation"
+	IDNodeAlloc         = "node.alloc"            // a workflow node/edge allocates a binding that does not resolve
+	IDHookAlloc         = "hook.alloc.unresolved" // a lifecycle hook's agent allocation is unusable
 
 	// Required binaries.
 	IDBinaryMissing   = "binary.missing"   // a binding's executable is not on PATH
@@ -106,7 +110,7 @@ const (
 // silently collapsing two defects into one identifier.
 var ids = []string{
 	IDAgentsLoad, IDAgentsBinding, IDAgentsProfileBroken, IDEnvUnresolved,
-	IDReviewerUnsafe, IDNodeAlloc, IDHookAlloc,
+	IDReviewerUnsafe, IDReviewerIsolation, IDNodeAlloc, IDHookAlloc,
 	IDBinaryMissing, IDBinaryMalformed,
 	IDWorkflowStructure, IDWorkflowConsistency,
 	IDScaffoldStale, IDScaffoldMissing, IDRepoUnreadable, IDConfigStray, IDBreakingUnacknowledged,

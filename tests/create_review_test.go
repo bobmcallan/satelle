@@ -40,13 +40,13 @@ func TestCreateContentReviewGate(t *testing.T) {
 	seedRouteSource(t, repo)
 
 	// Stub the reviewer harness to a deterministic verdict script.
-	verdict := filepath.Join(repo, "verdict.sh")
+	verdict := filepath.Join(repo, "claude-verdict.sh")
 	setVerdict := func(decision, notes string) {
 		writeFile(t, verdict, fmt.Sprintf("#!/bin/sh\necho '{\"decision\":\"%s\",\"notes\":\"%s\"}'\n", decision, notes))
 		_ = os.Chmod(verdict, 0o755)
 	}
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
-		fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\n", verdict))
+		fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\nisolation = \"operator-attested\"\n", verdict))
 
 	setVerdict("reject", "stub: the ACs do not verify the goal")
 	mustRun(t, testBin, repo, "reindex")
@@ -196,7 +196,7 @@ func TestCreateGateRejectsEpicAsFeature(t *testing.T) {
 
 	// Stub the reviewer harness: reject when the draft looks like an epic
 	// misfiled as feature (mirrors the classification rule in the rubric).
-	verdict := filepath.Join(repo, "verdict.sh")
+	verdict := filepath.Join(repo, "claude-verdict.sh")
 	writeFile(t, verdict, `#!/bin/sh
 # Read stdin draft JSON; reject epic-as-feature, else accept.
 IN=$(cat)
@@ -212,7 +212,7 @@ echo '{"decision":"accept","notes":""}'
 `)
 	_ = os.Chmod(verdict, 0o755)
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
-		fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\n", verdict))
+		fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\nisolation = \"operator-attested\"\n", verdict))
 	mustRun(t, testBin, repo, "reindex")
 
 	// Draft epic with category feature — must be rejected.

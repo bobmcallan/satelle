@@ -41,7 +41,7 @@ func TestGateRetriesTransientReviewerFailure(t *testing.T) {
 	// A reviewer stub that returns NO verdict on call 1 (transient), a verdict after.
 	// A counter file records the number of invocations so the retry is observable.
 	counter := filepath.Join(repo, "reviewer-calls")
-	verdict := filepath.Join(repo, "verdict.sh")
+	verdict := filepath.Join(repo, "claude-verdict.sh")
 	script := "#!/bin/sh\n" +
 		"c='" + counter + "'\n" +
 		"n=$(cat \"$c\" 2>/dev/null || echo 0); n=$((n+1)); echo \"$n\" > \"$c\"\n" +
@@ -50,7 +50,7 @@ func TestGateRetriesTransientReviewerFailure(t *testing.T) {
 	writeFile(t, verdict, script)
 	_ = os.Chmod(verdict, 0o755)
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
-		fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\n", verdict))
+		fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\nisolation = \"operator-attested\"\n", verdict))
 
 	mustRun(t, testBin, repo, "reindex")
 

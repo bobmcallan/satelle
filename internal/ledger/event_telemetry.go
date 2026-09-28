@@ -86,6 +86,13 @@ type Telemetry struct {
 	// existed.
 	SystemPromptBytes int
 	PayloadBytes      int
+	// OfferedToolCount is the number of tools the reviewer's harness offered
+	// (sty_ef3efb51); nil when the adapter has no real figure — then
+	// OfferedToolsSource carries its adapter-named reason. Never the grant length.
+	OfferedToolCount   *int
+	OfferedToolsSource string
+	// IsolationLimitation is the adapter-named limitation recorded for the run.
+	IsolationLimitation string
 	// CostUSD is the invocation's dollar cost (sty_c4df7376), read from the
 	// row's own cost_usd, or — for a legacy row recorded before that field
 	// existed but carrying per-model costs — the sum of model_usage's own
@@ -191,6 +198,9 @@ func invocationTelemetry(payload []byte) Telemetry {
 		TokensCacheRead   int      `json:"tokens_cache_read"`
 		SystemPromptBytes int      `json:"system_prompt_bytes"`
 		PayloadBytes      int      `json:"payload_bytes"`
+		OfferedToolCount  *int     `json:"offered_tool_count"`
+		OfferedSource     string   `json:"offered_tools_source"`
+		IsoLimitation     string   `json:"isolation_limitation"`
 		CostUSD           *float64 `json:"cost_usd"`
 		CostUnavailable   string   `json:"cost_unavailable_reason"`
 		// ModelUsage is read only for its per-model cost_usd — a legacy row's
@@ -232,6 +242,9 @@ func invocationTelemetry(payload []byte) Telemetry {
 		TokensCacheRead:        row.TokensCacheRead,
 		SystemPromptBytes:      row.SystemPromptBytes,
 		PayloadBytes:           row.PayloadBytes,
+		OfferedToolCount:       row.OfferedToolCount,
+		OfferedToolsSource:     row.OfferedSource,
+		IsolationLimitation:    row.IsoLimitation,
 		CostUSD:                cost,
 		CostUnavailableReason:  costReason,
 	}

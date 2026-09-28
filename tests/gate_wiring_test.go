@@ -176,7 +176,7 @@ func TestEmbeddedGateCoverageDiscovery(t *testing.T) {
 func stubReviewerDispatch(t *testing.T, repo string) string {
 	t.Helper()
 	logPath := filepath.Join(repo, "gate.log")
-	stub := filepath.Join(repo, "verdict-dispatch.sh")
+	stub := filepath.Join(repo, "claude-verdict-dispatch.sh")
 	// Read system prompt from argv: command is "stub {system} {tools} {model}"
 	// agentcli substitutes {system} as one argv token containing the skill body.
 	script := `#!/bin/sh
@@ -193,7 +193,7 @@ echo "{\"decision\":\"accept\",\"notes\":\"ok\"}"
 	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	agents := fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\n", stub)
+	agents := fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\nisolation = \"operator-attested\"\n", stub)
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "agents.toml"), []byte(agents), 0o644); err != nil {
 		t.Fatal(err)
 	}

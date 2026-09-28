@@ -19,13 +19,22 @@ import (
 func writeFakeStreamPeer(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "fake-stream-peer")
+	// The name carries the provider (adapterOf): a reviewer dispatch is refused
+	// for a harness satelle has no adapter for (sty_ef3efb51), and this peer
+	// speaks claude's stream-json.
+	path := filepath.Join(dir, "claude-fake-stream-peer")
 	script := `#!/usr/bin/env python3
-import json, sys
+import json, os, sys
 
 def send(obj):
     sys.stdout.write(json.dumps(obj) + "\n")
     sys.stdout.flush()
+
+# STREAM_INIT_TOOLS: report the tools the harness offers, as claude's
+# stream-json system/init record does (sty_ef3efb51).
+init_tools = os.environ.get("STREAM_INIT_TOOLS")
+if init_tools is not None:
+    send({"type":"system","subtype":"init","session_id":"fake-sess","tools":[t for t in init_tools.split(",") if t]})
 
 def read():
     line = sys.stdin.readline()

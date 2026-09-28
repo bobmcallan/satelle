@@ -22,7 +22,7 @@ import (
 func stubAgentsAt(t *testing.T, repo, agentsPath string) string {
 	t.Helper()
 	logPath := filepath.Join(repo, "relocate-gate.log")
-	stub := filepath.Join(repo, "verdict-relocate.sh")
+	stub := filepath.Join(repo, "claude-verdict-relocate.sh")
 	script := `#!/bin/sh
 sys="$1"
 name=$(printf '%s\n' "$sys" | sed -n 's/^name:[[:space:]]*//p' | head -1)
@@ -34,7 +34,7 @@ echo "{\"decision\":\"accept\",\"notes\":\"ok\"}"
 	}
 	// model= is the observable that proves the DECLARED binding drove the
 	// dispatch: agent validate echoes it back as effective_model.
-	body := fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\nmodel = \"relocate-probe\"\n", stub)
+	body := fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\nisolation = \"operator-attested\"\nmodel = \"relocate-probe\"\n", stub)
 	if err := os.MkdirAll(filepath.Dir(agentsPath), 0o755); err != nil {
 		t.Fatal(err)
 	}

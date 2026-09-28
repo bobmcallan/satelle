@@ -15,12 +15,12 @@ import (
 // no-verdict (sty_9485d47e).
 func stubReviewerProse(t *testing.T, repo, prose string) {
 	t.Helper()
-	stub := filepath.Join(repo, "verdict-prose.sh")
+	stub := filepath.Join(repo, "claude-verdict-prose.sh")
 	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho '"+prose+"'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
-		[]byte(fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\n", stub)), 0o644); err != nil {
+		[]byte(fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\nisolation = \"operator-attested\"\n", stub)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

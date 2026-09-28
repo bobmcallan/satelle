@@ -57,7 +57,9 @@ type Grant struct {
 	// binding inherits [defaults]/the shipped default.
 	IdleTimeout string
 	// BusyTimeout is the raw busy_timeout= (sty_db62a3b9), empty when unset.
-	BusyTimeout       string
+	BusyTimeout string
+	// Isolation is the raw isolation= (sty_ef3efb51): "operator-attested" or empty.
+	Isolation         string
 	Tools             string
 	Model             string
 	Effort            string // optional reasoning effort (sty_657f77b9)
@@ -818,6 +820,7 @@ func checkBinding(section string, b config.AgentBinding, vars map[string]string)
 		Timeout:           b.Timeout,
 		IdleTimeout:       b.IdleTimeout,
 		BusyTimeout:       b.BusyTimeout,
+		Isolation:         b.Isolation,
 		InjectsPrinciples: b.InjectsPrinciples(),
 		Role:              role,
 		Principles:        b.ResolvedPrinciples(),

@@ -1,0 +1,723 @@
+package agentcli
+
+import (
+	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+// Reviewer tool isolation (sty_ef3efb51). A reviewer judges; it must never write,
+// edit, run a shell, spawn a subprocess, fetch over the network or call an MCP
+// tool beyond what its binding grants — whatever permission mode the harness runs
+// in. This file owns the provider-neutral vocabulary (ToolClass), the tables that
+// map each supported harness's own tool names onto it, the preflight that refuses a
+// dispatch no adapter can keep inside its grant, and the reviewer policies the
+// live transports apply. Tool names and flags live here and nowhere else
+// ([[satelle-agent-agnostic]] §1).
+
+// ToolClass is a provider-neutral category of tool capability.
+type ToolClass string
+
+// The classes a read-only grant must be able to deny. ClassUnknown is any tool
+// no table names — denied unless the grant lists that exact name.
+const (
+	ClassRead       ToolClass = "read"
+	ClassWrite      ToolClass = "write"
+	ClassEdit       ToolClass = "edit"
+	ClassShell      ToolClass = "shell"
+	ClassSubprocess ToolClass = "subprocess"
+	ClassNetwork    ToolClass = "network"
+	ClassMCP        ToolClass = "mcp"
+	ClassUnknown    ToolClass = "unknown"
+)
+
+// OutOfGrantClasses are the classes a reviewer dispatch must be able to deny.
+var OutOfGrantClasses = []ToolClass{ClassWrite, ClassEdit, ClassShell, ClassSubprocess, ClassNetwork, ClassMCP, ClassUnknown}
+
+// toolClassByName maps a lower-cased tool name (any supported harness) to its
+// class. claude names first, then grok's.
+var toolClassByName = map[string]ToolClass{
+	// claude
+	"read": ClassRead, "grep": ClassRead, "glob": ClassRead, "ls": ClassRead, "notebookread": ClassRead,
+	"write": ClassWrite, "edit": ClassEdit, "multiedit": ClassEdit, "notebookedit": ClassEdit,
+	"bash": ClassShell, "bashoutput": ClassShell, "killshell": ClassShell,
+	"task": ClassSubprocess, "agent": ClassSubprocess,
+	"webfetch": ClassNetwork, "websearch": ClassNetwork,
+	// grok
+	"read_file": ClassRead, "list_dir": ClassRead,
+	"write_file":     ClassWrite,
+	"search_replace": ClassEdit, "strreplace": ClassEdit, "edit_file": ClassEdit,
+	"run_terminal_command": ClassShell, "run_terminal_cmd": ClassShell, "run_terminal": ClassShell, "shell": ClassShell,
+	"spawn_subagent": ClassSubprocess,
+	"web_fetch":      ClassNetwork, "web_search": ClassNetwork, "image_gen": ClassNetwork,
+}
+
+// grantTool is one entry of a tools grant.
+type grantTool struct {
+	Name   string // as written, e.g. Bash(satelle:*)
+	Base   string // Name without its specifier, e.g. Bash
+	Scoped bool   // carries a (specifier) the harness must enforce
+}
+
+// parseGrant splits a comma/space separated grant, keeping a (specifier) whole.
+func parseGrant(grant string) []grantTool {
+	var out []grantTool
+	var cur strings.Builder
+	depth := 0
+	flush := func() {
+		name := strings.TrimSpace(cur.String())
+		cur.Reset()
+		if name == "" {
+			return
+		}
+		base, scoped := name, false
+		if i := strings.IndexByte(name, '('); i >= 0 {
+			base, scoped = strings.TrimSpace(name[:i]), true
+		}
+		out = append(out, grantTool{Name: name, Base: base, Scoped: scoped})
+	}
+	for _, r := range grant {
+		switch {
+		case r == '(':
+			depth++
+			cur.WriteRune(r)
+		case r == ')':
+			if depth > 0 {
+				depth--
+			}
+			cur.WriteRune(r)
+		case (r == ',' || r == ' ' || r == '\t') && depth == 0:
+			flush()
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	flush()
+	return out
+}
+
+// ClassifyTool maps a harness tool name onto its class. A name no table knows is
+// ClassUnknown. A specifier — Bash(satelle:*) — is ignored.
+func ClassifyTool(name string) ToolClass {
+	n := strings.ToLower(strings.TrimSpace(name))
+	if i := strings.IndexByte(n, '('); i >= 0 {
+		n = strings.TrimSpace(n[:i])
+	}
+	if n == "" {
+		return ClassUnknown
+	}
+	if strings.HasPrefix(n, "mcp__") || strings.HasPrefix(n, "mcp_") {
+		return ClassMCP
+	}
+	if c, ok := toolClassByName[n]; ok {
+		return c
+	}
+	return ClassUnknown
+}
+
+// classifyKind maps an ACP ToolKind onto a class.
+func classifyKind(kind string) ToolClass {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "read", "search", "think":
+		return ClassRead
+	case "edit", "delete", "move":
+		return ClassEdit
+	case "execute":
+		return ClassShell
+	case "fetch":
+		return ClassNetwork
+	default:
+		return ClassUnknown
+	}
+}
+
+// grantAdmits is what a grant admits: the classes of its tool names plus the
+// exact names listed. A reviewer's live permission policy counts only UNSCOPED
+// names (a scoped one — Bash(satelle:*) — is pre-approved by the harness itself;
+// a live ask for the same tool is by definition outside it). Only a harness that
+// enforces specifiers (claude) may offer a scoped tool in its allow-list.
+type grantAdmits struct {
+	classes map[ToolClass]bool
+	names   map[string]bool
+}
+
+func admitsFromGrant(grant string, includeScoped bool) grantAdmits {
+	a := grantAdmits{classes: map[ToolClass]bool{}, names: map[string]bool{}}
+	for _, t := range parseGrant(grant) {
+		if t.Scoped && !includeScoped {
+			continue
+		}
+		a.names[strings.ToLower(t.Base)] = true
+		if c := ClassifyTool(t.Base); c != ClassUnknown {
+			a.classes[c] = true
+		}
+	}
+	return a
+}
+
+// allows reports whether a tool of class c named name is inside the grant. An
+// unknown class is admitted only by an exact name listed in the grant.
+func (a grantAdmits) allows(c ToolClass, name string) bool {
+	if c == ClassUnknown {
+		return name != "" && a.names[strings.ToLower(name)]
+	}
+	return a.classes[c]
+}
+
+// dangerOrder ranks classes when one call shows several (worst first).
+var dangerOrder = []ToolClass{ClassShell, ClassSubprocess, ClassNetwork, ClassMCP, ClassWrite, ClassEdit}
+
+// acpToolCall is what an ACP toolCall carries that names the tool.
+type acpToolCall struct {
+	Kind     string
+	Title    string
+	RawInput json.RawMessage
+	// Names are explicit tool-name fields the peer put on the call (toolName,
+	// name, _meta.toolName) — first-class evidence, unlike a free-form title.
+	Names []string
+}
+
+// classifyACPCall resolves the class of an ACP tool call from every signal it
+// carries. The kind alone is never trusted: a peer may label a shell tool
+// kind=read (the VIRE run_terminal_command hole, sty_ef3efb51). Any signal
+// showing a dangerous class wins; read needs positive evidence.
+func classifyACPCall(call acpToolCall) (ToolClass, string) {
+	var seen []ToolClass
+	firstName := ""
+	note := func(c ToolClass, name string) {
+		seen = append(seen, c)
+		if firstName == "" && name != "" {
+			firstName = name
+		}
+	}
+	explicitUnknown := false
+	for _, n := range call.Names {
+		if strings.TrimSpace(n) != "" {
+			c := ClassifyTool(n)
+			explicitUnknown = explicitUnknown || c == ClassUnknown
+			note(c, n)
+		}
+	}
+	head, _, _ := strings.Cut(call.Title, ":")
+	head = strings.TrimSpace(head)
+	// A title is free prose: only a name a table knows counts, and a lone word
+	// counts only when it is the whole title head (so "Read edit.go" is not a
+	// write). Underscore names (run_terminal_command) are unambiguous tokens.
+	if c := ClassifyTool(head); c != ClassUnknown {
+		note(c, head)
+	}
+	for _, tok := range strings.FieldsFunc(call.Title, func(r rune) bool {
+		return !(r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9')
+	}) {
+		if strings.Contains(tok, "_") {
+			if c := ClassifyTool(tok); c != ClassUnknown {
+				note(c, tok)
+			}
+		}
+	}
+	if len(call.RawInput) > 0 {
+		var in map[string]json.RawMessage
+		if json.Unmarshal(call.RawInput, &in) == nil {
+			if _, ok := in["command"]; ok {
+				note(ClassShell, "command")
+			}
+		}
+	}
+	if k := classifyKind(call.Kind); k != ClassUnknown {
+		note(k, "")
+	}
+	class := worstClass(seen...)
+	if class == ClassRead && explicitUnknown {
+		// A peer that names a tool no table knows has an unknown tool, whatever
+		// benign kind it labels it with.
+		return ClassUnknown, firstName
+	}
+	return class, firstName
+}
+
+// worstClass picks the most dangerous class among cs; read only when read is
+// positively shown and nothing worse is; otherwise unknown.
+func worstClass(cs ...ToolClass) ToolClass {
+	for _, d := range dangerOrder {
+		for _, c := range cs {
+			if c == d {
+				return d
+			}
+		}
+	}
+	for _, c := range cs {
+		if c == ClassRead {
+			return ClassRead
+		}
+	}
+	return ClassUnknown
+}
+
+// ReviewerPermissionPolicy is the live-session permission policy of a reviewer
+// (stream and ACP): a tool is allowed only when its class is inside the grant.
+// Unknown, empty-kind and mislabelled tools are denied — never approved by
+// default.
+func ReviewerPermissionPolicy(grant string) PermissionPolicy {
+	admits := admitsFromGrant(grant, false)
+	return func(req PermissionRequest) PermissionDecision {
+		byName, byKind := ClassifyTool(req.ToolName), classifyKind(req.Kind)
+		if byName == ClassUnknown && req.ToolName != "" && byKind != ClassShell && byKind != ClassEdit && byKind != ClassNetwork {
+			// A named tool no table knows is unknown whatever a benign kind says.
+			return PermissionDecision{Allow: admits.allows(ClassUnknown, req.ToolName)}
+		}
+		// A dangerous kind beats a benign-looking name and vice versa; a request
+		// naming nothing and no kind is unknown, denied.
+		return PermissionDecision{Allow: admits.allows(worstClass(byName, byKind), req.ToolName)}
+	}
+}
+
+// ReviewerSessionPolicy narrows a live reviewer session's own policy (the rework
+// consultant's mutator ceiling, say) by its grant: a tool runs only when both
+// allow it, so the by-name denial holds on stream sessions too. A nil caller
+// leaves the grant policy alone.
+func ReviewerSessionPolicy(grant string, caller PermissionPolicy) PermissionPolicy {
+	byGrant := ReviewerPermissionPolicy(grant)
+	if caller == nil {
+		return byGrant
+	}
+	return func(req PermissionRequest) PermissionDecision {
+		if d := caller(req); !d.Allow {
+			return d
+		}
+		return byGrant(req)
+	}
+}
+
+// --- adapter identity and flag tables -------------------------------------
+
+// adapterOf names the provider behind a spawn from its binary and argv:
+// HarnessClaude, HarnessGrok or HarnessUnknown. Nothing unrecognised is assumed
+// to be Claude ([[satelle-agent-agnostic]] §3).
+func adapterOf(binary string, args []string) string {
+	base := strings.ToLower(filepath.Base(binary))
+	switch {
+	case strings.Contains(base, "claude"):
+		return HarnessClaude
+	case strings.Contains(base, "grok"):
+		return HarnessGrok
+	}
+	for _, a := range args {
+		if strings.Contains(strings.ToLower(a), "grok") {
+			return HarnessGrok
+		}
+	}
+	return HarnessUnknown
+}
+
+// flagValue returns the value of --name in args ("--name v" or "--name=v") and
+// whether the flag is present.
+func flagValue(args []string, name string) (string, bool) {
+	for i, a := range args {
+		if a == name {
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
+				return args[i+1], true
+			}
+			return "", true
+		}
+		if strings.HasPrefix(a, name+"=") {
+			return strings.TrimPrefix(a, name+"="), true
+		}
+	}
+	return "", false
+}
+
+func hasFlag(args []string, name string) bool {
+	_, ok := flagValue(args, name)
+	return ok
+}
+
+// skipsPermission reports whether the spawn args switch the harness's permission
+// requests off (yolo / always-approve / bypass): the harness then never asks, so
+// a permission deny never runs.
+func skipsPermission(adapter string, args []string) bool {
+	switch adapter {
+	case HarnessClaude:
+		if hasFlag(args, "--dangerously-skip-permissions") {
+			return true
+		}
+		if v, ok := flagValue(args, "--permission-mode"); ok && skipModeName(v) {
+			return true
+		}
+	case HarnessGrok:
+		if hasFlag(args, "--always-approve") || hasFlag(args, "--yolo") {
+			return true
+		}
+		for _, f := range []string{"--permission-mode", "--mode"} {
+			if v, ok := flagValue(args, f); ok && skipModeName(v) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// skipModeName reports whether a peer permission-mode id means "never ask".
+func skipModeName(id string) bool {
+	m := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(id, "_", ""), "-", ""))
+	for _, s := range []string{"yolo", "bypass", "alwaysapprove", "autoapprove", "dontask", "acceptall", "acceptedits"} {
+		if strings.Contains(m, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// toolList splits a --tools value into names (comma or space separated, a
+// specifier kept whole).
+func toolList(v string) []string {
+	var out []string
+	for _, t := range parseGrant(v) {
+		out = append(out, t.Name)
+	}
+	return out
+}
+
+// baseNames returns the deduplicated, order-preserving base names of a grant —
+// what a harness allow-list (claude --tools) names, specifiers stripped.
+func baseNames(grant string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range parseGrant(grant) {
+		k := strings.ToLower(t.Base)
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, t.Base)
+		}
+	}
+	return out
+}
+
+// --- preflight -------------------------------------------------------------
+
+// RefusalError is a reviewer dispatch refused before any process started because
+// no adapter path can keep the run inside its grant.
+type RefusalError struct {
+	// Adapter is "<provider>/<transport>", e.g. "grok/acp".
+	Adapter string
+	// Classes are the tool classes the adapter cannot deny.
+	Classes []ToolClass
+	// Why is the concrete reason.
+	Why string
+}
+
+func (e *RefusalError) Error() string {
+	cs := make([]string, len(e.Classes))
+	for i, c := range e.Classes {
+		cs[i] = string(c)
+	}
+	return fmt.Sprintf("reviewer dispatch refused: %s cannot deny %s outside the grant — %s", e.Adapter, strings.Join(cs, ", "), e.Why)
+}
+
+// noAskModeWhy is why a reviewer ACP peer that reports no permission mode is refused.
+const noAskModeWhy = "the peer reports no permission mode and cannot be forced to ask"
+
+// grokACPRefusalWhy is the preflight reason for a grok ACP reviewer binding.
+const grokACPRefusalWhy = noAskModeWhy + " (grok agent stdio: no modes block, no permission option, no ask flag), so an out-of-grant tool could run without a permission request; use the grok command transport with --tools equal to the grant"
+
+func allOutOfGrant() []ToolClass { return append([]ToolClass(nil), OutOfGrantClasses...) }
+
+// PreflightRunner refuses a reviewer dispatch the adapter cannot keep inside grant.
+// It is pure over the runner's own configuration and runs before the process
+// starts. A Runner satelle did not build (a test double) launches no harness
+// and is not judged.
+//
+// attested is the binding's isolation = "operator-attested" declaration: it admits
+// a reviewer whose harness no adapter recognises and nothing else — claude and
+// grok bindings are judged by their adapter whatever the operator declares.
+func PreflightRunner(r Runner, grant string, attested bool) error {
+	switch v := r.(type) {
+	case templateRunner:
+		return preflight(InterfaceCommand, v.binary, v.argTemplate, grant, attested)
+	case streamRunner:
+		return preflight(InterfaceStream, v.binary, v.args, grant, attested)
+	case acpRunner:
+		return preflight(InterfaceACP, v.binary, v.args, grant, attested)
+	}
+	return nil
+}
+
+// UnrecognisedRunner reports whether r's harness is one no adapter recognises, so
+// an operator-attested declaration is what admits it (and the ledger records that
+// source instead of a count).
+func UnrecognisedRunner(r Runner) bool {
+	switch v := r.(type) {
+	case templateRunner:
+		return adapterOf(v.binary, v.argTemplate) == HarnessUnknown
+	case streamRunner:
+		return adapterOf(v.binary, v.args) == HarnessUnknown
+	case acpRunner:
+		return adapterOf(v.binary, v.args) == HarnessUnknown
+	}
+	return false
+}
+
+// UnrecognisedCommand is UnrecognisedRunner over a binding's raw command (what
+// satelle doctor holds). An in-loop or empty command starts no process and is
+// never unrecognised.
+func UnrecognisedCommand(command string) bool {
+	fields := strings.Fields(command)
+	if len(fields) == 0 || strings.EqualFold(fields[0], "in-loop") {
+		return false
+	}
+	return adapterOf(fields[0], fields[1:]) == HarnessUnknown
+}
+
+// PreflightReviewer is PreflightRunner over a binding's raw interface and command
+// (what satelle doctor holds). An in-loop or empty command starts no process.
+func PreflightReviewer(iface, command, grant string, attested bool) error {
+	fields := strings.Fields(command)
+	if len(fields) == 0 || strings.EqualFold(fields[0], "in-loop") {
+		return nil
+	}
+	iface = strings.ToLower(strings.TrimSpace(iface))
+	if iface == "" {
+		iface = InterfaceCommand
+	}
+	return preflight(iface, fields[0], fields[1:], grant, attested)
+}
+
+func preflight(iface, binary string, args []string, grant string, attested bool) error {
+	adapter := adapterOf(binary, args)
+	label := adapter + "/" + iface
+	if adapter == HarnessUnknown {
+		if attested {
+			return nil
+		}
+		return &RefusalError{Adapter: label, Classes: allOutOfGrant(),
+			Why: fmt.Sprintf("no adapter knows how to trim or deny tools for %q (isolation = %q on the binding declares that the command offers no tool outside its grant)",
+				filepath.Base(binary), "operator-attested")}
+	}
+	skips := skipsPermission(adapter, args)
+	if iface == InterfaceACP {
+		if adapter == HarnessGrok {
+			// Captured from grok 1.0.41 (testdata/grok_acp_session_new_1.0.41.jsonl):
+			// session/new carries no modes block, configOptions offers no permission
+			// option and `grok agent stdio` has no ask flag, while the user's own
+			// grok config may set always-approve. satelle can neither confirm nor
+			// force ask mode, so no permission deny is guaranteed to run.
+			return &RefusalError{Adapter: label, Classes: allOutOfGrant(), Why: grokACPRefusalWhy}
+		}
+		if skips {
+			return &RefusalError{Adapter: label, Classes: allOutOfGrant(),
+				Why: "the spawn skips permission requests (yolo/always-approve), so the peer never asks and no out-of-grant tool can be denied; ACP cannot trim the offered tools"}
+		}
+		return nil
+	}
+	// command and stream: the harness trims its offered tools with an allow-list.
+	list, listed := flagValue(args, "--tools")
+	if adapter == HarnessGrok && listed {
+		// A blank grok --tools (`--tools=`, `--tools` before another flag, or
+		// `--tools {tools}` rendered from a grant naming no tool) is not an
+		// allow-list: grok may read it as "offer the default tools". Claude documents
+		// "" as no tools, so only grok is judged this way.
+		if v := strings.TrimSpace(list); v == "" || (v == "{tools}" && len(baseNames(grant)) == 0) {
+			listed = false
+		}
+	}
+	if listed && strings.TrimSpace(list) != "{tools}" {
+		admits := admitsFromGrant(grant, adapter == HarnessClaude)
+		var bad []ToolClass
+		var badNames []string
+		for _, n := range toolList(list) {
+			if !admits.allows(ClassifyTool(n), n) {
+				bad = append(bad, ClassifyTool(n))
+				badNames = append(badNames, n)
+			}
+		}
+		if len(bad) > 0 {
+			return &RefusalError{Adapter: label, Classes: uniqueClasses(bad),
+				Why: fmt.Sprintf("--tools offers %s, which the grant %q does not admit", strings.Join(badNames, ","), grant)}
+		}
+	}
+	if skips && adapter == HarnessClaude {
+		// A scoped grant (Bash(satelle:*)) is enforced by the permission engine; with
+		// permissions skipped the specifier is not applied and the bare tool runs
+		// unbounded. The offered tools are the listed --tools, else the grant's
+		// base names (reviewerArgs adds them at spawn).
+		offered := baseNames(grant)
+		if listed && strings.TrimSpace(list) != "" && strings.TrimSpace(list) != "{tools}" {
+			offered = baseNames(list)
+		}
+		if names := scopedOnlyOffered(grant, offered); len(names) > 0 {
+			var classes []ToolClass
+			for _, n := range names {
+				classes = append(classes, ClassifyTool(n))
+			}
+			return &RefusalError{Adapter: label, Classes: uniqueClasses(classes),
+				Why: fmt.Sprintf("the specifier is not enforced when permissions are skipped (%s runs unbounded under the grant %q)", strings.Join(names, ","), grant)}
+		}
+	}
+	if skips && !listed {
+		return &RefusalError{Adapter: label, Classes: allOutOfGrant(),
+			Why: "the binding skips permission requests (yolo/always-approve/bypass) without a --tools allow-list equal to its grant, so every tool the harness offers would run"}
+	}
+	if adapter == HarnessGrok && !listed {
+		return &RefusalError{Adapter: label, Classes: allOutOfGrant(),
+			Why: "grok's command transport carries no allow-list in this binding; add --tools <read-only grok tools> so only the grant is offered"}
+	}
+	return nil
+}
+
+// scopedOnlyOffered returns the offered tool names the grant only SCOPES: a tool
+// the grant lists solely with a specifier (Bash(satelle:*)) and never bare.
+func scopedOnlyOffered(grant string, offered []string) []string {
+	scoped := map[string]bool{}
+	bare := map[string]bool{}
+	for _, t := range parseGrant(grant) {
+		k := strings.ToLower(t.Base)
+		if t.Scoped {
+			scoped[k] = true
+		} else {
+			bare[k] = true
+		}
+	}
+	var out []string
+	for _, n := range offered {
+		if k := strings.ToLower(n); scoped[k] && !bare[k] {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func uniqueClasses(in []ToolClass) []ToolClass {
+	seen := map[ToolClass]bool{}
+	var out []ToolClass
+	for _, c := range in {
+		if !seen[c] {
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// --- spawn-time trim ---------------------------------------------------------
+
+// reviewerArgs applies the harness-side tool trim to a rendered reviewer argv. For
+// claude it adds `--tools <grant base names>` (the AVAILABLE built-in tools;
+// --allowedTools only pre-approves) and `--strict-mcp-config` (no MCP servers are
+// configured, so no mcp__* tool is offered) unless the template already carries
+// them. It also pins `--permission-mode default` when the template sets no mode
+// and does not skip permissions, so a user-settings defaultMode of
+// bypassPermissions cannot silently switch off the Bash(satelle:*) specifier
+// (under -p an ask the allow-list does not pre-approve is denied). Any other
+// request, and any other adapter, is returned unchanged.
+func reviewerArgs(binary string, args []string, req Request) []string {
+	if !req.ReadOnly || adapterOf(binary, args) != HarnessClaude {
+		return args
+	}
+	out := append([]string(nil), args...)
+	if !hasFlag(out, "--permission-mode") && !skipsPermission(HarnessClaude, out) {
+		out = append(out, "--permission-mode", "default")
+	}
+	if !hasFlag(out, "--tools") {
+		out = append(out, "--tools", strings.Join(baseNames(req.AllowedTools), ","))
+	}
+	if !hasFlag(out, "--strict-mcp-config") {
+		out = append(out, "--strict-mcp-config")
+	}
+	return out
+}
+
+// Where an offered-tool figure came from.
+const (
+	OfferedSourceFlag    = "flag"    // the --tools allow-list the adapter rendered
+	OfferedSourceHarness = "harness" // the harness's own report (claude system/init tools)
+	// OfferedSourceAttested: no adapter knows the harness; the operator declared
+	// isolation = "operator-attested" — it offers nothing outside the grant. No
+	// count is ever recorded for it.
+	OfferedSourceAttested = "operator-attested"
+)
+
+// AttestedIsolation is the ledger description of an operator-attested reviewer
+// binding: the source is the attestation, the limitation names the binding, and
+// there is never an offered-tool count.
+func AttestedIsolation(binding string) ReviewerIsolation {
+	return ReviewerIsolation{
+		Adapter:       HarnessUnknown,
+		OfferedSource: OfferedSourceAttested,
+		Limitation: fmt.Sprintf("binding %q: no adapter recognises this harness; the operator attests (isolation = %q) that it offers no tool outside the grant, so satelle neither trims nor verifies the offered tools",
+			binding, OfferedSourceAttested),
+	}
+}
+
+// ReviewerIsolation describes what one reviewer spawn offers, for the ledger.
+type ReviewerIsolation struct {
+	// Adapter is "<provider> <transport>".
+	Adapter string
+	// Limitation is the adapter-named limitation, empty when there is none.
+	Limitation string
+	// OfferedTools is the tools the harness offers; nil when unavailable.
+	OfferedTools []string
+	// OfferedSource is OfferedSourceFlag/OfferedSourceHarness, or
+	// "unavailable: <adapter reason>" when OfferedTools is nil.
+	OfferedSource string
+}
+
+// grokACPLimitation is the adapter-named limitation recorded for a grok ACP
+// reviewer (AC2): grok agent stdio has no tool-list or system-prompt flag. A grok
+// ACP reviewer is refused at preflight, so this is reachable only when preflight
+// is bypassed.
+const grokACPLimitation = "grok/acp: grok agent stdio cannot trim the offered tools, override the system prompt or drop the machine-wide skills list, and reports no permission mode so it cannot be forced to ask; a grok acp reviewer is refused, not denied by permission"
+
+const grokACPOfferedUnavailable = "unavailable: grok agent stdio neither trims nor reports offered tools"
+
+// DescribeReviewer reports what a reviewer spawn of r under req offers. It is pure:
+// the flag-sourced figure is read off the argv the adapter will render.
+func DescribeReviewer(r Runner, req Request) ReviewerIsolation {
+	var binary string
+	var args []string
+	var transport string
+	switch v := r.(type) {
+	case templateRunner:
+		binary, transport = v.binary, InterfaceCommand
+		args = reviewerArgs(v.binary, buildArgs(v.argTemplate, req), req)
+	case streamRunner:
+		binary, transport = v.binary, InterfaceStream
+		args = reviewerArgs(v.binary, buildArgs(v.args, req), req)
+	case acpRunner:
+		binary, transport = v.binary, InterfaceACP
+		args = v.args
+	default:
+		return ReviewerIsolation{}
+	}
+	adapter := adapterOf(binary, args)
+	iso := ReviewerIsolation{Adapter: adapter + " " + transport}
+	if transport == InterfaceACP {
+		iso.OfferedSource = "unavailable: " + adapter + " agent stdio neither trims nor reports offered tools"
+		if adapter == HarnessGrok {
+			iso.OfferedSource = grokACPOfferedUnavailable
+			iso.Limitation = grokACPLimitation
+		}
+		return iso
+	}
+	if v, ok := flagValue(args, "--tools"); ok {
+		iso.OfferedTools = baseNames(v)
+		if iso.OfferedTools == nil {
+			iso.OfferedTools = []string{}
+		}
+		iso.OfferedSource = OfferedSourceFlag
+		return iso
+	}
+	iso.OfferedSource = "unavailable: " + adapter + " " + transport + " binding carries no --tools allow-list"
+	return iso
+}
+
+// OfferedToolCount is the number of distinct tools a report names.
+func OfferedToolCount(tools []string) int {
+	seen := map[string]bool{}
+	for _, t := range tools {
+		seen[strings.ToLower(strings.TrimSpace(t))] = true
+	}
+	delete(seen, "")
+	return len(seen)
+}

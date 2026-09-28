@@ -66,6 +66,11 @@ type Event struct {
 	// Model is set on EventSessionInit only: the model the transport's own
 	// init message reported the session opened with (sty_7069bced).
 	Model string `json:"model,omitempty"`
+	// Tools is set on EventSessionInit only, and only when the transport's own
+	// init message lists the tools the harness offers the session (claude
+	// stream-json system/init `tools`) — the harness's own report of what it
+	// offers (sty_ef3efb51). Nil means the transport reported none.
+	Tools []string `json:"tools,omitempty"`
 }
 
 // EventHandler receives normalized events as they happen. Implementations may
