@@ -62,6 +62,7 @@ var Settings = []Setting{
 	{Section: "gate", Key: "no_implement_exempt_paths", Label: "No-implement exempt paths", Help: "Path prefixes skipped by the model-role rule only. Does not exempt the engaged-story gate (that is edit_exempt_paths).", Kind: kindList},
 	{Section: "gate", Key: "no_implement_exempt_globs", Label: "No-implement exempt globs", Help: "Filename globs skipped by the model-role rule only. Does not exempt the engaged-story gate.", Kind: kindList},
 	{Section: "gate", Key: "allow_outside_tree_edits", Label: "Allow outside-tree edits", Help: "Opt in to Bash/Edit mutations in another repo's working tree. Non-repo paths are never fenced. Default deny; only for a deliberate multi-repo install.", Kind: kindBool},
+	{Section: "gate", Key: "handoff", Label: "Gate handoff", Help: "auto = a gate-running verb called by an agent hands off (returns a handle, verdict delivered by notification) only when a configured driver harness has a background cutoff under 1 minute (the fastest measured gate; a repo with longer edges sets on); on = always hand off for an agent or no-terminal caller; off = always run in the foreground. SATELLE_GATE_MODE overrides.", Kind: kindEnum, Enum: []string{GateHandoffAuto, GateHandoffOn, GateHandoffOff}},
 	{Section: "engagement", Key: "parallel", Label: "Seat concurrency mode", Help: "none = one performing story at a time; epic = sibling children of one epic may engage concurrently, each from a distinct git working tree.", Kind: kindEnum, Enum: []string{ParallelNone, ParallelEpic}},
 	{Section: "sync", Key: "project", Label: "Sync project", Help: "Hosted project slug this repo maps to. Unset = this repo's directory name.", Kind: kindString},
 	{Section: "sync", Key: "server", Label: "Sync server (leftover)", Help: "Leftover repo key — not resolved. Hosted origin is machine-scope (satelle settings --global server). Re-home with satelle migrate --yes.", Kind: kindString},
@@ -139,6 +140,9 @@ func SettingDisplay(cfg Config, s Setting) string {
 		return strings.Join(cfg.Gate.NoImplementExemptGlobs, "\n")
 	case "gate.allow_outside_tree_edits":
 		return boolStr(cfg.Gate.AllowOutsideTreeEdits)
+	case "gate.handoff":
+		// The RESOLVED choice: an unset key means auto.
+		return cfg.ResolveGateHandoff()
 	case "engagement.parallel":
 		// The RESOLVED mode, not the raw field: an unset key means `none`, and an
 		// agent reading this surface needs the mode it is actually running under,

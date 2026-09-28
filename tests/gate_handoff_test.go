@@ -213,6 +213,45 @@ func TestAgentFacingRejectionKeepsItsNotesAndExitCode(t *testing.T) {
 	}
 }
 
+// sty_8ee31f26 AC1/AC3: a repo that sets `[gate] handoff = "off"` runs the gate in
+// the foreground for a caller with no terminal — the call outlasts the (short)
+// wait a hand-off would have honoured, prints the reviewer's progress, and
+// leaves no pending handle. The isolated env always carries
+// SATELLE_GATE_MODE=interactive, which would win over the repo setting, so the
+// call clears it (an empty value is the last duplicate exec takes, and the
+// resolver trims it and falls through to config). The env override itself is
+// proven by the neighbouring SATELLE_GATE_MODE cases and the unit resolver table.
+func TestRepoHandoffOffRunsTheGateInTheForeground(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	stubAmendVerdict(t, repo)
+	mustRun(t, testBin, repo, "reindex")
+	id := engageForAmend(t, repo, "Add a widget")
+	slowReviewer(t, repo, 3)
+	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"), "[gate]\nhandoff = \"off\"\n")
+	gates := filepath.Join(runtimeRoot(t, repo), "gates")
+	before, _ := os.ReadDir(gates)
+
+	start := time.Now()
+	out, err := runEnv(t, testBin, repo, []string{"SATELLE_GATE_MODE=", "SATELLE_GATE_WAIT=1s"},
+		"story", "amend", id, "--acceptance", "1. the widget renders\n2. the widget is green", "--reason", "fix colour")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if took := time.Since(start); took < 3*time.Second {
+		t.Fatalf("handoff = off returned after %s — it handed off instead of waiting out the 3s gate:\n%s", took, out)
+	}
+	if strings.Contains(out, `"gate":"pending"`) {
+		t.Fatalf("handoff = off returned a pending handle:\n%s", out)
+	}
+	if !strings.Contains(out, "running reviewer") {
+		t.Fatalf("a foreground run must print the reviewer progress line:\n%s", out)
+	}
+	if after, _ := os.ReadDir(gates); len(after) != len(before) {
+		t.Fatalf("handoff = off created %d gate handle(s)", len(after)-len(before))
+	}
+}
+
 // AC4: from an interactive terminal the gate runs in the foreground, the
 // reviewer's progress prints as it always did, and no detached run or handle is
 // created.

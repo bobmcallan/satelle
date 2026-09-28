@@ -1613,6 +1613,14 @@ const scaffoldTomlAfterExempt = `
 # [gate.command_allow]
 # push = ["release"]
 # allow_outside_tree_edits = false
+# handoff — whether a gate-running verb called by an agent (or with no terminal)
+# returns a handle and delivers the verdict later by notification, instead of
+# holding the foreground. "auto" (default) hands off only when a configured
+# driver harness has a background cutoff under 1 minute (grok: 15s; claude's 120s
+# is above it, so a claude repo whose edges run longer sets "on");
+# "on" always hands off for such a caller; "off" always runs in the foreground.
+# SATELLE_GATE_MODE=interactive|agent overrides it. See satelle help agent-dispatch.
+# handoff = "auto"
 
 # [engagement] — SEAT CONCURRENCY: how many stories may perform at once.
 # "none" (default, and what you get with no section) is single occupancy: one

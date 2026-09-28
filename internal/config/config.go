@@ -615,6 +615,51 @@ type GateConfig struct {
 	NoImplementMessage     string              `toml:"no_implement_message"`
 	NoImplementExemptPaths []string            `toml:"no_implement_exempt_paths"`
 	NoImplementExemptGlobs []string            `toml:"no_implement_exempt_globs"`
+	// Handoff chooses whether a gate-running verb called by an agent (or with no
+	// terminal) returns a handle and delivers its verdict later, instead of
+	// holding the foreground until the reviewer finishes. One of GateHandoffAuto
+	// (the default), GateHandoffOn, GateHandoffOff. The SATELLE_GATE_MODE
+	// environment variable overrides it. A value outside the set is refused at
+	// load (ValidateGateHandoff).
+	Handoff string `toml:"handoff"`
+}
+
+// Gate handoff choices for [gate] handoff (sty_8ee31f26). The set is CLOSED.
+const (
+	// GateHandoffAuto hands off only when a configured driver harness has a
+	// background cutoff under the fastest measured gate time (the mechanism
+	// decides; see agentcli.HandoffNeeded and GateForegroundBudget). It is not a
+	// guarantee for a harness above that line whose edges run longer. It is the default.
+	GateHandoffAuto = "auto"
+	// GateHandoffOn hands off for every agent caller or caller with no terminal.
+	GateHandoffOn = "on"
+	// GateHandoffOff always runs the gate in the foreground.
+	GateHandoffOff = "off"
+)
+
+// ResolveGateHandoff returns the configured handoff choice, defaulting an
+// absent/blank value to GateHandoffAuto. Load has already refused anything
+// outside the closed set.
+func (c Config) ResolveGateHandoff() string {
+	if s := strings.TrimSpace(c.Gate.Handoff); s != "" {
+		return s
+	}
+	return GateHandoffAuto
+}
+
+// ValidateGateHandoff refuses a [gate] handoff value outside the closed set,
+// naming the supported values. Matching is exact. Blank/absent is valid (it
+// means the default). path is named so a multi-file overlay says which file to
+// fix.
+func ValidateGateHandoff(c Config, path string) error {
+	switch v := strings.TrimSpace(c.Gate.Handoff); v {
+	case "", GateHandoffAuto, GateHandoffOn, GateHandoffOff:
+		return nil
+	default:
+		return fmt.Errorf(
+			"config: %s: [gate] handoff = %q is not a handoff choice — supported values are %q (hand off only where a driver harness has a background cutoff), %q and %q",
+			path, v, GateHandoffAuto, GateHandoffOn, GateHandoffOff)
+	}
 }
 
 // Seat concurrency modes for [engagement] parallel (sty_c098dc2d). The set is
@@ -880,6 +925,9 @@ func Load(explicitPath string) (Config, string, error) {
 	// Closed-set values are refused HERE so every caller of Load shares one
 	// answer — a bad mode must not reach the seat as a silent default.
 	if err := ValidateEngagement(cfg, path); err != nil {
+		return Config{}, path, err
+	}
+	if err := ValidateGateHandoff(cfg, path); err != nil {
 		return Config{}, path, err
 	}
 	if err := validateDiffRankPatterns(cfg, path); err != nil {

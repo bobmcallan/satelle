@@ -244,7 +244,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// a hang (sty_6c88ca10). stderr keeps stdout's JSON payload clean.
 			// An agent-facing call keeps it off the agent's stream (sty_c4b92c9e):
 			// the sink is stderr only for a person at a terminal.
-			rev.SetProgress(gateProgressSink(a.RuntimeDir))
+			rev.SetProgress(gateProgressSink(a.Config, a.RepoRoot, a.RuntimeDir))
 			// Queryable gate progress on the engagement lease (sty_598a8e1b).
 			// Best-effort: a SetActivity failure must never fail a transition.
 			leases := a.Store.Leases

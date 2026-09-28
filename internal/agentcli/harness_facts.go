@@ -87,6 +87,35 @@ func FactsFor(harness string) HarnessFacts {
 	}
 }
 
+// GateForegroundBudget is the LOW end of how long a gate-running verb holds the
+// foreground, not a typical or worst case. Its basis is measured: the driver
+// windows around gate-running commands in this repo's own ledger
+// (`satelle story cost`, sty_c4b92c9e / sty_7f3e6fd3 / sty_8ee31f26) run from
+// 53s to 6m55s — 53s, 1m2s, 1m16s, 1m42s, 2m41s, 4m44s, 6m55s — and a single
+// reviewer alone takes 9s–50s. So a harness whose cutoff is under a minute
+// cannot wait out even the quickest gate, and a hand-off is certainly needed.
+// A harness above it (claude, 120s) is NOT guaranteed to finish: a multi-gate
+// edge can exceed 120s, and that repo sets `[gate] handoff = "on"`. `auto` is
+// therefore a floor for when a hand-off is unavoidable, not a promise that the
+// foreground is safe.
+const GateForegroundBudget = time.Minute
+
+// HandoffNeeded reports whether any harness in play has a background cutoff
+// below GateForegroundBudget. A harness with no row takes FactsFor's
+// conservative floor, so it counts as needing a hand-off (§3): nothing
+// unrecognised is assumed generous. No harness in play means the floor applies.
+func HandoffNeeded(harnesses []string) bool {
+	if len(harnesses) == 0 {
+		return DefaultBackgroundCutoff < GateForegroundBudget
+	}
+	for _, h := range harnesses {
+		if FactsFor(h).BackgroundCutoff < GateForegroundBudget {
+			return true
+		}
+	}
+	return false
+}
+
 // AgentWaitBound is the longest an agent-facing gate-running verb may stay in
 // the foreground: the shortest background cutoff of any harness in play, less
 // GateWaitMargin, so the command always returns before that harness can

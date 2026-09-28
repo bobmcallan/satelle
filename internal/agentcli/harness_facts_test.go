@@ -53,6 +53,36 @@ func TestAgentWaitBound_UnknownHarnessGetsTheFloor(t *testing.T) {
 	}
 }
 
+// HandoffNeeded is what the `[gate] handoff = "auto"` default rests on
+// (sty_8ee31f26): true when any harness in play has a cutoff below a gate's
+// foreground budget — grok yes, claude no — and true for nothing configured or
+// nothing recognised, because an unrecognised harness gets the floor (§3).
+func TestHandoffNeeded(t *testing.T) {
+	cases := []struct {
+		set  []string
+		want bool
+	}{
+		{[]string{HarnessGrok}, true},
+		{[]string{HarnessClaude}, false},
+		{[]string{HarnessClaude, HarnessGrok}, true},
+		{nil, true},
+		{[]string{}, true},
+		{[]string{HarnessUnknown}, true},
+		{[]string{"some-new-cli"}, true},
+		{[]string{HarnessClaude, "some-new-cli"}, true},
+	}
+	for _, c := range cases {
+		if got := HandoffNeeded(c.set); got != c.want {
+			t.Errorf("HandoffNeeded(%v) = %v, want %v", c.set, got, c.want)
+		}
+	}
+	// The documented reason must hold: every recorded cutoff either sits below
+	// the budget (hand off) or at/above it (do not).
+	if DefaultBackgroundCutoff >= GateForegroundBudget {
+		t.Errorf("the unknown-harness floor %s must stay below the budget %s", DefaultBackgroundCutoff, GateForegroundBudget)
+	}
+}
+
 // Every harness row is a value or an adapter-named reason — never a silent
 // zero — and an unrecognised harness is named, not assumed to be claude.
 func TestHarnessFacts_EveryRowIsExplicit(t *testing.T) {

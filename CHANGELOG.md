@@ -1,3 +1,13 @@
+## [0.0.573] - 2026-09-28
+
+### Changed
+- **Migration: a claude-only repo runs gates in the foreground again, as before 0.0.563 (claude's 120s cutoff is above the 1-minute line; a repo whose edges run longer sets `handoff = "on"`).** Whether a gate-running verb hands off (returns a handle, delivers the verdict by notification) is now a per-repo choice, `[gate] handoff = "auto" | "on" | "off"`, and the default is `auto`: hand off only when a configured driver harness has a background cutoff under 1 minute — the shortest a gate-running command was measured to hold its caller (measured driver windows in this repo's ledger: 53s to 6m55s; grok's cutoff is 15s, claude's 120s). Under a minute a hand-off is unavoidable; above it `auto` is not a guarantee, since a multi-gate edge can outlast claude's 120s — such a repo sets `handoff = "on"`. Reason: a hand-off exists to beat a harness's background cutoff; where none applies it only adds a delayed notification that a caller may check too early (this repo's own rework run did), and it changed behaviour for every script with no terminal. A harness with no facts row takes the conservative floor, so an unrecognised harness still hands off. Set `handoff = "on"` to restore the 0.0.563 behaviour, or `"off"` to never hand off. `SATELLE_GATE_MODE` still overrides the setting. (sty_8ee31f26)
+
+## [serve-v0.0.95] - 2026-09-28
+
+### Changed
+- **The service embeds the per-repo gate handoff setting above.** (sty_8ee31f26)
+
 ## [0.0.572] - 2026-09-28
 
 ### Fixed

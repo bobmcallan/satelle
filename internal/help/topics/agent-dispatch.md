@@ -1038,9 +1038,33 @@ thing to do with a pending handle is end the turn.
 
 A person at an interactive terminal is unaffected: the gate runs in the
 foreground and the reviewer's progress prints on stderr as before.
-`SATELLE_GATE_MODE=interactive` gives a script or an operator the same
-foreground behaviour where no terminal is attached; `SATELLE_GATE_MODE=agent`
-forces the hand-off. `SATELLE_GATE_WAIT=<duration>` overrides the bound.
+
+### Whether a repo hands off — `[gate] handoff`
+
+Handing off is a per-repo choice, `handoff` in the `[gate]` table of
+`.satelle/satelle.toml`:
+
+| value | behaviour |
+| --- | --- |
+| `auto` (default) | an agent-facing call hands off only when a harness configured for the repo has a background cutoff under 1 minute — the shortest a gate-running command was measured to hold its caller (grok's 15s qualifies, claude's 120s does not); otherwise the gate runs in the foreground |
+| `on` | every agent-facing call hands off |
+| `off` | every call runs in the foreground |
+
+**Why `auto`.** A hand-off exists to beat a harness's background cutoff. Where
+no configured harness has one, a handle only adds a notification the driver may
+check too early, and it changes behaviour for scripts and operators with no
+terminal. The 1-minute line is measured, not a typical gate time: the driver
+windows around gate-running commands in this repo's ledger run from 53s to
+6m55s (a lone reviewer, 9s–50s). Under a minute, no gate can finish inside the
+cutoff, so a hand-off is unavoidable. Above it, `auto` is not a guarantee: a
+multi-gate edge can outlast claude's 120s, and a claude repo whose edges run
+that long should set `handoff = "on"`. A harness with no facts row takes the conservative floor, so an
+unrecognised harness counts as needing the hand-off. The decision is the
+adapter's fact table (`agentcli.HandoffNeeded`), not a harness name in the CLI.
+
+`SATELLE_GATE_MODE` overrides the repo setting: `interactive` gives a script or
+an operator the foreground behaviour, `agent` forces the hand-off.
+`SATELLE_GATE_WAIT=<duration>` overrides the bound.
 
 What each harness can do is a fact about the harness, recorded in
 `internal/agentcli/harness_facts.go`. A harness with no notification path is

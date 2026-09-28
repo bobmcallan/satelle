@@ -138,29 +138,76 @@ func TestGateCallerMode(t *testing.T) {
 	t.Cleanup(func() { stderrIsTerminal = old })
 
 	stderrIsTerminal = func() bool { return true }
-	if got := gateCallerMode(); got != gateModeInteractive {
+	if got := gateCallerMode(config.Config{}, t.TempDir()); got != gateModeInteractive {
 		t.Errorf("a person at a terminal = %s, want interactive", got)
 	}
 	stderrIsTerminal = func() bool { return false }
-	if got := gateCallerMode(); got != gateModeAgent {
+	if got := gateCallerMode(config.Config{}, t.TempDir()); got != gateModeAgent {
 		t.Errorf("no terminal = %s, want agent", got)
 	}
 	stderrIsTerminal = func() bool { return true }
 	t.Setenv("GROK_AGENT", "1")
-	if got := gateCallerMode(); got != gateModeAgent {
+	if got := gateCallerMode(config.Config{}, t.TempDir()); got != gateModeAgent {
 		t.Errorf("a harness-identified session at a terminal = %s, want agent", got)
 	}
 	// The override wins both ways.
 	t.Setenv(gateModeEnv, "interactive")
 	stderrIsTerminal = func() bool { return false }
-	if got := gateCallerMode(); got != gateModeInteractive {
+	if got := gateCallerMode(config.Config{}, t.TempDir()); got != gateModeInteractive {
 		t.Errorf("SATELLE_GATE_MODE=interactive = %s", got)
 	}
 	_ = os.Unsetenv("GROK_AGENT")
 	t.Setenv(gateModeEnv, "agent")
 	stderrIsTerminal = func() bool { return true }
-	if got := gateCallerMode(); got != gateModeAgent {
+	if got := gateCallerMode(config.Config{}, t.TempDir()); got != gateModeAgent {
 		t.Errorf("SATELLE_GATE_MODE=agent = %s", got)
+	}
+}
+
+// TestGateCallerMode_RepoHandoffChoice (sty_8ee31f26 AC1, AC3): the repo's
+// [gate] handoff decides whether an agent-facing caller hands off, and
+// SATELLE_GATE_MODE overrides it either way. Under auto the adapter's facts
+// decide: a grok scaffold (15s cutoff) hands off, a claude-only repo (120s) does
+// not.
+func TestGateCallerMode_RepoHandoffChoice(t *testing.T) {
+	old := stderrIsTerminal
+	t.Cleanup(func() { stderrIsTerminal = old })
+
+	cases := []struct {
+		name     string
+		handoff  string
+		env      string
+		scaffold string // harness scaffold dir the repo carries
+		terminal bool
+		want     gateMode
+	}{
+		{"off: no terminal is still foreground", config.GateHandoffOff, "", ".claude", false, gateModeInteractive},
+		{"off: grok scaffold is still foreground", config.GateHandoffOff, "", ".grok", false, gateModeInteractive},
+		{"on: claude-only, no terminal hands off", config.GateHandoffOn, "", ".claude", false, gateModeAgent},
+		{"on: a person at a terminal stays interactive", config.GateHandoffOn, "", ".claude", true, gateModeInteractive},
+		{"auto: grok in play hands off", config.GateHandoffAuto, "", ".grok", false, gateModeAgent},
+		{"auto: claude only stays foreground", config.GateHandoffAuto, "", ".claude", false, gateModeInteractive},
+		{"default (unset) is auto: claude only stays foreground", "", "", ".claude", false, gateModeInteractive},
+		{"auto: a terminal stays interactive even with grok", config.GateHandoffAuto, "", ".grok", true, gateModeInteractive},
+		{"env interactive beats on", config.GateHandoffOn, "interactive", ".grok", false, gateModeInteractive},
+		{"env agent beats off", config.GateHandoffOff, "agent", ".claude", true, gateModeAgent},
+		{"env agent beats auto with claude only", config.GateHandoffAuto, "agent", ".claude", false, gateModeAgent},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearHarnessEnv(t)
+			t.Setenv(gateModeEnv, tc.env)
+			repo := t.TempDir()
+			if err := os.MkdirAll(repo+"/"+tc.scaffold, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			stderrIsTerminal = func() bool { return tc.terminal }
+			cfg := config.Config{Gate: config.GateConfig{Handoff: tc.handoff}}
+			if got := gateCallerMode(cfg, repo); got != tc.want {
+				t.Errorf("gateCallerMode(handoff=%q env=%q scaffold=%s terminal=%v) = %s, want %s",
+					tc.handoff, tc.env, tc.scaffold, tc.terminal, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -409,13 +456,13 @@ func TestGateProgressSink_ByCaller(t *testing.T) {
 
 	// Interactive: stderr, exactly as before.
 	t.Setenv(gateModeEnv, string(gateModeInteractive))
-	got := captureStderr(t, func() { gateProgressSink(dir)("gate 1/2: reviewing") })
+	got := captureStderr(t, func() { gateProgressSink(config.Config{}, dir, dir)("gate 1/2: reviewing") })
 	if got != "gate 1/2: reviewing\n" {
 		t.Errorf("interactive progress = %q, want the line on stderr", got)
 	}
 	// Agent-facing: nothing on the agent's stream.
 	t.Setenv(gateModeEnv, string(gateModeAgent))
-	if got := captureStderr(t, func() { gateProgressSink(dir)("gate 1/2: reviewing") }); got != "" {
+	if got := captureStderr(t, func() { gateProgressSink(config.Config{}, dir, dir)("gate 1/2: reviewing") }); got != "" {
 		t.Errorf("agent-facing progress reached stderr: %q", got)
 	}
 	// A detached run keeps it in the handle's progress log.
@@ -426,7 +473,7 @@ func TestGateProgressSink_ByCaller(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := captureStderr(t, func() { gateProgressSink(dir)("gate 2/2: judging") }); got != "" {
+	if got := captureStderr(t, func() { gateProgressSink(config.Config{}, dir, dir)("gate 2/2: judging") }); got != "" {
 		t.Errorf("a detached run's progress reached stderr: %q", got)
 	}
 	b, _ := os.ReadFile(gatehandle.New(dir).ProgressPath(m.ID))

@@ -57,20 +57,38 @@ var stderrIsTerminal = func() bool {
 	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }
 
-// gateCallerMode decides who is calling. A person at a terminal is interactive;
-// anything else — no TTY, or a session a harness identifies — is an agent.
-// SATELLE_GATE_MODE overrides both.
-func gateCallerMode() gateMode {
+// gateCallerMode decides whether this call hands its gate off. The order is:
+//
+//  1. SATELLE_GATE_MODE, which wins over everything.
+//  2. The repo's [gate] handoff: "off" runs in the foreground; "on" hands off for
+//     any caller that is not a person at a terminal.
+//  3. "auto" (the default) hands off for such a caller only when a configured
+//     driver harness has a background cutoff under agentcli.GateForegroundBudget
+//     (agentcli.HandoffNeeded), the fastest measured gate. Above that line auto is
+//     not a guarantee: a repo whose edges outlast its harness's cutoff sets "on".
+//     Where no harness needs it a handle only adds a delayed notification the
+//     driver may check too early.
+//
+// A person at a terminal is always interactive; anything else — no TTY, or a
+// session a harness identifies — is an agent caller.
+func gateCallerMode(cfg config.Config, repoRoot string) gateMode {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(gateModeEnv))) {
 	case string(gateModeInteractive):
 		return gateModeInteractive
 	case string(gateModeAgent):
 		return gateModeAgent
 	}
-	if config.IsAgentCaller() || !stderrIsTerminal() {
-		return gateModeAgent
+	handoff := cfg.ResolveGateHandoff()
+	if handoff == config.GateHandoffOff {
+		return gateModeInteractive
 	}
-	return gateModeInteractive
+	if !config.IsAgentCaller() && stderrIsTerminal() {
+		return gateModeInteractive
+	}
+	if handoff == config.GateHandoffAuto && !agentcli.HandoffNeeded(configuredDriverHarnesses(repoRoot, os.Environ())) {
+		return gateModeInteractive
+	}
+	return gateModeAgent
 }
 
 // gateRun is what a detached run knows about itself. It is read from the
@@ -124,11 +142,11 @@ func finishGateRun(err error) {
 // terminal sees it on stderr, exactly as before. A detached run keeps it in the
 // handle's progress log, and an agent-facing call drops it: progress lines in an
 // agent's stream are tokens it pays to read and cannot act on.
-func gateProgressSink(runtimeDir string) func(string) {
+func gateProgressSink(cfg config.Config, repoRoot, runtimeDir string) func(string) {
 	if inGateRun() {
 		return appendLine(gatehandle.New(runtimeDir).ProgressPath(gateRun.id))
 	}
-	if gateCallerMode() == gateModeAgent {
+	if gateCallerMode(cfg, repoRoot) == gateModeAgent {
 		return func(string) {}
 	}
 	return func(msg string) { fmt.Fprintln(os.Stderr, msg) }
@@ -234,11 +252,14 @@ func drivingHarness() string {
 // could not start — and handled=true with the error the command must return
 // when it has answered the caller.
 func handOffGate(cmd *cobra.Command, verbName, storyID string) (handled bool, err error) {
-	if inGateRun() || gateCallerMode() != gateModeAgent {
+	if inGateRun() {
 		return false, nil
 	}
 	a, aerr := appFrom(cmd)
 	if aerr != nil || a == nil {
+		return false, nil
+	}
+	if gateCallerMode(a.Config, a.RepoRoot) != gateModeAgent {
 		return false, nil
 	}
 	store := gatehandle.New(a.RuntimeDir)

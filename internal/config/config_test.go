@@ -228,6 +228,47 @@ func TestEngagementParallelValidation(t *testing.T) {
 	}
 }
 
+// TestGateHandoff (sty_8ee31f26 AC1, AC3): [gate] handoff is a closed set that
+// defaults to auto, round-trips through Load and the settings display, and a
+// value outside the set is refused at load naming the supported values.
+func TestGateHandoff(t *testing.T) {
+	var zero Config
+	if got := zero.ResolveGateHandoff(); got != GateHandoffAuto {
+		t.Errorf("zero Config handoff = %q, want %q", got, GateHandoffAuto)
+	}
+	for _, want := range []string{GateHandoffAuto, GateHandoffOn, GateHandoffOff} {
+		cfg, err := writeConfig(t, "[gate]\nhandoff = \""+want+"\"\n")
+		if err != nil {
+			t.Fatalf("handoff = %q must load: %v", want, err)
+		}
+		if got := cfg.ResolveGateHandoff(); got != want {
+			t.Errorf("handoff = %q resolved to %q", want, got)
+		}
+		s, ok := SettingByID("gate.handoff")
+		if !ok {
+			t.Fatal("gate.handoff is not in the settings registry")
+		}
+		if got := SettingDisplay(cfg, s); got != want {
+			t.Errorf("settings display = %q, want %q", got, want)
+		}
+		if _, err := s.EncodeValue(want); err != nil {
+			t.Errorf("EncodeValue(%q): %v", want, err)
+		}
+	}
+	for _, bad := range []string{"ON", "true", "yes", "always"} {
+		_, err := writeConfig(t, "[gate]\nhandoff = \""+bad+"\"\n")
+		if err == nil {
+			t.Errorf("handoff = %q must be refused at load", bad)
+			continue
+		}
+		for _, name := range []string{GateHandoffAuto, GateHandoffOn, GateHandoffOff, bad} {
+			if !strings.Contains(err.Error(), name) {
+				t.Errorf("refusal for %q must name %q: %v", bad, name, err)
+			}
+		}
+	}
+}
+
 // TestLoadVarsOverlay pins the per-key merge the env substitution relies on: a
 // committed [vars] provides non-secret defaults, and the gitignored local overlay
 // adds/overrides keys WITHOUT dropping committed-only keys (sty_001558ce).
