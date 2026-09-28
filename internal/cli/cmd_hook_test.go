@@ -1005,7 +1005,7 @@ func TestStopHookActive(t *testing.T) {
 // TestEmitStopBlock: the Stop block payload carries decision=block + the reason.
 func TestEmitStopBlock(t *testing.T) {
 	var buf bytes.Buffer
-	if err := emitStopBlock(&buf, "ungated edits: a.go"); err != nil {
+	if err := emitStopBlock(&buf, "claude", "ungated edits: a.go"); err != nil {
 		t.Fatalf("emitStopBlock: %v", err)
 	}
 	var got stopBlockOut
@@ -1021,7 +1021,7 @@ func TestEmitStopBlock(t *testing.T) {
 // decision=block + reason (NOT PreToolUse hookSpecificOutput). Closed-key check.
 func TestStopBlockShape(t *testing.T) {
 	var buf bytes.Buffer
-	if err := emitStopBlock(&buf, "ungated edits: a.go"); err != nil {
+	if err := emitStopBlock(&buf, "claude", "ungated edits: a.go"); err != nil {
 		t.Fatalf("emitStopBlock: %v", err)
 	}
 	var root map[string]any

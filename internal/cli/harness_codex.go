@@ -218,6 +218,11 @@ func pruneSatelleHookEntries(raw []byte) (pruned []byte, empty bool, err error) 
 			}
 			hs, ok := gm["hooks"].([]any)
 			if !ok {
+				// A flat handler (Antigravity's PreInvocation/Stop lists carry the
+				// handler itself, not a matcher group): drop it when satelle's.
+				if cmd, _ := gm["command"].(string); isSatelleOwnedHookCommand(cmd) {
+					continue
+				}
 				keptGroups = append(keptGroups, g)
 				continue
 			}
@@ -299,6 +304,7 @@ func maybeRemoveSharedHookScript(repoRoot string) (action, path, note string, er
 		filepath.Join(repoRoot, ".claude", "settings.json"),
 		filepath.Join(repoRoot, filepath.FromSlash(grokHooksRel)),
 		filepath.Join(repoRoot, filepath.FromSlash(codexHooksRel)),
+		filepath.Join(repoRoot, filepath.FromSlash(antigravityHooksRel)),
 	} {
 		b, err := os.ReadFile(p)
 		if err != nil {

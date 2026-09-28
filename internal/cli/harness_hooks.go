@@ -48,8 +48,21 @@ var fullHookEvents = []string{"SessionStart", "PreToolUse", "UserPromptSubmit", 
 //   - EVENTS omit Stop. The Codex scaffold uses only the events proven in the
 //     sty_9e86f407 plan probe; stopcheck runs on Claude and Grok. A checker that
 //     demands Stop of Codex contradicts the builder that omits it.
+//
+// Antigravity (agy) differs in all three fields, from its own hook doc
+// (~/.gemini/antigravity-cli/builtin/skills/agy-customizations/docs/hooks.md) and
+// real agy session transcripts (sty_9e88b82f): its tools are write_to_file /
+// replace_file_content (edits) and run_command (shell); its lifecycle events are
+// PreInvocation (context injection — there is no SessionStart or
+// UserPromptSubmit), PreToolUse and Stop.
 func harnessHooks(harness string) harnessHookSpec {
 	switch harness {
+	case antigravityHarness:
+		return harnessHookSpec{
+			gateMatcher:   "write_to_file|replace_file_content",
+			commitMatcher: "run_command",
+			events:        []string{"PreInvocation", "PreToolUse", "Stop"},
+		}
 	case "grok":
 		return harnessHookSpec{
 			gateMatcher:   "Edit|Write|MultiEdit|NotebookEdit|search_replace|write",

@@ -94,7 +94,7 @@ byte ceiling (overflow noted on stderr); fails open so it never blocks a session
 				resolveContextHarness(hookHarnessFlag, raw, os.Environ()))
 		},
 	}
-	context.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex — selects the injection limit (default: sniff event, then environment)")
+	context.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex|antigravity —selects the injection limit (default: sniff event, then environment)")
 	gate := &cobra.Command{
 		Use:   "gate",
 		Short: "PreToolUse edit gate — block code edits unless a story is engaged",
@@ -361,15 +361,15 @@ session holds the seat.`,
 	}
 
 	// Explicit harness for deny shape (sty_9e86f407): wrapper forwards
-	// --harness claude|grok|codex; empty falls back to harnessFromEvent.
-	gate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex — deny envelope (default: sniff event)")
-	commitgate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex — deny envelope (default: sniff event)")
+	// --harness claude|grok|codex|antigravity; empty falls back to harnessFromEvent.
+	gate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex|antigravity —deny envelope (default: sniff event)")
+	commitgate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex|antigravity —deny envelope (default: sniff event)")
 	// Same explicit --harness on prompt/stopcheck (sty_719c4a7b AC2): the
 	// installed hook names its own harness rather than relying only on the
 	// event sniff, so bindSessionID's in-loop publish stays correct even if a
 	// future payload shape changes.
-	prompt.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex — in-loop publish (default: sniff event)")
-	stopcheck.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex — in-loop publish (default: sniff event)")
+	prompt.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex|antigravity —in-loop publish (default: sniff event)")
+	stopcheck.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex|antigravity —in-loop publish (default: sniff event)")
 	explain := &cobra.Command{
 		Use:   "explain",
 		Short: "Show how the PreToolUse model rule would decide for a payload",
@@ -483,14 +483,18 @@ func sessionIDFromHook(raw []byte) string {
 	var ev struct {
 		SessionID      string `json:"session_id"`
 		SessionIDCamel string `json:"sessionId"`
+		// Antigravity names its session conversationId on every hook payload.
+		ConversationID string `json:"conversationId"`
 	}
 	if json.Unmarshal(raw, &ev) != nil {
 		return ""
 	}
-	if s := strings.TrimSpace(ev.SessionID); s != "" {
-		return s
+	for _, s := range []string{ev.SessionID, ev.SessionIDCamel, ev.ConversationID} {
+		if s = strings.TrimSpace(s); s != "" {
+			return s
+		}
 	}
-	return strings.TrimSpace(ev.SessionIDCamel)
+	return ""
 }
 
 // bindSessionID is the hook identity: prefer SATELLE_SESSION (dispatch and
@@ -1140,7 +1144,8 @@ func derivedSeat(items []workitem.Item, wfs []docindex.Doc) (seatInfo, bool, err
 // camelCase envelope (toolInput.command) — both harnesses fire the same hook
 // (epic:scoped-sync order:9 / sty_0d3665ee). Codex may send command as a JSON
 // array of argv tokens (shell); those are joined with spaces (sty_9e86f407).
-// Prefer the first non-empty value.
+// Antigravity nests it as toolCall.args.CommandLine. Prefer the first non-empty
+// value.
 func bashCommandFromEvent(raw []byte) string {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &top); err != nil {
@@ -1170,13 +1175,46 @@ func bashCommandFromEvent(raw []byte) string {
 			return strings.Join(parts, " ")
 		}
 	}
-	return ""
+	// Antigravity: toolCall.args.CommandLine (run_command).
+	return antigravityToolArg(raw, "CommandLine")
+}
+
+// antigravityToolArg reads a string argument of an Antigravity PreToolUse
+// payload's toolCall.args (sty_9e88b82f). agy's own transcripts record each arg
+// value as a JSON-encoded string ("CommandLine":"\"ls -la\""), so a value that
+// is itself a JSON string literal is unwrapped: a quoted path would otherwise
+// resolve as a relative one and slip past the edit gate's path checks. The
+// documented hooks.md payload carries the plain form, which passes through.
+// "" when the key is absent or not a string.
+func antigravityToolArg(raw []byte, key string) string {
+	var ev struct {
+		ToolCall struct {
+			Args map[string]json.RawMessage `json:"args"`
+		} `json:"toolCall"`
+	}
+	if json.Unmarshal(raw, &ev) != nil {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(ev.ToolCall.Args[key], &s) != nil {
+		return ""
+	}
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, `"`) {
+		var inner string
+		if json.Unmarshal([]byte(s), &inner) == nil {
+			s = strings.TrimSpace(inner)
+		}
+	}
+	return s
 }
 
 // filePathFromEvent pulls the edit target out of a PreToolUse edit event.
 // Claude Code: tool_input.file_path / tool_input.notebook_path.
 // Grok: toolInput.file_path | filePath | path | notebook_path | notebookPath.
-// Returns "" when none is present. Prefer Claude snake_case, then Grok aliases.
+// Antigravity: toolCall.args.TargetFile.
+// Returns "" when none is present. Prefer Claude snake_case, then Grok aliases,
+// then Antigravity.
 func filePathFromEvent(raw []byte) string {
 	var ev struct {
 		ToolInputSnake struct {
@@ -1212,7 +1250,8 @@ func filePathFromEvent(raw []byte) string {
 			return p
 		}
 	}
-	return ""
+	// Antigravity: toolCall.args.TargetFile (write_to_file, replace_file_content).
+	return antigravityToolArg(raw, "TargetFile")
 }
 
 // sessionAnchor returns the pinned session-home repo root for containment and
@@ -1662,16 +1701,17 @@ type grokPreToolUseDenyOut struct {
 }
 
 // emitPreToolUseDeny writes one harness-correct deny JSON line to out.
-// harness is "grok" → top-level decision/reason; "claude"/"codex"/other → Claude
-// envelope (Codex rejects empty reasons and does not accept Grok's top-level
-// shape for PreToolUse deny — sty_9e86f407).
+// harness is "grok" or "antigravity" → top-level decision/reason (agy documents
+// the same {"decision":"deny","reason":…} shape — sty_9e88b82f);
+// "claude"/"codex"/other → Claude envelope (Codex rejects empty reasons and does
+// not accept Grok's top-level shape for PreToolUse deny — sty_9e86f407).
 func emitPreToolUseDeny(out io.Writer, harness, reason string) error {
 	if strings.TrimSpace(reason) == "" {
 		reason = "satelle: denied (no reason supplied)"
 	}
 	var b []byte
 	var err error
-	if harness == "grok" {
+	if harness == "grok" || harness == antigravityHarness {
 		b, err = json.Marshal(grokPreToolUseDenyOut{Decision: "deny", Reason: reason})
 	} else {
 		// Claude + Codex: hookSpecificOutput with deny + non-empty reason.
@@ -1948,7 +1988,31 @@ func runHookContext(out, stderr io.Writer, harness string) error {
 	if strings.TrimSpace(content) == "" {
 		return nil
 	}
+	if harness == antigravityHarness {
+		return emitAntigravityInject(out, content)
+	}
 	return emitAdditionalContext(out, "SessionStart", "", content)
+}
+
+// antigravityInjectOut is Antigravity's PreInvocation output: steps injected
+// before the model runs. An ephemeralMessage is a transient system message, so
+// it is the analogue of Claude's SessionStart additionalContext.
+type antigravityInjectOut struct {
+	InjectSteps []antigravityInjectStep `json:"injectSteps"`
+}
+
+type antigravityInjectStep struct {
+	EphemeralMessage string `json:"ephemeralMessage"`
+}
+
+// emitAntigravityInject writes the PreInvocation injection (one JSON line).
+func emitAntigravityInject(out io.Writer, message string) error {
+	b, err := json.Marshal(antigravityInjectOut{InjectSteps: []antigravityInjectStep{{EphemeralMessage: message}}})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, string(b))
+	return nil
 }
 
 // resolveContextHarness names the in-loop harness a SessionStart injection is
@@ -2528,6 +2592,13 @@ func runHookPrompt(out io.Writer) error {
 // check runs before the other-holder note so a sibling session that edited
 // nothing gets no chatter on every Stop.
 func runHookStopcheck(raw []byte, out io.Writer) error {
+	// The block shape is per harness (Antigravity blocks only on "continue"), chosen
+	// the way a PreToolUse deny chooses its envelope: the explicit --harness the
+	// scaffold passes, else the event fingerprint.
+	harness := hookHarnessFlag
+	if harness == "" {
+		harness = harnessFromEvent(raw)
+	}
 	// A gate the session handed off (sty_c4b92c9e) is what it is waiting on: wait
 	// for it here and answer with its verdict, which the harness feeds back as the
 	// session's next input — the wake that costs the driver no call to ask. A gate
@@ -2538,10 +2609,15 @@ func runHookStopcheck(raw []byte, out io.Writer) error {
 	// and a still-running note ends with the run (finished, died, or — where the
 	// platform cannot verify liveness — noted once).
 	if text := stopGateDeliveryFor(stopGateWait()); text != "" {
-		return emitStopBlock(out, text)
+		return emitStopBlock(out, harness, text)
 	}
 	if stopHookActive(raw) {
 		return nil // anti-loop: never re-block a stop we already blocked
+	}
+	if harness == antigravityHarness && antigravityStopForced(raw) {
+		// Antigravity's Stop also fires when the loop ended on an error or its step
+		// bound; "continue" there would re-enter a loop the harness meant to end.
+		return nil
 	}
 	root, ok := repoRootForHook()
 	if !ok {
@@ -2560,9 +2636,22 @@ func runHookStopcheck(raw []byte, out io.Writer) error {
 		return nil // git absent / clean / only exempt (.satelle) changes — nothing to flag
 	}
 	if other.ItemID != "" {
-		return emitStopNote(out, stopcheckSiblingNote(other, extra, gated, time.Now().UTC()))
+		return emitStopNote(out, harness, stopcheckSiblingNote(other, extra, gated, time.Now().UTC()))
 	}
-	return emitStopBlock(out, stopcheckReason(gated))
+	return emitStopBlock(out, harness, stopcheckReason(gated))
+}
+
+// antigravityStopForced reports whether an Antigravity Stop event records a
+// termination the harness imposed (its terminationReason is set and is not
+// "model_stop" — e.g. max_steps_exceeded, error) rather than the model choosing
+// to finish. An absent reason counts as the model finishing.
+func antigravityStopForced(raw []byte) bool {
+	var ev struct {
+		TerminationReason string `json:"terminationReason"`
+	}
+	_ = json.Unmarshal(raw, &ev)
+	reason := strings.TrimSpace(ev.TerminationReason)
+	return reason != "" && reason != "model_stop"
 }
 
 // repoRootForHook resolves this repo's root from the committed config, or
@@ -2720,7 +2809,15 @@ type stopAllowOut struct {
 }
 
 // emitStopNote writes the allow-with-note JSON (one line) and returns nil.
-func emitStopNote(out io.Writer, note string) error {
+// Antigravity documents no allow-with-message shape for Stop — any decision but
+// "continue" allows, and only a continue's reason is surfaced — so it gets an
+// empty object (allow) and the note goes to stderr, which is at worst logged.
+func emitStopNote(out io.Writer, harness, note string) error {
+	if harness == antigravityHarness {
+		fmt.Fprintln(out, "{}")
+		fmt.Fprintln(os.Stderr, note)
+		return nil
+	}
 	b, err := json.Marshal(stopAllowOut{SystemMessage: note})
 	if err != nil {
 		return err
@@ -2732,17 +2829,28 @@ func emitStopNote(out io.Writer, note string) error {
 // stopBlockOut is the Stop-hook block payload (AC6 / sty_5e4bc568 audit): Claude
 // Code's Stop control channel IS top-level {"decision":"block","reason":…} —
 // distinct from PreToolUse's hookSpecificOutput shape. The same top-level shape
-// best-effort covers Grok. No harness split needed; confirmed still honored.
+// best-effort covers Grok. Antigravity shares the shape but INVERTS the value
+// (sty_9e88b82f): it blocks a stop only on decision "continue" and lets any
+// other value — Claude's "block" included — through.
 type stopBlockOut struct {
 	Decision string `json:"decision"`
 	Reason   string `json:"reason"`
 }
 
+// stopBlockDecision is the decision value that blocks a stop on this harness.
+func stopBlockDecision(harness string) string {
+	if harness == antigravityHarness {
+		return "continue"
+	}
+	return "block"
+}
+
 // emitStopBlock writes the Stop block JSON (one line) and returns nil — the Stop
 // hook blocks via the stdout decision, not an exit code (its wiring carries no
-// '|| exit 2').
-func emitStopBlock(out io.Writer, reason string) error {
-	b, err := json.Marshal(stopBlockOut{Decision: "block", Reason: reason})
+// '|| exit 2'). Every block path goes through here so none can emit the wrong
+// decision value for its harness.
+func emitStopBlock(out io.Writer, harness, reason string) error {
+	b, err := json.Marshal(stopBlockOut{Decision: stopBlockDecision(harness), Reason: reason})
 	if err != nil {
 		return err
 	}

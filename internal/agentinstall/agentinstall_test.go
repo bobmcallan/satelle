@@ -115,15 +115,69 @@ func TestInstallAllAndUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rs) != 3 {
-		t.Fatalf("all should install 3: %+v", rs)
+	if len(rs) != 4 {
+		t.Fatalf("all should install 4: %+v", rs)
 	}
 	names := SortedNames(rs)
-	if strings.Join(names, ",") != "claude,codex,grok" {
+	if strings.Join(names, ",") != "antigravity,claude,codex,grok" {
 		t.Fatalf("names = %v", names)
 	}
 	if _, err := Install(home, "nope"); err == nil {
 		t.Fatal("unknown name must error")
+	}
+}
+
+// sty_9e88b82f AC7: antigravity installs the satelle-antigravity launcher, which
+// execs agy; "agy" is an alias for the same launcher, not a second one.
+func TestAntigravityLauncherAndAlias(t *testing.T) {
+	c, err := Content("antigravity")
+	if err != nil || !strings.Contains(c, "exec agy \"$@\"") || !strings.Contains(c, MarkerLine) {
+		t.Fatalf("antigravity content: %v %q", err, c)
+	}
+	home := t.TempDir()
+	for _, name := range []string{"antigravity", "agy"} {
+		rs, err := Install(home, name)
+		if err != nil || len(rs) != 1 || rs[0].Name != "antigravity" {
+			t.Fatalf("Install(%q) = %+v (%v)", name, rs, err)
+		}
+		if want := filepath.Join(home, RelBin, "satelle-antigravity"); rs[0].Path != want {
+			t.Fatalf("launcher path = %s, want %s", rs[0].Path, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, RelBin, "satelle-agy")); err == nil {
+		t.Fatal("the alias must not create a second launcher")
+	}
+	rs, err := Remove(home, "agy")
+	if err != nil || rs[0].Action != "removed" {
+		t.Fatalf("Remove(agy) = %+v (%v)", rs, err)
+	}
+	if _, err := os.Stat(LauncherPath(home, "antigravity")); !os.IsNotExist(err) {
+		t.Fatalf("launcher should be gone: %v", err)
+	}
+}
+
+// PrereqNote reports whether agy is on PATH — with and without it.
+func TestAntigravityPrereqNote(t *testing.T) {
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	if got := PrereqNote("antigravity"); !strings.Contains(got, "agy not on PATH") {
+		t.Errorf("without agy: %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "agy"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := PrereqNote("antigravity"); !strings.Contains(got, "agy on PATH") || strings.Contains(got, "not on PATH") {
+		t.Errorf("with agy: %q", got)
+	}
+}
+
+func TestAntigravityBindingSnippet(t *testing.T) {
+	snip := BindingSnippet("antigravity", "/h/agents/bin/satelle-antigravity")
+	if !strings.Contains(snip, "/h/agents/bin/satelle-antigravity") || !strings.Contains(snip, "agy") {
+		t.Fatalf("snippet = %q", snip)
+	}
+	if strings.Contains(snip, "\n[") || strings.Contains(snip, "role") {
+		t.Fatalf("agy has no reviewer adapter; the snippet must not invent a binding:\n%s", snip)
 	}
 }
 

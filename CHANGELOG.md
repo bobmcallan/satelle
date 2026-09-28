@@ -1,3 +1,8 @@
+## [0.0.565] - 2026-09-28
+
+### Added
+- **Antigravity (agy) is a supported harness.** `satelle init --harness antigravity` (alias `agy`) and `satelle agents install antigravity` write a per-repo `.agents/hooks.json` in agy's own format: PreToolUse gates file writes (`write_to_file|replace_file_content`) and commits (`run_command`), PreInvocation injects satelle's context as an agy `injectSteps` ephemeral message, and Stop blocks with agy's `decision: "continue"` so a handed-off gate's verdict is delivered. Hook payloads are read from agy's `toolCall.args` (`TargetFile`, `CommandLine`, including JSON-encoded values) and `conversationId`. Denials use agy's top-level `{"decision":"deny"}`, and the fail-visible wrapper emits the same shape when satelle is missing. Heal is idempotent, user hooks are preserved, and `satelle agents remove antigravity` removes only satelle's entries. A `satelle-antigravity` launcher runs `agy`. Nothing is installed outside the repo. (sty_9e88b82f)
+
 ## [0.0.564] - 2026-09-28
 
 ### Fixed
