@@ -74,12 +74,22 @@ func init() {
 
 // ChangelogEntry is one release section from CHANGELOG.md.
 type ChangelogEntry struct {
-	Version  string              `json:"version"`
-	Date     string              `json:"date,omitempty"`
-	Breaking bool                `json:"breaking"`
-	Sections map[string][]string `json:"sections,omitempty"`
-	Raw      string              `json:"raw,omitempty"`
+	Version  string `json:"version"`
+	Date     string `json:"date,omitempty"`
+	Breaking bool   `json:"breaking"`
+	// InitHeals is true when the entry's ### Breaking section carries an
+	// `init-heals:` bullet — the release's own declaration that `satelle init`
+	// performs every migration it names, so refusing commands until init runs is
+	// safe and sufficient. Absent, the entry's migrations are manual and the drift
+	// gate only warns. The declaration is authored in CHANGELOG.md, never in Go.
+	InitHeals bool                `json:"init_heals,omitempty"`
+	Sections  map[string][]string `json:"sections,omitempty"`
+	Raw       string              `json:"raw,omitempty"`
 }
+
+// initHealsMarker is the case-insensitive prefix of the ### Breaking bullet that
+// declares `satelle init` heals the release (see ChangelogEntry.InitHeals).
+const initHealsMarker = "init-heals:"
 
 // ChangelogResult is the changelog verb response.
 type ChangelogResult struct {
@@ -172,7 +182,12 @@ func parseChangelog(body string) []ChangelogEntry {
 			continue
 		}
 		if strings.HasPrefix(line, "- ") && section != "" {
-			cur.Sections[section] = append(cur.Sections[section], strings.TrimSpace(strings.TrimPrefix(line, "- ")))
+			bullet := strings.TrimSpace(strings.TrimPrefix(line, "- "))
+			if strings.EqualFold(section, "Breaking") && len(bullet) >= len(initHealsMarker) &&
+				strings.EqualFold(bullet[:len(initHealsMarker)], initHealsMarker) {
+				cur.InitHeals = true
+			}
+			cur.Sections[section] = append(cur.Sections[section], bullet)
 			cur.Raw += "\n" + line
 			continue
 		}

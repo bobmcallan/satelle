@@ -373,6 +373,47 @@ func TestStatusDriftFindingsAreInjected(t *testing.T) {
 	}
 }
 
+// TestBreakingDriftFindingsAreInjected (sty_6e143870 AC3): doctor surfaces an
+// unacknowledged Breaking release through the injected authority. A manual
+// migration is a warning (commands still run); one init heals is an error.
+func TestBreakingDriftFindingsAreInjected(t *testing.T) {
+	root := newFixtureRepo(t, fixtureOpts{})
+	dataDir := filepath.Join(root, ".satelle")
+	if ids(check(t, root))[health.IDBreakingUnacknowledged] {
+		t.Fatal("no breaking-drift authority was injected, so no finding may appear")
+	}
+	warn := Check(context.Background(), Opts{
+		RepoRoot: root, DataDir: dataDir,
+		BreakingDrift: func(string) health.Findings {
+			return health.Findings{health.Warn(health.IDBreakingUnacknowledged, "Breaking release needs manual migration",
+				"binary 0.0.9 is ahead of deployed stamp 0.0.1 across BREAKING release 0.0.5")}
+		},
+	})
+	if !ids(warn)[health.IDBreakingUnacknowledged] {
+		t.Fatalf("injected finding must reach the report: %+v", warn.Findings)
+	}
+	if !warn.OK {
+		t.Errorf("a manual-migration warning must not fail the report: %+v", warn.Findings)
+	}
+	fail := Check(context.Background(), Opts{
+		RepoRoot: root, DataDir: dataDir,
+		BreakingDrift: func(string) health.Findings {
+			return health.Findings{health.Error(health.IDBreakingUnacknowledged, "Breaking release not applied",
+				"binary 0.0.9 is ahead of deployed stamp 0.0.1 across BREAKING release 0.0.5")}
+		},
+	})
+	if fail.OK {
+		t.Errorf("an init-heals release still unapplied must FAIL the report: %+v", fail.Findings)
+	}
+	none := Check(context.Background(), Opts{
+		RepoRoot: root, DataDir: dataDir,
+		BreakingDrift: func(string) health.Findings { return nil },
+	})
+	if ids(none)[health.IDBreakingUnacknowledged] {
+		t.Errorf("empty injection must not invent a finding: %+v", none.Findings)
+	}
+}
+
 // TestScaffoldFindingsAreInjectedNotImported pins the dependency direction:
 // doctor never imports the harness-scaffold writer, it consumes the detector as
 // an injected authority. A nil injection skips the check rather than guessing.

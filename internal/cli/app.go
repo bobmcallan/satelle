@@ -71,14 +71,18 @@ func openAppForCmd(cmd *cobra.Command) error {
 		return fmt.Errorf("bootstrap: %w", err)
 	}
 	// Drift / breaking-surface gate: a deployed repo behind a breaking binary
-	// release fails closed and names `satelle init` as the heal path.
+	// release that declares `init-heals:` fails closed and names `satelle init` as
+	// the heal path; a release whose migrations are manual only warns, once per
+	// session, and the command runs (sty_6e143870).
 	// `restore` is a heal command and must not sit behind the stamp gate it
 	// heals (sty_a9ec33e7) — keep confirmation; keep other store verbs gated.
 	if cmd.Name() != "restore" {
-		if derr := refuseBreakingDrift(a.RepoRoot); derr != nil {
+		bw, derr := checkBreakingDrift(a.RepoRoot)
+		if derr != nil {
 			_ = a.Close()
 			return derr
 		}
+		warnBreakingOnce(a.RuntimeDir, bw, cmd.ErrOrStderr())
 	}
 	// Lazy harness install (epic:minimal-harness-footprint): if this process is
 	// inside a Claude/Grok session and the repo lacks that harness scaffold,
@@ -88,8 +92,8 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// Scaffold drift (sty_ac25b787, sty_e56ea643): deployed harness wrappers
 	// behind the binary are satelle-owned bytes that `satelle init` heals, so
 	// they WARN on stderr and never refuse — only a release's own CHANGELOG
-	// ### Breaking (refuseBreakingDrift above) stops a command. `status`
-	// prints the full block itself.
+	// ### Breaking that declares `init-heals:` (checkBreakingDrift above) stops a
+	// command. `status` prints the full block itself.
 	if cmd.Name() != "status" {
 		warnScaffoldDrift(a.RepoRoot, cmd.ErrOrStderr())
 	}

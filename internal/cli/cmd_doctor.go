@@ -94,6 +94,7 @@ killed and reaped on the deadline or on cancellation.`,
 				LiveTimeout:   timeout,
 				ScaffoldDrift: scaffoldFindings,
 				StatusDrift:   statusDriftFindings,
+				BreakingDrift: breakingDriftFindings,
 			}
 			if a != nil {
 				opts.RepoRoot = a.RepoRoot

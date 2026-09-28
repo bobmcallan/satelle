@@ -220,7 +220,7 @@ func formatScaffoldDriftWarning(findings []ScaffoldFinding) string {
 // staleness is a heal the operator can run when convenient, not a reason to
 // stop ordinary commands across every repo the moment a release changes a
 // managed byte. The only hard refusal left is the CHANGELOG `### Breaking`
-// gate (refuseBreakingDrift), which the release itself declares.
+// gate (checkBreakingDrift), which the release itself declares (`init-heals:`).
 // Dev builds and uninitialised repos skip.
 func warnScaffoldDrift(repoRoot string, w io.Writer) {
 	if isDevVersion(strings.TrimSpace(buildinfo.Resolve().Version)) {

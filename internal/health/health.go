@@ -78,7 +78,12 @@ const (
 	IDScaffoldStale   = "scaffold.stale"   // deployed harness scaffolding differs from the binary's canonical form
 	IDScaffoldMissing = "scaffold.missing" // canonical harness scaffolding is absent
 	IDRepoUnreadable  = "repo.unreadable"  // a registered repo could not be checked at all
-	IDConfigStray     = "config.stray"     // machine-scope key leftover in a repo file (sty_21a7d16d)
+
+	// IDBreakingUnacknowledged: the binary is ahead of the repo's deployed stamp
+	// across a CHANGELOG ### Breaking release — the migration is not yet done and
+	// `satelle init` has not re-stamped (sty_6e143870).
+	IDBreakingUnacknowledged = "breaking.unacknowledged"
+	IDConfigStray            = "config.stray" // machine-scope key leftover in a repo file (sty_21a7d16d)
 
 	// Workstate sync health (sty_30696eeb).
 	IDSyncLocal    = "sync.local"         // work-state areas are all local
@@ -104,7 +109,7 @@ var ids = []string{
 	IDReviewerUnsafe, IDNodeAlloc, IDHookAlloc,
 	IDBinaryMissing, IDBinaryMalformed,
 	IDWorkflowStructure, IDWorkflowConsistency,
-	IDScaffoldStale, IDScaffoldMissing, IDRepoUnreadable, IDConfigStray,
+	IDScaffoldStale, IDScaffoldMissing, IDRepoUnreadable, IDConfigStray, IDBreakingUnacknowledged,
 	IDSyncLocal, IDSyncOk, IDSyncFailing, IDSyncUnbacked, IDSyncConfig,
 	IDStatusDrift,
 	IDLiveOK, IDLiveAuth, IDLiveTimeout, IDLiveSpawn, IDLiveACPHandshake,

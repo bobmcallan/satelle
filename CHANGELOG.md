@@ -1,3 +1,8 @@
+## [0.0.570] - 2026-09-28
+
+### Changed
+- **A Breaking release blocks a repo's commands only when `satelle init` heals it.** A `### Breaking` entry refuses ordinary commands in a repo stamped before it only when the entry carries an `init-heals:` bullet — the release's own declaration that `satelle init` performs every migration it names. A Breaking entry without it (manual migrations such as hand edits or a `jq` command) now lets commands run and prints the entry's remediation once per session on stderr; `satelle init` still re-stamps, and `satelle doctor` reports the unacknowledged Breaking release as a finding. The session-start advisory says which of the two applies. 0.0.568's entry is unmarked on purpose: its migrations are manual. (sty_6e143870)
+
 ## [0.0.569] - 2026-09-28
 
 ### Fixed
@@ -2588,6 +2593,14 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 **Breaking marker:** a non-empty `### Breaking` subsection under a version means that
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
+
+**init-heals marker:** a `### Breaking` subsection refuses a repo's ordinary commands
+(until `satelle init` runs) only when it contains a bullet starting `init-heals:` —
+the release's own declaration that `satelle init` performs every migration the entry
+names. Without it the migrations are manual (hand edits, a `jq` command, removing
+config), init cannot heal them, so commands run and print the entry's bullets once per
+session as a stderr warning, and `satelle init` still re-stamps the repo. Declare it
+only when init alone is the whole remediation.
 
 ## [0.0.270] - 2026-07-17
 

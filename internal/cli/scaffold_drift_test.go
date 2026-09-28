@@ -304,14 +304,67 @@ func TestOrdinaryCommandsWarnOnStaleScaffolding(t *testing.T) {
 		}
 	})
 
-	t.Run("still refuses across a Breaking release", func(t *testing.T) {
+	// sty_6e143870: the shipped Breaking releases (0.0.385, 0.0.401, 0.0.568) all
+	// need manual migration and none declares `init-heals:`, so a stamp behind them
+	// warns once per session and every ordinary command runs.
+	t.Run("warns once per session and runs across a manual-migration Breaking release", func(t *testing.T) {
 		driftedRepo(t, "0.0.100") // the shipped 0.0.385 Breaking entry is in range
+		t.Setenv(config.SessionEnv, "sess-breaking")
+		stdout, stderr, err := runRootSplit(t, "", "story", "create", "--title", "behind", "--tags", "a")
+		if err != nil {
+			t.Fatalf("story create must run behind a manual-migration Breaking release: %v\n%s", err, stderr)
+		}
+		id := storyIDFromJSON(t, stdout)
+		for _, want := range []string{"BREAKING release", "0.0.385", "satelle migrate", "Commands still run", "re-stamps"} {
+			if !strings.Contains(stderr, want) {
+				t.Errorf("first command in the session must print the remediation, missing %q:\n%s", want, stderr)
+			}
+		}
+		if strings.Contains(stdout, "BREAKING release") {
+			t.Errorf("the warning must stay off stdout:\n%s", stdout)
+		}
+		for _, args := range [][]string{
+			{"story", "list"},
+			{"story", "get", id},
+			{"story", "set", id, "--priority", "high"},
+			{"ledger", "list", "--story", id},
+			{"sync"},
+		} {
+			_, stderr, err := runRootSplit(t, "", args...)
+			if err != nil {
+				t.Errorf("%v must run behind a manual-migration Breaking release: %v\n%s", args, err, stderr)
+				continue
+			}
+			if strings.Contains(stderr, "BREAKING release") {
+				t.Errorf("%v: the warning must print once per session, saw it again:\n%s", args, stderr)
+			}
+		}
+		// A fresh session is told again.
+		t.Setenv(config.SessionEnv, "sess-other")
+		_, stderr, err = runRootSplit(t, "", "story", "list")
+		if err != nil || !strings.Contains(stderr, "BREAKING release") {
+			t.Errorf("a new session must be warned again: err=%v\n%s", err, stderr)
+		}
+	})
+
+	t.Run("hooks run behind a manual-migration Breaking release", func(t *testing.T) {
+		driftedRepo(t, "0.0.100")
+		if _, _, err := runRootSplit(t, `{"session_id":"s"}`, "hook", "prompt"); err != nil {
+			t.Fatalf("hook prompt must not fail behind a manual-migration Breaking release: %v", err)
+		}
+	})
+
+	t.Run("still refuses an unstamped repo — init is the heal", func(t *testing.T) {
+		repo := driftedRepo(t, "0.0.100")
+		if err := os.Remove(filepath.Join(repo, config.DefaultDataDir, deployedVersionName)); err != nil {
+			t.Fatal(err)
+		}
 		_, stderr, err := runRootSplit(t, "", "story", "list")
 		if err == nil {
-			t.Fatal("a stamp behind a Breaking release must still refuse")
+			t.Fatal("an unstamped repo must still refuse — init establishes the baseline")
 		}
-		if !strings.Contains(strings.ToLower(err.Error()), "breaking") || !strings.Contains(err.Error(), "satelle init") {
-			t.Errorf("refusal must name the breaking release and the heal: %v", err)
+		if !strings.Contains(err.Error(), "satelle init") {
+			t.Errorf("refusal must name the heal: %v", err)
 		}
 		if strings.Contains(stderr, "scaffolding is stale") {
 			t.Errorf("a refused command must not also print the drift warning:\n%s", stderr)

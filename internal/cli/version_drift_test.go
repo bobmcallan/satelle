@@ -25,6 +25,7 @@ import (
 
 func TestVersionDriftLine(t *testing.T) {
 	breaking := verb.ChangelogEntry{Version: "0.0.440", Breaking: true}
+	healing := verb.ChangelogEntry{Version: "0.0.440", Breaking: true, InitHeals: true}
 	quiet := verb.ChangelogEntry{Version: "0.0.441"}
 
 	cases := []struct {
@@ -38,10 +39,20 @@ func TestVersionDriftLine(t *testing.T) {
 		{
 			// AC1: the whole point — name the binary, the stamp, the breaking
 			// classification and the heal, in one line.
-			name:     "behind across a breaking release",
+			name:     "behind across a breaking release whose migrations are manual",
 			deployed: "0.0.432", bin: "0.0.441",
-			entries:      []verb.ChangelogEntry{quiet, breaking},
-			wantContains: []string{"0.0.441", "0.0.432", "BREAKING release 0.0.440", "satelle init"},
+			entries:        []verb.ChangelogEntry{quiet, breaking},
+			wantContains:   []string{"0.0.441", "0.0.432", "BREAKING release 0.0.440", "manual migration", "commands warn", "satelle init"},
+			wantNotContain: []string{"refuse"},
+		},
+		{
+			// sty_6e143870: only a release that declares init-heals refuses, and the
+			// advisory says so ahead of time.
+			name:     "behind across a breaking release that init heals",
+			deployed: "0.0.432", bin: "0.0.441",
+			entries:        []verb.ChangelogEntry{quiet, healing},
+			wantContains:   []string{"0.0.441", "0.0.432", "BREAKING release 0.0.440", "commands refuse until init runs", "run `satelle init` to heal"},
+			wantNotContain: []string{"manual migration"},
 		},
 		{
 			name:     "behind with no breaking release in range",
@@ -142,32 +153,45 @@ func TestVersionDriftAdvisoryUninitialisedSilent(t *testing.T) {
 	}
 }
 
-// TestFirstBreakingIsTheOneDefinition: the refusal and the advisory classify the
+// TestSplitBreakingIsTheOneDefinition: the gate and the advisory classify the
 // same range through the same predicate (AC5). If this ever needed two answers,
 // the gap would be described one way to the operator who is warned and another
 // to the operator who is refused.
-func TestFirstBreakingIsTheOneDefinition(t *testing.T) {
+func TestSplitBreakingIsTheOneDefinition(t *testing.T) {
 	entries := []verb.ChangelogEntry{
 		{Version: "0.0.441"},
 		{Version: "0.0.440", Breaking: true},
-		{Version: "0.0.439", Breaking: true},
+		{Version: "0.0.439", Breaking: true, InitHeals: true},
+		{Version: "0.0.438", Breaking: true},
 	}
-	e, ok := firstBreaking(entries)
-	if !ok || e.Version != "0.0.440" {
-		t.Fatalf("firstBreaking = %+v, %v; want the FIRST breaking entry (0.0.440)", e, ok)
+	healing, manual := splitBreaking(entries)
+	if len(healing) != 1 || healing[0].Version != "0.0.439" {
+		t.Fatalf("healing = %+v; want only 0.0.439", healing)
 	}
-	if _, ok := firstBreaking([]verb.ChangelogEntry{{Version: "0.0.441"}}); ok {
-		t.Error("no breaking entry must report false")
+	if len(manual) != 2 || manual[0].Version != "0.0.440" || manual[1].Version != "0.0.438" {
+		t.Fatalf("manual = %+v; want 0.0.440 then 0.0.438 (newest first)", manual)
 	}
-	if _, ok := firstBreaking(nil); ok {
-		t.Error("nil entries must report false")
+	if h, m := splitBreaking([]verb.ChangelogEntry{{Version: "0.0.441"}}); len(h)+len(m) != 0 {
+		t.Error("no breaking entry must classify as neither")
 	}
-	// The refusal reaches the same verdict over the same range.
-	if err := breakingDriftError("0.0.432", "0.0.441", entries); err == nil {
-		t.Error("breakingDriftError must refuse the range firstBreaking says is breaking")
+	if h, m := splitBreaking(nil); len(h)+len(m) != 0 {
+		t.Error("nil entries must classify as neither")
 	}
-	if versionDriftLine("0.0.432", "0.0.441", entries) == "" {
-		t.Error("versionDriftLine must advise on the range breakingDriftError refuses")
+	// The gate reaches the same verdict over the same range: it refuses (an
+	// init-heals entry is in range) and the advisory names that release.
+	if _, err := breakingDrift("0.0.432", "0.0.441", entries); err == nil {
+		t.Error("breakingDrift must refuse a range splitBreaking says has an init-heals release")
+	}
+	if got := versionDriftLine("0.0.432", "0.0.441", entries); !strings.Contains(got, "0.0.439") {
+		t.Errorf("versionDriftLine must advise on the release the gate refuses, got %q", got)
+	}
+	// Without the init-heals entry the same range warns, and the advisory agrees.
+	manualOnly := []verb.ChangelogEntry{entries[0], entries[1], entries[3]}
+	if bw, err := breakingDrift("0.0.432", "0.0.441", manualOnly); err != nil || bw == nil {
+		t.Errorf("manual-only range must warn, not refuse: warn=%v err=%v", bw, err)
+	}
+	if got := versionDriftLine("0.0.432", "0.0.441", manualOnly); !strings.Contains(got, "manual migration") {
+		t.Errorf("versionDriftLine must call the manual range a manual migration, got %q", got)
 	}
 }
 

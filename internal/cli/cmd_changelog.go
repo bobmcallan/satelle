@@ -13,7 +13,10 @@ func init() {
 embedded in this binary (the only consumer channel — works in any repo with no
 satelle source tree, no local CHANGELOG.md, no git, no network). to defaults to
 the installed binary version. Breaking versions carry a non-empty ### Breaking
-subsection — the marker require-init and post-upgrade heal key on.
+subsection — the marker require-init and post-upgrade heal key on. A Breaking
+entry refuses a repo's commands only when it carries an "init-heals:" bullet
+(satelle init performs its migrations); otherwise the migrations are manual and
+commands warn once per session while satelle init still re-stamps.
 
 Repo-root CHANGELOG.md is the build input that ships into the embed; consumers
 never depend on it (sty_b5fa838a).

@@ -77,7 +77,7 @@ func TestIsDevVersion(t *testing.T) {
 
 // TestRefuseBreakingDriftDevBuildNeverGates covers AC4. It asserts against a
 // stamp old enough that the shipped 0.0.385 Breaking entry is in range, so on a
-// release build it would refuse — the dev short-circuit is the only reason it
+// release build it would warn — the dev short-circuit is the only reason it
 // does not. Skips loudly on a release build rather than passing vacuously.
 func TestRefuseBreakingDriftDevBuildNeverGates(t *testing.T) {
 	if !isDevVersion(buildinfo.Resolve().Version) {
@@ -92,8 +92,8 @@ func TestRefuseBreakingDriftDevBuildNeverGates(t *testing.T) {
 		[]byte("satelle.version: 0.0.100\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := refuseBreakingDrift(repo); err != nil {
-		t.Fatalf("dev build must never gate: %v", err)
+	if bw, err := checkBreakingDrift(repo); err != nil || bw != nil {
+		t.Fatalf("dev build must never gate or warn: warn=%v err=%v", bw, err)
 	}
 }
 
@@ -105,7 +105,7 @@ func TestRefuseBreakingDriftMissingStamp(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err := refuseBreakingDrift(repo)
+	_, err := checkBreakingDrift(repo)
 	// Either skipped (dev) or fails naming init.
 	if err != nil && !strings.Contains(err.Error(), "satelle init") {
 		t.Fatalf("want init named: %v", err)
@@ -113,6 +113,7 @@ func TestRefuseBreakingDriftMissingStamp(t *testing.T) {
 }
 
 // breakingEntry is a synthesised ### Breaking release carrying remediation text.
+// It declares nothing about init, so its migrations are manual — the warning case.
 func breakingEntry(ver string, bullets ...string) verb.ChangelogEntry {
 	e := verb.ChangelogEntry{Version: ver, Breaking: true, Sections: map[string][]string{}}
 	if len(bullets) > 0 {
@@ -121,91 +122,137 @@ func breakingEntry(ver string, bullets ...string) verb.ChangelogEntry {
 	return e
 }
 
+// healingEntry is a synthesised ### Breaking release that declares `init-heals:`
+// — the only shape that refuses ordinary commands (sty_6e143870).
+func healingEntry(ver string, bullets ...string) verb.ChangelogEntry {
+	e := breakingEntry(ver, bullets...)
+	e.InitHeals = true
+	return e
+}
+
 // TestBreakingDriftDecision exercises the pure decision directly. The whole-
 // function tests below self-neuter on a dev build (the gate short-circuits), so
-// this is where AC2/AC3/AC5 are actually proven (sty_b36c051c).
+// this is where the refuse / warn / quiet split is actually proven (sty_b36c051c).
 func TestBreakingDriftDecision(t *testing.T) {
 	conv := breakingEntry("0.0.385",
 		"An authored DOT workflow no longer resolves a lifecycle.",
 		"Convert it forward — run `satelle migrate` and read `satelle help workflow-convert`; `satelle init` does NOT convert DOT.")
 	bare := breakingEntry("0.0.385")
-	quiet := verb.ChangelogEntry{Version: "0.0.390", Sections: map[string][]string{"Fixed": {"something"}}}
+	heals := healingEntry("0.0.390",
+		"init-heals: `satelle init` rewrites the managed hook files.")
+	quiet := verb.ChangelogEntry{Version: "0.0.391", Sections: map[string][]string{"Fixed": {"something"}}}
 
 	cases := []struct {
-		name           string
-		deployed, bin  string
-		entries        []verb.ChangelogEntry
-		wantErr        bool
-		wantContains   []string
-		wantNotContain []string
+		name          string
+		deployed, bin string
+		entries       []verb.ChangelogEntry
+		wantRefuse    []string // non-nil: must refuse, message contains all
+		wantWarn      []string // non-nil: must warn, text contains all
+		wantNotRefuse []string // substrings the refusal must not carry
 	}{
 		{
-			name: "stamp predates the breaking release — refused with the conversion path",
-			// AC2: the remediation the operator reads is the changelog's own text.
+			name:     "init-heals entry in range — refused with its own bullets",
+			deployed: "0.0.380", bin: "0.0.396", entries: []verb.ChangelogEntry{quiet, heals},
+			wantRefuse: []string{"0.0.390", "0.0.380", "init-heals:", "managed hook files", "Run `satelle init` to heal."},
+		},
+		{
+			name:     "manual entry — warns with the release's remediation, never refuses",
 			deployed: "0.0.380", bin: "0.0.396", entries: []verb.ChangelogEntry{quiet, conv},
-			wantErr:      true,
-			wantContains: []string{"0.0.385", "satelle migrate", "satelle help workflow-convert", "0.0.380"},
-			// AC2: `satelle init` must NOT be the instruction for this class —
-			// except where the entry itself says it does not convert.
-			wantNotContain: []string{"run `satelle init` to heal"},
+			wantWarn: []string{"0.0.385", "0.0.380", "satelle migrate", "satelle help workflow-convert", "Commands still run", "re-stamps"},
 		},
 		{
-			name: "an entry that declares no remediation falls back to init",
-			// AC5: the fallback is the binary's ONE generic answer, not a branch.
+			name:     "manual entry that declares no remediation — warns and points at the changelog",
 			deployed: "0.0.380", bin: "0.0.396", entries: []verb.ChangelogEntry{bare},
-			wantErr:      true,
-			wantContains: []string{"run `satelle init` to heal"},
+			wantWarn: []string{"0.0.385", "CHANGELOG.md ### Breaking"},
 		},
 		{
-			name: "stamped AT the breaking release — not refused",
-			// AC3: 0.0.385 is not in (0.0.385, 0.0.396].
+			name:     "init-heals and manual in one range — refused, and the manual remediation is not lost",
+			deployed: "0.0.380", bin: "0.0.396", entries: []verb.ChangelogEntry{quiet, heals, conv},
+			wantRefuse: []string{"0.0.390", "Release 0.0.385 also needs manual migration", "satelle help workflow-convert"},
+		},
+		{
+			name:     "two manual entries — one warning carries both, newest first",
+			deployed: "0.0.380", bin: "0.0.396",
+			entries:  []verb.ChangelogEntry{breakingEntry("0.0.390", "second."), breakingEntry("0.0.385", "first.")},
+			wantWarn: []string{"release 0.0.390 says:\n  - second.", "release 0.0.385 says:\n  - first."},
+		},
+		{
+			name:     "stamped AT the breaking release — quiet",
 			deployed: "0.0.385", bin: "0.0.396", entries: []verb.ChangelogEntry{quiet},
 		},
 		{
-			name:     "current repo — not refused",
+			name:     "current repo — quiet",
 			deployed: "0.0.395", bin: "0.0.396", entries: []verb.ChangelogEntry{quiet},
 		},
 		{
-			name:     "stamp equals binary — not refused",
-			deployed: "0.0.396", bin: "0.0.396", entries: []verb.ChangelogEntry{conv},
+			name:     "stamp equals binary — quiet even with an init-heals entry",
+			deployed: "0.0.396", bin: "0.0.396", entries: []verb.ChangelogEntry{heals},
 		},
 		{
-			name:     "binary older than stamp — not refused even with a breaking entry",
-			deployed: "0.0.397", bin: "0.0.396", entries: []verb.ChangelogEntry{conv},
+			name:     "binary older than stamp — quiet even with a breaking entry",
+			deployed: "0.0.397", bin: "0.0.396", entries: []verb.ChangelogEntry{conv, heals},
 		},
 		{
-			name:     "version gap with no breaking entry — not refused",
+			name:     "version gap with no breaking entry — quiet",
 			deployed: "0.0.390", bin: "0.0.396", entries: []verb.ChangelogEntry{quiet},
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := breakingDriftError(c.deployed, c.bin, c.entries)
-			if !c.wantErr {
+			bw, err := breakingDrift(c.deployed, c.bin, c.entries)
+			switch {
+			case c.wantRefuse != nil:
+				if err == nil {
+					t.Fatal("want refusal, got nil")
+				}
+				if bw != nil {
+					t.Errorf("a refusal must not also warn: %+v", bw)
+				}
+				for _, want := range c.wantRefuse {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("refusal missing %q:\n%v", want, err)
+					}
+				}
+			case c.wantWarn != nil:
 				if err != nil {
-					t.Fatalf("want nil, got %v", err)
+					t.Fatalf("a manual-migration release must not refuse: %v", err)
 				}
-				return
-			}
-			if err == nil {
-				t.Fatal("want refusal, got nil")
-			}
-			for _, want := range c.wantContains {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("message missing %q:\n%v", want, err)
+				if bw == nil {
+					t.Fatal("want a warning, got none")
 				}
-			}
-			for _, no := range c.wantNotContain {
-				if strings.Contains(err.Error(), no) {
-					t.Errorf("message must not contain %q:\n%v", no, err)
+				for _, want := range c.wantWarn {
+					if !strings.Contains(bw.Text, want) {
+						t.Errorf("warning missing %q:\n%s", want, bw.Text)
+					}
+				}
+				if bw.Deployed != c.deployed {
+					t.Errorf("warning key Deployed = %q, want %q", bw.Deployed, c.deployed)
+				}
+			default:
+				if err != nil || bw != nil {
+					t.Fatalf("want quiet, got warn=%v err=%v", bw, err)
 				}
 			}
 		})
 	}
 }
 
-// TestShippedChangelogMarksDOTRetirement pins AC1 to the file that actually
-// ships. The guard reads the EMBED, so asserting a fixture that merely
+// TestBreakingWarningNamesNewestManualRelease: the once-per-session key follows
+// the newest manual release, so a NEWER Breaking release warns again even in a
+// session that has already seen the older one.
+func TestBreakingWarningNamesNewestManualRelease(t *testing.T) {
+	bw, err := breakingDrift("0.0.380", "0.0.396",
+		[]verb.ChangelogEntry{breakingEntry("0.0.390", "b"), breakingEntry("0.0.385", "a")})
+	if err != nil || bw == nil {
+		t.Fatalf("want a warning: warn=%v err=%v", bw, err)
+	}
+	if bw.Version != "0.0.390" {
+		t.Errorf("warning Version = %q, want the newest manual release 0.0.390", bw.Version)
+	}
+}
+
+// TestShippedChangelogMarksDOTRetirement pins the DOT retirement to the file that
+// actually ships. The guard reads the EMBED, so asserting a fixture that merely
 // resembles the changelog would prove nothing about a consumer's binary.
 func TestShippedChangelogMarksDOTRetirement(t *testing.T) {
 	entries, err := verb.ChangelogRange("0.0.384", "0.0.385")
@@ -219,29 +266,38 @@ func TestShippedChangelogMarksDOTRetirement(t *testing.T) {
 	if !e.Breaking {
 		t.Fatal("0.0.385 retired the DOT front end and must declare ### Breaking")
 	}
-	// AC2 end to end: the refusal a stale repo sees is composed from THIS text.
-	msg := breakingDriftError("0.0.380", "0.0.385", entries)
-	if msg == nil {
-		t.Fatal("a repo stamped before the DOT retirement must be refused")
+	if e.InitHeals {
+		t.Fatal("0.0.385's conversion is manual (`satelle init` does NOT convert DOT) — it must not declare init-heals")
+	}
+	// The warning a stale repo sees is composed from THIS text, and the commands
+	// keep running.
+	bw, derr := breakingDrift("0.0.380", "0.0.385", entries)
+	if derr != nil {
+		t.Fatalf("a manual-migration release must not refuse: %v", derr)
+	}
+	if bw == nil {
+		t.Fatal("a repo stamped before the DOT retirement must be warned")
 	}
 	for _, want := range []string{"satelle migrate", "satelle help workflow-convert", "does NOT convert"} {
-		if !strings.Contains(msg.Error(), want) {
-			t.Errorf("shipped remediation missing %q:\n%v", want, msg)
+		if !strings.Contains(bw.Text, want) {
+			t.Errorf("shipped remediation missing %q:\n%s", want, bw.Text)
 		}
 	}
 }
 
-// TestShippedChangelogSparesCurrentRepos is AC3 against the REAL corpus: a
-// repo is refused across a Breaking release and spared once it is stamped at or
-// after it. Ranges come from verb.ChangelogRange over the shipped embed, so this
-// fails if a later edit marks a release Breaking without accounting for who it
-// refuses.
+// TestShippedChangelogSparesCurrentRepos is the range check against the REAL
+// corpus: a repo is warned across a Breaking release and spared once it is
+// stamped at or after it. Ranges come from verb.ChangelogRange over the shipped
+// embed, so this fails if a later edit marks a release Breaking without
+// accounting for who it reaches.
 //
 // The expectations MOVE with each Breaking release, and they must — a `###
-// Breaking` marker exists to refuse the repos below it. Three markers ship today:
+// Breaking` marker exists to tell the repos below it. Three markers ship today,
+// and NONE declares `init-heals:`, because every migration they name is manual —
+// so no stamp is refused, and the ones below the newest marker are warned:
 //
 //   - 0.0.385, the DOT retirement. RETROACTIVE (sty_b36c051c) — added after the
-//     fact, so it can only refuse repos that were already broken.
+//     fact, so it can only reach repos that were already broken.
 //   - 0.0.401, the route source becoming TOML (sty_81bb0dde). A REAL breaking
 //     release: every repo whose route source is still markdown stops resolving
 //     on upgrade, and being told so on the next command — rather than at work
@@ -250,21 +306,20 @@ func TestShippedChangelogMarksDOTRetirement(t *testing.T) {
 //     a repo still carrying scaffolding or bindings for a removed harness must
 //     be told to clean them up by hand.
 //
-// So a stamp that this test spared before 0.0.568 is now correctly refused. What
-// stays invariant is the shape: at-or-after the newest marker is spared, and the
-// refusal a repo below it gets carries that release's own bullets.
+// What stays invariant is the shape: at-or-after the newest marker is quiet, and
+// the warning a repo below it gets carries that release's own bullets.
 func TestShippedChangelogSparesCurrentRepos(t *testing.T) {
 	// A ceiling above every shipped entry, so the range is the widest one any
 	// future binary could ask for.
 	const future = "9.9.9"
 	cases := []struct {
 		deployed string
-		refused  bool
+		warned   bool
 		why      string
 	}{
 		{"0.0.380", true, "predates the DOT retirement — already broken, must be told"},
 		{"0.0.385", true, "converted off DOT, but its route source is still markdown"},
-		{"0.0.395", true, "same — every pre-TOML stamp is refused across 0.0.401"},
+		{"0.0.395", true, "same — every pre-TOML stamp is warned across 0.0.401"},
 		{"0.0.401", true, "converted to TOML, but still predates the harness removal at 0.0.568"},
 		{"0.0.567", true, "the release just before the harness removal"},
 		{"0.0.568", false, "stamped AT the newest Breaking release"},
@@ -275,12 +330,15 @@ func TestShippedChangelogSparesCurrentRepos(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = breakingDriftError(c.deployed, future, entries)
-		if c.refused && err == nil {
-			t.Errorf("stamp %s (%s): want refusal, got none", c.deployed, c.why)
+		bw, derr := breakingDrift(c.deployed, future, entries)
+		if derr != nil {
+			t.Errorf("stamp %s (%s): no shipped release declares init-heals, so nothing may refuse:\n%v", c.deployed, c.why, derr)
 		}
-		if !c.refused && err != nil {
-			t.Errorf("stamp %s (%s): must not be refused:\n%v", c.deployed, c.why, err)
+		if c.warned && bw == nil {
+			t.Errorf("stamp %s (%s): want a warning, got none", c.deployed, c.why)
+		}
+		if !c.warned && bw != nil {
+			t.Errorf("stamp %s (%s): must be quiet:\n%s", c.deployed, c.why, bw.Text)
 		}
 	}
 }
@@ -288,35 +346,37 @@ func TestShippedChangelogSparesCurrentRepos(t *testing.T) {
 // TestShippedChangelogCarriesTheTomlRemediation (sty_81bb0dde AC6): the marker
 // only helps if the bullets an operator READS tell them what to do. A repo
 // stamped before the cutover must get the TOML conversion path verbatim — the
-// rename, the help topic, and the diff that proves no gate vanished — not the
-// older DOT-retirement text it also spans. The range stops just below the later
-// Breaking release, which the refusal would otherwise name in its place.
+// rename, the help topic, and the diff that proves no gate vanished. The range
+// stops just below the later Breaking release so the warning is about the
+// cutover alone.
 func TestShippedChangelogCarriesTheTomlRemediation(t *testing.T) {
 	entries, err := verb.ChangelogRange("0.0.395", "0.0.567")
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = breakingDriftError("0.0.395", "0.0.567", entries)
-	if err == nil {
-		t.Fatal("a pre-TOML stamp must be refused across the cutover")
+	bw, derr := breakingDrift("0.0.395", "0.0.567", entries)
+	if derr != nil {
+		t.Fatalf("the cutover's migration is manual and must not refuse: %v", derr)
 	}
-	msg := err.Error()
+	if bw == nil {
+		t.Fatal("a pre-TOML stamp must be warned across the cutover")
+	}
 	for _, want := range []string{
 		"done.toml", "step.toml",
 		"satelle help workflow-convert",
 		"satelle workflow show",
 		"satelle init` does NOT convert",
 	} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("the TOML remediation is missing %q:\n%v", want, msg)
+		if !strings.Contains(bw.Text, want) {
+			t.Errorf("the TOML remediation is missing %q:\n%s", want, bw.Text)
 		}
 	}
 }
 
-// TestRemediationCommandsAreReachable guards the half of AC2 the message text
-// cannot: a refusal is useless if the commands it names sit BEHIND the gate that
-// emits it. refuseBreakingDrift runs only for store-backed commands, so the
-// conversion path must stay off that annotation.
+// TestRemediationCommandsAreReachable guards the half the message text cannot: a
+// refusal is useless if the commands it names sit BEHIND the gate that emits it.
+// checkBreakingDrift runs only for store-backed commands, so the conversion path
+// must stay off that annotation.
 func TestRemediationCommandsAreReachable(t *testing.T) {
 	root := NewRootCmd()
 	for _, name := range []string{"migrate", "help"} {
@@ -330,12 +390,12 @@ func TestRemediationCommandsAreReachable(t *testing.T) {
 	}
 }
 
-// TestRefuseBreakingDriftBreakingRange covers the WIRING — stat the data dir,
+// TestCheckBreakingDriftBreakingRange covers the WIRING — stat the data dir,
 // read the stamp, range the shipped changelog, delegate the decision. It cannot
 // plant its own changelog: readChangelogBody prefers the embed always, which is
 // the point (a consumer's binary carries satelle's changelog, not their repo's).
 // So the fixture is the stamp alone, and the corpus is the real one.
-func TestRefuseBreakingDriftBreakingRange(t *testing.T) {
+func TestCheckBreakingDriftBreakingRange(t *testing.T) {
 	if isDevVersion(buildinfo.Resolve().Version) {
 		t.Skip("dev build never gates — see TestBreakingDriftDecision for the decision")
 	}
@@ -349,15 +409,18 @@ func TestRefuseBreakingDriftBreakingRange(t *testing.T) {
 		[]byte("satelle.version: 0.0.100\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := refuseBreakingDrift(repo)
-	if err == nil {
-		t.Fatal("release build with a 0.0.100 stamp must refuse across a Breaking release")
+	bw, err := checkBreakingDrift(repo)
+	if err != nil {
+		t.Fatalf("shipped Breaking releases are manual — must warn, not refuse: %v", err)
 	}
-	if !strings.Contains(strings.ToLower(err.Error()), "breaking") {
-		t.Fatalf("want breaking named: %v", err)
+	if bw == nil {
+		t.Fatal("release build with a 0.0.100 stamp must warn across a Breaking release")
+	}
+	if !strings.Contains(strings.ToLower(bw.Text), "breaking") {
+		t.Fatalf("want breaking named: %s", bw.Text)
 	}
 
-	// AC3, on the same wiring: a current stamp is not refused.
+	// A current stamp is neither warned nor refused.
 	cur := t.TempDir()
 	curData := filepath.Join(cur, ".satelle")
 	if err := os.MkdirAll(curData, 0o755); err != nil {
@@ -367,8 +430,8 @@ func TestRefuseBreakingDriftBreakingRange(t *testing.T) {
 		[]byte("satelle.version: "+buildinfo.Resolve().Version+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := refuseBreakingDrift(cur); err != nil {
-		t.Fatalf("a repo stamped at the running binary must not be refused: %v", err)
+	if bw, err := checkBreakingDrift(cur); err != nil || bw != nil {
+		t.Fatalf("a repo stamped at the running binary must be quiet: warn=%v err=%v", bw, err)
 	}
 }
 

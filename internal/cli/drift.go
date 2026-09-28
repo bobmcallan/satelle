@@ -3,12 +3,14 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/health"
 	"github.com/bobmcallan/satelle/internal/verb"
 )
 
@@ -62,27 +64,42 @@ func isDevVersion(v string) bool {
 	return strings.HasPrefix(v, "0.0.0-dev") || strings.Contains(v, "+")
 }
 
-// refuseBreakingDrift fails closed when the installed binary is newer than
-// .satelle/deployed.version AND CHANGELOG.md has a ### Breaking entry in the
-// open range (deployed, binary]. The REMEDIATION comes from that entry's own
-// bullets, not from Go — see breakingDriftError.
+// breakingWarning is the NON-refusing outcome of the drift gate: the binary is
+// ahead of this repo's stamp across ### Breaking release(s) whose migrations the
+// operator performs by hand, so `satelle init` cannot heal them (sty_6e143870).
+// Version and Deployed are the once-per-session key; Text is what the operator
+// reads, composed from the releases' own bullets.
+type breakingWarning struct {
+	Version  string // newest manual Breaking release in the range
+	Deployed string
+	Text     string
+}
+
+// checkBreakingDrift is the gatherer for the drift gate. It returns the refusal
+// when the range crosses a Breaking release that declares `init-heals:` (init
+// really is the heal, so stopping is safe and sufficient), and otherwise the
+// warning for a range that crosses only manual-migration Breaking releases. Both
+// are nil for every quiet case.
+//
+// The refusal (never the warning) also covers the unstamped repo: init is the
+// heal there, and it is the only way the baseline gets established.
 // Non-breaking version gaps do not gate. Dev builds never gate.
-func refuseBreakingDrift(repoRoot string) error {
+func checkBreakingDrift(repoRoot string) (*breakingWarning, error) {
 	binVer := strings.TrimSpace(buildinfo.Resolve().Version)
 	if isDevVersion(binVer) {
-		return nil
+		return nil, nil
 	}
 	dataDir := filepath.Join(repoRoot, config.DefaultDataDir)
 	// Uninitialized repo: no .satelle → app.Open may still work zero-config;
 	// only gate when the data dir exists (initialized).
 	if st, err := os.Stat(dataDir); err != nil || !st.IsDir() {
-		return nil
+		return nil, nil
 	}
 	deployed := readDeployedVersion(dataDir)
 	if deployed == "" {
 		// Initialized but never stamped (pre-gate repos): fail closed so the
 		// operator runs init once to establish the baseline.
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"satelle: this repo has no .satelle/%s stamp — run `satelle init` to align with binary %s (breaking-surface heal path)",
 			deployedVersionName, binVer)
 	}
@@ -90,65 +107,180 @@ func refuseBreakingDrift(repoRoot string) error {
 	entries, err := verb.ChangelogRange(deployed, binVer)
 	if err != nil {
 		// Missing changelog: do not brick — init analysis still works.
-		return nil
+		return nil, nil
 	}
-	return breakingDriftError(deployed, binVer, entries)
+	return breakingDrift(deployed, binVer, entries)
 }
 
-// breakingDriftError is the DECISION half of the drift gate: given the repo's
-// stamp, the running binary and the changelog entries in (deployed, binVer],
-// return the refusal or nil. Split from refuseBreakingDrift so the decision is
-// reachable without buildinfo — the dev short-circuit above makes every
+// breakingDrift is the DECISION half of the drift gate: given the repo's stamp,
+// the running binary and the changelog entries in (deployed, binVer], return the
+// warning, the refusal, or neither. Split from checkBreakingDrift so the decision
+// is reachable without buildinfo — the dev short-circuit above makes every
 // assertion about the whole function vacuous under `go test` (sty_b36c051c).
 //
-// The remediation is CONFIGURATION: a release that has something specific to
-// say says it in its own ### Breaking bullets and those reach the operator
-// verbatim. The binary contributes only the preamble and, for an entry that
-// declares nothing, the generic `satelle init` fallback. There is deliberately
-// no per-release branch here — the next breaking change authors its heal path
-// in CHANGELOG.md, with no recompile.
-func breakingDriftError(deployed, binVer string, entries []verb.ChangelogEntry) error {
+// Whether a release refuses is CONFIGURATION: it refuses only when its own
+// ### Breaking section carries an `init-heals:` bullet, because only then does
+// `satelle init` actually perform what the release asks. A release whose
+// migrations are manual (hand edits, a jq command) cannot be healed by the
+// command a refusal would send the operator to, so it warns instead and the
+// operator's commands keep running. The remediation is likewise the release's
+// own bullets, verbatim; there is deliberately no per-release branch here — the
+// next breaking change authors its heal path in CHANGELOG.md, with no recompile.
+func breakingDrift(deployed, binVer string, entries []verb.ChangelogEntry) (*breakingWarning, error) {
 	if verb.CmpSemverExported(deployed, binVer) >= 0 {
-		return nil // binary not newer
+		return nil, nil // binary not newer
 	}
-	if e, ok := firstBreaking(entries); ok {
-		head := fmt.Sprintf(
-			"satelle: binary %s is ahead of this repo's deployed stamp %s across BREAKING release %s",
-			binVer, deployed, e.Version)
-		bullets := e.Sections["Breaking"]
-		if len(bullets) == 0 {
-			return fmt.Errorf("%s — run `satelle init` to heal (see CHANGELOG.md ### Breaking)", head)
-		}
+	healing, manual := splitBreaking(entries)
+	switch {
+	case len(healing) > 0:
+		e := healing[0]
 		var b strings.Builder
-		b.WriteString(head)
-		b.WriteString(" — that release says:")
-		for _, ln := range bullets {
-			b.WriteString("\n  - ")
-			b.WriteString(ln)
+		fmt.Fprintf(&b,
+			"satelle: binary %s is ahead of this repo's deployed stamp %s across BREAKING release %s — that release says:%s",
+			binVer, deployed, e.Version, breakingBullets(e))
+		for _, m := range manual {
+			fmt.Fprintf(&b, "\nRelease %s also needs manual migration — it says:%s", m.Version, breakingBullets(m))
 		}
-		return errors.New(b.String())
+		b.WriteString("\nRun `satelle init` to heal.")
+		return nil, errors.New(b.String())
+	case len(manual) > 0:
+		var b strings.Builder
+		fmt.Fprintf(&b,
+			"⚠️ satelle: binary %s is ahead of this repo's deployed stamp %s across BREAKING release(s) whose migrations are manual — `satelle init` does not perform them:",
+			binVer, deployed)
+		for _, m := range manual {
+			fmt.Fprintf(&b, "\nrelease %s says:%s", m.Version, breakingBullets(m))
+		}
+		b.WriteString("\nCommands still run; `satelle init` re-stamps the repo once you have migrated.")
+		return &breakingWarning{Version: manual[0].Version, Deployed: deployed, Text: b.String()}, nil
 	}
-	return nil
+	return nil, nil
 }
 
-// firstBreaking returns the first changelog entry in the range that declares a
-// ### Breaking section. Entries arrive newest-first, so that is the NEWEST
-// breaking release in the range — the same one the refusal names, which is the
-// point. ONE definition of "this gap crosses a breaking release",
-// shared by the refusal (breakingDriftError) and the session-start advisory
-// (versionDriftLine) so the two can never disagree about the same range.
-func firstBreaking(entries []verb.ChangelogEntry) (verb.ChangelogEntry, bool) {
+// breakingDriftFindings is the doctor's view of the same gate: one finding per
+// Breaking release the repo's stamp has not caught up with, so the unacknowledged
+// entry shows in `satelle doctor` whether or not a command has warned about it
+// this session (sty_6e143870). Injected into doctor.Opts, like scaffoldFindings.
+// Quiet for dev builds, uninitialised or unstamped repos and a missing changelog
+// — the same cases checkBreakingDrift stays quiet on (unstamped refuses there).
+func breakingDriftFindings(repoRoot string) health.Findings {
+	binVer := strings.TrimSpace(buildinfo.Resolve().Version)
+	if isDevVersion(binVer) {
+		return nil
+	}
+	dataDir := filepath.Join(repoRoot, config.DefaultDataDir)
+	if st, err := os.Stat(dataDir); err != nil || !st.IsDir() {
+		return nil
+	}
+	deployed := readDeployedVersion(dataDir)
+	if deployed == "" {
+		return nil
+	}
+	entries, err := verb.ChangelogRange(deployed, binVer)
+	if err != nil {
+		return nil
+	}
+	return breakingFindings(deployed, binVer, entries)
+}
+
+// breakingFindings is the pure classification behind breakingDriftFindings: an
+// Error for a release that declares `init-heals:` (commands refuse until init
+// runs) and a Warn for one whose migrations are manual (commands warn). The
+// Detail carries the release's own bullets verbatim, as the gate's messages do.
+func breakingFindings(deployed, binVer string, entries []verb.ChangelogEntry) health.Findings {
+	if verb.CmpSemverExported(deployed, binVer) >= 0 {
+		return nil
+	}
+	healing, manual := splitBreaking(entries)
+	var out health.Findings
+	add := func(e verb.ChangelogEntry, mk func(id, title, detail string) health.Finding, title, effect, remediation string) {
+		detail := fmt.Sprintf("binary %s is ahead of deployed stamp %s across BREAKING release %s — %s; that release says: %s",
+			binVer, deployed, e.Version, effect, strings.Join(e.Sections["Breaking"], "; "))
+		out = append(out, mk(health.IDBreakingUnacknowledged, title, detail).About(e.Version).WithRemediation(remediation))
+	}
+	for _, e := range healing {
+		add(e, health.Error, "Breaking release not applied", "commands refuse until `satelle init` runs",
+			"run `satelle init` to heal")
+	}
+	for _, e := range manual {
+		add(e, health.Warn, "Breaking release needs manual migration", "commands warn, `satelle init` does not migrate it",
+			"perform the migration the release describes, then run `satelle init` to re-stamp")
+	}
+	return out
+}
+
+// breakingBullets renders an entry's ### Breaking bullets as an indented list,
+// or a pointer at the changelog when the entry says nothing specific.
+func breakingBullets(e verb.ChangelogEntry) string {
+	bullets := e.Sections["Breaking"]
+	if len(bullets) == 0 {
+		return " see CHANGELOG.md ### Breaking (`satelle changelog --from <stamp>`)"
+	}
+	var b strings.Builder
+	for _, ln := range bullets {
+		b.WriteString("\n  - ")
+		b.WriteString(ln)
+	}
+	return b.String()
+}
+
+// splitBreaking partitions the Breaking entries of a range into those that
+// declare `init-heals:` (a refusal — init is the heal) and those that do not (a
+// warning — the migration is manual). Entries arrive newest-first, so index 0 of
+// each list is the NEWEST release of its kind — the one the refusal or warning
+// names. ONE definition of "this gap crosses a breaking release", shared by the
+// gate (breakingDrift) and the session-start advisory (versionDriftLine) so the
+// two can never disagree about the same range.
+func splitBreaking(entries []verb.ChangelogEntry) (healing, manual []verb.ChangelogEntry) {
 	for _, e := range entries {
-		if e.Breaking {
-			return e, true
+		switch {
+		case !e.Breaking:
+		case e.InitHeals:
+			healing = append(healing, e)
+		default:
+			manual = append(manual, e)
 		}
 	}
-	return verb.ChangelogEntry{}, false
+	return healing, manual
+}
+
+// breakingWarnedName is the per-repo runtime file holding the key of the last
+// Breaking warning printed, so a session sees it once, not on every command.
+const breakingWarnedName = "breaking-warned"
+
+// warnBreakingOnce prints the Breaking warning on w (stderr) the first time a
+// session runs a command against this repo, and stays silent afterwards. The
+// marker lives on the home-keyed runtime plane, never in the repo tree, and is
+// keyed by session + stamp + release, so a new session, a re-stamp or a newer
+// release warns again. One file per repo, overwritten — nothing accumulates.
+//
+// With no resolvable session there is nothing to scope "once" to, so it prints
+// every time: repeating a warning costs a line, silencing it costs the
+// operator's only notice. A marker that cannot be read or written likewise
+// means the warning may repeat; it never fails the command.
+func warnBreakingOnce(runtimeDir string, bw *breakingWarning, w io.Writer) {
+	if bw == nil {
+		return
+	}
+	session := config.ResolveSession()
+	if session == "" {
+		fmt.Fprintln(w, bw.Text)
+		return
+	}
+	key := session + "|" + bw.Deployed + "|" + bw.Version
+	path := filepath.Join(runtimeDir, breakingWarnedName)
+	if prev, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(prev)) == key {
+		return
+	}
+	fmt.Fprintln(w, bw.Text)
+	if err := os.MkdirAll(runtimeDir, 0o755); err == nil {
+		_ = os.WriteFile(path, []byte(key+"\n"), 0o644)
+	}
 }
 
 // versionDriftAdvisory gathers the inputs versionDriftLine decides on: the
 // running binary, this repo's stamp, and the changelog entries between them.
-// The gatherer/decision split mirrors refuseBreakingDrift/breakingDriftError —
+// The gatherer/decision split mirrors checkBreakingDrift/breakingDrift —
 // the dev short-circuit below makes assertions about the whole function vacuous
 // under `go test`, so the decision has to be reachable without buildinfo.
 //
@@ -162,7 +294,7 @@ func versionDriftAdvisory(repoRoot string) string {
 	}
 	dataDir := filepath.Join(repoRoot, config.DefaultDataDir)
 	// Uninitialised repo: nothing was ever deployed here, so there is no gap to
-	// report — same guard refuseBreakingDrift applies.
+	// report — same guard checkBreakingDrift applies.
 	if st, err := os.Stat(dataDir); err != nil || !st.IsDir() {
 		return ""
 	}
@@ -209,10 +341,16 @@ func versionDriftLine(deployed, binVer string, entries []verb.ChangelogEntry) st
 		return "" // stamp current (or ahead) — the common path stays silent
 	}
 	gap := "no breaking release in that range"
-	if e, ok := firstBreaking(entries); ok {
-		gap = "BREAKING release " + e.Version + " in that range"
+	action := "run `satelle init` to heal."
+	healing, manual := splitBreaking(entries)
+	switch {
+	case len(healing) > 0:
+		gap = "BREAKING release " + healing[0].Version + " in that range — commands refuse until init runs"
+	case len(manual) > 0:
+		gap = "BREAKING release " + manual[0].Version + " in that range needs manual migration — commands warn"
+		action = "follow the release's ### Breaking bullets (`satelle changelog`), then run `satelle init` to re-stamp."
 	}
 	return fmt.Sprintf(
-		"\u26a0\ufe0f satelle: binary %s is ahead of this repo's .satelle/%s stamp %s (%s) — run `satelle init` to heal.",
-		binVer, deployedVersionName, deployed, gap)
+		"\u26a0\ufe0f satelle: binary %s is ahead of this repo's .satelle/%s stamp %s (%s) — %s",
+		binVer, deployedVersionName, deployed, gap, action)
 }

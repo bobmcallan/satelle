@@ -54,6 +54,52 @@ func TestParseChangelogAndRange(t *testing.T) {
 	}
 }
 
+// TestParseChangelogInitHeals (sty_6e143870 AC1): an `init-heals:` bullet under
+// ### Breaking is the release's declaration that `satelle init` performs its
+// migrations. It is not set for an unmarked Breaking entry, and not for the same
+// bullet sitting in another section — where it is just prose.
+func TestParseChangelogInitHeals(t *testing.T) {
+	all := parseChangelog(`# Changelog
+
+## [0.0.5] - 2026-07-15
+
+### Breaking
+- INIT-HEALS: satelle init rewrites the hook files.
+- an ordinary remediation bullet
+
+## [0.0.4] - 2026-07-14
+
+### Breaking
+- hand-edit agents.toml; init does not do this
+
+## [0.0.3] - 2026-07-13
+
+### Changed
+- init-heals: mentioned in prose, but not under Breaking
+
+## [0.0.2] - 2026-07-12
+
+### Breaking
+- init-heals
+`)
+	if len(all) != 4 {
+		t.Fatalf("entries = %d, want 4", len(all))
+	}
+	want := map[string]bool{"0.0.5": true, "0.0.4": false, "0.0.3": false, "0.0.2": false}
+	for _, e := range all {
+		if e.InitHeals != want[e.Version] {
+			t.Errorf("%s: InitHeals = %v, want %v", e.Version, e.InitHeals, want[e.Version])
+		}
+	}
+	if !all[0].Breaking || len(all[0].Sections["Breaking"]) != 2 ||
+		!strings.HasPrefix(all[0].Sections["Breaking"][0], "INIT-HEALS:") {
+		t.Errorf("the marker bullet must stay in the section so the operator reads it: %+v", all[0].Sections)
+	}
+	if all[2].Breaking {
+		t.Error("0.0.3 has no Breaking section")
+	}
+}
+
 func TestChangelogVerbFixture(t *testing.T) {
 	// Consumer channel is the embed; inject a fixture by overriding embed.
 	oldEmbed := embeddedChangelog

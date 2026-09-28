@@ -56,6 +56,11 @@ type Opts struct {
 	// status_transition. Injected: the detector lives in verb and needs a store;
 	// doctor does not open the database. Nil means the check is skipped.
 	StatusDrift func(repoRoot string) health.Findings
+	// BreakingDrift reports a repo whose deployed stamp is behind a CHANGELOG
+	// ### Breaking release. Injected for the same reason as ScaffoldDrift: the
+	// stamp reader and the drift classification live in internal/cli. Nil means
+	// the check is skipped.
+	BreakingDrift func(repoRoot string) health.Findings
 	// probe overrides the live prober in tests. Nil uses the real one.
 	probe func(ctx context.Context, g agentvalidate.Grant, timeout time.Duration) health.Findings
 }
@@ -168,6 +173,9 @@ func Check(ctx context.Context, o Opts) Report {
 	}
 	if o.StatusDrift != nil && strings.TrimSpace(o.RepoRoot) != "" {
 		rep.Findings = append(rep.Findings, o.StatusDrift(o.RepoRoot)...)
+	}
+	if o.BreakingDrift != nil && strings.TrimSpace(o.RepoRoot) != "" {
+		rep.Findings = append(rep.Findings, o.BreakingDrift(o.RepoRoot)...)
 	}
 
 	// 5b. Leftover machine-scope keys in repo files (config.MachineScopeStrays
