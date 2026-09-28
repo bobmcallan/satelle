@@ -436,6 +436,11 @@ type seatInfo struct {
 	HeartbeatAt time.Time
 	Stale       bool
 	InFlight    bool
+	// Waiting is true for a container idling at a route-declared
+	// waits_on_children step with open children (sty_7f3e6fd3). evaluateSeat
+	// never returns such a seat as live or as the naming pick; the flag is set
+	// for callers that build a descriptor themselves.
+	Waiting bool
 	// EditCapable is true only when the committed status is a spine performing
 	// step the route allocates to agent=executor. It is intentionally narrower
 	// than Engaged, which also includes isolated-agent planning states.
@@ -736,7 +741,7 @@ var seatHeartbeat = func(ctx context.Context, ls *lease.Store, itemID, owner str
 }
 
 // evaluateSeat is the pure engagement predicate (sty_1738f973 AC2). A lease L is
-// a live seat iff NOT IsStale(L) AND (committed status is a NonTerminalEngaging
+// a live seat iff lease.Alive(L) AND (committed status is a NonTerminalEngaging
 // state of the item's governing workflow OR (L.InFlight AND non-stale)). The
 // InFlight+fresh disjunct preserves the acquire-at-start window for a legit
 // first-transition dispatch; the residual sub-TTL orphan gap is the documented
@@ -758,7 +763,7 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 	// name-keyed cache would hand one story another's route (sty_9835070d).
 	var otherPick seatInfo
 	for _, l := range leases {
-		stale := lease.IsStale(l, now)
+		stale := !lease.Alive(l, now)
 		info := seatInfo{
 			ItemID:      l.ItemID,
 			State:       l.State,
@@ -830,6 +835,13 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 		engaging := map[string]bool{}
 		for _, s := range spec.NonTerminalEngagingStates() {
 			engaging[s] = true
+		}
+		// A container waiting on its children is not performing: leave it out of
+		// live AND out of the deny/session naming (sty_7f3e6fd3). A transition in
+		// flight on it is real work, so that case still counts.
+		if !info.InFlight && waitsOnOpenChildren(it, status, spec, items, wfs) {
+			info.Waiting = true
+			continue
 		}
 		// Live seat: committed status is performing, OR effective in-flight mid-transition.
 		// Use info.InFlight (EffectiveInFlight) not raw l.InFlight — a dead
@@ -925,7 +937,21 @@ func editPermitted(info seatInfo, marker dispatchMarker) bool {
 				agents = []string{info.StateAgent}
 			}
 		}
-		return info.InFlight && marker.Item == info.ItemID && slices.Contains(agents, marker.Agent)
+		if marker.Item != info.ItemID {
+			return false
+		}
+		if info.InFlight {
+			return slices.Contains(agents, marker.Agent)
+		}
+		// Not mid-transition: the dispatch entered its step and the status has
+		// committed (or the in-flight mark aged out under a long run). The seat is
+		// correct, so the performer the route allocates to that committed step may
+		// edit — the same rule the rework relay's coder gets (sty_7f3e6fd3).
+		status := info.StoryStatus
+		if status == "" {
+			status = info.State
+		}
+		return marker.Step == status && dispatchedPerformerPermitted(info, marker.Agent)
 	}
 	return !info.InFlight && info.EditCapable
 }
@@ -961,6 +987,37 @@ func dispatchedPerformerPermitted(info seatInfo, binding string) bool {
 		agents = []string{info.StateAgent}
 	}
 	return slices.Contains(agents, binding)
+}
+
+// waitsOnOpenChildren reports whether it is a container idling at a step its
+// route declares `waits_on_children` while at least one child is still open
+// (sty_7f3e6fd3). Such a story holds a status but performs nothing, so it is
+// not a performing seat holder: no edit is allowed under it, and its seat must
+// not stop an unrelated session, nor be named in a deny message.
+//
+// A child is resolved when its OWN route says terminal, or that it sits in a
+// cancel sink; a parked child (blocked) is still open. A child whose workflow
+// cannot be resolved does not keep the container waiting — the container then
+// counts as performing, exactly as it did before this rule. Which step waits is
+// the route's declaration; no status or category name appears here.
+func waitsOnOpenChildren(it workitem.Item, status string, spec wfdot.Spec, items []workitem.Item, wfs []docindex.Doc) bool {
+	if !spec.WaitsOnChildren(status) {
+		return false
+	}
+	for _, c := range items {
+		if c.ParentID != it.ID {
+			continue
+		}
+		cs, _, _, err := wfgovern.SpecFor(wfs, c)
+		if err != nil {
+			continue
+		}
+		if cs.IsTerminalState(c.Status) || (cs.IsParkState(c.Status) && !cs.IsResumePark(c.Status)) {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func dispatchAgents(spec wfdot.Spec) map[string][]string {
@@ -1125,6 +1182,9 @@ func derivedSeat(items []workitem.Item, wfs []docindex.Doc) (seatInfo, bool, err
 				engaging = true
 				break
 			}
+		}
+		if engaging && waitsOnOpenChildren(it, it.Status, spec, items, wfs) {
+			continue // a container waiting on its children is neither a seat nor a name to cite
 		}
 		if engaging {
 			info.Engaged = true
@@ -1546,7 +1606,7 @@ func firstDroppedPerformingSeat() seatInfo {
 		if lerr == nil {
 			now := time.Now().UTC()
 			for _, l := range leases {
-				if !lease.IsStale(l, now) {
+				if lease.Alive(l, now) {
 					leased[l.ItemID] = true
 				}
 			}
@@ -1567,7 +1627,7 @@ func firstDroppedPerformingSeat() seatInfo {
 				break
 			}
 		}
-		if engaging {
+		if engaging && !waitsOnOpenChildren(it, it.Status, spec, items, wfs) {
 			return seatInfo{ItemID: it.ID, StoryStatus: it.Status, State: it.Status}
 		}
 	}
@@ -2051,7 +2111,7 @@ func sessionSeatBlock(a *app.App) string {
 		info = seatInfo{
 			ItemID: l.ItemID, State: l.State, Owner: l.Owner, Worktree: l.Worktree,
 			AcquiredAt: l.AcquiredAt, HeartbeatAt: l.HeartbeatAt,
-			Stale: lease.IsStale(l, now), InFlight: lease.EffectiveInFlight(l, now),
+			Stale: !lease.Alive(l, now), InFlight: lease.EffectiveInFlight(l, now),
 		}
 	}
 	return formatSeatBlock(info, now, mode)

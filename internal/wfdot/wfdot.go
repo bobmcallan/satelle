@@ -205,6 +205,17 @@ type State struct {
 	Propose      bool
 	Freeze       bool
 	RejectBudget int
+	// WaitsOnChildren: a container idles here while its children are driven
+	// (sty_7f3e6fd3). Read through Spec.WaitsOnChildren.
+	WaitsOnChildren bool
+}
+
+// WaitsOnChildren reports whether the route declares that a story holding
+// status is waiting on its children rather than performing (`waits_on_children`
+// in step.toml). Unknown names do not wait.
+func (s Spec) WaitsOnChildren(status string) bool {
+	st, ok := s.StateNamed(status)
+	return ok && st.WaitsOnChildren
 }
 
 // StateNamed returns the spine state called name, and whether it exists.

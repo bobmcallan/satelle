@@ -26,8 +26,20 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
+// plantedHoldersDead makes the pid probe say the process behind every seat these
+// tests plant is gone. A planted lease is stamped with this test process's own
+// (live) pid, and a live in-flight pid keeps a seat Alive whatever its
+// heartbeat — so the kill these tests simulate needs the probe to agree.
+func plantedHoldersDead(t *testing.T) {
+	t.Helper()
+	prev := lease.PidAlive
+	lease.PidAlive = func(int) bool { return false }
+	t.Cleanup(func() { lease.PidAlive = prev })
+}
+
 func wireDU(t *testing.T) *store.DB {
 	t.Helper()
+	plantedHoldersDead(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -1049,6 +1061,7 @@ func TestOrdinaryDeltaAndLateCreditNeverBothClaimSameTurn(t *testing.T) {
 // package verb (internal), and acquireEngagementLease is unexported.
 func wireDUWithEngagingWorkflow(t *testing.T) *store.DB {
 	t.Helper()
+	plantedHoldersDead(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {

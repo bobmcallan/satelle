@@ -416,7 +416,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	// holds it. A deferred abort guard releases a NEWLY acquired seat (or clears
 	// in_flight on sequential continuation) on ANY return path that does not
 	// settle — gate reject, dispatch abort, panic-recoverable exit, Update error.
-	// SIGKILL still cannot run defers; HeartbeatTTL + IsStale covers that residual.
+	// SIGKILL still cannot run defers; HeartbeatTTL + lease.Alive covers that residual.
 	// settled is set only after force-release (exit) or Confirm (engaging commit).
 	// sameStatusReengage also acquires (sty_4f74d01f) without running gate/dispatch.
 	acquiredThisCall := false
@@ -472,6 +472,9 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		} else {
 			acquiredThisCall = acq
 			settled = false
+			// The gate and any dispatched performer fire no hook of their own, so
+			// nothing else refreshes the heartbeat while they run.
+			defer keepEngagementAlive(ctx, current.ID)()
 		}
 	}
 	// releaseOnAbort: newly acquired seats are deleted; sequential continuations

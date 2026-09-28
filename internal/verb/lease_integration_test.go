@@ -444,6 +444,11 @@ func TestOrphanStaleLeaseDoesNotBlockEngage(t *testing.T) {
 	if err := db.Leases.SetHeartbeat(ctx, a.ID, staleAt); err != nil {
 		t.Fatalf("freeze heartbeat: %v", err)
 	}
+	// The kill: the process that started the transition is gone. A live
+	// in-flight pid would keep the seat (lease.Alive), so the probe says dead.
+	prevProbe := lease.PidAlive
+	lease.PidAlive = func(int) bool { return false }
+	t.Cleanup(func() { lease.PidAlive = prevProbe })
 	// A committed status is still backlog — the field-defect shape.
 	var still workitem.Item
 	json.Unmarshal(call(t, "story-get", map[string]any{"id": a.ID}), &still)
@@ -456,7 +461,7 @@ func TestOrphanStaleLeaseDoesNotBlockEngage(t *testing.T) {
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("orphan row: err=%v len=%d", err, len(rows))
 	}
-	if !lease.IsStale(rows[0], time.Now().UTC()) || !rows[0].InFlight {
+	if lease.Alive(rows[0], time.Now().UTC()) || !rows[0].InFlight {
 		t.Fatalf("orphan must be stale+in_flight: %+v", rows[0])
 	}
 	// New story B engages: Acquire steals the stale seat holder.

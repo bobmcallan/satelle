@@ -133,8 +133,12 @@ type stepWire struct {
 	Propose      bool `toml:"propose"`
 	Freeze       bool `toml:"freeze"`
 	RejectBudget *int `toml:"reject_budget"`
-	Start        bool `toml:"start"`
-	Terminal     bool `toml:"terminal"`
+	// WaitsOnChildren marks a step at which a container idles while its child
+	// stories are driven: it holds the status, but nothing performs on the
+	// container itself (sty_7f3e6fd3).
+	WaitsOnChildren bool `toml:"waits_on_children"`
+	Start           bool `toml:"start"`
+	Terminal        bool `toml:"terminal"`
 }
 
 type gateWire struct {
@@ -354,6 +358,8 @@ func ParseSteps(body string) (Catalogue, error) {
 			Terminal:      s.Terminal,
 			Propose:       s.Propose,
 			Freeze:        s.Freeze,
+
+			WaitsOnChildren: s.WaitsOnChildren,
 		}
 		if s.RejectBudget != nil {
 			st.RejectBudget = *s.RejectBudget

@@ -96,6 +96,7 @@ func TestReleaseOwnerOnly(t *testing.T) {
 }
 
 func TestStaleLeaseStolen(t *testing.T) {
+	holderGone(t) // the dead owner's transition pid is gone too
 	s := openTestDB(t)
 	ctx := context.Background()
 	// Force stale via old heartbeat by inserting directly then stealing.
@@ -200,8 +201,8 @@ func TestEffectiveInFlightAgesStuckFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	if IsStale(l, now) {
-		t.Fatal("heartbeat is fresh — must not be IsStale")
+	if !Alive(l, now) {
+		t.Fatal("heartbeat is fresh — must be Alive")
 	}
 	if !l.InFlight {
 		t.Fatal("raw InFlight column still set")
@@ -356,9 +357,10 @@ func TestLeaseSessionColumnMigration(t *testing.T) {
 	}
 }
 
-// TestListIsStaleReap: List returns rows; IsStale flags aged heartbeats; Reap
+// TestListAliveReap: List returns rows; Alive rejects aged heartbeats; Reap
 // deletes them so a subsequent seat-occupying acquire succeeds (sty_1738f973 AC3).
-func TestListIsStaleReap(t *testing.T) {
+func TestListAliveReap(t *testing.T) {
+	holderGone(t)
 	s := openTestDB(t)
 	ctx := context.Background()
 	_, _, _, _ = s.Acquire(ctx, "sty_a", "story", "dead", "plan", true)
@@ -371,8 +373,8 @@ func TestListIsStaleReap(t *testing.T) {
 		t.Fatalf("list: %v len=%d", err, len(all))
 	}
 	now := time.Now().UTC()
-	if !IsStale(all[0], now) {
-		t.Fatal("aged lease must be IsStale")
+	if Alive(all[0], now) {
+		t.Fatal("aged lease must not be Alive")
 	}
 	reaped, err := s.Reap(ctx)
 	if err != nil || len(reaped) != 1 || reaped[0].ItemID != "sty_a" {

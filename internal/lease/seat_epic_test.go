@@ -169,6 +169,7 @@ func TestSubLeaseLifecycle(t *testing.T) {
 	})
 
 	t.Run("stale reap takes one sibling only", func(t *testing.T) {
+		holderGone(t)
 		s := openTestDB(t)
 		mustAcquire(t, s, seatOpts("sty_a", "alice", "epic_1", "/w/a"))
 		mustAcquire(t, s, seatOpts("sty_b", "alice", "epic_1", "/w/b"))
@@ -212,6 +213,7 @@ func TestSubLeaseLifecycle(t *testing.T) {
 // the actively-worked sibling alive — route by owner alone and the other
 // sibling's heartbeat is the one refreshed, letting this one die at TTL.
 func TestHeartbeatRoutesByWorktree(t *testing.T) {
+	holderGone(t)
 	s := openTestDB(t)
 	ctx := context.Background()
 	const owner = "local@host" // one host, one owner string, two leases
@@ -240,10 +242,10 @@ func TestHeartbeatRoutesByWorktree(t *testing.T) {
 	now := time.Now().UTC()
 	a, _ := s.Get(ctx, "sty_a")
 	b, _ := s.Get(ctx, "sty_b")
-	if IsStale(a, now) {
+	if !Alive(a, now) {
 		t.Errorf("worked sibling must be refreshed: %+v", a)
 	}
-	if !IsStale(b, now) {
+	if Alive(b, now) {
 		t.Errorf("idle sibling must NOT be refreshed by its sibling's activity: %+v", b)
 	}
 	// No tree, or an unknown tree, must not silently pick someone else's lease.

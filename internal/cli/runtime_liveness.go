@@ -34,7 +34,7 @@ type liveHolder struct {
 // which would create wal/shm and fight VACUUM INTO.
 //
 // An in-flight dispatch is covered by freshness: a live dispatch heartbeats, so
-// !IsStale already refuses it. in_flight only decorates the message. Refusing
+// lease.Alive already refuses it. in_flight only decorates the message. Refusing
 // on a stale in_flight row would permanently wedge migrate after process death.
 func detectLiveRuntime(cfg config.Config, repoRoot, legacyDB string) ([]liveHolder, error) {
 	var out []liveHolder
@@ -118,7 +118,7 @@ func scanLiveLeases(legacyDB string) ([]liveHolder, error) {
 				l.InFlightAt = t
 			}
 		}
-		if lease.IsStale(l, now) {
+		if !lease.Alive(l, now) {
 			continue
 		}
 		age := "unknown"

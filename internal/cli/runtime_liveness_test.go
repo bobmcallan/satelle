@@ -24,7 +24,7 @@ func disableServeProbe(t *testing.T) {
 }
 
 // liveLegacyFixture builds a legacy-layout repo with a fresh engagement lease
-// in the in-repo DB. Owner is pid-less so only heartbeat governs IsStale.
+// in the in-repo DB. Owner is pid-less so only heartbeat governs Alive.
 func liveLegacyFixture(t *testing.T) (home, repo, dataDir, legacyDB string, a *app.App) {
 	t.Helper()
 	disableServeProbe(t)
@@ -115,8 +115,20 @@ func TestRuntimeMigrateRefusesLiveLease(t *testing.T) {
 	}
 }
 
+// holdersGone makes the pid probe say the process that stamped a planted seat's
+// in-flight mark is gone: a planted lease carries this test process's own (live)
+// pid, and a live in-flight pid keeps a seat Alive whatever its heartbeat, so a
+// simulated kill needs the probe to agree.
+func holdersGone(t *testing.T) {
+	t.Helper()
+	prev := lease.PidAlive
+	lease.PidAlive = func(int) bool { return false }
+	t.Cleanup(func() { lease.PidAlive = prev })
+}
+
 // TestMigrateProceedsWhenLeaseStale: guard keys on liveness, not row presence.
 func TestMigrateProceedsWhenLeaseStale(t *testing.T) {
+	holdersGone(t)
 	home, _, dataDir, legacyDB, a := liveLegacyFixture(t)
 	// Freeze heartbeat past TTL.
 	db, err := store.Open(legacyDB)

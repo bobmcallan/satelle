@@ -168,6 +168,11 @@ func runStoryRework(cmd *cobra.Command, args []string) error {
 		}
 	}
 	seat := func() (seatInfo, bool, error) { return resolveSeat(true, sid) }
+	// A long relay round between edits fires no hook, so nothing else refreshes
+	// the seat's heartbeat while it waits on a model (sty_7f3e6fd3).
+	if leaseFound {
+		defer lease.KeepAlive(ctx, a.Store.Leases, it.ID, lease.ResolveOwner())()
+	}
 
 	out := cmd.OutOrStdout()
 	coderLedger := &storeSessionLedger{ctx: ctx, storyID: it.ID, ls: a.Store.Ledger, actor: rw.CoderBinding}

@@ -26,6 +26,7 @@ import (
 // and never runs `satelle story seat` would otherwise never get a
 // driver_usage row for a session this call reaps (sty_81caa41b).
 func TestListSeatsJSONRecordsKillRowOnReap(t *testing.T) {
+	holdersGone(t)
 	repo := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repo, ".git"), []byte(""), 0o644); err != nil {
 		t.Fatal(err)

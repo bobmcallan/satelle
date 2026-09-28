@@ -142,6 +142,9 @@ type Step struct {
 	Propose      bool `json:"propose,omitempty"`
 	Freeze       bool `json:"freeze,omitempty"`
 	RejectBudget int  `json:"reject_budget,omitempty"`
+	// WaitsOnChildren: a container idles at this step while its children are
+	// driven, so it does not count as performing (sty_7f3e6fd3).
+	WaitsOnChildren bool `json:"waits_on_children,omitempty"`
 }
 
 // Exit is an off-route destination — a park or cancel state the story may leave
@@ -247,6 +250,8 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 		Propose:      st.Propose,
 		Freeze:       st.Freeze,
 		RejectBudget: st.RejectBudget,
+
+		WaitsOnChildren: st.WaitsOnChildren,
 	}
 	// Edge-named gates: the reviewers on any inbound edge. A step is entered from
 	// one place on the spine and from recovery edges, which repeat the same gate
@@ -444,6 +449,9 @@ func renderKnobs(s Step) string {
 	}
 	if s.Freeze {
 		parts = append(parts, "the definition freezes on entry")
+	}
+	if s.WaitsOnChildren {
+		parts = append(parts, "the container waits here while its children are driven; it is not performing")
 	}
 	if len(parts) == 0 {
 		return ""

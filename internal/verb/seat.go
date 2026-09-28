@@ -130,7 +130,7 @@ func seatRowFromLease(l lease.Lease, now time.Time) seatRow {
 		InFlight:      lease.EffectiveInFlight(l, now),
 		AcquiredAge:   formatAge(now.Sub(l.AcquiredAt)),
 		HeartbeatAge:  formatAge(now.Sub(l.HeartbeatAt)),
-		Stale:         lease.IsStale(l, now),
+		Stale:         !lease.Alive(l, now),
 		StopRequested: l.StopRequestedBy,
 		StopReason:    l.StopReason,
 	}

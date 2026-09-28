@@ -96,6 +96,11 @@ type Step struct {
 	// means no declared budget. The unit is a PRESENTATION (one gate run),
 	// however many reviewers it fanned out to.
 	RejectBudget int
+	// WaitsOnChildren marks a step at which a container idles while its child
+	// stories are driven. The seat holder there is not performing anything, so
+	// the edit gate and Stop hook do not count it while children are open
+	// (sty_7f3e6fd3). Authored in step.toml; the binary never names the status.
+	WaitsOnChildren bool
 	// Start marks the entry state; Terminal marks a terminal success state.
 	Start    bool
 	Terminal bool
@@ -413,6 +418,8 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			Propose:      st.Propose,
 			Freeze:       st.Freeze,
 			RejectBudget: st.RejectBudget,
+
+			WaitsOnChildren: st.WaitsOnChildren,
 		})
 	}
 

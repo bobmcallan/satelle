@@ -1,3 +1,15 @@
+## [0.0.572] - 2026-09-28
+
+### Fixed
+- **A story's seat is no longer dropped while its holder or a dispatch it started is alive.** One liveness predicate in the lease package decides whether a seat is held: its holder process is dead, or its lease has expired with no live in-flight or activity process. Acquire's steal path, reap and the edit gate all call it, so a second session can no longer take a seat the gate still treats as held. A keep-alive now holds the seat through long gates and rework relay runs. (sty_7f3e6fd3)
+- **An epic or parent waiting on its children no longer counts as performing.** A step can declare `waits_on_children = true` in `step.toml`. While a container sits at that step with non-terminal children, the edit gate, the Stop hook and the deny message ignore it, so its children can be engaged without releasing its seat first. A story at a dispatched-performer step that has child tasks still counts as performing. (sty_7f3e6fd3)
+- **A dispatched coder can edit on a correct seat.** The edit gate now allows a coder dispatched on entry to its step while the story's seat is settled. A coder working longer than 30 minutes also no longer loses its in-flight status, because the keep-alive refreshes it. (sty_7f3e6fd3)
+
+## [serve-v0.0.94] - 2026-09-28
+
+### Changed
+- **The service embeds the seat and edit-gate fixes above.** (sty_7f3e6fd3)
+
 ## [0.0.571] - 2026-09-28
 
 ### Added

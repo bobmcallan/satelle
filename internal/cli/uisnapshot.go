@@ -337,7 +337,7 @@ func listSeatsJSON(ctx context.Context, a *app.App) ([]json.RawMessage, error) {
 			"owner":     l.Owner,
 			"state":     l.State,
 			"in_flight": lease.EffectiveInFlight(l, now),
-			"stale":     lease.IsStale(l, now),
+			"stale":     !lease.Alive(l, now),
 		}
 		// In-flight DISPATCH metadata (sty_752c4ef2 AC6): which agent binding
 		// and model are running, the OS pid, and the last real event — the web

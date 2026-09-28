@@ -172,6 +172,17 @@ func releaseEngagementLease(ctx context.Context, itemID string) {
 	_ = ls.Release(ctx, itemID, lease.ResolveOwner())
 }
 
+// keepEngagementAlive holds the seat through a long gate or dispatch: it
+// refreshes the heartbeat until the returned stop runs (sty_7f3e6fd3). The
+// caller defers stop on every return path. A no-op without a lease store.
+func keepEngagementAlive(ctx context.Context, itemID string) (stop func()) {
+	ls, err := requireLease()
+	if err != nil {
+		return func() {}
+	}
+	return lease.KeepAlive(ctx, ls, itemID, lease.ResolveOwner())
+}
+
 // clearEngagementInFlight drops the in_flight flag after a sequential step
 // aborts (gate reject) so a retry can re-enter the edge.
 func clearEngagementInFlight(ctx context.Context, itemID string) {

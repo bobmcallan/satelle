@@ -97,7 +97,14 @@ does not make obvious, and the one every conversion gets wrong.**
 
 Step keys: `status`, `agent`, `skills`, `reviewers`, `reviewer_agent`,
 `parallel`, `requires`, `applies_to`, `advise`, `rework`, `propose`, `freeze`,
-`reject_budget`, `start`, `terminal`.
+`reject_budget`, `waits_on_children`, `start`, `terminal`.
+
+`waits_on_children = true` marks the step a **container** (a parent or epic)
+idles at while its child stories are driven. The container holds the status but
+performs nothing, so while any child is not yet terminal (or cancelled) the edit
+gate, the Stop hook and the deny messages do not count it as a performing seat.
+It counts again once every child is resolved. A story at a dispatched-performer
+step is not affected by having children — only the route's declaration waits.
 
 Three keys turn a step into a **readiness step** — a performer that produces an
 artifact the entry reviewers then judge, while the story stays editable:

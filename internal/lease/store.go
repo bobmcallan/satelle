@@ -429,7 +429,7 @@ func (s *Store) AcquireWith(ctx context.Context, opts AcquireOpts) (Lease, Outco
 			return cur, OutcomeAlreadyHeld, nil, nil
 		}
 		// Different owner: stale → steal; live → conflict.
-		if !isStale(cur, now) {
+		if Alive(cur, now) {
 			h := cur
 			return Lease{}, OutcomeConflict, &h, nil
 		}
@@ -464,7 +464,7 @@ func (s *Store) AcquireWith(ctx context.Context, opts AcquireOpts) (Lease, Outco
 			if h.ItemID == itemID {
 				continue
 			}
-			if isStale(h, now) {
+			if !Alive(h, now) {
 				// Steal stale seat holder (same rule as before, now per row).
 				if _, err := tx.ExecContext(ctx, `DELETE FROM engagement_lease WHERE item_id = ?`, h.ItemID); err != nil {
 					return Lease{}, 0, nil, fmt.Errorf("lease: seat steal: %w", err)
@@ -648,7 +648,7 @@ func (s *Store) AnyActive(ctx context.Context) (bool, error) {
 
 // List returns every engagement lease row (including stale / in-flight). The
 // lease package is pure mechanism — callers decide which rows count as live
-// engagement (staleness via IsStale; performing-state via workflow shape).
+// engagement (staleness via Alive; performing-state via workflow shape).
 func (s *Store) List(ctx context.Context) ([]Lease, error) {
 	if s == nil || s.db == nil {
 		return nil, errors.New("lease: store not configured")
@@ -718,14 +718,9 @@ func scanLeases(rows *sql.Rows, qerr error) ([]Lease, error) {
 	return out, nil
 }
 
-// IsStale reports whether a lease may be stolen or ignored for engagement: the
-// heartbeat is older than HeartbeatTTL, or the owner embeds a dead local pid.
-// Exported so gate/seat surfaces share one definition with Acquire steal paths.
-func IsStale(l Lease, now time.Time) bool { return isStale(l, now) }
-
-// Reap deletes rows whose heartbeat/pid marks them stale. Returns the reaped
-// leases. Opportunistic housekeeping for seat-list honesty; gate correctness
-// does not depend on Reap — IsStale already excludes those rows from engagement.
+// Reap deletes rows that are not Alive. Returns the reaped leases.
+// Opportunistic housekeeping for seat-list honesty; gate correctness does not
+// depend on Reap — a non-Alive row is already excluded from engagement.
 func (s *Store) Reap(ctx context.Context) ([]Lease, error) {
 	if s == nil || s.db == nil {
 		return nil, errors.New("lease: store not configured")
@@ -737,7 +732,7 @@ func (s *Store) Reap(ctx context.Context) ([]Lease, error) {
 	now := time.Now().UTC()
 	var reaped []Lease
 	for _, l := range all {
-		if !IsStale(l, now) {
+		if Alive(l, now) {
 			continue
 		}
 		if err := s.ForceRelease(ctx, l.ItemID); err != nil {
@@ -929,21 +924,6 @@ func boolInt(b bool) int {
 		return 1
 	}
 	return 0
-}
-
-// isStale reports whether a lease may be stolen: heartbeat older than TTL, or
-// same-host embedded pid that is no longer alive.
-func isStale(l Lease, now time.Time) bool {
-	if !l.HeartbeatAt.IsZero() && now.Sub(l.HeartbeatAt) > HeartbeatTTL {
-		return true
-	}
-	if host, pid, ok := parseLocalOwner(l.Owner); ok {
-		myHost, _ := os.Hostname()
-		if myHost != "" && host == myHost && !pidAlive(pid) {
-			return true
-		}
-	}
-	return false
 }
 
 // parseLocalOwner parses "local@hostname:pid".
