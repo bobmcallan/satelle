@@ -243,7 +243,7 @@ event is still judged stalled.
 ### Silent one-shot command bindings (`busy_timeout`, sty_db62a3b9)
 
 A `command`-transport binding whose CLI prints one envelope at exit (for
-example `claude -p --output-format json`, `grok -p … plain`, `codex exec`)
+example `claude -p --output-format json` or `grok -p … plain`)
 emits nothing while it works, so output alone cannot tell a thinking run from a
 hung one. For the command transport only, satelle also samples the CPU time of
 the child's **process tree** (Linux: `/proc`); each time it advances, that
@@ -369,8 +369,8 @@ Empty means the peer default.
 
 | Transport | How effort is applied |
 | --- | --- |
-| **command** | Substitutes into `{effort}` (flag dropped when empty, like `{model}`). Also supports fused forms such as `model_reasoning_effort="{effort}"` (empty drops the whole token and a preceding `-`flag). Default Claude/Grok templates include the flag; DefaultCodexExecCommand uses `-c model_reasoning_effort="{effort}"` (TOML-quoted string for Codex `-c`). |
-| **ACP** | Session path: `session/set_config_option` for `reasoning_effort` / `effort` (failure-tolerant). **Grok-shaped** ACP spawns also receive argv `--reasoning-effort` (Grok CLI flag). **Codex ACP and other non-Grok peers never get that argv flag** — it is not ACP (sty_aa726901). |
+| **command** | Substitutes into `{effort}` (flag dropped when empty, like `{model}`). Also supports fused forms such as `model_reasoning_effort="{effort}"` (empty drops the whole token and a preceding `-`flag). Default Claude/Grok templates include the flag. |
+| **ACP** | Session path: `session/set_config_option` for `reasoning_effort` / `effort` (failure-tolerant). **Grok-shaped** ACP spawns also receive argv `--reasoning-effort` (Grok CLI flag). Other non-Grok peers never get that argv flag — it is not ACP (sty_aa726901). |
 
 ### Rate-limit secondary (`secondary=` / `[defaults]`)
 
@@ -603,33 +603,22 @@ A repo with no hosted server or no team workspace does nothing on either verb
 and contacts nothing; a repo that never pulled a layer resolves byte-identically
 to before.
 
-### Codex — preferred ACP, secondary command (sty_3b4909bb)
+### Supported adapters — claude and grok
 
-Codex is a first-class agent on the **same command and acp transports** as
-everyone else. Codex needs no third interface. App Server is an implementation
-detail of the ACP adapter, not a satelle protocol. `stream` is Claude's live
-channel, not a Codex transport.
-
-| Preference | Transport | Binding shape |
-| --- | --- | --- |
-| **1. Preferred** | ACP | `interface = "acp"` + `command = "npx -y @agentclientprotocol/codex-acp"` (`DefaultCodexACPCommand`) |
-| **2. Secondary** | command | `interface = "command"` (default) + full `codex exec -s read-only -m {model} -c model_reasoning_effort="{effort}" {system}` (`DefaultCodexExecCommand`) |
-
-Bare `command = "codex"` is rejected by validate (like bare claude/grok);
-`satelle init` / migrate expands it to `DefaultCodexExecCommand`. Global
-`NewRunner("codex")` resolves to that **command** template — for ACP, set
-`interface = "acp"` explicitly.
+Satelle supports two agent adapters: **claude** (command and stream) and **grok**
+(command and acp). An adapter satelle does not handle records an adapter-named
+unavailable rather than a default. Both run on the transports above; `stream` is
+Claude's live channel.
 
 **`satelle agents` vs `satelle agent`:** `satelle agents install|remove` provisions
-two satelle-owned surfaces per target (`claude` / `grok` / `codex` / `all`):
+two satelle-owned surfaces per target (`claude` / `grok` / `all`):
 
-1. **Launchers** under `$SATELLE_HOME/agents/bin/` (e.g. `satelle-codex` →
-   `npx -y @agentclientprotocol/codex-acp` — **no** `stdio` subcommand; that is
-   not part of the adapter contract). Generated ACP bindings use
-   `command = "sh <launcher>"` (multi-token) so `interface=acp` accepts them.
-2. **Harness compliance scaffolds** in the repo: `.claude/settings.json`,
-   `.grok/hooks/satelle.json`, `.codex/hooks.json` — blocking PreToolUse hooks
-   that deny governed code-changing actions unless a satelle story is engaged.
+1. **Launchers** under `$SATELLE_HOME/agents/bin/` (e.g. `satelle-grok`).
+   Generated ACP bindings use `command = "sh <launcher>"` (multi-token) so
+   `interface=acp` accepts them.
+2. **Harness compliance scaffolds** in the repo: `.claude/settings.json` and
+   `.grok/hooks/satelle.json` — blocking PreToolUse hooks that deny governed
+   code-changing actions unless a satelle story is engaged.
 
 Ownership: only marker-bearing launchers and satelle hook entries are written or
 removed; user harness keys/hooks are preserved. Install/remove are idempotent.
@@ -645,10 +634,9 @@ The installed `satelle-hook.sh` uses one coherent structured-deny contract:
 | --- | --- | --- |
 | Claude | `hookSpecificOutput.permissionDecision=deny` with a non-empty `permissionDecisionReason` | `0` |
 | Grok | top-level `decision=deny` with a non-empty `reason` | `0` |
-| Codex | `hookSpecificOutput.permissionDecision=deny` with a non-empty `permissionDecisionReason` | `0` |
 
 Exit `0` means the hook handler ran successfully; the JSON decision still blocks
-the tool. Claude and Codex use a separate fallback contract for exit `2`: the
+the tool. Claude uses a separate fallback contract for exit `2`: the
 blocking reason must be non-empty on stderr and structured stdout is not the
 authoritative channel. Do not mix exit `2` with JSON-only stdout and empty
 stderr. Satelle's wrapper prefers the structured path for policy and
@@ -656,89 +644,24 @@ infrastructure denials, emits a static safe infrastructure reason when the
 binary is absent or unusable, and keeps irrelevant/read-only Bash fail-open so
 the operator can diagnose the installation.
 
-#### Install compliance + ACP adapter (dogfood)
+#### Install compliance
 
 ```bash
-# Launchers + .claude/.grok/.codex blocking-hook scaffolds (repo cwd)
+# Launchers + .claude/.grok blocking-hook scaffolds (repo cwd)
 satelle agents install all
 # Or a single harness:
-satelle agents install codex
-# Manual ACP fallback (or use npx each run):
-#   npm install -g @agentclientprotocol/codex-acp
-# Authenticate through the Codex CLI (for example, `codex login`). Satelle does
-# not require CODEX_API_KEY, OPENAI_API_KEY, or a Satelle-specific environment flag.
-# Optional: point at a specific codex binary
-export CODEX_PATH=$(which codex)
-# Reviewer dogfood: keep the adapter in read-only agent mode when possible
-export INITIAL_AGENT_MODE=read-only
-# Codex will prompt to trust .codex/hooks.json on first run (/hooks).
-# Automation: codex exec --dangerously-bypass-hook-trust …
+satelle agents install grok
 ```
-
-**Local hook smoke (never CI):** run `go test -tags codexlive ./tests/codexlive/`
-(or `make codex-smoke` when present). It uses existing Codex CLI login/configuration
-and reports a clear prerequisite when Codex is absent or unauthenticated. Hermetic
-unit tests cover the install path without Codex, npm, or API keys.
-
-#### Sample agents.toml — Codex ACP for low-cost / park roles
-
-```toml
-# Preferred: reuse satelle's ACP client (same as Grok).
-[reviewer-summary]
-role       = "reviewer"
-effort     = "low"
-interface  = "acp"
-command    = "npx -y @agentclientprotocol/codex-acp"
-tools      = "read_file,grep,list_dir"
-model      = "o4-mini"
-principles = "session"
-
-[retrospective]
-role       = "agent"
-effort     = "high"
-interface  = "acp"
-command    = "npx -y @agentclientprotocol/codex-acp"
-tools      = "read_file,grep,list_dir,Bash(satelle:*)"
-principles = "session"
-
-[blocked-triage]
-role       = "agent"
-effort     = "high"
-interface  = "acp"
-command    = "npx -y @agentclientprotocol/codex-acp"
-tools      = "read_file,grep,list_dir,Bash(satelle:*)"
-principles = "session"
-```
-
-#### Sample — Codex exec command transport
-
-```toml
-[reviewer-codex-exec]
-role      = "reviewer"
-command   = "codex exec -s read-only -m {model} -c model_reasoning_effort=\"{effort}\" {system}"
-# payload is always on stdin; do not add {payload} to argv
-effort    = "high"
-model     = "o4-mini"
-principles = "session"
-```
-
-`satelle agent validate` treats `-s read-only` as reviewer ceiling evidence and
-**hard-rejects** `role=reviewer` Codex **command** templates whose effective
-sandbox is not read-only — including `workspace-write`, an omitted sandbox, and
-`danger-full-access` / `--dangerously-bypass-approvals-and-sandbox`. Codex ACP
-reviewers are not required to carry `-s` (ceiling = tools grant + permission
-policy).
 
 #### Live dogfood vs CI
 
 - **Hermetic tests** (in `make integration` / unit suites) use fake ACP peers and
-  validate/buildArgs only — they never require `codex`, npm, or API keys.
-- **Live dogfood** is optional and uses the same model as Claude and Grok: the
-  operator authenticates the agent CLI itself (`codex login`, Claude login, Grok
-  session). Satelle never stores or injects agent API keys. Install the adapter
-  when using ACP, point a named binding at Codex ACP or exec, run
-  `satelle agent validate`, then drive a cheap gate (e.g. step-summary). Optional
-  live probes must never be required by CI.
+  validate/buildArgs only — they never require a provider CLI or API keys.
+- **Live dogfood** is optional: the operator authenticates the agent CLI itself
+  (Claude login, Grok session). Satelle never stores or injects agent API keys.
+  Point a named binding at the CLI, run `satelle agent validate`, then drive a
+  cheap gate (e.g. step-summary). Optional live probes must never be required by
+  CI.
 
 Claude remains the default init `[reviewer]` preset until an operator opts in.
 
@@ -746,8 +669,8 @@ Claude remains the default init `[reviewer]` preset until an operator opts in.
 
 Each binding's **`command`** says *how* the agent runs. With **`interface =
 "command"`** (the default), an **isolated** binding requires a **full multi-token command template** — the real argv is literal in the file so the operator can
-read exactly what will run. Bare single-token CLI names (`claude` / `grok` /
-`codex`) are **rejected** by `satelle agent validate` (and refuse engage); run
+read exactly what will run. Bare single-token CLI names (`claude` /
+`grok`) are **rejected** by `satelle agent validate` (and refuse engage); run
 `satelle init` to expand a legacy bare preset, or write the full template
 yourself. The only bare single-token value that remains valid is:
 
@@ -1006,7 +929,7 @@ web timeline). Precedence, first match wins:
    both would apply to the same dispatch.
 3. **inherited-in-loop** — the in-loop engaging session's model on this
    story. It is guarded so a Claude session's model id can never reach a
-   Codex/Grok dispatch — see "cross-provider guard" below.
+   Grok dispatch — see "cross-provider guard" below.
 4. **creator** — the model of the session that created the story, same guard.
 5. **order** — the first entry of the `[model_order]` list for THIS binding's
    executable (see "The model order" below). Applied only when the binding can
@@ -1038,10 +961,9 @@ into a fresh agents.toml and appends them to an existing one that has no
 | --- | --- |
 | claude | opus, sonnet, haiku |
 | grok | grok-4.7 |
-| codex | gpt-5-codex |
 
-The codex id comes from a captured `codex exec --json` fixture and the grok id
-from a captured ACP `modelId`; claude uses the CLI's own aliases. An executable
+The grok id comes from a captured ACP `modelId`; claude uses the CLI's own
+aliases. An executable
 with no list falls through to `cli-default`, recorded as such.
 
 ### The cross-provider guard
@@ -1049,7 +971,7 @@ with no list falls through to `cli-default`, recorded as such.
 An inherited or creator model is applied only when the dispatch binding's own
 command template carries a `{model}` placeholder (a slot to fill) AND the
 captured session's executable matches the binding's own command executable
-(e.g. both `claude`). A Grok-native or Codex session's model id never rides
+(e.g. both `claude`). A Grok-native session's model id never rides
 into a Claude dispatch, or the reverse — a guard failure simply falls through
 to the next precedence tier instead of erroring.
 
@@ -1066,23 +988,13 @@ this table and a test checks every cell against the code that produces it.
 | claude stream | yes | yes | yes | yes | yes |
 | grok command | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | unavailable: interface=command is one-shot only |
 | grok acp | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | yes |
-| codex command | yes | yes | unavailable: codex exec --json names no model | yes | unavailable: interface=command is one-shot only |
-| codex acp | unavailable: no captured usage report from the peer | unavailable: no captured usage report from the peer | unavailable: codex acp reports no model | unavailable: the in-loop model is recorded under harness codex, but the default binding's executable is npx, so the cross-provider guard does not match | yes |
-| antigravity command | unavailable: agy hook payloads report no token usage | unavailable: agy hook payloads report no token usage | unavailable: no captured agy print-mode output names a model | unavailable: the in-loop model is recorded under harness antigravity, but an agy binding's executable is agy, so the cross-provider guard does not match | unavailable: interface=command is one-shot only |
 
 ### What each harness reports
 
 - **Claude Code** — the in-loop hook payload's `model` field (or the
   transcript's last assistant entry) captures the in-loop tier.
-- **Codex** — its hook payload carries `model`, so the in-loop tier is
-  captured; if a payload omits it the session is recorded `unknown` and the
-  rule falls through.
 - **Grok** — its hook payload carries no model, so the in-loop tier is recorded
   `unknown`.
-- **Antigravity** — its hook payload's `modelName` is published verbatim as the
-  in-loop tier (it may be an alias such as `auto`); the session marker is
-  `ANTIGRAVITY_AGENT`. The tier is recorded under harness `antigravity`, so an
-  `agy` binding does not inherit it (executable `agy` ≠ harness token).
 
 Model inheritance in the capability table is "available" when the in-loop tier
 can apply; it needs a hook that carries a model, so without one the dispatch
@@ -1140,7 +1052,6 @@ fixed.
 | --- | --- | --- |
 | claude | 2m0s — the Bash tool's default timeout (120s) | yes |
 | grok | 15s — grok backgrounds any command past 15s (sty_c4b92c9e) | yes |
-| codex | 10s — not measured — the conservative floor | unavailable: codex: the satelle scaffold installs no Stop hook, so nothing fires when the turn ends; delivery lands only at the next UserPromptSubmit |
 
 What a wait cost the driver is read from `driver_usage` rows, not asserted:
 `satelle story cost <id>` carries a CALLS column (the driving session's model

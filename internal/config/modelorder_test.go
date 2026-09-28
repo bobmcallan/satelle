@@ -13,7 +13,6 @@ import (
 const modelOrderDoc = `[model_order]
 claude = ["opus", ["sonnet", "claude-sonnet-5"], "haiku"]
 grok = ["grok-4.7"]
-codex = ["gpt-5-codex"]
 
 [executor]
 command = "in-loop"
@@ -49,7 +48,7 @@ func TestSelectModel_BindingPinBeatsOrder(t *testing.T) {
 func TestSelectModel_OrderFirstEntry(t *testing.T) {
 	ac := decodeOrder(t, modelOrderDoc)
 	for _, tc := range []struct{ exe, want string }{
-		{"claude", "opus"}, {"grok", "grok-4.7"}, {"codex", "gpt-5-codex"},
+		{"claude", "opus"}, {"grok", "grok-4.7"},
 	} {
 		in := SelectInput{Order: ac.OrderFor(tc.exe), HasModelSlot: true, CommandExecutable: tc.exe}
 		if m, src := SelectModel(in); m != tc.want || src != ModelSourceOrder {
@@ -83,16 +82,16 @@ func TestSelectModel_OrderFirstEntry(t *testing.T) {
 // executable's own list is consulted, in both directions.
 func TestSelectModel_OrderNeverCrossesExecutable(t *testing.T) {
 	claudeOnly := decodeOrder(t, "[model_order]\nclaude = [\"opus\"]\n")
-	for _, exe := range []string{"grok", "codex", "unknown-cli", ""} {
+	for _, exe := range []string{"grok", "nosuch", "unknown-cli", ""} {
 		in := SelectInput{Order: claudeOnly.OrderFor(exe), HasModelSlot: true, CommandExecutable: exe}
 		if m, src := SelectModel(in); m != "" || src != ModelSourceCLIDefault {
 			t.Errorf("claude list reached %q: got (%q, %q)", exe, m, src)
 		}
 	}
-	others := decodeOrder(t, "[model_order]\ngrok = [\"grok-4.7\"]\ncodex = [\"gpt-5-codex\"]\n")
+	others := decodeOrder(t, "[model_order]\ngrok = [\"grok-4.7\"]\nnosuch = [\"nosuch-1\"]\n")
 	in := SelectInput{Order: others.OrderFor("claude"), HasModelSlot: true, CommandExecutable: "claude"}
 	if m, src := SelectModel(in); m != "" || src != ModelSourceCLIDefault {
-		t.Errorf("grok/codex list reached claude: got (%q, %q)", m, src)
+		t.Errorf("grok/nosuch list reached claude: got (%q, %q)", m, src)
 	}
 }
 
@@ -148,7 +147,7 @@ func TestRedactAgentsTransport_KeepsModelOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	ac := decodeOrder(t, string(out))
-	for _, exe := range []string{"claude", "grok", "codex"} {
+	for _, exe := range []string{"claude", "grok"} {
 		if len(ac.OrderFor(exe)) == 0 {
 			t.Errorf("redacted transport lost the %s list", exe)
 		}
@@ -169,14 +168,14 @@ func TestRehydrateAgents_KeepsModelOrder(t *testing.T) {
 }
 
 func TestResolveAgentsBaseline_ModelOrderLayers(t *testing.T) {
-	baseline := AgentsConfig{ModelOrder: map[string][]ModelRank{"codex": {{"gpt-5-codex"}}, "claude": {{"haiku"}}}}
+	baseline := AgentsConfig{ModelOrder: map[string][]ModelRank{"nosuch": {{"nosuch-1"}}, "claude": {{"haiku"}}}}
 	workspace := AgentsConfig{ModelOrder: map[string][]ModelRank{"grok": {{"grok-4.7"}}, "claude": {{"sonnet"}}}}
 	repo := AgentsConfig{ModelOrder: map[string][]ModelRank{"claude": {{"opus"}}}}
 	out, _, err := ResolveAgentsBaseline(baseline, repo, workspace, GlobalAgentsConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for exe, want := range map[string]string{"claude": "opus", "grok": "grok-4.7", "codex": "gpt-5-codex"} {
+	for exe, want := range map[string]string{"claude": "opus", "grok": "grok-4.7", "nosuch": "nosuch-1"} {
 		got := out.OrderFor(exe)
 		if len(got) == 0 || got[0].First() != want {
 			t.Errorf("%s: got %v, want first %q", exe, got, want)
@@ -197,7 +196,7 @@ func TestLoadEffectiveAgents_ModelOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, exe := range []string{"claude", "grok", "codex"} {
+	for _, exe := range []string{"claude", "grok"} {
 		if len(eff.Agents.OrderFor(exe)) == 0 {
 			t.Errorf("effective layer lost the %s list", exe)
 		}

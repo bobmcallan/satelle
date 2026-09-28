@@ -55,7 +55,7 @@ func init() {
     Repos still on the pre-relocation layout: run 'satelle migrate'.
   - process hooks ON DEMAND for coding harnesses in use (epic:minimal-harness-footprint):
     scaffolds only when the repo already has .claude/ or .grok/, or when
-    --harness names them (claude,grok,codex,antigravity). Never from PATH and never a silent
+    --harness names them (claude,grok). Never from PATH and never a silent
     claude default. An empty repo with no flag gets zero harness scaffolds.
     Use-time lazy install: store-backed verbs detect the harness session
     marker and install the matching scaffold if missing (first session
@@ -88,7 +88,7 @@ shows what was added versus already present.`,
 	}
 	cmd.Flags().StringVar(&configArg, "config", "", "path to satelle.toml (resolves the repo root; default: walk up from CWD)")
 	cmd.Flags().BoolVar(&noWorkspace, "no-workspace", false, "skip registering this repo in the local workspace registry")
-	cmd.Flags().StringVar(&harnessFlag, "harness", "", "comma-separated harness scaffolds to install (claude,grok,codex,antigravity); when empty, only existing .claude/.grok/.codex dirs (and an already-installed .agents/hooks.json) are scaffolded — never PATH")
+	cmd.Flags().StringVar(&harnessFlag, "harness", "", "comma-separated harness scaffolds to install (claude,grok); when empty, only existing .claude/.grok dirs are scaffolded — never PATH")
 	cmd.Flags().BoolVar(&all, "all", false, "heal EVERY registered repo whose deployed scaffolding is stale (dry-run; --yes applies)")
 	cmd.Flags().BoolVar(&yes, "yes", false, "with --all: apply the heal (default is dry-run)")
 	register(cmd)
@@ -172,8 +172,7 @@ func runInitAll(out io.Writer, apply bool, forcedHarness []string) error {
 	return nil
 }
 
-// parseHarnessFlag parses --harness claude,grok,codex,antigravity into a unique
-// ordered list. "agy" is accepted as an alias and normalised to "antigravity".
+// parseHarnessFlag parses --harness claude,grok into a unique ordered list.
 func parseHarnessFlag(s string) ([]string, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -186,17 +185,14 @@ func parseHarnessFlag(s string) ([]string, error) {
 		if p == "" {
 			continue
 		}
-		if p == "agy" {
-			p = antigravityHarness
-		}
 		switch p {
-		case "claude", "grok", "codex", antigravityHarness:
+		case "claude", "grok":
 			if !seen[p] {
 				seen[p] = true
 				out = append(out, p)
 			}
 		default:
-			return nil, fmt.Errorf("init: unknown --harness %q (want claude, grok, codex, and/or antigravity)", p)
+			return nil, fmt.Errorf("init: unknown --harness %q (want claude and/or grok)", p)
 		}
 	}
 	return out, nil
@@ -558,7 +554,7 @@ func renderHookCommand(repoRoot, harness, sub string) string {
 }
 
 // parameterizedHookScriptBody is the single script body for satelle-hook.sh.
-// Usage: sh .satelle/hooks/satelle-hook.sh <gate|commitgate> <claude|grok|codex|antigravity>
+// Usage: sh .satelle/hooks/satelle-hook.sh <gate|commitgate> <claude|grok>
 //
 // The wrapper:
 //  1. Resolves satelle from $HOME/.local/bin/satelle → $CLAUDE_PROJECT_DIR/.satelle/satelle
@@ -568,26 +564,20 @@ func renderHookCommand(repoRoot, harness, sub string) string {
 //  4. On infra/malformed failure: harness-correct static deny JSON + exit 0
 //  5. commitgate: non-mutating bash fails OPEN on infra failure; commit/push closed
 //
-// A PreToolUse exit 2 is deliberately not used here: Claude and Codex ignore
-// structured stdout on that path and require the reason on stderr. Mixing JSON
+// A PreToolUse exit 2 is deliberately not used here: Claude ignores
+// structured stdout on that path and requires the reason on stderr. Mixing JSON
 // stdout with exit 2 and discarded stderr caused the invisible-denial defect.
 func parameterizedHookScriptBody() string {
 	claudeInfra := strings.ReplaceAll(infraDenyJSON("claude"), `'`, `'\''`)
 	grokInfra := strings.ReplaceAll(infraDenyJSON("grok"), `'`, `'\''`)
-	// Codex deny uses the Claude envelope (permissionDecision=deny + reason).
-	codexInfra := claudeInfra
-	// Antigravity's PreToolUse deny is the same top-level decision/reason shape.
-	antigravityInfra := strings.ReplaceAll(infraDenyJSON(antigravityHarness), `'`, `'\''`)
 	return fmt.Sprintf(`#!/bin/sh
 %s
-# args: $1=gate|commitgate  $2=claude|grok|codex|antigravity
+# args: $1=gate|commitgate  $2=claude|grok
 sub="$1"
 harness="$2"
 case "$harness" in
-  grok)        infra='%s' ;;
-  antigravity) infra='%s' ;;
-  codex)       infra='%s' ;;
-  *)           infra='%s' ;;
+  grok) infra='%s' ;;
+  *)    infra='%s' ;;
 esac
 # Prefer harness project pin so binary probe works even if invocation cwd drifted.
 root=""
@@ -603,8 +593,8 @@ done
 p=$(cat)
 structured_deny(){
   case "$harness" in
-    grok|antigravity) case "$1" in *'"decision"'*'"deny"'*) return 0;; esac ;;
-    *)                case "$1" in *'"permissionDecision"'*'"deny"'*) return 0;; esac ;;
+    grok) case "$1" in *'"decision"'*'"deny"'*) return 0;; esac ;;
+    *)    case "$1" in *'"permissionDecision"'*'"deny"'*) return 0;; esac ;;
   esac
   return 1
 }
@@ -646,7 +636,7 @@ if [ "$code" -eq 0 ]; then
 fi
 if structured_deny "$o"; then printf '%%s\n' "$o"; exit 0; fi
 deny_infra
-`, failVisibleMarker, grokInfra, antigravityInfra, codexInfra, claudeInfra)
+`, failVisibleMarker, grokInfra, claudeInfra)
 }
 
 // failVisibleScriptBody returns the canonical wrapper body. The single script
@@ -814,10 +804,10 @@ var retiredHookCommands = map[string]string{
 // detectProcessHarnesses decides which process-hook scaffolds to apply
 // (epic:minimal-harness-footprint). Signals:
 //   - forced: explicit --harness list (wins when non-empty)
-//   - existing harness dirs in the repo (.claude / .grok / .codex)
+//   - existing harness dirs in the repo (.claude / .grok)
 //
 // Never PATH. Never a silent claude default (empty → install nothing).
-func detectProcessHarnesses(repoRoot string, forced []string) (claude, grok, codex bool) {
+func detectProcessHarnesses(repoRoot string, forced []string) (claude, grok bool) {
 	if len(forced) > 0 {
 		for _, h := range forced {
 			switch strings.ToLower(strings.TrimSpace(h)) {
@@ -825,34 +815,13 @@ func detectProcessHarnesses(repoRoot string, forced []string) (claude, grok, cod
 				claude = true
 			case "grok":
 				grok = true
-			case "codex":
-				codex = true
 			}
 		}
-		return claude, grok, codex
+		return claude, grok
 	}
 	claude = dirExists(filepath.Join(repoRoot, ".claude"))
 	grok = dirExists(filepath.Join(repoRoot, ".grok"))
-	codex = dirExists(filepath.Join(repoRoot, ".codex"))
-	return claude, grok, codex
-}
-
-// detectAntigravityHarness is detectProcessHarnesses for Antigravity, kept apart
-// so that function's three-bool contract is unchanged. Its .agents/ directory is
-// a shared customization root that other tools use, so the directory alone is
-// NOT a signal: an explicit --harness names it, or — with no flag — an
-// .agents/hooks.json that already carries satelle entries is healed.
-func detectAntigravityHarness(repoRoot string, forced []string) bool {
-	if len(forced) > 0 {
-		for _, h := range forced {
-			if h = strings.ToLower(strings.TrimSpace(h)); h == antigravityHarness || h == "agy" {
-				return true
-			}
-		}
-		return false
-	}
-	raw, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(antigravityHooksRel)))
-	return err == nil && (strings.Contains(string(raw), "satelle-hook.sh") || strings.Contains(string(raw), "satelle hook "))
+	return claude, grok
 }
 
 // detectSessionHarnesses probes the process environment for harness session
@@ -862,7 +831,6 @@ func detectSessionHarnesses() (claude, grok bool) {
 }
 
 // detectSessionHarnessesFrom is the testable core (environ as KEY=VALUE entries).
-// Codex is not reported: lazy install has no codex scaffold path.
 func detectSessionHarnessesFrom(environ []string) (claude, grok bool) {
 	found := agentcli.DetectSessionHarnesses(environ)
 	return found[agentcli.HarnessClaude], found[agentcli.HarnessGrok]
@@ -910,10 +878,9 @@ func ensureProcessHooks(out io.Writer, repoRoot string, forced []string) error {
 	if err := writeHookScripts(repoRoot); err != nil {
 		return err
 	}
-	wantClaude, wantGrok, wantCodex := detectProcessHarnesses(repoRoot, forced)
-	wantAntigravity := detectAntigravityHarness(repoRoot, forced)
-	if !wantClaude && !wantGrok && !wantCodex && !wantAntigravity {
-		fmt.Fprintln(out, "  · process hooks: none (no .claude/.grok/.codex dirs and no --harness; use --harness claude,grok,codex,antigravity or open a harness session for lazy install)")
+	wantClaude, wantGrok := detectProcessHarnesses(repoRoot, forced)
+	if !wantClaude && !wantGrok {
+		fmt.Fprintln(out, "  · process hooks: none (no .claude/.grok dirs and no --harness; use --harness claude,grok or open a harness session for lazy install)")
 		return nil
 	}
 	if wantClaude {
@@ -956,36 +923,6 @@ func ensureProcessHooks(out io.Writer, repoRoot string, forced []string) error {
 		// Grok; leave skills/rules/agents/mcps alone.
 		if err := ensureGrokCompatConfig(out); err != nil {
 			return err
-		}
-	}
-	if wantCodex {
-		added, updated, incomplete, err := ensureCodexHooks(repoRoot)
-		if err != nil {
-			return err
-		}
-		if len(updated) > 0 {
-			fmt.Fprintf(out, "  ~ %s (hook updated: %s)\n", codexHooksRel, strings.Join(updated, "; "))
-		} else {
-			fmt.Fprintln(out, initLine(added, codexHooksRel+" (process hooks)"))
-		}
-		if len(incomplete) > 0 {
-			fmt.Fprintf(out, "WARN  %s — incomplete satelle hooks after heal: missing %s\n",
-				codexHooksRel, strings.Join(incomplete, ", "))
-		}
-	}
-	if wantAntigravity {
-		added, updated, incomplete, err := ensureAntigravityHooks(repoRoot)
-		if err != nil {
-			return err
-		}
-		if len(updated) > 0 {
-			fmt.Fprintf(out, "  ~ %s (hook updated: %s)\n", antigravityHooksRel, strings.Join(updated, "; "))
-		} else {
-			fmt.Fprintln(out, initLine(added, antigravityHooksRel+" (process hooks)"))
-		}
-		if len(incomplete) > 0 {
-			fmt.Fprintf(out, "WARN  %s — incomplete satelle hooks after heal: missing %s\n",
-				antigravityHooksRel, strings.Join(incomplete, ", "))
 		}
 	}
 	return nil
@@ -1251,9 +1188,8 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 		}
 	}
 
-	// Reinforce only the events THIS harness's scaffold installs — the Codex
-	// scaffold omits Stop (sty_9e86f407 plan event set), and the omission is
-	// declared once in harnessHooks rather than repeated as a literal here.
+	// Reinforce only the events THIS harness's scaffold installs, as declared
+	// once in harnessHooks rather than repeated as a literal here.
 	for _, rh := range reinforcementSimpleHooks {
 		if !hs.hasEvent(rh.event) {
 			continue
@@ -1299,9 +1235,8 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 // may still WARN on unparseable separately).
 //
 // The expected set is PER HARNESS, read from the same harnessHooks table the
-// builder writes from (sty_338a53f8). Asking every harness for every event made
-// re-init WARN "missing Stop" about a Codex file the Codex builder deliberately
-// writes without one — a complete file reported incomplete.
+// builder writes from (sty_338a53f8), so a complete file is never reported
+// incomplete.
 func incompleteHookEvents(path, harness string) []string {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -1634,7 +1569,7 @@ gate_create = true
 # principles/documents/tasks/config) stays editable without a release.
 # The rest of the seeded list is the footprint SATELLE ITSELF deploys, unasked:
 # the ".gitignore" managed block init/migrate write (sty_f115e6bf), and the
-# harness hook scaffolds init installs under ".claude/", ".grok/" and ".codex/"
+# harness hook scaffolds init installs under ".claude/" and ".grok/"
 # — some of them lazily, mid-session, with no story engaged (sty_926cfcdc).
 # Exempting them is not leniency: without it the binary writes a file and then
 # its own stop gate refuses the session for the write, with no clean lane to
@@ -1843,7 +1778,7 @@ var scaffoldAgentsToml = strings.NewReplacer("MODEL_ORDER_BLOCK\n", scaffoldMode
 # multi-token command (binary + argv). The only bare single-token value is
 # "in-loop" (the driving session performs the step — no subprocess). An
 # empty/omitted command on [reviewer] inherits the full default claude template.
-# Bare tokens like "claude" / "grok" / "codex" are rejected by satelle agent
+# Bare tokens like "claude" / "grok" are rejected by satelle agent
 # validate — run satelle init to expand a legacy bare preset, or write the full
 # argv yourself. Placeholders — each one argv token: {system} {tools} {model}
 # {effort} {settings} {payload}. The work-item body is ALWAYS also written on stdin
@@ -1931,7 +1866,7 @@ command = "in-loop"            # the orchestrator/driving session itself
 # substitutes {system}/{tools}/{model}/{settings}/{payload} (each one argv token);
 # payload is always also on stdin. An empty model drops the --model pair. Point
 # this at ANY agent CLI by rewriting the multi-token command. Bare single-token
-# presets (claude/grok/codex) are not accepted — the real argv must be literal.
+# presets (claude/grok) are not accepted — the real argv must be literal.
 role    = "reviewer"           # declared contract; inference is a fallback, not the norm
 command = "REVIEWER_COMMAND_TEMPLATE"
 tools   = "Read,Grep,Glob"     # read-only grant — widen at your own risk (claude template default; a grok full template bakes its own grok-named read-only grant)
@@ -1983,10 +1918,10 @@ func withModelOrder(content string, notes []string) (string, []string) {
 // agents.toml and appends to an existing one that lacks the table
 // (sty_4fde0a50). It is the single source of the seeded lists: the names are
 // configuration, and the ids come from captured fixtures under
-// internal/agentcli/testdata/usage (codex exec, grok ACP modelId) and the
+// internal/agentcli/testdata/usage (grok ACP modelId) and the
 // claude CLI's own aliases.
 const scaffoldModelOrderToml = `# [model_order] — the order an UNSET model follows (sty_4fde0a50), one list per
-# executable (claude, grok, codex). A binding that leaves model= empty and has no
+# executable (claude, grok). A binding that leaves model= empty and has no
 # same-executable inherited or creator session model takes the FIRST entry of ITS
 # OWN executable's list; a name from one list is never applied to another
 # executable. An entry is a name, or an array of names that are one rank (an
@@ -1996,7 +1931,6 @@ const scaffoldModelOrderToml = `# [model_order] — the order an UNSET model fol
 [model_order]
 claude = ["opus", "sonnet", "haiku"]
 grok   = ["grok-4.7"]
-codex  = ["gpt-5-codex"]
 `
 
 // scaffoldConstitution is the project-constitution template a fresh init writes to

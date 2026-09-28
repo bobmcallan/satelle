@@ -95,7 +95,7 @@ func clearHarnessEnv(t *testing.T) {
 	for _, e := range os.Environ() {
 		k, v, _ := strings.Cut(e, "=")
 		if k == "CLAUDECODE" || strings.HasPrefix(k, "CLAUDE_CODE_") || k == "GROK_AGENT" ||
-			strings.HasPrefix(k, "CODEX_") || k == config.ScratchEnv || k == config.SessionEnv {
+			k == config.ScratchEnv || k == config.SessionEnv {
 			key, val := k, v
 			_ = os.Unsetenv(key)
 			t.Cleanup(func() { _ = os.Setenv(key, val) })
@@ -456,7 +456,7 @@ func captureStderr(t *testing.T, fn func()) string {
 // one and the harness-named limitation when it does not — and never a polling
 // instruction either way.
 func TestPendingMessage_NamesPathOrLimitation_NeverAPollInstruction(t *testing.T) {
-	for _, h := range []string{agentcli.HarnessClaude, agentcli.HarnessGrok, agentcli.HarnessCodex, "", "mystery"} {
+	for _, h := range []string{agentcli.HarnessClaude, agentcli.HarnessGrok, "", "mystery"} {
 		msg := pendingMessage("gw_abc", h)
 		facts := agentcli.FactsFor(h)
 		if !strings.Contains(msg, "gw_abc") {
@@ -488,9 +488,6 @@ func TestCompletionNotification_CellsMatchTheScaffold(t *testing.T) {
 		wired := harnessHooks(f.Harness).hasEvent("Stop")
 		if f.CompletionNotification.Available && !wired {
 			t.Errorf("%s is recorded as delivering a completion notification but its scaffold installs no Stop hook", f.Harness)
-		}
-		if f.Harness == agentcli.HarnessCodex && wired {
-			t.Errorf("codex now installs a Stop hook: revisit its recorded limitation in harness_facts.go")
 		}
 	}
 	// And the Stop hook the scaffold writes waits long enough for a gate.

@@ -34,7 +34,7 @@ import (
 // Env VALUES are never included (secrets); key names may appear in Notes.
 type Grant struct {
 	Name      string
-	Backend   string // in-loop | isolated:claude | isolated:grok | isolated:codex | isolated:<binary> | acp:<binary> | stream:<binary>
+	Backend   string // in-loop | isolated:claude | isolated:grok | isolated:<binary> | acp:<binary> | stream:<binary>
 	Interface string // command | acp | stream (epic:agent-dispatch-transport)
 	// InterfaceReason states why Interface resolved the way it did:
 	// "explicit" (the binding set interface= itself), "one-shot default" (a
@@ -648,10 +648,8 @@ func checkHooks(doc docindex.Doc, agents config.AgentsConfig, revModel string, u
 					doc.Name, h.Operation, sec))
 			}
 			// The reviewer PERMISSION CEILING is deliberately NOT re-decided here.
-			// checkBinding already judges every section's ceiling with the severity
-			// split this package has settled on: a provable escape (a Codex danger
-			// sandbox, a non-read-only Codex sandbox) is a hard problem, while an
-			// unexpressed ceiling is a warning because ReadOnly is a heuristic. The
+			// checkBinding already judges every section's ceiling: an unexpressed
+			// ceiling is a warning because ReadOnly is a heuristic. The
 			// hook's section is one of those sections, so it is already covered —
 			// re-checking it here would only re-decide the same heuristic at a
 			// harsher severity, and would hard-fail every repo whose reviewer
@@ -946,7 +944,7 @@ func checkBinding(section string, b config.AgentBinding, vars map[string]string)
 		} else {
 			g.Notes += "; full session grant (driving agent)"
 		}
-	case len(fields) == 1 && (lower0 == agentcli.CLIClaude || lower0 == agentcli.CLIGrok || lower0 == agentcli.CLICodex):
+	case len(fields) == 1 && (lower0 == agentcli.CLIClaude || lower0 == agentcli.CLIGrok):
 		// Bare CLI presets removed from the agents.toml path — full template required.
 		g.Backend = "invalid"
 		g.ReadOnly = false
@@ -977,14 +975,10 @@ func checkBinding(section string, b config.AgentBinding, vars map[string]string)
 			if b.Tools == "" && strings.Contains(resolved, "read_file") {
 				g.Tools = "read_file,grep,list_dir"
 			}
-		case agentcli.CLICodex:
-			// Codex exec: sandbox mode is the ceiling evidence (sty_3b4909bb).
-			g.ReadOnly = commandHasCodexReadOnlySandbox(resolved)
 		default:
 			// Full template: surface the command so the ceiling is visible.
 			g.ReadOnly = strings.Contains(resolved, "--disallowedTools") ||
 				strings.Contains(resolved, "--deny") ||
-				commandHasCodexReadOnlySandbox(resolved) ||
 				(strings.Contains(resolved, "Read") && !strings.Contains(resolved, "Write"))
 		}
 		// Placeholder completeness (sty_21db3670): buildArgs substitutes only
@@ -995,33 +989,12 @@ func checkBinding(section string, b config.AgentBinding, vars map[string]string)
 				"agents.toml [%s] command omits {system} as its own argv token — the gate/skill rubric is never appended and the agent runs without its rubric",
 				section))
 		}
-		// Hard-reject danger sandbox for role=reviewer (sty_3b4909bb AC3) — not a
-		// warning. danger-full-access / --dangerously-bypass-* erase the ceiling.
-		codexCmd := isCodexCommand(name, resolved)
-		dangerHard := role == config.RoleReviewer && commandHasDangerSandbox(resolved)
-		if dangerHard {
-			ceilingProblem(fmt.Sprintf(
-				"agents.toml [%s] is role=reviewer with a command that disables the sandbox ceiling (%s) — refuse; use -s read-only (DefaultCodexExecCommand) or a non-danger template",
-				section, dangerSandboxToken(resolved)))
-		}
-		// Codex command reviewers must have effective sandbox read-only
-		// (sty_aa726901 AC3): workspace-write or omitted sandbox hard-reject.
-		// Danger already failed above — do not double-report. ACP branch returns
-		// earlier; Codex ACP uses tools grant, not -s.
-		codexSandboxHard := false
-		if role == config.RoleReviewer && codexCmd && !commandHasCodexReadOnlySandbox(resolved) && !dangerHard {
-			codexSandboxHard = true
-			ceilingProblem(fmt.Sprintf(
-				"agents.toml [%s] is role=reviewer with a Codex command whose effective sandbox is %q (want -s read-only) — refuse; use DefaultCodexExecCommand",
-				section, effectiveCodexSandbox(resolved)))
-		}
 		// Reviewer read-only ceiling: advisory when role=reviewer but no ceiling
 		// is expressed (no --disallowedTools/--deny / read-only heuristic miss).
-		// Warn not fail for non-Codex templates — g.ReadOnly is a heuristic.
-		// Codex non-RO already produced a Problem above (sty_aa726901).
-		if role == config.RoleReviewer && !g.ReadOnly && !dangerHard && !codexSandboxHard {
+		// Warn not fail — g.ReadOnly is a heuristic.
+		if role == config.RoleReviewer && !g.ReadOnly {
 			ceilingWarn(fmt.Sprintf(
-				"agents.toml [%s] is role=reviewer with an isolated command that expresses no read-only ceiling (no --disallowedTools/--deny of mutators, no -s read-only) — the reviewer could silently gain write; deny the mutators or use the default claude/grok/codex template",
+				"agents.toml [%s] is role=reviewer with an isolated command that expresses no read-only ceiling (no --disallowedTools/--deny of mutators) — the reviewer could silently gain write; deny the mutators or use the default claude/grok template",
 				section))
 		}
 		if g.Notes == "" {
@@ -1048,81 +1021,6 @@ func hasToken(fields []string, tok string) bool {
 		}
 	}
 	return false
-}
-
-// isCodexCommand reports a Codex command-transport template (sty_aa726901 AC3):
-// binary name is codex, or the resolved line contains "codex exec".
-func isCodexCommand(name, resolved string) bool {
-	if strings.EqualFold(name, agentcli.CLICodex) {
-		return true
-	}
-	return strings.Contains(strings.ToLower(resolved), "codex exec")
-}
-
-// commandHasCodexReadOnlySandbox reports Codex-style read-only sandbox ceiling
-// evidence in a resolved command template (sty_3b4909bb).
-func commandHasCodexReadOnlySandbox(resolved string) bool {
-	return effectiveCodexSandbox(resolved) == "read-only"
-}
-
-// effectiveCodexSandbox returns the sandbox mode token for a Codex-style command
-// template: "read-only", "workspace-write", "danger-full-access", or "none (omitted)"
-// (sty_aa726901 AC3). Prefer explicit -s/--sandbox/sandbox= over danger markers.
-func effectiveCodexSandbox(resolved string) string {
-	lower := strings.ToLower(resolved)
-	// sandbox=VALUE fused form
-	if i := strings.Index(lower, "sandbox="); i >= 0 {
-		rest := lower[i+len("sandbox="):]
-		// token until space
-		end := strings.IndexAny(rest, " \t")
-		val := rest
-		if end >= 0 {
-			val = rest[:end]
-		}
-		if val != "" {
-			return val
-		}
-	}
-	fields := strings.Fields(lower)
-	for i, f := range fields {
-		if (f == "-s" || f == "--sandbox") && i+1 < len(fields) {
-			return fields[i+1]
-		}
-	}
-	if strings.Contains(lower, "danger-full-access") {
-		return "danger-full-access"
-	}
-	return "none (omitted)"
-}
-
-// commandHasDangerSandbox reports Codex (or similar) danger sandbox tokens that
-// erase a reviewer ceiling (sty_3b4909bb AC3).
-func commandHasDangerSandbox(resolved string) bool {
-	lower := strings.ToLower(resolved)
-	if strings.Contains(lower, "danger-full-access") {
-		return true
-	}
-	if strings.Contains(lower, "--dangerously-bypass-approvals-and-sandbox") {
-		return true
-	}
-	if strings.Contains(lower, "--dangerously-bypass-hook-trust") {
-		// Hook trust bypass alone is not a full sandbox erase; do not hard-fail.
-		return false
-	}
-	return false
-}
-
-// dangerSandboxToken returns a short label for the first danger marker found.
-func dangerSandboxToken(resolved string) string {
-	lower := strings.ToLower(resolved)
-	switch {
-	case strings.Contains(lower, "danger-full-access"):
-		return "danger-full-access"
-	case strings.Contains(lower, "--dangerously-bypass-approvals-and-sandbox"):
-		return "--dangerously-bypass-approvals-and-sandbox"
-	default:
-		return "danger sandbox"
-	}
 }
 
 // toolsGrantMutators mirrors agentcli.toolsAllowMutators for validate-time

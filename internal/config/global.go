@@ -121,7 +121,7 @@ const DefaultAgentCLI = "claude"
 // AgentConfig selects the headless agent CLI the quality-management spine uses
 // for isolated reviews/summaries. Set once at install (`satelle agent`).
 type AgentConfig struct {
-	// CLI is the agent CLI identifier (claude | codex). Empty resolves to
+	// CLI is the agent CLI identifier (claude | grok). Empty resolves to
 	// DefaultAgentCLI.
 	CLI string `toml:"cli"`
 }
@@ -308,7 +308,7 @@ endpoint = %q
 repo = %q
 
 [agent]
-# the headless agent CLI the reviewer/summariser shell out to (claude | codex).
+# the headless agent CLI the reviewer/summariser shell out to (claude | grok).
 # Set by 'satelle agent set <cli>' / 'satelle agent detect'.
 cli = %q
 

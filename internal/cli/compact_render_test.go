@@ -110,13 +110,13 @@ func TestCompactModeMatrix(t *testing.T) {
 
 // scrubAgentEnv unsets every agent marker (restored on cleanup): this suite
 // itself may run inside a harness session (SATELLE_SESSION, CLAUDECODE,
-// CLAUDE_CODE_*, GROK_AGENT, CODEX_*).
+// CLAUDE_CODE_*, GROK_AGENT).
 func scrubAgentEnv(t *testing.T) {
 	t.Helper()
 	keys := []string{"SATELLE_SCRATCH", "SATELLE_SESSION", "CLAUDECODE", "GROK_AGENT"}
 	for _, e := range os.Environ() {
 		k, _, _ := strings.Cut(e, "=")
-		if strings.HasPrefix(k, "CLAUDE_CODE_") || strings.HasPrefix(k, "CODEX_") {
+		if strings.HasPrefix(k, "CLAUDE_CODE_") {
 			keys = append(keys, k)
 		}
 	}

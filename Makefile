@@ -85,9 +85,3 @@ planner-bench: build
 .PHONY: planner-report
 planner-report:
 	SATELLE_PLANNER_REPORT=1 go test -tags plannerbench ./tests/plannerbench/ -run TestRegenerateReportFromDurableEvidence -count=1 -v
-
-# Local Codex hook smoke (sty_71491143). Never part of CI. It uses the existing
-# Codex CLI login/configuration and clearly skips when Codex is unavailable.
-.PHONY: codex-smoke
-codex-smoke: build
-	SATELLE_TEST_BIN=$$(pwd)/$(BIN) go test -tags codexlive ./tests/codexlive/ -count=1 -v

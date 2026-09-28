@@ -75,8 +75,8 @@ func TestGateWaits_LiveHarnessNeedsARequestAfterTheDelivery(t *testing.T) {
 // A harness that reports no count says so; it never reads as zero.
 func TestGateWaits_UnavailableCountIsNamedNotZero(t *testing.T) {
 	issue := gateRow(GatePhaseIssue, "gw_c", nil, 3, true)
-	issue.Executable = "codex"
-	issue.ModelCallsUnavailableReason = "codex: session rollout carries no model-call count"
+	issue.Executable = "nosuch"
+	issue.ModelCallsUnavailableReason = "nosuch: session rollout carries no model-call count"
 	rows := []DriverRow{issue, gateRow(GatePhaseDelivered, "gw_c", nil, 3, true)}
 	got := GateWaits(rows)
 	if len(got) != 1 || got[0].ModelCalls != nil || got[0].Open {

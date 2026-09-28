@@ -55,11 +55,10 @@ type DriverSnapshot struct {
 	// only flushes a turn's usage once that turn fully completes, so a
 	// snapshot read DURING a tool call that is itself part of the in-flight
 	// turn (e.g. the `satelle story set` call that closes/parks a story) can
-	// undercount that very turn (sty_81caa41b AC6). True for grok and codex —
-	// confirmed against real captures: grokDriverSnapshot's cumulative only
-	// updates via the "session" object's summary, and codexDriverSnapshot's
-	// cumulative is the LAST completed turn's token_count event, both written
-	// only once a turn finishes. False for claude, whose transcript already
+	// undercount that very turn (sty_81caa41b AC6). True for grok —
+	// confirmed against a real capture: grokDriverSnapshot's cumulative only
+	// updates via the "session" object's summary, written only once a turn
+	// finishes. False for claude, whose transcript already
 	// carries the calling message's own usage by the time a tool call within
 	// it executes (also confirmed against a real capture — see
 	// testdata/driver/README.md) — a verb-layer catch-up keyed on this field
@@ -70,8 +69,7 @@ type DriverSnapshot struct {
 
 	// TurnBreakdown is each individual turn's OWN usage delta (not a running
 	// cumulative), in completion order, for a harness whose session record
-	// can be decomposed per turn (grok's usage.json turns[], codex's sequence
-	// of token_count events) — nil for claude and any harness this reader
+	// can be decomposed per turn (grok's usage.json turns[]) — nil for claude and any harness this reader
 	// cannot decompose. len(TurnBreakdown) == Turns whenever populated. This
 	// is what lets a verb-layer Pending catch-up (sty_81caa41b AC6) credit
 	// EXACTLY the one turn that was still in flight at a close/park read —
@@ -113,15 +111,13 @@ func SessionUsageSnapshot(harness, sessionID, repoRoot string) DriverSnapshot {
 		return claudeDriverSnapshot(sessionID, repoRoot)
 	case HarnessGrok:
 		return grokDriverSnapshot(sessionID, repoRoot)
-	case HarnessCodex:
-		return codexDriverSnapshot(sessionID)
 	default:
 		return DriverSnapshot{SessionID: sessionID, Executable: adapter,
 			UnavailableReason: fmt.Sprintf("%s: no driver-usage reader for this harness", adapter)}
 	}
 }
 
-// claudeConfigDir/grokHomeDir/codexHomeDir resolve each harness's home
+// claudeConfigDir/grokHomeDir resolve each harness's home
 // directory, honouring an env override so tests (and an unusual install) can
 // point at testdata instead of the real user home.
 func claudeConfigDir() string {
@@ -142,16 +138,6 @@ func grokHomeDir() string {
 		return filepath.Join(h, ".grok")
 	}
 	return ".grok"
-}
-
-func codexHomeDir() string {
-	if v := strings.TrimSpace(os.Getenv("CODEX_HOME")); v != "" {
-		return v
-	}
-	if h, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(h, ".codex")
-	}
-	return ".codex"
 }
 
 // claudeProjectSlug mirrors Claude Code's own project directory naming: the
@@ -392,153 +378,4 @@ func freshOf(u *UsageResult) int {
 		return u.FreshInputTokens
 	}
 	return u.InputTokens
-}
-
-// codexDriverSnapshot reads a codex session rollout JSONL under
-// ~/.codex/sessions/**/rollout-*<session-id>*.jsonl. The model comes from a
-// turn_context event's payload.model; the cumulative usage comes from the
-// LAST event_msg event whose payload.type is "token_count", at
-// payload.info.total_token_usage — confirmed against a real rollout capture
-// (sty_81caa41b coder round 2). total_token_usage is already the harness's
-// own cumulative figure for the session (unlike claude/grok, no summing
-// needed).
-func codexDriverSnapshot(sessionID string) DriverSnapshot {
-	snap := DriverSnapshot{SessionID: sessionID, Executable: HarnessCodex}
-	root := filepath.Join(codexHomeDir(), "sessions")
-	path, err := findCodexRollout(root, sessionID)
-	if err != nil {
-		snap.UnavailableReason = fmt.Sprintf("codex: %v", err)
-		snap.CostUnavailableReason = snap.UnavailableReason
-		return snap
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		snap.UnavailableReason = fmt.Sprintf("codex: session rollout unreadable: %v", err)
-		snap.CostUnavailableReason = snap.UnavailableReason
-		return snap
-	}
-	defer f.Close()
-
-	var last map[string]any
-	var lastUsage *UsageResult
-	var model string
-	turns := 0
-	var breakdown []DriverTurn
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
-		}
-		var ev map[string]any
-		if json.Unmarshal(line, &ev) != nil {
-			continue
-		}
-		typ, _ := ev["type"].(string)
-		payload, _ := ev["payload"].(map[string]any)
-		switch typ {
-		case "turn_context":
-			if m, ok := payload["model"].(string); ok && m != "" {
-				model = m
-			}
-		case "event_msg":
-			if msgTyp, _ := payload["type"].(string); msgTyp != "token_count" {
-				continue
-			}
-			info, _ := payload["info"].(map[string]any)
-			total, _ := info["total_token_usage"].(map[string]any)
-			if total == nil {
-				continue
-			}
-			// last, turns and breakdown advance TOGETHER, only for an event
-			// whose usage map actually parses (sty_81caa41b Revision 4): a
-			// skipped/unavailable token_count event must never count as a turn
-			// with no breakdown entry to match it (len(TurnBreakdown)==Turns is
-			// an invariant the verb layer's turn-index credit indexes into), and
-			// must never overwrite `last` with a map codexUsageFromMap itself
-			// would reject, which would otherwise flip the WHOLE snapshot
-			// Available=false even though an earlier event already read fine.
-			u := codexUsageFromMap(total)
-			if !u.Available {
-				continue
-			}
-			last = total
-			turns++
-			// total_token_usage is the harness's own SESSION-cumulative figure
-			// (see the doc comment above) — this event's own turn delta is the
-			// difference from the previous token_count event's cumulative, not
-			// the map itself (sty_81caa41b AC6 needs per-turn deltas, not
-			// running totals, to isolate one closing turn from later ones).
-			dt := DriverTurn{FreshInput: freshOf(u), CacheRead: u.CacheReadInputTokens, Output: u.OutputTokens}
-			if lastUsage != nil {
-				dt.FreshInput -= freshOf(lastUsage)
-				dt.CacheRead -= lastUsage.CacheReadInputTokens
-				dt.Output -= lastUsage.OutputTokens
-			}
-			if ts, ok := ev["timestamp"].(string); ok {
-				if t, err := time.Parse(time.RFC3339, ts); err == nil {
-					dt.EndedAt = t
-				}
-			}
-			breakdown = append(breakdown, dt)
-			lastUsage = u
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		snap.UnavailableReason = fmt.Sprintf("codex: session rollout unreadable: %v", err)
-		snap.CostUnavailableReason = snap.UnavailableReason
-		return snap
-	}
-	if last == nil {
-		snap.UnavailableReason = "codex: no token_count usage in session rollout"
-		snap.CostUnavailableReason = snap.UnavailableReason
-		return snap
-	}
-	u := codexUsageFromMap(last)
-	if !u.Available {
-		snap.UnavailableReason = u.UnavailableReason
-		snap.CostUnavailableReason = u.CostUnavailableReason
-		return snap
-	}
-	snap.Available = true
-	snap.MayUndercountInFlightTurn = true
-	snap.Model = model
-	snap.FreshInputTokens = freshOf(u)
-	snap.CacheReadInputTokens = u.CacheReadInputTokens
-	snap.OutputTokens = u.OutputTokens
-	snap.Turns = turns
-	snap.TurnBreakdown = breakdown
-	// codex has no cache-write concept (OpenAI prompt caching bills no write
-	// share) and its rollout carries no dollar figure.
-	snap.CostUnavailableReason = "codex: session rollout reports no cost field"
-	// The rollout's token_count events carry token totals and no model-request
-	// count, so there is nothing to read.
-	snap.ModelCallsUnavailableReason = "codex: session rollout carries no model-call count"
-	return snap
-}
-
-// findCodexRollout walks root for the one file matching rollout-*<sessionID>*.jsonl.
-func findCodexRollout(root, sessionID string) (string, error) {
-	var found string
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil //nolint:nilerr // best-effort walk: an unreadable subtree is skipped, not fatal
-		}
-		if d.IsDir() {
-			return nil
-		}
-		name := d.Name()
-		if strings.HasPrefix(name, "rollout-") && strings.HasSuffix(name, ".jsonl") && strings.Contains(name, sessionID) {
-			found = path
-		}
-		return nil
-	})
-	if err != nil {
-		return "", fmt.Errorf("session rollout directory unreadable: %w", err)
-	}
-	if found == "" {
-		return "", fmt.Errorf("no session rollout found for %s under %s", sessionID, root)
-	}
-	return found, nil
 }

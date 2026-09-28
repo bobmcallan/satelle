@@ -11,7 +11,7 @@ import (
 const modelUnavailable = "unavailable"
 
 // modelUnavailablePrefix leads an adapter-named reason such as
-// "unavailable: codex command reports no model" (agentcli.ModelUnavailableFor,
+// "unavailable: grok acp reports no model" (agentcli.ModelUnavailableFor,
 // sty_8e422d47) — a reason, never a measured id. Keep in sync by hand.
 const modelUnavailablePrefix = modelUnavailable + ":"
 

@@ -11,7 +11,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/help"
 )
 
-var modelOrderExecutables = []string{"claude", "grok", "codex"}
+var modelOrderExecutables = []string{"claude", "grok"}
 
 func loadScaffoldAgents(t *testing.T, content string) config.AgentsConfig {
 	t.Helper()
@@ -29,9 +29,9 @@ func loadScaffoldAgents(t *testing.T, content string) config.AgentsConfig {
 	return ac
 }
 
-// TestScaffoldAgentsTomlWritesAllThreeModelOrders (sty_4fde0a50 AC4): init's
-// agents.toml carries a non-empty order for each of claude, grok and codex.
-func TestScaffoldAgentsTomlWritesAllThreeModelOrders(t *testing.T) {
+// TestScaffoldAgentsTomlWritesAllModelOrders (sty_4fde0a50 AC4): init's
+// agents.toml carries a non-empty order for each of claude and grok.
+func TestScaffoldAgentsTomlWritesAllModelOrders(t *testing.T) {
 	ac := loadScaffoldAgents(t, scaffoldAgentsToml)
 	for _, exe := range modelOrderExecutables {
 		if len(ac.OrderFor(exe)) == 0 {
@@ -44,7 +44,7 @@ func TestScaffoldAgentsTomlWritesAllThreeModelOrders(t *testing.T) {
 }
 
 // TestAgentDispatchHelpListsSameModelOrders (AC4): the help topic lists all
-// three executables' orders, and they equal what init writes.
+// executables' orders, and they equal what init writes.
 func TestAgentDispatchHelpListsSameModelOrders(t *testing.T) {
 	top, ok := help.Get("agent-dispatch")
 	if !ok {

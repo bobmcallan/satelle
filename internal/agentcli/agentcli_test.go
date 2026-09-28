@@ -50,8 +50,9 @@ func TestNewRunnerMapping(t *testing.T) {
 		{"", CLIClaude, false}, // empty defaults to claude
 		{"claude", CLIClaude, false},
 		{"CLAUDE", CLIClaude, false}, // case-insensitive
-		{"codex", CLICodex, false},
+		{"grok", CLIGrok, false},
 		{"gpt", "", true},
+		{"nosuch", "", true},
 	}
 	for _, c := range cases {
 		r, err := NewRunner(c.name)
@@ -71,54 +72,27 @@ func TestNewRunnerMapping(t *testing.T) {
 	}
 }
 
-// TestCodexPresetExpansion (sty_3b4909bb): NewRunner("codex") maps to the
-// command-template DefaultCodexExecCommand (not an unmapped stub). Preferred
-// ACP path is DefaultCodexACPCommand + interface=acp (separate test).
-func TestCodexPresetExpansion(t *testing.T) {
-	r := mustRunner(t, "codex")
-	if r.Name() != CLICodex {
-		t.Errorf("NewRunner(codex) name = %q, want %q", r.Name(), CLICodex)
+// The unknown-name error lists only the supported presets, and a bare token is
+// rejected on the agents.toml path (a full template is required).
+func TestUnknownPresetNamesSupportedAdapters(t *testing.T) {
+	_, err := NewRunner("nosuch")
+	if err == nil {
+		t.Fatal("NewRunner(nosuch) must error")
 	}
-	if r.Command() != DefaultCodexExecCommand {
-		t.Errorf("NewRunner(codex) should equal DefaultCodexExecCommand\n got: %q\nwant: %q", r.Command(), DefaultCodexExecCommand)
+	if want := `want "claude" or "grok"`; !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q must name only the supported adapters (%s)", err, want)
 	}
-	// Bare token rejected on the agents.toml path (full template required).
-	if _, err := RunnerFromCommand("codex"); err == nil {
-		t.Fatal("RunnerFromCommand(codex) must error (bare presets removed)")
-	}
-	for _, want := range []string{
-		"codex", "exec", "-s", "read-only", "{system}", "-m", "{model}",
-		`model_reasoning_effort="{effort}"`,
-	} {
-		if !strings.Contains(DefaultCodexExecCommand, want) {
-			t.Errorf("DefaultCodexExecCommand must include %q: %q", want, DefaultCodexExecCommand)
-		}
-	}
-	// Prompt is {system} alone — payload rides stdin (Claude-like dual delivery).
-	if strings.Contains(DefaultCodexExecCommand, "{payload}") {
-		t.Error("DefaultCodexExecCommand must not place {payload} on argv")
+	if _, err := RunnerFromCommand("nosuch"); err == nil {
+		t.Fatal("RunnerFromCommand(nosuch) must error (bare presets removed)")
 	}
 }
 
-func TestCodexACPCommandShape(t *testing.T) {
-	r, err := RunnerFromBinding(InterfaceACP, DefaultCodexACPCommand)
-	if err != nil {
-		t.Fatalf("RunnerFromBinding(acp, DefaultCodexACPCommand): %v", err)
-	}
-	if r.Command() != DefaultCodexACPCommand {
-		t.Errorf("Command() = %q, want %q", r.Command(), DefaultCodexACPCommand)
-	}
-	// First token is the spawn binary (npx); multi-token required by ACP path.
-	if r.Name() != "npx" {
-		t.Errorf("Name() = %q, want npx", r.Name())
-	}
-	if strings.Contains(DefaultCodexACPCommand, "{system}") || strings.Contains(DefaultCodexACPCommand, "{payload}") {
-		t.Error("ACP spawn must not carry template placeholders")
-	}
-}
-
-func TestCodexExecBuildArgs(t *testing.T) {
-	fields := strings.Fields(DefaultCodexExecCommand)
+// buildArgs expands {model} and {effort} fused into a larger token, and drops a
+// fused token together with its preceding flag when the value is empty
+// (sty_aa726901).
+func TestFusedPlaceholderBuildArgs(t *testing.T) {
+	const template = `tool exec -s read-only -m {model} -c model_reasoning_effort="{effort}" {system}`
+	fields := strings.Fields(template)
 	// Drop binary; buildArgs substitutes the template tail.
 	args := buildArgs(fields[1:], Request{
 		SystemPrompt: "gate rubric here",

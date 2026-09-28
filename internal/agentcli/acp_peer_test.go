@@ -9,31 +9,34 @@ import (
 	"testing"
 )
 
-// Codex-shaped ACP fixtures (sty_aa726901 AC1/AC4). Generic ACP coverage from
-// sty_3b4909bb lives in acp_test.go; these pin Codex spawn behaviour:
-// no Grok-only --reasoning-effort argv, session effort config, response
-// capture, denied mutation, Satelle-only grant contract.
+// Non-Grok ACP peer fixtures (sty_aa726901 AC1/AC4). Generic ACP coverage from
+// sty_3b4909bb lives in acp_test.go; these pin the spawn behaviour for a peer
+// satelle has no name for: no Grok-only --reasoning-effort argv, session effort
+// config, response capture, denied mutation, Satelle-only grant contract.
 
-// TestCodexACP_NoReasoningEffortArgv (AC1): spawn shaped like
-// @agentclientprotocol/codex-acp must NOT receive --reasoning-effort on argv
-// when Effort is set; effort rides set_config_option (session path).
-func TestCodexACP_NoReasoningEffortArgv(t *testing.T) {
+// peerSpawnArg stands in for the adapter package token a real peer spawn would
+// carry. It is deliberately not Grok-shaped.
+const peerSpawnArg = "--peer-adapter"
+
+// TestACPPeer_NoReasoningEffortArgv (AC1): a non-Grok spawn must NOT receive
+// --reasoning-effort on argv when Effort is set; effort rides set_config_option
+// (session path).
+func TestACPPeer_NoReasoningEffortArgv(t *testing.T) {
 	for _, effort := range []string{"low", "high"} {
 		t.Run(effort, func(t *testing.T) {
 			dir := t.TempDir()
 			argvLog := filepath.Join(dir, "argv.log")
 			cfgLog := filepath.Join(dir, "cfg.log")
-			peer := writeCodexACPPeer(t, cfgLog)
-			// Wrapper name must NOT be Grok-shaped; arg includes the adapter package.
-			wrap := filepath.Join(dir, "codex-acp-wrapper")
-			// Extra arg mimics DefaultCodexACPCommand package path for allowlist.
+			peer := writeACPPeer(t, cfgLog)
+			// Wrapper name must NOT be Grok-shaped.
+			wrap := filepath.Join(dir, "peer-wrapper")
 			script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argvLog + "\nexec " + peer + " \"$@\"\n"
 			if err := os.WriteFile(wrap, []byte(script), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			// Multi-token spawn: wrapper + package token (no stdio subcommand) (package token
-			// documents Codex shape; peer ignores argv content).
-			cmdLine := wrap + " @agentclientprotocol/codex-acp"
+			// Multi-token spawn: wrapper + adapter token (no stdio subcommand); the
+			// peer ignores argv content.
+			cmdLine := wrap + " " + peerSpawnArg
 			r, err := RunnerFromBinding(InterfaceACP, cmdLine)
 			if err != nil {
 				t.Fatal(err)
@@ -56,7 +59,7 @@ func TestCodexACP_NoReasoningEffortArgv(t *testing.T) {
 			}
 			argv := string(b)
 			if strings.Contains(argv, "--reasoning-effort") {
-				t.Fatalf("Codex ACP spawn must not receive --reasoning-effort argv:\n%s", argv)
+				t.Fatalf("non-Grok ACP spawn must not receive --reasoning-effort argv:\n%s", argv)
 			}
 			cfg, err := os.ReadFile(cfgLog)
 			if err != nil {
@@ -73,25 +76,25 @@ func TestCodexACP_NoReasoningEffortArgv(t *testing.T) {
 	}
 }
 
-// TestCodexACP_InitModelEffortAndCapture covers initialization, model config,
-// and CaptureAnswer vs CaptureFull on a Codex-shaped spawn with tool fencing (AC4).
-func TestCodexACP_InitModelEffortAndCapture(t *testing.T) {
+// TestACPPeer_InitModelEffortAndCapture covers initialization, model config,
+// and CaptureAnswer vs CaptureFull on a non-Grok spawn with tool fencing (AC4).
+func TestACPPeer_InitModelEffortAndCapture(t *testing.T) {
 	dir := t.TempDir()
 	cfgLog := filepath.Join(dir, "cfg.log")
 	// Narration, tool fence, then final decision — same contract as generic ACP capture.
 	extra := `
-        send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Codex narration before tools"}}}})
+        send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Peer narration before tools"}}}})
         send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":{"sessionUpdate":"tool_call","toolCallId":"c1","title":"list_dir","kind":"read"}}})
         send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":{"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"completed"}}})
 `
-	// Peer that also logs set_config_option (model/effort) like writeCodexACPPeer.
-	peer := writeCodexACPPeerWithExtra(t, cfgLog, extra)
-	wrap := filepath.Join(dir, "codex-acp-wrapper")
+	// Peer that also logs set_config_option (model/effort) like writeACPPeer.
+	peer := writeACPPeerWithExtra(t, cfgLog, extra)
+	wrap := filepath.Join(dir, "peer-wrapper")
 	script := "#!/bin/sh\nexec " + peer + " \"$@\"\n"
 	if err := os.WriteFile(wrap, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cmdLine := wrap + " @agentclientprotocol/codex-acp"
+	cmdLine := wrap + " " + peerSpawnArg
 	r, err := RunnerFromBinding(InterfaceACP, cmdLine)
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +114,7 @@ func TestCodexACP_InitModelEffortAndCapture(t *testing.T) {
 		t.Fatalf("CaptureAnswer Run: %v\nsink:\n%s", err, sink.String())
 	}
 	got := string(out)
-	if strings.Contains(got, "Codex narration") {
+	if strings.Contains(got, "Peer narration") {
 		t.Fatalf("CaptureAnswer leaked narration: %q", got)
 	}
 	if !strings.Contains(got, `"decision":"accept"`) {
@@ -151,7 +154,7 @@ func TestCodexACP_InitModelEffortAndCapture(t *testing.T) {
 		t.Fatalf("CaptureFull Run: %v", err)
 	}
 	fullS := string(full)
-	if !strings.Contains(fullS, "Codex narration") {
+	if !strings.Contains(fullS, "Peer narration") {
 		t.Fatalf("CaptureFull dropped narration: %q", fullS)
 	}
 	if !strings.Contains(fullS, `"decision":"accept"`) {
@@ -159,8 +162,8 @@ func TestCodexACP_InitModelEffortAndCapture(t *testing.T) {
 	}
 }
 
-// TestCodexACP_DenyMutation: edit permission denied under read-only tools (AC4).
-func TestCodexACP_DenyMutation(t *testing.T) {
+// TestACPPeer_DenyMutation: edit permission denied under read-only tools (AC4).
+func TestACPPeer_DenyMutation(t *testing.T) {
 	extra := `
         send({"jsonrpc":"2.0","id":99,"method":"session/request_permission","params":{"sessionId":"sess_test","toolCall":{"toolCallId":"c1","kind":"edit","title":"Write"},"options":[{"optionId":"allow-once","name":"Allow","kind":"allow_once"},{"optionId":"reject-once","name":"Reject","kind":"reject_once"}]}})
         resp = read()
@@ -170,11 +173,11 @@ func TestCodexACP_DenyMutation(t *testing.T) {
 `
 	peer := writeFakeACPPeer(t, extra)
 	dir := t.TempDir()
-	wrap := filepath.Join(dir, "codex-acp-wrapper")
+	wrap := filepath.Join(dir, "peer-wrapper")
 	if err := os.WriteFile(wrap, []byte("#!/bin/sh\nexec "+peer+" \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	r, err := RunnerFromBinding(InterfaceACP, wrap+" @agentclientprotocol/codex-acp")
+	r, err := RunnerFromBinding(InterfaceACP, wrap+" "+peerSpawnArg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,9 +194,9 @@ func TestCodexACP_DenyMutation(t *testing.T) {
 	}
 }
 
-// TestCodexACP_SatelleOnlyOps: kind=read allowed under Bash(satelle:*) grant;
+// TestACPPeer_SatelleOnlyOps: kind=read allowed under Bash(satelle:*) grant;
 // kind=execute still denied (current contract — pin, do not widen) (AC4 / Risk 4).
-func TestCodexACP_SatelleOnlyOps(t *testing.T) {
+func TestACPPeer_SatelleOnlyOps(t *testing.T) {
 	// First: read allowed.
 	extraRead := `
         send({"jsonrpc":"2.0","id":99,"method":"session/request_permission","params":{"sessionId":"sess_test","toolCall":{"toolCallId":"c1","kind":"read","title":"Read"},"options":[{"optionId":"allow-once","name":"Allow","kind":"allow_once"},{"optionId":"reject-once","name":"Reject","kind":"reject_once"}]}})
@@ -204,11 +207,11 @@ func TestCodexACP_SatelleOnlyOps(t *testing.T) {
 `
 	peer := writeFakeACPPeer(t, extraRead)
 	dir := t.TempDir()
-	wrap := filepath.Join(dir, "codex-acp-wrapper")
+	wrap := filepath.Join(dir, "peer-wrapper")
 	if err := os.WriteFile(wrap, []byte("#!/bin/sh\nexec "+peer+" \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	r, err := RunnerFromBinding(InterfaceACP, wrap+" @agentclientprotocol/codex-acp")
+	r, err := RunnerFromBinding(InterfaceACP, wrap+" "+peerSpawnArg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,11 +236,11 @@ func TestCodexACP_SatelleOnlyOps(t *testing.T) {
             continue
 `
 	peer2 := writeFakeACPPeer(t, extraExec)
-	wrap2 := filepath.Join(dir, "codex-acp-wrapper2")
+	wrap2 := filepath.Join(dir, "peer-wrapper2")
 	if err := os.WriteFile(wrap2, []byte("#!/bin/sh\nexec "+peer2+" \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	r2, err := RunnerFromBinding(InterfaceACP, wrap2+" @agentclientprotocol/codex-acp")
+	r2, err := RunnerFromBinding(InterfaceACP, wrap2+" "+peerSpawnArg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,13 +257,14 @@ func TestCodexACP_SatelleOnlyOps(t *testing.T) {
 	}
 }
 
-// TestCodexACP_SkipsCLIOwnedAuthMethods (sty_71491143): real codex-acp advertises
-// api-key / chat-gpt. Satelle must not call authenticate for those — agent CLIs
-// own login (codex login), same posture as Claude/Grok outside Grok session reuse.
-func TestCodexACP_SkipsCLIOwnedAuthMethods(t *testing.T) {
+// TestACPPeer_SkipsCLIOwnedAuthMethods (sty_71491143): a peer that advertises
+// api-key / web-login methods must not have authenticate called for them —
+// agent CLIs own their login, same posture as Claude/Grok outside Grok session
+// reuse.
+func TestACPPeer_SkipsCLIOwnedAuthMethods(t *testing.T) {
 	dir := t.TempDir()
 	authLog := filepath.Join(dir, "auth.log")
-	path := filepath.Join(dir, "codex-auth-peer")
+	path := filepath.Join(dir, "auth-peer")
 	authEsc := strings.ReplaceAll(authLog, `\`, `\\`)
 	authEsc = strings.ReplaceAll(authEsc, `"`, `\"`)
 	script := `#!/usr/bin/env python3
@@ -284,8 +288,7 @@ while True:
     mid = msg.get("id")
     method = msg.get("method")
     if method == "initialize":
-        # Real @agentclientprotocol/codex-acp order: api-key then chat-gpt.
-        send({"jsonrpc":"2.0","id":mid,"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[{"id":"api-key"},{"id":"chat-gpt"}]}})
+        send({"jsonrpc":"2.0","id":mid,"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[{"id":"api-key"},{"id":"web-login"}]}})
     elif method == "authenticate":
         with open(AUTH, "a") as f:
             f.write("authenticate methodId=%s\n" % ((msg.get("params") or {}).get("methodId"),))
@@ -304,11 +307,11 @@ while True:
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	wrap := filepath.Join(dir, "codex-acp-wrapper")
+	wrap := filepath.Join(dir, "peer-wrapper")
 	if err := os.WriteFile(wrap, []byte("#!/bin/sh\nexec "+path+" \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	r, err := RunnerFromBinding(InterfaceACP, wrap+" @agentclientprotocol/codex-acp")
+	r, err := RunnerFromBinding(InterfaceACP, wrap+" "+peerSpawnArg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,23 +326,23 @@ while True:
 		t.Fatalf("stdout = %q", out)
 	}
 	if b, err := os.ReadFile(authLog); err == nil && len(b) > 0 {
-		t.Fatalf("Codex ACP must not call authenticate for api-key/chat-gpt; got:\n%s", b)
+		t.Fatalf("a peer's CLI-owned auth methods must not be authenticated; got:\n%s", b)
 	}
 }
 
-// writeCodexACPPeer is like writeFakeACPPeer but logs set_config_option calls
-// to cfgLog for Codex effort/model assertions.
-func writeCodexACPPeer(t *testing.T, cfgLog string) string {
-	return writeCodexACPPeerWithExtra(t, cfgLog, "")
+// writeACPPeer is like writeFakeACPPeer but logs set_config_option calls to
+// cfgLog for effort/model assertions.
+func writeACPPeer(t *testing.T, cfgLog string) string {
+	return writeACPPeerWithExtra(t, cfgLog, "")
 }
 
-// writeCodexACPPeerWithExtra injects Python statements into the session/prompt
+// writeACPPeerWithExtra injects Python statements into the session/prompt
 // handler before the final decision chunk (for tool-fenced capture tests).
 // Logs initialize + set_config_option to cfgLog for AC4 init assertions.
-func writeCodexACPPeerWithExtra(t *testing.T, cfgLog, extra string) string {
+func writeACPPeerWithExtra(t *testing.T, cfgLog, extra string) string {
 	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "codex-peer")
+	path := filepath.Join(dir, "acp-peer")
 	cfgEsc := strings.ReplaceAll(cfgLog, `\`, `\\`)
 	cfgEsc = strings.ReplaceAll(cfgEsc, `"`, `\"`)
 	script := `#!/usr/bin/env python3

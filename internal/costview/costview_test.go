@@ -345,8 +345,8 @@ func TestFamilyNestedEpicNeverEngagedMiddleUsesDescendantUnion(t *testing.T) {
 // bug the previous round shipped.
 func TestFormatDriverRowsAllUnavailableIsNeverZero(t *testing.T) {
 	rows := []costview.DriverRow{
-		{SessionID: "sess1", Executable: "codex", Trigger: "engage", Available: false, WallSeconds: 10},
-		{SessionID: "sess2", Executable: "codex", Trigger: "close", Available: false, WallSeconds: 5},
+		{SessionID: "sess1", Executable: "nosuch", Trigger: "engage", Available: false, WallSeconds: 10},
+		{SessionID: "sess2", Executable: "nosuch", Trigger: "close", Available: false, WallSeconds: 5},
 	}
 	rowViews, total := costview.FormatDriverRows(rows)
 	if len(rowViews) != 2 || total == nil {
@@ -375,7 +375,7 @@ func TestFormatDriverRowsMixedMeasuresOnlyAvailableRows(t *testing.T) {
 		{SessionID: "sess1", Executable: "claude", Trigger: "engage",
 			FreshInput: 100, Output: 20, CacheRead: 10, CacheWrite: 5,
 			Available: true, WallSeconds: 90, CostUSD: &cost},
-		{SessionID: "sess2", Executable: "codex", Trigger: "close", Available: false, WallSeconds: 30},
+		{SessionID: "sess2", Executable: "nosuch", Trigger: "close", Available: false, WallSeconds: 30},
 	}
 	rowViews, total := costview.FormatDriverRows(rows)
 	if rowViews[0].FreshIn != "100" || rowViews[0].Out != "20" || rowViews[0].CacheRead != "10" || rowViews[0].CacheWrite != "5" {

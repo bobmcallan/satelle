@@ -29,11 +29,6 @@ import (
 //     (inputTokens / outputTokens / cachedReadTokens / cacheCreationTokens /
 //     totalTokens) and inputTokens INCLUDES cachedReadTokens. A response with
 //     no _meta.usage records unavailable.
-//   - codex exec --json: a `turn.completed` line carries usage {input_tokens,
-//     cached_input_tokens, output_tokens, reasoning_output_tokens}; input_tokens
-//     INCLUDES cached_input_tokens (OpenAI semantics). OpenAI prompt caching
-//     has no cache-write concept (nothing is billed as a write), so the write
-//     share is a true zero within an otherwise-available split, not a default.
 
 // claudeUsageFromMap maps an Anthropic-shaped `usage` object. Cache fields fold
 // into InputTokens on the UnwrapUsage rule (sty_8178f1c6): input + creation +
@@ -107,51 +102,12 @@ func grokUsageFromMap(raw map[string]any) *UsageResult {
 	return u
 }
 
-// codexUsageFromMap maps a codex `turn.completed` usage object. input_tokens
-// includes cached_input_tokens; codex has no cache-write field.
-func codexUsageFromMap(raw map[string]any) *UsageResult {
-	if !hasAnyKey(raw, "input_tokens", "output_tokens", "cached_input_tokens", "total_tokens") {
-		u := noTokenFields("codex")
-		return &u
-	}
-	in := intValue(raw["input_tokens"])
-	out := intValue(raw["output_tokens"])
-	u := &UsageResult{
-		InputTokens:  in,
-		OutputTokens: out,
-		Available:    true,
-	}
-	if cached, ok := raw["cached_input_tokens"]; ok {
-		read := intValue(cached)
-		u.CacheSplitAvailable = true
-		u.CacheReadInputTokens = read
-		u.FreshInputTokens = max(in-read, 0)
-	}
-	u.TotalTokens = trustedTotal(intValue(raw["total_tokens"]), in+out)
-	return u
-}
-
-// codexModelID reads the model id off a codex event: `model` on the event
-// itself (thread.started / session_configured / turn.completed) or on its usage
-// object. The real `codex exec --json` capture in testdata/usage carries none,
-// so this is empty unless a build emits one; the caller then records the
-// adapter-named no-model reason.
-func codexModelID(ev, usage map[string]any) string {
-	if id := firstString(ev, "model", "model_id"); id != "" {
-		return id
-	}
-	return firstString(usage, "model", "model_id")
-}
-
 // usageForShape picks the provider mapper from the usage object's own field
-// names: camelCase inputTokens is grok's spelling, cached_input_tokens (or a
-// turn.completed carrier) is codex's, anything else is Anthropic-shaped.
+// names: camelCase inputTokens is grok's spelling, anything else is
+// Anthropic-shaped.
 func usageForShape(raw map[string]any) *UsageResult {
 	if _, ok := raw["inputTokens"]; ok {
 		return grokUsageFromMap(raw)
-	}
-	if _, ok := raw["cached_input_tokens"]; ok {
-		return codexUsageFromMap(raw)
 	}
 	return claudeUsageFromMap(raw, "claude")
 }
@@ -175,14 +131,10 @@ func unavailableUsage(adapter, why string) UsageResult {
 	return UsageResult{UnavailableReason: reason, CostUnavailableReason: reason}
 }
 
-// jsonlUsage scans a JSONL stdout (codex exec --json, grok streaming-json,
-// claude stream-json) for usage lines. Codex turn.completed usages are
-// per-turn and summed; any other usage line (a result event) is a final
-// figure, so the last one wins. ok is false when no line carried usage.
+// jsonlUsage scans a JSONL stdout (grok streaming-json, claude stream-json) for
+// usage lines. A usage line (a result event) is a final figure, so the last one
+// wins. ok is false when no line carried usage.
 func jsonlUsage(stdout []byte) (u UsageResult, ok bool) {
-	// codex names its model on rows that carry no usage; remember it for the
-	// turn.completed sum.
-	var codexModel string
 	for _, line := range bytes.Split(stdout, []byte("\n")) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 || line[0] != '{' {
@@ -193,64 +145,17 @@ func jsonlUsage(stdout []byte) (u UsageResult, ok bool) {
 			continue
 		}
 		typ := lowerString(v, "type")
-		if typ == "thread.started" || typ == "session_configured" || typ == "turn.started" {
-			if id := codexModelID(v, nil); id != "" {
-				codexModel = id
-			}
-			continue
-		}
-		if typ != "turn.completed" && typ != "result" && typ != "usage" && typ != "end" {
+		if typ != "result" && typ != "usage" && typ != "end" {
 			continue
 		}
 		got := usageFromMap(v)
 		if got == nil || !got.Available {
 			continue
 		}
-		if typ == "turn.completed" && ok {
-			u = addUsage(u, *got)
-		} else {
-			u = *got
-		}
+		u = *got
 		ok = true
 	}
-	if ok && codexModel != "" {
-		u.ModelResolved = KeepModel(codexModel, u.ModelResolved)
-	}
 	return u, ok
-}
-
-// addUsage sums two per-turn usages. The split stays available only while
-// both halves report it.
-func addUsage(a, b UsageResult) UsageResult {
-	a.InputTokens += b.InputTokens
-	a.OutputTokens += b.OutputTokens
-	a.TotalTokens += b.TotalTokens
-	a.FreshInputTokens += b.FreshInputTokens
-	a.CacheCreationInputTokens += b.CacheCreationInputTokens
-	a.CacheReadInputTokens += b.CacheReadInputTokens
-	a.CacheSplitAvailable = a.CacheSplitAvailable && b.CacheSplitAvailable
-	// A model id seen on any turn survives the sum; a later no-model reason
-	// never replaces it.
-	a.ModelResolved = KeepModel(a.ModelResolved, b.ModelResolved)
-	if len(a.Models) == 0 {
-		a.Models = b.Models
-	}
-	// Cost sums only the turns that reported one; an all-nil sum stays nil
-	// rather than becoming a measured zero, keeping the later turn's reason.
-	if a.CostUSD != nil || b.CostUSD != nil {
-		var sum float64
-		if a.CostUSD != nil {
-			sum += *a.CostUSD
-		}
-		if b.CostUSD != nil {
-			sum += *b.CostUSD
-		}
-		a.CostUSD = &sum
-		a.CostUnavailableReason = ""
-	} else {
-		a.CostUnavailableReason = b.CostUnavailableReason
-	}
-	return a
 }
 
 func trustedTotal(reported, derived int) int {

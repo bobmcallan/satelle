@@ -157,7 +157,7 @@ func TestPrintDriverSectionSplitsColumns(t *testing.T) {
 				Available: true, WallSeconds: 90, CostUSD: float64p(1.25),
 			},
 			{
-				SessionID: "sess2", Executable: "codex", Trigger: "close",
+				SessionID: "sess2", Executable: "grok", Trigger: "close",
 				Available: false, WallSeconds: 30,
 			},
 		},
@@ -190,8 +190,8 @@ func TestPrintDriverSectionSplitsColumns(t *testing.T) {
 func TestPrintDriverSectionAllUnavailableTotalNeverZero(t *testing.T) {
 	sc := verb.StoryCost{
 		DriverRows: []verb.DriverUsagePayload{
-			{SessionID: "sess1", Executable: "codex", Trigger: "engage", Available: false, WallSeconds: 10},
-			{SessionID: "sess2", Executable: "codex", Trigger: "close", Available: false, WallSeconds: 5},
+			{SessionID: "sess1", Executable: "grok", Trigger: "engage", Available: false, WallSeconds: 10},
+			{SessionID: "sess2", Executable: "grok", Trigger: "close", Available: false, WallSeconds: 5},
 		},
 	}
 	cmd := &cobra.Command{}
@@ -282,7 +282,7 @@ func TestPrintDriverSectionGrandTotalSplitsColumns(t *testing.T) {
 func TestPrintDriverSectionGrandTotalNeverZeroWhenUnmeasured(t *testing.T) {
 	sc := verb.StoryCost{
 		DriverRows: []verb.DriverUsagePayload{
-			{SessionID: "sess1", Executable: "codex", Trigger: "engage", Available: false, WallSeconds: 10},
+			{SessionID: "sess1", Executable: "grok", Trigger: "engage", Available: false, WallSeconds: 10},
 		},
 	}
 	cmd := &cobra.Command{}

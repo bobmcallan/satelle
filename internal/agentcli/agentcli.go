@@ -15,11 +15,9 @@
 //
 // agents.toml bindings carry a FULL command template (or "in-loop"/empty). Bare
 // single-token CLI names are NOT accepted on the agents.toml path — the operator
-// must see the real argv. DefaultClaudeCommand / DefaultGrokCommand /
-// DefaultCodexExecCommand are the canonical command templates init/migrate
-// expand into; DefaultCodexACPCommand is the preferred Codex spawn for
-// interface=acp (sty_3b4909bb). NewRunner generates command templates only
-// (init/migrate/detection).
+// must see the real argv. DefaultClaudeCommand / DefaultGrokCommand are
+// the canonical command templates init/migrate expand into. NewRunner generates
+// command templates only (init/migrate/detection).
 package agentcli
 
 import (
@@ -42,7 +40,6 @@ import (
 // Supported agent CLI identifiers.
 const (
 	CLIClaude = "claude"
-	CLICodex  = "codex"
 	CLIGrok   = "grok"
 )
 
@@ -84,33 +81,6 @@ const DefaultClaudeStreamCommand = "claude -p --input-format stream-json --outpu
 // template instead of the bare preset. {model} is dropped (with -m) when unset, so
 // grok falls back to its own default unless the binding pins one (e.g. grok-4.5).
 const DefaultGrokCommand = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --reasoning-effort {effort} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format plain --max-turns 16 --no-subagents"
-
-// DefaultCodexACPCommand is the preferred Codex transport spawn for
-// interface=acp (sty_3b4909bb). The @agentclientprotocol/codex-acp adapter starts
-// the Codex App Server and speaks Agent Client Protocol on stdio, so satelle
-// reuses the existing ACP client (sessions, stream, permission policy, tools
-// grant). No third satelle interface is required. Operators set:
-//
-//	interface = "acp"
-//	command   = DefaultCodexACPCommand  # or "codex-acp" with a multi-token spawn
-//
-// Live dogfood needs the adapter (npx/npm) and an authenticated Codex CLI
-// session; hermetic tests never invoke this binary.
-const DefaultCodexACPCommand = "npx -y @agentclientprotocol/codex-acp"
-
-// DefaultCodexExecCommand is the secondary Codex command-template transport
-// (interface=command / NewRunner("codex")). codex exec takes the gate rubric as
-// the initial PROMPT argv token ({system}); the satelle work-item always rides
-// on stdin (dual delivery — do not also place {payload} on argv). -s read-only
-// is the baked sandbox ceiling (Codex analogue of Claude --disallowedTools /
-// Grok --deny). -m {model} drops when model is empty. Preference remains ACP
-// (DefaultCodexACPCommand); this template covers operators who cannot run the
-// adapter.
-// model_reasoning_effort is the Codex config key for reasoning effort; fused
-// {effort} substitution (buildArgs) expands it or drops -c when effort is empty
-// (sty_aa726901). Value is TOML-quoted so Codex -c accepts a string (unquoted
-// bare tokens fail type checks). Preference remains ACP (DefaultCodexACPCommand).
-const DefaultCodexExecCommand = `codex exec -s read-only -m {model} -c model_reasoning_effort="{effort}" {system}`
 
 // Request is one headless agent invocation.
 type Request struct {
@@ -302,7 +272,7 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 	if len(trimmed) == 0 || trimmed[0] != '{' {
 		return stdout, UsageResult{}
 	}
-	// JSONL (codex exec --json, grok streaming-json, claude stream-json): the
+	// JSONL (grok streaming-json, claude stream-json): the
 	// whole stdout is not one JSON document, so read usage off its event lines.
 	// The text is returned verbatim, as before.
 	if !json.Valid(trimmed) {
@@ -387,9 +357,7 @@ type UsageRunner interface {
 }
 
 // NewRunner returns the Runner for a bare CLI NAME — the preset. An empty name
-// defaults to claude; "grok" expands to the grok command preset; "codex" expands
-// to DefaultCodexExecCommand (command transport). Preferred Codex path for
-// agents.toml is interface=acp + DefaultCodexACPCommand — NewRunner cannot
+// defaults to claude; "grok" expands to the grok command preset. NewRunner cannot
 // return an ACP runner (no interface arg); see help agent-dispatch. Unknown
 // names error. Callers with a full command template use RunnerFromCommand.
 func NewRunner(name string) (Runner, error) {
@@ -398,10 +366,8 @@ func NewRunner(name string) (Runner, error) {
 		return templateFromCommand(DefaultClaudeCommand), nil
 	case CLIGrok:
 		return templateFromCommand(DefaultGrokCommand), nil
-	case CLICodex:
-		return templateFromCommand(DefaultCodexExecCommand), nil
 	default:
-		return nil, fmt.Errorf("agentcli: unknown agent cli %q (want %q, %q, or %q, or a full command template)", name, CLIClaude, CLIGrok, CLICodex)
+		return nil, fmt.Errorf("agentcli: unknown agent cli %q (want %q or %q, or a full command template)", name, CLIClaude, CLIGrok)
 	}
 }
 
@@ -484,7 +450,7 @@ func RunnerFromCommand(command string) (Runner, error) {
 // Detect returns the first supported agent CLI found on PATH (claude preferred),
 // or "" when none is installed. Used by the install-time selection.
 func Detect() string {
-	for _, c := range []string{CLIClaude, CLIGrok, CLICodex} {
+	for _, c := range []string{CLIClaude, CLIGrok} {
 		if _, err := exec.LookPath(c); err == nil {
 			return c
 		}
@@ -493,12 +459,12 @@ func Detect() string {
 }
 
 // Available reports whether the named CLI's binary is on PATH. Known CLI names
-// (claude/grok/codex) are looked up directly — availability does not route
+// (claude/grok) are looked up directly — availability does not route
 // through the agents.toml preset resolver (which no longer accepts bare tokens).
 func Available(name string) bool {
 	n := strings.ToLower(strings.TrimSpace(name))
 	switch n {
-	case CLIClaude, CLIGrok, CLICodex:
+	case CLIClaude, CLIGrok:
 		_, err := exec.LookPath(n)
 		return err == nil
 	default:
@@ -508,7 +474,7 @@ func Available(name string) bool {
 
 // templateRunner executes a command template: a binary plus an argv template whose
 // tokens may carry {system}/{tools}/{model}/{settings}/{payload} placeholders. It
-// is the single code path for every agent CLI — claude, grok, codex, or any
+// is the single code path for every agent CLI — claude, grok, or any
 // operator-supplied binary.
 type templateRunner struct {
 	binary      string
@@ -588,7 +554,7 @@ func buildArgs(argTemplate []string, req Request) []string {
 			}
 			args = append(args, req.Settings)
 		default:
-			// Fused {model}/{effort}/{settings} (sty_aa726901) — e.g. Codex
+			// Fused {model}/{effort}/{settings} (sty_aa726901) — e.g.
 			// -c model_reasoning_effort={effort}. Exact-token cases handled above.
 			if sub, ok, empty := fusedPlaceholder(tok, req); ok {
 				if empty {

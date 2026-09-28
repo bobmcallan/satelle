@@ -57,9 +57,8 @@ func (a acpRunner) Open(ctx context.Context, req Request, pol PermissionPolicy) 
 }
 
 // acpEffortArgvSupported reports whether the ACP spawn is Grok-shaped and may
-// receive the Grok-only --reasoning-effort argv flag (sty_aa726901). Codex ACP
-// (npx -y @agentclientprotocol/codex-acp) and unknown peers are false — effort
-// rides session/set_config_option only. Deliberate allowlist: an unknown flag
+// receive the Grok-only --reasoning-effort argv flag (sty_aa726901). Unknown
+// peers are false — effort rides session/set_config_option only. Deliberate allowlist: an unknown flag
 // can abort a non-Grok spawn.
 func acpEffortArgvSupported(binary string, args []string) bool {
 	base := strings.ToLower(filepath.Base(binary))
@@ -104,20 +103,11 @@ func (a acpRunner) RunUsage(ctx context.Context, req Request) ([]byte, UsageResu
 }
 
 // acpAdapterLabel names the adapter behind an ACP spawn for a no-model reason
-// (ModelUnavailableFor): "grok acp", "codex acp", or "acp <binary>" for a peer
+// (ModelUnavailableFor): "grok acp", or "acp <binary>" for a peer
 // satelle has no name for. Derived from the spawn, never assumed.
 func acpAdapterLabel(binary string, args []string) string {
 	if acpEffortArgvSupported(binary, args) {
 		return "grok acp"
-	}
-	base := strings.ToLower(filepath.Base(binary))
-	if strings.Contains(base, "codex") {
-		return "codex acp"
-	}
-	for _, a := range args {
-		if strings.Contains(strings.ToLower(a), "codex") {
-			return "codex acp"
-		}
 	}
 	return "acp " + filepath.Base(binary)
 }
@@ -247,8 +237,7 @@ func openACPSession(ctx context.Context, a acpRunner, req Request, pol Permissio
 	args := append([]string(nil), a.args...)
 	// Inject --reasoning-effort into spawn ONLY for Grok-shaped ACP peers
 	// (sty_aa726901). --reasoning-effort is a Grok CLI flag, not ACP; unknown
-	// peers (including Codex ACP via @agentclientprotocol/codex-acp) get effort
-	// solely via session/set_config_option in handshake. Prefer insertion
+	// peers get effort solely via session/set_config_option in handshake. Prefer insertion
 	// before trailing "stdio" so `grok agent --reasoning-effort high stdio`.
 	if e := strings.TrimSpace(req.Effort); e != "" && acpEffortArgvSupported(a.binary, a.args) {
 		injected := false
@@ -459,9 +448,9 @@ func (s *acpSession) handshake(ctx context.Context, req Request) error {
 	}
 
 	// Authenticate only for Grok-shaped methods that reuse an existing CLI
-	// session (cached_token / xai.api_key). Agent CLIs (Claude, Grok, Codex)
+	// session (cached_token / xai.api_key). Agent CLIs (Claude, Grok)
 	// own their own login/configuration — satelle never supplies API keys or
-	// drives Codex api-key / chat-gpt flows. Unknown advertised methods are
+	// drives another provider's login flows. Unknown advertised methods are
 	// skipped so session/new uses the peer's already-authenticated CLI state.
 	var initObj struct {
 		AuthMethods []struct {

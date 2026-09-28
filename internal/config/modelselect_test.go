@@ -124,17 +124,17 @@ func TestSelectModelPrecedence(t *testing.T) {
 		{
 			name: "cross-provider guard blocks a mismatched executable, falls to creator",
 			in: SelectInput{
-				HasModelSlot: true, CommandExecutable: "codex",
+				HasModelSlot: true, CommandExecutable: "grok",
 				InLoop:  SessionModel{Model: "claude-opus-5-5", Executable: "claude"},
-				Creator: SessionModel{Model: "gpt-5-codex", Executable: "codex"},
+				Creator: SessionModel{Model: "grok-4.5", Executable: "grok"},
 			},
-			wantModel:  "gpt-5-codex",
+			wantModel:  "grok-4.5",
 			wantSource: ModelSourceCreator,
 		},
 		{
 			name: "cross-provider guard blocks creator too, falls to cli-default",
 			in: SelectInput{
-				HasModelSlot: true, CommandExecutable: "codex",
+				HasModelSlot: true, CommandExecutable: "grok",
 				Creator: SessionModel{Model: "claude-opus-5-5", Executable: "claude"},
 			},
 			wantModel:  "",
@@ -173,7 +173,7 @@ func TestHasModelSlot(t *testing.T) {
 		want    bool
 	}{
 		{"claude -p --model {model}", true},
-		{`codex exec -s read-only -m {model} -c model_reasoning_effort="{effort}"`, true},
+		{`grok -p {payload} -m {model} --reasoning-effort {effort}`, true},
 		{"claude -p --output-format json", false},
 		{"", false},
 	}

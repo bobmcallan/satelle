@@ -165,7 +165,7 @@ func TestHookGate_NoImplementSkipStillRequiresEngagement(t *testing.T) {
 	}
 }
 
-func TestHookGate_CodexShapedSkip(t *testing.T) {
+func TestHookGate_NoModelPayloadSkip(t *testing.T) {
 	repo, _ := liveSeatRepo(t)
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
 	body, _ := os.ReadFile(cfgPath)
@@ -174,8 +174,8 @@ func TestHookGate_CodexShapedSkip(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("SATELLE_CONFIG", cfgPath)
-	out, err := runRootIn(t, `{"tool_input":{"file_path":"internal/foo.go"}}`, "hook", "gate", "--harness", "codex")
+	out, err := runRootIn(t, `{"tool_input":{"file_path":"internal/foo.go"}}`, "hook", "gate", "--harness", "claude")
 	if err != nil {
-		t.Fatalf("codex payload with no model must skip model rule: %v\n%s", err, out)
+		t.Fatalf("payload with no model must skip model rule: %v\n%s", err, out)
 	}
 }

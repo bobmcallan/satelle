@@ -1,3 +1,22 @@
+## [0.0.568] - 2026-09-28
+
+### Breaking
+- **Codex and Antigravity (agy) support is removed; satelle drives claude and grok only.** Neither can be controlled headless from its command line: agy has no system-prompt flag and denies tools only through its own hooks file, and codex's read-only mode is an OS sandbox that also breaks satelle's read verbs. Everything specific to them is deleted: the adapters, launchers, hook scaffolds and wrapper-script arms, session markers and payload fingerprints, capability and harness-facts rows, usage and model parsers, model-order entries, reviewer sandbox rules and help text. `satelle init --harness codex`, `satelle init --harness antigravity` (and `agy`), and `satelle agents install codex|antigravity` are now unknown-harness errors. (sty_941e60cb)
+- **Migration: remove stale bindings by hand.** In `.satelle/workflows/agents.toml` and in every `~/.satelle/agents.toml` profile, delete any binding whose `command` starts with `codex`, `npx -y @agentclientprotocol/codex-acp` or `agy`, and delete any `codex` entry under `[model_order]`. satelle does not reject them for you: a bare `codex` or `agy` token is refused as a removed preset, but a full command template still runs as a generic operator command with its usage recorded as unavailable, so nothing flags it as stale.
+- **Migration: remove satelle's hook entries from a repo that was initialised for them.** `satelle init` no longer knows those hook file shapes, so it does not heal them. Run this once from the repo root (needs `jq`). It removes only satelle's entries (commands containing `satelle-hook.sh`, `satelle hook ` or `satelle reindex`) from `.codex/hooks.json` and `.agents/hooks.json`, and deletes a file only when nothing else is left in it. User hooks (including `{"enabled":true}`, `{}` and empty arrays) and non-array keys are untouched; on invalid JSON it removes its temp file and leaves the original as it was.
+
+```bash
+own='def own: (type=="object") and ((.command? // "")|type=="string" and test("satelle-hook\\.sh|satelle hook |satelle reindex")); def grp: type=="object" and (.hooks|type)=="array"; def had: any(.[]; own or (grp and any(.hooks[]; own))); def prune: map(if grp then (if any(.hooks[]; own) then (.hooks |= map(select(own|not))) | select((.hooks|length)>0) else . end) else select(own|not) end); def pobj: with_entries(if (.value|type)=="array" and (.value|had) then (.value |= prune) | select((.value|length)>0) else . end); def touched: [.[]|select(type=="array")|had]|any;'
+heal() { f=$1; [ -f "$f" ] || return 0; { jq "$own $2" "$f" > "$f.tmp" && if [ "$(jq -c . "$f.tmp")" = '{}' ]; then rm -f "$f" "$f.tmp"; else mv "$f.tmp" "$f"; fi; } || { rm -f "$f.tmp"; echo "satelle heal: $f left unchanged (invalid JSON?)" >&2; }; }
+heal .codex/hooks.json '(if (.hooks|type)=="object" and (.hooks|touched) then (.hooks |= pobj) | (if .hooks=={} then del(.hooks) else . end) else . end) | if ((.description? // "")|type=="string" and startswith("satelle-owned")) then del(.description) else . end'
+heal .agents/hooks.json 'with_entries(if (.value|type)=="object" and (.value|touched) then (.value |= pobj) | select([.value[]|select(type=="array")]|length>0) else . end)'
+```
+
+## [serve-v0.0.92] - 2026-09-28
+
+### Changed
+- **The service embeds the codex and Antigravity removal above; it drives claude and grok only.** (sty_941e60cb)
+
 ## [0.0.567] - 2026-09-28
 
 ### Fixed

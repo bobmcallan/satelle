@@ -20,11 +20,11 @@ func TestAgentsInstallRemove(t *testing.T) {
 		t.Fatalf("agents --help should name install/remove:\n%s", helpOut)
 	}
 	// Unknown name lists valid set.
-	out, err := run(t, testBin, t.TempDir(), "agents", "install", "nope")
+	out, err := run(t, testBin, t.TempDir(), "agents", "install", "nosuch")
 	if err == nil {
 		t.Fatalf("unknown name should fail:\n%s", out)
 	}
-	for _, want := range []string{"claude", "grok", "codex", "all"} {
+	for _, want := range []string{"claude", "grok", "all"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("error should name %q:\n%s", want, out)
 		}
@@ -49,23 +49,23 @@ func TestAgentsInstallRemove(t *testing.T) {
 
 	showBefore := mustRun(t, testBin, repo, "agent", "show")
 
-	// install codex → created + executable + marker + adapter
-	out = mustRun(t, testBin, repo, "agents", "install", "codex")
+	// install grok → created + executable + marker
+	out = mustRun(t, testBin, repo, "agents", "install", "grok")
 	if !strings.Contains(out, "created") && !strings.Contains(out, "unchanged") && !strings.Contains(out, "updated") {
-		t.Fatalf("install codex output:\n%s", out)
+		t.Fatalf("install grok output:\n%s", out)
 	}
 	if !strings.Contains(out, "No default reviewer") {
 		t.Fatalf("install must state default reviewer unchanged:\n%s", out)
 	}
-	launcher := extractLauncherPath(out, "codex")
+	launcher := extractLauncherPath(out, "grok")
 	if launcher == "" {
-		launcher = filepath.Join(home, "agents", "bin", "satelle-codex")
+		launcher = filepath.Join(home, "agents", "bin", "satelle-grok")
 	}
-	assertLauncher(t, launcher, "@agentclientprotocol/codex-acp")
+	assertLauncher(t, launcher, "")
 
 	// Re-run → unchanged, byte-identical.
 	beforeBytes, _ := os.ReadFile(launcher)
-	out2 := mustRun(t, testBin, repo, "agents", "install", "codex")
+	out2 := mustRun(t, testBin, repo, "agents", "install", "grok")
 	if !strings.Contains(out2, "unchanged") {
 		t.Fatalf("second install should be unchanged:\n%s", out2)
 	}
@@ -95,31 +95,28 @@ func TestAgentsInstallRemove(t *testing.T) {
 	if showBefore != showAfter {
 		t.Fatalf("agent show changed:\nbefore: %s\nafter: %s", showBefore, showAfter)
 	}
-	if strings.Contains(showAfter, "cli: codex") && !strings.Contains(showBefore, "cli: codex") {
-		t.Fatalf("install must not set default agent cli to codex:\n%s", showAfter)
-	}
 
 	validateOut := mustRun(t, testBin, repo, "agent", "validate")
 	if !strings.Contains(validateOut, "PASS  agent validate green") {
 		t.Fatalf("validate after install:\n%s", validateOut)
 	}
 
-	// remove codex → gone; re-remove → absent ok
-	rem := mustRun(t, testBin, repo, "agents", "remove", "codex")
+	// remove grok → gone; re-remove → absent ok
+	rem := mustRun(t, testBin, repo, "agents", "remove", "grok")
 	if !strings.Contains(rem, "removed") && !strings.Contains(rem, "absent") {
 		t.Fatalf("remove:\n%s", rem)
 	}
 	if _, err := os.Stat(launcher); !os.IsNotExist(err) {
 		t.Fatalf("launcher should be removed: %v", err)
 	}
-	rem2 := mustRun(t, testBin, repo, "agents", "remove", "codex")
+	rem2 := mustRun(t, testBin, repo, "agents", "remove", "grok")
 	if !strings.Contains(rem2, "absent") && !strings.Contains(rem2, "removed") {
 		t.Fatalf("re-remove should be ok:\n%s", rem2)
 	}
 
-	// install all → three launchers exist + harness scaffolds (sty_9e86f407)
+	// install all → both launchers exist + harness scaffolds (sty_9e86f407)
 	allOut := mustRun(t, testBin, repo, "agents", "install", "all")
-	for _, name := range []string{"claude", "grok", "codex"} {
+	for _, name := range []string{"claude", "grok"} {
 		if !strings.Contains(allOut, name) {
 			t.Fatalf("install all should mention %s:\n%s", name, allOut)
 		}
@@ -130,7 +127,6 @@ func TestAgentsInstallRemove(t *testing.T) {
 	for _, rel := range []string{
 		".claude/settings.json",
 		".grok/hooks/satelle.json",
-		".codex/hooks.json",
 	} {
 		p := filepath.Join(repo, filepath.FromSlash(rel))
 		b, err := os.ReadFile(p)
@@ -141,22 +137,13 @@ func TestAgentsInstallRemove(t *testing.T) {
 			t.Fatalf("scaffold %s missing satelle hook command:\n%s", rel, b)
 		}
 	}
-	// Codex sample binding must not advertise stdio subcommand.
-	if strings.Contains(allOut, `stdio`) && strings.Contains(allOut, "command") {
-		// Allow comment mention of "no stdio"; fail if command line has it.
-		for _, line := range strings.Split(allOut, "\n") {
-			if strings.Contains(line, "command") && strings.Contains(line, "=") && strings.Contains(line, "stdio") {
-				t.Fatalf("install output must not set command with stdio:\n%s", line)
-			}
-		}
-	}
 	if !strings.Contains(allOut, "Compliance") && !strings.Contains(allOut, "engaged") {
 		t.Fatalf("install should state compliance / engaged-story guarantee:\n%s", allOut)
 	}
 
-	// remove all → three gone
+	// remove all → both gone
 	rmAll := mustRun(t, testBin, repo, "agents", "remove", "all")
-	for _, name := range []string{"claude", "grok", "codex"} {
+	for _, name := range []string{"claude", "grok"} {
 		if !strings.Contains(rmAll, name) {
 			t.Fatalf("remove all should mention %s:\n%s", name, rmAll)
 		}
@@ -167,7 +154,7 @@ func TestAgentsInstallRemove(t *testing.T) {
 	}
 
 	// Per-target install for each accepted name
-	for _, name := range []string{"claude", "grok", "codex"} {
+	for _, name := range []string{"claude", "grok"} {
 		o := mustRun(t, testBin, repo, "agents", "install", name)
 		if !strings.Contains(o, name) {
 			t.Fatalf("install %s:\n%s", name, o)

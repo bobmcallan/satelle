@@ -120,25 +120,27 @@ func TestValidateEffectiveRefusesBrokenReferences(t *testing.T) {
 func TestValidateEffectiveJudgesTheMergedBinding(t *testing.T) {
 	global := catalog(t, `
 [profiles.wide-open]
-role    = "reviewer"
-command = "codex exec -s danger-full-access {system}"
-tools   = "read_file,run_terminal_command"
+role      = "reviewer"
+interface = "acp"
+command   = "nosuch acp-serve"
 `)
-	repo := config.AgentsConfig{Reviewer: config.AgentBinding{Profile: "wide-open", Role: config.RoleReviewer}}
+	repo := config.AgentsConfig{Agents: map[string]config.AgentBinding{
+		"judge": {Profile: "wide-open", Role: config.RoleReviewer},
+	}}
 	r := ValidateEffective(repo, global, nil, nil)
 	if r.OK() {
-		t.Fatal("a profile-supplied reviewer command that erases the sandbox must be refused")
+		t.Fatal("a profile-supplied reviewer with no tools= grant evidence must be refused")
 	}
-	if !strings.Contains(strings.Join(r.Problems, "\n"), "danger-full-access") {
+	if !strings.Contains(strings.Join(r.Problems, "\n"), "requires tools=") {
 		t.Errorf("problem should name the ceiling escape: %v", r.Problems)
 	}
 	// The same check runs on an unresolved layer, so the catalog changed only
 	// WHERE the value came from — never WHETHER it is judged.
-	inline := config.AgentsConfig{Reviewer: config.AgentBinding{
-		Role:    config.RoleReviewer,
-		Command: "codex exec -s danger-full-access {system}",
-		Tools:   "read_file,run_terminal_command",
-	}}
+	inline := config.AgentsConfig{Agents: map[string]config.AgentBinding{"judge": {
+		Role:      config.RoleReviewer,
+		Interface: "acp",
+		Command:   "nosuch acp-serve",
+	}}}
 	if direct := Validate(inline, nil, nil); direct.OK() {
 		t.Fatal("the inline equivalent must be refused identically")
 	}

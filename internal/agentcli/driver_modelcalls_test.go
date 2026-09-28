@@ -84,18 +84,3 @@ func TestClaudeDriverSnapshot_ModelCallsCountsDistinctMessages(t *testing.T) {
 		t.Fatalf("ModelCalls = %d, want 2 (a second distinct message)", b.ModelCalls)
 	}
 }
-
-// codex's rollout carries no request count: adapter-named unavailable.
-func TestCodexDriverSnapshot_ModelCallsIsNamedUnavailable(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CODEX_HOME", home)
-	sessionID := "01a0e225-973d-7f11-90e8-68681c9d6d67"
-	writeAt(t, filepath.Join(home, "sessions", "2026", "09", "27", "rollout-2026-09-27T19-15-09-"+sessionID+".jsonl"), readFixture(t, "codex_rollout.jsonl"))
-	snap := SessionUsageSnapshot(HarnessCodex, sessionID, "")
-	if !snap.Available {
-		t.Fatalf("snapshot unavailable: %s", snap.UnavailableReason)
-	}
-	if !strings.HasPrefix(snap.ModelCallsUnavailableReason, "codex:") {
-		t.Fatalf("ModelCallsUnavailableReason = %q, want a codex-named reason, not a zero count", snap.ModelCallsUnavailableReason)
-	}
-}

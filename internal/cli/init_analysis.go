@@ -94,11 +94,11 @@ gate_create = true`,
 //
 // The list names ONLY what the binary deploys: the managed .gitignore block
 // (init/migrate) and the harness hook scaffolds init writes under .claude/,
-// .grok/ and .codex/ (ensureProcessHooks / ensureLazySessionHarness). A repo
+// and .grok/ (ensureProcessHooks / ensureLazySessionHarness). A repo
 // that wants more exempt adds its own prefix; product paths stay gated. Keep it
 // in step with the embedded satelle-substrate-only-check allow list — one answer
 // about the footprint, not two (pinned by a test).
-var managedEditExemptEntries = []string{".gitignore", ".claude/", ".grok/", ".codex/"}
+var managedEditExemptEntries = []string{".gitignore", ".claude/", ".grok/"}
 
 // managedDraftExemptPrefixes are out-of-tree drafting locations the edit
 // gate seeds as exempt. Not the binary's deployed footprint —

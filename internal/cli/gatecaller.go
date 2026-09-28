@@ -184,15 +184,12 @@ func configuredDriverHarnesses(repoRoot string, environ []string) []string {
 	for h := range agentcli.DetectSessionHarnesses(environ) {
 		set[h] = true
 	}
-	claude, grok, codex := detectProcessHarnesses(repoRoot, nil)
+	claude, grok := detectProcessHarnesses(repoRoot, nil)
 	if claude {
 		set[agentcli.HarnessClaude] = true
 	}
 	if grok {
 		set[agentcli.HarnessGrok] = true
-	}
-	if codex {
-		set[agentcli.HarnessCodex] = true
 	}
 	out := make([]string, 0, len(set))
 	for h := range set {

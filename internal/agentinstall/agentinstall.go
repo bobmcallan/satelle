@@ -8,7 +8,6 @@ package agentinstall
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -25,14 +24,8 @@ const (
 	RelBin = "agents/bin"
 )
 
-// antigravityBinary is the Google Antigravity CLI the satelle-antigravity
-// launcher execs. It is not an agentcli headless CLI (satelle drives no isolated
-// agy reviewer), so its name lives here with the launcher that uses it.
-const antigravityBinary = "agy"
-
-// known agents installable by name. "agy" is accepted as an alias for
-// antigravity (see expandName).
-var known = []string{"claude", "grok", "codex", "antigravity"}
+// known agents installable by name.
+var known = []string{"claude", "grok"}
 
 // Agents returns the installable names (stable order).
 func Agents() []string {
@@ -43,14 +36,14 @@ func Agents() []string {
 
 // Result is one install/remove outcome.
 type Result struct {
-	Name   string // claude | grok | codex | antigravity
+	Name   string // claude | grok
 	Path   string
 	Action string // created | updated | unchanged | removed | absent | skipped
 	Note   string
 }
 
 // Install writes satelle-owned launchers under home/agents/bin for name
-// (claude|grok|codex|antigravity|agy|all). home is injected so tests need not set
+// (claude|grok|all). home is injected so tests need not set
 // SATELLE_HOME.
 func Install(home, name string) ([]Result, error) {
 	names, err := expandName(name)
@@ -103,13 +96,8 @@ func Content(name string) (string, error) {
 		return launcherScript("claude", "claude"), nil
 	case "grok":
 		return launcherScript("grok", "grok"), nil
-	case "codex":
-		// Preferred ACP adapter spawn (DefaultCodexACPCommand).
-		return launcherScript("codex", "npx -y @agentclientprotocol/codex-acp"), nil
-	case "antigravity":
-		return launcherScript("antigravity", antigravityBinary), nil
 	default:
-		return "", fmt.Errorf("agentinstall: unknown agent %q (want claude, grok, codex, antigravity, or all)", name)
+		return "", fmt.Errorf("agentinstall: unknown agent %q (want claude, grok, or all)", name)
 	}
 }
 
@@ -129,49 +117,13 @@ func PrereqNote(name string) string {
 		} else {
 			parts = append(parts, "grok not on PATH")
 		}
-	case "codex":
-		if agentcli.Available(agentcli.CLICodex) {
-			parts = append(parts, "codex on PATH")
-		} else {
-			parts = append(parts, "codex not on PATH (optional for ACP adapter)")
-		}
-		if _, err := exec.LookPath("npx"); err == nil {
-			parts = append(parts, "npx on PATH")
-		} else {
-			parts = append(parts, "npx not on PATH — needed for DefaultCodexACPCommand")
-		}
-		parts = append(parts, "authenticate with codex login for local verification")
-	case "antigravity":
-		if _, err := exec.LookPath(antigravityBinary); err == nil {
-			parts = append(parts, antigravityBinary+" on PATH")
-		} else {
-			parts = append(parts, antigravityBinary+" not on PATH — the satelle-antigravity launcher execs it")
-		}
 	}
 	return strings.Join(parts, "; ")
 }
 
 // BindingSnippet returns a pasteable agents.toml fragment for the launcher path.
-// Codex: multi-token ACP spawn via `sh <launcher>` so interface=acp accepts it
-// (bare single-token paths are rejected). The launcher body execs
-// DefaultCodexACPCommand with no stdio subcommand (sty_9e86f407 AC4/AC5).
 func BindingSnippet(name, launcherPath string) string {
 	switch name {
-	case "codex":
-		// sh + launcher is multi-token; launcher runs DefaultCodexACPCommand.
-		cmd := "sh " + launcherPath
-		return fmt.Sprintf(`[reviewer-codex-acp]
-role       = "reviewer"
-interface  = "acp"
-command    = %q
-tools      = "read_file,grep,list_dir"
-principles = "session"
-# Paste into .satelle/workflows/agents.toml — does not change the default [reviewer].
-# Launcher execs: %s  (no stdio subcommand — not part of the adapter contract)
-# Equivalent direct form: command = %q
-# Auth: use Codex CLI login/configuration; Satelle does not require an API-key environment variable.
-# Optional adapter environment: CODEX_PATH, CODEX_CONFIG, INITIAL_AGENT_MODE, APP_SERVER_LOGS
-`, cmd, agentcli.DefaultCodexACPCommand, agentcli.DefaultCodexACPCommand)
 	case "claude":
 		return fmt.Sprintf(`# Use launcher or DefaultClaudeCommand template; select with satelle agent set claude
 # command = %q  # optional wrapper; full template still required for {system}
@@ -180,14 +132,6 @@ principles = "session"
 		return fmt.Sprintf(`# Use launcher or DefaultGrokCommand; select with satelle agent set (or ACP spawn).
 # command = %q
 `, launcherPath)
-	case "antigravity":
-		// No reviewer binding to paste: satelle runs no isolated agy agent (no
-		// headless or ACP adapter), so the install provides the launcher and the
-		// .agents/hooks.json compliance scaffold only.
-		return fmt.Sprintf(`# Antigravity (agy) is a driving harness here, not a satelle reviewer/agent binding:
-# the install provides this launcher and the .agents/hooks.json compliance hooks.
-# Launcher (execs %s): %s
-`, antigravityBinary, launcherPath)
 	default:
 		return ""
 	}
@@ -195,9 +139,6 @@ principles = "session"
 
 func expandName(name string) ([]string, error) {
 	n := strings.ToLower(strings.TrimSpace(name))
-	if n == antigravityBinary {
-		n = "antigravity"
-	}
 	if n == "all" {
 		out := make([]string, len(known))
 		copy(out, known)
@@ -214,12 +155,8 @@ func expandName(name string) ([]string, error) {
 
 func launcherScript(name, execLine string) string {
 	// Derive exec targets from shipped constants so launchers cannot drift.
-	// codex uses DefaultCodexACPCommand; claude/grok/antigravity wrap the bare binary.
+	// claude/grok wrap the bare binary.
 	switch name {
-	case "antigravity":
-		execLine = antigravityBinary
-	case "codex":
-		execLine = agentcli.DefaultCodexACPCommand
 	case "claude":
 		execLine = agentcli.CLIClaude
 	case "grok":

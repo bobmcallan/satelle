@@ -238,7 +238,7 @@ func TestMigrateAppendsEditExemptManaged(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Predating list: operator added .claude/ by hand; the rest of the managed
-	// footprint (.gitignore, .grok/, .codex/) is missing.
+	// footprint (.gitignore, .grok/) is missing.
 	tomlBody := `[gate]
 edit_exempt_paths = [".satelle/", ".claude/"]
 `
@@ -288,7 +288,7 @@ edit_exempt_paths = [".satelle/", ".claude/"]
 		t.Fatal(err)
 	}
 	s := string(got)
-	if !strings.Contains(s, `edit_exempt_paths = [".satelle/", ".claude/", ".gitignore", ".grok/", ".codex/", "/tmp/"]`) {
+	if !strings.Contains(s, `edit_exempt_paths = [".satelle/", ".claude/", ".gitignore", ".grok/", "/tmp/"]`) {
 		t.Errorf("want append-only merge, got:\n%s", s)
 	}
 	if !strings.Contains(apply.String(), "edit_exempt_paths") {
@@ -924,7 +924,7 @@ func TestListLegacyResidueLeavesAgentsBak(t *testing.T) {
 	if err := os.MkdirAll(wf, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(wf, "agents.toml.codex-broken.bak"), []byte("mine\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(wf, "agents.toml.grok-broken.bak"), []byte("mine\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// Real residue still listed.

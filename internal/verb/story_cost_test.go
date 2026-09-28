@@ -177,7 +177,7 @@ func TestComputeStoryCostDollars(t *testing.T) {
 	// A row whose provider reported no cost at all — nil, never a measured zero.
 	uncosted, _ := json.Marshal(map[string]any{
 		"from": "in_progress", "to": "integration", "agent": "reviewer",
-		"usage_available": true, "cost_unavailable_reason": "codex command: no cost reported",
+		"usage_available": true, "cost_unavailable_reason": "nosuch command: no cost reported",
 	})
 	appendInv(uncosted)
 	// A legacy row recorded before cost_usd existed, but with per-model costUSD —
@@ -343,7 +343,7 @@ func TestComputeSkillRollupDollars(t *testing.T) {
 	}
 	appendInv("sty_a", map[string]any{"agent": "reviewer", "skill": "satelle-story-done-review", "usage_available": true, "cost_usd": 0.01})
 	appendInv("sty_b", map[string]any{"agent": "reviewer", "skill": "satelle-story-done-review", "usage_available": true, "cost_usd": 0.02})
-	appendInv("sty_b", map[string]any{"agent": "reviewer", "skill": "satelle-story-done-review", "usage_available": true, "cost_unavailable_reason": "codex command: no cost reported"})
+	appendInv("sty_b", map[string]any{"agent": "reviewer", "skill": "satelle-story-done-review", "usage_available": true, "cost_unavailable_reason": "nosuch command: no cost reported"})
 	appendInv("sty_a", map[string]any{
 		"agent": "reviewer", "skill": "satelle-story-plan-review", "usage_available": true,
 		"model_usage": []map[string]any{{"id": "claude-opus-5-5", "cost_usd": 0.1}},
@@ -351,7 +351,7 @@ func TestComputeSkillRollupDollars(t *testing.T) {
 	appendInv("sty_a", map[string]any{"agent": "reviewer", "skill": "satelle-story-plan-review", "usage_available": false})
 	// A skill with no costed row at all: its costed count (Invocations -
 	// UncostedRows) is zero, which the CLI renders as "unknown", not "$0".
-	appendInv("sty_a", map[string]any{"agent": "reviewer", "skill": "satelle-story-intent-review", "usage_available": true, "cost_unavailable_reason": "codex command: no cost reported"})
+	appendInv("sty_a", map[string]any{"agent": "reviewer", "skill": "satelle-story-intent-review", "usage_available": true, "cost_unavailable_reason": "nosuch command: no cost reported"})
 
 	rollup, err := verb.ComputeSkillRollup(ctx, "")
 	if err != nil {

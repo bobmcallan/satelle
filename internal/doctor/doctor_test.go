@@ -247,7 +247,7 @@ func TestDefectMatrix(t *testing.T) {
 		{
 			name: "unsafe reviewer",
 			opts: fixtureOpts{agents: healthyAgentsTOML +
-				"\n[judge]\nrole = \"reviewer\"\ncommand = \"codex exec -s danger-full-access {system}\"\n"},
+				"\n[judge]\nrole = \"reviewer\"\ninterface = \"acp\"\ncommand = \"grok agent stdio\"\n"},
 			want: health.IDReviewerUnsafe,
 		},
 		{

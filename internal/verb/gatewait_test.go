@@ -117,10 +117,10 @@ func TestGateWaitRows_LiveHarnessSettlesOnlyAfterARequestPastTheDelivery(t *test
 // A harness that cannot count says so on the row and in the wait, adapter-named.
 func TestGateWaitRows_UnavailableCountIsRecordedNotZeroed(t *testing.T) {
 	db := wireDU(t)
-	t.Setenv(config.SessionEnv, "sess-gw-codex")
+	t.Setenv(config.SessionEnv, "sess-gw-nosuch")
 	t.Setenv("CLAUDECODE", "1")
 	uncounted := gateSnap(2, 0, true)
-	uncounted.ModelCallsUnavailableReason = "codex: session rollout carries no model-call count"
+	uncounted.ModelCallsUnavailableReason = "nosuch: session record carries no model-call count"
 	stubSnapshotter(t, uncounted)
 	ctx := context.Background()
 	now := time.Unix(1_700_000_000, 0)
@@ -132,13 +132,13 @@ func TestGateWaitRows_UnavailableCountIsRecordedNotZeroed(t *testing.T) {
 		if r.ModelCalls != nil || r.Cumulative.ModelCalls != nil {
 			t.Errorf("an uncounted harness recorded a count: %+v", r)
 		}
-		if !strings.HasPrefix(r.ModelCallsUnavailableReason, "codex:") {
+		if !strings.HasPrefix(r.ModelCallsUnavailableReason, "nosuch:") {
 			t.Errorf("reason = %q, want the adapter-named reason on the row", r.ModelCallsUnavailableReason)
 		}
 	}
 	w := gateCounted(t, "sty_gw3")
-	if w.ModelCalls != nil || w.Open || !strings.HasPrefix(w.Reason, "codex:") {
-		t.Fatalf("wait = %+v, want no count, not open, a codex-named reason", w)
+	if w.ModelCalls != nil || w.Open || !strings.HasPrefix(w.Reason, "nosuch:") {
+		t.Fatalf("wait = %+v, want no count, not open, an adapter-named reason", w)
 	}
 }
 

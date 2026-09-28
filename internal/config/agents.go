@@ -166,7 +166,7 @@ type AgentBinding struct {
 	// Command is the agent's spawn/template string.
 	//   command transport: multi-token full argv template with {system}/{tools}/
 	//     {model}/{settings}/{payload} (each its own argv token). Bare single-token
-	//     only "in-loop"; bare claude/grok/codex rejected by agentvalidate.
+	//     only "in-loop"; bare claude/grok rejected by agentvalidate.
 	//   acp transport: ACP stdio spawn only (e.g. "grok agent stdio") — no
 	//     {system}/{payload} placeholders (those ride the protocol).
 	// Prefer over retired harness= (no runtime fallback; MigrateAgents rewrites).
@@ -727,7 +727,7 @@ type AgentsConfig struct {
 	Reviewer AgentBinding            `toml:"reviewer"`
 	Agents   map[string]AgentBinding `toml:"agents"`
 	// ModelOrder is the [model_order] table (sty_4fde0a50): one ordered list
-	// of models per executable token (claude, grok, codex). It is what an
+	// of models per executable token (claude, grok). It is what an
 	// unpinned dispatch with no same-executable inherited model follows.
 	ModelOrder map[string][]ModelRank `toml:"model_order"`
 }

@@ -19,7 +19,7 @@ const (
 // produced it. Executable is the cross-provider guard's evidence: an
 // inherited or creator model applies only when it matches the dispatch
 // binding's own command executable, so a Claude session's model id can never
-// reach a Codex/Grok command (sty_7069bced).
+// reach a Grok command (sty_7069bced).
 type SessionModel struct {
 	Model      string
 	Executable string

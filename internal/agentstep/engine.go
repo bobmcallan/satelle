@@ -2699,7 +2699,7 @@ func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStat
 	// one — fail loud at gate time (design §6.4), not by policing tools/model.
 	if config.IsInLoopCommand(binding.CommandTemplate()) {
 		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
-			"gate refused: reviewer binding %q is command=in-loop and cannot produce an isolated verdict — set [%s] command to an isolated agent CLI (claude|grok|codex or a full template)", section, section)
+			"gate refused: reviewer binding %q is command=in-loop and cannot produce an isolated verdict — set [%s] command to an isolated agent CLI (claude|grok or a full template)", section, section)
 	}
 	// Role must resolve to reviewer for the gate binding (design §4.4 / §8 / sty_a476a2f8).
 	if config.ResolvedRole(section, binding) != config.RoleReviewer {

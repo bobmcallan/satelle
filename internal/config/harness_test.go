@@ -6,7 +6,7 @@ func TestEmbeddedHarnessParses(t *testing.T) {
 	if err := EmbeddedHarnessErr(); err != nil {
 		t.Fatalf("embedded harness.toml: %v", err)
 	}
-	for _, h := range []string{"claude", "grok", "codex", "unknown"} {
+	for _, h := range []string{"claude", "grok", "unknown"} {
 		if EmbeddedHarness()[h].ContextLimitBytes <= 0 {
 			t.Errorf("embedded default for %q has no context_limit_bytes", h)
 		}
@@ -36,7 +36,7 @@ func TestContextLimitPerHarness(t *testing.T) {
 		t.Errorf("MaxContextLimit = %d, want 64000", got)
 	}
 	// Unset repo config falls through to the embedded default.
-	if got := (Config{}).ContextLimit("codex"); got != EmbeddedHarness()["codex"].ContextLimitBytes {
-		t.Errorf("codex default = %d", got)
+	if got := (Config{}).ContextLimit("grok"); got != EmbeddedHarness()["grok"].ContextLimitBytes {
+		t.Errorf("grok default = %d", got)
 	}
 }

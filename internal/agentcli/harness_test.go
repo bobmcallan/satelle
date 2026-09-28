@@ -10,7 +10,7 @@ func TestRunnerFromCommand(t *testing.T) {
 		wantErr   bool
 	}{
 		{"claude", "", false, true}, // bare preset removed
-		{"codex", "", false, true},  // bare preset removed
+		{"grok", "", false, true},   // bare preset removed
 		{"claude -p --append-system-prompt {system}", "claude", false, false}, // literal template
 		{"myagent review {system} {tools}", "myagent", false, false},          // arbitrary literal template
 		{"", "", true, false},        // unset → nil (keep default)

@@ -31,7 +31,7 @@ import (
 func init() {
 	agent := &cobra.Command{
 		Use:   "agent",
-		Short: "Select the agent CLI the reviewer/summariser use (claude | codex); validate agents.toml",
+		Short: "Select the agent CLI the reviewer/summariser use (claude | grok); validate agents.toml",
 		Long: `agent manages which headless agent CLI satelle's quality-management spine
 shells out to for isolated reviews and summaries. The choice persists in the
 global config (~/.satelle/config.toml) so it is set once per machine.
@@ -41,7 +41,7 @@ timeout, env) and each workflow's agent= node bindings, and surfaces each agent'
 resolved grant. Structural workflow checks (rubrics, unresolved gate skills) stay
 on satelle workflow validate — this command reuses them alongside the agent layer.
 
-To install satelle-owned launcher scripts (e.g. Codex ACP adapter wrapper), use
+To install satelle-owned launcher scripts, use
 satelle agents install (plural) — that path never changes this [agent] cli default.`,
 	}
 
@@ -73,7 +73,7 @@ have looks identical to a misconfigured workflow until you ask.`,
 	}
 
 	set := &cobra.Command{
-		Use:   "set <claude|codex>",
+		Use:   "set <claude|grok>",
 		Short: "Select and persist the agent CLI",
 		Long: `Select the agent CLI and persist it machine-wide.
 
@@ -103,7 +103,7 @@ selection pointing at a missing binary.`,
 			found := agentcli.Detect()
 			if found == "" {
 				return fmt.Errorf("no supported agent CLI found on PATH (looked for %q, %q) — install one, then `satelle agent set <cli>`",
-					agentcli.CLIClaude, agentcli.CLICodex)
+					agentcli.CLIClaude, agentcli.CLIGrok)
 			}
 			return persistAgentCLI(cmd, found)
 		},

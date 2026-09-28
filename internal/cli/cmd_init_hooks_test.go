@@ -68,40 +68,33 @@ func TestReconcileClaudeHooks(t *testing.T) {
 func TestDetectProcessHarnesses(t *testing.T) {
 	repo := t.TempDir()
 	// Neither forced nor dirs → nothing (no PATH, no claude default).
-	c, g, x := detectProcessHarnesses(repo, nil)
-	if c || g || x {
-		t.Errorf("empty: claude=%v grok=%v codex=%v, want none", c, g, x)
+	c, g := detectProcessHarnesses(repo, nil)
+	if c || g {
+		t.Errorf("empty: claude=%v grok=%v, want none", c, g)
 	}
 	// Forced flag only.
-	c, g, x = detectProcessHarnesses(repo, []string{"grok"})
-	if c || !g || x {
-		t.Errorf("forced grok: claude=%v grok=%v codex=%v, want grok-only", c, g, x)
+	c, g = detectProcessHarnesses(repo, []string{"grok"})
+	if c || !g {
+		t.Errorf("forced grok: claude=%v grok=%v, want grok-only", c, g)
 	}
-	c, g, x = detectProcessHarnesses(repo, []string{"claude", "grok", "codex"})
-	if !c || !g || !x {
-		t.Errorf("forced all: claude=%v grok=%v codex=%v, want all", c, g, x)
+	c, g = detectProcessHarnesses(repo, []string{"claude", "grok"})
+	if !c || !g {
+		t.Errorf("forced all: claude=%v grok=%v, want all", c, g)
 	}
 	// Existing harness dirs (PATH must not matter — forced nil).
 	if err := os.MkdirAll(filepath.Join(repo, ".grok"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	c, g, x = detectProcessHarnesses(repo, nil)
-	if c || !g || x {
-		t.Errorf(".grok dir only: claude=%v grok=%v codex=%v, want grok-only", c, g, x)
+	c, g = detectProcessHarnesses(repo, nil)
+	if c || !g {
+		t.Errorf(".grok dir only: claude=%v grok=%v, want grok-only", c, g)
 	}
 	if err := os.MkdirAll(filepath.Join(repo, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	c, g, x = detectProcessHarnesses(repo, nil)
-	if !c || !g || x {
-		t.Errorf("claude+grok dirs: claude=%v grok=%v codex=%v", c, g, x)
-	}
-	if err := os.MkdirAll(filepath.Join(repo, ".codex"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	c, g, x = detectProcessHarnesses(repo, nil)
-	if !c || !g || !x {
-		t.Errorf("all dirs: claude=%v grok=%v codex=%v, want all", c, g, x)
+	c, g = detectProcessHarnesses(repo, nil)
+	if !c || !g {
+		t.Errorf("claude+grok dirs: claude=%v grok=%v, want all", c, g)
 	}
 }
 
@@ -657,7 +650,7 @@ func TestFailVisibleWrapperShell(t *testing.T) {
 	if err := writeHookScripts(repo); err != nil {
 		t.Fatal(err)
 	}
-	for _, harness := range []string{"claude", "grok", "codex", "antigravity"} {
+	for _, harness := range []string{"claude", "grok"} {
 		full := renderHookCommand(repo, harness, "gate")
 		if strings.Contains(full, "$") || strings.HasPrefix(full, "sh -c ") {
 			t.Fatalf("command must be $-free script form: %s", full)
@@ -671,7 +664,7 @@ func TestFailVisibleWrapperShell(t *testing.T) {
 		if !strings.Contains(got, "policy denial") {
 			t.Errorf("%s gate infra deny missing reason: stdout=%q stderr=%q", harness, got, stderr)
 		}
-		topLevel := harness == "grok" || harness == "antigravity"
+		topLevel := harness == "grok"
 		if !topLevel && !strings.Contains(got, "hookSpecificOutput") {
 			t.Errorf("%s want Claude shape: %q", harness, got)
 		}
@@ -681,7 +674,7 @@ func TestFailVisibleWrapperShell(t *testing.T) {
 		assertHookDenyReason(t, harness, got)
 	}
 
-	for _, harness := range []string{"claude", "grok", "codex", "antigravity"} {
+	for _, harness := range []string{"claude", "grok"} {
 		full := renderHookCommand(repo, harness, "commitgate")
 		code, stdout, stderr := runHookScript(t, repo, full,
 			hookBashEvent(harness, "echo hello"), t.TempDir())
@@ -715,7 +708,7 @@ func TestFailVisibleWrapperShellBinaryPresent(t *testing.T) {
 	stub := filepath.Join(stubDir, "satelle")
 	body := `#!/bin/sh
 case "$4" in
-  grok|antigravity) printf '%s\n' '{"decision":"deny","reason":"stub policy denial"}' ;;
+  grok) printf '%s\n' '{"decision":"deny","reason":"stub policy denial"}' ;;
   *) printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"stub policy denial"}}' ;;
 esac
 printf '%s\n' 'TOKEN=must-not-leak' >&2
@@ -726,7 +719,7 @@ exit 1
 	}
 	home := t.TempDir()
 
-	for _, harness := range []string{"claude", "grok", "codex", "antigravity"} {
+	for _, harness := range []string{"claude", "grok"} {
 		for _, sub := range []string{"gate", "commitgate"} {
 			event := hookEditEvent(harness)
 			if sub == "commitgate" {
@@ -757,7 +750,7 @@ exit 1
 		if err := os.WriteFile(stub, []byte(failure), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		for _, harness := range []string{"claude", "grok", "codex", "antigravity"} {
+		for _, harness := range []string{"claude", "grok"} {
 			code, stdout, stderr := runHookScript(t, repo,
 				renderHookCommand(repo, harness, "gate"),
 				hookEditEvent(harness), home)
@@ -776,7 +769,7 @@ exit 1
 	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, harness := range []string{"claude", "grok", "codex", "antigravity"} {
+	for _, harness := range []string{"claude", "grok"} {
 		for _, sub := range []string{"gate", "commitgate"} {
 			event := hookEditEvent(harness)
 			if sub == "commitgate" {
@@ -838,18 +831,10 @@ func hookEditEvent(harness string) string {
 	if harness == "grok" {
 		return `{"toolInput":{"filePath":"x.go"}}`
 	}
-	if harness == "antigravity" {
-		return `{"conversationId":"c1","toolCall":{"name":"write_to_file","args":{"TargetFile":"x.go"}}}`
-	}
 	return `{"tool_input":{"file_path":"x.go"}}`
 }
 
 func hookBashEvent(harness, command string) string {
-	if harness == "antigravity" {
-		b, _ := json.Marshal(map[string]any{"conversationId": "c1", "toolCall": map[string]any{
-			"name": "run_command", "args": map[string]string{"CommandLine": command}}})
-		return string(b)
-	}
 	key := "tool_input"
 	field := "command"
 	if harness == "grok" {
@@ -866,7 +851,7 @@ func assertHookDenyReason(t *testing.T, harness, stdout string) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &doc); err != nil {
 		t.Fatalf("%s deny is not JSON: %v: %q", harness, err, stdout)
 	}
-	if harness == "grok" || harness == "antigravity" {
+	if harness == "grok" {
 		if doc["decision"] != "deny" {
 			t.Fatalf("%s decision=%v, want deny", harness, doc["decision"])
 		}

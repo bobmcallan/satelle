@@ -19,7 +19,7 @@ const ModelUnavailable = "unavailable"
 const modelUnavailablePrefix = ModelUnavailable + ":"
 
 // ModelUnavailableFor is the adapter-named no-model marker, e.g.
-// "unavailable: codex command reports no model" — it says which adapter ran and
+// "unavailable: grok command reports no model" — it says which adapter ran and
 // found no model to report, where the bare ModelUnavailable literal says only
 // that none was recorded (sty_8e422d47). It is never a measured id;
 // IsModelUnavailable recognises both spellings.

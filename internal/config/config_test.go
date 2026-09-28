@@ -564,7 +564,6 @@ func TestIsAgentCaller(t *testing.T) {
 		{"plain", false},
 		{"claude", true},
 		{"grok", true},
-		{"codex", true},
 	} {
 		useFixtureEnv(t, c.fixture)
 		if got := IsAgentCaller(); got != c.want {

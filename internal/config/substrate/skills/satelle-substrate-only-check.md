@@ -15,7 +15,7 @@ verifies the story's **change set** touched **only** substrate-lane paths:
 markdown and config under `.satelle/` (workflows, skills, principles,
 documents, tasks, agents.toml, hooks, …), `docs/`, the binary's own **managed
 footprint** outside `.satelle/` (the root `.gitignore` managed block and harness
-hook scaffolds under `.claude/`, `.grok/` and `.codex/` that `satelle init`
+hook scaffolds under `.claude/` and `.grok/` that `satelle init`
 deploys), or any
 prefix in `[gate] edit_exempt_paths` in `satelle.toml`.
 
@@ -109,7 +109,7 @@ fi
 changed=$(printf '%s\n%s\n%s\n' "$rec" "$liv" "$com" | grep -v '^$' | sort -u)
 
 # Allowed prefixes: authored substrate, managed footprint, edit_exempt_paths.
-allow='\.satelle/|docs/|\.gitignore$|\.claude/|\.grok/|\.codex/'
+allow='\.satelle/|docs/|\.gitignore$|\.claude/|\.grok/'
 extra=$(grep -E '^[[:space:]]*edit_exempt_paths' .satelle/satelle.toml 2>/dev/null | grep -oE '"[^"]+"' | tr -d '"')
 for p in $extra; do
   esc=$(printf '%s' "$p" | sed 's#[^A-Za-z0-9/]#\\&#g')

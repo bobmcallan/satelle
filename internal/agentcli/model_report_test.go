@@ -32,13 +32,9 @@ func TestModelResolved_MeasuredPerAdapter(t *testing.T) {
 			return u.ModelResolved
 		}, "grok-4.7-build"},
 		{"acp session reply fallback", func() string {
-			u := acpUsageFromResult(json.RawMessage(`{"stopReason":"end_turn"}`), acpModelFromReply(json.RawMessage(`{"sessionId":"s","models":{"currentModelId":"m-1"}}`)), "codex acp")
+			u := acpUsageFromResult(json.RawMessage(`{"stopReason":"end_turn"}`), acpModelFromReply(json.RawMessage(`{"sessionId":"s","models":{"currentModelId":"m-1"}}`)), "acp fake-peer")
 			return u.ModelResolved
 		}, "m-1"},
-		{"codex command with model", func() string {
-			_, u := UnwrapUsage(usageFixture(t, "codex_exec_model.jsonl"))
-			return u.ModelResolved
-		}, "gpt-5-codex"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -79,13 +75,9 @@ func TestModelResolved_AdapterNamedReasonPerAdapter(t *testing.T) {
 		{"grok acp", func() string {
 			return acpUsageFromResult(json.RawMessage(`{"_meta":{"usage":{"inputTokens":1,"outputTokens":1}}}`), "", "grok acp").ModelResolved
 		}, "unavailable: grok acp reports no model"},
-		{"codex acp", func() string {
-			return acpUsageFromResult(json.RawMessage(`{"_meta":{"usage":{"inputTokens":1,"outputTokens":1}}}`), "", "codex acp").ModelResolved
-		}, "unavailable: codex acp reports no model"},
-		{"codex command", func() string {
-			_, u := UnwrapUsage(usageFixture(t, "codex_exec.jsonl"))
-			return u.ModelResolved
-		}, "unavailable: codex command reports no model"},
+		{"unnamed acp peer", func() string {
+			return acpUsageFromResult(json.RawMessage(`{"_meta":{"usage":{"inputTokens":1,"outputTokens":1}}}`), "", "acp fake-peer").ModelResolved
+		}, "unavailable: acp fake-peer reports no model"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -108,27 +100,12 @@ func TestACPAdapterLabel(t *testing.T) {
 	}{
 		{"grok", []string{"agent", "stdio"}, "grok acp"},
 		{"/usr/bin/grok", []string{"agent", "stdio"}, "grok acp"},
-		{"npx", []string{"-y", "@agentclientprotocol/codex-acp"}, "codex acp"},
-		{"codex-acp", []string{"stdio"}, "codex acp"},
 		{"/tmp/fake-peer", []string{"stdio"}, "acp fake-peer"},
 	}
 	for _, c := range cases {
 		if got := acpAdapterLabel(c.binary, c.args); got != c.want {
 			t.Errorf("acpAdapterLabel(%q, %v) = %q, want %q", c.binary, c.args, got, c.want)
 		}
-	}
-}
-
-// An id seen on one codex turn survives the per-turn sum; a later reason never
-// replaces a measured id.
-func TestAddUsage_KeepsMeasuredModel(t *testing.T) {
-	a := UsageResult{ModelResolved: "gpt-5-codex", Available: true}
-	b := UsageResult{ModelResolved: noModelReport("codex command"), Available: true}
-	if got := addUsage(a, b).ModelResolved; got != "gpt-5-codex" {
-		t.Errorf("model = %q, want gpt-5-codex kept", got)
-	}
-	if got := addUsage(b, a).ModelResolved; got != "gpt-5-codex" {
-		t.Errorf("model = %q, want a later measured id to replace a reason", got)
 	}
 }
 
@@ -141,7 +118,7 @@ func TestIsModelUnavailable(t *testing.T) {
 	if IsModelUnavailable("grok-4.7") {
 		t.Error("a measured id is not unavailable")
 	}
-	if !strings.HasPrefix(ModelUnavailableFor("codex command", "reports no model"), "unavailable: codex command") {
+	if !strings.HasPrefix(ModelUnavailableFor("grok command", "reports no model"), "unavailable: grok command") {
 		t.Error("reason must name the adapter")
 	}
 }

@@ -1,6 +1,6 @@
 // `satelle agents install|remove` provisions satelle-owned launchers under
 // $SATELLE_HOME/agents/bin/ and repo harness compliance scaffolds
-// (.claude / .grok / .codex blocking hooks) (sty_aa726901, sty_9e86f407).
+// (.claude / .grok blocking hooks) (sty_aa726901, sty_9e86f407).
 // Distinct from `satelle agent` (singular: select/validate the headless CLI).
 package cli
 
@@ -18,13 +18,12 @@ import (
 func init() {
 	agents := &cobra.Command{
 		Use:   "agents",
-		Short: "Install or remove satelle-owned agent launchers and harness compliance hooks (claude | grok | codex | antigravity | all)",
+		Short: "Install or remove satelle-owned agent launchers and harness compliance hooks (claude | grok | all)",
 		Long: `agents install and remove manage two satelle-owned surfaces per target:
 
-  1. Launcher scripts under $SATELLE_HOME/agents/bin/ (e.g. satelle-codex →
-     npx -y @agentclientprotocol/codex-acp — no unsupported stdio subcommand).
+  1. Launcher scripts under $SATELLE_HOME/agents/bin/.
   2. Repo harness compliance scaffolds with blocking PreToolUse hooks:
-     .claude/settings.json, .grok/hooks/satelle.json, .codex/hooks.json, .agents/hooks.json —
+     .claude/settings.json, .grok/hooks/satelle.json —
      so governed code-changing actions are denied unless a satelle story is
      engaged (same policy as satelle hook gate / commitgate).
 
@@ -43,27 +42,19 @@ choice on everyone who opens the repo. The renderer stays — to show a live
 satelled link plus the engaged <story_id>::<stage>, put "satelle status --line"
 in your own ~/.claude/settings.json as statusLine.command; install prints the
 snippet. An entry satelle seeded into a repo before this is removed on install,
-and a statusLine you own is left byte-for-byte. Grok and Codex could not take
-one regardless: Grok has no scriptable statusline, and Codex's built-in
-[tui].status_line takes a fixed item list (model, cwd, git branch, context
-usage) with no command backing. All three harnesses see the same facts through
-the SessionStart availability line.
+and a statusLine you own is left byte-for-byte. Grok could not take one
+regardless: it has no scriptable statusline. Both harnesses see the same facts
+through the SessionStart availability line.
 
 They do not install third-party packages globally, do not change
-~/.satelle/config.toml [agent] cli, and do not edit any repo's agents.toml —
-so a Codex install path can be verified without changing the default reviewer.
-
-Codex hooks require trust on first use (Codex /hooks review). Automation may
-pass --dangerously-bypass-hook-trust to codex exec.
-Codex authentication comes from the Codex CLI (codex login); satelle requires
-no API-key or opt-in environment variable.
+~/.satelle/config.toml [agent] cli, and do not edit any repo's agents.toml.
 
 For selecting or validating the headless agent CLI, use satelle agent (singular):
   satelle agent show | set | detect | validate`,
 	}
 
 	install := &cobra.Command{
-		Use:   "install <claude|grok|codex|antigravity|all>",
+		Use:   "install <claude|grok|all>",
 		Short: "Install launchers + harness compliance hooks (idempotent)",
 		Long: `Install the satelle-owned launcher and compliance hooks for a harness, or for
 all of them.
@@ -120,19 +111,6 @@ overwritten — which is also why remove leaves yours in place.`,
 						return err
 					}
 					printScaffoldOutcome(out, "grok", grokHooksRel, added, updated, incomplete)
-				case "codex":
-					added, updated, incomplete, err := ensureCodexHooks(repoRoot)
-					if err != nil {
-						return err
-					}
-					printScaffoldOutcome(out, "codex", codexHooksRel, added, updated, incomplete)
-					fmt.Fprintln(out, "  note: Codex will prompt to trust .codex/hooks.json on first run (/hooks); automation may use --dangerously-bypass-hook-trust")
-				case antigravityHarness:
-					added, updated, incomplete, err := ensureAntigravityHooks(repoRoot)
-					if err != nil {
-						return err
-					}
-					printScaffoldOutcome(out, antigravityHarness, antigravityHooksRel, added, updated, incomplete)
 				}
 			}
 			fmt.Fprintln(out, "No default reviewer or [agent] cli was changed.")
@@ -142,7 +120,7 @@ overwritten — which is also why remove leaves yours in place.`,
 	}
 
 	remove := &cobra.Command{
-		Use:   "remove <claude|grok|codex|antigravity|all>",
+		Use:   "remove <claude|grok|all>",
 		Short: "Remove satelle-owned launchers and hook scaffolds (idempotent; unmarked left in place)",
 		Long: `Remove the launchers and hook scaffolds satelle installed for a harness.
 
@@ -177,10 +155,6 @@ you mean to stop satelle governing the harness — not as tidying.`,
 					action, path, note, rerr = removeClaudeHooks(repoRoot)
 				case "grok":
 					action, path, note, rerr = removeGrokHooks(repoRoot)
-				case "codex":
-					action, path, note, rerr = removeCodexHooks(repoRoot)
-				case antigravityHarness:
-					action, path, note, rerr = removeAntigravityHooks(repoRoot)
 				}
 				if rerr != nil {
 					return rerr
@@ -211,16 +185,13 @@ you mean to stop satelle governing the harness — not as tidying.`,
 
 func expandAgentTargets(name string) ([]string, error) {
 	n := strings.ToLower(strings.TrimSpace(name))
-	if n == "agy" {
-		n = antigravityHarness
-	}
 	switch n {
 	case "all":
-		return []string{"claude", "grok", "codex", antigravityHarness}, nil
-	case "claude", "grok", "codex", antigravityHarness:
+		return []string{"claude", "grok"}, nil
+	case "claude", "grok":
 		return []string{n}, nil
 	default:
-		return nil, fmt.Errorf("agents: unknown agent %q (want claude, grok, codex, antigravity (agy), or all)", name)
+		return nil, fmt.Errorf("agents: unknown agent %q (want claude, grok, or all)", name)
 	}
 }
 

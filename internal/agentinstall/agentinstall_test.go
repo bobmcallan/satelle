@@ -9,7 +9,7 @@ import (
 
 func TestInstallIdempotentAndUpdate(t *testing.T) {
 	home := t.TempDir()
-	rs, err := Install(home, "codex")
+	rs, err := Install(home, "grok")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,11 +24,11 @@ func TestInstallIdempotentAndUpdate(t *testing.T) {
 	if !strings.Contains(string(b), MarkerLine) {
 		t.Fatalf("missing marker: %s", b)
 	}
-	if !strings.Contains(string(b), "@agentclientprotocol/codex-acp") {
-		t.Fatalf("codex launcher must spawn adapter: %s", b)
+	if !strings.Contains(string(b), "exec grok") {
+		t.Fatalf("grok launcher must exec grok: %s", b)
 	}
 	// Identical re-run → unchanged.
-	rs2, err := Install(home, "codex")
+	rs2, err := Install(home, "grok")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,11 +36,11 @@ func TestInstallIdempotentAndUpdate(t *testing.T) {
 		t.Fatalf("want unchanged, got %+v", rs2)
 	}
 	// Mutate a satelle-owned file (keep marker) then reinstall → updated.
-	stale := "#!/bin/sh\n" + MarkerLine + " codex — do not edit\necho stale\n"
+	stale := "#!/bin/sh\n" + MarkerLine + " grok — do not edit\necho stale\n"
 	if err := os.WriteFile(path, []byte(stale), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	rs3, err := Install(home, "codex")
+	rs3, err := Install(home, "grok")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,69 +115,22 @@ func TestInstallAllAndUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rs) != 4 {
-		t.Fatalf("all should install 4: %+v", rs)
+	if len(rs) != 2 {
+		t.Fatalf("all should install 2: %+v", rs)
 	}
 	names := SortedNames(rs)
-	if strings.Join(names, ",") != "antigravity,claude,codex,grok" {
+	if strings.Join(names, ",") != "claude,grok" {
 		t.Fatalf("names = %v", names)
 	}
-	if _, err := Install(home, "nope"); err == nil {
+	_, err = Install(home, "nope")
+	if err == nil {
 		t.Fatal("unknown name must error")
 	}
-}
-
-// sty_9e88b82f AC7: antigravity installs the satelle-antigravity launcher, which
-// execs agy; "agy" is an alias for the same launcher, not a second one.
-func TestAntigravityLauncherAndAlias(t *testing.T) {
-	c, err := Content("antigravity")
-	if err != nil || !strings.Contains(c, "exec agy \"$@\"") || !strings.Contains(c, MarkerLine) {
-		t.Fatalf("antigravity content: %v %q", err, c)
+	if !strings.Contains(err.Error(), "want claude, grok, or all") {
+		t.Fatalf("unknown-target error must list only claude and grok: %v", err)
 	}
-	home := t.TempDir()
-	for _, name := range []string{"antigravity", "agy"} {
-		rs, err := Install(home, name)
-		if err != nil || len(rs) != 1 || rs[0].Name != "antigravity" {
-			t.Fatalf("Install(%q) = %+v (%v)", name, rs, err)
-		}
-		if want := filepath.Join(home, RelBin, "satelle-antigravity"); rs[0].Path != want {
-			t.Fatalf("launcher path = %s, want %s", rs[0].Path, want)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(home, RelBin, "satelle-agy")); err == nil {
-		t.Fatal("the alias must not create a second launcher")
-	}
-	rs, err := Remove(home, "agy")
-	if err != nil || rs[0].Action != "removed" {
-		t.Fatalf("Remove(agy) = %+v (%v)", rs, err)
-	}
-	if _, err := os.Stat(LauncherPath(home, "antigravity")); !os.IsNotExist(err) {
-		t.Fatalf("launcher should be gone: %v", err)
-	}
-}
-
-// PrereqNote reports whether agy is on PATH — with and without it.
-func TestAntigravityPrereqNote(t *testing.T) {
-	bin := t.TempDir()
-	t.Setenv("PATH", bin)
-	if got := PrereqNote("antigravity"); !strings.Contains(got, "agy not on PATH") {
-		t.Errorf("without agy: %q", got)
-	}
-	if err := os.WriteFile(filepath.Join(bin, "agy"), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if got := PrereqNote("antigravity"); !strings.Contains(got, "agy on PATH") || strings.Contains(got, "not on PATH") {
-		t.Errorf("with agy: %q", got)
-	}
-}
-
-func TestAntigravityBindingSnippet(t *testing.T) {
-	snip := BindingSnippet("antigravity", "/h/agents/bin/satelle-antigravity")
-	if !strings.Contains(snip, "/h/agents/bin/satelle-antigravity") || !strings.Contains(snip, "agy") {
-		t.Fatalf("snippet = %q", snip)
-	}
-	if strings.Contains(snip, "\n[") || strings.Contains(snip, "role") {
-		t.Fatalf("agy has no reviewer adapter; the snippet must not invent a binding:\n%s", snip)
+	if got := Agents(); strings.Join(got, ",") != "claude,grok" {
+		t.Fatalf("Agents() = %v", got)
 	}
 }
 
@@ -192,53 +145,18 @@ func TestContentClaudeGrok(t *testing.T) {
 	}
 }
 
-// TestCodexBindingHasNoUnsupportedArgv (sty_9e86f407 AC4): install-generated
-// ACP command uses DefaultCodexACPCommand with no stdio subcommand.
-func TestCodexBindingHasNoUnsupportedArgv(t *testing.T) {
-	snip := BindingSnippet("codex", "/tmp/home/agents/bin/satelle-codex")
-	// Parse the command = "..." line only — comments may mention "stdio" as a
-	// negative ("no stdio subcommand").
-	var cmdLine string
-	for _, line := range strings.Split(snip, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "command") && strings.Contains(line, "=") {
-			cmdLine = line
-			break
+// A removed target is rejected by the generic unknown-target path and has no
+// binding snippet.
+func TestRemovedTargetsAreUnknown(t *testing.T) {
+	for _, name := range []string{"nosuch", "gemini"} {
+		if _, err := Content(name); err == nil {
+			t.Fatalf("Content(%q) must error", name)
 		}
-	}
-	if cmdLine == "" {
-		t.Fatalf("no command line in snippet:\n%s", snip)
-	}
-	if strings.Contains(cmdLine, "stdio") {
-		t.Fatalf("command must not include stdio token: %s", cmdLine)
-	}
-	// Generated command must drive the installed launcher (sh <path>), not
-	// only the raw npx line (AC5: exercise installed artifact).
-	if !strings.Contains(cmdLine, "satelle-codex") || !strings.Contains(cmdLine, "sh ") {
-		t.Fatalf("want sh <launcher> form, got: %s\nsnippet:\n%s", cmdLine, snip)
-	}
-	if !strings.Contains(snip, `npx -y @agentclientprotocol/codex-acp`) {
-		t.Fatalf("snippet should document DefaultCodexACPCommand:\n%s", snip)
-	}
-	// Launcher body: marker + exec DefaultCodexACPCommand "$@"
-	body, err := Content("codex")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(body, MarkerLine) {
-		t.Fatalf("launcher missing marker:\n%s", body)
-	}
-	if !strings.Contains(body, "exec npx -y @agentclientprotocol/codex-acp \"$@\"") {
-		t.Fatalf("launcher must exec DefaultCodexACPCommand:\n%s", body)
-	}
-	// Residual tokens after the package path: only passthrough "$@" is ok.
-	// Reject any unsupported subcommand baked into the script body.
-	for _, bad := range []string{" stdio", " login", " cli "} {
-		// " login" / " cli " as baked argv after the package are unsupported for
-		// the default launch path (adapter may accept them as subcommands, but
-		// the install-generated default must not add them).
-		if bad == " stdio" && strings.Contains(body, bad) {
-			t.Fatalf("launcher body must not bake %q:\n%s", bad, body)
+		if _, err := Install(t.TempDir(), name); err == nil {
+			t.Fatalf("Install(%q) must error", name)
+		}
+		if got := BindingSnippet(name, "/x"); got != "" {
+			t.Fatalf("BindingSnippet(%q) = %q, want empty", name, got)
 		}
 	}
 }

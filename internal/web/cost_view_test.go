@@ -118,7 +118,7 @@ func TestCostVMRendersDriverRow(t *testing.T) {
 				FreshInput: 50, Output: 10, CacheRead: 5, CacheWrite: 2,
 				Available: true, WallSeconds: 30, CostUSD: &cost,
 			},
-			{SessionID: "sess2", Executable: "codex", Trigger: "close", Available: false, WallSeconds: 15},
+			{SessionID: "sess2", Executable: "nosuch", Trigger: "close", Available: false, WallSeconds: 15},
 		},
 	}
 	vm := costVMFromStory(own, nil)

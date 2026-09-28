@@ -37,7 +37,6 @@ func TestCommandAdapterRepresentativeShapesAndFallback(t *testing.T) {
 	}{
 		{"claude delta", `{"type":"content_block_delta","delta":{"type":"text_delta","text":"working"}}`, EventMessage, "working"},
 		{"claude tool", `{"type":"content_block_start","content_block":{"type":"tool_use","name":"Read"}}`, EventToolStart, ""},
-		{"codex item", `{"type":"item.completed","item":{"type":"agent_message","text":"answer"}}`, EventMessage, "answer"},
 		{"generic grok", "plain progress", EventMessage, "plain progress"},
 		{"malformed", `{"type":`, EventMessage, `{"type":`},
 	}

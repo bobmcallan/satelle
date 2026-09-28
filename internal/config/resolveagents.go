@@ -230,8 +230,8 @@ func ResolveAgentsBaseline(baseline, repo, workspace AgentsConfig, global Global
 
 // layerModelOrder folds the [model_order] layers per executable key: the
 // highest layer that names an executable wins that executable's list, so a repo
-// writing only claude still inherits the workspace's or baseline's grok and
-// codex lists. Layers are passed lowest first.
+// writing only claude still inherits the workspace's or baseline's grok
+// list. Layers are passed lowest first.
 func layerModelOrder(layers ...map[string][]ModelRank) map[string][]ModelRank {
 	var out map[string][]ModelRank
 	for _, l := range layers {

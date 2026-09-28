@@ -613,25 +613,20 @@ func TestStatusLineAloneIsNotScaffoldDrift(t *testing.T) {
 	}
 }
 
-// TestGrokAndCodexGetNoStatusline (AC10): neither harness's scaffold carries a
-// statusline key — they cannot accept one, so writing it would be a lie.
-func TestGrokAndCodexGetNoStatusline(t *testing.T) {
+// TestGrokGetsNoStatusline (AC10): the grok scaffold carries no statusline key
+// — it cannot accept one, so writing it would be a lie.
+func TestGrokGetsNoStatusline(t *testing.T) {
 	repo := t.TempDir()
 	if _, _, _, err := ensureGrokHooks(repo); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := ensureCodexHooks(repo); err != nil {
+	raw, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(grokHooksRel)))
+	if err != nil {
 		t.Fatal(err)
 	}
-	for _, rel := range []string{grokHooksRel, codexHooksRel} {
-		raw, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(rel)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, key := range []string{"statusLine", "status_line"} {
-			if strings.Contains(string(raw), key) {
-				t.Fatalf("%s must not carry %q:\n%s", rel, key, raw)
-			}
+	for _, key := range []string{"statusLine", "status_line"} {
+		if strings.Contains(string(raw), key) {
+			t.Fatalf("%s must not carry %q:\n%s", grokHooksRel, key, raw)
 		}
 	}
 }

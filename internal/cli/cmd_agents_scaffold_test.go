@@ -12,68 +12,13 @@ import (
 )
 
 // sty_9e86f407 AC1/AC3: agents install/remove harness scaffolds.
-func TestEnsureCodexHooksIdempotentAndPreservesUser(t *testing.T) {
+func TestRemoveGrokHooksStripsOnlySatelle(t *testing.T) {
 	repo := t.TempDir()
-	// Seed a user-owned entry by writing a partial file first.
-	if err := os.MkdirAll(filepath.Join(repo, ".codex"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	userDoc := map[string]any{
-		"description": "user meta",
-		"hooks": map[string]any{
-			"SessionStart": []any{
-				map[string]any{"hooks": []any{
-					map[string]any{"type": "command", "command": "echo user-session"},
-				}},
-			},
-		},
-	}
-	ub, _ := json.MarshalIndent(userDoc, "", "  ")
-	path := filepath.Join(repo, filepath.FromSlash(codexHooksRel))
-	if err := os.WriteFile(path, append(ub, '\n'), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	created, updated, _, err := ensureCodexHooks(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if created {
-		t.Fatal("existing file should heal, not recreate")
-	}
-	if len(updated) == 0 {
-		// Reinforcement should add PreToolUse etc.
-		t.Logf("heal updates: %v (may be empty if already complete)", updated)
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "echo user-session") {
-		t.Fatalf("user SessionStart entry must survive:\n%s", raw)
-	}
-	if !strings.Contains(string(raw), "satelle-hook.sh") {
-		t.Fatalf("satelle PreToolUse must be present after heal:\n%s", raw)
-	}
-
-	// Re-run → no byte rewrite of user entry.
-	_, _, _, err = ensureCodexHooks(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw2, _ := os.ReadFile(path)
-	if !strings.Contains(string(raw2), "echo user-session") {
-		t.Fatal("user entry lost on second ensure")
-	}
-}
-
-func TestRemoveCodexHooksStripsOnlySatelle(t *testing.T) {
-	repo := t.TempDir()
-	created, _, _, err := ensureCodexHooks(repo)
+	created, _, _, err := ensureGrokHooks(repo)
 	if err != nil || !created {
 		t.Fatalf("ensure: created=%v err=%v", created, err)
 	}
-	path := filepath.Join(repo, filepath.FromSlash(codexHooksRel))
+	path := filepath.Join(repo, filepath.FromSlash(grokHooksRel))
 	// Inject user entry.
 	raw, _ := os.ReadFile(path)
 	var root map[string]any
@@ -91,18 +36,17 @@ func TestRemoveCodexHooksStripsOnlySatelle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	action, _, note, err := removeCodexHooks(repo)
+	action, _, note, err := removeGrokHooks(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if action != "updated" && action != "removed" {
-		t.Fatalf("action=%s note=%s", action, note)
+	if action != "updated" {
+		t.Fatalf("action=%s note=%s, want updated", action, note)
 	}
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		// Only ok if wholly satelle — we injected user, so must remain.
+	after, err := os.ReadFile(path)
+	if err != nil {
 		t.Fatal("file deleted despite user entry")
 	}
-	after, _ := os.ReadFile(path)
 	if !strings.Contains(string(after), "echo keep-me") {
 		t.Fatalf("user entry must remain:\n%s", after)
 	}
@@ -110,13 +54,9 @@ func TestRemoveCodexHooksStripsOnlySatelle(t *testing.T) {
 		t.Fatalf("satelle entries must be stripped:\n%s", after)
 	}
 
-	// Second remove → absent or skipped/updated no-op.
-	a2, _, _, err := removeCodexHooks(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if a2 == "removed" {
-		// ok if file emptied entirely on first pass somehow
+	// A second remove finds nothing satelle-owned left and leaves the file alone.
+	if a2, _, _, err := removeGrokHooks(repo); err != nil || a2 != "skipped" {
+		t.Fatalf("second remove: action=%q err=%v, want skipped", a2, err)
 	}
 }
 
@@ -212,7 +152,7 @@ func TestEnsureGrokHooksSkipsUnmarked(t *testing.T) {
 
 func TestRemoveSharedHookScriptWhenUnreferenced(t *testing.T) {
 	repo := t.TempDir()
-	if _, _, _, err := ensureCodexHooks(repo); err != nil {
+	if _, _, _, err := ensureGrokHooks(repo); err != nil {
 		t.Fatal(err)
 	}
 	// Still referenced → skip.
@@ -223,8 +163,8 @@ func TestRemoveSharedHookScriptWhenUnreferenced(t *testing.T) {
 	if a != "skipped" {
 		t.Fatalf("want skipped while referenced, got %s (%s)", a, note)
 	}
-	// Strip codex hooks entirely then remove shared script.
-	path := filepath.Join(repo, filepath.FromSlash(codexHooksRel))
+	// Strip the grok hooks entirely then remove the shared script.
+	path := filepath.Join(repo, filepath.FromSlash(grokHooksRel))
 	_ = os.Remove(path)
 	a2, _, _, err := maybeRemoveSharedHookScript(repo)
 	if err != nil {
@@ -238,13 +178,13 @@ func TestRemoveSharedHookScriptWhenUnreferenced(t *testing.T) {
 	}
 }
 
-func TestRemoveCodexDeletesWhollySatelleScaffold(t *testing.T) {
+func TestRemoveGrokDeletesWhollySatelleScaffold(t *testing.T) {
 	repo := t.TempDir()
-	if _, _, _, err := ensureCodexHooks(repo); err != nil {
+	if _, _, _, err := ensureGrokHooks(repo); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(repo, filepath.FromSlash(codexHooksRel))
-	action, _, _, err := removeCodexHooks(repo)
+	path := filepath.Join(repo, filepath.FromSlash(grokHooksRel))
+	action, _, _, err := removeGrokHooks(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,18 +192,18 @@ func TestRemoveCodexDeletesWhollySatelleScaffold(t *testing.T) {
 		t.Fatalf("wholly satelle scaffold must be removed, got %s", action)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatal("hooks.json should be gone")
+		t.Fatal("hooks file should be gone")
 	}
 }
 
-// Every command emitted by the Codex scaffold must be recognisably Satelle-owned,
+// Every command emitted by the Grok scaffold must be recognisably Satelle-owned,
 // otherwise remove could leave a supposedly wholly-owned hooks file behind.
-func TestRemoveCodexRecognisesEveryGeneratedCommand(t *testing.T) {
+func TestRemoveGrokRecognisesEveryGeneratedCommand(t *testing.T) {
 	repo := t.TempDir()
-	if _, _, _, err := ensureCodexHooks(repo); err != nil {
+	if _, _, _, err := ensureGrokHooks(repo); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(codexHooksRel)))
+	raw, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(grokHooksRel)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,135 +221,108 @@ func TestRemoveCodexRecognisesEveryGeneratedCommand(t *testing.T) {
 			}
 		}
 	}
-	if action, _, _, err := removeCodexHooks(repo); err != nil || action != "removed" {
-		t.Fatalf("remove wholly-owned Codex scaffold: action=%q err=%v", action, err)
+	if action, _, _, err := removeGrokHooks(repo); err != nil || action != "removed" {
+		t.Fatalf("remove wholly-owned Grok scaffold: action=%q err=%v", action, err)
 	}
 }
 
-func TestRemoveCodexKeepsUserDescription(t *testing.T) {
+func TestRemoveGrokKeepsUserTopLevelKey(t *testing.T) {
 	repo := t.TempDir()
-	if _, _, _, err := ensureCodexHooks(repo); err != nil {
+	if _, _, _, err := ensureGrokHooks(repo); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(repo, filepath.FromSlash(codexHooksRel))
+	path := filepath.Join(repo, filepath.FromSlash(grokHooksRel))
 	raw, _ := os.ReadFile(path)
 	var root map[string]any
 	_ = json.Unmarshal(raw, &root)
 	root["description"] = "user kept this"
 	b, _ := json.MarshalIndent(root, "", "  ")
 	_ = os.WriteFile(path, append(b, '\n'), 0o644)
-	action, _, _, err := removeCodexHooks(repo)
+	action, _, _, err := removeGrokHooks(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if action == "removed" {
-		t.Fatal("must not delete file when user description remains")
+		t.Fatal("must not delete file when a user key remains")
 	}
 	after, _ := os.ReadFile(path)
 	if !strings.Contains(string(after), "user kept this") {
-		t.Fatalf("user description must remain:\n%s", after)
+		t.Fatalf("user key must remain:\n%s", after)
 	}
 	if strings.Contains(string(after), "satelle-hook.sh") {
 		t.Fatalf("satelle hooks should be stripped:\n%s", after)
 	}
 }
 
-// TestInstalledCodexScaffoldDeniesMutation (AC2/AC5): agents-install path writes
-// .codex/hooks.json + wrapper; running the gate command as the harness would
-// denies an apply_patch-shaped edit with no engaged story.
-func TestInstalledCodexScaffoldDeniesMutation(t *testing.T) {
+// TestInstalledGrokScaffoldDeniesMutation (AC2/AC5): the agents-install path
+// writes .grok/hooks/satelle.json + wrapper; the deny path the wrapper calls with
+// --harness grok emits Grok's top-level decision/reason shape.
+func TestInstalledGrokScaffoldDeniesMutation(t *testing.T) {
 	repo := t.TempDir()
-	created, _, _, err := ensureCodexHooks(repo)
+	created, _, _, err := ensureGrokHooks(repo)
 	if err != nil || !created {
-		t.Fatalf("ensureCodexHooks: created=%v err=%v", created, err)
+		t.Fatalf("ensureGrokHooks: created=%v err=%v", created, err)
 	}
-	raw, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(codexHooksRel)))
+	raw, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(grokHooksRel)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(raw), "satelle-hook.sh") {
 		t.Fatalf("scaffold missing wrapper:\n%s", raw)
 	}
-	// Run the same command the scaffold embeds: sh <wrapper> gate codex
-	cmd := renderHookCommand(repo, "codex", "gate")
-	// Build satelle binary is not available; invoke emit via package helper with
-	// harness flag to prove the deny path the wrapper would call.
-	// Also execute the wrapper script if satelle is on PATH.
 	prev := hookHarnessFlag
-	hookHarnessFlag = "codex"
+	hookHarnessFlag = "grok"
 	t.Cleanup(func() { hookHarnessFlag = prev })
 	var buf bytes.Buffer
 	c := &cobra.Command{}
 	c.SetOut(&buf)
-	ev := []byte(`{"tool_input":{"file_path":"` + filepath.Join(repo, "main.go") + `"},"hook_event_name":"PreToolUse"}`)
-	// denyPreToolUse is the gate's deny path; gate RunE needs store — use deny helper
-	// with codex harness (what wrapper passes via --harness).
+	ev := []byte(`{"toolInput":{"file_path":"` + filepath.Join(repo, "main.go") + `"}}`)
+	// denyPreToolUse is the gate's deny path; the gate RunE needs a store.
 	if err := denyPreToolUse(c, ev, "no engaged story"); err == nil {
 		t.Fatal("expected deny error")
 	}
-	if !strings.Contains(buf.String(), `"permissionDecision":"deny"`) {
-		t.Fatalf("want codex deny: %s", buf.String())
+	if !strings.Contains(buf.String(), `"decision":"deny"`) {
+		t.Fatalf("want grok deny: %s", buf.String())
 	}
-	// Config validity: JSON must parse; no Stop key.
 	var root map[string]any
 	if err := json.Unmarshal(raw, &root); err != nil {
-		t.Fatalf("hooks.json invalid: %v", err)
+		t.Fatalf("hooks file invalid: %v", err)
 	}
 	hooks := root["hooks"].(map[string]any)
-	if _, ok := hooks["Stop"]; ok {
-		t.Fatal("Stop must not be present")
-	}
-	_ = cmd // command form documented for harness
-}
-
-func TestBuildCodexHookSettingsShape(t *testing.T) {
-	b := buildCodexHookSettings("/tmp/repo")
-	var root map[string]any
-	if err := json.Unmarshal(b, &root); err != nil {
-		t.Fatal(err)
-	}
-	hooks, ok := root["hooks"].(map[string]any)
-	if !ok {
-		t.Fatalf("want top-level hooks: %s", b)
-	}
-	for _, ev := range []string{"SessionStart", "PreToolUse", "UserPromptSubmit"} {
+	for _, ev := range []string{"SessionStart", "PreToolUse", "UserPromptSubmit", "Stop"} {
 		if _, ok := hooks[ev]; !ok {
 			t.Errorf("missing event %s", ev)
 		}
 	}
-	if _, ok := hooks["Stop"]; ok {
-		t.Error("Codex scaffold must not include Stop (plan event set)")
+}
+
+// TestAgentsAndInitRejectUnknownHarness: a name that is not claude or grok
+// reaches the generic unknown-name errors of both `init --harness` and
+// `agents install|remove`, and the errors list only the supported harnesses.
+func TestAgentsAndInitRejectUnknownHarness(t *testing.T) {
+	if _, err := parseHarnessFlag("claude,nosuch"); err == nil ||
+		!strings.Contains(err.Error(), "unknown --harness") || !strings.Contains(err.Error(), "claude and/or grok") {
+		t.Fatalf("parseHarnessFlag(nosuch) = %v", err)
 	}
-	if !strings.Contains(string(b), "codex") {
-		t.Fatalf("commands must name codex harness:\n%s", b)
+	if _, err := expandAgentTargets("nosuch"); err == nil ||
+		!strings.Contains(err.Error(), "unknown agent") || !strings.Contains(err.Error(), "claude, grok, or all") {
+		t.Fatalf("expandAgentTargets(nosuch) = %v", err)
 	}
-	if !strings.Contains(string(b), "apply_patch") {
-		t.Fatalf("gate matcher must cover apply_patch:\n%s", b)
+	if all, err := expandAgentTargets("all"); err != nil || strings.Join(all, ",") != "claude,grok" {
+		t.Fatalf("expandAgentTargets(all) = %v (%v)", all, err)
 	}
-	pre := hooks["PreToolUse"].([]any)
-	if got := pre[0].(map[string]any)["matcher"]; got != "apply_patch|Edit|Write|Bash" {
-		t.Fatalf("Codex gate matcher = %q, want documented tool names", got)
-	}
-	if got := pre[1].(map[string]any)["matcher"]; got != "Bash" {
-		t.Fatalf("Codex commit matcher = %q, want Bash", got)
-	}
-	for event, rawGroups := range hooks {
-		groups, ok := rawGroups.([]any)
-		if !ok {
-			t.Fatalf("%s groups have unexpected type %T", event, rawGroups)
-		}
-		for _, rawGroup := range groups {
-			group := rawGroup.(map[string]any)
-			for _, rawHandler := range group["hooks"].([]any) {
-				handler := rawHandler.(map[string]any)
-				if handler["type"] != "command" {
-					t.Fatalf("%s handler type = %v", event, handler["type"])
-				}
-				async, ok := handler["async"].(bool)
-				if !ok || async {
-					t.Fatalf("%s command handler must explicitly set async=false: %#v", event, handler)
-				}
-			}
+
+	repo := tempRepo(t)
+	t.Chdir(repo)
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	for _, args := range [][]string{
+		{"init", "--harness", "nosuch"},
+		{"agents", "install", "nosuch"},
+		{"agents", "remove", "nosuch"},
+	} {
+		out, err := runRootIn(t, "", args...)
+		if err == nil || !strings.Contains(err.Error()+out, "unknown") {
+			t.Errorf("%v: want an unknown-harness error, got err=%v\n%s", args, err, out)
 		}
 	}
 }

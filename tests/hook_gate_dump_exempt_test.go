@@ -63,7 +63,7 @@ func TestHookGateDumpExemptConfigDecides(t *testing.T) {
 	}
 
 	setExemptGate(t, repo,
-		[]string{".satelle/", ".gitignore", ".claude/", ".grok/", ".codex/"},
+		[]string{".satelle/", ".gitignore", ".claude/", ".grok/"},
 		[]string{})
 
 	allowed, out := gateEventOutput(t, repo, body)

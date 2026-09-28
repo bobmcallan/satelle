@@ -61,33 +61,18 @@ func adaptJSONEvent(v map[string]any) []Event {
 		ev := newEvent(EventToolEnd)
 		ev.Status = "completed"
 		return []Event{ev}
-	case "result", "turn.completed":
+	case "result":
 		if usage := usageFromMap(v); usage != nil {
 			ev := newEvent(EventUsage)
 			ev.Usage = usage
 			return []Event{ev}
 		}
-	case "item.started", "item_started":
-		ev := newEvent(EventToolStart)
-		ev.Tool = itemLabel(v)
-		ev.Status = "running"
-		return []Event{ev}
-	case "item.completed", "item_completed":
-		if text := nestedString(v, "item", "text"); text != "" {
-			ev := newEvent(EventMessage)
-			ev.Text = text
-			return []Event{ev}
-		}
-		ev := newEvent(EventToolEnd)
-		ev.Tool = itemLabel(v)
-		ev.Status = "completed"
-		return []Event{ev}
 	case "message", "assistant_message", "status":
 		return messageEvents(v)
 	}
 
-	// Codex and compatible peers sometimes put the event name under event/type
-	// and the record under item.
+	// Compatible peers sometimes put the event name under event/type and the
+	// record under item.
 	eventName := lowerString(v, "event")
 	if strings.Contains(eventName, "tool") {
 		kind := EventToolStart
@@ -151,10 +136,6 @@ func usageFromMap(v map[string]any) *UsageResult {
 	var u *UsageResult
 	var adapter string // names the no-model reason for this event's provider
 	switch lowerString(v, "type") {
-	case "turn.completed":
-		u = codexUsageFromMap(raw) // codex's per-turn carrier, whatever fields it names
-		adapter = "codex command"
-		u.ModelResolved = codexModelID(v, raw)
 	case "usage", "end":
 		u = claudeUsageFromMap(raw, "grok") // grok streaming-json usage/end lines
 		adapter = "grok stream"
@@ -173,13 +154,6 @@ func usageFromMap(v map[string]any) *UsageResult {
 	return u
 }
 
-func itemLabel(v map[string]any) string {
-	if item, ok := v["item"].(map[string]any); ok {
-		return firstString(item, "name", "type", "id")
-	}
-	return firstString(v, "name", "tool", "id")
-}
-
 func lowerString(v map[string]any, key string) string {
 	return strings.ToLower(stringValue(v[key]))
 }
@@ -191,11 +165,6 @@ func firstString(v map[string]any, keys ...string) string {
 		}
 	}
 	return ""
-}
-
-func nestedString(v map[string]any, parent, child string) string {
-	m, _ := v[parent].(map[string]any)
-	return stringValue(m[child])
 }
 
 func stringValue(v any) string {

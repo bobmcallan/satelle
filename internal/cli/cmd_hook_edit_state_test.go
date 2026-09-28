@@ -343,7 +343,6 @@ func TestGateDeniesPlanningAndInFlightAcrossHarnesses(t *testing.T) {
 	}{
 		{"claude", `{"tool_input":{"file_path":"internal/foo.go"}}`, `"permissionDecision":"deny"`},
 		{"grok", `{"toolInput":{"file_path":"internal/foo.go"}}`, `"decision":"deny"`},
-		{"codex", `{"tool_input":{"patch":"*** Begin Patch"}}`, `"permissionDecision":"deny"`},
 	}
 	for _, state := range []struct {
 		name, status, target string
@@ -386,10 +385,10 @@ func TestGateAllowsReadOnlyShellDuringPlanButDeniesMutation(t *testing.T) {
 	prevHarness := hookHarnessFlag
 	t.Cleanup(func() { hookHarnessFlag = prevHarness })
 	editStateRepo(t, "plan", "plan", false)
-	if out, err := runRootIn(t, `{"tool_input":{"command":["rg","TODO","internal"]}}`, "hook", "gate", "--harness", "codex"); err != nil {
+	if out, err := runRootIn(t, `{"tool_input":{"command":"rg TODO internal"}}`, "hook", "gate", "--harness", "claude"); err != nil {
 		t.Fatalf("read-only shell denied: %v\n%s", err, out)
 	}
-	out, err := runRootIn(t, `{"tool_input":{"command":["sed","-i","s/a/b/","internal/foo.go"]}}`, "hook", "gate", "--harness", "codex")
+	out, err := runRootIn(t, `{"tool_input":{"command":"sed -i s/a/b/ internal/foo.go"}}`, "hook", "gate", "--harness", "claude")
 	if err == nil || !strings.Contains(err.Error(), `at "plan"`) {
 		t.Fatalf("mutating shell not denied at plan: err=%v out=%s", err, out)
 	}

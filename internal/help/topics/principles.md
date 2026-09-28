@@ -38,7 +38,7 @@ reference principle `satelle-residency`). One classifier — the frontmatter tag
 Keep the system set **minimal** under the SessionStart limit of the harness in use
 (constitution + resident bodies + pointer). The limit is per-harness configuration —
 `[harness.<name>] context_limit_bytes` in `satelle.toml`, defaulting to the embedded
-`substrate/config/harness.toml` (claude 9500, grok/codex 16384, `unknown` 9500). What
+`substrate/config/harness.toml` (claude 9500, grok 16384, `unknown` 9500). What
 does not fit is never cut silently: it is replaced by an index line carrying its
 `satelle doc get principles <name>` command, under an in-context directive to read it.
 The operating triad that ships session-tagged is `satelle-agent-goals`,

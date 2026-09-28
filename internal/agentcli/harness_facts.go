@@ -27,7 +27,7 @@ const DefaultBackgroundCutoff = 10 * time.Second
 
 // HarnessFacts is one harness's row.
 type HarnessFacts struct {
-	// Harness is the token recorded in telemetry: claude, grok or codex.
+	// Harness is the token recorded in telemetry: claude or grok.
 	Harness string
 	// BackgroundCutoff is how long a foreground command may run before the
 	// harness backgrounds it (or stops it) on the driver's behalf.
@@ -62,14 +62,6 @@ func HarnessFactsTable() []HarnessFacts {
 			// driver ended its turn, and the Stop hook's block reason woke the
 			// session with the verdict — three model calls in all, no polling.
 			CompletionNotification: yes(),
-		},
-		{
-			Harness:          HarnessCodex,
-			BackgroundCutoff: DefaultBackgroundCutoff,
-			CutoffBasis:      "not measured — the conservative floor",
-			// codex's satelle scaffold installs no Stop hook (harnessHooks("codex")),
-			// so nothing fires when a codex turn ends.
-			CompletionNotification: no("codex: the satelle scaffold installs no Stop hook, so nothing fires when the turn ends; delivery lands only at the next UserPromptSubmit"),
 		},
 	}
 }

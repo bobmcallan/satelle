@@ -1,7 +1,7 @@
 # Machine-wide agent profiles — one provider definition, many repos
 
-An operator with several satelle repositories used to restate the same Claude,
-Grok, or Codex binding in each one. The **profile catalog** at
+An operator with several satelle repositories used to restate the same Claude
+or Grok binding in each one. The **profile catalog** at
 `~/.satelle/agents.toml` holds those definitions once; each repository then
 **explicitly** points a binding at a profile.
 

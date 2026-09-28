@@ -295,7 +295,7 @@ func productDigest(root string) (string, error) {
 		}
 		if d.IsDir() {
 			switch rel {
-			case ".satelle", ".git", ".claude", ".grok", ".codex":
+			case ".satelle", ".git", ".claude", ".grok":
 				return filepath.SkipDir
 			}
 			return nil

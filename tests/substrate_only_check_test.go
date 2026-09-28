@@ -38,7 +38,7 @@ func TestSubstrateOnlyCheckScript(t *testing.T) {
 	// default must grow with it. internal/cli asserts the two agree (sty_926cfcdc);
 	// this asserts the shipped expression names each one. Tables assert
 	// accept/reject behaviour; this asserts the expression itself.
-	for _, want := range []string{`\.satelle/`, `docs/`, `\.gitignore$`, `\.claude/`, `\.grok/`, `\.codex/`} {
+	for _, want := range []string{`\.satelle/`, `docs/`, `\.gitignore$`, `\.claude/`, `\.grok/`} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("shipped allow-list missing managed footprint %q:\n%s", want, s)
 		}

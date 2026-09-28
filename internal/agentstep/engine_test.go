@@ -3691,13 +3691,13 @@ func TestSetReviewerTools(t *testing.T) {
 
 func TestSetRunner(t *testing.T) {
 	g := New(nil, nil, "", "")
-	r, _ := agentcli.NewRunner("codex")
+	r, _ := agentcli.NewRunner("grok")
 	g.SetRunner(r)
-	if g.runner == nil || g.runner.Name() != "codex" {
+	if g.runner == nil || g.runner.Name() != "grok" {
 		t.Fatalf("SetRunner should override the runner, got %v", g.runner)
 	}
 	g.SetRunner(nil) // nil is ignored
-	if g.runner == nil || g.runner.Name() != "codex" {
+	if g.runner == nil || g.runner.Name() != "grok" {
 		t.Errorf("a nil runner must be ignored")
 	}
 }

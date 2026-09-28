@@ -14,7 +14,7 @@ import (
 // writeFakeACPPeer spawns a minimal ACP peer (same protocol shape as
 // agentcli's own fake-peer test harness, acp_test.go:92) that answers
 // initialize/authenticate/session/new/session/prompt with a bare, non-JSON
-// -envelope decision — exactly what a real ACP-fronted agent (Codex, Grok
+// -envelope decision — exactly what a real ACP-fronted agent (Grok
 // over ACP) returns: no `result`/`text`/`modelUsage` wrapper at all.
 func writeFakeACPPeer(t *testing.T) string {
 	t.Helper()

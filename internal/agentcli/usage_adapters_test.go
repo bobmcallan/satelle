@@ -127,54 +127,14 @@ func TestUsageAdapter_GrokStreamingJSON(t *testing.T) {
 	}
 }
 
-// codex command transport, exec --json: turn.completed carries usage whose
-// input_tokens includes cached_input_tokens; codex reports no cache write.
-func TestUsageAdapter_CodexExecJSONL(t *testing.T) {
-	_, u := UnwrapUsage(usageFixture(t, "codex_exec.jsonl"))
-	if !u.Available || u.InputTokens != 24763 || u.OutputTokens != 122 || u.TotalTokens != 24885 {
-		t.Fatalf("usage = %+v", u)
-	}
-	if !u.CacheSplitAvailable || u.CacheReadInputTokens != 24448 || u.FreshInputTokens != 315 || u.CacheCreationInputTokens != 0 {
-		t.Errorf("split = %+v, want read=24448 fresh=315 write=0", u)
-	}
-	// codex's turn.completed carries no cost field: unavailable, adapter-named.
-	if u.CostUSD != nil || !strings.Contains(u.CostUnavailableReason, "codex") {
-		t.Errorf("cost = %+v, want nil with a codex-named reason", u.CostUSD)
-	}
-	// The same line through the event adapter yields the shared usage event.
-	var line string
-	for _, l := range strings.Split(string(usageFixture(t, "codex_exec.jsonl")), "\n") {
-		if strings.Contains(l, "turn.completed") {
-			line = l
-		}
-	}
-	evs := commandAdapter{}.Adapt([]byte(line), false)
-	if len(evs) != 1 || evs[0].Kind != EventUsage || evs[0].Usage.InputTokens != 24763 {
-		t.Errorf("events = %+v", evs)
-	}
-}
-
-// codex reporting no cached_input_tokens: the split is unreported, not zero.
-func TestUsageAdapter_CodexNoCacheFieldSplitUnavailable(t *testing.T) {
-	line := `{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":5}}`
-	_, u := UnwrapUsage([]byte("{\"type\":\"turn.started\"}\n" + line + "\n"))
-	if !u.Available || u.InputTokens != 100 || u.CacheSplitAvailable {
-		t.Errorf("usage = %+v, want available with split unavailable", u)
-	}
-}
-
-// Multi-turn codex output sums per-turn usage.
-func TestUsageAdapter_CodexTurnsSummed(t *testing.T) {
-	l := `{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":1}}` + "\n"
-	_, u := UnwrapUsage([]byte("{\"type\":\"turn.started\"}\n" + l + l))
-	if u.InputTokens != 20 || u.CacheReadInputTokens != 8 || u.OutputTokens != 2 || u.TotalTokens != 22 {
-		t.Errorf("usage = %+v", u)
-	}
-}
-
 // Plain text / JSONL without any usage line: unavailable, never a measured zero.
+// A foreign per-turn carrier no adapter here knows is not read as usage either.
 func TestUsageAdapter_NoUsageIsUnavailable(t *testing.T) {
-	for _, raw := range []string{"plain text verdict", "{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"text\":\"x\"}}\n"} {
+	for _, raw := range []string{
+		"plain text verdict",
+		"{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"text\":\"x\"}}\n",
+		"{\"type\":\"turn.started\"}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":4,\"output_tokens\":5}}\n",
+	} {
 		_, u := UnwrapUsage([]byte(raw))
 		if u.Available || u.InputTokens != 0 || u.CacheSplitAvailable {
 			t.Errorf("usage(%q) = %+v, want unavailable", raw, u)

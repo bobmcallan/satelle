@@ -28,7 +28,7 @@ import (
 // started writing somewhere new; anything else belongs in the operator's own
 // list, not the seeded default (AC3).
 func TestManagedEditExemptEntriesAreDeployedFootprint(t *testing.T) {
-	want := []string{".gitignore", ".claude/", ".grok/", ".codex/"}
+	want := []string{".gitignore", ".claude/", ".grok/"}
 	if strings.Join(managedEditExemptEntries, ",") != strings.Join(want, ",") {
 		t.Fatalf("managedEditExemptEntries = %v, want %v — widening the seeded default is a deliberate change, not a drift",
 			managedEditExemptEntries, want)
@@ -36,7 +36,7 @@ func TestManagedEditExemptEntriesAreDeployedFootprint(t *testing.T) {
 	if strings.Join(managedDraftExemptPrefixes, ",") != "/tmp/" {
 		t.Fatalf("managedDraftExemptPrefixes = %v, want [/tmp/]", managedDraftExemptPrefixes)
 	}
-	if got := defaultEditExemptTOML(); got != `[".satelle/", ".gitignore", ".claude/", ".grok/", ".codex/", "/tmp/"]` {
+	if got := defaultEditExemptTOML(); got != `[".satelle/", ".gitignore", ".claude/", ".grok/", "/tmp/"]` {
 		t.Errorf("defaultEditExemptTOML() = %s", got)
 	}
 	// The scaffold seeds from the helper, so the two cannot drift apart.
@@ -115,7 +115,6 @@ func TestSeededExemptionCoversLazyHarnessWrite(t *testing.T) {
 	exempt := []string{
 		".claude/", ".claude/settings.json", ".claude/hooks/satelle.sh",
 		".grok/", ".grok/settings.json",
-		".codex/", ".codex/hooks.json",
 		".gitignore", ".satelle/satelle.toml",
 	}
 	for _, rel := range exempt {

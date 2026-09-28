@@ -27,11 +27,9 @@ import (
 // that wraps satelle's — is never touched.
 //
 // Claude ONLY, by capability rather than preference: Grok has no scriptable
-// statusline at all, and Codex's built-in `[tui].status_line` accepts a fixed
-// item list (model, cwd, git branch, context usage) with no command backing, so
-// nothing external can inject into either. Those two harnesses are served by the
-// SessionStart availability line (sty_fb5e6d96), which reaches all three. Do not
-// "fix" their absence here — it is not an oversight.
+// statusline at all, so nothing external can inject into it. It is served by the
+// SessionStart availability line (sty_fb5e6d96), which reaches both harnesses.
+// Do not "fix" its absence here — it is not an oversight.
 
 // claudeUserSettingsRel is where an operator who WANTS satelle's line puts it:
 // their own settings, not the repo's. Named in every surface that mentions the

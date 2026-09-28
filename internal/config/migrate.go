@@ -289,13 +289,10 @@ func renameKeyInSection(lines []string, section, oldKey, newKey string) bool {
 	return false
 }
 
-// expandBareCommandInSection rewrites a bare command = "claude"|"grok"|"codex"
-// value to the full multi-token preset template (agentcli.NewRunner). Codex
-// expands to DefaultCodexExecCommand (command transport); preferred Codex ACP
-// is interface=acp + DefaultCodexACPCommand and is not expressed as a bare
-// command token (sty_3b4909bb). Preserves indent and any trailing comment;
-// rewrites only the quoted RHS. Idempotent: a multi-token value is left
-// untouched. Returns true if a line was rewritten.
+// expandBareCommandInSection rewrites a bare command = "claude"|"grok"
+// value to the full multi-token preset template (agentcli.NewRunner). Preserves
+// indent and any trailing comment; rewrites only the quoted RHS. Idempotent: a
+// multi-token value is left untouched. Returns true if a line was rewritten.
 func expandBareCommandInSection(lines []string, section string) bool {
 	start, end := sectionRange(lines, section)
 	if start < 0 {
@@ -348,7 +345,7 @@ func expandBareCommandInSection(lines []string, section string) bool {
 			return false // already multi-token (or empty)
 		}
 		tok := strings.ToLower(fields[0])
-		if tok != agentcli.CLIClaude && tok != agentcli.CLIGrok && tok != agentcli.CLICodex {
+		if tok != agentcli.CLIClaude && tok != agentcli.CLIGrok {
 			return false
 		}
 		r, err := agentcli.NewRunner(tok)

@@ -284,19 +284,11 @@ func TestHookGateAllowsUnderEngagedStory(t *testing.T) {
 	if !gateEvent(t, repo, code) {
 		t.Error("gate BLOCKED a code edit while a story is engaged")
 	}
-	// Codex uses the same accepted hook envelope as Claude. Its harness-specific
-	// path must preserve the normal engaged-story allow policy as well.
-	codexOut := hookStdoutArgs(t, repo, []string{"gate", "--harness", "codex"},
-		`{"tool_input":{"file_path":"`+code+`"},"hook_event_name":"PreToolUse"}`)
-	if strings.Contains(codexOut, `"permissionDecision":"deny"`) {
-		t.Errorf("Codex gate denied an edit while a story is engaged:\n%s", codexOut)
-	}
 }
 
 // TestHookGateHarnessSpecificDenyShape (sty_5e4bc568): a denied edit emits ONLY
 // the Claude shape for tool_input envelopes and ONLY the Grok shape for toolInput.
 // Dual-format was the inert-gate bug (Claude schema rejects top-level decision).
-// sty_9e86f407: --harness codex forces Claude envelope on no-story deny.
 func TestHookGateHarnessSpecificDenyShape(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
@@ -309,16 +301,6 @@ func TestHookGateHarnessSpecificDenyShape(t *testing.T) {
 	}
 	if strings.Contains(claudeOut, `"decision":"deny"`) {
 		t.Errorf("Claude deny must not carry top-level decision:\n%s", claudeOut)
-	}
-
-	// Explicit --harness codex (wrapper forwards this after agents install).
-	codexOut := hookStdoutArgs(t, repo, []string{"gate", "--harness", "codex"},
-		`{"tool_input":{"file_path":"`+code+`"}}`)
-	if !strings.Contains(codexOut, `"permissionDecision":"deny"`) {
-		t.Errorf("Codex deny missing permissionDecision:\n%s", codexOut)
-	}
-	if strings.Contains(codexOut, `"decision":"deny"`) && !strings.Contains(codexOut, "hookSpecificOutput") {
-		t.Errorf("Codex deny must use Claude envelope:\n%s", codexOut)
 	}
 
 	grokOut := hookStdout(t, repo, "gate",

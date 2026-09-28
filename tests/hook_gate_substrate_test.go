@@ -103,7 +103,7 @@ func TestHookGateExemptsSubstrate(t *testing.T) {
 //
 // The BEFORE case deliberately uses a harness dir satelle does not write. The
 // seeded default covers satelle's OWN deployed footprint (.gitignore, .claude/,
-// .grok/, .codex/) because the binary writes those unasked (sty_926cfcdc) — so
+// .grok/) because the binary writes those unasked (sty_926cfcdc) — so
 // picking one of them here would test the seed, not the opt-in mechanism.
 func TestHookGateExemptsConfiguredPaths(t *testing.T) {
 	repo := t.TempDir()

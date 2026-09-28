@@ -171,8 +171,8 @@ func TestValidateChecksHooksEvenWhenTheDotDoesNotParse(t *testing.T) {
 
 // TestValidateHookCeilingIsOwnedByTheBindingCheck pins the severity split this
 // package settled on, applied to a hook's section. checkBinding is the single
-// owner of the reviewer permission ceiling: a PROVABLE escape (a Codex danger
-// sandbox) is a hard problem, while a merely unexpressed ceiling stays a warning
+// owner of the reviewer permission ceiling: a PROVABLE escape (an ACP reviewer with
+// no tools= grant evidence) is a hard problem, while a merely unexpressed ceiling stays a warning
 // because ReadOnly is a heuristic. checkHooks deliberately does not re-decide it
 // — re-checking the same heuristic at a harsher severity would hard-fail every
 // repo whose reviewer template the heuristic cannot classify.
@@ -182,13 +182,13 @@ func TestValidateHookCeilingIsOwnedByTheBindingCheck(t *testing.T) {
 	// Provable escape → hard problem, naming the section the hook allocates.
 	danger := healthyAgents()
 	danger.Agents = map[string]config.AgentBinding{
-		"judge": {Role: config.RoleReviewer, Command: "codex exec -s danger-full-access {system}"},
+		"judge": {Role: config.RoleReviewer, Interface: "acp", Command: "nosuch acp-serve"},
 	}
 	r := Validate(danger, nil, []docindex.Doc{doc})
 	if r.OK() {
-		t.Fatal("a hook binding that erases its sandbox ceiling must be refused")
+		t.Fatal("a hook binding with no ceiling evidence must be refused")
 	}
-	if joined := strings.Join(r.Problems, "\n"); !strings.Contains(joined, "judge") || !strings.Contains(joined, "danger-full-access") {
+	if joined := strings.Join(r.Problems, "\n"); !strings.Contains(joined, "judge") || !strings.Contains(joined, "requires tools=") {
 		t.Errorf("problem should name the section and the escape: %v", r.Problems)
 	}
 
@@ -248,7 +248,7 @@ func TestFindingsMirrorTheProseSurfaces(t *testing.T) {
 	// A fixture that trips several distinct classes at once.
 	agents := config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop", Role: config.RoleAgent},
-		Reviewer: config.AgentBinding{Role: config.RoleReviewer, Command: "codex exec -s danger-full-access {system}"},
+		Reviewer: config.AgentBinding{Role: config.RoleReviewer, Command: "nosuch exec {system}"},
 		Agents: map[string]config.AgentBinding{
 			"orphan": {Role: config.RoleReviewer, Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob"},
 		},

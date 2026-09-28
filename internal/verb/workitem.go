@@ -1099,8 +1099,8 @@ func recordActual(ctx context.Context, current workitem.Item, at time.Time) (wor
 	} else {
 		kv["actual-minutes"] = strconv.Itoa(costMinutes(time.Duration(tot.ElapsedMs) * time.Millisecond))
 	}
-	// A story with no priced row (e.g. a codex-driven session whose adapter
-	// never reports cost_usd) must never read as "$0" — that claims a free
+	// A story with no priced row (e.g. a session whose adapter never
+	// reports cost_usd) must never read as "$0" — that claims a free
 	// story rather than an unmeasured one (revision 2, no silent zeros).
 	if tot.CostRows > 0 {
 		kv["actual-usd"] = strconv.FormatFloat(tot.CostUSD, 'f', -1, 64)

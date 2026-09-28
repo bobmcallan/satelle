@@ -127,7 +127,7 @@ func TestStoryActualComputesFromLedgerNotHandEntered(t *testing.T) {
 }
 
 // TestStoryActualUnpricedRowsTagUnavailable pins revision 2 point 1: a story
-// whose every dispatch row carries no cost_usd (a codex-style driver whose
+// whose every dispatch row carries no cost_usd (a driver whose
 // adapter never reports a price) must never be tagged actual-usd:0 — that
 // claims a free story rather than an unmeasured one.
 func TestStoryActualUnpricedRowsTagUnavailable(t *testing.T) {
@@ -135,7 +135,7 @@ func TestStoryActualUnpricedRowsTagUnavailable(t *testing.T) {
 	ctx := context.Background()
 
 	var it workitem.Item
-	json.Unmarshal(call(t, "story-create", map[string]any{"title": "codex-driven"}), &it)
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "unpriced-driven"}), &it)
 
 	payload, _ := json.Marshal(map[string]any{
 		"from": "plan", "to": "in_progress", "agent": "coder",

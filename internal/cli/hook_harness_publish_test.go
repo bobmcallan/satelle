@@ -30,7 +30,7 @@ func hookFixture(t *testing.T, name string) []byte {
 // executable, both with the scaffold's explicit --harness flag (AC2's
 // authoritative naming) and, for every fixture here, from the event sniff
 // alone. The grok fixtures are real payloads captured 2026-09-27 from a live
-// grok CLI hook firing in this repo; the claude and codex fixtures are
+// grok CLI hook firing in this repo; the claude fixtures are
 // synthetic but schema-verbatim — see
 // internal/agentcli/testdata/hooks/README.md for exact provenance per file.
 func TestHookHarnessPublishesExecutable(t *testing.T) {
@@ -55,12 +55,6 @@ func TestHookHarnessPublishesExecutable(t *testing.T) {
 		{"grok", "UserPromptSubmit", hookFixture(t, "grok_prompt_submit.json")},
 		{"grok", "Stop", hookFixture(t, "grok_stop.json")},
 		{"grok", "PreToolUse", hookFixture(t, "grok_pre_tool_use.json")},
-
-		// codex: snake_case envelope carrying turn_id. Codex's scaffold omits
-		// Stop (harnessHooks), so there is no Stop case here.
-		{"codex", "SessionStart", []byte(`{"session_id":"codex-sessionstart","turn_id":"t1","transcript_path":"/home/u/.codex/sessions/codex-sessionstart.jsonl","cwd":"/repo","hook_event_name":"SessionStart"}`)},
-		{"codex", "UserPromptSubmit", []byte(`{"session_id":"codex-promptsubmit","turn_id":"t1","transcript_path":"/home/u/.codex/sessions/codex-promptsubmit.jsonl","cwd":"/repo","hook_event_name":"UserPromptSubmit"}`)},
-		{"codex", "PreToolUse", []byte(`{"session_id":"codex-pretooluse","turn_id":"t1","transcript_path":"/home/u/.codex/sessions/codex-pretooluse.jsonl","cwd":"/repo","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git status"},"tool_use_id":"call_1"}`)},
 	}
 
 	// Every case's event must actually belong to that harness's installed set

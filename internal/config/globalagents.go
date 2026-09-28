@@ -2,7 +2,7 @@
 // $SATELLE_HOME/agents.toml (sty_c7dfeedf / epic:agent-configuration-operability).
 //
 // The catalog holds named, provider-neutral EXECUTION profiles so an operator
-// working across several repositories updates a Claude/Grok/Codex/other
+// working across several repositories updates a Claude/Grok/other
 // definition once. It holds NO workflow policy: a profile cannot name a skill,
 // a gate, a state, an applies_to, or anything else that decides PROCESS. That
 // boundary is mechanical, not advisory — the loader accepts only the known

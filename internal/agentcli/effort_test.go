@@ -27,12 +27,6 @@ func TestDefaultTemplatesIncludeEffort(t *testing.T) {
 	if !strings.Contains(DefaultGrokCommand, "{effort}") {
 		t.Error("DefaultGrokCommand must include {effort}")
 	}
-	if !strings.Contains(DefaultCodexExecCommand, "{effort}") {
-		t.Error("DefaultCodexExecCommand must include {effort} (sty_aa726901)")
-	}
-	if !strings.Contains(DefaultCodexExecCommand, "model_reasoning_effort=") {
-		t.Error("DefaultCodexExecCommand must use model_reasoning_effort (sty_aa726901)")
-	}
 }
 
 // TestBuildArgsFusedEffort (sty_aa726901): fused {effort}/{model}/{settings}

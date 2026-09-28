@@ -24,7 +24,6 @@ func TestInLoopHarnessFromEnv(t *testing.T) {
 	}{
 		{"claude", HarnessClaude, true},
 		{"grok", HarnessGrok, true},
-		{"codex", HarnessCodex, true},
 		{"plain", "", false},
 	}
 	for _, c := range cases {
@@ -36,75 +35,9 @@ func TestInLoopHarnessFromEnv(t *testing.T) {
 	if _, ok := InLoopHarnessFromEnv([]string{"GROK_AGENT=0"}); ok {
 		t.Error("GROK_AGENT=0 must not count as an in-loop session")
 	}
-	if got := DetectSessionHarnesses([]string{"CODEX_SANDBOX=seatbelt"}); !got[HarnessCodex] {
-		t.Error("CODEX_SANDBOX must mark codex")
-	}
-}
-
-func TestDetectSessionHarnesses_Antigravity(t *testing.T) {
-	for _, c := range []struct {
-		env  []string
-		want map[string]bool
-	}{
-		{[]string{"ANTIGRAVITY_AGENT=1"}, map[string]bool{HarnessAntigravity: true}},
-		{[]string{"ANTIGRAVITY_AGENT=true"}, map[string]bool{HarnessAntigravity: true}},
-		{[]string{"ANTIGRAVITY_AGENT=0"}, map[string]bool{}},
-		{[]string{"ANTIGRAVITY_AGENT="}, map[string]bool{}},
-		{[]string{"ANTIGRAVITY_AGENT_X=1"}, map[string]bool{}},
-		{[]string{"CLAUDECODE=1", "ANTIGRAVITY_AGENT=1"}, map[string]bool{HarnessClaude: true, HarnessAntigravity: true}},
-	} {
-		got := DetectSessionHarnesses(c.env)
-		if len(got) != len(c.want) {
-			t.Errorf("%v: DetectSessionHarnesses = %v, want %v", c.env, got, c.want)
-			continue
-		}
-		for h := range c.want {
-			if !got[h] {
-				t.Errorf("%v: DetectSessionHarnesses = %v, want %v", c.env, got, c.want)
-			}
-		}
-	}
-	if h, ok := InLoopHarnessFromEnv([]string{"ANTIGRAVITY_AGENT=1"}); !ok || h != HarnessAntigravity {
-		t.Errorf("InLoopHarnessFromEnv = (%q,%v), want antigravity", h, ok)
-	}
-	if _, ok := InLoopHarnessFromEnv([]string{"ANTIGRAVITY_AGENT=0"}); ok {
-		t.Error("ANTIGRAVITY_AGENT=0 must not count as an in-loop session")
-	}
-}
-
-// The antigravity fixtures live with the hook tests in internal/cli; they are
-// synthetic (see their README), not live captures.
-func TestHarnessFromHookEvent_Antigravity(t *testing.T) {
-	files, err := filepath.Glob(filepath.Join("..", "cli", "testdata", "antigravity", "*.json"))
-	if err != nil || len(files) == 0 {
-		t.Fatalf("no antigravity fixtures found: %v", err)
-	}
-	for _, f := range files {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := HarnessFromHookEvent(b); got != HarnessAntigravity {
-			t.Errorf("%s: HarnessFromHookEvent = %q, want antigravity", filepath.Base(f), got)
-		}
-	}
-	for name, raw := range map[string]string{
-		"toolCall only":       `{"toolCall":{"name":"run_command","args":{}}}`,
-		"conversationId only": `{"conversationId":"abc"}`,
-	} {
-		if got := HarnessFromHookEvent([]byte(raw)); got != HarnessAntigravity {
-			t.Errorf("%s: HarnessFromHookEvent = %q, want antigravity", name, got)
-		}
-	}
-	// A toolCall riding beside a claude/grok tool input key is not antigravity.
-	for name, raw := range map[string]string{
-		"toolCall with tool_input": `{"toolCall":{},"tool_input":{"file_path":"/x.go"},"tool_name":"Edit"}`,
-		"toolCall with toolInput":  `{"toolCall":{},"toolInput":{"filePath":"/x.go"}}`,
-		"null conversationId":      `{"conversationId":null}`,
-	} {
-		if got := HarnessFromHookEvent([]byte(raw)); got == HarnessAntigravity {
-			t.Errorf("%s: classified antigravity", name)
-		}
+	// Neutral detection: an unrecognised marker is no harness at all.
+	if got := DetectSessionHarnesses([]string{"FOO_AGENT=1", "FOO_SESSION_ID=abc"}); len(got) != 0 {
+		t.Errorf("unrecognised markers must mark nothing, got %v", got)
 	}
 }
 
@@ -118,8 +51,6 @@ func TestHarnessFromHookEvent(t *testing.T) {
 		"grok_prompt_submit": HarnessGrok, // real capture — the AC3 regression case
 		"grok_pre_tool_use":  HarnessGrok, // real capture
 		"grok_stop":          HarnessGrok, // real capture
-		"codex_shell":        HarnessCodex,
-		"codex_apply_patch":  HarnessCodex,
 	}
 	for name, want := range fixtures {
 		b, err := os.ReadFile(filepath.Join("testdata", "hooks", name+".json"))
@@ -137,6 +68,8 @@ func TestHarnessFromHookEvent(t *testing.T) {
 		"bare snake":                   `{"tool_input":{"file_path":"/x.go"}}`,
 		"both keys":                    `{"tool_input":{},"toolInput":{}}`,
 		"not json":                     `nope`,
+		"foreign turn envelope":        `{"session_id":"s1","turn_id":"t1","tool_name":"Bash","tool_input":{"command":"x"}}`,
+		"foreign call envelope":        `{"conversationId":"abc","toolCall":{"name":"run","args":{}}}`,
 		"bare permission_mode":         `{"permission_mode":"default"}`,
 		"permission_mode + tool_input": `{"permission_mode":"default","tool_input":{"file_path":"/x.go"}}`,
 	} {

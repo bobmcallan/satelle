@@ -173,7 +173,7 @@ func TestAgentCLIRoundTripAndDefault(t *testing.T) {
 	}
 
 	// Persisted value survives a round-trip alongside the service block.
-	gc.Agent.CLI = "codex"
+	gc.Agent.CLI = "grok"
 	if err := SaveGlobal(gc); err != nil {
 		t.Fatalf("SaveGlobal: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestAgentCLIRoundTripAndDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadGlobal: %v", err)
 	}
-	if got.Agent.CLI != "codex" || got.Agent.ResolveCLI() != "codex" {
+	if got.Agent.CLI != "grok" || got.Agent.ResolveCLI() != "grok" {
 		t.Errorf("agent cli round-trip = %+v", got.Agent)
 	}
 }

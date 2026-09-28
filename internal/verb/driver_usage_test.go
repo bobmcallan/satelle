@@ -226,8 +226,8 @@ func TestRecordDriverUsageIsolatesConsecutiveStories(t *testing.T) {
 }
 
 // TestRecordDriverUsagePendingCatchupBoundedToExactlyOneTurn pins the
-// correction the reviewer named: an available-but-Pending close row (grok/
-// codex only) must NOT credit the closed story with everything the next read
+// correction the reviewer named: an available-but-Pending close row (grok
+// only) must NOT credit the closed story with everything the next read
 // happens to see — only the usage the harness's own Turns counter proves is
 // the ONE turn that was in flight at close time. Here the confirming read (B
 // engaging) advances Turns by exactly 1: that turn's delta is swept onto A,
@@ -235,7 +235,7 @@ func TestRecordDriverUsageIsolatesConsecutiveStories(t *testing.T) {
 func TestRecordDriverUsagePendingCatchupBoundedToExactlyOneTurn(t *testing.T) {
 	db := wireDU(t)
 	t.Setenv(config.SessionEnv, "sess-du-bounded")
-	t.Setenv("CODEX_THREAD_ID", "thread-1")
+	t.Setenv("GROK_AGENT", "1")
 	stubSnapshotter(t,
 		agentcli.DriverSnapshot{Available: true, MayUndercountInFlightTurn: true, FreshInputTokens: 100, OutputTokens: 10, Turns: 3}, // A engage
 		agentcli.DriverSnapshot{Available: true, MayUndercountInFlightTurn: true, FreshInputTokens: 400, OutputTokens: 40, Turns: 5}, // A close: Turns=5, in-flight turn 6 not yet flushed
@@ -284,7 +284,7 @@ func TestRecordDriverUsagePendingCatchupBoundedToExactlyOneTurn(t *testing.T) {
 func TestRecordDriverUsagePendingCatchupCreditsOnlyClosingTurn(t *testing.T) {
 	db := wireDU(t)
 	t.Setenv(config.SessionEnv, "sess-du-multiturn")
-	t.Setenv("CODEX_THREAD_ID", "thread-2")
+	t.Setenv("GROK_AGENT", "1")
 	stubSnapshotter(t,
 		agentcli.DriverSnapshot{Available: true, MayUndercountInFlightTurn: true, FreshInputTokens: 100, OutputTokens: 10, Turns: 3}, // A engage
 		agentcli.DriverSnapshot{Available: true, MayUndercountInFlightTurn: true, FreshInputTokens: 400, OutputTokens: 40, Turns: 5}, // A close: Turns=5
@@ -839,14 +839,14 @@ func TestSessionDriverUsageStateScansPastPageBoundary(t *testing.T) {
 // TestSweepPendingDriverUsageSettlesTailWithNoFollowingTransition pins AC6's
 // other named gap: "a session's tail after its last close is never swept onto
 // the closed story." Story A closes (Pending read, possibly undercounting its
-// own turn on grok/codex) and the session NEVER drives another story — no
+// own turn on grok) and the session NEVER drives another story — no
 // transition will ever call back in to confirm it. sweepPendingDriverUsage is
 // the standalone entry point (wired into story-seat-list) that confirms it
 // anyway.
 func TestSweepPendingDriverUsageSettlesTailWithNoFollowingTransition(t *testing.T) {
 	db := wireDU(t)
 	t.Setenv(config.SessionEnv, "sess-du-sweep")
-	t.Setenv("CODEX_THREAD_ID", "thread-sweep")
+	t.Setenv("GROK_AGENT", "1")
 	stubSnapshotter(t,
 		agentcli.DriverSnapshot{Available: true, MayUndercountInFlightTurn: true, FreshInputTokens: 100, OutputTokens: 10, Turns: 2}, // engage
 		agentcli.DriverSnapshot{Available: true, MayUndercountInFlightTurn: true, FreshInputTokens: 400, OutputTokens: 40, Turns: 4}, // close: Pending, may undercount turn 5
@@ -900,7 +900,7 @@ func TestSweepPendingDriverUsageSettlesTailWithNoFollowingTransition(t *testing.
 func TestSweepCreditsSharedTurnToEarliestPendingRowOnly(t *testing.T) {
 	db := wireDU(t)
 	t.Setenv(config.SessionEnv, "sess-du-ruleT-shared")
-	t.Setenv("CODEX_THREAD_ID", "thread-ruleT-a")
+	t.Setenv("GROK_AGENT", "1")
 	stubSnapshotter(t,
 		agentcli.DriverSnapshot{Available: true, MayUndercountInFlightTurn: true, FreshInputTokens: 100, OutputTokens: 10, Turns: 0}, // A engage
 		agentcli.DriverSnapshot{Available: true, MayUndercountInFlightTurn: true, FreshInputTokens: 100, OutputTokens: 10, Turns: 0}, // A close: Pending at Turns=0
@@ -982,7 +982,7 @@ func TestSweepCreditsSharedTurnToEarliestPendingRowOnly(t *testing.T) {
 func TestOrdinaryDeltaAndLateCreditNeverBothClaimSameTurn(t *testing.T) {
 	db := wireDU(t)
 	t.Setenv(config.SessionEnv, "sess-du-ruleT-ordinary")
-	t.Setenv("CODEX_THREAD_ID", "thread-ruleT-b")
+	t.Setenv("GROK_AGENT", "1")
 	stubSnapshotter(t,
 		agentcli.DriverSnapshot{Available: true, MayUndercountInFlightTurn: true, FreshInputTokens: 100, OutputTokens: 10, Turns: 0}, // A engage
 		agentcli.DriverSnapshot{Available: true, MayUndercountInFlightTurn: true, FreshInputTokens: 100, OutputTokens: 10, Turns: 0}, // A close: Pending at Turns=0
@@ -1141,7 +1141,7 @@ func TestAcquireEngagementLeaseRecordsKillRowOnSteal(t *testing.T) {
 	}
 }
 
-// fakeTurnSession simulates a grok/codex-style session record whose turns are
+// fakeTurnSession simulates a grok-style session record whose turns are
 // appended one at a time by a test driving a SEQUENCE of actions
 // (sty_81caa41b Revision 5's property test) — the per-turn breakdown every
 // delta-carrying writer (ordinary, the single-turn Pending catch-up, the
@@ -1258,7 +1258,7 @@ func TestTurnCreditPropertySequence_ReapClaimsSharedTurnBeforeSweepCanDoubleCred
 	fake := &fakeTurnSession{}
 	stubSessionSnapshotter(t, map[string]*fakeTurnSession{sessionID: fake})
 	t.Setenv(config.SessionEnv, sessionID)
-	t.Setenv("CODEX_THREAD_ID", "thread-prop-reap")
+	t.Setenv("GROK_AGENT", "1")
 
 	a := workitem.Item{ID: "sty_prop_reapA", Kind: workitem.KindStory, Status: "plan"}
 	b := workitem.Item{ID: "sty_prop_reapB", Kind: workitem.KindStory, Status: "plan"}
@@ -1329,7 +1329,7 @@ func TestTurnCreditPropertySequence_GapLateClaimsSharedTurnBeforeSweepCanDoubleC
 	fake := &fakeTurnSession{}
 	stubSessionSnapshotter(t, map[string]*fakeTurnSession{sessionID: fake})
 	t.Setenv(config.SessionEnv, sessionID)
-	t.Setenv("CODEX_THREAD_ID", "thread-prop-gaplate")
+	t.Setenv("GROK_AGENT", "1")
 
 	a := workitem.Item{ID: "sty_prop_gaplateA", Kind: workitem.KindStory, Status: "plan"}
 	b := workitem.Item{ID: "sty_prop_gaplateB", Kind: workitem.KindStory, Status: "plan"}

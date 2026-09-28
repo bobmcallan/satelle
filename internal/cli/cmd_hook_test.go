@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/lease"
@@ -238,7 +240,7 @@ func TestResolveContextHarness(t *testing.T) {
 	}{
 		{"flag wins", "grok", claudeEvt, nil, "grok"},
 		{"event sniff", "", claudeEvt, nil, "claude"},
-		{"env marker", "", []byte(`{}`), []string{"CODEX_THREAD_ID=abc"}, "codex"},
+		{"env marker", "", []byte(`{}`), []string{"GROK_AGENT=1"}, "grok"},
 		{"nothing recognised is unknown, not claude", "", []byte(`{}`), nil, "unknown"},
 	}
 	for _, c := range cases {
@@ -542,7 +544,7 @@ func TestEmitPreToolUseDenyGrok(t *testing.T) {
 
 // TestHarnessFromEvent (sty_5e4bc568 AC2, sty_719c4a7b AC3): a snake_case
 // envelope corroborated by a .claude transcript or a Claude-only tool name →
-// claude; camelCase-only toolInput → grok; turn_id → codex; a bare
+// claude; camelCase-only toolInput → grok; a bare
 // permission_mode with no such corroboration → unknown, because Grok's
 // Claude-compat shim echoes that key too (real captured grok payloads carry
 // it — see agentcli/testdata/hooks/README.md); ambiguous/empty → unknown,
@@ -556,7 +558,6 @@ func TestHarnessFromEvent(t *testing.T) {
 	}{
 		{"claude envelope", `{"session_id":"s1","transcript_path":"/home/u/.claude/projects/p/s1.jsonl","hook_event_name":"PreToolUse","permission_mode":"default","tool_input":{"file_path":"/x.go"}}`, "claude"},
 		{"claude tool name", `{"tool_name":"Edit","tool_input":{"command":"git commit -m x"}}`, "claude"},
-		{"codex envelope", `{"turn_id":"t1","tool_input":{"command":"git commit -m x"}}`, "codex"},
 		{"grok camelCase", `{"toolInput":{"path":"internal/x.go"}}`, "grok"},
 		{"grok bash", `{"toolInput":{"command":"git push"}}`, "grok"},
 		{"bare snake_case → unknown", `{"tool_input":{"file_path":"/x.go"}}`, "unknown"},
@@ -570,6 +571,94 @@ func TestHarnessFromEvent(t *testing.T) {
 		if got := harnessFromEvent([]byte(c.raw)); got != c.want {
 			t.Errorf("%s: harnessFromEvent = %q, want %q", c.name, got, c.want)
 		}
+	}
+}
+
+// TestEmitPreToolUseDenyClaudeEnvelope: a non-Grok harness gets Claude's
+// hookSpecificOutput deny, never the top-level decision shape.
+func TestEmitPreToolUseDenyClaudeEnvelope(t *testing.T) {
+	var buf bytes.Buffer
+	if err := emitPreToolUseDeny(&buf, "claude", "no story engaged"); err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+		t.Fatalf("json: %v body=%s", err, buf.String())
+	}
+	hso, ok := doc["hookSpecificOutput"].(map[string]any)
+	if !ok {
+		t.Fatalf("want hookSpecificOutput: %s", buf.String())
+	}
+	if hso["permissionDecision"] != "deny" || hso["permissionDecisionReason"] != "no story engaged" || hso["hookEventName"] != "PreToolUse" {
+		t.Errorf("hookSpecificOutput = %v", hso)
+	}
+	if _, ok := doc["decision"]; ok {
+		t.Error("claude deny must not use top-level decision")
+	}
+}
+
+// TestEmitPreToolUseDenyEmptyReasonFallback: an empty reason is replaced, so a
+// deny never reaches the harness without one.
+func TestEmitPreToolUseDenyEmptyReasonFallback(t *testing.T) {
+	var buf bytes.Buffer
+	if err := emitPreToolUseDeny(&buf, "claude", ""); err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	_ = json.Unmarshal(buf.Bytes(), &doc)
+	hso, _ := doc["hookSpecificOutput"].(map[string]any)
+	if s, _ := hso["permissionDecisionReason"].(string); strings.TrimSpace(s) == "" {
+		t.Fatalf("empty reason must be filled: %s", buf.String())
+	}
+}
+
+// TestDenyPreToolUseUnknownHarnessStaysStrict (sty_37fd5470): an unrecognised
+// envelope is recorded "unknown" but still gets the strict hookSpecificOutput
+// deny shape and an error, so the sniff change cannot reopen the inert-gate bug.
+func TestDenyPreToolUseUnknownHarnessStaysStrict(t *testing.T) {
+	prev := hookHarnessFlag
+	hookHarnessFlag = ""
+	t.Cleanup(func() { hookHarnessFlag = prev })
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	raw := []byte(`{"tool_input":{"file_path":"/tmp/x.go"}}`)
+	if harnessFromEvent(raw) != "unknown" {
+		t.Fatalf("precondition: envelope must sniff unknown")
+	}
+	if err := denyPreToolUse(cmd, raw, "no engaged story"); err == nil {
+		t.Fatal("denyPreToolUse must return error")
+	}
+	var doc map[string]any
+	if jerr := json.Unmarshal(buf.Bytes(), &doc); jerr != nil {
+		t.Fatalf("json: %v body=%s", jerr, buf.String())
+	}
+	if hso, _ := doc["hookSpecificOutput"].(map[string]any); hso["permissionDecision"] != "deny" {
+		t.Fatalf("unknown harness deny not strict: %s", buf.String())
+	}
+}
+
+// TestDenyPreToolUseRespectsHarnessFlag: --harness grok forces Grok's top-level
+// envelope even when the event would sniff as claude (snake_case tool_input).
+func TestDenyPreToolUseRespectsHarnessFlag(t *testing.T) {
+	prev := hookHarnessFlag
+	hookHarnessFlag = "grok"
+	t.Cleanup(func() { hookHarnessFlag = prev })
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	raw := []byte(`{"tool_input":{"file_path":"/tmp/x.go"}}`)
+	if err := denyPreToolUse(cmd, raw, "no engaged story"); err == nil {
+		t.Fatal("denyPreToolUse must return error")
+	}
+	var doc map[string]any
+	if jerr := json.Unmarshal(buf.Bytes(), &doc); jerr != nil {
+		t.Fatalf("json: %v body=%s", jerr, buf.String())
+	}
+	if doc["decision"] != "deny" {
+		t.Fatalf("got %v", doc)
 	}
 }
 
@@ -1005,7 +1094,7 @@ func TestStopHookActive(t *testing.T) {
 // TestEmitStopBlock: the Stop block payload carries decision=block + the reason.
 func TestEmitStopBlock(t *testing.T) {
 	var buf bytes.Buffer
-	if err := emitStopBlock(&buf, "claude", "ungated edits: a.go"); err != nil {
+	if err := emitStopBlock(&buf, "ungated edits: a.go"); err != nil {
 		t.Fatalf("emitStopBlock: %v", err)
 	}
 	var got stopBlockOut
@@ -1021,7 +1110,7 @@ func TestEmitStopBlock(t *testing.T) {
 // decision=block + reason (NOT PreToolUse hookSpecificOutput). Closed-key check.
 func TestStopBlockShape(t *testing.T) {
 	var buf bytes.Buffer
-	if err := emitStopBlock(&buf, "claude", "ungated edits: a.go"); err != nil {
+	if err := emitStopBlock(&buf, "ungated edits: a.go"); err != nil {
 		t.Fatalf("emitStopBlock: %v", err)
 	}
 	var root map[string]any

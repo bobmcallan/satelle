@@ -14,9 +14,6 @@
 #           clip is 10,000 characters, on PreToolUse/PostToolUse/Stop only. See
 #           the grok-context-limit attachment on sty_ce1a2733. 16384 is kept as
 #           the pre-existing value.
-# codex  — has its own hook additionalContextLimit setting; its default is
-#           unmeasured (grok-context-limit attachment). 16384 is kept as the
-#           conservative pre-existing value.
 # unknown — anything unrecognised gets the smallest safe budget. Nothing
 #           unrecognised is assumed to be Claude, but the safe choice is the
 #           tightest one.
@@ -24,9 +21,6 @@
 context_limit_bytes = 9500
 
 [harness.grok]
-context_limit_bytes = 16384
-
-[harness.codex]
 context_limit_bytes = 16384
 
 [harness.unknown]

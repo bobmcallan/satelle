@@ -175,7 +175,7 @@ func TestBaselineRoleConflictRefused(t *testing.T) {
 
 // A profile exists for each role on each supported CLI.
 func TestStarterGlobalAgentsHasAgentAndReviewerProfiles(t *testing.T) {
-	for _, cli := range []string{"claude", "grok", "codex"} {
+	for _, cli := range []string{"claude", "grok"} {
 		body, err := StarterGlobalAgents(cli)
 		if err != nil {
 			t.Fatalf("%s: %v", cli, err)

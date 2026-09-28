@@ -124,39 +124,6 @@ func TestStopHookGateFinishingDuringWaitIsDeliveredOnce(t *testing.T) {
 	}
 }
 
-// Antigravity blocks a stop only on decision "continue" (sty_9e88b82f): a still
-// running gate and a delivered verdict must each carry it, or agy would let the
-// session go idle and lose the verdict. The decision is the only difference from
-// the paths above.
-func TestStopHookGateDeliveryAntigravityContinues(t *testing.T) {
-	store := stopWakeRepo(t, "50ms")
-	prev := hookHarnessFlag
-	hookHarnessFlag = "antigravity"
-	t.Cleanup(func() { hookHarnessFlag = prev })
-	stopAgy := func() stopBlockOut {
-		t.Helper()
-		var out strings.Builder
-		if err := runHookStopcheck([]byte(`{"conversationId":"c","terminationReason":"model_stop","fullyIdle":true}`), &out); err != nil {
-			t.Fatal(err)
-		}
-		var blk stopBlockOut
-		if err := json.Unmarshal([]byte(strings.TrimSpace(out.String())), &blk); err != nil {
-			t.Fatalf("agy Stop output is not a decision: %q (%v)", out.String(), err)
-		}
-		return blk
-	}
-
-	m := runningGate(t, store, "sty_agy")
-	if blk := stopAgy(); blk.Decision != "continue" || !strings.Contains(blk.Reason, "still running") {
-		t.Fatalf("agy still-running gate = %+v, want decision=continue", blk)
-	}
-	_ = os.WriteFile(store.VerdictPath(m.ID), []byte("accepted plan→in_progress\n"), 0o644)
-	_ = store.Finish(m.ID, gatehandle.Result{})
-	if blk := stopAgy(); blk.Decision != "continue" || !strings.Contains(blk.Reason, "accepted plan→in_progress") {
-		t.Fatalf("agy verdict delivery = %+v, want decision=continue carrying the verdict", blk)
-	}
-}
-
 // AC3: a run that can no longer finish is reported as died, then the stop is
 // allowed — the loop cannot run forever.
 func TestStopHookTerminalHandleReportedThenAllowed(t *testing.T) {
@@ -304,8 +271,7 @@ func TestStopDeliveryDecidesFromOneObservation(t *testing.T) {
 }
 
 // AC5: the wait bound stays below the Stop timeout the scaffold installs, for
-// every override an operator can give. Codex is absent by design: it installs no
-// Stop hook (TestCompletionNotification_CellsMatchTheScaffold).
+// every override an operator can give.
 func TestStopWaitBelowInstalledHookTimeout(t *testing.T) {
 	timeouts := installedStopTimeouts(t)
 	if len(timeouts) == 0 {

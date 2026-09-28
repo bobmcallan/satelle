@@ -14,8 +14,8 @@ func TestAgentWaitBound_BelowGrokCutoffWheneverGrokIsConfigured(t *testing.T) {
 	for _, set := range [][]string{
 		{HarnessGrok},
 		{HarnessClaude, HarnessGrok},
-		{HarnessGrok, HarnessClaude, HarnessCodex},
-		{HarnessCodex, HarnessGrok},
+		{HarnessGrok, HarnessClaude, HarnessUnknown},
+		{HarnessUnknown, HarnessGrok},
 	} {
 		got := AgentWaitBound(set)
 		if got >= 15*time.Second {
@@ -83,15 +83,15 @@ func TestHarnessFacts_EveryRowIsExplicit(t *testing.T) {
 // AC3: a harness is recorded as delivering a completion notification only after
 // a live run showed it. Grok was observed (sty_c4b92c9e, grok-dogfood-run-1: the
 // Stop hook's block reason woke a headless grok 1.0.41 session with the
-// verdict); codex's scaffold installs no Stop hook, so it stays limited.
+// verdict); a harness with no row makes no such claim.
 func TestHarnessFacts_RecordsObservedWakesAndNamesTheRest(t *testing.T) {
 	for _, h := range []string{HarnessClaude, HarnessGrok} {
 		if !FactsFor(h).CompletionNotification.Available {
 			t.Errorf("%s was observed waking its session on a Stop-hook block; the table must say so", h)
 		}
 	}
-	if FactsFor(HarnessCodex).CompletionNotification.Available {
-		t.Error("codex claims a completion notification but its scaffold installs no Stop hook")
+	if FactsFor("nosuch").CompletionNotification.Available {
+		t.Error("a harness with no row claims a completion notification nothing wired")
 	}
 }
 

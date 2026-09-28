@@ -86,7 +86,7 @@ func TestInitReconcilesConfigBlock(t *testing.T) {
 	if !strings.Contains(out, "edit_exempt_paths") {
 		t.Fatalf("want edit_exempt_paths WARN:\n%s", out)
 	}
-	if !strings.Contains(out, `[".satelle/", ".gitignore", ".claude/", ".grok/", ".codex/", "/tmp/"]`) {
+	if !strings.Contains(out, `[".satelle/", ".gitignore", ".claude/", ".grok/", "/tmp/"]`) {
 		t.Fatalf("want exact block naming the seeded exempt list in fix:\n%s", out)
 	}
 }

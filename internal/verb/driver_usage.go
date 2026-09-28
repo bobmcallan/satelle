@@ -122,7 +122,7 @@ type DriverUsagePayload struct {
 	// wait's count is only readable from a row taken after that turn flushed.
 	Unflushed bool `json:"unflushed,omitempty"`
 	// Pending marks a close/park row read from a harness that reported
-	// agentcli.DriverSnapshot.MayUndercountInFlightTurn (grok, codex — NEVER
+	// agentcli.DriverSnapshot.MayUndercountInFlightTurn (grok — NEVER
 	// claude, see that field's doc comment) — the read may undercount the
 	// very turn that made the transition call, because that harness's session
 	// record only flushes a turn's usage once the turn fully completes.
@@ -221,7 +221,7 @@ func driverUsageTrigger(ctx context.Context, item workitem.Item, from, to string
 //     nothing better to go on — the record carried literally no data for
 //     that window).
 //   - a record that read SUCCESSFULLY at close/park but, on a harness with
-//     agentcli.DriverSnapshot.MayUndercountInFlightTurn (grok, codex — never
+//     agentcli.DriverSnapshot.MayUndercountInFlightTurn (grok — never
 //     claude), may still be an UNDERCOUNT of the very turn that made the
 //     call, because that harness only flushes a turn's cumulative once the
 //     turn fully completes. Such a row is stamped Pending. Unlike the
@@ -246,7 +246,7 @@ func driverUsageTrigger(ctx context.Context, item workitem.Item, from, to string
 // STILL NOT IMPLEMENTED: AC8's forked-session-id-with-parent-reference resume
 // case — confirmed against real captured session records (see
 // internal/agentcli/testdata/driver/README.md), no adapter in this codebase
-// (claude transcript, grok usage.json, codex rollout) surfaces a parent/
+// (claude transcript, grok usage.json) surfaces a parent/
 // resume lineage for a NEW session id to seed a baseline from. This is a
 // genuine data gap in the harness's own record, not an unwritten branch:
 // there is nothing to read. AC8's SAME-id resume case needs no extra code:
@@ -260,7 +260,7 @@ func driverUsageTrigger(ctx context.Context, item workitem.Item, from, to string
 // The environment is the fallback when the session published nothing.
 func driverSessionHarness(sessionID string) string {
 	switch _, exe, _ := config.ResolveSessionModel(sessionID, SessionModelRoleInLoop); exe {
-	case agentcli.HarnessClaude, agentcli.HarnessGrok, agentcli.HarnessCodex:
+	case agentcli.HarnessClaude, agentcli.HarnessGrok:
 		return exe
 	}
 	if h, ok := agentcli.InLoopHarnessFromEnv(os.Environ()); ok {
@@ -346,7 +346,7 @@ func recordDriverUsageAs(ctx context.Context, item workitem.Item, sessionID, har
 		payload.BaseTurns = snap.Turns
 	case prevFound && prev.payload.Pending:
 		// AC6: the previous row read successfully but was Pending — it MAY have
-		// undercounted its own in-flight turn (grok/codex only). Bounded catch-up
+		// undercounted its own in-flight turn (grok only). Bounded catch-up
 		// only: recordLateDriverUsageCatchup attributes usage to the closed story
 		// ONLY when the harness's Turns counter proves this read isolates exactly
 		// that one turn — never the whole gap, which could include unrelated
@@ -394,7 +394,7 @@ func recordDriverUsageAs(ctx context.Context, item workitem.Item, sessionID, har
 		payload.CostUnavailableReason = snap.CostUnavailableReason
 	}
 	if (trigger == DriverTriggerClose || trigger == DriverTriggerPark) && snap.MayUndercountInFlightTurn {
-		// AC6: this harness (grok/codex, never claude — see
+		// AC6: this harness (grok, never claude — see
 		// agentcli.DriverSnapshot.MayUndercountInFlightTurn) may not have flushed
 		// the very turn that made this call yet. Leave it open for the next read
 		// to confirm — bounded to that one turn only, see
@@ -669,7 +669,7 @@ func adjustBaseForClaimedTurns(base driverCumulative, breakdown []agentcli.Drive
 
 // sweepPendingDriverUsage confirms every driver_usage row still Pending
 // anywhere in the ledger (sty_81caa41b AC6) — a close/park row that may have
-// undercounted its own turn on grok/codex. Inline catch-up inside
+// undercounted its own turn on grok. Inline catch-up inside
 // recordDriverUsage only fires on the SAME session's NEXT transition; this
 // sweep also covers two gaps that leaves: a session that never drives another
 // story after closing this one (that tail would otherwise never get
