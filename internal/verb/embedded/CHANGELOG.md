@@ -1,3 +1,8 @@
+## [0.0.569] - 2026-09-28
+
+### Fixed
+- **A repo whose satelle scaffolding is older than the binary keeps working and is told to heal, instead of having its commands refused.** When a release changed satelle's hook wrapper or harness hook commands, every store-backed command in a repo still on the older scaffolding failed with "deployed harness scaffolding is stale", and `satelle doctor --all` showed every registered repo unhealthy. Those files are satelle-owned and `satelle init` rewrites them idempotently, so stale scaffolding now prints one line on stderr naming the stale files and the heal command, and the command runs. Hook handlers are unaffected and stdout stays clean for JSON output. A release whose CHANGELOG entry declares `### Breaking` still refuses until `satelle init` is run, and `satelle doctor` still reports `scaffold.stale`. (sty_e56ea643)
+
 ## [0.0.568] - 2026-09-28
 
 ### Breaking

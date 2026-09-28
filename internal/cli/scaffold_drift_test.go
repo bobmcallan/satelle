@@ -1,10 +1,17 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/buildinfo"
+	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/health"
 )
 
 func TestDetectScaffoldDrift_CleanAfterWrite(t *testing.T) {
@@ -183,5 +190,252 @@ func TestDetectScaffoldDrift_HealClears(t *testing.T) {
 	}
 	if fs := DetectScaffoldDrift(repo); len(fs) != 0 {
 		t.Fatalf("post-heal must be clean: %v", fs)
+	}
+}
+
+// --- sty_e56ea643: stale scaffolding warns, never refuses ---------------------
+
+// driftedRepo returns a hermetic initialised repo whose harness scaffolding is
+// stale in the two ways a release changes it: the wrapper script differs from
+// the binary's canonical bytes, and a PreToolUse command is not the canonical
+// script form. The build is stamped as a release (drift only fires off a dev
+// build) and the repo's deployed.version stamp is set to stamp.
+func driftedRepo(t *testing.T, stamp string) string {
+	t.Helper()
+	repo := tempRepo(t)
+	old := buildinfo.Version
+	buildinfo.Version = "0.0.900"
+	t.Cleanup(func() { buildinfo.Version = old })
+	if err := writeHookScripts(repo); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, filepath.FromSlash(satelleHookScriptRel)), []byte("#!/bin/sh\n# an older wrapper\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"hooks":{"PreToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"satelle hook gate || exit 2"}]}]}}`
+	if err := os.WriteFile(filepath.Join(repo, ".claude", "settings.json"), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, config.DefaultDataDir, deployedVersionName), []byte("satelle.version: "+stamp+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+	return repo
+}
+
+// runRootSplit runs one command with stdout and stderr captured apart, so a
+// warning on stderr can be told from the JSON a store verb prints on stdout.
+func runRootSplit(t *testing.T, stdin string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	root := NewRootCmd()
+	resetFlagState(root)
+	var out, errBuf bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errBuf)
+	root.SetIn(strings.NewReader(stdin))
+	root.SetArgs(args)
+	c, err := root.ExecuteC()
+	if c != nil {
+		closeAppForCmd(c)
+	}
+	return out.String(), errBuf.String(), err
+}
+
+// TestOrdinaryCommandsWarnOnStaleScaffolding pins AC1 and AC2 side by side: the
+// same stale scaffolding warns and runs when the release declares nothing
+// breaking, and only the CHANGELOG ### Breaking gate (a stamp behind a Breaking
+// release) still refuses.
+func TestOrdinaryCommandsWarnOnStaleScaffolding(t *testing.T) {
+	t.Run("warns and runs when nothing breaking", func(t *testing.T) {
+		driftedRepo(t, "0.0.900")
+		stdout, stderr, err := runRootSplit(t, "", "story", "create", "--title", "drifted", "--tags", "a")
+		if err != nil {
+			t.Fatalf("story create must run against stale scaffolding: %v\n%s", err, stderr)
+		}
+		id := storyIDFromJSON(t, stdout)
+		for _, args := range [][]string{
+			{"story", "list"},
+			{"story", "get", id},
+			{"story", "set", id, "--priority", "high"},
+			{"ledger", "list", "--story", id},
+			{"sync"},
+		} {
+			stdout, stderr, err := runRootSplit(t, "", args...)
+			if err != nil {
+				t.Errorf("%v must run against stale scaffolding: %v\n%s", args, err, stderr)
+				continue
+			}
+			var warns []string
+			for _, ln := range strings.Split(stderr, "\n") {
+				if strings.Contains(ln, "scaffolding is stale") {
+					warns = append(warns, ln)
+				}
+			}
+			if len(warns) != 1 {
+				t.Errorf("%v: want exactly one warning line on stderr, got %d:\n%s", args, len(warns), stderr)
+				continue
+			}
+			for _, want := range []string{satelleHookScriptRel, ".claude/settings.json", "satelle init", "satelle-managed", "idempotent"} {
+				if !strings.Contains(warns[0], want) {
+					t.Errorf("%v: warning missing %q: %s", args, want, warns[0])
+				}
+			}
+			if strings.Contains(stdout, "scaffolding is stale") {
+				t.Errorf("%v: the warning must stay off stdout:\n%s", args, stdout)
+			}
+		}
+	})
+
+	t.Run("hooks never see the warning or refuse", func(t *testing.T) {
+		driftedRepo(t, "0.0.900")
+		stdout, stderr, err := runRootSplit(t, `{"session_id":"s"}`, "hook", "prompt")
+		if err != nil {
+			t.Fatalf("hook prompt must not fail on stale scaffolding: %v", err)
+		}
+		if strings.Contains(stderr, "scaffolding is stale") {
+			t.Errorf("hook stderr must not carry the ordinary-command warning:\n%s", stderr)
+		}
+		var v map[string]any
+		if err := json.Unmarshal([]byte(stdout), &v); err != nil {
+			t.Errorf("hook stdout must stay valid JSON: %v\n%s", err, stdout)
+		}
+	})
+
+	t.Run("still refuses across a Breaking release", func(t *testing.T) {
+		driftedRepo(t, "0.0.100") // the shipped 0.0.385 Breaking entry is in range
+		_, stderr, err := runRootSplit(t, "", "story", "list")
+		if err == nil {
+			t.Fatal("a stamp behind a Breaking release must still refuse")
+		}
+		if !strings.Contains(strings.ToLower(err.Error()), "breaking") || !strings.Contains(err.Error(), "satelle init") {
+			t.Errorf("refusal must name the breaking release and the heal: %v", err)
+		}
+		if strings.Contains(stderr, "scaffolding is stale") {
+			t.Errorf("a refused command must not also print the drift warning:\n%s", stderr)
+		}
+	})
+}
+
+func storyIDFromJSON(t *testing.T, s string) string {
+	t.Helper()
+	var v struct {
+		ID    string `json:"id"`
+		Story struct {
+			ID string `json:"id"`
+		} `json:"story"`
+	}
+	if err := json.Unmarshal([]byte(s), &v); err != nil {
+		t.Fatalf("story create output is not JSON: %v\n%s", err, s)
+	}
+	if v.ID != "" {
+		return v.ID
+	}
+	if v.Story.ID == "" {
+		t.Fatalf("no story id in output:\n%s", s)
+	}
+	return v.Story.ID
+}
+
+func TestWarnScaffoldDriftSilentCases(t *testing.T) {
+	// Dev build: the drift is real but the build never self-gates.
+	repo := tempRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"hooks":{"PreToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"satelle hook gate || exit 2"}]}]}}`
+	if err := os.WriteFile(filepath.Join(repo, ".claude", "settings.json"), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	warnScaffoldDrift(repo, &buf)
+	if buf.Len() != 0 {
+		t.Errorf("a dev build must stay silent, got %q", buf.String())
+	}
+	// Release build, clean repo and uninitialised repo: silent.
+	old := buildinfo.Version
+	buildinfo.Version = "0.0.900"
+	t.Cleanup(func() { buildinfo.Version = old })
+	warnScaffoldDrift(t.TempDir(), &buf)
+	clean := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(clean, config.DefaultDataDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	warnScaffoldDrift(clean, &buf)
+	if buf.Len() != 0 {
+		t.Errorf("uninitialised or clean repos must stay silent, got %q", buf.String())
+	}
+}
+
+func TestFormatScaffoldDriftOneLine(t *testing.T) {
+	if got := formatScaffoldDriftOneLine(nil); got != "" {
+		t.Fatalf("no findings must be silent, got %q", got)
+	}
+	got := formatScaffoldDriftOneLine([]ScaffoldFinding{
+		{Path: "a", Kind: "content", Detail: "x"},
+		{Path: "a", Kind: "content", Detail: "y"},
+		{Path: "b", Kind: "command", Detail: "z"},
+	})
+	if strings.Contains(got, "\n") || !strings.Contains(got, "(2)") || strings.Count(got, "a[content]") != 1 || !strings.Contains(got, "b[command]") {
+		t.Errorf("one line, each artifact once: %q", got)
+	}
+}
+
+// TestInitHealsStaleScaffoldingIdempotently pins AC3: every stale item is a
+// satelle-owned managed file, init rewrites it, and a second init changes nothing.
+func TestInitHealsStaleScaffoldingIdempotently(t *testing.T) {
+	repo := driftedRepo(t, "0.0.900")
+	if len(DetectScaffoldDrift(repo)) == 0 {
+		t.Fatal("fixture must drift before heal")
+	}
+	heal := func() {
+		t.Helper()
+		if err := runInitTest(t, io.Discard, repo); err != nil {
+			t.Fatalf("init: %v", err)
+		}
+	}
+	managed := []string{satelleHookScriptRel, ".claude/settings.json"}
+	read := func() map[string]string {
+		out := map[string]string{}
+		for _, rel := range managed {
+			b, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(rel)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			out[rel] = string(b)
+		}
+		return out
+	}
+	heal()
+	if fs := DetectScaffoldDrift(repo); len(fs) != 0 {
+		t.Fatalf("init must heal every stale item: %v", fs)
+	}
+	first := read()
+	heal()
+	if fs := DetectScaffoldDrift(repo); len(fs) != 0 {
+		t.Fatalf("second init must leave no findings: %v", fs)
+	}
+	second := read()
+	for _, rel := range managed {
+		if first[rel] != second[rel] {
+			t.Errorf("init is not idempotent for %s", rel)
+		}
+	}
+}
+
+// TestDoctorStillReportsScaffoldStale pins AC4: the warning is a courtesy on
+// ordinary commands; doctor still records the drift as a scaffold.stale finding.
+func TestDoctorStillReportsScaffoldStale(t *testing.T) {
+	repo := driftedRepo(t, "0.0.900")
+	found := false
+	for _, f := range scaffoldFindings(repo) {
+		if f.ID == health.IDScaffoldStale {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("doctor must still report %s on a drifted repo", health.IDScaffoldStale)
 	}
 }

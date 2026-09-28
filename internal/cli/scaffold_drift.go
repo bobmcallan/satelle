@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -213,31 +214,43 @@ func formatScaffoldDriftWarning(findings []ScaffoldFinding) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// refuseScaffoldDrift fails closed when deployed scaffolding differs from the
-// binary's canonical wrappers (sty_ac25b787 hash mechanism — does not reuse the
-// changelog ### Breaking semantic). Dev builds and uninitialised repos skip.
-// Heal path: satelle init.
-func refuseScaffoldDrift(repoRoot string) error {
-	binVer := strings.TrimSpace(buildinfo.Resolve().Version)
-	if isDevVersion(binVer) {
-		return nil
+// warnScaffoldDrift tells the operator, on w (stderr), that the deployed harness
+// scaffolding differs from this binary's canonical wrappers, and never refuses
+// (sty_e56ea643). Every file DetectScaffoldDrift reports is satelle-owned, so
+// staleness is a heal the operator can run when convenient, not a reason to
+// stop ordinary commands across every repo the moment a release changes a
+// managed byte. The only hard refusal left is the CHANGELOG `### Breaking`
+// gate (refuseBreakingDrift), which the release itself declares.
+// Dev builds and uninitialised repos skip.
+func warnScaffoldDrift(repoRoot string, w io.Writer) {
+	if isDevVersion(strings.TrimSpace(buildinfo.Resolve().Version)) {
+		return
 	}
 	dataDir := filepath.Join(repoRoot, config.DefaultDataDir)
 	if st, err := os.Stat(dataDir); err != nil || !st.IsDir() {
-		return nil
+		return
 	}
-	findings := DetectScaffoldDrift(repoRoot)
-	if len(findings) == 0 {
-		return nil
+	if line := formatScaffoldDriftOneLine(DetectScaffoldDrift(repoRoot)); line != "" {
+		fmt.Fprintln(w, line)
 	}
-	return fmt.Errorf("%s", formatScaffoldDriftRefuse(binVer, findings))
 }
 
-func formatScaffoldDriftRefuse(binVer string, findings []ScaffoldFinding) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "satelle: binary %s deployed harness scaffolding is stale (%d item(s)) — run `satelle init` to heal\n", binVer, len(findings))
-	for _, f := range findings {
-		fmt.Fprintf(&b, "  - %s [%s]: %s\n", f.Path, f.Kind, f.Detail)
+// formatScaffoldDriftOneLine is the ordinary-command warning: ONE line naming
+// each stale artifact once and the heal, "" when nothing drifts. It goes to
+// stderr so stdout stays clean for the JSON the store verbs print.
+func formatScaffoldDriftOneLine(findings []ScaffoldFinding) string {
+	if len(findings) == 0 {
+		return ""
 	}
-	return strings.TrimRight(b.String(), "\n")
+	var items []string
+	seen := map[string]bool{}
+	for _, f := range findings {
+		item := f.Path + "[" + f.Kind + "]"
+		if !seen[item] {
+			seen[item] = true
+			items = append(items, item)
+		}
+	}
+	return fmt.Sprintf("⚠️ satelle: harness scaffolding is stale (%d): %s — satelle-managed files; run `satelle init` to heal (idempotent)",
+		len(items), strings.Join(items, ", "))
 }

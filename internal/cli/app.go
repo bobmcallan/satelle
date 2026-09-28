@@ -85,14 +85,13 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// install it now (idempotent). First session of a new harness may still
 	// have run without hooks; next session picks them up.
 	ensureLazySessionHarness(a.RepoRoot)
-	// Scaffold drift (sty_ac25b787): deployed harness wrappers behind the binary
-	// fail closed for store-backed verbs — hash mechanism, not ### Breaking.
-	// `status` is exempt so it can REPORT the drift (AC3); heal is still init.
+	// Scaffold drift (sty_ac25b787, sty_e56ea643): deployed harness wrappers
+	// behind the binary are satelle-owned bytes that `satelle init` heals, so
+	// they WARN on stderr and never refuse — only a release's own CHANGELOG
+	// ### Breaking (refuseBreakingDrift above) stops a command. `status`
+	// prints the full block itself.
 	if cmd.Name() != "status" {
-		if derr := refuseScaffoldDrift(a.RepoRoot); derr != nil {
-			_ = a.Close()
-			return derr
-		}
+		warnScaffoldDrift(a.RepoRoot, cmd.ErrOrStderr())
 	}
 	// Broken configuration refuses to run (sty_d0d6bb67): an initialized repo
 	// (this command reached the store, so .satelle exists) must carry a loadable

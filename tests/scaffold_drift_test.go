@@ -74,17 +74,18 @@ func TestScaffoldDriftSurfacesAndHeal(t *testing.T) {
 		}
 	}
 
-	// AC4: store-backed verb fails closed via hash mechanism (not ### Breaking).
+	// AC4 (sty_e56ea643): a store-backed verb keeps working on scaffold drift and
+	// warns once, naming the heal; refusal is reserved for a ### Breaking
+	// require-init entry, never the scaffold-hash mechanism.
 	out, err := run(t, testBin, repo, "story", "list")
-	if err == nil {
-		t.Fatalf("story list must fail closed on scaffold drift; out=%s", out)
+	if err != nil {
+		t.Fatalf("story list must run (warn, not refuse) on scaffold drift: %v; out=%s", err, out)
 	}
-	combined := out + err.Error()
-	if !strings.Contains(combined, "satelle init") {
-		t.Errorf("refuse must name satelle init: %s", combined)
+	if !strings.Contains(out, "satelle init") {
+		t.Errorf("drift warning must name satelle init: %s", out)
 	}
-	if !strings.Contains(combined, "scaffold") && !strings.Contains(combined, "stale") {
-		t.Errorf("refuse must mention scaffold/stale: %s", combined)
+	if !strings.Contains(out, "scaffold") && !strings.Contains(out, "stale") {
+		t.Errorf("drift warning must mention scaffold/stale: %s", out)
 	}
 
 	// Heal.
