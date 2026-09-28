@@ -119,6 +119,15 @@ func (g *Engine) runArtifactAttempts(
 			return withUsage(lastResult, totalUsage), nil, lastResult.Err
 		}
 
+		// An explicit reject decision is the performer's ANSWER (its premise check
+		// failed, sty_b8a0d062), not a malformed artifact: repairing it would ask
+		// the performer to invent output for a premise it just refuted. Hand it back
+		// with no artifact and no error so DispatchExecutor turns it into a
+		// PerformerReject (sty_5262592e: a readiness performer that also plans).
+		if dec, derr := parseDecision(lastResult.Stdout); derr == nil && !dec.Accept {
+			g.recordArtifactAttempt(ctx, item.ID, attempt, phase, section, attemptBinding, current.Source, lastResult.Usage, nil, reason)
+			return withUsage(lastResult, totalUsage), nil, nil
+		}
 		candidate, decodeErr := agentartifact.Decode(lastResult.Stdout)
 		lastFindings = nil
 		if decodeErr != nil {

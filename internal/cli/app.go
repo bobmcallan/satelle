@@ -275,6 +275,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// Prior-verdict injection (sty_0f5e600c): a re-reviewed edge carries
 			// what it already judged, so the gate judges the delta.
 			rev.SetPriorVerdictsResolver(priorVerdictsResolver())
+			// Definition-edit injection (sty_5262592e): the intent reviewer judges
+			// each edited acceptance criterion against the story's purpose.
+			rev.SetDefinitionEditsResolver(definitionEditsResolver())
 			// Engagement-diff injection (sty_a125b440): Bash-less reviewers
 			// receive the live slice in the transition payload. Enumeration
 			// only; a missing baseline is a marker, never a refused gate.
@@ -533,6 +536,27 @@ func priorVerdictsResolver() func(ctx context.Context, itemID, from, to string) 
 				Notes:     v.Notes,
 				CreatedAt: v.CreatedAt,
 			})
+		}
+		return out
+	}
+}
+
+// definitionEditsResolver lists the definition edits recorded for a story, for
+// transition-payload injection (sty_5262592e). verb.DefinitionEdits reads the
+// package-global ledger store wired above; an unreadable ledger degrades to no
+// edits and never fails the transition.
+func definitionEditsResolver() func(ctx context.Context, itemID string) []agentstep.DefinitionEdit {
+	return func(ctx context.Context, itemID string) []agentstep.DefinitionEdit {
+		if itemID == "" {
+			return nil
+		}
+		edits := verb.DefinitionEdits(ctx, itemID)
+		if len(edits) == 0 {
+			return nil
+		}
+		out := make([]agentstep.DefinitionEdit, 0, len(edits))
+		for _, e := range edits {
+			out = append(out, agentstep.DefinitionEdit{Field: e.Field, Old: e.Old, New: e.New, Actor: e.Actor, At: e.At})
 		}
 		return out
 	}

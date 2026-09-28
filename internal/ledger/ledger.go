@@ -95,6 +95,14 @@ const (
 	// correction, not merely that one happened. Enumeration only — the accept/
 	// reject decision belongs to the authored amend_review gate.
 	KindDefinitionAmended = "definition_amended"
+	// KindDefinitionEdited records one field of a story's definition (title, body,
+	// acceptance_criteria, category) edited while the route still leaves it
+	// editable (sty_5262592e): Payload {field, before, after} with the row's Actor
+	// as the editor. One row per changed field. Unlike KindDefinitionAmended no
+	// gate judged the edit at the time — the intent review reads these rows on the
+	// next presentation, and a definition-unchanged check reads them after
+	// readiness accepted. Enumeration only.
+	KindDefinitionEdited = "definition_edited"
 	// KindSessionModel records one session role's captured model for a story —
 	// the in-loop engaging session or the story-creating session
 	// (an old row under the retired orchestrator role is ignored) (sty_7069bced /

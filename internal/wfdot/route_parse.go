@@ -83,10 +83,13 @@ type tagObligation struct {
 }
 
 type categoryWire struct {
-	Obligations    []string        `toml:"obligations"`
-	Park           *roleRef        `toml:"park"`
-	Cancel         *roleRef        `toml:"cancel"`
-	Recover        *recoverRef     `toml:"recover"`
+	Obligations []string `toml:"obligations"`
+	Park        *roleRef `toml:"park"`
+	Cancel      *roleRef `toml:"cancel"`
+	// Recover is a table (one declared backward movement) or an array of tables
+	// (several). A Primitive so ParseDone can accept either shape while the
+	// strict unknown-key pass still covers the keys inside it.
+	Recover        *toml.Primitive `toml:"recover"`
 	TagObligations []tagObligation `toml:"tag_obligation"`
 }
 
@@ -122,9 +125,16 @@ type stepWire struct {
 	// Rework is a POINTER for the same reason Parallel is: an absent key must be
 	// distinguishable from an authored zero, because absent means "no loop" and
 	// `rounds = 0` is a mis-authored budget this parser refuses.
-	Rework   *reworkRef `toml:"rework"`
-	Start    bool       `toml:"start"`
-	Terminal bool       `toml:"terminal"`
+	Rework *reworkRef `toml:"rework"`
+	// Propose, Freeze and RejectBudget are the step's declared transition knobs
+	// (sty_5262592e). RejectBudget is a POINTER for the same reason Rework is: an
+	// absent key means "no budget" and an authored zero is a mis-authored one this
+	// parser refuses.
+	Propose      bool `toml:"propose"`
+	Freeze       bool `toml:"freeze"`
+	RejectBudget *int `toml:"reject_budget"`
+	Start        bool `toml:"start"`
+	Terminal     bool `toml:"terminal"`
 }
 
 type gateWire struct {
@@ -250,8 +260,12 @@ func ParseDone(body string) ([]List, error) {
 		if c.Cancel != nil {
 			l.Cancel, l.CancelGate = c.Cancel.State, c.Cancel.Gate
 		}
-		if c.Recover != nil {
-			l.Recover, l.RecoverFrom = c.Recover.Step, c.Recover.From
+		recovers, rerr := decodeRecovers(md, c.Recover)
+		if rerr != nil {
+			return nil, fmt.Errorf("done.toml: category %q: recover: %w", name, rerr)
+		}
+		for _, r := range recovers {
+			l.Recovers = append(l.Recovers, Recover{Step: r.Step, From: r.From})
 		}
 		for _, t := range c.TagObligations {
 			if t.Tag == "" || t.Obligation == "" {
@@ -268,6 +282,24 @@ func ParseDone(body string) ([]List, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// decodeRecovers reads a category's `recover` as either one table or an array of
+// tables. The single-table form is the original grammar and stays valid; the
+// array form lets a route declare a second backward edge (sty_5262592e).
+func decodeRecovers(md toml.MetaData, p *toml.Primitive) ([]recoverRef, error) {
+	if p == nil {
+		return nil, nil
+	}
+	var many []recoverRef
+	if err := md.PrimitiveDecode(*p, &many); err == nil {
+		return many, nil
+	}
+	var one recoverRef
+	if err := md.PrimitiveDecode(*p, &one); err != nil {
+		return nil, err
+	}
+	return []recoverRef{one}, nil
 }
 
 // ParseSteps reads a step catalogue. One TABLE per step, keyed by the OBLIGATION
@@ -299,6 +331,7 @@ func ParseSteps(body string) (Catalogue, error) {
 	}
 	var cat Catalogue
 	reworkDeclared := map[string]bool{}
+	budgetDeclared := map[string]bool{}
 	for _, provides := range sortedKeys(recs) {
 		var s stepWire
 		if err := md.PrimitiveDecode(recs[provides], &s); err != nil {
@@ -319,6 +352,12 @@ func ParseSteps(body string) (Catalogue, error) {
 			AppliesTo:     s.AppliesTo,
 			Start:         s.Start,
 			Terminal:      s.Terminal,
+			Propose:       s.Propose,
+			Freeze:        s.Freeze,
+		}
+		if s.RejectBudget != nil {
+			st.RejectBudget = *s.RejectBudget
+			budgetDeclared[provides] = true
 		}
 		if s.Parallel != nil {
 			st.Parallel, st.ParallelSet = *s.Parallel, true
@@ -370,6 +409,16 @@ func ParseSteps(body string) (Catalogue, error) {
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: rework rounds must be > 0 (a zero budget is a loop that never runs)", st.Provides)
 		case strings.TrimSpace(st.Agent) == "":
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: rework needs the step to allocate a performer (agent = …) — there is nobody to code with", st.Provides)
+		}
+	}
+	// propose and reject_budget refusals, for the same reason as rework's: each is
+	// a silent no-op when mis-authored (sty_5262592e).
+	for _, st := range cat.Steps {
+		switch {
+		case st.Propose && (strings.TrimSpace(st.Agent) == "" || len(st.Skills) == 0):
+			return Catalogue{}, fmt.Errorf("step.toml: step %q: propose needs the step to allocate a performer (agent = …) and its skills — there is nothing to run before the gates", st.Provides)
+		case budgetDeclared[st.Provides] && st.RejectBudget < 1:
+			return Catalogue{}, fmt.Errorf("step.toml: step %q: reject_budget must be >= 1 (a zero budget refuses the first presentation)", st.Provides)
 		}
 	}
 	return cat, nil

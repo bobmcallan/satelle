@@ -351,25 +351,31 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		req.Category = &canon
 	}
 
-	// Definition freeze (sty_b572537f): once a STORY leaves its workflow's entry
-	// state (Mdiamond / Spec.Start — not a hardcoded "backlog"), title/body/
-	// acceptance_criteria/category are immutable. Status, tags, priority,
-	// estimate/actual, and attachments still flow. Fail-closed when the entry
-	// state cannot be resolved so a broken deployment cannot silently permit
-	// an anti-gaming definition edit.
+	// Definition freeze (sty_b572537f): once a STORY passes its workflow's freeze
+	// point, title/body/acceptance_criteria/category are immutable. The point is
+	// route configuration — the step that declares `freeze`, else the entry state
+	// (Mdiamond / Spec.Start), never a hardcoded status name (sty_5262592e).
+	// Status, tags, priority, estimate/actual, and attachments still flow.
+	// Fail-closed when the rule cannot be resolved so a broken deployment cannot
+	// silently permit an anti-gaming definition edit. An edit that IS still
+	// permitted is recorded on the ledger once it commits (recordDefinitionEdits).
+	var definitionEdits []AmendField
 	if current.Kind == workitem.KindStory {
 		if frozen := definitionFieldsChanged(current, req); len(frozen) > 0 {
-			entry, ok := storyEntryState(ctx, current)
+			editable, boundary, ok := storyDefinitionEditable(ctx, current)
 			if !ok {
 				return nil, fmt.Errorf(
 					"satelle: refusing to change definition fields [%s] on %s — cannot resolve the story's workflow entry state (fix config and retry)",
 					strings.Join(frozen, ", "), current.ID)
 			}
-			if current.Status != entry {
+			if !editable {
 				return nil, fmt.Errorf(
-					"satelle: refusing to change frozen definition field(s) [%s] on engaged story %s (status %q; entry state is %q) — title/body/acceptance_criteria/category are immutable once a story leaves its workflow entry state; status/estimate/actual/tags/priority/attachments are unaffected. To CORRECT a wrong definition mid-flight, use `satelle story amend %s --reason …`, which is judged by the repo's amend gate and records the before/after on the ledger",
-					strings.Join(frozen, ", "), current.ID, current.Status, entry, current.ID)
+					"satelle: refusing to change frozen definition field(s) [%s] on engaged story %s (status %q; %s) — title/body/acceptance_criteria/category are immutable once a story passes that point; status/estimate/actual/tags/priority/attachments are unaffected. To CORRECT a wrong definition mid-flight, use `satelle story amend %s --reason …`, which is judged by the repo's amend gate and records the before/after on the ledger",
+					strings.Join(frozen, ", "), current.ID, current.Status, boundary, current.ID)
 			}
+			definitionEdits = amendFields(current, amendReq{
+				Title: req.Title, Body: req.Body, AcceptanceCriteria: req.AcceptanceCriteria, Category: req.Category,
+			})
 		}
 	}
 
@@ -493,10 +499,31 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	// signature change: the reasoning belongs on the same artifact as the route.
 	var routeVerdicts []ReviewerVerdict
 	var routeUnresolved []string
-	if transitioning && transitionGater != nil {
+	//
+	// Round budget (sty_5262592e): an edge whose destination step declares a
+	// reject_budget refuses another presentation once that many have been
+	// rejected — before any performer or reviewer is paid for. The count is a
+	// ledger enumeration; the budget and the wording of the ask are route data.
+	if transitioning {
+		if err := refuseSpentRejectBudget(ctx, current, *req.Status); err != nil {
+			return nil, err
+		}
+	}
+	// Propose (sty_5262592e): a destination step that declares `propose` runs
+	// its performer BEFORE the entry gates, on the source status, so the gates
+	// judge what the performer produced. The route declares the order; this only
+	// sequences the two calls below.
+	proposeFirst := transitioning && stepProposes(ctx, current, *req.Status)
+	runGate := func() error {
+		if !(transitioning && transitionGater != nil) {
+			return nil
+		}
+		// One attempt id per presentation, stamped on every verdict row this run
+		// writes, so a rejected ROUND is countable however many reviewers ran.
+		attempt := ledger.NewAttemptID()
 		dec, gerr := transitionGater.Gate(ctx, current, *req.Status)
 		if gerr != nil {
-			return nil, gerr
+			return gerr
 		}
 		// An edge may carry several reviewers (a transition's reviewer list plus
 		// the always-on system layer). Record each reviewer's verdict as its own
@@ -531,21 +558,21 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			if !rv.Accept {
 				appendLedgerEntry(ctx, current.ID, ledger.KindReviewReject, "reviewer",
 					fmt.Sprintf("rejected %s→%s by %s: %s", current.Status, *req.Status, rv.Skill, rv.Notes),
-					reviewerPayload(current.Status, *req.Status, rv), now)
+					reviewerPayload(current.Status, *req.Status, rv, attempt), now)
 				rejects = append(rejects, rv)
 				continue
 			}
 			acceptBody := fmt.Sprintf("accepted %s→%s by %s: decision=accept notes=%s%s",
 				current.Status, *req.Status, rv.Skill, rv.Notes, formatReasoningSuffix(rv.Reasoning))
 			appendLedgerEntry(ctx, current.ID, ledger.KindReviewAccept, "reviewer",
-				acceptBody, reviewerPayload(current.Status, *req.Status, rv), now)
+				acceptBody, reviewerPayload(current.Status, *req.Status, rv, attempt), now)
 			// Transparency (design §6.2 / epic AC): surface accept verdicts too —
 			// decision, notes, reasoning on stderr (reject already returns as error).
 			EmitVerdict(acceptBody)
 		}
 		if len(rejects) > 0 {
 			notifyChange(panelTopic(current.Kind))
-			return nil, multiRejectError(current.Status, *req.Status, rejects)
+			return multiRejectError(current.Status, *req.Status, rejects)
 		}
 		// An edge may have DECLARED a gate whose skill does not resolve. That gate
 		// degraded to advisory and judged nothing, so this advance is ungated —
@@ -564,16 +591,21 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			gatedAccepted = true
 		}
 		routeVerdicts, routeUnresolved = reviewers, dec.Unresolved
+		return nil
 	}
 
 	// A workflow node may allocate the TARGET state to a NAMED isolated agent
 	// (agent=<name> — sty_fd427546). The binding's harness performs the step
 	// synchronously here, after the edge's gates accepted and BEFORE the status is
-	// enacted: a dispatch failure refuses the whole transition (status unchanged),
-	// and the spawned agent never advances status itself — the state's exit gate
-	// still governs the next edge. agent=executor and agent-less states dispatch
-	// nothing (the in-loop orchestrator performs, today's behaviour).
-	if transitioning && executorDispatcher != nil {
+	// enacted (or before them, when the step declares `propose`): a dispatch
+	// failure refuses the whole transition (status unchanged), and the spawned
+	// agent never advances status itself — the state's exit gate still governs the
+	// next edge. agent=executor and agent-less states dispatch nothing (the
+	// in-loop orchestrator performs, today's behaviour).
+	performStep := func() (json.RawMessage, error) {
+		if !(transitioning && executorDispatcher != nil) {
+			return nil, nil
+		}
 		res, derr := executorDispatcher.DispatchExecutor(ctx, current, *req.Status)
 		if derr != nil {
 			// A performer that judged the premise wrong parks the story: the
@@ -627,6 +659,26 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 						transitionPayload(current.Status, *req.Status, res.Skill), now)
 				}
 			}
+		}
+		return nil, nil
+	}
+	// Order is the step's declaration: gates then performer (the default), or —
+	// for a `propose` step — performer then gates, so the gate payload carries the
+	// artifact the performer just attached. A failure at either call leaves the
+	// story at its source status, and the deferred guard frees the seat.
+	if proposeFirst {
+		if out, perr := performStep(); out != nil || perr != nil {
+			return out, perr
+		}
+		if gerr := runGate(); gerr != nil {
+			return nil, gerr
+		}
+	} else {
+		if gerr := runGate(); gerr != nil {
+			return nil, gerr
+		}
+		if out, perr := performStep(); out != nil || perr != nil {
+			return out, perr
 		}
 	}
 
@@ -691,6 +743,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			return nil, staleWriteError(current, req.Status, err)
 		}
 	}
+	recordDefinitionEdits(ctx, it, definitionEdits, now)
 	// Release the seat on transition into terminal (Msquare) or park (agent=reviewer).
 	// Force-release: exit is config-driven and must free the seat even when the
 	// exit CLI process is not the acquire-time owner (default owner is stable
@@ -1532,6 +1585,28 @@ func definitionFieldsChanged(current workitem.Item, req setReq) []string {
 	return out
 }
 
+// storyDefinitionEditable reports whether item's definition may still be edited
+// under its governing route, and the sentence naming where the route freezes it
+// (Spec.DefinitionEditable). ok is false when the route cannot be resolved, so
+// the caller fails closed. The answer is derived from route order, never a
+// status literal (sty_5262592e).
+func storyDefinitionEditable(ctx context.Context, item workitem.Item) (editable bool, boundary string, ok bool) {
+	spec, _, _, resolved := governingSpec(ctx, item)
+	if !resolved {
+		return false, "", false
+	}
+	editable, ok = spec.DefinitionEditable(item.Status)
+	if !ok {
+		return false, "", false
+	}
+	for _, st := range spec.States {
+		if st.Freeze {
+			return editable, fmt.Sprintf("the route freezes the definition on entry to %q", st.Name), true
+		}
+	}
+	return editable, fmt.Sprintf("entry state is %q", spec.Start()), true
+}
+
 // storyEntryState returns the governing workflow's entry state (Spec.Start —
 // conventionally the Mdiamond node) for item. ok is false when the doc index is
 // unwired, the workflow list fails, no workflow governs the item, the body is
@@ -1606,11 +1681,14 @@ func transitionPayload(from, to, skill string) json.RawMessage {
 // reviewerPayload is transitionPayload enriched with a single reviewer's order
 // and system-layer flag — stamped on each per-reviewer review row so the trail
 // preserves who judged the edge, in what order, and whether from the always-on
-// system layer.
-func reviewerPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
+// system layer. attempt is the id of the ONE gate run that produced the verdict
+// (ledger.NewAttemptID), shared by every row that run writes, so a rejected
+// presentation is countable however many reviewers judged it.
+func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.RawMessage {
 	p := struct {
 		From          string       `json:"from"`
 		To            string       `json:"to"`
+		Attempt       string       `json:"attempt,omitempty"`
 		Skill         string       `json:"skill,omitempty"`
 		Order         int          `json:"order"`
 		System        bool         `json:"system,omitempty"`
@@ -1621,7 +1699,7 @@ func reviewerPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		ModelResolved string       `json:"model_resolved,omitempty"`
 		ModelSource   string       `json:"model_source,omitempty"`
 		Models        []ModelUsage `json:"model_usage,omitempty"`
-	}{From: from, To: to, Skill: rv.Skill, Order: rv.Order, System: rv.System,
+	}{From: from, To: to, Attempt: attempt, Skill: rv.Skill, Order: rv.Order, System: rv.System,
 		Notes: rv.Notes, Reasoning: rv.Reasoning, Accept: rv.Accept,
 		Model: rv.Model, ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models}
 	b, err := json.Marshal(p)

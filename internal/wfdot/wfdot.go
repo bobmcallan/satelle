@@ -126,6 +126,14 @@ func duplicateStateProblem(name string) string {
 // incoming transition (the Mdiamond entry, e.g. "backlog"). Empty when every
 // state has an incoming edge (no clear start). The engagement edge leaves Start.
 func (s Spec) Start() string {
+	// The declared start marker wins: a recover edge back INTO the entry state
+	// (plan→backlog) gives it an incoming transition, and the incoming-edge scan
+	// below would then name a gate node as the start.
+	for _, st := range s.States {
+		if st.Shape == "Mdiamond" {
+			return st.Name
+		}
+	}
 	hasIn := map[string]bool{}
 	for _, tr := range s.Transitions {
 		hasIn[tr.To] = true
@@ -187,6 +195,53 @@ type State struct {
 	// Empty means inbound park edges must be drawn explicitly (legacy form).
 	// Resume is NOT declared here — the engine enforces resume-to-origin.
 	From []string
+	// Propose, Freeze and RejectBudget are the step's declared knobs
+	// (sty_5262592e). Propose: the performer runs BEFORE the entry gates, on the
+	// source status, so the gates judge what it produced. Freeze: the story's
+	// definition freezes when it enters this step. RejectBudget: the most
+	// rejected presentations of the entry edge before the orchestrator parks.
+	// Carried on State like Agent and Model — dispatch and transition input, not
+	// a consultation instruction.
+	Propose      bool
+	Freeze       bool
+	RejectBudget int
+}
+
+// StateNamed returns the spine state called name, and whether it exists.
+func (s Spec) StateNamed(name string) (State, bool) {
+	for _, st := range s.States {
+		if st.Name == name && len(st.On) == 0 {
+			return st, true
+		}
+	}
+	return State{}, false
+}
+
+// DefinitionEditable reports whether a story holding status may still have its
+// title, body, acceptance criteria and category edited, and whether that could
+// be decided at all. When a step declares Freeze the definition is editable
+// while the status comes strictly BEFORE that step in the route's order; with
+// no such step the legacy rule applies (editable only in the entry state).
+// Route order is the derived order of Spec.States, never a status literal.
+func (s Spec) DefinitionEditable(status string) (editable, ok bool) {
+	freezeAt, at, i := -1, -1, 0
+	for _, st := range s.States {
+		if len(st.On) > 0 || (st.Agent == "reviewer" && st.Shape != "Msquare") {
+			continue // a gate or role state, not a step on the route
+		}
+		if st.Freeze && freezeAt < 0 {
+			freezeAt = i
+		}
+		if st.Name == status && at < 0 {
+			at = i
+		}
+		i++
+	}
+	if freezeAt < 0 {
+		start := s.Start()
+		return status == start, start != ""
+	}
+	return at >= 0 && at < freezeAt, true
 }
 
 // StepSummary reports whether the workflow declares a step-summary node (a node

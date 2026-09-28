@@ -110,6 +110,10 @@ type Engine struct {
 	// re-reading the artefact with no memory (sty_0f5e600c). Nil-safe: an unwired
 	// resolver injects nothing.
 	priorVerdicts func(ctx context.Context, itemID, from, to string) []PriorVerdict
+	// definitionEdits resolves the definition edits recorded for THIS item, oldest
+	// first, so an intent reviewer judges an edited AC against the story's purpose
+	// (sty_5262592e). Nil-safe: an unwired resolver injects nothing.
+	definitionEdits func(ctx context.Context, itemID string) []DefinitionEdit
 	// itemDiff resolves the live engagement slice for a reviewer payload
 	// (sty_a125b440). Nil-safe: an unwired resolver injects no Diff. The
 	// resolver itself must never error — map missing baseline / git failure to
@@ -560,6 +564,15 @@ func (g *Engine) SetPriorVerdictsResolver(fn func(ctx context.Context, itemID, f
 	g.priorVerdicts = fn
 }
 
+// SetDefinitionEditsResolver wires the resolver that lists the definition edits
+// recorded for an item, oldest first (sty_5262592e). Enumeration, not verdict:
+// the binary attaches the before/after rows, the intent reviewer decides whether
+// an edit weakened an acceptance criterion. Nil-safe: an unwired resolver
+// injects no edits.
+func (g *Engine) SetDefinitionEditsResolver(fn func(ctx context.Context, itemID string) []DefinitionEdit) {
+	g.definitionEdits = fn
+}
+
 // SetDiffResolver wires the resolver that enumerates the engagement slice for
 // a reviewer payload (sty_a125b440). Enumeration, not verdict: the binary
 // attaches the facts, the skill decides. Nil-safe: an unwired resolver injects
@@ -776,6 +789,12 @@ type transitionPayload struct {
 	// finding set each pass. Absent on a first attempt, so a reviewer that ignores
 	// it costs nothing. Enumeration, not verdict.
 	PriorVerdicts []PriorVerdict `json:"prior_verdicts,omitempty"`
+	// DefinitionEdits carries the definition edits recorded for this story while
+	// its definition was still editable (sty_5262592e): field, old and new value,
+	// actor, oldest first, windowed to the most recent definitionEditCount. Absent
+	// when nothing was edited, so a reviewer that ignores it costs nothing.
+	// Enumeration, not verdict.
+	DefinitionEdits []DefinitionEdit `json:"definition_edits,omitempty"`
 	// Amendment is present ONLY on the amend_review gate's payload
 	// (sty_81aa4d8f): the before/after of every definition field the amendment
 	// proposes, plus the caller's reason. Without it the reviewer would see only
@@ -944,6 +963,47 @@ func (g *Engine) fillPriorVerdicts(ctx context.Context, itemID, from, to string,
 		out = append(out, v)
 	}
 	tp.PriorVerdicts = out
+}
+
+// DefinitionEdit is one recorded edit to a story's definition while it was still
+// editable: which field, its value before and after, and who edited it.
+type DefinitionEdit struct {
+	Field string `json:"field"`
+	Old   string `json:"old"`
+	New   string `json:"new"`
+	Actor string `json:"actor,omitempty"`
+	At    string `json:"at,omitempty"` // RFC3339
+}
+
+// definitionEditCount bounds how many edits ride in one payload and
+// definitionEditValueCeiling bounds each before/after value; together an upper
+// bound on the block, separate from the docs, prior-verdict and diff budgets.
+const (
+	definitionEditCount        = 20
+	definitionEditValueCeiling = 4 << 10
+)
+
+// fillDefinitionEdits attaches the story's definition edits, most recent
+// definitionEditCount, each value capped. Gate payload only, like prior verdicts:
+// the reader is a reviewer judging the definition, not a performer.
+func (g *Engine) fillDefinitionEdits(ctx context.Context, itemID string, tp *transitionPayload) {
+	if g.definitionEdits == nil || itemID == "" {
+		return
+	}
+	all := g.definitionEdits(ctx, itemID)
+	if len(all) == 0 {
+		return
+	}
+	if len(all) > definitionEditCount {
+		all = all[len(all)-definitionEditCount:]
+	}
+	out := make([]DefinitionEdit, 0, len(all))
+	for _, e := range all {
+		e.Old = excerpt(e.Old, definitionEditValueCeiling)
+		e.New = excerpt(e.New, definitionEditValueCeiling)
+		out = append(out, e)
+	}
+	tp.DefinitionEdits = out
 }
 
 // fillDiff attaches the engagement slice under its own ceiling. Runs AFTER
@@ -2628,6 +2688,7 @@ func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStat
 	// a performer optimising for the last rejection instead of the story is the
 	// failure mode that would create.
 	g.fillPriorVerdicts(ctx, item.ID, item.Status, toStatus, &tp)
+	g.fillDefinitionEdits(ctx, item.ID, &tp)
 	// Engagement diff rides the GATE payload only (sty_a125b440): reviewers
 	// without a shell need the slice; executors have one. fillDiff never
 	// errors — a missing baseline is a marker, not a refused transition.

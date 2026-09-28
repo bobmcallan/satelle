@@ -1,3 +1,20 @@
+## [0.0.571] - 2026-09-28
+
+### Added
+- **A story's readiness can be one step that plans while the story is still in backlog, and its definition freezes only when implementation starts.** Three step keys make this possible in `step.toml`:
+  - `propose = true` runs the step's performer before the entry gates, so the reviewers judge the plan it just produced;
+  - `freeze = true` marks the step whose entry freezes title, body and acceptance criteria;
+  - `reject_budget = N` refuses a presentation after N rejected rounds, quoting the last objection so the orchestrator can park the story and ask the developer.
+
+  A rejected readiness edge leaves the story in backlog, where its definition stays editable. A round counts once, however many reviewers reject in it. Every title, body or acceptance edit made before the freeze is recorded as a `definition_edited` ledger row with actor, old and new value, and edits ride in the gate payload so the intent review can judge them against the story's purpose. `recover` in `done.toml` now also accepts an array, which declares more than one way back.
+
+  `satelle story definition-edits <id> [--since-edge from:to]` enumerates the edits. The embedded plan-review and intent-review rubrics require every blocking finding in the first pass, and later rounds only verify earlier findings unless there is new evidence. Routes that do not use the new keys behave as before. (sty_5262592e)
+
+## [serve-v0.0.93] - 2026-09-28
+
+### Changed
+- **The service embeds the readiness-step mechanism above.** (sty_5262592e)
+
 ## [0.0.570] - 2026-09-28
 
 ### Changed

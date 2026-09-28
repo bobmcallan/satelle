@@ -48,7 +48,9 @@ obligation = "design-reviewed"
   on that state. It is a declaration, never a dispatch.
 - `recover` allows backward movement to `step`. Name only steps the route
   actually declares — `from` emits edges verbatim, so a stale name becomes an
-  edge from a state that does not exist.
+  edge from a state that does not exist. It is one inline table, or an array of
+  them when a route declares more than one way back:
+  `recover = [ { step = "in_progress", from = ["integration"] }, { step = "backlog", from = ["plan"] } ]`.
 - `[[<category>.tag_obligation]]` appends an obligation when the story carries
   the tag.
 
@@ -94,7 +96,26 @@ while in the step, and stage names REPEAT by design: several route families reac
 does not make obvious, and the one every conversion gets wrong.**
 
 Step keys: `status`, `agent`, `skills`, `reviewers`, `reviewer_agent`,
-`parallel`, `requires`, `applies_to`, `advise`, `start`, `terminal`.
+`parallel`, `requires`, `applies_to`, `advise`, `rework`, `propose`, `freeze`,
+`reject_budget`, `start`, `terminal`.
+
+Three keys turn a step into a **readiness step** — a performer that produces an
+artifact the entry reviewers then judge, while the story stays editable:
+
+- `propose = true` runs the step's performer (`agent` + `skills`, both required)
+  **before** the entry gates, on the source status, so the reviewers judge what it
+  produced (a plan, say). Without it the gates run first and the performer after
+  they accept. A rejected edge leaves the story where it was.
+- `reject_budget = N` (N ≥ 1) is the most rejected **presentations** of the entry
+  edge — one gate run, however many reviewers rejected in it. Once spent, the next
+  presentation is refused with the last objection quoted, and the orchestrator
+  parks the story and asks the developer; a resume restarts the count.
+- `freeze = true` makes entry to the step the point where title, body, acceptance
+  criteria and category freeze. At most one step of a route may declare it. With
+  none, the definition freezes when the story leaves the entry state. Until then
+  every edit is recorded on the ledger (`definition_edited`: field, old, new,
+  actor); `satelle story definition-edits <id> [--since-edge <from>:<to>]` lists
+  them for a check to judge.
 Gate keys: `skill`, `agent`, `on`, `applies_to`, `for`, `mandatory`.
 
 An unknown key is an ERROR, never a silent drop — a typo'd `reviewrs =` that

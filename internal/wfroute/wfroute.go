@@ -134,6 +134,14 @@ type Step struct {
 	// Rework is the bounded consultation loop the orchestrator may open at this
 	// step before presenting its exit edge. Nil when the step declares none.
 	Rework *Rework `json:"rework,omitempty"`
+	// Propose: the performer runs BEFORE the entry gates, so they judge what it
+	// produced. Freeze: the definition freezes on entry to this step. RejectBudget:
+	// the rejected presentations of the entry edge allowed before the story parks
+	// (sty_5262592e). Read off the derived State like Agent — declared, never a
+	// decision of the binary.
+	Propose      bool `json:"propose,omitempty"`
+	Freeze       bool `json:"freeze,omitempty"`
+	RejectBudget int  `json:"reject_budget,omitempty"`
 }
 
 // Exit is an off-route destination — a park or cancel state the story may leave
@@ -235,6 +243,10 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 		Agent:      st.Agent,
 		Skills:     spec.ExecutorSkillsFor(st.Name, tags),
 		Terminal:   st.Shape == "Msquare",
+
+		Propose:      st.Propose,
+		Freeze:       st.Freeze,
+		RejectBudget: st.RejectBudget,
 	}
 	// Edge-named gates: the reviewers on any inbound edge. A step is entered from
 	// one place on the spine and from recovery edges, which repeat the same gate
@@ -366,6 +378,9 @@ func (r Route) Render(at string) string {
 		if line := renderRework(s.Rework); line != "" {
 			b.WriteString(line)
 		}
+		if line := renderKnobs(s); line != "" {
+			b.WriteString(line)
+		}
 	}
 	if len(r.Exits) > 0 {
 		var exits []string
@@ -413,6 +428,27 @@ func renderRework(w *Rework) string {
 	}
 	return fmt.Sprintf("   rework: consult %s, up to %d round(s) — the orchestrator may open `satelle story rework`; the outcome is context, the entry gate still decides\n",
 		w.Consult, w.Rounds)
+}
+
+// renderKnobs writes the step's declared transition knobs, addressed to the
+// orchestrator like renderRework: the route has to say that the plan is produced
+// before the gates judge it, where the definition freezes, and how many rejected
+// presentations the entry edge allows before the story parks.
+func renderKnobs(s Step) string {
+	var parts []string
+	if s.Propose {
+		parts = append(parts, "the performer runs before the entry gates, so they judge what it produced")
+	}
+	if s.RejectBudget > 0 {
+		parts = append(parts, fmt.Sprintf("entry may be rejected %d time(s) before the story parks and the developer is asked", s.RejectBudget))
+	}
+	if s.Freeze {
+		parts = append(parts, "the definition freezes on entry")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "   " + strings.Join(parts, "; ") + "\n"
 }
 
 func renderObligation(s Step) string {

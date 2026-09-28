@@ -195,12 +195,12 @@ func renderSynthesised(out io.Writer, route wfroute.Route, l wfdot.List) {
 		fmt.Fprintf(out, "  %s advisor: %s @%s (consulted on park)\n", l.Park, l.ParkAdvisor, l.ParkAdvisorSkill)
 		any = true
 	}
-	if l.Recover != "" {
-		from := "every spine step after " + l.Recover
-		if len(l.RecoverFrom) > 0 {
-			from = strings.Join(l.RecoverFrom, ", ")
+	for _, r := range l.Recovers {
+		from := "every spine step after " + r.Step
+		if len(r.From) > 0 {
+			from = strings.Join(r.From, ", ")
 		}
-		fmt.Fprintf(out, "  recover: back to %s from %s\n", l.Recover, from)
+		fmt.Fprintf(out, "  recover: back to %s from %s\n", r.Step, from)
 		any = true
 	}
 	if !any {

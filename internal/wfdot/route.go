@@ -79,6 +79,23 @@ type Step struct {
 	// consult budget is an instruction to the orchestrator.
 	ReworkConsult string
 	ReworkRounds  int
+	// Propose runs this step's performer BEFORE its entry gates, on the source
+	// status, so the gates judge the artifact the performer produced (a plan
+	// that must exist before the readiness reviewers read it). Without it the
+	// gates run first and the performer after they accept. Mechanism only: it
+	// reorders two calls the binary already makes and decides no verdict
+	// (sty_5262592e).
+	Propose bool
+	// Freeze makes entry to this step the point where a story's definition (title,
+	// body, acceptance criteria, category) freezes. Without any step declaring it
+	// the legacy rule applies: the definition freezes when the story leaves the
+	// entry state.
+	Freeze bool
+	// RejectBudget is the most rejected presentations of this step's entry edge
+	// before the orchestrator must park the story and ask the developer. Zero
+	// means no declared budget. The unit is a PRESENTATION (one gate run),
+	// however many reviewers it fanned out to.
+	RejectBudget int
 	// Start marks the entry state; Terminal marks a terminal success state.
 	Start    bool
 	Terminal bool
@@ -133,12 +150,18 @@ type List struct {
 	Cancel string
 	// CancelGate is the reviewer that judges entry to Cancel.
 	CancelGate string
-	// Recover names the step a later step returns to — the backward movement the
-	// binary owns rather than the author drawing it.
-	Recover string
-	// RecoverFrom names the steps that may move back to Recover. Empty with a
-	// non-empty Recover means every spine step after Recover.
-	RecoverFrom []string
+	// Recovers are the backward movements the binary owns rather than the author
+	// drawing them: each names a step later steps return to. A route may declare
+	// more than one (release→in_progress, plan→backlog).
+	Recovers []Recover
+}
+
+// Recover is one declared backward movement: Step is the step a later step
+// returns to. From names the steps that may move back to it; empty means every
+// spine step after Step.
+type Recover struct {
+	Step string
+	From []string
 }
 
 // Catalogue is the step catalogue: every step and gate available to any category.
@@ -332,6 +355,21 @@ func checkSelectionUnambiguous(selected []Step, category string) error {
 		}
 		firstByProvides[st.Provides] = st
 	}
+	// At most one step of a route may declare the freeze point: two would leave
+	// "where does the definition freeze" with a silent winner.
+	var freezeAt string
+	for _, st := range selected {
+		if !st.Freeze {
+			continue
+		}
+		if freezeAt != "" {
+			return fmt.Errorf(
+				"route for category %q selects two steps declaring freeze (%q and %q); "+
+					"a route freezes the definition at exactly one step",
+				category, freezeAt, st.Name)
+		}
+		freezeAt = st.Name
+	}
 	return nil
 }
 
@@ -371,6 +409,10 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			Obligation: st.Provides,
 			Shape:      shape,
 			AppliesTo:  st.AppliesTo,
+
+			Propose:      st.Propose,
+			Freeze:       st.Freeze,
+			RejectBudget: st.RejectBudget,
 		})
 	}
 
@@ -447,9 +489,9 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			spec.Transitions = append(spec.Transitions, roleEdge(l.Park, l.Cancel, l.CancelGate))
 		}
 	}
-	if l.Recover != "" {
-		for _, name := range recoverSources(l, spine) {
-			spec.Transitions = append(spec.Transitions, Transition{From: name, To: l.Recover})
+	for _, r := range l.Recovers {
+		for _, name := range recoverSources(r, spine) {
+			spec.Transitions = append(spec.Transitions, Transition{From: name, To: r.Step})
 		}
 	}
 	return spec, nil
@@ -480,16 +522,16 @@ func roleEdge(from, to, gate string) Transition {
 	return tr
 }
 
-// recoverSources returns the steps that may move backward to l.Recover: the
-// explicit RecoverFrom list, or every spine step after Recover.
-func recoverSources(l List, spine []Step) []string {
-	if len(l.RecoverFrom) > 0 {
-		return l.RecoverFrom
+// recoverSources returns the steps that may move backward to r.Step: the
+// explicit From list, or every spine step after Step.
+func recoverSources(r Recover, spine []Step) []string {
+	if len(r.From) > 0 {
+		return r.From
 	}
 	var out []string
 	seen := false
 	for _, st := range spine {
-		if st.Name == l.Recover {
+		if st.Name == r.Step {
 			seen = true
 			continue
 		}

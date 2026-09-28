@@ -11,9 +11,10 @@ import (
 // TestProjectWorkflowReviewerFirst asserts this repo's project workflow is
 // reviewer-first: a reviewer gates every transition on the spine. Plan
 // dispatches to an isolated read-only planner; integration and release run
-// IN-LOOP on the driving session (agent=executor). backlog -> ready is performed by
-// ready-reviewer running ready-review (sty_e1d93a2c), and ready -> plan is gated
-// by satelle-story-intent-review (sty_3437b803, sty_bb2d1542). The former commit/push/committed
+// IN-LOOP on the driving session (agent=executor). A story has one readiness
+// step (sty_5262592e): backlog -> plan, whose planner proposes before the
+// intent, plan, architecture and coverage reviewers judge it; plan ->
+// in_progress is gated by the definition-unchanged check. The former commit/push/committed
 // states are merged into one `release` state, and there are recovery edges back
 // to in_progress (no dead-end). `integration` is an explicit, visible testing
 // step (sty_15dbc0dd).
@@ -80,12 +81,14 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 		t.Errorf("plan step must dispatch agent=planner @skill:plan, got agent=%q skill=%q", p.Agent, p.Skill)
 	}
 
-	// ready is performed by ready-reviewer; the read-only reviewer must not
-	// judge backlog -> ready (sty_e1d93a2c).
-	if r, present := states["ready"]; !present {
-		t.Error("missing ready state")
-	} else if r.Agent != "ready-reviewer" || r.Skill != "ready-review" {
-		t.Errorf("ready step must be agent=ready-reviewer @skill:ready-review, got agent=%q skill=%q", r.Agent, r.Skill)
+	// A story has ONE readiness step (sty_5262592e): no `ready` state; plan is
+	// entered straight from backlog, its planner proposes before the gates, and
+	// the definition freezes on entry to in_progress.
+	if _, present := states["ready"]; present {
+		t.Error("a story route must not hold a separate ready state (sty_5262592e)")
+	}
+	if p := states["plan"]; !p.Propose || p.RejectBudget <= 0 {
+		t.Errorf("plan must propose before its gates with a reject budget, got propose=%v reject_budget=%d", p.Propose, p.RejectBudget)
 	}
 
 	// The dispatched executor experiment states are gone (merged into release).
@@ -101,6 +104,7 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 	type edge struct{ from, to, skill string }
 	got := map[edge]bool{}
 	hasRecovery := false
+	hasBacklogRecover := false
 	for _, tr := range spec.Transitions {
 		skills := tr.Skills
 		if len(skills) == 0 && tr.Skill != "" {
@@ -112,10 +116,16 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 		if tr.From == "release" && tr.To == "in_progress" {
 			hasRecovery = true
 		}
+		if tr.From == "plan" && tr.To == "backlog" {
+			hasBacklogRecover = true
+		}
 	}
 	for _, want := range []edge{
-		{"ready", "plan", "satelle-story-intent-review"},
-		{"plan", "in_progress", "satelle-story-plan-review"},
+		{"backlog", "plan", "satelle-story-intent-review"},
+		{"backlog", "plan", "satelle-story-plan-review"},
+		{"backlog", "plan", "satelle-story-architecture-review"},
+		{"backlog", "plan", "satelle-story-integration-coverage-review"},
+		{"plan", "in_progress", "satelle-definition-unchanged-check"},
 		{"in_progress", "integration", "satelle-ac-evidence-check"},
 		{"in_progress", "integration", "satelle-code-ac-review"},
 		{"integration", "release", "satelle-integration-review"},
@@ -127,6 +137,9 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 	}
 	if got[edge{"backlog", "ready", "satelle-story-ready-review"}] {
 		t.Error("backlog -> ready must not be gated by the read-only satelle-story-ready-review")
+	}
+	if !hasBacklogRecover {
+		t.Error("missing plan -> backlog recover edge (the way back for a definition edited after readiness)")
 	}
 	if !hasRecovery {
 		t.Error("missing release -> in_progress recovery edge (a reject must have a back-edge)")

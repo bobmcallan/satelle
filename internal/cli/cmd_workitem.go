@@ -229,6 +229,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyCostCommands()...)
 		parent.AddCommand(storyDiffCommand())
 		parent.AddCommand(storyProofCommand())
+		parent.AddCommand(storyDefinitionEditsCommand())
 		parent.AddCommand(storySyncCommand())
 		parent.AddCommand(storyReconcileCommand())
 		parent.AddCommand(storyRestampCommand())
@@ -681,6 +682,39 @@ so an empty tests list is not confused with a classifier miss.`,
 			return dispatch(cmd, "story-proof", body)
 		},
 	}
+	return cmd
+}
+
+// storyDefinitionEditsCommand builds `satelle story definition-edits <id>`:
+// enumerate the edits made to a story's definition while the route left it
+// editable (sty_5262592e). Report-only — a functional-check gate reads the JSON
+// and decides what a non-empty list means; the command itself always exits 0 for
+// a readable story.
+func storyDefinitionEditsCommand() *cobra.Command {
+	var sinceEdge string
+	cmd := &cobra.Command{
+		Use:   "definition-edits <id>",
+		Short: "List a story's definition edits (enumeration only)",
+		Long: `List the title/body/acceptance_criteria/category edits recorded on a story's
+ledger while its definition was still editable — field, before, after, actor.
+JSON only. Report-only: it decides nothing.
+
+--since-edge <from>:<to> keeps only the edits made after the story's latest
+accepted <from>→<to> transition (for example backlog:plan). A functional-check
+gate uses it to notice a definition edited after readiness was accepted, without
+compiling that rule into the binary. With no accepted edge there is nothing to
+have gone stale and the list is empty.`,
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := map[string]any{"id": args[0]}
+			if sinceEdge != "" {
+				req["since_edge"] = sinceEdge
+			}
+			return dispatch(cmd, "story-definition-edits", req)
+		},
+	}
+	cmd.Flags().StringVar(&sinceEdge, "since-edge", "", "only edits after the latest accepted <from>:<to> transition (e.g. backlog:plan)")
 	return cmd
 }
 
