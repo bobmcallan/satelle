@@ -266,3 +266,40 @@ func ReadRepoPathMarker(runtimeDir string) string {
 	}
 	return strings.TrimSpace(string(b))
 }
+
+// CanonicalRepoRoot returns the MAIN working tree root for repoRoot, so a linked
+// git worktree identifies as the repository it belongs to rather than as a
+// separate project of its own.
+//
+// `git rev-parse --git-common-dir` already resolves from any worktree to the main
+// repository's .git — the same fact RepoKey collapses worktrees with. A worktree
+// needs its own .satelle for authored substrate, so the DATA dir is deliberately
+// left alone; what is canonicalised here is IDENTITY: the path a repo registers
+// under and the slug its mirror partition carries.
+//
+// Without this, registering from a worktree added a second project row and
+// relabelled the parent repo's partition after its own directory name, so
+// /r/<parent> returned 404 until a `satelle workspace add` from the main tree put
+// it back — on every worktree dispatch (sty_cd219594, sty_dfc9b100).
+//
+// Falls back to repoRoot unchanged when the tree is not a git worktree of a
+// satelle-governed main tree, so the ordinary case is untouched.
+func CanonicalRepoRoot(repoRoot string) string {
+	root := strings.TrimSpace(repoRoot)
+	if root == "" {
+		root = "."
+	}
+	common, _, ok := gitCommonIdentity(root)
+	if !ok {
+		return root
+	}
+	// The identity is the .git DIRECTORY; the main working tree is its parent.
+	if filepath.Base(common) != ".git" {
+		return root
+	}
+	main := filepath.Dir(common)
+	if _, err := os.Stat(filepath.Join(main, DefaultDataDir)); err != nil {
+		return root
+	}
+	return main
+}

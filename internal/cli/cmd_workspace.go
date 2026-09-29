@@ -169,7 +169,10 @@ func runWorkspaceAdd(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	} else {
-		path, err = filepath.Abs(a.RepoRoot)
+		// Identity is the MAIN working tree, so a linked worktree registers the
+		// repository it belongs to and is reported as already registered rather
+		// than becoming a second project (sty_cd219594).
+		path, err = filepath.Abs(config.CanonicalRepoRoot(a.RepoRoot))
 		if err != nil {
 			return err
 		}
@@ -189,7 +192,7 @@ func runWorkspaceAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	// Snapshot only the active repo's store — other paths are register-only.
-	activeRoot, _ := filepath.Abs(a.RepoRoot)
+	activeRoot, _ := filepath.Abs(config.CanonicalRepoRoot(a.RepoRoot))
 	if filepath.Clean(path) != filepath.Clean(activeRoot) {
 		fmt.Fprintf(cmd.OutOrStdout(), "workspace add: registered %s; run `satelle workspace add` from inside that repo to seed its mirror\n", path)
 		return nil

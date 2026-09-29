@@ -2008,7 +2008,11 @@ func gitignoreBlockFor(existing string) string {
 //	workspace: member (N repos registered)
 //	workspace: not-member — join with `satelle workspace add`
 func ensureWorkspaceRegistration(out io.Writer, repoRoot string, noWorkspace bool) {
-	abs, absErr := filepath.Abs(repoRoot)
+	// Identity is the MAIN working tree: running `satelle init` in a linked
+	// worktree must not add a second project row for a repository that is already
+	// registered, and must not relabel its mirror partition after the worktree's
+	// directory name (sty_cd219594).
+	abs, absErr := filepath.Abs(config.CanonicalRepoRoot(repoRoot))
 	if noWorkspace {
 		fmt.Fprintln(out, "  = workspace registry (skipped: --no-workspace)")
 		printWorkspaceMembership(out, abs, absErr)

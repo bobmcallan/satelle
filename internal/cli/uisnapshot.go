@@ -83,7 +83,11 @@ func buildUIDrainSnapshot(ctx context.Context, a *app.App) (*mirror.Snapshot, er
 
 func buildUISnapshotOpts(ctx context.Context, a *app.App, drain bool) (*mirror.Snapshot, error) {
 	repoKey := config.RepoKey(a.RepoRoot)
-	slug := filepath.Base(a.RepoRoot)
+	// The slug names the PROJECT, so it comes from the canonical repo root — a
+	// worktree is the same project as its parent, and deriving the slug from the
+	// invoking directory renamed the parent's partition to `sty_<id>` and took
+	// /r/<parent> to 404 on every worktree dispatch (sty_cd219594, sty_dfc9b100).
+	slug := filepath.Base(config.CanonicalRepoRoot(a.RepoRoot))
 	snap := &mirror.Snapshot{RepoKey: repoKey, Slug: slug}
 
 	items, err := a.Store.Stories.List(ctx, workitem.ListFilter{})
