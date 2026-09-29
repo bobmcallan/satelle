@@ -119,6 +119,29 @@ func renderRoute(t *testing.T, category string, tags []string) string {
 	return b.String()
 }
 
+// sty_4cf2c585: the derived route view reports each step's declared reject_budget,
+// and only the steps that declare one.
+func TestWorkflowShowRouteReportsDeclaredRejectBudget(t *testing.T) {
+	rs := routeSourceFixture()
+	rs.Step = strings.Replace(rs.Step, "[closed]\nstatus = \"done\"\n", "[closed]\nstatus = \"done\"\nreject_budget = 2\n", 1)
+	var b strings.Builder
+	if err := renderWorkflowRoute(&b, rs, "feature", nil); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	var budgets []string
+	for _, ln := range strings.Split(b.String(), "\n") {
+		if strings.Contains(ln, "reject budget:") {
+			budgets = append(budgets, strings.TrimSpace(ln))
+		}
+	}
+	if len(budgets) != 1 || !strings.HasPrefix(budgets[0], "reject budget: 2 ") {
+		t.Fatalf("want exactly one `reject budget: 2` line (the terminal step's), got %q in:\n%s", budgets, b.String())
+	}
+	if out := renderRoute(t, "feature", nil); strings.Contains(out, "reject budget") {
+		t.Errorf("a route declaring no budget must render none:\n%s", out)
+	}
+}
+
 // AC1: obligations in order with the step discharging each, the entry gates and
 // their bindings, and the synthesised topology marked as synthesised.
 func TestShowRouteRendersTheWildcardSpine(t *testing.T) {

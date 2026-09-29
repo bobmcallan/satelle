@@ -93,6 +93,10 @@ func renderRouteSteps(out io.Writer, route wfroute.Route, l wfdot.List) {
 				fmt.Fprintln(out, "                    bundled: gates sharing binding, model, effort and tool grant run as one session, one verdict per rubric")
 			}
 		}
+		if st.RejectBudget > 0 {
+			fmt.Fprintf(out, "       reject budget: %d — a rejected presentation returns the reviewers' notes to the requesting session and the story holds its source status; the presentation after %d rejected rounds is refused\n",
+				st.RejectBudget, st.RejectBudget)
+		}
 		for _, sk := range st.Skipped {
 			fmt.Fprintf(out, "       not run:    %s — needs tag %s\n", sk.Skill, strings.Join(sk.ByTag, "|"))
 		}

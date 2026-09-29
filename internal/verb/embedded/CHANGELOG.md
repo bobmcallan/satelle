@@ -1,3 +1,16 @@
+## [0.0.583] - 2026-09-29
+
+### Added
+- **A gate rejection is now a loop on every edge in this repo, not operator work.** The reject-budget mechanism was already generic — `reject_budget` is read from the destination step and enforced with no keying on a step name — but only `[readied]` declared one, so a rejection on any other edge failed the command outright and left the story sitting in its source status with the reason to be re-read by hand. Every gated step in this repo's step catalogue now declares `reject_budget = 3`: the verdict and the reviewer's reasoning come back to the session that requested the edge, the story holds its source status, the retry is admitted until the budget is spent, and the presentation after that is refused with the last objection quoted for the orchestrator's park. A budget on the TERMINAL `[closed]` step holds the story in `release` and admits the retry into the same edge rather than re-entering `done`; the shared `done` status resolves against the category's own route, so one category's budget cannot leak onto another's close. The budget is a repo's opinion, not the binary's: the embedded default declares none, and a step that declares none behaves exactly as before. (sty_4cf2c585, epic:pi-harness)
+
+### Changed
+- **`satelle workflow show <category>` reports each step's declared reject budget.** The derived route view named the entry gates and the terminal flag but not the budget that bounds them, so the route and the catalogue could disagree with nothing on screen to show it. A step that declares no budget prints no line, unchanged. (sty_4cf2c585)
+
+## [serve-v0.0.102] - 2026-09-29
+
+### Changed
+- **The service carries the 0.0.583 review-loop work.** (sty_4cf2c585)
+
 ## [0.0.582] - 2026-09-29
 
 ### Fixed
