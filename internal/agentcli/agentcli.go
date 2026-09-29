@@ -147,6 +147,11 @@ type Request struct {
 	// transport denies a tool outside the grant by name, whatever permission mode
 	// the harness reports. Zero value: an ordinary performer request, unchanged.
 	ReadOnly bool
+	// OnIsolation, when non-nil, receives each runtime isolation observation of a
+	// ReadOnly ACP session (sty_2d5e583a): a peer that offers no ask mode, or a
+	// tool that ran outside the grant without asking. It only reports — the run
+	// continues and its verdict stands. It may be called from a reader goroutine.
+	OnIsolation func(IsolationNote)
 }
 
 // CaptureMode selects which ACP agent_message_chunk text is returned as the

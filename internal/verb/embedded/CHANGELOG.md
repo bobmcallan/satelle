@@ -1,3 +1,19 @@
+## [0.0.577] - 2026-09-29
+
+### Changed
+- **A reviewer configuration satelle cannot hold to its tool grant now runs with a warning instead of being refused.** 0.0.575 refused four configurations before they started; each now runs, and the gap is shown, recorded and documented. satelle's default is to let the operator configure what they choose and to warn about what is unsupported or below standard, not to block it.
+  - **What runs with a warning:** a grok ACP reviewer (`grok agent stdio`); a harness no adapter recognises, with no `isolation` key; grok with `--always-approve` and no `--tools` allow-list equal to the grant; claude skipping permissions while its grant scopes a tool. This covers gate reviewers, `[reviewer-summary]` and `[reviewer-consult]`.
+  - **The warning is never silent.** One line on stderr names the binding, the adapter, the gap (for grok ACP: "tools not held to the grant" and "usage accounting not to standard") and the fix. The gap is recorded as `isolation_limitation` and `offered_tools_source` on the `agent_invocation` row and as a `reviewer-isolation-warned` ledger event. `satelle doctor` reports each binding as a WARN naming the gap and the fix. `satelle help agent-dispatch` lists every warned configuration.
+  - **`isolation = "operator-attested"` is now the operator's acknowledgement of any of these gaps.** It suppresses the dispatch warning and turns the doctor WARN into an INFO; the ledger still records the limitation.
+  - **Mid-session ACP checks no longer abort the run.** A peer that offers no ask mode, or a tool that ran outside the grant without a permission request, is recorded (`reviewer-isolation-gap`, `reviewer-isolation-breach`) and warned; the session continues and the verdict stands. An observed breach is warned even for an attested binding.
+  - **Unchanged:** the default claude and grok-command trims (`--tools`, `--strict-mcp-config`, `--permission-mode default`), because they change nothing the operator configured. A stock claude or grok-command reviewer reports nothing.
+  - **New principle `satelle-configure-freely`:** configurations are warned, not blocked, and no rule is undocumented. (sty_2d5e583a)
+
+## [serve-v0.0.99] - 2026-09-29
+
+### Changed
+- **The service embeds the warn-not-block reviewer isolation above.** (sty_2d5e583a)
+
 ## [0.0.576] - 2026-09-29
 
 ### Added

@@ -1,6 +1,7 @@
 package agentstep
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ import (
 
 const summaryRO = "Read,Grep,Glob"
 
-func summariseWith(t *testing.T, iface, command, tools string) (*[]telemetryRec, error) {
+func summariseWith(t *testing.T, iface, command, tools string) (*[]telemetryRec, string, error) {
 	t.Helper()
 	runner, err := agentcli.RunnerFromBinding(iface, command)
 	if err != nil {
@@ -25,13 +26,17 @@ func summariseWith(t *testing.T, iface, command, tools string) (*[]telemetryRec,
 	docs := fakeDocs{workflow: summaryWorkflow, skillBody: "summarise rubric", skillFound: true}
 	g := New(runner, docs, t.TempDir(), "")
 	g.SetReviewerTools(tools)
+	var warn bytes.Buffer
+	g.SetWarnWriter(&warn)
 	recs := captureTelemetry(g)
 	_, serr := g.Summarise(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "in_progress", "done")
-	return recs, serr
+	return recs, warn.String(), serr
 }
 
-// A refused summariser binding starts no process and names the adapter and class.
-func TestSummarise_RefusedBindingStartsNoProcess(t *testing.T) {
+// An unsupported summariser binding runs (sty_2d5e583a AC1): the process starts,
+// one warning names the adapter and the gap, and the ledger records the warned
+// event. It is never refused.
+func TestSummarise_UnsupportedBindingRunsWithWarning(t *testing.T) {
 	cases := []struct {
 		name, iface, binary, args, wantAdapter string
 	}{
@@ -41,24 +46,31 @@ func TestSummarise_RefusedBindingStartsNoProcess(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			path, marker := startCounter(t, tc.binary, "the recap")
-			recs, err := summariseWith(t, tc.iface, path+" "+tc.args, summaryRO)
-			if err == nil {
-				t.Fatal("a refused summariser binding must surface an error for a mandatory summary")
+			var command, marker string
+			if tc.iface != "command" {
+				command = namedPeer(t, tc.iface, tc.binary) + " " + tc.args
+			} else {
+				var path string
+				path, marker = startCounter(t, tc.binary, "the recap")
+				command = path + " " + tc.args
 			}
-			msg := err.Error()
-			if !strings.Contains(msg, "refused") || !strings.Contains(msg, tc.wantAdapter) || !strings.Contains(msg, "shell") {
-				t.Errorf("refusal %q must name the adapter %q and the tool class", msg, tc.wantAdapter)
+			recs, warn, err := summariseWith(t, tc.iface, command, summaryRO)
+			if err != nil {
+				t.Fatalf("an unsupported summariser binding was refused: %v", err)
 			}
-			if n := starts(marker); n != 0 {
-				t.Fatalf("a refused summariser started %d process(es)", n)
+			if marker != "" {
+				if n := starts(marker); n != 1 {
+					t.Fatalf("summariser started %d process(es), want 1", n)
+				}
 			}
-			var refused bool
-			for _, r := range *recs {
-				refused = refused || r.kind == "reviewer-isolation-refused"
+			if n := strings.Count(warn, "warning:"); n != 1 || !strings.Contains(warn, tc.wantAdapter) || !strings.Contains(warn, "tools not held to the grant") {
+				t.Errorf("want one warning naming %q and the gap, got %q", tc.wantAdapter, warn)
 			}
-			if !refused {
-				t.Errorf("no reviewer-isolation-refused event: %+v", *recs)
+			if countKind(*recs, "reviewer-isolation-warned") != 1 {
+				t.Errorf("want one reviewer-isolation-warned event: %+v", *recs)
+			}
+			if countKind(*recs, "reviewer-isolation-refused") != 0 {
+				t.Errorf("a refused event was emitted: %+v", *recs)
 			}
 		})
 	}
@@ -94,6 +106,7 @@ type liveReviewer struct {
 	pol    agentcli.PermissionPolicy
 	rows   []map[string]any
 	events *[]telemetryRec
+	warn   *bytes.Buffer
 }
 
 // openConsult opens a role=reviewer consult session over a fake opener and
@@ -104,7 +117,8 @@ func openConsult(t *testing.T, iface, command, tools string, caller agentcli.Per
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
 		return config.AgentBinding{Role: config.RoleReviewer, Interface: iface, Command: command, Tools: tools}, true
 	})
-	lr := &liveReviewer{events: captureTelemetry(g)}
+	lr := &liveReviewer{events: captureTelemetry(g), warn: &bytes.Buffer{}}
+	g.SetWarnWriter(lr.warn)
 	g.SetInvocationRecorder(func(_ context.Context, _ string, p map[string]any) error {
 		lr.rows = append(lr.rows, p)
 		return nil
@@ -124,8 +138,10 @@ func openConsult(t *testing.T, iface, command, tools string, caller agentcli.Per
 	return lr, err
 }
 
-// A refused consult binding opens no session and names the adapter.
-func TestOpenSession_RefusedReviewerConsultOpensNothing(t *testing.T) {
+// An unsupported consult binding opens its session (sty_2d5e583a AC1): one
+// warning names the adapter and the gap, the ledger records the warned event and
+// the open row carries the limitation. The session stays read-only.
+func TestOpenSession_UnsupportedReviewerConsultOpensWithWarning(t *testing.T) {
 	cases := []struct {
 		name, iface, command, tools, wantAdapter string
 	}{
@@ -137,24 +153,26 @@ func TestOpenSession_RefusedReviewerConsultOpensNothing(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			lr, err := openConsult(t, tc.iface, tc.command, tc.tools, nil)
-			if err == nil {
-				t.Fatal("a refused consult binding opened a session")
+			if err != nil {
+				t.Fatalf("an unsupported consult binding was refused: %v", err)
 			}
-			if msg := err.Error(); !strings.Contains(msg, "refused") || !strings.Contains(msg, tc.wantAdapter) {
-				t.Errorf("refusal %q must name the adapter %q", msg, tc.wantAdapter)
+			if lr.opens != 1 || !lr.req.ReadOnly {
+				t.Fatalf("opens = %d, ReadOnly = %v; want one read-only open", lr.opens, lr.req.ReadOnly)
 			}
-			if lr.opens != 0 {
-				t.Fatalf("a refused consult binding started %d session(s)", lr.opens)
+			if n := strings.Count(lr.warn.String(), "warning:"); n != 1 || !strings.Contains(lr.warn.String(), tc.wantAdapter) {
+				t.Errorf("want one warning naming %q, got %q", tc.wantAdapter, lr.warn.String())
 			}
-			var refused bool
-			for _, r := range *lr.events {
-				refused = refused || r.kind == "reviewer-isolation-refused"
+			if countKind(*lr.events, "reviewer-isolation-warned") != 1 || countKind(*lr.events, "reviewer-isolation-refused") != 0 {
+				t.Errorf("want one warned and no refused event: %+v", *lr.events)
 			}
-			if !refused {
-				t.Errorf("no reviewer-isolation-refused event: %+v", *lr.events)
+			var open map[string]any
+			for _, r := range lr.rows {
+				if r["phase"] == "open" {
+					open = r
+				}
 			}
-			if len(lr.rows) != 0 {
-				t.Errorf("a refused open wrote an invocation row: %+v", lr.rows)
+			if open == nil || open["isolation_limitation"] == nil || open["offered_tools_source"] == nil {
+				t.Errorf("the open row must record the limitation and offered-tools source: %+v", open)
 			}
 		})
 	}

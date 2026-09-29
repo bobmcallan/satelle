@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -12,8 +11,8 @@ import (
 // edit, run a shell, spawn a subprocess, fetch over the network or call an MCP
 // tool beyond what its binding grants — whatever permission mode the harness runs
 // in. This file owns the provider-neutral vocabulary (ToolClass), the tables that
-// map each supported harness's own tool names onto it, the preflight that refuses a
-// dispatch no adapter can keep inside its grant, and the reviewer policies the
+// map each supported harness's own tool names onto it, the preflight that warns of
+// a dispatch no adapter can keep inside its grant, and the reviewer policies the
 // live transports apply. Tool names and flags live here and nowhere else
 // ([[satelle-agent-agnostic]] §1).
 
@@ -32,9 +31,6 @@ const (
 	ClassMCP        ToolClass = "mcp"
 	ClassUnknown    ToolClass = "unknown"
 )
-
-// OutOfGrantClasses are the classes a reviewer dispatch must be able to deny.
-var OutOfGrantClasses = []ToolClass{ClassWrite, ClassEdit, ClassShell, ClassSubprocess, ClassNetwork, ClassMCP, ClassUnknown}
 
 // toolClassByName maps a lower-cased tool name (any supported harness) to its
 // class. claude names first, then grok's.
@@ -396,56 +392,80 @@ func baseNames(grant string) []string {
 
 // --- preflight -------------------------------------------------------------
 
-// RefusalError is a reviewer dispatch refused before any process started because
-// no adapter path can keep the run inside its grant.
-type RefusalError struct {
+// IsolationGap is one way a reviewer binding cannot be held to its tool grant.
+// It is a warning, never a refusal (sty_2d5e583a): the configuration runs, and the
+// gap is shown at dispatch, recorded on the ledger and reported by doctor. The
+// wording is provider-local; the engine and doctor only render it.
+type IsolationGap struct {
 	// Adapter is "<provider>/<transport>", e.g. "grok/acp".
 	Adapter string
-	// Classes are the tool classes the adapter cannot deny.
-	Classes []ToolClass
-	// Why is the concrete reason.
-	Why string
+	// What is the specific gap, e.g. "tools not held to the grant (...)".
+	What string
+	// Fix is how the operator closes it.
+	Fix string
 }
 
-func (e *RefusalError) Error() string {
-	cs := make([]string, len(e.Classes))
-	for i, c := range e.Classes {
-		cs[i] = string(c)
+// IsolationNote is one runtime observation, delivered through Request.OnIsolation
+// while a reviewer session runs: a peer that offered no ask mode (a gap) or ran a
+// tool outside the grant without asking (a breach). It is recorded and warned;
+// it never aborts the run.
+type IsolationNote struct {
+	Adapter string
+	// Breach is true for an observed out-of-grant tool call or mode switch, false
+	// for a runtime gap (the peer offers no ask mode).
+	Breach bool
+	Detail string
+}
+
+// GapSummary joins the gaps' What text for one line ("a; b").
+func GapSummary(gaps []IsolationGap) string {
+	var parts []string
+	for _, g := range gaps {
+		parts = append(parts, g.What)
 	}
-	return fmt.Sprintf("reviewer dispatch refused: %s cannot deny %s outside the grant — %s", e.Adapter, strings.Join(cs, ", "), e.Why)
+	return strings.Join(parts, "; ")
 }
 
-// noAskModeWhy is why a reviewer ACP peer that reports no permission mode is refused.
-const noAskModeWhy = "the peer reports no permission mode and cannot be forced to ask"
+// GapFix joins the gaps' distinct Fix text for one line.
+func GapFix(gaps []IsolationGap) string {
+	seen := map[string]bool{}
+	var parts []string
+	for _, g := range gaps {
+		if g.Fix != "" && !seen[g.Fix] {
+			seen[g.Fix] = true
+			parts = append(parts, g.Fix)
+		}
+	}
+	return strings.Join(parts, "; or ")
+}
 
-// grokACPRefusalWhy is the preflight reason for a grok ACP reviewer binding.
-const grokACPRefusalWhy = noAskModeWhy + " (grok agent stdio: no modes block, no permission option, no ask flag), so an out-of-grant tool could run without a permission request; use the grok command transport with --tools equal to the grant"
+// noAskMode is the runtime gap for an ACP peer that reports no permission mode.
+const noAskMode = "the peer reports no permission mode and cannot be forced to ask, so a tool outside the grant could run without a permission request"
 
-func allOutOfGrant() []ToolClass { return append([]ToolClass(nil), OutOfGrantClasses...) }
+const fixAttest = `acknowledge it with isolation = "operator-attested" on the binding`
 
-// PreflightRunner refuses a reviewer dispatch the adapter cannot keep inside grant.
-// It is pure over the runner's own configuration and runs before the process
-// starts. A Runner satelle did not build (a test double) launches no harness
-// and is not judged.
-//
-// attested is the binding's isolation = "operator-attested" declaration: it admits
-// a reviewer whose harness no adapter recognises and nothing else — claude and
-// grok bindings are judged by their adapter whatever the operator declares.
-func PreflightRunner(r Runner, grant string, attested bool) error {
+const fixGrokCommand = "use the grok command transport with --tools equal to the grant"
+
+// PreflightRunner reports the ways a reviewer dispatch cannot be held inside its
+// grant. It is pure over the runner's own configuration and runs before the
+// process starts; a nil result means nothing to warn about. It never refuses. A
+// Runner satelle did not build (a test double) launches no harness and has no
+// gaps.
+func PreflightRunner(r Runner, grant string) []IsolationGap {
 	switch v := r.(type) {
 	case templateRunner:
-		return preflight(InterfaceCommand, v.binary, v.argTemplate, grant, attested)
+		return preflight(InterfaceCommand, v.binary, v.argTemplate, grant)
 	case streamRunner:
-		return preflight(InterfaceStream, v.binary, v.args, grant, attested)
+		return preflight(InterfaceStream, v.binary, v.args, grant)
 	case acpRunner:
-		return preflight(InterfaceACP, v.binary, v.args, grant, attested)
+		return preflight(InterfaceACP, v.binary, v.args, grant)
 	}
 	return nil
 }
 
 // UnrecognisedRunner reports whether r's harness is one no adapter recognises, so
-// an operator-attested declaration is what admits it (and the ledger records that
-// source instead of a count).
+// an operator-attested declaration is what acknowledges it (and the ledger records
+// that source instead of a count).
 func UnrecognisedRunner(r Runner) bool {
 	switch v := r.(type) {
 	case templateRunner:
@@ -471,7 +491,7 @@ func UnrecognisedCommand(command string) bool {
 
 // PreflightReviewer is PreflightRunner over a binding's raw interface and command
 // (what satelle doctor holds). An in-loop or empty command starts no process.
-func PreflightReviewer(iface, command, grant string, attested bool) error {
+func PreflightReviewer(iface, command, grant string) []IsolationGap {
 	fields := strings.Fields(command)
 	if len(fields) == 0 || strings.EqualFold(fields[0], "in-loop") {
 		return nil
@@ -480,19 +500,18 @@ func PreflightReviewer(iface, command, grant string, attested bool) error {
 	if iface == "" {
 		iface = InterfaceCommand
 	}
-	return preflight(iface, fields[0], fields[1:], grant, attested)
+	return preflight(iface, fields[0], fields[1:], grant)
 }
 
-func preflight(iface, binary string, args []string, grant string, attested bool) error {
+func preflight(iface, binary string, args []string, grant string) []IsolationGap {
 	adapter := adapterOf(binary, args)
 	label := adapter + "/" + iface
+	gap := func(what, fix string) []IsolationGap {
+		return []IsolationGap{{Adapter: label, What: what, Fix: fix + ", or " + fixAttest}}
+	}
 	if adapter == HarnessUnknown {
-		if attested {
-			return nil
-		}
-		return &RefusalError{Adapter: label, Classes: allOutOfGrant(),
-			Why: fmt.Sprintf("no adapter knows how to trim or deny tools for %q (isolation = %q on the binding declares that the command offers no tool outside its grant)",
-				filepath.Base(binary), "operator-attested")}
+		return gap(fmt.Sprintf("tools not held to the grant (no adapter knows how to trim or deny tools for %q)", filepath.Base(binary)),
+			"point the binding at claude or grok")
 	}
 	skips := skipsPermission(adapter, args)
 	if iface == InterfaceACP {
@@ -502,11 +521,15 @@ func preflight(iface, binary string, args []string, grant string, attested bool)
 			// option and `grok agent stdio` has no ask flag, while the user's own
 			// grok config may set always-approve. satelle can neither confirm nor
 			// force ask mode, so no permission deny is guaranteed to run.
-			return &RefusalError{Adapter: label, Classes: allOutOfGrant(), Why: grokACPRefusalWhy}
+			fix := fixGrokCommand + ", or " + fixAttest
+			return []IsolationGap{
+				{Adapter: label, What: "tools not held to the grant (grok agent stdio cannot trim the offered tools and reports no permission mode, so it cannot be forced to ask)", Fix: fix},
+				{Adapter: label, What: "usage accounting not to standard (this transport reports no offered-tool figure and may report no usage)", Fix: fix},
+			}
 		}
 		if skips {
-			return &RefusalError{Adapter: label, Classes: allOutOfGrant(),
-				Why: "the spawn skips permission requests (yolo/always-approve), so the peer never asks and no out-of-grant tool can be denied; ACP cannot trim the offered tools"}
+			return gap("tools not held to the grant (the spawn skips permission requests, so the peer never asks; ACP cannot trim the offered tools)",
+				"drop the yolo/always-approve flag or use a transport that can trim tools")
 		}
 		return nil
 	}
@@ -523,17 +546,15 @@ func preflight(iface, binary string, args []string, grant string, attested bool)
 	}
 	if listed && strings.TrimSpace(list) != "{tools}" {
 		admits := admitsFromGrant(grant, adapter == HarnessClaude)
-		var bad []ToolClass
 		var badNames []string
 		for _, n := range toolList(list) {
 			if !admits.allows(ClassifyTool(n), n) {
-				bad = append(bad, ClassifyTool(n))
 				badNames = append(badNames, n)
 			}
 		}
-		if len(bad) > 0 {
-			return &RefusalError{Adapter: label, Classes: uniqueClasses(bad),
-				Why: fmt.Sprintf("--tools offers %s, which the grant %q does not admit", strings.Join(badNames, ","), grant)}
+		if len(badNames) > 0 {
+			return gap(fmt.Sprintf("tools not held to the grant (--tools offers %s, which the grant %q does not admit)", strings.Join(badNames, ","), grant),
+				"narrow --tools to the grant")
 		}
 	}
 	if skips && adapter == HarnessClaude {
@@ -546,21 +567,17 @@ func preflight(iface, binary string, args []string, grant string, attested bool)
 			offered = baseNames(list)
 		}
 		if names := scopedOnlyOffered(grant, offered); len(names) > 0 {
-			var classes []ToolClass
-			for _, n := range names {
-				classes = append(classes, ClassifyTool(n))
-			}
-			return &RefusalError{Adapter: label, Classes: uniqueClasses(classes),
-				Why: fmt.Sprintf("the specifier is not enforced when permissions are skipped (%s runs unbounded under the grant %q)", strings.Join(names, ","), grant)}
+			return gap(fmt.Sprintf("scoped grant not enforced (the specifier is not applied when permissions are skipped, so %s runs unbounded under the grant %q)", strings.Join(names, ","), grant),
+				"drop --dangerously-skip-permissions / the bypass permission mode")
 		}
 	}
 	if skips && !listed {
-		return &RefusalError{Adapter: label, Classes: allOutOfGrant(),
-			Why: "the binding skips permission requests (yolo/always-approve/bypass) without a --tools allow-list equal to its grant, so every tool the harness offers would run"}
+		return gap("tools not held to the grant (the binding skips permission requests without a --tools allow-list equal to its grant, so every tool the harness offers would run)",
+			"add a --tools allow-list equal to the grant, or drop always-approve/yolo/bypass")
 	}
 	if adapter == HarnessGrok && !listed {
-		return &RefusalError{Adapter: label, Classes: allOutOfGrant(),
-			Why: "grok's command transport carries no allow-list in this binding; add --tools <read-only grok tools> so only the grant is offered"}
+		return gap("tools not held to the grant (grok's command transport carries no --tools allow-list in this binding)",
+			"add --tools <read-only grok tools> so only the grant is offered")
 	}
 	return nil
 }
@@ -584,19 +601,6 @@ func scopedOnlyOffered(grant string, offered []string) []string {
 			out = append(out, n)
 		}
 	}
-	return out
-}
-
-func uniqueClasses(in []ToolClass) []ToolClass {
-	seen := map[ToolClass]bool{}
-	var out []ToolClass
-	for _, c := range in {
-		if !seen[c] {
-			seen[c] = true
-			out = append(out, c)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
 }
 
@@ -664,10 +668,9 @@ type ReviewerIsolation struct {
 }
 
 // grokACPLimitation is the adapter-named limitation recorded for a grok ACP
-// reviewer (AC2): grok agent stdio has no tool-list or system-prompt flag. A grok
-// ACP reviewer is refused at preflight, so this is reachable only when preflight
-// is bypassed.
-const grokACPLimitation = "grok/acp: grok agent stdio cannot trim the offered tools, override the system prompt or drop the machine-wide skills list, and reports no permission mode so it cannot be forced to ask; a grok acp reviewer is refused, not denied by permission"
+// reviewer: grok agent stdio has no tool-list or system-prompt flag. The binding
+// runs with this recorded on the ledger (sty_2d5e583a).
+const grokACPLimitation = "grok/acp: grok agent stdio cannot trim the offered tools, override the system prompt or drop the machine-wide skills list, and reports no permission mode so it cannot be forced to ask; tools are not held to the grant and usage accounting is not to standard"
 
 const grokACPOfferedUnavailable = "unavailable: grok agent stdio neither trims nor reports offered tools"
 

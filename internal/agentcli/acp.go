@@ -310,12 +310,7 @@ func openACPSession(ctx context.Context, a acpRunner, req Request, pol Permissio
 	client.setPolicy(pol)
 	client.setCapture(req.Capture)
 	if req.ReadOnly {
-		client.setReviewer(req.AllowedTools, strings.ReplaceAll(sess.adapter, " ", "/"), func() {
-			// The peer ran (or is running) a tool outside the grant: stop it now.
-			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
-			}
-		})
+		client.setReviewer(req.AllowedTools, strings.ReplaceAll(sess.adapter, " ", "/"), req.OnIsolation)
 	}
 	sess.client = client
 
@@ -360,20 +355,10 @@ func (s *acpSession) Send(ctx context.Context, turn Turn) error {
 	c.mu.Lock()
 	sid := c.session
 	c.mu.Unlock()
-	// A reviewer whose peer is in a never-ask mode, or that already ran a tool
-	// outside its grant, never gets a prompt.
-	if b := c.breachErr(); b != nil {
-		s.promptErr = b
-		return b
-	}
 	result, err := c.request(ctx, "session/prompt", map[string]any{
 		"sessionId": sid,
 		"prompt":    blocks,
 	})
-	if b := c.breachErr(); b != nil {
-		s.promptErr = b
-		return b
-	}
 	if err != nil {
 		s.promptErr = fmt.Errorf("session/prompt: %w", err)
 		return s.promptErr
@@ -523,11 +508,11 @@ func (s *acpSession) handshake(ctx context.Context, req Request) error {
 	c.model = acpModelFromReply(sessRes)
 	c.mu.Unlock()
 	if req.ReadOnly {
-		// A reviewer session must ASK before it runs a tool: a peer that opens in a
-		// never-ask (yolo) mode is moved to an ask mode, or the run is refused
-		// before any prompt is sent (sty_ef3efb51).
-		if err := s.enforceAskMode(ctx, sessRes, sessObj.SessionID); err != nil {
-			return err
+		// A reviewer session should ASK before it runs a tool: a peer that opens in a
+		// never-ask (yolo) mode is moved to an ask mode where it offers one. Where
+		// it cannot be, the gap is reported and the run continues (sty_2d5e583a).
+		if gap := s.enforceAskMode(ctx, sessRes, sessObj.SessionID); gap != "" && req.OnIsolation != nil {
+			req.OnIsolation(IsolationNote{Adapter: strings.ReplaceAll(s.adapter, " ", "/"), Detail: gap})
 		}
 	}
 
@@ -595,23 +580,20 @@ type acpModes struct {
 	} `json:"modes"`
 }
 
-// enforceAskMode makes sure a reviewer's ACP peer will send session/request_permission
-// for a tool it wants to run. A peer advertising no modes is refused: satelle can
-// neither confirm nor force ask mode on it. A peer whose current mode never asks
-// is switched to an ask mode — "default" when offered, else the first mode that
-// is not a skip mode — and refused when none exists or the switch is rejected. In
-// every refusal no session/prompt is ever sent.
-func (s *acpSession) enforceAskMode(ctx context.Context, sessRes json.RawMessage, sessionID string) error {
-	label := strings.ReplaceAll(s.adapter, " ", "/")
-	refuse := func(why string) error {
-		return &RefusalError{Adapter: label, Classes: allOutOfGrant(), Why: why}
-	}
+// enforceAskMode tries to make a reviewer's ACP peer send session/request_permission
+// for a tool it wants to run, and returns the gap text when it cannot ("" when the
+// peer is, or was moved to, an ask mode). A peer advertising no modes is a gap:
+// satelle can neither confirm nor force ask mode on it. A peer whose current mode
+// never asks is switched to an ask mode — "default" when offered, else the first
+// mode that is not a skip mode — and is a gap when none exists or the switch is
+// rejected. A gap never stops the session: the caller reports it and prompts.
+func (s *acpSession) enforceAskMode(ctx context.Context, sessRes json.RawMessage, sessionID string) string {
 	var m acpModes
 	if json.Unmarshal(sessRes, &m) != nil || (m.Modes.Current == "" && len(m.Modes.Available) == 0) {
-		return refuse(noAskModeWhy)
+		return noAskMode
 	}
 	if m.Modes.Current != "" && !skipModeName(m.Modes.Current) {
-		return nil
+		return ""
 	}
 	target := ""
 	for _, a := range m.Modes.Available {
@@ -629,12 +611,12 @@ func (s *acpSession) enforceAskMode(ctx context.Context, sessRes json.RawMessage
 		}
 	}
 	if target == "" {
-		return refuse(fmt.Sprintf("the peer opened in %q, a mode that never asks permission, and offers no ask mode", m.Modes.Current))
+		return fmt.Sprintf("the peer opened in %q, a mode that never asks permission, and offers no ask mode", m.Modes.Current)
 	}
 	if _, err := s.client.request(ctx, "session/set_mode", map[string]any{"sessionId": sessionID, "modeId": target}); err != nil {
-		return refuse(fmt.Sprintf("the peer opened in %q, a mode that never asks permission, and refused to switch to %q: %v", m.Modes.Current, target, err))
+		return fmt.Sprintf("the peer opened in %q, a mode that never asks permission, and refused to switch to %q: %v", m.Modes.Current, target, err)
 	}
-	return nil
+	return ""
 }
 
 // toolsAllowMutators is true when the binding's tools grant includes a write/edit
@@ -697,16 +679,16 @@ type acpClient struct {
 
 	// Reviewer isolation (sty_ef3efb51). reviewer is set by setReviewer for a
 	// ReadOnly request: handlePermission then allows only a tool inside admits,
-	// and handleUpdate cancels the run when a tool outside it executes without a
-	// permission ask (a peer in a never-ask mode) or after a deny.
+	// and handleUpdate REPORTS (never cancels — sty_2d5e583a) a tool outside it that
+	// executes without a permission ask (a peer in a never-ask mode) or after a deny.
 	reviewer bool
 	admits   grantAdmits
 	calls    map[string]acpToolCall
 	asked    map[string]bool
 	denied   map[string]bool
-	breach   error
-	onBreach func()
-	label    string // "<provider>/acp" for a refusal
+	breached map[string]bool // breach keys already reported, so each is reported once
+	notify   func(IsolationNote)
+	label    string // "<provider>/acp"
 }
 
 type acpRPC struct {
@@ -745,9 +727,9 @@ func (c *acpClient) setCapture(m CaptureMode) {
 	c.mu.Unlock()
 }
 
-// setReviewer switches the client to reviewer isolation over grant. onBreach
-// stops the peer process when an out-of-grant tool runs.
-func (c *acpClient) setReviewer(grant, label string, onBreach func()) {
+// setReviewer switches the client to reviewer isolation over grant. notify, when
+// set, receives each observed breach; the run is never stopped for one.
+func (c *acpClient) setReviewer(grant, label string, notify func(IsolationNote)) {
 	c.mu.Lock()
 	c.reviewer = true
 	c.label = label
@@ -755,7 +737,8 @@ func (c *acpClient) setReviewer(grant, label string, onBreach func()) {
 	c.calls = map[string]acpToolCall{}
 	c.asked = map[string]bool{}
 	c.denied = map[string]bool{}
-	c.onBreach = onBreach
+	c.breached = map[string]bool{}
+	c.notify = notify
 	c.mu.Unlock()
 }
 
@@ -765,27 +748,20 @@ func (c *acpClient) isReviewer() bool {
 	return c.reviewer
 }
 
-func (c *acpClient) breachErr() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.breach
-}
-
-// recordBreachLocked notes the first breach, cancels the session and stops the
-// peer. Caller holds c.mu; the stop runs after it is released by the caller via
-// the returned func.
-func (c *acpClient) recordBreachLocked(err error) func() {
-	if c.breach != nil {
-		return func() {}
+// recordBreachLocked notes one observed breach (once per key) and returns the
+// func that reports it. It never cancels the session or stops the peer: a
+// breach is recorded and warned, and the run and its verdict stand
+// (sty_2d5e583a). Caller holds c.mu and runs the returned func after releasing it.
+func (c *acpClient) recordBreachLocked(key, detail string) func() {
+	if c.breached[key] {
+		return nil
 	}
-	c.breach = err
-	stop := c.onBreach
-	return func() {
-		_ = c.tryCancel()
-		if stop != nil {
-			stop()
-		}
+	c.breached[key] = true
+	notify, note := c.notify, IsolationNote{Adapter: c.label, Breach: true, Detail: detail}
+	if notify == nil {
+		return nil
 	}
+	return func() { notify(note) }
 }
 
 func (c *acpClient) setPolicy(pol PermissionPolicy) {
@@ -892,8 +868,8 @@ func (c *acpClient) handleUpdate(params json.RawMessage) {
 		c.mu.Lock()
 		var stop func()
 		if c.reviewer && skipModeName(p.Update.CurrentModeID) {
-			stop = c.recordBreachLocked(&RefusalError{Adapter: c.label, Classes: allOutOfGrant(),
-				Why: fmt.Sprintf("the peer switched to %q, a mode that never asks permission, mid-session", p.Update.CurrentModeID)})
+			stop = c.recordBreachLocked("mode:"+p.Update.CurrentModeID,
+				fmt.Sprintf("the peer switched to %q, a mode that never asks permission, mid-session", p.Update.CurrentModeID))
 		}
 		c.mu.Unlock()
 		if stop != nil {
@@ -975,8 +951,8 @@ func (c *acpClient) noteReviewerToolLocked(id string, in acpToolCall, status str
 	if c.denied[id] {
 		why = "ran after permission was denied"
 	}
-	return c.recordBreachLocked(&RefusalError{Adapter: c.label, Classes: []ToolClass{class},
-		Why: fmt.Sprintf("a %s tool call (%s) %s", class, describeCall(call, name), why)})
+	return c.recordBreachLocked("call:"+id,
+		fmt.Sprintf("a %s tool call (%s) %s", class, describeCall(call, name), why))
 }
 
 func describeCall(call acpToolCall, name string) string {

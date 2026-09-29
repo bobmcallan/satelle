@@ -250,38 +250,38 @@ func checkBinaries(grants []agentvalidate.Grant) health.Findings {
 	return out
 }
 
-// checkReviewerIsolation warns once per role=reviewer binding — a gate reviewer,
+// checkReviewerIsolation reports once per role=reviewer binding — a gate reviewer,
 // the step summariser and the rework consultant alike, since all three dispatch
-// through the one isolation path — whose command the
-// dispatch preflight (agentcli.PreflightReviewer) would refuse — it skips
-// permission requests without a tool allow-list inside its grant, or no adapter
-// can deny an out-of-grant tool (a grok acp reviewer: the peer reports no
-// permission mode and cannot be forced to ask). A warning, not an error: the gate
-// refuses at dispatch, and an operator may not yet have upgraded. The stock grok
-// command preset carries a --tools allow-list equal to the grant and does not warn.
-// A binding on a harness no adapter recognises that declares isolation =
-// "operator-attested" is admitted at dispatch and reported here by name, so the
-// declaration is never silent.
+// through the one isolation path — whose command the dispatch preflight
+// (agentcli.PreflightReviewer) cannot hold to its grant: it skips permission
+// requests without a tool allow-list inside its grant, or no adapter can deny an
+// out-of-grant tool (a grok acp reviewer, an unrecognised harness). Such a binding
+// RUNS (sty_2d5e583a): it is a WARN naming the binding, the gap and the fix.
+// isolation = "operator-attested" on the binding acknowledges the gap and
+// downgrades it to INFO. The stock grok command preset carries a --tools
+// allow-list equal to the grant and reports nothing.
 func checkReviewerIsolation(grants []agentvalidate.Grant) health.Findings {
 	var out health.Findings
 	for _, g := range grants {
 		if g.Role != config.RoleReviewer || g.Backend == "in-loop" || g.Backend == "invalid" {
 			continue
 		}
+		gaps := agentcli.PreflightReviewer(g.Interface, g.Command, g.Tools)
+		if len(gaps) == 0 {
+			continue
+		}
 		attested := strings.EqualFold(strings.TrimSpace(g.Isolation), config.IsolationOperatorAttested)
-		if attested && agentcli.UnrecognisedCommand(g.Command) {
-			// Visible, never silent: satelle neither trims nor verifies this
-			// command's tools; the operator has declared it safe.
-			out = append(out, health.Warn(health.IDReviewerIsolation, "Reviewer tool isolation attested",
-				fmt.Sprintf("reviewer binding %q is operator-attested (isolation = %q): no adapter recognises its harness, so satelle neither trims nor verifies the tools it offers — it must offer none outside the grant %q", g.Name, config.IsolationOperatorAttested, g.Tools)).
+		summary := agentcli.GapSummary(gaps)
+		if attested {
+			out = append(out, health.Info(health.IDReviewerIsolation, "Reviewer tool isolation acknowledged",
+				fmt.Sprintf("reviewer binding %q (%s) is operator-attested (isolation = %q): %s — it runs with the limitation recorded on the ledger and no dispatch warning; it must offer no tool outside the grant %q",
+					g.Name, gaps[0].Adapter, config.IsolationOperatorAttested, summary, g.Tools)).
 				About(g.Name))
 			continue
 		}
-		if err := agentcli.PreflightReviewer(g.Interface, g.Command, g.Tools, false); err != nil {
-			out = append(out, health.Warn(health.IDReviewerIsolation, "Reviewer tool isolation",
-				fmt.Sprintf("reviewer binding %q will be refused at dispatch: it skips permission requests without a tool allow-list equal to its grant, or its adapter cannot deny out-of-grant tools (a grok acp peer reports no permission mode and cannot be forced to ask): %v", g.Name, err)).
-				About(g.Name).WithRemediation("give ["+g.Name+"] a --tools allow-list inside its grant and drop always-approve/yolo, or point it at an adapter that can deny (claude, grok command with --tools; not grok acp)"))
-		}
+		out = append(out, health.Warn(health.IDReviewerIsolation, "Reviewer tool isolation",
+			fmt.Sprintf("reviewer binding %q (%s) runs with a warning at every dispatch: %s", g.Name, gaps[0].Adapter, summary)).
+			About(g.Name).WithRemediation("for ["+g.Name+"]: "+agentcli.GapFix(gaps)))
 	}
 	return out
 }

@@ -178,6 +178,9 @@ type Engine struct {
 	// visibly distinct from a hang (sty_6c88ca10). The CLI wires it to stderr;
 	// nil (web/tests) disables emission.
 	progress func(msg string)
+	// warnOut receives the one-line isolation warnings of a reviewer dispatch the
+	// binding cannot hold to its grant (sty_2d5e583a). New defaults it to stderr.
+	warnOut io.Writer
 	// activity, when set, receives structured gate/phase progress so seat can
 	// expose which gate is running without the dispatching terminal (sty_598a8e1b).
 	// Callback includes the story id so the sink stays stateless.
@@ -311,8 +314,13 @@ func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Engine
 		busyTimeout: config.DefaultBusyTimeout,
 		newRunner:   lookupRunner,
 		newOpener:   agentcli.OpenerFromBinding,
+		warnOut:     os.Stderr,
 	}
 }
+
+// SetWarnWriter redirects the reviewer isolation warnings (stderr by default);
+// nil discards them.
+func (g *Engine) SetWarnWriter(w io.Writer) { g.warnOut = w }
 
 // ExecutableNotFoundError is returned by the default runner constructor when a
 // binding's program is not on this machine's PATH (sty_01949949 AC3). Local
@@ -2210,8 +2218,8 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 	}
 	// Reviewer tool isolation (sty_ef3efb51): a live session bound to a
 	// role=reviewer binding (the rework consultant) takes the same
-	// refuse-before-start / trim / describe path as a gate verdict, in addition
-	// to the caller's own policy, before any process starts.
+	// warn / trim / describe path as a gate verdict, in addition to the
+	// caller's own policy, before any process starts.
 	var isolation verb.ToolIsolation
 	if config.ResolvedRole(name, binding) == config.RoleReviewer {
 		runner, rerr := agentcli.RunnerFromBinding(binding.ResolvedInterface(), binding.CommandTemplate())
@@ -2219,14 +2227,9 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 			finishScratch(scratchDir, false)
 			return nil, rerr
 		}
-		var perr error
-		isolation, _, perr = g.isolateReviewer(ctx, reviewerDispatch{
+		isolation, _ = g.isolateReviewer(ctx, reviewerDispatch{
 			StoryID: item.ID, Actor: name, Skill: "live-session", Step: item.Status, Section: name,
 		}, runner, binding.OperatorAttested(), &req)
-		if perr != nil {
-			finishScratch(scratchDir, false)
-			return nil, perr
-		}
 		pol = agentcli.ReviewerSessionPolicy(req.AllowedTools, pol)
 	}
 	// A live session ledgers its own open as an agent_invocation row
@@ -2961,14 +2964,10 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 		return verb.SummaryResult{}, err
 	}
 	// Reviewer tool isolation (sty_ef3efb51): the summariser is a role=reviewer
-	// dispatch, so it takes the same refuse-before-start / trim / describe path
-	// as a gate verdict.
-	isolation, _, isoErr := g.isolateReviewer(ctx, reviewerDispatch{
+	// dispatch, so it takes the same warn / trim / describe path as a gate verdict.
+	isolation, _ := g.isolateReviewer(ctx, reviewerDispatch{
 		StoryID: item.ID, Actor: section, Skill: summariserSkill, Step: to, Section: section,
 	}, runner, binding.OperatorAttested(), &req)
-	if isoErr != nil {
-		return soft("step summary agent=%s: %v", section, isoErr)
-	}
 	g.emitActivity(item.ID, "summary", 1, 1)
 	g.emitProgress("summarising step %s→%s via [%s] (may take a minute)…", from, to, section)
 	// Retry the SAME transient a reviewer retries (a rate-limited/killed/empty

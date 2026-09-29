@@ -3,7 +3,6 @@ package agentcli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,8 +15,8 @@ import (
 
 // Reviewer tool isolation (sty_ef3efb51): the tools a reviewer is offered equal
 // its grant, every out-of-grant class is denied on claude and grok (command and
-// acp), and a binding no adapter can keep inside its grant is refused before a
-// process starts.
+// acp), and a binding no adapter can keep inside its grant runs with a reported
+// gap (sty_2d5e583a) rather than being refused.
 
 const roGrant = "Read,Grep,Glob"
 
@@ -278,7 +277,7 @@ func TestStreamSession_InitReportsOfferedTools(t *testing.T) {
 func TestPreflightReviewer(t *testing.T) {
 	cases := []struct {
 		name, iface, command, grant string
-		wantClass                   ToolClass // "" = must pass
+		warns                       bool // false = no gap at all
 		wantAdapter                 string
 	}{
 		{name: "stock claude command", iface: "command", command: DefaultClaudeCommand, grant: roGrant},
@@ -289,54 +288,54 @@ func TestPreflightReviewer(t *testing.T) {
 		{name: "claude offers Bash, grant scopes it", iface: "command", command: "claude -p --tools Read,Bash", grant: "Read,Bash(satelle:*)"},
 
 		{name: "grok always-approve without --tools", iface: "command",
-			command:   "grok -p {payload} --always-approve --output-format plain",
-			grant:     roGrant,
-			wantClass: ClassShell, wantAdapter: "grok/command"},
+			command: "grok -p {payload} --always-approve --output-format plain",
+			grant:   roGrant,
+			warns:   true, wantAdapter: "grok/command"},
 		{name: "grok always-approve with a wider --tools", iface: "command",
-			command:   "grok -p {payload} --tools read_file,grep,list_dir,run_terminal_command --always-approve",
-			grant:     roGrant,
-			wantClass: ClassShell, wantAdapter: "grok/command"},
-		{name: "grok command with no allow-list", iface: "command", command: "grok -p {payload} --output-format plain", grant: roGrant, wantClass: ClassWrite, wantAdapter: "grok/command"},
+			command: "grok -p {payload} --tools read_file,grep,list_dir,run_terminal_command --always-approve",
+			grant:   roGrant,
+			warns:   true, wantAdapter: "grok/command"},
+		{name: "grok command with no allow-list", iface: "command", command: "grok -p {payload} --output-format plain", grant: roGrant, warns: true, wantAdapter: "grok/command"},
 		// A blank grok --tools is not an allow-list.
 		{name: "grok always-approve with --tools= (blank)", iface: "command",
-			command:   "grok -p {payload} --always-approve --tools=",
-			grant:     roGrant,
-			wantClass: ClassShell, wantAdapter: "grok/command"},
+			command: "grok -p {payload} --always-approve --tools=",
+			grant:   roGrant,
+			warns:   true, wantAdapter: "grok/command"},
 		{name: "grok always-approve with --tools before another flag", iface: "command",
-			command:   "grok -p {payload} --tools --always-approve",
-			grant:     roGrant,
-			wantClass: ClassShell, wantAdapter: "grok/command"},
+			command: "grok -p {payload} --tools --always-approve",
+			grant:   roGrant,
+			warns:   true, wantAdapter: "grok/command"},
 		{name: "grok always-approve with --tools {tools} rendered from an empty grant", iface: "command",
-			command:   "grok -p {payload} --tools {tools} --always-approve",
-			grant:     "",
-			wantClass: ClassShell, wantAdapter: "grok/command"},
+			command: "grok -p {payload} --tools {tools} --always-approve",
+			grant:   "",
+			warns:   true, wantAdapter: "grok/command"},
 		{name: "grok --tools {tools} with a real grant still counts as an allow-list", iface: "command",
 			command: "grok -p {payload} --tools {tools} --always-approve",
 			grant:   roGrant},
-		{name: "grok acp stock spawn (no permission mode, cannot be forced to ask)", iface: "acp", command: "grok agent stdio", grant: roGrant, wantClass: ClassShell, wantAdapter: "grok/acp"},
-		{name: "grok acp always-approve", iface: "acp", command: "grok agent --always-approve stdio", grant: roGrant, wantClass: ClassShell, wantAdapter: "grok/acp"},
-		{name: "grok acp yolo mode", iface: "acp", command: "grok agent --permission-mode yolo stdio", grant: roGrant, wantClass: ClassWrite, wantAdapter: "grok/acp"},
-		{name: "claude bypass without --tools", iface: "command", command: "claude -p --dangerously-skip-permissions", grant: roGrant, wantClass: ClassShell, wantAdapter: "claude/command"},
-		{name: "claude bypassPermissions mode", iface: "stream", command: "claude -p --permission-mode bypassPermissions", grant: roGrant, wantClass: ClassMCP, wantAdapter: "claude/stream"},
-		{name: "claude --tools wider than the grant", iface: "command", command: "claude -p --tools Read,Bash,Task", grant: roGrant, wantClass: ClassShell, wantAdapter: "claude/command"},
-		{name: "unrecognised harness", iface: "command", command: "mystery-cli -p {payload}", grant: roGrant, wantClass: ClassUnknown, wantAdapter: "unknown/command"},
+		{name: "grok acp stock spawn (no permission mode, cannot be forced to ask)", iface: "acp", command: "grok agent stdio", grant: roGrant, warns: true, wantAdapter: "grok/acp"},
+		{name: "grok acp always-approve", iface: "acp", command: "grok agent --always-approve stdio", grant: roGrant, warns: true, wantAdapter: "grok/acp"},
+		{name: "grok acp yolo mode", iface: "acp", command: "grok agent --permission-mode yolo stdio", grant: roGrant, warns: true, wantAdapter: "grok/acp"},
+		{name: "claude bypass without --tools", iface: "command", command: "claude -p --dangerously-skip-permissions", grant: roGrant, warns: true, wantAdapter: "claude/command"},
+		{name: "claude bypassPermissions mode", iface: "stream", command: "claude -p --permission-mode bypassPermissions", grant: roGrant, warns: true, wantAdapter: "claude/stream"},
+		{name: "claude --tools wider than the grant", iface: "command", command: "claude -p --tools Read,Bash,Task", grant: roGrant, warns: true, wantAdapter: "claude/command"},
+		{name: "unrecognised harness", iface: "command", command: "mystery-cli -p {payload}", grant: roGrant, warns: true, wantAdapter: "unknown/command"},
 
 		// A scoped grant is not enforced when permissions are skipped.
 		{name: "claude command skip-permissions + scoped grant + --tools {tools}", iface: "command",
 			command: "claude -p --tools {tools} --dangerously-skip-permissions", grant: scopedGrant,
-			wantClass: ClassShell, wantAdapter: "claude/command"},
+			warns: true, wantAdapter: "claude/command"},
 		{name: "claude stream bypassPermissions + scoped grant + --tools {tools}", iface: "stream",
 			command: "claude -p --tools {tools} --permission-mode bypassPermissions", grant: scopedGrant,
-			wantClass: ClassShell, wantAdapter: "claude/stream"},
+			warns: true, wantAdapter: "claude/stream"},
 		{name: "claude command skip-permissions + scoped grant + explicit --tools", iface: "command",
 			command: "claude -p --tools Read,Bash --dangerously-skip-permissions", grant: scopedGrant,
-			wantClass: ClassShell, wantAdapter: "claude/command"},
+			warns: true, wantAdapter: "claude/command"},
 		{name: "claude stream bypass + scoped grant, no --tools", iface: "stream",
 			command: "claude -p --permission-mode=bypassPermissions", grant: scopedGrant,
-			wantClass: ClassShell, wantAdapter: "claude/stream"},
+			warns: true, wantAdapter: "claude/stream"},
 		{name: "claude acceptEdits + scoped grant", iface: "command",
 			command: "claude -p --tools {tools} --permission-mode acceptEdits", grant: scopedGrant,
-			wantClass: ClassShell, wantAdapter: "claude/command"},
+			warns: true, wantAdapter: "claude/command"},
 		{name: "claude skip-permissions, --tools omits the scoped tool", iface: "command",
 			command: "claude -p --tools Read,Grep --dangerously-skip-permissions", grant: scopedGrant},
 		{name: "claude default mode + scoped grant is enforced", iface: "stream",
@@ -344,53 +343,48 @@ func TestPreflightReviewer(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := PreflightReviewer(tc.iface, tc.command, tc.grant, false)
-			if tc.wantClass == "" {
-				if err != nil {
-					t.Fatalf("refused: %v", err)
+			gaps := PreflightReviewer(tc.iface, tc.command, tc.grant)
+			if !tc.warns {
+				if len(gaps) != 0 {
+					t.Fatalf("unexpected gap: %+v", gaps)
 				}
 				return
 			}
-			var ref *RefusalError
-			if !errors.As(err, &ref) {
-				t.Fatalf("want a RefusalError, got %v", err)
+			if len(gaps) == 0 {
+				t.Fatal("want a gap (a warning, never a refusal), got none")
 			}
-			if ref.Adapter != tc.wantAdapter {
-				t.Errorf("adapter = %q, want %q", ref.Adapter, tc.wantAdapter)
-			}
-			found := false
-			for _, c := range ref.Classes {
-				if c == tc.wantClass {
-					found = true
+			for _, g := range gaps {
+				if g.Adapter != tc.wantAdapter {
+					t.Errorf("adapter = %q, want %q", g.Adapter, tc.wantAdapter)
 				}
-			}
-			if !found {
-				t.Errorf("classes = %v, want %s among them", ref.Classes, tc.wantClass)
-			}
-			msg := err.Error()
-			if !strings.Contains(msg, tc.wantAdapter) || !strings.Contains(msg, string(tc.wantClass)) {
-				t.Errorf("message %q must name the adapter %q and class %q", msg, tc.wantAdapter, tc.wantClass)
+				if g.What == "" || g.Fix == "" {
+					t.Errorf("gap %+v must state the gap and its fix", g)
+				}
+				if !strings.Contains(g.Fix, "operator-attested") {
+					t.Errorf("fix %q must name the attestation that acknowledges the gap", g.Fix)
+				}
 			}
 		})
 	}
 }
 
-// AC3/AC7: the claude bypass-with-scoped-grant refusal names the transport, the
-// shell class and the reason.
+// The claude bypass-with-scoped-grant gap names the transport and the reason.
 func TestPreflightReviewer_ClaudeBypassScopedGrantReason(t *testing.T) {
 	for _, tc := range []struct{ iface, command, adapter string }{
 		{"command", "claude -p --tools {tools} --dangerously-skip-permissions", "claude/command"},
 		{"stream", "claude -p --tools {tools} --permission-mode bypassPermissions", "claude/stream"},
 	} {
-		err := PreflightReviewer(tc.iface, tc.command, scopedGrant, false)
-		var ref *RefusalError
-		if !errors.As(err, &ref) {
-			t.Fatalf("%s: want a RefusalError, got %v", tc.adapter, err)
+		gaps := PreflightReviewer(tc.iface, tc.command, scopedGrant)
+		if len(gaps) != 1 {
+			t.Fatalf("%s: want one gap, got %+v", tc.adapter, gaps)
 		}
-		for _, want := range []string{tc.adapter, "shell", "the specifier is not enforced when permissions are skipped"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("%s: refusal %q must contain %q", tc.adapter, err, want)
+		for _, want := range []string{"scoped grant not enforced", "the specifier is not applied when permissions are skipped"} {
+			if !strings.Contains(gaps[0].What, want) {
+				t.Errorf("%s: gap %q must contain %q", tc.adapter, gaps[0].What, want)
 			}
+		}
+		if gaps[0].Adapter != tc.adapter {
+			t.Errorf("adapter = %q, want %q", gaps[0].Adapter, tc.adapter)
 		}
 	}
 }
@@ -449,42 +443,35 @@ func TestReviewerArgs_PinsPermissionModeDefault(t *testing.T) {
 	}
 }
 
-// AC3/AC6: the grok acp refusal names the adapter, the tool classes and the reason.
-func TestPreflightReviewer_GrokACPRefusalReason(t *testing.T) {
-	err := PreflightReviewer("acp", "grok agent stdio", roGrant, false)
-	var ref *RefusalError
-	if !errors.As(err, &ref) {
-		t.Fatalf("want a RefusalError, got %v", err)
+// The grok acp gap names the adapter, both gaps and the fix (sty_2d5e583a AC2).
+func TestPreflightReviewer_GrokACPGaps(t *testing.T) {
+	gaps := PreflightReviewer("acp", "grok agent stdio", roGrant)
+	if len(gaps) != 2 {
+		t.Fatalf("want two gaps, got %+v", gaps)
 	}
-	for _, want := range []string{"grok/acp", "shell", "write", "the peer reports no permission mode and cannot be forced to ask"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("refusal %q must contain %q", err, want)
+	summary := GapSummary(gaps)
+	for _, want := range []string{"tools not held to the grant", "usage accounting not to standard", "cannot be forced to ask"} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("summary %q must contain %q", summary, want)
 		}
+	}
+	if fix := GapFix(gaps); !strings.Contains(fix, "grok command transport") || !strings.Contains(fix, "operator-attested") || strings.Count(fix, "operator-attested") != 1 {
+		t.Errorf("fix %q must name the command transport and the attestation once", fix)
+	}
+	if gaps[0].Adapter != "grok/acp" {
+		t.Errorf("adapter = %q, want grok/acp", gaps[0].Adapter)
 	}
 }
 
-// isolation = "operator-attested" admits a reviewer on a harness no adapter
-// recognises and nothing else: claude and grok are still judged by their adapter.
-func TestPreflightReviewer_OperatorAttested(t *testing.T) {
+// Every configuration the isolation warning covers is a gap whatever the operator
+// declares: attestation only changes how the gap is reported, so the preflight
+// takes no attested argument and an unrecognised harness is a gap too.
+func TestPreflightReviewer_UnrecognisedHarnessIsAGap(t *testing.T) {
 	const unknownCmd = "verdict.sh -p {payload}"
-	if err := PreflightReviewer("command", unknownCmd, roGrant, false); err == nil {
-		t.Fatal("an unrecognised harness without the key must be refused")
-	} else if !strings.Contains(err.Error(), "operator-attested") {
-		t.Errorf("refusal %q should name the isolation key that would admit it", err)
-	}
 	for _, iface := range []string{"command", "stream", "acp"} {
-		if err := PreflightReviewer(iface, unknownCmd, roGrant, true); err != nil {
-			t.Errorf("attested unrecognised %s reviewer refused: %v", iface, err)
-		}
-	}
-
-	for _, tc := range []struct{ name, iface, command, grant string }{
-		{"grok acp", "acp", "grok agent stdio", roGrant},
-		{"grok command always-approve, no allow-list", "command", "grok -p {payload} --always-approve", roGrant},
-		{"claude bypass + scoped grant", "command", "claude -p --dangerously-skip-permissions --tools {tools}", roGrant + ",Bash(satelle:*)"},
-	} {
-		if err := PreflightReviewer(tc.iface, tc.command, tc.grant, true); err == nil {
-			t.Errorf("%s: the attestation must not waive an adapter's refusal", tc.name)
+		gaps := PreflightReviewer(iface, unknownCmd, roGrant)
+		if len(gaps) != 1 || !strings.Contains(gaps[0].What, "tools not held to the grant") || !strings.Contains(gaps[0].Fix, "operator-attested") {
+			t.Errorf("%s: gaps = %+v", iface, gaps)
 		}
 	}
 	if !UnrecognisedCommand(unknownCmd) || UnrecognisedCommand("claude -p") || UnrecognisedCommand("grok agent stdio") || UnrecognisedCommand("in-loop") {
@@ -503,38 +490,40 @@ func TestAttestedIsolation(t *testing.T) {
 	}
 }
 
-// AC3/AC7: a refused binding starts no process. PreflightRunner is the gate the
-// dispatch calls before the runner's first spawn; a runner it refuses never
-// reaches Run.
-func TestPreflightRunner_RefusedRunnerStartsNothing(t *testing.T) {
+// sty_2d5e583a AC1: a binding with a gap still starts its process. PreflightRunner
+// reports the gap before the runner's first spawn and never stops it reaching Run.
+func TestPreflightRunner_GappedRunnerStillStarts(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "started")
 	shim := filepath.Join(dir, "grok-shim")
 	if err := os.WriteFile(shim, []byte("#!/bin/sh\necho started >> "+marker+"\necho '{}'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	dispatch := func(command string) error {
+	dispatch := func(command string) ([]IsolationGap, error) {
 		r, err := RunnerFromBinding(InterfaceCommand, command)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := PreflightRunner(r, roGrant, false); err != nil {
-			return err
-		}
+		gaps := PreflightRunner(r, roGrant)
 		_, err = r.Run(context.Background(), Request{ReadOnly: true, AllowedTools: roGrant})
-		return err
+		return gaps, err
 	}
-	if err := dispatch(shim + " -p {payload} --always-approve"); err == nil {
-		t.Fatal("always-approve without an allow-list must be refused")
+	gaps, err := dispatch(shim + " -p {payload} --always-approve")
+	if err != nil {
+		t.Fatalf("always-approve without an allow-list must run: %v", err)
 	}
-	if _, err := os.Stat(marker); err == nil {
-		t.Fatal("a refused binding started a process")
-	}
-	if err := dispatch(shim + " -p {payload} --tools read_file,grep,list_dir --always-approve"); err != nil {
-		t.Fatalf("stock-shaped binding refused: %v", err)
+	if len(gaps) == 0 {
+		t.Fatal("always-approve without an allow-list must report a gap")
 	}
 	if b, _ := os.ReadFile(marker); strings.Count(string(b), "started") != 1 {
-		t.Fatalf("the permitted binding must start exactly once, marker = %q", b)
+		t.Fatalf("the gapped binding must start exactly once, marker = %q", b)
+	}
+	gaps, err = dispatch(shim + " -p {payload} --tools read_file,grep,list_dir --always-approve")
+	if err != nil || len(gaps) != 0 {
+		t.Fatalf("stock-shaped binding: gaps %+v, err %v", gaps, err)
+	}
+	if b, _ := os.ReadFile(marker); strings.Count(string(b), "started") != 2 {
+		t.Fatalf("both bindings must start, marker = %q", b)
 	}
 }
 
@@ -619,13 +608,45 @@ func permissionExtra(t *testing.T, toolCall map[string]any, wantOption string) s
 
 func runACPReviewer(t *testing.T, peer string) ([]byte, error) {
 	t.Helper()
+	out, _, err := runACPReviewerNotes(t, peer)
+	return out, err
+}
+
+// runACPReviewerNotes is runACPReviewer that also returns every runtime isolation
+// note (gap or breach) the session reported.
+func runACPReviewerNotes(t *testing.T, peer string) ([]byte, []IsolationNote, error) {
+	t.Helper()
 	r, err := RunnerFromBinding(InterfaceACP, peer+" stdio")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return r.Run(ctx, Request{SystemPrompt: "r", Payload: "{}", AllowedTools: roGrant, ReadOnly: true, Capture: CaptureFull})
+	var mu sync.Mutex
+	var notes []IsolationNote
+	out, err := r.Run(ctx, Request{SystemPrompt: "r", Payload: "{}", AllowedTools: roGrant, ReadOnly: true, Capture: CaptureFull,
+		OnIsolation: func(n IsolationNote) {
+			mu.Lock()
+			notes = append(notes, n)
+			mu.Unlock()
+		}})
+	mu.Lock()
+	defer mu.Unlock()
+	return out, append([]IsolationNote(nil), notes...), err
+}
+
+// wantNote asserts exactly one note of the given kind whose detail contains want.
+func wantNote(t *testing.T, notes []IsolationNote, breach bool, want string) {
+	t.Helper()
+	var got []IsolationNote
+	for _, n := range notes {
+		if n.Breach == breach {
+			got = append(got, n)
+		}
+	}
+	if len(got) != 1 || !strings.Contains(got[0].Detail, want) || got[0].Adapter == "" {
+		t.Fatalf("want one breach=%v note containing %q, got %+v", breach, want, notes)
+	}
 }
 
 // AC4 (grok acp): every out-of-grant class is rejected by permission under a
@@ -739,24 +760,6 @@ func methodsLogged(t *testing.T, log string) string {
 	return string(b)
 }
 
-func assertRefusal(t *testing.T, err error, class ToolClass) *RefusalError {
-	t.Helper()
-	var ref *RefusalError
-	if !errors.As(err, &ref) {
-		t.Fatalf("want a RefusalError, got %v", err)
-	}
-	found := false
-	for _, c := range ref.Classes {
-		if c == class {
-			found = true
-		}
-	}
-	if !found || !strings.Contains(err.Error(), string(class)) {
-		t.Fatalf("refusal %q must name class %s", err, class)
-	}
-	return ref
-}
-
 // AC3/AC7: a grok acp peer that opens in yolo is switched to an ask mode when it
 // offers one; the prompt is only sent after that.
 func TestACPReviewer_YoloPeerIsMovedToAskMode(t *testing.T) {
@@ -776,9 +779,9 @@ func TestACPReviewer_YoloPeerIsMovedToAskMode(t *testing.T) {
 	}
 }
 
-// AC7: a peer that reports yolo and offers no ask mode — or refuses the switch —
-// is aborted BEFORE session/prompt: no turn is ever sent.
-func TestACPReviewer_YoloPeerWithNoAskModeAbortsBeforePrompt(t *testing.T) {
+// sty_2d5e583a AC1: a peer that reports yolo and offers no ask mode — or refuses
+// the switch — still gets its prompt and returns its verdict; the gap is reported.
+func TestACPReviewer_YoloPeerWithNoAskModeRunsWithGap(t *testing.T) {
 	skipWithoutPython3(t)
 	cases := map[string]struct {
 		modes string
@@ -791,10 +794,13 @@ func TestACPReviewer_YoloPeerWithNoAskModeAbortsBeforePrompt(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			log := filepath.Join(t.TempDir(), "log")
-			_, err := runACPReviewer(t, writeIsoACPPeer(t, log, tc.modes, "", tc.fails))
-			assertRefusal(t, err, ClassShell)
-			if l := methodsLogged(t, log); strings.Contains(l, "session/prompt") {
-				t.Fatalf("a turn was sent to a never-ask peer:\n%s", l)
+			out, notes, err := runACPReviewerNotes(t, writeIsoACPPeer(t, log, tc.modes, "", tc.fails))
+			if err != nil || !strings.Contains(string(out), "accept") {
+				t.Fatalf("Run = %q, %v; a never-ask peer must still return its verdict", out, err)
+			}
+			wantNote(t, notes, false, "never asks permission")
+			if l := methodsLogged(t, log); !strings.Contains(l, "session/prompt") {
+				t.Fatalf("no turn was sent to the never-ask peer:\n%s", l)
 			}
 		})
 	}
@@ -816,24 +822,25 @@ func pyJSONLiteral(t *testing.T, doc []byte) string {
 }
 
 // A reviewer peer that reports no permission mode cannot be confirmed or forced
-// to ask, so it is refused before session/prompt: no turn is ever sent.
-func TestACPReviewer_PeerWithoutModesIsRefused(t *testing.T) {
+// to ask: the gap is reported and the turn is still sent.
+func TestACPReviewer_PeerWithoutModesRunsWithGap(t *testing.T) {
 	skipWithoutPython3(t)
 	log := filepath.Join(t.TempDir(), "log")
-	_, err := runACPReviewer(t, writeIsoACPPeer(t, log, `{"sessionId":"sess_test"}`, "", false))
-	ref := assertRefusal(t, err, ClassShell)
-	if !strings.Contains(ref.Why, "the peer reports no permission mode and cannot be forced to ask") {
-		t.Errorf("refusal reason = %q", ref.Why)
+	out, notes, err := runACPReviewerNotes(t, writeIsoACPPeer(t, log, `{"sessionId":"sess_test"}`, "", false))
+	if err != nil || !strings.Contains(string(out), "accept") {
+		t.Fatalf("Run = %q, %v", out, err)
 	}
-	if l := methodsLogged(t, log); strings.Contains(l, "session/prompt") {
-		t.Fatalf("a turn was sent to a peer with no permission mode:\n%s", l)
+	wantNote(t, notes, false, "the peer reports no permission mode and cannot be forced to ask")
+	if l := methodsLogged(t, log); !strings.Contains(l, "session/prompt") {
+		t.Fatalf("no turn was sent to a peer with no permission mode:\n%s", l)
 	}
 }
 
 // The real grok 1.0.41 `session/new` result (testdata/grok_acp_session_new_1.0.41.jsonl):
-// no modes block, configOptions with only model and reasoning_effort. It is
-// refused before session/prompt, whatever the user's grok config sets.
-func TestACPReviewer_CapturedGrokSessionNewIsRefused(t *testing.T) {
+// no modes block, configOptions with only model and reasoning_effort. It runs —
+// the prompt is sent and a verdict returns — and reports the no-ask-mode gap,
+// whatever the user's grok config sets.
+func TestACPReviewer_CapturedGrokSessionNewRunsWithGap(t *testing.T) {
 	skipWithoutPython3(t)
 	raw, err := os.ReadFile(filepath.Join("testdata", "grok_acp_session_new_1.0.41.jsonl"))
 	if err != nil {
@@ -853,61 +860,67 @@ func TestACPReviewer_CapturedGrokSessionNewIsRefused(t *testing.T) {
 		t.Fatal("the captured grok session/new result must carry no modes block")
 	}
 	log := filepath.Join(t.TempDir(), "log")
-	_, err = runACPReviewer(t, writeIsoACPPeer(t, log, pyJSONLiteral(t, msg.Result), "", false))
-	ref := assertRefusal(t, err, ClassShell)
-	if !strings.Contains(ref.Why, "no permission mode") {
-		t.Errorf("refusal reason = %q", ref.Why)
+	out, notes, err := runACPReviewerNotes(t, writeIsoACPPeer(t, log, pyJSONLiteral(t, msg.Result), "", false))
+	if err != nil || !strings.Contains(string(out), "accept") {
+		t.Fatalf("Run = %q, %v; grok's captured session/new must still return a verdict", out, err)
 	}
-	if l := methodsLogged(t, log); strings.Contains(l, "session/prompt") {
-		t.Fatalf("a turn was sent to grok before ask mode could be confirmed:\n%s", l)
+	wantNote(t, notes, false, "no permission mode")
+	if l := methodsLogged(t, log); !strings.Contains(l, "session/prompt") {
+		t.Fatalf("no turn was sent to grok:\n%s", l)
 	}
 }
 
-// AC4/AC7: a peer that runs an out-of-grant tool WITHOUT asking (yolo behind a
-// mode that never showed) is cancelled and the invocation fails with the neutral
-// refusal, whatever mode the peer claims.
-func TestACPReviewer_ToolRunningWithoutAskIsBreach(t *testing.T) {
+// A peer that runs an out-of-grant tool WITHOUT asking (yolo behind a mode that
+// never showed) is recorded as a breach — one note per call — and the run
+// continues to its verdict (sty_2d5e583a): a breach is warned, never aborted.
+func TestACPReviewer_ToolRunningWithoutAskIsReportedNotAborted(t *testing.T) {
 	skipWithoutPython3(t)
-	cases := map[string]string{
-		"shell": `{"sessionUpdate":"tool_call","toolCallId":"c1","title":"run_terminal_command","kind":"read","status":"pending"}`,
-		"write": `{"sessionUpdate":"tool_call","toolCallId":"c1","title":"write","kind":"edit","status":"pending"}`,
-		"mcp":   `{"sessionUpdate":"tool_call","toolCallId":"c1","title":"mcp__srv__tool","kind":"other","status":"pending"}`,
+	cases := map[string]struct{ call, want string }{
+		"shell": {`{"sessionUpdate":"tool_call","toolCallId":"c1","title":"run_terminal_command","kind":"read","status":"pending"}`, "run_terminal_command"},
+		"write": {`{"sessionUpdate":"tool_call","toolCallId":"c1","title":"write","kind":"edit","status":"pending"}`, "write"},
+		"mcp":   {`{"sessionUpdate":"tool_call","toolCallId":"c1","title":"mcp__srv__tool","kind":"other","status":"pending"}`, "mcp__srv__tool"},
 	}
-	classes := map[string]ToolClass{"shell": ClassShell, "write": ClassWrite, "mcp": ClassMCP}
-	for name, call := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			extra := `
-        send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":` + call + `}})
+        send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":` + tc.call + `}})
         send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":{"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"in_progress"}}})
 `
 			log := filepath.Join(t.TempDir(), "log")
-			// The breach sends session/cancel and stops the peer at once; the run
-			// fails with the refusal rather than waiting out the turn.
-			_, err := runACPReviewer(t, writeIsoACPPeer(t, log, askModes, extra, false))
-			assertRefusal(t, err, classes[name])
+			out, notes, err := runACPReviewerNotes(t, writeIsoACPPeer(t, log, askModes, extra, false))
+			if err != nil || !strings.Contains(string(out), "accept") {
+				t.Fatalf("Run = %q, %v; a breach must not abort the run", out, err)
+			}
+			wantNote(t, notes, true, tc.want)
 		})
 	}
 }
 
-// A tool the peer ran AFTER satelle denied it is a breach too.
-func TestACPReviewer_ToolRunningAfterDenyIsBreach(t *testing.T) {
+// A tool the peer ran AFTER satelle denied it is a breach too — reported, not aborted.
+func TestACPReviewer_ToolRunningAfterDenyIsReported(t *testing.T) {
 	skipWithoutPython3(t)
 	extra := permissionExtra(t, map[string]any{"toolCallId": "c1", "kind": "execute", "title": "Bash"}, "reject-once") + `
         send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":{"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"completed","kind":"execute","title":"Bash"}}})
 `
 	log := filepath.Join(t.TempDir(), "log")
-	_, err := runACPReviewer(t, writeIsoACPPeer(t, log, askModes, extra, false))
-	assertRefusal(t, err, ClassShell)
+	out, notes, err := runACPReviewerNotes(t, writeIsoACPPeer(t, log, askModes, extra, false))
+	if err != nil || !strings.Contains(string(out), "accept") {
+		t.Fatalf("Run = %q, %v", out, err)
+	}
+	wantNote(t, notes, true, "ran after permission was denied")
 }
 
-// A peer that switches into a never-ask mode mid-session is a breach.
-func TestACPReviewer_MidSessionYoloIsBreach(t *testing.T) {
+// A peer that switches into a never-ask mode mid-session is a reported breach.
+func TestACPReviewer_MidSessionYoloIsReported(t *testing.T) {
 	skipWithoutPython3(t)
 	extra := `
         send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":{"sessionUpdate":"current_mode_update","currentModeId":"yolo"}}})
 `
-	_, err := runACPReviewer(t, writeIsoACPPeer(t, filepath.Join(t.TempDir(), "log"), askModes, extra, false))
-	assertRefusal(t, err, ClassShell)
+	out, notes, err := runACPReviewerNotes(t, writeIsoACPPeer(t, filepath.Join(t.TempDir(), "log"), askModes, extra, false))
+	if err != nil || !strings.Contains(string(out), "accept") {
+		t.Fatalf("Run = %q, %v", out, err)
+	}
+	wantNote(t, notes, true, "mid-session")
 }
 
 // A granted read tool that runs without a permission ask is normal (grok does
@@ -918,15 +931,18 @@ func TestACPReviewer_UnaskedReadToolIsNotABreach(t *testing.T) {
         send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":{"sessionUpdate":"tool_call","toolCallId":"c1","title":"list_dir","kind":"read","status":"pending"}}})
         send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":{"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"completed"}}})
 `
-	out, err := runACPReviewer(t, writeIsoACPPeer(t, filepath.Join(t.TempDir(), "log"), askModes, extra, false))
+	out, notes, err := runACPReviewerNotes(t, writeIsoACPPeer(t, filepath.Join(t.TempDir(), "log"), askModes, extra, false))
 	if err != nil || !strings.Contains(string(out), "accept") {
 		t.Fatalf("Run = %q, %v", out, err)
 	}
+	if len(notes) != 0 {
+		t.Fatalf("an unasked granted read tool is not a breach, got %+v", notes)
+	}
 }
 
-// A tool no signal identifies, running without a permission ask, is a breach:
-// only a positively identified granted tool may run unasked.
-func TestACPReviewer_UnidentifiedToolRunningWithoutAskIsBreach(t *testing.T) {
+// A tool no signal identifies, running without a permission ask, is reported as a
+// breach: only a positively identified granted tool may run unasked.
+func TestACPReviewer_UnidentifiedToolRunningWithoutAskIsReported(t *testing.T) {
 	skipWithoutPython3(t)
 	cases := map[string]string{
 		"no title, kind or name": `{"sessionUpdate":"tool_call","toolCallId":"c1","status":"in_progress"}`,
@@ -938,8 +954,11 @@ func TestACPReviewer_UnidentifiedToolRunningWithoutAskIsBreach(t *testing.T) {
 			extra := `
         send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":` + call + `}})
 `
-			_, err := runACPReviewer(t, writeIsoACPPeer(t, filepath.Join(t.TempDir(), "log"), askModes, extra, false))
-			assertRefusal(t, err, ClassUnknown)
+			out, notes, err := runACPReviewerNotes(t, writeIsoACPPeer(t, filepath.Join(t.TempDir(), "log"), askModes, extra, false))
+			if err != nil || !strings.Contains(string(out), "accept") {
+				t.Fatalf("Run = %q, %v", out, err)
+			}
+			wantNote(t, notes, true, "unknown tool call")
 		})
 	}
 }

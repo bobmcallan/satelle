@@ -424,21 +424,16 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	cmdStr := runner.Command()
 
 	// Reviewer tool isolation (sty_ef3efb51): a reviewer judges, so it may use
-	// only the tools its binding grants. Refuse — before any process starts — a
-	// binding no adapter path can keep inside that grant, then mark the request so
-	// the adapter trims what the harness offers and every live transport denies a
-	// tool outside the grant by name.
+	// only the tools its binding grants. Warn — before the process starts — of a
+	// binding no adapter path can keep inside that grant (sty_2d5e583a: it still
+	// runs), then mark the request so the adapter trims what the harness offers
+	// and every live transport denies a tool outside the grant by name.
 	var isolation verb.ToolIsolation
 	var attested bool // operator-attested reviewer on an unrecognised harness: never a count
 	if expect.judges() {
-		var perr error
-		isolation, attested, perr = g.isolateReviewer(ctx, reviewerDispatch{
+		isolation, attested = g.isolateReviewer(ctx, reviewerDispatch{
 			StoryID: req.StoryID, Actor: req.Actor, Skill: req.Skill, Step: req.Step, Section: section,
 		}, runner, binding.OperatorAttested(), &agentReq)
-		if perr != nil {
-			finishScratch(scratchDir, false)
-			return InvokeResult{Command: cmdStr, Err: perr}
-		}
 	}
 
 	timeout := req.Timeout
@@ -660,16 +655,6 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 		if rerr != nil {
 			if se := asStallError(rerr); se != nil {
 				return g.stallResult(ctx, req, cmdStr, se)
-			}
-			// A peer that ran a tool outside the grant, or opened in a mode that
-			// never asks, is not a transient failure: retrying it re-runs the
-			// breach (sty_ef3efb51).
-			var refusal *agentcli.RefusalError
-			if errors.As(rerr, &refusal) {
-				g.telemetryEvent(ctx, storyID, actor, "reviewer-isolation-refused", map[string]any{
-					"skill": skill, "step": step, "reason": refusal.Error(),
-				})
-				return InvokeResult{Command: cmdStr, Err: rerr}
 			}
 			if errors.Is(rerr, context.DeadlineExceeded) && ctx.Err() == nil {
 				g.logReviewerFailure(skill, attempt, attempts, rerr, nil)

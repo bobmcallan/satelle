@@ -38,6 +38,9 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 		// Promoted from repo-local (sty_fd4c3466): executor owes declared
 		// outcome artifacts, never gate-judging criteria.
 		"satelle-executor-deliverables",
+		// Product default (sty_2d5e583a): configurations are warned, never blocked,
+		// and no rule is undocumented.
+		"satelle-configure-freely",
 	} {
 		if body, ok := embedded[name]; !ok {
 			t.Errorf("operating principle %q must be embedded, but is missing from EmbeddedDefaults()", name)

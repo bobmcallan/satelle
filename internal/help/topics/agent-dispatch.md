@@ -993,7 +993,7 @@ this table and a test checks every cell against the code that produces it.
 | claude command | yes | yes | yes | yes | unavailable: interface=command is one-shot only | yes | yes |
 | claude stream | yes | yes | yes | yes | yes | yes | yes |
 | grok command | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | unavailable: interface=command is one-shot only | yes | yes |
-| grok acp | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | yes | unavailable: grok agent stdio has no tool-list flag and reports no permission mode, so a grok acp reviewer is refused as a reviewer | unavailable: grok agent stdio neither trims nor reports offered tools |
+| grok acp | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | yes | unavailable: grok agent stdio has no tool-list flag and reports no permission mode, so a grok acp reviewer runs with a warning that its tools are not held to the grant | unavailable: grok agent stdio neither trims nor reports offered tools |
 
 ### Reviewer tool isolation
 
@@ -1003,9 +1003,10 @@ permission mode the harness runs in:
 - **Every role=reviewer dispatch, one path.** A gate verdict, the step summariser
   (`[reviewer-summary]`) and the rework consultant's live session
   (`[reviewer-consult]`) all pass the same preflight, the same read-only trim and
-  the same `agent_invocation` recording; a refused binding starts no process on
-  any of them. The consultant keeps its own mutator ceiling as well — the grant
-  policy narrows it, never widens it.
+  the same `agent_invocation` recording; a binding satelle cannot hold to its
+  grant runs with a warning on any of them (see *Warned, never blocked*). The
+  consultant keeps its own mutator ceiling as well — the grant policy narrows it,
+  never widens it.
 
 - **Tool classes.** Every tool a harness can offer is classed `read`, `write`,
   `edit`, `shell`, `subprocess`, `network`, `mcp` or `unknown` by the adapter
@@ -1024,41 +1025,36 @@ permission mode the harness runs in:
   `--tools` allow-list (the stock preset does: `--always-approve` is safe there
   because only the granted tools are offered). Grok ACP (`grok agent stdio`) has
   no tool-list flag and no way to force a permission ask, so a grok ACP reviewer
-  is not dispatched (next bullet).
-- **Refused before the process starts** when no path can deny an out-of-grant
-  tool: a binding that skips permission requests (`--always-approve`, `--yolo`,
-  `--dangerously-skip-permissions`, a bypass mode) without a `--tools` allow-list
-  inside its grant; a **claude** binding that skips permissions
-  (`--dangerously-skip-permissions`, `--permission-mode bypassPermissions` or
-  `acceptEdits`) while its offered tools include one the grant only scopes
-  (`Bash` under `Bash(satelle:*)`) — refused as `claude/<transport>`, class
-  `shell`, because the specifier is not enforced when permissions are skipped
-  (an unscoped grant with no shell is unaffected); a grok command binding with no allow-list (a
-  blank one — `--tools=`, `--tools` before another flag, or `--tools {tools}`
-  rendered from a grant naming no tool — is not an allow-list); a harness satelle
-  has no adapter for, unless the binding carries `isolation = "operator-attested"`
-  (next bullet); **every grok ACP reviewer binding** — grok 1.0.41's
-  `session/new` reports no permission mode, offers no permission option and has
-  no ask flag, and the user's own grok config may set `always-approve`, so
-  satelle can neither confirm nor force ask mode. The refusal names the adapter
-  (`grok/acp`), the tool classes, and the reason: the peer reports no permission
-  mode and cannot be forced to ask. Use the grok command transport instead. As
-  defence in depth for any other ACP reviewer peer: a peer that reports no modes
-  block is refused before `session/prompt`; one that opens, or switches, into a
-  never-ask mode is moved to an ask mode or refused before any prompt; a tool
-  that runs without being asked and is not positively identified as inside the
-  grant, or that runs after a deny, cancels the session and stops the peer.
+  runs with a warning (next bullet).
+- **Warned, never blocked** (sty_2d5e583a). A configuration satelle cannot hold to
+  its grant is not refused: the process starts and its verdict stands. Every
+  such dispatch **warns** — one line on stderr naming the binding, the adapter,
+  the gap and the fix — records the gap as `isolation_limitation` (and
+  `offered_tools_source`) on the `agent_invocation` row plus a
+  `reviewer-isolation-warned` ledger event, and `satelle doctor` reports the
+  binding. These are all the warned configurations:
+
+  | configuration | gap | fix |
+  | --- | --- | --- |
+  | a **grok ACP** reviewer (`grok agent stdio`) | tools not held to the grant (grok 1.0.41's `session/new` reports no permission mode and has no ask flag, and the user's own grok config may set `always-approve`, so satelle can neither confirm nor force ask mode); usage accounting not to standard (this transport reports no offered-tool figure and may report no usage) | the grok command transport with `--tools` equal to the grant, or `isolation = "operator-attested"` |
+  | a harness **no adapter recognises** (a script, another CLI) | tools not held to the grant (satelle can neither trim nor deny tools) | a claude or grok binding, or `isolation = "operator-attested"` |
+  | **grok** that skips permissions (`--always-approve`, `--yolo`) without a `--tools` allow-list equal to its grant (absent, blank — `--tools=`, `--tools {tools}` rendered from an empty grant — or wider) | tools not held to the grant | add a `--tools` allow-list equal to the grant, or drop always-approve, or `isolation = "operator-attested"` |
+  | **claude** that skips permissions (`--dangerously-skip-permissions`, `--permission-mode bypassPermissions` or `acceptEdits`) while its grant scopes a tool (`Bash` under `Bash(satelle:*)`), or with no `--tools` allow-list | scoped grant not enforced / tools not held to the grant (the specifier is not applied when permissions are skipped) | drop the skip flag, add `--tools`, or `isolation = "operator-attested"` |
+  | an ACP reviewer peer that offers **no ask mode** (or refuses the switch to one) at session open | the peer offers no ask mode, so a tool permission request is not guaranteed | none in satelle; the warning is per dispatch |
+
+  An **observed breach** — an ACP tool that ran outside the grant without a
+  permission request, or after a deny, or a switch into a never-ask mode — is
+  recorded on the ledger (`reviewer-isolation-breach`) and warned; it never aborts
+  the run or cancels the session. A breach is behaviour satelle saw, not a
+  configured gap, so `isolation = "operator-attested"` does not silence it.
 - **`isolation = "operator-attested"`** is a binding key in `agents.toml` (and in
-  a machine-wide `[profiles.<name>]`): the operator's explicit declaration that
-  the command offers no tool outside the binding's grant — a script, or a harness
-  satelle has no adapter for. Preflight admits an unrecognised-harness reviewer
-  only when its binding carries it; with no key the refusal above stands. The
-  invocation is recorded with `offered_tools_source = "operator-attested"` and an
-  `isolation_limitation` naming the binding — never a count — and `satelle
-  doctor` reports the binding (a warning naming it), so it is never silent. The
-  key has no effect on a claude or grok binding: the adapter decides those, and a
-  grok ACP or skip-permissions refusal stands whatever the key says. It is the
-  only accepted value; any other value fails at load.
+  a machine-wide `[profiles.<name>]`): the operator's acknowledgement of every
+  configured gap in the table above, adapter-decided or not. With it the
+  dispatch warning is suppressed and `satelle doctor` reports the binding as INFO
+  (acknowledged) instead of WARN; the ledger still records the limitation — for an
+  unrecognised harness with `offered_tools_source = "operator-attested"` and an
+  `isolation_limitation` naming the binding, never a count. Nothing is silent. It
+  is the only accepted value; any other value fails at load.
   ```toml
   [judge]
   role      = "reviewer"
@@ -1073,9 +1069,11 @@ permission mode the harness runs in:
   case there is no count), and, for
   grok ACP and operator-attested bindings, `isolation_limitation`. The grant
   length is never written in place of a count.
-- **`satelle doctor`** warns, naming the binding, when a configured reviewer
-  binding fails this preflight — including every grok ACP reviewer binding, which
-  the dispatch will refuse. The stock grok command preset does not warn.
+- **`satelle doctor`** WARNs, naming the binding, the gap and the fix, for each
+  configured reviewer binding in the table above — including every grok ACP
+  reviewer binding; with `isolation = "operator-attested"` it reports INFO
+  (acknowledged) instead. The stock claude and grok command presets report
+  nothing.
 
 ### What each harness reports
 

@@ -1,6 +1,7 @@
 package agentstep
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -12,9 +13,10 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 )
 
-// Reviewer tool isolation through the dispatch seam (sty_ef3efb51): a refused
-// binding starts no process (AC3/AC7), and each adapter's invocation records the
-// system prompt size and the offered-tool figure with its source (AC5).
+// Reviewer tool isolation through the dispatch seam (sty_ef3efb51): an
+// unsupported binding runs with a warning (sty_2d5e583a), and each adapter's
+// invocation records the system prompt size and the offered-tool figure with its
+// source (AC5).
 
 const isolationVerdict = `{"decision":"accept","notes":"ok"}`
 
@@ -52,149 +54,250 @@ func reviewerInvoke(t *testing.T, iface, command, tools string) InvokeResult {
 	})
 }
 
-// AC3/AC7: a binding whose adapter cannot deny an out-of-grant tool is refused
-// before the process starts — start count 0, an error naming adapter and class —
-// and the stock grok command preset (always-approve + --tools) starts once.
-func TestInvoke_ReviewerRefusalStartsNoProcess(t *testing.T) {
+// namedPeer copies the fake ACP or stream peer under name, so the adapter
+// detection (which reads the binary's name) sees a grok, claude or mystery
+// harness that actually speaks the transport (a shell stub would wait forever).
+func namedPeer(t *testing.T, iface, name string) string {
+	t.Helper()
+	skipNoPython(t)
+	peer := writeFakeACPPeer
+	if iface == "stream" {
+		peer = writeFakeStreamPeer
+	}
+	src, err := os.ReadFile(peer(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// warnedInvoke dispatches a reviewer with the warning writer captured.
+func warnedInvoke(t *testing.T, iface, command, tools string, b config.AgentBinding) (InvokeResult, string) {
+	t.Helper()
+	runner, err := agentcli.RunnerFromBinding(iface, command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var warn bytes.Buffer
+	g := New(&fakeRunner{}, fakeDocs{}, t.TempDir(), "")
+	g.SetWarnWriter(&warn)
+	b.Tools, b.Principles = tools, config.PrinciplesNone
+	res := g.Invoke(context.Background(), InvokeRequest{
+		Binding: b, Section: "reviewer", Rubric: "judge", Payload: map[string]string{"story": "sty_1"},
+		Expect: ExpectVerdict, Runner: runner, Skill: "test-skill",
+	})
+	return res, warn.String()
+}
+
+// sty_2d5e583a AC1/AC2: a binding no adapter path can hold to its grant runs —
+// the process starts and returns its verdict — with ONE warning on stderr naming
+// the binding, the adapter and the gap, and the limitation and offered-tools
+// source recorded on the invocation. It is never refused.
+func TestInvoke_UnsupportedReviewerRunsWithWarning(t *testing.T) {
 	const ro = "Read,Grep,Glob"
 	cases := []struct {
-		name, iface, binary, args string
-		wantAdapter, wantClass    string
+		name, iface, binary, args, tools string
+		wantAdapter, wantGap             string
 	}{
-		{"grok command always-approve, no allow-list", "command", "grok-shim", "-p {payload} --always-approve", "grok/command", "shell"},
-		{"grok command always-approve, wider allow-list", "command", "grok-shim", "-p {payload} --tools read_file,run_terminal_command --always-approve", "grok/command", "shell"},
-		{"grok acp yolo", "acp", "grok-shim", "agent --always-approve stdio", "grok/acp", "shell"},
-		{"grok acp stock spawn: no permission mode, cannot be forced to ask", "acp", "grok-shim", "agent stdio", "grok/acp", "shell"},
-		{"claude bypass without allow-list", "command", "claude-shim", "-p --dangerously-skip-permissions", "claude/command", "shell"},
-		{"claude stream bypass mode", "stream", "claude-shim", "-p --permission-mode bypassPermissions", "claude/stream", "mcp"},
-		{"unrecognised harness", "command", "mystery-shim", "-p {payload}", "unknown/command", "unknown"},
+		{"grok command always-approve, no allow-list", "command", "grok-shim", "-p {payload} --always-approve", ro, "grok/command", "tools not held to the grant"},
+		{"grok command always-approve, wider allow-list", "command", "grok-shim", "-p {payload} --tools read_file,run_terminal_command --always-approve", ro, "grok/command", "tools not held to the grant"},
+		{"grok acp yolo", "acp", "grok-shim", "agent --always-approve stdio", ro, "grok/acp", "usage accounting not to standard"},
+		{"grok acp stock spawn", "acp", "grok-shim", "agent stdio", ro, "grok/acp", "tools not held to the grant"},
+		{"claude bypass without allow-list", "command", "claude-shim", "-p --dangerously-skip-permissions", ro, "claude/command", "tools not held to the grant"},
+		{"claude stream bypass mode", "stream", "claude-shim", "-p --permission-mode bypassPermissions", ro, "claude/stream", "tools not held to the grant"},
+		{"claude command bypass + scoped grant", "command", "claude-shim", "-p --tools {tools} --dangerously-skip-permissions", ro + ",Bash(satelle:*)", "claude/command", "scoped grant not enforced"},
+		{"claude stream bypassPermissions + scoped grant", "stream", "claude-shim", "-p --tools {tools} --permission-mode bypassPermissions", ro + ",Bash(satelle:*)", "claude/stream", "scoped grant not enforced"},
+		{"unrecognised harness", "command", "mystery-shim", "-p {payload}", ro, "unknown/command", "tools not held to the grant"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			path, marker := startCounter(t, tc.binary, isolationVerdict)
-			res := reviewerInvoke(t, tc.iface, path+" "+tc.args, ro)
-			if res.Err == nil {
-				t.Fatalf("binding was not refused: %+v", res)
+			var command, marker string
+			if tc.iface != "command" {
+				command = namedPeer(t, tc.iface, tc.binary) + " " + tc.args
+			} else {
+				var path string
+				path, marker = startCounter(t, tc.binary, isolationVerdict)
+				command = path + " " + tc.args
 			}
-			msg := res.Err.Error()
-			if !strings.Contains(msg, tc.wantAdapter) || !strings.Contains(msg, tc.wantClass) || !strings.Contains(msg, "refused") {
-				t.Errorf("refusal %q must name the adapter %q and the tool class %q", msg, tc.wantAdapter, tc.wantClass)
+			res, warn := warnedInvoke(t, tc.iface, command, tc.tools, config.AgentBinding{})
+			if res.Err != nil {
+				t.Fatalf("the binding was refused: %v", res.Err)
 			}
-			if n := starts(marker); n != 0 {
-				t.Fatalf("a refused reviewer binding started %d process(es)", n)
+			if res.Decision == nil {
+				t.Fatalf("the process ran but no verdict came back: %+v", res)
 			}
-			if tc.wantAdapter == "grok/acp" && !strings.Contains(msg, "the peer reports no permission mode and cannot be forced to ask") {
-				t.Errorf("grok/acp refusal %q must give the reason", msg)
-			}
-			if res.Decision != nil {
-				t.Errorf("a refused dispatch produced a decision: %+v", res.Decision)
-			}
-		})
-	}
-
-	// A scoped grant (Bash(satelle:*)) is not enforced when permissions are
-	// skipped: the binding is refused, start count 0, naming claude/<transport>,
-	// the shell class and the reason.
-	for _, tc := range []struct{ name, iface, args, adapter string }{
-		{"claude command bypass + scoped grant", "command", "-p --tools {tools} --dangerously-skip-permissions", "claude/command"},
-		{"claude stream bypassPermissions + scoped grant", "stream", "-p --tools {tools} --permission-mode bypassPermissions", "claude/stream"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			path, marker := startCounter(t, "claude-shim", isolationVerdict)
-			res := reviewerInvoke(t, tc.iface, path+" "+tc.args, ro+",Bash(satelle:*)")
-			if res.Err == nil {
-				t.Fatalf("binding was not refused: %+v", res)
-			}
-			msg := res.Err.Error()
-			for _, want := range []string{"refused", tc.adapter, "shell", "the specifier is not enforced when permissions are skipped"} {
-				if !strings.Contains(msg, want) {
-					t.Errorf("refusal %q must contain %q", msg, want)
+			if marker != "" {
+				if n := starts(marker); n != 1 {
+					t.Fatalf("start count = %d, want 1", n)
 				}
 			}
-			if n := starts(marker); n != 0 {
-				t.Fatalf("a refused reviewer binding started %d process(es)", n)
+			if n := strings.Count(warn, "warning:"); n != 1 {
+				t.Fatalf("want exactly one warning line, got %d: %q", n, warn)
 			}
-			if res.Decision != nil {
-				t.Errorf("a refused dispatch produced a decision: %+v", res.Decision)
+			for _, want := range []string{`"reviewer"`, tc.wantAdapter, tc.wantGap, "fix:"} {
+				if !strings.Contains(warn, want) {
+					t.Errorf("warning %q must contain %q", warn, want)
+				}
+			}
+			if !strings.Contains(res.IsolationLimitation, tc.wantGap) {
+				t.Errorf("isolation_limitation = %q, want it to carry %q", res.IsolationLimitation, tc.wantGap)
+			}
+			if res.OfferedToolsSource == "" {
+				t.Error("offered_tools_source must never be empty")
 			}
 		})
 	}
 
-	t.Run("stock grok command preset starts", func(t *testing.T) {
+	t.Run("grok acp names both gaps and records offered tools as unavailable", func(t *testing.T) {
+		res, warn := warnedInvoke(t, "acp", namedPeer(t, "acp", "grok-shim")+" agent stdio", ro, config.AgentBinding{})
+		if res.Err != nil {
+			t.Fatal(res.Err)
+		}
+		for _, want := range []string{"tools not held to the grant", "usage accounting not to standard"} {
+			if !strings.Contains(warn, want) {
+				t.Errorf("warning %q must name %q", warn, want)
+			}
+		}
+		if !strings.HasPrefix(res.OfferedToolsSource, "unavailable: grok") {
+			t.Errorf("offered_tools_source = %q, want an adapter-named unavailable reason", res.OfferedToolsSource)
+		}
+	})
+
+	t.Run("stock grok command preset runs with no warning and no limitation", func(t *testing.T) {
 		path, marker := startCounter(t, "grok-shim", isolationVerdict)
 		command := strings.Replace(agentcli.DefaultGrokCommand, "grok ", path+" ", 1)
-		res := reviewerInvoke(t, "command", command, ro)
+		res, warn := warnedInvoke(t, "command", command, ro, config.AgentBinding{})
 		if res.Err != nil {
 			t.Fatalf("stock grok preset refused: %v", res.Err)
 		}
 		if n := starts(marker); n != 1 {
 			t.Fatalf("start count = %d, want 1", n)
 		}
+		if warn != "" || res.IsolationLimitation != "" {
+			t.Errorf("stock preset warned %q / limited %q", warn, res.IsolationLimitation)
+		}
 	})
 }
 
-// isolation = "operator-attested" (sty_ef3efb51): an unrecognised harness with no
-// key is refused (start count 0, the row above); with the key it runs once and the
-// invocation records the attested source, a limitation naming the binding and never
-// a count. The key waives nothing an adapter decides.
-func TestInvoke_OperatorAttestedReviewer(t *testing.T) {
-	const ro = "Read,Grep,Glob"
-	invoke := func(t *testing.T, iface, command string, b config.AgentBinding) InvokeResult {
-		t.Helper()
-		runner, err := agentcli.RunnerFromBinding(iface, command)
-		if err != nil {
-			t.Fatal(err)
-		}
-		b.Tools, b.Principles = ro, config.PrinciplesNone
-		g := New(&fakeRunner{}, fakeDocs{}, t.TempDir(), "")
-		return g.Invoke(context.Background(), InvokeRequest{
-			Binding: b, Section: "judge", Rubric: "judge", Payload: map[string]string{"story": "sty_1"},
-			Expect: ExpectVerdict, Runner: runner, Skill: "test-skill",
+// sty_2d5e583a AC2: an observed mid-session breach — a write tool that ran without
+// a permission request — is warned and ledgered, and the run still returns its
+// verdict. An operator-attested binding is still warned of it: a breach is seen
+// behaviour, not a configured gap.
+func TestInvoke_ObservedBreachIsWarnedAndLedgeredNeverAborts(t *testing.T) {
+	skipNoPython(t)
+	src, err := os.ReadFile(writeFakeACPPeer(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const marker = "    elif method == \"session/prompt\":\n"
+	breach := marker + `        send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":{"sessionUpdate":"tool_call","toolCallId":"c1","kind":"edit","title":"write_file","status":"in_progress"}}})` + "\n"
+	script := strings.Replace(string(src), marker, breach, 1)
+	if script == string(src) {
+		t.Fatal("the fake ACP peer no longer has a session/prompt branch to inject the breach into")
+	}
+	for name, b := range map[string]config.AgentBinding{
+		"unattested": {},
+		"attested":   {Isolation: config.IsolationOperatorAttested},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "grok-shim")
+			if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			runner, err := agentcli.RunnerFromBinding("acp", path+" agent stdio")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var warn bytes.Buffer
+			g := New(&fakeRunner{}, fakeDocs{}, t.TempDir(), "")
+			g.SetWarnWriter(&warn)
+			recs := captureTelemetry(g)
+			b.Tools, b.Principles = "Read,Grep,Glob", config.PrinciplesNone
+			res := g.Invoke(context.Background(), InvokeRequest{
+				Binding: b, Section: "reviewer", Rubric: "judge", Payload: map[string]string{"story": "sty_1"},
+				Expect: ExpectVerdict, Runner: runner, Skill: "test-skill",
+			})
+			if res.Err != nil || res.Decision == nil {
+				t.Fatalf("a breach must not abort the run: %+v", res)
+			}
+			if countKind(*recs, "reviewer-isolation-breach") != 1 {
+				t.Errorf("want one reviewer-isolation-breach event: %+v", *recs)
+			}
+			if !strings.Contains(warn.String(), "write_file") {
+				t.Errorf("the breach warning must name the tool: %q", warn.String())
+			}
 		})
 	}
+}
 
-	t.Run("unrecognised harness without the key: refused, no process", func(t *testing.T) {
+// isolation = "operator-attested" (sty_2d5e583a): the operator's acknowledgement.
+// An unrecognised harness runs with or without it; with it the configured-gap
+// warning is suppressed and the ledger limitation is still recorded — naming the
+// binding, never a count. It acknowledges every gap, an adapter's included.
+func TestInvoke_OperatorAttestedReviewer(t *testing.T) {
+	const ro = "Read,Grep,Glob"
+	attested := config.AgentBinding{Isolation: config.IsolationOperatorAttested}
+
+	t.Run("unrecognised harness without the key: runs, warns", func(t *testing.T) {
 		path, marker := startCounter(t, "verdict.sh", isolationVerdict)
-		res := invoke(t, "command", path+" -p {payload}", config.AgentBinding{})
-		if res.Err == nil || !strings.Contains(res.Err.Error(), "refused") {
-			t.Fatalf("want a refusal, got %+v", res)
+		res, warn := warnedInvoke(t, "command", path+" -p {payload}", ro, config.AgentBinding{})
+		if res.Err != nil {
+			t.Fatalf("refused: %v", res.Err)
 		}
-		if n := starts(marker); n != 0 {
-			t.Fatalf("started %d process(es)", n)
+		if n := starts(marker); n != 1 {
+			t.Fatalf("start count = %d, want 1", n)
+		}
+		if strings.Count(warn, "warning:") != 1 {
+			t.Errorf("want one warning, got %q", warn)
 		}
 	})
 
-	t.Run("unrecognised harness with the key: runs and records the attested source", func(t *testing.T) {
+	t.Run("unrecognised harness with the key: no warning, records the attested source", func(t *testing.T) {
 		path, marker := startCounter(t, "verdict.sh", isolationVerdict)
-		res := invoke(t, "command", path+" -p {payload} --tools read_file,grep", config.AgentBinding{Isolation: config.IsolationOperatorAttested})
+		res, warn := warnedInvoke(t, "command", path+" -p {payload} --tools read_file,grep", ro, attested)
 		if res.Err != nil {
 			t.Fatalf("attested binding refused: %v", res.Err)
 		}
 		if n := starts(marker); n != 1 {
 			t.Fatalf("start count = %d, want 1", n)
 		}
+		if warn != "" {
+			t.Errorf("an attested binding warned: %q", warn)
+		}
 		if res.OfferedToolCount != nil {
 			t.Errorf("an attested run recorded a count: %d", *res.OfferedToolCount)
 		}
-		if res.OfferedToolsSource != "operator-attested" || !strings.Contains(res.IsolationLimitation, `"judge"`) {
+		if res.OfferedToolsSource != "operator-attested" || !strings.Contains(res.IsolationLimitation, `"reviewer"`) {
 			t.Errorf("source/limitation = %q/%q, want operator-attested naming the binding", res.OfferedToolsSource, res.IsolationLimitation)
 		}
 	})
 
-	t.Run("the key does not admit an adapter's refusal", func(t *testing.T) {
-		attested := config.AgentBinding{Isolation: config.IsolationOperatorAttested}
+	t.Run("the key acknowledges an adapter's gap: no warning, limitation still recorded", func(t *testing.T) {
 		for _, tc := range []struct{ name, iface, binary, args string }{
 			{"grok acp", "acp", "grok-shim", "agent stdio"},
 			{"grok command always-approve, no allow-list", "command", "grok-shim", "-p {payload} --always-approve"},
 			{"claude bypass, no allow-list", "command", "claude-shim", "-p --dangerously-skip-permissions"},
 		} {
-			path, marker := startCounter(t, tc.binary, isolationVerdict)
-			res := invoke(t, tc.iface, path+" "+tc.args, attested)
-			if res.Err == nil || !strings.Contains(res.Err.Error(), "refused") {
-				t.Errorf("%s: want a refusal, got %+v", tc.name, res)
+			var command string
+			if tc.iface != "command" {
+				command = namedPeer(t, tc.iface, tc.binary) + " " + tc.args
+			} else {
+				path, _ := startCounter(t, tc.binary, isolationVerdict)
+				command = path + " " + tc.args
 			}
-			if n := starts(marker); n != 0 {
-				t.Errorf("%s: started %d process(es)", tc.name, n)
+			res, warn := warnedInvoke(t, tc.iface, command, ro, attested)
+			if res.Err != nil || res.Decision == nil {
+				t.Errorf("%s: want a verdict, got %+v", tc.name, res)
+			}
+			if warn != "" {
+				t.Errorf("%s: an attested binding warned: %q", tc.name, warn)
+			}
+			if res.IsolationLimitation == "" {
+				t.Errorf("%s: the ledger limitation must still be recorded", tc.name)
 			}
 		}
 	})
@@ -203,7 +306,8 @@ func TestInvoke_OperatorAttestedReviewer(t *testing.T) {
 // AC5: every reviewer invocation records system_prompt_bytes and the offered
 // tool figure with its source, per adapter. The count is what the harness
 // offers (rendered --tools, or the harness's own init report) — never the grant
-// length. A grok acp reviewer is refused before it starts (the refusal test).
+// length. A grok acp reviewer runs with a warning and records an unverified
+// source (the warning test).
 func TestInvoke_RecordsPromptBytesAndOfferedToolsPerAdapter(t *testing.T) {
 	const ro = "Read,Grep,Glob"
 	intp := func(p *int) any {

@@ -27,20 +27,23 @@ func isolationFindingsFor(t *testing.T, agentsAdd string) map[string]health.Find
 	return out
 }
 
-// sty_ef3efb51 AC8: doctor warns — naming the binding — when a reviewer binding
-// skips permission requests without a tool allow-list equal to its grant. The
-// stock grok command preset and the claude default do not warn.
+// sty_2d5e583a AC3: doctor WARNs — naming the binding, the gap and the fix — when
+// a reviewer binding cannot be held to its grant (it skips permission requests
+// without a tool allow-list equal to its grant, or no adapter can deny an
+// out-of-grant tool). The binding still runs. The stock grok command preset and
+// the claude default do not warn.
 func TestDoctorWarnsOnReviewerSkippingPermissionsWithoutAllowList(t *testing.T) {
 	warn := []struct {
-		name, binding string
+		name, binding, wantGap string
 	}{
-		{"grok acp stock spawn (peer reports no permission mode)", "\n[judge]\nrole = \"reviewer\"\ninterface = \"acp\"\ncommand = \"grok agent stdio\"\ntools = \"Read,Grep,Glob\"\n"},
-		{"grok acp in yolo", "\n[judge]\nrole = \"reviewer\"\ninterface = \"acp\"\ncommand = \"grok agent --always-approve stdio\"\ntools = \"Read,Grep,Glob\"\n"},
-		{"grok command always-approve, no --tools", "\n[judge]\nrole = \"reviewer\"\ncommand = \"grok -p {payload} --system-prompt-override {system} --always-approve\"\ntools = \"Read,Grep,Glob\"\n"},
-		{"grok command always-approve, wider --tools", "\n[judge]\nrole = \"reviewer\"\ncommand = \"grok -p {payload} --tools read_file,run_terminal_command --always-approve\"\ntools = \"Read,Grep,Glob\"\n"},
-		{"claude bypass, no --tools", "\n[judge]\nrole = \"reviewer\"\ncommand = \"claude -p --dangerously-skip-permissions --append-system-prompt {system}\"\ntools = \"Read,Grep,Glob\"\n"},
-		{"claude command bypass + scoped grant", "\n[judge]\nrole = \"reviewer\"\ncommand = \"claude -p --dangerously-skip-permissions --tools {tools} --append-system-prompt {system}\"\ntools = \"Read,Grep,Glob,Bash(satelle:*)\"\n"},
-		{"claude stream bypassPermissions + scoped grant", "\n[judge]\nrole = \"reviewer\"\ninterface = \"stream\"\ncommand = \"claude -p --input-format stream-json --output-format stream-json --permission-mode bypassPermissions --tools {tools}\"\ntools = \"Read,Grep,Glob,Bash(satelle:*)\"\n"},
+		{"grok acp stock spawn (peer reports no permission mode)", "\n[judge]\nrole = \"reviewer\"\ninterface = \"acp\"\ncommand = \"grok agent stdio\"\ntools = \"Read,Grep,Glob\"\n", "usage accounting not to standard"},
+		{"grok acp in yolo", "\n[judge]\nrole = \"reviewer\"\ninterface = \"acp\"\ncommand = \"grok agent --always-approve stdio\"\ntools = \"Read,Grep,Glob\"\n", "tools not held to the grant"},
+		{"grok command always-approve, no --tools", "\n[judge]\nrole = \"reviewer\"\ncommand = \"grok -p {payload} --system-prompt-override {system} --always-approve\"\ntools = \"Read,Grep,Glob\"\n", "tools not held to the grant"},
+		{"grok command always-approve, wider --tools", "\n[judge]\nrole = \"reviewer\"\ncommand = \"grok -p {payload} --tools read_file,run_terminal_command --always-approve\"\ntools = \"Read,Grep,Glob\"\n", "tools not held to the grant"},
+		{"claude bypass, no --tools", "\n[judge]\nrole = \"reviewer\"\ncommand = \"claude -p --dangerously-skip-permissions --append-system-prompt {system}\"\ntools = \"Read,Grep,Glob\"\n", "tools not held to the grant"},
+		{"claude command bypass + scoped grant", "\n[judge]\nrole = \"reviewer\"\ncommand = \"claude -p --dangerously-skip-permissions --tools {tools} --append-system-prompt {system}\"\ntools = \"Read,Grep,Glob,Bash(satelle:*)\"\n", "scoped grant not enforced"},
+		{"claude stream bypassPermissions + scoped grant", "\n[judge]\nrole = \"reviewer\"\ninterface = \"stream\"\ncommand = \"claude -p --input-format stream-json --output-format stream-json --permission-mode bypassPermissions --tools {tools}\"\ntools = \"Read,Grep,Glob,Bash(satelle:*)\"\n", "scoped grant not enforced"},
+		{"unrecognised harness without the key", "\n[judge]\nrole = \"reviewer\"\ncommand = \"verdict.sh -p {payload}\"\ntools = \"Read,Grep,Glob\"\n", "tools not held to the grant"},
 	}
 	for _, tc := range warn {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,37 +55,32 @@ func TestDoctorWarnsOnReviewerSkippingPermissionsWithoutAllowList(t *testing.T) 
 			if f.Severity != health.SeverityWarn {
 				t.Errorf("severity = %s, want warn (advisory)", f.Severity)
 			}
-			if !strings.Contains(f.Detail, "skips permission requests without a tool allow-list equal to its grant") {
-				t.Errorf("detail = %q", f.Detail)
+			if !strings.Contains(f.Detail, tc.wantGap) || !strings.Contains(f.Detail, "runs with a warning") {
+				t.Errorf("detail = %q, want the gap %q and that it runs", f.Detail, tc.wantGap)
+			}
+			if strings.Contains(f.Detail, "refused") || f.Remediation == "" || !strings.Contains(f.Remediation, "operator-attested") {
+				t.Errorf("finding must not claim a refusal and must carry the fix incl. the acknowledgement: %+v", f)
 			}
 		})
 	}
 
-	// An unrecognised harness is refused unless the binding attests isolation; a
-	// key on a claude/grok binding waives nothing.
-	t.Run("unrecognised harness without the key warns it will be refused", func(t *testing.T) {
-		got := isolationFindingsFor(t, "\n[judge]\nrole = \"reviewer\"\ncommand = \"verdict.sh -p {payload}\"\ntools = \"Read,Grep,Glob\"\n")
-		f, ok := got["judge"]
-		if !ok || !strings.Contains(f.Detail, "will be refused at dispatch") {
-			t.Fatalf("want a refusal warning naming the binding, got %+v", got)
-		}
-	})
-	t.Run("attested unrecognised harness is visible, naming the binding", func(t *testing.T) {
-		got := isolationFindingsFor(t, "\n[judge]\nrole = \"reviewer\"\ncommand = \"verdict.sh -p {payload}\"\ntools = \"Read,Grep,Glob\"\nisolation = \"operator-attested\"\n")
-		f, ok := got["judge"]
-		if !ok {
-			t.Fatal("an attested binding must be reported, never silent")
-		}
-		if f.Severity != health.SeverityWarn || strings.Contains(f.Detail, "will be refused") || !strings.Contains(f.Detail, "operator-attested") {
-			t.Errorf("attested finding = %+v", f)
-		}
-	})
-	t.Run("the key does not waive a grok acp refusal", func(t *testing.T) {
-		got := isolationFindingsFor(t, "\n[judge]\nrole = \"reviewer\"\ninterface = \"acp\"\ncommand = \"grok agent stdio\"\ntools = \"Read,Grep,Glob\"\nisolation = \"operator-attested\"\n")
-		if f, ok := got["judge"]; !ok || !strings.Contains(f.Detail, "will be refused at dispatch") {
-			t.Fatalf("want the refusal warning, got %+v", got)
-		}
-	})
+	// isolation = "operator-attested" acknowledges any gap: an INFO, not a WARN.
+	for _, tc := range []struct{ name, binding string }{
+		{"unrecognised harness", "\n[judge]\nrole = \"reviewer\"\ncommand = \"verdict.sh -p {payload}\"\ntools = \"Read,Grep,Glob\"\nisolation = \"operator-attested\"\n"},
+		{"grok acp", "\n[judge]\nrole = \"reviewer\"\ninterface = \"acp\"\ncommand = \"grok agent stdio\"\ntools = \"Read,Grep,Glob\"\nisolation = \"operator-attested\"\n"},
+		{"grok command always-approve", "\n[judge]\nrole = \"reviewer\"\ncommand = \"grok -p {payload} --always-approve\"\ntools = \"Read,Grep,Glob\"\nisolation = \"operator-attested\"\n"},
+	} {
+		t.Run("attested "+tc.name+" is acknowledged as info, naming the binding", func(t *testing.T) {
+			got := isolationFindingsFor(t, tc.binding)
+			f, ok := got["judge"]
+			if !ok {
+				t.Fatal("an attested binding must be reported, never silent")
+			}
+			if f.Severity != health.SeverityInfo || !strings.Contains(f.Detail, "operator-attested") || strings.Contains(f.Detail, "refused") {
+				t.Errorf("attested finding = %+v, want info acknowledging the gap", f)
+			}
+		})
+	}
 
 	// Every role=reviewer dispatch shares the one isolation path, so the summary
 	// and consult bindings are judged (and named) exactly like a gate reviewer.
@@ -91,8 +89,8 @@ func TestDoctorWarnsOnReviewerSkippingPermissionsWithoutAllowList(t *testing.T) 
 			"\n[reviewer-summary]\nrole = \"reviewer\"\ninterface = \"acp\"\ncommand = \"grok agent stdio\"\ntools = \"Read,Grep,Glob\"\n"+
 				"\n[reviewer-consult]\nrole = \"reviewer\"\ncommand = \"grok -p {payload} --system-prompt-override {system} --always-approve\"\ntools = \"Read,Grep,Glob\"\n")
 		for _, name := range []string{"reviewer-summary", "reviewer-consult"} {
-			if f, ok := got[name]; !ok || !strings.Contains(f.Detail, "will be refused at dispatch") {
-				t.Errorf("want a refusal warning naming %q, got %+v", name, got)
+			if f, ok := got[name]; !ok || f.Severity != health.SeverityWarn || !strings.Contains(f.Detail, "runs with a warning") {
+				t.Errorf("want a warning naming %q, got %+v", name, got)
 			}
 		}
 	})

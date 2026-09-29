@@ -63,7 +63,7 @@ type AdapterCapabilities struct {
 func CapabilityTable() []AdapterCapabilities {
 	const notLive = "interface=command is one-shot only"
 	const noGrokHookModel = "grok's hook payload carries no model, so the in-loop tier is unknown"
-	const grokACPNoTrim = "grok agent stdio has no tool-list flag and reports no permission mode, so a grok acp reviewer is refused as a reviewer"
+	const grokACPNoTrim = "grok agent stdio has no tool-list flag and reports no permission mode, so a grok acp reviewer runs with a warning that its tools are not held to the grant"
 	return []AdapterCapabilities{
 		{
 			Adapter: "claude command", Usage: yes(), CacheSplit: yes(), ResolvedModel: yes(),
