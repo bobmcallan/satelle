@@ -215,7 +215,18 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 			if hookEditPermitted(info, dm, rm) {
 				return nil
 			}
-			return denyPreToolUse(cmd, raw, hookDenyReason(info, live, dm, rm, sid, time.Now().UTC()))
+			// The scoped in-loop fix lane (sty_4b694872) is a second look at a
+			// PATH edit the ordinary rule refused: one recorded, in-bound claim
+			// on exactly this path licenses exactly one edit. It never widens
+			// what a gate judges, and never applies to a dispatched performer.
+			note := ""
+			if p != "" {
+				var granted bool
+				if granted, note = fixLaneEdit(info, dm, rm, raw, p); granted {
+					return nil
+				}
+			}
+			return denyPreToolUse(cmd, raw, hookDenyReason(info, live, dm, rm, sid, time.Now().UTC())+note)
 		},
 	}
 

@@ -236,6 +236,13 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 		if serr != nil {
 			return fmt.Errorf("init: seed [sync] stale_after: %w", serr)
 		}
+		fixLaneChanged, ferr := healFixLane(dataDir)
+		if ferr != nil {
+			return fmt.Errorf("init: seed [fix_lane]: %w", ferr)
+		}
+		if fixLaneChanged {
+			fmt.Fprintf(out, "~ %s ([fix_lane] seeded — product_surface is empty, so the fix lane is closed until you declare it)\n", config.DefaultDataDir+"/"+config.ConfigName)
+		}
 		switch {
 		case hostedChanged && staleChanged:
 			fmt.Fprintf(out, "~ %s ([hosted] folded into [sync]; stale_after seeded)\n", config.DefaultDataDir+"/"+config.ConfigName)
@@ -1512,7 +1519,7 @@ func legacyHookSub(cmd string) string {
 // are seeded ACTIVE from the managed-list helpers so the seeded values and the
 // set migrate converges on cannot drift apart — hence the literal is split
 // around them.
-var scaffoldToml = scaffoldTomlBeforeExempt + defaultEditExemptTOML() + scaffoldTomlBetweenExempt + defaultEditExemptGlobsTOML() + scaffoldTomlAfterExempt
+var scaffoldToml = scaffoldTomlBeforeExempt + defaultEditExemptTOML() + scaffoldTomlBetweenExempt + defaultEditExemptGlobsTOML() + scaffoldTomlAfterExempt + fixLaneScaffoldBlock()
 
 const scaffoldTomlBeforeExempt = `# satelle.toml — per-repo config (committed, secret-free). Every setting has a
 # default, so this file may stay fully commented; uncomment a key to override.

@@ -176,7 +176,7 @@ rather than silently dropping every gate it authored. How each agent runs is bou
 `.satelle/workflows/agents.toml` — the reviewer's
 agent CLI (`claude` and `grok` presets — see
 `satelle help agent-dispatch`) and its read-only grant; the executor runs
-in-loop. `satelle agents install claude|grok|all` installs launchers and
+in-loop. `satelle agents install claude|grok|pi|all` installs launchers and
 repo compliance hooks (`.claude` / `.grok`) so governed edits need
 an engaged story.
 

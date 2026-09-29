@@ -44,10 +44,13 @@ func TestScaffoldTomlDocumentsConfigSurface(t *testing.T) {
 		case "[gate]", "edit_exempt_paths = " + defaultEditExemptTOML(),
 			"edit_exempt_globs = " + defaultEditExemptGlobsTOML(),
 			"[review]", "gate_create = true",
-			"[sync]", `stale_after = "24h"`:
+			"[sync]", `stale_after = "24h"`,
+			// sty_4b694872: the fix lane's DECLARATION is seeded so it exists to
+			// be edited; product_surface starts empty, which leaves the lane closed.
+			"[fix_lane]", "product_surface = []":
 			// expected seeded active lines
 		default:
-			t.Errorf("scaffold line %d is active (want fully-commented except [gate]/[review]/[sync] stale_after): %q", i+1, s)
+			t.Errorf("scaffold line %d is active (want fully-commented except [gate]/[review]/[sync] stale_after/[fix_lane]): %q", i+1, s)
 		}
 	}
 

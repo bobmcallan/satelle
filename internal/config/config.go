@@ -144,6 +144,10 @@ type Config struct {
 	// injection limit (sty_ce1a2733). Embedded defaults live in
 	// substrate/config/harness.toml; a key here overrides them per harness.
 	Harness map[string]HarnessConfig `toml:"harness"`
+	// FixLane is the bound on the in-loop fix lane (sty_4b694872): the size
+	// ceiling and the path classes a claim may never touch. Embedded default in
+	// substrate/config/fix_lane.toml; see ResolveFixLane.
+	FixLane FixLaneConfig `toml:"fix_lane"`
 	// Attachments bounds binary story attachments (sty_40e5a305): max decoded
 	// size and the content-type allowlist. Defaults ship in code as mechanism
 	// bounds; a repo may override either in satelle.toml.

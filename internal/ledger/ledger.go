@@ -150,6 +150,16 @@ const (
 	// set; with none configured satelle warns and records the measurement on the
 	// agent_invocation row instead.
 	KindBudgetOverrun = "budget_overrun"
+	// KindFixClaim records one in-loop-fix claim (sty_4b694872) — the typed
+	// exception the fix lane grants — BEFORE the edit it licenses. Payload is
+	// fixlane.ClaimPayload: path, reason, bound_lines, proving_test and the
+	// decision (recorded | refused, with the refused class). A refused claim is a
+	// row too, so refusal is analysable, not merely silent. Enumeration only —
+	// the class decision is the configured bound's, applied by internal/fixlane.
+	KindFixClaim = "fix_claim"
+	// KindFixClaimUse records the ONE edit a recorded claim licensed. Refs carries
+	// {"claim": "<fix_claim entry id>"}; a claim with a use row is consumed.
+	KindFixClaimUse = "fix_claim_used"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional

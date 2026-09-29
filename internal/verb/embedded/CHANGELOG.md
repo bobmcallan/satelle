@@ -1,3 +1,22 @@
+## [0.0.585] - 2026-09-29
+
+### Added
+- **A scoped in-loop fix lane: a typed `in-loop-fix` claim with an absolute bound, and a ledger row per claim.** When an agent hit a small, self-evident fix mid-step, satelle offered two wrong answers: engage a full story for a two-line change, or make an ungated edit that is a rule breach and invisible afterwards. `satelle fix claim <path> --reason … --lines N --test <named test>` records the claim BEFORE the edit, and the edit gate then allows that ONE edit. `satelle fix report` analyses the rows over any window. (sty_4b694872, epic:pi-harness)
+  - **The lane changes WHO MAY EDIT, never WHAT IS JUDGED.** It joins the existing adapter-neutral PreToolUse predicate as a second look, taken only after the ordinary rule has already refused, so claude, grok and pi all reach it through the same harness matchers with no provider-specific code. `TestFixLaneNeverChangesWhatAGateJudges` compares every gate skill body and every edge's reviewer set byte-for-byte with the lane off, on, and after a claim is used.
+  - **The bound is absolute, and it fails closed.** A claim is refused — and the refusal is itself a ledger row carrying the class — when it touches product surface, a gate skill, a reviewer rubric, a workflow, a principle, the constitution or the repo config, or names no proving test. **The lane does not exist unless the repo declares `[fix_lane] product_surface`**: with none declared every claim is refused with class `undeclared-bound`, because a lane with no declared product surface would be anything-goes. The substrate classes are DERIVED from where the repo actually keeps its substrate, so relocating it keeps every refusal.
+  - **No bound number lives in Go.** `max_lines` is read from the repo's `[fix_lane]`, and the default ships in the embedded `substrate/config/fix_lane.toml` as template text that the help topic derives from. A repo that sets no bound falls to that default, never to "anything goes". `TestNoBoundLiteralInGo` scans the lane's sources, including comments and the seed.
+  - **One claim licenses ONE edit and dies at the story's next transition**, so it is never a standing licence. It is refused outright under a dispatch or relay marker, and while a transition is in flight — a lane is for the driving session, and a dispatched performer or a reviewer still edits nothing.
+  - **Every claim and every refusal is a row, before the edit.** `fix_claim` precedes `fix_claim_used`, both durable in SQLite and readable from another process, so the timeline proves the claim came first. Without a row per exception the exception rate, its size distribution and its test coverage are unmeasured — and an unbounded lane is indistinguishable from no lane. `satelle fix report` yields, over any window: claim count, declared and edited size distribution, refused-claim count by class, and per-gate reject count.
+  - **The rule lives in substrate, not only in Go.** `satelle-edits-require-a-story` now names the lane as the one exception to the executor-state rule — explicitly not to the engaged-story requirement — and points at `satelle help fix-lane` for the refused classes.
+
+### Changed
+- **`satelle agents install claude|grok|pi|all` in the README.** The documented target list predated 0.0.584's pi scaffold and understated the thing it described. Fixed through the new lane itself, as its dogfood: a recorded claim, one line, rows `evt_d66c6780` and `evt_83ae07e7`. (sty_4b694872)
+
+## [serve-v0.0.104] - 2026-09-29
+
+### Added
+- **The service carries the in-loop fix lane above**, its ledger kinds, and the amended `satelle-edits-require-a-story` principle and `fix-lane` help topic. (sty_4b694872)
+
 ## [0.0.584] - 2026-09-29
 
 ### Added

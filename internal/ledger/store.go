@@ -116,6 +116,49 @@ func (s *Store) Append(ctx context.Context, in AppendInput, now time.Time) (Entr
 	return e, nil
 }
 
+// AppendOnce appends in ONLY when no row of the same kind already carries the
+// same Refs, and reports whether it did. The existence check and the insert are
+// ONE statement, so of any number of concurrent callers (separate processes
+// included — sqlite serialises the writers) exactly one inserts. Refs is
+// required: it is the identity being claimed once (sty_4b694872: one fix-lane
+// claim licenses one edit, and a check-then-append would let two parallel edits
+// both pass the check).
+func (s *Store) AppendOnce(ctx context.Context, in AppendInput, now time.Time) (Entry, bool, error) {
+	if strings.TrimSpace(in.Kind) == "" {
+		return Entry{}, false, fmt.Errorf("ledger: kind required")
+	}
+	if len(in.Refs) == 0 {
+		return Entry{}, false, fmt.Errorf("ledger: append-once requires refs")
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	now = now.UTC()
+	payload := in.Payload
+	if len(payload) == 0 {
+		payload = json.RawMessage("{}")
+	}
+	e := Entry{
+		ID: NewID(), StoryID: in.StoryID, ProjectID: in.ProjectID, Kind: in.Kind,
+		Actor: in.Actor, Body: in.Body, Payload: payload, Refs: in.Refs, CreatedAt: now,
+	}
+	res, err := s.db.ExecContext(ctx, `
+        INSERT INTO evidence (id, story_id, project_id, kind, actor, body, payload, refs, created_at)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE NOT EXISTS (SELECT 1 FROM evidence WHERE kind = ? AND refs = ?)`,
+		e.ID, e.StoryID, e.ProjectID, e.Kind, e.Actor, e.Body,
+		string(payload), string(in.Refs), now.Format(time.RFC3339Nano),
+		in.Kind, string(in.Refs))
+	if err != nil {
+		return Entry{}, false, fmt.Errorf("ledger: append once: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return Entry{}, false, fmt.Errorf("ledger: append once: %w", err)
+	}
+	return e, n == 1, nil
+}
+
 // Upsert inserts an evidence row with a known id (workstate rehydrate). Uses
 // INSERT OR IGNORE so re-run is idempotent and existing rows are never
 // rewritten (append-only in spirit). Kind and ID are required; missing
