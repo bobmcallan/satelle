@@ -74,7 +74,7 @@ func TestServeReleaseWalkStopsAndReportsHonestly(t *testing.T) {
 
 	t.Run("short page ends the list", func(t *testing.T) {
 		fetched := 0
-		_, err := firstPrefixedTagInPages(func(page int) ([]byte, error) {
+		_, err := highestPrefixedTagInPages(func(page int) ([]byte, error) {
 			fetched++
 			return []byte(`[{"tag_name":"v0.0.1","draft":false}]`), nil
 		}, "serve-v", 10)
@@ -87,7 +87,7 @@ func TestServeReleaseWalkStopsAndReportsHonestly(t *testing.T) {
 	})
 
 	t.Run("draft is skipped", func(t *testing.T) {
-		got, err := firstPrefixedTagInPages(func(page int) ([]byte, error) {
+		got, err := highestPrefixedTagInPages(func(page int) ([]byte, error) {
 			return []byte(`[{"tag_name":"serve-v0.0.99","draft":true},{"tag_name":"serve-v0.0.12","draft":false}]`), nil
 		}, "serve-v", 10)
 		if err != nil || got != "serve-v0.0.12" {
@@ -95,9 +95,49 @@ func TestServeReleaseWalkStopsAndReportsHonestly(t *testing.T) {
 		}
 	})
 
+	t.Run("higher tag on a later page wins", func(t *testing.T) {
+		fetched := 0
+		got, err := highestPrefixedTagInPages(func(page int) ([]byte, error) {
+			fetched++
+			if page == 1 {
+				var entries []string
+				for i := 0; i < releasePageSize-1; i++ {
+					entries = append(entries, fmt.Sprintf(`{"tag_name":"v0.0.%d","draft":false}`, 900-i))
+				}
+				entries = append(entries, `{"tag_name":"serve-v0.0.99","draft":false}`)
+				return []byte("[" + strings.Join(entries, ",") + "]"), nil
+			}
+			return []byte(`[{"tag_name":"serve-v0.0.100","draft":false}]`), nil
+		}, "serve-v", 10)
+		if err != nil || got != "serve-v0.0.100" {
+			t.Fatalf("got %q err %v, want serve-v0.0.100 from the later page", got, err)
+		}
+		if fetched != 2 {
+			t.Fatalf("fetched %d pages, want 2", fetched)
+		}
+	})
+
+	t.Run("cap reached with a match returns the highest seen", func(t *testing.T) {
+		fetched := 0
+		got, err := highestPrefixedTagInPages(func(page int) ([]byte, error) {
+			fetched++
+			body := fullCLIPage()
+			if page == 1 {
+				body = []byte(strings.Replace(string(body), "v0.0.900", "serve-v0.0.5", 1))
+			}
+			return body, nil
+		}, "serve-v", 3)
+		if err != nil || got != "serve-v0.0.5" {
+			t.Fatalf("got %q err %v, want serve-v0.0.5", got, err)
+		}
+		if fetched != 3 {
+			t.Fatalf("fetched %d pages, want the 3-page cap", fetched)
+		}
+	})
+
 	t.Run("cap exhausted says so", func(t *testing.T) {
 		fetched := 0
-		_, err := firstPrefixedTagInPages(func(page int) ([]byte, error) {
+		_, err := highestPrefixedTagInPages(func(page int) ([]byte, error) {
 			fetched++
 			return fullCLIPage(), nil
 		}, "serve-v", 3)
@@ -110,13 +150,46 @@ func TestServeReleaseWalkStopsAndReportsHonestly(t *testing.T) {
 	})
 
 	t.Run("fetch error propagates", func(t *testing.T) {
-		_, err := firstPrefixedTagInPages(func(page int) ([]byte, error) {
+		_, err := highestPrefixedTagInPages(func(page int) ([]byte, error) {
 			return nil, errors.New("boom")
 		}, "serve-v", 10)
 		if err == nil || !strings.Contains(err.Error(), "boom") {
 			t.Fatalf("err = %v, want the transport error", err)
 		}
 	})
+}
+
+// TestHighestServeReleaseTag proves the highest version wins over list order:
+// GitHub listed serve-v0.0.99 ahead of serve-v0.0.100 (sty_47cf8289).
+func TestHighestServeReleaseTag(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string // "" means the not-published error
+	}{
+		{"real listing order", `[{"tag_name":"v0.0.578"},{"tag_name":"v0.0.577"},{"tag_name":"serve-v0.0.99"},{"tag_name":"serve-v0.0.100"}]`, "serve-v0.0.100"},
+		{"9 before 10", `[{"tag_name":"serve-v0.0.9"},{"tag_name":"serve-v0.0.10"}]`, "serve-v0.0.10"},
+		{"10 before 9", `[{"tag_name":"serve-v0.0.10"},{"tag_name":"serve-v0.0.9"}]`, "serve-v0.0.10"},
+		{"minor beats patch", `[{"tag_name":"serve-v0.1.0"},{"tag_name":"serve-v0.0.200"}]`, "serve-v0.1.0"},
+		{"lone tag", `[{"tag_name":"serve-v0.0.7"}]`, "serve-v0.0.7"},
+		{"malformed tags ignored", `[{"tag_name":"serve-vnext"},{"tag_name":"serve-v1.2"},{"tag_name":"serve-v0.0.5"},{"tag_name":"serve-v0.0.6-rc1"},{"tag_name":"serve-v0.0.-3"}]`, "serve-v0.0.5"},
+		{"only malformed tags", `[{"tag_name":"serve-vnext"},{"tag_name":"serve-v1.2"}]`, ""},
+		{"draft skipped", `[{"tag_name":"serve-v0.0.999","draft":true},{"tag_name":"serve-v0.0.12"}]`, "serve-v0.0.12"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := highestPrefixedTagInPages(func(int) ([]byte, error) { return []byte(tc.body), nil }, "serve-v", 10)
+			if tc.want == "" {
+				if err == nil || !isNoServeReleaseErr(err) {
+					t.Fatalf("got %q err %v, want the not-published error", got, err)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("got %q err %v, want %q", got, err, tc.want)
+			}
+		})
+	}
 }
 
 // TestReleaseListPageURL proves pagination merges with an override URL that

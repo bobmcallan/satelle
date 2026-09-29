@@ -1,3 +1,8 @@
+## [0.0.579] - 2026-09-29
+
+### Fixed
+- **`satelle update` installs the highest published satelled, not the first one GitHub lists.** GitHub's release list is not ordered by version (it returned serve-v0.0.99 ahead of serve-v0.0.100), and update took the first `serve-v*` tag it found. Every install stopped at satelled 0.0.99 once the serve patch number reached three digits. update now reads every release page up to the existing cap and installs the numerically highest `serve-v` tag. It ignores drafts and tags that do not parse as a version. The "no published release" and "cap exhausted" errors are unchanged. Run `satelle update` again to pick up satelled 0.0.100. (sty_47cf8289)
+
 ## [0.0.578] - 2026-09-29
 
 ### Added

@@ -176,17 +176,18 @@ func TestDownloadAndReplaceFrom(t *testing.T) {
 	}
 }
 
-func TestFirstPrefixedTag(t *testing.T) {
+func TestHighestPrefixedTag(t *testing.T) {
 	body := []byte(`[
 	  {"tag_name":"v0.0.285"},
 	  {"tag_name":"serve-v0.0.2"},
+	  {"tag_name":"serve-v0.0.10"},
 	  {"tag_name":"serve-v0.0.1"}
 	]`)
-	got, err := firstPrefixedTag(body, "serve-v")
-	if err != nil || got != "serve-v0.0.2" {
+	got, err := highestPrefixedTag(body, "serve-v")
+	if err != nil || got != "serve-v0.0.10" {
 		t.Fatalf("got %q err %v", got, err)
 	}
-	if _, err := firstPrefixedTag(body, "nope-"); err == nil {
+	if _, err := highestPrefixedTag(body, "nope-"); err == nil {
 		t.Fatal("expected error for missing prefix")
 	}
 }

@@ -540,15 +540,15 @@ const (
 	maxReleasePages = 10
 )
 
-// latestServeReleaseTag finds the newest published serve-v* release
-// (sty_19ff03f4). Serve releases are published with --latest=false so
+// latestServeReleaseTag finds the highest-versioned published serve-v* release
+// (sty_19ff03f4, sty_47cf8289). Serve releases are published with --latest=false so
 // /releases/latest stays CLI, which is why they must be found by listing.
 func latestServeReleaseTag(ctx context.Context, repo string) (string, error) {
 	base := os.Getenv("SATELLE_RELEASE_LIST_API")
 	if base == "" {
 		base = fmt.Sprintf("https://api.github.com/repos/%s/releases", repo)
 	}
-	return firstPrefixedTagInPages(func(page int) ([]byte, error) {
+	return highestPrefixedTagInPages(func(page int) ([]byte, error) {
 		return httpGetBytes(ctx, releaseListPageURL(base, page))
 	}, "serve-v", maxReleasePages)
 }
@@ -567,66 +567,128 @@ func releaseListPageURL(base string, page int) string {
 	return u.String()
 }
 
-// firstPrefixedTagInPages walks pages of the newest-first release list until it
-// finds a prefix match, a page comes back empty (the list is exhausted), or
-// maxPages is reached. An exhausted cap is a DISTINCT error from an exhausted
-// list: "searched N pages" says the answer may exist further back, which a bare
-// "not found" would hide. Pure over fetch for unit tests.
-func firstPrefixedTagInPages(fetch func(page int) ([]byte, error), prefix string, maxPages int) (string, error) {
+// highestPrefixedTagInPages walks pages of the release list and returns the
+// numerically highest prefix match. GitHub does not order the list by version
+// (or date), so the first match is not the newest: serve-v0.0.99 was listed
+// ahead of serve-v0.0.100 (sty_47cf8289). The walk therefore continues until a
+// short (or empty) page ends the list or maxPages is reached. An exhausted cap
+// with no match is a DISTINCT error from an exhausted list: "searched N pages"
+// says the answer may exist further back, which a bare "not found" would hide.
+// With a match in hand the cap simply bounds the search. Pure over fetch for
+// unit tests.
+func highestPrefixedTagInPages(fetch func(page int) ([]byte, error), prefix string, maxPages int) (string, error) {
+	best := ""
 	for page := 1; page <= maxPages; page++ {
 		body, err := fetch(page)
 		if err != nil {
 			return "", err
 		}
-		tag, n, err := firstPrefixedTagOnPage(body, prefix)
+		tags, n, err := prefixedTagsOnPage(body, prefix)
 		if err != nil {
 			return "", err
 		}
-		if tag != "" {
-			return tag, nil
-		}
+		best = highestTag(best, tags, prefix)
 		if n < releasePageSize {
 			// Short (or empty) page — that was the end of the list.
-			return "", fmt.Errorf("no published release with prefix %q", prefix)
+			if best == "" {
+				return "", fmt.Errorf("no published release with prefix %q", prefix)
+			}
+			return best, nil
 		}
 	}
-	return "", fmt.Errorf("no published release with prefix %q in the newest %d releases", prefix, maxPages*releasePageSize)
+	if best == "" {
+		return "", fmt.Errorf("no published release with prefix %q in the newest %d releases", prefix, maxPages*releasePageSize)
+	}
+	return best, nil
 }
 
-// firstPrefixedTag returns the first tag_name in a GitHub releases JSON array
-// that has the given prefix (newest-first list). Pure for unit tests.
-func firstPrefixedTag(body []byte, prefix string) (string, error) {
-	tag, _, err := firstPrefixedTagOnPage(body, prefix)
+// highestPrefixedTag returns the numerically highest tag_name in one GitHub
+// releases JSON array that has the given prefix. Pure for unit tests.
+func highestPrefixedTag(body []byte, prefix string) (string, error) {
+	tags, _, err := prefixedTagsOnPage(body, prefix)
 	if err != nil {
 		return "", err
 	}
-	if tag == "" {
+	best := highestTag("", tags, prefix)
+	if best == "" {
 		return "", fmt.Errorf("no release tag with prefix %q", prefix)
 	}
-	return tag, nil
+	return best, nil
 }
 
-// firstPrefixedTagOnPage returns the first matching tag on one page plus how
-// many entries that page held (so the caller knows whether to keep walking).
-// tag is "" when the page holds no match. DRAFTS ARE SKIPPED: a draft carries no
+// highestTag folds tags into best, keeping the numerically highest by the
+// version that follows prefix. best and every tag already parse.
+func highestTag(best string, tags []string, prefix string) string {
+	bestVer, haveBest := [3]int{}, false
+	if best != "" {
+		bestVer, haveBest = parseTagVersion(strings.TrimPrefix(best, prefix))
+	}
+	for _, t := range tags {
+		v, ok := parseTagVersion(strings.TrimPrefix(t, prefix))
+		if !ok {
+			continue
+		}
+		if !haveBest || lessVersion(bestVer, v) {
+			best, bestVer, haveBest = t, v, true
+		}
+	}
+	return best
+}
+
+// prefixedTagsOnPage returns every selectable tag on one page plus how many
+// entries that page held (so the caller knows whether to keep walking). A tag
+// is selectable when it has the prefix and the rest parses as MAJOR.MINOR.PATCH;
+// anything else is ignored, never chosen. DRAFTS ARE SKIPPED: a draft carries no
 // downloadable asset, so selecting one would trade a missed release for a 404.
-func firstPrefixedTagOnPage(body []byte, prefix string) (tag string, count int, err error) {
+func prefixedTagsOnPage(body []byte, prefix string) (tags []string, count int, err error) {
 	var releases []struct {
 		TagName string `json:"tag_name"`
 		Draft   bool   `json:"draft"`
 	}
 	if err := json.Unmarshal(body, &releases); err != nil {
-		return "", 0, err
+		return nil, 0, err
 	}
 	for _, r := range releases {
-		if r.Draft {
+		if r.Draft || !strings.HasPrefix(r.TagName, prefix) {
 			continue
 		}
-		if strings.HasPrefix(r.TagName, prefix) {
-			return r.TagName, len(releases), nil
+		if _, ok := parseTagVersion(strings.TrimPrefix(r.TagName, prefix)); ok {
+			tags = append(tags, r.TagName)
 		}
 	}
-	return "", len(releases), nil
+	return tags, len(releases), nil
+}
+
+// parseTagVersion parses a strict MAJOR.MINOR.PATCH of non-negative integers.
+// It is deliberately stricter than a general semver compare: a tag that does not
+// parse must never be chosen as the release to install.
+func parseTagVersion(s string) ([3]int, bool) {
+	var v [3]int
+	parts := strings.Split(s, ".")
+	if len(parts) != 3 {
+		return v, false
+	}
+	for i, p := range parts {
+		if p == "" || strings.Trim(p, "0123456789") != "" {
+			return v, false
+		}
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return v, false
+		}
+		v[i] = n
+	}
+	return v, true
+}
+
+// lessVersion reports whether a sorts before b.
+func lessVersion(a, b [3]int) bool {
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
+	}
+	return false
 }
 
 // downloadAndReplace downloads the platform asset for tag from repo's releases,
