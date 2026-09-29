@@ -1,3 +1,11 @@
+## [0.0.581] - 2026-09-29
+
+### Fixed
+- **The gate-value view groups a seat's spend under its role, not under `unknown`.** `normalizeSkill` folded every empty skill into `unknown`, so one seat appeared under two labels — the 30-day dogfood showed `coder / coder@sonnet` at 57 rows / $181.61 and `unknown / coder@sonnet` at 24 rows / $54.20, with orchestrator, reviewer-consult and planner rows under `unknown` too. A reader could not separate gate spend from executor and orchestrator spend, and per-seat totals split across rows. The label now resolves the recorded skill, then the recorded role, and reaches `unknown` only when neither is recorded. The view still only reports. (sty_95b6b869)
+
+### Fixed (test)
+- **The instruction-change gate and its trigger ship with their fence and wiring fixtures.** Both halves landed in 0.0.580 without the integration fixtures the substrate checks require, so `make integration` — and `satelle-integration-check` on the way to release — failed. Both checks are integration-tagged, so `go test ./...` never ran them. (sty_012394c0)
+
 ## [0.0.580] - 2026-09-29
 
 ### Added
