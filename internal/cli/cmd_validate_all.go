@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -51,7 +52,9 @@ silently. Read-only, deterministic, no agent — run it after any substrate edit
 					fmt.Fprintf(out, "FAIL  wikilinks — %s\n", p)
 				}
 			}
-			fmt.Fprintf(out, "\nwikilink problems: %d\n", len(problems))
+			fmt.Fprintf(out, "\nwikilink problems: %d\n\n", len(problems))
+			// Informational: an exceeded budget warns and never counts as a failure.
+			reportInjected(context.Background(), out, a)
 			if failed > 0 {
 				return fmt.Errorf("validate failed")
 			}

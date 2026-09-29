@@ -213,6 +213,10 @@ type State struct {
 	// WaitsOnChildren: a container idles here while its children are driven
 	// (sty_7f3e6fd3). Read through Spec.WaitsOnChildren.
 	WaitsOnChildren bool
+	// When is a gate node's optional enqueue precondition: the functional-check
+	// skill the engine runs before enqueuing it (RouteGate.When). Empty means the
+	// gate is unconditional.
+	When string
 }
 
 // WaitsOnChildren reports whether the route declares that a story holding
@@ -287,6 +291,7 @@ func (s Spec) StepSummaryBinding() (agent string, declared, mandatory bool) {
 type ScopedReviewer struct {
 	Skill string
 	Agent string // agents.toml section; empty → reviewer
+	When  string // functional-check skill; exit 1 skips the gate, empty → always runs
 }
 
 // ScopedReviewers returns the DECLARED, edge-less reviewer nodes that gate the
@@ -328,7 +333,7 @@ func (s Spec) ScopedReviewersSplit(toStatus string, tags []string) (enqueued, sk
 		if !(containsStr(st.On, "*") || containsStr(st.On, toStatus)) {
 			continue
 		}
-		ref := ScopedReviewer{Skill: st.Skill, Agent: st.Agent}
+		ref := ScopedReviewer{Skill: st.Skill, Agent: st.Agent, When: st.When}
 		if !tagsMatchAppliesTo(st.AppliesTo, tags) {
 			// Only applies_to-filtered nodes are "skipped"; absent applies_to never skips.
 			if len(st.AppliesTo) > 0 {

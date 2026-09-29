@@ -133,44 +133,67 @@ type invocation struct {
 	scratch    string // this dispatch's scratch dir; "" → no scratch briefing (sty_e7aaf8b1)
 }
 
+// promptParts are the pieces of an isolated agent's system prompt. Empty parts
+// are omitted, so a selector of none simply leaves constitution and resident
+// empty.
+type promptParts struct {
+	constitution string // project constitution body, trimmed
+	resident     string // resolved principle bodies
+	charter      string // role charter
+	scratch      string // this dispatch's scratch dir
+	rubric       string // the skill body
+}
+
+// composeSystemPrompt is the ONE canonical assembly order: constitution and
+// principles, role charter, scratch briefing, pull-context call-to-action, skill
+// rubric. Shared by buildRequest and the injected-size report (SeatSystemPrompt),
+// so the number the report prints is the length of what a dispatch sends.
+func composeSystemPrompt(p promptParts) string {
+	var b strings.Builder
+	if p.constitution != "" {
+		b.WriteString("# Project constitution\n\n")
+		b.WriteString(p.constitution)
+		b.WriteString("\n\n")
+	}
+	if p.resident != "" {
+		b.WriteString("# Always-resident principles (satelle)\n\n")
+		b.WriteString(p.resident)
+		b.WriteString("\n\n")
+	}
+	if p.charter != "" {
+		b.WriteString(p.charter)
+		b.WriteString("\n\n")
+	}
+	// The scratch briefing rides whenever this dispatch has a scratch dir,
+	// charter or not — a charter-less perform dispatch still needs to know
+	// where to put evidence (sty_e7aaf8b1 AC2).
+	if brief := scratchBriefing(p.scratch); brief != "" {
+		b.WriteString(brief)
+		b.WriteString("\n\n")
+	}
+	// The pull-context call-to-action rides in EVERY isolated-agent prompt.
+	b.WriteString(pullContextCallToAction)
+	if p.rubric != "" {
+		b.WriteString("\n\n---\n\n")
+		b.WriteString(p.rubric)
+	}
+	return b.String()
+}
+
 // buildRequest composes an isolated agent's system prompt in ONE canonical order —
 // constitution+principles (when selector ≠ none), role charter, pull-context
 // call-to-action, skill rubric — marshals the stdin payload, and fills the
 // grant/model/dir. It is the single insertion point for anything satelle wants
 // EVERY isolated agent to receive.
 func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Request, error) {
-	var b strings.Builder
+	parts := promptParts{charter: inv.charter, scratch: inv.scratch, rubric: inv.rubric}
 	// Principles selector (design §5): when not none, constitution rides order-zero
 	// then the selected principles — SessionStart parity (cmd_hook renderAlwaysContent).
 	if inv.principles != "" && inv.principles != config.PrinciplesNone {
-		if c := strings.TrimSpace(g.constitution); c != "" {
-			b.WriteString("# Project constitution\n\n")
-			b.WriteString(c)
-			b.WriteString("\n\n")
-		}
-		if resident := g.resolvePrinciples(ctx, inv.principles); resident != "" {
-			b.WriteString("# Always-resident principles (satelle)\n\n")
-			b.WriteString(resident)
-			b.WriteString("\n\n")
-		}
+		parts.constitution = strings.TrimSpace(g.constitution)
+		parts.resident = g.resolvePrinciples(ctx, inv.principles)
 	}
-	if inv.charter != "" {
-		b.WriteString(inv.charter)
-		b.WriteString("\n\n")
-	}
-	// The scratch briefing rides whenever this dispatch has a scratch dir,
-	// charter or not — a charter-less perform dispatch still needs to know
-	// where to put evidence (sty_e7aaf8b1 AC2).
-	if brief := scratchBriefing(inv.scratch); brief != "" {
-		b.WriteString(brief)
-		b.WriteString("\n\n")
-	}
-	// The pull-context call-to-action rides in EVERY isolated-agent prompt.
-	b.WriteString(pullContextCallToAction)
-	if inv.rubric != "" {
-		b.WriteString("\n\n---\n\n")
-		b.WriteString(inv.rubric)
-	}
+	systemPrompt := composeSystemPrompt(parts)
 	payload, err := json.Marshal(inv.payload)
 	if err != nil {
 		return agentcli.Request{}, err
@@ -197,7 +220,7 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 	}
 	env[config.SpawnEnv] = "1"
 	return agentcli.Request{
-		SystemPrompt: b.String(),
+		SystemPrompt: systemPrompt,
 		Payload:      string(payload),
 		AllowedTools: inv.tools,
 		Model:        inv.model,
@@ -832,13 +855,20 @@ func (g *Engine) runOnceBusyRaw(ctx context.Context, runner agentcli.Runner, req
 // system = embedded docs; project = non-embedded; all = every body; none = empty;
 // comma-list = union (name-sorted, deduped).
 func (g *Engine) resolvePrinciples(ctx context.Context, selector string) string {
+	return ResidentPrinciples(ctx, g.docs, selector)
+}
+
+// ResidentPrinciples is resolvePrinciples over any doc source, exported so the
+// injected-size report measures the exact text a dispatched seat receives rather
+// than a second implementation of the selector.
+func ResidentPrinciples(ctx context.Context, docs DocGetter, selector string) string {
 	selector = strings.TrimSpace(selector)
 	if selector == "" || selector == config.PrinciplesNone {
 		return ""
 	}
 	// Back-compat: session path is alwaysPrinciples (operating-principle guarantee).
 	if selector == config.PrinciplesSession {
-		return g.alwaysPrinciples(ctx)
+		return sessionPrinciples(ctx, docs)
 	}
 
 	want := map[string]bool{}
@@ -849,7 +879,7 @@ func (g *Engine) resolvePrinciples(ctx context.Context, selector string) string 
 		}
 	}
 	if want[config.PrinciplesSession] && len(want) == 1 {
-		return g.alwaysPrinciples(ctx)
+		return sessionPrinciples(ctx, docs)
 	}
 
 	// Collect by classification.
@@ -883,9 +913,9 @@ func (g *Engine) resolvePrinciples(ctx context.Context, selector string) string 
 		}
 		return false
 	}
-	if docs, err := g.docs.List(ctx, "principles"); err == nil {
-		sort.Slice(docs, func(i, j int) bool { return docs[i].Name < docs[j].Name })
-		for _, d := range docs {
+	if listed, err := docs.List(ctx, "principles"); err == nil {
+		sort.Slice(listed, func(i, j int) bool { return listed[i].Name < listed[j].Name })
+		for _, d := range listed {
 			if match(d) {
 				add(d)
 			}
@@ -894,7 +924,7 @@ func (g *Engine) resolvePrinciples(ctx context.Context, selector string) string 
 	// Operating principle guarantee when session/all is in the selector union.
 	if want[config.PrinciplesSession] || want[config.PrinciplesAll] {
 		if !seen[config.OperatingPrinciple] {
-			if d, err := g.docs.Get(ctx, "principles", config.OperatingPrinciple); err == nil {
+			if d, err := docs.Get(ctx, "principles", config.OperatingPrinciple); err == nil {
 				if want[config.PrinciplesAll] || want[config.PrinciplesSession] ||
 					(want[config.PrinciplesSystem] && d.Embedded) ||
 					(want[config.PrinciplesProject] && !d.Embedded) {

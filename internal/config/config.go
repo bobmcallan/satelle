@@ -157,6 +157,12 @@ type Config struct {
 	// compact mode OFF everywhere — plain indented JSON, unchanged, until a
 	// repo opts in.
 	Output OutputConfig `toml:"output"`
+	// InstructionReview names the extra instruction paths the shipped trigger
+	// skill counts (sty_012394c0). See InstructionReviewConfig.
+	InstructionReview InstructionReviewConfig `toml:"instruction_review"`
+	// Validate tunes what `satelle validate` reports beyond structure — today the
+	// injected-context size and its warn-only budgets. See ValidateConfig.
+	Validate ValidateConfig `toml:"validate"`
 }
 
 // OutputConfig is the [output] table: which verbs get compact rendering, when

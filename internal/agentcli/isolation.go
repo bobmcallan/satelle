@@ -288,6 +288,18 @@ func ReviewerSessionPolicy(grant string, caller PermissionPolicy) PermissionPoli
 
 // --- adapter identity and flag tables -------------------------------------
 
+// AdapterName is adapterOf for a caller outside the package that holds a binding's
+// command line rather than a spawn — the label a report prints beside a seat.
+// The first field is the binary, the rest its args; an empty command is
+// HarnessUnknown.
+func AdapterName(command string) string {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return HarnessUnknown
+	}
+	return adapterOf(fields[0], fields[1:])
+}
+
 // adapterOf names the provider behind a spawn from its binary and argv:
 // HarnessClaude, HarnessGrok or HarnessUnknown. Nothing unrecognised is assumed
 // to be Claude ([[satelle-agent-agnostic]] §3).

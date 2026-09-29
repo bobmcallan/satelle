@@ -43,3 +43,6 @@
 sty_*_body.md
 sty_*_ac.md
 # <<< satelle (managed) <<<
+
+# Pi harness config + local key override (.pi/.env) — never commit (operator-owned)
+.pi/

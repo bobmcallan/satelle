@@ -120,6 +120,9 @@ func reviewerList(rs []wfroute.Reviewer) string {
 		if r.Scoped {
 			s += " (always-on)"
 		}
+		if r.When != "" {
+			s += " (conditional, when: " + r.When + ")"
+		}
 		out = append(out, s)
 	}
 	return strings.Join(out, ", ")
@@ -150,6 +153,9 @@ func renderRouteGateScope(out io.Writer, d wfgovern.DerivedRoute) {
 		}
 		if len(st.AppliesTo) > 0 {
 			line += fmt.Sprintf(" · only for tags %s", strings.Join(st.AppliesTo, "|"))
+		}
+		if st.When != "" {
+			line += fmt.Sprintf(" · conditional (when: %s)", st.When)
 		}
 		if st.Mandatory {
 			line += " · mandatory"

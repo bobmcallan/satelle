@@ -11,6 +11,7 @@ import (
 const (
 	HarnessClaude  = "claude"
 	HarnessGrok    = "grok"
+	HarnessPi      = "pi"
 	HarnessUnknown = "unknown"
 )
 
@@ -34,6 +35,20 @@ var sessionMarkers = []sessionMarker{
 	{harness: HarnessClaude, key: "CLAUDECODE", match: func(v string) bool { return strings.TrimSpace(v) == "1" }},
 	{harness: HarnessClaude, key: "CLAUDE_CODE_", prefix: true, match: func(string) bool { return true }},
 	{harness: HarnessGrok, key: "GROK_AGENT", match: nonEmptyNotZero},
+	{harness: HarnessPi, key: "PI_CODING_AGENT", match: nonEmptyNotZero},
+	{harness: HarnessPi, key: "PI_SESSION_", prefix: true, match: func(string) bool { return true }},
+}
+
+// SessionMarkerEnvNames lists the environment keys DetectSessionHarnesses
+// looks at, so a caller that must neutralise harness detection (a test that
+// wants a bare shell) can clear exactly what the code reads instead of
+// hardcoding a list that silently drifts every time a harness is added.
+func SessionMarkerEnvNames() []string {
+	out := make([]string, 0, len(sessionMarkers))
+	for _, m := range sessionMarkers {
+		out = append(out, m.key)
+	}
+	return out
 }
 
 // DetectSessionHarnesses reports which harnesses' session markers appear in
@@ -59,7 +74,7 @@ func DetectSessionHarnesses(environ []string) map[string]bool {
 // marker, and the first harness it names (claude, grok order).
 func InLoopHarnessFromEnv(environ []string) (string, bool) {
 	found := DetectSessionHarnesses(environ)
-	for _, h := range []string{HarnessClaude, HarnessGrok} {
+	for _, h := range []string{HarnessClaude, HarnessGrok, HarnessPi} {
 		if found[h] {
 			return h, true
 		}

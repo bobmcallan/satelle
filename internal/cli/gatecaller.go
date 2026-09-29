@@ -197,17 +197,32 @@ var (
 // one whose session markers this process carries, and each one the repo carries
 // a scaffold for. The wait bound is the shortest cutoff among them, so a repo
 // driven from grok and claude never waits as long as claude alone would allow.
+// configuredDriverHarnesses is the set of harnesses whose facts decide whether
+// a gate hands off.
+//
+// The set is the SESSION's harnesses when the environment names one: a gate
+// verdict is waited on by the harness actually running, and its cutoff is that
+// harness's — not the union of every scaffold the repo happens to keep. A repo
+// with both .claude/ and .grok/ installed would otherwise force every pi session
+// to hand off on grok's 15s cutoff, and the verdict then waits on a hook the pi
+// session never fires (sty_f3dc2a97).
+//
+// With no session marker, the set falls back to the repo's installed scaffolds:
+// that is the proxy satelle has always used for "who may drive this repo", and
+// it is the only evidence available when nobody is driving.
 func configuredDriverHarnesses(repoRoot string, environ []string) []string {
 	set := map[string]bool{}
 	for h := range agentcli.DetectSessionHarnesses(environ) {
 		set[h] = true
 	}
-	claude, grok := detectProcessHarnesses(repoRoot, nil)
-	if claude {
-		set[agentcli.HarnessClaude] = true
-	}
-	if grok {
-		set[agentcli.HarnessGrok] = true
+	if len(set) == 0 {
+		claude, grok := detectProcessHarnesses(repoRoot, nil)
+		if claude {
+			set[agentcli.HarnessClaude] = true
+		}
+		if grok {
+			set[agentcli.HarnessGrok] = true
+		}
 	}
 	out := make([]string, 0, len(set))
 	for h := range set {

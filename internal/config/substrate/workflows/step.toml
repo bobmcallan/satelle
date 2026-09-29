@@ -155,3 +155,22 @@ for = ["*", "docs", "epic-parent", "parent"]
 skill = "satelle-estimate-actual-review"
 on = ["in_progress", "done"]
 for = ["*"]
+
+[[gate]]
+# Judges added or rewritten instruction text (skills, principles, constitution)
+# for accuracy, project relevance and bloat, on the default reviewer seat.
+#
+# `when` is the trigger and it is CONFIGURATION: the named check skill exits 0 to
+# run the gate and 1 to skip it (a typo or whitespace-only change), and any other
+# outcome runs it. A repo that keeps embedded defaults in-tree names their paths
+# in satelle.toml `[instruction_review] extra_paths`.
+#
+# DECISION, not omission: `for` names every category whose route has a step an
+# agent can edit under — the working lane, docs (markdown is what it edits),
+# and the two task-run categories. Containers perform no work, so they carry
+# none. `on = ["done"]` because each of those routes closes there.
+skill = "satelle-instruction-change-review"
+agent = "reviewer"
+when = "satelle-instruction-change-trigger"
+on = ["done"]
+for = ["*", "docs", "execution", "task"]

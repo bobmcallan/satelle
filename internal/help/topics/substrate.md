@@ -74,6 +74,34 @@ are CODE, not LLM rubrics: harness-independent and never flaky. A swapped agent
 (claude, grok) cannot change what "valid" means. `satelle <noun> validate` needs no
 agent CLI.
 
+### Injected context size
+
+`satelle validate` ends with an `# injected context` section: how many bytes of
+instruction text reach an agent, per kind (session-resident principles, the
+constitution, the largest skill of each kind) and per seat. The driver is one row
+per in-loop harness (`driver[claude]`, `driver[grok]`), each under that harness's
+own SessionStart limit, from the same assembly the hook uses; a row notes what the
+limit omitted. Every dispatched seat is one row labelled with its resolved adapter
+and interface (`reviewer[claude/stream]`): constitution and principles when its
+binding injects them, the charter, and its largest skill. A figure that cannot be
+computed prints `unavailable (<why>)`, never a number.
+
+Tokens are an estimate: bytes divided by one provider-neutral ratio, because no
+adapter reports tokens before a call.
+
+```toml
+[validate.injected]
+bytes_per_token = 4          # the default; a unit conversion, not a budget
+
+[validate.injected.budget]   # estimated tokens; the binary ships none
+driver   = 6000              # a seat or kind name, or an exact label: "driver[claude]"
+reviewer = 9000
+```
+
+A row over its budget prints `WARN`. A budget only warns: it never fails
+`satelle validate` and never changes its exit code. With no key set for a row it
+prints `no budget`.
+
 `satelle-repo-agnostic` (only satelle's OWN embedded `scope: system` substrate
 must avoid repo-specifics) is a satelle-dev concern — never a runtime gate. Your
 project substrate is meant to be opinionated; satelle never judges it for that.

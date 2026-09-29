@@ -63,6 +63,25 @@ func HarnessFactsTable() []HarnessFacts {
 			// session with the verdict — three model calls in all, no polling.
 			CompletionNotification: yes(),
 		},
+		{
+			Harness:          HarnessPi,
+			BackgroundCutoff: 10 * time.Minute,
+			// Measured 2026-09-29 on a live pi 0.87.1 session in this repo: a
+			// foreground bash call held the foreground for 25 minutes under an
+			// explicit timeout, and 45s with no timeout at all. pi does not
+			// background a long command the way grok does at 15s, so a
+			// gate-running verb completes in the foreground and replayGate
+			// delivers its own verdict — no driver re-entry, no handoff.
+			CutoffBasis: "a live pi 0.87.1 foreground call held 25m with an explicit timeout and 45s with none; pi does not auto-background a long command",
+			// The verdict arrives through the foreground replay, which calls the
+			// same exclusive Claim the harness Stop hooks call — so delivery is
+			// exactly-once by construction, not by a pi-specific hook. This
+			// matters: without this row pi fell to the HarnessUnknown floor
+			// (10s), every gate detached at 10s, and nothing ever claimed the
+			// finished handle — twelve stranded gates on 2026-09-29, each with
+			// a correct reviewer verdict that never landed.
+			CompletionNotification: yes(),
+		},
 	}
 }
 

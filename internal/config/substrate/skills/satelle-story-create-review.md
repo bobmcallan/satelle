@@ -3,7 +3,7 @@ name: satelle-story-create-review
 scope: system
 type: skill
 tags: [type:skill, type:reviewer]
-description: Content/alignment create gate after the deterministic structural check. Judges ACs vs goal, coherence, scope, premise falsification against the repo, AND category/tag classification. Read-only; rejects with specifics for the agent to fix and retry.
+description: Content/alignment create gate after the deterministic structural check. Judges ACs vs goal, coherence, scope, a DEAD premise only, AND category/tag classification. Read-only; rejects with specifics for the agent to fix and retry.
 ---
 
 # Story create — content, alignment, and classification review
@@ -32,21 +32,34 @@ guaranteed — do not re-check it. Judge content, alignment, premise, and
  a draft that is clearly several stories in one, or whose ACs describe work
  far beyond the goal.
 
-### Premise (falsification)
+### Premise (dead, not unverified)
 
-Same discipline as [[satelle-story-plan-review]] (falsify checkable claims
-against the repo; do not rewrite the work) — applied to the **story body and
-ACs**, not only to a plan artifact.
+One narrow check: does the story ask for something that **does not exist, or
+has been removed**? That is worth catching here — it would waste a whole
+story — and it is decidable from the draft plus one file read.
 
-- **Reject** when the body or ACs assert something **about this repo**
-  (mechanism, structure, or behaviour) that the repo **contradicts**, and you
-  can **name the file/symbol** that shows it. Notes must cite that evidence.
-  Existence claims and behaviour claims are both in scope when checkable.
+- **Reject** only when the body or ACs name a mechanism, artifact or capability
+  this repo does not have, or had and removed, and you can **name the
+  file/symbol** that shows it. Notes must cite that evidence.
 - **Never reject** for opinion: a design you would have chosen differently, a
   preferred tradeoff, or a judgment that the work is not worthwhile. That is
   create-and-match — out of scope for this gate.
-- **Out of scope** (not falsifiable here): future outcomes, value, priority, and
-  whether the operator should do the work. Leave those to the operator.
+- **Out of scope** (not this gate's business): future outcomes, value, priority,
+  whether the operator should do the work, and whether the work is worthwhile.
+
+**Not grounds at create, each of these.** They are plan-time questions and
+`satelle-story-plan-review` owns them, with the plan in hand:
+
+- a count, tally or total asserted about this repo
+- whether a sibling, dependency or referenced story exists
+- whether referenced work has already landed
+- dependency ordering — that this story must follow or precede another
+- anything requiring more than the draft and one file read
+
+A story whose premise depends on a *sibling story's state* is not miswritten; it
+is a sequencing matter, and the driver sequences it. Rejecting it here costs a
+round to learn something a later gate states better. If a premise looks shaky
+but is not dead, accept and let the plan review falsify it.
 
 ### Classification (against [[satelle-story-classification]])
 

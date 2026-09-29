@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -92,10 +93,17 @@ func init() {
 // inside a harness, so caller-mode tests see a bare shell whatever runs them.
 func clearHarnessEnv(t *testing.T) {
 	t.Helper()
+	markers := agentcli.SessionMarkerEnvNames()
 	for _, e := range os.Environ() {
 		k, v, _ := strings.Cut(e, "=")
-		if k == "CLAUDECODE" || strings.HasPrefix(k, "CLAUDE_CODE_") || k == "GROK_AGENT" ||
-			k == config.ScratchEnv || k == config.SessionEnv {
+		match := k == config.ScratchEnv || k == config.SessionEnv
+		for _, m := range markers {
+			if k == m || strings.HasPrefix(k, m) {
+				match = true
+				break
+			}
+		}
+		if match {
 			key, val := k, v
 			_ = os.Unsetenv(key)
 			t.Cleanup(func() { _ = os.Setenv(key, val) })
@@ -696,5 +704,36 @@ func TestDelivery_DiedRunIsDeliveredAsFailure(t *testing.T) {
 	got := deliverFinishedGates(store, "", 5*time.Second)
 	if !strings.Contains(got, "DIED") || !strings.Contains(got, m.ID) {
 		t.Fatalf("a died run must be delivered as a failure:\n%s", got)
+	}
+}
+
+// sty_f3dc2a97: the hand-off decision follows the SESSION's harness, not the
+// union of every scaffold a repo keeps installed. A repo with both .claude/ and
+// .grok/ must not force a pi session to hand off on grok's 15s cutoff — the
+// verdict would then wait on a Stop hook the pi session never fires.
+func TestConfiguredDriverHarnesses_FollowsTheSessionNotTheScaffolds(t *testing.T) {
+	dir := t.TempDir()
+	for _, d := range []string{".claude", ".grok"} {
+		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A pi session in a repo with every scaffold installed: pi alone.
+	got := configuredDriverHarnesses(dir, []string{"PI_CODING_AGENT=true"})
+	if len(got) != 1 || got[0] != agentcli.HarnessPi {
+		t.Errorf("pi session in a .claude+.grok repo = %v, want [%s]", got, agentcli.HarnessPi)
+	}
+	if agentcli.HandoffNeeded(got) {
+		t.Error("a pi-only session must not need a hand-off")
+	}
+	// A grok session in the same repo still hands off — unchanged behaviour.
+	grok := configuredDriverHarnesses(dir, []string{"GROK_AGENT=1"})
+	if !agentcli.HandoffNeeded(grok) {
+		t.Errorf("grok session = %v, want a hand-off (15s cutoff)", grok)
+	}
+	// No session marker: fall back to the installed scaffolds, as before.
+	bare := configuredDriverHarnesses(dir, []string{"PATH=/usr/bin"})
+	if len(bare) != 2 {
+		t.Errorf("no session marker = %v, want both scaffolds [claude grok]", bare)
 	}
 }

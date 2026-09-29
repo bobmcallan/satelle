@@ -1223,7 +1223,7 @@ Handing off is a per-repo choice, `handoff` in the `[gate]` table of
 
 | value | behaviour |
 | --- | --- |
-| `auto` (default) | an agent-facing call hands off only when a harness configured for the repo has a background cutoff under 1 minute — the shortest a gate-running command was measured to hold its caller (grok's 15s qualifies, claude's 120s does not); otherwise the gate runs in the foreground |
+| `auto` (default) | an agent-facing call hands off only when a harness configured for the repo has a background cutoff under 1 minute — the shortest a gate-running command was measured to hold its caller (grok's 15s qualifies, claude's 120s and pi's 10m do not); otherwise the gate runs in the foreground |
 | `on` | every agent-facing call hands off |
 | `off` | every call runs in the foreground |
 
@@ -1236,8 +1236,10 @@ windows around gate-running commands in this repo's ledger run from 53s to
 cutoff, so a hand-off is unavoidable. Above it, `auto` is not a guarantee: a
 multi-gate edge can outlast claude's 120s, and a claude repo whose edges run
 that long should set `handoff = "on"`. A harness with no facts row takes the conservative floor, so an
-unrecognised harness counts as needing the hand-off. The decision is the
-adapter's fact table (`agentcli.HandoffNeeded`), not a harness name in the CLI.
+unrecognised harness counts as needing the hand-off. A harness WITH a row but
+no notification path is recorded with that limitation quoted in the pending
+line — never a polling fallback. The decision is the adapter's fact table
+(`agentcli.HandoffNeeded`), not a harness name in the CLI.
 
 `SATELLE_GATE_MODE` overrides the repo setting: `interactive` gives a script or
 an operator the foreground behaviour, `agent` forces the hand-off.
@@ -1253,6 +1255,7 @@ fixed.
 | --- | --- | --- |
 | claude | 2m0s — the Bash tool's default timeout (120s) | yes |
 | grok | 15s — grok backgrounds any command past 15s (sty_c4b92c9e) | yes |
+| pi | 10m0s — a live pi 0.87.1 foreground call held 25m with an explicit timeout and 45s with none; pi does not auto-background a long command | yes |
 
 What a wait cost the driver is read from `driver_usage` rows, not asserted:
 `satelle story cost <id>` carries a CALLS column (the driving session's model

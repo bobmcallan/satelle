@@ -97,6 +97,7 @@ step done [terminal] agent=- skill=- provides=docs-verified admits=[satelle-docs
 step gate_satelle-step-summary agent=reviewer skill=satelle-step-summary provides=- admits=[]
 step cancelled agent=reviewer skill=satelle-story-cancel-review provides=- admits=[satelle-story-cancel-review,satelle-story-cancel-review,satelle-story-cancel-review]
 step blocked agent=reviewer skill=satelle-story-blocked-review provides=- admits=[satelle-story-blocked-review,satelle-story-blocked-review]
+gate satelle-instruction-change-review on=done
 `,
 		"*": `step backlog [start] agent=- skill=- provides=raised admits=[]
 step in_progress agent=executor skill=- provides=coded admits=[satelle-story-intent-review]
@@ -105,6 +106,7 @@ step gate_satelle-step-summary agent=reviewer skill=satelle-step-summary provide
 step cancelled agent=reviewer skill=satelle-story-cancel-review provides=- admits=[satelle-story-cancel-review,satelle-story-cancel-review,satelle-story-cancel-review]
 step blocked agent=reviewer skill=satelle-story-blocked-review provides=- admits=[satelle-story-blocked-review,satelle-story-blocked-review]
 gate satelle-estimate-actual-review on=in_progress+done
+gate satelle-instruction-change-review on=done
 `,
 		"epic-parent": `step backlog [start] agent=- skill=- provides=raised admits=[]
 step done [terminal] agent=reviewer skill=- provides=children-resolved admits=[satelle-story-done-review]

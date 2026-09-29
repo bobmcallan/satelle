@@ -297,11 +297,14 @@ func summaryBinding(s wfdot.Spec) string {
 func scopedStrings(rs []wfdot.ScopedReviewer) []string {
 	out := make([]string, 0, len(rs))
 	for _, r := range rs {
-		if r.Agent == "" {
-			out = append(out, r.Skill)
-			continue
+		s := r.Skill
+		if r.Agent != "" {
+			s += "@" + r.Agent
 		}
-		out = append(out, r.Skill+"@"+r.Agent)
+		if r.When != "" {
+			s += "?" + r.When
+		}
+		out = append(out, s)
 	}
 	return out
 }

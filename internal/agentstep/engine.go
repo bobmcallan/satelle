@@ -1187,6 +1187,12 @@ func (g *Engine) excerptOffload(ctx context.Context, itemID, s string, limit int
 // List lacks. Empty when none resolve; injection is additive and must never break
 // a gate.
 func (g *Engine) alwaysPrinciples(ctx context.Context) string {
+	return sessionPrinciples(ctx, g.docs)
+}
+
+// sessionPrinciples is alwaysPrinciples over any doc source, shared with
+// ResidentPrinciples.
+func sessionPrinciples(ctx context.Context, docs DocGetter) string {
 	seen := map[string]bool{}
 	var bodies []string
 	add := func(d docindex.Doc) {
@@ -1198,9 +1204,9 @@ func (g *Engine) alwaysPrinciples(ctx context.Context) string {
 			bodies = append(bodies, body)
 		}
 	}
-	if docs, err := g.docs.List(ctx, "principles"); err == nil {
-		sort.Slice(docs, func(i, j int) bool { return docs[i].Name < docs[j].Name })
-		for _, d := range docs {
+	if listed, err := docs.List(ctx, "principles"); err == nil {
+		sort.Slice(listed, func(i, j int) bool { return listed[i].Name < listed[j].Name })
+		for _, d := range listed {
 			if hasSessionTag(d.Body) {
 				add(d)
 			}
@@ -1209,7 +1215,7 @@ func (g *Engine) alwaysPrinciples(ctx context.Context) string {
 	// Guarantee the operating principle even when it is embedded-only (not yet
 	// materialised on disk) — Get carries the embedded fallback List does not.
 	if !seen[config.OperatingPrinciple] {
-		if d, err := g.docs.Get(ctx, "principles", config.OperatingPrinciple); err == nil {
+		if d, err := docs.Get(ctx, "principles", config.OperatingPrinciple); err == nil {
 			add(d)
 		}
 	}
@@ -2834,9 +2840,13 @@ func (g *Engine) scopedReviewers(ctx context.Context, item workitem.Item, toStat
 	// not identical to "no such surface gate" (sty_dcce86d5).
 	enqueued, skipped := spec.ScopedReviewersSplit(toStatus, item.Tags)
 	for _, s := range enqueued {
-		if !containsStr(exclude, s.Skill) {
-			out = append(out, reviewerRef{skill: s.Skill, agent: s.Agent})
+		if containsStr(exclude, s.Skill) {
+			continue
 		}
+		if s.When != "" && !g.whenAllows(ctx, item, toStatus, s) {
+			continue
+		}
+		out = append(out, reviewerRef{skill: s.Skill, agent: s.Agent})
 	}
 	for _, s := range skipped {
 		g.telemetryEvent(ctx, item.ID, "reviewer", "scoped-gate-skipped", map[string]any{
@@ -2846,6 +2856,57 @@ func (g *Engine) scopedReviewers(ctx context.Context, item workitem.Item, toStat
 	}
 	return out, nil
 }
+
+// whenAllows evaluates a scoped gate's `when` precondition: it runs the named
+// functional-check skill's ```check in the repo root with the transition payload
+// on stdin, exactly as a functional-check gate would. Exit 0 runs the gate and
+// exit 1 is the ONE skip code (telemetry reason "when"). Every other outcome —
+// another exit code, a timeout, an exec failure, a missing skill or one with no
+// check — runs the gate (telemetry reason "when-error"): a broken precondition
+// must never cost a gate. The engine decides nothing about paths or words; the
+// whole rule is in the script, and this is an enqueue filter, not a verdict.
+func (g *Engine) whenAllows(ctx context.Context, item workitem.Item, toStatus string, s wfdot.ScopedReviewer) bool {
+	event := func(reason, detail string) {
+		g.telemetryEvent(ctx, item.ID, "reviewer", "scoped-gate-skipped", map[string]any{
+			"skill": s.Skill, "to": toStatus, "reason": reason, "when": s.When, "detail": detail,
+		})
+	}
+	body, err := g.skillBody(ctx, s.When)
+	if err != nil {
+		event("when-error", "when skill "+s.When+": "+err.Error())
+		return true
+	}
+	command := skillCheck(body)
+	if command == "" {
+		event("when-error", "when skill "+s.When+" carries no ```check")
+		return true
+	}
+	payload, err := json.Marshal(transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: s.Skill})
+	if err != nil {
+		event("when-error", err.Error())
+		return true
+	}
+	timeout := g.checkTimeout
+	if timeout <= 0 {
+		timeout = defaultCheckTimeout
+	}
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	out, err := g.check(cctx, g.repoRoot, command, string(payload))
+	if err == nil {
+		return true
+	}
+	var ee interface{ ExitCode() int }
+	if cctx.Err() == nil && errors.As(err, &ee) && ee.ExitCode() == whenSkipExit {
+		event("when", strings.TrimSpace(out))
+		return false
+	}
+	event("when-error", fmt.Sprintf("%v: %s", err, strings.TrimSpace(out)))
+	return true
+}
+
+// whenSkipExit is the only exit code of a `when` check that skips its gate.
+const whenSkipExit = 1
 
 // reviewerRef is one gate to run: skill name + agents.toml binding section.
 // agent empty means [reviewer] (sty_a476a2f8).
@@ -3600,8 +3661,12 @@ func referencedWorkflowSkills(body string) []string {
 			}
 		}
 		for _, g := range cat.Gates {
-			if g.Skill != "" {
-				set[g.Skill] = true
+			// A gate's `when` skill is a route reference like its own skill: unresolved,
+			// the gate would run unconditionally (when-error), so surface it.
+			for _, sk := range []string{g.Skill, g.When} {
+				if sk != "" {
+					set[sk] = true
+				}
 			}
 		}
 	}

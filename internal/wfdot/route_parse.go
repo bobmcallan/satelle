@@ -155,6 +155,9 @@ type gateWire struct {
 	AppliesTo []string `toml:"applies_to"`
 	For       []string `toml:"for"`
 	Mandatory bool     `toml:"mandatory"`
+	// When names a functional-check skill the engine runs before it enqueues the
+	// gate — an enqueue precondition, never a verdict.
+	When string `toml:"when"`
 }
 
 // recordsOf splits a route-source body into its top-level tables: the reserved
@@ -407,6 +410,7 @@ func ParseSteps(body string) (Catalogue, error) {
 		cat.Gates = append(cat.Gates, RouteGate{
 			Skill: g.Skill, Agent: g.Agent, On: g.On,
 			AppliesTo: g.AppliesTo, For: g.For, Mandatory: g.Mandatory,
+			When: strings.TrimSpace(g.When),
 		})
 	}
 	if err := undecodedErr(md, "step.toml"); err != nil {

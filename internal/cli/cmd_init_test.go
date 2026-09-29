@@ -480,6 +480,8 @@ func checkScript(t *testing.T, skillBody string) string {
 // a gate skill without being an edge.
 var defaultSolutionSkills = []string{
 	"satelle-estimate-actual-review",
+	"satelle-instruction-change-review",
+	"satelle-instruction-change-trigger",
 	"satelle-story-amend-review",
 	"satelle-step-summary",
 	"satelle-story-blocked-review",

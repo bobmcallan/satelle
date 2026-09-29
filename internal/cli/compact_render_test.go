@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/compact"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/retrieve"
@@ -110,14 +111,22 @@ func TestCompactModeMatrix(t *testing.T) {
 
 // scrubAgentEnv unsets every agent marker (restored on cleanup): this suite
 // itself may run inside a harness session (SATELLE_SESSION, CLAUDECODE,
-// CLAUDE_CODE_*, GROK_AGENT).
+// CLAUDE_CODE_*, GROK_AGENT, PI_CODING_AGENT, PI_SESSION_*). The harness marker
+// names come from agentcli so this cannot drift when a harness is added.
 func scrubAgentEnv(t *testing.T) {
 	t.Helper()
-	keys := []string{"SATELLE_SCRATCH", "SATELLE_SESSION", "CLAUDECODE", "GROK_AGENT"}
+	markers := agentcli.SessionMarkerEnvNames()
+	keys := []string{"SATELLE_SCRATCH", "SATELLE_SESSION"}
 	for _, e := range os.Environ() {
 		k, _, _ := strings.Cut(e, "=")
-		if strings.HasPrefix(k, "CLAUDE_CODE_") {
-			keys = append(keys, k)
+		// Markers are either an exact env name or a PREFIX (CLAUDE_CODE_*,
+		// PI_SESSION_*), so match both — clearing only the literal marker name
+		// would leave the prefixed children in place.
+		for _, m := range markers {
+			if k == m || strings.HasPrefix(k, m) {
+				keys = append(keys, k)
+				break
+			}
 		}
 	}
 	for _, k := range keys {

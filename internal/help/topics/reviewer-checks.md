@@ -266,6 +266,44 @@ into the other. `satelle-integration-check`
 several reviewers directly (`reviewers = ["a", "b"]`). `satelle-story-cancel-review`
 records why an item is abandoned.
 
+### Conditional gates — `when`
+
+A `[[gate]]` may carry `when = "<check-skill>"`: a functional-check skill (a
+```check script) that decides, at transition time, whether the gate is worth
+running. The engine runs the script in the repo root with the transition payload
+on stdin, exactly like a functional-check gate, before it enqueues the gate:
+
+| Script result | The gate |
+| --- | --- |
+| exit 0 | runs |
+| exit 1 | is skipped — the only skip code; a `scoped-gate-skipped` telemetry event records `reason: when` and the script's output |
+| any other exit, a timeout, an exec failure, a missing or check-less `when` skill | runs, with `reason: when-error` recorded — a broken precondition never costs a gate |
+
+`when` is an enqueue filter, never a verdict: the rule lives in the script, not in
+the binary. `satelle workflow show` and the story route mark such a gate
+`conditional (when: <skill>)`.
+
+**Instruction changes.** `satelle-instruction-change-review` judges added or
+rewritten text in skills, principles and the constitution against three tests:
+it supports accurate, readable code; it is about satelle and this project; it
+does not duplicate or pad what is already injected. The shipped route binds it to
+the default `reviewer` seat on `done`, behind `when =
+"satelle-instruction-change-trigger"`. The trigger exits 0 when the story's change
+set adds a new instruction file or changes at least `THRESHOLD` words (default 5,
+whitespace and punctuation excluded, counted with `git diff -w --word-diff`), and
+exits 1 otherwise. It counts `.satelle/skills/**`, `.satelle/principles/**` and
+`.satelle/constitution.md`, plus the globs in `satelle.toml`:
+
+```toml
+[instruction_review]
+extra_paths = ["internal/config/substrate/skills/**"]  # e.g. embedded defaults kept in-tree
+```
+
+Override the `satelle-instruction-change-trigger` skill by name under
+`.satelle/skills/` to change `THRESHOLD` or the paths, and declare your own
+`[[gate]]` (a repo that declares any gate owns the whole list) to rebind the
+rubric to another seat or another step.
+
 ## Step summary — `satelle-step-summary` (transparent, opt-in)
 
 Not a gate. The step summary is **declared by the route**, not a hidden

@@ -28,12 +28,15 @@ import (
 // Reviewer is one gate admitting entry to a step. Scoped marks an always-on gate
 // the workflow declares edge-lessly (on="<state>") rather than one named on the
 // edge; ByTag names the applies_to that admitted a surface-scoped gate, so a
-// reviewer present only because the story carries a tag says so.
+// reviewer present only because the story carries a tag says so. When names the
+// functional-check skill that decides at transition time whether the gate runs,
+// so a gate the route lists may still be skipped for a given change.
 type Reviewer struct {
 	Skill  string   `json:"skill"`
 	Agent  string   `json:"agent,omitempty"`
 	Scoped bool     `json:"scoped,omitempty"`
 	ByTag  []string `json:"by_tag,omitempty"`
+	When   string   `json:"when,omitempty"`
 }
 
 // Advisor names an agent the ORCHESTRATOR may consult at a step, and the rubric
@@ -289,7 +292,7 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 		}
 		seen[sr.Skill] = true
 		step.Reviewers = append(step.Reviewers, Reviewer{
-			Skill: sr.Skill, Agent: sr.Agent, Scoped: true, ByTag: appliesTo(spec, sr.Skill),
+			Skill: sr.Skill, Agent: sr.Agent, Scoped: true, ByTag: appliesTo(spec, sr.Skill), When: sr.When,
 		})
 	}
 	for _, sr := range skipped {
@@ -502,6 +505,9 @@ func renderGates(s Step) string {
 		label := rv.Skill
 		if len(rv.ByTag) > 0 {
 			label += " (by tag " + strings.Join(rv.ByTag, "|") + ")"
+		}
+		if rv.When != "" {
+			label += " (conditional, when: " + rv.When + ")"
 		}
 		parts = append(parts, label)
 	}

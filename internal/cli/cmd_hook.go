@@ -2019,10 +2019,7 @@ func runHookContext(out, stderr io.Writer, harness string) error {
 	}
 
 	limit := a.Config.ContextLimit(harness)
-	budget := limit - (len(wrap("X")) - 1)
-	content, omitted := renderAlwaysContent(constitution, always, alwaysRender{
-		Budget: budget, Harness: harness, ConstitutionPath: constPath,
-	})
+	content, omitted := sessionAssembly(constitution, always, constPath, harness, limit, len(wrap("X"))-1)
 	if len(omitted) > 0 {
 		fmt.Fprintf(stderr,
 			"satelle hook context: %s exceeded the %s harness limit (%d bytes) — indexed with a read instruction: %s\n",
@@ -2033,6 +2030,18 @@ func runHookContext(out, stderr io.Writer, harness string) error {
 		return nil
 	}
 	return emitAdditionalContext(out, "SessionStart", "", content)
+}
+
+// sessionAssembly renders the deterministic body of a SessionStart injection —
+// constitution, then session principles, degraded to index lines past the
+// harness limit — and is the one place that rule is applied. overhead is what
+// the volatile lines around it (web probe, drift advisories, seat block) will
+// add; `satelle validate` passes 0 to size the stable part, so the hook and the
+// report cannot disagree about what a harness receives.
+func sessionAssembly(constitution string, always []docindex.Doc, constPath, harness string, limit, overhead int) (string, []string) {
+	return renderAlwaysContent(constitution, always, alwaysRender{
+		Budget: limit - overhead, Harness: harness, ConstitutionPath: constPath,
+	})
 }
 
 // resolveContextHarness names the in-loop harness a SessionStart injection is

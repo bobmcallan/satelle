@@ -141,6 +141,12 @@ type RouteGate struct {
 	For []string
 	// Mandatory marks a gate whose failure must be surfaced, not swallowed.
 	Mandatory bool
+	// When names a functional-check skill whose ```check the engine runs, in the
+	// engaged worktree, before enqueuing this gate. Exit 0 runs the gate, exit 1
+	// skips it, anything else runs it: a broken precondition never drops a gate.
+	// It decides whether a judgement is worth its cost, never the judgement, and
+	// the rule lives entirely in that skill's script.
+	When string
 }
 
 // List is one category's declaration of done: the obligations that must be
@@ -450,6 +456,7 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			On:        g.On,
 			AppliesTo: g.AppliesTo,
 			Mandatory: g.Mandatory,
+			When:      g.When,
 		})
 	}
 

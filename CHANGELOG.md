@@ -1,3 +1,24 @@
+## [0.0.580] - 2026-09-29
+
+### Added
+- **`pi` is a governed harness, and a gate verdict reaches a pi session.** pi joins claude and grok in the harness vocabulary, is detected from `PI_CODING_AGENT` / `PI_SESSION_*`, and publishes `executable = pi` on the ledger. A pi driver can now land a gated write: story create, story amend and every transition gate a pi session issues are claimed and their verdict delivered, instead of detaching and waiting forever. (sty_f3dc2a97, epic:pi-harness)
+  - **A measured row, not the conservative floor.** pi carries a 10m background cutoff with its basis naming the measurement — a live pi 0.87.1 foreground call held 25m under an explicit timeout and 45s with none, so pi does not auto-background a long command the way grok does at 15s. A pi-only session therefore does not need a hand-off, and the gate completes in the foreground.
+  - **What this fixes:** an unrecognised harness took the `HarnessUnknown` floor (10s) and the pending line said so. Every gate then detached at 10s, and the finished handle was never claimed because the claim is delivered by the harness's own hooks. Twelve gates on 2026-09-29 stranded this way, each with a correct reviewer verdict that never landed.
+
+### Fixed
+- **The hand-off decision follows the session's harness, not every scaffold a repo keeps.** `[gate] handoff = auto` decided from the union of the harnesses a repo has installed, so a repo carrying both `.claude/` and `.grok/` forced a pi session to hand off on grok's 15s cutoff — and then waited on a Stop hook the pi session never fires. The set is now the session's own harnesses when the environment names one, and falls back to the installed scaffolds only when no session marker is present. A grok or claude session in the same repo is unchanged. (sty_f3dc2a97)
+
+### Changed
+- **The create-review gate no longer researches the repo to validate a story.** `satelle-story-create-review` kept a premise section that cited `satelle-story-plan-review` for its discipline; that skill bounds falsification to existence claims on a presented plan, and the create gate had widened it to behaviour claims on the story body and ACs. The section is now a dead-premise check — reject only a story asking for something this repo does not have or has removed, cited by file/symbol — with counts, sibling-story existence, whether referenced work has landed, and dependency ordering each named as NOT grounds at create. The content & alignment and classification sections are unchanged. Observed on this repo, the section produced cross-story dependency checks and a repository audit, and cost 4-8 minutes per create; the same creates now take about 90 seconds. (sty_012394c0)
+- **`when` is a gate key, and a trigger is an enqueue precondition.** A gate may name `when = "<check-skill>"`: the check exits 0 to run the gate, 1 to skip it (a whitespace- or typo-only change), and any other outcome runs it. An enqueue precondition, never a verdict. The embedded shipped route carries `satelle-instruction-change-review` behind `satelle-instruction-change-trigger` on every editable lane, and containers carry none because they perform no work. (sty_012394c0)
+- **`satelle validate` reports injected context size.** Each kind's bytes and estimated tokens per seat, warning — never refusing — when a repo-configured budget is exceeded. No budget number is hard-coded in Go. (sty_012394c0)
+- **`agentcli.SessionMarkerEnvNames` publishes the marker env names.** A caller that must neutralise harness detection clears exactly what the code reads, instead of a hardcoded list that silently drifts every time a harness is added. (sty_f3dc2a97)
+
+## [serve-v0.0.101] - 2026-09-29
+
+### Changed
+- **The service embeds the pi harness row, the session-scoped hand-off decision, and the `when` gate key above.** (sty_f3dc2a97, sty_012394c0)
+
 ## [0.0.579] - 2026-09-29
 
 ### Fixed
