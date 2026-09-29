@@ -132,3 +132,38 @@ func TestCanonicalRepoRoot_DoesNotMoveTheDataDir(t *testing.T) {
 		t.Errorf("main data dir = %q, want %q", md, filepath.Join(main, DefaultDataDir))
 	}
 }
+
+// The runtime dir is keyed by RepoKey, which COLLAPSES worktrees. So the repo.path
+// marker it holds is an IDENTITY sink: if it recorded the invoking root it would
+// flip to whichever tree opened last, and after `git worktree remove` the MAIN
+// repo's whole plane would read as stale and `runtime reap` could offer to delete
+// it. A data-loss path, found by satelle-story-architecture-review on
+// sty_cd219594's plan edge.
+func TestWriteRepoPathMarker_RecordsTheCanonicalRoot(t *testing.T) {
+	base := t.TempDir()
+	main := mkSatelleTree(t, filepath.Join(base, "satelle"))
+	wt := filepath.Join(base, "wt", "sty_feedface")
+	if err := os.MkdirAll(filepath.Dir(wt), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	addWorktree(t, main, wt, "sty_feedface")
+	if err := os.MkdirAll(filepath.Join(wt, DefaultDataDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	plane := filepath.Join(base, "global", RepoKey(main))
+	if err := os.MkdirAll(filepath.Dir(plane), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A worktree opens the SHARED plane and writes the marker...
+	if err := WriteRepoPathMarker(plane, wt); err != nil {
+		t.Fatal(err)
+	}
+	got := ReadRepoPathMarker(plane)
+	if got == wt {
+		t.Errorf("marker recorded the WORKTREE root %q; the main repo's plane would then read stale after `git worktree remove`", got)
+	}
+	if want := CanonicalRepoRoot(main); got != want {
+		t.Errorf("marker = %q, want the canonical main tree %q", got, want)
+	}
+}

@@ -248,13 +248,18 @@ func WriteRepoPathMarker(runtimeDir, repoRoot string) error {
 	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
 		return err
 	}
-	abs, err := filepath.Abs(repoRoot)
+	abs, err := filepath.Abs(CanonicalRepoRoot(repoRoot))
 	if err != nil {
 		abs = repoRoot
 	}
 	if resolved, rerr := filepath.EvalSymlinks(abs); rerr == nil {
 		abs = resolved
 	}
+	// The marker is an IDENTITY sink, not a location: the runtime dir is keyed by
+	// RepoKey, which COLLAPSES worktrees, so writing the invoking root made the
+	// marker flip to whichever tree opened last. After `git worktree remove` the
+	// main repo's whole plane then read as stale and `runtime reap` could offer to
+	// delete it — a data-loss path (sty_cd219594).
 	return os.WriteFile(filepath.Join(runtimeDir, RepoPathMarkerName), []byte(abs+"\n"), 0o644)
 }
 
@@ -284,6 +289,18 @@ func ReadRepoPathMarker(runtimeDir string) string {
 //
 // Falls back to repoRoot unchanged when the tree is not a git worktree of a
 // satelle-governed main tree, so the ordinary case is untouched.
+//
+// OWNERSHIP RULE — identity versus location. Every IDENTITY sink goes through
+// this: the workspace-registry path, the mirror partition's slug, its path and
+// ProjectName, and the runtime dir's repo.path marker. Identity NAMES the
+// repository, and a worktree and its parent are the same repository, so identity
+// must not move per worktree. Every LOCATION use keeps the invoking root: the
+// data dir, authored substrate, story docs, and runtime-dir resolution (which
+// collapses worktrees by RepoKey on its own). Canonicalising only SOME identity
+// sinks is worse than canonicalising none — that is how the partition's slug
+// read `satelle` while its path still read the worktree, so the audit is by SINK
+// (grep IdentityMeta, ProjectName, RepoPathMarker, and the registry writers)
+// rather than by the shape of the call.
 func CanonicalRepoRoot(repoRoot string) string {
 	root := strings.TrimSpace(repoRoot)
 	if root == "" {

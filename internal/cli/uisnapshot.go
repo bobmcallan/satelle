@@ -190,9 +190,19 @@ func buildUISnapshotOpts(ctx context.Context, a *app.App, drain bool) (*mirror.S
 	}
 
 	// Per-partition identity/meta for footer + account strip.
+	//
+	// IDENTITY sinks go through CanonicalRepoRoot; LOCATION uses keep the
+	// invoking root. The rule (sty_cd219594): anything that NAMES the repository
+	// — registry path, partition slug, partition path, ProjectName, the runtime
+	// path marker — is identity and must not move per worktree. Anything that
+	// READS the repository's own data — data dir, substrate, docs, runtime-dir
+	// resolution via RepoKey — is location and stays per worktree. Canonicalising
+	// only some sinks is how the partition's slug said `satelle` while its path
+	// still said the worktree.
+	canon := config.CanonicalRepoRoot(a.RepoRoot)
 	id := mirror.IdentityMeta{
-		ProjectName: filepath.Base(a.RepoRoot),
-		RepoRoot:    a.RepoRoot,
+		ProjectName: filepath.Base(canon),
+		RepoRoot:    canon,
 		FooterEmail: gitConfigEmail(a.RepoRoot),
 	}
 	if b, err := json.Marshal(id); err == nil {
