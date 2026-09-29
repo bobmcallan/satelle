@@ -95,7 +95,7 @@ byte ceiling (overflow noted on stderr); fails open so it never blocks a session
 				resolveContextHarness(hookHarnessFlag, raw, os.Environ()))
 		},
 	}
-	context.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok —selects the injection limit (default: sniff event, then environment)")
+	context.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi —selects the injection limit (default: sniff event, then environment)")
 	gate := &cobra.Command{
 		Use:   "gate",
 		Short: "PreToolUse edit gate — block code edits unless a story is engaged",
@@ -362,15 +362,16 @@ session holds the seat.`,
 	}
 
 	// Explicit harness for deny shape (sty_9e86f407): wrapper forwards
-	// --harness claude|grok; empty falls back to harnessFromEvent.
-	gate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok —deny envelope (default: sniff event)")
-	commitgate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok —deny envelope (default: sniff event)")
+	// --harness claude|grok|pi; empty falls back to harnessFromEvent. pi takes the
+	// claude deny envelope (emitPreToolUseDeny gives every non-grok harness that).
+	gate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi —deny envelope (default: sniff event)")
+	commitgate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi —deny envelope (default: sniff event)")
 	// Same explicit --harness on prompt/stopcheck (sty_719c4a7b AC2): the
 	// installed hook names its own harness rather than relying only on the
 	// event sniff, so bindSessionID's in-loop publish stays correct even if a
 	// future payload shape changes.
-	prompt.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok —in-loop publish (default: sniff event)")
-	stopcheck.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok —in-loop publish (default: sniff event)")
+	prompt.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi —in-loop publish (default: sniff event)")
+	stopcheck.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi —in-loop publish (default: sniff event)")
 	explain := &cobra.Command{
 		Use:   "explain",
 		Short: "Show how the PreToolUse model rule would decide for a payload",

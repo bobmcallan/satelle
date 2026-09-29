@@ -1,6 +1,7 @@
 // `satelle agents install|remove` provisions satelle-owned launchers under
 // $SATELLE_HOME/agents/bin/ and repo harness compliance scaffolds
-// (.claude / .grok blocking hooks) (sty_aa726901, sty_9e86f407).
+// (.claude / .grok blocking hooks, .pi extension) (sty_aa726901, sty_9e86f407,
+// sty_b3c7b37d).
 // Distinct from `satelle agent` (singular: select/validate the headless CLI).
 package cli
 
@@ -18,33 +19,33 @@ import (
 func init() {
 	agents := &cobra.Command{
 		Use:   "agents",
-		Short: "Install or remove satelle-owned agent launchers and harness compliance hooks (claude | grok | all)",
+		Short: "Install or remove satelle-owned agent launchers and harness compliance hooks (claude | grok | pi | all)",
 		Long: `agents install and remove manage two satelle-owned surfaces per target:
 
-  1. Launcher scripts under $SATELLE_HOME/agents/bin/.
+  1. Launcher scripts under $SATELLE_HOME/agents/bin/ (claude and grok; pi has
+     no launcher).
   2. Repo harness compliance scaffolds with blocking PreToolUse hooks:
-     .claude/settings.json, .grok/hooks/satelle.json —
-     so governed code-changing actions are denied unless a satelle story is
-     engaged (same policy as satelle hook gate / commitgate).
+     .claude/settings.json, .grok/hooks/satelle.json, and for pi the extension
+     .pi/extensions/satelle.ts (pi has no hook config file; the extension calls
+     the same satelle hooks) — so governed code-changing actions are denied
+     unless a satelle story is engaged (same policy as satelle hook gate /
+     commitgate).
 
 Compliance guarantee: each scaffolded harness's hook path denies governed
 mutations when no story is engaged, and applies the normal engaged-story policy
-when one is.
+when one is. pi cannot veto a stop, so a refused stop returns as a message the
+agent must answer.
 
 Ownership boundary: only satelle-owned artifacts (marker-bearing launchers and
 hook entries whose command references satelle-hook.sh / satelle hook) are
 created, updated, or removed. User-authored harness keys and non-satelle hooks
 are preserved. Install and remove are idempotent.
 
-Statusline: satelle installs NONE. A statusline is an operator preference and a
-repo's .claude/settings.json is shared scaffold, so seeding one there imposes a
-choice on everyone who opens the repo. The renderer stays — to show a live
-satelled link plus the engaged <story_id>::<stage>, put "satelle status --line"
-in your own ~/.claude/settings.json as statusLine.command; install prints the
-snippet. An entry satelle seeded into a repo before this is removed on install,
-and a statusLine you own is left byte-for-byte. Grok could not take one
-regardless: it has no scriptable statusline. Both harnesses see the same facts
-through the SessionStart availability line.
+Statusline: satelle installs NONE — it is an operator preference and the repo's
+.claude/settings.json is shared. To show the engaged <story_id>::<stage>, put
+"satelle status --line" in your own ~/.claude/settings.json as
+statusLine.command; install prints the snippet. A statusLine you own is left
+byte-for-byte. Grok has no scriptable statusline.
 
 They do not install third-party packages globally, do not change
 ~/.satelle/config.toml [agent] cli, and do not edit any repo's agents.toml.
@@ -54,10 +55,13 @@ For selecting or validating the headless agent CLI, use satelle agent (singular)
 	}
 
 	install := &cobra.Command{
-		Use:   "install <claude|grok|all>",
+		Use:   "install <claude|grok|pi|all>",
 		Short: "Install launchers + harness compliance hooks (idempotent)",
 		Long: `Install the satelle-owned launcher and compliance hooks for a harness, or for
 all of them.
+
+"all" covers every harness satelle scaffolds, pi included, so it creates
+.pi/extensions/ in a repo that does not use pi. Name the harness to avoid that.
 
 Idempotent: re-running converges rather than duplicating. It writes only the
 files satelle marks as its own, so a hook you authored by hand is never
@@ -66,7 +70,7 @@ overwritten — which is also why remove leaves yours in place.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home := config.GlobalDir()
 			repoRoot := initRepoRoot("")
-			rs, err := agentinstall.Install(home, args[0])
+			rs, err := installLaunchers(home, args[0])
 			if err != nil {
 				return err
 			}
@@ -111,6 +115,12 @@ overwritten — which is also why remove leaves yours in place.`,
 						return err
 					}
 					printScaffoldOutcome(out, "grok", grokHooksRel, added, updated, incomplete)
+				case "pi":
+					added, updated, incomplete, err := scaffoldPiHooks(repoRoot)
+					if err != nil {
+						return err
+					}
+					printScaffoldOutcome(out, "pi", piExtensionRel, added, updated, incomplete)
 				}
 			}
 			fmt.Fprintln(out, "No default reviewer or [agent] cli was changed.")
@@ -120,7 +130,7 @@ overwritten — which is also why remove leaves yours in place.`,
 	}
 
 	remove := &cobra.Command{
-		Use:   "remove <claude|grok|all>",
+		Use:   "remove <claude|grok|pi|all>",
 		Short: "Remove satelle-owned launchers and hook scaffolds (idempotent; unmarked left in place)",
 		Long: `Remove the launchers and hook scaffolds satelle installed for a harness.
 
@@ -131,7 +141,7 @@ you mean to stop satelle governing the harness — not as tidying.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home := config.GlobalDir()
 			repoRoot := initRepoRoot("")
-			rs, err := agentinstall.Remove(home, args[0])
+			rs, err := removeLaunchers(home, args[0])
 			if err != nil {
 				return err
 			}
@@ -155,6 +165,8 @@ you mean to stop satelle governing the harness — not as tidying.`,
 					action, path, note, rerr = removeClaudeHooks(repoRoot)
 				case "grok":
 					action, path, note, rerr = removeGrokHooks(repoRoot)
+				case "pi":
+					action, path, note, rerr = removePiHooks(repoRoot)
 				}
 				if rerr != nil {
 					return rerr
@@ -187,12 +199,29 @@ func expandAgentTargets(name string) ([]string, error) {
 	n := strings.ToLower(strings.TrimSpace(name))
 	switch n {
 	case "all":
-		return []string{"claude", "grok"}, nil
-	case "claude", "grok":
+		return []string{"claude", "grok", "pi"}, nil
+	case "claude", "grok", "pi":
 		return []string{n}, nil
 	default:
-		return nil, fmt.Errorf("agents: unknown agent %q (want claude, grok, or all)", name)
+		return nil, fmt.Errorf("agents: unknown agent %q (want claude, grok, pi, or all)", name)
 	}
+}
+
+// installLaunchers and removeLaunchers manage the $SATELLE_HOME launcher scripts.
+// pi has none (launcher isolation is a separate story), so a pi-only target has
+// no launcher step and "all" covers the launchers that exist.
+func installLaunchers(home, name string) ([]agentinstall.Result, error) {
+	if strings.EqualFold(strings.TrimSpace(name), "pi") {
+		return nil, nil
+	}
+	return agentinstall.Install(home, name)
+}
+
+func removeLaunchers(home, name string) ([]agentinstall.Result, error) {
+	if strings.EqualFold(strings.TrimSpace(name), "pi") {
+		return nil, nil
+	}
+	return agentinstall.Remove(home, name)
 }
 
 func printScaffoldOutcome(out io.Writer, name, rel string, added bool, updated, incomplete []string) {

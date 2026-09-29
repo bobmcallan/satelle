@@ -1,3 +1,23 @@
+## [0.0.584] - 2026-09-29
+
+### Added
+- **`satelle agents install pi` holds a pi session to the edit gate and the commit gate.** pi had gate DELIVERY — a measured `HarnessFacts` row, so a verdict started by a pi session is claimed and lands — but no gate ENFORCEMENT: there is no path outside a harness hook, so a pi session got the benefit of the gates without their cost, and product edits to `internal/agentcli`, `internal/cli`, `internal/help` and `tests/` were made in this repo on 2026-09-29 with no engaged story and nothing objecting. `satelle agents install pi` now writes `.pi/extensions/satelle.ts`, which wires all four `fullHookEvents` onto pi's extension events and calls the same `satelle hook` verbs the claude and grok scaffolds wire. `satelle agents remove pi` removes it, leaving no residue: a foreign extension in the directory survives, and an unowned `satelle.ts` is skipped and reported. (sty_b3c7b37d, epic:pi-harness)
+  - **The event map, and what each event can actually refuse.** a pi `tool_call` on `edit`/`write` → `satelle hook gate`; on `bash` → `satelle hook commitgate`; `session_start` → `satelle hook context`; `before_agent_start` → `satelle hook prompt`; the settle event → `satelle hook stopcheck`. The edit gate honours `edit_exempt_paths` and `edit_exempt_globs` exactly as the claude and grok scaffolds do, and an engaged story's edit is allowed.
+  - **A deny is enforced, not logged.** pi blocks a `tool_call` whose handler returns `{ block: true, reason }`, and blocks on a throw. The refusal carries the edit-gate rule verbatim.
+  - **One owner for the infra-failure policy.** The PreToolUse handlers exec the SAME wrapper the claude and grok scaffolds use (`.satelle/hooks/satelle-hook.sh gate|commitgate pi`), so gate and `git commit`/`git push` fail CLOSED with the infra reason when satelle is unusable — the wrapper's rule, not a rule restated inside a harness adapter, which is what would otherwise leave the gate inert whenever satelle is missing from pi's PATH. Session start, prompt and stop call `satelle hook` DIRECTLY and fail open, exactly as claude's direct commands do. `maybeRemoveSharedHookScript` now counts `.pi/extensions/satelle.ts` as a scaffold that references the wrapper, so removing claude or grok no longer deletes a script pi still calls.
+  - **The one event pi cannot veto.** `agent_settled` is notification-only: a refused stop is delivered as a follow-up user message that starts another turn, so the agent cannot settle silently on an ungated edit — but a user who kills the session, or a non-interactive run that exits on settle, is not held. The re-prompt carries `stop_hook_active`, so it is one per stop chain rather than an unbounded loop. This limitation is stated in the extension header itself, not only in a changelog.
+  - **Parity is a test, not a convention.** The pi scaffold's event set is asserted equal to `fullHookEvents`, and each event's verb AND invocation form (wrapper vs direct) is asserted equal to what `buildClaudeHookSettings` and `buildGrokHookSettings` write, so a fifth event or a changed claude form fails the build.
+  - **`satelle agents install all` now installs pi**, and its help says so: `all` will create `.pi/` in repositories that do not use pi. Scaffold drift detection covers the extension and `satelle init` heals it, so the builder/healer/checker table stays one table.
+  - **`[harness.pi]` gets its own `context_limit_bytes` row** (equal to `unknown`, not claude's), so a pi session's injected principles:session context is bounded on its own terms. (sty_b3c7b37d)
+
+### Changed
+- **The `hook` verbs accept `--harness pi`.** `hook gate`, `commitgate`, `context`, `prompt` and `stopcheck` route pi through the same claude-shaped envelope the non-grok path already emits, so there is no new envelope type and no pi sniffing in the CLI. (sty_b3c7b37d)
+
+## [serve-v0.0.103] - 2026-09-29
+
+### Added
+- **The service carries the pi harness enforcement hook events above.** (sty_b3c7b37d)
+
 ## [0.0.583] - 2026-09-29
 
 ### Added

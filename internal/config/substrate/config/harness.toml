@@ -14,6 +14,11 @@
 #           clip is 10,000 characters, on PreToolUse/PostToolUse/Stop only. See
 #           the grok-context-limit attachment on sty_ce1a2733. 16384 is kept as
 #           the pre-existing value.
+# pi     — the generated extension (.pi/extensions/satelle.ts) receives the hook's
+#           additionalContext and appends it to the run's system prompt, so pi has
+#           no preview cliff of its own to measure (sty_b3c7b37d). It takes the
+#           same budget as unknown ON PURPOSE rather than inheriting claude's: a
+#           number is a claim about the harness, and none has been made here.
 # unknown — anything unrecognised gets the smallest safe budget. Nothing
 #           unrecognised is assumed to be Claude, but the safe choice is the
 #           tightest one.
@@ -22,6 +27,9 @@ context_limit_bytes = 9500
 
 [harness.grok]
 context_limit_bytes = 16384
+
+[harness.pi]
+context_limit_bytes = 9500
 
 [harness.unknown]
 context_limit_bytes = 9500

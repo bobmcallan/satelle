@@ -50,7 +50,7 @@ var longWordWaiver = map[string]int{
 	// Operator procedures: destructive, converging, or recovery paths where the
 	// steps and the refusals are the documentation.
 	"satelle migrate":             420, // structural convergence per area, with the refusal paths
-	"satelle agents":              248, // per-harness launcher + hook install matrix
+	"satelle agents":              237, // per-harness launcher + hook install matrix
 	"satelle workspace add":       284, // registration + machine-scope seed target
 	"satelle doctor":              280, // the readiness checklist it runs, item by item
 	"satelle init":                274, // what the scaffold writes and what it leaves alone

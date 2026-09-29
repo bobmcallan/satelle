@@ -51,6 +51,7 @@ func DetectScaffoldDrift(repoRoot string) []ScaffoldFinding {
 	// grok explicitly (sty_719c4a7b AC2/AC7) — PreToolUse already carries it via
 	// renderHookCommand's positional arg, checked above through driftHarnessSettings.
 	findings = append(findings, driftGrokHarnessFlag(repoRoot)...)
+	findings = append(findings, driftPiExtension(repoRoot)...)
 	// Legacy per-harness scripts on disk are drift (should have been retired).
 	for _, harness := range []string{"claude", "grok", "kimi"} {
 		for _, sub := range []string{"gate", "commitgate"} {
@@ -97,6 +98,34 @@ func driftGrokHarnessFlag(repoRoot string) []ScaffoldFinding {
 			Path:   grokHooksRel,
 			Kind:   "command",
 			Detail: fmt.Sprintf("%s command is missing --harness grok", c.event),
+		})
+	}
+	return findings
+}
+
+// driftPiExtension reports a deployed, satelle-owned pi extension that no longer
+// matches what this binary would write for repoRoot (sty_b3c7b37d) — the binary
+// changed, the repo moved (the wrapper path is absolute), or the file was edited —
+// and a missing wrapper it calls. An absent extension means pi is not deployed,
+// and one without the owned marker is the operator's; neither is drift.
+func driftPiExtension(repoRoot string) []ScaffoldFinding {
+	raw, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(piExtensionRel)))
+	if err != nil || !strings.Contains(string(raw), piOwnedMarker) {
+		return nil
+	}
+	var findings []ScaffoldFinding
+	if want := buildPiExtension(repoRoot); string(raw) != string(want) {
+		findings = append(findings, ScaffoldFinding{
+			Path:   piExtensionRel,
+			Kind:   "content",
+			Detail: fmt.Sprintf("differs from binary canonical pi extension (sha %s vs want %s)", shortSHA(raw), shortSHA(want)),
+		})
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(satelleHookScriptRel))); err != nil {
+		findings = append(findings, ScaffoldFinding{
+			Path:   satelleHookScriptRel,
+			Kind:   "missing",
+			Detail: "canonical wrapper script missing — run satelle init",
 		})
 	}
 	return findings

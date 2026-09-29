@@ -52,6 +52,14 @@ func harnessHooks(harness string) harnessHookSpec {
 			commitMatcher: "Bash|run_terminal_command",
 			events:        fullHookEvents,
 		}
+	case "pi":
+		// pi's built-in tool ids are lower-case (sty_b3c7b37d); the extension
+		// matches them anchored, so these are whole names, not substrings.
+		return harnessHookSpec{
+			gateMatcher:   "edit|write",
+			commitMatcher: "bash",
+			events:        fullHookEvents,
+		}
 	default: // claude
 		return harnessHookSpec{
 			gateMatcher:   "Edit|Write|MultiEdit|NotebookEdit",
@@ -122,6 +130,32 @@ func removeGrokHooks(repoRoot string) (action, path, note string, err error) {
 		return "", path, "", err
 	}
 	return "updated", path, "stripped satelle-owned entries; user hooks preserved", nil
+}
+
+// removePiHooks deletes the satelle-owned pi extension. A pi extension is one
+// TypeScript file, so there is nothing to prune: the file is removed only when it
+// carries the satelle-owned marker, and the .pi/extensions and .pi directories
+// only when that leaves them empty — a foreign extension or pi config survives.
+func removePiHooks(repoRoot string) (action, path, note string, err error) {
+	path = filepath.Join(repoRoot, filepath.FromSlash(piExtensionRel))
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "absent", path, "", nil
+		}
+		return "", path, "", err
+	}
+	if !strings.Contains(string(raw), piOwnedMarker) {
+		return "skipped", path, "not satelle-owned — left in place", nil
+	}
+	if err := os.Remove(path); err != nil {
+		return "", path, "", err
+	}
+	// Best-effort: os.Remove refuses a non-empty directory, which is the guard.
+	dir := filepath.Dir(path)
+	_ = os.Remove(dir)
+	_ = os.Remove(filepath.Dir(dir))
+	return "removed", path, "", nil
 }
 
 // pruneSatelleHookEntries removes hook handlers whose command carries a satelle
@@ -224,6 +258,7 @@ func maybeRemoveSharedHookScript(repoRoot string) (action, path, note string, er
 	for _, p := range []string{
 		filepath.Join(repoRoot, ".claude", "settings.json"),
 		filepath.Join(repoRoot, filepath.FromSlash(grokHooksRel)),
+		filepath.Join(repoRoot, filepath.FromSlash(piExtensionRel)),
 	} {
 		b, err := os.ReadFile(p)
 		if err != nil {

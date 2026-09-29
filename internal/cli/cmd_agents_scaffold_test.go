@@ -296,19 +296,21 @@ func TestInstalledGrokScaffoldDeniesMutation(t *testing.T) {
 	}
 }
 
-// TestAgentsAndInitRejectUnknownHarness: a name that is not claude or grok
+// TestAgentsAndInitRejectUnknownHarness: a name that is not a supported harness
 // reaches the generic unknown-name errors of both `init --harness` and
 // `agents install|remove`, and the errors list only the supported harnesses.
+// (`init --harness` stays claude and/or grok: pi is opted into with
+// `agents install pi`, never adopted by init.)
 func TestAgentsAndInitRejectUnknownHarness(t *testing.T) {
 	if _, err := parseHarnessFlag("claude,nosuch"); err == nil ||
 		!strings.Contains(err.Error(), "unknown --harness") || !strings.Contains(err.Error(), "claude and/or grok") {
 		t.Fatalf("parseHarnessFlag(nosuch) = %v", err)
 	}
 	if _, err := expandAgentTargets("nosuch"); err == nil ||
-		!strings.Contains(err.Error(), "unknown agent") || !strings.Contains(err.Error(), "claude, grok, or all") {
+		!strings.Contains(err.Error(), "unknown agent") || !strings.Contains(err.Error(), "claude, grok, pi, or all") {
 		t.Fatalf("expandAgentTargets(nosuch) = %v", err)
 	}
-	if all, err := expandAgentTargets("all"); err != nil || strings.Join(all, ",") != "claude,grok" {
+	if all, err := expandAgentTargets("all"); err != nil || strings.Join(all, ",") != "claude,grok,pi" {
 		t.Fatalf("expandAgentTargets(all) = %v (%v)", all, err)
 	}
 

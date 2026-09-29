@@ -554,7 +554,9 @@ func renderHookCommand(repoRoot, harness, sub string) string {
 }
 
 // parameterizedHookScriptBody is the single script body for satelle-hook.sh.
-// Usage: sh .satelle/hooks/satelle-hook.sh <gate|commitgate> <claude|grok>
+// Usage: sh .satelle/hooks/satelle-hook.sh <gate|commitgate> <claude|grok|pi>
+// (pi takes the claude-envelope branch: the generated pi extension parses the
+// same permissionDecision deny).
 //
 // The wrapper:
 //  1. Resolves satelle from $HOME/.local/bin/satelle → $CLAUDE_PROJECT_DIR/.satelle/satelle
@@ -572,7 +574,7 @@ func parameterizedHookScriptBody() string {
 	grokInfra := strings.ReplaceAll(infraDenyJSON("grok"), `'`, `'\''`)
 	return fmt.Sprintf(`#!/bin/sh
 %s
-# args: $1=gate|commitgate  $2=claude|grok
+# args: $1=gate|commitgate  $2=claude|grok|pi
 sub="$1"
 harness="$2"
 case "$harness" in
@@ -876,6 +878,9 @@ func ensureProcessHooks(out io.Writer, repoRoot string, forced []string) error {
 	// Always materialise/retire the shared hook script surface (even when no
 	// harness settings are installed) so migrate heals legacy scripts.
 	if err := writeHookScripts(repoRoot); err != nil {
+		return err
+	}
+	if err := healPiExtension(out, repoRoot); err != nil {
 		return err
 	}
 	wantClaude, wantGrok := detectProcessHarnesses(repoRoot, forced)
