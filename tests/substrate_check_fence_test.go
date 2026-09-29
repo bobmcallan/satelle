@@ -159,6 +159,60 @@ var fenceFixtures = map[string][]fenceCase{
 			wantStdout: "route drift",
 		},
 	},
+	"satelle-instruction-change-trigger": {
+		{
+			// The gate FIRES: a real rewrite of instruction text past the word
+			// threshold. `satelle story diff` is shimmed because the recorded and
+			// live channels are what name the changed files; the threshold itself
+			// is the shipped default (THRESHOLD=5).
+			name:       "fires on an instruction rewrite past the word threshold",
+			sid:        "sty_1c700001",
+			pathPrefix: "bin",
+			setup: func(t *testing.T, repo string) {
+				gitInit(t, repo)
+				mustWrite(t, filepath.Join(repo, "README.md"), "baseline\n")
+				mustWrite(t, filepath.Join(repo, ".satelle", "skills", "satelle-example.md"),
+					"one\n")
+				gitCommitAll(t, repo, "baseline")
+				// The baseline the shim names must be a REAL commit, or the check
+				// takes its "new or untracked instruction file" path instead of
+				// measuring the diff. The root commit is the baseline here.
+				mustWrite(t, filepath.Join(repo, "bin", "satelle"), `#!/usr/bin/env bash
+for a in "$@"; do
+  if [ "$a" = "--include-substrate" ]; then
+    printf '{"files":[".satelle/skills/satelle-example.md"],"baseline_sha":"%s"}\n' "$(git rev-list --max-parents=0 HEAD)"
+    exit 0
+  fi
+done
+echo '{"files":[".satelle/skills/satelle-example.md"]}'
+`)
+				if err := os.Chmod(filepath.Join(repo, "bin", "satelle"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				mustWrite(t, filepath.Join(repo, ".satelle", "skills", "satelle-example.md"),
+					"rewrite the whole paragraph so the word count clears the threshold easily\n")
+				gitCommitAll(t, repo, "rewrite an instruction skill (sty_1c700001)")
+			},
+			wantExit:   0,
+			wantStdout: "instruction text changed",
+		},
+		{
+			// The gate is SKIPPED: nothing under the instruction paths moved. This
+			// is the common case — most slices touch no skill, principle or
+			// constitution file, and the trigger must stay quiet on all of them.
+			name: "skips a slice that touches no instruction file",
+			sid:  "sty_1c700002",
+			setup: func(t *testing.T, repo string) {
+				gitInit(t, repo)
+				mustWrite(t, filepath.Join(repo, "README.md"), "baseline\n")
+				gitCommitAll(t, repo, "baseline")
+				mustWrite(t, filepath.Join(repo, "cmd", "foo.go"), "package main\n")
+				gitCommitAll(t, repo, "a code-only slice (sty_1c700002)")
+			},
+			wantExit:   1,
+			wantStdout: "no instruction file changed",
+		},
+	},
 	"satelle-docs-only-check": {
 		{
 			name: "accepts a markdown-only slice",

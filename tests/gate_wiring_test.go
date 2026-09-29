@@ -149,6 +149,10 @@ func TestEmbeddedGateCoverageDiscovery(t *testing.T) {
 		"task/satelle-story-create-review":              true,
 		"*/satelle-estimate-actual-review":              true,
 		"execution/satelle-task-validate-before-review": true,
+		"*/satelle-instruction-change-review":           true,
+		"docs/satelle-instruction-change-review":        true,
+		"execution/satelle-instruction-change-review":   true,
+		"task/satelle-instruction-change-review":        true,
 	}
 	for _, g := range enumerateEmbeddedGates(t) {
 		key := g.workflow + "/" + g.skill
