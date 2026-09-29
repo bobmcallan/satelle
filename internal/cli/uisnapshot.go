@@ -81,14 +81,20 @@ func buildUIDrainSnapshot(ctx context.Context, a *app.App) (*mirror.Snapshot, er
 	return buildUISnapshotOpts(ctx, a, true)
 }
 
+// partitionSlug is the landing slug a snapshot carries for a's partition. It names
+// the PROJECT, so it comes from the canonical repo root — a worktree is the same
+// project as its parent, and deriving the slug from the invoking directory renamed
+// the parent's partition to `sty_<id>` and took /r/<parent> to 404 on every
+// worktree dispatch (sty_cd219594, sty_dfc9b100). EVERY snapshot builder must use
+// this: the mirror overwrites a partition's slug from whichever snapshot arrives
+// last, so one builder on the raw root undoes the others.
+func partitionSlug(a *app.App) string {
+	return filepath.Base(config.CanonicalRepoRoot(a.RepoRoot))
+}
+
 func buildUISnapshotOpts(ctx context.Context, a *app.App, drain bool) (*mirror.Snapshot, error) {
 	repoKey := config.RepoKey(a.RepoRoot)
-	// The slug names the PROJECT, so it comes from the canonical repo root — a
-	// worktree is the same project as its parent, and deriving the slug from the
-	// invoking directory renamed the parent's partition to `sty_<id>` and took
-	// /r/<parent> to 404 on every worktree dispatch (sty_cd219594, sty_dfc9b100).
-	slug := filepath.Base(config.CanonicalRepoRoot(a.RepoRoot))
-	snap := &mirror.Snapshot{RepoKey: repoKey, Slug: slug}
+	snap := &mirror.Snapshot{RepoKey: repoKey, Slug: partitionSlug(a)}
 
 	items, err := a.Store.Stories.List(ctx, workitem.ListFilter{})
 	if err != nil {

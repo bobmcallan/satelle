@@ -1,3 +1,9 @@
+## [0.0.582] - 2026-09-29
+
+### Fixed
+- **A git worktree is the repository, not a project of its own.** A linked worktree registered itself in the workspace registry and relabelled its parent's mirror partition after its own directory name, so `http://localhost:8787/r/satelle/` returned 404 on every worktree dispatch and a `satelle workspace add` from the main tree was needed to restore it — a cycle that recurred three times in one session. `git rev-parse --git-common-dir` already resolves from any worktree to the main repository's `.git`, the same fact the runtime repo key collapses worktrees with, so identity now canonicalises through it and a worktree keeps its own `.satelle` for authored substrate. Both the registry path and the partition slug, path and project name are canonical; the data dir, substrate and doc reads stay per worktree. (sty_cd219594, sty_dfc9b100)
+  - **The runtime path marker was a data-loss path, and is fixed.** The runtime dir is keyed by repo key, which collapses worktrees, but the marker recorded the INVOKING root — so it flipped to whichever tree opened last. After `git worktree remove` the main repository's whole plane then read as stale and `runtime reap` could offer to delete it. The marker is an identity sink, so it now records the canonical root.
+
 ## [0.0.581] - 2026-09-29
 
 ### Fixed

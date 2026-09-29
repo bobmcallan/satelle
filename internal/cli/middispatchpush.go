@@ -9,7 +9,6 @@ package cli
 
 import (
 	"context"
-	"path/filepath"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/agentstep"
@@ -34,7 +33,7 @@ func buildSeatSnapshot(ctx context.Context, a *app.App) (*mirror.Snapshot, error
 		return nil, err
 	}
 	return &mirror.Snapshot{
-		RepoKey: config.RepoKey(a.RepoRoot), Slug: filepath.Base(a.RepoRoot),
+		RepoKey: config.RepoKey(a.RepoRoot), Slug: partitionSlug(a),
 		Seats: seats, Kinds: []string{"seat"},
 	}, nil
 }

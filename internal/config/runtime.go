@@ -84,16 +84,21 @@ func pathIdentity(repoRoot string) (identity, basename string) {
 // gitCommonIdentity resolves identity via git's common dir. Returns ok=false when
 // git is unavailable or the path is not a git work tree.
 func gitCommonIdentity(repoRoot string) (identity, basename string, ok bool) {
-	cmd := exec.Command("git", "-C", repoRoot, "rev-parse", "--git-common-dir")
-	out, err := cmd.Output()
+	// `--path-format=absolute` makes git print the common dir absolute from any
+	// worktree; git < 2.31 rejects the flag, so retry the bare form, which may
+	// print a path relative to repoRoot.
+	out, err := exec.Command("git", "-C", repoRoot, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
 	if err != nil {
-		return "", "", false
+		out, err = exec.Command("git", "-C", repoRoot, "rev-parse", "--git-common-dir").Output()
+		if err != nil {
+			return "", "", false
+		}
 	}
 	common := strings.TrimSpace(string(out))
 	if common == "" {
 		return "", "", false
 	}
-	// git often returns a relative ".git"; resolve against repoRoot first.
+	// A relative result (the pre-2.31 form) is resolved against repoRoot first.
 	if !filepath.IsAbs(common) {
 		common = filepath.Join(repoRoot, common)
 	}

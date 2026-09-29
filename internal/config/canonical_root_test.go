@@ -69,9 +69,82 @@ func TestCanonicalRepoRoot_WorktreeResolvesToMainTree(t *testing.T) {
 	}
 }
 
-// AC6: an ordinary directory is returned untouched. The common case must not move.
-func TestCanonicalRepoRoot_OrdinaryDirsUnchanged(t *testing.T) {
-	// A plain non-git directory.
+// gitOut runs git in dir and returns its trimmed stdout.
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// AC1: the canonical path IS the parent of `git rev-parse --path-format=absolute
+// --git-common-dir`, resolved from the worktree and from the main tree alike.
+func TestCanonicalRepoRoot_WorktreeEqualsMainTreeResolution(t *testing.T) {
+	base := t.TempDir()
+	main := mkSatelleTree(t, filepath.Join(base, "satelle"))
+	wt := filepath.Join(base, "wt", "sty_aaaa1111")
+	if err := os.MkdirAll(filepath.Dir(wt), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	addWorktree(t, main, wt, "sty_aaaa1111")
+
+	fromWT := gitOut(t, wt, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	fromMain := gitOut(t, main, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if fromWT != fromMain {
+		t.Fatalf("git disagrees on the common dir: worktree %q, main %q", fromWT, fromMain)
+	}
+	if got, want := CanonicalRepoRoot(wt), filepath.Dir(fromWT); got != want {
+		t.Errorf("CanonicalRepoRoot(worktree) = %q, want the parent of git's common dir %q", got, want)
+	}
+	if got, want := CanonicalRepoRoot(wt), CanonicalRepoRoot(main); got != want {
+		t.Errorf("worktree resolves to %q, the main tree to %q; they must agree", got, want)
+	}
+}
+
+// AC1: git < 2.31 rejects --path-format. The resolver must fall back to the bare
+// form (which prints a RELATIVE ".git" in a main tree) and still resolve the
+// same canonical root. A PATH shim stands in for the old git.
+func TestCanonicalRepoRoot_FallsBackWhenGitRejectsPathFormat(t *testing.T) {
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not on PATH")
+	}
+	base := t.TempDir()
+	main := mkSatelleTree(t, filepath.Join(base, "satelle"))
+	wt := filepath.Join(base, "wt", "sty_bbbb2222")
+	if err := os.MkdirAll(filepath.Dir(wt), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	addWorktree(t, main, wt, "sty_bbbb2222")
+	want := CanonicalRepoRoot(main)
+
+	shimDir := t.TempDir()
+	rejected := filepath.Join(shimDir, "rejected")
+	shim := "#!/bin/sh\n" +
+		"for a in \"$@\"; do case \"$a\" in --path-format*) : > " + rejected + "; echo 'error: unknown option' >&2; exit 129;; esac; done\n" +
+		"exec " + realGit + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(shimDir, "git"), []byte(shim), 0o755); err != nil {
+		t.Skipf("cannot write a git shim: %v", err)
+	}
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if got := CanonicalRepoRoot(main); got != want {
+		t.Errorf("fallback: main tree = %q, want %q", got, want)
+	}
+	if got := CanonicalRepoRoot(wt); got != want {
+		t.Errorf("fallback: worktree = %q, want the main tree %q", got, want)
+	}
+	if _, err := os.Stat(rejected); err != nil {
+		t.Errorf("the shim never rejected --path-format, so the fallback was not exercised: %v", err)
+	}
+}
+
+// AC6: a non-git directory resolves to the invoking directory, exactly as before.
+func TestCanonicalRepoRoot_NonGitDirReturnsInvokingDir(t *testing.T) {
 	plain := t.TempDir()
 	if got := CanonicalRepoRoot(plain); got != plain {
 		t.Errorf("non-git dir = %q, want %q unchanged", got, plain)
@@ -80,8 +153,19 @@ func TestCanonicalRepoRoot_OrdinaryDirsUnchanged(t *testing.T) {
 	if got, want := CanonicalRepoRoot(""), CanonicalRepoRoot("."); got != want {
 		t.Errorf(`CanonicalRepoRoot("") = %q, want the same as "." = %q`, got, want)
 	}
-	// A git repo with NO worktrees, and no .satelle, is still itself: a worktree
-	// whose MAIN tree is not satelle-governed must not be redirected to it.
+}
+
+// AC6: a git repo with no worktrees is itself, at the path it was invoked with.
+func TestCanonicalRepoRoot_GitRepoWithoutWorktreesReturnsItself(t *testing.T) {
+	main := mkSatelleTree(t, filepath.Join(t.TempDir(), "solo"))
+	if got := CanonicalRepoRoot(main); got != main {
+		t.Errorf("git repo without worktrees = %q, want %q unchanged", got, main)
+	}
+}
+
+// A worktree whose MAIN tree is not satelle-governed must not be redirected to it.
+// A documented superset of AC6's fallback.
+func TestCanonicalRepoRoot_NonSatelleMainTreeReturnsInvokingDir(t *testing.T) {
 	base := t.TempDir()
 	nogit := mkSatelleTree(t, filepath.Join(base, "nosatelle"))
 	if err := os.RemoveAll(filepath.Join(nogit, DefaultDataDir)); err != nil {

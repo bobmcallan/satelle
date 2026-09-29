@@ -2030,7 +2030,7 @@ func ensureWorkspaceRegistration(out io.Writer, repoRoot string, noWorkspace boo
 		return
 	}
 	if !gc.Workspace.AddRepo(abs) {
-		fmt.Fprintln(out, "  = workspace registry (already registered)")
+		fmt.Fprintf(out, "  = workspace registry (already registered: %s)\n", abs)
 		printWorkspaceMembership(out, abs, nil)
 		return
 	}
