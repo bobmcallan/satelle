@@ -107,6 +107,22 @@ var overlayExcluded = map[string]string{
 	"harness":           "retired alias, migrated by MigrateAgents",
 	"inject_principles": "retired alias, migrated by MigrateAgents",
 	"profile":           "identity: set by the resolver after the overlay, not overlaid",
+	"context_budget":    "repo-only integer bound: overlayBinding carries it (TestOverlayBindingCarriesBudgets), a catalog profile may not",
+	"turn_budget":       "repo-only integer bound: overlayBinding carries it (TestOverlayBindingCarriesBudgets), a catalog profile may not",
+}
+
+func TestOverlayBindingCarriesBudgets(t *testing.T) {
+	out, src := overlayBinding(AgentBinding{Model: "m"}, nil, AgentBinding{ContextBudget: 7, TurnBudget: 3}, "T")
+	if out.ContextBudget != 7 || out.TurnBudget != 3 || out.Model != "m" {
+		t.Fatalf("overlay = %+v, want budgets carried and the lower tier kept", out)
+	}
+	if src["context_budget"] != "T" || src["turn_budget"] != "T" {
+		t.Errorf("sources = %v, want T for both budgets", src)
+	}
+	out, _ = overlayBinding(out, src, AgentBinding{}, "U")
+	if out.ContextBudget != 7 || out.TurnBudget != 3 {
+		t.Errorf("an empty tier must not clear a budget: %+v", out)
+	}
 }
 
 // TestOverlayBindingCarriesEveryScalarField fails when a toml-tagged

@@ -345,6 +345,9 @@ func checkBindingTimeout(file, section string, b AgentBinding) error {
 	if _, err := b.BusyTimeoutDuration(0); err != nil {
 		return fmt.Errorf("%s [%s] busy_timeout: %w", file, section, err)
 	}
+	if err := checkBudget(fmt.Sprintf("%s [%s]", file, section), b.Budget()); err != nil {
+		return err
+	}
 	return nil
 }
 

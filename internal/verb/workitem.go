@@ -616,6 +616,29 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	// agent never advances status itself — the state's exit gate still governs the
 	// next edge. agent=executor and agent-less states dispatch nothing (the
 	// in-loop orchestrator performs, today's behaviour).
+	// parkWith parks the story at park with notes on the timeline: the set
+	// re-enters for the park edge, so blocked-review, park origin and the seat
+	// run as for any other park (sty_b8a0d062). handled is false when the
+	// request could not be re-issued, leaving the caller to refuse.
+	parkWith := func(park, notes string, res DispatchResult) (out json.RawMessage, err error, handled bool) {
+		author := res.Agent
+		if author == "" {
+			author = "executor"
+		}
+		appendLedgerEntry(ctx, current.ID, ledger.KindComment, author,
+			notes, transitionPayload(current.Status, park, res.Skill), now)
+		var parked map[string]json.RawMessage
+		if json.Unmarshal(raw, &parked) != nil {
+			return nil, nil, false
+		}
+		parked["status"], _ = json.Marshal(park)
+		reraw, merr := json.Marshal(parked)
+		if merr != nil {
+			return nil, nil, false
+		}
+		out, err = workItemSet(ctx, reraw)
+		return out, err, true
+	}
 	performStep := func() (json.RawMessage, error) {
 		if !(transitioning && executorDispatcher != nil) {
 			return nil, nil
@@ -623,24 +646,13 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		res, derr := executorDispatcher.DispatchExecutor(ctx, current, *req.Status)
 		if derr != nil {
 			// A performer that judged the premise wrong parks the story: the
-			// notes go on the timeline and the set re-enters for the park edge,
-			// so blocked-review, park origin and the seat run as for any other
-			// park (sty_b8a0d062). Any other failure is a plain refusal.
+			// notes go on the timeline and the set re-enters for the park edge.
+			// Any other failure is a plain refusal.
 			var rejected *PerformerReject
 			if errors.As(derr, &rejected) && strings.TrimSpace(rejected.Notes) != "" {
 				if park := resumeParkName(ctx, current); park != "" && park != *req.Status {
-					author := res.Agent
-					if author == "" {
-						author = "executor"
-					}
-					appendLedgerEntry(ctx, current.ID, ledger.KindComment, author,
-						rejected.Notes, transitionPayload(current.Status, park, res.Skill), now)
-					var parked map[string]json.RawMessage
-					if json.Unmarshal(raw, &parked) == nil {
-						parked["status"], _ = json.Marshal(park)
-						if reraw, merr := json.Marshal(parked); merr == nil {
-							return workItemSet(ctx, reraw)
-						}
+					if out, perr, handled := parkWith(park, rejected.Notes, res); handled {
+						return out, perr
 					}
 				}
 			}
@@ -671,6 +683,21 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 					appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "executor",
 						"run-output record failed: "+werr.Error(),
 						transitionPayload(current.Status, *req.Status, res.Skill), now)
+				}
+			}
+			// Spend budgets (sty_a7914904): with none configured this only warns
+			// and records; a bound the repo set and the run exceeded routes to
+			// rework (the step declares a loop) or parks the story blocked.
+			park := resumeParkName(ctx, current)
+			notes, refuse := applyDispatchBudget(ctx, current, *req.Status, res,
+				stepDeclaresRework(ctx, current, *req.Status), park, now)
+			if refuse != nil {
+				notifyChange(panelTopic(current.Kind))
+				return nil, fmt.Errorf("transition %s→%s refused: %v", current.Status, *req.Status, refuse)
+			}
+			if notes != "" {
+				if out, perr, handled := parkWith(park, notes, res); handled {
+					return out, perr
 				}
 			}
 		}
@@ -800,6 +827,10 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		if engaging, ok := storyStatusIsEngaging(ctx, it, *req.Status); ok && engaging {
 			recordEngageSessionModel(ctx, it.ID)
 		}
+		// Before this transition's own driver_usage row: tell a driver whose
+		// session already covers another story to start a fresh one
+		// (sty_a7914904). Warning only — engage is already committed.
+		checkFreshSession(ctx, it, current.Status, *req.Status, now)
 		// The driving session's measured usage at this transition (sty_81caa41b):
 		// a snapshot from the harness's own session record, delta-ed against the
 		// last snapshot for this session. Best-effort, like the change set below.
@@ -1760,6 +1791,9 @@ func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
 		PayloadBytes      int    `json:"payload_bytes,omitempty"`
 		ArtifactName      string `json:"artifact_name,omitempty"`
 		ArtifactType      string `json:"artifact_type,omitempty"`
+		// Budget records what the run measured against the repo's spend bounds
+		// (sty_a7914904): the measurement is recorded even when no bound is set.
+		Budget *BudgetReport `json:"budget,omitempty"`
 	}{From: from, To: to, Agent: res.Agent, Skill: res.Skill, Command: res.Command, Model: res.Model,
 		ModelResolved: res.ModelResolved, ModelSource: res.ModelSource, Models: res.Models,
 		TokensIn: res.TokensIn, TokensOut: res.TokensOut, TokensTotal: res.TokensTotal, DurationMs: res.DurationMs,
@@ -1767,7 +1801,7 @@ func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
 		TokensInFresh:  res.TokensInFresh, TokensCacheWrite: res.TokensCacheWrite, TokensCacheRead: res.TokensCacheRead, UsageNote: res.UsageNote,
 		CostUSD: res.CostUSD, CostUnavailableReason: res.CostUnavailableReason,
 		SystemPromptBytes: res.SystemPromptBytes, PayloadBytes: res.PayloadBytes,
-		ArtifactName: res.ArtifactName, ArtifactType: res.ArtifactType}
+		ArtifactName: res.ArtifactName, ArtifactType: res.ArtifactType, Budget: res.Budget}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil

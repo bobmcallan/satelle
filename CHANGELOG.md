@@ -1,3 +1,20 @@
+## [0.0.578] - 2026-09-29
+
+### Added
+- **Spend budgets, set by the repo: `context_budget` and `turn_budget`.** A binding in `agents.toml`, its `[defaults]`, or a workflow step can declare a context budget (input tokens) and a coder turn budget (model turns for one dispatched run). Resolution is step, then binding, then `[defaults]`. `0` or absent means unset, and a negative value is refused at load. The binary ships no number.
+  - **Turn budget reaches the harness where it can:** a command template takes `{max_turns}` (claude `--max-turns`, grok command). Grok ACP and unrecognised harnesses record an adapter-named "turn budget unavailable". `satelle help agent-dispatch` shows it in a new `turn budget` capability column.
+  - **No budget set:** satelle measures, warns and records on the `agent_invocation` row. A story is never parked for spend.
+  - **Budget set and overrun:** a `budget_overrun` row is recorded with its reason. If the step has a `rework` key, the output directs the orchestrator to `satelle story rework <id>`. Otherwise the story is blocked with the reason kept on the ledger. That consequence exists only because the repo configured the budget.
+- **Engage warns the driver to start a fresh session.** When the driving session's driver-usage rows already cover another story, engaging a story prints a warning to start a fresh session and records a `session_advisory` row. A repo-set context budget is a further trigger. It is a warning only, and engage is never refused.
+
+### Changed
+- **The coder-step edit refusal names the right next step.** During a step the route allocates to a dispatched coder, the edit gate's refusal of the driver's own edit now names `satelle story rework` only when that step has a `rework` key, and the one-shot coder dispatch otherwise. Steps allocated to the in-loop executor still accept the driver's edits. All four rules are documented in `satelle help agent-dispatch` ("Spend budgets") and `satelle help workflows`. (sty_a7914904)
+
+## [serve-v0.0.100] - 2026-09-29
+
+### Changed
+- **The service embeds the spend budgets and engage advisory above.** (sty_a7914904)
+
 ## [0.0.577] - 2026-09-29
 
 ### Changed

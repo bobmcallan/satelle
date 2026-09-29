@@ -127,6 +127,7 @@ type invocation struct {
 	tools      string
 	model      string
 	effort     string // optional reasoning effort (sty_657f77b9)
+	maxTurns   int    // the repo's resolved turn budget → {max_turns}; 0 = none (sty_a7914904)
 	settings   map[string]any
 	env        map[string]string
 	scratch    string // this dispatch's scratch dir; "" → no scratch briefing (sty_e7aaf8b1)
@@ -201,6 +202,7 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 		AllowedTools: inv.tools,
 		Model:        inv.model,
 		Effort:       inv.effort,
+		MaxTurns:     inv.maxTurns,
 		Settings:     settings,
 		Env:          env,
 		Dir:          g.repoRoot,
@@ -278,6 +280,7 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		tools:      binding.Tools,
 		model:      binding.Model,
 		effort:     binding.Effort,
+		maxTurns:   binding.TurnBudget,
 		settings:   binding.Settings,
 		env:        binding.Env,
 	}

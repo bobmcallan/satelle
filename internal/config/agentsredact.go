@@ -453,6 +453,12 @@ func defaultsTable(d AgentsDefaults) map[string]any {
 	if d.UseGlobalRoles {
 		out["use_global_roles"] = true
 	}
+	if d.ContextBudget != 0 {
+		out["context_budget"] = d.ContextBudget
+	}
+	if d.TurnBudget != 0 {
+		out["turn_budget"] = d.TurnBudget
+	}
 	return out
 }
 
@@ -476,6 +482,12 @@ func bindingTable(b AgentBinding) map[string]any {
 	set("secondary", b.Secondary)
 	set("isolation", b.Isolation)
 	set("profile", b.Profile)
+	if b.ContextBudget != 0 {
+		out["context_budget"] = b.ContextBudget
+	}
+	if b.TurnBudget != 0 {
+		out["turn_budget"] = b.TurnBudget
+	}
 	if b.InjectPrinciples != nil {
 		out["inject_principles"] = *b.InjectPrinciples
 	}

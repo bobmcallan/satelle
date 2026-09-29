@@ -7,7 +7,7 @@
 //
 // A command string is a command template: the first token is the binary, the rest
 // are argv tokens that may carry the placeholders {system}, {tools}, {model},
-// {settings}, and {payload}. At call time satelle substitutes each placeholder into
+// {settings}, {max_turns} (a repo's turn budget, dropped when unset), and {payload}. At call time satelle substitutes each placeholder into
 // its own argv token (so a multi-line system prompt or a JSON payload stays a
 // single argument). The work-item payload is ALWAYS also written to the child
 // stdin (dual delivery): stdin-first CLIs (claude -p) keep using stdin alone;
@@ -32,6 +32,7 @@ import (
 	"os/exec"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -96,6 +97,11 @@ type Request struct {
 	// Effort is {effort}: optional reasoning/thinking level (sty_657f77b9);
 	// "" drops the placeholder AND a directly preceding flag (like Model).
 	Effort string
+	// MaxTurns is {max_turns}: the repo's configured turn budget for this run
+	// (sty_a7914904). Zero means no budget: the placeholder AND a directly
+	// preceding flag are dropped, like an empty Model. satelle never supplies a
+	// number of its own — only a repo's turn_budget reaches here.
+	MaxTurns int
 	// Settings is {settings}: a pre-marshalled JSON object mirroring claude's
 	// settings.local.json schema (env/model/permissions), already ${VAR}-resolved
 	// by the caller (config.ResolveAgentEnvs / agentstep.buildRequest) — agentcli
@@ -224,6 +230,11 @@ type UsageResult struct {
 	// CostUnavailableReason names the adapter and why CostUSD is nil. Set only
 	// when CostUSD is nil.
 	CostUnavailableReason string
+	// Turns is the model turns the run reported (the envelope's num_turns), only
+	// meaningful when TurnsAvailable. False means the run reported no count —
+	// never a zero (sty_a7914904; satelle-agent-agnostic §2).
+	Turns          int
+	TurnsAvailable bool
 }
 
 // claudeJSONEnvelope is the shape of `claude -p --output-format json` output: the
@@ -250,6 +261,8 @@ type claudeJSONEnvelope struct {
 	// Absent on the captured claude_result.json fixture — cost then falls back
 	// to the sum of ModelUsage's own costUSD (costFromModels).
 	TotalCostUSD *float64 `json:"total_cost_usd"`
+	// NumTurns is the run's own turn count, when the envelope carries one.
+	NumTurns *int `json:"num_turns"`
 }
 
 // grokJSONEnvelope is the shape of `grok -p … --output-format json` headless
@@ -267,6 +280,7 @@ type grokJSONEnvelope struct {
 	// total_cost_usd_ticks * 1e-10 on the real capture); falls back to
 	// costFromModels when absent.
 	TotalCostUSD *float64 `json:"total_cost_usd"`
+	NumTurns     *int     `json:"num_turns"`
 }
 
 // UnwrapUsage splits an agent's raw stdout into the INNER result text (what verdict
@@ -315,6 +329,7 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 			u.Models = models
 		}
 		applyCost(&u, claude.TotalCostUSD, "claude command")
+		applyTurns(&u, claude.NumTurns)
 		return []byte(claude.Result), u
 	}
 	var grok grokJSONEnvelope
@@ -331,11 +346,13 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 				u.Models = models
 			}
 			applyCost(u, grok.TotalCostUSD, "grok command")
+			applyTurns(u, grok.NumTurns)
 			return []byte(grok.Text), *u
 		}
 		u := unavailableUsage("grok", "--output-format json envelope carries no usage object")
 		u.ModelResolved = noModelReport("grok command")
 		applyCost(&u, grok.TotalCostUSD, "grok command")
+		applyTurns(&u, grok.NumTurns)
 		return []byte(grok.Text), u
 	}
 	return stdout, UsageResult{}
@@ -556,6 +573,14 @@ func buildArgs(argTemplate []string, req Request) []string {
 				continue
 			}
 			args = append(args, req.Effort)
+		case "{max_turns}":
+			if req.MaxTurns <= 0 {
+				if n := len(args); n > 0 && strings.HasPrefix(args[n-1], "-") {
+					args = args[:n-1]
+				}
+				continue
+			}
+			args = append(args, strconv.Itoa(req.MaxTurns))
 		case "{settings}":
 			if strings.TrimSpace(req.Settings) == "" {
 				if n := len(args); n > 0 && strings.HasPrefix(args[n-1], "-") {
@@ -595,6 +620,7 @@ func fusedPlaceholder(tok string, req Request) (sub string, ok bool, empty bool)
 		{"{model}", strings.TrimSpace(req.Model)},
 		{"{effort}", strings.TrimSpace(req.Effort)},
 		{"{settings}", strings.TrimSpace(req.Settings)},
+		{"{max_turns}", maxTurnsValue(req.MaxTurns)},
 	} {
 		if !strings.Contains(tok, p.ph) || tok == p.ph {
 			continue
@@ -609,6 +635,15 @@ func fusedPlaceholder(tok string, req Request) (sub string, ok bool, empty bool)
 		return strings.ReplaceAll(tok, p.ph, p.val), true, false
 	}
 	return "", false, false
+}
+
+// maxTurnsValue renders a turn budget for a fused placeholder; no budget is the
+// empty value, which drops the token like any other unset placeholder.
+func maxTurnsValue(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return strconv.Itoa(n)
 }
 
 // composeEnv layers overlay onto base ("KEY=VALUE" entries, as from os.Environ),

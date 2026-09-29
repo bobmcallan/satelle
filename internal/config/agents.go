@@ -251,6 +251,13 @@ type AgentBinding struct {
 	// refused before it starts. It has no effect on a claude or grok binding — the
 	// adapter decides those. Any other value fails at load.
 	Isolation string `toml:"isolation"`
+	// ContextBudget and TurnBudget are the repo's own spend bounds for this
+	// binding (sty_a7914904): input tokens (fresh + cache read + cache write) and
+	// model turns. Zero or absent means unset — there is no shipped default, and
+	// with none set satelle only warns and records. A step's own budget overrides
+	// them, and [defaults] backs them. See Budget.
+	ContextBudget int `toml:"context_budget"`
+	TurnBudget    int `toml:"turn_budget"`
 }
 
 // IsolationOperatorAttested is the one valid isolation= value.
@@ -286,6 +293,10 @@ type AgentsDefaults struct {
 	// BusyTimeout is the repo-wide CPU-liveness cap (sty_db62a3b9) for a
 	// binding that omits its own busy_timeout=. Empty falls to the shipped default.
 	BusyTimeout string `toml:"busy_timeout"`
+	// ContextBudget and TurnBudget are the repo-wide spend bounds for a binding
+	// or step that sets neither (sty_a7914904). Zero means unset.
+	ContextBudget int `toml:"context_budget"`
+	TurnBudget    int `toml:"turn_budget"`
 }
 
 // LiveInterfaces returns the preference order ResolveInterface walks for a
@@ -1017,6 +1028,9 @@ func (a AgentsConfig) validateTimeouts() error {
 	}
 	if _, err := parseBusyDuration(a.Defaults.BusyTimeout, 0); err != nil {
 		return fmt.Errorf("%s [defaults] busy_timeout: %w", AgentsConfigName, err)
+	}
+	if err := checkBudget(AgentsConfigName+" [defaults]", a.Defaults.Budget()); err != nil {
+		return err
 	}
 	return nil
 }

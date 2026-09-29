@@ -257,7 +257,15 @@ type Engine struct {
 	// (empty Patterns, empty ContentRegex) disables the sweep entirely: the
 	// binary ships no opinion about what a leftover looks like.
 	leftoverRule config.LeftoverRule
+	// defaultBudget is the repo's [defaults] context_budget / turn_budget
+	// (sty_a7914904): the last tier a dispatch's budget resolves through, after
+	// the step's own and the allocated binding's. The zero value is "unset" — the
+	// binary ships no number.
+	defaultBudget config.Budget
 }
+
+// SetDefaultBudget wires the repo's [defaults] spend bounds.
+func (g *Engine) SetDefaultBudget(b config.Budget) { g.defaultBudget = b }
 
 // SetLeftoverRule wires the repo's leftover-sweep configuration
 // (sty_e7aaf8b1). Unset (the zero value) disables the sweep.
@@ -1745,6 +1753,14 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	// callers that need it applied build their OWN per-use copy.
 	modelResolved, modelSource := g.selectModel(ctx, binding, item.ID, target.Model, config.ModelSourceStep)
 	modelChoice := ModelChoice{Model: modelResolved, Source: modelSource}
+	// Spend bounds (sty_a7914904): the step's own, then the binding's, then
+	// [defaults]. Carried on this dispatch's copy of the binding so the turn
+	// budget reaches the harness ({max_turns}) on every path that invokes it,
+	// including the artifact-attempt loop.
+	budget := config.ResolveBudget(
+		config.Budget{Context: target.ContextBudget, Turns: target.TurnBudget},
+		binding.Budget(), g.defaultBudget)
+	binding.ContextBudget, binding.TurnBudget = budget.Context, budget.Turns
 	// Design §9 (a): when the resolved binding is role=reviewer, it is a judge
 	// not a performer — do not dispatch as ExpectPerform (isNamedPerformer).
 	// Fail loud when a role=reviewer binding is allocated on a performing node.
@@ -1911,6 +1927,9 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		CostUSD: invRes.Usage.CostUSD, CostUnavailableReason: invRes.Usage.CostUnavailableReason,
 		SystemPromptBytes: invRes.SystemPromptBytes, PayloadBytes: invRes.PayloadBytes,
 		Output: string(invRes.Stdout),
+	}
+	if invRes.Err == nil {
+		res.Budget = measureBudget(binding, budget, invRes.Usage)
 	}
 	g.logExecutorRun(dispatchAgent, item.ID, toStatus, invRes.Stdout, invRes.Err)
 	if invRes.Err != nil {

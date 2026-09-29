@@ -105,6 +105,12 @@ type Step struct {
 	// the edit gate and Stop hook do not count it while children are open
 	// (sty_7f3e6fd3). Authored in step.toml; the binary never names the status.
 	WaitsOnChildren bool
+	// ContextBudget / TurnBudget are this step's own spend bounds for its
+	// performer (sty_a7914904): input tokens and model turns. They override the
+	// allocated binding's, which override [defaults]. Zero means unset — nothing
+	// is inferred, and with none set satelle only warns and records.
+	ContextBudget int
+	TurnBudget    int
 	// Start marks the entry state; Terminal marks a terminal success state.
 	Start    bool
 	Terminal bool
@@ -411,13 +417,16 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 				st.Name, len(st.Skills))
 		}
 		spec.States = append(spec.States, State{
-			Name:       st.Name,
-			Agent:      st.Agent,
-			Model:      st.Model,
-			Skill:      firstOf(st.Skills),
-			Obligation: st.Provides,
-			Shape:      shape,
-			AppliesTo:  st.AppliesTo,
+			Name:  st.Name,
+			Agent: st.Agent,
+			Model: st.Model,
+			Skill: firstOf(st.Skills),
+
+			ContextBudget: st.ContextBudget,
+			TurnBudget:    st.TurnBudget,
+			Obligation:    st.Provides,
+			Shape:         shape,
+			AppliesTo:     st.AppliesTo,
 
 			Propose:      st.Propose,
 			Freeze:       st.Freeze,

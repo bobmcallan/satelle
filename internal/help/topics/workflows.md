@@ -54,6 +54,12 @@ parallel = 0
 requires = ["raised"]
 ```
 
+A performing step may also declare its own spend bounds, `context_budget` and
+`turn_budget` (integers; absent or `0` means unset, negative is refused). They
+override the allocated binding's own and `[defaults]`, and the overrun
+consequence depends on whether the step has a `rework` key — see
+`satelle help agent-dispatch` (*Spend budgets*). The binary ships no value.
+
 Both files carry a `[meta]` table (`name`, `type = "workflow"`, `scope`,
 `description`) and **must not** carry `applies_to` — done.toml's category tables
 are the selector, and a second one would be a second precedence rule. A lifecycle

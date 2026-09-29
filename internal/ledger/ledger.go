@@ -138,6 +138,18 @@ const (
 	// view over-count. See IsToolPermissionRow for the read-time filter that
 	// also excludes the legacy rows written before this kind existed.
 	KindToolPermission = "tool_permission"
+	// KindSessionAdvisory records the fresh-session warning given to the driver
+	// at engage (sty_a7914904): Payload verb.SessionAdvisoryPayload — the session,
+	// the trigger (other-story | context-budget) and what fired it. A warning
+	// only; engage is never refused for it. Enumeration only.
+	KindSessionAdvisory = "session_advisory"
+	// KindBudgetOverrun records a dispatched performer exceeding a context or
+	// turn budget the REPO configured (sty_a7914904): Payload
+	// verb.BudgetOverrunPayload — the kind, the budget, the measured figure and
+	// the consequence taken (rework | blocked). Written only when a budget is
+	// set; with none configured satelle warns and records the measurement on the
+	// agent_invocation row instead.
+	KindBudgetOverrun = "budget_overrun"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional

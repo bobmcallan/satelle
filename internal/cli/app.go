@@ -308,6 +308,12 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// agent=<name> allocation runs that binding's harness at the transition.
 			// agents.toml defines WHO, the DOT defines WHERE, the binary only runs it.
 			rev.SetNamedAgents(agents.NamedBinding)
+			// Spend budgets (sty_a7914904): [defaults] backs the engine's dispatch
+			// resolution, and the verb layer's engage-time context check reads the
+			// same binding → [defaults] ladder. Both are the repo's own numbers;
+			// unset stays unset.
+			rev.SetDefaultBudget(agents.Defaults.Budget())
+			verb.SetAgentBudgets(agentBudgetsFor(agents))
 			// Model selection (sty_7069bced): the session-model resolver feeds
 			// config.SelectModel's inherited/creator tiers. Without it, tiers 3
 			// and 4 of the precedence never apply — every dispatch with no
@@ -442,6 +448,7 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 		return nil, nil, err
 	}
 	rev.SetNamedAgents(eff.Agents.NamedBinding)
+	rev.SetDefaultBudget(eff.Agents.Defaults.Budget())
 	rev.SetLiveNamedAgents(eff.Agents.LiveBinding)
 	rev.SetSessionModelsResolver(verb.SessionModels)
 	rev.SetInvocationRecorder(verb.AppendAgentInvocation)
@@ -462,6 +469,17 @@ func logRotation(a *app.App) logfile.Config {
 	return logfile.Config{
 		MaxSizeBytes: a.Config.ResolveLogsMaxSizeBytes(),
 		MaxFiles:     a.Config.ResolveLogsMaxFiles(),
+	}
+}
+
+// agentBudgetsFor resolves the repo's spend budget for a named agent binding:
+// the binding's own context_budget / turn_budget, then [defaults]. An agent with
+// no binding (or ""), gets [defaults] alone. The verb layer layers a step's own
+// declaration above this (sty_a7914904).
+func agentBudgetsFor(agents config.AgentsConfig) func(agent string) config.Budget {
+	return func(agent string) config.Budget {
+		b, _ := agents.NamedBinding(agent)
+		return config.ResolveBudget(b.Budget(), agents.Defaults.Budget())
 	}
 }
 

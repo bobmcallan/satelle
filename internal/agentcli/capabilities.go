@@ -57,6 +57,11 @@ type AdapterCapabilities struct {
 	// offers, so a ledger row can record a real offered-tool count. Where it
 	// cannot, the row records this adapter-named reason and no number.
 	OfferedTools Capability
+	// TurnBudget: the harness can be told a repo's turn_budget at spawn (the
+	// {max_turns} placeholder) and stops the run itself (sty_a7914904). Where it
+	// cannot, the budget is only recorded and checked against the turns the run
+	// reports, and the adapter names why.
+	TurnBudget Capability
 }
 
 // CapabilityTable returns the table in the order help prints it.
@@ -68,20 +73,24 @@ func CapabilityTable() []AdapterCapabilities {
 		{
 			Adapter: "claude command", Usage: yes(), CacheSplit: yes(), ResolvedModel: yes(),
 			ModelInheritance: yes(), LiveSession: no(notLive), ToolTrim: yes(), OfferedTools: yes(),
+			TurnBudget: yes(),
 		},
 		{
 			Adapter: "claude stream", Usage: yes(), CacheSplit: yes(), ResolvedModel: yes(),
 			ModelInheritance: yes(), LiveSession: yes(), ToolTrim: yes(), OfferedTools: yes(),
+			TurnBudget: yes(),
 		},
 		{
 			Adapter: "grok command", Usage: yes(), CacheSplit: yes(), ResolvedModel: yes(),
 			ModelInheritance: no(noGrokHookModel), LiveSession: no(notLive), ToolTrim: yes(), OfferedTools: yes(),
+			TurnBudget: yes(),
 		},
 		{
 			Adapter: "grok acp", Usage: yes(), CacheSplit: yes(), ResolvedModel: yes(),
 			ModelInheritance: no(noGrokHookModel), LiveSession: yes(),
 			ToolTrim:     no(grokACPNoTrim),
 			OfferedTools: no("grok agent stdio neither trims nor reports offered tools"),
+			TurnBudget:   no(acpTurnBudgetReason),
 		},
 	}
 }
@@ -110,11 +119,11 @@ func ReasonForNoModel(harness string) string {
 }
 
 // capabilityColumns are the table headings, in cell order.
-var capabilityColumns = []string{"usage", "cache split", "resolved model", "model inheritance", "live session", "tool trim", "offered tools"}
+var capabilityColumns = []string{"usage", "cache split", "resolved model", "model inheritance", "live session", "tool trim", "offered tools", "turn budget"}
 
 // cells returns the row's cells in capabilityColumns order.
 func (a AdapterCapabilities) cells() []Capability {
-	return []Capability{a.Usage, a.CacheSplit, a.ResolvedModel, a.ModelInheritance, a.LiveSession, a.ToolTrim, a.OfferedTools}
+	return []Capability{a.Usage, a.CacheSplit, a.ResolvedModel, a.ModelInheritance, a.LiveSession, a.ToolTrim, a.OfferedTools, a.TurnBudget}
 }
 
 // CapabilityTableMarkdown renders CapabilityTable as the markdown table

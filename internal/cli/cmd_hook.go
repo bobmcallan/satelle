@@ -44,6 +44,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
+	"github.com/bobmcallan/satelle/internal/wfroute"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -424,6 +425,10 @@ type seatInfo struct {
 	TargetState string // immutable lease target used to authenticate a dispatched performer
 	StoryStatus string // committed work-item status (step policy; sty_c21490cc)
 	StateAgent  string // agent allocated to lease target / State
+	// StateRework is true when the route step StateAgent performs declares a
+	// rework loop (rework = { consult, rounds }). It decides whether the deny
+	// text may name `satelle story rework` (sty_a7914904).
+	StateRework bool
 	Owner       string
 	// Worktree is the git working tree the lease was engaged from, when
 	// recorded (sty_c098dc2d). It is how a session picks ITS seat out of
@@ -808,10 +813,11 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 		// Also expose the committed status when it differs (e.g. lease state=plan
 		// while story is still backlog mid-transition) by preferring lease state
 		// for messaging, but judging on committed status.
-		spec, wfName, _, serr := wfgovern.SpecFor(wfs, it)
+		route, wfName, serr := wfgovern.RouteFor(wfs, it)
 		if serr != nil {
 			return nil, seatInfo{}, fmt.Errorf("item %s: %w — cannot determine engagement", it.ID, serr)
 		}
+		spec := route.Spec
 		if _, known := spec.StateAgent(status); !known {
 			return nil, seatInfo{}, fmt.Errorf(
 				"item %s status %q is not declared by workflow %s — cannot classify edit permission",
@@ -827,6 +833,7 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 		info.TargetState = target
 		var targetKnown bool
 		info.StateAgent, targetKnown = spec.StateAgent(target)
+		info.StateRework = stepDeclaresRework(route.Reworks, target)
 		if !targetKnown {
 			return nil, seatInfo{}, fmt.Errorf(
 				"lease for item %s targets state %q not declared by workflow %s — cannot classify edit permission",
@@ -1161,10 +1168,11 @@ func anyEngaged(items []workitem.Item, wfs []docindex.Doc) (bool, error) {
 func derivedSeat(items []workitem.Item, wfs []docindex.Doc) (seatInfo, bool, error) {
 	var other seatInfo
 	for _, it := range items {
-		spec, wfName, _, serr := wfgovern.SpecFor(wfs, it)
+		route, wfName, serr := wfgovern.RouteFor(wfs, it)
 		if serr != nil {
 			return seatInfo{}, false, fmt.Errorf("item %s: %w — cannot determine engagement", it.ID, serr)
 		}
+		spec := route.Spec
 		agent, known := spec.StateAgent(it.Status)
 		if !known {
 			return seatInfo{}, false, fmt.Errorf(
@@ -1174,7 +1182,8 @@ func derivedSeat(items []workitem.Item, wfs []docindex.Doc) (seatInfo, bool, err
 		info := seatInfo{
 			ItemID: it.ID, State: it.Status, StoryStatus: it.Status,
 			StateAgent: agent, EditCapable: spec.IsEditCapableState(it.Status),
-			EditStates: spec.EditCapableStates(),
+			StateRework: stepDeclaresRework(route.Reworks, it.Status),
+			EditStates:  spec.EditCapableStates(),
 		}
 		engaging := false
 		for _, state := range spec.NonTerminalEngagingStates() {
@@ -1490,16 +1499,37 @@ func editPermissionDenyReason(info seatInfo, now time.Time) string {
 			info.ItemID, target, pre)
 	}
 	agent := info.StateAgent
-	if agent == "" {
-		agent = "no in-loop executor"
-	}
 	states := strings.Join(info.EditStates, ", ")
 	if states == "" {
 		states = "(none declared)"
 	}
+	if agent == "" {
+		return fmt.Sprintf(
+			"satelle: story %s is at %q, which its workflow allocates to %q; source edits are permitted only in route steps allocated to agent=executor (%s). Do not work ahead. %s",
+			info.ItemID, info.StoryStatus, "no in-loop executor", states, pre)
+	}
+	// A named performer owns this step: the driver's own edit is refused, and
+	// the text names the one path that reaches that performer. The relay is
+	// named only when the step declares a rework loop — naming it on a step
+	// with none sends the driver at a command that refuses (sty_a7914904).
+	path := fmt.Sprintf("the one-shot coder dispatch of %q performs this step — advance the edge (`satelle story set %s --status <next>`) to dispatch it", agent, info.ItemID)
+	if info.StateRework {
+		path = fmt.Sprintf("relay the change through the dispatched coder %q with `satelle story rework %s`", agent, info.ItemID)
+	}
 	return fmt.Sprintf(
-		"satelle: story %s is at %q, which its workflow allocates to %q; source edits are permitted only in route steps allocated to agent=executor (%s). Do not work ahead. %s",
-		info.ItemID, info.StoryStatus, agent, states, pre)
+		"satelle: story %s is at %q, which its workflow allocates to %q; source edits are permitted only in route steps allocated to agent=executor (%s). Do not edit in-loop — %s. Do not work ahead. %s",
+		info.ItemID, info.StoryStatus, agent, states, path, pre)
+}
+
+// stepDeclaresRework reports whether the derived route declares a rework loop
+// on step.
+func stepDeclaresRework(reworks []wfroute.Rework, step string) bool {
+	for _, w := range reworks {
+		if w.Step == step {
+			return true
+		}
+	}
+	return false
 }
 
 // hookDenyReason selects the agent-facing deny text for gate/commitgate.

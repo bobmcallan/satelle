@@ -151,6 +151,10 @@ func usageFromMap(v map[string]any) *UsageResult {
 		u.Models = models
 	}
 	applyCost(u, floatPtr(v["total_cost_usd"]), adapter)
+	if _, ok := v["num_turns"]; ok {
+		n := intValue(v["num_turns"])
+		applyTurns(u, &n)
+	}
 	return u
 }
 

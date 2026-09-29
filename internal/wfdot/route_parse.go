@@ -140,6 +140,12 @@ type stepWire struct {
 	WaitsOnChildren bool `toml:"waits_on_children"`
 	Start           bool `toml:"start"`
 	Terminal        bool `toml:"terminal"`
+	// ContextBudget and TurnBudget are the step's own spend bounds for its
+	// performer (sty_a7914904), overriding the allocated binding's. Zero or
+	// absent means unset; a negative value is refused. The numbers are the
+	// repo's — the binary ships none.
+	ContextBudget int `toml:"context_budget"`
+	TurnBudget    int `toml:"turn_budget"`
 }
 
 type gateWire struct {
@@ -361,6 +367,11 @@ func ParseSteps(body string) (Catalogue, error) {
 			Freeze:        s.Freeze,
 
 			WaitsOnChildren: s.WaitsOnChildren,
+			ContextBudget:   s.ContextBudget,
+			TurnBudget:      s.TurnBudget,
+		}
+		if s.ContextBudget < 0 || s.TurnBudget < 0 {
+			return Catalogue{}, fmt.Errorf("step.toml: step %q: context_budget and turn_budget must not be negative (0 or absent means unset)", provides)
 		}
 		if s.RejectBudget != nil {
 			st.RejectBudget = *s.RejectBudget

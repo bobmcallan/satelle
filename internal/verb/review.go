@@ -335,6 +335,9 @@ type DispatchResult struct {
 	// attached before the transition committed.
 	ArtifactName string `json:"artifact_name,omitempty"`
 	ArtifactType string `json:"artifact_type,omitempty"`
+	// Budget is what the run measured against the repo's spend bounds
+	// (sty_a7914904); nil when the dispatch failed before it produced usage.
+	Budget *BudgetReport `json:"budget,omitempty"`
 }
 
 // ExecutorDispatcher runs the named isolated agent a workflow node allocates a
