@@ -662,6 +662,102 @@ func TestGateValueEmptySkillCorrelatesInvocationAndVerdict(t *testing.T) {
 	}
 }
 
+// TestGateValueEmptySkillGroupsUnderRole pins AC1: an invocation with no skill
+// but a recorded non-gate role is grouped under a label naming that role.
+func TestGateValueEmptySkillGroupsUnderRole(t *testing.T) {
+	for _, role := range []string{"coder", "orchestrator", "reviewer-consult", "planner"} {
+		t.Run(role, func(t *testing.T) {
+			inv := ledger.Entry{StoryID: "sty_1", Kind: ledger.KindAgentInvocation, CreatedAt: time.Now(),
+				Payload: mustJSON(t, map[string]any{"agent": role, "model": "claude-sonnet-5", "usage_available": false})}
+			report := costview.GateValue(map[string][]ledger.Entry{"sty_1": {inv}}, costview.GateFilter{})
+			if len(report.Rows) != 1 {
+				t.Fatalf("rows = %d, want 1", len(report.Rows))
+			}
+			if got := report.Rows[0].Skill; got != role || got == "unknown" {
+				t.Fatalf("skill = %q, want %q", got, role)
+			}
+		})
+	}
+}
+
+// gateValueLabelFixture holds one row of each kind: a named skill, a role with
+// no skill, and neither.
+func gateValueLabelFixture(t *testing.T) map[string][]ledger.Entry {
+	t.Helper()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mk := func(p map[string]any) ledger.Entry {
+		return ledger.Entry{StoryID: "sty_1", Kind: ledger.KindAgentInvocation, CreatedAt: base, Payload: mustJSON(t, p)}
+	}
+	return map[string][]ledger.Entry{"sty_1": {
+		mk(map[string]any{"skill": "plan-review", "agent": "reviewer", "model": "opus", "cost_usd": 1.0}),
+		mk(map[string]any{"agent": "orchestrator", "model": "opus", "cost_usd": 2.0}),
+		mk(map[string]any{"cost_usd": 3.0}),
+	}}
+}
+
+// TestGateValueUnknownOnlyWhenNoSkillNorRole pins AC2: "unknown" is reserved
+// for rows with neither skill nor role; each kind lands in its own group.
+func TestGateValueUnknownOnlyWhenNoSkillNorRole(t *testing.T) {
+	report := costview.GateValue(gateValueLabelFixture(t), costview.GateFilter{})
+	got := map[string]float64{}
+	for _, r := range report.Rows {
+		got[r.Skill] = r.CostUSD
+	}
+	want := map[string]float64{"plan-review": 1.0, "orchestrator": 2.0, "unknown": 3.0}
+	if len(got) != len(want) || len(report.Rows) != len(want) {
+		t.Fatalf("groups = %v (rows %d), want %v", got, len(report.Rows), want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("groups = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestGateValueSeatMergesNamedAndEmptySkill pins AC3: one seat recorded under
+// a named skill and under the empty-skill fallback reports as ONE row whose
+// dollars are the sum of its former groups.
+func TestGateValueSeatMergesNamedAndEmptySkill(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	named := ledger.Entry{StoryID: "sty_1", Kind: ledger.KindAgentInvocation, CreatedAt: base,
+		Payload: mustJSON(t, map[string]any{"agent": "coder", "skill": "coder", "model": "claude-sonnet-5", "cost_usd": 3.0})}
+	empty := ledger.Entry{StoryID: "sty_1", Kind: ledger.KindAgentInvocation, CreatedAt: base,
+		Payload: mustJSON(t, map[string]any{"agent": "coder", "model": "claude-sonnet-5", "cost_usd": 1.5})}
+	report := costview.GateValue(map[string][]ledger.Entry{"sty_1": {named, empty}}, costview.GateFilter{})
+	if len(report.Rows) != 1 {
+		t.Fatalf("rows = %+v, want 1 merged row", report.Rows)
+	}
+	r := report.Rows[0]
+	if r.Skill != "coder" || r.Seat != "coder@claude-sonnet-5" {
+		t.Fatalf("row = %s / %s, want coder / coder@claude-sonnet-5", r.Skill, r.Seat)
+	}
+	if r.CostUSD != 4.5 || r.Invocations != 2 || r.Costed != 2 {
+		t.Fatalf("row = %+v, want $4.50 over 2 invocations, 2 costed", r)
+	}
+}
+
+// TestGateValueJSONCarriesSameGrouping pins AC4: --json marshals the same
+// GateValueReport the table renders, so the grouping survives a round trip.
+func TestGateValueJSONCarriesSameGrouping(t *testing.T) {
+	report := costview.GateValue(gateValueLabelFixture(t), costview.GateFilter{})
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var round costview.GateValueReport
+	if err := json.Unmarshal(raw, &round); err != nil {
+		t.Fatal(err)
+	}
+	if len(round.Rows) != len(report.Rows) {
+		t.Fatalf("round-trip rows = %d, want %d", len(round.Rows), len(report.Rows))
+	}
+	for i, r := range report.Rows {
+		if round.Rows[i].Skill != r.Skill || round.Rows[i].Seat != r.Seat || round.Rows[i].CostUSD != r.CostUSD {
+			t.Fatalf("row %d round-trip = %+v, want %+v", i, round.Rows[i], r)
+		}
+	}
+}
+
 // TestGateValuePricedButUsageUnreportedNeverPrintsZero pins the rework fix: a
 // gate-value row whose only invocation is priced but reports no usage at all
 // (usage_available: false) must render FRESH TOKENS as unavailable, never a

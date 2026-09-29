@@ -30,7 +30,8 @@ func (f GateFilter) includes(t time.Time) bool {
 }
 
 // GateValueRow is one skill/seat combination's aggregated spend against its
-// verdicts. Seat is the recorded agent and model (e.g. "reviewer@opus") — the
+// verdicts. Skill is the recorded skill, else the recorded role, else "unknown"
+// (neither recorded — unattributed legacy rows only). Seat is the recorded agent and model (e.g. "reviewer@opus") — the
 // ledger's agent_invocation and review rows carry no harness field today, so
 // seat cannot include one; a row with neither recorded groups as "unknown",
 // never defaulting to a provider. CostUSD/Costed/Uncosted follow the same
@@ -187,14 +188,14 @@ func GateValue(entriesByID map[string][]ledger.Entry, filter GateFilter) GateVal
 					// One measured bundled call, divided across the rubrics it
 					// judged — an allocation, labelled as one (sty_23e10d92).
 					for i, sk := range row.BundleSkills {
-						r := get(normalizeSkill(sk), seat)
+						r := get(skillLabel(sk, row.Agent), seat)
 						r.AllocatedRows++
 						r.noteBundle(row)
 						r.addUsage(bundleShare(row, i, n))
 					}
 					continue
 				}
-				r := get(normalizeSkill(row.Skill), seat)
+				r := get(skillLabel(row.Skill, row.Agent), seat)
 				r.Invocations++
 				r.addUsage(row)
 			case ledger.KindReviewAccept, ledger.KindReviewReject:
@@ -212,7 +213,7 @@ func GateValue(entriesByID map[string][]ledger.Entry, filter GateFilter) GateVal
 				if agent == "" {
 					agent = "reviewer"
 				}
-				r := get(normalizeSkill(v.Skill), seatOf(agent, modelOf(v.Model, v.ModelResolved)))
+				r := get(skillLabel(v.Skill, agent), seatOf(agent, modelOf(v.Model, v.ModelResolved)))
 				if e.Kind == ledger.KindReviewAccept {
 					r.Accepts++
 				} else {
@@ -338,19 +339,26 @@ func splitInt(total, i, n int) int {
 	return q
 }
 
-// normalizeSkill maps an empty skill to "unknown" — applied identically to an
-// agent_invocation row and a review_accept/review_reject row so a gate with
-// no named skill on EITHER side lands in the SAME row, never split into two
-// (one carrying the spend, the other the verdict) that silently break the
-// invocations-vs-verdicts correlation this view exists to report
-// (sty_b8542a3a AC6 rework). Previously the invocation branch alone fell back
-// to the row's Agent when Skill was empty — a fallback the verdict branch
-// never had, which could separate a gate's cost from its verdicts.
-func normalizeSkill(skill string) string {
-	if skill == "" {
+// skillLabel names the group a row is reported under. A recorded skill is used
+// as is; an empty skill falls back to the recorded role (agent), so a non-gate
+// seat — coder, orchestrator, reviewer-consult, planner — reads under a label
+// that names it and merges with its own named-skill row for the same seat.
+// "unknown" is reserved for a row with neither skill nor role recorded.
+//
+// It is applied identically to an agent_invocation row and a
+// review_accept/review_reject row (the verdict caller passes its defaulted
+// agent) so a gate with no named skill on EITHER side lands in the SAME row,
+// never split into two that silently break the invocations-vs-verdicts
+// correlation this view exists to report (sty_b8542a3a AC6 rework).
+func skillLabel(skill, agent string) string {
+	switch {
+	case skill != "":
+		return skill
+	case agent != "":
+		return agent
+	default:
 		return "unknown"
 	}
-	return skill
 }
 
 // modelOf prefers the resolved model id over the configured alias, so two
