@@ -1,3 +1,12 @@
+## [0.0.587] - 2026-09-30
+
+### Fixed
+- **A dispatched performer is attributed to its own dispatch, so the edit gate no longer refuses it while its story status still reads as the source status.** The coder dispatched for an epic's `in_progress` step was refused every source edit ("story status is still plan with the dispatch in flight, so the hook saw no performing story"), while the four child coders committed normally. The gate already allowed the marked agent during an in-flight transition; the defect was upstream, in seat selection. A performer inherits the driver's `SATELLE_SESSION`, and with several sibling seats live — or a seatless performing sibling — `pickSessionSeat` returned a sibling's seat or none at all, so the permission check never saw the performer's own lease. (sty_8d7d1c45, epic:exit-remediation)
+  - **The dispatch names its item, so the pick uses it.** `resolveSeats` now selects the live seat whose item equals `SATELLE_DISPATCH_ITEM` before it consults session or worktree, through `dispatchSeat`. Nothing about the choice is ambiguous once a marker names the item, so the `unstampedAmbiguous` report is untouched for sessions without a marker.
+  - **Selection grants nothing.** Permission still needs that item's lease in flight and a route allocation to the marked agent (`editPermitted`, read from the route, never compiled in); the foreign-tree fence runs before the seat is consulted. A wrong agent, or a marker whose item holds no live lease, is still refused.
+  - **A dispatch with no lease says so.** The deny names the dispatch (item, step, agent) and "no live in-flight lease" rather than attributing the refusal to whichever other story the session resolved.
+  - **Proof is store-backed.** `TestDispatchedPerformerAttributedToItsOwnLease` runs an epic committed at `ready` with a transition in flight: alone in the store with a performer whose session id differs from the one on the seat (the reported failure), and beside sibling seats acquired before and after it (store order is `seat_key, acquired_at`, and each case asserts where the epic actually lists), with a shared or differing performer session, and with an unstamped session made ambiguous by a seatless sibling. Without `dispatchSeat` the differing-session cases and the ambiguous case fail. `TestDispatchedPerformerRefusedOutsideItsDispatch` and `TestDispatchedPerformerStillFencedOutsideTheRepo` cover the refusals.
+
 ## [0.0.586] - 2026-09-30
 
 ### Fixed

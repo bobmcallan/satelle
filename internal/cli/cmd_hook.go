@@ -670,7 +670,12 @@ func resolveSeats(touch bool, sessionID string) (info seatInfo, engaged bool, li
 		if strings.TrimSpace(sessionID) == "" {
 			dropped = droppedSeatsFrom(items, wfs, leases, time.Now().UTC())
 		}
-		pick, mine := pickSessionSeat(live, dropped, sessionID)
+		// A dispatched performer is attributed to its own dispatch (sty_8d7d1c45):
+		// the item its marker names, before any session or worktree guess.
+		pick, mine := dispatchSeat(live, currentDispatchMarker())
+		if pick.ItemID == "" {
+			pick, mine = pickSessionSeat(live, dropped, sessionID)
+		}
 		if pick.ItemID == "" {
 			return other, false, live, nil
 		}
@@ -700,6 +705,27 @@ func stopcheckSeat() (mine bool, other seatInfo, extra int, err error) {
 		return false, seatInfo{}, 0, nil
 	}
 	return false, live[0], len(live) - 1, nil
+}
+
+// dispatchSeat selects the live seat a dispatched performer is running under,
+// by the one identity the dispatch carries: the item it was spawned for. It
+// inherits the driver's session id, so pickSessionSeat can hand it a sibling's
+// seat or — for an unstamped ambiguous session — none at all; the marker names
+// the item outright, so there is nothing to disambiguate. It only SELECTS the
+// performer's own lease: permission still needs that lease in flight on exactly
+// this item and a route allocation to the marked agent (editPermitted). No
+// marker, or no live seat for its item, returns the zero seat and the caller
+// falls through to the session pick.
+func dispatchSeat(live []seatInfo, marker dispatchMarker) (seatInfo, bool) {
+	if marker.Item == "" {
+		return seatInfo{}, false
+	}
+	for _, s := range live {
+		if s.ItemID == marker.Item {
+			return s, false
+		}
+	}
+	return seatInfo{}, false
 }
 
 // pickSessionSeat chooses which live seat is THIS session's. A matching
@@ -1690,11 +1716,24 @@ func stepDeclaresRework(reworks []wfroute.Rework, step string) bool {
 // A marked relay coder gets relayDenyReason; unmarked sessions keep
 // editPermissionDenyReason byte-for-byte (sty_7567f047 AC5).
 func hookDenyReason(info seatInfo, live []seatInfo, dm dispatchMarker, rm relayMarker, sessionID string, now time.Time) string {
-	_ = dm // dispatch deny text stays inside editPermissionDenyReason
 	if rm.Binding != "" {
 		return relayDenyReason(info, live, rm, sessionID, now)
 	}
+	// A dispatched performer whose item holds no live seat is refused for THAT,
+	// not for whichever other story the session happens to resolve
+	// (sty_8d7d1c45). It never borrows a sibling's permission.
+	if dm.Item != "" && info.ItemID != dm.Item {
+		return dispatchDenyReason(dm)
+	}
 	return editPermissionDenyReason(info, live, sessionID, now)
+}
+
+// dispatchDenyReason names a dispatched performer whose item holds no live
+// in-flight lease: the dispatch is the identity, so the reason names it.
+func dispatchDenyReason(dm dispatchMarker) string {
+	return fmt.Sprintf(
+		"satelle: dispatch %s/%s (agent %q) has no live in-flight lease — a dispatched performer may edit only under the seat of the item it was dispatched for, and only while that transition is in flight. %s",
+		dm.Item, dm.Step, dm.Agent, readOnlyPreflightReason())
 }
 
 // relayDenyReason names why a marked rework-relay coder was refused. It never
