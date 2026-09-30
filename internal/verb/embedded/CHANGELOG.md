@@ -1,3 +1,20 @@
+## [0.0.590] - 2026-09-30
+
+### Added
+- **The edit gate refuses a substrate change while a story is performing, on every harness.** `.satelle/` was unconditionally edit-exempt, so the workflows, skills and agent bindings that judge a story could be rewritten in the middle of that story — observed in petitio, where a story replaced the `[reviewer]` binding at `in_progress` and every later gate of that same story dispatched on the new one. `satelle-workflow-change-review` caught it at integration, which is detection after the fact. The refusal is now made in the gate itself, before the exemption early-return. (sty_992cffc6)
+  - **One harness-neutral predicate.** `substrateLocked` takes an already-resolved path and a list of roots — never a tool name, envelope or harness — so a claude-shaped and a grok-shaped edit of the same file classify identically and produce the same denial text. `TestSubstrateLockIsIdenticalAcrossHarnesses` drives both shapes and asserts one reason string.
+  - **The lock is the default posture, not an opt-in.** `config.ParseLockSubstratePaths` reads the RAW committed `satelle.toml` and keys off key PRESENCE, because the decoded config cannot tell an absent key from `= []`: absent locks the data dir, present-with-entries takes the operator's list, and present-and-empty is the documented opt-out. A file it cannot read with confidence — a TOML error, a non-string list — fails CLOSED to the lock, never to permissive. Migrate is not on this path: the gate resolves the list on every edit, so an upgraded repo that has never run migrate is locked from its first edit.
+  - **There is a lane out, or the product deadlocks itself.** A story in the `substrate` category may make the change under its own live seat; without one, satelle could never ship a skill, a gate rubric or a workflow. The deny names the holder, the locked path, the lane out and the opt-out key, and a store that cannot be read fails closed rather than allowing the edit.
+  - **Carve-outs are evaluated first and win.** The process temp dir and `/tmp`, the `[gate] edit_exempt_globs` story-reference dumps, and the footprint satelle deploys itself (`.claude/`, `.grok/`, `.pi/`, the managed `.gitignore` block) stay writable, so the binary's own writes are never refused.
+  - **Every refusal is a row.** `substrate_lock_deny` on the ledger, attributed to the gate rather than the agent, carrying the path, the holder's status and the lane — so a refusal is auditable after the fact and reads the same whichever harness was refused.
+  - **`satelle doctor` reports a deliberate unlock.** `IDSubstrateUnlocked` is a Warn when the key is present and empty, and nothing otherwise, so an unlocked posture is visible rather than silent.
+  - **Scope, stated rather than implied:** the lock covers Edit/Write. A substrate write that arrives as a shell command still short-circuits through the existing bash path; that is a separate story, not a silent part of this one.
+
+## [serve-v0.0.105] - 2026-09-30
+
+### Added
+- **The service carries the substrate lock above**, its `[gate] lock_substrate_paths` key, its `substrate_lock_deny` ledger kind and the `IDSubstrateUnlocked` doctor finding. (sty_992cffc6)
+
 ## [0.0.589] - 2026-09-30
 
 ### Changed

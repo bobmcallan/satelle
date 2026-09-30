@@ -160,6 +160,12 @@ const (
 	// KindFixClaimUse records the ONE edit a recorded claim licensed. Refs carries
 	// {"claim": "<fix_claim entry id>"}; a claim with a use row is consumed.
 	KindFixClaimUse = "fix_claim_used"
+	// KindSubstrateLockDeny records one edit the edit gate refused under the
+	// substrate lock (sty_992cffc6): a story outside the substrate lane tried to
+	// change locked substrate while it held a performing seat. Payload is
+	// {path, status, lane}; nothing in it is harness-specific. Enumeration only —
+	// the lock list is configuration.
+	KindSubstrateLockDeny = "substrate_lock_deny"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional

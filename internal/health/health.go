@@ -88,6 +88,10 @@ const (
 	// `satelle init` has not re-stamped (sty_6e143870).
 	IDBreakingUnacknowledged = "breaking.unacknowledged"
 	IDConfigStray            = "config.stray" // machine-scope key leftover in a repo file (sty_21a7d16d)
+	// IDSubstrateUnlocked: the repo set [gate] lock_substrate_paths = [], the
+	// documented opt-out, so a performing story can rewrite the substrate that
+	// judges it. Reported so the unlocked posture is visible (sty_992cffc6).
+	IDSubstrateUnlocked = "gate.substrate.unlocked"
 
 	// Workstate sync health (sty_30696eeb).
 	IDSyncLocal    = "sync.local"         // work-state areas are all local
@@ -113,7 +117,7 @@ var ids = []string{
 	IDReviewerUnsafe, IDReviewerIsolation, IDNodeAlloc, IDHookAlloc,
 	IDBinaryMissing, IDBinaryMalformed,
 	IDWorkflowStructure, IDWorkflowConsistency,
-	IDScaffoldStale, IDScaffoldMissing, IDRepoUnreadable, IDConfigStray, IDBreakingUnacknowledged,
+	IDScaffoldStale, IDScaffoldMissing, IDRepoUnreadable, IDConfigStray, IDSubstrateUnlocked, IDBreakingUnacknowledged,
 	IDSyncLocal, IDSyncOk, IDSyncFailing, IDSyncUnbacked, IDSyncConfig,
 	IDStatusDrift,
 	IDLiveOK, IDLiveAuth, IDLiveTimeout, IDLiveSpawn, IDLiveACPHandshake,

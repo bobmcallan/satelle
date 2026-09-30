@@ -1618,6 +1618,24 @@ edit_exempt_globs = `
 // scaffoldTomlAfterExempt is the remainder of the scaffold, resuming after
 // the seeded edit_exempt_globs value.
 const scaffoldTomlAfterExempt = `
+
+# lock_substrate_paths — path prefixes the edit gate REFUSES, while ANY story
+# holds a performing seat, to every story outside the substrate lane
+# (sty_992cffc6). It overrides edit_exempt_paths for a performing seat: without
+# it a story could rewrite the workflows, skills and agent bindings that are
+# about to judge it, and the change would leave no trace in its engagement diff.
+# The deny names the seat-holding story, the locked path and the lane out — a
+# story in the substrate lane (category "substrate", judged by
+# satelle-workflow-change-review) may change substrate under its own seat.
+# The key is left commented on purpose: ABSENT means the default lock
+# (".satelle/"), so a repo is locked without it. Uncomment to pin or widen the
+# list. Never locked, whatever is listed: the process temp dir and /tmp,
+# edit_exempt_globs matches, and the footprint satelle deploys itself
+# (.gitignore, .claude/, .grok/, .pi/). An explicitly EMPTY list is the
+# documented opt-out, and 'satelle doctor' reports it. Shell (Bash) mutations
+# are not covered by this lock.
+# lock_substrate_paths = [".satelle/"]
+
 # command_allow — OPT-IN step-scoped git policy (sty_c21490cc). Keys are git
 # subcommands; values are story statuses that may run them while engaged.
 # Absent/empty = no step restriction (commitgate only requires engagement).

@@ -100,54 +100,51 @@ byte ceiling (overflow noted on stderr); fails open so it never blocks a session
 		Use:   "gate",
 		Short: "PreToolUse edit gate — block code edits unless a story is engaged",
 		Long: `gate is the PreToolUse handler for Edit|Write|MultiEdit|NotebookEdit|
-search_replace|write. It returns a deny unless a story is ENGAGED — in one of the active workflow's
-non-terminal engaging states (e.g. plan, in_progress, integration, release) —
-so the agent works under a tracked story. On deny it emits a single harness-
-correct JSON shape on stdout (detected from the event envelope: tool_input =
-Claude, toolInput = Grok) so the harness surfaces the reason to the agent
-(Claude: hookSpecificOutput.permissionDecision=deny + permissionDecisionReason;
-Grok: decision=deny + reason), not a bare "hook denied (exit 2)". Emitting both
-shapes in one blob fails Claude's PreToolUse schema and silently unblocks the
-tool (sty_5e4bc568). The "engaged" policy is authored substrate — it reads the
-route's start/terminal markers (Mdiamond=start, Msquare=terminal) rather than
-hardcoding state names, so configuration drives the decision (sty_f3d5d4b8,
-sty_e4902c51).
+search_replace|write. It returns a deny unless a story is ENGAGED — in one of the
+active workflow's non-terminal engaging states (e.g. plan, in_progress,
+integration, release) — so the agent works under a tracked story. On deny it
+emits one harness-correct JSON shape on stdout, detected from the event
+envelope (tool_input = Claude, toolInput = Grok): Claude
+hookSpecificOutput.permissionDecision=deny + permissionDecisionReason; Grok
+decision=deny + reason. Emitting both shapes in one blob fails Claude's schema
+and silently unblocks the tool (sty_5e4bc568). "Engaged" is authored substrate:
+it reads the route's start/terminal markers (Mdiamond=start, Msquare=terminal),
+never hardcoded state names (sty_f3d5d4b8, sty_e4902c51).
 
-The installed satelle-hook.sh wrapper normalises that direct command result to
-structured deny JSON plus handler exit 0. Claude processes structured
-stdout only on the successful-handler path; its exit-2 path instead requires
-a non-empty reason on stderr. Never combine JSON-only stdout, exit 2, and empty
-stderr. Grok receives its top-level decision/reason envelope through the same
-exit-0 structured path.
+The installed satelle-hook.sh wrapper normalises that result to structured deny
+JSON plus handler exit 0: Claude reads structured stdout only on the
+successful-handler path, and its exit-2 path needs a non-empty stderr reason.
+Never combine JSON-only stdout, exit 2, and empty stderr.
 
 The edit target is resolved to an ABSOLUTE path against the repo root before any
-containment test (sty_8c3d345c). Harnesses differ: Claude Code sends an absolute
-file_path, Grok sends a repo-relative one — resolving up front means a relative
-target is never nested under a narrower tested root (e.g. the data dir) and
-wrongly classed as inside it, which previously let Grok edits bypass the gate.
+containment test (sty_8c3d345c): Claude sends an absolute file_path, Grok a
+repo-relative one, and a relative target must not be nested under a narrower
+tested root (the data dir) and wrongly classed inside it.
 
-Edits that land in ANOTHER git working tree (root differs from the session
-anchor) are REFUSED (sty_a8454d10; supersedes the sty_3026d890 stance that
-closed /tmp and every non-repo path). A session in satelle-server must not
-rewrite files under a sibling repo such as ../satelle — open a session in THAT
-repo. Temp dirs, scratchpads, and non-repo paths are outside the fence's
-concern and are allowed.
+Edits landing in ANOTHER git working tree are REFUSED (sty_a8454d10) — open a
+session in THAT repo. Temp dirs, scratchpads and non-repo paths are allowed.
 
-Exemption is CONFIGURATION, not code (the constitution: configuration over
-code). An edit is exempt when its target falls under a [gate] edit_exempt_paths
-prefix (repo-root-relative or absolute) or matches a [gate] edit_exempt_globs
-filename pattern. The binary does NOT special-case the data dir or any managed
-path: 'satelle init' SEEDS .satelle/ and the footprint it deploys (.gitignore,
-harness scaffolds) into edit_exempt_paths, and dump names into
-edit_exempt_globs, so authored substrate and satelle-written output stay
-editable without a release OOTB — but the operator owns those lists and may
-add or drop any default. With empty lists, even a .satelle/ edit needs an
-engaged story: config decides, never a Go rule. Generated views under the data
-dir stay protected by their 0o444 file mode regardless.
+Exemption is CONFIGURATION, not code. An edit is exempt when its target falls
+under a [gate] edit_exempt_paths prefix (repo-root-relative or absolute) or
+matches an edit_exempt_globs filename pattern. 'satelle init' SEEDS .satelle/,
+the footprint it deploys (.gitignore, harness scaffolds) and story-dump names;
+the operator owns the lists. With empty lists even a .satelle/ edit needs an
+engaged story. Generated views under the data dir stay 0o444 regardless.
+
+Exemption stops at a performing story (sty_992cffc6). While a story holds a
+performing seat, an edit under a [gate] lock_substrate_paths prefix (default
+.satelle/ when the key is absent) is REFUSED before the exemption is consulted,
+so a story cannot rewrite the workflows, skills and bindings that judge it.
+One harness-neutral predicate decides it for Claude, Grok and pi. The deny names
+the seat-holding story, the path and the lane out — a substrate-lane story
+(category "substrate", judged by satelle-workflow-change-review) may change
+substrate under its own seat — and lands on that story's ledger. Never locked:
+temp dirs, edit_exempt_globs matches, and the deployed footprint (.gitignore,
+.claude/, .grok/, .pi/). With no seat held nothing changes. Bash mutations are
+not covered. lock_substrate_paths = [] opts out; 'satelle doctor' reports it.
 
 Fails closed: a store open error, listing error, unresolvable workflow, or
-workflow body that declares no route blocks the edit with a clear error message rather than
-silently allowing it on a broken deployment (sty_f3d5d4b8).`,
+workflow body declaring no route blocks the edit (sty_f3d5d4b8).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
@@ -187,6 +184,15 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 				// but the operator owns those lists. With empty lists, even a
 				// .satelle/ edit needs an engaged story: config decides in-repo
 				// paths, never a Go rule.
+				//
+				// The one thing exemption may not do is let a story rewrite the
+				// substrate that judges it: while a seat is performing, a locked
+				// prefix ([gate] lock_substrate_paths, default .satelle/) is refused
+				// HERE, before the exemption, by the same harness-neutral predicate
+				// for every harness (sty_992cffc6).
+				if err := substrateLockGate(cmd, raw, p, info, engaged, live); err != nil {
+					return err
+				}
 				if exemptTarget(p) {
 					return nil
 				}

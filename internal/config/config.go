@@ -617,8 +617,14 @@ type GateConfig struct {
 	// edits skip the engaged-story gate. An absolute prefix that sits
 	// outside the session repo (e.g. /tmp/) never exempts a path inside
 	// that repo — it only covers out-of-tree drafts.
-	EditExemptPaths        []string            `toml:"edit_exempt_paths"`
-	EditExemptGlobs        []string            `toml:"edit_exempt_globs"`
+	EditExemptPaths []string `toml:"edit_exempt_paths"`
+	EditExemptGlobs []string `toml:"edit_exempt_globs"`
+	// LockSubstratePaths are the prefixes the edit gate refuses to a story that
+	// is not in the substrate lane while any story holds a performing seat
+	// (sty_992cffc6). It is decoded for settings display only: the lock reads
+	// the raw file through ResolveLockSubstratePaths, because an absent key
+	// (default lock) and `= []` (opt-out) both decode to an empty slice here.
+	LockSubstratePaths     []string            `toml:"lock_substrate_paths"`
 	AllowOutsideTreeEdits  bool                `toml:"allow_outside_tree_edits"`
 	CommandAllow           map[string][]string `toml:"command_allow"`
 	NoImplementModels      []string            `toml:"no_implement_models"`

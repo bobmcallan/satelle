@@ -190,6 +190,11 @@ func Check(ctx context.Context, o Opts) Report {
 			s.Warning()).About(s.File).WithRemediation("run `satelle migrate --yes`"))
 	}
 
+	// 5b'. The substrate lock opt-out (sty_992cffc6): reported only when the
+	// operator wrote lock_substrate_paths = [] — an absent key is the default
+	// lock and says nothing.
+	rep.Findings = append(rep.Findings, checkSubstrateLock(dataDir)...)
+
 	// 5c. Recorded workstate-push health (sty_30696eeb). Reads syncstate only.
 	globalDir := strings.TrimSpace(o.GlobalDir)
 	if globalDir == "" {
@@ -284,6 +289,22 @@ func checkReviewerIsolation(grants []agentvalidate.Grant) health.Findings {
 			About(g.Name).WithRemediation("for ["+g.Name+"]: "+agentcli.GapFix(gaps)))
 	}
 	return out
+}
+
+// checkSubstrateLock warns when the committed config carries an explicit empty
+// [gate] lock_substrate_paths. It keys off config.ResolveLockSubstratePaths'
+// explicit-opt-out result, never off an empty list: an absent key and a
+// present-but-empty one decode alike, and only the second is an opt-out.
+func checkSubstrateLock(dataDir string) health.Findings {
+	cfgPath := filepath.Join(dataDir, config.ConfigName)
+	if _, optOut := config.ResolveLockSubstratePaths(cfgPath, filepath.Dir(dataDir)); !optOut {
+		return nil
+	}
+	return health.Findings{health.Warn(health.IDSubstrateUnlocked, "Substrate lock disabled",
+		fmt.Sprintf("%s sets [gate] lock_substrate_paths = [] — a story that holds a performing seat can rewrite the workflows, skills and agent bindings that are about to judge it, and the change leaves no trace in its engagement diff",
+			config.DefaultDataDir+"/"+config.ConfigName)).
+		About(config.DefaultDataDir + "/" + config.ConfigName).
+		WithRemediation(`delete lock_substrate_paths (the default locks ".satelle/") or list the prefixes to lock`)}
 }
 
 // checkAuthoredDir applies each authored kind's structure contract, returning
