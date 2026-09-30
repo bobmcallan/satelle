@@ -41,11 +41,11 @@ func TestPickSessionSeatReworkIdentity(t *testing.T) {
 	t.Cleanup(func() { sessionWorktree = origTree })
 	sessionWorktree = func() string { return "" }
 
-	if pick, mine := pickSessionSeat(live, fallbackB); pick.ItemID != "" || mine {
+	if pick, mine := pickSessionSeat(live, nil, fallbackB); pick.ItemID != "" || mine {
 		t.Fatalf("23:04 failure: session B must drop lease stamped A; got item=%q mine=%v", pick.ItemID, mine)
 	}
 	adopted := reworkSessionID(lease.Lease{SessionID: leaseA}, true, fallbackB)
-	pick, mine := pickSessionSeat(live, adopted)
+	pick, mine := pickSessionSeat(live, nil, adopted)
 	if pick.ItemID != "sty_9134015e" || !mine {
 		t.Fatalf("reworkSessionID must select the stamped lease; got item=%q mine=%v", pick.ItemID, mine)
 	}

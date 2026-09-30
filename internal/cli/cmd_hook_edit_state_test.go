@@ -92,7 +92,7 @@ func TestEditPermissionDenyReasonsNameRecovery(t *testing.T) {
 		ItemID: "sty_x", State: "integration", StoryStatus: "in_progress",
 		StateAgent: "executor", Engaged: true, InFlight: true, Mine: true,
 	}
-	got := editPermissionDenyReason(inFlight, now)
+	got := editPermissionDenyReason(inFlight, nil, "", now)
 	for _, want := range []string{"IN FLIGHT", "sty_x", "integration", "satelle story attach"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("in-flight reason missing %q: %s", want, got)
@@ -102,12 +102,12 @@ func TestEditPermissionDenyReasonsNameRecovery(t *testing.T) {
 		ItemID: "sty_x", State: "plan", StoryStatus: "plan",
 		StateAgent: "planner", Engaged: true, EditStates: []string{"in_progress", "release"},
 	}
-	got = editPermissionDenyReason(inFlight, now)
+	got = editPermissionDenyReason(inFlight, nil, "", now)
 	if !strings.Contains(got, "the driving session cannot edit") {
 		t.Errorf("driver in-flight must address the driver: %s", got)
 	}
 	inFlight.Mine = false
-	got = editPermissionDenyReason(inFlight, now)
+	got = editPermissionDenyReason(inFlight, nil, "", now)
 	if strings.Contains(got, "the driving session cannot edit") {
 		t.Errorf("unstamped/non-mine must not be addressed as the driver: %s", got)
 	}
@@ -117,7 +117,7 @@ func TestEditPermissionDenyReasonsNameRecovery(t *testing.T) {
 	if !strings.Contains(got, "IN FLIGHT") || !strings.Contains(got, "sty_x") {
 		t.Errorf("unstamped/non-mine must still name the in-flight story: %s", got)
 	}
-	got = editPermissionDenyReason(plan, now)
+	got = editPermissionDenyReason(plan, nil, "", now)
 	for _, want := range []string{`at "plan"`, `"planner"`, "in_progress, release", "Do not work ahead", "Read-only"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("state reason missing %q: %s", want, got)
@@ -562,7 +562,7 @@ func TestUnmarkedDenyReasonUnchanged(t *testing.T) {
 		{ItemID: "sty_x", State: "integration", StoryStatus: "in_progress", StateAgent: "executor", Engaged: true, InFlight: true, Mine: true},
 	}
 	for i, info := range cases {
-		want := editPermissionDenyReason(info, now)
+		want := editPermissionDenyReason(info, nil, "sess", now)
 		got := hookDenyReason(info, nil, dispatchMarker{}, relayMarker{}, "sess", now)
 		if got != want {
 			t.Errorf("case %d: unmarked hookDenyReason diverged from editPermissionDenyReason\n got: %s\nwant: %s", i, got, want)

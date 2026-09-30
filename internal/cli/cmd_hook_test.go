@@ -1436,7 +1436,7 @@ func TestEditGateDenyReasonPrefersDroppedSeat(t *testing.T) {
 	// content was covered. Here: editGateDenyReason with empty info and no store
 	// home falls through to noEngagedStoryEditReason.
 	t.Setenv("SATELLE_HOME", t.TempDir())
-	got := editGateDenyReason(seatInfo{}, time.Now().UTC())
+	got := editGateDenyReason(seatInfo{}, nil, "", time.Now().UTC())
 	if !strings.Contains(got, "without a performing story") {
 		t.Fatalf("empty store should use generic no-story reason: %q", got)
 	}

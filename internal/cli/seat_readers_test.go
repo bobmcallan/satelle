@@ -105,20 +105,40 @@ func TestPickSessionSeatRoutesByWorktree(t *testing.T) {
 	t.Cleanup(func() { sessionWorktree = orig })
 
 	sessionWorktree = func() string { return "/w/b" }
-	if got, mine := pickSessionSeat(live, ""); got.ItemID != "sty_b" || mine {
+	if got, mine := pickSessionSeat(live, nil, ""); got.ItemID != "sty_b" || mine {
 		t.Errorf("session in /w/b must pick sty_b mine=false, got %+v mine=%v", got, mine)
 	}
 	sessionWorktree = func() string { return "/w/a" }
-	if got, mine := pickSessionSeat(live, ""); got.ItemID != "sty_a" || mine {
+	if got, mine := pickSessionSeat(live, nil, ""); got.ItemID != "sty_a" || mine {
 		t.Errorf("session in /w/a must pick sty_a mine=false, got %+v mine=%v", got, mine)
 	}
-	// No tree answer (non-git session) falls back to the first live seat rather
-	// than reporting no seat at all — the gate question must stay answered.
+	// No tree answer (non-git session), unstamped, several live seats: nothing
+	// binds the session to one, so no pick — the gate reports the ambiguity
+	// rather than attributing the edit to the first-listed seat (sty_fbbb4aee AC2).
 	sessionWorktree = func() string { return "" }
-	if got, mine := pickSessionSeat(live, ""); got.ItemID != "sty_a" || mine {
-		t.Errorf("unresolvable tree must fall back to the first live seat: %+v mine=%v", got, mine)
+	if got, mine := pickSessionSeat(live, nil, ""); got.ItemID != "" || mine {
+		t.Errorf("unstamped unbound session with several live seats must pick none: %+v mine=%v", got, mine)
 	}
-	if got, _ := pickSessionSeat(nil, ""); got.ItemID != "" {
+	sessionWorktree = func() string { return "/w/elsewhere" }
+	if got, mine := pickSessionSeat(live, nil, ""); got.ItemID != "" || mine {
+		t.Errorf("unstamped session in an unmatched tree must pick none: %+v mine=%v", got, mine)
+	}
+	// A sole live seat still answers the question for an unbound session.
+	if got, mine := pickSessionSeat(live[:1], nil, ""); got.ItemID != "sty_a" || mine {
+		t.Errorf("a sole live seat must still be picked: %+v mine=%v", got, mine)
+	}
+	// ...unless a second performing story holds no seat at all: one live seat
+	// plus one seatless story is still two performing stories (sty_fbbb4aee AC2).
+	seatless := []seatInfo{{ItemID: "sty_epic", StoryStatus: "ready"}}
+	if got, mine := pickSessionSeat(live[:1], seatless, ""); got.ItemID != "" || mine {
+		t.Errorf("a live seat plus a seatless performing story must pick none: %+v mine=%v", got, mine)
+	}
+	// A worktree match or a session id keeps resolving despite the seatless one.
+	sessionWorktree = func() string { return "/w/a" }
+	if got, _ := pickSessionSeat(live[:1], seatless, ""); got.ItemID != "sty_a" {
+		t.Errorf("a worktree match must still resolve: %+v", got)
+	}
+	if got, _ := pickSessionSeat(nil, nil, ""); got.ItemID != "" {
 		t.Errorf("no live seats must yield no pick: %+v", got)
 	}
 }
@@ -130,19 +150,19 @@ func TestSameTreeSessionsDoNotShareSeat(t *testing.T) {
 	t.Cleanup(func() { sessionWorktree = orig })
 	sessionWorktree = func() string { return "/w/a" }
 
-	got, mine := pickSessionSeat(live, "sess-A")
+	got, mine := pickSessionSeat(live, nil, "sess-A")
 	if got.ItemID != "sty_a" || !mine {
 		t.Fatalf("driver must pick sty_a mine=true, got %+v mine=%v", got, mine)
 	}
-	got, mine = pickSessionSeat(live, "sess-B")
+	got, mine = pickSessionSeat(live, nil, "sess-B")
 	if got.ItemID != "" || mine {
 		t.Fatalf("sibling must not inherit stamped seat, got %+v mine=%v", got, mine)
 	}
-	got, mine = pickSessionSeat([]seatInfo{{ItemID: "sty_a", Worktree: "/w/a"}}, "sess-B")
+	got, mine = pickSessionSeat([]seatInfo{{ItemID: "sty_a", Worktree: "/w/a"}}, nil, "sess-B")
 	if got.ItemID != "sty_a" || mine {
 		t.Fatalf("unstamped non-flight tree match is mine=false, got %+v mine=%v", got, mine)
 	}
-	got, mine = pickSessionSeat([]seatInfo{{ItemID: "sty_a", Worktree: "/w/a", InFlight: true}}, "sess-B")
+	got, mine = pickSessionSeat([]seatInfo{{ItemID: "sty_a", Worktree: "/w/a", InFlight: true}}, nil, "sess-B")
 	if got.ItemID != "sty_a" || mine {
 		t.Fatalf("unstamped in-flight still tree-routes mine=false, got %+v mine=%v", got, mine)
 	}

@@ -297,12 +297,23 @@ behaviour exactly as above — opt-in, not a satelle default.`,
 			// activity on commit/push keeps the seat alive (sty_3bb1d8be).
 			if !seatResolved {
 				var err error
-				info, engaged, err = resolveSeat(true, bindSessionID(raw))
+				sid = bindSessionID(raw)
+				info, engaged, live, err = resolveSeats(true, sid)
 				if err != nil {
 					return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
 				}
 			}
 			if needsEngage && !engaged {
+				// An unstamped session facing several performing stories is not
+				// "unengaged" — it is unattributable. Say so instead of sending it
+				// to engage another story (sty_fbbb4aee AC2). The fused form keeps
+				// its split-the-call text.
+				if !isFusedEngageAndCommit(command) {
+					if dropped := droppedPerformingSeats(); unstampedAmbiguous(live, dropped, sid) {
+						performing := append(append([]seatInfo{}, live...), dropped...)
+						return denyPreToolUse(cmd, raw, ambiguousPerformingReason(performing, sid))
+					}
+				}
 				// Deny only — never allow a fused engage+commit form. PreToolUse cannot
 				// know the engage line would succeed; pick the message that teaches the
 				// recovery path (sty_577d292f). Name a non-live seat when present so
@@ -653,7 +664,13 @@ func resolveSeats(touch bool, sessionID string) (info seatInfo, engaged bool, li
 		return seatInfo{}, false, nil, eerr
 	}
 	if len(live) > 0 {
-		pick, mine := pickSessionSeat(live, sessionID)
+		// The seatless performing stories only matter to an unstamped session
+		// (sty_fbbb4aee AC2): a stamped one resolves by id or worktree alone.
+		var dropped []seatInfo
+		if strings.TrimSpace(sessionID) == "" {
+			dropped = droppedSeatsFrom(items, wfs, leases, time.Now().UTC())
+		}
+		pick, mine := pickSessionSeat(live, dropped, sessionID)
 		if pick.ItemID == "" {
 			return other, false, live, nil
 		}
@@ -688,8 +705,13 @@ func stopcheckSeat() (mine bool, other seatInfo, extra int, err error) {
 // pickSessionSeat chooses which live seat is THIS session's. A matching
 // SessionID is identity (mine=true). A different non-empty SessionID is
 // skipped. Unstamped seats still tree-route with mine=false — that is
-// today's permission path, not ownership.
-func pickSessionSeat(live []seatInfo, sessionID string) (seatInfo, bool) {
+// today's permission path, not ownership. An UNSTAMPED session that no
+// worktree binds, facing more than one performing story — live seats plus the
+// performing stories that hold none (dropped) — gets no pick at all
+// (sty_fbbb4aee AC2): live[0] would attribute the edit to whichever seat the
+// store listed first, so the caller reports the ambiguity instead. dropped may
+// be nil where the caller has no seatless set to offer.
+func pickSessionSeat(live, dropped []seatInfo, sessionID string) (seatInfo, bool) {
 	if len(live) == 0 {
 		return seatInfo{}, false
 	}
@@ -718,7 +740,29 @@ func pickSessionSeat(live []seatInfo, sessionID string) (seatInfo, bool) {
 			}
 		}
 	}
+	if unstampedAmbiguous(live, dropped, sessionID) {
+		return seatInfo{}, false
+	}
 	return live[0], false
+}
+
+// unstampedAmbiguous reports whether nothing binds this session to one
+// performing story: no session id, no live seat for this worktree, and more than
+// one performing story (live plus seatless). One definition shared by the
+// chooser and every deny that must report the ambiguity rather than a pick
+// (sty_fbbb4aee AC2).
+func unstampedAmbiguous(live, dropped []seatInfo, sessionID string) bool {
+	if strings.TrimSpace(sessionID) != "" {
+		return false
+	}
+	if tree := sessionWorktree(); tree != "" {
+		for _, s := range live {
+			if s.Worktree == tree {
+				return false
+			}
+		}
+	}
+	return len(live)+len(dropped) > 1
 }
 
 // sessionWorktree resolves the git working tree this hook process runs in.
@@ -1433,16 +1477,114 @@ const noEngagedStoryEditReason = "satelle: you're mutating the tree without a pe
 // noEngagedStoryEditReason so agents re-acquire instead of creating a new story.
 func droppedSeatEditReason(id, status string) string {
 	return fmt.Sprintf(
-		"satelle: story %s is performing (status %q) but its engagement seat was dropped — re-acquire with `satelle story set %s --status %s` (same status is intentional; it grants a seat without inventing a new step), then retry the edit. Inspect with `satelle story seat`.",
+		"satelle: story %s is performing (status %q, seat: none) but its engagement seat was dropped — re-acquire with `satelle story set %s --status %s` (same status is intentional; it grants a seat without inventing a new step), then retry the edit. Inspect with `satelle story seat`.",
 		id, status, id, status)
 }
 
-// editGateDenyReason picks the agent-facing text when no live seat is engaged
-// (sty_4f74d01f): prefer naming a performing story with a dropped seat over the
-// generic "open a story" message.
-func editGateDenyReason(info seatInfo, now time.Time) string {
-	if drop := firstDroppedPerformingSeat(); drop.ItemID != "" {
-		return droppedSeatEditReason(drop.ItemID, drop.StoryStatus)
+// seatToken names a performing story's seat in one phrase for deny text
+// (sty_fbbb4aee AC3): "stale", "none" (no lease — a dropped seat), or the live
+// lease's session and worktree.
+func seatToken(s seatInfo) string {
+	switch {
+	case s.Stale:
+		return "stale"
+	case s.Engaged:
+		sess, tree := s.SessionID, s.Worktree
+		if sess == "" {
+			sess = "unstamped"
+		}
+		if tree == "" {
+			tree = "unrecorded"
+		}
+		return fmt.Sprintf("live (session %s, worktree %s)", sess, tree)
+	}
+	return "none"
+}
+
+// seatMismatchEditReason is the deny when the story that would hold this edit
+// has a live seat this session is not bound to (sty_fbbb4aee AC1/AC3). It names
+// that story, its state and its seat, and points at the stamp or worktree that
+// binds the session — never at re-acquiring a seat that is already held.
+func seatMismatchEditReason(s seatInfo, sessionID, tree string) string {
+	sess := strings.TrimSpace(sessionID)
+	if sess == "" {
+		sess = "unstamped"
+	}
+	seatSess := s.SessionID
+	if seatSess == "" {
+		seatSess = "unstamped"
+	}
+	var hint string
+	switch {
+	case tree == s.Worktree:
+		// Already in the seat's worktree: only the id can differ.
+		hint = fmt.Sprintf("this session is already in that worktree; its session id (%s) does not match the seat's (%s)", sess, seatSess)
+		if s.SessionID != "" {
+			hint += fmt.Sprintf(" — stamp SATELLE_SESSION=%s", s.SessionID)
+		}
+	case s.SessionID != "":
+		hint = fmt.Sprintf("stamp SATELLE_SESSION=%s or run from that seat's worktree", s.SessionID)
+	default:
+		hint = "run from that seat's worktree"
+	}
+	return fmt.Sprintf(
+		"satelle: story %s (status %q) holds the live engagement seat — seat: %s — but this session is %s in worktree %q, so the edit is not attributed to it; %s. The seat is held; it does not need re-acquiring.",
+		s.ItemID, s.StoryStatus, seatToken(s), sess, tree, hint)
+}
+
+// ambiguousPerformingReason is the deny when several stories are performing and
+// nothing binds this session to one of them (sty_fbbb4aee AC2): it says so and
+// lists each with its state and seat, instead of picking one.
+func ambiguousPerformingReason(performing []seatInfo, sessionID string) string {
+	lead := "more than one performing story, no session stamped"
+	if sess := strings.TrimSpace(sessionID); sess != "" {
+		lead = fmt.Sprintf("more than one performing story, none holds a seat for session %s", sess)
+	}
+	parts := make([]string, 0, len(performing))
+	for _, s := range performing {
+		parts = append(parts, fmt.Sprintf("%s (status %q, seat: %s)", s.ItemID, s.StoryStatus, seatToken(s)))
+	}
+	return fmt.Sprintf(
+		"satelle: %s — %s; stamp the session (SATELLE_SESSION=<the seat's session id>) or run from the seat's worktree. Inspect with `satelle story seat`.",
+		lead, strings.Join(parts, ", "))
+}
+
+// attributedDenyReason is the pure half of editGateDenyReason: given the live
+// seats and the performing stories that hold none, it names the story the edit
+// would have been attributed to (sty_fbbb4aee). ok is false when nothing is
+// performing. Order: the live seat for this worktree; else the only performing
+// story; else the ambiguity report. It never prefers a seatless story over a
+// seated one for this worktree.
+func attributedDenyReason(live, dropped []seatInfo, sessionID, tree string) (reason string, ok bool) {
+	if tree != "" {
+		for _, s := range live {
+			if s.Worktree == tree {
+				return seatMismatchEditReason(s, sessionID, tree), true
+			}
+		}
+	}
+	performing := make([]seatInfo, 0, len(live)+len(dropped))
+	performing = append(performing, live...)
+	performing = append(performing, dropped...)
+	switch len(performing) {
+	case 0:
+		return "", false
+	case 1:
+		if performing[0].Engaged {
+			return seatMismatchEditReason(performing[0], sessionID, tree), true
+		}
+		return droppedSeatEditReason(performing[0].ItemID, performing[0].StoryStatus), true
+	}
+	return ambiguousPerformingReason(performing, sessionID), true
+}
+
+// editGateDenyReason picks the agent-facing text when this session resolved no
+// engaged seat (sty_4f74d01f): name the performing story the edit belongs to —
+// seated for this worktree first, seatless only when it is the sole candidate —
+// over the generic "open a story" message.
+func editGateDenyReason(info seatInfo, live []seatInfo, sessionID string, now time.Time) string {
+	if reason, ok := attributedDenyReason(live, droppedPerformingSeats(), sessionID, sessionWorktree()); ok {
+		return reason
 	}
 	return noEngagedStoryEditReason + seatSuffix(info, now)
 }
@@ -1491,10 +1633,10 @@ func readOnlyPreflightReasonFrom(load func() (config.Config, string, error)) str
 	return readOnlyPreflightBase + " Story-reference copies belong in " + strings.Join(locs, ", ") + "."
 }
 
-func editPermissionDenyReason(info seatInfo, now time.Time) string {
+func editPermissionDenyReason(info seatInfo, live []seatInfo, sessionID string, now time.Time) string {
 	pre := readOnlyPreflightReason()
 	if info.ItemID == "" || !info.Engaged || info.Stale {
-		return editGateDenyReason(info, now) + " " + pre
+		return editGateDenyReason(info, live, sessionID, now) + " " + pre
 	}
 	if info.InFlight {
 		target := info.State
@@ -1517,8 +1659,8 @@ func editPermissionDenyReason(info seatInfo, now time.Time) string {
 	}
 	if agent == "" {
 		return fmt.Sprintf(
-			"satelle: story %s is at %q, which its workflow allocates to %q; source edits are permitted only in route steps allocated to agent=executor (%s). Do not work ahead. %s",
-			info.ItemID, info.StoryStatus, "no in-loop executor", states, pre)
+			"satelle: story %s is at %q (seat: %s), which its workflow allocates to %q; source edits are permitted only in route steps allocated to agent=executor (%s). Do not work ahead. %s",
+			info.ItemID, info.StoryStatus, seatToken(info), "no in-loop executor", states, pre)
 	}
 	// A named performer owns this step: the driver's own edit is refused, and
 	// the text names the one path that reaches that performer. The relay is
@@ -1529,8 +1671,8 @@ func editPermissionDenyReason(info seatInfo, now time.Time) string {
 		path = fmt.Sprintf("relay the change through the dispatched coder %q with `satelle story rework %s`", agent, info.ItemID)
 	}
 	return fmt.Sprintf(
-		"satelle: story %s is at %q, which its workflow allocates to %q; source edits are permitted only in route steps allocated to agent=executor (%s). Do not edit in-loop — %s. Do not work ahead. %s",
-		info.ItemID, info.StoryStatus, agent, states, path, pre)
+		"satelle: story %s is at %q (seat: %s), which its workflow allocates to %q; source edits are permitted only in route steps allocated to agent=executor (%s). Do not edit in-loop — %s. Do not work ahead. %s",
+		info.ItemID, info.StoryStatus, seatToken(info), agent, states, path, pre)
 }
 
 // stepDeclaresRework reports whether the derived route declares a rework loop
@@ -1552,7 +1694,7 @@ func hookDenyReason(info seatInfo, live []seatInfo, dm dispatchMarker, rm relayM
 	if rm.Binding != "" {
 		return relayDenyReason(info, live, rm, sessionID, now)
 	}
-	return editPermissionDenyReason(info, now)
+	return editPermissionDenyReason(info, live, sessionID, now)
 }
 
 // relayDenyReason names why a marked rework-relay coder was refused. It never
@@ -1625,35 +1767,44 @@ func relayDenyReason(info seatInfo, live []seatInfo, rm relayMarker, sessionID s
 		info.ItemID, binding, pre)
 }
 
-// firstDroppedPerformingSeat finds a story/task whose committed status is
-// performing but that has no live (non-stale) engagement lease (sty_4f74d01f).
-func firstDroppedPerformingSeat() seatInfo {
+// droppedPerformingSeats finds every story/task whose committed status is
+// performing but that has no live (non-stale) engagement lease, in store order
+// (sty_4f74d01f). It returns all of them, not the first: which one an edit
+// belongs to is attributedDenyReason's decision (sty_fbbb4aee).
+func droppedPerformingSeats() []seatInfo {
 	a, err := app.Open()
 	if err != nil {
-		return seatInfo{}
+		return nil
 	}
 	defer func() { _ = a.Close() }()
 	ctx := context.Background()
 	wfs, err := a.Store.DocIndex.List(ctx, "workflows")
 	if err != nil {
-		return seatInfo{}
+		return nil
 	}
 	items, err := a.Store.Stories.List(ctx, workitem.ListFilter{})
 	if err != nil {
-		return seatInfo{}
+		return nil
 	}
-	leased := map[string]bool{}
+	var leases []lease.Lease
 	if a.Store.Leases != nil {
-		leases, lerr := a.Store.Leases.List(ctx)
-		if lerr == nil {
-			now := time.Now().UTC()
-			for _, l := range leases {
-				if lease.Alive(l, now) {
-					leased[l.ItemID] = true
-				}
-			}
+		if ls, lerr := a.Store.Leases.List(ctx); lerr == nil {
+			leases = ls
 		}
 	}
+	return droppedSeatsFrom(items, wfs, leases, time.Now().UTC())
+}
+
+// droppedSeatsFrom is droppedPerformingSeats over an already-read store view, so
+// resolveSeats can count the seatless performing stories without a second open.
+func droppedSeatsFrom(items []workitem.Item, wfs []docindex.Doc, leases []lease.Lease, now time.Time) []seatInfo {
+	leased := map[string]bool{}
+	for _, l := range leases {
+		if lease.Alive(l, now) {
+			leased[l.ItemID] = true
+		}
+	}
+	var dropped []seatInfo
 	for _, it := range items {
 		if leased[it.ID] {
 			continue
@@ -1670,10 +1821,10 @@ func firstDroppedPerformingSeat() seatInfo {
 			}
 		}
 		if engaging && !waitsOnOpenChildren(it, it.Status, spec, items, wfs) {
-			return seatInfo{ItemID: it.ID, StoryStatus: it.Status, State: it.Status}
+			dropped = append(dropped, seatInfo{ItemID: it.ID, StoryStatus: it.Status, State: it.Status})
 		}
 	}
-	return seatInfo{}
+	return dropped
 }
 
 // noEngagedStoryCommitReason is the agent-facing deny for git commit/push without
@@ -2176,7 +2327,7 @@ func renderSeatBlocks(live []seatInfo, now time.Time, mode string) string {
 	if len(live) == 0 {
 		return ""
 	}
-	mine, _ := pickSessionSeat(live, config.ResolveSession())
+	mine, _ := pickSessionSeat(live, nil, config.ResolveSession())
 	if mine.ItemID == "" {
 		mine = live[0]
 	}

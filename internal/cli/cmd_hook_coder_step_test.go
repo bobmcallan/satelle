@@ -25,14 +25,14 @@ func TestEditPermissionDenyReasonCoderStep(t *testing.T) {
 
 	withRework := coder
 	withRework.StateRework = true
-	got := editPermissionDenyReason(withRework, now)
+	got := editPermissionDenyReason(withRework, nil, "", now)
 	for _, want := range []string{"sty_x", `"coder"`, "story rework sty_x", "Do not edit in-loop"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("rework step reason missing %q: %s", want, got)
 		}
 	}
 
-	got = editPermissionDenyReason(coder, now)
+	got = editPermissionDenyReason(coder, nil, "", now)
 	for _, want := range []string{"one-shot coder dispatch", `"coder"`, "Do not edit in-loop"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("non-rework step reason missing %q: %s", want, got)
@@ -100,7 +100,7 @@ func TestSeatFillsStateReworkFromTheRoute(t *testing.T) {
 			if live[0].StateAgent != "coder" || live[0].StateRework != tc.wantRework {
 				t.Errorf("seat = agent %q rework %v, want coder / %v", live[0].StateAgent, live[0].StateRework, tc.wantRework)
 			}
-			got := editPermissionDenyReason(live[0], now)
+			got := editPermissionDenyReason(live[0], live, "", now)
 			if has := strings.Contains(got, "story rework"); has != tc.wantRework {
 				t.Errorf("deny text names `story rework` = %v, want %v: %s", has, tc.wantRework, got)
 			}

@@ -226,7 +226,7 @@ func TestFirstDroppedPerformingSeatIgnoresWaitingContainer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if drop := firstDroppedPerformingSeat(); drop.ItemID != "" {
+	if drop := droppedPerformingSeats(); len(drop) != 0 {
 		t.Fatalf("a waiting container was treated as a dropped performing seat: %+v", drop)
 	}
 
@@ -234,7 +234,7 @@ func TestFirstDroppedPerformingSeatIgnoresWaitingContainer(t *testing.T) {
 	if _, err := db.Stories.Update(ctx, kid.ID, workitem.UpdateInput{Status: &done}, now); err != nil {
 		t.Fatal(err)
 	}
-	if drop := firstDroppedPerformingSeat(); drop.ItemID != epic.ID {
+	if drop := droppedPerformingSeats(); len(drop) != 1 || drop[0].ItemID != epic.ID {
 		t.Fatalf("with every child terminal the container is performing again: %+v", drop)
 	}
 }
