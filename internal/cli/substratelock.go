@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -106,41 +107,47 @@ type substrateLockPayload struct {
 	Lane   string `json:"lane"`
 }
 
+// readLockConfig reads the committed config for the lock gate; a var so a test
+// can count the reads a single edit performs.
+var readLockConfig = os.ReadFile
+
 // substrateLockGate applies the lock to a path edit. It returns nil to let the
 // ordinary gate carry on and a deny error to refuse. It runs BEFORE the
 // exempt-path early return, because that exemption is exactly what let a
 // performing story rewrite the substrate that judges it.
 //
-// The lock is a function of a live performing seat only, never of the session's
-// identity, the harness or the model (substrateLockHolders). With no seat held
-// it changes nothing: an exempt path stays writable. A holder's category is read
+// The lock is a function of holders — the live performing seats
+// (substrateLockHolders) — never of the session's identity, the harness or the
+// model; the caller skips the gate when there are none, so with no seat held
+// nothing is read and an exempt path stays writable. A holder's category is read
 // from the store and every doubt about it refuses — a lock that fails open is
-// not a lock. Config that cannot be read defers to the ordinary gate.
-func substrateLockGate(cmd *cobra.Command, raw []byte, target string, info seatInfo, engaged bool, live []seatInfo) error {
-	cfg, cfgPath, err := config.Load("")
-	if err != nil {
-		return nil
-	}
+// not a lock. The committed config is read ONCE, and a config that cannot be
+// read or parsed fails closed: the default lock, with the seeded dump globs so
+// the story-reference dumps stay writable.
+func substrateLockGate(cmd *cobra.Command, raw []byte, target string, holders []seatInfo) error {
+	cfgPath, _ := config.ResolvePath("")
+	content, rerr := readLockConfig(cfgPath)
 	root := config.RepoRootFromConfigPath(cfgPath)
-	lockRoots, _ := config.ResolveLockSubstratePaths(cfgPath, root)
-	if len(lockRoots) == 0 {
-		return nil
+	globs, ok := config.ParseEditExemptGlobs(string(content))
+	if rerr != nil || !ok {
+		globs = managedEditExemptGlobs
+	}
+	lockPaths, _ := config.ParseLockSubstratePaths(string(content))
+	lockRoots := make([]string, 0, len(lockPaths))
+	for _, p := range lockPaths {
+		lockRoots = append(lockRoots, resolveAbsTarget(root, p))
+	}
+	footprint := substrateLockFootprint()
+	for i, f := range footprint {
+		footprint[i] = resolveAbsTarget(root, f)
 	}
 	abs := resolveAbsTarget(root, target)
-	footprint := make([]string, 0, len(substrateLockFootprint()))
-	for _, f := range substrateLockFootprint() {
-		footprint = append(footprint, resolveAbsTarget(root, f))
-	}
-	if !substrateLocked(lockRoots, footprint, cfg.ResolveEditExemptGlobs(), root, abs) {
+	if !substrateLocked(lockRoots, footprint, globs, root, abs) {
 		return nil
 	}
 	rel := abs
 	if r, rerr := filepath.Rel(root, abs); rerr == nil {
 		rel = filepath.ToSlash(r)
-	}
-	holders := substrateLockHolders(info, engaged, live)
-	if len(holders) == 0 {
-		return nil
 	}
 	a, oerr := app.Open()
 	if oerr != nil {

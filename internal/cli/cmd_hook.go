@@ -190,8 +190,10 @@ workflow body declaring no route blocks the edit (sty_f3d5d4b8).`,
 				// prefix ([gate] lock_substrate_paths, default .satelle/) is refused
 				// HERE, before the exemption, by the same harness-neutral predicate
 				// for every harness (sty_992cffc6).
-				if err := substrateLockGate(cmd, raw, p, info, engaged, live); err != nil {
-					return err
+				if holders := substrateLockHolders(info, engaged, live); len(holders) > 0 {
+					if err := substrateLockGate(cmd, raw, p, holders); err != nil {
+						return err
+					}
 				}
 				if exemptTarget(p) {
 					return nil

@@ -619,12 +619,9 @@ type GateConfig struct {
 	// that repo — it only covers out-of-tree drafts.
 	EditExemptPaths []string `toml:"edit_exempt_paths"`
 	EditExemptGlobs []string `toml:"edit_exempt_globs"`
-	// LockSubstratePaths are the prefixes the edit gate refuses to a story that
-	// is not in the substrate lane while any story holds a performing seat
-	// (sty_992cffc6). It is decoded for settings display only: the lock reads
-	// the raw file through ResolveLockSubstratePaths, because an absent key
-	// (default lock) and `= []` (opt-out) both decode to an empty slice here.
-	LockSubstratePaths     []string            `toml:"lock_substrate_paths"`
+	// [gate] lock_substrate_paths is deliberately NOT a field: an absent key
+	// (default lock) and `= []` (opt-out) decode alike here, so the lock reads
+	// the raw file through ParseLockSubstratePaths.
 	AllowOutsideTreeEdits  bool                `toml:"allow_outside_tree_edits"`
 	CommandAllow           map[string][]string `toml:"command_allow"`
 	NoImplementModels      []string            `toml:"no_implement_models"`
@@ -752,6 +749,17 @@ func (c Config) ResolveEditExemptPaths(repoRoot string) []string {
 		}
 	}
 	return out
+}
+
+// ParseEditExemptGlobs is ResolveEditExemptGlobs over the raw committed config
+// bytes, for a caller that already read the file. ok is false when the content
+// does not decode, so the caller can tell a damaged file from a repo with none.
+func ParseEditExemptGlobs(content string) (globs []string, ok bool) {
+	var cfg Config
+	if _, err := toml.Decode(content, &cfg); err != nil {
+		return nil, false
+	}
+	return cfg.ResolveEditExemptGlobs(), true
 }
 
 // ResolveEditExemptGlobs returns trimmed [gate] edit_exempt_globs entries.
@@ -912,7 +920,7 @@ func RepoRootFromConfigPath(configPath string) string {
 // derivation), and any error. A missing config is ErrNotFound — callers may
 // treat that as "use the zero-value Config" for zero-config operation.
 func Load(explicitPath string) (Config, string, error) {
-	path, err := resolvePath(explicitPath)
+	path, err := ResolvePath(explicitPath)
 	if err != nil {
 		return Config{}, "", err
 	}
@@ -1001,7 +1009,7 @@ func validateCheckLogPatterns(cfg Config, path string) error {
 	return nil
 }
 
-// resolvePath finds the committed config: an explicit path, then the
+// ResolvePath finds the committed config: an explicit path, then the
 // SATELLE_CONFIG env, then walking up from CWD for .satelle/satelle.toml.
 // Returns "" (no error) when none is found.
 // FindDataDir walks up from start (empty → CWD) for a `.satelle` DIRECTORY and
@@ -1035,7 +1043,7 @@ func FindDataDir(start string) (string, bool) {
 	}
 }
 
-func resolvePath(explicit string) (string, error) {
+func ResolvePath(explicit string) (string, error) {
 	if explicit != "" {
 		return explicit, nil
 	}

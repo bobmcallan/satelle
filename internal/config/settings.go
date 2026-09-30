@@ -57,7 +57,6 @@ var Settings = []Setting{
 	{Section: "review", Key: "gate_create", Label: "Gate create", Help: "Run structure + create_review on story/task create (default on at init).", Kind: kindBool},
 	{Section: "gate", Key: "edit_exempt_paths", Label: "Edit-gate exempt paths", Help: "Path prefixes exempt from the engaged-story edit gate. Init seeds .satelle/ (authored substrate) plus the footprint satelle deploys itself (.gitignore block, harness scaffolds).", Kind: kindList},
 	{Section: "gate", Key: "edit_exempt_globs", Label: "Edit-gate exempt globs", Help: "Filename globs exempt from the engaged-story edit gate (basename match; a pattern containing / is repo-relative). Init seeds sty_*_body.md and sty_*_ac.md for agent story-reference dumps.", Kind: kindList},
-	{Section: "gate", Key: "lock_substrate_paths", Label: "Substrate lock paths", Help: "Path prefixes the edit gate refuses to any story outside the substrate lane while a story holds a performing seat, so a story cannot rewrite the workflow, skills or bindings that judge it. Absent = .satelle/ is locked; [] is the opt-out, and `satelle doctor` reports it. Sits beside edit_exempt_paths and overrides it for a performing seat.", Kind: kindList},
 	{Section: "gate", Key: "no_implement_models", Label: "No-implement model globs", Help: "When set, PreToolUse Edit is denied if the calling agent's model matches a glob. Absent = no model check. The binary ships no default list.", Kind: kindList},
 	{Section: "gate", Key: "no_implement_message", Label: "No-implement deny message", Help: "Deny text rendered when a caller model matches no_implement_models. Rendered verbatim. Empty = a generic sentence naming the matched glob.", Kind: kindString},
 	{Section: "gate", Key: "no_implement_exempt_paths", Label: "No-implement exempt paths", Help: "Path prefixes skipped by the model-role rule only. Does not exempt the engaged-story gate (that is edit_exempt_paths).", Kind: kindList},
@@ -131,8 +130,6 @@ func SettingDisplay(cfg Config, s Setting) string {
 		return strings.Join(cfg.Gate.EditExemptPaths, "\n")
 	case "gate.edit_exempt_globs":
 		return strings.Join(cfg.Gate.EditExemptGlobs, "\n")
-	case "gate.lock_substrate_paths":
-		return strings.Join(cfg.Gate.LockSubstratePaths, "\n")
 	case "gate.no_implement_models":
 		return strings.Join(cfg.Gate.NoImplementModels, "\n")
 	case "gate.no_implement_message":

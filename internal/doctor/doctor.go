@@ -292,12 +292,12 @@ func checkReviewerIsolation(grants []agentvalidate.Grant) health.Findings {
 }
 
 // checkSubstrateLock warns when the committed config carries an explicit empty
-// [gate] lock_substrate_paths. It keys off config.ResolveLockSubstratePaths'
+// [gate] lock_substrate_paths. It keys off config.ParseLockSubstratePaths'
 // explicit-opt-out result, never off an empty list: an absent key and a
 // present-but-empty one decode alike, and only the second is an opt-out.
 func checkSubstrateLock(dataDir string) health.Findings {
-	cfgPath := filepath.Join(dataDir, config.ConfigName)
-	if _, optOut := config.ResolveLockSubstratePaths(cfgPath, filepath.Dir(dataDir)); !optOut {
+	raw, _ := os.ReadFile(filepath.Join(dataDir, config.ConfigName))
+	if _, optOut := config.ParseLockSubstratePaths(string(raw)); !optOut {
 		return nil
 	}
 	return health.Findings{health.Warn(health.IDSubstrateUnlocked, "Substrate lock disabled",

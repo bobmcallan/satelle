@@ -1,7 +1,6 @@
 package config
 
 import (
-	"os"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -24,8 +23,7 @@ var DefaultLockSubstratePaths = []string{".satelle/"}
 // Anything the parser cannot read with confidence — a TOML syntax error, a
 // value that is not a list of strings — fails CLOSED to the default lock, never
 // to permissive: a damaged file must not read as an operator's opt-out. Entries
-// are returned as written (repo-root-relative or absolute); see
-// ResolveLockSubstratePaths for the resolved form.
+// are returned as written (repo-root-relative or absolute).
 func ParseLockSubstratePaths(content string) (paths []string, optOut bool) {
 	var probe struct {
 		Gate struct {
@@ -45,20 +43,4 @@ func ParseLockSubstratePaths(content string) (paths []string, optOut bool) {
 		return nil, true
 	}
 	return paths, false
-}
-
-// ResolveLockSubstratePaths reads the committed config at configPath and returns
-// the substrate lock roots resolved against repoRoot (the same join
-// ResolveEditExemptPaths applies) plus whether the operator explicitly opted
-// out. An unreadable file fails closed to the default lock.
-func ResolveLockSubstratePaths(configPath, repoRoot string) (roots []string, explicitOptOut bool) {
-	raw, err := os.ReadFile(configPath)
-	if err != nil {
-		raw = nil
-	}
-	paths, optOut := ParseLockSubstratePaths(string(raw))
-	for _, p := range paths {
-		roots = append(roots, resolveUnder(repoRoot, p))
-	}
-	return roots, optOut
 }

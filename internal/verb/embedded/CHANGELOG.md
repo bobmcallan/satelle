@@ -1,3 +1,19 @@
+## [0.0.591] - 2026-09-30
+
+### Changed
+- **The substrate lock shipped in 0.0.590 is smaller: dead configuration surface removed, one config read per edit instead of two, and a four-parameter gate.** The lock refused a `.satelle/` edit under a performing seat, but it carried plumbing that no posture a repo can reach makes work, and read the config twice on every edit. Six premises were checked against the code first; every one of them held. (sty_1ba4dbc7, epic:earned-complexity)
+  - **The dead field is gone.** `GateConfig.LockSubstratePaths` was decoded and read at exactly one place — a `satelle settings` display row — and since the scaffold ships the key COMMENTED, that row could only ever print empty. The field, the display case, the settings schema row and its test are removed. A repo that pins the key still loads and is now answered by the gate, not by a display.
+  - **One read, not two.** `substrateLockGate` called `config.Load` (a read plus a full decode) and then `ResolveLockSubstratePaths` (a second read plus a second decode) on every edit, and re-absolutised the footprint list twice. It now reads the file once and parses both the lock list and the exempt globs from the same bytes.
+  - **The gate takes four parameters, not six.** `engaged`, `info` and `live` were three views of one seat resolution, collapsed inside the gate AFTER the config had already been read. Holders are resolved at the call site, so with no seat the gate reads no configuration at all.
+  - **`ResolveLockSubstratePaths` is deleted.** Its only consumer was the doctor finding, which used half its result; the doctor now makes one call into the config parser with no entry point of its own.
+  - **Fail-closed now covers the lock and not the carve-outs.** An unreadable or garbled config previously deferred to the ordinary gate; it now fails closed to the default lock. The story-reference globs are the exception: a damaged file falls back to the seeded managed defaults rather than to none, so a garbled `satelle.toml` cannot turn a story dump into a refusal.
+  - **Net: mechanism −4 lines, tests +34.** Every added test line and every added mechanism line is named in the story's `line-count` evidence with the alternative it rejected. The regression suite and the three-harness live probe are unchanged in behaviour.
+
+## [serve-v0.0.106] - 2026-09-30
+
+### Changed
+- **The service carries the substrate-lock simplification above**: one config read per edit, the four-parameter gate, and the removed settings display surface. (sty_1ba4dbc7)
+
 ## [0.0.590] - 2026-09-30
 
 ### Added

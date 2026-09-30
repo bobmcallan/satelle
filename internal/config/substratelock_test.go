@@ -42,50 +42,29 @@ func TestParseLockSubstratePathsSplitsAbsentFromExplicitEmpty(t *testing.T) {
 	}
 }
 
-func TestResolveLockSubstratePathsReadsFileAndFailsClosed(t *testing.T) {
-	dir := t.TempDir()
-	repo := filepath.Join(dir, "repo")
-	cfg := filepath.Join(repo, ".satelle", "satelle.toml")
-	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	// (f) an unreadable (here: missing) file fails closed to the default lock.
-	roots, optOut := ResolveLockSubstratePaths(cfg, repo)
-	if want := []string{filepath.Join(repo, ".satelle/")}; !reflect.DeepEqual(roots, want) || optOut {
-		t.Fatalf("missing file = (%v, %v), want (%v, false)", roots, optOut, want)
-	}
-
-	// Entries resolve against the repo root; an absolute entry passes through.
-	if err := os.WriteFile(cfg, []byte("[gate]\nlock_substrate_paths = [\"policy/\", \"/etc/satelle/\"]\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	roots, optOut = ResolveLockSubstratePaths(cfg, repo)
-	if want := []string{filepath.Join(repo, "policy/"), "/etc/satelle/"}; !reflect.DeepEqual(roots, want) || optOut {
-		t.Fatalf("entries = (%v, %v), want (%v, false)", roots, optOut, want)
-	}
-
-	if err := os.WriteFile(cfg, []byte("[gate]\nlock_substrate_paths = []\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if roots, optOut = ResolveLockSubstratePaths(cfg, repo); len(roots) != 0 || !optOut {
-		t.Fatalf("explicit empty = (%v, %v), want (none, true)", roots, optOut)
-	}
-}
-
-// The decoded Config carries the key for settings display only; it cannot tell
-// absent from `= []`, which is why the lock never reads it.
-func TestGateConfigDecodesLockSubstratePathsForDisplay(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "satelle.toml")
+// The key is not a decoded field, so a repo that pins it still loads, and the
+// settings schema carries no row for a value that would only ever read empty.
+func TestPinnedLockKeyLoadsAndHasNoSettingsRow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "satelle.toml")
 	if err := os.WriteFile(path, []byte("[gate]\nlock_substrate_paths = [\"a/\", \"b/\"]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg, _, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
+	if _, _, err := Load(path); err != nil {
+		t.Fatalf("a pinned lock_substrate_paths must not break Load: %v", err)
 	}
-	if !reflect.DeepEqual(cfg.Gate.LockSubstratePaths, []string{"a/", "b/"}) {
-		t.Fatalf("Gate.LockSubstratePaths = %v", cfg.Gate.LockSubstratePaths)
+	if _, ok := SettingByID("gate.lock_substrate_paths"); ok {
+		t.Error("settings schema must not list gate.lock_substrate_paths")
+	}
+}
+
+func TestParseEditExemptGlobsSplitsDamagedFromEmpty(t *testing.T) {
+	if got, ok := ParseEditExemptGlobs("[gate]\nedit_exempt_globs = [\" a \", \"\"]\n"); !ok || !reflect.DeepEqual(got, []string{"a"}) {
+		t.Errorf("entries = (%v, %v), want ([a], true)", got, ok)
+	}
+	if got, ok := ParseEditExemptGlobs(""); !ok || got != nil {
+		t.Errorf("empty = (%v, %v), want (nil, true)", got, ok)
+	}
+	if _, ok := ParseEditExemptGlobs("[gate\n"); ok {
+		t.Error("a syntax error must report ok=false")
 	}
 }

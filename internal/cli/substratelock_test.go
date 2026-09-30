@@ -330,6 +330,13 @@ func TestSubstrateLockConfigurableAndOptOut(t *testing.T) {
 		if !strings.Contains(scaffoldToml, "# lock_substrate_paths = [\".satelle/\"]") {
 			t.Error("the seeded satelle.toml must document the key beside edit_exempt_paths")
 		}
+		// The shipped posture is COMMENTED: no scaffold line is an active key, so
+		// nothing decodes, displays or migrates it (sty_1ba4dbc7).
+		for _, line := range strings.Split(scaffoldToml, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "lock_substrate_paths") {
+				t.Errorf("the scaffold must ship the key commented, found %q", line)
+			}
+		}
 		// The documented-but-commented key leaves the key ABSENT: the default lock,
 		// never the opt-out.
 		paths, optOut := config.ParseLockSubstratePaths(scaffoldToml)
@@ -337,6 +344,64 @@ func TestSubstrateLockConfigurableAndOptOut(t *testing.T) {
 			t.Errorf("seeded scaffold parses to (%v, optOut=%v)", paths, optOut)
 		}
 	})
+}
+
+// countLockConfigReads swaps the gate's config read for a counting one that
+// returns read/err, and reports the count when the test ends.
+func countLockConfigReads(t *testing.T, err error) *int {
+	t.Helper()
+	orig, n := readLockConfig, new(int)
+	readLockConfig = func(path string) ([]byte, error) {
+		*n++
+		if err != nil {
+			return nil, err
+		}
+		return os.ReadFile(path)
+	}
+	t.Cleanup(func() { readLockConfig = orig })
+	return n
+}
+
+// sty_1ba4dbc7 AC5: the per-edit path reads the committed config once when a
+// seat is held, and not at all when none is.
+func TestSubstrateLockGateReadsConfigOncePerEditAndOnlyUnderASeat(t *testing.T) {
+	t.Run("a held seat reads the config once", func(t *testing.T) {
+		repo, _ := lockRepo(t, "feature", "")
+		n := countLockConfigReads(t, nil)
+		if _, err := runRootIn(t, claudeEditEvent(filepath.Join(repo, ".satelle", "skills", "x.md")), "hook", "gate"); err == nil {
+			t.Fatal("expected a refusal")
+		}
+		if *n != 1 {
+			t.Fatalf("lock gate config reads = %d, want 1", *n)
+		}
+	})
+	t.Run("no seat reads nothing", func(t *testing.T) {
+		repo := tempRepo(t)
+		t.Chdir(repo)
+		if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"), []byte(lockExemptToml), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		n := countLockConfigReads(t, os.ErrPermission)
+		if out, err := runRootIn(t, claudeEditEvent(filepath.Join(repo, ".satelle", "skills", "x.md")), "hook", "gate"); err != nil {
+			t.Fatalf("no seat: the lock must not act: %v\n%s", err, out)
+		}
+		if *n != 0 {
+			t.Fatalf("lock gate config reads = %d, want 0", *n)
+		}
+	})
+}
+
+// sty_1ba4dbc7 AC5: an unreadable config fails closed to the default lock — and
+// keeps the seeded dump globs, so the story-reference dumps stay writable.
+func TestSubstrateLockGateUnreadableConfigFailsClosed(t *testing.T) {
+	repo, _ := lockRepo(t, "feature", "")
+	countLockConfigReads(t, os.ErrPermission)
+	if out, err := runRootIn(t, claudeEditEvent(filepath.Join(repo, ".satelle", "skills", "x.md")), "hook", "gate"); err == nil {
+		t.Fatalf("an unreadable config must lock the default, not open:\n%s", out)
+	}
+	if out, err := runRootIn(t, claudeEditEvent(filepath.Join(repo, ".satelle", "documents", "sty_abc12345_body.md")), "hook", "gate"); err != nil {
+		t.Fatalf("an unreadable config must keep the dump globs writable: %v\n%s", err, out)
+	}
 }
 
 // AC8: the refusal is a ledger row on the seat-holding story.

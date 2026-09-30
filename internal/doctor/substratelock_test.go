@@ -27,22 +27,12 @@ func TestDoctorReportsSubstrateLockOptOutOnly(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := newFixtureRepo(t, fixtureOpts{extraFiles: map[string]string{"satelle.toml": tc.toml}})
 			rep := check(t, root)
-			got := ids(rep)[health.IDSubstrateUnlocked]
-			if got != tc.want {
+			if got := ids(rep)[health.IDSubstrateUnlocked]; got != tc.want {
 				t.Fatalf("finding %s present = %v, want %v (findings: %+v)", health.IDSubstrateUnlocked, got, tc.want, rep.Findings)
 			}
-			if !tc.want {
-				return
-			}
 			for _, f := range rep.Findings {
-				if f.ID != health.IDSubstrateUnlocked {
-					continue
-				}
-				if f.Severity != health.SeverityWarn {
-					t.Errorf("severity = %v, want warn", f.Severity)
-				}
-				if !strings.Contains(f.Detail, "lock_substrate_paths = []") || f.Remediation == "" {
-					t.Errorf("finding must name the key and carry a remediation: %+v", f)
+				if f.ID == health.IDSubstrateUnlocked && (f.Severity != health.SeverityWarn || !strings.Contains(f.Detail, "lock_substrate_paths = []") || f.Remediation == "") {
+					t.Errorf("finding must be a warn naming the key with a remediation: %+v", f)
 				}
 			}
 		})
