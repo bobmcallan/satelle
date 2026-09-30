@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/logsread"
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -142,19 +141,7 @@ func renderOutcome(itemID, from, to string, verdicts []ReviewerVerdict, unresolv
 }
 
 func dispatchLogRel(storyID string, at time.Time) string {
-	dir := ""
-	if wd, err := os.Getwd(); err == nil {
-		p := filepath.Join(wd, ".satelle", "logs")
-		if st, err := os.Lstat(p); err == nil && st.Mode()&os.ModeSymlink != 0 {
-			dir = p
-		}
-	}
-	if dir == "" && strings.TrimSpace(os.Getenv("SATELLE_HOME")) != "" {
-		cfg, cfgPath, err := config.Load("")
-		if err == nil {
-			dir = cfg.ResolveLogsDir(config.RepoRootFromConfigPath(cfgPath))
-		}
-	}
+	dir := dispatchLogsDir()
 	if dir == "" {
 		return ""
 	}

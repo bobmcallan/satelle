@@ -1,3 +1,18 @@
+## [0.0.592] - 2026-09-30
+
+### Added
+- **`satelle story recover <id>`: a dispatch that died without a completion is now visible, with what it left.** A dispatched performer that dies mid-turn — killed by a stall, an OOM, a closed pipe — leaves no completion row, and nothing in the product said so. The next driver either re-dispatches blind or assumes the work is lost. Observed on 2026-09-30: a planner dispatch from 2026-09-24 had died without completion and nothing had surfaced it in the six days since. (sty_f0ed2473, epic:earned-complexity)
+  - **It reports, it does not vouch.** The report opens `dispatch <name> ended WITHOUT a completion; the transition did NOT commit; the work is UNVERIFIED`, names the log, the last recorded event and the wall time since, and lists the files present since the engagement anchor. It then says in words that it does not say whether the slice is coherent. A half-written slice must never read as finished.
+  - **Detection uses evidence that already exists.** A dispatch is unfinished when its newest log has no terminal `completion` line. No new telemetry is written on the dispatch path, and the verb stays quiet after a genuine successful completion — including when an older dispatch died and a later one succeeded, which is exactly the shape this repo hit on sty_992cffc6.
+  - **The recovery decision leaves a row.** `--choice redispatch|finish|park` records what was decided and on what evidence, so the cost of a recovery is visible in the story's own record rather than only in a session transcript.
+  - **A missing baseline is reported, not hidden.** A story with no engagement baseline says so in the report and still gives the dispatch facts.
+  - **The watchdog stall is included, not just the orphan.** A dispatch reaped by the stall detector has no completion row either, and is reported the same way.
+
+## [serve-v0.0.107] - 2026-09-30
+
+### Added
+- **The service carries `satelle story recover` above**, and surfaces an unfinished dispatch in the story view. (sty_f0ed2473)
+
 ## [0.0.591] - 2026-09-30
 
 ### Changed

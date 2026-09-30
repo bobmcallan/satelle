@@ -241,6 +241,32 @@ event is still judged stalled.
   session's own turn (a rework relay coder/consult
   round) — not only the one-shot dispatch path.
 
+### After a dispatch ends without a completion (`story recover`, sty_f0ed2473)
+
+A dispatch that stalls, dies or is reaped leaves work on disk and no committed
+transition. Before you pay for another performer to re-read it, ask what the dead
+one left:
+
+    satelle story recover <id>
+
+It reports the newest dispatch log's last recorded event and the wall time since,
+the files present since the engagement anchor, the `agent-stalled` row when the
+watchdog wrote one, and the lease. It reports and never vouches: every report says
+the transition did NOT commit and the work is UNVERIFIED, and the file list is an
+enumeration, not a coherence check (git cannot say which dispatch wrote a file).
+A log that ends in a `completed` event is not an unfinished dispatch; the report
+says so and lists nothing. A dispatch whose lease is still in flight is reported as
+running, not as a recovery.
+
+The decision stays yours. Record it, then act through the normal verbs:
+
+    satelle story recover <id> --choice redispatch|finish|park [--reason ...]
+    satelle ledger list --story <id> --kind recovery_choice
+
+The choice writes one `recovery_choice` row and nothing else — it never
+dispatches, transitions or parks. This is recognition, not a resume: no live
+session is persisted or re-entered.
+
 ### Silent one-shot command bindings (`busy_timeout`, sty_db62a3b9)
 
 A `command`-transport binding whose CLI prints one envelope at exit (for

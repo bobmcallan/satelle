@@ -235,6 +235,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyRestampCommand())
 		parent.AddCommand(storyAmendCommand())
 		parent.AddCommand(storyStopRequestCommand())
+		parent.AddCommand(storyRecoverCommand())
 		parent.AddCommand(storySeatCommands()...)
 		parent.AddCommand(storyHoldCommands())
 		parent.AddCommand(storyTidyCommands()...)
@@ -1661,6 +1662,55 @@ Never cancel a healthy story to free the seat — cancelled is terminal.`,
 		},
 	}
 	cmd.Flags().StringVar(&reason, "reason", "", "why the stop is requested")
+	return cmd
+}
+
+// storyRecoverCommand builds `satelle story recover <id> [--choice …]`
+// (sty_f0ed2473): after a dispatch ends without a completion, report what it
+// left; with --choice, record the driver's decision as one ledger row.
+func storyRecoverCommand() *cobra.Command {
+	var choice, reason string
+	cmd := &cobra.Command{
+		Use:   "recover <id>",
+		Short: "Report what a dispatch that ended without a completion left; record the recovery choice",
+		Long: `Report what a dispatch that ended without a completion left behind: its last
+recorded event and the wall time since, and the files present since the
+engagement anchor. Reach for it when a dispatch stalled, died or was reaped and
+you must decide what to do next.
+
+It REPORTS; it does not VOUCH. The transition did not commit and the work is
+unverified; the file list is an enumeration, not a coherence check. Not a
+resume: no live session is re-entered.
+
+--choice redispatch|finish|park records your decision as one recovery_choice
+ledger row and stops. It never dispatches, transitions or parks.
+
+See: satelle help agent-dispatch`,
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := map[string]any{"id": args[0]}
+			putIf(req, "choice", choice)
+			putIf(req, "reason", reason)
+			resp, err := verb.Dispatch(cmd.Context(), "story-recover", mustJSON(req))
+			if err != nil {
+				return err
+			}
+			if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
+				return printJSON(cmd, resp)
+			}
+			var res struct {
+				Report string `json:"report"`
+			}
+			if err := json.Unmarshal(resp, &res); err != nil {
+				return printJSON(cmd, resp)
+			}
+			fmt.Fprint(cmd.OutOrStdout(), res.Report)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&choice, "choice", "", "record the recovery decision: redispatch, finish or park")
+	cmd.Flags().StringVar(&reason, "reason", "", "why this choice (kept on the ledger row)")
 	return cmd
 }
 

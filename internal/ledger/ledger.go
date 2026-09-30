@@ -166,6 +166,12 @@ const (
 	// {path, status, lane}; nothing in it is harness-specific. Enumeration only —
 	// the lock list is configuration.
 	KindSubstrateLockDeny = "substrate_lock_deny"
+	// KindRecoveryChoice records the driver's decision after a dispatch ended
+	// without a completion (sty_f0ed2473): Payload is {choice, reason, state, log,
+	// last_event, file_count} with choice one of redispatch | finish | park. The
+	// row records the decision only — it never dispatches, transitions or parks.
+	// Enumeration only.
+	KindRecoveryChoice = "recovery_choice"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional
