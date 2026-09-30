@@ -1,3 +1,10 @@
+## [0.0.588] - 2026-09-30
+
+### Fixed
+- **A session-start hook verb no longer fails as "unparseable output" when it has something to report.** The pi extension binds `SessionStart` to a direct binding that runs `satelle reindex` and parses its stdout as one JSON document. `reindex` printed the doc-sync JSON and then appended its progress lines to the SAME stream, so any repo with a backlog-reference delta — this one has 61 open stories — got `Warning: satelle reindex unavailable (unparseable output) — continuing without it` on every pi startup, and nothing else. The child coders and the four child dispatches of the run that reported it were unaffected, which is why it read as a repo-local artifact. (sty_929c7959, epic:pi-harness, supersedes:sty_6b8b9010)
+  - **stdout is the JSON document; stderr is the operator.** The task-sync report, the backlog-reference count and the doc-validation `FAIL` lines now go to `cmd.ErrOrStderr()`, beside the warnings already there. Nothing is removed and nothing changes shape: a terminal shows both streams, and a failing leg still exits non-zero.
+  - **The contract is pinned by a test, not by a comment.** `TestReindexStdoutIsSingleJSONDocument` runs the verb through the reproduced backlog-delta case, a task-sync report and a validation `FAIL` finding, and each decodes stdout with `json.Decoder`, requires a second `Decode` to hit `io.EOF`, and requires the moved line to be present on stderr and absent from stdout.
+
 ## [0.0.587] - 2026-09-30
 
 ### Fixed

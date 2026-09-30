@@ -68,7 +68,7 @@ starts serve loses nothing if these three paths fire.`,
 			if terr != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "reindex: task sync: %v\n", terr)
 			} else if idx > 0 || mig > 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "tasks: indexed %d, migrated %d\n", idx, mig)
+				fmt.Fprintf(cmd.ErrOrStderr(), "tasks: indexed %d, migrated %d\n", idx, mig)
 			}
 			// Regenerate the read-only OKF backlog reference under .satelle/stories/
 			// from the store (the DB stays the sole story store; this is a disposable
@@ -76,7 +76,7 @@ starts serve loses nothing if these three paths fire.`,
 			if n, _, serr := verb.SyncStoryBacklog(cmd.Context(), a.Store.Stories, time.Now()); serr != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "reindex: story backlog: %v\n", serr)
 			} else if n > 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "stories: backlog reference +%d\n", n)
+				fmt.Fprintf(cmd.ErrOrStderr(), "stories: backlog reference +%d\n", n)
 			}
 			// Repo-health warning (sty_7db2ed7d): the legacy actors.toml filename is no
 			// longer loaded, so a repo still carrying it is silently on defaults. Warn
@@ -112,7 +112,9 @@ starts serve loses nothing if these three paths fire.`,
 // pass-through (it never blocks indexing).
 func validateChanged(cmd *cobra.Command, a *app.App, changed []docindex.DocRef) {
 	ctx := context.Background()
-	out := cmd.OutOrStdout()
+	// stdout carries the one doc-sync JSON document (a direct hook binding parses
+	// it), so every progress line goes to stderr (sty_929c7959).
+	out := cmd.ErrOrStderr()
 	resolve := skillResolver(a)
 	for _, ch := range changed {
 		if !structure.Checked(ch.Kind) {
