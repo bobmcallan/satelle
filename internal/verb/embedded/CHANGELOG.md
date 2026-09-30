@@ -1,3 +1,11 @@
+## [0.0.589] - 2026-09-30
+
+### Changed
+- **This repo's agent seats now run on sonnet 5.5, and the edge-gate reviewer runs on grok.** Operator direction (sty_a07f69ef): `[reviewer]` moves from an inline `claude` command on opus to the `grok-reviewer` profile (grok `acp`, `read_file`/`grep`/`list_dir`), and `[reviewer-consult]`, `[ready-reviewer]` and `[planner]` are pinned to `model = "sonnet"`, which resolves to `claude-sonnet-5-5`. No seat in `.satelle/workflows/agents.toml` resolves to opus any more, and `satelle agent validate` resolves every seat with no missing profile and no fallback.
+  - **The cheaper edge-gate seat is a directed change, not a measured improvement.** The dispatch record shows opus as the largest line item (759 dispatches, $266) and grok having run the same gate class 149 times for a small fraction of that, but the store holds no comparison of the two harnesses' ACCEPT/REJECT verdicts on the same edge. Whether grok judges as well is NOT asserted here; read its effect from the gate-value ledger (epic:token-accountability).
+  - **The machine catalog is untouched.** `~/.satelle/agents.toml` is fleet-wide and still pins `claude-consult` and `claude-planner` to opus; this repo moves those seats with a pin in its own binding, which `satelle agent validate` attributes to `(repo)`, so no other repo on the machine is rebound.
+  - **`[model_order]` and the agent roster agree with the bindings.** `claude` drops opus so an unset binding cannot silently resolve to it, and `grok` is `grok-4.5`, the `grok-reviewer` profile's actual pin, replacing the stale `grok-4.7`. The roster's reviewer, reviewer-consult, ready-reviewer and planner rows are rewritten to match.
+
 ## [0.0.588] - 2026-09-30
 
 ### Fixed
