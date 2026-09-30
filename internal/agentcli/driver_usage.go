@@ -111,6 +111,8 @@ func SessionUsageSnapshot(harness, sessionID, repoRoot string) DriverSnapshot {
 		return claudeDriverSnapshot(sessionID, repoRoot)
 	case HarnessGrok:
 		return grokDriverSnapshot(sessionID, repoRoot)
+	case HarnessPi:
+		return piDriverSnapshot(sessionID, repoRoot)
 	default:
 		return DriverSnapshot{SessionID: sessionID, Executable: adapter,
 			UnavailableReason: fmt.Sprintf("%s: no driver-usage reader for this harness", adapter)}
@@ -138,6 +140,16 @@ func grokHomeDir() string {
 		return filepath.Join(h, ".grok")
 	}
 	return ".grok"
+}
+
+func piHomeDir() string {
+	if v := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR")); v != "" {
+		return v
+	}
+	if h, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(h, ".pi", "agent")
+	}
+	return filepath.Join(".pi", "agent")
 }
 
 // claudeProjectSlug mirrors Claude Code's own project directory naming: the

@@ -202,6 +202,15 @@ type costVM struct {
 	// empty when the story has no driver_usage rows.
 	DriverRows  []costview.DriverRowView
 	DriverTotal *costview.DriverRowView
+	// DriverLine says whether the driving session's own spend is in the figures
+	// above; DriverAdapters is, per adapter, what its driver rows measured and
+	// what they could not. FamilyDriverLine/FamilyAdapters say the same of the
+	// family total. All come from costview's coverage formatters, as the CLI's do
+	// (sty_ca1ca935).
+	DriverLine       string
+	DriverAdapters   []string
+	FamilyDriverLine string
+	FamilyAdapters   []string
 }
 
 // familyRowVM is one family member's pre-formatted cost line — a child, or

@@ -1,3 +1,38 @@
+## [0.0.593] - 2026-09-30
+
+### Added
+- **A pi driving session now reports what it spent.** Every run driven on pi recorded its
+  driver rows as `pi: no driver-usage reader for this harness`, so the figure satelle published as
+  a story's cost covered dispatched agents and gates and excluded the session doing the driving —
+  silently, because an honest unavailable looks like a measured total. epic:token-accountability
+  built the instrument for dispatched agents; the in-loop driver was never in scope, and moving
+  this repo's driving harness to pi turned a working column into a missing one. (sty_ca1ca935,
+  epic:earned-complexity)
+  - **The premise was checked before anything was built, and the answer was yes.** A pi session is
+    JSONL at `~/.pi/agent/sessions/<repo-dir>/<timestamp>_<id>.jsonl`: a `session` header, then
+    `model_change` and `message` rows, and each assistant message carries that request's own
+    `usage` — `input`, `output`, `cacheRead`, `cacheWrite`, `totalTokens` and a per-component
+    `cost`, written once when the message completes. The split is disjoint and maps straight onto
+    the snapshot fields, so one assistant row is one model call.
+  - **The dollars are pi's own, never a price table.** A model pi holds no price for records cost
+    0 beside real token counts, and that zero means *unpriced*, not *free*: it is reported as an
+    unavailable cost with its reason, never as a measured $0. A silent zero is the one thing the
+    adapter-agnostic rule forbids, so it is named.
+  - **The summary says which is which.** The cost summary now states, in words, when the total
+    covers gated-and-dispatched agents only and not the driving session, and the aggregate names
+    every adapter's reader or its named unavailable.
+  - **Captured real output is the fixture.** `internal/agentcli/testdata/driver/pi_session.jsonl` is
+    a real capture, checked in beside the reader that parses it, and the reader is exercised per
+    adapter in the cost-coverage tests.
+
+### Fixed
+- **The `serve-v0.0.107` changelog entry claimed the service surfaces an unfinished dispatch in the story view. It does not.** Commit `6130151` touched no serve or web source, and the retrospective on sty_f0ed2473 caught the overreach. The verb is real; the claim that the service view shows it was not backed by the diff that shipped. Surfacing it in the web view is `sty_737f4d87`. The line is corrected here rather than left standing.
+
+## [serve-v0.0.108] - 2026-09-30
+
+### Added
+- **The service carries the pi driver-usage reader above**, so a story driven on pi reports its driving session's tokens in the cost view. (sty_ca1ca935)
+
 ## [0.0.592] - 2026-09-30
 
 ### Added
@@ -11,7 +46,7 @@
 ## [serve-v0.0.107] - 2026-09-30
 
 ### Added
-- **The service carries `satelle story recover` above**, and surfaces an unfinished dispatch in the story view. (sty_f0ed2473)
+- **The service carries `satelle story recover` above.** The verb ships in the binary the service runs; surfacing an unfinished dispatch in the web story view is not part of it (see the 0.0.593 correction). (sty_f0ed2473)
 
 ## [0.0.591] - 2026-09-30
 

@@ -260,7 +260,7 @@ func driverUsageTrigger(ctx context.Context, item workitem.Item, from, to string
 // The environment is the fallback when the session published nothing.
 func driverSessionHarness(sessionID string) string {
 	switch _, exe, _ := config.ResolveSessionModel(sessionID, SessionModelRoleInLoop); exe {
-	case agentcli.HarnessClaude, agentcli.HarnessGrok:
+	case agentcli.HarnessClaude, agentcli.HarnessGrok, agentcli.HarnessPi:
 		return exe
 	}
 	if h, ok := agentcli.InLoopHarnessFromEnv(os.Environ()); ok {

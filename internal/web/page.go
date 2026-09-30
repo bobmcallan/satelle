@@ -432,6 +432,8 @@ const templatesSrc = `
     <dt>Agent time (dispatch+driver)</dt><dd>{{.AgentTime}}</dd>
   </dl>
   {{if .LegacyEstimate}}<div class="cost-legacy-estimate">{{.LegacyEstimate}}</div>{{end}}
+  <div class="cost-driver-coverage">{{.DriverLine}}</div>
+  {{range .DriverAdapters}}<div class="cost-adapter-coverage">{{.}}</div>{{end}}
   {{if .Family}}<h4>Family</h4>
   <table class="panel-table cost-family">
     <thead><tr><th>Child</th><th>$</th><th>Fresh in</th><th>Out</th><th>Cache read</th><th>Cache write</th><th>Elapsed</th></tr></thead>
@@ -439,7 +441,9 @@ const templatesSrc = `
       {{range .Family}}<tr><td class="id">{{.ID}}</td><td>{{.USD}}</td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Elapsed}}</td></tr>{{end}}
       {{with .FamilyTotal}}<tr class="cost-family-total"><td>{{.ID}}</td><td>{{.USD}}</td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Elapsed}}</td></tr>{{end}}
     </tbody>
-  </table>{{end}}
+  </table>
+  <div class="cost-driver-coverage">{{.FamilyDriverLine}}</div>
+  {{range .FamilyAdapters}}<div class="cost-adapter-coverage">{{.}}</div>{{end}}{{end}}
   {{if .DriverRows}}<h4>Driver sessions</h4>
   <table class="panel-table cost-driver">
     <thead><tr><th>Session</th><th>Executable</th><th>Trigger</th><th>Fresh in</th><th>Out</th><th>Calls</th><th>Cache read</th><th>Cache write</th><th>$</th><th>Agent time</th></tr></thead>

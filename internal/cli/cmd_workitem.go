@@ -1130,7 +1130,7 @@ func driverRowsToCostview(rows []verb.DriverUsagePayload) []costview.DriverRow {
 			SessionID: d.SessionID, Executable: d.Executable, Model: d.Model,
 			FreshInput: d.FreshInput, CacheRead: d.CacheRead, CacheWrite: d.CacheWrite, Output: d.Output,
 			CostUSD: d.CostUSD, CostUnavailableReason: d.CostUnavailableReason,
-			Available: d.Available, WallSeconds: d.WallSeconds, Trigger: d.Trigger,
+			Available: d.Available, UnavailableReason: d.UnavailableReason, WallSeconds: d.WallSeconds, Trigger: d.Trigger,
 			From: d.From, To: d.To,
 			ModelCalls: d.ModelCalls, ModelCallsUnavailableReason: d.ModelCallsUnavailableReason,
 			Turns: d.Turns, Unflushed: d.Unflushed,
@@ -1180,6 +1180,9 @@ func printDriverSection(cmd *cobra.Command, sc verb.StoryCost) error {
 		costview.FormatSplitTokens(f.CacheRead, splitRows, f.UnsplitRows, f.UsageUnavailableRows),
 		costview.FormatSplitTokens(f.CacheWrite, splitRows, f.UnsplitRows, f.UsageUnavailableRows),
 		costview.FormatDuration(f.AgentMs))
+	for _, line := range costview.FormatAdapterCoverage(f) {
+		fmt.Fprintln(cmd.OutOrStdout(), line)
+	}
 	for _, recon := range sc.Sessions {
 		printSessionReconciliation(cmd, recon)
 	}
@@ -1257,6 +1260,7 @@ func printCostSummary(cmd *cobra.Command, sc verb.StoryCost) {
 	fmt.Fprintf(w, "elapsed (wall)\t%s\t%s\n", costview.FormatDuration(f.ElapsedMs), costview.FormatEstimate(sc.Estimates, "minutes"))
 	fmt.Fprintf(w, "agent time (dispatch+driver)\t%s\t\n", costview.FormatDuration(f.AgentMs))
 	_ = w.Flush()
+	fmt.Fprintln(out, costview.FormatDriverCoverage(f))
 	if legacy := costview.FormatLegacyTokenEstimate(sc.Estimates); legacy != "" {
 		fmt.Fprintln(out, legacy)
 	}
@@ -1281,6 +1285,10 @@ func printCostSummary(cmd *cobra.Command, sc verb.StoryCost) {
 			costview.FormatSplitTokens(ft.CacheRead, ftSplitRows, ft.UnsplitRows, ft.UsageUnavailableRows), costview.FormatSplitTokens(ft.CacheWrite, ftSplitRows, ft.UnsplitRows, ft.UsageUnavailableRows),
 			costview.FormatDuration(ft.ElapsedMs))
 		_ = fw.Flush()
+		for _, line := range costview.FormatAdapterCoverage(ft) {
+			fmt.Fprintln(out, "  "+line)
+		}
+		fmt.Fprintln(out, "  "+costview.FormatDriverCoverage(ft))
 	}
 	fmt.Fprintln(out)
 }

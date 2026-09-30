@@ -50,6 +50,13 @@ type Figures struct {
 	AgentMs    int64 `json:"agent_ms"`
 	DispatchMs int64 `json:"dispatch_ms"`
 	DriverMs   int64 `json:"driver_ms"`
+
+	// Driver says, per adapter, what the driving session's own rows measured and
+	// what they could not; DriverStatus is its one-word roll-up (measured,
+	// partial, unavailable, none). Without them the gated-and-dispatched total
+	// reads as the whole story's cost (sty_ca1ca935).
+	Driver       []DriverCoverage `json:"driver,omitempty"`
+	DriverStatus string           `json:"driver_status"`
 }
 
 // HasRows reports whether any dispatch or driver row actually measured usage
@@ -96,6 +103,7 @@ func UnionSpan(a, b *Span) *Span {
 // Fold sums two Figures — used to fold a child's (subtree) figures into a
 // parent's running family total.
 func Fold(a, b Figures) Figures {
+	driver := foldCoverage(a.Driver, b.Driver)
 	return Figures{
 		CostUSD:              a.CostUSD + b.CostUSD,
 		CostRows:             a.CostRows + b.CostRows,
@@ -112,6 +120,8 @@ func Fold(a, b Figures) Figures {
 		AgentMs:              a.AgentMs + b.AgentMs,
 		DispatchMs:           a.DispatchMs + b.DispatchMs,
 		DriverMs:             a.DriverMs + b.DriverMs,
+		Driver:               driver,
+		DriverStatus:         driverStatus(driver),
 	}
 }
 
@@ -231,6 +241,9 @@ type DriverRow struct {
 
 	Available bool `json:"available"`
 
+	// UnavailableReason names the adapter and why Available is false.
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+
 	WallSeconds float64 `json:"wall_seconds"`
 	Trigger     string  `json:"trigger"`
 	From        string  `json:"from,omitempty"`
@@ -276,6 +289,8 @@ type accumulator struct {
 	usageRows, usageUnavailableRows, unsplitRows int
 
 	dispatchMs, driverMs int64
+
+	driver []DriverCoverage
 }
 
 // addDispatchRow folds one agent_invocation row (already tool-permission-
@@ -312,6 +327,7 @@ func (a *accumulator) addDispatchRow(row Row) {
 // always folds in; the token/cost fields only ever carry non-zero values on
 // an Available row.
 func (a *accumulator) addDriverRow(d DriverRow) {
+	a.driver = addCoverage(a.driver, d)
 	a.driverMs += int64(d.WallSeconds * 1000)
 	if d.CostUSD != nil {
 		a.costUSD += *d.CostUSD
@@ -346,6 +362,8 @@ func (a *accumulator) figures() Figures {
 		AgentMs:              a.dispatchMs + a.driverMs,
 		DispatchMs:           a.dispatchMs,
 		DriverMs:             a.driverMs,
+		Driver:               foldCoverage(nil, a.driver),
+		DriverStatus:         driverStatus(a.driver),
 	}
 }
 
