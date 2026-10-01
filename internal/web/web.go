@@ -17,6 +17,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/costview"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/epicset"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
@@ -177,6 +178,11 @@ type detailData struct {
 	// costview formatters so the template renders, never recomputes, a figure
 	// (sty_b8542a3a AC7).
 	Cost *costVM
+	// Members is a container's member set (id + status) — epicset's answer, the
+	// same set the close guard and the other surfaces report (sty_9f4f8e12).
+	// MembersNote carries the reason when an epic-parent's set cannot be fixed.
+	Members     []epicset.Ref
+	MembersNote string
 }
 
 // costVM is one story's pre-formatted cost headline plus its family roll-up

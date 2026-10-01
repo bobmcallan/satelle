@@ -68,8 +68,8 @@ func TestEvaluateSeatContainerWaitingOnChildren(t *testing.T) {
 	t.Chdir(tempRepo(t))
 	wfs := waitingRouteWFs()
 	now := time.Now().UTC()
-	epic := workitem.Item{ID: "sty_epic", Kind: workitem.KindStory, Status: "ready", Category: "epic-parent"}
-	openChild := workitem.Item{ID: "sty_kid", Kind: workitem.KindStory, Status: "in_progress", Category: "feature", ParentID: "sty_epic"}
+	epic := workitem.Item{ID: "sty_epic", Kind: workitem.KindStory, Status: "ready", Category: "epic-parent", Tags: []string{"epic:wait"}}
+	openChild := workitem.Item{ID: "sty_kid", Kind: workitem.KindStory, Status: "in_progress", Category: "feature", Tags: []string{"epic:wait"}}
 
 	live, other, err := evaluateSeat([]lease.Lease{liveLease("sty_epic", "ready", now)},
 		[]workitem.Item{epic, openChild}, wfs, now)
@@ -133,8 +133,8 @@ func TestEvaluateSeatDispatchedStepWithChildTaskStillPerforms(t *testing.T) {
 // applies the same rule.
 func TestDerivedSeatContainerWaitingOnChildren(t *testing.T) {
 	wfs := waitingRouteWFs()
-	epic := workitem.Item{ID: "sty_epic", Kind: workitem.KindStory, Status: "ready", Category: "epic-parent"}
-	kid := workitem.Item{ID: "sty_kid", Kind: workitem.KindStory, Status: "backlog", Category: "feature", ParentID: "sty_epic"}
+	epic := workitem.Item{ID: "sty_epic", Kind: workitem.KindStory, Status: "ready", Category: "epic-parent", Tags: []string{"epic:wait"}}
+	kid := workitem.Item{ID: "sty_kid", Kind: workitem.KindStory, Status: "backlog", Category: "feature", Tags: []string{"epic:wait"}}
 	info, engaged, err := derivedSeat([]workitem.Item{epic, kid}, wfs)
 	if err != nil {
 		t.Fatal(err)
@@ -214,14 +214,14 @@ func TestFirstDroppedPerformingSeatIgnoresWaitingContainer(t *testing.T) {
 	}
 	epic, err := db.Stories.Create(ctx, workitem.CreateInput{
 		Kind: workitem.KindStory, Title: "epic", Body: "goal", AcceptanceCriteria: "1. ok",
-		Status: "ready", Category: "epic-parent",
+		Status: "ready", Category: "epic-parent", Tags: []string{"epic:wait"},
 	}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	kid, err := db.Stories.Create(ctx, workitem.CreateInput{
 		Kind: workitem.KindStory, Title: "kid", Body: "goal", AcceptanceCriteria: "1. ok",
-		Status: "backlog", Category: "feature", ParentID: epic.ID,
+		Status: "backlog", Category: "feature", Tags: []string{"epic:wait"},
 	}, now)
 	if err != nil {
 		t.Fatal(err)

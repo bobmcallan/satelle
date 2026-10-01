@@ -1,3 +1,13 @@
+## [0.0.594] - 2026-10-01
+
+### Changed
+- **An epic close re-reads the `epic:<theme>` set at commit and does not trust the parent list.** The set is every story carrying the tag. The parent is the one `category: epic-parent` in that set. Every other tagged story is a child and keeps its work category. `parent_id` is not membership. A child that is not done or cancelled refuses the close, named by id and status. The reviewer list is a snapshot. A plain parent container still uses `parent_id`. A proposal whose tag names a container that is already done or cancelled is filed without that tag and with a body note. (sty_9f4f8e12)
+
+## [serve-v0.0.109] - 2026-10-01
+
+### Changed
+- **The service reports the same epic set the close uses.** Web story view, route members, and the workspace aggregate read the `epic:<theme>` set, not `parent_id`, for an epic-parent. (sty_9f4f8e12)
+
 ## [0.0.593] - 2026-09-30
 
 ### Added

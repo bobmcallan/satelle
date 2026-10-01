@@ -17,6 +17,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/compact"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docstory"
+	"github.com/bobmcallan/satelle/internal/epicset"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/oplog"
@@ -483,15 +484,17 @@ func agentBudgetsFor(agents config.AgentsConfig) func(agent string) config.Budge
 	}
 }
 
-// childrenResolver lists a parent's child stories (id + status) from the DB, for
-// the container close gate's payload — so a parent/epic close is judged from the
-// database, never an on-disk story mirror (sty_fa1e02e1).
-func childrenResolver(a *app.App) func(ctx context.Context, parentID string) []agentstep.ChildState {
-	return func(ctx context.Context, parentID string) []agentstep.ChildState {
-		if parentID == "" {
+// childrenResolver lists a container's member stories (id + status) from the DB,
+// for the container close gate's payload — so a parent/epic close is judged from
+// the database, never an on-disk story mirror (sty_fa1e02e1). Membership is
+// epicset's (sty_9f4f8e12): the epic: tag set for an epic-parent, parent_id links
+// for any other container. The result is a snapshot hint; the close re-reads.
+func childrenResolver(a *app.App) func(ctx context.Context, item workitem.Item) []agentstep.ChildState {
+	return func(ctx context.Context, item workitem.Item) []agentstep.ChildState {
+		if item.ID == "" {
 			return nil
 		}
-		kids, err := a.Store.Stories.List(ctx, workitem.ListFilter{ParentID: parentID})
+		kids, err := epicset.Members(ctx, a.Store.Stories, item)
 		if err != nil {
 			return nil
 		}

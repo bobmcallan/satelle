@@ -414,6 +414,9 @@ const templatesSrc = `
   </dl>
   {{if .Item.Body}}<h4>{{if $isTask}}Work definition{{else}}Description{{end}}</h4><pre class="prose">{{.Item.Body}}</pre>{{end}}
   {{if .Item.AcceptanceCriteria}}<h4>Acceptance criteria</h4><pre class="prose">{{.Item.AcceptanceCriteria}}</pre>{{end}}
+  {{if or .Members .MembersNote}}<h4>Members</h4>
+  {{if .MembersNote}}<div class="meta">{{.MembersNote}} — the container does not close</div>{{end}}
+  {{if .Members}}<table class="panel-table epic-members"><tbody>{{range .Members}}<tr><td class="id"><a href="story/{{.ID}}">{{.ID}}</a></td><td><span class="badge s-{{.Status}}">{{.Status}}</span></td></tr>{{end}}</tbody></table>{{end}}{{end}}
   {{if $isTask}}<h4>Runs</h4>
   {{if .Executions}}<ol class="run-list">{{range .Executions}}<li class="run run-s-{{.Status}}">
     <div class="run-head"><span class="run-id">{{.ID}}</span> <span class="badge s-{{.Status}}">{{.Status}}</span></div>

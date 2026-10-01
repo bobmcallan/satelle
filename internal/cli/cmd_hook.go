@@ -40,6 +40,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/docstory"
+	"github.com/bobmcallan/satelle/internal/epicset"
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -1101,15 +1102,12 @@ func waitsOnOpenChildren(it workitem.Item, status string, spec wfdot.Spec, items
 	if !spec.WaitsOnChildren(status) {
 		return false
 	}
-	for _, c := range items {
-		if c.ParentID != it.ID {
-			continue
-		}
-		cs, _, _, err := wfgovern.SpecFor(wfs, c)
-		if err != nil {
-			continue
-		}
-		if cs.IsTerminalState(c.Status) || (cs.IsParkState(c.Status) && !cs.IsResumePark(c.Status)) {
+	// Membership is epicset's: an epic-parent's members are its tag set, any
+	// other container's are its parent_id links (sty_9f4f8e12). An epic whose
+	// set cannot be fixed holds no members here — the close itself refuses it.
+	members, _ := epicset.MembersFromItems(items, it)
+	for _, c := range members {
+		if resolved, known := wfgovern.ChildResolved(wfs, c); !known || resolved {
 			continue
 		}
 		return true

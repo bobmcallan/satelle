@@ -66,7 +66,7 @@ func (g *Engine) prepareReviewer(ctx context.Context, item workitem.Item, toStat
 	}
 	tp := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: skill}
 	if g.children != nil {
-		tp.Children = g.children(ctx, item.ID)
+		tp.Children = g.children(ctx, item)
 	}
 	g.fillPayloadDocs(ctx, item.ID, &tp)
 	// Prior verdicts ride ONLY the gate payload (sty_0f5e600c): they are re-review

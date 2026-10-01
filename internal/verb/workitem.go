@@ -144,6 +144,12 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 			}
 		}
 
+		// A proposal naming an epic that already closed is filed without that tag,
+		// with a body note naming the container (sty_9f4f8e12).
+		if kind == workitem.KindStory {
+			tags, req.Body = dropClosedEpicTags(ctx, req.Category, tags, req.Body)
+		}
+
 		// Single-story process rule (sty_c7149f8a): refuse creating a story already
 		// in an engaging status when another story occupies that seat. Default
 		// create status is backlog (not engaging) — no-op unless create opts a
@@ -396,6 +402,11 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	// park, and cancel edges still pass.
 	if transitioning {
 		if err := refuseSkippedStep(ctx, current, *req.Status); err != nil {
+			return nil, err
+		}
+		// Fail fast on an epic-parent close over open members, before a reviewer
+		// is paid for; the same check re-runs at the commit below.
+		if err := refuseOpenEpicChildren(ctx, current, *req.Status); err != nil {
 			return nil, err
 		}
 	}
@@ -752,6 +763,13 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		// (sty_2c71eff6). A transition enacts only from the status the reviewers
 		// judged; a late write built on a stale read loses instead of clobbering.
 		ExpectStatus: &current.Status,
+	}
+	// The commit re-reads the epic set: gates and a performer ran since the first
+	// check, and a member may have been filed in that window (sty_9f4f8e12).
+	if transitioning {
+		if err := refuseOpenEpicChildren(ctx, current, *req.Status); err != nil {
+			return nil, err
+		}
 	}
 	transitionInTx := false
 	var it workitem.Item

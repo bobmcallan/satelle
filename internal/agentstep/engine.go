@@ -99,7 +99,7 @@ type Engine struct {
 	check func(ctx context.Context, dir, command, payload string) (string, error)
 	// children resolves a parent's child stories (id + status) for a container
 	// close gate's payload. Nil when unwired (no children injected).
-	children func(ctx context.Context, parentID string) []ChildState
+	children func(ctx context.Context, item workitem.Item) []ChildState
 	// itemDocs resolves an item's attached documents (name/type/body) so isolated
 	// agents judge attachments from the PAYLOAD — no disk path required
 	// (sty_58fa970e). Nil-safe: an unwired resolver injects no docs.
@@ -539,11 +539,13 @@ func (g *Engine) SetReviewerBinding(b config.AgentBinding) {
 // isolated agent briefings whenever principles ≠ none (design §5.3).
 func (g *Engine) SetConstitution(body string) { g.constitution = strings.TrimSpace(body) }
 
-// SetChildrenResolver wires the resolver that lists a parent's child stories
+// SetChildrenResolver wires the resolver that lists a container's member stories
 // (id + status) so a container close gate judges the children-resolved rule from
-// the payload satelle builds — not an on-disk story mirror. Nil-safe: an unwired
-// resolver simply injects no children.
-func (g *Engine) SetChildrenResolver(fn func(ctx context.Context, parentID string) []ChildState) {
+// the payload satelle builds — not an on-disk story mirror. The list is a
+// SNAPSHOT taken when the reviewer is prepared: a hint to the reviewer, never the
+// close check, which re-reads the set at the commit (sty_9f4f8e12). Nil-safe: an
+// unwired resolver simply injects no children.
+func (g *Engine) SetChildrenResolver(fn func(ctx context.Context, item workitem.Item) []ChildState) {
 	g.children = fn
 }
 
@@ -2116,7 +2118,7 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item, modelOverri
 func (g *Engine) ChatPayload(ctx context.Context, item workitem.Item, binding string) (transitionPayload, error) {
 	tp := transitionPayload{Story: item, From: item.Status, To: item.Status}
 	if g.children != nil {
-		tp.Children = g.children(ctx, item.ID)
+		tp.Children = g.children(ctx, item)
 	}
 	g.fillPayloadDocs(ctx, item.ID, &tp)
 	g.fillMessages(ctx, item.ID, []string{strings.TrimSpace(binding)}, &tp)

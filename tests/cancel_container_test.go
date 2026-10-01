@@ -55,7 +55,8 @@ func TestCancelContainerCascade(t *testing.T) {
 		"--title", "Epic to shelve",
 		"--body", "Container; cancel reason: shelved — not moving forward",
 		"--acceptance", "1. children resolved",
-		"--category", "epic-parent")
+		"--category", "epic-parent",
+		"--tags", "epic:shelve")
 	var epic struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
@@ -70,7 +71,7 @@ func TestCancelContainerCascade(t *testing.T) {
 		"--body", "Still live work",
 		"--acceptance", "1. something",
 		"--category", "chore",
-		"--parent", epic.ID)
+		"--tags", "epic:shelve")
 	var child struct {
 		ID string `json:"id"`
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/costview"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/epicset"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/syncstate"
@@ -514,11 +515,36 @@ func mirrorLoadDetail(ctx context.Context, s *mirror.Store, repoKey, group, id s
 		}
 	}
 
+	var members []epicset.Ref
+	var membersNote string
+	if group != "task" {
+		members, membersNote = mirrorBuildMembers(ctx, s, repoKey, item)
+	}
+
 	idMeta := mirrorIdentity(ctx, s, repoKey)
 	return detailData{
 		Item: item, Events: evs, Route: route, Docs: docs, Executions: executions,
 		TopBar: mirrorTopBar("", idMeta.FooterEmail), Cost: cost,
+		Members: members, MembersNote: membersNote,
 	}, idMeta, nil
+}
+
+// mirrorBuildMembers is the container's member set for the story view
+// (sty_9f4f8e12) — epicset's answer over the mirror's indexed stories, the same
+// set the close guard, the close-gate payload, the CLI route view and the
+// workspace aggregate report. The note is non-empty when an epic-parent's set
+// cannot be fixed (the close refuses it); a story that is not a container
+// returns neither members nor a note.
+func mirrorBuildMembers(ctx context.Context, s *mirror.Store, repoKey string, item workitem.Item) ([]epicset.Ref, string) {
+	stories, err := decodeItems(ctx, s, repoKey, "story")
+	if err != nil {
+		return nil, ""
+	}
+	members, err := epicset.MembersFromItems(stories, item)
+	if err != nil {
+		return nil, err.Error()
+	}
+	return epicset.Refs(members), ""
 }
 
 // mirrorBuildCostVM computes item's costview headline plus its family

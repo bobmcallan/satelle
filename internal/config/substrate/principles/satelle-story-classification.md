@@ -26,7 +26,7 @@ binary) that a repo may extend or replace in satelle.toml — never a Go literal
 | `feature` / `improvement` / `fix` / `chore` / `docs` / `refactor` / `test` / `tooling` / `infrastructure` / `architecture` | Leaf work with a slice to build | project (or baseline) workflow |
 | `substrate` | Markdown-only substrate change (no binary) | substrate workflow when authored |
 | `parent` | Container whose work IS its children | parent workflow |
-| `epic-parent` | Epic container — themed umbrella over children | parent workflow |
+| `epic-parent` | Epic container — the one parent of an `epic:<theme>` set | parent workflow |
 
 **Synonym collapses** (use the surviving value): `bug` / `bugfix` / `defect` →
 `fix`; `infra` → `infrastructure`. Surface-shaped names (`frontend` / `web` /
@@ -53,11 +53,28 @@ the wildcard project workflow.
 ## Epics — a theme, with a parent
 
 An **epic** is a themed body of work that spans several stories and outlives any
-single sprint. Tag the epic story `epic:<theme>`, where `<theme>` is a short
-kebab-case name for the theme (`epic:release-hygiene`, `epic:substrate-structure`).
-Member stories join the epic through `parent` — set each child's parent to the
-epic story's id. The `epic:<theme>` tag names the theme; the `parent` link is the
-durable membership. The epic *item itself* carries `category: epic-parent`.
+single sprint. Its membership is ONE rule:
+
+- **The set is every story carrying `epic:<theme>`**, where `<theme>` is a short
+  kebab-case name (`epic:release-hygiene`, `epic:substrate-structure`).
+- **The parent is the single story in that set whose category is `epic-parent`**,
+  and it carries the same tag. Every other story in the set is a **child** and
+  keeps its own work category (`fix`, `substrate`, `docs`, …) — there is no
+  `epic-child` category.
+- **`parent_id` is not membership.** A story with the tag and no `parent_id` is a
+  child; a story with a `parent_id` and no `epic:` tag is in no epic's set.
+
+The epic closes only when Go re-reads that set from the store at the commit and
+every child is `done` or `cancelled`; the `children` list handed to the close
+gate's reviewer is a snapshot taken when it was prepared — a hint, not the check.
+If the set cannot be determined — the `epic-parent` has no `epic:<theme>` tag, or
+more than one `epic-parent` carries the tag — the container does not close, and
+the refusal says why. A proposal filed with an `epic:<theme>` tag whose container
+is already `done` or `cancelled` is filed without that tag, with a body note
+naming the container.
+
+A non-epic container (`category: parent`) is unchanged: its members are the
+stories whose `parent_id` is that container.
 
 ## Sprints — an incremental number
 
@@ -81,7 +98,7 @@ story drops its `order` so the live sequence stays contiguous, but keeps its
 **The sprint owns `order:`.** It is meaningful only alongside `sprint:` — a story
 not yet pulled into a sprint has no order. And unlike membership, position is
 **not durable**: `order:` is assigned on entry to a sprint and renumbered freely
-as the sprint is re-planned, while `parent` and `sprint:<N>` persist.
+as the sprint is re-planned, while `epic:<theme>` and `sprint:<N>` persist.
 
 **An epic whose members must run in a fixed relative order** keeps them
 CONSECUTIVE within the sprint sequence and states the hard dependency in the
@@ -90,7 +107,7 @@ story body. Do not introduce a second numbering — one story carries one
 driven by its children.
 
 A single story may carry all three at once: it sits under an epic
-(`epic:<theme>` + `parent`), ships in a sprint (`sprint:<N>`), and holds a position
+(`epic:<theme>`), ships in a sprint (`sprint:<N>`), and holds a position
 in that sprint (`order:<N>`).
 
 ## Tags — multi-value namespaces (repeated keys)

@@ -29,7 +29,8 @@ the workflow, not a normal step on its path.
 before engaging another.
 
 **Epics close on their children.** An epic (an `epic-parent`/parent container)
-is complete only when every child story is terminal. Keep driving the
+is complete only when every child story is terminal; who the children are is
+defined once, in [[satelle-story-classification]]. Keep driving the
 children, one at a time, until the container can close. Intermediate stages
 (plan, in_progress, integration, release, and so on) are waypoints, never a
 point to hand back control.

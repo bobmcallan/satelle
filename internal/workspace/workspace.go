@@ -11,6 +11,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/epicset"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -23,6 +24,22 @@ type RepoView struct {
 	Tasks   []workitem.Item
 	Docs    []docindex.Doc
 	Err     string // non-empty when this repo could not be read
+}
+
+// Members returns the container's member set within this repo — epicset's
+// answer over the repo's stories (sty_9f4f8e12): the epic: tag set for an
+// epic-parent, parent_id links for any other container. The same set the close
+// guard, the close-gate payload, the web story view and the CLI route view
+// report; the error says why an epic-parent's set cannot be fixed.
+func (r RepoView) Members(containerID string) ([]epicset.Ref, error) {
+	for _, s := range r.Stories {
+		if s.ID != containerID {
+			continue
+		}
+		members, err := epicset.MembersFromItems(r.Stories, s)
+		return epicset.Refs(members), err
+	}
+	return nil, nil
 }
 
 // Aggregate is the merged view across the registered repos.
@@ -70,7 +87,9 @@ func loadRepo(ctx context.Context, root string) RepoView {
 	}
 	defer db.Close()
 
-	if stories, err := db.Stories.List(ctx, workitem.ListFilter{Kind: workitem.KindStory}); err == nil {
+	// The store's maximum page, so Members (an epic set read from these rows)
+	// is not cut short by the default 500 — the same bound epicset reads under.
+	if stories, err := db.Stories.List(ctx, workitem.ListFilter{Kind: workitem.KindStory, Limit: 2000}); err == nil {
 		rv.Stories = stories
 	} else {
 		rv.Err = err.Error()

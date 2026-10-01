@@ -2966,9 +2966,9 @@ func TestReviewerSkillsForDOT(t *testing.T) {
 // payload (resolved from the DB), not any on-disk story mirror (sty_fa1e02e1).
 func TestGatePayloadIncludesChildren(t *testing.T) {
 	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
-	g.SetChildrenResolver(func(_ context.Context, parentID string) []ChildState {
-		if parentID != "sty_parent" {
-			t.Errorf("resolver called with %q, want sty_parent", parentID)
+	g.SetChildrenResolver(func(_ context.Context, item workitem.Item) []ChildState {
+		if item.ID != "sty_parent" {
+			t.Errorf("resolver called with %q, want sty_parent", item.ID)
 		}
 		return []ChildState{{ID: "sty_child1", Status: "done"}, {ID: "sty_child2", Status: "in_progress"}}
 	})
