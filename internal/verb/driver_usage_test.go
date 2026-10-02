@@ -1061,6 +1061,15 @@ func TestOrdinaryDeltaAndLateCreditNeverBothClaimSameTurn(t *testing.T) {
 // package verb (internal), and acquireEngagementLease is unexported.
 func wireDUWithEngagingWorkflow(t *testing.T) *store.DB {
 	t.Helper()
+	return wireDUWithWorkflow(t,
+		"[\"*\"]\nobligations = [\"raised\", \"planned\"]\n",
+		"[raised]\nstatus = \"backlog\"\nstart = true\n\n[planned]\nstatus = \"plan\"\nagent = \"executor\"\nrequires = [\"raised\"]\n")
+}
+
+// wireDUWithWorkflow is wireDU plus a two-file fixture workflow (the "done" obligations
+// table and the "step" states) synced into DocIndex.
+func wireDUWithWorkflow(t *testing.T, doneTable, stepStates string) *store.DB {
+	t.Helper()
 	plantedHoldersDead(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
@@ -1071,10 +1080,9 @@ func wireDUWithEngagingWorkflow(t *testing.T) *store.DB {
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	doneBody := "[meta]\nname = \"done\"\ntype = \"workflow\"\nscope = \"project\"\ndescription = \"fixture\"\n\n" +
-		"[\"*\"]\nobligations = [\"raised\", \"planned\"]\n"
-	stepBody := "[meta]\nname = \"step\"\ntype = \"workflow\"\nscope = \"project\"\ndescription = \"fixture\"\n\n" +
-		"[raised]\nstatus = \"backlog\"\nstart = true\n\n[planned]\nstatus = \"plan\"\nagent = \"executor\"\nrequires = [\"raised\"]\n"
+	const meta = "[meta]\nname = \"%s\"\ntype = \"workflow\"\nscope = \"project\"\ndescription = \"fixture\"\n\n"
+	doneBody := fmt.Sprintf(meta, "done") + doneTable
+	stepBody := fmt.Sprintf(meta, "step") + stepStates
 	if err := os.WriteFile(filepath.Join(wfDir, "done.toml"), []byte(doneBody), 0o644); err != nil {
 		t.Fatal(err)
 	}

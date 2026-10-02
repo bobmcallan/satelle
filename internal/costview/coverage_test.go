@@ -87,3 +87,46 @@ func TestFoldMergesDriverCoverage(t *testing.T) {
 		t.Fatalf("empty fold status = %q, want none", none.DriverStatus)
 	}
 }
+
+// TestBackfilledRowsAreDerivedNotMeasured pins sty_8c0e7e8c: a backfilled row counts as
+// a usage row but never reads as live — the status is derived, the headline says how many
+// rows were backfilled, and an unavailable row a later backfill recovered is superseded
+// (kept for its wall time, dropped from the gap count) only for the session it recovered.
+func TestBackfilledRowsAreDerivedNotMeasured(t *testing.T) {
+	rows := MarkSuperseded([]DriverRow{
+		{SessionID: "s1", Executable: "pi", WallSeconds: 5, UnavailableReason: "pi: no driver-usage reader for this harness"},
+		{SessionID: "s2", Executable: "pi", UnavailableReason: "pi: session record not found"},
+		{SessionID: "s1", Executable: "pi", Available: true, Backfilled: true, FreshInput: 7, Trigger: "backfill"},
+	})
+	if !rows[0].Superseded || rows[1].Superseded || rows[2].Superseded {
+		t.Fatalf("superseded = %v %v %v, want only s1's earlier unavailable row", rows[0].Superseded, rows[1].Superseded, rows[2].Superseded)
+	}
+	acc := &accumulator{}
+	for _, d := range rows {
+		acc.addDriverRow(d)
+	}
+	f := acc.figures()
+	if f.DriverMs != 5000 || f.FreshInput != 7 || f.UsageRows != 1 {
+		t.Fatalf("figures = %+v, want the superseded row's wall time kept and the backfill's tokens counted", f)
+	}
+	if f.DriverStatus != DriverPartial || f.Driver[0].Rows != 2 || f.Driver[0].BackfilledRows != 1 {
+		t.Fatalf("status/coverage = %q %+v: s2's unavailable row is still a gap", f.DriverStatus, f.Driver)
+	}
+	if got := FormatDriverCoverage(f); !strings.Contains(got, "1 backfilled ("+BackfilledLabel+")") {
+		t.Fatalf("partial headline = %q", got)
+	}
+
+	only := &accumulator{}
+	only.addDriverRow(DriverRow{Executable: "pi", Available: true, Backfilled: true, FreshInput: 1})
+	g := only.figures()
+	if g.DriverStatus != DriverDerived {
+		t.Fatalf("status = %q, want derived", g.DriverStatus)
+	}
+	if got := FormatDriverCoverage(g); got != "driver: derived (pi 1 rows; 1 backfilled ("+BackfilledLabel+"))" {
+		t.Fatalf("derived headline = %q", got)
+	}
+	merged := Fold(g, g)
+	if merged.Driver[0].BackfilledRows != 2 || merged.DriverStatus != DriverDerived {
+		t.Fatalf("fold = %+v", merged)
+	}
+}

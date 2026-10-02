@@ -1,3 +1,13 @@
+## [0.0.596] - 2026-10-02
+
+### Added
+- **`satelle story driver-backfill` attributes historic pi driver spend by the engage..close window.** Stories whose driver rows are still `pi: no driver-usage reader` can be filled from the session file that still holds the messages. The row is marked backfilled and derived from timestamps, never as a live delta. An overlapping window in the same session is named unavailable and is not split. Zero cost beside real tokens stays an unpriced-model unavailable, never a measured zero. A later backfilled available row is what session reconciliation counts, so the old unavailable row no longer hides those tokens. (sty_8c0e7e8c)
+
+## [serve-v0.0.111] - 2026-10-02
+
+### Added
+- **The service shows backfilled driver rows as derived, not as a live measurement.** (sty_8c0e7e8c)
+
 ## [0.0.595] - 2026-10-02
 
 ### Fixed

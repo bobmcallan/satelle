@@ -54,17 +54,29 @@ func FormatDriverRows(rows []DriverRow) ([]DriverRowView, *DriverRowView) {
 			counted++
 		}
 		usd := FormatUSD(0, 0, 1)
-		if d.CostUSD != nil {
+		switch {
+		case d.CostUSD != nil:
 			usd = FormatUSD(*d.CostUSD, 1, 0)
 			totalUSD += *d.CostUSD
 			costed++
-		} else {
+		case d.Superseded:
+			// a recovered gap, not an unknown cost: the backfill row carries the figure
+		default:
 			uncosted++
 		}
 		wallMs := int64(d.WallSeconds * 1000)
 		totalWallMs += wallMs
+		trigger := d.Trigger
+		switch {
+		case d.Backfilled && d.Available:
+			trigger += " (" + BackfilledLabel + ")"
+		case d.Backfilled:
+			trigger += " (attempt)"
+		case d.Superseded:
+			trigger += " (superseded by backfill)"
+		}
 		out = append(out, DriverRowView{
-			SessionID: d.SessionID, Executable: d.Executable, Trigger: d.Trigger,
+			SessionID: d.SessionID, Executable: d.Executable, Trigger: trigger,
 			FreshIn: freshIn, Out: outCol, Calls: calls, CacheRead: cacheRead, CacheWrite: cacheWrite,
 			USD: usd, AgentTime: FormatDuration(wallMs),
 		})

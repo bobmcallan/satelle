@@ -176,6 +176,14 @@ type DriverUsagePayload struct {
 	// reader tell them apart (sty_89768625). A session's very first row is the
 	// ordinary engage baseline and is not marked.
 	BaselineFresh bool `json:"baseline_fresh,omitempty"`
+	// Backfilled marks a row written after the fact by story-driver-backfill: its
+	// figures are the session record's per-message timestamps attributed to
+	// [WindowFrom, WindowTo] — derived, never a live-measured delta. It carries no
+	// Cumulative and claims no turn range, so it is invisible to the live baseline,
+	// the claimed-turn set and the session total (sty_8c0e7e8c).
+	Backfilled bool   `json:"backfilled,omitempty"`
+	WindowFrom string `json:"window_from,omitempty"`
+	WindowTo   string `json:"window_to,omitempty"`
 }
 
 // driverUsageTrigger classifies the enacted transition from → to for
@@ -462,8 +470,8 @@ func sessionDriverUsageState(ctx context.Context, sessionID string) (latest driv
 	}
 	_ = ledgerStore.ForEachKind(ctx, "", ledger.KindDriverUsage, func(e ledger.Entry) error {
 		var p DriverUsagePayload
-		if json.Unmarshal(e.Payload, &p) != nil || p.SessionID != sessionID {
-			return nil
+		if json.Unmarshal(e.Payload, &p) != nil || p.SessionID != sessionID || p.Backfilled {
+			return nil // a backfilled row is history, not the live session's high-water mark
 		}
 		row := driverUsageRow{payload: p, storyID: e.StoryID, at: e.CreatedAt}
 		latest, latestFound = row, true
@@ -631,7 +639,7 @@ func sessionClaimedTurns(ctx context.Context, sessionID string) map[int]bool {
 	}
 	_ = ledgerStore.ForEachKind(ctx, "", ledger.KindDriverUsage, func(e ledger.Entry) error {
 		var p DriverUsagePayload
-		if json.Unmarshal(e.Payload, &p) != nil || p.SessionID != sessionID || !p.Available {
+		if json.Unmarshal(e.Payload, &p) != nil || p.SessionID != sessionID || !p.Available || p.Backfilled {
 			return nil
 		}
 		for idx := p.BaseTurns; idx < p.Turns; idx++ {
@@ -897,6 +905,9 @@ type SessionReconciliationStory struct {
 
 	Available         bool   `json:"available"`
 	UnavailableReason string `json:"unavailable_reason,omitempty"`
+	// Backfilled is true when part of the figure is a backfill row: derived from
+	// session-record timestamps, not a live-measured delta.
+	Backfilled bool `json:"backfilled,omitempty"`
 }
 
 // SessionReconciliation reports, for one driving session, the harness's own
@@ -945,25 +956,61 @@ func ComputeSessionReconciliation(ctx context.Context, sessionID string) (Sessio
 		available         bool
 		unavailableReason string
 		seen              bool
+		backfilled        bool
 	}
 	byStory := map[string]*storyAgg{}
 	var order []string
 	var latestAt time.Time
 	var haveLatest bool
 
+	type reconRow struct {
+		p       DriverUsagePayload
+		storyID string
+		at      time.Time
+	}
+	var rows []reconRow
+	// backfilledAt is, per story, when its latest AVAILABLE backfill row was written:
+	// every unavailable row the story carried before that is superseded by it.
+	backfilledAt := map[string]time.Time{}
+
 	err := ledgerStore.ForEachKind(ctx, "", ledger.KindDriverUsage, func(e ledger.Entry) error {
 		var p DriverUsagePayload
 		if json.Unmarshal(e.Payload, &p) != nil || p.SessionID != sessionID {
 			return nil
 		}
+		rows = append(rows, reconRow{p: p, storyID: e.StoryID, at: e.CreatedAt})
+		if p.Backfilled && p.Available && e.CreatedAt.After(backfilledAt[e.StoryID]) {
+			backfilledAt[e.StoryID] = e.CreatedAt
+		}
+		return nil
+	})
+	if err != nil {
+		return recon, err
+	}
+	for _, r := range rows {
+		p := r.p
 		if recon.Executable == "" {
 			recon.Executable = p.Executable
 		}
-		agg, ok := byStory[e.StoryID]
+		// The session total is the harness's own latest cumulative: a backfilled row
+		// carries none, and writing it later must not make it the session's latest read.
+		if !p.Backfilled && (!haveLatest || r.at.After(latestAt)) {
+			haveLatest = true
+			latestAt = r.at
+			recon.TotalAvailable = p.Available
+			recon.TotalUnavailableReason = p.UnavailableReason
+			if p.Available {
+				recon.Total = p.Cumulative
+			}
+		}
+		if at, ok := backfilledAt[r.storyID]; ok && !p.Available && !r.at.After(at) {
+			continue // superseded: the backfill recovered what this unavailable row could not read
+		}
+		agg, ok := byStory[r.storyID]
 		if !ok {
 			agg = &storyAgg{available: true}
-			byStory[e.StoryID] = agg
-			order = append(order, e.StoryID)
+			byStory[r.storyID] = agg
+			order = append(order, r.storyID)
 		}
 		agg.seen = true
 		if p.Available {
@@ -972,30 +1019,18 @@ func ComputeSessionReconciliation(ctx context.Context, sessionID string) (Sessio
 			agg.sum.CacheWrite += p.CacheWrite
 			agg.sum.Output += p.Output
 			agg.sum.CostUSD = addCostPtr(agg.sum.CostUSD, p.CostUSD)
+			agg.backfilled = agg.backfilled || p.Backfilled
 		} else if agg.available {
 			agg.available = false
 			agg.unavailableReason = p.UnavailableReason
 		}
-		if !haveLatest || e.CreatedAt.After(latestAt) {
-			haveLatest = true
-			latestAt = e.CreatedAt
-			recon.TotalAvailable = p.Available
-			recon.TotalUnavailableReason = p.UnavailableReason
-			if p.Available {
-				recon.Total = p.Cumulative
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return recon, err
 	}
 
 	var sum driverCumulative
 	anyUnavailable := !recon.TotalAvailable
 	for _, storyID := range order {
 		agg := byStory[storyID]
-		row := SessionReconciliationStory{StoryID: storyID, Available: agg.available}
+		row := SessionReconciliationStory{StoryID: storyID, Available: agg.available, Backfilled: agg.backfilled}
 		if agg.available {
 			row.FreshInput, row.CacheRead, row.CacheWrite, row.Output = agg.sum.FreshInput, agg.sum.CacheRead, agg.sum.CacheWrite, agg.sum.Output
 			row.CostUSD = agg.sum.CostUSD

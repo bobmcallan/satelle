@@ -34,6 +34,7 @@ func init() {
 	// begin-work and the actual cost at close, scoped to the story.
 	Register(&Verb{Name: "story-estimate", Description: "Record a story's plan estimate (usd, fresh-input/output, or legacy tokens/time)", Invoke: storyEstimate})
 	Register(&Verb{Name: "story-actual", Description: "Compute and record a story's actual cost from its ledger", Invoke: storyActual})
+	Register(&Verb{Name: "story-driver-backfill", Description: "Attribute a closed story's driver spend from the session record by its engage..close window, for rows a missing driver-usage reader left unavailable", Invoke: storyDriverBackfill})
 	Register(&Verb{Name: "story-resummarise", Description: "Re-run the step summariser for one edge to close a missing-summary gap", Invoke: storyResummarise, DispatchesReviewer: dispatchesOnResummarise})
 	Register(&Verb{Name: "story-retrospect", Description: "Run the retrospective agent over a finished story to file improvement proposals", Invoke: storyRetrospect, DispatchesReviewer: dispatchesOnRetrospect})
 	// Restamp is story-only too: tasks/executions are unstamped by design

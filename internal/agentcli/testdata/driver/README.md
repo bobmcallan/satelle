@@ -89,3 +89,22 @@ An all-zero close delta on pi is therefore never flush lag. It is either a real
 zero or the fresh-baseline rule (first available read after unavailable rows),
 which the verb layer marks `baseline_fresh` and reports as no measurement
 (`TestPiFreshBaselineAfterUnavailableIsNotAMeasuredZero`).
+
+### pi multi-story window fixture (sty_8c0e7e8c)
+
+`pi_session_multistory.jsonl` backs `driver_usage_pi_window_test.go` and the verb-layer
+`driver_usage_backfill_test.go`. **Provenance: constructed, not captured.** The row shapes
+(session header, `model_change`, user/assistant `message`, an errored all-zero assistant
+row, `usage` and `usage.cost.total`) are those of the real `pi_session.jsonl` capture; the
+ids, timestamps, token figures and the priced `priced/model-one` rows are synthetic, laid
+out so one session carries what a real pi session driving several stories does:
+
+- three disjoint story windows (`10:00-10:10`, `10:20-10:30`, `10:40-10:50`): the first has
+  an errored row inside it and a row exactly on its closing edge; the middle one is priced
+  by pi, the others unpriced (cost 0 beside real tokens);
+- a row between windows that belongs to no story (`10:15`);
+- two stories whose windows intersect (`11:00-11:20`, `11:10-11:30`) around a shared row;
+- a window with no rows at all (`12:00-12:10`).
+
+It has not been checked against a real multi-story pi session: running the verb against the
+real record (`~/.pi/agent/sessions/--<repo>--/*_<session>.jsonl`) is the dogfood step.

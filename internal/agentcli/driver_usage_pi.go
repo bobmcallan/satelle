@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // piSessionDirName is pi's per-repo session directory name under
@@ -54,19 +55,70 @@ func piDriverSnapshot(sessionID, repoRoot string) DriverSnapshot {
 		snap.CostUnavailableReason = reason
 		return snap
 	}
+	rec, reason := readPiSession(sessionID, repoRoot)
+	if reason != "" {
+		return fail(reason)
+	}
+	var cost float64
+	for _, r := range rec.rows {
+		snap.FreshInputTokens += r.input
+		snap.OutputTokens += r.output
+		snap.CacheReadInputTokens += r.cacheRead
+		snap.CacheCreationInputTokens += r.cacheWrite
+		snap.Turns++
+		cost += r.cost
+	}
+	if snap.Turns == 0 {
+		return fail("pi: session record carries no assistant usage yet")
+	}
+	snap.Available = true
+	snap.MayUndercountInFlightTurn = false // pi_inflight_probe.result.md: the calling row precedes the tool run
+	snap.Model = rec.lastModel
+	snap.ModelCalls = snap.Turns
+	if cost > 0 {
+		snap.CostUSD = &cost
+	} else {
+		snap.CostUnavailableReason = piUnpricedCostReason
+	}
+	return snap
+}
+
+// piUnpricedCostReason is the one reason both pi readers (cumulative and windowed)
+// give for a zero usage.cost.total beside real token counts.
+const piUnpricedCostReason = "pi: usage.cost.total is zero beside real token counts (model unpriced by pi)"
+
+// piUsageRow is one assistant message that made a model call: its own usage and
+// the time pi wrote it.
+type piUsageRow struct {
+	at                                   time.Time // zero when the row carries no parseable timestamp
+	model                                string
+	input, output, cacheRead, cacheWrite int
+	cost                                 float64
+}
+
+// piSessionRecord is every usage-bearing assistant row of one pi session, in file
+// order, plus the model the session last named.
+type piSessionRecord struct {
+	rows      []piUsageRow
+	lastModel string
+}
+
+// readPiSession is the one pi session-record iterator: the cumulative reader and
+// the windowed reader both fold its rows, so the two cannot drift apart. A non-empty
+// reason says why the record could not be read, pi-named.
+func readPiSession(sessionID, repoRoot string) (piSessionRecord, string) {
+	var rec piSessionRecord
 	dir := filepath.Join(piHomeDir(), "sessions", piSessionDirName(repoRoot))
 	matches, _ := filepath.Glob(filepath.Join(dir, "*_"+sessionID+".jsonl"))
 	if len(matches) == 0 {
-		return fail(fmt.Sprintf("pi: session record for %s not found under %s", sessionID, dir))
+		return rec, fmt.Sprintf("pi: session record for %s not found under %s", sessionID, dir)
 	}
 	f, err := os.Open(matches[len(matches)-1])
 	if err != nil {
-		return fail(fmt.Sprintf("pi: session record unreadable: %v", err))
+		return rec, fmt.Sprintf("pi: session record unreadable: %v", err)
 	}
 	defer f.Close()
 
-	var lastModel string
-	var cost float64
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
 	for scanner.Scan() {
@@ -75,9 +127,10 @@ func piDriverSnapshot(sessionID, repoRoot string) DriverSnapshot {
 			continue
 		}
 		var row struct {
-			Type    string `json:"type"`
-			ModelID string `json:"modelId"`
-			Message struct {
+			Type      string `json:"type"`
+			ModelID   string `json:"modelId"`
+			Timestamp string `json:"timestamp"`
+			Message   struct {
 				Role  string `json:"role"`
 				Model string `json:"model"`
 				Usage *struct {
@@ -95,7 +148,7 @@ func piDriverSnapshot(sessionID, repoRoot string) DriverSnapshot {
 			continue
 		}
 		if row.Type == "model_change" && row.ModelID != "" {
-			lastModel = row.ModelID
+			rec.lastModel = row.ModelID
 		}
 		u := row.Message.Usage
 		if row.Type != "message" || row.Message.Role != "assistant" || u == nil || u.Input == nil || u.Output == nil {
@@ -106,32 +159,70 @@ func piDriverSnapshot(sessionID, repoRoot string) DriverSnapshot {
 			// made no measured call.
 			continue
 		}
-		snap.FreshInputTokens += *u.Input
-		snap.OutputTokens += *u.Output
-		snap.CacheReadInputTokens += u.CacheRead
-		snap.CacheCreationInputTokens += u.CacheWrite
-		snap.Turns++
+		r := piUsageRow{input: *u.Input, output: *u.Output, cacheRead: u.CacheRead, cacheWrite: u.CacheWrite}
 		if u.Cost != nil && u.Cost.Total != nil {
-			cost += *u.Cost.Total
+			r.cost = *u.Cost.Total
 		}
 		if row.Message.Model != "" {
-			lastModel = row.Message.Model
+			rec.lastModel = row.Message.Model
 		}
+		r.model = rec.lastModel
+		if t, err := time.Parse(time.RFC3339Nano, row.Timestamp); err == nil {
+			r.at = t
+		}
+		rec.rows = append(rec.rows, r)
 	}
 	if err := scanner.Err(); err != nil {
-		return fail(fmt.Sprintf("pi: session record unreadable: %v", err))
+		return piSessionRecord{}, fmt.Sprintf("pi: session record unreadable: %v", err)
 	}
-	if snap.Turns == 0 {
-		return fail("pi: session record carries no assistant usage yet")
+	return rec, ""
+}
+
+// piWindowUsage sums the assistant rows pi wrote inside [from, to] (inclusive at
+// both ends). The attribution is by each row's own timestamp, so the figure is
+// derived from timestamps, not a live-measured delta. A window with no usage in it,
+// or a record whose rows cannot all be placed in time, is a named unavailable —
+// never a zero.
+func piWindowUsage(sessionID, repoRoot string, from, to time.Time) DriverWindowUsage {
+	w := DriverWindowUsage{SessionID: sessionID, Executable: HarnessPi}
+	fail := func(reason string) DriverWindowUsage {
+		w.UnavailableReason = reason
+		w.CostUnavailableReason = reason
+		return w
 	}
-	snap.Available = true
-	snap.MayUndercountInFlightTurn = false // pi_inflight_probe.result.md: the calling row precedes the tool run
-	snap.Model = lastModel
-	snap.ModelCalls = snap.Turns
+	rec, reason := readPiSession(sessionID, repoRoot)
+	if reason != "" {
+		return fail(reason)
+	}
+	untimed := 0
+	var cost float64
+	for _, r := range rec.rows {
+		if r.at.IsZero() {
+			untimed++
+			continue
+		}
+		if r.at.Before(from) || r.at.After(to) {
+			continue
+		}
+		w.FreshInputTokens += r.input
+		w.OutputTokens += r.output
+		w.CacheReadInputTokens += r.cacheRead
+		w.CacheCreationInputTokens += r.cacheWrite
+		w.ModelCalls++
+		cost += r.cost
+		w.Model = r.model
+	}
+	if untimed > 0 {
+		return fail(fmt.Sprintf("pi: %d assistant rows in the session record carry no parseable timestamp; the window cannot be attributed", untimed))
+	}
+	if w.ModelCalls == 0 {
+		return fail(fmt.Sprintf("pi: session record has no assistant usage between %s and %s", from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano)))
+	}
+	w.Available = true
 	if cost > 0 {
-		snap.CostUSD = &cost
+		w.CostUSD = &cost
 	} else {
-		snap.CostUnavailableReason = "pi: usage.cost.total is zero beside real token counts (model unpriced by pi)"
+		w.CostUnavailableReason = piUnpricedCostReason
 	}
-	return snap
+	return w
 }

@@ -115,7 +115,65 @@ func SessionUsageSnapshot(harness, sessionID, repoRoot string) DriverSnapshot {
 		return piDriverSnapshot(sessionID, repoRoot)
 	default:
 		return DriverSnapshot{SessionID: sessionID, Executable: adapter,
-			UnavailableReason: fmt.Sprintf("%s: no driver-usage reader for this harness", adapter)}
+			UnavailableReason: fmt.Sprintf("%s: %s", adapter, noDriverReaderReason)}
+	}
+}
+
+// noDriverReaderReason is the tail of the unavailable reason a harness with no
+// driver-usage reader reports; IsNoDriverReaderReason recognises it on a recorded
+// row without the verb layer knowing any adapter.
+const noDriverReaderReason = "no driver-usage reader for this harness"
+
+// IsNoDriverReaderReason reports whether reason is a recorded "this harness had no
+// driver-usage reader" unavailable — the rows a backfill can still recover from a
+// session record that outlived them.
+func IsNoDriverReaderReason(reason string) bool {
+	return strings.HasSuffix(strings.TrimSpace(reason), noDriverReaderReason)
+}
+
+// DriverWindowUsage is one session's usage over a time window, attributed from the
+// per-message timestamps of the harness's own session record rather than read as a
+// live delta (sty_8c0e7e8c). It is derived data: a caller that stores it must say so.
+// Available=false carries an adapter-named UnavailableReason; the token fields are
+// then zero but never a measurement.
+type DriverWindowUsage struct {
+	SessionID  string
+	Executable string
+	Model      string
+
+	FreshInputTokens         int
+	CacheReadInputTokens     int
+	CacheCreationInputTokens int
+	OutputTokens             int
+	ModelCalls               int
+
+	CostUSD               *float64
+	CostUnavailableReason string
+
+	Available         bool
+	UnavailableReason string
+}
+
+// SessionWindowUsage attributes harness's session record for sessionID to the
+// window [from, to] by each message's own timestamp. A harness with no windowed
+// reader, a record that is gone or unreadable, or a window with nothing in it yields
+// Available=false with an adapter-named reason — never zeros that look like a
+// measurement (satelle-agent-agnostic §2/§3).
+func SessionWindowUsage(harness, sessionID, repoRoot string, from, to time.Time) DriverWindowUsage {
+	sessionID = strings.TrimSpace(sessionID)
+	adapter := harness
+	if strings.TrimSpace(adapter) == "" {
+		adapter = HarnessUnknown
+	}
+	if sessionID == "" {
+		return DriverWindowUsage{Executable: adapter, UnavailableReason: fmt.Sprintf("%s: no session id resolved", adapter)}
+	}
+	switch harness {
+	case HarnessPi:
+		return piWindowUsage(sessionID, repoRoot, from, to)
+	default:
+		return DriverWindowUsage{SessionID: sessionID, Executable: adapter,
+			UnavailableReason: fmt.Sprintf("%s: backfill not supported — no timestamped session-window reader for this harness", adapter)}
 	}
 }
 

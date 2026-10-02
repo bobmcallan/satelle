@@ -265,6 +265,35 @@ type DriverRow struct {
 	// session's first available reading), not a measured zero: its token and cost
 	// figures are unreported, and it is not counted as a measured usage row.
 	BaselineFresh bool `json:"baseline_fresh,omitempty"`
+	// Backfilled marks a row written after the fact from the session record's
+	// per-message timestamps: a measured figure, but derived — never a live delta.
+	Backfilled bool `json:"backfilled,omitempty"`
+	// Superseded is set by MarkSuperseded, never stored: an unavailable row that a
+	// later backfill row for the same session recovered. It keeps its wall time and
+	// drops out of the measured/unavailable counts.
+	Superseded bool `json:"-"`
+}
+
+// BackfilledLabel is how every surface says a backfilled figure is not a live delta.
+const BackfilledLabel = "derived from timestamps, not a live delta"
+
+// MarkSuperseded flags, in rows (one story's driver rows, oldest first), each
+// unavailable row that a later available backfill row for the same session recovers.
+// The ledger is append-only, so the old unavailable row stays; what it could not read
+// is no longer a gap once the backfill has.
+func MarkSuperseded(rows []DriverRow) []DriverRow {
+	recoveredAt := map[string]int{} // session -> index of its last available backfill row
+	for i, d := range rows {
+		if d.Backfilled && d.Available {
+			recoveredAt[d.SessionID] = i
+		}
+	}
+	for i := range rows {
+		if at, ok := recoveredAt[rows[i].SessionID]; ok && i < at && !rows[i].Available {
+			rows[i].Superseded = true
+		}
+	}
+	return rows
 }
 
 // measured reports whether d carries a token delta that was actually measured: an
@@ -350,8 +379,11 @@ func (a *accumulator) addDispatchRow(row Row) {
 // always folds in; the token/cost fields only ever carry non-zero values on
 // an Available row.
 func (a *accumulator) addDriverRow(d DriverRow) {
-	a.driver = addCoverage(a.driver, d)
 	a.driverMs += int64(d.WallSeconds * 1000)
+	if d.Superseded {
+		return // wall time only: the backfill row that recovered it carries the figures
+	}
+	a.driver = addCoverage(a.driver, d)
 	if d.CostUSD != nil {
 		a.costUSD += *d.CostUSD
 		a.costRows++
@@ -404,6 +436,32 @@ type Story struct {
 	Estimates  []Estimate  `json:"estimates,omitempty"`
 }
 
+// StoryWindow returns the story clock's engage and terminal timestamps from entries'
+// status transitions: the first transition INTO a state clk.Engaging accepts and the
+// first INTO a state clk.Terminal accepts. have* is false for one the ledger has no
+// transition to prove — a window is never guessed from the item's current status.
+func StoryWindow(entries []ledger.Entry, clk Clock) (engageAt, terminalAt time.Time, haveEngage, haveTerminal bool) {
+	for _, e := range entries {
+		if e.Kind != ledger.KindStatusTransition {
+			continue
+		}
+		var p struct {
+			From string `json:"from"`
+			To   string `json:"to"`
+		}
+		if json.Unmarshal(e.Payload, &p) != nil {
+			continue
+		}
+		if !haveEngage && clk.Engaging != nil && clk.Engaging(p.To) {
+			engageAt, haveEngage = e.CreatedAt, true
+		}
+		if !haveTerminal && clk.Terminal != nil && clk.Terminal(p.To) {
+			terminalAt, haveTerminal = e.CreatedAt, true
+		}
+	}
+	return
+}
+
 // Own reads item's ledger entries and returns its own Story — figures, rows,
 // driver rows, span and parsed estimates — with no child rollup. The story
 // clock is derived from clk, never from a status literal: it starts at the
@@ -422,10 +480,6 @@ type Story struct {
 // CreatedAt is never a stand-in for when work actually started.
 func Own(item workitem.Item, entries []ledger.Entry, clk Clock, now time.Time) Story {
 	acc := &accumulator{}
-	var engageAt time.Time
-	haveEngage := false
-	var terminalAt time.Time
-	haveTerminal := false
 	var rows []Row
 	var driverRows []DriverRow
 
@@ -443,24 +497,14 @@ func Own(item workitem.Item, entries []ledger.Entry, clk Clock, now time.Time) S
 			if !ok {
 				continue
 			}
-			acc.addDriverRow(d)
 			driverRows = append(driverRows, d)
-		case ledger.KindStatusTransition:
-			var p struct {
-				From string `json:"from"`
-				To   string `json:"to"`
-			}
-			if json.Unmarshal(e.Payload, &p) != nil {
-				continue
-			}
-			if !haveEngage && clk.Engaging != nil && clk.Engaging(p.To) {
-				engageAt, haveEngage = e.CreatedAt, true
-			}
-			if !haveTerminal && clk.Terminal != nil && clk.Terminal(p.To) {
-				terminalAt, haveTerminal = e.CreatedAt, true
-			}
 		}
 	}
+	driverRows = MarkSuperseded(driverRows)
+	for _, d := range driverRows {
+		acc.addDriverRow(d)
+	}
+	engageAt, terminalAt, haveEngage, haveTerminal := StoryWindow(entries, clk)
 
 	figures := acc.figures()
 	var span *Span

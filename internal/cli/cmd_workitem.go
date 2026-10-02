@@ -788,6 +788,27 @@ running it by hand is for an early look, not a requirement.`,
 		},
 	}
 
+	backfill := &cobra.Command{
+		Use:   "backfill-driver <id>",
+		Short: "Attribute a closed story's driver spend from the session record it outlived",
+		Long: `Recover the driving session's spend for a closed story whose driver_usage rows
+are unavailable because its harness had no driver-usage reader at the time. The
+session record's per-message timestamps are attributed to the story's own
+engage..close window and appended as a backfilled row, marked as derived from
+timestamps — never presented as a live-measured delta.
+
+A window shared with another story driven in the same session is reported
+ambiguous and is not split. A session record that is gone, an empty window, or
+a model the harness reports no price for stays unavailable with the named
+reason. Re-running appends nothing it already wrote. Run ` + "`satelle story actual <id>`" + `
+afterwards to refresh the story's actual-* tags.`,
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return dispatch(cmd, "story-driver-backfill", map[string]any{"id": args[0]})
+		},
+	}
+
 	// log — the generic typed telemetry/quality event write primitive (AC1,
 	// sty_b73c3236), retiring `story step-cost`: any typed event — an in-loop
 	// step's self-reported actual tokens/duration and per-step estimate (`--kind
@@ -1016,7 +1037,7 @@ routine close step.`,
 	}
 	retrospect.Flags().String("model", "", "model for this dispatch, overriding agents.toml (recorded with source=agent)")
 
-	return []*cobra.Command{estimate, actual, log, cost, resummarise, retrospect}
+	return []*cobra.Command{estimate, actual, backfill, log, cost, resummarise, retrospect}
 }
 
 // parseLogData turns a list of "key=value" flags into a typed data map: a
@@ -1133,11 +1154,11 @@ func driverRowsToCostview(rows []verb.DriverUsagePayload) []costview.DriverRow {
 			Available: d.Available, UnavailableReason: d.UnavailableReason, WallSeconds: d.WallSeconds, Trigger: d.Trigger,
 			From: d.From, To: d.To,
 			ModelCalls: d.ModelCalls, ModelCallsUnavailableReason: d.ModelCallsUnavailableReason,
-			Turns: d.Turns, Unflushed: d.Unflushed, BaselineFresh: d.BaselineFresh,
+			Turns: d.Turns, Unflushed: d.Unflushed, BaselineFresh: d.BaselineFresh, Backfilled: d.Backfilled,
 		}
 		out[i].Cumulative.ModelCalls = d.Cumulative.ModelCalls
 	}
-	return out
+	return costview.MarkSuperseded(out)
 }
 
 // printDriverSection renders the DRIVER SESSION table — the driving (in-loop)
@@ -1216,6 +1237,9 @@ func printSessionReconciliation(cmd *cobra.Command, recon verb.SessionReconcilia
 		tokens, cost := "—", "unknown"
 		if s.Available {
 			tokens = strconv.Itoa(s.FreshInput + s.CacheRead + s.CacheWrite + s.Output)
+			if s.Backfilled {
+				tokens += " (backfilled: " + costview.BackfilledLabel + ")"
+			}
 			cost = rowCostUSD(s.CostUSD)
 		} else {
 			tokens = fmt.Sprintf("unavailable (%s)", s.UnavailableReason)
