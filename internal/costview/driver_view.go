@@ -38,7 +38,7 @@ func FormatDriverRows(rows []DriverRow) ([]DriverRowView, *DriverRowView) {
 	var totalWallMs int64
 	for _, d := range rows {
 		freshIn, outCol, cacheRead, cacheWrite := "—", "—", "—", "—"
-		if d.Available {
+		if d.measured() {
 			freshIn, outCol = FormatTokens(d.FreshInput), FormatTokens(d.Output)
 			cacheRead, cacheWrite = FormatTokens(d.CacheRead), FormatTokens(d.CacheWrite)
 			totalFresh += d.FreshInput
@@ -48,7 +48,7 @@ func FormatDriverRows(rows []DriverRow) ([]DriverRowView, *DriverRowView) {
 			measured++
 		}
 		calls := "—"
-		if d.Available && d.ModelCalls != nil {
+		if d.measured() && d.ModelCalls != nil {
 			calls = fmt.Sprintf("%d", *d.ModelCalls)
 			totalCalls += *d.ModelCalls
 			counted++

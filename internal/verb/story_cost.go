@@ -261,7 +261,7 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 			if dr, ok := costview.DecodeDriverRow(e); ok {
 				gateRows = append(gateRows, dr)
 			}
-			if d.Available {
+			if d.Available && !d.BaselineFresh {
 				sc.DriverTotalTokens += d.FreshInput + d.CacheRead + d.CacheWrite + d.Output
 				sc.DriverMeasuredRows++
 			} else {

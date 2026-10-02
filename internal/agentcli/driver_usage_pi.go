@@ -43,8 +43,10 @@ func piSessionDirName(repoRoot string) string {
 //
 // Pi persists an assistant row when the message completes — before the tool call
 // it requested runs — so the row carrying a closing `satelle story set` call is
-// expected to be in the file when this reads it: no in-flight undercount is
-// assumed (testdata/driver/README.md records that this is inferred, not probed).
+// already in the file when this reads it, and MayUndercountInFlightTurn stays
+// false. Measured, not inferred: testdata/driver/pi_inflight_probe.{jsonl,log,
+// result.md} is a timestamped probe on a real pi session in which all three
+// tool calls found their own calling row already in the file.
 func piDriverSnapshot(sessionID, repoRoot string) DriverSnapshot {
 	snap := DriverSnapshot{SessionID: sessionID, Executable: HarnessPi}
 	fail := func(reason string) DriverSnapshot {
@@ -123,6 +125,7 @@ func piDriverSnapshot(sessionID, repoRoot string) DriverSnapshot {
 		return fail("pi: session record carries no assistant usage yet")
 	}
 	snap.Available = true
+	snap.MayUndercountInFlightTurn = false // pi_inflight_probe.result.md: the calling row precedes the tool run
 	snap.Model = lastModel
 	snap.ModelCalls = snap.Turns
 	if cost > 0 {

@@ -1,3 +1,13 @@
+## [0.0.595] - 2026-10-02
+
+### Fixed
+- **Pi's in-flight turn is in the session file when the tool runs.** A timestamped probe on a real pi session recorded the calling assistant row already present at each of three tool executions, so `MayUndercountInFlightTurn` for pi is false, measured, not inferred. A first available driver row after unavailable rows is marked a fresh baseline and is not reported as a measured zero-token delta. (sty_89768625)
+
+## [serve-v0.0.110] - 2026-10-02
+
+### Fixed
+- **The service uses the measured pi flush result.** Cost coverage does not treat a fresh baseline after unavailable rows as a measured zero. (sty_89768625)
+
 ## [0.0.594] - 2026-10-01
 
 ### Changed

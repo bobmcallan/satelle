@@ -69,10 +69,10 @@ func addCoverage(cov []DriverCoverage, d DriverRow) []DriverCoverage {
 	}
 	c := &cov[idx]
 	c.Rows++
-	if d.Available {
+	if d.measured() {
 		c.UsageRows++
 	} else {
-		c.UsageUnavailableBy = addReason(c.UsageUnavailableBy, d.UnavailableReason, exe)
+		c.UsageUnavailableBy = addReason(c.UsageUnavailableBy, d.unmeasuredReason(), exe)
 	}
 	if d.CostUSD != nil {
 		c.CostRows++

@@ -11,6 +11,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/costview"
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -72,6 +73,8 @@ func stampModelCalls(p *DriverUsagePayload, snap agentcli.DriverSnapshot, cur, b
 	switch {
 	case snap.ModelCallsUnavailableReason != "":
 		p.ModelCallsUnavailableReason = snap.ModelCallsUnavailableReason
+	case p.BaselineFresh:
+		p.ModelCallsUnavailableReason = costview.BaselineFreshReason(p.Executable)
 	case cur.ModelCalls == nil || base.ModelCalls == nil:
 		p.ModelCallsUnavailableReason = "driver_usage: the base row predates model-call recording"
 	default:
@@ -164,6 +167,15 @@ type DriverUsagePayload struct {
 	// directly, without having to reconstruct "was this row a single-turn
 	// credit" from the range shape.
 	CreditedTurns []int `json:"credited_turns,omitempty"`
+	// BaselineFresh marks the first available row after one or more unavailable
+	// rows: its base is this read's own cumulative because there is no prior
+	// measurement to diff against, so its zero token and model-call delta is "the
+	// baseline was set here", never a measured zero. It is distinct from
+	// Unflushed/Pending: a flush-lagged harness's missing turn and a fresh
+	// baseline both read as an all-zero delta, and only this marker lets a later
+	// reader tell them apart (sty_89768625). A session's very first row is the
+	// ordinary engage baseline and is not marked.
+	BaselineFresh bool `json:"baseline_fresh,omitempty"`
 }
 
 // driverUsageTrigger classifies the enacted transition from → to for
@@ -333,6 +345,7 @@ func recordDriverUsageAs(ctx context.Context, item workitem.Item, sessionID, har
 		} else {
 			base = fresh
 			payload.BaseTurns = snap.Turns
+			payload.BaselineFresh = true
 		}
 	case prevFound && !prev.payload.Available:
 		// AC6: the previous row for this session failed to read outright — the
@@ -344,6 +357,7 @@ func recordDriverUsageAs(ctx context.Context, item workitem.Item, sessionID, har
 		recordLateDriverUsageCatchup(ctx, sessionID, harness, snap, fresh, prev, prevAvail, prevAvailFound, false, now)
 		base = fresh
 		payload.BaseTurns = snap.Turns
+		payload.BaselineFresh = true
 	case prevFound && prev.payload.Pending:
 		// AC6: the previous row read successfully but was Pending — it MAY have
 		// undercounted its own in-flight turn (grok only). Bounded catch-up

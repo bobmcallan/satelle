@@ -261,6 +261,29 @@ type DriverRow struct {
 	// harness that records a turn's usage only when the turn ends.
 	Turns     int  `json:"turns,omitempty"`
 	Unflushed bool `json:"unflushed,omitempty"`
+	// BaselineFresh marks a row whose zero delta is the baseline being set (the
+	// session's first available reading), not a measured zero: its token and cost
+	// figures are unreported, and it is not counted as a measured usage row.
+	BaselineFresh bool `json:"baseline_fresh,omitempty"`
+}
+
+// measured reports whether d carries a token delta that was actually measured: an
+// available row that is not a fresh baseline.
+func (d DriverRow) measured() bool { return d.Available && !d.BaselineFresh }
+
+// BaselineFreshReason is the adapter-named reason a fresh-baseline row reports in
+// place of a delta: nothing was measured between two reads, the baseline was set.
+func BaselineFreshReason(executable string) string {
+	return executable + ": first available reading for this session — baseline set, no delta measured"
+}
+
+// unmeasuredReason names why an unmeasured row reports no delta: the adapter's
+// unavailable reason, or the baseline being set.
+func (d DriverRow) unmeasuredReason() string {
+	if d.BaselineFresh {
+		return BaselineFreshReason(d.Executable)
+	}
+	return d.UnavailableReason
 }
 
 // DecodeDriverRow decodes one driver_usage ledger entry into a DriverRow, or
@@ -335,7 +358,7 @@ func (a *accumulator) addDriverRow(d DriverRow) {
 	} else {
 		a.costUnavailableRows++
 	}
-	if !d.Available {
+	if !d.measured() {
 		a.usageUnavailableRows++
 		return
 	}

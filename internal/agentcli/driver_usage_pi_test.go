@@ -1,6 +1,7 @@
 package agentcli
 
 import (
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -54,7 +55,83 @@ func TestPiDriverSnapshot(t *testing.T) {
 		t.Fatalf("CostUnavailableReason = %q, want a pi: reason", snap.CostUnavailableReason)
 	}
 	if snap.MayUndercountInFlightTurn {
-		t.Fatal("pi persists an assistant row before its tool call runs; it must not be flagged as undercounting")
+		t.Fatal("pi persists an assistant row before its tool call runs (pi_inflight_probe.result.md); it must not be flagged as undercounting")
+	}
+}
+
+// piProbeCalls parses pi_inflight_probe.log: for each probed tool call k, how many
+// toolCall assistant rows the session file held at the moment the tool executed.
+func piProbeCalls(t *testing.T) map[int]int {
+	t.Helper()
+	calls := map[int]int{}
+	for _, line := range strings.Split(strings.TrimSpace(string(readFixture(t, "pi_inflight_probe.log"))), "\n") {
+		var k, seen, rows int
+		var at string
+		if _, err := fmt.Sscanf(line, "call=%d at=%s toolcall_rows_in_file=%d assistant_rows_in_file=%d", &k, &at, &seen, &rows); err != nil {
+			t.Fatalf("probe log line %q: %v", line, err)
+		}
+		calls[k] = seen
+	}
+	if len(calls) < 3 {
+		t.Fatalf("probe log has %d calls, want the three captured", len(calls))
+	}
+	return calls
+}
+
+// piFileAtToolCall is the probe session file as it stood when the k-th tool call
+// executed: every row up to and including the k-th assistant toolCall row, and
+// nothing after it (that call's own toolResult had not been written yet).
+func piFileAtToolCall(t *testing.T, k int) []byte {
+	t.Helper()
+	var out strings.Builder
+	seen := 0
+	for _, line := range strings.SplitAfter(string(readFixture(t, "pi_inflight_probe.jsonl")), "\n") {
+		if strings.Contains(line, `"type":"toolCall"`) {
+			seen++
+		}
+		if seen > k {
+			break
+		}
+		out.WriteString(line)
+		if seen == k && strings.Contains(line, `"type":"toolCall"`) {
+			break
+		}
+	}
+	return []byte(out.String())
+}
+
+// TestPiInFlightTurnIsInTheSessionFileWhenTheToolRuns pins MayUndercountInFlightTurn
+// for pi to a timestamped probe on a real session (sty_89768625): at each of three
+// tool calls the calling assistant row was already persisted, so a snapshot taken by
+// a `satelle story set` call includes the very turn that made it. The flag is
+// derived from the probe log, not asserted free-standing, and the read at each call
+// is replayed from the capture.
+func TestPiInFlightTurnIsInTheSessionFileWhenTheToolRuns(t *testing.T) {
+	repo := "/home/example/repo"
+	wantUndercount := false
+	for k, seen := range piProbeCalls(t) {
+		if seen < k {
+			wantUndercount = true
+		}
+	}
+	// Cumulative usage after each calling row, from pi_inflight_probe.jsonl.
+	type cum struct{ fresh, out, cacheRead int }
+	want := map[int]cum{1: {2171, 126, 140}, 2: {2191, 247, 2575}, 3: {2211, 368, 5149}}
+	for k := 1; k <= 3; k++ {
+		installPiFixture(t, repo, piFileAtToolCall(t, k))
+		snap := SessionUsageSnapshot(HarnessPi, piFixtureSession, repo)
+		if !snap.Available || snap.Turns != k {
+			t.Fatalf("tool call %d: snapshot = %+v, want available with the calling turn counted (turns=%d)", k, snap, k)
+		}
+		if got := (cum{snap.FreshInputTokens, snap.OutputTokens, snap.CacheReadInputTokens}); got != want[k] {
+			t.Fatalf("tool call %d: usage = %+v, want %+v (calling row's own usage included)", k, got, want[k])
+		}
+		if snap.MayUndercountInFlightTurn != wantUndercount {
+			t.Fatalf("tool call %d: MayUndercountInFlightTurn = %v, want %v from the probe log", k, snap.MayUndercountInFlightTurn, wantUndercount)
+		}
+	}
+	if wantUndercount {
+		t.Fatal("the checked-in probe shows the calling row absent at execution; this test and piDriverSnapshot were written for the measured present-at-execution result — re-derive both")
 	}
 }
 

@@ -1133,7 +1133,7 @@ func driverRowsToCostview(rows []verb.DriverUsagePayload) []costview.DriverRow {
 			Available: d.Available, UnavailableReason: d.UnavailableReason, WallSeconds: d.WallSeconds, Trigger: d.Trigger,
 			From: d.From, To: d.To,
 			ModelCalls: d.ModelCalls, ModelCallsUnavailableReason: d.ModelCallsUnavailableReason,
-			Turns: d.Turns, Unflushed: d.Unflushed,
+			Turns: d.Turns, Unflushed: d.Unflushed, BaselineFresh: d.BaselineFresh,
 		}
 		out[i].Cumulative.ModelCalls = d.Cumulative.ModelCalls
 	}

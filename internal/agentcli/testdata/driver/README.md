@@ -60,9 +60,32 @@ What pi exposes, and what `piDriverSnapshot` reads:
   dollar figure (`TestPiDriverSnapshotMeasuredCost`).
 - **Errored requests** are recorded as assistant rows with all-zero usage (the
   first assistant row of this fixture) and are not counted as calls.
-- **No in-flight undercount.** The assistant row is persisted when its message
-  completes, before the tool call it requested runs, so a snapshot taken by a
-  `satelle story set` call already includes the calling message. This is
-  inferred from pi persisting on message completion, not observed with a
-  timestamped probe; if a pi session shows the closing turn missing, set
-  `MayUndercountInFlightTurn` in `piDriverSnapshot`.
+- **No in-flight undercount (measured).** The assistant row is in the session
+  file before the tool call it requested runs, so a snapshot taken by a
+  `satelle story set` call already includes the calling message, and
+  `piDriverSnapshot` leaves `MayUndercountInFlightTurn` false. This was measured
+  (sty_89768625), not inferred — see below. The Pending → Late catch-up never
+  applies to pi.
+
+### pi in-flight probe (sty_89768625)
+
+`pi_inflight_probe.sh` drives a real pi session through three bash tool calls;
+at each execution the tool counts the `toolCall` assistant rows in
+`$PI_SESSION_FILE`. Checked in beside `pi_session.jsonl`:
+
+- `pi_inflight_probe.jsonl` — the session file, prompt/tool/system text and cwd
+  redacted; ids, timestamps and usage verbatim.
+- `pi_inflight_probe.log` — what the tool saw: `toolcall_rows_in_file` equals the
+  call index k at every call (k=1,2,3), i.e. the calling row was already written.
+- `pi_inflight_probe.result.md` — the verdict, cross-checked against each row's
+  own `timestamp` (row at `:32.048`, tool ran at `:32.060`, toolResult at `:32.064`).
+
+`TestPiInFlightTurnIsInTheSessionFileWhenTheToolRuns` replays the file at each
+call and derives the flag from the log; `TestPiClosingTurnIsCountedInTheSameRead`
+pushes the replay through the verb layer: the close row holds the closing turn,
+neither Pending nor Late.
+
+An all-zero close delta on pi is therefore never flush lag. It is either a real
+zero or the fresh-baseline rule (first available read after unavailable rows),
+which the verb layer marks `baseline_fresh` and reports as no measurement
+(`TestPiFreshBaselineAfterUnavailableIsNotAMeasuredZero`).
