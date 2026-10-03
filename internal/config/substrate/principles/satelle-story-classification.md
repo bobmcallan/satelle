@@ -3,52 +3,35 @@ name: satelle-story-classification
 type: principle
 tags: [type:principle]
 applies_to: ["*"]
-description: How stories are classified — category (including epic-parent/parent containers), theme tags (epic:<theme>), sprints (sprint:<N>), and order:<N>; multi-value tags use repeated keys. Category selects the governing workflow; invented kind:* tags are not a taxonomy axis.
+description: How stories are classified — category (selects the workflow; TYPE, never a surface), epic membership by the epic:<theme> tag, sprints (sprint:<index>), order:<N>, and multi-value tags by repeated keys. The category vocabulary is substrate/config/categories.toml.
 ---
 
 # Story classification — category, epics, sprints, and order
 
-A story is one leaf of work, but a backlog of hundreds is only navigable when its
-stories are grouped and sequenced. Classify each story along **category** (what
-kind of work item it is — selects the workflow), a **theme** (the epic it belongs
-to), and a **time-box** (the sprint it ships in), and give it an explicit **order**
-within the sprint that drives it.
+A backlog is navigable only when its stories are grouped and sequenced. Classify
+each story by **category** (selects the workflow), a **theme** (its epic), a
+**time-box** (its sprint) and an **order** within that sprint.
 
 ## Category — selects the workflow
 
-`category` is a first-class field on the story (not a free-form tag). It decides
-which workflow governs the item. Values are a **controlled TYPE vocabulary**
-shipped as an embedded default (`substrate/config/categories.toml` in the
-binary) that a repo may extend or replace in satelle.toml — never a Go literal.
+`category` is a first-class field, not a free-form tag, and it decides which
+workflow governs the item. It is a controlled **TYPE** vocabulary: the embedded
+default is `substrate/config/categories.toml` (its header carries the synonym
+collapses, e.g. `bug` → `fix`), and a repo extends or replaces it with
+`[categories] extra` / `vocabulary` in satelle.toml — never a Go literal.
+`[categories] enforce` is `off`, `warn` (default: advise, still create) or
+`reject` (an opt-in hard fail). Existing stories are never rewritten when a
+vocabulary is introduced.
 
-| Category | Meaning | Typical workflow |
-| --- | --- | --- |
-| `feature` / `improvement` / `fix` / `chore` / `docs` / `refactor` / `test` / `tooling` / `infrastructure` / `architecture` | Leaf work with a slice to build | project (or baseline) workflow |
-| `substrate` | Markdown-only substrate change (no binary) | substrate workflow when authored |
-| `parent` | Container whose work IS its children | parent workflow |
-| `epic-parent` | Epic container — the one parent of an `epic:<theme>` set | parent workflow |
-
-**Synonym collapses** (use the surviving value): `bug` / `bugfix` / `defect` →
-`fix`; `infra` → `infrastructure`. Surface-shaped names (`frontend` / `web` /
-`ui` / `cli`) are **not** categories — use the `surface:` tag plus a TYPE
-category. Matching is case-insensitive; stored form uses the declared casing.
-
-```toml
-[categories]
-enforce = "warn"                 # off | warn | reject (default warn)
-# extra = ["my-type"]            # ADD to the embedded default list
-# vocabulary = ["feature","fix"] # REPLACE the embedded default list
-```
-
-Default enforce is **warn**: unknown values print an advisory and still create;
-`reject` is a deliberate opt-in hard fail. Existing/terminal stories are never
-rewritten when a vocabulary is introduced.
-
-**File an epic as `category: epic-parent`** (or `parent` for a non-epic
-container). Do **not** invent a `kind:epic` / `kind:bug` tag axis — those tags
-are not taxonomy; the durable class is `category`. The parent workflow's
-`applies_to: ["epic-parent", "parent"]` is how a category-specific workflow beats
-the wildcard project workflow.
+- **Category is TYPE, not a surface.** It is single-valued. A story touching two
+  interfaces (`surface:ui` + `surface:cli`) still has exactly one category;
+  surface is a `surface:` tag, and names like `frontend` / `web` / `ui` / `cli`
+  are not categories. A category per interface would fork the lifecycle.
+- **Containers.** File an epic as `category: epic-parent` (or `parent` for a
+  non-epic container whose members are the stories with that `parent_id`). Do not
+  invent a `kind:epic` / `kind:bug` tag axis; the durable class is `category`.
+  The parent workflow's `applies_to: ["epic-parent", "parent"]` is how a
+  category-specific workflow beats the wildcard one.
 
 ## Epics — a theme, with a parent
 
@@ -71,88 +54,46 @@ If the set cannot be determined — the `epic-parent` has no `epic:<theme>` tag,
 more than one `epic-parent` carries the tag — the container does not close, and
 the refusal says why. A proposal filed with an `epic:<theme>` tag whose container
 is already `done` or `cancelled` is filed without that tag, with a body note
-naming the container.
+naming the container. Scheduling the children is `satelle help epic-wave`.
 
-A non-epic container (`category: parent`) is unchanged: its members are the
-stories whose `parent_id` is that container.
+## Sprints and order
 
-## Sprints — an incremental number
+- **Sprint.** Tag every story in a time-box `sprint:<index>`. The index form is a
+  repo choice (integer, date, month-plus-name), kept consistent within the repo
+  and fixed in the repo's own substrate, not here. A bare `sprint` tag with no
+  index is incomplete.
+- **Order.** Within a sprint, tag each member `order:<N>`: a plain integer from 1,
+  not zero-padded, not duplicated. It is position in the sprint, not priority;
+  dependency is `depends-on:`, never inferred from order. A cancelled or
+  superseded story drops its `order` but keeps its `sprint:`.
+- **The sprint owns `order:`.** It means nothing without `sprint:`, and unlike
+  `epic:` and `sprint:` it is **not durable** — renumbered freely as the sprint
+  is re-planned.
+- **A fixed-order epic** keeps its members consecutive in the sprint sequence and
+  states the hard dependency in the story body. One story carries one `order:`;
+  the `epic-parent` carries none, since it is driven by its children.
 
-A **sprint** is a time-boxed increment of delivery. Tag every story in it
-`sprint:<index>`, where the **index form is a repo choice** — a plain integer
-counter (`sprint:1`) or a date index (`sprint:2026-07-25`) — kept consistent
-within a repo so increments stay enumerable. A bare `sprint` tag
-with no index is incomplete: it asserts "in a sprint" but not which one. Always
-carry an index; fix the form in the repo's own substrate, not here.
+## Tags — multi-value namespaces use repeated keys
 
-## Order — position in the sprint
+Tags are a set of strings, often `namespace:value`. Multiple values in one
+namespace are **separate entries**, not a comma-joined value: `epic:this` +
+`epic:that`, never `epic:this,that` (one tag; it fights CLI `StringSlice` parsing
+and loses round-trip fidelity). This matches the store (`[]string`), additive
+mutation (`--add-tags` / `--remove-tags`, including group remove like `sprint:*`)
+and display. `--tag <tag>` on `story list` / `task list` matches an item that
+holds that exact tag among its set (ANY-match) and composes with `--status` and
+`--parent`.
 
-Within a sprint the stories have a sequence — which is engaged first, second,
-third. Tag each member `order:<N>` with a plain integer starting at 1
-(`order:1`, `order:2`, …): not zero-padded, and not duplicated within the sprint.
-Order encodes the operator's intended drive order; combined with engaging one story
-at a time, it is how the next story to engage is chosen. A cancelled or superseded
-story drops its `order` so the live sequence stays contiguous, but keeps its
-`sprint:<N>` for the record.
+## Controlled tag namespaces — `tags.vocabulary`
 
-**The sprint owns `order:`.** It is meaningful only alongside `sprint:` — a story
-not yet pulled into a sprint has no order. And unlike membership, position is
-**not durable**: `order:` is assigned on entry to a sprint and renumbered freely
-as the sprint is re-planned, while `epic:<theme>` and `sprint:<N>` persist.
+A repo MAY declare, in satelle.toml, that a namespace accepts only a fixed set of
+values — e.g. `[tags.vocabulary]` with `surface = ["ui", "cli"]`. It is **repo
+config, not compiled in** (another repo declares its own namespaces).
 
-**An epic whose members must run in a fixed relative order** keeps them
-CONSECUTIVE within the sprint sequence and states the hard dependency in the
-story body. Do not introduce a second numbering — one story carries one
-`order:`. The `epic-parent` container itself carries no `order:` at all; it is
-driven by its children.
-
-A single story may carry all three at once: it sits under an epic
-(`epic:<theme>`), ships in a sprint (`sprint:<N>`), and holds a position
-in that sprint (`order:<N>`).
-
-## Tags — multi-value namespaces (repeated keys)
-
-Tags are a set of strings, often `namespace:value`. **Multiple values in one
-namespace use repeated keys** — separate entries, not a comma-joined value:
-
-- Canonical: `epic:this`, `epic:that` — or `surface:ui`, `surface:cli` (two tags).
-- Not canonical: `epic:this,that` (one tag) — it fights CLI `StringSlice` parsing
- and loses round-trip fidelity through create/set/get.
-
-This matches the store (`[]string`), additive mutation (`--add-tags` /
-`--remove-tags`, including group remove like `sprint:*`), and display. Filter
-with `satelle story list --tag <tag>` (and the same flag on `task list`): an item
-matches when it **holds that exact tag** among its set (ANY-match — a story with
-both `epic:this` and `epic:that` matches `--tag epic:this`). The tag filter
-composes with `--status` and `--parent`.
-
-## Controlled tag namespaces — `tags.vocabulary` in satelle.toml
-
-A repo MAY declare that certain tag namespaces only accept a fixed set of values.
-That declaration lives in satelle.toml as `[tags.vocabulary]` — **repo config, not
-compiled into the binary** (the constitution: no surface rule compiled into the
-binary; another repo declares its own namespaces and values).
-
-```toml
-[tags.vocabulary]
-surface = ["ui", "cli"] # this repo's surfaces; another repo might use api/worker
-```
-
-- A tag whose namespace is listed must use a **declared** value. Unknown values
- are rejected at story/task create and set with a named error listing the allowed
- set. Matching is case-insensitive; the stored form uses the casing declared in
- config so exact-equality list filters stay correct.
-- Namespaces **absent** from the table stay free-form (`epic:`, `sprint:`,
- `order:`, and any organically-grown topic tags).
-- A story with **no** controlled-namespace tag is always valid — the vocabulary
- only constrains values when the namespace is used.
-
-### Category is TYPE, not a surface
-
-`category` selects the governing **workflow** (feature / fix / substrate /
-epic-parent / …). It is single-valued and is **not** a surface discriminator. A
-story may touch two interfaces (`surface:ui` + `surface:cli`) while still having
-exactly one category. Do not invent a category per interface — that would fork
-the lifecycle.
+- A tag in a listed namespace must use a declared value; an unknown value is
+  rejected at create and set with an error naming the allowed set. Matching is
+  case-insensitive and the stored form uses the declared casing.
+- Namespaces absent from the table stay free-form (`epic:`, `sprint:`, `order:`).
+  A story with no controlled-namespace tag is always valid.
 
 See [[satelle-done-is-last]], [[satelle-constitution]].
