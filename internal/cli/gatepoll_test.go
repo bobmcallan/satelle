@@ -112,13 +112,15 @@ func TestNoSurfaceLetsTheDriverPollAHandle(t *testing.T) {
 // store is the first step toward a status command.
 func TestOnlyDeliveryAndReplayReadAHandle(t *testing.T) {
 	allowed := map[string]bool{
-		filepath.Join("internal", "gatehandle"):                  true,
-		filepath.Join("internal", "cli", "gatecaller.go"):        true,
-		filepath.Join("internal", "cli", "gatedeliver.go"):       true,
-		filepath.Join("internal", "cli", "gatecaller_test.go"):   true,
-		filepath.Join("internal", "cli", "gatepoll_test.go"):     true,
-		filepath.Join("internal", "cli", "gateverdict_test.go"):  true,
-		filepath.Join("internal", "cli", "gatestopwake_test.go"): true,
+		filepath.Join("internal", "gatehandle"):                         true,
+		filepath.Join("internal", "cli", "gatecaller.go"):               true,
+		filepath.Join("internal", "cli", "gatedeliver.go"):              true,
+		filepath.Join("internal", "cli", "gatecaller_test.go"):          true,
+		filepath.Join("internal", "cli", "gatepoll_test.go"):            true,
+		filepath.Join("internal", "cli", "gateverdict_test.go"):         true,
+		filepath.Join("internal", "cli", "gatestopwake_test.go"):        true,
+		filepath.Join("internal", "cli", "gatesettle_test.go"):          true,
+		filepath.Join("internal", "cli", "harness_pi_gatewake_test.go"): true,
 	}
 	root := filepath.Join("..", "..")
 	var offenders []string

@@ -33,6 +33,7 @@ type piRig struct {
 	fakeDir string // canned responses: <verb>.out, <verb>.code
 	binDir  string // holds the fake `satelle`, put first on PATH
 	log     string
+	env     []string // extra environment for the driver and the satelle it runs
 }
 
 const fakeSatelle = `#!/bin/sh
@@ -95,9 +96,13 @@ func (r *piRig) canDeny(verb, reason string) {
 }
 
 type piStep struct {
-	Event string         `json:"event"`
+	Event string         `json:"event,omitempty"`
 	Arg   map[string]any `json:"arg,omitempty"`
 	Ctx   map[string]any `json:"ctx,omitempty"`
+	// WaitMessages, set instead of Event, waits until that many user messages
+	// have been sent (the driver's own timeout bounds it).
+	WaitMessages *int `json:"wait_messages,omitempty"`
+	TimeoutMS    int  `json:"timeout_ms,omitempty"`
 }
 
 type piResult struct {
@@ -149,8 +154,8 @@ func (r *piRig) drive(withSatelleOnPath bool, steps ...piStep) piOut {
 	cmd := exec.CommandContext(ctx, node, "--experimental-strip-types",
 		filepath.Join("testdata", "pi_driver.mjs"),
 		filepath.Join(r.repo, filepath.FromSlash(piExtensionRel)), stepsPath)
-	cmd.Env = []string{"HOME=" + r.home, "PATH=" + pathEnv, "TMPDIR=" + r.t.TempDir(),
-		"FAKE_LOG=" + r.log, "FAKE_DIR=" + r.fakeDir}
+	cmd.Env = append([]string{"HOME=" + r.home, "PATH=" + pathEnv, "TMPDIR=" + r.t.TempDir(),
+		"FAKE_LOG=" + r.log, "FAKE_DIR=" + r.fakeDir}, r.env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
