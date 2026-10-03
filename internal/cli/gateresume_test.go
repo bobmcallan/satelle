@@ -139,7 +139,7 @@ func TestGrokSpentTurnDeliversVerdictByResume(t *testing.T) {
 	if w == nil {
 		t.Fatal("grok has no resume wake")
 	}
-	if err := runHookPromptWith(&prompt, w == nil); err != nil {
+	if err := runHookPromptWith(&prompt, w.promptCarriesGates()); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(prompt.String(), m.ID) || store.Delivered(m.ID) {
@@ -390,11 +390,20 @@ func TestNoResumeWakeForOtherHarnesses(t *testing.T) {
 			t.Errorf("event %q got a resume wake for harness %s", ev, w.harness)
 		}
 	}
-	if _, ok := agentcli.StopResumeFor(agentcli.HarnessClaude); ok {
-		t.Error("claude was given a resume path no one measured")
+	for _, h := range []string{agentcli.HarnessPi, agentcli.HarnessUnknown, "other"} {
+		if _, ok := agentcli.StopResumeFor(h); ok {
+			t.Errorf("%s was given a resume path no one measured", h)
+		}
+		if got := agentcli.StopResumeUnavailable(h); !strings.Contains(got, h) {
+			t.Errorf("unavailable reason does not name the harness: %s", got)
+		}
 	}
-	if got := agentcli.StopResumeUnavailable("claude"); !strings.Contains(got, "claude") {
-		t.Errorf("unavailable reason does not name the harness: %s", got)
+	// A watcher or hook for such a harness reports the adapter-named unavailable
+	// instead of resuming anything.
+	store := stopWakeRepo(t, "50ms")
+	err := runGateResume(store, resumeJob{Handle: "gw_x", Harness: "other", Session: "s"})
+	if err == nil || !strings.Contains(err.Error(), "unavailable: other") {
+		t.Errorf("runGateResume for an unrecognised harness = %v, want an adapter-named unavailable", err)
 	}
 }
 

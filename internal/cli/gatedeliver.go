@@ -178,15 +178,20 @@ func stillRunningNote(store *gatehandle.Store, id, unverifiedReason string) stri
 	return fmt.Sprintf("satelle: gate %s — %s — is still running after %s. End your turn to keep waiting; do not poll.", id, what, elapsed)
 }
 
-// waitForGates blocks until every id is terminal (or, once a session has been
-// told its liveness cannot be verified, no longer worth holding it for), or wait
-// passes.
+// waitForGates blocks until one of ids has finished (a Finished or Died run is a
+// verdict ready to hand over), or until none of them is worth holding the
+// session for — each is no longer running, or is a run whose liveness the
+// session was already told it cannot verify — or wait passes. A verdict that is
+// ready is delivered at once and never held behind a slower gate: the rest are
+// waited for by the next Stop (sty_7e4393fc).
 func waitForGates(store *gatehandle.Store, ids []string, wait time.Duration) {
 	deadline := time.Now().Add(wait)
 	for {
 		running := false
 		for _, id := range ids {
 			switch store.State(id) {
+			case gatehandle.Finished, gatehandle.Died:
+				return
 			case gatehandle.Running:
 				running = true
 			case gatehandle.RunningUnverified:

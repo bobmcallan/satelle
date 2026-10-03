@@ -69,7 +69,7 @@ func HarnessFactsTable() []HarnessFacts {
 			// db658341-256f-413c-ac4e-c6c48922fbf5, 2026-10-03) was overridden after
 			// 9 consecutive Stop blocks ("A hook blocked the turn from ending 9
 			// consecutive times").
-			InTurnWake:        "a Stop-block wakes the session; cap 8 (CLAUDE_CODE_STOP_HOOK_BLOCK_CAP default) — measured on claude 2.1.288: a live always-block Stop probe was overridden after 9 consecutive blocks (session db658341-256f-413c-ac4e-c6c48922fbf5, 2026-10-03)",
+			InTurnWake:        "a Stop-block wakes the session; cap 8 (CLAUDE_CODE_STOP_HOOK_BLOCK_CAP default) — measured on claude 2.1.288: a live always-block Stop probe was overridden after 9 consecutive blocks (session db658341-256f-413c-ac4e-c6c48922fbf5, 2026-10-03). Past the cap, or after a StopFailure/SessionEnd, a gate is delivered by resuming the same session with the verdict as the prompt (sty_7e4393fc)",
 			PromptContext:     yes(),
 			PromptContextNote: "delivered, and the scaffold's engaged reminder rides it",
 		},

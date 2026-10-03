@@ -1,6 +1,11 @@
 package agentcli
 
-import "strings"
+import (
+	"os"
+	"slices"
+	"strconv"
+	"strings"
+)
 
 // How a finished gate reaches a session whose turn cannot spend another Stop
 // continuation (sty_eac9b28d, epic:gate-wake). A harness that caps in-turn
@@ -19,6 +24,14 @@ type StopResume struct {
 	Argv func(session, prompt, permissionMode string) []string
 	// Basis is where the budget and the resume form were read from.
 	Basis string
+	// CapEnv, when set, names the environment variable that overrides Cap for
+	// the session the hook runs in. Hook and resume process inherit it, so the
+	// budget the hook counts against is the one the harness enforces.
+	CapEnv string
+	// KeepEnv names variables ResumeEnv keeps although they match a session
+	// marker: the resumed process is the same user's continuation of the same
+	// session, so its budget override and its credentials must carry over.
+	KeepEnv []string
 }
 
 // stopResumes lists the harnesses with a recorded resume path. A harness absent
@@ -29,6 +42,24 @@ var stopResumes = map[string]StopResume{
 		Argv:  grokResumeArgv,
 		Basis: "grok 1.0.46 binary's embedded docs: 'After 8 continuations (blocks or non-error feedback) in one turn the gate is overridden and the turn ends; hooks are not consulted for that final, forced stop. The counter is per turn: the next user prompt starts fresh', and headless 'grok -p \"…\" --resume \"<id>\"'",
 	},
+	HarnessClaude: {
+		Cap:     8,
+		CapEnv:  "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP",
+		KeepEnv: []string{"CLAUDE_CODE_STOP_HOOK_BLOCK_CAP", "CLAUDE_CODE_OAUTH_TOKEN"},
+		Argv:    claudeResumeArgv,
+		Basis:   "claude 2.1.288: CLAUDE_CODE_STOP_HOOK_BLOCK_CAP defaults to 8 and a live always-block Stop probe was overridden after 9 consecutive blocks (session db658341-256f-413c-ac4e-c6c48922fbf5, 2026-10-03); headless 'claude -p \"…\" --resume <session-id>' continues that session",
+	},
+}
+
+// claudeResumeArgv is claude's headless resume: -p carries the prompt and
+// --resume names the session, so the verdict is the next user prompt of the same
+// session. --permission-mode carries the session's own mode over.
+func claudeResumeArgv(session, prompt, permissionMode string) []string {
+	argv := []string{"claude", "-p", prompt, "--resume", session}
+	if permissionMode != "" {
+		argv = append(argv, "--permission-mode", permissionMode)
+	}
+	return argv
 }
 
 // grokResumeArgv is grok's headless resume: -p carries the prompt and --resume
@@ -44,9 +75,16 @@ func grokResumeArgv(session, prompt, permissionMode string) []string {
 }
 
 // StopResumeFor returns harness's Stop budget and resume path. ok is false for a
-// harness with none — nothing unrecognised is assumed to be grok or claude.
+// harness with none — nothing unrecognised is assumed to be grok or claude. A
+// harness that lets the environment override its cap gets the overridden Cap;
+// an unset or non-positive value leaves the recorded default.
 func StopResumeFor(harness string) (StopResume, bool) {
 	r, ok := stopResumes[harness]
+	if ok && r.CapEnv != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(os.Getenv(r.CapEnv))); err == nil && n > 0 {
+			r.Cap = n
+		}
+	}
 	return r, ok
 }
 
@@ -54,9 +92,14 @@ func StopResumeFor(harness string) (StopResume, bool) {
 // without the in-loop session markers that harness exports to its hook children,
 // so the resumed process is not mistaken for a child of the session it resumes.
 func ResumeEnv(harness string, environ []string) []string {
+	keep := stopResumes[harness].KeepEnv
 	out := make([]string, 0, len(environ))
 	for _, e := range environ {
 		key, val, _ := strings.Cut(e, "=")
+		if slices.Contains(keep, key) {
+			out = append(out, e)
+			continue
+		}
 		marked := false
 		for _, m := range sessionMarkers {
 			if m.harness != harness {

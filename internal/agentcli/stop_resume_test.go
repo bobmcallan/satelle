@@ -56,7 +56,7 @@ func TestStopResumeIsRecordedForGrokOnly(t *testing.T) {
 	if !ok || r.Cap != 8 || r.Basis == "" {
 		t.Fatalf("grok: %+v ok=%v", r, ok)
 	}
-	for _, h := range []string{HarnessClaude, HarnessPi, HarnessUnknown, "", "other"} {
+	for _, h := range []string{HarnessPi, HarnessUnknown, "", "other"} {
 		if _, ok := StopResumeFor(h); ok {
 			t.Errorf("%q was given a resume path nobody recorded", h)
 		}
@@ -64,8 +64,52 @@ func TestStopResumeIsRecordedForGrokOnly(t *testing.T) {
 			t.Errorf("%q: reason %q is not an explicit unavailable", h, got)
 		}
 	}
-	if got := StopResumeUnavailable("claude"); !strings.Contains(got, "claude") {
+	if got := StopResumeUnavailable("other"); !strings.Contains(got, "other") {
 		t.Errorf("reason does not name the harness: %s", got)
+	}
+}
+
+// claude records its own budget and resume form beside grok's (sty_7e4393fc).
+func TestClaudeStopResumeIsRecorded(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_STOP_HOOK_BLOCK_CAP", "")
+	r, ok := StopResumeFor(HarnessClaude)
+	if !ok || r.Cap != 8 || r.Basis == "" {
+		t.Fatalf("claude: %+v ok=%v", r, ok)
+	}
+	if got, want := r.Argv("sid", "the verdict", ""), []string{"claude", "-p", "the verdict", "--resume", "sid"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("argv = %q, want %q", got, want)
+	}
+	if got, want := r.Argv("sid", "p", "acceptEdits"), []string{"claude", "-p", "p", "--resume", "sid", "--permission-mode", "acceptEdits"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("argv = %q, want %q", got, want)
+	}
+}
+
+// The cap follows the environment the harness enforces it from, so a low cap
+// set for a dogfood is the one the hook counts against; junk leaves the default.
+func TestClaudeStopCapFollowsTheEnvironment(t *testing.T) {
+	for _, c := range []struct {
+		env  string
+		want int
+	}{{"2", 2}, {" 3 ", 3}, {"", 8}, {"0", 8}, {"-1", 8}, {"many", 8}} {
+		t.Setenv("CLAUDE_CODE_STOP_HOOK_BLOCK_CAP", c.env)
+		if r, _ := StopResumeFor(HarnessClaude); r.Cap != c.want {
+			t.Errorf("cap with %q = %d, want %d", c.env, r.Cap, c.want)
+		}
+	}
+	t.Setenv("CLAUDE_CODE_STOP_HOOK_BLOCK_CAP", "2")
+	if r, _ := StopResumeFor(HarnessGrok); r.Cap != 8 {
+		t.Errorf("grok cap = %d: claude's override leaked", r.Cap)
+	}
+}
+
+// The resumed claude is not mistaken for a child of the session it resumes, but
+// keeps its budget override and its credentials.
+func TestClaudeResumeEnvKeepsBudgetAndCredentials(t *testing.T) {
+	env := []string{"PATH=/usr/bin", "CLAUDECODE=1", "CLAUDE_CODE_ENTRYPOINT=cli", "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=2", "CLAUDE_CODE_OAUTH_TOKEN=t", "GROK_AGENT=1"}
+	got := ResumeEnv(HarnessClaude, env)
+	want := []string{"PATH=/usr/bin", "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=2", "CLAUDE_CODE_OAUTH_TOKEN=t", "GROK_AGENT=1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("env = %q, want %q", got, want)
 	}
 }
 

@@ -37,7 +37,7 @@ func TestIncompleteHookEvents_PerHarness(t *testing.T) {
 	if err := os.WriteFile(truncated, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{"PreToolUse": true, "UserPromptSubmit": true, "Stop": true}
+	want := map[string]bool{"PreToolUse": true, "UserPromptSubmit": true, "Stop": true, "StopFailure": true, "SessionEnd": true}
 	missing := incompleteHookEvents(truncated, "claude")
 	if len(missing) != len(want) {
 		t.Fatalf("truncated claude file: missing=%v, want %v", missing, want)

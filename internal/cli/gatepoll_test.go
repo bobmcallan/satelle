@@ -119,6 +119,7 @@ func TestOnlyDeliveryAndReplayReadAHandle(t *testing.T) {
 		filepath.Join("internal", "cli", "gatedeliver.go"):       true,
 		filepath.Join("internal", "cli", "gateresume.go"):        true,
 		filepath.Join("internal", "cli", "gateresume_test.go"):   true,
+		filepath.Join("internal", "cli", "gateclaude_test.go"):   true,
 		filepath.Join("internal", "cli", "gatecaller_test.go"):   true,
 		filepath.Join("internal", "cli", "gatepoll_test.go"):     true,
 		filepath.Join("internal", "cli", "gateverdict_test.go"):  true,

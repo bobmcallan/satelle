@@ -137,6 +137,31 @@ func (w *resumeWake) settle() {
 	}
 }
 
+// promptCarriesGates reports whether the prompt hook may put a finished gate's
+// verdict in front of the model: a harness with no resume wake always does, and
+// one with a wake does only where the harness delivers the prompt hook's
+// additionalContext (a harness that discards it would lose a verdict claimed
+// there, so its verdict stays for the resume).
+func (w *resumeWake) promptCarriesGates() bool {
+	return w == nil || agentcli.FactsFor(w.harness).PromptContext.Available
+}
+
+// closeTurn records that the harness ended the session's turn on its own — a
+// failed turn, or the session itself — and hands every gate of the session that
+// is still undelivered to a watcher: no Stop hook will run for it, so the resume
+// is the only route left, and it waits for the gate to finish.
+func (w *resumeWake) closeTurn() {
+	if w == nil {
+		return
+	}
+	w.store.CloseTurn(w.session)
+	for _, id := range w.store.Undelivered() {
+		if m, err := w.store.Meta(id); err == nil && ownsGate(w.owner, m) {
+			w.arm(id, w.store.Observe(id))
+		}
+	}
+}
+
 // spent reports whether this turn can spend no more Stop continuations.
 func (w *resumeWake) spent() bool { return w != nil && w.count >= w.res.Cap }
 

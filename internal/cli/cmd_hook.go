@@ -369,7 +369,7 @@ additionalContext envelope for both harnesses (AC7 finding on sty_e16a2cd7).`,
 			// here (sty_eac9b28d).
 			w := resumeWakeFor(raw)
 			w.newTurn()
-			return runHookPromptWith(cmd.OutOrStdout(), w == nil)
+			return runHookPromptWith(cmd.OutOrStdout(), w.promptCarriesGates())
 		},
 	}
 	stopcheck := &cobra.Command{
@@ -399,6 +399,27 @@ session holds the seat.`,
 		},
 	}
 
+	turnend := &cobra.Command{
+		Use:    "turnend",
+		Hidden: true,
+		Short:  "StopFailure / SessionEnd handler — record that the harness ended the turn on its own",
+		Long: `turnend is the handler for the events a harness fires when it ends a turn
+without a Stop hook: a turn that failed (StopFailure) or the session itself
+(SessionEnd). It records the turn as closed and hands every gate of the session
+that is still undelivered to the resume watcher, which waits for it to finish
+and resumes the same session with the verdict. It prints nothing and never
+blocks: neither event can be continued. A harness with no resume path, and a
+dispatched process, are left alone.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			raw, _ := io.ReadAll(cmd.InOrStdin())
+			_ = bindSessionID(raw)
+			resumeWakeFor(raw).closeTurn()
+			return nil
+		},
+	}
+	turnend.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi —the harness that fired the event (default: sniff event)")
+
 	// Explicit harness for deny shape (sty_9e86f407): wrapper forwards
 	// --harness claude|grok|pi; empty falls back to harnessFromEvent. pi takes the
 	// claude deny envelope (emitPreToolUseDeny gives every non-grok harness that).
@@ -421,7 +442,7 @@ It does not touch the engagement seat. A denied agent can run it to see why.`,
 	}
 	explain.Flags().String("payload", "", "PreToolUse JSON file (`-` reads stdin)")
 	_ = explain.MarkFlagRequired("payload")
-	hook.AddCommand(context, gate, commitgate, prompt, stopcheck, explain, newHookResumeCommand())
+	hook.AddCommand(context, gate, commitgate, prompt, stopcheck, turnend, explain, newHookResumeCommand())
 	register(hook)
 }
 

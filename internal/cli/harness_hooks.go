@@ -27,6 +27,17 @@ type harnessHookSpec struct {
 	gateMatcher   string
 	commitMatcher string
 	events        []string
+	// turnEndEvents are the events a harness fires when it ends a turn or its
+	// session without a Stop hook (sty_7e4393fc): the scaffold wires `satelle
+	// hook turnend` to each so a gate still owed to that session is resumed. Empty
+	// for a harness that fires none.
+	turnEndEvents []string
+}
+
+// turnEndHookCommand is the command wired to a harness's turnEndEvents. It names
+// its harness, since the payload of these events carries no tool to sniff.
+func turnEndHookCommand(harness string) string {
+	return "PATH=$HOME/.local/bin:$PATH satelle hook turnend --harness " + harness
 }
 
 // hasEvent reports whether this harness's scaffold installs the named event.
@@ -65,6 +76,7 @@ func harnessHooks(harness string) harnessHookSpec {
 			gateMatcher:   "Edit|Write|MultiEdit|NotebookEdit",
 			commitMatcher: "Bash",
 			events:        fullHookEvents,
+			turnEndEvents: []string{"StopFailure", "SessionEnd"},
 		}
 	}
 }
