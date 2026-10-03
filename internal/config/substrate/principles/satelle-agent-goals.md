@@ -3,7 +3,7 @@ name: satelle-agent-goals
 type: principle
 tags: [type:principle, principles:session]
 applies_to: ["*"]
-description: Drive a story to the terminal state of its configured workflow with every gate accepted. Status is the sole proof of done. Never route around a gate; surface a gap and stop. One story at a time.
+description: Drive a story to the terminal state of its configured workflow with every gate accepted. Status is the sole proof of done. Never route around a gate; surface a gap and stop. One story at a time unless the container declares a schedule; then the wave says who may start.
 ---
 
 # Agent goals
@@ -25,15 +25,40 @@ is authorised *by* the workflow; it is never a "block", even when it builds,
 deploys, or mutates local state. A block is only a gap that *prevents* following
 the workflow, not a normal step on its path.
 
-**One story at a time.** Drive a single engaged story to its terminal state
-before engaging another.
+**One story at a time — when the container declares no schedule.** Drive a
+single engaged story to its terminal state before engaging another. This is not
+the rule once a container declares a schedule; see *Driving an epic* below.
 
 **Epics close on their children.** An epic (an `epic-parent`/parent container)
 is complete only when every child story is terminal; who the children are is
 defined once, in [[satelle-story-classification]]. Keep driving the
-children, one at a time, until the container can close. Intermediate stages
+children until the container can close: one at a time when no schedule is
+declared, and as *Driving an epic* says when one is. Intermediate stages
 (plan, in_progress, integration, release, and so on) are waypoints, never a
 point to hand back control.
+
+## Driving an epic
+
+**Drive epic `<id>` to ready** walks only the container to ready. It does not
+engage children.
+
+**Drive epic `<id>` to done** requires the container at its waiting step. Each
+call to `satelle story wave <id>` returns the set that may be engaged. Drive each
+child on its own category workflow to its own terminal state. Close the container
+only after the wave is empty because every child is terminal.
+
+When `satelle story wave` exits non-zero, that is a **stop**: surface the reason
+it printed. A wave that exits zero and names children is not a stop — drive
+those children. Do not pick a child by `order:`, by the sprint, or by title —
+`satelle story wave` is the only answer to who may start.
+
+A parallel wave is one worktree per child, and same-tree engagement is refused.
+You open the worktrees; satelle neither opens them nor spawns the sessions.
+Cut an independent child from the epic base, the branch the container was
+engaged on. Cut a child whose `depends-on`
+target is done from that target's branch, not from main, so the dependent tree
+holds the change it was written against. A cancelled dependency is a stop: cut
+no worktree from it and do not retarget the edge yourself.
 
 ## When an engaged story cannot satisfy its ACs
 

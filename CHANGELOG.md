@@ -1,3 +1,13 @@
+## [0.0.601] - 2026-10-03
+
+### Changed
+- **The driving session is told how to drive an epic to ready and to done.** Ready walks only the container. Done follows `satelle story wave` and stops when that command exits non-zero. One story at a time remains the rule only when no schedule is declared. A parallel inject names one worktree per child. An independent child is cut from the branch the container was engaged on; a dependent child is cut from the done dependency's branch. A cancelled dependency is a stop. (sty_4aefd2a9)
+
+## [serve-v0.0.116] - 2026-10-03
+
+### Changed
+- **The published serve binary ships the same drive-an-epic principle the CLI injects.** The web UI does not drive epics. (sty_4aefd2a9)
+
 ## [0.0.600] - 2026-10-03
 
 ### Added

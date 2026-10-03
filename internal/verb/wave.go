@@ -156,6 +156,21 @@ func waveSchedule(spec wfdot.Spec, status string) (string, error) {
 	return "", errNoUsableSchedule{fmt.Sprintf("the container's route declares more than one schedule (%s) and its status %q selects none", strings.Join(vals, ", "), status)}
 }
 
+// ContainerSchedule is the child schedule an epic-parent's route declares, or ""
+// when it declares no single one. Read-only mechanism for callers outside this
+// package that must name the active schedule without deriving a wave.
+func ContainerSchedule(wfs []docindex.Doc, container workitem.Item) string {
+	spec, _, _, err := wfgovern.SpecFor(wfs, container)
+	if err != nil {
+		return ""
+	}
+	schedule, err := waveSchedule(spec, container.Status)
+	if err != nil {
+		return ""
+	}
+	return schedule
+}
+
 // storyWave assesses an epic-parent's children. It reads the store and the
 // workflow index and writes nothing: no status, no lease, no tag, no dispatch.
 func storyWave(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {

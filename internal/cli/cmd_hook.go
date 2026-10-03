@@ -40,6 +40,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/docstory"
+	"github.com/bobmcallan/satelle/internal/epicset"
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -1172,6 +1173,49 @@ func seatModeLine(mode string) string {
 		return "seat mode: epic — a sibling under the SAME parent may engage alongside the holder, from a DISTINCT git working tree; a story under another parent (or none) is refused while that seat is held."
 	}
 	return "seat mode: none — one performing story at a time."
+}
+
+// scheduleLine names the declared child schedule of an epic container and the
+// command that answers who may start. It formats a string only: it never reads
+// children, never derives a wave and never names a child — which child starts is
+// `satelle story wave`'s answer, not this line's. The worktree clause is stated
+// only for the parallel schedule, where it applies.
+func scheduleLine(id, schedule string) string {
+	if schedule == "" {
+		return ""
+	}
+	line := fmt.Sprintf("epic %s schedule: %s — the set that may be engaged is `satelle story wave %s`; a non-zero wave is a stop, not a licence to choose a child.", id, schedule, id)
+	if schedule == wfdot.SchedParallel {
+		line += " A parallel wave is one worktree per child; same-tree engagement is refused."
+	}
+	return line
+}
+
+// seatScheduleLines names the schedule of every scheduled epic container in
+// context: a seat holder that is itself an epic-parent, or whose parent is one.
+// Silent (empty) when no such container declares a schedule, so an unscheduled
+// repo gains no drive-epic text.
+func seatScheduleLines(holders []string, items []workitem.Item, wfs []docindex.Doc) string {
+	byID := make(map[string]workitem.Item, len(items))
+	for _, it := range items {
+		byID[it.ID] = it
+	}
+	seen := map[string]bool{}
+	var lines []string
+	for _, id := range holders {
+		c, ok := byID[id]
+		if ok && !epicset.IsEpicParent(c) {
+			c, ok = byID[c.ParentID]
+		}
+		if !ok || !epicset.IsEpicParent(c) || seen[c.ID] {
+			continue
+		}
+		seen[c.ID] = true
+		if l := scheduleLine(c.ID, verb.ContainerSchedule(wfs, c)); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // formatSeatBlock is the SessionStart / prompt multi-line seat inject body.
@@ -2335,7 +2379,15 @@ func sessionSeatBlock(a *app.App) string {
 	// render them ALL — an operator joining a project where work is in flight
 	// under a shared key must see every holder, not just one.
 	if len(live) > 0 {
-		return renderSeatBlocks(live, now, mode)
+		holders := make([]string, 0, len(live))
+		for _, s := range live {
+			holders = append(holders, s.ItemID)
+		}
+		block := renderSeatBlocks(live, now, mode)
+		if sched := seatScheduleLines(holders, items, wfs); sched != "" {
+			block += "\n\n" + sched
+		}
+		return block
 	}
 	info := other
 	// No evaluateSeat pick (e.g. empty items+wfs): still name the first raw row.
