@@ -303,6 +303,13 @@ func handOffGate(cmd *cobra.Command, verbName, storyID string) (handled bool, er
 	done := make(chan struct{})
 	go func() { _ = child.Wait(); close(done) }()
 
+	// The handle is going back to the driver unfinished: a harness that cannot
+	// wake the session in-turn is handed a watcher here, in the driver's own
+	// call, since no later hook is certain to run (armResumeForPending).
+	pending := func() error {
+		armResumeForPending(store, meta)
+		return printPending(cmd, meta)
+	}
 	deadline := time.NewTimer(gateWaitBound(a.RepoRoot))
 	defer deadline.Stop()
 	tick := time.NewTicker(50 * time.Millisecond)
@@ -320,11 +327,11 @@ func handOffGate(cmd *cobra.Command, verbName, storyID string) (handled bool, er
 			if v, ok := store.Load(meta.ID); ok {
 				return true, replayGate(cmd, store, v)
 			}
-			return true, printPending(cmd, meta)
+			return true, pending()
 		case <-deadline.C:
-			return true, printPending(cmd, meta)
+			return true, pending()
 		case <-cmd.Context().Done():
-			return true, printPending(cmd, meta)
+			return true, pending()
 		case <-tick.C:
 		}
 	}

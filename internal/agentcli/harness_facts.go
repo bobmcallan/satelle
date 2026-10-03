@@ -86,7 +86,7 @@ func HarnessFactsTable() []HarnessFacts {
 			// Measurement: the grok binary's stop_gate.rs notes and its porting
 			// list (grok 1.0.41 observed). A Stop-block and a non-error Stop
 			// feedback each count as a continuation.
-			InTurnWake:    "cap 8 continuations (a Stop-block and a non-error Stop feedback each count); after 8 the gate is overridden, hooks are not consulted and the turn ends; the counter resets on the next user prompt — measured from grok's stop_gate.rs notes and porting list",
+			InTurnWake:    "cap 8 continuations (a Stop-block and a non-error Stop feedback each count); after 8 the gate is overridden, hooks are not consulted and the turn ends; the counter resets on the next user prompt — measured from grok's stop_gate.rs notes and porting list. Past the cap a gate is delivered by resuming the same session with the verdict as the prompt (sty_eac9b28d)",
 			PromptContext: no("grok: UserPromptSubmit additionalContext is discarded"),
 		},
 		{

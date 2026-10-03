@@ -155,6 +155,7 @@ workflow body declaring no route blocks the edit (sty_f3d5d4b8).`,
 			// (not resolveSeat) so a marked relay coder can name a live seat the
 			// session did not bind (sty_7567f047 AC5).
 			sid := bindSessionID(raw)
+			resumeWakeFor(raw).activity() // a tool call: the session is mid-turn
 			info, engaged, live, engErr := resolveSeats(true, sid)
 			p := filePathFromEvent(raw)
 			command := bashCommandFromEvent(raw)
@@ -261,6 +262,7 @@ behaviour exactly as above — opt-in, not a satelle default.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
+			resumeWakeFor(raw).activity() // a tool call: the session is mid-turn
 			command := bashCommandFromEvent(raw)
 			// Containment BEFORE the engaged-story branch: a foreign-tree mutation
 			// is wrong even with a story engaged (sty_aadd4d6c / sty_a8454d10).
@@ -362,7 +364,12 @@ additionalContext envelope for both harnesses (AC7 finding on sty_e16a2cd7).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
 			_ = bindSessionID(raw)
-			return runHookPrompt(cmd.OutOrStdout())
+			// A user prompt starts a fresh Stop-continuation count, and for a
+			// harness that discards this hook's context the verdict is not put
+			// here (sty_eac9b28d).
+			w := resumeWakeFor(raw)
+			w.newTurn()
+			return runHookPromptWith(cmd.OutOrStdout(), w == nil)
 		},
 	}
 	stopcheck := &cobra.Command{
@@ -414,7 +421,7 @@ It does not touch the engagement seat. A denied agent can run it to see why.`,
 	}
 	explain.Flags().String("payload", "", "PreToolUse JSON file (`-` reads stdin)")
 	_ = explain.MarkFlagRequired("payload")
-	hook.AddCommand(context, gate, commitgate, prompt, stopcheck, explain)
+	hook.AddCommand(context, gate, commitgate, prompt, stopcheck, explain, newHookResumeCommand())
 	register(hook)
 }
 
@@ -2815,6 +2822,14 @@ func formatEngagedPrompt(info seatInfo, now time.Time) string {
 // is appended as before (sty_1738f973 AC6). Fails open — a resolve/read failure
 // injects only the reminder.
 func runHookPrompt(out io.Writer) error {
+	return runHookPromptWith(out, true)
+}
+
+// runHookPromptWith is runHookPrompt that can leave a finished gate unclaimed.
+// A harness whose resume wake owns delivery (resumeWakeFor) discards this hook's
+// additionalContext, so claiming a verdict here would lose it: it stays for the
+// resume (sty_eac9b28d).
+func runHookPromptWith(out io.Writer, gatesInContext bool) error {
 	body := hookPromptReminder
 	now := time.Now().UTC()
 	// Seat + heartbeat: fail-open (resolve error leaves the static reminder;
@@ -2843,8 +2858,10 @@ func runHookPrompt(out io.Writer) error {
 	}
 	// A gate that finished between turns (sty_c4b92c9e): put its verdict in front
 	// of the model with this prompt. No waiting — the Stop hook owns the wait.
-	if verdicts := gateDeliveryFor(0); verdicts != "" {
-		body += "\n\n" + verdicts
+	if gatesInContext {
+		if verdicts := gateDeliveryFor(0); verdicts != "" {
+			body += "\n\n" + verdicts
+		}
 	}
 	return emitAdditionalContext(out, "UserPromptSubmit", "", body)
 }
@@ -2881,8 +2898,20 @@ func runHookStopcheck(raw []byte, out io.Writer) error {
 	// SATELLE_SESSION, so the handle it would wait on is the very gate that is
 	// waiting for it to exit — a cycle only idle_timeout ends. The driving
 	// session, which is not dispatched, still waits.
+	//
+	// A harness that caps the continuations of a turn (resumeWakeFor) is woken by
+	// resuming its session instead of by a note it would count: see resumeWake.
+	var wake *resumeWake
+	defer func() { wake.settle() }()
 	if !isDispatchedProcess() {
-		if text := stopGateDeliveryFor(stopGateWait()); text != "" {
+		if wake = resumeWakeFor(raw); wake != nil {
+			if text := wake.stop(raw); text != "" {
+				return wake.block(out, text)
+			}
+			if wake.spent() {
+				return nil // the turn ends on its own; nothing more can be said
+			}
+		} else if text := stopGateDeliveryFor(stopGateWait()); text != "" {
 			return emitStopBlock(out, text)
 		}
 	}
@@ -2906,9 +2935,9 @@ func runHookStopcheck(raw []byte, out io.Writer) error {
 		return nil // git absent / clean / only exempt (.satelle) changes — nothing to flag
 	}
 	if other.ItemID != "" {
-		return emitStopNote(out, stopcheckSiblingNote(other, extra, gated, time.Now().UTC()))
+		return wake.note(out, stopcheckSiblingNote(other, extra, gated, time.Now().UTC()))
 	}
-	return emitStopBlock(out, stopcheckReason(gated))
+	return wake.block(out, stopcheckReason(gated))
 }
 
 // repoRootForHook resolves this repo's root from the committed config, or
