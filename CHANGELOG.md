@@ -1,3 +1,21 @@
+## [0.0.606] - 2026-10-03
+
+### Fixed
+- **A finished gate's verdict reaches the session that started it, exactly once, on claude, grok, and pi.** This closes epic:gate-wake. (sty_fbf45a3f)
+  - Each harness records its gate-wake budget and catch-up channel in its adapter's facts row. (sty_3a2d3b7e)
+  - **grok:** past the eight-continuation Stop cap, a verdict reaches the same session by resuming it with the verdict as the prompt. It no longer waits for a ninth Stop-block that grok never consults. (sty_eac9b28d)
+  - **claude:** the Stop hook delivers a gate as soon as it finishes, not held until every other running gate is done. Past claude's Stop block cap (CLAUDE_CODE_STOP_HOOK_BLOCK_CAP, default 8), the verdict arrives as the prompt of a resumed turn in the same session (`claude -p --resume`). StopFailure and SessionEnd close the turn, so a cut-off turn still gets its verdict. (sty_7e4393fc, supersedes sty_c35690d3)
+  - **pi:** a pi session is told a gate's verdict once and is no longer re-prompted while the gate runs. The stop waits once, up to its bound. A gate still running is named as pending, and the extension sends the verdict as one user message when it finishes. A non-interactive pi run that exits on settle records a pi-named limitation on each undelivered gate, leaving it for the next session's prompt. (sty_7ebeda10)
+  - **Cross-repo:** a gate started by a session in one repo, acting on another repo, is now delivered by the session's own repo hooks, not left unclaimed in the other repo's store. (sty_8f10499d)
+
+### Changed
+- Run `satelle init` in each repo to deploy the new claude StopFailure/SessionEnd hooks and the updated pi extension. Until then, those repos keep the previous delivery behaviour. (sty_7e4393fc, sty_7ebeda10)
+
+## [serve-v0.0.119] - 2026-10-03
+
+### Changed
+- **The published serve binary includes the gate-wake delivery changes.** The gate handle store, session resolution, and help topic sit on the serve dependency path, so this release bumps satelled.version. (sty_fbf45a3f)
+
 ## [0.0.605] - 2026-10-03
 
 ### Changed
