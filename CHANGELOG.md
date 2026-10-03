@@ -1,3 +1,13 @@
+## [0.0.598] - 2026-10-03
+
+### Fixed
+- **A container waiting on open children does not hold the engagement lease.** Entering a `waits_on_children` status releases any story-seat row for the container, so one child can engage from that worktree. A second child in the same tree is still refused. When every child is terminal, the container's next performing step acquires a lease again. Ordinary stories are unchanged. (sty_56648ae5)
+
+## [serve-v0.0.113] - 2026-10-03
+
+### Fixed
+- **The service uses the same waiting-container rule as the CLI.** A container idling on open children is not treated as holding the story seat. (sty_56648ae5)
+
 ## [0.0.597] - 2026-10-03
 
 ### Added

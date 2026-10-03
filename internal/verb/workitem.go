@@ -833,7 +833,11 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		// Engaging (or other non-exit) commit: settle lease state + clear in_flight.
 		engaging, ok := storyStatusIsEngaging(ctx, it, *req.Status)
 		if ok && engaging {
-			confirmEngagementLease(ctx, it.ID, *req.Status)
+			// A container waiting on open children took no lease
+			// (acquireEngagementLease, sty_56648ae5): there is no row to confirm.
+			if !waitsOnOpenChildrenAt(ctx, it, *req.Status) {
+				confirmEngagementLease(ctx, it.ID, *req.Status)
+			}
 			settled = true
 		} else {
 			// Non-engaging, non-exit target after a lease was claimed for an

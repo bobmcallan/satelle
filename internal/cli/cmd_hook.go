@@ -40,7 +40,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/docstory"
-	"github.com/bobmcallan/satelle/internal/epicset"
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -1099,20 +1098,7 @@ func dispatchedPerformerPermitted(info seatInfo, binding string) bool {
 // counts as performing, exactly as it did before this rule. Which step waits is
 // the route's declaration; no status or category name appears here.
 func waitsOnOpenChildren(it workitem.Item, status string, spec wfdot.Spec, items []workitem.Item, wfs []docindex.Doc) bool {
-	if !spec.WaitsOnChildren(status) {
-		return false
-	}
-	// Membership is epicset's: an epic-parent's members are its tag set, any
-	// other container's are its parent_id links (sty_9f4f8e12). An epic whose
-	// set cannot be fixed holds no members here — the close itself refuses it.
-	members, _ := epicset.MembersFromItems(items, it)
-	for _, c := range members {
-		if resolved, known := wfgovern.ChildResolved(wfs, c); !known || resolved {
-			continue
-		}
-		return true
-	}
-	return false
+	return wfgovern.WaitsOnOpenChildren(it, status, spec, items, wfs)
 }
 
 func dispatchAgents(spec wfdot.Spec) map[string][]string {

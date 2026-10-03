@@ -33,6 +33,16 @@ func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatu
 	if !engaging {
 		return false, false, nil
 	}
+	// A container idling at a waits_on_children step performs nothing, so it
+	// holds no seat (sty_56648ae5): its children engage from the driving tree.
+	// Release any seat the prior performing step left (this transition may be
+	// the one that finds it). Never acquiring keeps acquiredThisCall false, so
+	// release-on-abort is untouched. The create-path probe (no id, no children
+	// yet) never reaches this.
+	if item.ID != "" && waitsOnOpenChildrenAt(ctx, item, targetStatus) {
+		forceReleaseEngagementLease(ctx, item.ID)
+		return false, false, nil
+	}
 	ls, err := requireLease()
 	if err != nil {
 		// Lease store not wired (tests that only need status): fall back to the
