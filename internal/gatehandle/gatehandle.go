@@ -71,6 +71,13 @@ type Meta struct {
 	// Session is the driving session's identity when one is resolvable: a
 	// delivery hook tells a session about its own runs, never a sibling's.
 	Session string `json:"session,omitempty"`
+	// ServeRoot is the repo whose hooks serve Session, set only when that is not
+	// the repo this handle lives in: a session anchored in one repo that ran a
+	// gate against another (sty_8f10499d). Repo is the repo the handle lives in,
+	// set with it, so a delivery can reach that repo's ledger. Both empty is the
+	// ordinary case — the handle is served by the repo that holds it.
+	ServeRoot string `json:"serve_root,omitempty"`
+	Repo      string `json:"repo,omitempty"`
 }
 
 // Result is how the run ended.
@@ -102,14 +109,19 @@ const (
 
 // Store is the handles directory of one repo's runtime plane.
 type Store struct {
-	dir string
+	dir     string
+	runtime string
 }
 
 // New returns the store rooted at <runtimeDir>/gates. Nothing is created until
 // the first Create.
 func New(runtimeDir string) *Store {
-	return &Store{dir: filepath.Join(runtimeDir, "gates")}
+	return &Store{dir: filepath.Join(runtimeDir, "gates"), runtime: runtimeDir}
 }
+
+// RuntimeDir is the runtime directory the store was opened on: what a watcher
+// started for one of its handles is given to find the store again.
+func (s *Store) RuntimeDir() string { return s.runtime }
 
 // NewID mints a handle id.
 func NewID() string {

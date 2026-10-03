@@ -581,6 +581,7 @@ func bindSessionID(raw []byte) string {
 		config.PublishSession(id)
 		if !dispatched {
 			publishInLoopModel(raw, id)
+			publishServeRoot(id)
 		}
 		return id
 	}
@@ -588,6 +589,7 @@ func bindSessionID(raw []byte) string {
 		config.PublishSession(id)
 		if !dispatched {
 			publishInLoopModel(raw, id)
+			publishServeRoot(id)
 		}
 		return id
 	}
@@ -1437,10 +1439,11 @@ func sessionAnchor() string {
 	return anchorFrom(os.Getenv, cfgRoot)
 }
 
-// anchorFrom is the pure resolver for sessionAnchor. getenv is injected for tests.
-// An env pin wins over cfgRoot because config.Load walks up from CWD and is not
-// trustworthy alone once a persistent shell has cd'd.
-func anchorFrom(getenv func(string) string, cfgRoot string) string {
+// anchorFromEnv is the env-pinned part of the anchor, "" when no pin is set. It
+// is the one answer to "which repo is this session anchored in", independent of
+// the working directory: a gate hand-off uses it to tell the repo whose hooks
+// serve the session from the repo the command happens to act on (sty_8f10499d).
+func anchorFromEnv(getenv func(string) string) string {
 	for _, key := range []string{"SATELLE_PROJECT_DIR", "CLAUDE_PROJECT_DIR"} {
 		if p := strings.TrimSpace(getenv(key)); p != "" {
 			if abs, err := filepath.Abs(p); err == nil {
@@ -1448,6 +1451,16 @@ func anchorFrom(getenv func(string) string, cfgRoot string) string {
 			}
 			return filepath.Clean(p)
 		}
+	}
+	return ""
+}
+
+// anchorFrom is the pure resolver for sessionAnchor. getenv is injected for tests.
+// An env pin wins over cfgRoot because config.Load walks up from CWD and is not
+// trustworthy alone once a persistent shell has cd'd.
+func anchorFrom(getenv func(string) string, cfgRoot string) string {
+	if p := anchorFromEnv(getenv); p != "" {
+		return p
 	}
 	if strings.TrimSpace(cfgRoot) == "" {
 		return ""

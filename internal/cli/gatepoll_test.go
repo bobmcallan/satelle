@@ -114,10 +114,14 @@ func TestNoSurfaceLetsTheDriverPollAHandle(t *testing.T) {
 // first step toward a status command.
 func TestOnlyDeliveryAndReplayReadAHandle(t *testing.T) {
 	allowed := map[string]bool{
-		filepath.Join("internal", "gatehandle"):                  true,
-		filepath.Join("internal", "cli", "gatecaller.go"):        true,
-		filepath.Join("internal", "cli", "gatedeliver.go"):       true,
-		filepath.Join("internal", "cli", "gateresume.go"):        true,
+		filepath.Join("internal", "gatehandle"):            true,
+		filepath.Join("internal", "cli", "gatecaller.go"):  true,
+		filepath.Join("internal", "cli", "gatedeliver.go"): true,
+		filepath.Join("internal", "cli", "gateresume.go"):  true,
+		// Where delivery looks for a session's handles across repos (sty_8f10499d):
+		// it lists and claims for the hooks and the watcher, and answers no caller.
+		filepath.Join("internal", "cli", "gatexrepo.go"):         true,
+		filepath.Join("internal", "cli", "gatexrepo_test.go"):    true,
 		filepath.Join("internal", "cli", "gateresume_test.go"):   true,
 		filepath.Join("internal", "cli", "gateclaude_test.go"):   true,
 		filepath.Join("internal", "cli", "gatecaller_test.go"):   true,

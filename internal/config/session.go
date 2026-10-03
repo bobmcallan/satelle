@@ -110,6 +110,37 @@ func sessionModelDir() string {
 	return filepath.Join(sessionPublishDir(), "models")
 }
 
+// PublishSessionRoot records, for sessionID, the repo root whose hooks serve it
+// (sty_8f10499d, epic:gate-wake). A hook publishes it each time it fires; a
+// satelle command that acts on another repo reads it back to find the repo its
+// own session is served from, which the command's environment and working
+// directory cannot say. Written only when it changed.
+func PublishSessionRoot(sessionID, root string) {
+	sessionID, root = strings.TrimSpace(sessionID), strings.TrimSpace(root)
+	if sessionID == "" || root == "" || PublishedSessionRoot(sessionID) == root {
+		return
+	}
+	dir := sessionPublishDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(dir, "root."+sessionID), []byte(root+"\n"), 0o600)
+}
+
+// PublishedSessionRoot reads back what PublishSessionRoot recorded ("" when no
+// hook has spoken for the session).
+func PublishedSessionRoot(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(sessionPublishDir(), "root."+sessionID))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
 func sessionPublishDir() string {
 	if h := strings.TrimSpace(os.Getenv("SATELLE_HOME")); h != "" {
 		return filepath.Join(h, "sessions")

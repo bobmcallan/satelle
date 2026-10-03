@@ -25,8 +25,13 @@ import (
 const turnsDir = ".turns"
 
 func (s *Store) turnPath(session, suffix string) string {
+	return filepath.Join(s.dir, turnsDir, sessionKey(session)+"."+suffix)
+}
+
+// sessionKey is the file-name-safe form of a session identity.
+func sessionKey(session string) string {
 	sum := sha256.Sum256([]byte(session))
-	return filepath.Join(s.dir, turnsDir, hex.EncodeToString(sum[:8])+"."+suffix)
+	return hex.EncodeToString(sum[:8])
 }
 
 // StopCount is how many Stop emissions the session's current turn has spent.

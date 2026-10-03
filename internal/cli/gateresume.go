@@ -155,11 +155,15 @@ func (w *resumeWake) closeTurn() {
 		return
 	}
 	w.store.CloseTurn(w.session)
-	for _, id := range w.store.Undelivered() {
-		if m, err := w.store.Meta(id); err == nil && ownsGate(w.owner, m) {
-			w.arm(id, w.store.Observe(id))
-		}
+	for _, g := range w.ownedGates() {
+		w.arm(g.store, g.id, g.store.Observe(g.id))
 	}
+}
+
+// ownedGates is every undelivered run of the session, in whichever store holds
+// it. The wake's own store is the turn plane; the runs are the handle plane.
+func (w *resumeWake) ownedGates() []gateRef {
+	return ownedGates(handleStoresFor(w.store, w.owner), w.owner)
 }
 
 // spent reports whether this turn can spend no more Stop continuations.
@@ -193,33 +197,28 @@ func (w *resumeWake) stop(raw []byte) string {
 	if !stopHookActive(raw) {
 		w.newTurn() // the first Stop of a turn: the count restarts
 	}
-	var mine []string
-	for _, id := range w.store.Undelivered() {
-		if m, err := w.store.Meta(id); err == nil && ownsGate(w.owner, m) {
-			mine = append(mine, id)
-		}
-	}
+	mine := w.ownedGates()
 	if len(mine) == 0 {
 		return ""
 	}
 	spent := w.spent()
 	if !spent {
-		waitForGates(w.store, mine, stopGateWait())
+		waitForGates(mine, stopGateWait())
 	}
 	var blocks []string
 	var delivered []gatehandle.Meta
-	for _, id := range mine {
-		o := w.store.Observe(id)
+	for _, g := range mine {
+		o := g.store.Observe(g.id)
 		switch {
 		case o.Terminal() && !spent:
-			if w.store.Claim(id) {
+			if g.store.Claim(g.id) {
 				blocks = append(blocks, renderGateVerdict(o.Verdict))
 				delivered = append(delivered, o.Verdict.Meta)
 			}
 		default:
 			// Running, unverified, or finished with no continuation left to carry it:
 			// the watcher resumes the session once the handle has finished.
-			w.arm(id, o)
+			w.arm(g.store, g.id, o)
 		}
 	}
 	recordGateDelivered(delivered)
@@ -229,12 +228,27 @@ func (w *resumeWake) stop(raw []byte) string {
 // resumeJob is what a watcher needs to resume a session with one handle's verdict.
 type resumeJob struct {
 	Handle, Harness, Session, Owner, Cwd, PermissionMode string
+	// ServeRuntime is the runtime dir of the store the session's turn state lives
+	// in, set only when the handle lives in a different store (sty_8f10499d). The
+	// watcher judges the turn and takes the resume lock there and everything else
+	// in the handle's own store; empty means they are one store.
+	ServeRuntime string
 }
 
 // arm hands a handle that cannot be delivered in this turn to one watcher. The
-// handle stays unclaimed until it finishes.
-func (w *resumeWake) arm(id string, o gatehandle.Observation) {
-	armResume(w.store, resumeJob{Handle: id, Harness: w.harness, Session: w.session, Owner: w.owner, Cwd: w.cwd, PermissionMode: w.permissionMode}, o)
+// handle stays unclaimed until it finishes; it is armed in the store that holds
+// it, while the session's turn stays in the wake's own store.
+func (w *resumeWake) arm(handle *gatehandle.Store, id string, o gatehandle.Observation) {
+	armResume(handle, resumeJob{Handle: id, Harness: w.harness, Session: w.session, Owner: w.owner, Cwd: w.cwd, PermissionMode: w.permissionMode, ServeRuntime: serveRuntimeFor(w.store, handle)}, o)
+}
+
+// serveRuntimeFor is the ServeRuntime a job for a handle in handle carries when
+// the session's turn state lives in serve: "" when they are the same store.
+func serveRuntimeFor(serve, handle *gatehandle.Store) string {
+	if filepath.Clean(serve.RuntimeDir()) == filepath.Clean(handle.RuntimeDir()) {
+		return ""
+	}
+	return serve.RuntimeDir()
 }
 
 // armResume starts job's watcher unless one already owns the handle.
@@ -266,11 +280,21 @@ func armResumeForPending(store *gatehandle.Store, meta gatehandle.Meta) {
 	if _, ok := agentcli.StopResumeFor(meta.Harness); !ok {
 		return
 	}
-	hs, ok := store.SessionFor(meta.Session)
+	// The hooks that recorded the session ran in the serving repo, which for a
+	// run started across repos is not the one holding the handle.
+	serve := store
+	if meta.ServeRoot != "" {
+		s, ok := gateStoreAt(meta.ServeRoot)
+		if !ok {
+			return
+		}
+		serve = s
+	}
+	hs, ok := serve.SessionFor(meta.Session)
 	if !ok || hs.Harness != meta.Harness {
 		return
 	}
-	armResume(store, resumeJob{Handle: meta.ID, Harness: hs.Harness, Session: hs.Session, Owner: meta.Session, Cwd: hs.Cwd, PermissionMode: hs.Mode}, store.Observe(meta.ID))
+	armResume(store, resumeJob{Handle: meta.ID, Harness: hs.Harness, Session: hs.Session, Owner: meta.Session, Cwd: hs.Cwd, PermissionMode: hs.Mode, ServeRuntime: serveRuntimeFor(serve, store)}, store.Observe(meta.ID))
 }
 
 // spawnResumeWatcher starts the detached watcher for job. A seam, so tests can
@@ -282,6 +306,11 @@ var spawnResumeWatcher = func(store *gatehandle.Store, j resumeJob) error {
 	}
 	if j.PermissionMode != "" {
 		argv = append(argv, "--permission-mode", j.PermissionMode)
+	}
+	if j.ServeRuntime != "" {
+		// The watcher is told both stores outright: it depends on neither the
+		// environment it inherits nor the directory it starts in.
+		argv = append(argv, "--serve-store", j.ServeRuntime, "--handle-store", store.RuntimeDir())
 	}
 	c, err := gateChildCommand(argv)
 	if err != nil {
@@ -326,14 +355,20 @@ resumes the same session with the verdict as the prompt. You do not run it.`,
 			j.Owner, _ = f.GetString("owner")
 			j.Cwd, _ = f.GetString("cwd")
 			j.PermissionMode, _ = f.GetString("permission-mode")
-			store, ok := hookGateStore()
-			if !ok {
-				return nil
+			j.ServeRuntime, _ = f.GetString("serve-store")
+			var store *gatehandle.Store
+			if dir, _ := f.GetString("handle-store"); dir != "" {
+				store = gatehandle.New(dir)
+			} else {
+				var ok bool
+				if store, ok = hookGateStore(); !ok {
+					return nil
+				}
 			}
 			return runGateResume(store, j)
 		},
 	}
-	for _, n := range []string{"handle", "harness", "session", "owner", "cwd", "permission-mode"} {
+	for _, n := range []string{"handle", "harness", "session", "owner", "cwd", "permission-mode", "serve-store", "handle-store"} {
 		c.Flags().String(n, "", "")
 	}
 	return c
@@ -343,7 +378,15 @@ resumes the same session with the verdict as the prompt. You do not run it.`,
 // handle of the session already armed for a resume — and resumes the session
 // once with the verdicts as its prompt. A handle someone else already claimed is
 // not delivered again.
+//
+// store is the handle plane — where the handle lives. The session's turn plane
+// (is a turn open, who is resuming) is the store at j.ServeRuntime when the
+// handle is in another repo's store, and the same store otherwise.
 func runGateResume(store *gatehandle.Store, j resumeJob) error {
+	serve := store
+	if j.ServeRuntime != "" {
+		serve = gatehandle.New(j.ServeRuntime)
+	}
 	res, ok := agentcli.StopResumeFor(j.Harness)
 	if !ok {
 		return fmt.Errorf("resume: %s", agentcli.StopResumeUnavailable(j.Harness))
@@ -358,7 +401,7 @@ func runGateResume(store *gatehandle.Store, j resumeJob) error {
 	// The verdict is held until the session is between turns: while the turn is
 	// open and can still spend a continuation the Stop hook delivers it in-turn,
 	// and a resume under a running turn would be a second writer on one session.
-	for !store.TurnIdle(j.Session, res.Cap, resumeQuiet) {
+	for !serve.TurnIdle(j.Session, res.Cap, resumeQuiet) {
 		if store.Delivered(j.Handle) || !time.Now().Before(deadline) {
 			return nil
 		}
@@ -366,7 +409,7 @@ func runGateResume(store *gatehandle.Store, j resumeJob) error {
 	}
 	// One resume per session at a time: two gates finishing together must not
 	// resume the session twice at once.
-	unlock, ok := store.LockSession(j.Session, gatehandle.MaxDeliveryAge)
+	unlock, ok := serve.LockSession(j.Session, gatehandle.MaxDeliveryAge)
 	if !ok {
 		return nil
 	}
