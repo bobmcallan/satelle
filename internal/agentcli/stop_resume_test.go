@@ -1,10 +1,55 @@
 package agentcli
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+// The captured grok dogfood (testdata/hooks/grok_resume_dogfood.json): resuming
+// a finished session with a new prompt runs a fresh turn in the SAME session.
+// This is the grok-side evidence a stand-in binary cannot give (sty_eac9b28d AC4).
+func TestGrokResumeDogfoodShowsAFreshTurnInTheSameSession(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "hooks", "grok_resume_dogfood.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d struct {
+		Command   string `json:"command"`
+		SessionID string `json:"sessionId"`
+		PriorTurn struct {
+			Text string `json:"text"`
+		} `json:"priorTurn"`
+		Resume struct {
+			Prompt     string `json:"prompt"`
+			Text       string `json:"text"`
+			SessionID  string `json:"sessionId"`
+			StopReason string `json:"stopReason"`
+		} `json:"resume"`
+	}
+	if err := json.Unmarshal(raw, &d); err != nil {
+		t.Fatal(err)
+	}
+	const sid = "01a1017e-bf68-7110-8006-d3dc51df44d9"
+	if d.SessionID != sid || d.Resume.SessionID != sid {
+		t.Errorf("session id = %q / %q, want %s in both", d.SessionID, d.Resume.SessionID, sid)
+	}
+	if !strings.Contains(d.Command, sid) {
+		t.Errorf("command does not resume session %s: %s", sid, d.Command)
+	}
+	if d.Resume.Prompt != "Reply with the single word resumed." || !strings.Contains(d.Command, d.Resume.Prompt) {
+		t.Errorf("resume prompt not captured: %q in %q", d.Resume.Prompt, d.Command)
+	}
+	if d.Resume.Text != "resumed" || d.Resume.StopReason != "end_turn" {
+		t.Errorf("fresh turn = %q (%s), want %q (end_turn)", d.Resume.Text, d.Resume.StopReason, "resumed")
+	}
+	if d.PriorTurn.Text != "hello" {
+		t.Errorf("prior turn = %q, want the earlier %q turn the resume continues", d.PriorTurn.Text, "hello")
+	}
+}
 
 func TestStopResumeIsRecordedForGrokOnly(t *testing.T) {
 	r, ok := StopResumeFor(HarnessGrok)

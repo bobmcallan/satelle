@@ -96,3 +96,95 @@ func TestLockSessionIsExclusiveAndTakesOverADeadHolder(t *testing.T) {
 		t.Fatalf("a dead holder's lock was waited on (ok=%v, %s)", ok, time.Since(start))
 	}
 }
+
+func ageTurn(t *testing.T, s *Store, session string, by time.Duration) {
+	t.Helper()
+	old := time.Now().Add(-by)
+	if err := os.Chtimes(s.turnPath(session, "turn"), old, old); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTurnIdle(t *testing.T) {
+	const stopCap, quiet = 8, time.Minute
+	spend := func(s *Store, n int) {
+		for i := 0; i < n; i++ {
+			s.AddStopCount("a")
+		}
+	}
+
+	t.Run("no record means no hook has spoken, so idle", func(t *testing.T) {
+		if !New(t.TempDir()).TurnIdle("a", stopCap, quiet) {
+			t.Error("a session nothing recorded was held back")
+		}
+	})
+	t.Run("a closed turn is idle", func(t *testing.T) {
+		s := New(t.TempDir())
+		s.OpenTurn("a")
+		s.CloseTurn("a")
+		if !s.TurnIdle("a", stopCap, quiet) {
+			t.Error("a closed turn was not idle")
+		}
+	})
+	t.Run("an open turn with budget left is not idle however quiet", func(t *testing.T) {
+		s := New(t.TempDir())
+		s.OpenTurn("a")
+		spend(s, stopCap-1)
+		ageTurn(t, s, "a", time.Hour)
+		if s.TurnIdle("a", stopCap, quiet) {
+			t.Error("a turn that can still be woken in-turn was resumed into")
+		}
+	})
+	t.Run("a spent turn that is still active is not idle", func(t *testing.T) {
+		s := New(t.TempDir())
+		s.OpenTurn("a")
+		spend(s, stopCap)
+		if s.TurnIdle("a", stopCap, quiet) {
+			t.Error("a spent turn with a fresh tool call was treated as ended")
+		}
+	})
+	t.Run("a spent turn gone quiet is idle", func(t *testing.T) {
+		s := New(t.TempDir())
+		s.OpenTurn("a")
+		spend(s, stopCap)
+		ageTurn(t, s, "a", 2*quiet)
+		if !s.TurnIdle("a", stopCap, quiet) {
+			t.Error("a spent turn that went quiet was never resumed")
+		}
+	})
+	t.Run("a new prompt reopens a closed turn", func(t *testing.T) {
+		s := New(t.TempDir())
+		s.CloseTurn("a")
+		s.OpenTurn("a")
+		if s.TurnIdle("a", stopCap, quiet) {
+			t.Error("an open turn was idle")
+		}
+	})
+	t.Run("sessions are independent", func(t *testing.T) {
+		s := New(t.TempDir())
+		s.OpenTurn("a")
+		if !s.TurnIdle("b", stopCap, quiet) {
+			t.Error("another session's open turn held this one back")
+		}
+	})
+}
+
+func TestNoteSessionRoundTripsPerOwner(t *testing.T) {
+	s := New(t.TempDir())
+	if _, ok := s.SessionFor("o"); ok {
+		t.Fatal("a session was found before any was noted")
+	}
+	hs := HarnessSession{Harness: "h", Session: "sid", Cwd: "/w", Mode: "m"}
+	s.NoteSession("o", hs)
+	if got, ok := s.SessionFor("o"); !ok || got != hs {
+		t.Fatalf("SessionFor = %+v, %v; want %+v", got, ok, hs)
+	}
+	hs2 := HarnessSession{Harness: "h", Session: "sid2"}
+	s.NoteSession("o", hs2)
+	if got, _ := s.SessionFor("o"); got != hs2 {
+		t.Errorf("a changed session was not re-recorded: %+v", got)
+	}
+	if _, ok := s.SessionFor("other"); ok {
+		t.Error("one owner's session leaked to another")
+	}
+}

@@ -107,6 +107,11 @@ func resumeCapture(t *testing.T) (argvs *[][]string) {
 // AC1: eight Stop continuations already spent in a turn; the gate finishes later.
 // The stop is not blocked a ninth time and nothing rides UserPromptSubmit
 // additionalContext; the watcher resumes the same session with the verdict.
+//
+// The count is set by hand and the Stop hook is called at the cap. Grok does
+// not consult hooks for its forced final stop, so this is the defensive branch,
+// kept so a hook call at the cap never emits a ninth block. The realistic
+// sequence is TestGrokGateStartedAfterTheLastContinuationIsArmedAtHandoff.
 func TestGrokSpentTurnDeliversVerdictByResume(t *testing.T) {
 	store := stopWakeRepo(t, "50ms")
 	t.Setenv(config.SessionEnv, grokSession)
@@ -235,7 +240,8 @@ func TestGrokFinishedGateWithinBudgetBlocksAndCounts(t *testing.T) {
 }
 
 // A finished gate on a turn with no continuation left is not blocked a ninth
-// time; it is resumed.
+// time; it is resumed. Like the test above this calls the hook at the cap, the
+// defensive branch; the realistic path is the hand-off arm.
 func TestGrokFinishedGateOnSpentTurnIsResumed(t *testing.T) {
 	store := stopWakeRepo(t, "10s")
 	t.Setenv(config.SessionEnv, grokSession)

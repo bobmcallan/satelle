@@ -14,6 +14,7 @@ if it was.
 | `grok_prompt_submit.json` | REAL — same capture session as `grok_session_start.json`. This is the AC3 regression payload: it carries `permission_mode`/`hook_event_name` (Claude-compatible snake_case aliases Grok's shim echoes) alongside its own `sessionId`/`hookEventName`/`workspaceRoot`. `HarnessFromHookEvent` must classify it grok, not claude, even with those aliases present. |
 | `grok_pre_tool_use.json` | REAL — same capture session. Carries both `toolInput` and `tool_input` (and both `sessionId`/`session_id`), so grok's own fields (`hookEventName`, `workspaceRoot`) are what decide it, not the ambiguous tool_input pair alone. |
 | `grok_stop.json` | REAL — same capture session. |
+| `grok_resume_dogfood.json` | REAL — a live grok dogfood of resuming a finished session with a new prompt (sty_eac9b28d AC4), recorded as the result of `grok -p "Reply with the single word resumed." -r <session> --output-format json`. Not a hook payload: it holds the command, the session's prior turn (`hello`) and the resumed turn (`resumed`, same `sessionId`, `stopReason` `end_turn`), so the resume prompt is a fresh turn in the same session, not a second session. `-r` is the short form of the `--resume` the adapter's argv uses. Checked by `TestGrokResumeDogfoodShowsAFreshTurnInTheSameSession`. |
 
 **Provenance note:** every real grok payload above carries Claude-compatible
 snake_case aliases (`session_id`, `hook_event_name`, `permission_mode`,
