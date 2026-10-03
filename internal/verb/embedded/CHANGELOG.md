@@ -1,3 +1,8 @@
+## [0.0.604] - 2026-10-03
+
+### Fixed
+- **A dispatched reviewer's Stop hook no longer waits on the gate that is waiting for it.** The hook still wakes a driving session. A dispatched process, recognised by the markers satelle already sets, skips that wait, so the verdict is not held until idle_timeout. (sty_aeb8a138, sty_79894535)
+
 ## [0.0.603] - 2026-10-03
 
 ### Changed
