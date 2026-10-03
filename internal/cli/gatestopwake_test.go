@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/gatehandle"
 )
 
@@ -29,7 +30,14 @@ func stopWakeRepo(t *testing.T, wait string) *gatehandle.Store {
 // with the identity SetPID recorded for it.
 func runningGate(t *testing.T, store *gatehandle.Store, story string) gatehandle.Meta {
 	t.Helper()
-	m, err := store.Create(gatehandle.Meta{Verb: gateTestVerb, Story: story, Argv: []string{"story", "set", story, "--status", "ready"}})
+	return runningGateForSession(t, store, story, "")
+}
+
+// runningGateForSession is runningGate with the handle stamped to a driving
+// session, the identity the Stop hook matches a handle against.
+func runningGateForSession(t *testing.T, store *gatehandle.Store, story, session string) gatehandle.Meta {
+	t.Helper()
+	m, err := store.Create(gatehandle.Meta{Verb: gateTestVerb, Story: story, Session: session, Argv: []string{"story", "set", story, "--status", "ready"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,6 +60,48 @@ func stopOnce(t *testing.T, raw string) (stopBlockOut, bool) {
 		return stopBlockOut{}, false
 	}
 	return blk, true
+}
+
+// A dispatched process inherits the driver's SATELLE_SESSION, so the handle it
+// would wait on is the gate that is waiting for it to exit (sty_aeb8a138): it
+// never takes the gate-wait. The control proves the handle really is owned by
+// the resolved session, so the dispatch marker is the only reason it is skipped.
+func TestStopHookDispatchedProcessSkipsGateWait(t *testing.T) {
+	const session = "sess-dispatch"
+
+	t.Run("control: in-loop waits on the owned handle", func(t *testing.T) {
+		store := stopWakeRepo(t, "200ms")
+		h := runningGateForSession(t, store, "sty_x", session)
+		t.Setenv(config.SessionEnv, session)
+		blk, ok := stopOnce(t, "")
+		if !ok || !strings.Contains(blk.Reason, h.ID) || !strings.Contains(blk.Reason, "still running") {
+			t.Fatalf("the in-loop stop did not wait on the handle owned by its session: %+v ok=%v", blk, ok)
+		}
+	})
+
+	for _, marker := range []string{config.DispatchAgentEnv, config.DispatchStepEnv, config.DispatchItemEnv, config.SpawnEnv} {
+		t.Run(marker, func(t *testing.T) {
+			store := stopWakeRepo(t, "10s")
+			h := runningGateForSession(t, store, "sty_x", session)
+			t.Setenv(config.SessionEnv, session)
+			t.Setenv(marker, "reviewer")
+
+			start := time.Now()
+			blk, ok := stopOnce(t, "")
+			if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+				t.Errorf("a dispatched stop waited on the gate that waits for it (%s)", elapsed)
+			}
+			if ok && strings.Contains(blk.Reason, h.ID) {
+				t.Errorf("a dispatched stop answered for the driver's gate:\n%s", blk.Reason)
+			}
+			if obs := store.Observe(h.ID); obs.State != gatehandle.Running {
+				t.Errorf("the handle is no longer running: %v", obs.State)
+			}
+			if store.Delivered(h.ID) {
+				t.Error("a dispatched stop consumed the driver's gate delivery")
+			}
+		})
+	}
 }
 
 // AC1: a gate still running at the wait bound blocks the stop; it does not

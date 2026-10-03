@@ -91,12 +91,16 @@ func init() {
 
 // clearHarnessEnv removes every marker that makes this process look like it runs
 // inside a harness, so caller-mode tests see a bare shell whatever runs them.
+// That includes the dispatch markers: a test run from a dispatched session would
+// otherwise look dispatched to every in-loop hook path.
 func clearHarnessEnv(t *testing.T) {
 	t.Helper()
 	markers := agentcli.SessionMarkerEnvNames()
 	for _, e := range os.Environ() {
 		k, v, _ := strings.Cut(e, "=")
-		match := k == config.ScratchEnv || k == config.SessionEnv
+		match := k == config.ScratchEnv || k == config.SessionEnv ||
+			k == config.DispatchAgentEnv || k == config.DispatchStepEnv ||
+			k == config.DispatchItemEnv || k == config.SpawnEnv
 		for _, m := range markers {
 			if k == m || strings.HasPrefix(k, m) {
 				match = true

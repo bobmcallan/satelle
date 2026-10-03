@@ -239,6 +239,48 @@ func TestStopcheckFailOpenPathsUnchanged(t *testing.T) {
 	})
 }
 
+// A dispatched process skips the gate-wait but not the ungated-edit check
+// (sty_aeb8a138 AC4): with a dirty non-exempt tree and no running gate of its
+// own it still reports that tree, and the driver's running gate does not hold it.
+func TestStopcheckDispatchedStillReportsDirtyTree(t *testing.T) {
+	t.Run("no gate", func(t *testing.T) {
+		repo, _ := stopcheckRepo(t, seatNone)
+		dirtyTree(t, repo)
+		t.Setenv(config.DispatchAgentEnv, "reviewer")
+		var buf bytes.Buffer
+		if err := runHookStopcheck([]byte("{}"), &buf); err != nil {
+			t.Fatalf("stopcheck: %v", err)
+		}
+		var blk stopBlockOut
+		if err := json.Unmarshal([]byte(strings.TrimSpace(buf.String())), &blk); err != nil || blk.Decision != "block" {
+			t.Fatalf("block payload = %q (%v)", buf.String(), err)
+		}
+		if !strings.Contains(blk.Reason, "STOP BLOCKED") || !strings.Contains(blk.Reason, "internal/foo.go") {
+			t.Fatalf("a dispatched stop must report the dirty tree: %q", blk.Reason)
+		}
+	})
+	t.Run("driver's gate still running", func(t *testing.T) {
+		repo, _ := stopcheckRepo(t, seatNone)
+		dirtyTree(t, repo)
+		t.Setenv(stopGateWaitEnv, "10s")
+		t.Setenv(config.DispatchAgentEnv, "reviewer")
+		h := runningGateForSession(t, gateStoreForTest(t), "sty_x", thisSession)
+
+		start := time.Now()
+		var buf bytes.Buffer
+		if err := runHookStopcheck([]byte("{}"), &buf); err != nil {
+			t.Fatalf("stopcheck: %v", err)
+		}
+		if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+			t.Errorf("a dispatched stop waited on the driver's gate (%s)", elapsed)
+		}
+		out := buf.String()
+		if strings.Contains(out, h.ID) || !strings.Contains(out, "internal/foo.go") {
+			t.Fatalf("a dispatched stop must report the dirty tree, not the gate: %q", out)
+		}
+	})
+}
+
 // TestStopcheckSiblingNoteShape: the note is pure and names story, session,
 // path count and any further live seats without ever reading as a demand.
 func TestStopcheckSiblingNoteShape(t *testing.T) {

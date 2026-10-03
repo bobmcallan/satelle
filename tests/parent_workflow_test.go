@@ -74,20 +74,20 @@ func TestParentWorkflowSelectedAndValid(t *testing.T) {
 			t.Errorf("category %s active workflow = %+v, want the derived route first/active", cat, rows)
 		}
 		// …and it is the container lifecycle, not the wildcard one: backlog
-		// passes ready, then closes to done, with no plan/in_progress/
-		// integration/release step.
+		// passes ready, then the container merge and its own release, with no
+		// slice steps (plan / in_progress / integration).
 		spec := repoRouteSpec(t, cat, nil)
 		var names []string
 		for _, st := range spec.States {
 			names = append(names, st.Name)
 		}
-		for _, absent := range []string{"plan", "in_progress", "integration", "release"} {
+		for _, absent := range []string{"plan", "in_progress", "integration"} {
 			if containsStrSlice(names, absent) {
 				t.Errorf("category %s must have no %q step — a container has no slice of its own (states %v)", cat, absent, names)
 			}
 		}
-		if !spec.HasEdge("backlog", "ready") || !spec.HasEdge("ready", "done") {
-			t.Errorf("category %s must close backlog → ready → done (states %v)", cat, names)
+		if !spec.HasEdge("backlog", "ready") || !spec.HasEdge("ready", "merging") || !spec.HasEdge("merging", "release") || !spec.HasEdge("release", "done") {
+			t.Errorf("category %s must close backlog → ready → merging → release → done (states %v)", cat, names)
 		}
 	}
 }

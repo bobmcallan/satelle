@@ -2876,8 +2876,15 @@ func runHookStopcheck(raw []byte, out io.Writer) error {
 	// only stopcheck's own block: a verdict is consumed once, so it cannot loop,
 	// and a still-running note ends with the run (finished, died, or — where the
 	// platform cannot verify liveness — noted once).
-	if text := stopGateDeliveryFor(stopGateWait()); text != "" {
-		return emitStopBlock(out, text)
+	//
+	// A dispatched process never takes this wait: it inherits the driver's
+	// SATELLE_SESSION, so the handle it would wait on is the very gate that is
+	// waiting for it to exit — a cycle only idle_timeout ends. The driving
+	// session, which is not dispatched, still waits.
+	if !isDispatchedProcess() {
+		if text := stopGateDeliveryFor(stopGateWait()); text != "" {
+			return emitStopBlock(out, text)
+		}
 	}
 	if stopHookActive(raw) {
 		return nil // anti-loop: never re-block a stop we already blocked
