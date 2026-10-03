@@ -413,6 +413,21 @@ func (s *Store) mark(id, name, body string) {
 	_ = f.Close()
 }
 
+// MarkLimited records why a run's verdict could not be sent to the session that
+// started it: the session ended at a point nothing can wake. It never claims the
+// run, so its verdict is still owed and the next session's prompt delivers it.
+// Written once, so a session that settles again does not rewrite the record.
+func (s *Store) MarkLimited(id, limitation string) bool {
+	if s.Limited(id) {
+		return false
+	}
+	s.mark(id, "delivery-limited", limitation)
+	return s.Limited(id)
+}
+
+// Limited reports whether MarkLimited recorded a limitation for id.
+func (s *Store) Limited(id string) bool { return s.has(id, "delivery-limited") }
+
 func (s *Store) notified(id string) bool { return s.has(id, "pending-notified") }
 
 // UnverifiedNotified reports whether a Stop hook already told the session that

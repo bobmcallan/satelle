@@ -26,12 +26,27 @@
 // Stop is the one event pi cannot veto. `agent_settled` is notification-only, so
 // a refused stop is delivered as a user message that starts another turn: the
 // agent cannot settle silently on an ungated edit, it has to answer. That is a
-// re-prompt, not a veto — a user who kills the session, or a non-interactive run
-// that exits on settle, is not held. As with claude, satelle's own anti-loop
-// applies: a re-prompt is sent with stop_hook_active, so stopcheck never blocks
-// its own block twice in one chain.
+// re-prompt, not a veto — a user who kills the session is not held. As with
+// claude, satelle's own anti-loop applies: a re-prompt is sent with
+// stop_hook_active, so stopcheck never blocks its own block twice in one chain.
+//
+// A gate the session handed off is told once. A settle runs stopcheck, which
+// waits for the gate up to its own bound and answers with the verdict as a block
+// — sent here as one user message — or, when the gate is still going, allows the
+// stop and names it as pending. A pending gate arms ONE waiter, which asks
+// stopcheck again: each ask is a blocking wait on the handle inside the hook,
+// never a timer or a poll, and the verdict is sent once when it arrives. Nothing
+// is re-sent on a later settle: the verdict is claimed by whichever of the stop
+// hook and the prompt hook (before_agent_start, additionalContext) reaches it
+// first.
+//
+// A non-interactive run (print or JSON mode: no UI, so ctx.hasUI is false) ends
+// at agent_settled and nothing can send it a later message. It asks stopcheck
+// with --no-wake, which waits for nothing and records an adapter-named limitation
+// for each gate left undelivered; those verdicts stay unclaimed, so the next
+// session's prompt still delivers them.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 
 const REPO_ROOT: string = __SATELLE_REPO_ROOT__;
 const WRAPPER: string = __SATELLE_WRAPPER__;
@@ -73,6 +88,11 @@ function childEnv(): Record<string, string | undefined> {
 	};
 }
 
+// Every satelle process this extension has running, so the waiter below can be
+// stopped when pi exits: a hook left waiting on a gate would claim a verdict
+// that nobody is left to receive.
+const children = new Set<ChildProcess>();
+
 function run(cmd: string, args: string[], input: string, cwd: string, timeoutS: number): Promise<Run> {
 	return new Promise((resolve) => {
 		let stdout = "";
@@ -97,6 +117,8 @@ function run(cmd: string, args: string[], input: string, cwd: string, timeoutS: 
 			timedOut = true;
 			child.kill("SIGKILL");
 		}, timeoutS * 1000);
+		children.add(child);
+		child.on("close", () => children.delete(child));
 		child.stdout.on("data", (d) => (stdout += d));
 		child.stderr.on("data", (d) => (stderr += d));
 		child.on("error", (e) => finish({ spawnError: String(e), timedOut, code: null, stdout, stderr }));
@@ -182,8 +204,8 @@ function directResult(r: Run): { ok: boolean; doc: any; why: string } {
 	return { ok: true, doc, why: "" };
 }
 
-async function runDirect(b: Binding, payload: string, ctx: any) {
-	const argv = b.argv ?? ["hook", b.verb, "--harness", "pi"];
+async function runDirect(b: Binding, payload: string, ctx: any, extra: string[] = []) {
+	const argv = [...(b.argv ?? ["hook", b.verb, "--harness", "pi"]), ...extra];
 	const r = await run("satelle", argv, payload, workdir(ctx), b.timeout_s);
 	const d = directResult(r);
 	if (!d.ok) notify(ctx, `satelle ${argv.join(" ")} unavailable (${d.why}) — continuing without it`);
@@ -196,6 +218,8 @@ export default function (pi: ExtensionAPI) {
 	// it rides the system prompt that before_agent_start builds.
 	let sessionContext = "";
 	let stopActive = false;
+	// A gate still going at settle has exactly one waiter (armWaiter).
+	let waiterArmed = false;
 
 	// PreToolUse -> gate (edit/write) and commitgate (bash), through the wrapper.
 	pi.on("tool_call", async (event: any, ctx: any) => {
@@ -249,22 +273,64 @@ export default function (pi: ExtensionAPI) {
 		return { systemPrompt: `${event?.systemPrompt ?? ""}\n\n${parts.join("\n\n")}` };
 	});
 
-	// Stop -> stopcheck. See the header: a re-prompt, not a veto.
-	pi.on("agent_settled", async (_event: any, ctx: any) => {
+	// One Stop question: stopcheck's block (a verdict or a refused stop), and
+	// whether a gate it named is still going. noWake is the non-interactive case
+	// (see the header).
+	async function stopQuestion(ctx: any, noWake: boolean): Promise<{ block?: string; pending: boolean }> {
 		let block: string | undefined;
+		let pending = false;
 		for (const b of bindingsFor("agent_settled")) {
-			const d = await runDirect(b, claudeEvent("Stop", ctx, { stop_hook_active: stopActive }), ctx);
+			const d = await runDirect(b, claudeEvent("Stop", ctx, { stop_hook_active: stopActive }), ctx, noWake ? ["--no-wake"] : []);
 			if (!d.ok) continue;
 			if (d.doc?.decision === "block") block = String(d.doc.reason ?? "satelle: stop refused");
-			else if (typeof d.doc?.systemMessage === "string") notify(ctx, d.doc.systemMessage, "info");
+			else {
+				if (typeof d.doc?.systemMessage === "string") notify(ctx, d.doc.systemMessage, "info");
+				if (Array.isArray(d.doc?.pending) && d.doc.pending.length > 0) pending = true;
+			}
 		}
-		stopActive = block !== undefined;
-		if (block === undefined) return;
+		return { block, pending };
+	}
+
+	function sendBlock(ctx: any, block: string): void {
 		try {
 			if (ctx?.isIdle?.() ?? true) pi.sendUserMessage(block);
 			else pi.sendUserMessage(block, { deliverAs: "followUp" });
 		} catch (e) {
 			notify(ctx, `satelle could not deliver the stop refusal: ${String(e)}`);
 		}
+	}
+
+	// The one waiter for a gate still going at settle. Each pass is stopcheck's own
+	// blocking wait on the handle, bounded by the hook's timeout — not a timer and
+	// not a poll — and the loop ends when no gate is pending any more. It never
+	// sends a still-running note: only a verdict becomes a message.
+	function armWaiter(ctx: any): void {
+		waiterArmed = true;
+		process.once("exit", () => children.forEach((c) => c.kill("SIGKILL")));
+		void (async () => {
+			try {
+				for (;;) {
+					const started = Date.now();
+					const q = await stopQuestion(ctx, false);
+					stopActive = q.block !== undefined;
+					if (q.block !== undefined) sendBlock(ctx, q.block);
+					// A pending answer that came back at once was no wait (the hook's
+					// bound is zero): looping on it would be a poll. The verdict still
+					// reaches the next prompt.
+					if (!q.pending || Date.now() - started < 1000) break;
+				}
+			} finally {
+				waiterArmed = false;
+			}
+		})();
+	}
+
+	// Stop -> stopcheck. See the header: a re-prompt, not a veto.
+	pi.on("agent_settled", async (_event: any, ctx: any) => {
+		const interactive = Boolean(ctx?.hasUI);
+		const q = await stopQuestion(ctx, !interactive);
+		stopActive = q.block !== undefined;
+		if (q.block !== undefined) sendBlock(ctx, q.block);
+		if (q.pending && !waiterArmed) armWaiter(ctx);
 	});
 }

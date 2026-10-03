@@ -34,9 +34,10 @@ const stopGateWaitEnv = "SATELLE_GATE_STOP_WAIT"
 
 // stopGateWaitDefault is how long the Stop hook waits for a running gate. It
 // sits inside the Stop hook's own timeout in the scaffold (stopHookTimeoutSec),
-// so the hook answers rather than being killed. A gate still running at the end
-// of one wait is not released to idle: the hook blocks with a still-running note
-// and the next Stop waits again.
+// so the hook answers rather than being killed. For a harness whose stop can
+// hold, a gate still running at the end of one wait is not released to idle: the
+// hook blocks with a still-running note and the next Stop waits again. A harness
+// that cannot hold its stop is allowed through instead (modeSettle).
 const stopGateWaitDefault = 25 * time.Minute
 
 // stopHookTimeoutSec is the timeout, in seconds, the scaffold writes on the Stop
@@ -108,29 +109,63 @@ func deliverFinishedGates(store *gatehandle.Store, session string, wait time.Dur
 // deliverGates is deliverFinishedGates that also names the runs it delivered,
 // so the hook can record the delivery as a driver-usage row.
 func deliverGates(store *gatehandle.Store, session string, wait time.Duration) (string, []gatehandle.Meta) {
-	return deliverGatesMode(store, session, wait, false)
+	d := deliverGatesMode(store, session, wait, modeCatchUp)
+	return d.text, d.delivered
 }
 
-// deliverStopGates is deliverGates for the Stop hook, which never lets a session
-// go idle on a gate that is still going: when no verdict is ready and a run of
-// its own is still running, the text is a one-line still-running note instead,
-// so the hook blocks the stop and the next Stop waits again. The loop ends when
-// the verdict is delivered or the run is dead — a Died or Finished run is
-// terminal, and a run whose liveness the platform cannot verify is noted once
-// and then let go (see gatehandle.RunningUnverified).
+// deliverStopGates is deliverGates for the Stop hook of a harness whose stop can
+// hold a session, which never lets one go idle on a gate that is still going:
+// when no verdict is ready and a run of its own is still running, the text is a
+// one-line still-running note instead, so the hook blocks the stop and the next
+// Stop waits again. The loop ends when the verdict is delivered or the run is
+// dead — a Died or Finished run is terminal, and a run whose liveness the
+// platform cannot verify is noted once and then let go (see
+// gatehandle.RunningUnverified).
 func deliverStopGates(store *gatehandle.Store, session string, wait time.Duration) (string, []gatehandle.Meta) {
-	return deliverGatesMode(store, session, wait, true)
+	d := deliverGatesMode(store, session, wait, modeStopHold)
+	return d.text, d.delivered
 }
 
-func deliverGatesMode(store *gatehandle.Store, session string, wait time.Duration, stopWake bool) (string, []gatehandle.Meta) {
-	return deliverRefs(ownedGates([]handleStore{{store: store}}, session), wait, stopWake)
+// deliverMode is what a hook does with a gate that is still running.
+type deliverMode int
+
+const (
+	// modeCatchUp: nothing is waited on or said about a running gate (the prompt
+	// hook).
+	modeCatchUp deliverMode = iota
+	// modeStopHold: a stop that can hold its session. A running gate becomes a
+	// still-running block, so the next stop waits again (deliverStopGates).
+	modeStopHold
+	// modeSettle: a stop that cannot hold its session, only notify (a harness
+	// whose facts say SettleNotifyOnly). The hook waits once, up to its own bound;
+	// a gate still running after it is reported as pending, never as a block,
+	// because a block here starts a turn of its own and nothing would cap them.
+	// The stop is allowed, and the harness adapter asks again for the verdict.
+	modeSettle
+)
+
+// gateDelivery is what one hook decided about the session's gates.
+type gateDelivery struct {
+	// text is what to put in front of the session: the verdicts or, in
+	// modeStopHold, a still-running note. "" when there is nothing to say.
+	text      string
+	delivered []gatehandle.Meta
+	// pending are the runs still going after the wait (modeSettle).
+	pending []string
+	// note is an operator-facing line that blocks nothing: how long a pending run
+	// has gone, or why a run is let go.
+	note string
+}
+
+func deliverGatesMode(store *gatehandle.Store, session string, wait time.Duration, mode deliverMode) gateDelivery {
+	return deliverRefs(ownedGates([]handleStore{{store: store}}, session), wait, mode)
 }
 
 // deliverRefs is the delivery over runs that may live in different stores: each
 // is observed, claimed and marked in the store that holds it.
-func deliverRefs(mine []gateRef, wait time.Duration, stopWake bool) (string, []gatehandle.Meta) {
+func deliverRefs(mine []gateRef, wait time.Duration, mode deliverMode) gateDelivery {
 	if len(mine) == 0 {
-		return "", nil
+		return gateDelivery{}
 	}
 	if wait > 0 {
 		waitForGates(mine, wait)
@@ -139,7 +174,7 @@ func deliverRefs(mine []gateRef, wait time.Duration, stopWake bool) (string, []g
 	// between two looks would otherwise be "running" to the first and "done" to
 	// the second, and the stop would be let through with its verdict undelivered.
 	var blocks, notes []string
-	var delivered []gatehandle.Meta
+	var d gateDelivery
 	var toMark []stillRunning
 	for _, g := range mine {
 		o := g.store.Observe(g.id)
@@ -147,23 +182,50 @@ func deliverRefs(mine []gateRef, wait time.Duration, stopWake bool) (string, []g
 		case o.Terminal():
 			if g.store.Claim(g.id) {
 				blocks = append(blocks, renderGateVerdict(o.Verdict))
-				delivered = append(delivered, o.Verdict.Meta)
+				d.delivered = append(d.delivered, o.Verdict.Meta)
 			}
-		case stopWake && o.State == gatehandle.Running:
+		case mode == modeSettle && o.State == gatehandle.Running:
+			d.pending = append(d.pending, g.id)
+			notes = append(notes, settlePendingNote(g.store, g.id))
+		case mode == modeStopHold && o.State == gatehandle.Running:
 			toMark = append(toMark, stillRunning{gateRef: g})
 			notes = append(notes, stillRunningNote(g.store, g.id, ""))
-		case stopWake && o.State == gatehandle.RunningUnverified && !g.store.UnverifiedNotified(g.id):
+		case mode != modeCatchUp && o.State == gatehandle.RunningUnverified && !g.store.UnverifiedNotified(g.id):
+			// Noted once and then let go in both stop modes — not pending, so the
+			// adapter's next wait on it is not an immediate return, looped.
 			toMark = append(toMark, stillRunning{gateRef: g, unverified: true, reason: o.Reason})
 			notes = append(notes, stillRunningNote(g.store, g.id, o.Reason))
 		}
 	}
 	if len(blocks) > 0 {
-		return strings.Join(blocks, "\n\n"), delivered
+		d.text = strings.Join(blocks, "\n\n")
+		return d
 	}
 	for _, r := range toMark {
 		r.store.MarkNotified(r.id, r.unverified, r.reason)
 	}
-	return strings.Join(notes, "\n"), nil
+	if mode == modeSettle {
+		d.note = strings.Join(notes, "\n")
+	} else {
+		d.text = strings.Join(notes, "\n")
+	}
+	return d
+}
+
+// limitUndelivered is the settle step of a run that ends at settle, where
+// nothing can wake it: no gate is waited on or claimed. Each run of the
+// session's own that has not been handed over gets the adapter-named limitation
+// recorded on its handle — once — and stays undelivered, so the next session's
+// prompt still puts its verdict in front of the model. It returns the runs it
+// recorded the limitation for.
+func limitUndelivered(refs []gateRef, limitation string) []string {
+	var limited []string
+	for _, g := range refs {
+		if g.store.MarkLimited(g.id, limitation) {
+			limited = append(limited, g.id)
+		}
+	}
+	return limited
 }
 
 // stillRunning is a run the Stop hook is about to tell its session about.
@@ -184,6 +246,37 @@ func stillRunningNote(store *gatehandle.Store, id, unverifiedReason string) stri
 		return fmt.Sprintf("satelle: gate %s — %s — has run %s and this platform cannot verify it is still going (%s); its verdict is delivered with your next prompt or stop once it finishes. End your turn; do not poll.", id, what, elapsed, unverifiedReason)
 	}
 	return fmt.Sprintf("satelle: gate %s — %s — is still running after %s. End your turn to keep waiting; do not poll.", id, what, elapsed)
+}
+
+// settlePendingNote is the line an operator is shown while a gate is still going
+// at the end of a settle's one wait: the stop is allowed, and the verdict is sent
+// to the session when the run finishes.
+func settlePendingNote(store *gatehandle.Store, id string) string {
+	m, _ := store.Meta(id)
+	elapsed := time.Since(m.Started).Round(time.Second)
+	return fmt.Sprintf("satelle: gate %s — `satelle %s` for %s — is still running after %s; its verdict is sent to the session once it finishes.", id, strings.Join(m.Argv, " "), storyLabel(m), elapsed)
+}
+
+// settleGateDelivery is the Stop hook's gate step for a harness that cannot hold
+// its stop (agentcli.HarnessFacts.SettleNotifyOnly). One wait, up to wait: a
+// finished run is claimed — the same exclusive Claim the prompt hook uses, so a
+// verdict is told to the session once, by whichever hook gets there first — and
+// returned as the text to send. A run still going is returned as pending, never
+// as text. With noWake the run ends at settle, so nothing is waited on or
+// claimed and limitation is recorded for each undelivered run instead.
+func settleGateDelivery(wait time.Duration, noWake bool, limitation string) (gateDelivery, []string) {
+	home, ok := hookGateStore()
+	if !ok {
+		return gateDelivery{}, nil
+	}
+	session := config.ResolveSession()
+	refs := ownedGates(handleStoresFor(home, session), session)
+	if noWake {
+		return gateDelivery{}, limitUndelivered(refs, limitation)
+	}
+	d := deliverRefs(refs, wait, modeSettle)
+	recordGateDelivered(d.delivered)
+	return d, nil
 }
 
 // waitForGates blocks until one of refs has finished (a Finished or Died run is a
@@ -281,24 +374,24 @@ func storyLabel(m gatehandle.Meta) string {
 // and deliver for this session — from that store and from any store it points at
 // for the session (handleStoresFor). Fails open — no repo, no handles, no text.
 func gateDeliveryFor(wait time.Duration) string {
-	return hookGateDelivery(wait, false)
+	return hookGateDelivery(wait, modeCatchUp)
 }
 
 // stopGateDeliveryFor is gateDeliveryFor for the Stop hook: it also answers with
 // a still-running note while a gate the session handed off is still going.
 func stopGateDeliveryFor(wait time.Duration) string {
-	return hookGateDelivery(wait, true)
+	return hookGateDelivery(wait, modeStopHold)
 }
 
-func hookGateDelivery(wait time.Duration, stopWake bool) string {
+func hookGateDelivery(wait time.Duration, mode deliverMode) string {
 	home, ok := hookGateStore()
 	if !ok {
 		return ""
 	}
 	session := config.ResolveSession()
-	text, delivered := deliverRefs(ownedGates(handleStoresFor(home, session), session), wait, stopWake)
-	recordGateDelivered(delivered)
-	return text
+	d := deliverRefs(ownedGates(handleStoresFor(home, session), session), wait, mode)
+	recordGateDelivered(d.delivered)
+	return d.text
 }
 
 // recordGateDelivered writes each delivered run's delivery row (sty_c4b92c9e):

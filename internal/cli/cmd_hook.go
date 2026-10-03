@@ -431,6 +431,7 @@ dispatched process, are left alone.`,
 	// future payload shape changes.
 	prompt.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi —in-loop publish (default: sniff event)")
 	stopcheck.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi —in-loop publish (default: sniff event)")
+	stopcheck.Flags().BoolVar(&hookNoWakeFlag, "no-wake", false, "the run ends at settle: wait for no gate and record a delivery limitation for each undelivered one (a harness that cannot hold its stop)")
 	explain := &cobra.Command{
 		Use:   "explain",
 		Short: "Show how the PreToolUse model rule would decide for a payload",
@@ -476,6 +477,11 @@ func runHookExplain(cmd *cobra.Command, args []string) error {
 // hookHarnessFlag is set by gate/commitgate --harness (wrapper forwards the
 // scaffold harness token). Empty → harnessFromEvent fallback.
 var hookHarnessFlag string
+
+// hookNoWakeFlag is set by stopcheck --no-wake: the harness adapter says this
+// run ends at settle, where nothing can wake it, so the Stop hook waits for no
+// gate and records a limitation for each undelivered one instead.
+var hookNoWakeFlag bool
 
 // seatInfo is a single engagement-lease view for gate denials and session inject
 // (sty_1738f973). Empty ItemID means no lease row was relevant.
@@ -2935,26 +2941,87 @@ func runHookStopcheck(raw []byte, out io.Writer) error {
 	//
 	// A harness that caps the continuations of a turn (resumeWakeFor) is woken by
 	// resuming its session instead of by a note it would count: see resumeWake.
+	//
+	// A harness whose stop cannot hold a session (facts.SettleNotifyOnly) is the
+	// exception: a block there is a user message that starts a turn of its own, so
+	// a still-running note would re-prompt on every settle with nothing to cap it.
+	// Its hook waits once (settleGateDelivery), blocks only with a verdict, and
+	// answers a gate still going with an allow that names it as pending, which the
+	// harness adapter asks about again.
 	var wake *resumeWake
 	defer func() { wake.settle() }()
+	var settle *stopAllowOut
 	if !isDispatchedProcess() {
-		if wake = resumeWakeFor(raw); wake != nil {
-			if text := wake.stop(raw); text != "" {
-				return wake.block(out, text)
+		facts := agentcli.FactsFor(stopHarness(raw))
+		if !facts.SettleNotifyOnly {
+			if wake = resumeWakeFor(raw); wake != nil {
+				if text := wake.stop(raw); text != "" {
+					return wake.block(out, text)
+				}
+				if wake.spent() {
+					return nil // the turn ends on its own; nothing more can be said
+				}
+			} else if text := stopGateDeliveryFor(stopGateWait()); text != "" {
+				return emitStopBlock(out, text)
 			}
-			if wake.spent() {
-				return nil // the turn ends on its own; nothing more can be said
+		} else {
+			d, limited := settleGateDelivery(stopGateWait(), hookNoWakeFlag, facts.NoWakeLimitation)
+			if d.text != "" {
+				return emitStopBlock(out, d.text)
 			}
-		} else if text := stopGateDeliveryFor(stopGateWait()); text != "" {
-			return emitStopBlock(out, text)
+			settle = &stopAllowOut{SystemMessage: d.note, Pending: d.pending, Limited: limited}
+			for _, id := range limited {
+				settle.SystemMessage = joinNonEmpty("\n", settle.SystemMessage, fmt.Sprintf("satelle: gate %s undelivered — %s", id, facts.NoWakeLimitation))
+			}
 		}
 	}
+	block, note, err := stopcheckEdits(raw)
+	if err != nil {
+		return err
+	}
+	if block != "" {
+		return wake.block(out, block) // counted where the harness caps continuations
+	}
+	if settle != nil && settle.SystemMessage != "" {
+		settle.SystemMessage = joinNonEmpty("\n", note, settle.SystemMessage)
+		return emitStopAllow(out, *settle)
+	}
+	if note != "" {
+		return wake.note(out, note)
+	}
+	return nil
+}
+
+// stopHarness is the harness the Stop event came from: the hook's own --harness
+// token, else a neutral sniff of the event envelope.
+func stopHarness(raw []byte) string {
+	if hookHarnessFlag != "" {
+		return hookHarnessFlag
+	}
+	return harnessFromEvent(raw)
+}
+
+func joinNonEmpty(sep string, parts ...string) string {
+	var kept []string
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, sep)
+}
+
+// stopcheckEdits is the ungated-edit half of the Stop hook: the block reason when
+// the tree has uncommitted non-exempt changes and no live seat, or the note when
+// a sibling session holds the seat; both empty when nothing is wrong or nothing
+// can be known.
+func stopcheckEdits(raw []byte) (block, note string, err error) {
 	if stopHookActive(raw) {
-		return nil // anti-loop: never re-block a stop we already blocked
+		return "", "", nil // anti-loop: never re-block a stop we already blocked
 	}
 	root, ok := repoRootForHook()
 	if !ok {
-		return nil // fail open — unresolvable repo blocks nothing
+		return "", "", nil // fail open — unresolvable repo blocks nothing
 	}
 	mine, other, extra, err := stopcheckSeat()
 	if err != nil || mine {
@@ -2962,16 +3029,16 @@ func runHookStopcheck(raw []byte, out io.Writer) error {
 		// unknowable — stopcheck is a secondary detector, so it fails OPEN rather
 		// than blocking a finish on a broken deployment (the PreToolUse gate is the
 		// fail-closed one).
-		return nil
+		return "", "", nil
 	}
 	gated, derr := dirtyGatedPaths(root)
 	if derr != nil || len(gated) == 0 {
-		return nil // git absent / clean / only exempt (.satelle) changes — nothing to flag
+		return "", "", nil // git absent / clean / only exempt (.satelle) changes — nothing to flag
 	}
 	if other.ItemID != "" {
-		return wake.note(out, stopcheckSiblingNote(other, extra, gated, time.Now().UTC()))
+		return "", stopcheckSiblingNote(other, extra, gated, time.Now().UTC()), nil
 	}
-	return wake.block(out, stopcheckReason(gated))
+	return stopcheckReason(gated), "", nil
 }
 
 // repoRootForHook resolves this repo's root from the committed config, or
@@ -3124,13 +3191,25 @@ func stopcheckSiblingNote(holder seatInfo, extra int, paths []string, now time.T
 // the stop proceeds, and systemMessage surfaces the note to the operator. It is
 // deliberately NOT stopBlockOut — the JSON on stdout must never read as a block
 // on this path (sty_211d8419).
+//
+// Pending and Limited are the settle answer of a harness that cannot hold its
+// stop (agentcli.HarnessFacts.SettleNotifyOnly), and are absent from every other
+// harness's output: Pending names gate runs still going, whose verdict the
+// harness adapter asks for again; Limited names runs whose verdict was left
+// undelivered because the run ends at settle.
 type stopAllowOut struct {
-	SystemMessage string `json:"systemMessage"`
+	SystemMessage string   `json:"systemMessage"`
+	Pending       []string `json:"pending,omitempty"`
+	Limited       []string `json:"limited,omitempty"`
 }
 
 // emitStopNote writes the allow-with-note JSON (one line) and returns nil.
 func emitStopNote(out io.Writer, note string) error {
-	b, err := json.Marshal(stopAllowOut{SystemMessage: note})
+	return emitStopAllow(out, stopAllowOut{SystemMessage: note})
+}
+
+func emitStopAllow(out io.Writer, allow stopAllowOut) error {
+	b, err := json.Marshal(allow)
 	if err != nil {
 		return err
 	}

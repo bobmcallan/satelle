@@ -209,7 +209,7 @@ func TestXRepo_ConcurrentRoutesDeliverOnce(t *testing.T) {
 			// The stores are what each hook resolves; the claim is the shared part.
 			var text string
 			if i%2 == 0 {
-				text, _ = deliverRefs(ownedGates(handleStoresFor(a, xrepoSession), xrepoSession), 0, false)
+				text = deliverRefs(ownedGates(handleStoresFor(a, xrepoSession), xrepoSession), 0, modeCatchUp).text
 			} else {
 				text, _ = deliverGates(b, xrepoSession, 0)
 			}

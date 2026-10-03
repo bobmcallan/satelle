@@ -44,6 +44,16 @@ type HarnessFacts struct {
 	// not a wake that cannot run out: each row names its budget, its basis, or
 	// an adapter-named "unavailable"/"unverified".
 	InTurnWake string
+	// SettleNotifyOnly: the harness's stop event is notification-only and cannot
+	// hold a session, so the Stop hook must never answer a still-running gate
+	// with a block — each block would start a turn of its own, with nothing to
+	// cap them. A harness whose stop can hold (a Stop-block wakes it, under a
+	// cap) leaves this false, and so does a harness with no row.
+	SettleNotifyOnly bool
+	// NoWakeLimitation is the adapter-named limitation recorded for a gate
+	// verdict left undelivered because the run ended at settle, where nothing
+	// can wake it. Empty for a harness that has no such run.
+	NoWakeLimitation string
 	// PromptContext: the harness delivers the prompt hook's additionalContext to
 	// the model — the catch-up channel for a verdict that missed its wake.
 	PromptContext Capability
@@ -108,7 +118,9 @@ func HarnessFactsTable() []HarnessFacts {
 			// a correct reviewer verdict that never landed.
 			CompletionNotification: yes(),
 			// Grounded in the satelle pi extension (satelle_pi_extension.ts.tmpl).
-			InTurnWake:        "Stop cannot veto: the extension turns a block into a user message that starts another turn; a non-interactive run that exits on settle is not held; no budget recorded",
+			InTurnWake:        "Stop cannot veto: the extension turns a verdict into a user message that starts another turn, sent once — one bounded wait, then the stop is allowed, so there is no re-prompt budget to spend; a non-interactive run that exits on settle is not held and records a limitation for the undelivered gate",
+			SettleNotifyOnly:  true,
+			NoWakeLimitation:  "pi: a non-interactive (print or JSON) run ends at agent_settled, which is notification-only, so the gate verdict cannot be sent as a user message; it stays undelivered and is put in front of the model by UserPromptSubmit additionalContext in the next session",
 			PromptContext:     yes(),
 			PromptContextNote: "the extension injects it into the system prompt via before_agent_start",
 		},

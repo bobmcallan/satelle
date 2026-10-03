@@ -7,6 +7,7 @@
 //
 // steps.json is an array of
 //   { "event": "<pi event>", "arg": {...}, "ctx": { "cwd": "...", "idle": true, "hasUI": true } }
+//   { "wait_messages": N, "timeout_ms": T }   (see below)
 // and the driver prints one JSON document:
 //   { "registered": [<pi event names in registration order>],
 //     "results":    [<what each step's handlers returned>],
@@ -47,6 +48,17 @@ mod.default(pi);
 const steps = JSON.parse(readFileSync(stepsPath, "utf8")) ?? [];
 const results = [];
 for (const step of steps) {
+	// { "wait_messages": N, "timeout_ms": T } waits — for work the extension left
+	// running without awaiting, such as a gate waiter — until N messages have been
+	// sent, or T ms pass.
+	if (step.wait_messages !== undefined) {
+		const deadline = Date.now() + (step.timeout_ms ?? 10000);
+		while (messages.length < step.wait_messages && Date.now() < deadline) {
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		results.push({ event: "wait_messages", result: null, threw: null });
+		continue;
+	}
 	const c = step.ctx ?? {};
 	const ctx = {
 		cwd: c.cwd,

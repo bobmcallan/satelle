@@ -172,9 +172,17 @@ func TestHarnessFacts_ClaudeWakeNamesVersionAndDelivers(t *testing.T) {
 // additionalContext, and a non-interactive settle is not held.
 func TestHarnessFacts_PiWake(t *testing.T) {
 	p := FactsFor(HarnessPi)
-	for _, want := range []string{"cannot veto", "user message", "not held"} {
+	for _, want := range []string{"cannot veto", "user message", "sent once", "not held"} {
 		if !strings.Contains(p.InTurnWake, want) {
 			t.Errorf("pi in-turn wake lacks %q: %q", want, p.InTurnWake)
+		}
+	}
+	if !p.SettleNotifyOnly || !strings.HasPrefix(p.NoWakeLimitation, "pi:") {
+		t.Errorf("pi must record a settle-notify-only stop and an adapter-named no-wake limitation: %+v", p)
+	}
+	for _, h := range []string{HarnessClaude, HarnessGrok, "mystery", ""} {
+		if f := FactsFor(h); f.SettleNotifyOnly || f.NoWakeLimitation != "" {
+			t.Errorf("%q must keep the hold-the-stop behaviour: %+v", h, f)
 		}
 	}
 	if !p.PromptContext.Available || !strings.Contains(p.PromptContextCell(), "before_agent_start") {
