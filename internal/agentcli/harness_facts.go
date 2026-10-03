@@ -38,6 +38,18 @@ type HarnessFacts struct {
 	// CompletionNotification: the harness can deliver a finished gate's verdict
 	// into the driving session without the driver asking. Polling is not this.
 	CompletionNotification Capability
+	// InTurnWake is how a finished gate reaches the driving session inside a
+	// turn, what budget that wake has, and what happens when it is spent
+	// (sty_3a2d3b7e, epic:gate-wake). A completion notification that exists is
+	// not a wake that cannot run out: each row names its budget, its basis, or
+	// an adapter-named "unavailable"/"unverified".
+	InTurnWake string
+	// PromptContext: the harness delivers the prompt hook's additionalContext to
+	// the model — the catch-up channel for a verdict that missed its wake.
+	PromptContext Capability
+	// PromptContextNote qualifies PromptContext (how it is delivered), appended
+	// to the yes/unavailable cell.
+	PromptContextNote string
 }
 
 // HarnessFactsTable returns the table in the order help prints it.
@@ -51,6 +63,15 @@ func HarnessFactsTable() []HarnessFacts {
 			// that answers {"decision":"block","reason":…} keeps the session going
 			// with that reason as its next input — a wake with no driver call.
 			CompletionNotification: yes(),
+			// Measured on the installed claude 2.1.288:
+			// CLAUDE_CODE_STOP_HOOK_BLOCK_CAP defaults to 8, and a live always-block
+			// probe (claude -p haiku, --tools "", Stop hook always blocking, session
+			// db658341-256f-413c-ac4e-c6c48922fbf5, 2026-10-03) was overridden after
+			// 9 consecutive Stop blocks ("A hook blocked the turn from ending 9
+			// consecutive times").
+			InTurnWake:        "a Stop-block wakes the session; cap 8 (CLAUDE_CODE_STOP_HOOK_BLOCK_CAP default) — measured on claude 2.1.288: a live always-block Stop probe was overridden after 9 consecutive blocks (session db658341-256f-413c-ac4e-c6c48922fbf5, 2026-10-03). Past the cap, or after a StopFailure/SessionEnd, a gate is delivered by resuming the same session with the verdict as the prompt (sty_7e4393fc)",
+			PromptContext:     yes(),
+			PromptContextNote: "delivered, and the scaffold's engaged reminder rides it",
 		},
 		{
 			Harness:          HarnessGrok,
@@ -62,6 +83,11 @@ func HarnessFactsTable() []HarnessFacts {
 			// driver ended its turn, and the Stop hook's block reason woke the
 			// session with the verdict — three model calls in all, no polling.
 			CompletionNotification: yes(),
+			// Measurement: the grok binary's stop_gate.rs notes and its porting
+			// list (grok 1.0.41 observed). A Stop-block and a non-error Stop
+			// feedback each count as a continuation.
+			InTurnWake:    "cap 8 continuations (a Stop-block and a non-error Stop feedback each count); after 8 the gate is overridden, hooks are not consulted and the turn ends; the counter resets on the next user prompt — measured from grok's stop_gate.rs notes and porting list. Past the cap a gate is delivered by resuming the same session with the verdict as the prompt (sty_eac9b28d)",
+			PromptContext: no("grok: UserPromptSubmit additionalContext is discarded"),
 		},
 		{
 			Harness:          HarnessPi,
@@ -81,6 +107,10 @@ func HarnessFactsTable() []HarnessFacts {
 			// finished handle — twelve stranded gates on 2026-09-29, each with
 			// a correct reviewer verdict that never landed.
 			CompletionNotification: yes(),
+			// Grounded in the satelle pi extension (satelle_pi_extension.ts.tmpl).
+			InTurnWake:        "Stop cannot veto: the extension turns a block into a user message that starts another turn; a non-interactive run that exits on settle is not held; no budget recorded",
+			PromptContext:     yes(),
+			PromptContextNote: "the extension injects it into the system prompt via before_agent_start",
 		},
 	}
 }
@@ -103,7 +133,18 @@ func FactsFor(harness string) HarnessFacts {
 		BackgroundCutoff:       DefaultBackgroundCutoff,
 		CutoffBasis:            "no measurement for this harness — the conservative floor",
 		CompletionNotification: no(h + ": no completion-notification path is wired for this harness"),
+		InTurnWake:             "unavailable: " + h + ": no in-turn wake path is recorded for this harness",
+		PromptContext:          no(h + ": no prompt additionalContext path is recorded for this harness"),
 	}
+}
+
+// PromptContextCell is the help-table spelling of PromptContext: the
+// yes/unavailable cell, qualified by the note when one is recorded.
+func (f HarnessFacts) PromptContextCell() string {
+	if f.PromptContextNote == "" {
+		return f.PromptContext.Cell()
+	}
+	return f.PromptContext.Cell() + " — " + f.PromptContextNote
 }
 
 // GateForegroundBudget is the LOW end of how long a gate-running verb holds the
@@ -158,7 +199,7 @@ func AgentWaitBound(harnesses []string) time.Duration {
 }
 
 // harnessFactsColumns are the harness-facts table headings, in cell order.
-var harnessFactsColumns = []string{"background cutoff", "completion notification"}
+var harnessFactsColumns = []string{"background cutoff", "completion notification", "in-turn wake / budget", "prompt additionalContext"}
 
 // HarnessFactsTableMarkdown renders HarnessFactsTable as the markdown table
 // `satelle help agent-dispatch` carries, so the docs cannot say a harness can
@@ -168,7 +209,7 @@ func HarnessFactsTableMarkdown() string {
 	b.WriteString("| harness | " + strings.Join(harnessFactsColumns, " | ") + " |\n")
 	b.WriteString("| --- |" + strings.Repeat(" --- |", len(harnessFactsColumns)) + "\n")
 	for _, f := range HarnessFactsTable() {
-		fmt.Fprintf(&b, "| %s | %s — %s | %s |\n", f.Harness, f.BackgroundCutoff, f.CutoffBasis, f.CompletionNotification.Cell())
+		fmt.Fprintf(&b, "| %s | %s — %s | %s | %s | %s |\n", f.Harness, f.BackgroundCutoff, f.CutoffBasis, f.CompletionNotification.Cell(), f.InTurnWake, f.PromptContextCell())
 	}
 	return b.String()
 }

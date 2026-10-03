@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/costview"
 	"github.com/bobmcallan/satelle/internal/gatehandle"
 	"github.com/bobmcallan/satelle/internal/verb"
 )
@@ -66,9 +64,19 @@ func stopGateWait() time.Duration {
 // way app.Open finds it but without opening the database — a hook must stay
 // cheap. ok is false outside a governed repo, where a hook stays inert.
 func hookGateStore() (*gatehandle.Store, bool) {
+	cfg, root, ok := firingRepo()
+	if !ok {
+		return nil, false
+	}
+	return gatehandle.New(cfg.ResolveRuntimeDir(root).Dir), true
+}
+
+// firingRepo is the repo a hook fires in: its config and root. ok is false
+// outside a governed repo.
+func firingRepo() (config.Config, string, bool) {
 	cfg, cfgPath, err := config.Load("")
 	if err != nil && !errors.Is(err, config.ErrNotFound) {
-		return nil, false
+		return config.Config{}, "", false
 	}
 	root := "."
 	if cfgPath != "" {
@@ -77,9 +85,9 @@ func hookGateStore() (*gatehandle.Store, bool) {
 		root = cwd
 	}
 	if _, ok := config.FindDataDir(root); !ok {
-		return nil, false
+		return config.Config{}, "", false
 	}
-	return gatehandle.New(cfg.ResolveRuntimeDir(root).Dir), true
+	return cfg, root, true
 }
 
 // ownsGate reports whether the session may be told about a run: its own, or one
@@ -115,17 +123,17 @@ func deliverStopGates(store *gatehandle.Store, session string, wait time.Duratio
 }
 
 func deliverGatesMode(store *gatehandle.Store, session string, wait time.Duration, stopWake bool) (string, []gatehandle.Meta) {
-	var mine []string
-	for _, id := range store.Undelivered() {
-		if m, err := store.Meta(id); err == nil && ownsGate(session, m) {
-			mine = append(mine, id)
-		}
-	}
+	return deliverRefs(ownedGates([]handleStore{{store: store}}, session), wait, stopWake)
+}
+
+// deliverRefs is the delivery over runs that may live in different stores: each
+// is observed, claimed and marked in the store that holds it.
+func deliverRefs(mine []gateRef, wait time.Duration, stopWake bool) (string, []gatehandle.Meta) {
 	if len(mine) == 0 {
 		return "", nil
 	}
 	if wait > 0 {
-		waitForGates(store, mine, wait)
+		waitForGates(mine, wait)
 	}
 	// One look per run, and everything is decided from it: a run that finishes
 	// between two looks would otherwise be "running" to the first and "done" to
@@ -133,34 +141,34 @@ func deliverGatesMode(store *gatehandle.Store, session string, wait time.Duratio
 	var blocks, notes []string
 	var delivered []gatehandle.Meta
 	var toMark []stillRunning
-	for _, id := range mine {
-		o := store.Observe(id)
+	for _, g := range mine {
+		o := g.store.Observe(g.id)
 		switch {
 		case o.Terminal():
-			if store.Claim(id) {
+			if g.store.Claim(g.id) {
 				blocks = append(blocks, renderGateVerdict(o.Verdict))
 				delivered = append(delivered, o.Verdict.Meta)
 			}
 		case stopWake && o.State == gatehandle.Running:
-			toMark = append(toMark, stillRunning{id: id})
-			notes = append(notes, stillRunningNote(store, id, ""))
-		case stopWake && o.State == gatehandle.RunningUnverified && !store.UnverifiedNotified(id):
-			toMark = append(toMark, stillRunning{id: id, unverified: true, reason: o.Reason})
-			notes = append(notes, stillRunningNote(store, id, o.Reason))
+			toMark = append(toMark, stillRunning{gateRef: g})
+			notes = append(notes, stillRunningNote(g.store, g.id, ""))
+		case stopWake && o.State == gatehandle.RunningUnverified && !g.store.UnverifiedNotified(g.id):
+			toMark = append(toMark, stillRunning{gateRef: g, unverified: true, reason: o.Reason})
+			notes = append(notes, stillRunningNote(g.store, g.id, o.Reason))
 		}
 	}
 	if len(blocks) > 0 {
 		return strings.Join(blocks, "\n\n"), delivered
 	}
 	for _, r := range toMark {
-		store.MarkNotified(r.id, r.unverified, r.reason)
+		r.store.MarkNotified(r.id, r.unverified, r.reason)
 	}
 	return strings.Join(notes, "\n"), nil
 }
 
 // stillRunning is a run the Stop hook is about to tell its session about.
 type stillRunning struct {
-	id         string
+	gateRef
 	unverified bool
 	reason     string
 }
@@ -178,19 +186,24 @@ func stillRunningNote(store *gatehandle.Store, id, unverifiedReason string) stri
 	return fmt.Sprintf("satelle: gate %s — %s — is still running after %s. End your turn to keep waiting; do not poll.", id, what, elapsed)
 }
 
-// waitForGates blocks until every id is terminal (or, once a session has been
-// told its liveness cannot be verified, no longer worth holding it for), or wait
-// passes.
-func waitForGates(store *gatehandle.Store, ids []string, wait time.Duration) {
+// waitForGates blocks until one of refs has finished (a Finished or Died run is a
+// verdict ready to hand over), or until none of them is worth holding the
+// session for — each is no longer running, or is a run whose liveness the
+// session was already told it cannot verify — or wait passes. A verdict that is
+// ready is delivered at once and never held behind a slower gate: the rest are
+// waited for by the next Stop (sty_7e4393fc).
+func waitForGates(refs []gateRef, wait time.Duration) {
 	deadline := time.Now().Add(wait)
 	for {
 		running := false
-		for _, id := range ids {
-			switch store.State(id) {
+		for _, g := range refs {
+			switch g.store.State(g.id) {
+			case gatehandle.Finished, gatehandle.Died:
+				return
 			case gatehandle.Running:
 				running = true
 			case gatehandle.RunningUnverified:
-				running = running || !store.UnverifiedNotified(id)
+				running = running || !g.store.UnverifiedNotified(g.id)
 			}
 		}
 		if !running || !time.Now().Before(deadline) {
@@ -265,23 +278,25 @@ func storyLabel(m gatehandle.Meta) string {
 }
 
 // gateDeliveryFor is the hook-side entry point: resolve the repo's handle store
-// and deliver for this session. Fails open — no repo, no handles, no text.
+// and deliver for this session — from that store and from any store it points at
+// for the session (handleStoresFor). Fails open — no repo, no handles, no text.
 func gateDeliveryFor(wait time.Duration) string {
-	return hookGateDelivery(wait, deliverGates)
+	return hookGateDelivery(wait, false)
 }
 
 // stopGateDeliveryFor is gateDeliveryFor for the Stop hook: it also answers with
 // a still-running note while a gate the session handed off is still going.
 func stopGateDeliveryFor(wait time.Duration) string {
-	return hookGateDelivery(wait, deliverStopGates)
+	return hookGateDelivery(wait, true)
 }
 
-func hookGateDelivery(wait time.Duration, deliver func(*gatehandle.Store, string, time.Duration) (string, []gatehandle.Meta)) string {
-	store, ok := hookGateStore()
+func hookGateDelivery(wait time.Duration, stopWake bool) string {
+	home, ok := hookGateStore()
 	if !ok {
 		return ""
 	}
-	text, delivered := deliver(store, config.ResolveSession(), wait)
+	session := config.ResolveSession()
+	text, delivered := deliverRefs(ownedGates(handleStoresFor(home, session), session), wait, stopWake)
 	recordGateDelivered(delivered)
 	return text
 }
@@ -289,24 +304,27 @@ func hookGateDelivery(wait time.Duration, deliver func(*gatehandle.Store, string
 // recordGateDelivered writes each delivered run's delivery row (sty_c4b92c9e):
 // the mark of when the harness handed the session its verdict, one of the rows a
 // wait's model-call count is read from. It is a seam because the hook stays
-// cheap and opens the store only when it has actually delivered something.
+// cheap and opens the store only when it has actually delivered something. The
+// row goes to the ledger of the repo the run's story lives in — for a run started
+// across repos, the one holding the handle, not the one whose hook delivered it.
 var recordGateDelivered = func(delivered []gatehandle.Meta) {
-	var stories []gatehandle.Meta
+	byRepo := map[string][]gatehandle.Meta{}
 	for _, m := range delivered {
 		if m.Story != "" {
-			stories = append(stories, m)
+			byRepo[m.Repo] = append(byRepo[m.Repo], m)
 		}
 	}
-	if len(stories) == 0 {
-		return
-	}
-	a, err := app.Open()
-	if err != nil {
-		return
-	}
-	defer a.Close()
-	verb.SetLedgerStore(a.Store.Ledger)
-	for _, m := range stories {
-		verb.RecordGateWait(context.Background(), m.Story, costview.GatePhaseDelivered, m.ID, time.Now().UTC())
+	for repo, stories := range byRepo {
+		if repo != "" {
+			recordDeliveredIn(repo, stories)
+			continue
+		}
+		a, err := app.Open() // the repo this hook fires in
+		if err != nil {
+			continue
+		}
+		verb.SetLedgerStore(a.Store.Ledger)
+		recordDeliveryRows(stories)
+		a.Close()
 	}
 }

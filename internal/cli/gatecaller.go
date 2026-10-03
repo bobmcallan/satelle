@@ -279,10 +279,20 @@ func handOffGate(cmd *cobra.Command, verbName, storyID string) (handled bool, er
 	}
 	store := gatehandle.New(a.RuntimeDir)
 	argv := gateArgv()
-	meta, cerr := store.Create(gatehandle.Meta{
+	m := gatehandle.Meta{
 		Verb: verbName, Story: storyID, Argv: argv,
 		Session: config.ResolveSession(), Harness: drivingHarness(),
-	})
+	}
+	// A session anchored in another repo has hooks that read that repo's store, not
+	// this one: name it on the handle and leave a pointer there once the run is
+	// started (sty_8f10499d). Without a session there is nobody to route to.
+	var serve *gatehandle.Store
+	if m.Session != "" && !isDispatchedProcess() {
+		if s, root, ok := serveTarget(m.Session, a.RuntimeDir); ok {
+			serve, m.ServeRoot, m.Repo = s, root, a.RepoRoot
+		}
+	}
+	meta, cerr := store.Create(m)
 	if cerr != nil {
 		return false, nil
 	}
@@ -295,6 +305,9 @@ func handOffGate(cmd *cobra.Command, verbName, storyID string) (handled bool, er
 	// Before child.Wait below: SetPID records the process's creation identity, and
 	// until the child is reaped its pid cannot have been reused.
 	_ = store.SetPID(meta.ID, child.Process.Pid)
+	if serve != nil {
+		_ = serve.Forward(meta.Session, meta.ID, a.RuntimeDir)
+	}
 	// The first of the rows a wait's model-call count is read from: the driving
 	// session's request count as the gate command is issued.
 	if storyID != "" {
@@ -303,6 +316,13 @@ func handOffGate(cmd *cobra.Command, verbName, storyID string) (handled bool, er
 	done := make(chan struct{})
 	go func() { _ = child.Wait(); close(done) }()
 
+	// The handle is going back to the driver unfinished: a harness that cannot
+	// wake the session in-turn is handed a watcher here, in the driver's own
+	// call, since no later hook is certain to run (armResumeForPending).
+	pending := func() error {
+		armResumeForPending(store, meta)
+		return printPending(cmd, meta)
+	}
 	deadline := time.NewTimer(gateWaitBound(a.RepoRoot))
 	defer deadline.Stop()
 	tick := time.NewTicker(50 * time.Millisecond)
@@ -320,11 +340,11 @@ func handOffGate(cmd *cobra.Command, verbName, storyID string) (handled bool, er
 			if v, ok := store.Load(meta.ID); ok {
 				return true, replayGate(cmd, store, v)
 			}
-			return true, printPending(cmd, meta)
+			return true, pending()
 		case <-deadline.C:
-			return true, printPending(cmd, meta)
+			return true, pending()
 		case <-cmd.Context().Done():
-			return true, printPending(cmd, meta)
+			return true, pending()
 		case <-tick.C:
 		}
 	}

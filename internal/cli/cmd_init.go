@@ -746,6 +746,11 @@ func buildClaudeHookSettings(repoRoot string) []byte {
 		// is shared repo scaffold. The renderer stays; an operator who wants the
 		// line puts it in their own settings — see statusLineOptInNotice.
 	}
+	for _, ev := range hs.turnEndEvents {
+		doc["hooks"].(map[string]any)[ev] = []any{
+			map[string]any{"hooks": []any{map[string]any{"type": "command", "command": turnEndHookCommand("claude")}}},
+		}
+	}
 	b, _ := json.MarshalIndent(doc, "", "  ")
 	return append(b, '\n')
 }
@@ -1222,6 +1227,17 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 		hooks[rh.event] = append(arr, group)
 		added = append(added, rh.event)
 	}
+	// The turn-end events this harness fires (sty_7e4393fc), wired as the
+	// builder wires them.
+	for _, ev := range hs.turnEndEvents {
+		if hookEventHasMarker(hooks[ev], "satelle hook turnend") {
+			continue
+		}
+		group := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": turnEndHookCommand(harness)}}}
+		arr, _ := hooks[ev].([]any)
+		hooks[ev] = append(arr, group)
+		added = append(added, ev)
+	}
 	// A Stop hook installed before gate hand-off (sty_c4b92c9e) carries no
 	// timeout, so the harness's default would cut its wait for a running gate
 	// short. Raise it in place — never lowering one the operator set.
@@ -1276,6 +1292,11 @@ func incompleteHookEvents(path, harness string) []string {
 			}
 		}
 		if !ok {
+			missing = append(missing, event)
+		}
+	}
+	for _, event := range harnessHooks(harness).turnEndEvents {
+		if !hookEventHasMarker(hooks[event], "satelle hook turnend") {
 			missing = append(missing, event)
 		}
 	}

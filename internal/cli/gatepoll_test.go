@@ -108,13 +108,22 @@ func TestNoSurfaceLetsTheDriverPollAHandle(t *testing.T) {
 
 // The structural half: the only code allowed to read a handle's outcome is the
 // parent replaying its own run (gatecaller.go) and the harness-hook delivery
-// (gatedeliver.go). A verb, the web surface or a new command importing the
-// store is the first step toward a status command.
+// (gatedeliver.go, and gateresume.go for a harness whose turn cannot carry the
+// verdict — the hook starts a watcher that claims and delivers, and answers no
+// caller). A verb, the web surface or a new command importing the store is the
+// first step toward a status command.
 func TestOnlyDeliveryAndReplayReadAHandle(t *testing.T) {
 	allowed := map[string]bool{
-		filepath.Join("internal", "gatehandle"):                  true,
-		filepath.Join("internal", "cli", "gatecaller.go"):        true,
-		filepath.Join("internal", "cli", "gatedeliver.go"):       true,
+		filepath.Join("internal", "gatehandle"):            true,
+		filepath.Join("internal", "cli", "gatecaller.go"):  true,
+		filepath.Join("internal", "cli", "gatedeliver.go"): true,
+		filepath.Join("internal", "cli", "gateresume.go"):  true,
+		// Where delivery looks for a session's handles across repos (sty_8f10499d):
+		// it lists and claims for the hooks and the watcher, and answers no caller.
+		filepath.Join("internal", "cli", "gatexrepo.go"):         true,
+		filepath.Join("internal", "cli", "gatexrepo_test.go"):    true,
+		filepath.Join("internal", "cli", "gateresume_test.go"):   true,
+		filepath.Join("internal", "cli", "gateclaude_test.go"):   true,
 		filepath.Join("internal", "cli", "gatecaller_test.go"):   true,
 		filepath.Join("internal", "cli", "gatepoll_test.go"):     true,
 		filepath.Join("internal", "cli", "gateverdict_test.go"):  true,
