@@ -41,6 +41,10 @@ func grokStopEvent(t *testing.T, active bool) string {
 		t.Fatal(err)
 	}
 	ev["stopHookActive"] = active
+	// The capture names the directory it was taken in. A resume runs in the
+	// session's cwd, so point it at a directory every machine has.
+	ev["cwd"] = os.TempDir()
+	ev["workspaceRoot"] = os.TempDir()
 	out, err := json.Marshal(ev)
 	if err != nil {
 		t.Fatal(err)
