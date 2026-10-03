@@ -138,8 +138,12 @@ type stepWire struct {
 	// stories are driven: it holds the status, but nothing performs on the
 	// container itself (sty_7f3e6fd3).
 	WaitsOnChildren bool `toml:"waits_on_children"`
-	Start           bool `toml:"start"`
-	Terminal        bool `toml:"terminal"`
+	// Schedule is a container step's declared child schedule: SchedParallel or
+	// SchedSequential. A plain string, so an absent key stays "" — the binary does
+	// not guess one. Distinct from Parallel above, which is the reviewer fan-out.
+	Schedule string `toml:"schedule"`
+	Start    bool   `toml:"start"`
+	Terminal bool   `toml:"terminal"`
 	// ContextBudget and TurnBudget are the step's own spend bounds for its
 	// performer (sty_a7914904), overriding the allocated binding's. Zero or
 	// absent means unset; a negative value is refused. The numbers are the
@@ -370,6 +374,7 @@ func ParseSteps(body string) (Catalogue, error) {
 			Freeze:        s.Freeze,
 
 			WaitsOnChildren: s.WaitsOnChildren,
+			Schedule:        s.Schedule,
 			ContextBudget:   s.ContextBudget,
 			TurnBudget:      s.TurnBudget,
 		}
@@ -442,6 +447,17 @@ func ParseSteps(body string) (Catalogue, error) {
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: propose needs the step to allocate a performer (agent = …) and its skills — there is nothing to run before the gates", st.Provides)
 		case budgetDeclared[st.Provides] && st.RejectBudget < 1:
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: reject_budget must be >= 1 (a zero budget refuses the first presentation)", st.Provides)
+		}
+	}
+	// schedule refusals: a value outside the closed set, or on a step that does
+	// not wait on children, would be a silent no-op.
+	for _, st := range cat.Steps {
+		switch {
+		case st.Schedule == "":
+		case st.Schedule != SchedParallel && st.Schedule != SchedSequential:
+			return Catalogue{}, fmt.Errorf("step.toml: step %q: schedule %q is invalid — schedule must be one of: %s, %s", st.Provides, st.Schedule, SchedParallel, SchedSequential)
+		case !st.WaitsOnChildren:
+			return Catalogue{}, fmt.Errorf("step.toml: step %q: schedule is a container declaration — it needs waits_on_children = true", st.Provides)
 		}
 	}
 	return cat, nil

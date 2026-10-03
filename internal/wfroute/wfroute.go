@@ -152,6 +152,9 @@ type Step struct {
 	// WaitsOnChildren: a container idles at this step while its children are
 	// driven, so it does not count as performing (sty_7f3e6fd3).
 	WaitsOnChildren bool `json:"waits_on_children,omitempty"`
+	// Schedule is the container's declared child schedule ("parallel" or
+	// "sequential"); absent when the step declares none.
+	Schedule string `json:"schedule,omitempty"`
 }
 
 // Exit is an off-route destination — a park or cancel state the story may leave
@@ -259,6 +262,7 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 		RejectBudget: st.RejectBudget,
 
 		WaitsOnChildren: st.WaitsOnChildren,
+		Schedule:        st.Schedule,
 	}
 	// Edge-named gates: the reviewers on any inbound edge. A step is entered from
 	// one place on the spine and from recovery edges, which repeat the same gate

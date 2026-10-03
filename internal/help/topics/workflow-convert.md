@@ -97,7 +97,7 @@ does not make obvious, and the one every conversion gets wrong.**
 
 Step keys: `status`, `agent`, `skills`, `reviewers`, `reviewer_agent`,
 `parallel`, `bundle`, `requires`, `applies_to`, `advise`, `rework`, `propose`,
-`freeze`, `reject_budget`, `waits_on_children`, `start`, `terminal`.
+`freeze`, `reject_budget`, `waits_on_children`, `schedule`, `start`, `terminal`.
 
 `bundle = true` runs the step's entry reviewers that can share one session as
 ONE reviewer session: every rubric rides the prompt verbatim under its own
@@ -119,6 +119,16 @@ performs nothing, so while any child is not yet terminal (or cancelled) the edit
 gate, the Stop hook and the deny messages do not count it as a performing seat.
 It counts again once every child is resolved. A story at a dispatched-performer
 step is not affected by having children — only the route's declaration waits.
+
+`schedule = "parallel"` or `"sequential"` is the container's declared child
+schedule. It is legal only on a `waits_on_children` step, any other value is
+refused, and an absent key stays absent — the binary neither guesses one, computes
+a wave from it, nor changes engagement because of it. It is NOT the reviewer
+`parallel` integer (entry-gate fan-out); a step may set both and each keeps its
+own meaning. The story-level edge is a repeated `depends-on:<story id>` tag,
+which create/set validate: each target must be a story in the same epic set, with
+no self-edge and no cycle. It is distinct from `order:` (sprint position) and
+`blocked-by:` (the park cue).
 
 Three keys turn a step into a **readiness step** — a performer that produces an
 artifact the entry reviewers then judge, while the story stays editable:

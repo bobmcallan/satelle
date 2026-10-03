@@ -149,6 +149,12 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 		// with a body note naming the container (sty_9f4f8e12).
 		if kind == workitem.KindStory {
 			tags, req.Body = dropClosedEpicTags(ctx, req.Category, tags, req.Body)
+			// depends-on:<story id> must name a story in the same epic set. The
+			// check reads the FINAL tags; there is no id yet, so only the not-a-
+			// story and outside-the-set refusals can apply.
+			if err := checkDependsOn(ctx, store, "", req.ParentID, tags); err != nil {
+				return nil, err
+			}
 		}
 
 		// Single-story process rule (sty_c7149f8a): refuse creating a story already
@@ -347,6 +353,18 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			return nil, cerr
 		}
 		req.Tags = &canon
+		// depends-on:<story id> validation (the story-level epic edge): the final
+		// effective set must name stories in this story's epic set, with no
+		// self-edge and no cycle.
+		if current.Kind == workitem.KindStory {
+			parent := current.ParentID
+			if req.ParentID != nil {
+				parent = *req.ParentID
+			}
+			if err := checkDependsOn(ctx, store, current.ID, parent, canon); err != nil {
+				return nil, err
+			}
+		}
 	}
 	// Category vocabulary (sty_b2315e17): canonicalise BEFORE definition freeze so
 	// a casing-only --category change is not treated as a definition mutation.

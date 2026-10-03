@@ -213,6 +213,9 @@ type State struct {
 	// WaitsOnChildren: a container idles here while its children are driven
 	// (sty_7f3e6fd3). Read through Spec.WaitsOnChildren.
 	WaitsOnChildren bool
+	// Schedule is the container's declared child schedule (Step.Schedule); empty
+	// when undeclared.
+	Schedule string
 	// When is a gate node's optional enqueue precondition: the functional-check
 	// skill the engine runs before enqueuing it (RouteGate.When). Empty means the
 	// gate is unconditional.
@@ -825,6 +828,13 @@ func (s Spec) ExecutorSkillsFor(name string, tags []string) []string {
 	}
 	return append(out, augs...)
 }
+
+// The closed set of values a container step's `schedule` may take. Distinct from
+// the reviewer fan-out `parallel` integer.
+const (
+	SchedParallel   = "parallel"
+	SchedSequential = "sequential"
+)
 
 // DefaultParallelCap is the concurrency cap when an edge sets parallel=true
 // without a numeric limit (sty_4f0a15db). Bounded because reviewers share backends.

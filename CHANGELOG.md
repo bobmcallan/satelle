@@ -1,3 +1,13 @@
+## [0.0.597] - 2026-10-03
+
+### Added
+- **A container step may declare `schedule` as `parallel` or `sequential`, and a story may declare `depends-on:`.** An absent schedule stays absent. A value outside the closed set is refused and the message names the key and both legal values. `schedule` is refused on a step that is not waiting on children, so it cannot be confused with reviewer fan-out `parallel`. Create and set refuse a `depends-on:` that does not name a story, a self-edge, a cycle, or an edge that leaves the epic set, and the refusal names the ids. The binary does not compute a wave and does not change engagement. (sty_839938cc)
+
+## [serve-v0.0.112] - 2026-10-03
+
+### Added
+- **The service reads the same container `schedule` field the CLI validates.** A waits-on-children step may carry `parallel` or `sequential`; anything else is refused. Reviewer fan-out is unchanged. (sty_839938cc)
+
 ## [0.0.596] - 2026-10-02
 
 ### Added

@@ -105,6 +105,11 @@ type Step struct {
 	// the edit gate and Stop hook do not count it while children are open
 	// (sty_7f3e6fd3). Authored in step.toml; the binary never names the status.
 	WaitsOnChildren bool
+	// Schedule is the container's declared child schedule (SchedParallel or
+	// SchedSequential), authored on a waits_on_children step. Empty means
+	// undeclared: the binary does not default it, compute a wave from it or
+	// change engagement because of it.
+	Schedule string
 	// ContextBudget / TurnBudget are this step's own spend bounds for its
 	// performer (sty_a7914904): input tokens and model turns. They override the
 	// allocated binding's, which override [defaults]. Zero means unset — nothing
@@ -439,6 +444,7 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			RejectBudget: st.RejectBudget,
 
 			WaitsOnChildren: st.WaitsOnChildren,
+			Schedule:        st.Schedule,
 		})
 	}
 
