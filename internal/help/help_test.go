@@ -17,7 +17,7 @@ func TestListContainsCoreTopics(t *testing.T) {
 			t.Errorf("topic %q has empty body", top.Name)
 		}
 	}
-	for _, want := range []string{"create-story", "reviewer-checks", "principles", "projects", "create-review", "agent-dispatch", "workflow-convert", "retrieve", "compact-output"} {
+	for _, want := range []string{"create-story", "reviewer-checks", "principles", "projects", "create-review", "agent-dispatch", "workflow-convert", "retrieve", "compact-output", "epic-wave"} {
 		if !names[want] {
 			t.Errorf("missing help topic %q", want)
 		}

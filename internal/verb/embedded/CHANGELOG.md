@@ -1,3 +1,13 @@
+## [0.0.599] - 2026-10-03
+
+### Added
+- **`satelle story wave` returns the children of an epic that may start now.** Membership is the epic tag set. A dependency is satisfied only when that story is done; cancelled does not count, and the omission names it. Parallel returns every eligible child. Sequential returns that set only when it is exactly one id, otherwise it refuses and names them. No schedule, two epic-parents, or a missing epic tag refuses with no runnable ids. The command writes nothing. (sty_a0563b3e)
+
+## [serve-v0.0.114] - 2026-10-03
+
+### Added
+- **The published serve binary includes the epic-wave assessment, because the CLI help topic and verb sit on its dependency path.** The web UI does not render a wave. The command remains read-only. (sty_a0563b3e)
+
 ## [0.0.598] - 2026-10-03
 
 ### Fixed

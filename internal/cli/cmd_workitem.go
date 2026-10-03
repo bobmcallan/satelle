@@ -228,6 +228,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyDocCommands()...)
 		parent.AddCommand(storyCostCommands()...)
 		parent.AddCommand(storyDiffCommand())
+		parent.AddCommand(storyWaveCommand())
 		parent.AddCommand(storyProofCommand())
 		parent.AddCommand(storyDefinitionEditsCommand())
 		parent.AddCommand(storySyncCommand())
@@ -1413,6 +1414,53 @@ func fmtDurationMs(ms int64) string {
 		return "-"
 	}
 	return (time.Duration(ms) * time.Millisecond).Round(100 * time.Millisecond).String()
+}
+
+// storyWaveCommand builds `satelle story wave <epic-parent-id>`: the read-only
+// assessment of which children of an epic may start now (sty_a0563b3e). It
+// engages, dispatches and writes nothing.
+func storyWaveCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "wave <epic-parent-id>",
+		Short: "Print the children of an epic that may start now (read-only)",
+		Long: `Print the runnable child ids of an epic-parent, one per line. Read-only: it
+writes no status, lease or tag, and engages or dispatches nothing.
+
+A dependency is satisfied only when that story's own route says done — a
+cancelled one does not satisfy it, and the omitted child is listed (# omitted)
+with the dependency named. The container's route declares the schedule; with no
+schedule, or sequential and more than one runnable child, it exits non-zero
+and prints no id — it never picks by order: or created_at.
+
+See 'satelle help epic-wave' for the full contract; --json prints the response.`,
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			body, err := json.Marshal(map[string]any{"id": args[0]})
+			if err != nil {
+				return err
+			}
+			resp, err := verb.Dispatch(cmd.Context(), "story-wave", body)
+			if err != nil {
+				return err
+			}
+			if v, _ := cmd.Flags().GetBool("json"); v {
+				return printJSON(cmd, resp)
+			}
+			var res verb.WaveResult
+			if err := json.Unmarshal(resp, &res); err != nil {
+				return fmt.Errorf("story wave: decode response: %w", err)
+			}
+			out := cmd.OutOrStdout()
+			for _, id := range res.Runnable {
+				fmt.Fprintln(out, id)
+			}
+			for _, o := range res.Omitted {
+				fmt.Fprintf(out, "# omitted %s: %s\n", o.ID, o.Reason)
+			}
+			return nil
+		},
+	}
 }
 
 // storyRestampCommand builds `satelle story restamp <id> [--workflow <name>]`:

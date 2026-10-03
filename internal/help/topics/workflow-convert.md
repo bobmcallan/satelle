@@ -122,8 +122,9 @@ step is not affected by having children — only the route's declaration waits.
 
 `schedule = "parallel"` or `"sequential"` is the container's declared child
 schedule. It is legal only on a `waits_on_children` step, any other value is
-refused, and an absent key stays absent — the binary neither guesses one, computes
-a wave from it, nor changes engagement because of it. It is NOT the reviewer
+refused, and an absent key stays absent — the binary never guesses one and never
+changes engagement because of it. `satelle story wave` reads it to report, read-only, which
+children may start now (`satelle help epic-wave`). It is NOT the reviewer
 `parallel` integer (entry-gate fan-out); a step may set both and each keeps its
 own meaning. The story-level edge is a repeated `depends-on:<story id>` tag,
 which create/set validate: each target must be a story in the same epic set, with
