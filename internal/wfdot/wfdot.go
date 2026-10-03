@@ -216,6 +216,9 @@ type State struct {
 	// Schedule is the container's declared child schedule (Step.Schedule); empty
 	// when undeclared.
 	Schedule string
+	// AfterChildren is the obligation every child must have discharged before a
+	// container enters this step (Step.AfterChildren); empty when undeclared.
+	AfterChildren string
 	// When is a gate node's optional enqueue precondition: the functional-check
 	// skill the engine runs before enqueuing it (RouteGate.When). Empty means the
 	// gate is unconditional.
@@ -228,6 +231,13 @@ type State struct {
 func (s Spec) WaitsOnChildren(status string) bool {
 	st, ok := s.StateNamed(status)
 	return ok && st.WaitsOnChildren
+}
+
+// AfterChildren returns the obligation a container must see discharged by every
+// child before it may enter status, or "" when the step declares none.
+func (s Spec) AfterChildren(status string) string {
+	st, _ := s.StateNamed(status)
+	return st.AfterChildren
 }
 
 // StateNamed returns the spine state called name, and whether it exists.
@@ -249,8 +259,8 @@ func (s Spec) StateNamed(name string) (State, bool) {
 func (s Spec) DefinitionEditable(status string) (editable, ok bool) {
 	freezeAt, at, i := -1, -1, 0
 	for _, st := range s.States {
-		if len(st.On) > 0 || (st.Agent == "reviewer" && st.Shape != "Msquare") {
-			continue // a gate or role state, not a step on the route
+		if !st.onRouteSpine() {
+			continue
 		}
 		if st.Freeze && freezeAt < 0 {
 			freezeAt = i
@@ -265,6 +275,39 @@ func (s Spec) DefinitionEditable(status string) (editable, ok bool) {
 		return status == start, start != ""
 	}
 	return at >= 0 && at < freezeAt, true
+}
+
+// onRouteSpine reports whether a state is a step on the route — not a gate or a
+// role state.
+func (st State) onRouteSpine() bool {
+	return len(st.On) == 0 && !(st.Agent == "reviewer" && st.Shape != "Msquare")
+}
+
+// SpineIndex is the position of the step called name among the route's steps, in
+// route order, or -1 when name is not a step on the route.
+func (s Spec) SpineIndex(name string) int {
+	i := 0
+	for _, st := range s.States {
+		if !st.onRouteSpine() {
+			continue
+		}
+		if st.Name == name {
+			return i
+		}
+		i++
+	}
+	return -1
+}
+
+// ObligationStep returns the route step that discharges obligation, and whether
+// the route has one.
+func (s Spec) ObligationStep(obligation string) (State, bool) {
+	for _, st := range s.States {
+		if st.onRouteSpine() && st.Obligation != "" && st.Obligation == obligation {
+			return st, true
+		}
+	}
+	return State{}, false
 }
 
 // StepSummary reports whether the workflow declares a step-summary node (a node

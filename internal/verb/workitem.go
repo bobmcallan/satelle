@@ -428,6 +428,11 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		if err := refuseOpenEpicChildren(ctx, current, *req.Status); err != nil {
 			return nil, err
 		}
+		// A container's merge-style step waits on its children's own obligation;
+		// refused here, before any gate is paid for or seat taken.
+		if err := refuseUndischargedChildren(ctx, current, *req.Status); err != nil {
+			return nil, err
+		}
 	}
 
 	// Engage precondition (sty_93eec36d): when a story leaves its workflow entry
@@ -787,6 +792,9 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	// check, and a member may have been filed in that window (sty_9f4f8e12).
 	if transitioning {
 		if err := refuseOpenEpicChildren(ctx, current, *req.Status); err != nil {
+			return nil, err
+		}
+		if err := refuseUndischargedChildren(ctx, current, *req.Status); err != nil {
 			return nil, err
 		}
 	}

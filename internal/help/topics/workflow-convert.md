@@ -97,7 +97,8 @@ does not make obvious, and the one every conversion gets wrong.**
 
 Step keys: `status`, `agent`, `skills`, `reviewers`, `reviewer_agent`,
 `parallel`, `bundle`, `requires`, `applies_to`, `advise`, `rework`, `propose`,
-`freeze`, `reject_budget`, `waits_on_children`, `schedule`, `start`, `terminal`.
+`freeze`, `reject_budget`, `waits_on_children`, `schedule`, `after_children`,
+`start`, `terminal`.
 
 `bundle = true` runs the step's entry reviewers that can share one session as
 ONE reviewer session: every rubric rides the prompt verbatim under its own
@@ -130,6 +131,14 @@ own meaning. The story-level edge is a repeated `depends-on:<story id>` tag,
 which create/set validate: each target must be a story in the same epic set, with
 no self-edge and no cycle. It is distinct from `order:` (sprint position) and
 `blocked-by:` (the park cue).
+
+`after_children = "<obligation>"` makes a container step wait on a child
+obligation: entry is refused until every child in the epic set has discharged
+that obligation on its own route, and the refusal names the children that have
+not (`satelle help epic-wave`). The name must be an obligation some step
+provides, the step must require a `waits_on_children` step, and the two keys
+cannot sit on one step. The step may name an `agent`, which then takes the
+container's seat on entry. Absent, nothing changes.
 
 Three keys turn a step into a **readiness step** — a performer that produces an
 artifact the entry reviewers then judge, while the story stays editable:

@@ -1,3 +1,13 @@
+## [0.0.602] - 2026-10-03
+
+### Added
+- **A container step may wait on a named child obligation, then perform.** `after_children` is refused until every child has discharged that obligation, or is done or cancelled. The refusal names the children that have not. Entering the step takes a parent seat. A discharged child can still advance from another worktree. Absent the key, the waiting-container lease rule is unchanged. The binary does not merge, push, or bump a version. (sty_fdad98b0)
+
+## [serve-v0.0.117] - 2026-10-03
+
+### Added
+- **The published serve binary includes the after_children gate, because the route parser and help topic sit on its dependency path.** The web UI does not merge branches. (sty_fdad98b0)
+
 ## [0.0.601] - 2026-10-03
 
 ### Changed

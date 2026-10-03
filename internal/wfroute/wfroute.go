@@ -155,6 +155,9 @@ type Step struct {
 	// Schedule is the container's declared child schedule ("parallel" or
 	// "sequential"); absent when the step declares none.
 	Schedule string `json:"schedule,omitempty"`
+	// AfterChildren is the obligation every child must have discharged before the
+	// container may enter this step; absent when the step declares none.
+	AfterChildren string `json:"after_children,omitempty"`
 }
 
 // Exit is an off-route destination — a park or cancel state the story may leave
@@ -263,6 +266,7 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 
 		WaitsOnChildren: st.WaitsOnChildren,
 		Schedule:        st.Schedule,
+		AfterChildren:   st.AfterChildren,
 	}
 	// Edge-named gates: the reviewers on any inbound edge. A step is entered from
 	// one place on the spine and from recovery edges, which repeat the same gate
@@ -466,6 +470,9 @@ func renderKnobs(s Step) string {
 	}
 	if s.WaitsOnChildren {
 		parts = append(parts, "the container waits here while its children are driven; it is not performing")
+	}
+	if s.AfterChildren != "" {
+		parts = append(parts, fmt.Sprintf("entry is refused until every child has discharged %q", s.AfterChildren))
 	}
 	if len(parts) == 0 {
 		return ""

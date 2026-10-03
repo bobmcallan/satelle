@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/epicset"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -38,11 +39,14 @@ func ClearEngagementMode() { engagementParallel = config.ParallelNone }
 //     seat. A parentless story falls back to its own id and therefore claims the
 //     seat as a singleton (nothing else can match its key).
 //
-// The parent is NEVER engaged and is never even read: the epic id is a string
-// key lifted off ParentID. Do not "fix" this by leasing or loading the parent —
-// container stories keep their judge-only routes on purpose.
+// The epic id is a string key lifted off ParentID; the parent is never read to
+// find it. A parent is not engaged unless its route declares a step with
+// after_children, which may name a performer; a container idling at a
+// waits_on_children step still holds no lease. An epic-parent that does take a
+// seat claims it under its OWN id, which is the key its children share, so
+// parent and children co-hold from distinct worktrees.
 func seatKeyFor(item workitem.Item) string {
-	if engagementParallel == config.ParallelEpic {
+	if engagementParallel == config.ParallelEpic && !epicset.IsEpicParent(item) {
 		if p := strings.TrimSpace(item.ParentID); p != "" {
 			return p
 		}

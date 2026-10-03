@@ -51,3 +51,24 @@ mid-flight keeps moving.
 A container with no schedule is unchanged: the "no schedule" refusal above
 belongs to `story wave`, not to engagement. Stories that are not children of an
 epic are unaffected. See `satelle help workflow-convert` for `schedule` and `depends-on`.
+
+## A container step that waits on a child obligation
+
+A container step may declare `after_children = "<obligation>"` in `step.toml`.
+Entering it is refused until every child has discharged that obligation on its
+own route; the refusal names each child that has not, with its status. A child
+has discharged it when it is done or cancelled, or sits at or past the step of
+its own route that provides the obligation. A child whose route has no such step
+holds the container back, and the refusal says so.
+
+The step may name a performer. Entering it takes a seat for the container, under
+the epic key its children already share, so a child that has discharged the
+obligation can still engage its later steps from another worktree while the
+container holds it — still one worktree per lease. That needs
+`[engagement] parallel = "epic"`: in `none` mode the container and a child hold
+different keys and conflict. The container's `waits_on_children` step still
+holds no seat. Without `after_children`, container engagement is unchanged, and
+`children-resolved` still requires every child terminal.
+
+The binary only gates the entry and the seat. It runs no git command; a merge is
+a skill the step names.

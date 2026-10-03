@@ -142,8 +142,12 @@ type stepWire struct {
 	// SchedSequential. A plain string, so an absent key stays "" — the binary does
 	// not guess one. Distinct from Parallel above, which is the reviewer fan-out.
 	Schedule string `toml:"schedule"`
-	Start    bool   `toml:"start"`
-	Terminal bool   `toml:"terminal"`
+	// AfterChildren names the obligation every child must have discharged on its
+	// own route before a container may enter this step. A plain string, so an
+	// absent key stays "" and container engagement is unchanged.
+	AfterChildren string `toml:"after_children"`
+	Start         bool   `toml:"start"`
+	Terminal      bool   `toml:"terminal"`
 	// ContextBudget and TurnBudget are the step's own spend bounds for its
 	// performer (sty_a7914904), overriding the allocated binding's. Zero or
 	// absent means unset; a negative value is refused. The numbers are the
@@ -375,6 +379,7 @@ func ParseSteps(body string) (Catalogue, error) {
 
 			WaitsOnChildren: s.WaitsOnChildren,
 			Schedule:        s.Schedule,
+			AfterChildren:   strings.TrimSpace(s.AfterChildren),
 			ContextBudget:   s.ContextBudget,
 			TurnBudget:      s.TurnBudget,
 		}
@@ -460,7 +465,57 @@ func ParseSteps(body string) (Catalogue, error) {
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: schedule is a container declaration — it needs waits_on_children = true", st.Provides)
 		}
 	}
+	if err := checkAfterChildren(cat); err != nil {
+		return Catalogue{}, err
+	}
 	return cat, nil
+}
+
+// checkAfterChildren refuses the after_children declarations that would be
+// silent no-ops: a name no step provides, a step that is itself the wait, and a
+// step no waits_on_children step precedes — which is not a container route. The
+// precedence test is the step's own requires chain, so it is decided on the
+// catalogue and never on a category or status name.
+func checkAfterChildren(cat Catalogue) error {
+	provided := providedSet(cat)
+	byProvides := map[string]Step{}
+	for _, st := range cat.Steps {
+		if st.Provides != "" {
+			byProvides[st.Provides] = st
+		}
+	}
+	for _, st := range cat.Steps {
+		if st.AfterChildren == "" {
+			continue
+		}
+		switch {
+		case st.WaitsOnChildren:
+			return fmt.Errorf("step.toml: step %q: after_children and waits_on_children are two different container steps — the wait is the step before the one that names after_children", st.Provides)
+		case !provided[st.AfterChildren]:
+			return fmt.Errorf("step.toml: step %q: after_children %q names an obligation no step provides", st.Provides, st.AfterChildren)
+		case st.AfterChildren == st.Provides:
+			return fmt.Errorf("step.toml: step %q: after_children names the step's own obligation", st.Provides)
+		case !requiresWait(st, byProvides, map[string]bool{}):
+			return fmt.Errorf("step.toml: step %q: after_children is a container declaration — the step must require, directly or through other steps, a waits_on_children step", st.Provides)
+		}
+	}
+	return nil
+}
+
+// requiresWait reports whether st's requires chain reaches a waits_on_children
+// step.
+func requiresWait(st Step, byProvides map[string]Step, seen map[string]bool) bool {
+	for _, req := range st.Requires {
+		if seen[req] {
+			continue
+		}
+		seen[req] = true
+		p, ok := byProvides[req]
+		if ok && (p.WaitsOnChildren || requiresWait(p, byProvides, seen)) {
+			return true
+		}
+	}
+	return false
 }
 
 // ParseRoute is the single entry point: the two authored bodies plus a category

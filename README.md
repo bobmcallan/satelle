@@ -219,9 +219,14 @@ Two rules follow, and both are load-bearing:
   valid sibling — two engaged stories sharing a tree would attribute each
   other's edits. `satelle story diff` is anchored to the recorded tree for the
   same reason: run it elsewhere and it refuses, naming where to run it.
-- **The parent is never engaged.** It is an arbitration key, not a lease.
-  Container stories keep their judge-only routes; nothing here makes them
-  performable.
+- **The parent is not engaged unless its route says so.** Its id is the
+  arbitration key, not a lease, and a container idling at a `waits_on_children`
+  step holds none. A container step may declare `after_children = "<obligation>"`:
+  entry is refused until every child has discharged that obligation on its own
+  route, and the step may name a performer, which then takes a seat under the
+  same key so parent and children co-hold from distinct worktrees. The binary
+  only gates that entry and seat; what the step does, a merge included, is a
+  skill the route names.
 
 **What satelle does not own.** Satelle arbitrates concurrent *engagement*. It
 does not define how concurrent work *converges* — merge order, whether a batch

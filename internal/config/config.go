@@ -685,8 +685,9 @@ const (
 	// ParallelEpic keys the seat on the story's PARENT id, so sibling children
 	// of one epic may hold sub-leases concurrently — each from a distinct git
 	// working tree. A story under a different parent (or none) is refused while
-	// an epic-keyed seat is held. The parent itself is never engaged: the epic
-	// id is an arbitration KEY, not a lease on the container.
+	// an epic-keyed seat is held. The parent is not engaged unless its route
+	// declares a step with after_children: the epic id is an arbitration KEY, and
+	// a container waiting on its children holds no lease.
 	ParallelEpic = "epic"
 )
 

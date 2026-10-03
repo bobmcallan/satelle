@@ -110,6 +110,11 @@ type Step struct {
 	// undeclared: the binary does not default it, compute a wave from it or
 	// change engagement because of it.
 	Schedule string
+	// AfterChildren is the obligation every child must have discharged on its own
+	// route before a container may enter this step. The step may name a performer
+	// like any other; the binary only gates entry and the seat. Empty means the
+	// step has no such wait.
+	AfterChildren string
 	// ContextBudget / TurnBudget are this step's own spend bounds for its
 	// performer (sty_a7914904): input tokens and model turns. They override the
 	// allocated binding's, which override [defaults]. Zero means unset — nothing
@@ -445,6 +450,7 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 
 			WaitsOnChildren: st.WaitsOnChildren,
 			Schedule:        st.Schedule,
+			AfterChildren:   st.AfterChildren,
 		})
 	}
 
