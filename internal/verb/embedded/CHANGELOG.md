@@ -1,3 +1,8 @@
+## [0.0.603] - 2026-10-03
+
+### Changed
+- **epic:epic-drive closed.** The mechanism shipped in 0.0.597 through 0.0.602. This container release records the close. Children of an epic whose parent owns the merge now stop on `epic/<id>` instead of pushing main; this epic's children had already landed on main before that rule existed, so there was nothing left to merge. (sty_53d52623)
+
 ## [0.0.602] - 2026-10-03
 
 ### Added
