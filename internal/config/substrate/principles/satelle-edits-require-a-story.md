@@ -32,16 +32,11 @@ fix, not permission to edit ungated. Commits and pushes are gated the same way �
 commit under the engaged story. Gate-routing discipline (including when a gate
 denies): [[satelle-agent-goals]].
 
-**The one exception to the executor-state rule above is a recorded claim.** It
-exists only where the repo declares `[fix_lane] product_surface`; otherwise every
-claim is refused (class `undeclared-bound`). With a story engaged and no transition in flight, the driving session (never a
-dispatched performer) may make a small self-evident fix in a state that is not
-`agent=executor`, under an `in-loop-fix` claim — `satelle fix claim <path>
---reason … --lines N --test <named test>`, recorded BEFORE the edit. It excepts
-only that rule: it never waives the engaged-story requirement. It licenses ONE
-edit and dies at the story's next transition. Which claims are refused (each
-refusal a ledger row) is in `satelle help fix-lane`. The lane changes who may
-edit, never what a gate judges; an edit with no claim is a breach, not a lane.
+**The one exception to the executor-state rule above is a recorded claim**
+(`satelle fix claim`). It excepts only that rule: it never waives the
+engaged-story requirement, and it changes who may edit, never what a gate
+judges. An edit with no claim is a breach, not a lane. Who may claim, the
+bound, and every refusal: `satelle help fix-lane`.
 
 **Follow the workflow.** Drive the engaged story through every transition its
 workflow declares; a step the workflow prescribes is authorised by it, never a
