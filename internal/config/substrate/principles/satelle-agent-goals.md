@@ -20,22 +20,17 @@ never work around it.
 
 **The workflow is the authority.** Follow every transition it declares — the
 entry gate, the integration and deploy checks, the close — without pausing to ask
-permission for a step the workflow itself prescribes. A step the workflow declares
-is authorised *by* the workflow; it is never a "block", even when it builds,
-deploys, or mutates local state. A block is only a gap that *prevents* following
-the workflow, not a normal step on its path.
+permission. A step the workflow declares is authorised *by* it, even when it
+builds, deploys, or mutates local state; a block is only a gap that *prevents*
+following the workflow.
 
 **One story at a time — when the container declares no schedule.** Drive a
 single engaged story to its terminal state before engaging another. This is not
 the rule once a container declares a schedule; see *Driving an epic* below.
 
-**Epics close on their children.** An epic (an `epic-parent`/parent container)
-is complete only when every child story is terminal; who the children are is
-defined once, in [[satelle-story-classification]]. Keep driving the
-children until the container can close: one at a time when no schedule is
-declared, and as *Driving an epic* says when one is. Intermediate stages
-(plan, in_progress, integration, release, and so on) are waypoints, never a
-point to hand back control.
+**Epics close on their children.** An epic is complete only when every child
+story is terminal ([[satelle-story-classification]] defines the children).
+Intermediate stages are waypoints, never a point to hand back control.
 
 ## Driving an epic
 
@@ -52,12 +47,10 @@ it printed. A wave that exits zero and names children is not a stop — drive
 those children. Do not pick a child by `order:`, by the sprint, or by title —
 `satelle story wave` is the only answer to who may start.
 
-A parallel wave is one worktree per child, and same-tree engagement is refused.
-You open the worktrees; satelle neither opens them nor spawns the sessions.
-Cut an independent child from the epic base, the branch the container was
-engaged on. Cut a child whose `depends-on`
-target is done from that target's branch, not from main, so the dependent tree
-holds the change it was written against. A cancelled dependency is a stop: cut
+You open the worktrees. Cut an independent child from the epic base, the branch
+the container was engaged on. Cut a child whose `depends-on` target is done from
+that target's branch, not from main, so the dependent tree holds the change it
+was written against. A cancelled dependency is a stop: cut
 no worktree from it and do not retarget the edge yourself.
 
 ## When an engaged story cannot satisfy its ACs

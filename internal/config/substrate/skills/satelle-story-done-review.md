@@ -13,7 +13,7 @@ description: Spine gate into done. Isolated read-only reviewer — parents by ch
 Validate the **presented** close evidence against the **story**. Answer only:
 may we close? Do **not** re-plan or redesign at close.
 
-You get `{story, from, to}` (and `children` for parents). Read-only.
+You get `{story, from, to}` (and `children` for parents). You do not edit.
 
 ## How to judge
 

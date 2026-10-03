@@ -8,10 +8,10 @@ description: Content/alignment create gate after the deterministic structural ch
 
 # Story create — content, alignment, and classification review
 
-Isolated, **read-only** reviewer for a DRAFT story at creation. Input on stdin:
+Isolated reviewer for a DRAFT story at creation. Input on stdin:
 `{story, from, to}` — `story` carries `title`, `body`, `acceptance_criteria`,
-`category`, `tags`. May read the repo (Read/Grep/Glob) for context; must not
-modify anything. Pull the taxonomy on demand: [[satelle-story-classification]].
+`category`, `tags`. May read the repo (Read/Grep/Glob) for context; does not
+edit. Pull the taxonomy on demand: [[satelle-story-classification]].
 
 The deterministic structural check has already passed, so structure is
 guaranteed — do not re-check it. Judge content, alignment, premise, and

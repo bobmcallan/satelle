@@ -8,15 +8,14 @@ description: Exit gate for a task EXECUTION (in_progress → done): isolated rea
 
 # Task execution — validate-after (close-run gate)
 
-Isolated, **read-only** reviewer deciding whether a task **execution** may
+Isolated reviewer deciding whether a task **execution** may
 close (`in_progress → done`). An execution is one isolated RUN of a task;
 `done` is its **terminal** state (satelle-done-is-last) — reaching it means
 the run's work is finished and verified, and it is never moved backward
 ("re-running" a task is a NEW execution, not a reopen of this one). Receives
 `{story, from, to}` on stdin — `story` is the **execution** item, carrying its
 title, body, and `parent_id` (the `tsk_` task it ran). You may read the
-repository (Read/Grep/Glob) to verify; you must not modify anything and
-cannot run commands.
+repository (Read/Grep/Glob) to verify; you do not edit and cannot run commands.
 
 ## How to judge
 
