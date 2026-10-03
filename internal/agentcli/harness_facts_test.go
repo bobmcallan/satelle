@@ -1,6 +1,7 @@
 package agentcli
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -101,6 +102,14 @@ func TestHarnessFacts_EveryRowIsExplicit(t *testing.T) {
 			t.Errorf("%s: unavailable without an adapter-named reason: %q", f.Harness, c.Reason)
 		}
 	}
+	for _, f := range HarnessFactsTable() {
+		if strings.TrimSpace(f.InTurnWake) == "" {
+			t.Errorf("%s: no in-turn wake recorded", f.Harness)
+		}
+		if p := f.PromptContext; !p.Available && !strings.HasPrefix(p.Reason, f.Harness+":") {
+			t.Errorf("%s: prompt context unavailable without an adapter-named reason: %q", f.Harness, p.Reason)
+		}
+	}
 	u := FactsFor("mystery")
 	if u.CompletionNotification.Available {
 		t.Errorf("an unrecognised harness claims a completion notification: %+v", u)
@@ -122,6 +131,88 @@ func TestHarnessFacts_RecordsObservedWakesAndNamesTheRest(t *testing.T) {
 	}
 	if FactsFor("nosuch").CompletionNotification.Available {
 		t.Error("a harness with no row claims a completion notification nothing wired")
+	}
+}
+
+// sty_3a2d3b7e AC1: grok's row states the cap, that a forced stop does not
+// consult hooks, that additionalContext is discarded, and its measurement.
+func TestHarnessFacts_GrokWakeBudget(t *testing.T) {
+	g := FactsFor(HarnessGrok)
+	for _, want := range []string{"cap 8", "hooks are not consulted", "stop_gate.rs"} {
+		if !strings.Contains(g.InTurnWake, want) {
+			t.Errorf("grok in-turn wake lacks %q: %q", want, g.InTurnWake)
+		}
+	}
+	if g.PromptContext.Available || !strings.Contains(g.PromptContext.Reason, "discarded") {
+		t.Errorf("grok must record additionalContext as discarded: %+v", g.PromptContext)
+	}
+}
+
+// AC2: claude records the measured continuation cap with the binary's version,
+// and delivers additionalContext.
+func TestHarnessFacts_ClaudeWakeNamesVersionAndDelivers(t *testing.T) {
+	c := FactsFor(HarnessClaude)
+	if !regexp.MustCompile(`claude \d+\.\d+\.\d+`).MatchString(c.InTurnWake) {
+		t.Errorf("claude wake names no binary version: %q", c.InTurnWake)
+	}
+	for _, want := range []string{"cap 8", "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP", "9 consecutive", "db658341-256f-413c-ac4e-c6c48922fbf5"} {
+		if !strings.Contains(c.InTurnWake, want) {
+			t.Errorf("claude wake lacks %q: %q", want, c.InTurnWake)
+		}
+	}
+	if strings.Contains(c.InTurnWake, "unverified") {
+		t.Errorf("claude's cap is measured, not unverified: %q", c.InTurnWake)
+	}
+	if !c.PromptContext.Available {
+		t.Error("claude delivers UserPromptSubmit additionalContext; the row must say so")
+	}
+}
+
+// AC3: pi's wake cannot veto, a block is a user message, the extension injects
+// additionalContext, and a non-interactive settle is not held.
+func TestHarnessFacts_PiWake(t *testing.T) {
+	p := FactsFor(HarnessPi)
+	for _, want := range []string{"cannot veto", "user message", "not held"} {
+		if !strings.Contains(p.InTurnWake, want) {
+			t.Errorf("pi in-turn wake lacks %q: %q", want, p.InTurnWake)
+		}
+	}
+	if !p.PromptContext.Available || !strings.Contains(p.PromptContextCell(), "before_agent_start") {
+		t.Errorf("pi must record the before_agent_start injection: %q", p.PromptContextCell())
+	}
+}
+
+// AC4: an unknown harness is an adapter-named unavailable, never claude's row.
+func TestFactsFor_UnknownHarnessIsNotClaude(t *testing.T) {
+	claude := FactsFor(HarnessClaude)
+	for _, h := range []string{"mystery", ""} {
+		u := FactsFor(h)
+		name := h
+		if name == "" {
+			name = HarnessUnknown
+		}
+		if !strings.HasPrefix(u.InTurnWake, "unavailable: "+name+":") {
+			t.Errorf("%q: in-turn wake is not an adapter-named unavailable: %q", h, u.InTurnWake)
+		}
+		if u.PromptContext.Available || !strings.HasPrefix(u.PromptContext.Reason, name+":") {
+			t.Errorf("%q: prompt context must be an adapter-named unavailable: %+v", h, u.PromptContext)
+		}
+		if u.InTurnWake == claude.InTurnWake || u.PromptContext == claude.PromptContext {
+			t.Errorf("%q was given claude's row", h)
+		}
+	}
+}
+
+// The help topic prints the new columns too.
+func TestHarnessFacts_HelpTopicPrintsWakeColumns(t *testing.T) {
+	top, ok := help.Get("agent-dispatch")
+	if !ok {
+		t.Fatal("agent-dispatch help topic missing")
+	}
+	for _, col := range []string{"in-turn wake / budget", "prompt additionalContext"} {
+		if !strings.Contains(top.Body, col) {
+			t.Errorf("help agent-dispatch lacks the %q column", col)
+		}
 	}
 }
 

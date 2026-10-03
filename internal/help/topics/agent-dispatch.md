@@ -1277,11 +1277,18 @@ recorded with a harness-named limitation — the pending line quotes it — and 
 never given a polling fallback; a limitation is not a claim that the adapter is
 fixed.
 
-| harness | background cutoff | completion notification |
-| --- | --- | --- |
-| claude | 2m0s — the Bash tool's default timeout (120s) | yes |
-| grok | 15s — grok backgrounds any command past 15s (sty_c4b92c9e) | yes |
-| pi | 10m0s — a live pi 0.87.1 foreground call held 25m with an explicit timeout and 45s with none; pi does not auto-background a long command | yes |
+| harness | background cutoff | completion notification | in-turn wake / budget | prompt additionalContext |
+| --- | --- | --- | --- | --- |
+| claude | 2m0s — the Bash tool's default timeout (120s) | yes | a Stop-block wakes the session; cap 8 (CLAUDE_CODE_STOP_HOOK_BLOCK_CAP default) — measured on claude 2.1.288: a live always-block Stop probe was overridden after 9 consecutive blocks (session db658341-256f-413c-ac4e-c6c48922fbf5, 2026-10-03) | yes — delivered, and the scaffold's engaged reminder rides it |
+| grok | 15s — grok backgrounds any command past 15s (sty_c4b92c9e) | yes | cap 8 continuations (a Stop-block and a non-error Stop feedback each count); after 8 the gate is overridden, hooks are not consulted and the turn ends; the counter resets on the next user prompt — measured from grok's stop_gate.rs notes and porting list | unavailable: grok: UserPromptSubmit additionalContext is discarded |
+| pi | 10m0s — a live pi 0.87.1 foreground call held 25m with an explicit timeout and 45s with none; pi does not auto-background a long command | yes | Stop cannot veto: the extension turns a block into a user message that starts another turn; a non-interactive run that exits on settle is not held; no budget recorded | yes — the extension injects it into the system prompt via before_agent_start |
+
+The wake is not unlimited. Where a harness caps in-turn continuations (grok: 8),
+a verdict that arrives after the cap is spent has no wake; the catch-up channel
+is the next prompt's `additionalContext`, and only claude and pi deliver it.
+Grok discards it, so on grok a verdict past the cap waits for the driver to
+read it. A harness with no row is recorded with an adapter-named "unavailable"
+for both, never claude's row.
 
 What a wait cost the driver is read from `driver_usage` rows, not asserted:
 `satelle story cost <id>` carries a CALLS column (the driving session's model
