@@ -11,8 +11,7 @@ description: Semantic workflow review run AFTER `satelle workflow validate` pass
 You are the **in-loop agent** reviewing a workflow the operator authored or is
 about to adopt. `satelle workflow validate <name>` has already passed — the
 structure is legal. Your job is the judgment the structural check deliberately
-skips: is this lifecycle **well configured**? Report findings as advice; change
-nothing yourself.
+skips: is this lifecycle **well configured**? Report findings as advice; you do not edit.
 
 ## What to check
 

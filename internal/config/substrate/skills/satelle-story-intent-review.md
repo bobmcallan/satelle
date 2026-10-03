@@ -13,7 +13,7 @@ description: Entry gate for begin-work (backlog → plan or in_progress). Isolat
 Validate the **presented** story draft. Answer only: may work begin / enter
 planning? Do not rewrite body/ACs; do not invent a plan.
 
-You get `{story, from, to}` on stdin. Read-only.
+You get `{story, from, to}` on stdin. You do not edit.
 
 ## Accept when
 

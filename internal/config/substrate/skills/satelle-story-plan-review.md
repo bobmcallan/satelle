@@ -15,7 +15,7 @@ story advance across this edge (`from` → `to` in the payload)? Do **not**
 create-and-complete this step. Do **not** invent a competing plan and match
 against it.
 
-You get `{story, from, to}` on stdin. Read-only; no modifying, no implementing.
+You get `{story, from, to}` on stdin. You do not edit or implement.
 
 ## 1. Locate the presented artifact
 
