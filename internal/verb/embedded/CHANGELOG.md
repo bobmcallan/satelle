@@ -1,3 +1,13 @@
+## [0.0.605] - 2026-10-03
+
+### Changed
+- **epic:substrate-tight closed.** Embedded session principles and two on-demand principles state each rule once and point at the help topic or toml that owns the rest. Reviewer skills drop the repeated read-only posture paragraph. An epic child's close gates accept the branch-only release when the parent route owns the merge. (sty_1c91175b, sty_f61c09ec, sty_984d0717, sty_f10218e6, sty_2e9d0440)
+
+## [serve-v0.0.118] - 2026-10-03
+
+### Changed
+- **The published serve binary includes the shortened embedded principles and reviewer skills.** Those files sit on the serve dependency path, so this release bumps satelled.version. The web UI does not merge branches. (sty_1c91175b)
+
 ## [0.0.604] - 2026-10-03
 
 ### Fixed
