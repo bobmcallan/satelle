@@ -118,11 +118,17 @@ func computeWave(schedule string, children []workitem.Item, state func(id string
 		omitted = append(omitted, WaveOmitted{ID: c.ID, WaitingOn: waiting, Reason: "waiting on " + strings.Join(parts, ", ")})
 	}
 	if schedule == wfdot.SchedSequential && len(runnable) > 1 {
-		return nil, omitted, fmt.Errorf("schedule is %s but %d children are runnable: %s — add %s edges so exactly one is eligible (a sequential wave never picks by order: or created_at)",
-			wfdot.SchedSequential, len(runnable), strings.Join(runnable, ", "), DependsOnPrefix)
+		return nil, omitted, errWaveTooWide{fmt.Sprintf("schedule is %s but %d children are runnable: %s — add %s edges so exactly one is eligible (a sequential wave never picks by order: or created_at)",
+			wfdot.SchedSequential, len(runnable), strings.Join(runnable, ", "), DependsOnPrefix)}
 	}
 	return runnable, omitted, nil
 }
+
+// errWaveTooWide is the sequential refusal: more than one child is eligible, so
+// the wave names none. Typed so engagement can tell it from a store failure.
+type errWaveTooWide struct{ msg string }
+
+func (e errWaveTooWide) Error() string { return e.msg }
 
 // waveSchedule reads the child schedule the container's route declares: the one
 // on the container's current step when it has one, else the single value any
@@ -142,12 +148,12 @@ func waveSchedule(spec wfdot.Spec, status string) (string, error) {
 	}
 	switch len(vals) {
 	case 0:
-		return "", fmt.Errorf("no schedule is declared on the container's route (set schedule = %q or %q on its waits_on_children step in step.toml)", wfdot.SchedParallel, wfdot.SchedSequential)
+		return "", errNoUsableSchedule{fmt.Sprintf("no schedule is declared on the container's route (set schedule = %q or %q on its waits_on_children step in step.toml)", wfdot.SchedParallel, wfdot.SchedSequential)}
 	case 1:
 		return vals[0], nil
 	}
 	sort.Strings(vals)
-	return "", fmt.Errorf("the container's route declares more than one schedule (%s) and its status %q selects none", strings.Join(vals, ", "), status)
+	return "", errNoUsableSchedule{fmt.Sprintf("the container's route declares more than one schedule (%s) and its status %q selects none", strings.Join(vals, ", "), status)}
 }
 
 // storyWave assesses an epic-parent's children. It reads the store and the
@@ -171,13 +177,6 @@ func storyWave(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 	if container.Kind != workitem.KindStory || !epicset.IsEpicParent(container) {
 		return nil, fmt.Errorf("story-wave: %s is not an epic-parent (category %q) — a wave is the runnable children of an epic's container", container.ID, container.Category)
 	}
-	set, err := epicset.Resolve(ctx, store, container)
-	if err != nil {
-		if errors.Is(err, epicset.ErrUndetermined) {
-			return nil, fmt.Errorf("story-wave: %s: %v — no child is runnable", container.ID, err)
-		}
-		return nil, fmt.Errorf("story-wave: %s: %w", container.ID, err)
-	}
 	idx, err := requireDocIndex()
 	if err != nil {
 		return nil, err
@@ -186,13 +185,38 @@ func storyWave(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 	if err != nil {
 		return nil, fmt.Errorf("story-wave: list workflows: %w", err)
 	}
+	res, err := assessWave(ctx, store, wfs, container)
+	if err != nil {
+		if errors.Is(err, epicset.ErrUndetermined) {
+			return nil, fmt.Errorf("story-wave: %s: %v — no child is runnable", container.ID, err)
+		}
+		return nil, fmt.Errorf("story-wave: %s: %w", container.ID, err)
+	}
+	return json.Marshal(res)
+}
+
+// errNoUsableSchedule marks a container whose route declares no single child
+// schedule (none, or two with its status selecting neither). story wave refuses
+// it; engagement does not, so an unscheduled epic keeps its existing behaviour.
+type errNoUsableSchedule struct{ msg string }
+
+func (e errNoUsableSchedule) Error() string { return e.msg }
+
+// assessWave is the read-only core shared by story wave and engagement: the
+// wave of an epic-parent container. A schedule the route does not declare
+// surfaces as errNoUsableSchedule; an unresolvable set wraps epicset.ErrUndetermined.
+func assessWave(ctx context.Context, store *workitem.Store, wfs []docindex.Doc, container workitem.Item) (WaveResult, error) {
+	set, err := epicset.Resolve(ctx, store, container)
+	if err != nil {
+		return WaveResult{}, err
+	}
 	spec, _, _, err := wfgovern.SpecFor(wfs, container)
 	if err != nil {
-		return nil, fmt.Errorf("story-wave: %s: container route: %w", container.ID, err)
+		return WaveResult{}, fmt.Errorf("container route: %w", err)
 	}
 	schedule, err := waveSchedule(spec, container.Status)
 	if err != nil {
-		return nil, fmt.Errorf("story-wave: %s: %w", container.ID, err)
+		return WaveResult{}, err
 	}
 
 	cache := map[string]waveState{}
@@ -213,10 +237,12 @@ func storyWave(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 	}
 	runnable, omitted, err := computeWave(schedule, set.Children, state)
 	if err != nil {
-		return nil, fmt.Errorf("story-wave: %s: %w", container.ID, err)
+		// The omissions survive a refusal so engagement can quote a waiting
+		// child's own reason; story wave discards the result on error.
+		return WaveResult{Omitted: omitted}, err
 	}
 	if runnable == nil {
 		runnable = []string{}
 	}
-	return json.Marshal(WaveResult{Container: container.ID, Theme: set.Theme, Schedule: schedule, Runnable: runnable, Omitted: omitted})
+	return WaveResult{Container: container.ID, Theme: set.Theme, Schedule: schedule, Runnable: runnable, Omitted: omitted}, nil
 }

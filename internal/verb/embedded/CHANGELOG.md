@@ -1,3 +1,13 @@
+## [0.0.600] - 2026-10-03
+
+### Added
+- **Engaging a child a scheduled epic's wave would omit is refused.** The refusal quotes the wave's reason. A child the wave returns may still engage, one worktree per lease. A container with no schedule is unchanged, so an existing epic does not lock. A story that is not a child of a scheduled epic is unaffected. (sty_54004fbd)
+
+## [serve-v0.0.115] - 2026-10-03
+
+### Added
+- **The published serve binary includes the engagement-wave refusal, because the help topic that states it sits on the serve dependency path.** The web UI does not enforce engagement. (sty_54004fbd)
+
 ## [0.0.599] - 2026-10-03
 
 ### Added

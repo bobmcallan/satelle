@@ -35,4 +35,19 @@ line names the dependency (a cancelled one is called out as cancelled).
 - the story is not an epic-parent.
 
 There is no fallback to `order:` or to every child — the declaration is the
-authority. See `satelle help workflow-convert` for `schedule` and `depends-on`.
+authority.
+
+## Engagement honours the wave
+
+Entering an engaging status (`satelle story set <child> --status plan`) is
+refused for a child of a **scheduled** epic that the wave would not return, and
+the refusal quotes the wave's reason: the dependency that is not done, the
+sequential wave that is wider than one (add `depends-on`), or that the story is
+not in the epic set. A child the wave returns still meets the seat mode and the
+one-engagement-per-worktree rule, so two eligible siblings co-engage only from
+distinct worktrees. Only a *new* engagement is checked; a child already
+mid-flight keeps moving.
+
+A container with no schedule is unchanged: the "no schedule" refusal above
+belongs to `story wave`, not to engagement. Stories that are not children of an
+epic are unaffected. See `satelle help workflow-convert` for `schedule` and `depends-on`.

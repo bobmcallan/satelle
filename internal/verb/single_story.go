@@ -43,6 +43,12 @@ func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatu
 		forceReleaseEngagementLease(ctx, item.ID)
 		return false, false, nil
 	}
+	// A child of a scheduled epic engages only if the wave returns it
+	// (sty_54004fbd). Checked before any seat is taken, so a refusal leaves
+	// nothing to release; seat mode and the tree rule still run below.
+	if err := refuseOffWave(ctx, item, targetStatus); err != nil {
+		return false, false, err
+	}
 	ls, err := requireLease()
 	if err != nil {
 		// Lease store not wired (tests that only need status): fall back to the
