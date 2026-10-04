@@ -2,13 +2,19 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
+	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/testutil"
@@ -290,4 +296,145 @@ func TestHookContext_UnwritableRuntimeDirStillEmits(t *testing.T) {
 	if _, content, _, emitted := runContext(t, "grok", grokDualPayload(channel, "post_tool_use", "sess-unwritable")); !emitted || !strings.Contains(content, "CONSTITUTION-MARKER-sty_507d3d9c") {
 		t.Fatal("an unwritable runtime dir must still emit")
 	}
+}
+
+// diagnosisPrincipleName is the authored session principle. Tests copy the repo
+// file into the temp repo; they do not carry a second copy of its text.
+const diagnosisPrincipleName = "satelle-diagnosis-is-hypothesis"
+
+// diagnosisProofPhrase is a sentence fragment that lives in the principle body
+// and must not appear in the description or the first heading. principleIndexLine
+// copies only those, so an indexed emit cannot contain this phrase.
+const diagnosisProofPhrase = "unproven until discovery proves"
+
+// diagnosisPrincipleBody reads the repo's authored principle. The path is taken
+// from this file, not the process cwd, because session fixtures chdir.
+func diagnosisPrincipleBody(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	dir := filepath.Dir(file)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			b, err := os.ReadFile(filepath.Join(dir, config.DefaultDataDir, "principles", diagnosisPrincipleName+".md"))
+			if err != nil {
+				if errors.Is(err, fs.ErrNotExist) {
+					t.Skip("satelle-diagnosis-is-hypothesis is repo-local substrate (.satelle is gitignored); not present in this checkout")
+				}
+				t.Fatal(err)
+			}
+			return string(b)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("go.mod not found above the test file")
+		}
+		dir = parent
+	}
+}
+
+// requireDiagnosisProof fails unless the phrase is in the body and absent from
+// the two fields principleIndexLine would copy.
+func requireDiagnosisProof(t *testing.T, body string) {
+	t.Helper()
+	if !strings.Contains(body, "name: "+diagnosisPrincipleName) {
+		t.Fatalf("principle file is not named %s", diagnosisPrincipleName)
+	}
+	if !strings.Contains(frontmatter(body), "principles:session") {
+		t.Fatal("principle is not tagged principles:session")
+	}
+	desc, heading, prose := diagnosisParts(body)
+	if !strings.Contains(prose, diagnosisProofPhrase) {
+		t.Fatalf("principle body missing proof phrase %q", diagnosisProofPhrase)
+	}
+	if strings.Contains(desc, diagnosisProofPhrase) || strings.Contains(heading, diagnosisProofPhrase) {
+		t.Fatalf("proof phrase is on an index input (description %q, heading %q)", desc, heading)
+	}
+	idx := principleIndexLine(docindex.Doc{Name: diagnosisPrincipleName, Body: body})
+	if strings.Contains(idx, diagnosisProofPhrase) {
+		t.Fatalf("index line contains the proof phrase, so a compact emit could pass: %s", idx)
+	}
+}
+
+func diagnosisParts(body string) (desc, heading, prose string) {
+	prose = body
+	fm := frontmatter(body)
+	if fm != "" {
+		if i := strings.Index(body, fm); i >= 0 {
+			prose = body[i+len(fm):]
+		}
+	}
+	for _, ln := range strings.Split(fm, "\n") {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "description:") {
+			desc = strings.Trim(strings.TrimSpace(strings.TrimPrefix(t, "description:")), `"'`)
+		}
+	}
+	for _, ln := range strings.Split(prose, "\n") {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "#") {
+			heading = strings.TrimSpace(strings.TrimLeft(t, "#"))
+			break
+		}
+	}
+	return desc, heading, prose
+}
+
+// seedDiagnosisPrinciple copies the repo principle into the temp repo and
+// reindexes it, so the hook reads the same bytes the repo authors.
+func seedDiagnosisPrinciple(t *testing.T, repo string) {
+	t.Helper()
+	body := diagnosisPrincipleBody(t)
+	requireDiagnosisProof(t, body)
+	dir := filepath.Join(repo, config.DefaultDataDir, "principles")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, diagnosisPrincipleName+".md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a, err := app.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = a.Store.DocIndex.Sync(context.Background(), map[string]string{"principles": dir}, time.Now().UTC())
+	closeErr := a.Close()
+	if err != nil {
+		t.Fatalf("reindex principles: %v", err)
+	}
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+}
+
+func assertDiagnosisInlined(t *testing.T, harness, event, wantEvent, content string, emitted bool) {
+	t.Helper()
+	if !emitted {
+		t.Fatalf("%s emitted nothing", harness)
+	}
+	if event != wantEvent {
+		t.Errorf("%s hookEventName = %q, want %q", harness, event, wantEvent)
+	}
+	if !strings.Contains(content, diagnosisPrincipleName) || !strings.Contains(content, diagnosisProofPhrase) {
+		t.Errorf("%s additionalContext missing the principle name or the body phrase %q:\n%s", harness, diagnosisProofPhrase, content)
+	}
+}
+
+// The authored session principle is inlined — name and a body phrase the index
+// line cannot carry — on each harness's real delivery channel.
+func TestHookContext_DiagnosisPrincipleInlined(t *testing.T) {
+	repo := sessionContextRepo(t)
+	seedDiagnosisPrinciple(t, repo)
+
+	event, content, _, emitted := runContext(t, "claude", []byte(`{"hook_event_name":"SessionStart","session_id":"sess-diag-claude"}`))
+	assertDiagnosisInlined(t, "claude", event, "SessionStart", content, emitted)
+
+	// The pi extension sends this synthetic SessionStart and reads additionalContext.
+	event, content, _, emitted = runContext(t, "pi", []byte(`{"hook_event_name":"SessionStart","source":"startup","session_id":"sess-diag-pi"}`))
+	assertDiagnosisInlined(t, "pi", event, "SessionStart", content, emitted)
+
+	event, content, _, emitted = runContext(t, "grok", grokDualPayload("PostToolUse", "post_tool_use", "sess-diag-grok"))
+	assertDiagnosisInlined(t, "grok", event, "PostToolUse", content, emitted)
 }
