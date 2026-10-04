@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -38,14 +39,17 @@ func TestStoryEstimateWritesTagsInAnyUnit(t *testing.T) {
 		t.Errorf("estimate dropped an unrelated tag: %v", est.Tags)
 	}
 
-	// The current units — usd, fresh-input, output — write alongside the legacy
-	// ones, never converted from/into them (sty_8eae81ac AC7).
+	// The current units — fresh-input, output — write alongside the legacy
+	// ones. A dollar figure in the request is not an estimate and writes nothing.
 	var cur workitem.Item
 	json.Unmarshal(call(t, "story-estimate", map[string]any{"id": it.ID, "usd": 2.5, "fresh_input": 100000, "output": 20000}), &cur)
-	for _, want := range []string{"estimate-usd:2.5", "estimate-fresh-input:100000", "estimate-output:20000", "estimate-minutes:30", "estimate-tokens:50000"} {
+	for _, want := range []string{"estimate-fresh-input:100000", "estimate-output:20000", "estimate-minutes:30", "estimate-tokens:50000"} {
 		if !hasTag(cur.Tags, want) {
-			t.Errorf("after usd/fresh-input/output estimate, missing tag %q in %v", want, cur.Tags)
+			t.Errorf("after fresh-input/output estimate, missing tag %q in %v", want, cur.Tags)
 		}
+	}
+	if hasTag(cur.Tags, "estimate-usd:2.5") {
+		t.Errorf("a dollar figure must not be written as estimate-usd: %v", cur.Tags)
 	}
 
 	// Re-recording an estimate replaces the prior value rather than duplicating it.
@@ -105,8 +109,11 @@ func TestStoryActualComputesFromLedgerNotHandEntered(t *testing.T) {
 	if hasTag(act.Tags, "actual-tokens:200000") {
 		t.Errorf("stale hand-typed actual-tokens survived: %v", act.Tags)
 	}
-	if !hasTag(act.Tags, "actual-usd:0.42") {
-		t.Errorf("computed actual-usd missing/wrong: %v", act.Tags)
+	if !hasTag(act.Tags, "actual-cost:low") {
+		t.Errorf("measured tokens must be tagged actual-cost:low: %v", act.Tags)
+	}
+	if hasActualUSD(act.Tags) {
+		t.Errorf("actual recorder must not write actual-usd: %v", act.Tags)
 	}
 	if !hasTag(act.Tags, "area:web") {
 		t.Errorf("actual dropped an unrelated tag: %v", act.Tags)
@@ -126,10 +133,10 @@ func TestStoryActualComputesFromLedgerNotHandEntered(t *testing.T) {
 	}
 }
 
-// TestStoryActualUnpricedRowsTagUnavailable pins revision 2 point 1: a story
-// whose every dispatch row carries no cost_usd (a driver whose
-// adapter never reports a price) must never be tagged actual-usd:0 — that
-// claims a free story rather than an unmeasured one.
+// TestStoryActualUnpricedRowsTagUnavailable pins that a measured row with no
+// cost_usd is still banded from its tokens. A dollar figure is not an input:
+// the absence of a price does not withhold the band, and the recorder does
+// not write actual-usd.
 func TestStoryActualUnpricedRowsTagUnavailable(t *testing.T) {
 	db := wire(t)
 	ctx := context.Background()
@@ -150,14 +157,152 @@ func TestStoryActualUnpricedRowsTagUnavailable(t *testing.T) {
 
 	var act workitem.Item
 	json.Unmarshal(call(t, "story-actual", map[string]any{"id": it.ID}), &act)
-	if !hasTag(act.Tags, "actual-usd:unavailable") {
-		t.Errorf("all-unpriced story must be tagged actual-usd:unavailable: %v", act.Tags)
+	if !hasTag(act.Tags, "actual-cost:low") {
+		t.Errorf("unpriced measured tokens must be actual-cost:low: %v", act.Tags)
 	}
-	if hasTag(act.Tags, "actual-usd:0") {
-		t.Errorf("all-unpriced story must never be tagged actual-usd:0: %v", act.Tags)
+	if hasActualUSD(act.Tags) {
+		t.Errorf("actual recorder must not write actual-usd: %v", act.Tags)
 	}
 	if !hasTag(act.Tags, "actual-cost-unavailable-rows:1") {
 		t.Errorf("want actual-cost-unavailable-rows:1, got %v", act.Tags)
+	}
+}
+
+func hasActualUSD(tags []string) bool {
+	for _, t := range tags {
+		if t == "actual-usd" || strings.HasPrefix(t, "actual-usd:") {
+			return true
+		}
+	}
+	return false
+}
+
+func actualCostBands(tags []string) []string {
+	var out []string
+	for _, t := range tags {
+		if strings.HasPrefix(t, "actual-cost:") {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func appendInvocationRow(t *testing.T, db *store.DB, storyID string, payload map[string]any) {
+	t.Helper()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Ledger.Append(context.Background(), ledger.AppendInput{
+		StoryID: storyID, Kind: ledger.KindAgentInvocation, Actor: "coder", Payload: raw,
+	}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestStoryActualBandIgnoresCostUSD pins dollar independence at the recorder:
+// two stories with the same token counts and different cost_usd get the same
+// band, and neither is tagged actual-usd.
+func TestStoryActualBandIgnoresCostUSD(t *testing.T) {
+	db := wire(t)
+	for _, cost := range []float64{0.01, 999.0} {
+		var it workitem.Item
+		json.Unmarshal(call(t, "story-create", map[string]any{"title": "priced"}), &it)
+		appendInvocationRow(t, db, it.ID, map[string]any{
+			"from": "plan", "to": "in_progress", "agent": "coder",
+			"usage_available": true, "tokens_in_fresh": 1000, "tokens_out": 200,
+			"duration_ms": 5000, "cost_usd": cost,
+		})
+		var act workitem.Item
+		json.Unmarshal(call(t, "story-actual", map[string]any{"id": it.ID}), &act)
+		if bands := actualCostBands(act.Tags); len(bands) != 1 || bands[0] != "actual-cost:low" {
+			t.Errorf("cost_usd %v: bands = %v, want exactly actual-cost:low", cost, act.Tags)
+		}
+		if hasActualUSD(act.Tags) {
+			t.Errorf("cost_usd %v: actual recorder wrote actual-usd: %v", cost, act.Tags)
+		}
+	}
+}
+
+// TestStoryActualNoUsageRowsWritesNoBand pins that a priced row which reported
+// no token usage writes no band, and does not rewrite a stored actual-usd tag.
+func TestStoryActualNoUsageRowsWritesNoBand(t *testing.T) {
+	db := wire(t)
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{
+		"title": "usage-less",
+		"tags":  []string{"actual-cost:high", "actual-usd:9.99", "area:web"},
+	}), &it)
+	appendInvocationRow(t, db, it.ID, map[string]any{
+		"from": "plan", "to": "in_progress", "agent": "coder",
+		"usage_available": false, "cost_usd": 1.25, "duration_ms": 5000,
+	})
+	var act workitem.Item
+	json.Unmarshal(call(t, "story-actual", map[string]any{"id": it.ID}), &act)
+	if bands := actualCostBands(act.Tags); len(bands) != 0 {
+		t.Errorf("no measured tokens must write no actual-cost tag, got %v", act.Tags)
+	}
+	if !hasTag(act.Tags, "actual-usd:9.99") {
+		t.Errorf("stored actual-usd must be left as stored, got %v", act.Tags)
+	}
+	if !hasTag(act.Tags, "area:web") {
+		t.Errorf("unrelated tag dropped: %v", act.Tags)
+	}
+	if !hasTag(act.Tags, "actual-tokens:0") {
+		t.Errorf("token accounting must still be written, got %v", act.Tags)
+	}
+}
+
+// TestRecordActualBandBoundaries pins both sides of the low/medium boundary
+// and the high boundary at the recorder, composing fresh + unsplit + output +
+// cache read + cache write. Unsplit input is its own legacy row: addDispatchRow
+// drops TokensIn when fresh or cache is set on the same row.
+func TestRecordActualBandBoundaries(t *testing.T) {
+	db := wire(t)
+	// Constant parts of the sum: unsplit 30000 + output 15000 + cache read 4000
+	// + cache write 1000 = 50000. fresh_input is the field that crosses.
+	const (
+		unsplit    = 30000
+		output     = 15000
+		cacheRead  = 4000
+		cacheWrite = 1000
+		rest       = unsplit + output + cacheRead + cacheWrite
+	)
+	cases := []struct {
+		fresh int
+		want  string
+	}{
+		{199999 - rest, "low"},    // 149999 + 50000 = 199999
+		{200000 - rest, "medium"}, // 150000 + 50000 = 200000
+		{2000000 - rest, "high"},  // 1950000 + 50000 = 2000000
+	}
+	for _, c := range cases {
+		var it workitem.Item
+		json.Unmarshal(call(t, "story-create", map[string]any{"title": "boundary"}), &it)
+		appendInvocationRow(t, db, it.ID, map[string]any{
+			"from": "plan", "to": "in_progress", "agent": "coder",
+			"usage_available": true,
+			"tokens_in_fresh": c.fresh, "tokens_out": output,
+			"tokens_cache_read": cacheRead, "tokens_cache_write": cacheWrite,
+			"duration_ms": 1000, "cost_usd": 4.5,
+		})
+		// Legacy row: TokensIn only. No fresh/cache fields, or this input is dropped.
+		appendInvocationRow(t, db, it.ID, map[string]any{
+			"from": "plan", "to": "in_progress", "agent": "coder",
+			"usage_available": true, "tokens_in": unsplit, "tokens_out": 0, "duration_ms": 1000,
+		})
+		var act workitem.Item
+		json.Unmarshal(call(t, "story-actual", map[string]any{"id": it.ID}), &act)
+		want := "actual-cost:" + c.want
+		if bands := actualCostBands(act.Tags); len(bands) != 1 || bands[0] != want {
+			t.Errorf("fresh %d (total %d): bands = %v, want exactly %s; tags %v", c.fresh, c.fresh+rest, bands, want, act.Tags)
+		}
+		if !hasTag(act.Tags, "actual-unsplit-input:30000") {
+			t.Errorf("fresh %d: legacy unsplit row did not land: %v", c.fresh, act.Tags)
+		}
+		if hasActualUSD(act.Tags) {
+			t.Errorf("fresh %d: actual recorder wrote actual-usd: %v", c.fresh, act.Tags)
+		}
 	}
 }
 

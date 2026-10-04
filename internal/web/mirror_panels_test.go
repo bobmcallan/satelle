@@ -744,8 +744,8 @@ func TestMirrorLoadDetailCostVM(t *testing.T) {
 		t.Fatal("a story detail must carry a Cost view")
 	}
 	c := d.Cost
-	if c.USD != "$1.50" || c.FreshIn != "100" || c.Out != "20" {
-		t.Errorf("own USD/fresh/out = %q/%q/%q, want $1.50/100/20", c.USD, c.FreshIn, c.Out)
+	if c.Band != costview.FormatCostBand(costview.Figures{UsageRows: 1, FreshInput: 100, Output: 20}) || c.FreshIn != "100" || c.Out != "20" {
+		t.Errorf("own Band/fresh/out = %q/%q/%q, want %s/100/20", c.Band, c.FreshIn, c.Out, costview.FormatCostBand(costview.Figures{UsageRows: 1, FreshInput: 100, Output: 20}))
 	}
 	if want := costview.FormatDuration(time.Hour.Milliseconds()); c.Elapsed != want {
 		t.Errorf("Elapsed = %q, want %q (workflow-shaped in_progress→done clock)", c.Elapsed, want)
@@ -756,8 +756,8 @@ func TestMirrorLoadDetailCostVM(t *testing.T) {
 	if len(c.Family) != 1 || c.Family[0].ID != "sty_c" {
 		t.Fatalf("Family = %+v, want only the story child sty_c (no task, no unrelated story)", c.Family)
 	}
-	if c.FamilyTotal == nil || c.FamilyTotal.USD != "$3.50" || c.FamilyTotal.FreshIn != "1100" || c.FamilyTotal.Out != "220" {
-		t.Errorf("FamilyTotal = %+v, want $3.50 / 1100 fresh / 220 out", c.FamilyTotal)
+	if c.FamilyTotal == nil || c.FamilyTotal.Band != "low" || c.FamilyTotal.FreshIn != "1100" || c.FamilyTotal.Out != "220" {
+		t.Errorf("FamilyTotal = %+v, want low / 1100 fresh / 220 out", c.FamilyTotal)
 	}
 
 	// Cost is computed BEFORE the timeline reversal: events stay newest-first

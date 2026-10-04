@@ -1,3 +1,17 @@
+## [0.0.607] - 2026-10-04
+
+### Breaking
+- **`satelle story estimate` no longer accepts `--usd`.** The flag, the `estimate-usd` write, and the `actual-usd` write are gone. A stored dollar tag is left as stored and is not an estimate. Token, cache, and time estimates and actuals are unchanged.
+- **Migration:** replace `satelle story estimate <id> --usd <n>` with `satelle story estimate <id> --fresh-input <n> --output <n>`, or with the legacy `--tokens <n>` / `--time <dur>`. `satelle init` does not rewrite scripts or stored tags.
+
+### Changed
+- **A story's cost is a band from its actual tokens, not a dollar figure.** When actual tokens are recorded, the story is tagged `actual-cost:low` (under 200000), `actual-cost:medium` (200000 up to but not including 2000000), or `actual-cost:high` (2000000 and above), from fresh input, unsplit input, output, cache read, and cache write only. No measured tokens means no band. The story and epic cost views show that band instead of a dollar estimate or dollar actual. Driver-session dollars and gate-value cost-per-reject are unchanged. (sty_2f6c7df5)
+
+## [serve-v0.0.120] - 2026-10-04
+
+### Changed
+- **The published serve binary includes the token cost band.** The cost view, the band function, and the estimate help sit on the serve dependency path, so this release bumps satelled.version. (sty_2f6c7df5)
+
 ## [0.0.606] - 2026-10-03
 
 ### Fixed

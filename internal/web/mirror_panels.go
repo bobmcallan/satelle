@@ -598,8 +598,7 @@ func mirrorBuildCostVM(ctx context.Context, s *mirror.Store, repoKey string, ite
 func costVMFromStory(own costview.Story, fam *costview.FamilyCost) *costVM {
 	splitRows := own.Figures.UsageRows - own.Figures.UnsplitRows
 	vm := &costVM{
-		USD:            costview.FormatUSD(own.Figures.CostUSD, own.Figures.CostRows, own.Figures.CostUnavailableRows),
-		EstUSD:         costview.FormatEstimate(own.Estimates, "usd"),
+		Band:           costview.FormatCostBand(own.Figures),
 		FreshIn:        costview.FormatSplitTokens(own.Figures.FreshInput, splitRows, own.Figures.UnsplitRows, own.Figures.UsageUnavailableRows),
 		EstFreshIn:     costview.FormatEstimate(own.Estimates, "fresh-input"),
 		Out:            costview.FormatTokensMeasured(own.Figures.Output, own.Figures.UsageRows, own.Figures.UsageUnavailableRows),
@@ -634,7 +633,7 @@ func familyRowFromFigures(id string, f costview.Figures) familyRowVM {
 	splitRows := f.UsageRows - f.UnsplitRows
 	return familyRowVM{
 		ID:         id,
-		USD:        costview.FormatUSD(f.CostUSD, f.CostRows, f.CostUnavailableRows),
+		Band:       costview.FormatCostBand(f),
 		FreshIn:    costview.FormatSplitTokens(f.FreshInput, splitRows, f.UnsplitRows, f.UsageUnavailableRows),
 		Out:        costview.FormatTokensMeasured(f.Output, f.UsageRows, f.UsageUnavailableRows),
 		CacheRead:  costview.FormatSplitTokens(f.CacheRead, splitRows, f.UnsplitRows, f.UsageUnavailableRows),

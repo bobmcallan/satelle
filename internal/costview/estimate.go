@@ -5,10 +5,11 @@ import (
 	"strings"
 )
 
-// Estimate is one legacy plan estimate figure, kept in the unit it was
-// written in (sty_8eae81ac's estimate-* tags). Unit is one of "usd",
-// "fresh-input", "output", "minutes", or the legacy cache-inclusive "tokens" —
-// never converted into another unit or conflated with a measured figure.
+// Estimate is one plan estimate figure, kept in the unit it was written in.
+// Unit is one of "fresh-input", "output", "minutes", or the legacy
+// cache-inclusive "tokens" — never converted into another unit or conflated
+// with a measured figure. A stored estimate-usd tag is not a unit this parser
+// reads: it is left as stored and ignored by the display and the estimate gate.
 type Estimate struct {
 	Unit  string  `json:"unit"`
 	Value float64 `json:"value"`
@@ -16,7 +17,8 @@ type Estimate struct {
 
 // estimateUnits are the tag suffixes ParseEstimates recognises, in the order
 // they are checked — storyEstimate (verb/workitem.go) is the sole writer.
-var estimateUnits = []string{"usd", "fresh-input", "output", "minutes", "tokens"}
+// "usd" is deliberately absent: a dollar tag is not an estimate.
+var estimateUnits = []string{"fresh-input", "output", "minutes", "tokens"}
 
 // ParseEstimates reads estimate-<unit>:<value> tags off tags and returns each
 // as its own Estimate, in its own unit. A tag whose value does not parse as a

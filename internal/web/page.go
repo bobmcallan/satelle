@@ -425,7 +425,7 @@ const templatesSrc = `
   </li>{{end}}</ol>{{else}}<div class="empty">No runs yet — create one with <code>satelle execution create --parent {{.Item.ID}}</code>.</div>{{end}}{{end}}
   {{with .Cost}}<h4>Cost</h4>
   <dl class="cost-summary">
-    <dt>$</dt><dd>{{.USD}}{{if .EstUSD}} <span class="cost-est">({{.EstUSD}})</span>{{end}}</dd>
+    <dt>Band</dt><dd>{{.Band}}</dd>
     <dt>Fresh in</dt><dd>{{.FreshIn}}{{if .EstFreshIn}} <span class="cost-est">({{.EstFreshIn}})</span>{{end}}</dd>
     <dt>Out</dt><dd>{{.Out}}{{if .EstOut}} <span class="cost-est">({{.EstOut}})</span>{{end}}</dd>
     <dt>Cache read</dt><dd>{{.CacheRead}}</dd>
@@ -439,10 +439,10 @@ const templatesSrc = `
   {{range .DriverAdapters}}<div class="cost-adapter-coverage">{{.}}</div>{{end}}
   {{if .Family}}<h4>Family</h4>
   <table class="panel-table cost-family">
-    <thead><tr><th>Child</th><th>$</th><th>Fresh in</th><th>Out</th><th>Cache read</th><th>Cache write</th><th>Elapsed</th></tr></thead>
+    <thead><tr><th>Child</th><th>Band</th><th>Fresh in</th><th>Out</th><th>Cache read</th><th>Cache write</th><th>Elapsed</th></tr></thead>
     <tbody>
-      {{range .Family}}<tr><td class="id">{{.ID}}</td><td>{{.USD}}</td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Elapsed}}</td></tr>{{end}}
-      {{with .FamilyTotal}}<tr class="cost-family-total"><td>{{.ID}}</td><td>{{.USD}}</td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Elapsed}}</td></tr>{{end}}
+      {{range .Family}}<tr><td class="id">{{.ID}}</td><td>{{.Band}}</td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Elapsed}}</td></tr>{{end}}
+      {{with .FamilyTotal}}<tr class="cost-family-total"><td>{{.ID}}</td><td>{{.Band}}</td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Elapsed}}</td></tr>{{end}}
     </tbody>
   </table>
   <div class="cost-driver-coverage">{{.FamilyDriverLine}}</div>

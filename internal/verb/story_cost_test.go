@@ -671,8 +671,11 @@ func TestComputeStoryCostFamilyFiguresAndEstimates(t *testing.T) {
 	for _, e := range sc.Estimates {
 		units[e.Unit] = e.Value
 	}
-	if units["usd"] != 25 || units["tokens"] != 9000 || len(units) != 2 {
-		t.Errorf("estimates = %+v, want usd:25 and legacy tokens:9000, each in its own unit", sc.Estimates)
+	if units["tokens"] != 9000 || len(units) != 1 {
+		t.Errorf("estimates = %+v, want legacy tokens:9000 only (stored estimate-usd is left unparsed)", sc.Estimates)
+	}
+	if _, ok := units["usd"]; ok {
+		t.Errorf("stored estimate-usd must not be parsed as an estimate, got %+v", sc.Estimates)
 	}
 
 	if sc.Family == nil {

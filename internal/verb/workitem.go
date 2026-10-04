@@ -32,7 +32,7 @@ func init() {
 	}
 	// Estimate/actual are story-only: an agent records the plan estimate at
 	// begin-work and the actual cost at close, scoped to the story.
-	Register(&Verb{Name: "story-estimate", Description: "Record a story's plan estimate (usd, fresh-input/output, or legacy tokens/time)", Invoke: storyEstimate})
+	Register(&Verb{Name: "story-estimate", Description: "Record a story's plan estimate (fresh-input/output, or legacy tokens/time)", Invoke: storyEstimate})
 	Register(&Verb{Name: "story-actual", Description: "Compute and record a story's actual cost from its ledger", Invoke: storyActual})
 	Register(&Verb{Name: "story-driver-backfill", Description: "Attribute a closed story's driver spend from the session record by its engage..close window, for rows a missing driver-usage reader left unavailable", Invoke: storyDriverBackfill})
 	Register(&Verb{Name: "story-resummarise", Description: "Re-run the step summariser for one edge to close a missing-summary gap", Invoke: storyResummarise, DispatchesReviewer: dispatchesOnResummarise})
@@ -1081,28 +1081,27 @@ func containsState(states []string, s string) bool {
 }
 
 // estimateReq is the request body for story-estimate: a plan estimate in
-// dollars and/or fresh-input + output tokens (the current units, sty_8eae81ac
-// AC7), or the legacy --tokens/--time units kept for stories already written
-// in them. Never accepted by story-actual: the actual is computed from the
-// ledger, never hand-entered (AC1) — see actualReq.
+// fresh-input + output tokens, or the legacy --tokens/--time units kept for
+// stories already written in them. A dollar figure is not an estimate and is
+// not a field here. Never accepted by story-actual: the actual is computed
+// from the ledger, never hand-entered — see actualReq.
 type estimateReq struct {
 	ID   string `json:"id"`
 	Time string `json:"time,omitempty"`
-	// Tokens is the legacy unit: a bare token count with no dollar or
-	// fresh/output split. Kept readable and writable, never converted into usd
-	// or fresh_input — a different unit is never silently treated as this one.
-	Tokens     int     `json:"tokens,omitempty"`
-	USD        float64 `json:"usd,omitempty"`
-	FreshInput int     `json:"fresh_input,omitempty"`
-	Output     int     `json:"output,omitempty"`
-	Basis      string  `json:"basis,omitempty"`
+	// Tokens is the legacy unit: a bare token count with no fresh/output split.
+	// Kept readable and writable, never converted into fresh_input — a different
+	// unit is never silently treated as this one.
+	Tokens     int    `json:"tokens,omitempty"`
+	FreshInput int    `json:"fresh_input,omitempty"`
+	Output     int    `json:"output,omitempty"`
+	Basis      string `json:"basis,omitempty"`
 }
 
-// storyEstimate records a story's plan estimate as tags — estimate-usd,
+// storyEstimate records a story's plan estimate as tags —
 // estimate-fresh-input/estimate-output, and/or the legacy estimate-minutes/
 // estimate-tokens — preserving every other tag, and appends an
-// estimate_recorded ledger row carrying the same fields with their units
-// (sty_8eae81ac AC7).
+// estimate_recorded ledger row carrying the same fields with their units.
+// A stored estimate-usd tag is left as stored; this verb does not write one.
 func storyEstimate(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	store, err := requireWorkItem()
 	if err != nil {
@@ -1115,8 +1114,8 @@ func storyEstimate(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 	if req.ID == "" {
 		return nil, fmt.Errorf("verb: id required")
 	}
-	if req.Tokens <= 0 && req.Time == "" && req.USD <= 0 && req.FreshInput <= 0 && req.Output <= 0 {
-		return nil, fmt.Errorf("verb: estimate requires at least one of --usd, --fresh-input/--output, --time, or the legacy --tokens")
+	if req.Tokens <= 0 && req.Time == "" && req.FreshInput <= 0 && req.Output <= 0 {
+		return nil, fmt.Errorf("verb: estimate requires at least one of --fresh-input/--output, --time, or the legacy --tokens")
 	}
 	current, err := store.Get(ctx, req.ID)
 	if err != nil {
@@ -1124,7 +1123,7 @@ func storyEstimate(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 	}
 	kv := map[string]string{}
 	if req.Tokens > 0 {
-		kv["estimate-tokens"] = strconv.Itoa(req.Tokens) // legacy unit — never usd or fresh_input
+		kv["estimate-tokens"] = strconv.Itoa(req.Tokens) // legacy unit — never fresh_input
 	}
 	if req.Time != "" {
 		d, perr := parseCostDuration(req.Time)
@@ -1132,9 +1131,6 @@ func storyEstimate(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 			return nil, perr
 		}
 		kv["estimate-minutes"] = strconv.Itoa(costMinutes(d))
-	}
-	if req.USD > 0 {
-		kv["estimate-usd"] = strconv.FormatFloat(req.USD, 'f', -1, 64)
 	}
 	if req.FreshInput > 0 {
 		kv["estimate-fresh-input"] = strconv.Itoa(req.FreshInput)
@@ -1179,15 +1175,16 @@ type actualReq struct {
 }
 
 // storyActual computes the story's actual from its ledger (ComputeStoryActual)
-// and writes it: actual-usd (or "unavailable" when no row carries a cost),
-// actual-fresh-input/actual-output/actual-cache-read/actual-cache-write,
-// actual-cost-unavailable-rows and actual-unsplit-input (each only when
-// non-zero), actual-minutes and — for the summary tag the close-out gate
+// and writes it: actual-fresh-input/actual-output/actual-cache-read/
+// actual-cache-write, actual-cost (low/medium/high, only when tokens were
+// measured), actual-cost-unavailable-rows and actual-unsplit-input (each only
+// when non-zero), actual-minutes and — for the summary tag the close-out gate
 // greps — actual-tokens (fresh input + unsplit input + output + cache write;
-// cache read excluded, since it is reused context, not new work). Overwrites
-// any prior hand-typed actual-* tag (sty_218fb3a3 regression: a computed
-// figure always wins over a stale manual one). Records the full StoryActual as
-// the actual_recorded ledger payload (AC2/AC3).
+// cache read excluded, since it is reused context, not new work). Computed
+// keys replace a prior value of the same key (sty_218fb3a3 regression: a
+// computed figure always wins over a stale manual one). A stored actual-usd
+// tag is left as stored — this verb does not write one. Records the full
+// StoryActual as the actual_recorded ledger payload.
 func storyActual(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	store, err := requireWorkItem()
 	if err != nil {
@@ -1246,13 +1243,11 @@ func recordActual(ctx context.Context, current workitem.Item, at time.Time) (wor
 	} else {
 		kv["actual-minutes"] = strconv.Itoa(costMinutes(time.Duration(tot.ElapsedMs) * time.Millisecond))
 	}
-	// A story with no priced row (e.g. a session whose adapter never
-	// reports cost_usd) must never read as "$0" — that claims a free
-	// story rather than an unmeasured one (revision 2, no silent zeros).
-	if tot.CostRows > 0 {
-		kv["actual-usd"] = strconv.FormatFloat(tot.CostUSD, 'f', -1, 64)
-	} else {
-		kv["actual-usd"] = "unavailable"
+	// A band is written only when tokens were measured. CostBand is empty when
+	// no row reported usage; a measured zero is low. Dollars and elapsed time
+	// are not inputs. The display word "unavailable" is not a tag.
+	if band := tot.CostBand(); band != "" {
+		kv["actual-cost"] = band
 	}
 	if tot.CostUnavailableRows > 0 {
 		kv["actual-cost-unavailable-rows"] = strconv.Itoa(tot.CostUnavailableRows)
@@ -1269,6 +1264,12 @@ func recordActual(ctx context.Context, current workitem.Item, at time.Time) (wor
 		kv["actual-unsplit-input"] = strconv.Itoa(tot.UnsplitTokens)
 	}
 	merged := upsertKeyedTags(current.Tags, kv)
+	// No measured tokens means no band. upsertKeyedTags only replaces keys it
+	// is given, so a prior actual-cost tag would otherwise survive a re-record
+	// whose ledger no longer measured usage.
+	if _, wrote := kv["actual-cost"]; !wrote {
+		merged = dropKeyedTag(merged, "actual-cost")
+	}
 	runAfterTagCASGet(ctx, current.ID, current.Status)
 	it, err := store.Update(ctx, current.ID, workitem.UpdateInput{
 		Tags: &merged, ExpectStatus: &current.Status,
@@ -1564,6 +1565,21 @@ func applyTagMutation(existing, add, remove []string) []string {
 			continue
 		}
 		seen[t] = true
+		out = append(out, t)
+	}
+	return out
+}
+
+// dropKeyedTag removes every tag whose key (text before the first colon) is
+// key. A tag that merely shares a prefix (actual-cost-unavailable-rows vs
+// actual-cost) is kept.
+func dropKeyedTag(tags []string, key string) []string {
+	out := make([]string, 0, len(tags))
+	prefix := key + ":"
+	for _, t := range tags {
+		if t == key || strings.HasPrefix(t, prefix) {
+			continue
+		}
 		out = append(out, t)
 	}
 	return out

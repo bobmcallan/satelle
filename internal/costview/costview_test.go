@@ -399,16 +399,14 @@ func TestParseEstimatesKeepsUnit(t *testing.T) {
 	if len(estimates) != 1 || estimates[0].Unit != "tokens" || estimates[0].Value != 5000 {
 		t.Fatalf("estimates = %+v, want one tokens:5000", estimates)
 	}
-	if got := costview.FormatEstimate(estimates, "usd"); got != "" {
-		t.Fatalf("FormatEstimate(usd) with only a tokens estimate = %q, want empty", got)
-	}
 	if got := costview.FormatLegacyTokenEstimate(estimates); got != "estimate (legacy, cache-inclusive tokens): 5000" {
 		t.Fatalf("FormatLegacyTokenEstimate = %q", got)
 	}
 
+	// A stored dollar estimate is left unparsed. Fresh-input still formats.
 	fresh := costview.ParseEstimates([]string{"estimate-usd:25", "estimate-fresh-input:20000", "estimate-output:250000"})
-	if got := costview.FormatEstimate(fresh, "usd"); got != "est. $25.00" {
-		t.Fatalf("FormatEstimate(usd) = %q", got)
+	if len(fresh) != 2 {
+		t.Fatalf("ParseEstimates = %+v, want fresh-input and output only (estimate-usd ignored)", fresh)
 	}
 	if got := costview.FormatEstimate(fresh, "fresh-input"); got != "est. 20000" {
 		t.Fatalf("FormatEstimate(fresh-input) = %q", got)

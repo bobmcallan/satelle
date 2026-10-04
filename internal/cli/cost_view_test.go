@@ -86,15 +86,26 @@ func TestPrintCostSummaryRendersSharedFixture(t *testing.T) {
 	out := buf.String()
 
 	for _, want := range []string{
-		"$1.50",
-		"est. $10.00",
-		"110",            // FAMILY TOTAL fresh input: 100 (root) + 10 (child)
-		"1 unavailable)", // FAMILY TOTAL uncosted count: root priced, child uncosted
+		"BAND",
+		costview.FormatCostBand(own.Figures), // headline band, from the shared helper
+		"FRESH IN",
+		"100", // own fresh input
+		"OUT",
+		"20", // own output
+		"CACHE READ",
+		"CACHE WRITE",
+		"elapsed (wall)",
+		"110", // FAMILY TOTAL fresh input: 100 (root) + 10 (child)
+		"22",  // FAMILY TOTAL output: 20 + 2
 		"FAMILY TOTAL",
+		costview.FormatCostBand(fam.Total),
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("printCostSummary missing %q; got:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "$") {
+		t.Errorf("printCostSummary must not show a dollar estimate or dollar actual:\n%s", out)
 	}
 }
 
@@ -138,9 +149,18 @@ func TestPrintCostSummaryEmptyChildShowsUnavailable(t *testing.T) {
 		if !strings.Contains(strings.Join(fields, " "), "unavailable") {
 			t.Errorf("row missing unavailable for its no-rows figures: %q", line)
 		}
+		if strings.Contains(line, "low") || strings.Contains(line, "medium") || strings.Contains(line, "high") {
+			t.Errorf("unmeasured row must not show a band: %q", line)
+		}
 	}
 	if !sawEmptyChild || !sawFamilyTotal {
 		t.Fatalf("did not find both the empty child and FAMILY TOTAL rows; got:\n%s", out)
+	}
+	if got := fam.Children[0].Figures.CostBand(); got != "" {
+		t.Errorf("empty child CostBand = %q, want empty", got)
+	}
+	if got := costview.FormatCostBand(fam.Children[0].Figures); got != "unavailable" {
+		t.Errorf("empty child display band = %q, want unavailable", got)
 	}
 }
 
@@ -259,15 +279,10 @@ func TestPrintDriverSectionGrandTotalSplitsColumns(t *testing.T) {
 	if strings.Contains(grandTotalLine, "999999") || strings.Contains(grandTotalLine, "999.99") {
 		t.Errorf("GRAND TOTAL read the legacy blended fields instead of Figures: %q", grandTotalLine)
 	}
-	// Assert the $ FIELD exactly (not merely a substring): a stray literal '$'
-	// left in the format string around FormatUSD's own leading '$' would print
-	// "$$1.50 (+1 unavailable)" and still pass a bare strings.Contains(line,
-	// "$1.50") check.
-	if !strings.Contains(grandTotalLine, "): $1.50 (+1 unavailable) |") {
-		t.Errorf("GRAND TOTAL $ field != $1.50 (+1 unavailable) (possible doubled '$'); got: %q", grandTotalLine)
-	}
-	if strings.Contains(grandTotalLine, "$$") {
-		t.Errorf("GRAND TOTAL has a doubled '$': %q", grandTotalLine)
+	// The story/epic grand total no longer prints a dollar actual. Token
+	// figures still come from Figures, not the legacy blended fields above.
+	if strings.Contains(grandTotalLine, "$") {
+		t.Errorf("GRAND TOTAL must not show a dollar actual: %q", grandTotalLine)
 	}
 	for _, want := range []string{"fresh in 100", "out 20", "cache read 10", "cache write 5"} {
 		if !strings.Contains(grandTotalLine, want) {

@@ -2,10 +2,13 @@ package cli
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // TestRowTokensRender pins the cost-table tri-state (sty_56aae77a AC2): measured
@@ -69,6 +72,49 @@ func TestRowCostUSDRender(t *testing.T) {
 	}
 	if got := costTotalLabel(0.1095, 2, 1); got != "$0.1095 (1 rows unknown)" {
 		t.Errorf("costTotalLabel(mixed) = %q, want $0.1095 (1 rows unknown)", got)
+	}
+}
+
+// TestStoryEstimateHasNoUSDFlag pins that satelle story estimate no longer
+// exposes --usd, that its help does not name the flag, and that invoking it
+// is an unknown-flag error. The token and time flags stay.
+func TestStoryEstimateHasNoUSDFlag(t *testing.T) {
+	var estimate, actual *cobra.Command
+	for _, c := range storyCostCommands() {
+		switch c.Name() {
+		case "estimate":
+			estimate = c
+		case "actual":
+			actual = c
+		}
+	}
+	if estimate == nil {
+		t.Fatal("story estimate command missing")
+	}
+	if estimate.Flags().Lookup("usd") != nil {
+		t.Fatal("story estimate must not expose --usd")
+	}
+	for _, name := range []string{"fresh-input", "output", "time", "tokens"} {
+		if estimate.Flags().Lookup(name) == nil {
+			t.Errorf("story estimate must still expose --%s", name)
+		}
+	}
+	if strings.Contains(estimate.Long, "--usd") || strings.Contains(estimate.UsageString(), "--usd") {
+		t.Fatalf("estimate help still names --usd\nlong: %s\nusage: %s", estimate.Long, estimate.UsageString())
+	}
+	if !strings.Contains(estimate.UsageString(), "--fresh-input") {
+		t.Fatalf("estimate usage missing --fresh-input:\n%s", estimate.UsageString())
+	}
+	if actual == nil || strings.Contains(actual.Long, "record it as actual-usd") {
+		t.Fatalf("story actual help must not say it records actual-usd:\n%s", actual.Long)
+	}
+	estimate.SetArgs([]string{"sty_x", "--usd", "5"})
+	estimate.SetOut(io.Discard)
+	estimate.SetErr(io.Discard)
+	estimate.SilenceUsage = true
+	err := estimate.Execute()
+	if err == nil || !strings.Contains(err.Error(), "unknown flag: --usd") {
+		t.Fatalf("story estimate --usd 5: err = %v, want unknown flag: --usd", err)
 	}
 }
 

@@ -82,21 +82,31 @@ func TestCostVMRendersSharedFixture(t *testing.T) {
 	}
 	out := buf.String()
 	for _, want := range []string{
-		"$1.50",    // own dollars (only the priced row counts)
+		"Band",
+		vm.Band,
 		"110",      // fresh input (100 root + 10 child folded into the family total)
+		"22",       // family output
 		vm.Elapsed, // elapsed wall time — asserted non-empty below
 		vm.AgentTime,
-		"1 unavailable)", // FAMILY TOTAL uncosted count: root priced + child uncosted (html-escapes the leading '+')
+		"Fresh in",
+		"Cache read",
+		"Cache write",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("itemDetail missing %q; got:\n%s", want, out)
 		}
 	}
+	if strings.Contains(out, "$") {
+		t.Errorf("itemDetail must not show a dollar estimate or dollar actual:\n%s", out)
+	}
 	if vm.Elapsed == "" || vm.AgentTime == "" {
 		t.Fatalf("vm = %+v, want non-empty Elapsed/AgentTime", vm)
 	}
-	if vm.EstUSD != "est. $10.00" {
-		t.Errorf("EstUSD = %q, want est. $10.00", vm.EstUSD)
+	if vm.Band != costview.FormatCostBand(own.Figures) || vm.Band != "low" {
+		t.Errorf("Band = %q, want shared FormatCostBand %q (low)", vm.Band, costview.FormatCostBand(own.Figures))
+	}
+	if vm.FamilyTotal == nil || vm.FamilyTotal.Band != costview.FormatCostBand(fam.Total) {
+		t.Errorf("FamilyTotal band = %+v, want %q", vm.FamilyTotal, costview.FormatCostBand(fam.Total))
 	}
 	if len(vm.Family) != 1 || vm.FamilyTotal == nil {
 		t.Fatalf("vm.Family = %+v, FamilyTotal = %+v, want one child + a total", vm.Family, vm.FamilyTotal)

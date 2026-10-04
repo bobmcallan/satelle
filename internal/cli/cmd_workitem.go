@@ -727,14 +727,13 @@ have gone stale and the list is empty.`,
 func storyCostCommands() []*cobra.Command {
 	var eTime, eBasis string
 	var eTokens, eFreshInput, eOutput int
-	var eUSD float64
 	estimate := &cobra.Command{
 		Use:   "estimate <id>",
-		Short: "Record a story's plan estimate (usd, fresh-input/output, or legacy tokens/time)",
-		Long: `Record the plan's estimate for a story: --usd for dollars, --fresh-input/
---output for tokens — the CURRENT units. --tokens and --time are LEGACY units,
-kept readable and writable for stories already written in them, but never
-converted into usd or fresh input.
+		Short: "Record a story's plan estimate (fresh-input/output, or legacy tokens/time)",
+		Long: `Record the plan's estimate for a story: --fresh-input and --output for tokens
+— the CURRENT units. --tokens and --time are LEGACY units, kept readable and
+writable for stories already written in them, but never converted into fresh
+input. A dollar figure is not an estimate.
 
 The driving session records it — not the planner — and a workflow that gates on
 the estimate greps those TAGS, not a plan section, so a figure written only into
@@ -751,9 +750,6 @@ transition the gate fires on.
 			if eTokens > 0 {
 				req["tokens"] = eTokens
 			}
-			if eUSD > 0 {
-				req["usd"] = eUSD
-			}
 			if eFreshInput > 0 {
 				req["fresh_input"] = eFreshInput
 			}
@@ -763,7 +759,6 @@ transition the gate fires on.
 			return dispatch(cmd, "story-estimate", req)
 		},
 	}
-	estimate.Flags().Float64Var(&eUSD, "usd", 0, "estimated dollars")
 	estimate.Flags().IntVar(&eFreshInput, "fresh-input", 0, "estimated fresh input tokens")
 	estimate.Flags().IntVar(&eOutput, "output", 0, "estimated output tokens")
 	estimate.Flags().StringVar(&eTime, "time", "", "legacy unit: estimated duration (30m, 2h, or a bare number of minutes)")
@@ -774,14 +769,15 @@ transition the gate fires on.
 		Use:   "actual <id>",
 		Short: "Compute and record a story's actual cost from its ledger",
 		Long: `Compute the story's actual from its ledger (dispatch + driver-usage rows) and
-record it as actual-usd / actual-fresh-input / actual-output / actual-cache-read
-/ actual-cache-write / actual-minutes / actual-tokens tags, plus the full
-actual_recorded ledger payload.
+record it as actual-fresh-input / actual-output / actual-cache-read /
+actual-cache-write / actual-minutes / actual-tokens tags, plus actual-cost
+(low, medium, or high) when tokens were measured, and the full actual_recorded
+ledger payload. A stored actual-usd tag is left as stored.
 
 The actual is COMPUTED, never entered: this command takes no figures — pass
-none. A hand-typed actual-* tag is overwritten by the computed one. This is
-also run automatically when the story reaches its workflow's terminal state, so
-running it by hand is for an early look, not a requirement.`,
+none. A hand-typed token, cache, or time actual is overwritten by the computed
+one. This is also run automatically when the story reaches its workflow's
+terminal state, so running it by hand is for an early look, not a requirement.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -857,7 +853,7 @@ prior entry.`,
 	cost := &cobra.Command{
 		Use:   "cost [id]",
 		Short: "Show the measured per-gate token + wall-time cost recorded for a story",
-		Long: `Show what a story actually cost to run: dollars and fresh tokens headline,
+		Long: `Show what a story actually cost to run: a cost band and fresh tokens headline,
 cache read/write as secondary columns, elapsed wall time and agent time, any
 legacy plan estimate beside the measured figure it matches, the driving
 session's own line, and — for an epic-parent — the family roll-up. Below that,
@@ -936,23 +932,21 @@ reject per skill and seat, scoped by --story, --epic, or --since/--until.`,
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			// Dispatched/reviewed invocations — the precise sub-process cost.
 			// Unreported usage renders as — (sty_56aae77a), never a confident 0.
-			fmt.Fprintln(w, "TRANSITION\tSTEP\tMODEL\tTOKENS in/out\tTOTAL\tDURATION\t$")
+			fmt.Fprintln(w, "TRANSITION\tSTEP\tMODEL\tTOKENS in/out\tTOTAL\tDURATION")
 			for _, r := range sc.Rows {
 				step := r.Agent
 				if r.Skill != "" {
 					step = r.Skill
 				}
-				fmt.Fprintf(w, "%s→%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				fmt.Fprintf(w, "%s→%s\t%s\t%s\t%s\t%s\t%s\n",
 					r.From, r.To, step, ledger.ModelLabel(r.Model, r.ModelResolved),
 					rowTokensIO(r.TokensIn, r.TokensOut, r.UsageAvailable),
 					rowTokensTotal(r.TokensTotal, r.UsageAvailable),
-					fmtDurationMs(r.DurationMs),
-					rowCostUSD(r.CostUSD))
+					fmtDurationMs(r.DurationMs))
 			}
-			fmt.Fprintf(w, "TOTAL\t\t\t\t%s\t%s\t%s\n",
+			fmt.Fprintf(w, "TOTAL\t\t\t\t%s\t%s\n",
 				measuredTotalLabel(sc.TotalTokens, sc.MeasuredRows, sc.UnmeasuredRows),
-				fmtDurationMs(sc.TotalDurationMs),
-				costTotalLabel(sc.TotalCostUSD, sc.CostedRows, sc.UncostedRows))
+				fmtDurationMs(sc.TotalDurationMs))
 			if err := w.Flush(); err != nil {
 				return err
 			}
@@ -1195,8 +1189,7 @@ func printDriverSection(cmd *cobra.Command, sc verb.StoryCost) error {
 	// reads as a literal 0 (sty_b8542a3a AC1 rework).
 	f := sc.Figures
 	splitRows := f.UsageRows - f.UnsplitRows
-	fmt.Fprintf(cmd.OutOrStdout(), "\nGRAND TOTAL (agent_invocation + driver): %s | fresh in %s | out %s | cache read %s | cache write %s | agent time %s\n",
-		costview.FormatUSD(f.CostUSD, f.CostRows, f.CostUnavailableRows),
+	fmt.Fprintf(cmd.OutOrStdout(), "\nGRAND TOTAL (agent_invocation + driver): fresh in %s | out %s | cache read %s | cache write %s | agent time %s\n",
 		costview.FormatSplitTokens(f.FreshInput, splitRows, f.UnsplitRows, f.UsageUnavailableRows),
 		costview.FormatTokensMeasured(f.Output, f.UsageRows, f.UsageUnavailableRows),
 		costview.FormatSplitTokens(f.CacheRead, splitRows, f.UnsplitRows, f.UsageUnavailableRows),
@@ -1261,20 +1254,20 @@ func printSessionReconciliation(cmd *cobra.Command, recon verb.SessionReconcilia
 	_ = w.Flush()
 }
 
-// printCostSummary renders the costview headline (sty_b8542a3a AC1-AC4): $
-// and fresh tokens lead, cache read/write are secondary columns, elapsed wall
-// time and agent time are both shown (never substituted for each other), any
-// legacy estimate prints in its own unit beside the figure it matches, and —
-// when the story has children — the family roll-up (AC5). It is the SAME
-// costview.Figures the actual-* tags and the web page read, so all three
-// agree on every number.
+// printCostSummary renders the costview headline: the cost band and fresh
+// tokens lead, cache read/write are secondary columns, elapsed wall time and
+// agent time are both shown (never substituted for each other), any legacy
+// estimate prints in its own unit beside the figure it matches, and — when the
+// story has children — the family roll-up. The band is costview.FormatCostBand
+// on the SAME Figures the actual-cost tag and the web page read, so all three
+// agree. An empty band renders "unavailable". A dollar estimate is not shown.
 func printCostSummary(cmd *cobra.Command, sc verb.StoryCost) {
 	out := cmd.OutOrStdout()
 	f := sc.Figures
 	fmt.Fprintln(out, "COST SUMMARY")
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	splitRows := f.UsageRows - f.UnsplitRows
-	fmt.Fprintf(w, "$\t%s\t%s\n", costview.FormatUSD(f.CostUSD, f.CostRows, f.CostUnavailableRows), costview.FormatEstimate(sc.Estimates, "usd"))
+	fmt.Fprintf(w, "BAND\t%s\n", costview.FormatCostBand(f))
 	fmt.Fprintf(w, "FRESH IN\t%s\t%s\n", costview.FormatSplitTokens(f.FreshInput, splitRows, f.UnsplitRows, f.UsageUnavailableRows), costview.FormatEstimate(sc.Estimates, "fresh-input"))
 	fmt.Fprintf(w, "OUT\t%s\t%s\n", costview.FormatTokensMeasured(f.Output, f.UsageRows, f.UsageUnavailableRows), costview.FormatEstimate(sc.Estimates, "output"))
 	fmt.Fprintf(w, "CACHE READ\t%s\t\n", costview.FormatSplitTokens(f.CacheRead, splitRows, f.UnsplitRows, f.UsageUnavailableRows))
@@ -1292,12 +1285,12 @@ func printCostSummary(cmd *cobra.Command, sc verb.StoryCost) {
 	if sc.Family != nil {
 		fmt.Fprintln(out, "\nFAMILY")
 		fw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(fw, "CHILD\t$\tFRESH IN\tOUT\tCACHE READ\tCACHE WRITE\tELAPSED")
+		fmt.Fprintln(fw, "CHILD\tBAND\tFRESH IN\tOUT\tCACHE READ\tCACHE WRITE\tELAPSED")
 		for _, c := range sc.Family.Children {
 			cf := c.Figures
 			cfSplitRows := cf.UsageRows - cf.UnsplitRows
 			fmt.Fprintf(fw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", c.ID,
-				costview.FormatUSD(cf.CostUSD, cf.CostRows, cf.CostUnavailableRows),
+				costview.FormatCostBand(cf),
 				costview.FormatSplitTokens(cf.FreshInput, cfSplitRows, cf.UnsplitRows, cf.UsageUnavailableRows), costview.FormatTokensMeasured(cf.Output, cf.UsageRows, cf.UsageUnavailableRows),
 				costview.FormatSplitTokens(cf.CacheRead, cfSplitRows, cf.UnsplitRows, cf.UsageUnavailableRows), costview.FormatSplitTokens(cf.CacheWrite, cfSplitRows, cf.UnsplitRows, cf.UsageUnavailableRows),
 				costview.FormatDuration(cf.ElapsedMs))
@@ -1305,7 +1298,7 @@ func printCostSummary(cmd *cobra.Command, sc verb.StoryCost) {
 		ft := sc.Family.Total
 		ftSplitRows := ft.UsageRows - ft.UnsplitRows
 		fmt.Fprintf(fw, "FAMILY TOTAL\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			costview.FormatUSD(ft.CostUSD, ft.CostRows, ft.CostUnavailableRows),
+			costview.FormatCostBand(ft),
 			costview.FormatSplitTokens(ft.FreshInput, ftSplitRows, ft.UnsplitRows, ft.UsageUnavailableRows), costview.FormatTokensMeasured(ft.Output, ft.UsageRows, ft.UsageUnavailableRows),
 			costview.FormatSplitTokens(ft.CacheRead, ftSplitRows, ft.UnsplitRows, ft.UsageUnavailableRows), costview.FormatSplitTokens(ft.CacheWrite, ftSplitRows, ft.UnsplitRows, ft.UsageUnavailableRows),
 			costview.FormatDuration(ft.ElapsedMs))

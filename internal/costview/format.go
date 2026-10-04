@@ -106,8 +106,6 @@ func FormatEstimate(estimates []Estimate, unit string) string {
 		return ""
 	}
 	switch unit {
-	case "usd":
-		return fmt.Sprintf("est. $%.2f", e.Value)
 	case "minutes":
 		return fmt.Sprintf("est. %s", FormatDuration(int64(e.Value)*60*1000))
 	default:

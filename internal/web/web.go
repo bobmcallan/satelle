@@ -190,7 +190,9 @@ type detailData struct {
 // through a costview formatter, so the template and the CLI can never
 // disagree on a number's presentation.
 type costVM struct {
-	USD, EstUSD           string
+	// Band is costview.FormatCostBand: low, medium, high, or unavailable.
+	// A dollar estimate is not shown.
+	Band                  string
 	FreshIn, EstFreshIn   string
 	Out, EstOut           string
 	CacheRead, CacheWrite string
@@ -223,7 +225,7 @@ type costVM struct {
 // (as FamilyTotal) the whole family's fold.
 type familyRowVM struct {
 	ID                    string
-	USD                   string
+	Band                  string
 	FreshIn, Out          string
 	CacheRead, CacheWrite string
 	Elapsed               string

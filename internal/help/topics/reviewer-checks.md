@@ -257,11 +257,11 @@ route is the sole gating authority (no hidden `reviewer:always` layer). A
 `[[gate]]` entry in `step.toml` carries an `on` list of steps and runs on
 the transitions into them, after that step's own `reviewers`.
 `satelle-estimate-actual-review` (`on = ["in_progress", "done"]`) requires a recorded plan
-estimate entering `in_progress` (`satelle story estimate`, in usd, fresh-input/
-output, or a legacy tokens/time unit); entering `done` it never rejects — the
+estimate entering `in_progress` (`satelle story estimate`, in fresh-input/
+output, or a legacy tokens/time unit — a dollar tag is not an estimate); entering `done` it never rejects — the
 actual is COMPUTED from the ledger on the terminal commit itself, and the gate
-shows it beside the estimate in each figure's own unit, never converting one
-into the other. `satelle-integration-check`
+shows the token figures beside the estimate, never a dollar figure and never converting one
+unit into another. `satelle-integration-check`
 (`on: commit`) runs `make integration` before a commit. A step may also name
 several reviewers directly (`reviewers = ["a", "b"]`). `satelle-story-cancel-review`
 records why an item is abandoned.

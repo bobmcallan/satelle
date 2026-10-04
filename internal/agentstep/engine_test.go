@@ -3825,7 +3825,7 @@ func TestCodedEstimateGate(t *testing.T) {
 		{"in_progress without estimate rejects", "in_progress", []string{"cli"}, false, "no plan estimate recorded"},
 		{"in_progress with legacy minutes accepts", "in_progress", []string{"estimate-minutes:30"}, true, ""},
 		{"in_progress with legacy tokens accepts", "in_progress", []string{"estimate-tokens:5000"}, true, ""},
-		{"in_progress with usd accepts", "in_progress", []string{"estimate-usd:2.5"}, true, ""},
+		{"in_progress with usd rejects", "in_progress", []string{"estimate-usd:2.5"}, false, "no plan estimate recorded"},
 		{"in_progress with fresh-input accepts", "in_progress", []string{"estimate-fresh-input:100000"}, true, ""},
 		{"done with no estimate never rejects", "done", nil, true, ""},
 		{"done with a huge overrun never rejects", "done", []string{"estimate-tokens:1"}, true, ""},
@@ -3883,14 +3883,13 @@ func TestCodedEstimateGateDonePrintsUnitAwareSummary(t *testing.T) {
 	if !strings.Contains(out, "legacy unit") {
 		t.Errorf("stdout = %q, want the legacy estimate marked as a legacy unit", out)
 	}
-	if !strings.Contains(out, "$50.5") {
-		t.Errorf("stdout = %q, want the TOTAL measured actual in dollars (not own's 0.10)", out)
+	for _, want := range []string{"fresh 9000000", "output 100000", "cache read 1000000", "cache write 50000"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout = %q, want %q", out, want)
+		}
 	}
-	if !strings.Contains(out, "2 rows cost unavailable") {
-		t.Errorf("stdout = %q, want the TOTAL's unavailable-row count shown beside the dollars", out)
-	}
-	if strings.Contains(out, "$200000") {
-		t.Errorf("stdout = %q, must never render the token estimate as dollars", out)
+	if strings.Contains(out, "$50.5") || strings.Contains(out, "$") {
+		t.Errorf("stdout = %q, must not print a dollar figure", out)
 	}
 }
 
@@ -3921,9 +3920,9 @@ func TestCodedEstimateGateMeasuredActualUnavailable(t *testing.T) {
 	}
 }
 
-// TestCodedEstimateGateAllUnpricedRows pins revision 2 point 3's other
-// branch: measured_actual is present but no row was priced (cost_rows == 0),
-// so the dollar figure reads "cost unavailable", never a false "$0".
+// TestCodedEstimateGateAllUnpricedRows pins that a measured_actual whose
+// rows are unpriced still prints the token figures and never a dollar figure,
+// and that a stored estimate-usd tag is not treated as the printed estimate.
 func TestCodedEstimateGateAllUnpricedRows(t *testing.T) {
 	body := estimateActualCheckBody(t)
 	command := skillCheck(body)
@@ -3942,11 +3941,16 @@ func TestCodedEstimateGateAllUnpricedRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("check rejected an all-unpriced actual: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "cost unavailable (3 rows)") {
-		t.Errorf("stdout = %q, want an explicit unpriced notice naming the unavailable row count", out)
+	for _, want := range []string{"fresh 0", "output 0", "cache read 0", "cache write 0"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout = %q, want %q", out, want)
+		}
 	}
-	if strings.Contains(out, "$0") {
-		t.Errorf("stdout = %q, must never render an all-unpriced actual as a false $0", out)
+	if strings.Contains(out, "$") {
+		t.Errorf("stdout = %q, must not print a dollar figure for an unpriced actual", out)
+	}
+	if strings.Contains(out, "estimate: $5") || strings.Contains(out, "estimate-usd") {
+		t.Errorf("stdout = %q, must not treat a dollar tag as the printed estimate", out)
 	}
 }
 
