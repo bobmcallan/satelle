@@ -113,6 +113,11 @@ type stepWire struct {
 	Skills        []string `toml:"skills"`
 	Reviewers     []string `toml:"reviewers"`
 	ReviewerAgent string   `toml:"reviewer_agent"`
+	// Panel is the ordered list of agents.toml sections that judge this step's
+	// entry reviewers. Combine names the functional-check skill that folds their
+	// verdicts. Both empty means today's single seat.
+	Panel   []string `toml:"panel"`
+	Combine string   `toml:"combine"`
 	// Parallel is a POINTER on purpose: TOML's zero value is indistinguishable
 	// from an absent key, and an authored `parallel = 0` (serial) must not read
 	// as "unset" (which defaults to DefaultParallelCap concurrent). This is the
@@ -166,6 +171,10 @@ type gateWire struct {
 	// When names a functional-check skill the engine runs before it enqueues the
 	// gate — an enqueue precondition, never a verdict.
 	When string `toml:"when"`
+	// Panel / Combine are this gate's own seats and fold check. They apply only
+	// to this skill, and they do not overwrite a step-level panel.
+	Panel   []string `toml:"panel"`
+	Combine string   `toml:"combine"`
 }
 
 // recordsOf splits a route-source body into its top-level tables: the reserved
@@ -337,6 +346,42 @@ func decodeRecovers(md toml.MetaData, p *toml.Primitive) ([]recoverRef, error) {
 //	skill = "satelle-build-unit-check"
 //	on = ["integration"]
 //
+// trimPanel drops surrounding space and refuses an empty seat name. An empty
+// name would be a binding that cannot resolve, recorded as a silent gap rather
+// than the typo it is.
+func trimPanel(in []string) ([]string, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return nil, fmt.Errorf("panel contains an empty seat")
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+// refusePanelShape is the parse refusal for a panel declaration, by key name.
+// A one-seat panel is the same shape as a single binding and may omit combine.
+// Two or more seats need a combine skill. combine without a panel, and panel
+// together with the single-binding key, are silent no-ops if accepted — so
+// they are refused here rather than dropped later.
+func refusePanelShape(panel []string, combine, other, otherKey, where string) error {
+	combine = strings.TrimSpace(combine)
+	switch {
+	case strings.TrimSpace(other) != "" && len(panel) > 0:
+		return fmt.Errorf("%s: panel together with %s — name the seats on panel, or one binding on %s, not both", where, otherKey, otherKey)
+	case combine != "" && len(panel) == 0:
+		return fmt.Errorf("%s: combine %q without panel — combine names the check that folds a panel", where, combine)
+	case len(panel) >= 2 && combine == "":
+		return fmt.Errorf("%s: panel of %d seats without combine — name the check skill that folds them", where, len(panel))
+	}
+	return nil
+}
+
 // Keyed by obligation, NOT by stage name: `done` is four different steps in this
 // repo's catalogue and `in_progress` is three, because different route families
 // reach the same status by discharging different obligations. The obligation is
@@ -362,6 +407,13 @@ func ParseSteps(body string) (Catalogue, error) {
 		if strings.TrimSpace(s.Status) == "" {
 			return Catalogue{}, fmt.Errorf("step.toml: step %q has no status (the stage name an item holds here)", provides)
 		}
+		panel, perr := trimPanel(s.Panel)
+		if perr != nil {
+			return Catalogue{}, fmt.Errorf("step.toml: step %q: %w", provides, perr)
+		}
+		if err := refusePanelShape(panel, s.Combine, s.ReviewerAgent, "reviewer_agent", fmt.Sprintf("step.toml: step %q", provides)); err != nil {
+			return Catalogue{}, err
+		}
 		st := Step{
 			Name:          s.Status,
 			Provides:      provides,
@@ -370,6 +422,8 @@ func ParseSteps(body string) (Catalogue, error) {
 			Skills:        s.Skills,
 			Reviewers:     s.Reviewers,
 			ReviewerAgent: s.ReviewerAgent,
+			Panel:         panel,
+			Combine:       strings.TrimSpace(s.Combine),
 			Requires:      s.Requires,
 			AppliesTo:     s.AppliesTo,
 			Start:         s.Start,
@@ -417,10 +471,19 @@ func ParseSteps(body string) (Catalogue, error) {
 		if strings.TrimSpace(g.Skill) == "" {
 			return Catalogue{}, fmt.Errorf("step.toml: [[gate]] #%d has no skill", i+1)
 		}
+		panel, perr := trimPanel(g.Panel)
+		if perr != nil {
+			return Catalogue{}, fmt.Errorf("step.toml: [[gate]] %q: %w", g.Skill, perr)
+		}
+		if err := refusePanelShape(panel, g.Combine, g.Agent, "agent", fmt.Sprintf("step.toml: [[gate]] %q", g.Skill)); err != nil {
+			return Catalogue{}, err
+		}
 		cat.Gates = append(cat.Gates, RouteGate{
 			Skill: g.Skill, Agent: g.Agent, On: g.On,
 			AppliesTo: g.AppliesTo, For: g.For, Mandatory: g.Mandatory,
-			When: strings.TrimSpace(g.When),
+			When:    strings.TrimSpace(g.When),
+			Panel:   panel,
+			Combine: strings.TrimSpace(g.Combine),
 		})
 	}
 	if err := undecodedErr(md, "step.toml"); err != nil {

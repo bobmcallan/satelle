@@ -586,13 +586,30 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		var rejects []ReviewerVerdict
 		bundled := map[string]bool{}
 		for _, rv := range reviewers {
+			// A panel fold leaves Command empty on the skill row and carries one
+			// stamp per seat that started. Write those first, then the single
+			// skill-level verdict. A dissent stays inside seats — it is not a
+			// second review_reject, and a seat that never started has no stamp.
+			for _, stamp := range rv.SeatStamps {
+				if stamp.Command == "" {
+					continue
+				}
+				seat := stamp.Seat
+				if seat == "" {
+					seat = stamp.Skill
+				}
+				appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "reviewer",
+					fmt.Sprintf("invoked reviewer (%s) for %s→%s with @skill:%s seat %s", stamp.Command, current.Status, *req.Status, stamp.Skill, seat),
+					invocationPayload(current.Status, *req.Status, stamp), now)
+			}
 			// Record HOW the isolated agent was invoked before its verdict — the
 			// resolved command/harness and the injected skill/rubric file — so the
 			// timeline shows what command ran with what context (sty_fb3e0873). Only
 			// an LLM reviewer carries a Command; a functional check invokes no agent.
 			// A bundled session is ONE invocation however many rubrics it judged
 			// (sty_23e10d92): its row is written once, with the bundle's usage, on
-			// the first of its verdicts.
+			// the first of its verdicts. A panel fold leaves Command empty so this
+			// write does not fire a duplicate for the skill row.
 			if rv.Command != "" && !(rv.BundleID != "" && bundled[rv.BundleID]) {
 				inv, rubrics := rv, rv.Context
 				if rv.BundleID != "" {
@@ -1812,12 +1829,15 @@ func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.R
 		// BundleID/BundleSize: this verdict came from one bundled session judging
 		// BundleSize rubrics (sty_23e10d92). The verdict row carries no usage — the
 		// bundle's single agent_invocation row does.
-		BundleID   string `json:"bundle_id,omitempty"`
-		BundleSize int    `json:"bundle_size,omitempty"`
+		BundleID   string      `json:"bundle_id,omitempty"`
+		BundleSize int         `json:"bundle_size,omitempty"`
+		Seats      []PanelSeat `json:"seats,omitempty"`
+		Combine    string      `json:"combine,omitempty"`
 	}{From: from, To: to, Attempt: attempt, Skill: rv.Skill, Order: rv.Order, System: rv.System,
 		Notes: rv.Notes, Reasoning: rv.Reasoning, Accept: rv.Accept,
 		Model: rv.Model, ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models,
-		BundleID: rv.BundleID, BundleSize: len(rv.BundleSkills)}
+		BundleID: rv.BundleID, BundleSize: len(rv.BundleSkills),
+		Seats: rv.Seats, Combine: rv.Combine}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil
@@ -1938,6 +1958,9 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		// (sty_23e10d92); costview allocates its usage across them.
 		BundleID     string   `json:"bundle_id,omitempty"`
 		BundleSkills []string `json:"bundle_skills,omitempty"`
+		// Seat is the agents.toml section when this row is one panel seat's
+		// invocation. Empty on a single-seat gate.
+		Seat string `json:"seat,omitempty"`
 	}{From: from, To: to, Agent: "reviewer", Skill: rv.Skill, Command: rv.Command, Context: rv.Context, Model: rv.Model,
 		ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models,
 		TokensIn: rv.TokensIn, TokensOut: rv.TokensOut, TokensTotal: rv.TokensTotal, DurationMs: rv.DurationMs,
@@ -1946,7 +1969,8 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		CostUSD: rv.CostUSD, CostUnavailableReason: rv.CostUnavailableReason,
 		SystemPromptBytes: rv.SystemPromptBytes, PayloadBytes: rv.PayloadBytes,
 		ToolIsolation: rv.ToolIsolation,
-		BundleID:      rv.BundleID, BundleSkills: rv.BundleSkills}
+		BundleID:      rv.BundleID, BundleSkills: rv.BundleSkills,
+		Seat: rv.Seat}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil

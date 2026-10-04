@@ -32,11 +32,13 @@ import (
 // functional-check skill that decides at transition time whether the gate runs,
 // so a gate the route lists may still be skipped for a given change.
 type Reviewer struct {
-	Skill  string   `json:"skill"`
-	Agent  string   `json:"agent,omitempty"`
-	Scoped bool     `json:"scoped,omitempty"`
-	ByTag  []string `json:"by_tag,omitempty"`
-	When   string   `json:"when,omitempty"`
+	Skill   string   `json:"skill"`
+	Agent   string   `json:"agent,omitempty"`
+	Scoped  bool     `json:"scoped,omitempty"`
+	ByTag   []string `json:"by_tag,omitempty"`
+	When    string   `json:"when,omitempty"`
+	Panel   []string `json:"panel,omitempty"`
+	Combine string   `json:"combine,omitempty"`
 }
 
 // Advisor names an agent the ORCHESTRATOR may consult at a step, and the rubric
@@ -134,6 +136,10 @@ type Step struct {
 	// tool grant run as one reviewer session with a verdict per rubric
 	// (sty_23e10d92). Read from the same spine inbound edge as Parallel.
 	Bundle bool `json:"bundle,omitempty"`
+	// Panel / Combine are the step's entry-gate seats and the check that folds
+	// them, read from the spine inbound edge. Empty when the step names neither.
+	Panel   []string `json:"panel,omitempty"`
+	Combine string   `json:"combine,omitempty"`
 	// Terminal marks the route's success end.
 	Terminal bool `json:"terminal,omitempty"`
 	// Advisor is the agent the orchestrator may consult at this step.
@@ -284,6 +290,10 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 		if len(tr.Skills) > 0 && tr.Bundle {
 			step.Bundle = true
 		}
+		if len(tr.Skills) > 0 && len(tr.Panel) > 0 && len(step.Panel) == 0 {
+			step.Panel = tr.Panel
+			step.Combine = tr.Combine
+		}
 		for _, sk := range tr.Skills {
 			if sk == "" || seen[sk] {
 				continue
@@ -301,6 +311,7 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 		seen[sr.Skill] = true
 		step.Reviewers = append(step.Reviewers, Reviewer{
 			Skill: sr.Skill, Agent: sr.Agent, Scoped: true, ByTag: appliesTo(spec, sr.Skill), When: sr.When,
+			Panel: sr.Panel, Combine: sr.Combine,
 		})
 	}
 	for _, sr := range skipped {
@@ -520,6 +531,13 @@ func renderGates(s Step) string {
 		if rv.When != "" {
 			label += " (conditional, when: " + rv.When + ")"
 		}
+		if len(rv.Panel) > 0 {
+			label += " (panel " + strings.Join(rv.Panel, ", ")
+			if rv.Combine != "" {
+				label += ", combine " + rv.Combine
+			}
+			label += ")"
+		}
 		parts = append(parts, label)
 	}
 	for _, rv := range s.Skipped {
@@ -528,6 +546,12 @@ func renderGates(s Step) string {
 	out := " · entry gated by " + strings.Join(parts, ", ")
 	if s.Bundle {
 		out += " (bundled: gates sharing binding, model, effort and tool grant run as one session)"
+	}
+	if len(s.Panel) > 0 {
+		out += " · panel " + strings.Join(s.Panel, ", ")
+		if s.Combine != "" {
+			out += " · combine " + s.Combine
+		}
 	}
 	return out
 }

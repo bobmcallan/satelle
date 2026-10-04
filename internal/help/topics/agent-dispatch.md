@@ -67,6 +67,18 @@ A step's `reviewer_agent:` (or a `[[gate]]` entry's `agent`) may name any
 `[reviewer]`. The agents layer owns harness, tools, and model — the route names
 *who*. See the satelle-route-standard principle.
 
+### A panel of seats
+
+A step or `[[gate]]` may name `panel = ["reviewer-claude", "reviewer-grok"]`
+and `combine = "satelle-panel-all-accept"`. satelle runs that reviewer skill
+once per section, cold and one-shot, then runs the named check skill with the
+seat records on stdin. The check's exit code is the skill's verdict. Who sits
+and which check folds them is configuration: the binary ships
+`satelle-panel-all-accept` and `satelle-panel-majority` as skills, and a repo
+adds a rule by adding a skill. A seat that cannot start, or whose output does
+not parse, is recorded unavailable and is not an accept. The ledger row for
+the skill carries every seat; each seat that started has its own invocation
+row.
 
 ### What each role needs
 

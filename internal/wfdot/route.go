@@ -47,6 +47,12 @@ type Step struct {
 	// ReviewerAgent is the agents.toml binding the entry gates run under.
 	// Empty means [reviewer].
 	ReviewerAgent string
+	// Panel is the ordered list of agents.toml sections that judge this step's
+	// entry reviewers, one cold run each. Empty means the single ReviewerAgent
+	// seat. Combine names the functional-check skill that folds those runs; a
+	// one-seat panel may omit it.
+	Panel   []string
+	Combine string
 	// Parallel is the entry gates' concurrency cap. Unset with two or more
 	// reviewers defaults to DefaultParallelCap: concurrency is the shape's rule,
 	// not an authored opt-in. An authored value always wins.
@@ -157,6 +163,10 @@ type RouteGate struct {
 	// It decides whether a judgement is worth its cost, never the judgement, and
 	// the rule lives entirely in that skill's script.
 	When string
+	// Panel / Combine are this gate's own seats and fold check. They apply only
+	// to this skill.
+	Panel   []string
+	Combine string
 }
 
 // List is one category's declaration of done: the obligations that must be
@@ -469,6 +479,8 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			AppliesTo: g.AppliesTo,
 			Mandatory: g.Mandatory,
 			When:      g.When,
+			Panel:     g.Panel,
+			Combine:   g.Combine,
 		})
 	}
 
@@ -492,6 +504,8 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			Agent:    to.ReviewerAgent,
 			Parallel: parallelFor(to),
 			Bundle:   to.Bundle && len(to.Reviewers) > 1,
+			Panel:    to.Panel,
+			Combine:  to.Combine,
 		})
 	}
 

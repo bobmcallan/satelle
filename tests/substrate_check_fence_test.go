@@ -32,6 +32,44 @@ type fenceCase struct {
 // golden table. Discovery (TestEveryCheckFenceHasFixtures) fails if a skill has
 // a fence but no entry here (sty_6830e78e AC3).
 var fenceFixtures = map[string][]fenceCase{
+	"satelle-panel-all-accept": {
+		{
+			name:     "accept when every declared seat accepts",
+			stdin:    `{"seats":[{"seat":"seat-a","accept":true,"unavailable":false,"notes":""},{"seat":"seat-b","accept":true,"unavailable":false,"notes":""}],"declared":2}`,
+			wantExit: 0,
+		},
+		{
+			name:       "reject a dissenting seat",
+			stdin:      `{"seats":[{"seat":"seat-a","accept":true,"unavailable":false,"notes":""},{"seat":"seat-b","accept":false,"unavailable":false,"notes":"no"}],"declared":2}`,
+			wantExit:   1,
+			wantStdout: "seat-b",
+		},
+		{
+			name:       "reject an unavailable seat without shrinking the panel",
+			stdin:      `{"seats":[{"seat":"seat-a","accept":true,"unavailable":false,"notes":""},{"seat":"seat-b","accept":false,"unavailable":true,"notes":"missing"}],"declared":2}`,
+			wantExit:   1,
+			wantStdout: "unavailable: seat-b",
+		},
+	},
+	"satelle-panel-majority": {
+		{
+			name:     "accept a strict majority of declared",
+			stdin:    `{"seats":[{"seat":"seat-a","accept":true,"unavailable":false,"notes":""},{"seat":"seat-b","accept":true,"unavailable":false,"notes":""},{"seat":"seat-c","accept":false,"unavailable":false,"notes":"no"}],"declared":3}`,
+			wantExit: 0,
+		},
+		{
+			name:       "reject a 2-2 split",
+			stdin:      `{"seats":[{"seat":"seat-a","accept":true,"unavailable":false,"notes":""},{"seat":"seat-b","accept":true,"unavailable":false,"notes":""},{"seat":"seat-c","accept":false,"unavailable":false,"notes":"no"},{"seat":"seat-d","accept":false,"unavailable":false,"notes":"no"}],"declared":4}`,
+			wantExit:   1,
+			wantStdout: "dissent: seat-c",
+		},
+		{
+			name:       "unavailable stays in the denominator",
+			stdin:      `{"seats":[{"seat":"seat-a","accept":true,"unavailable":false,"notes":""},{"seat":"seat-b","accept":false,"unavailable":true,"notes":"missing"}],"declared":2}`,
+			wantExit:   1,
+			wantStdout: "unavailable: seat-b",
+		},
+	},
 	"satelle-estimate-actual-review": {
 		{
 			name:       "accept enter in_progress with estimate tags",
