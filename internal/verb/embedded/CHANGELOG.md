@@ -1,3 +1,19 @@
+## [0.0.608] - 2026-10-05
+
+### Added
+- **A grok in-loop session receives the session principle set.** grok ignores SessionStart hook stdout, so the set is delivered on the hook event harness configuration names (`[harness.<name>] session_context_event`; grok: `PostToolUse`), once per session, budgeted by `tool_context_limit_chars` (grok: 10000) and degrading to the compact index. A harness with no declared event emits nothing when an event is present; `satelle hook context` with no event still emits. Existing grok installs get the PostToolUse context hook by re-running `satelle init`. (sty_507d3d9c)
+- **A gate can be judged by a panel of agent seats.** A reviewer reference may declare `panel` (seats) and `combine` (a functional-check skill); each seat runs cold and one-shot, the combine check's exit code is the skill's verdict, and seat records ride the ledger row. `satelle-panel-all-accept` and `satelle-panel-majority` ship as default combine skills; a repo authors another rule as a check skill. A panel on a bundled edge is refused by validate. (sty_74e52e16)
+
+### Changed
+- **Story create no longer requires acceptance criteria.** The compiled numbered-criterion rule is gone from the structure check (title, goal body and category remain). The shipped create review does not reject empty or unnumbered criteria; numbered criteria that are present must still verify the goal. Help for create-story, create-review, reviewer-checks and workflows updated. (sty_9d623118)
+- **Create review pushes back on a story that prescribes its solution.** A draft whose body or criteria require a particular implementation is rejected with the prescriptive parts named; naming a file, symbol or mechanism only as evidence of what exists or is missing is not a prescription. (sty_dea5e414)
+- **The session principle tests cover every harness channel.** A repo principle is proven on claude SessionStart, the pi synthetic SessionStart, grok PostToolUse and the dispatched system prompt. (sty_9e33976f)
+
+## [serve-v0.0.121] - 2026-10-05
+
+### Changed
+- Route parsing carries reviewer `panel` and `combine` declarations (sty_74e52e16).
+
 ## [0.0.607] - 2026-10-04
 
 ### Breaking
