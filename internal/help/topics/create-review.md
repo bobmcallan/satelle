@@ -2,7 +2,7 @@
 
 A **create-review** is an optional content/alignment reviewer that judges a
 story draft at `satelle story create`, after the deterministic structure check
-(clear goal, numbered ACs, category). It is **opt-in twice over**: the repo
+(title, clear goal, category). Acceptance criteria are not part of that check. It is **opt-in twice over**: the repo
 enables create-gating (`[review] gate_create = true` in `.satelle/satelle.toml`),
 and the governing workflow **declares** the reviewer via its `create_review`
 frontmatter. Absent either — or if the declared skill does not resolve —
@@ -25,8 +25,8 @@ description: Create gate — judges a story draft is aligned with this repo's co
 
 You are an isolated reviewer judging whether a story DRAFT should be created.
 You receive the draft (title, body, acceptance_criteria, category, tags) on
-stdin. Judge alignment — the structural basics (goal, numbered ACs) have
-already passed deterministically.
+stdin. Judge alignment — the structural basics (title, goal, category) have
+already passed deterministically. Acceptance criteria are not part of that check.
 
 ## Accept when
 
@@ -148,9 +148,9 @@ gate_create = true
   whose agent has no binding, is not `role = "reviewer"`, or is `command =
   "in-loop"` (which cannot produce an isolated verdict). Both refuse **before**
   a story is ever created.
-- Try it: `satelle story create --title … --body … --acceptance "1. …" --category …`
-  now runs your reviewer after the structure check; a reject blocks creation
-  and prints the reviewer's notes.
+- Try it: `satelle story create --title … --body … --category …` now runs your
+  reviewer after the structure check; a reject blocks creation and prints the
+  reviewer's notes. `--acceptance "1. …"` is optional.
 
 ## What happens when it is NOT wired
 

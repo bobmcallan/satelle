@@ -11,21 +11,30 @@ CLI:
     satelle story create \
       --title "Ship the thing" \
       --body "What done looks like / the outcome sought" \
-      --acceptance "1. first testable criterion
-    2. second testable criterion" \
+      --category feature \
       --priority high --tags mvp,web
+
+`--acceptance` is optional. Pass it only when the draft already has criteria;
+the readiness step authors them otherwise:
+
+    --acceptance "1. first testable criterion
+    2. second testable criterion"
 
 A well-formed draft needs three things (the required structure):
 
 1. a specific **title** (names the change, not just a noun),
 2. a **body** stating the goal / what done looks like, and
-3. numbered, **testable acceptance criteria**.
+3. a non-empty **category** (it selects the governing workflow).
+
+Acceptance criteria are not part of that check.
 
 `satelle init` seeds **`[review] gate_create = true`** (opt out with
 `false`). Creation always runs the **deterministic** structure check (title,
-goal body, numbered ACs, non-empty category). When the active workflow declares
+goal body, non-empty category). When the active workflow declares
 `create_review` (the embedded default is `satelle-story-create-review`), an
-isolated reviewer also judges **content/alignment** and **classification**
+isolated reviewer also judges **content/alignment**, **solution prescription**
+(push back when the draft requires a function, type, file, or mechanism be
+written, and name those prescriptive parts), and **classification**
 against [[satelle-story-classification]] — e.g. reject an epic draft filed as
 `category: feature` (use `epic-parent`). A reject pushes back with notes;
 nothing is persisted until the draft is sound. With `gate_create = false`, only

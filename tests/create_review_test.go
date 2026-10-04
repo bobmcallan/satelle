@@ -240,3 +240,111 @@ echo '{"decision":"accept","notes":""}'
 		t.Fatalf("epic-parent create should accept: %v", err)
 	}
 }
+
+// TestCreateAcceptsStoryWithoutAcceptance is AC1's shipped-path proof: init leaves
+// the create gate on, the baseline binds satelle-story-create-review, and a stub
+// accept lets story create persist a title/body/category draft with no
+// --acceptance. The stub does not execute the skill as an LLM.
+func TestCreateAcceptsStoryWithoutAcceptance(t *testing.T) {
+	repo := t.TempDir()
+	// Use run (not mustRun) so hermetic create-gate opt-out does not flip the
+	// scaffold before we assert the product default.
+	if out, err := run(t, testBin, repo, "init"); err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+
+	cfg, err := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(cfg), "gate_create = true") {
+		t.Fatalf("init must seed gate_create = true:\n%s", cfg)
+	}
+	materializeDefault(t, repo, "workflows", "done")
+	wf, err := os.ReadFile(filepath.Join(repo, ".satelle", "workflows", "done.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(wf), `create_review = "satelle-story-create-review"`) {
+		t.Fatalf("baseline must declare create_review:\n%s", wf)
+	}
+
+	stubReviewerAccept(t, repo)
+	mustRun(t, testBin, repo, "reindex")
+
+	title := "Raise without criteria"
+	out, err := run(t, testBin, repo, "story", "create",
+		"--title", title,
+		"--body", "Intent: a story needs a title, an intent-and-evidence body, and a category. Evidence: the create path no longer demands acceptance criteria.",
+		"--category", "feature")
+	if err != nil {
+		t.Fatalf("create without --acceptance must exit 0: %v\n%s", err, out)
+	}
+	if list := mustRun(t, testBin, repo, "story", "list"); !strings.Contains(list, title) {
+		t.Fatalf("created story missing from list:\n%s", list)
+	}
+}
+
+// TestCreateReviewSkillAllowsAbsentCriteria is the embedded-rubric proof: the
+// shipped create-review skill does not treat missing criteria as a reject, and
+// numbered criteria that are present still have to verify the goal. It must
+// not name a readiness step: the embedded default route has none, so naming
+// one would ship this repo's process to every other repo. It also rejects a
+// draft that prescribes the implementation and names those parts, including
+// when acceptance criteria are empty or unnumbered and the body is what
+// prescribes it. A draft that states what should be true, and does not require
+// a particular implementation, passes the prescription check, including when a
+// mechanism is named only to show what exists today. The skill text must not
+// contain "discovery".
+func TestCreateReviewSkillAllowsAbsentCriteria(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	materializeDefault(t, repo, "skills", "satelle-story-create-review")
+	body, err := os.ReadFile(filepath.Join(repo, ".satelle", "skills", "satelle-story-create-review.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(body)
+	if !strings.Contains(s, "Empty or unnumbered acceptance criteria are not a reject") {
+		t.Error("skill must state that empty or unnumbered acceptance criteria are not a reject")
+	}
+	if strings.Contains(strings.ToLower(s), "readiness step") {
+		t.Error("embedded skill must not name a readiness step")
+	}
+	if strings.Contains(s, "acceptance_criteria needs at least one numbered") {
+		t.Error("skill must not compile the numbered-criterion requirement")
+	}
+	lower := strings.ToLower(s)
+	for _, banned := range []string{
+		"reject a draft solely because",
+		"reject when acceptance criteria are absent",
+		"reject for missing criteria",
+		"reject because criteria are absent",
+		"reject when criteria are missing",
+	} {
+		if strings.Contains(lower, banned) {
+			t.Errorf("skill must not instruct a reject solely because criteria are absent: %q", banned)
+		}
+	}
+	if !strings.Contains(s, "verify the goal") {
+		t.Error("numbered criteria that are present must still be required to verify the goal")
+	}
+	for _, want := range []string{
+		"name each prescriptive part",
+		"states what should be true, and does not require a particular implementation, passes this check",
+		"does not prescribe the implementation",
+		"only to show what exists today",
+		"is evidence, not a prescription",
+		"including when acceptance criteria are empty or unnumbered",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("skill must state the prescription rule %q", want)
+		}
+	}
+	if strings.Contains(s, "discovery") {
+		t.Error("embedded skill must not contain \"discovery\"")
+	}
+	if strings.Contains(s, "and classification only") {
+		t.Error("empty or unnumbered criteria must still judge solution prescription, not coherence, dead premise, and classification only")
+	}
+}
