@@ -1,6 +1,8 @@
 package agentcli
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -232,5 +234,60 @@ func TestHarnessFacts_HelpTopicMatchesCode(t *testing.T) {
 	}
 	if want := HarnessFactsTableMarkdown(); !strings.Contains(top.Body, want) {
 		t.Errorf("help agent-dispatch does not contain the harness-facts table the code renders; want:\n%s", want)
+	}
+}
+
+// The session-context channel is a field on the adapter row. Until a
+// config-seeing caller records one, the cell is an adapter-named unavailable
+// — never a compiled event or clip.
+func TestHarnessFacts_SessionContextChannelIsInjected(t *testing.T) {
+	t.Cleanup(func() { ClearSessionContext(HarnessGrok) })
+	g := FactsFor(HarnessGrok)
+	if g.SessionContextChannel != "" || g.SessionContextClip != 0 {
+		t.Fatalf("static grok row must not compile a channel or clip: %+v", g)
+	}
+	if !strings.Contains(g.SessionContextCell(), "unavailable: grok:") {
+		t.Errorf("unset channel cell = %q", g.SessionContextCell())
+	}
+	if !strings.Contains(g.PromptContext.Reason, "SessionStart stdout is ignored") || !strings.Contains(g.PromptContext.Reason, "discarded") {
+		t.Errorf("grok static row lost its prompt-context facts: %q", g.PromptContext.Reason)
+	}
+	// A config override, recorded through the setter the config-seeing call site
+	// uses, changes the rendered cell. The values are the caller's, not this package's.
+	SetSessionContext(HarnessGrok, "Stop", 500)
+	md := HarnessFactsTableMarkdown()
+	if !strings.Contains(md, "Stop (clip 500 characters)") {
+		t.Errorf("override did not change the session-context cell:\n%s", md)
+	}
+	if FactsFor(HarnessGrok).SessionContextChannel != "Stop" {
+		t.Errorf("FactsFor did not read the recorded channel: %+v", FactsFor(HarnessGrok))
+	}
+}
+
+// agentcli stays config-free: no internal/config import, no compiled clip.
+func TestHarnessFacts_SeamHasNoConfigAndNoClipLiteral(t *testing.T) {
+	dir := "."
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := string(b)
+		if strings.Contains(s, "internal/config") {
+			t.Errorf("%s imports internal/config", e.Name())
+		}
+		if strings.Contains(s, "10000") {
+			t.Errorf("%s contains a compiled 10000 clip", e.Name())
+		}
+		if strings.Contains(s, "PostToolUse") {
+			t.Errorf("%s contains an event-name default", e.Name())
+		}
 	}
 }

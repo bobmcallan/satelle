@@ -764,43 +764,76 @@ func withGrokHarness(cmd string) string {
 	return cmd + " --harness grok"
 }
 
+// grokSessionContextEvent is the event satelle hook context is installed on
+// for this repo: the repo's [harness.grok] session_context_event, else the
+// embedded default. Empty when neither declares one — the installer does not
+// guess an event.
+func grokSessionContextEvent(repoRoot string) string {
+	var cfg config.Config
+	if strings.TrimSpace(repoRoot) != "" {
+		path := filepath.Join(repoRoot, config.DefaultDataDir, config.ConfigName)
+		if c, _, err := config.Load(path); err == nil {
+			cfg = c
+		}
+	}
+	return cfg.SessionContextEvent(agentcli.HarnessGrok)
+}
+
 // buildGrokHookSettings returns the .grok/hooks/satelle.json scaffold bytes.
 // Matchers cover Grok-native tool ids and Claude aliases Grok maps (sty_2fad11b0).
-// repoRoot makes PreToolUse script paths absolute (cwd-safe). SessionStart,
-// UserPromptSubmit and Stop all pass --harness grok (sty_719c4a7b AC2);
+// repoRoot makes PreToolUse script paths absolute (cwd-safe). SessionStart keeps
+// satelle reindex. satelle hook context is installed, matcher-less, on the event
+// SessionContextEvent resolves to — beside reindex when that event is
+// SessionStart, and not also on SessionStart when it is another event.
+// UserPromptSubmit and Stop pass --harness grok (sty_719c4a7b AC2);
 // PreToolUse already does via renderHookCommand's positional harness arg.
 func buildGrokHookSettings(repoRoot string) []byte {
 	hs := harnessHooks("grok")
-	doc := map[string]any{
-		"hooks": map[string]any{
-			"SessionStart": []any{
-				map[string]any{"hooks": []any{
-					map[string]any{"type": "command", "command": "satelle reindex"},
-					map[string]any{"type": "command", "command": withGrokHarness("satelle hook context")},
-				}},
+	event := grokSessionContextEvent(repoRoot)
+	contextCmd := withGrokHarness("satelle hook context")
+	sessionHooks := []any{
+		map[string]any{"type": "command", "command": "satelle reindex"},
+	}
+	if event == "SessionStart" {
+		sessionHooks = append(sessionHooks, map[string]any{"type": "command", "command": contextCmd})
+	}
+	hooks := map[string]any{
+		"SessionStart": []any{
+			map[string]any{"hooks": sessionHooks},
+		},
+		"PreToolUse": []any{
+			map[string]any{
+				"matcher": hs.gateMatcher,
+				"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "grok", "gate")}},
 			},
-			"PreToolUse": []any{
-				map[string]any{
-					"matcher": hs.gateMatcher,
-					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "grok", "gate")}},
-				},
-				map[string]any{
-					"matcher": hs.commitMatcher,
-					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "grok", "commitgate")}},
-				},
-			},
-			"UserPromptSubmit": []any{
-				map[string]any{"hooks": []any{
-					map[string]any{"type": "command", "command": withGrokHarness(promptHookCommand)},
-				}},
-			},
-			"Stop": []any{
-				map[string]any{"hooks": []any{stopHookEntry(withGrokHarness(stopcheckHookCommand))}},
+			map[string]any{
+				"matcher": hs.commitMatcher,
+				"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "grok", "commitgate")}},
 			},
 		},
+		"UserPromptSubmit": []any{
+			map[string]any{"hooks": []any{
+				map[string]any{"type": "command", "command": withGrokHarness(promptHookCommand)},
+			}},
+		},
+		"Stop": []any{
+			map[string]any{"hooks": []any{stopHookEntry(withGrokHarness(stopcheckHookCommand))}},
+		},
 	}
+	if event != "" && event != "SessionStart" {
+		placeMatcherlessCommand(hooks, event, contextCmd)
+	}
+	doc := map[string]any{"hooks": hooks}
 	b, _ := json.MarshalIndent(doc, "", "  ")
 	return append(b, '\n')
+}
+
+// placeMatcherlessCommand appends a matcher-less command group on event so it
+// fires for every invocation of that event, not only a tool-name match.
+func placeMatcherlessCommand(hooks map[string]any, event, cmd string) {
+	group := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": cmd}}}
+	arr, _ := hooks[event].([]any)
+	hooks[event] = append(arr, group)
 }
 
 // grokHooksRel is the repo-relative path of the satelle-owned Grok hooks file.
@@ -1134,36 +1167,60 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 	}
 	var added []string
 
-	// contextCmd/simpleCmd carry --harness grok when healing a grok file
+	// contextCmd carries --harness grok when healing a grok file
 	// (sty_719c4a7b AC2) — a healed file must match what a fresh scaffold would
 	// have written, or doctor's drift check would immediately re-flag it.
+	// Grok installs that command on the event SessionContextEvent resolves to,
+	// not on a compiled event name. Claude keeps it on SessionStart.
 	contextCmd := "satelle hook context"
+	contextEvent := "SessionStart"
 	if harness == "grok" {
 		contextCmd = withGrokHarness(contextCmd)
+		contextEvent = grokSessionContextEvent(repoRoot)
 	}
 
-	// SessionStart: need context (and reindex alongside on a full scaffold add).
-	if !hookEventHasMarker(hooks["SessionStart"], "satelle hook context") &&
-		!hookEventHasMarker(hooks["SessionStart"], "satelle reindex") {
-		group := map[string]any{
-			"hooks": []any{
-				map[string]any{"type": "command", "command": "satelle reindex"},
-				map[string]any{"type": "command", "command": contextCmd},
-			},
+	changed := false
+	if harness == "grok" && contextEvent != "" && contextEvent != "SessionStart" {
+		// An older file has the context command on SessionStart. The resolved
+		// event is elsewhere, so do not leave a second copy there. reindex stays.
+		if next, removed := removeHookMarker(hooks["SessionStart"], "satelle hook context"); removed {
+			hooks["SessionStart"] = next
+			changed = true
 		}
-		arr, _ := hooks["SessionStart"].([]any)
-		hooks["SessionStart"] = append(arr, group)
-		added = append(added, "SessionStart")
-	} else if !hookEventHasMarker(hooks["SessionStart"], "satelle hook context") {
-		// reindex present but context missing — append context only.
-		group := map[string]any{
-			"hooks": []any{
-				map[string]any{"type": "command", "command": contextCmd},
-			},
+		if !hookEventHasMarker(hooks["SessionStart"], "satelle reindex") {
+			group := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "satelle reindex"}}}
+			arr, _ := hooks["SessionStart"].([]any)
+			hooks["SessionStart"] = append(arr, group)
+			added = append(added, "SessionStart")
 		}
-		arr, _ := hooks["SessionStart"].([]any)
-		hooks["SessionStart"] = append(arr, group)
-		added = append(added, "SessionStart")
+		if !hookEventHasMarker(hooks[contextEvent], "satelle hook context") {
+			placeMatcherlessCommand(hooks, contextEvent, contextCmd)
+			added = append(added, contextEvent)
+		}
+	} else if contextEvent == "SessionStart" || harness != "grok" {
+		// SessionStart: need context (and reindex alongside on a full scaffold add).
+		if !hookEventHasMarker(hooks["SessionStart"], "satelle hook context") &&
+			!hookEventHasMarker(hooks["SessionStart"], "satelle reindex") {
+			group := map[string]any{
+				"hooks": []any{
+					map[string]any{"type": "command", "command": "satelle reindex"},
+					map[string]any{"type": "command", "command": contextCmd},
+				},
+			}
+			arr, _ := hooks["SessionStart"].([]any)
+			hooks["SessionStart"] = append(arr, group)
+			added = append(added, "SessionStart")
+		} else if !hookEventHasMarker(hooks["SessionStart"], "satelle hook context") {
+			// reindex present but context missing — append context only.
+			group := map[string]any{
+				"hooks": []any{
+					map[string]any{"type": "command", "command": contextCmd},
+				},
+			}
+			arr, _ := hooks["SessionStart"].([]any)
+			hooks["SessionStart"] = append(arr, group)
+			added = append(added, "SessionStart")
+		}
 	}
 
 	// PreToolUse: gate + commitgate with harness matchers / script-file commands.
@@ -1244,7 +1301,7 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 	if hs.hasEvent("Stop") && raiseStopHookTimeout(hooks["Stop"]) {
 		added = append(added, "Stop timeout")
 	}
-	if len(added) == 0 {
+	if len(added) == 0 && !changed {
 		return nil, nil
 	}
 	b, err := json.MarshalIndent(root, "", "  ")
@@ -1300,7 +1357,70 @@ func incompleteHookEvents(path, harness string) []string {
 			missing = append(missing, event)
 		}
 	}
+	// Grok's context command lives on the resolved channel, which may not be
+	// one of the events the table above demands. A missing command is this
+	// check's finding; drift does not report it. Only the installed grok hooks
+	// path carries a repo root we can resolve the channel from.
+	if harness == "grok" {
+		rel := filepath.FromSlash(grokHooksRel)
+		if strings.HasSuffix(path, rel) {
+			repoRoot := strings.TrimSuffix(path, rel)
+			repoRoot = strings.TrimSuffix(repoRoot, string(filepath.Separator))
+			if ev := grokSessionContextEvent(repoRoot); ev != "" && !hookEventHasMarker(hooks[ev], "satelle hook context") {
+				missing = append(missing, ev)
+			}
+		}
+	}
 	return missing
+}
+
+// removeHookMarker drops hook entries whose command contains marker, and drops
+// groups that become empty. The event value is returned even when unchanged.
+func removeHookMarker(event any, marker string) (any, bool) {
+	groups, ok := event.([]any)
+	if !ok {
+		return event, false
+	}
+	changed := false
+	var out []any
+	for _, g := range groups {
+		gm, ok := g.(map[string]any)
+		if !ok {
+			out = append(out, g)
+			continue
+		}
+		hs, ok := gm["hooks"].([]any)
+		if !ok {
+			out = append(out, g)
+			continue
+		}
+		var kept []any
+		for _, h := range hs {
+			hm, ok := h.(map[string]any)
+			if !ok {
+				kept = append(kept, h)
+				continue
+			}
+			cmd, _ := hm["command"].(string)
+			if strings.Contains(cmd, marker) {
+				changed = true
+				continue
+			}
+			kept = append(kept, h)
+		}
+		if len(kept) == 0 {
+			changed = true
+			continue
+		}
+		if len(kept) != len(hs) {
+			gm["hooks"] = kept
+		}
+		out = append(out, gm)
+	}
+	if !changed {
+		return event, false
+	}
+	return out, true
 }
 
 // hookEventHasMarker reports whether an event's hook groups already contain a

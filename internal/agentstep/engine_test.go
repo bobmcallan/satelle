@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -369,6 +370,147 @@ func TestStripFrontmatter(t *testing.T) {
 	}
 	if got := stripFrontmatter("no frontmatter here"); got != "no frontmatter here" {
 		t.Errorf("body without frontmatter should pass through, got %q", got)
+	}
+}
+
+// diagnosisPrincipleName is the authored session principle. The test copies the
+// repo file; it does not embed a second copy of the prose.
+const diagnosisPrincipleName = "satelle-diagnosis-is-hypothesis"
+
+// diagnosisProofPhrase sits in the principle body and not in the description or
+// the first heading, so a compact index line cannot satisfy the assertion.
+const diagnosisProofPhrase = "unproven until discovery proves"
+
+func diagnosisPrincipleFile(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	dir := filepath.Dir(file)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return filepath.Join(dir, ".satelle", "principles", diagnosisPrincipleName+".md")
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("go.mod not found above the test file")
+		}
+		dir = parent
+	}
+}
+
+func diagnosisParts(body string) (desc, heading, prose string) {
+	prose = stripFrontmatter(body)
+	s := strings.TrimLeft(body, "\n")
+	if strings.HasPrefix(s, "---") {
+		rest := s[len("---"):]
+		if i := strings.Index(rest, "\n---"); i >= 0 {
+			for _, ln := range strings.Split(rest[:i], "\n") {
+				t := strings.TrimSpace(ln)
+				if strings.HasPrefix(t, "description:") {
+					desc = strings.Trim(strings.TrimSpace(strings.TrimPrefix(t, "description:")), `"'`)
+				}
+			}
+		}
+	}
+	for _, ln := range strings.Split(prose, "\n") {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "#") {
+			heading = strings.TrimSpace(strings.TrimLeft(t, "#"))
+			break
+		}
+	}
+	return desc, heading, prose
+}
+
+// TestDispatchedSeatInlinesDiagnosisPrinciple: a dispatched seat's system prompt
+// is built from sessionPrinciples after the repo principle is copied into a temp
+// repo and reindexed. sessionPrinciples joins stripped bodies and does not prefix
+// the doc name, so the name has to sit in the body — the heading carries
+// satelle-diagnosis-is-hypothesis. Both sessionPrinciples and the system prompt
+// must contain that name and the body phrase. The phrase is not in the
+// description or the first heading, so an index line cannot satisfy it.
+func TestDispatchedSeatInlinesDiagnosisPrinciple(t *testing.T) {
+	raw, err := os.ReadFile(diagnosisPrincipleFile(t))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			t.Skip("satelle-diagnosis-is-hypothesis is repo-local substrate (.satelle is gitignored); not present in this checkout")
+		}
+		t.Fatal(err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, "name: "+diagnosisPrincipleName) {
+		t.Fatalf("principle file is not named %s", diagnosisPrincipleName)
+	}
+	if !hasSessionTag(body) {
+		t.Fatal("principle is not tagged principles:session")
+	}
+	desc, heading, prose := diagnosisParts(body)
+	if !strings.Contains(prose, diagnosisProofPhrase) {
+		t.Fatalf("principle body missing proof phrase %q", diagnosisProofPhrase)
+	}
+	if strings.Contains(desc, diagnosisProofPhrase) || strings.Contains(heading, diagnosisProofPhrase) {
+		t.Fatalf("proof phrase is on an index input (description %q, heading %q)", desc, heading)
+	}
+
+	repo := t.TempDir()
+	dir := filepath.Join(repo, ".satelle", "principles")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, diagnosisPrincipleName+".md"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.DocIndex.Sync(context.Background(), map[string]string{"principles": dir}, time.Now().UTC()); err != nil {
+		t.Fatalf("reindex principles: %v", err)
+	}
+
+	listed, err := db.DocIndex.List(context.Background(), "principles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var indexed docindex.Doc
+	for _, d := range listed {
+		if d.Name == diagnosisPrincipleName {
+			indexed = d
+			break
+		}
+	}
+	if indexed.Name != diagnosisPrincipleName {
+		t.Fatal("reindex did not keep the principle under its name")
+	}
+	stripped := stripFrontmatter(indexed.Body)
+	if !hasSessionTag(indexed.Body) || !strings.Contains(stripped, diagnosisPrincipleName) || !strings.Contains(stripped, diagnosisProofPhrase) {
+		t.Fatalf("indexed body, frontmatter stripped, must carry the name %q and phrase %q", diagnosisPrincipleName, diagnosisProofPhrase)
+	}
+
+	resident := sessionPrinciples(context.Background(), db.DocIndex)
+	g := New(&fakeRunner{}, db.DocIndex, repo, "")
+	req, err := g.buildRequest(context.Background(), invocation{
+		charter:    executorCharter("coder", "in_progress", "default"),
+		rubric:     "RUBRIC-BODY",
+		principles: config.PrinciplesSession,
+		payload:    map[string]string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The name is in the body heading, so it survives stripFrontmatter and reaches
+	// the seat. The phrase is absent from the description and the first heading,
+	// so an index line cannot satisfy it.
+	for _, label := range []struct{ name, got string }{
+		{"sessionPrinciples", resident},
+		{"system prompt", req.SystemPrompt},
+	} {
+		if !strings.Contains(label.got, diagnosisPrincipleName) || !strings.Contains(label.got, diagnosisProofPhrase) {
+			t.Errorf("%s missing principle name %q or body phrase %q:\n%s", label.name, diagnosisPrincipleName, diagnosisProofPhrase, label.got)
+		}
 	}
 }
 

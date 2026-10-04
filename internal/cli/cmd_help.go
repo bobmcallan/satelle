@@ -7,10 +7,13 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/help"
 )
 
@@ -40,7 +43,11 @@ topics, or pass a topic name to print that guide. These document the process
 				return tw.Flush()
 			}
 			if t, ok := help.Get(args[0]); ok {
-				fmt.Fprintln(out, t.Body)
+				body := t.Body
+				if args[0] == "agent-dispatch" {
+					body = sessionContextHelpBody(body)
+				}
+				fmt.Fprintln(out, body)
 				return nil
 			}
 			// Not a process topic — if it names a command, route to that command's
@@ -52,4 +59,36 @@ topics, or pass a topic name to print that guide. These document the process
 		},
 	}
 	return cmd
+}
+
+// sessionContextHelpBody threads the config-resolved channel and clip into the
+// harness-facts table the topic embeds. The embedded table is the un-injected
+// rendering; a repo override changes the cell. Missing config leaves the embed.
+func sessionContextHelpBody(body string) string {
+	plain := agentcli.HarnessFactsTableMarkdown()
+	cfg, _, err := config.Load("")
+	if err != nil {
+		cfg = config.Config{}
+	}
+	applySessionContextFacts(cfg)
+	rendered := agentcli.HarnessFactsTableMarkdown()
+	if plain == rendered || !strings.Contains(body, plain) {
+		return body
+	}
+	return strings.Replace(body, plain, rendered, 1)
+}
+
+// applySessionContextFacts records each harness's resolved session-context
+// channel and clip on the adapter row. agentcli does not read config.
+func applySessionContextFacts(cfg config.Config) {
+	names := map[string]bool{}
+	for k := range config.EmbeddedHarness() {
+		names[k] = true
+	}
+	for k := range cfg.Harness {
+		names[k] = true
+	}
+	for name := range names {
+		agentcli.SetSessionContext(name, cfg.SessionContextEvent(name), cfg.ToolContextLimitChars(name))
+	}
 }

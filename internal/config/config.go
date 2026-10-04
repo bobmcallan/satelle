@@ -140,9 +140,10 @@ type Config struct {
 	// may extend (extra) or replace (vocabulary). Enforce is off|warn|reject
 	// (default warn). Values are never a Go literal.
 	Categories CategoriesConfig `toml:"categories"`
-	// Harness holds per-harness [harness.<name>] tables — today the SessionStart
-	// injection limit (sty_ce1a2733). Embedded defaults live in
-	// substrate/config/harness.toml; a key here overrides them per harness.
+	// Harness holds per-harness [harness.<name>] tables — the SessionStart
+	// injection limit (sty_ce1a2733) and the session-context event plus its
+	// character clip. Embedded defaults live in substrate/config/harness.toml;
+	// a key here overrides them per harness.
 	Harness map[string]HarnessConfig `toml:"harness"`
 	// FixLane is the bound on the in-loop fix lane (sty_4b694872): the size
 	// ceiling and the path classes a claim may never touch. Embedded default in

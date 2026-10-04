@@ -32,6 +32,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -77,12 +78,15 @@ session; install or remove the wiring with satelle agents.`,
 	}
 	context := &cobra.Command{
 		Use:   "context",
-		Short: "SessionStart session-context injector — inject principles:session docs + the on-demand pointer",
-		Long: `context is the SessionStart handler. It injects every principles:session
-authored doc (the SESSION set — the minimal operating principle) as session
-context, then the standing instruction that the rest is on-demand: pulled via
-` + "`satelle doc get`" + ` only when a skill or workflow references it. Bounded by a
-byte ceiling (overflow noted on stderr); fails open so it never blocks a session.`,
+		Short: "Session-context injector — inject principles:session docs + the on-demand pointer",
+		Long: `context injects every principles:session authored doc (the SESSION set —
+the minimal operating principle) as session context, then the standing
+instruction that the rest is on-demand: pulled via ` + "`satelle doc get`" + ` only
+when a skill or workflow references it. The emitting event is the harness's
+session_context_event; a payload that names a different event emits nothing,
+and a payload with no event field keeps the diagnostic SessionStart contract.
+Bounded by that event's budget (overflow noted on stderr); fails open so it
+never blocks a session.`,
 		Args: cobra.NoArgs,
 		// No store annotation: this command opens the store itself, defensively,
 		// so any bootstrap failure fails OPEN (exit 0, inject nothing) rather than
@@ -93,7 +97,7 @@ byte ceiling (overflow noted on stderr); fails open so it never blocks a session
 			raw, _ := io.ReadAll(cmd.InOrStdin())
 			_ = bindSessionID(raw)
 			return runHookContext(cmd.OutOrStdout(), cmd.ErrOrStderr(),
-				resolveContextHarness(hookHarnessFlag, raw, os.Environ()))
+				resolveContextHarness(hookHarnessFlag, raw, os.Environ()), raw)
 		},
 	}
 	context.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi —selects the injection limit (default: sniff event, then environment)")
@@ -2246,20 +2250,79 @@ func withinRoot(root, target string) bool {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// runHookContext assembles and emits the SessionStart injection. It fails open:
+// runHookContext assembles and emits the session principle set. It fails open:
 // any error opening the store or listing docs injects nothing and returns nil.
-// When any engagement lease exists, appends a seat block so the agent sees the
-// holder without digging (sty_1738f973 AC6) — also fail-open on lease read errors.
-func runHookContext(out, stderr io.Writer, harness string) error {
+// The emitting event is the harness's configured session_context_event when the
+// payload names that event; a payload with no event field keeps today's
+// diagnostic contract (emit, rendered event name SessionStart). A payload that
+// names a different event emits nothing. Delivery on a matching channel is once
+// per session|harness|channel.
+func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 	a, err := app.Open()
 	if err != nil {
 		return nil // fail open — unconfigured repo / unopenable db blocks nothing
 	}
 	defer func() { _ = a.Close() }()
 
+	channel := a.Config.SessionContextEvent(harness)
+	snake, camel := hookEventNames(raw)
+	present, match := eventMatchesChannel(snake, camel, channel)
+	// An event is present and neither field equals the configured channel
+	// (including an empty channel): emit nothing. No event field keeps the
+	// diagnostic contract.
+	if present && !match {
+		return nil
+	}
+	emitEvent := "SessionStart"
+	unit := "bytes"
+	limit := a.Config.ContextLimit(harness)
+	if match {
+		emitEvent = channel
+		if channel != "SessionStart" {
+			unit = "characters"
+			limit = a.Config.ToolContextLimitChars(harness)
+		}
+	}
+	sessionID := sessionContextSessionID(raw)
+	marker := ""
+	if match && sessionID != "" {
+		marker = sessionContextMarkerPath(a, sessionID, harness, channel)
+		if sessionContextMarkerExists(marker) {
+			return nil
+		}
+	}
+	content, omitted := assembleSessionContext(a, harness, limit, unit)
+	if len(omitted) > 0 {
+		fmt.Fprintf(stderr,
+			"satelle hook context: %s exceeded the %s harness limit (%d %s) — indexed with a read instruction: %s\n",
+			"always-content", harness, limit, contextUnitName(unit), strings.Join(omitted, ", "))
+	}
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+	if err := emitAdditionalContext(out, emitEvent, "", content); err != nil {
+		return nil // fail open
+	}
+	// The marker is written only after a channel-matching emit of non-empty
+	// additionalContext. A non-matching event (including SessionStart when the
+	// channel is elsewhere) writes nothing. Marker errors are swallowed.
+	if match && marker != "" {
+		writeSessionContextMarker(marker)
+	}
+	return nil
+}
+
+// assembleSessionContext renders the session principle set — constitution,
+// principles:session docs, advisories, seat — under the budget the caller
+// resolved. unit is "bytes" (len, the SessionStart path) or "characters"
+// (runes, a tool-event clip). Fail-open: a list error returns empty content.
+func assembleSessionContext(a *app.App, harness string, limit int, unit string) (string, []string) {
+	if a == nil || a.Store == nil || a.Store.DocIndex == nil {
+		return "", nil
+	}
 	docs, err := a.Store.DocIndex.List(context.Background(), "")
 	if err != nil {
-		return nil // fail open
+		return "", nil
 	}
 	always := selectAlwaysDocs(docs)
 	constPath := a.Config.ResolveConstitution(a.RepoRoot)
@@ -2303,18 +2366,96 @@ func runHookContext(out, stderr io.Writer, harness string) error {
 		return appendSeatToContext(content, seat, 0)
 	}
 
-	limit := a.Config.ContextLimit(harness)
-	content, omitted := sessionAssembly(constitution, always, constPath, harness, limit, len(wrap("X"))-1)
-	if len(omitted) > 0 {
-		fmt.Fprintf(stderr,
-			"satelle hook context: %s exceeded the %s harness limit (%d bytes) — indexed with a read instruction: %s\n",
-			"always-content", harness, limit, strings.Join(omitted, ", "))
+	measure := contextMeasure(unit)
+	overhead := measure(wrap("X")) - measure("X")
+	if overhead < 0 {
+		overhead = 0
 	}
+	content, omitted := sessionAssemblyUnit(constitution, always, constPath, harness, limit, overhead, unit)
 	content = wrap(content)
-	if strings.TrimSpace(content) == "" {
-		return nil
+	return content, omitted
+}
+
+// hookEventNames reads both event fields a harness may send. Captured grok
+// stdin puts the PascalCase name on hook_event_name and the snake_case twin on
+// hookEventName. Matching is exact equality with the configured channel — the
+// snake_case twin is not case-folded into a match.
+func hookEventNames(raw []byte) (snake, camel string) {
+	if len(raw) == 0 {
+		return "", ""
 	}
-	return emitAdditionalContext(out, "SessionStart", "", content)
+	var ev struct {
+		Snake string `json:"hook_event_name"`
+		Camel string `json:"hookEventName"`
+	}
+	if json.Unmarshal(raw, &ev) != nil {
+		return "", ""
+	}
+	return ev.Snake, ev.Camel
+}
+
+// eventMatchesChannel reports whether an event field is present and whether
+// either field equals channel exactly. An empty channel never matches.
+func eventMatchesChannel(snake, camel, channel string) (present, match bool) {
+	present = snake != "" || camel != ""
+	if channel == "" {
+		return present, false
+	}
+	return present, snake == channel || camel == channel
+}
+
+// sessionContextSessionID prefers the hook payload's session id, then the
+// SATELLE_SESSION stamp. Empty means the once-marker cannot key a delivery, so
+// the caller delivers.
+func sessionContextSessionID(raw []byte) string {
+	if id := sessionIDFromHook(raw); id != "" {
+		return id
+	}
+	return strings.TrimSpace(config.SessionFromEnv())
+}
+
+func sessionContextMarkerPath(a *app.App, session, harness, channel string) string {
+	if a == nil || strings.TrimSpace(session) == "" || strings.TrimSpace(channel) == "" {
+		return ""
+	}
+	dir := filepath.Join(a.Config.ResolveRuntimeDir(a.RepoRoot).Dir, "session-context")
+	name := session + "|" + harness + "|" + channel
+	name = strings.ReplaceAll(strings.ReplaceAll(name, "/", "_"), "\\", "_")
+	return filepath.Join(dir, name)
+}
+
+func sessionContextMarkerExists(path string) bool {
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// writeSessionContextMarker records a delivery. Any error — including an
+// unwritable runtime dir — is swallowed so the emit already written still stands.
+func writeSessionContextMarker(path string) {
+	if path == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(path, []byte("1\n"), 0o644)
+}
+
+func contextMeasure(unit string) func(string) int {
+	if unit == "characters" || unit == "runes" {
+		return utf8.RuneCountInString
+	}
+	return func(s string) int { return len(s) }
+}
+
+func contextUnitName(unit string) string {
+	if unit == "" {
+		return "bytes"
+	}
+	return unit
 }
 
 // sessionAssembly renders the deterministic body of a SessionStart injection —
@@ -2324,8 +2465,15 @@ func runHookContext(out, stderr io.Writer, harness string) error {
 // add; `satelle validate` passes 0 to size the stable part, so the hook and the
 // report cannot disagree about what a harness receives.
 func sessionAssembly(constitution string, always []docindex.Doc, constPath, harness string, limit, overhead int) (string, []string) {
+	return sessionAssemblyUnit(constitution, always, constPath, harness, limit, overhead, "bytes")
+}
+
+// sessionAssemblyUnit is sessionAssembly with an explicit budget unit. "bytes"
+// keeps the existing len path; "characters" counts runes. validate and the
+// SessionStart path stay on bytes.
+func sessionAssemblyUnit(constitution string, always []docindex.Doc, constPath, harness string, limit, overhead int, unit string) (string, []string) {
 	return renderAlwaysContent(constitution, always, alwaysRender{
-		Budget: limit - overhead, Harness: harness, ConstitutionPath: constPath,
+		Budget: limit - overhead, Harness: harness, ConstitutionPath: constPath, Unit: unit,
 	})
 }
 
@@ -2494,6 +2642,24 @@ type alwaysRender struct {
 	Budget           int
 	Harness          string
 	ConstitutionPath string
+	// Unit is how Budget is counted. Empty or "bytes" uses len — the SessionStart
+	// path, unchanged. "characters" or "runes" uses utf8.RuneCountInString for a
+	// tool-event clip. The omit header names this unit.
+	Unit string
+}
+
+func (r alwaysRender) measure() func(string) int {
+	if r.Unit == "characters" || r.Unit == "runes" {
+		return utf8.RuneCountInString
+	}
+	return func(s string) int { return len(s) }
+}
+
+func (r alwaysRender) unitName() string {
+	if r.Unit == "" {
+		return "bytes"
+	}
+	return r.Unit
 }
 
 // principleIndexLine is the one-line stand-in for a principle whose body does
@@ -2528,10 +2694,12 @@ func principleIndexLine(d docindex.Doc) string {
 // what was omitted for which harness limit and to read it before working
 // (sty_ce1a2733). Returns the content and the names omitted (nil when all fit;
 // "constitution" when the constitution itself was indexed). The instruction is
-// always present, even with no session content, so the pull-on-reference
-// discipline is taught from day one.
+// present whenever it fits, so the pull-on-reference discipline is taught
+// from day one. A clip tighter than the chrome keeps the omit header's read
+// instruction and as many index lines as fit, and never cuts a body.
 func renderAlwaysContent(constitution string, docs []docindex.Doc, r alwaysRender) (string, []string) {
 	const principlesHeading = "# Always-resident principles (satelle)\n\n"
+	measure := r.measure()
 	type entry struct{ name, full, index string }
 	var entries []entry
 	for _, d := range docs {
@@ -2548,41 +2716,42 @@ func renderAlwaysContent(constitution string, docs []docindex.Doc, r alwaysRende
 	consFull := "# Project constitution\n\n" + constitution
 	consIndex := "- `constitution` — the project constitution — read: the file `" + consPath + "`"
 
-	// Everything in full, when it fits.
-	total := len(alwaysIndexInstruction)
+	// Everything in full, when it fits. The byte path measures with len; a
+	// tool-event clip measures with runes. The choice is the unit, not a second renderer.
+	total := measure(alwaysIndexInstruction)
 	if constitution != "" {
-		total += len(consFull) + 2
+		total += measure(consFull) + 2
 	}
 	if len(entries) > 0 {
-		total += len(principlesHeading)
+		total += measure(principlesHeading)
 		for _, e := range entries {
-			total += len(e.full) + 2
+			total += measure(e.full) + 2
 		}
 	}
 	all := total <= r.Budget
 
 	header := "OMITTED FOR THE " + strings.ToUpper(r.Harness) + " CONTEXT LIMIT (" + strconv.Itoa(r.Budget) +
-		" bytes): the following are not inlined — read each now with the command shown, before doing any work."
+		" " + r.unitName() + "): the following are not inlined — read each now with the command shown, before doing any work."
 	// Reserve the fixed parts and every index line not yet decided; a body goes
 	// in full only if the remainder still fits with the rest indexed.
-	reserve := len(alwaysIndexInstruction) + len(header) + len(principlesHeading) + 8
+	reserve := measure(alwaysIndexInstruction) + measure(header) + measure(principlesHeading) + 8
 	if constitution != "" {
-		reserve += len(consIndex) + 1
+		reserve += measure(consIndex) + 1
 	}
 	for _, e := range entries {
-		reserve += len(e.index) + 1
+		reserve += measure(e.index) + 1
 	}
 	used := 0
 	fits := func(full, index string) bool {
-		return all || used+len(full)+2+reserve-len(index)-1 <= r.Budget
+		return all || used+measure(full)+2+reserve-measure(index)-1 <= r.Budget
 	}
 	var omitted, parts, idx []string
 	var b strings.Builder
 	if constitution != "" {
 		if fits(consFull, consIndex) {
 			b.WriteString(consFull + "\n\n")
-			used += len(consFull) + 2
-			reserve -= len(consIndex) + 1
+			used += measure(consFull) + 2
+			reserve -= measure(consIndex) + 1
 		} else {
 			idx = append(idx, consIndex)
 			omitted = append(omitted, "constitution")
@@ -2591,8 +2760,8 @@ func renderAlwaysContent(constitution string, docs []docindex.Doc, r alwaysRende
 	for _, e := range entries {
 		if fits(e.full, e.index) {
 			parts = append(parts, e.full)
-			used += len(e.full) + 2
-			reserve -= len(e.index) + 1
+			used += measure(e.full) + 2
+			reserve -= measure(e.index) + 1
 		} else {
 			idx = append(idx, e.index)
 			omitted = append(omitted, e.name)
@@ -2609,7 +2778,44 @@ func renderAlwaysContent(constitution string, docs []docindex.Doc, r alwaysRende
 		b.WriteString("\n\n")
 	}
 	b.WriteString(alwaysIndexInstruction)
-	return b.String(), omitted
+	out := b.String()
+	// A clip tighter than the fixed chrome (header + standing instruction +
+	// index lines) cannot hold that form. Recompose from whole lines so the
+	// result stays inside the budget without cutting a principle body. The
+	// SessionStart byte path does not hit this: its budgets fit the chrome.
+	if r.Budget > 0 && measure(out) > r.Budget {
+		out = composeWithinContextBudget(header, idx, alwaysIndexInstruction, r.Budget, measure)
+	}
+	return out, omitted
+}
+
+// composeWithinContextBudget keeps the omit header (it names the unit and the
+// read instruction) and as many index lines as fit, then the standing
+// instruction if room remains. It never slices a line.
+func composeWithinContextBudget(header string, idx []string, instruction string, budget int, measure func(string) int) string {
+	var lines []string
+	used := 0
+	add := func(line string, sep int) bool {
+		n := measure(line) + sep
+		if used+n > budget {
+			return false
+		}
+		lines = append(lines, line)
+		used += n
+		return true
+	}
+	if header != "" {
+		add(header, 1)
+	}
+	for _, line := range idx {
+		if !add(line, 1) {
+			break
+		}
+	}
+	if instruction != "" && used+measure(instruction)+1 <= budget {
+		lines = append(lines, instruction)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // readConstitution returns the project constitution body (frontmatter stripped),

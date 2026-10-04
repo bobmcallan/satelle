@@ -100,7 +100,51 @@ func driftGrokHarnessFlag(repoRoot string) []ScaffoldFinding {
 			Detail: fmt.Sprintf("%s command is missing --harness grok", c.event),
 		})
 	}
+	// The resolved channel's context command, when that event is not already
+	// covered by the SessionStart row above. A missing command is not this
+	// row's finding — heal and init install it.
+	if event := grokSessionContextEvent(repoRoot); event != "" && event != "SessionStart" {
+		if detail, ok := contextCommandMissingHarness(hooks[event], event); ok {
+			findings = append(findings, ScaffoldFinding{
+				Path: grokHooksRel, Kind: "command", Detail: detail,
+			})
+		}
+	}
 	return findings
+}
+
+// contextCommandMissingHarness reports a satelle hook context command on event
+// that lacks --harness grok. ok is false when that command is not installed.
+func contextCommandMissingHarness(event any, name string) (string, bool) {
+	groups, ok := event.([]any)
+	if !ok {
+		return "", false
+	}
+	for _, g := range groups {
+		gm, ok := g.(map[string]any)
+		if !ok {
+			continue
+		}
+		hs, ok := gm["hooks"].([]any)
+		if !ok {
+			continue
+		}
+		for _, h := range hs {
+			hm, ok := h.(map[string]any)
+			if !ok {
+				continue
+			}
+			cmd, _ := hm["command"].(string)
+			if !strings.Contains(cmd, "satelle hook context") {
+				continue
+			}
+			if strings.Contains(cmd, "--harness grok") {
+				return "", false
+			}
+			return fmt.Sprintf("%s command is missing --harness grok", name), true
+		}
+	}
+	return "", false
 }
 
 // driftPiExtension reports a deployed, satelle-owned pi extension that no longer
