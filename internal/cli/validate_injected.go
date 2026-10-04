@@ -349,6 +349,7 @@ func printInjectedReport(out io.Writer, rows []injectedRow, cfg config.InjectedC
 // Nothing here can fail validate; an environment piece that will not load turns
 // the affected rows into named unavailable ones.
 func reportInjected(ctx context.Context, out io.Writer, a *app.App) {
+	applySessionContextFacts(a.Config)
 	workflows, _ := a.Store.DocIndex.List(ctx, "workflows")
 	constPath := a.Config.ResolveConstitution(a.RepoRoot)
 	env := injectedEnv{

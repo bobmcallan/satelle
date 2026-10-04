@@ -20,6 +20,13 @@ type HarnessConfig struct {
 	// ContextLimitBytes is the SessionStart additionalContext budget for the
 	// harness; zero or negative means unset (fall through to the default).
 	ContextLimitBytes int `toml:"context_limit_bytes"`
+	// SessionContextEvent is the hook event whose additionalContext delivers
+	// the session principle set. Empty means unset — no unknown-table fallback
+	// and no provider fallback.
+	SessionContextEvent string `toml:"session_context_event"`
+	// ToolContextLimitChars is the character (rune) clip for a non-SessionStart
+	// session-context event. Zero means unset (no tool-event budget).
+	ToolContextLimitChars int `toml:"tool_context_limit_chars"`
 }
 
 const (
@@ -89,6 +96,36 @@ func (c Config) ContextLimit(harness string) int {
 		}
 	}
 	return lastResortContextLimit
+}
+
+// SessionContextEvent returns the hook event that delivers the session principle
+// set for harness. Resolution is the repo's [harness.<name>] then the embedded
+// [harness.<name>], and "" when unset. It does not fall through to
+// [harness.unknown] or to another provider — an absent event is unavailable,
+// not a guess.
+func (c Config) SessionContextEvent(harness string) string {
+	name := strings.ToLower(strings.TrimSpace(harness))
+	if name == "" {
+		return ""
+	}
+	if v := strings.TrimSpace(c.Harness[name].SessionContextEvent); v != "" {
+		return v
+	}
+	return strings.TrimSpace(EmbeddedHarness()[name].SessionContextEvent)
+}
+
+// ToolContextLimitChars returns the character clip for a non-SessionStart
+// session-context event. Resolution matches SessionContextEvent (repo, then
+// embedded, no unknown fallback). Zero means unset — no tool-event budget.
+func (c Config) ToolContextLimitChars(harness string) int {
+	name := strings.ToLower(strings.TrimSpace(harness))
+	if name == "" {
+		return 0
+	}
+	if v := c.Harness[name].ToolContextLimitChars; v > 0 {
+		return v
+	}
+	return EmbeddedHarness()[name].ToolContextLimitChars
 }
 
 // MaxContextLimit returns the largest limit among the named harnesses (every

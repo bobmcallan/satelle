@@ -239,11 +239,15 @@ func TestHarnessHooks_PiMatchesFullEventSet(t *testing.T) {
 	}
 
 	// Per event, pi's verbs and invocation forms equal what the claude scaffold
-	// and the grok scaffold actually write.
-	for name, build := range map[string][]byte{
+	// writes. Grok installs context on its resolved channel rather than on
+	// SessionStart, so that one verb is compared there instead of being
+	// required on SessionStart. Pi is not retargeted.
+	builds := map[string][]byte{
 		"claude": buildClaudeHookSettings("/repo"),
 		"grok":   buildGrokHookSettings("/repo"),
-	} {
+	}
+	grokChannel := grokSessionContextEvent("/repo")
+	for name, build := range builds {
 		var doc struct {
 			Hooks map[string][]struct {
 				Hooks []struct {
@@ -262,8 +266,30 @@ func TestHarnessHooks_PiMatchesFullEventSet(t *testing.T) {
 					got[verb] = form
 				}
 			}
-			if pi := byEvent[event]; !sameMap(pi, got) {
-				t.Errorf("%s: %s verbs/forms = %v, but the %s scaffold writes %v", "pi", event, pi, name, got)
+			want := byEvent[event]
+			if name == "grok" && event == "SessionStart" && grokChannel != "SessionStart" {
+				want = map[string]string{}
+				for verb, form := range byEvent[event] {
+					if verb == "context" {
+						continue
+					}
+					want[verb] = form
+				}
+			}
+			if !sameMap(want, got) {
+				t.Errorf("pi: %s verbs/forms = %v, but the %s scaffold writes %v", event, want, name, got)
+			}
+		}
+		if name == "grok" && grokChannel != "" && grokChannel != "SessionStart" {
+			got := map[string]string{}
+			for _, g := range doc.Hooks[grokChannel] {
+				for _, h := range g.Hooks {
+					verb, form := verbAndForm(h.Command)
+					got[verb] = form
+				}
+			}
+			if got["context"] != piFormDirect {
+				t.Errorf("grok context verb = %q on %s, want direct", got["context"], grokChannel)
 			}
 		}
 	}

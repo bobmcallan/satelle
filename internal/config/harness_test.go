@@ -40,3 +40,47 @@ func TestContextLimitPerHarness(t *testing.T) {
 		t.Errorf("grok default = %d", got)
 	}
 }
+
+// SessionContextEvent is per-harness configuration: a repo override wins, an
+// unset harness is empty (no unknown-table fallback, no provider fallback), and
+// the embedded grok default is the configured channel rather than a Go literal
+// the test invents.
+func TestSessionContextEventPerHarness(t *testing.T) {
+	embedded := EmbeddedHarness()
+	if embedded["grok"].SessionContextEvent == "" {
+		t.Fatal("embedded grok session_context_event is unset")
+	}
+	if embedded["claude"].SessionContextEvent == "" || embedded["pi"].SessionContextEvent == "" {
+		t.Fatal("embedded claude/pi session_context_event is unset")
+	}
+	if embedded["unknown"].SessionContextEvent != "" || embedded["unknown"].ToolContextLimitChars != 0 {
+		t.Fatalf("[harness.unknown] must declare no event and no clip, got %+v", embedded["unknown"])
+	}
+	if embedded["grok"].ToolContextLimitChars <= 0 {
+		t.Fatal("embedded grok tool_context_limit_chars is unset")
+	}
+	c := Config{Harness: map[string]HarnessConfig{
+		"grok": {SessionContextEvent: "Stop", ToolContextLimitChars: 500},
+	}}
+	if got := c.SessionContextEvent("grok"); got != "Stop" {
+		t.Errorf("repo override = %q, want Stop", got)
+	}
+	if got := c.ToolContextLimitChars("GROK"); got != 500 {
+		t.Errorf("repo clip = %d, want 500", got)
+	}
+	// Unset repo key falls through to the embed, not to another provider.
+	if got := (Config{}).SessionContextEvent("grok"); got != embedded["grok"].SessionContextEvent {
+		t.Errorf("grok default = %q, want embedded %q", got, embedded["grok"].SessionContextEvent)
+	}
+	if got := (Config{}).ToolContextLimitChars("grok"); got != embedded["grok"].ToolContextLimitChars {
+		t.Errorf("grok clip default = %d, want %d", got, embedded["grok"].ToolContextLimitChars)
+	}
+	for _, h := range []string{"", "unknown", "some-future-cli"} {
+		if got := c.SessionContextEvent(h); got != "" {
+			t.Errorf("SessionContextEvent(%q) = %q, want empty (no fallback)", h, got)
+		}
+		if got := c.ToolContextLimitChars(h); got != 0 {
+			t.Errorf("ToolContextLimitChars(%q) = %d, want 0 (never grok's clip)", h, got)
+		}
+	}
+}

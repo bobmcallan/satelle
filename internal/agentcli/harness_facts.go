@@ -60,6 +60,13 @@ type HarnessFacts struct {
 	// PromptContextNote qualifies PromptContext (how it is delivered), appended
 	// to the yes/unavailable cell.
 	PromptContextNote string
+	// SessionContextChannel is the event that delivers the session principle
+	// set. Empty until a config-seeing caller records it via SetSessionContext.
+	// agentcli does not know the event or the clip — no compiled default.
+	SessionContextChannel string
+	// SessionContextClip is the character budget for a non-SessionStart channel,
+	// recorded the same way. Zero means unset.
+	SessionContextClip int
 }
 
 // HarnessFactsTable returns the table in the order help prints it.
@@ -97,7 +104,7 @@ func HarnessFactsTable() []HarnessFacts {
 			// list (grok 1.0.41 observed). A Stop-block and a non-error Stop
 			// feedback each count as a continuation.
 			InTurnWake:    "cap 8 continuations (a Stop-block and a non-error Stop feedback each count); after 8 the gate is overridden, hooks are not consulted and the turn ends; the counter resets on the next user prompt — measured from grok's stop_gate.rs notes and porting list. Past the cap a gate is delivered by resuming the same session with the verdict as the prompt (sty_eac9b28d)",
-			PromptContext: no("grok: UserPromptSubmit additionalContext is discarded"),
+			PromptContext: no("grok: SessionStart stdout is ignored; UserPromptSubmit additionalContext is discarded"),
 		},
 		{
 			Harness:          HarnessPi,
@@ -134,20 +141,20 @@ func FactsFor(harness string) HarnessFacts {
 	h := strings.TrimSpace(harness)
 	for _, f := range HarnessFactsTable() {
 		if f.Harness == h {
-			return f
+			return applySessionContext(f)
 		}
 	}
 	if h == "" {
 		h = HarnessUnknown
 	}
-	return HarnessFacts{
+	return applySessionContext(HarnessFacts{
 		Harness:                h,
 		BackgroundCutoff:       DefaultBackgroundCutoff,
 		CutoffBasis:            "no measurement for this harness — the conservative floor",
 		CompletionNotification: no(h + ": no completion-notification path is wired for this harness"),
 		InTurnWake:             "unavailable: " + h + ": no in-turn wake path is recorded for this harness",
 		PromptContext:          no(h + ": no prompt additionalContext path is recorded for this harness"),
-	}
+	})
 }
 
 // PromptContextCell is the help-table spelling of PromptContext: the
@@ -210,18 +217,73 @@ func AgentWaitBound(harnesses []string) time.Duration {
 	return bound
 }
 
+// sessionContextFacts is filled by SetSessionContext. The config-seeing call
+// site records the resolved channel and clip; this package never reads config
+// and never compiles an event name or a clip.
+var sessionContextFacts = map[string]sessionContextFact{}
+
+type sessionContextFact struct {
+	Channel string
+	Clip    int
+}
+
+// SetSessionContext records the resolved session-context channel and character
+// clip for harness. A config-seeing caller (help, validate) uses this; agentcli
+// does not import config and does not default the values.
+func SetSessionContext(harness, channel string, clip int) {
+	h := strings.TrimSpace(harness)
+	if h == "" {
+		return
+	}
+	sessionContextFacts[h] = sessionContextFact{Channel: channel, Clip: clip}
+}
+
+// ClearSessionContext drops a recorded fact. Tests use it so one injection
+// cannot leak into another.
+func ClearSessionContext(harness string) {
+	delete(sessionContextFacts, strings.TrimSpace(harness))
+}
+
+func applySessionContext(f HarnessFacts) HarnessFacts {
+	if rec, ok := sessionContextFacts[f.Harness]; ok {
+		f.SessionContextChannel = rec.Channel
+		f.SessionContextClip = rec.Clip
+	}
+	return f
+}
+
+// SessionContextCell is the help-table spelling of the session-context channel.
+// An empty channel is an adapter-named unavailable — never a guessed event.
+func (f HarnessFacts) SessionContextCell() string {
+	if strings.TrimSpace(f.SessionContextChannel) == "" {
+		name := f.Harness
+		if name == "" {
+			name = HarnessUnknown
+		}
+		return "unavailable: " + name + ": no session-context channel is recorded"
+	}
+	cell := f.SessionContextChannel
+	if f.SessionContextClip > 0 {
+		cell += fmt.Sprintf(" (clip %d characters)", f.SessionContextClip)
+	}
+	return cell
+}
+
 // harnessFactsColumns are the harness-facts table headings, in cell order.
-var harnessFactsColumns = []string{"background cutoff", "completion notification", "in-turn wake / budget", "prompt additionalContext"}
+var harnessFactsColumns = []string{"background cutoff", "completion notification", "in-turn wake / budget", "prompt additionalContext", "session context channel"}
 
 // HarnessFactsTableMarkdown renders HarnessFactsTable as the markdown table
 // `satelle help agent-dispatch` carries, so the docs cannot say a harness can
-// wake its driver when the code records that it cannot.
+// wake its driver when the code records that it cannot. A channel recorded by
+// SetSessionContext appears in the session-context cell; without one the cell
+// is an adapter-named unavailable.
 func HarnessFactsTableMarkdown() string {
 	var b strings.Builder
 	b.WriteString("| harness | " + strings.Join(harnessFactsColumns, " | ") + " |\n")
 	b.WriteString("| --- |" + strings.Repeat(" --- |", len(harnessFactsColumns)) + "\n")
 	for _, f := range HarnessFactsTable() {
-		fmt.Fprintf(&b, "| %s | %s — %s | %s | %s | %s |\n", f.Harness, f.BackgroundCutoff, f.CutoffBasis, f.CompletionNotification.Cell(), f.InTurnWake, f.PromptContextCell())
+		f = applySessionContext(f)
+		fmt.Fprintf(&b, "| %s | %s — %s | %s | %s | %s | %s |\n", f.Harness, f.BackgroundCutoff, f.CutoffBasis, f.CompletionNotification.Cell(), f.InTurnWake, f.PromptContextCell(), f.SessionContextCell())
 	}
 	return b.String()
 }

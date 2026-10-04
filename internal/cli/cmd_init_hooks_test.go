@@ -294,10 +294,22 @@ func TestBuildGrokHookSettingsPassesHarnessFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 	hooks := root["hooks"].(map[string]any)
-	for _, event := range []string{"SessionStart", "UserPromptSubmit", "Stop"} {
+	for _, event := range []string{"UserPromptSubmit", "Stop"} {
 		if !hookEventHasMarker(hooks[event], "--harness grok") {
 			t.Errorf("%s command missing --harness grok:\n%s", event, body)
 		}
+	}
+	// Context is installed on the resolved channel, not left on SessionStart
+	// beside reindex when that channel is a different event.
+	event := grokSessionContextEvent(repo)
+	if event == "" {
+		t.Fatal("grok session context event resolved empty")
+	}
+	if !hookEventHasMarker(hooks[event], "satelle hook context --harness grok") {
+		t.Errorf("context command missing on resolved event %s:\n%s", event, body)
+	}
+	if event != "SessionStart" && hookEventHasMarker(hooks["SessionStart"], "satelle hook context") {
+		t.Errorf("SessionStart must not also carry context when the channel is %s:\n%s", event, body)
 	}
 	// PreToolUse (gate + commitgate) already carries harness positionally.
 	if !hookEventHasMarker(hooks["PreToolUse"], "grok") {
@@ -350,10 +362,17 @@ func TestHealGrokHooksRetrofitsHarnessFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 	hooks := root["hooks"].(map[string]any)
-	for _, event := range []string{"SessionStart", "UserPromptSubmit", "Stop"} {
+	for _, event := range []string{"UserPromptSubmit", "Stop"} {
 		if !hookEventHasMarker(hooks[event], "--harness grok") {
 			t.Errorf("healed %s command missing --harness grok:\n%s", event, body)
 		}
+	}
+	event := grokSessionContextEvent(repo)
+	if !hookEventHasMarker(hooks[event], "satelle hook context --harness grok") {
+		t.Errorf("healed context command missing on resolved event %s:\n%s", event, body)
+	}
+	if event != "SessionStart" && hookEventHasMarker(hooks["SessionStart"], "satelle hook context") {
+		t.Errorf("heal left context on SessionStart; channel is %s:\n%s", event, body)
 	}
 	if fs := driftGrokHarnessFlag(repo); len(fs) != 0 {
 		t.Errorf("post-heal must not still drift: %v", fs)
@@ -1256,5 +1275,76 @@ func TestUpgradeRelativeScriptFormToAbsolute(t *testing.T) {
 	}
 	if n2 != 0 {
 		t.Fatalf("second pass must be idempotent, n=%d", n2)
+	}
+}
+
+// A repo session_context_event override moves the installed context command
+// for both a fresh scaffold and a heal of an older file. The install target
+// is the resolved event, not a compiled event name.
+func TestGrokContextHookFollowsSessionContextEvent(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, config.DefaultDataDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, config.DefaultDataDir, config.ConfigName), []byte(`
+[harness.grok]
+session_context_event = "Stop"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body := string(buildGrokHookSettings(repo))
+	var root map[string]any
+	if err := json.Unmarshal([]byte(body), &root); err != nil {
+		t.Fatal(err)
+	}
+	hooks := root["hooks"].(map[string]any)
+	if !hookEventHasMarker(hooks["Stop"], "satelle hook context --harness grok") {
+		t.Fatalf("fresh scaffold did not install context on Stop:\n%s", body)
+	}
+	if hookEventHasMarker(hooks["PostToolUse"], "satelle hook context") || hookEventHasMarker(hooks["SessionStart"], "satelle hook context") {
+		t.Fatalf("fresh scaffold left context off Stop:\n%s", body)
+	}
+	if !hookEventHasMarker(hooks["SessionStart"], "satelle reindex") {
+		t.Fatalf("reindex must stay on SessionStart:\n%s", body)
+	}
+
+	path := filepath.Join(repo, filepath.FromSlash(grokHooksRel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	older := `{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "satelle reindex" }, { "type": "command", "command": "satelle hook context" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook stopcheck" } ] }
+    ]
+  }
+}
+`
+	if err := os.WriteFile(path, []byte(older), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := healExistingHookFile(path, "grok", repo); err != nil {
+		t.Fatal(err)
+	}
+	healed, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hroot map[string]any
+	if err := json.Unmarshal(healed, &hroot); err != nil {
+		t.Fatal(err)
+	}
+	hhooks := hroot["hooks"].(map[string]any)
+	if !hookEventHasMarker(hhooks["Stop"], "satelle hook context --harness grok") {
+		t.Fatalf("heal did not install context on Stop:\n%s", healed)
+	}
+	if hookEventHasMarker(hhooks["PostToolUse"], "satelle hook context") || hookEventHasMarker(hhooks["SessionStart"], "satelle hook context") {
+		t.Fatalf("heal left context off Stop:\n%s", healed)
+	}
+	if !hookEventHasMarker(hhooks["SessionStart"], "satelle reindex") {
+		t.Fatalf("heal dropped reindex:\n%s", healed)
 	}
 }
