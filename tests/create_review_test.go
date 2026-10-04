@@ -285,11 +285,17 @@ func TestCreateAcceptsStoryWithoutAcceptance(t *testing.T) {
 	}
 }
 
-// TestCreateReviewSkillAllowsAbsentCriteria is AC1's embedded-rubric proof: the
+// TestCreateReviewSkillAllowsAbsentCriteria is the embedded-rubric proof: the
 // shipped create-review skill does not treat missing criteria as a reject, and
 // numbered criteria that are present still have to verify the goal. It must
 // not name a readiness step: the embedded default route has none, so naming
-// one would ship this repo's discovery process to every other repo.
+// one would ship this repo's process to every other repo. It also rejects a
+// draft that prescribes the implementation and names those parts, including
+// when acceptance criteria are empty or unnumbered and the body is what
+// prescribes it. A draft that states what should be true, and does not require
+// a particular implementation, passes the prescription check, including when a
+// mechanism is named only to show what exists today. The skill text must not
+// contain "discovery".
 func TestCreateReviewSkillAllowsAbsentCriteria(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
@@ -322,5 +328,23 @@ func TestCreateReviewSkillAllowsAbsentCriteria(t *testing.T) {
 	}
 	if !strings.Contains(s, "verify the goal") {
 		t.Error("numbered criteria that are present must still be required to verify the goal")
+	}
+	for _, want := range []string{
+		"name each prescriptive part",
+		"states what should be true, and does not require a particular implementation, passes this check",
+		"does not prescribe the implementation",
+		"only to show what exists today",
+		"is evidence, not a prescription",
+		"including when acceptance criteria are empty or unnumbered",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("skill must state the prescription rule %q", want)
+		}
+	}
+	if strings.Contains(s, "discovery") {
+		t.Error("embedded skill must not contain \"discovery\"")
+	}
+	if strings.Contains(s, "and classification only") {
+		t.Error("empty or unnumbered criteria must still judge solution prescription, not coherence, dead premise, and classification only")
 	}
 }

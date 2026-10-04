@@ -32,7 +32,9 @@ Acceptance criteria are not part of that check.
 `false`). Creation always runs the **deterministic** structure check (title,
 goal body, non-empty category). When the active workflow declares
 `create_review` (the embedded default is `satelle-story-create-review`), an
-isolated reviewer also judges **content/alignment** and **classification**
+isolated reviewer also judges **content/alignment**, **solution prescription**
+(push back when the draft requires a function, type, file, or mechanism be
+written, and name those prescriptive parts), and **classification**
 against [[satelle-story-classification]] — e.g. reject an epic draft filed as
 `category: feature` (use `epic-parent`). A reject pushes back with notes;
 nothing is persisted until the draft is sound. With `gate_create = false`, only
