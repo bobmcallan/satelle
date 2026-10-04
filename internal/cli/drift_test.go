@@ -292,9 +292,9 @@ func TestShippedChangelogMarksDOTRetirement(t *testing.T) {
 // accounting for who it reaches.
 //
 // The expectations MOVE with each Breaking release, and they must — a `###
-// Breaking` marker exists to tell the repos below it. Three markers ship today,
-// and NONE declares `init-heals:`, because every migration they name is manual —
-// so no stamp is refused, and the ones below the newest marker are warned:
+// Breaking` marker exists to tell the repos below it. NONE declares
+// `init-heals:`, because every migration they name is manual — so no stamp is
+// refused, and the ones below the newest marker are warned:
 //
 //   - 0.0.385, the DOT retirement. RETROACTIVE (sty_b36c051c) — added after the
 //     fact, so it can only reach repos that were already broken.
@@ -305,6 +305,11 @@ func TestShippedChangelogMarksDOTRetirement(t *testing.T) {
 //   - 0.0.568, the removal of every harness but claude and grok (sty_941e60cb):
 //     a repo still carrying scaffolding or bindings for a removed harness must
 //     be told to clean them up by hand.
+//   - 0.0.575, reviewer isolation (sty_ef3efb51). Manual: change the reviewer
+//     binding; init does not rewrite it.
+//   - 0.0.607, story estimate no longer accepts --usd (sty_2f6c7df5). Manual:
+//     pass --fresh-input/--output (or legacy --tokens/--time). Init does not
+//     rewrite scripts or stored tags.
 //
 // What stays invariant is the shape: at-or-after the newest marker is quiet, and
 // the warning a repo below it gets carries that release's own bullets.
@@ -324,8 +329,11 @@ func TestShippedChangelogSparesCurrentRepos(t *testing.T) {
 		{"0.0.567", true, "the release just before the harness removal"},
 		{"0.0.568", true, "stamped at the harness removal, but predates reviewer isolation at 0.0.575"},
 		{"0.0.574", true, "the release just before reviewer isolation"},
-		{"0.0.575", false, "stamped AT the newest Breaking release"},
-		{"0.0.576", false, "past it"},
+		{"0.0.575", true, "stamped at reviewer isolation, but predates the estimate flag removal at 0.0.607"},
+		{"0.0.576", true, "past reviewer isolation, but still predates 0.0.607"},
+		{"0.0.606", true, "the release just before the estimate flag removal"},
+		{"0.0.607", false, "stamped AT the newest Breaking release"},
+		{"0.0.608", false, "past it"},
 	}
 	for _, c := range cases {
 		entries, err := verb.ChangelogRange(c.deployed, future)
