@@ -198,6 +198,27 @@ func TestBuildLights(t *testing.T) {
 	}
 }
 
+// A skill-level accept whose nested seats include a dissent is not a fail.
+// buildLights keys off the row kind; it does not re-vote the seats.
+func TestBuildLightsPanelDissentIsNotAFail(t *testing.T) {
+	p, err := json.Marshal(map[string]any{
+		"from": "open", "to": "in_progress", "accept": true,
+		"seats": []map[string]any{
+			{"seat": "a", "accept": true},
+			{"seat": "b", "accept": false},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lights := buildLights([]ledger.Entry{{Kind: ledger.KindReviewAccept, Payload: p}}, "in_progress", false, testStep)
+	for _, l := range lights {
+		if l.State == "fail" {
+			t.Fatalf("nested dissent must not paint a fail light: %v", lights)
+		}
+	}
+}
+
 func TestBuildLightsCurrentStepPulses(t *testing.T) {
 	// A story sitting IN step 1 (open→in_progress is step 1, its current state):
 	// the entry transition is NOT a completed light — step 1 itself pulses.

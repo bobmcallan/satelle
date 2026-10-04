@@ -1284,7 +1284,7 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 	} else if resume {
 		return verb.GateDecision{Gated: false}, nil
 	}
-	skills, edgeAgent, parallelCap, declared, err := g.reviewerSkills(ctx, item, item.Status, toStatus)
+	skills, edgeAgent, parallelCap, declared, edgePanel, edgeCombine, err := g.reviewerSkills(ctx, item, item.Status, toStatus)
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
@@ -1353,10 +1353,30 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 	// (sty_a476a2f8). Scoped nodes carry their own agent=.
 	var ordered []reviewerRef
 	for _, sk := range skills {
-		ordered = append(ordered, reviewerRef{skill: sk, agent: edgeAgent})
+		ordered = append(ordered, reviewerRef{
+			skill: sk, agent: edgeAgent, panel: edgePanel, combine: edgeCombine, parallel: parallelCap,
+		})
 	}
 	sysStart := len(ordered)
+	for i := range sys {
+		sys[i].parallel = parallelCap
+	}
 	ordered = append(ordered, sys...)
+
+	// A panel and a bundle cannot share a session: runGateBundled calls
+	// runReviewer once per rubric inside one session, which would drop the
+	// seats. Refuse before that branch, naming the edge, so a skipped validate
+	// cannot enter it either.
+	if g.edgeBundle(ctx, item, item.Status, toStatus) {
+		for _, ref := range ordered {
+			if len(ref.panel) == 0 {
+				continue
+			}
+			return verb.GateDecision{}, fmt.Errorf(
+				"gate refused: edge %s→%s is bundled and %q declares panel %v — a panel runs one cold session per seat and cannot share a bundled session",
+				item.Status, toStatus, ref.skill, ref.panel)
+		}
+	}
 
 	// Parallel opt-in (sty_4f0a15db): edge parallel=N|true runs reviewers
 	// concurrently (no short-circuit). Absent/0 or a single reviewer keeps the
@@ -1383,7 +1403,7 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 			continue
 		}
 		g.emitActivity(item.ID, skill, i+1, nGates)
-		dec, rerr := g.runReviewer(ctx, item, toStatus, skill, ref.agent)
+		dec, rerr := g.runReviewerRef(ctx, item, toStatus, ref, nil)
 		if rerr != nil {
 			return dec, rerr
 		}
@@ -1456,7 +1476,7 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 			doneMu.Lock()
 			g.emitActivity(item.ID, ref.skill+" (parallel)", doneN+1, nGates)
 			doneMu.Unlock()
-			dec, rerr := g.runReviewer(ctx, item, toStatus, ref.skill, ref.agent)
+			dec, rerr := g.runReviewerRef(ctx, item, toStatus, ref, nil)
 			doneMu.Lock()
 			doneN++
 			g.emitActivity(item.ID, ref.skill+" (parallel)", doneN, nGates)
@@ -1489,6 +1509,7 @@ func reviewerVerdictOf(skill string, order int, system bool, dec verb.GateDecisi
 		SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
 		ToolIsolation: dec.ToolIsolation,
 		BundleID:      dec.BundleID, BundleSkills: dec.BundleSkills,
+		Seats: dec.Seats, Combine: dec.Combine, SeatStamps: dec.SeatStamps,
 	}
 }
 
@@ -2751,15 +2772,60 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 // runReviewerWith is runReviewer with an optional payload decorator, for a gate
 // that judges something the item alone does not carry — today the amendment's
 // before/after (sty_81aa4d8f). Everything else about the run is identical, so a
-// decorated gate is not a second reviewer path.
+// decorated gate is not a second reviewer path. Hook call sites pass no panel
+// and stay single-seat.
 func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStatus, skill, gateAgent string, decorate func(*transitionPayload)) (verb.GateDecision, error) {
-	prep, err := g.prepareReviewer(ctx, item, toStatus, skill, gateAgent, decorate)
+	return g.runReviewerRef(ctx, item, toStatus, reviewerRef{skill: skill, agent: gateAgent}, decorate)
+}
+
+// runReviewerRef runs one skill. An empty panel, and a one-seat panel with no
+// combine, are the single-seat path. A panel of two or more seats, or a panel
+// that names a combine skill, runs the skill once per seat and folds through
+// that check. The fold returns one verdict for the skill.
+func (g *Engine) runReviewerRef(ctx context.Context, item workitem.Item, toStatus string, ref reviewerRef, decorate func(*transitionPayload)) (verb.GateDecision, error) {
+	skill := ref.skill
+	agent := ref.agent
+	fold := panelFolds(ref)
+	if len(ref.panel) == 1 && !fold {
+		agent = ref.panel[0]
+	}
+	prep, err := g.prepareReviewer(ctx, item, toStatus, skill, agent, decorate)
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
 	if prep.unresolved {
 		return verb.GateDecision{Gated: false, Skill: skill, Unresolved: []string{skill}}, nil
 	}
+	if !fold {
+		return g.decideReviewer(ctx, item, toStatus, skill, agent, prep)
+	}
+	if command := skillCheck(prep.body); command != "" {
+		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
+			"gate refused: reviewer skill %q carries a functional check and also sits on panel %v — the check is that skill's one decision", skill, ref.panel)
+	}
+	command, cerr := g.combineCommand(ctx, ref.combine)
+	if cerr != nil {
+		return verb.GateDecision{Gated: true, Skill: skill}, cerr
+	}
+	runs := g.runPanelSeats(ctx, item, toStatus, skill, ref.panel, prep, ref.parallel)
+	return g.foldPanel(ctx, skill, ref.combine, command, ref.panel, runs)
+}
+
+// panelFolds reports whether this ref expands into seat runs and a combine
+// check. A one-seat panel with combine omitted is the single-binding shape.
+func panelFolds(ref reviewerRef) bool {
+	if len(ref.panel) == 0 {
+		return false
+	}
+	if len(ref.panel) == 1 && strings.TrimSpace(ref.combine) == "" {
+		return false
+	}
+	return true
+}
+
+// decideReviewer is the single-seat path: a check fence runs once through
+// runCheck, otherwise one reviewerSeatFor plus one Invoke with ExpectVerdict.
+func (g *Engine) decideReviewer(ctx context.Context, item workitem.Item, toStatus, skill, gateAgent string, prep reviewerPrep) (verb.GateDecision, error) {
 	// Functional-check gate: when the skill carries a check — an embedded ```check
 	// script block in its body, or a single-line `check:` in frontmatter — the
 	// gate is deterministic. The check is SELF-CONTAINED in the skill (it never
@@ -2776,7 +2842,23 @@ func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStat
 	if serr != nil {
 		return verb.GateDecision{Gated: true, Skill: skill}, serr
 	}
-	res := g.Invoke(ctx, InvokeRequest{
+	res := g.invokeReviewerSeat(ctx, item, toStatus, skill, prep, seat)
+	if res.Err != nil {
+		return verb.GateDecision{Gated: true, Skill: skill}, res.Err
+	}
+	if res.Decision == nil {
+		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
+			"reviewer: %s produced no decision", skill)
+	}
+	stampInvocation(res.Decision, res, seat.modelSource)
+	return *res.Decision, nil
+}
+
+// invokeReviewerSeat is the cold one-shot Invoke shared by the single-seat path
+// and each panel seat. The payload is the prepared transition, never another
+// seat's stdout.
+func (g *Engine) invokeReviewerSeat(ctx context.Context, item workitem.Item, toStatus, skill string, prep reviewerPrep, seat reviewerSeat) InvokeResult {
+	return g.Invoke(ctx, InvokeRequest{
 		Binding:     seat.binding,
 		Section:     seat.section,
 		Rubric:      prep.body,
@@ -2792,15 +2874,158 @@ func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStat
 		Skill:       skill,
 		Actor:       seat.section,
 	})
-	if res.Err != nil {
-		return verb.GateDecision{Gated: true, Skill: skill}, res.Err
+}
+
+// panelSeatRun is one declared seat's record plus the invocation stamp, if the
+// process started. A seat that never started has an empty Command.
+type panelSeatRun struct {
+	record verb.PanelSeat
+	stamp  verb.ReviewerVerdict
+}
+
+// combineCommand resolves the fold check. A missing skill or a skill with no
+// check command is a skill-level error, never an accept.
+func (g *Engine) combineCommand(ctx context.Context, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("panel combine skill is empty")
 	}
-	if res.Decision == nil {
-		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
-			"reviewer: %s produced no decision", skill)
+	body, err := g.skillBody(ctx, name)
+	if err != nil {
+		return "", fmt.Errorf("panel combine skill %q: %w", name, err)
 	}
-	stampInvocation(res.Decision, res, seat.modelSource)
-	return *res.Decision, nil
+	command := skillCheck(body)
+	if command == "" {
+		return "", fmt.Errorf("panel combine skill %q has no check command", name)
+	}
+	return command, nil
+}
+
+// runPanelSeats runs the reviewer once per declared section, in order, under the
+// edge's parallel cap. A seat that cannot start or whose output does not parse
+// is an unavailable record; the loop continues. It is not a skill-level error.
+func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus, skill string, panel []string, prep reviewerPrep, cap int) []panelSeatRun {
+	runs := make([]panelSeatRun, len(panel))
+	one := func(i int, section string) {
+		if ctx.Err() != nil {
+			runs[i] = panelSeatRun{record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: ctx.Err().Error()}}
+			return
+		}
+		seat, serr := g.reviewerSeatFor(ctx, item, toStatus, skill, section)
+		if serr != nil {
+			runs[i] = panelSeatRun{record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: serr.Error()}}
+			return
+		}
+		res := g.invokeReviewerSeat(ctx, item, toStatus, skill, prep, seat)
+		if res.Err != nil || res.Decision == nil {
+			notes := "reviewer produced no decision"
+			if res.Err != nil {
+				notes = res.Err.Error()
+			}
+			runs[i] = panelSeatRun{
+				record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: notes},
+				stamp:  seatStamp(skill, section, res, nil),
+			}
+			return
+		}
+		stampInvocation(res.Decision, res, seat.modelSource)
+		runs[i] = panelSeatRun{
+			record: verb.PanelSeat{Seat: section, Accept: res.Decision.Accept, Notes: res.Decision.Notes},
+			stamp:  seatStamp(skill, section, res, res.Decision),
+		}
+	}
+	if cap <= 1 {
+		for i, section := range panel {
+			one(i, section)
+		}
+		return runs
+	}
+	if cap > len(panel) {
+		cap = len(panel)
+	}
+	sem := make(chan struct{}, cap)
+	var wg sync.WaitGroup
+	for i, section := range panel {
+		wg.Add(1)
+		go func(i int, section string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				runs[i] = panelSeatRun{record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: ctx.Err().Error()}}
+				return
+			}
+			one(i, section)
+		}(i, section)
+	}
+	wg.Wait()
+	return runs
+}
+
+// seatStamp is the invocation evidence for a seat whose process started.
+// Command empty means it never started, and the transition writer skips it.
+func seatStamp(skill, section string, res InvokeResult, dec *verb.GateDecision) verb.ReviewerVerdict {
+	if res.Command == "" && (dec == nil || dec.Command == "") {
+		return verb.ReviewerVerdict{}
+	}
+	if dec != nil {
+		rv := reviewerVerdictOf(skill, 0, false, *dec)
+		rv.Seat = section
+		rv.SeatStamps = nil
+		rv.Seats = nil
+		rv.Combine = ""
+		return rv
+	}
+	return verb.ReviewerVerdict{Skill: skill, Seat: section, Command: res.Command, Context: skill}
+}
+
+// foldPanel runs the combine check over the seat records and returns one
+// skill-level verdict. It does not use runCheck: that wrapper would replace the
+// check's own notes. Command stays empty so the fold is not a harness invocation.
+func (g *Engine) foldPanel(ctx context.Context, skill, combine, command string, panel []string, runs []panelSeatRun) (verb.GateDecision, error) {
+	type combineSeat struct {
+		Seat        string `json:"seat"`
+		Accept      bool   `json:"accept"`
+		Unavailable bool   `json:"unavailable"`
+		Notes       string `json:"notes"`
+	}
+	seats := make([]combineSeat, 0, len(panel))
+	records := make([]verb.PanelSeat, 0, len(panel))
+	var stamps []verb.ReviewerVerdict
+	for _, run := range runs {
+		seats = append(seats, combineSeat{
+			Seat: run.record.Seat, Accept: run.record.Accept,
+			Unavailable: run.record.Unavailable, Notes: run.record.Notes,
+		})
+		records = append(records, run.record)
+		if run.stamp.Command != "" {
+			stamps = append(stamps, run.stamp)
+		}
+	}
+	payload, err := json.Marshal(struct {
+		Seats    []combineSeat `json:"seats"`
+		Declared int           `json:"declared"`
+	}{Seats: seats, Declared: len(panel)})
+	if err != nil {
+		return verb.GateDecision{Gated: true, Skill: skill}, err
+	}
+	timeout := g.checkTimeout
+	if timeout <= 0 {
+		timeout = defaultCheckTimeout
+	}
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	out, cerr := g.check(cctx, g.repoRoot, command, string(payload))
+	notes := strings.TrimSpace(out)
+	accept := cerr == nil
+	if !accept && notes == "" {
+		notes = cerr.Error()
+	}
+	return verb.GateDecision{
+		Gated: true, Skill: skill, Accept: accept, Notes: notes,
+		Combine: combine, Seats: records, SeatStamps: stamps,
+	}, nil
 }
 
 // outputTail returns a short, trimmed tail of a reviewer's last output for an
@@ -2848,7 +3073,7 @@ func (g *Engine) scopedReviewers(ctx context.Context, item workitem.Item, toStat
 		if s.When != "" && !g.whenAllows(ctx, item, toStatus, s) {
 			continue
 		}
-		out = append(out, reviewerRef{skill: s.Skill, agent: s.Agent})
+		out = append(out, reviewerRef{skill: s.Skill, agent: s.Agent, panel: s.Panel, combine: s.Combine})
 	}
 	for _, s := range skipped {
 		g.telemetryEvent(ctx, item.ID, "reviewer", "scoped-gate-skipped", map[string]any{
@@ -2911,9 +3136,15 @@ func (g *Engine) whenAllows(ctx context.Context, item workitem.Item, toStatus st
 const whenSkipExit = 1
 
 // reviewerRef is one gate to run: skill name + agents.toml binding section.
-// agent empty means [reviewer] (sty_a476a2f8).
+// agent empty means [reviewer] (sty_a476a2f8). panel is the ordered seat list
+// for this skill; combine is the check skill that folds those seats. Both empty
+// means the single agent seat. parallel is the edge's concurrency cap, which
+// also bounds the seat fan-out.
 type reviewerRef struct {
 	skill, agent string
+	panel        []string
+	combine      string
+	parallel     int
 }
 
 // structureSkill is the required-structure reviewer that judges a draft work
@@ -3297,19 +3528,19 @@ func (g *Engine) lifecycleHook(ctx context.Context, category, operation string) 
 // transition of that workflow. An absent workflow means no governance at all —
 // every edge is allowed and ungated (declared=true, no skills), so fresh repos
 // and the baseline keep working.
-func (g *Engine) reviewerSkills(ctx context.Context, item workitem.Item, from, to string) (skills []string, model string, parallel int, declared bool, err error) {
+func (g *Engine) reviewerSkills(ctx context.Context, item workitem.Item, from, to string) (skills []string, model string, parallel int, declared bool, panel []string, combine string, err error) {
 	spec, _, err := g.activeSpec(ctx, item)
 	if ungoverned(err) {
-		return nil, "", 0, true, nil
+		return nil, "", 0, true, nil, "", nil
 	}
 	if err != nil {
 		// A lifecycle EXISTS and does not resolve. Refusing here is the point:
 		// falling through as "ungated but declared" would advance the story past
 		// every gate the route declares (sty_9835070d).
-		return nil, "", 0, false, err
+		return nil, "", 0, false, nil, "", err
 	}
-	skills, model, parallel, declared = specReviewerSkills(spec, from, to)
-	return skills, model, parallel, declared, nil
+	skills, model, parallel, declared, panel, combine = specReviewerSkills(spec, from, to)
+	return skills, model, parallel, declared, panel, combine, nil
 }
 
 // successorsOf returns declared DOT successors of from for agent-facing refuse
@@ -3858,16 +4089,16 @@ func reviewerSkillsFor(body, from, to string) (skills []string, agent string, pa
 // specReviewerSkills resolves an edge's gate off an already-built Spec. It is
 // the front-door form: whichever representation produced the Spec — an authored
 // DOT or a derived route — the edge answers the same way (sty_9835070d).
-func specReviewerSkills(spec wfdot.Spec, from, to string) (skills []string, agent string, parallel int, declared bool) {
+func specReviewerSkills(spec wfdot.Spec, from, to string) (skills []string, agent string, parallel int, declared bool, panel []string, combine string) {
 	for _, tr := range spec.Transitions {
 		if tr.From == from && tr.To == to {
 			if len(tr.Skills) > 0 {
-				return tr.Skills, tr.Agent, tr.Parallel, true
+				return tr.Skills, tr.Agent, tr.Parallel, true, tr.Panel, tr.Combine
 			}
-			return nil, tr.Agent, tr.Parallel, true
+			return nil, tr.Agent, tr.Parallel, true, tr.Panel, tr.Combine
 		}
 	}
-	return nil, "", 0, false
+	return nil, "", 0, false, nil, ""
 }
 
 // inlineField extracts key's value from an inline-map line, trimming quotes. The

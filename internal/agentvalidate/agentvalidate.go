@@ -23,6 +23,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/health"
+	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/wfhook"
@@ -475,11 +476,11 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 		}
 		// Edge gates: skills share the edge's agent= binding (default reviewer).
 		for _, tr := range spec.Transitions {
-			skills := tr.Skills
-			if len(skills) == 0 && tr.Skill != "" {
-				skills = []string{tr.Skill}
+			edgeSkills := tr.Skills
+			if len(edgeSkills) == 0 && tr.Skill != "" {
+				edgeSkills = []string{tr.Skill}
 			}
-			if len(skills) == 0 {
+			if len(edgeSkills) == 0 {
 				continue
 			}
 			sec := tr.Agent
@@ -503,9 +504,27 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 				}
 			}
 			edgeNode := "edge:" + tr.From + "→" + tr.To
-			for _, sk := range skills {
+			for _, sk := range edgeSkills {
 				r.Gates = append(r.Gates, gateAlloc(doc.Name, edgeNode, sk, sec, bm, ""))
 			}
+			edge := tr.From + "→" + tr.To
+			if len(tr.Panel) > 0 && tr.Bundle {
+				r.allocProblem(fmt.Sprintf(
+					"workflow %q edge %s declares panel and bundle — a panel runs one cold session per seat and cannot share a bundled session",
+					doc.Name, edge))
+			}
+			checkPanel(doc.Name, "edge "+edge, tr.Panel, tr.Combine, agents, skills, &r, usedNamed)
+		}
+		for _, st := range spec.States {
+			if len(st.On) == 0 || len(st.Panel) == 0 {
+				continue
+			}
+			if where, bundled := gateOnBundledEdge(spec, st); bundled {
+				r.allocProblem(fmt.Sprintf(
+					"workflow %q gate %s declares a panel on bundled edge %s — a panel cannot share a bundled session",
+					doc.Name, st.Skill, where))
+			}
+			checkPanel(doc.Name, "gate "+st.Skill, st.Panel, st.Combine, agents, skills, &r, usedNamed)
 		}
 	}
 	// Reviewer SHELL GRANT: unused capability, not a prohibition (sty_87c0ef37).
@@ -736,6 +755,71 @@ func skillShellsSatelle(body string) bool {
 // gateAlloc builds a GateAllocation for the binding that will run the gate.
 // stepModel is the step's own model= (empty for a gate/edge/hook node, which
 // has no step tier — sty_7069bced).
+// checkPanel warns when a panel seat is missing or not a reviewer, and errors
+// when combine does not resolve or has no check command. The warning is not
+// the runtime record: an unavailable seat is still reported at the gate.
+func checkPanel(workflow, where string, panel []string, combine string, agents config.AgentsConfig, skills SkillBody, r *Report, usedNamed map[string]bool) {
+	for _, seat := range panel {
+		if seat == "" || seat == "reviewer" {
+			continue
+		}
+		usedNamed[seat] = true
+		b, ok := agents.NamedBinding(seat)
+		switch {
+		case !ok:
+			r.record(health.Warn(health.IDNodeAlloc, "Panel seat missing", fmt.Sprintf(
+				"workflow %q %s panel seat %q has no [%s] binding in agents.toml — at runtime it is recorded unavailable, never counted as accept",
+				workflow, where, seat, seat)).About(seat).
+				WithRemediation("add a role=\"reviewer\" [" + seat + "] binding, or remove the seat from panel"))
+		case config.ResolvedRole(seat, b) != config.RoleReviewer:
+			r.record(health.Warn(health.IDNodeAlloc, "Panel seat not a reviewer", fmt.Sprintf(
+				"workflow %q %s panel seat %q has role=%q (want role=reviewer) — at runtime it is recorded unavailable, never counted as accept",
+				workflow, where, seat, config.ResolvedRole(seat, b))).About(seat).
+				WithRemediation("set role = \"reviewer\" on [" + seat + "], or remove the seat from panel"))
+		}
+	}
+	combine = strings.TrimSpace(combine)
+	if combine == "" || skills == nil {
+		// No resolver (the narrower Validate callers) cannot say whether the
+		// skill exists. agent validate passes one; the gate refuses a missing
+		// combine rather than accepting.
+		return
+	}
+	body, ok := skills(combine)
+	switch {
+	case !ok:
+		r.allocProblem(fmt.Sprintf(
+			"workflow %q %s names combine skill %q which does not resolve",
+			workflow, where, combine))
+	case structure.CheckCommand(body) == "":
+		r.allocProblem(fmt.Sprintf(
+			"workflow %q %s combine skill %q has no check command",
+			workflow, where, combine))
+	}
+}
+
+// gateOnBundledEdge reports whether a scoped gate joins a bundled inbound edge.
+func gateOnBundledEdge(spec wfdot.Spec, st wfdot.State) (string, bool) {
+	for _, tr := range spec.Transitions {
+		if !tr.Bundle {
+			continue
+		}
+		if containsStr(st.On, "*") || containsStr(st.On, tr.To) {
+			return tr.From + "→" + tr.To, true
+		}
+	}
+	return "", false
+}
+
+func containsStr(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
 func gateAlloc(workflow, node, skill, agent, bindingModel, stepModel string) GateAllocation {
 	effective, source := bindingModel, ""
 	switch {

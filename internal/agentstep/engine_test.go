@@ -1222,13 +1222,13 @@ func TestBadDecisionErrors(t *testing.T) {
 
 func TestReviewerSkillsFor(t *testing.T) {
 	spec := fixtureSpec(t, testWorkflow)
-	if got, _, _, declared := specReviewerSkills(spec, "in_progress", "done"); len(got) != 1 || got[0] != "satelle-story-done-review" || !declared {
+	if got, _, _, declared, _, _ := specReviewerSkills(spec, "in_progress", "done"); len(got) != 1 || got[0] != "satelle-story-done-review" || !declared {
 		t.Errorf("in_progress→done = (%v, %v), want ([done-review], true)", got, declared)
 	}
-	if got, _, _, declared := specReviewerSkills(spec, "backlog", "cancelled"); len(got) != 0 || !declared {
+	if got, _, _, declared, _, _ := specReviewerSkills(spec, "backlog", "cancelled"); len(got) != 0 || !declared {
 		t.Errorf("declared ungated edge = (%v, %v), want (nil, true)", got, declared)
 	}
-	if got, _, _, declared := specReviewerSkills(spec, "backlog", "nowhere"); len(got) != 0 || declared {
+	if got, _, _, declared, _, _ := specReviewerSkills(spec, "backlog", "nowhere"); len(got) != 0 || declared {
 		t.Errorf("undeclared edge = (%v, %v), want (nil, false)", got, declared)
 	}
 	// An ordered list: reviewer_skills takes precedence and preserves order.
@@ -2950,14 +2950,14 @@ var dotWF = spineWF("", "", "",
 
 func TestReviewerSkillsForDOT(t *testing.T) {
 	spec := fixtureSpec(t, dotWF)
-	skills, model, _, declared := specReviewerSkills(spec, "in_progress", "committed")
+	skills, model, _, declared, _, _ := specReviewerSkills(spec, "in_progress", "committed")
 	if !declared || len(skills) != 1 || skills[0] != "satelle-commit-push-reviewer" || model != "" {
 		t.Fatalf("in_progress->committed: skills=%v model=%q declared=%v", skills, model, declared)
 	}
-	if _, _, _, declared := specReviewerSkills(spec, "in_progress", "nope"); declared {
+	if _, _, _, declared, _, _ := specReviewerSkills(spec, "in_progress", "nope"); declared {
 		t.Errorf("an undeclared edge should report declared=false")
 	}
-	if skills, _, _, declared := specReviewerSkills(spec, "committed", "done"); !declared || len(skills) != 0 {
+	if skills, _, _, declared, _, _ := specReviewerSkills(spec, "committed", "done"); !declared || len(skills) != 0 {
 		t.Errorf("committed->done should be declared and ungated: skills=%v declared=%v", skills, declared)
 	}
 }
@@ -3672,7 +3672,7 @@ func TestGateNamedReviewerBinding(t *testing.T) {
 // TestReviewerSkillsForDOTAgent: edge agent= is returned alongside skills.
 func TestReviewerSkillsForDOTAgent(t *testing.T) {
 	spec := fixtureSpec(t, spineWF("", "", "", "b|executor||rev|reviewer-deep"))
-	skills, agent, _, declared := specReviewerSkills(spec, "backlog", "b")
+	skills, agent, _, declared, _, _ := specReviewerSkills(spec, "backlog", "b")
 	if !declared || len(skills) != 1 || skills[0] != "rev" || agent != "reviewer-deep" {
 		t.Fatalf("skills=%v agent=%q declared=%v", skills, agent, declared)
 	}
@@ -4819,14 +4819,14 @@ func TestGateSerial_ShortCircuitFirstReject(t *testing.T) {
 func TestReviewerSkillsFor_Parallel(t *testing.T) {
 	// Unset parallel with two or more reviewers defaults to the cap: concurrency
 	// is the shape's rule, not an authored opt-in.
-	skills, _, par, declared := specReviewerSkills(fixtureSpec(t, parallelWF("")), "backlog", "in_progress")
+	skills, _, par, declared, _, _ := specReviewerSkills(fixtureSpec(t, parallelWF("")), "backlog", "in_progress")
 	if !declared || len(skills) != 2 {
 		t.Fatalf("skills=%v declared=%v", skills, declared)
 	}
 	if par != wfdot.DefaultParallelCap {
 		t.Errorf("unset parallel → cap %d, want %d", par, wfdot.DefaultParallelCap)
 	}
-	_, _, par2, _ := specReviewerSkills(fixtureSpec(t, parallelWF("2")), "backlog", "in_progress")
+	_, _, par2, _, _, _ := specReviewerSkills(fixtureSpec(t, parallelWF("2")), "backlog", "in_progress")
 	if par2 != 2 {
 		t.Errorf("parallel=2 → %d", par2)
 	}

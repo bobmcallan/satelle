@@ -223,6 +223,11 @@ type State struct {
 	// skill the engine runs before enqueuing it (RouteGate.When). Empty means the
 	// gate is unconditional.
 	When string
+	// Panel / Combine are a gate node's own seats and fold check (RouteGate).
+	// Empty on a spine step: a step panel rides the inbound Transition, not the
+	// node, so a gate panel and a step panel do not overwrite each other.
+	Panel   []string
+	Combine string
 }
 
 // WaitsOnChildren reports whether the route declares that a story holding
@@ -335,9 +340,11 @@ func (s Spec) StepSummaryBinding() (agent string, declared, mandatory bool) {
 // ScopedReviewer is one edge-less always-on gate: its skill and optional gate
 // binding section name (agent=<name>). Agent empty means [reviewer] (sty_a476a2f8).
 type ScopedReviewer struct {
-	Skill string
-	Agent string // agents.toml section; empty → reviewer
-	When  string // functional-check skill; exit 1 skips the gate, empty → always runs
+	Skill   string
+	Agent   string   // agents.toml section; empty → reviewer
+	When    string   // functional-check skill; exit 1 skips the gate, empty → always runs
+	Panel   []string // this gate's seats; empty → the single Agent seat
+	Combine string   // functional-check skill that folds Panel; empty on a one-seat panel
 }
 
 // ScopedReviewers returns the DECLARED, edge-less reviewer nodes that gate the
@@ -379,7 +386,7 @@ func (s Spec) ScopedReviewersSplit(toStatus string, tags []string) (enqueued, sk
 		if !(containsStr(st.On, "*") || containsStr(st.On, toStatus)) {
 			continue
 		}
-		ref := ScopedReviewer{Skill: st.Skill, Agent: st.Agent, When: st.When}
+		ref := ScopedReviewer{Skill: st.Skill, Agent: st.Agent, When: st.When, Panel: st.Panel, Combine: st.Combine}
 		if !tagsMatchAppliesTo(st.AppliesTo, tags) {
 			// Only applies_to-filtered nodes are "skipped"; absent applies_to never skips.
 			if len(st.AppliesTo) > 0 {
@@ -907,6 +914,11 @@ type Transition struct {
 	// returning one verdict per rubric (sty_23e10d92). False is today's default:
 	// every gate is its own session. Edge-only, like Parallel.
 	Bundle bool
+	// Panel / Combine are the target step's entry-gate seats and the check skill
+	// that folds them. Empty means the single Agent seat. Copied from the target
+	// step onto the spine edge only — role and recover edges do not carry them.
+	Panel   []string
+	Combine string
 }
 
 // Spec is the parsed lifecycle: states and gated transitions.

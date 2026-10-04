@@ -143,6 +143,20 @@ requires = ["coded"]
   instead of one session each (see `satelle help workflow-convert`). Off by
   default; `parallel` then schedules the bundles and any reviewer left alone.
   A rubric that must judge alone sets `independent: true` in its frontmatter.
+- **`panel` judges one skill on several seats.** `panel` is an ordered list of
+  `agents.toml` section names. Each reviewer skill on the step runs once per
+  seat, cold and one-shot. `combine` names a functional-check skill whose
+  check reads the seat records on stdin and whose exit code is the combined
+  decision. The binary ships `satelle-panel-all-accept` and
+  `satelle-panel-majority` as markdown; a repo authors another rule as a new
+  check skill. There is no compiled rule. A one-seat `panel` is the same shape
+  as `reviewer_agent` and may omit `combine`. `panel` together with
+  `reviewer_agent`, `combine` without `panel`, or two or more seats without
+  `combine` is refused by name. `panel` together with `bundle` is an error: a
+  panel cannot share a session. An unavailable seat is recorded and handed to
+  the check as unavailable; it is never an accept. The same keys on a `[[gate]]`
+  apply only to that skill (`panel` together with that gate's `agent` is
+  refused the same way).
 
 ### An always-on `[[gate]]` — multi-step only
 

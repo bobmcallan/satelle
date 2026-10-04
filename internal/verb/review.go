@@ -76,6 +76,14 @@ type GateDecision struct {
 	// the FIRST verdict of a bundle only — it is one measured invocation.
 	BundleID     string
 	BundleSkills []string
+	// Seats is the panel's per-seat record, in declaration order, when this
+	// decision is the fold of several seats. Combine names the check skill whose
+	// exit code set Accept. Both are empty on a single-seat gate. Command stays
+	// empty on a fold so the transition writer does not record the fold as one
+	// harness invocation; SeatStamps carries each seat that actually started.
+	Seats      []PanelSeat
+	Combine    string
+	SeatStamps []ReviewerVerdict
 	// Unresolved names gate skills this edge DECLARED that do not resolve in the
 	// substrate. Those gates degrade to advisory — the edge advances with no
 	// reviewer and no verdict — which is deliberate, so a fresh repo works before
@@ -140,6 +148,26 @@ type ReviewerVerdict struct {
 	// the invocation's usage; the rest carry none.
 	BundleID     string   `json:"bundle_id,omitempty"`
 	BundleSkills []string `json:"bundle_skills,omitempty"`
+	// Seats / Combine are the panel fold recorded on the skill-level verdict.
+	// A dissenting seat is a nested record, never its own review row.
+	Seats   []PanelSeat `json:"seats,omitempty"`
+	Combine string      `json:"combine,omitempty"`
+	// Seat is the agents.toml section when this verdict is one seat's invocation
+	// stamp rather than the skill-level fold. Empty on the skill row.
+	Seat string `json:"seat,omitempty"`
+	// SeatStamps are the invocation stamps of seats that started. The transition
+	// writer walks them; they are not part of the review-row JSON.
+	SeatStamps []ReviewerVerdict `json:"-"`
+}
+
+// PanelSeat is one seat's record inside a skill-level panel verdict. Accept
+// false with Unavailable true is not an accept — the combine check decides
+// whether that counts against the panel.
+type PanelSeat struct {
+	Seat        string `json:"seat"`
+	Accept      bool   `json:"accept"`
+	Unavailable bool   `json:"unavailable,omitempty"`
+	Notes       string `json:"notes,omitempty"`
 }
 
 // ToolIsolation is what a reviewer invocation's harness offered
