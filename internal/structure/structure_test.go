@@ -22,6 +22,13 @@ func TestStory(t *testing.T) {
 	if p := Story("Add X", "Make the thing do X", "1. it does X", "feature"); len(p) != 0 {
 		t.Errorf("well-formed story should pass, got %v", p)
 	}
+	// Acceptance criteria are not a compiled create rule. Empty, whitespace, and
+	// unnumbered text all pass when title, body, and category are present.
+	for _, ac := range []string{"", "   ", "\n", "do it well"} {
+		if p := Story("Add X", "Make the thing do X", ac, "feature"); len(p) != 0 {
+			t.Errorf("acceptance %q should pass, got %v", ac, p)
+		}
+	}
 	cases := []struct {
 		name                              string
 		title, body, acceptance, category string
@@ -29,7 +36,6 @@ func TestStory(t *testing.T) {
 		{"empty title", "", "goal", "1. a", "feature"},
 		{"empty body", "T", "", "1. a", "feature"},
 		{"body restates title", "Same", "same", "1. a", "feature"},
-		{"no numbered AC", "T", "goal", "do it well", "feature"},
 		// category is a deterministic conformance rule (sty_af239840) — it selects
 		// the governing workflow, so an empty one is a structural reject.
 		{"empty category", "T", "goal", "1. a", ""},

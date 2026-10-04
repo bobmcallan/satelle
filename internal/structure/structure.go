@@ -26,9 +26,6 @@ import (
 // kebab matches a lower-kebab-case slug (the universal artifact-name shape).
 var kebab = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
-// numberedAC matches a numbered acceptance-criterion line ("1. …" or "2) …").
-var numberedAC = regexp.MustCompile(`(?m)^\s*\d+[.)]\s+\S`)
-
 // deprecatedActorKeyword matches the retired performer keyword in either grammar:
 // the DOT node attribute `actor=` or the inline-state map key `actor:` (sty_7db2ed7d).
 var deprecatedActorKeyword = regexp.MustCompile(`\bactor\s*[=:]`)
@@ -85,9 +82,12 @@ func Checked(kind string) bool {
 
 // Story returns the structural problems with a draft work item, empty when
 // conformant: a specific title, a goal body that is not a title restatement, and
-// at least one numbered acceptance criterion. This is the deterministic
+// a non-empty category. Acceptance criteria are not part of this check —
+// discovery authors them, and a repo that still wants the rule authors it in
+// its create-review skill. The acceptance argument is kept so create and amend
+// keep one call; it is intentionally unused. This is the deterministic
 // replacement for the create-time satelle-story-review rubric.
-func Story(title, body, acceptance, category string) []string {
+func Story(title, body, _ string, category string) []string {
 	var p []string
 	if strings.TrimSpace(title) == "" {
 		p = append(p, "title is empty")
@@ -97,9 +97,6 @@ func Story(title, body, acceptance, category string) []string {
 		p = append(p, "body (the goal / what done looks like) is empty")
 	case strings.EqualFold(strings.TrimSpace(body), strings.TrimSpace(title)):
 		p = append(p, "body just restates the title — state the goal / outcome")
-	}
-	if !numberedAC.MatchString(acceptance) {
-		p = append(p, "acceptance_criteria needs at least one numbered, testable item (e.g. \"1. …\")")
 	}
 	// A non-empty category is a deterministic conformance rule, not an LLM rubric
 	// clause (sty_af239840): the category selects the governing workflow

@@ -78,11 +78,13 @@ func TestReviewAmendRunsTheDeclaredSkillWithTheBeforeAfter(t *testing.T) {
 
 // An amendment may correct a definition but never leave the story structurally
 // invalid: the deterministic check pre-empts the reviewer, exactly as on create.
+// Empty acceptance criteria are not structurally invalid — the amend skill judges
+// a dropped criterion — so the pre-empt case is an emptied body.
 func TestReviewAmendRejectsAStructurallyInvalidResult(t *testing.T) {
 	g, r := newEngine(t, `{"decision":"accept"}`,
 		fakeDocs{workflow: amendWF, skillBody: "amend rubric", skillFound: true})
 	draft := amendDraft
-	draft.Fields = []verb.AmendField{{Field: "acceptance_criteria", Old: "1. it does X", New: ""}}
+	draft.Fields = []verb.AmendField{{Field: "body", Old: "Make the thing do X", New: ""}}
 	dec, err := g.ReviewAmend(context.Background(), draft)
 	if err != nil {
 		t.Fatal(err)
@@ -92,5 +94,24 @@ func TestReviewAmendRejectsAStructurallyInvalidResult(t *testing.T) {
 	}
 	if r.got.SystemPrompt != "" {
 		t.Error("the content reviewer must not be reached on a structurally invalid amendment")
+	}
+}
+
+// Dropping acceptance criteria is not a structural pre-empt. The amend reviewer
+// is reached; it, not Go, judges the weakening.
+func TestReviewAmendEmptyCriteriaReachesReviewer(t *testing.T) {
+	g, r := newEngine(t, `{"decision":"reject","notes":"dropped a criterion"}`,
+		fakeDocs{workflow: amendWF, skillBody: "amend rubric", skillFound: true})
+	draft := amendDraft
+	draft.Fields = []verb.AmendField{{Field: "acceptance_criteria", Old: "1. it does X", New: ""}}
+	dec, err := g.ReviewAmend(context.Background(), draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Gated || dec.Accept || dec.Skill != "my-amend-review" {
+		t.Fatalf("empty criteria must reach the amend reviewer, got %+v", dec)
+	}
+	if r.got.SystemPrompt == "" {
+		t.Fatal("amend reviewer must run when criteria are dropped")
 	}
 }

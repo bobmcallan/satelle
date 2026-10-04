@@ -2295,7 +2295,8 @@ func TestParkResumeRefusalIsStructured(t *testing.T) {
 }
 
 // ReviewCreate is now DETERMINISTIC (internal/structure) — no rubric, no agent
-// CLI. A well-formed draft accepts; one missing the goal or numbered ACs rejects.
+// CLI. A well-formed draft accepts, including one with empty acceptance
+// criteria; one missing the goal body rejects.
 func TestReviewCreateAcceptAndReject(t *testing.T) {
 	ctx := context.Background()
 	g, _ := newEngine(t, "", fakeDocs{})
@@ -2309,7 +2310,17 @@ func TestReviewCreateAcceptAndReject(t *testing.T) {
 		t.Fatalf("want gated accept by %s, got %+v", structureSkill, dec)
 	}
 
-	bad := verb.CreateDraft{Kind: "story", Title: "x"} // no goal body, no numbered ACs
+	// No content reviewer: empty criteria are a gated accept by the structure skill.
+	empty := verb.CreateDraft{Kind: "story", Title: "Add X", Body: "Make the thing do X", Category: "feature"}
+	decEmpty, err := g.ReviewCreate(ctx, empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decEmpty.Gated || !decEmpty.Accept || decEmpty.Skill != structureSkill {
+		t.Fatalf("empty acceptance criteria: want gated accept by %s, got %+v", structureSkill, decEmpty)
+	}
+
+	bad := verb.CreateDraft{Kind: "story", Title: "x"} // no goal body
 	dec2, err := g.ReviewCreate(ctx, bad)
 	if err != nil {
 		t.Fatal(err)
@@ -2405,7 +2416,7 @@ func TestReviewCreateNoWorkflowBinding(t *testing.T) {
 func TestReviewCreateStructurePreemptsContent(t *testing.T) {
 	g, r := newEngine(t, `{"decision":"accept"}`,
 		fakeDocs{workflow: createWF, skillBody: "content/alignment rubric", skillFound: true})
-	bad := verb.CreateDraft{Kind: "story", Title: "x"} // no goal, no numbered AC
+	bad := verb.CreateDraft{Kind: "story", Title: "x"} // no goal body
 	dec, err := g.ReviewCreate(context.Background(), bad)
 	if err != nil {
 		t.Fatal(err)
@@ -2415,6 +2426,26 @@ func TestReviewCreateStructurePreemptsContent(t *testing.T) {
 	}
 	if r.got.SystemPrompt != "" {
 		t.Error("the content reviewer must NOT run when the structural check fails")
+	}
+}
+
+// Empty criteria are not a structural failure. With create_review declared, the
+// content reviewer is reached (system prompt set). That is the regression that
+// would hide a skill still treating absence as a reject; it is not the
+// shipped-path accept.
+func TestReviewCreateEmptyCriteriaReachesContentReviewer(t *testing.T) {
+	g, r := newEngine(t, `{"decision":"accept","notes":"absence is readiness"}`,
+		fakeDocs{workflow: createWF, skillBody: "content/alignment rubric", skillFound: true})
+	draft := verb.CreateDraft{Kind: "story", Title: "Add X", Body: "Make the thing do X", Category: "feature"}
+	dec, err := g.ReviewCreate(context.Background(), draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Gated || !dec.Accept || dec.Skill != "my-create-review" {
+		t.Fatalf("empty criteria must reach the declared content reviewer, got %+v", dec)
+	}
+	if r.got.SystemPrompt == "" {
+		t.Fatal("content reviewer system prompt must be set when criteria are empty")
 	}
 }
 

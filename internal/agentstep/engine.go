@@ -3146,10 +3146,11 @@ func (g *Engine) stepSummaryDeclared(ctx context.Context, item workitem.Item) (a
 }
 
 // ReviewCreate judges a draft work item's required structure before it is
-// persisted, DETERMINISTICALLY (internal/structure) — a clear goal and at least
-// one numbered, testable acceptance criterion. No LLM, no agent CLI: the contract
-// is code, so it is harness-independent and never flaky. Always Gated (the
-// structure is the one thing satelle enforces on creation).
+// persisted, DETERMINISTICALLY (internal/structure) — a specific title, a goal
+// body, and a non-empty category. Acceptance criteria are not part of that
+// check. No LLM, no agent CLI: the contract is code, so it is
+// harness-independent and never flaky. Always Gated (the structure is the one
+// thing satelle enforces on creation).
 func (g *Engine) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb.GateDecision, error) {
 	// 1. Deterministic structural check FIRST — the one thing satelle always
 	// enforces on creation. A structural failure pre-empts: the content reviewer

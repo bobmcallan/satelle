@@ -222,9 +222,10 @@ resolved allocation; `satelle agent validate` refuses one whose agent is missing
 is not `role = "reviewer"`, or is `command = "in-loop"`.
 
 **Deterministic structure checks** are not configuration at all — a story needs a
-clear goal and at least one numbered acceptance criterion, judged by code so the
-result is harness-independent and identical every run. A structural failure
-pre-empts: no hook or gate reviewer is reached on a malformed draft.
+title, a clear goal body, and a category, judged by code so the result is
+harness-independent and identical every run. Acceptance criteria are not part of
+that check. A structural failure pre-empts: no hook or gate reviewer is reached
+on a malformed draft.
 
 **Agent judgments** are the rubrics themselves. A gate or hook says *which* skill
 judges; the skill says *what* the judgment is. That split is why adding a

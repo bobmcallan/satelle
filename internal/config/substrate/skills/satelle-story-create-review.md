@@ -13,7 +13,8 @@ Isolated reviewer for a DRAFT story at creation. Input on stdin:
 `category`, `tags`. May read the repo (Read/Grep/Glob) for context; does not
 edit. Pull the taxonomy on demand: [[satelle-story-classification]].
 
-The deterministic structural check has already passed, so structure is
+The deterministic structural check has already passed (title, goal body, and
+category — acceptance criteria are not part of that check), so structure is
 guaranteed — do not re-check it. Judge content, alignment, premise, and
 **classification**:
 
@@ -21,13 +22,21 @@ guaranteed — do not re-check it. Judge content, alignment, premise, and
 
 ### Content & alignment
 
+Empty or unnumbered acceptance criteria are not a reject. When
+`acceptance_criteria` is empty or has no numbered item, judge coherence of the
+body, the dead-premise check, and classification only.
+
+- **Coherence** — is the goal a real, singular outcome (what "done" looks
+ like), not a vague aspiration ("improve things"), a contradiction, or two
+ unrelated goals stapled together?
+
+When numbered criteria are present, the alignment and scope rules are unchanged,
+and those ACs must verify the goal:
+
 - **Alignment** — do the ACs actually verify the goal in the body? Each
  criterion should be a testable check that, if met, advances the stated
  outcome. Reject when ACs are unrelated to the goal, only restate the title,
  or leave the core of the goal unverified.
-- **Coherence** — is the goal a real, singular outcome (what "done" looks
- like), not a vague aspiration ("improve things"), a contradiction, or two
- unrelated goals stapled together?
 - **Scope** — is this one sensible slice? Push back (with a suggested split)
  a draft that is clearly several stories in one, or whose ACs describe work
  far beyond the goal.
@@ -86,16 +95,18 @@ only**, and never reject a value for being unknown.
  repo's satelle.toml `[tags.vocabulary]` names should carry the matching tag
  rather than omit it. Read the values from that config; never invent them.
 
-Fair gate, not perfectionist: a clear leaf story with a fitting category and
-ACs that plausibly verify the goal accepts.
+Fair gate, not perfectionist: a clear leaf story with a fitting category
+accepts. When numbered criteria are present, they must plausibly verify the goal.
 
-- **Accept** when goal is coherent, ACs verify it, premise is not falsified by
- named repo evidence, and category/tags fit the taxonomy.
-- **Reject** when content fails alignment/coherence/scope, premise is falsified
- with cited evidence, OR classification is wrong (epic as feature, doc-only
- slice on a code lane, invented `kind:*`) — name the specific problem and the
- fix (e.g. "use category epic-parent"; "use category docs"; "premise false:
- contradicted by <path>:<symbol>").
+- **Accept** when the goal is coherent, the premise is not falsified by
+ named repo evidence, and category/tags fit the taxonomy. When numbered
+ criteria are present, also require that those ACs verify the goal.
+- **Reject** when numbered criteria are present and fail alignment or scope,
+ when coherence fails, when the premise is falsified with cited evidence, OR
+ classification is wrong (epic as feature, doc-only slice on a code lane,
+ invented `kind:*`) — name the specific problem and the fix (e.g. "use category
+ epic-parent"; "use category docs"; "premise false: contradicted by
+ <path>:<symbol>").
 
 ## Verdict
 

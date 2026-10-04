@@ -213,10 +213,11 @@ quotes or backslashes needs a real JSON parser instead.
 
 When a draft is created (opt-in per repo via `[review] gate_create`), satelle
 checks **required structure** deterministically in code (no LLM): a specific
-title, a clear goal in the body, and at least one numbered, testable acceptance
-criterion. The structure reviewers for skills/workflows/principles are likewise
-deterministic code (`internal/structure`), not LLM rubrics — conformance is
-mechanical, so a swapped harness can never change what "valid" means.
+title, a clear goal in the body, and a non-empty category. Acceptance criteria
+are not part of that check. The structure reviewers for
+skills/workflows/principles are likewise deterministic code
+(`internal/structure`), not LLM rubrics — conformance is mechanical, so a
+swapped harness can never change what "valid" means.
 
 ## Begin-work gate — `satelle-story-intent-review` (→ in_progress)
 
