@@ -168,6 +168,10 @@ type Config struct {
 	// Validate tunes what `satelle validate` reports beyond structure — today the
 	// injected-context size and its warn-only budgets. See ValidateConfig.
 	Validate ValidateConfig `toml:"validate"`
+	// Worktree declares what a worktree opened for a story needs
+	// (sty_804c566b): the gitignored paths it carries from the main tree and the
+	// branch and location templates. See WorktreeConfig.
+	Worktree WorktreeConfig `toml:"worktree"`
 }
 
 // OutputConfig is the [output] table: which verbs get compact rendering, when
@@ -963,6 +967,9 @@ func Load(explicitPath string) (Config, string, error) {
 		return Config{}, path, err
 	}
 	if err := validateCrush(cfg, path); err != nil {
+		return Config{}, path, err
+	}
+	if err := validateWorktree(cfg, path); err != nil {
 		return Config{}, path, err
 	}
 	return cfg, path, nil

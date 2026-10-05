@@ -161,6 +161,10 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// "epic" (sibling children of one epic, one working tree per lease). Unwired
 	// is "none", so a repo with no [engagement] section is unaffected.
 	verb.SetEngagementMode(a.ProcessConfig)
+	// Worktree declaration (sty_804c566b): the process-of-record [worktree] table
+	// and the main tree it carries from, so a worktree reads the main tree's
+	// declaration rather than one of its own.
+	verb.SetWorktreeConfig(a.ProcessConfig, a.ProcessRoot)
 	// Controlled tag vocabulary (sty_034d843c): validate namespaces declared in
 	// satelle.toml [tags.vocabulary] at story/task create and set. Independent of
 	// the agent CLI — must work with no harness installed.

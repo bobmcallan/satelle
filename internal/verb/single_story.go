@@ -173,8 +173,8 @@ func treeConflictError(self, targetStatus string, holder *lease.Lease) error {
 		}
 	}
 	return fmt.Errorf(
-		"satelle: refusing to engage %s (→ %s) — %w: %s is already engaged from %s, and two engaged stories sharing a tree attribute each other's edits. Engage %s from its OWN git working tree (`git worktree add`), or finish/park %s first. Inspect with `satelle story seat`",
-		self, targetStatus, lease.ErrTreeConflict, who, tree, self, who)
+		"satelle: refusing to engage %s (→ %s) — %w: %s is already engaged from %s, and two engaged stories sharing a tree attribute each other's edits. Engage %s from its OWN git working tree — `satelle story worktree %s --base <ref>` opens one carrying the gitignored paths this repo declares it needs (--base is the epic's base branch, or a done dependency's branch; see `satelle help worktree`) — or finish/park %s first. Inspect with `satelle story seat`",
+		self, targetStatus, lease.ErrTreeConflict, who, tree, self, self, who)
 }
 
 // releaseEngagementLease frees the seat for itemID if held by the current owner.
