@@ -10,68 +10,113 @@ import (
 	"github.com/bobmcallan/satelle/internal/structure"
 )
 
-// TestReviewerSkillsQuotationComparison (AC7) walks both skill roots. A skill
-// is in the set when its frontmatter tags include type:reviewer, do not
-// include type:functional-check, and the body has no ```check fence.
-func TestReviewerSkillsQuotationComparison(t *testing.T) {
+const (
+	embeddedSkillsRel = "internal/config/substrate/skills/"
+	overrideSkillsRel = ".satelle/skills/"
+)
+
+// later is one later-round section the quotation rule must be stated in.
+type later struct {
+	rel     string
+	heading string
+	bold    bool
+	forbid  []string
+}
+
+var laterSections = []later{
+	{".satelle/skills/satelle-story-plan-review.md", "## 6. Later rounds", false, []string{
+		"verify every prior blocking finding",
+		"a criterion or plan section that changed",
+	}},
+	{"internal/config/substrate/skills/satelle-story-plan-review.md", "## 4. Later rounds", false, []string{
+		"verify the prior findings",
+		"acceptance criterion that changed (open definition_edits.path)",
+	}},
+	{".satelle/skills/satelle-story-architecture-review.md", "", true, []string{
+		"verify each prior finding",
+		"acceptance criterion that changed (open definition_edits.path)",
+	}},
+	{".satelle/skills/satelle-story-integration-coverage-review.md", "", true, []string{
+		"verify each prior finding",
+		"acceptance criterion that changed (open definition_edits.path)",
+	}},
+	{".satelle/skills/satelle-story-intent-review.md", "## Later rounds", false, []string{
+		"changed definition field",
+		"verify every prior finding",
+	}},
+	{"internal/config/substrate/skills/satelle-story-intent-review.md", "## Later rounds", false, []string{
+		"changed definition field",
+		"verify every prior finding",
+	}},
+}
+
+// The plan descriptions and the architecture and coverage headings sit
+// outside the later-round body. The same normaliser has to see them, or
+// "verify prior findings" and "then verify" stay in the skill and the test
+// still passes.
+var leftoverSkills = []struct {
+	rel     string
+	phrases []string
+}{
+	{".satelle/skills/satelle-story-plan-review.md", []string{
+		"later rounds verify prior findings",
+		"verify prior findings",
+		"number your findings so the next round can answer each one",
+	}},
+	{"internal/config/substrate/skills/satelle-story-plan-review.md", []string{
+		"later rounds verify prior findings",
+		"verify prior findings",
+		"number your findings so the next round can answer each one",
+	}},
+	{".satelle/skills/satelle-story-architecture-review.md", []string{
+		"every blocker first, then verify",
+		"then verify",
+		"verify prior findings",
+	}},
+	{".satelle/skills/satelle-story-integration-coverage-review.md", []string{
+		"every blocker first, then verify",
+		"then verify",
+		"verify prior findings",
+	}},
+}
+
+// TestEmbeddedReviewerSkillsQuotationComparison (AC7) walks the embedded skill
+// root, which every checkout has. A skill is in the set when its frontmatter
+// tags include type:reviewer, do not include type:functional-check, and the
+// body has no ```check fence.
+func TestEmbeddedReviewerSkillsQuotationComparison(t *testing.T) {
 	root := moduleRoot(t)
-	roots := []string{
-		filepath.Join(root, "internal", "config", "substrate", "skills"),
-		filepath.Join(root, ".satelle", "skills"),
-	}
-	var selected []string
-	for _, dir := range roots {
-		paths, err := reviewerSkillMarkdown(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, path := range paths {
-			body, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !quotationReviewer(string(body)) {
-				continue
-			}
-			selected = append(selected, path)
-			lower := strings.ToLower(string(body))
-			for _, phrase := range []string{
-				"quotation comparison governs",
-				"re-issue",
-				"does not clear a standing rejection",
-				"reviewed_truncated",
-				"do not cite an older",
-				// A judgment records the quotation. The differ branch alone
-				// never stores one, so a later round has nothing to cite.
-				"the first verdict",
-				"sets `reviewed`",
-				"re-judge the words this verdict would rest on and set `reviewed`",
-				"the same `reviewed` string",
-			} {
-				if !strings.Contains(lower, phrase) {
-					t.Errorf("%s missing %q", path, phrase)
-				}
-			}
-			if !strings.Contains(string(body), `"reviewed":`) {
-				t.Errorf("%s verdict JSON omits the reviewed field", path)
-			}
-		}
-	}
-	if len(selected) == 0 {
-		t.Fatal("no reviewer skills selected")
-	}
-	for _, name := range []string{
-		"plan.md", "commit.md", "satelle-lessons.md", "satelle-step-summary.md",
-		"satelle-workflow-advisor.md", "README.md",
-	} {
+	selected := selectQuotationReviewers(t, filepath.Join(root, "internal", "config", "substrate", "skills"))
+	assertOutsideReviewerSet(t, selected)
+	for _, name := range []string{"satelle-story-scope-review.md", "satelle-story-done-review.md"} {
+		var hits []string
 		for _, path := range selected {
 			if filepath.Base(path) == name {
-				t.Errorf("%s is outside the reviewer set", path)
+				hits = append(hits, path)
 			}
 		}
+		if len(hits) != 1 {
+			t.Errorf("%s must be selected once under the embedded skills root, got %v", name, hits)
+		}
 	}
+	assertLaterRounds(t, root, embeddedSkillsRel)
+}
+
+// TestOverrideReviewerSkillsQuotationComparison (AC7) runs the same checks
+// over the repo's live override skills. .satelle/ is gitignored operator
+// substrate, so a clean checkout and CI do not have it and the test skips.
+func TestOverrideReviewerSkillsQuotationComparison(t *testing.T) {
+	root := moduleRoot(t)
+	dir := filepath.Join(root, ".satelle", "skills")
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		t.Skip(".satelle/skills is gitignored operator substrate; not present in this checkout")
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	selected := selectQuotationReviewers(t, dir)
+	assertOutsideReviewerSet(t, selected)
 	for _, name := range []string{"satelle-story-deploy-review.md", "satelle-story-integration-review.md"} {
-		body, err := os.ReadFile(filepath.Join(root, ".satelle", "skills", name))
+		body, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -84,7 +129,7 @@ func TestReviewerSkillsQuotationComparison(t *testing.T) {
 			}
 		}
 	}
-	if _, err := os.Stat(filepath.Join(root, ".satelle", "skills", "satelle-integration-review.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "satelle-integration-review.md")); err != nil {
 		t.Fatal(err)
 	}
 	var sawIntegration bool
@@ -97,50 +142,88 @@ func TestReviewerSkillsQuotationComparison(t *testing.T) {
 		t.Error("satelle-integration-review is type:reviewer only and must carry the instruction")
 	}
 	for _, name := range []string{"satelle-story-scope-review.md", "satelle-story-done-review.md"} {
-		var hits []string
 		for _, path := range selected {
 			if filepath.Base(path) == name {
-				hits = append(hits, path)
+				t.Errorf("%s must be edited only under the embedded skills root, got %s", name, path)
 			}
 		}
-		if len(hits) != 1 || !strings.Contains(hits[0], filepath.Join("internal", "config", "substrate", "skills")) {
-			t.Errorf("%s must be edited only under the embedded skills root, got %v", name, hits)
+	}
+	assertLaterRounds(t, root, overrideSkillsRel)
+}
+
+// selectQuotationReviewers returns the reviewer skills under dir and asserts
+// each carries the quotation instruction.
+func selectQuotationReviewers(t *testing.T, dir string) []string {
+	t.Helper()
+	paths, err := reviewerSkillMarkdown(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selected []string
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !quotationReviewer(string(body)) {
+			continue
+		}
+		selected = append(selected, path)
+		assertQuotationPhrases(t, path, string(body))
+	}
+	if len(selected) == 0 {
+		t.Fatalf("no reviewer skills selected under %s", dir)
+	}
+	return selected
+}
+
+func assertQuotationPhrases(t *testing.T, path, body string) {
+	t.Helper()
+	lower := strings.ToLower(body)
+	for _, phrase := range []string{
+		"quotation comparison governs",
+		"re-issue",
+		"does not clear a standing rejection",
+		"reviewed_truncated",
+		"do not cite an older",
+		// A judgment records the quotation. The differ branch alone
+		// never stores one, so a later round has nothing to cite.
+		"the first verdict",
+		"sets `reviewed`",
+		"re-judge the words this verdict would rest on and set `reviewed`",
+		"the same `reviewed` string",
+	} {
+		if !strings.Contains(lower, phrase) {
+			t.Errorf("%s missing %q", path, phrase)
 		}
 	}
+	if !strings.Contains(body, `"reviewed":`) {
+		t.Errorf("%s verdict JSON omits the reviewed field", path)
+	}
+}
 
-	type later struct {
-		rel     string
-		heading string
-		bold    bool
-		forbid  []string
+func assertOutsideReviewerSet(t *testing.T, selected []string) {
+	t.Helper()
+	for _, name := range []string{
+		"plan.md", "commit.md", "satelle-lessons.md", "satelle-step-summary.md",
+		"satelle-workflow-advisor.md", "README.md",
+	} {
+		for _, path := range selected {
+			if filepath.Base(path) == name {
+				t.Errorf("%s is outside the reviewer set", path)
+			}
+		}
 	}
-	sections := []later{
-		{".satelle/skills/satelle-story-plan-review.md", "## 6. Later rounds", false, []string{
-			"verify every prior blocking finding",
-			"a criterion or plan section that changed",
-		}},
-		{"internal/config/substrate/skills/satelle-story-plan-review.md", "## 4. Later rounds", false, []string{
-			"verify the prior findings",
-			"acceptance criterion that changed (open definition_edits.path)",
-		}},
-		{".satelle/skills/satelle-story-architecture-review.md", "", true, []string{
-			"verify each prior finding",
-			"acceptance criterion that changed (open definition_edits.path)",
-		}},
-		{".satelle/skills/satelle-story-integration-coverage-review.md", "", true, []string{
-			"verify each prior finding",
-			"acceptance criterion that changed (open definition_edits.path)",
-		}},
-		{".satelle/skills/satelle-story-intent-review.md", "## Later rounds", false, []string{
-			"changed definition field",
-			"verify every prior finding",
-		}},
-		{"internal/config/substrate/skills/satelle-story-intent-review.md", "## Later rounds", false, []string{
-			"changed definition field",
-			"verify every prior finding",
-		}},
-	}
-	for _, sec := range sections {
+}
+
+// assertLaterRounds checks the later-round sections and leftovers whose rel
+// path starts with prefix.
+func assertLaterRounds(t *testing.T, root, prefix string) {
+	t.Helper()
+	for _, sec := range laterSections {
+		if !strings.HasPrefix(sec.rel, prefix) {
+			continue
+		}
 		body, err := os.ReadFile(filepath.Join(root, sec.rel))
 		if err != nil {
 			t.Fatal(err)
@@ -179,37 +262,10 @@ func TestReviewerSkillsQuotationComparison(t *testing.T) {
 			t.Errorf("%s later-round section contains an ISO-8601 datetime:\n%s", sec.rel, norm)
 		}
 	}
-
-	// The plan descriptions and the architecture and coverage headings sit
-	// outside the later-round body. The same normaliser has to see them, or
-	// "verify prior findings" and "then verify" stay in the skill and this
-	// test still passes.
-	leftovers := []struct {
-		rel     string
-		phrases []string
-	}{
-		{".satelle/skills/satelle-story-plan-review.md", []string{
-			"later rounds verify prior findings",
-			"verify prior findings",
-			"number your findings so the next round can answer each one",
-		}},
-		{"internal/config/substrate/skills/satelle-story-plan-review.md", []string{
-			"later rounds verify prior findings",
-			"verify prior findings",
-			"number your findings so the next round can answer each one",
-		}},
-		{".satelle/skills/satelle-story-architecture-review.md", []string{
-			"every blocker first, then verify",
-			"then verify",
-			"verify prior findings",
-		}},
-		{".satelle/skills/satelle-story-integration-coverage-review.md", []string{
-			"every blocker first, then verify",
-			"then verify",
-			"verify prior findings",
-		}},
-	}
-	for _, item := range leftovers {
+	for _, item := range leftoverSkills {
+		if !strings.HasPrefix(item.rel, prefix) {
+			continue
+		}
 		body, err := os.ReadFile(filepath.Join(root, item.rel))
 		if err != nil {
 			t.Fatal(err)
