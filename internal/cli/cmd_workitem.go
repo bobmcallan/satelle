@@ -83,7 +83,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 			// create path itself. Never fail a successful create over the advisory.
 			// Category warn-mode advisory (sty_b2315e17) rides the same channel.
 			if a, aerr := appFrom(cmd); aerr == nil {
-				if notice := createGateNotice(a.Config.Review.GateCreate, a.DataDir); notice != "" {
+				if notice := createGateNotice(a.ProcessConfig.Review.GateCreate, a.ProcessDataDir); notice != "" {
 					fmt.Fprint(cmd.ErrOrStderr(), notice)
 				}
 				if notice := categoryNotice(a.Config, cCategory); notice != "" {

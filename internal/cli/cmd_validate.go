@@ -61,10 +61,7 @@ binary loads that substrate, so a green result here is what loading expects.`,
 func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error {
 	out := cmd.OutOrStdout()
 
-	dataDir := a.DataDir
-	if dataDir == "" {
-		dataDir = a.Config.ResolveDataDir(a.RepoRoot)
-	}
+	dataDir := a.PlaneDir()
 	// Disk-backed, through the same helper `satelle doctor` uses, so the two can
 	// never contradict each other on an unchanged tree (sty_540cfcd3). The doc
 	// index lags an authored edit, and validating right after an edit is exactly
@@ -92,7 +89,7 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 		}
 		// Per-gate effective model surface (sty_19456622) — same allocation view as
 		// `satelle agent validate`, informational (not a hard fail).
-		if eff, aerr := config.LoadEffectiveAgents(dataDir, a.Config.Vars); aerr == nil {
+		if eff, aerr := config.LoadEffectiveAgents(dataDir, a.PlaneConfig().Vars); aerr == nil {
 			report := agentvalidate.Validate(eff.Agents, eff.Vars, doctor.GoverningWorkflows(dataDir))
 			if len(report.Gates) > 0 {
 				fmt.Fprintln(out, "Gate/node effective models:")
@@ -164,7 +161,7 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 	// no principle scope:, resident set under SessionStart ceiling. Whole-set
 	// only — same anchor pattern as workflow consistency.
 	if kind == "principles" && nameFilter == "" {
-		constitution := readConstitution(a.Config.ResolveConstitution(a.RepoRoot))
+		constitution := readConstitution(a.PlaneConstitution())
 		for _, p := range auditPlacement(dataDir, config.EmbeddedDefaults(), constitution) {
 			failed++
 			fmt.Fprintf(out, "FAIL  principles (placement) — %s\n", p)

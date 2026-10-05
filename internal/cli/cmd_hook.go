@@ -464,16 +464,16 @@ func runHookExplain(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	caller := resolveCaller(raw, osCallerFS{})
-	cfg, cfgPath, loadErr := config.Load("")
-	root := ""
-	if loadErr == nil {
-		root = config.RepoRootFromConfigPath(cfgPath)
+	proc, invoking, _, _, loadErr := config.LoadInvokingProcess()
+	if loadErr != nil {
+		proc = config.Config{}
+		invoking = ""
 	}
 	target := filePathFromEvent(raw)
-	if target != "" && root != "" {
-		target = resolveAbsTarget(root, target)
+	if target != "" && invoking != "" {
+		target = resolveAbsTarget(invoking, target)
 	}
-	d, glob, exempt, reason := evaluateNoImplement(caller, target, root, cfg)
+	d, glob, exempt, reason := evaluateNoImplement(caller, target, invoking, proc)
 	_, _ = fmt.Fprint(cmd.OutOrStdout(), formatHookExplain(caller, d, glob, exempt, reason))
 	return nil
 }
@@ -1541,16 +1541,13 @@ func commandAllowDenyWith(policy map[string][]string, subs []string, storyStatus
 
 // loadCommandAllow returns the opt-in [gate.command_allow] map (nil/empty = off).
 func loadCommandAllow() map[string][]string {
-	cfg, _, err := config.Load("")
-	if err != nil {
-		return nil
-	}
-	if len(cfg.Gate.CommandAllow) == 0 {
+	proc, _, _, _, err := config.LoadInvokingProcess()
+	if err != nil || len(proc.Gate.CommandAllow) == 0 {
 		return nil
 	}
 	// Normalize keys to lowercase for lookup.
-	out := make(map[string][]string, len(cfg.Gate.CommandAllow))
-	for k, v := range cfg.Gate.CommandAllow {
+	out := make(map[string][]string, len(proc.Gate.CommandAllow))
+	for k, v := range proc.Gate.CommandAllow {
 		out[strings.ToLower(strings.TrimSpace(k))] = v
 	}
 	return out
@@ -1561,11 +1558,11 @@ func loadCommandAllow() map[string][]string {
 // Non-repo paths are never fenced. On config load failure, returns false
 // (containment stays on).
 func allowOutsideTreeEdits() bool {
-	cfg, _, err := config.Load("")
+	proc, _, _, _, err := config.LoadInvokingProcess()
 	if err != nil {
 		return false
 	}
-	return cfg.Gate.AllowOutsideTreeEdits
+	return proc.Gate.AllowOutsideTreeEdits
 }
 
 // outsideAnchorBashReason is the agent-facing deny when a Bash mutation target
@@ -1709,7 +1706,14 @@ const readOnlyPreflightBase = "Read-only preflight remains available: use Read/r
 // promises nothing.
 func readOnlyPreflightReason() string {
 	return readOnlyPreflightReasonFrom(func() (config.Config, string, error) {
-		return config.Load("")
+		proc, invoking, _, _, err := config.LoadInvokingProcess()
+		if err != nil {
+			return config.Config{}, "", err
+		}
+		// The seam derives the root with RepoRootFromConfigPath, which walks
+		// two directories up. A path under the invoking tree joins exemptions
+		// there. The config itself is the process of record.
+		return proc, filepath.Join(invoking, config.DefaultDataDir, config.ConfigName), nil
 	})
 }
 
@@ -2093,19 +2097,18 @@ func infraDenyJSON(harness string) string {
 // applies) on any resolution failure — including a temp-dir target, so a
 // broken config does not fail open.
 func exemptTarget(target string) bool {
-	cfg, cfgPath, err := config.Load("")
+	proc, invoking, _, _, err := config.LoadInvokingProcess()
 	if err != nil {
 		return false
 	}
-	root := config.RepoRootFromConfigPath(cfgPath)
-	abs := resolveAbsTarget(root, target)
-	if tempDraftTarget(root, abs) {
+	abs := resolveAbsTarget(invoking, target)
+	if tempDraftTarget(invoking, abs) {
 		return true
 	}
-	if editExempt(cfg.ResolveEditExemptPaths(root), root, abs) {
+	if editExempt(proc.ResolveEditExemptPaths(invoking), invoking, abs) {
 		return true
 	}
-	return editExemptPattern(cfg.ResolveEditExemptGlobs(), root, abs)
+	return editExemptPattern(proc.ResolveEditExemptGlobs(), invoking, abs)
 }
 
 // tempDraftRoots is the process temp directory (os.TempDir already honours
@@ -2325,7 +2328,7 @@ func assembleSessionContext(a *app.App, harness string, limit int, unit string) 
 		return "", nil
 	}
 	always := selectAlwaysDocs(docs)
-	constPath := a.Config.ResolveConstitution(a.RepoRoot)
+	constPath := a.PlaneConstitution()
 	constitution := readConstitution(constPath)
 
 	// Everything that rides around the principles (advisories, seat) is measured
@@ -2554,7 +2557,7 @@ func sessionSeatBlock(a *app.App) string {
 		return ""
 	}
 	ctx := context.Background()
-	mode := a.Config.ResolveEngagementParallel()
+	mode := a.PlaneConfig().ResolveEngagementParallel()
 	leases, err := a.Store.Leases.List(ctx)
 	if err != nil || len(leases) == 0 {
 		// No seat to describe. Under the default mode that is the whole story and
