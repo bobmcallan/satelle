@@ -351,12 +351,12 @@ func printInjectedReport(out io.Writer, rows []injectedRow, cfg config.InjectedC
 func reportInjected(ctx context.Context, out io.Writer, a *app.App) {
 	applySessionContextFacts(a.Config)
 	workflows, _ := a.Store.DocIndex.List(ctx, "workflows")
-	constPath := a.Config.ResolveConstitution(a.RepoRoot)
+	constPath := a.PlaneConstitution()
 	env := injectedEnv{
 		Cfg: a.Config, Docs: a.Store.DocIndex, Workflows: workflows,
 		Constitution: readConstitution(constPath), ConstPath: constPath,
 	}
-	eff, err := config.LoadEffectiveAgents(a.Config.ResolveDataDir(a.RepoRoot), a.Config.Vars)
+	eff, err := config.LoadEffectiveAgents(a.PlaneDir(), a.PlaneConfig().Vars)
 	env.Agents, env.AgentsErr = eff.Agents, err
 	printInjectedReport(out, injectedRows(ctx, env), a.Config.Validate.Injected)
 }

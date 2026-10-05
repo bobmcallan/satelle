@@ -112,9 +112,26 @@ func (c Config) ResolveFixLane(repoRoot string) FixLaneConfig {
 //   - repo config     — satelle.toml and satelle.local.toml, which carry this
 //     very bound: a lane that could edit its own [fix_lane] would have none
 //
-// A location outside repoRoot is skipped: such a path is refused as
-// outside-repo before any class is consulted.
+// A location outside repoRoot is skipped by the in-tree derivation: such a
+// path is refused as outside-repo before any class is consulted. The process
+// of record is the exception — its substrate is added as absolute globs so a
+// lane running in a worktree is still refused from editing the main tree.
 func (c Config) substrateClasses(repoRoot string) FixLaneConfig {
+	local := c.substrateClassesInTree(repoRoot)
+	// A lane running in a linked worktree still may not edit the main tree's
+	// process of record. relUnder stays on the invoking root: re-anchoring it
+	// at main would drop every in-tree class. Paths outside the worktree are
+	// added as absolute globs.
+	extra := c.outOfTreeProcessClasses(repoRoot)
+	local.GateSkills = append(local.GateSkills, extra.GateSkills...)
+	local.Workflows = append(local.Workflows, extra.Workflows...)
+	local.Principles = append(local.Principles, extra.Principles...)
+	local.ReviewerRubrics = append(local.ReviewerRubrics, extra.ReviewerRubrics...)
+	local.RepoConfig = append(local.RepoConfig, extra.RepoConfig...)
+	return local
+}
+
+func (c Config) substrateClassesInTree(repoRoot string) FixLaneConfig {
 	dirs := c.ResolveAuthoredDirs(repoRoot)
 	data := c.ResolveDataDir(repoRoot)
 	tree := func(abs string) []string {
@@ -146,6 +163,62 @@ func (c Config) substrateClasses(repoRoot string) FixLaneConfig {
 		),
 		RepoConfig: file(filepath.Join(data, ConfigName), filepath.Join(data, LocalConfigName)),
 	}
+}
+
+// outOfTreeProcessClasses adds the process-of-record substrate when it lives
+// outside repoRoot. LoadProcess derives the root from a config path under
+// repoRoot, so the caller does not pass the canonical root and a test whose
+// root is not a worktree does not read another tree.
+func (c Config) outOfTreeProcessClasses(repoRoot string) FixLaneConfig {
+	locPath := filepath.Join(repoRoot, DefaultDataDir, ConfigName)
+	proc, procRoot, _, err := LoadProcess(c, locPath)
+	if err != nil || sameResolvedPath(procRoot, repoRoot) {
+		return FixLaneConfig{}
+	}
+	dirs := ResolveProcessAuthoredDirs(proc, procRoot)
+	data := ResolveProcessDataDir(proc, procRoot)
+	tree := func(abs string) []string {
+		return absClass(repoRoot, abs, true)
+	}
+	file := func(abs ...string) []string {
+		var out []string
+		for _, a := range abs {
+			out = append(out, absClass(repoRoot, a, false)...)
+		}
+		return out
+	}
+	return FixLaneConfig{
+		GateSkills: tree(dirs["skills"]),
+		Workflows:  tree(dirs["workflows"]),
+		Principles: append(tree(dirs["principles"]), file(ResolveProcessConstitution(proc, procRoot))...),
+		ReviewerRubrics: file(
+			filepath.Join(data, AgentsConfigDir, AgentsConfigName),
+			filepath.Join(data, AgentsConfigDir, WorkspaceAgentsName),
+			filepath.Join(data, AgentsConfigDir, ActorsConfigName),
+			filepath.Join(data, AgentsConfigName),
+			filepath.Join(data, ActorsConfigName),
+			filepath.Join(dirs["workflows"], AgentsConfigName),
+		),
+		RepoConfig: file(filepath.Join(data, ConfigName), filepath.Join(data, LocalConfigName)),
+	}
+}
+
+// absClass is one absolute glob for a process path that is not inside
+// repoRoot. A path inside the tree is already covered by the location
+// classes. tree adds "/**" so the directory's children match.
+func absClass(repoRoot, abs string, tree bool) []string {
+	abs = strings.TrimSpace(abs)
+	if abs == "" {
+		return nil
+	}
+	if _, ok := relUnder(repoRoot, abs); ok {
+		return nil
+	}
+	g := escapeGlob(filepath.ToSlash(filepath.Clean(abs)))
+	if tree {
+		return []string{g + "/**"}
+	}
+	return []string{g}
 }
 
 // relUnder returns abs as a slash-separated path relative to repoRoot, with
