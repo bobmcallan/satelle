@@ -16,20 +16,49 @@ import (
 
 // captureRunner is an agent CLI that returns a scripted verdict per call and
 // keeps every request, so a test can read exactly what rode the reviewer's stdin.
+// priorFiles is the prior_verdicts file named by that request, read during Run
+// before a successful review deletes the scratch directory. Empty when the
+// work item omits the key.
 type captureRunner struct {
-	outs []string
-	reqs []agentcli.Request
+	outs       []string
+	reqs       []agentcli.Request
+	priorFiles []string
 }
 
 func (c *captureRunner) Name() string    { return "capture" }
 func (c *captureRunner) Command() string { return "capture -p --append-system-prompt {system}" }
 func (c *captureRunner) Run(_ context.Context, req agentcli.Request) ([]byte, error) {
 	c.reqs = append(c.reqs, req)
+	c.priorFiles = append(c.priorFiles, priorVerdictFile(req.Payload))
 	i := len(c.reqs) - 1
 	if i >= len(c.outs) {
 		i = len(c.outs) - 1
 	}
 	return []byte(c.outs[i]), nil
+}
+
+// priorVerdictFile reads the file a referenced prior_verdicts path names.
+// An inline array, or a missing key, yields "".
+func priorVerdictFile(payload string) string {
+	var top map[string]json.RawMessage
+	if json.Unmarshal([]byte(payload), &top) != nil {
+		return ""
+	}
+	raw, ok := top["prior_verdicts"]
+	if !ok {
+		return ""
+	}
+	var ref struct {
+		Path string `json:"path"`
+	}
+	if json.Unmarshal(raw, &ref) != nil || ref.Path == "" {
+		return ""
+	}
+	b, err := os.ReadFile(ref.Path)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // pvReviewSkill is a minimal reviewer rubric that passes the structure and
@@ -77,8 +106,8 @@ requires = ["coded"]
 // TestSecondGateAttemptStdinCarriesPriorVerdict (sty_0f5e600c AC4): end to end,
 // with the REAL engine as the transition gater and the REAL verb.PriorVerdicts as
 // its resolver — a first attempt is judged with no memory, and the SECOND
-// attempt's reviewer receives the first verdict's notes on stdin. The
-// backlog→plan verdict seeded alongside must not appear (AC2).
+// attempt's work item names a prior_verdicts file that holds the first verdict.
+// The backlog→plan verdict seeded alongside must not appear (AC2).
 func TestSecondGateAttemptStdinCarriesPriorVerdict(t *testing.T) {
 	const (
 		firstNotes = "PV-E2E-FIRST-VERDICT-MARKER: AC3 is unplanned"
@@ -149,18 +178,19 @@ func TestSecondGateAttemptStdinCarriesPriorVerdict(t *testing.T) {
 	}
 
 	first, second := runner.reqs[0].Payload, runner.reqs[1].Payload
-	if strings.Contains(first, "prior_verdicts") {
+	if strings.Contains(first, "prior_verdicts") || runner.priorFiles[0] != "" {
 		t.Errorf("first attempt at the edge must carry no prior verdicts:\n%s", first)
 	}
 	if !strings.Contains(second, `"prior_verdicts"`) {
 		t.Fatalf("second attempt's reviewer stdin missing prior_verdicts:\n%s", second)
 	}
+	file := runner.priorFiles[1]
 	for _, want := range []string{firstNotes, `"decision":"reject"`, `"attempt":1`, `"skill":"pv-plan-review"`} {
-		if !strings.Contains(second, want) {
-			t.Errorf("second attempt's stdin missing %q:\n%s", want, second)
+		if !strings.Contains(file, want) {
+			t.Errorf("prior verdicts file missing %q:\n%s", want, file)
 		}
 	}
-	if strings.Contains(second, otherEdge) {
-		t.Errorf("a verdict from another edge rode this edge's payload:\n%s", second)
+	if strings.Contains(file, otherEdge) || strings.Contains(second, otherEdge) {
+		t.Errorf("a verdict from another edge rode this edge's payload:\n%s\nfile:\n%s", second, file)
 	}
 }

@@ -10,8 +10,7 @@ description: Implementation-exit gate judging route edits — where a gate is bo
 
 You are an isolated reviewer judging whether the engaged slice's
 workflow edits (if any) are sound. You receive `{story, from, to}` on stdin;
-`story` carries title, body, acceptance criteria, and tags. Attached plan and
-step summaries may appear in the payload `docs` array. Read the repository
+`story` carries title, body, acceptance criteria, and tags. Attached plan and step summaries may appear as payload `docs` entries (`name`, `type`, `path`). Open `path`. Read the repository
 (Read/Grep); you do not edit.
 
 ## Scope first — n/a fast-accept

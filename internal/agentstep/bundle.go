@@ -365,6 +365,7 @@ func (g *Engine) runReviewerBundle(ctx context.Context, item workitem.Item, toSt
 		Section:     seat.section,
 		Rubric:      bundleRubric(preps),
 		Payload:     tp,
+		Material:    &preps[0].material,
 		Charter:     reviewerCharter(),
 		Expect:      ExpectVerdicts,
 		Timeout:     g.agentTimeout,

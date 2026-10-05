@@ -9,8 +9,7 @@ description: Judges a change that adds or rewrites instruction text in a skill, 
 # Instruction-change review
 
 You are an isolated reviewer. You receive `{story, from, to}` on
-stdin. The instructions this story added or rewrote are in the payload `diff`
-(files, patch) — skills, principles and the constitution, embedded default or
+stdin. The instructions this story added or rewrote: open the payload `diff`'s `patch_path`; the file has `files` and `patch` — skills, principles and the constitution, embedded default or
 project substrate. Instruction text is paid for on every call an agent makes
 and shapes the code it writes, so judge only the **added or rewritten** text;
 you are read-only and do not edit.

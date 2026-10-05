@@ -58,7 +58,11 @@ type InvokeRequest struct {
 	Section string              // agents.toml section name (for role inference / logging)
 	Rubric  string              // skill body from the workflow node/edge
 	Payload any                 // marshalled to JSON stdin
-	Charter string              // optional override; empty → charter from role/expect
+	// Material is the pre-cap reviewer bytes. Invoke writes them and substitutes
+	// paths only when Expect judges and Payload is a transitionPayload. The
+	// check path never sets this; executor and consultant payloads stay inline.
+	Material *reviewerMaterial
+	Charter  string // optional override; empty → charter from role/expect
 	// Expect selects the contract. Zero value is ExpectVerdict — callers that
 	// perform must set ExpectPerform explicitly.
 	Expect Expect
@@ -131,6 +135,8 @@ type invocation struct {
 	settings   map[string]any
 	env        map[string]string
 	scratch    string // this dispatch's scratch dir; "" → no scratch briefing (sty_e7aaf8b1)
+	judging    bool   // Expect judges: the work item is paths, the briefing says so
+	shell      bool   // the grant admits a shell, so the judging briefing keeps the CLI lines
 }
 
 // promptParts are the pieces of an isolated agent's system prompt. Empty parts
@@ -142,6 +148,8 @@ type promptParts struct {
 	charter      string // role charter
 	scratch      string // this dispatch's scratch dir
 	rubric       string // the skill body
+	judging      bool   // use the judging briefing instead of the pull-context call to action
+	shell        bool   // judging briefing also names the three CLI lines
 }
 
 // composeSystemPrompt is the ONE canonical assembly order: constitution and
@@ -171,8 +179,14 @@ func composeSystemPrompt(p promptParts) string {
 		b.WriteString(brief)
 		b.WriteString("\n\n")
 	}
-	// The pull-context call-to-action rides in EVERY isolated-agent prompt.
-	b.WriteString(pullContextCallToAction)
+	// A judging reviewer opens the work item by path. Every other isolated
+	// agent still gets the pull-context call to action, including the step
+	// summariser (SeatSystemPrompt leaves judging unset).
+	if p.judging {
+		b.WriteString(judgingContextBriefing(p.shell))
+	} else {
+		b.WriteString(pullContextCallToAction)
+	}
 	if p.rubric != "" {
 		b.WriteString("\n\n---\n\n")
 		b.WriteString(p.rubric)
@@ -186,7 +200,10 @@ func composeSystemPrompt(p promptParts) string {
 // grant/model/dir. It is the single insertion point for anything satelle wants
 // EVERY isolated agent to receive.
 func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Request, error) {
-	parts := promptParts{charter: inv.charter, scratch: inv.scratch, rubric: inv.rubric}
+	parts := promptParts{
+		charter: inv.charter, scratch: inv.scratch, rubric: inv.rubric,
+		judging: inv.judging, shell: inv.shell,
+	}
 	// Principles selector (design §5): when not none, constitution rides order-zero
 	// then the selected principles — SessionStart parity (cmd_hook renderAlwaysContent).
 	if inv.principles != "" && inv.principles != config.PrinciplesNone {
@@ -351,6 +368,25 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	}
 	inv.scratch = scratchDir
 	inv.env = overlayScratchEnv(inv.env, scratchDir)
+	inv.judging = expect.judges()
+	inv.shell = agentcli.GrantAdmitsShell(inv.tools)
+
+	// The swap is only the judging path, and only when the caller handed over
+	// the pre-cap material. A functional check never reaches Invoke. A direct
+	// Invoke of a map payload (no Material) stays inline.
+	swapped := false
+	if tp, mat, ok := referencedWorkItem(req); ok {
+		ref, werr := writeReviewerMaterial(scratchDir, mat, tp)
+		if werr != nil {
+			g.recordInvocation(ctx, req.StoryID, map[string]any{
+				"phase": "scratch_kept", "scratch_dir": scratchDir, "agent": section,
+			})
+			finishScratch(scratchDir, true)
+			return InvokeResult{Err: werr}
+		}
+		inv.payload = ref
+		swapped = true
+	}
 
 	agentReq, err := g.buildRequest(ctx, inv)
 	if err != nil {
@@ -460,6 +496,17 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		isolation, attested = g.isolateReviewer(ctx, reviewerDispatch{
 			StoryID: req.StoryID, Actor: req.Actor, Skill: req.Skill, Step: req.Step, Section: section,
 		}, runner, binding.OperatorAttested(), &agentReq)
+	}
+	// A judging reviewer that was handed files must be able to open them.
+	// An empty read class skips the runner; the edge does not accept.
+	if swapped && !agentcli.GrantAdmitsRead(inv.tools) {
+		err := fmt.Errorf("unavailable: %s: reviewer grant admits no read tool; the material at %s could not be opened",
+			runner.Name(), filepath.Join(scratchDir, "material"))
+		g.recordInvocation(ctx, req.StoryID, map[string]any{
+			"phase": "scratch_kept", "scratch_dir": scratchDir, "agent": section,
+		})
+		finishScratch(scratchDir, true)
+		return InvokeResult{Err: err, Command: cmdStr}
 	}
 
 	timeout := req.Timeout
@@ -978,8 +1025,50 @@ const pullContextCallToAction = "## Reconstruct your context (you start fresh)\n
 func reviewerCharter() string {
 	return "## You are an isolated satelle reviewer\n\n" +
 		"You judge only — you CANNOT modify the repository, and your tool grant is " +
-		"read-only (Read, Grep, Glob). " + isolatedAgentBriefing +
+		"read-only. The context briefing below says how the work item is delivered and how to open it. " +
+		isolatedAgentBriefing +
 		" Judge the OUTCOME the story claims against this rubric and return your verdict."
+}
+
+// judgingContextBriefing tells a judging reviewer that the work item on the
+// transport carries the story inline and the large fields as paths. It names
+// no tool. shell keeps the three CLI lines for a binding that also has a shell.
+func judgingContextBriefing(shell bool) string {
+	var b strings.Builder
+	b.WriteString("## Reconstruct your context (you start fresh)\n\n")
+	b.WriteString("You are dispatched with NO conversation history. The work item is the JSON on the transport. ")
+	b.WriteString("Story fields, including the body and acceptance criteria, and children are inline. ")
+	b.WriteString("`docs[].path`, `diff.patch_path`, and the path objects on `messages`, `prior_verdicts`, `definition_edits`, and `ledger` are files under this dispatch's scratch directory `material`. ")
+	b.WriteString("Open them with the configured read grant. ")
+	b.WriteString("A `ledger` object whose `unavailable` field is set names why that listing could not be opened. ")
+	b.WriteString("Do not look under in-repo `.satelle/stories/` — that path is obsolete post-relocation and must not be recreated.")
+	if shell {
+		b.WriteString("\n\nWhen the grant also admits a shell:\n\n")
+		b.WriteString("- `satelle story get <id>` — the full current record.\n")
+		b.WriteString("- `satelle story docs <id>`, then `satelle story doc <id> <name>` — attachments beyond (or fuller than) the files.\n")
+		b.WriteString("- `satelle ledger list --story <id>` — the evidence ledger (transitions, review verdicts, summaries).")
+	}
+	return b.String()
+}
+
+// referencedWorkItem reports the transition a judging Invoke should rewrite
+// into paths. Anything else — a performer, a check, a bare map — stays as the
+// caller passed it.
+func referencedWorkItem(req InvokeRequest) (transitionPayload, *reviewerMaterial, bool) {
+	if !req.Expect.judges() || req.Material == nil {
+		return transitionPayload{}, nil, false
+	}
+	switch p := req.Payload.(type) {
+	case transitionPayload:
+		return p, req.Material, true
+	case *transitionPayload:
+		if p == nil {
+			return transitionPayload{}, nil, false
+		}
+		return *p, req.Material, true
+	default:
+		return transitionPayload{}, nil, false
+	}
 }
 
 // executorCharter is the charter for an isolated named executor performing a step.

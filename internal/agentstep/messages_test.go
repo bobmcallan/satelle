@@ -37,21 +37,45 @@ func TestMessageBodyBudget(t *testing.T) {
 	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_budget", Status: "in_progress"}, "done"); err != nil {
 		t.Fatal(err)
 	}
+	if strings.Contains(r.got.Payload, over) {
+		t.Error("the work item must not carry the over-long body")
+	}
+	var kept []MessageState
+	if err := json.Unmarshal(openedAt(t, r.opened, r.got.Payload, "messages"), &kept); err != nil {
+		t.Fatal(err)
+	}
+	if len(kept) != 2 {
+		t.Fatalf("messages file = %d, want 2", len(kept))
+	}
+	if kept[0].Body != whole || kept[0].Truncated {
+		t.Errorf("the file must keep a body of exactly the budget whole (len %d, truncated %v)", len(kept[0].Body), kept[0].Truncated)
+	}
+	if kept[1].Body != over || kept[1].Truncated {
+		t.Error("the file must keep the over-long body whole")
+	}
+	stdin := cappedGateStdin(t, testWorkflow, workitem.Item{ID: "sty_budget", Status: "in_progress"}, "done", func(g *Engine) {
+		g.SetMessagesResolver(func(context.Context, string, []string) []MessageState {
+			return []MessageState{
+				{ID: "m1", From: "orchestrator", To: "planner", Body: whole, CreatedAt: "2026-09-28T12:54:00Z"},
+				{ID: "m2", From: "orchestrator", To: "planner", Body: over, CreatedAt: "2026-09-28T12:55:00Z"},
+			}
+		})
+	})
 	var wrap struct {
 		Messages []MessageState `json:"messages"`
 	}
-	if err := json.Unmarshal([]byte(r.got.Payload), &wrap); err != nil {
+	if err := json.Unmarshal([]byte(stdin), &wrap); err != nil {
 		t.Fatal(err)
 	}
 	if len(wrap.Messages) != 2 {
-		t.Fatalf("messages = %d, want 2", len(wrap.Messages))
+		t.Fatalf("check messages = %d, want 2", len(wrap.Messages))
 	}
 	if m := wrap.Messages[0]; m.Body != whole || m.Truncated {
-		t.Errorf("a body of exactly the budget must arrive whole and unmarked (len %d, truncated %v)", len(m.Body), m.Truncated)
+		t.Errorf("a body of exactly the budget must arrive whole on the check stdin (len %d, truncated %v)", len(m.Body), m.Truncated)
 	}
 	m := wrap.Messages[1]
 	if !m.Truncated {
-		t.Fatal("a body over the budget must be marked truncated")
+		t.Fatal("a body over the budget must be marked truncated on the check stdin")
 	}
 	if !strings.HasPrefix(m.Body, strings.Repeat("a", messageBodyBudget-1)+"…") {
 		t.Errorf("the cut must back off the split rune: %q", m.Body[len(m.Body)-120:])
@@ -98,16 +122,32 @@ func TestGatePayloadIncludesMessages(t *testing.T) {
 	if !strings.Contains(r.got.Payload, `"messages"`) {
 		t.Fatalf("payload missing messages:\n%s", r.got.Payload)
 	}
+	if strings.Contains(r.got.Payload, long) {
+		t.Error("the work item must not carry the over-long body")
+	}
+	var kept []MessageState
+	if err := json.Unmarshal(openedAt(t, r.opened, r.got.Payload, "messages"), &kept); err != nil {
+		t.Fatal(err)
+	}
+	if len(kept) != len(many) {
+		t.Errorf("messages file = %d, want every message (%d)", len(kept), len(many))
+	}
+	if kept[0].Body != long || kept[0].Truncated {
+		t.Error("the file must keep the over-long body whole")
+	}
+	stdin := cappedGateStdin(t, testWorkflow, workitem.Item{ID: "sty_msg", Status: "in_progress"}, "done", func(g *Engine) {
+		g.SetMessagesResolver(func(context.Context, string, []string) []MessageState { return many })
+	})
 	var wrap struct {
 		Messages []MessageState `json:"messages"`
 	}
-	if err := json.Unmarshal([]byte(r.got.Payload), &wrap); err != nil {
+	if err := json.Unmarshal([]byte(stdin), &wrap); err != nil {
 		t.Fatal(err)
 	}
 	if len(wrap.Messages) != messagesCount {
-		t.Errorf("len(messages) = %d, want %d", len(wrap.Messages), messagesCount)
+		t.Errorf("check messages = %d, want %d", len(wrap.Messages), messagesCount)
 	}
 	if !strings.Contains(wrap.Messages[0].Body, "[truncated]") {
-		t.Errorf("over-long body not excerpted: %q", wrap.Messages[0].Body[:40])
+		t.Errorf("over-long body not excerpted on the check stdin: %q", wrap.Messages[0].Body[:40])
 	}
 }

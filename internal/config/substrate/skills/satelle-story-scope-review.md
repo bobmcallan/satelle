@@ -15,11 +15,10 @@ stdin. Read the story (title, body, ACs, non-goals) and the
 
 ## Enumeration (mechanism, not a verdict)
 
-**Payload-first.** Prefer the transition payload's `diff` object (files, stat,
-patch — the same shape as `satelle story diff`) when it is present. Satelle
+**Payload-first.** Prefer the payload `diff` when it is present. Open `patch_path`; the file has `files`, `stat`, and `patch`, the same shape as `satelle story diff`. Satelle
 injects it whenever an engagement baseline exists; no executor
 attachment and no shell are required. Then a story attachment named `scope-diff`
-(or similar) in the payload `docs` array. Also use plan/step summaries. When
+(or similar) is a `docs` entry (`name`, `type`, `path`); open `path`. Also use plan/step summaries. When
 shell is available and payload `diff` is absent:
 
 ```bash

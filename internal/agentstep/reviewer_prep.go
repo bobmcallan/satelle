@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -25,11 +28,31 @@ type reviewerPrep struct {
 	skill string
 	body  string
 	tp    transitionPayload
-	// payload is tp marshalled — the stdin of a functional check.
+	// payload is tp marshalled — the stdin of a functional check. It stays the
+	// capped inline JSON. A judging reviewer does not receive this value; Invoke
+	// writes material to disk and substitutes paths.
 	payload []byte
+	// material is the pre-cap bytes the fills already computed. The check path
+	// never reads it. A judging Invoke writes it under the dispatch scratch.
+	material reviewerMaterial
 	// unresolved marks a DECLARED gate whose rubric is not installed: advisory,
 	// nothing judges it, and the caller records it as an ungated advance.
 	unresolved bool
+}
+
+// reviewerMaterial is the pre-cap copy of what a reviewer is handed today.
+// Docs, the diff, and the history slices are the resolver results before the
+// count and excerpt cuts. The capped copies stay on transitionPayload.
+type reviewerMaterial struct {
+	Docs            []DocState
+	Diff            *DiffState
+	Messages        []MessageState
+	PriorVerdicts   []PriorVerdict
+	DefinitionEdits []DefinitionEdit
+	// LedgerJSON is the store listing when List succeeded, including an empty
+	// array. LedgerErr is the unavailable reason ("ledger: …") when it did not.
+	LedgerJSON []byte
+	LedgerErr  string
 }
 
 // prepareReviewer resolves skill's rubric, refuses a broken one, and builds the
@@ -65,25 +88,27 @@ func (g *Engine) prepareReviewer(ctx context.Context, item workitem.Item, toStat
 			skill, strings.Join(problems, "; "))
 	}
 	tp := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: skill}
+	mat := &reviewerMaterial{}
 	if g.children != nil {
 		tp.Children = g.children(ctx, item)
 	}
-	g.fillPayloadDocs(ctx, item.ID, &tp)
+	g.fillPayloadDocs(ctx, item.ID, &tp, mat)
 	// Prior verdicts ride ONLY the gate payload (sty_0f5e600c): they are re-review
 	// context, so the executor and retrospective payloads deliberately go without —
 	// a performer optimising for the last rejection instead of the story is the
 	// failure mode that would create.
-	g.fillPriorVerdicts(ctx, item.ID, item.Status, toStatus, &tp)
-	g.fillDefinitionEdits(ctx, item.ID, &tp)
+	g.fillPriorVerdicts(ctx, item.ID, item.Status, toStatus, &tp, mat)
+	g.fillDefinitionEdits(ctx, item.ID, &tp, mat)
 	// Engagement diff rides the GATE payload only (sty_a125b440): reviewers
 	// without a shell need the slice; executors have one. fillDiff never
 	// errors — a missing baseline is a marker, not a refused transition.
-	g.fillDiff(ctx, item.ID, &tp)
+	g.fillDiff(ctx, item.ID, &tp, mat)
 	gateAddrs := []string{"reviewer"}
 	if strings.TrimSpace(gateAgent) != "" && gateAgent != "reviewer" {
 		gateAddrs = append(gateAddrs, gateAgent)
 	}
-	g.fillMessages(ctx, item.ID, gateAddrs, &tp)
+	g.fillMessages(ctx, item.ID, gateAddrs, &tp, mat)
+	g.fillLedger(ctx, item.ID, mat)
 	g.fillMeasuredActual(ctx, item.ID, &tp)
 	// Route drift rides the payload ONLY when it exists, so a repo that names a
 	// drift gate has the enumeration without shelling for it, and every other
@@ -98,7 +123,26 @@ func (g *Engine) prepareReviewer(ctx context.Context, item workitem.Item, toStat
 	if err != nil {
 		return reviewerPrep{}, err
 	}
-	return reviewerPrep{skill: skill, body: body, tp: tp, payload: payload}, nil
+	return reviewerPrep{skill: skill, body: body, tp: tp, payload: payload, material: *mat}, nil
+}
+
+// fillLedger lists the story's ledger once, the same filter as
+// `satelle ledger list --story`. Failure is an unavailable reason. It never
+// shells out and never re-resolves.
+func (g *Engine) fillLedger(ctx context.Context, itemID string, mat *reviewerMaterial) {
+	if mat == nil {
+		return
+	}
+	if strings.TrimSpace(itemID) == "" {
+		mat.LedgerErr = "ledger: story id required"
+		return
+	}
+	b, err := verb.ListStoryLedger(ctx, itemID)
+	if err != nil {
+		mat.LedgerErr = "ledger: " + err.Error()
+		return
+	}
+	mat.LedgerJSON = b
 }
 
 // reviewerSeat is the resolved harness an LLM gate runs under: the binding with
@@ -187,4 +231,172 @@ func stampInvocation(d *verb.GateDecision, res InvokeResult, modelSource string)
 	d.SystemPromptBytes = res.SystemPromptBytes
 	d.PayloadBytes = res.PayloadBytes
 	d.ToolIsolation = res.ToolIsolation
+}
+
+// referencedPayload is the work item a judging reviewer receives. Inline fields
+// match transitionPayload. The large fields are paths under the dispatch scratch.
+type referencedPayload struct {
+	Story           workitem.Item        `json:"story"`
+	From            string               `json:"from"`
+	To              string               `json:"to"`
+	ReviewSkill     string               `json:"review_skill"`
+	ReviewSkills    []string             `json:"review_skills,omitempty"`
+	Children        []ChildState         `json:"children,omitempty"`
+	Docs            []referencedDoc      `json:"docs,omitempty"`
+	RouteDrift      *wfgovern.RouteDrift `json:"route_drift,omitempty"`
+	PriorVerdicts   *pathRef             `json:"prior_verdicts,omitempty"`
+	DefinitionEdits *pathRef             `json:"definition_edits,omitempty"`
+	Amendment       *AmendmentState      `json:"amendment,omitempty"`
+	Diff            *referencedDiff      `json:"diff,omitempty"`
+	Messages        *pathRef             `json:"messages,omitempty"`
+	MeasuredActual  *verb.StoryActual    `json:"measured_actual,omitempty"`
+	Ledger          ledgerRef            `json:"ledger"`
+}
+
+type referencedDoc struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+	Path string `json:"path"`
+}
+
+type referencedDiff struct {
+	Baseline   string `json:"baseline_sha,omitempty"`
+	Dirty      bool   `json:"baseline_dirty,omitempty"`
+	NoBaseline bool   `json:"no_baseline,omitempty"`
+	Note       string `json:"note,omitempty"`
+	Source     string `json:"source,omitempty"`
+	PatchPath  string `json:"patch_path"`
+}
+
+type pathRef struct {
+	Path string `json:"path"`
+}
+
+type ledgerRef struct {
+	Path        string `json:"path,omitempty"`
+	Unavailable string `json:"unavailable,omitempty"`
+}
+
+// writeReviewerMaterial writes the pre-cap bytes under scratch/material and
+// returns the referenced work item. A write error returns before any swap.
+func writeReviewerMaterial(scratch string, mat *reviewerMaterial, tp transitionPayload) (referencedPayload, error) {
+	dir := filepath.Join(scratch, "material")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return referencedPayload{}, err
+	}
+	ref := referencedPayload{
+		Story:          tp.Story,
+		From:           tp.From,
+		To:             tp.To,
+		ReviewSkill:    tp.ReviewSkill,
+		ReviewSkills:   tp.ReviewSkills,
+		Children:       tp.Children,
+		RouteDrift:     tp.RouteDrift,
+		Amendment:      tp.Amendment,
+		MeasuredActual: tp.MeasuredActual,
+	}
+	if len(mat.Docs) > 0 {
+		docsDir := filepath.Join(dir, "docs")
+		if err := os.MkdirAll(docsDir, 0o700); err != nil {
+			return referencedPayload{}, err
+		}
+		used := map[string]int{}
+		for _, d := range mat.Docs {
+			name, ok := materialDocFile(d.Name, used)
+			if !ok {
+				continue
+			}
+			path := filepath.Join(docsDir, name)
+			if err := os.WriteFile(path, []byte(d.Body), 0o600); err != nil {
+				return referencedPayload{}, err
+			}
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				return referencedPayload{}, err
+			}
+			ref.Docs = append(ref.Docs, referencedDoc{Name: d.Name, Type: d.Type, Path: abs})
+		}
+	}
+	if mat.Diff != nil {
+		abs, err := writeMaterialJSON(dir, "diff.json", mat.Diff)
+		if err != nil {
+			return referencedPayload{}, err
+		}
+		ref.Diff = &referencedDiff{
+			Baseline:   mat.Diff.Baseline,
+			Dirty:      mat.Diff.Dirty,
+			NoBaseline: mat.Diff.NoBaseline,
+			Note:       mat.Diff.Note,
+			Source:     mat.Diff.Source,
+			PatchPath:  abs,
+		}
+	}
+	if len(mat.Messages) > 0 {
+		abs, err := writeMaterialJSON(dir, "messages.json", mat.Messages)
+		if err != nil {
+			return referencedPayload{}, err
+		}
+		ref.Messages = &pathRef{Path: abs}
+	}
+	if len(mat.PriorVerdicts) > 0 {
+		abs, err := writeMaterialJSON(dir, "prior_verdicts.json", mat.PriorVerdicts)
+		if err != nil {
+			return referencedPayload{}, err
+		}
+		ref.PriorVerdicts = &pathRef{Path: abs}
+	}
+	if len(mat.DefinitionEdits) > 0 {
+		abs, err := writeMaterialJSON(dir, "definition_edits.json", mat.DefinitionEdits)
+		if err != nil {
+			return referencedPayload{}, err
+		}
+		ref.DefinitionEdits = &pathRef{Path: abs}
+	}
+	if len(mat.LedgerJSON) > 0 && mat.LedgerErr == "" {
+		path := filepath.Join(dir, "ledger.json")
+		if err := os.WriteFile(path, mat.LedgerJSON, 0o600); err != nil {
+			return referencedPayload{}, err
+		}
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return referencedPayload{}, err
+		}
+		ref.Ledger = ledgerRef{Path: abs}
+	} else {
+		reason := mat.LedgerErr
+		if reason == "" {
+			reason = "ledger: not resolved"
+		}
+		ref.Ledger = ledgerRef{Unavailable: reason}
+	}
+	return ref, nil
+}
+
+func writeMaterialJSON(dir, name string, v any) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		return "", err
+	}
+	return filepath.Abs(path)
+}
+
+// materialDocFile returns a basename safe to write under material/docs.
+// Empty, ".", and ".." are skipped. A repeated basename gains a numeric suffix.
+func materialDocFile(name string, used map[string]int) (string, bool) {
+	base := filepath.Base(strings.TrimSpace(name))
+	if base == "" || base == "." || base == ".." || strings.ContainsAny(base, `/\`) {
+		return "", false
+	}
+	n := used[base]
+	used[base] = n + 1
+	if n == 0 {
+		return base, true
+	}
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	return fmt.Sprintf("%s-%d%s", stem, n+1, ext), true
 }

@@ -39,7 +39,7 @@ later pass costs a full round.
 While a story is still in its editable state, a rejection may be followed by an
 edit to its title, body, acceptance criteria or category, so the story can be
 corrected instead of parked. Every such edit is recorded, and when the payload
-carries `definition_edits` (each with `field`, `old`, `new`, `actor`), judge
+carries `definition_edits` as `{path}`; open it; the file is the array of `{field, old, new, actor}`, judge
 **each edited acceptance criterion against the story's purpose** — the goal its
 body states — and not against the last rejection alone:
 
@@ -52,10 +52,9 @@ body states — and not against the last rejection alone:
 
 ## Later rounds: verify, do not re-review
 
-When the payload carries `prior_verdicts` (this edge's earlier verdicts, oldest
-first), verify **every** prior finding as resolved or unresolved — never re-raise
+When the payload carries `prior_verdicts` as `{path}`, open that file; it is this edge's earlier verdicts, oldest first. Verify **every** prior finding as resolved or unresolved — never re-raise
 a resolved one. Raise a **new** blocking finding **only** with new evidence you
-can cite: a changed definition field (see `definition_edits`) or text the prior
+can cite: a changed definition field (open `definition_edits.path`) or text the prior
 payload did not contain. A check you could have failed in the first pass is not
 new evidence — note it, do not block on it.
 

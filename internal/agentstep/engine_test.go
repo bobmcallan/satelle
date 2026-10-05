@@ -1,6 +1,7 @@
 package agentstep
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -191,13 +192,167 @@ type fakeRunner struct {
 	out string
 	err error
 	got agentcli.Request
+	// opened is the material files the work item named, read during Run,
+	// before a successful review deletes the scratch directory.
+	opened map[string][]byte
 }
 
 func (f *fakeRunner) Name() string    { return "fake" }
 func (f *fakeRunner) Command() string { return "fake -p --append-system-prompt {system}" }
 func (f *fakeRunner) Run(_ context.Context, req agentcli.Request) ([]byte, error) {
 	f.got = req
+	f.opened = openPayloadFiles(req.Payload)
 	return []byte(f.out), f.err
+}
+
+// openPayloadFiles reads every path the referenced work item names. A payload
+// that is still the capped inline struct has none, and the map stays empty.
+func openPayloadFiles(payload string) map[string][]byte {
+	out := map[string][]byte{}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(payload), &top); err != nil {
+		return out
+	}
+	read := func(p string) {
+		if p == "" {
+			return
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return
+		}
+		out[p] = b
+	}
+	if raw, ok := top["docs"]; ok {
+		var docs []struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(raw, &docs) == nil {
+			for _, d := range docs {
+				read(d.Path)
+			}
+		}
+	}
+	if raw, ok := top["diff"]; ok {
+		var d struct {
+			PatchPath string `json:"patch_path"`
+		}
+		if json.Unmarshal(raw, &d) == nil {
+			read(d.PatchPath)
+		}
+	}
+	for _, key := range []string{"messages", "prior_verdicts", "definition_edits", "ledger"} {
+		raw, ok := top[key]
+		if !ok {
+			continue
+		}
+		var p struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(raw, &p) == nil {
+			read(p.Path)
+		}
+	}
+	return out
+}
+
+func payloadFieldPath(t *testing.T, payload, key string) string {
+	t.Helper()
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(payload), &top); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	raw, ok := top[key]
+	if !ok {
+		t.Fatalf("payload missing %q", key)
+	}
+	if key == "diff" {
+		var d struct {
+			PatchPath string `json:"patch_path"`
+		}
+		if err := json.Unmarshal(raw, &d); err != nil {
+			t.Fatal(err)
+		}
+		return d.PatchPath
+	}
+	var p struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatal(err)
+	}
+	return p.Path
+}
+
+func openedAt(t *testing.T, opened map[string][]byte, payload, key string) []byte {
+	t.Helper()
+	p := payloadFieldPath(t, payload, key)
+	b, ok := opened[p]
+	if !ok {
+		t.Fatalf("material %s was not captured from %s", key, p)
+	}
+	return b
+}
+
+func openedDocs(t *testing.T, payload string, opened map[string][]byte) map[string]string {
+	t.Helper()
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(payload), &top); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := top["docs"]
+	if !ok {
+		t.Fatal("payload missing docs")
+	}
+	var docs []struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+		Body string `json:"body"`
+	}
+	if err := json.Unmarshal(raw, &docs); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for _, d := range docs {
+		if d.Body != "" {
+			t.Errorf("doc %s still carries an inline body", d.Name)
+		}
+		b, ok := opened[d.Path]
+		if !ok {
+			t.Fatalf("doc %s was not captured from %s", d.Name, d.Path)
+		}
+		out[d.Name] = string(b)
+	}
+	return out
+}
+
+// capCheckSkill is a functional check. Its stdin is today's capped JSON.
+// No frontmatter: conformantSkill stamps the skill name the workflow asked for.
+const capCheckSkill = "Reads the capped transition on stdin.\n\n```check\ncat\n```\n"
+
+// cappedGateStdin runs the same resolvers through a check fence and returns
+// the stdin the check received.
+func cappedGateStdin(t *testing.T, wf string, item workitem.Item, to string, setup func(*Engine)) string {
+	t.Helper()
+	g, r := newEngine(t, `{"decision":"reject"}`, fakeDocs{workflow: wf, skillBody: capCheckSkill, skillFound: true})
+	if setup != nil {
+		setup(g)
+	}
+	var stdin string
+	g.check = func(_ context.Context, _, _, payload string) (string, error) {
+		stdin = payload
+		return "ok\n", nil
+	}
+	if _, err := g.Gate(context.Background(), item, to); err != nil {
+		t.Fatal(err)
+	}
+	if r.got.SystemPrompt != "" {
+		t.Fatal("a functional check must not start the reviewer")
+	}
+	if stdin == "" {
+		t.Fatal("check received no stdin")
+	}
+	return stdin
 }
 
 type fakeDocs struct {
@@ -3169,10 +3324,17 @@ func TestGatePayloadIncludesDocs(t *testing.T) {
 	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_docs", Status: "in_progress"}, "done"); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"docs"`, `"name":"plan"`, "plan body for AC1", "step-summary"} {
+	for _, want := range []string{`"docs"`, `"name":"plan"`, `"path":`} {
 		if !strings.Contains(r.got.Payload, want) {
 			t.Errorf("payload missing %q:\n%s", want, r.got.Payload)
 		}
+	}
+	if strings.Contains(r.got.Payload, "plan body for AC1") {
+		t.Error("the plan body must be a file, not an inline docs body")
+	}
+	docs := openedDocs(t, r.got.Payload, r.opened)
+	if docs["plan"] != "# plan body for AC1" || docs["step-summary-x"] != "did the thing" {
+		t.Errorf("doc files = %#v", docs)
 	}
 }
 
@@ -3196,7 +3358,7 @@ func TestGatePayloadIncludesPriorVerdicts(t *testing.T) {
 			CreatedAt: fmt.Sprintf("2026-08-24T0%d:00:00Z", i),
 		}
 	}
-	gateOnce := func(t *testing.T, resolver func(ctx context.Context, itemID, from, to string) []PriorVerdict) string {
+	gateOnce := func(t *testing.T, resolver func(ctx context.Context, itemID, from, to string) []PriorVerdict) (string, map[string][]byte) {
 		t.Helper()
 		g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: planEdgeWorkflow, skillBody: "rubric", skillFound: true})
 		if resolver != nil {
@@ -3205,14 +3367,15 @@ func TestGatePayloadIncludesPriorVerdicts(t *testing.T) {
 		if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_pv", Status: "plan"}, "in_progress"); err != nil {
 			t.Fatal(err)
 		}
-		return r.got.Payload
+		return r.got.Payload, r.opened
 	}
 
 	t.Run("three rejects then an accept ride in order", func(t *testing.T) {
 		var gotFrom, gotTo, gotID string
-		payload := gateOnce(t, func(_ context.Context, itemID, from, to string) []PriorVerdict {
+		history := []PriorVerdict{verdict(1, "reject"), verdict(2, "reject"), verdict(3, "reject"), verdict(4, "accept")}
+		payload, opened := gateOnce(t, func(_ context.Context, itemID, from, to string) []PriorVerdict {
 			gotID, gotFrom, gotTo = itemID, from, to
-			return []PriorVerdict{verdict(1, "reject"), verdict(2, "reject"), verdict(3, "reject"), verdict(4, "accept")}
+			return history
 		})
 		// AC2 (unit half): the engine asks for the edge under review, so a
 		// resolver filtering on from/to cannot be handed another edge's verdicts.
@@ -3222,11 +3385,12 @@ func TestGatePayloadIncludesPriorVerdicts(t *testing.T) {
 		if !strings.Contains(payload, `"prior_verdicts"`) {
 			t.Fatalf("payload missing prior_verdicts:\n%s", payload)
 		}
+		file := string(openedAt(t, opened, payload, "prior_verdicts"))
 		var last int
 		for i := 1; i <= 4; i++ {
-			at := strings.Index(payload, fmt.Sprintf("PV-NOTE-%d", i))
+			at := strings.Index(file, fmt.Sprintf("PV-NOTE-%d", i))
 			if at < 0 {
-				t.Fatalf("payload missing PV-NOTE-%d:\n%s", i, payload)
+				t.Fatalf("file missing PV-NOTE-%d:\n%s", i, file)
 			}
 			if at < last {
 				t.Errorf("PV-NOTE-%d is out of order (oldest first expected)", i)
@@ -3234,47 +3398,55 @@ func TestGatePayloadIncludesPriorVerdicts(t *testing.T) {
 			last = at
 		}
 		for _, want := range []string{`"attempt":1`, `"attempt":4`, `"decision":"reject"`, `"decision":"accept"`, `"skill":"satelle-story-plan-review"`, `"created_at":"2026-08-24T01:00:00Z"`} {
-			if !strings.Contains(payload, want) {
-				t.Errorf("payload missing %q:\n%s", want, payload)
+			if !strings.Contains(file, want) {
+				t.Errorf("file missing %q:\n%s", want, file)
 			}
 		}
 	})
 
-	t.Run("capped at the most recent five, numbered over the full history", func(t *testing.T) {
-		payload := gateOnce(t, func(_ context.Context, _, _, _ string) []PriorVerdict {
-			all := make([]PriorVerdict, 0, 8)
-			for i := 1; i <= 8; i++ {
-				all = append(all, verdict(i, "reject"))
+	t.Run("the file keeps the full history; the check stdin keeps the window", func(t *testing.T) {
+		all := make([]PriorVerdict, 0, 8)
+		for i := 1; i <= 8; i++ {
+			all = append(all, verdict(i, "reject"))
+		}
+		payload, opened := gateOnce(t, func(_ context.Context, _, _, _ string) []PriorVerdict { return all })
+		file := string(openedAt(t, opened, payload, "prior_verdicts"))
+		for i := 1; i <= 8; i++ {
+			if !strings.Contains(file, fmt.Sprintf("PV-NOTE-%d", i)) {
+				t.Errorf("verdict %d missing from the full file", i)
 			}
-			return all
+		}
+		if !strings.Contains(file, `"attempt":1`) || !strings.Contains(file, `"attempt":8`) {
+			t.Errorf("attempts must be numbered over the full history:\n%s", file)
+		}
+		stdin := cappedGateStdin(t, planEdgeWorkflow, workitem.Item{ID: "sty_pv", Status: "plan"}, "in_progress", func(g *Engine) {
+			g.SetPriorVerdictsResolver(func(context.Context, string, string, string) []PriorVerdict { return all })
 		})
 		for i := 1; i <= 3; i++ {
-			if strings.Contains(payload, fmt.Sprintf(`"PV-NOTE-%d"`, i)) {
-				t.Errorf("verdict %d is outside the most-recent-5 window but rode the payload", i)
+			if strings.Contains(stdin, fmt.Sprintf("PV-NOTE-%d", i)) {
+				t.Errorf("verdict %d is outside the most-recent-5 window but rode the check stdin", i)
 			}
 		}
 		for i := 4; i <= 8; i++ {
-			if !strings.Contains(payload, fmt.Sprintf("PV-NOTE-%d", i)) {
-				t.Errorf("verdict %d missing from the window", i)
+			if !strings.Contains(stdin, fmt.Sprintf("PV-NOTE-%d", i)) {
+				t.Errorf("verdict %d missing from the check window", i)
 			}
 		}
-		// Numbering is over the FULL history: the window starts at attempt 4, so a
-		// reviewer reading attempt 8 learns how deep the edge is.
 		for _, want := range []string{`"attempt":4`, `"attempt":8`} {
-			if !strings.Contains(payload, want) {
-				t.Errorf("payload missing %q:\n%s", want, payload)
+			if !strings.Contains(stdin, want) {
+				t.Errorf("check stdin missing %q", want)
 			}
 		}
-		if strings.Contains(payload, `"attempt":1`) {
+		if strings.Contains(stdin, `"attempt":1`) {
 			t.Error("windowed verdicts must not be renumbered from 1")
 		}
 	})
 
 	t.Run("first attempt carries no key", func(t *testing.T) {
-		if payload := gateOnce(t, nil); strings.Contains(payload, "prior_verdicts") {
+		if payload, _ := gateOnce(t, nil); strings.Contains(payload, "prior_verdicts") {
 			t.Errorf("unwired resolver must inject nothing:\n%s", payload)
 		}
-		empty := gateOnce(t, func(_ context.Context, _, _, _ string) []PriorVerdict { return nil })
+		empty, _ := gateOnce(t, func(_ context.Context, _, _, _ string) []PriorVerdict { return nil })
 		if strings.Contains(empty, "prior_verdicts") {
 			t.Errorf("a first attempt (no prior verdicts) must omit the key:\n%s", empty)
 		}
@@ -3301,20 +3473,35 @@ func TestPriorVerdictsBoundedAndDoNotStarveDocs(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload := r.got.Payload
-
-	if !strings.Contains(payload, planBody) {
-		t.Errorf("plan body must ride in full alongside a huge prior verdict:\n%s", payload)
+	docs := openedDocs(t, payload, r.opened)
+	if docs["plan"] != planBody {
+		t.Errorf("plan file = %q, want the full body", docs["plan"])
 	}
-	if strings.Contains(payload, `"truncated":true`) {
+	file := string(openedAt(t, r.opened, payload, "prior_verdicts"))
+	if !strings.Contains(file, huge) {
+		t.Error("the verdict file must keep the full note")
+	}
+	if strings.Contains(payload, huge) {
+		t.Error("the work item must not carry the note inline")
+	}
+	stdin := cappedGateStdin(t, planEdgeWorkflow, workitem.Item{ID: "sty_pvbig", Status: "plan"}, "in_progress", func(g *Engine) {
+		g.SetDocsResolver(func(context.Context, string) []DocState {
+			return []DocState{{Name: "plan", Type: "plan", Body: planBody}}
+		})
+		g.SetPriorVerdictsResolver(func(context.Context, string, string, string) []PriorVerdict {
+			return []PriorVerdict{{Skill: "satelle-story-plan-review", Decision: "reject", Notes: huge}}
+		})
+	})
+	if !strings.Contains(stdin, planBody) {
+		t.Error("the check stdin must still carry the plan body")
+	}
+	if strings.Contains(stdin, `"name":"plan"`) && strings.Contains(stdin, `"truncated":true`) && !strings.Contains(stdin, planBody) {
 		t.Error("prior verdicts must not consume the docs budget")
 	}
-	if !strings.Contains(payload, marker) {
-		t.Error("the prior verdict's notes must still be present, excerpted")
+	if !strings.Contains(stdin, "[truncated]") {
+		t.Error("an over-cap note must be marked as excerpted on the check stdin")
 	}
-	if !strings.Contains(payload, "[truncated]") {
-		t.Error("an over-cap note must be marked as excerpted")
-	}
-	if got, cap := strings.Count(payload, marker), (priorVerdictNotesCeiling/len(marker))+1; got > cap {
+	if got, cap := strings.Count(stdin, marker), (priorVerdictNotesCeiling/len(marker))+1; got > cap {
 		t.Errorf("note excerpt carries %d markers, want at most %d (%d-byte cap)", got, cap, priorVerdictNotesCeiling)
 	}
 }
@@ -3332,7 +3519,7 @@ func TestBinaryExcludedFromGatePayload(t *testing.T) {
 	planBody := "# plan body for binary payload test"
 	summaryBody := "step summary must remain fully present"
 
-	run := func(t *testing.T, order []DocState) string {
+	run := func(t *testing.T, order []DocState) (string, map[string][]byte) {
 		t.Helper()
 		g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
 		g.SetDocsResolver(func(_ context.Context, itemID string) []DocState {
@@ -3341,7 +3528,7 @@ func TestBinaryExcludedFromGatePayload(t *testing.T) {
 		if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_bin", Status: "in_progress"}, "done"); err != nil {
 			t.Fatal(err)
 		}
-		return r.got.Payload
+		return r.got.Payload, r.opened
 	}
 
 	binDoc := DocState{
@@ -3354,12 +3541,13 @@ func TestBinaryExcludedFromGatePayload(t *testing.T) {
 	sumDoc := DocState{Name: "step-summary-x", Type: "step-summary", Body: summaryBody}
 
 	// Binary first — skip must continue, not break.
-	payload := run(t, []DocState{binDoc, planDoc, sumDoc})
-	if !strings.Contains(payload, planBody) {
-		t.Error("plan must be fully present when binary is listed first")
+	payload, opened := run(t, []DocState{binDoc, planDoc, sumDoc})
+	docs := openedDocs(t, payload, opened)
+	if docs["plan"] != planBody {
+		t.Error("plan file must be the full body when binary is listed first")
 	}
-	if !strings.Contains(payload, summaryBody) {
-		t.Error("step-summary must be fully present when binary is listed first")
+	if docs["step-summary-x"] != summaryBody {
+		t.Error("step-summary file must be the full body when binary is listed first")
 	}
 	if strings.Contains(payload, plantASCII) {
 		t.Error("raw binary plant must not appear in gate payload")
@@ -3367,13 +3555,14 @@ func TestBinaryExcludedFromGatePayload(t *testing.T) {
 	if strings.Contains(payload, `"name":"shot.png"`) {
 		t.Error("binary doc must not be listed in gate payload docs (excluded like type:change)")
 	}
-	if strings.Contains(payload, `"truncated":true`) {
-		t.Error("plan/summary must not be truncated by a binary attachment")
+	if _, ok := docs["shot.png"]; ok {
+		t.Error("binary doc must not be written as reviewer material")
 	}
 
 	// Binary last — same guarantees.
-	payload2 := run(t, []DocState{planDoc, sumDoc, binDoc})
-	if !strings.Contains(payload2, planBody) || !strings.Contains(payload2, summaryBody) {
+	payload2, opened2 := run(t, []DocState{planDoc, sumDoc, binDoc})
+	docs2 := openedDocs(t, payload2, opened2)
+	if docs2["plan"] != planBody || docs2["step-summary-x"] != summaryBody {
 		t.Error("plan and step-summary must remain when binary is listed last")
 	}
 	if strings.Contains(payload2, plantASCII) {
@@ -3395,8 +3584,9 @@ func TestChangeRecordExcludedFromGatePayload(t *testing.T) {
 	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_change", Status: "in_progress"}, "done"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(r.got.Payload, "plan body") {
-		t.Error("plan doc must still ride the payload")
+	docs := openedDocs(t, r.got.Payload, r.opened)
+	if docs["plan"] != "# plan body" {
+		t.Error("plan doc must still be handed to the reviewer")
 	}
 	if strings.Contains(r.got.Payload, "planted-secret-in-change-attachment") {
 		t.Error("type:change body must not appear in gate payload")
@@ -3422,14 +3612,26 @@ func TestRouteDocExcludedFromGatePayload(t *testing.T) {
 	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_route", Status: "in_progress"}, "done"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(r.got.Payload, "plan body") {
-		t.Error("plan doc must still ride the payload")
+	docs := openedDocs(t, r.got.Payload, r.opened)
+	if docs["plan"] != "# plan body" {
+		t.Error("plan doc must still be handed to the reviewer")
 	}
 	if strings.Contains(r.got.Payload, "actual-minutes:") {
-		t.Error("the route document's quoted verdicts must not reach a gate's stdin")
+		t.Error("the route document's quoted verdicts must not reach a gate's work item")
 	}
 	if strings.Contains(r.got.Payload, `"name":"`+verb.RouteDocName+`"`) {
 		t.Error("the route document must not be listed in gate payload docs")
+	}
+	stdin := cappedGateStdin(t, testWorkflow, workitem.Item{ID: "sty_route", Status: "in_progress"}, "done", func(g *Engine) {
+		g.SetDocsResolver(func(context.Context, string) []DocState {
+			return []DocState{
+				{Name: "plan", Type: "plan", Body: "# plan body"},
+				{Name: verb.RouteDocName, Type: verb.RouteDocName, Body: "notes: functional check passed, quoting \"actual-minutes:\" from its own script"},
+			}
+		})
+	})
+	if strings.Contains(stdin, "actual-minutes:") {
+		t.Error("the route document's quoted verdicts must not reach a check's stdin")
 	}
 }
 
@@ -3456,8 +3658,7 @@ func TestGatePayloadIncludesDiffWhenBaselineExists(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"diff"`, `"baseline_sha":"abc123"`, `"baseline_dirty":true`,
-		`"foo.go"`, `"foo_test.go"`, "2 files changed",
-		"diff --git a/foo.go", `"source":"live"`,
+		`"patch_path":`, `"source":"live"`,
 	} {
 		if !strings.Contains(r.got.Payload, want) {
 			t.Errorf("payload missing %q:\n%s", want, r.got.Payload)
@@ -3465,6 +3666,15 @@ func TestGatePayloadIncludesDiffWhenBaselineExists(t *testing.T) {
 	}
 	if strings.Contains(r.got.Payload, `"no_baseline"`) {
 		t.Error("present baseline must not set no_baseline")
+	}
+	if strings.Contains(r.got.Payload, `"patch":`) || strings.Contains(r.got.Payload, "foo.go") {
+		t.Error("files, stat, and patch must not ride inline")
+	}
+	diffJSON := string(openedAt(t, r.opened, r.got.Payload, "diff"))
+	for _, want := range []string{`"foo.go"`, `"foo_test.go"`, "2 files changed", "diff --git a/foo.go"} {
+		if !strings.Contains(diffJSON, want) {
+			t.Errorf("diff file missing %q:\n%s", want, diffJSON)
+		}
 	}
 }
 
@@ -3507,11 +3717,23 @@ func TestGatePayloadDiffAdversarialPatchStillAccepts(t *testing.T) {
 	if !dec.Accept {
 		t.Fatalf("adversarial patch must not refuse the gate: %+v", dec)
 	}
-	if !strings.Contains(r.got.Payload, `"truncated":true`) {
-		t.Error("over-ceiling patch must be marked truncated")
+	if strings.Count(r.got.Payload, "A") > 16 {
+		t.Error("the work item must not carry the patch")
 	}
-	if strings.Count(r.got.Payload, "A") > diffPayloadCeiling+16 {
-		t.Error("truncated patch still exceeds the ceiling")
+	diffJSON := openedAt(t, r.opened, r.got.Payload, "diff")
+	if !bytes.Contains(diffJSON, []byte(huge)) {
+		t.Error("the diff file must keep the full patch")
+	}
+	stdin := cappedGateStdin(t, testWorkflow, workitem.Item{ID: "sty_adv", Status: "in_progress"}, "done", func(g *Engine) {
+		g.SetDiffResolver(func(context.Context, string) *DiffState {
+			return &DiffState{Baseline: "deadbeef", Files: []string{"x.go"}, Patch: huge}
+		})
+	})
+	if !strings.Contains(stdin, `"truncated":true`) {
+		t.Error("the check stdin must still mark an over-ceiling patch truncated")
+	}
+	if strings.Count(stdin, "A") > diffPayloadCeiling+16 {
+		t.Error("the check stdin patch still exceeds the ceiling")
 	}
 }
 
@@ -3530,15 +3752,29 @@ func TestDiffDoesNotConsumeDocsCeiling(t *testing.T) {
 	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_diffdocs", Status: "in_progress"}, "done"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(r.got.Payload, planBody) {
-		t.Errorf("plan body must ride in full alongside a huge patch:\n%s", r.got.Payload)
+	docs := openedDocs(t, r.got.Payload, r.opened)
+	if docs["plan"] != planBody {
+		t.Errorf("plan file = %q, want the full body beside a huge patch", docs["plan"])
 	}
-	if strings.Contains(r.got.Payload, `"name":"plan"`) && strings.Contains(r.got.Payload, `"truncated":true`) &&
-		!strings.Contains(r.got.Payload, planBody) {
-		t.Error("plan must not be truncated by the diff budget")
+	if !bytes.Contains(openedAt(t, r.opened, r.got.Payload, "diff"), []byte(huge)) {
+		t.Error("the diff file must keep the full patch")
 	}
-	if !strings.Contains(r.got.Payload, `"truncated":true`) {
-		t.Error("the over-cap patch must still be marked truncated")
+	if strings.Contains(r.got.Payload, huge[:64]) {
+		t.Error("the work item must not carry the patch")
+	}
+	stdin := cappedGateStdin(t, testWorkflow, workitem.Item{ID: "sty_diffdocs", Status: "in_progress"}, "done", func(g *Engine) {
+		g.SetDocsResolver(func(context.Context, string) []DocState {
+			return []DocState{{Name: "plan", Type: "plan", Body: planBody}}
+		})
+		g.SetDiffResolver(func(context.Context, string) *DiffState {
+			return &DiffState{Baseline: "abc", Files: []string{"z.go"}, Patch: huge}
+		})
+	})
+	if !strings.Contains(stdin, planBody) {
+		t.Error("the check stdin must still carry the plan body")
+	}
+	if !strings.Contains(stdin, `"truncated":true`) {
+		t.Error("the check stdin must still mark the over-cap patch truncated")
 	}
 }
 
@@ -3558,8 +3794,11 @@ func TestDiffInjectedOnArbitraryEdge(t *testing.T) {
 	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_invented", Status: "draft"}, "shipped"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(r.got.Payload, `"diff"`) || !strings.Contains(r.got.Payload, `"a.go"`) {
+	if !strings.Contains(r.got.Payload, `"diff"`) || !strings.Contains(r.got.Payload, `"patch_path"`) {
 		t.Errorf("diff must ride an invented-status edge:\n%s", r.got.Payload)
+	}
+	if !strings.Contains(string(openedAt(t, r.opened, r.got.Payload, "diff")), `"a.go"`) {
+		t.Error("the diff file must carry the file list")
 	}
 }
 
@@ -3629,31 +3868,53 @@ func TestGatePayloadDiffCompressorReducesAndComposesWithExistingCaps(t *testing.
 	if !dec.Accept {
 		t.Fatalf("compressed diff must not refuse the gate: %+v", dec)
 	}
-	probe := decodeDiffProbe(t, r.got.Payload)
+	var kept DiffState
+	if err := json.Unmarshal(openedAt(t, r.opened, r.got.Payload, "diff"), &kept); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(kept.Patch, "+kept line") {
+		t.Errorf("compressor's kept content missing from the diff file:\n%s", kept.Patch)
+	}
+	if strings.Contains(kept.Patch, dropped) {
+		t.Errorf("dropped content must not ride in the diff file:\n%s", kept.Patch)
+	}
+	if !retrieve.MarkerRE.MatchString(kept.Patch) {
+		t.Errorf("compressed patch must carry a retrieve marker:\n%s", kept.Patch)
+	}
+	if !kept.Truncated {
+		t.Error("a compressed (marker-bearing) patch must set truncated on the retained copy")
+	}
+	if len(kept.Files) != 600 {
+		t.Errorf("retained files = %d, want the post-compressor slice before the file cap (600)", len(kept.Files))
+	}
+	if len(kept.Stat) != diffStatCeiling+512 {
+		t.Errorf("retained stat length = %d, want the full stat before the ceiling", len(kept.Stat))
+	}
 
-	if !strings.Contains(probe.Diff.Patch, "+kept line") {
-		t.Errorf("compressor's kept content missing from payload patch:\n%s", probe.Diff.Patch)
-	}
-	if strings.Contains(probe.Diff.Patch, dropped) {
-		t.Errorf("dropped content must not ride inline once offloaded:\n%s", probe.Diff.Patch)
-	}
-	if !retrieve.MarkerRE.MatchString(probe.Diff.Patch) {
-		t.Errorf("compressed patch must carry a retrieve marker:\n%s", probe.Diff.Patch)
-	}
-	if !probe.Diff.Truncated {
-		t.Error("a compressed (marker-bearing) patch must set truncated")
-	}
+	stdin := cappedGateStdin(t, testWorkflow, workitem.Item{ID: "sty_ranked", Status: "in_progress"}, "done", func(g *Engine) {
+		g.SetDiffCompressor(func(_ context.Context, itemID, _ string) string {
+			hash := store.put([]byte(dropped))
+			return "diff --git a/kept.go b/kept.go\n+kept line\n" + retrieve.MarkerKind(hash, "hunk", len(dropped)) + "\n"
+		})
+		g.SetDiffResolver(func(context.Context, string) *DiffState {
+			return &DiffState{Baseline: "abc123", Files: files, Stat: strings.Repeat("x", diffStatCeiling+512), Patch: "irrelevant — the compressor replaces this entirely"}
+		})
+	})
+	probe := decodeDiffProbe(t, stdin)
 	if len(probe.Diff.Files) != diffFilesCount {
-		t.Errorf("Files count = %d, want diffFilesCount (%d) — unchanged by this story", len(probe.Diff.Files), diffFilesCount)
+		t.Errorf("check Files count = %d, want diffFilesCount (%d)", len(probe.Diff.Files), diffFilesCount)
 	}
 	if probe.Diff.Files[len(probe.Diff.Files)-1] != "file499.go" {
-		t.Errorf("Files list must keep the first diffFilesCount (500) files, last = %q", probe.Diff.Files[len(probe.Diff.Files)-1])
+		t.Errorf("check Files list must keep the first diffFilesCount (500) files, last = %q", probe.Diff.Files[len(probe.Diff.Files)-1])
 	}
 	if len(probe.Diff.Stat) > diffStatCeiling+64 {
-		t.Errorf("Stat length = %d, want <= diffStatCeiling+marker (%d) — unchanged by this story", len(probe.Diff.Stat), diffStatCeiling+64)
+		t.Errorf("check Stat length = %d, want <= diffStatCeiling+marker", len(probe.Diff.Stat))
+	}
+	if !probe.Diff.Truncated {
+		t.Error("the check payload must still mark the capped diff truncated")
 	}
 
-	hash, kind, size, ok := retrieve.ParseMarkerKind(extractMarker(t, probe.Diff.Patch))
+	hash, kind, size, ok := retrieve.ParseMarkerKind(extractMarker(t, kept.Patch))
 	if !ok {
 		t.Fatalf("could not parse marker out of patch:\n%s", probe.Diff.Patch)
 	}
@@ -3692,14 +3953,32 @@ func TestGatePayloadDiffBackstopOffloadsOverflowWithNoCompressorWired(t *testing
 	if !dec.Accept {
 		t.Fatalf("an oversized patch must not refuse the gate: %+v", dec)
 	}
-	probe := decodeDiffProbe(t, r.got.Payload)
+	var kept DiffState
+	if err := json.Unmarshal(openedAt(t, r.opened, r.got.Payload, "diff"), &kept); err != nil {
+		t.Fatal(err)
+	}
+	if kept.Patch != huge {
+		t.Errorf("the diff file must keep the full patch before the ceiling backstop (len %d, want %d)", len(kept.Patch), len(huge))
+	}
+	if kept.Truncated {
+		t.Error("the ceiling backstop must not mark the retained copy truncated")
+	}
+	stdin := cappedGateStdin(t, testWorkflow, workitem.Item{ID: "sty_backstop", Status: "in_progress"}, "done", func(g *Engine) {
+		g.SetDiffOffloader(func(_ context.Context, _ string, content []byte) (string, error) {
+			return store.put(content), nil
+		})
+		g.SetDiffResolver(func(context.Context, string) *DiffState {
+			return &DiffState{Baseline: "deadbeef", Files: []string{"x.go"}, Patch: huge}
+		})
+	})
+	probe := decodeDiffProbe(t, stdin)
 	if !probe.Diff.Truncated {
-		t.Error("over-ceiling patch must still be marked truncated")
+		t.Error("the check stdin must still mark an over-ceiling patch truncated")
 	}
 	if !retrieve.MarkerRE.MatchString(probe.Diff.Patch) {
-		t.Errorf("no-compressor backstop must still offload behind a marker, not truncate blindly:\n%s", probe.Diff.Patch)
+		t.Errorf("no-compressor backstop must still offload behind a marker on the check stdin:\n%s", probe.Diff.Patch)
 	}
-	if !strings.HasPrefix(huge, probe.Diff.Patch[:diffPayloadCeiling]) {
+	if len(probe.Diff.Patch) < diffPayloadCeiling || !strings.HasPrefix(huge, probe.Diff.Patch[:diffPayloadCeiling]) {
 		t.Error("backstop must keep the patch's leading bytes verbatim up to the ceiling")
 	}
 	hash, kind, _, ok := retrieve.ParseMarkerKind(extractMarker(t, probe.Diff.Patch))

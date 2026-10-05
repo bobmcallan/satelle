@@ -127,6 +127,59 @@ func TestPullContextCallToActionInEveryRole(t *testing.T) {
 // JSON-marshalled onto req.Settings (deterministic key order, via encoding/json's
 // sorted map keys), and an unset/empty settings yields "" — so buildArgs drops the
 // {settings} placeholder and its flag exactly as it does for an empty model.
+// TestJudgingBriefingReplacesThePullContext: a judging prompt tells the
+// reviewer to open paths and names no tool. A shell grant keeps the three CLI
+// lines. A performer prompt still carries the pull-context call to action.
+func TestJudgingBriefingReplacesThePullContext(t *testing.T) {
+	g := New(&fakeRunner{}, fakeDocs{workflow: testWorkflow}, "/repo", "")
+	judge, err := g.buildRequest(context.Background(), invocation{
+		charter: reviewerCharter(), rubric: "r", judging: true, tools: "Read,Grep,Glob",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp := judge.SystemPrompt
+	for _, want := range []string{"JSON on the transport", "docs[].path", "diff.patch_path", "prior_verdicts", "definition_edits", "material", "could not be opened", ".satelle/stories/"} {
+		if !strings.Contains(sp, want) {
+			t.Errorf("judging prompt missing %q:\n%s", want, sp)
+		}
+	}
+	for _, banned := range []string{"satelle story get", "Read, Grep, Glob", "read_file", "plan body"} {
+		if strings.Contains(sp, banned) {
+			t.Errorf("judging prompt without a shell must not contain %q", banned)
+		}
+	}
+	// isolatedAgentBriefing still says the work item arrives on stdin. The
+	// judging briefing must not: the plan body and the patch are files.
+	brief := judgingContextBriefing(false)
+	if strings.Contains(brief, "on stdin") || strings.Contains(brief, "plan body") {
+		t.Fatalf("judging briefing must not put the plan or the patch on stdin:\n%s", brief)
+	}
+	withShell, err := g.buildRequest(context.Background(), invocation{
+		charter: reviewerCharter(), rubric: "r", judging: true, shell: true, tools: "Read,Bash(satelle:*)",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range []string{"satelle story get", "satelle story docs", "satelle ledger list --story"} {
+		if !strings.Contains(withShell.SystemPrompt, cmd) {
+			t.Errorf("shell judging prompt missing %q", cmd)
+		}
+	}
+	perform, err := g.buildRequest(context.Background(), invocation{
+		charter: executorCharter("coder", "in_progress", "default"), rubric: "r",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(perform.SystemPrompt, "satelle story get") {
+		t.Error("performer prompt must keep the pull-context call to action")
+	}
+	if strings.Contains(perform.SystemPrompt, "diff.patch_path") {
+		t.Error("performer prompt must not use the judging briefing")
+	}
+}
+
 func TestBuildRequestMarshalsSettings(t *testing.T) {
 	g := New(&fakeRunner{}, fakeDocs{workflow: testWorkflow}, "/repo", "")
 
