@@ -83,7 +83,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 			// create path itself. Never fail a successful create over the advisory.
 			// Category warn-mode advisory (sty_b2315e17) rides the same channel.
 			if a, aerr := appFrom(cmd); aerr == nil {
-				if notice := createGateNotice(a.Config.Review.GateCreate, a.DataDir); notice != "" {
+				if notice := createGateNotice(a.ProcessConfig.Review.GateCreate, a.ProcessDataDir); notice != "" {
 					fmt.Fprint(cmd.ErrOrStderr(), notice)
 				}
 				if notice := categoryNotice(a.Config, cCategory); notice != "" {
@@ -236,6 +236,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyRestampCommand())
 		parent.AddCommand(storyAmendCommand())
 		parent.AddCommand(storyStopRequestCommand())
+		parent.AddCommand(storyWorktreeCommand())
 		parent.AddCommand(storyRecoverCommand())
 		parent.AddCommand(storySeatCommands()...)
 		parent.AddCommand(storyHoldCommands())
@@ -1735,6 +1736,44 @@ Never cancel a healthy story to free the seat — cancelled is terminal.`,
 		},
 	}
 	cmd.Flags().StringVar(&reason, "reason", "", "why the stop is requested")
+	return cmd
+}
+
+// storyWorktreeCommand builds `satelle story worktree <id>` (sty_804c566b): open
+// the git worktree a story is engaged from and carry into it the gitignored
+// paths the repo's [worktree] declaration names. satelle holds no convention —
+// the branch and location templates and the include list are the repo's config.
+func storyWorktreeCommand() *cobra.Command {
+	var base, branch, path, existing string
+	cmd := &cobra.Command{
+		Use:   "worktree <id> --base <ref>",
+		Short: "Open a git worktree for a story, carrying the gitignored paths the repo declares it needs",
+		Long: `Open the worktree a story is engaged from, carrying the gitignored paths the
+repo's [worktree] table declares it needs (a plain git worktree add copies only
+tracked content). Each is linked from the main tree, never copied.
+
+--base is required and never defaults to HEAD: the epic's base branch for a
+child of an epic, or a done dependency's branch for a dependent. --branch and
+--path override the repo's templates and are required when it declares none.
+
+--existing <path> applies the declaration to a worktree that already exists,
+creating nothing and deleting nothing. See satelle help worktree.`,
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := map[string]any{"id": args[0]}
+			f := cmd.Flags()
+			putChanged(req, f, "base", "base")
+			putChanged(req, f, "branch", "branch")
+			putChanged(req, f, "path", "path")
+			putChanged(req, f, "existing", "existing")
+			return dispatch(cmd, "story-worktree", req)
+		},
+	}
+	cmd.Flags().StringVar(&base, "base", "", "ref the new worktree's branch is cut from (required unless --existing)")
+	cmd.Flags().StringVar(&branch, "branch", "", "new branch name (default: the [worktree] branch template)")
+	cmd.Flags().StringVar(&path, "path", "", "worktree location (default: the [worktree] path template)")
+	cmd.Flags().StringVar(&existing, "existing", "", "bring an existing worktree up to the declaration instead of creating one")
 	return cmd
 }
 

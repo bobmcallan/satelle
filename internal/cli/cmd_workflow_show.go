@@ -99,10 +99,7 @@ func showDerivedRoute(out io.Writer, a *app.App, category string, tags []string)
 // taking the skill resolver as a parameter rather than reaching for the store —
 // so a test can drive it against a doc + agents layer with no database.
 func renderWorkflowShow(out io.Writer, a *app.App, doc docindex.Doc, resolves func(string) bool) error {
-	dataDir := a.DataDir
-	if dataDir == "" {
-		dataDir = a.Config.ResolveDataDir(a.RepoRoot)
-	}
+	dataDir := a.PlaneDir()
 
 	fmt.Fprintf(out, "WORKFLOW %s\n", doc.Name)
 	fmt.Fprintf(out, "  scope:      %s\n", scopeLabel(doc))
@@ -252,7 +249,7 @@ func hookGrantIndex(a *app.App, dataDir string) (map[string]agentvalidate.Grant,
 	if err != nil {
 		workspace = config.AgentsConfig{}
 	}
-	for _, g := range agentvalidate.ValidateEffectiveLayered(repo, workspace, global, a.Config.Vars, nil, nil).Grants {
+	for _, g := range agentvalidate.ValidateEffectiveLayered(repo, workspace, global, a.PlaneConfig().Vars, nil, nil).Grants {
 		index[g.Name] = g
 	}
 	return index, agentsFile, catalogFile

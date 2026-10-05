@@ -58,20 +58,19 @@ func withHeuristicMark(caller callerID, msg string) string {
 }
 
 func denyIfNoImplement(cmd *cobra.Command, raw []byte, target string) error {
-	cfg, cfgPath, err := config.Load("")
+	proc, invoking, _, _, err := config.LoadInvokingProcess()
 	if err != nil {
 		return nil
 	}
-	if len(cfg.Gate.NoImplementModels) == 0 {
+	if len(proc.Gate.NoImplementModels) == 0 {
 		return nil
 	}
-	root := config.RepoRootFromConfigPath(cfgPath)
 	abs := target
 	if target != "" {
-		abs = resolveAbsTarget(root, target)
+		abs = resolveAbsTarget(invoking, target)
 	}
 	caller := resolveCaller(raw, osCallerFS{})
-	d, _, _, reason := evaluateNoImplement(caller, abs, root, cfg)
+	d, _, _, reason := evaluateNoImplement(caller, abs, invoking, proc)
 	if d == "deny" {
 		return denyPreToolUse(cmd, raw, reason)
 	}

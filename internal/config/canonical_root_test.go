@@ -181,10 +181,9 @@ func TestCanonicalRepoRoot_NonSatelleMainTreeReturnsInvokingDir(t *testing.T) {
 	}
 }
 
-// AC7: the DATA dir is deliberately NOT canonicalised. A worktree keeps its own
-// .satelle so it can hold authored substrate, which is what lets it derive the
-// repo's real route rather than the embedded default. Identity moves; the data
-// dir does not.
+// Discovery still keys on a literal .satelle in the tree it is asked about.
+// CanonicalRepoRoot does not move FindDataDir onto the main tree. The process
+// read-plane is a separate resolution, after config is loaded.
 func TestCanonicalRepoRoot_DoesNotMoveTheDataDir(t *testing.T) {
 	base := t.TempDir()
 	main := mkSatelleTree(t, filepath.Join(base, "satelle"))
@@ -203,10 +202,11 @@ func TestCanonicalRepoRoot_DoesNotMoveTheDataDir(t *testing.T) {
 	if got := CanonicalRepoRoot(wt); got != main {
 		t.Fatalf("identity: got %q, want %q", got, main)
 	}
-	// ...but FindDataDir still resolves the WORKTREE's own .satelle, which is
-	// what a worktree needs to read the repo's authored workflows and skills.
+	// ...but FindDataDir still resolves a literal .satelle in the tree it is
+	// asked about. It does not follow the main tree. That worktree copy is
+	// not the process of record; TestWorktreeOwnDataDirIsNotTheProcess is.
 	if _, ok := FindDataDir(wt); !ok {
-		t.Error("FindDataDir(worktree) found no .satelle; the identity fix must not cost route correctness")
+		t.Error("FindDataDir(worktree) found no .satelle")
 	}
 	// And the two roots keep their own substrate directories.
 	if wd, _ := FindDataDir(wt); wd != filepath.Join(wt, DefaultDataDir) {

@@ -20,10 +20,9 @@ import (
 // helper keeps a fixture honest about where a default actually lives.
 func substrateSkillBody(t *testing.T, name string) string {
 	t.Helper()
-	root := repoRootForTest()
 	candidates := []string{
-		filepath.Join(root, ".satelle", "skills", name+".md"),
-		filepath.Join(root, "internal", "config", "substrate", "skills", name+".md"),
+		filepath.Join(repoProcessDataDir(t), "skills", name+".md"),
+		filepath.Join(repoRootForTest(), "internal", "config", "substrate", "skills", name+".md"),
 	}
 	for _, p := range candidates {
 		if b, err := os.ReadFile(p); err == nil {

@@ -282,10 +282,12 @@ func ReadRepoPathMarker(runtimeDir string) string {
 // separate project of its own.
 //
 // `git rev-parse --git-common-dir` already resolves from any worktree to the main
-// repository's .git — the same fact RepoKey collapses worktrees with. A worktree
-// needs its own .satelle for authored substrate, so the DATA dir is deliberately
-// left alone; what is canonicalised here is IDENTITY: the path a repo registers
-// under and the slug its mirror partition carries.
+// repository's .git — the same fact RepoKey collapses worktrees with. FindDataDir
+// still keys on a literal .satelle in the tree it is given, so the DATA dir is
+// deliberately left alone; what is canonicalised here is IDENTITY: the path a
+// repo registers under and the slug its mirror partition carries. The process
+// read-plane is not this function: once config is loaded, it follows the data
+// dir the main tree's loaded config names.
 //
 // Without this, registering from a worktree added a second project row and
 // relabelled the parent repo's partition after its own directory name, so
@@ -299,9 +301,11 @@ func ReadRepoPathMarker(runtimeDir string) string {
 // this: the workspace-registry path, the mirror partition's slug, its path and
 // ProjectName, and the runtime dir's repo.path marker. Identity NAMES the
 // repository, and a worktree and its parent are the same repository, so identity
-// must not move per worktree. Every LOCATION use keeps the invoking root: the
-// data dir, authored substrate, story docs, and runtime-dir resolution (which
-// collapses worktrees by RepoKey on its own). Canonicalising only SOME identity
+// must not move per worktree. Every LOCATION use of this function keeps the
+// invoking root: FindDataDir, the edit tree, and runtime-dir resolution (which
+// collapses worktrees by RepoKey on its own). The process read-plane is a
+// separate resolution after config is loaded, and it follows the data dir the
+// main tree's loaded config names. Canonicalising only SOME identity
 // sinks is worse than canonicalising none — that is how the partition's slug
 // read `satelle` while its path still read the worktree, so the audit is by SINK
 // (grep IdentityMeta, ProjectName, RepoPathMarker, and the registry writers)

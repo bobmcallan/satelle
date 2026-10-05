@@ -208,6 +208,13 @@ func TestEpicSeatTreeConflict(t *testing.T) {
 	if !strings.Contains(err.Error(), treeA) {
 		t.Errorf("refusal must name the occupied tree: %v", err)
 	}
+	// sty_804c566b: the refusal directs to the verb that opens a worktree
+	// carrying the declared paths, and states the base rule.
+	for _, want := range []string{"satelle story worktree " + childB.ID + " --base", "satelle help worktree"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal must contain %q: %v", want, err)
+		}
+	}
 	var still workitem.Item
 	json.Unmarshal(call(t, "story-get", map[string]any{"id": childB.ID}), &still)
 	if still.Status != workitem.StatusBacklog {

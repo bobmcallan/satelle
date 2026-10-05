@@ -125,9 +125,21 @@ var readLockConfig = os.ReadFile
 // read or parsed fails closed: the default lock, with the seeded dump globs so
 // the story-reference dumps stay writable.
 func substrateLockGate(cmd *cobra.Command, raw []byte, target string, holders []seatInfo) error {
-	cfgPath, _ := config.ResolvePath("")
-	content, rerr := readLockConfig(cfgPath)
-	root := config.RepoRootFromConfigPath(cfgPath)
+	_, invoking, _, processPath, lerr := config.LoadInvokingProcess()
+	var content []byte
+	var rerr error
+	// A missing process file, or no path because the invoking tree is the
+	// main tree and that tree has no config file, is the default lock.
+	// Any other read or parse failure also fails closed to that default.
+	if lerr != nil || strings.TrimSpace(processPath) == "" {
+		rerr = os.ErrNotExist
+	} else {
+		content, rerr = readLockConfig(processPath)
+	}
+	root := invoking
+	if strings.TrimSpace(root) == "" {
+		root = "."
+	}
 	globs, ok := config.ParseEditExemptGlobs(string(content))
 	if rerr != nil || !ok {
 		globs = managedEditExemptGlobs

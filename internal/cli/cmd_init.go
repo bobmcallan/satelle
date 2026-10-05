@@ -1806,6 +1806,18 @@ const scaffoldTomlAfterExempt = `
 # [engagement]
 # parallel = "epic"
 
+# [worktree] — what a worktree opened with 'satelle story worktree <id> --base
+# <ref>' needs. git worktree add carries only tracked content, so list the
+# gitignored paths (files or directories, repo-relative) this repo needs in a
+# tree; each is linked from the main tree, never copied. branch and path are
+# templates ({id} is the story id; a relative path resolves from the main tree);
+# with no template the --branch / --path flags are required. Nothing is declared
+# by default. See 'satelle help worktree'.
+# [worktree]
+# include = [".env"]
+# branch = "work/{id}"
+# path = "../trees/{id}"
+
 # substrate_roots — per-kind parent dir for authored markdown. Unset means
 # <data_dir>/<kind> (e.g. .satelle/documents). Point a kind elsewhere — even
 # outside .satelle/ — to author it at the repo root or another path:

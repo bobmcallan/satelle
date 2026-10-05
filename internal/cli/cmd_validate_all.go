@@ -42,7 +42,7 @@ silently. Read-only, deterministic, no agent — run it after any substrate edit
 			}
 			// Wikilink audit (whole substrate).
 			fmt.Fprintln(out, "# wikilinks")
-			dataDir := a.Config.ResolveDataDir(a.RepoRoot)
+			dataDir := a.PlaneDir()
 			problems := auditWikilinks(dataDir, config.EmbeddedDefaults())
 			if len(problems) == 0 {
 				fmt.Fprintln(out, "PASS  wikilinks (all [[refs]] resolve)")
