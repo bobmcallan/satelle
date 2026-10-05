@@ -551,12 +551,7 @@ func priorVerdictsResolver() func(ctx context.Context, itemID, from, to string) 
 		}
 		out := make([]agentstep.PriorVerdict, 0, len(verdicts))
 		for _, v := range verdicts {
-			out = append(out, agentstep.PriorVerdict{
-				Skill:     v.Skill,
-				Decision:  v.Decision,
-				Notes:     v.Notes,
-				CreatedAt: v.CreatedAt,
-			})
+			out = append(out, agentstep.PriorVerdictFrom(v))
 		}
 		return out
 	}

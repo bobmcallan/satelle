@@ -570,7 +570,9 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		// top-level verdict so both paths record identically.
 		reviewers := dec.Reviewers
 		if len(reviewers) == 0 && dec.Gated {
-			reviewers = []ReviewerVerdict{{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, Command: dec.Command, Context: dec.Context, Model: dec.Model,
+			reviewers = []ReviewerVerdict{{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning,
+				Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated,
+				Command: dec.Command, Context: dec.Context, Model: dec.Model,
 				ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 				TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 				UsageAvailable: dec.UsageAvailable,
@@ -1813,19 +1815,21 @@ func transitionPayload(from, to, skill string) json.RawMessage {
 // presentation is countable however many reviewers judged it.
 func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.RawMessage {
 	p := struct {
-		From          string       `json:"from"`
-		To            string       `json:"to"`
-		Attempt       string       `json:"attempt,omitempty"`
-		Skill         string       `json:"skill,omitempty"`
-		Order         int          `json:"order"`
-		System        bool         `json:"system,omitempty"`
-		Notes         string       `json:"notes,omitempty"`
-		Reasoning     string       `json:"reasoning,omitempty"`
-		Accept        bool         `json:"accept"`
-		Model         string       `json:"model,omitempty"`
-		ModelResolved string       `json:"model_resolved,omitempty"`
-		ModelSource   string       `json:"model_source,omitempty"`
-		Models        []ModelUsage `json:"model_usage,omitempty"`
+		From              string       `json:"from"`
+		To                string       `json:"to"`
+		Attempt           string       `json:"attempt,omitempty"`
+		Skill             string       `json:"skill,omitempty"`
+		Order             int          `json:"order"`
+		System            bool         `json:"system,omitempty"`
+		Notes             string       `json:"notes,omitempty"`
+		Reasoning         string       `json:"reasoning,omitempty"`
+		Reviewed          string       `json:"reviewed,omitempty"`
+		ReviewedTruncated bool         `json:"reviewed_truncated,omitempty"`
+		Accept            bool         `json:"accept"`
+		Model             string       `json:"model,omitempty"`
+		ModelResolved     string       `json:"model_resolved,omitempty"`
+		ModelSource       string       `json:"model_source,omitempty"`
+		Models            []ModelUsage `json:"model_usage,omitempty"`
 		// BundleID/BundleSize: this verdict came from one bundled session judging
 		// BundleSize rubrics (sty_23e10d92). The verdict row carries no usage — the
 		// bundle's single agent_invocation row does.
@@ -1834,7 +1838,7 @@ func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.R
 		Seats      []PanelSeat `json:"seats,omitempty"`
 		Combine    string      `json:"combine,omitempty"`
 	}{From: from, To: to, Attempt: attempt, Skill: rv.Skill, Order: rv.Order, System: rv.System,
-		Notes: rv.Notes, Reasoning: rv.Reasoning, Accept: rv.Accept,
+		Notes: rv.Notes, Reasoning: rv.Reasoning, Reviewed: rv.Reviewed, ReviewedTruncated: rv.ReviewedTruncated, Accept: rv.Accept,
 		Model: rv.Model, ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models,
 		BundleID: rv.BundleID, BundleSize: len(rv.BundleSkills),
 		Seats: rv.Seats, Combine: rv.Combine}

@@ -9,8 +9,10 @@
 // Reviewer path: the active workflow names a reviewer_skill per edge; the skill's
 // markdown body rides as the agent's appended system prompt; the work item +
 // requested transition go in on stdin; the agent prints one JSON object
-// {decision, notes, reasoning}, parsed strictly into an accept/reject. Accept lets
-// the caller enact; reject blocks and pushes the notes back to the executor.
+// {decision, notes, reasoning} and may include reviewed, the exact words that
+// verdict rests on. The decision is parsed strictly into an accept/reject.
+// Accept lets the caller enact; reject blocks and pushes the notes back to the
+// executor. The binary stores reviewed; it does not compare it.
 // LLM gate and named-dispatch runs share Invoke (invoke.go) — one path that
 // calls agentcli.Runner.Run (sty_ba860c8a).
 //
@@ -711,6 +713,10 @@ const docsPayloadCeiling = 128 << 10
 const (
 	priorVerdictCount        = 5
 	priorVerdictNotesCeiling = 2 << 10
+	// reviewedCeiling is the size bound on the quotation stored with a verdict.
+	// Over it, the row records that the citation was truncated and omits the
+	// string. It is not a hash and not a comparison of the story.
+	reviewedCeiling = 8 << 10
 )
 
 // diffPayloadCeiling bounds the patch body that rides in one reviewer payload,
@@ -885,11 +891,26 @@ type AmendmentState struct {
 // a reviewer seeing attempt 7 learns the edge is deep even when the window
 // starts at 3.
 type PriorVerdict struct {
-	Skill     string `json:"skill,omitempty"`
-	Decision  string `json:"decision"` // "accept" | "reject"
-	Notes     string `json:"notes,omitempty"`
-	CreatedAt string `json:"created_at,omitempty"` // RFC3339
-	Attempt   int    `json:"attempt"`
+	Skill             string `json:"skill,omitempty"`
+	Decision          string `json:"decision"` // "accept" | "reject"
+	Notes             string `json:"notes,omitempty"`
+	CreatedAt         string `json:"created_at,omitempty"` // RFC3339
+	Attempt           int    `json:"attempt"`
+	Reviewed          string `json:"reviewed,omitempty"`
+	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+}
+
+// PriorVerdictFrom is the one conversion from a ledger prior verdict to the
+// payload record. Attempt stays zero; fillPriorVerdicts assigns it.
+func PriorVerdictFrom(v verb.PriorVerdict) PriorVerdict {
+	return PriorVerdict{
+		Skill:             v.Skill,
+		Decision:          v.Decision,
+		Notes:             v.Notes,
+		CreatedAt:         v.CreatedAt,
+		Reviewed:          v.Reviewed,
+		ReviewedTruncated: v.ReviewedTruncated,
+	}
 }
 
 // ChildState is one child story's id and status, injected into a parent/epic
@@ -999,6 +1020,9 @@ func (g *Engine) fillPriorVerdicts(ctx context.Context, itemID, from, to string,
 	out := make([]PriorVerdict, 0, len(window))
 	for _, v := range window {
 		v.Notes = excerpt(v.Notes, priorVerdictNotesCeiling)
+		// Reviewed is the reviewer's quotation. It is copied whole onto this
+		// window and onto the material snapshot above. It is not excerpted:
+		// a shortened quotation is not a citation.
 		out = append(out, v)
 	}
 	tp.PriorVerdicts = out
@@ -1455,6 +1479,8 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		result.Accept = dec.Accept
 		result.Notes = dec.Notes
 		result.Reasoning = dec.Reasoning
+		result.Reviewed = dec.Reviewed
+		result.ReviewedTruncated = dec.ReviewedTruncated
 		result.Command = dec.Command
 		result.Context = dec.Context
 		result.Model = dec.Model
@@ -1535,7 +1561,8 @@ type gateSlot struct {
 // the serial, parallel and bundled paths.
 func reviewerVerdictOf(skill string, order int, system bool, dec verb.GateDecision) verb.ReviewerVerdict {
 	return verb.ReviewerVerdict{
-		Skill: skill, Order: order, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, System: system,
+		Skill: skill, Order: order, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning,
+		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated, System: system,
 		Command: dec.Command, Context: dec.Context, Model: dec.Model,
 		ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 		TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
@@ -1596,6 +1623,8 @@ func assembleGate(ordered []reviewerRef, results []gateSlot, sysStart int) (verb
 		result.Skill = pick.Skill
 		result.Notes = pick.Notes
 		result.Reasoning = pick.Reasoning
+		result.Reviewed = pick.Reviewed
+		result.ReviewedTruncated = pick.ReviewedTruncated
 		result.Command = pick.Command
 		result.Context = pick.Context
 		result.Model = pick.Model
@@ -4176,10 +4205,26 @@ func inlineListField(line, key string) []string {
 
 // rawDecision is the reviewer's JSON contract: {decision, notes, reasoning}.
 // reasoning is optional for back-compat with notes-only output (design §6.1).
+// reviewed is the exact words this verdict rests on. reviewed_truncated is
+// accepted on the wire and then ignored: the ceiling below decides the flag.
 type rawDecision struct {
-	Decision  string `json:"decision"`
-	Notes     string `json:"notes"`
-	Reasoning string `json:"reasoning"`
+	Decision          string `json:"decision"`
+	Notes             string `json:"notes"`
+	Reasoning         string `json:"reasoning"`
+	Reviewed          string `json:"reviewed,omitempty"`
+	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+}
+
+// applyReviewed bounds a quotation to reviewedCeiling before the decision is
+// copied onward. Over the ceiling the string is dropped and the flag is set.
+// At or under the ceiling the full string is kept and the flag stays unset.
+// A model-sent flag does not override that. This is a size bound, not a
+// comparison and not a shortened citation.
+func applyReviewed(s string) (string, bool) {
+	if len(s) > reviewedCeiling {
+		return "", true
+	}
+	return s, false
 }
 
 // parseDecision finds the reviewer's verdict in the agent's stdout — lenient on
@@ -4195,11 +4240,15 @@ func parseDecision(out []byte) (verb.GateDecision, error) {
 			continue
 		}
 		switch strings.ToLower(strings.TrimSpace(rd.Decision)) {
-		case "accept":
-			d := verb.GateDecision{Accept: true, Notes: rd.Notes, Reasoning: rd.Reasoning}
-			found = &d
-		case "reject":
-			d := verb.GateDecision{Accept: false, Notes: rd.Notes, Reasoning: rd.Reasoning}
+		case "accept", "reject":
+			reviewed, truncated := applyReviewed(rd.Reviewed)
+			d := verb.GateDecision{
+				Accept:            strings.ToLower(strings.TrimSpace(rd.Decision)) == "accept",
+				Notes:             rd.Notes,
+				Reasoning:         rd.Reasoning,
+				Reviewed:          reviewed,
+				ReviewedTruncated: truncated,
+			}
 			found = &d
 		}
 	}

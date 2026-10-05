@@ -17,12 +17,18 @@ import (
 // Accept/Skill/Notes mirror the deciding reviewer (the first reject, or the last
 // reviewer when all accept) so single-reviewer callers keep their contract.
 type GateDecision struct {
-	Gated     bool              // a reviewer skill judged this edge
-	Accept    bool              // accept enacts the transition; reject blocks it
-	Notes     string            // reviewer notes — pushback to the executor on reject
-	Reasoning string            // optional free-form reasoning (verdict contract; may be empty)
-	Skill     string            // the deciding reviewer skill
-	Reviewers []ReviewerVerdict // per-reviewer verdicts in run order (empty for the legacy single-reviewer path)
+	Gated     bool   // a reviewer skill judged this edge
+	Accept    bool   // accept enacts the transition; reject blocks it
+	Notes     string // reviewer notes — pushback to the executor on reject
+	Reasoning string // optional free-form reasoning (verdict contract; may be empty)
+	// Reviewed is the exact words this verdict rests on, as the reviewer quoted
+	// them. ReviewedTruncated is set when that quotation was over the ledger
+	// ceiling and was omitted rather than shortened. The binary stores both; it
+	// does not compare them to the story.
+	Reviewed          string
+	ReviewedTruncated bool
+	Skill             string            // the deciding reviewer skill
+	Reviewers         []ReviewerVerdict // per-reviewer verdicts in run order (empty for the legacy single-reviewer path)
 	// Command/Context describe an isolated AGENT invocation (LLM reviewer): the
 	// resolved harness command and the injected-context source (skill/rubric file).
 	// Empty for a deterministic functional-check gate, which invokes no agent
@@ -98,12 +104,14 @@ type GateDecision struct {
 // review. Order is its position in the run (workflow-named reviewers first,
 // then the always-on system layer); System marks a verdict from that layer.
 type ReviewerVerdict struct {
-	Skill     string `json:"skill"`
-	Order     int    `json:"order"`
-	Accept    bool   `json:"accept"`
-	Notes     string `json:"notes,omitempty"`
-	Reasoning string `json:"reasoning,omitempty"` // optional free-form reasoning (verdict contract)
-	System    bool   `json:"system,omitempty"`
+	Skill             string `json:"skill"`
+	Order             int    `json:"order"`
+	Accept            bool   `json:"accept"`
+	Notes             string `json:"notes,omitempty"`
+	Reasoning         string `json:"reasoning,omitempty"` // optional free-form reasoning (verdict contract)
+	Reviewed          string `json:"reviewed,omitempty"`
+	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+	System            bool   `json:"system,omitempty"`
 	// Command/Context name the agent invocation behind an LLM reviewer's verdict —
 	// the resolved harness command and the injected skill/rubric file — so the trail
 	// records HOW it was judged, not just the outcome. Empty for a functional check.

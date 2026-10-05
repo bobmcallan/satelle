@@ -32,7 +32,7 @@ const bundlePreamble = "## Bundled review — several rubrics, one session\n\n" 
 	"IGNORE that instruction here. Return exactly ONE JSON object, once, at the end of " +
 	"your reply, with one entry per rubric — `skill` is the exact name in its heading:\n\n" +
 	"```json\n" +
-	"{\"verdicts\": [{\"skill\": \"<skill name>\", \"decision\": \"accept|reject\", \"notes\": \"...\", \"reasoning\": \"...\"}]}\n" +
+	"{\"verdicts\": [{\"skill\": \"<skill name>\", \"decision\": \"accept|reject\", \"notes\": \"...\", \"reasoning\": \"...\", \"reviewed\": \"...\"}]}\n" +
 	"```\n\n" +
 	"A rubric you give no verdict for is treated as a REJECT."
 
@@ -51,10 +51,12 @@ func bundleRubric(preps []reviewerPrep) string {
 }
 
 type bundleEntry struct {
-	Skill     string `json:"skill"`
-	Decision  string `json:"decision"`
-	Notes     string `json:"notes"`
-	Reasoning string `json:"reasoning"`
+	Skill             string `json:"skill"`
+	Decision          string `json:"decision"`
+	Notes             string `json:"notes"`
+	Reasoning         string `json:"reasoning"`
+	Reviewed          string `json:"reviewed,omitempty"`
+	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
 }
 
 type bundleEnvelope struct {
@@ -76,10 +78,15 @@ func parseBundleDecisions(out []byte, skills []string) ([]verb.GateDecision, err
 			return
 		}
 		switch strings.ToLower(strings.TrimSpace(e.Decision)) {
-		case "accept":
-			found[skill] = verb.GateDecision{Accept: true, Notes: e.Notes, Reasoning: e.Reasoning}
-		case "reject":
-			found[skill] = verb.GateDecision{Accept: false, Notes: e.Notes, Reasoning: e.Reasoning}
+		case "accept", "reject":
+			reviewed, truncated := applyReviewed(e.Reviewed)
+			found[skill] = verb.GateDecision{
+				Accept:            strings.ToLower(strings.TrimSpace(e.Decision)) == "accept",
+				Notes:             e.Notes,
+				Reasoning:         e.Reasoning,
+				Reviewed:          reviewed,
+				ReviewedTruncated: truncated,
+			}
 		}
 	}
 	for _, obj := range jsonObjectCandidates(out) {
