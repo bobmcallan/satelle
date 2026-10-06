@@ -1,3 +1,19 @@
+## [0.0.614] - 2026-10-06
+
+### Added
+- **A session principle against drifting and orphan documentation ships with the binary.** `satelle-no-drifting-docs` tells agents that the code and configuration are the documentation: do not write prose that restates them, do not create a document nothing reads, and treat a document that has drifted as a defect to delete or replace with a pointer. It is injected every session; a repo overrides it with a same-named file under `.satelle/principles/`. (sty_9fa1023d)
+
+### Changed
+- **A Bash command that writes into locked substrate is held by the substrate lock, as an Edit is.** `hook gate` and `hook commitgate` refuse redirects, `tee`, `rm`/`mv`/`cp`/`sed -i` and `git -C` targets in locked `.satelle/` paths, and interpreter commands (`python`, `node`, `perl`, `ruby`, `sh`/`bash`/`zsh -c`) whose arguments or heredoc name `.satelle`, with the same refusal text and `substrate_lock_deny` ledger row. A script whose path is not in the command text, or a path assembled from fragments, is not visible and is not refused; `satelle hook gate --help` says so. Heredoc bodies and the commands that follow them are now classified by every Bash check. (sty_dc77e118)
+
+### Fixed
+- **The Makefile credentials guard fails a run only when the tests changed which credentials the host file holds.** `scripts/credguard.sh` compares the file's credential identity (servers, display name, email, principal) instead of its bytes, through the same check the integration suite uses, so an outside token refresh during a run no longer fails it; a test that adds, removes or changes a credential, or creates, deletes or corrupts the file, still does. (sty_5ba68e2c)
+
+## [serve-v0.0.126] - 2026-10-06
+
+### Changed
+- The serve path picks up the new session principle, the Bash substrate-lock classification and the shared credential identity check (sty_9fa1023d, sty_dc77e118, sty_5ba68e2c).
+
 ## [0.0.613] - 2026-10-06
 
 ### Fixed
