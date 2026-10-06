@@ -1,3 +1,13 @@
+## [0.0.613] - 2026-10-06
+
+### Fixed
+- **The epic-driving principle's no-branch case now names the dependent child as the one cut from trunk.** It reads "A child whose done target has no branch of its own ... is cut from trunk", where 0.0.612 made the done target the subject. (sty_92e73724)
+
+## [serve-v0.0.125] - 2026-10-06
+
+### Changed
+- The embedded `satelle-agent-goals` principle words its no-branch worktree base case with the dependent child as subject (sty_92e73724).
+
 ## [0.0.612] - 2026-10-06
 
 ### Fixed

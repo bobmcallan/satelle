@@ -50,8 +50,9 @@ those children. Do not pick a child by `order:`, by the sprint, or by title —
 You open the worktrees. Cut an independent child from the epic base, the branch
 the container was engaged on. Cut a child whose `depends-on` target is done and
 already on trunk from trunk: its change is there, and the epic still merges once.
-A done target with no branch of its own (its change was live without a commit) is
-cut from trunk the same way; never cut from a branch that does not exist. Cut a
+A child whose done target has no branch of its own (its change was live without a
+commit) is cut from trunk the same way; never cut from a branch that does not
+exist. Cut a
 child whose `depends-on` target is done but not yet on trunk from that target's
 branch, not from main, so the dependent tree holds the change it was written
 against. A cancelled dependency is a stop: cut no worktree from it and do not
