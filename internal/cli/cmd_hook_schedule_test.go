@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/help"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -100,6 +101,10 @@ func TestAgentGoalsDriveEpicText(t *testing.T) {
 		"Do not pick a child by `order:`, by the sprint, or by title",
 		"Cut an independent child from the epic base",
 		"from that target's branch, not from main",
+		"done and already on trunk from trunk",
+		"no branch of its own",
+		"never cut from a branch that does not exist",
+		"not yet on trunk from that target's branch",
 		"A cancelled dependency is a stop",
 		"One story at a time — when the container declares no schedule.",
 		"This is not the rule once a container declares a schedule",
@@ -121,5 +126,44 @@ func TestAgentGoalsDriveEpicText(t *testing.T) {
 			t.Errorf("unqualified one-at-a-time: %q", flat[lo:hi])
 		}
 		from = i + 1
+	}
+}
+
+// TestWorktreeBaseRuleMatchesPrinciple (sty_92e73724 AC4, AC5, AC6): the help
+// topic states the same three-way base rule as the principle, the story
+// worktree help points at the topic and names trunk, and neither long text
+// carries a repo's lane tag.
+func TestWorktreeBaseRuleMatchesPrinciple(t *testing.T) {
+	principle, ok := embeddedDefault("principles", "satelle-agent-goals")
+	if !ok {
+		t.Fatal("satelle-agent-goals embedded default not present")
+	}
+	topic, ok := help.Get("worktree")
+	if !ok {
+		t.Fatal("worktree help topic not present")
+	}
+	pflat := strings.Join(strings.Fields(principle), " ")
+	tflat := strings.Join(strings.Fields(topic.Body), " ")
+	for _, want := range []string{"already on trunk", "no branch of its own", "not yet on trunk"} {
+		if !strings.Contains(pflat, want) {
+			t.Errorf("principle missing %q", want)
+		}
+		if !strings.Contains(tflat, want) {
+			t.Errorf("worktree topic missing %q", want)
+		}
+	}
+	if !strings.Contains(tflat, "independent child of an epic it is the epic's base branch") {
+		t.Error("worktree topic missing the independent-child base")
+	}
+	for name, body := range map[string]string{"principle": pflat, "worktree topic": tflat} {
+		if strings.Contains(body, "lane:") {
+			t.Errorf("%s names a repo-specific lane tag", name)
+		}
+	}
+	long := strings.Join(strings.Fields(storyWorktreeCommand().Long), " ")
+	for _, want := range []string{"trunk", "satelle help worktree"} {
+		if !strings.Contains(long, want) {
+			t.Errorf("story worktree long help missing %q", want)
+		}
 	}
 }

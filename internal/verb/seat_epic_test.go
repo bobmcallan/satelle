@@ -210,7 +210,7 @@ func TestEpicSeatTreeConflict(t *testing.T) {
 	}
 	// sty_804c566b: the refusal directs to the verb that opens a worktree
 	// carrying the declared paths, and states the base rule.
-	for _, want := range []string{"satelle story worktree " + childB.ID + " --base", "satelle help worktree"} {
+	for _, want := range []string{"satelle story worktree " + childB.ID + " --base", "satelle help worktree", "trunk"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal must contain %q: %v", want, err)
 		}

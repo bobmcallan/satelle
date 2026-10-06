@@ -1752,9 +1752,11 @@ func storyWorktreeCommand() *cobra.Command {
 repo's [worktree] table declares it needs (a plain git worktree add copies only
 tracked content). Each is linked from the main tree, never copied.
 
---base is required and never defaults to HEAD: the epic's base branch for a
-child of an epic, or a done dependency's branch for a dependent. --branch and
---path override the repo's templates and are required when it declares none.
+--base is required and never defaults to HEAD: the epic's base branch for an
+independent child of an epic; for a dependent, trunk once its dependency is on
+trunk or has no branch, otherwise the dependency's branch (see satelle help
+worktree). --branch and --path override the repo's templates and are required
+when it declares none.
 
 --existing <path> applies the declaration to a worktree that already exists,
 creating nothing and deleting nothing. See satelle help worktree.`,

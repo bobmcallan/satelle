@@ -96,7 +96,7 @@ func storyWorktree(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 		res.Path, res.Existing = wt, true
 	} else {
 		if strings.TrimSpace(req.Base) == "" {
-			return nil, errors.New("verb: --base <ref> is required — name the ref the worktree is cut from (for a child of an epic, the epic's base branch; for a dependent, its dependency's branch); satelle never defaults to HEAD")
+			return nil, errors.New("verb: --base <ref> is required — name the ref the worktree is cut from (for a child of an epic, the epic's base branch; for a dependent, trunk or its dependency's branch — see satelle help worktree); satelle never defaults to HEAD")
 		}
 		branch, err := resolveTemplate("branch", req.Branch, worktreeCfg.Branch, req.ID)
 		if err != nil {

@@ -148,6 +148,12 @@ func TestStoryWorktreeBaseIsExplicitAndResolved(t *testing.T) {
 
 	if _, err := openWT(t, map[string]any{"id": "sty_1"}); err == nil || !strings.Contains(err.Error(), "--base") {
 		t.Errorf("omitted base: err = %v, want --base named", err)
+	} else {
+		for _, want := range []string{"trunk", "help worktree"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("omitted base: err = %v, want %q", err, want)
+			}
+		}
 	}
 	if _, err := openWT(t, map[string]any{"id": "sty_1", "base": "nope"}); err == nil || !strings.Contains(err.Error(), `"nope"`) {
 		t.Errorf("unknown base: err = %v", err)

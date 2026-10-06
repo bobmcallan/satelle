@@ -1,3 +1,13 @@
+## [0.0.612] - 2026-10-06
+
+### Fixed
+- **The epic-driving principle no longer tells the driver to cut a dependent child from a branch that holds nothing new or does not exist.** `satelle-agent-goals` ("Driving an epic") now says: cut an independent child from the epic base; cut a child whose done `depends-on` target is already on trunk, or has no branch of its own (its change was live without a commit), from trunk; cut from the target's branch only when the done target is not yet on trunk. `satelle help worktree` ("The base") states the same rule, and the `story worktree` help, the missing `--base` error and the engage refusal name trunk as a base for a dependent and point to `satelle help worktree`. (sty_92e73724)
+
+## [serve-v0.0.124] - 2026-10-06
+
+### Changed
+- The embedded `satelle-agent-goals` principle and the `worktree` help topic carry the trunk-aware worktree base rule for a dependent child (sty_92e73724).
+
 ## [0.0.611] - 2026-10-06
 
 ### Added

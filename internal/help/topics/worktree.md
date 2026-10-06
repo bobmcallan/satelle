@@ -43,10 +43,12 @@ data dir is never carried, and nothing outside the repository is.
 
 ## The base
 
-`--base <ref>` is required; satelle never defaults to HEAD. For a child of an
-epic it is the epic's base branch; for a child whose `depends-on` target is done
-it is that target's branch, so the dependent tree holds the change it was written
-against. The branch is new: an existing branch is refused, never reused or reset.
+`--base <ref>` is required; satelle never defaults to HEAD. For an independent
+child of an epic it is the epic's base branch. For a child whose `depends-on`
+target is done and already on trunk, or done with no branch of its own, it is
+trunk. For a child whose done target is not yet on trunk it is that target's
+branch, so the dependent tree holds the change it was written against. The branch
+is new: an existing branch is refused, never reused or reset.
 
 ## An existing worktree
 
