@@ -1,3 +1,24 @@
+## [0.0.611] - 2026-10-06
+
+### Added
+- **`satelle logout --prune-loopback` removes the stale localhost test credentials earlier test runs left in the host credentials file.** It removes only loopback (`127.0.0.1` / `localhost`) entries that carry no `created_at` and no email, and leaves every real hosted credential untouched. Run it once after upgrading to clear the entries that accumulated before this release. (sty_18403814)
+
+### Changed
+- **The web cost view shows no dollar column.** The Driver sessions table keeps its token, call, cache and agent-time columns; each adapter's note still says, by adapter name, whether usage was measured. (sty_5c4e703e)
+- **The story list's status cell shows the status alone.** A pending outgoing gate's rounds sit on the current PROGRESS chip, with the edge in its tooltip. (sty_5f717362)
+- **Gate outcome counts are shown by number and colour, without pass and fail glyphs.** Accept counts use the accent colour and reject counts the fail colour; each chip's title still says what the numbers mean. (sty_82e203f4)
+- **A blocked episode shows on a progress chip as a count in the warn colour.** The chip's title names the episodes by the route's own park-state name (e.g. "blocked once") instead of a fixed "parked" word. (sty_027a90f0)
+
+### Fixed
+- **No test writes a credential into the operator's host credentials file.** Under `go test` the credentials path is fenced to the test's temp or `SATELLE_HOME` dir; the `internal/cli` and shared test helpers isolate `XDG_CONFIG_HOME`; every Makefile `go test` target runs under `scripts/credguard.sh`, which fails the run when the host file changes. (sty_18403814)
+- **The integration suite's host check tolerates a credential token refresh made outside the suite,** and still fails, naming the file, when the suite itself writes the host credentials file. (sty_d9677380)
+- **A linked worktree of the session's own repository is not refused as a foreign tree.** The foreign-tree fence lets an Edit/Write or Bash mutation in a worktree that shares the session repository's git common dir through to the ordinary edit gate; a different repository is still refused, and an unresolvable common dir fails closed. A target under the process temp dir or `/tmp` is not fenced even when it is itself a git root. (sty_bcf837ff)
+
+## [serve-v0.0.123] - 2026-10-06
+
+### Changed
+- The web story list drops the status-cell gate badge and the chip glyphs, shows blocked episodes as a warn-coloured count and a pending gate on the current chip, and the cost view drops its dollar column (sty_5f717362, sty_82e203f4, sty_027a90f0, sty_5c4e703e).
+
 ## [0.0.610] - 2026-10-06
 
 ### Fixed
