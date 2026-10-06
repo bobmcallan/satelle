@@ -86,12 +86,12 @@ func TestBuildStagesRefusedAttemptIsABadgeNotAStage(t *testing.T) {
 		ev(ledger.KindStatusTransition, "backlog", "plan"), // entry into the live current state
 		ev(ledger.KindReviewReject, "plan", "in_progress"), // the refused earlier attempt
 	}
-	stages, gate := buildStages(chrono, "plan", false, noStep, wfdot.Spec{})
+	stages := buildStages(chrono, "plan", false, noStep, wfdot.Spec{})
 	if len(stages) != 1 || stages[0].Name != "plan" || stages[0].State != "current" {
 		t.Fatalf("stages = %+v, want exactly the current plan stage", stages)
 	}
-	if gate == nil || gate.Rejected != 1 || gate.Accepted != 0 {
-		t.Errorf("gate = %+v, want the refused round as ✗1", gate)
+	if p := stages[0].Pending; p == nil || p.Rejected != 1 || p.Accepted != 0 {
+		t.Errorf("pending = %+v, want the refused round as ✗1", p)
 	}
 }
 
@@ -157,8 +157,8 @@ func TestMirrorRowShowsRunningDispatchBesideEarlierRefusal(t *testing.T) {
 	if len(row.Stages) != 1 || row.Stages[0].Name != "plan" || row.Stages[0].State != "current" {
 		t.Fatalf("Stages = %+v, want the current plan stage (the live plan step)", row.Stages)
 	}
-	if row.Gate == nil || row.Gate.Rejected != 1 {
-		t.Fatalf("Gate = %+v, want ✗1 (the refused attempt)", row.Gate)
+	if p := row.Stages[0].Pending; p == nil || p.Rejected != 1 {
+		t.Fatalf("Stages[0].Pending = %+v, want ✗1 (the refused attempt)", p)
 	}
 
 	ms := NewMirror(s)
@@ -180,6 +180,19 @@ func TestMirrorRowShowsRunningDispatchBesideEarlierRefusal(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("recovering row missing %q; body:\n%s", want, body)
 		}
+	}
+	// The refused round reads from the PROGRESS cell, and the STATUS cell has no
+	// gate badge of its own.
+	if strings.Contains(body, "gate-badge") {
+		t.Errorf("a gate-badge was rendered in the story row; body:\n%s", body)
+	}
+	_, afterCol, ok := strings.Cut(body, `class="col-reviews">`)
+	if !ok {
+		t.Fatalf("no PROGRESS cell in body:\n%s", body)
+	}
+	progress, _, _ := strings.Cut(afterCol, "</td>")
+	if !strings.Contains(progress, `<b class="rej">✗1</b>`) {
+		t.Errorf("PROGRESS cell = %q, want the refused round ✗1", progress)
 	}
 }
 
