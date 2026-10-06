@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -10,7 +11,8 @@ import (
 // the PreToolUse commitgate for cross-repo containment and tokenized commit/push
 // detection (sty_aadd4d6c).
 //
-// Honest scope: reminder and boundary, not a sandbox. Variable expansion, eval,
+// Honest scope: reminder and boundary, not a sandbox. Variable expansion beyond
+// a leading ~ / $VAR from the hook's own environment (expandShellPath), eval,
 // xargs, command substitution, symlink escapes, and a bypassed hook are out of
 // scope. When a form is ambiguous, classifiers return no target / false rather
 // than guess (false positives are worse than missed exotic forms).
@@ -501,7 +503,16 @@ func bashMutationTargets(command, anchor string) (inHome, foreign []string) {
 
 		// Mutation verbs: path-like args after options.
 		if mutationVerbs[cmd] {
-			for _, p := range mutationPathArgs(words, cwd) {
+			var paths []string
+			if cmd == "sed" {
+				// sed reads the segment tokens, not the word list: a quoted
+				// script or -e/-f value is a string token that must still
+				// occupy its slot, or the file after it is mistaken for it.
+				paths = sedPathArgs(commandTokens(seg, idx), cwd)
+			} else {
+				paths = mutationPathArgs(words, cwd)
+			}
+			for _, p := range paths {
 				add(p)
 			}
 		}
@@ -682,8 +693,8 @@ func mutationPathArgs(words []string, cwd string) []string {
 		return []string{resolvePath(cwd, positionals[len(positionals)-1])}
 	}
 
-	// All-args family: rm/touch/mkdir/chmod/chown/truncate/sed/tee — every
-	// non-option arg is a mutation target.
+	// All-args family: rm/touch/mkdir/chmod/chown/truncate/tee — every
+	// non-option arg is a mutation target (sed has its own extractor).
 	skipNext := false
 	for i := 1; i < len(words); i++ {
 		w := words[i]
@@ -692,9 +703,6 @@ func mutationPathArgs(words []string, cwd string) []string {
 			continue
 		}
 		if strings.HasPrefix(w, "-") {
-			if cmd == "sed" && (w == "-e" || w == "-f") {
-				skipNext = true
-			}
 			if (cmd == "rm" || cmd == "mkdir" || cmd == "chmod" || cmd == "chown") &&
 				(w == "-t" || w == "--target-directory") {
 				skipNext = true
@@ -702,6 +710,108 @@ func mutationPathArgs(words []string, cwd string) []string {
 			continue
 		}
 		out = append(out, resolvePath(cwd, w))
+	}
+	return out
+}
+
+// commandTokens returns the segment tokens from the command word on, where
+// skipWords is the number of leading word tokens (env assignments) before it.
+// Unlike wordsOnly it keeps quoted string tokens in position.
+func commandTokens(seg []bashTok, skipWords int) []bashTok {
+	seen := 0
+	for k, t := range seg {
+		if t.Kind != "word" || t.Value == "" {
+			continue
+		}
+		if seen == skipWords {
+			return seg[k:]
+		}
+		seen++
+	}
+	return nil
+}
+
+// unquoteTok returns the text of a quoted string token without its quotes.
+func unquoteTok(v string) string {
+	v = strings.TrimPrefix(v, "$")
+	if len(v) >= 2 && (v[0] == '\'' || v[0] == '"') && v[len(v)-1] == v[0] {
+		return v[1 : len(v)-1]
+	}
+	return v
+}
+
+// sedPathArgs extracts the files a sed invocation edits from its segment tokens
+// (command word first). sed only writes its input files when run in place (-i,
+// -i<suffix>, --in-place[=<suffix>], or a single-dash cluster containing i such
+// as -ni); otherwise it reads them and prints to stdout, so it contributes no
+// target. The script is never a target: it is the value of -e/-f/--expression/
+// --file, or else the first positional. A quoted token is never an option but
+// does occupy a positional or option-value slot, so `sed -i 's/a/b/' f` and
+// `sed -i -e 's/a/b/' f` both yield f. Best-effort like the rest of the
+// classifier: a `w <file>` command inside the script of a non-in-place run is
+// not tracked.
+func sedPathArgs(toks []bashTok, cwd string) []string {
+	if len(toks) < 2 {
+		return nil
+	}
+	inPlace, hasScript, skipNext, optsDone := false, false, false, false
+	var positionals []string
+	for _, t := range toks[1:] {
+		if t.Kind == "string" && t.Value == "HEREDOC" {
+			continue // stdin body, not an argument
+		}
+		w := t.Value
+		quoted := t.Kind == "string"
+		if quoted {
+			w = unquoteTok(w)
+		}
+		switch {
+		case skipNext:
+			skipNext = false
+		case quoted || optsDone || w == "-" || !strings.HasPrefix(w, "-"):
+			positionals = append(positionals, w)
+		case w == "--":
+			optsDone = true
+		case strings.HasPrefix(w, "--"):
+			name, _, hasValue := strings.Cut(w, "=")
+			switch name {
+			case "--in-place":
+				inPlace = true
+			case "--expression", "--file":
+				hasScript = true
+				skipNext = !hasValue
+			case "--line-length":
+				skipNext = !hasValue
+			}
+		default:
+			// Single-dash cluster, scanned left to right. i, e, f and l consume
+			// the rest of the cluster (a suffix, a glued script or a number).
+		cluster:
+			for j := 1; j < len(w); j++ {
+				switch w[j] {
+				case 'i':
+					inPlace = true
+					break cluster
+				case 'e', 'f':
+					hasScript = true
+					skipNext = j == len(w)-1
+					break cluster
+				case 'l':
+					skipNext = j == len(w)-1
+					break cluster
+				}
+			}
+		}
+	}
+	if !inPlace {
+		return nil
+	}
+	if !hasScript && len(positionals) > 0 {
+		positionals = positionals[1:] // the script
+	}
+	out := make([]string, 0, len(positionals))
+	for _, p := range positionals {
+		out = append(out, resolvePath(cwd, p))
 	}
 	return out
 }
@@ -812,9 +922,47 @@ func gluedRedirectRemainder(rest string) string {
 	return rest
 }
 
-// resolvePath makes a path absolute against cwd (no symlink resolution).
+// expandShellPath expands a leading ~, $NAME or the braced form of NAME from
+// the hook's own environment. The word is replaced only when the expansion is
+// an absolute path and the name is followed by nothing or a "/"; anything else
+// (unset, relative, ~user, $(cmd), $NAMEsuffix) is returned unchanged, so it
+// resolves under cwd and stays conservatively in-home. Nothing is executed or
+// globbed.
+func expandShellPath(p string) string {
+	var name, rest string
+	switch {
+	case p == "~" || strings.HasPrefix(p, "~/"):
+		name, rest = "HOME", p[1:]
+	case strings.HasPrefix(p, "$"+"{"):
+		end := strings.IndexByte(p, '}')
+		if end < 0 {
+			return p
+		}
+		name, rest = p[2:end], p[end+1:]
+	case strings.HasPrefix(p, "$"):
+		end := 1
+		for end < len(p) && (p[end] == '_' || unicode.IsLetter(rune(p[end])) || unicode.IsDigit(rune(p[end]))) {
+			end++
+		}
+		name, rest = p[1:end], p[end:]
+	default:
+		return p
+	}
+	if !isShellIdent(name) || (rest != "" && rest[0] != '/') {
+		return p
+	}
+	val := os.Getenv(name)
+	if !filepath.IsAbs(val) {
+		return p
+	}
+	return val + rest
+}
+
+// resolvePath makes a path absolute against cwd (no symlink resolution). A
+// leading ~ or $VAR that the hook's environment expands to an absolute path is
+// expanded first (expandShellPath).
 func resolvePath(cwd, p string) string {
-	p = strings.TrimSpace(p)
+	p = expandShellPath(strings.TrimSpace(p))
 	if p == "" {
 		return ""
 	}
