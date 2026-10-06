@@ -45,6 +45,15 @@ func PushedBranch(ctx context.Context, dir string) (string, error) {
 	return branch, nil
 }
 
+// CurrentBranch is the branch checked out at dir ("" on a detached HEAD).
+func CurrentBranch(ctx context.Context, dir string) string {
+	branch, err := git(ctx, dir, "symbolic-ref", "--short", "-q", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return branch
+}
+
 // UpstreamRemote is the remote the branch checked out at dir pushes to.
 func UpstreamRemote(ctx context.Context, dir string) (string, error) {
 	branch, err := git(ctx, dir, "symbolic-ref", "--short", "-q", "HEAD")

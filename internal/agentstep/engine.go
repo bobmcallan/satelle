@@ -47,6 +47,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/compact"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/placement"
 	"github.com/bobmcallan/satelle/internal/retrieve"
 	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -1864,7 +1865,16 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if target.Agent == "" || target.Agent == "executor" || target.Agent == "reviewer" {
 		return verb.DispatchResult{}, nil
 	}
-	dispatchAgent := target.Agent
+	// Placement (sty_dde8b6a4): a parallel epic child's step may be declared to
+	// run in a cloud session (step.toml remote_agent). Otherwise, or when the
+	// session is not signed in, the step's own agent performs, unchanged.
+	placed := placement.Decide(ctx, item, *target)
+	dispatchAgent := placed.Agent
+	if placed.Note != "" {
+		g.telemetryEvent(ctx, item.ID, "executor", "placement", map[string]any{
+			"placement": placed.Note, "step": toStatus, "agent": dispatchAgent,
+		})
+	}
 	composed := spec.ExecutorSkillsFor(toStatus, item.Tags)
 	dispatchSkill := firstStr(composed)
 	if dispatchSkill == "" {
@@ -1916,7 +1926,12 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	// A cloud performer returns a pushed branch, not stdout: it runs and is
 	// collected on its own path, which never reaches the runner below.
 	if binding.ResolvedInterface() == config.InterfaceCloud {
-		return g.dispatchCloud(ctx, item, toStatus, wfName, dispatchAgent, binding, composed, dispatchSkill)
+		return g.dispatchCloud(ctx, item, toStatus, wfName, dispatchAgent, binding, composed, dispatchSkill, placed.Remote)
+	}
+	if placed.Remote {
+		return verb.DispatchResult{}, fmt.Errorf(
+			"workflow %q places state %q remote on agent %q but its [%s] binding is not interface=cloud — fix remote_agent in step.toml",
+			wfName, toStatus, dispatchAgent, dispatchAgent)
 	}
 	var (
 		outputContract agentartifact.Contract

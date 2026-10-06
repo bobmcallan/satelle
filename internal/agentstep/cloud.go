@@ -15,6 +15,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/placement"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 	"github.com/bobmcallan/satelle/internal/worktree"
@@ -49,9 +50,29 @@ const (
 	defaultCloudDeadline = 60 * time.Minute
 )
 
+// unpushedRemoteRefusal is the refusal for a child placed remote (step.toml
+// remote_agent, sty_dde8b6a4) whose worktree branch the cloud cannot see. The
+// dispatch never pushes for the operator; the message names the child, the
+// placement and the command that clears it, so the driver's missed push is a
+// stop it can act on.
+func (g *Engine) unpushedRemoteRefusal(ctx context.Context, id string, cause error) error {
+	branch := worktree.CurrentBranch(ctx, g.repoRoot)
+	if branch == "" {
+		branch = "<branch>"
+	}
+	remote, err := worktree.UpstreamRemote(ctx, g.repoRoot)
+	if err != nil {
+		remote = "origin"
+	}
+	return fmt.Errorf("cloud dispatch refused: %s is placed remote and its branch %s is not pushed (%v) — push it before presenting the step: git push -u %s %s",
+		id, branch, cause, remote, branch)
+}
+
 // dispatchCloud performs the step in a cloud session and collects the result.
+// remotePlaced marks a step the placement rule sent here (remote_agent) rather
+// than one whose own agent is a cloud binding.
 func (g *Engine) dispatchCloud(ctx context.Context, item workitem.Item, toStatus, wfName, agent string,
-	binding config.AgentBinding, composed []string, skill string) (verb.DispatchResult, error) {
+	binding config.AgentBinding, composed []string, skill string, remotePlaced bool) (verb.DispatchResult, error) {
 	res := verb.DispatchResult{Dispatched: true, Agent: agent, Skill: skill}
 	harness := agentcli.HarnessOf(binding.CommandTemplate())
 
@@ -99,6 +120,9 @@ func (g *Engine) dispatchCloud(ctx context.Context, item workitem.Item, toStatus
 	// The session is based on the pushed branch; the dispatch never pushes for the
 	// operator, so an unpushed worktree is refused before anything starts.
 	if _, err := worktree.PushedBranch(ctx, g.repoRoot); err != nil {
+		if remotePlaced {
+			return res, g.unpushedRemoteRefusal(ctx, item.ID, err)
+		}
 		return res, fmt.Errorf("cloud dispatch refused: %w", err)
 	}
 	remote, err := worktree.UpstreamRemote(ctx, g.repoRoot)
@@ -118,6 +142,9 @@ func (g *Engine) dispatchCloud(ctx context.Context, item workitem.Item, toStatus
 		return res, fmt.Errorf("named agent %q failed performing step %q: %w", agent, toStatus, err)
 	}
 	rec := &verb.CloudDispatch{SessionID: session.ID, URL: session.URL, Branch: branch, Doc: binding.CollectDoc}
+	if remotePlaced {
+		rec.Placement = placement.Remote
+	}
 	res.Command, res.Cloud = session.URL, rec
 	g.emitProgress("cloud session started: %s — waiting up to %s for branch %s…", session.URL, deadline, branch)
 	res.UsageNote = verb.UsageNote{
@@ -126,10 +153,14 @@ func (g *Engine) dispatchCloud(ctx context.Context, item workitem.Item, toStatus
 	}
 	outcome := "failed"
 	defer func() {
-		g.telemetryEvent(ctx, item.ID, "executor", "cloud_dispatch", map[string]any{
+		data := map[string]any{
 			"agent": agent, "step": toStatus, "outcome": outcome, "session_id": rec.SessionID, "url": rec.URL,
 			"branch": rec.Branch, "commit": rec.Commit, "collect_doc": rec.Doc,
-		})
+		}
+		if rec.Placement != "" {
+			data["placement"] = rec.Placement
+		}
+		g.telemetryEvent(ctx, item.ID, "executor", "cloud_dispatch", data)
 	}()
 	fail := func(format string, a ...any) (verb.DispatchResult, error) {
 		return res, fmt.Errorf("named agent %q failed performing step %q: %s (cloud session %s); the story worktree is unchanged",

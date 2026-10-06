@@ -392,6 +392,10 @@ type CloudDispatch struct {
 	Branch    string `json:"branch"`
 	Commit    string `json:"commit,omitempty"`
 	Doc       string `json:"doc,omitempty"`
+	// Placement is "remote" when the step was sent to the cloud by its
+	// remote_agent placement (sty_dde8b6a4); empty when its own agent is the
+	// cloud binding.
+	Placement string `json:"placement,omitempty"`
 }
 
 // ExecutorDispatcher runs the named isolated agent a workflow node allocates a

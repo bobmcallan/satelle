@@ -651,3 +651,43 @@ func TestEmbeddedHelpHasNoUnreachableReferences(t *testing.T) {
 		}
 	}
 }
+
+// TestRemotePlacementTopics (sty_dde8b6a4): where a parallel epic child runs is
+// stated in `satelle help epic-wave`, and the two step.toml keys that declare it
+// in `satelle help agent-dispatch`.
+func TestRemotePlacementTopics(t *testing.T) {
+	wave, ok := Get("epic-wave")
+	if !ok {
+		t.Fatal("epic-wave topic not found")
+	}
+	start := strings.Index(wave.Body, "## Where a child runs")
+	if start < 0 {
+		t.Fatal("epic-wave topic lost its Where a child runs section")
+	}
+	section := wave.Body[start:]
+	for _, want := range []string{
+		"remote_agent", "local_tags", `schedule = "parallel"`, // the placement rule
+		"not signed in",                 // the fallback
+		"git push -u <remote> <branch>", // the driver's push duty
+		"satelle story rework",          // rework is refused...
+		"Re-present the edge",           // ...and the edge re-presented
+		"parks to `blocked`",            // parking after the rejection count
+		"gate-rejection count",
+		"stays at its from-state", // failure
+		"session URL",
+		"`after_children` step keeps refusing",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("epic-wave Where a child runs section missing %q", want)
+		}
+	}
+	dispatch, ok := Get("agent-dispatch")
+	if !ok {
+		t.Fatal("agent-dispatch topic not found")
+	}
+	for _, want := range []string{"remote_agent", "local_tags", "interface = \"cloud\"", "waits_on_children", "satelle help epic-wave"} {
+		if !strings.Contains(dispatch.Body, want) {
+			t.Errorf("agent-dispatch topic missing %q", want)
+		}
+	}
+}

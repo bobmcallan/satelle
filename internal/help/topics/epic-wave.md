@@ -72,3 +72,48 @@ holds no seat. Without `after_children`, container engagement is unchanged, and
 
 The binary only gates the entry and the seat. It runs no git command; a merge is
 a skill the step names.
+
+## Where a child runs
+
+A child's step runs locally unless its step declares otherwise. A performer step
+in `step.toml` may declare `remote_agent = "<binding>"` (a `role = "agent"`,
+`interface = "cloud"` binding in `agents.toml`) and `local_tags = ["<tag>", …]`.
+The step is then performed by `remote_agent`, in a cloud session, when **all** of
+these hold:
+
+- the child belongs to an epic whose container declares `schedule = "parallel"`
+  (the wave's own membership and schedule — a sequential epic, or a story that is
+  not an epic child, keeps the step's own `agent =`);
+- the child carries none of the step's `local_tags` (a tag the repo uses to pin a
+  child local, such as the children that edit shared substrate);
+- the session is **signed in**. A local-only session performs the step with its
+  own `agent =` and records the ledger note
+  `placement: remote declared, local used — not signed in`. A git email is not
+  a sign-in.
+
+A step with no `remote_agent` is unchanged, and the epic's merge never moves: a
+container step (`waits_on_children` or `after_children`) cannot declare
+`remote_agent`, so integration and release stay local. Which children run remote
+and which run local is therefore declared configuration, never a decision of the
+agent driving the epic.
+
+**The driver pushes first.** A cloud session is based on the child's pushed
+branch, and satelle never pushes for you. Before presenting a remote child's
+performer step, push its worktree branch: `git push -u <remote> <branch>`. If you
+forget, the dispatch is refused before anything launches, naming the child, the
+remote placement and that command.
+
+**Rework is refused for a remote child.** A cloud session is one-shot and cannot
+be a relay partner, so `satelle story rework` on a child placed remote is refused
+and ledgered (`rework_refused`). Re-present the edge instead: that launches a
+fresh cloud session carrying the reviewers' findings in its payload. A remote
+child that keeps being rejected parks to `blocked` after the step's declared
+gate-rejection count, with the last objection quoted — nothing is retried
+locally. A local child (a local tag, a sequential epic, or the not-signed-in
+fallback) still opens the relay.
+
+**Failure.** A remote child whose cloud dispatch fails stays at its from-state,
+with the failure and the session URL on the ledger (`cloud_dispatch`, which also
+records `placement: remote`). The base agent is not dispatched in its place. The
+container's `after_children` step keeps refusing entry, naming that child, until
+it has discharged the obligation.

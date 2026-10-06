@@ -171,6 +171,39 @@ func ContainerSchedule(wfs []docindex.Doc, container workitem.Item) string {
 	return schedule
 }
 
+// EpicChildSchedule is the child schedule of the epic item is a child of: the
+// schedule its container's route declares, found the way engagement finds the
+// container (parent_id and epic:<theme>). It is "" for a story that is not an
+// epic child, when a store or route lookup fails, when a container declares no
+// single schedule, and when item's containers disagree — so a caller placing
+// work by schedule never acts on a guess. Read-only mechanism.
+func EpicChildSchedule(ctx context.Context, item workitem.Item) string {
+	if item.ID == "" || item.Kind != workitem.KindStory || epicset.IsEpicParent(item) {
+		return ""
+	}
+	store, err := requireWorkItem()
+	if err != nil {
+		return ""
+	}
+	idx, err := requireDocIndex()
+	if err != nil {
+		return ""
+	}
+	wfs, err := idx.List(ctx, "workflows")
+	if err != nil {
+		return ""
+	}
+	schedule := ""
+	for _, container := range waveContainersOf(ctx, store, item) {
+		s := ContainerSchedule(wfs, container)
+		if s == "" || (schedule != "" && s != schedule) {
+			return ""
+		}
+		schedule = s
+	}
+	return schedule
+}
+
 // storyWave assesses an epic-parent's children. It reads the store and the
 // workflow index and writes nothing: no status, no lease, no tag, no dispatch.
 func storyWave(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {

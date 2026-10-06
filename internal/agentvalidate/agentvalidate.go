@@ -486,6 +486,27 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 					r.Gates = append(r.Gates, gateAlloc(doc.Name, st.Name, st.Skill, st.Agent, b.Model, st.Model))
 				}
 			}
+			// remote_agent (sty_dde8b6a4): the cloud binding that performs a parallel
+			// epic child's step. It must resolve to a role=agent, interface=cloud
+			// binding, and never sits on a container step — the epic's merge stays
+			// local. Naming it counts the binding as used.
+			if st.RemoteAgent != "" {
+				usedNamed[st.RemoteAgent] = true
+				switch rb, ok := agents.NamedBinding(st.RemoteAgent); {
+				case st.WaitsOnChildren || st.AfterChildren != "":
+					r.allocProblem(fmt.Sprintf(
+						"workflow %q step %q declares remote_agent=%s on a container step (waits_on_children / after_children) — the epic's merge stays local",
+						doc.Name, st.Name, st.RemoteAgent))
+				case !ok:
+					r.allocProblem(fmt.Sprintf(
+						"workflow %q step %q declares remote_agent=%s with no [%s] binding in agents.toml",
+						doc.Name, st.Name, st.RemoteAgent, st.RemoteAgent))
+				case config.ResolvedRole(st.RemoteAgent, rb) != config.RoleAgent || rb.ResolvedInterface() != config.InterfaceCloud:
+					r.allocProblem(fmt.Sprintf(
+						"workflow %q step %q declares remote_agent=%s, but [%s] is role=%q interface=%q (want role=agent interface=cloud)",
+						doc.Name, st.Name, st.RemoteAgent, st.RemoteAgent, config.ResolvedRole(st.RemoteAgent, rb), rb.ResolvedInterface()))
+				}
+			}
 			// on_enter_agent was validated here as a one-shot entry performer. Flat
 			// dispatch retired it (sty_05a5e203): no node dispatches on entry, so
 			// there is no entry binding to resolve. An ADVISOR the orchestrator

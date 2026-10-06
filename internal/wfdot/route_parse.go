@@ -151,8 +151,13 @@ type stepWire struct {
 	// own route before a container may enter this step. A plain string, so an
 	// absent key stays "" and container engagement is unchanged.
 	AfterChildren string `toml:"after_children"`
-	Start         bool   `toml:"start"`
-	Terminal      bool   `toml:"terminal"`
+	// RemoteAgent and LocalTags declare where a parallel epic child's step runs:
+	// the cloud binding that performs it, and the tags that pin a child to the
+	// step's own agent (sty_dde8b6a4).
+	RemoteAgent string   `toml:"remote_agent"`
+	LocalTags   []string `toml:"local_tags"`
+	Start       bool     `toml:"start"`
+	Terminal    bool     `toml:"terminal"`
 	// ContextBudget and TurnBudget are the step's own spend bounds for its
 	// performer (sty_a7914904), overriding the allocated binding's. Zero or
 	// absent means unset; a negative value is refused. The numbers are the
@@ -434,6 +439,8 @@ func ParseSteps(body string) (Catalogue, error) {
 			WaitsOnChildren: s.WaitsOnChildren,
 			Schedule:        s.Schedule,
 			AfterChildren:   strings.TrimSpace(s.AfterChildren),
+			RemoteAgent:     strings.TrimSpace(s.RemoteAgent),
+			LocalTags:       s.LocalTags,
 			ContextBudget:   s.ContextBudget,
 			TurnBudget:      s.TurnBudget,
 		}
