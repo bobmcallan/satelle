@@ -25,6 +25,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/agentvalidate"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/doctor"
 )
 
@@ -351,8 +352,12 @@ are both visible here rather than at the next dispatch.`,
 			// one verb covers the mechanical agent↔workflow surface). Disk-backed
 			// resolver and AUTHORED set, matching doctor (sty_540cfcd3).
 			resolve := doctor.SkillResolver(dataDir)
-			_, f, _ := validateAuthoredDir(out, "workflows", filepath.Join(dataDir, "workflows"), "", resolve)
-			failed += f
+			// An unreadable workflows dir was already reported above, once, as a
+			// problem of the governing set; validating it again would print it twice.
+			if _, _, unreadable := docindex.UnreadableOf(governing); !unreadable {
+				_, f, _ := validateAuthoredDir(out, "workflows", filepath.Join(dataDir, "workflows"), "", resolve)
+				failed += f
+			}
 			for _, p := range agentstep.WorkflowConsistency(doctor.WorkflowDocs(dataDir), resolve) {
 				failed++
 				fmt.Fprintf(out, "FAIL  workflows (consistency) — %s\n", p)

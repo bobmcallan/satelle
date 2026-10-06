@@ -22,11 +22,11 @@ func TestDerivedRouteNameRoundTripsFromCreateToRestamp(t *testing.T) {
 	docs := fakeDocs{workflow: plainWF}
 	g, _ := newEngine(t, "", docs)
 
-	name := g.WorkflowNameFor(context.Background(), "feature")
-	if name != wfgovern.DerivedRouteName {
-		t.Fatalf("WorkflowNameFor = %q, want the derived route %q", name, wfgovern.DerivedRouteName)
+	name, nerr := g.WorkflowNameFor(context.Background(), "feature")
+	if nerr != nil || name != wfgovern.DerivedRouteName {
+		t.Fatalf("WorkflowNameFor = %q, %v, want the derived route %q", name, nerr, wfgovern.DerivedRouteName)
 	}
-	states, resolved := g.WorkflowStates(context.Background(), name)
+	states, resolved, _ := g.WorkflowStates(context.Background(), name)
 	if !resolved {
 		t.Fatalf("WorkflowStates(%q) must resolve — restamp refuses a name that does not", name)
 	}
@@ -47,7 +47,7 @@ func TestDerivedRouteNameDoesNotResolveWithoutARouteSource(t *testing.T) {
 		{Kind: "workflows", Name: "some-graph", Body: "---\nname: some-graph\n---\n# not a route\n"},
 	}}
 	g, _ := newEngine(t, "", docs)
-	if _, resolved := g.WorkflowStates(context.Background(), wfgovern.DerivedRouteName); resolved {
+	if _, resolved, _ := g.WorkflowStates(context.Background(), wfgovern.DerivedRouteName); resolved {
 		t.Fatal("the derived route must not resolve in a repo that has no route source")
 	}
 }
@@ -60,7 +60,7 @@ func TestDerivedRouteNameDoesNotResolveOnHalfARoute(t *testing.T) {
 			Body: "[meta]\nname = \"done\"\n\n[\"*\"]\nobligations = [\"raised\"]\n"},
 	}}
 	g, _ := newEngine(t, "", docs)
-	if _, resolved := g.WorkflowStates(context.Background(), wfgovern.DerivedRouteName); resolved {
+	if _, resolved, _ := g.WorkflowStates(context.Background(), wfgovern.DerivedRouteName); resolved {
 		t.Fatal("one half is not a route — the name must not resolve")
 	}
 }

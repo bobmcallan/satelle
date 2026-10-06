@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 )
 
 var registered []*cobra.Command
@@ -47,8 +48,12 @@ dependency. See https://github.com/bobmcallan/satelle for docs.`,
 				// A store-optional command reports on something other than the
 				// current repo, so an ungoverned cwd must not stop it. It runs with
 				// no app and is responsible for handling that (sty_0f471251).
+				//
+				// An unreadable authored process is the other case it must see: the
+				// bootstrap refuses every store command then, and doctor's job is to
+				// report that as a finding rather than stop on it (sty_d6e209aa).
 				if err != nil && cmd.Annotations[storeOptionalAnnotation] == "1" &&
-					errors.Is(err, app.ErrNotInitialised) {
+					(errors.Is(err, app.ErrNotInitialised) || errors.Is(err, wfgovern.ErrAuthoredProcessUnreadable)) {
 					return nil
 				}
 				return err

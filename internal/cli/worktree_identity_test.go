@@ -349,8 +349,9 @@ func TestWorktreeWorkspaceListAndPartitionsAgree(t *testing.T) {
 
 // A worktree that carries its own route is not the process of record. The
 // six-step files below live only in the worktree; the story still walks the
-// main tree's route (sty_ddbe2669). Reporting that the copy diverges is a
-// sibling story.
+// main tree's route (sty_ddbe2669). That the copy diverges is reported in the
+// route's `## Process of record` section (sty_d6e209aa), which the main tree's
+// route does not carry; the route above it is identical.
 func TestWorktreeRouteFollowsTheMainTree(t *testing.T) {
 	f := newWorktreeFixture(t)
 	f.initWorktree(t)
@@ -387,8 +388,12 @@ func TestWorktreeRouteFollowsTheMainTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("story route (main): %v\n%s", err, mainRoute)
 	}
-	if wtRoute != mainRoute {
+	wtBody, wtReport, _ := strings.Cut(wtRoute, "\n\n## Process of record")
+	if strings.TrimSpace(wtBody) != strings.TrimSpace(mainRoute) {
 		t.Fatalf("worktree route diverges from the main tree\nworktree:\n%s\nmain:\n%s", wtRoute, mainRoute)
+	}
+	if !strings.Contains(wtReport, "worktree's copy is ignored") {
+		t.Errorf("worktree route does not report its divergent copy:\n%s", wtRoute)
 	}
 	for _, step := range []string{"plan", "integration", "release"} {
 		if strings.Contains(wtRoute, "**"+step+"**") {

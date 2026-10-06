@@ -78,6 +78,13 @@ const (
 	IDWorkflowStructure   = "workflow.structure"   // a workflow/skill/principle/task fails its structure contract
 	IDWorkflowConsistency = "workflow.consistency" // cross-workflow consistency (ambiguity, unresolved skills)
 
+	// The process of record (sty_d6e209aa): where the repository's authored
+	// process is missing, unreadable or overridden, satelle says so rather than
+	// governing by the binary's default in silence.
+	IDProcessUnreadable = "process.unreadable" // the authored workflows dir exists and cannot be read
+	IDProcessAbsent     = "process.absent"     // the authored workflows dir is absent; the embedded backstop governs
+	IDProcessDivergent  = "process.divergent"  // a linked worktree's own copy of the process differs from the main tree's
+
 	// Deployment.
 	IDScaffoldStale   = "scaffold.stale"   // deployed harness scaffolding differs from the binary's canonical form
 	IDScaffoldMissing = "scaffold.missing" // canonical harness scaffolding is absent
@@ -117,6 +124,7 @@ var ids = []string{
 	IDReviewerUnsafe, IDReviewerIsolation, IDNodeAlloc, IDHookAlloc,
 	IDBinaryMissing, IDBinaryMalformed,
 	IDWorkflowStructure, IDWorkflowConsistency,
+	IDProcessUnreadable, IDProcessAbsent, IDProcessDivergent,
 	IDScaffoldStale, IDScaffoldMissing, IDRepoUnreadable, IDConfigStray, IDSubstrateUnlocked, IDBreakingUnacknowledged,
 	IDSyncLocal, IDSyncOk, IDSyncFailing, IDSyncUnbacked, IDSyncConfig,
 	IDStatusDrift,

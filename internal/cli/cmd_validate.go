@@ -193,6 +193,17 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 // moment it became TOML: `workflow validate` reported "validated 0" on a
 // perfectly good route, which reads as a clean pass (sty_81bb0dde).
 func validateAuthoredDir(out io.Writer, kind, dir, nameFilter string, resolve func(skill string) bool) (validated, failed, exempt int) {
+	// A dir that exists and cannot be read is a FAILURE, not an empty kind
+	// (sty_d6e209aa). For workflows it is the named message every surface prints:
+	// the embedded route would otherwise govern, and its gates are not the repo's.
+	if state, perr := docindex.ProbeDir(dir); state == docindex.DirUnreadable {
+		if kind == "workflows" {
+			fmt.Fprintf(out, "FAIL  workflows — %s\n", wfgovern.UnreadableMessage(dir, perr.Error()))
+		} else {
+			fmt.Fprintf(out, "FAIL  %s — %s cannot be read: %v\n", kind, dir, perr)
+		}
+		return 0, 1, 0
+	}
 	entries, derr := os.ReadDir(dir)
 	if derr != nil {
 		return 0, 0, 0
