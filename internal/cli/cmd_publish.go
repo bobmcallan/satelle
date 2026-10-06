@@ -193,7 +193,7 @@ func runPublishPush(cmd *cobra.Command, serverArg, workspaceArg, kind, title str
 		}
 		return nil
 	}
-	client := hosted.NewClient(server, hosted.FileStore{}, nil)
+	client := hosted.NewClient(server, hosted.DefaultStore(), nil)
 	wsID, err := client.ActiveWorkspaceID(cmd.Context(), teamName)
 	if err != nil {
 		return fmt.Errorf("resolve team workspace: %w", err)
@@ -262,7 +262,7 @@ func runPublishList(cmd *cobra.Command, serverArg, workspaceArg string) error {
 	if err != nil {
 		return err
 	}
-	client := hosted.NewClient(server, hosted.FileStore{}, nil)
+	client := hosted.NewClient(server, hosted.DefaultStore(), nil)
 	wsID, err := client.ActiveWorkspaceID(cmd.Context(), teamName)
 	if err != nil {
 		return fmt.Errorf("resolve team workspace: %w", err)
@@ -300,7 +300,7 @@ func runPublishAdopt(cmd *cobra.Command, serverArg, workspaceArg string, version
 	}
 	path = strings.TrimPrefix(filepath.ToSlash(path), "./")
 	path = strings.TrimPrefix(path, ".satelle/")
-	client := hosted.NewClient(server, hosted.FileStore{}, nil)
+	client := hosted.NewClient(server, hosted.DefaultStore(), nil)
 	wsID, err := client.ActiveWorkspaceID(cmd.Context(), teamName)
 	if err != nil {
 		return fmt.Errorf("resolve team workspace: %w", err)
@@ -363,7 +363,7 @@ func runPublishCheck(cmd *cobra.Command, serverArg, workspaceArg string, doUpdat
 		fmt.Fprintln(cmd.OutOrStdout(), "No adopted artifacts recorded.")
 		return nil
 	}
-	client := hosted.NewClient(server, hosted.FileStore{}, nil)
+	client := hosted.NewClient(server, hosted.DefaultStore(), nil)
 	out := cmd.OutOrStdout()
 	var updates int
 	for _, rec := range recs {

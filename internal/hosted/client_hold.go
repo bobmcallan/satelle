@@ -98,6 +98,11 @@ func (c *Client) mapHoldResponse(itemID string, resp *http.Response) (HoldState,
 		return HoldState{}, &HeldError{ItemID: itemID, Hold: held}
 	case http.StatusForbidden:
 		return HoldState{}, fmt.Errorf("hosted: not the holder: %s", serverError(resp.StatusCode, body))
+	case http.StatusNotFound:
+		if scope := c.sessionScopeErr(); scope != nil {
+			return HoldState{}, scope
+		}
+		return HoldState{}, fmt.Errorf("hosted: hold %s: %s", itemID, serverError(resp.StatusCode, body))
 	default:
 		return HoldState{}, fmt.Errorf("hosted: hold %s: %s", itemID, serverError(resp.StatusCode, body))
 	}
@@ -159,6 +164,11 @@ func (c *Client) ItemHold(ctx context.Context, project, id string) (HoldState, e
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusUnauthorized {
 		return HoldState{}, ErrLoginRequired
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		if scope := c.sessionScopeErr(); scope != nil {
+			return HoldState{}, scope
+		}
 	}
 	if resp.StatusCode != http.StatusOK {
 		return HoldState{}, fmt.Errorf("hosted: GET item %s: %s", id, serverError(resp.StatusCode, body))

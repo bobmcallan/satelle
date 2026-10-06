@@ -371,6 +371,12 @@ func (c *Client) doAuthed(ctx context.Context, method, path string, payload []by
 		return resp, nil
 	}
 
+	// A session token is never refreshed: the server's 401 is final.
+	if cred.IsSession() {
+		resp.Body.Close()
+		return nil, ErrSessionTokenRefused
+	}
+
 	// Access token rejected — refresh, PERSIST the rotated refresh immediately
 	// (the old one dies on rotation; a late persist would strand a dead token on
 	// crash), then retry the request exactly once.

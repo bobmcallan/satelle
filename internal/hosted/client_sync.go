@@ -68,7 +68,7 @@ func (c *Client) Apply(ctx context.Context, project string, batch WorkstateInges
 		return rpcErr
 	})
 	if err != nil {
-		return WorkstateIngestResult{}, mapGRPCErr("Apply", err)
+		return WorkstateIngestResult{}, c.mapSyncErr("Apply", err)
 	}
 	return WorkstateIngestResult{Items: int(out.GetItems()), Ledger: int(out.GetLedger())}, nil
 }
@@ -88,7 +88,7 @@ func (c *Client) Snapshot(ctx context.Context, project, kind string) (items []Wo
 		return rpcErr
 	})
 	if err != nil {
-		return nil, nil, mapGRPCErr("Snapshot", err)
+		return nil, nil, c.mapSyncErr("Snapshot", err)
 	}
 	items = make([]WorkstateItem, 0, len(out.GetItems()))
 	for _, it := range out.GetItems() {
@@ -228,6 +228,9 @@ func (c *Client) withGRPCAuth(ctx context.Context, cli syncpb.SyncClient, fn fun
 	if err == nil || status.Code(err) != codes.Unauthenticated {
 		return err
 	}
+	if cred.IsSession() {
+		return ErrSessionTokenRefused
+	}
 	rotated, rErr := c.refreshOverGRPC(ctx, cli, cred)
 	if rErr != nil {
 		return rErr
@@ -271,6 +274,17 @@ func (c *Client) withLocation(ctx context.Context) context.Context {
 // and the post-refresh retry.
 func (c *Client) callCtx(ctx context.Context, token string) context.Context {
 	return c.withLocation(withBearer(ctx, token))
+}
+
+// mapSyncErr is mapGRPCErr with the session-token reading of NotFound: under a
+// session token the project is outside the token's scope.
+func (c *Client) mapSyncErr(op string, err error) error {
+	if status.Code(err) == codes.NotFound {
+		if scope := c.sessionScopeErr(); scope != nil {
+			return scope
+		}
+	}
+	return mapGRPCErr(op, err)
 }
 
 func mapGRPCErr(op string, err error) error {

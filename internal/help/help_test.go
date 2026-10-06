@@ -17,7 +17,7 @@ func TestListContainsCoreTopics(t *testing.T) {
 			t.Errorf("topic %q has empty body", top.Name)
 		}
 	}
-	for _, want := range []string{"create-story", "reviewer-checks", "principles", "projects", "create-review", "agent-dispatch", "workflow-convert", "retrieve", "compact-output", "epic-wave"} {
+	for _, want := range []string{"create-story", "reviewer-checks", "principles", "projects", "create-review", "agent-dispatch", "workflow-convert", "retrieve", "compact-output", "epic-wave", "session-token"} {
 		if !names[want] {
 			t.Errorf("missing help topic %q", want)
 		}
@@ -47,6 +47,32 @@ func TestCompactOutputTopic(t *testing.T) {
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("compact-output topic missing %q", want)
+		}
+	}
+}
+
+// TestSessionTokenTopic (sty_6ed6318d AC4): minting, the env var, how the user is
+// resolved, the token's reach, its lifetime and the snapshot-push exclusion are
+// documented so `satelle help session-token` is the one reference for a
+// non-interactive session.
+func TestSessionTokenTopic(t *testing.T) {
+	top, ok := Get("session-token")
+	if !ok {
+		t.Fatal("session-token topic not found")
+	}
+	for _, want := range []string{
+		"SATELLE_TOKEN",
+		"Account → Sessions",
+		"POST /api/v1/me/tokens",
+		"satelle whoami",
+		"30 days",
+		"revoke",
+		"holds",
+		"workstate",
+		"snapshot",
+	} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("session-token topic missing %q", want)
 		}
 	}
 }

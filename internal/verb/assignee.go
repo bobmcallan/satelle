@@ -25,6 +25,24 @@ func ClearAssigneeResolver() {
 	assigneeResolver = nil
 }
 
+// engageGuard runs before an engaging move's wrong-holder check. It lets the
+// CLI refuse an engage whose holder cannot yet be named (a session token whose
+// user is not resolved), instead of the empty holder passing refuseWrongHolder
+// silently. Unwired is no guard.
+var engageGuard func(ctx context.Context) error
+
+// SetEngageGuard wires the pre-engage guard. Pass nil to clear (tests).
+func SetEngageGuard(f func(ctx context.Context) error) {
+	engageGuard = f
+}
+
+func runEngageGuard(ctx context.Context) error {
+	if engageGuard == nil {
+		return nil
+	}
+	return engageGuard(ctx)
+}
+
 // actorResolver returns the satelle user as a ledger actor: the account
 // PrincipalID when signed in, the git email when local-only (wired by the CLI,
 // which owns the credential store and git). Distinct from assigneeResolver on

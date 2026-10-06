@@ -182,6 +182,10 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// unassigned (offline team-of-1). The one user rule is resolveUser
 	// (sty_e698d914).
 	verb.SetAssigneeResolver(func() string { return resolveUser(a.Config, a.RepoRoot).Holder() })
+	// Session token (sty_6ed6318d): an engage under SATELLE_TOKEN first learns
+	// the token's user, and is refused while it cannot — the empty holder would
+	// otherwise pass the wrong-holder guard unnoticed.
+	verb.SetEngageGuard(func(ctx context.Context) error { return ensureSessionPrincipal(ctx, a.Config, a.RepoRoot) })
 	// Person actor for ledger rows that name the satelle user: the account
 	// PrincipalID when signed in, the git email when local-only.
 	verb.SetActorResolver(func() string { return resolveUser(a.Config, a.RepoRoot).Actor() })

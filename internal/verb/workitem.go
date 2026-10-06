@@ -480,6 +480,9 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		// Before the lease so a refusal never takes it. Non-engaging moves
 		// (park, cancel, field edits) are not blocked.
 		if eng, ok := storyStatusIsEngaging(ctx, current, *req.Status); ok && eng {
+			if err := runEngageGuard(ctx); err != nil {
+				return nil, err
+			}
 			if err := refuseWrongHolder(current, resolveAssignee()); err != nil {
 				return nil, err
 			}

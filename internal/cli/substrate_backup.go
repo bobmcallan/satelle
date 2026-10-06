@@ -132,7 +132,7 @@ func pushHostedBackup(opts BackupOpts, relPath string, body []byte) (string, err
 		return opts.HostedPush(context.Background(), relPath, body)
 	}
 	server := opts.HostedServer
-	store := hosted.FileStore{}
+	store := hosted.DefaultStore()
 	cred, err := store.Load(server)
 	if err != nil {
 		return "", err

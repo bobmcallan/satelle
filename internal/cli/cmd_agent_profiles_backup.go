@@ -163,5 +163,5 @@ func profilesHostedClient(serverFlag string) (*hosted.Client, error) {
 	if server == "" {
 		return nil, fmt.Errorf("%w — run \"satelle login\" first (no hosted server configured)", hosted.ErrLoginRequired)
 	}
-	return hosted.NewClient(server, hosted.FileStore{}, nil), nil
+	return hosted.NewClient(server, hosted.DefaultStore(), nil), nil
 }

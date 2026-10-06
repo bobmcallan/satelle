@@ -16,6 +16,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -280,6 +281,9 @@ func runLogout(cmd *cobra.Command, serverArg string) error {
 		return err
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Logged out of %s.\n", server)
+	if hosted.SessionToken() != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s is still set — the session token remains active.\n", hosted.SessionTokenEnv)
+	}
 	return nil
 }
 
@@ -303,7 +307,11 @@ func runWhoami(cmd *cobra.Command, serverArg string) error {
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — pass --server <url>")
 	}
-	who, err := hosted.NewClient(server, hosted.FileStore{}, nil).Me(cmd.Context())
+	store := hosted.DefaultStore()
+	if cred, lerr := store.Load(server); lerr == nil && cred.IsSession() {
+		return runWhoamiSession(cmd, server, store)
+	}
+	who, err := hosted.NewClient(server, store, nil).Me(cmd.Context())
 	if err != nil {
 		if errors.Is(err, hosted.ErrLoginRequired) {
 			return err
@@ -311,6 +319,28 @@ func runWhoami(cmd *cobra.Command, serverArg string) error {
 		return fmt.Errorf("whoami: %w", err)
 	}
 	printPrincipal(cmd, server, who, resolveWhoamiWorkspace())
+	return nil
+}
+
+// runWhoamiSession is whoami under a SATELLE_TOKEN session token. GET
+// /api/v1/me refuses a session token, so the user is learned from the
+// session-allowed location registration and cached; it is re-resolved on every
+// call. When it cannot be (the server refuses, or none is reachable) it says so
+// and exits non-zero rather than printing a stale or blank identity.
+func runWhoamiSession(cmd *cobra.Command, server string, store hosted.Store) error {
+	root := ""
+	if p := repoConfigPath(); p != "" {
+		root = config.RepoRootFromConfigPath(p)
+	}
+	if root == "" {
+		root, _ = os.Getwd()
+	}
+	client := hosted.NewClient(server, store, nil)
+	id, err := hosted.ResolveSessionPrincipal(cmd.Context(), client, root, server)
+	if err != nil {
+		return fmt.Errorf("%s: %w", sessionUnresolved, err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "acting via session token on %s as user %s\n", server, id)
 	return nil
 }
 

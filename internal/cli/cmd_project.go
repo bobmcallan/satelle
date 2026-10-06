@@ -173,7 +173,12 @@ func runProjectShow(cmd *cobra.Command, serverArg string) error {
 		fmt.Fprintf(out, "bound project: %s\n", slug)
 	}
 	signed := "signed out"
-	if resolveUserFor(server, root).SignedIn() {
+	switch u := resolveUserFor(server, root); {
+	case u.Unresolved():
+		signed = sessionUnresolved
+	case u.IsSession():
+		signed = "session token (user " + u.PrincipalID + ")"
+	case u.SignedIn():
 		signed = "signed in"
 	}
 	fmt.Fprintf(out, "sign-in state: %s\n", signed)
@@ -194,7 +199,7 @@ func runProjectCreate(cmd *cobra.Command, serverArg, slug, name string) error {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
 
-	p, err := hosted.NewClient(server, hosted.FileStore{}, nil).CreateProject(cmd.Context(), slug, name)
+	p, err := hosted.NewClient(server, hosted.DefaultStore(), nil).CreateProject(cmd.Context(), slug, name)
 	if err != nil {
 		switch {
 		case errors.Is(err, hosted.ErrLoginRequired):
@@ -215,7 +220,7 @@ func runProjectList(cmd *cobra.Command, serverArg string) error {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
 
-	projects, err := hosted.NewClient(server, hosted.FileStore{}, nil).ListProjects(cmd.Context())
+	projects, err := hosted.NewClient(server, hosted.DefaultStore(), nil).ListProjects(cmd.Context())
 	if err != nil {
 		if errors.Is(err, hosted.ErrLoginRequired) {
 			return err

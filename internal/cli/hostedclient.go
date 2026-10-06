@@ -17,7 +17,7 @@ import (
 // Registration failure other than ErrLoginRequired is non-fatal: a location
 // registry outage must not block sync. The header is still sent.
 func newHostedClient(ctx context.Context, server, repoRoot string) *hosted.Client {
-	c := hosted.NewClient(server, hosted.FileStore{}, nil)
+	c := hosted.NewClient(server, hosted.DefaultStore(), nil)
 	if repoRoot == "" {
 		return c
 	}
@@ -27,7 +27,13 @@ func newHostedClient(ctx context.Context, server, repoRoot string) *hosted.Clien
 		return c
 	}
 	c.SetLocation(id)
-	if err := hosted.EnsureLocationRegistered(ctx, c, repoRoot, server); err != nil && !errors.Is(err, hosted.ErrLoginRequired) {
+	err = hosted.EnsureLocationRegistered(ctx, c, repoRoot, server)
+	switch {
+	case errors.Is(err, hosted.ErrSessionTokenRefused):
+		// Not "not signed in": the session token was refused, and the caller's
+		// next call fails with the same error — say so once, up front.
+		fmt.Fprintf(os.Stderr, "satelle: %v\n", err)
+	case err != nil && !errors.Is(err, hosted.ErrLoginRequired):
 		fmt.Fprintf(os.Stderr, "satelle: register checkout location: %v\n", err)
 	}
 	return c

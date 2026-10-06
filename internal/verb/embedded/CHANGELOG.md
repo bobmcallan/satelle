@@ -1,3 +1,13 @@
+## [0.0.616] - 2026-10-06
+
+### Added
+- **A session with no browser (a cloud session, a CI job, a headless box) can act as the signed-in user with a session token.** Mint a token on the hosted server (Account → Sessions, or `POST /api/v1/me/tokens` with `session_projects` and an `expires_in` of at most 30 days) and set it in `SATELLE_TOKEN`. While it is set, every hosted client the CLI builds sends it as the bearer instead of any stored login, with no browser and no credentials file. It reaches story holds, location registration and workstate sync (REST and gRPC Sync.Apply/Snapshot) on its granted projects only; UI snapshot push is not covered. The token is never refreshed or written to disk: a 401 / Unauthenticated fails at once with "session token refused (expired, revoked, or a route the token does not cover)", and a 404 / NotFound says the project is not in the token's scope. The session learns its user id from the location-registration response, never `/api/v1/me`, and caches only that id, keyed by server and a SHA-256 fingerprint of the token, in `session-identity.toml` beside `credentials.toml`. Once it is known the assignee stamp, ledger attribution, web footer, `satelle project status` and `satelle whoami` all name that user and the wrong-holder guard applies. Until then, an engage is refused with `run "satelle whoami"`, and the footer and status say "session token, user not yet resolved". With `SATELLE_TOKEN` unset nothing changes. See `satelle help session-token`. (sty_6ed6318d)
+
+## [serve-v0.0.127] - 2026-10-06
+
+### Changed
+- The serve path embeds the new `session-token` help topic (sty_6ed6318d).
+
 ## [0.0.615] - 2026-10-06
 
 ### Fixed
