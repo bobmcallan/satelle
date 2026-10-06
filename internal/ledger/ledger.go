@@ -27,7 +27,7 @@ const (
 	KindComment      = "comment"
 	// Quality-management spine: a gated transition records the request and its
 	// verdict; every enacted status change records a transition. These feed the
-	// progress/review-lights column.
+	// progress (stages) column and the status gate badge.
 	KindStatusTransition = "status_transition"
 	// KindStatusReconcile records that a story row's status was repaired from
 	// the last status_transition (the row is a projection of the ledger).

@@ -91,6 +91,47 @@ func CountRejectedRounds(entries []Entry, from, to string) RejectedRounds {
 	return out
 }
 
+// EdgeRounds counts the presentations of the from→to edge in entries, as
+// accepted and rejected rounds. A round is one gate run, identified by the
+// attempt id its verdict rows carry, however many reviewers voted in it: it is
+// rejected when any of its rows is a reject, accepted otherwise (a panel with a
+// dissenting seat that still passes is an accept). A row written before attempt
+// ids existed carries none and counts as a round of its own (conservative).
+//
+// Unlike CountRejectedRounds the tally does not restart at a status_transition:
+// it is the edge's whole history in entries, so a caller that wants a window
+// passes the slice it means. Pure enumeration — which total is good or bad is
+// the reader's, not decided here.
+func EdgeRounds(entries []Entry, from, to string) (accepted, rejected int) {
+	rejectedIDs, acceptedIDs := map[string]bool{}, map[string]bool{}
+	legacy := 0
+	for _, e := range entries {
+		if e.Kind != KindReviewAccept && e.Kind != KindReviewReject {
+			continue
+		}
+		r, ok := decodeEdgeRow(e)
+		if !ok || r.From != from || r.To != to {
+			continue
+		}
+		id := r.Attempt
+		if id == "" {
+			legacy++
+			id = fmt.Sprintf("legacy-%d", legacy)
+		}
+		if e.Kind == KindReviewReject {
+			rejectedIDs[id] = true
+		} else {
+			acceptedIDs[id] = true
+		}
+	}
+	for id := range acceptedIDs {
+		if !rejectedIDs[id] {
+			accepted++
+		}
+	}
+	return accepted, len(rejectedIDs)
+}
+
 // DefinitionEditedSince returns the definition_edited rows that postdate the
 // latest status_transition from→to in entries (oldest first). With no such
 // transition it returns nil: there is no accepted edge to have gone stale.

@@ -19,6 +19,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/syncstate"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -136,6 +137,7 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 	engagedIDs, _ := decodeEngagedStorySeats(ctx, s, repoKey)
 	dispatches, _ := decodeDispatchSeats(ctx, s, repoKey)
 	catStepOf := categoryStepOf(byKind["workflows"])
+	specOf := categorySpecOf(byKind["workflows"])
 
 	projectName := id.ProjectName
 	if projectName == "" {
@@ -159,11 +161,11 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 		SyncReason:      syncSt.PushReason,
 		SyncLocal:       syncSt.Scope == "local",
 		SyncLogPath:     logPath,
-		Stories:         attachLightsFrom(entriesByStory, stories, liveSeat, dispatches, catStepOf),
+		Stories:         attachStagesFrom(entriesByStory, stories, liveSeat, dispatches, catStepOf, specOf),
 		BacklogCount:    backlog,
 		EngagementCount: len(engagedIDs),
 		EngagedStoryIDs: engagedIDs,
-		Tasks:           attachLightsFrom(entriesByStory, tasks, liveSeat, dispatches, catStepOf),
+		Tasks:           attachStagesFrom(entriesByStory, tasks, liveSeat, dispatches, catStepOf, specOf),
 		DocKinds:        kinds,
 		DocCount:        len(docs),
 		Workflows:       workflowRows(byKind["workflows"], prov, src),
@@ -173,15 +175,13 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 	}, id, nil
 }
 
-// attachLightsFrom is the mirror-side attachLights: ledger rows already loaded.
-func attachLightsFrom(entriesByStory map[string][]ledger.Entry, items []workitem.Item, liveSeat map[string]bool, dispatches map[string]*dispatchVM, catStepOf func(category, state string) int) []rowVM {
+// attachStagesFrom is the mirror-side stage attach: ledger rows already loaded.
+func attachStagesFrom(entriesByStory map[string][]ledger.Entry, items []workitem.Item, liveSeat map[string]bool, dispatches map[string]*dispatchVM, catStepOf func(category, state string) int, specOf func(category string) wfdot.Spec) []rowVM {
 	out := make([]rowVM, len(items))
 	for i, it := range items {
 		stepOf := func(s string) int { return catStepOf(it.Category, s) }
-		out[i] = rowVM{
-			Item: it, Lights: buildLights(entriesByStory[it.ID], it.Status, liveSeat[it.ID], stepOf),
-			Dispatch: dispatches[it.ID],
-		}
+		stages, gate := buildStages(entriesByStory[it.ID], it.Status, liveSeat[it.ID], stepOf, specOf(it.Category))
+		out[i] = rowVM{Item: it, Stages: stages, Gate: gate, Dispatch: dispatches[it.ID]}
 	}
 	return out
 }

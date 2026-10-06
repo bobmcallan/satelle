@@ -79,7 +79,7 @@ func Qualifies(it workitem.Item) bool {
 	if it.Kind != workitem.KindStory {
 		return false
 	}
-	if it.Status == workitem.StatusDone || it.Status == "cancelled" {
+	if it.Status == workitem.StatusDone || it.Status == workitem.StatusCancelled {
 		return false
 	}
 	if !strings.EqualFold(strings.TrimSpace(it.Priority), Priority) {
