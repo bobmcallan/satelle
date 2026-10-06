@@ -1,5 +1,9 @@
-# Harness / agent local dirs — never commit (operator-owned)
-.claude/
+# Harness / agent local dirs — never commit (operator-owned). The one tracked
+# file under .claude/ is settings.local.json: the Claude cloud-session hook
+# carrier (scripts/claude-cloud-hook.sh). A file inside an ignored directory
+# cannot be re-included, so the directory is ignored by contents (.claude/*).
+.claude/*
+!.claude/settings.local.json
 .grok/
 
 # satelle workspace (authored substrate + local config). Continuity is local

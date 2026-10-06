@@ -1,3 +1,8 @@
+## [0.0.617] - 2026-10-06
+
+### Added
+- **A Claude cloud session of this repository runs satelle's edit and commit gates.** `.claude/settings.local.json` is now tracked (`.gitignore` ignores `.claude/*` except that file) and holds only a `hooks` block: SessionStart and PreToolUse run `scripts/claude-cloud-hook.sh`, which does nothing unless `CLAUDE_CODE_REMOTE=true`. In a cloud session it installs the satelle CLI from the GitHub release (skipped when `satelle` is on PATH), runs `satelle init --harness claude --no-workspace`, logs to `/tmp/satelle-cloud-bootstrap.log` and emits `satelle hook context`; edits and Bash calls are then judged by satelle's own gate and commitgate hooks, and denied when the bootstrap did not produce them. A real `claude --cloud` probe (CLI 2.1.291; there is no `--remote` flag, and `--cloud` needs a terminal) confirmed that `CLAUDE_CODE_REMOTE=true` is set, that hooks the clone carries fire, and that a Write and a `git commit` with no engaged story are refused by satelle. Hooks that `init` writes mid-session are not loaded, so a cloud session has no Stop or UserPromptSubmit hook. Operator steps, listed in the script header: allowlist `satelle.dev` in the cloud environment's network policy (the default proxy answers 403); until then the session has only a fresh local store and the embedded-default substrate, so every edit is refused. Optionally register an environment setup script that pre-installs satelle. Personal keys that lived in `.claude/settings.local.json` belong in `.claude/settings.json` or `~/.claude/settings.json`; a containment test fails if the tracked file gains anything but `hooks`. (sty_3b112554)
+
 ## [0.0.616] - 2026-10-06
 
 ### Added
