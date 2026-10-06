@@ -2238,7 +2238,7 @@ func tempDraftTarget(repoRoot, target string) bool {
 	if repoRoot != "" && withinRoot(repoRoot, target) {
 		return false
 	}
-	for _, r := range tempDraftRoots() {
+	for _, r := range containmentTempRoots() {
 		if withinRoot(r, target) {
 			return true
 		}

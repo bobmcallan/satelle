@@ -35,6 +35,7 @@ func TestGitRootOf(t *testing.T) {
 }
 
 func TestForeignTreeTarget(t *testing.T) {
+	fenceTempRootsElsewhere(t)
 	anchor := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(anchor, ".git"), 0o755); err != nil {
 		t.Fatal(err)

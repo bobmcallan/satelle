@@ -144,21 +144,30 @@ func substrateLockGate(cmd *cobra.Command, raw []byte, target string, holders []
 	if rerr != nil || !ok {
 		globs = managedEditExemptGlobs
 	}
+	abs := resolveAbsTarget(root, target)
+	// The lock list is repo-relative, so it must be resolved against the tree the
+	// target lives in. A linked worktree of the session repository passes the
+	// foreign-tree fence (sty_bcf837ff); resolving against the invoking tree alone
+	// would leave the sibling tree's substrate (its .satelle/) unlocked, and a
+	// performing story could rewrite the substrate that judges it.
+	lockBase := root
+	if tree := gitRootOf(abs); tree != "" && linkedTreeTarget(sessionAnchor(), abs) {
+		lockBase = tree
+	}
 	lockPaths, _ := config.ParseLockSubstratePaths(string(content))
 	lockRoots := make([]string, 0, len(lockPaths))
 	for _, p := range lockPaths {
-		lockRoots = append(lockRoots, resolveAbsTarget(root, p))
+		lockRoots = append(lockRoots, resolveAbsTarget(lockBase, p))
 	}
 	footprint := substrateLockFootprint()
 	for i, f := range footprint {
-		footprint[i] = resolveAbsTarget(root, f)
+		footprint[i] = resolveAbsTarget(lockBase, f)
 	}
-	abs := resolveAbsTarget(root, target)
-	if !substrateLocked(lockRoots, footprint, globs, root, abs) {
+	if !substrateLocked(lockRoots, footprint, globs, lockBase, abs) {
 		return nil
 	}
 	rel := abs
-	if r, rerr := filepath.Rel(root, abs); rerr == nil {
+	if r, rerr := filepath.Rel(lockBase, abs); rerr == nil {
 		rel = filepath.ToSlash(r)
 	}
 	a, oerr := app.Open()

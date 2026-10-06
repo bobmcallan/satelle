@@ -1,9 +1,14 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
+
+	"github.com/bobmcallan/satelle/internal/worktree"
 )
 
 // containment.go — filesystem layer for the foreign-tree fence (sty_a8454d10 /
@@ -15,11 +20,16 @@ import (
 //
 //	foreign(anchor, absTarget) :=
 //	  !withinRoot(anchor, absTarget)        // inside home → allow, no stat
+//	  && !under(containmentTempRoots)       // temp / scratch → allow, even a git root
 //	  && gitRootOf(absTarget) != ""         // no enclosing tree → allow
 //	  && gitRootOf(absTarget) != clean(anchor)
+//	  && !sameRepo(anchor, gitRootOf(...))  // linked worktree of home → allow
 //
-// Non-repo paths (/tmp, scratchpads, $HOME without a .git, /dev/null) are
-// outside the fence's concern. The fence denies only ANOTHER repo's tree.
+// Non-repo paths ($HOME without a .git, /dev/null) and anything under the temp
+// dir are outside the fence's concern, as is a linked worktree of the session's
+// own repository (same git common dir; the ordinary edit gate still judges it —
+// sty_bcf837ff). The fence denies only ANOTHER repo's tree, and an unresolvable
+// common dir counts as another repo (fail closed).
 
 // gitRootOf walks ancestors of abs for a .git entry (directory or file —
 // worktree/submodule form). Start at filepath.Dir(abs) so a not-yet-created
@@ -56,6 +66,92 @@ func gitRootOf(abs string) string {
 	}
 }
 
+// containmentTempRoots is the one set of temp roots both the foreign-tree fence
+// and the temp-draft edit exemption (tempDraftTarget) honour. A var so a test
+// whose repos live under t.TempDir can point it elsewhere and keep proving the
+// fence and the edit gate for trees outside the temp roots.
+var containmentTempRoots = tempDraftRoots
+
+// commonDirTimeout bounds each git lookup so a wedged repo cannot hang a hook.
+const commonDirTimeout = 2 * time.Second
+
+var (
+	commonDirMu    sync.Mutex
+	commonDirCache = map[string]string{}
+)
+
+// commonDirOf is the git common dir of the tree at root, memoised for the
+// process (a Bash event checks the anchor once per candidate). Only successes
+// are cached, so a repo that becomes readable later is not stuck as foreign.
+func commonDirOf(root string) (string, bool) {
+	commonDirMu.Lock()
+	dir, ok := commonDirCache[root]
+	commonDirMu.Unlock()
+	if ok {
+		return dir, true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), commonDirTimeout)
+	defer cancel()
+	dir, err := worktree.CommonDir(ctx, root)
+	if err != nil || dir == "" {
+		return "", false
+	}
+	commonDirMu.Lock()
+	commonDirCache[root] = dir
+	commonDirMu.Unlock()
+	return dir, true
+}
+
+// sameRepo reports whether the trees at anchor and root share one git common
+// dir — a main tree and its linked worktrees. Any lookup failure is false, so
+// the fence fails closed.
+func sameRepo(anchor, root string) bool {
+	a, ok := commonDirOf(anchor)
+	if !ok {
+		return false
+	}
+	r, ok := commonDirOf(root)
+	return ok && a == r
+}
+
+// foreignRootFor is the one predicate behind both the Edit and Bash fences: the
+// git root abs lives in when that is ANOTHER repository's tree, ok=false when
+// abs is allowed (in the anchor, temp, non-repo, or a linked worktree of the
+// anchor's repository). abs must be absolute and clean.
+func foreignRootFor(anchor, abs string) (root string, ok bool) {
+	if withinRoot(anchor, abs) {
+		return "", false
+	}
+	for _, t := range containmentTempRoots() {
+		if withinRoot(t, abs) {
+			return "", false
+		}
+	}
+	root = gitRootOf(abs)
+	if root == "" || root == filepath.Clean(anchor) || sameRepo(anchor, root) {
+		return "", false
+	}
+	return root, true
+}
+
+// linkedTreeTarget reports whether abs lives in a tree the fence lets through
+// only because it shares the anchor's git common dir — a linked worktree of the
+// session repository, outside the anchor and outside the temp roots. Such a
+// target is still a tree change: the ordinary edit gate must judge it
+// (sty_bcf837ff). abs must be absolute and clean.
+func linkedTreeTarget(anchor, abs string) bool {
+	if withinRoot(anchor, abs) {
+		return false
+	}
+	for _, t := range containmentTempRoots() {
+		if withinRoot(t, abs) {
+			return false
+		}
+	}
+	root := gitRootOf(abs)
+	return root != "" && root != filepath.Clean(anchor) && sameRepo(anchor, root)
+}
+
 // foreignTreeTarget filters candidate absolute paths and returns the first
 // that lands in a git working tree whose root differs from anchor, plus that
 // foreign root. Empty path / ok=false means nothing foreign (allow).
@@ -69,17 +165,9 @@ func foreignTreeTarget(anchor string, candidates []string) (path string, foreign
 		if c == "" {
 			continue
 		}
-		if withinRoot(anchor, c) {
-			continue
+		if root, foreign := foreignRootFor(anchor, c); foreign {
+			return c, root, true
 		}
-		root := gitRootOf(c)
-		if root == "" {
-			continue // non-repo path — not fenced
-		}
-		if root == anchor {
-			continue // same tree, other path spelling
-		}
-		return c, root, true
 	}
 	return "", "", false
 }
@@ -106,13 +194,5 @@ func editTargetForeign(target string) (foreignRoot string, foreign bool) {
 	if strings.TrimSpace(root) == "" {
 		return "", false
 	}
-	abs := resolveAbsTarget(root, target)
-	if withinRoot(root, abs) {
-		return "", false
-	}
-	gitRoot := gitRootOf(abs)
-	if gitRoot == "" || gitRoot == filepath.Clean(root) {
-		return "", false
-	}
-	return gitRoot, true
+	return foreignRootFor(filepath.Clean(root), resolveAbsTarget(root, target))
 }

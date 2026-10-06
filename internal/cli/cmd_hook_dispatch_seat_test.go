@@ -210,6 +210,7 @@ func TestDispatchedPerformerRefusedOutsideItsDispatch(t *testing.T) {
 // foreign-tree fence runs before the seat is consulted, so a performer holding a
 // valid in-flight seat is still denied a write into another git working tree.
 func TestDispatchedPerformerStillFencedOutsideTheRepo(t *testing.T) {
+	fenceTempRootsElsewhere(t)
 	db, create := attributionRepo(t)
 	epic := create("epic", "ready")
 	inFlightSeat(t, db, epic, "in_progress", "", "")
