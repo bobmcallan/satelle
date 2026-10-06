@@ -29,8 +29,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BurntSushi/toml"
-
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 )
@@ -224,7 +222,7 @@ type hostSurface struct {
 	xdgConfig   map[string]string // ~/.config/satelle, credentials.toml excluded
 	// credentials is the identity fingerprint of ~/.config/satelle/credentials.toml
 	// (sty_d9677380): token rotation is tolerated, server/identity changes are not.
-	credentials credentialsIdentity
+	credentials hosted.Identity
 	// installed binary fingerprint; "" when ~/.local/bin/satelle is absent
 	installedBin string
 	// resolved roots (for diagnostics only)
@@ -291,7 +289,7 @@ func captureHostSurfaceAt(r hostRoots) hostSurface {
 	return hostSurface{
 		satelleHome:      hashTree(r.satelleHome, r.preExistingKeys),
 		xdgConfig:        hashXDGConfig(r.xdgConfig),
-		credentials:      captureCredentialsIdentity(filepath.Join(r.xdgConfig, credentialsFileName)),
+		credentials:      hosted.CaptureIdentity(filepath.Join(r.xdgConfig, credentialsFileName)),
 		installedBin:     fingerprintFile(r.installedBin),
 		satelleHomeRoot:  r.satelleHome,
 		xdgConfigRoot:    r.xdgConfig,
@@ -305,7 +303,7 @@ func diffHostSurface(before, after hostSurface) []string {
 	diffs = append(diffs, diffTreeMaps("host SATELLE_HOME ("+before.satelleHomeRoot+")", before.satelleHome, after.satelleHome)...)
 	xdgLabel := "host ~/.config/satelle (" + before.xdgConfigRoot + ")"
 	diffs = append(diffs, diffTreeMaps(xdgLabel, before.xdgConfig, after.xdgConfig)...)
-	for _, reason := range diffCredentialsIdentity(before.credentials, after.credentials) {
+	for _, reason := range hosted.DiffIdentity(before.credentials, after.credentials) {
 		diffs = append(diffs, fmt.Sprintf("%s: changed %s (%s)", xdgLabel, credentialsFileName, reason))
 	}
 	if before.installedBin != after.installedBin {
@@ -328,106 +326,9 @@ func diffHostSurface(before, after hostSurface) []string {
 // credentialsFileName is the host credential store inside ~/.config/satelle.
 const credentialsFileName = "credentials.toml"
 
-// credentialsIdentity is what the guard compares for credentials.toml instead of
-// its bytes. A token refresh by the operator's hosted session
-// (hosted.Client.persistRotated → FileStore.Save) rewrites access_token,
-// refresh_token, expires_at, token_type, scope and created_at and carries
-// display_name, email and principal_id over (see hosted.Credential in
-// credstore.go and persistRotated in client.go); those rotation fields are left
-// out. What remains — the set of server_url entries and each one's identity — is
-// what a suite write would have to change.
-//
-// Accepted limit: a suite write that looks exactly like a refresh of a server
-// already present would not trip this guard. XDG_CONFIG_HOME isolation removes
-// the environment route by which suite code could produce one.
-type credentialsIdentity struct {
-	state   string            // "" (unset), "absent", "ok", "unparseable"
-	digest  string            // unparseable only: sha256 of the bytes
-	servers map[string]string // ok only: normalised server_url → identity hash
-}
-
-// captureCredentialsIdentity reads path (read-only) and fingerprints its identity.
-func captureCredentialsIdentity(path string) credentialsIdentity {
-	if path == "" {
-		return credentialsIdentity{state: "absent"}
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return credentialsIdentity{state: "absent"}
-		}
-		return credentialsIdentity{state: "unparseable", digest: "unreadable:" + err.Error()}
-	}
-	var cf struct {
-		Credential []hosted.Credential `toml:"credential"`
-	}
-	if err := toml.Unmarshal(b, &cf); err != nil {
-		sum := sha256.Sum256(b)
-		return credentialsIdentity{state: "unparseable", digest: hex.EncodeToString(sum[:])}
-	}
-	servers := map[string]string{}
-	for _, c := range cf.Credential {
-		url := strings.TrimRight(strings.TrimSpace(c.ServerURL), "/")
-		sum := sha256.Sum256([]byte(c.DisplayName + "\x00" + c.Email + "\x00" + c.PrincipalID))
-		servers[url] += hex.EncodeToString(sum[:])
-	}
-	return credentialsIdentity{state: "ok", servers: servers}
-}
-
-// diffCredentialsIdentity returns one reason per identity change; empty when the
-// two snapshots differ at most by token rotation.
-func diffCredentialsIdentity(before, after credentialsIdentity) []string {
-	if before.state != after.state {
-		switch {
-		case before.state == "absent":
-			return []string{"file appeared"}
-		case after.state == "absent":
-			return []string{"file removed"}
-		case after.state == "unparseable":
-			return []string{"unparseable"}
-		default:
-			return []string{"was unparseable, now parses"}
-		}
-	}
-	switch before.state {
-	case "unparseable":
-		if before.digest != after.digest {
-			return []string{"unparseable content changed"}
-		}
-	case "ok":
-		urls := map[string]struct{}{}
-		for u := range before.servers {
-			urls[u] = struct{}{}
-		}
-		for u := range after.servers {
-			urls[u] = struct{}{}
-		}
-		sorted := make([]string, 0, len(urls))
-		for u := range urls {
-			sorted = append(sorted, u)
-		}
-		sort.Strings(sorted)
-		var reasons []string
-		for _, u := range sorted {
-			b, bok := before.servers[u]
-			a, aok := after.servers[u]
-			switch {
-			case !bok:
-				reasons = append(reasons, "server added "+u)
-			case !aok:
-				reasons = append(reasons, "server removed "+u)
-			case a != b:
-				reasons = append(reasons, "identity changed for "+u)
-			}
-		}
-		return reasons
-	}
-	return nil
-}
-
 // hashXDGConfig byte-guards every file under ~/.config/satelle except
 // credentials.toml (and its atomic-write .tmp sibling), which
-// captureCredentialsIdentity guards by identity instead.
+// hosted.CaptureIdentity guards by identity instead.
 func hashXDGConfig(root string) map[string]string {
 	m := hashTree(root, nil)
 	delete(m, credentialsFileName)
