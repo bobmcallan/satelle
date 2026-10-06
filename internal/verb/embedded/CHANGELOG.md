@@ -1,14 +1,12 @@
 ## [0.0.609] - 2026-10-06
 
-### Breaking
-- **A performer dispatched into a linked worktree without its harness gate wiring is refused before it starts.** The refusal names the harness and each missing path (for claude, `.claude/settings.json` and the `satelle-hook.sh` wrapper it calls). To heal a worktree: declare the gitignored paths a worktree needs in `satelle.toml` `[worktree] include` (e.g. `include = [".claude", ".grok", ".pi"]`) and run `satelle story worktree <id> --existing <path>` to link them in; or, only if you accept ungated runs, declare `[worktree] absent_wiring = "fail-open"`. An unknown key under `[worktree]` or `[harness.<name>]` is now refused at load, naming the key. (sty_f141c77f)
-
 ### Added
 - **`satelle story worktree <id> --base <ref>` opens a story's worktree and carries the gitignored files the repository declares it needs.** `[worktree]` in `satelle.toml` declares `include` paths plus `branch` and `path` templates (`{id}` placeholder); each path is linked from the main tree, anchored in `info/exclude`, and proven ignored. `--existing <path>` brings an existing worktree up to the declaration without creating or deleting anything. A malformed declaration is refused at load, naming the entry. (sty_804c566b)
 - **A missing or divergent authored process is reported, never silently replaced by the embedded default.** An unreadable workflows dir refuses engage, transition, create, amend, restamp, `story route`, doctor and validate by name; an absent one keeps the embedded backstop and says so, naming the binary-shipped halves; a worktree whose own data dir diverges from the process of record is reported at engage, in refusals and in the route document. (sty_d6e209aa)
 - **The story list shows completed stages and gate outcomes.** The PROGRESS column has one chip per completed stage plus the current one, named by the stage, with a per-edge badge counting accepts and rejects; park, sink and terminal come from the route. (sty_a7d6e0d0)
 
 ### Changed
+- **A performer dispatched into a linked worktree without its harness gate wiring is refused before it starts.** The refusal names the harness and each missing path (for claude, `.claude/settings.json` and the `satelle-hook.sh` wrapper it calls). To heal a worktree: declare the gitignored paths a worktree needs in `satelle.toml` `[worktree] include` (e.g. `include = [".claude", ".grok", ".pi"]`) and run `satelle story worktree <id> --existing <path>` to link them in; or, only if you accept ungated runs, declare `[worktree] absent_wiring = "fail-open"`. An unknown key under `[worktree]` or `[harness.<name>]` is now refused at load, naming the key. (sty_f141c77f)
 - **A story driven in a linked worktree follows the main tree's authored process.** Workflows, agents, skills, principles, documents, the constitution and the gate, engagement and vars decisions read the main tree's data dir; a worktree's own data dir is not the process of record. (sty_ddbe2669)
 - **A reviewer on a re-presented edge judges what changed since its last verdict** instead of starting over, citing the words its earlier verdict rested on. (sty_3d279f8b)
 
