@@ -2,9 +2,11 @@ package hosted
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -14,13 +16,133 @@ func tempStore(t *testing.T) FileStore {
 }
 
 func TestCredentialsPathXDG(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", "/xdg")
+	x := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", x)
 	p, err := CredentialsPath()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p != filepath.Join("/xdg", "satelle", "credentials.toml") {
+	if p != filepath.Join(x, "satelle", "credentials.toml") {
 		t.Fatalf("path = %q", p)
+	}
+}
+
+// panicMessage runs f and returns its recovered panic text ("" if none).
+func panicMessage(f func()) (msg string) {
+	defer func() {
+		if r := recover(); r != nil {
+			msg = fmt.Sprint(r)
+		}
+	}()
+	f()
+	return ""
+}
+
+// TestCredentialsPathFenceUnderTest proves the sty_18403814 fence: under go test
+// the resolved path must lie under the temp dir / SATELLE_HOME, whichever branch
+// (XDG_CONFIG_HOME or HOME) produced it.
+func TestCredentialsPathFenceUnderTest(t *testing.T) {
+	t.Run("xdg outside temp panics", func(t *testing.T) {
+		const bad = "/nonexistent-satelle-xdg"
+		t.Setenv("SATELLE_HOME", t.TempDir())
+		t.Setenv("XDG_CONFIG_HOME", bad)
+		msg := panicMessage(func() { _, _ = CredentialsPath() })
+		if !strings.Contains(msg, filepath.Join(bad, "satelle", "credentials.toml")) {
+			t.Fatalf("want panic naming the resolved path, got %q", msg)
+		}
+	})
+	t.Run("home fallback outside temp panics", func(t *testing.T) {
+		const bad = "/nonexistent-satelle-home"
+		t.Setenv("SATELLE_HOME", t.TempDir())
+		t.Setenv("XDG_CONFIG_HOME", "")
+		t.Setenv("HOME", bad)
+		msg := panicMessage(func() { _, _ = CredentialsPath() })
+		if !strings.Contains(msg, filepath.Join(bad, ".config", "satelle", "credentials.toml")) {
+			t.Fatalf("want panic naming the resolved path, got %q", msg)
+		}
+	})
+	t.Run("xdg under temp dir is allowed", func(t *testing.T) {
+		x := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", x)
+		var p string
+		if msg := panicMessage(func() { p, _ = CredentialsPath() }); msg != "" {
+			t.Fatalf("unexpected panic: %s", msg)
+		}
+		if p != filepath.Join(x, "satelle", "credentials.toml") {
+			t.Fatalf("path = %q", p)
+		}
+	})
+	t.Run("xdg under SATELLE_HOME is allowed", func(t *testing.T) {
+		t.Setenv("TMPDIR", t.TempDir()) // SATELLE_HOME below is not under this
+		h := t.TempDir()
+		t.Setenv("SATELLE_HOME", h)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(h, "xdg"))
+		if msg := panicMessage(func() { _, _ = CredentialsPath() }); msg != "" {
+			t.Fatalf("unexpected panic: %s", msg)
+		}
+	})
+	t.Run("explicit FileStore path bypasses the fence", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", "/nonexistent-satelle-xdg")
+		s := FileStore{Path: filepath.Join(t.TempDir(), "c.toml")}
+		if _, err := s.Load("https://h"); !errors.Is(err, ErrNoCredential) {
+			t.Fatalf("Load = %v", err)
+		}
+	})
+}
+
+// TestPruneLoopback proves the narrowed prune: only loopback entries with no
+// created_at and no email go; a loopback login that carries both stays.
+func TestPruneLoopback(t *testing.T) {
+	s := tempStore(t)
+	stampless := []string{"http://127.0.0.1:41001", "http://localhost:41002", "http://[::1]:41003"}
+	keep := []Credential{
+		{ServerURL: "http://127.0.0.1:8787", AccessToken: "a", RefreshToken: "r", CreatedAt: "2026-10-01T00:00:00Z", Email: "dev@x.io", DisplayName: "Dev"},
+		{ServerURL: "https://hosted.example", AccessToken: "a2", RefreshToken: "r2"},
+		{ServerURL: "https://other.example", AccessToken: "a3", RefreshToken: "r3", CreatedAt: "2026-10-02T00:00:00Z", Email: "o@x.io"},
+	}
+	for _, u := range stampless {
+		if err := s.Save(Credential{ServerURL: u, AccessToken: "t", RefreshToken: "t"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range keep {
+		if err := s.Save(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	removed, err := s.PruneLoopback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 3 {
+		t.Fatalf("removed = %v, want the 3 stamp-less loopback URLs", removed)
+	}
+	for i, u := range stampless {
+		if removed[i] != u {
+			t.Errorf("removed[%d] = %q, want %q", i, removed[i], u)
+		}
+		if _, err := s.Load(u); !errors.Is(err, ErrNoCredential) {
+			t.Errorf("%s survived the prune: %v", u, err)
+		}
+	}
+	for _, want := range keep {
+		got, err := s.Load(want.ServerURL)
+		if err != nil || got != want {
+			t.Errorf("%s changed: got %+v err %v, want %+v", want.ServerURL, got, err, want)
+		}
+	}
+	if runtime.GOOS != "windows" {
+		fi, err := os.Stat(s.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm() != 0o600 {
+			t.Errorf("mode = %v, want 0600", fi.Mode().Perm())
+		}
+	}
+	// A second prune finds nothing.
+	if again, err := s.PruneLoopback(); err != nil || len(again) != 0 {
+		t.Fatalf("second prune = %v, %v", again, err)
 	}
 }
 

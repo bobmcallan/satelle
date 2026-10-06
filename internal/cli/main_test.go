@@ -53,5 +53,23 @@ func TestMain(m *testing.M) {
 	} {
 		_ = os.Unsetenv(k)
 	}
-	os.Exit(m.Run())
+	os.Exit(runIsolated(m))
+}
+
+// runIsolated runs the package's tests with XDG_CONFIG_HOME pointing at a
+// process-lifetime temp dir. Any command a test drives through runRoot reads the
+// per-user credentials file (the assignee lookup in openAppForCmd), so a test
+// that never isolates it would otherwise resolve the operator's real
+// ~/.config/satelle/credentials.toml — or write it, if it saves a credential
+// (sty_18403814). A test that needs its own credential store still sets
+// XDG_CONFIG_HOME with t.Setenv, which overrides this backstop.
+func runIsolated(m *testing.M) int {
+	dir, err := os.MkdirTemp("", "satelle-cli-xdg-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "satelle cli tests: temp XDG_CONFIG_HOME:", err)
+		return 1
+	}
+	defer os.RemoveAll(dir)
+	_ = os.Setenv("XDG_CONFIG_HOME", dir)
+	return m.Run()
 }

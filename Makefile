@@ -52,8 +52,12 @@ uninstall:
 	rm -f $(INSTALL_DIR)/$(BIN) $(INSTALL_DIR)/$(SERVE_BIN)
 	@echo "removed $(INSTALL_DIR)/$(BIN) and $(INSTALL_DIR)/$(SERVE_BIN) (run 'satelle service uninstall' first if the service is installed)"
 
+# Every go test target below runs under scripts/credguard.sh, which fails the
+# target if the suite changed the operator's host credentials file (sty_18403814).
+CREDGUARD := sh scripts/credguard.sh --
+
 test:
-	go test ./...
+	$(CREDGUARD) go test ./...
 
 # integration builds the binary once, then drives it from ./tests via SATELLE_BIN
 # (no per-test rebuild). Run by hand with: SATELLE_BIN=$(command -v satelle) go test -tags integration ./tests/...
@@ -64,19 +68,19 @@ test:
 integration:
 	go build -ldflags "-X $(PKG).Name=satelle -X $(PKG).Version=$(BASE_VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)" -o $(BIN) ./cmd/satelle
 	go build -ldflags "-X $(PKG).Name=satelled -X $(PKG).Version=$(BASE_SERVE_VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)" -o $(SERVE_BIN) ./cmd/satelled
-	SATELLE_BIN=$(CURDIR)/$(BIN) go test -tags integration ./tests/...
+	SATELLE_BIN=$(CURDIR)/$(BIN) $(CREDGUARD) go test -tags integration ./tests/...
 
 # judgment: opt-in LLM rubric fixtures (sty_6830e78e). Costs tokens, not hermetic,
 # never in default CI. See README ## Testing.
 judgment:
-	go test -tags llm ./tests/llm/...
+	$(CREDGUARD) go test -tags llm ./tests/llm/...
 
 # Opt-in live planner study: the controlled matrix declared in
 # tests/plannerbench/study.json. Costs tokens and writes durable per-sample
 # evidence plus report.md under tests/plannerbench/out/. Bindings whose binary is
 # not on PATH are skipped with a recorded reason rather than dropped.
 planner-bench: build
-	SATELLE_BIN=$(CURDIR)/$(BIN) SATELLE_PLANNER_BENCH=1 go test -tags plannerbench ./tests/plannerbench/ -count=1 -timeout 90m -v
+	SATELLE_BIN=$(CURDIR)/$(BIN) SATELLE_PLANNER_BENCH=1 $(CREDGUARD) go test -tags plannerbench ./tests/plannerbench/ -count=1 -timeout 90m -v
 
 # planner-report re-renders report.md/report.json from the durable run records
 # already under tests/plannerbench/out/runs. Pure and token-free: same records in,
@@ -84,4 +88,4 @@ planner-bench: build
 # without paying for it again.
 .PHONY: planner-report
 planner-report:
-	SATELLE_PLANNER_REPORT=1 go test -tags plannerbench ./tests/plannerbench/ -run TestRegenerateReportFromDurableEvidence -count=1 -v
+	SATELLE_PLANNER_REPORT=1 $(CREDGUARD) go test -tags plannerbench ./tests/plannerbench/ -run TestRegenerateReportFromDurableEvidence -count=1 -v

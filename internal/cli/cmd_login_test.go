@@ -193,6 +193,64 @@ func TestRunLogoutClearsCredential(t *testing.T) {
 	}
 }
 
+// TestLogoutPruneLoopback drives `satelle logout --prune-loopback` end to end:
+// it prints each removed URL and the count, removes only the stamp-less loopback
+// credentials, and the help text describes the flag and its narrowing
+// (sty_18403814).
+func TestLogoutPruneLoopback(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	store := hosted.FileStore{}
+	for _, c := range []hosted.Credential{
+		{ServerURL: "http://127.0.0.1:41001", AccessToken: "a", RefreshToken: "r"},
+		{ServerURL: "http://localhost:41002", AccessToken: "a", RefreshToken: "r"},
+		{ServerURL: "http://127.0.0.1:8787", AccessToken: "a", RefreshToken: "r", CreatedAt: "2026-10-01T00:00:00Z", Email: "dev@x.io"},
+		{ServerURL: "https://hosted.example", AccessToken: "a", RefreshToken: "r"},
+	} {
+		if err := store.Save(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out, err := runRoot(t, "logout", "--prune-loopback")
+	if err != nil {
+		t.Fatalf("logout --prune-loopback: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"removed http://127.0.0.1:41001\n",
+		"removed http://localhost:41002\n",
+		"removed 2 loopback test credential(s)\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+	for _, gone := range []string{"http://127.0.0.1:41001", "http://localhost:41002"} {
+		if _, err := store.Load(gone); !errors.Is(err, hosted.ErrNoCredential) {
+			t.Errorf("%s not pruned: %v", gone, err)
+		}
+	}
+	for _, kept := range []string{"http://127.0.0.1:8787", "https://hosted.example"} {
+		if _, err := store.Load(kept); err != nil {
+			t.Errorf("%s must survive: %v", kept, err)
+		}
+	}
+
+	if _, err := runRoot(t, "logout", "--prune-loopback", "--server", "https://x"); err == nil {
+		t.Error("--prune-loopback with --server must be refused")
+	}
+
+	help, err := runRoot(t, "logout", "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--prune-loopback", "no created_at and no email", "real logins"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("logout --help missing %q:\n%s", want, help)
+		}
+	}
+}
+
 func TestRunWhoamiNotSignedIn(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

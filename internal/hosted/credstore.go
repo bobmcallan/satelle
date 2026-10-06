@@ -13,9 +13,12 @@ package hosted
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"testing"
 
 	"github.com/BurntSushi/toml"
 )
@@ -69,7 +72,25 @@ type Store interface {
 // CredentialsPath returns the per-user credentials file location:
 // $XDG_CONFIG_HOME/satelle/credentials.toml, falling back to
 // ~/.config/satelle/credentials.toml. Deliberately outside any repo tree.
+//
+// Under `go test` (testing.Testing()) the RESOLVED path, whichever branch
+// produced it, must lie under os.TempDir() or SATELLE_HOME, else it panics
+// rather than letting a test read or write the operator's real credentials
+// file (sty_18403814). It panics instead of returning an error because callers
+// such as the CLI app's server lookup swallow Load errors, which would degrade
+// a returned error into a silent fallback; production is unaffected.
 func CredentialsPath() (string, error) {
+	p, err := resolveCredentialsPath()
+	if err != nil {
+		return "", err
+	}
+	if testing.Testing() {
+		guardTestPath(p)
+	}
+	return p, nil
+}
+
+func resolveCredentialsPath() (string, error) {
 	if x := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); x != "" {
 		return filepath.Join(x, "satelle", "credentials.toml"), nil
 	}
@@ -78,6 +99,44 @@ func CredentialsPath() (string, error) {
 		return "", fmt.Errorf("hosted: resolve home dir: %w", err)
 	}
 	return filepath.Join(home, ".config", "satelle", "credentials.toml"), nil
+}
+
+// guardTestPath panics unless p lies under the temp dir or SATELLE_HOME.
+func guardTestPath(p string) {
+	roots := []string{os.TempDir()}
+	if h := strings.TrimSpace(os.Getenv("SATELLE_HOME")); h != "" {
+		roots = append(roots, h)
+	}
+	rp := resolveExisting(p)
+	for _, r := range roots {
+		if pathUnder(rp, resolveExisting(r)) {
+			return
+		}
+	}
+	panic(fmt.Sprintf("hosted: test resolved credentials path %s outside the temp dir/SATELLE_HOME — isolate XDG_CONFIG_HOME (testutil.IsolateHome); refusing to touch the operator's credentials", p))
+}
+
+// resolveExisting cleans p and resolves symlinks through its deepest existing
+// ancestor, so a symlinked /tmp still matches and a not-yet-created file works.
+func resolveExisting(p string) string {
+	p = filepath.Clean(p)
+	rest := ""
+	for cur := p; ; {
+		if r, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(r, rest)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(cur), rest)
+		cur = parent
+	}
+}
+
+func pathUnder(p, root string) bool {
+	rel, err := filepath.Rel(root, p)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func (s FileStore) path() (string, error) {
@@ -170,6 +229,49 @@ func (s FileStore) Delete(serverURL string) error {
 	}
 	cf.Credential = kept
 	return writeCredentials(path, cf)
+}
+
+// PruneLoopback removes the credentials test servers left behind (sty_18403814)
+// and returns the removed server URLs. An entry goes only when its server host
+// is loopback (127.0.0.0/8, ::1, localhost) AND it carries no created_at and no
+// email — a real login stamps both, so a genuine login to a local dev server is
+// kept. Every other entry is written back untouched.
+func (s FileStore) PruneLoopback() ([]string, error) {
+	cf, path, err := s.read()
+	if err != nil {
+		return nil, err
+	}
+	var removed []string
+	kept := cf.Credential[:0]
+	for _, c := range cf.Credential {
+		if isLoopbackURL(c.ServerURL) && strings.TrimSpace(c.CreatedAt) == "" && strings.TrimSpace(c.Email) == "" {
+			removed = append(removed, c.ServerURL)
+			continue
+		}
+		kept = append(kept, c)
+	}
+	if len(removed) == 0 {
+		return nil, nil
+	}
+	cf.Credential = kept
+	if err := writeCredentials(path, cf); err != nil {
+		return nil, err
+	}
+	return removed, nil
+}
+
+// isLoopbackURL reports whether raw's host is localhost or a loopback IP.
+func isLoopbackURL(raw string) bool {
+	u, err := url.Parse(normalizeServerURL(raw))
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func writeCredentials(path string, cf credentialsFile) error {
