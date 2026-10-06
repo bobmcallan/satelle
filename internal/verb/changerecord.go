@@ -121,8 +121,11 @@ func recordChangeSet(ctx context.Context, item workitem.Item, from, to string, n
 	// Substrate leg when we have a real anchor (baseline or prior record).
 	// Skip when no-baseline so files stays empty (clear absent-record).
 	if hasSinceTime && payload.Unavailable != "no-baseline" {
-		sub := substrateChangedFiles(dir, authoredDirs, substrateConfigDir, sinceTime)
-		files = append(files, sub...)
+		// Process-root paths ride in the same flat list: the recorded channel is a
+		// union of repo-relative strings (sty_92e4cdbe).
+		local, procRel, _ := substrateChangedFilesSplit(dir, authoredDirs, substrateConfigDir, sinceTime)
+		files = append(files, local...)
+		files = append(files, procRel...)
 	}
 
 	files = uniqueSorted(files)
@@ -358,13 +361,57 @@ func changeRecordSinceTime(ctx context.Context, storyID string) (time.Time, bool
 // are skipped (path-space: repo-relative only). Runtime/state files under the
 // config dir are excluded so mtime churn never lands in a change set.
 func substrateWalk(repoRoot string, dirs map[string]string, configDir string, keep func(os.FileInfo) bool) []string {
-	var out []string
-	seen := map[string]bool{}
-	walk := func(root string) {
-		if strings.TrimSpace(root) == "" {
+	local, _, _ := substrateWalkSplit(repoRoot, dirs, configDir, keep)
+	return local
+}
+
+// processRootForSubstrate names the main tree whose authored substrate is the
+// process of record for every worktree (sty_ddbe2669). The root has one owner,
+// app.App.ProcessRoot, and arrives through the existing wiring in internal/cli
+// (SetProcessProbe, else SetWorktreeConfig) — it is never worked out here, so
+// with neither wired it is "" and out-of-tree paths are dropped.
+func processRootForSubstrate() string {
+	if processProbe != nil && strings.TrimSpace(processProbe.ProcessRoot) != "" {
+		return processProbe.ProcessRoot
+	}
+	if worktreeWired {
+		return worktreeRoot
+	}
+	return ""
+}
+
+// substrateRelUnder is the slash path of path under root, or false when path is
+// not under root (or root is unset).
+func substrateRelUnder(root, path string) (string, bool) {
+	if strings.TrimSpace(root) == "" {
+		return "", false
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
+}
+
+// substrateWalkSplit is substrateWalk that also reports the substrate a story
+// engaged from a linked worktree made in the MAIN tree (sty_92e4cdbe). The walk
+// roots are the process-of-record dirs, so for a worktree slice they sit outside
+// sliceRoot: local holds the paths under sliceRoot, processRel those under the
+// process root (relative to it), and processRoot names that root — "" when
+// processRel is empty, so a main-tree story reports nothing extra. Any other path
+// is dropped.
+//
+// processRel is attributed by mtime to whichever story asks, including edits
+// another story engaged in the main tree made in the same window; it is
+// enumeration a gate judges, the same attribution the main-tree case already has.
+func substrateWalkSplit(sliceRoot string, dirs map[string]string, configDir string, keep func(os.FileInfo) bool) (local, processRel []string, processRoot string) {
+	root := processRootForSubstrate()
+	seenLocal, seenProc := map[string]bool{}, map[string]bool{}
+	walk := func(dir string) {
+		if strings.TrimSpace(dir) == "" {
 			return
 		}
-		_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info == nil || info.IsDir() {
 				return nil
 			}
@@ -374,34 +421,45 @@ func substrateWalk(repoRoot string, dirs map[string]string, configDir string, ke
 			if keep != nil && !keep(info) {
 				return nil
 			}
-			rel, rerr := filepath.Rel(repoRoot, path)
-			if rerr != nil || strings.HasPrefix(rel, "..") {
-				return nil
-			}
-			rel = filepath.ToSlash(rel)
-			if !seen[rel] {
-				seen[rel] = true
-				out = append(out, rel)
+			if rel, ok := substrateRelUnder(sliceRoot, path); ok {
+				if !seenLocal[rel] {
+					seenLocal[rel] = true
+					local = append(local, rel)
+				}
+			} else if rel, ok := substrateRelUnder(root, path); ok && !seenProc[rel] {
+				seenProc[rel] = true
+				processRel = append(processRel, rel)
 			}
 			return nil
 		})
 	}
-	for _, root := range dirs {
-		walk(root)
+	for _, d := range dirs {
+		walk(d)
 	}
 	walk(configDir)
-	sort.Strings(out)
-	return out
+	sort.Strings(local)
+	sort.Strings(processRel)
+	if len(processRel) > 0 {
+		processRoot = root
+	}
+	return local, processRel, processRoot
 }
 
 // substrateChangedFiles lists repo-relative paths under authored dirs and the
 // substrate config dir whose mtime is strictly after since. since must be a real
 // anchor.
 func substrateChangedFiles(repoRoot string, dirs map[string]string, configDir string, since time.Time) []string {
+	local, _, _ := substrateChangedFilesSplit(repoRoot, dirs, configDir, since)
+	return local
+}
+
+// substrateChangedFilesSplit is substrateChangedFiles that also returns the
+// process-root substrate paths (see substrateWalkSplit).
+func substrateChangedFilesSplit(repoRoot string, dirs map[string]string, configDir string, since time.Time) (local, processRel []string, processRoot string) {
 	if since.IsZero() {
-		return nil
+		return nil, nil, ""
 	}
-	return substrateWalk(repoRoot, dirs, configDir, func(info os.FileInfo) bool {
+	return substrateWalkSplit(repoRoot, dirs, configDir, func(info os.FileInfo) bool {
 		return info.ModTime().After(since)
 	})
 }

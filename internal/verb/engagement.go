@@ -171,6 +171,13 @@ type StoryDiffResult struct {
 	// Source is "live" (git re-derive) or "recorded" (change_record union).
 	Source  string `json:"source,omitempty"`
 	Records int    `json:"records,omitempty"`
+	// ProcessRoot / ProcessRootFiles name the substrate a story engaged from a
+	// linked worktree changed in the MAIN tree (sty_92e4cdbe): the process of
+	// record lives there, not in the worktree. The same paths are also in Files;
+	// these fields say they are relative to ProcessRoot. Omitted for a story
+	// engaged in the main tree.
+	ProcessRoot      string   `json:"process_root,omitempty"`
+	ProcessRootFiles []string `json:"process_root_files,omitempty"`
 }
 
 func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
@@ -270,11 +277,20 @@ func liveStoryDiff(ctx context.Context, it workitem.Item, wantPatch, includeSubs
 		return StoryDiffResult{}, err
 	}
 	files := sl.Files
+	note := "enumeration only — no pass/fail; gates decide scope"
+	var processRoot string
+	var processFiles []string
 	// Opt-in substrate leg only (--include-substrate). Default live path stays
 	// git-only so scope-review is not polluted by mtime noise (sty_6469025e).
 	if includeSubstrate {
 		if !sl.BaseAt.IsZero() {
-			files = append(files, substrateChangedFiles(sl.Dir, authoredDirs, substrateConfigDir, sl.BaseAt)...)
+			local, procRel, root := substrateChangedFilesSplit(sl.Dir, authoredDirs, substrateConfigDir, sl.BaseAt)
+			files = append(files, local...)
+			files = append(files, procRel...)
+			processRoot, processFiles = root, procRel
+			if len(procRel) > 0 {
+				note += "; process_root_files live in the main tree at " + root
+			}
 		}
 		// Deletions are measured against the FIRST engagement baseline's manifest,
 		// not the resume re-anchor above: the manifest says what existed when the
@@ -293,7 +309,10 @@ func liveStoryDiff(ctx context.Context, it workitem.Item, wantPatch, includeSubs
 		Stat:     sl.Stat,
 		Patch:    sl.Patch,
 		Source:   "live",
-		Note:     "enumeration only — no pass/fail; gates decide scope",
+		Note:     note,
+
+		ProcessRoot:      processRoot,
+		ProcessRootFiles: processFiles,
 	}, nil
 }
 

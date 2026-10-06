@@ -1,3 +1,8 @@
+## [0.0.619] - 2026-10-06
+
+### Fixed
+- **A story engaged from a linked worktree now counts its edits to the main tree's git-ignored substrate as its change set.** A worktree reads the main tree's substrate directory as its process of record, so a substrate-lane story engaged from its own worktree makes its edits there. The substrate walk used to drop every path outside the story's worktree, so `satelle story diff <id> --include-substrate` and the recorded change set came back empty, and `satelle-substrate-only-check` refused the close with "no change set found". Those main-tree substrate files are now listed under their process-root-relative paths (for example `skills/x.md` under the data dir). `story diff --include-substrate` also reports `process_root` (the main tree) and `process_root_files`, and its note says the files live in the main tree. The root comes from the existing process-of-record wiring and is never guessed: with no wiring, out-of-tree paths are still dropped. A story engaged in the main tree is unchanged, and those fields are omitted for it. Deleting main-tree substrate from a worktree is not enumerated yet (follow-up sty_85ba4a00). (sty_92e4cdbe)
+
 ## [0.0.618] - 2026-10-06
 
 ### Added
