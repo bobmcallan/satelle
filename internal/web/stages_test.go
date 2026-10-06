@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -239,14 +240,90 @@ func TestStagesRenderNoNumberedLights(t *testing.T) {
 	}
 	for _, want := range []string{
 		`class="stage-chip stage-done"`, `class="stage-chip stage-current"`,
-		`<b class="ok">✓1</b>`, `<b class="rej">✗5</b>`, "parked 1", `class="gate-badge"`,
+		`<b class="ok">✓1</b>`, `<b class="rej">✗5</b>`, `<b class="blk">1</b>`, `class="gate-badge"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered row missing %q:\n%s", want, html)
 		}
 	}
-	if !strings.Contains(html, "1 accepted round, 5 rejected rounds, parked once") {
+	if strings.Contains(html, "parked") {
+		t.Errorf("the chip must carry no 'parked' word:\n%s", html)
+	}
+	if !strings.Contains(html, "1 accepted round, 5 rejected rounds, blocked once") {
 		t.Errorf("tooltip should spell the totals in words:\n%s", html)
+	}
+}
+
+// AC1: the blocked count is painted in the theme's warn colour.
+func TestBlockedCountUsesWarnColour(t *testing.T) {
+	raw, err := staticFS.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?s)\.stage-chip \.blk\s*\{[^}]*\}`).FindString(string(raw))
+	if m == "" || !strings.Contains(m, "color: var(--warn)") {
+		t.Errorf("app.css needs a .stage-chip .blk rule using var(--warn); got %q", m)
+	}
+}
+
+// AC2: the title names the episodes by the park transition's own state, so a
+// route whose park state is not "blocked" reads its own word — on a resolved
+// route and on the degraded no-Spec shape.
+func TestStageTitleUsesParkStateName(t *testing.T) {
+	spec := wfdot.Spec{States: []wfdot.State{
+		{Name: "backlog", Shape: "Mdiamond"},
+		{Name: "plan", Agent: "planner"},
+		{Name: "in_progress", Agent: "coder"},
+		{Name: "on_hold", Agent: "reviewer", From: []string{"*"}},
+	}}
+	entries := []ledger.Entry{
+		evA(ledger.KindReviewAccept, "backlog", "plan", "h1"),
+		ev(ledger.KindStatusTransition, "backlog", "plan"),
+		ev(ledger.KindStatusTransition, "plan", "on_hold"),
+		ev(ledger.KindStatusTransition, "on_hold", "plan"),
+		ev(ledger.KindStatusTransition, "plan", "on_hold"),
+		ev(ledger.KindStatusTransition, "on_hold", "plan"),
+	}
+	for name, sp := range map[string]wfdot.Spec{"route": spec, "no route": {}} {
+		stages, _ := buildStages(entries, "plan", false, noStep, sp)
+		plan := stageNamed(stages, "plan")
+		if plan.Parked != 2 || plan.ParkName != "on_hold" {
+			t.Fatalf("%s: plan = %+v, want 2 parks into on_hold", name, plan)
+		}
+		if got := stageTitle(plan); !strings.Contains(got, "on_hold 2 times") || strings.Contains(got, "blocked") {
+			t.Errorf("%s: title = %q, want the park state's own name", name, got)
+		}
+	}
+	once := stageVM{Name: "plan", State: "done", Parked: 1, ParkName: "on_hold"}
+	if got := stageTitle(once); !strings.Contains(got, "on_hold once") {
+		t.Errorf("title = %q, want 'on_hold once'", got)
+	}
+}
+
+// AC3: a stage never parked shows no blocked count in its chip and no park
+// wording in its title.
+func TestNeverParkedStageShowsNoBlockedCount(t *testing.T) {
+	entries := []ledger.Entry{
+		evA(ledger.KindReviewReject, "backlog", "plan", "n1"),
+		evA(ledger.KindReviewAccept, "backlog", "plan", "n2"),
+		ev(ledger.KindStatusTransition, "backlog", "plan"),
+	}
+	stages, gate := buildStages(entries, "plan", false, noStep, routeSpec())
+	it := workitem.Item{ID: "sty_nopark01", Kind: workitem.KindStory, Title: "T", Status: "plan"}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "workitemRows", []rowVM{{Item: it, Stages: stages, Gate: gate}}); err != nil {
+		t.Fatal(err)
+	}
+	html := buf.String()
+	if strings.Contains(html, `class="blk"`) {
+		t.Errorf("a never-parked stage rendered a blocked count:\n%s", html)
+	}
+	for _, s := range stages {
+		for _, word := range []string{"blocked", "parked"} {
+			if strings.Contains(s.Title, word) {
+				t.Errorf("title %q carries park wording %q", s.Title, word)
+			}
+		}
 	}
 }
 

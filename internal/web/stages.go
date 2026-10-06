@@ -26,6 +26,7 @@ type stageVM struct {
 	Accepted int    // accepted gate rounds on the edges into this stage
 	Rejected int    // rejected gate rounds on the edges into this stage
 	Parked   int    // parks taken while this stage's gate was in flight
+	ParkName string // the state those parks went into (the route's park-state name)
 	Title    string // tooltip: the totals spelled in words
 }
 
@@ -133,7 +134,7 @@ func buildStages(entries []ledger.Entry, status string, seatHeld bool, stepOf fu
 
 	var stages []stageVM
 	at := map[string]int{} // stage name → index in stages
-	type park struct{ target, within string }
+	type park struct{ target, within, name string }
 	var parks []park
 	lastEdgeTo, curName := "", ""
 	offRoute := map[string]bool{} // edges of a park, recover or sink: not a stage's gate
@@ -158,7 +159,7 @@ func buildStages(entries []ledger.Entry, status string, seatHeld bool, stepOf fu
 				if target == "" {
 					target = within
 				}
-				parks = append(parks, park{target, within})
+				parks = append(parks, park{target, within, t.to})
 				lastEdgeTo = ""
 			case trRecover:
 				offRoute[t.from+"→"+t.to] = true
@@ -195,10 +196,13 @@ func buildStages(entries []ledger.Entry, status string, seatHeld bool, stepOf fu
 		stages[i].Rejected += r
 	}
 	for _, p := range parks {
-		if i, ok := at[p.target]; ok {
+		i, ok := at[p.target]
+		if !ok {
+			i, ok = at[p.within]
+		}
+		if ok {
 			stages[i].Parked++
-		} else if i, ok := at[p.within]; ok {
-			stages[i].Parked++
+			stages[i].ParkName = p.name
 		}
 	}
 
@@ -299,9 +303,9 @@ func stageTitle(s stageVM) string {
 	}
 	switch {
 	case s.Parked == 1:
-		parts = append(parts, "parked once")
+		parts = append(parts, s.ParkName+" once")
 	case s.Parked > 1:
-		parts = append(parts, fmt.Sprintf("parked %d times", s.Parked))
+		parts = append(parts, fmt.Sprintf("%s %d times", s.ParkName, s.Parked))
 	}
 	title := s.Name
 	if s.State == "current" {

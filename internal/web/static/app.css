@@ -380,7 +380,7 @@ td.updated-cell { white-space: nowrap; }
 .stage-done { color: var(--muted); }
 .stage-current { border-color: var(--warn); color: var(--warn);
   animation: review-pulse 1.4s ease-in-out infinite; }
-.stage-chip .parked { font-style: normal; color: var(--muted); }
+.stage-chip .blk { color: var(--warn); font-weight: 600; }
 .gate-badge { margin-top: 3px; font-size: 11px; line-height: 1.4; }
 .gate-badge b + b { margin-left: 6px; }
 .ok { color: var(--accent); font-weight: 600; }
