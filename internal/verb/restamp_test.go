@@ -20,13 +20,13 @@ type fakeWorkflowResolver struct {
 	states     map[string][]string
 }
 
-func (f *fakeWorkflowResolver) WorkflowNameFor(_ context.Context, category string) string {
-	return f.byCategory[category]
+func (f *fakeWorkflowResolver) WorkflowNameFor(_ context.Context, category string) (string, error) {
+	return f.byCategory[category], nil
 }
 
-func (f *fakeWorkflowResolver) WorkflowStates(_ context.Context, name string) ([]string, bool) {
+func (f *fakeWorkflowResolver) WorkflowStates(_ context.Context, name string) ([]string, bool, error) {
 	s, ok := f.states[name]
-	return s, ok
+	return s, ok, nil
 }
 
 // wireResolver wires a fake workflow resolver, resetting on cleanup.

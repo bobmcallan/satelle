@@ -88,7 +88,10 @@ func showDerivedRoute(out io.Writer, a *app.App, category string, tags []string)
 	if err != nil {
 		return fmt.Errorf("workflow show %q: %w", category, err)
 	}
-	rs, ok := wfgovern.RouteGoverns(docs, category)
+	rs, ok, rerr := wfgovern.RouteGovernsErr(docs, category)
+	if rerr != nil {
+		return fmt.Errorf("workflow show %q: %w", category, rerr)
+	}
 	if !ok {
 		return fmt.Errorf("workflow show %q: no workflow document of that name, and no derived route governs that category — see `satelle workflow list`", category)
 	}

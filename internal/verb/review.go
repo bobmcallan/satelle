@@ -295,13 +295,16 @@ func SetAmendReviewer(r AmendReviewer) { amendReviewer = r }
 // of create-gating — a story is stamped whenever a workflow governs it.
 // Implemented in internal/agentstep.
 type WorkflowResolver interface {
-	WorkflowNameFor(ctx context.Context, category string) string
+	// The error is non-nil only when the authored process cannot be read
+	// (wfgovern.ErrAuthoredProcessUnreadable): the caller refuses and stores
+	// nothing, rather than stamping the embedded default's name.
+	WorkflowNameFor(ctx context.Context, category string) (string, error)
 	// WorkflowStates returns the lifecycle states the named workflow declares and
 	// whether the workflow resolves at all — the restamp validation seam. An empty
 	// state list on a resolved workflow means the lifecycle was not statically
 	// parseable; the caller skips the status-compatibility check rather than
-	// blocking the restamp.
-	WorkflowStates(ctx context.Context, name string) ([]string, bool)
+	// blocking the restamp. The error is the same unreadable-process refusal.
+	WorkflowStates(ctx context.Context, name string) ([]string, bool, error)
 }
 
 var workflowResolver WorkflowResolver

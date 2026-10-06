@@ -181,6 +181,11 @@ func runAmendGate(ctx context.Context, current workitem.Item, fields []AmendFiel
 func refuseUnamendableState(ctx context.Context, current workitem.Item) error {
 	spec, ok := storyGoverningSpec(ctx, current)
 	if !ok {
+		// An unreadable authored process is named, not folded into "cannot resolve"
+		// (sty_d6e209aa).
+		if perr := processCheck(ctx); perr != nil {
+			return fmt.Errorf("satelle: refusing to amend %s — %w", current.ID, perr)
+		}
 		return fmt.Errorf(
 			"satelle: refusing to amend %s — cannot resolve the story's governing route, so whether this state may be amended is unknown (fix the workflow config and retry)",
 			current.ID)

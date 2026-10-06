@@ -31,6 +31,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/health"
 	"github.com/bobmcallan/satelle/internal/structure"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 )
 
 // DefaultLiveTimeout bounds ONE live provider probe.
@@ -62,6 +63,12 @@ type Opts struct {
 	// stamp reader and the drift classification live in internal/cli. Nil means
 	// the check is skipped.
 	BreakingDrift func(repoRoot string) health.Findings
+	// Process and ProcessRoot are the process-of-record config and root, with
+	// RepoRoot as the invoking tree. When Process is set and the invoking tree is
+	// a linked worktree whose own copy of the authored process differs from the
+	// main tree's, Check reports it (sty_d6e209aa). Nil Process skips the check.
+	Process     *config.Config
+	ProcessRoot string
 	// probe overrides the live prober in tests. Nil uses the real one.
 	probe func(ctx context.Context, g agentvalidate.Grant, timeout time.Duration) health.Findings
 }
@@ -95,6 +102,19 @@ func (o Opts) resolveDataDir() string {
 		return d
 	}
 	return filepath.Join(o.RepoRoot, config.DefaultDataDir)
+}
+
+// workflowsDir is the authored workflows dir the process config resolves — the
+// same path the other loaders of it read, so a [substrate_roots] override is
+// honoured rather than assumed to be <data dir>/workflows. With no process config
+// it falls back to <data dir>/workflows.
+func (o Opts) workflowsDir(dataDir string) string {
+	if o.Process != nil && strings.TrimSpace(o.ProcessRoot) != "" {
+		if d := config.ResolveProcessAuthoredDirs(*o.Process, o.ProcessRoot)["workflows"]; d != "" {
+			return d
+		}
+	}
+	return filepath.Join(dataDir, "workflows")
 }
 
 // Check runs the deterministic readiness pass for one repository, plus the
@@ -138,8 +158,9 @@ func Check(ctx context.Context, o Opts) Report {
 	// on-disk wildcard workflow legitimately overrides the embedded wildcard
 	// baseline, so feeding both to the ambiguity check would report every repo as
 	// misconfigured for doing the normal thing.
-	authored := WorkflowDocs(dataDir)
-	governing := GoverningWorkflows(dataDir)
+	wfDir := o.workflowsDir(dataDir)
+	authored := WorkflowDocsAt(wfDir)
+	governing := GoverningWorkflowsAt(wfDir)
 	resolve := SkillResolver(dataDir)
 	vars := RepoVars(dataDir)
 
@@ -155,8 +176,33 @@ func Check(ctx context.Context, o Opts) Report {
 
 	// 2. Authored substrate contracts, store-free (doctor runs before indexing).
 	for _, kind := range []string{"workflows", "skills", "principles", "tasks"} {
-		rep.Findings = append(rep.Findings, checkAuthoredDir(kind, filepath.Join(dataDir, kind), resolve)...)
+		dir := filepath.Join(dataDir, kind)
+		if kind == "workflows" {
+			dir = wfDir
+		}
+		rep.Findings = append(rep.Findings, checkAuthoredDir(kind, dir, resolve)...)
 	}
+
+	// 2b. The process of record (sty_d6e209aa). An UNREADABLE workflows dir was
+	// reported above, as an error. An ABSENT one keeps the embedded backstop and
+	// is reported here as a warning, so the gates are never silently the
+	// binary's; and a linked worktree whose own copy of the authored process
+	// differs from the main tree's is listed file by file.
+	if state, _ := docindex.ProbeDir(wfDir); state == docindex.DirAbsent {
+		rep.Findings = append(rep.Findings, health.Warn(health.IDProcessAbsent, "Authored process absent",
+			wfgovern.AbsentMessage(wfDir)).
+			About(wfDir).
+			WithRemediation("run `satelle init` to seed the workflows dir, or author done.toml + step.toml under it"))
+	}
+	if o.Process != nil && strings.TrimSpace(o.RepoRoot) != "" && strings.TrimSpace(o.ProcessRoot) != "" {
+		if notice := config.DivergenceNotice(o.RepoRoot, o.ProcessRoot,
+			config.ProcessDivergence(o.RepoRoot, o.ProcessRoot, *o.Process)); notice != "" {
+			rep.Findings = append(rep.Findings, health.Warn(health.IDProcessDivergent, "Worktree process diverges", notice).
+				About(o.RepoRoot).
+				WithRemediation("make the change in the main tree (it governs), or discard the worktree's copy"))
+		}
+	}
+	rep.Findings = dedupeFindings(rep.Findings)
 
 	// 3. Cross-workflow consistency — ambiguity, unresolved gate and HOOK skills.
 	for _, p := range agentstep.WorkflowConsistency(authored, resolve) {
@@ -307,15 +353,54 @@ func checkSubstrateLock(dataDir string) health.Findings {
 		WithRemediation(`delete lock_substrate_paths (the default locks ".satelle/") or list the prefixes to lock`)}
 }
 
+// unreadableProcessFinding is the one finding for an unreadable authored workflows
+// dir. agentvalidate builds the same finding for `satelle agent validate`; doctor
+// runs both, so Check de-duplicates (dedupeFindings).
+func unreadableProcessFinding(dir string, err error) health.Finding {
+	return health.Error(health.IDProcessUnreadable, "Authored process unreadable",
+		wfgovern.UnreadableMessage(dir, err.Error())).
+		About(dir).WithRemediation("restore the workflows dir (it must be a readable directory) before engaging a story")
+}
+
+// dedupeFindings drops a finding identical (id, severity, detail) to an earlier
+// one, keeping the first. Two checks can legitimately see the same defect.
+func dedupeFindings(in health.Findings) health.Findings {
+	seen := map[string]bool{}
+	out := make(health.Findings, 0, len(in))
+	for _, f := range in {
+		k := f.ID + "\x00" + string(f.Severity) + "\x00" + f.Detail
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, f)
+	}
+	return out
+}
+
 // checkAuthoredDir applies each authored kind's structure contract, returning
 // findings instead of printing. It mirrors the loop `satelle validate` runs, so
 // init and doctor judge the same files by the same rules.
 func checkAuthoredDir(kind, dir string, resolve func(string) bool) health.Findings {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
+	var out health.Findings
+	state, perr := docindex.ProbeDir(dir)
+	if state == docindex.DirAbsent {
 		return nil // an absent kind is not a defect; init seeds what it needs
 	}
-	var out health.Findings
+	if state == docindex.DirUnreadable {
+		// An authored dir that exists and cannot be read is a defect, not an absent
+		// kind. For workflows it is the named process-unreadable finding the other
+		// surfaces print (sty_d6e209aa).
+		if kind == "workflows" {
+			return health.Findings{unreadableProcessFinding(dir, perr)}
+		}
+		return health.Findings{health.Error(health.IDWorkflowStructure, "Unreadable substrate",
+			fmt.Sprintf("%s — %s", kind, perr)).About(kind)}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
 	for _, e := range entries {
 		fn := e.Name()
 		if e.IsDir() || !docindex.Indexable(fn) {
@@ -385,8 +470,24 @@ func envKeys(agents config.AgentsConfig, vars map[string]string) map[string][]En
 // doctor must work on a repo that has never been indexed. Exported so init and
 // its tests read the deployed set through the SAME function doctor judges, not a
 // second copy that could drift.
+//
+// An UNREADABLE dir (it exists and cannot be listed, or is not a directory) is
+// not an absent one: the answer is the same unreadable sentinel the store-backed
+// loader returns for it, decided by the same docindex.ProbeDir, so no consumer
+// reads it as "no workflows" and falls back to the embedded route
+// (sty_d6e209aa). An absent dir stays nil.
 func WorkflowDocs(dataDir string) []docindex.Doc {
-	dir := filepath.Join(dataDir, "workflows")
+	return WorkflowDocsAt(filepath.Join(dataDir, "workflows"))
+}
+
+// WorkflowDocsAt is WorkflowDocs for an explicit workflows dir — the one the
+// process config resolves, which a [substrate_roots] override moves off
+// <data dir>/workflows (sty_d6e209aa).
+func WorkflowDocsAt(dir string) []docindex.Doc {
+	state, perr := docindex.ProbeDir(dir)
+	if state == docindex.DirUnreadable {
+		return []docindex.Doc{docindex.UnreadableDoc("workflows", dir, perr)}
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
@@ -404,7 +505,10 @@ func WorkflowDocs(dataDir string) []docindex.Doc {
 		}
 		body, rerr := os.ReadFile(filepath.Join(dir, fn))
 		if rerr != nil {
-			continue
+			// A file that exists and cannot be read is the authored process
+			// unreadable one level down — skipping it would let GoverningWorkflows
+			// substitute the embedded half of that name (sty_d6e209aa).
+			return []docindex.Doc{docindex.UnreadableDoc("workflows", filepath.Join(dir, fn), rerr)}
 		}
 		docs = append(docs, docindex.Doc{
 			Kind: "workflows",
@@ -427,7 +531,19 @@ func WorkflowDocs(dataDir string) []docindex.Doc {
 // same union is what the resolution surfaces see once the substrate is indexed;
 // doctor computes it store-free so it also works before the first reindex.
 func GoverningWorkflows(dataDir string) []docindex.Doc {
-	docs := WorkflowDocs(dataDir)
+	return GoverningWorkflowsAt(filepath.Join(dataDir, "workflows"))
+}
+
+// GoverningWorkflowsAt is GoverningWorkflows for an explicit workflows dir; see
+// WorkflowDocsAt.
+func GoverningWorkflowsAt(dir string) []docindex.Doc {
+	docs := WorkflowDocsAt(dir)
+	// An unreadable authored dir governs nothing: overlaying the embedded
+	// workflows here would make every consumer judge a route that is not the
+	// repository's as if it were (sty_d6e209aa).
+	if _, _, unreadable := docindex.UnreadableOf(docs); unreadable {
+		return docs
+	}
 	onDisk := map[string]bool{}
 	for _, d := range docs {
 		onDisk[d.Name] = true

@@ -10,6 +10,13 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
+// routeGoverns is the precedence rule without its error leg, for the cases here
+// that only ask which route wins; the unreadable leg is unreadable_test.go's.
+func routeGoverns(docs []docindex.Doc, category string) (wfgovern.RouteSource, bool) {
+	rs, ok, _ := wfgovern.RouteGovernsErr(docs, category)
+	return rs, ok
+}
+
 // The binary ships its default lifecycle as a derived route (sty_3795e7f6), and
 // the doc index overlays an embedded default wherever the repo has no file of
 // that name. So the two halves surface in EVERY repo's workflow set, including
@@ -85,7 +92,7 @@ func graphDoc() docindex.Doc {
 // repo and let the transition through ungated).
 func TestShippedRouteYieldsToAnAuthoredWorkflow(t *testing.T) {
 	docs := append(routeDocs(true), graphDoc())
-	if _, ok := wfgovern.RouteGoverns(docs, "feature"); ok {
+	if _, ok := routeGoverns(docs, "feature"); ok {
 		t.Error("the shipped route must not govern a category an authored workflow claims")
 	}
 	_, name, _, err := wfgovern.SpecFor(docs, workitem.Item{ID: "sty_1", Category: "feature"})
@@ -130,6 +137,16 @@ func TestAuthoredBrokenRouteIsNotUngoverned(t *testing.T) {
 	if !strings.Contains(err.Error(), "satelle reindex") {
 		t.Errorf("broken-route refusal must name satelle reindex, got %v", err)
 	}
+	// sty_d6e209aa AC2: the refusal also says which embedded route would have
+	// governed instead, and that its gates are not the repository's.
+	for _, want := range []string{
+		"embedded default route", "binary-shipped", `lane "default"`,
+		"gates would not be the repository's gates",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("broken-route refusal must carry %q, got %v", want, err)
+		}
+	}
 }
 
 func TestErrNoWorkflowNamesReindex(t *testing.T) {
@@ -157,7 +174,7 @@ func TestEmbeddedBrokenRouteDoesNotBrick(t *testing.T) {
 
 func TestShippedRouteGovernsWhenNothingIsAuthored(t *testing.T) {
 	docs := routeDocs(true)
-	if _, ok := wfgovern.RouteGoverns(docs, "feature"); !ok {
+	if _, ok := routeGoverns(docs, "feature"); !ok {
 		t.Fatal("the shipped route must govern when no authored workflow claims the category")
 	}
 	spec, name, _, err := wfgovern.SpecFor(docs, workitem.Item{ID: "sty_1", Category: "feature"})
@@ -176,7 +193,7 @@ func TestShippedRouteGovernsWhenNothingIsAuthored(t *testing.T) {
 // what it wrote, graph or no graph. Only the shipped route yields.
 func TestAuthoredRouteBeatsAnAuthoredWorkflow(t *testing.T) {
 	docs := append(routeDocs(false), graphDoc())
-	if _, ok := wfgovern.RouteGoverns(docs, "feature"); !ok {
+	if _, ok := routeGoverns(docs, "feature"); !ok {
 		t.Fatal("an authored route must govern even beside an authored workflow")
 	}
 	_, name, _, err := wfgovern.SpecFor(docs, workitem.Item{ID: "sty_1", Category: "feature"})
@@ -198,7 +215,7 @@ func TestMixedPlaneRouteCountsAsAuthored(t *testing.T) {
 		{Kind: "workflows", Name: "step", Body: routeStep, Embedded: true},
 		graphDoc(),
 	}
-	rs, ok := wfgovern.RouteGoverns(docs, "feature")
+	rs, ok := routeGoverns(docs, "feature")
 	if !ok {
 		t.Fatal("a half-authored route must still govern — the repo intends a route")
 	}
@@ -224,10 +241,10 @@ func TestShippedRouteStillGovernsAnUnclaimedCategory(t *testing.T) {
 	specific := docindex.Doc{Kind: "workflows", Name: "web-workflow",
 		Body: "---\nname: web-workflow\ntype: workflow\nscope: project\napplies_to: [\"web\"]\ndescription: x\n---\n"}
 	docs := append(routeDocs(true), specific)
-	if _, ok := wfgovern.RouteGoverns(docs, "web"); ok {
+	if _, ok := routeGoverns(docs, "web"); ok {
 		t.Error("category web is claimed by an authored workflow — the shipped route must yield there")
 	}
-	if _, ok := wfgovern.RouteGoverns(docs, "feature"); !ok {
+	if _, ok := routeGoverns(docs, "feature"); !ok {
 		t.Error("category feature is unclaimed — the shipped route must still govern it")
 	}
 }

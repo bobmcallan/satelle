@@ -1593,8 +1593,21 @@ func (g *Engine) guardWorkflowStructure(ctx context.Context, item workitem.Item,
 	// this guard now — activeWorkflow deliberately does not return route halves,
 	// so without this the guard would pass every broken route silently.
 	if workflows, lerr := g.docs.List(ctx, "workflows"); lerr == nil {
-		// Judge authored route halves regardless of whether RouteGoverns
-		// currently resolves: a parse failure makes RouteGoverns false, which
+		// An unreadable authored workflows dir refuses BEFORE the activeWorkflow
+		// fallback below: that fallback would resolve the embedded default and let
+		// the story be gated by a process that is not the repository's
+		// (sty_d6e209aa).
+		if path, reason, ok := docindex.UnreadableOf(workflows); ok {
+			return wfgovern.Refusal{
+				Rule: wfgovern.RuleStructureGuard, Item: item.ID,
+				From: item.Status, To: toStatus,
+				Why:    wfgovern.UnreadableMessage(path, reason),
+				Remedy: "restore the workflows dir (it must be a readable directory) — no transition is legal until it can be read",
+				Err:    wfgovern.ErrAuthoredProcessUnreadable,
+			}
+		}
+		// Judge authored route halves regardless of whether RouteGovernsErr
+		// currently resolves: a parse failure makes it false, which
 		// is exactly when this guard must still fire (sty_5b88aa1b).
 		for _, w := range workflows {
 			if !wfgovern.IsRouteSource(w.Name) || w.Embedded {
@@ -1605,13 +1618,13 @@ func (g *Engine) guardWorkflowStructure(ctx context.Context, item workitem.Item,
 					Rule: wfgovern.RuleStructureGuard, Item: item.ID, Workflow: w.Name,
 					From: item.Status, To: toStatus,
 					TrackingStory: g.trackingStoryFor(ctx, "workflows", w.Name),
-					Why: fmt.Sprintf("the governing workflow fails structure validation (%s), so no gate under it can be trusted to judge",
-						strings.Join(problems, "; ")),
+					Why: fmt.Sprintf("the governing workflow fails structure validation (%s), so no gate under it can be trusted to judge; %s",
+						strings.Join(problems, "; "), wfgovern.EmbeddedLaneNotice()),
 					Remedy: fmt.Sprintf("fix the substrate (`satelle workflow validate %s`) — if the file on disk already passes, the index is stale: run `satelle reindex`", w.Name),
 				}
 			}
 		}
-		if _, governs := wfgovern.RouteGoverns(workflows, workflowCategory(item)); governs {
+		if _, governs, _ := wfgovern.RouteGovernsErr(workflows, workflowCategory(item)); governs {
 			return nil
 		}
 	}
@@ -1636,8 +1649,8 @@ func (g *Engine) guardWorkflowStructure(ctx context.Context, item workitem.Item,
 			Rule: wfgovern.RuleStructureGuard, Item: item.ID, Workflow: doc.Name,
 			From: item.Status, To: toStatus,
 			TrackingStory: g.trackingStoryFor(ctx, "workflows", doc.Name),
-			Why: fmt.Sprintf("the governing workflow fails structure validation (%s), so no gate under it can be trusted to judge",
-				strings.Join(problems, "; ")),
+			Why: fmt.Sprintf("the governing workflow fails structure validation (%s), so no gate under it can be trusted to judge; %s",
+				strings.Join(problems, "; "), wfgovern.EmbeddedLaneNotice()),
 			Remedy: fmt.Sprintf("fix the substrate (`satelle workflow validate %s`) — no transition is legal until it passes", doc.Name),
 		}
 	}
@@ -3393,7 +3406,12 @@ func (g *Engine) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb
 	// agent that runs it are DECLARED by the active workflow's create-review hook
 	// (selected by the draft's category), not hardcoded. Absent a declaration (or
 	// the skill does not resolve), creation stays deterministic-only.
-	hook, declared := g.createReviewHook(ctx, draft.Category)
+	hook, declared, herr := g.createReviewHook(ctx, draft.Category)
+	if herr != nil {
+		// The authored process cannot be read: refuse rather than create under the
+		// embedded default's "no gate declared" (sty_d6e209aa).
+		return verb.GateDecision{}, herr
+	}
 	if !declared || hook.Skill == "" {
 		return verb.GateDecision{Gated: true, Accept: true, Skill: structureSkill}, nil
 	}
@@ -3432,7 +3450,7 @@ func (g *Engine) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb
 // deliberately not judged here — that is validation's job, surfaced by
 // `satelle agent validate` / `satelle workflow validate` before anything runs.
 // The engine keeps only its mechanism-level refusals at dispatch (role, in-loop).
-func (g *Engine) createReviewHook(ctx context.Context, category string) (wfhook.Hook, bool) {
+func (g *Engine) createReviewHook(ctx context.Context, category string) (wfhook.Hook, bool, error) {
 	return g.lifecycleHook(ctx, category, wfhook.OpCreateReview)
 }
 
@@ -3454,7 +3472,10 @@ func (g *Engine) ReviewAmend(ctx context.Context, draft verb.AmendDraft) (verb.G
 	if problems := structure.Story(amended.Title, amended.Body, amended.AcceptanceCriteria, amended.Category); len(problems) > 0 {
 		return verb.GateDecision{Gated: true, Accept: false, Skill: structureSkill, Notes: strings.Join(problems, "; ")}, nil
 	}
-	hook, declared := g.lifecycleHook(ctx, amended.Category, wfhook.OpAmendReview)
+	hook, declared, herr := g.lifecycleHook(ctx, amended.Category, wfhook.OpAmendReview)
+	if herr != nil {
+		return verb.GateDecision{}, herr
+	}
 	if !declared || hook.Skill == "" {
 		return verb.GateDecision{}, nil // no gate declared — the verb refuses
 	}
@@ -3498,7 +3519,7 @@ func applyAmendment(draft verb.AmendDraft) workitem.Item {
 // the category — its `hooks:` entry or the `<operation>:` shorthand. Not
 // declared when no workflow governs the category or the workflow declares none;
 // what that ABSENCE means is the caller's decision, not this resolver's.
-func (g *Engine) lifecycleHook(ctx context.Context, category, operation string) (wfhook.Hook, bool) {
+func (g *Engine) lifecycleHook(ctx context.Context, category, operation string) (wfhook.Hook, bool, error) {
 	// A lifecycle hook is workflow FRONTMATTER, and a derived route's frontmatter
 	// lives on its declaration of done — the half that says what this repo means
 	// by finished, which is where a create gate belongs. Read it first, so a
@@ -3507,20 +3528,29 @@ func (g *Engine) lifecycleHook(ctx context.Context, category, operation string) 
 	// Only when the route GOVERNS the category, though. The doc index overlays the
 	// shipped done.toml wherever a repo has no file of that name, so reading it
 	// unconditionally would let the default's create gate shadow the one an
-	// authored workflow declares — the same precedence hole RouteGoverns closes
+	// authored workflow declares — the same precedence hole RouteGovernsErr closes
 	// for the lifecycle itself (sty_3795e7f6).
+	//
+	// An UNREADABLE authored workflows dir is an error, never "no hook declared":
+	// the caller would otherwise create or amend under no gate at all
+	// (sty_d6e209aa).
 	if workflows, err := g.docs.List(ctx, "workflows"); err == nil {
-		if rs, ok := wfgovern.RouteGoverns(workflows, category); ok {
+		rs, ok, rerr := wfgovern.RouteGovernsErr(workflows, category)
+		if rerr != nil {
+			return wfhook.Hook{}, false, rerr
+		}
+		if ok {
 			if h, hooked := wfhook.For(rs.Done, operation); hooked {
-				return h, true
+				return h, true, nil
 			}
 		}
 	}
 	doc, err := g.activeWorkflow(ctx, category)
 	if err != nil {
-		return wfhook.Hook{}, false
+		return wfhook.Hook{}, false, nil
 	}
-	return wfhook.For(doc.Body, operation)
+	h, hooked := wfhook.For(doc.Body, operation)
+	return h, hooked, nil
 }
 
 // reviewerSkills resolves the ordered reviewer skills governing the (from→to)
@@ -3712,21 +3742,29 @@ func ungoverned(err error) bool {
 // WorkflowNameFor returns the name of the workflow that governs a story of the
 // given category — the value stamped on the story at create. Empty when no
 // workflow governs the category. Used by the create path to record the choice.
-func (g *Engine) WorkflowNameFor(ctx context.Context, category string) string {
+//
+// The error is non-nil only when the authored workflows dir is unreadable: the
+// caller refuses, so no story is stamped (and so created) under a process that is
+// not the repository's (sty_d6e209aa).
+func (g *Engine) WorkflowNameFor(ctx context.Context, category string) (string, error) {
 	// A story is stamped with what will GOVERN it. When a derived route claims
 	// the category, that is the route — stamping an authored workflow the engine
 	// will not consult would be a lie on every story created after a conversion
 	// (sty_9835070d).
 	if workflows, err := g.docs.List(ctx, "workflows"); err == nil {
-		if _, ok := wfgovern.RouteGoverns(workflows, category); ok {
-			return wfgovern.DerivedRouteName
+		_, ok, rerr := wfgovern.RouteGovernsErr(workflows, category)
+		if rerr != nil {
+			return "", rerr
+		}
+		if ok {
+			return wfgovern.DerivedRouteName, nil
 		}
 	}
 	doc, err := g.activeWorkflow(ctx, category)
 	if err != nil {
-		return ""
+		return "", nil
 	}
-	return doc.Name
+	return doc.Name, nil
 }
 
 // WorkflowStates returns the lifecycle states the named workflow declares — the
@@ -3747,25 +3785,32 @@ func (g *Engine) WorkflowNameFor(ctx context.Context, category string) string {
 // misses, and `satelle story restamp` refused to stamp the very name the create
 // path assigns. That is the exact round trip a stamp has to support: whatever
 // WorkflowNameFor hands out, restamp must accept back.
-func (g *Engine) WorkflowStates(ctx context.Context, name string) ([]string, bool) {
+func (g *Engine) WorkflowStates(ctx context.Context, name string) ([]string, bool, error) {
 	if name == wfgovern.DerivedRouteName {
-		return nil, g.routeSourcePresent(ctx)
+		present, err := g.routeSourcePresent(ctx)
+		return nil, present, err
 	}
 	if _, err := g.docs.Get(ctx, "workflows", name); err != nil {
-		return nil, false
+		return nil, false, nil
 	}
-	return nil, true
+	return nil, true, nil
 }
 
 // routeSourcePresent reports whether a derived route exists to be stamped onto —
 // both halves, authored or shipped. Without this check the name would resolve in
 // a repo that has no route at all, which is the one case a stamp must refuse.
-func (g *Engine) routeSourcePresent(ctx context.Context) bool {
+// An unreadable authored workflows dir is an error rather than "absent", so the
+// refusal names it (sty_d6e209aa).
+func (g *Engine) routeSourcePresent(ctx context.Context) (bool, error) {
 	workflows, err := g.docs.List(ctx, "workflows")
 	if err != nil {
-		return false
+		return false, nil
 	}
-	return wfgovern.RouteSourceOf(workflows).Present()
+	rs := wfgovern.RouteSourceOf(workflows)
+	if err := rs.Err(); err != nil {
+		return false, err
+	}
+	return rs.Present(), nil
 }
 
 // WorkflowConsistency reports cross-workflow inconsistencies an agent should
@@ -3776,6 +3821,7 @@ func (g *Engine) routeSourcePresent(ctx context.Context) bool {
 // the workflow set is consistent. resolve may be nil to skip the skill check.
 func WorkflowConsistency(workflows []docindex.Doc, resolve func(skill string) bool) []string {
 	var problems []string
+	workflows = docindex.WithoutUnreadable(workflows) // a sentinel is a state, never a workflow
 
 	// (1) Ambiguous applies_to among REPO workflows (the embedded defaults are the
 	// single canonical source, so a tie there is not the user's misconfiguration).

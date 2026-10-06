@@ -264,6 +264,15 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 	var r Report
 	r.Provenance = prov
 
+	// An unreadable authored workflows dir is reported by name, once. Nothing
+	// below expands a route for it: judging the embedded default's allocations
+	// here would read as if that route governed (sty_d6e209aa).
+	if path, reason, ok := docindex.UnreadableOf(workflows); ok {
+		r.record(health.Error(health.IDProcessUnreadable, "Authored process unreadable",
+			wfgovern.UnreadableMessage(path, reason)).
+			About(path).WithRemediation("restore the workflows dir (it must be a readable directory) before engaging a story"))
+	}
+
 	// Env/settings resolution once — fail-fast naming section+key, never values.
 	if _, err := config.ResolveAgentEnvs(agents, vars); err != nil {
 		r.record(health.Error(health.IDEnvUnresolved, "Unresolved variable", err.Error()).
@@ -552,8 +561,11 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 			sec.name, tok)).About(sec.name))
 	}
 
+	// With the workflows dir unreadable no route was expanded, so every binding
+	// would read as orphaned — a finding about the missing route, not the bindings.
+	_, _, processUnreadable := docindex.UnreadableOf(workflows)
 	for _, name := range sortedNames(agents.Agents) {
-		if !usedNamed[name] && !shipped[name] {
+		if !usedNamed[name] && !shipped[name] && !processUnreadable {
 			// Advisory only: a binding may serve a non-workflow verb (e.g.
 			// [retrospective] for `satelle story retrospect`) without an agent=
 			// node. The satelle-workflow-drift skill judges semantics; validate
@@ -1182,7 +1194,9 @@ func (e wfEntry) spec() (wfdot.Spec, bool) {
 func expandRouteSources(workflows []docindex.Doc) []wfEntry {
 	var out []wfEntry
 	for _, w := range workflows {
-		if wfgovern.IsRouteSource(w.Name) {
+		// The unreadable-dir sentinel is a state, not a workflow; validateShipped
+		// reports it once, and the embedded route is never expanded in its place.
+		if wfgovern.IsRouteSource(w.Name) || w.IsUnreadable() {
 			continue
 		}
 		out = append(out, wfEntry{Doc: w})
@@ -1201,7 +1215,7 @@ func expandRouteSources(workflows []docindex.Doc) []wfEntry {
 		return out // structure validate owns an unparseable route source
 	}
 	for _, l := range lists {
-		if _, governs := wfgovern.RouteGoverns(workflows, l.Category); !governs {
+		if _, governs, _ := wfgovern.RouteGovernsErr(workflows, l.Category); !governs {
 			// An authored workflow outranks the shipped route for this category, so
 			// the route is not this repo's lifecycle there and has no allocation to
 			// check (sty_3795e7f6).

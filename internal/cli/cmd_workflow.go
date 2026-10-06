@@ -51,7 +51,10 @@ default. The head of the list is the active workflow the reviewer enforces.`,
 			// (sty_9835070d). The predicate is the front door's, not a second copy of
 			// it: an authored route beats every graph, the shipped route is order zero
 			// and yields to an authored graph (sty_3795e7f6).
-			rs, derived := wfgovern.RouteGoverns(docs, category)
+			rs, derived, rerr := wfgovern.RouteGovernsErr(docs, category)
+			if rerr != nil {
+				return rerr // an unreadable authored dir is reported, never listed as the embedded route
+			}
 			if derived {
 				out = append(out, workflowChoice{
 					Name:      wfgovern.DerivedRouteName,

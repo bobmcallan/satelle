@@ -65,14 +65,20 @@ func StoryRoute(ctx context.Context, id string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("verb: route: %s: %w", id, err)
 	}
+	// BEFORE the stored document: an unreadable authored process refuses even for
+	// a story that already has a route doc, which would otherwise be served as
+	// the repository's route while nothing can say it still is (sty_d6e209aa).
+	if perr := processCheck(ctx); perr != nil {
+		return "", fmt.Errorf("verb: route: %s: %w", id, perr)
+	}
 	if body := readRouteDoc(item); body != "" {
-		return strings.TrimRight(body, "\n") + membersSection(ctx, item), nil
+		return strings.TrimRight(body, "\n") + membersSection(ctx, item) + processOfRecordSection(), nil
 	}
 	d, wfName, ok := governingRoute(ctx, item)
 	if !ok {
 		return "", fmt.Errorf("verb: route: %s has no governing workflow with a parseable lifecycle", id)
 	}
-	return strings.TrimRight(renderRouteDoc(d, wfName, item, item.Status, ""), "\n") + membersSection(ctx, item), nil
+	return strings.TrimRight(renderRouteDoc(d, wfName, item, item.Status, ""), "\n") + membersSection(ctx, item) + processOfRecordSection(), nil
 }
 
 // renderRouteDoc assembles the whole artifact: the plan half rendered fresh, then

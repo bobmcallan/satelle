@@ -139,7 +139,11 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 		tags := req.Tags
 		stampedWorkflow := ""
 		if kind == workitem.KindStory && workflowResolver != nil && !hasWorkflowStamp(tags) {
-			if wf := workflowResolver.WorkflowNameFor(ctx, req.Category); wf != "" {
+			wf, werr := workflowResolver.WorkflowNameFor(ctx, req.Category)
+			if werr != nil {
+				return nil, werr
+			}
+			if wf != "" {
 				stampedWorkflow = wf
 				tags = append(tags, "workflow:"+wf)
 			}
@@ -304,7 +308,15 @@ type setReq struct {
 	RemoveTags         []string  `json:"remove_tags,omitempty"`
 }
 
+// workItemSet is the update verb. A refused status change is annotated with the
+// worktree-divergence report (sty_d6e209aa) here, at the one seam every refusal
+// of the transition passes through, so no refusal site needs its own copy.
 func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	out, err := workItemSetCore(ctx, raw)
+	return out, annotateProcessRefusal(raw, err)
+}
+
+func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	store, err := requireWorkItem()
 	if err != nil {
 		return nil, err
@@ -688,7 +700,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		if merr != nil {
 			return nil, nil, false
 		}
-		out, err = workItemSet(ctx, reraw)
+		out, err = workItemSetCore(ctx, reraw) // the outer workItemSet annotates once
 		return out, err, true
 	}
 	performStep := func() (json.RawMessage, error) {
@@ -897,6 +909,9 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		// session already covers another story to start a fresh one
 		// (sty_a7914904). Warning only — engage is already committed.
 		checkFreshSession(ctx, it, current.Status, *req.Status, now)
+		// Say once, on stderr, when the gates this story now runs under are not
+		// (or may not be) the repository's authored ones (sty_d6e209aa).
+		reportProcessAtEngage(ctx, it, current.Status, *req.Status)
 		// The driving session's measured usage at this transition (sty_81caa41b):
 		// a snapshot from the harness's own session record, delta-ed against the
 		// last snapshot for this session. Best-effort, like the change set below.
@@ -1047,11 +1062,17 @@ func storyRestamp(ctx context.Context, raw json.RawMessage) (json.RawMessage, er
 	}
 	target := req.Workflow
 	if target == "" {
-		if target = workflowResolver.WorkflowNameFor(ctx, current.Category); target == "" {
+		var werr error
+		if target, werr = workflowResolver.WorkflowNameFor(ctx, current.Category); werr != nil {
+			return nil, werr
+		} else if target == "" {
 			return nil, fmt.Errorf("verb: no workflow governs category %q — pass --workflow", current.Category)
 		}
 	}
-	states, resolved := workflowResolver.WorkflowStates(ctx, target)
+	states, resolved, serr := workflowResolver.WorkflowStates(ctx, target)
+	if serr != nil {
+		return nil, serr
+	}
 	if !resolved {
 		return nil, fmt.Errorf("verb: workflow %q does not resolve in the substrate", target)
 	}

@@ -44,6 +44,9 @@ type Doc struct {
 	ModTime   time.Time `json:"mod_time"`
 	IndexedAt time.Time `json:"indexed_at"`
 	Embedded  bool      `json:"embedded,omitempty"` // a binary-shipped canonical default, not an on-disk file
+	// Unreadable is set only on the UnreadableSentinel doc: the reason the kind's
+	// authored dir exists but cannot be read (sty_d6e209aa).
+	Unreadable string `json:"unreadable,omitempty"`
 }
 
 // schema is the authored-docs index, keyed by (kind, path). Self-migrating.
@@ -248,7 +251,22 @@ func (s *Store) List(ctx context.Context, kind string) ([]Doc, error) {
 	// that kind from disk so a corrected done.toml is visible without reindex.
 	if strings.TrimSpace(kind) == "workflows" && s.roots != nil {
 		if dir := strings.TrimSpace(s.roots["workflows"]); dir != "" {
-			_, _ = s.Sync(ctx, map[string]string{"workflows": dir}, time.Now())
+			// An unreadable workflows dir is an authored process that exists and
+			// cannot be read — never an absent one. Return ONLY the sentinel: no
+			// stale index rows and no embedded overlay, so no precedence rule can
+			// silently govern by the binary's default (sty_d6e209aa).
+			if state, perr := ProbeDir(dir); state == DirUnreadable {
+				return []Doc{UnreadableDoc("workflows", dir, perr)}, nil
+			}
+			// A file or subdirectory inside a readable dir that cannot be read is
+			// the same fact one level down: the authored process cannot be seen,
+			// so it must not be silently replaced by the embedded half of that
+			// name. Any other Sync error (the index itself) stays best-effort.
+			_, serr := s.Sync(ctx, map[string]string{"workflows": dir}, time.Now())
+			var rerr *ReadError
+			if errors.As(serr, &rerr) {
+				return []Doc{UnreadableDoc("workflows", rerr.Path, rerr.Err)}, nil
+			}
 		}
 	}
 	q := `SELECT kind, name, path, headline, body, hash, size, mod_time, indexed_at FROM authored_docs`
@@ -378,15 +396,10 @@ func walkMarkdown(dir string) ([]fileInfo, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, nil
 	}
-	info, err := os.Stat(dir)
-	if errors.Is(err, fs.ErrNotExist) {
+	if state, err := ProbeDir(dir); state == DirAbsent {
 		return nil, nil
-	}
-	if err != nil {
+	} else if state == DirUnreadable {
 		return nil, err
-	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("not a directory")
 	}
 	var out []fileInfo
 	walkErr := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
@@ -431,7 +444,7 @@ func walkMarkdown(dir string) ([]fileInfo, error) {
 		return nil
 	})
 	if walkErr != nil {
-		return nil, walkErr
+		return nil, &ReadError{Path: dir, Err: walkErr}
 	}
 	return out, nil
 }
@@ -460,7 +473,7 @@ func (s *Store) indexedPaths(ctx context.Context, kind string) (map[string]index
 func (s *Store) upsert(ctx context.Context, kind string, fi fileInfo, now time.Time) error {
 	body, err := os.ReadFile(fi.path)
 	if err != nil {
-		return fmt.Errorf("docindex: read %s: %w", fi.path, err)
+		return fmt.Errorf("docindex: read %s: %w", fi.path, &ReadError{Path: fi.path, Err: err})
 	}
 	// Workflows are indexed exactly as authored. The DOT normalisation that used
 	// to run here existed only to feed the DOT parser; with that front end retired

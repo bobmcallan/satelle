@@ -59,6 +59,12 @@ type Refusal struct {
 	// backlog unread, sends the operator to hunt the symptom. Empty on every
 	// refusal that has no such story, and Error() then renders exactly as before.
 	TrackingStory string `json:"tracking_story,omitempty"`
+	// Notes are findings about the process of record that qualify this refusal
+	// without changing its rule — chiefly a linked worktree whose own copy of the
+	// authored process differs from the main tree's (sty_d6e209aa). The verb
+	// layer, not the gate engine, attaches them, so the comparison never runs in
+	// the engine or the edit-gate hook.
+	Notes []string `json:"notes,omitempty"`
 	// Err is the underlying sentinel this refusal wraps (ErrRouteSourceBroken,
 	// …), so a caller matching with errors.Is keeps matching after the refusal
 	// gains structure. Not serialised: the fields above carry the content.
@@ -98,6 +104,9 @@ func (r Refusal) Error() string {
 	if r.TrackingStory != "" {
 		b.WriteString("; already diagnosed — see " + r.TrackingStory +
 			" (`satelle story get " + r.TrackingStory + "`)")
+	}
+	for _, n := range r.Notes {
+		b.WriteString("; " + strings.TrimSpace(n))
 	}
 	return b.String()
 }

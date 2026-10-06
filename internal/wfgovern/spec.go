@@ -2,7 +2,7 @@
 // lifecycle is resolved, so every consumer — the engine, the verbs, the edit-gate
 // hooks, the web panel — sees the same route.
 //
-// There are two representations and exactly one precedence rule, and RouteGoverns
+// There are two representations and exactly one precedence rule, and RouteGovernsErr
 // is that rule. A DERIVED route (`done.toml` + `step.toml` under the workflows kind)
 // wins when the repo AUTHORED one; the route the BINARY ships is order zero and
 // yields to an authored workflow for the categories that workflow claims; an
@@ -108,10 +108,14 @@ type RouteSource struct {
 	Step string
 	// Embedded marks a route that comes ENTIRELY from the binary's shipped
 	// defaults rather than from the repo's own substrate. It is what makes the
-	// shipped route ORDER ZERO: see RouteGoverns. A mixed pair (the repo authored
+	// shipped route ORDER ZERO: see RouteGovernsErr. A mixed pair (the repo authored
 	// one half, the other overlaid from the defaults) counts as authored — the
 	// repo intends a route, and BuildRoute fails loudly if the halves disagree.
 	Embedded bool
+	// Unreadable is set when the doc set carried the unreadable-dir sentinel: the
+	// authored workflows dir exists and cannot be read (sty_d6e209aa). Present()
+	// is false then, but that is NOT "no route authored" — Err() says which.
+	Unreadable struct{ Path, Reason string }
 }
 
 // Present reports whether both halves are there. One half alone is not a route
@@ -120,7 +124,7 @@ func (rs RouteSource) Present() bool { return rs.Done != "" && rs.Step != "" }
 
 // RouteSourceOf picks the declaration of done and the step catalogue out of an
 // already-listed workflow doc set. It reports what is THERE; whether it governs
-// a given category is RouteGoverns.
+// a given category is RouteGovernsErr.
 func RouteSourceOf(workflows []docindex.Doc) RouteSource {
 	var rs RouteSource
 	doneEmbedded, stepEmbedded := true, true
@@ -143,6 +147,10 @@ func RouteSourceOf(workflows []docindex.Doc) RouteSource {
 		return w.Body, w.Embedded, true
 	}
 	for _, w := range workflows {
+		if w.IsUnreadable() {
+			rs.Unreadable.Path, rs.Unreadable.Reason = w.Path, w.Unreadable
+			continue
+		}
 		switch w.Name {
 		case RouteSourceDone:
 			rs.Done, doneEmbedded, seenDone = take(rs.Done, doneEmbedded, seenDone, w)
@@ -214,31 +222,6 @@ func tomlNames(stale []string) []string {
 	return out
 }
 
-// RouteGoverns is the ONE precedence rule for a derived route, and every surface
-// that resolves, displays or stamps a lifecycle asks it rather than re-deriving
-// its own answer.
-//
-// An AUTHORED route (the repo's own done.toml + step.toml) governs the categories it
-// claims — a repo that converted is governed by what it wrote. The route the
-// BINARY ships is order zero instead: it governs a category only when no
-// authored workflow claims that category. Without that distinction, shipping the
-// defaults as a route would silently shadow every repo's authored graph on the
-// next binary upgrade, because the doc index overlays an embedded default
-// wherever the repo has no file of that name.
-//
-// An empty category means the wildcard view, which a route answers with its `*`
-// section.
-func RouteGoverns(workflows []docindex.Doc, category string) (RouteSource, bool) {
-	rs := RouteSourceOf(workflows)
-	if !rs.Present() || !routeClaims(rs, category) {
-		return RouteSource{}, false
-	}
-	if rs.Embedded && len(OrderedWorkflows(LifecycleWorkflows(workflows), category)) > 0 {
-		return RouteSource{}, false // an authored workflow outranks the shipped route
-	}
-	return rs, true
-}
-
 // routeClaims reports whether the route declares a section for category — its
 // own, or the wildcard that governs everything else.
 func routeClaims(rs RouteSource, category string) bool {
@@ -257,7 +240,7 @@ func routeClaims(rs RouteSource, category string) bool {
 func LifecycleWorkflows(workflows []docindex.Doc) []docindex.Doc {
 	out := make([]docindex.Doc, 0, len(workflows))
 	for _, w := range workflows {
-		if IsRouteSource(w.Name) {
+		if IsRouteSource(w.Name) || w.IsUnreadable() {
 			continue
 		}
 		out = append(out, w)
@@ -273,7 +256,7 @@ func LifecycleWorkflows(workflows []docindex.Doc) []docindex.Doc {
 // to degrade is a read surface rendering a page, and it degrades by handling the
 // error here, not by this seam hiding it.
 //
-// Precedence is RouteGoverns, and it is now the WHOLE rule: a derived route
+// Precedence is RouteGovernsErr, and it is now the WHOLE rule: a derived route
 // claiming the item's category (or the wildcard) governs, except that the route
 // the BINARY ships yields to an authored workflow for the categories that
 // workflow claims. There is no second representation to fall back to — the DOT
@@ -292,20 +275,26 @@ func SpecFor(workflows []docindex.Doc, item workitem.Item) (wfdot.Spec, string, 
 // twenty gate sites.
 func RouteFor(workflows []docindex.Doc, item workitem.Item) (DerivedRoute, string, error) {
 	category := WorkflowCategory(item)
+	// An unreadable authored workflows dir refuses before anything resolves: it
+	// is NOT an absent one, and the embedded route must never be consulted in its
+	// place (sty_d6e209aa).
+	if _, _, err := RouteGovernsErr(workflows, category); err != nil {
+		return DerivedRoute{}, DerivedRouteName, err
+	}
 	// BEFORE anything resolves: a repo whose route source is still markdown is
-	// refused by name (sty_81bb0dde). This precedes RouteGoverns deliberately —
+	// refused by name (sty_81bb0dde). This precedes RouteGovernsErr deliberately —
 	// otherwise the file fails to decode, the authored route looks absent, and
 	// the embedded default silently governs a repo that authored its own.
 	if stale := LegacyMarkdownRoute(workflows); len(stale) > 0 {
 		return DerivedRoute{}, DerivedRouteName, LegacyMarkdownRouteError(stale)
 	}
 	// A present authored route that does not parse is BROKEN, not absent.
-	// RouteGoverns would otherwise swallow the parse error (RouteCategories
+	// RouteGovernsErr would otherwise swallow the parse error (RouteCategories
 	// returns nil) and fall through to ErrNoWorkflow — ungated close.
 	if err := authoredRouteParseError(workflows); err != nil {
 		return DerivedRoute{}, DerivedRouteName, err
 	}
-	rs, ok := RouteGoverns(workflows, category)
+	rs, ok, _ := RouteGovernsErr(workflows, category)
 	if !ok {
 		if wf, governs := GoverningWorkflow(LifecycleWorkflows(workflows), item); governs {
 			// A workflow doc claims the category but carries no lifecycle satelle can
@@ -425,7 +414,7 @@ func authoredRouteParseError(workflows []docindex.Doc) error {
 			_, err = wfdot.ParseSteps(w.Body)
 		}
 		if err != nil {
-			return fmt.Errorf("%w: %s: %v — %s", ErrRouteSourceBroken, w.Name+".toml", err, staleIndexRemedy)
+			return fmt.Errorf("%w: %s: %v — %s; %s", ErrRouteSourceBroken, w.Name+".toml", err, staleIndexRemedy, embeddedLaneClause())
 		}
 	}
 	return nil

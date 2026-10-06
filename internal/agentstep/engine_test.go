@@ -1587,7 +1587,10 @@ func TestGateRefusesBrokenWorkflowStructure(t *testing.T) {
 	if err == nil {
 		t.Fatal("want the gate refused under a structurally broken workflow")
 	}
-	for _, want := range []string{"done", "structure validation"} {
+	// sty_d6e209aa AC2: and the two things a silent embedded fallback would hide —
+	// which embedded route would otherwise govern, and that its gates are not the
+	// repository's.
+	for _, want := range []string{"done", "structure validation", "embedded default route", "gates would not be the repository's gates"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal should carry %q: %v", want, err)
 		}

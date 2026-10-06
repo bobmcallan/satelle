@@ -84,10 +84,15 @@ killed and reaped on the deadline or on cancellation.`,
 			// nothing for it to diagnose, and the refusal names `satelle init`.
 			a, err := appFrom(cmd)
 			if err != nil && !all {
-				if _, oerr := app.Open(); oerr != nil {
+				oa, oerr := app.Open()
+				if oerr != nil {
 					return oerr // the actionable "not a satelle repo — run satelle init"
 				}
-				return err
+				// A governed repo whose bootstrap stood aside because its authored
+				// process is unreadable (the only refusal a store-optional command
+				// gets past): doctor reports it as a finding instead of stopping.
+				defer func() { _ = oa.Close() }()
+				a, err = oa, nil
 			}
 			opts := doctor.Opts{
 				Live:          live,
@@ -98,7 +103,12 @@ killed and reaped on the deadline or on cancellation.`,
 			}
 			if a != nil {
 				opts.RepoRoot = a.RepoRoot
-				opts.DataDir = a.DataDir
+				// The process read-plane: in a linked worktree the main tree's
+				// process is the one in force, so that is what doctor judges and
+				// what the divergence report compares the worktree against.
+				opts.DataDir = a.PlaneDir()
+				opts.Process = &a.ProcessConfig
+				opts.ProcessRoot = a.ProcessRoot
 			}
 			ctx := context.Background()
 

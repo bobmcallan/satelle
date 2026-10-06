@@ -2572,7 +2572,13 @@ func sessionSeatBlock(a *app.App) string {
 	wfs, _ := a.Store.DocIndex.List(ctx, "workflows")
 	items, _ := a.Store.Stories.List(ctx, workitem.ListFilter{})
 	now := time.Now().UTC()
-	live, other, _ := evaluateSeat(leases, items, wfs, now)
+	live, other, eerr := evaluateSeat(leases, items, wfs, now)
+	// An unreadable authored process is said, not read as "no seat to describe":
+	// the seat's route cannot be resolved while the process cannot be read
+	// (sty_d6e209aa).
+	if errors.Is(eerr, wfgovern.ErrAuthoredProcessUnreadable) {
+		return "## Engagement seat\n" + eerr.Error()
+	}
 	// Several live seats: lead with this session's own (by working tree) but
 	// render them ALL — an operator joining a project where work is in flight
 	// under a shared key must see every holder, not just one.

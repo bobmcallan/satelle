@@ -47,9 +47,18 @@ func refuseSkippedStep(ctx context.Context, current workitem.Item, toStatus stri
 	spec, wfName, _, serr := wfgovern.SpecFor(wfs, current)
 	ok := serr == nil
 	if !ok {
-		// A broken authored route source must fail closed. Other resolution
-		// errors (fresh repo / unconverted graph) stay the existing fail-open
-		// owned by the gate engine.
+		// A broken authored route source, or an authored workflows dir that cannot
+		// be read, must fail closed. Other resolution errors (fresh repo /
+		// unconverted graph) stay the existing fail-open owned by the gate engine.
+		if errors.Is(serr, wfgovern.ErrAuthoredProcessUnreadable) {
+			return wfgovern.Refusal{
+				Rule: wfgovern.RuleStructureGuard, Item: current.ID,
+				From: from, To: toStatus,
+				Why:    serr.Error(),
+				Remedy: "restore the workflows dir (it must be a readable directory) — no transition is legal until it can be read",
+				Err:    serr,
+			}
+		}
 		if errors.Is(serr, wfgovern.ErrRouteSourceBroken) {
 			// Point at the diagnosis (sty_88d40a60). The indexer already raised a
 			// story naming the exact file and key when the route source stopped

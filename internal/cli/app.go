@@ -16,12 +16,14 @@ import (
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/compact"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/docstory"
 	"github.com/bobmcallan/satelle/internal/epicset"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/oplog"
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -165,6 +167,13 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// and the main tree it carries from, so a worktree reads the main tree's
 	// declaration rather than one of its own.
 	verb.SetWorktreeConfig(a.ProcessConfig, a.ProcessRoot)
+	// Process-of-record reporting (sty_d6e209aa): where the authored process
+	// lives, so an absent workflows dir or a divergent worktree copy is reported
+	// at engage, in a refusal and in the route document. Data only — nothing is
+	// compared until a surface asks.
+	verb.SetProcessProbe(&verb.ProcessProbe{
+		Process: a.ProcessConfig, InvokingRoot: a.RepoRoot, ProcessRoot: a.ProcessRoot,
+	})
 	// Controlled tag vocabulary (sty_034d843c): validate namespaces declared in
 	// satelle.toml [tags.vocabulary] at story/task create and set. Independent of
 	// the agent CLI — must work with no harness installed.
@@ -708,6 +717,16 @@ func requireAgents(a *app.App) (config.EffectiveAgents, error) {
 	// agents.toml is authored substrate — always under DataDir, never RuntimeDir
 	// (sty_4660bbe1: the DB leaving the repo must not take the agents layer with it).
 	dataDir := a.PlaneDir()
+	// agents.toml lives inside the workflows dir. When that dir exists and cannot
+	// be read, the cause is the dir, not the file: say so by name, and say that the
+	// embedded route would otherwise govern, rather than blaming a broken
+	// agents.toml (sty_d6e209aa).
+	if wf := a.AuthoredDirs()["workflows"]; wf != "" {
+		if state, perr := docindex.ProbeDir(wf); state == docindex.DirUnreadable {
+			return config.EffectiveAgents{}, fmt.Errorf("%w: %s",
+				wfgovern.ErrAuthoredProcessUnreadable, wfgovern.UnreadableMessage(wf, perr.Error()))
+		}
+	}
 	// AgentsPath prefers the canonical workflows/ location and falls back to the
 	// legacy one, so an unconverted repo still runs (sty_10f732ed). The message
 	// names the CANONICAL path — where the file belongs, not where it used to be.

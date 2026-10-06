@@ -84,6 +84,9 @@ type workflowDetailVM struct {
 // only lifecycle it has. The row names itself as `satelle workflow list` does
 // and expands through done.toml, the half the fragment resolves the route from.
 func workflowRows(docs []docindex.Doc, prov, src map[string]string) []workflowRowVM {
+	// The unreadable-dir sentinel is a state, never a row; the panel keeps its
+	// empty rendering for it (sty_d6e209aa).
+	docs = docindex.WithoutUnreadable(docs)
 	out := make([]workflowRowVM, 0, len(docs))
 	if rs := wfgovern.RouteSourceOf(docs); rs.Present() {
 		key := "workflows\x00" + wfgovern.RouteSourceDone
