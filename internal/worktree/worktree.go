@@ -103,6 +103,24 @@ func CommonDir(ctx context.Context, root string) (string, error) {
 	return filepath.Clean(out), nil
 }
 
+// IsLinked reports whether root is a linked worktree: its own git dir differs
+// from the common dir it shares with the main tree. A main tree, a submodule and
+// a directory that is not a repository are all not linked.
+func IsLinked(ctx context.Context, root string) bool {
+	gitDir, err := git(ctx, root, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return false
+	}
+	common, err := CommonDir(ctx, root)
+	if err != nil {
+		return false
+	}
+	if resolved, rerr := filepath.EvalSymlinks(gitDir); rerr == nil {
+		gitDir = resolved
+	}
+	return filepath.Clean(gitDir) != common
+}
+
 // TopLevel returns the symlink-resolved working-tree root containing dir.
 func TopLevel(ctx context.Context, dir string) (string, error) {
 	out, err := git(ctx, dir, "rev-parse", "--show-toplevel")

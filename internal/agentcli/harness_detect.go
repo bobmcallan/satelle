@@ -2,6 +2,7 @@ package agentcli
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 )
 
@@ -37,6 +38,30 @@ var sessionMarkers = []sessionMarker{
 	{harness: HarnessGrok, key: "GROK_AGENT", match: nonEmptyNotZero},
 	{harness: HarnessPi, key: "PI_CODING_AGENT", match: nonEmptyNotZero},
 	{harness: HarnessPi, key: "PI_SESSION_", prefix: true, match: func(string) bool { return true }},
+}
+
+// HarnessOf names the harness behind a binding's command line, for lookups keyed
+// by harness (the [harness.<name>] tables): HarnessClaude, HarnessGrok,
+// HarnessPi or HarnessUnknown. It is NOT the reviewer-isolation classifier.
+// AdapterName answers for claude and grok only, and pi stays HarnessUnknown
+// there on purpose: preflight's no-tool-trim gap, the operator-attested path and
+// the unrecognised-adapter handling all key on it, so recognising pi in that
+// switch would quietly turn an explicit gap into a silent pass. The two agree
+// everywhere except pi. pi is the executable named exactly pi or pi-*, which
+// excludes pip and the like.
+func HarnessOf(command string) string {
+	if h := AdapterName(command); h != HarnessUnknown {
+		return h
+	}
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return HarnessUnknown
+	}
+	base := strings.ToLower(filepath.Base(fields[0]))
+	if base == "pi" || strings.HasPrefix(base, "pi-") {
+		return HarnessPi
+	}
+	return HarnessUnknown
 }
 
 // SessionMarkerEnvNames lists the environment keys DetectSessionHarnesses

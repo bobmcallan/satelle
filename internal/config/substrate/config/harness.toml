@@ -40,18 +40,32 @@
 # unknown — anything unrecognised gets the smallest safe budget. Nothing
 #           unrecognised is assumed to be Claude, but the safe choice is the
 #           tightest one.
+#
+# gate_wiring (sty_f141c77f) lists the tree-relative paths a harness needs in a
+# tree for its edit and commit gates to govern a performer run there. A dispatch
+# into a linked worktree is refused (or, under [worktree] absent_wiring =
+# "fail-open", run visibly ungated) when one is missing. Besides these paths,
+# each present wiring file is scanned for the hook wrapper script it calls, and
+# that script must exist too. Both keys are read from the MAIN tree's
+# configuration, so a worktree cannot exempt itself. A harness with no
+# gate_wiring is treated as having absent wiring; `unknown` declares none, so an
+# unrecognised command is refused unless a repo declares [harness.unknown]
+# gate_wiring itself.
 [harness.claude]
 context_limit_bytes = 9500
 session_context_event = "SessionStart"
+gate_wiring = [".claude/settings.json"]
 
 [harness.grok]
 context_limit_bytes = 16384
 session_context_event = "PostToolUse"
 tool_context_limit_chars = 10000
+gate_wiring = [".grok/hooks/satelle.json"]
 
 [harness.pi]
 context_limit_bytes = 9500
 session_context_event = "SessionStart"
+gate_wiring = [".pi/extensions/satelle.ts"]
 
 [harness.unknown]
 context_limit_bytes = 9500
