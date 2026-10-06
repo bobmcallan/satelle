@@ -72,6 +72,13 @@ Output is JSON: `files` (sorted, includes untracked), `stat`, optional `patch`.
 **Report only** — no pass/fail. The gate skill decides. Missing baseline → clear
 error (pre-feature stories degrade gracefully).
 
+`story diff` refuses to run from a working tree other than the one the story was
+engaged from. A functional check runs in the main tree (the process of record),
+so for a story engaged from a linked worktree the engine exports
+`SATELLE_GATE_STORY=<id>` into the check's environment: `story diff <id>` then
+reads that story's own tree. It is honoured only for the story it names and only
+for a tree of the same repository; any other foreign-tree diff is still refused.
+
 With `[output]` compact mode on for `story-diff` (see `satelle help
 compact-output`), `patch` loses its `index` lines and offloads noisy/
 whitespace-only hunks behind a `<<ccr:HASH,KIND,SIZE>>` marker that `satelle

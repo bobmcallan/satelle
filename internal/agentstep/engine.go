@@ -784,12 +784,37 @@ func (g *Engine) SetRunner(r agentcli.Runner) {
 	}
 }
 
+// gateStoryKey carries the id of the story a functional check judges, from the
+// gate to execCheck, without widening the check seam every test double shares.
+type gateStoryKey struct{}
+
+// withGateStory marks ctx as judging story id, so execCheck exports it to the
+// check as verb.GateStoryEnv (sty_ab93f9a6).
+func withGateStory(ctx context.Context, id string) context.Context {
+	if strings.TrimSpace(id) == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, gateStoryKey{}, id)
+}
+
+// gateStoryFrom reports the story withGateStory marked ctx with, or "".
+func gateStoryFrom(ctx context.Context) string {
+	id, _ := ctx.Value(gateStoryKey{}).(string)
+	return id
+}
+
 // execCheck runs command via `bash -c` in dir, returning combined stdout+stderr.
 // bash (not sh) so a multi-line self-contained check embedded in a skill may use
-// ordinary shell scripting.
+// ordinary shell scripting. dir is the MAIN tree (the process of record); a story
+// engaged from a linked worktree is reached through verb.GateStoryEnv, which names
+// the story being judged so `satelle story diff` resolves that story's own tree
+// instead of refusing the main tree (sty_ab93f9a6).
 func execCheck(ctx context.Context, dir, command, payload string) (string, error) {
 	c := exec.CommandContext(ctx, "bash", "-c", command)
 	c.Dir = dir
+	if id := gateStoryFrom(ctx); id != "" {
+		c.Env = append(os.Environ(), verb.GateStoryEnv+"="+id)
+	}
 	c.Stdin = strings.NewReader(payload)
 	out, err := c.CombinedOutput()
 	return string(out), err
@@ -3227,7 +3252,7 @@ func (g *Engine) whenAllows(ctx context.Context, item workitem.Item, toStatus st
 	}
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	out, err := g.check(cctx, g.repoRoot, command, string(payload))
+	out, err := g.check(withGateStory(cctx, item.ID), g.repoRoot, command, string(payload))
 	if err == nil {
 		return true
 	}
@@ -4064,7 +4089,7 @@ func (g *Engine) runCheck(ctx context.Context, itemID, skill, command, payload s
 	}
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	out, err := g.check(cctx, g.repoRoot, command, payload)
+	out, err := g.check(withGateStory(cctx, itemID), g.repoRoot, command, payload)
 	dec := verb.GateDecision{Gated: true, Skill: skill}
 	if err != nil {
 		dec.Accept = false

@@ -1,3 +1,13 @@
+## [0.0.620] - 2026-10-06
+
+### Fixed
+- **A gate's functional check now sees the change set of a story engaged from a linked worktree.** A functional check runs in the main tree (the process of record), and `satelle story diff` refuses to run from a tree other than the one the story was engaged from. A check judging a worktree-engaged story (for example `satelle-substrate-only-check`) used to swallow that refusal and reject with "no change set found". The engine now exports `SATELLE_GATE_STORY=<id>` into the check's environment, and `story diff <id>` honours it by reading that story's own engagement tree. It is honoured only for the story it names, only while that tree still exists, and only for a tree of the same repository. Any other foreign-tree diff is still refused, and the check's working directory stays the main tree. A story engaged in the main tree is unchanged. See `satelle help reviewer-checks`. (sty_ab93f9a6)
+
+## [serve-v0.0.129] - 2026-10-06
+
+### Changed
+- The serve path carries the updated `reviewer-checks` help topic, which documents `SATELLE_GATE_STORY` (sty_ab93f9a6).
+
 ## [0.0.619] - 2026-10-06
 
 ### Fixed

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -352,6 +353,9 @@ func resolveEngagementSlice(ctx context.Context, it workitem.Item, wantPatch boo
 	if top := gitToplevel(dir); top != "" {
 		dir = top
 	}
+	if anchor := gateTreeOverride(ctx, it.ID, base.Worktree, dir); anchor != "" {
+		dir = anchor
+	}
 	if aerr := refuseForeignTreeDiff(ctx, it.ID, base.Worktree, dir); aerr != nil {
 		return engagementSlice{}, fmt.Errorf("%w: %v", errForeignTree, aerr)
 	}
@@ -370,6 +374,64 @@ func resolveEngagementSlice(ctx context.Context, it workitem.Item, wantPatch boo
 	}, nil
 }
 
+// GateStoryEnv names the story a gate's functional check is judging. The engine
+// exports it into the check's environment (sty_ab93f9a6): a check runs in the
+// MAIN tree, the process of record, yet a story engaged from a linked worktree is
+// anchored to that worktree, so the check could not otherwise read its change
+// set. `story diff` honours it for the named story alone — see gateTreeOverride.
+const GateStoryEnv = "SATELLE_GATE_STORY"
+
+// storyAnchor is the working tree a story is engaged from: the live lease's tree
+// when one exists, else the engagement baseline's. Empty when unanchored.
+func storyAnchor(ctx context.Context, storyID, baselineTree string) string {
+	anchor := strings.TrimSpace(baselineTree)
+	if ls, err := requireLease(); err == nil {
+		if l, gerr := ls.Get(ctx, storyID); gerr == nil && strings.TrimSpace(l.Worktree) != "" {
+			anchor = strings.TrimSpace(l.Worktree)
+		}
+	}
+	return anchor
+}
+
+// gateTreeOverride resolves the tree `story diff` should read when it runs under
+// a gate's functional check (sty_ab93f9a6). It returns the story's own anchor —
+// not the invoking tree — only when ALL hold: GateStoryEnv names this very story,
+// the story is anchored, the anchor still exists, and it is a working tree of the
+// same repository as the invoking tree. Otherwise "", and the ordinary refusal
+// stands, so the variable cannot redirect a diff to another story's tree or to an
+// unrelated repository.
+func gateTreeOverride(ctx context.Context, storyID, baselineTree, invokedTree string) string {
+	if strings.TrimSpace(os.Getenv(GateStoryEnv)) != storyID {
+		return ""
+	}
+	anchor := storyAnchor(ctx, storyID, baselineTree)
+	if anchor == "" || anchor == invokedTree {
+		return ""
+	}
+	if fi, err := os.Stat(anchor); err != nil || !fi.IsDir() {
+		return ""
+	}
+	want, got := gitCommonDir(invokedTree), gitCommonDir(anchor)
+	if want == "" || want != got {
+		return ""
+	}
+	return anchor
+}
+
+// gitCommonDir is dir's repository's shared git directory — identical for the main
+// tree and every linked worktree of one repository. Empty when git cannot answer.
+func gitCommonDir(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	if err != nil {
+		return ""
+	}
+	p := strings.TrimSpace(string(out))
+	if r, rerr := filepath.EvalSymlinks(p); rerr == nil {
+		p = r
+	}
+	return p
+}
+
 // refuseForeignTreeDiff enforces the lease's working-tree anchor (sty_c098dc2d).
 // A story engaged from tree A diffs against a baseline taken in A; run from tree
 // B it would enumerate B's unrelated changes and attribute them to the story —
@@ -381,12 +443,7 @@ func resolveEngagementSlice(ctx context.Context, it workitem.Item, wantPatch boo
 // proceeds as it always did, so pre-upgrade baselines and non-git checkouts are
 // unaffected.
 func refuseForeignTreeDiff(ctx context.Context, storyID, baselineTree, invokedTree string) error {
-	anchor := strings.TrimSpace(baselineTree)
-	if ls, err := requireLease(); err == nil {
-		if l, gerr := ls.Get(ctx, storyID); gerr == nil && strings.TrimSpace(l.Worktree) != "" {
-			anchor = strings.TrimSpace(l.Worktree)
-		}
-	}
+	anchor := storyAnchor(ctx, storyID, baselineTree)
 	if anchor == "" || strings.TrimSpace(invokedTree) == "" || anchor == invokedTree {
 		return nil
 	}
