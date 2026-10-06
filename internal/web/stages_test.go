@@ -268,7 +268,7 @@ func TestStagesRenderNoNumberedLights(t *testing.T) {
 	}
 	for _, want := range []string{
 		`class="stage-chip stage-done"`, `class="stage-chip stage-current"`,
-		`<b class="ok">✓1</b>`, `<b class="rej">✗5</b>`, `<b class="blk">1</b>`,
+		`<b class="ok">1</b>`, `<b class="rej">5</b>`, `<b class="blk">1</b>`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered row missing %q:\n%s", want, html)
@@ -395,7 +395,7 @@ func TestProgressCellShowsPendingGate(t *testing.T) {
 		evA(ledger.KindReviewReject, "plan", "in_progress", "m2"),
 	}
 	_, progress := renderRowCells(t, "plan", buildStages(mid, "plan", false, noStep, routeSpec()))
-	for _, want := range []string{`class="pending-gate"`, `plan → in_progress: 1 rejected round`, `<b class="rej">✗1</b>`} {
+	for _, want := range []string{`class="pending-gate"`, `plan → in_progress: 1 rejected round`, `<b class="rej">1</b>`} {
 		if !strings.Contains(progress, want) {
 			t.Errorf("mid-gate progress cell missing %q: %q", want, progress)
 		}

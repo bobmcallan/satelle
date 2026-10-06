@@ -172,7 +172,7 @@ func TestMirrorRowShowsRunningDispatchBesideEarlierRefusal(t *testing.T) {
 	resp.Body.Close()
 	body := string(raw)
 	for _, want := range []string{
-		`<b class="rej">✗1</b>`,
+		`<b class="rej">1</b>`,
 		`class="stage-chip stage-current"`,
 		`class="dispatch-indicator"`,
 		"coder (sonnet) running",
@@ -191,7 +191,7 @@ func TestMirrorRowShowsRunningDispatchBesideEarlierRefusal(t *testing.T) {
 		t.Fatalf("no PROGRESS cell in body:\n%s", body)
 	}
 	progress, _, _ := strings.Cut(afterCol, "</td>")
-	if !strings.Contains(progress, `<b class="rej">✗1</b>`) {
+	if !strings.Contains(progress, `<b class="rej">1</b>`) {
 		t.Errorf("PROGRESS cell = %q, want the refused round ✗1", progress)
 	}
 }

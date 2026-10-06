@@ -213,6 +213,10 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		if !waitCond(t, ctx, row+".children[2].children.length === 1 && "+row+".children[2].firstElementChild.classList.contains('badge')", 3*time.Second) {
 			t.Error("the STATUS cell should hold only the status badge")
 		}
+		// Counts are told apart by colour alone — the chip carries no tick or cross glyph.
+		if !waitCond(t, ctx, "!/[✓✗]/.test("+stage+".textContent)", 3*time.Second) {
+			t.Error("a progress stage chip should show no ✓ or ✗ glyph")
+		}
 	})
 
 	t.Run("tab_switching", func(t *testing.T) {
