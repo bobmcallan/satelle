@@ -119,6 +119,7 @@ func (g *Engine) dispatchCloud(ctx context.Context, item workitem.Item, toStatus
 	}
 	rec := &verb.CloudDispatch{SessionID: session.ID, URL: session.URL, Branch: branch, Doc: binding.CollectDoc}
 	res.Command, res.Cloud = session.URL, rec
+	g.emitProgress("cloud session started: %s — waiting up to %s for branch %s…", session.URL, deadline, branch)
 	res.UsageNote = verb.UsageNote{
 		UsageUnavailableReason: harness + " cloud: usage unavailable",
 		CacheSplitUnavailable:  true,

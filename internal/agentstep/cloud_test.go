@@ -557,6 +557,62 @@ func TestCloudDispatchLaunchFailure(t *testing.T) {
 	}
 }
 
+// The pre-launch line names no session; a failed launch adds nothing after it.
+func TestCloudDispatchLaunchFailurePrintsNoSessionLine(t *testing.T) {
+	f := newCloudFix(t)
+	c := &fakeCloud{err: errors.New("boom")}
+	installCloud(t, agentcli.HarnessClaude, c)
+	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), cloudBinding("claude -p {system}", "", ""))
+	var lines []string
+	ce.SetProgress(func(msg string) { lines = append(lines, msg) })
+	if _, err := ce.dispatch(t); err == nil {
+		t.Fatal("dispatch succeeded despite the launcher's error")
+	}
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "dispatching step ") {
+		t.Fatalf("progress lines = %q, want only the pre-launch dispatching line", lines)
+	}
+	if strings.Contains(lines[0], "cloud session started") || strings.Contains(lines[0], cloudSessionURL) {
+		t.Errorf("pre-launch line %q names a started session", lines[0])
+	}
+}
+
+// After a successful launch exactly one more progress line names the session
+// URL, the branch and the deadline, and it is sent before the branch wait: the
+// session only pushes when that line arrives, so a line sent after the wait
+// would time the dispatch out.
+func TestCloudDispatchPrintsSessionURLOnLaunch(t *testing.T) {
+	f := newCloudFix(t)
+	c := &fakeCloud{}
+	installCloud(t, agentcli.HarnessClaude, c)
+	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), cloudBinding("claude -p {system}", "", cloudTestShortLimit))
+	var lines []string
+	ce.SetProgress(func(msg string) {
+		lines = append(lines, msg)
+		if strings.Contains(msg, cloudSessionURL) {
+			f.session(t, c.branch, tipMessage(cloudEvidenceBody, c.nonce), map[string]string{"b.txt": "x\n"})
+		}
+	})
+	res, err := ce.dispatch(t)
+	if err != nil {
+		t.Fatalf("dispatch: %v (progress %q)", err, lines)
+	}
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "dispatching step ") {
+		t.Fatalf("progress lines = %q, want the dispatching line then one session line", lines)
+	}
+	if strings.Contains(lines[0], cloudSessionURL) {
+		t.Errorf("pre-launch line %q already names the session URL", lines[0])
+	}
+	got := lines[1]
+	for _, want := range []string{cloudSessionURL, c.branch, cloudTestShortLimit} {
+		if !strings.Contains(got, want) {
+			t.Errorf("session line %q does not name %q", got, want)
+		}
+	}
+	if res.Command != cloudSessionURL {
+		t.Errorf("result.Command = %q, want %q", res.Command, cloudSessionURL)
+	}
+}
+
 // AC8: a live session (rework relay, consult) is never opened on a cloud binding.
 func TestOpenSessionRefusesCloudBinding(t *testing.T) {
 	g, _ := newEngine(t, "", fakeDocs{})
