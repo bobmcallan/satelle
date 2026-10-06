@@ -232,10 +232,7 @@ are both visible here rather than at the next dispatch.`,
 				return err
 			}
 			out := cmd.OutOrStdout()
-			dataDir := a.DataDir
-			if dataDir == "" {
-				dataDir = a.Config.ResolveDataDir(a.RepoRoot)
-			}
+			dataDir := a.PlaneDir()
 
 			agents, lerr := config.LoadAgents(dataDir)
 			if lerr != nil {
@@ -281,7 +278,7 @@ are both visible here rather than at the next dispatch.`,
 			// Skill bodies too, from the same resolver doctor uses — otherwise this
 			// command and `satelle doctor` would report the reviewer shell grant
 			// differently on the same tree (sty_338a53f8).
-			report := agentvalidate.ValidateEffectiveLayered(agents, workspace, global, a.Config.Vars, governing,
+			report := agentvalidate.ValidateEffectiveLayered(agents, workspace, global, a.PlaneConfig().Vars, governing,
 				doctor.SkillBodyResolver(dataDir))
 			printProfileCatalog(out, global)
 			fmt.Fprintln(out, "Agent grants (resolved):")

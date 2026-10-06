@@ -122,14 +122,21 @@ accepts. When numbered criteria are present, they must plausibly verify the goal
  epic-parent"; "use category docs"; "premise false: contradicted by
  <path>:<symbol>").
 
+
+## Re-presented edge
+
+Every judging verdict sets `reviewed` to the exact words it rests on. The first verdict on the edge has no prior row, so it judges and sets `reviewed`; a later citation cannot start until that quotation is stored. On a re-presented edge the quotation comparison governs. Open `prior_verdicts`. Take this skill's latest row. If that row has no `reviewed` string, or `reviewed_truncated` is set, re-judge the words this verdict would rest on and set `reviewed` to those exact words. Do not cite an older row that still has a complete `reviewed` string. If that latest row has a complete `reviewed` string, compare those exact words with the words this verdict would rest on. If they are the same words, re-issue that earlier verdict: the same decision, the same `reviewed` string, and notes that cite its `attempt` and skill. An unchanged accept stays accept. An unchanged reject stays reject. A citation does not clear a standing rejection. If the words differ, judge the difference, name what changed in notes, and set `reviewed` to the exact words this verdict rests on. Cite the passages the verdict depends on, not the whole input. Definition-edit fields, edit timestamps, and a selection of story sections are not how unchanged words are established.
+
 ## Verdict
 
 Reply with exactly one JSON object, nothing else of that shape:
 
 ```json
-{"decision": "accept", "notes": ""}
+{"decision": "accept", "notes": "", "reviewed": "<exact words this verdict rests on>"}
 ```
 
 `decision` is `"accept"` or `"reject"`; `notes` names the alignment, scope,
 prescription, dead-premise, or classification problem on reject (may be empty
 on accept).
+
+`reviewed` is required on every judgment, including the first verdict on this edge. It is the exact words this verdict rests on. Replace the slot; do not omit the field and do not copy the angle-bracket text. A citation of the same words repeats that same `reviewed` string.

@@ -43,7 +43,7 @@ func TestArtifactAttemptsRejectDecisionIsNotRepaired(t *testing.T) {
 // recent definitionEditCount with each value capped; a story with none carries no
 // key at all, and an unwired resolver injects nothing.
 func TestGatePayloadIncludesDefinitionEdits(t *testing.T) {
-	gateOnce := func(t *testing.T, resolver func(ctx context.Context, itemID string) []DefinitionEdit) string {
+	gateOnce := func(t *testing.T, resolver func(ctx context.Context, itemID string) []DefinitionEdit) (string, map[string][]byte) {
 		t.Helper()
 		g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: planEdgeWorkflow, skillBody: "rubric", skillFound: true})
 		if resolver != nil {
@@ -52,36 +52,50 @@ func TestGatePayloadIncludesDefinitionEdits(t *testing.T) {
 		if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_de", Status: "plan"}, "in_progress"); err != nil {
 			t.Fatal(err)
 		}
-		return r.got.Payload
+		return r.got.Payload, r.opened
 	}
 
 	t.Run("edits ride with before, after and actor", func(t *testing.T) {
 		var gotID string
-		payload := gateOnce(t, func(_ context.Context, itemID string) []DefinitionEdit {
+		payload, opened := gateOnce(t, func(_ context.Context, itemID string) []DefinitionEdit {
 			gotID = itemID
 			return []DefinitionEdit{{Field: "acceptance_criteria", Old: "OLD-AC-TEXT", New: "NEW-AC-TEXT", Actor: "driver", At: "2026-09-28T10:00:00Z"}}
 		})
 		if gotID != "sty_de" {
 			t.Errorf("resolver asked for %q, want sty_de", gotID)
 		}
-		for _, want := range []string{`"definition_edits"`, "OLD-AC-TEXT", "NEW-AC-TEXT", `"actor":"driver"`, `"field":"acceptance_criteria"`} {
-			if !strings.Contains(payload, want) {
-				t.Errorf("payload missing %s: %s", want, payload)
+		if !strings.Contains(payload, `"definition_edits"`) {
+			t.Fatalf("payload missing the path: %s", payload)
+		}
+		file := string(openedAt(t, opened, payload, "definition_edits"))
+		for _, want := range []string{"OLD-AC-TEXT", "NEW-AC-TEXT", `"actor":"driver"`, `"field":"acceptance_criteria"`} {
+			if !strings.Contains(file, want) {
+				t.Errorf("file missing %s: %s", want, file)
 			}
 		}
 	})
 
-	t.Run("windowed and capped", func(t *testing.T) {
+	t.Run("the file keeps every edit; the check stdin windows and caps", func(t *testing.T) {
 		var edits []DefinitionEdit
 		for i := 0; i < definitionEditCount+5; i++ {
 			edits = append(edits, DefinitionEdit{Field: "title", Old: fmt.Sprintf("OLD-%02d", i), New: strings.Repeat("x", definitionEditValueCeiling*2)})
 		}
-		payload := gateOnce(t, func(context.Context, string) []DefinitionEdit { return edits })
-		if strings.Contains(payload, "OLD-00") || !strings.Contains(payload, fmt.Sprintf("OLD-%02d", definitionEditCount+4)) {
-			t.Error("only the most recent edits ride")
+		payload, opened := gateOnce(t, func(context.Context, string) []DefinitionEdit { return edits })
+		file := string(openedAt(t, opened, payload, "definition_edits"))
+		if !strings.Contains(file, "OLD-00") || !strings.Contains(file, fmt.Sprintf("OLD-%02d", definitionEditCount+4)) {
+			t.Error("the file must keep every edit, including the oldest")
 		}
-		if strings.Contains(payload, strings.Repeat("x", definitionEditValueCeiling+1)) {
-			t.Error("each value must be capped")
+		if !strings.Contains(file, strings.Repeat("x", definitionEditValueCeiling+1)) {
+			t.Error("the file must keep each value whole")
+		}
+		stdin := cappedGateStdin(t, planEdgeWorkflow, workitem.Item{ID: "sty_de", Status: "plan"}, "in_progress", func(g *Engine) {
+			g.SetDefinitionEditsResolver(func(context.Context, string) []DefinitionEdit { return edits })
+		})
+		if strings.Contains(stdin, "OLD-00") || !strings.Contains(stdin, fmt.Sprintf("OLD-%02d", definitionEditCount+4)) {
+			t.Error("only the most recent edits ride the check stdin")
+		}
+		if strings.Contains(stdin, strings.Repeat("x", definitionEditValueCeiling+1)) {
+			t.Error("each check-stdin value must be capped")
 		}
 	})
 
@@ -90,7 +104,7 @@ func TestGatePayloadIncludesDefinitionEdits(t *testing.T) {
 			"empty":   func(context.Context, string) []DefinitionEdit { return nil },
 			"unwired": nil,
 		} {
-			if payload := gateOnce(t, resolver); strings.Contains(payload, "definition_edits") {
+			if payload, _ := gateOnce(t, resolver); strings.Contains(payload, "definition_edits") {
 				t.Errorf("%s: payload must carry no definition_edits key: %s", name, payload)
 			}
 		}

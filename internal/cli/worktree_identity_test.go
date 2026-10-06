@@ -347,15 +347,14 @@ func TestWorktreeWorkspaceListAndPartitionsAgree(t *testing.T) {
 	}
 }
 
-// AC7: a worktree derives its route from its OWN authored substrate, not the
-// embedded default. The identity fix moved identity only; it must not have moved
-// the data dir, or a worktree would silently derive the embedded route.
-func TestWorktreeDerivesItsOwnAuthoredRoute(t *testing.T) {
+// A worktree that carries its own route is not the process of record. The
+// six-step files below live only in the worktree; the story still walks the
+// main tree's route (sty_ddbe2669). Reporting that the copy diverges is a
+// sibling story.
+func TestWorktreeRouteFollowsTheMainTree(t *testing.T) {
 	f := newWorktreeFixture(t)
 	f.initWorktree(t)
 
-	// Only the WORKTREE carries the authored six-step route; the main tree stays on
-	// the embedded default, so the two routes differ iff the worktree reads its own.
 	wf := filepath.Join(f.wt, ".satelle", "workflows")
 	if err := os.MkdirAll(wf, 0o755); err != nil {
 		t.Fatal(err)
@@ -383,22 +382,21 @@ func TestWorktreeDerivesItsOwnAuthoredRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("story route (worktree): %v\n%s", err, wtRoute)
 	}
-	for _, step := range []string{"backlog", "plan", "in_progress", "integration", "release", "done"} {
-		if !strings.Contains(wtRoute, "**"+step+"**") {
-			t.Errorf("worktree route has no %q step:\n%s", step, wtRoute)
-		}
-	}
-	if !strings.Contains(wtRoute, "  6. **done**") {
-		t.Errorf("worktree route is not the six-step feature route:\n%s", wtRoute)
-	}
-
 	t.Chdir(f.main)
 	mainRoute, err := runRoot(t, "story", "route", created.ID)
 	if err != nil {
 		t.Fatalf("story route (main): %v\n%s", err, mainRoute)
 	}
-	if strings.Contains(mainRoute, "**plan**") {
-		t.Errorf("control: the main tree has no authored route, yet derived a plan step:\n%s", mainRoute)
+	if wtRoute != mainRoute {
+		t.Fatalf("worktree route diverges from the main tree\nworktree:\n%s\nmain:\n%s", wtRoute, mainRoute)
+	}
+	for _, step := range []string{"plan", "integration", "release"} {
+		if strings.Contains(wtRoute, "**"+step+"**") {
+			t.Errorf("route contains the worktree-only step %q:\n%s", step, wtRoute)
+		}
+	}
+	if !strings.Contains(wtRoute, "**backlog**") || !strings.Contains(wtRoute, "**in_progress**") {
+		t.Errorf("route is not the main tree's lane:\n%s", wtRoute)
 	}
 }
 

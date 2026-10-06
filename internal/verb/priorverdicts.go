@@ -12,20 +12,24 @@ import (
 // PriorVerdict is one verdict already recorded for an item on one from→to edge.
 // Decision is "accept" or "reject"; CreatedAt is RFC3339.
 type PriorVerdict struct {
-	Skill     string `json:"skill,omitempty"`
-	Decision  string `json:"decision"`
-	Notes     string `json:"notes,omitempty"`
-	CreatedAt string `json:"created_at,omitempty"`
+	Skill             string `json:"skill,omitempty"`
+	Decision          string `json:"decision"`
+	Notes             string `json:"notes,omitempty"`
+	CreatedAt         string `json:"created_at,omitempty"`
+	Reviewed          string `json:"reviewed,omitempty"`
+	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
 }
 
 // priorVerdictRow is the reviewer row's payload as reviewerPayload
 // (workitem.go) writes it — the decision itself comes from the row's KIND,
 // which is what the trail is indexed by.
 type priorVerdictRow struct {
-	From  string `json:"from"`
-	To    string `json:"to"`
-	Skill string `json:"skill,omitempty"`
-	Notes string `json:"notes,omitempty"`
+	From              string `json:"from"`
+	To                string `json:"to"`
+	Skill             string `json:"skill,omitempty"`
+	Notes             string `json:"notes,omitempty"`
+	Reviewed          string `json:"reviewed,omitempty"`
+	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
 }
 
 // PriorVerdicts returns every review verdict already recorded for itemID on the
@@ -66,10 +70,12 @@ func PriorVerdicts(ctx context.Context, itemID, from, to string) ([]PriorVerdict
 			continue
 		}
 		out = append(out, PriorVerdict{
-			Skill:     row.Skill,
-			Decision:  decision,
-			Notes:     row.Notes,
-			CreatedAt: e.CreatedAt.UTC().Format(time.RFC3339),
+			Skill:             row.Skill,
+			Decision:          decision,
+			Notes:             row.Notes,
+			CreatedAt:         e.CreatedAt.UTC().Format(time.RFC3339),
+			Reviewed:          row.Reviewed,
+			ReviewedTruncated: row.ReviewedTruncated,
 		})
 	}
 	return out, nil

@@ -418,6 +418,26 @@ func TestBundle_SeatKeyDecidesWhoShares(t *testing.T) {
 	}
 }
 
+func TestParseBundleDecisionsCopiesReviewed(t *testing.T) {
+	const quote = "BUNDLE-REVIEWED-QUOTATION-not-in-notes"
+	decs, err := parseBundleDecisions([]byte(`{"verdicts":[{"skill":"rev-a","decision":"reject","notes":"the plan's AC3","reasoning":"because","reviewed":"`+quote+`"}]}`), []string{"rev-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decs) != 1 {
+		t.Fatalf("decisions = %+v", decs)
+	}
+	if decs[0].Accept || decs[0].Notes != "the plan's AC3" || decs[0].Reviewed != quote || decs[0].ReviewedTruncated {
+		t.Fatalf("bundle entry = %+v", decs[0])
+	}
+	if strings.Contains(decs[0].Notes, quote) {
+		t.Fatal("the quotation must be its own field, not a substring of notes")
+	}
+	if !strings.Contains(bundlePreamble, `"reviewed": "..."`) {
+		t.Fatalf("bundle preamble must show reviewed beside notes and reasoning:\n%s", bundlePreamble)
+	}
+}
+
 func TestBundle_PartitionKeepsUnrelatedSeatsApart(t *testing.T) {
 	wf := spineWF("", "", "", "in_progress|executor||rev-a,rev-b,rev-c|reviewer||bundle = true", "done")
 	docs := fakeDocs{workflow: wf, extraSkills: bundleSkillDocs("rev-a", "rev-b", "rev-c")}

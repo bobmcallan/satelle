@@ -85,3 +85,19 @@ func ledgerList(ctx context.Context, raw json.RawMessage) (json.RawMessage, erro
 	}
 	return json.Marshal(entries)
 }
+
+// ListStoryLedger is the in-process form of `satelle ledger list --story`.
+// It uses the same filter the CLI does (story id only; limit 0 so the store
+// default applies) and returns the list JSON. A missing store is
+// ErrStoreNotConfigured. Callers must not shell out to the CLI.
+func ListStoryLedger(ctx context.Context, storyID string) ([]byte, error) {
+	store, err := requireLedger()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := store.List(ctx, ledger.ListFilter{StoryID: storyID})
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(entries)
+}

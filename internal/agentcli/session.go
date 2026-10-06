@@ -30,6 +30,32 @@ type Turn struct {
 	Text   string
 }
 
+// turnObserver, when set, sees the Turn runOneShotUsage passes to Send.
+// Stream folds System and Text into one content block; ACP sends them as
+// separate blocks. The observer reads turn.Text, which is Request.Payload,
+// without reading either of those wire shapes. Send itself is unchanged.
+var (
+	turnObserverMu sync.Mutex
+	turnObserver   func(Turn)
+)
+
+// SetTurnObserver installs fn as the Turn observer. A nil fn clears it.
+// Tests use it to read the payload block a live transport is about to send.
+func SetTurnObserver(fn func(Turn)) {
+	turnObserverMu.Lock()
+	turnObserver = fn
+	turnObserverMu.Unlock()
+}
+
+func observeTurn(turn Turn) {
+	turnObserverMu.Lock()
+	fn := turnObserver
+	turnObserverMu.Unlock()
+	if fn != nil {
+		fn(turn)
+	}
+}
+
 // PermissionRequest is a tool-use ask from a live session.
 type PermissionRequest struct {
 	ToolName string
@@ -99,7 +125,9 @@ func runOneShot(ctx context.Context, sess Session, req Request) ([]byte, error) 
 // Captured() (sty_87b86044 AC2).
 func runOneShotUsage(ctx context.Context, sess Session, req Request) ([]byte, UsageResult, error) {
 	var usage UsageResult
-	if err := sess.Send(ctx, Turn{System: req.SystemPrompt, Text: req.Payload}); err != nil {
+	turn := Turn{System: req.SystemPrompt, Text: req.Payload}
+	observeTurn(turn)
+	if err := sess.Send(ctx, turn); err != nil {
 		closeErr := sess.Close()
 		out := sess.Captured()
 		if closeErr != nil {

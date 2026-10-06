@@ -13,9 +13,10 @@ import (
 // countingRunner is fakeRunner plus a call count, so "the gate runs cold and
 // one-shot" is an assertion rather than an assumption: one Run, no session.
 type countingRunner struct {
-	out   string
-	calls int
-	got   agentcli.Request
+	out    string
+	calls  int
+	got    agentcli.Request
+	opened map[string][]byte
 }
 
 func (c *countingRunner) Name() string    { return "counting" }
@@ -23,6 +24,7 @@ func (c *countingRunner) Command() string { return "counting -p --append-system-
 func (c *countingRunner) Run(_ context.Context, req agentcli.Request) ([]byte, error) {
 	c.calls++
 	c.got = req
+	c.opened = openPayloadFiles(req.Payload)
 	return []byte(c.out), nil
 }
 
@@ -76,22 +78,20 @@ func TestReworkTranscriptReachesTheGateColdAndOneShot(t *testing.T) {
 		}
 	}
 
-	var wrap struct {
-		Messages []MessageState `json:"messages"`
-	}
-	if err := json.Unmarshal([]byte(r.got.Payload), &wrap); err != nil {
+	var got []MessageState
+	if err := json.Unmarshal(openedAt(t, r.opened, r.got.Payload, "messages"), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(wrap.Messages) != len(transcript) {
-		t.Fatalf("payload messages = %d, want the whole %d-turn transcript", len(wrap.Messages), len(transcript))
+	if len(got) != len(transcript) {
+		t.Fatalf("messages file = %d, want the whole %d-turn transcript", len(got), len(transcript))
 	}
 	for i := range transcript {
-		if wrap.Messages[i].From != transcript[i].From || wrap.Messages[i].To != transcript[i].To {
+		if got[i].From != transcript[i].From || got[i].To != transcript[i].To {
 			t.Errorf("turn %d = %s -> %s, want %s -> %s; the reviewer must see who said what",
-				i, wrap.Messages[i].From, wrap.Messages[i].To, transcript[i].From, transcript[i].To)
+				i, got[i].From, got[i].To, transcript[i].From, transcript[i].To)
 		}
-		if wrap.Messages[i].Body != transcript[i].Body {
-			t.Errorf("turn %d body = %q, want %q", i, wrap.Messages[i].Body, transcript[i].Body)
+		if got[i].Body != transcript[i].Body {
+			t.Errorf("turn %d body = %q, want %q", i, got[i].Body, transcript[i].Body)
 		}
 	}
 }
@@ -115,16 +115,32 @@ func TestReworkTranscriptRespectsTheExistingBudget(t *testing.T) {
 	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_rw2", Status: "in_progress"}, "done"); err != nil {
 		t.Fatal(err)
 	}
+	var kept []MessageState
+	if err := json.Unmarshal(openedAt(t, r.opened, r.got.Payload, "messages"), &kept); err != nil {
+		t.Fatal(err)
+	}
+	if len(kept) != len(many) {
+		t.Errorf("messages file = %d, want every turn (%d)", len(kept), len(many))
+	}
+	if strings.Contains(kept[0].Body, "[truncated]") || len(kept[0].Body) <= messageBodyBudget {
+		t.Error("the file must keep each over-long turn whole")
+	}
+	if strings.Contains(r.got.Payload, strings.Repeat("y", messageBodyBudget)) {
+		t.Error("the work item must not carry the over-long body")
+	}
+	stdin := cappedGateStdin(t, testWorkflow, workitem.Item{ID: "sty_rw2", Status: "in_progress"}, "done", func(g *Engine) {
+		g.SetMessagesResolver(func(context.Context, string, []string) []MessageState { return many })
+	})
 	var wrap struct {
 		Messages []MessageState `json:"messages"`
 	}
-	if err := json.Unmarshal([]byte(r.got.Payload), &wrap); err != nil {
+	if err := json.Unmarshal([]byte(stdin), &wrap); err != nil {
 		t.Fatal(err)
 	}
 	if len(wrap.Messages) != messagesCount {
-		t.Errorf("payload messages = %d, want the existing cap %d", len(wrap.Messages), messagesCount)
+		t.Errorf("check messages = %d, want the existing cap %d", len(wrap.Messages), messagesCount)
 	}
 	if !strings.Contains(wrap.Messages[0].Body, "[truncated]") {
-		t.Errorf("an over-long turn must be excerpted, not delivered whole")
+		t.Errorf("an over-long turn must be excerpted on the check stdin")
 	}
 }

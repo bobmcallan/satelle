@@ -15,11 +15,10 @@ stdin. Read the story (title, body, ACs, non-goals) and the
 
 ## Enumeration (mechanism, not a verdict)
 
-**Payload-first.** Prefer the transition payload's `diff` object (files, stat,
-patch — the same shape as `satelle story diff`) when it is present. Satelle
+**Payload-first.** Prefer the payload `diff` when it is present. Open `patch_path`; the file has `files`, `stat`, and `patch`, the same shape as `satelle story diff`. Satelle
 injects it whenever an engagement baseline exists; no executor
 attachment and no shell are required. Then a story attachment named `scope-diff`
-(or similar) in the payload `docs` array. Also use plan/step summaries. When
+(or similar) is a `docs` entry (`name`, `type`, `path`); open `path`. Also use plan/step summaries. When
 shell is available and payload `diff` is absent:
 
 ```bash
@@ -36,7 +35,7 @@ compact-output`); --json gives the plain form.
 - **No engagement baseline** (`diff.no_baseline` is true, or error from story
   diff / never recorded) →
  ```json
- {"decision": "accept", "notes": "scope: no-baseline"}
+ {"decision": "accept", "notes": "scope: no-baseline", "reviewed": "<exact words this verdict rests on>"}
  ```
  Do **not** reject solely for a missing baseline.
 - When a baseline **exists** but the payload carries **no** `diff` (and no
@@ -81,8 +80,15 @@ Fair gate: ACs as written, not perfectionism. Docs/tests for *this* slice are
 in-scope. Implementing five sibling stories under one engage is the canonical
 reject.
 
+
+## Re-presented edge
+
+Every judging verdict sets `reviewed` to the exact words it rests on. The first verdict on the edge has no prior row, so it judges and sets `reviewed`; a later citation cannot start until that quotation is stored. On a re-presented edge the quotation comparison governs. Open `prior_verdicts`. Take this skill's latest row. If that row has no `reviewed` string, or `reviewed_truncated` is set, re-judge the words this verdict would rest on and set `reviewed` to those exact words. Do not cite an older row that still has a complete `reviewed` string. If that latest row has a complete `reviewed` string, compare those exact words with the words this verdict would rest on. If they are the same words, re-issue that earlier verdict: the same decision, the same `reviewed` string, and notes that cite its `attempt` and skill. An unchanged accept stays accept. An unchanged reject stays reject. A citation does not clear a standing rejection. If the words differ, judge the difference, name what changed in notes, and set `reviewed` to the exact words this verdict rests on. Cite the passages the verdict depends on, not the whole input. Definition-edit fields, edit timestamps, and a selection of story sections are not how unchanged words are established.
+
 ## Verdict
 
 ```json
-{"decision": "accept", "notes": ""}
+{"decision": "accept", "notes": "", "reviewed": "<exact words this verdict rests on>"}
 ```
+
+`reviewed` is required on every judgment, including the first verdict on this edge. It is the exact words this verdict rests on. Replace the slot; do not omit the field and do not copy the angle-bracket text. A citation of the same words repeats that same `reviewed` string.

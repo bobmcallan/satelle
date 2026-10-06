@@ -153,6 +153,21 @@ func admitsFromGrant(grant string, includeScoped bool) grantAdmits {
 	return a
 }
 
+// GrantAdmitsRead reports whether grant lists an unscoped read-class tool.
+// A scoped name does not count: opening a file needs a read tool the grant
+// itself names. ClassRead is Read, Grep, Glob, ls, notebookread, read_file,
+// and list_dir. find is ClassUnknown and does not admit a read.
+func GrantAdmitsRead(grant string) bool {
+	return admitsFromGrant(grant, false).classes[ClassRead]
+}
+
+// GrantAdmitsShell reports whether grant lists a shell-class tool, including
+// a scoped one such as Bash(satelle:*). The judging briefing keeps its CLI
+// lines only when this is true.
+func GrantAdmitsShell(grant string) bool {
+	return admitsFromGrant(grant, true).classes[ClassShell]
+}
+
 // allows reports whether a tool of class c named name is inside the grant. An
 // unknown class is admitted only by an exact name listed in the grant.
 func (a grantAdmits) allows(c ToolClass, name string) bool {

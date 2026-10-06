@@ -9,8 +9,10 @@
 // Reviewer path: the active workflow names a reviewer_skill per edge; the skill's
 // markdown body rides as the agent's appended system prompt; the work item +
 // requested transition go in on stdin; the agent prints one JSON object
-// {decision, notes, reasoning}, parsed strictly into an accept/reject. Accept lets
-// the caller enact; reject blocks and pushes the notes back to the executor.
+// {decision, notes, reasoning} and may include reviewed, the exact words that
+// verdict rests on. The decision is parsed strictly into an accept/reject.
+// Accept lets the caller enact; reject blocks and pushes the notes back to the
+// executor. The binary stores reviewed; it does not compare it.
 // LLM gate and named-dispatch runs share Invoke (invoke.go) — one path that
 // calls agentcli.Runner.Run (sty_ba860c8a).
 //
@@ -711,6 +713,10 @@ const docsPayloadCeiling = 128 << 10
 const (
 	priorVerdictCount        = 5
 	priorVerdictNotesCeiling = 2 << 10
+	// reviewedCeiling is the size bound on the quotation stored with a verdict.
+	// Over it, the row records that the citation was truncated and omits the
+	// string. It is not a hash and not a comparison of the story.
+	reviewedCeiling = 8 << 10
 )
 
 // diffPayloadCeiling bounds the patch body that rides in one reviewer payload,
@@ -885,11 +891,26 @@ type AmendmentState struct {
 // a reviewer seeing attempt 7 learns the edge is deep even when the window
 // starts at 3.
 type PriorVerdict struct {
-	Skill     string `json:"skill,omitempty"`
-	Decision  string `json:"decision"` // "accept" | "reject"
-	Notes     string `json:"notes,omitempty"`
-	CreatedAt string `json:"created_at,omitempty"` // RFC3339
-	Attempt   int    `json:"attempt"`
+	Skill             string `json:"skill,omitempty"`
+	Decision          string `json:"decision"` // "accept" | "reject"
+	Notes             string `json:"notes,omitempty"`
+	CreatedAt         string `json:"created_at,omitempty"` // RFC3339
+	Attempt           int    `json:"attempt"`
+	Reviewed          string `json:"reviewed,omitempty"`
+	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+}
+
+// PriorVerdictFrom is the one conversion from a ledger prior verdict to the
+// payload record. Attempt stays zero; fillPriorVerdicts assigns it.
+func PriorVerdictFrom(v verb.PriorVerdict) PriorVerdict {
+	return PriorVerdict{
+		Skill:             v.Skill,
+		Decision:          v.Decision,
+		Notes:             v.Notes,
+		CreatedAt:         v.CreatedAt,
+		Reviewed:          v.Reviewed,
+		ReviewedTruncated: v.ReviewedTruncated,
+	}
 }
 
 // ChildState is one child story's id and status, injected into a parent/epic
@@ -914,7 +935,10 @@ type DocState struct {
 }
 
 // fillPayloadDocs attaches resolved docs under the cumulative body budget.
-func (g *Engine) fillPayloadDocs(ctx context.Context, itemID string, tp *transitionPayload) {
+// After the binary, type:change, and route skips, every remaining doc is kept
+// with its full body on mat. The ceiling applies only to tp.Docs, which is
+// the functional-check payload.
+func (g *Engine) fillPayloadDocs(ctx context.Context, itemID string, tp *transitionPayload, mat *reviewerMaterial) {
 	if g.itemDocs == nil || itemID == "" {
 		return
 	}
@@ -924,6 +948,7 @@ func (g *Engine) fillPayloadDocs(ctx context.Context, itemID string, tp *transit
 	}
 	var used int
 	out := make([]DocState, 0, len(all))
+	var retained []DocState
 	for _, d := range all {
 		// Binary attachments are disk retention only (sty_40e5a305): a screenshot
 		// larger than the ceiling would starve plan/step-summary. Never inline
@@ -945,6 +970,7 @@ func (g *Engine) fillPayloadDocs(ctx context.Context, itemID string, tp *transit
 		if strings.EqualFold(d.Type, verb.RouteDocName) {
 			continue
 		}
+		retained = append(retained, d)
 		if used >= docsPayloadCeiling {
 			out = append(out, DocState{Name: d.Name, Type: d.Type, Truncated: true})
 			continue
@@ -960,6 +986,9 @@ func (g *Engine) fillPayloadDocs(ctx context.Context, itemID string, tp *transit
 		out = append(out, d)
 		used += len(body)
 	}
+	if mat != nil {
+		mat.Docs = retained
+	}
 	tp.Docs = out
 }
 
@@ -968,7 +997,7 @@ func (g *Engine) fillPayloadDocs(ctx context.Context, itemID string, tp *transit
 // priorVerdictCount with each note capped. The two budgets stay separate on
 // purpose: this runs AFTER fillPayloadDocs and never touches its counter, so
 // prior verdicts provably cannot consume docsPayloadCeiling.
-func (g *Engine) fillPriorVerdicts(ctx context.Context, itemID, from, to string, tp *transitionPayload) {
+func (g *Engine) fillPriorVerdicts(ctx context.Context, itemID, from, to string, tp *transitionPayload, mat *reviewerMaterial) {
 	if g.priorVerdicts == nil || itemID == "" {
 		return
 	}
@@ -979,12 +1008,21 @@ func (g *Engine) fillPriorVerdicts(ctx context.Context, itemID, from, to string,
 	for i := range all {
 		all[i].Attempt = i + 1
 	}
-	if len(all) > priorVerdictCount {
-		all = all[len(all)-priorVerdictCount:]
+	// Snapshot before the window. The copy does not share the backing array,
+	// so the note excerpts below cannot shorten the retained bodies.
+	if mat != nil {
+		mat.PriorVerdicts = append([]PriorVerdict(nil), all...)
 	}
-	out := make([]PriorVerdict, 0, len(all))
-	for _, v := range all {
+	window := all
+	if len(window) > priorVerdictCount {
+		window = window[len(window)-priorVerdictCount:]
+	}
+	out := make([]PriorVerdict, 0, len(window))
+	for _, v := range window {
 		v.Notes = excerpt(v.Notes, priorVerdictNotesCeiling)
+		// Reviewed is the reviewer's quotation. It is copied whole onto this
+		// window and onto the material snapshot above. It is not excerpted:
+		// a shortened quotation is not a citation.
 		out = append(out, v)
 	}
 	tp.PriorVerdicts = out
@@ -1011,7 +1049,7 @@ const (
 // fillDefinitionEdits attaches the story's definition edits, most recent
 // definitionEditCount, each value capped. Gate payload only, like prior verdicts:
 // the reader is a reviewer judging the definition, not a performer.
-func (g *Engine) fillDefinitionEdits(ctx context.Context, itemID string, tp *transitionPayload) {
+func (g *Engine) fillDefinitionEdits(ctx context.Context, itemID string, tp *transitionPayload, mat *reviewerMaterial) {
 	if g.definitionEdits == nil || itemID == "" {
 		return
 	}
@@ -1019,11 +1057,15 @@ func (g *Engine) fillDefinitionEdits(ctx context.Context, itemID string, tp *tra
 	if len(all) == 0 {
 		return
 	}
-	if len(all) > definitionEditCount {
-		all = all[len(all)-definitionEditCount:]
+	if mat != nil {
+		mat.DefinitionEdits = append([]DefinitionEdit(nil), all...)
 	}
-	out := make([]DefinitionEdit, 0, len(all))
-	for _, e := range all {
+	window := all
+	if len(window) > definitionEditCount {
+		window = window[len(window)-definitionEditCount:]
+	}
+	out := make([]DefinitionEdit, 0, len(window))
+	for _, e := range window {
 		e.Old = excerpt(e.Old, definitionEditValueCeiling)
 		e.New = excerpt(e.New, definitionEditValueCeiling)
 		out = append(out, e)
@@ -1036,7 +1078,7 @@ func (g *Engine) fillDefinitionEdits(ctx context.Context, itemID string, tp *tra
 // the gate payload — no status-name switch (sty_a125b440 AC2). Gate payload
 // only: executor and retrospective payloads deliberately go without, matching
 // prior_verdicts (an executor modelling its own slice is the failure mode).
-func (g *Engine) fillDiff(ctx context.Context, itemID string, tp *transitionPayload) {
+func (g *Engine) fillDiff(ctx context.Context, itemID string, tp *transitionPayload, mat *reviewerMaterial) {
 	if g.itemDiff == nil || itemID == "" {
 		return
 	}
@@ -1045,6 +1087,26 @@ func (g *Engine) fillDiff(ctx context.Context, itemID string, tp *transitionPayl
 		return
 	}
 	cp := *d
+	if d.Files != nil {
+		cp.Files = append([]string(nil), d.Files...)
+	}
+	// The compressor runs once, before the file, stat, and patch ceilings.
+	// The retained copy is that post-compressor slice. The ceilings still
+	// apply to tp.Diff, which is the functional-check payload.
+	if g.diffCompressor != nil && cp.Patch != "" {
+		compressed := g.diffCompressor(ctx, itemID, cp.Patch)
+		if retrieve.MarkerRE.MatchString(compressed) {
+			cp.Truncated = true
+		}
+		cp.Patch = compressed
+	}
+	if mat != nil {
+		snap := cp
+		if cp.Files != nil {
+			snap.Files = append([]string(nil), cp.Files...)
+		}
+		mat.Diff = &snap
+	}
 	if len(cp.Files) > diffFilesCount {
 		cp.Files = append([]string(nil), cp.Files[:diffFilesCount]...)
 		cp.Truncated = true
@@ -1053,17 +1115,8 @@ func (g *Engine) fillDiff(ctx context.Context, itemID string, tp *transitionPayl
 		cp.Stat = excerpt(cp.Stat, diffStatCeiling)
 		cp.Truncated = true
 	}
-	// The compressor (noise-strip then ranked hunk selection) is the PRIMARY
-	// reducer for the patch; diffPayloadCeiling below stays only as a backstop
-	// (sty_918e2086). Composition: diffFilesCount/diffStatCeiling above are
-	// unrelated caps and run unchanged either way.
-	if g.diffCompressor != nil && cp.Patch != "" {
-		compressed := g.diffCompressor(ctx, itemID, cp.Patch)
-		if retrieve.MarkerRE.MatchString(compressed) {
-			cp.Truncated = true
-		}
-		cp.Patch = compressed
-	}
+	// diffPayloadCeiling stays only as a backstop on the check payload
+	// (sty_918e2086). The judging path keeps the post-compressor text.
 	if len(cp.Patch) > diffPayloadCeiling {
 		cp.Patch = g.excerptOffload(ctx, itemID, cp.Patch, diffPayloadCeiling)
 		cp.Truncated = true
@@ -1105,7 +1158,7 @@ const (
 // Runs AFTER fillPayloadDocs / fillDiff and never touches those counters.
 // Oldest 20 kept; each body cut at messageBodyBudget with a fetch hint.
 // Nil-safe; never errors.
-func (g *Engine) fillMessages(ctx context.Context, itemID string, addresses []string, tp *transitionPayload) {
+func (g *Engine) fillMessages(ctx context.Context, itemID string, addresses []string, tp *transitionPayload, mat *reviewerMaterial) {
 	if g.itemMessages == nil || itemID == "" {
 		return
 	}
@@ -1113,13 +1166,20 @@ func (g *Engine) fillMessages(ctx context.Context, itemID string, addresses []st
 	if len(msgs) == 0 {
 		return
 	}
-	if len(msgs) > messagesCount {
-		msgs = msgs[:messagesCount]
+	// The file keeps resolver order and the full bodies. The check payload
+	// stays the oldest messagesCount, each body cut at messageBodyBudget.
+	if mat != nil {
+		mat.Messages = append([]MessageState(nil), msgs...)
 	}
-	for i := range msgs {
-		msgs[i] = budgetMessage(itemID, msgs[i])
+	window := msgs
+	if len(window) > messagesCount {
+		window = window[:messagesCount]
 	}
-	tp.Messages = msgs
+	out := make([]MessageState, len(window))
+	for i := range window {
+		out[i] = budgetMessage(itemID, window[i])
+	}
+	tp.Messages = out
 }
 
 // budgetMessage cuts a message body longer than messageBodyBudget, sets
@@ -1419,6 +1479,8 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		result.Accept = dec.Accept
 		result.Notes = dec.Notes
 		result.Reasoning = dec.Reasoning
+		result.Reviewed = dec.Reviewed
+		result.ReviewedTruncated = dec.ReviewedTruncated
 		result.Command = dec.Command
 		result.Context = dec.Context
 		result.Model = dec.Model
@@ -1499,7 +1561,8 @@ type gateSlot struct {
 // the serial, parallel and bundled paths.
 func reviewerVerdictOf(skill string, order int, system bool, dec verb.GateDecision) verb.ReviewerVerdict {
 	return verb.ReviewerVerdict{
-		Skill: skill, Order: order, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, System: system,
+		Skill: skill, Order: order, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning,
+		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated, System: system,
 		Command: dec.Command, Context: dec.Context, Model: dec.Model,
 		ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 		TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
@@ -1560,6 +1623,8 @@ func assembleGate(ordered []reviewerRef, results []gateSlot, sysStart int) (verb
 		result.Skill = pick.Skill
 		result.Notes = pick.Notes
 		result.Reasoning = pick.Reasoning
+		result.Reviewed = pick.Reviewed
+		result.ReviewedTruncated = pick.ReviewedTruncated
 		result.Command = pick.Command
 		result.Context = pick.Context
 		result.Model = pick.Model
@@ -1906,12 +1971,12 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		g.emitProgress("dispatching step %s to named agent %s (may take several minutes)…", toStatus, dispatchAgent)
 	}
 	execPayload := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: dispatchSkill}
-	g.fillPayloadDocs(ctx, item.ID, &execPayload)
+	g.fillPayloadDocs(ctx, item.ID, &execPayload, nil)
 	execAddrs := []string{dispatchAgent, "executor"}
 	if role := config.ResolvedRole(dispatchAgent, binding); role != "" {
 		execAddrs = append(execAddrs, role)
 	}
-	g.fillMessages(ctx, item.ID, execAddrs, &execPayload)
+	g.fillMessages(ctx, item.ID, execAddrs, &execPayload, nil)
 	charter := executorCharter(dispatchAgent, toStatus, wfName)
 	var finalArtifact *agentartifact.Artifact
 	var invRes InvokeResult
@@ -2092,7 +2157,7 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item, modelOverri
 	g.emitActivity(item.ID, "retrospective", 1, 1)
 	g.emitProgress("running retrospective on %s (may take a few minutes)…", item.ID)
 	retroPayload := transitionPayload{Story: item, From: item.Status, To: item.Status, ReviewSkill: retrospectSkill}
-	g.fillPayloadDocs(ctx, item.ID, &retroPayload)
+	g.fillPayloadDocs(ctx, item.ID, &retroPayload, nil)
 	// Model selection (sty_7069bced): binding.Model wins outright when set;
 	// otherwise modelOverride (--model) is a per-dispatch instruction, then the
 	// inherited/creator session tiers apply, else cli-default.
@@ -2141,8 +2206,8 @@ func (g *Engine) ChatPayload(ctx context.Context, item workitem.Item, binding st
 	if g.children != nil {
 		tp.Children = g.children(ctx, item)
 	}
-	g.fillPayloadDocs(ctx, item.ID, &tp)
-	g.fillMessages(ctx, item.ID, []string{strings.TrimSpace(binding)}, &tp)
+	g.fillPayloadDocs(ctx, item.ID, &tp, nil)
+	g.fillMessages(ctx, item.ID, []string{strings.TrimSpace(binding)}, &tp, nil)
 	return tp, nil
 }
 
@@ -2863,6 +2928,7 @@ func (g *Engine) invokeReviewerSeat(ctx context.Context, item workitem.Item, toS
 		Section:     seat.section,
 		Rubric:      prep.body,
 		Payload:     prep.tp,
+		Material:    &prep.material,
 		Charter:     reviewerCharter(),
 		Expect:      ExpectVerdict,
 		Timeout:     g.agentTimeout,
@@ -4139,10 +4205,26 @@ func inlineListField(line, key string) []string {
 
 // rawDecision is the reviewer's JSON contract: {decision, notes, reasoning}.
 // reasoning is optional for back-compat with notes-only output (design §6.1).
+// reviewed is the exact words this verdict rests on. reviewed_truncated is
+// accepted on the wire and then ignored: the ceiling below decides the flag.
 type rawDecision struct {
-	Decision  string `json:"decision"`
-	Notes     string `json:"notes"`
-	Reasoning string `json:"reasoning"`
+	Decision          string `json:"decision"`
+	Notes             string `json:"notes"`
+	Reasoning         string `json:"reasoning"`
+	Reviewed          string `json:"reviewed,omitempty"`
+	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+}
+
+// applyReviewed bounds a quotation to reviewedCeiling before the decision is
+// copied onward. Over the ceiling the string is dropped and the flag is set.
+// At or under the ceiling the full string is kept and the flag stays unset.
+// A model-sent flag does not override that. This is a size bound, not a
+// comparison and not a shortened citation.
+func applyReviewed(s string) (string, bool) {
+	if len(s) > reviewedCeiling {
+		return "", true
+	}
+	return s, false
 }
 
 // parseDecision finds the reviewer's verdict in the agent's stdout — lenient on
@@ -4158,11 +4240,15 @@ func parseDecision(out []byte) (verb.GateDecision, error) {
 			continue
 		}
 		switch strings.ToLower(strings.TrimSpace(rd.Decision)) {
-		case "accept":
-			d := verb.GateDecision{Accept: true, Notes: rd.Notes, Reasoning: rd.Reasoning}
-			found = &d
-		case "reject":
-			d := verb.GateDecision{Accept: false, Notes: rd.Notes, Reasoning: rd.Reasoning}
+		case "accept", "reject":
+			reviewed, truncated := applyReviewed(rd.Reviewed)
+			d := verb.GateDecision{
+				Accept:            strings.ToLower(strings.TrimSpace(rd.Decision)) == "accept",
+				Notes:             rd.Notes,
+				Reasoning:         rd.Reasoning,
+				Reviewed:          reviewed,
+				ReviewedTruncated: truncated,
+			}
 			found = &d
 		}
 	}
