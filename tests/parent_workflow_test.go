@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -93,8 +91,8 @@ func TestParentWorkflowSelectedAndValid(t *testing.T) {
 }
 
 // repoRootForTest returns the satelle repo root from this test file's location
-// (tests/ -> root), so a test can read the repo's real authored substrate.
+// (tests/ -> root), so a test can read the repo's tracked files. The authored
+// process under the data dir is read through repoProcessDataDir, not from here.
 func repoRootForTest() string {
-	_, file, _, _ := runtime.Caller(0)
-	return filepath.Dir(filepath.Dir(file))
+	return moduleRoot()
 }

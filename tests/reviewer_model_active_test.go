@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -38,8 +37,7 @@ func reviewerModelProblem(repo config.AgentsConfig, catalog config.GlobalAgentsC
 // agents.toml; skip when the file is absent so the pin remains a local dogfood
 // check, not a false CI red.
 func TestRepoReviewerModelIsActive(t *testing.T) {
-	_, file, _, _ := runtime.Caller(0)
-	dataDir := filepath.Join(filepath.Dir(filepath.Dir(file)), ".satelle")
+	dataDir := repoProcessDataDir(t)
 	if _, err := os.Stat(func() string { p, _ := config.AgentsPath(dataDir); return p }()); os.IsNotExist(err) {
 		t.Skip(".satelle/agents.toml not present (gitignored operator substrate); dogfood pin is local-only")
 	}

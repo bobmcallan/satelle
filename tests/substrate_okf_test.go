@@ -13,10 +13,9 @@ import (
 // and the embedded substrate source) carries no legacy kind: tag prefix
 // (sty_bf2e6ee6) — OKF uses type:.
 func TestRepoSubstrateTagsAreOKF(t *testing.T) {
-	root := repoRootForTest()
 	for _, dir := range []string{
-		filepath.Join(root, ".satelle"),
-		filepath.Join(root, "internal", "config", "substrate"),
+		repoProcessDataDir(t),
+		filepath.Join(repoRootForTest(), "internal", "config", "substrate"),
 	} {
 		_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 			if err != nil || d.IsDir() || !strings.HasSuffix(p, ".md") {

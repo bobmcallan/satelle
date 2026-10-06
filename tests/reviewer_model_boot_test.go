@@ -25,7 +25,7 @@ func TestReviewerModelActorsBoots(t *testing.T) {
 	// Overwrite the scaffold agents.toml with this repo's real, activated binding
 	// (read from the repo's own agents.toml). Writing the canonical agents.toml
 	// ensures it is the binding the loader resolves.
-	src := filepath.Join(repoRootForTest(), ".satelle", "workflows", "agents.toml")
+	src := filepath.Join(repoProcessDataDir(t), "workflows", "agents.toml")
 	body, err := os.ReadFile(src)
 	if err != nil {
 		t.Fatalf("read agents source %s: %v", src, err)
