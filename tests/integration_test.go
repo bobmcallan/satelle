@@ -29,7 +29,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BurntSushi/toml"
+
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/hosted"
 )
 
 // testBin is the satelle binary under test, resolved once by TestMain.
@@ -55,6 +58,14 @@ var testHomes sync.Map
 // non-zero if anything changed (sty_6d824d6a): host SATELLE_HOME tree,
 // ~/.config/satelle credentials, and ~/.local/bin/satelle. Production listen
 // port 8787 is off-limits for test serves (see never-bind-8787 assertions).
+//
+// Host credentials are guarded by server identity, not bytes (sty_d9677380): the
+// operator's own hosted session rotates tokens in credentials.toml
+// (hosted.Client.persistRotated) at any moment, independent of the suite, so a
+// byte/mtime hash false-fails a clean run. A suite that adds, removes or
+// re-identifies a server, or creates, deletes or corrupts the file, still fails.
+// XDG_CONFIG_HOME is sandboxed for every test process so the suite cannot reach
+// the host file through the environment.
 func TestMain(m *testing.M) {
 	// Resolve host roots BEFORE isolating SATELLE_HOME, then snapshot those fixed
 	// paths before and after the suite. Re-resolving via getenv after Setenv would
@@ -92,6 +103,7 @@ func TestMain(m *testing.M) {
 	// after m.Run, any new suite-owned serve is a leak — kill it and fail the suite.
 	beforeParts := captureMirrorPartitionKeys(hostRoots.satelleHome)
 	beforeServes := liveServePIDs()
+	var xdgBackstop string
 	exit := func(code int) {
 		// Always print coverage so a green run still says full vs PARTIAL
 		// (sty_948a2d42) — silence must not read as verified clean.
@@ -122,6 +134,9 @@ func TestMain(m *testing.M) {
 			code = 1
 		}
 		_ = os.RemoveAll(backstop)
+		if xdgBackstop != "" {
+			_ = os.RemoveAll(xdgBackstop)
+		}
 		os.Exit(code)
 	}
 
@@ -137,6 +152,10 @@ func TestMain(m *testing.M) {
 		// loudly when the binary is a dev sentinel. Prefer a stamped binary
 		// (e.g. make build && SATELLE_BIN=./satelle go test …).
 		testBin = abs
+		if xdgBackstop, err = isolateXDGConfig(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			exit(1)
+		}
 		exit(m.Run())
 	}
 	dir, err := os.MkdirTemp("", "satelle-itest")
@@ -166,9 +185,34 @@ func TestMain(m *testing.M) {
 		_ = os.RemoveAll(dir)
 		exit(1)
 	}
+	// Sandbox XDG_CONFIG_HOME only now: the go build above (and any setup-time
+	// git) legitimately reads the operator's ~/.config/go and ~/.config/git. The
+	// host roots were resolved and snapshotted before this point.
+	if xdgBackstop, err = isolateXDGConfig(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		_ = os.RemoveAll(dir)
+		exit(1)
+	}
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	exit(code)
+}
+
+// isolateXDGConfig points XDG_CONFIG_HOME at a fresh temp dir so every satelle
+// process the suite starts resolves hosted.CredentialsPath inside the sandbox,
+// never the operator's ~/.config/satelle (sty_d9677380). Tests that need a
+// specific config home still append their own XDG_CONFIG_HOME; the later
+// duplicate wins in exec. Returns the dir for cleanup.
+func isolateXDGConfig() (string, error) {
+	dir, err := os.MkdirTemp("", "satelle-itest-xdg-*")
+	if err != nil {
+		return "", fmt.Errorf("mkdtemp xdg: %w", err)
+	}
+	if err := os.Setenv("XDG_CONFIG_HOME", dir); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("setenv XDG_CONFIG_HOME: %w", err)
+	}
+	return dir, nil
 }
 
 // hostSurface is a content-addressed snapshot of production host state the
@@ -177,7 +221,10 @@ func TestMain(m *testing.M) {
 type hostSurface struct {
 	// relpath → "dir" or "file:<sha256>:<size>:<mtime_ns>"
 	satelleHome map[string]string
-	xdgConfig   map[string]string // credentials under ~/.config/satelle
+	xdgConfig   map[string]string // ~/.config/satelle, credentials.toml excluded
+	// credentials is the identity fingerprint of ~/.config/satelle/credentials.toml
+	// (sty_d9677380): token rotation is tolerated, server/identity changes are not.
+	credentials credentialsIdentity
 	// installed binary fingerprint; "" when ~/.local/bin/satelle is absent
 	installedBin string
 	// resolved roots (for diagnostics only)
@@ -243,7 +290,8 @@ func listRuntimeKeyNames(home string) map[string]struct{} {
 func captureHostSurfaceAt(r hostRoots) hostSurface {
 	return hostSurface{
 		satelleHome:      hashTree(r.satelleHome, r.preExistingKeys),
-		xdgConfig:        hashTree(r.xdgConfig, nil),
+		xdgConfig:        hashXDGConfig(r.xdgConfig),
+		credentials:      captureCredentialsIdentity(filepath.Join(r.xdgConfig, credentialsFileName)),
 		installedBin:     fingerprintFile(r.installedBin),
 		satelleHomeRoot:  r.satelleHome,
 		xdgConfigRoot:    r.xdgConfig,
@@ -255,7 +303,11 @@ func captureHostSurfaceAt(r hostRoots) hostSurface {
 func diffHostSurface(before, after hostSurface) []string {
 	var diffs []string
 	diffs = append(diffs, diffTreeMaps("host SATELLE_HOME ("+before.satelleHomeRoot+")", before.satelleHome, after.satelleHome)...)
-	diffs = append(diffs, diffTreeMaps("host ~/.config/satelle ("+before.xdgConfigRoot+")", before.xdgConfig, after.xdgConfig)...)
+	xdgLabel := "host ~/.config/satelle (" + before.xdgConfigRoot + ")"
+	diffs = append(diffs, diffTreeMaps(xdgLabel, before.xdgConfig, after.xdgConfig)...)
+	for _, reason := range diffCredentialsIdentity(before.credentials, after.credentials) {
+		diffs = append(diffs, fmt.Sprintf("%s: changed %s (%s)", xdgLabel, credentialsFileName, reason))
+	}
 	if before.installedBin != after.installedBin {
 		label := before.installedBinPath
 		if label == "" {
@@ -271,6 +323,116 @@ func diffHostSurface(before, after hostSurface) []string {
 		}
 	}
 	return diffs
+}
+
+// credentialsFileName is the host credential store inside ~/.config/satelle.
+const credentialsFileName = "credentials.toml"
+
+// credentialsIdentity is what the guard compares for credentials.toml instead of
+// its bytes. A token refresh by the operator's hosted session
+// (hosted.Client.persistRotated → FileStore.Save) rewrites access_token,
+// refresh_token, expires_at, token_type, scope and created_at and carries
+// display_name, email and principal_id over (see hosted.Credential in
+// credstore.go and persistRotated in client.go); those rotation fields are left
+// out. What remains — the set of server_url entries and each one's identity — is
+// what a suite write would have to change.
+//
+// Accepted limit: a suite write that looks exactly like a refresh of a server
+// already present would not trip this guard. XDG_CONFIG_HOME isolation removes
+// the environment route by which suite code could produce one.
+type credentialsIdentity struct {
+	state   string            // "" (unset), "absent", "ok", "unparseable"
+	digest  string            // unparseable only: sha256 of the bytes
+	servers map[string]string // ok only: normalised server_url → identity hash
+}
+
+// captureCredentialsIdentity reads path (read-only) and fingerprints its identity.
+func captureCredentialsIdentity(path string) credentialsIdentity {
+	if path == "" {
+		return credentialsIdentity{state: "absent"}
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return credentialsIdentity{state: "absent"}
+		}
+		return credentialsIdentity{state: "unparseable", digest: "unreadable:" + err.Error()}
+	}
+	var cf struct {
+		Credential []hosted.Credential `toml:"credential"`
+	}
+	if err := toml.Unmarshal(b, &cf); err != nil {
+		sum := sha256.Sum256(b)
+		return credentialsIdentity{state: "unparseable", digest: hex.EncodeToString(sum[:])}
+	}
+	servers := map[string]string{}
+	for _, c := range cf.Credential {
+		url := strings.TrimRight(strings.TrimSpace(c.ServerURL), "/")
+		sum := sha256.Sum256([]byte(c.DisplayName + "\x00" + c.Email + "\x00" + c.PrincipalID))
+		servers[url] += hex.EncodeToString(sum[:])
+	}
+	return credentialsIdentity{state: "ok", servers: servers}
+}
+
+// diffCredentialsIdentity returns one reason per identity change; empty when the
+// two snapshots differ at most by token rotation.
+func diffCredentialsIdentity(before, after credentialsIdentity) []string {
+	if before.state != after.state {
+		switch {
+		case before.state == "absent":
+			return []string{"file appeared"}
+		case after.state == "absent":
+			return []string{"file removed"}
+		case after.state == "unparseable":
+			return []string{"unparseable"}
+		default:
+			return []string{"was unparseable, now parses"}
+		}
+	}
+	switch before.state {
+	case "unparseable":
+		if before.digest != after.digest {
+			return []string{"unparseable content changed"}
+		}
+	case "ok":
+		urls := map[string]struct{}{}
+		for u := range before.servers {
+			urls[u] = struct{}{}
+		}
+		for u := range after.servers {
+			urls[u] = struct{}{}
+		}
+		sorted := make([]string, 0, len(urls))
+		for u := range urls {
+			sorted = append(sorted, u)
+		}
+		sort.Strings(sorted)
+		var reasons []string
+		for _, u := range sorted {
+			b, bok := before.servers[u]
+			a, aok := after.servers[u]
+			switch {
+			case !bok:
+				reasons = append(reasons, "server added "+u)
+			case !aok:
+				reasons = append(reasons, "server removed "+u)
+			case a != b:
+				reasons = append(reasons, "identity changed for "+u)
+			}
+		}
+		return reasons
+	}
+	return nil
+}
+
+// hashXDGConfig byte-guards every file under ~/.config/satelle except
+// credentials.toml (and its atomic-write .tmp sibling), which
+// captureCredentialsIdentity guards by identity instead.
+func hashXDGConfig(root string) map[string]string {
+	m := hashTree(root, nil)
+	delete(m, credentialsFileName)
+	delete(m, credentialsFileName+".tmp")
+	return m
 }
 
 // hashTree walks root and returns a map of relpath → fingerprint. Missing or
@@ -740,6 +902,160 @@ func TestHostSurfaceGuardTrips(t *testing.T) {
 	beforeS.installedBinPath = bin
 	if diffs := diffHostSurface(beforeS, afterS); len(diffs) == 0 {
 		t.Fatal("expected installed-binary change to trip the guard")
+	}
+}
+
+// testCredential is a login-shaped credential for the host-surface guard tests.
+func testCredential(url string) hosted.Credential {
+	return hosted.Credential{
+		ServerURL:    url,
+		AccessToken:  "access-1",
+		RefreshToken: "refresh-1",
+		TokenType:    "Bearer",
+		Scope:        "mcp",
+		DisplayName:  "Ada",
+		Email:        "ada@example.com",
+		PrincipalID:  "usr_1",
+		ExpiresAt:    "2026-10-06T01:00:00Z",
+		CreatedAt:    "2026-10-06T00:00:00Z",
+	}
+}
+
+// credSurface captures a hostSurface for a temp config root holding the store.
+func credSurface(root string) hostSurface {
+	return captureHostSurfaceAt(hostRoots{xdgConfig: root})
+}
+
+func mustSave(t *testing.T, s hosted.FileStore, c hosted.Credential) {
+	t.Helper()
+	if err := s.Save(c); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestHostSurfaceToleratesCredentialRefresh proves a token refresh by a satelle
+// process outside the suite (sty_d9677380 AC1) does not trip the guard. The
+// rotated record is built the way hosted.Client.persistRotated builds it: new
+// tokens, expiry and created_at, identity fields carried over from the original.
+func TestHostSurfaceToleratesCredentialRefresh(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, credentialsFileName)
+	store := hosted.FileStore{Path: path}
+	orig := testCredential("http://127.0.0.1:9999")
+	mustSave(t, store, orig)
+	other := testCredential("https://other.example.com")
+	other.PrincipalID = "usr_2"
+	mustSave(t, store, other)
+	before := credSurface(root)
+	beforeBytes := readFileOptional(path)
+	time.Sleep(5 * time.Millisecond) // let mtime move on coarse filesystems
+
+	rotated := testCredential(orig.ServerURL)
+	rotated.AccessToken = "access-2"
+	rotated.RefreshToken = "refresh-2"
+	rotated.ExpiresAt = "2026-10-06T02:00:00Z"
+	rotated.CreatedAt = "2026-10-06T01:00:00Z"
+	rotated.DisplayName, rotated.Email, rotated.PrincipalID = orig.DisplayName, orig.Email, orig.PrincipalID
+	mustSave(t, store, rotated)
+	after := credSurface(root)
+
+	if bytes.Equal(beforeBytes, readFileOptional(path)) {
+		t.Fatal("test setup: refresh must change the file bytes")
+	}
+	if diffs := diffHostSurface(before, after); len(diffs) != 0 {
+		t.Fatalf("token refresh must not trip the guard: %v", diffs)
+	}
+}
+
+// TestHostSurfaceCredentialWritesTrip proves a suite write to the host
+// credentials file still fails the check and names the file (sty_d9677380 AC2).
+func TestHostSurfaceCredentialWritesTrip(t *testing.T) {
+	const keep = "https://keep.example.com"
+	const drop = "https://drop.example.com"
+	seed := func(t *testing.T, s hosted.FileStore, _ string) { mustSave(t, s, testCredential(keep)) }
+	mutate := func(f func(*hosted.Credential)) func(*testing.T, hosted.FileStore, string) {
+		return func(t *testing.T, s hosted.FileStore, _ string) {
+			c := testCredential(keep)
+			f(&c)
+			mustSave(t, s, c)
+		}
+	}
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, store hosted.FileStore, path string)
+		write func(t *testing.T, store hosted.FileStore, path string)
+	}{
+		{"server added", seed, func(t *testing.T, s hosted.FileStore, _ string) {
+			mustSave(t, s, testCredential("http://127.0.0.1:41234"))
+		}},
+		{"server removed", func(t *testing.T, s hosted.FileStore, p string) {
+			seed(t, s, p)
+			mustSave(t, s, testCredential(drop))
+		}, func(t *testing.T, s hosted.FileStore, _ string) {
+			if err := s.Delete(drop); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"display_name changed", seed, mutate(func(c *hosted.Credential) { c.DisplayName = "Grace" })},
+		{"email changed", seed, mutate(func(c *hosted.Credential) { c.Email = "grace@example.com" })},
+		{"principal_id changed", seed, mutate(func(c *hosted.Credential) { c.PrincipalID = "usr_9" })},
+		{"file created", func(*testing.T, hosted.FileStore, string) {}, mutate(func(*hosted.Credential) {})},
+		{"file deleted", seed, func(t *testing.T, _ hosted.FileStore, p string) {
+			if err := os.Remove(p); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"file unparseable", seed, func(t *testing.T, _ hosted.FileStore, p string) {
+			if err := os.WriteFile(p, []byte("[[credential\nnot toml"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, credentialsFileName)
+			store := hosted.FileStore{Path: path}
+			tc.setup(t, store, path)
+			before := credSurface(root)
+			tc.write(t, store, path)
+			diffs := diffHostSurface(before, credSurface(root))
+			if len(diffs) == 0 {
+				t.Fatal("suite write to host credentials must trip the guard")
+			}
+			if !strings.Contains(strings.Join(diffs, "\n"), credentialsFileName) {
+				t.Fatalf("diff must name %s: %v", credentialsFileName, diffs)
+			}
+		})
+	}
+}
+
+// TestSuiteXDGConfigIsolated proves TestMain sandboxed XDG_CONFIG_HOME away from
+// the operator's config root (sty_d9677380 AC3).
+func TestSuiteXDGConfigIsolated(t *testing.T) {
+	xdg := os.Getenv("XDG_CONFIG_HOME")
+	if xdg == "" {
+		t.Fatal("XDG_CONFIG_HOME must be set for the suite")
+	}
+	if !strings.HasPrefix(filepath.Clean(xdg), filepath.Clean(os.TempDir())+string(filepath.Separator)) {
+		t.Fatalf("XDG_CONFIG_HOME %q must be a temp dir under %q", xdg, os.TempDir())
+	}
+	// resolveHostRoots honours the (now sandboxed) env, so derive the operator's
+	// default root from the home dir instead.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir resolvable: %v", err)
+	}
+	host := filepath.Join(home, ".config", "satelle")
+	if filepath.Join(xdg, "satelle") == host {
+		t.Fatalf("suite XDG_CONFIG_HOME %q resolves to the host root %q", xdg, host)
+	}
+	path, err := hosted.CredentialsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path == filepath.Join(host, credentialsFileName) {
+		t.Fatalf("hosted.CredentialsPath %q reaches the host credentials", path)
 	}
 }
 
