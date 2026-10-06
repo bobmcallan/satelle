@@ -32,11 +32,15 @@ func isolateUserHome(t *testing.T) {
 		if strings.TrimSpace(os.Getenv("SATELLE_HOME")) == "" {
 			t.Setenv("SATELLE_HOME", t.TempDir())
 		}
+		// An exported XDG_CONFIG_HOME would point the credentials file at the
+		// operator's real ~/.config (sty_18403814).
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 		return
 	}
 	h := t.TempDir()
 	t.Setenv("HOME", h)
 	t.Setenv("SATELLE_HOME", h)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(h, ".config"))
 	t.Setenv("SATELLE_INIT_TEST_HOME", h)
 }
 

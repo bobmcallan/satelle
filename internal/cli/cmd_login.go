@@ -56,7 +56,10 @@ satelle.toml.`,
 	login.Flags().DurationVar(&timeout, "timeout", 3*time.Minute, "How long to wait for the browser approval.")
 	register(login)
 
-	var logoutServer string
+	var (
+		logoutServer  string
+		pruneLoopback bool
+	)
 	logout := &cobra.Command{
 		Use:   "logout",
 		Short: "Clear stored hosted-server credentials",
@@ -64,12 +67,25 @@ satelle.toml.`,
 
 Local work is unaffected — satelle runs fully locally, and only the hosted sync
 and project commands need a session. Nothing already synced is withdrawn: this
-forgets a credential, it does not revoke or delete anything server-side.`,
+forgets a credential, it does not revoke or delete anything server-side.
+
+--prune-loopback instead removes the stale credentials that test runs left in
+the store: only entries whose URL host is loopback (127.0.0.0/8, ::1,
+localhost) AND that have no created_at and no email. Real
+logins, including to a local dev hosted server, stamp both and are kept, as is every
+non-loopback entry.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if pruneLoopback {
+				if strings.TrimSpace(logoutServer) != "" {
+					return fmt.Errorf("--prune-loopback cannot be combined with --server")
+				}
+				return runLogoutPruneLoopback(cmd)
+			}
 			return runLogout(cmd, logoutServer)
 		},
 	}
 	logout.Flags().StringVar(&logoutServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
+	logout.Flags().BoolVar(&pruneLoopback, "prune-loopback", false, "Remove only stored credentials for loopback hosts (127.0.0.0/8, ::1, localhost) that have no created_at and no email (left by test runs); real logins and non-loopback entries are kept.")
 	register(logout)
 
 	var whoamiServer string
@@ -264,6 +280,21 @@ func runLogout(cmd *cobra.Command, serverArg string) error {
 		return err
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Logged out of %s.\n", server)
+	return nil
+}
+
+// runLogoutPruneLoopback drops the stamp-less loopback credentials test servers
+// left behind and reports each removed URL and the count (sty_18403814).
+func runLogoutPruneLoopback(cmd *cobra.Command) error {
+	removed, err := (hosted.FileStore{}).PruneLoopback()
+	if err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
+	for _, u := range removed {
+		fmt.Fprintf(out, "removed %s\n", u)
+	}
+	fmt.Fprintf(out, "removed %d loopback test credential(s)\n", len(removed))
 	return nil
 }
 

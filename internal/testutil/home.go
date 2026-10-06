@@ -7,6 +7,7 @@ package testutil
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -23,6 +24,10 @@ func IsolateHome(t testing.TB) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("SATELLE_HOME", home)
+	// The per-user credentials file resolves through XDG_CONFIG_HOME; an
+	// exported real ~/.config would otherwise be written by any test that saves
+	// a credential (sty_18403814).
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
 	if strings.TrimSpace(os.Getenv("SATELLE_SERVER_ENDPOINT")) == "" {
 		t.Setenv("SATELLE_SERVER_ENDPOINT", "none")
 	}
