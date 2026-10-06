@@ -173,10 +173,8 @@ func runProjectShow(cmd *cobra.Command, serverArg string) error {
 		fmt.Fprintf(out, "bound project: %s\n", slug)
 	}
 	signed := "signed out"
-	if server != "" {
-		if _, lerr := (hosted.FileStore{}).Load(server); lerr == nil {
-			signed = "signed in"
-		}
+	if resolveUserFor(server, root).SignedIn() {
+		signed = "signed in"
 	}
 	fmt.Fprintf(out, "sign-in state: %s\n", signed)
 	return nil

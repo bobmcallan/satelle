@@ -19,7 +19,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/docstory"
 	"github.com/bobmcallan/satelle/internal/epicset"
-	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/oplog"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -179,19 +178,13 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// the agent CLI — must work with no harness installed.
 	verb.SetTagVocabulary(a.Config)
 	// Assignee holder (sty_8ccaa906): local credstore PrincipalID only — no
-	// hosted.Client.Me, no network. Empty server or missing credential means
-	// unassigned (offline team-of-1).
-	verb.SetAssigneeResolver(func() string {
-		server := config.ResolveHostedServer(a.Config)
-		if server == "" {
-			return ""
-		}
-		cred, err := (hosted.FileStore{}).Load(server)
-		if err != nil {
-			return ""
-		}
-		return cred.PrincipalID
-	})
+	// hosted.Client.Me, no network. Local-only (no credential) means
+	// unassigned (offline team-of-1). The one user rule is resolveUser
+	// (sty_e698d914).
+	verb.SetAssigneeResolver(func() string { return resolveUser(a.Config, a.RepoRoot).Holder() })
+	// Person actor for ledger rows that name the satelle user: the account
+	// PrincipalID when signed in, the git email when local-only.
+	verb.SetActorResolver(func() string { return resolveUser(a.Config, a.RepoRoot).Actor() })
 	// Hosted story-hold (sty_dec88606): refuse engaging a story held by another
 	// location. Unwired when no server or no bound project (AC6). Cached per
 	// process so a multi-step engage does not repeat the GET. Lookup errors

@@ -246,6 +246,38 @@ func TestDefinitionEditableUntilInProgressAndRecorded(t *testing.T) {
 	}
 }
 
+// A definition_edited row names the satelle user: the resolved actor in both
+// modes (account principal signed in, git email local-only), and the executor
+// role only when nothing resolves (sty_e698d914).
+func TestDefinitionEditActorIsTheSatelleUser(t *testing.T) {
+	for _, tc := range []struct{ name, actor, want string }{
+		{"signed in", "principal-1", "principal-1"},
+		{"local-only", "git.author@example.test", "git.author@example.test"},
+		{"neither", "", "executor"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newReadinessRig(t, readinessWF, func(string, int) verb.GateDecision { return acceptAll() })
+			verb.SetActorResolver(func() string { return tc.actor })
+			t.Cleanup(func() { verb.SetActorResolver(nil) })
+
+			it := newFeature(t)
+			call(t, "story-set", map[string]any{"id": it.ID, "acceptance_criteria": "1. narrowed"})
+
+			edits := ledgerRows(t, it.ID, ledger.KindDefinitionEdited)
+			if len(edits) != 1 {
+				t.Fatalf("definition_edited rows = %d, want 1", len(edits))
+			}
+			var p struct{ Actor string }
+			if err := json.Unmarshal(edits[0].Payload, &p); err != nil {
+				t.Fatal(err)
+			}
+			if edits[0].Actor != tc.want || p.Actor != tc.want {
+				t.Errorf("row actor %q payload actor %q, want %q", edits[0].Actor, p.Actor, tc.want)
+			}
+		})
+	}
+}
+
 // AC4: the performer runs before the gate, the artifact it attached is there when
 // the gate runs, and a performer error means no gate and no transition.
 func TestProposeRunsPerformerBeforeGate(t *testing.T) {

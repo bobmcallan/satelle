@@ -25,6 +25,27 @@ func ClearAssigneeResolver() {
 	assigneeResolver = nil
 }
 
+// actorResolver returns the satelle user as a ledger actor: the account
+// PrincipalID when signed in, the git email when local-only (wired by the CLI,
+// which owns the credential store and git). Distinct from assigneeResolver on
+// purpose: a holder id must stay a PrincipalID, and offline there is no holder,
+// so the git email never reaches refuseWrongHolder.
+var actorResolver func() string
+
+// SetActorResolver wires how person-valued ledger rows resolve the user. Pass
+// nil to clear (tests).
+func SetActorResolver(f func() string) {
+	actorResolver = f
+}
+
+// resolveActor is the person actor, or "" when unwired / nothing is known.
+func resolveActor() string {
+	if actorResolver == nil {
+		return ""
+	}
+	return actorResolver()
+}
+
 func resolveAssignee() string {
 	if assigneeResolver == nil {
 		return ""

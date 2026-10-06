@@ -1,3 +1,8 @@
+## [0.0.615] - 2026-10-06
+
+### Fixed
+- **satelle has one user, and every surface that names the user agrees on it.** Local-only (no credential for the configured hosted server) the user is the repo's git user. Signed in (`satelle login`), the online account is the user and the git user is never shown in its place. The web header shows the account email, else its display name, else `signed in — run "satelle login" to refresh identity`; local-only it shows `git config user.email`. `satelle project status` decides its sign-in line by the same rule, and a `definition_edited` ledger row now names the git user local-only instead of the `executor` role. The engagement holder and seat owner are unchanged. The decision reads only the local credential file and git, never the network. (sty_e698d914)
+
 ## [0.0.614] - 2026-10-06
 
 ### Added

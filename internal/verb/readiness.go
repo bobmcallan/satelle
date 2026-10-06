@@ -88,14 +88,15 @@ type definitionEditPayload struct {
 
 // recordDefinitionEdits appends one definition_edited row per field a committed
 // story-set changed while the route still leaves the definition editable. The
-// actor is the resolved principal, falling back to the executor role the other
-// definition rows use. Best-effort like every other trail row: a failed append
-// never reverts the edit that already committed.
+// actor is the satelle user (account principal, or the git user local-only),
+// falling back to the executor role the other definition rows use. Best-effort
+// like every other trail row: a failed append never reverts the edit that
+// already committed.
 func recordDefinitionEdits(ctx context.Context, it workitem.Item, edits []AmendField, now time.Time) {
 	if len(edits) == 0 {
 		return
 	}
-	actor := resolveAssignee()
+	actor := resolveActor()
 	if actor == "" {
 		actor = "executor"
 	}

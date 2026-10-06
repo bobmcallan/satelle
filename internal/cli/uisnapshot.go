@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -209,7 +208,7 @@ func buildUISnapshotOpts(ctx context.Context, a *app.App, drain bool) (*mirror.S
 	id := mirror.IdentityMeta{
 		ProjectName: filepath.Base(canon),
 		RepoRoot:    canon,
-		FooterEmail: gitConfigEmail(a.RepoRoot),
+		FooterEmail: resolveUser(a.Config, a.RepoRoot).Display(),
 	}
 	if b, err := json.Marshal(id); err == nil {
 		snap.Identity = b
@@ -414,14 +413,4 @@ func marshalSettingsBlob(a *app.App) (json.RawMessage, error) {
 		"repo_root": a.RepoRoot,
 		"rows":      rows,
 	})
-}
-
-func gitConfigEmail(repoRoot string) string {
-	cmd := exec.Command("git", "config", "--get", "user.email")
-	cmd.Dir = repoRoot
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
 }
