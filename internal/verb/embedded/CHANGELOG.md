@@ -1,3 +1,14 @@
+## [0.0.621] - 2026-10-07
+
+### Added
+- **An epic can place its parallel children on a cloud performer while trunk children run locally.** A step in `step.toml` may declare `remote_agent` (a cloud binding, `interface = "cloud"`) and `local_tags`. A child runs that step remotely only when it is a child of a parallel epic, carries none of the local tags (for example `lane:trunk`), and the session is signed in; otherwise the step's own agent runs it, and a ledger note says why. Container steps cannot declare `remote_agent`, so the epic merge stays local; `satelle story rework` is refused for a remotely placed child; a child whose branch is not pushed is refused with the `git push -u` command to fix it. The shipped default workflows declare no `remote_agent`, so nothing changes until a repo opts in. (sty_dde8b6a4)
+- **A cloud-performed step prints its session URL as soon as the session starts,** so the operator can follow it while the dispatch waits for the pushed branch. (sty_9eb7eac5)
+
+## [serve-v0.0.130] - 2026-10-07
+
+### Changed
+- The serve path picks up remote placement of epic children and the cloud session URL progress line (sty_dde8b6a4, sty_9eb7eac5).
+
 ## [0.0.620] - 2026-10-06
 
 ### Fixed
