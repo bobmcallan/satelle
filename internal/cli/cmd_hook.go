@@ -160,9 +160,12 @@ workflow body declaring no route blocks the edit (sty_f3d5d4b8).`,
 			// session did not bind (sty_7567f047 AC5).
 			sid := bindSessionID(raw)
 			resumeWakeFor(raw).activity() // a tool call: the session is mid-turn
-			info, engaged, live, engErr := resolveSeats(true, sid)
 			p := filePathFromEvent(raw)
 			command := bashCommandFromEvent(raw)
+			// A session holding seats in several worktrees is attributed by the
+			// tree the edit targets (sty_42231b74); the fence below decides
+			// whether that tree may be edited at all.
+			info, engaged, live, engErr := resolveSeatsFor(true, sid, treeOf(p))
 			if p != "" {
 				// Foreign-tree fence (sty_a8454d10 / sty_aadd4d6c): refuse edits
 				// that land in ANOTHER git working tree unless the operator opts
@@ -229,6 +232,9 @@ workflow body declaring no route blocks the edit (sty_f3d5d4b8).`,
 			if hookEditPermitted(info, dm, rm) {
 				return nil
 			}
+			if reason, ok := sessionSeatsUnmatched(engaged, live, sid, dm, rm); ok {
+				return denyPreToolUse(cmd, raw, reason)
+			}
 			// The scoped in-loop fix lane (sty_4b694872) is a second look at a
 			// PATH edit the ordinary rule refused: one recorded, in-bound claim
 			// on exactly this path licenses exactly one edit. It never widens
@@ -291,6 +297,9 @@ behaviour exactly as above — opt-in, not a satelle default.`,
 				}
 				dm, rm := currentDispatchMarker(), currentRelayMarker()
 				if !hookEditPermitted(info, dm, rm) {
+					if reason, ok := sessionSeatsUnmatched(engaged, live, sid, dm, rm); ok {
+						return denyPreToolUse(cmd, raw, reason)
+					}
 					return denyPreToolUse(cmd, raw, hookDenyReason(info, live, dm, rm, sid, time.Now().UTC()))
 				}
 			}
@@ -319,6 +328,9 @@ behaviour exactly as above — opt-in, not a satelle default.`,
 				}
 			}
 			if needsEngage && !engaged {
+				if reason, ok := sessionSeatsUnmatched(engaged, live, sid, currentDispatchMarker(), currentRelayMarker()); ok {
+					return denyPreToolUse(cmd, raw, reason)
+				}
 				// An unstamped session facing several performing stories is not
 				// "unengaged" — it is unattributable. Say so instead of sending it
 				// to engage another story (sty_fbbb4aee AC2). The fused form keeps
@@ -677,6 +689,14 @@ func resolveSeat(touch bool, sessionID string) (info seatInfo, engaged bool, err
 // repo, whoever holds it, before pickSessionSeat narrows to this session. live
 // is nil on the derived-status fallback and the ungoverned-repo early return.
 func resolveSeats(touch bool, sessionID string) (info seatInfo, engaged bool, live []seatInfo, err error) {
+	return resolveSeatsFor(touch, sessionID, "")
+}
+
+// resolveSeatsFor is resolveSeats for an event with a target: when the session
+// holds seats in several worktrees, targetTree (the git root of the path being
+// edited, "" when it has none) picks among them. It is the ONE body behind every
+// seat lookup, so no caller attributes by store order (sty_42231b74).
+func resolveSeatsFor(touch bool, sessionID, targetTree string) (info seatInfo, engaged bool, live []seatInfo, err error) {
 	a, openErr := app.Open()
 	if openErr != nil {
 		// An ungoverned repo has no seat to determine — a session opened in an
@@ -723,7 +743,7 @@ func resolveSeats(touch bool, sessionID string) (info seatInfo, engaged bool, li
 		// the item its marker names, before any session or worktree guess.
 		pick, mine := dispatchSeat(live, currentDispatchMarker())
 		if pick.ItemID == "" {
-			pick, mine = pickSessionSeat(live, dropped, sessionID)
+			pick, mine = pickSessionSeatFor(live, dropped, sessionID, targetTree)
 		}
 		if pick.ItemID == "" {
 			return other, false, live, nil
@@ -787,15 +807,35 @@ func dispatchSeat(live []seatInfo, marker dispatchMarker) (seatInfo, bool) {
 // store listed first, so the caller reports the ambiguity instead. dropped may
 // be nil where the caller has no seatless set to offer.
 func pickSessionSeat(live, dropped []seatInfo, sessionID string) (seatInfo, bool) {
+	return pickSessionSeatFor(live, dropped, sessionID, "")
+}
+
+// pickSessionSeatFor is pickSessionSeat for an event with a target tree. One
+// session may hold stamped seats in several worktrees (one per epic child); the
+// store lists them in no meaningful order, so with two or more the seat is chosen
+// by tree, never by position: the seat whose worktree is targetTree (when the
+// target sits in a git tree), else the seat whose worktree is the session's own
+// tree, else none — the caller reports the session's seats instead of guessing
+// (sty_42231b74). Exactly one stamped seat resolves as it always did.
+func pickSessionSeatFor(live, dropped []seatInfo, sessionID, targetTree string) (seatInfo, bool) {
 	if len(live) == 0 {
 		return seatInfo{}, false
 	}
 	id := strings.TrimSpace(sessionID)
 	if id != "" {
-		for _, s := range live {
-			if s.SessionID == id {
-				return s, true
+		switch mine := sessionSeats(live, id); len(mine) {
+		case 0:
+		case 1:
+			return mine[0], true
+		default:
+			for _, tree := range []string{targetTree, sessionWorktree()} {
+				for _, s := range mine {
+					if tree != "" && sameTree(s.Worktree, tree) {
+						return s, true
+					}
+				}
 			}
+			return seatInfo{}, false
 		}
 		tree := sessionWorktree()
 		for _, s := range live {
@@ -819,6 +859,64 @@ func pickSessionSeat(live, dropped []seatInfo, sessionID string) (seatInfo, bool
 		return seatInfo{}, false
 	}
 	return live[0], false
+}
+
+// sessionSeats is the live seats stamped with this session id, in store order.
+func sessionSeats(live []seatInfo, sessionID string) []seatInfo {
+	id := strings.TrimSpace(sessionID)
+	if id == "" {
+		return nil
+	}
+	var mine []seatInfo
+	for _, s := range live {
+		if s.SessionID == id {
+			mine = append(mine, s)
+		}
+	}
+	return mine
+}
+
+// sameTree reports whether two git working-tree paths name one directory.
+func sameTree(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if a == b {
+		return true
+	}
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
+}
+
+// sessionSeatsUnmatched is the deny for a session that holds two or more live
+// seats when none of them is in the tree the event targets or the tree the
+// session runs in: it names every seat instead of attributing the event to one
+// (sty_42231b74 AC3). ok is false when the session was attributed, holds fewer
+// than two seats, or the event belongs to a dispatched performer or a rework
+// relay (their own denials already name their identity).
+func sessionSeatsUnmatched(engaged bool, live []seatInfo, sessionID string, dm dispatchMarker, rm relayMarker) (string, bool) {
+	if engaged || dm.Item != "" || rm.Binding != "" {
+		return "", false
+	}
+	mine := sessionSeats(live, sessionID)
+	if len(mine) < 2 {
+		return "", false
+	}
+	return sessionSeatsAmbiguousReason(mine, sessionWorktree()), true
+}
+
+// sessionSeatsAmbiguousReason names each of a session's seats with its status and
+// worktree, and the tree the event was attributed against.
+func sessionSeatsAmbiguousReason(seats []seatInfo, tree string) string {
+	parts := make([]string, 0, len(seats))
+	for _, s := range seats {
+		parts = append(parts, fmt.Sprintf("%s (status %q) in worktree %q", s.ItemID, s.StoryStatus, s.Worktree))
+	}
+	return fmt.Sprintf(
+		"satelle: this session holds %d seats — %s — and none is in the tree this event runs in (%q), so it is not attributed to any of them; act from the worktree of the seat you mean. Inspect with `satelle story seat`.",
+		len(seats), strings.Join(parts, "; "), tree)
 }
 
 // unstampedAmbiguous reports whether nothing binds this session to one
