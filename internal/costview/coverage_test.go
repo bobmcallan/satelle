@@ -35,6 +35,14 @@ func TestDriverCoverage(t *testing.T) {
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("adapter lines =\n%s\nwant\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))
 	}
+	usage := FormatAdapterUsageCoverage(f)
+	wantUsage := []string{
+		"claude: driver usage measured (1 of 1 rows)",
+		"pi: driver usage unavailable (pi: session record not found)",
+	}
+	if strings.Join(usage, "\n") != strings.Join(wantUsage, "\n") {
+		t.Fatalf("usage-only adapter lines =\n%s\nwant\n%s", strings.Join(usage, "\n"), strings.Join(wantUsage, "\n"))
+	}
 	if got := FormatDriverCoverage(f); !strings.HasPrefix(got, "driver: partial — pi: session record not found (2 of 2 rows)") ||
 		!strings.Contains(got, "gated-and-dispatched") {
 		t.Fatalf("headline = %q", got)

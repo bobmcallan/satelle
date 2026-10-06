@@ -41,7 +41,7 @@ func TestCostVMStatesDriverCoverage(t *testing.T) {
 	if !strings.HasPrefix(vm.FamilyDriverLine, "driver: partial — pi: session record not found") {
 		t.Fatalf("FamilyDriverLine = %q", vm.FamilyDriverLine)
 	}
-	wantPi := "pi: driver usage unavailable (pi: session record not found); driver cost unavailable (pi: session record not found)"
+	wantPi := "pi: driver usage unavailable (pi: session record not found)"
 	var sawPi bool
 	for _, l := range vm.FamilyAdapters {
 		sawPi = sawPi || l == wantPi
@@ -54,10 +54,13 @@ func TestCostVMStatesDriverCoverage(t *testing.T) {
 	if err := tmpl.ExecuteTemplate(&buf, "itemDetail", detailData{Item: root, Cost: vm}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{vm.DriverLine, vm.FamilyDriverLine, wantPi} {
+	for _, want := range []string{vm.DriverLine, vm.FamilyDriverLine, wantPi, "claude: driver usage measured (1 of 1 rows)"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("itemDetail missing %q", want)
 		}
+	}
+	if strings.Contains(buf.String(), "driver cost") {
+		t.Errorf("itemDetail must not state dollar-cost coverage:\n%s", buf.String())
 	}
 
 	// A story with no driver row at all says so, rather than saying nothing.

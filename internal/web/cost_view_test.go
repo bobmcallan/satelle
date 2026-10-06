@@ -142,10 +142,25 @@ func TestCostVMRendersDriverRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	for _, want := range []string{"Driver sessions", "sess1", "claude", "$0.75", "50", "10", "5", "2", "—"} {
+	for _, want := range []string{"Driver sessions", "sess1", "claude", "50", "10", "5", "2", "—"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("itemDetail missing %q for the driver table; got:\n%s", want, out)
 		}
+	}
+	// Cells come in column order with no dollar column between Cache write and Agent time.
+	if want := `<td class="id">sess1</td><td>claude</td><td>engage</td><td>50</td><td>10</td><td>—</td><td>5</td><td>2</td><td>30s</td>`; !strings.Contains(out, want) {
+		t.Errorf("driver row cells not in column order without a dollar cell, want %q in:\n%s", want, out)
+	}
+	if !strings.Contains(out, "<th>Cache write</th><th>Agent time</th>") {
+		t.Errorf("driver table header must run Cache write then Agent time:\n%s", out)
+	}
+	for _, bad := range []string{"<th>$</th>", "$0.75", "unavailable (", "driver cost"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("itemDetail must not show dollar output %q; got:\n%s", bad, out)
+		}
+	}
+	if strings.Contains(out, "$") {
+		t.Errorf("itemDetail must not contain a dollar sign:\n%s", out)
 	}
 	if strings.Contains(out, "TOKENS") {
 		t.Fatalf("driver table still shows a cache-inclusive TOKENS column; got:\n%s", out)

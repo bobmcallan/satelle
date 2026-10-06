@@ -615,12 +615,12 @@ func costVMFromStory(own costview.Story, fam *costview.FamilyCost) *costVM {
 	}
 	vm.DriverRows, vm.DriverTotal = costview.FormatDriverRows(own.DriverRows)
 	vm.DriverLine = costview.FormatDriverCoverage(own.Figures)
-	vm.DriverAdapters = costview.FormatAdapterCoverage(own.Figures)
+	vm.DriverAdapters = costview.FormatAdapterUsageCoverage(own.Figures)
 	if fam == nil {
 		return vm
 	}
 	vm.FamilyDriverLine = costview.FormatDriverCoverage(fam.Total)
-	vm.FamilyAdapters = costview.FormatAdapterCoverage(fam.Total)
+	vm.FamilyAdapters = costview.FormatAdapterUsageCoverage(fam.Total)
 	for _, c := range fam.Children {
 		vm.Family = append(vm.Family, familyRowFromFigures(c.ID, c.Figures))
 	}

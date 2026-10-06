@@ -227,6 +227,17 @@ func FormatAdapterCoverage(f Figures) []string {
 	return out
 }
 
+// FormatAdapterUsageCoverage is FormatAdapterCoverage without the dollar-cost
+// clause: one line per adapter naming what its driver rows measured and could
+// not measure for usage. The web page renders it, as it shows no dollar figures.
+func FormatAdapterUsageCoverage(f Figures) []string {
+	out := make([]string, 0, len(f.Driver))
+	for _, c := range f.Driver {
+		out = append(out, fmt.Sprintf("%s: driver usage %s", c.Executable, usageWord(c)))
+	}
+	return out
+}
+
 // usageWord is c's usage coverage, noting any backfilled rows it counts as measured.
 func usageWord(c DriverCoverage) string {
 	w := coverageWord(c.UsageRows, c.Rows, c.UsageUnavailableBy)
