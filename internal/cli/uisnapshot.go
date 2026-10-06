@@ -339,10 +339,7 @@ func listSeatsJSON(ctx context.Context, a *app.App) ([]json.RawMessage, error) {
 	// the push-fed web has no other access to this repo's agents.toml. A
 	// missing/broken agents layer must never fail a seat push — it just omits
 	// idle_timeout on every row.
-	dataDir := a.DataDir
-	if dataDir == "" {
-		dataDir = a.Config.ResolveDataDir(a.RepoRoot)
-	}
+	dataDir := a.PlaneDir()
 	agentsLayer, agentsErr := config.LoadAgents(dataDir)
 	out := make([]json.RawMessage, 0, len(all))
 	for _, l := range all {

@@ -20,7 +20,7 @@ import (
 // repoRouteSource returns this repo's declaration of done and step catalogue.
 func repoRouteSource(t *testing.T) (done, step string) {
 	t.Helper()
-	dir := filepath.Join(repoRootForTest(), ".satelle", "workflows")
+	dir := filepath.Join(repoProcessDataDir(t), "workflows")
 	d, err := os.ReadFile(filepath.Join(dir, "done.toml"))
 	if err != nil {
 		t.Fatalf("read done.toml: %v", err)

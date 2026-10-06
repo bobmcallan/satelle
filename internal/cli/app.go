@@ -116,7 +116,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetTxRunner(a.Store.InTx)
 	verb.SetDocIndexStore(a.Store.DocIndex)
 	verb.SetAuthoredDirs(a.AuthoredDirs())
-	verb.SetSubstrateConfigDir(a.Config.ResolveDataDir(a.RepoRoot))
+	verb.SetSubstrateConfigDir(a.ProcessDataDir)
 	verb.SetLeaseStore(a.Store.Leases)
 	verb.SetRetrieveStore(a.Store.Retrieve)
 	// UI push drain (sty_9ba3d709 / sty_126228b2 / sty_21a7d16d): machine
@@ -143,7 +143,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetStoryDir(filepath.Join(a.RuntimeDir, "stories"))
 	// Authored root (documents/, workflows/, …) — needed when a verb spans both
 	// planes (e.g. migrateLegacySummaries moves docs → runtime stories/).
-	verb.SetDataDir(a.DataDir)
+	verb.SetDataDir(a.ProcessDataDir)
 	// Archive-retention policy for the closed-story attachment dirs — a no-op
 	// unless satelle.toml sets a count/age policy (sty_aba7200c).
 	verb.SetStoryRetention(a.Config.StoriesKeepClosed, a.Config.StoriesKeepDays)
@@ -160,7 +160,11 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// default, and what this repo has always enforced: one performing story) or
 	// "epic" (sibling children of one epic, one working tree per lease). Unwired
 	// is "none", so a repo with no [engagement] section is unaffected.
-	verb.SetEngagementMode(a.Config)
+	verb.SetEngagementMode(a.ProcessConfig)
+	// Worktree declaration (sty_804c566b): the process-of-record [worktree] table
+	// and the main tree it carries from, so a worktree reads the main tree's
+	// declaration rather than one of its own.
+	verb.SetWorktreeConfig(a.ProcessConfig, a.ProcessRoot)
 	// Controlled tag vocabulary (sty_034d843c): validate namespaces declared in
 	// satelle.toml [tags.vocabulary] at story/task create and set. Independent of
 	// the agent CLI — must work with no harness installed.
@@ -226,9 +230,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetAgentsConfig(agents, eff.Vars)
 	// A task, unlike a story, IS authored substrate: its <data_dir>/tasks/tsk_*.md
 	// work-definition file is the source of truth and the store is its index
-	// (sty_c1f9e74c). Wire the dir so create/set materialise the file and `reindex`
-	// ingests it. MUST stay on DataDir — never derive from DBPath (runtime plane).
-	verb.SetTaskDir(filepath.Join(a.DataDir, "tasks"))
+	// (sty_c1f9e74c). That substrate is the process of record. Sync, migrate,
+	// and runtime do not go through SetTaskDir; they keep the location DataDir.
+	verb.SetTaskDir(filepath.Join(a.ProcessDataDir, "tasks"))
 	// Wire the flat-file operation log (runtime logs/operations.log): a plain-text
 	// mirror of state-mutating verbs that a read-only reviewer can scan to verify a
 	// DB change the SQLite store hides from it (sty_be257fef).
@@ -325,7 +329,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// session leaves in the tree that this repo wants moved to scratch
 			// (or flagged) at session close. Unset by default — the binary ships
 			// no opinion about what a leftover looks like.
-			rev.SetLeftoverRule(a.Config.Dispatch.Leftovers)
+			rev.SetLeftoverRule(a.ProcessConfig.Dispatch.Leftovers)
 			// A live session (the rework relay's coder seat and
 			// rework.consult binding) resolves an unset interface= to the
 			// binding CLI's best live transport, not always command
@@ -374,7 +378,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// the rubric ships embedded, but enforcing it is the operator's choice.
 			// Always set (or clear) so a prior command that left the package-global
 			// wired cannot leak into an ungated repo in the same process.
-			if a.Config.Review.GateCreate {
+			if a.ProcessConfig.Review.GateCreate {
 				verb.SetCreateReviewer(rev)
 			} else {
 				verb.SetCreateReviewer(nil)
@@ -453,7 +457,7 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 	rev.SetLiveNamedAgents(eff.Agents.LiveBinding)
 	rev.SetSessionModelsResolver(verb.SessionModels)
 	rev.SetInvocationRecorder(verb.AppendAgentInvocation)
-	rev.SetLeftoverRule(a.Config.Dispatch.Leftovers)
+	rev.SetLeftoverRule(a.ProcessConfig.Dispatch.Leftovers)
 	// The live sessions this engine opens (the rework relay) ledger
 	// a denied ask-the-user through this sink (sty_ff50f788); unwired, the row
 	// is silently dropped.
@@ -703,10 +707,7 @@ func skillResolver(a *app.App) func(skill string) bool {
 func requireAgents(a *app.App) (config.EffectiveAgents, error) {
 	// agents.toml is authored substrate — always under DataDir, never RuntimeDir
 	// (sty_4660bbe1: the DB leaving the repo must not take the agents layer with it).
-	dataDir := a.DataDir
-	if dataDir == "" {
-		dataDir = a.Config.ResolveDataDir(a.RepoRoot)
-	}
+	dataDir := a.PlaneDir()
 	// AgentsPath prefers the canonical workflows/ location and falls back to the
 	// legacy one, so an unconverted repo still runs (sty_10f732ed). The message
 	// names the CANONICAL path — where the file belongs, not where it used to be.
@@ -720,7 +721,7 @@ func requireAgents(a *app.App) (config.EffectiveAgents, error) {
 		}
 		// No repo file: the embedded baseline seats run (sty_6602bb44).
 	}
-	eff, err := config.LoadEffectiveAgents(dataDir, a.Config.Vars)
+	eff, err := config.LoadEffectiveAgents(dataDir, a.PlaneConfig().Vars)
 	if err != nil {
 		return config.EffectiveAgents{}, fmt.Errorf("broken %s: %w — fix it, or delete it and run `satelle init` to reseed the default", rel, err)
 	}
@@ -751,7 +752,7 @@ func applyAgentGrants(rev *agentstep.Engine, a *app.App, agents config.AgentsCon
 	// Project constitution rides order-zero in isolated briefings whenever
 	// principles ≠ none (design §5.3) — SessionStart parity with cmd_hook.
 	if a != nil {
-		rev.SetConstitution(readConstitution(a.Config.ResolveConstitution(a.RepoRoot)))
+		rev.SetConstitution(readConstitution(a.PlaneConstitution()))
 	}
 	// Select the reviewer's agent CLI from the agents-layer command binding
 	// (default claude). An unset/in-loop command keeps the global [agent] cli

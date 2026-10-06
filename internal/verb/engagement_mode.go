@@ -21,8 +21,8 @@ import (
 
 var engagementParallel = config.ParallelNone
 
-// SetEngagementMode wires the repo's seat concurrency mode. Called with
-// a.Config at CLI bootstrap.
+// SetEngagementMode wires the repo's seat concurrency mode. Called with the
+// process config at CLI bootstrap.
 func SetEngagementMode(cfg config.Config) {
 	engagementParallel = cfg.ResolveEngagementParallel()
 }
