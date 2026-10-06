@@ -508,6 +508,7 @@ func TestHookCommitgate_PiHarness(t *testing.T) {
 		}
 	})
 	t.Run("foreign tree refused", func(t *testing.T) {
+		fenceTempRootsElsewhere(t)
 		stopcheckRepo(t, seatMine)
 		foreign := t.TempDir()
 		if o, err := exec.Command("git", "-C", foreign, "init", "-q").CombinedOutput(); err != nil {

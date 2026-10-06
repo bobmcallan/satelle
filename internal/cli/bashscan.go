@@ -581,12 +581,19 @@ func gitCommandDir(command, base string) string {
 	return dir
 }
 
-// bashMutatesTree reports whether a command has an in-anchor mutation target
-// not exempted by the operator's [gate] edit_exempt_paths configuration.
+// bashMutatesTree reports whether a command has a mutation target in the
+// session's tree — or in a linked worktree of the session's own repository,
+// which the foreign-tree fence lets through (sty_bcf837ff) — not exempted by the
+// operator's [gate] edit_exempt_paths configuration.
 func bashMutatesTree(command, anchor string) bool {
-	inHome, _ := bashMutationTargets(command, anchor)
+	inHome, foreign := bashMutationTargets(command, anchor)
 	for _, target := range inHome {
 		if !exemptTarget(target) {
+			return true
+		}
+	}
+	for _, target := range foreign {
+		if linkedTreeTarget(filepath.Clean(anchor), target) && !exemptTarget(target) {
 			return true
 		}
 	}

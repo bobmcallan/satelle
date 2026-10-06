@@ -86,10 +86,7 @@ func TestHookGateExemptsSubstrate(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	siblingRepo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(siblingRepo, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	siblingRepo := foreignRepoDir(t)
 	sibling := filepath.Join(siblingRepo, "main.go")
 	if gateEvent(t, repo, sibling) {
 		t.Error("edit gate allowed a sibling-repo path (must refuse foreign-tree edits)")

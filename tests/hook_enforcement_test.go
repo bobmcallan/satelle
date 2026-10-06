@@ -22,6 +22,28 @@ func writeEnforcementRoute(t *testing.T, repo string) {
 		"done||||")
 }
 
+// foreignRepoDir returns a sibling "repo" (a bare .git dir, so it shares no git
+// common dir with any anchor and sameRepo fails closed) that lives OUTSIDE the
+// temp roots. t.TempDir() is under os.TempDir, which the foreign-tree fence
+// leaves unfenced (sty_bcf837ff AC3), so a foreign-fence fixture must sit
+// elsewhere — here, under the tests package dir.
+func foreignRepoDir(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.MkdirTemp(wd, ".foreign-repo-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 // gitBaseline makes repo a git repo with a clean tree (everything committed), so
 // a later `git status --porcelain` reflects only the test's intentional changes —
 // dirtyGatedPaths is what the Stop hook inspects.
@@ -86,10 +108,7 @@ func TestHookCommitgateContainment(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Sibling repo (has .git) — foreign fence applies.
-	other := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(other, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	other := foreignRepoDir(t)
 	// Non-repo temp — not fenced (pins the live defect).
 	nonRepo := t.TempDir()
 
@@ -183,10 +202,7 @@ func TestHookCommitgateFdDuplication(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	other := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(other, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	other := foreignRepoDir(t)
 	env := append(isolatedEnv(t), "CLAUDE_PROJECT_DIR="+repo)
 
 	// Allowed: cross-repo story verbs with fd-duplication (the live regression).
