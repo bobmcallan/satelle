@@ -669,6 +669,46 @@ func TestDispatchedSeatInlinesDiagnosisPrinciple(t *testing.T) {
 	}
 }
 
+// TestDispatchedSeatInlinesNoDriftingDocsPrinciple: the shipped session principle
+// reaches a dispatched seat from the embedded overlay alone — .satelle/principles
+// is empty, so no on-disk copy can satisfy it (sty_9fa1023d).
+func TestDispatchedSeatInlinesNoDriftingDocsPrinciple(t *testing.T) {
+	const name = "satelle-no-drifting-docs"
+	repo := t.TempDir()
+	dir := filepath.Join(repo, ".satelle", "principles")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.DocIndex.Sync(context.Background(), map[string]string{"principles": dir}, time.Now().UTC()); err != nil {
+		t.Fatalf("reindex principles: %v", err)
+	}
+
+	resident := sessionPrinciples(context.Background(), db.DocIndex)
+	g := New(&fakeRunner{}, db.DocIndex, repo, "")
+	req, err := g.buildRequest(context.Background(), invocation{
+		charter:    executorCharter("coder", "in_progress", "default"),
+		rubric:     "RUBRIC-BODY",
+		principles: config.PrinciplesSession,
+		payload:    map[string]string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, label := range []struct{ name, got string }{
+		{"sessionPrinciples", resident},
+		{"system prompt", req.SystemPrompt},
+	} {
+		if !strings.Contains(label.got, name) {
+			t.Errorf("%s missing the embedded principle %q:\n%s", label.name, name, label.got)
+		}
+	}
+}
+
 func skillDoc(name string) docindex.Doc {
 	return docindex.Doc{Kind: "skills", Name: name, Body: conformantSkill(name, "rubric body")}
 }
