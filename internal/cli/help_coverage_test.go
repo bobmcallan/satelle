@@ -44,7 +44,7 @@ const (
 var longWordWaiver = map[string]int{
 	// Machine-invoked hook handlers: an operator reads these to understand what
 	// the harness does on their behalf, and the decision tables ARE the content.
-	"satelle hook gate":       431, // every deny reason the edit gate can return, and its remedy
+	"satelle hook gate":       426, // every deny reason the edit gate can return, and its remedy
 	"satelle hook commitgate": 161, // the commit/push fence and the engagement it requires
 	"satelle hook prompt":     135, // what the per-prompt reminder injects and when
 	// Operator procedures: destructive, converging, or recovery paths where the

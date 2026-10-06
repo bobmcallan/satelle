@@ -106,8 +106,7 @@ never blocks a session.`,
 		Short: "PreToolUse edit gate — block code edits unless a story is engaged",
 		Long: `gate is the PreToolUse handler for Edit|Write|MultiEdit|NotebookEdit|
 search_replace|write. It returns a deny unless a story is ENGAGED — in one of the
-active workflow's non-terminal engaging states (e.g. plan, in_progress,
-integration, release) — so the agent works under a tracked story. On deny it
+active workflow's non-terminal engaging states (e.g. plan, in_progress). On deny it
 emits one harness-correct JSON shape on stdout, detected from the event
 envelope (tool_input = Claude, toolInput = Grok): Claude
 hookSpecificOutput.permissionDecision=deny + permissionDecisionReason; Grok
@@ -117,14 +116,11 @@ it reads the route's start/terminal markers (Mdiamond=start, Msquare=terminal),
 never hardcoded state names (sty_f3d5d4b8, sty_e4902c51).
 
 The installed satelle-hook.sh wrapper normalises that result to structured deny
-JSON plus handler exit 0: Claude reads structured stdout only on the
-successful-handler path, and its exit-2 path needs a non-empty stderr reason.
-Never combine JSON-only stdout, exit 2, and empty stderr.
+JSON plus handler exit 0.
 
 The edit target is resolved to an ABSOLUTE path against the repo root before any
 containment test (sty_8c3d345c): Claude sends an absolute file_path, Grok a
-repo-relative one, and a relative target must not be nested under a narrower
-tested root (the data dir) and wrongly classed inside it.
+repo-relative one.
 
 Edits landing in ANOTHER git working tree are REFUSED (sty_a8454d10) — open a
 session in THAT repo. Temp dirs, scratchpads and non-repo paths are allowed.
@@ -134,7 +130,7 @@ under a [gate] edit_exempt_paths prefix (repo-root-relative or absolute) or
 matches an edit_exempt_globs filename pattern. 'satelle init' SEEDS .satelle/,
 the footprint it deploys (.gitignore, harness scaffolds) and story-dump names;
 the operator owns the lists. With empty lists even a .satelle/ edit needs an
-engaged story. Generated views under the data dir stay 0o444 regardless.
+engaged story.
 
 Exemption stops at a performing story (sty_992cffc6). While a story holds a
 performing seat, an edit under a [gate] lock_substrate_paths prefix (default
@@ -145,8 +141,15 @@ the seat-holding story, the path and the lane out — a substrate-lane story
 (category "substrate", judged by satelle-workflow-change-review) may change
 substrate under its own seat — and lands on that story's ledger. Never locked:
 temp dirs, edit_exempt_globs matches, and the deployed footprint (.gitignore,
-.claude/, .grok/, .pi/). With no seat held nothing changes. Bash mutations are
-not covered. lock_substrate_paths = [] opts out; 'satelle doctor' reports it.
+.claude/, .grok/, .pi/). With no seat held nothing changes.
+lock_substrate_paths = [] opts out; 'satelle doctor' reports it.
+
+The lock covers Bash too, here and in 'hook commitgate', with the same text and
+ledger row: a redirect, tee, rm/mv/cp/sed -i or git -C target in locked
+substrate, or an interpreter command (python, node, perl, ruby, sh/bash/zsh -c)
+whose arguments, heredoc or NAME=value assignment name a locked path or the bare
+root (.satelle) — even if it only READS. Not seen, so allowed: python3 tool.py
+and '.sat'+'elle'.
 
 Fails closed: a store open error, listing error, unresolvable workflow, or
 workflow body declaring no route blocks the edit (sty_f3d5d4b8).`,
@@ -218,6 +221,15 @@ workflow body declaring no route blocks the edit (sty_f3d5d4b8).`,
 						return denyPreToolUse(cmd, raw, outsideAnchorBashReason(path, foreignRoot))
 					}
 				}
+				// The substrate lock holds for a shell command as it does for an
+				// Edit: a classified target, or an interpreter's command text,
+				// under a locked prefix is refused before the exemption is
+				// consulted (sty_dc77e118).
+				if holders := substrateLockHolders(info, engaged, live); len(holders) > 0 {
+					if err := bashSubstrateLockGate(cmd, raw, command, func() ([]seatInfo, error) { return holders, nil }); err != nil {
+						return err
+					}
+				}
 				if !bashMutatesTree(command, sessionAnchor()) {
 					return nil
 				}
@@ -256,20 +268,21 @@ workflow body declaring no route blocks the edit (sty_f3d5d4b8).`,
 		Long: `commitgate is the PreToolUse handler for Bash. It first applies foreign-tree
 containment: a command whose mutation target resolves inside a git working tree
 whose root differs from the session anchor is denied unless [gate]
-allow_outside_tree_edits is true. Temp, scratch and non-repo paths are not
-fenced. Containment is a reminder and boundary, not a sandbox. Then, for git
-commit/push only, it denies unless a story is engaged. A deny is structured JSON
-with handler exit 0. It fails closed on store/listing/workflow-resolution errors
-(sty_f3d5d4b8).
+allow_outside_tree_edits is true. Temp and non-repo paths are not fenced. Then, for git commit/push only, it denies unless a story is engaged. It
+fails closed on store/listing/workflow-resolution errors (sty_f3d5d4b8).
 
 Step policy (sty_c21490cc): when [gate.command_allow] is authored (e.g.
-push = ["release"]), the engaged story must also be at a listed status for that
-git subcommand. Absent/empty leaves behaviour as above.
+push = ["release"]), the engaged story must be at a listed status for that
+git subcommand.
 
-Attribution (sty_3a9b06fe): with seats in several worktrees, a commit/push goes
-to the seat whose worktree holds its effective directory — the hook's tree, moved
-by each preceding cd, then by its own -C. Unmoved, or outside every seat's
-worktree, it goes to the seat in the hook's own tree.`,
+Substrate lock (sty_dc77e118): a command whose classified target, or whose
+interpreter arguments or heredoc (python, node, perl, ruby, sh -c), name locked
+substrate is refused — even if it only READS. Not seen, so allowed:
+python3 tool.py and '.sat'+'elle'. See 'hook gate --help'.
+
+Attribution (sty_3a9b06fe): a commit/push goes to the seat of the worktree
+holding its effective directory (hook tree moved by each cd, then its own -C),
+else the hook's own tree's seat.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
@@ -288,13 +301,28 @@ worktree, it goes to the seat in the hook's own tree.`,
 			var live []seatInfo
 			var seatResolved bool
 			var sid string
-			if bashMutatesTree(command, sessionAnchor()) {
+			// The substrate lock before the mutation gate: a command whose target
+			// is locked substrate is refused even though .satelle/ is exempt from
+			// the engaged-story gate (sty_dc77e118). Seats resolve only when the
+			// command has a lockable candidate.
+			if err := bashSubstrateLockGate(cmd, raw, command, func() ([]seatInfo, error) {
 				var err error
 				sid = bindSessionID(raw)
 				info, engaged, live, err = resolveSeats(true, sid)
 				seatResolved = true
-				if err != nil {
-					return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
+				return substrateLockHolders(info, engaged, live), err
+			}); err != nil {
+				return err
+			}
+			if bashMutatesTree(command, sessionAnchor()) {
+				if !seatResolved {
+					var err error
+					sid = bindSessionID(raw)
+					info, engaged, live, err = resolveSeats(true, sid)
+					seatResolved = true
+					if err != nil {
+						return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
+					}
 				}
 				dm, rm := currentDispatchMarker(), currentRelayMarker()
 				if !hookEditPermitted(info, dm, rm) {
