@@ -25,6 +25,10 @@ type bashTok struct {
 	Kind  string
 	Value string // raw value for word; empty or placeholder for string/op
 	Op    string // for Kind=="op": ";", "&&", "||", "|", "\n"
+	// Raw is the full source text of a heredoc token (opener line and body), which
+	// Value collapses to a placeholder. Text scans that must see what an
+	// interpreter is fed (interpreterPathRefs) read it; word classifiers never do.
+	Raw string
 }
 
 // tokenizeBash splits a Bash payload into tokens. Quoted spans and heredoc
@@ -69,9 +73,14 @@ func tokenizeBash(command string) []bashTok {
 		}
 		// Heredoc: <<[-]['"]WORD['"] … WORD
 		if command[i] == '<' && i+1 < n && command[i+1] == '<' {
-			end, ok := consumeHeredoc(command, i)
+			end, rest, ok := consumeHeredoc(command, i)
 			if ok {
-				out = append(out, bashTok{Kind: "string", Value: "HEREDOC"})
+				out = append(out, bashTok{Kind: "string", Value: "HEREDOC", Raw: command[i:end]})
+				// What follows the delimiter on the opener line (`<<EOF > f`,
+				// `<<EOF | python3 -`) is ordinary shell and is classified as such;
+				// the line after the closing delimiter starts a new command.
+				out = append(out, tokenizeBash(rest)...)
+				out = append(out, bashTok{Kind: "op", Op: "\n"})
 				i = end
 				continue
 			}
@@ -160,8 +169,9 @@ func tokenizeBash(command string) []bashTok {
 }
 
 // consumeHeredoc advances past a heredoc opener and its body. Returns the index
-// after the terminating delimiter line, or (start, false) if it cannot parse.
-func consumeHeredoc(s string, start int) (int, bool) {
+// after the terminating delimiter line and the rest of the opener line after the
+// delimiter word, or (start, "", false) if it cannot parse.
+func consumeHeredoc(s string, start int) (int, string, bool) {
 	// start points at first '<' of <<
 	i := start + 2
 	n := len(s)
@@ -173,7 +183,7 @@ func consumeHeredoc(s string, start int) (int, bool) {
 		i++
 	}
 	if i >= n {
-		return start, false
+		return start, "", false
 	}
 	delim := ""
 	if s[i] == '\'' || s[i] == '"' {
@@ -197,12 +207,14 @@ func consumeHeredoc(s string, start int) (int, bool) {
 		i = j
 	}
 	if delim == "" {
-		return start, false
+		return start, "", false
 	}
-	// Skip rest of the opener line to newline.
+	// The rest of the opener line, up to the newline that starts the body.
+	restStart := i
 	for i < n && s[i] != '\n' {
 		i++
 	}
+	rest := s[restStart:i]
 	if i < n {
 		i++ // past newline
 	}
@@ -217,13 +229,47 @@ func consumeHeredoc(s string, start int) (int, bool) {
 			if i < n {
 				i++ // consume newline after delimiter
 			}
-			return i, true
+			return i, rest, true
 		}
 		if i < n {
 			i++
 		}
 	}
-	return i, true // unterminated: consume rest
+	return i, rest, true // unterminated: consume rest
+}
+
+// pipedSegment is one command segment with whether a pipe feeds it.
+type pipedSegment struct {
+	Toks  []bashTok
+	Piped bool // the operators between this segment and the previous one include "|"
+}
+
+// splitSegments splits tokens into command segments at ; && || | newline,
+// remembering which ones a pipe feeds.
+func splitSegments(toks []bashTok) []pipedSegment {
+	var segs []pipedSegment
+	var cur []bashTok
+	piped, curPiped := false, false
+	flush := func() {
+		if len(cur) > 0 {
+			segs = append(segs, pipedSegment{Toks: cur, Piped: curPiped})
+			cur = nil
+			piped = false
+		}
+	}
+	for _, t := range toks {
+		if t.Kind == "op" {
+			flush()
+			piped = piped || t.Op == "|"
+			continue
+		}
+		if len(cur) == 0 {
+			curPiped = piped
+		}
+		cur = append(cur, t)
+	}
+	flush()
+	return segs
 }
 
 // segmentWords splits tokens into command segments at ; && || | newline.
@@ -232,21 +278,9 @@ func consumeHeredoc(s string, start int) (int, bool) {
 // match as verb names).
 func segmentWords(toks []bashTok) [][]bashTok {
 	var segs [][]bashTok
-	var cur []bashTok
-	flush := func() {
-		if len(cur) > 0 {
-			segs = append(segs, cur)
-			cur = nil
-		}
+	for _, s := range splitSegments(toks) {
+		segs = append(segs, s.Toks)
 	}
-	for _, t := range toks {
-		if t.Kind == "op" {
-			flush()
-			continue
-		}
-		cur = append(cur, t)
-	}
-	flush()
 	return segs
 }
 
@@ -516,6 +550,7 @@ type bashSegment struct {
 	Words  []string  // bare words after any leading NAME=value assignments; empty for an env-only segment
 	Idx    int       // number of assignment words stripped (commandTokens(Tokens, Idx))
 	Cwd    string    // working dir in effect BEFORE this segment's own cd applies
+	Piped  bool      // a pipe feeds this segment from the one before it
 }
 
 // forEachSegment walks a Bash payload's command segments in order, seeding the
@@ -526,7 +561,8 @@ type bashSegment struct {
 // (gitCommandDir), so the two cannot drift.
 func forEachSegment(command, base string, fn func(s bashSegment)) {
 	cwd := base
-	for _, seg := range segmentWords(tokenizeBash(command)) {
+	for _, ps := range splitSegments(tokenizeBash(command)) {
+		seg := ps.Toks
 		all := wordsOnly(seg)
 		if len(all) == 0 {
 			continue
@@ -542,7 +578,7 @@ func forEachSegment(command, base string, fn func(s bashSegment)) {
 			idx++
 		}
 		words := all[idx:]
-		fn(bashSegment{Tokens: seg, Words: words, Idx: idx, Cwd: cwd})
+		fn(bashSegment{Tokens: seg, Words: words, Idx: idx, Cwd: cwd, Piped: ps.Piped})
 		if len(words) >= 2 && filepath.Base(words[0]) == "cd" {
 			cwd = resolvePath(cwd, words[1])
 		}
@@ -598,6 +634,183 @@ func bashMutatesTree(command, anchor string) bool {
 		}
 	}
 	return false
+}
+
+// interpreterVerbs are the commands that run a program whose writes the
+// classifier cannot see from the command line alone: a classifier table of the
+// same kind as mutationVerbs. Which paths are locked stays configuration
+// ([gate] lock_substrate_paths); this only says which commands carry program
+// text the lock scans. A versioned python (python3.11) counts as python.
+var interpreterVerbs = map[string]bool{
+	"python": true, "python3": true, "node": true, "nodejs": true, "perl": true, "ruby": true,
+}
+
+// shellInterpreters run a program only when handed one with -c.
+var shellInterpreters = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true}
+
+// isInterpreterCommand reports whether words (env assignments already stripped)
+// run an interpreter: a verb in interpreterVerbs, or a shell given -c (including a
+// flag cluster such as -ec or -lc). A leading `env [-opts] [NAME=val]…` is seen
+// through.
+func isInterpreterCommand(words []string) bool {
+	i := 0
+	if len(words) > 0 && filepath.Base(words[0]) == "env" {
+		for i = 1; i < len(words); i++ {
+			w := words[i]
+			if !strings.HasPrefix(w, "-") && !strings.Contains(w, "=") {
+				break
+			}
+		}
+	}
+	if i >= len(words) {
+		return false
+	}
+	base := filepath.Base(words[i])
+	if interpreterVerbs[base] {
+		return true
+	}
+	if rest, ok := strings.CutPrefix(base, "python"); ok && rest != "" && strings.Trim(rest, "0123456789.") == "" {
+		return true
+	}
+	if !shellInterpreters[base] {
+		return false
+	}
+	for _, w := range words[i+1:] {
+		if strings.HasPrefix(w, "-") && !strings.HasPrefix(w, "--") && strings.ContainsRune(w[1:], 'c') {
+			return true
+		}
+	}
+	return false
+}
+
+// isNameByte is a byte that continues a file or identifier name. A lock-root token
+// is a whole token only when neither neighbour is one (`.satellerc` and
+// `my.satelle` are other names).
+func isNameByte(c byte) bool {
+	return c == '_' || c == '-' || c == '.' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// isRunByte is a byte of a path-like run around a lock-root token. Looking back it
+// also accepts the characters of an unexpanded $VAR / ${VAR} / ~ prefix.
+func isRunByte(c byte, back bool) bool {
+	switch c {
+	case '/', '~', '+', '@', '%':
+		return true
+	case '$', '{', '}':
+		return back
+	}
+	return isNameByte(c)
+}
+
+// lockPathRefs returns the path-like runs in text that name a locked path: the
+// lock path with its trailing slash removed (`.satelle`) as a whole token, so both
+// `.satelle/documents/x.md` and a bare `'.satelle'` (os.path.join, Path(...)/,
+// D=.satelle) match. A token preceded by `/` is the tail of a longer path, so the
+// run extends backward to its start; the run is unresolved text.
+func lockPathRefs(text string, lockPaths []string) []string {
+	var out []string
+	for _, p := range lockPaths {
+		root := strings.TrimRight(strings.TrimSpace(p), "/")
+		if root == "" {
+			continue
+		}
+		for from := 0; from < len(text); {
+			k := strings.Index(text[from:], root)
+			if k < 0 {
+				break
+			}
+			k += from
+			end := k + len(root)
+			from = end
+			if (k > 0 && isNameByte(text[k-1])) || (end < len(text) && isNameByte(text[end])) {
+				continue
+			}
+			start := k
+			if k > 0 && text[k-1] == '/' {
+				for start > 0 && isRunByte(text[start-1], true) {
+					start--
+				}
+			}
+			stop := end
+			for stop < len(text) && isRunByte(text[stop], false) {
+				stop++
+			}
+			out = append(out, text[start:stop])
+		}
+	}
+	return out
+}
+
+// interpreterPathRefs returns the absolute paths a command's interpreter segments
+// reference under a lock path, for the substrate lock. An interpreter (see
+// isInterpreterCommand) can write anywhere its program text says, and the text is
+// opaque to bashMutationTargets, so the command text is scanned instead: each
+// argument and heredoc body of the segment (and of the segments piping into it)
+// is searched for a lock path or the bare lock-root token (lockPathRefs). The
+// NAME=value assignment words of any segment are scanned too, returned apart as
+// assigned. They are not interpreter text, so they join refs only when some segment
+// is an interpreter (`D=.satelle; python3 -c "…os.environ['D']…"`); otherwise the
+// caller uses them only to resolve a classified target that still holds an
+// unexpanded `$D/x`, never on their own (`D=.satelle; ls $D` is a read). A relative run resolves against the segment's
+// working dir and against base, so a cd cannot move the reference out of the lock.
+//
+// Honest limits, stated where the lock is documented: a script file whose body and
+// target are not in the command text (`python3 tool.py`) and a path assembled from
+// fragments that never spell the lock root (`'.sat'+'elle'`) are invisible here.
+// The scan is conservative — an interpreter command that only READS a locked path
+// is also a candidate; reads have the read tools and `satelle doc get`.
+func interpreterPathRefs(command, base string, lockPaths []string) (refs, assigned []string) {
+	if len(lockPaths) == 0 {
+		return nil, nil
+	}
+	var segs []bashSegment
+	forEachSegment(command, base, func(s bashSegment) { segs = append(segs, s) })
+	seenRefs, seenAssigned := map[string]bool{}, map[string]bool{}
+	scanTo := func(dst *[]string, seen map[string]bool, text, cwd string) {
+		for _, run := range lockPathRefs(text, lockPaths) {
+			for _, b := range []string{cwd, base} {
+				if abs := resolvePath(b, run); abs != "" && !seen[abs] {
+					seen[abs] = true
+					*dst = append(*dst, abs)
+				}
+			}
+		}
+	}
+	scan := func(text, cwd string) { scanTo(&refs, seenRefs, text, cwd) }
+	scanSegment := func(s bashSegment) {
+		for _, t := range s.Tokens {
+			text := t.Value
+			if t.Raw != "" {
+				text = t.Raw
+			}
+			scan(text, s.Cwd)
+		}
+	}
+	interp := false
+	for j, s := range segs {
+		for _, a := range wordsOnly(s.Tokens)[:s.Idx] {
+			scanTo(&assigned, seenAssigned, a, s.Cwd)
+		}
+		if !isInterpreterCommand(s.Words) {
+			continue
+		}
+		interp = true
+		for k := j; k >= 0; k-- {
+			scanSegment(segs[k])
+			if !segs[k].Piped {
+				break
+			}
+		}
+	}
+	if interp {
+		for _, a := range assigned {
+			if !seenRefs[a] {
+				seenRefs[a] = true
+				refs = append(refs, a)
+			}
+		}
+	}
+	return refs, assigned
 }
 
 // foreignSatelleVerb returns a foreign target dir when the satelle segment is a
