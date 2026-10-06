@@ -272,3 +272,115 @@ func TestSegmentIsStoryEngage(t *testing.T) {
 		t.Error("create is not engage")
 	}
 }
+
+// sty_bc78617c AC1: sed is a read unless run in place; the script is never a
+// target.
+func TestSedTargetsOnlyWhenInPlace(t *testing.T) {
+	anchor := "/work/repo"
+	cases := []struct {
+		command string
+		want    []string // in-home targets; nil = none
+	}{
+		{"sed -n 332,463p internal/web/web.go", nil},
+		{"sed -n 1,5p f", nil},
+		{"sed 's/a/b/' f", nil},
+		{"sed -e s/a/b/ f", nil},
+		{"sed -ne 1p f", nil},
+		{"sed --expression=s/a/b/ f", nil},
+		{"sed --expression s/a/b/ f", nil},
+		{"sed -f script.sed f", nil},
+		{"sed -E -s 's/a/b/' f g", nil},
+		{"sed -i s/a/b/ f", []string{"/work/repo/f"}},
+		{"sed -i.bak s/a/b/ f", []string{"/work/repo/f"}},
+		{"sed -ni 1p f", []string{"/work/repo/f"}},
+		{"sed -in 1p f", []string{"/work/repo/f"}},
+		{"sed --in-place s/a/b/ f", []string{"/work/repo/f"}},
+		{"sed --in-place=.bak s/a/b/ f", []string{"/work/repo/f"}},
+		{"sed -i -e s/a/b/ f g", []string{"/work/repo/f", "/work/repo/g"}},
+		{"sed -i -f script.sed f", []string{"/work/repo/f"}},
+		{"sed -i -- s/a/b/ f", []string{"/work/repo/f"}},
+		// Quoted script / -e / -f values occupy their slot; the file is the target.
+		{"sed -i 's/a/b/' internal/x.go", []string{"/work/repo/internal/x.go"}},
+		{`sed -i "s/a/b/" internal/x.go`, []string{"/work/repo/internal/x.go"}},
+		{"sed -i -e 's/a/b/' internal/x.go", []string{"/work/repo/internal/x.go"}},
+		{`sed -i -e "s/a/b/" internal/x.go`, []string{"/work/repo/internal/x.go"}},
+		{"sed -i --expression 's/a/b/' internal/x.go", []string{"/work/repo/internal/x.go"}},
+		{"sed -i -f 'my script.sed' internal/x.go", []string{"/work/repo/internal/x.go"}},
+		{"sed -i.bak 's/a/b/' f g", []string{"/work/repo/f", "/work/repo/g"}},
+		{"sed -i 's/a/b/' 'internal/x.go'", []string{"/work/repo/internal/x.go"}},
+		{"FOO=1 sed -i 's/a/b/' f", []string{"/work/repo/f"}},
+		{"sed -n '1,5p' f", nil},
+		{`sed -e "s/a/b/" f`, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.command, func(t *testing.T) {
+			home, foreign := bashMutationTargets(tc.command, anchor)
+			if len(foreign) != 0 {
+				t.Fatalf("foreign = %v, want none", foreign)
+			}
+			if strings.Join(home, " ") != strings.Join(tc.want, " ") {
+				t.Fatalf("inHome = %v, want %v", home, tc.want)
+			}
+			if got, want := bashMutatesTree(tc.command, anchor), len(tc.want) > 0; got != want {
+				t.Fatalf("bashMutatesTree = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// sty_bc78617c AC2/AC3: writes confined to the temp dir or /tmp are not tree
+// mutations (a leading ~ or $VAR the hook's environment expands counts); an
+// unresolvable $ or ~ word stays in-home; real tree writes are still targets.
+func TestTempWriteTargetsAreNotTreeMutations(t *testing.T) {
+	anchor := "/work/repo"
+	scratch := "/tmp/claude-1000/p/s/scratchpad"
+	t.Setenv("TMPDIR", "/tmp/custom")
+	t.Setenv("SCRATCH", scratch)
+	t.Setenv("HOME", "/tmp/fakehome")
+	t.Setenv("RELVAR", "relative/dir")
+	t.Setenv("EMPTY_FOR_TEST", "")
+
+	notMutating := []string{
+		"mkdir -p " + scratch + "/octop; curl -sfL https://x/y -o " + scratch + "/octop/f",
+		"mkdir -p /tmp/x && touch /tmp/x/f",
+		"echo hi > /tmp/x/out",
+		"mkdir -p $TMPDIR/x",
+		"mkdir -p ${TMPDIR}/x",
+		"mkdir -p $SCRATCH/octop",
+		"touch $SCRATCH/octop/f",
+		"mkdir -p ~/octop",
+		"echo hi > $TMPDIR/out",
+		"cp internal/x.go $SCRATCH/copy.go",
+		"cd $SCRATCH && touch f",
+	}
+	for _, c := range notMutating {
+		if bashMutatesTree(c, anchor) {
+			t.Errorf("bashMutatesTree(%q) = true, want false", c)
+		}
+	}
+
+	mutating := []string{
+		"sed -i s/a/b/ internal/x.go",
+		"rm internal/x.go",
+		"echo x > internal/x.go",
+		"mkdir -p internal/newdir",
+		"mkdir -p $EMPTY_FOR_TEST/x",
+		"mkdir -p $NO_SUCH_VAR_FOR_TEST/x",
+		"mkdir -p ${NO_SUCH_VAR_FOR_TEST}/x",
+		"mkdir -p ~someone/x",
+		"mkdir -p $RELVAR/x",
+		"mkdir -p $SCRATCHsuffix/x",
+		"mkdir -p $(mktemp -d)/x",
+	}
+	for _, c := range mutating {
+		if !bashMutatesTree(c, anchor) {
+			t.Errorf("bashMutatesTree(%q) = false, want true", c)
+		}
+	}
+
+	// A var that expands into the tree is a tree target.
+	t.Setenv("INTREE", anchor+"/internal")
+	if !bashMutatesTree("rm $INTREE/x.go", anchor) {
+		t.Error("var expanding into the anchor must stay a tree mutation")
+	}
+}
