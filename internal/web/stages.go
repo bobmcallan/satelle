@@ -11,7 +11,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-// The story list's PROGRESS and STATUS cells present the STAGES a story has
+// The story list's PROGRESS cell presents the STAGES a story has
 // completed and how hard each gate was to clear — not one light per ledger row.
 // A stage is named by the state a forward transition landed in; its totals are
 // the gate's accepted and rejected ROUNDS (one attempt id however many reviewers
@@ -28,10 +28,13 @@ type stageVM struct {
 	Parked   int    // parks taken while this stage's gate was in flight
 	ParkName string // the state those parks went into (the route's park-state name)
 	Title    string // tooltip: the totals spelled in words
+	// Pending is the outgoing gate the story has presented and not yet passed:
+	// its rounds since the story entered the stage. Set only on the current chip.
+	Pending *gateRoundsVM
 }
 
-// gateBadgeVM is the STATUS cell's second line: the current gate's round counts.
-type gateBadgeVM struct {
+// gateRoundsVM is one gate's round counts, named by the edge they are for.
+type gateRoundsVM struct {
 	Accepted int
 	Rejected int
 	Edge     string // "from → to" the counts are for
@@ -120,13 +123,12 @@ func parseEdge(e ledger.Entry) lightPayload {
 	return lp
 }
 
-// buildStages folds a story's ledger into the PROGRESS stages and the STATUS
-// badge. Entries may arrive newest- or oldest-first; they are re-sorted here.
+// buildStages folds a story's ledger into the PROGRESS stages. Entries may arrive newest- or oldest-first; they are re-sorted here.
 // Stages are in the order they were first reached — never numbered, never by
 // route depth — so a story whose category resolved no route reads the same as
 // one that did, and no stage appears twice. stepOf is consulted only to tell an
 // on-route status from an unstarted one when the ledger is empty.
-func buildStages(entries []ledger.Entry, status string, seatHeld bool, stepOf func(state string) int, spec wfdot.Spec) ([]stageVM, *gateBadgeVM) {
+func buildStages(entries []ledger.Entry, status string, seatHeld bool, stepOf func(state string) int, spec wfdot.Spec) []stageVM {
 	es := append([]ledger.Entry(nil), entries...)
 	sortLedger(es)
 	ts := classifyTransitions(es, spec)
@@ -229,7 +231,16 @@ func buildStages(entries []ledger.Entry, status string, seatHeld bool, stepOf fu
 			stages[i].Title = stageTitle(stages[i])
 		}
 	}
-	return stages, gateBadge(es, ts, status, fin)
+	if !fin {
+		if p := pendingGate(es, ts, status); p != nil {
+			for i := range stages {
+				if stages[i].State == "current" {
+					stages[i].Pending = p
+				}
+			}
+		}
+	}
+	return stages
 }
 
 // routeEdgeOff reports whether a review edge is a park, recover or sink edge of
@@ -241,59 +252,38 @@ func routeEdgeOff(spec wfdot.Spec, from, to string) bool {
 	return spec.IsResumePark(from) || spec.IsResumePark(to) || isSink(spec, to)
 }
 
-// gateBadge is the current gate's reviewer result. Mid-gate — the story is not
-// finished and an outgoing edge has been presented since it entered its status —
-// it reports that edge's rounds since the entry. Otherwise it reports the entry
-// gate's rounds: the presentations of the edge it arrived on, since the stage
-// before it landed. No review rows, no badge.
-func gateBadge(es []ledger.Entry, ts []transition, status string, fin bool) *gateBadgeVM {
+// pendingGate is the outgoing gate the story is waiting on: an edge out of
+// status presented since the story entered it, reported with that edge's rounds
+// since the entry. The entry gate is not reported here — its rounds are already
+// in the totals of the stage it led into. No outgoing review rows, no result.
+func pendingGate(es []ledger.Entry, ts []transition, status string) *gateRoundsVM {
 	// The last transition into status that is not a recover: a recovery returns a
 	// story to the state it left, so its entry gate is the one it first arrived by.
-	enter := -1
-	for i, t := range ts {
-		if t.to == status && t.kind != trRecover {
-			enter = i
-		}
-	}
 	enterPos := -1
-	if enter >= 0 {
-		enterPos = ts[enter].pos
-	}
-	if !fin {
-		var last *lightPayload
-		for _, e := range es[enterPos+1:] {
-			if e.Kind != ledger.KindReviewAccept && e.Kind != ledger.KindReviewReject {
-				continue
-			}
-			if lp := parseEdge(e); lp.From == status {
-				last = &lp
-			}
-		}
-		if last != nil {
-			a, r := ledger.EdgeRounds(es[enterPos+1:], status, last.To)
-			return newGateBadge(status, last.To, a, r)
+	for _, t := range ts {
+		if t.to == status && t.kind != trRecover {
+			enterPos = t.pos
 		}
 	}
-	if enter < 0 {
+	var last *lightPayload
+	for _, e := range es[enterPos+1:] {
+		if e.Kind != ledger.KindReviewAccept && e.Kind != ledger.KindReviewReject {
+			continue
+		}
+		if lp := parseEdge(e); lp.From == status {
+			last = &lp
+		}
+	}
+	if last == nil {
 		return nil
 	}
-	start := 0
-	for _, t := range ts[:enter] {
-		if t.kind == trStage {
-			start = t.pos
-		}
-	}
-	a, r := ledger.EdgeRounds(es[start:enterPos], ts[enter].from, status)
-	return newGateBadge(ts[enter].from, status, a, r)
-}
-
-func newGateBadge(from, to string, accepted, rejected int) *gateBadgeVM {
-	if accepted == 0 && rejected == 0 {
+	a, r := ledger.EdgeRounds(es[enterPos+1:], status, last.To)
+	if a == 0 && r == 0 {
 		return nil
 	}
-	edge := from + " → " + to
-	return &gateBadgeVM{Accepted: accepted, Rejected: rejected, Edge: edge,
-		Title: edge + ": " + roundsWords(accepted, rejected)}
+	edge := status + " → " + last.To
+	return &gateRoundsVM{Accepted: a, Rejected: r, Edge: edge,
+		Title: edge + ": " + roundsWords(a, r)}
 }
 
 func stageTitle(s stageVM) string {

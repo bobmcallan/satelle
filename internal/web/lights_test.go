@@ -202,7 +202,7 @@ func TestBuildStagesRetriedEdgeKeepsItsRounds(t *testing.T) {
 		ev(ledger.KindReviewAccept, "in_progress", "done"),
 		ev(ledger.KindStatusTransition, "in_progress", "done"),
 	}
-	stages, _ := buildStages(chrono, "done", false, testStep, wfdot.Spec{})
+	stages := buildStages(chrono, "done", false, testStep, wfdot.Spec{})
 	if got, want := names(stages), []string{"in_progress", "done"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("stages = %v, want %v", got, want)
 	}
@@ -236,12 +236,9 @@ func TestBuildStagesPanelDissentIsNotARejection(t *testing.T) {
 		{Kind: ledger.KindReviewAccept, Payload: p},
 		ev(ledger.KindStatusTransition, "open", "in_progress"),
 	}
-	stages, gate := buildStages(entries, "in_progress", false, testStep, wfdot.Spec{})
+	stages := buildStages(entries, "in_progress", false, testStep, wfdot.Spec{})
 	if s := stageNamed(stages, "in_progress"); s.Rejected != 0 || s.Accepted != 1 {
 		t.Fatalf("nested dissent must not count as a rejected round: %+v", stages)
-	}
-	if gate == nil || gate.Rejected != 0 || gate.Accepted != 1 {
-		t.Fatalf("gate = %+v, want 1 accepted", gate)
 	}
 }
 
@@ -252,7 +249,7 @@ func TestBuildStagesCurrentStagePulses(t *testing.T) {
 		ev(ledger.KindReviewAccept, "open", "in_progress"),
 		ev(ledger.KindStatusTransition, "open", "in_progress"),
 	}
-	stages, _ := buildStages(chrono, "in_progress", false, testStep, wfdot.Spec{})
+	stages := buildStages(chrono, "in_progress", false, testStep, wfdot.Spec{})
 	if len(stages) != 1 || stages[0].State != "current" || stages[0].Name != "in_progress" {
 		t.Fatalf("want [current in_progress], got %+v", stages)
 	}
@@ -265,7 +262,7 @@ func TestBuildStagesPriorStageDoneCurrentPulses(t *testing.T) {
 		ev(ledger.KindReviewAccept, "in_progress", "release"),
 		ev(ledger.KindStatusTransition, "in_progress", "release"),
 	}
-	stages, _ := buildStages(chrono, "release", false, noStep, wfdot.Spec{})
+	stages := buildStages(chrono, "release", false, noStep, wfdot.Spec{})
 	if got, want := names(stages), []string{"in_progress", "release"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("stages = %v, want %v", got, want)
 	}
@@ -276,21 +273,23 @@ func TestBuildStagesPriorStageDoneCurrentPulses(t *testing.T) {
 
 func TestBuildStagesUngatedStageHasNoCounts(t *testing.T) {
 	chrono := []ledger.Entry{ev(ledger.KindStatusTransition, "open", "in_progress")}
-	stages, gate := buildStages(chrono, "done", false, testStep, wfdot.Spec{})
+	stages := buildStages(chrono, "done", false, testStep, wfdot.Spec{})
 	if len(stages) != 2 || stages[0].Name != "in_progress" || stages[0].Accepted+stages[0].Rejected != 0 {
 		t.Fatalf("want an ungated in_progress stage with no counts, got %+v", stages)
 	}
-	if gate != nil {
-		t.Errorf("no review rows must show no badge, got %+v", gate)
+	for _, s := range stages {
+		if s.Pending != nil {
+			t.Errorf("no review rows must show no pending gate, got %+v", s)
+		}
 	}
 }
 
 func TestBuildStagesUnstartedHasNoStage(t *testing.T) {
 	// A freshly-created item at its initial state shows nothing — no phantom stage.
-	if got, g := buildStages(nil, "open", false, testStep, wfdot.Spec{}); len(got) != 0 || g != nil {
-		t.Fatalf("unstarted open item should have no stages, got %v %v", got, g)
+	if got := buildStages(nil, "open", false, testStep, wfdot.Spec{}); len(got) != 0 {
+		t.Fatalf("unstarted open item should have no stages, got %v", got)
 	}
-	if got, _ := buildStages([]ledger.Entry{ev(ledger.KindStoryCreated, "", "")}, "open", false, testStep, wfdot.Spec{}); len(got) != 0 {
+	if got := buildStages([]ledger.Entry{ev(ledger.KindStoryCreated, "", "")}, "open", false, testStep, wfdot.Spec{}); len(got) != 0 {
 		t.Fatalf("created-only item should have no stages, got %v", got)
 	}
 }
@@ -299,18 +298,18 @@ func TestBuildStagesUnstartedHasNoStage(t *testing.T) {
 // titled "starting"; without a seat the cell stays blank; once a transition lands
 // the real current stage takes over (sty_e1314fe3).
 func TestBuildStagesStartingSeat(t *testing.T) {
-	stages, _ := buildStages(nil, "backlog", true, projStep, wfdot.Spec{})
+	stages := buildStages(nil, "backlog", true, projStep, wfdot.Spec{})
 	if len(stages) != 1 || stages[0].State != "current" || stages[0].Title != "starting" {
 		t.Fatalf("seat-held unentered = %+v, want one current chip titled starting", stages)
 	}
-	if got, _ := buildStages(nil, "backlog", false, projStep, wfdot.Spec{}); len(got) != 0 {
+	if got := buildStages(nil, "backlog", false, projStep, wfdot.Spec{}); len(got) != 0 {
 		t.Fatalf("no-seat backlog: want no stages, got %v", got)
 	}
 	chrono := []ledger.Entry{
 		ev(ledger.KindReviewAccept, "backlog", "in_progress"),
 		ev(ledger.KindStatusTransition, "backlog", "in_progress"),
 	}
-	stages, _ = buildStages(chrono, "in_progress", true, projStep, wfdot.Spec{})
+	stages = buildStages(chrono, "in_progress", true, projStep, wfdot.Spec{})
 	if len(stages) != 1 || stages[0].Name != "in_progress" || stages[0].Title == "starting" {
 		t.Fatalf("entered with seat: want one real in_progress stage, got %+v", stages)
 	}
@@ -323,7 +322,7 @@ func TestBuildStagesFollowTheLedgerNotRouteDepth(t *testing.T) {
 		ev(ledger.KindStatusTransition, "in_progress", "done"),
 		ev(ledger.KindStatusTransition, "open", "in_progress"),
 	}
-	stages, _ := buildStages(chrono, "done", false, testStep, wfdot.Spec{})
+	stages := buildStages(chrono, "done", false, testStep, wfdot.Spec{})
 	if got, want := names(stages), []string{"done", "in_progress"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("stages = %v, want %v", got, want)
 	}
@@ -335,7 +334,7 @@ func TestBuildStagesRetriedStageKeepsOneEntry(t *testing.T) {
 		ev(ledger.KindReviewAccept, "open", "in_progress"),
 		ev(ledger.KindStatusTransition, "open", "in_progress"),
 	}
-	stages, _ := buildStages(chrono, "in_progress", false, testStep, wfdot.Spec{})
+	stages := buildStages(chrono, "in_progress", false, testStep, wfdot.Spec{})
 	if len(stages) != 1 {
 		t.Fatalf("want one stage, got %+v", stages)
 	}
@@ -353,7 +352,7 @@ func TestBuildStagesChronologicalWithRetry(t *testing.T) {
 		ev(ledger.KindStatusTransition, "d", "e"),
 		ev(ledger.KindStatusTransition, "e", "f"),
 	}
-	stages, _ := buildStages(chrono, "f", false, noStep, wfdot.Spec{})
+	stages := buildStages(chrono, "f", false, noStep, wfdot.Spec{})
 	if got, want := names(stages), []string{"b", "c", "d", "e", "f"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("stages = %v, want %v", got, want)
 	}
@@ -449,7 +448,7 @@ func TestBuildStagesFullSpineEachOnce(t *testing.T) {
 		ev(ledger.KindReviewAccept, "committed", "done"),
 		ev(ledger.KindStatusTransition, "committed", "done"),
 	}
-	stages, _ := buildStages(chrono, "done", false, projStep, wfdot.Spec{})
+	stages := buildStages(chrono, "done", false, projStep, wfdot.Spec{})
 	if got, want := names(stages), []string{"in_progress", "commit_push", "committed", "done"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("stages = %v, want %v", got, want)
 	}
@@ -472,7 +471,7 @@ func TestBuildStagesRecoveryLoopListsEachStageOnce(t *testing.T) {
 		ev(ledger.KindReviewAccept, "committed", "done"),
 		ev(ledger.KindStatusTransition, "committed", "done"),
 	}
-	stages, _ := buildStages(chrono, "done", false, projStep, wfdot.Spec{})
+	stages := buildStages(chrono, "done", false, projStep, wfdot.Spec{})
 	if got, want := names(stages), []string{"in_progress", "commit_push", "committed", "done"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("stages = %v, want %v (no stage twice)", got, want)
 	}
@@ -486,8 +485,8 @@ func TestBuildStagesRecoveryLoopListsEachStageOnce(t *testing.T) {
 
 // A story AT release that attempted release→done and was rejected: release is
 // the current stage, done has not been reached, and the rejected outgoing round
-// shows on the STATUS badge — never as a stage.
-func TestBuildStagesRejectPastCurrentIsABadge(t *testing.T) {
+// shows as the pending gate on the release chip — never as a stage.
+func TestBuildStagesRejectPastCurrentIsPending(t *testing.T) {
 	chrono := []ledger.Entry{
 		ev(ledger.KindStatusTransition, "a", "b"),
 		ev(ledger.KindStatusTransition, "b", "c"),
@@ -495,23 +494,23 @@ func TestBuildStagesRejectPastCurrentIsABadge(t *testing.T) {
 		ev(ledger.KindStatusTransition, "d", "release"),
 		ev(ledger.KindReviewReject, "release", "done"),
 	}
-	stages, gate := buildStages(chrono, "release", false, noStep, wfdot.Spec{})
+	stages := buildStages(chrono, "release", false, noStep, wfdot.Spec{})
 	if got, want := names(stages), []string{"b", "c", "d", "release"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("stages = %v, want %v", got, want)
 	}
 	if last := stages[3]; last.State != "current" || last.Rejected != 0 {
 		t.Errorf("release = %+v, want current with no counts of its own", last)
 	}
-	if gate == nil || gate.Rejected != 1 || gate.Accepted != 0 {
-		t.Errorf("gate = %+v, want 1 rejected (the outgoing release→done round)", gate)
+	if p := stages[3].Pending; p == nil || p.Rejected != 1 || p.Accepted != 0 || p.Edge != "release → done" {
+		t.Errorf("pending = %+v, want 1 rejected (the outgoing release→done round)", p)
 	}
 }
 
 // TestBuildStagesStatusAloneCurrentStage: empty ledger + on-route status yields a
 // current stage independent of seat (sty_c5065d05 AC4/AC5).
 func TestBuildStagesStatusAloneCurrentStage(t *testing.T) {
-	noSeat, _ := buildStages(nil, "in_progress", false, projStep, wfdot.Spec{})
-	withSeat, _ := buildStages(nil, "in_progress", true, projStep, wfdot.Spec{})
+	noSeat := buildStages(nil, "in_progress", false, projStep, wfdot.Spec{})
+	withSeat := buildStages(nil, "in_progress", true, projStep, wfdot.Spec{})
 	if len(noSeat) != 1 || noSeat[0].State != "current" || noSeat[0].Name != "in_progress" {
 		t.Fatalf("status alone: want one current in_progress, got %v", noSeat)
 	}

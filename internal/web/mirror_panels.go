@@ -180,8 +180,8 @@ func attachStagesFrom(entriesByStory map[string][]ledger.Entry, items []workitem
 	out := make([]rowVM, len(items))
 	for i, it := range items {
 		stepOf := func(s string) int { return catStepOf(it.Category, s) }
-		stages, gate := buildStages(entriesByStory[it.ID], it.Status, liveSeat[it.ID], stepOf, specOf(it.Category))
-		out[i] = rowVM{Item: it, Stages: stages, Gate: gate, Dispatch: dispatches[it.ID]}
+		stages := buildStages(entriesByStory[it.ID], it.Status, liveSeat[it.ID], stepOf, specOf(it.Category))
+		out[i] = rowVM{Item: it, Stages: stages, Dispatch: dispatches[it.ID]}
 	}
 	return out
 }

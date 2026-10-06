@@ -121,10 +121,8 @@ type topBar struct {
 type rowVM struct {
 	workitem.Item
 	// Stages are the stages the story has completed plus the one it is in, in
-	// the order it reached them (PROGRESS cell); Gate is the current gate's
-	// round counts (STATUS cell badge), nil when the story has no review rows.
+	// the order it reached them (PROGRESS cell).
 	Stages []stageVM
-	Gate   *gateBadgeVM
 	// Dispatch is the running indicator for an in-flight dispatch (sty_752c4ef2
 	// AC6) — nil when nothing is in flight. Distinct from Stages: a stage
 	// records PAST gate outcomes, Dispatch narrates what is happening RIGHT NOW,

@@ -204,6 +204,15 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		if !waitCond(t, ctx, "!!"+stage, 8*time.Second) {
 			t.Error("a transitioned story should show a progress stage, pushed live")
 		}
+		// The STATUS cell holds the status badge alone: gate outcomes read from
+		// PROGRESS, never a second line under the status.
+		row := fmt.Sprintf(`document.querySelector('#panel-stories tr.row[data-expand-url$="%s"]')`, openID)
+		if !waitCond(t, ctx, "!"+row+".querySelector('.gate-badge')", 3*time.Second) {
+			t.Error("a story row must carry no .gate-badge")
+		}
+		if !waitCond(t, ctx, row+".children[2].children.length === 1 && "+row+".children[2].firstElementChild.classList.contains('badge')", 3*time.Second) {
+			t.Error("the STATUS cell should hold only the status badge")
+		}
 	})
 
 	t.Run("tab_switching", func(t *testing.T) {

@@ -373,7 +373,8 @@ td.updated-cell { white-space: nowrap; }
 
 /* Progress column — the stages a story has completed (plus the one it is in),
    each with its gate's accepted/rejected ROUND totals. No indices: a number here
-   is a count, never a stage. The Status cell's .gate-badge uses the same pair. */
+   is a count, never a stage. A current chip's .pending-gate is the outgoing
+   gate's rounds, the same pair. */
 .col-reviews { white-space: normal; width: 14rem; }
 .stage-chip { display: inline-block; margin: 0 6px 3px 0; padding: 0 6px; font-size: 11px;
   line-height: 1.6; border: 1px solid var(--line); background: var(--chip); color: var(--ink); }
@@ -381,8 +382,7 @@ td.updated-cell { white-space: nowrap; }
 .stage-current { border-color: var(--warn); color: var(--warn);
   animation: review-pulse 1.4s ease-in-out infinite; }
 .stage-chip .blk { color: var(--warn); font-weight: 600; }
-.gate-badge { margin-top: 3px; font-size: 11px; line-height: 1.4; }
-.gate-badge b + b { margin-left: 6px; }
+.pending-gate { color: var(--muted); }
 .ok { color: var(--accent); font-weight: 600; }
 .rej { color: var(--fail); font-weight: 600; }
 @keyframes review-pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }

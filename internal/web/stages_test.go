@@ -55,7 +55,7 @@ func ddbeLedger() []ledger.Entry {
 
 func checkDdbe(t *testing.T, spec wfdot.Spec) {
 	t.Helper()
-	stages, gate := buildStages(ddbeLedger(), "in_progress", false, noStep, spec)
+	stages := buildStages(ddbeLedger(), "in_progress", false, noStep, spec)
 	if got, want := names(stages), []string{"plan", "in_progress"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("stages = %v, want exactly %v (no blocked, no backlog)", got, want)
 	}
@@ -67,8 +67,8 @@ func checkDdbe(t *testing.T, spec wfdot.Spec) {
 	if cur.State != "current" || cur.Accepted != 1 || cur.Rejected != 0 {
 		t.Errorf("in_progress = %+v, want current with 1 accepted", cur)
 	}
-	if gate == nil || gate.Accepted != 1 || gate.Rejected != 0 {
-		t.Errorf("gate = %+v, want the entry gate's ✓1", gate)
+	if cur.Pending != nil {
+		t.Errorf("in_progress pending = %+v, want none (no outgoing gate presented)", cur.Pending)
 	}
 }
 
@@ -86,7 +86,7 @@ func TestStagesTwoRejectingReviewersAreOneRound(t *testing.T) {
 		evA(ledger.KindReviewReject, "backlog", "plan", "x1"),
 		ev(ledger.KindStatusTransition, "backlog", "plan"),
 	}
-	stages, _ := buildStages(entries, "plan", false, noStep, routeSpec())
+	stages := buildStages(entries, "plan", false, noStep, routeSpec())
 	if s := stageNamed(stages, "plan"); s.Rejected != 1 || s.Accepted != 0 {
 		t.Fatalf("plan = %+v, want 1 rejected round from three rejecting rows", s)
 	}
@@ -105,14 +105,14 @@ func TestStagesRejectedRoundsStayRedAfterAnAccept(t *testing.T) {
 	entries = append(entries,
 		evA(ledger.KindReviewAccept, "backlog", "plan", "r6"),
 		ev(ledger.KindStatusTransition, "backlog", "plan"))
-	stages, _ := buildStages(entries, "done", false, noStep, wfdot.Spec{})
+	stages := buildStages(entries, "done", false, noStep, wfdot.Spec{})
 	if s := stageNamed(stages, "plan"); s.Accepted != 1 || s.Rejected != 5 {
 		t.Fatalf("plan = %+v, want 1 accepted / 5 rejected", s)
 	}
 }
 
 // AC3: a transition into the cancel sink is not a park note, and a cancelled
-// story is finished — its chip never pulses and it has no outgoing-gate badge.
+// story is finished — its chip never pulses and it has no pending outgoing gate.
 func TestStagesCancelIsNotAParkAndNeverPulses(t *testing.T) {
 	entries := []ledger.Entry{
 		evA(ledger.KindReviewAccept, "backlog", "plan", "c1"),
@@ -120,7 +120,7 @@ func TestStagesCancelIsNotAParkAndNeverPulses(t *testing.T) {
 		evA(ledger.KindReviewReject, "plan", "in_progress", "c2"), // a presented outgoing edge
 		ev(ledger.KindStatusTransition, "plan", "cancelled"),
 	}
-	stages, gate := buildStages(entries, "cancelled", false, noStep, routeSpec())
+	stages := buildStages(entries, "cancelled", false, noStep, routeSpec())
 	for _, s := range stages {
 		if s.Parked != 0 {
 			t.Errorf("cancel produced a park note: %+v", s)
@@ -128,14 +128,13 @@ func TestStagesCancelIsNotAParkAndNeverPulses(t *testing.T) {
 		if s.State == "current" {
 			t.Errorf("a cancelled story must show no pulse: %+v", stages)
 		}
+		// Finished: never the rejected outgoing plan→in_progress round.
+		if s.Pending != nil {
+			t.Errorf("a finished story must carry no pending gate: %+v", s)
+		}
 	}
 	if got, want := names(stages), []string{"plan", "cancelled"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("stages = %v, want %v (the sink only as the final chip)", got, want)
-	}
-	// Finished: the badge is the ENTRY gate (cancelled had none) — never the
-	// rejected outgoing plan→in_progress round.
-	if gate != nil {
-		t.Errorf("gate = %+v, want none for a finished story with no entry-gate rows", gate)
 	}
 }
 
@@ -147,14 +146,15 @@ func TestStagesDoneWithoutRouteNeverPulses(t *testing.T) {
 		evA(ledger.KindReviewAccept, "in_progress", workitem.StatusDone, "d2"),
 		ev(ledger.KindStatusTransition, "in_progress", workitem.StatusDone),
 	}
-	stages, gate := buildStages(entries, workitem.StatusDone, false, noStep, wfdot.Spec{})
+	stages := buildStages(entries, workitem.StatusDone, false, noStep, wfdot.Spec{})
 	for _, s := range stages {
 		if s.State == "current" {
 			t.Fatalf("a done story with no route must show no pulse: %+v", stages)
 		}
 	}
-	if gate == nil || gate.Accepted != 1 {
-		t.Errorf("gate = %+v, want the done entry gate's ✓1", gate)
+	// The done entry gate's ✓1 reads from the done chip itself.
+	if s := stageNamed(stages, workitem.StatusDone); s.Accepted != 1 {
+		t.Errorf("done chip = %+v, want the entry gate's ✓1", s)
 	}
 }
 
@@ -167,7 +167,7 @@ func TestStagesStillParked(t *testing.T) {
 		evA(ledger.KindReviewReject, "plan", "in_progress", "p2"),
 		ev(ledger.KindStatusTransition, "plan", "blocked"),
 	}
-	stages, _ := buildStages(entries, "blocked", false, noStep, routeSpec())
+	stages := buildStages(entries, "blocked", false, noStep, routeSpec())
 	if got, want := names(stages), []string{"plan", "blocked"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("stages = %v, want %v", got, want)
 	}
@@ -180,31 +180,43 @@ func TestStagesStillParked(t *testing.T) {
 	}
 }
 
-// AC5: the STATUS badge — mid-gate, entry gate, and no rows.
-func TestGateBadgeThreeCases(t *testing.T) {
+// AC2: the outgoing gate a story is waiting on rides the current PROGRESS chip —
+// mid-gate, entry gate only, no rows, and a stale outgoing round.
+func TestPendingGateOnCurrentStage(t *testing.T) {
 	enter := []ledger.Entry{
 		evA(ledger.KindReviewReject, "backlog", "plan", "g0"),
 		evA(ledger.KindReviewAccept, "backlog", "plan", "g1"),
 		ev(ledger.KindStatusTransition, "backlog", "plan"),
 	}
-	// Entry gate: nothing presented since entering plan.
-	_, gate := buildStages(enter, "plan", false, noStep, routeSpec())
-	if gate == nil || gate.Accepted != 1 || gate.Rejected != 1 || gate.Edge != "backlog → plan" {
-		t.Errorf("entry-gate badge = %+v, want ✓1 ✗1 on backlog → plan", gate)
+	// Entry gate only: nothing presented since entering plan. Its rounds are in
+	// the plan chip's totals, not pending.
+	cur := stageNamed(buildStages(enter, "plan", false, noStep, routeSpec()), "plan")
+	if cur.Pending != nil || cur.Accepted != 1 || cur.Rejected != 1 {
+		t.Errorf("entry-only plan chip = %+v, want ✓1 ✗1 totals and no pending gate", cur)
 	}
 	// Mid-gate: an outgoing edge has been presented since entering plan.
 	mid := append(append([]ledger.Entry(nil), enter...),
 		evA(ledger.KindReviewReject, "plan", "in_progress", "g2"),
 		evA(ledger.KindReviewReject, "plan", "in_progress", "g2"),
 		evA(ledger.KindReviewReject, "plan", "in_progress", "g3"))
-	_, gate = buildStages(mid, "plan", false, noStep, routeSpec())
-	if gate == nil || gate.Accepted != 0 || gate.Rejected != 2 || gate.Edge != "plan → in_progress" {
-		t.Errorf("mid-gate badge = %+v, want ✗2 on plan → in_progress", gate)
+	cur = stageNamed(buildStages(mid, "plan", false, noStep, routeSpec()), "plan")
+	if p := cur.Pending; cur.State != "current" || p == nil || p.Accepted != 0 || p.Rejected != 2 || p.Edge != "plan → in_progress" {
+		t.Errorf("mid-gate plan chip = %+v, want current with ✗2 pending on plan → in_progress", cur)
 	}
-	// No review rows → no badge.
+	if cur.Accepted != 1 || cur.Rejected != 1 {
+		t.Errorf("mid-gate plan chip totals = ✓%d ✗%d, want the entry gate's ✓1 ✗1 untouched", cur.Accepted, cur.Rejected)
+	}
+	// Mid-gate on a finished story is not pending: the story reached done.
+	fin := append(append([]ledger.Entry(nil), mid...), ev(ledger.KindStatusTransition, "plan", "done"))
+	for _, s := range buildStages(fin, "done", false, noStep, routeSpec()) {
+		if s.Pending != nil {
+			t.Errorf("finished story chip %+v carries a pending gate", s)
+		}
+	}
+	// No review rows → nothing pending.
 	bare := []ledger.Entry{ev(ledger.KindStatusTransition, "backlog", "plan")}
-	if _, gate = buildStages(bare, "plan", false, noStep, routeSpec()); gate != nil {
-		t.Errorf("no review rows: badge = %+v, want none", gate)
+	if s := stageNamed(buildStages(bare, "plan", false, noStep, routeSpec()), "plan"); s.Pending != nil {
+		t.Errorf("no review rows: pending = %+v, want none", s.Pending)
 	}
 	// An outgoing round from BEFORE the story entered its status is not mid-gate.
 	stale := []ledger.Entry{
@@ -212,26 +224,42 @@ func TestGateBadgeThreeCases(t *testing.T) {
 		evA(ledger.KindReviewAccept, "backlog", "plan", "s2"),
 		ev(ledger.KindStatusTransition, "backlog", "plan"),
 	}
-	if _, gate = buildStages(stale, "plan", false, noStep, routeSpec()); gate == nil || gate.Edge != "backlog → plan" {
-		t.Errorf("stale outgoing round: badge = %+v, want the entry gate", gate)
+	if s := stageNamed(buildStages(stale, "plan", false, noStep, routeSpec()), "plan"); s.Pending != nil {
+		t.Errorf("stale outgoing round: pending = %+v, want none", s.Pending)
 	}
 }
 
 // AC6: a category that resolved no route spine (empty Spec, every depth 0) orders
 // its stages by first entry in the ledger, each once.
 func TestStagesNoSpineOrdersByLedger(t *testing.T) {
-	stages, _ := buildStages(ddbeLedger(), "in_progress", false, noStep, wfdot.Spec{})
+	stages := buildStages(ddbeLedger(), "in_progress", false, noStep, wfdot.Spec{})
 	if got, want := names(stages), []string{"plan", "in_progress"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("stages = %v, want %v", got, want)
 	}
 }
 
+// renderRowCells renders one story row and returns its STATUS and PROGRESS
+// cells (the rendered row's third and fourth <td>).
+func renderRowCells(t *testing.T, status string, stages []stageVM) (statusCell, progressCell string) {
+	t.Helper()
+	it := workitem.Item{ID: "sty_ddbe2669", Kind: workitem.KindStory, Title: "T", Status: status}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "workitemRows", []rowVM{{Item: it, Stages: stages}}); err != nil {
+		t.Fatal(err)
+	}
+	cells := strings.Split(buf.String(), "<td")
+	if len(cells) < 5 {
+		t.Fatalf("rendered row has %d cells, want at least 4:\n%s", len(cells)-1, buf.String())
+	}
+	return cells[3], cells[4]
+}
+
 // AC1: the rendered row carries stage chips and no numbered review-light circle.
 func TestStagesRenderNoNumberedLights(t *testing.T) {
-	stages, gate := buildStages(ddbeLedger(), "in_progress", false, noStep, routeSpec())
+	stages := buildStages(ddbeLedger(), "in_progress", false, noStep, routeSpec())
 	it := workitem.Item{ID: "sty_ddbe2669", Kind: workitem.KindStory, Title: "T", Status: "in_progress"}
 	var buf bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&buf, "workitemRows", []rowVM{{Item: it, Stages: stages, Gate: gate}}); err != nil {
+	if err := tmpl.ExecuteTemplate(&buf, "workitemRows", []rowVM{{Item: it, Stages: stages}}); err != nil {
 		t.Fatal(err)
 	}
 	html := buf.String()
@@ -240,7 +268,7 @@ func TestStagesRenderNoNumberedLights(t *testing.T) {
 	}
 	for _, want := range []string{
 		`class="stage-chip stage-done"`, `class="stage-chip stage-current"`,
-		`<b class="ok">✓1</b>`, `<b class="rej">✗5</b>`, `<b class="blk">1</b>`, `class="gate-badge"`,
+		`<b class="ok">✓1</b>`, `<b class="rej">✗5</b>`, `<b class="blk">1</b>`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered row missing %q:\n%s", want, html)
@@ -285,7 +313,7 @@ func TestStageTitleUsesParkStateName(t *testing.T) {
 		ev(ledger.KindStatusTransition, "on_hold", "plan"),
 	}
 	for name, sp := range map[string]wfdot.Spec{"route": spec, "no route": {}} {
-		stages, _ := buildStages(entries, "plan", false, noStep, sp)
+		stages := buildStages(entries, "plan", false, noStep, sp)
 		plan := stageNamed(stages, "plan")
 		if plan.Parked != 2 || plan.ParkName != "on_hold" {
 			t.Fatalf("%s: plan = %+v, want 2 parks into on_hold", name, plan)
@@ -308,10 +336,10 @@ func TestNeverParkedStageShowsNoBlockedCount(t *testing.T) {
 		evA(ledger.KindReviewAccept, "backlog", "plan", "n2"),
 		ev(ledger.KindStatusTransition, "backlog", "plan"),
 	}
-	stages, gate := buildStages(entries, "plan", false, noStep, routeSpec())
+	stages := buildStages(entries, "plan", false, noStep, routeSpec())
 	it := workitem.Item{ID: "sty_nopark01", Kind: workitem.KindStory, Title: "T", Status: "plan"}
 	var buf bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&buf, "workitemRows", []rowVM{{Item: it, Stages: stages, Gate: gate}}); err != nil {
+	if err := tmpl.ExecuteTemplate(&buf, "workitemRows", []rowVM{{Item: it, Stages: stages}}); err != nil {
 		t.Fatal(err)
 	}
 	html := buf.String()
@@ -324,6 +352,59 @@ func TestNeverParkedStageShowsNoBlockedCount(t *testing.T) {
 				t.Errorf("title %q carries park wording %q", s.Title, word)
 			}
 		}
+	}
+}
+
+// AC1: the STATUS cell holds the status badge alone — no gate badge, no round
+// count — for a done story and for a story mid-gate.
+func TestStatusCellHoldsOnlyTheStatusBadge(t *testing.T) {
+	midLedger := []ledger.Entry{
+		evA(ledger.KindReviewAccept, "backlog", "plan", "m1"),
+		ev(ledger.KindStatusTransition, "backlog", "plan"),
+		evA(ledger.KindReviewReject, "plan", "in_progress", "m2"),
+	}
+	doneLedger := []ledger.Entry{
+		evA(ledger.KindReviewAccept, "backlog", "plan", "d1"),
+		ev(ledger.KindStatusTransition, "backlog", "plan"),
+		evA(ledger.KindReviewAccept, "plan", "done", "d2"),
+		ev(ledger.KindStatusTransition, "plan", "done"),
+	}
+	for name, tc := range map[string]struct {
+		status  string
+		entries []ledger.Entry
+	}{"done": {"done", doneLedger}, "mid-gate": {"plan", midLedger}} {
+		status, _ := renderRowCells(t, tc.status, buildStages(tc.entries, tc.status, false, noStep, routeSpec()))
+		want := `><span class="badge s-` + tc.status + `">` + tc.status + `</span></td>`
+		if strings.TrimSpace(status) != strings.TrimSpace(want) {
+			t.Errorf("%s: status cell = %q, want only %q", name, status, want)
+		}
+		for _, bad := range []string{"gate-badge", "✓", "✗"} {
+			if strings.Contains(status, bad) {
+				t.Errorf("%s: status cell carries %q: %q", name, bad, status)
+			}
+		}
+	}
+}
+
+// AC2: a mid-gate story's PROGRESS cell shows the outgoing gate's rounds on its
+// current chip, with the edge in the tooltip; a done story's cell has no pending mark.
+func TestProgressCellShowsPendingGate(t *testing.T) {
+	mid := []ledger.Entry{
+		evA(ledger.KindReviewAccept, "backlog", "plan", "m1"),
+		ev(ledger.KindStatusTransition, "backlog", "plan"),
+		evA(ledger.KindReviewReject, "plan", "in_progress", "m2"),
+	}
+	_, progress := renderRowCells(t, "plan", buildStages(mid, "plan", false, noStep, routeSpec()))
+	for _, want := range []string{`class="pending-gate"`, `plan → in_progress: 1 rejected round`, `<b class="rej">✗1</b>`} {
+		if !strings.Contains(progress, want) {
+			t.Errorf("mid-gate progress cell missing %q: %q", want, progress)
+		}
+	}
+	_, progress = renderRowCells(t, "done", buildStages(append(mid[:2:2],
+		evA(ledger.KindReviewAccept, "plan", "done", "d2"),
+		ev(ledger.KindStatusTransition, "plan", "done")), "done", false, noStep, routeSpec()))
+	if strings.Contains(progress, "pending-gate") {
+		t.Errorf("done story's progress cell carries a pending gate: %q", progress)
 	}
 }
 
