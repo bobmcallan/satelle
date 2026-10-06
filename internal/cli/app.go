@@ -751,6 +751,12 @@ func requireAgents(a *app.App) (config.EffectiveAgents, error) {
 	return eff, nil
 }
 
+// planeWiringGuard is the dispatch wiring guard for a: built from the process
+// of record (the main tree's configuration), never the invoking worktree's own.
+func planeWiringGuard(a *app.App) agentstep.WiringGuard {
+	return agentstep.WiringGuardFrom(a.PlaneConfig())
+}
+
 // applyAgentGrants binds the loaded agents layer onto the engine: the reviewer's
 // binding (tools/model/env/principles/role), constitution order-zero, and harness.
 // A broken harness value is an error — the configuration executes as defined or
@@ -759,6 +765,12 @@ func applyAgentGrants(rev *agentstep.Engine, a *app.App, agents config.AgentsCon
 	// The per-executable [model_order] feeds config.SelectModel's order tier
 	// (sty_4fde0a50); every engine that resolves a model gets it here.
 	rev.SetModelOrder(agents.OrderFor)
+	// The wiring guard reads the main tree's configuration, never the
+	// invoking worktree's own, so a worktree cannot exempt itself
+	// (sty_f141c77f).
+	if a != nil {
+		rev.SetWiringGuard(planeWiringGuard(a))
+	}
 	rb := agents.ReviewerBinding()
 	// Store the whole binding as the single resolution shape for Invoke
 	// (sty_ba860c8a); scalar caches are synced from it.

@@ -938,16 +938,24 @@ func Load(explicitPath string) (Config, string, error) {
 		return Config{}, path, fmt.Errorf("config: read %s: %w", path, err)
 	}
 	var cfg Config
-	if _, err := toml.Decode(string(b), &cfg); err != nil {
+	md, err := toml.Decode(string(b), &cfg)
+	if err != nil {
 		return Config{}, path, fmt.Errorf("config: parse %s: %w", path, err)
+	}
+	if err := undecodedGovernedKeys(md, path); err != nil {
+		return Config{}, path, err
 	}
 	// Overlay the gitignored per-user satelle.local.toml beside the committed
 	// file; its set fields win. Decoding over the populated cfg leaves absent
 	// fields untouched. An absent overlay is not an error.
 	localPath := filepath.Join(filepath.Dir(path), LocalConfigName)
 	if lb, lerr := os.ReadFile(localPath); lerr == nil {
-		if _, derr := toml.Decode(string(lb), &cfg); derr != nil {
+		lmd, derr := toml.Decode(string(lb), &cfg)
+		if derr != nil {
 			return Config{}, localPath, fmt.Errorf("config: parse %s: %w", localPath, derr)
+		}
+		if err := undecodedGovernedKeys(lmd, localPath); err != nil {
+			return Config{}, localPath, err
 		}
 	} else if !errors.Is(lerr, os.ErrNotExist) {
 		return Config{}, path, fmt.Errorf("config: read %s: %w", localPath, lerr)
@@ -970,6 +978,9 @@ func Load(explicitPath string) (Config, string, error) {
 		return Config{}, path, err
 	}
 	if err := validateWorktree(cfg, path); err != nil {
+		return Config{}, path, err
+	}
+	if err := validateHarness(cfg, path); err != nil {
 		return Config{}, path, err
 	}
 	return cfg, path, nil

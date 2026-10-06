@@ -56,3 +56,46 @@ refused if it is the main tree). It creates no branch and is safe to repeat: an
 already-linked path is reported as `already carried`, and a real file or
 directory found where a link belongs is left as is and reported. To replace a
 hand-copied folder, delete the copy yourself and run the command again.
+
+## A performer in a worktree without its gate wiring
+
+A performer dispatched into a linked worktree runs there, so the harness's edit
+and commit gates must be wired into that tree. A worktree satelle did not
+prepare (a manual `git worktree add`, a tree from before the declaration) may
+lack them, and a performer would then run ungoverned. satelle checks first. The
+check covers a named step performer and a driving-role live session (the
+`satelle story rework` coder); reviewer verdicts are read-only and not covered,
+and the main tree is left to drift detection.
+
+```toml
+[worktree]
+absent_wiring = "fail-open"          # refuse (default) | fail-open
+
+[harness.mybot]
+gate_wiring = [".mybot/hooks.json"]  # tree-relative paths this harness needs
+```
+
+- A dispatch whose harness wiring is absent is **refused** before it starts,
+  naming the harness and each missing path. This is the default.
+- `absent_wiring = "fail-open"` lets it run instead. satelle then says so on every
+  dispatch it permits: an `UNGATED` warning naming the policy, and an
+  `ungated_dispatch` ledger row. An ungated run is visible even when allowed.
+- `gate_wiring` is declared per harness. Embedded defaults cover claude
+  (`.claude/settings.json`), grok (`.grok/hooks/satelle.json`) and pi
+  (`.pi/extensions/satelle.ts`); a repo's table overrides them. A harness with
+  none declared is treated as having absent wiring.
+- A present wiring file is also scanned for the hook wrapper script it calls
+  (`.satelle/hooks/satelle-hook.sh`, comment lines ignored). That script must
+  exist where the call points; a missing one counts as missing wiring.
+- The harness comes from the binding's command: claude, grok, pi, otherwise
+  `unknown`. An unrecognised command is `unknown`, which declares no wiring, so it
+  is refused (naming the executable) unless the repo declares
+  `[harness.unknown] gate_wiring`. pi is recognised here but stays unrecognised
+  for reviewer tool isolation.
+- Both keys are read from the **main tree's** configuration. A policy or wiring
+  declared only in a worktree's own `satelle.toml` changes nothing, so a worktree
+  cannot exempt itself.
+
+Loading refuses an unknown `absent_wiring` value, an unknown key under
+`[worktree]` or `[harness.<name>]`, and a malformed `gate_wiring` entry (the same
+path rules as `include`), naming the field. Nothing is rewritten.

@@ -49,6 +49,22 @@ func fixture(t *testing.T) (main, wt string) {
 	return main, wt
 }
 
+// IsLinked is true for a linked worktree only: not the main tree, and not a
+// directory that is no repository at all.
+func TestIsLinked(t *testing.T) {
+	main, wt := fixture(t)
+	ctx := context.Background()
+	if !IsLinked(ctx, wt) {
+		t.Error("a linked worktree must be linked")
+	}
+	if IsLinked(ctx, main) {
+		t.Error("the main tree is not linked")
+	}
+	if IsLinked(ctx, t.TempDir()) {
+		t.Error("a non-repository is not linked")
+	}
+}
+
 func TestCarryLinksIgnoredPathsAndStaysClean(t *testing.T) {
 	main, wt := fixture(t)
 	rep, err := Carry(context.Background(), main, wt, []string{".toolA", ".env", ".absent"})

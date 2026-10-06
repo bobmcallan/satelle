@@ -525,7 +525,7 @@ const failVisibleMarker = "#satelle-failvisible"
 
 // satelleHookScriptRel is the single parameterized fail-visible PreToolUse
 // wrapper (epic:minimal-harness-footprint): gate|commitgate × claude|grok.
-const satelleHookScriptRel = ".satelle/hooks/satelle-hook.sh"
+const satelleHookScriptRel = config.HookWrapperRel
 
 // legacyHookScriptRel is the pre-consolidation per-harness path (retired).
 func legacyHookScriptRel(harness, sub string) string {

@@ -24,6 +24,32 @@ type WorktreeConfig struct {
 	// the main tree's root. Unset means the matching flag is required.
 	Branch string `toml:"branch"`
 	Path   string `toml:"path"`
+	// AbsentWiring is what a dispatch does when a performer would run in a
+	// linked worktree whose harness gate wiring is absent (sty_f141c77f): refuse
+	// it, or run it visibly ungated. Empty means refuse — an ungated performer
+	// is the worse failure, so fail-open is something a repository opts into.
+	AbsentWiring string `toml:"absent_wiring"`
+}
+
+// The two absent-wiring policies a repository may declare.
+const (
+	AbsentWiringRefuse   = "refuse"
+	AbsentWiringFailOpen = "fail-open"
+)
+
+// HookWrapperRel is the parameterised fail-visible hook wrapper every deployed
+// harness gate and commit-gate command runs. It is part of satelle's own data
+// layout, not provider knowledge, so the wiring guard and the init scaffolding
+// share this one spelling.
+const HookWrapperRel = ".satelle/hooks/satelle-hook.sh"
+
+// AbsentWiringPolicy resolves [worktree] absent_wiring: AbsentWiringRefuse when
+// undeclared, otherwise the declared (validated) value.
+func (c Config) AbsentWiringPolicy() string {
+	if c.Worktree.AbsentWiring == "" {
+		return AbsentWiringRefuse
+	}
+	return c.Worktree.AbsentWiring
 }
 
 // validateWorktree refuses a malformed [worktree] at load time, naming the
@@ -41,24 +67,9 @@ func validateWorktree(cfg Config, path string) error {
 	dataDirs := []string{filepath.Join(root, DefaultDataDir), cfg.ResolveDataDir(root)}
 	seen := map[string]string{}
 	for _, raw := range w.Include {
-		if strings.TrimSpace(raw) == "" {
-			return bad("include", raw, "an empty entry names no path")
-		}
-		if strings.ContainsAny(raw, "\x00\n\r\t*?[]\\") || strings.HasPrefix(raw, "!") || strings.HasPrefix(raw, "#") {
-			return bad("include", raw, "must name a path, not a pattern")
-		}
-		if filepath.IsAbs(raw) || strings.HasPrefix(raw, "/") {
-			return bad("include", raw, "must be relative to the repository root, not absolute")
-		}
-		clean := filepath.Clean(raw)
-		if clean == "." {
-			return bad("include", raw, "names the whole repository")
-		}
-		if !filepath.IsLocal(clean) {
-			return bad("include", raw, "points outside the repository")
-		}
-		if clean == ".git" || strings.HasPrefix(clean, ".git"+string(filepath.Separator)) {
-			return bad("include", raw, "names git's own directory")
+		clean, why := relPathProblem(raw)
+		if why != "" {
+			return bad("include", raw, why)
 		}
 		abs := filepath.Join(root, clean)
 		for _, dd := range dataDirs {
@@ -82,6 +93,12 @@ func validateWorktree(cfg Config, path string) error {
 			return bad(t.key, t.val, "template has no "+WorktreeIDPlaceholder+", so every story would collide")
 		}
 	}
+	switch w.AbsentWiring {
+	case "", AbsentWiringRefuse, AbsentWiringFailOpen:
+	default:
+		return fmt.Errorf("config: %s: [worktree] absent_wiring %q — must be %q or %q",
+			path, w.AbsentWiring, AbsentWiringRefuse, AbsentWiringFailOpen)
+	}
 	if w.Branch != "" {
 		sample := strings.ReplaceAll(w.Branch, WorktreeIDPlaceholder, "sty_00000000")
 		if why := invalidBranchName(sample); why != "" {
@@ -89,6 +106,33 @@ func validateWorktree(cfg Config, path string) error {
 		}
 	}
 	return nil
+}
+
+// relPathProblem applies the rules every declared repo-relative path shares
+// (a [worktree] include entry, a [harness.<name>] gate_wiring entry): it names
+// a path inside the repository, not a pattern. It returns the cleaned path, or
+// why the entry is refused.
+func relPathProblem(raw string) (clean, why string) {
+	if strings.TrimSpace(raw) == "" {
+		return "", "an empty entry names no path"
+	}
+	if strings.ContainsAny(raw, "\x00\n\r\t*?[]\\") || strings.HasPrefix(raw, "!") || strings.HasPrefix(raw, "#") {
+		return "", "must name a path, not a pattern"
+	}
+	if filepath.IsAbs(raw) || strings.HasPrefix(raw, "/") {
+		return "", "must be relative to the repository root, not absolute"
+	}
+	clean = filepath.Clean(raw)
+	if clean == "." {
+		return "", "names the whole repository"
+	}
+	if !filepath.IsLocal(clean) {
+		return "", "points outside the repository"
+	}
+	if clean == ".git" || strings.HasPrefix(clean, ".git"+string(filepath.Separator)) {
+		return "", "names git's own directory"
+	}
+	return clean, ""
 }
 
 // within reports whether p is dir itself or lies under it.

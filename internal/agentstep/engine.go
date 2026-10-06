@@ -254,6 +254,9 @@ type Engine struct {
 	// shows up in `satelle story cost` and the web timeline the same way a
 	// one-shot dispatch does. Nil-safe: an unwired recorder writes no rows.
 	invocationRecorder func(ctx context.Context, itemID string, payload map[string]any) error
+	// wiring is the gate-wiring policy a performer dispatch is held to in a
+	// linked worktree (sty_f141c77f). Nil means unguarded; the CLI always wires it.
+	wiring *WiringGuard
 	// leftoverRule is the repo's [dispatch.leftovers] config (sty_e7aaf8b1) —
 	// what counts as debris a coder session left in the tree. Zero value
 	// (empty Patterns, empty ContentRegex) disables the sweep entirely: the
@@ -1925,6 +1928,11 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if runner == nil {
 		return verb.DispatchResult{}, nil // command "in-loop": the orchestrator performs the step
 	}
+	// A performer that would run in a linked worktree without its gate wiring
+	// is refused before it starts (or visibly allowed under fail-open).
+	if err := g.wiringGuard(ctx, dispatchAgent, binding.CommandTemplate(), item.ID); err != nil {
+		return verb.DispatchResult{}, err
+	}
 	// A dispatched executor starts fresh and reconstructs its context by PULLING the
 	// story, its documents, and the ledger — either via the read-only satelle CLI
 	// (the pull-context call-to-action, sty_47d31300) or via disk reads under the
@@ -2295,6 +2303,13 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 	}
 	if config.IsInLoopCommand(binding.CommandTemplate()) {
 		return nil, fmt.Errorf("satelle: cannot open a live session: [%s] is in-loop — the hook channel remains the orchestrator; set interface=acp or stream to open a live session", name)
+	}
+	// A driving session performs, so it is held to the same wiring guard a
+	// one-shot performer dispatch is; a consult session is read-only.
+	if role == SessionRoleDriving {
+		if err := g.wiringGuard(ctx, name, binding.CommandTemplate(), item.ID); err != nil {
+			return nil, err
+		}
 	}
 	openerFn := g.newOpener
 	if openerFn == nil {

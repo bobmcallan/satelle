@@ -6,6 +6,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 
@@ -27,6 +28,11 @@ type HarnessConfig struct {
 	// ToolContextLimitChars is the character (rune) clip for a non-SessionStart
 	// session-context event. Zero means unset (no tool-event budget).
 	ToolContextLimitChars int `toml:"tool_context_limit_chars"`
+	// GateWiring lists the tree-relative paths this harness needs present in a
+	// tree for its edit and commit gates to govern a performer run there
+	// (sty_f141c77f). Empty means none declared, which a dispatch treats as
+	// absent wiring.
+	GateWiring []string `toml:"gate_wiring"`
 }
 
 const (
@@ -126,6 +132,51 @@ func (c Config) ToolContextLimitChars(harness string) int {
 		return v
 	}
 	return EmbeddedHarness()[name].ToolContextLimitChars
+}
+
+// GateWiring returns the tree-relative paths harness needs for its gates to
+// govern a performer, or nil when none are declared. Resolution is the repo's
+// [harness.<name>] then the embedded [harness.<name>]; it never falls through
+// to [harness.unknown] or another provider — undeclared wiring is absent
+// wiring, not a guess.
+func (c Config) GateWiring(harness string) []string {
+	name := strings.ToLower(strings.TrimSpace(harness))
+	if name == "" {
+		return nil
+	}
+	if v := c.Harness[name].GateWiring; len(v) > 0 {
+		return append([]string(nil), v...)
+	}
+	return append([]string(nil), EmbeddedHarness()[name].GateWiring...)
+}
+
+// validateHarness refuses a malformed [harness.<name>] gate_wiring entry at
+// load time, naming the table and key. It only reads.
+func validateHarness(cfg Config, path string) error {
+	for name, h := range cfg.Harness {
+		for _, raw := range h.GateWiring {
+			if _, why := relPathProblem(raw); why != "" {
+				return fmt.Errorf("config: %s: [harness.%s] gate_wiring entry %q — %s", path, name, raw, why)
+			}
+		}
+	}
+	return nil
+}
+
+// undecodedGovernedKeys names the keys an overlay declares under [worktree] or
+// [harness.<name>] that no field decodes: those two tables are strict, so a
+// misspelled key is refused instead of silently ignored (sty_f141c77f). Other
+// tables keep their existing lenient decode.
+func undecodedGovernedKeys(md toml.MetaData, path string) error {
+	for _, k := range md.Undecoded() {
+		switch {
+		case len(k) >= 2 && k[0] == "worktree":
+			return fmt.Errorf("config: %s: unknown key [worktree] %s", path, strings.Join(k[1:], "."))
+		case len(k) >= 3 && k[0] == "harness":
+			return fmt.Errorf("config: %s: unknown key [harness.%s] %s", path, k[1], strings.Join(k[2:], "."))
+		}
+	}
+	return nil
 }
 
 // MaxContextLimit returns the largest limit among the named harnesses (every
