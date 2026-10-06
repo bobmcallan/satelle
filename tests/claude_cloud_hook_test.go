@@ -2,11 +2,11 @@
 
 package tests
 
-// Offline proof of the Claude cloud-session hook carrier (sty_3b112554): the
+// Offline proof of the Claude cloud-session hook carrier (sty_82cffd60): the
 // tracked .claude/settings.local.json runs scripts/claude-cloud-hook.sh, which
-// is inert locally and, when CLAUDE_CODE_REMOTE=true, bootstraps satelle and
-// delegates the edit and commit gates. No network: a built satelle is put on
-// PATH so the script's install step is skipped.
+// is inert locally and, when CLAUDE_CODE_REMOTE=true, lets a cloud session edit
+// and commit only on the dispatch branch claude/satelle-*. No network and no
+// satelle binary is involved in the hook itself.
 
 import (
 	"encoding/json"
@@ -26,21 +26,17 @@ const (
 type cloudHookEnv struct {
 	repo string
 	home string
-	bin  string
 }
 
 // newCloudHookEnv builds a temporary git clone holding only the tracked carrier
-// files, a temporary HOME, and a bin dir exposing the built satelle as `satelle`.
-func newCloudHookEnv(t *testing.T) cloudHookEnv {
+// files, on branch.
+func newCloudHookEnv(t *testing.T, branch string) cloudHookEnv {
 	t.Helper()
 	root, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := cloudHookEnv{repo: t.TempDir(), home: t.TempDir(), bin: t.TempDir()}
-	if err := os.Symlink(testBin, filepath.Join(e.bin, "satelle")); err != nil {
-		t.Fatal(err)
-	}
+	e := cloudHookEnv{repo: t.TempDir(), home: t.TempDir()}
 	for _, rel := range []string{cloudHookScript, cloudHookSettings} {
 		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
@@ -54,7 +50,7 @@ func newCloudHookEnv(t *testing.T) cloudHookEnv {
 			t.Fatal(err)
 		}
 	}
-	if out, err := exec.Command("git", "-C", e.repo, "init", "-q").CombinedOutput(); err != nil {
+	if out, err := exec.Command("git", "-C", e.repo, "init", "-q", "-b", branch).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v\n%s", err, out)
 	}
 	return e
@@ -70,16 +66,12 @@ func (e cloudHookEnv) hook(t *testing.T, remote bool, mode, stdin string) (strin
 	var env []string
 	for _, kv := range isolatedEnv(t) {
 		if strings.HasPrefix(kv, "CLAUDE_CODE_REMOTE=") || strings.HasPrefix(kv, "CLAUDE_PROJECT_DIR=") ||
-			strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "PATH=") {
+			strings.HasPrefix(kv, "HOME=") {
 			continue
 		}
 		env = append(env, kv)
 	}
-	env = append(env,
-		"HOME="+e.home,
-		"PATH="+e.bin+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"CLAUDE_PROJECT_DIR="+e.repo,
-	)
+	env = append(env, "HOME="+e.home, "CLAUDE_PROJECT_DIR="+e.repo)
 	if remote {
 		env = append(env, "CLAUDE_CODE_REMOTE=true")
 	}
@@ -98,34 +90,33 @@ func (e cloudHookEnv) editPayload() string {
 	return string(b)
 }
 
-func (e cloudHookEnv) commitPayload() string {
+func (e cloudHookEnv) bashPayload(command string) string {
 	b, _ := json.Marshal(map[string]any{
 		"hook_event_name": "PreToolUse",
 		"tool_name":       "Bash",
-		"tool_input":      map[string]any{"command": "git commit -m probe"},
+		"tool_input":      map[string]any{"command": command},
 		"cwd":             e.repo,
 	})
 	return string(b)
 }
 
-// denyReason returns the PreToolUse permissionDecisionReason when out is a deny.
-func denyReason(out string) (string, bool) {
+// denied reports whether out is a PreToolUse deny.
+func denied(out string) bool {
 	var v struct {
 		Hook struct {
 			Decision string `json:"permissionDecision"`
-			Reason   string `json:"permissionDecisionReason"`
 		} `json:"hookSpecificOutput"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &v); err != nil {
-		return "", false
+		return false
 	}
-	return v.Hook.Reason, v.Hook.Decision == "deny"
+	return v.Hook.Decision == "deny"
 }
 
 func TestClaudeCloudHookInertLocally(t *testing.T) {
-	e := newCloudHookEnv(t)
+	e := newCloudHookEnv(t, "main")
 	for _, c := range []struct{ mode, stdin string }{
-		{"session", ""}, {"gate", e.editPayload()}, {"commitgate", e.commitPayload()},
+		{"gate", e.editPayload()}, {"commitgate", e.bashPayload("git commit -m probe")},
 	} {
 		out, err := e.hook(t, false, c.mode, c.stdin)
 		if err != nil || out != "" {
@@ -137,50 +128,88 @@ func TestClaudeCloudHookInertLocally(t *testing.T) {
 	}
 }
 
-func TestClaudeCloudHookBootstrapAndGates(t *testing.T) {
-	e := newCloudHookEnv(t)
-
-	out, err := e.hook(t, true, "session", "")
-	if err != nil {
-		t.Fatalf("session hook: %v\n%s", err, out)
-	}
-	for _, rel := range []string{".satelle", ".claude/settings.json", ".satelle/hooks/satelle-hook.sh"} {
-		if _, err := os.Stat(filepath.Join(e.repo, filepath.FromSlash(rel))); err != nil {
-			t.Fatalf("after cloud SessionStart %s missing: %v\nhook output:\n%s", rel, err, out)
-		}
-	}
-	if !strings.Contains(out, "Always-resident principles") {
-		t.Errorf("SessionStart did not emit `satelle hook context`:\n%s", out)
-	}
-
-	for name, c := range map[string]struct{ mode, stdin string }{
-		"edit":   {"gate", e.editPayload()},
-		"commit": {"commitgate", e.commitPayload()},
+// A cloud session on the dispatch branch may edit and commit; on any other
+// branch both are denied.
+func TestClaudeCloudHookBranchGate(t *testing.T) {
+	for _, c := range []struct {
+		branch  string
+		allowed bool
+	}{
+		{"claude/satelle-sty_ab12cd34-0f1e2d3c", true},
+		{"claude/other", false},
+		{"claude/probe-sty_3b112554-1", false},
+		{"main", false},
 	} {
-		out, err := e.hook(t, true, c.mode, c.stdin)
-		if err != nil {
-			t.Fatalf("%s: %v\n%s", name, err, out)
-		}
-		if reason, ok := denyReason(out); !ok {
-			t.Errorf("%s with no engaged story was not denied: %q", name, out)
-		} else if strings.Contains(reason, "bootstrap absent") {
-			t.Errorf("%s denied by the missing-hook fallback, not satelle's gate: %q", name, reason)
+		e := newCloudHookEnv(t, c.branch)
+		for name, in := range map[string]struct{ mode, stdin string }{
+			"edit":   {"gate", e.editPayload()},
+			"commit": {"commitgate", e.bashPayload("git commit -m done")},
+			"push":   {"commitgate", e.bashPayload("git push origin " + c.branch)},
+		} {
+			out, err := e.hook(t, true, in.mode, in.stdin)
+			if err != nil {
+				t.Fatalf("%s on %s: %v\n%s", name, c.branch, err, out)
+			}
+			if got := denied(out); got == c.allowed {
+				t.Errorf("%s on branch %q: denied=%v, want allowed=%v (out %q)", name, c.branch, got, c.allowed, out)
+			}
 		}
 	}
+}
 
-	// Fail closed: with the delegated hook gone the script itself denies.
-	if err := os.Remove(filepath.Join(e.repo, ".satelle", "hooks", "satelle-hook.sh")); err != nil {
-		t.Fatal(err)
+// git's global options (-C <dir>, -c k=v, --no-pager, a quoted value) between
+// "git" and the subcommand do not hide a commit or push: off the dispatch branch
+// each is denied, on it each is allowed.
+func TestClaudeCloudHookGitGlobalOptions(t *testing.T) {
+	cmds := []string{
+		"git -C /tmp/work commit -m x",
+		"git -C /tmp/work push origin HEAD",
+		"git -c user.name=x commit -m x",
+		"git -c k=v push",
+		"git -C /tmp/work -c k=v commit -m x",
+		"git --no-pager commit -m x",
+		"git --git-dir=/tmp/x/.git push",
+		`git -C "/tmp/my dir" commit -m x`,
+		"git -C '/tmp/my dir' push",
+		"cd /tmp && git -C . commit -am x",
+		"/usr/bin/git -C /tmp/work commit",
 	}
-	for _, c := range []struct{ mode, stdin string }{
-		{"gate", e.editPayload()}, {"commitgate", e.commitPayload()},
+	for _, c := range []struct {
+		branch  string
+		allowed bool
+	}{
+		{"claude/satelle-sty_ab12cd34-0f1e2d3c", true},
+		{"claude/auto-named", false},
 	} {
-		out, err := e.hook(t, true, c.mode, c.stdin)
-		if err != nil {
-			t.Fatalf("%s without hook: %v\n%s", c.mode, err, out)
+		e := newCloudHookEnv(t, c.branch)
+		for _, cmd := range cmds {
+			out, err := e.hook(t, true, "commitgate", e.bashPayload(cmd))
+			if err != nil {
+				t.Fatalf("%q on %s: %v\n%s", cmd, c.branch, err, out)
+			}
+			if got := denied(out); got == c.allowed {
+				t.Errorf("%q on branch %q: denied=%v, want allowed=%v (out %q)", cmd, c.branch, got, c.allowed, out)
+			}
 		}
-		if reason, ok := denyReason(out); !ok || !strings.Contains(reason, "bootstrap absent") {
-			t.Errorf("%s without .satelle/hooks/satelle-hook.sh did not fail closed: %q", c.mode, out)
+	}
+}
+
+// Off the dispatch branch only the edit tools and git commit/push are refused:
+// everything a session needs to reach the branch and verify its work still runs.
+func TestClaudeCloudHookAllowsOtherCommandsOffBranch(t *testing.T) {
+	e := newCloudHookEnv(t, "claude/auto-named")
+	for _, cmd := range []string{
+		"git checkout -b claude/satelle-sty_ab12cd34-0f1e2d3c",
+		"git status --short",
+		"go test ./...",
+		"git log --oneline",
+		"git -C /tmp/work status",
+		"git -c k=v log -1",
+		"git commit-tree HEAD^{tree}",
+	} {
+		out, err := e.hook(t, true, "commitgate", e.bashPayload(cmd))
+		if err != nil || out != "" {
+			t.Errorf("%q off the dispatch branch: err=%v out=%q, want it left alone", cmd, err, out)
 		}
 	}
 }
@@ -219,7 +248,7 @@ func hookMatchers(t *testing.T, path string) map[string]string {
 }
 
 func TestClaudeCloudHookTrackedSettingsConfined(t *testing.T) {
-	e := newCloudHookEnv(t)
+	e := newCloudHookEnv(t, "main")
 	tracked := filepath.Join(e.repo, filepath.FromSlash(cloudHookSettings))
 
 	b, err := os.ReadFile(tracked)
@@ -246,8 +275,8 @@ func TestClaudeCloudHookTrackedSettingsConfined(t *testing.T) {
 		t.Fatal(err)
 	}
 	for ev, groups := range events {
-		if ev != "SessionStart" && ev != "PreToolUse" {
-			t.Errorf("tracked settings wire hook event %q; only SessionStart and PreToolUse are allowed", ev)
+		if ev != "PreToolUse" {
+			t.Errorf("tracked settings wire hook event %q; only PreToolUse is allowed", ev)
 		}
 		for _, g := range groups {
 			for _, h := range g.Hooks {
@@ -257,10 +286,8 @@ func TestClaudeCloudHookTrackedSettingsConfined(t *testing.T) {
 			}
 		}
 	}
-	for _, ev := range []string{"SessionStart", "PreToolUse"} {
-		if len(events[ev]) == 0 {
-			t.Errorf("tracked settings have no %s entry", ev)
-		}
+	if len(events["PreToolUse"]) == 0 {
+		t.Error("tracked settings have no PreToolUse entry")
 	}
 
 	// Matcher drift: what init scaffolds for claude must match the tracked matchers.
@@ -271,5 +298,20 @@ func TestClaudeCloudHookTrackedSettingsConfined(t *testing.T) {
 	}
 	if got := hookMatchers(t, tracked); !reflect.DeepEqual(got, want) {
 		t.Errorf("tracked PreToolUse matchers %v differ from `satelle init` %v", got, want)
+	}
+}
+
+// The script carries no bootstrap and no instruction to open the network to the
+// hosted service: a cloud performer needs neither.
+func TestClaudeCloudHookHasNoBootstrap(t *testing.T) {
+	e := newCloudHookEnv(t, "main")
+	b, err := os.ReadFile(filepath.Join(e.repo, filepath.FromSlash(cloudHookScript)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, banned := range []string{"satelle.dev", "satelle init", "install.sh", "allowlist"} {
+		if strings.Contains(string(b), banned) {
+			t.Errorf("%s still mentions %q", cloudHookScript, banned)
+		}
 	}
 }

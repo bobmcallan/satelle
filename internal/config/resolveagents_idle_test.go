@@ -109,6 +109,18 @@ var overlayExcluded = map[string]string{
 	"profile":           "identity: set by the resolver after the overlay, not overlaid",
 	"context_budget":    "repo-only integer bound: overlayBinding carries it (TestOverlayBindingCarriesBudgets), a catalog profile may not",
 	"turn_budget":       "repo-only integer bound: overlayBinding carries it (TestOverlayBindingCarriesBudgets), a catalog profile may not",
+	"collect_doc":       "repo-only: names the story document this repo's gates read; overlayBinding carries the repo tier's (TestOverlayBindingCarriesCollectDoc), a catalog profile may not",
+}
+
+func TestOverlayBindingCarriesCollectDoc(t *testing.T) {
+	out, src := overlayBinding(AgentBinding{Model: "m"}, nil, AgentBinding{CollectDoc: "ac-evidence"}, "R")
+	if out.CollectDoc != "ac-evidence" || out.Model != "m" || src["collect_doc"] != "R" {
+		t.Fatalf("overlay = %+v %v, want collect_doc carried and the lower tier kept", out, src)
+	}
+	out, _ = overlayBinding(out, src, AgentBinding{}, "U")
+	if out.CollectDoc != "ac-evidence" {
+		t.Errorf("an empty tier must not clear collect_doc: %+v", out)
+	}
 }
 
 func TestOverlayBindingCarriesBudgets(t *testing.T) {

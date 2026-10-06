@@ -99,11 +99,15 @@ const (
 // worker subprocess (epic:agent-dispatch-transport). Orthogonal to role:
 // command = full argv template (default; any CLI including Claude);
 // acp = Agent Client Protocol over stdio (spawn line only; satelle is client);
-// stream = Claude stream-json live session (sty_d244fe1b).
+// stream = Claude stream-json live session (sty_d244fe1b);
+// cloud = the step runs once in a provider cloud session whose pushed branch is
+// collected into the story worktree (sty_82cffd60). Cloud is a performer-only,
+// one-shot transport: it is never a live interface.
 const (
 	InterfaceCommand = "command"
 	InterfaceACP     = "acp"
 	InterfaceStream  = "stream"
+	InterfaceCloud   = "cloud"
 
 	// Dispatch marker environment keys identify an isolated performing step to
 	// harness hooks. They let the dispatched child use its authored tool grant
@@ -157,12 +161,17 @@ const (
 // (true→session, false→none); Principles wins when both are set.
 //
 // Interface selects the dispatch transport (epic:agent-dispatch-transport):
-// "command" (default), "acp", or "stream". Shared grant fields apply to all;
-// spawn shape differs.
+// "command" (default), "acp", "stream" or "cloud". Shared grant fields apply to
+// all; spawn shape differs.
 type AgentBinding struct {
-	// Interface is "command" | "acp" | "stream". Empty means command.
-	// Unknown values fail at load.
+	// Interface is "command" | "acp" | "stream" | "cloud". Empty means command.
+	// Unknown values fail at load; cloud only on a role=agent binding.
 	Interface string `toml:"interface"`
+	// CollectDoc, on an interface=cloud binding, names the story document the
+	// collected tip commit's message body is attached under. Empty attaches
+	// nothing. What the body holds is the step skill's business, never the
+	// binary's. Refused on any other interface.
+	CollectDoc string `toml:"collect_doc"`
 	// Command is the agent's spawn/template string.
 	//   command transport: multi-token full argv template with {system}/{tools}/
 	//     {model}/{settings}/{payload} (each its own argv token). Bare single-token
@@ -378,6 +387,8 @@ func (b AgentBinding) ResolvedInterface() string {
 		return InterfaceACP
 	case InterfaceStream:
 		return InterfaceStream
+	case InterfaceCloud:
+		return InterfaceCloud
 	default:
 		return strings.ToLower(strings.TrimSpace(b.Interface))
 	}
@@ -672,6 +683,17 @@ func GrantsContextChannel(tools string) bool {
 		}
 	}
 	return false
+}
+
+// NeedsContextChannel reports whether a binding allocated to a performing node
+// must grant a pull-context channel. An in-loop binding is performed by the
+// driving session with full context; a cloud binding is handed the whole payload
+// in its prompt and has no satelle CLI or store to pull from. Neither is
+// dispatched as a context-pulling child, so neither needs a grant. This is the
+// one owner of that exemption: the dispatch refusal and `satelle agent validate`
+// both ask it, then judge the grant with GrantsContextChannel.
+func NeedsContextChannel(b AgentBinding) bool {
+	return !IsInLoopCommand(b.CommandTemplate()) && b.ResolvedInterface() != InterfaceCloud
 }
 
 // ShellGrantToken returns the first token in a tool grant that confers shell

@@ -267,6 +267,11 @@ type Engine struct {
 	// the step's own and the allocated binding's. The zero value is "unset" — the
 	// binary ships no number.
 	defaultBudget config.Budget
+	// cloudPoll / cloudDefaultDeadline pace and bound the wait for a cloud
+	// performer's pushed branch (sty_82cffd60): the poll interval, and the
+	// deadline a cloud binding gets when it sets no timeout. Tests shorten both.
+	cloudPoll            time.Duration
+	cloudDefaultDeadline time.Duration
 }
 
 // SetDefaultBudget wires the repo's [defaults] spend bounds.
@@ -325,9 +330,10 @@ func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Engine
 		attempts: defaultReviewerAttempts, backoff: defaultReviewerBackoff,
 		agentTimeout: defaultHardTimeout, idleTimeout: defaultIdleTimeout,
 		busyTimeout: config.DefaultBusyTimeout,
-		newRunner:   lookupRunner,
-		newOpener:   agentcli.OpenerFromBinding,
-		warnOut:     os.Stderr,
+		cloudPoll:   defaultCloudPoll, cloudDefaultDeadline: defaultCloudDeadline,
+		newRunner: lookupRunner,
+		newOpener: agentcli.OpenerFromBinding,
+		warnOut:   os.Stderr,
 	}
 }
 
@@ -1882,6 +1888,11 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if !isNamedPerformer(dispatchAgent, binding) {
 		return verb.DispatchResult{}, nil
 	}
+	// A cloud performer returns a pushed branch, not stdout: it runs and is
+	// collected on its own path, which never reaches the runner below.
+	if binding.ResolvedInterface() == config.InterfaceCloud {
+		return g.dispatchCloud(ctx, item, toStatus, wfName, dispatchAgent, binding, composed, dispatchSkill)
+	}
 	var (
 		outputContract agentartifact.Contract
 		attemptPolicy  agentartifact.AttemptPolicy
@@ -1941,7 +1952,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	// context channel the agent is silently context-starved. Refuse the dispatch
 	// with an actionable fix rather than run a blind agent — the no-silent-fallback
 	// style the engine uses for a missing binding.
-	if !config.GrantsContextChannel(binding.Tools) {
+	if config.NeedsContextChannel(binding) && !config.GrantsContextChannel(binding.Tools) {
 		return verb.DispatchResult{}, fmt.Errorf(
 			"named agent %q cannot perform step %q: its .satelle/workflows/agents.toml [%s] tools grant has no context channel (add `Bash(satelle:*)` for the satelle CLI, or `read_file` for disk reads under ~/.satelle/<repo-key>/stories/<id>/)",
 			dispatchAgent, toStatus, dispatchAgent)
@@ -2303,6 +2314,9 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 	}
 	if config.IsInLoopCommand(binding.CommandTemplate()) {
 		return nil, fmt.Errorf("satelle: cannot open a live session: [%s] is in-loop — the hook channel remains the orchestrator; set interface=acp or stream to open a live session", name)
+	}
+	if binding.ResolvedInterface() == config.InterfaceCloud {
+		return nil, fmt.Errorf("satelle: cannot open a live session: [%s] interface=cloud runs one-shot in a cloud session — rework and consult need interface=acp or stream", name)
 	}
 	// A driving session performs, so it is held to the same wiring guard a
 	// one-shot performer dispatch is; a consult session is read-only.

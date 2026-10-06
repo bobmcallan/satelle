@@ -377,6 +377,21 @@ type DispatchResult struct {
 	// Budget is what the run measured against the repo's spend bounds
 	// (sty_a7914904); nil when the dispatch failed before it produced usage.
 	Budget *BudgetReport `json:"budget,omitempty"`
+	// Cloud is set when the step was performed by a cloud session
+	// (interface=cloud, sty_82cffd60): where it ran and what was collected.
+	Cloud *CloudDispatch `json:"cloud,omitempty"`
+}
+
+// CloudDispatch is what a cloud-performed step records: the session, the branch
+// it pushed and the commit collected into the story worktree. Commit is empty on
+// a dispatch that failed before collection; Doc is the story document the commit
+// body was attached under, empty when the binding collects none.
+type CloudDispatch struct {
+	SessionID string `json:"session_id,omitempty"`
+	URL       string `json:"url,omitempty"`
+	Branch    string `json:"branch"`
+	Commit    string `json:"commit,omitempty"`
+	Doc       string `json:"doc,omitempty"`
 }
 
 // ExecutorDispatcher runs the named isolated agent a workflow node allocates a

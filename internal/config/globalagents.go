@@ -105,6 +105,7 @@ var globalAgentsPolicyKeys = map[string]bool{
 	"parallel":       true,
 	"category":       true,
 	"categories":     true,
+	"collect_doc":    true,
 }
 
 // GlobalAgentsPath returns the path to the machine-wide profile catalog.
@@ -312,15 +313,30 @@ func (g GlobalAgentsConfig) knownProfiles() string {
 func checkBindingInterface(file, section string, b AgentBinding) error {
 	raw := strings.TrimSpace(b.Interface)
 	if raw == "" {
-		return nil
+		return checkCollectDoc(file, section, b)
 	}
 	switch strings.ToLower(raw) {
 	case InterfaceCommand, InterfaceACP, InterfaceStream:
+		return checkCollectDoc(file, section, b)
+	case InterfaceCloud:
+		if ResolvedRole(section, b) != RoleAgent {
+			return fmt.Errorf("%s [%s] interface %q: a cloud session performs a step and returns a branch, so only a role=%s binding may use it (not role=%s)",
+				file, section, raw, RoleAgent, ResolvedRole(section, b))
+		}
 		return nil
 	default:
-		return fmt.Errorf("%s [%s] interface %q: want %q, %q, or %q",
-			file, section, raw, InterfaceCommand, InterfaceACP, InterfaceStream)
+		return fmt.Errorf("%s [%s] interface %q: want %q, %q, %q, or %q",
+			file, section, raw, InterfaceCommand, InterfaceACP, InterfaceStream, InterfaceCloud)
 	}
+}
+
+// checkCollectDoc refuses collect_doc on a binding that is not interface=cloud,
+// where nothing would ever read it.
+func checkCollectDoc(file, section string, b AgentBinding) error {
+	if strings.TrimSpace(b.CollectDoc) != "" {
+		return fmt.Errorf("%s [%s] collect_doc %q: only an interface=%s binding collects a document", file, section, b.CollectDoc, InterfaceCloud)
+	}
+	return nil
 }
 
 // checkBindingIsolation is the shared isolation= check (see checkBindingInterface):

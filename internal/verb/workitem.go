@@ -1907,6 +1907,8 @@ func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
 		// Budget records what the run measured against the repo's spend bounds
 		// (sty_a7914904): the measurement is recorded even when no bound is set.
 		Budget *BudgetReport `json:"budget,omitempty"`
+		// Cloud records a cloud-performed step's session, branch and collected commit.
+		Cloud *CloudDispatch `json:"cloud,omitempty"`
 	}{From: from, To: to, Agent: res.Agent, Skill: res.Skill, Command: res.Command, Model: res.Model,
 		ModelResolved: res.ModelResolved, ModelSource: res.ModelSource, Models: res.Models,
 		TokensIn: res.TokensIn, TokensOut: res.TokensOut, TokensTotal: res.TokensTotal, DurationMs: res.DurationMs,
@@ -1914,7 +1916,7 @@ func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
 		TokensInFresh:  res.TokensInFresh, TokensCacheWrite: res.TokensCacheWrite, TokensCacheRead: res.TokensCacheRead, UsageNote: res.UsageNote,
 		CostUSD: res.CostUSD, CostUnavailableReason: res.CostUnavailableReason,
 		SystemPromptBytes: res.SystemPromptBytes, PayloadBytes: res.PayloadBytes,
-		ArtifactName: res.ArtifactName, ArtifactType: res.ArtifactType, Budget: res.Budget}
+		ArtifactName: res.ArtifactName, ArtifactType: res.ArtifactType, Budget: res.Budget, Cloud: res.Cloud}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil

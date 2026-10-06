@@ -1,16 +1,5 @@
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/claude-cloud-hook.sh\" session",
-            "timeout": 300
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit",

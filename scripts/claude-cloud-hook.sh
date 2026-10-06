@@ -1,83 +1,66 @@
 #!/bin/sh
-# claude-cloud-hook.sh — satelle's gates for a Claude cloud session (sty_3b112554).
+# claude-cloud-hook.sh — the edit and commit guard for a Claude cloud session
+# that performs a satelle step (sty_82cffd60, interface = "cloud").
 #
-# A Claude cloud session clones this repository from GitHub. .claude/ and
-# .satelle/ are gitignored, so the clone carries none of satelle's hook wiring.
-# The one tracked carrier is .claude/settings.local.json, which Claude Code
-# loads at startup; it holds ONLY a top-level "hooks" key (personal keys belong
-# in .claude/settings.json or ~/.claude/settings.json) and every entry runs this
-# script:
+# A Claude cloud session clones this repository from GitHub. The one tracked
+# carrier of hook wiring is .claude/settings.local.json, which Claude Code loads
+# at startup; it holds ONLY a top-level "hooks" key and every entry runs this
+# script. The session has no satelle binary, store or network route to satelle,
+# so the guard is the branch, not a story:
 #
-#   session      SessionStart — install satelle, run `satelle init`, emit
-#                `satelle hook context`; log to /tmp/satelle-cloud-bootstrap.log
-#   gate         PreToolUse (edit tools)  — .satelle/hooks/satelle-hook.sh gate claude
-#   commitgate   PreToolUse (Bash)        — .satelle/hooks/satelle-hook.sh commitgate claude
+#   gate         PreToolUse (edit tools)  — edits only on a claude/satelle-* branch
+#   commitgate   PreToolUse (Bash)        — git commit / git push only on one
+#
+# The dispatch tells the session to create its branch (claude/satelle-<story>-
+# <nonce>) before it edits and to push it once, at the end; satelle collects it
+# into the story worktree and its local gates judge the diff. Any other branch —
+# main, or the auto-named branch a session starts on — may be read, built and
+# tested on, but not edited, committed or pushed from.
 #
 # Every mode exits 0 silently unless CLAUDE_CODE_REMOTE=true, so a local session
-# is untouched (init's own .claude/settings.json gates it). PreToolUse fails
-# closed: if the bootstrap did not produce the hook, the call is denied.
-#
-# This tracked wiring covers SessionStart and PreToolUse only. A cloud session
-# lacks init's Stop (stopcheck) and UserPromptSubmit hooks unless Claude Code
-# hot-loads the .claude/settings.json that `satelle init` writes mid-session.
-#
-# OPERATOR STEPS — only an operator can do these; none is assumed:
-#   1. (optional) Register a claude.ai environment setup script that pre-installs
-#      satelle, so SessionStart finds it on PATH and skips the download.
-#   2. Allowlist satelle.dev in the environment network policy (the default cloud
-#      proxy answers 403, probe sty_3b112554/session_01KDe674AwhRHiL9RAQBuHRK).
-#      Without it: the session has only a fresh local store, so no story created
-#      elsewhere can be engaged there; it runs the embedded-default substrate,
-#      not this repo's authored workflows and principles (.satelle/ is
-#      gitignored); and driving an epic child there requires this step.
-#
-# POSIX sh, no bashisms.
+# is untouched. POSIX sh, no bashisms.
 
 mode="$1"
 
 [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] || exit 0
 
 root="${CLAUDE_PROJECT_DIR:-$(pwd)}"
-log=/tmp/satelle-cloud-bootstrap.log
-PATH="$HOME/.local/bin:$PATH"
-export PATH
+branch=$(git -C "$root" symbolic-ref --short -q HEAD 2>/dev/null)
+
+on_dispatch_branch() {
+  case "$branch" in
+    claude/satelle-*) return 0 ;;
+  esac
+  return 1
+}
+
+deny() {
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
+  exit 0
+}
 
 case "$mode" in
-  session)
-    cd "$root" || exit 0
-    {
-      printf '== %s session start in %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$root"
-      ok=1
-      if command -v satelle >/dev/null 2>&1; then
-        echo "satelle already on PATH: $(command -v satelle)"
-      else
-        echo "installing satelle from the GitHub release"
-        curl -fsSL https://github.com/bobmcallan/satelle/releases/latest/download/install.sh | sh || ok=0
-      fi
-      if [ "$ok" = 1 ]; then
-        satelle init --harness claude --no-workspace || ok=0
-      fi
-      echo "bootstrap ok=$ok"
-      [ "$ok" = 1 ]
-    } >>"$log" 2>&1
-    if [ $? -eq 0 ]; then
-      satelle hook context
-    else
-      echo "satelle cloud bootstrap FAILED — gates are unavailable and edits will be denied. See $log."
-    fi
-    exit 0
-    ;;
-  gate | commitgate)
-    h="$root/.satelle/hooks/satelle-hook.sh"
-    if [ -f "$h" ]; then
-      exec sh "$h" "$mode" claude
-    fi
+  gate)
     cat >/dev/null
-    printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"satelle cloud bootstrap absent — see /tmp/satelle-cloud-bootstrap.log"}}'
+    on_dispatch_branch && exit 0
+    deny "satelle cloud session: edits are only allowed on the dispatch branch claude/satelle-<story>-<nonce> (create it with git checkout -b first); current branch: ${branch:-detached}"
+    ;;
+  commitgate)
+    payload=$(cat)
+    on_dispatch_branch && exit 0
+    # git's global options precede the subcommand: bare flags (-p, --no-pager,
+    # --git-dir=x) and flags that take the next word (-C <dir>, -c k=v), whose
+    # value may be quoted (the payload is JSON, so a double quote arrives as \").
+    arg='(\\?"[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]]+)'
+    opts='(-C|-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env)'
+    pat="(^|[^[:alnum:]_-])git([[:space:]]+${opts}[[:space:]]+${arg}|[[:space:]]+-[^[:space:]]*)*[[:space:]]+(commit|push)([^[:alnum:]_-]|\$)"
+    if printf '%s' "$payload" | grep -Eq "$pat"; then
+      deny "satelle cloud session: git commit and git push are only allowed on the dispatch branch claude/satelle-<story>-<nonce>; current branch: ${branch:-detached}"
+    fi
     exit 0
     ;;
   *)
-    echo "claude-cloud-hook.sh: unknown mode '$mode' (session|gate|commitgate)" >&2
+    echo "claude-cloud-hook.sh: unknown mode '$mode' (gate|commitgate)" >&2
     exit 0
     ;;
 esac

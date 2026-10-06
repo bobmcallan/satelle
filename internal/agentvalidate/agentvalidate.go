@@ -364,6 +364,10 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 			if ad.Agent != "" && ad.Agent != "reviewer" && ad.Agent != "executor" {
 				usedNamed[ad.Agent] = true
 			}
+			if b, found := agents.NamedBinding(ad.Agent); found && b.ResolvedInterface() == config.InterfaceCloud {
+				r.allocProblem(fmt.Sprintf(
+					"workflow %q names agent=%s as an advisor, but [%s] is interface=cloud — a cloud session only performs a step, it cannot advise", doc.Name, ad.Agent, ad.Agent))
+			}
 			advisors = append(advisors, ad)
 		}
 
@@ -379,6 +383,11 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 			}
 			if w.Consult != "reviewer" && w.Consult != "executor" {
 				usedNamed[w.Consult] = true
+			}
+			if nb, ok := agents.NamedBinding(w.Consult); ok && nb.ResolvedInterface() == config.InterfaceCloud {
+				r.allocProblem(fmt.Sprintf(
+					"workflow %q step %q declares rework consult=%s, but [%s] is interface=cloud — the relay opens a live session and a cloud session is one-shot", doc.Name, w.Step, w.Consult, w.Consult))
+				continue
 			}
 			b, found := agents.LiveBinding(w.Consult)
 			if !found {
@@ -855,9 +864,11 @@ func gateAlloc(workflow, node, skill, agent, bindingModel, stepModel string) Gat
 // This is the same condition internal/agentstep refuses at dispatch time —
 // decided by the same config.GrantsContextChannel predicate — surfaced BEFORE a
 // story is engaged rather than mid-transition. An in-loop binding is performed by
-// the driving session with full context and is never dispatched, so it is exempt.
+// the driving session with full context and is never dispatched, so it is exempt;
+// so is a cloud binding, whose prompt carries the whole payload
+// (config.NeedsContextChannel owns both exemptions).
 func performerChannelProblem(workflow, node, section string, b config.AgentBinding) string {
-	if config.IsInLoopCommand(b.CommandTemplate()) || config.GrantsContextChannel(b.Tools) {
+	if !config.NeedsContextChannel(b) || config.GrantsContextChannel(b.Tools) {
 		return ""
 	}
 	return fmt.Sprintf(
@@ -978,11 +989,39 @@ func checkBinding(section string, b config.AgentBinding, vars map[string]string)
 	}
 
 	// Unknown interface (LoadAgents also rejects; keep validate defensive).
-	if iface != config.InterfaceCommand && iface != config.InterfaceACP && iface != config.InterfaceStream {
+	if iface != config.InterfaceCommand && iface != config.InterfaceACP && iface != config.InterfaceStream && iface != config.InterfaceCloud {
 		bindingProblem(fmt.Sprintf(
-			"agents.toml [%s] interface %q: want %q, %q, or %q",
-			section, b.Interface, config.InterfaceCommand, config.InterfaceACP, config.InterfaceStream))
+			"agents.toml [%s] interface %q: want %q, %q, %q, or %q",
+			section, b.Interface, config.InterfaceCommand, config.InterfaceACP, config.InterfaceStream, config.InterfaceCloud))
 		g.Backend = "invalid"
+		return g, problems, warnings, fs
+	}
+
+	// Cloud: one-shot in a provider's cloud session, branch collected locally.
+	// There is no spawn line to preflight; the question is whether the command's
+	// adapter has a cloud runner at all, and whether the role may use one.
+	if iface == config.InterfaceCloud {
+		harness := agentcli.HarnessOf(cmd)
+		g.Backend = "cloud:" + harness
+		if role != config.RoleAgent {
+			bindingProblem(fmt.Sprintf(
+				"agents.toml [%s] interface=cloud with role=%s — only a role=agent performer can run in a cloud session", section, role))
+		}
+		if err := agentcli.CloudLaunchAvailable(harness); err != nil {
+			bindingProblem(fmt.Sprintf("agents.toml [%s] interface=cloud: %v", section, err))
+		}
+		if _, err := b.TimeoutDuration(0); err != nil {
+			bindingProblem(fmt.Sprintf("agents.toml [%s] timeout: %v", section, err))
+		}
+		note := "cloud session; the pushed branch is collected into the story worktree"
+		if b.CollectDoc != "" {
+			note += "; commit body attached as " + b.CollectDoc
+		}
+		if g.Notes == "" {
+			g.Notes = note
+		} else {
+			g.Notes += "; " + note
+		}
 		return g, problems, warnings, fs
 	}
 

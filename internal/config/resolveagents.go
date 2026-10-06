@@ -376,6 +376,7 @@ func overlayBinding(base AgentBinding, baseSrc map[string]string, top AgentBindi
 	setScalar("effort", &out.Effort, top.Effort)
 	setScalar("secondary", &out.Secondary, top.Secondary)
 	setScalar("isolation", &out.Isolation, top.Isolation)
+	setScalar("collect_doc", &out.CollectDoc, top.CollectDoc)
 	// Budgets are the REPO's (never a catalog profile's), so only the top tier
 	// carries them; a non-zero value overlays whatever sits beneath.
 	if top.ContextBudget != 0 {

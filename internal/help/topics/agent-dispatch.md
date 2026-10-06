@@ -1112,17 +1112,77 @@ adapter-named reason on the ledger row, never a silent zero or a Claude default
 (`satelle-agent-agnostic`). `internal/agentcli/capabilities.go` is the source of
 this table and a test checks every cell against the code that produces it.
 
-| adapter | usage | cache split | resolved model | model inheritance | live session | tool trim | offered tools | turn budget |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| claude command | yes | yes | yes | yes | unavailable: interface=command is one-shot only | yes | yes | yes |
-| claude stream | yes | yes | yes | yes | yes | yes | yes | yes |
-| grok command | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | unavailable: interface=command is one-shot only | yes | yes | yes |
-| grok acp | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | yes | unavailable: grok agent stdio has no tool-list flag and reports no permission mode, so a grok acp reviewer runs with a warning that its tools are not held to the grant | unavailable: grok agent stdio neither trims nor reports offered tools | unavailable: grok agent stdio has no turn-limit argv or session option, so a turn_budget is recorded and checked against reported turns only |
+| adapter | usage | cache split | resolved model | model inheritance | live session | tool trim | offered tools | turn budget | cloud launch |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| claude command | yes | yes | yes | yes | unavailable: interface=command is one-shot only | yes | yes | yes | yes |
+| claude stream | yes | yes | yes | yes | yes | yes | yes | yes | yes |
+| grok command | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | unavailable: interface=command is one-shot only | yes | yes | yes | unavailable: grok command has no cloud runner |
+| grok acp | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | yes | unavailable: grok agent stdio has no tool-list flag and reports no permission mode, so a grok acp reviewer runs with a warning that its tools are not held to the grant | unavailable: grok agent stdio neither trims nor reports offered tools | unavailable: grok agent stdio has no turn-limit argv or session option, so a turn_budget is recorded and checked against reported turns only | unavailable: grok acp has no cloud runner |
 
 **turn budget** means the harness itself is handed the repo's `turn_budget`
 through the `{max_turns}` placeholder in the binding's command template and
 stops the run; it is only "yes" for a binding whose template carries the
 placeholder (see *Spend budgets* below).
+
+**cloud launch** means a binding with `interface = "cloud"` can run its step in
+a cloud session of the harness (see *Cloud performer* below). Only claude has a
+runner: it runs `claude --cloud` under a pty provided by `script`, so it needs
+linux or darwin and reports unavailable on any other host when asked to launch.
+A harness with no runner fails the dispatch with `cloud session: unavailable for
+adapter <name>` and launches nothing.
+
+### Cloud performer — `interface = "cloud"` (sty_82cffd60)
+
+A step's performer can run in a provider's cloud session instead of a local
+process. Bind it in `agents.toml`:
+
+```toml
+[coder]
+role        = "agent"
+interface   = "cloud"
+command     = "claude -p {system}"   # names the harness; the cloud runner is its own
+collect_doc = "ac-evidence"          # optional: attach the final commit body under this name
+timeout     = "90m"                  # optional: how long to wait for the branch
+```
+
+`cloud` is a fourth value of `interface`, valid only on a `role = "agent"`
+performer. A reviewer, an advisor or a rework consult cannot use it, and it is
+never a live transport, so `story rework` and consult refuse it by name.
+`collect_doc` is valid only here. A cloud performer is handed the whole payload
+in its prompt and pulls nothing locally, so — like an in-loop binding — it needs
+no `tools` grant and the context-channel check does not apply to it; the example
+above validates as written.
+
+When the step is entered, satelle:
+
+1. refuses unless the story worktree's branch is **pushed** (HEAD equals its
+   upstream) — it never pushes for you — and unless the step's skill declares no
+   `output_*` contract and no `attempt_*` policy, which a cloud session cannot
+   return;
+2. launches the session from the worktree with a prompt of the step's skill, then
+   the `satelle-cloud-performer` skill (embedded; a repo overrides it to say what
+   its sessions leave in the final commit), then a data-only block: the payload
+   (story, criteria, plan, relayed messages), the **branch** and a **nonce**. The
+   session has no satelle CLI, store or token and is never told of the hosted
+   service;
+3. waits for the branch the adapter named (claude: `claude/satelle-<story>-<nonce>`)
+   to carry a tip commit whose message ends with the trailer
+   `Satelle-Nonce: <nonce>`. That trailer is the **only** completion marker. It
+   waits for the binding's `timeout`, or **60 minutes** when none is set;
+4. fetches the branch and fast-forwards the worktree to it, or merges it when
+   that is conflict-free; a merge that is not clean is aborted and the dispatch
+   fails with the session URL, the worktree untouched;
+5. when `collect_doc` is set, attaches the tip commit's message body (the trailer
+   excluded) to the story under that name. What the body holds is the step
+   skill's business; satelle never inspects it. With `collect_doc` unset nothing
+   is attached.
+
+The session id and URL, branch and collected commit go on the ledger
+(`cloud_dispatch`) and the dispatch result; usage is recorded as unavailable,
+naming the adapter. The step's exit gates then judge the collected work locally,
+exactly as for a headless performer. What a repo does to hold the session to its
+branch while it runs (a tracked hook that refuses edits and commits off the
+dispatch branch, for instance) is that repo's own configuration, not satelle's.
 
 ### Reviewer tool isolation
 

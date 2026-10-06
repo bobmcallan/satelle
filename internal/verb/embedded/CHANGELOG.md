@@ -1,3 +1,16 @@
+## [0.0.618] - 2026-10-06
+
+### Added
+- **A step's performer can be a Claude cloud session.** An `agents.toml` performer binding may set `interface = "cloud"` (a fourth value of the dispatch transport, valid only on a `role = "agent"` performer and never a live transport). Entering that step, satelle refuses unless the story worktree's branch is pushed and the step skill declares no `output_*` contract or `attempt_*` policy, then launches the session from the worktree (`claude --cloud` under a pty from `script`) with a prompt of the step rubric, the embedded, repo-overridable `satelle-cloud-performer` skill and a data-only block (payload, branch, nonce). It waits for the adapter-named branch (`claude/satelle-<story>-<nonce>`) to carry a tip commit with the trailer `Satelle-Nonce: <nonce>` (the binding's `timeout`, else 60 minutes), fast-forwards or cleanly merges it into the worktree, and, when the binding sets `collect_doc`, attaches the commit body under that name. Usage is recorded as unavailable with the adapter's name, the ledger carries the session, branch and commit, and the step's local exit gates then judge the work as for any performer. The session needs no hosted access, token, vault or allowlist; the prompt is refused if it would carry the hosted URL or the session-token variable. A non-Claude harness reports cloud launch unavailable (`satelle agent capabilities`, and the dispatch fails by adapter name); `story rework` and consult refuse a cloud binding; a cloud binding needs no context-channel grant. Dogfooded: sty_9eb7eac5's coded step ran in cloud session session_01U66zNWMgWhdqvNDAvQJ1k9 and its local gates accepted it. See `satelle help agent-dispatch`. (sty_82cffd60)
+
+### Changed
+- **This repository's committed cloud hook guards by branch, not by a satelle bootstrap.** `scripts/claude-cloud-hook.sh` (wired by the tracked `.claude/settings.local.json`, now PreToolUse only) lets a cloud session edit, commit and push only on a `claude/satelle-*` dispatch branch and denies edits and `git commit`/`git push` (including `git -C …` and `git -c …` forms) on any other branch; it does nothing outside a cloud session. The SessionStart install/init bootstrap and the operator step to allowlist the hosted service are gone. (sty_82cffd60)
+
+## [serve-v0.0.128] - 2026-10-06
+
+### Changed
+- The serve path carries the `interface = "cloud"` binding config, the cloud-launch capability column, the `satelle-cloud-performer` embedded skill and the updated `agent-dispatch` help topic (sty_82cffd60).
+
 ## [0.0.617] - 2026-10-06
 
 ### Added

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -66,5 +67,57 @@ func TestStorySetDispatchSuccessEnacts(t *testing.T) {
 	json.Unmarshal(call(t, "story-get", map[string]any{"id": it.ID}), &after)
 	if after.Status != "in_progress" {
 		t.Errorf("status = %q, want in_progress", after.Status)
+	}
+}
+
+// A cloud-performed step (sty_82cffd60) is consumed by the transition commit
+// exactly as a local perform result is: the status is enacted, and the
+// agent_invocation row carries the session, branch and collected commit beside
+// the unavailable-usage note.
+func TestStorySetCloudDispatchEnactsAndRecordsSession(t *testing.T) {
+	db := wire(t)
+	cloud := &verb.CloudDispatch{
+		SessionID: "session_X", URL: "https://claude.ai/code/session_X",
+		Branch: "claude/satelle-sty_x-ab12cd34", Commit: "0123456789abcdef", Doc: "ac-evidence",
+	}
+	d := &dispatcherStub{res: verb.DispatchResult{
+		Dispatched: true, Agent: "coder", Command: cloud.URL, Cloud: cloud,
+		UsageNote: verb.UsageNote{UsageUnavailableReason: "claude cloud: usage unavailable", CacheSplitUnavailable: true},
+	}}
+	verb.SetExecutorDispatcher(d)
+	t.Cleanup(func() { verb.SetExecutorDispatcher(nil) })
+
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "backlog"}), &it)
+	if _, err := dispatchRaw(t, "story-set", map[string]any{"id": it.ID, "status": "in_progress"}); err != nil {
+		t.Fatalf("a cloud dispatch result must enact the transition: %v", err)
+	}
+	var after workitem.Item
+	json.Unmarshal(call(t, "story-get", map[string]any{"id": it.ID}), &after)
+	if after.Status != "in_progress" {
+		t.Errorf("status = %q, want in_progress", after.Status)
+	}
+	entries, err := db.Ledger.ListByStory(context.Background(), it.ID, ledger.KindAgentInvocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, e := range entries {
+		var row struct {
+			Agent          string              `json:"agent"`
+			UsageAvailable bool                `json:"usage_available"`
+			Reason         string              `json:"usage_unavailable_reason"`
+			Cloud          *verb.CloudDispatch `json:"cloud"`
+		}
+		if json.Unmarshal(e.Payload, &row) != nil || row.Cloud == nil {
+			continue
+		}
+		found = true
+		if row.Agent != "coder" || row.UsageAvailable || row.Reason != "claude cloud: usage unavailable" || *row.Cloud != *cloud {
+			t.Errorf("agent_invocation row = %+v (cloud %+v), want the cloud record and unavailable usage", row, row.Cloud)
+		}
+	}
+	if !found {
+		t.Fatalf("no agent_invocation row carried the cloud record: %+v", entries)
 	}
 }

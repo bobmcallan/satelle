@@ -62,6 +62,10 @@ type AdapterCapabilities struct {
 	// cannot, the budget is only recorded and checked against the turns the run
 	// reports, and the adapter names why.
 	TurnBudget Capability
+	// CloudLaunch: a session of the repository can be started on the provider's
+	// cloud from a local worktree and told the branch to push (sty_82cffd60).
+	// Where it cannot, the adapter names that it has no cloud runner.
+	CloudLaunch Capability
 }
 
 // CapabilityTable returns the table in the order help prints it.
@@ -69,7 +73,7 @@ func CapabilityTable() []AdapterCapabilities {
 	const notLive = "interface=command is one-shot only"
 	const noGrokHookModel = "grok's hook payload carries no model, so the in-loop tier is unknown"
 	const grokACPNoTrim = "grok agent stdio has no tool-list flag and reports no permission mode, so a grok acp reviewer runs with a warning that its tools are not held to the grant"
-	return []AdapterCapabilities{
+	rows := []AdapterCapabilities{
 		{
 			Adapter: "claude command", Usage: yes(), CacheSplit: yes(), ResolvedModel: yes(),
 			ModelInheritance: yes(), LiveSession: no(notLive), ToolTrim: yes(), OfferedTools: yes(),
@@ -93,6 +97,10 @@ func CapabilityTable() []AdapterCapabilities {
 			TurnBudget:   no(acpTurnBudgetReason),
 		},
 	}
+	for i := range rows {
+		rows[i].CloudLaunch = cloudLaunchCapability(rows[i].Adapter)
+	}
+	return rows
 }
 
 // ReasonForNoModel names why a hook-time in-loop publish found no model to
@@ -119,11 +127,11 @@ func ReasonForNoModel(harness string) string {
 }
 
 // capabilityColumns are the table headings, in cell order.
-var capabilityColumns = []string{"usage", "cache split", "resolved model", "model inheritance", "live session", "tool trim", "offered tools", "turn budget"}
+var capabilityColumns = []string{"usage", "cache split", "resolved model", "model inheritance", "live session", "tool trim", "offered tools", "turn budget", "cloud launch"}
 
 // cells returns the row's cells in capabilityColumns order.
 func (a AdapterCapabilities) cells() []Capability {
-	return []Capability{a.Usage, a.CacheSplit, a.ResolvedModel, a.ModelInheritance, a.LiveSession, a.ToolTrim, a.OfferedTools, a.TurnBudget}
+	return []Capability{a.Usage, a.CacheSplit, a.ResolvedModel, a.ModelInheritance, a.LiveSession, a.ToolTrim, a.OfferedTools, a.TurnBudget, a.CloudLaunch}
 }
 
 // CapabilityTableMarkdown renders CapabilityTable as the markdown table
