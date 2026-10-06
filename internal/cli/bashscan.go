@@ -291,14 +291,22 @@ func gitSubcommands(command string) []string {
 // segmentGitSubcommand returns the first non-option word after git as the
 // subcommand (lowercased).
 func segmentGitSubcommand(words []string) (string, bool) {
+	sub, _, ok := gitInvocation(words)
+	return sub, ok
+}
+
+// gitInvocation parses a git segment's global options. It returns the subcommand
+// (lowercased) and the -C DIR operands that precede it, in order; ok is false when
+// the words are not a git invocation with a subcommand.
+func gitInvocation(words []string) (sub string, dirs []string, ok bool) {
 	if len(words) == 0 {
-		return "", false
+		return "", nil, false
 	}
 	cmd := words[0]
 	base := filepath.Base(cmd)
 	// Strip a trailing path form: /usr/bin/git or ./git
 	if base != "git" && cmd != "git" {
-		return "", false
+		return "", nil, false
 	}
 	i := 1
 	for i < len(words) {
@@ -306,6 +314,9 @@ func segmentGitSubcommand(words []string) (string, bool) {
 		switch {
 		case w == "-C" || w == "-c":
 			// Takes a following argument.
+			if w == "-C" && i+1 < len(words) {
+				dirs = append(dirs, words[i+1])
+			}
 			i += 2
 			continue
 		case strings.HasPrefix(w, "--git-dir=") ||
@@ -331,10 +342,10 @@ func segmentGitSubcommand(words []string) (string, bool) {
 			continue
 		default:
 			// First non-option word is the subcommand.
-			return strings.ToLower(w), true
+			return strings.ToLower(w), dirs, true
 		}
 	}
-	return "", false
+	return "", nil, false
 }
 
 // segmentIsGitCommitOrPush classifies one segment's word list.
@@ -431,47 +442,26 @@ func bashMutationTargets(command, anchor string) (inHome, foreign []string) {
 		foreign = append(foreign, abs)
 	}
 
-	cwd := anchor
-	for _, seg := range segmentWords(tokenizeBash(command)) {
-		words := wordsOnly(seg)
-		if len(words) == 0 {
-			continue
-		}
-		// Redirect targets on the full segment text (spaced and glued forms).
+	forEachSegment(command, anchor, func(sg bashSegment) {
+		seg, words, idx, cwd := sg.Tokens, sg.Words, sg.Idx, sg.Cwd
+		// Redirect targets on the full segment text (spaced and glued forms),
+		// against the cwd in effect before this segment — cd and env-only
+		// segments included.
 		for _, r := range redirectTargets(seg, cwd) {
 			add(r)
 		}
-
+		if len(words) == 0 {
+			return // env assignments only
+		}
 		cmd := filepath.Base(words[0])
-		// Strip env assignments: FOO=bar cmd …
-		idx := 0
-		for idx < len(words) && strings.Contains(words[idx], "=") && !strings.HasPrefix(words[idx], "-") {
-			// Only treat as assignment if it looks like NAME=value before command.
-			eq := strings.IndexByte(words[idx], '=')
-			if eq <= 0 {
-				break
-			}
-			name := words[idx][:eq]
-			if !isShellIdent(name) {
-				break
-			}
-			idx++
-		}
-		if idx >= len(words) {
-			continue
-		}
-		words = words[idx:]
-		cmd = filepath.Base(words[0])
 
-		// cd DIR — update working dir for later relative paths. cd alone is not
-		// a mutation target: `cd /other && satelle story create` must stay
-		// allowed (AC2); `cd /other && rm f` is denied via the rm path under
-		// the updated cwd (AC1).
+		// cd DIR only updates the working dir for later relative paths
+		// (forEachSegment). cd alone is not a mutation target:
+		// `cd /other && satelle story create` must stay allowed (AC2);
+		// `cd /other && rm f` is denied via the rm path under the updated cwd
+		// (AC1).
 		if cmd == "cd" {
-			if len(words) >= 2 {
-				cwd = resolvePath(cwd, words[1])
-			}
-			continue
+			return
 		}
 
 		// satelle foreign verb classification.
@@ -480,7 +470,7 @@ func bashMutationTargets(command, anchor string) (inHome, foreign []string) {
 				add(t)
 			}
 			// Still check -C style if any (satelle has no -C today).
-			continue
+			return
 		}
 
 		// Named dir flags (git -C, make -C, tar -C).
@@ -516,8 +506,79 @@ func bashMutationTargets(command, anchor string) (inHome, foreign []string) {
 				add(p)
 			}
 		}
-	}
+	})
 	return inHome, foreign
+}
+
+// bashSegment is one non-empty command segment as forEachSegment yields it.
+type bashSegment struct {
+	Tokens []bashTok // the segment's raw tokens (redirects, sed scripts)
+	Words  []string  // bare words after any leading NAME=value assignments; empty for an env-only segment
+	Idx    int       // number of assignment words stripped (commandTokens(Tokens, Idx))
+	Cwd    string    // working dir in effect BEFORE this segment's own cd applies
+}
+
+// forEachSegment walks a Bash payload's command segments in order, seeding the
+// working dir at base and updating it after each `cd DIR`. It yields every segment
+// that has a word, cd and env-only segments included, so a caller that must see
+// redirects on them still does. It is the one cd/env-assignment walk shared by the
+// containment classifier (bashMutationTargets) and commit attribution
+// (gitCommandDir), so the two cannot drift.
+func forEachSegment(command, base string, fn func(s bashSegment)) {
+	cwd := base
+	for _, seg := range segmentWords(tokenizeBash(command)) {
+		all := wordsOnly(seg)
+		if len(all) == 0 {
+			continue
+		}
+		// Strip env assignments: FOO=bar cmd …
+		idx := 0
+		for idx < len(all) && strings.Contains(all[idx], "=") && !strings.HasPrefix(all[idx], "-") {
+			// Only treat as assignment if it looks like NAME=value before command.
+			eq := strings.IndexByte(all[idx], '=')
+			if eq <= 0 || !isShellIdent(all[idx][:eq]) {
+				break
+			}
+			idx++
+		}
+		words := all[idx:]
+		fn(bashSegment{Tokens: seg, Words: words, Idx: idx, Cwd: cwd})
+		if len(words) >= 2 && filepath.Base(words[0]) == "cd" {
+			cwd = resolvePath(cwd, words[1])
+		}
+	}
+}
+
+// gitCommandDir is the directory the first `git … commit|push` in a payload runs
+// in when a preceding `cd` or the command's own `-C` moved it, else "". base is the
+// directory the shell starts in. An unmoved command returns "" so the caller keeps
+// attributing it to the tree the hook itself runs in. -C operands chain as git
+// applies them, each relative to the one before.
+func gitCommandDir(command, base string) string {
+	moved, found := false, false
+	dir := ""
+	forEachSegment(command, base, func(s bashSegment) {
+		if found || len(s.Words) == 0 {
+			return
+		}
+		if filepath.Base(s.Words[0]) == "cd" {
+			moved = moved || len(s.Words) >= 2
+			return
+		}
+		sub, dirs, ok := gitInvocation(s.Words)
+		if !ok || (sub != "commit" && sub != "push") {
+			return
+		}
+		found, dir = true, s.Cwd
+		for _, d := range dirs {
+			moved = true
+			dir = resolvePath(dir, d)
+		}
+	})
+	if !found || !moved {
+		return ""
+	}
+	return dir
 }
 
 // bashMutatesTree reports whether a command has an in-anchor mutation target

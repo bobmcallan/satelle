@@ -1,3 +1,8 @@
+## [0.0.610] - 2026-10-06
+
+### Fixed
+- **A git commit or push run from inside one of a session's worktrees is judged against that worktree's seat when the session holds several.** The commit gate derives the command's effective directory (the tree the hook runs in, moved by each preceding `cd`, then by the git segment's own `-C`) and attributes the commit to the seat whose worktree contains it, whatever order the store lists the seats in; it is still refused when that seat is not engaged or its status is not listed in an authored `[gate.command_allow]`. A commit nothing moved, or one whose directory is in no seat's worktree, is attributed exactly as before. The foreign-tree fence still refuses `git -C <other tree>` unless `[gate] allow_outside_tree_edits` is true. (sty_3a9b06fe)
+
 ## [0.0.609] - 2026-10-06
 
 ### Added

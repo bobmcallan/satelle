@@ -117,6 +117,14 @@ func multiSeatRepo(t *testing.T, aStatus, aCategory, bStatus string, aFirst bool
 // the session's own tree (the anchor), same session id.
 func multiSeatTwoElsewhere(t *testing.T) (repo, wtX, wtY string, x, y workitem.Item) {
 	t.Helper()
+	return multiSeatTwoElsewhereOrdered(t, false)
+}
+
+// multiSeatTwoElsewhereOrdered is multiSeatTwoElsewhere with the store order
+// chosen: xFirst lists X (at plan, in wtX) before Y (at in_progress, in wtY).
+// Leases list by seat_key then acquired_at, so the seat acquired last lists last.
+func multiSeatTwoElsewhereOrdered(t *testing.T, xFirst bool) (repo, wtX, wtY string, x, y workitem.Item) {
+	t.Helper()
 	f := multiSeatRepo(t, "plan", "feature", "in_progress", true, "")
 	// Re-seat A out of the anchor tree: the anchor then holds no seat of the session.
 	wtX = t.TempDir()
@@ -138,6 +146,29 @@ func multiSeatTwoElsewhere(t *testing.T) (repo, wtX, wtY string, x, y workitem.I
 	}
 	if err := db.Leases.Confirm(ctx, f.a.ID, "plan"); err != nil {
 		t.Fatal(err)
+	}
+	if xFirst {
+		// Re-seat Y after X so the store lists X first.
+		time.Sleep(5 * time.Millisecond)
+		if err := db.Leases.ForceRelease(ctx, f.b.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
+			ItemID: f.b.ID, Kind: "story", Owner: "alice", State: "in_progress", StorySeat: true,
+			SeatKey: "epic-parent", Worktree: f.wtB, SessionID: multiSeatSession,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Leases.Confirm(ctx, f.b.ID, "in_progress"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	live, err := db.Leases.List(ctx)
+	if err != nil || len(live) != 2 {
+		t.Fatalf("fixture must hold two live seats: %v n=%d", err, len(live))
+	}
+	if first := live[0].ItemID; (first == f.a.ID) != xFirst {
+		t.Fatalf("store lists %s first, xFirst=%v", first, xFirst)
 	}
 	return f.repo, wtX, f.wtB, f.a, f.b
 }
@@ -344,4 +375,124 @@ func TestMultiSeatNoMatchingSeatNamesEverySeat(t *testing.T) {
 	check(t, "commitgate mutation", out, err)
 	out, err = runRootIn(t, multiSeatBash("git commit -m x"), "hook", "commitgate")
 	check(t, "commitgate commit", out, err)
+}
+
+const commitInProgressOnly = "\n[gate.command_allow]\ncommit = [\"in_progress\"]\n"
+
+// sty_3a9b06fe AC1: a commit that a leading cd moved into a worktree is judged
+// against that worktree's seat, whichever order the store lists the seats in.
+func TestMultiSeatCommitFromWorktreeAttributedToItsSeat(t *testing.T) {
+	// The session's own tree holds none of its seats: such a commit used to be
+	// refused as unattributable.
+	bothOrders(t, func(t *testing.T, xFirst bool) {
+		_, _, wtY, _, _ := multiSeatTwoElsewhereOrdered(t, xFirst)
+		if out, err := runRootIn(t, multiSeatBash("cd "+wtY+" && git commit -m x"), "hook", "commitgate"); err != nil {
+			t.Fatalf("the commit runs in Y's worktree, so it is attributed to Y and allowed: %v\n%s", err, out)
+		}
+	})
+	// The anchor's seat is at plan, B's at in_progress: the commit is B's to make.
+	bothOrders(t, func(t *testing.T, aFirst bool) {
+		f := multiSeatRepo(t, "plan", "feature", "in_progress", aFirst, commitInProgressOnly)
+		if out, err := runRootIn(t, multiSeatBash("cd "+f.wtB+" && git commit -m x"), "hook", "commitgate"); err != nil {
+			t.Fatalf("B is at in_progress and holds the worktree the commit runs in: %v\n%s", err, out)
+		}
+	})
+}
+
+// sty_3a9b06fe AC2: the moved commit is decided by the seat's own state under the
+// same rules as any commit — no new check.
+func TestMultiSeatMovedCommitDecidedByItsSeatState(t *testing.T) {
+	bothOrders(t, func(t *testing.T, aFirst bool) {
+		f := multiSeatRepo(t, "in_progress", "feature", "plan", aFirst, commitInProgressOnly)
+		out, err := runRootIn(t, multiSeatBash("cd "+f.wtB+" && git commit -m x"), "hook", "commitgate")
+		if err == nil {
+			t.Fatalf("B is at plan, so the commit in B's worktree must be refused though A would allow it:\n%s", out)
+		}
+		reason := denyReasonOf(t, out)
+		if !strings.Contains(reason, "plan") || !strings.Contains(reason, f.b.ID) {
+			t.Errorf("the refusal must name B's status and seat: %s", reason)
+		}
+		if strings.Contains(reason, f.a.ID) {
+			t.Errorf("the refusal must not be attributed to A (%s): %s", f.a.ID, reason)
+		}
+	})
+	// Without [gate.command_allow] the engaged seat is all a commit needs.
+	bothOrders(t, func(t *testing.T, aFirst bool) {
+		f := multiSeatRepo(t, "in_progress", "feature", "plan", aFirst, "")
+		if out, err := runRootIn(t, multiSeatBash("cd "+f.wtB+" && git commit -m x"), "hook", "commitgate"); err != nil {
+			t.Fatalf("no command_allow: an engaged seat may commit whatever its status: %v\n%s", err, out)
+		}
+	})
+}
+
+// sty_3a9b06fe AC3: a commit nothing moved is attributed to the seat in the hook's
+// own tree (sessionWorktree), not to the anchor's.
+func TestMultiSeatPlainCommitKeepsHookTreeSeat(t *testing.T) {
+	bothOrders(t, func(t *testing.T, aFirst bool) {
+		// The hook runs in B's tree while the anchor (config root) holds A.
+		f := multiSeatRepo(t, "in_progress", "feature", "plan", aFirst, commitInProgressOnly)
+		stubWorktree(t, f.wtB)
+		out, err := runRootIn(t, multiSeatBash("git commit -m x"), "hook", "commitgate")
+		if err == nil {
+			t.Fatalf("the hook runs in B's tree and B is at plan, so the commit is refused:\n%s", out)
+		}
+		if reason := denyReasonOf(t, out); !strings.Contains(reason, f.b.ID) {
+			t.Errorf("the refusal must be B's: %s", reason)
+		}
+	})
+	bothOrders(t, func(t *testing.T, aFirst bool) {
+		f := multiSeatRepo(t, "plan", "feature", "in_progress", aFirst, commitInProgressOnly)
+		stubWorktree(t, f.wtB)
+		if out, err := runRootIn(t, multiSeatBash("git commit -m x"), "hook", "commitgate"); err != nil {
+			t.Fatalf("the hook runs in B's tree and B is at in_progress: %v\n%s", err, out)
+		}
+	})
+}
+
+// sty_3a9b06fe AC3: a command that runs in no seat's tree is refused as before,
+// moved or not.
+func TestMultiSeatCommitInNoSeatTreeStillRefused(t *testing.T) {
+	_, _, _, _, _ = multiSeatTwoElsewhere(t)
+	for _, command := range []string{"git commit -m x", "cd " + t.TempDir() + " && git commit -m x"} {
+		out, err := runRootIn(t, multiSeatBash(command), "hook", "commitgate")
+		if err == nil {
+			t.Fatalf("%q runs in no seat's tree and must be refused:\n%s", command, out)
+		}
+		if reason := denyReasonOf(t, out); !strings.Contains(reason, "none is in the tree this event runs in") {
+			t.Errorf("%q: want the existing unattributed refusal, got: %s", command, reason)
+		}
+	}
+}
+
+// sty_3a9b06fe AC4: the foreign-tree fence is untouched. git -C into another
+// tree is refused by default; with the fence opted out it is attributed to that
+// tree's seat by the same rule as a cd.
+func TestMultiSeatGitDashCFenceAndAttribution(t *testing.T) {
+	bothOrders(t, func(t *testing.T, aFirst bool) {
+		f := multiSeatRepo(t, "plan", "feature", "in_progress", aFirst, commitInProgressOnly)
+		out, err := runRootIn(t, multiSeatBash("git -C "+f.wtB+" commit -m x"), "hook", "commitgate")
+		if err == nil {
+			t.Fatalf("git -C into another tree is still refused by containment:\n%s", out)
+		}
+		if reason := denyReasonOf(t, out); !strings.Contains(reason, "another repo's tree") {
+			t.Errorf("want the containment refusal, got: %s", reason)
+		}
+	})
+	const optOut = "allow_outside_tree_edits = true\n" + commitInProgressOnly
+	bothOrders(t, func(t *testing.T, aFirst bool) {
+		f := multiSeatRepo(t, "plan", "feature", "in_progress", aFirst, optOut)
+		if out, err := runRootIn(t, multiSeatBash("git -C "+f.wtB+" commit -m x"), "hook", "commitgate"); err != nil {
+			t.Fatalf("fence opted out and B (in_progress) holds the tree the commit runs in: %v\n%s", err, out)
+		}
+	})
+	bothOrders(t, func(t *testing.T, aFirst bool) {
+		f := multiSeatRepo(t, "in_progress", "feature", "plan", aFirst, optOut)
+		out, err := runRootIn(t, multiSeatBash("git -C "+f.wtB+" commit -m x"), "hook", "commitgate")
+		if err == nil {
+			t.Fatalf("fence opted out, but B is at plan, so the commit in B's tree is refused:\n%s", out)
+		}
+		if reason := denyReasonOf(t, out); !strings.Contains(reason, f.b.ID) {
+			t.Errorf("the refusal must be B's: %s", reason)
+		}
+	})
 }

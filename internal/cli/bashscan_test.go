@@ -205,6 +205,65 @@ func TestMutationTargets(t *testing.T) {
 	}
 }
 
+// The cd/env-assignment walk is shared with gitCommandDir (sty_3a9b06fe): these
+// pin what it hands the containment classifier — a redirect on a cd or env-only
+// segment resolves against the cwd BEFORE that segment's own cd, and a later
+// segment sees the updated cwd, with env assignments stripped before sed's args.
+func TestBashMutationTargetsSegmentWalk(t *testing.T) {
+	anchor := "/work/repo"
+	cases := []struct {
+		name, command string
+		home, foreign []string
+	}{
+		{"redirect on a cd segment uses the pre-cd cwd", "cd sub > out.txt", []string{"/work/repo/out.txt"}, nil},
+		{"redirect on a second cd uses the first cd's cwd", "cd /other/x; cd y > o.txt", nil, []string{"/other/x/o.txt"}},
+		{"redirect on an env-only segment", "FOO=1 > f", []string{"/work/repo/f"}, nil},
+		{"sed path resolves under the updated cwd", "cd other && sed -i 's/a/b/' f", []string{"/work/repo/other/f"}, nil},
+		{"sed after env assignment keeps its slot", "FOO=1 sed -i 's/a/b/' f", []string{"/work/repo/f"}, nil},
+		{"cd alone is no target", "cd /other && ls", nil, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home, foreign := bashMutationTargets(tc.command, anchor)
+			if strings.Join(home, ",") != strings.Join(tc.home, ",") || strings.Join(foreign, ",") != strings.Join(tc.foreign, ",") {
+				t.Fatalf("home=%v foreign=%v, want home=%v foreign=%v", home, foreign, tc.home, tc.foreign)
+			}
+		})
+	}
+}
+
+func TestGitCommandDir(t *testing.T) {
+	const base = "/base/tree"
+	cases := []struct {
+		command, want string
+	}{
+		{"git commit -m x", ""},
+		{"FOO=1 git push", ""},
+		{"git status", ""},
+		{"cd /a && ls", ""},
+		{"cd /a && git commit -m x", "/a"},
+		{"cd sub && git push", "/base/tree/sub"},
+		{"cd /a; cd b && git push", "/a/b"},
+		{"cd /a && FOO=1 git commit -m x", "/a"},
+		{"git -C /a commit -m x", "/a"},
+		{"git -C rel commit -m x", "/base/tree/rel"},
+		{"cd /a && git -C ../x commit -m x", "/x"},
+		{"git -C /a -C b push", "/a/b"},
+		// -C after the subcommand is commit's own option (reuse message), not a dir.
+		{"git commit -C HEAD", ""},
+		// A later cd does not move a command that already ran.
+		{"git commit -m x && cd /a", ""},
+		// Only the first commit/push is considered.
+		{"cd /a && git commit -m x && cd /b && git push", "/a"},
+		{`echo "cd /a && git commit"`, ""},
+	}
+	for _, tc := range cases {
+		if got := gitCommandDir(tc.command, base); got != tc.want {
+			t.Errorf("gitCommandDir(%q) = %q, want %q", tc.command, got, tc.want)
+		}
+	}
+}
+
 func TestBashMutationTargetsClassifiesInHome(t *testing.T) {
 	anchor := "/work/repo"
 	cases := []struct {

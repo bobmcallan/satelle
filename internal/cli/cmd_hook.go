@@ -253,22 +253,23 @@ workflow body declaring no route blocks the edit (sty_f3d5d4b8).`,
 	commitgate := &cobra.Command{
 		Use:   "commitgate",
 		Short: "PreToolUse Bash gate — foreign-tree containment + engaged-story commit/push",
-		Long: `commitgate is the PreToolUse handler for Bash. It first applies best-effort
-foreign-tree containment (sty_a8454d10 / sty_aadd4d6c): a command whose mutation
-target resolves inside a git working tree whose root differs from the session
-anchor is denied unless [gate] allow_outside_tree_edits is true. Temp/scratchpad/
-non-repo paths are not fenced (the sty_3026d890 stance that closed /tmp is
-superseded). Containment is a reminder and boundary, not a sandbox. Then, for
-git commit/push only, it exits non-zero unless a story is engaged. On deny it
-emits the same harness-specific PreToolUse deny shape and uses the same installed
-wrapper contract as gate: structured deny JSON plus handler exit 0; an exit-2
-fallback would require a non-empty stderr reason (sty_5e4bc568, sty_56cda59c).
-Fails closed on store/listing/workflow-resolution errors (sty_f3d5d4b8).
+		Long: `commitgate is the PreToolUse handler for Bash. It first applies foreign-tree
+containment: a command whose mutation target resolves inside a git working tree
+whose root differs from the session anchor is denied unless [gate]
+allow_outside_tree_edits is true. Temp, scratch and non-repo paths are not
+fenced. Containment is a reminder and boundary, not a sandbox. Then, for git
+commit/push only, it denies unless a story is engaged. A deny is structured JSON
+with handler exit 0. It fails closed on store/listing/workflow-resolution errors
+(sty_f3d5d4b8).
 
-Optional step policy (sty_c21490cc): when [gate.command_allow] is authored in
-satelle.toml (e.g. push = ["release"]), an engaged story must also be at one of
-the listed statuses for that git subcommand. Absent/empty command_allow leaves
-behaviour exactly as above — opt-in, not a satelle default.`,
+Step policy (sty_c21490cc): when [gate.command_allow] is authored (e.g.
+push = ["release"]), the engaged story must also be at a listed status for that
+git subcommand. Absent/empty leaves behaviour as above.
+
+Attribution (sty_3a9b06fe): with seats in several worktrees, a commit/push goes
+to the seat whose worktree holds its effective directory — the hook's tree, moved
+by each preceding cd, then by its own -C. Unmoved, or outside every seat's
+worktree, it goes to the seat in the hook's own tree.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
@@ -319,10 +320,25 @@ behaviour exactly as above — opt-in, not a satelle default.`,
 			}
 			// Heartbeat only for gated commands (after the early return above) —
 			// activity on commit/push keeps the seat alive (sty_3bb1d8be).
-			if !seatResolved {
+			// A commit/push a leading cd or its own -C moved into another tree is
+			// attributed to the seat in that tree (sty_3a9b06fe); an unmoved one
+			// passes no tree, so the hook's own tree decides as it always did. The
+			// shell starts where the hook runs, so that is where a relative cd
+			// resolves from. A seat resolved above judged an anchor-tree mutation;
+			// a moved commit is decided by its own tree's seat, so it resolves
+			// again.
+			commitTree := ""
+			base := sessionWorktree()
+			if base == "" {
+				base = sessionAnchor()
+			}
+			if d := gitCommandDir(command, base); d != "" {
+				commitTree = treeOf(d)
+			}
+			if !seatResolved || commitTree != "" {
 				var err error
 				sid = bindSessionID(raw)
-				info, engaged, live, err = resolveSeats(true, sid)
+				info, engaged, live, err = resolveSeatsFor(true, sid, commitTree)
 				if err != nil {
 					return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
 				}
