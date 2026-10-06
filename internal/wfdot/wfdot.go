@@ -219,6 +219,10 @@ type State struct {
 	// AfterChildren is the obligation every child must have discharged before a
 	// container enters this step (Step.AfterChildren); empty when undeclared.
 	AfterChildren string
+	// RemoteAgent / LocalTags are the step's declared remote placement
+	// (Step.RemoteAgent / Step.LocalTags); empty when undeclared.
+	RemoteAgent string
+	LocalTags   []string
 	// When is a gate node's optional enqueue precondition: the functional-check
 	// skill the engine runs before enqueuing it (RouteGate.When). Empty means the
 	// gate is unconditional.

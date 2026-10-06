@@ -1184,6 +1184,29 @@ exactly as for a headless performer. What a repo does to hold the session to its
 branch while it runs (a tracked hook that refuses edits and commits off the
 dispatch branch, for instance) is that repo's own configuration, not satelle's.
 
+#### Placing an epic's parallel children remote — `remote_agent`, `local_tags` (sty_dde8b6a4)
+
+A spine performer step in `step.toml` may name a cloud binding for the children
+of a parallel epic, and the tags that keep a child local:
+
+```toml
+[coded]
+status       = "in_progress"
+agent        = "coder"              # performs the step by default (local)
+remote_agent = "coder-cloud"        # a role=agent, interface=cloud binding
+local_tags   = ["lane:trunk"]       # a child carrying any of these stays local
+```
+
+`satelle agent validate` accepts the keys when `remote_agent` names a
+`role = "agent"`, `interface = "cloud"` binding (and counts that binding as
+used), and rejects them, naming the step, when the binding is missing or not
+cloud, or when the step is a container step (`waits_on_children` or
+`after_children`). The placement rule, the not-signed-in fallback, the push the
+driver owes before presenting a remote step, the refusal of `story rework` for a
+remote child and the failure behaviour are all in `satelle help epic-wave`
+("Where a child runs"). No embedded workflow declares `remote_agent`, so a repo
+that does not opt in behaves as before.
+
 ### Reviewer tool isolation
 
 A reviewer is read-only, and satelle keeps it inside its `tools` grant whatever

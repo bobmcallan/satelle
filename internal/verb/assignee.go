@@ -25,6 +25,14 @@ func ClearAssigneeResolver() {
 	assigneeResolver = nil
 }
 
+// SignedIn reports whether the session acts as a signed-in hosted user: the
+// assignee resolver yields a PrincipalID. It is deliberately not the actor
+// resolver, which returns the git email for a local-only user — an unwired
+// resolver, or one with no credential, is a local-only session.
+func SignedIn() bool {
+	return assigneeResolver != nil && assigneeResolver() != ""
+}
+
 // engageGuard runs before an engaging move's wrong-holder check. It lets the
 // CLI refuse an engage whose holder cannot yet be named (a session token whose
 // user is not resolved), instead of the empty holder passing refuseWrongHolder

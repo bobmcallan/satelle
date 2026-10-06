@@ -16,6 +16,8 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/placement"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -83,6 +85,31 @@ func resolveReworkPlan(d wfgovern.DerivedRoute, status string) (reworkPlan, erro
 	return rw, nil
 }
 
+// refuseRemoteRework refuses a relay for a child the placement rule places
+// remote (step.toml remote_agent, sty_dde8b6a4). A cloud session is one-shot and
+// cannot be a relay partner, so running the relay would put remote work under a
+// local coder unannounced. The way forward is the edge itself: re-presenting it
+// launches a fresh cloud session carrying the reviewers' findings. The refusal
+// is ledgered. A child placed local — including the not-signed-in fallback —
+// passes: its performer really is local.
+func refuseRemoteRework(ctx context.Context, d wfgovern.DerivedRoute, it workitem.Item) error {
+	step, ok := d.Spec.StateNamed(it.Status)
+	if !ok {
+		return nil
+	}
+	placed := placement.Decide(ctx, it, step)
+	if !placed.Remote {
+		return nil
+	}
+	err := fmt.Errorf(
+		"satelle story rework: %s is placed remote (remote_agent %q on step %q) — a cloud session cannot be a relay partner; re-present the edge instead to dispatch a fresh cloud session with the reviewers' findings",
+		it.ID, placed.Agent, it.Status)
+	_ = verb.AppendTelemetry(ctx, it.ID, "orchestrator", "rework_refused", map[string]any{
+		"placement": placement.Remote, "step": it.Status, "agent": placed.Agent, "reason": err.Error(),
+	})
+	return err
+}
+
 func runStoryRework(cmd *cobra.Command, args []string) error {
 	id := strings.TrimSpace(args[0])
 	// The relay runs a consulting reviewer for minutes: an agent-facing call is
@@ -112,6 +139,9 @@ func runStoryRework(cmd *cobra.Command, args []string) error {
 	}
 	rw, err := resolveReworkPlan(d, it.Status)
 	if err != nil {
+		return err
+	}
+	if err := refuseRemoteRework(ctx, d, it); err != nil {
 		return err
 	}
 	// The budget is CONFIGURATION. --rounds is an operator saying "spend less

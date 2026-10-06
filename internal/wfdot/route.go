@@ -121,6 +121,13 @@ type Step struct {
 	// like any other; the binary only gates entry and the seat. Empty means the
 	// step has no such wait.
 	AfterChildren string
+	// RemoteAgent names the agents.toml cloud binding that performs this step for
+	// a child placed remote, and LocalTags are the tags that pin a child to the
+	// step's own Agent (sty_dde8b6a4). Declarations only: the placement rule is
+	// mechanism, the tag vocabulary is the repo's. Empty RemoteAgent means the
+	// step never runs remotely.
+	RemoteAgent string
+	LocalTags   []string
 	// ContextBudget / TurnBudget are this step's own spend bounds for its
 	// performer (sty_a7914904): input tokens and model turns. They override the
 	// allocated binding's, which override [defaults]. Zero means unset — nothing
@@ -461,6 +468,8 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			WaitsOnChildren: st.WaitsOnChildren,
 			Schedule:        st.Schedule,
 			AfterChildren:   st.AfterChildren,
+			RemoteAgent:     st.RemoteAgent,
+			LocalTags:       st.LocalTags,
 		})
 	}
 
