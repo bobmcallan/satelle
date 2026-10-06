@@ -204,15 +204,16 @@ type costVM struct {
 	// usage — its own section, separate from the dispatch figures above, same
 	// as the CLI's DRIVER SESSION table (sty_81caa41b, sty_b8542a3a AC4/AC7).
 	// costview.FormatDriverRows is the ONE formatting pass both surfaces call,
-	// so they cannot render different strings for the same ledger data. Nil/
-	// empty when the story has no driver_usage rows.
+	// so they cannot render different strings for the same ledger data. The web
+	// table omits the dollar column the CLI still prints. Nil/empty when the
+	// story has no driver_usage rows.
 	DriverRows  []costview.DriverRowView
 	DriverTotal *costview.DriverRowView
 	// DriverLine says whether the driving session's own spend is in the figures
 	// above; DriverAdapters is, per adapter, what its driver rows measured and
-	// what they could not. FamilyDriverLine/FamilyAdapters say the same of the
-	// family total. All come from costview's coverage formatters, as the CLI's do
-	// (sty_ca1ca935).
+	// what they could not measure for usage (no dollar-cost clause).
+	// FamilyDriverLine/FamilyAdapters say the same of the family total. All come
+	// from costview's coverage formatters, as the CLI's do (sty_ca1ca935).
 	DriverLine       string
 	DriverAdapters   []string
 	FamilyDriverLine string
