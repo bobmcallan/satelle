@@ -91,7 +91,7 @@ func TestBuildStagesRefusedAttemptIsABadgeNotAStage(t *testing.T) {
 		t.Fatalf("stages = %+v, want exactly the current plan stage", stages)
 	}
 	if gate == nil || gate.Rejected != 1 || gate.Accepted != 0 {
-		t.Errorf("gate = %+v, want the refused round as ✗1", gate)
+		t.Errorf("gate = %+v, want the refused round as 1 rejected", gate)
 	}
 }
 
@@ -158,7 +158,7 @@ func TestMirrorRowShowsRunningDispatchBesideEarlierRefusal(t *testing.T) {
 		t.Fatalf("Stages = %+v, want the current plan stage (the live plan step)", row.Stages)
 	}
 	if row.Gate == nil || row.Gate.Rejected != 1 {
-		t.Fatalf("Gate = %+v, want ✗1 (the refused attempt)", row.Gate)
+		t.Fatalf("Gate = %+v, want 1 rejected (the refused attempt)", row.Gate)
 	}
 
 	ms := NewMirror(s)
@@ -172,7 +172,7 @@ func TestMirrorRowShowsRunningDispatchBesideEarlierRefusal(t *testing.T) {
 	resp.Body.Close()
 	body := string(raw)
 	for _, want := range []string{
-		`<b class="rej">✗1</b>`,
+		`<b class="rej">1</b>`,
 		`class="stage-chip stage-current"`,
 		`class="dispatch-indicator"`,
 		"coder (sonnet) running",

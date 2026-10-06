@@ -204,6 +204,10 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		if !waitCond(t, ctx, "!!"+stage, 8*time.Second) {
 			t.Error("a transitioned story should show a progress stage, pushed live")
 		}
+		// Counts are told apart by colour alone — the chip carries no tick or cross glyph.
+		if !waitCond(t, ctx, "!/[✓✗]/.test("+stage+".textContent)", 3*time.Second) {
+			t.Error("a progress stage chip should show no ✓ or ✗ glyph")
+		}
 	})
 
 	t.Run("tab_switching", func(t *testing.T) {

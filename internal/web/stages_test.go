@@ -67,7 +67,7 @@ func checkDdbe(t *testing.T, spec wfdot.Spec) {
 		t.Errorf("in_progress = %+v, want current with 1 accepted", cur)
 	}
 	if gate == nil || gate.Accepted != 1 || gate.Rejected != 0 {
-		t.Errorf("gate = %+v, want the entry gate's ✓1", gate)
+		t.Errorf("gate = %+v, want the entry gate's 1 accepted", gate)
 	}
 }
 
@@ -153,7 +153,7 @@ func TestStagesDoneWithoutRouteNeverPulses(t *testing.T) {
 		}
 	}
 	if gate == nil || gate.Accepted != 1 {
-		t.Errorf("gate = %+v, want the done entry gate's ✓1", gate)
+		t.Errorf("gate = %+v, want the done entry gate's 1 accepted", gate)
 	}
 }
 
@@ -189,7 +189,7 @@ func TestGateBadgeThreeCases(t *testing.T) {
 	// Entry gate: nothing presented since entering plan.
 	_, gate := buildStages(enter, "plan", false, noStep, routeSpec())
 	if gate == nil || gate.Accepted != 1 || gate.Rejected != 1 || gate.Edge != "backlog → plan" {
-		t.Errorf("entry-gate badge = %+v, want ✓1 ✗1 on backlog → plan", gate)
+		t.Errorf("entry-gate badge = %+v, want 1 accepted 1 rejected on backlog → plan", gate)
 	}
 	// Mid-gate: an outgoing edge has been presented since entering plan.
 	mid := append(append([]ledger.Entry(nil), enter...),
@@ -198,7 +198,7 @@ func TestGateBadgeThreeCases(t *testing.T) {
 		evA(ledger.KindReviewReject, "plan", "in_progress", "g3"))
 	_, gate = buildStages(mid, "plan", false, noStep, routeSpec())
 	if gate == nil || gate.Accepted != 0 || gate.Rejected != 2 || gate.Edge != "plan → in_progress" {
-		t.Errorf("mid-gate badge = %+v, want ✗2 on plan → in_progress", gate)
+		t.Errorf("mid-gate badge = %+v, want 2 rejected on plan → in_progress", gate)
 	}
 	// No review rows → no badge.
 	bare := []ledger.Entry{ev(ledger.KindStatusTransition, "backlog", "plan")}
@@ -239,10 +239,24 @@ func TestStagesRenderNoNumberedLights(t *testing.T) {
 	}
 	for _, want := range []string{
 		`class="stage-chip stage-done"`, `class="stage-chip stage-current"`,
-		`<b class="ok">✓1</b>`, `<b class="rej">✗5</b>`, "parked 1", `class="gate-badge"`,
+		`<b class="ok">1</b>`, `<b class="rej">5</b>`, "parked 1", `class="gate-badge"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered row missing %q:\n%s", want, html)
+		}
+	}
+	// The counts are told apart by colour class alone — no tick or cross glyph in
+	// any stage chip or gate badge — and each carries its meaning as a title.
+	if strings.ContainsAny(html, "✓✗") {
+		t.Errorf("a stage chip or gate badge rendered a tick/cross glyph:\n%s", html)
+	}
+	for _, want := range []string{
+		`class="stage-chip stage-done" title="`,
+		`class="gate-badge" title="`,
+		"accepted round", "rejected rounds",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("rendered row missing title text %q:\n%s", want, html)
 		}
 	}
 	if !strings.Contains(html, "1 accepted round, 5 rejected rounds, parked once") {
