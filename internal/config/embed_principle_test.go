@@ -41,6 +41,9 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 		// Product default (sty_2d5e583a): configurations are warned, never blocked,
 		// and no rule is undocumented.
 		"satelle-configure-freely",
+		// Product default (sty_9fa1023d): agents do not write documentation that
+		// restates code or configuration, or that nothing reads.
+		"satelle-no-drifting-docs",
 	} {
 		if body, ok := embedded[name]; !ok {
 			t.Errorf("operating principle %q must be embedded, but is missing from EmbeddedDefaults()", name)
@@ -48,18 +51,26 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 			t.Errorf("embedded principle %q has empty body", name)
 		}
 	}
-	// Surviving pin: cross-repo-containment must be session-resident — residency
-	// is a curated product choice for this principle, not a general corpus rule.
-	if body := embedded["satelle-cross-repo-containment"]; body != "" {
-		tagsLine := ""
-		for _, line := range strings.Split(body, "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), "tags:") {
-				tagsLine = line
-				break
+	// Surviving pin: these must be session-resident — residency is a curated
+	// product choice per principle, not a general corpus rule.
+	for _, name := range []string{"satelle-cross-repo-containment", "satelle-no-drifting-docs"} {
+		if body := embedded[name]; body != "" {
+			tagsLine := ""
+			for _, line := range strings.Split(body, "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), "tags:") {
+					tagsLine = line
+					break
+				}
+			}
+			if !strings.Contains(tagsLine, "principles:session") {
+				t.Errorf("%s must carry principles:session", name)
 			}
 		}
-		if !strings.Contains(tagsLine, "principles:session") {
-			t.Error("satelle-cross-repo-containment must carry principles:session")
+	}
+	// Negative guard: the shipped text must name nothing specific to this repo.
+	for _, term := range []string{"agent-roster", "agents.toml", "sty_"} {
+		if strings.Contains(embedded["satelle-no-drifting-docs"], term) {
+			t.Errorf("satelle-no-drifting-docs must not name %q (repo-specific)", term)
 		}
 	}
 	// Surviving pin: residency taxonomy is ondemand (defines the axis, does not

@@ -422,6 +422,28 @@ func assertDiagnosisInlined(t *testing.T, harness, event, wantEvent, content str
 	}
 }
 
+// The shipped no-drifting-docs principle reaches SessionStart from the embedded
+// overlay alone: sessionContextRepo seeds no principles, so nothing on disk can
+// satisfy it. It is either inlined or listed under OMITTED with its read command
+// when the byte ceiling pushes it out (sty_9fa1023d).
+func TestHookContext_NoDriftingDocsPrincipleDelivered(t *testing.T) {
+	const name = "satelle-no-drifting-docs"
+	repo := sessionContextRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, config.DefaultDataDir, "principles"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	event, content, _, emitted := runContext(t, "claude", []byte(`{"hook_event_name":"SessionStart","session_id":"sess-nodrift-claude"}`))
+	if !emitted {
+		t.Fatal("claude emitted nothing")
+	}
+	if event != "SessionStart" {
+		t.Errorf("hookEventName = %q, want SessionStart", event)
+	}
+	if !strings.Contains(content, "### "+name) && !strings.Contains(content, "`satelle doc get principles "+name+"`") {
+		t.Errorf("additionalContext neither inlines %s nor lists it with its read command:\n%s", name, content)
+	}
+}
+
 // The authored session principle is inlined — name and a body phrase the index
 // line cannot carry — on each harness's real delivery channel.
 func TestHookContext_DiagnosisPrincipleInlined(t *testing.T) {
