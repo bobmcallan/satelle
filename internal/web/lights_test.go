@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/docindex"
@@ -161,19 +162,39 @@ func ev(kind, from, to string) ledger.Entry {
 	return ledger.Entry{Kind: kind, Payload: p}
 }
 
-func states(ls []reviewLight) []string {
-	out := make([]string, len(ls))
-	for i, l := range ls {
-		out[i] = l.State
+// evA is ev with the attempt id the gate run stamped on the row.
+func evA(kind, from, to, attempt string) ledger.Entry {
+	p, _ := json.Marshal(map[string]string{"from": from, "to": to, "attempt": attempt})
+	return ledger.Entry{Kind: kind, Payload: p}
+}
+
+// names lists the stage names in order.
+func names(ss []stageVM) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = s.Name
 	}
 	return out
+}
+
+// stageNamed returns the stage called name, or the zero value.
+func stageNamed(ss []stageVM, name string) stageVM {
+	for _, s := range ss {
+		if s.Name == name {
+			return s
+		}
+	}
+	return stageVM{}
 }
 
 // testStep is the step resolver for the simple test lifecycle
 // open(0) → in_progress(1) → done(2).
 func testStep(s string) int { return map[string]int{"in_progress": 1, "done": 2}[s] }
 
-func TestBuildLights(t *testing.T) {
+// noStep is a category that resolved no route spine: every state is depth 0.
+func noStep(string) int { return 0 }
+
+func TestBuildStagesRetriedEdgeKeepsItsRounds(t *testing.T) {
 	chrono := []ledger.Entry{
 		ev(ledger.KindReviewAccept, "open", "in_progress"),
 		ev(ledger.KindStatusTransition, "open", "in_progress"),
@@ -181,26 +202,26 @@ func TestBuildLights(t *testing.T) {
 		ev(ledger.KindReviewAccept, "in_progress", "done"),
 		ev(ledger.KindStatusTransition, "in_progress", "done"),
 	}
-	lights := buildLights(chrono, "done", false, testStep)
-	// stage 1 passes; stage 2 fails then passes (shared index); no current (done).
-	got := states(lights)
-	want := []string{"pass", "fail", "pass"}
-	if len(got) != len(want) {
-		t.Fatalf("lights = %v, want %v", got, want)
+	stages, _ := buildStages(chrono, "done", false, testStep, wfdot.Spec{})
+	if got, want := names(stages), []string{"in_progress", "done"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("stages = %v, want %v", got, want)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("light[%d] = %s, want %s", i, got[i], want[i])
+	if s := stages[0]; s.Accepted != 1 || s.Rejected != 0 {
+		t.Errorf("in_progress = %+v, want 1 accepted 0 rejected", s)
+	}
+	if s := stages[1]; s.Accepted != 1 || s.Rejected != 1 {
+		t.Errorf("done = %+v, want 1 accepted 1 rejected (the reject is not turned green by the later accept)", s)
+	}
+	for _, s := range stages {
+		if s.State == "current" {
+			t.Errorf("a done story must show no current stage: %+v", stages)
 		}
-	}
-	if lights[0].Index != 1 || lights[1].Index != 2 || lights[2].Index != 2 {
-		t.Errorf("indices = %d,%d,%d, want 1,2,2", lights[0].Index, lights[1].Index, lights[2].Index)
 	}
 }
 
-// A skill-level accept whose nested seats include a dissent is not a fail.
-// buildLights keys off the row kind; it does not re-vote the seats.
-func TestBuildLightsPanelDissentIsNotAFail(t *testing.T) {
+// A skill-level accept whose nested seats include a dissent is not a rejection:
+// buildStages keys off the row kind; it does not re-vote the seats.
+func TestBuildStagesPanelDissentIsNotARejection(t *testing.T) {
 	p, err := json.Marshal(map[string]any{
 		"from": "open", "to": "in_progress", "accept": true,
 		"seats": []map[string]any{
@@ -211,186 +232,142 @@ func TestBuildLightsPanelDissentIsNotAFail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lights := buildLights([]ledger.Entry{{Kind: ledger.KindReviewAccept, Payload: p}}, "in_progress", false, testStep)
-	for _, l := range lights {
-		if l.State == "fail" {
-			t.Fatalf("nested dissent must not paint a fail light: %v", lights)
-		}
+	entries := []ledger.Entry{
+		{Kind: ledger.KindReviewAccept, Payload: p},
+		ev(ledger.KindStatusTransition, "open", "in_progress"),
+	}
+	stages, gate := buildStages(entries, "in_progress", false, testStep, wfdot.Spec{})
+	if s := stageNamed(stages, "in_progress"); s.Rejected != 0 || s.Accepted != 1 {
+		t.Fatalf("nested dissent must not count as a rejected round: %+v", stages)
+	}
+	if gate == nil || gate.Rejected != 0 || gate.Accepted != 1 {
+		t.Fatalf("gate = %+v, want 1 accepted", gate)
 	}
 }
 
-func TestBuildLightsCurrentStepPulses(t *testing.T) {
-	// A story sitting IN step 1 (open→in_progress is step 1, its current state):
-	// the entry transition is NOT a completed light — step 1 itself pulses.
+func TestBuildStagesCurrentStagePulses(t *testing.T) {
+	// A story sitting IN in_progress: the entry is the current stage, not a
+	// completed one.
 	chrono := []ledger.Entry{
 		ev(ledger.KindReviewAccept, "open", "in_progress"),
 		ev(ledger.KindStatusTransition, "open", "in_progress"),
 	}
-	lights := buildLights(chrono, "in_progress", false, testStep)
-	if len(lights) != 1 || lights[0].State != "current" || lights[0].Index != 1 {
-		t.Fatalf("want [current(1)], got %v", lights)
+	stages, _ := buildStages(chrono, "in_progress", false, testStep, wfdot.Spec{})
+	if len(stages) != 1 || stages[0].State != "current" || stages[0].Name != "in_progress" {
+		t.Fatalf("want [current in_progress], got %+v", stages)
 	}
 }
 
-func TestBuildLightsPriorStepDoneCurrentPulses(t *testing.T) {
-	// Step 1 (open→in_progress) done, then the NON-terminal step 2 (in_progress→
-	// release) is the current state: step 1 stays a completed pass, step 2 pulses —
-	// no duplicate step-2 done light for the entry into release.
-	step := func(s string) int { return map[string]int{"in_progress": 1, "release": 2}[s] }
+func TestBuildStagesPriorStageDoneCurrentPulses(t *testing.T) {
 	chrono := []ledger.Entry{
 		ev(ledger.KindReviewAccept, "open", "in_progress"),
 		ev(ledger.KindStatusTransition, "open", "in_progress"),
 		ev(ledger.KindReviewAccept, "in_progress", "release"),
 		ev(ledger.KindStatusTransition, "in_progress", "release"),
 	}
-	lights := buildLights(chrono, "release", false, step)
-	if len(lights) != 2 {
-		t.Fatalf("want 2 lights, got %v", lights)
+	stages, _ := buildStages(chrono, "release", false, noStep, wfdot.Spec{})
+	if got, want := names(stages), []string{"in_progress", "release"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("stages = %v, want %v", got, want)
 	}
-	if lights[0].State != "pass" || lights[0].Index != 1 {
-		t.Errorf("light[0] = %v, want step 1 pass", lights[0])
-	}
-	if lights[1].State != "current" || lights[1].Index != 2 {
-		t.Errorf("light[1] = %v, want current step 2", lights[1])
+	if stages[0].State != "done" || stages[1].State != "current" {
+		t.Errorf("states = %s,%s, want done,current", stages[0].State, stages[1].State)
 	}
 }
 
-func TestBuildLightsUngatedIsFired(t *testing.T) {
-	// A status_transition with no matching review_accept is an ungated checkpoint.
+func TestBuildStagesUngatedStageHasNoCounts(t *testing.T) {
 	chrono := []ledger.Entry{ev(ledger.KindStatusTransition, "open", "in_progress")}
-	lights := buildLights(chrono, "done", false, testStep)
-	if len(lights) != 1 || lights[0].State != "fired" {
-		t.Fatalf("want [fired], got %v", lights)
+	stages, gate := buildStages(chrono, "done", false, testStep, wfdot.Spec{})
+	if len(stages) != 2 || stages[0].Name != "in_progress" || stages[0].Accepted+stages[0].Rejected != 0 {
+		t.Fatalf("want an ungated in_progress stage with no counts, got %+v", stages)
+	}
+	if gate != nil {
+		t.Errorf("no review rows must show no badge, got %+v", gate)
 	}
 }
 
-func TestBuildLightsUnstartedHasNoCurrent(t *testing.T) {
-	// A freshly-created item at its initial state (no transitions) shows NO lights
-	// — the initial backlog/open state is not step 1, so no phantom current ①.
-	if got := buildLights(nil, "open", false, testStep); len(got) != 0 {
-		t.Fatalf("unstarted open item should have no lights, got %v", got)
+func TestBuildStagesUnstartedHasNoStage(t *testing.T) {
+	// A freshly-created item at its initial state shows nothing — no phantom stage.
+	if got, g := buildStages(nil, "open", false, testStep, wfdot.Spec{}); len(got) != 0 || g != nil {
+		t.Fatalf("unstarted open item should have no stages, got %v %v", got, g)
 	}
-	if got := buildLights([]ledger.Entry{ev(ledger.KindStoryCreated, "", "")}, "open", false, testStep); len(got) != 0 {
-		t.Fatalf("created-only item should have no lights, got %v", got)
+	if got, _ := buildStages([]ledger.Entry{ev(ledger.KindStoryCreated, "", "")}, "open", false, testStep, wfdot.Spec{}); len(got) != 0 {
+		t.Fatalf("created-only item should have no stages, got %v", got)
 	}
 }
 
-// TestBuildLightsStartingLight: pre-transition seat (seatHeld && entered==false)
-// emits a single pulsing "starting" light at the start state's spine depth 0;
-// without a seat the strip stays blank; once a transition lands the 0 light is
-// gone and the real step-1 current takes over (sty_e1314fe3 ACs 1–4).
-func TestBuildLightsStartingLight(t *testing.T) {
-	// projStep omits backlog (mirrors spineDepths) so stepOf("backlog")==0 by map-miss —
-	// the start-state spine depth, not a hardcoded literal (AC2).
-	// AC1/AC2: seat held, zero transitions → single current light numbered 0 titled starting.
-	lights := buildLights(nil, "backlog", true, projStep)
-	if len(lights) != 1 {
-		t.Fatalf("seat-held unentered: want 1 light, got %v", lights)
+// TestBuildStagesStartingSeat: a pre-transition seat emits a single current chip
+// titled "starting"; without a seat the cell stays blank; once a transition lands
+// the real current stage takes over (sty_e1314fe3).
+func TestBuildStagesStartingSeat(t *testing.T) {
+	stages, _ := buildStages(nil, "backlog", true, projStep, wfdot.Spec{})
+	if len(stages) != 1 || stages[0].State != "current" || stages[0].Title != "starting" {
+		t.Fatalf("seat-held unentered = %+v, want one current chip titled starting", stages)
 	}
-	if lights[0].Index != 0 || lights[0].State != "current" || lights[0].Title != "starting" {
-		t.Errorf("seat-held unentered light = %+v, want Index=0 State=current Title=starting", lights[0])
+	if got, _ := buildStages(nil, "backlog", false, projStep, wfdot.Spec{}); len(got) != 0 {
+		t.Fatalf("no-seat backlog: want no stages, got %v", got)
 	}
-
-	// AC4: no live seat → blank strip (no phantom 0).
-	if got := buildLights(nil, "backlog", false, projStep); len(got) != 0 {
-		t.Fatalf("no-seat backlog: want 0 lights, got %v", got)
-	}
-
-	// AC3: first transition lands (entered==true) even with seat still held →
-	// real step-1 current only; no lingering 0, no double light.
 	chrono := []ledger.Entry{
 		ev(ledger.KindReviewAccept, "backlog", "in_progress"),
 		ev(ledger.KindStatusTransition, "backlog", "in_progress"),
 	}
-	lights = buildLights(chrono, "in_progress", true, projStep)
-	if len(lights) != 1 {
-		t.Fatalf("entered with seat: want 1 light, got %v", lights)
-	}
-	if lights[0].Index != 1 || lights[0].State != "current" {
-		t.Errorf("entered with seat light = %+v, want Index=1 State=current (no lingering 0)", lights[0])
-	}
-	for _, l := range lights {
-		if l.Index == 0 || l.Title == "starting" {
-			t.Errorf("0/starting light must not linger once entered: %+v", l)
-		}
+	stages, _ = buildStages(chrono, "in_progress", true, projStep, wfdot.Spec{})
+	if len(stages) != 1 || stages[0].Name != "in_progress" || stages[0].Title == "starting" {
+		t.Fatalf("entered with seat: want one real in_progress stage, got %+v", stages)
 	}
 }
 
-func TestBuildLightsNumbersByStepNotAppearance(t *testing.T) {
-	// A ledger where a higher step is recorded before a lower one (e.g. a
-	// corrected history). Numbers must follow the workflow STEP, not the order the
-	// edge first appears — appearance order would give 1,2 here.
+func TestBuildStagesFollowTheLedgerNotRouteDepth(t *testing.T) {
+	// A ledger recording a deeper step before a shallower one: stages are in the
+	// order they were reached, never re-sorted by depth.
 	chrono := []ledger.Entry{
-		ev(ledger.KindStatusTransition, "in_progress", "done"), // step 2
-		ev(ledger.KindStatusTransition, "open", "in_progress"), // step 1
+		ev(ledger.KindStatusTransition, "in_progress", "done"),
+		ev(ledger.KindStatusTransition, "open", "in_progress"),
 	}
-	lights := buildLights(chrono, "done", false, testStep)
-	if len(lights) != 2 || lights[0].Index != 2 || lights[1].Index != 1 {
-		t.Fatalf("want indices [2,1] by step, got %v", lights)
+	stages, _ := buildStages(chrono, "done", false, testStep, wfdot.Spec{})
+	if got, want := names(stages), []string{"done", "in_progress"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("stages = %v, want %v", got, want)
 	}
 }
 
-func TestBuildLightsRetriedStepSharesNumber(t *testing.T) {
-	// Step 1 (open→in_progress) rejected then accepted, and step 1 is the CURRENT
-	// state: the reject stays a red step-1 light, but the accepted entry transition
-	// into the current state is not a completed light — step 1 itself pulses.
+func TestBuildStagesRetriedStageKeepsOneEntry(t *testing.T) {
 	chrono := []ledger.Entry{
 		ev(ledger.KindReviewReject, "open", "in_progress"),
 		ev(ledger.KindReviewAccept, "open", "in_progress"),
 		ev(ledger.KindStatusTransition, "open", "in_progress"),
 	}
-	lights := buildLights(chrono, "in_progress", false, testStep)
-	if len(lights) != 2 {
-		t.Fatalf("want 2 lights, got %v", lights)
+	stages, _ := buildStages(chrono, "in_progress", false, testStep, wfdot.Spec{})
+	if len(stages) != 1 {
+		t.Fatalf("want one stage, got %+v", stages)
 	}
-	if lights[0].Index != 1 || lights[0].State != "fail" {
-		t.Errorf("light[0] = %v, want step 1 fail", lights[0])
-	}
-	if lights[1].State != "current" || lights[1].Index != 1 {
-		t.Errorf("light[1] = %v, want current step 1", lights[1])
+	if s := stages[0]; s.State != "current" || s.Accepted != 1 || s.Rejected != 1 {
+		t.Errorf("stage = %+v, want current with 1 accepted 1 rejected", s)
 	}
 }
 
-func TestBuildLightsChronologicalAscending(t *testing.T) {
-	// A forward run with a retry in the middle must render in ascending step
-	// order, each light +0/+1 from the previous (the retried step repeats in
-	// place): 1,2,3,3,4,5 — never reversed.
-	step := func(s string) int { return map[string]int{"b": 1, "c": 2, "d": 3, "e": 4, "f": 5}[s] }
+func TestBuildStagesChronologicalWithRetry(t *testing.T) {
 	chrono := []ledger.Entry{
-		ev(ledger.KindStatusTransition, "a", "b"), // 1
-		ev(ledger.KindStatusTransition, "b", "c"), // 2
-		ev(ledger.KindReviewReject, "c", "d"),     // 3 (fail)
-		ev(ledger.KindStatusTransition, "c", "d"), // 3 (retry)
-		ev(ledger.KindStatusTransition, "d", "e"), // 4
-		ev(ledger.KindStatusTransition, "e", "f"), // 5
+		ev(ledger.KindStatusTransition, "a", "b"),
+		ev(ledger.KindStatusTransition, "b", "c"),
+		ev(ledger.KindReviewReject, "c", "d"),
+		ev(ledger.KindStatusTransition, "c", "d"),
+		ev(ledger.KindStatusTransition, "d", "e"),
+		ev(ledger.KindStatusTransition, "e", "f"),
 	}
-	lights := buildLights(chrono, "f", false, step) // non-terminal → step 5 (its current state) pulses
-	var idx []int
-	for _, l := range lights {
-		idx = append(idx, l.Index)
+	stages, _ := buildStages(chrono, "f", false, noStep, wfdot.Spec{})
+	if got, want := names(stages), []string{"b", "c", "d", "e", "f"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("stages = %v, want %v", got, want)
 	}
-	// Completed steps 1,2,3,3,4 then the current (pulsing) light LAST at step 5 — the
-	// entry into "f" (step 5) is the current light, not an extra completed step.
-	want := []int{1, 2, 3, 3, 4, 5}
-	if len(idx) != len(want) {
-		t.Fatalf("indices = %v, want %v", idx, want)
+	if stageNamed(stages, "d").Rejected != 1 {
+		t.Errorf("d = %+v, want 1 rejected", stageNamed(stages, "d"))
 	}
-	for i := range want {
-		if idx[i] != want[i] {
-			t.Errorf("light[%d] index = %d, want %d (order %v)", i, idx[i], want[i], idx)
-		}
-		if i > 0 && idx[i]-idx[i-1] > 1 {
-			t.Errorf("non-sequential lights at %d: %d after %d (must be +0 or +1)", i, idx[i], idx[i-1])
-		}
-	}
-	if last := lights[len(lights)-1]; last.State != "current" {
-		t.Errorf("the last light must be the current stage, got %q", last.State)
+	if last := stages[len(stages)-1]; last.State != "current" {
+		t.Errorf("the last stage must be the current one, got %q", last.State)
 	}
 }
 
-// TestSpineDepths: the progress column numbers a story by its distance along the
-// spine, and an off-route exit (a park state) is never numbered. Stated as a Spec
-// literal now that the DOT front end is retired (sty_d953c5d8).
+// TestSpineDepths: the route's spine numbering still drives which statuses are
+// on-route, and an off-route exit (a park state) is never numbered. Stated as a
+// Spec literal now that the DOT front end is retired (sty_d953c5d8).
 func TestSpineDepths(t *testing.T) {
 	spec := wfdot.Spec{
 		States: []wfdot.State{
@@ -423,7 +400,7 @@ func TestSpineDepths(t *testing.T) {
 
 // projSpec mirrors the project workflow: executor steps (in_progress, commit_push)
 // are NOT gated, a recovery back-edge (committed→in_progress) and a cancelled
-// detour exist. The OLD gated-only numbering rendered a clean run as 1 2 1 2.
+// detour exist.
 func projSpec() wfdot.Spec {
 	return wfdot.Spec{
 		States: []wfdot.State{
@@ -462,122 +439,83 @@ func TestSpineDepthsProjectShape(t *testing.T) {
 // projStep is the step resolver derived from the project spine.
 func projStep(s string) int { return spineDepths(projSpec())[s] }
 
-func TestBuildLightsFullSpineSequential(t *testing.T) {
-	// A clean project run must render 1→2→3→4, NOT the old 1 2 1 2.
+func TestBuildStagesFullSpineEachOnce(t *testing.T) {
 	chrono := []ledger.Entry{
 		ev(ledger.KindReviewAccept, "backlog", "in_progress"),
-		ev(ledger.KindStatusTransition, "backlog", "in_progress"),     // step 1
-		ev(ledger.KindStatusTransition, "in_progress", "commit_push"), // step 2 (ungated)
-		ev(ledger.KindReviewAccept, "commit_push", "committed"),
-		ev(ledger.KindStatusTransition, "commit_push", "committed"), // step 3
-		ev(ledger.KindReviewAccept, "committed", "done"),
-		ev(ledger.KindStatusTransition, "committed", "done"), // step 4
-	}
-	lights := buildLights(chrono, "done", false, projStep)
-	var idx []int
-	for _, l := range lights {
-		idx = append(idx, l.Index)
-	}
-	want := []int{1, 2, 3, 4}
-	if len(idx) != len(want) {
-		t.Fatalf("indices = %v, want %v", idx, want)
-	}
-	for i := range want {
-		if idx[i] != want[i] {
-			t.Fatalf("indices = %v, want %v (was 1 2 1 2 before the fix)", idx, want)
-		}
-	}
-}
-
-func TestBuildLightsRecoveryRepeatSharesSteps(t *testing.T) {
-	// A done-review reject (step 4 fail) then the committed→in_progress recovery
-	// loop: the repeated steps SHARE their numbers (1,2,3 again), and the repeat
-	// only follows the fail.
-	chrono := []ledger.Entry{
 		ev(ledger.KindStatusTransition, "backlog", "in_progress"),
-		ev(ledger.KindStatusTransition, "in_progress", "commit_push"),
-		ev(ledger.KindReviewAccept, "commit_push", "committed"),
-		ev(ledger.KindStatusTransition, "commit_push", "committed"),
-		ev(ledger.KindReviewReject, "committed", "done"),            // fail at step 4
-		ev(ledger.KindStatusTransition, "committed", "in_progress"), // recovery → step 1
 		ev(ledger.KindStatusTransition, "in_progress", "commit_push"),
 		ev(ledger.KindReviewAccept, "commit_push", "committed"),
 		ev(ledger.KindStatusTransition, "commit_push", "committed"),
 		ev(ledger.KindReviewAccept, "committed", "done"),
 		ev(ledger.KindStatusTransition, "committed", "done"),
 	}
-	lights := buildLights(chrono, "done", false, projStep)
-	var idx []int
-	for _, l := range lights {
-		idx = append(idx, l.Index)
-	}
-	want := []int{1, 2, 3, 4, 1, 2, 3, 4}
-	if len(idx) != len(want) {
-		t.Fatalf("indices = %v, want %v", idx, want)
-	}
-	for i := range want {
-		if idx[i] != want[i] {
-			t.Fatalf("indices = %v, want %v", idx, want)
-		}
-	}
-	if lights[3].State != "fail" {
-		t.Errorf("step 4 (first done attempt) should be a fail, got %q", lights[3].State)
+	stages, _ := buildStages(chrono, "done", false, projStep, wfdot.Spec{})
+	if got, want := names(stages), []string{"in_progress", "commit_push", "committed", "done"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("stages = %v, want %v", got, want)
 	}
 }
 
-// TestBuildLightsRejectPastCurrentOrdered reproduces the reported bug
-// (sty_909b4de7): a story AT step 4 (release) that attempted the step-4→step-5
-// edge (release→done) and was rejected must render the current light (step 4)
-// BEFORE the step-5 fail — 1,2,3,4(current),5(fail) — never 1,2,3,5,4. The
-// current light sits at its STARTING edge (the transition INTO release), so the
-// higher-numbered reject that followed renders after it.
-func TestBuildLightsRejectPastCurrentOrdered(t *testing.T) {
-	step := func(s string) int { return map[string]int{"b": 1, "c": 2, "d": 3, "release": 4, "done": 5}[s] }
+// A done-review reject, then the committed→in_progress recovery loop: a real
+// backward edge. The stages that repeat keep ONE entry each, in the order first
+// reached, and the reject stays a red round on done.
+func TestBuildStagesRecoveryLoopListsEachStageOnce(t *testing.T) {
 	chrono := []ledger.Entry{
-		ev(ledger.KindStatusTransition, "a", "b"),       // 1
-		ev(ledger.KindStatusTransition, "b", "c"),       // 2
-		ev(ledger.KindStatusTransition, "c", "d"),       // 3
-		ev(ledger.KindStatusTransition, "d", "release"), // 4 -> current (starting edge)
-		ev(ledger.KindReviewReject, "release", "done"),  // 5 fail (rejected outgoing edge)
+		ev(ledger.KindStatusTransition, "backlog", "in_progress"),
+		ev(ledger.KindStatusTransition, "in_progress", "commit_push"),
+		ev(ledger.KindReviewAccept, "commit_push", "committed"),
+		ev(ledger.KindStatusTransition, "commit_push", "committed"),
+		ev(ledger.KindReviewReject, "committed", "done"),
+		ev(ledger.KindStatusTransition, "committed", "in_progress"),
+		ev(ledger.KindStatusTransition, "in_progress", "commit_push"),
+		ev(ledger.KindReviewAccept, "commit_push", "committed"),
+		ev(ledger.KindStatusTransition, "commit_push", "committed"),
+		ev(ledger.KindReviewAccept, "committed", "done"),
+		ev(ledger.KindStatusTransition, "committed", "done"),
 	}
-	lights := buildLights(chrono, "release", false, step)
-	var idx []int
-	for _, l := range lights {
-		idx = append(idx, l.Index)
+	stages, _ := buildStages(chrono, "done", false, projStep, wfdot.Spec{})
+	if got, want := names(stages), []string{"in_progress", "commit_push", "committed", "done"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("stages = %v, want %v (no stage twice)", got, want)
 	}
-	want := []int{1, 2, 3, 4, 5}
-	if len(idx) != len(want) {
-		t.Fatalf("indices = %v, want %v", idx, want)
+	if s := stageNamed(stages, "done"); s.Rejected != 1 || s.Accepted != 1 {
+		t.Errorf("done = %+v, want 1 accepted 1 rejected", s)
 	}
-	for i := range want {
-		if idx[i] != want[i] {
-			t.Fatalf("indices = %v, want %v (bug renders 1 2 3 5 4)", idx, want)
-		}
-		if i > 0 && idx[i] < idx[i-1] {
-			t.Errorf("light[%d] index %d < previous %d — strip not ascending", i, idx[i], idx[i-1])
-		}
-	}
-	if lights[3].State != "current" || lights[3].Index != 4 {
-		t.Errorf("light[3] = %v, want current at step 4", lights[3])
-	}
-	if lights[4].State != "fail" || lights[4].Index != 5 {
-		t.Errorf("light[4] = %v, want fail at step 5", lights[4])
+	if s := stageNamed(stages, "committed"); s.Accepted != 2 {
+		t.Errorf("committed = %+v, want 2 accepted rounds across the loop", s)
 	}
 }
 
-// TestBuildLightsStatusAloneCurrentStage: empty ledger + on-spine status yields a
-// non-empty current light independent of seat (sty_c5065d05 AC4/AC5).
-func TestBuildLightsStatusAloneCurrentStage(t *testing.T) {
-	noSeat := buildLights(nil, "in_progress", false, projStep)
-	withSeat := buildLights(nil, "in_progress", true, projStep)
-	if len(noSeat) != 1 || noSeat[0].State != "current" {
-		t.Fatalf("status alone: want one current light, got %v", noSeat)
+// A story AT release that attempted release→done and was rejected: release is
+// the current stage, done has not been reached, and the rejected outgoing round
+// shows on the STATUS badge — never as a stage.
+func TestBuildStagesRejectPastCurrentIsABadge(t *testing.T) {
+	chrono := []ledger.Entry{
+		ev(ledger.KindStatusTransition, "a", "b"),
+		ev(ledger.KindStatusTransition, "b", "c"),
+		ev(ledger.KindStatusTransition, "c", "d"),
+		ev(ledger.KindStatusTransition, "d", "release"),
+		ev(ledger.KindReviewReject, "release", "done"),
 	}
-	if noSeat[0].Index != 1 {
-		t.Errorf("in_progress step index = %d, want 1", noSeat[0].Index)
+	stages, gate := buildStages(chrono, "release", false, noStep, wfdot.Spec{})
+	if got, want := names(stages), []string{"b", "c", "d", "release"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("stages = %v, want %v", got, want)
 	}
-	// Seat must not flicker: same strip with or without seat.
-	if len(withSeat) != len(noSeat) || withSeat[0].Index != noSeat[0].Index || withSeat[0].State != noSeat[0].State {
+	if last := stages[3]; last.State != "current" || last.Rejected != 0 {
+		t.Errorf("release = %+v, want current with no counts of its own", last)
+	}
+	if gate == nil || gate.Rejected != 1 || gate.Accepted != 0 {
+		t.Errorf("gate = %+v, want 1 rejected (the outgoing release→done round)", gate)
+	}
+}
+
+// TestBuildStagesStatusAloneCurrentStage: empty ledger + on-route status yields a
+// current stage independent of seat (sty_c5065d05 AC4/AC5).
+func TestBuildStagesStatusAloneCurrentStage(t *testing.T) {
+	noSeat, _ := buildStages(nil, "in_progress", false, projStep, wfdot.Spec{})
+	withSeat, _ := buildStages(nil, "in_progress", true, projStep, wfdot.Spec{})
+	if len(noSeat) != 1 || noSeat[0].State != "current" || noSeat[0].Name != "in_progress" {
+		t.Fatalf("status alone: want one current in_progress, got %v", noSeat)
+	}
+	if !reflect.DeepEqual(noSeat, withSeat) {
 		t.Fatalf("seat flicker: noSeat=%v withSeat=%v", noSeat, withSeat)
 	}
 }

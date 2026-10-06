@@ -35,6 +35,11 @@ const (
 	StatusBacklog    = "backlog"
 	StatusInProgress = "in_progress"
 	StatusDone       = "done"
+	// StatusCancelled is the lifecycle name of a cancelled item, the counterpart
+	// of StatusDone for readers that must tell a finished item from a live one.
+	// It is only the lifecycle fallback for when no route resolves; a resolved
+	// route's own cancel state is authored in its declaration of done.
+	StatusCancelled = "cancelled"
 	// Park/resume state names are authored in the route's declaration of done
 	// (`park:` / `cancel:`) — never hardcoded here (config-over-code).
 )

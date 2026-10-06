@@ -71,6 +71,42 @@ func TestCountRejectedRoundsResetsAfterAnyTransition(t *testing.T) {
 	}
 }
 
+// A round is one attempt however many reviewers reject in it, and a round with
+// any reject is rejected even when another reviewer accepted in it.
+func TestEdgeRoundsCountsAttemptsNotRows(t *testing.T) {
+	entries := []Entry{
+		reject("att_1", "intent", "a"), reject("att_1", "plan", "b"), accept("att_1", "arch"),
+		reject("att_2", "intent", "a"),
+		accept("att_3", "intent"), accept("att_3", "plan"),
+	}
+	if a, r := EdgeRounds(entries, "backlog", "plan"); a != 1 || r != 2 {
+		t.Fatalf("EdgeRounds = %d accepted / %d rejected, want 1 / 2", a, r)
+	}
+	if a, r := EdgeRounds(entries, "plan", "in_progress"); a != 0 || r != 0 {
+		t.Fatalf("another edge = %d/%d, want 0/0", a, r)
+	}
+}
+
+// Legacy rows carry no attempt id: each counts as a round of its own.
+func TestEdgeRoundsLegacyRowsCountIndividually(t *testing.T) {
+	entries := []Entry{reject("", "intent", "a"), reject("", "plan", "b"), accept("", "arch")}
+	if a, r := EdgeRounds(entries, "backlog", "plan"); a != 1 || r != 2 {
+		t.Fatalf("EdgeRounds = %d/%d, want 1/2", a, r)
+	}
+}
+
+// Unlike CountRejectedRounds the tally survives status transitions: it is the
+// edge's whole history in the slice it is given.
+func TestEdgeRoundsDoNotResetAtTransitions(t *testing.T) {
+	entries := []Entry{
+		reject("att_1", "intent", "a"), transition("backlog", "blocked"), transition("blocked", "backlog"),
+		reject("att_2", "intent", "a"), accept("att_3", "intent"),
+	}
+	if a, r := EdgeRounds(entries, "backlog", "plan"); a != 1 || r != 2 {
+		t.Fatalf("EdgeRounds = %d/%d, want 1/2 across the park", a, r)
+	}
+}
+
 func TestObjectionLineIsOneLine(t *testing.T) {
 	r := RejectedRounds{LastSkill: "satelle-story-plan-review", LastNotes: "AC1\n  contradicts   AC2"}
 	if got := r.ObjectionLine(); got != "satelle-story-plan-review: AC1 contradicts AC2" || strings.Contains(got, "\n") {

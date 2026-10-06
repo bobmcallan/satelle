@@ -120,19 +120,17 @@ type topBar struct {
 
 type rowVM struct {
 	workitem.Item
-	Lights []reviewLight
+	// Stages are the stages the story has completed plus the one it is in, in
+	// the order it reached them (PROGRESS cell); Gate is the current gate's
+	// round counts (STATUS cell badge), nil when the story has no review rows.
+	Stages []stageVM
+	Gate   *gateBadgeVM
 	// Dispatch is the running indicator for an in-flight dispatch (sty_752c4ef2
-	// AC6) — nil when nothing is in flight. Distinct from Lights: a pip records
-	// a PAST transition's outcome (pass/fail/current), Dispatch narrates what is
-	// happening RIGHT NOW, so a refused earlier attempt's fail pip is never the
-	// only signal on a story a live agent is currently working.
+	// AC6) — nil when nothing is in flight. Distinct from Stages: a stage
+	// records PAST gate outcomes, Dispatch narrates what is happening RIGHT NOW,
+	// so a refused earlier attempt's red count is never the only signal on a
+	// story a live agent is currently working.
 	Dispatch *dispatchVM
-}
-
-type reviewLight struct {
-	Index int
-	State string // pass | fail | fired | current
-	Title string // tooltip
 }
 
 type lightPayload struct {
@@ -327,139 +325,6 @@ func sectionLabel(s string) string {
 		return "General"
 	}
 	return strings.ToUpper(s[:1]) + s[1:] // "hosted" → "Hosted", "gate" → "Gate"
-}
-
-func buildLights(entries []ledger.Entry, status string, seatHeld bool, stepOf func(state string) int) []reviewLight {
-	// Derivation order (sty_c5065d05): status → current-stage light; ledger →
-	// history enrichment; seat → decoration only (never the sole light for an
-	// on-spine performing status). Entries may arrive newest- or oldest-first;
-	// callers re-sort per story when needed.
-	es := entries
-	parse := func(p json.RawMessage) lightPayload {
-		var lp lightPayload
-		_ = json.Unmarshal(p, &lp)
-		return lp
-	}
-	accepted := map[string]bool{}
-	for _, e := range es {
-		if e.Kind == ledger.KindReviewAccept {
-			lp := parse(e.Payload)
-			accepted[lp.From+"→"+lp.To] = true
-		}
-	}
-	// Off-spine fallback: an edge whose target has no gated step still gets a
-	// stable number by order of first appearance, after the highest real step.
-	idx := map[string]int{}
-	extra := 0
-	stepFor := func(to, edge string) int {
-		if s := stepOf(to); s > 0 {
-			return s
-		}
-		if _, ok := idx[edge]; !ok {
-			extra++
-			idx[edge] = extra
-		}
-		return idx[edge]
-	}
-	// The story is actively IN its current state, so the entry transition into that
-	// state is rendered as the pulsing current light, in place at its starting
-	// edge (not a completed step, and not appended at the tail — see below), so a
-	// later higher-numbered reject of a rejected outgoing edge still trails it and
-	// the strip reads in step order. Suppress that one transition — the LAST one
-	// landing in the current state (an earlier visit in a recovery loop stays a
-	// completed prior step) — but only for a non-terminal story sitting on the
-	// spine (curStep > 0). Terminal stories render every transition (the entry
-	// into done IS the final completed light), and an off-spine current state
-	// keeps today's maxStep+1 fallback.
-	curStep := stepOf(status)
-	terminal := status == "done" || status == "cancelled"
-	suppress := -1
-	if !terminal && curStep > 0 {
-		for pos, e := range es {
-			if e.Kind == ledger.KindStatusTransition && parse(e.Payload).To == status {
-				suppress = pos
-			}
-		}
-	}
-	var lights []reviewLight
-	entered := false
-	currentEmitted := false
-	maxStep := 0
-	minStep := 0
-	note := func(i int) {
-		if i > maxStep {
-			maxStep = i
-		}
-		if minStep == 0 || i < minStep {
-			minStep = i
-		}
-	}
-	for pos, e := range es {
-		lp := parse(e.Payload)
-		edge := lp.From + " → " + lp.To
-		switch e.Kind {
-		case ledger.KindReviewReject:
-			entered = true
-			i := stepFor(lp.To, edge)
-			lights = append(lights, reviewLight{i, "fail", fmt.Sprintf("%d. %s — rejected", i, edge)})
-			note(i)
-		case ledger.KindStatusTransition:
-			entered = true
-			i := stepFor(lp.To, edge)
-			// note() before the suppress skip so the suppressed step still feeds
-			// minStep/maxStep — the leading-gap fillers depend on it.
-			note(i)
-			if pos == suppress {
-				// The entry transition INTO the current state is the step's STARTING
-				// edge — starting a step closes the prior one — so render the pulsing
-				// current light HERE, in ledger position, not appended at the tail.
-				// Prior steps close to its left; a higher-numbered reject of a rejected
-				// OUTGOING edge (release→done at step 5 while sitting at release, step
-				// 4) then trails it, so the strip reads in step order (fixes 1 2 3 5 4).
-				lights = append(lights, reviewLight{i, "current", "current stage"})
-				currentEmitted = true
-				continue
-			}
-			state := "fired"
-			if accepted[lp.From+"→"+lp.To] {
-				state = "pass"
-			}
-			lights = append(lights, reviewLight{i, state, fmt.Sprintf("%d. %s — %s", i, edge, state)})
-		}
-	}
-	// If the earliest recorded step is beyond step 1 — e.g. an item engaged before
-	// the workflow gained an earlier step, so its first transition lands mid-spine
-	// (sty_d9a0b573) — prepend muted placeholders so the strip ALWAYS reads in
-	// order from 1 rather than starting at a gap. A clean run (first step == 1)
-	// prepends nothing.
-	if minStep > 1 {
-		fillers := make([]reviewLight, 0, minStep-1)
-		for i := 1; i < minStep; i++ {
-			fillers = append(fillers, reviewLight{i, "pending", fmt.Sprintf("%d. not run", i)})
-		}
-		lights = append(fillers, lights...)
-	}
-	// Current-stage light from STATUS when on-spine (sty_c5065d05 AC4): an
-	// in_progress (etc.) story shows PROGRESS even with ZERO mirrored ledger
-	// rows. Ledger suppress path above usually already emitted current in place;
-	// this arm covers empty-ledger and off-spine entered fallbacks.
-	if !terminal && !currentEmitted {
-		if curStep > 0 {
-			lights = append(lights, reviewLight{curStep, "current", "current stage"})
-			currentEmitted = true
-		} else if entered {
-			// Off-spine with ledger history: keep maxStep+1 tail fallback.
-			lights = append(lights, reviewLight{maxStep + 1, "current", "current stage"})
-			currentEmitted = true
-		}
-	}
-	// Pre-transition seat (sty_e1314fe3): live lease at the START state only
-	// (curStep==0). On-spine performing statuses already have a status-derived
-	// current light — seat must not add a second light or flicker with lease churn.
-	if seatHeld && !entered && curStep == 0 {
-		lights = append(lights, reviewLight{stepOf(status), "current", "starting"})
-	}
-	return lights
 }
 
 // spineDepths numbers the states on a shortest start→done path, which is what

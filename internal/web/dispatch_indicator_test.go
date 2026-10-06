@@ -13,6 +13,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/mirror"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -72,50 +73,36 @@ func TestBuildDispatchIndicatorWarnsPastHalfIdleTimeout(t *testing.T) {
 	}
 }
 
-// planToInProgressStep is the stepOf fixture for the pip-distinctness tests
-// below: plan(1) → in_progress(2), matching the sty_7069bced report — a story
-// SITTING AT plan (not yet transitioned) with an earlier refused coder
-// attempt on the plan→in_progress edge, and a new coder dispatch now live
-// toward the SAME edge.
-func planToInProgressStep(s string) int {
-	return map[string]int{"plan": 1, "in_progress": 2}[s]
-}
-
-// TestBuildLightsFailPipDistinctFromCurrent (sty_752c4ef2 AC6, rendering 3:
-// pip distinctness) reproduces the exact sty_7069bced evidence: the story is
-// SITTING AT plan (entered via a status_transition, never having left it —
-// the next edge has not committed), and an EARLIER coder attempt on
-// plan→in_progress was refused. That must render BOTH the pulsing "current"
-// pip for the live plan step AND a "fail" pip for the refused next-edge
-// attempt — at DIFFERENT indices, never a single ambiguous red pip standing
-// in for "currently broken" while a new coder dispatch is in flight toward
-// the same edge.
-func TestBuildLightsFailPipDistinctFromCurrent(t *testing.T) {
+// TestBuildStagesRefusedAttemptIsABadgeNotAStage (sty_752c4ef2 AC6, rendering 3)
+// reproduces the exact sty_7069bced evidence: the story is SITTING AT plan
+// (entered via a status_transition, never having left it — the next edge has not
+// committed), and an EARLIER coder attempt on plan→in_progress was refused. That
+// must render the pulsing current plan stage AND the refused round as a red
+// count on the STATUS badge — a refused next-edge attempt is never a stage of
+// its own, nor a single ambiguous red mark standing in for "currently broken"
+// while a new coder dispatch is in flight toward the same edge.
+func TestBuildStagesRefusedAttemptIsABadgeNotAStage(t *testing.T) {
 	chrono := []ledger.Entry{
 		ev(ledger.KindStatusTransition, "backlog", "plan"), // entry into the live current state
 		ev(ledger.KindReviewReject, "plan", "in_progress"), // the refused earlier attempt
 	}
-	lights := buildLights(chrono, "plan", false, planToInProgressStep)
-	if len(lights) != 2 {
-		t.Fatalf("lights = %+v, want exactly 2 (current(1) + fail(2))", lights)
+	stages, gate := buildStages(chrono, "plan", false, noStep, wfdot.Spec{})
+	if len(stages) != 1 || stages[0].Name != "plan" || stages[0].State != "current" {
+		t.Fatalf("stages = %+v, want exactly the current plan stage", stages)
 	}
-	current, fail := lights[0], lights[1]
-	if current.State != "current" || current.Index != 1 {
-		t.Errorf("lights[0] = %+v, want {Index:1 State:current} (the live plan step)", current)
-	}
-	if fail.State != "fail" || fail.Index != 2 {
-		t.Errorf("lights[1] = %+v, want {Index:2 State:fail} (the refused attempt on the NEXT edge)", fail)
+	if gate == nil || gate.Rejected != 1 || gate.Accepted != 0 {
+		t.Errorf("gate = %+v, want the refused round as ✗1", gate)
 	}
 }
 
-// TestMirrorRowShowsRunningDispatchBesideEarlierFailPip (sty_752c4ef2 AC6):
+// TestMirrorRowShowsRunningDispatchBesideEarlierRefusal (sty_752c4ef2 AC6):
 // the full sty_7069bced reproduction, end-to-end through mirrorLoadPanels —
 // a story sitting at plan with an earlier refused attempt on plan→in_progress
 // AND a live coder dispatch now working toward that same edge. The row must
-// show BOTH: the fail pip for the past refusal (distinct from the pulsing
-// current pip) AND the running dispatch indicator — a live agent at work is
+// show BOTH: the red round count for the past refusal (distinct from the
+// pulsing current stage) AND the running dispatch indicator — a live agent at work is
 // never rendered as only a red failure.
-func TestMirrorRowShowsRunningDispatchBesideEarlierFailPip(t *testing.T) {
+func TestMirrorRowShowsRunningDispatchBesideEarlierRefusal(t *testing.T) {
 	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -167,17 +154,11 @@ func TestMirrorRowShowsRunningDispatchBesideEarlierFailPip(t *testing.T) {
 	if row.Dispatch == nil || row.Dispatch.Agent != "coder" {
 		t.Fatalf("expected a running dispatch indicator on the recovering row, got %+v", row.Dispatch)
 	}
-	var sawFail, sawCurrent bool
-	for _, l := range row.Lights {
-		if l.State == "fail" {
-			sawFail = true
-		}
-		if l.State == "current" {
-			sawCurrent = true
-		}
+	if len(row.Stages) != 1 || row.Stages[0].Name != "plan" || row.Stages[0].State != "current" {
+		t.Fatalf("Stages = %+v, want the current plan stage (the live plan step)", row.Stages)
 	}
-	if !sawFail || !sawCurrent {
-		t.Fatalf("Lights = %+v, want both a fail pip (the refused attempt) and a current pip (the live plan step)", row.Lights)
+	if row.Gate == nil || row.Gate.Rejected != 1 {
+		t.Fatalf("Gate = %+v, want ✗1 (the refused attempt)", row.Gate)
 	}
 
 	ms := NewMirror(s)
@@ -191,8 +172,8 @@ func TestMirrorRowShowsRunningDispatchBesideEarlierFailPip(t *testing.T) {
 	resp.Body.Close()
 	body := string(raw)
 	for _, want := range []string{
-		`class="review-light review-light-fail"`,
-		`class="review-light review-light-current"`,
+		`<b class="rej">✗1</b>`,
+		`class="stage-chip stage-current"`,
 		`class="dispatch-indicator"`,
 		"coder (sonnet) running",
 	} {

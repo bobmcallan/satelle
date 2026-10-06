@@ -156,9 +156,9 @@ func TestTimelineDotOutcomeClass(t *testing.T) {
 	}
 }
 
-// TestTimelineDotPaletteReused asserts the dot colours reuse the existing
-// review-light palette (no new ad-hoc colour values): tl-pass uses the pass green
-// and tl-fail the fail red already defined for .review-light-*.
+// TestTimelineDotPaletteReused pins the timeline dot fills (tl-pass green, tl-fail
+// red, fixed hexes that read on both themes) and that the progress column's
+// .ok/.rej text uses theme tokens rather than those hexes.
 func TestTimelineDotPaletteReused(t *testing.T) {
 	raw, err := staticFS.ReadFile("static/app.css")
 	if err != nil {
@@ -170,13 +170,14 @@ func TestTimelineDotPaletteReused(t *testing.T) {
 		"ol.timeline li.tl-fail::before { background: #e74c3c; }",
 	} {
 		if !strings.Contains(css, want) {
-			t.Errorf("app.css missing timeline dot rule reusing the review-light palette: %q", want)
+			t.Errorf("app.css missing timeline dot fill rule: %q", want)
 		}
 	}
-	// The same hues are the review-light pass/fail values (single palette).
-	for _, want := range []string{".review-light-pass { background: #2ecc71;", ".review-light-fail { background: #e74c3c;"} {
+	// The progress column's accepted/rejected text uses theme tokens (legible in both
+	// themes), never a hard-coded hex.
+	for _, want := range []string{".ok { color: var(--accent);", ".rej { color: var(--fail);"} {
 		if !strings.Contains(css, want) {
-			t.Errorf("review-light palette anchor missing (%q) — timeline dots must reuse it", want)
+			t.Errorf("progress-column text token rule missing (%q)", want)
 		}
 	}
 }

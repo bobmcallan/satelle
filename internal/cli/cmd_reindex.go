@@ -152,7 +152,7 @@ func warnUncategorisedStories(cmd *cobra.Command, a *app.App) {
 	}
 	var ids []string
 	for _, it := range items {
-		if it.Status == workitem.StatusDone || it.Status == "cancelled" {
+		if it.Status == workitem.StatusDone || it.Status == workitem.StatusCancelled {
 			continue
 		}
 		if strings.TrimSpace(it.Category) == "" {
@@ -200,7 +200,7 @@ func fileSystemStory(ctx context.Context, a *app.App, ch docindex.DocRef, notes 
 		// Dedup against any NON-TERMINAL tracking story (it now rests at backlog,
 		// or has moved further along) — a done/cancelled one should not suppress a
 		// fresh story for a doc that is still non-conforming.
-		if it.Status == workitem.StatusDone || it.Status == "cancelled" {
+		if it.Status == workitem.StatusDone || it.Status == workitem.StatusCancelled {
 			continue
 		}
 		for _, t := range it.Tags {

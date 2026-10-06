@@ -95,9 +95,9 @@ func TestMirrorLoadPanelsFromKindsOnly(t *testing.T) {
 	if len(data.Tasks) != 1 {
 		t.Errorf("tasks = %d", len(data.Tasks))
 	}
-	// AC2: lights assembled from mirror ledger + seat (not empty for engaged backlog).
-	if len(data.Stories[0].Lights) == 0 {
-		t.Errorf("expected progress lights from mirror ledger/seat, got none: %+v", data.Stories[0])
+	// AC2: stages assembled from mirror ledger + seat (not empty for engaged backlog).
+	if len(data.Stories[0].Stages) == 0 {
+		t.Errorf("expected progress stages from mirror ledger/seat, got none: %+v", data.Stories[0])
 	}
 	if len(data.DocKinds) == 0 {
 		t.Error("expected DocKinds groups")
@@ -110,7 +110,7 @@ func TestMirrorLoadPanelsFromKindsOnly(t *testing.T) {
 		t.Errorf("topbar RO/identity: %+v", data.TopBar)
 	}
 	// Existing fixture seat is in_flight+!stale but does not set story_seat — engagement
-	// requires explicit story_seat (sty_01ba9482). Lights still use decodeLiveSeats.
+	// requires explicit story_seat (sty_01ba9482). Stages still use decodeLiveSeats.
 	if data.EngagementCount != 0 {
 		t.Errorf("EngagementCount = %d without story_seat, want 0", data.EngagementCount)
 	}
@@ -229,7 +229,7 @@ func TestEngagementCountAndChrome(t *testing.T) {
 	if data1.EngagementCount != 1 || len(data1.EngagedStoryIDs) != 1 || data1.EngagedStoryIDs[0] != "sty_e1" {
 		t.Fatalf("live seat: count=%d ids=%v", data1.EngagementCount, data1.EngagedStoryIDs)
 	}
-	// Lights predicate unchanged: settled !in_flight does not set seatHeld lights path —
+	// Stages predicate unchanged: settled !in_flight does not set seatHeld stages path —
 	// still no regression: load still succeeds and stories present.
 	if len(data1.Stories) != 2 {
 		t.Fatalf("stories = %d", len(data1.Stories))

@@ -189,20 +189,20 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		waitCond(t, ctx, jsRowVisible(openID), 3*time.Second)
 	})
 
-	t.Run("progress_column_lights", func(t *testing.T) {
+	t.Run("progress_column_stages", func(t *testing.T) {
 		// A fresh open story (still at its initial state, no transitions) shows NO
-		// progress light — the initial state is not step 1.
-		light := fmt.Sprintf(`document.querySelector('#panel-stories tr.row[data-expand-url$="%s"] .col-reviews .review-light')`, openID)
-		if !waitCond(t, ctx, "!"+light, 3*time.Second) {
-			t.Error("a fresh open story should have no progress light (no phantom current ①)")
+		// progress stage — the initial state is not a completed stage.
+		stage := fmt.Sprintf(`document.querySelector('#panel-stories tr.row[data-expand-url$="%s"] .col-reviews .stage-chip')`, openID)
+		if !waitCond(t, ctx, "!"+stage, 3*time.Second) {
+			t.Error("a fresh open story should have no progress stage (no phantom current stage)")
 		}
-		// After a REAL transition, a light appears — pushed live to the page over
+		// After a REAL transition, a stage appears — pushed live to the page over
 		// the realtime bus. (The coded estimate gate enforces OOTB — record one.)
 		mustRun(t, testBin, repo, "story", "estimate", openID, "--time", "10m")
 		mustRun(t, testBin, repo, "story", "set", openID, "--status", "in_progress")
 		workspaceAddIfConfigured(t, repo)
-		if !waitCond(t, ctx, "!!"+light, 8*time.Second) {
-			t.Error("a transitioned story should show a progress light, pushed live")
+		if !waitCond(t, ctx, "!!"+stage, 8*time.Second) {
+			t.Error("a transitioned story should show a progress stage, pushed live")
 		}
 	})
 
