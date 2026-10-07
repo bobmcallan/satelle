@@ -1,3 +1,13 @@
+## [0.0.624] - 2026-10-07
+
+### Changed
+- **Substrate sync works from snapshots, like pushing to a git remote.** Each push of an opted-in config or documents area also publishes a snapshot record (`backups/sync/<area>.snapshot.json` on the hosted copy, never written into a tree) naming every file in the area and the snapshot it was based on. A pull or `satelle sync rehydrate` applies that snapshot, so a file deleted or renamed on one machine disappears on the others; a hosted head the snapshot does not name (such as the retired `workflows/done.md`) is never written into a tree. Each machine records, outside the repo, the snapshot it last synced per area (`satelle sync scopes` shows a `last synced` column; push and pull print `<area>: snapshot N (parent B)` / `<area>: synced to snapshot N`). A push from a machine whose recorded snapshot is older than the hosted one is refused, naming both numbers and telling you to pull first, and uploads nothing; when two machines push from the same snapshot, the first claim wins and the other is refused before uploading. A pull where a file changed on both sides keeps your local file, writes the remote copy to `backups/sync-conflicts/<area>/<path>`, names it as a conflict, and refuses the next push until you merge and delete that copy. The first pull on a machine with no recorded snapshot adopts matching files, treats differing files as conflicts, moves a local file the snapshot does not name and that matches a stale hosted copy to `backups/sync-removed/<area>/<path>`, and reports any other local-only file as `local only — push to publish`. A server with no snapshot yet deploys every head as before, and `--dry-run` uploads nothing. (sty_fe5a8ed4)
+
+## [serve-v0.0.133] - 2026-10-07
+
+### Changed
+- The serve path picks up the snapshot-based substrate sync configuration (sty_fe5a8ed4).
+
 ## [0.0.623] - 2026-10-07
 
 ### Added

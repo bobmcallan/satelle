@@ -49,6 +49,7 @@ catalog. Requires "satelle project bind <slug>".`,
 	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	push.Flags().StringVar(&pushWorkspace, "workspace", "", "Ignored for push (sync is personal-only; kept for flag compatibility).")
 	push.Flags().BoolVar(&dryRun, "dry-run", false, "List what would be pushed without contacting the server.")
+	push.Flags().Bool("prune", false, pruneFlagUsage)
 	group.AddCommand(push)
 
 	var pullServer, pullWorkspace string
@@ -71,7 +72,7 @@ them byte-for-byte into this repo's documents area. Up-to-date trees report
 }
 
 func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRun bool) error {
-	cfg, repoRoot, _, err := loadRepoConfig()
+	cfg, repoRoot, dataDir, err := loadRepoConfig()
 	if err != nil {
 		return err
 	}
@@ -121,6 +122,18 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 		return err
 	}
 	client := newHostedClient(cmd.Context(), server, repoRoot)
+	// Publish the area's whole state as a snapshot (sty_fe5a8ed4); a server that
+	// cannot hold snapshots falls through to the plain upload below.
+	snap, handled, serr := pushDocumentsSnapshot(cmd, cfg, repoRoot, dataDir, client, server, project, files)
+	if serr != nil {
+		return serr
+	}
+	if handled {
+		printWithheldLocal()
+		fmt.Fprintf(out, "Pushed %d of %d document(s) to project %q personal collection on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
+			snap.created+snap.unchanged, len(files), project, server, snap.created, snap.unchanged, snap.notUploaded)
+		return nil
+	}
 	// Skip unchanged bytes via server document manifest (sty_88e83180 AC6).
 	// Empty since = full set; does not touch the pull cursor.
 	headSHA := map[string]string{}
@@ -190,6 +203,13 @@ func runSyncDocumentsPull(cmd *cobra.Command, serverArg, workspaceArg string) er
 		return err
 	}
 	client := newHostedClient(cmd.Context(), server, repoRoot)
+
+	// A documents snapshot on the hosted copy governs the pull: it applies what
+	// the snapshot names, honours deletions, and parks a file changed on both
+	// sides (sty_fe5a8ed4). Without one the cursor-driven pull below runs as before.
+	if handled, serr := pullDocumentsSnapshot(cmd, cfg, repoRoot, dataDir, client, server, project); handled || serr != nil {
+		return serr
+	}
 
 	// Personal only (epic:sync-publish). Team catalog is via publish/adopt.
 	// Project-addressed routes (sty_ca64d0cb) need no workspace id.

@@ -25,6 +25,53 @@ type documentSyncStateFile struct {
 	// (sty_f6cff549). Server is still authority; push uses this to skip
 	// foreign-held items without forking a second copy.
 	Holds map[string]map[string]string `json:"holds,omitempty"`
+	// Snapshots records, per (server, project, repo, area), the hosted snapshot
+	// this checkout last synced from (sty_fe5a8ed4). It lives here, outside any
+	// repo tree, so knowing what was last synced never becomes a file that is
+	// itself synced.
+	Snapshots map[string]AreaBase `json:"snapshots,omitempty"`
+}
+
+// AreaBase is what one checkout last synced for one sync area: the effective
+// snapshot version, the sha of every file as of that snapshot, and the paths a
+// pull left unmerged because they changed on both sides. It is the "base" of the
+// three-way comparison a pull makes, and the version a push must still match.
+type AreaBase struct {
+	Version  int               `json:"version"`
+	Files    map[string]string `json:"files,omitempty"`
+	Unmerged map[string]string `json:"unmerged,omitempty"`
+}
+
+func areaBaseKey(server, project, repoRoot, area string) string {
+	return documentCursorKey(server, project, repoRoot) + "|" + area
+}
+
+// LoadAreaBase returns the recorded base for an area. ok=false means this
+// checkout has never synced the area against this project.
+func LoadAreaBase(server, project, repoRoot, area string) (AreaBase, bool, error) {
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return AreaBase{}, false, err
+	}
+	b, ok := state.Snapshots[areaBaseKey(server, project, repoRoot, area)]
+	return b, ok, nil
+}
+
+// SaveAreaBase persists the base for an area (atomic, like every state write).
+func SaveAreaBase(server, project, repoRoot, area string, b AreaBase) error {
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return err
+	}
+	if state.Snapshots == nil {
+		state.Snapshots = map[string]AreaBase{}
+	}
+	state.Snapshots[areaBaseKey(server, project, repoRoot, area)] = b
+	return writeDocumentSyncState(state)
 }
 
 // WorkstateCursor tracks the high-water marks of the last successful work-state

@@ -353,12 +353,59 @@ func filesForArea(cfg Config, repoRoot, area string) ([]ConfigFile, Scope, error
 	if scope == LocalScope {
 		return nil, scope, nil
 	}
+	files, err := walkAreaFiles(cfg, repoRoot, area, scope)
+	return files, scope, err
+}
+
+// AreaFiles reads one config or documents area's files exactly as a push would
+// bundle them — same walk, same redaction, same .local withholding — but without
+// consulting the area's [sync] scope. A pull needs the local side of a
+// three-way comparison for an area whether or not this machine would push it.
+func AreaFiles(cfg Config, repoRoot, area string) ([]ConfigFile, error) {
+	files, err := walkAreaFiles(cfg, repoRoot, area, PersonalScope)
+	if err != nil {
+		return nil, err
+	}
+	return assemble(files).Files, nil
+}
+
+// SyncAreaOf names the config or documents area a server-relative path belongs
+// to, or "" for a path no area owns (the synced workspace agents layer, the
+// snapshot records, anything unrecognised). Server keys are stable regardless
+// of [substrate_roots], so the owner is a function of the key alone — which is
+// what lets a puller decide whether a hosted path the current snapshot does not
+// name was published and then deleted, or was never an area's to begin with.
+func SyncAreaOf(cfg Config, repoRoot, path string) string {
+	switch path {
+	case AgentsRel:
+		return "agents"
+	case WorkspaceAgentsRel, "":
+		return ""
+	case ConfigName:
+		return "settings"
+	case filepath.Base(cfg.ResolveConstitution(repoRoot)):
+		return "constitution"
+	}
+	first, _, ok := strings.Cut(path, "/")
+	if !ok {
+		return ""
+	}
+	for _, area := range []string{"workflows", "principles", "skills", "tasks", "documents"} {
+		if first == area {
+			return area
+		}
+	}
+	return ""
+}
+
+// walkAreaFiles is the scope-free walk behind filesForArea and AreaFiles.
+func walkAreaFiles(cfg Config, repoRoot, area string, scope Scope) ([]ConfigFile, error) {
 	location, isDir := ConfigAreaLocation(cfg, repoRoot, area)
 	if location == "" {
 		// documents (and other authored dirs) resolve via ResolveAuthoredDirs;
 		// constitution/agents use dedicated paths. An area with no location is
 		// not a config/document candidate on disk.
-		return nil, scope, nil
+		return nil, nil
 	}
 	var out []ConfigFile
 	if !isDir {
@@ -372,11 +419,11 @@ func filesForArea(cfg Config, repoRoot, area string) ([]ConfigFile, Scope, error
 			serverPath = AgentsRel
 		}
 		if cf, ok, err := readConfigFile(area, location, serverPath, scope); err != nil {
-			return nil, scope, err
+			return nil, err
 		} else if ok {
 			out = append(out, cf)
 		}
-		return out, scope, nil
+		return out, nil
 	}
 	walkErr := filepath.WalkDir(location, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -414,9 +461,9 @@ func filesForArea(cfg Config, repoRoot, area string) ([]ConfigFile, Scope, error
 		return nil
 	})
 	if walkErr != nil {
-		return nil, scope, fmt.Errorf("sync area %q: %w", area, walkErr)
+		return nil, fmt.Errorf("sync area %q: %w", area, walkErr)
 	}
-	return out, scope, nil
+	return out, nil
 }
 
 // readConfigFile reads one file's bytes and resolves its tier. serverPath is the

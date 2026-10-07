@@ -16,6 +16,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/snapsync"
 	"github.com/bobmcallan/satelle/internal/subsync"
 )
 
@@ -60,6 +61,7 @@ catalogs are a separate verb: satelle publish.`,
 	}
 	syncCmd.Flags().StringVar(&syncServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	syncCmd.Flags().BoolVar(&syncDryRun, "dry-run", false, "Preview what each opted-in area would push without contacting the server (documents pull is not previewed).")
+	syncCmd.Flags().Bool("prune", false, pruneFlagUsage)
 	syncCmd.AddCommand(&cobra.Command{
 		Use:   "scopes",
 		Short: "Print each .satelle area's resolved scope, and shared files within a personal area",
@@ -317,7 +319,9 @@ collection only (epic:sync-publish). The settings area is satelle.toml (includin
 another repo. Identical content is idempotent (no new version). Files with a
 .local segment are never uploaded (reported as withheld). Team is not a sync
 destination; use satelle publish to expose artifacts to a team catalog.
-Requires "satelle project bind <slug>".`,
+Requires "satelle project bind <slug>".
+
+Pushes publish each area as one snapshot (deletes propagate) and are refused when another machine pushed since your last sync: deploy first.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncConfigPush(cmd, pushServer, pushWorkspace, dryRun)
 		},
@@ -325,6 +329,7 @@ Requires "satelle project bind <slug>".`,
 	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	push.Flags().StringVar(&pushWorkspace, "workspace", "", "Ignored for push (sync is personal-only; kept for flag compatibility).")
 	push.Flags().BoolVar(&dryRun, "dry-run", false, "List what would be pushed without contacting the server.")
+	push.Flags().Bool("prune", false, pruneFlagUsage)
 	group.AddCommand(push)
 
 	var deployServer, deployWorkspace string
@@ -392,7 +397,7 @@ func resolveDeploySourceName(cfg config.Config, workspaceArg string) string {
 }
 
 func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRun bool) error {
-	cfg, repoRoot, _, err := loadRepoConfig()
+	cfg, repoRoot, dataDir, err := loadRepoConfig()
 	if err != nil {
 		return err
 	}
@@ -448,6 +453,20 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 		fmt.Fprintf(out, "config manifest unavailable (%v) — uploading every file.\n", merr)
 	} else {
 		headSHA = headSHAByPath(manifest)
+		// A push publishes each area's whole state as a snapshot (sty_fe5a8ed4):
+		// refused when this machine is behind, so it never overwrites a newer
+		// push from another machine. A server that cannot hold snapshots falls
+		// through to the plain upload below.
+		snap, handled, serr := pushConfigSnapshots(cmd, cfg, repoRoot, dataDir, client, server, project, manifest, files)
+		if serr != nil {
+			return serr
+		}
+		if handled {
+			printWithheldLocal()
+			fmt.Fprintf(out, "Pushed %d of %d config file(s) to project %q personal collection on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
+				snap.created+snap.unchanged, len(files), project, server, snap.created, snap.unchanged, snap.notUploaded)
+			return nil
+		}
 	}
 	var created, unchanged, notUploaded int
 	for _, f := range files {
@@ -598,10 +617,37 @@ func runSyncConfigDeployOutcome(cmd *cobra.Command, serverArg, workspaceArg stri
 		fmt.Fprintf(out, "No config in workspace %q project %q on %s.\n", sourceName, project, server)
 		return deployOutcome{}, nil
 	}
+	// Areas the hosted copy holds a snapshot for deploy what the snapshot names —
+	// a file deleted or renamed elsewhere stays gone — and a file changed on both
+	// sides is parked for merging instead of overwritten (sty_fe5a8ed4). A pinned
+	// --version is a deliberate historical read of every head, so it bypasses
+	// snapshots. The records themselves are never deployed.
+	var snaps *configDeploySnapshots
+	if version == 0 {
+		snaps, err = planConfigDeploySnapshots(cmd, cfg, repoRoot, dataDir, client, server, project, manifest)
+		if err != nil {
+			return deployOutcome{}, err
+		}
+	}
 	var files []subsync.File
 	var missing int
 	var settingsInManifest bool
+	if snaps != nil {
+		staged, serr := snaps.stage(cmd.Context())
+		if serr != nil {
+			return deployOutcome{}, serr
+		}
+		files = append(files, staged...)
+	}
+	for _, f := range files {
+		if f.Path == config.ConfigName {
+			settingsInManifest = true
+		}
+	}
 	for _, item := range manifest {
+		if _, isRecord := snapsync.AreaOfRecordPath(item.Path); isRecord || snaps.owns(cfg, repoRoot, item.Path) {
+			continue
+		}
 		if item.Path == config.ConfigName {
 			settingsInManifest = true
 		}
@@ -618,7 +664,7 @@ func runSyncConfigDeployOutcome(cmd *cobra.Command, serverArg, workspaceArg stri
 		}
 		files = append(files, subsync.File{Path: item.Path, Content: content})
 	}
-	if len(files) == 0 {
+	if len(files) == 0 && (snaps == nil || len(snaps.jobs) == 0) {
 		fmt.Fprintf(out, "Nothing to deploy — version %d matched no files in workspace %q.\n", version, sourceName)
 		return deployOutcome{}, nil
 	}
@@ -645,6 +691,11 @@ func runSyncConfigDeployOutcome(cmd *cobra.Command, serverArg, workspaceArg stri
 	// (sty_4c3729e7); this caller keeps the loud behaviour it always had.
 	if err := res.Err(); err != nil {
 		return deployOutcome{}, fmt.Errorf("deploy: %w", err)
+	}
+	if snaps != nil {
+		if err := snaps.commit(res); err != nil {
+			return deployOutcome{}, fmt.Errorf("deploy: record synced snapshot: %w", err)
+		}
 	}
 	outcome := deployOutcome{
 		Written:      res.Written,
@@ -691,12 +742,22 @@ func runSyncScopes(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	// What this checkout last synced for each area (sty_fe5a8ed4): shown only
+	// once an area has a recorded base, so an area never synced prints as before.
+	lastSynced, unmerged := lastSyncedNotes(a.Config, a.RepoRoot)
 	for _, area := range config.SyncAreas {
 		scope, err := config.ScopeFor(a.Config, area)
 		if err != nil {
 			return fmt.Errorf("sync area %q: %w", area, err)
 		}
-		fmt.Fprintf(w, "%s\t%s\n", area, scope)
+		if note := lastSynced[area]; note != "" && scope != config.LocalScope {
+			fmt.Fprintf(w, "%s\t%s\t%s\n", area, scope, note)
+		} else {
+			fmt.Fprintf(w, "%s\t%s\n", area, scope)
+		}
+		for _, p := range unmerged[area] {
+			fmt.Fprintf(w, "\tunmerged: %s\n", p)
+		}
 		// Local areas push nothing — nothing to report. Non-local areas can leave
 		// the machine, so report both shared: promotions and withheld .local files.
 		if scope == config.LocalScope {

@@ -155,6 +155,75 @@ func Restore(dataDir string, files []File) (Result, error) {
 	return res, nil
 }
 
+// AsideDirs are the only places under backups/ that sync ever writes: a remote
+// copy it will not apply over a local file (conflicts), and a local file it
+// moved out of the tree because the hosted copy deleted it (removed). Restore
+// still never writes under backups/; WriteAside is the one sanctioned writer.
+const (
+	ConflictDir = "backups/sync-conflicts/"
+	RemovedDir  = "backups/sync-removed/"
+)
+
+// AsidePath is where an area's file is parked under dir (ConflictDir or
+// RemovedDir): "<dir><area>/<rel>", with rel taken relative to the area so a
+// directory area does not repeat its own name ("skills/x.md" parks at
+// "<dir>skills/x.md", not "<dir>skills/skills/x.md").
+func AsidePath(dir, area, rel string) string {
+	return dir + area + "/" + strings.TrimPrefix(rel, area+"/")
+}
+
+// WriteAside writes content at rel, which must sit under ConflictDir or
+// RemovedDir. It goes through the same cleanRel escape guard as Restore, so a
+// hostile path cannot leave the data dir, and it refuses any other backups/
+// location so it cannot be used to plant files where a deploy never looks.
+func WriteAside(dataDir, rel string, content []byte) error {
+	rel, err := cleanRel(rel)
+	if err != nil {
+		return fmt.Errorf("subsync: write aside %q: %w", rel, err)
+	}
+	if !strings.HasPrefix(rel, ConflictDir) && !strings.HasPrefix(rel, RemovedDir) {
+		return fmt.Errorf("subsync: write aside %q: not under %s or %s", rel, ConflictDir, RemovedDir)
+	}
+	dest := filepath.Join(dataDir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(dest, content, 0o644)
+}
+
+// Remove deletes the files at rels under dataDir — the local half of a deletion
+// that happened on the hosted copy. It applies the same guards as Restore: an
+// unsafe path hard-errors, a local-only path is never touched, and a file that
+// is already gone is not an error. Directories left empty are pruned (never
+// dataDir itself) so a deleted area subtree does not linger as bare folders.
+// It returns the paths it actually removed.
+func Remove(dataDir string, rels []string) ([]string, error) {
+	var removed []string
+	for _, p := range rels {
+		rel, err := cleanRel(p)
+		if err != nil {
+			return removed, fmt.Errorf("subsync: remove %q: %w", p, err)
+		}
+		if excludedLocal(rel) {
+			continue
+		}
+		dest := filepath.Join(dataDir, filepath.FromSlash(rel))
+		if err := os.Remove(dest); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return removed, fmt.Errorf("subsync: remove %q: %w", rel, err)
+		}
+		removed = append(removed, rel)
+		for dir := filepath.Dir(dest); dir != filepath.Clean(dataDir) && strings.HasPrefix(dir, filepath.Clean(dataDir)); dir = filepath.Dir(dir) {
+			if os.Remove(dir) != nil { // not empty (or not ours to remove): stop
+				break
+			}
+		}
+	}
+	return removed, nil
+}
+
 // restoredMode picks the permissions a restored file ends at: an existing
 // destination keeps what it has, a new one gets 0o644, and generated content is
 // forced read-only whichever it was. Without the last rule a freshly pulled

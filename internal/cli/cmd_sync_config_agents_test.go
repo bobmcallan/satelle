@@ -59,10 +59,16 @@ func TestSyncConfigAgentsPushDeployRoundTripKeepsLocalValues(t *testing.T) {
 	// binding added); deploying it here must keep this machine's values.
 	other := syncConfigRepo(t, "[sync]\nagents = \"personal\"\n"+boundProjectToml)
 	_ = os.Remove(filepath.Join(other, ".satelle", "agents.toml"))
+	pointAt(t, other)
+	// A checkout that has never synced must pull before it can publish over the
+	// hosted snapshot (sty_fe5a8ed4); then it edits and pushes.
+	cmdPull, bufPull := testCmd()
+	if err := runSyncConfigDeploy(cmdPull, ts.URL, "personal", 0); err != nil {
+		t.Fatalf("other pull: %v\n%s", err, bufPull.String())
+	}
 	changed := strings.Replace(authoredAgentsWithSecrets, `model   = "opus"`, `model   = "sonnet"`, 1) +
 		"\n[summariser]\nrole = \"reviewer\"\ncommand = \"claude -p {system}\"\n"
 	writeRepoFile(t, other, ".satelle/workflows/agents.toml", changed)
-	pointAt(t, other)
 	cmd3, buf3 := testCmd()
 	if err := runSyncConfigPush(cmd3, ts.URL, "", false); err != nil {
 		t.Fatalf("push 2: %v\n%s", err, buf3.String())
