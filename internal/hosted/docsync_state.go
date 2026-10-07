@@ -31,8 +31,19 @@ type documentSyncStateFile struct {
 // push for one (server, project, repoRoot) key (sty_88e83180). Zero times mean
 // "never pushed" / full set next time.
 type WorkstateCursor struct {
-	ItemsUpdatedAt  time.Time `json:"items_updated_at"`
+	ItemsUpdatedAt time.Time `json:"items_updated_at"`
+	// LedgerCreatedAt is the newest created_at pushed. Informational since
+	// sty_4a31e1ed: the ledger is paged by insertion order below, because a row
+	// can commit with a created_at behind one already pushed. A cursor with only
+	// this set (written by an older binary) is a fresh start for the ledger.
 	LedgerCreatedAt time.Time `json:"ledger_created_at"`
+	// LedgerSeq is the insertion position (rowid) of the last ledger row pushed;
+	// LedgerAnchorID is that row's id and LedgerStoreID the database it was read
+	// from. All three must still match the local store, or the position belongs
+	// to a replaced or renumbered database and the ledger starts over.
+	LedgerSeq      int64  `json:"ledger_seq,omitempty"`
+	LedgerAnchorID string `json:"ledger_anchor_id,omitempty"`
+	LedgerStoreID  string `json:"ledger_store_id,omitempty"`
 }
 
 // docSyncMu serialises read-modify-write of the state file across concurrent

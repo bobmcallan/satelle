@@ -832,6 +832,13 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			return nil, err
 		}
 	}
+	// Everything below is the commit. The gates and the dispatched step ran for
+	// minutes since `now` was taken, and rows attached live in that window
+	// (documents, session invocations) carry real wall-clock time. Stamp the
+	// transition's rows and the story's updated_at at the commit, so a
+	// timestamp-ordered reader never finds them behind rows written during the
+	// gate window (sty_4a31e1ed).
+	commitNow := time.Now()
 	transitionInTx := false
 	var it workitem.Item
 	if transitioning && ledgerStore != nil && txRunner == nil {
@@ -840,7 +847,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	if transitioning && txRunner != nil {
 		err = txRunner(ctx, func(tx *sql.Tx) error {
 			var uerr error
-			it, uerr = store.WithTx(tx).Update(ctx, req.ID, upd, now)
+			it, uerr = store.WithTx(tx).Update(ctx, req.ID, upd, commitNow)
 			if uerr != nil {
 				return uerr
 			}
@@ -850,7 +857,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 				Actor:   "executor",
 				Body:    fmt.Sprintf("%s → %s", current.Status, *req.Status),
 				Payload: transitionPayload(current.Status, *req.Status, ""),
-			}, now)
+			}, commitNow)
 			return aerr
 		})
 		if err != nil {
@@ -858,12 +865,12 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		}
 		transitionInTx = true
 	} else {
-		it, err = store.Update(ctx, req.ID, upd, now)
+		it, err = store.Update(ctx, req.ID, upd, commitNow)
 		if err != nil {
 			return nil, staleWriteError(current, req.Status, err)
 		}
 	}
-	recordDefinitionEdits(ctx, it, definitionEdits, now)
+	recordDefinitionEdits(ctx, it, definitionEdits, commitNow)
 	// Release the seat on transition into terminal (Msquare) or park (agent=reviewer).
 	// Force-release: exit is config-driven and must free the seat even when the
 	// exit CLI process is not the acquire-time owner (default owner is stable
@@ -897,12 +904,12 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		if !transitionInTx {
 			appendLedgerEntry(ctx, it.ID, ledger.KindStatusTransition, "executor",
 				fmt.Sprintf("%s → %s", current.Status, *req.Status),
-				transitionPayload(current.Status, *req.Status, ""), now)
+				transitionPayload(current.Status, *req.Status, ""), commitNow)
 		}
 		// First entry into an engaging state: record engagement baseline once
 		// (sty_da169e03). Enumerates git HEAD for later satelle story diff;
 		// never a verdict. Idempotent across park/resume.
-		maybeRecordEngagementBaseline(ctx, it, current.Status, *req.Status, now)
+		maybeRecordEngagementBaseline(ctx, it, current.Status, *req.Status, commitNow)
 		// The engaging session's model is the in-loop tier config.SelectModel's
 		// inherited resolution reads (sty_7069bced). Recorded on every engaging
 		// transition, not just the first — a later engage (e.g. blocked→in_progress)
@@ -913,14 +920,14 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		// Before this transition's own driver_usage row: tell a driver whose
 		// session already covers another story to start a fresh one
 		// (sty_a7914904). Warning only — engage is already committed.
-		checkFreshSession(ctx, it, current.Status, *req.Status, now)
+		checkFreshSession(ctx, it, current.Status, *req.Status, commitNow)
 		// Say once, on stderr, when the gates this story now runs under are not
 		// (or may not be) the repository's authored ones (sty_d6e209aa).
 		reportProcessAtEngage(ctx, it, current.Status, *req.Status)
 		// The driving session's measured usage at this transition (sty_81caa41b):
 		// a snapshot from the harness's own session record, delta-ed against the
 		// last snapshot for this session. Best-effort, like the change set below.
-		recordDriverUsage(ctx, it, current.Status, *req.Status, now)
+		recordDriverUsage(ctx, it, current.Status, *req.Status, commitNow)
 		// On reaching a terminal state (by shape, never park — architecture
 		// revision A4, sty_8eae81ac), compute and persist the actual from the
 		// ledger, AFTER the driver-usage row above so it is included in the
@@ -929,20 +936,20 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		// (TestTransitionAppendFailureRollsBackRow). Best-effort: a computation
 		// failure is recorded, never reverts the already-enacted transition.
 		if targetIsTerminalStateOnly(ctx, it, *req.Status) {
-			if actualIt, aerr := recordActual(ctx, it, now); aerr == nil {
+			if actualIt, aerr := recordActual(ctx, it, commitNow); aerr == nil {
 				it = actualIt
 			} else {
 				appendLedgerEntry(ctx, it.ID, ledger.KindActualRecorded, "executor",
-					"actual computation failed: "+aerr.Error(), nil, now)
+					"actual computation failed: "+aerr.Error(), nil, commitNow)
 			}
 		}
 		// Record the change set for the step just closed (sty_948ad5df).
 		// Enumeration only; best-effort; never blocks the transition.
-		recordChangeSet(ctx, it, current.Status, *req.Status, now)
+		recordChangeSet(ctx, it, current.Status, *req.Status, commitNow)
 		// Write the route forward (sty_39e2d9df): re-render the plan half so the
 		// "you are here" marker is current, and APPEND this step's verdicts and
 		// reviewer reasoning to the same artifact. Best-effort, like the change set.
-		recordRoute(ctx, it, current.Status, *req.Status, routeVerdicts, routeUnresolved, now)
+		recordRoute(ctx, it, current.Status, *req.Status, routeVerdicts, routeUnresolved, commitNow)
 		// After a GATED transition is enacted, the read-only summariser recaps the
 		// step into a step_summary row — but ONLY where the active workflow declares
 		// a step-summary node (transparent opt-in; sty_9a139c78). The transition
@@ -950,21 +957,21 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		// ledger (it records the gap, it does not revert the step).
 		if gatedAccepted && stepSummariser != nil {
 			result, serr := stepSummariser.Summarise(ctx, it, current.Status, *req.Status)
-			recordStepSummary(ctx, it, current.Status, *req.Status, result, serr, now)
+			recordStepSummary(ctx, it, current.Status, *req.Status, result, serr, commitNow)
 		}
 		// On reaching the terminal state, surface (NON-BLOCKING) any mandatory
 		// step-summary that never produced its doc — a silent hole in the pull-context
 		// chain a dispatched coder reads (sty_a1151fb0). The transition still stands;
 		// the gap is made loud + fixable, not reverted.
 		if *req.Status == "done" && stepSummariser != nil && stepSummariser.MandatorySummary(ctx, it) {
-			surfaceMissingSummaries(ctx, it, now)
+			surfaceMissingSummaries(ctx, it, commitNow)
 		}
 	} else {
 		ledgerKind := ledger.KindStoryUpdated
 		if it.Kind == workitem.KindTask || it.Kind == workitem.KindExecution {
 			ledgerKind = ledger.KindTaskUpdated
 		}
-		appendLedger(ctx, it.ID, ledgerKind, fmt.Sprintf("updated %s", it.Kind), now)
+		appendLedger(ctx, it.ID, ledgerKind, fmt.Sprintf("updated %s", it.Kind), commitNow)
 	}
 	// Mirror the mutation to the flat operation log (sty_be257fef): the status
 	// transition and/or the tag before/after, so a read-only reviewer can verify a

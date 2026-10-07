@@ -1,3 +1,13 @@
+## [0.0.622] - 2026-10-07
+
+### Fixed
+- **A story pushed to the hosted project now arrives on another machine with its whole ledger, including status transitions and change records.** A transition used to stamp its `status_transition` and `change_record` rows, and the story's `updated_at`, with the time the call started, before the gates ran. A `satelle sync workstate push` made during that gate window sent the later-stamped attachment rows and moved the push cursor past them, so the transition rows committed behind the cursor and were never sent without `--full`. Transition rows and the story's `updated_at` now carry the commit time, and the ledger push cursor follows insertion order instead of `created_at`, so every row inserted since the last successful push is sent whatever its timestamp. The cursor is bound to the database it was taken from (a per-database instance id plus the row at its saved position), so after `satelle sync rehydrate` or a `VACUUM INTO` copy the next push resets and sends the full ledger once, printing `ledger cursor reset: store changed; sending full ledger`. The first push after upgrading also sends the full ledger once, which heals rows earlier pushes left behind; the server ingests by id, so nothing is duplicated. (sty_4a31e1ed)
+
+## [serve-v0.0.131] - 2026-10-07
+
+### Changed
+- The serve path picks up the ledger store's per-database instance id and insertion-order listing (sty_4a31e1ed).
+
 ## [0.0.621] - 2026-10-07
 
 ### Added

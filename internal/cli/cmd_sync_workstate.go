@@ -241,23 +241,32 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	if err != nil {
 		return fmt.Errorf("load workstate cursor: %w", err)
 	}
-	hadCursor := !cursor.ItemsUpdatedAt.IsZero() || !cursor.LedgerCreatedAt.IsZero()
+	hadCursor := !cursor.ItemsUpdatedAt.IsZero() || !cursor.LedgerCreatedAt.IsZero() || cursor.LedgerSeq > 0
 	if full {
 		cursor = hosted.WorkstateCursor{}
 	}
+	if optIn["ledger"] {
+		var reset bool
+		cursor, reset, err = validateLedgerCursor(cmd.Context(), a, cursor)
+		if err != nil {
+			return err
+		}
+		if reset {
+			fmt.Fprintln(cmd.ErrOrStderr(), "ledger cursor reset: store changed; sending full ledger")
+		}
+	}
 
-	batch, maxItems, maxLedger, err := collectWorkstateSince(cmd.Context(), a, optIn, cursor)
+	batch, maxItems, ledgerMark, err := collectWorkstateSince(cmd.Context(), a, optIn, cursor)
 	if err != nil {
 		return err
 	}
 	// SQL uses a whole-second lower bound so boundary-second rows reappear;
 	// drop anything not strictly after the cursor so a true no-op sends nothing
 	// (AC2/AC7) while same-second new nanos still After() and ride (sty_88e83180).
+	// The ledger needs no such filter: it is paged strictly after an insertion
+	// position, not a timestamp (sty_4a31e1ed).
 	if !full && !cursor.ItemsUpdatedAt.IsZero() {
 		batch.Items = filterItemsAfter(batch.Items, cursor.ItemsUpdatedAt)
-	}
-	if !full && !cursor.LedgerCreatedAt.IsZero() {
-		batch.Ledger = filterLedgerAfter(batch.Ledger, cursor.LedgerCreatedAt)
 	}
 
 	if len(batch.Items) == 0 && len(batch.Ledger) == 0 {
@@ -335,7 +344,10 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	// Advance cursor only after full success.
 	next := hosted.WorkstateCursor{
 		ItemsUpdatedAt:  maxItems,
-		LedgerCreatedAt: maxLedger,
+		LedgerCreatedAt: ledgerMark.createdAt,
+		LedgerSeq:       ledgerMark.seq,
+		LedgerAnchorID:  ledgerMark.anchorID,
+		LedgerStoreID:   ledgerMark.storeID,
 	}
 	if err := hosted.SaveWorkstateCursor(server, project, repoRoot, next); err != nil {
 		return fmt.Errorf("save workstate cursor: %w", err)
@@ -381,27 +393,6 @@ func filterItemsAfter(items []json.RawMessage, since time.Time) []json.RawMessag
 			UpdatedAt time.Time `json:"updated_at"`
 		}
 		if err := json.Unmarshal(raw, &w); err != nil || !w.UpdatedAt.After(since) {
-			continue
-		}
-		out = append(out, raw)
-	}
-	if out == nil {
-		return []json.RawMessage{}
-	}
-	return out
-}
-
-// filterLedgerAfter keeps only ledger rows strictly after since (see filterItemsAfter).
-func filterLedgerAfter(entries []json.RawMessage, since time.Time) []json.RawMessage {
-	if since.IsZero() || len(entries) == 0 {
-		return entries
-	}
-	var out []json.RawMessage
-	for _, raw := range entries {
-		var w struct {
-			CreatedAt time.Time `json:"created_at"`
-		}
-		if err := json.Unmarshal(raw, &w); err != nil || !w.CreatedAt.After(since) {
 			continue
 		}
 		out = append(out, raw)
@@ -798,14 +789,64 @@ func collectWorkstate(ctx context.Context, a *app.App, optIn map[string]bool) (h
 	return batch, err
 }
 
-// collectWorkstateSince builds the ingest batch for records at or after the
-// cursor high-water marks, paging to exhaustion (sty_88e83180). Returns the
-// batch plus the max timestamps observed (seeded from the cursor so empty areas
-// never rewind it).
-func collectWorkstateSince(ctx context.Context, a *app.App, optIn map[string]bool, cursor hosted.WorkstateCursor) (hosted.WorkstateIngest, time.Time, time.Time, error) {
+// ledgerMark is where a collection left the ledger: the insertion position and
+// id of the last row sent, the database it was read from, and the newest
+// created_at seen.
+type ledgerMark struct {
+	createdAt time.Time
+	seq       int64
+	anchorID  string
+	storeID   string
+}
+
+// validateLedgerCursor drops a ledger position that no longer belongs to the
+// local store, so the next collection sends the whole ledger once (idempotent:
+// the server ingests by id). A position belongs when the store's instance id
+// matches the one saved AND the row at that position is still the anchor row;
+// the id alone survives a VACUUM that renumbers rowids, the anchor alone could
+// coincide in a rehydrated database. A cursor with no position (never pushed,
+// or saved by a created_at-only binary) already starts from the top. Reports
+// whether a saved position was dropped.
+func validateLedgerCursor(ctx context.Context, a *app.App, cursor hosted.WorkstateCursor) (hosted.WorkstateCursor, bool, error) {
+	if cursor.LedgerSeq <= 0 {
+		return cursor, false, nil
+	}
+	storeID, err := a.Store.Ledger.InstanceID(ctx)
+	if err != nil {
+		return cursor, false, err
+	}
+	valid := cursor.LedgerStoreID == storeID
+	if valid {
+		id, ok, ierr := a.Store.Ledger.IDAtSeq(ctx, cursor.LedgerSeq)
+		if ierr != nil {
+			return cursor, false, ierr
+		}
+		valid = ok && id == cursor.LedgerAnchorID
+	}
+	if valid {
+		return cursor, false, nil
+	}
+	cursor.LedgerCreatedAt = time.Time{}
+	cursor.LedgerSeq = 0
+	cursor.LedgerAnchorID = ""
+	cursor.LedgerStoreID = ""
+	return cursor, true, nil
+}
+
+// collectWorkstateSince builds the ingest batch for records past the cursor,
+// paging to exhaustion (sty_88e83180). Work items page on updated_at; the ledger
+// pages on insertion order, because a row can commit with a created_at behind a
+// row already pushed (sty_4a31e1ed). Returns the batch plus the marks observed
+// (seeded from the cursor so empty areas never rewind it).
+func collectWorkstateSince(ctx context.Context, a *app.App, optIn map[string]bool, cursor hosted.WorkstateCursor) (hosted.WorkstateIngest, time.Time, ledgerMark, error) {
 	var batch hosted.WorkstateIngest
 	maxItems := cursor.ItemsUpdatedAt
-	maxLedger := cursor.LedgerCreatedAt
+	maxLedger := ledgerMark{
+		createdAt: cursor.LedgerCreatedAt,
+		seq:       cursor.LedgerSeq,
+		anchorID:  cursor.LedgerAnchorID,
+		storeID:   cursor.LedgerStoreID,
+	}
 
 	pageItems := func(kind workitem.Kind) error {
 		offset := 0
@@ -846,9 +887,13 @@ func collectWorkstateSince(ctx context.Context, a *app.App, optIn map[string]boo
 		}
 	}
 	if optIn["ledger"] {
-		offset := 0
+		storeID, err := a.Store.Ledger.InstanceID(ctx)
+		if err != nil {
+			return batch, maxItems, maxLedger, fmt.Errorf("list ledger: %w", err)
+		}
+		maxLedger.storeID = storeID
 		for {
-			entries, err := a.Store.Ledger.ListChangedSince(ctx, cursor.LedgerCreatedAt, workstateLedgerChunk, offset)
+			entries, err := a.Store.Ledger.ListInsertedAfter(ctx, maxLedger.seq, workstateLedgerChunk)
 			if err != nil {
 				return batch, maxItems, maxLedger, fmt.Errorf("list ledger: %w", err)
 			}
@@ -856,19 +901,20 @@ func collectWorkstateSince(ctx context.Context, a *app.App, optIn map[string]boo
 				break
 			}
 			for _, e := range entries {
-				raw, merr := marshalWorkstateLedger(e)
+				raw, merr := marshalWorkstateLedger(e.Entry)
 				if merr != nil {
 					return batch, maxItems, maxLedger, merr
 				}
 				batch.Ledger = append(batch.Ledger, raw)
-				if e.CreatedAt.After(maxLedger) {
-					maxLedger = e.CreatedAt
+				if e.CreatedAt.After(maxLedger.createdAt) {
+					maxLedger.createdAt = e.CreatedAt
 				}
+				maxLedger.seq = e.Seq
+				maxLedger.anchorID = e.ID
 			}
 			if len(entries) < workstateLedgerChunk {
 				break
 			}
-			offset += len(entries)
 		}
 	}
 	if batch.Items == nil {

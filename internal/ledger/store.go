@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"uuid"
 )
 
 // schema is the evidence table, self-migrating (CREATE IF NOT EXISTS). No
@@ -26,11 +27,34 @@ CREATE TABLE IF NOT EXISTS evidence (
 CREATE INDEX IF NOT EXISTS idx_evidence_story ON evidence(story_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_evidence_kind  ON evidence(kind);`
 
+// metaSchema holds per-database facts that must not survive the database being
+// replaced. The only key is instance_id, written once when the file is created.
+const metaSchema = `
+CREATE TABLE IF NOT EXISTS ledger_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);`
+
+const instanceIDKey = "instance_id"
+
 // Migrate creates the evidence table on db. Idempotent. Called by the store
 // opener alongside the other dynamic primitives' migrations.
 func Migrate(db *sql.DB) error {
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("ledger: migrate: %w", err)
+	}
+	if _, err := db.Exec(metaSchema); err != nil {
+		return fmt.Errorf("ledger: migrate: %w", err)
+	}
+	// Read first so a plain open of an existing database takes no write lock.
+	var have string
+	err := db.QueryRow(`SELECT value FROM ledger_meta WHERE key = ?`, instanceIDKey).Scan(&have)
+	if err == sql.ErrNoRows {
+		_, err = db.Exec(`INSERT OR IGNORE INTO ledger_meta (key, value) VALUES (?, ?)`,
+			instanceIDKey, uuid.NewV4().String())
+	}
+	if err != nil {
+		return fmt.Errorf("ledger: migrate instance id: %w", err)
 	}
 	return nil
 }
@@ -427,6 +451,79 @@ func (s *Store) ListChangedSince(ctx context.Context, since time.Time, limit, of
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// SeqEntry is an evidence row with its position in insertion order.
+type SeqEntry struct {
+	Seq int64
+	Entry
+}
+
+// ListInsertedAfter returns up to limit rows whose insertion position (the
+// table's rowid) is greater than afterSeq, in insertion order, store-wide. The
+// log is append-only and INSERT OR IGNORE, so within one database file rowid
+// grows with every insert whatever the row's created_at says — a row stamped
+// earlier than a previous push's high-water mark is still found
+// (sty_4a31e1ed). A position is only meaningful for the database file it was
+// read from; pair a saved one with InstanceID and IDAtSeq. limit defaults to
+// 1000, hard-capped at 5000.
+func (s *Store) ListInsertedAfter(ctx context.Context, afterSeq int64, limit int) ([]SeqEntry, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+        SELECT rowid, id, story_id, project_id, kind, actor, body, payload, refs, created_at
+        FROM evidence WHERE rowid > ? ORDER BY rowid ASC LIMIT ?`, afterSeq, limit)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: list inserted after: %w", err)
+	}
+	defer rows.Close()
+	out := []SeqEntry{}
+	for rows.Next() {
+		var (
+			se            SeqEntry
+			payload, refs string
+			created       string
+		)
+		if err := rows.Scan(&se.Seq, &se.ID, &se.StoryID, &se.ProjectID, &se.Kind,
+			&se.Actor, &se.Body, &payload, &refs, &created); err != nil {
+			return nil, fmt.Errorf("ledger: scan: %w", err)
+		}
+		se.Payload = json.RawMessage(payload)
+		se.Refs = json.RawMessage(refs)
+		se.CreatedAt = parseTime(created)
+		out = append(out, se)
+	}
+	return out, rows.Err()
+}
+
+// IDAtSeq returns the id of the row at insertion position seq, and whether
+// such a row exists. A saved position is trusted only while the row there is
+// still the row it was taken from (a VACUUM may renumber rowids).
+func (s *Store) IDAtSeq(ctx context.Context, seq int64) (string, bool, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM evidence WHERE rowid = ?`, seq).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("ledger: id at seq: %w", err)
+	}
+	return id, true, nil
+}
+
+// InstanceID identifies this database file: written once when it is created,
+// kept by a VACUUM INTO copy, absent from a database built fresh in its place.
+func (s *Store) InstanceID(ctx context.Context) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM ledger_meta WHERE key = ?`, instanceIDKey).Scan(&id)
+	if err != nil {
+		return "", fmt.Errorf("ledger: instance id: %w", err)
+	}
+	return id, nil
 }
 
 // ListAll returns up to limit evidence rows newest-first (no story/kind filter).
