@@ -1,3 +1,18 @@
+## [0.0.625] - 2026-10-08
+
+### Added
+- **Engaging a story claims it on the hosted project, and other machines can see who holds it.** With a bound project and the server reachable, moving a story into an engaging state places or refreshes its hosted hold before the engagement lease is taken; if another location holds it, the engage is refused naming the holder, label and last-seen time. Two machines engaging the same story at once cannot both succeed. An engage made offline, or on a story the server has not seen yet, records a pending claim that the next `satelle sync workstate push` reconciles: it places the hold, or reports the collision when another location got there first. After a pull, satelle lists each non-terminal story held by another location with its holder and since when (a last-seen time is labelled as last seen), whatever status the hosted copy still shows for it. (sty_52eb8c2f)
+- **After pulling work state, satelle says where story status and the git remote disagree.** Each pulled story whose status claims code the remote cannot be shown to hold is named with the reason: in an implementation state with no commit recorded since work started (its code may exist only on the machine that holds it), or done with a recorded head no remote branch contains. The story's own workflow decides which states count, and cancelled states are skipped. A story whose workflow does not resolve is reported as `reachability unavailable (workflow not resolved)`. (sty_78e20d15)
+
+### Changed
+- **`satelle sync workstate pull` and `satelle sync rehydrate` merge by id instead of refusing on counts.** A freshly initialised repo, or one holding only stories and ledger rows the hosted copy has never seen, now pulls without `--force`; local-only rows are kept. A pull still refuses real divergence (a story newer locally that differs from hosted, or a ledger row whose content differs) and names each conflicting id; `--force` lets hosted win as before. (sty_78e20d15)
+- **The work-state push hold starts where implementation starts, whichever agent performs that step.** On a workflow whose implement step declares `freeze = true`, a story is held from that step on, so a story being coded by a dispatched coder with its work only in an uncommitted tree is no longer published; executor steps before the freeze are not held. Workflows with no freeze step keep holding executor states only. (sty_87f407ef)
+
+## [serve-v0.0.134] - 2026-10-08
+
+### Changed
+- The serve path picks up the hosted hold claim, the id-based work-state merge and the freeze-based hold eligibility (sty_52eb8c2f, sty_78e20d15, sty_87f407ef).
+
 ## [0.0.624] - 2026-10-07
 
 ### Changed
