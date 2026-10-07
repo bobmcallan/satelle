@@ -82,3 +82,26 @@ func StoryCodeState(ctx context.Context, item workitem.Item, fallbackTree string
 	}
 	return CodeState{Eligible: true, Tree: tree}, nil
 }
+
+// RouteRest says whether a story is at rest on its governing route: in a
+// terminal state, or parked (blocked, cancelled) (sty_52eb8c2f). Status names
+// are never compared here; the route decides. Known is false when the route
+// could not be resolved, and a caller must then treat the story as in flight.
+type RouteRest struct {
+	Known    bool
+	Terminal bool
+	Parked   bool
+}
+
+// StoryRouteRest classifies item's status on its governing route.
+func StoryRouteRest(ctx context.Context, item workitem.Item) RouteRest {
+	route, _, ok := governingRoute(ctx, item)
+	if !ok {
+		return RouteRest{}
+	}
+	return RouteRest{
+		Known:    true,
+		Terminal: route.Spec.IsTerminalState(item.Status),
+		Parked:   route.Spec.IsParkState(item.Status),
+	}
+}

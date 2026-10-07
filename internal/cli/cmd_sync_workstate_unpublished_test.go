@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -181,7 +182,13 @@ type holdWorld struct {
 //   - plan:     never entered an executor state, sharing the dirty story's tree
 func newHoldWorld(t *testing.T, syncToml string) *holdWorld {
 	t.Helper()
-	ts, f := newFakeWorkstateServer(t)
+	return newHoldWorldWith(t, syncToml, nil)
+}
+
+// newHoldWorldWith is newHoldWorld on a server that also serves extra routes.
+func newHoldWorldWith(t *testing.T, syncToml string, routes func(mux *http.ServeMux, f *fakeWorkstateServer)) *holdWorld {
+	t.Helper()
+	ts, f := newFakeWorkstateServerWith(t, routes)
 	seedCred(t, ts.URL)
 	w := &holdWorld{f: f, url: ts.URL}
 	w.repo = workstateRepo(t, syncToml)

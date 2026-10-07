@@ -25,6 +25,10 @@ type documentSyncStateFile struct {
 	// (sty_f6cff549). Server is still authority; push uses this to skip
 	// foreign-held items without forking a second copy.
 	Holds map[string]map[string]string `json:"holds,omitempty"`
+	// Pending is the stories engaged here while the hosted hold could not be
+	// placed (server unreachable, or the story never pushed): id → engage time.
+	// The next work-state push claims them (sty_52eb8c2f).
+	Pending map[string]map[string]string `json:"pending,omitempty"`
 	// Snapshots records, per (server, project, repo, area), the hosted snapshot
 	// this checkout last synced from (sty_fe5a8ed4). It lives here, outside any
 	// repo tree, so knowing what was last synced never becomes a file that is
@@ -256,6 +260,68 @@ func ForgetHold(server, project, repoRoot, id string) error {
 		delete(state.Holds, key)
 	} else {
 		state.Holds[key] = m
+	}
+	return writeDocumentSyncState(state)
+}
+
+// RecordPendingClaim notes that id was engaged here without a hosted hold.
+func RecordPendingClaim(server, project, repoRoot, id string, at time.Time) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return err
+	}
+	if state.Pending == nil {
+		state.Pending = map[string]map[string]string{}
+	}
+	key := documentCursorKey(server, project, repoRoot)
+	m := state.Pending[key]
+	if m == nil {
+		m = map[string]string{}
+	}
+	if _, ok := m[id]; !ok {
+		m[id] = at.UTC().Format(time.RFC3339)
+	}
+	state.Pending[key] = m
+	return writeDocumentSyncState(state)
+}
+
+// PendingClaims returns the pending claims for the key (id → engage time).
+func PendingClaims(server, project, repoRoot string) (map[string]string, error) {
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for k, v := range state.Pending[documentCursorKey(server, project, repoRoot)] {
+		out[k] = v
+	}
+	return out, nil
+}
+
+// ClearPendingClaim drops id from the pending claims.
+func ClearPendingClaim(server, project, repoRoot, id string) error {
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return err
+	}
+	key := documentCursorKey(server, project, repoRoot)
+	m := state.Pending[key]
+	if _, ok := m[id]; !ok {
+		return nil
+	}
+	delete(m, id)
+	if len(m) == 0 {
+		delete(state.Pending, key)
 	}
 	return writeDocumentSyncState(state)
 }

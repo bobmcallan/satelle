@@ -41,6 +41,13 @@ type fakeWorkstateServer struct {
 
 func newFakeWorkstateServer(t *testing.T) (*httptest.Server, *fakeWorkstateServer) {
 	t.Helper()
+	return newFakeWorkstateServerWith(t, nil)
+}
+
+// newFakeWorkstateServerWith is newFakeWorkstateServer plus extra REST routes
+// (the hosted hold surface) registered on the same server.
+func newFakeWorkstateServerWith(t *testing.T, routes func(mux *http.ServeMux, f *fakeWorkstateServer)) (*httptest.Server, *fakeWorkstateServer) {
+	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	// Work-state cursor lives in the document-sync state file (sty_88e83180).
 	hosted.DocumentSyncStatePathOverride = filepath.Join(t.TempDir(), "document-sync-state.json")
@@ -57,6 +64,9 @@ func newFakeWorkstateServer(t *testing.T) (*httptest.Server, *fakeWorkstateServe
 			{"id": "ws-team", "kind": "team", "name": "Acme"},
 		})
 	})
+	if routes != nil {
+		routes(mux, f)
+	}
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	attachFakeWorkstateGRPC(t, f)

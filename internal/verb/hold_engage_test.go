@@ -12,10 +12,10 @@ import (
 
 func TestHeldElsewhereRefusesEngageNotListGetCancel(t *testing.T) {
 	wire(t)
-	verb.SetHoldChecker(func(ctx context.Context, itemID string) (verb.HoldInfo, error) {
+	verb.SetHoldClaimer(func(ctx context.Context, itemID string) (verb.HoldInfo, error) {
 		return verb.HoldInfo{Holder: "loc_other", LastSeen: "2026-09-01T00:00:00Z", HeldElsewhere: true}, nil
 	})
-	t.Cleanup(verb.ClearHoldChecker)
+	t.Cleanup(verb.ClearHoldClaimer)
 
 	var it workitem.Item
 	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "held elsewhere"}), &it); err != nil {
@@ -37,25 +37,6 @@ func TestHeldElsewhereRefusesEngageNotListGetCancel(t *testing.T) {
 	}
 	if _, err := verb.Dispatch(context.Background(), "story-set", marshalReq(t, map[string]any{"id": it.ID, "status": "cancelled"})); err != nil {
 		t.Fatalf("cancel: %v", err)
-	}
-}
-
-func TestUnheldHostedStoryRefusesEngage(t *testing.T) {
-	wire(t)
-	verb.SetHoldChecker(func(ctx context.Context, itemID string) (verb.HoldInfo, error) {
-		return verb.HoldInfo{Unheld: true}, nil
-	})
-	t.Cleanup(verb.ClearHoldChecker)
-	var it workitem.Item
-	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "unheld hosted"}), &it); err != nil {
-		t.Fatal(err)
-	}
-	_, err := verb.Dispatch(context.Background(), "story-set", marshalReq(t, map[string]any{"id": it.ID, "status": "in_progress"}))
-	if err == nil || !strings.Contains(err.Error(), "hold checkout") {
-		t.Fatalf("unheld engage = %v", err)
-	}
-	if _, err := verb.Dispatch(context.Background(), "story-get", marshalReq(t, map[string]any{"id": it.ID})); err != nil {
-		t.Fatalf("get: %v", err)
 	}
 }
 

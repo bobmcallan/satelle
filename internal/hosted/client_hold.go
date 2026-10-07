@@ -20,6 +20,10 @@ import (
 // ErrHeldElsewhere is the sentinel for HTTP 409 code=held.
 var ErrHeldElsewhere = errors.New("hosted: story held by another location")
 
+// ErrItemNotFound is HTTP 404 on a story the server has never ingested: there
+// is nothing to check out until the first push (sty_52eb8c2f).
+var ErrItemNotFound = errors.New("hosted: item not found")
+
 // HoldState is one checkout as the server returns it.
 type HoldState struct {
 	LocationID string `json:"location_id"`
@@ -102,7 +106,7 @@ func (c *Client) mapHoldResponse(itemID string, resp *http.Response) (HoldState,
 		if scope := c.sessionScopeErr(); scope != nil {
 			return HoldState{}, scope
 		}
-		return HoldState{}, fmt.Errorf("hosted: hold %s: %s", itemID, serverError(resp.StatusCode, body))
+		return HoldState{}, fmt.Errorf("%w: hold %s: %s", ErrItemNotFound, itemID, serverError(resp.StatusCode, body))
 	default:
 		return HoldState{}, fmt.Errorf("hosted: hold %s: %s", itemID, serverError(resp.StatusCode, body))
 	}
@@ -169,6 +173,7 @@ func (c *Client) ItemHold(ctx context.Context, project, id string) (HoldState, e
 		if scope := c.sessionScopeErr(); scope != nil {
 			return HoldState{}, scope
 		}
+		return HoldState{}, fmt.Errorf("%w: GET item %s: %s", ErrItemNotFound, id, serverError(resp.StatusCode, body))
 	}
 	if resp.StatusCode != http.StatusOK {
 		return HoldState{}, fmt.Errorf("hosted: GET item %s: %s", id, serverError(resp.StatusCode, body))
@@ -197,6 +202,53 @@ func (c *Client) HoldLog(ctx context.Context, project, id string) ([]map[string]
 		return nil, fmt.Errorf("hosted: decode checkout-log: %w", err)
 	}
 	return out, nil
+}
+
+// HoldSince is when holder's current hold began, read from a checkout log: the
+// earliest checkout or takeover entry by holder after that holder's last
+// release. ok is false when the log has no parseable entry for them, so a
+// caller never presents last-seen as since. The log's field names are not
+// pinned by the server contract, so both common spellings are read.
+func HoldSince(log []map[string]any, holder string) (string, bool) {
+	var since time.Time
+	var raw string
+	for _, e := range log {
+		if logString(e, "location_id", "location") != holder {
+			continue
+		}
+		t, ok := logTime(e)
+		if !ok {
+			continue
+		}
+		switch strings.ToLower(logString(e, "action", "event", "type")) {
+		case "release":
+			since, raw = time.Time{}, ""
+		case "checkout", "takeover":
+			if raw == "" || t.Before(since) {
+				since, raw = t, logString(e, "at", "created_at")
+			}
+		}
+	}
+	return raw, raw != ""
+}
+
+func logString(e map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if s, ok := e[k].(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func logTime(e map[string]any) (time.Time, bool) {
+	s := logString(e, "at", "created_at")
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // FormatLastSeen renders an RFC3339 timestamp plus relative age.
