@@ -15,9 +15,9 @@ import (
 // ledger only; asking git is the caller's job.
 type CodeState struct {
 	// Eligible is true when the story is non-terminal and has entered a code-bearing
-	// state of its workflow: one allocated to the in-loop executor
-	// (Spec.EditCapableStates). A story that never entered one has no code of
-	// its own.
+	// state of its workflow (Spec.CodeBearingStates): at or after the freeze step,
+	// whichever agent performs it, or an executor state on a route with no freeze
+	// step. A story that never entered one has no code of its own.
 	Eligible bool
 	// Tree is the working tree the story was engaged from.
 	Tree string
@@ -39,11 +39,11 @@ func StoryCodeState(ctx context.Context, item workitem.Item, fallbackTree string
 	if spec.IsTerminalState(item.Status) {
 		return CodeState{}, nil
 	}
-	executor := map[string]bool{}
-	for _, s := range spec.EditCapableStates() {
-		executor[s] = true
+	codeBearing := map[string]bool{}
+	for _, s := range spec.CodeBearingStates() {
+		codeBearing[s] = true
 	}
-	entered := executor[item.Status]
+	entered := codeBearing[item.Status]
 	if !entered {
 		led, err := requireLedger()
 		if err != nil {
@@ -57,7 +57,7 @@ func StoryCodeState(ctx context.Context, item workitem.Item, fallbackTree string
 			var p struct {
 				To string `json:"to"`
 			}
-			if json.Unmarshal(e.Payload, &p) == nil && executor[p.To] {
+			if json.Unmarshal(e.Payload, &p) == nil && codeBearing[p.To] {
 				entered = true
 				break
 			}

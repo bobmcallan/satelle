@@ -548,6 +548,34 @@ func (s Spec) EditCapableStates() []string {
 	return out
 }
 
+// CodeBearingStates returns the performing states in which a story can be
+// carrying code of its own. On a route that declares a freeze step the freeze
+// bounds it: every spine performing state at or after that step, whichever agent
+// performs it (the definition is settled, so what is performed from there on is
+// implementation), and nothing before it, executor states included. A route with
+// no freeze step falls back to EditCapableStates. Order comes from the route's
+// topology and the freeze from its configuration; no state name is compiled in.
+// Distinct from EditCapableStates, which governs edit permission.
+func (s Spec) CodeBearingStates() []string {
+	freezeAt := -1
+	for _, st := range s.States {
+		if st.Freeze && st.onRouteSpine() {
+			freezeAt = s.SpineIndex(st.Name)
+			break
+		}
+	}
+	if freezeAt < 0 {
+		return s.EditCapableStates()
+	}
+	var out []string
+	for _, st := range s.States {
+		if st.IsPerforming() && !st.IsAugmentation() && st.onRouteSpine() && s.SpineIndex(st.Name) >= freezeAt {
+			out = append(out, st.Name)
+		}
+	}
+	return out
+}
+
 // IsEditCapableState reports whether name is a spine performing node allocated
 // to the in-loop executor. Unknown names are not edit-capable.
 func (s Spec) IsEditCapableState(name string) bool {
