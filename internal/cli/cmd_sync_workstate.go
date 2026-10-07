@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -280,6 +281,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	}
 
 	if len(batch.Items) == 0 && len(batch.Ledger) == 0 {
+		settlePendingClaims(cmd.Context(), out, cmd.ErrOrStderr(), a, server, project)
 		if hadCursor && !full {
 			fmt.Fprintf(out, "Work-state up to date on %s — no records changed since the last push.\n", server)
 			recordWorkstatePush(a.RepoRoot, true, "")
@@ -288,6 +290,10 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		fmt.Fprintln(out, "No work-state rows to push (opted-in areas are empty).")
 		return nil
 	}
+
+	client := newHostedClient(cmd.Context(), server, a.RepoRoot)
+	site := holdSite{client: client, server: server, project: project, repoRoot: repoRoot}
+	errw := cmd.ErrOrStderr()
 
 	// Hold a story whose code is not on the git remote (sty_7361569a). Held rows
 	// stay behind the cursors, so the next push re-checks and sends them.
@@ -307,6 +313,8 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		}
 		if len(res.held) > 0 {
 			held = res.held
+			// The story's rows stay local, but its hosted marker must not go stale.
+			refreshHeldBack(cmd.Context(), out, errw, site, held)
 			batch.Items, batch.Ledger, earliestHeld = withoutHeld(held, batch.Items, batch.Ledger, ledgerRows)
 			lmark = ledgerMarkBeforeHold(startMark, held, ledgerRows)
 			if !earliestHeld.IsZero() {
@@ -314,6 +322,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 			}
 			if len(batch.Items) == 0 && len(batch.Ledger) == 0 {
 				fmt.Fprintln(out, "No work-state rows to push after holding unpushed stories.")
+				reconcilePendingClaims(cmd.Context(), out, errw, site)
 				recordWorkstatePush(a.RepoRoot, true, "")
 				return nil
 			}
@@ -323,7 +332,6 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	// Chunked push; cursor advances only after every chunk confirms (AC3).
 	// Prefer a single POST when both sides fit in one chunk (preserves the
 	// small-batch shape tests and production already rely on).
-	client := newHostedClient(cmd.Context(), server, a.RepoRoot)
 	skipped, keep, skipErr := partitionByHold(cmd.Context(), client, server, project, repoRoot, batch.Items)
 	if skipErr != nil {
 		return skipErr
@@ -339,19 +347,78 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	} else if len(keep) > 0 && earliestHeld.IsZero() {
 		maxItems = maxItemUpdatedAt(keep)
 	}
-	if len(batch.Items) == 0 && len(batch.Ledger) == 0 {
+	var totalItems, totalLedger int
+	var publishedItems, publishedLedger []json.RawMessage
+	apply := func(items, ledgerRaw []json.RawMessage) error {
+		if items == nil {
+			items = []json.RawMessage{}
+		}
+		if ledgerRaw == nil {
+			ledgerRaw = []json.RawMessage{}
+		}
+		res, perr := client.Apply(cmd.Context(), project, hosted.WorkstateIngest{Items: items, Ledger: ledgerRaw})
+		if perr != nil {
+			recordWorkstatePush(a.RepoRoot, false, perr.Error())
+			if errors.Is(perr, hosted.ErrLoginRequired) || errors.Is(perr, hosted.ErrHeldElsewhere) {
+				return perr
+			}
+			return fmt.Errorf("apply workstate: %w", perr)
+		}
+		totalItems += res.Items
+		totalLedger += res.Ledger
+		publishedItems = append(publishedItems, items...)
+		publishedLedger = append(publishedLedger, ledgerRaw...)
+		return nil
+	}
+
+	// A story engaged here before the server could be asked has no hosted hold
+	// yet, and a story the server has never seen cannot be checked out until its
+	// item is there. So those items go first, alone; then every pending claim is
+	// placed, and a story another location got to loses its remaining rows
+	// (sty_52eb8c2f). They stay behind the cursors, so a takeover later sends them.
+	if pending, perr := hosted.PendingClaims(server, project, repoRoot); perr == nil && len(pending) > 0 {
+		var first, rest []json.RawMessage
+		for _, raw := range batch.Items {
+			if _, ok := pending[rawItemID(raw)]; ok {
+				first = append(first, raw)
+			} else {
+				rest = append(rest, raw)
+			}
+		}
+		if len(first) > 0 {
+			if err := apply(first, nil); err != nil {
+				return err
+			}
+			batch.Items = rest
+		}
+	}
+	if collided := reconcilePendingClaims(cmd.Context(), out, errw, site); len(collided) > 0 {
+		batch.Ledger = withoutStories(batch.Ledger, collided)
+		stopped := maps.Clone(held)
+		if stopped == nil {
+			stopped = map[string]string{}
+		}
+		for id := range collided {
+			stopped[id] = "held elsewhere"
+		}
+		lmark = ledgerMarkBeforeHold(startMark, stopped, ledgerRows)
+		maxItems = cursor.ItemsUpdatedAt
+	}
+	if len(batch.Items) == 0 && len(batch.Ledger) == 0 && len(publishedItems) == 0 {
 		fmt.Fprintln(out, "No work-state rows to push after hold partition.")
 		return nil
 	}
-	var totalItems, totalLedger int
 	type partial struct {
 		items  []json.RawMessage
 		ledger []json.RawMessage
 	}
 	var parts []partial
-	if len(batch.Items) <= workstateItemChunk && len(batch.Ledger) <= workstateLedgerChunk {
+	switch {
+	case len(batch.Items) == 0 && len(batch.Ledger) == 0:
+		// Everything went ahead of the claims.
+	case len(batch.Items) <= workstateItemChunk && len(batch.Ledger) <= workstateLedgerChunk:
 		parts = []partial{{items: batch.Items, ledger: batch.Ledger}}
-	} else {
+	default:
 		for _, c := range chunkRaw(batch.Items, workstateItemChunk) {
 			parts = append(parts, partial{items: c})
 		}
@@ -359,28 +426,10 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 			parts = append(parts, partial{ledger: c})
 		}
 	}
-	if len(parts) == 0 {
-		parts = []partial{{}}
-	}
 	for _, p := range parts {
-		chunk := hosted.WorkstateIngest{Items: p.items, Ledger: p.ledger}
-		if chunk.Items == nil {
-			chunk.Items = []json.RawMessage{}
+		if err := apply(p.items, p.ledger); err != nil {
+			return err
 		}
-		if chunk.Ledger == nil {
-			chunk.Ledger = []json.RawMessage{}
-		}
-		res, perr := client.Apply(cmd.Context(), project, chunk)
-		if perr != nil {
-			if errors.Is(perr, hosted.ErrLoginRequired) || errors.Is(perr, hosted.ErrHeldElsewhere) {
-				recordWorkstatePush(a.RepoRoot, false, perr.Error())
-				return perr
-			}
-			recordWorkstatePush(a.RepoRoot, false, perr.Error())
-			return fmt.Errorf("apply workstate: %w", perr)
-		}
-		totalItems += res.Items
-		totalLedger += res.Ledger
 	}
 	// Advance cursor only after full success.
 	next := hosted.WorkstateCursor{
@@ -397,6 +446,10 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		project, server, totalItems, totalLedger)
 	if len(held) > 0 {
 		fmt.Fprintf(out, "%d stor(y/ies) held until their code is on the remote.\n", len(held))
+	}
+	// A published story at rest no longer needs its in-flight marker.
+	if released := releaseAtRest(cmd.Context(), errw, a, site, publishedStoryIDs(publishedItems, publishedLedger)); len(released) > 0 {
+		fmt.Fprintf(out, "released the hosted hold on %s.\n", strings.Join(released, ", "))
 	}
 	recordWorkstatePush(a.RepoRoot, true, "")
 	return nil
@@ -508,6 +561,9 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 	if merr != nil {
 		return merr
 	}
+	// Stories in flight elsewhere are worth knowing even when nothing was pulled.
+	defer reportInFlight(ctx, out, cmd.ErrOrStderr(),
+		holdSite{client: client, server: server, project: project, repoRoot: a.RepoRoot}, items)
 	if nItems == 0 && nLedger == 0 && nKept == 0 {
 		fmt.Fprintln(out, "No work-state rows to pull (hosted opted-in areas are empty).")
 		return nil

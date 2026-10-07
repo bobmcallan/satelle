@@ -2,57 +2,64 @@ package verb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-// HoldInfo is the hosted checkout of a story, if any. Wired from the CLI
+// HoldInfo is the outcome of claiming a story's hosted hold. Wired from the CLI
 // (internal/hosted) so verb never imports hosted — same seam as assigneeResolver.
 type HoldInfo struct {
 	Holder        string
 	HolderLabel   string
 	LastSeen      string
 	HeldElsewhere bool
-	// Unheld is a hosted story with no location. Engage is refused until
-	// satelle story hold checkout (AC2). Distinct from HeldElsewhere (AC4)
-	// and from a lookup error / missing item (fail-open: local-only).
-	Unheld bool
 }
 
-// holdChecker returns the current hosted hold for itemID. Nil (unwired) means
-// unbound / fully-local: refuseHeldElsewhere is a no-op (AC6).
-var holdChecker func(ctx context.Context, itemID string) (HoldInfo, error)
+// ErrHoldPending is returned by a claimer that could not place the hold — the
+// server was unreachable or has never seen the story. The engage proceeds with a
+// local hold, and the claimer has recorded the claim to be placed at the next
+// work-state push (sty_52eb8c2f).
+var ErrHoldPending = errors.New("hosted hold pending")
 
-// SetHoldChecker wires hosted hold lookup. Pass nil to clear (tests / unbound).
-func SetHoldChecker(f func(ctx context.Context, itemID string) (HoldInfo, error)) {
-	holdChecker = f
+// holdClaimer places (or refreshes) the hosted hold for itemID and reports who
+// holds it. Nil (unwired) means unbound / fully-local: refuseHeldElsewhere is a
+// no-op (AC8).
+var holdClaimer func(ctx context.Context, itemID string) (HoldInfo, error)
+
+// SetHoldClaimer wires the hosted hold claim. Pass nil to clear (tests / unbound).
+func SetHoldClaimer(f func(ctx context.Context, itemID string) (HoldInfo, error)) {
+	holdClaimer = f
 }
 
-// ClearHoldChecker unsets the checker (tests). Unwired is the unbound path.
-func ClearHoldChecker() {
-	holdChecker = nil
+// ClearHoldClaimer unsets the claimer (tests). Unwired is the unbound path.
+func ClearHoldClaimer() {
+	holdClaimer = nil
 }
 
-// refuseHeldElsewhere refuses an engaging move when another location holds the
-// story. Nil checker, lookup error, or !HeldElsewhere allow the move.
+// refuseHeldElsewhere claims the story's hosted hold for an engaging move, and
+// refuses the move when another location holds it. It runs before the
+// engagement lease, so a refusal takes none.
 //
-// Fail-open on lookup error is deliberate (sty_dec88606): a hosted outage must
-// not brick local engagement. The warning goes to stderr so the operator sees
-// the degraded check; two locations can then engage the same story until
-// connectivity returns.
+// An unreachable server or a story the server has never seen lets the move
+// through with a warning (ErrHoldPending): a hosted outage must not brick local
+// engagement (sty_dec88606). The claimer has recorded the claim, and the next
+// push places the hold or reports the collision. Any other claimer error is
+// treated the same way, unrecorded.
 func refuseHeldElsewhere(ctx context.Context, current workitem.Item) error {
-	if holdChecker == nil {
+	if holdClaimer == nil {
 		return nil
 	}
-	info, err := holdChecker(ctx, current.ID)
+	info, err := holdClaimer(ctx, current.ID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "satelle: hosted hold lookup failed (engaging anyway): %v\n", err)
+		if errors.Is(err, ErrHoldPending) {
+			fmt.Fprintf(os.Stderr, "satelle: hosted hold for %s not placed (engaging with a local hold; claimed at the next work-state push): %v\n", current.ID, err)
+		} else {
+			fmt.Fprintf(os.Stderr, "satelle: hosted hold lookup failed (engaging anyway): %v\n", err)
+		}
 		return nil
-	}
-	if info.Unheld {
-		return fmt.Errorf("%s is unheld on the hosted server — satelle story hold checkout %s", current.ID, current.ID)
 	}
 	if !info.HeldElsewhere {
 		return nil

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -189,45 +188,10 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// Person actor for ledger rows that name the satelle user: the account
 	// PrincipalID when signed in, the git email when local-only.
 	verb.SetActorResolver(func() string { return resolveUser(a.Config, a.RepoRoot).Actor() })
-	// Hosted story-hold (sty_dec88606): refuse engaging a story held by another
-	// location. Unwired when no server or no bound project (AC6). Cached per
-	// process so a multi-step engage does not repeat the GET. Lookup errors
-	// fail-open inside refuseHeldElsewhere.
-	var holdMu sync.Mutex
-	holdCache := map[string]verb.HoldInfo{}
-	verb.SetHoldChecker(func(ctx context.Context, itemID string) (verb.HoldInfo, error) {
-		server := config.ResolveHostedServer(a.Config)
-		project := a.Config.SyncProject()
-		if server == "" || project == "" {
-			return verb.HoldInfo{}, nil
-		}
-		holdMu.Lock()
-		if h, ok := holdCache[itemID]; ok {
-			holdMu.Unlock()
-			return h, nil
-		}
-		holdMu.Unlock()
-		c := newHostedClient(ctx, server, a.RepoRoot)
-		st, err := c.ItemHold(ctx, project, itemID)
-		if err != nil {
-			return verb.HoldInfo{}, err
-		}
-		info := verb.HoldInfo{
-			Holder:      st.LocationID,
-			HolderLabel: st.Label,
-			LastSeen:    st.LastSeenAt,
-		}
-		switch {
-		case st.LocationID == "":
-			info.Unheld = true
-		case c.Location() != "" && st.LocationID != c.Location():
-			info.HeldElsewhere = true
-		}
-		holdMu.Lock()
-		holdCache[itemID] = info
-		holdMu.Unlock()
-		return info, nil
-	})
+	// Hosted story-hold (sty_dec88606, sty_52eb8c2f): an engaging move claims the
+	// story's hosted hold and is refused when another location holds it.
+	// Unwired when no server or no bound project.
+	verb.SetHoldClaimer(hostedHoldClaimer(a))
 	// Engage precondition (sty_93eec36d): agents.toml + workflow agent= validation
 	// before a story leaves its entry state. agents already loaded by requireAgents.
 	// Vars are the LAYERED KV (machine-wide catalog [vars] under the repo's own,

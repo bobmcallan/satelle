@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -16,8 +17,12 @@ func storyHoldCommands() *cobra.Command {
 	var server string
 	hold := &cobra.Command{
 		Use:   "hold",
-		Short: "Checkout, release, or take over a hosted story (not the engagement seat)",
+		Short: "Checkout, release, take over, or show a hosted story's hold (not the engagement seat)",
 		Long: `Hosted story-hold: which location may work a canonical hosted story.
+
+Engaging a story claims its hold for you (checkout) before the engagement lease,
+and a machine that cannot reach the server engages anyway and claims at its next
+work-state push. satelle story hold checkout is the manual form of that claim.
 
 This is not the engagement seat. satelle story seat / satelle story seat release
 free a LOCAL lease in this working tree. satelle story hold release drops the
@@ -61,8 +66,46 @@ List/get still work; engaging requires checkout again.`,
 			return runStoryHoldTakeover(cmd, server, args[0])
 		},
 	}
-	hold.AddCommand(checkout, release, takeover)
+	show := &cobra.Command{
+		Use:   "show <id>",
+		Short: "Show who holds a story on the hosted server, and since when",
+		Long: `Show the hosted hold of one story: the holder location and label, and either
+"since <t>" (when the story's checkout log has a checkout or takeover entry for
+that holder) or "last seen <t>" (when it has not — last-seen is never presented
+as since). Prints "unheld" when no location holds it.`,
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runStoryHoldShow(cmd, server, args[0])
+		},
+	}
+	hold.AddCommand(checkout, release, takeover, show)
 	return hold
+}
+
+func runStoryHoldShow(cmd *cobra.Command, serverArg, id string) error {
+	client, project, repoRoot, err := holdClient(cmd, serverArg)
+	if err != nil {
+		return err
+	}
+	st, err := client.ItemHold(cmd.Context(), project, id)
+	switch {
+	case errors.Is(err, hosted.ErrItemNotFound):
+		fmt.Fprintf(cmd.OutOrStdout(), "%s unheld (not on the hosted server yet)\n", id)
+		return nil
+	case err != nil:
+		return err
+	case st.LocationID == "":
+		fmt.Fprintf(cmd.OutOrStdout(), "%s unheld\n", id)
+		return nil
+	}
+	h := holdSite{client: client, server: resolveServer(serverArg), project: project, repoRoot: repoRoot}
+	line := describeHold(cmd.Context(), h, id, st)
+	if client.Location() != "" && st.LocationID == client.Location() {
+		line += " (this location)"
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), line)
+	return nil
 }
 
 func holdClient(cmd *cobra.Command, serverArg string) (client *hosted.Client, project, repoRoot string, err error) {
