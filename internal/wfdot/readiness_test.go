@@ -179,6 +179,45 @@ func TestTwoFreezeStepsInOneRouteAreRefused(t *testing.T) {
 	}
 }
 
+// A story can carry code of its own from the freeze step on, whichever agent
+// performs it; the readiness step before the freeze never can (sty_87f407ef).
+func TestCodeBearingStatesFollowTheFreezeStep(t *testing.T) {
+	spec := readinessSpec(t)
+	if got := spec.EditCapableStates(); len(got) != 0 {
+		t.Fatalf("fixture has no executor step, EditCapableStates = %v", got)
+	}
+	if got := spec.CodeBearingStates(); !sameStrings(got, []string{"in_progress"}) {
+		t.Errorf("CodeBearingStates = %v, want [in_progress] (coder at the freeze step, not the planner)", got)
+	}
+
+	// With no freeze step the executor rule is the whole answer.
+	noFreeze := strings.Replace(readinessSteps, "freeze = true\n", "", 1)
+	noFreeze = strings.Replace(noFreeze, "agent = \"coder\"", "agent = \"executor\"", 1)
+	spec, err := ParseRoute(readinessDone, noFreeze, "feature", nil)
+	if err != nil {
+		t.Fatalf("ParseRoute: %v", err)
+	}
+	if got, want := spec.CodeBearingStates(), spec.EditCapableStates(); !sameStrings(got, want) || !sameStrings(got, []string{"in_progress"}) {
+		t.Errorf("no-freeze CodeBearingStates = %v, want EditCapableStates %v = [in_progress]", got, want)
+	}
+}
+
+// The freeze bounds eligibility: an executor step placed before the freeze step
+// is edit-capable but never code-bearing, because the definition is still open.
+func TestExecutorBeforeFreezeIsNotCodeBearing(t *testing.T) {
+	steps := strings.Replace(readinessSteps, "agent = \"planner\"", "agent = \"executor\"", 1)
+	spec, err := ParseRoute(readinessDone, steps, "feature", nil)
+	if err != nil {
+		t.Fatalf("ParseRoute: %v", err)
+	}
+	if got := spec.EditCapableStates(); !sameStrings(got, []string{"plan"}) {
+		t.Fatalf("fixture: EditCapableStates = %v, want [plan]", got)
+	}
+	if got := spec.CodeBearingStates(); !sameStrings(got, []string{"in_progress"}) {
+		t.Errorf("CodeBearingStates = %v, want [in_progress]: the executor state before the freeze is not code-bearing", got)
+	}
+}
+
 // AC2's route rule: editable strictly before the freeze step, by route order.
 func TestDefinitionEditableFollowsTheFreezeStep(t *testing.T) {
 	spec := readinessSpec(t)

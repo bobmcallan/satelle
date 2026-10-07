@@ -404,3 +404,121 @@ func TestWorkstatePushDryRunListsHeldStories(t *testing.T) {
 		t.Error("dry-run contacted the server")
 	}
 }
+
+// coderFreezeWorld is a repo whose route has no executor step: the freeze step
+// is performed by a dispatched coder (sty_87f407ef). Both stories share the
+// satelle repo as their dirty tree.
+type coderFreezeWorld struct {
+	f            *fakeWorkstateServer
+	url          string
+	repo         string
+	coding, plan string // story ids
+}
+
+func newCoderFreezeWorld(t *testing.T) *coderFreezeWorld {
+	t.Helper()
+	ts, f := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	w := &coderFreezeWorld{f: f, url: ts.URL}
+	w.repo = workstateRepo(t, holdSyncToml)
+	makeRepoAClone(t, w.repo, holdRemote(t))
+
+	writeRoute(t, filepath.Join(w.repo, ".satelle", "workflows"),
+		`["*"]
+obligations = ["raised", "planned", "coded", "closed"]
+park = { state = "blocked" }
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[planned]
+status = "plan"
+agent = "planner"
+requires = ["raised"]
+
+[coded]
+status = "in_progress"
+agent = "coder"
+freeze = true
+requires = ["planned"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+`)
+	a, err := app.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Store.DocIndex.Sync(context.Background(), a.AuthoredDirs(), time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	a.Close()
+
+	w.coding = createStoryID(t, "coder at the freeze step")
+	w.plan = createStoryID(t, "planner before the freeze step")
+	return w
+}
+
+// codeBearingState is the first code-bearing state of the route that governs id.
+func codeBearingState(t *testing.T, id string) string {
+	t.Helper()
+	a, err := app.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	ctx := context.Background()
+	it, err := a.Store.Stories.Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wfs, err := a.Store.DocIndex.List(ctx, "workflows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	route, _, err := wfgovern.RouteFor(wfs, it)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := route.Spec.EditCapableStates(); len(got) != 0 {
+		t.Fatalf("fixture must have no executor step, EditCapableStates = %v", got)
+	}
+	states := route.Spec.CodeBearingStates()
+	if len(states) == 0 {
+		t.Fatal("route has no code-bearing state")
+	}
+	return states[0]
+}
+
+// A story being coded at a freeze step a coder performs, with work only in an
+// uncommitted tree and no later transition, is held and named; a story still in
+// the readiness step sharing that dirty tree is published (sty_87f407ef AC1, AC2).
+func TestWorkstatePushHoldsCoderStoryAtFreezeStep(t *testing.T) {
+	w := newCoderFreezeWorld(t)
+	head := gitIn(t, w.repo, "rev-parse", "HEAD")
+	putInState(t, w.coding, codeBearingState(t, w.coding), w.repo, head, true)
+	putInState(t, w.plan, "plan", w.repo, head, true)
+	if err := os.WriteFile(filepath.Join(w.repo, "feature.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runRoot(t, "sync", "workstate", "push", "--server", w.url)
+	if err != nil {
+		t.Fatalf("push must exit zero: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "held "+w.coding+": uncommitted changes in "+w.repo) {
+		t.Errorf("coder story at the freeze step not held and named:\n%s", out)
+	}
+	if strings.Contains(out, "held "+w.plan) {
+		t.Errorf("story in the readiness step reported held:\n%s", out)
+	}
+	if w.f.hasItem("probe", w.coding) || w.f.ledgerCount("probe", w.coding) != 0 {
+		t.Errorf("held coder story %s reached the server", w.coding)
+	}
+	if !w.f.hasItem("probe", w.plan) {
+		t.Errorf("planning story %s with a dirty tree was not published", w.plan)
+	}
+}
