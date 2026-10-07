@@ -40,6 +40,22 @@ func OnRemote(dir, sha string) (bool, error) {
 	return strings.TrimSpace(out) != "", nil
 }
 
+// HasCommit reports whether sha names a commit present in dir's repository, so a
+// recorded head can be told apart from one that never reached this machine.
+func HasCommit(dir, sha string) (bool, error) {
+	if _, err := gitOutput(dir, "rev-parse", "--git-dir"); err != nil {
+		return false, err
+	}
+	cmd := exec.Command("git", "-C", dir, "cat-file", "-e", sha+"^{commit}")
+	if err := cmd.Run(); err != nil {
+		if _, ok := err.(*exec.ExitError); ok {
+			return false, nil
+		}
+		return false, fmt.Errorf("git cat-file: %w", err)
+	}
+	return true, nil
+}
+
 func gitOutput(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	out, err := cmd.Output()

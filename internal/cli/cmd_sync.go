@@ -88,7 +88,7 @@ a whole-area reading gets wrong. Read-only.`,
 // empty tree; the store is opened after deploy for workstate pull only.
 func newSyncRehydrateCmd() *cobra.Command {
 	var server string
-	var force bool
+	var force, verbose bool
 	cmd := &cobra.Command{
 		Use:     "rehydrate",
 		Aliases: []string{"pull"},
@@ -114,17 +114,18 @@ no satelle.toml yet (never pushed from a post-0.0.330 binary with settings
 opted in), areas stay local and rehydrate names the fix.
 
 Does not push. Bare "satelle sync" remains the backup-oriented path on a healthy
-machine. Optional --force is passed to workstate pull only (conflict override).`,
+machine. Optional --force and --verbose are passed to workstate pull only.`,
 		RunE: func(c *cobra.Command, args []string) error {
-			return runSyncRehydrate(c, server, force)
+			return runSyncRehydrate(c, server, force, verbose)
 		},
 	}
 	cmd.Flags().StringVar(&server, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	cmd.Flags().BoolVar(&force, "force", false, "Pass --force to workstate pull (upsert on conflict).")
+	cmd.Flags().BoolVar(&verbose, "verbose", false, "Pass --verbose to workstate pull (list every story that left work with no recorded head).")
 	return cmd
 }
 
-func runSyncRehydrate(cmd *cobra.Command, serverArg string, force bool) error {
+func runSyncRehydrate(cmd *cobra.Command, serverArg string, force, verbose bool) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintln(out, "rehydrate: config deploy…")
 	outcome, err := runSyncConfigDeployOutcome(cmd, serverArg, "", 0)
@@ -146,7 +147,7 @@ func runSyncRehydrate(cmd *cobra.Command, serverArg string, force bool) error {
 	}
 	defer closeAppForCmd(cmd)
 	fmt.Fprintln(out, "rehydrate: workstate pull…")
-	if err := runSyncWorkstatePull(cmd, serverArg, false, force); err != nil {
+	if err := runSyncWorkstatePull(cmd, serverArg, false, force, verbose); err != nil {
 		return err
 	}
 	fmt.Fprintln(out, rehydrateDoneSummary(outcome))
