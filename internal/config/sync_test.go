@@ -1,6 +1,74 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// [sync] hold_unpushed: missing means true, a boolean sets it, anything else is
+// a config error (sty_7361569a).
+func TestHoldUnpushed(t *testing.T) {
+	cases := []struct {
+		name    string
+		sync    SyncTable
+		want    bool
+		wantErr bool
+	}{
+		{"missing", nil, true, false},
+		{"blank", SyncTable{"hold_unpushed": " "}, true, false},
+		{"true", SyncTable{"hold_unpushed": "true"}, true, false},
+		{"false", SyncTable{"hold_unpushed": "false"}, false, false},
+		{"bad", SyncTable{"hold_unpushed": "maybe"}, false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := HoldUnpushed(Config{Sync: tc.sync})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if err == nil && got != tc.want {
+				t.Fatalf("HoldUnpushed = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A bare TOML boolean loads, the overlay wins per key, and hold_unpushed is a
+// reserved key rather than a sync area.
+func TestSyncTableAcceptsBareBoolean(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "satelle.toml")
+	if err := os.WriteFile(path, []byte("[sync]\nstories = \"personal\"\nhold_unpushed = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Sync["stories"] != "personal" {
+		t.Errorf("stories = %q, want personal", cfg.Sync["stories"])
+	}
+	if got, err := HoldUnpushed(cfg); err != nil || got {
+		t.Errorf("HoldUnpushed = %v, %v; want false, nil", got, err)
+	}
+	if !reservedSyncKeys[syncHoldUnpushedKey] {
+		t.Error("hold_unpushed must be a reserved [sync] key")
+	}
+	for _, a := range SyncAreas {
+		if a == syncHoldUnpushedKey {
+			t.Errorf("hold_unpushed minted as a sync area")
+		}
+	}
+
+	bad := filepath.Join(dir, "bad.toml")
+	if err := os.WriteFile(bad, []byte("[sync]\nhold_unpushed = 3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Load(bad); err == nil {
+		t.Error("an integer [sync] value must be a config error")
+	}
+}
 
 func TestParseScope(t *testing.T) {
 	cases := map[string]Scope{"local": LocalScope, "personal": PersonalScope, "shared": SharedScope}

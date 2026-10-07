@@ -1,3 +1,13 @@
+## [0.0.623] - 2026-10-07
+
+### Added
+- **`satelle sync workstate push` holds back a story's activity until its code is on the git remote.** At push time satelle checks each story that has entered a state its workflow allocates to `agent=executor`: when the story's engagement tree has uncommitted changes, or its `HEAD` is on no remote-tracking branch, neither its item row nor any of its ledger rows is sent, and push prints `held <id>: uncommitted changes in <tree>` or `held <id>: head <sha8> is not on any remote branch` and still exits zero, sending everything else. Stories that have not reached such a state (backlog, plan) are never held. The next push after the code reaches the remote publishes the held rows, with no new transition and no `--full`. When git or the story's engagement tree is not available on this machine, push holds nothing on that basis and prints `reachability unavailable (<reason>): <id> not checked`. `--dry-run` lists what would be held. The hold is configuration: `[sync] hold_unpushed = false` turns it off (missing means on; a non-boolean value is a config error). (sty_7361569a)
+
+## [serve-v0.0.132] - 2026-10-07
+
+### Changed
+- The serve path picks up the `[sync] hold_unpushed` configuration key (sty_7361569a).
+
 ## [0.0.622] - 2026-10-07
 
 ### Fixed

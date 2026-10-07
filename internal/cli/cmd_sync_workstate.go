@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -54,21 +55,22 @@ area is opted in, and a pull merges into local rows rather than replacing them.`
 		Use:         "push",
 		Short:       "Replicate opted-in work-state areas to the personal workspace",
 		Annotations: needsStore(),
-		Long: `push collects local stories, task-executions, and ledger entries for work-state
-areas whose resolved [sync] scope is personal or shared, and upserts them into
-this repo's bound hosted PROJECT's personal collection on the hosted server
-(origin=cli-sync). Only records changed since the last successful push are sent
-(cursor outside the repo; sty_88e83180). Local-scoped areas are skipped. A team
-active-workspace binding does NOT redirect work-state — destination is always
-the bound project's personal partition. Requires "satelle project bind <slug>".
---full ignores the stored cursor and re-sends everything. Pull is the recover
-path: "satelle sync workstate pull".`,
+		Long: `push upserts local stories, task-executions, and ledger entries, for areas whose
+[sync] scope is personal or shared, into the bound hosted project's personal
+collection (origin=cli-sync). Only records changed since the last successful
+push are sent; --full re-sends everything. A team workspace binding does NOT
+redirect work-state. Requires "satelle project bind <slug>". Pull is the recover
+path: "satelle sync workstate pull".
+
+A story in progress is held, with a "held <id>" line, until its engagement tree
+is clean and its HEAD is on a remote-tracking ref; the next push sends it.
+[sync] hold_unpushed = false turns this off.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncWorkstatePush(cmd, pushServer, dryRun, full)
 		},
 	}
 	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
-	push.Flags().BoolVar(&dryRun, "dry-run", false, "List which areas would be pushed without contacting the server.")
+	push.Flags().BoolVar(&dryRun, "dry-run", false, "List which areas would be pushed, and which stories would be held, without contacting the server.")
 	push.Flags().BoolVar(&full, "full", false, "Ignore the stored cursor and push the complete set (then advance the cursor).")
 	group.AddCommand(push)
 
@@ -228,7 +230,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 				fmt.Fprintf(out, "  %s -> personal\n", area)
 			}
 		}
-		return nil
+		return dryRunHolds(cmd, a, optIn, out, server)
 	}
 
 	project, err := resolveBoundProject(a.Config, a.RepoRoot)
@@ -256,9 +258,15 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		}
 	}
 
-	batch, maxItems, ledgerMark, err := collectWorkstateSince(cmd.Context(), a, optIn, cursor)
+	batch, maxItems, lmark, ledgerRows, err := collectWorkstateRows(cmd.Context(), a, optIn, cursor)
 	if err != nil {
 		return err
+	}
+	startMark := ledgerMark{
+		createdAt: cursor.LedgerCreatedAt,
+		seq:       cursor.LedgerSeq,
+		anchorID:  cursor.LedgerAnchorID,
+		storeID:   lmark.storeID,
 	}
 	// SQL uses a whole-second lower bound so boundary-second rows reappear;
 	// drop anything not strictly after the cursor so a true no-op sends nothing
@@ -279,6 +287,37 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		return nil
 	}
 
+	// Hold a story whose code is not on the git remote (sty_7361569a). Held rows
+	// stay behind the cursors, so the next push re-checks and sends them.
+	holdOn, err := config.HoldUnpushed(a.Config)
+	if err != nil {
+		return err
+	}
+	var held map[string]string
+	var earliestHeld time.Time
+	if holdOn {
+		res, herr := classifyHolds(cmd.Context(), a, batch.Items, ledgerRows)
+		if herr != nil {
+			return herr
+		}
+		for _, l := range res.lines() {
+			fmt.Fprintln(out, l)
+		}
+		if len(res.held) > 0 {
+			held = res.held
+			batch.Items, batch.Ledger, earliestHeld = withoutHeld(held, batch.Items, batch.Ledger, ledgerRows)
+			lmark = ledgerMarkBeforeHold(startMark, held, ledgerRows)
+			if !earliestHeld.IsZero() {
+				maxItems = itemsCursorBefore(batch.Items, earliestHeld, cursor.ItemsUpdatedAt)
+			}
+			if len(batch.Items) == 0 && len(batch.Ledger) == 0 {
+				fmt.Fprintln(out, "No work-state rows to push after holding unpushed stories.")
+				recordWorkstatePush(a.RepoRoot, true, "")
+				return nil
+			}
+		}
+	}
+
 	// Chunked push; cursor advances only after every chunk confirms (AC3).
 	// Prefer a single POST when both sides fit in one chunk (preserves the
 	// small-batch shape tests and production already rely on).
@@ -295,7 +334,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		// Do not advance the items cursor past a skipped foreign-held row
 		// or it is silently dropped until --full (sty_f6cff549).
 		maxItems = cursor.ItemsUpdatedAt
-	} else if len(keep) > 0 {
+	} else if len(keep) > 0 && earliestHeld.IsZero() {
 		maxItems = maxItemUpdatedAt(keep)
 	}
 	if len(batch.Items) == 0 && len(batch.Ledger) == 0 {
@@ -344,16 +383,19 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	// Advance cursor only after full success.
 	next := hosted.WorkstateCursor{
 		ItemsUpdatedAt:  maxItems,
-		LedgerCreatedAt: ledgerMark.createdAt,
-		LedgerSeq:       ledgerMark.seq,
-		LedgerAnchorID:  ledgerMark.anchorID,
-		LedgerStoreID:   ledgerMark.storeID,
+		LedgerCreatedAt: lmark.createdAt,
+		LedgerSeq:       lmark.seq,
+		LedgerAnchorID:  lmark.anchorID,
+		LedgerStoreID:   lmark.storeID,
 	}
 	if err := hosted.SaveWorkstateCursor(server, project, repoRoot, next); err != nil {
 		return fmt.Errorf("save workstate cursor: %w", err)
 	}
 	fmt.Fprintf(out, "Pushed work-state to project %q personal collection on %s: %d item(s), %d ledger entr(y/ies).\n",
 		project, server, totalItems, totalLedger)
+	if len(held) > 0 {
+		fmt.Fprintf(out, "%d stor(y/ies) held until their code is on the remote.\n", len(held))
+	}
 	recordWorkstatePush(a.RepoRoot, true, "")
 	return nil
 }
@@ -839,6 +881,15 @@ func validateLedgerCursor(ctx context.Context, a *app.App, cursor hosted.Worksta
 // row already pushed (sty_4a31e1ed). Returns the batch plus the marks observed
 // (seeded from the cursor so empty areas never rewind it).
 func collectWorkstateSince(ctx context.Context, a *app.App, optIn map[string]bool, cursor hosted.WorkstateCursor) (hosted.WorkstateIngest, time.Time, ledgerMark, error) {
+	batch, maxItems, mark, _, err := collectWorkstateRows(ctx, a, optIn, cursor)
+	return batch, maxItems, mark, err
+}
+
+// collectWorkstateRows is collectWorkstateSince plus, for each collected ledger
+// row in batch order, who owns it and where it sits — what the unpushed-code
+// hold needs to cut the ledger cursor ahead of a held row (sty_7361569a).
+func collectWorkstateRows(ctx context.Context, a *app.App, optIn map[string]bool, cursor hosted.WorkstateCursor) (hosted.WorkstateIngest, time.Time, ledgerMark, []ledgerRowMeta, error) {
+	var rows []ledgerRowMeta
 	var batch hosted.WorkstateIngest
 	maxItems := cursor.ItemsUpdatedAt
 	maxLedger := ledgerMark{
@@ -878,24 +929,24 @@ func collectWorkstateSince(ctx context.Context, a *app.App, optIn map[string]boo
 
 	if optIn["stories"] {
 		if err := pageItems(workitem.KindStory); err != nil {
-			return batch, maxItems, maxLedger, fmt.Errorf("list stories: %w", err)
+			return batch, maxItems, maxLedger, rows, fmt.Errorf("list stories: %w", err)
 		}
 	}
 	if optIn["executions"] {
 		if err := pageItems(workitem.KindExecution); err != nil {
-			return batch, maxItems, maxLedger, fmt.Errorf("list executions: %w", err)
+			return batch, maxItems, maxLedger, rows, fmt.Errorf("list executions: %w", err)
 		}
 	}
 	if optIn["ledger"] {
 		storeID, err := a.Store.Ledger.InstanceID(ctx)
 		if err != nil {
-			return batch, maxItems, maxLedger, fmt.Errorf("list ledger: %w", err)
+			return batch, maxItems, maxLedger, rows, fmt.Errorf("list ledger: %w", err)
 		}
 		maxLedger.storeID = storeID
 		for {
 			entries, err := a.Store.Ledger.ListInsertedAfter(ctx, maxLedger.seq, workstateLedgerChunk)
 			if err != nil {
-				return batch, maxItems, maxLedger, fmt.Errorf("list ledger: %w", err)
+				return batch, maxItems, maxLedger, rows, fmt.Errorf("list ledger: %w", err)
 			}
 			if len(entries) == 0 {
 				break
@@ -903,9 +954,10 @@ func collectWorkstateSince(ctx context.Context, a *app.App, optIn map[string]boo
 			for _, e := range entries {
 				raw, merr := marshalWorkstateLedger(e.Entry)
 				if merr != nil {
-					return batch, maxItems, maxLedger, merr
+					return batch, maxItems, maxLedger, rows, merr
 				}
 				batch.Ledger = append(batch.Ledger, raw)
+				rows = append(rows, ledgerRowMeta{storyID: e.StoryID, id: e.ID, seq: e.Seq, createdAt: e.CreatedAt})
 				if e.CreatedAt.After(maxLedger.createdAt) {
 					maxLedger.createdAt = e.CreatedAt
 				}
@@ -923,7 +975,49 @@ func collectWorkstateSince(ctx context.Context, a *app.App, optIn map[string]boo
 	if batch.Ledger == nil {
 		batch.Ledger = []json.RawMessage{}
 	}
-	return batch, maxItems, maxLedger, nil
+	return batch, maxItems, maxLedger, rows, nil
+}
+
+// dryRunHolds lists the stories a real push would hold, from the same live git
+// check. The cursor is read when the repo is bound so the list is what a push
+// would actually consider; otherwise every story is checked.
+func dryRunHolds(cmd *cobra.Command, a *app.App, optIn map[string]bool, out io.Writer, server string) error {
+	on, err := config.HoldUnpushed(a.Config)
+	if err != nil {
+		return err
+	}
+	if !on {
+		fmt.Fprintln(out, "Hold is off ([sync] hold_unpushed = false) — no story would be held.")
+		return nil
+	}
+	var cursor hosted.WorkstateCursor
+	if project, perr := resolveBoundProject(a.Config, a.RepoRoot); perr == nil {
+		if c, lerr := hosted.LoadWorkstateCursor(server, project, a.RepoRoot); lerr == nil {
+			cursor = c
+		}
+	}
+	if optIn["ledger"] {
+		if cursor, _, err = validateLedgerCursor(cmd.Context(), a, cursor); err != nil {
+			return err
+		}
+	}
+	batch, _, _, rows, err := collectWorkstateRows(cmd.Context(), a, optIn, cursor)
+	if err != nil {
+		return err
+	}
+	batch.Items = filterItemsAfter(batch.Items, cursor.ItemsUpdatedAt)
+	res, err := classifyHolds(cmd.Context(), a, batch.Items, rows)
+	if err != nil {
+		return err
+	}
+	if len(res.held) == 0 && len(res.unavailable) == 0 {
+		fmt.Fprintln(out, "No story would be held.")
+		return nil
+	}
+	for _, l := range res.lines() {
+		fmt.Fprintln(out, l)
+	}
+	return nil
 }
 
 // marshalWorkstateItem encodes a work item with the promoted fields the server

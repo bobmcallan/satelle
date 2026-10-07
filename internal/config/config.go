@@ -128,7 +128,7 @@ type Config struct {
 	// nothing syncs without explicit opt-in. A committed [sync] table sets team
 	// defaults; satelle.local.toml overrides per-area for a single developer, the
 	// same per-key overlay merge as Vars (sty_a2d2e057).
-	Sync map[string]string `toml:"sync"`
+	Sync SyncTable `toml:"sync"`
 	// Tags holds the optional controlled-vocabulary table for work-item tags
 	// (sty_034d843c / epic:surface-scoped-steps). Declared namespaces reject
 	// unknown values at story/task create and set; absent/empty means every tag

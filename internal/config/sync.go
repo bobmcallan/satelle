@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -79,6 +80,11 @@ const syncAllKey = "all"
 // partition is unbacked (sty_30696eeb). Reserved so it is never treated as an area.
 const syncStaleAfterKey = "stale_after"
 
+// syncHoldUnpushedKey is the [sync] switch for the work-state push hold
+// (sty_7361569a): an in-flight story whose code is not on the git remote is
+// not published. Reserved so it is never treated as an area.
+const syncHoldUnpushedKey = "hold_unpushed"
+
 // WorkstateAreas are the [sync] areas that form the work-state kind.
 var WorkstateAreas = []string{"stories", "executions", "ledger"}
 
@@ -86,7 +92,51 @@ var WorkstateAreas = []string{"stories", "executions", "ledger"}
 // never looks them up; they must never be minted as SyncAreas.
 var reservedSyncKeys = map[string]bool{
 	syncAllKey: true, syncServerKey: true, syncProjectKey: true, syncWorkspaceKey: true,
-	syncStaleAfterKey: true,
+	syncStaleAfterKey: true, syncHoldUnpushedKey: true,
+}
+
+// SyncTable is the [sync] table: area name -> scope, plus the reserved
+// connection and switch keys. Values are strings; a bare TOML boolean is
+// accepted and kept as "true"/"false" so a switch reads naturally
+// (hold_unpushed = false). Decoding merges into an existing table, so the
+// satelle.local.toml overlay wins per key.
+type SyncTable map[string]string
+
+// UnmarshalTOML implements toml.Unmarshaler.
+func (t *SyncTable) UnmarshalTOML(data any) error {
+	m, ok := data.(map[string]any)
+	if !ok {
+		return fmt.Errorf("sync: [sync] must be a table, got %T", data)
+	}
+	if *t == nil {
+		*t = SyncTable{}
+	}
+	for k, v := range m {
+		switch x := v.(type) {
+		case string:
+			(*t)[k] = x
+		case bool:
+			(*t)[k] = strconv.FormatBool(x)
+		default:
+			return fmt.Errorf("sync: %s must be a string or boolean, got %T", k, v)
+		}
+	}
+	return nil
+}
+
+// HoldUnpushed reads [sync] hold_unpushed: whether work-state push holds back a
+// story whose code is not yet on the git remote. Missing means true; a value
+// that is not a boolean is a config error.
+func HoldUnpushed(cfg Config) (bool, error) {
+	raw := strings.TrimSpace(cfg.Sync[syncHoldUnpushedKey])
+	if raw == "" {
+		return true, nil
+	}
+	b, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("sync: hold_unpushed %q is not a boolean (want true|false)", raw)
+	}
+	return b, nil
 }
 
 // WorkstateStaleAfter reads [sync] stale_after. ok=false when the key is
