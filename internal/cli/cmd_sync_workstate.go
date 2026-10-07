@@ -13,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -75,33 +77,33 @@ is clean and its HEAD is on a remote-tracking ref; the next push sends it.
 	group.AddCommand(push)
 
 	var pullServer string
-	var pullDryRun, force bool
+	var pullDryRun, force, pullVerbose bool
 	pull := &cobra.Command{
 		Use:         "pull",
 		Short:       "Restore opted-in work-state from the personal workspace into the local store",
 		Annotations: needsStore(),
-		Long: `pull fetches stories, task-executions, and ledger entries for work-state areas
-whose resolved [sync] scope is personal or shared from this repo's bound hosted
-PROJECT's personal collection, and materializes them into the local DB (store
-upsert + derived backlog view regeneration). On-disk story markdown is never the
-primary restore target; story attachment files under the home-keyed runtime
-stories dir are not part of the workstate mirror and are not restored.
+		Long: `pull fetches the bound hosted PROJECT's personal stories, executions and
+ledger entries for areas whose [sync] scope is personal or shared, and merges
+them into the local DB by id. Story attachment files are not mirrored.
 
-Conflict policy (per opted-in area):
-  - local empty + hosted non-empty → materialize (prefer hosted)
-  - local non-empty AND hosted non-empty → fail with a named error (no silent clobber)
-  - --force overrides the conflict check; hosted rows upsert over same-id local
-    rows; local-only rows are left alone (not a wipe-and-replace)
+Local-only rows are kept. The pull refuses, naming each id, only where it would
+lose local information: a story changed locally since hosted, or a ledger row
+whose payload differs. --force lets hosted win (local-only rows stay; an
+existing ledger row is never rewritten).
 
-Local-scoped areas are skipped. Source is always the personal workspace (team
-binding ignored). Requires "satelle project bind <slug>".`,
+Afterwards it names each pulled story whose status claims code the git remote
+lacks, as of the last fetch; --verbose lists stories that left work with no
+recorded head. It changes nothing.
+
+Local-scoped areas are skipped. Requires "satelle project bind <slug>".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSyncWorkstatePull(cmd, pullServer, pullDryRun, force)
+			return runSyncWorkstatePull(cmd, pullServer, pullDryRun, force, pullVerbose)
 		},
 	}
 	pull.Flags().StringVar(&pullServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	pull.Flags().BoolVar(&pullDryRun, "dry-run", false, "List which areas would be pulled without contacting the server.")
-	pull.Flags().BoolVar(&force, "force", false, "Materialize even when local and hosted both have data for an area (upsert by id; no wipe).")
+	pull.Flags().BoolVar(&force, "force", false, "Materialize even where a same-id local row differs from hosted (hosted wins; local-only rows kept).")
+	pull.Flags().BoolVar(&pullVerbose, "verbose", false, "List every story that left work with no recorded head, not just a count.")
 	group.AddCommand(pull)
 
 	var snapServer string
@@ -445,7 +447,7 @@ func filterItemsAfter(items []json.RawMessage, since time.Time) []json.RawMessag
 	return out
 }
 
-func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force bool) error {
+func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, verbose bool) error {
 	a, err := appFrom(cmd)
 	if err != nil {
 		return err
@@ -496,24 +498,8 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force bo
 		ledgerRows = nil
 	}
 
-	// Partition hosted rows by area for conflict checks and materialize.
-	hostedStories, hostedExecs := 0, 0
-	for _, it := range items {
-		switch it.Kind {
-		case string(workitem.KindStory):
-			hostedStories++
-		case string(workitem.KindExecution):
-			hostedExecs++
-		}
-	}
-	hostedByArea := map[string]int{
-		"stories":    hostedStories,
-		"executions": hostedExecs,
-		"ledger":     len(ledgerRows),
-	}
-
 	if !force {
-		if cerr := checkWorkstatePullConflicts(ctx, a, optIn, hostedByArea); cerr != nil {
+		if cerr := checkWorkstatePullConflicts(ctx, a, optIn, items, ledgerRows); cerr != nil {
 			return cerr
 		}
 	}
@@ -534,6 +520,17 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force bo
 	if nKept > 0 {
 		fmt.Fprintf(out, "%d item(s) kept — local copy is newer than hosted\n", nKept)
 	}
+	if optIn["stories"] {
+		var ids []string
+		for _, hi := range items {
+			if hi.Kind == string(workitem.KindStory) {
+				ids = append(ids, hi.ID)
+			}
+		}
+		for _, line := range reconcilePulledStories(ctx, a, ids, verbose) {
+			fmt.Fprintln(out, line)
+		}
+	}
 	return nil
 }
 
@@ -551,39 +548,104 @@ func workstateOptIn(cfg config.Config) (map[string]bool, error) {
 	return optIn, nil
 }
 
-func checkWorkstatePullConflicts(ctx context.Context, a *app.App, optIn map[string]bool, hostedByArea map[string]int) error {
-	var conflicts []string
-	for _, area := range WorkstateAreas {
-		if !optIn[area] {
+// maxConflictIDs caps how many conflicting ids per area the refusal names.
+const maxConflictIDs = 10
+
+// checkWorkstatePullConflicts refuses a pull only where it would lose local
+// information. Merge is by id, so a local row the hosted copy has never seen, or
+// a same-id row that is identical to or older than hosted, is safe. What is not:
+// a same-id story the local side has changed since hosted (newer and differing),
+// and a same-id ledger row whose kind or payload differs (a ledger row is never
+// rewritten, so the hosted version would be dropped).
+func checkWorkstatePullConflicts(ctx context.Context, a *app.App, optIn map[string]bool, items []hosted.WorkstateItem, ledgerRows []hosted.WorkstateLedgerRow) error {
+	found := map[string][]string{}
+	for _, hi := range items {
+		area := workstateAreaForKind(hi.Kind)
+		if area == "" || !optIn[area] {
 			continue
 		}
-		localN, err := localWorkstateCount(ctx, a, area)
+		incoming, err := parseWorkstateItem(hi)
 		if err != nil {
+			continue // materialize names the undecodable row
+		}
+		local, err := a.Store.Stories.Get(ctx, incoming.ID)
+		if err != nil {
+			if errors.Is(err, workitem.ErrNotFound) {
+				continue
+			}
 			return err
 		}
-		hostedN := hostedByArea[area]
-		if localN > 0 && hostedN > 0 {
-			conflicts = append(conflicts, fmt.Sprintf("%s (local=%d hosted=%d)", area, localN, hostedN))
+		if local.UpdatedAt.After(incoming.UpdatedAt) && workstateItemsDiffer(local, incoming) {
+			found[area] = append(found[area], incoming.ID)
 		}
+	}
+	if optIn["ledger"] {
+		for _, hr := range ledgerRows {
+			incoming, err := parseWorkstateLedger(hr)
+			if err != nil {
+				continue
+			}
+			local, ok, err := a.Store.Ledger.GetByID(ctx, incoming.ID)
+			if err != nil {
+				return err
+			}
+			if ok && workstateLedgerDiffers(local, incoming) {
+				found["ledger"] = append(found["ledger"], incoming.ID)
+			}
+		}
+	}
+	var conflicts []string
+	for _, area := range WorkstateAreas {
+		ids := found[area]
+		if len(ids) == 0 {
+			continue
+		}
+		slices.Sort(ids)
+		extra := ""
+		if len(ids) > maxConflictIDs {
+			extra = fmt.Sprintf(" (+%d more)", len(ids)-maxConflictIDs)
+			ids = ids[:maxConflictIDs]
+		}
+		conflicts = append(conflicts, fmt.Sprintf("%s %s%s", area, strings.Join(ids, ", "), extra))
 	}
 	if len(conflicts) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%w: %s — re-run with --force to upsert hosted over same-id local rows (local-only rows kept)",
+	return fmt.Errorf("%w: %s — re-run with --force to let hosted win (local-only rows kept; an existing ledger row is never rewritten)",
 		ErrWorkstatePullConflict, strings.Join(conflicts, "; "))
 }
 
-func localWorkstateCount(ctx context.Context, a *app.App, area string) (int, error) {
-	switch area {
-	case "stories":
-		return a.Store.Stories.Count(ctx, workitem.KindStory)
-	case "executions":
-		return a.Store.Stories.Count(ctx, workitem.KindExecution)
-	case "ledger":
-		return a.Store.Ledger.Count(ctx)
-	default:
-		return 0, nil
+// workstateItemsDiffer compares the fields a work-state record carries, leaving
+// the timestamps out: they say which side is newer, not whether the content differs.
+func workstateItemsDiffer(a, b workitem.Item) bool {
+	return a.Kind != b.Kind || a.Title != b.Title || a.Body != b.Body || a.Status != b.Status ||
+		a.Priority != b.Priority || a.Category != b.Category || a.ParentID != b.ParentID ||
+		a.AcceptanceCriteria != b.AcceptanceCriteria || a.Archived != b.Archived ||
+		a.ParkOrigin != b.ParkOrigin || !slices.Equal(a.Tags, b.Tags)
+}
+
+// workstateLedgerDiffers reports whether two same-id ledger rows disagree on
+// kind or payload. Payloads are compared as JSON values, so key order and
+// whitespace do not count, and an empty payload equals {}.
+func workstateLedgerDiffers(a, b ledger.Entry) bool {
+	if a.Kind != b.Kind {
+		return true
 	}
+	return !jsonPayloadEqual(a.Payload, b.Payload)
+}
+
+func jsonPayloadEqual(a, b json.RawMessage) bool {
+	var av, bv any
+	if len(a) == 0 {
+		a = json.RawMessage("{}")
+	}
+	if len(b) == 0 {
+		b = json.RawMessage("{}")
+	}
+	if json.Unmarshal(a, &av) != nil || json.Unmarshal(b, &bv) != nil {
+		return string(a) == string(b)
+	}
+	return reflect.DeepEqual(av, bv)
 }
 
 // materializeWorkstate upserts hosted rows into the local store for opted-in

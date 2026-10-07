@@ -49,21 +49,20 @@ var longWordWaiver = map[string]int{
 	"satelle hook prompt":     135, // what the per-prompt reminder injects and when
 	// Operator procedures: destructive, converging, or recovery paths where the
 	// steps and the refusals are the documentation.
-	"satelle migrate":             420, // structural convergence per area, with the refusal paths
-	"satelle agents":              237, // per-harness launcher + hook install matrix
-	"satelle workspace add":       284, // registration + machine-scope seed target
-	"satelle doctor":              280, // the readiness checklist it runs, item by item
-	"satelle init":                274, // what the scaffold writes and what it leaves alone
-	"satelle rebase":              263, // DESTRUCTIVE: backup, reset, what is not recoverable
-	"satelle sync":                220, // the four areas and the personal/team scoping rules
-	"satelle service install":     189, // user vs system unit, lingering, the sudo boundary
-	"satelle sync rehydrate":      174, // recovery protocol from a hosted project
-	"satelle update":              172, // published-asset install plus the service cycle it performs
-	"satelle runtime reap":        169, // what it deletes and what it refuses to touch
-	"satelle reindex":             157, // normalisation + view regeneration, and what it never rewrites
-	"satelle runtime migrate":     152, // moving the runtime plane, and the refusals that protect it
-	"satelle restore":             150, // OVERWRITES drifted copies — the blast radius is the content
-	"satelle sync workstate pull": 138, // the merge rules for pulled workstate
+	"satelle migrate":         420, // structural convergence per area, with the refusal paths
+	"satelle agents":          237, // per-harness launcher + hook install matrix
+	"satelle workspace add":   284, // registration + machine-scope seed target
+	"satelle doctor":          280, // the readiness checklist it runs, item by item
+	"satelle init":            274, // what the scaffold writes and what it leaves alone
+	"satelle rebase":          263, // DESTRUCTIVE: backup, reset, what is not recoverable
+	"satelle sync":            220, // the four areas and the personal/team scoping rules
+	"satelle service install": 189, // user vs system unit, lingering, the sudo boundary
+	"satelle sync rehydrate":  174, // recovery protocol from a hosted project
+	"satelle update":          172, // published-asset install plus the service cycle it performs
+	"satelle runtime reap":    169, // what it deletes and what it refuses to touch
+	"satelle reindex":         157, // normalisation + view regeneration, and what it never rewrites
+	"satelle runtime migrate": 152, // moving the runtime plane, and the refusals that protect it
+	"satelle restore":         150, // OVERWRITES drifted copies — the blast radius is the content
 }
 
 // walkCommands visits every command under root with its full invocation path,

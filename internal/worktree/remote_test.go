@@ -59,6 +59,26 @@ func TestRemoteProbes(t *testing.T) {
 	}
 }
 
+func TestHasCommit(t *testing.T) {
+	base := t.TempDir()
+	bare := filepath.Join(base, "remote.git")
+	run(t, base, "init", "--bare", "-b", "main", bare)
+	tree := filepath.Join(base, "tree")
+	run(t, base, "clone", bare, tree)
+	commitFile(t, tree, "one")
+	head, _ := Head(tree)
+
+	if has, err := HasCommit(tree, head); err != nil || !has {
+		t.Errorf("HasCommit(known commit) = %v, %v; want true, nil", has, err)
+	}
+	if has, err := HasCommit(tree, "0123456789abcdef0123456789abcdef01234567"); err != nil || has {
+		t.Errorf("HasCommit(absent sha) = %v, %v; want false, nil", has, err)
+	}
+	if _, err := HasCommit(t.TempDir(), head); err == nil {
+		t.Error("HasCommit outside a repo should error, not report the commit absent")
+	}
+}
+
 func TestRemoteProbesOutsideARepo(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := Dirty(dir); err == nil {

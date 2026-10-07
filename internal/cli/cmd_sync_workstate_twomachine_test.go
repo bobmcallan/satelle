@@ -106,7 +106,7 @@ func (m *machine) push(t *testing.T, server string) {
 
 func (m *machine) pull(t *testing.T, server string) {
 	t.Helper()
-	m.run(t, func(c *cobra.Command) error { return runSyncWorkstatePull(c, server, false, false) })
+	m.run(t, func(c *cobra.Command) error { return runSyncWorkstatePull(c, server, false, false, false) })
 }
 
 // pushInGateGater attaches a document and pushes this machine's work-state from

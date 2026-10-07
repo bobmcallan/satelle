@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -599,81 +598,8 @@ func TestSyncWorkstateSnapshotRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSyncWorkstatePullConflictFails: both non-empty without --force.
-func TestSyncWorkstatePullConflictFails(t *testing.T) {
-	ts, _ := newFakeWorkstateServer(t)
-	seedCred(t, ts.URL)
-	workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
-
-	out, err := runRoot(t, "story", "create",
-		"--title", "Local kept",
-		"--body", "local row",
-		"--acceptance", "1. stays",
-	)
-	if err != nil {
-		t.Fatalf("create: %v\n%s", err, out)
-	}
-	out, err = runRoot(t, "sync", "workstate", "push", "--server", ts.URL)
-	if err != nil {
-		t.Fatalf("push: %v\n%s", err, out)
-	}
-
-	// Create a second local story so local is non-empty and hosted is non-empty
-	// (hosted has first story from push; local has both — conflict on stories).
-	out, err = runRoot(t, "story", "create",
-		"--title", "Local only extra",
-		"--body", "extra",
-		"--acceptance", "1. x",
-	)
-	if err != nil {
-		t.Fatalf("create2: %v\n%s", err, out)
-	}
-
-	out, err = runRoot(t, "sync", "workstate", "pull", "--server", ts.URL, "--dry-run=false")
-	if err == nil {
-		t.Fatalf("expected conflict, got success: %s", out)
-	}
-	if !errors.Is(err, ErrWorkstatePullConflict) && !strings.Contains(err.Error(), "workstate pull conflict") {
-		t.Fatalf("want conflict error, got %v\n%s", err, out)
-	}
-
-	// Local-only story still present (nothing written / no wipe).
-	listOut, err := runRoot(t, "story", "list", "--limit", "10")
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if !strings.Contains(listOut, "Local only extra") {
-		t.Errorf("local-only story should remain after conflict: %s", listOut)
-	}
-}
-
-// TestSyncWorkstatePullConflictForceOverrides: --force materializes.
-func TestSyncWorkstatePullConflictForceOverrides(t *testing.T) {
-	ts, _ := newFakeWorkstateServer(t)
-	seedCred(t, ts.URL)
-	workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
-
-	out, err := runRoot(t, "story", "create",
-		"--title", "Hosted title",
-		"--body", "original",
-		"--acceptance", "1. force",
-	)
-	if err != nil {
-		t.Fatalf("create: %v\n%s", err, out)
-	}
-	out, err = runRoot(t, "sync", "workstate", "push", "--server", ts.URL)
-	if err != nil {
-		t.Fatalf("push: %v\n%s", err, out)
-	}
-	// Local still non-empty; force pull should succeed.
-	out, err = runRoot(t, "sync", "workstate", "pull", "--server", ts.URL, "--force", "--dry-run=false")
-	if err != nil {
-		t.Fatalf("force pull: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, "Pulled work-state") {
-		t.Fatalf("force pull output: %q", out)
-	}
-}
+// The conflict tests (same-id local change, ledger mismatch, --force override)
+// live in cmd_sync_workstate_merge_test.go.
 
 // TestSyncWorkstatePullIgnoresTeamBinding: GETs personal only.
 func TestSyncWorkstatePullIgnoresTeamBinding(t *testing.T) {
