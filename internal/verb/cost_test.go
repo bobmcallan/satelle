@@ -376,6 +376,7 @@ func TestStoryEstimateRequiresAValue(t *testing.T) {
 // Move status between the verb's Get and Update via SetAfterTagCASGetHook so
 // the test fails if ExpectStatus is removed from storyEstimate.
 func TestStoryEstimateRefusesWhenStatusMoved(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
 	ctx := context.Background()
 	var it workitem.Item
@@ -391,7 +392,6 @@ func TestStoryEstimateRefusesWhenStatusMoved(t *testing.T) {
 			t.Errorf("SetStatus under estimate: %v", err)
 		}
 	})
-	t.Cleanup(func() { verb.SetAfterTagCASGetHook(nil) })
 
 	_, err := dispatchRaw(t, "story-estimate", map[string]any{"id": it.ID, "time": "30m"})
 	if !errors.Is(err, workitem.ErrStatusConflict) {
@@ -416,6 +416,7 @@ func TestStoryEstimateRefusesWhenStatusMoved(t *testing.T) {
 // though the actual is now computed rather than passed in (sty_8eae81ac AC1),
 // recordActual's own Get→Update still goes through the same CAS.
 func TestStoryActualRefusesWhenStatusMoved(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
 	ctx := context.Background()
 	var it workitem.Item
@@ -431,7 +432,6 @@ func TestStoryActualRefusesWhenStatusMoved(t *testing.T) {
 			t.Errorf("SetStatus under actual: %v", err)
 		}
 	})
-	t.Cleanup(func() { verb.SetAfterTagCASGetHook(nil) })
 
 	_, err := dispatchRaw(t, "story-actual", map[string]any{"id": it.ID})
 	if !errors.Is(err, workitem.ErrStatusConflict) {

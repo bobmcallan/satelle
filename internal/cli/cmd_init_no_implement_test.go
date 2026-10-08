@@ -30,6 +30,8 @@ func TestNoImplementHandoverNotice(t *testing.T) {
 }
 
 func TestInitPrintsNoImplementHandover(t *testing.T) {
+	// The operator-level settings file this test writes lives under HOME: own it.
+	t.Setenv("HOME", t.TempDir())
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".claude"), 0o755); err != nil {
 		t.Fatal(err)

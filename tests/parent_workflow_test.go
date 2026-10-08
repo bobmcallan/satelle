@@ -10,17 +10,17 @@ import (
 	"testing"
 )
 
-// TestParentWorkflowSelectedAndValid drives the real binary: the authored
-// satelle-parent-workflow validates (structure + graph) and is the ACTIVE
-// workflow for BOTH container categories (epic-parent, parent), overriding the
-// wildcard project workflow. The artifact under test is the repo's real workflow
-// file, installed into an isolated temp repo so the assertion is hermetic.
+// TestParentWorkflowSelectedAndValid drives the real binary: the route source
+// validates (structure + graph) and is the ACTIVE workflow for BOTH container
+// categories (epic-parent, parent), overriding the wildcard lane. The artifact
+// under test is the route the binary ships, installed into an isolated temp repo
+// so the assertion is hermetic and needs nothing from this checkout's .satelle.
 func TestParentWorkflowSelectedAndValid(t *testing.T) {
 	home := t.TempDir()
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	// Install this repo's real route source — the lifecycle that governs an
+	// Install the shipped route source — the lifecycle that governs an
 	// epic-parent now that the graphs are retired (sty_9835070d).
 	seedRouteSource(t, repo)
 
@@ -71,10 +71,11 @@ func TestParentWorkflowSelectedAndValid(t *testing.T) {
 		if len(rows) == 0 || rows[0].Name != "default" || !rows[0].Active {
 			t.Errorf("category %s active workflow = %+v, want the derived route first/active", cat, rows)
 		}
-		// …and it is the container lifecycle, not the wildcard one: backlog
-		// passes ready, then the container merge and its own release, with no
-		// slice steps (plan / in_progress / integration).
-		spec := repoRouteSpec(t, cat, nil)
+		// …and it is the container lifecycle, not the wildcard one: nothing is
+		// performed on a container, so backlog closes straight to done with no
+		// slice steps (plan / in_progress / integration). This repo's own
+		// container route is pinned by TestOperatorParentRoute.
+		spec := embeddedRouteSpec(t, cat, nil)
 		var names []string
 		for _, st := range spec.States {
 			names = append(names, st.Name)
@@ -84,8 +85,8 @@ func TestParentWorkflowSelectedAndValid(t *testing.T) {
 				t.Errorf("category %s must have no %q step — a container has no slice of its own (states %v)", cat, absent, names)
 			}
 		}
-		if !spec.HasEdge("backlog", "ready") || !spec.HasEdge("ready", "merging") || !spec.HasEdge("merging", "release") || !spec.HasEdge("release", "done") {
-			t.Errorf("category %s must close backlog → ready → merging → release → done (states %v)", cat, names)
+		if !spec.HasEdge("backlog", "done") {
+			t.Errorf("category %s must close backlog → done (states %v)", cat, names)
 		}
 	}
 }

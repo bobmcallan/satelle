@@ -28,6 +28,7 @@ func (s stubSummariser) MandatorySummary(_ context.Context, _ workitem.Item) boo
 // re-runs the summariser for one edge and deposits the step-summary doc that closes
 // the gap.
 func TestStoryResummarise(t *testing.T) {
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -41,12 +42,6 @@ func TestStoryResummarise(t *testing.T) {
 	verb.SetStepSummariser(stubSummariser{out: "the recovered recap", mandatory: true})
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetDocIndexStore(nil)
-		verb.SetStoryDir("")
-		verb.SetStepSummariser(nil)
 	})
 
 	var st workitem.Item

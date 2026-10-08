@@ -62,9 +62,9 @@ requires = ["coded"]
 // worktrees. It returns the store for lease assertions.
 func wireEngageWave(t *testing.T, schedule string) *store.DB {
 	t.Helper()
+	withWiring(t)
 	db := wireWithWorkflowsStore(t, engageWaveWF(schedule))
 	verb.SetEngagementMode(config.Config{Engagement: config.EngagementConfig{Parallel: config.ParallelEpic}})
-	t.Cleanup(verb.ClearEngagementMode)
 	return db
 }
 

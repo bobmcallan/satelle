@@ -32,8 +32,8 @@ func (f *fakeWorkflowResolver) WorkflowStates(_ context.Context, name string) ([
 // wireResolver wires a fake workflow resolver, resetting on cleanup.
 func wireResolver(t *testing.T, f *fakeWorkflowResolver) {
 	t.Helper()
+	withWiring(t)
 	verb.SetWorkflowResolver(f)
-	t.Cleanup(func() { verb.SetWorkflowResolver(nil) })
 }
 
 // dispatchErr dispatches a verb expected to FAIL and returns the error.
@@ -187,6 +187,7 @@ func TestStoryRestampSameTargetIsANoop(t *testing.T) {
 // the verb's Get and Update via SetAfterTagCASGetHook so the test fails if
 // ExpectStatus is removed from storyRestamp.
 func TestStoryRestampRefusesWhenStatusMoved(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
 	wireResolver(t, &fakeWorkflowResolver{
 		byCategory: map[string]string{"feature": "wf-a", "bug": "wf-b"},
@@ -209,7 +210,6 @@ func TestStoryRestampRefusesWhenStatusMoved(t *testing.T) {
 			t.Errorf("SetStatus under restamp: %v", err)
 		}
 	})
-	t.Cleanup(func() { verb.SetAfterTagCASGetHook(nil) })
 
 	_, err := dispatchRaw(t, "story-restamp", map[string]any{"id": created.ID, "workflow": "wf-b"})
 	if !errors.Is(err, workitem.ErrStatusConflict) {

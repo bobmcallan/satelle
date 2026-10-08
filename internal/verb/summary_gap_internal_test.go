@@ -17,6 +17,7 @@ import (
 // absent is surfaced as a NON-BLOCKING warning naming the edge + the exact
 // remediation; once the doc exists the gap clears.
 func TestSurfaceMissingSummaries(t *testing.T) {
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -25,12 +26,7 @@ func TestSurfaceMissingSummaries(t *testing.T) {
 	SetLedgerStore(db.Ledger)
 	SetTxRunner(db.InTx)
 	SetStoryDir(filepath.Join(dir, "stories"))
-	t.Cleanup(func() {
-		db.Close()
-		SetLedgerStore(nil)
-		SetTxRunner(nil)
-		SetStoryDir("")
-	})
+	t.Cleanup(func() { db.Close() })
 
 	ctx := context.Background()
 	now := time.Unix(1_700_000_000, 0)

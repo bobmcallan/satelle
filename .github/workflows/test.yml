@@ -34,11 +34,19 @@ jobs:
           if [ -n "$unformatted" ]; then
             echo "::error::these files are not gofmt-clean:"; echo "$unformatted"; exit 1
           fi
-      - name: unit tests
-        run: go test ./...
+      - name: unit tests (strict)
+        # STRICT=1: -count=3 -shuffle=on, and a skip that is not on
+        # scripts/skip-allow.txt fails the run (sty_53c3f311).
+        run: make test STRICT=1
+      - name: locate Chrome
+        # The browser e2e tests read SATELLE_CHROME; hermetic.sh forwards it.
+        # They are not on the allowed-skip list, so a missing Chrome fails.
+        run: |
+          chrome=$(command -v google-chrome || command -v chromium || command -v chromium-browser || true)
+          if [ -z "$chrome" ]; then echo "::error::no Chrome/Chromium on the runner"; exit 1; fi
+          echo "SATELLE_CHROME=$chrome" >> "$GITHUB_ENV"
+      - name: integration tests (strict)
+        run: make integration STRICT=1
       - name: no-cgo static build
         # Cover every main under cmd/ (CLI + satelled; sty_19ff03f4).
         run: CGO_ENABLED=0 go build -o /dev/null ./cmd/...
-      # Integration + browser e2e tests (tests/, -tags integration) run LOCALLY
-      # via `make integration` — they need a real Chrome and exercise the running
-      # binary, so they are not part of GitHub CI by design.

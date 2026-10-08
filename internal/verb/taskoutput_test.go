@@ -55,6 +55,7 @@ func TestExecutionRecordWritesOKFOutput(t *testing.T) {
 // (sty_890b86cb): attaching to a TASK materialises under .satelle/tasks/<tsk_id>/,
 // never under .satelle/stories/, while a story attaches under stories/ as before.
 func TestAttachRootResolvesByKind(t *testing.T) {
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -69,11 +70,6 @@ func TestAttachRootResolvesByKind(t *testing.T) {
 	verb.SetTaskDir(taskDir)
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetStoryDir("")
-		verb.SetTaskDir("")
 	})
 
 	var task workitem.Item

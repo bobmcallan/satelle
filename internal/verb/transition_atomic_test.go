@@ -13,9 +13,9 @@ import (
 )
 
 func TestTransitionRefusesUnwiredTxRunner(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
 	verb.SetTxRunner(nil)
-	t.Cleanup(func() { verb.SetTxRunner(db.InTx) })
 
 	var it workitem.Item
 	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "no-runner"}), &it); err != nil {

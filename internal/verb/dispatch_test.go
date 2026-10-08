@@ -27,10 +27,10 @@ func (d *dispatcherStub) DispatchExecutor(context.Context, workitem.Item, string
 // A dispatch failure refuses the transition: the status stays unchanged and the
 // error is surfaced (sty_fd427546).
 func TestStorySetDispatchFailureRefusesTransition(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	d := &dispatcherStub{err: errors.New("named agent architect failed performing step")}
 	verb.SetExecutorDispatcher(d)
-	t.Cleanup(func() { verb.SetExecutorDispatcher(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "backlog"}), &it)
@@ -52,10 +52,10 @@ func TestStorySetDispatchFailureRefusesTransition(t *testing.T) {
 // A successful dispatch enacts the transition and the run does not advance
 // status beyond the requested state.
 func TestStorySetDispatchSuccessEnacts(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	d := &dispatcherStub{res: verb.DispatchResult{Dispatched: true, Agent: "architect", Command: "fake {system}"}}
 	verb.SetExecutorDispatcher(d)
-	t.Cleanup(func() { verb.SetExecutorDispatcher(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "backlog"}), &it)
@@ -75,6 +75,7 @@ func TestStorySetDispatchSuccessEnacts(t *testing.T) {
 // agent_invocation row carries the session, branch and collected commit beside
 // the unavailable-usage note.
 func TestStorySetCloudDispatchEnactsAndRecordsSession(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
 	cloud := &verb.CloudDispatch{
 		SessionID: "session_X", URL: "https://claude.ai/code/session_X",
@@ -85,7 +86,6 @@ func TestStorySetCloudDispatchEnactsAndRecordsSession(t *testing.T) {
 		UsageNote: verb.UsageNote{UsageUnavailableReason: "claude cloud: usage unavailable", CacheSplitUnavailable: true},
 	}}
 	verb.SetExecutorDispatcher(d)
-	t.Cleanup(func() { verb.SetExecutorDispatcher(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "backlog"}), &it)

@@ -46,9 +46,9 @@ func bundledDecision(usageAvailable bool) verb.GateDecision {
 
 func bundleTransition(t *testing.T, dec verb.GateDecision) (*ledger.Store, string) {
 	t.Helper()
+	withWiring(t)
 	db := wire(t)
 	verb.SetTransitionGater(stubGater{dec: dec})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 	var it workitem.Item
 	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it); err != nil {
 		t.Fatal(err)

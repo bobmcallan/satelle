@@ -17,10 +17,10 @@ import (
 // log a read-only reviewer can scan — create, a tag reconciliation, and an
 // estimate all land with the story id and the before/after detail (sty_be257fef).
 func TestOpLogMirrorsMutations(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	dir := t.TempDir()
 	verb.SetOpLog(oplog.New(dir, logfile.Config{}))
-	t.Cleanup(func() { verb.SetOpLog(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "tags": []string{"sprint:9"}}), &it)
@@ -42,6 +42,7 @@ func TestOpLogMirrorsMutations(t *testing.T) {
 // TestOpLogUnwiredIsSafe: with no log wired, mutations still succeed (the log is
 // best-effort and nil-safe).
 func TestOpLogUnwiredIsSafe(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	verb.SetOpLog(nil)
 	var it workitem.Item

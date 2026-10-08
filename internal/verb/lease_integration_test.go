@@ -184,10 +184,10 @@ func TestSameStatusReengageAfterDroppedSeat(t *testing.T) {
 // rejected by the gate, the just-claimed seat is released so another story can
 // engage (AC4 release-on-abort).
 func TestLeaseNewAcquireAbortFreesSeat(t *testing.T) {
+	withWiring(t)
 	wireWithWorkflows(t, singleStoryWF)
 
 	verb.SetTransitionGater(rejectToGater{to: "plan", skill: "intent"})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	var a, b workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
@@ -216,6 +216,7 @@ func TestLeaseNewAcquireAbortFreesSeat(t *testing.T) {
 // still backlog), story B's concurrent engage is refused and A has not committed
 // plan yet (AC1/AC2 acquire-at-start window).
 func TestLeaseAcquireBeforeStatusCommit(t *testing.T) {
+	withWiring(t)
 	wireWithWorkflows(t, singleStoryWF)
 
 	// Slow gater blocks A on backlog→plan long enough for B to race.
@@ -223,7 +224,6 @@ func TestLeaseAcquireBeforeStatusCommit(t *testing.T) {
 	gater := &slowGater{to: "plan", delay: 200 * time.Millisecond, done: done}
 	verb.SetTransitionGater(gater)
 	t.Cleanup(func() {
-		verb.SetTransitionGater(nil)
 		select {
 		case <-done:
 		default:
@@ -284,13 +284,13 @@ func (s *slowGater) Gate(ctx context.Context, item workitem.Item, toStatus strin
 // TestLeaseGateRejectRetry: sequential plan→in_progress gate reject leaves
 // status at plan and clears in_flight so a retry can re-enter the edge.
 func TestLeaseGateRejectRetry(t *testing.T) {
+	withWiring(t)
 	wireWithWorkflows(t, singleStoryWF)
 	var a workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "plan"}), &a)
 
 	verb.SetTransitionGater(rejectToGater{to: "in_progress", skill: "code-ac"})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	_, err := dispatchRaw(t, "story-set", map[string]any{"id": a.ID, "status": "in_progress"})
 	if err == nil {
@@ -332,10 +332,10 @@ func (r rejectToGater) Gate(ctx context.Context, item workitem.Item, toStatus st
 // TestLeaseAbortLeavesNoSeatRow: gate reject on NEW acquire leaves no seat row
 // (sty_1738f973 AC1 deferred release-on-abort).
 func TestLeaseAbortLeavesNoSeatRow(t *testing.T) {
+	withWiring(t)
 	wireWithWorkflows(t, singleStoryWF)
 
 	verb.SetTransitionGater(rejectToGater{to: "plan", skill: "intent"})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	var a workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
@@ -398,6 +398,7 @@ func TestStorySeatListAndRelease(t *testing.T) {
 // committed backlog, heartbeat past TTL) then assert (a) seat list flags stale
 // and (b) a new story engages by stealing the seat (sty_1738f973 AC5).
 func TestOrphanStaleLeaseDoesNotBlockEngage(t *testing.T) {
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -422,11 +423,6 @@ func TestOrphanStaleLeaseDoesNotBlockEngage(t *testing.T) {
 	verb.SetLeaseStore(db.Leases)
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetDocIndexStore(nil)
-		verb.SetLeaseStore(nil)
 	})
 
 	var a, b workitem.Item

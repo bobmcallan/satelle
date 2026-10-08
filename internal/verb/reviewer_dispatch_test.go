@@ -108,8 +108,7 @@ func TestEveryReviewerDispatchSiteDeclaresItself(t *testing.T) {
 // a gate wired dispatches, a title edit does not, and with nothing wired
 // nothing does.
 func TestDispatchesReviewer_Predicates(t *testing.T) {
-	oldG, oldC, oldA := transitionGater, createReviewer, amendReviewer
-	t.Cleanup(func() { transitionGater, createReviewer, amendReviewer = oldG, oldC, oldA })
+	withWiring(t)
 
 	setStatus := json.RawMessage(`{"id":"sty_x","status":"in_progress"}`)
 	setTitle := json.RawMessage(`{"id":"sty_x","title":"t"}`)

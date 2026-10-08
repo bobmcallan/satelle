@@ -14,6 +14,7 @@ import (
 // it stayed at its from-state — the container's merge step refuses entry and
 // names it.
 func TestAfterChildrenHoldsTheMergeForAFailedRemoteChild(t *testing.T) {
+	withWiring(t)
 	_, _ = twoWorktrees(t)
 	wf := afterChildrenWF(true)
 	declared := "[coded]\nstatus = \"in_progress\"\nagent = \"coder\"\nremote_agent = \"coder-cloud\"\nlocal_tags = [\"lane:trunk\"]\n"
@@ -24,7 +25,6 @@ func TestAfterChildrenHoldsTheMergeForAFailedRemoteChild(t *testing.T) {
 	wf["step"] = stepBody
 	wireWithWorkflowsStore(t, wf)
 	verb.SetEngagementMode(config.Config{Engagement: config.EngagementConfig{Parallel: config.ParallelEpic}})
-	t.Cleanup(verb.ClearEngagementMode)
 
 	epic := waveEpic(t)
 	remote := acChild(t, epic, "fix")

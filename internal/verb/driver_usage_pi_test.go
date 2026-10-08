@@ -42,11 +42,10 @@ func piSeam(t *testing.T, record string) StoryCost {
 			t.Fatal(err)
 		}
 	}
-	prev := driverSnapshotter
+	withWiring(t)
 	driverSnapshotter = func(harness, sessionID, _ string) agentcli.DriverSnapshot {
 		return agentcli.SessionUsageSnapshot(harness, sessionID, repo)
 	}
-	t.Cleanup(func() { driverSnapshotter = prev })
 
 	ctx := context.Background()
 	create, _ := json.Marshal(map[string]any{"title": "pi driven", "status": "backlog"})
@@ -221,11 +220,10 @@ func TestPiClosingTurnIsCountedInTheSameRead(t *testing.T) {
 	agentDir := t.TempDir()
 	t.Setenv("PI_CODING_AGENT_DIR", agentDir)
 	config.PublishSessionModel(session, SessionModelRoleInLoop, "unknown", agentcli.HarnessPi, "pi hook payload")
-	prev := driverSnapshotter
+	withWiring(t)
 	driverSnapshotter = func(harness, sessionID, _ string) agentcli.DriverSnapshot {
 		return agentcli.SessionUsageSnapshot(harness, sessionID, repo)
 	}
-	t.Cleanup(func() { driverSnapshotter = prev })
 
 	probe, err := os.ReadFile(filepath.Join("..", "agentcli", "testdata", "driver", "pi_inflight_probe.jsonl"))
 	if err != nil {

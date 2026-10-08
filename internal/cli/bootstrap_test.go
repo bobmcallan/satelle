@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/verb"
 )
 
 // runRoot executes a fresh root command with args, returning combined output.
@@ -29,11 +30,38 @@ func runRoot(t *testing.T, args ...string) (string, error) {
 	root.SetOut(&buf)
 	root.SetErr(&buf)
 	root.SetArgs(args)
+	err := executeRoot(root)
+	return buf.String(), err
+}
+
+// executeRoot runs root in-process and leaves package verb's wiring as it found
+// it. The command wires the verb layer to the app it opens (stores, directories,
+// per-run resolvers); closeAppForCmd joins the app's background work and closes
+// its stores, and only then is the prior wiring put back, so nothing the run
+// started can read the restored wiring and the next run or test does not
+// resolve paths into this one's temp dir. Every in-process run goes through here.
+func executeRoot(root *cobra.Command) error {
+	restore, _ := verb.SnapshotWiring()
+	defer restore()
+	// Flags are bound to package-level variables the command tree shares across
+	// runs (hookHarnessFlag, hookNoWakeFlag, ...); a value parsed here would
+	// otherwise steer the next test that calls a hook handler directly.
+	defer resetFlagState(root)
 	c, err := root.ExecuteC()
 	if c != nil {
 		closeAppForCmd(c)
 	}
-	return buf.String(), err
+	return err
+}
+
+// withVerbWiring restores package verb's wiring to what it was when the test
+// started. A test that calls verb.Set*, verb.Clear* or verb.Add* calls it first
+// (TestVerbWiringCallsAreGuarded fails otherwise) — never a hand-written reset
+// to nil or zero, which would clobber a production default.
+func withVerbWiring(t *testing.T) {
+	t.Helper()
+	restore, _ := verb.SnapshotWiring()
+	t.Cleanup(restore)
 }
 
 // resetFlagState clears Changed and restores DefValue on every flag in the
@@ -42,17 +70,33 @@ func resetFlagState(cmd *cobra.Command) {
 	if cmd == nil {
 		return
 	}
-	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-		f.Changed = false
-		_ = f.Value.Set(f.DefValue)
-	})
-	cmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
-		f.Changed = false
-		_ = f.Value.Set(f.DefValue)
-	})
+	// A test that calls SetOut/SetErr/SetIn on a registered (process-global)
+	// command pins that writer on it for good; the next run's root buffer is then
+	// bypassed and the command prints into the earlier test's buffer.
+	cmd.SetOut(nil)
+	cmd.SetErr(nil)
+	cmd.SetIn(nil)
+	cmd.Flags().VisitAll(resetFlag)
+	cmd.PersistentFlags().VisitAll(resetFlag)
 	for _, c := range cmd.Commands() {
 		resetFlagState(c)
 	}
+}
+
+// resetFlag returns one flag to its declared default. A slice flag cannot be
+// reset by Set(DefValue): after its first Set every later Set appends, so the
+// tags of one run's --tags would ride into the next run's story.
+func resetFlag(f *pflag.Flag) {
+	f.Changed = false
+	if sv, ok := f.Value.(pflag.SliceValue); ok {
+		var def []string
+		if d := strings.Trim(f.DefValue, "[]"); d != "" {
+			def = strings.Split(d, ",")
+		}
+		_ = sv.Replace(def)
+		return
+	}
+	_ = f.Value.Set(f.DefValue)
 }
 
 // tempRepo creates a repo with .satelle/satelle.toml and points SATELLE_CONFIG

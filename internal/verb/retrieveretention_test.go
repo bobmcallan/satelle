@@ -22,6 +22,7 @@ import (
 // its retrieval sweep) while storyDir is unset.
 func wireStoriesAndRetrieve(t *testing.T) (*workitem.Store, *retrieve.Store) {
 	t.Helper()
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -36,10 +37,6 @@ func wireStoriesAndRetrieve(t *testing.T) (*workitem.Store, *retrieve.Store) {
 	verb.SetStoryDir(storyDir)
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetRetrieveStore(nil)
-		verb.SetStoryDir("")
-		verb.SetRetrieveRetention(0)
 	})
 	return db.Stories, db.Retrieve
 }
@@ -51,6 +48,7 @@ func wireStoriesAndRetrieve(t *testing.T) (*workitem.Store, *retrieve.Store) {
 // and a blob shared with a live sibling must all survive; only the old-done
 // story's own blob is pruned.
 func TestPruneRetrievalStoreRetention(t *testing.T) {
+	withWiring(t)
 	st, rs := wireStoriesAndRetrieve(t)
 	ctx := context.Background()
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)

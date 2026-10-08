@@ -17,6 +17,7 @@ import (
 // with controlled update times and inspect the attachment dirs.
 func wireStories(t *testing.T) (*workitem.Store, string) {
 	t.Helper()
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -32,11 +33,6 @@ func wireStories(t *testing.T) (*workitem.Store, string) {
 	verb.SetStoryDir(storyDir)
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetStoryDir("")
-		verb.SetStoryRetention(0, 0)
 	})
 	return db.Stories, storyDir
 }
@@ -70,6 +66,7 @@ func dirExists(t *testing.T, path string) bool {
 // most-recently-updated closed dirs and prunes the rest to a backup, while a
 // non-terminal story's dir is ALWAYS kept (sty_aba7200c).
 func TestStoryRetentionCountAndOverride(t *testing.T) {
+	withWiring(t)
 	st, storyDir := wireStories(t)
 	ctx := context.Background()
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -104,6 +101,7 @@ func TestStoryRetentionCountAndOverride(t *testing.T) {
 // TestStoryRetentionAge proves the age policy prunes a closed dir older than the
 // horizon while keeping a recent one, and that no policy is a no-op.
 func TestStoryRetentionAge(t *testing.T) {
+	withWiring(t)
 	st, storyDir := wireStories(t)
 	ctx := context.Background()
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)

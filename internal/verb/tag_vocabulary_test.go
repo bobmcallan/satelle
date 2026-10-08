@@ -18,9 +18,9 @@ func surfaceVocab() config.Config {
 }
 
 func TestTagVocab_CreateRejectsUnknown(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	verb.SetTagVocabulary(surfaceVocab())
-	t.Cleanup(verb.ClearTagVocabulary)
 
 	_, err := dispatchRaw(t, "story-create", map[string]any{
 		"title": "x", "category": "feature", "tags": []string{"surface:web"},
@@ -37,9 +37,9 @@ func TestTagVocab_CreateRejectsUnknown(t *testing.T) {
 }
 
 func TestTagVocab_CreateAcceptsMultiSurface(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	verb.SetTagVocabulary(surfaceVocab())
-	t.Cleanup(verb.ClearTagVocabulary)
 
 	raw := call(t, "story-create", map[string]any{
 		"title": "dual", "category": "feature",
@@ -67,9 +67,9 @@ func TestTagVocab_CreateAcceptsMultiSurface(t *testing.T) {
 }
 
 func TestTagVocab_SetCanonicalises(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	verb.SetTagVocabulary(surfaceVocab())
-	t.Cleanup(verb.ClearTagVocabulary)
 
 	raw := call(t, "story-create", map[string]any{
 		"title": "canon", "category": "feature",
@@ -104,6 +104,7 @@ func TestTagVocab_SetCanonicalises(t *testing.T) {
 }
 
 func TestTagVocab_UnwiredNoOp(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	verb.ClearTagVocabulary() // ensure unwired
 
@@ -129,9 +130,9 @@ func TestTagVocab_UnwiredNoOp(t *testing.T) {
 }
 
 func TestTagVocab_NoSurfaceTagValid(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	verb.SetTagVocabulary(surfaceVocab())
-	t.Cleanup(verb.ClearTagVocabulary)
 
 	raw := call(t, "story-create", map[string]any{
 		"title": "plain", "category": "feature", "tags": []string{"area:web"},

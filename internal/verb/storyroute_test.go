@@ -50,6 +50,7 @@ applies_to = ["surface:ui"]
 // indexed, so a story created here is governed by a parseable lifecycle.
 func wireRoute(t *testing.T) {
 	t.Helper()
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -63,12 +64,6 @@ func wireRoute(t *testing.T) {
 	verb.SetStoryDir(filepath.Join(dir, "stories"))
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetDocIndexStore(nil)
-		verb.SetLeaseStore(nil)
-		verb.SetStoryDir("")
 	})
 
 	wfDir := t.TempDir()
@@ -85,6 +80,7 @@ func wireRoute(t *testing.T) {
 // re-rendered so "you are here" stays true; the outcome half is APPENDED, so a
 // second transition never erases the first one's verdicts.
 func TestRouteDocIsOneArtifactWrittenForward(t *testing.T) {
+	withWiring(t)
 	wireRoute(t)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
 		Gated: true, Accept: true, Skill: "intent-review",
@@ -93,7 +89,6 @@ func TestRouteDocIsOneArtifactWrittenForward(t *testing.T) {
 			Notes: "the story names a deliverable", Reasoning: "ACs are testable", Model: "opus",
 		}},
 	}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{
@@ -183,9 +178,9 @@ func TestRouteRendersLiveBeforeAnyTransition(t *testing.T) {
 // advanced with NOBODY judging it. The route must say so — a blank outcome would
 // read as "reviewed and fine".
 func TestRouteRecordsAnUngatedAdvance(t *testing.T) {
+	withWiring(t)
 	wireRoute(t)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Unresolved: []string{"intent-review"}}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/verb"
 )
 
 // preSeedScaffold is the pre-sty_83782ffb shape: [review] fully commented out so
@@ -215,7 +214,6 @@ func TestCreateGateNoticeOnCreate(t *testing.T) {
 	if out, err := runRoot(t, "reindex"); err != nil {
 		t.Fatalf("reindex hermetic create-review skill: %v\n%s", err, out)
 	}
-	t.Cleanup(func() { verb.SetCreateReviewer(nil) })
 
 	out2, err := runRoot(t, "story", "create",
 		"--title", "Gated create probe full",

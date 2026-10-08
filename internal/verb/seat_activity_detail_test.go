@@ -15,12 +15,12 @@ import (
 // that binding — extending the existing activity/activity_age output rather
 // than a second record.
 func TestSeatListExposesActivityDetail(t *testing.T) {
+	withWiring(t)
 	SetAgentsConfig(config.AgentsConfig{
 		Agents: map[string]config.AgentBinding{
 			"coder": {Command: "claude {payload}", IdleTimeout: "7m"},
 		},
 	}, nil)
-	t.Cleanup(ClearAgentsConfig)
 
 	now := time.Now().UTC()
 	live := lease.Lease{

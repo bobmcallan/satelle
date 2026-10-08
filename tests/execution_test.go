@@ -9,24 +9,22 @@ import (
 	"testing"
 )
 
-// copyTaskExecSubstrate copies this repo's task-execution substrate (the
-// workflow + its two gate rubrics) into a temp repo, so an e2e can drive a real
-// execution through the shipped lifecycle (the workflow is project substrate, not
-// an embedded default). Reviewers are stubbed separately (stubReviewerAccept).
+// copyTaskExecSubstrate copies the shipped task-execution substrate (the
+// route source + its two gate rubrics) into a temp repo, so an e2e can drive a
+// real execution through the shipped lifecycle. Reviewers are stubbed
+// separately (stubReviewerAccept).
 func copyTaskExecSubstrate(t *testing.T, repo string) {
 	t.Helper()
-	// The execution lifecycle is a category of this repo's DERIVED route now, not
-	// a workflow file of its own (sty_9835070d).
+	// The execution lifecycle is a category of the shipped DERIVED route, not a
+	// workflow file of its own (sty_9835070d). The shipped `run` step names no
+	// performer skill, so nothing authored is needed to engage it.
 	seedRouteSource(t, repo)
-	// The two task-validate gates are embedded defaults and the task-run rubric is
-	// authored here; substrateSkillBody resolves each wherever it actually lives,
-	// so this fixture no longer assumes an unedited default sits on disk.
+	// The two task-validate gates are embedded defaults; substrateSkillBody
+	// resolves each wherever it actually lives, so this fixture no longer assumes
+	// an unedited default sits on disk.
 	for _, name := range []string{
 		"satelle-task-validate-before-review",
 		"satelle-task-validate-after-review",
-		// in_progress carries prompt="@skill:task-run" (format-lag fix); engage
-		// refuses if the performer skill is absent from the substrate.
-		"task-run",
 	} {
 		dst := filepath.Join(repo, ".satelle", "skills", name+".md")
 		if err := os.WriteFile(dst, []byte(substrateSkillBody(t, name)), 0o644); err != nil {

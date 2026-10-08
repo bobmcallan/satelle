@@ -27,13 +27,13 @@ func (f *fakeRetro) Retrospect(ctx context.Context, item workitem.Item, modelOve
 // records its cost on an agent_invocation ledger entry, returning the rollup-able
 // numbers (sty_b53730e2).
 func TestStoryRetrospectRecordsInvocation(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	verb.SetRetrospector(&fakeRetro{res: verb.DispatchResult{
 		Dispatched: true, Agent: "retrospective", Model: "glm-4.6", Skill: "satelle-retrospective",
 		TokensTotal: 100, DurationMs: 5000, Output: "## PROPOSALS FILED\nnone",
 		UsageAvailable: true, // transport reported usage (sty_56aae77a)
 	}})
-	defer verb.SetRetrospector(nil)
 
 	var created struct {
 		ID string `json:"id"`
@@ -61,10 +61,10 @@ func TestStoryRetrospectRecordsInvocation(t *testing.T) {
 // order:3): `satelle story retrospect --model` reaches the dispatcher as a
 // per-dispatch override, so AC3's agent-flag tier applies to retrospect too.
 func TestStoryRetrospectPassesModelOverride(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	fake := &fakeRetro{res: verb.DispatchResult{Dispatched: true, Agent: "retrospective"}}
 	verb.SetRetrospector(fake)
-	defer verb.SetRetrospector(nil)
 
 	var created struct {
 		ID string `json:"id"`
@@ -82,6 +82,7 @@ func TestStoryRetrospectPassesModelOverride(t *testing.T) {
 // TestStoryRetrospectNoRetrospectorErrors: with no retrospective agent wired, the
 // verb refuses clearly rather than silently no-op.
 func TestStoryRetrospectNoRetrospectorErrors(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	verb.SetRetrospector(nil)
 	body, _ := json.Marshal(map[string]any{"id": "sty_x"})
