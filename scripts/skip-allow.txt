@@ -18,5 +18,8 @@ github.com/bobmcallan/satelle/internal/cli TestHookContext_DiagnosisPrincipleInl
 github.com/bobmcallan/satelle/internal/cli TestRenderAlwaysContent_realSubstrateFitsClaudeLimit repo-local constitution under gitignored .satelle/ is absent from a CI checkout
 github.com/bobmcallan/satelle/internal/cli TestRepoRouteCarriesTheInstructionGateOnEveryEditableLane repo-local route under gitignored .satelle/workflows is absent from a CI checkout
 
+# `go test` builds a dev version, and a dev build never gates on breaking drift.
+github.com/bobmcallan/satelle/internal/cli TestCheckBreakingDriftBreakingRange go test builds a dev version, which never gates; the decision is covered by TestBreakingDriftDecision
+
 # Opt-in live runs that spend real money or tokens; never enabled on CI.
 github.com/bobmcallan/satelle/internal/agentstep TestParityLive live parity run is opt-in (SATELLE_PARITY=1) and spends real money
