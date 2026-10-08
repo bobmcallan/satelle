@@ -1,3 +1,12 @@
+## [0.0.626] - 2026-10-08
+
+### Changed
+- **The test suites give the same verdict however they are ordered, repeated or timed, and CI runs them strictly.** CI now runs `make test STRICT=1` (unit tests with `-count=3 -shuffle=on`) and `make integration STRICT=1` (the integration suite, which did not run on CI before, with `-shuffle=on` and the browser tests against the runner's Chrome), both through a skip checker that fails the run on any skipped test not listed, with a reason, in `scripts/skip-allow.txt`. Without `STRICT=1` the make targets run as before. (sty_53c3f311)
+- **Tests no longer depend on the developer's machine.** `make test` and `make integration` run inside `scripts/hermetic.sh`, which gives the suites an empty test-owned HOME and XDG dirs and a minimal PATH while passing through the Go caches. The checks of the operator's real reviewer/profile catalog and this repo's own authored route moved behind an opt-in `make operator-check`; integration tests that only need a working route seed their own. (sty_ec30f859, sty_53c3f311)
+- **A test that touches the operator's real satelle state fails the run.** The credentials guard now also fails `make test` and `make integration` when a test adds or changes anything at the top of the real `~/.satelle` or changes the installed `satelle`/`satelled`, and it fails closed when it cannot check; one `internal/hostguard` package does this for both suites. (sty_1b739a74)
+- **Running the CLI in-process inside a test leaves package state as it found it**, so repeated and shuffled runs no longer leak wiring between tests. (sty_d832e56f)
+- **Test verdicts no longer depend on machine speed:** fixed sleeps that waited on work a test does not control were replaced by bounded waits on an observable condition, and timing-dependent tests were fixed, including the pi gate-wake test that once failed a release on CI. (sty_48b51600, sty_a8dbc889)
+
 ## [0.0.625] - 2026-10-08
 
 ### Added
