@@ -8,12 +8,13 @@
 // steps.json is an array of
 //   { "event": "<pi event>", "arg": {...}, "ctx": { "cwd": "...", "idle": true, "hasUI": true } }
 //   { "wait_messages": N, "timeout_ms": T }   (see below)
+//   { "touch": "<path>" }                      (see below)
 // and the driver prints one JSON document:
 //   { "registered": [<pi event names in registration order>],
 //     "results":    [<what each step's handlers returned>],
 //     "messages":   [{ "text": "...", "opts": {...} }],
 //     "notices":    [{ "msg": "...", "level": "..." }] }
-import { copyFileSync, mkdtempSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -57,6 +58,13 @@ for (const step of steps) {
 			await new Promise((r) => setTimeout(r, 50));
 		}
 		results.push({ event: "wait_messages", result: null, threw: null });
+		continue;
+	}
+	// { "touch": "<path>" } creates an empty file once every earlier step has
+	// returned — a signal the test can order work behind without a timer.
+	if (step.touch !== undefined) {
+		writeFileSync(step.touch, "");
+		results.push({ event: "touch", result: null, threw: null });
 		continue;
 	}
 	const c = step.ctx ?? {};

@@ -62,11 +62,21 @@ func (r *piRig) useRealSatelle(stopWait string) *gatehandle.Store {
 	return gateStoreForTest(t)
 }
 
-func (r *piRig) finishGateAfter(store *gatehandle.Store, id string, after time.Duration, verdict string) {
+// finishGateOn finishes the gate once the signal file exists, never on a timer,
+// so the finish is ordered behind whatever step creates it and not behind the
+// machine's speed. If the signal never comes the gate stays running and the
+// test fails on its own assertions.
+func (r *piRig) finishGateOn(store *gatehandle.Store, id, signal, verdict string) {
 	go func() {
-		time.Sleep(after)
-		_ = os.WriteFile(store.VerdictPath(id), []byte(verdict+"\n"), 0o644)
-		_ = store.Finish(id, gatehandle.Result{})
+		deadline := time.Now().Add(60 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(signal); err == nil {
+				_ = os.WriteFile(store.VerdictPath(id), []byte(verdict+"\n"), 0o644)
+				_ = store.Finish(id, gatehandle.Result{})
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
 	}()
 }
 
@@ -85,12 +95,15 @@ func TestPiTrace_RunningGateIsSentOnceWhenItFinishes(t *testing.T) {
 	r := newPiRig(t)
 	store := r.useRealSatelle("1s")
 	g := runningGate(t, store, "sty_slow")
-	r.finishGateAfter(store, g.ID, 2500*time.Millisecond, "accepted plan→in_progress")
+	signal := filepath.Join(t.TempDir(), "settled")
+	r.finishGateOn(store, g.ID, signal, "accepted plan→in_progress")
 
 	out := r.drive(true,
 		// The settle waits its one bound (1s), finds the gate still going, allows
 		// the stop and arms the waiter.
 		piStep{Event: "agent_settled", Ctx: map[string]any{"idle": true, "hasUI": true}},
+		// The gate finishes only now, after that settle has returned.
+		piStep{Touch: signal},
 		piStep{WaitMessages: one(1), TimeoutMS: 20000},
 		piStep{Event: "agent_settled", Ctx: map[string]any{"idle": true, "hasUI": true}},
 		piStep{Event: "before_agent_start", Arg: map[string]any{"prompt": "next", "systemPrompt": "SYS"}},
@@ -114,7 +127,7 @@ func TestPiTrace_RunningGateIsSentOnceWhenItFinishes(t *testing.T) {
 	if !pending {
 		t.Errorf("the pending gate was not noted to the operator: %+v", out.Notices)
 	}
-	prompt, _ := out.Results[3].Result["systemPrompt"].(string)
+	prompt, _ := out.Results[4].Result["systemPrompt"].(string)
 	if strings.Contains(prompt, g.ID) {
 		t.Errorf("the prompt catch-up repeated a verdict already sent as a user message:\n%s", prompt)
 	}
