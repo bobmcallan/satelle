@@ -12,16 +12,12 @@ package tests
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,6 +27,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/hostguard"
 )
 
 // testBin is the satelle binary under test, resolved once by TestMain.
@@ -68,7 +65,7 @@ func TestMain(m *testing.M) {
 	// Resolve host roots BEFORE isolating SATELLE_HOME, then snapshot those fixed
 	// paths before and after the suite. Re-resolving via getenv after Setenv would
 	// measure the sandbox and false-trip (or hide real host pollution).
-	hostRoots := resolveHostRoots()
+	hostRoots := newHostRoots()
 	beforeSurface := captureHostSurfaceAt(hostRoots)
 
 	backstop, err := os.MkdirTemp("", "satelle-itest-home-*")
@@ -99,7 +96,7 @@ func TestMain(m *testing.M) {
 	// Serve process inventory (sty_bf797fa9 AC1): snapshot live serve pids BEFORE
 	// the suite so the operator's own serve on :8787 is excluded by identity;
 	// after m.Run, any new suite-owned serve is a leak — kill it and fail the suite.
-	beforeParts := captureMirrorPartitionKeys(hostRoots.satelleHome)
+	beforeParts := captureMirrorPartitionKeys(hostRoots.SatelleHome)
 	beforeServes := liveServePIDs()
 	var xdgBackstop string
 	exit := func(code int) {
@@ -116,13 +113,13 @@ func TestMain(m *testing.M) {
 		afterSurface := captureHostSurfaceAt(hostRoots)
 		if diffs := diffHostSurface(beforeSurface, afterSurface); len(diffs) > 0 {
 			fmt.Fprintf(os.Stderr, "FATAL: host production surface changed during the integration suite (isolation failed).\n")
-			fmt.Fprintf(os.Stderr, "  Production port 8787 is off-limits; host ~/.satelle, ~/.config/satelle, and ~/.local/bin/satelle must be untouched.\n")
+			fmt.Fprintf(os.Stderr, "  Production port 8787 is off-limits; host ~/.satelle, ~/.config/satelle, and ~/.local/bin/{satelle,satelled} must be untouched.\n")
 			for _, d := range diffs {
 				fmt.Fprintf(os.Stderr, "  - %s\n", d)
 			}
 			code = 1
 		}
-		afterParts := captureMirrorPartitionKeys(hostRoots.satelleHome)
+		afterParts := captureMirrorPartitionKeys(hostRoots.SatelleHome)
 		if diffs := diffMirrorPartitionKeys(beforeParts, afterParts); len(diffs) > 0 {
 			fmt.Fprintf(os.Stderr, "FATAL: host push-fed mirror partitions changed during the integration suite (sty_5aa08259 — hermetic seed isolation failed).\n")
 			fmt.Fprintf(os.Stderr, "  Live :8787 mirror must stay byte-identical in partition keys; tests must not auto-probe/seed it.\n")
@@ -217,83 +214,63 @@ func isolateXDGConfig() (string, error) {
 // integration suite must not mutate (sty_6d824d6a). Missing roots yield empty
 // maps / empty binary fingerprint — skip-safe on fresh CI with no install.
 type hostSurface struct {
-	// relpath → "dir" or "file:<sha256>:<size>:<mtime_ns>"
+	// relpath → "dir" or "sha256:<hex>:<size>"
 	satelleHome map[string]string
 	xdgConfig   map[string]string // ~/.config/satelle, credentials.toml excluded
 	// credentials is the identity fingerprint of ~/.config/satelle/credentials.toml
 	// (sty_d9677380): token rotation is tolerated, server/identity changes are not.
 	credentials hosted.Identity
-	// installed binary fingerprint; "" when ~/.local/bin/satelle is absent
-	installedBin string
+	// bins is hostguard's fingerprint of the installed satelle and satelled
+	// (sty_1b739a74); "" for a binary that is absent.
+	bins map[string]string
 	// resolved roots (for diagnostics only)
-	satelleHomeRoot  string
-	xdgConfigRoot    string
-	installedBinPath string
+	satelleHomeRoot string
+	xdgConfigRoot   string
+	binDirRoot      string
 }
 
 // hostRoots are fixed host paths resolved once before SATELLE_HOME isolation.
+// The ~/.satelle and ~/.local/bin roots come from hostguard.ResolveRoots; the
+// config root stays here because only this suite's hashXDGConfig walks it.
 type hostRoots struct {
-	satelleHome  string
-	xdgConfig    string
-	installedBin string
-	// preExistingKeys: key-dir names already under satelleHome before the suite
+	hostguard.Roots
+	xdgConfig string
+	// preExistingKeys: key-dir names already under SatelleHome before the suite
 	// (sty_c36c211f). Live service may mutate those trees; NEW key dirs are
 	// pollution and must fail the host-surface guard.
 	preExistingKeys map[string]struct{}
 }
 
-// resolveHostRoots picks the real machine paths to guard. Honors a pre-existing
-// SATELLE_HOME / XDG_CONFIG_HOME when already set (caller sandboxed).
-func resolveHostRoots() hostRoots {
-	homeDir, _ := os.UserHomeDir()
-	r := hostRoots{}
-	if v := strings.TrimSpace(os.Getenv("SATELLE_HOME")); v != "" {
-		r.satelleHome = v
-	} else if homeDir != "" {
-		r.satelleHome = filepath.Join(homeDir, ".satelle")
-	}
+// newHostRoots picks the real machine paths to guard. The ~/.satelle and bin
+// roots deliberately ignore SATELLE_HOME (see hostguard.ResolveRoots); the
+// credentials root honours a pre-existing XDG_CONFIG_HOME (caller sandboxed).
+func newHostRoots() hostRoots {
+	r := hostRoots{Roots: hostguard.ResolveRoots(), preExistingKeys: map[string]struct{}{}}
 	if v := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); v != "" {
 		r.xdgConfig = filepath.Join(v, "satelle")
-	} else if homeDir != "" {
-		r.xdgConfig = filepath.Join(homeDir, ".config", "satelle")
+	} else if r.Home != "" {
+		r.xdgConfig = filepath.Join(r.Home, ".config", "satelle")
 	}
-	if homeDir != "" {
-		r.installedBin = filepath.Join(homeDir, ".local", "bin", "satelle")
-	}
-	r.preExistingKeys = listRuntimeKeyNames(r.satelleHome)
-	return r
-}
-
-// listRuntimeKeyNames returns the set of home-keyed runtime dir basenames under home.
-func listRuntimeKeyNames(home string) map[string]struct{} {
-	out := map[string]struct{}{}
-	if home == "" {
-		return out
-	}
-	ents, err := os.ReadDir(home)
+	snap, err := hostguard.Capture(r.Roots)
 	if err != nil {
-		return out
+		fmt.Fprintf(os.Stderr, "FATAL: cannot snapshot the host surface, so isolation cannot be verified: %v\n", err)
+		os.Exit(1)
 	}
-	// Match RepoKey shape without importing config (tests package is standalone).
-	runtimeKey := regexp.MustCompile(`^[^/]+-[0-9a-f]{8}$`)
-	for _, e := range ents {
-		if e.IsDir() && runtimeKey.MatchString(e.Name()) {
-			out[e.Name()] = struct{}{}
-		}
-	}
-	return out
+	r.preExistingKeys = snap.KeyDirs()
+	return r
 }
 
 // captureHostSurfaceAt hashes the given fixed host roots (not re-resolved from env).
 func captureHostSurfaceAt(r hostRoots) hostSurface {
+	snap, _ := hostguard.Capture(r.Roots)
 	return hostSurface{
-		satelleHome:      hashTree(r.satelleHome, r.preExistingKeys),
-		xdgConfig:        hashXDGConfig(r.xdgConfig),
-		credentials:      hosted.CaptureIdentity(filepath.Join(r.xdgConfig, credentialsFileName)),
-		installedBin:     fingerprintFile(r.installedBin),
-		satelleHomeRoot:  r.satelleHome,
-		xdgConfigRoot:    r.xdgConfig,
-		installedBinPath: r.installedBin,
+		satelleHome:     hashTree(r.SatelleHome, r.preExistingKeys),
+		xdgConfig:       hashXDGConfig(r.xdgConfig),
+		credentials:     hosted.CaptureIdentity(filepath.Join(r.xdgConfig, credentialsFileName)),
+		bins:            snap.Bins,
+		satelleHomeRoot: r.SatelleHome,
+		xdgConfigRoot:   r.xdgConfig,
+		binDirRoot:      r.BinDir,
 	}
 }
 
@@ -306,19 +283,12 @@ func diffHostSurface(before, after hostSurface) []string {
 	for _, reason := range hosted.DiffIdentity(before.credentials, after.credentials) {
 		diffs = append(diffs, fmt.Sprintf("%s: changed %s (%s)", xdgLabel, credentialsFileName, reason))
 	}
-	if before.installedBin != after.installedBin {
-		label := before.installedBinPath
-		if label == "" {
-			label = "installed binary"
-		}
-		switch {
-		case before.installedBin == "" && after.installedBin != "":
-			diffs = append(diffs, label+": appeared during suite")
-		case before.installedBin != "" && after.installedBin == "":
-			diffs = append(diffs, label+": removed during suite")
-		default:
-			diffs = append(diffs, label+": content/mtime changed during suite")
-		}
+	binLabel := "installed binaries"
+	if before.binDirRoot != "" {
+		binLabel += " (" + before.binDirRoot + ")"
+	}
+	for _, d := range hostguard.DiffBins(before.bins, after.bins) {
+		diffs = append(diffs, binLabel+": "+d)
 	}
 	return diffs
 }
@@ -356,11 +326,9 @@ func hashTree(root string, preExistingKeys map[string]struct{}) map[string]strin
 		return out
 	}
 	if !info.IsDir() {
-		out["."] = fingerprintFile(root)
+		out["."] = hostguard.FingerprintFile(root)
 		return out
 	}
-	// name-hex8 — RepoKey shape (e.g. satelle-16882c39, 001-a1b2c3d4).
-	runtimeKey := regexp.MustCompile(`^[^/]+-[0-9a-f]{8}$`)
 	_ = filepath.Walk(root, func(path string, fi os.FileInfo, err error) error {
 		if err != nil || fi == nil {
 			return nil // skip unreadable leaves
@@ -374,21 +342,16 @@ func hashTree(root string, preExistingKeys map[string]struct{}) map[string]strin
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
-		// Live satelled rewrites this cursor independently of the suite
-		// (same class as serve/ WAL). Fingerprinting it false-fails every
-		// release on a machine whose daemon is running.
-		if rel == "document-sync-state.json" {
-			return nil
-		}
 		top := strings.SplitN(rel, "/", 2)[0]
-		// Live push-fed serve plane (mirror.db, server.log) — skip contents.
-		if top == "serve" {
+		// Names a live satelled rewrites on its own (the document-sync cursor,
+		// the push-fed serve plane) — hostguard.Ignored owns the list.
+		if hostguard.Ignored(top) {
 			if fi.IsDir() && rel == top {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if runtimeKey.MatchString(top) {
+		if hostguard.IsRuntimeKey(top) {
 			// Pre-existing: skip contents (live service may rewrite DB/logs).
 			if _, ok := preExistingKeys[top]; ok {
 				if fi.IsDir() && rel == top {
@@ -407,7 +370,7 @@ func hashTree(root string, preExistingKeys map[string]struct{}) map[string]strin
 			out[rel+"/"] = "dir"
 			return nil
 		}
-		out[rel] = fingerprintFile(path)
+		out[rel] = hostguard.FingerprintFile(path)
 		return nil
 	})
 	return out
@@ -444,28 +407,6 @@ func diffMirrorPartitionKeys(before, after map[string]struct{}) []string {
 	}
 	sort.Strings(diffs)
 	return diffs
-}
-
-// fingerprintFile returns "file:<sha256>:<size>:<mtime_ns>" or "" if missing.
-func fingerprintFile(path string) string {
-	if path == "" {
-		return ""
-	}
-	fi, err := os.Stat(path)
-	if err != nil || fi.IsDir() {
-		return ""
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return ""
-	}
-	sum := hex.EncodeToString(h.Sum(nil))
-	return fmt.Sprintf("file:%s:%d:%d", sum, fi.Size(), fi.ModTime().UnixNano())
 }
 
 func diffTreeMaps(label string, before, after map[string]string) []string {
@@ -766,7 +707,7 @@ func TestHostSurfaceGuardTrips(t *testing.T) {
 	if len(hashTree(filepath.Join(root, "does-not-exist"), nil)) != 0 {
 		t.Fatal("missing root must hash to empty map")
 	}
-	if fingerprintFile(filepath.Join(root, "does-not-exist")) != "" {
+	if hostguard.FingerprintFile(filepath.Join(root, "does-not-exist")) != "" {
 		t.Fatal("missing file fingerprint must be empty")
 	}
 	if err := os.WriteFile(filepath.Join(root, "pollute"), []byte("x"), 0o644); err != nil {
@@ -777,32 +718,40 @@ func TestHostSurfaceGuardTrips(t *testing.T) {
 		t.Fatal("expected guard to trip after deliberate write into protected tree")
 	}
 	// Full surface diff names the change.
-	beforeS := hostSurface{satelleHome: before, xdgConfig: map[string]string{}, installedBin: ""}
-	afterS := hostSurface{satelleHome: after, xdgConfig: map[string]string{}, installedBin: ""}
+	beforeS := hostSurface{satelleHome: before, xdgConfig: map[string]string{}}
+	afterS := hostSurface{satelleHome: after, xdgConfig: map[string]string{}}
 	if diffs := diffHostSurface(beforeS, afterS); len(diffs) == 0 {
 		t.Fatal("diffHostSurface should report the deliberate write")
 	}
-	// Installed-binary fingerprint changes on rewrite.
-	bin := filepath.Join(root, "satelle")
-	if err := os.WriteFile(bin, []byte("v1"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	fp1 := fingerprintFile(bin)
-	// Ensure mtime can move on coarse filesystems.
-	time.Sleep(5 * time.Millisecond)
-	if err := os.WriteFile(bin, []byte("v2"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	fp2 := fingerprintFile(bin)
-	if fp1 == "" || fp2 == "" || fp1 == fp2 {
-		t.Fatalf("binary fingerprint must change on rewrite: %q → %q", fp1, fp2)
-	}
-	beforeS.installedBin = fp1
-	afterS.installedBin = fp2
-	afterS.installedBinPath = bin
-	beforeS.installedBinPath = bin
-	if diffs := diffHostSurface(beforeS, afterS); len(diffs) == 0 {
-		t.Fatal("expected installed-binary change to trip the guard")
+	// Installed-binary fingerprint changes on rewrite, for satelled as well as
+	// satelle, and ignores a no-op touch (sty_1b739a74).
+	binDir := t.TempDir()
+	for _, name := range hostguard.BinNames {
+		bin := filepath.Join(binDir, name)
+		if err := os.WriteFile(bin, []byte("v1"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		fp1 := hostguard.FingerprintFile(bin)
+		future := time.Now().Add(time.Hour)
+		if err := os.Chtimes(bin, future, future); err != nil {
+			t.Fatal(err)
+		}
+		if hostguard.FingerprintFile(bin) != fp1 {
+			t.Fatalf("%s: a touch must not change the binary fingerprint", name)
+		}
+		if err := os.WriteFile(bin, []byte("v2"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		fp2 := hostguard.FingerprintFile(bin)
+		if fp1 == "" || fp2 == "" || fp1 == fp2 {
+			t.Fatalf("%s: binary fingerprint must change on rewrite: %q → %q", name, fp1, fp2)
+		}
+		diffs := diffHostSurface(
+			hostSurface{bins: map[string]string{name: fp1}, binDirRoot: binDir},
+			hostSurface{bins: map[string]string{name: fp2}, binDirRoot: binDir})
+		if len(diffs) != 1 || !strings.Contains(diffs[0], name) {
+			t.Fatalf("expected the %s change to trip the guard and name it: %v", name, diffs)
+		}
 	}
 }
 
@@ -941,7 +890,7 @@ func TestSuiteXDGConfigIsolated(t *testing.T) {
 	if !strings.HasPrefix(filepath.Clean(xdg), filepath.Clean(os.TempDir())+string(filepath.Separator)) {
 		t.Fatalf("XDG_CONFIG_HOME %q must be a temp dir under %q", xdg, os.TempDir())
 	}
-	// resolveHostRoots honours the (now sandboxed) env, so derive the operator's
+	// newHostRoots honours the (now sandboxed) XDG env, so derive the operator's
 	// default root from the home dir instead.
 	home, err := os.UserHomeDir()
 	if err != nil {
