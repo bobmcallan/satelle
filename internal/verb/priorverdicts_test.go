@@ -13,6 +13,7 @@ import (
 // ledger→verdict read is exercised without a workflow in the way.
 func wireLedgerOnly(t *testing.T) {
 	t.Helper()
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -24,10 +25,6 @@ func wireLedgerOnly(t *testing.T) {
 	verb.SetStoryDir(filepath.Join(dir, "stories"))
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetStoryDir("")
 	})
 }
 
@@ -92,6 +89,7 @@ func TestPriorVerdictsFiltersToTheEdge(t *testing.T) {
 // additive context — an unwired ledger degrades to nothing, never an error that
 // could fail the transition it decorates.
 func TestPriorVerdictsWithoutLedgerIsInert(t *testing.T) {
+	withWiring(t)
 	verb.SetLedgerStore(nil)
 	got, err := verb.PriorVerdicts(context.Background(), "sty_none", "plan", "in_progress")
 	if err != nil || got != nil {

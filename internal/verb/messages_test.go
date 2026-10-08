@@ -201,6 +201,7 @@ func bodiesOf(t *testing.T, id, addr string) []string {
 // sty_36ac4319 AC1: a message sent while the story is still at the start state
 // reaches the performer that proposes from there, and is stamped with no SHA.
 func TestMessageReachesProposingPerformerFromBacklog(t *testing.T) {
+	withWiring(t)
 	newReadinessRig(t, readinessWF, func(string, int) verb.GateDecision { return acceptAll() })
 	var seen []verb.AgentMessage
 	verb.SetExecutorDispatcher(dispatcherFunc(func(ctx context.Context, it workitem.Item, to string) (verb.DispatchResult, error) {
@@ -258,6 +259,7 @@ func TestPreEngagementWindowExcludesEarlierEngagement(t *testing.T) {
 // with the resume transition) do not close the pre-engagement window; the
 // message sent before the park stays excluded.
 func TestPreEngagementWindowAfterParkFromStart(t *testing.T) {
+	withWiring(t)
 	newReadinessRig(t, readinessWF, func(string, int) verb.GateDecision { return acceptAll() })
 	verb.SetExecutorDispatcher(dispatcherFunc(func(_ context.Context, _ workitem.Item, to string) (verb.DispatchResult, error) {
 		if to != "plan" {

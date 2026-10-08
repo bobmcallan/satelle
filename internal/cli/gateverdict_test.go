@@ -72,9 +72,9 @@ func TestVerdictBlock_ARejectCarriesTheReviewersNotes(t *testing.T) {
 // The verdict recorder is what a detached run writes: EmitVerdict shows AND
 // records; RecordVerdict (an accepted create or amend) records without showing.
 func TestVerdictRecorder_ShowsOnlyWhatItAlwaysShowed(t *testing.T) {
+	withVerbWiring(t)
 	path := t.TempDir() + "/verdict.log"
 	verb.SetVerdictRecorder(appendLine(path))
-	t.Cleanup(func() { verb.SetVerdictRecorder(nil) })
 
 	shown := captureStderr(t, func() {
 		verb.EmitVerdict("accepted a→b by g: decision=accept notes=n")
@@ -111,5 +111,19 @@ func TestGateDelivery_RecordsEachDeliveryOnce(t *testing.T) {
 	}
 	if text := gateDeliveryFor(0); text != "" || len(got) != 1 {
 		t.Fatalf("a delivered run was recorded again: text=%q recorded=%d", text, len(got))
+	}
+}
+
+// restoringRecorder wraps the real delivery recorder so a test that reaches it
+// (gateDeliveryFor, stopGateDeliveryFor, runGateResume with no stub) does not
+// leave behind the ledger it wired: the recorder opens a store, points verb at
+// it and closes it, and nothing else puts the prior wiring back. TestMain
+// installs it; production keeps the unwrapped recorder — a hook is its own
+// process.
+func restoringRecorder(real func([]gatehandle.Meta)) func([]gatehandle.Meta) {
+	return func(delivered []gatehandle.Meta) {
+		restore, _ := verb.SnapshotWiring()
+		defer restore()
+		real(delivered)
 	}
 }

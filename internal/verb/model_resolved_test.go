@@ -31,12 +31,12 @@ func TestReviewVerdictRowsCarryResolvedModel(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			withWiring(t)
 			verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
 				Gated: true, Accept: tc.accept, Skill: "satelle-story-done-review", Notes: "n",
 				ModelResolved: "claude-opus-5-5", ModelSource: "inherited-in-loop",
 				Models: []verb.ModelUsage{{ID: "claude-opus-5-5", TokensIn: 10, TokensOut: 5}},
 			}})
-			t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 			var it workitem.Item
 			if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it); err != nil {
@@ -89,13 +89,13 @@ func TestReviewVerdictRowsCarryResolvedModel(t *testing.T) {
 // off the row invocationPayload stamps, not the review_accept row
 // reviewerPayload stamps (two different payload writers, sty_7069bced AC5).
 func TestGateInvocationRowCarriesModelSource(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
 		Gated: true, Accept: true, Skill: "satelle-story-done-review", Notes: "n",
 		Command: "claude -p", Context: "satelle-story-done-review",
 		ModelResolved: "claude-opus-5-5", ModelSource: "binding",
 	}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	var it workitem.Item
 	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it); err != nil {
@@ -127,6 +127,7 @@ func TestGateInvocationRowCarriesModelSource(t *testing.T) {
 // LENGTHS of the system prompt and payload satelle sent — never the text
 // itself — so the ledger row is auditable without ever storing a prompt.
 func TestGateInvocationRowCarriesPromptByteCounts(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
 	const fakeSystemPrompt = "## You are an isolated satelle reviewer — judge only, never mutate"
 	const fakePayload = `{"story":{"id":"sty_1"},"from":"in_progress","to":"done"}`
@@ -135,7 +136,6 @@ func TestGateInvocationRowCarriesPromptByteCounts(t *testing.T) {
 		Command: "claude -p", Context: "satelle-story-done-review",
 		SystemPromptBytes: len(fakeSystemPrompt), PayloadBytes: len(fakePayload),
 	}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	var it workitem.Item
 	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it); err != nil {
@@ -174,13 +174,13 @@ func TestGateInvocationRowCarriesPromptByteCounts(t *testing.T) {
 // ledger.EventTelemetry the same as the reviewer/summariser rows do
 // (sty_7069bced AC5).
 func TestDispatchInvocationRowCarriesModelSource(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
 	d := &dispatcherStub{res: verb.DispatchResult{
 		Dispatched: true, Agent: "architect", Command: "fake {system}",
 		Model: "m", ModelResolved: "claude-sonnet-5", ModelSource: "step",
 	}}
 	verb.SetExecutorDispatcher(d)
-	t.Cleanup(func() { verb.SetExecutorDispatcher(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "backlog"}), &it)
@@ -212,6 +212,7 @@ func TestDispatchInvocationRowCarriesModelSource(t *testing.T) {
 // workitem.go:1465 — Actor "executor") records the byte LENGTHS of the system
 // prompt and payload satelle sent — never the text itself.
 func TestDispatchInvocationRowCarriesPromptByteCounts(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
 	const fakeSystemPrompt = "## You are architect, dispatched to plan this story"
 	const fakePayload = `{"story":{"id":"sty_1"},"from":"backlog","to":"in_progress"}`
@@ -220,7 +221,6 @@ func TestDispatchInvocationRowCarriesPromptByteCounts(t *testing.T) {
 		SystemPromptBytes: len(fakeSystemPrompt), PayloadBytes: len(fakePayload),
 	}}
 	verb.SetExecutorDispatcher(d)
-	t.Cleanup(func() { verb.SetExecutorDispatcher(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "backlog"}), &it)
@@ -275,9 +275,9 @@ func (modelSourceSummariser) MandatorySummary(context.Context, workitem.Item) bo
 // (sty_7069bced AC5) — driven through `story-resummarise`, which shares
 // recordStepSummary's write path with the post-transition summariser.
 func TestSummariserInvocationRowCarriesModelSource(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
 	verb.SetStepSummariser(modelSourceSummariser{})
-	t.Cleanup(func() { verb.SetStepSummariser(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "acceptance_criteria": "1. ok"}), &it)
@@ -318,11 +318,11 @@ func (byteSummariser) MandatorySummary(context.Context, workitem.Item) bool { re
 // workitem.go:1575) records the byte LENGTHS of the system prompt and payload
 // satelle sent — never the text itself.
 func TestSummariserInvocationRowCarriesPromptByteCounts(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
 	const fakeSystemPrompt = "## You are the step summariser — recap only, never mutate"
 	const fakePayload = `{"story":{"id":"sty_1"},"from":"plan","to":"in_progress"}`
 	verb.SetStepSummariser(byteSummariser{systemPromptBytes: len(fakeSystemPrompt), payloadBytes: len(fakePayload)})
-	t.Cleanup(func() { verb.SetStepSummariser(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "acceptance_criteria": "1. ok"}), &it)
@@ -360,13 +360,13 @@ func TestSummariserInvocationRowCarriesPromptByteCounts(t *testing.T) {
 // a model's TokensCacheWrite/TokensCacheRead must survive both hops, not just
 // its plain TokensOut.
 func TestReviewVerdictRowCarriesModelCacheSplit(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
 		Gated: true, Accept: true, Skill: "satelle-story-done-review", Notes: "n",
 		ModelResolved: "claude-opus-5-5", ModelSource: "inherited-in-loop",
 		Models: []verb.ModelUsage{{ID: "claude-opus-5-5", TokensIn: 41, TokensOut: 5, TokensCacheWrite: 17, TokensCacheRead: 23}},
 	}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	var it workitem.Item
 	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it); err != nil {
@@ -398,6 +398,7 @@ func TestReviewVerdictRowCarriesModelCacheSplit(t *testing.T) {
 // split (copied from the single-reviewer GateDecision synthesis) and the
 // per-model split.
 func TestGateInvocationRowCarriesCacheSplit(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
 		Gated: true, Accept: true, Skill: "satelle-story-done-review", Notes: "n",
@@ -405,7 +406,6 @@ func TestGateInvocationRowCarriesCacheSplit(t *testing.T) {
 		TokensInFresh: 41, TokensCacheWrite: 17, TokensCacheRead: 23,
 		Models: []verb.ModelUsage{{ID: "claude-opus-5-5", TokensCacheWrite: 17, TokensCacheRead: 23}},
 	}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	var it workitem.Item
 	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it); err != nil {
@@ -442,6 +442,7 @@ func TestGateInvocationRowCarriesCacheSplit(t *testing.T) {
 // carry tokens_in_fresh/tokens_cache_write/tokens_cache_read, top-level and
 // per-model.
 func TestDispatchInvocationRowCarriesCacheSplit(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
 	d := &dispatcherStub{res: verb.DispatchResult{
 		Dispatched: true, Agent: "architect", Command: "fake {system}",
@@ -449,7 +450,6 @@ func TestDispatchInvocationRowCarriesCacheSplit(t *testing.T) {
 		Models: []verb.ModelUsage{{ID: "claude-sonnet-5", TokensCacheWrite: 17, TokensCacheRead: 23}},
 	}}
 	verb.SetExecutorDispatcher(d)
-	t.Cleanup(func() { verb.SetExecutorDispatcher(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "backlog"}), &it)
@@ -499,9 +499,9 @@ func (cacheSplitSummariser) MandatorySummary(context.Context, workitem.Item) boo
 // summariser's own agent_invocation row must carry tokens_in_fresh/
 // tokens_cache_write/tokens_cache_read, top-level and per-model.
 func TestSummariserInvocationRowCarriesCacheSplit(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
 	verb.SetStepSummariser(cacheSplitSummariser{})
-	t.Cleanup(func() { verb.SetStepSummariser(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "acceptance_criteria": "1. ok"}), &it)
@@ -550,11 +550,11 @@ func TestReviewVerdictRowCarriesAliasWhenUnresolved(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			withWiring(t)
 			verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
 				Gated: true, Accept: tc.accept, Skill: "satelle-story-done-review", Notes: "n",
 				Model: "opus",
 			}})
-			t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 			var it workitem.Item
 			if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it); err != nil {

@@ -58,6 +58,7 @@ func TestMigrateLegacySummaries(t *testing.T) {
 // artifact dirs and misfiled artifacts are REPORTED (never deleted); counts fill
 // the report. Uses a real store so the DB-backed check is exercised.
 func TestSyncStoriesReport(t *testing.T) {
+	withWiring(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +66,6 @@ func TestSyncStoriesReport(t *testing.T) {
 	defer db.Close()
 	dir := t.TempDir()
 	SetStoryDir(dir)
-	defer SetStoryDir("")
 
 	ctx := context.Background()
 	now := time.Now()

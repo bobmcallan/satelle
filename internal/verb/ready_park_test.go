@@ -66,6 +66,7 @@ func statusOf(t *testing.T, id string) workitem.Item {
 func TestReadyRejectParksBlockedWithNotes(t *testing.T) {
 	for _, category := range []string{"feature", "epic-parent"} {
 		t.Run(category, func(t *testing.T) {
+			withWiring(t)
 			wireWithWorkflows(t, readyParkWF)
 			verb.SetExecutorDispatcher(dispatcherFunc(func(_ context.Context, _ workitem.Item, to string) (verb.DispatchResult, error) {
 				if to != "ready" {
@@ -74,7 +75,6 @@ func TestReadyRejectParksBlockedWithNotes(t *testing.T) {
 				return verb.DispatchResult{Agent: "ready-reviewer"},
 					&verb.PerformerReject{Notes: "premise wrong: body claims foo.go:40 is 64 bytes"}
 			}))
-			t.Cleanup(func() { verb.SetExecutorDispatcher(nil) })
 			it := newReadyStory(t, category)
 
 			if _, err := dispatchRaw(t, "story-set", map[string]any{"id": it.ID, "status": "ready"}); err != nil {
@@ -103,9 +103,9 @@ func TestReadyRejectParksBlockedWithNotes(t *testing.T) {
 }
 
 func TestReadyAcceptEntersReady(t *testing.T) {
+	withWiring(t)
 	wireWithWorkflows(t, readyParkWF)
 	verb.SetExecutorDispatcher(&dispatcherStub{res: verb.DispatchResult{Dispatched: true, Agent: "ready-reviewer"}})
-	t.Cleanup(func() { verb.SetExecutorDispatcher(nil) })
 	it := newReadyStory(t, "feature")
 	if _, err := dispatchRaw(t, "story-set", map[string]any{"id": it.ID, "status": "ready"}); err != nil {
 		t.Fatal(err)
@@ -126,9 +126,9 @@ func TestReadyOtherFailureDoesNotPark(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
+			withWiring(t)
 			wireWithWorkflows(t, readyParkWF)
 			verb.SetExecutorDispatcher(&dispatcherStub{err: c.err})
-			t.Cleanup(func() { verb.SetExecutorDispatcher(nil) })
 			it := newReadyStory(t, c.category)
 			_, err := dispatchRaw(t, "story-set", map[string]any{"id": it.ID, "status": "ready"})
 			if err == nil || !strings.Contains(err.Error(), "refused") {

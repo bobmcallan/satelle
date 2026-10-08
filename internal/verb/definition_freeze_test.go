@@ -23,6 +23,7 @@ func wireWithWorkflows(t *testing.T, workflows map[string]string) {
 
 func wireWithWorkflowsStore(t *testing.T, workflows map[string]string) *store.DB {
 	t.Helper()
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -47,11 +48,6 @@ func wireWithWorkflowsStore(t *testing.T, workflows map[string]string) *store.DB
 	verb.SetLeaseStore(db.Leases)
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetDocIndexStore(nil)
-		verb.SetLeaseStore(nil)
 	})
 	return db
 }

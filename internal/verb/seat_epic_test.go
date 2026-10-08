@@ -84,9 +84,9 @@ requires = ["coded"]
 // restoring the default afterwards so no other test inherits it.
 func wireEpicMode(t *testing.T, mode string) {
 	t.Helper()
+	withWiring(t)
 	wireWithWorkflows(t, engagementModeTestWF)
 	verb.SetEngagementMode(config.Config{Engagement: config.EngagementConfig{Parallel: mode}})
-	t.Cleanup(verb.ClearEngagementMode)
 }
 
 func createChild(t *testing.T, title, parent string) workitem.Item {
@@ -287,11 +287,11 @@ func TestNoneModeRefusesSiblings(t *testing.T) {
 // baseline; run from another tree it refuses and names the recorded path,
 // rather than silently attributing that tree's changes to the story.
 func TestStoryDiffAnchoredToLeaseWorktree(t *testing.T) {
+	withWiring(t)
 	treeA, treeB := twoWorktrees(t)
 	chdir(t, treeA)
 	wireEpicMode(t, config.ParallelEpic)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	epic := createChild(t, "Container", "")
 	child := createChild(t, "Child A", epic.ID)

@@ -12,8 +12,8 @@ import (
 )
 
 func TestCreateStampsAssigneeFromResolver(t *testing.T) {
+	withWiring(t)
 	wire(t)
-	t.Cleanup(verb.ClearAssigneeResolver)
 	verb.SetAssigneeResolver(func() string { return "P" })
 
 	var story workitem.Item
@@ -33,8 +33,8 @@ func TestCreateStampsAssigneeFromResolver(t *testing.T) {
 }
 
 func TestEngageRefusesOtherHolder(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
-	t.Cleanup(verb.ClearAssigneeResolver)
 	verb.SetAssigneeResolver(func() string { return "P" })
 
 	var story workitem.Item
@@ -65,8 +65,8 @@ func TestEngageRefusesOtherHolder(t *testing.T) {
 }
 
 func TestEngageEmptyAssigneeStampsResolver(t *testing.T) {
+	withWiring(t)
 	wire(t)
-	t.Cleanup(verb.ClearAssigneeResolver)
 
 	var story workitem.Item
 	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "Open"}), &story); err != nil {
@@ -87,8 +87,8 @@ func TestEngageEmptyAssigneeStampsResolver(t *testing.T) {
 }
 
 func TestNoCredentialCreateAndEngageLeaveEmpty(t *testing.T) {
+	withWiring(t)
 	wire(t)
-	t.Cleanup(verb.ClearAssigneeResolver)
 	verb.ClearAssigneeResolver()
 
 	var story workitem.Item

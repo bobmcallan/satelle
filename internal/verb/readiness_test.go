@@ -102,6 +102,7 @@ type readinessRig struct {
 // The dispatcher attaches a `plan` doc the way a real planner's artifact lands.
 func newReadinessRig(t *testing.T, wf map[string]string, verd func(to string, n int) verb.GateDecision) *readinessRig {
 	t.Helper()
+	withWiring(t)
 	wireWithWorkflows(t, wf)
 	verb.SetStoryDir(filepath.Join(t.TempDir(), ".satelle", "stories"))
 	r := &readinessRig{}
@@ -118,10 +119,6 @@ func newReadinessRig(t *testing.T, wf map[string]string, verd func(to string, n 
 		call(t, "story-doc-attach", map[string]any{"story_id": it.ID, "name": "plan", "type": "plan", "body": "the plan"})
 		return verb.DispatchResult{Dispatched: true, Agent: "planner", Skill: "plan"}, nil
 	}))
-	t.Cleanup(func() {
-		verb.SetTransitionGater(nil)
-		verb.SetExecutorDispatcher(nil)
-	})
 	return r
 }
 
@@ -256,9 +253,9 @@ func TestDefinitionEditActorIsTheSatelleUser(t *testing.T) {
 		{"neither", "", "executor"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			withWiring(t)
 			newReadinessRig(t, readinessWF, func(string, int) verb.GateDecision { return acceptAll() })
 			verb.SetActorResolver(func() string { return tc.actor })
-			t.Cleanup(func() { verb.SetActorResolver(nil) })
 
 			it := newFeature(t)
 			call(t, "story-set", map[string]any{"id": it.ID, "acceptance_criteria": "1. narrowed"})
@@ -311,6 +308,7 @@ func TestProposeRunsPerformerBeforeGate(t *testing.T) {
 }
 
 func TestProposePerformerErrorSkipsGateAndKeepsBacklog(t *testing.T) {
+	withWiring(t)
 	r := newReadinessRig(t, readinessWF, func(string, int) verb.GateDecision { return acceptAll() })
 	verb.SetExecutorDispatcher(dispatcherFunc(func(context.Context, workitem.Item, string) (verb.DispatchResult, error) {
 		return verb.DispatchResult{}, errors.New("planner crashed")
@@ -341,6 +339,7 @@ func TestWithoutProposeGateRunsBeforePerformer(t *testing.T) {
 // A performer that judges the premise wrong parks from backlog (before any gate)
 // and a later resume returns the story to backlog.
 func TestProposePerformerRejectParksFromBacklogAndResumes(t *testing.T) {
+	withWiring(t)
 	r := newReadinessRig(t, readinessWF, func(string, int) verb.GateDecision { return acceptAll() })
 	verb.SetExecutorDispatcher(dispatcherFunc(func(_ context.Context, _ workitem.Item, to string) (verb.DispatchResult, error) {
 		if to != "plan" {

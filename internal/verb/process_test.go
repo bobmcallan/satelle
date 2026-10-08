@@ -11,6 +11,7 @@ import (
 )
 
 func TestProcessViewAllocations(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	// The allocation view resolves the machine-wide profile catalog (sty_c7dfeedf);
 	// an isolated empty home is the repo-only baseline this case asserts.
@@ -50,7 +51,6 @@ requires = ["planned"]
 	}
 	call(t, "doc-sync", map[string]any{"dirs": map[string]string{"workflows": wfDir}})
 	verb.SetDataDir(data)
-	t.Cleanup(func() { verb.SetDataDir("") })
 
 	raw := call(t, "process-view", map[string]any{"workflow": "default"})
 	var view verb.ProcessView

@@ -11,6 +11,7 @@ import (
 )
 
 func TestRefuseHeldElsewhere(t *testing.T) {
+	withWiring(t)
 	ClearHoldClaimer()
 	it := workitem.Item{ID: "sty_h", Status: workitem.StatusBacklog, Kind: workitem.KindStory}
 	if err := refuseHeldElsewhere(context.Background(), it); err != nil {
@@ -20,7 +21,6 @@ func TestRefuseHeldElsewhere(t *testing.T) {
 	SetHoldClaimer(func(ctx context.Context, itemID string) (HoldInfo, error) {
 		return HoldInfo{Holder: "loc_other", HolderLabel: "desk", LastSeen: "2026-09-01T00:00:00Z", HeldElsewhere: true}, nil
 	})
-	t.Cleanup(ClearHoldClaimer)
 	err := refuseHeldElsewhere(context.Background(), it)
 	if err == nil {
 		t.Fatal("expected refusal")
@@ -42,7 +42,7 @@ func TestRefuseHeldElsewhere(t *testing.T) {
 
 func TestRefuseHeldElsewhereFailOpen(t *testing.T) {
 	it := workitem.Item{ID: "sty_h", Kind: workitem.KindStory}
-	t.Cleanup(ClearHoldClaimer)
+	withWiring(t)
 	for name, claimErr := range map[string]error{
 		"lookup error": errors.New("network down"),
 		"pending":      fmt.Errorf("%w: server down", ErrHoldPending),

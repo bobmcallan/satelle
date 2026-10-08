@@ -11,11 +11,11 @@ import (
 )
 
 func TestHeldElsewhereRefusesEngageNotListGetCancel(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	verb.SetHoldClaimer(func(ctx context.Context, itemID string) (verb.HoldInfo, error) {
 		return verb.HoldInfo{Holder: "loc_other", LastSeen: "2026-09-01T00:00:00Z", HeldElsewhere: true}, nil
 	})
-	t.Cleanup(verb.ClearHoldClaimer)
 
 	var it workitem.Item
 	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "held elsewhere"}), &it); err != nil {

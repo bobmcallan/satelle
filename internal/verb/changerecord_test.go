@@ -66,6 +66,7 @@ func chdir(t *testing.T, dir string) {
 
 // AC1 + AC2 + AC8: enacted transition records change_record; visible on ledger; no hook.
 func TestChangeRecordPerEnactedTransition(t *testing.T) {
+	withWiring(t)
 	dir := gitRepo(t)
 	chdir(t, dir)
 	stories := filepath.Join(dir, "stories")
@@ -74,10 +75,6 @@ func TestChangeRecordPerEnactedTransition(t *testing.T) {
 	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() {
-		verb.SetTransitionGater(nil)
-		verb.SetStoryDir("")
-	})
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{
@@ -142,6 +139,7 @@ func TestChangeRecordPerEnactedTransition(t *testing.T) {
 
 // AC2: story-diff --recorded returns union.
 func TestChangeRecordVisibleOnLedgerList(t *testing.T) {
+	withWiring(t)
 	dir := gitRepo(t)
 	chdir(t, dir)
 	stories := filepath.Join(dir, "stories")
@@ -149,10 +147,6 @@ func TestChangeRecordVisibleOnLedgerList(t *testing.T) {
 	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() {
-		verb.SetTransitionGater(nil)
-		verb.SetStoryDir("")
-	})
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{
@@ -196,6 +190,7 @@ const noEngageWF = "---\nname: cr-ne\ntype: workflow\nscope: system\napplies_to:
 // AC6: no-baseline TRANSITION degrades — row written with files:[] and
 // unavailable:no-baseline; status still advances.
 func TestChangeRecordNoBaselineDegrades(t *testing.T) {
+	withWiring(t)
 	dir := gitRepo(t)
 	chdir(t, dir)
 	stories := filepath.Join(dir, "stories")
@@ -203,10 +198,6 @@ func TestChangeRecordNoBaselineDegrades(t *testing.T) {
 	wireWithWorkflows(t, map[string]string{"cr-ne": noEngageWF})
 	verb.SetStoryDir(stories)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() {
-		verb.SetTransitionGater(nil)
-		verb.SetStoryDir("")
-	})
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{
 		"title": "nb", "body": "g", "acceptance_criteria": "1. ok",
@@ -243,6 +234,7 @@ func TestChangeRecordNoBaselineDegrades(t *testing.T) {
 
 // AC6 no-git: chdir to non-git dir with stores; transition still succeeds.
 func TestChangeRecordNoGitDegrades(t *testing.T) {
+	withWiring(t)
 	dir := t.TempDir() // not a git repo
 	chdir(t, dir)
 	stories := filepath.Join(dir, "stories")
@@ -250,10 +242,6 @@ func TestChangeRecordNoGitDegrades(t *testing.T) {
 	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() {
-		verb.SetTransitionGater(nil)
-		verb.SetStoryDir("")
-	})
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{
 		"title": "nogit", "body": "g", "acceptance_criteria": "1. ok",
@@ -289,6 +277,7 @@ func TestChangeRecordNoGitDegrades(t *testing.T) {
 
 // AC5: real ledger change_record has no verdict fields.
 func TestChangeRecordHasNoVerdict(t *testing.T) {
+	withWiring(t)
 	dir := gitRepo(t)
 	chdir(t, dir)
 	stories := filepath.Join(dir, "stories")
@@ -296,10 +285,6 @@ func TestChangeRecordHasNoVerdict(t *testing.T) {
 	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() {
-		verb.SetTransitionGater(nil)
-		verb.SetStoryDir("")
-	})
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{
 		"title": "nov", "body": "g", "acceptance_criteria": "1. ok",
@@ -322,6 +307,7 @@ func TestChangeRecordHasNoVerdict(t *testing.T) {
 
 // AC4: real ledger payload carries no content/patch body (paths only).
 func TestChangeRecordPayloadCarriesNoContent(t *testing.T) {
+	withWiring(t)
 	dir := gitRepo(t)
 	chdir(t, dir)
 	stories := filepath.Join(dir, "stories")
@@ -329,10 +315,6 @@ func TestChangeRecordPayloadCarriesNoContent(t *testing.T) {
 	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() {
-		verb.SetTransitionGater(nil)
-		verb.SetStoryDir("")
-	})
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{
 		"title": "noc", "body": "g", "acceptance_criteria": "1. ok",
@@ -363,6 +345,7 @@ func TestChangeRecordPayloadCarriesNoContent(t *testing.T) {
 
 // AC5: recording never decides — a gate reject still blocks; no change_record on reject.
 func TestChangeRecordDoesNotAlterGateDecisions(t *testing.T) {
+	withWiring(t)
 	dir := gitRepo(t)
 	chdir(t, dir)
 	stories := filepath.Join(dir, "stories")
@@ -371,10 +354,6 @@ func TestChangeRecordDoesNotAlterGateDecisions(t *testing.T) {
 	verb.SetStoryDir(stories)
 	// First engage with open gate so we land in_progress.
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() {
-		verb.SetTransitionGater(nil)
-		verb.SetStoryDir("")
-	})
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{
 		"title": "gate", "body": "g", "acceptance_criteria": "1. ok",
@@ -420,6 +399,7 @@ func TestChangeRecordDoesNotAlterGateDecisions(t *testing.T) {
 
 // AC8: change_record is produced on the transition path with no hook event.
 func TestChangeRecordNeedsNoHook(t *testing.T) {
+	withWiring(t)
 	// Same path as production: verb Dispatch story-set (CLI/API), not hook handlers.
 	// Proves record is not coupled to Claude PostToolUse / Stop hooks.
 	dir := gitRepo(t)
@@ -429,10 +409,6 @@ func TestChangeRecordNeedsNoHook(t *testing.T) {
 	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() {
-		verb.SetTransitionGater(nil)
-		verb.SetStoryDir("")
-	})
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{
 		"title": "hookless", "body": "g", "acceptance_criteria": "1. ok",
@@ -457,6 +433,7 @@ func TestChangeRecordNeedsNoHook(t *testing.T) {
 
 // AC7: consumer surface story-diff --recorded is what substrate-only-check prefers.
 func TestSubstrateOnlyCheckReadsRecordedChangeSet(t *testing.T) {
+	withWiring(t)
 	// The skill script prefers `satelle story diff --recorded`; this test pins
 	// the verb contract that script parses (source=recorded + files union).
 	dir := gitRepo(t)
@@ -466,10 +443,6 @@ func TestSubstrateOnlyCheckReadsRecordedChangeSet(t *testing.T) {
 	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() {
-		verb.SetTransitionGater(nil)
-		verb.SetStoryDir("")
-	})
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{
 		"title": "consumer", "body": "g", "acceptance_criteria": "1. ok",
@@ -482,7 +455,6 @@ func TestSubstrateOnlyCheckReadsRecordedChangeSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	verb.SetAuthoredDirs(map[string]string{"skills": skillDir})
-	t.Cleanup(func() { verb.SetAuthoredDirs(nil) })
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": it.ID, "status": "done"}), &it)
 
 	raw := call(t, "story-diff", map[string]any{"id": it.ID, "recorded": true})
@@ -504,6 +476,7 @@ func TestSubstrateOnlyCheckReadsRecordedChangeSet(t *testing.T) {
 
 // AC3: git-ignored substrate path appears via authoredDirs leg.
 func TestChangeRecordCapturesGitIgnoredSubstrate(t *testing.T) {
+	withWiring(t)
 	dir := gitRepo(t)
 	chdir(t, dir)
 	// gitignore .satelle/
@@ -528,11 +501,6 @@ func TestChangeRecordCapturesGitIgnoredSubstrate(t *testing.T) {
 	verb.SetStoryDir(stories)
 	verb.SetAuthoredDirs(map[string]string{"skills": satelleDir})
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() {
-		verb.SetTransitionGater(nil)
-		verb.SetStoryDir("")
-		verb.SetAuthoredDirs(nil)
-	})
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{

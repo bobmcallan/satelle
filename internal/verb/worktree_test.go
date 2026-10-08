@@ -55,8 +55,8 @@ func wtFixture(t *testing.T) string {
 // config would.
 func declare(t *testing.T, main string, w config.WorktreeConfig) {
 	t.Helper()
+	withWiring(t)
 	verb.SetWorktreeConfig(config.Config{Worktree: w}, main)
-	t.Cleanup(verb.ClearWorktreeConfig)
 }
 
 func openWT(t *testing.T, req map[string]any) (verb.WorktreeResult, error) {

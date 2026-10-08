@@ -18,7 +18,6 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/verb"
 )
 
 func TestWorktreeDecoyIsNotTheProcessOfRecord(t *testing.T) {
@@ -28,7 +27,6 @@ func TestWorktreeDecoyIsNotTheProcessOfRecord(t *testing.T) {
 	t.Setenv("SATELLE_CONFIG", "")
 	_ = os.Unsetenv("SATELLE_CONFIG")
 	t.Setenv("SATELLE_SERVER_ENDPOINT", "none")
-	t.Cleanup(verb.ClearEngagementMode)
 
 	base := t.TempDir()
 	main := filepath.Join(base, "proj")

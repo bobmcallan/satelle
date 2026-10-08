@@ -59,7 +59,6 @@ func authoredBudgetRoute(t *testing.T, codedExtra string, noPark bool) *engageHa
 
 func (h *engageHarness) dispatchWith(report *BudgetReport) {
 	SetExecutorDispatcher(budgetDispatcher{report: report})
-	h.t.Cleanup(func() { SetExecutorDispatcher(nil) })
 }
 
 func (h *engageHarness) status(id string) string {

@@ -48,9 +48,9 @@ func dispatchRaw(t *testing.T, name string, req any) (json.RawMessage, error) {
 }
 
 func TestStorySetGatedRejectBlocksTransition(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: true, Accept: false, Notes: "no acceptance criteria", Skill: "satelle-story-done-review"}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it)
@@ -68,9 +68,9 @@ func TestStorySetGatedRejectBlocksTransition(t *testing.T) {
 }
 
 func TestStorySetGatedAcceptEnacts(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: true, Accept: true, Skill: "satelle-story-done-review"}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it)
@@ -91,9 +91,9 @@ func (c createStub) ReviewCreate(context.Context, verb.CreateDraft) (verb.GateDe
 }
 
 func TestStoryCreateGatedRejectBlocksPersist(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	verb.SetCreateReviewer(createStub{dec: verb.GateDecision{Gated: true, Accept: false, Notes: "add numbered acceptance criteria", Skill: "satelle-story-review"}})
-	t.Cleanup(func() { verb.SetCreateReviewer(nil) })
 
 	_, err := dispatchRaw(t, "story-create", map[string]any{"title": "vague"})
 	if err == nil || !strings.Contains(err.Error(), "rejected") {
@@ -108,9 +108,9 @@ func TestStoryCreateGatedRejectBlocksPersist(t *testing.T) {
 }
 
 func TestStoryCreateGatedAcceptPersists(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	verb.SetCreateReviewer(createStub{dec: verb.GateDecision{Gated: true, Accept: true}})
-	t.Cleanup(func() { verb.SetCreateReviewer(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "well formed", "acceptance_criteria": "1. works"}), &it)
@@ -135,13 +135,13 @@ func TestStorySetUngatedTransitionEnacts(t *testing.T) {
 }
 
 func TestGatedTransitionRecordsStepSummary(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	dir := filepath.Join(t.TempDir(), ".satelle", "stories")
 	verb.SetStoryDir(dir)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: true, Accept: true, Skill: "satelle-story-done-review"}})
 	sum := &summariserStub{out: "Moved to done after the criteria were met."}
 	verb.SetStepSummariser(sum)
-	t.Cleanup(func() { verb.SetTransitionGater(nil); verb.SetStepSummariser(nil); verb.SetStoryDir("") })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it)
@@ -168,6 +168,7 @@ func TestGatedTransitionRecordsStepSummary(t *testing.T) {
 }
 
 func TestPullContextChainResolvesPriorSummaries(t *testing.T) {
+	withWiring(t)
 	// AC4/AC5 (sty_47d31300): the pull-context contract rests on the mandatory
 	// step-summary chain. After two gated transitions, a dispatched agent can
 	// reconstruct context via the SAME verbs the CLI pull commands dispatch to —
@@ -178,7 +179,6 @@ func TestPullContextChainResolvesPriorSummaries(t *testing.T) {
 	verb.SetStoryDir(dir)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: true, Accept: true, Skill: "s"}})
 	verb.SetStepSummariser(edgeSummariser{})
-	t.Cleanup(func() { verb.SetTransitionGater(nil); verb.SetStepSummariser(nil); verb.SetStoryDir("") })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "backlog"}), &it)
@@ -231,6 +231,7 @@ func TestPullContextChainResolvesPriorSummaries(t *testing.T) {
 }
 
 func TestGatedTransitionRecordsAgentInvocation(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	// An LLM reviewer carries its invocation: the resolved command and the injected
 	// skill/rubric file. A functional check would leave Command empty (no agent).
@@ -243,7 +244,6 @@ func TestGatedTransitionRecordsAgentInvocation(t *testing.T) {
 			Context: "satelle-story-done-review",
 		}},
 	}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it)
@@ -274,6 +274,7 @@ func TestGatedTransitionRecordsAgentInvocation(t *testing.T) {
 // mixed accept/reject verdicts (parallel path), every row is ledgered and the
 // refuse error names every rejecting reviewer.
 func TestMultiRejectNamesAllAndLedgersAll(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
 		Gated:  true,
@@ -285,7 +286,6 @@ func TestMultiRejectNamesAllAndLedgersAll(t *testing.T) {
 			{Skill: "rev-c", Accept: false, Notes: "no-c", Command: "fake", Context: "rev-c"},
 		},
 	}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "multi-reject", "status": "in_progress"}), &it)
@@ -312,6 +312,7 @@ func TestMultiRejectNamesAllAndLedgersAll(t *testing.T) {
 }
 
 func TestFunctionalCheckRecordsNoInvocation(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	// A deterministic functional-check gate invokes no agent (Command empty), so no
 	// agent_invocation row is written — only LLM agent invocations are recorded.
@@ -319,7 +320,6 @@ func TestFunctionalCheckRecordsNoInvocation(t *testing.T) {
 		Gated: true, Accept: true, Skill: "satelle-integration-check",
 		Reviewers: []verb.ReviewerVerdict{{Skill: "satelle-integration-check", Accept: true}},
 	}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it)
@@ -333,11 +333,11 @@ func TestFunctionalCheckRecordsNoInvocation(t *testing.T) {
 }
 
 func TestUngatedTransitionSkipsSummariser(t *testing.T) {
+	withWiring(t)
 	wire(t)
 	// No transition gater → ungated edge → summariser must not run.
 	sum := &summariserStub{out: "should not run"}
 	verb.SetStepSummariser(sum)
-	t.Cleanup(func() { verb.SetStepSummariser(nil) })
 
 	var it workitem.Item
 	// DOT-legal statuses (sty_ebd3d666).
@@ -354,13 +354,13 @@ func TestUngatedTransitionSkipsSummariser(t *testing.T) {
 // errors carry decision=, notes=, and reasoning=; accept enacts with the same
 // fields on the review_accept ledger body (stderr is the live session notice).
 func TestStorySetSurfacesDecisionNotesReasoning(t *testing.T) {
+	withWiring(t)
 	wire(t)
 
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
 		Gated: true, Accept: false, Skill: "satelle-story-done-review",
 		Notes: "missing AC", Reasoning: "body lacks numbered criteria",
 	}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it)

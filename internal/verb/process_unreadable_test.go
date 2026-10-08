@@ -20,6 +20,7 @@ import (
 // document), create, amend and restamp all refuse, name the path, name the
 // embedded route that would otherwise govern, and record nothing.
 func TestUnreadableWorkflowsDirRefusesTheVerbs(t *testing.T) {
+	withWiring(t)
 	ctx := context.Background()
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
@@ -34,13 +35,6 @@ func TestUnreadableWorkflowsDirRefusesTheVerbs(t *testing.T) {
 	verb.SetStoryDir(filepath.Join(dir, "stories"))
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetDocIndexStore(nil)
-		verb.SetLeaseStore(nil)
-		verb.SetStoryDir("")
-		verb.SetTransitionGater(nil)
 	})
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: true, Accept: true, Skill: "intent-review"}})
 

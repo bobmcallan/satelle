@@ -17,6 +17,7 @@ import (
 // would, then waits for the keep-alive to refresh it; the pid probe says dead so
 // nothing but the heartbeat can vouch for the holder.
 func TestSeatHeldThroughLongGate(t *testing.T) {
+	withWiring(t)
 	prevProbe := lease.PidAlive
 	lease.PidAlive = func(int) bool { return false }
 	prevEvery := lease.KeepAliveInterval
@@ -50,7 +51,6 @@ func TestSeatHeldThroughLongGate(t *testing.T) {
 		}
 		return verb.GateDecision{Gated: false}
 	}))
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "in_progress"}), &a)
 	if !aliveDuringGate {
@@ -65,6 +65,7 @@ func TestSeatHeldThroughLongGate(t *testing.T) {
 // holds its seat clears only the in-flight mark — the seat row is not the
 // gate's to delete, only one this call created.
 func TestGateRejectKeepsPreexistingSeat(t *testing.T) {
+	withWiring(t)
 	db := wireWithWorkflowsStore(t, singleStoryWF)
 
 	var a workitem.Item
@@ -76,7 +77,6 @@ func TestGateRejectKeepsPreexistingSeat(t *testing.T) {
 	}
 
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: true, Accept: false, Skill: "s", Notes: "no"}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 	if _, err := dispatchRaw(t, "story-set", map[string]any{"id": a.ID, "status": "in_progress"}); err == nil {
 		t.Fatal("expected the gate to reject")
 	}

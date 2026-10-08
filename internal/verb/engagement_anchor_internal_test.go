@@ -51,7 +51,7 @@ func TestRefuseForeignTreeDiffAnchored(t *testing.T) {
 // special case. Epic mode keys on the parent, falling back to the item's own id
 // when there is none (a singleton claim).
 func TestSeatKeyForModes(t *testing.T) {
-	t.Cleanup(ClearEngagementMode)
+	withWiring(t)
 	child := workitem.Item{ID: "sty_child", Kind: workitem.KindStory, ParentID: "sty_epic"}
 	lone := workitem.Item{ID: "sty_lone", Kind: workitem.KindStory}
 

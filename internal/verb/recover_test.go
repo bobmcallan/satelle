@@ -27,6 +27,7 @@ type recoverFixture struct {
 
 func newRecoverFixture(t *testing.T) recoverFixture {
 	t.Helper()
+	withWiring(t)
 	dir := t.TempDir()
 	run := func(args ...string) {
 		t.Helper()
@@ -87,7 +88,6 @@ terminal = true
 requires = ["coded"]
 `))
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{

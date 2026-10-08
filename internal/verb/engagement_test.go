@@ -18,6 +18,7 @@ import (
 // TestEngagementBaselineIdempotentAndDiff: first engage records baseline once;
 // park/re-enter keeps one row; story-diff enumerates tracked+untracked (sty_da169e03).
 func TestEngagementBaselineIdempotentAndDiff(t *testing.T) {
+	withWiring(t)
 	dir := t.TempDir()
 	run := func(args ...string) {
 		t.Helper()
@@ -64,7 +65,6 @@ terminal = true
 requires = ["coded"]
 `))
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{
@@ -187,6 +187,7 @@ requires = ["coded"]
 // TestStoryDiffNoBaselineError (sty_a125b440): the exported API errors when no
 // baseline exists — the reviewer resolver maps that to a no-baseline marker.
 func TestStoryDiffNoBaselineError(t *testing.T) {
+	withWiring(t)
 	dir := t.TempDir()
 	run := func(args ...string) {
 		t.Helper()
@@ -229,7 +230,6 @@ terminal = true
 requires = ["coded"]
 `))
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{
 		"title": "no baseline yet", "body": "goal for story-diff no-baseline",
@@ -251,6 +251,7 @@ requires = ["coded"]
 // the recorded change_record union and the live story-diff --include-substrate
 // leg — plus a vacuity control proving the assertions can fail (sty_526d6a68).
 func TestResumeReanchorsPastParkWindowCommits(t *testing.T) {
+	withWiring(t)
 	dir := t.TempDir()
 	run := func(args ...string) {
 		t.Helper()
@@ -308,7 +309,6 @@ terminal = true
 requires = ["coded"]
 `))
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	engage := func(title string) workitem.Item {
 		t.Helper()
@@ -434,6 +434,7 @@ requires = ["coded"]
 // shows up under --include-substrate, and NOT on the git-only default leg
 // (sty_6469025e preserved).
 func TestEngagementBaselineManifestReportsSubstrateDeletions(t *testing.T) {
+	withWiring(t)
 	dir := gitRepo(t)
 	chdir(t, dir)
 	run := func(args ...string) {
@@ -469,11 +470,6 @@ func TestEngagementBaselineManifestReportsSubstrateDeletions(t *testing.T) {
 	verb.SetStoryDir(stories)
 	verb.SetAuthoredDirs(map[string]string{"skills": skillDir})
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() {
-		verb.SetTransitionGater(nil)
-		verb.SetStoryDir("")
-		verb.SetAuthoredDirs(nil)
-	})
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{
@@ -532,6 +528,7 @@ func TestEngagementBaselineManifestReportsSubstrateDeletions(t *testing.T) {
 // AC3: a baseline carrying no substrate_manifest — every engagement recorded
 // before the field existed — reports no deletions and no error.
 func TestManifestlessBaselineReportsNoDeletions(t *testing.T) {
+	withWiring(t)
 	dir := gitRepo(t)
 	chdir(t, dir)
 	skillDir := filepath.Join(dir, ".satelle", "skills")
@@ -548,11 +545,6 @@ func TestManifestlessBaselineReportsNoDeletions(t *testing.T) {
 	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() {
-		verb.SetTransitionGater(nil)
-		verb.SetStoryDir("")
-		verb.SetAuthoredDirs(nil)
-	})
 
 	// Engage with no authored roots wired: the baseline lands WITHOUT the field,
 	// which is byte-for-byte the pre-upgrade payload shape.

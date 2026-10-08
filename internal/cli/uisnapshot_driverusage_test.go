@@ -26,6 +26,7 @@ import (
 // and never runs `satelle story seat` would otherwise never get a
 // driver_usage row for a session this call reaps (sty_81caa41b).
 func TestListSeatsJSONRecordsKillRowOnReap(t *testing.T) {
+	withVerbWiring(t)
 	holdersGone(t)
 	repo := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repo, ".git"), []byte(""), 0o644); err != nil {
@@ -37,7 +38,6 @@ func TestListSeatsJSONRecordsKillRowOnReap(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	verb.SetLedgerStore(db.Ledger)
-	t.Cleanup(func() { verb.SetLedgerStore(nil) })
 
 	ctx := context.Background()
 	sty, err := db.Stories.Create(ctx, workitem.CreateInput{

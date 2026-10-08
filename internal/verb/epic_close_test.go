@@ -132,6 +132,7 @@ func TestEpicCloseIgnoresParentLinkWithoutTag(t *testing.T) {
 // non-terminal member is filed inside the window before the commit. The commit
 // re-reads the set and refuses, naming the member filed in the window.
 func TestEpicCloseRereadsSetAtCommit(t *testing.T) {
+	withWiring(t)
 	wireWithWorkflows(t, epicCloseWF)
 	epic := mkEpicStory(t, map[string]any{"category": "epic-parent", "tags": []string{"epic:t"}})
 	child := mkEpicStory(t, map[string]any{"category": "fix", "tags": []string{"epic:t"}})
@@ -154,7 +155,6 @@ func TestEpicCloseRereadsSetAtCommit(t *testing.T) {
 		late = mkEpicStory(t, map[string]any{"category": "fix", "tags": []string{"epic:t"}})
 		return verb.GateDecision{Gated: true, Accept: true, Skill: "satelle-story-done-review"}
 	}))
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	err := setStatus(t, epic.ID, "done")
 	if len(snapshot) != 1 || snapshot[0].Status != "done" {

@@ -42,6 +42,7 @@ func minimalPDF() []byte {
 
 func wireDocs(t *testing.T) (storyDir string) {
 	t.Helper()
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -56,12 +57,6 @@ func wireDocs(t *testing.T) (storyDir string) {
 	verb.SetAttachmentPolicy(0, nil) // defaults
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetDocIndexStore(nil)
-		verb.SetStoryDir("")
-		verb.SetAttachmentPolicy(0, nil)
 	})
 	return storyDir
 }
@@ -283,6 +278,7 @@ func TestBinarySafeNameTraversal(t *testing.T) {
 
 // TestBinaryCapAndAllowlist (AC7).
 func TestBinaryCapAndAllowlist(t *testing.T) {
+	withWiring(t)
 	storyDir := wireDocs(t)
 	st := createStory(t)
 

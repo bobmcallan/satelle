@@ -19,6 +19,7 @@ import (
 // per-story attachment subdirs survive. The DB stays authoritative — this is a
 // disposable view.
 func TestSyncStoryBacklog(t *testing.T) {
+	withWiring(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -26,7 +27,6 @@ func TestSyncStoryBacklog(t *testing.T) {
 	defer db.Close()
 	dir := t.TempDir()
 	verb.SetStoryDir(dir)
-	defer verb.SetStoryDir("")
 	ctx := context.Background()
 	now := time.Now()
 

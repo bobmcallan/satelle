@@ -87,9 +87,9 @@ requires = ["merged"]
 
 func wireAfterChildren(t *testing.T, afterChildren bool) *store.DB {
 	t.Helper()
+	withWiring(t)
 	db := wireWithWorkflowsStore(t, afterChildrenWF(afterChildren))
 	verb.SetEngagementMode(config.Config{Engagement: config.EngagementConfig{Parallel: config.ParallelEpic}})
-	t.Cleanup(verb.ClearEngagementMode)
 	return db
 }
 
