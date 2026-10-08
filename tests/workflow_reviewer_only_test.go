@@ -1,4 +1,4 @@
-//go:build integration
+//go:build integration && operatorconfig
 
 package tests
 
@@ -8,8 +8,10 @@ import (
 	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
-// TestProjectWorkflowReviewerFirst asserts this repo's project workflow is
-// reviewer-first: a reviewer gates every transition on the spine. Plan
+// TestOperatorProjectWorkflowReviewerFirst asserts this repo's project workflow
+// is reviewer-first (it pins the AUTHORED route under .satelle/workflows, which a
+// clean checkout does not carry, so it runs under the operatorconfig opt-in —
+// make operator-check): a reviewer gates every transition on the spine. Plan
 // dispatches to an isolated read-only planner; integration and release run
 // IN-LOOP on the driving session (agent=executor). A story has one readiness
 // step (sty_5262592e): backlog -> plan, whose planner proposes before the
@@ -33,7 +35,7 @@ import (
 // orchestrator instruction, not topology, so it is absent from the emitted
 // Spec by design; `satelle story route` prints it. Compiling it into a Go
 // assertion would be another process-in-Go pin.
-func TestProjectWorkflowReviewerFirst(t *testing.T) {
+func TestOperatorProjectWorkflowReviewerFirst(t *testing.T) {
 	spec := repoRouteSpec(t, "*", nil)
 
 	states := map[string]wfdot.State{}

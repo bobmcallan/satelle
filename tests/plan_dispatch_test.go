@@ -21,6 +21,27 @@ func writePlanDemoRoute(t *testing.T, repo string) {
 		"done||||")
 }
 
+// planSkillFixture is the planner rubric the demo route names. The stubbed
+// planner process never reads its prose; the dispatch needs it to resolve and to
+// declare the structured plan output contract the tests exercise.
+const planSkillFixture = `---
+name: plan
+scope: project
+type: skill
+tags: [type:skill]
+description: Fixture planner rubric for the plan-dispatch tests — propose a plan for the story's acceptance criteria.
+output_name: plan
+output_type: plan
+output_required: true
+output_schema: name,type,body
+output_ac_coverage: true
+---
+
+# Plan (fixture)
+
+Read the story and propose an implementation plan that covers every acceptance criterion.
+`
+
 const validStructuredPlannerScript = `#!/bin/sh
 cat >/dev/null
 printf '%s\n' '{"artifact":{"name":"plan","type":"plan","body":"# Plan\n\n## AC1\nThe thing is covered."}}'
@@ -33,11 +54,13 @@ func setupStructuredPlanRepo(t *testing.T, scriptBody string) (repo, id, script 
 	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"),
 		"[review]\ngate_create = false\n\n[categories]\nenforce = \"off\"\n")
 	stubReviewerAccept(t, repo)
-	// `plan` is authored here; satelle-story-plan-review is an embedded default
-	// served by the overlay. substrateSkillBody resolves each where it lives.
-	for _, name := range []string{"plan", "satelle-story-plan-review"} {
-		writeFile(t, filepath.Join(repo, ".satelle", "skills", name+".md"), substrateSkillBody(t, name))
-	}
+	// The planner's skill is a minimal committed fixture, not this repo's authored
+	// `plan` (untracked .satelle, absent on a clean checkout); the dispatch
+	// mechanism under test needs only that the named skill resolves.
+	// satelle-story-plan-review is an embedded default served by the overlay.
+	writeFile(t, filepath.Join(repo, ".satelle", "skills", "plan.md"), planSkillFixture)
+	writeFile(t, filepath.Join(repo, ".satelle", "skills", "satelle-story-plan-review.md"),
+		substrateSkillBody(t, "satelle-story-plan-review"))
 	script = filepath.Join(repo, "planner.sh")
 	if err := os.WriteFile(script, []byte(scriptBody), 0o755); err != nil {
 		t.Fatal(err)

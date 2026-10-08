@@ -5,6 +5,7 @@ package tests
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/config"
@@ -32,9 +33,27 @@ func repoRouteSource(t *testing.T) (done, step string) {
 	return string(d), string(s)
 }
 
-// seedRouteSource copies this repo's route source into a temp repo's substrate,
-// so the seeded repo is governed by the same lifecycle this one is.
+// seedRouteSource installs the route source the BINARY ships (the same bytes
+// `satelle init` serves as the order-zero default) as an authored copy in a temp
+// repo's substrate, so a test of generic route and gate mechanism runs against
+// the canonical default solution and needs nothing from this repo's own
+// .satelle — which a clean checkout does not have (it is gitignored). A test
+// whose subject IS this repo's authored lifecycle uses seedRepoRouteSource and
+// sits behind the operatorconfig opt-in (make operator-check).
 func seedRouteSource(t *testing.T, repo string) {
+	t.Helper()
+	done, step := embeddedRouteHalves(t)
+	// An authored copy is project scope; the embedded bytes say `system`.
+	done = strings.Replace(done, `scope = "system"`, `scope = "project"`, 1)
+	step = strings.Replace(step, `scope = "system"`, `scope = "project"`, 1)
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "done.toml"), done)
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "step.toml"), step)
+}
+
+// seedRepoRouteSource copies this repo's authored route source into a temp
+// repo's substrate, so the seeded repo is governed by the same lifecycle this one
+// is. It reads untracked .satelle, so only operatorconfig tests may call it.
+func seedRepoRouteSource(t *testing.T, repo string) {
 	t.Helper()
 	done, step := repoRouteSource(t)
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "done.toml"), done)
