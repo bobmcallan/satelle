@@ -136,6 +136,6 @@ func TestMirrorReconcilesTerminalStateAfterServiceRestart(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("mirror never reconciled to the terminal state.\nservice log:\n%s\npage:\n%s", serveOut.String(), page)
 		}
-		time.Sleep(250 * time.Millisecond)
+		time.Sleep(250 * time.Millisecond) // poll tick
 	}
 }

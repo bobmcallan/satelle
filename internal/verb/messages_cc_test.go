@@ -26,7 +26,7 @@ func TestMessageCcWidensReadNotDirection(t *testing.T) {
 	call(t, "ledger-append", map[string]any{
 		"story_id": it.ID, "kind": ledger.KindEngagementBaseline, "payload": json.RawMessage(payload),
 	})
-	time.Sleep(2 * time.Millisecond)
+	time.Sleep(2 * time.Millisecond) // time-subject: created_at separation from the baseline row, so the since-cutoff orders the messages after it
 	// A relay turn: directed consult → coder, audience everyone.
 	call(t, "story-message", map[string]any{
 		"id": it.ID, "from": "consult", "to": "coder", "cc": "*", "body": "AC4 has no test",

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // writeStreamingRoute allocates the plan step to the NAMED agent "architect" so
@@ -26,14 +28,16 @@ func writeStreamingRoute(t *testing.T, repo string) {
 	writeSpineFixture(t, repo, "", "", "", "plan|architect|||", "done||||")
 }
 
-// slowStreamingAgentScript echoes two lines with a real pause between them, then
-// exits 0 — a stand-in for an agent whose output arrives over time rather than
-// all at once.
+// slowStreamingAgentScript echoes a line, holds until the test creates the
+// release-agent file beside the script, then echoes the rest and exits 0 — a
+// stand-in for an agent whose output arrives over time rather than all at once.
+// The hold is the test's to lift, so "the first line was visible while the agent
+// was still running" does not depend on how fast the machine polls.
 const slowStreamingAgentScript = `#!/bin/sh
+dir=$(dirname "$0")
 echo line-one
-sleep 0.3
+while [ ! -e "$dir/release-agent" ]; do sleep 0.05; done
 echo line-two
-sleep 0.3
 echo done
 `
 
@@ -41,7 +45,7 @@ echo done
 // configured timeout, so the dispatch is expected to be killed mid-run.
 const hangingAgentScript = `#!/bin/sh
 echo partial-line
-exec sleep 5
+exec sleep 60
 `
 
 func setupStreamingRepo(t *testing.T, script string, extraAgentsToml string) (repo, storyID string) {
@@ -108,7 +112,7 @@ func TestDispatchStreamsLiveOutputBeforeExit(t *testing.T) {
 	}
 
 	var sawPartial bool
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testutil.WaitBudget)
 	logDir := filepath.Join(runtimeRoot(t, repo), "logs", "dispatch")
 	for time.Now().Before(deadline) {
 		matches, _ := filepath.Glob(filepath.Join(logDir, "dispatch-*.log"))
@@ -119,7 +123,12 @@ func TestDispatchStreamsLiveOutputBeforeExit(t *testing.T) {
 				break
 			}
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) // poll tick
+	}
+	// Lift the hold whether or not the partial line was seen, so the agent ends
+	// and the transition can finish.
+	if err := os.WriteFile(filepath.Join(repo, "release-agent"), nil, 0o644); err != nil {
+		t.Fatal(err)
 	}
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("story set failed: %v", err)
@@ -159,7 +168,10 @@ func TestDispatchStreamsLiveOutputBeforeExit(t *testing.T) {
 // (sty_446c38b7) shorter than the agent's sleep kills the dispatch, but the line
 // it streamed before the kill is retained on the live log file for diagnosis.
 func TestDispatchTimeoutRetainsStreamedOutputOnKill(t *testing.T) {
-	repo, id := setupStreamingRepo(t, hangingAgentScript, "timeout = \"300ms\"\n")
+	// time-subject: the binding timeout is what kills the agent. It is long enough
+	// for a slow machine to start the shell and stream the first line before the
+	// kill (the agent itself sleeps 60s), so only the kill ends the dispatch.
+	repo, id := setupStreamingRepo(t, hangingAgentScript, "timeout = \"3s\"\n")
 
 	out, err := run(t, testBin, repo, "story", "set", id, "--status", "plan")
 	if err == nil {

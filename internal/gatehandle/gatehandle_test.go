@@ -129,6 +129,7 @@ func TestState_NeverStartedIsDeadAfterGrace(t *testing.T) {
 	if got := s.State(fresh.ID); got != Running {
 		t.Errorf("a just-created handle = %s, want running (the parent is still starting it)", got)
 	}
+	// time-subject: the start grace is the subject, crossed by backdating Started.
 	old, _ := s.Create(Meta{ID: "gw_old", Verb: "x", Started: time.Now().Add(-2 * startGrace)})
 	if got := s.State(old.ID); got != Died {
 		t.Errorf("a handle that never got a process = %s, want died", got)
@@ -155,7 +156,7 @@ func TestPrune_RemovesOldDeliveredHandlesOnly(t *testing.T) {
 	oldDelivered, _ := s.Create(Meta{ID: "gw_olddel", Verb: "x"})
 	_ = s.Finish(oldDelivered.ID, Result{})
 	s.Claim(oldDelivered.ID)
-	past := time.Now().Add(-retention - time.Hour)
+	past := time.Now().Add(-retention - time.Hour) // time-subject: retention age is the subject, set by backdating
 	_ = os.Chtimes(s.path(oldDelivered.ID, "delivered"), past, past)
 	recent, _ := s.Create(Meta{ID: "gw_recent", Verb: "x"})
 	_ = s.Finish(recent.ID, Result{})
@@ -175,6 +176,7 @@ func TestPrune_RemovesOldDeliveredHandlesOnly(t *testing.T) {
 
 func TestUndelivered_SkipsRunsTooOldToBeANotification(t *testing.T) {
 	s := newStore(t)
+	// time-subject: delivery age is the subject, set by backdating Started, never slept for.
 	_, _ = s.Create(Meta{ID: "gw_stale", Verb: "x", Started: time.Now().Add(-MaxDeliveryAge - time.Hour)})
 	fresh, _ := s.Create(Meta{ID: "gw_fresh", Verb: "x"})
 	if got := s.Undelivered(); len(got) != 1 || got[0] != fresh.ID {

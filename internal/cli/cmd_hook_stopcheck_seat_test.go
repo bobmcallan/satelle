@@ -271,7 +271,9 @@ func TestStopcheckDispatchedStillReportsDirtyTree(t *testing.T) {
 		if err := runHookStopcheck([]byte("{}"), &buf); err != nil {
 			t.Fatalf("stopcheck: %v", err)
 		}
-		if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		// The wait bound is 10s: a stop that waited would run all of it, so half of
+		// it separates "did not wait" from "waited" on any machine.
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
 			t.Errorf("a dispatched stop waited on the driver's gate (%s)", elapsed)
 		}
 		out := buf.String()

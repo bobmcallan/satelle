@@ -101,7 +101,7 @@ func multiSeatRepo(t *testing.T, aStatus, aCategory, bStatus string, aFirst bool
 		if err := db.Leases.Confirm(ctx, s.it.ID, s.status); err != nil {
 			t.Fatal(err)
 		}
-		time.Sleep(5 * time.Millisecond) // distinct acquired_at: the store order is the acquisition order
+		time.Sleep(5 * time.Millisecond) // time-subject: distinct acquired_at, the store order is the acquisition order
 	}
 	live, err := db.Leases.List(ctx)
 	if err != nil || len(live) != 2 {
@@ -149,7 +149,7 @@ func multiSeatTwoElsewhereOrdered(t *testing.T, xFirst bool) (repo, wtX, wtY str
 	}
 	if xFirst {
 		// Re-seat Y after X so the store lists X first.
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond) // time-subject: distinct acquired_at, Y is re-seated strictly after X
 		if err := db.Leases.ForceRelease(ctx, f.b.ID); err != nil {
 			t.Fatal(err)
 		}

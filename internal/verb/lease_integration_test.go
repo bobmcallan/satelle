@@ -12,6 +12,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/testutil"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -219,16 +220,13 @@ func TestLeaseAcquireBeforeStatusCommit(t *testing.T) {
 	withWiring(t)
 	wireWithWorkflows(t, singleStoryWF)
 
-	// Slow gater blocks A on backlog→plan long enough for B to race.
-	done := make(chan struct{})
-	gater := &slowGater{to: "plan", delay: 200 * time.Millisecond, done: done}
+	// The gater holds A on backlog→plan until the test releases it, so B races a
+	// gate that is provably still running however slow the machine is.
+	release := make(chan struct{})
+	gater := &slowGater{to: "plan", entered: make(chan struct{}), release: release}
 	verb.SetTransitionGater(gater)
 	t.Cleanup(func() {
-		select {
-		case <-done:
-		default:
-			close(done)
-		}
+		gater.releaseOnce.Do(func() { close(release) })
 	})
 
 	var a, b workitem.Item
@@ -240,8 +238,12 @@ func TestLeaseAcquireBeforeStatusCommit(t *testing.T) {
 		_, err := dispatchRaw(t, "story-set", map[string]any{"id": a.ID, "status": "plan"})
 		errCh <- err
 	}()
-	// Give A time to Acquire before gate sleeps.
-	time.Sleep(50 * time.Millisecond)
+	// A has acquired its seat by the time its gate is entered.
+	select {
+	case <-gater.entered:
+	case <-time.After(testutil.WaitBudget):
+		t.Fatal("A never reached its gate")
+	}
 	_, berr := dispatchRaw(t, "story-set", map[string]any{"id": b.ID, "status": "plan"})
 	if berr == nil || (!strings.Contains(berr.Error(), "engagement seat") && !strings.Contains(berr.Error(), "one performing")) {
 		t.Fatalf("B must be refused while A holds seat pre-commit: %v", berr)
@@ -249,7 +251,8 @@ func TestLeaseAcquireBeforeStatusCommit(t *testing.T) {
 	// A still backlog until its gate finishes (or at least B was refused mid-window).
 	var mid workitem.Item
 	json.Unmarshal(call(t, "story-get", map[string]any{"id": a.ID}), &mid)
-	// Wait for A to finish.
+	// Let A's gate finish, then wait for A.
+	gater.releaseOnce.Do(func() { close(release) })
 	if err := <-errCh; err != nil {
 		t.Fatalf("A engage: %v", err)
 	}
@@ -262,19 +265,24 @@ func TestLeaseAcquireBeforeStatusCommit(t *testing.T) {
 	_ = mid
 }
 
-// slowGater delays the first transition into `to`, then accepts.
+// slowGater holds the first transition into `to` until release is closed, then
+// accepts. entered is closed once the gate is running.
 type slowGater struct {
-	to    string
-	delay time.Duration
-	done  chan struct{}
-	once  sync.Once
+	to          string
+	entered     chan struct{}
+	release     chan struct{}
+	once        sync.Once
+	releaseOnce sync.Once
 }
 
 func (s *slowGater) Gate(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, error) {
 	if toStatus == s.to {
 		s.once.Do(func() {
-			time.Sleep(s.delay)
-			close(s.done)
+			close(s.entered)
+			select {
+			case <-s.release:
+			case <-time.After(2 * testutil.WaitBudget): // safety net against a hung test; release is the exit
+			}
 		})
 		return verb.GateDecision{Gated: true, Accept: true, Skill: "slow", Notes: "ok"}, nil
 	}

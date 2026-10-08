@@ -472,7 +472,7 @@ func TestGrokWatcherResumesAfterTheGateFinishes(t *testing.T) {
 			raw = b
 			break
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond) // poll tick
 	}
 	if raw == nil {
 		logb, _ := os.ReadFile(filepath.Join(store.Dir(), m.ID, "resume.log"))

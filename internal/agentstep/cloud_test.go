@@ -42,7 +42,8 @@ const (
 	cloudContractSkill  = "---\nname: cloud-step\ntype: skill\ndescription: x\noutput_name: design\noutput_type: design-note\noutput_required: true\noutput_schema: body\n---\nreturn an artifact"
 	cloudStoryID        = "sty_cloud01"
 	cloudDefaultPoll    = 10 * time.Millisecond
-	cloudTestShortLimit = "400ms"
+	cloudTestShortLimit = "400ms" // time-subject: the binding timeout of the tests whose subject is the timeout itself
+	cloudTestLongLimit  = "60s"   // every other test: the session pushes before the wait starts, which returns at its first poll, so a slow `git` cannot expire it mid-poll
 )
 
 // cloudFix is a story worktree (a clone, upstream set) beside its bare remote.
@@ -201,7 +202,7 @@ func TestCloudDispatchPrompt(t *testing.T) {
 		f.session(t, branch, tipMessage(cloudEvidenceBody, nonce), map[string]string{"b.txt": "b\n"})
 	}
 	installCloud(t, agentcli.HarnessClaude, c)
-	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), cloudBinding("claude -p {system}", "", cloudTestShortLimit))
+	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), cloudBinding("claude -p {system}", "", cloudTestLongLimit))
 	if _, err := ce.dispatch(t); err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +244,7 @@ func TestCloudDispatchPromptHasNoFrontmatterAndNoLeadingDash(t *testing.T) {
 		{Kind: "skills", Name: "cloud-step", Body: "---\nname: cloud-step\ntype: skill\ndescription: FM-STEP-DESC\n---\n# Rubric\n" + cloudStepSkill},
 		{Kind: "skills", Name: cloudPerformerSkill, Body: "---\nname: " + cloudPerformerSkill + "\ntype: skill\ndescription: FM-PERF-DESC\n---\n" + cloudPerformerBody},
 	}}
-	b := cloudBinding("claude -p {system}", "", cloudTestShortLimit)
+	b := cloudBinding("claude -p {system}", "", cloudTestLongLimit)
 	if b.Tools != "" {
 		t.Fatal("fixture binding must grant no tools")
 	}
@@ -353,7 +354,7 @@ func TestCloudDispatchCollectsAndAttaches(t *testing.T) {
 		f.session(t, branch, tipMessage(cloudEvidenceBody, nonce), map[string]string{"b.txt": "from cloud\n"})
 	}
 	installCloud(t, agentcli.HarnessClaude, c)
-	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), cloudBinding("claude -p {system}", cloudDocName, cloudTestShortLimit))
+	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), cloudBinding("claude -p {system}", cloudDocName, cloudTestLongLimit))
 	res, err := ce.dispatch(t)
 	if err != nil {
 		t.Fatal(err)
@@ -401,7 +402,7 @@ func TestCloudDispatchWithoutCollectDocAttachesNothing(t *testing.T) {
 		f.session(t, branch, tipMessage(cloudEvidenceBody, nonce), map[string]string{"b.txt": "x\n"})
 	}
 	installCloud(t, agentcli.HarnessClaude, c)
-	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), cloudBinding("claude -p {system}", "", cloudTestShortLimit))
+	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), cloudBinding("claude -p {system}", "", cloudTestLongLimit))
 	res, err := ce.dispatch(t)
 	if err != nil {
 		t.Fatal(err)
@@ -416,6 +417,9 @@ func TestCloudDispatchWithoutCollectDocAttachesNothing(t *testing.T) {
 
 // A tip commit that carries no trailer is not a completion: the wait times out,
 // the error carries the session URL, and the worktree is unchanged.
+//
+// time-subject: the 400ms binding timeout is the subject — a tip without the
+// trailer must never complete, so the wait has to end at the timeout.
 func TestCloudDispatchTimesOutWithoutTrailer(t *testing.T) {
 	f := newCloudFix(t)
 	before := gitT(t, f.work, "rev-parse", "HEAD")
@@ -442,6 +446,9 @@ func TestCloudDispatchTimesOutWithoutTrailer(t *testing.T) {
 
 // A session that never pushes times out at the binding's timeout; with no
 // binding timeout the dispatch's own default deadline applies.
+//
+// time-subject: the 400ms binding timeout and the 300ms default deadline are the
+// subject. The 10s ceiling below only checks the wait was bounded by them.
 func TestCloudDispatchTimesOutWhenNothingIsPushed(t *testing.T) {
 	f := newCloudFix(t)
 	installCloud(t, agentcli.HarnessClaude, &fakeCloud{})
@@ -484,7 +491,7 @@ func TestCloudDispatchRefusesConflictingBranch(t *testing.T) {
 		f.session(t, branch, tipMessage("body", nonce), map[string]string{"a.txt": "one\nCLOUD\nthree\n"})
 	}
 	installCloud(t, agentcli.HarnessClaude, c)
-	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), cloudBinding("claude -p {system}", cloudDocName, cloudTestShortLimit))
+	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), cloudBinding("claude -p {system}", cloudDocName, cloudTestLongLimit))
 	_, err := ce.dispatch(t)
 	if err == nil || !strings.Contains(err.Error(), "does not merge cleanly") || !strings.Contains(err.Error(), cloudSessionURL) {
 		t.Fatalf("err = %v, want a merge refusal naming the session URL", err)
@@ -513,7 +520,7 @@ func TestCloudDispatchMergesCleanDivergence(t *testing.T) {
 		f.session(t, branch, tipMessage("body", nonce), map[string]string{"cloud.txt": "c\n"})
 	}
 	installCloud(t, agentcli.HarnessClaude, c)
-	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), cloudBinding("claude -p {system}", "", cloudTestShortLimit))
+	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), cloudBinding("claude -p {system}", "", cloudTestLongLimit))
 	if _, err := ce.dispatch(t); err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +540,7 @@ func TestCloudDispatchNamesTheResolvedAdapter(t *testing.T) {
 		f.session(t, branch, tipMessage("body", nonce), map[string]string{"p.txt": "p\n"})
 	}
 	installCloud(t, agentcli.HarnessPi, c)
-	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), cloudBinding("pi --mode x", "", cloudTestShortLimit))
+	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), cloudBinding("pi --mode x", "", cloudTestLongLimit))
 	res, err := ce.dispatch(t)
 	if err != nil {
 		t.Fatal(err)
@@ -584,7 +591,7 @@ func TestCloudDispatchPrintsSessionURLOnLaunch(t *testing.T) {
 	f := newCloudFix(t)
 	c := &fakeCloud{}
 	installCloud(t, agentcli.HarnessClaude, c)
-	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), cloudBinding("claude -p {system}", "", cloudTestShortLimit))
+	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), cloudBinding("claude -p {system}", "", cloudTestLongLimit))
 	var lines []string
 	ce.SetProgress(func(msg string) {
 		lines = append(lines, msg)
@@ -603,7 +610,8 @@ func TestCloudDispatchPrintsSessionURLOnLaunch(t *testing.T) {
 		t.Errorf("pre-launch line %q already names the session URL", lines[0])
 	}
 	got := lines[1]
-	for _, want := range []string{cloudSessionURL, c.branch, cloudTestShortLimit} {
+	// The line prints the parsed deadline, so "60s" reads as "1m0s".
+	for _, want := range []string{cloudSessionURL, c.branch, time.Minute.String()} {
 		if !strings.Contains(got, want) {
 			t.Errorf("session line %q does not name %q", got, want)
 		}

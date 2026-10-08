@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/lease"
+	"github.com/bobmcallan/satelle/internal/testutil"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -38,13 +39,13 @@ func TestSeatHeldThroughLongGate(t *testing.T) {
 		if err := db.Leases.SetHeartbeat(ctx, item.ID, time.Now().UTC().Add(-lease.HeartbeatTTL-time.Minute)); err != nil {
 			t.Errorf("age heartbeat: %v", err)
 		}
-		deadline := time.Now().Add(2 * time.Second)
+		deadline := time.Now().Add(testutil.WaitBudget)
 		for time.Now().Before(deadline) {
 			if l, err := db.Leases.Get(ctx, item.ID); err == nil && lease.Alive(l, time.Now().UTC()) {
 				aliveDuringGate = true
 				break
 			}
-			time.Sleep(5 * time.Millisecond)
+			time.Sleep(5 * time.Millisecond) // poll tick
 		}
 		if reaped, _ := db.Leases.Reap(ctx); len(reaped) != 0 {
 			t.Errorf("Reap took the seat of a story whose gate is running: %+v", reaped)

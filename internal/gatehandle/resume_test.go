@@ -91,8 +91,10 @@ func TestLockSessionIsExclusiveAndTakesOverADeadHolder(t *testing.T) {
 	if err := os.WriteFile(s.turnPath("a", "lock"), []byte("2147483646\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// time-subject: the wait bound is the subject. A takeover is immediate, a wait
+	// would run the whole 60s bound, so a 30s ceiling separates them on any machine.
 	start := time.Now()
-	if _, ok := s.LockSession("a", 5*time.Second); !ok || time.Since(start) > time.Second {
+	if _, ok := s.LockSession("a", time.Minute); !ok || time.Since(start) > 30*time.Second {
 		t.Fatalf("a dead holder's lock was waited on (ok=%v, %s)", ok, time.Since(start))
 	}
 }

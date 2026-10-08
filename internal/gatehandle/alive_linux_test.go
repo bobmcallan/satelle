@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 func TestParseProcStat(t *testing.T) {
@@ -59,13 +61,13 @@ func TestOSProbe_LinuxChildLifecycle(t *testing.T) {
 	// Killed, not yet reaped: a zombie, which can never record a result.
 	// Signal delivery is asynchronous, so poll to a deadline rather than probe once.
 	live = Alive
-	for deadline := time.Now().Add(5 * time.Second); live != Gone && time.Now().Before(deadline); {
+	for deadline := time.Now().Add(testutil.WaitBudget); live != Gone && time.Now().Before(deadline); {
 		if live, _ = osProbe(pid); live != Gone {
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond) // poll tick
 		}
 	}
 	if live != Gone {
-		t.Errorf("an unreaped killed child probes %v after 5s, want gone", live)
+		t.Errorf("an unreaped killed child probes %v after %s, want gone", live, testutil.WaitBudget)
 	}
 	_ = c.Wait()
 	if live, _ := osProbe(pid); live != Gone {

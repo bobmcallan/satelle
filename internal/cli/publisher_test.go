@@ -103,8 +103,10 @@ func TestChangePublisherCLI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create with blackhole endpoint must succeed: %v\n%s", err, out)
 	}
-	// Connection-refused returns instantly; allow headroom for store open.
-	if elapsed > 2*time.Second {
+	// time-subject: the drain budget is the subject. Connection-refused returns
+	// instantly; the ceiling is the budget plus headroom for a loaded runner's
+	// store open.
+	if elapsed > uiDrainBudget+10*time.Second {
 		t.Errorf("create took %v with refused endpoint — drain may be blocking", elapsed)
 	}
 	if !strings.Contains(out, `"id"`) {
@@ -149,8 +151,8 @@ func TestChangePublisherCLI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create with hang endpoint must succeed: %v\n%s", err, out)
 	}
-	if elapsed > 3*time.Second {
-		t.Errorf("create took %v with hang endpoint — want ≤3s (budget 1.5s + store open)", elapsed)
+	if elapsed > uiDrainBudget+10*time.Second {
+		t.Errorf("create took %v with hang endpoint — want ≤ the %v drain budget plus store open", elapsed, uiDrainBudget)
 	}
 	if !strings.Contains(out, `"id"`) {
 		t.Errorf("expected story JSON, got:\n%s", out)

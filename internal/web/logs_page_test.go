@@ -254,10 +254,10 @@ func TestPublishLogsReachesEvents(t *testing.T) {
 		}
 		got <- "eof"
 	}()
-	// Give the subscriber time to register before publishing.
-	deadline := time.Now().Add(time.Second)
+	// Publish until the subscriber has registered and receives it.
+	deadline := time.Now().Add(testutil.WaitBudget)
 	for time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) // poll tick
 		ms.Publish("logs")
 		select {
 		case v := <-got:

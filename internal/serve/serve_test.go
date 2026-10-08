@@ -28,18 +28,14 @@ func freePort(t *testing.T) int {
 func waitHealthz(t *testing.T, port int) {
 	t.Helper()
 	url := fmt.Sprintf("http://127.0.0.1:%d/healthz", port)
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
+	testutil.Eventually(t, waitBudget, func() bool {
 		resp, err := http.Get(url)
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return
-			}
+		if err != nil {
+			return false
 		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("healthz on :%d never answered", port)
+		resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}, fmt.Sprintf("healthz on :%d never answered", port))
 }
 
 // TestServePortIgnoresRepoConfig (sty_21a7d16d AC2): repo web_port does not
@@ -70,7 +66,7 @@ func TestServePortIgnoresRepoConfig(t *testing.T) {
 	cancel()
 	select {
 	case <-errc:
-	case <-time.After(2 * time.Second):
+	case <-time.After(waitBudget):
 	}
 }
 
@@ -86,7 +82,7 @@ func TestZeroConfigRepoServes(t *testing.T) {
 	cancel()
 	select {
 	case <-errc:
-	case <-time.After(2 * time.Second):
+	case <-time.After(waitBudget):
 	}
 }
 
@@ -104,6 +100,6 @@ func TestServeAddrUsesGlobalWhenEmpty(t *testing.T) {
 	cancel()
 	select {
 	case <-errc:
-	case <-time.After(2 * time.Second):
+	case <-time.After(waitBudget):
 	}
 }

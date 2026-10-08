@@ -101,7 +101,7 @@ func engageTidyStory(t *testing.T, dir string) workitem.Item {
 	}), &it)
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": it.ID, "status": "in_progress"}), &it)
 	t.Cleanup(func() { _ = os.RemoveAll(config.StoryScratchDir(dir, it.ID)) })
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(30 * time.Millisecond) // time-subject: mtime separation from the engagement baseline (a slower clock only widens the gap)
 	return it
 }
 
@@ -237,7 +237,7 @@ func TestStoryTidyRefusals(t *testing.T) {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(30 * time.Millisecond) // time-subject: mtime separation, so preexisting.txt predates the baseline
 	it := engageTidyStory(t, dir)
 	writeFile(t, filepath.Join(dir, "fresh.txt"), "f\n")
 

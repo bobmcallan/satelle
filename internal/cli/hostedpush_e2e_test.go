@@ -12,6 +12,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/serve"
+	"github.com/bobmcallan/satelle/internal/testutil"
 	"github.com/bobmcallan/satelle/internal/web"
 )
 
@@ -34,7 +35,7 @@ func TestMutatingCLIDoesNotDialHosted(t *testing.T) {
 	var pushed []string
 	pusher := &serve.Pusher{
 		Debounce: 5 * time.Millisecond,
-		Timeout:  time.Second,
+		Timeout:  testutil.WaitBudget,
 		Resolve: func(_ context.Context, _ string) (string, bool) {
 			return repo, true
 		},
@@ -71,7 +72,7 @@ func TestMutatingCLIDoesNotDialHosted(t *testing.T) {
 		t.Fatalf("no story id in %s", out)
 	}
 
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(testutil.WaitBudget)
 	for time.Now().Before(deadline) {
 		mu.Lock()
 		n := len(pushed)
@@ -79,7 +80,7 @@ func TestMutatingCLIDoesNotDialHosted(t *testing.T) {
 		if n >= 1 {
 			break
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond) // poll tick
 	}
 	mu.Lock()
 	got := append([]string(nil), pushed...)

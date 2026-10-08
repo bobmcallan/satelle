@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // TestServeDiesWhenParentDies proves AC2's timeout/hard-kill path: when the
@@ -67,7 +69,7 @@ func main() {
 		t.Fatalf("parent did not print serve pid (err=%v out=%q)", err, out)
 	}
 
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testutil.WaitBudget)
 	for {
 		_, statErr := os.Stat(fmt.Sprintf("/proc/%d", childPID))
 		if statErr != nil {
@@ -75,9 +77,9 @@ func main() {
 		}
 		if time.Now().After(deadline) {
 			_ = syscall.Kill(childPID, syscall.SIGKILL)
-			t.Fatalf("serve pid %d still alive 5s after parent exit without cleanup (Pdeathsig failed?)", childPID)
+			t.Fatalf("serve pid %d still alive %s after parent exit without cleanup (Pdeathsig failed?)", childPID, testutil.WaitBudget)
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond) // poll tick
 	}
 }
 
@@ -94,7 +96,7 @@ func TestStartServeCleanupOnSubtestExit(t *testing.T) {
 
 	var pid int
 	t.Run("spawn", func(t *testing.T) {
-		h := StartServeHealthy(t, testBin, repo, env, 8*time.Second,
+		h := StartServeHealthy(t, testBin, repo, env, testutil.WaitBudget,
 			"--addr", "127.0.0.1", "--port", port, "--no-watch")
 		if h.Cmd.Process != nil {
 			pid = h.Cmd.Process.Pid
@@ -197,7 +199,7 @@ func TestScanServePIDsMatchesRunningServe(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 	port := freeListenPort(t)
 	env := append(os.Environ(), "SATELLE_HOME="+home)
-	h := StartServeHealthy(t, testBin, repo, env, 8*time.Second,
+	h := StartServeHealthy(t, testBin, repo, env, testutil.WaitBudget,
 		"--addr", "127.0.0.1", "--port", port, "--no-watch")
 	found := liveServePIDs()
 	if _, ok := found[h.Cmd.Process.Pid]; !ok {
@@ -205,12 +207,12 @@ func TestScanServePIDsMatchesRunningServe(t *testing.T) {
 	}
 	h.Stop()
 	// After stop, that pid should vanish from the scan.
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(testutil.WaitBudget)
 	for time.Now().Before(deadline) {
 		if _, ok := liveServePIDs()[h.Cmd.Process.Pid]; !ok {
 			return
 		}
-		time.Sleep(30 * time.Millisecond)
+		time.Sleep(30 * time.Millisecond) // poll tick
 	}
 	t.Fatalf("pid %d still visible after Stop", h.Cmd.Process.Pid)
 }

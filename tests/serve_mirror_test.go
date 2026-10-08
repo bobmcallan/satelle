@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // TestServeMirrorPushFed proves sty_dbdadfa0 + sty_1dde0d47 behavioural ACs:
@@ -45,7 +47,7 @@ func TestServeMirrorPushFed(t *testing.T) {
 	home := t.TempDir()
 	env := append(os.Environ(), "SATELLE_HOME="+home)
 	startServe := func() *ServeHandle {
-		return StartServeHealthy(t, testBin, repo, env, 8*time.Second,
+		return StartServeHealthy(t, testBin, repo, env, testutil.WaitBudget,
 			"--addr", "127.0.0.1", "--port", fmt.Sprint(port))
 	}
 
@@ -82,8 +84,12 @@ func TestServeMirrorPushFed(t *testing.T) {
 
 	// --- AC3: SSE trigger fires on ingest/change ---
 	sseCh := make(chan string, 1)
+	connected := make(chan struct{})
 	go func() {
 		resp, err := http.Get(host + "/events")
+		// Get returns once the handler has flushed its opening ": connected", which
+		// it does only after subscribing, so the trigger below cannot be missed.
+		close(connected)
 		if err != nil {
 			return
 		}
@@ -100,7 +106,11 @@ func TestServeMirrorPushFed(t *testing.T) {
 			}
 		}
 	}()
-	time.Sleep(100 * time.Millisecond) // let SSE connect
+	select {
+	case <-connected:
+	case <-time.After(testutil.WaitBudget):
+		t.Fatal("the SSE stream never opened")
+	}
 	ev, _ := json.Marshal(map[string]string{
 		"repo_key": "rk-test", "topic": "stories", "entity": "story",
 		"at": time.Now().UTC().Format(time.RFC3339),
@@ -118,7 +128,7 @@ func TestServeMirrorPushFed(t *testing.T) {
 		if topic == "" {
 			t.Error("empty SSE topic")
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(testutil.WaitBudget):
 		t.Fatal("no SSE trigger after ingest/change")
 	}
 
@@ -192,14 +202,14 @@ func TestCLICreateAppearsLiveWithoutRefresh(t *testing.T) {
 	slug := filepath.Base(repo)
 	// Drain is synchronous before the verb returns; first GET should already
 	// see the row. Brief poll only covers page/serve race, not the 5m reconcile.
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(testutil.WaitBudget)
 	var proj string
 	for time.Now().Before(deadline) {
 		proj = httpGet(t, host+"/r/"+slug+"/")
 		if strings.Contains(proj, "Live Drain Story") {
 			break
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond) // poll tick
 	}
 	if !strings.Contains(proj, "Live Drain Story") {
 		t.Fatalf("new story not visible after create drain (id=%s):\n%s", created.ID, proj)

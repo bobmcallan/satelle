@@ -15,6 +15,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/mirror"
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // TestReconcileConvergesAfterDroppedPush proves AC1: a mutation whose push never
@@ -51,12 +52,12 @@ func TestReconcileConvergesAfterDroppedPush(t *testing.T) {
 				[]mirror.ItemRow{{ID: "sty_1", Payload: payload}}, time.Now())
 		},
 	}
-	runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	runCtx, cancel := context.WithTimeout(ctx, 2*waitBudget)
 	defer cancel()
 	done := make(chan struct{})
 	go func() { rec.Loop(runCtx); close(done) }()
 
-	waitFor(t, time.Second, func() bool { return storyStatus(t, ms, "rk", "sty_1") == "done" })
+	waitFor(t, waitBudget, func() bool { return storyStatus(t, ms, "rk", "sty_1") == "done" })
 	cancel()
 	<-done
 	mu.Lock()
@@ -94,11 +95,11 @@ func TestReconcileSurvivesFailingRepo(t *testing.T) {
 			logs = append(logs, format)
 		},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*waitBudget)
 	defer cancel()
 	go rec.Loop(ctx)
 
-	waitFor(t, time.Second, func() bool {
+	waitFor(t, waitBudget, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return okCalls >= 2
@@ -182,11 +183,11 @@ func TestReconcileSuppressesRepeatedIdenticalFailure(t *testing.T) {
 		},
 		Log: rec.log,
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*waitBudget)
 	defer cancel()
 	go r.Loop(ctx)
 
-	waitFor(t, time.Second, func() bool {
+	waitFor(t, waitBudget, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return badAttempts >= 5
@@ -222,7 +223,7 @@ func TestReconcileReportsChangedReasonAndRecovery(t *testing.T) {
 		reasonB = "workspace add: exit status 1: binary is ahead of the deployed stamp"
 	)
 	var mu sync.Mutex
-	calls := 0
+	calls, atFirstLog := 0, 0
 	rec := &lineRecorder{}
 	r := &Reconciler{
 		Interval: 5 * time.Millisecond,
@@ -240,26 +241,35 @@ func TestReconcileReportsChangedReasonAndRecovery(t *testing.T) {
 				return nil
 			}
 		},
-		Log: rec.log,
+		// Count the passes AT the moment the first failure is logged, so the
+		// assertion below measures the loop and not how soon the poller looks.
+		Log: func(format string, args ...any) {
+			rec.log(format, args...)
+			mu.Lock()
+			defer mu.Unlock()
+			if atFirstLog == 0 {
+				atFirstLog = calls
+			}
+		},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*waitBudget)
 	defer cancel()
 
 	go r.Loop(ctx)
 
 	// AC3: the FIRST failure is visible immediately — before the reason ever
 	// changes, and with no summary interval to wait out.
-	waitFor(t, time.Second, func() bool {
+	waitFor(t, waitBudget, func() bool {
 		return countLines(rec.snapshot(), "/repo/one", reasonA) == 1
 	})
 	mu.Lock()
-	early := calls
+	early := atFirstLog
 	mu.Unlock()
 	if early > 3 {
 		t.Errorf("first failure took %d passes to surface — it must be logged in the pass that produced it", early)
 	}
 
-	waitFor(t, 2*time.Second, func() bool {
+	waitFor(t, waitBudget, func() bool {
 		return countLines(rec.snapshot(), "recovered") == 1
 	})
 	cancel()
@@ -311,7 +321,7 @@ func TestReconcileReportsChangedReasonAndRecovery(t *testing.T) {
 // nothing to report a recovery FROM.
 func TestReconcileForgetsRepoThatLeavesTargets(t *testing.T) {
 	rec := &lineRecorder{}
-	r := &Reconciler{Log: rec.log, Timeout: time.Second}
+	r := &Reconciler{Log: rec.log, Timeout: waitBudget}
 
 	var mu sync.Mutex
 	phase := 0
@@ -366,7 +376,9 @@ func TestReconcileHonoursOffSwitch(t *testing.T) {
 			return nil
 		},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	// The bound is only reached if the off-switch is ignored; a longer one makes
+	// a broken loop run (and call Reseed) for longer, so it is never a flake.
+	ctx, cancel := context.WithTimeout(context.Background(), waitBudget)
 	defer cancel()
 	rec.Loop(ctx) // returns immediately when disabled
 	if called {
@@ -568,14 +580,10 @@ func storyStatus(t *testing.T, ms *mirror.Store, repoKey, id string) string {
 	return row.Status
 }
 
+// waitBudget bounds a wait on background work the test does not control.
+const waitBudget = testutil.WaitBudget
+
 func waitFor(t *testing.T, budget time.Duration, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(budget)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	t.Fatalf("condition not met within %s", budget)
+	testutil.Eventually(t, budget, cond, "condition not met")
 }

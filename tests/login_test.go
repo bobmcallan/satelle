@@ -258,18 +258,20 @@ func driveLoginNoBrowser(t *testing.T, bin, repo, server string, env []string, e
 			}
 		}
 	}()
-	waitDone := make(chan error, 1)
-	go func() { waitDone <- cmd.Wait() }()
+	// os/exec: Wait closes the StdoutPipe and must not run before every read from
+	// it completes. So wait for the scanner to hit EOF (the binary closed stdout)
+	// first, then reap; calling Wait concurrently loses the output tail on a
+	// slow core. The 25s bound kills the process on a hang.
 	select {
-	case err := <-waitDone:
-		if err != nil {
-			t.Fatalf("login exited with error: %v", err)
-		}
+	case <-scanDone:
 	case <-time.After(25 * time.Second):
 		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
 		t.Fatal("login did not complete in time")
 	}
-	<-scanDone // let the scanner flush the tail before the caller reads buf
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("login exited with error: %v", err)
+	}
 	return buf.String()
 }
 
@@ -349,7 +351,9 @@ func TestLoginWorkspaceNotFoundEndToEnd(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	scanDone := make(chan struct{})
 	go func() {
+		defer close(scanDone)
 		sc := bufio.NewScanner(stdout)
 		for sc.Scan() {
 			tl := strings.TrimSpace(sc.Text())
@@ -360,6 +364,15 @@ func TestLoginWorkspaceNotFoundEndToEnd(t *testing.T) {
 			}
 		}
 	}()
+	// Reads must finish before Wait closes the pipe (os/exec contract); the
+	// binary's own --timeout 20s bounds the run, this bound only guards a hang.
+	select {
+	case <-scanDone:
+	case <-time.After(25 * time.Second):
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		t.Fatal("login did not complete in time")
+	}
 	exitErr := cmd.Wait() // expected non-zero: the workspace choice is unresolvable
 	if exitErr == nil {
 		t.Fatal("login with an unknown --workspace should exit non-zero")

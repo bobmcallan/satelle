@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // TestServeWritesServerLog drives a real `satelle serve` and confirms the request
@@ -20,7 +22,7 @@ func TestServeWritesServerLog(t *testing.T) {
 	home := isolatedHome(t)
 	const port = "8795"
 	env := append(os.Environ(), "SATELLE_HOME="+home)
-	h := StartServeHealthy(t, testBin, repo, env, 5*time.Second, "--port", port)
+	h := StartServeHealthy(t, testBin, repo, env, testutil.WaitBudget, "--port", port)
 	base := h.Base
 	httpGet(t, base+"/")
 	if code := httpStatus(t, base+"/nope"); code != 404 {
@@ -29,7 +31,7 @@ func TestServeWritesServerLog(t *testing.T) {
 
 	logPath := filepath.Join(home, "serve", "server.log")
 	var log string
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(testutil.WaitBudget)
 	for time.Now().Before(deadline) {
 		if b, err := os.ReadFile(logPath); err == nil {
 			log = string(b)
@@ -37,7 +39,7 @@ func TestServeWritesServerLog(t *testing.T) {
 				break
 			}
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond) // poll tick
 	}
 	if log == "" {
 		t.Fatalf("server did not write %s", logPath)

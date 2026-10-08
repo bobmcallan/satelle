@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // Black-box coverage for sty_8f10499d: a gate that a session anchored in repo A
@@ -46,7 +48,7 @@ func gateAcrossRepos(t *testing.T, pinned bool) {
 	stubAmendVerdict(t, repoB)
 	mustRun(t, testBin, repoB, "reindex")
 	id := engageForAmend(t, repoB, "Add a widget")
-	slowReviewer(t, repoB, handoffGateSeconds)
+	release := holdReviewer(t, repoB)
 	if runtimeRoot(t, repoA) == runtimeRoot(t, repoB) {
 		t.Fatalf("both repos share the runtime dir %s", runtimeRoot(t, repoA))
 	}
@@ -72,8 +74,10 @@ func gateAcrossRepos(t *testing.T, pinned bool) {
 	if err != nil {
 		t.Fatalf("a pending gate must exit clean: %v\n%s", err, out)
 	}
-	if time.Since(start) >= handoffGateSeconds*time.Second {
-		t.Fatalf("the call waited out the gate instead of returning a handle (%s)", time.Since(start))
+	// The gate is held until released, so a call that waited for it would still be
+	// blocked here; returning inside the wait budget proves it handed off.
+	if time.Since(start) >= testutil.WaitBudget {
+		t.Fatalf("the call waited for the held gate instead of returning a handle (%s)", time.Since(start))
 	}
 	handle := pendingHandle(t, out)
 	if _, err := os.Stat(filepath.Join(runtimeRoot(t, repoB), "gates", handle)); err != nil {
@@ -84,7 +88,9 @@ func gateAcrossRepos(t *testing.T, pinned bool) {
 	}
 
 	// A's Stop hook, fired in A for the same session: it waits for the running gate
-	// and answers with the verdict.
+	// and answers with the verdict. The gate is let go first; the hook still waits
+	// for the detached run to finish.
+	release()
 	stop := func() string {
 		cmd := exec.Command(testBin, "hook", "stopcheck")
 		cmd.Dir = repoA

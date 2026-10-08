@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // findBrowser returns a Chrome/Chromium executable path, or "".
@@ -58,7 +60,7 @@ func serveRepo(t *testing.T, _ string) (string, string) {
 	// Same isolated SATELLE_HOME as mustRun/init so the home-keyed runtime plane
 	// (DB under ~/.satelle/<repo-key>/) matches the CLI (sty_4660bbe1).
 	env := append(os.Environ(), "SATELLE_HOME="+isolatedHome(t))
-	h := StartServeHealthy(t, testBin, repo, env, 5*time.Second, "--port", port)
+	h := StartServeHealthy(t, testBin, repo, env, testutil.WaitBudget, "--port", port)
 	host := h.Base
 	// Push-fed mirror: seed [server] endpoint + full snapshot so /r/<slug>/ has data.
 	ep := fmt.Sprintf("[server]\nendpoint = %q\n", host)
@@ -87,9 +89,43 @@ func newChrome(t *testing.T) context.Context {
 	t.Cleanup(cancelAlloc)
 	ctx, cancelCtx := chromedp.NewContext(allocCtx)
 	t.Cleanup(cancelCtx)
-	ctx, cancelTimeout := context.WithTimeout(ctx, 60*time.Second)
+	// Bounds the whole test, whose individual waits each have testutil.WaitBudget,
+	// so it must hold several of them.
+	ctx, cancelTimeout := context.WithTimeout(ctx, 4*time.Minute)
 	t.Cleanup(cancelTimeout)
+	// Launch Chrome here so the first test step does not pay the (speed-dependent)
+	// browser start-up out of its own wait budget.
+	if err := chromedp.Run(ctx); err != nil {
+		t.Fatalf("start chrome: %v", err)
+	}
 	return ctx
+}
+
+// browserStep runs actions under their own budget (2×testutil.WaitBudget) so one
+// stuck Navigate/WaitVisible cannot consume the whole-test context, and the
+// failure names the step. It retries once, only when the attempt hit its
+// deadline (a stuck page load on a starved core): an assertion or selector error
+// fails immediately, so a real rendering failure is never retried into a pass.
+// The root cause of the observed deadline (sty_05017a43, 1/10 on one loaded
+// core) is unconfirmed; a seeding race (page loaded before the pushed snapshot
+// landed) is still a candidate the retry would mask, so the step label matters.
+func browserStep(t *testing.T, ctx context.Context, label string, actions ...chromedp.Action) {
+	t.Helper()
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		stepCtx, cancel := context.WithTimeout(ctx, 2*testutil.WaitBudget)
+		err = chromedp.Run(stepCtx, actions...)
+		timedOut := stepCtx.Err() != nil && ctx.Err() == nil
+		cancel()
+		if err == nil {
+			return
+		}
+		if !timedOut {
+			break
+		}
+		t.Logf("browser step %q hit its %s budget (attempt %d): %v", label, 2*testutil.WaitBudget, attempt+1, err)
+	}
+	t.Fatalf("browser step %q: %v", label, err)
 }
 
 func TestBrowserProjectPageInteractions(t *testing.T) {
@@ -321,8 +357,8 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		// Mutate from a SEPARATE process (the CLI), as a user would.
 		newID := createStory(t, repo, "Pushed Live RT", "")
 
-		// The open page must show the new row within a few seconds, with no reload.
-		deadline := time.Now().Add(8 * time.Second)
+		// The open page must show the new row within the wait budget, with no reload.
+		deadline := time.Now().Add(testutil.WaitBudget)
 		seen := false
 		for time.Now().Before(deadline) {
 			var present bool
@@ -335,10 +371,10 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 				seen = true
 				break
 			}
-			time.Sleep(300 * time.Millisecond)
+			time.Sleep(300 * time.Millisecond) // poll tick
 		}
 		if !seen {
-			t.Fatal("new story did not appear on the open page via realtime within 8s")
+			t.Fatalf("new story did not appear on the open page via realtime within %s", testutil.WaitBudget)
 		}
 		var noReload bool
 		if err := chromedp.Run(ctx, chromedp.Evaluate(`window.__noReload === true`, &noReload)); err != nil {
@@ -1295,16 +1331,22 @@ func clickJS(t *testing.T, ctx context.Context, sel string) {
 	}
 }
 
-// waitCond polls a JS boolean expression until true or the timeout elapses.
+// waitCond polls a JS boolean expression until true or the timeout elapses. The
+// timeout is a floor, never a ceiling a slow machine can hit: the wait is on a
+// page the test does not control, it returns the moment the expression holds, and
+// no caller asks for less than testutil.WaitBudget (sty_05017a43).
 func waitCond(t *testing.T, ctx context.Context, js string, timeout time.Duration) bool {
 	t.Helper()
+	if timeout < testutil.WaitBudget {
+		timeout = testutil.WaitBudget
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		var ok bool
 		if err := chromedp.Run(ctx, chromedp.Evaluate(js, &ok)); err == nil && ok {
 			return true
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond) // poll tick
 	}
 	return false
 }

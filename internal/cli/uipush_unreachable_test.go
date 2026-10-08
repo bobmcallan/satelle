@@ -100,10 +100,14 @@ requires = ["coded"]
 		status   string
 		budget   time.Duration
 	}{
+		// time-subject: the drain budget is the subject. The ceiling is the budget
+		// plus headroom for a loaded runner's store open; a drain that ignored its
+		// budget against a peer that never answers would not return at all.
+		//
 		// The service is gone (the restart case): connection refused.
-		{"refused", "http://127.0.0.1:1", "plan", 2 * time.Second},
+		{"refused", "http://127.0.0.1:1", "plan", uiDrainBudget + 10*time.Second},
 		// The service is going away mid-request: accepted, never answered.
-		{"black hole", "http://" + ln.Addr().String(), "in_progress", 3 * time.Second},
+		{"black hole", "http://" + ln.Addr().String(), "in_progress", uiDrainBudget + 10*time.Second},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

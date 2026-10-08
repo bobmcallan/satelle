@@ -65,7 +65,10 @@ func withVerbWiring(t *testing.T) {
 }
 
 // resetFlagState clears Changed and restores DefValue on every flag in the
-// command tree so a prior Execute cannot poison the next one.
+// command tree so a prior Execute cannot poison the next one. It also drops any
+// output writer or context a test set directly on a registered command: a
+// command's own writer beats its parent's, so a stale SetOut left by an earlier
+// test (or an earlier -count iteration) would swallow this run's output.
 func resetFlagState(cmd *cobra.Command) {
 	if cmd == nil {
 		return
@@ -76,6 +79,7 @@ func resetFlagState(cmd *cobra.Command) {
 	cmd.SetOut(nil)
 	cmd.SetErr(nil)
 	cmd.SetIn(nil)
+	cmd.SetContext(nil)
 	cmd.Flags().VisitAll(resetFlag)
 	cmd.PersistentFlags().VisitAll(resetFlag)
 	for _, c := range cmd.Commands() {
