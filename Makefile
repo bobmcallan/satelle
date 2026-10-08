@@ -56,8 +56,13 @@ uninstall:
 # target if the suite changed the operator's host credentials file (sty_18403814).
 CREDGUARD := sh scripts/credguard.sh --
 
+# HERMETIC runs a command under an empty test-owned HOME/XDG and a minimal PATH so
+# the suites do not depend on the operator's machine (sty_ec30f859). Test flags go
+# through TESTFLAGS. credguard stays OUTSIDE it so it keeps watching the real host.
+HERMETIC := sh scripts/hermetic.sh --
+
 test:
-	$(CREDGUARD) go test ./...
+	$(CREDGUARD) $(HERMETIC) go test $(TESTFLAGS) ./...
 
 # integration builds the binary once, then drives it from ./tests via SATELLE_BIN
 # (no per-test rebuild). Run by hand with: SATELLE_BIN=$(command -v satelle) go test -tags integration ./tests/...
@@ -68,7 +73,14 @@ test:
 integration:
 	go build -ldflags "-X $(PKG).Name=satelle -X $(PKG).Version=$(BASE_VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)" -o $(BIN) ./cmd/satelle
 	go build -ldflags "-X $(PKG).Name=satelled -X $(PKG).Version=$(BASE_SERVE_VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)" -o $(SERVE_BIN) ./cmd/satelled
-	SATELLE_BIN=$(CURDIR)/$(BIN) $(CREDGUARD) go test -tags integration ./tests/...
+	SATELLE_BIN=$(CURDIR)/$(BIN) $(CREDGUARD) $(HERMETIC) go test -tags integration $(TESTFLAGS) ./tests/...
+
+# operator-check: the few checks of the operator's REAL reviewer/profile config.
+# Opt-in and deliberately NOT hermetic: they read the operator's ~/.satelle
+# catalog (via hostRootsAtStart in tests/) and pass only on a configured machine.
+.PHONY: operator-check
+operator-check:
+	go test -tags 'integration operatorconfig' -run 'Operator|RepoReviewerModel' ./tests/...
 
 # judgment: opt-in LLM rubric fixtures (sty_6830e78e). Costs tokens, not hermetic,
 # never in default CI. See README ## Testing.

@@ -25,48 +25,11 @@ func reviewerModelProblem(repo config.AgentsConfig, catalog config.GlobalAgentsC
 	return ""
 }
 
-// TestRepoReviewerModelIsActive pins this repo's dogfood substrate when present:
-// the reviewer's EFFECTIVE model — resolved through the machine-wide profile
-// catalog (sty_6388f140 moved execution detail there) — stays a non-empty value,
-// so the reviewer runs on a pinned model rather than silently falling back to the
-// CLI default. The SPECIFIC model is an operator choice, so the test asserts the
-// knob is set, not a particular value. The wiring from binding → reviewer
-// subprocess is covered by internal/agentstep.TestReviewerModelReachesRunner.
-//
-// After sty_91a390a0, .satelle/ is gitignored (operator-owned). CI clones have no
-// agents.toml; skip when the file is absent so the pin remains a local dogfood
-// check, not a false CI red.
-func TestRepoReviewerModelIsActive(t *testing.T) {
-	dataDir := repoProcessDataDir(t)
-	if _, err := os.Stat(func() string { p, _ := config.AgentsPath(dataDir); return p }()); os.IsNotExist(err) {
-		t.Skip(".satelle/agents.toml not present (gitignored operator substrate); dogfood pin is local-only")
-	}
-	repo, err := config.LoadAgents(dataDir)
-	if err != nil {
-		t.Fatalf("load %s/agents.toml: %v", dataDir, err)
-	}
-	// This dogfood pin deliberately reads the OPERATOR's real machine catalog
-	// (read-only) — the one this repo's profile= references resolve against.
-	// Always point SATELLE_HOME at it: GlobalDir panics under go test without
-	// SATELLE_HOME (sty_c36c211f), and the integration suite's TestMain isolates
-	// SATELLE_HOME to an empty temp home, where the profiles do not exist.
-	home, herr := os.UserHomeDir()
-	if herr != nil {
-		t.Skipf("no home directory to locate the machine catalog: %v", herr)
-	}
-	t.Setenv("SATELLE_HOME", filepath.Join(home, ".satelle"))
-	catalog, err := config.LoadGlobalAgents()
-	if err != nil {
-		t.Fatalf("load machine agents catalog: %v", err)
-	}
-	if msg := reviewerModelProblem(repo, catalog); msg != "" {
-		t.Error(msg)
-	}
-}
-
 // TestReviewerModelProblem_Resolution covers the pass, empty, missing-profile and
 // repo-model cases with a temp repo layer and an in-memory catalog, so it runs in
-// CI without the operator's .satelle or ~/.satelle.
+// CI without the operator's .satelle or ~/.satelle. The check of the operator's
+// REAL catalog is TestRepoReviewerModelIsActive (operator_config_test.go, behind
+// the operatorconfig tag).
 func TestReviewerModelProblem_Resolution(t *testing.T) {
 	profiles := func(m map[string]config.AgentBinding) config.GlobalAgentsConfig {
 		return config.GlobalAgentsConfig{Profiles: m}

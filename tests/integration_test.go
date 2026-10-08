@@ -68,8 +68,8 @@ func TestMain(m *testing.M) {
 	// Resolve host roots BEFORE isolating SATELLE_HOME, then snapshot those fixed
 	// paths before and after the suite. Re-resolving via getenv after Setenv would
 	// measure the sandbox and false-trip (or hide real host pollution).
-	hostRoots := resolveHostRoots()
-	beforeSurface := captureHostSurfaceAt(hostRoots)
+	hostRootsAtStart = resolveHostRoots()
+	beforeSurface := captureHostSurfaceAt(hostRootsAtStart)
 
 	backstop, err := os.MkdirTemp("", "satelle-itest-home-*")
 	if err != nil {
@@ -99,7 +99,7 @@ func TestMain(m *testing.M) {
 	// Serve process inventory (sty_bf797fa9 AC1): snapshot live serve pids BEFORE
 	// the suite so the operator's own serve on :8787 is excluded by identity;
 	// after m.Run, any new suite-owned serve is a leak — kill it and fail the suite.
-	beforeParts := captureMirrorPartitionKeys(hostRoots.satelleHome)
+	beforeParts := captureMirrorPartitionKeys(hostRootsAtStart.satelleHome)
 	beforeServes := liveServePIDs()
 	var xdgBackstop string
 	exit := func(code int) {
@@ -113,8 +113,14 @@ func TestMain(m *testing.M) {
 			killLeakedServes(leaks)
 			code = 1
 		}
-		afterSurface := captureHostSurfaceAt(hostRoots)
-		if diffs := diffHostSurface(beforeSurface, afterSurface); len(diffs) > 0 {
+		afterSurface := captureHostSurfaceAt(hostRootsAtStart)
+		diffs := diffHostSurface(beforeSurface, afterSurface)
+		// The host-mutation probe's own artefacts go only after the guard has
+		// compared, so the probe fails the suite and leaves the host as it found it.
+		for _, p := range probePaths {
+			_ = os.RemoveAll(p)
+		}
+		if len(diffs) > 0 {
 			fmt.Fprintf(os.Stderr, "FATAL: host production surface changed during the integration suite (isolation failed).\n")
 			fmt.Fprintf(os.Stderr, "  Production port 8787 is off-limits; host ~/.satelle, ~/.config/satelle, and ~/.local/bin/satelle must be untouched.\n")
 			for _, d := range diffs {
@@ -122,7 +128,7 @@ func TestMain(m *testing.M) {
 			}
 			code = 1
 		}
-		afterParts := captureMirrorPartitionKeys(hostRoots.satelleHome)
+		afterParts := captureMirrorPartitionKeys(hostRootsAtStart.satelleHome)
 		if diffs := diffMirrorPartitionKeys(beforeParts, afterParts); len(diffs) > 0 {
 			fmt.Fprintf(os.Stderr, "FATAL: host push-fed mirror partitions changed during the integration suite (sty_5aa08259 — hermetic seed isolation failed).\n")
 			fmt.Fprintf(os.Stderr, "  Live :8787 mirror must stay byte-identical in partition keys; tests must not auto-probe/seed it.\n")
@@ -242,17 +248,38 @@ type hostRoots struct {
 	preExistingKeys map[string]struct{}
 }
 
-// resolveHostRoots picks the real machine paths to guard. Honors a pre-existing
-// SATELLE_HOME / XDG_CONFIG_HOME when already set (caller sandboxed).
+// hostRootsAtStart is the operator's real host, resolved ONCE by TestMain before
+// it sandboxes SATELLE_HOME / XDG_CONFIG_HOME. Every check that must look at the
+// real host (the host-surface and mirror-key guards, the isolation tests, the
+// operator-config checks) reads this var; nothing re-resolves it after
+// sandboxing begins, when the env describes the sandbox.
+var hostRootsAtStart hostRoots
+
+// probePaths are paths the host-mutation probe created under the real host; the
+// TestMain exit hook removes them after the host-surface guard has compared.
+var probePaths []string
+
+// resolveHostRoots picks the real machine paths to guard; only TestMain calls it,
+// before sandboxing. Under scripts/hermetic.sh the env is a sandbox already, and
+// the caller's real host arrives as SATELLE_TEST_HOST_HOME / _SATELLE_HOME /
+// _XDG_CONFIG_HOME, which win when SATELLE_TEST_HOST_HOME is set. Otherwise it
+// honors a pre-existing SATELLE_HOME / XDG_CONFIG_HOME (caller sandboxed).
 func resolveHostRoots() hostRoots {
 	homeDir, _ := os.UserHomeDir()
+	satelleHome := os.Getenv("SATELLE_HOME")
+	xdgHome := os.Getenv("XDG_CONFIG_HOME")
+	if v := os.Getenv("SATELLE_TEST_HOST_HOME"); v != "" {
+		homeDir = v
+		satelleHome = os.Getenv("SATELLE_TEST_HOST_SATELLE_HOME")
+		xdgHome = os.Getenv("SATELLE_TEST_HOST_XDG_CONFIG_HOME")
+	}
 	r := hostRoots{}
-	if v := strings.TrimSpace(os.Getenv("SATELLE_HOME")); v != "" {
+	if v := strings.TrimSpace(satelleHome); v != "" {
 		r.satelleHome = v
 	} else if homeDir != "" {
 		r.satelleHome = filepath.Join(homeDir, ".satelle")
 	}
-	if v := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); v != "" {
+	if v := strings.TrimSpace(xdgHome); v != "" {
 		r.xdgConfig = filepath.Join(v, "satelle")
 	} else if homeDir != "" {
 		r.xdgConfig = filepath.Join(homeDir, ".config", "satelle")
@@ -388,7 +415,11 @@ func hashTree(root string, preExistingKeys map[string]struct{}) map[string]strin
 			}
 			return nil
 		}
-		if runtimeKey.MatchString(top) {
+		// Runtime-key handling applies only to SATELLE_HOME (the caller passes a
+		// non-nil key set; listRuntimeKeyNames always returns one) and only to key
+		// DIRS. A key-shaped file, or anything under another root such as
+		// ~/.config/satelle, is fingerprinted like any other state.
+		if preExistingKeys != nil && runtimeKey.MatchString(top) && (fi.IsDir() || rel != top) {
 			// Pre-existing: skip contents (live service may rewrite DB/logs).
 			if _, ok := preExistingKeys[top]; ok {
 				if fi.IsDir() && rel == top {
@@ -710,14 +741,13 @@ func hermeticCreateGateOff(t *testing.T, repo string) {
 
 // TestSubprocessHomeIsolated proves init via run() never writes the host global
 // config, and that an explicit sandbox SATELLE_HOME receives the registry write
-// instead (sty_ee7f40c6). Host path is always ~/.satelle under UserHomeDir —
-// independent of TestMain's process-wide backstop.
+// instead (sty_ee7f40c6). The host path is the real SATELLE_HOME resolved before
+// TestMain's process-wide backstop (hostRootsAtStart).
 func TestSubprocessHomeIsolated(t *testing.T) {
-	userHome, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("UserHomeDir: %v", err)
+	if hostRootsAtStart.satelleHome == "" {
+		t.Skip("no host SATELLE_HOME resolved; nothing to compare")
 	}
-	hostCfg := filepath.Join(userHome, ".satelle", "config.toml")
+	hostCfg := filepath.Join(hostRootsAtStart.satelleHome, "config.toml")
 	before := readFileOptional(hostCfg)
 
 	repo := t.TempDir()
@@ -941,13 +971,10 @@ func TestSuiteXDGConfigIsolated(t *testing.T) {
 	if !strings.HasPrefix(filepath.Clean(xdg), filepath.Clean(os.TempDir())+string(filepath.Separator)) {
 		t.Fatalf("XDG_CONFIG_HOME %q must be a temp dir under %q", xdg, os.TempDir())
 	}
-	// resolveHostRoots honours the (now sandboxed) env, so derive the operator's
-	// default root from the home dir instead.
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skipf("no home dir resolvable: %v", err)
+	host := hostRootsAtStart.xdgConfig
+	if host == "" {
+		t.Skip("no host XDG config root was resolvable at suite start")
 	}
-	host := filepath.Join(home, ".config", "satelle")
 	if filepath.Join(xdg, "satelle") == host {
 		t.Fatalf("suite XDG_CONFIG_HOME %q resolves to the host root %q", xdg, host)
 	}

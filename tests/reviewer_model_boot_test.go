@@ -8,55 +8,27 @@ import (
 	"testing"
 )
 
-// TestReviewerModelActorsBoots drives the REAL binary with this repo's activated
-// agents.toml installed into an isolated temp repo: the binary must boot, index,
-// and report status cleanly with the reviewer-model binding active. It is the
-// integration counterpart to the unit TestRepoReviewerModelIsActive — proving the
-// activated config loads end-to-end through the binary (applyAgentGrants resolves
-// the binding on store open) and does not regress a fresh repo. The artifact under
-// test is the repo's real agents.toml, so a malformed/regressed activation is
-// caught here too.
-func TestReviewerModelActorsBoots(t *testing.T) {
+// TestReviewerProfileBoots drives the REAL binary with a repo agents.toml whose
+// reviewer names a machine-wide profile (profile = "…", sty_6388f140) and a
+// fixture catalog in the test's isolated SATELLE_HOME: the binary must boot,
+// index and report status cleanly. It is hermetic — the fixture catalog is a
+// literal; the check against the operator's REAL catalog is
+// TestOperatorCatalogReviewerBoots (operatorconfig tag).
+func TestReviewerProfileBoots(t *testing.T) {
 	bin := testBin
 	repo := t.TempDir()
 
 	mustRun(t, bin, repo, "init")
 
-	// Overwrite the scaffold agents.toml with this repo's real, activated binding
-	// (read from the repo's own agents.toml). Writing the canonical agents.toml
-	// ensures it is the binding the loader resolves.
-	src := filepath.Join(repoProcessDataDir(t), "workflows", "agents.toml")
-	body, err := os.ReadFile(src)
-	if err != nil {
-		t.Fatalf("read agents source %s: %v", src, err)
-	}
-	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "agents.toml"), body, 0o644); err != nil {
+	agents := "[reviewer]\nprofile = \"fixture-reviewer\"\n"
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "agents.toml"), []byte(agents), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// This repo's bindings reference ${GLM_API_KEY} in their env (the model-mixing
-	// switch, epic:model-mixing), resolved from the gitignored satelle.local.toml
-	// [vars] — absent in this fresh temp repo. Seed a DUMMY value so the ${VAR}
-	// substitution resolves; reindex/status never call the endpoint, so any
-	// non-empty value boots. This mirrors what a real clone must supply.
-	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.local.toml"),
-		[]byte("[vars]\nGLM_API_KEY = \"test-dummy-key\"\n"), 0o644); err != nil {
+	catalog := "[profiles.fixture-reviewer]\ncommand = \"claude -p\"\nmodel = \"fixture-model\"\n"
+	if err := os.WriteFile(filepath.Join(isolatedHome(t), "agents.toml"), []byte(catalog), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	// This repo's bindings name machine-wide profiles (profile = "…",
-	// sty_6388f140), which resolve only against the operator's catalog. Install a
-	// READ-ONLY copy of it into this test's isolated SATELLE_HOME — like the
-	// dummy [vars] above, it mirrors what a real clone's machine must supply.
-	if home, herr := os.UserHomeDir(); herr == nil {
-		if cat, cerr := os.ReadFile(filepath.Join(home, ".satelle", "agents.toml")); cerr == nil {
-			if err := os.WriteFile(filepath.Join(isolatedHome(t), "agents.toml"), cat, 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-
-	// The binary opens the store (applyAgentGrants resolves the [reviewer] binding
-	// + its env) on every command — these must succeed with the activated config.
 	mustRun(t, bin, repo, "reindex")
 	mustRun(t, bin, repo, "status")
 }
