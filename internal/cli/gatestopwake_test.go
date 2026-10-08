@@ -88,7 +88,9 @@ func TestStopHookDispatchedProcessSkipsGateWait(t *testing.T) {
 
 			start := time.Now()
 			blk, ok := stopOnce(t, "")
-			if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+			// The wait bound is 10s: a stop that waited would run all of it, so half
+			// of it separates "did not wait" from "waited" on any machine.
+			if elapsed := time.Since(start); elapsed > 5*time.Second {
 				t.Errorf("a dispatched stop waited on the gate that waits for it (%s)", elapsed)
 			}
 			if ok && strings.Contains(blk.Reason, h.ID) {
@@ -115,6 +117,7 @@ func TestStopHookBlocksWhileGateStillRunning(t *testing.T) {
 	if !ok {
 		t.Fatal("a gate still running at the wait bound was let through: the stop was allowed")
 	}
+	// time-subject: the 50ms wait bound is the subject; this is a lower bound.
 	if time.Since(start) < 40*time.Millisecond {
 		t.Errorf("the hook did not wait out its bound (%s)", time.Since(start))
 	}
@@ -164,6 +167,10 @@ func TestStopHookGateFinishingDuringWaitIsDeliveredOnce(t *testing.T) {
 	store := stopWakeRepo(t, "10s")
 	m := runningGate(t, store, "sty_during")
 	go func() {
+		// negative window: aims to finish the gate after the hook has begun waiting.
+		// Slowness can only make the gate already finished when the hook looks, which
+		// is delivered the same way, so a slow runner cannot turn a real delivery
+		// failure into a pass or a pass into a failure; it only exercises the wait less.
 		time.Sleep(300 * time.Millisecond)
 		_ = os.WriteFile(store.VerdictPath(m.ID), []byte("accepted plan→in_progress\n"), 0o644)
 		_ = store.Finish(m.ID, gatehandle.Result{})

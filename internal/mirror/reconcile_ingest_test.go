@@ -34,7 +34,7 @@ func TestSnapshotIngestQuietWhenUnchanged(t *testing.T) {
 
 	before := partitionOf(t, s, "rk")
 	topics = nil
-	time.Sleep(2 * time.Millisecond)
+	time.Sleep(2 * time.Millisecond) // time-subject: timestamp separation, so the confirming ingest visibly moves updated_at
 
 	got := postSnapshot(t, srv.URL, snap)
 	if got["unchanged"] != true {

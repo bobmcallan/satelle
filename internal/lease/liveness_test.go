@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // holderGone makes every pid probe answer "dead" for the test: the process that
@@ -27,6 +29,8 @@ func pidsAlive(t *testing.T) {
 
 func ageHeartbeat(t *testing.T, s *Store, item string) {
 	t.Helper()
+	// time-subject: the heartbeat TTL is what these tests judge. It is crossed by
+	// backdating the heartbeat, never by waiting for it.
 	old := time.Now().UTC().Add(-HeartbeatTTL - time.Minute)
 	if err := s.SetHeartbeat(context.Background(), item, old); err != nil {
 		t.Fatal(err)
@@ -151,17 +155,10 @@ func TestKeepAliveKeepsLongDispatchInFlight(t *testing.T) {
 	}
 
 	stop := KeepAlive(ctx, s, "sty_a", "alice")
-	deadline := time.Now().Add(2 * time.Second)
-	for {
+	testutil.Eventually(t, testutil.WaitBudget, func() bool {
 		l, _ = s.Get(ctx, "sty_a")
-		if EffectiveInFlight(l, time.Now().UTC()) {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("KeepAlive never refreshed in_flight_at for a live dispatch")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+		return EffectiveInFlight(l, time.Now().UTC())
+	}, "KeepAlive never refreshed in_flight_at for a live dispatch")
 	stop()
 
 	// Settled: the beat must not resurrect an in-flight mark.
@@ -196,17 +193,10 @@ func TestKeepAliveHoldsSeatAcrossTTL(t *testing.T) {
 	}
 	stop := KeepAlive(ctx, s, "sty_a", "alice")
 	defer stop()
-	deadline := time.Now().Add(2 * time.Second)
-	for {
+	testutil.Eventually(t, testutil.WaitBudget, func() bool {
 		l, _ = s.Get(ctx, "sty_a")
-		if Alive(l, time.Now().UTC()) {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("KeepAlive never refreshed the heartbeat")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+		return Alive(l, time.Now().UTC())
+	}, "KeepAlive never refreshed the heartbeat")
 	stop()
 	stop() // idempotent: every return path may call it
 }

@@ -40,6 +40,9 @@ func TestCommandTransportBusySilentNotStalled(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("CPU liveness probe is linux-only; other platforms stay strict")
 	}
+	// time-subject: the 300ms idle window is the subject. The busy loop must outlast
+	// it for the test to mean anything; a machine fast enough to finish sooner skips
+	// (below) instead of passing vacuously.
 	// Shell builtins only: the CPU is the shell's own, no forked children.
 	// idle_timeout is generous relative to the 10ms CPU-tick granularity so a
 	// loaded CI box that starves the shell for a moment is not a false stall.
@@ -61,8 +64,11 @@ func TestCommandTransportBusySilentNotStalled(t *testing.T) {
 
 // TestCommandTransportSleepingStillStalls (AC2): with the busy cap enabled, a
 // silent process that burns no CPU is still cancelled at idle_timeout.
+//
+// time-subject: the 80ms idle window is the subject; the process sleeps 60s so
+// "killed" and "ran to completion" stay far apart whatever the machine speed.
 func TestCommandTransportSleepingStillStalls(t *testing.T) {
-	runner := busyScript(t, "exec sleep 5\n")
+	runner := busyScript(t, "exec sleep 60\n")
 	g := New(runner, fakeDocs{}, "/repo", "")
 
 	start := time.Now()
@@ -74,13 +80,17 @@ func TestCommandTransportSleepingStillStalls(t *testing.T) {
 	if se.BusyCapExceeded {
 		t.Error("a sleeping process stalled on idle, not on the busy cap")
 	}
-	if elapsed := time.Since(start); elapsed >= 4*time.Second {
+	if elapsed := time.Since(start); elapsed >= 30*time.Second {
 		t.Errorf("sleeping process was not killed promptly: %v", elapsed)
 	}
 }
 
 // TestCommandTransportBusyCapStillStalls: a process that spins forever is
 // stalled once the busy cap (from its last real event) runs out.
+//
+// time-subject: the idle window and the busy cap are the subject. Both are wide
+// (300ms idle, 900ms cap) so a runner that starves the spinning shell for a few
+// ticks stalls on the cap rather than on idle, which is what the test asserts.
 func TestCommandTransportBusyCapStillStalls(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("CPU liveness probe is linux-only")
@@ -89,7 +99,7 @@ func TestCommandTransportBusyCapStillStalls(t *testing.T) {
 	g := New(runner, fakeDocs{}, "/repo", "")
 
 	start := time.Now()
-	_, _, err := g.runOnceBusy(context.Background(), runner, agentcli.Request{SystemPrompt: "x"}, 0, 80*time.Millisecond, 200*time.Millisecond)
+	_, _, err := g.runOnceBusy(context.Background(), runner, agentcli.Request{SystemPrompt: "x"}, 0, 300*time.Millisecond, 900*time.Millisecond)
 	var se *StallError
 	if !errors.As(err, &se) {
 		t.Fatalf("err = %v, want a *StallError", err)
@@ -97,7 +107,7 @@ func TestCommandTransportBusyCapStillStalls(t *testing.T) {
 	if !se.BusyCapExceeded || !strings.Contains(se.Error(), "busy cap exceeded") {
 		t.Errorf("stall = %q, want the busy cap named", se.Error())
 	}
-	if elapsed := time.Since(start); elapsed >= 3*time.Second {
+	if elapsed := time.Since(start); elapsed >= 15*time.Second {
 		t.Errorf("busy cap did not stop the spin promptly: %v", elapsed)
 	}
 }

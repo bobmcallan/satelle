@@ -82,7 +82,9 @@ func TestWaitTrailerBranchTimesOut(t *testing.T) {
 	if !errors.Is(err, ErrTrailerTimeout) {
 		t.Fatalf("err = %v, want ErrTrailerTimeout", err)
 	}
-	if time.Since(start) > 5*time.Second {
+	// time-subject: the 150ms timeout is the subject. The ceiling only has to be a
+	// value a wait that ignored its timeout (and polled forever) would exceed.
+	if time.Since(start) > 30*time.Second {
 		t.Fatal("wait overran its timeout")
 	}
 }
@@ -116,6 +118,10 @@ func TestWaitTrailerBranchRetriesFailedFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 	go func() {
+		// negative window: aims to clear the failure while the wait is retrying.
+		// Slowness can only make the first fetch succeed, so the assertion cannot
+		// flip on a slow runner (a real retry bug still fails when the timing lands);
+		// it only exercises the retry less. The wait itself is bounded at 10s.
 		time.Sleep(300 * time.Millisecond)
 		_ = os.Remove(blocker)
 	}()

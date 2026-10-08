@@ -427,6 +427,8 @@ while True:
 	if err != nil {
 		t.Fatal(err)
 	}
+	// time-subject: the deadline is what is under test — a silent peer must trip it
+	// as a timeout error. A slow start only makes it trip earlier; any error passes.
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	_, err = r.Run(ctx, Request{SystemPrompt: "x", Payload: "{}"})

@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 func skipWithoutPython3(t *testing.T) {
@@ -404,7 +406,7 @@ func TestStreamSession_AskDeniedEvenWhenPolicyAllows(t *testing.T) {
 
 func waitEventText(t *testing.T, sess Session, want string) string {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(testutil.WaitBudget)
 	for {
 		select {
 		case <-deadline:

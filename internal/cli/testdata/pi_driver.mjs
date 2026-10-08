@@ -8,12 +8,13 @@
 // steps.json is an array of
 //   { "event": "<pi event>", "arg": {...}, "ctx": { "cwd": "...", "idle": true, "hasUI": true } }
 //   { "wait_messages": N, "timeout_ms": T }   (see below)
+//   any step may add "touch_after": "<path>"  (see below)
 // and the driver prints one JSON document:
 //   { "registered": [<pi event names in registration order>],
 //     "results":    [<what each step's handlers returned>],
 //     "messages":   [{ "text": "...", "opts": {...} }],
 //     "notices":    [{ "msg": "...", "level": "..." }] }
-import { copyFileSync, mkdtempSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -78,6 +79,10 @@ for (const step of steps) {
 		}
 	}
 	results.push({ event: step.event, result, threw });
+	// { "touch_after": "<path>" } creates that file once this step's handlers have
+	// returned, so a test can act on an observable "this step is done" instead of
+	// guessing how long the step takes.
+	if (step.touch_after) writeFileSync(step.touch_after, "");
 }
 
 process.stdout.write(JSON.stringify({ registered, results, messages, notices }));

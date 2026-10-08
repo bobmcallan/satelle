@@ -334,7 +334,7 @@ func TestSuiteCitationNewestWinsAndStdinID(t *testing.T) {
 		"story_id": it.ID, "command": "old suite", "outcome": "red",
 	}), &first)
 	call(t, "ledger-cite-run", map[string]any{"story_id": it.ID, "run_id": first.ID})
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(5 * time.Millisecond) // time-subject: citation timestamp separation, so "newest citation wins" has a newest
 	json.Unmarshal(call(t, "ledger-record-run", map[string]any{
 		"story_id": it.ID, "command": "make integration", "outcome": "green",
 	}), &second)

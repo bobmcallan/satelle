@@ -156,7 +156,7 @@ func TestWaveSequentialDoesNotPickByOrder(t *testing.T) {
 	wireWithWorkflows(t, waveWF("sequential"))
 	epic := waveEpic(t)
 	first := waveChild(t, "order:1")
-	time.Sleep(2 * time.Millisecond)
+	time.Sleep(2 * time.Millisecond) // time-subject: created_at separation, so created_at is a real (and refused) tie-break candidate
 	second := waveChild(t, "order:2")
 
 	_, err := wave(t, epic.ID)

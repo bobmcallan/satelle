@@ -14,6 +14,13 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
+// separate pauses so the next ledger row's created_at is strictly later than the
+// last one's: the since-cutoff under test orders rows by timestamp.
+func separate() {
+	// time-subject: created_at separation. A slower clock only widens the gap.
+	time.Sleep(2 * time.Millisecond)
+}
+
 func TestMessageVerbsRegistered(t *testing.T) {
 	cat := verb.Catalog()
 	want := map[string]bool{"story-message": false, "story-messages": false}
@@ -67,11 +74,11 @@ func TestStoryMessagesOrderingAndFilters(t *testing.T) {
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "filter"}), &it)
 
 	call(t, "story-message", map[string]any{"id": it.ID, "from": "human", "to": "executor", "body": "one"})
-	time.Sleep(2 * time.Millisecond)
+	separate()
 	mid := time.Now().UTC()
-	time.Sleep(2 * time.Millisecond)
+	separate()
 	call(t, "story-message", map[string]any{"id": it.ID, "from": "orchestrator", "body": "two-star"}) // to default *
-	time.Sleep(2 * time.Millisecond)
+	separate()
 	call(t, "story-message", map[string]any{"id": it.ID, "from": "human", "to": "reviewer", "body": "three"})
 
 	raw := call(t, "story-messages", map[string]any{"id": it.ID})
@@ -108,12 +115,12 @@ func TestMessagesSinceExcludes(t *testing.T) {
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "window"}), &it)
 
 	call(t, "story-message", map[string]any{"id": it.ID, "from": "human", "to": "executor", "body": "before"})
-	time.Sleep(2 * time.Millisecond)
+	separate()
 	payload, _ := json.Marshal(map[string]any{"head_sha": "abc123", "dirty": false, "to": "in_progress"})
 	call(t, "ledger-append", map[string]any{
 		"story_id": it.ID, "kind": ledger.KindEngagementBaseline, "payload": json.RawMessage(payload),
 	})
-	time.Sleep(2 * time.Millisecond)
+	separate()
 	call(t, "story-message", map[string]any{"id": it.ID, "from": "orchestrator", "to": "reviewer", "body": "for-reviewer"})
 	call(t, "story-message", map[string]any{"id": it.ID, "from": "orchestrator", "to": "executor", "body": "for-executor"})
 	call(t, "story-message", map[string]any{"id": it.ID, "from": "orchestrator", "body": "for-all"})
@@ -144,9 +151,9 @@ func TestMessagesSinceAfterReanchor(t *testing.T) {
 	call(t, "ledger-append", map[string]any{
 		"story_id": it.ID, "kind": ledger.KindEngagementBaseline, "payload": json.RawMessage(first),
 	})
-	time.Sleep(2 * time.Millisecond)
+	separate()
 	call(t, "story-message", map[string]any{"id": it.ID, "from": "orchestrator", "to": "executor", "body": "during-first"})
-	time.Sleep(2 * time.Millisecond)
+	separate()
 	re, _ := json.Marshal(map[string]any{
 		"from": "blocked", "to": "in_progress", "head_sha": "def456", "files": []string{},
 		"reanchor_resume": true,
@@ -154,7 +161,7 @@ func TestMessagesSinceAfterReanchor(t *testing.T) {
 	call(t, "ledger-append", map[string]any{
 		"story_id": it.ID, "kind": ledger.KindChangeRecord, "payload": json.RawMessage(re),
 	})
-	time.Sleep(2 * time.Millisecond)
+	separate()
 	call(t, "story-message", map[string]any{"id": it.ID, "from": "orchestrator", "to": "executor", "body": "after-resume"})
 
 	got := verb.MessagesSince(context.Background(), it.ID, []string{"executor"})
@@ -231,18 +238,18 @@ func TestPreEngagementWindowExcludesEarlierEngagement(t *testing.T) {
 	newReadinessRig(t, readinessWF, func(string, int) verb.GateDecision { return acceptAll() })
 	it := newFeature(t)
 	call(t, "story-message", map[string]any{"id": it.ID, "from": "orchestrator", "to": "planner", "body": "backlog-one"})
-	time.Sleep(2 * time.Millisecond)
+	separate()
 
 	call(t, "story-set", map[string]any{"id": it.ID, "status": "plan"})
-	time.Sleep(2 * time.Millisecond)
+	separate()
 	call(t, "story-message", map[string]any{"id": it.ID, "from": "orchestrator", "to": "planner", "body": "engagement-A"})
 	if got := strings.Join(bodiesOf(t, it.ID, "planner"), ","); got != "engagement-A" {
 		t.Fatalf("engaged at plan, planner sees %q, want only engagement-A", got)
 	}
-	time.Sleep(2 * time.Millisecond)
+	separate()
 
 	call(t, "story-set", map[string]any{"id": it.ID, "status": "backlog"}) // the declared recover edge
-	time.Sleep(2 * time.Millisecond)
+	separate()
 	call(t, "story-message", map[string]any{"id": it.ID, "from": "orchestrator", "to": "planner", "body": "engagement-B"})
 
 	if got := strings.Join(bodiesOf(t, it.ID, "planner"), ","); got != "engagement-B" {
@@ -267,13 +274,13 @@ func TestPreEngagementWindowAfterParkFromStart(t *testing.T) {
 	}))
 	it := newFeature(t)
 	call(t, "story-message", map[string]any{"id": it.ID, "from": "orchestrator", "to": "planner", "body": "before-park"})
-	time.Sleep(2 * time.Millisecond)
+	separate()
 	call(t, "story-set", map[string]any{"id": it.ID, "status": "plan"})
 	if got := statusOf(t, it.ID).Status; got != "blocked" {
 		t.Fatalf("status = %q, want blocked", got)
 	}
 	call(t, "story-set", map[string]any{"id": it.ID, "status": "backlog"})
-	time.Sleep(2 * time.Millisecond)
+	separate()
 	call(t, "story-message", map[string]any{"id": it.ID, "from": "orchestrator", "to": "planner", "body": "after-resume"})
 
 	if got := strings.Join(bodiesOf(t, it.ID, "planner"), ","); got != "after-resume" {
@@ -289,7 +296,7 @@ func TestEngagedStoryKeepsSHAStampedWindow(t *testing.T) {
 	it := newFeature(t)
 	call(t, "story-set", map[string]any{"id": it.ID, "status": "plan"})
 	call(t, "story-set", map[string]any{"id": it.ID, "status": "in_progress"})
-	time.Sleep(2 * time.Millisecond)
+	separate()
 	call(t, "story-message", map[string]any{"id": it.ID, "from": "orchestrator", "to": "executor", "body": "current"})
 
 	msgs := verb.MessagesSince(context.Background(), it.ID, []string{"executor"})

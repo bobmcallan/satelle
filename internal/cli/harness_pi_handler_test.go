@@ -103,6 +103,9 @@ type piStep struct {
 	// have been sent (the driver's own timeout bounds it).
 	WaitMessages *int `json:"wait_messages,omitempty"`
 	TimeoutMS    int  `json:"timeout_ms,omitempty"`
+	// TouchAfter, on any step, makes the driver create that file once the step's
+	// handlers have returned: an observable "this step is done" for the test.
+	TouchAfter string `json:"touch_after,omitempty"`
 }
 
 type piResult struct {

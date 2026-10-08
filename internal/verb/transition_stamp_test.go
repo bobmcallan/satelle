@@ -23,7 +23,7 @@ func (g attachingGater) Gate(ctx context.Context, item workitem.Item, to string)
 	if _, _, err := verb.AttachItemDoc(ctx, item, "gate-note", "output", "attached mid-gate"); err != nil {
 		return verb.GateDecision{}, err
 	}
-	time.Sleep(g.delay)
+	time.Sleep(g.delay) // time-subject: timestamp separation, so the call's start and the commit are measurably apart (a slower clock only widens the gap)
 	return verb.GateDecision{Gated: false}, nil
 }
 

@@ -87,7 +87,7 @@ func TestSyncWorkstatePullConflictFails(t *testing.T) {
 		t.Fatalf("push: %v\n%s", err, out)
 	}
 	// Local moves on after hosted: newer and different.
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond) // time-subject: timestamp separation, the local edit must be strictly newer than the pushed copy
 	if out, err := runRoot(t, "story", "set", id, "--title", "Local edit"); err != nil {
 		t.Fatalf("set: %v\n%s", err, out)
 	}

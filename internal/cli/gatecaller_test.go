@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,11 +19,12 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/gatehandle"
+	"github.com/bobmcallan/satelle/internal/testutil"
 	"github.com/bobmcallan/satelle/internal/verb"
 )
 
 // The hand-off is tested against a test-only verb that declares
-// DispatchesReviewer and sleeps: it is the same seam every real reviewer-running
+// DispatchesReviewer and can be held running: it is the same seam every real reviewer-running
 // verb goes through (dispatch → handOffGate), without needing a live reviewer. The
 // real verbs are exercised against a slow stub reviewer in tests/gate_handoff_test.go.
 
@@ -48,9 +50,24 @@ func assertVerdictOnly(t *testing.T, what, block, verdict string) {
 }
 
 type gateTestReq struct {
-	Ms   int    `json:"ms"`
+	// Hold, when set, keeps the gate running until that file exists. A test that
+	// needs "the gate is still running" asks for it explicitly instead of sleeping
+	// for a duration it hopes outlasts the machine.
+	Hold string `json:"hold"`
 	Fail bool   `json:"fail"`
 	Say  string `json:"say"`
+}
+
+// holdGate returns the gatetest arguments that keep the gate running until
+// release is called. release also runs on cleanup, so a gate left running by a
+// failed test (its child is a detached process) is let go at once.
+func holdGate(t *testing.T) (args []string, release func()) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "release-gate")
+	var once sync.Once
+	release = func() { once.Do(func() { _ = os.WriteFile(path, nil, 0o644) }) }
+	t.Cleanup(release)
+	return []string{"--hold", path}, release
 }
 
 func init() {
@@ -61,7 +78,16 @@ func init() {
 		Invoke: func(_ context.Context, raw json.RawMessage) (json.RawMessage, error) {
 			var r gateTestReq
 			_ = json.Unmarshal(raw, &r)
-			time.Sleep(time.Duration(r.Ms) * time.Millisecond)
+			if r.Hold != "" {
+				// The bound is a safety net so a gate whose test is gone ends on its own.
+				deadline := time.Now().Add(2 * testutil.WaitBudget)
+				for time.Now().Before(deadline) {
+					if _, err := os.Stat(r.Hold); err == nil {
+						break
+					}
+					time.Sleep(10 * time.Millisecond) // poll tick
+				}
+			}
 			// What the real transition prints: the verdict through the verdict sink,
 			// and an advisory note on stderr that a delivery must leave out.
 			verb.EmitVerdict("accepted: " + r.Say)
@@ -77,13 +103,13 @@ func init() {
 		Use: "gatetest", Hidden: true, Short: "test only",
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ms, _ := cmd.Flags().GetInt("ms")
+			hold, _ := cmd.Flags().GetString("hold")
 			fail, _ := cmd.Flags().GetBool("fail")
 			say, _ := cmd.Flags().GetString("say")
-			return dispatch(cmd, gateTestVerb, map[string]any{"ms": ms, "fail": fail, "say": say})
+			return dispatch(cmd, gateTestVerb, map[string]any{"hold": hold, "fail": fail, "say": say})
 		},
 	}
-	c.Flags().Int("ms", 0, "")
+	c.Flags().String("hold", "", "")
 	c.Flags().Bool("fail", false, "")
 	c.Flags().String("say", "", "")
 	register(c)
@@ -272,7 +298,7 @@ func TestGateWaitBound_FollowsConfiguredHarnesses(t *testing.T) {
 // exactly as it would have, with nothing left for a hook to deliver.
 func TestHandOff_FastGateReturnsVerdictInline(t *testing.T) {
 	_ = tempRepo(t)
-	args := []string{"gatetest", "--ms", "0", "--say", "fast"}
+	args := []string{"gatetest", "--say", "fast"}
 	useGateHandOff(t, "20s", args)
 
 	start := time.Now()
@@ -302,8 +328,9 @@ func TestHandOff_FastGateReturnsVerdictInline(t *testing.T) {
 // progress — and its verdict is then delivered exactly once, by the hook side.
 func TestHandOff_SlowGateReturnsHandleThenDeliversOnce(t *testing.T) {
 	_ = tempRepo(t)
-	args := []string{"gatetest", "--ms", "2500", "--say", "slow"}
-	useGateHandOff(t, "300ms", args)
+	hold, release := holdGate(t)
+	args := append([]string{"gatetest", "--say", "slow"}, hold...)
+	useGateHandOff(t, "300ms", args) // time-subject: the hand-off bound is what the test crosses
 
 	start := time.Now()
 	out, err := runRoot(t, args...)
@@ -311,8 +338,10 @@ func TestHandOff_SlowGateReturnsHandleThenDeliversOnce(t *testing.T) {
 	if err != nil && !errors.Is(err, errGateHandedOff) {
 		t.Fatalf("pending must exit clean: %v\n%s", err, out)
 	}
-	if took > 2*time.Second {
-		t.Fatalf("returned after %s, want inside the bound plus start-up, well under the gate's 2.5s", took)
+	// The gate is held until released, so a return at all — well inside the gate's
+	// own safety bound — means the call handed off rather than waiting for it.
+	if took >= testutil.WaitBudget {
+		t.Fatalf("returned after %s, want inside the bound plus start-up, not waiting for the held gate", took)
 	}
 	var p pendingPayload
 	if jerr := json.Unmarshal([]byte(strings.TrimSpace(out)), &p); jerr != nil {
@@ -332,7 +361,8 @@ func TestHandOff_SlowGateReturnsHandleThenDeliversOnce(t *testing.T) {
 		t.Fatalf("delivered a run that had not finished:\n%s", got)
 	}
 	// The wake: a delivery that waits gets the verdict.
-	got := deliverFinishedGates(store, "", 15*time.Second)
+	release()
+	got := deliverFinishedGates(store, "", 3*testutil.WaitBudget)
 	if !strings.Contains(got, p.Handle) {
 		t.Fatalf("delivery missing the handle:\n%s", got)
 	}
@@ -449,7 +479,7 @@ func TestInteractive_RunsInForegroundWithoutAHandle(t *testing.T) {
 
 	var out string
 	var err error
-	stderr := captureStderr(t, func() { out, err = runRoot(t, "gatetest", "--ms", "0", "--say", "here") })
+	stderr := captureStderr(t, func() { out, err = runRoot(t, "gatetest", "--say", "here") })
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -630,8 +660,12 @@ func TestStopHook_WaitsForRunningGateAndAnswersWithVerdict(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = store.SetPID(m.ID, os.Getpid()) // alive: a running gate
+	// launched is taken before the gate's clock starts, so the gate can never
+	// finish less than gateRuns after it, however late the hook starts waiting.
+	const gateRuns = 400 * time.Millisecond
+	launched := time.Now()
 	go func() {
-		time.Sleep(400 * time.Millisecond)
+		time.Sleep(gateRuns) // time-subject: the gate runs for a known minimum, so a hook that returned sooner did not wait for it
 		_ = os.WriteFile(store.VerdictPath(m.ID), []byte("accepted plan→in_progress by satelle-story-plan-review\n"), 0o644)
 		_ = os.WriteFile(store.ErrPath(m.ID), []byte(gateTestAdvisory+"\n"), 0o644)
 		_ = os.WriteFile(store.OutPath(m.ID), []byte(`{"id":"sty_wake","status":"in_progress"}`), 0o644)
@@ -639,12 +673,11 @@ func TestStopHook_WaitsForRunningGateAndAnswersWithVerdict(t *testing.T) {
 	}()
 
 	var out strings.Builder
-	start := time.Now()
 	if err := runHookStopcheck(nil, &out); err != nil {
 		t.Fatal(err)
 	}
-	if time.Since(start) < 300*time.Millisecond {
-		t.Fatalf("the Stop hook did not wait for the running gate (returned in %s)", time.Since(start))
+	if time.Since(launched) < gateRuns {
+		t.Fatalf("the Stop hook did not wait for the running gate (returned %s after the gate started)", time.Since(launched))
 	}
 	var blk stopBlockOut
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out.String())), &blk); err != nil {

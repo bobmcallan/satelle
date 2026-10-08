@@ -37,22 +37,36 @@ func runRoot(t *testing.T, args ...string) (string, error) {
 }
 
 // resetFlagState clears Changed and restores DefValue on every flag in the
-// command tree so a prior Execute cannot poison the next one.
+// command tree so a prior Execute cannot poison the next one. It also drops any
+// output writer or context a test set directly on a registered command: a
+// command's own writer beats its parent's, so a stale SetOut left by an earlier
+// test (or an earlier -count iteration) would swallow this run's output.
 func resetFlagState(cmd *cobra.Command) {
 	if cmd == nil {
 		return
 	}
-	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-		f.Changed = false
-		_ = f.Value.Set(f.DefValue)
-	})
-	cmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
-		f.Changed = false
-		_ = f.Value.Set(f.DefValue)
-	})
+	cmd.SetOut(nil)
+	cmd.SetErr(nil)
+	cmd.SetContext(nil)
+	cmd.Flags().VisitAll(resetFlag)
+	cmd.PersistentFlags().VisitAll(resetFlag)
 	for _, c := range cmd.Commands() {
 		resetFlagState(c)
 	}
+}
+
+// resetFlag returns one flag to its default. A slice flag (--tags) cannot be
+// reset by Set(DefValue): pflag appends to a slice once it has been set, so the
+// literal default "[]" would be added as an element and every later run would
+// inherit the tags of every earlier one (a "lane:trunk" pin from one test
+// leaking into the next, or into the next -count iteration).
+func resetFlag(f *pflag.Flag) {
+	f.Changed = false
+	if sv, ok := f.Value.(pflag.SliceValue); ok {
+		_ = sv.Replace([]string{})
+		return
+	}
+	_ = f.Value.Set(f.DefValue)
 }
 
 // tempRepo creates a repo with .satelle/satelle.toml and points SATELLE_CONFIG

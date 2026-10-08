@@ -267,7 +267,7 @@ func TestHookHandlersHeartbeatLiveSeat(t *testing.T) {
 			ageLease(t, id, 5*time.Minute)
 			before := heartbeatOf(t, id)
 			// tiny sleep so After(before) is reliable even on coarse clocks
-			time.Sleep(5 * time.Millisecond)
+			time.Sleep(5 * time.Millisecond) // time-subject: heartbeat timestamp separation, so "advanced" is observable
 			out, err := runRootIn(t, c.payload, "hook", c.sub)
 			if c.sub != "prompt" && err != nil {
 				t.Fatalf("hook %s: %v\n%s", c.sub, err, out)

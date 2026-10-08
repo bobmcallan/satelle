@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // serveRegistry tracks suite-owned serve pids so TestMain can prove none survive
@@ -101,8 +103,10 @@ func StartServeHealthy(t *testing.T, bin, dir string, env []string, wait time.Du
 	if h.Base == "" {
 		t.Fatal("StartServeHealthy requires --port in args so Base is known")
 	}
-	if wait <= 0 {
-		wait = 10 * time.Second
+	// wait is a floor, never a ceiling a slow machine can hit: the wait returns the
+	// moment /healthz answers, and no caller gets less than testutil.WaitBudget.
+	if wait < testutil.WaitBudget {
+		wait = testutil.WaitBudget
 	}
 	if !waitHealthy(t, h.Base+"/healthz", wait) {
 		h.Stop()
@@ -139,12 +143,12 @@ func (h *ServeHandle) Stop() {
 	}()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(testutil.WaitBudget):
 		// Escalation: process-group SIGKILL, not a second TERM.
 		killServeGroup(h.Cmd, false)
 		select {
 		case <-done:
-		case <-time.After(2 * time.Second):
+		case <-time.After(testutil.WaitBudget):
 		}
 	}
 }

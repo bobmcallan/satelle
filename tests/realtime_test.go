@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // TestCrossProcessFragmentReflectsCLI asserts the mirror reflects a story after
@@ -30,12 +32,12 @@ func TestCrossProcessFragmentReflectsCLI(t *testing.T) {
 	host := strings.TrimSuffix(base, "/r/"+filepath.Base(repo))
 	seedWorkspaceAdd(t, testBin, repo, host)
 
-	deadline := time.Now().Add(8 * time.Second)
+	deadline := time.Now().Add(testutil.WaitBudget)
 	for time.Now().Before(deadline) {
 		if strings.Contains(httpGet(t, base+"/fragment/stories"), "Cross-process realtime story") {
 			return
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond) // poll tick
 	}
 	t.Fatal("web /fragment/stories never reflected the CLI-created story after workspace add")
 }
@@ -72,7 +74,8 @@ func TestCrossProcessSSETrigger(t *testing.T) {
 			}
 		}
 	}()
-	time.Sleep(100 * time.Millisecond)
+	// No pause is needed for the subscriber to register: http.Get returned, and the
+	// events handler flushes its opening ": connected" only after it subscribed.
 	seedWorkspaceAdd(t, testBin, repo, host)
 
 	select {
@@ -80,7 +83,7 @@ func TestCrossProcessSSETrigger(t *testing.T) {
 		if topic == "" {
 			t.Error("empty SSE topic")
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testutil.WaitBudget):
 		t.Fatal("no SSE trigger after workspace add")
 	}
 }

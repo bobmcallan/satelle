@@ -122,6 +122,7 @@ func TestSyncSkipsUnchangedAndReindexesChanged(t *testing.T) {
 	if err := os.WriteFile(p, []byte("v2 longer"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// time-subject: reindexing keys on a newer mtime, set explicitly rather than slept for.
 	future := time.Now().Add(2 * time.Second)
 	if err := os.Chtimes(p, future, future); err != nil {
 		t.Fatal(err)

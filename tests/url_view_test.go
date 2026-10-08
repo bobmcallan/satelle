@@ -27,14 +27,12 @@ func TestBrowserUrlAddressableView(t *testing.T) {
 
 	// 1. Tabs are real links (open-in-new-tab works) with a panel-encoding href.
 	var tag, href string
-	if err := chromedp.Run(ctx,
+	browserStep(t, ctx, "load page, tabs visible",
 		chromedp.Navigate(base),
 		chromedp.WaitVisible(`.tab[data-panel="workflow"]`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.querySelector('.tab[data-panel="workflow"]').tagName`, &tag),
 		chromedp.Evaluate(`document.querySelector('.tab[data-panel="workflow"]').getAttribute('href')`, &href),
-	); err != nil {
-		t.Fatal(err)
-	}
+	)
 	if tag != "A" {
 		t.Errorf("workflow tab is <%s>, want <A> (a real link supporting open-in-new-tab)", tag)
 	}
@@ -51,13 +49,11 @@ func TestBrowserUrlAddressableView(t *testing.T) {
 	}
 
 	// 3. The filter is written to the URL, and a reload restores it.
-	if err := chromedp.Run(ctx,
+	browserStep(t, ctx, "reload, stories table visible, set filter",
 		chromedp.Navigate(base),
 		chromedp.WaitVisible(`#panel-stories table.panel-table`, chromedp.ByQuery),
 		setInput(`#panel-stories .filterbar input`, "tags:urltest status:all"),
-	); err != nil {
-		t.Fatal(err)
-	}
+	)
 	if !waitCond(t, ctx,
 		`new URLSearchParams(location.search).get('stories') === 'tags:urltest status:all'`,
 		3*time.Second) {
@@ -68,13 +64,11 @@ func TestBrowserUrlAddressableView(t *testing.T) {
 		t.Fatal(err)
 	}
 	var restored string
-	if err := chromedp.Run(ctx,
+	browserStep(t, ctx, "reload captured URL, filter input visible",
 		chromedp.Navigate(url), // reload the captured URL — a fresh page load
 		chromedp.WaitVisible(`#panel-stories .filterbar input`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.querySelector('#panel-stories .filterbar input').value`, &restored),
-	); err != nil {
-		t.Fatal(err)
-	}
+	)
 	if restored != "tags:urltest status:all" {
 		t.Errorf("filter not restored from the URL on reload: input = %q", restored)
 	}

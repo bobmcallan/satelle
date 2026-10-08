@@ -95,7 +95,7 @@ func TestNoSurfaceLetsTheDriverPollAHandle(t *testing.T) {
 
 	// The verb that started the wait, invoked again, runs a fresh gate — it does
 	// not answer from the old handle.
-	args := []string{"gatetest", "--ms", "0", "--say", "again"}
+	args := []string{"gatetest", "--say", "again"}
 	useGateHandOff(t, "20s", args)
 	again, _ := runRoot(t, args...)
 	if revealsHandle(again, m) {

@@ -17,7 +17,7 @@ func testPusher(t *testing.T, p *Pusher) (context.CancelFunc, *pushRecorder) {
 		p.Debounce = 8 * time.Millisecond
 	}
 	if p.Timeout == 0 {
-		p.Timeout = time.Second
+		p.Timeout = waitBudget
 	}
 	rec := &pushRecorder{}
 	if p.Push == nil {
@@ -58,46 +58,84 @@ func (r *pushRecorder) count() int {
 	return len(r.paths)
 }
 
+// countPath is how many times path was pushed.
+func (r *pushRecorder) countPath(path string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, p := range r.paths {
+		if p == path {
+			n++
+		}
+	}
+	return n
+}
+
+// settleKey is the sentinel repo key settle pushes; settlePath is where the
+// default Resolve maps it.
+const (
+	settleKey  = "settle"
+	settlePath = "/repo/" + settleKey
+)
+
+// settle returns once every flush that began before the call has finished, so a
+// test can assert "nothing further was pushed" from the pusher's own state and
+// not from a sleep. The worker flushes serially: a flush that pushes the
+// sentinel the SECOND time began only after the flush that pushed it the first
+// time ended, and that first flush took every key dirtied before settle ran.
+// pushed reports how many times the sentinel has been pushed so far.
+func settle(t *testing.T, p *Pusher, pushed func() int) {
+	t.Helper()
+	base := pushed()
+	p.Notify(settleKey)
+	waitFor(t, waitBudget, func() bool { return pushed() >= base+1 })
+	p.Notify(settleKey)
+	waitFor(t, waitBudget, func() bool { return pushed() >= base+2 })
+}
+
 // TestPusherSingleNotifyPushesOnce proves AC3: one ingest notification becomes
 // one push after debounce, with no reconcile interval elapsed.
 func TestPusherSingleNotifyPushesOnce(t *testing.T) {
 	p := &Pusher{}
 	_, rec := testPusher(t, p)
 	p.Notify("rk")
-	waitFor(t, time.Second, func() bool { return rec.count() == 1 })
+	waitFor(t, waitBudget, func() bool { return rec.countPath("/repo/rk") == 1 })
 	if got := rec.snapshot(); got[0] != "/repo/rk" {
 		t.Fatalf("push path = %q", got[0])
 	}
-	time.Sleep(20 * time.Millisecond)
-	if rec.count() != 1 {
+	settle(t, p, func() int { return rec.countPath(settlePath) })
+	if n := rec.countPath("/repo/rk"); n != 1 {
 		t.Fatalf("extra pushes: %v", rec.snapshot())
 	}
 }
 
 // TestPusherCoalescesRapidNotifies proves D4: N mutations for one key collapse
-// into one push.
+// into one push. The notifies land before the worker starts, so no debounce
+// window can be missed by a slow machine; the dirty set is what coalesces them.
 func TestPusherCoalescesRapidNotifies(t *testing.T) {
 	p := &Pusher{}
-	_, rec := testPusher(t, p)
 	for i := 0; i < 5; i++ {
 		p.Notify("rk")
 	}
-	waitFor(t, time.Second, func() bool { return rec.count() >= 1 })
-	time.Sleep(30 * time.Millisecond)
-	if rec.count() != 1 {
-		t.Fatalf("pushes = %d, want 1 (coalesced): %v", rec.count(), rec.snapshot())
+	_, rec := testPusher(t, p)
+	waitFor(t, waitBudget, func() bool { return rec.countPath("/repo/rk") >= 1 })
+	settle(t, p, func() int { return rec.countPath(settlePath) })
+	if n := rec.countPath("/repo/rk"); n != 1 {
+		t.Fatalf("pushes = %d, want 1 (coalesced): %v", n, rec.snapshot())
 	}
 }
 
 // TestPusherUnresolvablePushesNothing proves a missing/unguarded key is dropped.
 func TestPusherUnresolvablePushesNothing(t *testing.T) {
 	p := &Pusher{
-		Resolve: func(context.Context, string) (string, bool) { return "", false },
+		// Only the ghost is unresolvable, so the sentinel settle pushes can prove
+		// the flush that took the ghost has finished.
+		Resolve: func(_ context.Context, key string) (string, bool) { return "/repo/" + key, key != "ghost" },
 	}
 	_, rec := testPusher(t, p)
 	p.Notify("ghost")
-	time.Sleep(40 * time.Millisecond)
-	if rec.count() != 0 {
+	settle(t, p, func() int { return rec.countPath(settlePath) })
+	if n := rec.countPath("/repo/ghost"); n != 0 {
 		t.Fatalf("unresolvable key pushed: %v", rec.snapshot())
 	}
 }
@@ -122,7 +160,7 @@ func TestPusherNotifyNeverBlocks(t *testing.T) {
 	p.Notify("rk")
 	select {
 	case <-started:
-	case <-time.After(time.Second):
+	case <-time.After(waitBudget):
 		t.Fatal("worker never entered Push")
 	}
 	done := make(chan struct{})
@@ -134,7 +172,7 @@ func TestPusherNotifyNeverBlocks(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(waitBudget):
 		t.Fatal("Notify blocked while worker stalled")
 	}
 	close(block)
@@ -147,7 +185,7 @@ func TestPusherCatchUpOnRun(t *testing.T) {
 		Keys: func(context.Context) []string { return []string{"a", "b"} },
 	}
 	_, rec := testPusher(t, p)
-	waitFor(t, time.Second, func() bool { return rec.count() == 2 })
+	waitFor(t, waitBudget, func() bool { return rec.count() == 2 })
 	got := map[string]bool{}
 	for _, path := range rec.snapshot() {
 		got[path] = true
@@ -171,7 +209,9 @@ func TestPusherHonoursOffSwitch(t *testing.T) {
 			return nil
 		},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	// Run returns at once when disabled; the bound is only reached if the
+	// off-switch is ignored, and a longer bound lets a broken Run push first.
+	ctx, cancel := context.WithTimeout(context.Background(), waitBudget)
 	defer cancel()
 	p.Run(ctx)
 	if called {
@@ -184,27 +224,33 @@ func TestPusherHonoursOffSwitch(t *testing.T) {
 func TestPusherBackoffDoesNotSpin(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	var mu sync.Mutex
-	var pushes int
+	var pushes, settled int
 	p := &Pusher{
 		Debounce: 5 * time.Millisecond,
 		Now:      func() time.Time { mu.Lock(); defer mu.Unlock(); return now },
-		Push: func(context.Context, string) error {
+		Push: func(_ context.Context, path string) error {
 			mu.Lock()
+			defer mu.Unlock()
+			if path == settlePath { // the flush barrier, not a push under test
+				settled++
+				return nil
+			}
 			pushes++
-			mu.Unlock()
 			return errors.New("hosted down")
 		},
 	}
 	testPusher(t, p)
 	p.Notify("rk")
-	waitFor(t, time.Second, func() bool {
+	waitFor(t, waitBudget, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return pushes >= 1
 	})
+	// One flush per notify: settle waits out the flush the notify caused, so
+	// each attempt lands inside the backoff window without a spacing sleep.
 	for i := 0; i < 8; i++ {
 		p.Notify("rk")
-		time.Sleep(15 * time.Millisecond)
+		settle(t, p, func() int { mu.Lock(); defer mu.Unlock(); return settled })
 	}
 	mu.Lock()
 	got := pushes
@@ -231,7 +277,7 @@ func TestPusherDirtySetBounded(t *testing.T) {
 func TestPusherSuccessResetsBackoff(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	var mu sync.Mutex
-	var pushes int
+	var pushes, settled int
 	var fail bool = true
 	p := &Pusher{
 		Debounce: 5 * time.Millisecond,
@@ -240,9 +286,13 @@ func TestPusherSuccessResetsBackoff(t *testing.T) {
 			defer mu.Unlock()
 			return now
 		},
-		Push: func(context.Context, string) error {
+		Push: func(_ context.Context, path string) error {
 			mu.Lock()
 			defer mu.Unlock()
+			if path == settlePath { // the flush barrier, not a push under test
+				settled++
+				return nil
+			}
 			pushes++
 			if fail {
 				return errors.New("hosted down")
@@ -252,18 +302,21 @@ func TestPusherSuccessResetsBackoff(t *testing.T) {
 	}
 	testPusher(t, p)
 	p.Notify("rk")
-	waitFor(t, time.Second, func() bool {
+	waitFor(t, waitBudget, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return pushes >= 1
 	})
+	// The push is counted before the worker arms its backoff from the clock, so
+	// moving the clock now would race it. Wait that flush out first.
+	settle(t, p, func() int { mu.Lock(); defer mu.Unlock(); return settled })
 
 	mu.Lock()
 	now = now.Add(time.Hour)
 	fail = false
 	mu.Unlock()
 	p.Notify("rk")
-	waitFor(t, time.Second, func() bool {
+	waitFor(t, waitBudget, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return pushes >= 2
@@ -271,7 +324,7 @@ func TestPusherSuccessResetsBackoff(t *testing.T) {
 
 	// Backoff reset: another Notify without advancing time must push.
 	p.Notify("rk")
-	waitFor(t, time.Second, func() bool {
+	waitFor(t, waitBudget, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return pushes >= 3
@@ -285,6 +338,7 @@ func TestPusherLogsOnReasonTransition(t *testing.T) {
 	var mu sync.Mutex
 	var reason string = "boom-a"
 	var fail bool = true
+	var settled int
 	logs := &lineRecorder{}
 	p := &Pusher{
 		Debounce: 5 * time.Millisecond,
@@ -294,9 +348,13 @@ func TestPusherLogsOnReasonTransition(t *testing.T) {
 			return now
 		},
 		Log: logs.log,
-		Push: func(context.Context, string) error {
+		Push: func(_ context.Context, path string) error {
 			mu.Lock()
 			defer mu.Unlock()
+			if path == settlePath { // the flush barrier, not a push under test
+				settled++
+				return nil
+			}
 			if !fail {
 				return nil
 			}
@@ -305,14 +363,14 @@ func TestPusherLogsOnReasonTransition(t *testing.T) {
 	}
 	testPusher(t, p)
 	p.Notify("rk")
-	waitFor(t, time.Second, func() bool { return countLines(logs.snapshot(), "hosted push", "boom-a") == 1 })
+	waitFor(t, waitBudget, func() bool { return countLines(logs.snapshot(), "hosted push", "boom-a") == 1 })
 
 	// Same reason, after backoff window — no new line.
 	mu.Lock()
 	now = now.Add(time.Hour)
 	mu.Unlock()
 	p.Notify("rk")
-	time.Sleep(30 * time.Millisecond)
+	settle(t, p, func() int { mu.Lock(); defer mu.Unlock(); return settled })
 	if n := countLines(logs.snapshot(), "boom-a"); n != 1 {
 		t.Fatalf("same-reason logs = %d, want 1: %v", n, logs.snapshot())
 	}
@@ -322,14 +380,14 @@ func TestPusherLogsOnReasonTransition(t *testing.T) {
 	reason = "boom-b"
 	mu.Unlock()
 	p.Notify("rk")
-	waitFor(t, time.Second, func() bool { return countLines(logs.snapshot(), "boom-b") == 1 })
+	waitFor(t, waitBudget, func() bool { return countLines(logs.snapshot(), "boom-b") == 1 })
 
 	mu.Lock()
 	now = now.Add(time.Hour)
 	fail = false
 	mu.Unlock()
 	p.Notify("rk")
-	waitFor(t, time.Second, func() bool { return countLines(logs.snapshot(), "recovered") == 1 })
+	waitFor(t, waitBudget, func() bool { return countLines(logs.snapshot(), "recovered") == 1 })
 }
 
 func TestPusherReportRecordsEveryOutcome(t *testing.T) {

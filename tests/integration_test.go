@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 )
@@ -64,6 +65,28 @@ var testHomes sync.Map
 // re-identifies a server, or creates, deletes or corrupts the file, still fails.
 // XDG_CONFIG_HOME is sandboxed for every test process so the suite cannot reach
 // the host file through the environment.
+// scrubAmbientHarnessEnv unsets the markers that make this process look like it
+// runs inside a harness session or a dispatched step, so children inherit a bare
+// shell whatever launched the suite.
+func scrubAmbientHarnessEnv() {
+	markers := agentcli.SessionMarkerEnvNames()
+	for _, e := range os.Environ() {
+		k, _, _ := strings.Cut(e, "=")
+		match := k == config.ScratchEnv || k == config.SessionEnv ||
+			k == config.DispatchAgentEnv || k == config.DispatchStepEnv ||
+			k == config.DispatchItemEnv || k == config.SpawnEnv
+		for _, m := range markers {
+			if k == m || strings.HasPrefix(k, m) {
+				match = true
+				break
+			}
+		}
+		if match {
+			_ = os.Unsetenv(k)
+		}
+	}
+}
+
 func TestMain(m *testing.M) {
 	// Resolve host roots BEFORE isolating SATELLE_HOME, then snapshot those fixed
 	// paths before and after the suite. Re-resolving via getenv after Setenv would
@@ -90,6 +113,13 @@ func TestMain(m *testing.M) {
 		_ = os.RemoveAll(backstop)
 		os.Exit(1)
 	}
+
+	// The suite drives the binary as a bare shell. A run started from inside a
+	// harness or a dispatched step (the build-unit-check gate runs the suite as a
+	// child of an engaged `satelle story set`) would otherwise hand every child
+	// process the driver's session and dispatch identity, and the hook paths under
+	// test would judge themselves dispatched. Tests that need one set it themselves.
+	scrubAmbientHarnessEnv()
 
 	// os.Exit skips defers; clean up and enforce the host-surface guard explicitly.
 	// Also fingerprint host mirror partition keys (sty_5aa08259 AC1): hermetic
@@ -789,7 +819,7 @@ func TestHostSurfaceGuardTrips(t *testing.T) {
 	}
 	fp1 := fingerprintFile(bin)
 	// Ensure mtime can move on coarse filesystems.
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(5 * time.Millisecond) // time-subject: mtime separation, so the rewrite fingerprints differently
 	if err := os.WriteFile(bin, []byte("v2"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -849,7 +879,7 @@ func TestHostSurfaceToleratesCredentialRefresh(t *testing.T) {
 	mustSave(t, store, other)
 	before := credSurface(root)
 	beforeBytes := readFileOptional(path)
-	time.Sleep(5 * time.Millisecond) // let mtime move on coarse filesystems
+	time.Sleep(5 * time.Millisecond) // time-subject: let mtime move on coarse filesystems, so the rotation is observable
 
 	rotated := testCredential(orig.ServerURL)
 	rotated.AccessToken = "access-2"
@@ -1125,7 +1155,7 @@ func waitHealthy(t *testing.T, url string, timeout time.Duration) bool {
 				return true
 			}
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond) // poll tick
 	}
 	return false
 }

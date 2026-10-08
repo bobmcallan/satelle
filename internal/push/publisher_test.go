@@ -2,6 +2,7 @@ package push_test
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,20 +11,27 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/push"
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
+
+// roundTripFunc is an http.RoundTripper made of a function, so a test sees every
+// request the publisher tries to send, to any address.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestPublisherInactiveNoNetwork(t *testing.T) {
 	var hits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	counting := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		hits.Add(1)
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	t.Cleanup(srv.Close)
+		return nil, errors.New("unexpected request from an inert publisher")
+	})}
 
-	// Empty endpoint: Notify must not hit the server.
-	p := &push.Publisher{Endpoint: "", RepoKey: "repo-x"}
+	// Empty endpoint: Notify must not send anything. The inert path returns before
+	// any goroutine exists, so there is no asynchronous work to wait out — a
+	// request, had one been attempted, would already be counted when Notify returns.
+	p := &push.Publisher{Endpoint: "", RepoKey: "repo-x", Client: counting, OnPost: func(*http.Request) { hits.Add(1) }}
 	p.Notify("stories")
-	time.Sleep(50 * time.Millisecond)
 	if hits.Load() != 0 {
 		t.Fatalf("inert publisher made %d network calls", hits.Load())
 	}
@@ -31,7 +39,6 @@ func TestPublisherInactiveNoNetwork(t *testing.T) {
 	// Nil receiver: also inert.
 	var nilP *push.Publisher
 	nilP.Notify("stories")
-	time.Sleep(20 * time.Millisecond)
 	if hits.Load() != 0 {
 		t.Fatalf("nil publisher made network calls")
 	}
@@ -57,7 +64,7 @@ func TestPublisherPostsEvent(t *testing.T) {
 	p.Notify("stories")
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(testutil.WaitBudget):
 		t.Fatal("timeout waiting for POST")
 	}
 	if got.RepoKey != "satelle-deadbeef" || got.Topic != "stories" || got.Entity != "story" {
@@ -69,19 +76,45 @@ func TestPublisherPostsEvent(t *testing.T) {
 }
 
 func TestPublisherFailSilentUnreachable(t *testing.T) {
-	// Black-hole: closed port, short client timeout. Notify returns immediately;
-	// the goroutine dies without affecting the caller.
+	// Black-hole: the transport parks the request until the test releases it, then
+	// fails it as an unreachable endpoint would. Notify must return while the
+	// attempt is still parked (fire-and-forget), and the goroutine must end
+	// without affecting the caller once the attempt fails.
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan struct{})
 	p := &push.Publisher{
 		Endpoint: "http://127.0.0.1:1",
 		RepoKey:  "repo",
-		Client:   &http.Client{Timeout: 50 * time.Millisecond},
+		Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			close(entered)
+			<-release
+			defer close(finished)
+			return nil, errors.New("connect: connection refused")
+		})},
 	}
-	start := time.Now()
-	p.Notify("tasks")
-	// Caller path must not wait for the HTTP attempt.
-	if d := time.Since(start); d > 20*time.Millisecond {
-		t.Fatalf("Notify blocked for %v — must be fire-and-forget", d)
+
+	returned := make(chan struct{})
+	go func() {
+		p.Notify("tasks")
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(testutil.WaitBudget):
+		close(release)
+		t.Fatal("Notify blocked on the HTTP attempt — must be fire-and-forget")
 	}
-	// Give the goroutine a moment to finish without panicking.
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-entered:
+	case <-time.After(testutil.WaitBudget):
+		close(release)
+		t.Fatal("the publisher never attempted the POST")
+	}
+	close(release)
+	select {
+	case <-finished:
+	case <-time.After(testutil.WaitBudget):
+		t.Fatal("the failed attempt never completed")
+	}
 }

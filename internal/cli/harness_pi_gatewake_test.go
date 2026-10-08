@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/gatehandle"
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // The pi extension's gate-verdict delivery (sty_7ebeda10), traced end to end:
@@ -62,9 +63,19 @@ func (r *piRig) useRealSatelle(stopWait string) *gatehandle.Store {
 	return gateStoreForTest(t)
 }
 
-func (r *piRig) finishGateAfter(store *gatehandle.Store, id string, after time.Duration, verdict string) {
+// finishGateOnSignal finishes gate id with verdict once the file signal exists
+// (the driver creates it via a step's TouchAfter). The gate therefore stays
+// running exactly until the step the test cares about has completed, however long
+// node and the real hook take to start on a slow machine.
+func (r *piRig) finishGateOnSignal(store *gatehandle.Store, id, signal, verdict string) {
 	go func() {
-		time.Sleep(after)
+		deadline := time.Now().Add(testutil.WaitBudget)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(signal); err == nil {
+				break
+			}
+			time.Sleep(5 * time.Millisecond) // poll tick
+		}
 		_ = os.WriteFile(store.VerdictPath(id), []byte(verdict+"\n"), 0o644)
 		_ = store.Finish(id, gatehandle.Result{})
 	}()
@@ -85,12 +96,15 @@ func TestPiTrace_RunningGateIsSentOnceWhenItFinishes(t *testing.T) {
 	r := newPiRig(t)
 	store := r.useRealSatelle("1s")
 	g := runningGate(t, store, "sty_slow")
-	r.finishGateAfter(store, g.ID, 2500*time.Millisecond, "accepted plan→in_progress")
+	// The gate finishes only once the first settle has returned, so that settle
+	// always finds it still running — no clock decides the order.
+	settled := filepath.Join(t.TempDir(), "first-settle-done")
+	r.finishGateOnSignal(store, g.ID, settled, "accepted plan→in_progress")
 
 	out := r.drive(true,
 		// The settle waits its one bound (1s), finds the gate still going, allows
 		// the stop and arms the waiter.
-		piStep{Event: "agent_settled", Ctx: map[string]any{"idle": true, "hasUI": true}},
+		piStep{Event: "agent_settled", Ctx: map[string]any{"idle": true, "hasUI": true}, TouchAfter: settled},
 		piStep{WaitMessages: one(1), TimeoutMS: 20000},
 		piStep{Event: "agent_settled", Ctx: map[string]any{"idle": true, "hasUI": true}},
 		piStep{Event: "before_agent_start", Arg: map[string]any{"prompt": "next", "systemPrompt": "SYS"}},

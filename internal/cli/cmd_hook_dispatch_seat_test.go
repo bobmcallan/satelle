@@ -91,12 +91,12 @@ func TestDispatchedPerformerAttributedToItsOwnLease(t *testing.T) {
 			seatKids := func() {
 				for i, k := range kids {
 					settledEpicSeat(t, db, k, "in_progress", fmt.Sprintf("/w/kid%d", i), tc.leaseSID)
-					time.Sleep(2 * time.Millisecond)
+					time.Sleep(2 * time.Millisecond) // time-subject: distinct acquired_at, so the store's acquisition order is the order the case sets up
 				}
 			}
 			if tc.epicFirst {
 				inFlightSeat(t, db, epic, "in_progress", "/w/epic", tc.leaseSID)
-				time.Sleep(2 * time.Millisecond)
+				time.Sleep(2 * time.Millisecond) // time-subject: distinct acquired_at (see above)
 				seatKids()
 			} else {
 				seatKids()
@@ -130,7 +130,7 @@ func TestDispatchedPerformerAttributedToItsOwnLease(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond) // time-subject: heartbeat separation, so a heartbeat bump by resolveSeats would show as a moved timestamp
 
 			info, engaged, live, err := resolveSeats(true, tc.perfSID)
 			if err != nil {

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // TestServeDoesNotAcquireEngagementLease (sty_bf797fa9 AC3 negative): a running
@@ -32,11 +34,15 @@ func TestServeDoesNotAcquireEngagementLease(t *testing.T) {
 
 	port := freeListenPort(t)
 	env := append(os.Environ(), "SATELLE_HOME="+home)
-	_ = StartServeHealthy(t, testBin, repo, env, 8*time.Second,
+	_ = StartServeHealthy(t, testBin, repo, env, testutil.WaitBudget,
 		"--addr", "127.0.0.1", "--port", port, "--no-watch")
 	base := "http://127.0.0.1:" + port
 	httpGet(t, base+"/healthz")
 	httpGet(t, base+"/")
+	// negative window: a lease taken while serving the requests above, or at startup,
+	// already exists by now (both are synchronous with the responses). The window
+	// only covers asynchronous follow-up work after them; a slow runner observes less
+	// of it, which can mask a late acquisition but never fails a serve that holds none.
 	time.Sleep(200 * time.Millisecond)
 
 	// Seat under the same home must not list this story from serve alone.

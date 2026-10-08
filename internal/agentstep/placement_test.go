@@ -45,11 +45,15 @@ type placedRig struct {
 	local *fakeRunner
 	db    *store.DB
 	epic  workitem.Item
+	// limit is the remote binding's timeout. It is long (the session pushes before
+	// the wait starts, which then returns at its first poll); a test whose subject
+	// is the timeout sets cloudTestShortLimit.
+	limit string
 }
 
 func newPlacedRig(t *testing.T, schedule, stepExtra string) *placedRig {
 	t.Helper()
-	r := &placedRig{db: nil}
+	r := &placedRig{db: nil, limit: cloudTestLongLimit}
 	r.fix = newCloudFix(t)
 	r.cloud = &fakeCloud{}
 	r.cloud.act = func(branch, nonce string) {
@@ -60,12 +64,12 @@ func newPlacedRig(t *testing.T, schedule, stepExtra string) *placedRig {
 		{Kind: "skills", Name: "cloud-step", Body: cloudStepSkill},
 		{Kind: "skills", Name: cloudPerformerSkill, Body: cloudPerformerBody},
 	}}
-	r.cloudEngine = newCloudEngine(t, r.fix, docs, cloudBinding("claude -p {system}", cloudDocName, cloudTestShortLimit))
+	r.cloudEngine = newCloudEngine(t, r.fix, docs, cloudBinding("claude -p {system}", cloudDocName, cloudTestLongLimit))
 	r.local = &fakeRunner{out: "did the work"}
 	r.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
 		switch name {
 		case placedRemoteAgent:
-			return cloudBinding("claude -p {system}", cloudDocName, cloudTestShortLimit), true
+			return cloudBinding("claude -p {system}", cloudDocName, r.limit), true
 		case placedLocalAgent:
 			return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Grep,Glob,Bash(satelle:*)"}, true
 		}
@@ -188,6 +192,9 @@ func TestPlacementRemoteFailureLeavesTheChildAndLedgersTheSession(t *testing.T) 
 	placementtest.SignIn(t)
 	item := placementtest.Child(t, r.db, r.epic)
 	r.cloud.act = func(string, string) {} // the session never pushes its branch
+	// time-subject: the binding timeout is what ends the wait for a branch that
+	// never arrives.
+	r.limit = cloudTestShortLimit
 
 	_, err := r.dispatchItem(item)
 	if err == nil || !strings.Contains(err.Error(), cloudSessionURL) {

@@ -15,6 +15,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/gatehandle"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // A gate handle written into another repo's store than the one whose hooks serve
@@ -94,7 +95,8 @@ func crossRepoGate(t *testing.T, a, b *gatehandle.Store, aRoot, bRoot, session, 
 // that acts on B; B's store holds the handle; A's hook delivers its verdict.
 func TestXRepo_HandOffFromASessionInAnotherRepoIsDeliveredByItsHooks(t *testing.T) {
 	aRoot, bRoot, a, b := twoRepos(t)
-	args := []string{"gatetest", "--ms", "1500", "--say", "xrepo"}
+	hold, release := holdGate(t)
+	args := append([]string{"gatetest", "--say", "xrepo"}, hold...)
 	useGateHandOff(t, "300ms", args)
 	t.Setenv("SATELLE_PROJECT_DIR", aRoot)
 	t.Setenv(config.SessionEnv, xrepoSession)
@@ -128,7 +130,8 @@ func TestXRepo_HandOffFromASessionInAnotherRepoIsDeliveredByItsHooks(t *testing.
 	if got := gateDeliveryFor(0); got != "" {
 		t.Fatalf("A's prompt hook delivered a run that had not finished:\n%s", got)
 	}
-	got := stopGateDeliveryFor(15 * time.Second)
+	release()
+	got := stopGateDeliveryFor(3 * testutil.WaitBudget)
 	if !strings.Contains(got, p.Handle) {
 		t.Fatalf("A's Stop hook did not deliver B's handle:\n%s", got)
 	}
@@ -280,7 +283,8 @@ func TestXRepo_StalePointerIsHarmless(t *testing.T) {
 // forwarded and the handle names no other repo — the same-repo shape is as before.
 func TestXRepo_SameRepoHandOffWritesNoPointer(t *testing.T) {
 	aRoot, _, a, _ := twoRepos(t)
-	args := []string{"gatetest", "--ms", "1500", "--say", "same"}
+	hold, _ := holdGate(t) // released on cleanup
+	args := append([]string{"gatetest", "--say", "same"}, hold...)
 	useGateHandOff(t, "300ms", args)
 	t.Setenv(config.SessionEnv, xrepoSession)
 	for _, pin := range []string{aRoot, ""} { // anchored in this repo, and unanchored
@@ -309,7 +313,8 @@ func TestXRepo_SameRepoHandOffWritesNoPointer(t *testing.T) {
 // pin, the repo the session's own hooks last published is the one that serves it.
 func TestXRepo_HandOffFindsTheServingRepoFromItsPublishedHooks(t *testing.T) {
 	aRoot, bRoot, _, b := twoRepos(t)
-	args := []string{"gatetest", "--ms", "1500", "--say", "published"}
+	hold, release := holdGate(t)
+	args := append([]string{"gatetest", "--say", "published"}, hold...)
 	useGateHandOff(t, "300ms", args)
 	t.Setenv("SATELLE_PROJECT_DIR", "")
 	t.Setenv("CLAUDE_PROJECT_DIR", "")
@@ -331,7 +336,8 @@ func TestXRepo_HandOffFindsTheServingRepoFromItsPublishedHooks(t *testing.T) {
 		t.Fatalf("the handle does not name the published serving repo: %+v (%v)", m, err)
 	}
 	inRepo(t, aRoot)
-	if got := stopGateDeliveryFor(15 * time.Second); !strings.Contains(got, p.Handle) {
+	release()
+	if got := stopGateDeliveryFor(3 * testutil.WaitBudget); !strings.Contains(got, p.Handle) {
 		t.Fatalf("A's Stop hook did not deliver the handle found through the published root:\n%s", got)
 	}
 }
@@ -340,7 +346,8 @@ func TestXRepo_HandOffFindsTheServingRepoFromItsPublishedHooks(t *testing.T) {
 // inherited the identity of: its handles are never routed to that session.
 func TestXRepo_DispatchedProcessWritesNoPointer(t *testing.T) {
 	aRoot, bRoot, a, _ := twoRepos(t)
-	args := []string{"gatetest", "--ms", "1500", "--say", "dispatched"}
+	hold, _ := holdGate(t) // released on cleanup
+	args := append([]string{"gatetest", "--say", "dispatched"}, hold...)
 	useGateHandOff(t, "300ms", args)
 	t.Setenv("SATELLE_PROJECT_DIR", aRoot)
 	t.Setenv(config.SessionEnv, xrepoSession)
@@ -357,7 +364,8 @@ func TestXRepo_DispatchedProcessWritesNoPointer(t *testing.T) {
 // A hand-off with no session has nobody to route to: nothing is forwarded.
 func TestXRepo_NoSessionNoPointer(t *testing.T) {
 	aRoot, bRoot, a, b := twoRepos(t)
-	args := []string{"gatetest", "--ms", "1500", "--say", "anon"}
+	hold, _ := holdGate(t) // released on cleanup
+	args := append([]string{"gatetest", "--say", "anon"}, hold...)
 	useGateHandOff(t, "300ms", args)
 	t.Setenv("SATELLE_PROJECT_DIR", aRoot)
 	inRepo(t, bRoot)
@@ -467,6 +475,12 @@ func TestXRepo_WatcherWaitsOutTheServingRepoTurn(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- runGateResume(b, job) }()
 
+	// negative window: 15 watcher polls (20ms each) while the turn is open. A
+	// watcher that ignored the open turn acts on its first poll, so it is caught
+	// well inside the window. A slow runner can only delay that first poll, which
+	// narrows the window and never fails a correct watcher; the watcher's progress
+	// once the turn closes (below, bounded by the shared wait budget) is what the
+	// rest of the test proves.
 	select {
 	case err := <-done:
 		t.Fatalf("the watcher ran (%v) while the session's turn was open in A", err)
@@ -482,7 +496,7 @@ func TestXRepo_WatcherWaitsOutTheServingRepoTurn(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testutil.WaitBudget):
 		t.Fatal("the watcher did not resume once the turn closed")
 	}
 	if len(*argvs) != 1 || !strings.Contains((*argvs)[0][2], "accepted xrepo watch") {

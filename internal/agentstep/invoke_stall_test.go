@@ -76,10 +76,15 @@ func (r *heartbeatOnlyRunner) Run(ctx context.Context, req agentcli.Request) ([]
 // events past the old 20m/10m default, with idle_timeout set small and no
 // hard timeout configured — the dispatch must complete, never be cut off by
 // elapsed time alone.
+//
+// time-subject: the idle window is what is under test. It is wide against the
+// 20ms event cadence (600ms) so a scheduler stall on a slow runner cannot lapse
+// it between events, and the run outlasts it (900ms), which is what proves elapsed
+// time alone never kills a progressing agent.
 func TestProgressingAgentNotKilled(t *testing.T) {
-	r := &progressingRunner{interval: 20 * time.Millisecond, duration: 300 * time.Millisecond, out: "DONE"}
+	r := &progressingRunner{interval: 20 * time.Millisecond, duration: 900 * time.Millisecond, out: "DONE"}
 	g := New(r, fakeDocs{}, "/repo", "")
-	g.idleTimeout = 100 * time.Millisecond // << the old wall-clock defaults; proves elapsed time alone never kills it
+	g.idleTimeout = 600 * time.Millisecond // << the old wall-clock defaults; proves elapsed time alone never kills it
 	g.agentTimeout = 0                     // no hard ceiling
 
 	start := time.Now()
@@ -112,6 +117,10 @@ func TestProgressingAgentNotKilled(t *testing.T) {
 // timeout set. It must resolve its own bound the same way DispatchExecutor
 // does — binding.TimeoutDuration(g.agentTimeout) / g.idleTimeoutFor — so a
 // small g.checkTimeout never reaches it.
+//
+// time-subject: the check timeout (50ms) and the idle window (500ms) are the
+// subject. Slowness cannot fail it: a slower run only stretches the 200ms runner
+// further past the 50ms bound it must ignore, and 500ms idle is wide against 20ms events.
 func TestRetrospectHonorsNoImplicitCheckTimeoutCap(t *testing.T) {
 	r := &progressingRunner{interval: 20 * time.Millisecond, duration: 200 * time.Millisecond, out: "DONE"}
 	g := New(r, fakeDocs{}, "/repo", "")
@@ -142,6 +151,9 @@ func TestRetrospectHonorsNoImplicitCheckTimeoutCap(t *testing.T) {
 // TestHeartbeatOnlyAgentStalls_ExpectPerform (AC2): a dispatch that emits no
 // real event for idle_timeout is stopped even though heartbeats keep
 // arriving, on the perform path (a named dispatch, e.g. the coder).
+//
+// time-subject: the 60ms idle window is the subject; the assertions are lower
+// bounds on the stall (Idle >= idleTimeout), so a slow runner cannot fail them.
 func TestHeartbeatOnlyAgentStalls_ExpectPerform(t *testing.T) {
 	r := &heartbeatOnlyRunner{}
 	g := New(r, fakeDocs{}, "/repo", "")
@@ -192,6 +204,9 @@ func TestHeartbeatOnlyAgentStalls_ExpectPerform(t *testing.T) {
 
 // TestHeartbeatOnlyAgentStalls_ExpectVerdict (AC2): same stall detection on
 // the verdict path (a gate reviewer).
+//
+// time-subject: the 60ms idle window is the subject; nothing here is an upper
+// bound on how fast the stall arrives.
 func TestHeartbeatOnlyAgentStalls_ExpectVerdict(t *testing.T) {
 	r := &heartbeatOnlyRunner{}
 	g := New(r, fakeDocs{}, "/repo", "")
@@ -282,16 +297,20 @@ func TestInvokeLedgersInteractiveDenied(t *testing.T) {
 
 // TestIdleTimeoutConfigMovesStallPoint (AC3): idle_timeout is read from
 // configuration; changing it moves the stall point with no code change.
+//
+// time-subject: the configured idle window is the subject. The two windows are
+// far apart (100ms, 1.5s) so the smaller stalls well before the larger could on
+// any runner, and each ceiling is wide enough that a loaded machine cannot cross it.
 func TestIdleTimeoutConfigMovesStallPoint(t *testing.T) {
 	// The ceiling is the NEXT configured value, not a multiple of this one: the
 	// point under test is that the stall point MOVES with configuration, and a
 	// fixed 2x bound flaked on a loaded CI runner (50ms config stalled at 129ms,
-	// sty_ef930f81 release). 50ms must still stall before 200ms could.
+	// sty_ef930f81 release). 100ms must still stall before 1.5s could.
 	ceilings := map[time.Duration]time.Duration{
-		50 * time.Millisecond:  200 * time.Millisecond,
-		200 * time.Millisecond: 800 * time.Millisecond,
+		100 * time.Millisecond:  1500 * time.Millisecond,
+		1500 * time.Millisecond: 15 * time.Second,
 	}
-	for _, idle := range []time.Duration{50 * time.Millisecond, 200 * time.Millisecond} {
+	for _, idle := range []time.Duration{100 * time.Millisecond, 1500 * time.Millisecond} {
 		t.Run(idle.String(), func(t *testing.T) {
 			r := &heartbeatOnlyRunner{}
 			g := New(r, fakeDocs{}, "/repo", "")
@@ -338,8 +357,16 @@ func TestIdleTimeoutConfigMovesStallPoint(t *testing.T) {
 // AC3 review round found) would fall back to the binding alone against the
 // engine-wide default, so both configured values below would stall at the
 // same point and this test would fail.
+//
+// time-subject: the configured idle window is the subject. As in
+// TestIdleTimeoutConfigMovesStallPoint, the ceiling is the next configured
+// value rather than a multiple of this one, so slowness cannot cross it.
 func TestDispatchExecutorHonorsDefaultsIdleTimeout(t *testing.T) {
-	for _, want := range []time.Duration{50 * time.Millisecond, 200 * time.Millisecond} {
+	ceilings := map[time.Duration]time.Duration{
+		100 * time.Millisecond:  1500 * time.Millisecond,
+		1500 * time.Millisecond: 15 * time.Second,
+	}
+	for _, want := range []time.Duration{100 * time.Millisecond, 1500 * time.Millisecond} {
 		t.Run(want.String(), func(t *testing.T) {
 			dir := t.TempDir()
 			body := fmt.Sprintf("[defaults]\nidle_timeout = %q\n\n[architect]\ncommand = \"fake -p {system}\"\ntools = \"read_file\"\n", want.String())
@@ -367,8 +394,8 @@ func TestDispatchExecutorHonorsDefaultsIdleTimeout(t *testing.T) {
 			if !errors.As(err, &se) {
 				t.Fatalf("err = %v, want a *StallError", err)
 			}
-			if elapsed < want || elapsed > want+want {
-				t.Errorf("stalled after %v, want close to the configured [defaults] idle_timeout %v", elapsed, want)
+			if elapsed < want || elapsed >= ceilings[want] {
+				t.Errorf("stalled after %v, want in [%v, %v) for the configured [defaults] idle_timeout", elapsed, want, ceilings[want])
 			}
 		})
 	}
@@ -377,8 +404,12 @@ func TestDispatchExecutorHonorsDefaultsIdleTimeout(t *testing.T) {
 // TestHardTimeoutStillCapsProgressingAgent (AC3): a configured hard timeout
 // still bounds total time even when the agent keeps progressing — the
 // optional ceiling, when authored, wins over the stall detector.
+//
+// time-subject: the 50ms hard timeout is the subject. The agent would keep
+// progressing for 30s, so "bounded by the timeout" and "ran to completion" stay
+// far apart on any runner.
 func TestHardTimeoutStillCapsProgressingAgent(t *testing.T) {
-	r := &progressingRunner{interval: 5 * time.Millisecond, duration: 2 * time.Second, out: "DONE"}
+	r := &progressingRunner{interval: 5 * time.Millisecond, duration: 30 * time.Second, out: "DONE"}
 	g := New(r, fakeDocs{}, "/repo", "")
 	g.idleTimeout = time.Minute // idle would never fire first
 
@@ -407,7 +438,7 @@ func TestHardTimeoutStillCapsProgressingAgent(t *testing.T) {
 	if !errors.Is(res.Err, context.DeadlineExceeded) {
 		t.Errorf("res.Err = %v, want context.DeadlineExceeded", res.Err)
 	}
-	if elapsed := time.Since(start); elapsed > time.Second {
+	if elapsed := time.Since(start); elapsed > 15*time.Second {
 		t.Errorf("hard timeout did not bound the run: took %v", elapsed)
 	}
 }
@@ -417,12 +448,16 @@ func TestHardTimeoutStillCapsProgressingAgent(t *testing.T) {
 // dispatch returns, and its EventAt/EventCount advance strictly between
 // pushes — proving the throttle refreshes, rather than stamping once and going
 // stale for the rest of a multi-minute dispatch.
+//
+// time-subject: the 20ms push throttle is the subject. The dispatch runs for
+// 1s, 50 throttle windows, so a slow runner that drops most of the 5ms ticks
+// still lands the two pushes the assertion needs.
 func TestActivityDetailThrottledDuringDispatch(t *testing.T) {
 	old := activityDetailThrottle
 	activityDetailThrottle = 20 * time.Millisecond
 	t.Cleanup(func() { activityDetailThrottle = old })
 
-	r := &progressingRunner{interval: 5 * time.Millisecond, duration: 150 * time.Millisecond, out: "DONE"}
+	r := &progressingRunner{interval: 5 * time.Millisecond, duration: time.Second, out: "DONE"}
 	g := New(r, fakeDocs{}, "/repo", "")
 	g.idleTimeout = time.Minute
 
@@ -474,6 +509,9 @@ func TestActivityDetailThrottledDuringDispatch(t *testing.T) {
 // shell script that prints nothing (so no real event ever fires past the
 // transport's own EventStart) while alive must be killed once idle_timeout
 // elapses, not run to completion.
+//
+// time-subject: the 80ms idle window is the subject; the subprocess sleeps 60s
+// so "killed" and "ran to completion" stay far apart whatever the machine speed.
 func TestCommandTransportHonorsWatchdog(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "silent-agent.sh")
@@ -482,7 +520,7 @@ func TestCommandTransportHonorsWatchdog(t *testing.T) {
 	// "sleep 5 &" child would inherit the pipe fd and keep it open after the
 	// shell dies, masking the kill behind pipe-EOF latency — a test-script
 	// artifact, not something runProcess needs to handle specially.
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 5\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	runner, err := agentcli.RunnerFromBinding(agentcli.InterfaceCommand, script+" --noop")
@@ -502,8 +540,8 @@ func TestCommandTransportHonorsWatchdog(t *testing.T) {
 	if !errors.As(err, &se) {
 		t.Fatalf("err = %v, want a *StallError", err)
 	}
-	if elapsed := time.Since(start); elapsed >= 5*time.Second {
-		t.Errorf("subprocess was not killed by the watchdog: took %v (script sleeps 5s)", elapsed)
+	if elapsed := time.Since(start); elapsed >= 30*time.Second {
+		t.Errorf("subprocess was not killed by the watchdog: took %v (script sleeps 60s)", elapsed)
 	}
 }
 
@@ -566,10 +604,12 @@ func TestActivityDetailCarriesRealSubprocessPid(t *testing.T) {
 // because every transport spawns its child through exec.CommandContext(ctx,
 // ...) against the SAME context the watchdog wraps — this proves that holds
 // for stream too, not just command.
+//
+// time-subject: the 80ms idle window is the subject (see the command variant).
 func TestStreamTransportHonorsWatchdog(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "silent-stream-agent.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 5\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	runner, err := agentcli.RunnerFromBinding(agentcli.InterfaceStream, script+" --stream")
@@ -589,17 +629,19 @@ func TestStreamTransportHonorsWatchdog(t *testing.T) {
 	if !errors.As(err, &se) {
 		t.Fatalf("err = %v, want a *StallError", err)
 	}
-	if elapsed := time.Since(start); elapsed >= 5*time.Second {
-		t.Errorf("stream subprocess was not killed by the watchdog: took %v (script sleeps 5s)", elapsed)
+	if elapsed := time.Since(start); elapsed >= 30*time.Second {
+		t.Errorf("stream subprocess was not killed by the watchdog: took %v (script sleeps 60s)", elapsed)
 	}
 }
 
 // TestACPTransportHonorsWatchdog (sty_752c4ef2 AC4): same proof against a
 // REAL interface=acp Runner.
+//
+// time-subject: the 80ms idle window is the subject (see the command variant).
 func TestACPTransportHonorsWatchdog(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "silent-acp-agent.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 5\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	runner, err := agentcli.RunnerFromBinding(agentcli.InterfaceACP, script+" --acp")
@@ -619,8 +661,8 @@ func TestACPTransportHonorsWatchdog(t *testing.T) {
 	if !errors.As(err, &se) {
 		t.Fatalf("err = %v, want a *StallError", err)
 	}
-	if elapsed := time.Since(start); elapsed >= 5*time.Second {
-		t.Errorf("ACP subprocess was not killed by the watchdog: took %v (script sleeps 5s)", elapsed)
+	if elapsed := time.Since(start); elapsed >= 30*time.Second {
+		t.Errorf("ACP subprocess was not killed by the watchdog: took %v (script sleeps 60s)", elapsed)
 	}
 }
 

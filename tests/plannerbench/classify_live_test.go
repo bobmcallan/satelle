@@ -223,6 +223,7 @@ func TestLiveClassificationOfEverySupportedClass(t *testing.T) {
 		// exec so the stub IS the sleeping process: a plain `sleep` child would
 		// outlive the deadline kill and hold the pipes open until it exited.
 		stub := writeStub(t, filepath.Join(root, "stubs"), "stub-sleep", "cat > /dev/null\nexec sleep 30\n")
+		// time-subject: the 3s binding timeout is the subject; the stub sleeps 30s.
 		b := stubBinding("stub-sleep", stub+" --system {system} --tools {tools}", env.Shipped.Grant, "3s")
 		record := runSample(root, env, b, f, liveDims(t, s, b, f))
 		if record.Diagnostics.Class != classSignalKilled && record.Diagnostics.Class != classTimeout {
@@ -240,6 +241,7 @@ func TestLiveClassificationOfEverySupportedClass(t *testing.T) {
 	t.Run("timeout: a silent ACP stub trips the deadline as a typed timeout", func(t *testing.T) {
 		root := t.TempDir()
 		stub := writeStub(t, filepath.Join(root, "stubs"), "stub-acp-silent", "sleep 60\n")
+		// time-subject: the 3s binding timeout is the subject; the stub sleeps 60s.
 		b := stubBinding("stub-acp", stub+" stdio", env.Shipped.Grant, "3s")
 		b.iface = "acp"
 		record := runSample(root, env, b, f, liveDims(t, s, b, f))

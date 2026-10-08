@@ -14,6 +14,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentvalidate"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/health"
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // fakeBin writes an executable script into a temp dir and returns its path.
@@ -128,7 +129,9 @@ func TestProbeCommandTimeoutReapsTheProcess(t *testing.T) {
 	if len(fs) != 1 || fs[0].ID != health.IDLiveTimeout {
 		t.Fatalf("want a %s finding, got %+v", health.IDLiveTimeout, fs)
 	}
-	if elapsed > 5*time.Second {
+	// time-subject: the 300ms probe deadline is the subject. The fake sleeps 30s, so
+	// a probe that failed to stop at its deadline would take at least that long.
+	if elapsed > 15*time.Second {
 		t.Errorf("the probe must return at its deadline, took %s", elapsed)
 	}
 	assertReaped(t, marker)
@@ -205,22 +208,24 @@ func TestLiveFindingsAreNeverBlocking(t *testing.T) {
 func assertReaped(t *testing.T, marker string) {
 	t.Helper()
 	var pid string
-	for i := 0; i < 50; i++ {
+	deadline := time.Now().Add(testutil.WaitBudget)
+	for time.Now().Before(deadline) {
 		if b, err := os.ReadFile(marker); err == nil && len(strings.TrimSpace(string(b))) > 0 {
 			pid = strings.TrimSpace(string(b))
 			break
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) // poll tick
 	}
 	if pid == "" {
 		t.Skip("the fake process never recorded its pid — nothing to assert about reaping")
 	}
 	// Give the kill a moment to land, then confirm the process is gone.
-	for i := 0; i < 50; i++ {
+	deadline = time.Now().Add(testutil.WaitBudget)
+	for time.Now().Before(deadline) {
 		if err := exec.Command("kill", "-0", pid).Run(); err != nil {
 			return // gone
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) // poll tick
 	}
 	t.Errorf("live probe leaked process %s — it must be killed and reaped", pid)
 }

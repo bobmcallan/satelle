@@ -1454,7 +1454,10 @@ func TestGate_agentTimeoutBoundsAWedgedReviewer(t *testing.T) {
 	if r.calls != 1 {
 		t.Errorf("a deadline expiry must fail fast, not retry; got %d attempts", r.calls)
 	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
+	// time-subject: the 20ms agent timeout is the subject. The reviewer blocks until
+	// cancelled, so an unbounded gate would never return; the ceiling only has to
+	// be a value no loaded runner needs to enforce a 20ms deadline.
+	if elapsed := time.Since(start); elapsed > 15*time.Second {
 		t.Errorf("gate was not bounded: took %v", elapsed)
 	}
 }
@@ -5059,7 +5062,7 @@ func TestDispatchExecutor_honorsBindingTimeout(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
 			t.Fatalf("want a deadline-exceeded dispatch failure from the 1ms binding timeout, got %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testutil.WaitBudget):
 		t.Fatal("the binding's 1ms timeout was not applied — dispatch did not return (fell back to the long default)")
 	}
 }
@@ -5197,18 +5200,21 @@ func parallelSkill(name string) string {
 	return "---\nname: " + name + "\nscope: system\ntype: skill\ntags: [type:skill, type:reviewer]\ndescription: parallel test gate\n---\n\n# " + name + "\n\nReturn a verdict:\n\n```json\n{\"decision\": \"accept\", \"notes\": \"\"}\n```\n"
 }
 
-// concurrentMapRunner records max concurrency via short sleep; returns per-skill verdicts.
+// concurrentMapRunner records max concurrency; returns per-skill verdicts. With
+// rendezvous > 0 each run holds until that many runs have been in flight at once
+// (bounded by testutil.WaitBudget), so overlap is guaranteed by construction and
+// does not depend on how closely a slow machine starts the goroutines.
 type concurrentMapRunner struct {
-	mu       sync.Mutex
-	inflight int
-	maxConc  int
-	verdict  map[string]string
-	calls    map[string]int
-	delay    time.Duration
+	mu         sync.Mutex
+	inflight   int
+	maxConc    int
+	verdict    map[string]string
+	calls      map[string]int
+	rendezvous int
 }
 
 func newConcurrentMapRunner(verdict map[string]string) *concurrentMapRunner {
-	return &concurrentMapRunner{verdict: verdict, calls: map[string]int{}, delay: 30 * time.Millisecond}
+	return &concurrentMapRunner{verdict: verdict, calls: map[string]int{}}
 }
 
 func (r *concurrentMapRunner) Name() string    { return "conc" }
@@ -5228,7 +5234,18 @@ func (r *concurrentMapRunner) Run(_ context.Context, req agentcli.Request) ([]by
 		r.maxConc = r.inflight
 	}
 	r.mu.Unlock()
-	time.Sleep(r.delay)
+	if r.rendezvous > 0 {
+		deadline := time.Now().Add(testutil.WaitBudget)
+		for time.Now().Before(deadline) {
+			r.mu.Lock()
+			met := r.maxConc >= r.rendezvous
+			r.mu.Unlock()
+			if met {
+				break
+			}
+			time.Sleep(time.Millisecond) // poll tick
+		}
+	}
 	r.mu.Lock()
 	r.inflight--
 	dec := r.verdict[sk]
@@ -5248,6 +5265,7 @@ func TestGateParallel_CollectsAllNoShortCircuit(t *testing.T) {
 		},
 	}
 	runner := newConcurrentMapRunner(map[string]string{"rev-b": "reject"})
+	runner.rendezvous = 2
 	g := New(runner, docs, "/repo", "")
 	g.backoff = func(int) time.Duration { return 0 }
 

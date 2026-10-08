@@ -110,6 +110,7 @@ func TestObserve_FinishedWhileReusedIsFinished(t *testing.T) {
 // Age counts from when the run ended: a long gate that finishes just now is news.
 func TestUndelivered_AgeCountsFromTheEnd(t *testing.T) {
 	s := newStore(t)
+	// time-subject: delivery age is the subject, set by backdating Started, never slept for.
 	m, _ := s.Create(Meta{ID: "gw_longrun", Verb: "x", Started: time.Now().Add(-MaxDeliveryAge - time.Hour)})
 	if got := s.Undelivered(); len(got) != 0 {
 		t.Fatalf("a day-old unfinished run was listed: %v", got)
@@ -123,6 +124,7 @@ func TestUndelivered_AgeCountsFromTheEnd(t *testing.T) {
 // A run its session was told about is never dropped for age.
 func TestUndelivered_NotifiedRunIsNeverFilteredByAge(t *testing.T) {
 	s := newStore(t)
+	// time-subject: delivery age is the subject, set by backdating Started, never slept for.
 	m, _ := s.Create(Meta{ID: "gw_notified", Verb: "x", Started: time.Now().Add(-MaxDeliveryAge - time.Hour)})
 	s.MarkNotified(m.ID, false, "")
 	if got := s.Undelivered(); len(got) != 1 || got[0] != m.ID {
@@ -150,7 +152,7 @@ func TestMarkNotified_Unverified(t *testing.T) {
 // old it is.
 func TestPrune_KeepsRunningAndNotifiedRuns(t *testing.T) {
 	s := newStore(t)
-	old := time.Now().Add(-3 * retention)
+	old := time.Now().Add(-3 * retention) // time-subject: retention age is the subject, set by backdating
 	stubProbe(t, func(int) (Liveness, string) { return Alive, "T1" })
 	running, _ := s.Create(Meta{ID: "gw_running", Verb: "x", Started: old})
 	_ = s.SetPID(running.ID, 4242)

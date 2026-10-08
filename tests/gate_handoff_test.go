@@ -9,8 +9,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // Black-box coverage for sty_c4b92c9e: a gate-running verb called by an AGENT
@@ -19,20 +22,41 @@ import (
 // the session by the harness's own Stop hook, not fetched by the driver.
 // Called from a terminal, nothing changes.
 
-const (
-	handoffGateSeconds = 6
-	handoffWait        = "1s"
-)
+const handoffWait = "1s"
 
-// slowReviewer makes the stub reviewer take `seconds` before accepting.
-func slowReviewer(t *testing.T, repo string, seconds int) {
+// installReviewer installs a stub reviewer whose script is body, then accepts.
+func installReviewer(t *testing.T, repo, body string) {
 	t.Helper()
 	verdict := filepath.Join(repo, "claude-verdict.sh")
-	writeFile(t, verdict, fmt.Sprintf(
-		"#!/bin/sh\nsleep %d\necho '{\"decision\":\"accept\",\"notes\":\"stub accepted after a slow review\"}'\n", seconds))
+	writeFile(t, verdict, "#!/bin/sh\n"+body+
+		"echo '{\"decision\":\"accept\",\"notes\":\"stub accepted after a slow review\"}'\n")
 	_ = os.Chmod(verdict, 0o755)
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\nisolation = \"operator-attested\"\n", verdict))
+}
+
+// slowReviewer makes the stub reviewer take `seconds` before accepting. Use it
+// only where the test asserts a LOWER bound on how long the gate ran (the sleep
+// guarantees it); a test that needs "the gate is still running" holds it with
+// holdReviewer instead.
+func slowReviewer(t *testing.T, repo string, seconds int) {
+	t.Helper()
+	installReviewer(t, repo, fmt.Sprintf("sleep %d\n", seconds))
+}
+
+// holdReviewer makes the stub reviewer wait until the returned release is called
+// (also on cleanup), then accept. The gate therefore stays running exactly as
+// long as the test needs it to, however slow the machine. The script's own bound
+// (60s) lets an orphaned detached reviewer end by itself.
+func holdReviewer(t *testing.T, repo string) (release func()) {
+	t.Helper()
+	flag := filepath.Join(repo, "release-reviewer")
+	installReviewer(t, repo, fmt.Sprintf(
+		"i=0\nwhile [ ! -e '%s' ] && [ $i -lt 1200 ]; do sleep 0.05; i=$((i+1)); done\n", flag))
+	var once sync.Once
+	release = func() { once.Do(func() { _ = os.WriteFile(flag, nil, 0o644) }) }
+	t.Cleanup(release)
+	return release
 }
 
 var agentGateEnv = []string{"SATELLE_GATE_MODE=agent", "SATELLE_GATE_WAIT=" + handoffWait}
@@ -75,7 +99,7 @@ func stopHook(t *testing.T, repo string) string {
 // reviewer and proves the whole contract: it returns inside the wait (not after
 // the gate), prints no reviewer progress, hands back a handle — and the Stop
 // hook then delivers the verdict, once.
-func assertAgentFacingHandoff(t *testing.T, repo string, wantInVerdict string, args ...string) {
+func assertAgentFacingHandoff(t *testing.T, repo string, release func(), wantInVerdict string, args ...string) {
 	t.Helper()
 	start := time.Now()
 	out, err := runEnv(t, testBin, repo, agentGateEnv, args...)
@@ -83,8 +107,10 @@ func assertAgentFacingHandoff(t *testing.T, repo string, wantInVerdict string, a
 	if err != nil {
 		t.Fatalf("satelle %s: a pending gate must exit clean: %v\n%s", strings.Join(args, " "), err, out)
 	}
-	if took >= handoffGateSeconds*time.Second {
-		t.Fatalf("satelle %s took %s — it waited out the %ds gate instead of returning a handle", strings.Join(args, " "), took, handoffGateSeconds)
+	// The gate is held until release, so a call that waited for it would still be
+	// blocked here; returning inside the wait budget proves it handed off.
+	if took >= testutil.WaitBudget {
+		t.Fatalf("satelle %s took %s — it waited for the held gate instead of returning a handle", strings.Join(args, " "), took)
 	}
 	for _, progress := range []string{"running reviewer", "agent reviewer", "may take several minutes"} {
 		if strings.Contains(out, progress) {
@@ -94,6 +120,7 @@ func assertAgentFacingHandoff(t *testing.T, repo string, wantInVerdict string, a
 	handle := pendingHandle(t, out)
 
 	// The wake: the Stop hook waits for the running gate and answers with the verdict.
+	release()
 	verdict := stopHook(t, repo)
 	var blk struct {
 		Decision string `json:"decision"`
@@ -127,8 +154,8 @@ func TestAgentFacingGateVerbsReturnAHandleAndTheStopHookDeliversTheVerdict(t *te
 		writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"), "[review]\ngate_create = true\n")
 		stubAmendVerdict(t, repo)
 		mustRun(t, testBin, repo, "reindex")
-		slowReviewer(t, repo, handoffGateSeconds)
-		assertAgentFacingHandoff(t, repo, "created: sty_",
+		release := holdReviewer(t, repo)
+		assertAgentFacingHandoff(t, repo, release, "created: sty_",
 			"story", "create", "--category", "feature", "--title", "Add a widget",
 			"--body", "Render a widget on the dashboard", "--acceptance", "1. the widget renders")
 	})
@@ -145,8 +172,8 @@ func TestAgentFacingGateVerbsReturnAHandleAndTheStopHookDeliversTheVerdict(t *te
 		created := mustRun(t, testBin, repo, "story", "create", "--title", "Gate me",
 			"--body", "Prove the hand-off on a transition", "--acceptance", "1. done", "--category", "handoff-test")
 		id := storyIDFrom(t, created)
-		slowReviewer(t, repo, handoffGateSeconds)
-		assertAgentFacingHandoff(t, repo, "stub accepted after a slow review",
+		release := holdReviewer(t, repo)
+		assertAgentFacingHandoff(t, repo, release, "stub accepted after a slow review",
 			"story", "set", id, "--status", "done")
 		if got := mustRun(t, testBin, repo, "story", "get", id); !strings.Contains(got, `"status": "done"`) {
 			t.Fatalf("the detached run must complete the transition it was handed:\n%s", got)
@@ -159,8 +186,8 @@ func TestAgentFacingGateVerbsReturnAHandleAndTheStopHookDeliversTheVerdict(t *te
 		stubAmendVerdict(t, repo)
 		mustRun(t, testBin, repo, "reindex")
 		id := engageForAmend(t, repo, "Add a widget")
-		slowReviewer(t, repo, handoffGateSeconds)
-		assertAgentFacingHandoff(t, repo, "accepted amendment of "+id,
+		release := holdReviewer(t, repo)
+		assertAgentFacingHandoff(t, repo, release, "accepted amendment of "+id,
 			"story", "amend", id, "--acceptance", "1. the widget renders\n2. the widget is green",
 			"--reason", "AC2 named the wrong colour")
 		if got := mustRun(t, testBin, repo, "story", "get", id); !strings.Contains(got, "the widget is green") {
@@ -238,6 +265,8 @@ func TestRepoHandoffOffRunsTheGateInTheForeground(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
+	// time-subject: the 3s the reviewer sleeps is the subject, and this is a lower
+	// bound — a foreground run cannot return before the gate it waited for ended.
 	if took := time.Since(start); took < 3*time.Second {
 		t.Fatalf("handoff = off returned after %s — it handed off instead of waiting out the 3s gate:\n%s", took, out)
 	}

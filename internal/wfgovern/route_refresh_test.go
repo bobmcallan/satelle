@@ -59,6 +59,7 @@ park = { state = "blocked", agent = "reviewer", gate = "blocked-review" }
 	if err := os.WriteFile(donePath, []byte(broken), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// time-subject: the index refreshes on a newer mtime, set explicitly rather than slept for.
 	_ = os.Chtimes(donePath, time.Now().Add(2*time.Second), time.Now().Add(2*time.Second))
 	docs, err = db.DocIndex.List(ctx, "workflows")
 	if err != nil {

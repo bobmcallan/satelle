@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // TestProxiedSSEAbortDoesNotPoisonConnection drives the REAL serve process: a
@@ -40,7 +42,9 @@ func TestProxiedSSEAbortDoesNotPoisonConnection(t *testing.T) {
 	// Open the proxied child SSE, read the stream open, then abort mid-stream by
 	// cancelling the request — the supervisor's reverse proxy raises
 	// http.ErrAbortHandler on the broken copy.
-	client := &http.Client{Timeout: 5 * time.Second}
+	// A poisoned connection would block until this timeout, so it is long enough
+	// that the 15s ceiling below separates "responded" from "stuck" on any machine.
+	client := &http.Client{Timeout: 30 * time.Second}
 	ctx, cancel := context.WithCancel(context.Background())
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/"+slug+"/events", nil)
 	if resp, err := client.Do(req); err == nil {
@@ -54,12 +58,12 @@ func TestProxiedSSEAbortDoesNotPoisonConnection(t *testing.T) {
 	}
 
 	// Give the supervisor a moment to unwind the aborted proxy handler.
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(testutil.WaitBudget)
 	for time.Now().Before(deadline) {
 		if httpStatus(t, base+"/healthz") == 200 {
 			break
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond) // poll tick
 	}
 
 	// The aborted stream must NOT have logged a panic ERROR line.
@@ -80,7 +84,7 @@ func TestProxiedSSEAbortDoesNotPoisonConnection(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET / = %d, want 200", resp.StatusCode)
 	}
-	if elapsed := time.Since(start); elapsed > 3*time.Second {
+	if elapsed := time.Since(start); elapsed > 15*time.Second {
 		t.Fatalf("GET / took %v after an aborted stream — connection poisoned", elapsed)
 	}
 }

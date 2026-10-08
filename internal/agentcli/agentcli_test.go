@@ -3,13 +3,16 @@ package agentcli
 import (
 	"bytes"
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/agentartifact"
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // syncBuffer is a concurrency-safe io.Writer: runProcess tees stdout/stderr from
@@ -621,7 +624,14 @@ func TestRunStreamsOutputBeforeExit(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not on PATH")
 	}
-	r := templateRunner{binary: "sh", argTemplate: []string{"-c", "echo before-sleep; sleep 0.3; echo after-sleep"}}
+	// The child holds between its two echoes until the test creates release, so
+	// "still running when the sink saw the first line" is true by construction and
+	// does not depend on how long a slow machine takes to notice it.
+	release := filepath.Join(t.TempDir(), "release")
+	releaseChild := func() { _ = os.WriteFile(release, nil, 0o644) }
+	t.Cleanup(releaseChild) // a failed assertion must not leave the child waiting
+	script := "echo before-sleep; while [ ! -e '" + release + "' ]; do sleep 0.02; done; echo after-sleep"
+	r := templateRunner{binary: "sh", argTemplate: []string{"-c", script}}
 	sink := &syncBuffer{}
 	done := make(chan []byte, 1)
 	go func() {
@@ -632,14 +642,10 @@ func TestRunStreamsOutputBeforeExit(t *testing.T) {
 		done <- out
 	}()
 
-	deadline := time.Now().Add(3 * time.Second)
-	for !strings.Contains(sink.String(), "before-sleep") {
-		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for streamed output to reach the sink")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	// The subprocess is still sleeping — it must not have finished yet, proving the
+	testutil.Eventually(t, testutil.WaitBudget, func() bool {
+		return strings.Contains(sink.String(), "before-sleep")
+	}, "timed out waiting for streamed output to reach the sink")
+	// The subprocess is still held — it must not have finished yet, proving the
 	// sink saw the first line BEFORE exit, not merely as a post-exit flush.
 	select {
 	case out := <-done:
@@ -647,7 +653,13 @@ func TestRunStreamsOutputBeforeExit(t *testing.T) {
 	default:
 	}
 
-	out := <-done
+	releaseChild()
+	var out []byte
+	select {
+	case out = <-done:
+	case <-time.After(testutil.WaitBudget):
+		t.Fatal("the released child never finished")
+	}
 	if !strings.Contains(string(out), "before-sleep") || !strings.Contains(string(out), "after-sleep") {
 		t.Errorf("final accumulated stdout incomplete: %q", out)
 	}
@@ -695,8 +707,19 @@ func TestRunKillRetainsStreamedOutputOnTimeout(t *testing.T) {
 	// something this change introduces).
 	r := templateRunner{binary: "sh", argTemplate: []string{"-c", "echo partial; exec sleep 5"}}
 	sink := &syncBuffer{}
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	// The context ends the moment the sink has seen the streamed line, so the
+	// kill lands after the output exists however slowly the shell started (a
+	// wall-clock deadline could expire before "partial" was ever written). A
+	// deadline and a cancel take the same os/exec kill path.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	go func() {
+		deadline := time.Now().Add(testutil.WaitBudget)
+		for !strings.Contains(sink.String(), "partial") && ctx.Err() == nil && time.Now().Before(deadline) {
+			time.Sleep(2 * time.Millisecond) // poll tick
+		}
+		cancel()
+	}()
 	_, err := r.Run(ctx, Request{Sink: sink})
 	if err == nil {
 		t.Fatal("expected the timeout to kill the child and surface an error")

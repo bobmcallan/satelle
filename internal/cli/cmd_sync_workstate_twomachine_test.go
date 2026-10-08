@@ -123,9 +123,9 @@ func (g pushInGateGater) Gate(ctx context.Context, item workitem.Item, to string
 		if _, _, err := verb.AttachItemDoc(ctx, item, "mid-gate", "output", "attached while gated"); err != nil {
 			return verb.GateDecision{}, err
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond) // time-subject: timestamp separation, so the mid-gate attachment predates the push cursor
 		g.m.push(g.t, g.server)
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond) // time-subject: timestamp separation, so the transition commit stamps after the push
 	}
 	return verb.GateDecision{Gated: false}, nil
 }
