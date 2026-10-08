@@ -61,8 +61,21 @@ CREDGUARD := sh scripts/credguard.sh --
 # through TESTFLAGS. credguard stays OUTSIDE it so it keeps watching the real host.
 HERMETIC := sh scripts/hermetic.sh --
 
+# STRICT=1 is the CI mode (sty_53c3f311): unit tests run repeated and shuffled
+# (-count=3 -shuffle=on) to expose order and repetition leaks, integration tests
+# shuffled, and both run through scripts/skipcheck, which fails the run on a skip
+# that is not on scripts/skip-allow.txt. skipcheck runs go test as its own child
+# (no pipe, so no pipefail hazard under /bin/sh) and keeps its exit status. With
+# STRICT unset every variable below is empty and the recipes are as before.
+STRICT ?=
+ifeq ($(STRICT),1)
+SKIPCHECK := go run ./scripts/skipcheck -allow scripts/skip-allow.txt --
+UNIT_STRICTFLAGS := -json -count=3 -shuffle=on
+INTEG_STRICTFLAGS := -json -shuffle=on
+endif
+
 test:
-	$(CREDGUARD) $(HERMETIC) go test $(TESTFLAGS) ./...
+	$(CREDGUARD) $(HERMETIC) $(SKIPCHECK) go test $(UNIT_STRICTFLAGS) $(TESTFLAGS) ./...
 
 # integration builds the binary once, then drives it from ./tests via SATELLE_BIN
 # (no per-test rebuild). Run by hand with: SATELLE_BIN=$(command -v satelle) go test -tags integration ./tests/...
@@ -73,7 +86,7 @@ test:
 integration:
 	go build -ldflags "-X $(PKG).Name=satelle -X $(PKG).Version=$(BASE_VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)" -o $(BIN) ./cmd/satelle
 	go build -ldflags "-X $(PKG).Name=satelled -X $(PKG).Version=$(BASE_SERVE_VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)" -o $(SERVE_BIN) ./cmd/satelled
-	SATELLE_BIN=$(CURDIR)/$(BIN) $(CREDGUARD) $(HERMETIC) go test -tags integration $(TESTFLAGS) ./tests/...
+	SATELLE_BIN=$(CURDIR)/$(BIN) $(CREDGUARD) $(HERMETIC) $(SKIPCHECK) go test -tags integration $(INTEG_STRICTFLAGS) $(TESTFLAGS) ./tests/...
 
 # operator-check: the few checks of the operator's REAL reviewer/profile config.
 # Opt-in and deliberately NOT hermetic: they read the operator's ~/.satelle

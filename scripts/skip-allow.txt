@@ -1,0 +1,22 @@
+# Reviewed allowlist for scripts/skipcheck (sty_53c3f311).
+#
+# `make test STRICT=1` and `make integration STRICT=1` fail on any test or
+# subtest that skips unless it is listed here. One entry per line:
+#
+#   <package import path> <TestName[/subtest]> <reason>
+#
+# The reason is required. Matching is exact on package and test name; there are
+# no globs and skip text is never matched. List only skips a strict run on CI
+# actually produces, and add an entry only after reviewing why the skip is
+# acceptable there. The browser e2e tests (tests/) are deliberately NOT listed:
+# CI has Chrome, so a missing Chrome must fail the run.
+
+# .satelle/ is gitignored operator substrate, so a CI checkout has none of it.
+github.com/bobmcallan/satelle/internal/agentstep TestDispatchedSeatInlinesDiagnosisPrinciple repo-local principle under gitignored .satelle/ is absent from a CI checkout
+github.com/bobmcallan/satelle/internal/agentstep TestOverrideReviewerSkillsQuotationComparison repo-local skills under gitignored .satelle/skills are absent from a CI checkout
+github.com/bobmcallan/satelle/internal/cli TestHookContext_DiagnosisPrincipleInlined repo-local principle under gitignored .satelle/ is absent from a CI checkout
+github.com/bobmcallan/satelle/internal/cli TestRenderAlwaysContent_realSubstrateFitsClaudeLimit repo-local constitution under gitignored .satelle/ is absent from a CI checkout
+github.com/bobmcallan/satelle/internal/cli TestRepoRouteCarriesTheInstructionGateOnEveryEditableLane repo-local route under gitignored .satelle/workflows is absent from a CI checkout
+
+# Opt-in live runs that spend real money or tokens; never enabled on CI.
+github.com/bobmcallan/satelle/internal/agentstep TestParityLive live parity run is opt-in (SATELLE_PARITY=1) and spends real money

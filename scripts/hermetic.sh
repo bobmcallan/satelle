@@ -23,7 +23,8 @@
 # The wrapper does not change which tests exist; operator-config checks stay
 # behind the `operatorconfig` build tag (make operator-check).
 
-ALLOW="TERM TMPDIR SATELLE_BIN GOFLAGS GOPROXY GOTOOLCHAIN GONOSUMDB GOPRIVATE GONOPROXY GOSUMDB"
+# SATELLE_CHROME points the browser e2e tests at a Chrome on CI (sty_53c3f311).
+ALLOW="TERM TMPDIR SATELLE_BIN SATELLE_CHROME GOFLAGS GOPROXY GOTOOLCHAIN GONOSUMDB GOPRIVATE GONOPROXY GOSUMDB"
 
 [ "$1" = "--" ] && shift
 if [ "$#" -eq 0 ]; then
