@@ -67,8 +67,8 @@ type mirrorWorkspaceData struct {
 }
 
 // mirrorTmpl is a clone-source that is NEVER executed on the root value — only
-// Clone()+ExecuteTemplate, so concurrent request-local basehref/footeremail
-// Funcs work (html/template forbids Clone after Execute on the same *Template).
+// Clone()+ExecuteTemplate, so concurrent request-local basehref
+// Func works (html/template forbids Clone after Execute on the same *Template).
 var mirrorTmpl *template.Template
 
 func init() {
@@ -196,16 +196,15 @@ func (s *MirrorServer) projectBase(slug string) string {
 	return "/r/" + slug + "/"
 }
 
-// mirrorRender executes a named template with request-local basehref + footeremail.
-func mirrorRender(w http.ResponseWriter, name, base, footerEmail string, data any) {
+// mirrorRender executes a named template with a request-local basehref.
+func mirrorRender(w http.ResponseWriter, name, base string, data any) {
 	t, err := mirrorTmpl.Clone()
 	if err != nil {
 		httpError(w, err)
 		return
 	}
 	t = t.Funcs(template.FuncMap{
-		"basehref":    func() string { return base },
-		"footeremail": func() string { return footerEmail },
+		"basehref": func() string { return base },
 	})
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, name, data); err != nil {
@@ -279,7 +278,7 @@ func (s *MirrorServer) landing(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	mirrorRender(w, "mirrorWorkspace", "/", "", mirrorWorkspaceData{
+	mirrorRender(w, "mirrorWorkspace", "/", mirrorWorkspaceData{
 		Partitions:   pvm,
 		TotalStories: total,
 		TopBar:       mirrorTopBar("projects", ""),
@@ -294,7 +293,7 @@ func (s *MirrorServer) landingFragment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	mirrorRender(w, "mirrorProjectsLive", "/", "", mirrorWorkspaceData{
+	mirrorRender(w, "mirrorProjectsLive", "/", mirrorWorkspaceData{
 		Partitions: pvm,
 		Empty:      len(pvm) == 0,
 	})
@@ -307,13 +306,13 @@ func (s *MirrorServer) projectHome(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	data, id, err := mirrorLoadPanels(r.Context(), s.Store, repoKey, slug)
+	data, _, err := mirrorLoadPanels(r.Context(), s.Store, repoKey, slug)
 	if err != nil {
 		httpError(w, err)
 		return
 	}
 	data.Projects = s.crumbProjects(r.Context(), slug)
-	mirrorRender(w, "page", s.projectBase(slug), id.FooterEmail, data)
+	mirrorRender(w, "page", s.projectBase(slug), data)
 }
 
 func (s *MirrorServer) crumbProjects(ctx context.Context, currentSlug string) []crumbProject {
@@ -361,7 +360,7 @@ func (s *MirrorServer) fragmentRows(tmplName, topic string) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		data, id, err := mirrorLoadPanels(r.Context(), s.Store, repoKey, slug)
+		data, _, err := mirrorLoadPanels(r.Context(), s.Store, repoKey, slug)
 		if err != nil {
 			httpError(w, err)
 			return
@@ -379,7 +378,7 @@ func (s *MirrorServer) fragmentRows(tmplName, topic string) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		mirrorRender(w, tmplName, base, id.FooterEmail, payload)
+		mirrorRender(w, tmplName, base, payload)
 	}
 }
 
@@ -391,12 +390,12 @@ func (s *MirrorServer) fragmentEngagement(w http.ResponseWriter, r *http.Request
 		http.NotFound(w, r)
 		return
 	}
-	data, id, err := mirrorLoadPanels(r.Context(), s.Store, repoKey, slug)
+	data, _, err := mirrorLoadPanels(r.Context(), s.Store, repoKey, slug)
 	if err != nil {
 		httpError(w, err)
 		return
 	}
-	mirrorRender(w, "engagementBadge", s.projectBase(slug), id.FooterEmail, data)
+	mirrorRender(w, "engagementBadge", s.projectBase(slug), data)
 }
 
 func (s *MirrorServer) itemFragment(group string) http.HandlerFunc {
@@ -408,12 +407,12 @@ func (s *MirrorServer) itemFragment(group string) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		d, idMeta, err := mirrorLoadDetail(r.Context(), s.Store, repoKey, group, id)
+		d, _, err := mirrorLoadDetail(r.Context(), s.Store, repoKey, group, id)
 		if err != nil {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		mirrorRender(w, "itemDetail", s.projectBase(slug), idMeta.FooterEmail, d)
+		mirrorRender(w, "itemDetail", s.projectBase(slug), d)
 	}
 }
 
@@ -426,13 +425,13 @@ func (s *MirrorServer) itemDetail(group string) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		d, idMeta, err := mirrorLoadDetail(r.Context(), s.Store, repoKey, group, id)
+		d, _, err := mirrorLoadDetail(r.Context(), s.Store, repoKey, group, id)
 		if err != nil {
 			http.Error(w, "not found: "+id, http.StatusNotFound)
 			return
 		}
 		d.Standalone = true
-		mirrorRender(w, "detailPage", s.projectBase(slug), idMeta.FooterEmail, d)
+		mirrorRender(w, "detailPage", s.projectBase(slug), d)
 	}
 }
 
@@ -460,8 +459,7 @@ func (s *MirrorServer) workflowFragment(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	applies := frontmatterList(doc.Body, "applies_to")
-	id := mirrorIdentity(r.Context(), s.Store, repoKey)
-	mirrorRender(w, "workflowDetail", s.projectBase(slug), id.FooterEmail, workflowDetailVM{
+	mirrorRender(w, "workflowDetail", s.projectBase(slug), workflowDetailVM{
 		Name:       doc.Name,
 		Headline:   doc.Headline,
 		Scope:      workflowScope(doc.Doc),
@@ -487,7 +485,7 @@ func (s *MirrorServer) docPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := mirrorIdentity(r.Context(), s.Store, repoKey)
-	mirrorRender(w, "docPage", s.projectBase(slug), id.FooterEmail, docPageData{
+	mirrorRender(w, "docPage", s.projectBase(slug), docPageData{
 		TopBar:     mirrorTopBar("", id.FooterEmail),
 		Kind:       kind,
 		Name:       doc.Name,
@@ -514,7 +512,7 @@ func (s *MirrorServer) helpPage(w http.ResponseWriter, r *http.Request) {
 			HTML:  renderMarkdown(stripLeadingHeading(t.Body)),
 		})
 	}
-	mirrorRender(w, "help", s.projectBase(slug), id.FooterEmail, helpPageData{
+	mirrorRender(w, "help", s.projectBase(slug), helpPageData{
 		Topics: topics,
 		TopBar: mirrorTopBar("help", id.FooterEmail),
 	})
@@ -527,12 +525,12 @@ func (s *MirrorServer) settingsPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	data, id, err := mirrorSettingsData(r.Context(), s.Store, repoKey)
+	data, _, err := mirrorSettingsData(r.Context(), s.Store, repoKey)
 	if err != nil {
 		httpError(w, err)
 		return
 	}
-	mirrorRender(w, "settings", s.projectBase(slug), id.FooterEmail, data)
+	mirrorRender(w, "settings", s.projectBase(slug), data)
 }
 
 type globalSettingsData struct {
@@ -544,7 +542,7 @@ type globalSettingsData struct {
 
 func (s *MirrorServer) globalSettingsPage(w http.ResponseWriter, r *http.Request) {
 	gc, _ := config.LoadGlobal()
-	mirrorRender(w, "globalSettings", "/", "", globalSettingsData{
+	mirrorRender(w, "globalSettings", "/", globalSettingsData{
 		Saved:  r.URL.Query().Get("saved") == "1",
 		Server: gc.Hosted.Server,
 		Theme:  gc.UI.Theme,

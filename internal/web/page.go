@@ -37,13 +37,12 @@ func baseHref() string {
 // tmplFuncs are shared template helpers.
 var tmplFuncs = template.FuncMap{
 	"basehref": baseHref,
-	// product / version / footeremail back the one shared site footer (see the
-	// "footer" template) so it needs no per-page data: product+version are
-	// baked into the binary (per-artifact name via buildinfo.Name), the
-	// operator email is resolved once from git identity at server start.
-	"product":     func() string { return buildinfo.Resolve().Name },
-	"version":     func() string { return buildinfo.Resolve().Version },
-	"footeremail": func() string { return footerEmail },
+	// product / version back the one shared site footer (see the "footer"
+	// template) so it needs no per-page data: they are baked into the binary
+	// (per-artifact name via buildinfo.Name). The footer names no user; the
+	// satelle user is shown once, in the top bar.
+	"product": func() string { return buildinfo.Resolve().Name },
+	"version": func() string { return buildinfo.Resolve().Version },
 	"ftime": func(t time.Time) string {
 		if t.IsZero() {
 			return "—"
@@ -261,7 +260,7 @@ const templatesSrc = `
      stay on the project page (sty_a447695e). */}}
 {{define "syncfailtag"}}{{if .SyncReason}}<span class="sync-tag-fail" title="hosted push is failing — see the project page">Push Failing</span>{{end}}{{end}}
 
-{{define "footer"}}<footer class="site-footer">{{if footeremail}}<a class="footer-email" href="mailto:{{footeremail}}">{{footeremail}}</a>{{end}}<span class="footer-version">{{product}} {{version}}</span></footer>{{end}}
+{{define "footer"}}<footer class="site-footer"><span class="footer-version">{{product}} {{version}}</span></footer>{{end}}
 
 {{/* favicon: satelle.dev ◐ monogram (animated terminator + reduced-motion static),
      one shared partial so every page <head> links the same icon — no per-page drift. */}}

@@ -371,6 +371,26 @@ func TestMirrorProjectPageRendersTemplates(t *testing.T) {
 		t.Error("project page must not render bare mirror mode pill")
 	}
 
+	// sty_0612af6b: the satelle user is named once, in the top bar; the shared
+	// footer carries the product/version only — no email, no mailto link.
+	fStart := strings.Index(body, `<footer class="site-footer">`)
+	fEnd := strings.Index(body[max(fStart, 0):], `</footer>`)
+	if fStart < 0 || fEnd < 0 {
+		t.Fatalf("project page missing site footer:\n%s", body)
+	}
+	footer := body[fStart : fStart+fEnd]
+	if !strings.Contains(footer, `class="footer-version"`) {
+		t.Errorf("footer missing version span: %s", footer)
+	}
+	for _, forbid := range []string{"a@b.c", "mailto:"} {
+		if strings.Contains(footer, forbid) {
+			t.Errorf("footer must not contain %q: %s", forbid, footer)
+		}
+	}
+	if outside := body[:fStart] + body[fStart+fEnd:]; !strings.Contains(outside, "a@b.c") {
+		t.Error("identity email must still appear outside the footer (top bar)")
+	}
+
 	// Workspace landing.
 	resp2, err := http.Get(srv.URL + "/")
 	if err != nil {

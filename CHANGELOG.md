@@ -1,3 +1,13 @@
+## [0.0.627] - 2026-10-09
+
+### Changed
+- **The web UI footer no longer shows the user's email.** The satelle user is shown once, in the top bar; the footer keeps the product name and version. The dead footer-email template func, package var and CSS rule are removed. (sty_0612af6b, relands sty_20aad72a)
+
+## [serve-v0.0.135] - 2026-10-09
+
+### Changed
+- The serve path picks up the footer without the user email (sty_0612af6b).
+
 ## [0.0.626] - 2026-10-08
 
 ### Changed

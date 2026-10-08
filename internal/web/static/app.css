@@ -66,9 +66,8 @@ input::placeholder { color: #9aa1ab; }
 button { cursor: pointer; }
 footer { margin-top: 40px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
 
-/* Site footer — satellites .site-footer language: name · email · version */
+/* Site footer — satellites .site-footer language: name · version */
 .site-footer { display: flex; align-items: center; gap: 14px; font-family: var(--mono); }
-.site-footer .footer-email { color: var(--muted); }
 .site-footer .footer-version { margin-left: auto; }
 
 /* Page width (sty_aed93a00): standard/wide viewports get ~10% side margins

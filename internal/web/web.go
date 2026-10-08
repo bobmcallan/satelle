@@ -558,9 +558,6 @@ func httpError(w http.ResponseWriter, err error) {
 	http.Error(w, err.Error(), http.StatusInternalServerError)
 }
 
-// footerEmail backs the shared footer template (mirror prefers identity meta).
-var footerEmail string
-
 // wfdotWildcard is the done.toml section that governs every category with none of
 // its own — the route-source spelling of applies_to ["*"].
 const wfdotWildcard = wfdot.WildcardCategory

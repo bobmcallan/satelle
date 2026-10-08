@@ -31,7 +31,7 @@ func (s *MirrorServer) logsPage(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err)
 		return
 	}
-	mirrorRender(w, "logs", "/", "", logsPageData{
+	mirrorRender(w, "logs", "/", logsPageData{
 		Path:   s.LogPath,
 		Filter: filter,
 		Rows:   filterLogRows(rows, filter),
@@ -46,7 +46,7 @@ func (s *MirrorServer) logsFragment(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err)
 		return
 	}
-	mirrorRender(w, "logsLive", "/", "", logsPageData{
+	mirrorRender(w, "logsLive", "/", logsPageData{
 		Path:   s.LogPath,
 		Filter: filter,
 		Rows:   filterLogRows(rows, filter),
