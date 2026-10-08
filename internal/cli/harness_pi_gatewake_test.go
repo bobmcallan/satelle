@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,22 +63,29 @@ func (r *piRig) useRealSatelle(stopWait string) *gatehandle.Store {
 	return gateStoreForTest(t)
 }
 
-// finishGateOn finishes the gate once the signal file exists, never on a timer,
-// so the finish is ordered behind whatever step creates it and not behind the
-// machine's speed. If the signal never comes the gate stays running and the
-// test fails on its own assertions.
-func (r *piRig) finishGateOn(store *gatehandle.Store, id, signal, verdict string) {
+// finishGateOnConnect returns the address the driver's connect step dials, and
+// finishes the gate when it does. The goroutine blocks in Accept, so the finish
+// is ordered behind whatever step connects, never behind a timer or a poll and
+// so not behind the machine's speed. The listener deadline only bounds a driver
+// that never connects: the gate then stays running and the test fails on its
+// own assertions.
+func (r *piRig) finishGateOnConnect(store *gatehandle.Store, id, verdict string) string {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	_ = ln.(*net.TCPListener).SetDeadline(time.Now().Add(60 * time.Second))
 	go func() {
-		deadline := time.Now().Add(60 * time.Second)
-		for time.Now().Before(deadline) {
-			if _, err := os.Stat(signal); err == nil {
-				_ = os.WriteFile(store.VerdictPath(id), []byte(verdict+"\n"), 0o644)
-				_ = store.Finish(id, gatehandle.Result{})
-				return
-			}
-			time.Sleep(20 * time.Millisecond)
+		defer ln.Close()
+		conn, err := ln.Accept()
+		if err != nil {
+			return
 		}
+		conn.Close()
+		_ = os.WriteFile(store.VerdictPath(id), []byte(verdict+"\n"), 0o644)
+		_ = store.Finish(id, gatehandle.Result{})
 	}()
+	return ln.Addr().String()
 }
 
 func (r *piRig) trace(out piOut) {
@@ -95,15 +103,14 @@ func TestPiTrace_RunningGateIsSentOnceWhenItFinishes(t *testing.T) {
 	r := newPiRig(t)
 	store := r.useRealSatelle("1s")
 	g := runningGate(t, store, "sty_slow")
-	signal := filepath.Join(t.TempDir(), "settled")
-	r.finishGateOn(store, g.ID, signal, "accepted plan→in_progress")
+	settled := r.finishGateOnConnect(store, g.ID, "accepted plan→in_progress")
 
 	out := r.drive(true,
 		// The settle waits its one bound (1s), finds the gate still going, allows
 		// the stop and arms the waiter.
 		piStep{Event: "agent_settled", Ctx: map[string]any{"idle": true, "hasUI": true}},
 		// The gate finishes only now, after that settle has returned.
-		piStep{Touch: signal},
+		piStep{Connect: settled},
 		piStep{WaitMessages: one(1), TimeoutMS: 20000},
 		piStep{Event: "agent_settled", Ctx: map[string]any{"idle": true, "hasUI": true}},
 		piStep{Event: "before_agent_start", Arg: map[string]any{"prompt": "next", "systemPrompt": "SYS"}},

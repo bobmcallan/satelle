@@ -103,9 +103,9 @@ type piStep struct {
 	// have been sent (the driver's own timeout bounds it).
 	WaitMessages *int `json:"wait_messages,omitempty"`
 	TimeoutMS    int  `json:"timeout_ms,omitempty"`
-	// Touch, set instead of Event, is a path the driver creates when the step is
-	// reached — after every earlier step has returned.
-	Touch string `json:"touch,omitempty"`
+	// Connect, set instead of Event, is a host:port the driver dials when the
+	// step is reached — after every earlier step has returned.
+	Connect string `json:"connect,omitempty"`
 }
 
 type piResult struct {

@@ -8,13 +8,14 @@
 // steps.json is an array of
 //   { "event": "<pi event>", "arg": {...}, "ctx": { "cwd": "...", "idle": true, "hasUI": true } }
 //   { "wait_messages": N, "timeout_ms": T }   (see below)
-//   { "touch": "<path>" }                      (see below)
+//   { "connect": "<host:port>" }               (see below)
 // and the driver prints one JSON document:
 //   { "registered": [<pi event names in registration order>],
 //     "results":    [<what each step's handlers returned>],
 //     "messages":   [{ "text": "...", "opts": {...} }],
 //     "notices":    [{ "msg": "...", "level": "..." }] }
-import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync } from "node:fs";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -60,11 +61,19 @@ for (const step of steps) {
 		results.push({ event: "wait_messages", result: null, threw: null });
 		continue;
 	}
-	// { "touch": "<path>" } creates an empty file once every earlier step has
-	// returned — a signal the test can order work behind without a timer.
-	if (step.touch !== undefined) {
-		writeFileSync(step.touch, "");
-		results.push({ event: "touch", result: null, threw: null });
+	// { "connect": "<host:port>" } dials the test once every earlier step has
+	// returned — a signal the test blocks on, ordering work behind this point
+	// without a timer or a poll.
+	if (step.connect !== undefined) {
+		const at = step.connect.lastIndexOf(":");
+		await new Promise((resolve, reject) => {
+			const sock = connect({ host: step.connect.slice(0, at), port: Number(step.connect.slice(at + 1)) }, () => {
+				sock.end();
+				resolve();
+			});
+			sock.on("error", reject);
+		});
+		results.push({ event: "connect", result: null, threw: null });
 		continue;
 	}
 	const c = step.ctx ?? {};
