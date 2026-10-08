@@ -17,9 +17,8 @@ import (
 // lets through; the engage guard refuses it first. Once the holder is known the
 // guard passes and the wrong-holder refusal applies as for any account.
 func TestEngageGuardRefusesBeforeWrongHolder(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
-	t.Cleanup(verb.ClearAssigneeResolver)
-	t.Cleanup(func() { verb.SetEngageGuard(nil) })
 
 	var story workitem.Item
 	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "Held"}), &story); err != nil {

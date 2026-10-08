@@ -33,6 +33,7 @@ func (g attachingGater) Gate(ctx context.Context, item workitem.Item, to string)
 // the gate window writes. A timestamp-ordered reader (the workstate push cursor)
 // would otherwise find them behind a document attached during the window.
 func TestTransitionRowsStampedAtCommit(t *testing.T) {
+	withWiring(t)
 	dir := gitRepo(t)
 	chdir(t, dir)
 	stories := filepath.Join(dir, "stories")
@@ -40,10 +41,6 @@ func TestTransitionRowsStampedAtCommit(t *testing.T) {
 	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	verb.SetTransitionGater(attachingGater{delay: 5 * time.Millisecond})
-	t.Cleanup(func() {
-		verb.SetTransitionGater(nil)
-		verb.SetStoryDir("")
-	})
 
 	var it workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{

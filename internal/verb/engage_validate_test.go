@@ -34,12 +34,12 @@ requires = ["planned"]
 // leaving the workflow entry state for a non-cancel target refuses when
 // agents.toml is broken; cancel from entry is still allowed.
 func TestEngageRefusesBrokenAgents(t *testing.T) {
+	withWiring(t)
 	wireWithWorkflows(t, engageWF)
 	verb.SetAgentsConfig(config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
 		Reviewer: config.AgentBinding{Command: "not-a-real-cli"},
 	}, nil)
-	t.Cleanup(verb.ClearAgentsConfig)
 
 	var created workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{
@@ -63,12 +63,12 @@ func TestEngageRefusesBrokenAgents(t *testing.T) {
 
 // TestEngageAllowsHealthyAgents: green agents.toml lets engage proceed.
 func TestEngageAllowsHealthyAgents(t *testing.T) {
+	withWiring(t)
 	wireWithWorkflows(t, engageWF)
 	verb.SetAgentsConfig(config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
 		Reviewer: config.AgentBinding{Command: config.DefaultReviewerCommand},
 	}, nil)
-	t.Cleanup(verb.ClearAgentsConfig)
 
 	var created workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{

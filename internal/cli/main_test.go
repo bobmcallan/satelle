@@ -71,5 +71,6 @@ func runIsolated(m *testing.M) int {
 	}
 	defer os.RemoveAll(dir)
 	_ = os.Setenv("XDG_CONFIG_HOME", dir)
+	recordGateDelivered = restoringRecorder(recordGateDelivered)
 	return m.Run()
 }

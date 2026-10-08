@@ -59,9 +59,9 @@ requires = ["coded"]
 // returns the store so a test can read the lease table directly.
 func wireContainerWait(t *testing.T) *store.DB {
 	t.Helper()
+	withWiring(t)
 	db := wireWithWorkflowsStore(t, containerWaitWF)
 	verb.SetEngagementMode(config.Config{Engagement: config.EngagementConfig{Parallel: config.ParallelEpic}})
-	t.Cleanup(verb.ClearEngagementMode)
 	return db
 }
 

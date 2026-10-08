@@ -19,6 +19,7 @@ import (
 
 func wireCR(t *testing.T) {
 	t.Helper()
+	withWiring(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -28,21 +29,13 @@ func wireCR(t *testing.T) {
 	SetTxRunner(db.InTx)
 	SetDocIndexStore(db.DocIndex)
 	SetLeaseStore(db.Leases)
-	t.Cleanup(func() {
-		db.Close()
-		SetWorkItemStore(nil)
-		SetLedgerStore(nil)
-		SetTxRunner(nil)
-		SetDocIndexStore(nil)
-		SetLeaseStore(nil)
-	})
+	t.Cleanup(func() { db.Close() })
 }
 
 // AC4: patch over changeRecordPatchLimit is truncated with marker; attachment written.
 func TestChangeRecordPatchAttachedAndCapped(t *testing.T) {
-	prev := changeRecordPatchLimit
+	withWiring(t)
 	changeRecordPatchLimit = 64
-	t.Cleanup(func() { changeRecordPatchLimit = prev })
 
 	wireCR(t)
 	dir := t.TempDir()
@@ -74,7 +67,6 @@ func TestChangeRecordPatchAttachedAndCapped(t *testing.T) {
 		t.Fatal(err)
 	}
 	SetStoryDir(stories)
-	t.Cleanup(func() { SetStoryDir("") })
 
 	ctx := context.Background()
 	now := time.Now()

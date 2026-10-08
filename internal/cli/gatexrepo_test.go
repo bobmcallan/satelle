@@ -15,6 +15,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/gatehandle"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/verb"
 )
 
 // A gate handle written into another repo's store than the one whose hooks serve
@@ -504,8 +505,13 @@ func TestXRepo_DeliveryRowLandsInTheHoldingRepoLedger(t *testing.T) {
 	m := crossRepoGate(t, a, b, aRoot, bRoot, xrepoSession, "sty_x8")
 	finishGate(t, b, m, "accepted ledger")
 
+	withVerbWiring(t)
+	_, changed := verb.SnapshotWiring()
 	if got := gateDeliveryFor(0); !strings.Contains(got, m.ID) {
 		t.Fatalf("not delivered:\n%s", got)
+	}
+	if got := changed(); len(got) != 0 {
+		t.Errorf("the real delivery recorder left verb wiring changed: %v", got)
 	}
 	if n := driverRowsFor(t, bRoot, "sty_x8"); n != 1 {
 		t.Errorf("B's ledger has %d delivery rows for the story, want 1", n)

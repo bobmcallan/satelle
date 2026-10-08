@@ -36,6 +36,7 @@ requires = ["coded"]
 
 func setupProofRepo(t *testing.T) (dir string) {
 	t.Helper()
+	withWiring(t)
 	dir = t.TempDir()
 	run := func(args ...string) {
 		t.Helper()
@@ -60,7 +61,6 @@ func setupProofRepo(t *testing.T) (dir string) {
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 	wireWithWorkflows(t, proofWorkflow())
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 	return dir
 }
 

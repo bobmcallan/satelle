@@ -110,6 +110,7 @@ requires = ["coded"]
 // attempt's work item names a prior_verdicts file that holds the first verdict.
 // The backlog→plan verdict seeded alongside must not appear (AC2).
 func TestSecondGateAttemptStdinCarriesPriorVerdict(t *testing.T) {
+	withWiring(t)
 	const (
 		firstNotes = "PV-E2E-FIRST-VERDICT-MARKER: AC3 is unplanned"
 		otherEdge  = "PV-E2E-OTHER-EDGE-MARKER"
@@ -145,7 +146,6 @@ func TestSecondGateAttemptStdinCarriesPriorVerdict(t *testing.T) {
 		return out
 	})
 	verb.SetTransitionGater(rev)
-	t.Cleanup(func() { verb.SetTransitionGater(nil); verb.SetStoryDir("") })
 
 	var story workitem.Item
 	if err := json.Unmarshal(call(t, "story-create", map[string]any{
@@ -201,6 +201,7 @@ func TestSecondGateAttemptStdinCarriesPriorVerdict(t *testing.T) {
 // reads the ledger through verb.PriorVerdicts and PriorVerdictFrom.
 func newPVHarness(t *testing.T, outs []string, resolver func(context.Context, string, string, string) []agentstep.PriorVerdict) (*captureRunner, workitem.Item) {
 	t.Helper()
+	withWiring(t)
 	db := wire(t)
 	verb.SetStoryDir(filepath.Join(t.TempDir(), "stories"))
 	wfDir, skillDir := t.TempDir(), t.TempDir()
@@ -227,7 +228,6 @@ func newPVHarness(t *testing.T, outs []string, resolver func(context.Context, st
 	}
 	rev.SetPriorVerdictsResolver(resolver)
 	verb.SetTransitionGater(rev)
-	t.Cleanup(func() { verb.SetTransitionGater(nil); verb.SetStoryDir("") })
 	var story workitem.Item
 	if err := json.Unmarshal(call(t, "story-create", map[string]any{
 		"title": "reviewed quotation", "category": "feature",

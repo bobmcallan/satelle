@@ -102,15 +102,10 @@ func TestParseChangelogInitHeals(t *testing.T) {
 
 func TestChangelogVerbFixture(t *testing.T) {
 	// Consumer channel is the embed; inject a fixture by overriding embed.
-	oldEmbed := embeddedChangelog
-	oldPath := changelogPath
+	withWiring(t)
 	embeddedChangelog = fixtureChangelog
 	// Disk path must not matter when embed is set.
 	changelogPath = func() string { return filepath.Join(t.TempDir(), "missing.md") }
-	t.Cleanup(func() {
-		embeddedChangelog = oldEmbed
-		changelogPath = oldPath
-	})
 
 	raw, err := changelogInvoke(context.Background(), mustJSON(map[string]any{
 		"from": "0.0.1", "to": "0.0.3",
@@ -155,9 +150,8 @@ func TestChangelogPreferEmbed(t *testing.T) {
 	if err := os.WriteFile(path, []byte("# empty disk\n## [9.9.9] - 2099-01-01\n### Fixed\n- lie\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	old := changelogPath
+	withWiring(t)
 	changelogPath = func() string { return path }
-	t.Cleanup(func() { changelogPath = old })
 
 	raw, err := changelogInvoke(context.Background(), mustJSON(map[string]any{
 		"from": "0.0.212", "to": "0.0.219",
@@ -182,14 +176,9 @@ func TestChangelogPreferEmbed(t *testing.T) {
 
 // TestChangelogAbsenceErrors: empty embed + missing disk → error, not empty success.
 func TestChangelogAbsenceErrors(t *testing.T) {
-	oldEmbed := embeddedChangelog
-	oldPath := changelogPath
+	withWiring(t)
 	embeddedChangelog = ""
 	changelogPath = func() string { return filepath.Join(t.TempDir(), "no-such-CHANGELOG.md") }
-	t.Cleanup(func() {
-		embeddedChangelog = oldEmbed
-		changelogPath = oldPath
-	})
 	_, err := changelogInvoke(context.Background(), mustJSON(map[string]any{
 		"from": "0.0.1", "to": "0.0.2",
 	}))

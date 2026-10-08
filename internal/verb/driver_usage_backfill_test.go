@@ -72,11 +72,10 @@ func useMultistoryRecord(t *testing.T) {
 // useBackfillRepo points the window reader at bfRepo, whether or not a record exists.
 func useBackfillRepo(t *testing.T) {
 	t.Helper()
-	prev := driverWindowReader
+	withWiring(t)
 	driverWindowReader = func(harness, sessionID, _ string, from, to time.Time) agentcli.DriverWindowUsage {
 		return agentcli.SessionWindowUsage(harness, sessionID, bfRepo, from, to)
 	}
-	t.Cleanup(func() { driverWindowReader = prev })
 }
 
 func bfPayloadAppend(t *testing.T, db *store.DB, storyID, kind string, payload any, at time.Time) {

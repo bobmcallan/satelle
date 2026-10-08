@@ -237,10 +237,7 @@ func runRootSplit(t *testing.T, stdin string, args ...string) (stdout, stderr st
 	root.SetErr(&errBuf)
 	root.SetIn(strings.NewReader(stdin))
 	root.SetArgs(args)
-	c, err := root.ExecuteC()
-	if c != nil {
-		closeAppForCmd(c)
-	}
+	err = executeRoot(root)
 	return out.String(), errBuf.String(), err
 }
 

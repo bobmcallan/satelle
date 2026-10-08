@@ -15,6 +15,7 @@ import (
 // cleanup so cases don't leak globals into each other.
 func wire(t *testing.T) *store.DB {
 	t.Helper()
+	withWiring(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -26,11 +27,6 @@ func wire(t *testing.T) *store.DB {
 	verb.SetLeaseStore(db.Leases)
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetDocIndexStore(nil)
-		verb.SetLeaseStore(nil)
 	})
 	return db
 }
@@ -64,6 +60,7 @@ func TestVersionVerbNeedsNoStore(t *testing.T) {
 }
 
 func TestStoreNotConfigured(t *testing.T) {
+	withWiring(t)
 	verb.SetWorkItemStore(nil)
 	if _, err := verb.Dispatch(context.Background(), "story-list", nil); err == nil {
 		t.Error("expected ErrStoreNotConfigured when unwired")

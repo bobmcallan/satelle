@@ -24,12 +24,11 @@ func TestDriverUsageHarnessFromPublishedSessionOverEnv(t *testing.T) {
 	config.PublishSessionModel("01a0e397-grok-session", SessionModelRoleInLoop, "unknown", agentcli.HarnessGrok, "grok's hook payload carries no model")
 
 	var sawHarness string
-	prev := driverSnapshotter
+	withWiring(t)
 	driverSnapshotter = func(harness, sessionID, repoRoot string) agentcli.DriverSnapshot {
 		sawHarness = harness
 		return agentcli.DriverSnapshot{Available: true, FreshInputTokens: 10, OutputTokens: 1, Turns: 1}
 	}
-	t.Cleanup(func() { driverSnapshotter = prev })
 
 	item := workitem.Item{ID: "sty_du_harness", Kind: workitem.KindStory, Status: "ready"}
 	recordDriverUsage(context.Background(), item, "backlog", "ready", time.Unix(1_700_000_000, 0))
@@ -64,9 +63,8 @@ func TestStorySetWritesDriverUsageThroughDispatch(t *testing.T) {
 	// The test sets the session's cumulative usage before each step; every
 	// snapshot the recorder takes during that step reads the same figure.
 	cur := agentcli.DriverSnapshot{Available: true, Model: "claude-opus-5-5", FreshInputTokens: 100, OutputTokens: 10, Turns: 1}
-	prev := driverSnapshotter
+	withWiring(t)
 	driverSnapshotter = func(harness, sessionID, repoRoot string) agentcli.DriverSnapshot { return cur }
-	t.Cleanup(func() { driverSnapshotter = prev })
 	grow := func(fresh, out int) {
 		cur.FreshInputTokens += fresh
 		cur.OutputTokens += out

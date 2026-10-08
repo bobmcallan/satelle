@@ -23,6 +23,7 @@ import (
 // external verb_test package (sty_8eae81ac).
 func wireActualWF(t *testing.T) *store.DB {
 	t.Helper()
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -55,11 +56,6 @@ func wireActualWF(t *testing.T) *store.DB {
 	verb.SetLeaseStore(db.Leases)
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetDocIndexStore(nil)
-		verb.SetLeaseStore(nil)
 	})
 	return db
 }

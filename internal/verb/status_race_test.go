@@ -33,12 +33,12 @@ func (f dispatcherFunc) DispatchExecutor(ctx context.Context, it workitem.Item, 
 // it was handed, returning the story id and the dispatched agent's snapshot.
 func engageWithDispatch(t *testing.T, db *store.DB) (string, workitem.Item) {
 	t.Helper()
+	withWiring(t)
 	var seen workitem.Item
 	verb.SetExecutorDispatcher(dispatcherFunc(func(_ context.Context, it workitem.Item, _ string) (verb.DispatchResult, error) {
 		seen = it
 		return verb.DispatchResult{Dispatched: true, Agent: "planner", Command: "fake {system}", Skill: "plan"}, nil
 	}))
-	t.Cleanup(func() { verb.SetExecutorDispatcher(nil) })
 
 	var it workitem.Item
 	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "race", "status": "backlog"}), &it); err != nil {
@@ -99,6 +99,7 @@ func TestDispatchedAgentSeesPreTransitionRowAndUnguardedLateWriteReverts(t *test
 // status, and a now-stamped Upsert of the FROM row, must not leave stored
 // status at FROM while the last status_transition is TO.
 func TestLateSnapshotWriteCannotRevertStatus(t *testing.T) {
+	withWiring(t)
 	// Workflow DOT so refuseSkippedStep fences reverse in_progress→backlog
 	// (without a DOT the fence fail-opens and a transitioning reverse would land).
 	db := wireWithWorkflowsStore(t, freezeWF)
@@ -108,7 +109,6 @@ func TestLateSnapshotWriteCannotRevertStatus(t *testing.T) {
 		seen = it
 		return verb.DispatchResult{Dispatched: true, Agent: "planner", Command: "fake {system}", Skill: "plan"}, nil
 	}))
-	t.Cleanup(func() { verb.SetExecutorDispatcher(nil) })
 
 	var it workitem.Item
 	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "race-snap", "status": "backlog"}), &it); err != nil {
@@ -213,6 +213,7 @@ func TestLateAgentWriteCannotRevertTransition(t *testing.T) {
 // silently overwriting whatever landed. Nothing is written, and no
 // status_transition row is appended (the CAS failure rolls the tx back).
 func TestTransitionRefusedWhenStatusMovesUnderDispatch(t *testing.T) {
+	withWiring(t)
 	db := wire(t)
 	ctx := context.Background()
 
@@ -224,7 +225,6 @@ func TestTransitionRefusedWhenStatusMovesUnderDispatch(t *testing.T) {
 		}
 		return verb.DispatchResult{Dispatched: true, Agent: "planner", Command: "fake {system}", Skill: "plan"}, nil
 	}))
-	t.Cleanup(func() { verb.SetExecutorDispatcher(nil) })
 
 	var it workitem.Item
 	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "moved", "status": "backlog"}), &it); err != nil {

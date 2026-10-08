@@ -72,9 +72,9 @@ func (s *amendStub) ReviewAmend(_ context.Context, d verb.AmendDraft) (verb.Gate
 
 func wireAmend(t *testing.T, stub *amendStub) *store.DB {
 	t.Helper()
+	withWiring(t)
 	db := wireWithWorkflowsStore(t, amendWF)
 	verb.SetAmendReviewer(stub)
-	t.Cleanup(func() { verb.SetAmendReviewer(nil) })
 	return db
 }
 
@@ -194,6 +194,7 @@ func TestAmendAcceptedRecordsBeforeAndAfter(t *testing.T) {
 // judges this": no reviewer wired at all, and a reviewer reporting that the
 // workflow declares no amend_review hook.
 func TestAmendRefusedWhenNoGateIsDeclared(t *testing.T) {
+	withWiring(t)
 	db := wireWithWorkflowsStore(t, amendWF)
 	verb.SetAmendReviewer(nil)
 	before := engagedStory(t, "Ungated", "1. original")
@@ -207,7 +208,6 @@ func TestAmendRefusedWhenNoGateIsDeclared(t *testing.T) {
 
 	stub := &amendStub{dec: verb.GateDecision{Gated: false}}
 	verb.SetAmendReviewer(stub)
-	t.Cleanup(func() { verb.SetAmendReviewer(nil) })
 	err = dispatchErr(t, "story-amend", map[string]any{
 		"id": before.ID, "acceptance_criteria": "1. corrected", "reason": "wrong AC",
 	})
@@ -267,6 +267,7 @@ func TestStorySetOnFrozenFieldStillRefusedAndNamesAmend(t *testing.T) {
 // AC4 — the next gate judges the AMENDED definition: a gater that rejects while
 // the false AC is present accepts once it has been corrected.
 func TestAmendedDefinitionIsWhatTheNextGateJudges(t *testing.T) {
+	withWiring(t)
 	stub := &amendStub{dec: verb.GateDecision{Gated: true, Accept: true, Skill: "amend-review"}}
 	wireAmend(t, stub)
 	it := engagedStory(t, "Judged", "1. original\n2. FALSE CLAIM")
@@ -279,7 +280,6 @@ func TestAmendedDefinitionIsWhatTheNextGateJudges(t *testing.T) {
 		}
 		return verb.GateDecision{Gated: true, Accept: true, Skill: "ac-truth-review"}
 	}))
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 	if err := dispatchErr(t, "story-set", map[string]any{"id": it.ID, "status": "done"}); !strings.Contains(err.Error(), "AC2 is not true") {
 		t.Fatalf("expected the gate to reject the false AC, got %v", err)

@@ -15,6 +15,7 @@ import (
 // sty_5262592e AC2: when the route cannot be resolved the freeze fails CLOSED — an
 // edit is refused rather than permitted by a rule nobody could evaluate.
 func TestDefinitionEditRefusedWhenRouteUnresolvable(t *testing.T) {
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -38,11 +39,6 @@ func TestDefinitionEditRefusedWhenRouteUnresolvable(t *testing.T) {
 	verb.SetLeaseStore(db.Leases)
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetDocIndexStore(nil)
-		verb.SetLeaseStore(nil)
 	})
 	it := newFeature(t)
 	call(t, "story-set", map[string]any{"id": it.ID, "title": "resolvable"}) // editable while the route resolves

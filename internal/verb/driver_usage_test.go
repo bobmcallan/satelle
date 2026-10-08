@@ -39,6 +39,7 @@ func plantedHoldersDead(t *testing.T) {
 
 func wireDU(t *testing.T) *store.DB {
 	t.Helper()
+	withWiring(t)
 	plantedHoldersDead(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
@@ -49,14 +50,7 @@ func wireDU(t *testing.T) *store.DB {
 	SetTxRunner(db.InTx)
 	SetDocIndexStore(db.DocIndex)
 	SetLeaseStore(db.Leases)
-	t.Cleanup(func() {
-		db.Close()
-		SetWorkItemStore(nil)
-		SetLedgerStore(nil)
-		SetTxRunner(nil)
-		SetDocIndexStore(nil)
-		SetLeaseStore(nil)
-	})
+	t.Cleanup(func() { db.Close() })
 	return db
 }
 
@@ -65,8 +59,8 @@ func wireDU(t *testing.T) *store.DB {
 // and restores the real reader on cleanup.
 func stubSnapshotter(t *testing.T, seq ...agentcli.DriverSnapshot) {
 	t.Helper()
+	withWiring(t)
 	i := 0
-	prev := driverSnapshotter
 	driverSnapshotter = func(harness, sessionID, repoRoot string) agentcli.DriverSnapshot {
 		if i >= len(seq) {
 			return seq[len(seq)-1]
@@ -75,7 +69,6 @@ func stubSnapshotter(t *testing.T, seq ...agentcli.DriverSnapshot) {
 		i++
 		return s
 	}
-	t.Cleanup(func() { driverSnapshotter = prev })
 }
 
 func driverUsageRows(t *testing.T, db *store.DB, storyID string) []DriverUsagePayload {
@@ -1070,6 +1063,7 @@ func wireDUWithEngagingWorkflow(t *testing.T) *store.DB {
 // table and the "step" states) synced into DocIndex.
 func wireDUWithWorkflow(t *testing.T, doneTable, stepStates string) *store.DB {
 	t.Helper()
+	withWiring(t)
 	plantedHoldersDead(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
@@ -1097,14 +1091,7 @@ func wireDUWithWorkflow(t *testing.T, doneTable, stepStates string) *store.DB {
 	SetTxRunner(db.InTx)
 	SetDocIndexStore(db.DocIndex)
 	SetLeaseStore(db.Leases)
-	t.Cleanup(func() {
-		db.Close()
-		SetWorkItemStore(nil)
-		SetLedgerStore(nil)
-		SetTxRunner(nil)
-		SetDocIndexStore(nil)
-		SetLeaseStore(nil)
-	})
+	t.Cleanup(func() { db.Close() })
 	return db
 }
 
@@ -1197,7 +1184,7 @@ func (f *fakeTurnSession) flushTurn(fresh, out int) {
 // flip availability between two calls into the SAME session).
 func stubSessionSnapshotter(t *testing.T, sessions map[string]*fakeTurnSession) {
 	t.Helper()
-	prev := driverSnapshotter
+	withWiring(t)
 	driverSnapshotter = func(harness, sessionID, repoRoot string) agentcli.DriverSnapshot {
 		if s, ok := sessions[sessionID]; ok {
 			snap := s.snapshot()
@@ -1206,7 +1193,6 @@ func stubSessionSnapshotter(t *testing.T, sessions map[string]*fakeTurnSession) 
 		}
 		return agentcli.DriverSnapshot{UnavailableReason: "test: no fake session wired for " + sessionID}
 	}
-	t.Cleanup(func() { driverSnapshotter = prev })
 }
 
 // assertTurnCreditInvariant is the Revision 5 property check, run after every

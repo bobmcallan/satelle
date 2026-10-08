@@ -19,6 +19,7 @@ import (
 // of truth), and a repeat sync with no changes is a no-op (so the continuous
 // serve watcher doesn't churn the store).
 func TestSyncTasks(t *testing.T) {
+	withWiring(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -26,7 +27,6 @@ func TestSyncTasks(t *testing.T) {
 	defer db.Close()
 	dir := t.TempDir()
 	verb.SetTaskDir(dir)
-	defer verb.SetTaskDir("")
 
 	ctx := context.Background()
 	now := time.Now()
@@ -79,6 +79,7 @@ func TestSyncTasks(t *testing.T) {
 // execution is adopted to that folder, and a hand-authored run file in the
 // folder is ingested and stamped with the folder's task id as its parent.
 func TestSyncExecutions(t *testing.T) {
+	withWiring(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -86,7 +87,6 @@ func TestSyncExecutions(t *testing.T) {
 	defer db.Close()
 	dir := t.TempDir()
 	verb.SetTaskDir(dir)
-	defer verb.SetTaskDir("")
 
 	ctx := context.Background()
 	now := time.Now()
@@ -134,6 +134,7 @@ func TestSyncExecutions(t *testing.T) {
 // syncTasksFixture stands up a temp store + task dir for the id-resolution tests.
 func syncTasksFixture(t *testing.T) (*store.DB, string, context.Context) {
 	t.Helper()
+	withWiring(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -141,7 +142,6 @@ func syncTasksFixture(t *testing.T) (*store.DB, string, context.Context) {
 	t.Cleanup(func() { db.Close() })
 	dir := t.TempDir()
 	verb.SetTaskDir(dir)
-	t.Cleanup(func() { verb.SetTaskDir("") })
 	return db, dir, context.Background()
 }
 

@@ -140,10 +140,7 @@ func runRootIn(t *testing.T, stdin string, args ...string) (string, error) {
 	root.SetErr(&buf)
 	root.SetIn(strings.NewReader(stdin))
 	root.SetArgs(args)
-	c, err := root.ExecuteC()
-	if c != nil {
-		closeAppForCmd(c)
-	}
+	err := executeRoot(root)
 	return buf.String(), err
 }
 

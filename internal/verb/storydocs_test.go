@@ -13,6 +13,7 @@ import (
 )
 
 func TestStoryDocAttachListGet(t *testing.T) {
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -25,11 +26,6 @@ func TestStoryDocAttachListGet(t *testing.T) {
 	verb.SetStoryDir(filepath.Join(dir, "stories"))
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetDocIndexStore(nil)
-		verb.SetStoryDir("")
 	})
 
 	var st workitem.Item
@@ -76,6 +72,7 @@ func TestStoryDocAttachListGet(t *testing.T) {
 }
 
 func TestStoryLessonsListAcrossStories(t *testing.T) {
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -88,11 +85,6 @@ func TestStoryLessonsListAcrossStories(t *testing.T) {
 	verb.SetStoryDir(filepath.Join(dir, "stories"))
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetDocIndexStore(nil)
-		verb.SetStoryDir("")
 	})
 
 	var a, b workitem.Item

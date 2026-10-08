@@ -19,6 +19,7 @@ import (
 // drive SyncTasks and inspect on-disk files.
 func wireTasks(t *testing.T) (*workitem.Store, string) {
 	t.Helper()
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -31,10 +32,6 @@ func wireTasks(t *testing.T) (*workitem.Store, string) {
 	verb.SetTaskDir(taskDir)
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetTaskDir("")
 	})
 	return db.Stories, taskDir
 }

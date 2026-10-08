@@ -33,13 +33,13 @@ func TestGateInvocationRowCarriesToolIsolation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			withWiring(t)
 			db := wire(t)
 			verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
 				Gated: true, Accept: true, Skill: "satelle-story-done-review", Notes: "n",
 				Command: "claude -p", Context: "satelle-story-done-review",
 				SystemPromptBytes: 1234, PayloadBytes: 56, ToolIsolation: tc.iso,
 			}})
-			t.Cleanup(func() { verb.SetTransitionGater(nil) })
 
 			var it workitem.Item
 			if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it); err != nil {

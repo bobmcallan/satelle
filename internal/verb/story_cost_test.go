@@ -18,6 +18,7 @@ import (
 // measured rows sum into TotalTokens; unreported rows are counted but do not
 // feed the total; a measured zero still participates.
 func TestComputeStoryCost(t *testing.T) {
+	withWiring(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -25,7 +26,6 @@ func TestComputeStoryCost(t *testing.T) {
 	defer db.Close()
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetTxRunner(db.InTx)
-	defer verb.SetLedgerStore(nil)
 	verb.SetTxRunner(nil)
 
 	ctx := context.Background()
@@ -101,6 +101,7 @@ func TestComputeStoryCost(t *testing.T) {
 // inflate UnmeasuredRows — the mechanism it used to before it got its own
 // ledger kind.
 func TestComputeStoryCostExcludesToolPermissionRows(t *testing.T) {
+	withWiring(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -108,7 +109,6 @@ func TestComputeStoryCostExcludesToolPermissionRows(t *testing.T) {
 	defer db.Close()
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetTxRunner(db.InTx)
-	defer verb.SetLedgerStore(nil)
 	verb.SetTxRunner(nil)
 
 	ctx := context.Background()
@@ -149,6 +149,7 @@ func TestComputeStoryCostExcludesToolPermissionRows(t *testing.T) {
 // but carrying per-model costUSD, derives its cost from that per-model sum
 // (ledger.EventTelemetry's fallback) rather than reporting unknown.
 func TestComputeStoryCostDollars(t *testing.T) {
+	withWiring(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -156,7 +157,6 @@ func TestComputeStoryCostDollars(t *testing.T) {
 	defer db.Close()
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetTxRunner(db.InTx)
-	defer verb.SetLedgerStore(nil)
 	verb.SetTxRunner(nil)
 
 	ctx := context.Background()
@@ -222,6 +222,7 @@ func TestComputeStoryCostDollars(t *testing.T) {
 // fresh/cache-write/cache-read split separate from legacy "unsplit" input so
 // a row recorded before the split existed still reconciles into the total.
 func TestComputeSkillRollup(t *testing.T) {
+	withWiring(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -229,7 +230,6 @@ func TestComputeSkillRollup(t *testing.T) {
 	defer db.Close()
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetTxRunner(db.InTx)
-	defer verb.SetLedgerStore(nil)
 	verb.SetTxRunner(nil)
 
 	ctx := context.Background()
@@ -321,6 +321,7 @@ func TestComputeSkillRollup(t *testing.T) {
 // per-model cost counts, and a row with no cost is counted as uncosted —
 // never folded into the total as zero.
 func TestComputeSkillRollupDollars(t *testing.T) {
+	withWiring(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -328,7 +329,6 @@ func TestComputeSkillRollupDollars(t *testing.T) {
 	defer db.Close()
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetTxRunner(db.InTx)
-	defer verb.SetLedgerStore(nil)
 	verb.SetTxRunner(nil)
 
 	ctx := context.Background()
@@ -384,6 +384,7 @@ func TestComputeSkillRollupDollars(t *testing.T) {
 }
 
 func TestComputeSkillRollupPagesBeyondOnePage(t *testing.T) {
+	withWiring(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -391,7 +392,6 @@ func TestComputeSkillRollupPagesBeyondOnePage(t *testing.T) {
 	defer db.Close()
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetTxRunner(db.InTx)
-	defer verb.SetLedgerStore(nil)
 	verb.SetTxRunner(nil)
 
 	orig := ledger.ForEachKindPageSize
@@ -437,6 +437,7 @@ func TestComputeSkillRollupPagesBeyondOnePage(t *testing.T) {
 // "unknown" for a legacy row that predates both fields — without back-filling
 // the stored payload.
 func TestComputeStoryCostRecordsResolvedModel(t *testing.T) {
+	withWiring(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -444,7 +445,6 @@ func TestComputeStoryCostRecordsResolvedModel(t *testing.T) {
 	defer db.Close()
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetTxRunner(db.InTx)
-	defer verb.SetLedgerStore(nil)
 	verb.SetTxRunner(nil)
 
 	ctx := context.Background()
@@ -502,6 +502,7 @@ func TestComputeStoryCostRecordsResolvedModel(t *testing.T) {
 // step_cost entry merges its self-reported actual tokens + per-step estimate onto
 // the matching step. A re-entered state sums its occupancy.
 func TestComputeStoryCostSteps(t *testing.T) {
+	withWiring(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -509,7 +510,6 @@ func TestComputeStoryCostSteps(t *testing.T) {
 	defer db.Close()
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetTxRunner(db.InTx)
-	defer verb.SetLedgerStore(nil)
 	verb.SetTxRunner(nil)
 
 	ctx := context.Background()
@@ -584,6 +584,7 @@ func TestComputeStoryCostSteps(t *testing.T) {
 // TestComputeStoryCostStepCostDurationOverride: an explicit --time on a step_cost
 // overrides the derived wall-time for that step.
 func TestComputeStoryCostStepCostDurationOverride(t *testing.T) {
+	withWiring(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -591,7 +592,6 @@ func TestComputeStoryCostStepCostDurationOverride(t *testing.T) {
 	defer db.Close()
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetTxRunner(db.InTx)
-	defer verb.SetLedgerStore(nil)
 	verb.SetTxRunner(nil)
 
 	ctx := context.Background()

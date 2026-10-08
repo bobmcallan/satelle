@@ -26,6 +26,7 @@ type engageHarness struct {
 
 func newEngageHarness(t *testing.T, session string) *engageHarness {
 	t.Helper()
+	withWiring(t)
 	h := &engageHarness{t: t, db: wireDU(t)}
 	if session != "" {
 		t.Setenv(config.SessionEnv, session)
@@ -34,7 +35,6 @@ func newEngageHarness(t *testing.T, session string) *engageHarness {
 	stubSnapshotter(t, agentcli.DriverSnapshot{Available: true, Model: "claude-opus-5-5",
 		FreshInputTokens: 100, CacheReadInputTokens: 50, CacheCreationInputTokens: 10, OutputTokens: 10, Turns: 1})
 	SetVerdictRecorder(func(s string) { h.lines = append(h.lines, s) })
-	t.Cleanup(func() { SetVerdictRecorder(nil); SetAgentBudgets(nil) })
 	return h
 }
 

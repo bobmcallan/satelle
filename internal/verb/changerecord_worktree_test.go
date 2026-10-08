@@ -36,6 +36,7 @@ type substrateFixture struct {
 
 func newSubstrateFixture(t *testing.T, fromWorktree bool, wiring wtWiring) substrateFixture {
 	t.Helper()
+	withWiring(t)
 	main := gitRepo(t)
 	skills := filepath.Join(main, ".satelle", "skills")
 	if err := os.MkdirAll(skills, 0o755); err != nil {
@@ -67,14 +68,6 @@ func newSubstrateFixture(t *testing.T, fromWorktree bool, wiring wtWiring) subst
 	if wiring == wireProbeCfg {
 		verb.SetProcessProbe(&verb.ProcessProbe{ProcessRoot: main, InvokingRoot: tree})
 	}
-	t.Cleanup(func() {
-		verb.SetTransitionGater(nil)
-		verb.SetStoryDir("")
-		verb.SetAuthoredDirs(nil)
-		verb.SetSubstrateConfigDir("")
-		verb.ClearWorktreeConfig()
-		verb.SetProcessProbe(nil)
-	})
 
 	json.Unmarshal(call(t, "story-create", map[string]any{
 		"title": "wt substrate", "body": "g", "acceptance_criteria": "1. ok",

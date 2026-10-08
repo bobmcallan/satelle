@@ -32,6 +32,7 @@ func (costSummariser) MandatorySummary(_ context.Context, _ workitem.Item) bool 
 // documented gap (sty_a699ad14) — folds into `satelle story cost`. Driven through
 // the `story-resummarise` verb, which shares recordStepSummary's write path.
 func TestSummariserCostFoldsIntoAgentInvocation(t *testing.T) {
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -45,12 +46,6 @@ func TestSummariserCostFoldsIntoAgentInvocation(t *testing.T) {
 	verb.SetStepSummariser(costSummariser{})
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetDocIndexStore(nil)
-		verb.SetStoryDir("")
-		verb.SetStepSummariser(nil)
 	})
 
 	var st workitem.Item
@@ -83,6 +78,7 @@ func TestSummariserCostFoldsIntoAgentInvocation(t *testing.T) {
 // invocation (Command empty — e.g. a stubbed/local summariser) records the
 // step_summary text but writes NO agent_invocation cost row.
 func TestSummariserNoCostRowWhenNoCommand(t *testing.T) {
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -96,12 +92,6 @@ func TestSummariserNoCostRowWhenNoCommand(t *testing.T) {
 	verb.SetStepSummariser(stubSummariser{out: "recap only", mandatory: true})
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetDocIndexStore(nil)
-		verb.SetStoryDir("")
-		verb.SetStepSummariser(nil)
 	})
 
 	var st workitem.Item
@@ -134,6 +124,7 @@ func (costUSDSummariser) MandatorySummary(_ context.Context, _ workitem.Item) bo
 // invocation's dollar cost reaches the ledger's agent_invocation row
 // (cost_usd) and story cost totals it — not just tokens.
 func TestSummariserCostUSDFoldsIntoAgentInvocation(t *testing.T) {
+	withWiring(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -147,12 +138,6 @@ func TestSummariserCostUSDFoldsIntoAgentInvocation(t *testing.T) {
 	verb.SetStepSummariser(costUSDSummariser{})
 	t.Cleanup(func() {
 		db.Close()
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetDocIndexStore(nil)
-		verb.SetStoryDir("")
-		verb.SetStepSummariser(nil)
 	})
 
 	var st workitem.Item

@@ -157,6 +157,7 @@ func entryIDs(m map[string]ledger.Entry) []string {
 // window, shows on machine B after a pull with the same status_transition rows
 // (every from→to, same ids) and change_record rows (same ids, same head_sha).
 func TestTwoMachineStoryArrivesWithTransitionsAndChangeRecords(t *testing.T) {
+	withVerbWiring(t)
 	ts, _ := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
 	t.Setenv("SATELLE_HOME", t.TempDir())
@@ -189,24 +190,9 @@ func TestTwoMachineStoryArrivesWithTransitionsAndChangeRecords(t *testing.T) {
 	verb.SetDocIndexStore(a.db.DocIndex)
 	verb.SetLeaseStore(a.db.Leases)
 	verb.SetStoryDir(filepath.Join(a.repo, "stories"))
-	// A prior runRoot left its (now closed) app's engine wired behind these
-	// seams; this test drives the verb layer on its own stores.
-	verb.SetWorkflowResolver(nil)
-	verb.SetExecutorDispatcher(nil)
-	verb.SetStepSummariser(nil)
-	verb.SetCreateReviewer(nil)
-	verb.SetAmendReviewer(nil)
-	verb.SetRetrospector(nil)
+	// Only the gater is wired: this test drives the verb layer on its own
+	// stores, with no reviewer engine behind the other seams.
 	verb.SetTransitionGater(pushInGateGater{t: t, m: a, server: ts.URL})
-	t.Cleanup(func() {
-		verb.SetTransitionGater(nil)
-		verb.SetStoryDir("")
-		verb.SetWorkItemStore(nil)
-		verb.SetLedgerStore(nil)
-		verb.SetTxRunner(nil)
-		verb.SetDocIndexStore(nil)
-		verb.SetLeaseStore(nil)
-	})
 
 	dispatch := func(name string, req map[string]any) workitem.Item {
 		t.Helper()

@@ -18,7 +18,7 @@ func TestWorktreeSeatKeyUsesProcessConfig(t *testing.T) {
 	t.Setenv("SATELLE_HOME", t.TempDir())
 	t.Setenv("SATELLE_CONFIG", "")
 	t.Setenv("SATELLE_SERVER_ENDPOINT", "none")
-	t.Cleanup(ClearEngagementMode)
+	withWiring(t)
 
 	base := t.TempDir()
 	main := filepath.Join(base, "proj")

@@ -50,6 +50,7 @@ requires = ["released"]
 // cwd, wired with the tidy workflow.
 func tidyRepo(t *testing.T) string {
 	t.Helper()
+	withWiring(t)
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +76,6 @@ func tidyRepo(t *testing.T) string {
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 	wireWithWorkflows(t, tidyWF)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
-	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 	return dir
 }
 
