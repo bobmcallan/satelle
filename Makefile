@@ -53,7 +53,9 @@ uninstall:
 	@echo "removed $(INSTALL_DIR)/$(BIN) and $(INSTALL_DIR)/$(SERVE_BIN) (run 'satelle service uninstall' first if the service is installed)"
 
 # Every go test target below runs under scripts/credguard.sh, which fails the
-# target if the suite changed the operator's host credentials file (sty_18403814).
+# target if the suite changed the operator's host credentials file (sty_18403814),
+# the top level of the real ~/.satelle, or the installed satelle/satelled
+# binaries (sty_1b739a74).
 CREDGUARD := sh scripts/credguard.sh --
 
 test:
