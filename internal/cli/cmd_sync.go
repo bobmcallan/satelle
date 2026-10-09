@@ -62,6 +62,7 @@ catalogs are a separate verb: satelle publish.`,
 	syncCmd.Flags().StringVar(&syncServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	syncCmd.Flags().BoolVar(&syncDryRun, "dry-run", false, "Preview what each opted-in area would push without contacting the server (documents pull is not previewed).")
 	syncCmd.Flags().Bool("prune", false, pruneFlagUsage)
+	syncCmd.Flags().Bool("force", false, forceFlagUsage)
 	syncCmd.AddCommand(&cobra.Command{
 		Use:   "scopes",
 		Short: "Print each .satelle area's resolved scope, and shared files within a personal area",
@@ -322,7 +323,7 @@ another repo. Identical content is idempotent (no new version). Files with a
 destination; use satelle publish to expose artifacts to a team catalog.
 Requires "satelle project bind <slug>".
 
-Pushes publish each area as one snapshot (deletes propagate) and are refused when another machine pushed since your last sync: deploy first.`,
+Pushes publish each area as one snapshot (deletes propagate) and are refused when another machine pushed since your last sync: deploy first, or pass --force to publish this tree over it.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncConfigPush(cmd, pushServer, pushWorkspace, dryRun)
 		},
@@ -331,6 +332,7 @@ Pushes publish each area as one snapshot (deletes propagate) and are refused whe
 	push.Flags().StringVar(&pushWorkspace, "workspace", "", "Ignored for push (sync is personal-only; kept for flag compatibility).")
 	push.Flags().BoolVar(&dryRun, "dry-run", false, "List what would be pushed without contacting the server.")
 	push.Flags().Bool("prune", false, pruneFlagUsage)
+	push.Flags().Bool("force", false, forceFlagUsage)
 	group.AddCommand(push)
 
 	var deployServer, deployWorkspace string

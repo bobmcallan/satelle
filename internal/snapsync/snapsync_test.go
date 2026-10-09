@@ -253,7 +253,7 @@ func TestPlanPushRefusals(t *testing.T) {
 	eff := rec(0, map[string]string{"a": "1"})
 
 	// Behind: base 1, hosted effective 2.
-	_, err := PlanPush("skills", "satelle sync rehydrate", "loc", false, &hosted.AreaBase{Version: 1, Files: map[string]string{"a": "1"}}, 2, eff,
+	_, err := PlanPush("skills", "satelle sync rehydrate", "loc", false, false, &hosted.AreaBase{Version: 1, Files: map[string]string{"a": "1"}}, 2, eff,
 		map[string]string{"a": "1"}, map[string]string{"a": "1"}, none)
 	var behind *ErrBehind
 	if !errors.As(err, &behind) || behind.Base != 1 || behind.Effective != 2 {
@@ -266,13 +266,13 @@ func TestPlanPushRefusals(t *testing.T) {
 	}
 
 	// A machine that has never synced, against a hosted snapshot.
-	_, err = PlanPush("skills", "pull", "loc", false, nil, 2, eff, map[string]string{"a": "1"}, nil, none)
+	_, err = PlanPush("skills", "pull", "loc", false, false, nil, 2, eff, map[string]string{"a": "1"}, nil, none)
 	if !errors.As(err, &behind) || behind.Base != 0 {
 		t.Fatalf("no base vs snapshot 2: %v", err)
 	}
 
 	// Unmerged.
-	_, err = PlanPush("skills", "pull", "loc", false,
+	_, err = PlanPush("skills", "pull", "loc", false, false,
 		&hosted.AreaBase{Version: 2, Files: map[string]string{"a": "1"}, Unmerged: map[string]string{"a": "r"}}, 2, eff,
 		map[string]string{"a": "1"}, map[string]string{"a": "1"}, none)
 	var um *ErrUnmerged
@@ -281,7 +281,7 @@ func TestPlanPushRefusals(t *testing.T) {
 	}
 
 	// Versions agree but a hosted change is not applied here yet.
-	_, err = PlanPush("skills", "pull", "loc", false, &hosted.AreaBase{Version: 2, Files: map[string]string{"a": "0"}}, 2,
+	_, err = PlanPush("skills", "pull", "loc", false, false, &hosted.AreaBase{Version: 2, Files: map[string]string{"a": "0"}}, 2,
 		rec(0, map[string]string{"a": "1"}), map[string]string{"a": "0"}, map[string]string{"a": "1"}, none)
 	if !errors.As(err, &behind) || len(behind.Pending) != 1 {
 		t.Fatalf("err = %v, want ErrBehind with pending paths", err)
@@ -294,7 +294,7 @@ func TestPlanPushPublishesWholeStateAndOnlyChangedBlobs(t *testing.T) {
 	eff := rec(3, map[string]string{"keep": "k", "edit": "e0", "drop": "d"})
 	local := map[string]string{"keep": "k", "edit": "e1", "new": "n"}
 	heads := map[string]string{"keep": "k", "edit": "e0", "drop": "d"}
-	plan, err := PlanPush("skills", "pull", "loc", false, base, 4, eff, local, heads, none)
+	plan, err := PlanPush("skills", "pull", "loc", false, false, base, 4, eff, local, heads, none)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,9 +309,73 @@ func TestPlanPushPublishesWholeStateAndOnlyChangedBlobs(t *testing.T) {
 	}
 
 	// Nothing changed: no claim.
-	plan, err = PlanPush("skills", "pull", "loc", false, base, 4, eff, map[string]string{"keep": "k", "edit": "e0", "drop": "d"}, heads, none)
+	plan, err = PlanPush("skills", "pull", "loc", false, false, base, 4, eff, map[string]string{"keep": "k", "edit": "e0", "drop": "d"}, heads, none)
 	if err != nil || plan.Claim || len(plan.Uploads) != 0 {
 		t.Fatalf("unchanged tree: %+v %v, want no claim and no uploads", plan, err)
+	}
+}
+
+func TestPlanPushForceOverBehind(t *testing.T) {
+	none := func(string) bool { return false }
+	eff := rec(2, map[string]string{"a": "a1", "b": "b1"})
+	heads := map[string]string{"a": "a1", "b": "b1"}
+	local := map[string]string{"a": "a2"}
+
+	// Behind: this machine last synced snapshot 1, the hosted copy is at 3. A plain
+	// push is refused; the forced one publishes this tree on parent 3.
+	base := &hosted.AreaBase{Version: 1, Files: map[string]string{"a": "a0"}}
+	if _, err := PlanPush("skills", "pull", "loc", false, false, base, 3, eff, local, heads, none); err == nil {
+		t.Fatal("a behind push without force must be refused")
+	}
+	plan, err := PlanPush("skills", "pull", "loc", false, true, base, 3, eff, local, heads, none)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Claim || !plan.Forced || plan.BaseVersion != 1 || plan.Record.Parent != 3 {
+		t.Fatalf("plan = %+v, want a forced claim on parent 3 from base 1", plan)
+	}
+	if !reflect.DeepEqual(plan.Record.Files, local) {
+		t.Errorf("record files = %v, want exactly the local tree (b, only hosted, is absent)", plan.Record.Files)
+	}
+	if !reflect.DeepEqual(plan.Uploads, []string{"a"}) {
+		t.Errorf("uploads = %v, want only the changed blob", plan.Uploads)
+	}
+
+	// Versions agree but a hosted change is not applied here: also overridden.
+	base = &hosted.AreaBase{Version: 3, Files: map[string]string{"a": "a0", "b": "b1"}}
+	if _, err := PlanPush("skills", "pull", "loc", false, false, base, 3, eff, local, heads, none); err == nil {
+		t.Fatal("a push over unapplied hosted changes without force must be refused")
+	}
+	plan, err = PlanPush("skills", "pull", "loc", false, true, base, 3, eff, local, heads, none)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Claim || !plan.Forced || plan.Record.Parent != 3 || !reflect.DeepEqual(plan.Record.Files, local) {
+		t.Fatalf("plan = %+v, want a forced claim of exactly the local tree on parent 3", plan)
+	}
+
+	// Nothing to override: force does not mark an ordinary push as forced.
+	base = &hosted.AreaBase{Version: 3, Files: eff.Files}
+	plan, err = PlanPush("skills", "pull", "loc", false, true, base, 3, eff, eff.Files, heads, none)
+	if err != nil || plan.Forced || plan.Claim {
+		t.Fatalf("in-sync tree: %+v %v, want no claim and not forced", plan, err)
+	}
+}
+
+func TestPlanPushForceStillRefusesUnmerged(t *testing.T) {
+	none := func(string) bool { return false }
+	eff := rec(2, map[string]string{"a": "1"})
+	for _, baseVersion := range []int{3, 1} { // versions agree, then behind
+		base := &hosted.AreaBase{Version: baseVersion, Files: map[string]string{"a": "1"}, Unmerged: map[string]string{"a": "r"}}
+		plan, err := PlanPush("skills", "pull", "loc", false, true, base, 3, eff,
+			map[string]string{"a": "1"}, map[string]string{"a": "1"}, none)
+		var um *ErrUnmerged
+		if !errors.As(err, &um) || um.Paths[0] != "a" {
+			t.Fatalf("base %d: err = %v, want ErrUnmerged", baseVersion, err)
+		}
+		if plan.Claim || len(plan.Uploads) != 0 {
+			t.Errorf("base %d: plan = %+v, want an empty plan", baseVersion, plan)
+		}
 	}
 }
 
@@ -319,7 +383,7 @@ func TestPlanPushFirstClaimCarriesForwardUnlessPruned(t *testing.T) {
 	none := func(string) bool { return false }
 	local := map[string]string{"mine": "m"}
 	heads := map[string]string{"theirs": "t", "mine": "old"}
-	plan, err := PlanPush("documents", "pull", "loc", false, nil, 0, Record{}, local, heads, none)
+	plan, err := PlanPush("documents", "pull", "loc", false, false, nil, 0, Record{}, local, heads, none)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +393,7 @@ func TestPlanPushFirstClaimCarriesForwardUnlessPruned(t *testing.T) {
 	if !reflect.DeepEqual(plan.Uploads, []string{"mine"}) {
 		t.Errorf("uploads = %v", plan.Uploads)
 	}
-	plan, err = PlanPush("documents", "pull", "loc", true, nil, 0, Record{}, local, heads, none)
+	plan, err = PlanPush("documents", "pull", "loc", true, false, nil, 0, Record{}, local, heads, none)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,12 +401,12 @@ func TestPlanPushFirstClaimCarriesForwardUnlessPruned(t *testing.T) {
 		t.Errorf("--prune must drop hosted files the tree lacks: %v", plan.Record.Files)
 	}
 	// Prune of an empty tree still publishes.
-	plan, _ = PlanPush("documents", "pull", "loc", true, nil, 0, Record{}, map[string]string{}, heads, none)
+	plan, _ = PlanPush("documents", "pull", "loc", true, false, nil, 0, Record{}, map[string]string{}, heads, none)
 	if !plan.Claim {
 		t.Error("pruning every stale head from an empty tree must still claim")
 	}
 	// Nothing anywhere: nothing to publish.
-	plan, _ = PlanPush("documents", "pull", "loc", false, nil, 0, Record{}, map[string]string{}, map[string]string{}, none)
+	plan, _ = PlanPush("documents", "pull", "loc", false, false, nil, 0, Record{}, map[string]string{}, map[string]string{}, none)
 	if plan.Claim {
 		t.Error("an empty tree against an empty store must not claim")
 	}

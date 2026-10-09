@@ -50,6 +50,7 @@ catalog. Requires "satelle project bind <slug>".`,
 	push.Flags().StringVar(&pushWorkspace, "workspace", "", "Ignored for push (sync is personal-only; kept for flag compatibility).")
 	push.Flags().BoolVar(&dryRun, "dry-run", false, "List what would be pushed without contacting the server.")
 	push.Flags().Bool("prune", false, pruneFlagUsage)
+	push.Flags().Bool("force", false, forceFlagUsage)
 	group.AddCommand(push)
 
 	var pullServer, pullWorkspace string

@@ -266,6 +266,27 @@ type PushPlan struct {
 	Claim bool
 	// Uploads are the paths whose hosted head is not the snapshot's bytes.
 	Uploads []string
+	// Forced is set when force bypassed a behind refusal; BaseVersion is the
+	// snapshot this machine had last synced, for naming what was overridden.
+	Forced      bool
+	BaseVersion int
+}
+
+// unmergedRefusal is the refusal for a base that still holds conflict copies, or
+// nil when there are none.
+func unmergedRefusal(area string, base *hosted.AreaBase) *ErrUnmerged {
+	if base == nil || len(base.Unmerged) == 0 {
+		return nil
+	}
+	e := &ErrUnmerged{Area: area, Copies: map[string]string{}}
+	for p := range base.Unmerged {
+		e.Paths = append(e.Paths, p)
+	}
+	sort.Strings(e.Paths)
+	for _, p := range e.Paths {
+		e.Copies[p] = CopyPath(area, p)
+	}
+	return e
 }
 
 // PlanPush decides a push of local over the effective snapshot, or refuses it.
@@ -273,32 +294,41 @@ type PushPlan struct {
 // hosted change this machine has not applied — so a push can never publish a
 // view that silently reverts someone else's work.
 //
+// force is the operator's explicit override of the two behind refusals: this
+// tree is published as the next snapshot, parented on the effective one, so a
+// client that holds that snapshot can fast-forward to it. Files this tree lacks
+// are absent from it — there is no merge. force never overrides an unmerged
+// conflict copy, so that refusal is checked first.
+//
 // While the hosted copy has no snapshot yet, its heads are the live files of a
 // store that predates snapshots (nothing could be deleted there), so the first
 // claim carries them forward — local bytes winning where both exist — rather than
 // silently abandoning a file only another machine has. prune publishes this tree
 // as the whole truth instead: a head the tree lacks is dropped, which is how an
 // existing store's stale files are retired.
-func PlanPush(area, pullCmd, by string, prune bool, base *hosted.AreaBase, effVersion int, eff Record, local, heads map[string]string, copyExists func(path string) bool) (PushPlan, error) {
+func PlanPush(area, pullCmd, by string, prune, force bool, base *hosted.AreaBase, effVersion int, eff Record, local, heads map[string]string, copyExists func(path string) bool) (PushPlan, error) {
 	baseVersion := 0
 	if base != nil {
 		baseVersion = base.Version
 	}
+	if force {
+		if e := unmergedRefusal(area, base); e != nil {
+			return PushPlan{}, e
+		}
+	}
+	forced := false
 	if effVersion != baseVersion {
-		return PushPlan{}, &ErrBehind{Area: area, Base: baseVersion, Effective: effVersion, PullCmd: pullCmd}
-	}
-	if base != nil && len(base.Unmerged) > 0 {
-		e := &ErrUnmerged{Area: area, Copies: map[string]string{}}
-		for p := range base.Unmerged {
-			e.Paths = append(e.Paths, p)
+		if !force {
+			return PushPlan{}, &ErrBehind{Area: area, Base: baseVersion, Effective: effVersion, PullCmd: pullCmd}
 		}
-		sort.Strings(e.Paths)
-		for _, p := range e.Paths {
-			e.Copies[p] = CopyPath(area, p)
-		}
-		return PushPlan{}, e
+		forced = true
 	}
-	if effVersion > 0 {
+	if !force {
+		if e := unmergedRefusal(area, base); e != nil {
+			return PushPlan{}, e
+		}
+	}
+	if effVersion > 0 && !forced {
 		var pending []string
 		for _, e := range PlanPull(base, eff, effVersion, local, heads).Entries {
 			switch e.Action {
@@ -307,7 +337,10 @@ func PlanPush(area, pullCmd, by string, prune bool, base *hosted.AreaBase, effVe
 			}
 		}
 		if len(pending) > 0 {
-			return PushPlan{}, &ErrBehind{Area: area, Base: baseVersion, Effective: effVersion, Pending: pending, PullCmd: pullCmd}
+			if !force {
+				return PushPlan{}, &ErrBehind{Area: area, Base: baseVersion, Effective: effVersion, Pending: pending, PullCmd: pullCmd}
+			}
+			forced = true
 		}
 	}
 	files := local
@@ -326,7 +359,7 @@ func PlanPush(area, pullCmd, by string, prune bool, base *hosted.AreaBase, effVe
 	if err != nil {
 		return PushPlan{}, err
 	}
-	plan := PushPlan{Record: rec, Claim: !sameFiles(files, eff.Files)}
+	plan := PushPlan{Record: rec, Claim: !sameFiles(files, eff.Files), Forced: forced, BaseVersion: baseVersion}
 	if effVersion == 0 && prune && len(heads) > 0 {
 		plan.Claim = true // an empty tree pruning every stale head still publishes
 	}

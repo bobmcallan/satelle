@@ -191,6 +191,7 @@ func pushConfigSnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, dataDi
 		"satelle sync rehydrate", newConfigRecords(client, project, manifest),
 		&configBlobs{client: client, project: project, manifest: manifest})
 	d.Prune = pruneRequested(cmd)
+	d.Force = forceRequested(cmd)
 	return runSnapshotPush(cmd.Context(), d, byArea, areas)
 }
 
@@ -213,6 +214,7 @@ func pushDocumentsSnapshot(cmd *cobra.Command, cfg config.Config, repoRoot, data
 		"satelle sync documents pull", newConfigRecords(client, project, manifest),
 		&docBlobs{client: client, project: project})
 	d.Prune = pruneRequested(cmd)
+	d.Force = forceRequested(cmd)
 	return runSnapshotPush(cmd.Context(), d, map[string][]snapsync.PushFile{"documents": pf}, []string{"documents"})
 }
 
@@ -223,6 +225,17 @@ const pruneFlagUsage = "When the hosted copy has no snapshot yet, publish this t
 // that does not define it (a test's bare command) reads as false.
 func pruneRequested(cmd *cobra.Command) bool {
 	f := cmd.Flags().Lookup("prune")
+	return f != nil && f.Value.String() == "true"
+}
+
+// forceFlagUsage is the one help text every command that takes --force on a
+// snapshot push shares.
+const forceFlagUsage = "Publish this tree as the next snapshot even when the hosted copy is ahead of it: files only the hosted copy has are dropped (there is no merge), and other machines get this tree on their next deploy. An unmerged conflict copy is still refused. Applies to the config and documents pushes only."
+
+// forceRequested reads --force from the command that is running. A command
+// that does not define it (a test's bare command) reads as false.
+func forceRequested(cmd *cobra.Command) bool {
+	f := cmd.Flags().Lookup("force")
 	return f != nil && f.Value.String() == "true"
 }
 

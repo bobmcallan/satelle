@@ -70,6 +70,10 @@ type Driver struct {
 	// Prune makes a first claim (no hosted snapshot yet) publish this tree as the
 	// whole truth instead of carrying forward hosted files it lacks.
 	Prune bool
+	// Force publishes this tree as the next snapshot even when the hosted copy
+	// is ahead of it or holds changes it has not applied. It never overrides an
+	// unmerged conflict copy.
+	Force bool
 	// Materialize makes Stage return files already equal to the snapshot too (a
 	// deploy rewrites the whole tree; a documents pull does not).
 	Materialize bool
@@ -260,7 +264,7 @@ func (d *Driver) PreparePush(ctx context.Context, area string, files []PushFile)
 		job.files[f.Path] = f.Content
 		job.local[f.Path] = SHA(f.Content)
 	}
-	job.plan, err = PlanPush(area, d.PullCmd, d.By, d.Prune, base, effVersion, eff, job.local, heads, d.conflictCopyExists(area))
+	job.plan, err = PlanPush(area, d.PullCmd, d.By, d.Prune, d.Force, base, effVersion, eff, job.local, heads, d.conflictCopyExists(area))
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +307,11 @@ func (d *Driver) Push(ctx context.Context, job *PushJob) (PushResult, error) {
 		if err := hosted.SaveAreaBase(d.Server, d.Project, d.RepoRoot, job.Area, hosted.AreaBase{Version: v, Files: job.local}); err != nil {
 			return res, err
 		}
-		d.printf("%s: snapshot %d (parent %d)\n", job.Area, v, job.effVersion)
+		if job.plan.Forced {
+			d.printf("%s: snapshot %d (parent %d, forced over hosted %d; this machine had %d)\n", job.Area, v, job.effVersion, job.effVersion, job.plan.BaseVersion)
+		} else {
+			d.printf("%s: snapshot %d (parent %d)\n", job.Area, v, job.effVersion)
+		}
 	} else if job.effVersion > 0 {
 		if err := hosted.SaveAreaBase(d.Server, d.Project, d.RepoRoot, job.Area, hosted.AreaBase{Version: job.effVersion, Files: job.local}); err != nil {
 			return res, err

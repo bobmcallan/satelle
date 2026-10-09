@@ -1,3 +1,8 @@
+## [0.0.629] - 2026-10-09
+
+### Added
+- **`satelle sync --force` publishes this tree over a newer hosted snapshot.** `sync config push --force`, `sync documents push --force`, and bare `sync --force` publish the local tree as the next snapshot, parented on the current hosted snapshot, when this machine is behind or has hosted changes it has not applied. Files this tree lacks are absent from that snapshot. Without `--force` a behind push is still refused and uploads nothing. `--force` still refuses an unresolved local conflict, and it does not change the work-state push. (sty_796fc16d)
+
 ## [0.0.628] - 2026-10-09
 
 ### Changed
