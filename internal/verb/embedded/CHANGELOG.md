@@ -1,3 +1,8 @@
+## [0.0.628] - 2026-10-09
+
+### Changed
+- **The docs lane can close on a document delivered outside the repo.** A docs story whose prose lives in Confluence, Jira or a hosted document changes no repo path, so `satelle-docs-only-check` used to reject its close as an empty change set, while the create review routed such a draft to `docs` in the first place. The story could never reach done. The check now also accepts an attached document of type `external-change` with a non-empty body that names the document, its new version and what changed, recorded with `satelle story attach <id> --name <doc> --type external-change --body '<url or page id> — version <n>: <what changed>'`. That evidence counts only when the repo change set is empty, and it never excuses a non-doc repo path. An empty claim is still rejected, and the rejection now prints the attach command. The create review's route-proportionality clause says the docs lane covers both kinds of prose. The evidence type is configuration (`external_type` in the check), like `doc_paths`. (sty_03414f12)
+
 ## [0.0.627] - 2026-10-09
 
 ### Changed

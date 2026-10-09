@@ -76,6 +76,10 @@ requires = ["raised"]
 # The whole close: one functional check that the slice stayed inside doc-typed
 # paths, which is the guard a prose slice actually needs. No `agent` — the
 # check fence IS the decision, so no LLM reviewer is dispatched.
+# A slice whose prose lives outside the repo (Confluence, Jira, a hosted
+# document) changes no repo path: before presenting done it records the evidence
+# with `satelle story attach <id> --name <doc> --type external-change --body
+# '<url or page id> — version <n>: <what changed>'`.
 status = "done"
 reviewers = ["satelle-docs-only-check"]
 terminal = true

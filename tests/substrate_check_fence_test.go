@@ -324,6 +324,56 @@ echo '{"files":[".satelle/skills/satelle-example.md"]}'
 			wantExit:   1,
 			wantStdout: "no change set found",
 		},
+		{
+			// sty_03414f12: prose delivered outside the repo changes no repo
+			// path; the recorded external-change document is the evidence.
+			name:       "accepts an external-change document with no repo change",
+			sid:        "sty_d0c77777",
+			pathPrefix: "bin",
+			setup: func(t *testing.T, repo string) {
+				emptyRepoWithBaseline(t, repo)
+				externalDocShim(t, repo, "sty_d0c77777", "external-change", "page 1265532932 v10 — restructured")
+			},
+			wantExit:   0,
+			wantStdout: "external document evidence",
+		},
+		{
+			name:       "rejects an external-change document with an empty body",
+			sid:        "sty_d0c88888",
+			pathPrefix: "bin",
+			setup: func(t *testing.T, repo string) {
+				emptyRepoWithBaseline(t, repo)
+				externalDocShim(t, repo, "sty_d0c88888", "external-change", "  ")
+			},
+			wantExit:   1,
+			wantStdout: "--type external-change",
+		},
+		{
+			name:       "rejects an attachment of another type",
+			sid:        "sty_d0c99999",
+			pathPrefix: "bin",
+			setup: func(t *testing.T, repo string) {
+				emptyRepoWithBaseline(t, repo)
+				externalDocShim(t, repo, "sty_d0c99999", "output", "page 1265532932 v10")
+			},
+			wantExit:   1,
+			wantStdout: "--type external-change",
+		},
+		{
+			// Evidence never excuses a non-doc repo path.
+			name:       "rejects a non-doc path even with an external-change document",
+			sid:        "sty_d0caaaaa",
+			pathPrefix: "bin",
+			setup: func(t *testing.T, repo string) {
+				emptyRepoWithBaseline(t, repo)
+				mustWrite(t, filepath.Join(repo, "cmd", "foo.go"), "package main\n")
+				gitCommitAll(t, repo, "docs plus code (sty_d0caaaaa)")
+				// After the commit, so the shim is not part of the change set.
+				externalDocShim(t, repo, "sty_d0caaaaa", "external-change", "page 1265532932 v10")
+			},
+			wantExit:   1,
+			wantStdout: "cmd/foo.go",
+		},
 	},
 	"satelle-substrate-only-check": {
 		{
@@ -544,6 +594,36 @@ func TestCheckFenceGoldenTables(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// emptyRepoWithBaseline is a git repo with one baseline commit and nothing else.
+// The shim directory is untracked, so it never joins the change set.
+func emptyRepoWithBaseline(t *testing.T, repo string) {
+	t.Helper()
+	gitInit(t, repo)
+	mustWrite(t, filepath.Join(repo, "README.md"), "baseline\n")
+	gitCommitAll(t, repo, "baseline")
+}
+
+// externalDocShim writes a bin/satelle stub that reports an empty story diff and
+// one attached document of docType with the given body, in the JSON shapes
+// `satelle story docs --json` and `satelle story doc` print.
+func externalDocShim(t *testing.T, repo, sid, docType, body string) {
+	t.Helper()
+	docs := `[{"story_id":"` + sid + `","name":"evidence","type":"` + docType + `"}]`
+	doc := `{"story_id":"` + sid + `","name":"evidence","type":"` + docType +
+		`","body":"---\nstory: ` + sid + `\ntype: ` + docType + `\nname: evidence\n---\n\n` + body + `"}`
+	script := "#!/usr/bin/env bash\n" +
+		"case \"$1 $2\" in\n" +
+		"  \"story docs\") cat <<'J'\n" + docs + "\nJ\n    ;;\n" +
+		"  \"story doc\") cat <<'J'\n" + doc + "\nJ\n    ;;\n" +
+		"  *) echo '{\"files\":[]}' ;;\n" +
+		"esac\n"
+	shim := filepath.Join(repo, "bin", "satelle")
+	mustWrite(t, shim, script)
+	if err := os.Chmod(shim, 0o755); err != nil {
+		t.Fatal(err)
 	}
 }
 

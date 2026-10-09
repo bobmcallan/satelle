@@ -3,7 +3,7 @@ name: satelle-docs-only-check
 scope: system
 type: skill
 tags: [type:skill, type:reviewer, type:functional-check]
-description: Functional-check for the docs lane's close — rejects any path in the story change set that is not doc-typed, and rejects an empty set. The doc-path pattern is the gate's configuration (default markdown); a repo widens it by overriding this skill. Deterministic and self-contained.
+description: Functional-check for the docs lane's close — rejects any path in the story change set that is not doc-typed, and rejects an empty set unless the story records an external-change document (prose delivered outside the repo). The doc-path pattern and the evidence type are the gate's configuration; a repo changes them by overriding this skill. Deterministic and self-contained.
 ---
 
 # Docs-only check (docs lane close gate)
@@ -15,7 +15,8 @@ Any other path — a source file, a build config, anything the pattern does not
 name — means the slice is not a documentation slice: it took the light lane
 while doing code-shaped work, so the close is **rejected** and the slice belongs
 on the repo's project lane. An **empty** change set is also **rejected**: empty
-is not evidence of a documentation change.
+is not evidence of a documentation change — unless the deliverable lives outside
+the repo and the story records it (see "External document evidence").
 
 ## The pattern is configuration
 
@@ -36,6 +37,27 @@ Never a branch in the binary: the binary runs the enumeration mechanism
 3. **Commits** — any commit whose **subject** names the story id (the trailing
    `(sty_…)` convention); a mention only in another commit's body is a citation,
    not ownership
+4. **External document (recorded)** — only when the three channels above are
+   empty: an attached document of type `external-change` with a non-empty body
+
+## External document evidence
+
+The docs lane also covers prose delivered **outside the repo** — a Confluence
+page, a Jira ticket, a hosted document. Such a slice changes no repo path, so
+its evidence is a document attached to the story, of type `external-change`
+(`external_type` in the check, configuration like `doc_paths`). Its body names
+the document's identity (URL or page/ticket id), its new version, and a line on
+what changed:
+
+```bash
+satelle story attach <sty_id> --name <doc> --type external-change \
+  --body '<url or page id> — version <n>: <what changed>'
+```
+
+It counts only when the repo change set is empty and the body is non-empty. It
+never excuses a non-doc repo path: code-shaped work with a document attached is
+still rejected. satelle cannot verify a hosted document's version; the check
+confirms the evidence is recorded, and a repo that wants more overrides this skill.
 
 The check is the embedded ```check script below — **self-contained**, no
 external file (see [[satelle-reviewer-self-contained]]). Exit 0 accepts;
@@ -49,6 +71,9 @@ set -uo pipefail
 # THE CONFIGURATION: which paths count as documentation. Override this skill to
 # change it — see "The pattern is configuration" above.
 doc_paths='\.md$'
+# THE CONFIGURATION: the attached-document type that records a change delivered
+# outside the repo (see "External document evidence" above).
+external_type='external-change'
 
 payload=$(cat)
 # Anchored on the id KEY so a story id quoted inside the body cannot win.
@@ -71,6 +96,41 @@ except Exception:
  pass" 2>/dev/null || true
   else
     printf '%s' "$raw" | tr -d ' \n' | sed -n 's/.*\"files\":\[\([^]]*\)\].*/\1/p' | tr ',' '\n' | tr -d '"' | grep -v '^$' || true
+  fi
+}
+
+# stdin: `satelle story docs --json`; stdout: names of documents of $external_type
+external_names() {
+  local raw
+  raw=$(cat)
+  [ -z "$raw" ] && return 0
+  if command -v python3 >/dev/null 2>&1; then
+    printf '%s' "$raw" | python3 -c "import json,sys
+try:
+ print('\n'.join(d.get('name','') for d in (json.load(sys.stdin) or []) if d.get('type')==sys.argv[1]))
+except Exception:
+ pass" "$external_type" 2>/dev/null || true
+  else
+    printf '%s' "$raw" | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' | grep -E "\"type\":[[:space:]]*\"$external_type\"" | sed -n 's/.*"name":[[:space:]]*"\([^"]*\)".*/\1/p' || true
+  fi
+}
+
+# stdin: `satelle story doc` JSON; exit 0 only when the body, less its
+# frontmatter and whitespace, is non-empty.
+body_nonempty() {
+  local raw
+  raw=$(cat)
+  [ -z "$raw" ] && return 1
+  if command -v python3 >/dev/null 2>&1; then
+    printf '%s' "$raw" | python3 -c "import json,re,sys
+try:
+ b=json.load(sys.stdin).get('body') or ''
+except Exception:
+ sys.exit(1)
+b=re.sub(r'\A---\n.*?\n---\n','',b,count=1,flags=re.S)
+sys.exit(0 if b.strip() else 1)" 2>/dev/null
+  else
+    printf '%s' "$raw" | tr -d '\n' | sed -n 's/.*"body":[[:space:]]*"\(.*\)"[[:space:]]*}.*/\1/p' | sed 's/^---\\n.*\\n---\\n//' | sed 's/\\[nt]//g' | tr -d '[:space:]' | grep -q .
   fi
 }
 
@@ -100,17 +160,33 @@ if [ -n "$owned" ]; then
 fi
 
 changed=$(printf '%s\n%s\n%s\n' "$rec" "$liv" "$com" | grep -v '^$' | sort -u)
-if [ -z "$changed" ]; then
-  echo "no change set found for $sid — nothing recorded, nothing in the working tree since engagement, and no commit subject names it. Empty is not evidence of a documentation change."
-  exit 1
+if [ -n "$changed" ]; then
+  # A non-doc repo path is rejected whether or not external evidence is attached.
+  offenders=$(printf '%s\n' "$changed" | grep -vE "$doc_paths" || true)
+  if [ -n "$offenders" ]; then
+    echo "the slice for $sid touches paths that are not doc-typed (pattern $doc_paths) — this is not a documentation-only change; move it to the repo's project lane, or widen the pattern by overriding this skill:"
+    printf '%s\n' "$offenders"
+    exit 1
+  fi
+  echo "docs-only slice confirmed for $sid:"
+  printf '%s\n' "$changed"
+  exit 0
 fi
 
-offenders=$(printf '%s\n' "$changed" | grep -vE "$doc_paths" || true)
-if [ -n "$offenders" ]; then
-  echo "the slice for $sid touches paths that are not doc-typed (pattern $doc_paths) — this is not a documentation-only change; move it to the repo's project lane, or widen the pattern by overriding this skill:"
-  printf '%s\n' "$offenders"
-  exit 1
+# Empty repo change set: the only remaining evidence is an attached document of
+# type $external_type with a non-empty body (prose delivered outside the repo).
+# --json: both outputs are parsed as JSON, so they must not receive [output]
+# compact rendering for an agent caller (satelle help compact-output).
+evidence=""
+for n in $(satelle story docs "$sid" --json 2>/dev/null | external_names); do
+  if { satelle story doc "$sid" "$n" --json 2>/dev/null || satelle story doc "$sid" "$n" 2>/dev/null; } | body_nonempty; then
+    evidence="$evidence $n"
+  fi
+done
+if [ -n "$evidence" ]; then
+  echo "docs-only slice confirmed for $sid (external document evidence:$evidence)"
+  exit 0
 fi
-echo "docs-only slice confirmed for $sid:"
-printf '%s\n' "$changed"
+echo "no change set found for $sid — nothing recorded, nothing in the working tree since engagement, no commit subject names it, and no non-empty $external_type document is attached. Empty is not evidence of a documentation change. If the deliverable lives outside the repo, record it: satelle story attach $sid --name <doc> --type $external_type --body '<url or page id> — version <n>: <what changed>'"
+exit 1
 ```

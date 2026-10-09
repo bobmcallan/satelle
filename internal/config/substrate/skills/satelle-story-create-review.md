@@ -98,8 +98,12 @@ only**, and never reject a value for being unknown.
  declared surface is entirely prose (body and ACs describe documentation and
  name no code, config or build surface) must not sit on a code-shaped lane.
  **Reject**, naming the lighter lane: `category: docs` — the shipped docs lane
- — or the repo's own doc lane where it authors one. Correcting it here is
- cheap; mid-route it is not, and no agent may skip steps to lighten a lane.
+ — or the repo's own doc lane where it authors one. The docs lane covers prose
+ in the repo (doc-typed paths) and prose delivered outside it (a Confluence
+ page, a Jira ticket, a hosted document), which closes on an attached
+ `external-change` document — so a draft routed to docs is never structurally
+ unable to close. Correcting it here is cheap; mid-route it is not, and no agent
+ may skip steps to lighten a lane.
 - **No invented kind:\* axis** — reject tags like `kind:epic`, `kind:bug`. A
  malformed `epic:` / `sprint:` / `order:` tag is NOT reject grounds on its own
  (the linked principle carries their form); inventing a parallel class axis is.
