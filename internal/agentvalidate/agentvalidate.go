@@ -225,7 +225,28 @@ func validateEffectiveBaseline(baseline, repo, workspace config.AgentsConfig, gl
 			}
 		}
 	}
-	return validateShipped(eff.Agents, eff.Vars, workflows, eff.Provenance, skills, shipped)
+	r := validateShipped(eff.Agents, eff.Vars, workflows, eff.Provenance, skills, shipped)
+	if f, ok := sameRoleFinding(eff.Agents); ok {
+		r.record(f)
+	}
+	return r
+}
+
+// sameRoleFinding is an advisory, never a refusal: when the executor seat and the
+// orchestrator seat both RESOLVE to in-loop, the driving session holds both — the
+// in-loop executor is the orchestrator (satelle-agent-model). Each seat is judged
+// by the command its resolver returns, so an executor with no command (in-loop by
+// default) counts and an orchestrator with no command (the isolated default) does
+// not. An absent orchestrator seat is not in-loop.
+func sameRoleFinding(agents config.AgentsConfig) (health.Finding, bool) {
+	orch, ok := agents.NamedBinding("orchestrator")
+	if !ok || !config.IsInLoopCommand(agents.ExecutorBinding().Command) || !config.IsInLoopCommand(orch.Command) {
+		return health.Finding{}, false
+	}
+	return health.Warn(health.IDAgentsSameRole, "Executor and orchestrator are one role",
+		"agents.toml [executor] and [orchestrator] both resolve to in-loop (same role): the driving session is already the orchestrator, so the two seats are one agent").
+		About("orchestrator").
+		WithRemediation("give [orchestrator] an isolated command, or keep the single in-loop driver"), true
 }
 
 // Validate checks every agents.toml binding and each workflow's agent= node

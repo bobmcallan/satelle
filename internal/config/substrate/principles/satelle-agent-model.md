@@ -16,17 +16,20 @@ the agent CLI backend a step may run on.)
 
 ## Two roles, bounded grants
 
-- **executor** — does the work. Mutates the tree, follows the step's rubric,
- requests the next status. Full tool grant.
+- **executor** — does the work. Mutates the tree and follows the step's rubric.
+ Full tool grant.
 - **reviewer** — limited to reviewing. Read-only judge of the claimed **outcome**;
  returns a structured verdict; never mutates code, story, or status. The
  read-only limit is enforced by the grant, not by trust.
 
+The driving session is the **orchestrator**: it alone requests the next status,
+whoever performs the step.
+
 ## Two run modes
 
-**In-loop executor.** The driving session *is* the executor. Full session context,
-principles, and skills via `.satelle/` and the `satelle` CLI. Default for steps
-allocated `agent=executor`.
+**In-loop executor.** The driving session — the orchestrator — also performs the
+step. Full session context, principles, and skills via `.satelle/` and the
+`satelle` CLI. Default for steps allocated `agent=executor`.
 
 **Isolated invocation.** satelle spawns a fresh-context sub-process over a
 **payload it builds** (work item + transition), with the step's skill as the
@@ -63,7 +66,7 @@ generic executor rubric.
 
 A workflow node names its performer:
 
-- `agent=executor` — in-loop (default)
+- `agent=executor` — in-loop (default): this same session performs the step
 - `agent=reviewer` — isolated gate
 - `agent=<name>` — isolated named agent bound in `.satelle/workflows/agents.toml` (e.g.
  `agent=planner` for the read-only plan step)
@@ -71,7 +74,7 @@ A workflow node names its performer:
 Every top-level `[section]` in `agents.toml` is an agent. `[executor]` /
 `[reviewer]` are built-in roles; any other name is a named agent. Unbound
 `<name>` refuses the transition (fail-fast — never silent in-loop fallback). A
-binding with `command=in-loop` keeps the step with the orchestrator. Per-binding
+binding with `command=in-loop` keeps the step in the driving session. Per-binding
 `{model}` is per-step model selection as configuration.
 
 ## `@skill:` is satelle's declaration

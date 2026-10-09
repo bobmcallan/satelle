@@ -60,6 +60,7 @@ const (
 	IDAgentsBinding       = "agents.binding"        // a binding is invalid (command, interface, timeout, …)
 	IDAgentsProfileBroken = "agents.profile.broken" // a machine-wide profile reference does not resolve
 	IDEnvUnresolved       = "env.unresolved"        // a ${VAR} in env/settings resolves to nothing
+	IDAgentsSameRole      = "agents.same_role"      // the executor and orchestrator seats both resolve to in-loop
 
 	// Reviewer / allocation safety.
 	IDReviewerUnsafe = "reviewer.unsafe" // a reviewer's permission ceiling is escaped
@@ -120,7 +121,7 @@ const (
 // reads it, so a copy-pasted duplicate fails the build's tests rather than
 // silently collapsing two defects into one identifier.
 var ids = []string{
-	IDAgentsLoad, IDAgentsBinding, IDAgentsProfileBroken, IDEnvUnresolved,
+	IDAgentsLoad, IDAgentsBinding, IDAgentsProfileBroken, IDAgentsSameRole, IDEnvUnresolved,
 	IDReviewerUnsafe, IDReviewerIsolation, IDNodeAlloc, IDHookAlloc,
 	IDBinaryMissing, IDBinaryMalformed,
 	IDWorkflowStructure, IDWorkflowConsistency,

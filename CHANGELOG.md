@@ -1,3 +1,13 @@
+## [0.0.630] - 2026-10-09
+
+### Changed
+- **The session principle names one driver, and doctor and init warn when both seats are in-loop.** The auto-loaded goals principle says the executor seat and the orchestrator seat are the same agent when both resolved commands are the in-loop command. A user message `complete sty_<id>` starts that story's drive, and a user message `drive epic <id> to done` starts the drive under *Driving an epic*. A named performer does the step and does not change status; when it returns, this session runs the next `satelle story set`. The on-demand agent model says the driving session is the orchestrator and that it alone requests the next status. When both seats resolve to in-loop, `satelle doctor` and `satelle init` each report a same-role warning naming both seats. The warning does not fail init and does not refuse a transition. The shipped baseline, whose orchestrator command is empty and resolves to the isolated default, does not warn. (sty_29ce243b)
+
+## [serve-v0.0.136] - 2026-10-09
+
+### Changed
+- The serve binary embeds the session principles that name the driving session as the orchestrator, and the same-role warning when both seats resolve to in-loop. (sty_29ce243b)
+
 ## [0.0.629] - 2026-10-09
 
 ### Added

@@ -24,6 +24,17 @@ permission. A step the workflow declares is authorised *by* it, even when it
 builds, deploys, or mutates local state; a block is only a gap that *prevents*
 following the workflow.
 
+**This session is the orchestrator when both seats are in-loop.** When the
+executor seat and the orchestrator seat both resolve to the in-loop command,
+they are the same agent. A user message `complete sty_<id>` starts that
+story's drive. A user message `drive epic <id> to done` starts the drive
+specified under *Driving an epic* below.
+
+**A named performer hands the drive back here.** The step's agent does the step
+and does not change status. When it returns, this session runs the next
+`satelle story set` the workflow names. An edit refusal on a step allocated to
+that performer fences source edits. The drive stays in this session.
+
 **One story at a time — when the container declares no schedule.** Drive a
 single engaged story to its terminal state before engaging another. This is not
 the rule once a container declares a schedule; see *Driving an epic* below.
