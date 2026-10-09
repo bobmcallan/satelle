@@ -23,3 +23,8 @@ github.com/bobmcallan/satelle/internal/cli TestCheckBreakingDriftBreakingRange g
 
 # Opt-in live runs that spend real money or tokens; never enabled on CI.
 github.com/bobmcallan/satelle/internal/agentstep TestParityLive live parity run is opt-in (SATELLE_PARITY=1) and spends real money
+
+# A tree whose satelled.version is already ahead of the newest serve-v* tag
+# cannot make the serve-gate probe fail, so the test skips. That is the state
+# of every release until the serve tag for that version exists.
+github.com/bobmcallan/satelle/cmd/satelled TestServeGateSeesNewFiles on a serve-release commit satelled.version is ahead of the baseline tag, so the gate cannot fail
