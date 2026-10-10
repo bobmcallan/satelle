@@ -3283,6 +3283,9 @@ func runHookPromptWith(out io.Writer, gatesInContext bool) error {
 // nothing gets no chatter on every Stop.
 func runHookStopcheck(raw []byte, out io.Writer) error {
 	stopEmitHarness = stopHarness(raw)
+	// Scoped to this answer: a later emitter in the same process (in-process
+	// tests run stopchecks for several harnesses) must not inherit it.
+	defer func() { stopEmitHarness = "" }()
 	// A cursor stop carries the turn's token usage and nothing else keeps it, so it
 	// is recorded before any early return below — a turn that ends on a delivered
 	// verdict is still a turn the session paid for. Fail open.

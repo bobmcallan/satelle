@@ -1106,6 +1106,26 @@ func TestEmitStopBlock(t *testing.T) {
 	}
 }
 
+// TestStopcheckHarnessDoesNotLeak: a cursor stopcheck run in this process
+// leaves no harness behind, so a later Stop block is encoded for the default
+// harness (the strict shuffled run caught TestEmitStopBlock inheriting cursor).
+func TestStopcheckHarnessDoesNotLeak(t *testing.T) {
+	t.Setenv("SATELLE_DISPATCH_AGENT", "leak-test") // skip cursor usage recording
+	var sink bytes.Buffer
+	_ = runHookStopcheck([]byte(`{"stop_hook_active":true,"hook_event_name":"stop","cursor_version":"2026.10.01-e373342","loop_count":0}`), &sink)
+	if stopEmitHarness != "" {
+		t.Fatalf("stopEmitHarness = %q after stopcheck, want empty", stopEmitHarness)
+	}
+	var buf bytes.Buffer
+	if err := emitStopBlock(&buf, "ungated edits: a.go"); err != nil {
+		t.Fatal(err)
+	}
+	var got stopBlockOut
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil || got.Decision != "block" {
+		t.Errorf("stop block after a cursor stopcheck = %s, want decision=block", buf.String())
+	}
+}
+
 // TestStopBlockShape (sty_5e4bc568 AC6): Stop schema honors top-level
 // decision=block + reason (NOT PreToolUse hookSpecificOutput). Closed-key check.
 func TestStopBlockShape(t *testing.T) {

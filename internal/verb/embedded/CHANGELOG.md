@@ -1,3 +1,13 @@
+## [0.0.640] - 2026-10-10
+
+### Fixed
+- **The strict CI run no longer fails `TestEmitStopBlock` after a cursor stopcheck test.** `runHookStopcheck` kept the harness of the Stop answer in a package variable and never cleared it, so in the shuffled in-process test run a later Stop block was encoded for cursor. The value is now scoped to the stopcheck call, with a regression test. Each hook is its own process in production, so no hook output changes. This release also carries 0.0.639, whose tag was not cut because this failure stopped its CI run. (sty_ba302c1b)
+
+## [serve-v0.0.145] - 2026-10-10
+
+### Changed
+- The serve binary carries the scoped Stop-answer harness. (sty_ba302c1b)
+
 ## [0.0.639] - 2026-10-10
 
 ### Added
