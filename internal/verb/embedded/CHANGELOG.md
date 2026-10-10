@@ -1,3 +1,13 @@
+## [0.0.635] - 2026-10-10
+
+### Added
+- **The hook wrapper passes cursor's own deny through.** `satelle hook gate --harness cursor` and `commitgate --harness cursor` deny in cursor's encoding, `{"permission":"deny","user_message":…,"agent_message":…}` — the one native shape that both blocks the tool and shows satelle's reason to the agent (a plain `reason` field blocks but hides it). The installed `satelle-hook.sh` recognises that deny and passes it through unchanged, and turns a real failure (missing binary, malformed output) into a cursor-shaped infrastructure deny. The per-harness deny encodings for claude, grok, pi and cursor now live in one place (`internal/agentcli`); claude, grok and pi output and wrapper bytes are unchanged. Run `satelle init` in a repo to regenerate its wrapper with the cursor arm; nothing else needs it. (sty_be756616)
+
+## [serve-v0.0.140] - 2026-10-10
+
+### Changed
+- The serve binary carries the agentcli deny encodings, including cursor's. (sty_be756616)
+
 ## [0.0.634] - 2026-10-10
 
 ### Added

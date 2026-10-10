@@ -20,6 +20,9 @@ Everything is REAL verbatim except:
   characters by the hook script, so a path can end mid-way; the remainder is also
   `/SCRATCH`). Cursor's dash-encoded form of it in `transcript_path` ->
   `SCRATCH-ENCODED`. The user's home directory -> `/HOME`.
+- 10a, 11a and 12-*: the scratch directory (and its dash-encoded form) are
+  replaced the same way, so `hooks.json` command paths and the sandbox `cwd`
+  read `/SCRATCH/...`.
 - No credential value appears in any capture (`apiKeySource` is only the string
   `login`); nothing needed `REDACTED`.
 
@@ -61,3 +64,16 @@ Everything is REAL verbatim except:
 | interactive hooks, stop followup | 7-stop | 7-stop-hooks.json, 7-stop-hook.sh, 7-stop-hooks.log, 7-stop.tty.log, 7-stop.fs, 7-stop.meta.json |
 | stdin carries the instruction | 8a | 8a-stdin-codeword.out, 8a-stdin-codeword.err, 8a-stdin-codeword.meta.json |
 | stdin plus argument | 8b | 8b-stdin-plus-arg.out, 8b-stdin-plus-arg.err, 8b-stdin-plus-arg.meta.json |
+| preToolUse deny `{"permission":"deny","reason":…}` on a delete (blocks; reason hidden) | 10a | 10a-hooks.json, 10a-hook.sh, 10a-hooks.log, 10a.out, 10a.err, 10a.fs, 10a.meta.json |
+| the same deny, second run | 11a | 11a-hooks.json, 11a-hook.sh, 11a-hooks.log, 11a.out, 11a.err, 11a.fs, 11a.meta.json |
+| deny with snake_case `user_message`/`agent_message` (blocks; model sees `user_message`) | 12-snake | 12-snake-hooks.json, 12-snake-hook.sh, 12-snake.out, 12-snake.err, 12-snake.fs, 12-snake.meta.json |
+| deny with camelCase `userMessage`/`agentMessage` (blocks; reason hidden) | 12-camel | 12-camel-hooks.json, 12-camel-hook.sh, 12-camel.out, 12-camel.err, 12-camel.fs, 12-camel.meta.json |
+| deny with only `reason` (blocks; reason hidden) | 12-reason | 12-reason-hooks.json, 12-reason-hook.sh, 12-reason.out, 12-reason.err, 12-reason.fs, 12-reason.meta.json |
+| claude's `hookSpecificOutput` deny (blocks; reason visible) | 12-claude | 12-claude-hooks.json, 12-claude-hook.sh, 12-claude.out, 12-claude.err, 12-claude.fs, 12-claude.meta.json |
+| stderr reason with exit 2 (blocks; reason visible) | 12-exit2 | 12-exit2-hooks.json, 12-exit2-hook.sh, 12-exit2.out, 12-exit2.err, 12-exit2.fs, 12-exit2.meta.json |
+
+Probe 12 (sty_be756616) asked the agent to create `written.txt` under a
+preToolUse hook returning each deny variant; the `reason` the model saw is the
+`rejected.reason` of the stream-json `tool_call` result. 10a and 11a asked it to
+delete `other.txt`. `agentcli.PreToolUseDeny("cursor", …)` encodes the 12-snake
+shape; `TestCursorDenyReasonVisible` pins it.

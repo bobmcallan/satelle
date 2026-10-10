@@ -106,24 +106,24 @@ never blocks a session.`,
 		Short: "PreToolUse edit gate — block code edits unless a story is engaged",
 		Long: `gate is the PreToolUse handler for Edit|Write|MultiEdit|NotebookEdit|
 search_replace|write. It returns a deny unless a story is ENGAGED — in one of the
-active workflow's non-terminal engaging states (e.g. plan, in_progress). On deny it
-emits one harness-correct JSON shape on stdout, detected from the event
-envelope (tool_input = Claude, toolInput = Grok): Claude
-hookSpecificOutput.permissionDecision=deny + permissionDecisionReason; Grok
-decision=deny + reason. Emitting both shapes in one blob fails Claude's schema
-and silently unblocks the tool (sty_5e4bc568). "Engaged" is authored substrate:
-it reads the route's start/terminal markers (Mdiamond=start, Msquare=terminal),
-never hardcoded state names (sty_f3d5d4b8, sty_e4902c51).
+active workflow's non-terminal engaging states. On deny it
+emits one harness-correct JSON shape on stdout, named by --harness or detected
+from the event envelope: Claude hookSpecificOutput.permissionDecision=deny;
+Grok decision=deny + reason; cursor permission=deny + user_message +
+agent_message. The encodings live in internal/agentcli. Emitting two shapes in
+one blob fails Claude's schema and silently unblocks the tool.
+"Engaged" is authored substrate: it reads the route's start/terminal markers
+(Mdiamond=start, Msquare=terminal), never hardcoded state names.
 
-The installed satelle-hook.sh wrapper normalises that result to structured deny
-JSON plus handler exit 0.
+The installed satelle-hook.sh wrapper passes a deny it recognises through
+unchanged, exit 0; any other result becomes that harness's infrastructure deny.
+commitgate fails open for non-mutating shell.
 
 The edit target is resolved to an ABSOLUTE path against the repo root before any
-containment test (sty_8c3d345c): Claude sends an absolute file_path, Grok a
-repo-relative one.
+containment test: Claude sends an absolute path, Grok a relative one.
 
-Edits landing in ANOTHER git working tree are REFUSED (sty_a8454d10) — open a
-session in THAT repo. Temp dirs, scratchpads and non-repo paths are allowed.
+Edits landing in ANOTHER git working tree are REFUSED — open a
+session in THAT repo. Temp, scratchpad and non-repo paths are allowed.
 
 Exemption is CONFIGURATION, not code. An edit is exempt when its target falls
 under a [gate] edit_exempt_paths prefix (repo-root-relative or absolute) or
@@ -132,7 +132,7 @@ the footprint it deploys (.gitignore, harness scaffolds) and story-dump names;
 the operator owns the lists. With empty lists even a .satelle/ edit needs an
 engaged story.
 
-Exemption stops at a performing story (sty_992cffc6). While a story holds a
+Exemption stops at a performing story. While a story holds a
 performing seat, an edit under a [gate] lock_substrate_paths prefix (default
 .satelle/ when the key is absent) is REFUSED before the exemption is consulted,
 so a story cannot rewrite the workflows, skills and bindings that judge it.
@@ -141,8 +141,7 @@ the seat-holding story, the path and the lane out — a substrate-lane story
 (category "substrate", judged by satelle-workflow-change-review) may change
 substrate under its own seat — and lands on that story's ledger. Never locked:
 temp dirs, edit_exempt_globs matches, and the deployed footprint (.gitignore,
-.claude/, .grok/, .pi/). With no seat held nothing changes.
-lock_substrate_paths = [] opts out; 'satelle doctor' reports it.
+.claude/, .grok/, .pi/). lock_substrate_paths = [] opts out; 'satelle doctor' reports it.
 
 The lock covers Bash too, here and in 'hook commitgate', with the same text and
 ledger row: a redirect, tee, rm/mv/cp/sed -i or git -C target in locked
@@ -151,8 +150,8 @@ whose arguments, heredoc or NAME=value assignment name a locked path or the bare
 root (.satelle) — even if it only READS. Not seen, so allowed: python3 tool.py
 and '.sat'+'elle'.
 
-Fails closed: a store open error, listing error, unresolvable workflow, or
-workflow body declaring no route blocks the edit (sty_f3d5d4b8).`,
+Fails closed: a store or listing error, unresolvable workflow, or
+workflow declaring no route blocks the edit.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
@@ -481,10 +480,11 @@ dispatched process, are left alone.`,
 	turnend.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi —the harness that fired the event (default: sniff event)")
 
 	// Explicit harness for deny shape (sty_9e86f407): wrapper forwards
-	// --harness claude|grok|pi; empty falls back to harnessFromEvent. pi takes the
-	// claude deny envelope (emitPreToolUseDeny gives every non-grok harness that).
-	gate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi —deny envelope (default: sniff event)")
-	commitgate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi —deny envelope (default: sniff event)")
+	// --harness claude|grok|pi|cursor; empty falls back to harnessFromEvent. pi
+	// takes the claude deny envelope (agentcli.PreToolUseDeny gives every harness
+	// without its own shape that).
+	gate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi|cursor —deny envelope (default: sniff event)")
+	commitgate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi|cursor —deny envelope (default: sniff event)")
 	// Same explicit --harness on prompt/stopcheck (sty_719c4a7b AC2): the
 	// installed hook names its own harness rather than relying only on the
 	// event sniff, so bindSessionID's in-loop publish stays correct even if a
@@ -2156,55 +2156,23 @@ func denyPreToolUse(cmd *cobra.Command, raw []byte, reason string) error {
 // harnessFromEvent classifies a hook event envelope as claude, grok or
 // unknown (sty_5e4bc568, sty_37fd5470). The per-provider fingerprints live in
 // agentcli.HarnessFromHookEvent. Unrecognised input is "unknown", never
-// "claude"; emitPreToolUseDeny still gives every non-Grok harness (unknown
-// included) the strict hookSpecificOutput shape, so the deny stays effective
-// and the sty_5e4bc568 inert-gate bug is not reopened.
+// "claude"; agentcli.PreToolUseDeny still gives every harness without its own
+// shape (unknown included) the strict hookSpecificOutput shape, so the deny
+// stays effective and the sty_5e4bc568 inert-gate bug is not reopened.
 func harnessFromEvent(raw []byte) string {
 	return agentcli.HarnessFromHookEvent(raw)
 }
 
-// claudePreToolUseDenyOut is Claude Code's PreToolUse deny shape (sty_5e4bc568).
-// Claude's schema rejects top-level decision/reason; only hookSpecificOutput is
-// valid. permissionDecisionReason is the model-visible deny channel.
-type claudePreToolUseDenyOut struct {
-	HookSpecificOutput struct {
-		HookEventName            string `json:"hookEventName"`
-		PermissionDecision       string `json:"permissionDecision"`
-		PermissionDecisionReason string `json:"permissionDecisionReason"`
-	} `json:"hookSpecificOutput"`
-}
+// claudePreToolUseDenyOut aliases the adapter's Claude deny shape so a test can
+// decode what the verb printed; the wire struct itself lives in agentcli.
+type claudePreToolUseDenyOut = agentcli.ClaudePreToolUseDenyOut
 
-// grokPreToolUseDenyOut is Grok Build's PreToolUse deny shape: top-level
-// decision + reason (sty_e4902c51 / sty_5e4bc568).
-type grokPreToolUseDenyOut struct {
-	Decision string `json:"decision"`
-	Reason   string `json:"reason"`
-}
-
-// emitPreToolUseDeny writes one harness-correct deny JSON line to out.
-// harness is "grok" → top-level decision/reason; "claude"/other → Claude
-// envelope.
+// emitPreToolUseDeny writes one harness-correct deny JSON line to out. The
+// per-harness encodings (claude, grok, cursor; everything else gets Claude's)
+// live in agentcli.PreToolUseDeny.
 func emitPreToolUseDeny(out io.Writer, harness, reason string) error {
-	if strings.TrimSpace(reason) == "" {
-		reason = "satelle: denied (no reason supplied)"
-	}
-	var b []byte
-	var err error
-	if harness == "grok" {
-		b, err = json.Marshal(grokPreToolUseDenyOut{Decision: "deny", Reason: reason})
-	} else {
-		// Claude: hookSpecificOutput with deny + non-empty reason.
-		var doc claudePreToolUseDenyOut
-		doc.HookSpecificOutput.HookEventName = "PreToolUse"
-		doc.HookSpecificOutput.PermissionDecision = "deny"
-		doc.HookSpecificOutput.PermissionDecisionReason = reason
-		b, err = json.Marshal(doc)
-	}
-	if err != nil {
-		return err
-	}
-	fmt.Fprintln(out, string(b))
-	return nil
+	_, err := fmt.Fprintf(out, "%s\n", agentcli.PreToolUseDeny(harness, reason))
+	return err
 }
 
 // hookInfraUnavailableReason is the model-visible text when the scaffolded

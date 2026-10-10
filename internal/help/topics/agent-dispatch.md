@@ -758,12 +758,13 @@ The installed `satelle-hook.sh` uses one coherent structured-deny contract:
 | --- | --- | --- |
 | Claude | `hookSpecificOutput.permissionDecision=deny` with a non-empty `permissionDecisionReason` | `0` |
 | Grok | top-level `decision=deny` with a non-empty `reason` | `0` |
+| Cursor | top-level `permission=deny` with non-empty `user_message` and `agent_message` (`user_message` is the reason the model sees; a bare `reason` blocks the tool but hides why) | `0` |
 
 Exit `0` means the hook handler ran successfully; the JSON decision still blocks
-the tool. Claude uses a separate fallback contract for exit `2`: the
-blocking reason must be non-empty on stderr and structured stdout is not the
-authoritative channel. Do not mix exit `2` with JSON-only stdout and empty
-stderr. Satelle's wrapper prefers the structured path for policy and
+the tool. Claude and Cursor also honour a separate fallback contract for exit
+`2`: the blocking reason must be non-empty on stderr and structured stdout is
+not the authoritative channel. Do not mix exit `2` with JSON-only stdout and
+empty stderr. Satelle's wrapper prefers the structured path for policy and
 infrastructure denials, emits a static safe infrastructure reason when the
 binary is absent or unusable, and keeps irrelevant/read-only Bash fail-open so
 the operator can diagnose the installation.

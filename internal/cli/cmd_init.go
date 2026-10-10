@@ -561,15 +561,18 @@ func renderHookCommand(repoRoot, harness, sub string) string {
 }
 
 // parameterizedHookScriptBody is the single script body for satelle-hook.sh.
-// Usage: sh .satelle/hooks/satelle-hook.sh <gate|commitgate> <claude|grok|pi>
+// Usage: sh .satelle/hooks/satelle-hook.sh <gate|commitgate> <claude|grok|pi|cursor>
 // (pi takes the claude-envelope branch: the generated pi extension parses the
-// same permissionDecision deny).
+// same permissionDecision deny). The per-harness deny encodings and the globs
+// that recognise them come from agentcli (HookDenyHarnesses, PreToolUseDeny,
+// PreToolUseDenyMatch); this script holds no copy of them beyond the generated
+// case arms.
 //
 // The wrapper:
 //  1. Resolves satelle from $HOME/.local/bin/satelle → $CLAUDE_PROJECT_DIR/.satelle/satelle
 //     (or SATELLE_PROJECT_DIR) → relative .satelle/satelle → PATH
 //  2. Runs `satelle hook <sub>`, capturing stdout and stderr separately
-//  3. Normalises a usable deny to harness-correct JSON + handler exit 0
+//  3. Passes a recognised deny through byte-for-byte + handler exit 0
 //  4. On infra/malformed failure: harness-correct static deny JSON + exit 0
 //  5. commitgate: non-mutating bash fails OPEN on infra failure; commit/push closed
 //
@@ -577,16 +580,22 @@ func renderHookCommand(repoRoot, harness, sub string) string {
 // structured stdout on that path and requires the reason on stderr. Mixing JSON
 // stdout with exit 2 and discarded stderr caused the invisible-denial defect.
 func parameterizedHookScriptBody() string {
-	claudeInfra := strings.ReplaceAll(infraDenyJSON("claude"), `'`, `'\''`)
-	grokInfra := strings.ReplaceAll(infraDenyJSON("grok"), `'`, `'\''`)
+	shQuote := func(s string) string { return strings.ReplaceAll(s, `'`, `'\''`) }
+	// One infra arm and one deny-recognition arm per harness that has its own
+	// deny shape (agentcli.HookDenyHarnesses); the encodings and globs come from
+	// the adapter, never restated here. The default arm is Claude's.
+	var infraArms, denyArms strings.Builder
+	for _, h := range agentcli.HookDenyHarnesses() {
+		fmt.Fprintf(&infraArms, "  %s) infra='%s' ;;\n", h, shQuote(infraDenyJSON(h)))
+		fmt.Fprintf(&denyArms, "    %s) case \"$1\" in %s) return 0;; esac ;;\n", h, agentcli.PreToolUseDenyMatch(h))
+	}
 	return fmt.Sprintf(`#!/bin/sh
 %s
-# args: $1=gate|commitgate  $2=claude|grok|pi
+# args: $1=gate|commitgate  $2=claude|grok|pi|cursor
 sub="$1"
 harness="$2"
 case "$harness" in
-  grok) infra='%s' ;;
-  *)    infra='%s' ;;
+%s  *)    infra='%s' ;;
 esac
 # Prefer harness project pin so binary probe works even if invocation cwd drifted.
 root=""
@@ -602,8 +611,7 @@ done
 p=$(cat)
 structured_deny(){
   case "$harness" in
-    grok) case "$1" in *'"decision"'*'"deny"'*) return 0;; esac ;;
-    *)    case "$1" in *'"permissionDecision"'*'"deny"'*) return 0;; esac ;;
+%s    *)    case "$1" in %s) return 0;; esac ;;
   esac
   return 1
 }
@@ -645,7 +653,8 @@ if [ "$code" -eq 0 ]; then
 fi
 if structured_deny "$o"; then printf '%%s\n' "$o"; exit 0; fi
 deny_infra
-`, failVisibleMarker, grokInfra, claudeInfra)
+`, failVisibleMarker, infraArms.String(), shQuote(infraDenyJSON("claude")),
+		denyArms.String(), agentcli.PreToolUseDenyMatch(agentcli.HarnessClaude))
 }
 
 // failVisibleScriptBody returns the canonical wrapper body. The single script
