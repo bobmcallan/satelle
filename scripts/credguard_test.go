@@ -173,6 +173,13 @@ func TestCredguard(t *testing.T) {
 // (sty_1b739a74) and returns the env that points the guard at it. The real
 // SATELLE_TEST_HOST_HOME is cleared so the fake HOME is the one resolved, and
 // the Go caches are pinned to the real ones so the helper still builds offline.
+//
+// Go telemetry is switched off in the fake HOME (sty_095d1f5b): with the default
+// "local" mode the go command that credguard.sh runs writes counter files under
+// $XDG_CONFIG_HOME/go/telemetry and starts a detached child that creates
+// telemetry/upload after the guard has exited, racing t.TempDir's RemoveAll
+// ("directory not empty"). The mode file is the go command's own switch and
+// leaves the pinned GOCACHE/GOMODCACHE and the watched host surface untouched.
 func fakeHost(t *testing.T) (home string, env []string) {
 	t.Helper()
 	home = t.TempDir()
@@ -182,6 +189,7 @@ func fakeHost(t *testing.T) (home string, env []string) {
 		".satelle/repo-0123abcd/db-wal":     "w1",
 		".satelle/serve/mirror.db-wal":      "w1",
 		".local/bin/satelle":                "v1",
+		".config/go/telemetry/mode":         "off",
 	} {
 		p := filepath.Join(home, rel)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -198,6 +206,21 @@ func fakeHost(t *testing.T) (home string, env []string) {
 		}
 		return strings.TrimSpace(string(out))
 	}
+	t.Cleanup(func() {
+		// Runs before t.TempDir's RemoveAll: anything beside the seeded mode
+		// file means the go command wrote telemetry into the fake HOME.
+		dir := filepath.Join(home, ".config", "go", "telemetry")
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Errorf("read %s: %v", dir, err)
+			return
+		}
+		for _, e := range entries {
+			if e.Name() != "mode" {
+				t.Errorf("go telemetry wrote %s into the fake HOME", filepath.Join(dir, e.Name()))
+			}
+		}
+	})
 	return home, []string{
 		"HOME=" + home,
 		"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),

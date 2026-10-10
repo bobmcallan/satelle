@@ -1,3 +1,8 @@
+## [0.0.633] - 2026-10-10
+
+### Fixed
+- **The strict CI unit run no longer fails on TestCredguard's temp-dir cleanup race.** The guard's `go build` started Go telemetry inside the test's fake HOME, and a detached telemetry child kept writing there after the guard exited, so the temp dir's cleanup failed with "directory not empty". The fake HOME now seeds Go telemetry mode `off`, and a cleanup check fails the test if anything writes under its `go/telemetry` directory. This release also carries 0.0.632, whose tag was never cut because this flake failed its CI run. (sty_095d1f5b)
+
 ## [0.0.632] - 2026-10-10
 
 ### Added
