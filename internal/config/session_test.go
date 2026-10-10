@@ -6,8 +6,34 @@ import (
 	"testing"
 )
 
+// sty_2439f4fd AC1: a cursor Shell child names its session through the cursor
+// adapter's environment variable, ahead of the pid lookup and behind
+// SATELLE_SESSION; without it nothing changes.
+func TestResolveSessionTakesTheAdapterEnvironmentID(t *testing.T) {
+	const conv = "17e98b90-f524-4ba9-a53e-eddfcff87713" // testdata/cursor/21-shell-env.txt
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	PublishSession("sess-published")
+
+	t.Setenv(SessionEnv, "")
+	t.Setenv("CURSOR_CONVERSATION_ID", "")
+	if got := ResolveSession(); got != "sess-published" {
+		t.Errorf("without the cursor env, ResolveSession = %q, want the published id", got)
+	}
+
+	t.Setenv("CURSOR_CONVERSATION_ID", conv)
+	if got := ResolveSession(); got != conv {
+		t.Errorf("with the cursor env, ResolveSession = %q, want %q", got, conv)
+	}
+
+	t.Setenv(SessionEnv, "sess-env")
+	if got := ResolveSession(); got != "sess-env" {
+		t.Errorf("SATELLE_SESSION must win over the adapter env, got %q", got)
+	}
+}
+
 func TestPublishSessionResolvesWithoutEnv(t *testing.T) {
 	t.Setenv("SATELLE_HOME", t.TempDir())
+	t.Setenv("CURSOR_CONVERSATION_ID", "")
 	t.Setenv(SessionEnv, "")
 	_ = os.Unsetenv(SessionEnv)
 

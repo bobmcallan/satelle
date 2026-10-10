@@ -18,7 +18,7 @@ import (
 // (sty_ac25b787). Paths are repo-relative; no absolute machine paths.
 type ScaffoldFinding struct {
 	Path   string // repo-relative path of the drifted artifact
-	Kind   string // missing | content | command
+	Kind   string // missing | content | command | timeout
 	Detail string
 }
 

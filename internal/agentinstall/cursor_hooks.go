@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -29,6 +30,12 @@ type CursorHook struct {
 	// slot's command does. An owned entry on Event whose command contains Role but
 	// differs from Command is a stale form of this slot and is replaced in place.
 	Role string
+	// TimeoutS, when positive, is the timeout in seconds the entry carries.
+	// cursor kills a hook that outlasts its timeout (the default dropped a 75s
+	// stop hook, probe 20-slow-default), so a hook that waits sets one. An
+	// installed entry with none, or a shorter one, is raised; a longer one an
+	// operator set is kept.
+	TimeoutS int
 }
 
 // IsSatelleOwnedHookCommand reports whether a hook command is satelle-managed.
@@ -125,6 +132,35 @@ func entryCommand(entry json.RawMessage) string {
 	return e.Command
 }
 
+// entryTimeout is the timeout, in seconds, of one hooks entry, 0 when it has none.
+func entryTimeout(entry json.RawMessage) float64 {
+	var e struct {
+		Timeout float64 `json:"timeout"`
+	}
+	_ = json.Unmarshal(entry, &e)
+	return e.Timeout
+}
+
+// withTimeout returns entry with its timeout raised to want seconds when it has
+// none or a shorter one; every other member is kept as it was. want <= 0 leaves
+// the entry alone.
+func withTimeout(entry json.RawMessage, want int) json.RawMessage {
+	if want <= 0 || entryTimeout(entry) >= float64(want) {
+		return entry
+	}
+	members, err := parseObject(entry)
+	if err != nil {
+		return entry
+	}
+	val := json.RawMessage(strconv.Itoa(want))
+	if i := findMember(members, "timeout"); i >= 0 {
+		members[i].val = val
+	} else {
+		members = append(members, kv{key: "timeout", val: val})
+	}
+	return renderObject(members)
+}
+
 // finishCursorDoc marshals the document indented, with a trailing newline.
 func finishCursorDoc(members []kv) ([]byte, error) {
 	var out bytes.Buffer
@@ -177,13 +213,19 @@ func RenderCursorHooks(existing []byte, want []CursorHook) ([]byte, error) {
 				continue
 			}
 			if cmd != w.Command {
+				// A stale form is replaced whole; an operator's longer timeout survives it.
 				entries[i] = mine
+				if w.TimeoutS > 0 {
+					entries[i] = withTimeout(mine, max(w.TimeoutS, int(entryTimeout(ent))))
+				}
+			} else {
+				entries[i] = withTimeout(ent, w.TimeoutS)
 			}
 			placed = true
 			break
 		}
 		if !placed {
-			entries = append(entries, mine)
+			entries = append(entries, withTimeout(mine, w.TimeoutS))
 		}
 		if ei >= 0 {
 			hooks[ei].val = renderArray(entries)
@@ -232,6 +274,44 @@ func CursorHooksMissing(raw []byte, want []CursorHook) []string {
 		}
 	}
 	return missing
+}
+
+// CursorHooksShortTimeout returns the events of wanted slots that carry a
+// TimeoutS whose installed entry has none or a shorter one. A slot that is
+// absent is CursorHooksMissing's to report, not this one's.
+func CursorHooksShortTimeout(raw []byte, want []CursorHook) []string {
+	top, err := parseObject(raw)
+	if err != nil {
+		return nil
+	}
+	hi := findMember(top, "hooks")
+	if hi < 0 {
+		return nil
+	}
+	hooks, err := parseObject(top[hi].val)
+	if err != nil {
+		return nil
+	}
+	var short []string
+	for _, w := range want {
+		ei := findMember(hooks, w.Event)
+		if w.TimeoutS <= 0 || ei < 0 {
+			continue
+		}
+		var entries []json.RawMessage
+		if json.Unmarshal(hooks[ei].val, &entries) != nil {
+			continue
+		}
+		for _, ent := range entries {
+			if cmd := entryCommand(ent); IsSatelleOwnedHookCommand(cmd) && strings.Contains(cmd, w.Role) {
+				if entryTimeout(ent) < float64(w.TimeoutS) {
+					short = append(short, w.Event)
+				}
+				break
+			}
+		}
+	}
+	return short
 }
 
 // CursorHookCommands returns the command of every satelle-owned entry under

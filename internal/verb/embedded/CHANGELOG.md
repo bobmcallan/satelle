@@ -1,3 +1,13 @@
+## [0.0.638] - 2026-10-10
+
+### Added
+- **A gate started from a cursor-agent session has its verdict delivered to that session.** When a gated `satelle story set` run from cursor outlasts the foreground and hands off, cursor's interactive `stop` hook (`satelle hook stopcheck --harness cursor`) delivers the finished verdict as a follow-up turn, once. The gate is stamped with cursor's own conversation id (`ResolveSession` reads it from the cursor adapter after `SATELLE_SESSION`), and the stop hook claims only gates of the same conversation. cursor acts on a follow-up only while the turn's `loop_count` is below 4 (measured), so satelle delivers and claims only then and otherwise leaves the verdict pending for the next stop. The installed stop entry carries a `timeout` above satelle's stop wait, because cursor's default hook timeout is under 75 seconds (measured). Print-mode cursor has no stop event, so delivery there is a cursor-named unavailable. Run `satelle agents install cursor` (or `satelle init`) to refresh the stop entry. (sty_2439f4fd)
+
+## [serve-v0.0.143] - 2026-10-10
+
+### Changed
+- The serve binary carries the cursor session identity and stop-continuation cap. (sty_2439f4fd)
+
 ## [0.0.637] - 2026-10-10
 
 ### Added

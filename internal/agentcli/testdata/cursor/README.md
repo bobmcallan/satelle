@@ -95,6 +95,28 @@ Everything is REAL verbatim except:
 | the same under `--mode plan --force` with the deny rules: neither exists | 16-plan-deny | 16-plan-deny.out, 16-plan-deny.err, 16-plan-deny.fs, 16-plan-deny.meta.json |
 | ACP: `session/set_mode plan`, client allows every permission request; no write, no `touch`, zero permission requests, material outside the workspace read | 17 | 17-acp-plan.json, 17-acp-plan.meta.json |
 | ACP: `session/set_mode ask`, client allows every permission request; no write, no `touch`, zero permission requests, the agent explains it cannot, material outside the workspace read (the mode satelle forces on a reviewer) | 18 | 18-acp-ask.json, 18-acp-ask.meta.json |
+| interactive stop hook that always answers a followup: how many continuations a turn takes (`loop_limit` unset) | 20-cap | 20-cap-hooks.json, 20-cap-hook.sh, 20-cap-hooks.log, 20-cap.count, 20-cap.meta.json |
+| the same hook with a 75s stop hook and cursor's default timeout (the followup is dropped) | 20-slow-default | 20-slow-default-hooks.json, 20-slow-default-hook.sh, 20-slow-default-hooks.log, 20-slow-default.count, 20-slow-default.meta.json |
+| the same hook with `timeout: 1800` (the followup lands) | 20-slow-1800 | 20-slow-1800-hooks.json, 20-slow-1800-hook.sh, 20-slow-1800-hooks.log, 20-slow-1800.count, 20-slow-1800.meta.json |
+| a gate's session identity: the Shell child's `CURSOR_CONVERSATION_ID` against the stop payload's `conversation_id` / `session_id` | 21 | 21-hooks.json, 21-hook.sh, 21-shell-env.txt, 21-stop.log, 21.meta.json |
+
+Probes 20 and 21 (sty_2439f4fd) were interactive cursor-agent runs through a pty
+(`--trust --force --model composer-2.5`). 20-cap: the stop hook answered
+`{"followup_message":"Reply with exactly LOOP-N and nothing else."}` every time and
+stop fired at `loop_count` 0, 1, 2, 3 and 4 (`.count` is 5): the followups at 0-3
+each produced another turn, the one at 4 produced none, so the turn's budget is 4
+followups. 20-slow-default and 20-slow-1800: the hook sleeps 75s on its first call
+and then answers a followup; under cursor's default hook timeout the stop fired once
+(`.count` 1, no followup turn), under `timeout: 1800` it fired at `loop_count` 0 and
+again at 1 (`.count` 2), 77s apart, and the followup landed. 21: the Shell call
+`env | grep CURSOR_` wrote `21-shell-env.txt`, and the stop hook of the same
+conversation logged the payload fields `21-stop.log` (a reduced log, not the whole
+payload) — `CURSOR_CONVERSATION_ID`, `conversation_id` and `session_id` are one id.
+cursor's hook processes do not see `CURSOR_CONVERSATION_ID` (6-hook-env-names.txt).
+The conversation uuids are kept; the scratch directory is `/SCRATCH` as above, and
+the 20 hook logs keep the hook script's 300-character truncation, so each line ends
+mid-way. The raw pty logs (`20-*.tty.log`, escape sequences and spinner redraws) are
+not committed: `.count`, the hook logs and `.meta.json` carry what the tests pin.
 
 Probe 9, 10b, 11b, 11c and 13 (sty_7d098d50) were captured and redacted the same
 way as the rest. Their hook logs are the hook script's first 300 (9) or 400 (the

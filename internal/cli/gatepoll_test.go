@@ -120,16 +120,17 @@ func TestOnlyDeliveryAndReplayReadAHandle(t *testing.T) {
 		filepath.Join("internal", "cli", "gateresume.go"):  true,
 		// Where delivery looks for a session's handles across repos (sty_8f10499d):
 		// it lists and claims for the hooks and the watcher, and answers no caller.
-		filepath.Join("internal", "cli", "gatexrepo.go"):                true,
-		filepath.Join("internal", "cli", "gatexrepo_test.go"):           true,
-		filepath.Join("internal", "cli", "gateresume_test.go"):          true,
-		filepath.Join("internal", "cli", "gateclaude_test.go"):          true,
-		filepath.Join("internal", "cli", "gatecaller_test.go"):          true,
-		filepath.Join("internal", "cli", "gatepoll_test.go"):            true,
-		filepath.Join("internal", "cli", "gateverdict_test.go"):         true,
-		filepath.Join("internal", "cli", "gatestopwake_test.go"):        true,
-		filepath.Join("internal", "cli", "gatesettle_test.go"):          true,
-		filepath.Join("internal", "cli", "harness_pi_gatewake_test.go"): true,
+		filepath.Join("internal", "cli", "gatexrepo.go"):                 true,
+		filepath.Join("internal", "cli", "gatexrepo_test.go"):            true,
+		filepath.Join("internal", "cli", "gateresume_test.go"):           true,
+		filepath.Join("internal", "cli", "gateclaude_test.go"):           true,
+		filepath.Join("internal", "cli", "gatecaller_test.go"):           true,
+		filepath.Join("internal", "cli", "gatepoll_test.go"):             true,
+		filepath.Join("internal", "cli", "gateverdict_test.go"):          true,
+		filepath.Join("internal", "cli", "gatestopwake_test.go"):         true,
+		filepath.Join("internal", "cli", "gatesettle_test.go"):           true,
+		filepath.Join("internal", "cli", "harness_pi_gatewake_test.go"):  true,
+		filepath.Join("internal", "cli", "cursor_gate_delivery_test.go"): true,
 	}
 	root := filepath.Join("..", "..")
 	var offenders []string

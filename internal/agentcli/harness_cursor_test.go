@@ -173,16 +173,25 @@ func TestCursorFactsRow(t *testing.T) {
 			t.Errorf("cutoff basis lacks %q: %s", want, f.CutoffBasis)
 		}
 	}
-	if f.CompletionNotification.Available {
-		t.Error("cursor completion notification must be unavailable until sty_2439f4fd")
+	// sty_2439f4fd: an interactive session's stop hook delivers the verdict; print
+	// mode, which dispatches no stop event, is a cursor-named unavailability with
+	// the foreground fallback.
+	if !f.CompletionNotification.Available {
+		t.Errorf("cursor completion notification must be available on an interactive session: %+v", f.CompletionNotification)
 	}
-	for _, want := range []string{"cursor", "sty_2439f4fd", "30s", "backgrounded", "not delivered"} {
-		if !strings.Contains(f.CompletionNotification.Reason, want) {
-			t.Errorf("completion-notification reason lacks %q: %s", want, f.CompletionNotification.Reason)
+	capN, _ := StopCapFor(HarnessCursor)
+	for _, want := range []string{"followup_message", "cap 4", "20-cap", "unavailable: cursor: print mode (-p)", "4-hooks.log", "holds the foreground"} {
+		if !strings.Contains(f.InTurnWake, want) {
+			t.Errorf("in-turn wake lacks %q: %s", want, f.InTurnWake)
 		}
 	}
-	if !strings.Contains(f.InTurnWake, "cursor") || !strings.HasPrefix(f.InTurnWake, "unverified:") {
-		t.Errorf("in-turn wake = %q, want a cursor-named unverified", f.InTurnWake)
+	if capN != 4 {
+		t.Errorf("recorded cursor cap = %d, the row says 4", capN)
+	}
+	for name, text := range map[string]string{"in-turn wake": f.InTurnWake, "completion notification": f.CompletionNotification.Reason} {
+		if strings.Contains(text, "until sty_2439f4fd") {
+			t.Errorf("%s still says the delivery is pending: %s", name, text)
+		}
 	}
 	if f.PromptContext.Available || !strings.Contains(f.PromptContext.Reason, "cursor") {
 		t.Errorf("prompt context = %+v, want a cursor-named unavailable", f.PromptContext)

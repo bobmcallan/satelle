@@ -641,6 +641,9 @@ func currentSeatTouch() (info seatInfo, engaged bool, err error) {
 }
 
 func sessionIDFromHook(raw []byte) string {
+	if id := agentcli.HookSessionID(raw); id != "" {
+		return id
+	}
 	var ev struct {
 		SessionID      string `json:"session_id"`
 		SessionIDCamel string `json:"sessionId"`
@@ -3304,10 +3307,14 @@ func runHookStopcheck(raw []byte, out io.Writer) error {
 	// Its hook waits once (settleGateDelivery), blocks only with a verdict, and
 	// answers a gate still going with an allow that names it as pending, which the
 	// harness adapter asks about again.
+	//
+	// A harness whose event counts its own continuations (agentcli.StopWithinCap)
+	// takes none of this once the turn has spent them: it would not act on what is
+	// said, so nothing is claimed and the verdict stays for the next turn.
 	var wake *resumeWake
 	defer func() { wake.settle() }()
 	var settle *stopAllowOut
-	if !isDispatchedProcess() {
+	if !isDispatchedProcess() && agentcli.StopWithinCap(stopHarness(raw), raw) {
 		facts := agentcli.FactsFor(stopHarness(raw))
 		if !facts.SettleNotifyOnly {
 			if wake = resumeWakeFor(raw); wake != nil {

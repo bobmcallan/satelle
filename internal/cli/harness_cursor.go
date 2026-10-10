@@ -35,12 +35,15 @@ func withCursorHarness(cmd string) string { return cmd + " --harness " + agentcl
 // fail-visible wrapper with an ABSOLUTE path (cursor runs hooks with a cwd other
 // than the project root, so a relative script never ran — probe 2e); the context
 // and stop entries are the PATH-prefixed direct form probe 13 showed cursor runs.
+// The stop entry carries stopHookTimeoutSec like the other harnesses': it waits
+// on a gate, and cursor's default timeout dropped a 75s stop hook (20-slow-default)
+// where a 1800s one landed (20-slow-1800).
 func cursorWantedHooks(repoRoot string) []agentinstall.CursorHook {
 	return []agentinstall.CursorHook{
 		{Event: cursorEventPreToolUse, Command: renderHookCommand(repoRoot, agentcli.HarnessCursor, "gate"), Role: satelleHookScriptRel + " gate "},
 		{Event: cursorEventPreToolUse, Command: renderHookCommand(repoRoot, agentcli.HarnessCursor, "commitgate"), Role: satelleHookScriptRel + " commitgate "},
 		{Event: cursorEventSessionStart, Command: withCursorHarness(contextHookCommandPathPrefixed), Role: "satelle hook context"},
-		{Event: cursorEventStop, Command: withCursorHarness(stopcheckHookCommand), Role: "satelle hook stopcheck"},
+		{Event: cursorEventStop, Command: withCursorHarness(stopcheckHookCommand), Role: "satelle hook stopcheck", TimeoutS: stopHookTimeoutSec},
 	}
 }
 
@@ -74,6 +77,9 @@ func ensureCursorHooks(repoRoot string) (created bool, updated, incomplete []str
 	}
 	if rerr == nil {
 		updated = agentinstall.CursorHooksMissing(prev, want)
+		for _, ev := range agentinstall.CursorHooksShortTimeout(prev, want) {
+			updated = append(updated, ev+" timeout raised")
+		}
 		if len(updated) == 0 {
 			updated = []string{"non-canonical entries rewritten"}
 		}
@@ -187,6 +193,12 @@ func driftCursorHooks(repoRoot string) []ScaffoldFinding {
 				Detail: fmt.Sprintf("%s command is not the canonical form (want %q)", w.Event, w.Command),
 			})
 		}
+	}
+	for _, ev := range agentinstall.CursorHooksShortTimeout(raw, want) {
+		findings = append(findings, ScaffoldFinding{
+			Path: cursorHooksRel, Kind: "timeout",
+			Detail: fmt.Sprintf("%s entry has no timeout or one under %ds — cursor drops a stop hook that outlasts it (run satelle init)", ev, stopHookTimeoutSec),
+		})
 	}
 	if _, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(satelleHookScriptRel))); err != nil {
 		findings = append(findings, ScaffoldFinding{

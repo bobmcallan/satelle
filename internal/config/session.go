@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/bobmcallan/satelle/internal/agentcli"
 )
 
 // SessionEnv is the process identity SATELLE_SESSION. Acquire stamps it on the
@@ -39,10 +41,15 @@ func PublishSession(id string) {
 }
 
 // ResolveSession returns the session identity for this process: SATELLE_SESSION
-// if set, else a published id on this pid or an ancestor. Empty when neither
-// channel has a value (ordinary unstamped use).
+// if set, else the session id a harness adapter publishes in the environment
+// (the shell of a harness whose hook processes cannot see it), else a published
+// id on this pid or an ancestor. Empty when no channel has a value (ordinary
+// unstamped use).
 func ResolveSession() string {
 	if id := SessionFromEnv(); id != "" {
+		return id
+	}
+	if id := agentcli.SessionIDFromEnv(os.Environ()); id != "" {
 		return id
 	}
 	return publishedSession()

@@ -80,11 +80,13 @@ func HarnessOf(command string) string {
 // wants a bare shell) can clear exactly what the code reads instead of
 // hardcoding a list that silently drifts every time a harness is added.
 func SessionMarkerEnvNames() []string {
-	out := make([]string, 0, len(sessionMarkers))
+	out := make([]string, 0, len(sessionMarkers)+len(sessionEnvKeys))
 	for _, m := range sessionMarkers {
 		out = append(out, m.key)
 	}
-	return out
+	// The session-id variables change what ResolveSession returns, so a caller
+	// that wants a bare shell clears them with the markers.
+	return append(out, sessionEnvKeys...)
 }
 
 // DetectSessionHarnesses reports which harnesses' session markers appear in

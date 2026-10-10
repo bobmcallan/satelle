@@ -191,6 +191,24 @@ func StopContinued(raw []byte) bool {
 	return strings.TrimSpace(ev.CursorVersion) != "" && ev.LoopCount > 0
 }
 
+// StopWithinCap reports whether a Stop event can still spend a continuation: the
+// payload counts its own continuations (cursor's loop_count) and the count is
+// below harness's recorded cap (StopCapFor). A payload with no count, or a
+// harness with no recorded cap, is within the cap — those harnesses are counted
+// by satelle, not read off the event. At or past the cap the harness will not
+// act on a followup, so a verdict emitted there would be claimed and lost
+// (testdata/cursor/20-cap-hooks.log).
+func StopWithinCap(harness string, raw []byte) bool {
+	var ev struct {
+		LoopCount *int `json:"loop_count"`
+	}
+	if json.Unmarshal(raw, &ev) != nil || ev.LoopCount == nil {
+		return true
+	}
+	limit, ok := StopCapFor(harness)
+	return !ok || *ev.LoopCount < limit
+}
+
 // SilentStopAllow reports whether harness's Stop allow carries no output: a
 // harness whose only Stop channel re-prompts (cursor) cannot take an
 // allow-with-note, because the note would become a followup turn.
