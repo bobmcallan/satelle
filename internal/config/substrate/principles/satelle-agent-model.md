@@ -22,13 +22,14 @@ the agent CLI backend a step may run on.)
  returns a structured verdict; never mutates code, story, or status. The
  read-only limit is enforced by the grant, not by trust.
 
-The driving session is the **orchestrator**: it alone requests the next status,
-whoever performs the step.
+The driving session alone requests the next status, whoever performs the step.
+When the orchestrator seat's resolved command is also in-loop, the driving
+session is the **orchestrator**.
 
 ## Two run modes
 
-**In-loop executor.** The driving session — the orchestrator — also performs the
-step. Full session context, principles, and skills via `.satelle/` and the
+**In-loop executor.** The driving session performs the step. Full session
+context, principles, and skills via `.satelle/` and the
 `satelle` CLI. Default for steps allocated `agent=executor`.
 
 **Isolated invocation.** satelle spawns a fresh-context sub-process over a

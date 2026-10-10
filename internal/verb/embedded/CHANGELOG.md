@@ -1,3 +1,13 @@
+## [0.0.631] - 2026-10-10
+
+### Changed
+- **The on-demand agent model calls the driving session the orchestrator only when that seat is in-loop.** The driving session alone requests the next status, whoever performs the step, and it performs an in-loop step. It is the orchestrator when the orchestrator seat's resolved command is also in-loop. An empty orchestrator command still resolves to the isolated default, so that baseline is not one role. (sty_29ce243b)
+
+## [serve-v0.0.137] - 2026-10-10
+
+### Changed
+- The serve binary embeds the agent-model wording that names the driving session as the orchestrator only when that seat resolves to in-loop. (sty_29ce243b)
+
 ## [0.0.630] - 2026-10-09
 
 ### Changed
