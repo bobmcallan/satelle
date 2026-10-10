@@ -318,6 +318,17 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
+// shell runs a caller-configured command (a proof, a stamp) with `sh -c` in dir
+// and returns its combined output. It carries the same environment as git, so a
+// hook caller cannot redirect it to another repository.
+func shell(ctx context.Context, dir, script string) (string, error) {
+	cmd := exec.CommandContext(ctx, "sh", "-c", script)
+	cmd.Dir = dir
+	cmd.Env = gitEnv()
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
 func gitEnv() []string {
 	var env []string
 	for _, kv := range os.Environ() {

@@ -60,6 +60,30 @@ func TestLoad_TrunkRefuseOverride(t *testing.T) {
 	}
 }
 
+func TestLoad_TrunkPublishKeys(t *testing.T) {
+	absent, _, err := Load(writeWorktreeRepo(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if absent.Trunk.Prove != "" || absent.Trunk.Stamp != "" || absent.Trunk.PublishRoundBound() != 5 {
+		t.Errorf("absent publish keys = %+v, bound %d; want empty commands and bound 5", absent.Trunk, absent.Trunk.PublishRoundBound())
+	}
+	cfg, _, err := Load(writeWorktreeRepo(t, "[trunk]\nprove = \"go test ./...\"\nstamp = \"./bump.sh\"\npublish_rounds = 2\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Trunk.Prove != "go test ./..." || cfg.Trunk.Stamp != "./bump.sh" || cfg.Trunk.PublishRoundBound() != 2 {
+		t.Errorf("publish keys not honoured: %+v", cfg.Trunk)
+	}
+}
+
+func TestLoad_TrunkPublishRoundsRejectsZero(t *testing.T) {
+	_, _, err := Load(writeWorktreeRepo(t, "[trunk]\npublish_rounds = 0\n"))
+	if err == nil || !strings.Contains(err.Error(), "publish_rounds") {
+		t.Fatalf("Load error = %v, want one naming publish_rounds", err)
+	}
+}
+
 func TestLoad_TrunkRefuseRejectsAnUnknownState(t *testing.T) {
 	_, _, err := Load(writeWorktreeRepo(t, "[trunk]\nrefuse = [\"dirtyy\"]\n"))
 	if err == nil || !strings.Contains(err.Error(), "dirtyy") {

@@ -33,6 +33,10 @@ func NewTrunkRepos(t testing.TB) TrunkRepos {
 		Subject: filepath.Join(root, "subject"),
 	}
 	r.Git(t, root, "init", "--bare", "--quiet", "-b", "main", r.Remote)
+	// A force push that rewrites published history is refused by the remote
+	// itself, so a mechanism that forced would fail its test, not merely be
+	// caught by a log.
+	r.Git(t, r.Remote, "config", "receive.denyNonFastForwards", "true")
 	r.Git(t, root, "init", "--quiet", "-b", "main", r.Pusher)
 	r.identify(t, r.Pusher)
 	r.Git(t, r.Pusher, "remote", "add", "origin", r.Remote)
@@ -98,6 +102,137 @@ func (r TrunkRepos) PublishFromPusher(t testing.TB, file string) {
 func (r TrunkRepos) Head(t testing.TB, dir string) string {
 	t.Helper()
 	return r.Git(t, dir, "rev-parse", "HEAD")
+}
+
+// RemoteHead is the sha the bare remote's trunk points at.
+func (r TrunkRepos) RemoteHead(t testing.TB) string {
+	t.Helper()
+	return r.Git(t, r.Remote, "rev-parse", "refs/heads/main")
+}
+
+// GitErr runs git in dir and returns its combined output and error, for a test
+// that expects git to refuse.
+func (TrunkRepos) GitErr(dir string, args ...string) (string, error) {
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+// LinearSlice commits one release commit on the subject's trunk, unpushed: a
+// single story's release. It returns the commit's sha.
+func (r TrunkRepos) LinearSlice(t testing.TB) []string {
+	t.Helper()
+	r.Commit(t, r.Subject, "story.txt", "story\n")
+	return []string{r.Head(t, r.Subject)}
+}
+
+// EpicSlice builds an epic container's release on the subject's trunk, unpushed:
+// two child branches, each with a commit, merged into trunk with --no-ff. It
+// returns the two merge commits and the two child tips.
+func (r TrunkRepos) EpicSlice(t testing.TB) (merges, tips []string) {
+	t.Helper()
+	for _, child := range []string{"child-a", "child-b"} {
+		r.Git(t, r.Subject, "checkout", "--quiet", "-b", "epic/"+child)
+		r.Commit(t, r.Subject, child+".txt", child+"\n")
+		tips = append(tips, r.Head(t, r.Subject))
+		r.Git(t, r.Subject, "checkout", "--quiet", "main")
+		r.Git(t, r.Subject, "merge", "--quiet", "--no-ff", "-m", "merge epic/"+child, "epic/"+child)
+		merges = append(merges, r.Head(t, r.Subject))
+	}
+	return merges, tips
+}
+
+// PushCounter installs a post-receive hook on the bare remote and returns a
+// function that reports how many pushes it has accepted since.
+func (r TrunkRepos) PushCounter(t testing.TB) func() int {
+	t.Helper()
+	log := filepath.Join(t.TempDir(), "pushes")
+	hook := filepath.Join(r.Remote, "hooks", "post-receive")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho push >> '"+log+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return func() int {
+		b, _ := os.ReadFile(log)
+		return strings.Count(string(b), "push")
+	}
+}
+
+// GitShim puts a git wrapper first on PATH for the test: it records each call's
+// argv and then execs the real git. Everything the test spawns, including the
+// code under test and shell commands it runs, goes through it.
+func GitShim(t testing.TB) *ShimLog {
+	t.Helper()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls")
+	script := "#!/bin/sh\n{ printf '%s\\037' \"$@\"; printf '\\036'; } >> '" + log + "'\nexec '" + realGit + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return &ShimLog{path: log}
+}
+
+// ShimLog is what GitShim recorded.
+type ShimLog struct{ path string }
+
+// Calls is every recorded git argv, in order.
+func (l *ShimLog) Calls() [][]string {
+	b, _ := os.ReadFile(l.path)
+	var out [][]string
+	for _, rec := range strings.Split(string(b), "\x1e") {
+		if rec == "" {
+			continue
+		}
+		out = append(out, strings.Split(strings.TrimSuffix(rec, "\x1f"), "\x1f"))
+	}
+	return out
+}
+
+// Pushes is the recorded calls whose git subcommand is push.
+func (l *ShimLog) Pushes() [][]string {
+	var out [][]string
+	for _, argv := range l.Calls() {
+		if gitSubcommand(argv) == "push" {
+			out = append(out, argv)
+		}
+	}
+	return out
+}
+
+// AssertNoForce fails the test unless at least one push was recorded and none
+// of them carries a force option or a forced (+) refspec.
+func (l *ShimLog) AssertNoForce(t testing.TB) {
+	t.Helper()
+	pushes := l.Pushes()
+	if len(pushes) == 0 {
+		t.Fatal("no git push was recorded, so the no-force check proved nothing")
+	}
+	for _, argv := range pushes {
+		for _, a := range argv {
+			forced := strings.HasPrefix(a, "+") || strings.HasPrefix(a, "--force") ||
+				(strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.Contains(a, "f"))
+			if forced {
+				t.Errorf("a push carries a force option %q: git %s", a, strings.Join(argv, " "))
+			}
+		}
+	}
+}
+
+// gitSubcommand is argv's subcommand, skipping git's own leading options.
+func gitSubcommand(argv []string) string {
+	for i := 0; i < len(argv); i++ {
+		switch {
+		case argv[i] == "-C" || argv[i] == "-c":
+			i++
+		case strings.HasPrefix(argv[i], "-"):
+		default:
+			return argv[i]
+		}
+	}
+	return ""
 }
 
 func (r TrunkRepos) identify(t testing.TB, dir string) {

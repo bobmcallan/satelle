@@ -7,11 +7,89 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/trunk"
 )
+
+// publishCommand is `satelle trunk publish` (sty_6af229f1): the mechanism a
+// release invokes to put its commits on a trunk other machines have moved. The
+// proof and the version stamp are the repo's [trunk] declaration (or flags); the
+// command compiles in neither.
+func publishCommand() *cobra.Command {
+	var (
+		asJSON bool
+		remote string
+		branch string
+		prove  string
+		stamp  string
+		rounds int
+		story  string
+	)
+	cmd := &cobra.Command{
+		Use:   "publish",
+		Short: "Bring the remote's trunk in, prove the combined head, and push it without force",
+		Long: `Publishes this tree's trunk: merges in what other machines pushed, runs the
+[trunk] stamp and prove commands on the combined head, then pushes it with a
+plain push. A push refused because the trunk moved is answered by another round,
+up to [trunk] publish_rounds; nothing is ever forced. A conflict, a failed
+proof or a spent bound exits non-zero with trunk put back and the remote
+untouched. --story ledgers the pushed and combined heads. See 'satelle help trunk'.
+
+  satelle trunk publish --story sty_123 --json`,
+		Args:        cobra.NoArgs,
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := appFrom(cmd)
+			if err != nil {
+				return err
+			}
+			cfg := a.PlaneConfig().Trunk
+			opts := trunk.PublishOptions{
+				Remote: remote, Branch: branch,
+				Prove:  firstNonEmpty(prove, cfg.Prove),
+				Stamp:  firstNonEmpty(stamp, cfg.Stamp),
+				Rounds: rounds,
+			}
+			if opts.Rounds == 0 {
+				opts.Rounds = cfg.PublishRoundBound()
+			}
+			rep := trunk.Publish(cmd.Context(), a.RepoRoot, opts)
+			if story != "" {
+				payload, _ := json.Marshal(rep)
+				_, _ = a.Store.Ledger.Append(cmd.Context(), ledger.AppendInput{
+					StoryID: story, Kind: ledger.KindTrunkPublish, Actor: "executor",
+					Body: rep.Line(), Payload: payload,
+				}, time.Now())
+			}
+			if asJSON {
+				b, err := json.MarshalIndent(rep, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), string(b))
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), rep.Line())
+			}
+			if !rep.OK() {
+				cmd.SilenceUsage = true
+				return fmt.Errorf("trunk publish: %s", rep.Error)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the report as JSON")
+	cmd.Flags().StringVar(&remote, "remote", "", "remote to publish to (default origin)")
+	cmd.Flags().StringVar(&branch, "branch", "", "trunk branch when the remote's HEAD ref does not name one")
+	cmd.Flags().StringVar(&prove, "prove", "", "shell command that proves the combined head (default [trunk] prove)")
+	cmd.Flags().StringVar(&stamp, "stamp", "", "shell command that commits the version bump on the integrated tree (default [trunk] stamp)")
+	cmd.Flags().IntVar(&rounds, "rounds", 0, "most rounds a refused push is answered with (default [trunk] publish_rounds, else 5)")
+	cmd.Flags().StringVar(&story, "story", "", "story id to record a trunk_publish ledger row on")
+	return cmd
+}
 
 func init() {
 	group := &cobra.Command{
@@ -66,5 +144,6 @@ reset, stashed or committed otherwise. See 'satelle help trunk'.
 	syncCmd.Flags().StringVar(&remote, "remote", "", "remote to compare against (default origin)")
 	syncCmd.Flags().StringVar(&branch, "branch", "", "trunk branch when the remote's HEAD ref does not name one")
 	group.AddCommand(syncCmd)
+	group.AddCommand(publishCommand())
 	register(group)
 }
