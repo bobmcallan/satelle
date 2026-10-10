@@ -50,6 +50,32 @@ trunk. For a child whose done target is not yet on trunk it is that target's
 branch, so the dependent tree holds the change it was written against. The branch
 is new: an existing branch is refused, never reused or reset.
 
+### A trunk base is brought level first
+
+When the repo has a remote, `[trunk] check` is on and `--base` names the trunk
+(`main`, `refs/heads/main`, `origin/main` or `refs/remotes/origin/main`), the cut
+first runs the trunk check with fast-forward: local trunk is brought level with
+the remote, the report line is printed (and carried in the JSON result as
+`trunk`), and the worktree is cut from the updated local trunk. A base that is
+not the trunk, `--existing`, `[trunk] check = false`, and a repo with no remote
+run no check and cut as before; a machine already level prints nothing.
+
+- If the remote's HEAD ref is missing the check first runs
+  `git remote set-head <remote> --auto`.
+- A state in `[trunk] base_refuse` (default `dirty, diverged, ahead, behind,
+  offline, unresolved`) stops the cut before any branch or worktree is created,
+  naming the state and the way out.
+- If the trunk still cannot be named, every cut stops (state `unresolved`) with:
+
+  ```
+  satelle: trunk unresolved — cannot tell whether <ref> is the trunk; pass --trunk-branch <name> or run git remote set-head <remote> --auto
+  ```
+
+  `--trunk-branch` (or `[trunk] branch`) names the trunk; `--branch` names the
+  new worktree branch and is never the trunk hint.
+- `trunk sync --strict` and `--refuse` are the same step for the container's
+  merge. `satelle help trunk` has the whole account.
+
 ## An existing worktree
 
 `satelle story worktree <id> --existing <path>` applies the declaration to a

@@ -1744,22 +1744,20 @@ Never cancel a healthy story to free the seat — cancelled is terminal.`,
 // paths the repo's [worktree] declaration names. satelle holds no convention —
 // the branch and location templates and the include list are the repo's config.
 func storyWorktreeCommand() *cobra.Command {
-	var base, branch, path, existing string
+	var base, branch, path, existing, trunkBranch string
 	cmd := &cobra.Command{
 		Use:   "worktree <id> --base <ref>",
 		Short: "Open a git worktree for a story, carrying the gitignored paths the repo declares it needs",
 		Long: `Open the worktree a story is engaged from, carrying the gitignored paths the
-repo's [worktree] table declares it needs (a plain git worktree add copies only
-tracked content). Each is linked from the main tree, never copied.
+repo's [worktree] table declares it needs, linked from the main tree.
 
---base is required and never defaults to HEAD: the epic's base branch for an
-independent child of an epic; for a dependent, trunk once its dependency is on
-trunk or has no branch, otherwise the dependency's branch (see satelle help
-worktree). --branch and --path override the repo's templates and are required
-when it declares none.
+--base is required and never defaults to HEAD: the epic's base branch, or trunk,
+or a dependency's branch. A trunk base is first brought level with the remote;
+--trunk-branch names the trunk when the remote's HEAD ref does not. --branch and
+--path override the repo's templates.
 
 --existing <path> applies the declaration to a worktree that already exists,
-creating nothing and deleting nothing. See satelle help worktree.`,
+creating nothing. See satelle help worktree.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -1769,6 +1767,7 @@ creating nothing and deleting nothing. See satelle help worktree.`,
 			putChanged(req, f, "branch", "branch")
 			putChanged(req, f, "path", "path")
 			putChanged(req, f, "existing", "existing")
+			putChanged(req, f, "trunk-branch", "trunk_branch")
 			return dispatch(cmd, "story-worktree", req)
 		},
 	}
@@ -1776,6 +1775,7 @@ creating nothing and deleting nothing. See satelle help worktree.`,
 	cmd.Flags().StringVar(&branch, "branch", "", "new branch name (default: the [worktree] branch template)")
 	cmd.Flags().StringVar(&path, "path", "", "worktree location (default: the [worktree] path template)")
 	cmd.Flags().StringVar(&existing, "existing", "", "bring an existing worktree up to the declaration instead of creating one")
+	cmd.Flags().StringVar(&trunkBranch, "trunk-branch", "", "trunk branch when the remote's HEAD ref does not name one (default: [trunk] branch)")
 	return cmd
 }
 

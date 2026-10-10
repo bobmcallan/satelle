@@ -84,6 +84,48 @@ func TestLoad_TrunkPublishRoundsRejectsZero(t *testing.T) {
 	}
 }
 
+// base_refuse (sty_92337a13) is wider than refuse by default and is declared
+// on its own, so the engage-time default does not move.
+func TestLoad_TrunkBaseRefuseDefaultOverrideAndBranch(t *testing.T) {
+	cfg, _, err := Load(writeWorktreeRepo(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(cfg.Trunk.BaseRefuseSet(), ","); got != "dirty,diverged,ahead,behind,offline,unresolved" {
+		t.Errorf("default base_refuse = %q", got)
+	}
+	if got := strings.Join(cfg.Trunk.RefuseSet(), ","); got != "dirty,diverged" {
+		t.Errorf("engage refuse default moved: %q", got)
+	}
+	if cfg.Trunk.Branch != "" {
+		t.Errorf("default branch hint = %q, want none", cfg.Trunk.Branch)
+	}
+
+	cfg, _, err = Load(writeWorktreeRepo(t, "[trunk]\nbase_refuse = [\"dirty\"]\nbranch = \"main\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Trunk.BaseRefuses("dirty") || cfg.Trunk.BaseRefuses("ahead") || cfg.Trunk.BaseRefuses("unresolved") {
+		t.Errorf("base_refuse override not honoured: %v", cfg.Trunk.BaseRefuseSet())
+	}
+	if cfg.Trunk.Branch != "main" || !cfg.Trunk.Refuses("diverged") {
+		t.Errorf("branch = %q, refuse = %v", cfg.Trunk.Branch, cfg.Trunk.RefuseSet())
+	}
+
+	empty, _, err := Load(writeWorktreeRepo(t, "[trunk]\nbase_refuse = []\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty.Trunk.BaseRefuseSet()) != 0 {
+		t.Errorf("an explicit empty base_refuse must stop nothing: %v", empty.Trunk.BaseRefuseSet())
+	}
+
+	_, _, err = Load(writeWorktreeRepo(t, "[trunk]\nbase_refuse = [\"bogus\"]\n"))
+	if err == nil || !strings.Contains(err.Error(), "base_refuse") || !strings.Contains(err.Error(), "bogus") {
+		t.Fatalf("Load error = %v, want one naming base_refuse and the state", err)
+	}
+}
+
 func TestLoad_TrunkRefuseRejectsAnUnknownState(t *testing.T) {
 	_, _, err := Load(writeWorktreeRepo(t, "[trunk]\nrefuse = [\"dirtyy\"]\n"))
 	if err == nil || !strings.Contains(err.Error(), "dirtyy") {

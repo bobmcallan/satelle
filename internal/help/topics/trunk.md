@@ -82,8 +82,60 @@ local trunk back at the release head and the remote untouched. On success the li
 ## Running it by hand
 
 ```
-satelle trunk sync [--fast-forward] [--json] [--remote r] [--branch b]
+satelle trunk sync [--fast-forward] [--json] [--remote r] [--trunk-branch b] [--strict] [--refuse s,...]
 ```
 
 reports the same state for the invoking tree and exits 0 once a state is
 reported. It is the operator's entry point to the same unit the engage runs.
+
+## Cutting a worktree and merging an epic from main as it is on the remote
+
+An epic's children are cut from the trunk and run for hours; the container then
+merges them. Both points start from the trunk brought level with the remote, so
+neither works from a stale local copy:
+
+- `satelle story worktree <id> --base <trunk>` runs this check with fast-forward
+  first (see `satelle help worktree`) and cuts from the updated local trunk.
+- `satelle trunk sync --fast-forward --strict` is what the container's merge step
+  runs before it merges a child. It prints what came in and exits non-zero when
+  the trunk is in a state the stop set names.
+
+Level: the cut prints nothing and `--strict` prints the level line and exits 0.
+
+**The stop set** is `[trunk] base_refuse`, or `--refuse` on `trunk sync`. Its
+default is `dirty, diverged, ahead, behind, offline, unresolved`, where `behind`
+means behind and not fast-forwarded (main is checked out in another worktree, so
+it was not moved). In a stopping state both points stop before changing anything:
+no branch or worktree is created and local main is unchanged. The message names
+the state, the ahead/behind counts where relevant, and the way out (for ahead,
+push first). It is wider than the engage-time `[trunk] refuse` on purpose: an
+engage only reads the trunk, so an offline remote proceeds there; a cut or merge
+writes new history from its base, so a base not shown to be level stops.
+
+```toml
+[trunk]
+base_refuse = ["dirty", "diverged"]  # any of dirty, diverged, ahead, behind, offline, unresolved
+branch      = "main"                 # the trunk's name when the remote's HEAD ref does not give one
+```
+
+**When the remote's HEAD ref is missing,** both points first run
+`git remote set-head <remote> --auto`, which writes only the remote-tracking
+symref. If the trunk then resolves it is checked as above; if the remote cannot
+be reached the state is `offline`. If it still does not resolve and no hint is
+given, satelle cannot tell the trunk from a dependency branch, so the state is
+`unresolved`: `story worktree` stops for every base with
+
+```
+satelle: trunk unresolved — cannot tell whether <ref> is the trunk; pass --trunk-branch <name> or run git remote set-head <remote> --auto
+```
+
+and `trunk sync --strict` stops the same way. `--trunk-branch` (or `[trunk] branch`)
+is the hint: the hinted branch, in any of its four spellings (`main`,
+`refs/heads/main`, `origin/main`, `refs/remotes/origin/main`), is then the trunk
+and is synced, and any other base is cut as named. On `story worktree` the
+`--branch` flag names the new worktree branch, never the trunk. `trunk sync`
+keeps `--branch` as a deprecated alias of `--trunk-branch`.
+
+Listing a state out of the stop set lets it through with the line printed. A
+machine already level, a base that is not the trunk, `--existing`,
+`[trunk] check = false` and a repo with no remote behave as they did before.
