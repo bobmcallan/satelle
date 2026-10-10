@@ -1,3 +1,19 @@
+## [0.0.642] - 2026-10-10
+
+### Added
+- **`satelle trunk publish` releases onto a main other machines have moved.** It merges origin/main into the release (no history rewrite, so the release's commits and an epic's merge commits stay ancestors), runs an optional `[trunk] stamp` command on the integrated tree and the `--prove` / `[trunk] prove` command on the combined head, then pushes with one plain push. A push refused because main moved again is answered by another merge-and-prove round, up to `[trunk] publish_rounds` (default 5); it never forces. A conflict lists the unmerged paths, and any other merge failure, failed proof or spent bound exits non-zero with trunk restored and the remote untouched. `--story` ledgers the combined and pushed heads as `trunk_publish`. (sty_6af229f1, sty_f77b40bb)
+- **Cutting an epic child from the trunk starts from main as published.** `satelle story worktree <id> --base <trunk>` (`main`, `refs/heads/main`, `origin/main` or `refs/remotes/origin/main`) first brings local main level with origin and cuts from the updated tip, printing what came in. A dependency or epic-branch base is cut as before. An unresolved remote HEAD is retried with `git remote set-head --auto`; `--trunk-branch` or `[trunk] branch` names the trunk otherwise. (sty_92337a13, sty_f77b40bb)
+- **`satelle trunk sync --strict [--refuse …]`** exits non-zero when the trunk is in a stop state; the container merge step runs it before merging children. `[trunk] base_refuse` (default dirty, diverged, ahead, behind-not-moved, offline, unresolved) sets the stop states for cuts and strict syncs; the engage-time `[trunk] refuse` default is unchanged. (sty_92337a13, sty_f77b40bb)
+
+### Changed
+- `satelle trunk sync --branch` is deprecated in favour of `--trunk-branch`. (sty_92337a13)
+- This completes epic:trunk-sync: starting, cutting, merging and releasing all begin from main as it is on origin. (sty_f77b40bb)
+
+## [serve-v0.0.147] - 2026-10-10
+
+### Changed
+- The serve binary carries the `trunk_publish` ledger kind and the `[trunk]` publish and base-refuse configuration. (sty_f77b40bb)
+
 ## [0.0.641] - 2026-10-10
 
 ### Added
