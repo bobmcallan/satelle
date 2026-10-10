@@ -44,6 +44,7 @@ Everything is REAL verbatim except:
 | Question | Run | Files |
 |---|---|---|
 | json output | 1a | 1a-json.out, 1a-json.err, 1a-json.meta.json |
+| json usage, two resumed print turns (same session; cold then warm: the warm turn's cacheReadTokens 12664 exceeds its inputTokens 74, so the envelope reads exclusively) | 22 | 22-json-cold.out, 22-json-warm.out |
 | stream-json output | 1b | 1b-stream.out, 1b-stream.err, 1b-stream.meta.json |
 | prompt on stdin | 1c | 1c-stdin.out, 1c-stdin.err, 1c-stdin.meta.json |
 | instructions via AGENTS.md | 1d | 1d-agentsmd.out, 1d-agentsmd.err, 1d-agentsmd.meta.json |

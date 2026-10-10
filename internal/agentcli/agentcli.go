@@ -295,8 +295,9 @@ type grokJSONEnvelope struct {
 //
 //   - Claude `--output-format json`: unwraps `.result` and captures `.usage`
 //   - Grok `--output-format json`: unwraps `.text` (usage zero when absent)
-//   - Cursor `--output-format json`: unwraps `.result`; usage is recorded as a
-//     cursor-named unavailable (fixture 1a)
+//   - Cursor `--output-format json`: unwraps `.result` and maps the camelCase
+//     usage (fixture 1a; inputTokens includes the cache reads); a missing usage
+//     is a cursor-named unavailable and cost is always one
 //
 // Otherwise stdout is returned verbatim with Available false — plain-text
 // harnesses keep working and explicitly report unavailable cost. Duration is set by the

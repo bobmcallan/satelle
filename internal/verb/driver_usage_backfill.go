@@ -196,7 +196,11 @@ func backfillSession(ctx context.Context, item workitem.Item, entries []ledger.E
 			calls := w.ModelCalls
 			payload.Available, payload.Model = true, w.Model
 			payload.FreshInput, payload.CacheRead, payload.CacheWrite, payload.Output = w.FreshInputTokens, w.CacheReadInputTokens, w.CacheCreationInputTokens, w.OutputTokens
-			payload.ModelCalls = &calls
+			if w.ModelCallsUnavailableReason != "" {
+				payload.ModelCallsUnavailableReason = w.ModelCallsUnavailableReason
+			} else {
+				payload.ModelCalls = &calls
+			}
 			payload.CostUSD, payload.CostUnavailableReason = w.CostUSD, w.CostUnavailableReason
 			s.Status = BackfillWritten
 			s.FreshInput, s.CacheRead, s.CacheWrite, s.Output, s.ModelCalls = payload.FreshInput, payload.CacheRead, payload.CacheWrite, payload.Output, calls

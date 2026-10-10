@@ -208,13 +208,19 @@ func TestCursorFactsRow(t *testing.T) {
 	}
 }
 
-// AC3: no driver-usage reader exists for cursor, and the record says so by name.
+// AC3: a cursor session with no recorded stop (print mode emits none) is a
+// cursor-named unavailable that gives its cause — cursor now has a reader, so it
+// is not the "no driver-usage reader" tail (sty_a3258bb3).
 func TestCursorSessionUsageIsNamedUnavailable(t *testing.T) {
+	t.Setenv("SATELLE_CURSOR_USAGE_DIR", t.TempDir())
 	snap := SessionUsageSnapshot(HarnessCursor, "sess-1", t.TempDir())
-	if snap.Available || snap.UnavailableReason != "cursor: no driver-usage reader for this harness" {
-		t.Fatalf("snapshot = %+v, want the cursor-named no-reader reason", snap)
+	if snap.Available || snap.UnavailableReason != cursorNoStopReason {
+		t.Fatalf("snapshot = %+v, want the cursor-named no-stop reason", snap)
 	}
-	if !IsNoDriverReaderReason(snap.UnavailableReason) {
-		t.Error("the reason is not recognised as a no-reader reason")
+	if !strings.HasPrefix(snap.UnavailableReason, "cursor:") || !strings.Contains(snap.UnavailableReason, "print mode") {
+		t.Errorf("reason = %q, want it to name cursor and the cause", snap.UnavailableReason)
+	}
+	if IsNoDriverReaderReason(snap.UnavailableReason) {
+		t.Error("cursor has a driver-usage reader; its reason is not a no-reader reason")
 	}
 }

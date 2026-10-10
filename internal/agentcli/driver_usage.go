@@ -113,6 +113,8 @@ func SessionUsageSnapshot(harness, sessionID, repoRoot string) DriverSnapshot {
 		return grokDriverSnapshot(sessionID, repoRoot)
 	case HarnessPi:
 		return piDriverSnapshot(sessionID, repoRoot)
+	case HarnessCursor:
+		return cursorDriverSnapshot(sessionID)
 	default:
 		return DriverSnapshot{SessionID: sessionID, Executable: adapter,
 			UnavailableReason: fmt.Sprintf("%s: %s", adapter, noDriverReaderReason)}
@@ -146,6 +148,9 @@ type DriverWindowUsage struct {
 	CacheCreationInputTokens int
 	OutputTokens             int
 	ModelCalls               int
+	// ModelCallsUnavailableReason is set when the harness's record carries no
+	// model-call count; ModelCalls is then not a measurement.
+	ModelCallsUnavailableReason string
 
 	CostUSD               *float64
 	CostUnavailableReason string
@@ -171,6 +176,8 @@ func SessionWindowUsage(harness, sessionID, repoRoot string, from, to time.Time)
 	switch harness {
 	case HarnessPi:
 		return piWindowUsage(sessionID, repoRoot, from, to)
+	case HarnessCursor:
+		return cursorWindowUsage(sessionID, from, to)
 	default:
 		return DriverWindowUsage{SessionID: sessionID, Executable: adapter,
 			UnavailableReason: fmt.Sprintf("%s: backfill not supported — no timestamped session-window reader for this harness", adapter)}
