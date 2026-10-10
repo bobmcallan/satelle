@@ -305,6 +305,87 @@ func TestCursorInteractiveHooks(t *testing.T) {
 	}
 }
 
+// cursorToolOutcome returns the result key ("rejected", "error" or "success")
+// and text of the completed tool_call whose call is the named kind.
+func cursorToolOutcome(t *testing.T, name, kind string) (string, string) {
+	t.Helper()
+	for _, m := range cursorJSONLines(t, name) {
+		if m["type"] != "tool_call" || m["subtype"] != "completed" {
+			continue
+		}
+		tc, _ := m["tool_call"].(map[string]any)
+		call, ok := tc[kind].(map[string]any)
+		if !ok {
+			continue
+		}
+		res, _ := call["result"].(map[string]any)
+		for key, v := range res {
+			body, _ := json.Marshal(v)
+			return key, string(body)
+		}
+	}
+	t.Fatalf("%s: no completed %s", name, kind)
+	return "", ""
+}
+
+// TestCursorDogfoodAC13 pins the captured dogfood of satelle's installed cursor
+// wiring (sty_7d098d50 AC13): refusals with satelle's reason, an engaged write,
+// the session context, and the stop followup re-prompting the agent.
+func TestCursorDogfoodAC13(t *testing.T) {
+	refusals := []struct{ run, kind, reason string }{
+		{"14-refuse-write", "editToolCall", "you're mutating the tree without a performing story"},
+		{"14-refuse-delete", "deleteToolCall", "you're mutating the tree without a performing story"},
+		{"14-refuse-shell-rm", "shellToolCall", "you're mutating the tree without a performing story"},
+		{"14-refuse-git-commit", "shellToolCall", "refusing to commit/push with no engaged story"},
+	}
+	for _, r := range refusals {
+		key, body := cursorToolOutcome(t, r.run+".out", r.kind)
+		if key != "rejected" && key != "error" {
+			t.Errorf("%s: %s result is %q, want a refusal", r.run, r.kind, key)
+		}
+		if !strings.Contains(body, "satelle: ") || !strings.Contains(body, r.reason) {
+			t.Errorf("%s: refusal does not carry satelle's reason %q: %.200s", r.run, r.reason, body)
+		}
+		// the model saw the reason: it is quoted in the run's final result
+		if res := cursorResult0(t, r.run+".out"); !strings.Contains(res, r.reason) {
+			t.Errorf("%s: final result does not quote the reason: %.200s", r.run, res)
+		}
+	}
+	if key, _ := cursorToolOutcome(t, "14-engaged-write.out", "editToolCall"); key != "success" {
+		t.Errorf("14-engaged-write: edit result is %q, want success", key)
+	}
+	if res := cursorResult0(t, "14-context.out"); !strings.Contains(res, "# Always-resident principles (satelle)") {
+		t.Errorf("14-context: reply %q does not quote the session context line", res)
+	}
+	tty := cursorRead(t, "14-stop.tty.txt")
+	for _, want := range []string{"STOP BLOCKED", "follow-ups", "NOTED satelle: STOP BLOCKED", "UNGATED"} {
+		if !strings.Contains(tty, want) {
+			t.Errorf("14-stop.tty.txt: want %q", want)
+		}
+	}
+	hooks := cursorRead(t, "14-transcript.md")
+	for _, want := range []string{
+		"satelle-hook.sh gate cursor", "satelle-hook.sh commitgate cursor",
+		"satelle hook context --harness cursor", "satelle hook stopcheck --harness cursor",
+	} {
+		if !strings.Contains(hooks, want) {
+			t.Errorf("14-transcript.md: installed hooks.json lacks %q", want)
+		}
+	}
+	if n := strings.Count(hooks, "absent .claude/settings.json; absent .grok/hooks/satelle.json; absent .pi/extensions/satelle.ts"); n != 7 {
+		t.Errorf("14-transcript.md: other-harness absence recorded %d times, want 7 (once per cursor-agent run)", n)
+	}
+}
+
+// cursorResult0 is the "result" of the last JSON line (a stream-json run's
+// final result event).
+func cursorResult0(t *testing.T, name string) string {
+	t.Helper()
+	lines := cursorJSONLines(t, name)
+	s, _ := lines[len(lines)-1]["result"].(string)
+	return s
+}
+
 func TestCursorACP(t *testing.T) {
 	var cap struct {
 		Frames []struct {

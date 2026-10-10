@@ -75,6 +75,72 @@ func TestPreToolUseDenyMatchRecognisesOwnShape(t *testing.T) {
 	}
 }
 
+// sty_7d098d50 AC7: cursor's session-context answer is additional_context; no
+// other harness has its own shape, so the caller builds the Claude envelope.
+func TestSessionContextOutput(t *testing.T) {
+	b, ok := SessionContextOutput(HarnessCursor, "CTX")
+	if !ok || string(b) != `{"additional_context":"CTX"}` {
+		t.Fatalf("SessionContextOutput(cursor) = %s, %v", b, ok)
+	}
+	for _, h := range []string{HarnessClaude, HarnessGrok, HarnessPi, HarnessUnknown, ""} {
+		if b, ok := SessionContextOutput(h, "CTX"); ok || b != nil {
+			t.Errorf("SessionContextOutput(%q) = %s, %v; want no own shape", h, b, ok)
+		}
+	}
+}
+
+// sty_7d098d50 AC8: a cursor stop is answered with followup_message and an allow
+// prints nothing; every other harness keeps the decision/reason block.
+func TestStopOutput(t *testing.T) {
+	if got := string(StopOutput(HarnessCursor, true, "R")); got != `{"followup_message":"R"}` {
+		t.Errorf("cursor block = %s", got)
+	}
+	for _, h := range []string{HarnessClaude, HarnessGrok, HarnessPi, HarnessUnknown} {
+		if got := string(StopOutput(h, true, "R")); got != `{"decision":"block","reason":"R"}` {
+			t.Errorf("%s block = %s", h, got)
+		}
+	}
+	for _, h := range []string{HarnessCursor, HarnessClaude} {
+		if got := StopOutput(h, false, "R"); got != nil {
+			t.Errorf("%s allow = %s, want nothing", h, got)
+		}
+	}
+	if !SilentStopAllow(HarnessCursor) || SilentStopAllow(HarnessClaude) || SilentStopAllow(HarnessGrok) {
+		t.Error("only cursor's Stop allow is silent")
+	}
+}
+
+// cursor's stop payload carries loop_count (testdata/cursor/7-stop-hooks.log): 0
+// on the first stop, 1 after one followup.
+func TestStopContinued(t *testing.T) {
+	line := func(i int) []byte {
+		var found []string
+		for _, l := range strings.Split(cursorRead(t, "7-stop-hooks.log"), "\n") {
+			if strings.HasPrefix(l, "stop\t") {
+				found = append(found, strings.TrimPrefix(l, "stop\t"))
+			}
+		}
+		if len(found) < 2 {
+			t.Fatalf("want two captured stop payloads, got %d", len(found))
+		}
+		// The log truncates each payload; the fields under test sit in the first
+		// 400 characters, so close the object after cursor_version.
+		l := found[i]
+		cut := strings.Index(l, `"cursor_version":"`)
+		end := cut + strings.Index(l[cut+len(`"cursor_version":"`):], `"`) + len(`"cursor_version":"`) + 1
+		return []byte(l[:end] + "}")
+	}
+	if StopContinued(line(0)) {
+		t.Error("loop_count 0 is the first stop, not a continued one")
+	}
+	if !StopContinued(line(1)) {
+		t.Error("loop_count 1 is a stop after a followup")
+	}
+	if StopContinued([]byte(`{"loop_count":3}`)) {
+		t.Error("loop_count without cursor_version is not cursor evidence")
+	}
+}
+
 // TestCursorDenyReasonVisible pins the cursor deny shape and the visibility of
 // its reason to real cursor-agent captures (probe 12, cursor-agent
 // 2026.10.01-e373342; sty_be756616).

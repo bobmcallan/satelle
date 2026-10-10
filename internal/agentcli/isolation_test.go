@@ -48,6 +48,22 @@ func TestClassifyTool_EveryClassOnBothProviders(t *testing.T) {
 	}
 }
 
+// sty_7d098d50: cursor's hook tool names. Delete is its file-delete tool and an
+// edit (testdata/cursor 10a/11a); Write and Shell classify through the tables
+// that already existed; Read and Grep are reads; a name nothing knows fails
+// closed as unknown.
+func TestClassifyTool_CursorToolNames(t *testing.T) {
+	for name, want := range map[string]ToolClass{
+		"Write": ClassWrite, "Delete": ClassEdit, "Shell": ClassShell,
+		"Read": ClassRead, "Grep": ClassRead, "Glob": ClassRead,
+		"FutureTool": ClassUnknown,
+	} {
+		if got := ClassifyTool(name); got != want {
+			t.Errorf("ClassifyTool(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
 // outOfGrantTools is one tool name per denied class, per provider, plus a name
 // no table knows.
 var outOfGrantTools = map[ToolClass][]string{

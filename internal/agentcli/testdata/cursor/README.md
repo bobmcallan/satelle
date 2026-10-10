@@ -71,6 +71,49 @@ Everything is REAL verbatim except:
 | deny with only `reason` (blocks; reason hidden) | 12-reason | 12-reason-hooks.json, 12-reason-hook.sh, 12-reason.out, 12-reason.err, 12-reason.fs, 12-reason.meta.json |
 | claude's `hookSpecificOutput` deny (blocks; reason visible) | 12-claude | 12-claude-hooks.json, 12-claude-hook.sh, 12-claude.out, 12-claude.err, 12-claude.fs, 12-claude.meta.json |
 | stderr reason with exit 2 (blocks; reason visible) | 12-exit2 | 12-exit2-hooks.json, 12-exit2-hook.sh, 12-exit2.out, 12-exit2.err, 12-exit2.fs, 12-exit2.meta.json |
+| sessionStart `additional_context` reaches the model (print mode) | 9 | 9-hooks.json, 9-hook.sh, 9-hooks.log, 9-ctx-print.out, 9-ctx-print.meta.json |
+| cursor runs a repo's `.claude/settings.json` hooks; Claude-format hook output (settings: Write\|Edit\|Bash matcher) | 10b | 10b-claude-settings.json, 10b-hooks.log, 10b.meta.json, 10b.fs |
+| the same, Claude `permissionDecision` deny JSON | 11b | 11b-claude-settings.json, 11b-hooks.log, 11b.meta.json, 11b.fs |
+| the same, blocking `exit 2` (the Delete tool escapes the matcher: `other.txt: absent`) | 11c | 11c-claude-settings.json, 11c-hook.sh, 11c-hooks.log, 11c.meta.json, 11c.fs |
+| hook command forms cursor runs (PATH lookup, env prefix, absolute, `sh -c`) | 13 | 13-hooks.json, 13-forms.log, 13.meta.json |
+| dogfood: installed sessionStart reaches the model (print mode) | 14-context | 14-context.out, 14-context.err, 14-context.meta.json |
+| dogfood: installed stop hook's followup re-prompts the agent (interactive pty) | 14-stop | 14-stop.tty.txt, 14-stop.meta.json |
+| dogfood: Write refused, no story engaged | 14-refuse-write | 14-refuse-write.out, 14-refuse-write.err, 14-refuse-write.meta.json |
+| dogfood: Delete refused, no story engaged | 14-refuse-delete | 14-refuse-delete.out, 14-refuse-delete.err, 14-refuse-delete.meta.json |
+| dogfood: Shell `rm` refused, no story engaged | 14-refuse-shell-rm | 14-refuse-shell-rm.out, 14-refuse-shell-rm.err, 14-refuse-shell-rm.meta.json |
+| dogfood: Shell `git commit` refused, no story engaged | 14-refuse-git-commit | 14-refuse-git-commit.out, 14-refuse-git-commit.err, 14-refuse-git-commit.meta.json |
+| dogfood: Write allowed, story engaged in an executor step | 14-engaged-write | 14-engaged-write.out, 14-engaged-write.err, 14-engaged-write.meta.json |
+| dogfood run log | 14 | 14-transcript.md |
+
+Probe 9, 10b, 11b, 11c and 13 (sty_7d098d50) were captured and redacted the same
+way as the rest. Their hook logs are the hook script's first 300 (9) or 400 (the
+rest) characters per payload, so a long `tool_input` ends mid-value; the tests
+read `tool_name` and as much of `tool_input` as survived. The stream-json
+`.out`/`.err` of 10b, 11b and 11c are not committed (the file-system result
+`.fs` and the hook log carry what the tests pin); 11c's stream recorded a
+successful `deleteToolCall` while its Write and Shell calls were refused.
+
+Probe 14 (sty_7d098d50, AC13) is the dogfood of satelle's own cursor wiring, not a
+probe with a hand-made `hooks.json`. Each run used a scratch git repo that had had
+`satelle init` and `satelle agents install cursor`, so `.cursor/hooks.json` is the
+real installed file (reproduced in 14-transcript.md, unmodified). Every child
+process ran with Claude's environment removed (every `CLAUDE*` variable and
+`AI_AGENT` dropped from cursor-agent's environment); no shim, HOME swap or
+`~/.local/bin` edit was used. Before each cursor-agent run the repo held no other
+harness wiring, and 14-transcript.md records `absent .claude/settings.json; absent
+.grok/hooks/satelle.json; absent .pi/extensions/satelle.ts` ahead of every pass.
+The engaged pass set the story and ran cursor-agent under one shared
+`SATELLE_SESSION` (`dogfood-cursor-sty_7d098d50`), so cursor's hook processes saw
+the seat the story set. Ordering: context, stop (pty), the four refusals, engaged.
+Redaction as above (including cursor's own `Co-authored-by` trailer address in
+14-refuse-git-commit.out, which cursor-agent appended to the `git commit` it ran);
+the dogfood sandbox's `repo-1791624060` directory name is kept.
+
+Deviation: 14-stop.tty.txt is a plain-text rendition of the raw pty log, not the
+raw bytes (escape sequences, CRs, BEL and spinner redraws removed). It carries the
+whole stop story: the agent's `HI`, the stop hook's `followup_message` queued as a
+follow-up, its submission as the next message, and the agent's second turn
+`NOTED satelle: STOP BLOCKED … these edits were made UNGATED: scratch.txt.`
 
 Probe 12 (sty_be756616) asked the agent to create `written.txt` under a
 preToolUse hook returning each deny variant; the `reason` the model saw is the

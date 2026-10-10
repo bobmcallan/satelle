@@ -5,6 +5,7 @@
 .claude/*
 !.claude/settings.local.json
 .grok/
+.cursor/
 
 # satelle workspace (authored substrate + local config). Continuity is local
 # disk by default (or hosted sync); Git is not the recovery path.

@@ -141,7 +141,7 @@ func HarnessFactsTable() []HarnessFacts {
 			// cursor driver when a backgrounded gate finishes.
 			CompletionNotification: no("cursor: a gate outlasting cursor's 30s shell foreground is backgrounded by cursor and its verdict is not delivered to the cursor driver until sty_2439f4fd lands"),
 			InTurnWake:             "unverified: cursor: an interactive stop hook with a followup_message re-prompt is captured (testdata/cursor/7-stop) but not wired — sty_2439f4fd",
-			PromptContext:          no("cursor: session context injection is unproven — owned by sty_7d098d50"),
+			PromptContext:          no("cursor: the prompt reminder (beforeSubmitPrompt) is unavailable — print mode does not dispatch it and interactive delivery is unproven (sty_7d098d50); session context rides sessionStart"),
 		},
 	}
 }

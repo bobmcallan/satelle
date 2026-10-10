@@ -1,0 +1,466 @@
+package cli
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/bobmcallan/satelle/internal/agentcli"
+)
+
+// sty_7d098d50: cursor-agent held to the edit and commit gates. cursor's hooks.json
+// has no tool matcher, so `hook gate` and `hook commitgate` see every tool call and
+// classify it themselves. These tests feed them preToolUse payloads taken from the
+// committed real captures (internal/agentcli/testdata/cursor).
+
+// cursorFixtureDir is absolute: several tests chdir into a temp repo.
+var cursorFixtureDir = func() string {
+	abs, err := filepath.Abs("../agentcli/testdata/cursor")
+	if err != nil {
+		panic(err)
+	}
+	return abs
+}()
+
+// cursorCall is one captured preToolUse tool call.
+type cursorCall struct {
+	Src   string         // the capture file it came from
+	Tool  string         // tool_name
+	Input map[string]any // tool_input, recovered even when the log truncated it
+}
+
+var (
+	cursorToolNameRe = regexp.MustCompile(`"tool_name":"([^"]+)"`)
+	cursorScratchRe  = regexp.MustCompile(`/SCRATCH/sb[0-9a-z-]*`)
+)
+
+// loadCursorCalls reads the tool calls out of capture hook logs. A hook log keeps
+// the first 300-400 characters of each payload, so a long tool_input ends
+// mid-value: the string fields (command, file_path) are recovered up to the cut.
+func loadCursorCalls(t *testing.T, files ...string) []cursorCall {
+	t.Helper()
+	var out []cursorCall
+	for _, f := range files {
+		raw, err := os.ReadFile(filepath.Join(cursorFixtureDir, f))
+		if err != nil {
+			t.Fatalf("cursor capture %s: %v", f, err)
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			m := cursorToolNameRe.FindStringSubmatch(line)
+			if m == nil {
+				continue
+			}
+			out = append(out, cursorCall{Src: f, Tool: m[1], Input: decodeCursorToolInput(line)})
+		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("no tool calls in %v", files)
+	}
+	return out
+}
+
+func decodeCursorToolInput(line string) map[string]any {
+	i := strings.Index(line, `"tool_input":`)
+	if i < 0 {
+		return map[string]any{}
+	}
+	rest := line[i+len(`"tool_input":`):]
+	var m map[string]any
+	if json.NewDecoder(strings.NewReader(rest)).Decode(&m) == nil {
+		return m
+	}
+	m = map[string]any{}
+	for _, key := range []string{"command", "file_path"} {
+		re := regexp.MustCompile(`"` + key + `":"((?:[^"\\]|\\.)*)`)
+		if sm := re.FindStringSubmatch(rest); sm != nil {
+			if s, err := strconv.Unquote(`"` + sm[1] + `"`); err == nil {
+				m[key] = s
+			} else {
+				m[key] = sm[1]
+			}
+		}
+	}
+	return m
+}
+
+// payload is the preToolUse envelope cursor sends, with the capture's scratch
+// sandbox rewritten to repo so a path lands inside the tree under test.
+func (c cursorCall) payload(repo string) string {
+	return cursorEnvelope(c.Tool, c.Input, repo)
+}
+
+func cursorEnvelope(tool string, input map[string]any, repo string) string {
+	in := map[string]any{}
+	for k, v := range input {
+		if s, ok := v.(string); ok {
+			v = cursorScratchRe.ReplaceAllString(s, repo)
+		}
+		in[k] = v
+	}
+	b, err := json.Marshal(map[string]any{
+		"tool_name": tool, "tool_input": in,
+		"hook_event_name": "preToolUse", "cursor_version": "2026.10.01-e373342",
+	})
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
+// firstCursorCall returns the first capture call to tool whose command contains
+// substr (any call when substr is empty).
+func firstCursorCall(t *testing.T, calls []cursorCall, tool, substr string) cursorCall {
+	t.Helper()
+	for _, c := range calls {
+		cmd, _ := c.Input["command"].(string)
+		if c.Tool == tool && strings.Contains(cmd, substr) {
+			return c
+		}
+	}
+	t.Fatalf("no captured %s call containing %q", tool, substr)
+	return cursorCall{}
+}
+
+// cursorCaptured is the call set every cursor gate test draws on.
+type cursorCaptured struct {
+	write, del, read, grep                    cursorCall
+	rmShell, sedShell, rmSedShell, plainShell cursorCall
+	all                                       []cursorCall
+}
+
+func loadCursorCaptured(t *testing.T) cursorCaptured {
+	t.Helper()
+	all := loadCursorCalls(t, "10a-hooks.log", "10b-hooks.log", "11a-hooks.log", "11b-hooks.log", "11c-hooks.log")
+	return cursorCaptured{
+		all:        all,
+		write:      firstCursorCall(t, loadCursorCalls(t, "11a-hooks.log"), "Write", ""),
+		del:        firstCursorCall(t, loadCursorCalls(t, "10a-hooks.log"), "Delete", ""),
+		read:       firstCursorCall(t, loadCursorCalls(t, "10a-hooks.log"), "Read", ""),
+		grep:       firstCursorCall(t, loadCursorCalls(t, "10a-hooks.log"), "Grep", ""),
+		rmShell:    firstCursorCall(t, loadCursorCalls(t, "10b-hooks.log"), "Shell", "rm "),
+		sedShell:   firstCursorCall(t, loadCursorCalls(t, "11c-hooks.log"), "Shell", "sed -i"),
+		rmSedShell: firstCursorCall(t, loadCursorCalls(t, "11a-hooks.log"), "Shell", "rm -f"),
+		plainShell: firstCursorCall(t, loadCursorCalls(t, "10a-hooks.log"), "Shell", "cat "),
+	}
+}
+
+// cursorScenario arranges the engagement state a gate decides against.
+type cursorScenario struct {
+	name  string
+	setup func(t *testing.T) string // returns the repo root
+	// allowMutation: the state permits edits (a performing executor step).
+	allowMutation bool
+}
+
+func cursorScenarios() []cursorScenario {
+	pin := func(t *testing.T, repo string) string {
+		// cursor sets CLAUDE_PROJECT_DIR for its hooks (testdata/cursor/clean-6-hook-env.txt).
+		t.Setenv("CLAUDE_PROJECT_DIR", repo)
+		t.Setenv("SATELLE_PROJECT_DIR", "")
+		prev := hookHarnessFlag
+		t.Cleanup(func() { hookHarnessFlag = prev })
+		resolved, err := filepath.EvalSymlinks(repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resolved
+	}
+	return []cursorScenario{
+		{"no story engaged", func(t *testing.T) string {
+			repo := tempRepo(t)
+			t.Chdir(repo)
+			return pin(t, repo)
+		}, false},
+		{"executor state", func(t *testing.T) string {
+			repo, _ := liveSeatRepo(t)
+			return pin(t, repo)
+		}, true},
+		{"planning state", func(t *testing.T) string {
+			return pin(t, editStateRepo(t, "plan", "plan", false))
+		}, false},
+	}
+}
+
+// decideHook runs one hook verb and reports whether it denied, with its output.
+func decideHook(t *testing.T, verb, harness, payload string) (denied bool, out string) {
+	t.Helper()
+	out, err := runRootIn(t, payload, "hook", verb, "--harness", harness)
+	return err != nil, out
+}
+
+// verbFor is the verb the Claude scaffold routes a tool to: Write and Edit to
+// gate, Bash (cursor's Shell) to commitgate.
+func verbFor(tool string) string {
+	if agentcli.ClassifyTool(tool) == agentcli.ClassShell {
+		return "commitgate"
+	}
+	return "gate"
+}
+
+// AC4/AC5: what the two verbs decide on real cursor payloads, in each state.
+func TestCursorGateDecisionsOnCapturedPayloads(t *testing.T) {
+	cc := loadCursorCaptured(t)
+	future := func(repo string) string {
+		return cursorEnvelope("FutureTool", map[string]any{"file_path": filepath.Join(repo, "x.txt")}, repo)
+	}
+	gitShell := func(cmd string) cursorCall {
+		return cursorCall{Tool: cc.plainShell.Tool, Input: map[string]any{"command": cmd, "cwd": "", "timeout": float64(30000)}}
+	}
+	for _, sc := range cursorScenarios() {
+		t.Run(sc.name, func(t *testing.T) {
+			repo := sc.setup(t)
+			type tc struct {
+				what, verb, payload string
+				mutates             bool // denied unless the state permits edits
+				alwaysAllowed       bool
+			}
+			cases := []tc{
+				{"Write (in-place edit)", "gate", cc.write.payload(repo), true, false},
+				{"Delete", "gate", cc.del.payload(repo), true, false},
+				{"unknown tool", "gate", future(repo), true, false},
+				{"Shell rm", "commitgate", cc.rmShell.payload(repo), true, false},
+				{"Shell sed -i", "commitgate", cc.sedShell.payload(repo), true, false},
+				{"Shell sed -i && rm", "commitgate", cc.rmSedShell.payload(repo), true, false},
+				{"Read via gate", "gate", cc.read.payload(repo), false, true},
+				{"Grep via gate", "gate", cc.grep.payload(repo), false, true},
+				{"Read via commitgate", "commitgate", cc.read.payload(repo), false, true},
+				{"non-mutating Shell via commitgate", "commitgate", cc.plainShell.payload(repo), false, true},
+				{"non-mutating Shell via gate", "gate", cc.plainShell.payload(repo), false, true},
+				{"Write via commitgate", "commitgate", cc.write.payload(repo), false, true},
+			}
+			for _, c := range cases {
+				denied, out := decideHook(t, c.verb, "cursor", c.payload)
+				want := c.mutates && !sc.allowMutation
+				if denied != want {
+					t.Errorf("%s: denied=%v, want %v\n%s", c.what, denied, want, out)
+				}
+				if denied {
+					if !strings.Contains(out, `"permission":"deny"`) || !strings.Contains(out, `"user_message"`) {
+						t.Errorf("%s: deny is not cursor's encoding:\n%s", c.what, out)
+					}
+					if strings.Contains(out, "hookSpecificOutput") {
+						t.Errorf("%s: cursor deny carries Claude's shape:\n%s", c.what, out)
+					}
+				}
+			}
+			// git commit / push are the commit gate's: refused with nothing engaged.
+			for _, git := range []string{"git commit -am x", "git push origin HEAD"} {
+				denied, out := decideHook(t, "commitgate", "cursor", gitShell(git).payload(repo))
+				engaged := sc.name != "no story engaged"
+				if denied == engaged {
+					t.Errorf("%s: denied=%v with engaged=%v\n%s", git, denied, engaged, out)
+				}
+				if denied && !denyReasonContains(out, noEngagedStoryCommitReason) {
+					t.Errorf("%s: deny is not satelle's commit reason:\n%s", git, out)
+				}
+			}
+		})
+	}
+}
+
+// AC4: satelle's reason reaches the model, and an unknown tool is named.
+func TestCursorGateDenyReasons(t *testing.T) {
+	cc := loadCursorCaptured(t)
+	repo := cursorScenarios()[0].setup(t)
+
+	_, out := decideHook(t, "gate", "cursor", cc.write.payload(repo))
+	if !denyReasonContains(out, noEngagedStoryEditReason) {
+		t.Errorf("Write deny lacks satelle's no-engaged-story reason:\n%s", out)
+	}
+	_, out = decideHook(t, "gate", "cursor", cc.del.payload(repo))
+	if !denyReasonContains(out, noEngagedStoryEditReason) {
+		t.Errorf("Delete deny lacks satelle's no-engaged-story reason:\n%s", out)
+	}
+	_, out = decideHook(t, "gate", "cursor", cursorEnvelope("FutureTool", map[string]any{}, repo))
+	for _, want := range []string{"unrecognised cursor tool FutureTool", "cannot tell whether it mutates"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("unknown-tool deny lacks %q:\n%s", want, out)
+		}
+	}
+	// A payload with no tool name cannot be placed either.
+	_, out = decideHook(t, "gate", "cursor", `{"cursor_version":"2026.10.01-e373342","tool_input":{}}`)
+	if !strings.Contains(out, "unrecognised cursor tool") {
+		t.Errorf("nameless payload should fail closed:\n%s", out)
+	}
+}
+
+// AC5: with a story engaged, a cursor payload gets the decision a Claude payload
+// for the same target gets — an executor state allows, a non-performing state
+// denies — and an exempt path stays exempt.
+func TestCursorEngagedPolicyMatchesClaude(t *testing.T) {
+	for _, sc := range cursorScenarios()[1:] {
+		t.Run(sc.name, func(t *testing.T) {
+			repo := sc.setup(t)
+			target := filepath.Join(repo, "internal", "foo.go")
+			cursorDenied, _ := decideHook(t, "gate", "cursor", cursorEnvelope("Write", map[string]any{"file_path": target}, repo))
+			claudeDenied, _ := decideHook(t, "gate", "claude", `{"tool_name":"Write","tool_input":{"file_path":`+strconv.Quote(target)+`}}`)
+			if cursorDenied != claudeDenied || cursorDenied == sc.allowMutation {
+				t.Errorf("cursor denied=%v claude denied=%v, want both %v", cursorDenied, claudeDenied, !sc.allowMutation)
+			}
+		})
+	}
+
+	// The exempt path is exercised under an engaged non-performing (planning)
+	// story, where a non-exempt Write is denied, so the allow is the exemption's.
+	t.Run("exempt path", func(t *testing.T) {
+		repo := cursorScenarios()[2].setup(t)
+		cfg := filepath.Join(repo, ".satelle", "satelle.toml")
+		if err := os.WriteFile(cfg, []byte("[review]\ngate_create = false\n\n[gate]\nedit_exempt_paths = [\"docs/\"]\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		exempt := filepath.Join(repo, "docs", "note.md")
+		for _, h := range []string{"cursor", "claude"} {
+			if denied, out := decideHook(t, "gate", h, cursorEnvelope("Write", map[string]any{"file_path": exempt}, repo)); denied {
+				t.Errorf("%s: exempt path denied:\n%s", h, out)
+			}
+		}
+		if denied, _ := decideHook(t, "gate", "cursor", cursorEnvelope("Write", map[string]any{"file_path": filepath.Join(repo, "internal", "foo.go")}, repo)); !denied {
+			t.Error("a non-exempt path must still be denied")
+		}
+	})
+}
+
+// AC6: cursor runs a repo's Claude-format hooks as well as its own, so a repo with
+// both scaffolds fires the gate twice per call. The pair of verbs the Claude
+// scaffold routes (gate for Write, commitgate for Shell) decide the same under
+// --harness claude and --harness cursor, with nothing engaged and with an
+// executor story; the native path alone also covers Delete and an unknown tool;
+// and each deny is encoded for the invocation's --harness.
+func TestCursorAndClaudeScaffoldsDecideAlike(t *testing.T) {
+	cc := loadCursorCaptured(t)
+	var forwarded []cursorCall
+	for _, c := range cc.all {
+		// The Claude matcher in the 10b/11b/11c captures is Write|Edit|Bash and
+		// cursor forwarded Write and Shell to it.
+		if tool := c.Tool; tool == "Write" || tool == "Shell" {
+			forwarded = append(forwarded, c)
+		}
+	}
+	if len(forwarded) < 6 {
+		t.Fatalf("want every captured Write and Shell call, got %d", len(forwarded))
+	}
+	for _, sc := range cursorScenarios()[:2] {
+		t.Run(sc.name, func(t *testing.T) {
+			repo := sc.setup(t)
+			for _, c := range forwarded {
+				verb := verbFor(c.Tool)
+				payload := c.payload(repo)
+				cursorDenied, cursorOut := decideHook(t, verb, "cursor", payload)
+				claudeDenied, claudeOut := decideHook(t, verb, "claude", payload)
+				if cursorDenied != claudeDenied {
+					t.Errorf("%s %s (%s): cursor denied=%v, claude denied=%v\ncursor: %s\nclaude: %s",
+						c.Src, c.Tool, verb, cursorDenied, claudeDenied, cursorOut, claudeOut)
+				}
+				if cursorDenied {
+					if !strings.Contains(cursorOut, `"permission":"deny"`) || strings.Contains(cursorOut, "permissionDecision") {
+						t.Errorf("%s: --harness cursor deny has the wrong encoding:\n%s", c.Src, cursorOut)
+					}
+					if !strings.Contains(claudeOut, `"permissionDecision":"deny"`) || strings.Contains(claudeOut, `"permission":"deny"`) {
+						t.Errorf("%s: --harness claude deny has the wrong encoding:\n%s", c.Src, claudeOut)
+					}
+				}
+			}
+		})
+	}
+
+	// Only the native path sees a Delete or a tool Claude's table does not name.
+	t.Run("native path covers what the claude matcher misses", func(t *testing.T) {
+		repo := cursorScenarios()[0].setup(t)
+		for what, payload := range map[string]string{
+			"Delete (10a)": cc.del.payload(repo),
+			"unknown tool": cursorEnvelope("FutureTool", map[string]any{}, repo),
+		} {
+			if denied, out := decideHook(t, "gate", "cursor", payload); !denied {
+				t.Errorf("%s: native gate allowed it:\n%s", what, out)
+			}
+		}
+	})
+}
+
+// The 11c capture is why: with a Claude matcher of Write|Edit|Bash, cursor's Delete
+// escaped it (other.txt: absent) while the edit and the shell were refused.
+func TestCursorDeleteEscapesClaudeMatcherCapture(t *testing.T) {
+	fs, err := os.ReadFile(filepath.Join(cursorFixtureDir, "11c.fs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(fs), "other.txt: absent") || !strings.Contains(string(fs), "line two") {
+		t.Errorf("11c.fs: want the delete to have landed and the edit refused, got %q", fs)
+	}
+	settings, err := os.ReadFile(filepath.Join(cursorFixtureDir, "11c-claude-settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(settings), `"matcher":"Write|Edit|Bash"`) {
+		t.Errorf("11c settings matcher changed: %s", settings)
+	}
+}
+
+// AC3: no cursor tool name or harness literal in the cli's gate code — the names
+// live in agentcli's table and the property in harnessHookSpec.NoToolMatcher.
+func TestNoCursorLiteralsInCliGateCode(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	forbidden := []string{`"Delete"`, `"Shell"`, `== "cursor"`}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, lit := range forbidden {
+			if strings.Contains(string(raw), lit) {
+				t.Errorf("%s contains %s; classify through agentcli.ClassifyTool and harnessHooks(...).NoToolMatcher", name, lit)
+			}
+		}
+	}
+}
+
+// Only cursor sets the property today; a harness gaining it must be a decision.
+func TestOnlyCursorHasNoToolMatcher(t *testing.T) {
+	for _, h := range []string{"claude", "grok", "pi", "unknown", ""} {
+		if harnessHooks(h).NoToolMatcher {
+			t.Errorf("harnessHooks(%q).NoToolMatcher is set", h)
+		}
+		if hs := harnessHooks(h); hs.gateMatcher == "" || hs.commitMatcher == "" {
+			t.Errorf("harnessHooks(%q) has an empty matcher", h)
+		}
+	}
+	hs := harnessHooks(agentcli.HarnessCursor)
+	if !hs.NoToolMatcher || hs.gateMatcher != "" || hs.commitMatcher != "" {
+		t.Errorf("cursor spec = %+v, want NoToolMatcher with no matchers", hs)
+	}
+}
+
+// A quoted argument names a target as a bare one does. cursor's shell tool quotes
+// its absolute paths (testdata/cursor/10b, 11b), and the word list used to drop
+// them, so `rm "f"` classified as no mutation at all.
+func TestBashMutationTargetsSeeQuotedArgs(t *testing.T) {
+	anchor := "/work/repo"
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{`rm "/work/repo/other.txt"`, []string{"/work/repo/other.txt"}},
+		{`rm 'other.txt'`, []string{"/work/repo/other.txt"}},
+		{`touch "a b.txt"`, []string{"/work/repo/a b.txt"}},
+		{`cp src.txt "/work/repo/dest.txt"`, []string{"/work/repo/dest.txt"}},
+		{`rm -f "/work/repo/x" other.txt`, []string{"/work/repo/x", "/work/repo/other.txt"}},
+		{`echo "rm /work/repo/other.txt"`, nil},
+		{`git commit -m "rm /work/repo/other.txt"`, nil},
+	} {
+		got, _ := bashMutationTargets(tc.command, anchor)
+		if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+			t.Errorf("bashMutationTargets(%q) = %v, want %v", tc.command, got, tc.want)
+		}
+	}
+}

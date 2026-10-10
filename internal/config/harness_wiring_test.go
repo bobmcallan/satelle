@@ -26,6 +26,7 @@ func TestGateWiringResolution(t *testing.T) {
 		"claude": ".claude/settings.json",
 		"grok":   ".grok/hooks/satelle.json",
 		"pi":     ".pi/extensions/satelle.ts",
+		"cursor": ".cursor/hooks.json",
 	} {
 		got := (Config{}).GateWiring(harness)
 		if len(got) != 1 || got[0] != want {

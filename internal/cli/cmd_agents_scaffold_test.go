@@ -307,10 +307,10 @@ func TestAgentsAndInitRejectUnknownHarness(t *testing.T) {
 		t.Fatalf("parseHarnessFlag(nosuch) = %v", err)
 	}
 	if _, err := expandAgentTargets("nosuch"); err == nil ||
-		!strings.Contains(err.Error(), "unknown agent") || !strings.Contains(err.Error(), "claude, grok, pi, or all") {
+		!strings.Contains(err.Error(), "unknown agent") || !strings.Contains(err.Error(), "claude, grok, pi, cursor, or all") {
 		t.Fatalf("expandAgentTargets(nosuch) = %v", err)
 	}
-	if all, err := expandAgentTargets("all"); err != nil || strings.Join(all, ",") != "claude,grok,pi" {
+	if all, err := expandAgentTargets("all"); err != nil || strings.Join(all, ",") != "claude,grok,pi,cursor" {
 		t.Fatalf("expandAgentTargets(all) = %v (%v)", all, err)
 	}
 

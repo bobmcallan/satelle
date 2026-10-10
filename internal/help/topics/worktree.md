@@ -83,17 +83,19 @@ gate_wiring = [".mybot/hooks.json"]  # tree-relative paths this harness needs
   dispatch it permits: an `UNGATED` warning naming the policy, and an
   `ungated_dispatch` ledger row. An ungated run is visible even when allowed.
 - `gate_wiring` is declared per harness. Embedded defaults cover claude
-  (`.claude/settings.json`), grok (`.grok/hooks/satelle.json`) and pi
-  (`.pi/extensions/satelle.ts`); a repo's table overrides them. A harness with
-  none declared is treated as having absent wiring.
+  (`.claude/settings.json`), grok (`.grok/hooks/satelle.json`), pi
+  (`.pi/extensions/satelle.ts`) and cursor (`.cursor/hooks.json`); a repo's table
+  overrides them. A harness with none declared is treated as having absent
+  wiring. To carry cursor's wiring into a worktree, add `.cursor/hooks.json` to
+  `[worktree] include` (the path must be gitignored in the main tree).
 - A present wiring file is also scanned for the hook wrapper script it calls
   (`.satelle/hooks/satelle-hook.sh`, comment lines ignored). That script must
   exist where the call points; a missing one counts as missing wiring.
-- The harness comes from the binding's command: claude, grok, pi, otherwise
-  `unknown`. An unrecognised command is `unknown`, which declares no wiring, so it
-  is refused (naming the executable) unless the repo declares
-  `[harness.unknown] gate_wiring`. pi is recognised here but stays unrecognised
-  for reviewer tool isolation.
+- The harness comes from the binding's command: claude, grok, pi, cursor
+  (`cursor-agent`), otherwise `unknown`. An unrecognised command is `unknown`,
+  which declares no wiring, so it is refused (naming the executable) unless the
+  repo declares `[harness.unknown] gate_wiring`. pi and cursor are recognised here
+  but stay unrecognised for reviewer tool isolation.
 - Both keys are read from the **main tree's** configuration. A policy or wiring
   declared only in a worktree's own `satelle.toml` changes nothing, so a worktree
   cannot exempt itself.

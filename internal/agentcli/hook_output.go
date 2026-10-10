@@ -118,3 +118,80 @@ func HookDenyHarnesses() []string {
 	}
 	return out
 }
+
+// Session-context and Stop encodings (sty_7d098d50). A harness whose hooks speak
+// their own shape for these answers lives here, beside the deny shapes; every
+// other harness takes the Claude-shaped envelopes the cli builds.
+
+// cursorSessionContextOut is cursor-agent's sessionStart output: additional_context
+// reaches the model in print mode (testdata/cursor/9-ctx-print.out).
+type cursorSessionContextOut struct {
+	AdditionalContext string `json:"additional_context"`
+}
+
+// SessionContextOutput returns the JSON bytes (no trailing newline) of a
+// session-context answer for a harness that has its own shape, and ok=false for
+// every other harness, whose answer is the Claude-shaped hookSpecificOutput
+// envelope the caller already builds.
+func SessionContextOutput(harness, text string) (out []byte, ok bool) {
+	if harness != HarnessCursor {
+		return nil, false
+	}
+	b, err := json.Marshal(cursorSessionContextOut{AdditionalContext: text})
+	if err != nil {
+		panic("agentcli: marshal session context: " + err.Error())
+	}
+	return b, true
+}
+
+// cursorStopOut is cursor-agent's stop output: a followup_message re-prompts the
+// agent as its next turn (testdata/cursor/7-stop). A stop cannot be vetoed.
+type cursorStopOut struct {
+	FollowupMessage string `json:"followup_message"`
+}
+
+// defaultStopBlockOut is the top-level decision/reason Stop block Claude reads
+// (sty_5e4bc568 AC6); best-effort for Grok.
+type defaultStopBlockOut struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason"`
+}
+
+// StopOutput returns the JSON bytes (no trailing newline) answering a Stop event
+// with reason: cursor re-prompts through followup_message, every other harness
+// blocks through the top-level decision/reason shape. A non-block answer is nil:
+// cursor treats any followup_message as a re-prompt, so its allow prints nothing
+// (SilentStopAllow); the other harnesses' allow-with-note is built by the caller.
+func StopOutput(harness string, block bool, reason string) []byte {
+	if !block {
+		return nil
+	}
+	var doc any = defaultStopBlockOut{Decision: "block", Reason: reason}
+	if harness == HarnessCursor {
+		doc = cursorStopOut{FollowupMessage: reason}
+	}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		panic("agentcli: marshal stop output: " + err.Error())
+	}
+	return b
+}
+
+// StopContinued reports whether a Stop event is the stop of a turn that a hook
+// already continued, for a harness that says so with a counter rather than
+// Claude's stop_hook_active flag: cursor's stop payload carries loop_count, 0 on
+// the first stop and the number of followups already spent after that
+// (testdata/cursor/7-stop-hooks.log).
+func StopContinued(raw []byte) bool {
+	var ev struct {
+		CursorVersion string `json:"cursor_version"`
+		LoopCount     int    `json:"loop_count"`
+	}
+	_ = json.Unmarshal(raw, &ev)
+	return strings.TrimSpace(ev.CursorVersion) != "" && ev.LoopCount > 0
+}
+
+// SilentStopAllow reports whether harness's Stop allow carries no output: a
+// harness whose only Stop channel re-prompts (cursor) cannot take an
+// allow-with-note, because the note would become a followup turn.
+func SilentStopAllow(harness string) bool { return harness == HarnessCursor }

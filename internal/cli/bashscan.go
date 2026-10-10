@@ -534,7 +534,7 @@ func bashMutationTargets(command, anchor string) (inHome, foreign []string) {
 				// occupy its slot, or the file after it is mistaken for it.
 				paths = sedPathArgs(commandTokens(seg, idx), cwd)
 			} else {
-				paths = mutationPathArgs(words, cwd)
+				paths = mutationPathArgs(commandArgWords(commandTokens(seg, idx)), cwd)
 			}
 			for _, p := range paths {
 				add(p)
@@ -542,6 +542,24 @@ func bashMutationTargets(command, anchor string) (inHome, foreign []string) {
 		}
 	})
 	return inHome, foreign
+}
+
+// commandArgWords is a command segment's words with each quoted argument
+// unquoted into its slot. A quoted path is as much a target as a bare one —
+// cursor's shell tool emits `rm "/abs/other.txt"` (testdata/cursor/10b) — and the
+// word list drops string tokens, so `rm "f"` named no target at all. A heredoc
+// body is not an argument and stays out.
+func commandArgWords(toks []bashTok) []string {
+	var out []string
+	for _, t := range toks {
+		switch {
+		case t.Kind == "word" && t.Value != "":
+			out = append(out, t.Value)
+		case t.Kind == "string" && t.Value != "HEREDOC" && t.Raw == "":
+			out = append(out, unquoteTok(t.Value))
+		}
+	}
+	return out
 }
 
 // bashSegment is one non-empty command segment as forEachSegment yields it.

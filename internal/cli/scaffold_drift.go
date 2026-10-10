@@ -52,6 +52,7 @@ func DetectScaffoldDrift(repoRoot string) []ScaffoldFinding {
 	// renderHookCommand's positional arg, checked above through driftHarnessSettings.
 	findings = append(findings, driftGrokHarnessFlag(repoRoot)...)
 	findings = append(findings, driftPiExtension(repoRoot)...)
+	findings = append(findings, driftCursorHooks(repoRoot)...)
 	// Legacy per-harness scripts on disk are drift (should have been retired).
 	for _, harness := range []string{"claude", "grok", "kimi"} {
 		for _, sub := range []string{"gate", "commitgate"} {

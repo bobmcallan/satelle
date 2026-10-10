@@ -1,3 +1,13 @@
+## [0.0.636] - 2026-10-10
+
+### Added
+- **A cursor-agent session is held to satelle's edit and commit gates.** `satelle agents install cursor` writes `.cursor/hooks.json`: an unmatched `preToolUse` routed to the gate and commit gate through the installed wrapper (absolute paths, as cursor needs), `sessionStart` to `satelle hook context --harness cursor` and `stop` to `satelle hook stopcheck --harness cursor`; `satelle agents remove cursor` takes out only satelle's entries. cursor's tools are classified by the shared tool table: `Write` and `Delete` are edits, `Shell` goes to the commit gate including the tree-mutation check (so `rm` and `sed -i` are refused with no story engaged, as for Claude's Bash), and an unrecognised tool is refused with no story engaged. Session context reaches cursor as `additional_context`; an interactive stop is answered with stopcheck's text as a `followup_message`. Print-mode stop and the prompt reminder are recorded as cursor-named unavailable. The absent-wiring check knows cursor's wiring. Proven on real cursor-agent 2026.10.01 (captures under `internal/agentcli/testdata/cursor/14-*`). To use it, run `satelle agents install cursor` in the repo. (sty_7d098d50)
+
+## [serve-v0.0.141] - 2026-10-10
+
+### Changed
+- The serve binary carries cursor's harness wiring, tool classification and context encoding. (sty_7d098d50)
+
 ## [0.0.635] - 2026-10-10
 
 ### Added

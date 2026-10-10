@@ -100,7 +100,7 @@ never blocks a session.`,
 				resolveContextHarness(hookHarnessFlag, raw, os.Environ()), raw)
 		},
 	}
-	context.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi —selects the injection limit (default: sniff event, then environment)")
+	context.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi|cursor —selects the injection limit and output shape (default: sniff event, then environment)")
 	gate := &cobra.Command{
 		Use:   "gate",
 		Short: "PreToolUse edit gate — block code edits unless a story is engaged",
@@ -164,6 +164,19 @@ workflow declaring no route blocks the edit.`,
 			resumeWakeFor(raw).activity() // a tool call: the session is mid-turn
 			p := filePathFromEvent(raw)
 			command := bashCommandFromEvent(raw)
+			// A harness whose hook file cannot filter by tool name sends this verb
+			// EVERY tool call, so classify it here (sty_7d098d50): an edit or write
+			// is judged below on its target, a shell is commitgate's, a tool the
+			// table cannot place fails closed, and any other class is allowed.
+			route, unknownTool := routeUnmatchedTool(raw)
+			switch route {
+			case routeSkip:
+				return nil
+			case routeUnknown:
+				p, command = "", ""
+			case routeJudge:
+				command = "" // an edit-class payload: the target alone is judged
+			}
 			// A session holding seats in several worktrees is attributed by the
 			// tree the edit targets (sty_42231b74); the fence below decides
 			// whether that tree may be edited at all.
@@ -243,6 +256,12 @@ workflow declaring no route blocks the edit.`,
 			if hookEditPermitted(info, dm, rm) {
 				return nil
 			}
+			if route == routeUnknown {
+				// No story is performing: a tool nothing classifies cannot be shown
+				// read-only, so it is refused, with the way in appended.
+				return denyPreToolUse(cmd, raw, unrecognisedToolReason(raw, unknownTool)+" "+
+					hookDenyReason(info, live, dm, rm, sid, time.Now().UTC()))
+			}
 			if reason, ok := sessionSeatsUnmatched(engaged, live, sid, dm, rm); ok {
 				return denyPreToolUse(cmd, raw, reason)
 			}
@@ -286,6 +305,12 @@ else the hook's own tree's seat.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
 			resumeWakeFor(raw).activity() // a tool call: the session is mid-turn
+			// Only a shell reaches the rest of this verb from a harness whose hook
+			// file cannot filter by tool name (sty_7d098d50): its other tools are the
+			// edit gate's, and a tool_input.command on one of them is not a shell.
+			if !shellOrMatched(raw) {
+				return nil
+			}
 			command := bashCommandFromEvent(raw)
 			// Containment BEFORE the engaged-story branch: a foreign-tree mutation
 			// is wrong even with a story engaged (sty_aadd4d6c / sty_a8454d10).
@@ -490,7 +515,7 @@ dispatched process, are left alone.`,
 	// event sniff, so bindSessionID's in-loop publish stays correct even if a
 	// future payload shape changes.
 	prompt.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi —in-loop publish (default: sniff event)")
-	stopcheck.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi —in-loop publish (default: sniff event)")
+	stopcheck.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|pi|cursor —in-loop publish and Stop output shape (default: sniff event)")
 	stopcheck.Flags().BoolVar(&hookNoWakeFlag, "no-wake", false, "the run ends at settle: wait for no gate and record a delivery limitation for each undelivered one (a harness that cannot hold its stop)")
 	explain := &cobra.Command{
 		Use:   "explain",
@@ -2391,7 +2416,9 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 	limit := a.Config.ContextLimit(harness)
 	if match {
 		emitEvent = channel
-		if channel != "SessionStart" {
+		// A harness spells its session-start event its own way (cursor sends
+		// sessionStart); every spelling is the SessionStart byte budget.
+		if !strings.EqualFold(channel, "SessionStart") {
 			unit = "characters"
 			limit = a.Config.ToolContextLimitChars(harness)
 		}
@@ -2413,7 +2440,10 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 	if strings.TrimSpace(content) == "" {
 		return nil
 	}
-	if err := emitAdditionalContext(out, emitEvent, "", content); err != nil {
+	if b, ok := agentcli.SessionContextOutput(harness, content); ok {
+		// A harness with its own session-context shape (cursor's additional_context).
+		fmt.Fprintln(out, string(b))
+	} else if err := emitAdditionalContext(out, emitEvent, "", content); err != nil {
 		return nil // fail open
 	}
 	// The marker is written only after a channel-matching emit of non-empty
@@ -3249,6 +3279,7 @@ func runHookPromptWith(out io.Writer, gatesInContext bool) error {
 // check runs before the other-holder note so a sibling session that edited
 // nothing gets no chatter on every Stop.
 func runHookStopcheck(raw []byte, out io.Writer) error {
+	stopEmitHarness = stopHarness(raw)
 	// A gate the session handed off (sty_c4b92c9e) is what it is waiting on: wait
 	// for it here and answer with its verdict, which the harness feeds back as the
 	// session's next input — the wake that costs the driver no call to ask. A gate
@@ -3476,7 +3507,7 @@ func stopHookActive(raw []byte) bool {
 		Camel bool `json:"stopHookActive"`
 	}
 	_ = json.Unmarshal(raw, &ev)
-	return ev.Snake || ev.Camel
+	return ev.Snake || ev.Camel || agentcli.StopContinued(raw)
 }
 
 // stopcheckReason is the agent-facing block message naming the ungated files
@@ -3534,6 +3565,9 @@ func emitStopNote(out io.Writer, note string) error {
 }
 
 func emitStopAllow(out io.Writer, allow stopAllowOut) error {
+	if agentcli.SilentStopAllow(stopEmitHarness) {
+		return nil // a harness whose only Stop channel re-prompts takes no note
+	}
 	b, err := json.Marshal(allow)
 	if err != nil {
 		return err
@@ -3556,10 +3590,12 @@ type stopBlockOut struct {
 // '|| exit 2'). Every block path goes through here so none can emit the wrong
 // decision value.
 func emitStopBlock(out io.Writer, reason string) error {
-	b, err := json.Marshal(stopBlockOut{Decision: "block", Reason: reason})
-	if err != nil {
-		return err
-	}
-	fmt.Fprintln(out, string(b))
+	fmt.Fprintln(out, string(agentcli.StopOutput(stopEmitHarness, true, reason)))
 	return nil
 }
+
+// stopEmitHarness is the harness the Stop answer in flight is encoded for. It is
+// set once per stopcheck process (runHookStopcheck), because the block and note
+// emitters sit several calls below the payload that names the harness; the
+// encodings themselves live in agentcli.StopOutput.
+var stopEmitHarness string

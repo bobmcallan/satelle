@@ -31,6 +31,23 @@ func WiringGuardFrom(cfg config.Config) WiringGuard {
 	return WiringGuard{GateWiring: cfg.GateWiring, Policy: cfg.AbsentWiringPolicy()}
 }
 
+// Missing returns what the tree at root lacks of the gate wiring declared for
+// harness: each declared path that is absent, each hook wrapper a present wiring
+// file calls that does not exist, or one entry saying the harness declares no
+// wiring at all (label names the harness in that entry). Empty means the tree is
+// wired. It is the check the dispatch guard runs, exported so a test can ask it
+// of a real worktree.
+func (w WiringGuard) Missing(root, harness, label string) []string {
+	var declared []string
+	if w.GateWiring != nil {
+		declared = w.GateWiring(harness)
+	}
+	if len(declared) == 0 {
+		return []string{"no gate wiring declared for harness " + label}
+	}
+	return missingWiring(root, declared)
+}
+
 // wiringMarker is the hook wrapper's file name. A wiring file that calls the
 // wrapper is only gated while the wrapper it names exists, so the guard checks
 // that too.
@@ -60,13 +77,7 @@ func (g *Engine) wiringGuard(ctx context.Context, agent, command, itemID string)
 			label = fmt.Sprintf("%s (executable %q)", harness, filepath.Base(f[0]))
 		}
 	}
-	declared := g.wiring.GateWiring(harness)
-	var missing []string
-	if len(declared) == 0 {
-		missing = []string{"no gate wiring declared for harness " + label}
-	} else {
-		missing = missingWiring(g.repoRoot, declared)
-	}
+	missing := g.wiring.Missing(g.repoRoot, harness, label)
 	if len(missing) == 0 {
 		return nil
 	}

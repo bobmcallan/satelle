@@ -48,6 +48,10 @@ var toolClassByName = map[string]ToolClass{
 	"run_terminal_command": ClassShell, "run_terminal_cmd": ClassShell, "run_terminal": ClassShell, "shell": ClassShell,
 	"spawn_subagent": ClassSubprocess,
 	"web_fetch":      ClassNetwork, "web_search": ClassNetwork, "image_gen": ClassNetwork,
+	// cursor: its file-delete tool (Delete in a preToolUse payload, testdata/cursor/
+	// 10a, 11a) is an edit. Write and Shell are cursor's too and already classify
+	// above; no Claude name maps to Delete, so a Claude matcher never forwards it.
+	"delete": ClassEdit,
 }
 
 // grantTool is one entry of a tools grant.

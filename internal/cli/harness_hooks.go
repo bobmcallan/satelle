@@ -15,6 +15,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/agentinstall"
 )
 
 // harnessHookSpec is one harness's satelle hook surface.
@@ -32,6 +35,12 @@ type harnessHookSpec struct {
 	// hook turnend` to each so a gate still owed to that session is resumed. Empty
 	// for a harness that fires none.
 	turnEndEvents []string
+	// NoToolMatcher is true for a harness whose hook file cannot filter a hook by
+	// tool name (cursor's hooks.json entries carry no matcher): its gate and
+	// commitgate fire for EVERY tool call, so the verbs classify the tool
+	// in-process (agentcli.ClassifyTool) and fail closed on one they cannot place.
+	// gateMatcher / commitMatcher are empty for such a harness.
+	NoToolMatcher bool
 }
 
 // turnEndHookCommand is the command wired to a harness's turnEndEvents. It names
@@ -57,6 +66,15 @@ var fullHookEvents = []string{"SessionStart", "PreToolUse", "UserPromptSubmit", 
 // the claude shape, which is what every caller already defaulted to.
 func harnessHooks(harness string) harnessHookSpec {
 	switch harness {
+	case agentcli.HarnessCursor:
+		// cursor's hooks.json is flat and matcher-less (sty_7d098d50): the gate
+		// and commitgate each see every tool call. It has no UserPromptSubmit
+		// (beforeSubmitPrompt is not dispatched in print mode) and no turn-end
+		// events; the file itself is written by agentinstall.RenderCursorHooks.
+		return harnessHookSpec{
+			events:        []string{"SessionStart", "PreToolUse", "Stop"},
+			NoToolMatcher: true,
+		}
 	case "grok":
 		return harnessHookSpec{
 			gateMatcher:   "Edit|Write|MultiEdit|NotebookEdit|search_replace|write",
@@ -249,13 +267,10 @@ func pruneSatelleHookEntries(raw []byte) (pruned []byte, empty bool, err error) 
 }
 
 // isSatelleOwnedHookCommand reports whether a hook command is satelle-managed.
+// The rule has one definition, shared with the cursor scaffold, in agentinstall;
+// the prompt and stopcheck constants both contain "satelle hook ".
 func isSatelleOwnedHookCommand(cmd string) bool {
-	return strings.Contains(cmd, "satelle-hook.sh") ||
-		strings.Contains(cmd, "satelle hook ") ||
-		strings.Contains(cmd, "satelle reindex") ||
-		cmd == "satelle reindex" ||
-		cmd == promptHookCommand ||
-		cmd == stopcheckHookCommand
+	return agentinstall.IsSatelleOwnedHookCommand(cmd)
 }
 
 // maybeRemoveSharedHookScript deletes .satelle/hooks/satelle-hook.sh only when
@@ -271,6 +286,7 @@ func maybeRemoveSharedHookScript(repoRoot string) (action, path, note string, er
 		filepath.Join(repoRoot, ".claude", "settings.json"),
 		filepath.Join(repoRoot, filepath.FromSlash(grokHooksRel)),
 		filepath.Join(repoRoot, filepath.FromSlash(piExtensionRel)),
+		filepath.Join(repoRoot, filepath.FromSlash(cursorHooksRel)),
 	} {
 		b, err := os.ReadFile(p)
 		if err != nil {

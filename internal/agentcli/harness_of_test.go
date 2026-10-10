@@ -7,18 +7,23 @@ import "testing"
 // classifier deliberately does not.
 func TestHarnessOf(t *testing.T) {
 	for command, want := range map[string]string{
-		"claude -p {system}":       HarnessClaude,
-		"/opt/bin/claude":          HarnessClaude,
-		"grok agent stdio":         HarnessGrok,
-		"pi -p {system}":           HarnessPi,
-		"/usr/bin/pi-agent --x":    HarnessPi,
-		"/usr/bin/PI":              HarnessPi,
-		"pip install":              HarnessUnknown,
-		"mybot -p":                 HarnessUnknown,
-		"pimento":                  HarnessUnknown,
-		"":                         HarnessUnknown,
-		"   ":                      HarnessUnknown,
-		"mybot --engine grok-fast": HarnessGrok,
+		"claude -p {system}":                      HarnessClaude,
+		"/opt/bin/claude":                         HarnessClaude,
+		"grok agent stdio":                        HarnessGrok,
+		"pi -p {system}":                          HarnessPi,
+		"/usr/bin/pi-agent --x":                   HarnessPi,
+		"/usr/bin/PI":                             HarnessPi,
+		"cursor-agent -p":                         HarnessCursor,
+		"/home/u/.local/bin/cursor-agent --trust": HarnessCursor,
+		"cursor-agent-beta -p":                    HarnessCursor,
+		"cursor":                                  HarnessUnknown,
+		"agent -p":                                HarnessUnknown,
+		"pip install":                             HarnessUnknown,
+		"mybot -p":                                HarnessUnknown,
+		"pimento":                                 HarnessUnknown,
+		"":                                        HarnessUnknown,
+		"   ":                                     HarnessUnknown,
+		"mybot --engine grok-fast":                HarnessGrok,
 	} {
 		if got := HarnessOf(command); got != want {
 			t.Errorf("HarnessOf(%q) = %q, want %q", command, got, want)
@@ -39,6 +44,19 @@ func TestHarnessOfDoesNotWidenReviewerIsolation(t *testing.T) {
 		}
 		if HarnessOf(command) != HarnessPi {
 			t.Errorf("HarnessOf(%q) must be pi", command)
+		}
+	}
+	// cursor-agent is recognised by HarnessOf (sty_7d098d50) and, like pi, stays
+	// unrecognised for reviewer isolation.
+	for _, command := range []string{"cursor-agent -p", "/home/u/.local/bin/cursor-agent --trust"} {
+		if got := AdapterName(command); got != HarnessUnknown {
+			t.Errorf("AdapterName(%q) = %q, must stay unknown for isolation", command, got)
+		}
+		if !UnrecognisedCommand(command) {
+			t.Errorf("UnrecognisedCommand(%q) must stay true", command)
+		}
+		if HarnessOf(command) != HarnessCursor {
+			t.Errorf("HarnessOf(%q) must be cursor", command)
 		}
 	}
 	for _, command := range []string{"claude -p", "grok agent", "mybot"} {

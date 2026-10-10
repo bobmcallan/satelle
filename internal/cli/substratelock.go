@@ -27,13 +27,14 @@ const substrateLockDenyActor = "edit-gate"
 
 // substrateLockFootprint is the set of prefixes the lock never applies to: the
 // footprint satelle's own machinery writes mid-session (the managed .gitignore
-// block and the harness scaffolds under .claude/, .grok/ and .pi/). It starts
-// from the seeded managed list so there is one answer about the footprint, and
-// adds .pi/ because the pi extension is deployed lazily by the binary. A lock
-// list that names one of these cannot lock it — the product must not deadlock
-// against its own writes.
+// block and the harness scaffolds under .claude/, .grok/, .pi/ and .cursor/). It
+// starts from the seeded managed list so there is one answer about the
+// footprint, and adds .pi/ and .cursor/ because those scaffolds are written by
+// `satelle agents install` and healed by the binary. A lock list that names one
+// of these cannot lock it — the product must not deadlock against its own
+// writes.
 func substrateLockFootprint() []string {
-	return append(append([]string{}, managedEditExemptEntries...), ".pi/")
+	return append(append([]string{}, managedEditExemptEntries...), ".pi/", ".cursor/")
 }
 
 // substrateLocked is the pure, harness-neutral predicate the edit gate applies:

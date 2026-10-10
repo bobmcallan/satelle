@@ -937,6 +937,9 @@ func ensureProcessHooks(out io.Writer, repoRoot string, forced []string) error {
 	if err := healPiExtension(out, repoRoot); err != nil {
 		return err
 	}
+	if err := healCursorHooks(out, repoRoot); err != nil {
+		return err
+	}
 	wantClaude, wantGrok := detectProcessHarnesses(repoRoot, forced)
 	if !wantClaude && !wantGrok {
 		fmt.Fprintln(out, "  · process hooks: none (no .claude/.grok dirs and no --harness; use --harness claude,grok or open a harness session for lazy install)")
@@ -1112,6 +1115,11 @@ func retrofitGrokHarnessFlag(path string) ([]string, error) {
 const (
 	promptHookCommand    = "PATH=$HOME/.local/bin:$PATH satelle hook prompt"
 	stopcheckHookCommand = "PATH=$HOME/.local/bin:$PATH satelle hook stopcheck"
+	// contextHookCommandPathPrefixed is the session-context command in the same
+	// PATH-prefixed form, for a scaffold that has no `satelle reindex` beside it
+	// to carry the PATH (the cursor scaffold). The Claude and grok scaffolds keep
+	// their bare `satelle hook context`.
+	contextHookCommandPathPrefixed = "PATH=$HOME/.local/bin:$PATH satelle hook context"
 )
 
 // stopHookEntry is the Stop hook's command entry. It carries a timeout longer

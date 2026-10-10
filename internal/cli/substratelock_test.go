@@ -78,7 +78,7 @@ func TestSubstrateLockedPredicate(t *testing.T) {
 // .pi/ (deployed lazily by the pi extension) is carved out as well.
 func TestSubstrateLockFootprintCoversManagedEntries(t *testing.T) {
 	got := substrateLockFootprint()
-	for _, want := range append(append([]string{}, managedEditExemptEntries...), ".pi/") {
+	for _, want := range append(append([]string{}, managedEditExemptEntries...), ".pi/", ".cursor/") {
 		found := false
 		for _, g := range got {
 			found = found || g == want
