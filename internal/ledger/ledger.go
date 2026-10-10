@@ -78,6 +78,10 @@ const (
 	// story first entered an engaging state (sty_9f3e51d1): body is the line
 	// shown to the operator, payload the trunk report. Never a verdict.
 	KindTrunkCheck = "trunk_check"
+	// KindTrunkPublish records what `satelle trunk publish --story` did
+	// (sty_6af229f1): body is the published line, payload the publish report
+	// with the pushed and combined heads. Never a verdict.
+	KindTrunkPublish = "trunk_publish"
 	// KindSuiteRun records ONE run of an expensive verification suite as
 	// SHA-keyed evidence: {sha, command, outcome, started_at, finished_at} in
 	// Payload, StoryID being the recording story (sty_183a0510). Sibling stories

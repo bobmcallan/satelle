@@ -18,6 +18,29 @@ type TrunkConfig struct {
 	// trunk that the check fast-forwarded is resolved, so "behind" refuses
 	// only when the trunk could not be moved.
 	Refuse *[]string `toml:"refuse"`
+
+	// Prove is the shell command `satelle trunk publish` runs on the combined
+	// head before it pushes (sty_6af229f1). There is no default: what proves a
+	// repo is its own decision. Absent, publish refuses.
+	Prove string `toml:"prove"`
+	// Stamp is an optional shell command publish runs on the integrated tree
+	// before Prove: it computes the release's version bump and changelog entry
+	// from that tree and commits them.
+	Stamp string `toml:"stamp"`
+	// PublishRounds bounds how many times a refused push is answered by
+	// integrating the moved trunk again. Absent means DefaultPublishRounds.
+	PublishRounds *int `toml:"publish_rounds"`
+}
+
+// DefaultPublishRounds is what an absent [trunk] publish_rounds means.
+const DefaultPublishRounds = 5
+
+// PublishRoundBound is the declared round bound, or DefaultPublishRounds.
+func (t TrunkConfig) PublishRoundBound() int {
+	if t.PublishRounds == nil {
+		return DefaultPublishRounds
+	}
+	return *t.PublishRounds
 }
 
 // DefaultTrunkRefuse is what an absent [trunk] refuse means: a dirty or a
@@ -54,6 +77,9 @@ func (t TrunkConfig) Refuses(state string) bool {
 // validateTrunk refuses an unknown state in [trunk] refuse at load time, so a
 // typo cannot silently disarm the check.
 func validateTrunk(cfg Config, path string) error {
+	if cfg.Trunk.PublishRounds != nil && *cfg.Trunk.PublishRounds < 1 {
+		return fmt.Errorf("config %s: [trunk] publish_rounds is %d (want 1 or more)", path, *cfg.Trunk.PublishRounds)
+	}
 	if cfg.Trunk.Refuse == nil {
 		return nil
 	}
