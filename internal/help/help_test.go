@@ -24,6 +24,33 @@ func TestListContainsCoreTopics(t *testing.T) {
 	}
 }
 
+// The trunk and worktree topics document the bring-level step for a trunk base
+// (sty_92337a13): set-head auto, the unresolved stop and its message, the hint,
+// --strict, --refuse and base_refuse with its default.
+func TestTrunkAndWorktreeTopicsDocumentTheBringLevelStep(t *testing.T) {
+	const unresolved = "satelle: trunk unresolved — cannot tell whether <ref> is the trunk; pass --trunk-branch <name> or run git remote set-head <remote> --auto"
+	for name, wants := range map[string][]string{
+		"worktree": {"brought level", "not the trunk", "set-head", unresolved, "--trunk-branch", "[trunk] branch", "base_refuse", "dirty, diverged, ahead, behind"},
+		"trunk":    {"set-head", unresolved, "--trunk-branch", "[trunk] branch", "--strict", "--refuse", "base_refuse", "dirty, diverged, ahead, behind, offline, unresolved"},
+	} {
+		topic, ok := Get(name)
+		if !ok {
+			t.Fatalf("missing help topic %q", name)
+		}
+		for _, w := range wants {
+			if !strings.Contains(topic.Body, w) {
+				t.Errorf("topic %q lacks %q", name, w)
+			}
+		}
+		// --branch names the new worktree's branch, never the trunk.
+		for _, ln := range strings.Split(topic.Body, "\n") {
+			if strings.Contains(ln, "pass --branch") || strings.Contains(ln, "pass `--branch`") {
+				t.Errorf("topic %q tells the operator to pass --branch for the trunk: %q", name, ln)
+			}
+		}
+	}
+}
+
 // TestCompactOutputTopic (sty_75b76691 AC5): the config keys, the flags, the
 // table/diff fold shapes, and the marker/retrieve tie-in are all documented so
 // `satelle help compact-output` is the single reference for what an agent sees

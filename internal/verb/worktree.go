@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/trunk"
 	"github.com/bobmcallan/satelle/internal/worktree"
 )
 
@@ -50,6 +51,9 @@ type worktreeReq struct {
 	Branch   string `json:"branch,omitempty"`
 	Path     string `json:"path,omitempty"`
 	Existing string `json:"existing,omitempty"`
+	// TrunkBranch names the trunk when the remote's HEAD ref does not
+	// (sty_92337a13); --branch names the new worktree branch, not this.
+	TrunkBranch string `json:"trunk_branch,omitempty"`
 }
 
 // WorktreeResult is the story-worktree response.
@@ -63,6 +67,10 @@ type WorktreeResult struct {
 	// Missing names declared paths the main tree does not have; they were
 	// skipped, which is reported rather than failed.
 	Missing []string `json:"missing,omitempty"`
+	// Trunk is the check that brought the trunk level before a trunk base was
+	// cut; absent when no check ran (a base that is not the trunk, --existing,
+	// the check switched off, or no remote).
+	Trunk *trunk.Report `json:"trunk,omitempty"`
 }
 
 var worktreeIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -86,8 +94,8 @@ func storyWorktree(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 	res := WorktreeResult{ID: req.ID}
 
 	if req.Existing != "" {
-		if req.Base != "" || req.Branch != "" || req.Path != "" {
-			return nil, errors.New("verb: --existing applies the declaration to a worktree that already exists; it cannot be combined with --base, --branch or --path")
+		if req.Base != "" || req.Branch != "" || req.Path != "" || req.TrunkBranch != "" {
+			return nil, errors.New("verb: --existing applies the declaration to a worktree that already exists; it cannot be combined with --base, --branch, --path or --trunk-branch")
 		}
 		wt, err := existingWorktree(ctx, main, req.Existing)
 		if err != nil {
@@ -110,7 +118,12 @@ func storyWorktree(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 			path = filepath.Join(main, path)
 		}
 		path = filepath.Clean(path)
-		if err := worktree.Open(ctx, main, path, branch, req.Base); err != nil {
+		base, rep, err := cutBase(ctx, main, req.ID, req.Base, req.TrunkBranch)
+		if err != nil {
+			return nil, err
+		}
+		res.Trunk = rep
+		if err := worktree.Open(ctx, main, path, branch, base); err != nil {
 			return nil, err
 		}
 		res.Path, res.Branch, res.Base = path, branch, req.Base

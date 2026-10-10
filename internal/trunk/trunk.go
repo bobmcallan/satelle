@@ -61,6 +61,11 @@ type Options struct {
 	// FastForward lets Check advance trunk with `merge --ff-only`. It never
 	// does anything else to the tree.
 	FastForward bool
+	// ResolveHead lets Check run `git remote set-head <remote> --auto` when the
+	// remote's HEAD ref is missing, before it falls back to Branch. That writes
+	// only the remote-tracking symref, but it contacts the remote, so a caller
+	// opts in: the engage path does not, the worktree cut and `trunk sync` do.
+	ResolveHead bool
 }
 
 // Report is what Check found. State is the one-word answer; the rest is the
@@ -74,6 +79,10 @@ type Report struct {
 	Behind int    `json:"behind"`
 	Remote string `json:"remote,omitempty"`
 	Trunk  string `json:"trunk,omitempty"`
+	// Unresolved is true when no trunk could be named: the remote's HEAD ref is
+	// missing, `set-head --auto` did not restore it and the caller gave no
+	// Branch. State is Skipped then; StopState tells a caller to stop.
+	Unresolved bool `json:"unresolved,omitempty"`
 	// FastForwarded is true only when this call moved trunk.
 	FastForwarded bool `json:"fast_forwarded"`
 	// From and To are local trunk's sha and the remote's. After a fast-forward
@@ -96,6 +105,9 @@ func (r Report) Detail() string {
 	case Level:
 		return fmt.Sprintf("%s level with %s/%s", r.Trunk, r.Remote, r.Trunk)
 	case Skipped:
+		if r.Unresolved {
+			return "unresolved: " + oneLine(r.Reason)
+		}
 		return "skipped: " + oneLine(r.Reason)
 	case Offline:
 		return fmt.Sprintf("fetch from %s failed (proceeding): %s", r.Remote, oneLine(r.Reason))
@@ -143,9 +155,10 @@ func Check(ctx context.Context, dir string, opts Options) Report {
 	if !contains(have, rep.Remote) {
 		return skipped(rep, fmt.Sprintf("remote %s is not configured", rep.Remote))
 	}
-	rep.Trunk = trunkName(ctx, top, rep.Remote, opts.Branch)
-	if rep.Trunk == "" {
-		return skipped(rep, fmt.Sprintf("cannot resolve trunk: %s has no HEAD ref and no branch was given", rep.Remote))
+	var stop *Report
+	rep.Trunk, stop = resolveTrunk(ctx, top, rep, opts)
+	if stop != nil {
+		return *stop
 	}
 	localRef := "refs/heads/" + rep.Trunk
 	remoteRef := "refs/remotes/" + rep.Remote + "/" + rep.Trunk
@@ -237,6 +250,62 @@ func compare(ctx context.Context, top, localRef, remoteRef string) (ahead, behin
 	ahead, _ = strconv.Atoi(f[0])
 	behind, _ = strconv.Atoi(f[1])
 	return ahead, behind, from, to, nil
+}
+
+// resolveTrunk names the trunk for rep.Remote: the remote's HEAD ref, else (when
+// opts.ResolveHead) the HEAD ref `set-head --auto` restores, else opts.Branch.
+// When none of those names one it returns a stop report instead: Offline when
+// the restore failed because the remote could not be reached, otherwise
+// Unresolved. A caller-given Branch wins over an unreachable remote — the fetch
+// then reports the offline state itself.
+func resolveTrunk(ctx context.Context, top string, rep Report, opts Options) (string, *Report) {
+	if name := trunkName(ctx, top, rep.Remote, ""); name != "" {
+		return name, nil
+	}
+	var serr error
+	if opts.ResolveHead {
+		sctx, cancel := context.WithTimeout(ctx, fetchTimeout)
+		defer cancel()
+		_, serr = git(sctx, top, "remote", "set-head", rep.Remote, "--auto")
+		if serr == nil {
+			if name := trunkName(ctx, top, rep.Remote, ""); name != "" {
+				return name, nil
+			}
+		}
+	}
+	if opts.Branch != "" {
+		return opts.Branch, nil
+	}
+	if serr != nil && !reachable(ctx, top, rep.Remote) {
+		rep.State = Offline
+		rep.Reason = serr.Error()
+		return "", &rep
+	}
+	rep.Unresolved = true
+	r := skipped(rep, fmt.Sprintf("cannot resolve trunk: %s has no HEAD ref and no branch was given; pass --trunk-branch <name> or run git remote set-head %s --auto", rep.Remote, rep.Remote))
+	return "", &r
+}
+
+// reachable reports whether the remote answers a ref listing.
+func reachable(ctx context.Context, top, remote string) bool {
+	rctx, cancel := context.WithTimeout(ctx, fetchTimeout)
+	defer cancel()
+	_, err := git(rctx, top, "ls-remote", "--heads", remote)
+	return err == nil
+}
+
+// HasRemote reports whether dir's repository has the named remote configured
+// ("" means DefaultRemote). A directory that is not a git repository has none.
+func HasRemote(ctx context.Context, dir, remote string) bool {
+	if remote == "" {
+		remote = DefaultRemote
+	}
+	top, err := worktree.TopLevel(ctx, dir)
+	if err != nil {
+		return false
+	}
+	remotes, err := git(ctx, top, "remote")
+	return err == nil && contains(strings.Fields(remotes), remote)
 }
 
 // trunkName is the remote's default branch (its HEAD ref), else fallback.

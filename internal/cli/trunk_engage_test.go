@@ -284,7 +284,7 @@ func TestTrunkSyncReportsAndFastForwards(t *testing.T) {
 	}
 }
 
-// --remote and --branch reach the check: a second remote with no HEAD ref is
+// --remote and --trunk-branch reach the check: a second remote with no HEAD ref is
 // unresolvable on its own, and resolves to the named branch with --branch.
 func TestTrunkSyncHonoursRemoteAndBranch(t *testing.T) {
 	repo, r, _ := trunkEngageRepo(t, "")
@@ -292,6 +292,9 @@ func TestTrunkSyncHonoursRemoteAndBranch(t *testing.T) {
 	r.Git(t, repo, "fetch", "--quiet", "upstream")
 	// A fetch may record the remote's HEAD itself; this remote must have none.
 	r.Git(t, repo, "remote", "set-head", "upstream", "--delete")
+	// `trunk sync` restores a missing HEAD ref with set-head --auto (sty_92337a13),
+	// so the remote's own HEAD must name nothing for the trunk to stay unresolved.
+	r.Git(t, r.Remote, "symbolic-ref", "HEAD", "refs/heads/gone")
 	r.PublishFromPusher(t, "b.txt")
 
 	stdout, stderr, err := runRootSplit(t, "", "trunk", "sync", "--remote", "upstream", "--json")
@@ -311,7 +314,7 @@ func TestTrunkSyncHonoursRemoteAndBranch(t *testing.T) {
 		t.Fatalf("--remote upstream without --branch: report = %+v, want skipped (upstream has no HEAD ref)", rep)
 	}
 
-	stdout, stderr, err = runRootSplit(t, "", "trunk", "sync", "--remote", "upstream", "--branch", "main", "--json")
+	stdout, stderr, err = runRootSplit(t, "", "trunk", "sync", "--remote", "upstream", "--trunk-branch", "main", "--json")
 	if err != nil {
 		t.Fatalf("trunk sync --remote upstream --branch main: %v\n%s", err, stderr)
 	}

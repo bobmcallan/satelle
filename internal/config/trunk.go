@@ -18,7 +18,25 @@ type TrunkConfig struct {
 	// trunk that the check fast-forwarded is resolved, so "behind" refuses
 	// only when the trunk could not be moved.
 	Refuse *[]string `toml:"refuse"`
+	// BaseRefuse lists the states that stop a worktree cut from the trunk and
+	// `satelle trunk sync --strict` (sty_92337a13), which the container's merge
+	// step runs. Absent means DefaultTrunkBaseRefuse; an explicit empty list
+	// stops nothing. "unresolved" (no trunk could be named) and "behind" (behind
+	// and not fast-forwarded) are states of this list.
+	BaseRefuse *[]string `toml:"base_refuse"`
+	// Branch is the trunk's name when the remote's HEAD ref does not give one:
+	// the hint `story worktree --trunk-branch` and `trunk sync --trunk-branch`
+	// override.
+	Branch string `toml:"branch"`
 }
+
+// DefaultTrunkBaseRefuse is what an absent [trunk] base_refuse means. It is
+// wider than DefaultTrunkRefuse on purpose. An engage only reads the trunk, so
+// an offline remote proceeds with a warning and an unpushed trunk is a notice.
+// A cut or a merge writes new history from its base, so a base that is not shown
+// to be level with the remote (ahead, offline, unresolved, or behind and not
+// moved) is a stop.
+var DefaultTrunkBaseRefuse = []string{"dirty", "diverged", "ahead", "behind", "offline", "unresolved"}
 
 // DefaultTrunkRefuse is what an absent [trunk] refuse means: a dirty or a
 // diverged trunk would only surface later as a rejected push, so work does not
@@ -28,7 +46,9 @@ var DefaultTrunkRefuse = []string{"dirty", "diverged"}
 
 // trunkRefusable are the states a [trunk] refuse list may name. Level and
 // skipped have nothing to refuse.
-var trunkRefusable = []string{"dirty", "diverged", "behind", "ahead", "offline"}
+// "unresolved" only has an effect in base_refuse: an engage skips a trunk it
+// cannot name.
+var trunkRefusable = []string{"dirty", "diverged", "behind", "ahead", "offline", "unresolved"}
 
 // Enabled reports whether the engage-time trunk check runs.
 func (t TrunkConfig) Enabled() bool { return t.Check == nil || *t.Check }
@@ -51,19 +71,49 @@ func (t TrunkConfig) Refuses(state string) bool {
 	return false
 }
 
-// validateTrunk refuses an unknown state in [trunk] refuse at load time, so a
-// typo cannot silently disarm the check.
-func validateTrunk(cfg Config, path string) error {
-	if cfg.Trunk.Refuse == nil {
-		return nil
+// BaseRefuseSet is the declared base_refuse list, or DefaultTrunkBaseRefuse when
+// absent.
+func (t TrunkConfig) BaseRefuseSet() []string {
+	if t.BaseRefuse == nil {
+		return append([]string(nil), DefaultTrunkBaseRefuse...)
 	}
-	for _, s := range *cfg.Trunk.Refuse {
+	return append([]string(nil), *t.BaseRefuse...)
+}
+
+// BaseRefuses reports whether state is in the base_refuse set.
+func (t TrunkConfig) BaseRefuses(state string) bool {
+	for _, s := range t.BaseRefuseSet() {
+		if s == state {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateTrunkStates refuses a state no trunk report can have. It serves the
+// config keys and the --refuse flag alike.
+func ValidateTrunkStates(states []string) error {
+	for _, s := range states {
 		ok := false
 		for _, known := range trunkRefusable {
 			ok = ok || s == known
 		}
 		if !ok {
-			return fmt.Errorf("config %s: [trunk] refuse names %q (want any of %v)", path, s, trunkRefusable)
+			return fmt.Errorf("names %q (want any of %v)", s, trunkRefusable)
+		}
+	}
+	return nil
+}
+
+// validateTrunk refuses an unknown state in [trunk] refuse or base_refuse at
+// load time, so a typo cannot silently disarm the check.
+func validateTrunk(cfg Config, path string) error {
+	for key, list := range map[string]*[]string{"refuse": cfg.Trunk.Refuse, "base_refuse": cfg.Trunk.BaseRefuse} {
+		if list == nil {
+			continue
+		}
+		if err := ValidateTrunkStates(*list); err != nil {
+			return fmt.Errorf("config %s: [trunk] %s %w", path, key, err)
 		}
 	}
 	return nil

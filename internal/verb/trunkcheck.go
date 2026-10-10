@@ -82,7 +82,7 @@ func checkTrunkAtEngage(ctx context.Context, item workitem.Item, to, edge string
 	if item.ID != "" && hasEngagementBaseline(ctx, item.ID) {
 		return trunk.Report{}, nil
 	}
-	rep := trunk.Check(ctx, trunkRepo, trunk.Options{FastForward: true})
+	rep := trunk.Check(ctx, trunkRepo, trunk.Options{Branch: trunkCfg.Branch, FastForward: true})
 	if rep.Quiet() {
 		return rep, nil
 	}
@@ -94,7 +94,7 @@ func checkTrunkAtEngage(ctx context.Context, item workitem.Item, to, edge string
 	if !trunkCfg.Refuses(string(rep.State)) || rep.FastForwarded {
 		return rep, nil
 	}
-	return rep, fmt.Errorf("%s refused: trunk %s — %s", edge, rep.Detail(), reconcileHint(rep))
+	return rep, fmt.Errorf("%s refused: trunk %s — %s", edge, rep.Detail(), rep.Hint())
 }
 
 // recordTrunkCheck ledgers what the check found. Level, skipped and a check
@@ -105,21 +105,4 @@ func recordTrunkCheck(ctx context.Context, storyID string, rep trunk.Report, now
 	}
 	payload, _ := json.Marshal(rep)
 	appendLedgerEntry(ctx, storyID, ledger.KindTrunkCheck, "executor", rep.Line(), payload, now)
-}
-
-// reconcileHint says how the operator clears a refused state.
-func reconcileHint(rep trunk.Report) string {
-	switch rep.State {
-	case trunk.Dirty:
-		return fmt.Sprintf("commit or `git stash` the changes on %s, then run the command again", rep.Trunk)
-	case trunk.Diverged:
-		return fmt.Sprintf("run `git pull --rebase %s %s` to replay your commits onto the remote's, then run the command again", rep.Remote, rep.Trunk)
-	case trunk.Behind:
-		return fmt.Sprintf("run `git pull --ff-only %s %s`, then run the command again", rep.Remote, rep.Trunk)
-	case trunk.Ahead:
-		return fmt.Sprintf("run `git push %s %s`, then run the command again", rep.Remote, rep.Trunk)
-	case trunk.Offline:
-		return fmt.Sprintf("restore access to %s, then run the command again", rep.Remote)
-	}
-	return "reconcile the trunk, then run the command again"
 }
