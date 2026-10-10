@@ -1,3 +1,13 @@
+## [0.0.634] - 2026-10-10
+
+### Added
+- **A cursor-agent session is recognised as cursor.** satelle detects cursor from its own markers — `CURSOR_AGENT` in agent-run shells and `CURSOR_INVOKED_AS` in shell and hook children — and from the `cursor_version` field every cursor hook envelope carries, checked before claude because a cursor run started from a Claude session inherits `CLAUDECODE=1`. `CLAUDE_PROJECT_DIR`, which cursor sets itself, is evidence of neither. Desktop variables such as `XCURSOR_SIZE` are not cursor evidence. cursor has its own harness-facts row (shown in `satelle help agent-dispatch`): a 30s background cutoff measured from cursor's own shell `timeout:30000` with background behaviour, and cursor-named unavailable entries — a verdict that outlasts that foreground is not delivered to a cursor driver until sty_2439f4fd. Driver-usage records for a cursor session say `cursor: no driver-usage reader for this harness`. (sty_c368826d)
+
+## [serve-v0.0.139] - 2026-10-10
+
+### Changed
+- The serve binary carries cursor harness detection and the cursor harness-facts row. (sty_c368826d)
+
 ## [0.0.633] - 2026-10-10
 
 ### Fixed

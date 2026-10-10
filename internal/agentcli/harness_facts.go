@@ -131,6 +131,18 @@ func HarnessFactsTable() []HarnessFacts {
 			PromptContext:     yes(),
 			PromptContextNote: "the extension injects it into the system prompt via before_agent_start",
 		},
+		{
+			Harness:          HarnessCursor,
+			BackgroundCutoff: 30 * time.Second,
+			// Captured from a real cursor-agent 2026.10.01: every Shell tool call
+			// carries timeout=30000 with timeoutBehavior=TIMEOUT_BEHAVIOR_BACKGROUND.
+			CutoffBasis: "cursor: Shell tool calls carry timeout=30000 with timeoutBehavior=TIMEOUT_BEHAVIOR_BACKGROUND (hardTimeout 86400000) — cursor backgrounds a shell call at 30s (testdata/cursor/{2e-hooks,3-abs,3-user,4}.out; tool_input.timeout in {3-abs,3-user,4,7-deny,7-stop}-hooks.log)",
+			// Delivery is owned by sty_2439f4fd; until it lands nothing wakes the
+			// cursor driver when a backgrounded gate finishes.
+			CompletionNotification: no("cursor: a gate outlasting cursor's 30s shell foreground is backgrounded by cursor and its verdict is not delivered to the cursor driver until sty_2439f4fd lands"),
+			InTurnWake:             "unverified: cursor: an interactive stop hook with a followup_message re-prompt is captured (testdata/cursor/7-stop) but not wired — sty_2439f4fd",
+			PromptContext:          no("cursor: session context injection is unproven — owned by sty_7d098d50"),
+		},
 	}
 }
 
