@@ -1,3 +1,13 @@
+## [0.0.639] - 2026-10-10
+
+### Added
+- **cursor-agent session and dispatch usage is recorded.** A cursor command dispatch records its token usage and cache split from the json envelope, read exclusively as cursor reports it (`inputTokens` excludes cached input; fresh = `inputTokens`, total = input + cache read + cache write). An interactive cursor session's driver spend is read from the usage cursor reports in each `stop` hook payload, read inclusively (fresh = input − cache read − cache write), recorded once per turn. Cost is a cursor-named unavailable (cursor publishes no per-token price), model calls are a cursor-named unavailable (a stop marks a turn, not a call), and the resolved model comes from the hook payload. Print-mode cursor has no stop event, so its driver spend is a cursor-named unavailable. This completes epic:cursor-harness: cursor-agent is detected, gated, able to claim a verdict, bindable to a step, and measured. (sty_a3258bb3, sty_ba302c1b)
+
+## [serve-v0.0.144] - 2026-10-10
+
+### Changed
+- The serve binary carries cursor usage recording. (sty_a3258bb3)
+
 ## [0.0.638] - 2026-10-10
 
 ### Added
