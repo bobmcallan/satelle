@@ -1,0 +1,1 @@
+{"permissions":{"allow":["Read(**)"],"deny":["Write(**)","Shell(*)","Shell(touch)"]}}

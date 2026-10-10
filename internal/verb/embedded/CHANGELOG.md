@@ -1,3 +1,13 @@
+## [0.0.632] - 2026-10-10
+
+### Added
+- **Real cursor-agent captures are pinned as test fixtures.** Runs of the installed cursor-agent 2026.10.01 (json and stream-json output, instruction delivery through stdin, `AGENTS.md` and `.cursor/rules`, read-only `--mode plan`/`ask` and `.cursor/cli.json` deny, print-mode and interactive hook events, ACP, and the environment markers a cursor session sets) are committed under `internal/agentcli/testdata/cursor/` with their provenance, redacted of the operator's email, and a test pins what each showed. No cursor detection, wiring or dispatch is added; the per-seat verdict the cursor-harness stories build on is attached to the story. (sty_383ff068)
+
+## [serve-v0.0.138] - 2026-10-10
+
+### Changed
+- The serve binary's dependency tree carries the new cursor-agent fixtures under `internal/agentcli/testdata/cursor/`; no serve behaviour changes. (sty_383ff068)
+
 ## [0.0.631] - 2026-10-10
 
 ### Changed
