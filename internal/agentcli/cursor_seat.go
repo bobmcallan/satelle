@@ -211,9 +211,94 @@ type cursorEnvelope struct {
 	Usage     map[string]any `json:"usage"`
 }
 
+// cursorCostReason is why a cursor run records no dollar cost: no capture and no
+// bundle schema carries a price, and satelle never prices from another provider's
+// table (sty_a3258bb3).
+const cursorCostReason = "cursor reports no per-token price (billed through the cursor account)"
+
+// cursorEnvTokens maps the json envelope's four token counts to a UsageResult.
+// The envelope reads EXCLUSIVELY: inputTokens is the uncached input and the cache
+// counts sit beside it, so fresh = inputTokens and the total input is
+// inputTokens + cacheReadTokens + cacheWriteTokens (measured: a warm resumed turn
+// reported inputTokens 74 with cacheReadTokens 12664, so a cache count above
+// inputTokens is the normal warm shape, never invalid). A missing input or output
+// is a cursor-named unavailable, never a zero; a missing cache field leaves the
+// split unreported and InputTokens at the uncached figure.
+func cursorEnvTokens(input, output, read, write *int, label string) UsageResult {
+	if input == nil || output == nil {
+		return unavailableUsage(label, "usage carried no inputTokens/outputTokens")
+	}
+	u := UsageResult{
+		Available:    true,
+		InputTokens:  *input,
+		OutputTokens: *output,
+	}
+	if read != nil && write != nil && *read >= 0 && *write >= 0 {
+		u.CacheSplitAvailable = true
+		u.FreshInputTokens = *input
+		u.CacheReadInputTokens = *read
+		u.CacheCreationInputTokens = *write
+		u.InputTokens = *input + *read + *write
+	}
+	u.TotalTokens = u.InputTokens + u.OutputTokens
+	return u
+}
+
+// cursorTokens maps the interactive stop hook payload's four token counts to a
+// UsageResult. Unlike the json envelope, the stop payload reads INCLUSIVELY:
+// input_tokens includes the cache reads (measured: every warm turn's input_tokens
+// exceeds its cache_read_tokens by about 100, 7-stop 16563/25758 and 13057/13161),
+// so fresh = input - read - write. A missing input or output is a cursor-named
+// unavailable, never a zero; a missing cache field leaves the split unreported; a
+// cache sum above input is not a count that can be subtracted, so the split is
+// withheld rather than recorded negative.
+func cursorTokens(input, output, read, write *int, label string) UsageResult {
+	if input == nil || output == nil {
+		return unavailableUsage(label, "usage carried no inputTokens/outputTokens")
+	}
+	u := UsageResult{
+		Available:    true,
+		InputTokens:  *input,
+		OutputTokens: *output,
+		TotalTokens:  *input + *output,
+	}
+	switch {
+	case read == nil || write == nil:
+		// cache fields not reported: the split is unreported, not zero.
+	case *read < 0 || *write < 0 || *read+*write > *input:
+		// Reported but inconsistent with the inclusive reading: keep the totals and
+		// leave the split unavailable (CacheSplitAvailable false) rather than negative.
+	default:
+		u.CacheSplitAvailable = true
+		u.CacheReadInputTokens = *read
+		u.CacheCreationInputTokens = *write
+		u.FreshInputTokens = *input - *read - *write
+	}
+	return u
+}
+
+// cursorEnvUsage reads the json envelope's camelCase usage object.
+func cursorEnvUsage(m map[string]any) UsageResult {
+	const label = "cursor command"
+	if m == nil {
+		return unavailableUsage(label, "json envelope carried no usage")
+	}
+	num := func(key string) *int {
+		f, ok := m[key].(float64)
+		if !ok {
+			return nil
+		}
+		n := int(f)
+		return &n
+	}
+	return cursorEnvTokens(num("inputTokens"), num("outputTokens"), num("cacheReadTokens"), num("cacheWriteTokens"), label)
+}
+
 // unwrapCursor reads a cursor json envelope. ok is false for any other shape.
-// Usage is recorded as an explicit cursor-named unavailable, never a zero read
-// through another adapter's field names; mapping the numbers is sty_a3258bb3's.
+// Usage is mapped from the camelCase usage object (cursorTokens); an envelope
+// without it is a cursor-named unavailable, never a zero read through another
+// adapter's field names. Cost is always a cursor-named unavailable, and the
+// envelope names no model.
 func unwrapCursor(trimmed []byte) (text []byte, u UsageResult, ok bool) {
 	var env cursorEnvelope
 	if err := json.Unmarshal(trimmed, &env); err != nil || env.Type != "result" || env.Result == "" {
@@ -222,7 +307,9 @@ func unwrapCursor(trimmed []byte) (text []byte, u UsageResult, ok bool) {
 	if _, camel := env.Usage["inputTokens"]; env.RequestID == "" && !camel {
 		return nil, UsageResult{}, false
 	}
-	u = unavailableUsage("cursor command", "usage mapping is not recorded for the json envelope's camelCase inputTokens/outputTokens")
+	u = cursorEnvUsage(env.Usage)
+	u.CostUSD = nil
+	u.CostUnavailableReason = "cursor command: " + cursorCostReason
 	u.ModelResolved = noModelReport("cursor command")
 	return []byte(env.Result), u, true
 }

@@ -3283,6 +3283,12 @@ func runHookPromptWith(out io.Writer, gatesInContext bool) error {
 // nothing gets no chatter on every Stop.
 func runHookStopcheck(raw []byte, out io.Writer) error {
 	stopEmitHarness = stopHarness(raw)
+	// A cursor stop carries the turn's token usage and nothing else keeps it, so it
+	// is recorded before any early return below — a turn that ends on a delivered
+	// verdict is still a turn the session paid for. Fail open.
+	if stopEmitHarness == agentcli.HarnessCursor && !isDispatchedProcess() {
+		_ = agentcli.RecordCursorStop(bindSessionID(raw), raw)
+	}
 	// A gate the session handed off (sty_c4b92c9e) is what it is waiting on: wait
 	// for it here and answer with its verdict, which the harness feeds back as the
 	// session's next input — the wake that costs the driver no call to ask. A gate

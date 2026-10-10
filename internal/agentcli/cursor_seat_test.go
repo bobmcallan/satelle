@@ -111,8 +111,8 @@ func TestCursorCommandRendersArgvAndStdin(t *testing.T) {
 	if string(text) != "PONG" {
 		t.Errorf("decision text = %q, want .result PONG", text)
 	}
-	if usage.Available {
-		t.Errorf("cursor usage must not be recorded as reported: %+v", usage)
+	if !usage.Available || usage.InputTokens != 12678 || usage.FreshInputTokens != 8814 || usage.OutputTokens != 32 {
+		t.Errorf("cursor usage must be the envelope's reported figures: %+v", usage)
 	}
 }
 
@@ -190,17 +190,11 @@ func TestCursorEnvelopeIsUnwrappedAsCursor(t *testing.T) {
 	if string(text) != "PONG" {
 		t.Errorf("decision text = %q, want PONG", text)
 	}
-	if u.Available {
-		t.Errorf("usage must not be Available (a zero claude read): %+v", u)
-	}
-	if !strings.Contains(u.UnavailableReason, "cursor") {
-		t.Errorf("UnavailableReason = %q, want a cursor-named reason", u.UnavailableReason)
+	if !u.Available || u.InputTokens != 12678 || u.FreshInputTokens != 8814 {
+		t.Errorf("usage must be cursor's camelCase figures, not a zero claude read: %+v", u)
 	}
 	if !strings.Contains(u.ModelResolved, "cursor") || !IsModelUnavailable(u.ModelResolved) {
 		t.Errorf("ModelResolved = %q, want a cursor-named no-model marker", u.ModelResolved)
-	}
-	if u.InputTokens != 0 || u.TotalTokens != 0 {
-		t.Errorf("no token figure may be invented: %+v", u)
 	}
 
 	// A claude envelope is still claude's (it has neither request_id nor camelCase usage).
