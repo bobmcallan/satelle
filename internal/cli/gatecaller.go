@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sort"
@@ -120,6 +121,29 @@ func appendLine(path string) func(string) {
 		defer f.Close()
 		fmt.Fprintln(f, msg)
 	}
+}
+
+// lineSink adapts a per-line sink to an io.Writer for the one-line reports a
+// verb prints with Fprintln.
+type lineSink func(string)
+
+func (f lineSink) Write(p []byte) (int, error) {
+	for _, ln := range strings.Split(strings.TrimRight(string(p), "\n"), "\n") {
+		f(ln)
+	}
+	return len(p), nil
+}
+
+// trunkOutput is where the engage-time trunk report goes (sty_9f3e51d1). A
+// detached gate run's stderr is a file nobody delivers, and the session only
+// receives the run's verdict, so there the line is also appended to the verdict
+// log: it then reaches the driver on replay and on hook delivery alike. Anywhere
+// else it is the command's stderr, exactly as before.
+func trunkOutput(stderr io.Writer) io.Writer {
+	if !inGateRun() || gateRun.runtime == "" {
+		return stderr
+	}
+	return io.MultiWriter(stderr, lineSink(appendLine(gatehandle.New(gateRun.runtime).VerdictPath(gateRun.id))))
 }
 
 // inGateRun reports whether this process IS a detached gate run.

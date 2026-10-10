@@ -165,6 +165,13 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// and the main tree it carries from, so a worktree reads the main tree's
 	// declaration rather than one of its own.
 	verb.SetWorktreeConfig(a.ProcessConfig, a.ProcessRoot)
+	// Start-of-work trunk check (sty_9f3e51d1): the process-of-record [trunk]
+	// declaration, and the invoking tree the check inspects and the engagement
+	// baseline is taken in. Unwired, the check does nothing.
+	verb.SetTrunkConfig(a.PlaneConfig().Trunk, a.RepoRoot)
+	// A detached gate run also appends each line to its verdict log, the only
+	// channel that reaches the driving session.
+	verb.SetTrunkOutput(trunkOutput(cmd.ErrOrStderr()))
 	// Process-of-record reporting (sty_d6e209aa): where the authored process
 	// lives, so an absent workflows dir or a divergent worktree copy is reported
 	// at engage, in a refusal and in the route document. Data only — nothing is

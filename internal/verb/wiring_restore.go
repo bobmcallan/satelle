@@ -36,6 +36,9 @@ var wiringVars = []wiringVar{
 	{"worktreeCfg", &worktreeCfg},
 	{"worktreeRoot", &worktreeRoot},
 	{"worktreeWired", &worktreeWired},
+	{"trunkCfg", &trunkCfg},
+	{"trunkRepo", &trunkRepo},
+	{"trunkOut", &trunkOut}, // non-zero default (stderr): restore puts the prior writer back
 	// Config-derived policy.
 	{"tagVocabCfg", &tagVocabCfg},
 	{"tagVocabWired", &tagVocabWired},

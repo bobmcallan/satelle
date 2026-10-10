@@ -1,3 +1,14 @@
+## [0.0.641] - 2026-10-10
+
+### Added
+- **Starting work checks main against origin first.** The first time a story, epic-parent or parent enters an engaging status, satelle fetches the trunk (the remote's HEAD branch, `origin` by default) before any entry gate runs and before the engagement baseline is recorded. A clean trunk that is behind is fast-forwarded. Any other finding prints one `satelle: trunk …` line: fast-forwarded with the count and old..new SHAs, behind but not moved, unpushed commits, diverged, a dirty tree on the trunk, or an offline fetch (work proceeds). For an existing story the same line is written to its ledger as `trunk_check`. In an agent session the line is carried in the delivered gate verdict. Dirty and diverged trunks refuse the engage by default and name the reconcile commands; `[trunk] refuse` and `[trunk] check = false` in `satelle.toml` change that. A level trunk prints nothing. (sty_9f3e51d1)
+- **`satelle trunk sync [--fast-forward] [--json] [--remote r] [--branch b]`** runs the same check on demand and prints the same line or the report JSON. (sty_9f3e51d1)
+
+## [serve-v0.0.146] - 2026-10-10
+
+### Changed
+- The serve binary carries the `trunk_check` ledger kind. (sty_9f3e51d1)
+
 ## [0.0.640] - 2026-10-10
 
 ### Fixed

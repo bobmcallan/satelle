@@ -70,10 +70,9 @@ func maybeRecordEngagementBaseline(ctx context.Context, item workitem.Item, from
 	if hasEngagementBaseline(ctx, item.ID) {
 		return
 	}
-	dir, err := os.Getwd()
-	if err != nil {
-		dir = "."
-	}
+	// The tree the trunk check inspected and fast-forwarded (sty_9f3e51d1), so the
+	// HEAD recorded here is the one the story starts from.
+	dir := engageRepoDir()
 	sha, dirty, gerr := gitHeadAndDirty(dir)
 	tree := gitToplevel(dir)
 	body := fmt.Sprintf("engagement baseline at %s→%s head=%s", from, to, sha)

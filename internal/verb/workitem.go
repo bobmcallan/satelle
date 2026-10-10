@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/trunk"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -165,6 +166,7 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 		// in an engaging status when another story occupies that seat. Default
 		// create status is backlog (not engaging) — no-op unless create opts a
 		// non-default status.
+		var trunkRep trunk.Report // what the start-of-work trunk check found, if it ran
 		if kind == workitem.KindStory {
 			status := req.Status
 			if status == "" {
@@ -179,6 +181,13 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 			}
 			if err := refuseSecondEngagingStory(ctx, "", status, provisional); err != nil {
 				return nil, err
+			}
+			// Start-of-work trunk check (sty_9f3e51d1): before the story row, the
+			// lease and the baseline, so a refusal leaves nothing behind and the
+			// baseline records the fast-forwarded HEAD.
+			var terr error
+			if trunkRep, terr = checkTrunkAtEngage(ctx, provisional, status, fmt.Sprintf("create into %s", status)); terr != nil {
+				return nil, terr
 			}
 		}
 
@@ -204,6 +213,7 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 			return nil, aerr
 		}
 		appendLedger(ctx, it.ID, ledgerKind, fmt.Sprintf("created %s %q", kind, it.Title), now)
+		recordTrunkCheck(ctx, it.ID, trunkRep, now)
 		if kind == workitem.KindStory {
 			recordCreatorSessionModel(ctx, it.ID)
 		}
@@ -559,6 +569,15 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	// ledger enumeration; the budget and the wording of the ask are route data.
 	if transitioning {
 		if err := refuseSpentRejectBudget(ctx, current, *req.Status); err != nil {
+			return nil, err
+		}
+		// Start-of-work trunk check (sty_9f3e51d1): on the first entry into an
+		// engaging state, with the seat held and before any performer or gate
+		// runs, so a fast-forward cannot race a reviewer and the baseline
+		// recorded at the commit below is the updated HEAD. A refusal returns
+		// here, so the abort guard frees the seat and the story stays put.
+		if _, err := checkTrunkAtEngage(ctx, current, *req.Status,
+			fmt.Sprintf("transition %s→%s", current.Status, *req.Status)); err != nil {
 			return nil, err
 		}
 	}

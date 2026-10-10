@@ -172,6 +172,9 @@ type Config struct {
 	// (sty_804c566b): the gitignored paths it carries from the main tree and the
 	// branch and location templates. See WorktreeConfig.
 	Worktree WorktreeConfig `toml:"worktree"`
+	// Trunk declares the start-of-work trunk check (sty_9f3e51d1): whether it
+	// runs at engage, and which states it refuses on. See TrunkConfig.
+	Trunk TrunkConfig `toml:"trunk"`
 }
 
 // OutputConfig is the [output] table: which verbs get compact rendering, when
@@ -978,6 +981,9 @@ func Load(explicitPath string) (Config, string, error) {
 		return Config{}, path, err
 	}
 	if err := validateWorktree(cfg, path); err != nil {
+		return Config{}, path, err
+	}
+	if err := validateTrunk(cfg, path); err != nil {
 		return Config{}, path, err
 	}
 	if err := validateHarness(cfg, path); err != nil {

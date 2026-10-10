@@ -74,6 +74,10 @@ const (
 	// diff-since-engagement (sty_da169e03 / epic:scope-integrity). Enumeration
 	// only — no pass/fail in Go.
 	KindEngagementBaseline = "engagement_baseline"
+	// KindTrunkCheck records what the start-of-work trunk check found when a
+	// story first entered an engaging state (sty_9f3e51d1): body is the line
+	// shown to the operator, payload the trunk report. Never a verdict.
+	KindTrunkCheck = "trunk_check"
 	// KindSuiteRun records ONE run of an expensive verification suite as
 	// SHA-keyed evidence: {sha, command, outcome, started_at, finished_at} in
 	// Payload, StoryID being the recording story (sty_183a0510). Sibling stories
