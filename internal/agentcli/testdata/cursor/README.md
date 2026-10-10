@@ -84,6 +84,17 @@ Everything is REAL verbatim except:
 | dogfood: Shell `git commit` refused, no story engaged | 14-refuse-git-commit | 14-refuse-git-commit.out, 14-refuse-git-commit.err, 14-refuse-git-commit.meta.json |
 | dogfood: Write allowed, story engaged in an executor step | 14-engaged-write | 14-engaged-write.out, 14-engaged-write.err, 14-engaged-write.meta.json |
 | dogfood run log | 14 | 14-transcript.md |
+| read-only seat opens material OUTSIDE its workspace: `--mode plan --force`, absolute path (Read succeeds) | 15-plan-read-outside | 15-plan-read-outside.out, 15-plan-read-outside.err, 15-plan-read-outside.meta.json |
+| the same with `--add-dir` (not needed) | 15-plan-read-adddir | 15-plan-read-adddir.out, 15-plan-read-adddir.err, 15-plan-read-adddir.meta.json |
+| the same in `--mode ask` | 15-ask-read-outside | 15-ask-read-outside.out, 15-ask-read-outside.err, 15-ask-read-outside.meta.json |
+| `--mode plan --force` still runs a non-mutating shell command (`echo`) | 15-plan-shell | 15-plan-shell.out, 15-plan-shell.err, 15-plan-shell.meta.json |
+| `--mode ask --force` still runs a non-mutating shell command (`echo`) | 15-ask-shell | 15-ask-shell.out, 15-ask-shell.err, 15-ask-shell.meta.json |
+| write + `touch` asked under `--mode plan --force` (approvalMode unrestricted): neither exists | 16-plan | 16-plan.out, 16-plan.err, 16-plan.fs, 16-plan.meta.json |
+| the same under `--mode ask --force`: neither exists | 16-ask | 16-ask.out, 16-ask.err, 16-ask.fs, 16-ask.meta.json |
+| the same under `--force` with `.cursor/cli.json` deny rules (Write(**), Shell(*)), no mode: neither exists | 16-deny | 16-deny.out, 16-deny.err, 16-deny.fs, 16-deny.meta.json |
+| the same under `--mode plan --force` with the deny rules: neither exists | 16-plan-deny | 16-plan-deny.out, 16-plan-deny.err, 16-plan-deny.fs, 16-plan-deny.meta.json |
+| ACP: `session/set_mode plan`, client allows every permission request; no write, no `touch`, zero permission requests, material outside the workspace read | 17 | 17-acp-plan.json, 17-acp-plan.meta.json |
+| ACP: `session/set_mode ask`, client allows every permission request; no write, no `touch`, zero permission requests, the agent explains it cannot, material outside the workspace read (the mode satelle forces on a reviewer) | 18 | 18-acp-ask.json, 18-acp-ask.meta.json |
 
 Probe 9, 10b, 11b, 11c and 13 (sty_7d098d50) were captured and redacted the same
 way as the rest. Their hook logs are the hook script's first 300 (9) or 400 (the
@@ -120,3 +131,35 @@ preToolUse hook returning each deny variant; the `reason` the model saw is the
 `rejected.reason` of the stream-json `tool_call` result. 10a and 11a asked it to
 delete `other.txt`. `agentcli.PreToolUseDeny("cursor", …)` encodes the 12-snake
 shape; `TestCursorDenyReasonVisible` pins it.
+
+Probes 15, 16 and 17 (sty_10c52ab3) are the dispatch-seat evidence: can a
+read-only cursor seat read satelle's scratch material, and is it kept from
+writing. Every run executed with this machine's `~/.config/cursor/cli-config.json`
+`approvalMode` `"unrestricted"` (Run Everything), recorded in each `.meta.json`, so
+the refusals in 16-* and 17 come from the mode (or the deny rules), not from
+cursor's approval setting. 15-*/16-* are stream-json runs with `--force`; the file
+system result of 16-* is its `.fs`. 16-deny and 16-plan-deny ran in a scratch repo
+whose `.cursor/cli.json` denied `Write(**)` and `Shell(*)`; that file is not
+committed (2c-cli.json is the same shape). 15-plan-shell and 15-ask-shell show
+plan and ask mode still run a non-mutating shell command, so a read-only cursor
+reviewer can use read-only shell while writes and mutating shell are refused.
+`TestCursorSeatEvidence` pins all of it.
+
+Plan versus ask for a reviewer: both refuse a write and a mutating shell (16-*, 17,
+18), but a plan-mode cursor reviewer answers with a plan instead of the requested
+`{"decision":…}` verdict (a real create-review run: no verdict after 3 attempts),
+while an ask-mode one returned all four readiness verdicts, quoted the planted
+codeword and created nothing. satelle therefore forces `--mode ask` /
+`session/set_mode ask` and refuses any other `--mode` on a reviewer.
+
+Deviations for 15-18: the scratch prefix is `/SCRATCH` as above (a plan text in 16-plan
+and 17 also names `/tmp/claude-1000/.../sb19-plan`, which cursor itself abbreviated).
+17-acp-plan.json and 18-acp-ask.json are condensed so it carries no personal data and stays readable: the
+`session/new` model catalogue (`models.availableModels` and the `model` option's
+`options`), the `available_commands_update` skill list (the user's own installed
+skills) and every `agent_thought_chunk` frame are removed or replaced by the string
+`"elided"`; frame order, ids and every other frame are verbatim. In 17 the peer's
+`cursor/create_plan` request (id 0) was never answered by the probe client, and its
+turn-4 prompt was ended `cancelled` by the next `session/prompt`; satelle answers an
+unknown peer request with JSON-RPC "method not found" (acp.go handleUnknownRequest).
+The 15-*/16-* `.err` files are only the exit line (`exit=0`).

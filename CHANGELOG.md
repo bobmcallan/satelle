@@ -1,3 +1,13 @@
+## [0.0.637] - 2026-10-10
+
+### Added
+- **A workflow step's performer or reviewer can be bound to cursor-agent.** In `agents.toml`, `command = "cursor-agent -p --trust --output-format json --model {model}"` (or `interface = "acp"`, `command = "cursor-agent acp"`) dispatches a cursor performer or reviewer headless. cursor has no system-prompt flag, so the step's instructions and the work item arrive together on stdin. A json result is read as cursor's (decision from `.result`; usage recorded as cursor-named unavailable for now), and a plain-text failure surfaces as a dispatch error. A cursor reviewer is forced read-only: satelle appends `--mode ask` (ACP: `session/set_mode ask`), which refused writes and mutating shell even with cursor's Run Everything approval, and refuses a reviewer template naming any other mode — `plan` included, because a plan-mode reviewer returns a plan instead of a verdict. Seats cursor cannot honour are refused at validation and at dispatch with a cursor-named reason: the stream interface, the cloud interface, any `--output-format` other than `json`, and `{system}`/`{payload}` argv tokens. A bare ACP model name such as `composer-2.5` maps onto cursor's parameterised ACP model value. Proven on real cursor-agent 2026.10.01 dispatches (performer and reviewer, command and ACP). (sty_10c52ab3)
+
+## [serve-v0.0.142] - 2026-10-10
+
+### Changed
+- The serve binary carries the cursor dispatch adapter and its validation answers. (sty_10c52ab3)
+
 ## [0.0.636] - 2026-10-10
 
 ### Added

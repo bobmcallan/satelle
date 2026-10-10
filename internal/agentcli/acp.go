@@ -44,6 +44,11 @@ func newACPRunner(command string) (Runner, error) {
 			return nil, fmt.Errorf("agentcli: interface=acp command must not contain placeholder %s — %s", tok, acpTurnBudgetReason)
 		}
 	}
+	if adapterOf(fields[0], fields[1:]) == HarnessCursor {
+		if err := cursorACPProblem(fields[1:]); err != nil {
+			return nil, err
+		}
+	}
 	return acpRunner{
 		binary: fields[0],
 		args:   fields[1:],
@@ -94,7 +99,7 @@ func (a acpRunner) RunUsage(ctx context.Context, req Request) ([]byte, UsageResu
 	}
 	out, usage, err := runOneShotUsage(ctx, sess, req)
 	if !usage.Available && usage.UnavailableReason == "" {
-		usage = unavailableUsage("acp", "session/prompt response carried no usage token fields")
+		usage = acpUnavailableUsage(acpAdapterLabel(a.binary, a.args))
 	}
 	if usage.ModelResolved == "" {
 		usage.ModelResolved = noModelReport(acpAdapterLabel(a.binary, a.args))
@@ -113,9 +118,12 @@ func acpPolicyFor(req Request) PermissionPolicy {
 }
 
 // acpAdapterLabel names the adapter behind an ACP spawn for a no-model reason
-// (ModelUnavailableFor): "grok acp", or "acp <binary>" for a peer
+// (ModelUnavailableFor): "grok acp", "cursor acp", or "acp <binary>" for a peer
 // satelle has no name for. Derived from the spawn, never assumed.
 func acpAdapterLabel(binary string, args []string) string {
+	if adapterOf(binary, args) == HarnessCursor {
+		return cursorACPLabel
+	}
 	if acpEffortArgvSupported(binary, args) {
 		return "grok acp"
 	}
@@ -210,7 +218,7 @@ func acpUsageFromResult(result json.RawMessage, fallbackModel, adapter string) *
 		if model == "" {
 			return nil
 		}
-		x := unavailableUsage("acp", "session/prompt response carried no usage token fields")
+		x := acpUnavailableUsage(adapter)
 		u = &x
 	}
 	if model == "" {
@@ -312,7 +320,7 @@ func openACPSession(ctx context.Context, a acpRunner, req Request, pol Permissio
 	client.setPolicy(pol)
 	client.setCapture(req.Capture)
 	if req.ReadOnly {
-		client.setReviewer(req.AllowedTools, strings.ReplaceAll(sess.adapter, " ", "/"), req.OnIsolation)
+		client.setReviewer(cursorACPGrant(sess.adapter, req.AllowedTools), strings.ReplaceAll(sess.adapter, " ", "/"), req.OnIsolation)
 	}
 	sess.client = client
 
@@ -509,7 +517,14 @@ func (s *acpSession) handshake(ctx context.Context, req Request) error {
 	c.session = sessObj.SessionID
 	c.model = acpModelFromReply(sessRes)
 	c.mu.Unlock()
-	if req.ReadOnly {
+	if req.ReadOnly && s.adapter == cursorACPLabel {
+		// cursor enforces read-only by its mode, not by asking: force ask mode (a plan
+		// mode reviewer returns a plan, not a verdict) and refuse the run when the
+		// peer will not enter it (probe 18).
+		if _, err := s.client.request(ctx, "session/set_mode", map[string]any{"sessionId": sessObj.SessionID, "modeId": cursorReadOnlyMode}); err != nil {
+			return cursorSetModeError(err)
+		}
+	} else if req.ReadOnly {
 		// A reviewer session should ASK before it runs a tool: a peer that opens in a
 		// never-ask (yolo) mode is moved to an ask mode where it offers one. Where
 		// it cannot be, the gap is reported and the run continues (sty_2d5e583a).
@@ -524,6 +539,15 @@ func (s *acpSession) handshake(ctx context.Context, req Request) error {
 	// are a soft miss — log and continue; the binding still spawned with its
 	// default model (same as before for those peers).
 	if m := strings.TrimSpace(req.Model); m != "" {
+		if s.adapter == cursorACPLabel {
+			// cursor's model option values are parameterised ("composer-2.5[fast=true]"):
+			// a bare name is mapped to the advertised value, an unknown one refused.
+			resolved, err := cursorModelValue(sessRes, m)
+			if err != nil {
+				return err
+			}
+			m = resolved
+		}
 		if cfgRes, err := c.request(ctx, "session/set_config_option", map[string]any{
 			"sessionId": sessObj.SessionID,
 			"configId":  "model",

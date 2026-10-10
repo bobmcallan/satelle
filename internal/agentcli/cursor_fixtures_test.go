@@ -21,6 +21,8 @@ var cursorRuns = []string{
 	"2a-plan", "2b-ask", "2c-deny", "2d-control", "2e-hooks",
 	"3-abs", "3-user", "4", "5-acp", "6", "clean-6", "7-deny", "7-stop",
 	"8a-stdin-codeword", "8b-stdin-plus-arg",
+	"15-plan-read-outside", "15-plan-read-adddir", "15-ask-read-outside", "15-plan-shell", "15-ask-shell",
+	"16-plan", "16-ask", "16-deny", "16-plan-deny", "17-acp-plan", "18-acp-ask",
 }
 
 // cursorFiles are the non-meta files the sibling stories read.
@@ -37,6 +39,9 @@ var cursorFiles = []string{
 	"7-deny-hooks.json", "7-deny-hook.sh", "7-deny-hooks.log", "7-deny.tty.log", "7-deny.fs",
 	"7-stop-hooks.json", "7-stop-hook.sh", "7-stop-hooks.log", "7-stop.tty.log", "7-stop.fs",
 	"5-acp.json",
+	"15-plan-read-outside.out", "15-plan-read-adddir.out", "15-ask-read-outside.out", "15-plan-shell.out", "15-ask-shell.out",
+	"16-plan.out", "16-plan.fs", "16-ask.out", "16-ask.fs", "16-deny.out", "16-deny.fs", "16-plan-deny.out", "16-plan-deny.fs",
+	"17-acp-plan.json", "18-acp-ask.json",
 	"6.out", "6-hook.sh", "6-hook-env.txt", "6-hook-env-names.txt",
 	"clean-6.out", "clean-6-hook.sh", "clean-6-hook-env.txt", "clean-6-hook-env-names.txt",
 	"README.md",

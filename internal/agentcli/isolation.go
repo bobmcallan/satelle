@@ -320,11 +320,16 @@ func AdapterName(command string) string {
 }
 
 // adapterOf names the provider behind a spawn from its binary and argv:
-// HarnessClaude, HarnessGrok or HarnessUnknown. Nothing unrecognised is assumed
-// to be Claude ([[satelle-agent-agnostic]] §3).
+// HarnessClaude, HarnessGrok, HarnessCursor or HarnessUnknown. Nothing
+// unrecognised is assumed to be Claude ([[satelle-agent-agnostic]] §3). cursor
+// is the executable named exactly cursor-agent (or cursor-agent-*), decided on the
+// binary alone and first: a cursor spawn routinely carries `--model grok-…` or
+// `claude-…`, which must not read as another provider.
 func adapterOf(binary string, args []string) string {
 	base := strings.ToLower(filepath.Base(binary))
 	switch {
+	case base == "cursor-agent" || strings.HasPrefix(base, "cursor-agent-"):
+		return HarnessCursor
 	case strings.Contains(base, "claude"):
 		return HarnessClaude
 	case strings.Contains(base, "grok"):
@@ -544,6 +549,11 @@ func preflight(iface, binary string, args []string, grant string) []IsolationGap
 		return gap(fmt.Sprintf("tools not held to the grant (no adapter knows how to trim or deny tools for %q)", filepath.Base(binary)),
 			"point the binding at claude or grok")
 	}
+	if adapter == HarnessCursor {
+		// cursor has no tools allow-list and no permission skip that matters: the
+		// forced ask mode is the ceiling (cursor_seat.go).
+		return cursorPreflight(iface, args)
+	}
 	skips := skipsPermission(adapter, args)
 	if iface == InterfaceACP {
 		if adapter == HarnessGrok {
@@ -725,6 +735,9 @@ func DescribeReviewer(r Runner, req Request) ReviewerIsolation {
 		return ReviewerIsolation{}
 	}
 	adapter := adapterOf(binary, args)
+	if adapter == HarnessCursor {
+		return cursorOffered(transport)
+	}
 	iso := ReviewerIsolation{Adapter: adapter + " " + transport}
 	if transport == InterfaceACP {
 		iso.OfferedSource = "unavailable: " + adapter + " agent stdio neither trims nor reports offered tools"

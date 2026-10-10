@@ -52,12 +52,14 @@ var sessionMarkers = []sessionMarker{
 // HarnessOf names the harness behind a binding's command line, for lookups keyed
 // by harness (the [harness.<name>] tables): HarnessClaude, HarnessGrok,
 // HarnessPi, HarnessCursor or HarnessUnknown. It is NOT the reviewer-isolation classifier.
-// AdapterName answers for claude and grok only, and pi stays HarnessUnknown
-// there on purpose: preflight's no-tool-trim gap, the operator-attested path and
-// the unrecognised-adapter handling all key on it, so recognising pi in that
-// switch would quietly turn an explicit gap into a silent pass. The two agree
-// everywhere except pi. pi is the executable named exactly pi or pi-*, which
-// excludes pip and the like.
+// AdapterName answers for claude, grok and cursor (adapterOf: cursor-agent is the
+// executable named exactly so or cursor-agent-*; the bare names cursor and agent
+// are too common to claim, sty_7d098d50), and pi stays HarnessUnknown there on
+// purpose: preflight's no-tool-trim gap, the operator-attested path and the
+// unrecognised-adapter handling all key on it, so recognising pi in that switch
+// would quietly turn an explicit gap into a silent pass. The two agree everywhere
+// except pi. pi is the executable named exactly pi or pi-*, which excludes pip
+// and the like.
 func HarnessOf(command string) string {
 	if h := AdapterName(command); h != HarnessUnknown {
 		return h
@@ -69,11 +71,6 @@ func HarnessOf(command string) string {
 	base := strings.ToLower(filepath.Base(fields[0]))
 	if base == "pi" || strings.HasPrefix(base, "pi-") {
 		return HarnessPi
-	}
-	// cursor-agent is the executable named exactly so (or cursor-agent-*): the
-	// bare names cursor and agent are too common to claim (sty_7d098d50).
-	if base == "cursor-agent" || strings.HasPrefix(base, "cursor-agent-") {
-		return HarnessCursor
 	}
 	return HarnessUnknown
 }

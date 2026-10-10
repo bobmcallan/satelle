@@ -692,8 +692,14 @@ func GrantsContextChannel(tools string) bool {
 // dispatched as a context-pulling child, so neither needs a grant. This is the
 // one owner of that exemption: the dispatch refusal and `satelle agent validate`
 // both ask it, then judge the grant with GrantsContextChannel.
+//
+// A binding whose adapter reads satelle's material by absolute path with its own
+// read tool (agentcli.ReadsMaterialByPath) is exempt too: its channel is the
+// adapter's, not a tools grant, so no grant string can be missing.
 func NeedsContextChannel(b AgentBinding) bool {
-	return !IsInLoopCommand(b.CommandTemplate()) && b.ResolvedInterface() != InterfaceCloud
+	cmd := b.CommandTemplate()
+	return !IsInLoopCommand(cmd) && b.ResolvedInterface() != InterfaceCloud &&
+		!agentcli.ReadsMaterialByPath(agentcli.AdapterName(cmd))
 }
 
 // ShellGrantToken returns the first token in a tool grant that confers shell

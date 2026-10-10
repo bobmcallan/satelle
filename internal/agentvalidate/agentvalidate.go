@@ -1091,10 +1091,18 @@ func checkBinding(section string, b config.AgentBinding, vars map[string]string)
 			} else {
 				g.Notes += "; " + label + " spawn: " + runner.Command()
 			}
-			// Ceiling: tools grant + client permission policy (not argv --deny).
-			g.ReadOnly = b.Tools != "" && !toolsGrantMutators(b.Tools)
+			adapter := agentcli.AdapterName(cmd)
+			addNote(&g, agentcli.ToolsGrantNote(adapter))
+			// Ceiling: tools grant + client permission policy (not argv --deny) —
+			// unless the adapter itself holds a reviewer read-only (a forced mode).
+			enforced, enforceErr := reviewerEnforced(role, adapter, fields[1:], iface)
+			g.ReadOnly = enforced || (b.Tools != "" && !toolsGrantMutators(b.Tools))
 			if role == config.RoleReviewer {
-				if b.Tools == "" {
+				if enforceErr != nil {
+					ceilingProblem(fmt.Sprintf("agents.toml [%s] %s: %v", section, label, enforceErr))
+				} else if enforced {
+					addNote(&g, agentcli.ReadOnlyCeilingNote(adapter))
+				} else if b.Tools == "" {
 					ceilingProblem(fmt.Sprintf(
 						"agents.toml [%s] interface=%s role=reviewer requires tools= (grant evidence; %s ceiling is tools + client permission policy, not argv --deny)",
 						section, label, label))
@@ -1164,15 +1172,32 @@ func checkBinding(section string, b config.AgentBinding, vars map[string]string)
 		// Placeholder completeness (sty_21db3670): buildArgs substitutes only
 		// tokens that equal {system} verbatim, so a multi-token isolated command
 		// without that token runs with no gate/skill rubric. Hard-fail.
-		if !hasToken(fields, "{system}") {
-			bindingProblem(fmt.Sprintf(
-				"agents.toml [%s] command omits {system} as its own argv token — the gate/skill rubric is never appended and the agent runs without its rubric",
-				section))
+		adapter := agentcli.AdapterName(cmd)
+		switch agentcli.SystemDelivery(adapter) {
+		case agentcli.SystemOnStdin:
+			addNote(&g, "system: stdin")
+		default:
+			if !hasToken(fields, "{system}") {
+				bindingProblem(fmt.Sprintf(
+					"agents.toml [%s] command omits {system} as its own argv token — the gate/skill rubric is never appended and the agent runs without its rubric",
+					section))
+			}
+		}
+		addNote(&g, agentcli.ToolsGrantNote(adapter))
+		// An adapter that holds a reviewer read-only itself (a forced mode)
+		// answers for the ceiling; a template that defeats it is an error, not a
+		// heuristic miss.
+		enforced, enforceErr := reviewerEnforced(role, adapter, fields[1:], iface)
+		if enforceErr != nil {
+			ceilingProblem(fmt.Sprintf("agents.toml [%s] command: %v", section, enforceErr))
+		} else if enforced {
+			g.ReadOnly = true
+			addNote(&g, agentcli.ReadOnlyCeilingNote(adapter))
 		}
 		// Reviewer read-only ceiling: advisory when role=reviewer but no ceiling
 		// is expressed (no --disallowedTools/--deny / read-only heuristic miss).
 		// Warn not fail — g.ReadOnly is a heuristic.
-		if role == config.RoleReviewer && !g.ReadOnly {
+		if role == config.RoleReviewer && !g.ReadOnly && enforceErr == nil {
 			ceilingWarn(fmt.Sprintf(
 				"agents.toml [%s] is role=reviewer with an isolated command that expresses no read-only ceiling (no --disallowedTools/--deny of mutators) — the reviewer could silently gain write; deny the mutators or use the default claude/grok template",
 				section))
@@ -1188,6 +1213,28 @@ func checkBinding(section string, b config.AgentBinding, vars map[string]string)
 		bindingProblem(fmt.Sprintf("agents.toml [%s] timeout: %v", section, err))
 	}
 	return g, problems, warnings, fs
+}
+
+// reviewerEnforced asks agentcli whether the adapter itself holds a reviewer
+// read-only (a forced mode), and why not when its template defeats that. A
+// performer is never held read-only, so only a reviewer is asked.
+func reviewerEnforced(role, adapter string, args []string, iface string) (bool, error) {
+	if role != config.RoleReviewer {
+		return false, nil
+	}
+	return agentcli.ReadOnlyEnforced(adapter, args, iface)
+}
+
+// addNote appends a validate note to the grant, "; "-separated. An empty note adds
+// nothing.
+func addNote(g *Grant, note string) {
+	switch {
+	case note == "":
+	case g.Notes == "":
+		g.Notes = note
+	default:
+		g.Notes += "; " + note
+	}
 }
 
 // hasToken reports whether tok appears as its own element of fields (exact match).

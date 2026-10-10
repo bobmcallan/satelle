@@ -46,14 +46,16 @@ func TestHarnessOfDoesNotWidenReviewerIsolation(t *testing.T) {
 			t.Errorf("HarnessOf(%q) must be pi", command)
 		}
 	}
-	// cursor-agent is recognised by HarnessOf (sty_7d098d50) and, like pi, stays
-	// unrecognised for reviewer isolation.
-	for _, command := range []string{"cursor-agent -p", "/home/u/.local/bin/cursor-agent --trust"} {
-		if got := AdapterName(command); got != HarnessUnknown {
-			t.Errorf("AdapterName(%q) = %q, must stay unknown for isolation", command, got)
+	// cursor-agent is recognised by HarnessOf (sty_7d098d50) and, since it became a
+	// dispatchable seat (sty_10c52ab3), by the isolation classifier too: its
+	// reviewer ceiling is the forced mode (cursor_seat.go), not an attestation. A
+	// --model naming another provider does not change that.
+	for _, command := range []string{"cursor-agent -p", "/home/u/.local/bin/cursor-agent --trust", "cursor-agent -p --model grok-4.7-high"} {
+		if got := AdapterName(command); got != HarnessCursor {
+			t.Errorf("AdapterName(%q) = %q, want cursor", command, got)
 		}
-		if !UnrecognisedCommand(command) {
-			t.Errorf("UnrecognisedCommand(%q) must stay true", command)
+		if UnrecognisedCommand(command) {
+			t.Errorf("UnrecognisedCommand(%q) must be false", command)
 		}
 		if HarnessOf(command) != HarnessCursor {
 			t.Errorf("HarnessOf(%q) must be cursor", command)
