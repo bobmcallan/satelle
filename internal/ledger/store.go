@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"uuid"
@@ -224,7 +225,7 @@ func (s *Store) ListByStory(ctx context.Context, storyID, kind string) ([]Entry,
 	if strings.TrimSpace(storyID) == "" {
 		return nil, fmt.Errorf("ledger: story_id required")
 	}
-	return s.List(ctx, ListFilter{StoryID: storyID, Kind: kind, Limit: 2000})
+	return s.List(ctx, ListFilter{StoryID: storyID, Kind: kind, Limit: MaxListLimit})
 }
 
 // GetByID returns one entry by its primary key, and whether it exists. A
@@ -257,20 +258,43 @@ func (s *Store) GetByID(ctx context.Context, id string) (Entry, bool, error) {
 	return e, true, nil
 }
 
-// List returns entries matching the filter, oldest-first. At least one of
-// StoryID/ProjectID/Kind must be set; an unfiltered scan is refused.
-func (s *Store) List(ctx context.Context, f ListFilter) ([]Entry, error) {
+// DefaultListLimit and MaxListLimit own the row limit of List and ListNewest: a
+// limit <= 0 means the default and anything above the max is capped. A caller
+// that shows the limit to a person or a gate reads it here, never a literal.
+const (
+	DefaultListLimit = 200
+	MaxListLimit     = 2000
+)
+
+// EffectiveLimit resolves a requested row limit: DefaultListLimit for n <= 0,
+// capped at MaxListLimit.
+func EffectiveLimit(n int) int {
+	if n <= 0 {
+		return DefaultListLimit
+	}
+	return min(n, MaxListLimit)
+}
+
+// Window states what a newest-window read returned against what matched: Total
+// rows matched the filter, Limit is the effective limit applied, Omitted is how
+// many older rows fell outside it (zero when all fit), and Max is the most one
+// read can return — so a caller can tell "raise the limit" from "narrow the
+// filter".
+type Window struct {
+	Total   int `json:"total"`
+	Limit   int `json:"limit"`
+	Omitted int `json:"omitted"`
+	Max     int `json:"max"`
+}
+
+// listQuery validates f and returns the SELECT prefix (columns, then extra
+// select expressions) and WHERE clause with its arguments, shared by List and
+// ListNewest.
+func listQuery(f ListFilter, extraCols string) (string, []any, error) {
 	if strings.TrimSpace(f.StoryID) == "" &&
 		strings.TrimSpace(f.ProjectID) == "" &&
 		strings.TrimSpace(f.Kind) == "" {
-		return nil, fmt.Errorf("ledger: at least one filter field required")
-	}
-	limit := f.Limit
-	if limit <= 0 {
-		limit = 200
-	}
-	if limit > 2000 {
-		limit = 2000
+		return "", nil, fmt.Errorf("ledger: at least one filter field required")
 	}
 	var (
 		conds []string
@@ -289,18 +313,14 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]Entry, error) {
 		conds = append(conds, "(created_at, id) > (SELECT created_at, id FROM evidence WHERE id = ?)")
 		args = append(args, f.AfterID)
 	}
+	q := `SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at` + extraCols +
+		` FROM evidence WHERE ` + strings.Join(conds, " AND ")
+	return q, args, nil
+}
 
-	q := `SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at FROM evidence`
-	if len(conds) > 0 {
-		q += " WHERE " + strings.Join(conds, " AND ")
-	}
-	q += fmt.Sprintf(" ORDER BY created_at ASC, id ASC LIMIT %d", limit)
-
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("ledger: list: %w", err)
-	}
-	defer rows.Close()
+// scanEntries reads rows of the listQuery columns into entries in row order.
+// extra receives the trailing select expression, when the query has one.
+func scanEntries(rows *sql.Rows, extra ...any) ([]Entry, error) {
 	out := []Entry{}
 	for rows.Next() {
 		var (
@@ -308,8 +328,9 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]Entry, error) {
 			payload, refs string
 			created       string
 		)
-		if err := rows.Scan(&e.ID, &e.StoryID, &e.ProjectID, &e.Kind,
-			&e.Actor, &e.Body, &payload, &refs, &created); err != nil {
+		dest := append([]any{&e.ID, &e.StoryID, &e.ProjectID, &e.Kind,
+			&e.Actor, &e.Body, &payload, &refs, &created}, extra...)
+		if err := rows.Scan(dest...); err != nil {
 			return nil, fmt.Errorf("ledger: scan: %w", err)
 		}
 		e.Payload = json.RawMessage(payload)
@@ -318,6 +339,49 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]Entry, error) {
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// List returns the OLDEST EffectiveLimit entries matching the filter,
+// oldest-first. At least one of StoryID/ProjectID/Kind must be set; an
+// unfiltered scan is refused. A reader that wants the latest state of a long
+// ledger uses ListNewest.
+func (s *Store) List(ctx context.Context, f ListFilter) ([]Entry, error) {
+	q, args, err := listQuery(f, "")
+	if err != nil {
+		return nil, err
+	}
+	q += fmt.Sprintf(" ORDER BY created_at ASC, id ASC LIMIT %d", EffectiveLimit(f.Limit))
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: list: %w", err)
+	}
+	defer rows.Close()
+	return scanEntries(rows)
+}
+
+// ListNewest returns the NEWEST EffectiveLimit entries matching the filter,
+// still ordered oldest-first (the newest entry is last), with the Window saying
+// how many older rows were left out. One statement reads the rows and the
+// matched total, so the two cannot disagree.
+func (s *Store) ListNewest(ctx context.Context, f ListFilter) ([]Entry, Window, error) {
+	q, args, err := listQuery(f, ", COUNT(*) OVER ()")
+	if err != nil {
+		return nil, Window{}, err
+	}
+	limit := EffectiveLimit(f.Limit)
+	q += fmt.Sprintf(" ORDER BY created_at DESC, id DESC LIMIT %d", limit)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, Window{}, fmt.Errorf("ledger: list newest: %w", err)
+	}
+	defer rows.Close()
+	var total int
+	entries, err := scanEntries(rows, &total)
+	if err != nil {
+		return nil, Window{}, err
+	}
+	slices.Reverse(entries)
+	return entries, Window{Total: total, Limit: limit, Omitted: max(0, total-len(entries)), Max: MaxListLimit}, nil
 }
 
 // ForEachKindPageSize is the page size ForEachKind reads per round-trip.

@@ -255,7 +255,7 @@ func gatherCapture(cmd *cobra.Command, storyID string) (reviewscore.CaptureInput
 	var entries []ledger.Entry
 	for after := ""; ; {
 		var page []ledger.Entry
-		req := map[string]any{"story_id": storyID, "limit": ledgerPage}
+		req := map[string]any{"story_id": storyID, "limit": ledgerPage, "oldest": true}
 		if after != "" {
 			req["after_id"] = after
 		}

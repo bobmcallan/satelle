@@ -7,7 +7,23 @@ import (
 	"io"
 
 	"github.com/spf13/cobra"
+
+	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/verb"
 )
+
+// omissionNotice is the one stderr line `ledger list` prints when its limit left
+// older rows out. Every number comes from the store's Window; when the matched
+// total exceeds what one read can return, raising --limit cannot reach the rest,
+// so the hint is to narrow with --kind.
+func omissionNotice(w ledger.Window) string {
+	hint := fmt.Sprintf("use --limit %d to see them", w.Total)
+	if w.Total > w.Max {
+		hint = fmt.Sprintf("use --limit %d for more, or narrow with --kind", w.Max)
+	}
+	return fmt.Sprintf("ledger: showing the newest %d of %d rows; %d older rows omitted — %s",
+		w.Limit, w.Total, w.Omitted, hint)
+}
 
 func init() {
 	ledgerCmd := &cobra.Command{Use: "ledger", Short: "Append to and read the evidence ledger",
@@ -62,13 +78,36 @@ Reach for it when the summary is not enough.`,
 			if lLimit > 0 {
 				req["limit"] = lLimit
 			}
-			return dispatch(cmd, "ledger-list", req)
+			req["window"] = true
+			body, err := json.Marshal(req)
+			if err != nil {
+				return fmt.Errorf("encode request: %w", err)
+			}
+			resp, err := verb.Dispatch(cmd.Context(), "ledger-list", body)
+			if err != nil {
+				return err
+			}
+			var w struct {
+				Entries json.RawMessage `json:"entries"`
+				ledger.Window
+			}
+			if err := json.Unmarshal(resp, &w); err != nil {
+				return fmt.Errorf("ledger list: decode: %w", err)
+			}
+			if err := renderResponse(cmd, "ledger-list", lStory, w.Entries); err != nil {
+				return err
+			}
+			if w.Omitted > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), omissionNotice(w.Window))
+			}
+			return nil
 		},
 	}
 	listCmd.Flags().StringVar(&lStory, "story", "", "filter by story id")
 	listCmd.Flags().StringVar(&lProject, "project", "", "filter by project id")
 	listCmd.Flags().StringVar(&lKind, "kind", "", "filter by kind")
-	listCmd.Flags().IntVar(&lLimit, "limit", 0, "max rows (default 200)")
+	listCmd.Flags().IntVar(&lLimit, "limit", 0, fmt.Sprintf(
+		"max rows, newest window, oldest first (default %d, max %d)", ledger.DefaultListLimit, ledger.MaxListLimit))
 
 	// Shared suite evidence (sty_183a0510): record one expensive suite run as
 	// SHA-keyed evidence, let sibling stories cite it, and enumerate the facts a

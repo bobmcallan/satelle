@@ -227,7 +227,7 @@ type ListFilter struct {
 	StoryID   string
 	ProjectID string
 	Kind      string
-	Limit     int // <=0 ⇒ default 200, capped at 2000
+	Limit     int // <=0 ⇒ DefaultListLimit, capped at MaxListLimit
 	// AfterID pages: only rows after the row with this id in (created_at, id)
 	// order, so a reader of a story with more than 2000 rows can walk all of it.
 	AfterID string

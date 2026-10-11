@@ -13,6 +13,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
@@ -53,6 +54,8 @@ type reviewerMaterial struct {
 	// array. LedgerErr is the unavailable reason ("ledger: …") when it did not.
 	LedgerJSON []byte
 	LedgerErr  string
+	// LedgerWindow says how many older rows the listing left out (Omitted > 0).
+	LedgerWindow ledger.Window
 }
 
 // prepareReviewer resolves skill's rubric, refuses a broken one, and builds the
@@ -137,12 +140,13 @@ func (g *Engine) fillLedger(ctx context.Context, itemID string, mat *reviewerMat
 		mat.LedgerErr = "ledger: story id required"
 		return
 	}
-	b, err := verb.ListStoryLedger(ctx, itemID)
+	b, win, err := verb.ListStoryLedger(ctx, itemID)
 	if err != nil {
 		mat.LedgerErr = "ledger: " + err.Error()
 		return
 	}
 	mat.LedgerJSON = b
+	mat.LedgerWindow = win
 }
 
 // reviewerSeat is the resolved harness an LLM gate runs under: the binding with
@@ -272,9 +276,15 @@ type pathRef struct {
 	Path string `json:"path"`
 }
 
+// ledgerRef points a gate at the story's ledger listing. Omitted, Total and
+// Limit are set only when the listing is the newest Limit of Total rows and
+// Omitted older ones are not in the file (sty_523edea7).
 type ledgerRef struct {
 	Path        string `json:"path,omitempty"`
 	Unavailable string `json:"unavailable,omitempty"`
+	Omitted     int    `json:"omitted,omitempty"`
+	Total       int    `json:"total,omitempty"`
+	Limit       int    `json:"limit,omitempty"`
 }
 
 // writeReviewerMaterial writes the pre-cap bytes under scratch/material and
@@ -362,6 +372,9 @@ func writeReviewerMaterial(scratch string, mat *reviewerMaterial, tp transitionP
 			return referencedPayload{}, err
 		}
 		ref.Ledger = ledgerRef{Path: abs}
+		if w := mat.LedgerWindow; w.Omitted > 0 {
+			ref.Ledger.Omitted, ref.Ledger.Total, ref.Ledger.Limit = w.Omitted, w.Total, w.Limit
+		}
 	} else {
 		reason := mat.LedgerErr
 		if reason == "" {
