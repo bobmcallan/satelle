@@ -1,3 +1,23 @@
+## [0.0.647] - 2026-10-11
+
+### Added
+- **A story's cost is priced at read time from its tokens per agent and model.** Tokens stay the recorded truth. `satelle story cost` and the web cost panel show a BY SEAT section (agent and model, with the driving session as `driver@<model>`) and one derived cost, computed each time it is read from `[pricing.models."<model id>"]` rates (USD per million fresh input, cache read, cache write and output tokens) or a `[pricing.subscription]` (`fee_usd`, `tokens_per_period`) in `~/.satelle/config.toml`. Changing the configuration re-prices past stories with no ledger write. A model with no configured rate reads as unavailable, naming the model, never as zero; with no configuration the cost reads `unavailable (no pricing configured)`. Provider-reported dollars are labelled `reported`. No price table exists in Go, and a test enforces it. See `satelle help cost-pricing`. (sty_6267abb7)
+- **The estimate gate judges the comparison, not the presence of a number.** `satelle story comparables <id>` lists comparable finished stories (same category first, then shared tags) with their measured token actuals. `satelle-estimate-actual-review` compares each token estimate against them, names the comparables, their median and the ratio, and rejects an estimate outside the tolerance. The tolerance and minimum comparables are repo configuration under `[estimate_review]` in `.satelle/satelle.toml` (defaults 1.5 and 3); too few comparables accepts with a "no comparison available" note. A passing functional check now keeps its bounded output in its verdict notes. (sty_e00e6a7a)
+- **A backlog definition edit is judged and recorded.** Changing a backlog story's title, body, acceptance criteria or category runs the create-review gate (a reject leaves the stored text unchanged), and the `story_updated` row records the editor's session and executable and each field's before and after. (sty_a8885220)
+
+### Fixed
+- **A driving session run as a subagent or from a worktree records its usage.** The session record is found by session id across trees (story tree, the session's published root, then a store-wide search) for claude, grok and pi. Claude subagent transcripts are included, deduplicated by message id. A row whose window overlaps another story in the same session is marked ambiguous, naming the overlapping stories, and kept out of the exact totals. grok and cursor rows say subagent spend inclusion is unverified. A record found nowhere, or more than once, is an adapter-named unavailable. (sty_6deecf76)
+- **Create-review and amend-review runs are recorded on the ledger** like every other reviewer dispatch, so their spend appears in story cost and the gate-value view. (sty_c5171eb9)
+- **A functional check's verdict notes carry its result, not its script.** An accept reads `functional check passed (<skill>)` with the check's output; a reject keeps its full failure output. (sty_e2b78a8d)
+
+### Changed
+- epic:token-accountability's criteria now treat tokens per agent as the true cost, with dollars derived from them at read time. (sty_1e037210)
+
+## [serve-v0.0.151] - 2026-10-11
+
+### Changed
+- The serve binary carries the per-seat cost view with read-time pricing, the ambiguous-driver-row classification and the cost-pricing help topic. (sty_1e037210)
+
 ## [0.0.646] - 2026-10-11
 
 ### Added
