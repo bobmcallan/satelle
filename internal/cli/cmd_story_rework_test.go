@@ -299,7 +299,7 @@ func TestStoryReworkE2EConvergesAndLeavesStatusAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ledger: %v\n%s", err, led)
 	}
-	if !strings.Contains(led, "rework converged=true rounds=2/3") {
+	if !strings.Contains(led, "rework outcome=converged converged=true rounds=2/3") {
 		t.Fatalf("ledger missing the relay outcome row:\n%s", led)
 	}
 

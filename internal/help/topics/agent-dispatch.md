@@ -655,9 +655,16 @@ and the last objection.
 The relay prints its result and records the same as a ledger row:
 
 ```json
-{"converged": true, "rounds": 2}
-{"converged": false, "rounds": 3, "last_objection": "AC4 has no test"}
+{"converged": true, "outcome": "converged", "rounds": 2}
+{"converged": false, "outcome": "budget", "rounds": 3, "last_objection": "AC4 has no test"}
+{"converged": false, "outcome": "no_progress", "rounds": 2, "last_objection": "AC4 has no test"}
 ```
+
+`no_progress` ends the relay before the budget: the coder's turn changed no
+evidence (working tree, attachments, ledger rows — the relay's own transcript
+does not count) and the consultant repeated its objection. The ledger row also
+carries `stopped_reason`. Park or re-present per rule 4 of
+`satelle-agent-consultation`.
 
 It **never** sets status. `READY` is a signal to the orchestrator, never a
 verdict: the orchestrator presents the edge, or — after the budget without

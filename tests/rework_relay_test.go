@@ -160,7 +160,7 @@ func TestReworkRelayOnTheRouteAndInTheVerb(t *testing.T) {
 
 	// The outcome is also ledgered, so the orchestrator can read it either way.
 	led := mustRun(t, testBin, repo, "ledger", "list", "--story", id)
-	if !strings.Contains(led, "rework converged=true rounds=2/2") {
+	if !strings.Contains(led, "rework outcome=converged converged=true rounds=2/2") {
 		t.Errorf("ledger missing the relay outcome row:\n%s", led)
 	}
 }
