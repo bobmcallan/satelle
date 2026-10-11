@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/verb"
 )
 
 // scriptSess is a live session whose replies are scripted, in order. It is the
@@ -120,6 +121,128 @@ func TestReworkRelayLedgersEveryTurnByRole(t *testing.T) {
 	}
 	if led.msgs[0].Body != "AC4 has no test.\nNOT READY: AC4 has no test" {
 		t.Errorf("first row body = %q; want the consultant's whole reply", led.msgs[0].Body)
+	}
+}
+
+// --- directed message: the performer acts first (sty_ec74ab22) --------------
+
+func TestReworkRelayPerformerActsFirstOnDirectedMessage(t *testing.T) {
+	coder := newScriptSess("fixed X")
+	consultant := newScriptSess("fine now\nREADY")
+	led := &memLedger{}
+	l := newReworkLoop(coder, consultant, 3, led, &bytes.Buffer{})
+	l.CoderSeed = "CODER-SEED"
+	l.Pending = []string{"from orchestrator: defect X"}
+
+	res, err := l.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Converged || res.Rounds != 1 {
+		t.Fatalf("result = %+v; want converged in 1 consultant round (the opening turn is not a round)", res)
+	}
+	if len(coder.turns) != 1 || !strings.Contains(coder.turns[0], "CODER-SEED") || !strings.Contains(coder.turns[0], "defect X") {
+		t.Fatalf("coder turns = %q; want one turn carrying the coder seed and the directed message", coder.turns)
+	}
+	if len(consultant.turns) != 1 || !strings.Contains(consultant.turns[0], "review the slice") || !strings.Contains(consultant.turns[0], "fixed X") {
+		t.Fatalf("consultant turns = %q; want its seed plus the coder's reply", consultant.turns)
+	}
+	// Order of turns, read off the ledger: the coder speaks before the consultant.
+	if len(led.msgs) != 2 || led.msgs[0].From != "coder" || led.msgs[1].From != "consult" {
+		t.Fatalf("ledgered order = %+v; want coder then consult", led.msgs)
+	}
+}
+
+func TestReworkRelayWithoutDirectedMessageStillOpensWithConsultant(t *testing.T) {
+	coder := newScriptSess("done")
+	consultant := newScriptSess("NOT READY: x", "READY")
+	led := &memLedger{}
+	l := newReworkLoop(coder, consultant, 3, led, &bytes.Buffer{})
+	l.CoderSeed = "CODER-SEED"
+
+	res, err := l.Run(context.Background())
+	if err != nil || !res.Converged || res.Rounds != 2 {
+		t.Fatalf("result = %+v, err %v; want converged after 2 rounds", res, err)
+	}
+	if len(led.msgs) == 0 || led.msgs[0].From != "consult" {
+		t.Fatalf("ledgered order = %+v; want the consultant first", led.msgs)
+	}
+	if len(coder.turns) != 1 || !strings.HasPrefix(coder.turns[0], "CODER-SEED") {
+		t.Fatalf("coder turns = %q; want the seed on its first turn", coder.turns)
+	}
+}
+
+func TestReworkRelayReadyIgnoredWhileDirectedMessageUnanswered(t *testing.T) {
+	// The performer returns nothing on its opening turn, so the consultant is
+	// asked over an unanswered message and its READY must not end the relay.
+	coder := newScriptSess("", "done")
+	consultant := newScriptSess("READY", "READY")
+	l := newReworkLoop(coder, consultant, 2, &memLedger{}, &bytes.Buffer{})
+	l.CoderSeed = "CODER-SEED"
+	l.Pending = []string{"from orchestrator: defect X"}
+
+	res, err := l.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Converged || res.Rounds != 2 {
+		t.Fatalf("result = %+v; want round 1's READY ignored and round 2's accepted", res)
+	}
+	if len(coder.turns) != 2 {
+		t.Fatalf("coder turns = %q; want the opening turn and one resend", coder.turns)
+	}
+	if !strings.Contains(coder.turns[1], "defect X") || strings.Contains(coder.turns[1], "CODER-SEED") {
+		t.Errorf("resend = %q; want the pending message, without a second coder seed", coder.turns[1])
+	}
+	if !strings.Contains(consultant.turns[1], "done") {
+		t.Errorf("consultant round 2 = %q; want the coder's reply", consultant.turns[1])
+	}
+}
+
+func TestReworkRelayUnansweredDirectedMessageNamedWhenBudgetSpent(t *testing.T) {
+	coder := newScriptSess("", "")
+	consultant := newScriptSess("READY")
+	l := newReworkLoop(coder, consultant, 1, &memLedger{}, &bytes.Buffer{})
+	l.Pending = []string{"from orchestrator: defect X"}
+
+	res, err := l.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Converged {
+		t.Fatalf("result = %+v; READY over an unanswered message must not converge", res)
+	}
+	if !strings.Contains(res.LastObjection, "unanswered directed message") || !strings.Contains(res.LastObjection, "defect X") {
+		t.Errorf("last objection = %q; want it to name the unanswered message", res.LastObjection)
+	}
+}
+
+func TestUnansweredDirected(t *testing.T) {
+	m := func(from, to, cc, body string) verb.AgentMessage {
+		return verb.AgentMessage{From: from, To: to, Cc: cc, Body: body}
+	}
+	cases := []struct {
+		name string
+		msgs []verb.AgentMessage
+		want []string
+	}{
+		{"directed and unanswered", []verb.AgentMessage{m("orchestrator", "coder", "", "a")}, []string{"a"}},
+		{"answered by a later coder message", []verb.AgentMessage{m("orchestrator", "coder", "", "a"), m("coder", "consult", "*", "ok")}, nil},
+		{"directed after the coder's last reply", []verb.AgentMessage{m("orchestrator", "coder", "", "a"), m("coder", "consult", "*", "ok"), m("orchestrator", "coder", "", "b")}, []string{"b"}},
+		{"every unanswered one is kept", []verb.AgentMessage{m("orchestrator", "coder", "", "a"), m("developer", "coder", "", "b")}, []string{"a", "b"}},
+		{"answered by a coder reply to another role, no cc", []verb.AgentMessage{m("orchestrator", "coder", "", "a"), m("coder", "orchestrator", "", "done")}, nil},
+		{"broadcast only", []verb.AgentMessage{m("orchestrator", "*", "", "a")}, nil},
+		{"relay transcript row is not a directive", []verb.AgentMessage{m("consult", "coder", "*", "READY")}, nil},
+		{"addressed to someone else", []verb.AgentMessage{m("orchestrator", "planner", "", "a")}, nil},
+	}
+	for _, c := range cases {
+		var got []string
+		for _, x := range unansweredDirected(c.msgs, "coder") {
+			got = append(got, x.Body)
+		}
+		if strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
 	}
 }
 

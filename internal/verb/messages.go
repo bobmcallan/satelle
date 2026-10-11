@@ -203,18 +203,37 @@ func rowToAgentMessage(e ledger.Entry) AgentMessage {
 // has no baseline — never fails a transition. Oldest first. The engine owns
 // budget truncation.
 func MessagesSince(ctx context.Context, itemID string, addresses []string) []AgentMessage {
+	want := map[string]bool{"*": true}
+	for _, a := range addresses {
+		if a = strings.TrimSpace(a); a != "" {
+			want[a] = true
+		}
+	}
+	msgs := EngagementMessages(ctx, itemID)
+	out := make([]AgentMessage, 0, len(msgs))
+	for _, m := range msgs {
+		// want never holds "" (addresses are trimmed and empties skipped), so a
+		// row with no Cc is admitted on To alone — byte-identical to before the
+		// field existed (sty_8e0b29a0).
+		if !want[m.To] && !want[m.Cc] {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// EngagementMessages returns every engagement-windowed agent message whatever
+// its addressee, oldest first; nil on the same conditions as MessagesSince. It
+// is for a reader that must see a role's own outbound messages, which
+// MessagesSince filters out by address.
+func EngagementMessages(ctx context.Context, itemID string) []AgentMessage {
 	if strings.TrimSpace(itemID) == "" {
 		return nil
 	}
 	windowSHA, windowAt, ok := currentEngagementWindow(ctx, itemID)
 	if !ok {
 		return nil
-	}
-	want := map[string]bool{"*": true}
-	for _, a := range addresses {
-		if a = strings.TrimSpace(a); a != "" {
-			want[a] = true
-		}
 	}
 	msgs, err := listAgentMessages(ctx, itemID)
 	if err != nil {
@@ -226,12 +245,6 @@ func MessagesSince(ctx context.Context, itemID string, addresses []string) []Age
 			continue
 		}
 		if m.EngagementSHA != "" && windowSHA != "" && m.EngagementSHA != windowSHA {
-			continue
-		}
-		// want never holds "" (addresses are trimmed and empties skipped), so a
-		// row with no Cc is admitted on To alone — byte-identical to before the
-		// field existed (sty_8e0b29a0).
-		if !want[m.To] && !want[m.Cc] {
 			continue
 		}
 		out = append(out, m)
