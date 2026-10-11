@@ -314,6 +314,12 @@ func reseedViaCLI(ctx context.Context, repoPath string) error {
 	return nil
 }
 
+// snapshotArgs is the flag-free verb each pass runs. It pages the project and
+// sends the last pass's since-token, and checkpoints every page, so a child cut
+// off at reconcileTimeout resumes where it stopped rather than starting over
+// (sty_2cb4e1f6). The loop adds no flag of its own.
+var snapshotArgs = []string{"sync", "workstate", "snapshot"}
+
 // snapshotViaCLI runs `satelle sync workstate snapshot` inside repoPath.
 // The CLI no-ops when work-state areas are local.
 func snapshotViaCLI(ctx context.Context, repoPath string) error {
@@ -321,7 +327,7 @@ func snapshotViaCLI(ctx context.Context, repoPath string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, bin, "sync", "workstate", "snapshot")
+	cmd := exec.CommandContext(ctx, bin, snapshotArgs...)
 	cmd.Dir = repoPath
 	out, err := cmd.CombinedOutput()
 	if err != nil {

@@ -1,3 +1,13 @@
+## [0.0.649] - 2026-10-11
+
+### Fixed
+- **Work-state Snapshot is paged, and a synced client receives only what changed.** `satelle sync workstate snapshot`, `satelle sync workstate pull` and `satelle sync rehydrate` request Snapshot in pages of 500 rows and follow `next_page_token` to the end of the pass, instead of asking for the whole project in one message (about 85,000 ledger rows for the satelle project). After a complete pass, its `sync_token` is saved per server, project and repo root in `~/.config/satelle/document-sync-state.json` and sent as `since_token` on the next pass, so an already-synced client receives only changes: against satelle.dev a full pass is 171 pages and the next since pass is 1 page. Each page is applied as it arrives, and an interrupted pass (for example the reconcile loop's 2-minute timeout) keeps its applied pages and a resume checkpoint, so the next pass continues from there. A repeated row is applied once. The client runs a full pass when no token is stored, when `--force` is given, when the opted-in areas or the local store changed, or when the server rejects the token; in the last three cases it prints one line on stderr saying the token was discarded and why. The summary names the pass kind (full, since or resumed) and the page count. While an older satelle binary still runs against the same state file (for example a not-yet-updated service), it can drop the saved token; the next pass is then a full pass. `satelle update` brings the CLI and the service to this version together. (sty_2cb4e1f6)
+
+## [serve-v0.0.152] - 2026-10-11
+
+### Changed
+- The serve reconcile loop runs the paged, since-cursor `satelle sync workstate snapshot` each interval, so a periodic pass no longer pulls the whole project. (sty_2cb4e1f6)
+
 ## [0.0.648] - 2026-10-11
 
 ### Changed

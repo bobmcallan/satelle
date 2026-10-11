@@ -25,6 +25,27 @@ func testApp(t *testing.T) *app.App {
 	return &app.App{Store: db}
 }
 
+// materializeWorkstate applies one batch the way a single-page pass does: upsert
+// the rows, forward hosted status, regenerate the story views.
+func materializeWorkstate(ctx context.Context, a *app.App, optIn map[string]bool, items []hosted.WorkstateItem, ledgerRows []hosted.WorkstateLedgerRow, force bool) (nItems, nLedger, nKept int, err error) {
+	now := time.Now().UTC()
+	applied, nItems, nLedger, nKept, err := upsertWorkstatePage(ctx, a, optIn, items, ledgerRows, force, now)
+	if err != nil {
+		return nItems, nLedger, nKept, err
+	}
+	if !force {
+		for _, incoming := range applied {
+			if serr := applyHostedWorkstateStatus(ctx, a, incoming, now); serr != nil {
+				return nItems, nLedger, nKept, serr
+			}
+		}
+	}
+	if _, _, verr := verb.SyncStoryBacklog(ctx, a.Store.Stories, now); verr != nil {
+		return nItems, nLedger, nKept, verr
+	}
+	return nItems, nLedger, nKept, nil
+}
+
 func hostedStory(id, status string, updated time.Time) hosted.WorkstateItem {
 	rec, _ := json.Marshal(workstateItemWire{
 		ID: id, Kind: string(workitem.KindStory), Status: status,

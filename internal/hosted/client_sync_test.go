@@ -145,6 +145,18 @@ func newTestGRPCClient(t *testing.T, stub *stubSync, store Store, httpClient *ht
 	return c
 }
 
+// snapshotAll runs one Snapshot pass and gathers every page's rows.
+func snapshotAll(c *Client, project, kind string, opts SnapshotOptions) ([]WorkstateItem, []WorkstateLedgerRow, SnapshotResult, error) {
+	var items []WorkstateItem
+	var rows []WorkstateLedgerRow
+	res, err := c.Snapshot(context.Background(), project, kind, opts, func(p SnapshotPage) error {
+		items = append(items, p.Items...)
+		rows = append(rows, p.Ledger...)
+		return nil
+	})
+	return items, rows, res, err
+}
+
 func fatalHTTP(t *testing.T) *http.Client {
 	t.Helper()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -209,7 +221,7 @@ func TestSnapshotSendsLocationMetadata(t *testing.T) {
 	stub := &stubSync{}
 	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
 	c.SetLocation("loc_grpc_snap_cccccccc")
-	if _, _, err := c.Snapshot(context.Background(), "probe", ""); err != nil {
+	if _, _, _, err := snapshotAll(c, "probe", "", SnapshotOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(stub.locs) != 1 || stub.locs[0] != "loc_grpc_snap_cccccccc" {
@@ -264,15 +276,18 @@ func TestSnapshotUsesGRPC(t *testing.T) {
 		}, nil
 	}}
 	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
-	items, rows, err := c.Snapshot(context.Background(), "probe", "story")
+	items, rows, res, err := snapshotAll(c, "probe", "story", SnapshotOptions{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if res.Pages != 1 || res.SyncToken != "" {
+		t.Fatalf("result = %+v, want one page and no token from an unpaged server", res)
 	}
 	if len(items) != 1 || items[0].ID != "sty_1" {
 		t.Fatalf("snapshot items = %+v", items)
 	}
-	if rows == nil {
-		t.Fatal("ledger nil")
+	if len(rows) != 0 {
+		t.Fatalf("ledger = %+v, want none", rows)
 	}
 	if stub.kind != "story" {
 		t.Fatalf("kind = %q", stub.kind)
@@ -287,7 +302,7 @@ func TestSnapshotTransportError(t *testing.T) {
 	_ = store.Save(Credential{ServerURL: "http://hosted.example", AccessToken: "tok", RefreshToken: "r"})
 	stub := &stubSync{fail: []error{status.Error(codes.Internal, "boom")}}
 	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
-	_, _, err := c.Snapshot(context.Background(), "probe", "")
+	_, _, _, err := snapshotAll(c, "probe", "", SnapshotOptions{})
 	if err == nil {
 		t.Fatal("expected snapshot error")
 	}
@@ -340,7 +355,7 @@ func TestSnapshotRefreshesOnUnauthenticated(t *testing.T) {
 	})
 	stub := &stubSync{fail: []error{status.Error(codes.Unauthenticated, "unauthenticated")}}
 	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
-	_, _, err := c.Snapshot(context.Background(), "probe", "")
+	_, _, _, err := snapshotAll(c, "probe", "", SnapshotOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +391,7 @@ func TestSnapshotAcceptsLargeMessage(t *testing.T) {
 		return resp, nil
 	}}
 	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
-	got, _, err := c.Snapshot(context.Background(), "probe", "")
+	got, _, _, err := snapshotAll(c, "probe", "", SnapshotOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +408,7 @@ func TestSnapshotResourceExhaustedNamesCap(t *testing.T) {
 	_ = store.Save(Credential{ServerURL: "http://hosted.example", AccessToken: "tok", RefreshToken: "r"})
 	stub := &stubSync{fail: []error{status.Error(codes.ResourceExhausted, "grpc: received message larger than max (25136676 vs. 4194304)")}}
 	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
-	_, _, err := c.Snapshot(context.Background(), "probe", "")
+	_, _, _, err := snapshotAll(c, "probe", "", SnapshotOptions{})
 	if err == nil {
 		t.Fatal("expected snapshot error")
 	}

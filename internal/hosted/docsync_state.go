@@ -34,6 +34,75 @@ type documentSyncStateFile struct {
 	// repo tree, so knowing what was last synced never becomes a file that is
 	// itself synced.
 	Snapshots map[string]AreaBase `json:"snapshots,omitempty"`
+	// SnapshotTokens holds, per (server, project, repo), where this checkout's
+	// work-state Snapshot pass stands (sty_2cb4e1f6).
+	SnapshotTokens map[string]SnapshotToken `json:"snapshot_tokens,omitempty"`
+}
+
+// SnapshotToken is a checkout's work-state Snapshot position for one (server,
+// project, repo). Token is the sync_token of the last completed pass, sent as
+// since_token on the next; it changes only when a pass finishes. Areas is the
+// set of opted-in work-state areas that pass covered — a token saved for other
+// areas would skip rows the new set needs, so a mismatch discards it. StoreID is
+// the local database the pass landed in: a replaced database holds none of those
+// rows, so a token from another one is discarded too. The
+// Resume* fields checkpoint a pass cut short (timeout, error): the next pass
+// continues from ResumePageToken, sending ResumeSince as it began. Pending
+// maps a story id to the hosted status not yet forwarded to the local row,
+// carried so the end of a resumed pass can retry it once the pass's ledger
+// rows have landed.
+type SnapshotToken struct {
+	Token           string            `json:"token,omitempty"`
+	Areas           string            `json:"areas,omitempty"`
+	StoreID         string            `json:"store_id,omitempty"`
+	ResumePageToken string            `json:"resume_page_token,omitempty"`
+	ResumeSince     string            `json:"resume_since,omitempty"`
+	Pending         map[string]string `json:"pending,omitempty"`
+	SavedAt         time.Time         `json:"saved_at"`
+}
+
+// LoadSnapshotToken returns the stored Snapshot position for the key, or the
+// zero value when none is stored. A missing file is not an error.
+func LoadSnapshotToken(server, project, repoRoot string) (SnapshotToken, error) {
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return SnapshotToken{}, err
+	}
+	return state.SnapshotTokens[documentCursorKey(server, project, repoRoot)], nil
+}
+
+// SaveSnapshotToken persists the Snapshot position for the key (atomic).
+func SaveSnapshotToken(server, project, repoRoot string, t SnapshotToken) error {
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return err
+	}
+	if state.SnapshotTokens == nil {
+		state.SnapshotTokens = map[string]SnapshotToken{}
+	}
+	state.SnapshotTokens[documentCursorKey(server, project, repoRoot)] = t
+	return writeDocumentSyncState(state)
+}
+
+// ClearSnapshotToken drops the Snapshot position for the key, so the next pass
+// is a full one.
+func ClearSnapshotToken(server, project, repoRoot string) error {
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return err
+	}
+	key := documentCursorKey(server, project, repoRoot)
+	if _, ok := state.SnapshotTokens[key]; !ok {
+		return nil
+	}
+	delete(state.SnapshotTokens, key)
+	return writeDocumentSyncState(state)
 }
 
 // AreaBase is what one checkout last synced for one sync area: the effective

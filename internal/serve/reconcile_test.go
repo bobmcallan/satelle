@@ -459,6 +459,14 @@ func TestSatelleBinaryPrefersSibling(t *testing.T) {
 	}
 }
 
+// The loop reaches the paged work-state Snapshot only by running the flag-free
+// verb, so the since-token and resume checkpoint it relies on are the CLI's.
+func TestSnapshotViaCLIRunsTheFlagFreeVerb(t *testing.T) {
+	if got := strings.Join(snapshotArgs, " "); got != "sync workstate snapshot" {
+		t.Fatalf("snapshot argv = %q, want the flag-free `sync workstate snapshot`", got)
+	}
+}
+
 func TestPassInvokesSnapshot(t *testing.T) {
 	var snap []string
 	r := &Reconciler{

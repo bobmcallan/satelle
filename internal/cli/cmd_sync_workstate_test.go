@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +23,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/hosted/syncpb"
@@ -36,6 +40,50 @@ type fakeWorkstateServer struct {
 	gets       int
 	failOnPost int // 1-based: fail this POST with 500; 0 = never
 	postN      int
+
+	// Snapshot paging and since-cursors (sty_2cb4e1f6). Apply stamps every row it
+	// stores with a rising version; a since_token "v<N>" returns rows stamped after
+	// N, plus any row seeded straight into the maps (unstamped), which a server may
+	// always repeat. Pages are page_size items AND page_size ledger rows, token
+	// "o<offset>".
+	itemVer      map[string]map[string]int
+	ledgerVer    map[string]map[string]int
+	seq          int
+	snapReqs     []*syncpb.SnapshotRequest
+	snapFailCall int // 1-based Snapshot call to fail with Unavailable; 0 = never
+	// Tokens carry the epoch they were issued in ("v3.1", "o2.1"); expireTokens
+	// bumps it, so every token issued before is refused with FailedPrecondition.
+	epoch int
+	// repeatBoundary makes each page after the first start with the last row of the
+	// page before it: a server may repeat a row, it must never miss one.
+	repeatBoundary bool
+}
+
+// expireTokens invalidates every since_token and page_token issued so far.
+func (f *fakeWorkstateServer) expireTokens() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.epoch++
+}
+
+// stamp records that a row changed at the next version.
+func (f *fakeWorkstateServer) stamp(ver map[string]map[string]int, project, id string) map[string]map[string]int {
+	if ver == nil {
+		ver = map[string]map[string]int{}
+	}
+	if ver[project] == nil {
+		ver[project] = map[string]int{}
+	}
+	f.seq++
+	ver[project][id] = f.seq
+	return ver
+}
+
+// snapshotRequests copies the recorded Snapshot requests.
+func (f *fakeWorkstateServer) snapshotRequests() []*syncpb.SnapshotRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*syncpb.SnapshotRequest(nil), f.snapReqs...)
 }
 
 func newFakeWorkstateServer(t *testing.T) (*httptest.Server, *fakeWorkstateServer) {
@@ -130,6 +178,7 @@ func (s *fakeWorkstateGRPC) Apply(ctx context.Context, req *syncpb.ApplyRequest)
 		id, _ := m["id"].(string)
 		if id != "" {
 			s.f.itemsByID[key][id] = m
+			s.f.itemVer = s.f.stamp(s.f.itemVer, key, id)
 		}
 	}
 	ledger := make([]any, 0, len(req.GetLedger()))
@@ -142,6 +191,7 @@ func (s *fakeWorkstateGRPC) Apply(ctx context.Context, req *syncpb.ApplyRequest)
 		id, _ := m["id"].(string)
 		if id != "" {
 			s.f.ledgerByID[key][id] = m
+			s.f.ledgerVer = s.f.stamp(s.f.ledgerVer, key, id)
 		}
 	}
 	s.f.posts[key] = append(s.f.posts[key], map[string]any{"items": items, "ledger": ledger})
@@ -152,40 +202,85 @@ func (s *fakeWorkstateGRPC) Snapshot(ctx context.Context, req *syncpb.SnapshotRe
 	s.f.mu.Lock()
 	defer s.f.mu.Unlock()
 	s.f.gets++
+	s.f.snapReqs = append(s.f.snapReqs, proto.Clone(req).(*syncpb.SnapshotRequest))
+	if s.f.snapFailCall > 0 && s.f.gets == s.f.snapFailCall {
+		return nil, status.Error(codes.Unavailable, "injected snapshot failure")
+	}
+	var since, off int
+	for _, tok := range []struct {
+		val, format string
+		into        *int
+	}{
+		{req.GetSinceToken(), "v%d.%d", &since},
+		{req.GetPageToken(), "o%d.%d", &off},
+	} {
+		if tok.val == "" {
+			continue
+		}
+		var epoch int
+		if n, _ := fmt.Sscanf(tok.val, tok.format, tok.into, &epoch); n != 2 || epoch != s.f.epoch {
+			return nil, status.Error(codes.FailedPrecondition, "token expired")
+		}
+	}
 	key := req.GetProject()
-	out := &syncpb.SnapshotResponse{}
+	changed := func(ver map[string]map[string]int, id string) bool {
+		v, stamped := ver[key][id]
+		return since == 0 || !stamped || v > since
+	}
+	var items []*syncpb.WorkItem
 	kindFilter := req.GetKind()
-	for _, it := range s.f.itemsByID[key] {
-		m, ok := it.(map[string]any)
-		if !ok {
+	for _, id := range slices.Sorted(maps.Keys(s.f.itemsByID[key])) {
+		m, ok := s.f.itemsByID[key][id].(map[string]any)
+		if !ok || !changed(s.f.itemVer, id) {
 			continue
 		}
 		kind, _ := m["kind"].(string)
 		if kindFilter != "" && kind != kindFilter {
 			continue
 		}
-		id, _ := m["id"].(string)
-		status, _ := m["status"].(string)
+		st, _ := m["status"].(string)
 		title, _ := m["title"].(string)
 		rec, _ := json.Marshal(m)
-		out.Items = append(out.Items, &syncpb.WorkItem{
-			Id: id, Kind: kind, Type: kind, Status: status, Title: title,
+		items = append(items, &syncpb.WorkItem{
+			Id: id, Kind: kind, Type: kind, Status: st, Title: title,
 			Origin: "cli-sync", Record: rec,
 		})
 	}
-	for _, it := range s.f.ledgerByID[key] {
-		m, ok := it.(map[string]any)
-		if !ok {
+	var rows []*syncpb.LedgerEntry
+	for _, id := range slices.Sorted(maps.Keys(s.f.ledgerByID[key])) {
+		m, ok := s.f.ledgerByID[key][id].(map[string]any)
+		if !ok || !changed(s.f.ledgerVer, id) {
 			continue
 		}
-		id, _ := m["id"].(string)
 		sid, _ := m["story_id"].(string)
 		kind, _ := m["kind"].(string)
 		rec, _ := json.Marshal(m)
-		out.Ledger = append(out.Ledger, &syncpb.LedgerEntry{
+		rows = append(rows, &syncpb.LedgerEntry{
 			Id: id, StoryId: sid, Kind: kind, Type: "ledger",
 			Origin: "cli-sync", Record: rec,
 		})
+	}
+	token := fmt.Sprintf("v%d.%d", s.f.seq, s.f.epoch)
+	size := int(req.GetPageSize())
+	if size <= 0 {
+		return &syncpb.SnapshotResponse{Items: items, Ledger: rows, SyncToken: token}, nil
+	}
+	window := func(n int) (int, int) {
+		lo := min(off, n)
+		if s.f.repeatBoundary && lo > 0 {
+			lo--
+		}
+		return lo, min(off+size, n)
+	}
+	out := &syncpb.SnapshotResponse{}
+	lo, hi := window(len(items))
+	out.Items = items[lo:hi]
+	lo, hi = window(len(rows))
+	out.Ledger = rows[lo:hi]
+	if off+size < max(len(items), len(rows)) {
+		out.NextPageToken = fmt.Sprintf("o%d.%d", off+size, s.f.epoch)
+	} else {
+		out.SyncToken = token
 	}
 	return out, nil
 }

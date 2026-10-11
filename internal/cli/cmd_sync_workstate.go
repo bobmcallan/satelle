@@ -36,7 +36,9 @@ import (
 var WorkstateAreas = config.WorkstateAreas
 
 // ErrWorkstatePullConflict is returned when local and hosted both have data for
-// an opted-in area and --force was not set. Nothing is written before this error.
+// an opted-in area and --force was not set. Nothing from the refused page on is
+// written; earlier pages of the pass stay (they passed the same check) and the
+// next pass resumes at the refused page.
 var ErrWorkstatePullConflict = errors.New("workstate pull conflict")
 
 // newSyncWorkstateCmd builds the `satelle sync workstate` group (push + pull).
@@ -113,14 +115,18 @@ Local-scoped areas are skipped. Requires "satelle project bind <slug>".`,
 		Use:         "snapshot",
 		Short:       "Pull current hosted work-state into the local store (lazy Snapshot)",
 		Annotations: needsStore(),
-		Long: `snapshot fetches the bound project's current work-state via the checkout-sync
-Snapshot adapter (gRPC Sync/Snapshot) and materializes opted-in
-areas into the local store. Local-only areas are a no-op. satelled may
-exec this verb; it does not talk to the hosted server itself.
+		Long: `snapshot fetches the bound project's work-state via gRPC Sync/Snapshot and
+materializes opted-in areas into the local store. Local-only areas are a no-op.
+satelled may exec this verb; it does not talk to the hosted server itself.
 
-A hosted story whose updated_at is older than the local row — or older than
-the local ledger's last status_transition — is skipped so a stale hosted
-copy cannot rewind status. --force upserts hosted over those rows.`,
+A hosted story older than the local row, or than the local ledger's last
+status_transition, is skipped so a stale copy cannot rewind status. --force
+upserts hosted over those rows.
+
+The project arrives in pages, each applied as it lands. The last completed
+pass's token is kept per hosted-server, project and repo, so the next pass
+receives only changes; a cut-short pass resumes at its last page. A full pass
+runs with no token, with --force, or when the areas, store or token change.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncWorkstateSnapshot(cmd, snapServer, snapForce)
 		},
@@ -154,21 +160,17 @@ func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string, force bool) 
 		return err
 	}
 	client := newHostedClient(cmd.Context(), server, a.RepoRoot)
-	items, ledgerRows, err := client.Snapshot(cmd.Context(), project, "")
+	rep, err := runPagedWorkstateSnapshot(cmd.Context(), a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModeSnapshot)
 	if err != nil {
 		return err
 	}
-	nItems, nLedger, nKept, merr := materializeWorkstate(cmd.Context(), a, optIn, items, ledgerRows, force)
-	if merr != nil {
-		return merr
-	}
-	if err := pushMirrorAfterWorkstate(cmd.Context(), a, nItems+nLedger); err != nil {
+	if err := pushMirrorAfterWorkstate(cmd.Context(), a, rep.Items+rep.Ledger); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "workstate: mirror push warning: %v\n", err)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Snapshot work-state from project %q: %d item(s), %d ledger.\n",
-		project, nItems, nLedger)
-	if nKept > 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "%d item(s) kept — local copy is newer than hosted\n", nKept)
+	fmt.Fprintf(cmd.OutOrStdout(), "Snapshot work-state from project %q (%s): %d item(s), %d ledger.\n",
+		project, rep.label(), rep.Items, rep.Ledger)
+	if rep.Kept > 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "%d item(s) kept — local copy is newer than hosted\n", rep.Kept)
 	}
 	return nil
 }
@@ -537,48 +539,36 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 
 	client := newHostedClient(ctx, server, a.RepoRoot)
 
-	items, ledgerRows, err := client.Snapshot(ctx, project, "")
+	rep, err := runPagedWorkstateSnapshot(ctx, a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModePull)
 	if err != nil {
-		if errors.Is(err, hosted.ErrLoginRequired) {
+		if errors.Is(err, hosted.ErrLoginRequired) || errors.Is(err, ErrWorkstatePullConflict) {
 			return err
 		}
 		return fmt.Errorf("snapshot workstate: %w", err)
 	}
-	if !(optIn["stories"] || optIn["executions"]) {
-		items = nil
-	}
-	if !optIn["ledger"] {
-		ledgerRows = nil
-	}
-
-	if !force {
-		if cerr := checkWorkstatePullConflicts(ctx, a, optIn, items, ledgerRows); cerr != nil {
-			return cerr
-		}
-	}
-
-	nItems, nLedger, nKept, merr := materializeWorkstate(ctx, a, optIn, items, ledgerRows, force)
-	if merr != nil {
-		return merr
-	}
+	nItems, nLedger, nKept := rep.Items, rep.Ledger, rep.Kept
 	// Stories in flight elsewhere are worth knowing even when nothing was pulled.
 	defer reportInFlight(ctx, out, cmd.ErrOrStderr(),
-		holdSite{client: client, server: server, project: project, repoRoot: a.RepoRoot}, items)
+		holdSite{client: client, server: server, project: project, repoRoot: a.RepoRoot}, inFlightCandidates(ctx, a, rep))
 	if nItems == 0 && nLedger == 0 && nKept == 0 {
-		fmt.Fprintln(out, "No work-state rows to pull (hosted opted-in areas are empty).")
+		if rep.Kind == passFull {
+			fmt.Fprintf(out, "No work-state rows to pull (%s; hosted opted-in areas are empty).\n", rep.label())
+		} else {
+			fmt.Fprintf(out, "No work-state rows to pull (%s; nothing changed on hosted since the last pass).\n", rep.label())
+		}
 		return nil
 	}
 	if err := pushMirrorAfterWorkstate(ctx, a, nItems+nLedger); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "workstate: mirror push warning: %v\n", err)
 	}
-	fmt.Fprintf(out, "Pulled work-state from project %q personal collection on %s: %d item(s), %d ledger entr(y/ies).\n",
-		project, server, nItems, nLedger)
+	fmt.Fprintf(out, "Pulled work-state from project %q personal collection on %s (%s): %d item(s), %d ledger entr(y/ies).\n",
+		project, server, rep.label(), nItems, nLedger)
 	if nKept > 0 {
 		fmt.Fprintf(out, "%d item(s) kept — local copy is newer than hosted\n", nKept)
 	}
 	if optIn["stories"] {
 		var ids []string
-		for _, hi := range items {
+		for _, hi := range rep.Hosted {
 			if hi.Kind == string(workitem.KindStory) {
 				ids = append(ids, hi.ID)
 			}
@@ -704,13 +694,13 @@ func jsonPayloadEqual(a, b json.RawMessage) bool {
 	return reflect.DeepEqual(av, bv)
 }
 
-// materializeWorkstate upserts hosted rows into the local store for opted-in
-// areas, then regenerates the backlog view. Returns counts of rows applied
-// and of local rows kept because they (or their ledger) are newer than hosted.
-// On mid-batch error, reports how many landed and that re-run is safe.
-func materializeWorkstate(ctx context.Context, a *app.App, optIn map[string]bool, items []hosted.WorkstateItem, ledgerRows []hosted.WorkstateLedgerRow, force bool) (nItems, nLedger, nKept int, err error) {
-	now := time.Now().UTC()
-	var applied []workitem.Item
+// upsertWorkstatePage upserts hosted rows into the local store for opted-in
+// areas and returns the items it applied, with counts of rows applied and of
+// local rows kept because they (or their ledger) are newer than hosted. Status
+// forwarding and the story-view regeneration are the caller's: a paged pass
+// writes each page here and regenerates the views once at the end. On a
+// mid-batch error it reports how many landed and that re-run is safe.
+func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool, items []hosted.WorkstateItem, ledgerRows []hosted.WorkstateLedgerRow, force bool, now time.Time) (applied []workitem.Item, nItems, nLedger, nKept int, err error) {
 	for _, hi := range items {
 		area := workstateAreaForKind(hi.Kind)
 		if area == "" || !optIn[area] {
@@ -718,12 +708,12 @@ func materializeWorkstate(ctx context.Context, a *app.App, optIn map[string]bool
 		}
 		it, perr := parseWorkstateItem(hi)
 		if perr != nil {
-			return nItems, nLedger, nKept, fmt.Errorf("materialize item %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hi.ID, nItems, nLedger, perr)
+			return applied, nItems, nLedger, nKept, fmt.Errorf("materialize item %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hi.ID, nItems, nLedger, perr)
 		}
 		if !force {
 			keep, kerr := keepLocalWorkstateItem(ctx, a, it)
 			if kerr != nil {
-				return nItems, nLedger, nKept, fmt.Errorf("compare item %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hi.ID, nItems, nLedger, kerr)
+				return applied, nItems, nLedger, nKept, fmt.Errorf("compare item %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hi.ID, nItems, nLedger, kerr)
 			}
 			if keep {
 				nKept++
@@ -739,7 +729,7 @@ func materializeWorkstate(ctx context.Context, a *app.App, optIn map[string]bool
 			upsert = a.Store.Stories.UpsertForce
 		}
 		if _, uerr := upsert(ctx, it, now); uerr != nil {
-			return nItems, nLedger, nKept, fmt.Errorf("upsert item %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hi.ID, nItems, nLedger, uerr)
+			return applied, nItems, nLedger, nKept, fmt.Errorf("upsert item %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hi.ID, nItems, nLedger, uerr)
 		}
 		applied = append(applied, it)
 		nItems++
@@ -748,28 +738,15 @@ func materializeWorkstate(ctx context.Context, a *app.App, optIn map[string]bool
 		for _, hr := range ledgerRows {
 			e, perr := parseWorkstateLedger(hr)
 			if perr != nil {
-				return nItems, nLedger, nKept, fmt.Errorf("materialize ledger %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hr.ID, nItems, nLedger, perr)
+				return applied, nItems, nLedger, nKept, fmt.Errorf("materialize ledger %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hr.ID, nItems, nLedger, perr)
 			}
 			if _, uerr := a.Store.Ledger.Upsert(ctx, e, now); uerr != nil {
-				return nItems, nLedger, nKept, fmt.Errorf("upsert ledger %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hr.ID, nItems, nLedger, uerr)
+				return applied, nItems, nLedger, nKept, fmt.Errorf("upsert ledger %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hr.ID, nItems, nLedger, uerr)
 			}
 			nLedger++
 		}
 	}
-	// Default Upsert no longer writes status. Forward it when the (now-hosted)
-	// ledger's latest TO matches the incoming row, or on first import with no
-	// local status_transition yet (sty_38915987). Force already wrote status.
-	if !force {
-		for _, incoming := range applied {
-			if serr := applyHostedWorkstateStatus(ctx, a, incoming, now); serr != nil {
-				return nItems, nLedger, nKept, fmt.Errorf("apply status for %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", incoming.ID, nItems, nLedger, serr)
-			}
-		}
-	}
-	if _, _, verr := verb.SyncStoryBacklog(ctx, a.Store.Stories, now); verr != nil {
-		return nItems, nLedger, nKept, fmt.Errorf("regenerate story views after %d item(s), %d ledger: %w — store rows landed; re-run is safe", nItems, nLedger, verr)
-	}
-	return nItems, nLedger, nKept, nil
+	return applied, nItems, nLedger, nKept, nil
 }
 
 // applyHostedWorkstateStatus moves stored status to match a hosted row when the

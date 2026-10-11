@@ -508,6 +508,11 @@ func TestSyncRehydrateEmptyTreeHappyPath(t *testing.T) {
 			t.Errorf("missing %q:\n%s", want, out)
 		}
 	}
+	// AC6 (sty_2cb4e1f6): rehydrate's work-state pull names its pass; this server
+	// does not page, so it is a single page and issues no token.
+	if !strings.Contains(out, "(full pass, 1 page(s))") {
+		t.Errorf("rehydrate's pull should name its pass kind and page count:\n%s", out)
+	}
 	// Deployed scopes should opt in — settings restored, no all-local note.
 	if !strings.Contains(out, "settings: satelle.toml restored") {
 		t.Errorf("expected settings restored line:\n%s", out)

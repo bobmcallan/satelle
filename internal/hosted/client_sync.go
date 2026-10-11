@@ -22,9 +22,24 @@ import (
 
 // MaxSyncMessageBytes caps a single unary Sync message (Apply / Snapshot /
 // Refresh) at 64 MiB, well over grpc-go's 4 MiB MaxCallRecvMsgSize default.
-// Snapshot is unpaged, so a whole project's work-state rides in one message
-// (satelle.dev/satelle was 24 MiB on 2026-08-25).
+// Apply batches ride in one message; Snapshot is paged (DefaultSnapshotPageSize),
+// so a page stays far under the cap however large the project grows
+// (satelle.dev/satelle was 24 MiB unpaged on 2026-08-25).
 const MaxSyncMessageBytes = 64 << 20
+
+// DefaultSnapshotPageSize is the page size Snapshot asks for when the caller
+// sets none: at most this many items and this many ledger rows per response.
+// The server caps it further. A var so tests can shrink it.
+var DefaultSnapshotPageSize int32 = 500
+
+// maxSnapshotPages bounds one pass so a server that never ends it cannot loop
+// the client forever.
+const maxSnapshotPages = 100000
+
+// ErrSinceTokenRejected is returned by Snapshot when the server refuses a
+// since_token or page_token the request carried (InvalidArgument,
+// FailedPrecondition or OutOfRange). The caller falls back to a full pass.
+var ErrSinceTokenRejected = errors.New("hosted: snapshot token rejected")
 
 func syncCallOpts() []grpc.CallOption {
 	return []grpc.CallOption{
@@ -73,40 +88,119 @@ func (c *Client) Apply(ctx context.Context, project string, batch WorkstateInges
 	return WorkstateIngestResult{Items: int(out.GetItems()), Ledger: int(out.GetLedger())}, nil
 }
 
-// Snapshot pulls current work-state via one gRPC Sync/Snapshot RPC.
-func (c *Client) Snapshot(ctx context.Context, project, kind string) (items []WorkstateItem, ledger []WorkstateLedgerRow, err error) {
+// SnapshotOptions steers one Snapshot pass. SinceToken is the sync_token of a
+// previous completed pass (only rows changed since are returned); PageToken
+// resumes a pass from a page boundary (send the SinceToken that pass began
+// with beside it). PageSize 0 means DefaultSnapshotPageSize.
+type SnapshotOptions struct {
+	SinceToken string
+	PageToken  string
+	PageSize   int32
+}
+
+// SnapshotPage is one response of a pass. Index counts from 1 within the call.
+type SnapshotPage struct {
+	Items         []WorkstateItem
+	Ledger        []WorkstateLedgerRow
+	NextPageToken string // empty on the last page
+	Index         int
+}
+
+// SnapshotResult closes a pass: the last page's sync_token (empty when the
+// server issues none) and how many pages this call fetched.
+type SnapshotResult struct {
+	SyncToken string
+	Pages     int
+}
+
+// Snapshot pulls work-state through Sync/Snapshot one bounded page at a time,
+// following next_page_token to the end of the pass. Each page is handed to
+// onPage as it arrives and is not retained, so the caller can apply and
+// checkpoint it and client memory stays bounded by the page size; an onPage
+// error stops the pass and is returned as is. A row can repeat across pages or
+// passes (the server never misses one), so onPage must apply idempotently.
+func (c *Client) Snapshot(ctx context.Context, project, kind string, opts SnapshotOptions, onPage func(SnapshotPage) error) (SnapshotResult, error) {
 	conn, err := c.openGRPC(ctx)
 	if err != nil {
-		return nil, nil, err
+		return SnapshotResult{}, err
 	}
 	defer conn.Close()
 	cli := syncpb.NewSyncClient(conn)
-	var out *syncpb.SnapshotResponse
-	err = c.withGRPCAuth(ctx, cli, func(ctx context.Context) error {
-		var rpcErr error
-		out, rpcErr = cli.Snapshot(ctx, &syncpb.SnapshotRequest{Project: project, Kind: kind}, syncCallOpts()...)
-		return rpcErr
-	})
-	if err != nil {
-		return nil, nil, c.mapSyncErr("Snapshot", err)
+	size := opts.PageSize
+	if size <= 0 {
+		size = DefaultSnapshotPageSize
 	}
-	items = make([]WorkstateItem, 0, len(out.GetItems()))
-	for _, it := range out.GetItems() {
+	token := opts.PageToken
+	seen := map[string]bool{token: true}
+	var res SnapshotResult
+	for {
+		req := &syncpb.SnapshotRequest{
+			Project: project, Kind: kind, PageSize: size,
+			PageToken: token, SinceToken: opts.SinceToken,
+		}
+		var out *syncpb.SnapshotResponse
+		err = c.withGRPCAuth(ctx, cli, func(ctx context.Context) error {
+			var rpcErr error
+			out, rpcErr = cli.Snapshot(ctx, req, syncCallOpts()...)
+			return rpcErr
+		})
+		if err != nil {
+			if (token != "" || opts.SinceToken != "") && tokenRejectedCode(status.Code(err)) {
+				return res, fmt.Errorf("%w: %s", ErrSinceTokenRejected, status.Convert(err).Message())
+			}
+			return res, c.mapSyncErr("Snapshot", err)
+		}
+		res.Pages++
+		page := SnapshotPage{
+			Items:         workstateItemsFromProto(out.GetItems()),
+			Ledger:        workstateLedgerFromProto(out.GetLedger()),
+			NextPageToken: out.GetNextPageToken(),
+			Index:         res.Pages,
+		}
+		if err := onPage(page); err != nil {
+			return res, err
+		}
+		if page.NextPageToken == "" {
+			res.SyncToken = out.GetSyncToken()
+			return res, nil
+		}
+		if seen[page.NextPageToken] || res.Pages >= maxSnapshotPages {
+			return res, fmt.Errorf("hosted: grpc Snapshot: pass does not end (page %d, token %q repeats or exceeds %d pages)",
+				res.Pages, page.NextPageToken, maxSnapshotPages)
+		}
+		seen[page.NextPageToken] = true
+		token = page.NextPageToken
+	}
+}
+
+// tokenRejectedCode reports whether a status code means the server refused a
+// token the request carried, rather than failed.
+func tokenRejectedCode(c codes.Code) bool {
+	return c == codes.InvalidArgument || c == codes.FailedPrecondition || c == codes.OutOfRange
+}
+
+func workstateItemsFromProto(in []*syncpb.WorkItem) []WorkstateItem {
+	items := make([]WorkstateItem, 0, len(in))
+	for _, it := range in {
 		items = append(items, WorkstateItem{
 			ID: it.GetId(), Kind: it.GetKind(), Type: it.GetType(),
 			Status: it.GetStatus(), Title: it.GetTitle(), Origin: it.GetOrigin(),
 			Record: json.RawMessage(it.GetRecord()),
 		})
 	}
-	ledger = make([]WorkstateLedgerRow, 0, len(out.GetLedger()))
-	for _, e := range out.GetLedger() {
+	return items
+}
+
+func workstateLedgerFromProto(in []*syncpb.LedgerEntry) []WorkstateLedgerRow {
+	ledger := make([]WorkstateLedgerRow, 0, len(in))
+	for _, e := range in {
 		ledger = append(ledger, WorkstateLedgerRow{
 			ID: e.GetId(), StoryID: e.GetStoryId(), Kind: e.GetKind(),
 			Type: e.GetType(), Origin: e.GetOrigin(),
 			Record: json.RawMessage(e.GetRecord()),
 		})
 	}
-	return items, ledger, nil
+	return ledger
 }
 
 func ingestToApplyRequest(project string, batch WorkstateIngest) (*syncpb.ApplyRequest, error) {
