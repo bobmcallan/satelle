@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
@@ -82,7 +85,9 @@ func checkTrunkAtEngage(ctx context.Context, item workitem.Item, to, edge string
 	if item.ID != "" && hasEngagementBaseline(ctx, item.ID) {
 		return trunk.Report{}, nil
 	}
-	rep := trunk.Check(ctx, trunkRepo, trunk.Options{Branch: trunkCfg.Branch, FastForward: true})
+	rep := trunk.Check(ctx, trunkRepo, trunk.Options{
+		Branch: trunkCfg.Branch, FastForward: true, DirtyOwner: dirtyTreeOwner(ctx, item.ID),
+	})
 	if rep.Quiet() {
 		return rep, nil
 	}
@@ -95,6 +100,52 @@ func checkTrunkAtEngage(ctx context.Context, item workitem.Item, to, edge string
 		return rep, nil
 	}
 	return rep, fmt.Errorf("%s refused: trunk %s — %s", edge, rep.Detail(), rep.Hint())
+}
+
+// dirtyTreeOwner answers trunk.Options.DirtyOwner for an engage of selfID
+// (sty_f1db1260): the IDs of the other stories in flight whose engagement was
+// taken in the dirty checkout, comma-joined, or "" when none is. A story is in
+// flight when its route is unresolved or neither terminal nor parked; one with
+// no anchored engagement baseline cannot claim a tree. Only a dirty trunk
+// checkout other than the invoking tree asks, so the story listing and ledger
+// reads are off the common path.
+func dirtyTreeOwner(ctx context.Context, selfID string) func(string) string {
+	return func(checkout string) string {
+		store, err := requireWorkItem()
+		if err != nil {
+			return ""
+		}
+		items, err := store.List(ctx, workitem.ListFilter{Kind: workitem.KindStory})
+		if err != nil {
+			return ""
+		}
+		want := normalisedPath(checkout)
+		var owners []string
+		for _, it := range items {
+			if it.ID == selfID {
+				continue
+			}
+			if rest := StoryRouteRest(ctx, it); rest.Known && (rest.Terminal || rest.Parked) {
+				continue
+			}
+			base, _, _, berr := firstEngagementBaseline(ctx, it.ID)
+			if berr != nil || base.Worktree == "" || normalisedPath(base.Worktree) != want {
+				continue
+			}
+			owners = append(owners, it.ID)
+		}
+		sort.Strings(owners)
+		return strings.Join(owners, ", ")
+	}
+}
+
+// normalisedPath resolves symlinks and cleans p the way trunk and worktree
+// name a tree, so a baseline's recorded path and a checkout's compare equal.
+func normalisedPath(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		p = resolved
+	}
+	return filepath.Clean(p)
 }
 
 // recordTrunkCheck ledgers what the check found. Level, skipped and a check

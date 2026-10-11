@@ -90,6 +90,19 @@ func (r TrunkRepos) Commit(t testing.TB, dir, file, content string) {
 	r.Git(t, dir, "commit", "--quiet", "-m", "add "+file)
 }
 
+// LinkedWorktree adds a linked worktree of from on a new branch and returns its
+// path, symlink-resolved like the paths satelle records. The branch is not
+// trunk, so trunk stays checked out in from.
+func (r TrunkRepos) LinkedWorktree(t testing.TB, from, branch string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), branch)
+	r.Git(t, from, "worktree", "add", "--quiet", "-b", branch, path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	return path
+}
+
 // PublishFromPusher commits file on the pusher's trunk and pushes it, the way
 // another machine lands work on the remote.
 func (r TrunkRepos) PublishFromPusher(t testing.TB, file string) {
