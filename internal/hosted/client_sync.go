@@ -91,11 +91,14 @@ func (c *Client) Apply(ctx context.Context, project string, batch WorkstateInges
 // SnapshotOptions steers one Snapshot pass. SinceToken is the sync_token of a
 // previous completed pass (only rows changed since are returned); PageToken
 // resumes a pass from a page boundary (send the SinceToken that pass began
-// with beside it). PageSize 0 means DefaultSnapshotPageSize.
+// with beside it). PageSize 0 means DefaultSnapshotPageSize. StoryIDs scopes the
+// pass to those work items and their ledger rows (server cap 1000, none empty);
+// it rides on every page request.
 type SnapshotOptions struct {
 	SinceToken string
 	PageToken  string
 	PageSize   int32
+	StoryIDs   []string
 }
 
 // SnapshotPage is one response of a pass. Index counts from 1 within the call.
@@ -137,6 +140,7 @@ func (c *Client) Snapshot(ctx context.Context, project, kind string, opts Snapsh
 		req := &syncpb.SnapshotRequest{
 			Project: project, Kind: kind, PageSize: size,
 			PageToken: token, SinceToken: opts.SinceToken,
+			StoryIds: opts.StoryIDs,
 		}
 		var out *syncpb.SnapshotResponse
 		err = c.withGRPCAuth(ctx, cli, func(ctx context.Context) error {

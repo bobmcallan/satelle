@@ -57,6 +57,13 @@ type fakeWorkstateServer struct {
 	// repeatBoundary makes each page after the first start with the last row of the
 	// page before it: a server may repeat a row, it must never miss one.
 	repeatBoundary bool
+	// Story scoping (sty_991b6900): a request's story_ids limits the pass to those
+	// items and the ledger rows of those stories. ignoreScope serves the whole
+	// project anyway, as a server that predates the field would;
+	// snapRejectCall (1-based) refuses that Snapshot call's token with
+	// FailedPrecondition.
+	ignoreScope    bool
+	snapRejectCall int
 }
 
 // expireTokens invalidates every since_token and page_token issued so far.
@@ -206,6 +213,16 @@ func (s *fakeWorkstateGRPC) Snapshot(ctx context.Context, req *syncpb.SnapshotRe
 	if s.f.snapFailCall > 0 && s.f.gets == s.f.snapFailCall {
 		return nil, status.Error(codes.Unavailable, "injected snapshot failure")
 	}
+	if s.f.snapRejectCall > 0 && s.f.gets == s.f.snapRejectCall {
+		return nil, status.Error(codes.FailedPrecondition, "token expired")
+	}
+	var scope map[string]bool
+	if ids := req.GetStoryIds(); len(ids) > 0 && !s.f.ignoreScope {
+		scope = map[string]bool{}
+		for _, id := range ids {
+			scope[id] = true
+		}
+	}
 	var since, off int
 	for _, tok := range []struct {
 		val, format string
@@ -231,7 +248,7 @@ func (s *fakeWorkstateGRPC) Snapshot(ctx context.Context, req *syncpb.SnapshotRe
 	kindFilter := req.GetKind()
 	for _, id := range slices.Sorted(maps.Keys(s.f.itemsByID[key])) {
 		m, ok := s.f.itemsByID[key][id].(map[string]any)
-		if !ok || !changed(s.f.itemVer, id) {
+		if !ok || !changed(s.f.itemVer, id) || (scope != nil && !scope[id]) {
 			continue
 		}
 		kind, _ := m["kind"].(string)
@@ -249,10 +266,10 @@ func (s *fakeWorkstateGRPC) Snapshot(ctx context.Context, req *syncpb.SnapshotRe
 	var rows []*syncpb.LedgerEntry
 	for _, id := range slices.Sorted(maps.Keys(s.f.ledgerByID[key])) {
 		m, ok := s.f.ledgerByID[key][id].(map[string]any)
-		if !ok || !changed(s.f.ledgerVer, id) {
+		sid, _ := m["story_id"].(string)
+		if !ok || !changed(s.f.ledgerVer, id) || (scope != nil && !scope[sid]) {
 			continue
 		}
-		sid, _ := m["story_id"].(string)
 		kind, _ := m["kind"].(string)
 		rec, _ := json.Marshal(m)
 		rows = append(rows, &syncpb.LedgerEntry{
