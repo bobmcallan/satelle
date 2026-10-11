@@ -172,12 +172,36 @@ func markStale(out []PriorVerdict, recorded []time.Time, entries []ledger.Entry)
 	}
 }
 
-// evidenceAfter lists the rows recorded strictly after cycleEnd that are not
-// binary self-reports, oldest first, capped at maxEvidenceSince.
+// IsEvidenceRow reports whether a ledger row is evidence a reviewer or a relay
+// could be waiting on: not a binary self-report, and not the rework relay's own
+// transcript. The transcript is a cc="*" agent_message (the relay broadcasts
+// every turn through story-message) — conversation about the work, not work. A
+// directed message (no cc), a story log and an attachment are evidence.
+func IsEvidenceRow(e ledger.Entry) bool {
+	if isSelfLedgerKind(e.Kind) {
+		return false
+	}
+	switch e.Kind {
+	case ledger.KindTelemetryEvent:
+		var env telemetryEnvelope
+		if json.Unmarshal(e.Payload, &env) == nil && isSelfTelemetryKind(env.Kind) {
+			return false
+		}
+	case ledger.KindAgentMessage:
+		var m AgentMessage
+		if json.Unmarshal(e.Payload, &m) == nil && m.Cc == "*" {
+			return false
+		}
+	}
+	return true
+}
+
+// evidenceAfter lists the rows recorded strictly after cycleEnd that are
+// evidence (IsEvidenceRow), oldest first, capped at maxEvidenceSince.
 func evidenceAfter(entries []ledger.Entry, cycleEnd time.Time) []EvidenceSince {
 	var since []EvidenceSince
 	for _, e := range entries {
-		if !e.CreatedAt.After(cycleEnd) || isSelfLedgerKind(e.Kind) {
+		if !e.CreatedAt.After(cycleEnd) || !IsEvidenceRow(e) {
 			continue
 		}
 		var event string
@@ -185,9 +209,6 @@ func evidenceAfter(entries []ledger.Entry, cycleEnd time.Time) []EvidenceSince {
 			var env telemetryEnvelope
 			if json.Unmarshal(e.Payload, &env) == nil {
 				event = env.Kind
-			}
-			if isSelfTelemetryKind(event) {
-				continue
 			}
 		}
 		since = append(since, EvidenceSince{Kind: e.Kind, Event: event, CreatedAt: e.CreatedAt.UTC().Format(time.RFC3339Nano)})

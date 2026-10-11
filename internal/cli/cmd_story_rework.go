@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,15 +32,15 @@ func storyReworkCommand() *cobra.Command {
 sessions until the consultant says ready or the round budget is spent. The step
 opts in: rework = { consult = "reviewer", rounds = 3 }.
 
-An unanswered directed message to the performer (addressed to its binding by
-name, no later reply from it) opens the relay performer-first, and READY cannot
-end the relay while it stands.
+An unanswered directed message to the performer opens the relay performer-first;
+READY cannot end it while that stands.
 
 The consultant's reply must END with a line exactly READY or NOT READY: <reason>;
 anything else consumes a round. --rounds may only LOWER the authored budget.
 
-Turns are ledgered as agent_message rows (cc="*"), so satelle story messages <id>
-reads as the conversation. Prints {converged, rounds, last_objection}.
+Turns are ledgered as agent_message rows (cc="*"). Prints {converged, outcome,
+rounds, last_objection}; outcome no_progress means a round changed no evidence
+and repeated the objection, so the relay stopped early.
 
 Does NOT change status: ready is a signal, never a verdict.
 See satelle help agent-dispatch.`,
@@ -266,6 +268,9 @@ func runStoryRework(cmd *cobra.Command, args []string) error {
 		Pending:            pending,
 		CoderIdleTimeout:   coderIdle,
 		ConsultIdleTimeout: consultIdle,
+		Evidence: func(ctx context.Context) (string, error) {
+			return reworkEvidenceFingerprint(ctx, a.Store.Ledger, it.ID)
+		},
 	}
 	res, runErr := loop.Run(ctx)
 	// The RESULT is recorded whether or not the relay finished cleanly: a relay
@@ -337,17 +342,64 @@ Do NOT change this story's status: the relay does not advance anything. The edge
 		rw.ConsultBinding, rw.Rounds)
 }
 
+// reworkEvidenceFingerprint is the relay's "did anything change" probe: a hash of
+// the story's engagement slice (verb.StoryDiff), its attachments, and the ids of
+// the ledger rows that are evidence (verb.IsEvidenceRow). It composes the
+// existing owners of each; the relay's own transcript and bookkeeping rows are
+// not evidence, so a round of chatter leaves it unchanged. A leg that cannot be
+// read contributes a fixed marker and the others still count.
+func reworkEvidenceFingerprint(ctx context.Context, ls *ledger.Store, storyID string) (string, error) {
+	h := sha256.New()
+	leg := func(name string, parts ...string) {
+		fmt.Fprintf(h, "%s\x00", name)
+		for _, p := range parts {
+			fmt.Fprintf(h, "%d:%s\x00", len(p), p)
+		}
+	}
+	if d, err := verb.StoryDiff(ctx, storyID, true); err == nil {
+		leg("tree", strings.Join(d.Files, "\n"), d.Stat, d.Patch)
+	} else {
+		leg("tree", "unavailable")
+	}
+	if docs, err := verb.ItemDocs(ctx, storyID); err == nil {
+		for _, d := range docs {
+			leg("doc", d.Name, d.Body, d.SHA256)
+		}
+	} else {
+		leg("doc", "unavailable")
+	}
+	if ls == nil {
+		return "", fmt.Errorf("rework evidence: no ledger store")
+	}
+	entries, err := ls.ListByStory(ctx, storyID, "")
+	if err != nil {
+		return "", err
+	}
+	for _, e := range entries {
+		if verb.IsEvidenceRow(e) {
+			leg("row", e.ID)
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
 // recordReworkResult appends the relay's outcome as a ledger row so the
 // orchestrator can read it from the ledger as well as from stdout. Best-effort:
 // a ledger write failure must not turn a completed relay into a command error.
+// A no_progress stop carries its reason beside the last objection and the rounds
+// used, the three things the orchestrator parks or re-presents on.
 func recordReworkResult(ctx context.Context, ls *ledger.Store, storyID string, rw reworkPlan, res reworkResult) {
 	if ls == nil {
 		return
 	}
-	payload, err := json.Marshal(map[string]any{
-		"converged": res.Converged, "rounds": res.Rounds, "last_objection": res.LastObjection,
+	row := map[string]any{
+		"converged": res.Converged, "outcome": res.Outcome, "rounds": res.Rounds, "last_objection": res.LastObjection,
 		"coder": rw.CoderBinding, "consult": rw.ConsultBinding, "budget": rw.Rounds,
-	})
+	}
+	if res.Outcome == outcomeNoProgress {
+		row["stopped_reason"] = "no new evidence and unchanged objection"
+	}
+	payload, err := json.Marshal(row)
 	if err != nil {
 		return
 	}
@@ -355,7 +407,7 @@ func recordReworkResult(ctx context.Context, ls *ledger.Store, storyID string, r
 		StoryID: storyID,
 		Kind:    ledger.KindAgentInvocation,
 		Actor:   rw.ConsultBinding,
-		Body:    fmt.Sprintf("rework converged=%t rounds=%d/%d", res.Converged, res.Rounds, rw.Rounds),
+		Body:    fmt.Sprintf("rework outcome=%s converged=%t rounds=%d/%d", res.Outcome, res.Converged, res.Rounds, rw.Rounds),
 		Payload: payload,
 	}, time.Now())
 }

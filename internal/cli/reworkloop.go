@@ -28,11 +28,20 @@ const (
 	notReadyMarker = "NOT READY:"
 )
 
+// How a relay ended. Outcome is the one field that says so; Converged is kept
+// for readers that predate it.
+const (
+	outcomeConverged  = "converged"
+	outcomeBudget     = "budget"
+	outcomeNoProgress = "no_progress"
+)
+
 // reworkResult is the relay's whole answer: did the consultant say ready, how
-// many rounds it cost, and the last objection if it did not. A signal for the
-// orchestrator, never a verdict.
+// many rounds it cost, how it ended, and the last objection if it did not. A
+// signal for the orchestrator, never a verdict.
 type reworkResult struct {
 	Converged     bool   `json:"converged"`
+	Outcome       string `json:"outcome,omitempty"`
 	Rounds        int    `json:"rounds"`
 	LastObjection string `json:"last_objection,omitempty"`
 }
@@ -64,11 +73,22 @@ type reworkLoop struct {
 	// session with a Watchdog (sty_752c4ef2) — each side may configure its own
 	// idle_timeout=. ≤0 disables stall detection for that side.
 	CoderIdleTimeout, ConsultIdleTimeout time.Duration
+	// Evidence returns an opaque fingerprint of the evidence on the story (the
+	// working tree, its attachments, its ledger). The command supplies it so the
+	// loop stays store- and git-free. A round whose coder turn leaves the
+	// fingerprint unchanged, answered by an unchanged objection, brought nothing
+	// new and ends the relay as no_progress. Nil disables the check; an error
+	// counts the round as progress, so a failing detector never cuts a relay
+	// short of its authored budget.
+	Evidence func(ctx context.Context) (string, error)
 }
 
 // Run drives the relay. The consultant speaks first (it reviews the slice as it
 // stands), then each round is consultant→coder→consultant. It returns as soon
-// as the consultant emits READY, or when the budget is spent.
+// as the consultant emits READY, when the budget is spent, or when a round
+// brought no new evidence and the consultant's objection did not change (the
+// no_progress outcome — the orchestrator parks or re-presents on it,
+// [[satelle-agent-consultation]]).
 //
 // The exception is a performer holding an unanswered directed message (Pending):
 // it opens the relay, so the consultant never judges a slice whose pending
@@ -90,16 +110,38 @@ func (l *reworkLoop) Run(ctx context.Context) (reworkResult, error) {
 	turn := l.Seed
 	coderSeeded := false
 	answered := len(l.Pending) == 0
+	// idle is true when the last coder turn left the evidence fingerprint where
+	// it was. fp is the fingerprint before the next coder turn, taken lazily
+	// before the first.
+	var fp string
+	haveFP, idle := false, false
+	snapshot := func() (string, bool) {
+		if l.Evidence == nil {
+			return "", false
+		}
+		cur, err := l.Evidence(ctx)
+		if err != nil {
+			fmt.Fprintf(l.Out, "\n— evidence check failed (%v); counting the round as progress —\n", err)
+			return "", false
+		}
+		return cur, true
+	}
 	// coderTurn sends the performer one ask, with the coder seed on the first.
 	coderTurn := func(ask string) (string, error) {
 		if !coderSeeded && strings.TrimSpace(l.CoderSeed) != "" {
 			ask = l.CoderSeed + "\n\n" + ask
 		}
 		coderSeeded = true
+		if !haveFP {
+			fp, haveFP = snapshot()
+		}
 		reply, err := l.exchange(ctx, l.Coder, l.CoderRole, l.ConsultRole, ask, l.CoderIdleTimeout)
 		if err == nil && strings.TrimSpace(reply) != "" {
 			answered = true
 		}
+		cur, ok := snapshot()
+		idle = haveFP && ok && cur == fp
+		fp, haveFP = cur, ok
 		return reply, err
 	}
 
@@ -125,7 +167,7 @@ func (l *reworkLoop) Run(ctx context.Context) (reworkResult, error) {
 		ask := objection
 		switch {
 		case ready && answered:
-			res.Converged = true
+			res.Converged, res.Outcome = true, outcomeConverged
 			res.LastObjection = ""
 			return res, nil
 		case ready:
@@ -136,7 +178,14 @@ func (l *reworkLoop) Run(ctx context.Context) (reworkResult, error) {
 		case !answered:
 			ask = pendingPreamble(l.Pending) + "\n\nThe reviewer's finding:\n" + objection
 		}
+		repeated := idle && res.LastObjection != "" && sameObjection(res.LastObjection, objection)
 		res.LastObjection = objection
+		if repeated {
+			res.Outcome = outcomeNoProgress
+			fmt.Fprintf(l.Out, "\n— no progress: round %d brought no new evidence and the objection is unchanged; stopping at %d/%d —\n",
+				round, round, l.Rounds)
+			return res, nil
+		}
 
 		fmt.Fprintf(l.Out, "\n— round %d/%d: %s —\n", round, l.Rounds, l.CoderRole)
 		reply, err := coderTurn(ask)
@@ -145,7 +194,15 @@ func (l *reworkLoop) Run(ctx context.Context) (reworkResult, error) {
 		}
 		turn = reply
 	}
+	res.Outcome = outcomeBudget
 	return res, nil
+}
+
+// sameObjection compares two objections ignoring case and whitespace, so a
+// consultant that repeats itself with different line wrapping is still repeating.
+func sameObjection(a, b string) bool {
+	norm := func(s string) string { return strings.ToLower(strings.Join(strings.Fields(s), " ")) }
+	return norm(a) == norm(b)
 }
 
 // pendingPreamble is what the performer is told when it holds directed messages
