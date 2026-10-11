@@ -4,6 +4,7 @@ package tests
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +27,9 @@ type fenceCase struct {
 	pathPrefix string
 	wantExit   int
 	wantStdout string
+	// wantAlso are further substrings the stdout must carry (a case that asserts
+	// several facts about one verdict, e.g. the ids read AND the ratio).
+	wantAlso []string
 }
 
 // fenceFixtures maps every embedded skill that carries a ```check fence to its
@@ -82,6 +86,125 @@ var fenceFixtures = map[string][]fenceCase{
 			stdin:      `{"story":{"id":"sty_est00002","tags":[]},"from":"backlog","to":"in_progress"}`,
 			wantExit:   1,
 			wantStdout: "no plan estimate",
+			// AC6: the driver is told to run comparables BEFORE recording, and
+			// the gate is named as the enforcement.
+			wantAlso: []string{
+				"run: satelle story comparables <id>, then satelle story estimate <id>",
+				"satelle-estimate-actual-review enforces it",
+			},
+		},
+		{
+			// A dollar tag is not an estimate, even beside comparables.
+			name:       "reject an estimate-usd-only story",
+			stdin:      `{"story":{"id":"sty_est00010","tags":["estimate-usd:25"]},"from":"plan","to":"in_progress"}`,
+			pathPrefix: "bin",
+			setup:      comparablesShim(false, comparableRow{"sty_c1", 585123, 0}),
+			wantExit:   1,
+			wantStdout: "no plan estimate",
+		},
+		{
+			// 250k against ~600k measured output is the sty_b8542a3a shape: the
+			// gate must reject, naming the comparables, the ratio and the bound.
+			name:       "reject an output estimate below the comparables' spread",
+			stdin:      `{"story":{"id":"sty_est00011","tags":["estimate-output:250000","epic:x"]},"from":"plan","to":"in_progress"}`,
+			pathPrefix: "bin",
+			setup:      comparablesShim(false, comparableRow{"sty_c1", 585123, 0}, comparableRow{"sty_c2", 600000, 0}, comparableRow{"sty_c3", 700000, 0}),
+			wantExit:   1,
+			wantStdout: "REJECT output",
+			wantAlso: []string{
+				"sty_c1", "sty_c2", "sty_c3",
+				"ratio estimate/median-actual 0.42",
+				"lowest comparable sty_c1 (output 585123)",
+			},
+		},
+		{
+			name:       "reject an output estimate above the comparables' spread",
+			stdin:      `{"story":{"id":"sty_est00012","tags":["estimate-output:2000000"]},"from":"plan","to":"in_progress"}`,
+			pathPrefix: "bin",
+			setup:      comparablesShim(false, comparableRow{"sty_c1", 585123, 0}, comparableRow{"sty_c2", 600000, 0}, comparableRow{"sty_c3", 700000, 0}),
+			wantExit:   1,
+			wantStdout: "REJECT output",
+			wantAlso:   []string{"above the spread", "highest comparable sty_c3 (output 700000)"},
+		},
+		{
+			name:       "accept an output estimate inside the spread, recording ids and ratio",
+			stdin:      `{"story":{"id":"sty_est00013","tags":["estimate-output:500000"]},"from":"plan","to":"in_progress"}`,
+			pathPrefix: "bin",
+			setup:      comparablesShim(false, comparableRow{"sty_c1", 585123, 0}, comparableRow{"sty_c2", 600000, 0}, comparableRow{"sty_c3", 700000, 0}),
+			wantExit:   0,
+			wantStdout: "ratio estimate/median-actual 0.83",
+			wantAlso:   []string{"read 3 comparable(s)", "sty_c1", "sty_c2", "sty_c3", "within tolerance"},
+		},
+		{
+			name:       "accept with a note when too few comparables carry the figure",
+			stdin:      `{"story":{"id":"sty_est00014","tags":["estimate-output:250000"]},"from":"plan","to":"in_progress"}`,
+			pathPrefix: "bin",
+			setup:      comparablesShim(false, comparableRow{"sty_c1", 585123, 0}),
+			wantExit:   0,
+			wantStdout: "no comparison available for output: 1 comparable(s) carry it, minimum 3",
+		},
+		{
+			name:       "fresh-input with too few comparables is a note while output is still judged",
+			stdin:      `{"story":{"id":"sty_est00015","tags":["estimate-fresh-input:20000","estimate-output:500000"]},"from":"plan","to":"in_progress"}`,
+			pathPrefix: "bin",
+			setup:      comparablesShim(false, comparableRow{"sty_c1", 585123, 9000}, comparableRow{"sty_c2", 600000, 0}, comparableRow{"sty_c3", 700000, 0}),
+			wantExit:   0,
+			wantStdout: "no comparison available for fresh-input",
+			wantAlso:   []string{"output: estimate 500000 vs 3 comparable(s)"},
+		},
+		{
+			name:       "accept with a note when comparables cannot be read",
+			stdin:      `{"story":{"id":"sty_est00016","tags":["estimate-output:250000"]},"from":"plan","to":"in_progress"}`,
+			pathPrefix: "bin",
+			setup:      comparablesShim(true),
+			wantExit:   0,
+			wantStdout: "no comparison available: satelle story comparables could not be read",
+		},
+		{
+			name:       "legacy unit is noted, not compared",
+			stdin:      `{"story":{"id":"sty_est00017","tags":["estimate-tokens:5000"]},"from":"plan","to":"in_progress"}`,
+			wantExit:   0,
+			wantStdout: "legacy unit — no comparison available",
+		},
+		{
+			// AC4: nothing configured → the documented defaults apply and are named.
+			name:       "default tolerance and minimum apply when the table is absent",
+			stdin:      `{"story":{"id":"sty_est00018","tags":["estimate-output:500000"]},"from":"plan","to":"in_progress"}`,
+			pathPrefix: "bin",
+			setup:      comparablesShim(false, comparableRow{"sty_c1", 585123, 0}, comparableRow{"sty_c2", 600000, 0}, comparableRow{"sty_c3", 700000, 0}),
+			wantExit:   0,
+			wantStdout: "tolerance 1.5 (default), min_comparables 3 (default)",
+		},
+		{
+			// AC4: the configured tolerance is what accepts 250k here — at the
+			// default it rejects (see the case above).
+			name:       "configured tolerance widens the accepted spread",
+			stdin:      `{"story":{"id":"sty_est00019","tags":["estimate-output:250000"]},"from":"plan","to":"in_progress"}`,
+			pathPrefix: "bin",
+			setup: withEstimateConfig("[estimate_review]\ntolerance = 3.0  # wide\nmin_comparables = 2\n",
+				comparablesShim(false, comparableRow{"sty_c1", 585123, 0}, comparableRow{"sty_c2", 600000, 0}, comparableRow{"sty_c3", 700000, 0})),
+			wantExit:   0,
+			wantStdout: "tolerance 3.0 (configured), min_comparables 2 (configured)",
+		},
+		{
+			// AC4: a configured minimum above the comparables on hand means no
+			// comparison — an out-of-spread estimate is then accepted with a note.
+			name:       "configured minimum comparables suppresses the comparison",
+			stdin:      `{"story":{"id":"sty_est00020","tags":["estimate-output:250000"]},"from":"plan","to":"in_progress"}`,
+			pathPrefix: "bin",
+			setup: withEstimateConfig("[estimate_review]\nmin_comparables = 5\n",
+				comparablesShim(false, comparableRow{"sty_c1", 585123, 0}, comparableRow{"sty_c2", 600000, 0}, comparableRow{"sty_c3", 700000, 0})),
+			wantExit:   0,
+			wantStdout: "no comparison available for output: 3 comparable(s) carry it, minimum 5",
+		},
+		{
+			name:       "reject a tolerance below 1",
+			stdin:      `{"story":{"id":"sty_est00021","tags":["estimate-output:250000"]},"from":"plan","to":"in_progress"}`,
+			pathPrefix: "bin",
+			setup: withEstimateConfig("[estimate_review]\ntolerance = 0.5\n",
+				comparablesShim(false, comparableRow{"sty_c1", 585123, 0})),
+			wantExit:   1,
+			wantStdout: "tolerance must be a number >= 1",
 		},
 		{
 			name:       "accept enter done with actual tags",
@@ -591,6 +714,11 @@ func TestCheckFenceGoldenTables(t *testing.T) {
 					if tc.wantStdout != "" && !strings.Contains(out, tc.wantStdout) {
 						t.Errorf("stdout missing %q:\n%s", tc.wantStdout, out)
 					}
+					for _, also := range tc.wantAlso {
+						if !strings.Contains(out, also) {
+							t.Errorf("stdout missing %q:\n%s", also, out)
+						}
+					}
 				})
 			}
 		})
@@ -624,6 +752,55 @@ func externalDocShim(t *testing.T, repo, sid, docType, body string) {
 	mustWrite(t, shim, script)
 	if err := os.Chmod(shim, 0o755); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// comparableRow is one comparable in a `satelle story comparables --json` stub:
+// id plus its measured output and fresh-input actuals (0 omits the figure, as
+// the verb omits an unmeasured one).
+type comparableRow struct {
+	id            string
+	output, fresh int
+}
+
+// comparablesShim writes a bin/satelle stub that answers `story comparables`
+// with rows in the JSON shape the verb prints; exit1 makes it fail instead.
+func comparablesShim(exit1 bool, rows ...comparableRow) func(*testing.T, string) {
+	return func(t *testing.T, repo string) {
+		t.Helper()
+		var items []string
+		for _, r := range rows {
+			var figs []string
+			if r.fresh > 0 {
+				figs = append(figs, fmt.Sprintf(`"fresh_input":%d`, r.fresh))
+			}
+			if r.output > 0 {
+				figs = append(figs, fmt.Sprintf(`"output":%d`, r.output))
+			}
+			items = append(items, fmt.Sprintf(`{"id":"%s","status":"done","category":"fix","shared_tags":1,"actuals":{%s}}`,
+				r.id, strings.Join(figs, ",")))
+		}
+		body := `{"story_id":"x","comparables":[` + strings.Join(items, ",") + `]}`
+		script := "#!/usr/bin/env bash\n"
+		if exit1 {
+			script += "exit 1\n"
+		} else {
+			script += "if [ \"$1 $2\" = \"story comparables\" ]; then cat <<'J'\n" + body + "\nJ\nfi\n"
+		}
+		shim := filepath.Join(repo, "bin", "satelle")
+		mustWrite(t, shim, script)
+		if err := os.Chmod(shim, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// withEstimateConfig composes setups: write .satelle/satelle.toml then shim.
+func withEstimateConfig(toml string, then func(*testing.T, string)) func(*testing.T, string) {
+	return func(t *testing.T, repo string) {
+		t.Helper()
+		mustWrite(t, filepath.Join(repo, ".satelle", "satelle.toml"), toml)
+		then(t, repo)
 	}
 }
 

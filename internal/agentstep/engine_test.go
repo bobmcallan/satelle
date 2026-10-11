@@ -3133,6 +3133,31 @@ func TestFunctionalCheckGate(t *testing.T) {
 		}
 	})
 
+	// A passing check keeps its bounded stdout in the verdict notes — generic,
+	// for every check — while a silent check keeps the one-line notes.
+	t.Run("TestPassingCheckNotesCarryScriptOutput", func(t *testing.T) {
+		run := func(t *testing.T, out string) string {
+			t.Helper()
+			g, _ := newEngine(t, ``, fakeDocs{workflow: wf, skillBody: checkSkill, skillFound: true})
+			g.check = func(_ context.Context, dir, command, payload string) (string, error) { return out, nil }
+			dec, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "integrated")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !dec.Accept {
+				t.Fatalf("want accept, got %+v", dec)
+			}
+			return dec.Notes
+		}
+		notes := run(t, "COMPARABLES sty_x ratio 0.43\n")
+		if !strings.Contains(notes, "functional check passed") || !strings.Contains(notes, "COMPARABLES sty_x ratio 0.43") {
+			t.Errorf("accept notes must carry the passed prefix and the script output: %q", notes)
+		}
+		if silent := run(t, "  \n"); strings.Contains(silent, "\n") {
+			t.Errorf("a silent check should keep one-line notes: %q", silent)
+		}
+	})
+
 	t.Run("fail rejects with output tail", func(t *testing.T) {
 		g, _ := newEngine(t, ``, fakeDocs{workflow: wf, skillBody: checkSkill, skillFound: true})
 		g.check = func(_ context.Context, dir, command, payload string) (string, error) {

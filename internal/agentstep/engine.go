@@ -4179,6 +4179,12 @@ func (g *Engine) runCheck(ctx context.Context, itemID, skill, command, payload s
 	}
 	dec.Accept = true
 	dec.Notes = "functional check passed: `" + command + "`"
+	// A passing check's stdout is its evidence (what it compared, what it
+	// found), so it rides in the notes for EVERY check, not one skill. Bounded by
+	// the deterministic compressor; the wired log compressor stays reject-only.
+	if strings.TrimSpace(out) != "" {
+		dec.Notes += "\n" + compact.CompressLog(out, compact.LogConfig{}, nil)
+	}
 	return dec
 }
 

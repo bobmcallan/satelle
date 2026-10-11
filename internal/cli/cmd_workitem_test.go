@@ -118,6 +118,40 @@ func TestStoryEstimateHasNoUSDFlag(t *testing.T) {
 	}
 }
 
+// TestStoryEstimateHelpPointsToComparables pins that the driver is told, in
+// what ships with the binary, to run `story comparables` before recording an
+// estimate and that the gate is the enforcement; and that the command exists.
+func TestStoryEstimateHelpPointsToComparables(t *testing.T) {
+	var estimate, comparables *cobra.Command
+	for _, c := range storyCostCommands() {
+		switch c.Name() {
+		case "estimate":
+			estimate = c
+		case "comparables":
+			comparables = c
+		}
+	}
+	if estimate == nil || comparables == nil {
+		t.Fatalf("story estimate/comparables missing: %v %v", estimate, comparables)
+	}
+	for _, want := range []string{"satelle story comparables <id>", "satelle-estimate-actual-review"} {
+		if !strings.Contains(estimate.Long, want) {
+			t.Errorf("story estimate help must mention %q:\n%s", want, estimate.Long)
+		}
+	}
+	if strings.Index(estimate.Long, "comparables") > strings.Index(estimate.Long, "gate rejects an estimate outside") {
+		t.Errorf("help must direct the driver to comparables before naming the rejection:\n%s", estimate.Long)
+	}
+	for _, name := range []string{"limit", "ignore-prefix"} {
+		if comparables.Flags().Lookup(name) == nil {
+			t.Errorf("story comparables must expose --%s", name)
+		}
+	}
+	if strings.Contains(comparables.Long, "usd") {
+		t.Errorf("story comparables help must not mention a dollar figure:\n%s", comparables.Long)
+	}
+}
+
 // TestStepSelfReportNudge pins the step-edge advisory (sty_56aae77a AC3): it
 // names the previous status on a real change, and is suppressed when a report
 // already exists or inputs are empty (title-only / no-op sets never call it).

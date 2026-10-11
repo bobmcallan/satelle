@@ -266,7 +266,20 @@ route is the sole gating authority (no hidden `reviewer:always` layer). A
 the transitions into them, after that step's own `reviewers`.
 `satelle-estimate-actual-review` (`on = ["in_progress", "done"]`) requires a recorded plan
 estimate entering `in_progress` (`satelle story estimate`, in fresh-input/
-output, or a legacy tokens/time unit — a dollar tag is not an estimate); entering `done` it never rejects — the
+output, or a legacy tokens/time unit — a dollar tag is not an estimate) and judges each
+token estimate against the measured actuals of comparable finished stories
+(`satelle story comparables <id>`, which a driver runs BEFORE recording): it names the
+comparables it read and the ratio estimate/median-actual, rejects an estimate outside
+the configured tolerance of their spread, and accepts with a note when fewer than the
+minimum comparables carry a figure. The tolerance and minimum are the repo's own:
+
+```toml
+[estimate_review]
+tolerance = 1.5        # default; a number >= 1
+min_comparables = 3    # default
+```
+
+Entering `done` it never rejects — the
 actual is COMPUTED from the ledger on the terminal commit itself, and the gate
 shows the token figures beside the estimate, never a dollar figure and never converting one
 unit into another. `satelle-integration-check`
