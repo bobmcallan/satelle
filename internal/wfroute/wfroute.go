@@ -155,6 +155,10 @@ type Step struct {
 	Propose      bool `json:"propose,omitempty"`
 	Freeze       bool `json:"freeze,omitempty"`
 	RejectBudget int  `json:"reject_budget,omitempty"`
+	// ApplyCriteriaDoc / ApplyCriteriaHeading: entry applies the criteria authored
+	// under that heading in that story document to the story (sty_4d9df9a0).
+	ApplyCriteriaDoc     string `json:"apply_criteria_doc,omitempty"`
+	ApplyCriteriaHeading string `json:"apply_criteria_heading,omitempty"`
 	// WaitsOnChildren: a container idles at this step while its children are
 	// driven, so it does not count as performing (sty_7f3e6fd3).
 	WaitsOnChildren bool `json:"waits_on_children,omitempty"`
@@ -269,6 +273,9 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 		Propose:      st.Propose,
 		Freeze:       st.Freeze,
 		RejectBudget: st.RejectBudget,
+
+		ApplyCriteriaDoc:     st.ApplyCriteriaDoc,
+		ApplyCriteriaHeading: st.ApplyCriteriaHeading,
 
 		WaitsOnChildren: st.WaitsOnChildren,
 		Schedule:        st.Schedule,
@@ -478,6 +485,9 @@ func renderKnobs(s Step) string {
 	}
 	if s.Freeze {
 		parts = append(parts, "the definition freezes on entry")
+	}
+	if s.ApplyCriteriaDoc != "" && s.ApplyCriteriaHeading != "" {
+		parts = append(parts, fmt.Sprintf("entry applies the criteria authored under %q in the %s document", s.ApplyCriteriaHeading, s.ApplyCriteriaDoc))
 	}
 	if s.WaitsOnChildren {
 		parts = append(parts, "the container waits here while its children are driven; it is not performing")

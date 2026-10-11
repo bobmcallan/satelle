@@ -70,6 +70,14 @@ type reworkRef struct {
 }
 
 // adviseRef is a step's `advise = { agent = "…", skill = "…" }`.
+// applyCriteriaRef is a step's `[apply_criteria] doc = "…" heading = "…"` — the
+// story document and heading whose criteria entry to the step applies to the
+// story (sty_4d9df9a0). Configuration: the binary copies, the route names.
+type applyCriteriaRef struct {
+	Doc     string `toml:"doc"`
+	Heading string `toml:"heading"`
+}
+
 type adviseRef struct {
 	Agent string `toml:"agent"`
 	Skill string `toml:"skill"`
@@ -132,6 +140,9 @@ type stepWire struct {
 	// distinguishable from an authored zero, because absent means "no loop" and
 	// `rounds = 0` is a mis-authored budget this parser refuses.
 	Rework *reworkRef `toml:"rework"`
+	// ApplyCriteria is a POINTER for the same reason: absent means the step applies
+	// nothing, and a half-authored one is refused rather than ignored.
+	ApplyCriteria *applyCriteriaRef `toml:"apply_criteria"`
 	// Propose, Freeze and RejectBudget are the step's declared transition knobs
 	// (sty_5262592e). RejectBudget is a POINTER for the same reason Rework is: an
 	// absent key means "no budget" and an authored zero is a mis-authored one this
@@ -404,6 +415,7 @@ func ParseSteps(body string) (Catalogue, error) {
 	var cat Catalogue
 	reworkDeclared := map[string]bool{}
 	budgetDeclared := map[string]bool{}
+	criteriaDeclared := map[string]bool{}
 	for _, provides := range sortedKeys(recs) {
 		var s stepWire
 		if err := md.PrimitiveDecode(recs[provides], &s); err != nil {
@@ -466,6 +478,11 @@ func ParseSteps(body string) (Catalogue, error) {
 			st.ReworkConsult, st.ReworkRounds = strings.TrimSpace(s.Rework.Consult), s.Rework.Rounds
 			reworkDeclared[provides] = true
 		}
+		if s.ApplyCriteria != nil {
+			st.ApplyCriteriaDoc = strings.TrimSpace(s.ApplyCriteria.Doc)
+			st.ApplyCriteriaHeading = strings.TrimSpace(s.ApplyCriteria.Heading)
+			criteriaDeclared[provides] = true
+		}
 		cat.Steps = append(cat.Steps, st)
 	}
 	var gates []gateWire
@@ -520,6 +537,8 @@ func ParseSteps(body string) (Catalogue, error) {
 		switch {
 		case st.Propose && (strings.TrimSpace(st.Agent) == "" || len(st.Skills) == 0):
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: propose needs the step to allocate a performer (agent = …) and its skills — there is nothing to run before the gates", st.Provides)
+		case criteriaDeclared[st.Provides] && (st.ApplyCriteriaDoc == "" || st.ApplyCriteriaHeading == ""):
+			return Catalogue{}, fmt.Errorf("step.toml: step %q: apply_criteria needs both doc = \"<document>\" and heading = \"<heading>\" — half a declaration applies nothing", st.Provides)
 		case budgetDeclared[st.Provides] && st.RejectBudget < 1:
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: reject_budget must be >= 1 (a zero budget refuses the first presentation)", st.Provides)
 		}

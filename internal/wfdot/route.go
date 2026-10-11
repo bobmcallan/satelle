@@ -101,6 +101,13 @@ type Step struct {
 	// the legacy rule applies: the definition freezes when the story leaves the
 	// entry state.
 	Freeze bool
+	// ApplyCriteriaDoc / ApplyCriteriaHeading declare that entry to this step
+	// applies the acceptance criteria authored under "## <heading>" in the story
+	// document <doc> to the story. Mechanism only: the binary copies the section
+	// the route names; which document and heading is configuration. Both empty
+	// means the step applies nothing (sty_4d9df9a0).
+	ApplyCriteriaDoc     string
+	ApplyCriteriaHeading string
 	// RejectBudget is the most rejected presentations of this step's entry edge
 	// before the orchestrator must park the story and ask the developer. Zero
 	// means no declared budget. The unit is a PRESENTATION (one gate run),
@@ -464,6 +471,9 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			Propose:      st.Propose,
 			Freeze:       st.Freeze,
 			RejectBudget: st.RejectBudget,
+
+			ApplyCriteriaDoc:     st.ApplyCriteriaDoc,
+			ApplyCriteriaHeading: st.ApplyCriteriaHeading,
 
 			WaitsOnChildren: st.WaitsOnChildren,
 			Schedule:        st.Schedule,

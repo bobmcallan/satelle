@@ -210,6 +210,11 @@ type State struct {
 	Propose      bool
 	Freeze       bool
 	RejectBudget int
+	// ApplyCriteriaDoc / ApplyCriteriaHeading: entry to this step applies the
+	// criteria authored under "## <heading>" in the story document <doc>
+	// (sty_4d9df9a0).
+	ApplyCriteriaDoc     string
+	ApplyCriteriaHeading string
 	// WaitsOnChildren: a container idles here while its children are driven
 	// (sty_7f3e6fd3). Read through Spec.WaitsOnChildren.
 	WaitsOnChildren bool
