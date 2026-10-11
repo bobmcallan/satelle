@@ -227,5 +227,5 @@ type ListFilter struct {
 	StoryID   string
 	ProjectID string
 	Kind      string
-	Limit     int // <=0 ⇒ default 200, capped at 2000
+	Limit     int // <=0 ⇒ DefaultListLimit, capped at MaxListLimit
 }

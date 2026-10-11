@@ -63,8 +63,21 @@ type ledgerListReq struct {
 	ProjectID string `json:"project_id,omitempty"`
 	Kind      string `json:"kind,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
+	// Window asks for the entries together with the omission facts instead of
+	// the bare array, so a caller can tell the user rows were left out.
+	Window bool `json:"window,omitempty"`
 }
 
+// ledgerListWindowResp is the ledger-list response when the request sets
+// window: the newest rows (oldest-first) and what the limit left out.
+type ledgerListWindowResp struct {
+	Entries []ledger.Entry `json:"entries"`
+	ledger.Window
+}
+
+// ledgerList returns the NEWEST rows (oldest-first, so the last row is the
+// latest state) up to the limit: a long ledger's latest events are what a gate
+// or an operator reads, and the oldest-first window hid them (sty_523edea7).
 func ledgerList(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	store, err := requireLedger()
 	if err != nil {
@@ -74,7 +87,7 @@ func ledgerList(ctx context.Context, raw json.RawMessage) (json.RawMessage, erro
 	if err := decode(raw, &req); err != nil {
 		return nil, err
 	}
-	entries, err := store.List(ctx, ledger.ListFilter{
+	entries, win, err := store.ListNewest(ctx, ledger.ListFilter{
 		StoryID:   req.StoryID,
 		ProjectID: req.ProjectID,
 		Kind:      req.Kind,
@@ -83,21 +96,26 @@ func ledgerList(ctx context.Context, raw json.RawMessage) (json.RawMessage, erro
 	if err != nil {
 		return nil, err
 	}
+	if req.Window {
+		return json.Marshal(ledgerListWindowResp{Entries: entries, Window: win})
+	}
 	return json.Marshal(entries)
 }
 
 // ListStoryLedger is the in-process form of `satelle ledger list --story`.
 // It uses the same filter the CLI does (story id only; limit 0 so the store
-// default applies) and returns the list JSON. A missing store is
+// default applies) and returns the list JSON — the newest rows — with the
+// Window saying how many older rows it omitted. A missing store is
 // ErrStoreNotConfigured. Callers must not shell out to the CLI.
-func ListStoryLedger(ctx context.Context, storyID string) ([]byte, error) {
+func ListStoryLedger(ctx context.Context, storyID string) ([]byte, ledger.Window, error) {
 	store, err := requireLedger()
 	if err != nil {
-		return nil, err
+		return nil, ledger.Window{}, err
 	}
-	entries, err := store.List(ctx, ledger.ListFilter{StoryID: storyID})
+	entries, win, err := store.ListNewest(ctx, ledger.ListFilter{StoryID: storyID})
 	if err != nil {
-		return nil, err
+		return nil, ledger.Window{}, err
 	}
-	return json.Marshal(entries)
+	b, err := json.Marshal(entries)
+	return b, win, err
 }
