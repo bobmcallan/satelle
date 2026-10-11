@@ -107,10 +107,16 @@ func TestPiSessionWindowUsageUnavailableIsNamed(t *testing.T) {
 		t.Fatalf("empty window = %+v, want a named pi unavailable", empty)
 	}
 
-	// The session file is gone: the record sits under another repo's directory.
-	gone := SessionWindowUsage(HarnessPi, piFixtureSession, "/home/example/other-repo", piAt(t, "10:00:00"), piAt(t, "10:10:00"))
-	if gone.Available || !strings.HasPrefix(gone.UnavailableReason, "pi: session record for "+piFixtureSession+" not found under ") {
+	// The session file is gone: no tree holds a record for this id.
+	gone := SessionWindowUsage(HarnessPi, "no-such-session", piWindowRepo, piAt(t, "10:00:00"), piAt(t, "10:10:00"))
+	if gone.Available || !strings.HasPrefix(gone.UnavailableReason, "pi: session record for no-such-session not found under ") {
 		t.Fatalf("missing file = %+v, want a named pi unavailable", gone)
+	}
+
+	// A record keyed under another tree than the one asked about is still found, by id.
+	elsewhere := SessionWindowUsage(HarnessPi, piFixtureSession, "/home/example/other-repo", piAt(t, "10:00:00"), piAt(t, "10:10:00"))
+	if !elsewhere.Available {
+		t.Fatalf("record under another tree = %+v, want it found by session id", elsewhere)
 	}
 
 	for _, harness := range []string{HarnessClaude, HarnessGrok, "mystery", ""} {

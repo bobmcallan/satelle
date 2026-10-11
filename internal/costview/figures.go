@@ -51,6 +51,12 @@ type Figures struct {
 	DispatchMs int64 `json:"dispatch_ms"`
 	DriverMs   int64 `json:"driver_ms"`
 
+	// AmbiguousTokens/AmbiguousCostUSD are the available driver rows whose session
+	// another story shared over the window (DriverRow.Ambiguous): visible, and in none
+	// of the exact sums above. How many rows is DriverCoverage.AmbiguousRows.
+	AmbiguousTokens  int     `json:"ambiguous_tokens,omitempty"`
+	AmbiguousCostUSD float64 `json:"ambiguous_cost_usd,omitempty"`
+
 	// Driver says, per adapter, what the driving session's own rows measured and
 	// what they could not; DriverStatus is its one-word roll-up (measured,
 	// partial, unavailable, none). Without them the gated-and-dispatched total
@@ -120,6 +126,8 @@ func Fold(a, b Figures) Figures {
 		AgentMs:              a.AgentMs + b.AgentMs,
 		DispatchMs:           a.DispatchMs + b.DispatchMs,
 		DriverMs:             a.DriverMs + b.DriverMs,
+		AmbiguousTokens:      a.AmbiguousTokens + b.AmbiguousTokens,
+		AmbiguousCostUSD:     a.AmbiguousCostUSD + b.AmbiguousCostUSD,
 		Driver:               driver,
 		DriverStatus:         driverStatus(driver),
 	}
@@ -268,6 +276,12 @@ type DriverRow struct {
 	// Backfilled marks a row written after the fact from the session record's
 	// per-message timestamps: a measured figure, but derived — never a live delta.
 	Backfilled bool `json:"backfilled,omitempty"`
+	// Overlaps names the other stories that drove this row's session in a window
+	// intersecting this story's, so the session's usage cannot be split between them;
+	// AttributionReason is the adapter-named sentence saying so, and — alone, with no
+	// Overlaps — the adapter's qualifier that a figure may leave subagent spend out.
+	Overlaps          []string `json:"overlaps,omitempty"`
+	AttributionReason string   `json:"attribution_reason,omitempty"`
 	// Superseded is set by MarkSuperseded, never stored: an unavailable row that a
 	// later backfill row for the same session recovered. It keeps its wall time and
 	// drops out of the measured/unavailable counts.
@@ -296,9 +310,22 @@ func MarkSuperseded(rows []DriverRow) []DriverRow {
 	return rows
 }
 
-// measured reports whether d carries a token delta that was actually measured: an
-// available row that is not a fresh baseline.
-func (d DriverRow) measured() bool { return d.Available && !d.BaselineFresh }
+// AmbiguousLabel is how every surface says a row's figure is the whole session's
+// usage over a window another story shared: available, but not this story's alone.
+const AmbiguousLabel = "shared session window, usage not split"
+
+// Ambiguous reports whether d is the one classification every surface reads for
+// "available but not exact": its session was driven by another story in an
+// intersecting window. An ambiguous row keeps its figures and is never summed into
+// the exact token and cost totals. A fresh-baseline row is never ambiguous: its zero
+// delta is a named baseline gap (BaselineFreshReason), not a figure to label.
+func (d DriverRow) Ambiguous() bool {
+	return d.Available && !d.BaselineFresh && len(d.Overlaps) > 0
+}
+
+// measured reports whether d carries a token delta that was actually measured, and
+// is exact: an available row that is neither a fresh baseline nor ambiguous.
+func (d DriverRow) measured() bool { return d.Available && !d.BaselineFresh && !d.Ambiguous() }
 
 // BaselineFreshReason is the adapter-named reason a fresh-baseline row reports in
 // place of a delta: nothing was measured between two reads, the baseline was set.
@@ -342,6 +369,9 @@ type accumulator struct {
 
 	dispatchMs, driverMs int64
 
+	ambiguousTokens  int
+	ambiguousCostUSD float64
+
 	driver []DriverCoverage
 }
 
@@ -384,6 +414,15 @@ func (a *accumulator) addDriverRow(d DriverRow) {
 		return // wall time only: the backfill row that recovered it carries the figures
 	}
 	a.driver = addCoverage(a.driver, d)
+	if d.Ambiguous() {
+		// Available, but the session's usage over the window is shared with another
+		// story: kept beside the exact figures, never in them.
+		a.ambiguousTokens += d.FreshInput + d.CacheRead + d.CacheWrite + d.Output
+		if d.CostUSD != nil {
+			a.ambiguousCostUSD += *d.CostUSD
+		}
+		return
+	}
 	if d.CostUSD != nil {
 		a.costUSD += *d.CostUSD
 		a.costRows++
@@ -417,6 +456,8 @@ func (a *accumulator) figures() Figures {
 		AgentMs:              a.dispatchMs + a.driverMs,
 		DispatchMs:           a.dispatchMs,
 		DriverMs:             a.driverMs,
+		AmbiguousTokens:      a.ambiguousTokens,
+		AmbiguousCostUSD:     a.ambiguousCostUSD,
 		Driver:               foldCoverage(nil, a.driver),
 		DriverStatus:         driverStatus(a.driver),
 	}

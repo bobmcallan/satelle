@@ -450,7 +450,7 @@ const templatesSrc = `
   <table class="panel-table cost-driver">
     <thead><tr><th>Session</th><th>Executable</th><th>Trigger</th><th>Fresh in</th><th>Out</th><th>Calls</th><th>Cache read</th><th>Cache write</th><th>Agent time</th></tr></thead>
     <tbody>
-      {{range .DriverRows}}<tr><td class="id">{{.SessionID}}</td><td>{{.Executable}}</td><td>{{.Trigger}}</td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.Calls}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.AgentTime}}</td></tr>{{end}}
+      {{range .DriverRows}}<tr><td class="id">{{.SessionID}}</td><td>{{.Executable}}</td><td{{if .Note}} title="{{.Note}}"{{end}}>{{.Trigger}}</td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.Calls}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.AgentTime}}</td></tr>{{end}}
       {{with .DriverTotal}}<tr class="cost-driver-total"><td>{{.SessionID}}</td><td></td><td></td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.Calls}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.AgentTime}}</td></tr>{{end}}
     </tbody>
   </table>{{end}}{{end}}

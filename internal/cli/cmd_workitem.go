@@ -1151,6 +1151,7 @@ func driverRowsToCostview(rows []verb.DriverUsagePayload) []costview.DriverRow {
 			From: d.From, To: d.To,
 			ModelCalls: d.ModelCalls, ModelCallsUnavailableReason: d.ModelCallsUnavailableReason,
 			Turns: d.Turns, Unflushed: d.Unflushed, BaselineFresh: d.BaselineFresh, Backfilled: d.Backfilled,
+			Overlaps: d.Overlaps, AttributionReason: d.AttributionReason,
 		}
 		out[i].Cumulative.ModelCalls = d.Cumulative.ModelCalls
 	}
@@ -1179,6 +1180,11 @@ func printDriverSection(cmd *cobra.Command, sc verb.StoryCost) error {
 	}
 	if err := dw.Flush(); err != nil {
 		return err
+	}
+	for _, d := range rowViews {
+		if d.Note != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "  note %s %s: %s\n", d.SessionID, d.Trigger, d.Note)
+		}
 	}
 	printGateWaits(cmd, sc.GateWaits)
 	// GRAND TOTAL reads off sc.Figures — costview.Own's single accumulation

@@ -77,6 +77,13 @@ type DriverSnapshot struct {
 	// guessing at whatever LATER, unrelated turns a delayed confirming read
 	// also picked up.
 	TurnBreakdown []DriverTurn
+
+	// SubagentNote is set on an available snapshot whose harness's record cannot
+	// say whether subagent spend is inside the figures: an adapter-named
+	// qualifier the verb layer carries onto the row, so the figures are never
+	// presented as complete. Empty for a harness whose record is known to
+	// include (claude) or to have no (pi) subagent spend.
+	SubagentNote string
 }
 
 // DriverTurn is one turn's own usage delta and completion time, as broken out
@@ -98,6 +105,15 @@ type DriverTurn struct {
 // with an adapter-named UnavailableReason — never zeros that look like a
 // measurement (satelle-agent-agnostic §2/§3).
 func SessionUsageSnapshot(harness, sessionID, repoRoot string) DriverSnapshot {
+	return SessionUsageSnapshotWith(harness, sessionID, repoRoot, nil)
+}
+
+// SessionUsageSnapshotWith is SessionUsageSnapshot for a caller that knows other
+// trees the session may be keyed under (hintRoots, e.g. the tree the session
+// published as its home): a tree-keyed harness looks in repoRoot's tree, then
+// each hint's, then searches its whole store for the session id. A session
+// started in one tree and driving a story in another is thereby still found.
+func SessionUsageSnapshotWith(harness, sessionID, repoRoot string, hintRoots []string) DriverSnapshot {
 	sessionID = strings.TrimSpace(sessionID)
 	adapter := harness
 	if strings.TrimSpace(adapter) == "" {
@@ -108,11 +124,11 @@ func SessionUsageSnapshot(harness, sessionID, repoRoot string) DriverSnapshot {
 	}
 	switch harness {
 	case HarnessClaude:
-		return claudeDriverSnapshot(sessionID, repoRoot)
+		return claudeDriverSnapshot(sessionID, repoRoot, hintRoots)
 	case HarnessGrok:
-		return grokDriverSnapshot(sessionID, repoRoot)
+		return grokDriverSnapshot(sessionID, repoRoot, hintRoots)
 	case HarnessPi:
-		return piDriverSnapshot(sessionID, repoRoot)
+		return piDriverSnapshot(sessionID, repoRoot, hintRoots)
 	case HarnessCursor:
 		return cursorDriverSnapshot(sessionID)
 	default:
@@ -154,6 +170,10 @@ type DriverWindowUsage struct {
 
 	CostUSD               *float64
 	CostUnavailableReason string
+
+	// SubagentNote mirrors DriverSnapshot.SubagentNote for a windowed read: set on
+	// an available result whose harness's record cannot show subagent spend.
+	SubagentNote string
 
 	Available         bool
 	UnavailableReason string
@@ -231,25 +251,79 @@ func claudeProjectSlug(repoRoot string) string {
 // assistant message, deduplicated by message id — a streamed session can repeat
 // the same message id with a growing usage object, so only the LAST occurrence
 // of a given id is kept, not summed with its own earlier partials.
-func claudeDriverSnapshot(sessionID, repoRoot string) DriverSnapshot {
+//
+// The session's subagents keep their own transcripts beside it
+// (ClaudeSubagentGlob); a subagent's spend is the session's spend, so they are
+// folded into the same sum, sharing one message-id map with the parent file so a
+// message echoed into both files is counted once. The transcript is located by
+// session id (ClaudeLocateSession), not only under the story's tree.
+func claudeDriverSnapshot(sessionID, repoRoot string, hints []string) DriverSnapshot {
 	snap := DriverSnapshot{SessionID: sessionID, Executable: HarnessClaude}
-	path := filepath.Join(claudeConfigDir(), "projects", claudeProjectSlug(repoRoot), sessionID+".jsonl")
-	f, err := os.Open(path)
-	if err != nil {
-		snap.UnavailableReason = fmt.Sprintf("claude: session transcript unreadable: %v", err)
-		snap.CostUnavailableReason = snap.UnavailableReason
+	fail := func(reason string) DriverSnapshot {
+		snap.UnavailableReason = reason
+		snap.CostUnavailableReason = reason
 		return snap
 	}
-	defer f.Close()
-
-	type perMessage struct {
-		fresh, cacheCreate, cacheRead, out int
-		model                              string
+	path, reason := ClaudeLocateSession(sessionID, repoRoot, hints)
+	if reason != "" {
+		return fail(reason)
 	}
-	byID := map[string]perMessage{}
-	var order []string
-	var lastModel string
+	acc := &claudeUsageAcc{byID: map[string]claudeMessageUsage{}}
+	if err := acc.scan(path); err != nil {
+		return fail(fmt.Sprintf("claude: session transcript unreadable: %v", err))
+	}
+	model := acc.lastModel
+	for _, sub := range claudeSubagentTranscripts(path) {
+		acc.lastModel = ""
+		if err := acc.scan(sub); err != nil {
+			return fail(fmt.Sprintf("claude: subagent transcript unreadable: %v", err))
+		}
+		if model == "" {
+			model = acc.lastModel
+		}
+	}
+	if len(acc.order) == 0 {
+		return fail("claude: session transcript carries no assistant usage yet")
+	}
+	for _, id := range acc.order {
+		m := acc.byID[id]
+		snap.FreshInputTokens += m.fresh
+		snap.CacheCreationInputTokens += m.cacheCreate
+		snap.CacheReadInputTokens += m.cacheRead
+		snap.OutputTokens += m.out
+	}
+	snap.Available = true
+	snap.Model = model
+	snap.Turns = len(acc.order)
+	// One message id is one API request, however many transcript lines its
+	// content blocks were streamed as — the same de-duplication the token sums use.
+	snap.ModelCalls = len(acc.order)
+	// A claude transcript reports no dollar figure at all (sty_c4df7376: never
+	// derive cost from a price table) — cost stays named-unavailable here.
+	snap.CostUnavailableReason = "claude: session transcript reports no cost field"
+	return snap
+}
 
+// claudeMessageUsage is one assistant message's own usage.
+type claudeMessageUsage struct {
+	fresh, cacheCreate, cacheRead, out int
+}
+
+// claudeUsageAcc folds assistant usage across the transcript files of one
+// session: byID keeps the last occurrence of each message id, order the first
+// time each was seen, lastModel the model of the last assistant line scanned.
+type claudeUsageAcc struct {
+	byID      map[string]claudeMessageUsage
+	order     []string
+	lastModel string
+}
+
+func (a *claudeUsageAcc) scan(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
@@ -276,43 +350,17 @@ func claudeDriverSnapshot(sessionID, repoRoot string) DriverSnapshot {
 		if id == "" {
 			// No message id to dedupe by: treat as its own entry so usage is
 			// never silently dropped.
-			id = fmt.Sprintf("__noid_%d", len(order))
+			id = fmt.Sprintf("__noid_%d", len(a.order))
 		}
-		if _, seen := byID[id]; !seen {
-			order = append(order, id)
+		if _, seen := a.byID[id]; !seen {
+			a.order = append(a.order, id)
 		}
-		byID[id] = perMessage{fresh: u.FreshInputTokens, cacheCreate: u.CacheCreationInputTokens, cacheRead: u.CacheReadInputTokens, out: u.OutputTokens, model: row.Message.Model}
+		a.byID[id] = claudeMessageUsage{fresh: u.FreshInputTokens, cacheCreate: u.CacheCreationInputTokens, cacheRead: u.CacheReadInputTokens, out: u.OutputTokens}
 		if row.Message.Model != "" {
-			lastModel = row.Message.Model
+			a.lastModel = row.Message.Model
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		snap.UnavailableReason = fmt.Sprintf("claude: session transcript unreadable: %v", err)
-		snap.CostUnavailableReason = snap.UnavailableReason
-		return snap
-	}
-	if len(order) == 0 {
-		snap.UnavailableReason = "claude: session transcript carries no assistant usage yet"
-		snap.CostUnavailableReason = snap.UnavailableReason
-		return snap
-	}
-	for _, id := range order {
-		m := byID[id]
-		snap.FreshInputTokens += m.fresh
-		snap.CacheCreationInputTokens += m.cacheCreate
-		snap.CacheReadInputTokens += m.cacheRead
-		snap.OutputTokens += m.out
-	}
-	snap.Available = true
-	snap.Model = lastModel
-	snap.Turns = len(order)
-	// One message id is one API request, however many transcript lines its
-	// content blocks were streamed as — the same de-duplication the token sums use.
-	snap.ModelCalls = len(order)
-	// A claude transcript reports no dollar figure at all (sty_c4df7376: never
-	// derive cost from a price table) — cost stays named-unavailable here.
-	snap.CostUnavailableReason = "claude: session transcript reports no cost field"
-	return snap
+	return scanner.Err()
 }
 
 // grokRepoDirName is grok's per-repo session directory name under
@@ -324,14 +372,34 @@ func grokRepoDirName(repoRoot string) string {
 	return url.QueryEscape(filepath.Clean(repoRoot))
 }
 
+// grokSubagentNote qualifies every available grok row: grok has a subagent tool
+// (spawn_subagent) but usage.json's turns carry no tool names, so the record
+// cannot show whether the figures include a subagent's spend
+// (testdata/driver/grok_usage_t2.json).
+const grokSubagentNote = "grok: subagent use undeterminable; subagent spend inclusion unverified"
+
 // grokDriverSnapshot reads grok's cumulative per-session usage.json. The
 // session-level cumulative lives under the top-level "session" object (its
 // per-turn breakdown lives under "turns", which this reader does not need);
 // it reuses grokUsageFromMap, the same camelCase mapping the ACP per-turn
 // transport uses, against that "session" object.
-func grokDriverSnapshot(sessionID, repoRoot string) DriverSnapshot {
+//
+// The session directory is located by session id (the story's tree, the hint
+// roots, then every tree), so a session started elsewhere is still found.
+//
+// grok's usage.json turns carry no tool names, so whether the session spent
+// through spawn_subagent cannot be read from it: every available snapshot says so
+// in SubagentNote rather than presenting its figures as complete.
+func grokDriverSnapshot(sessionID, repoRoot string, hints []string) DriverSnapshot {
 	snap := DriverSnapshot{SessionID: sessionID, Executable: HarnessGrok}
-	path := filepath.Join(grokHomeDir(), "sessions", grokRepoDirName(repoRoot), sessionID, "usage.json")
+	dir, reason := locateSessionRecord(HarnessGrok, sessionID, filepath.Join(grokHomeDir(), "sessions"),
+		grokRepoDirName, sessionID, append([]string{repoRoot}, hints...))
+	if reason != "" {
+		snap.UnavailableReason = reason
+		snap.CostUnavailableReason = reason
+		return snap
+	}
+	path := filepath.Join(dir, "usage.json")
 	b, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		if info, derr := os.Stat(filepath.Dir(path)); derr == nil && info.IsDir() {
@@ -339,6 +407,7 @@ func grokDriverSnapshot(sessionID, repoRoot string) DriverSnapshot {
 			// without it is a session still inside its first turn: nothing
 			// flushed yet, and that turn may be the one making this call.
 			snap.Available = true
+			snap.SubagentNote = grokSubagentNote
 			snap.MayUndercountInFlightTurn = true
 			snap.CostUnavailableReason = "grok: first turn not yet flushed to usage.json"
 			// Nothing flushed is a real zero: no completed turn has made a request.
@@ -369,6 +438,7 @@ func grokDriverSnapshot(sessionID, repoRoot string) DriverSnapshot {
 		return snap
 	}
 	snap.Available = true
+	snap.SubagentNote = grokSubagentNote
 	snap.MayUndercountInFlightTurn = true
 	snap.FreshInputTokens = freshOf(u)
 	snap.CacheCreationInputTokens = u.CacheCreationInputTokens

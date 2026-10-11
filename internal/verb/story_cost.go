@@ -258,14 +258,23 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 				continue
 			}
 			sc.DriverRows = append(sc.DriverRows, d)
-			if dr, ok := costview.DecodeDriverRow(e); ok {
+			dr, drOK := costview.DecodeDriverRow(e)
+			if drOK {
 				gateRows = append(gateRows, dr)
 			}
-			if d.Available && !d.BaselineFresh {
+			// An ambiguous row (costview.DriverRow.Ambiguous) is available but not
+			// exact: it feeds neither the measured nor the unmeasured totals.
+			ambiguous := drOK && dr.Ambiguous()
+			switch {
+			case ambiguous:
+			case d.Available && !d.BaselineFresh:
 				sc.DriverTotalTokens += d.FreshInput + d.CacheRead + d.CacheWrite + d.Output
 				sc.DriverMeasuredRows++
-			} else {
+			default:
 				sc.DriverUnmeasuredRows++
+			}
+			if ambiguous {
+				continue
 			}
 			if d.CostUSD != nil {
 				sc.DriverTotalCostUSD += *d.CostUSD
