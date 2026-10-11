@@ -57,6 +57,12 @@ type Figures struct {
 	// reads as the whole story's cost (sty_ca1ca935).
 	Driver       []DriverCoverage `json:"driver,omitempty"`
 	DriverStatus string           `json:"driver_status"`
+
+	// Derived is the read-time price of the measured tokens above under the
+	// operator's [pricing] configuration (price.go). It is computed on every
+	// read and never stored; JSON surfaces it as an added `derived_cost` object
+	// and leaves the existing figures keys as they were.
+	Derived DerivedCost `json:"derived_cost"`
 }
 
 // HasRows reports whether any dispatch or driver row actually measured usage
@@ -122,6 +128,7 @@ func Fold(a, b Figures) Figures {
 		DriverMs:             a.DriverMs + b.DriverMs,
 		Driver:               driver,
 		DriverStatus:         driverStatus(driver),
+		Derived:              foldDerived(a.Derived, b.Derived),
 	}
 }
 
@@ -164,6 +171,11 @@ type Row struct {
 	// allocation (see GateValue), never a second measured call.
 	BundleID     string   `json:"bundle_id,omitempty"`
 	BundleSkills []string `json:"bundle_skills,omitempty"`
+	// Adapter names the harness that produced the usage; Models is the row's
+	// per-model token split. Both are copied from ledger.Telemetry, the sole
+	// usage decoder, and feed read-time pricing (price.go).
+	Adapter string               `json:"adapter,omitempty"`
+	Models  []ledger.ModelTokens `json:"models,omitempty"`
 }
 
 // DecodeRow decodes one agent_invocation ledger entry into a Row, or ok=false
@@ -210,6 +222,8 @@ func DecodeRow(e ledger.Entry) (Row, bool) {
 		CostUnavailableReason:  tel.CostUnavailableReason,
 		BundleID:               meta.BundleID,
 		BundleSkills:           meta.BundleSkills,
+		Adapter:                tel.Adapter,
+		Models:                 tel.ModelUsage,
 	}
 	if row.Agent == "" {
 		row.Agent = tel.Agent
@@ -343,6 +357,11 @@ type accumulator struct {
 	dispatchMs, driverMs int64
 
 	driver []DriverCoverage
+
+	// price prices each row at the exact point its tokens fold in, so the
+	// counting rule below (unavailable, baseline and superseded rows add
+	// nothing) is the only one: a row that adds no tokens can never be priced.
+	price pricer
 }
 
 // addDispatchRow folds one agent_invocation row (already tool-permission-
@@ -372,6 +391,7 @@ func (a *accumulator) addDispatchRow(row Row) {
 		a.unsplitRows++
 	}
 	a.output += row.TokensOut
+	a.price.dispatch(row)
 }
 
 // addDriverRow folds one driver_usage row. WallSeconds is real elapsed time
@@ -399,10 +419,11 @@ func (a *accumulator) addDriverRow(d DriverRow) {
 	a.output += d.Output
 	a.cacheRead += d.CacheRead
 	a.cacheWrite += d.CacheWrite
+	a.price.driver(d)
 }
 
 func (a *accumulator) figures() Figures {
-	return Figures{
+	f := Figures{
 		CostUSD:              a.costUSD,
 		CostRows:             a.costRows,
 		CostUnavailableRows:  a.costUnavailableRows,
@@ -420,6 +441,8 @@ func (a *accumulator) figures() Figures {
 		Driver:               foldCoverage(nil, a.driver),
 		DriverStatus:         driverStatus(a.driver),
 	}
+	f.Derived = a.price.result(f)
+	return f
 }
 
 // Story is one item's own computed cost view: its Figures, the dispatch Rows
@@ -434,6 +457,9 @@ type Story struct {
 	DriverRows []DriverRow `json:"driver_rows,omitempty"`
 	Span       *Span       `json:"-"`
 	Estimates  []Estimate  `json:"estimates,omitempty"`
+	// Seats is the per-agent+model token and derived-cost breakdown of this
+	// item's own rows (BySeat).
+	Seats []SeatLine `json:"seats,omitempty"`
 }
 
 // StoryWindow returns the story clock's engage and terminal timestamps from entries'
@@ -478,8 +504,12 @@ func StoryWindow(entries []ledger.Entry, clk Clock) (engageAt, terminalAt time.T
 // this accounting (done/cancelled with no transitions logged at all) both
 // read as unavailable rather than a fabricated CreatedAt-based span — item's
 // CreatedAt is never a stand-in for when work actually started.
-func Own(item workitem.Item, entries []ledger.Entry, clk Clock, now time.Time) Story {
-	acc := &accumulator{}
+//
+// WithPricing prices the measured tokens under the operator's [pricing]
+// configuration at read time; without it the derived cost reads unavailable.
+func Own(item workitem.Item, entries []ledger.Entry, clk Clock, now time.Time, opts ...Option) Story {
+	p := pricingOf(opts)
+	acc := &accumulator{price: newPricer(p)}
 	var rows []Row
 	var driverRows []DriverRow
 
@@ -527,5 +557,6 @@ func Own(item workitem.Item, entries []ledger.Entry, clk Clock, now time.Time) S
 		DriverRows: driverRows,
 		Span:       span,
 		Estimates:  ParseEstimates(item.Tags),
+		Seats:      BySeat(rows, driverRows, p),
 	}
 }

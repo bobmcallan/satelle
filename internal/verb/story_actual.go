@@ -84,7 +84,7 @@ func collectDescendants(ctx context.Context, wi *workitem.Store, parentID string
 // one's ledger entries, and folds them through costview.Family. It returns
 // nil when root has no children — the family section's whole trigger,
 // consistent whether the caller is ComputeStoryActual or the cost view (AC5).
-func computeFamilyCost(ctx context.Context, wi *workitem.Store, ls *ledger.Store, root workitem.Item) (*costview.FamilyCost, error) {
+func computeFamilyCost(ctx context.Context, wi *workitem.Store, ls *ledger.Store, root workitem.Item, opts ...costview.Option) (*costview.FamilyCost, error) {
 	var descendants []workitem.Item
 	if err := collectDescendants(ctx, wi, root.ID, map[string]bool{root.ID: true}, &descendants); err != nil {
 		return nil, err
@@ -106,7 +106,7 @@ func computeFamilyCost(ctx context.Context, wi *workitem.Store, ls *ledger.Store
 	family := costview.Family(root, items, entries, func(it workitem.Item) costview.Clock {
 		clk, _ := clockFor(ctx, it)
 		return clk
-	}, time.Now())
+	}, time.Now(), opts...)
 	return &family, nil
 }
 

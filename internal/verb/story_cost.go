@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/costview"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -113,7 +114,12 @@ type StoryCost struct {
 	// plan estimate tags, kept in their own units. Family is populated only
 	// when the item has children (AC5) — the epic roll-up, sourced from the
 	// same costview.Family walk ComputeStoryActual uses.
-	Figures   costview.Figures     `json:"figures"`
+	Figures costview.Figures `json:"figures"`
+	// Seats is the per-agent+model token breakdown behind the derived cost in
+	// Figures.Derived (`figures.derived_cost`): the cost priced at read time from
+	// the operator's [pricing]. The *_cost_usd fields in this struct are the
+	// provider-REPORTED dollars, a second figure kept for comparison.
+	Seats     []costview.SeatLine  `json:"seats,omitempty"`
 	Estimates []costview.Estimate  `json:"estimates,omitempty"`
 	Family    *costview.FamilyCost `json:"family,omitempty"`
 }
@@ -177,10 +183,14 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 		switch {
 		case ierr == nil:
 			clk, _ := clockFor(ctx, item)
-			own := costview.Own(item, entries, clk, time.Now())
+			// The price is read now, from the operator's current [pricing]: a
+			// rate or plan change re-prices this story with no ledger write.
+			pricing := costview.WithPricing(config.LoadPricing())
+			own := costview.Own(item, entries, clk, time.Now(), pricing)
 			sc.Figures = own.Figures
+			sc.Seats = own.Seats
 			sc.Estimates = own.Estimates
-			family, ferr := computeFamilyCost(ctx, wi, ls, item)
+			family, ferr := computeFamilyCost(ctx, wi, ls, item, pricing)
 			if ferr != nil {
 				return StoryCost{}, ferr
 			}

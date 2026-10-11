@@ -2,6 +2,7 @@ package verb_test
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -88,7 +89,8 @@ func TestEventTelemetry(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := verb.EventTelemetry(c.e)
-		if got != c.want {
+		// DeepEqual, not ==: Telemetry now carries the per-model token slice.
+		if !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: EventTelemetry = %+v, want %+v", c.name, got, c.want)
 		}
 	}

@@ -854,15 +854,15 @@ prior entry.`,
 	cost := &cobra.Command{
 		Use:   "cost [id]",
 		Short: "Show the measured per-gate token + wall-time cost recorded for a story",
-		Long: `Show what a story actually cost to run: a cost band and fresh tokens headline,
-cache read/write as secondary columns, elapsed wall time and agent time, any
-legacy plan estimate beside the measured figure it matches, the driving
+		Long: `Show what a story actually cost to run: the derived cost, a cost band and fresh
+tokens headline, a per-seat breakdown, elapsed and agent time, the driving
 session's own line, and — for an epic-parent — the family roll-up. Below that,
-the per-gate token + wall-time detail taken from the agent-invocation ledger
-entries, plus a per-step roll-up.
+the per-gate detail from the agent-invocation ledger entries.
 
 This is MEASURED transport cost, distinct from the estimate/actual tags. A row
-printed as "—" is unmeasured, never free.
+printed as "—" is unmeasured, never free. "cost" is priced at read time from
+the [pricing] you configure (satelle help cost-pricing); "reported" is the
+provider's own dollars.
 
 --by-skill rolls up agent_invocation rows by skill (--all or --story <id>).
 --session <id> lists every story that session drove, plus its remainder.
@@ -904,7 +904,7 @@ reject per skill and seat, scoped by --story, --epic, or --since/--until.`,
 					return err
 				}
 				rw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-				fmt.Fprintln(rw, "SKILL\tINVOCATIONS\tFRESH\tCACHE-WRITE\tCACHE-READ\tUNSPLIT\tTOTAL IN\tTOTAL OUT\tAVG SYS BYTES\tAVG PAYLOAD BYTES\t$")
+				fmt.Fprintln(rw, "SKILL\tINVOCATIONS\tFRESH\tCACHE-WRITE\tCACHE-READ\tUNSPLIT\tTOTAL IN\tTOTAL OUT\tAVG SYS BYTES\tAVG PAYLOAD BYTES\tREPORTED $")
 				for _, r := range rollup.Rows {
 					fmt.Fprintf(rw, "%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",
 						r.Skill, r.Invocations, r.FreshTokens, r.CacheWriteTokens, r.CacheReadTokens,
@@ -1167,7 +1167,7 @@ func driverRowsToCostview(rows []verb.DriverUsagePayload) []costview.DriverRow {
 func printDriverSection(cmd *cobra.Command, sc verb.StoryCost) error {
 	rowViews, totalView := costview.FormatDriverRows(driverRowsToCostview(sc.DriverRows))
 	dw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(dw, "\nDRIVER SESSION\tEXECUTABLE\tTRIGGER\tFRESH IN\tOUT\tCALLS\tCACHE READ\tCACHE WRITE\t$\tAGENT TIME")
+	fmt.Fprintln(dw, "\nDRIVER SESSION\tEXECUTABLE\tTRIGGER\tFRESH IN\tOUT\tCALLS\tCACHE READ\tCACHE WRITE\tREPORTED $\tAGENT TIME")
 	for _, d := range rowViews {
 		fmt.Fprintf(dw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			d.SessionID, d.Executable, d.Trigger, d.FreshIn, d.Out, d.Calls, d.CacheRead, d.CacheWrite, d.USD, d.AgentTime)
@@ -1190,11 +1190,12 @@ func printDriverSection(cmd *cobra.Command, sc verb.StoryCost) error {
 	// reads as a literal 0 (sty_b8542a3a AC1 rework).
 	f := sc.Figures
 	splitRows := f.UsageRows - f.UnsplitRows
-	fmt.Fprintf(cmd.OutOrStdout(), "\nGRAND TOTAL (agent_invocation + driver): fresh in %s | out %s | cache read %s | cache write %s | agent time %s\n",
+	fmt.Fprintf(cmd.OutOrStdout(), "\nGRAND TOTAL (agent_invocation + driver): fresh in %s | out %s | cache read %s | cache write %s | cost %s | agent time %s\n",
 		costview.FormatSplitTokens(f.FreshInput, splitRows, f.UnsplitRows, f.UsageUnavailableRows),
 		costview.FormatTokensMeasured(f.Output, f.UsageRows, f.UsageUnavailableRows),
 		costview.FormatSplitTokens(f.CacheRead, splitRows, f.UnsplitRows, f.UsageUnavailableRows),
 		costview.FormatSplitTokens(f.CacheWrite, splitRows, f.UnsplitRows, f.UsageUnavailableRows),
+		costview.FormatDerived(f.Derived),
 		costview.FormatDuration(f.AgentMs))
 	for _, line := range costview.FormatAdapterCoverage(f) {
 		fmt.Fprintln(cmd.OutOrStdout(), line)
@@ -1227,7 +1228,7 @@ func printGateWaits(cmd *cobra.Command, waits []costview.GateWait) {
 func printSessionReconciliation(cmd *cobra.Command, recon verb.SessionReconciliation) {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	fmt.Fprintf(cmd.OutOrStdout(), "\nSession %s (%s) reconciliation:\n", recon.SessionID, recon.Executable)
-	fmt.Fprintln(w, "STORY\tTOKENS\t$")
+	fmt.Fprintln(w, "STORY\tTOKENS\tREPORTED $")
 	for _, s := range recon.Stories {
 		tokens, cost := "—", "unknown"
 		if s.Available {
@@ -1268,6 +1269,11 @@ func printCostSummary(cmd *cobra.Command, sc verb.StoryCost) {
 	fmt.Fprintln(out, "COST SUMMARY")
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	splitRows := f.UsageRows - f.UnsplitRows
+	// cost is the one primary dollar figure: the measured tokens priced now under
+	// the operator's [pricing]. The provider's own dollars are the labelled
+	// "reported" line; the band is the secondary size indicator after them.
+	fmt.Fprintf(w, "cost\t%s\n", costview.FormatDerived(f.Derived))
+	fmt.Fprintf(w, "reported\t%s\n", costview.FormatUSD(f.CostUSD, f.CostRows, f.CostUnavailableRows))
 	fmt.Fprintf(w, "BAND\t%s\n", costview.FormatCostBand(f))
 	fmt.Fprintf(w, "FRESH IN\t%s\t%s\n", costview.FormatSplitTokens(f.FreshInput, splitRows, f.UnsplitRows, f.UsageUnavailableRows), costview.FormatEstimate(sc.Estimates, "fresh-input"))
 	fmt.Fprintf(w, "OUT\t%s\t%s\n", costview.FormatTokensMeasured(f.Output, f.UsageRows, f.UsageUnavailableRows), costview.FormatEstimate(sc.Estimates, "output"))
@@ -1279,6 +1285,7 @@ func printCostSummary(cmd *cobra.Command, sc verb.StoryCost) {
 	fmt.Fprintf(w, "elapsed (wall)\t%s\t%s\n", costview.FormatDuration(f.ElapsedMs), costview.FormatEstimate(sc.Estimates, "minutes"))
 	fmt.Fprintf(w, "agent time (dispatch+driver)\t%s\t\n", costview.FormatDuration(f.AgentMs))
 	_ = w.Flush()
+	printSeatLines(out, "BY SEAT", sc.Seats)
 	fmt.Fprintln(out, costview.FormatDriverCoverage(f))
 	if legacy := costview.FormatLegacyTokenEstimate(sc.Estimates); legacy != "" {
 		fmt.Fprintln(out, legacy)
@@ -1286,11 +1293,12 @@ func printCostSummary(cmd *cobra.Command, sc verb.StoryCost) {
 	if sc.Family != nil {
 		fmt.Fprintln(out, "\nFAMILY")
 		fw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(fw, "CHILD\tBAND\tFRESH IN\tOUT\tCACHE READ\tCACHE WRITE\tELAPSED")
+		fmt.Fprintln(fw, "CHILD\tcost\tBAND\tFRESH IN\tOUT\tCACHE READ\tCACHE WRITE\tELAPSED")
 		for _, c := range sc.Family.Children {
 			cf := c.Figures
 			cfSplitRows := cf.UsageRows - cf.UnsplitRows
-			fmt.Fprintf(fw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", c.ID,
+			fmt.Fprintf(fw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", c.ID,
+				costview.FormatDerived(cf.Derived),
 				costview.FormatCostBand(cf),
 				costview.FormatSplitTokens(cf.FreshInput, cfSplitRows, cf.UnsplitRows, cf.UsageUnavailableRows), costview.FormatTokensMeasured(cf.Output, cf.UsageRows, cf.UsageUnavailableRows),
 				costview.FormatSplitTokens(cf.CacheRead, cfSplitRows, cf.UnsplitRows, cf.UsageUnavailableRows), costview.FormatSplitTokens(cf.CacheWrite, cfSplitRows, cf.UnsplitRows, cf.UsageUnavailableRows),
@@ -1298,17 +1306,35 @@ func printCostSummary(cmd *cobra.Command, sc verb.StoryCost) {
 		}
 		ft := sc.Family.Total
 		ftSplitRows := ft.UsageRows - ft.UnsplitRows
-		fmt.Fprintf(fw, "FAMILY TOTAL\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(fw, "FAMILY TOTAL\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			costview.FormatDerived(ft.Derived),
 			costview.FormatCostBand(ft),
 			costview.FormatSplitTokens(ft.FreshInput, ftSplitRows, ft.UnsplitRows, ft.UsageUnavailableRows), costview.FormatTokensMeasured(ft.Output, ft.UsageRows, ft.UsageUnavailableRows),
 			costview.FormatSplitTokens(ft.CacheRead, ftSplitRows, ft.UnsplitRows, ft.UsageUnavailableRows), costview.FormatSplitTokens(ft.CacheWrite, ftSplitRows, ft.UnsplitRows, ft.UsageUnavailableRows),
 			costview.FormatDuration(ft.ElapsedMs))
 		_ = fw.Flush()
+		printSeatLines(out, "FAMILY BY SEAT", sc.Family.Seats)
 		for _, line := range costview.FormatAdapterCoverage(ft) {
 			fmt.Fprintln(out, "  "+line)
 		}
 		fmt.Fprintln(out, "  "+costview.FormatDriverCoverage(ft))
 	}
+	fmt.Fprintln(out)
+}
+
+// printSeatLines renders the per-seat token breakdown with each seat's derived
+// cost — the same costview.FormatSeatLines pass the web page's seat table reads.
+func printSeatLines(out io.Writer, title string, lines []costview.SeatLine) {
+	if len(lines) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "\n%s\n", title)
+	sw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(sw, "SEAT\tFRESH IN\tCACHE READ\tCACHE WRITE\tOUT\tcost")
+	for _, v := range costview.FormatSeatLines(lines) {
+		fmt.Fprintf(sw, "%s\t%s\t%s\t%s\t%s\t%s\n", v.Seat, v.FreshIn, v.CacheRead, v.CacheWrite, v.Out, v.Cost)
+	}
+	_ = sw.Flush()
 	fmt.Fprintln(out)
 }
 
@@ -1358,7 +1384,7 @@ func runGateValue(cmd *cobra.Command, args gateValueArgs) error {
 	for _, r := range report.Rows {
 		allocated = allocated || r.AllocationNote != ""
 	}
-	header := "SKILL\tSEAT\tINVOCATIONS\t$\tFRESH TOKENS\tUNSPLIT (legacy)\tACCEPTS\tREJECTS\t$/REJECT"
+	header := "SKILL\tSEAT\tINVOCATIONS\tREPORTED $\tFRESH TOKENS\tUNSPLIT (legacy)\tACCEPTS\tREJECTS\tREPORTED $/REJECT"
 	if allocated {
 		header += "\tNOTE"
 	}

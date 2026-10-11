@@ -186,8 +186,16 @@ type detailData struct {
 // through a costview formatter, so the template and the CLI can never
 // disagree on a number's presentation.
 type costVM struct {
-	// Band is costview.FormatCostBand: low, medium, high, or unavailable.
-	// A dollar estimate is not shown.
+	// Cost is the one primary dollar figure (costview.FormatDerived): the
+	// measured tokens priced at read time under the operator's [pricing], or an
+	// explicit unavailable. Seats is the same figure per agent+model seat, and
+	// FamilySeats its epic roll-up; both are pre-formatted by costview, as the
+	// CLI's BY SEAT tables are.
+	Cost        string
+	Seats       []costview.SeatLineView
+	FamilySeats []costview.SeatLineView
+	// Band is costview.FormatCostBand: low, medium, high, or unavailable — the
+	// secondary size indicator after Cost.
 	Band                  string
 	FreshIn, EstFreshIn   string
 	Out, EstOut           string
@@ -221,7 +229,9 @@ type costVM struct {
 // familyRowVM is one family member's pre-formatted cost line — a child, or
 // (as FamilyTotal) the whole family's fold.
 type familyRowVM struct {
-	ID                    string
+	ID string
+	// Cost is the derived cost (costview.FormatDerived); Band follows it.
+	Cost                  string
 	Band                  string
 	FreshIn, Out          string
 	CacheRead, CacheWrite string

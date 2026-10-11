@@ -34,6 +34,14 @@ func ModelLabel(alias, resolved string) string {
 	return "unknown"
 }
 
+// ModelRecorded reports whether id names a model the transport measured — not
+// empty and not an explicit no-model marker — so a caller that keys on a model
+// (pricing) never treats the marker text as an id.
+func ModelRecorded(id string) bool {
+	id = strings.TrimSpace(id)
+	return id != "" && id != modelUnavailable && !strings.HasPrefix(id, modelUnavailablePrefix)
+}
+
 // Telemetry is display-ready agent-action fields from a single ledger entry
 // (sty_43d228e4 / sty_80233c10 / sty_56aae77a). Owned by ledger so the push-fed
 // web UI and verb story-cost share one reader without the web package importing
@@ -100,6 +108,33 @@ type Telemetry struct {
 	// the adapter and why, when the row recorded one.
 	CostUSD               *float64
 	CostUnavailableReason string
+	// Adapter names the harness that produced the row's usage (the `adapter`
+	// the dispatcher records beside the numbers); empty on a row written before
+	// it was recorded. ModelUsage is the row's per-model token split, in payload
+	// order; empty when the transport reported one model or none.
+	Adapter    string
+	ModelUsage []ModelTokens
+}
+
+// ModelTokens is one model's token entry from a row's model_usage list. A zero
+// TokensCacheWrite and TokensCacheRead means the transport reported no per-model
+// cache split (agentcli.ModelUsage: "Zero when unreported"), not a measured zero.
+type ModelTokens struct {
+	ID               string
+	TokensIn         int
+	TokensOut        int
+	TokensCacheWrite int
+	TokensCacheRead  int
+}
+
+// modelUsagePayload is one model_usage entry as the dispatcher writes it.
+type modelUsagePayload struct {
+	ID               string   `json:"id"`
+	TokensIn         int      `json:"tokens_in"`
+	TokensOut        int      `json:"tokens_out"`
+	TokensCacheWrite int      `json:"tokens_cache_write"`
+	TokensCacheRead  int      `json:"tokens_cache_read"`
+	CostUSD          *float64 `json:"cost_usd"`
 }
 
 // EventTelemetry extracts Telemetry from a single ledger entry.
@@ -183,6 +218,7 @@ func invocationTelemetry(payload []byte) Telemetry {
 	}
 	var row struct {
 		Agent             string   `json:"agent"`
+		Adapter           string   `json:"adapter"`
 		Model             string   `json:"model"`
 		ModelResolved     string   `json:"model_resolved"`
 		ModelSource       string   `json:"model_source"`
@@ -203,11 +239,10 @@ func invocationTelemetry(payload []byte) Telemetry {
 		IsoLimitation     string   `json:"isolation_limitation"`
 		CostUSD           *float64 `json:"cost_usd"`
 		CostUnavailable   string   `json:"cost_unavailable_reason"`
-		// ModelUsage is read only for its per-model cost_usd — a legacy row's
-		// fallback when it predates the top-level cost_usd field (sty_c4df7376).
-		ModelUsage []struct {
-			CostUSD *float64 `json:"cost_usd"`
-		} `json:"model_usage"`
+		// ModelUsage carries the per-model token split, and its per-model cost_usd
+		// is a legacy row's fallback when it predates the top-level cost_usd
+		// field (sty_c4df7376).
+		ModelUsage []modelUsagePayload `json:"model_usage"`
 	}
 	if err := json.Unmarshal(payload, &row); err != nil {
 		return Telemetry{}
@@ -225,8 +260,17 @@ func invocationTelemetry(payload []byte) Telemetry {
 			costReason = ""
 		}
 	}
+	var perModel []ModelTokens
+	for _, m := range row.ModelUsage {
+		perModel = append(perModel, ModelTokens{
+			ID: m.ID, TokensIn: m.TokensIn, TokensOut: m.TokensOut,
+			TokensCacheWrite: m.TokensCacheWrite, TokensCacheRead: m.TokensCacheRead,
+		})
+	}
 	return Telemetry{
 		Agent:                  row.Agent,
+		Adapter:                row.Adapter,
+		ModelUsage:             perModel,
 		Model:                  row.Model,
 		ModelResolved:          row.ModelResolved,
 		ModelSource:            row.ModelSource,
@@ -252,9 +296,7 @@ func invocationTelemetry(payload []byte) Telemetry {
 
 // sumModelCost sums a legacy row's per-model cost_usd entries, nil when none
 // reported one — never a measured zero from an unpriced model list.
-func sumModelCost(models []struct {
-	CostUSD *float64 `json:"cost_usd"`
-}) *float64 {
+func sumModelCost(models []modelUsagePayload) *float64 {
 	var sum float64
 	found := false
 	for _, m := range models {

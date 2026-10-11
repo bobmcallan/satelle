@@ -154,7 +154,9 @@ func TestCostVMRendersDriverRow(t *testing.T) {
 	if !strings.Contains(out, "<th>Cache write</th><th>Agent time</th>") {
 		t.Errorf("driver table header must run Cache write then Agent time:\n%s", out)
 	}
-	for _, bad := range []string{"<th>$</th>", "$0.75", "unavailable (", "driver cost"} {
+	// (The Cost line above the table now reads "unavailable (no pricing
+	// configured)" in this unpriced fixture, so that phrase is no longer banned.)
+	for _, bad := range []string{"<th>$</th>", "$0.75", "driver cost"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("itemDetail must not show dollar output %q; got:\n%s", bad, out)
 		}

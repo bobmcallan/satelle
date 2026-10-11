@@ -570,7 +570,10 @@ func mirrorBuildCostVM(ctx context.Context, s *mirror.Store, repoKey string, ite
 	}
 
 	now := time.Now()
-	own := costview.Own(item, entriesByStory[item.ID], clockFor(item), now)
+	// Priced now, from the operator's current [pricing]: changing it re-prices
+	// every story on its next render.
+	pricing := costview.WithPricing(config.LoadPricing())
+	own := costview.Own(item, entriesByStory[item.ID], clockFor(item), now, pricing)
 
 	stories, err := decodeItems(ctx, s, repoKey, "story")
 	if err != nil {
@@ -586,7 +589,7 @@ func mirrorBuildCostVM(ctx context.Context, s *mirror.Store, repoKey string, ite
 	if !hasChildren {
 		return costVMFromStory(own, nil)
 	}
-	fam := costview.Family(item, stories, entriesByStory, clockFor, now)
+	fam := costview.Family(item, stories, entriesByStory, clockFor, now, pricing)
 	return costVMFromStory(own, &fam)
 }
 
@@ -598,6 +601,8 @@ func mirrorBuildCostVM(ctx context.Context, s *mirror.Store, repoKey string, ite
 func costVMFromStory(own costview.Story, fam *costview.FamilyCost) *costVM {
 	splitRows := own.Figures.UsageRows - own.Figures.UnsplitRows
 	vm := &costVM{
+		Cost:           costview.FormatDerived(own.Figures.Derived),
+		Seats:          costview.FormatSeatLines(own.Seats),
 		Band:           costview.FormatCostBand(own.Figures),
 		FreshIn:        costview.FormatSplitTokens(own.Figures.FreshInput, splitRows, own.Figures.UnsplitRows, own.Figures.UsageUnavailableRows),
 		EstFreshIn:     costview.FormatEstimate(own.Estimates, "fresh-input"),
@@ -619,6 +624,7 @@ func costVMFromStory(own costview.Story, fam *costview.FamilyCost) *costVM {
 	if fam == nil {
 		return vm
 	}
+	vm.FamilySeats = costview.FormatSeatLines(fam.Seats)
 	vm.FamilyDriverLine = costview.FormatDriverCoverage(fam.Total)
 	vm.FamilyAdapters = costview.FormatAdapterUsageCoverage(fam.Total)
 	for _, c := range fam.Children {
@@ -633,6 +639,7 @@ func familyRowFromFigures(id string, f costview.Figures) familyRowVM {
 	splitRows := f.UsageRows - f.UnsplitRows
 	return familyRowVM{
 		ID:         id,
+		Cost:       costview.FormatDerived(f.Derived),
 		Band:       costview.FormatCostBand(f),
 		FreshIn:    costview.FormatSplitTokens(f.FreshInput, splitRows, f.UnsplitRows, f.UsageUnavailableRows),
 		Out:        costview.FormatTokensMeasured(f.Output, f.UsageRows, f.UsageUnavailableRows),

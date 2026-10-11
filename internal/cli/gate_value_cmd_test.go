@@ -126,6 +126,21 @@ func TestStoryCostGateValueScopesAndDates(t *testing.T) {
 			t.Errorf("table missing %q:\n%s", want, out)
 		}
 	}
+	// AC8 (sty_6267abb7): both provider-reported dollar columns are labelled
+	// "reported" — every "$" in the header belongs to a REPORTED label.
+	var header string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "SKILL") {
+			header = line
+			break
+		}
+	}
+	if !strings.Contains(header, "REPORTED $/REJECT") {
+		t.Errorf("gate-value header lacks REPORTED $/REJECT: %q", header)
+	}
+	if n, labelled := strings.Count(header, "$"), strings.Count(header, "REPORTED $"); n != 2 || labelled != 2 {
+		t.Errorf("gate-value header has %d dollar columns, %d labelled REPORTED; want 2 and 2: %q", n, labelled, header)
+	}
 
 	// A bad date is a usage error, not an empty report.
 	if out, err := runRoot(t, "story", "cost", "--gate-value", "--since", "not-a-date"); err == nil {
