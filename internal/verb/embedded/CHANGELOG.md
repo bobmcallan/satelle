@@ -1,3 +1,10 @@
+## [0.0.651] - 2026-10-11
+
+### Added
+- **`satelle status` names the hosted server and the hosted project this checkout syncs to.** Two rows follow `web service`: `hosted server` (the machine `[hosted] server`, else https://satelle.dev) and `hosted project` (the explicit `[sync] project` binding, or "not bound", naming the directory-derived slug sync would use and `satelle project bind <slug>`). Read from config alone, with no network call and no sign-in needed. (sty_1c4ad7e2)
+- **`satelle status` names the identity source.** An `identity` row says whether satelle acts through a session token (`SATELLE_TOKEN`), a stored login (`satelle login`), or no hosted identity (local-only). It reads one local credential file and prints no credential, account or fingerprint. (sty_e82d5f49)
+- This completes epic:remote-proof-epic, raised by the remote-Ready proof on a Fly.io Sprite: a remote node can now be checked with `satelle status` alone. (sty_6ffa494a)
+
 ## [0.0.650] - 2026-10-11
 
 ### Added
