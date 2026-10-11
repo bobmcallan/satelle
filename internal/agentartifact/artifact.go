@@ -24,6 +24,10 @@ type Contract struct {
 	Required       bool
 	RequiredFields []string
 	ACCoverage     bool
+	// CriteriaSection names a markdown "## <heading>" section of the artifact
+	// body whose every non-blank line must be a numbered criterion. Empty means
+	// the shape of that section is not checked.
+	CriteriaSection string
 }
 
 // AttemptPolicy is the provider-neutral validate/repair/escalate policy declared
@@ -51,7 +55,8 @@ func (p AttemptPolicy) Active() bool {
 
 // Active reports whether the skill opted into structured artifact handling.
 func (c Contract) Active() bool {
-	return c.Name != "" || c.Type != "" || c.Required || len(c.RequiredFields) > 0 || c.ACCoverage
+	return c.Name != "" || c.Type != "" || c.Required || len(c.RequiredFields) > 0 || c.ACCoverage ||
+		c.CriteriaSection != ""
 }
 
 // Artifact is the canonical final-response envelope payload.
@@ -93,6 +98,7 @@ func ParseContract(skillBody string) (Contract, error) {
 			return Contract{}, fmt.Errorf("output_ac_coverage: expected true or false, got %q", raw)
 		}
 	}
+	c.CriteriaSection = get("output_criteria_section")
 	if !c.Active() {
 		return Contract{}, nil
 	}
@@ -266,7 +272,55 @@ func ValidateAll(a Artifact, c Contract, acceptanceCriteria string) (Artifact, [
 			}
 		}
 	}
+	if c.CriteriaSection != "" {
+		findings = append(findings, criteriaSectionFindings(a.Body, c.CriteriaSection)...)
+	}
 	return a, findings
+}
+
+// criteriaSectionFindings names every non-blank line of the body's
+// "## <heading>" section that is not a numbered criterion. The heading is
+// matched exactly and case-sensitively (trailing blanks allowed), and the
+// section runs to the next "## " line or the end of the body — the same rule the
+// authored definition check applies, so both agree on which text is the
+// section. A body without the section yields no findings. A line counts as a
+// criterion only when numberedCriterion matches it at offset 0 and the line does
+// not start with whitespace, so tool line-number prefixes ("30|3. x"),
+// indentation, bullets and prose are refused.
+func criteriaSectionFindings(body, heading string) []string {
+	var findings []string
+	inSection := false
+	n := 0
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if strings.HasPrefix(line, "## ") {
+			inSection = strings.TrimRight(line, " \t") == "## "+heading
+			n = 0
+			continue
+		}
+		if !inSection {
+			continue
+		}
+		n++
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		loc := numberedCriterion.FindStringIndex(line)
+		if loc != nil && loc[0] == 0 && strings.TrimLeft(line, " \t") == line {
+			continue
+		}
+		findings = append(findings, fmt.Sprintf("artifact.body: %q line %d is not a numbered criterion: %q",
+			"## "+heading, n, truncateRunes(line, 80)))
+	}
+	return findings
+}
+
+func truncateRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
 }
 
 func contains(values []string, want string) bool {
