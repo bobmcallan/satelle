@@ -5,70 +5,50 @@
 // isolation (sty_9ded2605), audit (sty_9ed88e1e) and warm-resume
 // (sty_91d44f06) stories load it through Dir and Load rather than inventing
 // another set.
+//
+// The case model, the loader and the verdict classification are owned by
+// internal/reviewscore (sty_29741ad6), which also scores a reviewer binding over
+// this corpus; this package re-exports them so its consumers keep one import and
+// the fixture stays the only thing that lives under tests/.
 package reviewcorpus
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
+
+	"github.com/bobmcallan/satelle/internal/reviewscore"
 )
 
 // Label states whether a case demonstrates a known reviewer defect (an
 // expected reject) or a known-valid change (an expected accept).
-type Label string
+type Label = reviewscore.Label
 
 const (
-	LabelDefect Label = "defect"
-	LabelValid  Label = "valid"
+	LabelDefect = reviewscore.LabelDefect
+	LabelValid  = reviewscore.LabelValid
 )
 
 // Verdict is the reviewer decision a case expects.
-type Verdict string
+type Verdict = reviewscore.Verdict
 
 const (
-	VerdictReject Verdict = "reject"
-	VerdictAccept Verdict = "accept"
+	VerdictReject = reviewscore.VerdictReject
+	VerdictAccept = reviewscore.VerdictAccept
 )
 
 // SourceKind names where a defect case's cited note comes from.
-type SourceKind string
+type SourceKind = reviewscore.SourceKind
 
 const (
-	SourceLedgerReviewNote SourceKind = "ledger_review_note"
-	SourceCapturedNote     SourceKind = "captured_note"
+	SourceLedgerReviewNote = reviewscore.SourceLedgerReviewNote
+	SourceCapturedNote     = reviewscore.SourceCapturedNote
 )
 
-// Source cites the recorded evidence a defect case's expected reject comes
-// from (AC2): a real story id, the skill that rejected it, and the note text
-// itself, so the case is traceable rather than asserted.
-type Source struct {
-	Kind     SourceKind `json:"kind"`
-	StoryID  string     `json:"story_id"`
-	Skill    string     `json:"skill"`
-	LedgerID string     `json:"ledger_id,omitempty"`
-	Note     string     `json:"note"`
-}
+// Source cites the recorded evidence a defect case's expected reject comes from.
+type Source = reviewscore.Source
 
-// Case is one frozen corpus entry: a rubric, a label, the diff under review
-// and, for a defect, the recorded note its expected reject cites.
-type Case struct {
-	ID              string  `json:"id"`
-	Rubric          string  `json:"rubric"`
-	Skill           string  `json:"skill"`
-	Label           Label   `json:"label"`
-	StoryID         string  `json:"story_id"`
-	ExpectedVerdict Verdict `json:"expected_verdict"`
-	Source          *Source `json:"source,omitempty"`
-	Summary         string  `json:"summary"`
-
-	// Dir and Diff are populated by Load, not decoded from case.json.
-	Dir  string `json:"-"`
-	Diff string `json:"-"`
-}
+// Case is one frozen corpus entry (see reviewscore.Case).
+type Case = reviewscore.Case
 
 // Rubrics is the fixed set of proof rubrics the corpus must cover (AC3): a
 // const list, not derived from the data on disk, so a missing rubric
@@ -85,60 +65,4 @@ func Dir() string {
 
 // Load reads every case directory under root (see Dir), sorted by rubric
 // then case id.
-func Load(root string) ([]Case, error) {
-	rubricEntries, err := os.ReadDir(root)
-	if err != nil {
-		return nil, fmt.Errorf("read corpus root %s: %w", root, err)
-	}
-	var cases []Case
-	for _, re := range rubricEntries {
-		if !re.IsDir() {
-			continue
-		}
-		rubricDir := filepath.Join(root, re.Name())
-		caseEntries, err := os.ReadDir(rubricDir)
-		if err != nil {
-			return nil, fmt.Errorf("read rubric dir %s: %w", rubricDir, err)
-		}
-		for _, ce := range caseEntries {
-			if !ce.IsDir() {
-				continue
-			}
-			c, err := loadCase(filepath.Join(rubricDir, ce.Name()))
-			if err != nil {
-				return nil, err
-			}
-			cases = append(cases, c)
-		}
-	}
-	sort.Slice(cases, func(i, j int) bool {
-		if cases[i].Rubric != cases[j].Rubric {
-			return cases[i].Rubric < cases[j].Rubric
-		}
-		return cases[i].ID < cases[j].ID
-	})
-	return cases, nil
-}
-
-// loadCase decodes one case.json with unknown fields rejected, so a typo in
-// the corpus fails loudly instead of silently dropping a field, and pairs it
-// with its frozen change.diff.
-func loadCase(dir string) (Case, error) {
-	raw, err := os.ReadFile(filepath.Join(dir, "case.json"))
-	if err != nil {
-		return Case{}, fmt.Errorf("read %s/case.json: %w", dir, err)
-	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	var c Case
-	if err := dec.Decode(&c); err != nil {
-		return Case{}, fmt.Errorf("decode %s/case.json: %w", dir, err)
-	}
-	diff, err := os.ReadFile(filepath.Join(dir, "change.diff"))
-	if err != nil {
-		return Case{}, fmt.Errorf("read %s/change.diff: %w", dir, err)
-	}
-	c.Dir = dir
-	c.Diff = string(diff)
-	return c, nil
-}
+func Load(root string) ([]Case, error) { return reviewscore.Load(root) }

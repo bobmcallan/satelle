@@ -12,9 +12,9 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/reviewscore"
 	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/wfdot"
-	"github.com/bobmcallan/satelle/internal/workitem"
 	"github.com/bobmcallan/satelle/tests/reviewcorpus"
 )
 
@@ -253,82 +253,20 @@ func parityEdges(t *testing.T, root string, docs *liveDocs) []reviewcorpus.Edge 
 // verdict for the case's OWN rubric ("" when the run produced none).
 func liveJudge(t *testing.T, root string, docs *liveDocs, binding string, e reviewcorpus.Edge, c reviewcorpus.Case, mode reviewcorpus.Mode) reviewcorpus.Verdict {
 	t.Helper()
-	reviewers, extra := c.Skill, ""
+	j, err := NewCaseJudge(CaseJudgeOptions{Root: root, Binding: binding, Docs: docs})
+	if err != nil {
+		t.Errorf("%v", err)
+		return ""
+	}
+	var res reviewscore.JudgeResult
 	if mode == reviewcorpus.ModeBundled {
-		reviewers, extra = strings.Join(e.Skills, ","), "bundle = true"
+		res, err = j.JudgeBundled(context.Background(), c, e.Skills)
+	} else {
+		res, err = j.Judge(context.Background(), c)
 	}
-	wf := spineWF("", "", "", "in_progress|executor||"+reviewers+"|"+binding+"||"+extra, "done")
-	fd := fakeDocs{workflow: wf}
-	g := New(nil, liveMerged{fd, docs}, root, "")
-	agents, err := config.LoadEffectiveAgents(filepath.Join(root, config.DefaultDataDir), nil)
 	if err != nil {
-		t.Errorf("load agents.toml: %v", err)
+		t.Logf("%s %s %s: %v", c.ID, c.Skill, mode, err)
 		return ""
 	}
-	eff := func(name string) (config.AgentBinding, bool) {
-		b, ok := agents.Agents.RawBinding(name)
-		if !ok {
-			return config.AgentBinding{}, false
-		}
-		return agents.Agents.EffectiveBinding(b, config.UseOneShot), true
-	}
-	b, ok := eff(binding)
-	if !ok {
-		t.Errorf("no [%s] binding in agents.toml", binding)
-		return ""
-	}
-	runner, err := lookupRunner(b.ResolvedInterface(), b.CommandTemplate())
-	if err != nil {
-		t.Errorf("runner for [%s]: %v", binding, err)
-		return ""
-	}
-	g.SetRunner(runner)
-	g.SetReviewerBinding(b)
-	g.SetNamedAgents(eff)
-	if c, err := os.ReadFile(filepath.Join(root, config.DefaultDataDir, "constitution.md")); err == nil {
-		g.SetConstitution(string(c))
-	}
-	diff := c.Diff
-	g.SetDiffResolver(func(context.Context, string) *DiffState {
-		return &DiffState{Patch: diff, Source: "reviewcorpus " + c.ID}
-	})
-	item := workitem.Item{
-		ID: c.StoryID, Kind: workitem.KindStory, Status: "backlog", Category: "feature",
-		Title: c.ID, Body: c.Summary,
-	}
-	dec, gerr := g.Gate(context.Background(), item, "in_progress")
-	if gerr != nil {
-		t.Logf("%s %s %s: gate error: %v", c.ID, c.Skill, mode, gerr)
-		return ""
-	}
-	for _, rv := range dec.Reviewers {
-		if rv.Skill == c.Skill {
-			if rv.Accept {
-				return reviewcorpus.VerdictAccept
-			}
-			return reviewcorpus.VerdictReject
-		}
-	}
-	return ""
-}
-
-// liveMerged answers workflows from the synthesised fixture and skills/principles
-// from the repo's substrate.
-type liveMerged struct {
-	wf   fakeDocs
-	live *liveDocs
-}
-
-func (m liveMerged) Get(ctx context.Context, kind, name string) (docindex.Doc, error) {
-	if kind == "workflows" {
-		return m.wf.Get(ctx, kind, name)
-	}
-	return m.live.Get(ctx, kind, name)
-}
-
-func (m liveMerged) List(ctx context.Context, kind string) ([]docindex.Doc, error) {
-	if kind == "workflows" {
-		return m.wf.List(ctx, kind)
-	}
-	return m.live.List(ctx, kind)
+	return res.Verdict
 }

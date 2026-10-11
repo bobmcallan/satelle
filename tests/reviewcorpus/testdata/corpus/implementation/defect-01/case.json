@@ -5,6 +5,7 @@
   "label": "defect",
   "story_id": "sty_8eae81ac",
   "expected_verdict": "reject",
+  "defect_markers": ["actual-usd", "recordActual"],
   "source": {
     "kind": "ledger_review_note",
     "story_id": "sty_8eae81ac",

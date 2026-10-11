@@ -2,8 +2,9 @@ package reviewcorpus
 
 import (
 	"fmt"
-	"sort"
 	"strings"
+
+	"github.com/bobmcallan/satelle/internal/reviewscore"
 )
 
 // Parity is how bundled reviewer gates (sty_23e10d92) are compared with separate
@@ -12,19 +13,23 @@ import (
 // rejected a known-valid change to make up the number. The unit of comparison is
 // a known case, judged the same fixed number of times in each mode.
 //
+// The verdict classification (MissedDefect, FalseRejection, Pair, Summarise) is
+// owned by internal/reviewscore and re-exported below; this file decides when a
+// bundle may be turned on from it.
+//
 // This file is pure — it classifies verdicts a live run collected and decides
 // nothing about a workflow; a workflow's `bundle` key is authored by hand from
 // the outcome (the embedded default turns bundling on only where ParityVerdict
 // says so, and stays opt-in otherwise).
 
 // Mode is how a rubric was judged.
-type Mode string
+type Mode = reviewscore.Mode
 
 const (
 	// ModeSeparate is the rubric in its own reviewer session, as today.
-	ModeSeparate Mode = "separate"
+	ModeSeparate = reviewscore.ModeSeparate
 	// ModeBundled is the rubric as one section of a bundled session.
-	ModeBundled Mode = "bundled"
+	ModeBundled = reviewscore.ModeBundled
 )
 
 // ParityRuns is the fixed number of times every case is judged in each mode. It
@@ -32,156 +37,27 @@ const (
 // comparison one.
 const ParityRuns = 3
 
-// Result is ONE judgement of one case in one mode. Verdict is empty when the run
-// produced none for the case's own rubric (a missing verdict is not an accept).
-type Result struct {
-	CaseID   string
-	Rubric   string
-	Skill    string
-	Label    Label
-	Expected Verdict
-	Mode     Mode
-	Run      int // 1..ParityRuns
-	Verdict  Verdict
-}
+// Result is ONE judgement of one case in one mode.
+type Result = reviewscore.Result
+
+// Row is one case's run, both modes side by side, with every flag derived.
+type Row = reviewscore.Row
+
+// CaseSummary is one case across its runs.
+type CaseSummary = reviewscore.CaseSummary
 
 // MissedDefect is true when a case expected to be rejected was not: an accept,
 // or no verdict at all. Silence never counts as catching a defect.
-func MissedDefect(expected, got Verdict) bool {
-	return expected == VerdictReject && got != VerdictReject
-}
+func MissedDefect(expected, got Verdict) bool { return reviewscore.MissedDefect(expected, got) }
 
 // FalseRejection is true when a known-valid case was rejected.
-func FalseRejection(expected, got Verdict) bool {
-	return expected == VerdictAccept && got == VerdictReject
-}
-
-// Row is one case's run, both modes side by side, with every flag derived.
-type Row struct {
-	CaseID   string
-	Rubric   string
-	Skill    string
-	Label    Label
-	Expected Verdict
-	Run      int
-	Separate Verdict
-	Bundled  Verdict
-
-	SeparateMissedDefect   bool
-	BundledMissedDefect    bool
-	SeparateFalseRejection bool
-	BundledFalseRejection  bool
-}
+func FalseRejection(expected, got Verdict) bool { return reviewscore.FalseRejection(expected, got) }
 
 // Pair folds results into rows, one per case × run, ordered by rubric, case, run.
-// A case-run judged in only one mode still yields a row: the absent mode's
-// verdict is empty, which the parity rules read as a missed run, never a pass.
-func Pair(results []Result) []Row {
-	type key struct {
-		caseID string
-		run    int
-	}
-	rows := map[key]*Row{}
-	var order []key
-	for _, r := range results {
-		k := key{r.CaseID, r.Run}
-		row, ok := rows[k]
-		if !ok {
-			row = &Row{CaseID: r.CaseID, Rubric: r.Rubric, Skill: r.Skill, Label: r.Label, Expected: r.Expected, Run: r.Run}
-			rows[k] = row
-			order = append(order, k)
-		}
-		switch r.Mode {
-		case ModeSeparate:
-			row.Separate = r.Verdict
-		case ModeBundled:
-			row.Bundled = r.Verdict
-		}
-	}
-	out := make([]Row, 0, len(order))
-	for _, k := range order {
-		r := *rows[k]
-		r.SeparateMissedDefect = MissedDefect(r.Expected, r.Separate)
-		r.BundledMissedDefect = MissedDefect(r.Expected, r.Bundled)
-		r.SeparateFalseRejection = FalseRejection(r.Expected, r.Separate)
-		r.BundledFalseRejection = FalseRejection(r.Expected, r.Bundled)
-		out = append(out, r)
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Rubric != out[j].Rubric {
-			return out[i].Rubric < out[j].Rubric
-		}
-		if out[i].CaseID != out[j].CaseID {
-			return out[i].CaseID < out[j].CaseID
-		}
-		return out[i].Run < out[j].Run
-	})
-	return out
-}
-
-// CaseSummary is one case across its runs.
-type CaseSummary struct {
-	CaseID   string
-	Rubric   string
-	Skill    string
-	Label    Label
-	Expected Verdict
-	Runs     int
-
-	// Caught/rejected counts per mode: a defect is CAUGHT on a run that rejects
-	// it; a valid case is FALSELY REJECTED on a run that rejects it.
-	SeparateCaught, BundledCaught     int
-	SeparateFalseRej, BundledFalseRej int
-
-	// RegressedDefect is how many runs the bundle caught fewer of than the
-	// separate sessions did — the defect the bundle misses that separate sessions
-	// caught. AddedFalseRejection is how many more false rejections the bundle
-	// made than the separate sessions did. Both are zero for a case the bundle
-	// judges at least as well.
-	RegressedDefect     int
-	AddedFalseRejection int
-}
+func Pair(results []Result) []Row { return reviewscore.Pair(results) }
 
 // Summarise reduces rows to one summary per case.
-func Summarise(rows []Row) []CaseSummary {
-	byCase := map[string]*CaseSummary{}
-	var order []string
-	for _, r := range rows {
-		s, ok := byCase[r.CaseID]
-		if !ok {
-			s = &CaseSummary{CaseID: r.CaseID, Rubric: r.Rubric, Skill: r.Skill, Label: r.Label, Expected: r.Expected}
-			byCase[r.CaseID] = s
-			order = append(order, r.CaseID)
-		}
-		s.Runs++
-		if r.Expected == VerdictReject {
-			if !r.SeparateMissedDefect {
-				s.SeparateCaught++
-			}
-			if !r.BundledMissedDefect {
-				s.BundledCaught++
-			}
-		}
-		if r.SeparateFalseRejection {
-			s.SeparateFalseRej++
-		}
-		if r.BundledFalseRejection {
-			s.BundledFalseRej++
-		}
-	}
-	out := make([]CaseSummary, 0, len(order))
-	for _, id := range order {
-		s := *byCase[id]
-		if s.SeparateCaught > s.BundledCaught {
-			s.RegressedDefect = s.SeparateCaught - s.BundledCaught
-		}
-		if s.BundledFalseRej > s.SeparateFalseRej {
-			s.AddedFalseRejection = s.BundledFalseRej - s.SeparateFalseRej
-		}
-		out = append(out, s)
-	}
-	return out
-}
+func Summarise(rows []Row) []CaseSummary { return reviewscore.Summarise(rows) }
 
 // ParityCorpusRoot is where a parity run reads its cases from: this package's
 // own frozen corpus, and nowhere else. The parity story creates no second set,

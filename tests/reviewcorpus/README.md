@@ -30,6 +30,7 @@ expected `reject`) and one `valid` case (an expected `accept`).
   "label": "defect|valid",
   "story_id": "sty_...",
   "expected_verdict": "reject|accept",
+  "defect_markers": ["optional phrase a reviewer's notes cite when it names the defect"],
   "source": {
     "kind": "ledger_review_note|captured_note",
     "story_id": "sty_...",
@@ -40,6 +41,10 @@ expected `reject`) and one `valid` case (an expected `accept`).
   "summary": "..."
 }
 ```
+
+`defect_markers` is optional: `satelle review score` counts a rejected defect
+case as a finding match when the reviewer's notes contain one of them
+(case-insensitive), and reports the case as unscored when there are none.
 
 `source` is required on every `defect` case (AC2) and cites a real
 `satelle ledger list` row: the story it was rejected on, the skill that

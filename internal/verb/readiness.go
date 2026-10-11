@@ -120,6 +120,10 @@ type DefinitionEdit struct {
 	At    string `json:"at,omitempty"`
 }
 
+// DefinitionEditsFrom enumerates the definition edits among a story's ledger
+// rows, oldest first, so a replay can rebuild what a gate injected from rows alone.
+func DefinitionEditsFrom(entries []ledger.Entry) []DefinitionEdit { return editsFrom(entries) }
+
 func editsFrom(entries []ledger.Entry) []DefinitionEdit {
 	var out []DefinitionEdit
 	for _, e := range entries {

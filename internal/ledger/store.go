@@ -285,6 +285,10 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]Entry, error) {
 	add("story_id", f.StoryID)
 	add("project_id", f.ProjectID)
 	add("kind", f.Kind)
+	if strings.TrimSpace(f.AfterID) != "" {
+		conds = append(conds, "(created_at, id) > (SELECT created_at, id FROM evidence WHERE id = ?)")
+		args = append(args, f.AfterID)
+	}
 
 	q := `SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at FROM evidence`
 	if len(conds) > 0 {

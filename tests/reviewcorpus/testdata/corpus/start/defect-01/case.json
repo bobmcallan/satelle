@@ -5,6 +5,7 @@
   "label": "defect",
   "story_id": "sty_81caa41b",
   "expected_verdict": "reject",
+  "defect_markers": ["killed", "SweepLateDriverUsage"],
   "source": {
     "kind": "ledger_review_note",
     "story_id": "sty_81caa41b",

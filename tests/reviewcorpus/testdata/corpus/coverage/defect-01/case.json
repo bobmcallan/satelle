@@ -5,6 +5,7 @@
   "label": "defect",
   "story_id": "sty_7567f047",
   "expected_verdict": "reject",
+  "defect_markers": ["relayDenyReason"],
   "source": {
     "kind": "ledger_review_note",
     "story_id": "sty_7567f047",

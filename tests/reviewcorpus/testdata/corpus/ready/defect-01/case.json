@@ -5,6 +5,7 @@
   "label": "defect",
   "story_id": "sty_d1e20725",
   "expected_verdict": "reject",
+  "defect_markers": ["capability table", "order:N"],
   "source": {
     "kind": "ledger_review_note",
     "story_id": "sty_d1e20725",

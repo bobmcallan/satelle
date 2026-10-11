@@ -51,6 +51,13 @@ func PriorVerdicts(ctx context.Context, itemID, from, to string) ([]PriorVerdict
 	if err != nil {
 		return nil, err
 	}
+	return PriorVerdictsFrom(entries, from, to), nil
+}
+
+// PriorVerdictsFrom is the enumeration PriorVerdicts runs over a story's ledger
+// rows, oldest first. It is exported so a replay can rebuild what a gate injected
+// from rows alone.
+func PriorVerdictsFrom(entries []ledger.Entry, from, to string) []PriorVerdict {
 	var out []PriorVerdict
 	for _, e := range entries {
 		var decision string
@@ -78,5 +85,5 @@ func PriorVerdicts(ctx context.Context, itemID, from, to string) ([]PriorVerdict
 			ReviewedTruncated: row.ReviewedTruncated,
 		})
 	}
-	return out, nil
+	return out
 }

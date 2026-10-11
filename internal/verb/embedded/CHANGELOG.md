@@ -1,3 +1,13 @@
+## [0.0.643] - 2026-10-11
+
+### Added
+- **`satelle review score`, `capture` and `compare` measure a reviewer's quality, not its rejection count.** `review score --binding <name> --corpus <dir> [--replay <dir>]` runs a reviewer binding through the same isolated path a real gate uses over cases whose right verdict is known, and reports per rubric and in total: recall (defects rejected), false blockers (valid cases rejected), escapes (defects accepted), whether its notes cite the known defect, wall time, and tokens and cost — or the adapter's named reason when a CLI reports none. `review capture <story> --ledger <evt> --expect accept|reject` turns a recorded gate row into a replay case (reconstructed from the ledger, which keeps only the payload size). `review compare` sets two reports side by side and refuses reports scored over different cases. The frozen review corpus now lives in `internal/reviewscore`, with `tests/reviewcorpus` re-exporting it. (sty_29741ad6)
+
+## [serve-v0.0.148] - 2026-10-11
+
+### Changed
+- The serve binary carries the shared review-corpus model and the ledger replay readers. (sty_29741ad6)
+
 ## [0.0.642] - 2026-10-10
 
 ### Added

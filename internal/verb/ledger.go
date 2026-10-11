@@ -63,6 +63,7 @@ type ledgerListReq struct {
 	ProjectID string `json:"project_id,omitempty"`
 	Kind      string `json:"kind,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
+	AfterID   string `json:"after_id,omitempty"`
 }
 
 func ledgerList(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
@@ -79,6 +80,7 @@ func ledgerList(ctx context.Context, raw json.RawMessage) (json.RawMessage, erro
 		ProjectID: req.ProjectID,
 		Kind:      req.Kind,
 		Limit:     req.Limit,
+		AfterID:   req.AfterID,
 	})
 	if err != nil {
 		return nil, err
