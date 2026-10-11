@@ -546,8 +546,54 @@ func TestGrantsContextChannel(t *testing.T) {
 		{`"Read","Grep"`, false},
 	}
 	for _, tc := range cases {
-		if got := GrantsContextChannel(tc.tools); got != tc.want {
+		if got := GrantsContextChannel("", tc.tools); got != tc.want {
 			t.Errorf("GrantsContextChannel(%q) = %v, want %v", tc.tools, got, tc.want)
+		}
+	}
+}
+
+// The disk-read tool that gives a dispatched agent a context channel is the
+// adapter's own (sty_58a9bdc8): pi's is `read`, which is not a channel on another
+// adapter, and `read_file` is not one on pi.
+func TestGrantsContextChannelIsAdapterAware(t *testing.T) {
+	for _, tc := range []struct {
+		adapter, tools string
+		want           bool
+	}{
+		{"pi", "read", true},
+		{"pi", "read,grep,find,ls", true},
+		{"pi", `"read"`, true},
+		{"pi", "grep,find,ls", false},
+		{"pi", "read_file", false},
+		{"pi", "Bash(satelle:*)", true},
+		{"claude", "read", false},
+		{"claude", "Read", false},
+		{"grok", "read", false},
+		{"grok", "read_file", true},
+		{"unknown", "read", false},
+	} {
+		if got := GrantsContextChannel(tc.adapter, tc.tools); got != tc.want {
+			t.Errorf("GrantsContextChannel(%q, %q) = %v, want %v", tc.adapter, tc.tools, got, tc.want)
+		}
+	}
+}
+
+// BindingGrantsContextChannel classifies the adapter from the binding's own command.
+func TestBindingGrantsContextChannel(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		b    AgentBinding
+		want bool
+	}{
+		{"pi with read", AgentBinding{Command: "pi -p {system}", Tools: "read,grep"}, true},
+		{"pi path with read", AgentBinding{Command: "/usr/bin/pi -p {system}", Tools: "read"}, true},
+		{"pi without read", AgentBinding{Command: "pi -p {system}", Tools: "grep,find"}, false},
+		{"pi with --model naming grok", AgentBinding{Command: "pi -p --model openrouter/x-ai/grok-4 {system}", Tools: "read"}, true},
+		{"claude with read", AgentBinding{Command: "claude -p {system}", Tools: "read"}, false},
+		{"grok with read_file", AgentBinding{Command: "grok -p {system}", Tools: "read_file"}, true},
+	} {
+		if got := BindingGrantsContextChannel(tc.b); got != tc.want {
+			t.Errorf("%s: BindingGrantsContextChannel = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }

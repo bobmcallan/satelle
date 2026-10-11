@@ -1999,10 +1999,10 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	// context channel the agent is silently context-starved. Refuse the dispatch
 	// with an actionable fix rather than run a blind agent — the no-silent-fallback
 	// style the engine uses for a missing binding.
-	if config.NeedsContextChannel(binding) && !config.GrantsContextChannel(binding.Tools) {
+	if config.NeedsContextChannel(binding) && !config.BindingGrantsContextChannel(binding) {
 		return verb.DispatchResult{}, fmt.Errorf(
-			"named agent %q cannot perform step %q: its .satelle/workflows/agents.toml [%s] tools grant has no context channel (add `Bash(satelle:*)` for the satelle CLI, or `read_file` for disk reads under ~/.satelle/<repo-key>/stories/<id>/)",
-			dispatchAgent, toStatus, dispatchAgent)
+			"named agent %q cannot perform step %q: its .satelle/workflows/agents.toml [%s] tools grant has no context channel (add `Bash(satelle:*)` for the satelle CLI, or %s under ~/.satelle/<repo-key>/stories/<id>/)",
+			dispatchAgent, toStatus, dispatchAgent, agentcli.ContextChannelHint(agentcli.AdapterName(binding.CommandTemplate())))
 	}
 	// Composed rubrics: spine skill first, then matching augmentations in order
 	// (sty_8225d8a5). Absent skills stay advisory here — the engagement guard
@@ -2215,9 +2215,10 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item, spec verb.R
 	if runner == nil {
 		return verb.DispatchResult{}, fmt.Errorf("%s agent harness is in-loop; set a real harness to dispatch it", retrospectAgent)
 	}
-	if !config.GrantsContextChannel(binding.Tools) {
+	if !config.BindingGrantsContextChannel(binding) {
 		return verb.DispatchResult{}, fmt.Errorf(
-			"[%s] tools grant has no context channel (add `Bash(satelle:*)` for the satelle CLI, or `read_file` for disk reads) — it needs a channel to pull the story and file proposal stories", retrospectAgent)
+			"[%s] tools grant has no context channel (add `Bash(satelle:*)` for the satelle CLI, or %s) — it needs a channel to pull the story and file proposal stories",
+			retrospectAgent, agentcli.ContextChannelHint(agentcli.AdapterName(binding.CommandTemplate())))
 	}
 	rubric := ""
 	if body, rerr := g.skillBody(ctx, retrospectSkill); rerr == nil {
@@ -2535,6 +2536,9 @@ func (t *liveUsageTracker) wrap(next agentcli.EventHandler) agentcli.EventHandle
 			t.mu.Lock()
 			t.turns++
 			u := ev.Usage
+			if u.Adapter != "" {
+				t.usage.Adapter = u.Adapter
+			}
 			t.usage.Available = t.usage.Available || u.Available
 			t.usage.InputTokens += u.InputTokens
 			t.usage.OutputTokens += u.OutputTokens
@@ -2721,7 +2725,7 @@ func (g *Engine) setDecisionUsage(d *verb.GateDecision, u agentcli.UsageResult, 
 // An unavailable usage with no adapter reason (a path that bypassed
 // runOnceBusy) still records a reason — never a bare unexplained false.
 func usageNote(u agentcli.UsageResult) verb.UsageNote {
-	n := verb.UsageNote{CacheSplitUnavailable: !u.CacheSplitAvailable}
+	n := verb.UsageNote{Adapter: u.Adapter, CacheSplitUnavailable: !u.CacheSplitAvailable}
 	if !u.Available {
 		n.UsageUnavailableReason = u.UnavailableReason
 		if n.UsageUnavailableReason == "" {
@@ -2734,6 +2738,9 @@ func usageNote(u agentcli.UsageResult) verb.UsageNote {
 // addUsageNote stamps usageNote's fields onto a map-shaped ledger row.
 func addUsageNote(data map[string]any, u agentcli.UsageResult) {
 	n := usageNote(u)
+	if n.Adapter != "" {
+		data["adapter"] = n.Adapter
+	}
 	if n.UsageUnavailableReason != "" {
 		data["usage_unavailable_reason"] = n.UsageUnavailableReason
 	}

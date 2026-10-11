@@ -68,7 +68,13 @@ func (s streamRunner) RunUsage(ctx context.Context, req Request) ([]byte, UsageR
 	if err != nil {
 		return nil, UsageResult{}, err
 	}
-	return runOneShotUsage(ctx, sess, req)
+	out, usage, err := runOneShotUsage(ctx, sess, req)
+	if adapterOf(s.binary, s.args) == HarnessPi {
+		// satelle reads no pi stream protocol: never a silent zero.
+		usage = piTransportUnsupported(InterfaceStream)
+	}
+	usage.stampAdapter(adapterOf(s.binary, s.args))
+	return out, usage, err
 }
 
 type streamSession struct {

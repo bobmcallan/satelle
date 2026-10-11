@@ -37,6 +37,8 @@ const (
 var toolClassByName = map[string]ToolClass{
 	// claude
 	"read": ClassRead, "grep": ClassRead, "glob": ClassRead, "ls": ClassRead, "notebookread": ClassRead,
+	// find is pi's file search (a built-in beside read, grep, ls); it only reads.
+	"find":  ClassRead,
 	"write": ClassWrite, "edit": ClassEdit, "multiedit": ClassEdit, "notebookedit": ClassEdit,
 	"bash": ClassShell, "bashoutput": ClassShell, "killshell": ClassShell,
 	"task": ClassSubprocess, "agent": ClassSubprocess,
@@ -320,16 +322,24 @@ func AdapterName(command string) string {
 }
 
 // adapterOf names the provider behind a spawn from its binary and argv:
-// HarnessClaude, HarnessGrok, HarnessCursor or HarnessUnknown. Nothing
+// HarnessClaude, HarnessGrok, HarnessPi, HarnessCursor or HarnessUnknown. Nothing
 // unrecognised is assumed to be Claude ([[satelle-agent-agnostic]] §3). cursor
-// is the executable named exactly cursor-agent (or cursor-agent-*), decided on the
-// binary alone and first: a cursor spawn routinely carries `--model grok-…` or
-// `claude-…`, which must not read as another provider.
+// is the executable named exactly cursor-agent (or cursor-agent-*), and pi the
+// executable named exactly pi (or pi-*, which excludes pip and the like); both are
+// decided on the binary alone and first: a cursor or pi spawn routinely carries
+// `--model grok-…` or `claude-…`, which must not read as another provider.
+//
+// This is the one classifier: HarnessOf delegates to it. sty_f141c77f kept pi
+// HarnessUnknown here so the no-trim gap and the operator-attested path would not
+// turn silent; sty_58a9bdc8 reverses that on purpose, because preflight now reports
+// pi's own gap (piPreflight) instead of the unknown-adapter one.
 func adapterOf(binary string, args []string) string {
 	base := strings.ToLower(filepath.Base(binary))
 	switch {
 	case base == "cursor-agent" || strings.HasPrefix(base, "cursor-agent-"):
 		return HarnessCursor
+	case base == "pi" || strings.HasPrefix(base, "pi-"):
+		return HarnessPi
 	case strings.Contains(base, "claude"):
 		return HarnessClaude
 	case strings.Contains(base, "grok"):
@@ -554,6 +564,9 @@ func preflight(iface, binary string, args []string, grant string) []IsolationGap
 		// forced ask mode is the ceiling (cursor_seat.go).
 		return cursorPreflight(iface, args)
 	}
+	if adapter == HarnessPi {
+		return piPreflight(iface, label, args, grant)
+	}
 	skips := skipsPermission(adapter, args)
 	if iface == InterfaceACP {
 		if adapter == HarnessGrok {
@@ -586,14 +599,7 @@ func preflight(iface, binary string, args []string, grant string) []IsolationGap
 		}
 	}
 	if listed && strings.TrimSpace(list) != "{tools}" {
-		admits := admitsFromGrant(grant, adapter == HarnessClaude)
-		var badNames []string
-		for _, n := range toolList(list) {
-			if !admits.allows(ClassifyTool(n), n) {
-				badNames = append(badNames, n)
-			}
-		}
-		if len(badNames) > 0 {
+		if badNames := unadmittedTools(toolList(list), admitsFromGrant(grant, adapter == HarnessClaude)); len(badNames) > 0 {
 			return gap(fmt.Sprintf("tools not held to the grant (--tools offers %s, which the grant %q does not admit)", strings.Join(badNames, ","), grant),
 				"narrow --tools to the grant")
 		}
@@ -621,6 +627,19 @@ func preflight(iface, binary string, args []string, grant string) []IsolationGap
 			"add --tools <read-only grok tools> so only the grant is offered")
 	}
 	return nil
+}
+
+// unadmittedTools returns the names in tools the grant does not admit: the one
+// loop preflight's --tools branch and the pi restriction both judge a harness's
+// offered set by.
+func unadmittedTools(tools []string, admits grantAdmits) []string {
+	var bad []string
+	for _, n := range tools {
+		if !admits.allows(ClassifyTool(n), n) {
+			bad = append(bad, n)
+		}
+	}
+	return bad
 }
 
 // scopedOnlyOffered returns the offered tool names the grant only SCOPES: a tool
@@ -745,6 +764,18 @@ func DescribeReviewer(r Runner, req Request) ReviewerIsolation {
 			iso.OfferedSource = grokACPOfferedUnavailable
 			iso.Limitation = grokACPLimitation
 		}
+		return iso
+	}
+	if adapter == HarnessPi {
+		// pi is trimmed by --tools or --exclude-tools; piEffectiveTools is the one
+		// owner of what that leaves.
+		tools, restricted := piEffectiveTools(args)
+		if !restricted {
+			iso.OfferedSource = "unavailable: pi command binding carries no tool restriction"
+			return iso
+		}
+		iso.OfferedTools = append([]string{}, tools...)
+		iso.OfferedSource = OfferedSourceFlag
 		return iso
 	}
 	if v, ok := flagValue(args, "--tools"); ok {

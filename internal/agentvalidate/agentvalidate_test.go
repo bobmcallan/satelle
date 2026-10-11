@@ -869,6 +869,35 @@ func TestValidate_ContextChannelFindings(t *testing.T) {
 	}
 }
 
+// A dispatched pi performer's context channel is pi's own read tool (sty_58a9bdc8):
+// `read` passes, no read-capable grant still fails, and the finding names `read`
+// rather than the grok-native read_file. `read` on another adapter is no channel.
+func TestValidate_PiContextChannel(t *testing.T) {
+	run := func(command, tools string) Report {
+		agents := config.AgentsConfig{
+			Executor: config.AgentBinding{Command: "in-loop"},
+			Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
+			Agents:   map[string]config.AgentBinding{"planner": {Command: command, Tools: tools}},
+		}
+		return Validate(agents, nil, channelWF("planner"))
+	}
+	const pi = "pi -p {system} {payload}"
+	if got := findingWith(run(pi, "read,grep,find,ls").Problems, "no context channel"); got != "" {
+		t.Errorf("pi with read: unexpected context-channel problem: %s", got)
+	}
+	r := run(pi, "grep,find,ls")
+	got := findingWith(r.Problems, "no context channel")
+	if got == "" || r.OK() {
+		t.Fatalf("pi without read: want a context-channel problem, got problems=%v", r.Problems)
+	}
+	if !strings.Contains(got, "`read` for disk reads") || strings.Contains(got, "read_file") {
+		t.Errorf("pi finding must name `read`, not read_file: %s", got)
+	}
+	if findingWith(run(agentcli.DefaultClaudeCommand, "read").Problems, "no context channel") == "" {
+		t.Error("`read` on a claude binding must not be accepted as a context channel")
+	}
+}
+
 // TestValidate_ReviewerShellGrantIsUnusedCapability — AC2/AC4: reviewers are fed
 // their documents in the transition payload, so a shell grant is never consulted.
 // Reported as a WARNING (report stays OK → exit 0) because keeping it is the
