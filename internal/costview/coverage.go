@@ -30,22 +30,29 @@ type DriverCoverage struct {
 	CostRows  int `json:"cost_rows"`
 	// BackfilledRows is how many of UsageRows were backfilled from session-record
 	// timestamps rather than read live (BackfilledLabel).
-	BackfilledRows     int      `json:"backfilled_rows,omitempty"`
+	BackfilledRows int `json:"backfilled_rows,omitempty"`
+	// AmbiguousRows is how many of Rows are available but ambiguous (AmbiguousLabel):
+	// counted in neither UsageRows nor CostRows, and not a gap either.
+	AmbiguousRows      int      `json:"ambiguous_rows,omitempty"`
 	UsageUnavailableBy []string `json:"usage_unavailable_by,omitempty"`
 	CostUnavailableBy  []string `json:"cost_unavailable_by,omitempty"`
 }
 
 // driverStatus classifies a coverage set: none, measured, partial or unavailable.
 func driverStatus(cov []DriverCoverage) string {
-	rows, usage, backfilled := 0, 0, 0
+	rows, usage, backfilled, ambiguous := 0, 0, 0, 0
 	for _, c := range cov {
 		rows += c.Rows
 		usage += c.UsageRows
 		backfilled += c.BackfilledRows
+		ambiguous += c.AmbiguousRows
 	}
 	switch {
 	case rows == 0:
 		return DriverNone
+	case ambiguous > 0:
+		return DriverPartial // part of the spend is not this story's alone
+
 	case usage == rows && backfilled > 0:
 		return DriverDerived
 	case usage == rows:
@@ -76,12 +83,16 @@ func addCoverage(cov []DriverCoverage, d DriverRow) []DriverCoverage {
 	}
 	c := &cov[idx]
 	c.Rows++
-	if d.measured() {
+	switch {
+	case d.Ambiguous():
+		c.AmbiguousRows++
+		return cov
+	case d.measured():
 		c.UsageRows++
 		if d.Backfilled {
 			c.BackfilledRows++
 		}
-	} else {
+	default:
 		c.UsageUnavailableBy = addReason(c.UsageUnavailableBy, d.unmeasuredReason(), exe)
 	}
 	if d.CostUSD != nil {
@@ -131,6 +142,7 @@ func foldCoverage(a, b []DriverCoverage) []DriverCoverage {
 		o.UsageRows += c.UsageRows
 		o.CostRows += c.CostRows
 		o.BackfilledRows += c.BackfilledRows
+		o.AmbiguousRows += c.AmbiguousRows
 		o.UsageUnavailableBy = unionReasons(o.UsageUnavailableBy, c.UsageUnavailableBy)
 		o.CostUnavailableBy = unionReasons(o.CostUnavailableBy, c.CostUnavailableBy)
 	}
@@ -171,11 +183,17 @@ func FormatDriverCoverage(f Figures) string {
 	case DriverDerived:
 		return "driver: derived (" + adapterRows(f.Driver) + "; " + backfillNote(f.Driver) + ")"
 	case DriverPartial:
-		line := "driver: partial — " + unavailableWhy(f.Driver)
-		if note := backfillNote(f.Driver); note != "" {
-			line += "; " + note
+		var parts []string
+		if why := unavailableWhy(f.Driver); why != "" {
+			parts = append(parts, why)
 		}
-		return line + "; " + wholeNote
+		if note := ambiguousNote(f.Driver); note != "" {
+			parts = append(parts, note)
+		}
+		if note := backfillNote(f.Driver); note != "" {
+			parts = append(parts, note)
+		}
+		return "driver: partial — " + strings.Join(parts, "; ") + "; " + wholeNote
 	case DriverUnavailable:
 		return "driver: unavailable — " + unavailableWhy(f.Driver) + "; " + wholeNote
 	default:
@@ -204,11 +222,24 @@ func backfillNote(cov []DriverCoverage) string {
 	return fmt.Sprintf("%d backfilled (%s)", n, BackfilledLabel)
 }
 
+// ambiguousNote says how many driver rows are ambiguous and why they sit outside the
+// exact sums, or "" when none are.
+func ambiguousNote(cov []DriverCoverage) string {
+	n := 0
+	for _, c := range cov {
+		n += c.AmbiguousRows
+	}
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d ambiguous (%s)", n, AmbiguousLabel)
+}
+
 func unavailableWhy(cov []DriverCoverage) string {
 	var parts []string
 	for _, c := range cov {
-		if c.UsageRows < c.Rows {
-			parts = append(parts, fmt.Sprintf("%s (%d of %d rows)", strings.Join(c.UsageUnavailableBy, "; "), c.Rows-c.UsageRows, c.Rows))
+		if gap := c.Rows - c.UsageRows - c.AmbiguousRows; gap > 0 {
+			parts = append(parts, fmt.Sprintf("%s (%d of %d rows)", strings.Join(c.UsageUnavailableBy, "; "), gap, c.Rows))
 		}
 	}
 	return strings.Join(parts, "; ")
@@ -222,7 +253,7 @@ func FormatAdapterCoverage(f Figures) []string {
 		out = append(out, fmt.Sprintf("%s: driver usage %s; driver cost %s",
 			c.Executable,
 			usageWord(c),
-			coverageWord(c.CostRows, c.Rows, c.CostUnavailableBy)))
+			exactWord(c.CostRows, c, c.CostUnavailableBy)))
 	}
 	return out
 }
@@ -240,11 +271,24 @@ func FormatAdapterUsageCoverage(f Figures) []string {
 
 // usageWord is c's usage coverage, noting any backfilled rows it counts as measured.
 func usageWord(c DriverCoverage) string {
-	w := coverageWord(c.UsageRows, c.Rows, c.UsageUnavailableBy)
+	w := exactWord(c.UsageRows, c, c.UsageUnavailableBy)
 	if note := backfillNote([]DriverCoverage{c}); note != "" {
 		w += " — " + note
 	}
+	if note := ambiguousNote([]DriverCoverage{c}); note != "" {
+		w += " — " + note
+	}
 	return w
+}
+
+// exactWord is coverageWord over c's rows that are not ambiguous: an ambiguous row
+// is neither measured nor a gap, so it is left out of both sides.
+func exactWord(measured int, c DriverCoverage, reasons []string) string {
+	rows := c.Rows - c.AmbiguousRows
+	if rows == 0 {
+		return "none exact"
+	}
+	return coverageWord(measured, rows, reasons)
 }
 
 func coverageWord(measured, rows int, reasons []string) string {

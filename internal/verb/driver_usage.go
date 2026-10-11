@@ -20,7 +20,14 @@ import (
 // driverSnapshotter is swappable in tests (sty_81caa41b) so a test can drive
 // the recorder against a fixture-backed agentcli.DriverSnapshot without a real
 // session record on disk.
-var driverSnapshotter = agentcli.SessionUsageSnapshot
+//
+// The default also hands the reader the tree the session published as its home
+// (config.PublishedSessionRoot): a session started in the main tree that drives a
+// story in a worktree keeps its record under the main tree, not the story's.
+// internal/config imports agentcli, so the root is resolved here and passed in.
+var driverSnapshotter = func(harness, sessionID, repoRoot string) agentcli.DriverSnapshot {
+	return agentcli.SessionUsageSnapshotWith(harness, sessionID, repoRoot, []string{config.PublishedSessionRoot(sessionID)})
+}
 
 // Trigger names for DriverUsagePayload.Trigger — which kind of enacted
 // transition produced this snapshot (sty_81caa41b AC3).
@@ -184,6 +191,15 @@ type DriverUsagePayload struct {
 	Backfilled bool   `json:"backfilled,omitempty"`
 	WindowFrom string `json:"window_from,omitempty"`
 	WindowTo   string `json:"window_to,omitempty"`
+	// Overlaps names the other stories that drove this row's session in a window
+	// intersecting the story's own driver window (sessionWindowOverlaps): the
+	// session's usage cannot be split between them, so costview reads the row as
+	// ambiguous. AttributionReason is the adapter-named sentence saying so —
+	// "<adapter>: window overlaps <ids> in session <id>; usage not split" — joined
+	// with the adapter's subagent qualifier (agentcli.DriverSnapshot.SubagentNote)
+	// when it has one; a qualifier alone leaves the row exact.
+	Overlaps          []string `json:"overlaps,omitempty"`
+	AttributionReason string   `json:"attribution_reason,omitempty"`
 }
 
 // driverUsageTrigger classifies the enacted transition from → to for
@@ -430,6 +446,9 @@ func recordDriverUsageAs(ctx context.Context, item workitem.Item, sessionID, har
 		cumulativeEqual(prev.payload.Cumulative, payload.Cumulative) {
 		return
 	}
+	// The figures stay (the row is still the delta baseline, so the next delta does
+	// not re-credit this spend); the attribution says they are not exact.
+	stampDriverAttribution(ctx, item, &payload, snap.SubagentNote, now)
 	appendDriverUsageRow(ctx, item.ID, payload, now)
 }
 
@@ -550,6 +569,7 @@ func recordLateDriverUsageCatchup(ctx context.Context, sessionID, harness string
 	} else {
 		late.CostUnavailableReason = snap.CostUnavailableReason
 	}
+	late.AttributionReason = snap.SubagentNote
 	if late.FreshInput == 0 && late.CacheRead == 0 && late.CacheWrite == 0 && late.Output == 0 && late.CostUSD == nil {
 		return
 	}
@@ -605,7 +625,8 @@ func recordPendingCatchupFromTurnBreakdown(ctx context.Context, sessionID, harne
 		Turns:         idx + 1,
 		CreditedTurns: []int{idx},
 		FreshInput:    t.FreshInput, CacheRead: t.CacheRead, CacheWrite: t.CacheWrite, Output: t.Output,
-		CostUSD: t.CostUSD,
+		CostUSD:           t.CostUSD,
+		AttributionReason: snap.SubagentNote,
 	}
 	// The credited turn's own request count, from the same breakdown entry.
 	if snap.ModelCallsUnavailableReason != "" {
@@ -857,6 +878,7 @@ func recordDriverUsageOnReap(ctx context.Context, reaped []lease.Lease, now time
 			continue
 		}
 		payload.Available = true
+		payload.AttributionReason = snap.SubagentNote
 		payload.Cumulative = cum
 		payload.BaseTurns, payload.Turns = baseTurns, snap.Turns
 		payload.FreshInput, payload.CacheRead, payload.CacheWrite, payload.Output = fresh, cacheRead, cacheWrite, output

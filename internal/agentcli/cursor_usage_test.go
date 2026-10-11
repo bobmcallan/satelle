@@ -226,6 +226,9 @@ func TestCursorWindowUsageAttributesByStopTime(t *testing.T) {
 	if !w.Available || w.FreshInputTokens != 25758-16563 || w.CacheReadInputTokens != 16563 || w.OutputTokens != 266 || w.Model != "composer-2.5" {
 		t.Fatalf("window = %+v", w)
 	}
+	if w.SubagentNote != cursorSubagentNote {
+		t.Errorf("window SubagentNote = %q, want %q", w.SubagentNote, cursorSubagentNote)
+	}
 	if w.CostUSD != nil || !strings.Contains(w.CostUnavailableReason, "cursor") || !strings.Contains(w.ModelCallsUnavailableReason, "cursor") {
 		t.Errorf("window reasons = %q / %q", w.CostUnavailableReason, w.ModelCallsUnavailableReason)
 	}

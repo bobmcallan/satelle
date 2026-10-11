@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -23,10 +22,10 @@ var driverWindowReader = agentcli.SessionWindowUsage
 
 // Backfill report statuses for one session.
 const (
-	BackfillWritten     = "backfilled"  // a derived row was appended
-	BackfillUnchanged   = "unchanged"   // the same window was already backfilled; nothing appended
-	BackfillUnavailable = "unavailable" // no figure could be attributed, named by Reason
-	BackfillAmbiguous   = "ambiguous"   // another story shares the window; usage is not split
+	BackfillWritten     = "backfilled"               // a derived row was appended
+	BackfillUnchanged   = "unchanged"                // the same window was already backfilled; nothing appended
+	BackfillUnavailable = "unavailable"              // no figure could be attributed, named by Reason
+	BackfillAmbiguous   = DriverAttributionAmbiguous // another story shares the window; usage is not split
 )
 
 // DriverBackfillSession is one session's outcome for a story's backfill.
@@ -185,7 +184,7 @@ func backfillSession(ctx context.Context, item workitem.Item, entries []ledger.E
 
 	if overlaps := sessionWindowOverlaps(ctx, item.ID, c.sessionID, from, to, now); len(overlaps) > 0 {
 		s.Status, s.Overlaps = BackfillAmbiguous, overlaps
-		s.Reason = fmt.Sprintf("%s: window overlaps %s in session %s; usage not split", c.executable, strings.Join(overlaps, ", "), c.sessionID)
+		s.Reason = driverOverlapReason(c.executable, overlaps, c.sessionID)
 		payload.UnavailableReason, payload.CostUnavailableReason = s.Reason, s.Reason
 	} else {
 		w := driverWindowReader(c.executable, c.sessionID, changeRecordRepoRoot(), from, to)
@@ -202,6 +201,7 @@ func backfillSession(ctx context.Context, item workitem.Item, entries []ledger.E
 				payload.ModelCalls = &calls
 			}
 			payload.CostUSD, payload.CostUnavailableReason = w.CostUSD, w.CostUnavailableReason
+			payload.AttributionReason = w.SubagentNote
 			s.Status = BackfillWritten
 			s.FreshInput, s.CacheRead, s.CacheWrite, s.Output, s.ModelCalls = payload.FreshInput, payload.CacheRead, payload.CacheWrite, payload.Output, calls
 			s.CostUSD, s.CostUnavailableReason = w.CostUSD, w.CostUnavailableReason
@@ -233,47 +233,4 @@ func backfillAlreadyRecorded(entries []ledger.Entry, payload DriverUsagePayload)
 		}
 	}
 	return false
-}
-
-// sessionWindowOverlaps names the other stories that drove sessionID and whose own
-// engage..close window intersects [from, to] (inclusive, like the attribution
-// itself). A story still open counts up to now. Usage inside a shared window cannot
-// be split by timestamps, so the caller reports it ambiguous rather than apportion it.
-func sessionWindowOverlaps(ctx context.Context, selfID, sessionID string, from, to, now time.Time) []string {
-	wi, err := requireWorkItem()
-	if err != nil || ledgerStore == nil {
-		return nil
-	}
-	others := map[string]bool{}
-	_ = ledgerStore.ForEachKind(ctx, "", ledger.KindDriverUsage, func(e ledger.Entry) error {
-		var p DriverUsagePayload
-		if e.StoryID != selfID && json.Unmarshal(e.Payload, &p) == nil && p.SessionID == sessionID {
-			others[e.StoryID] = true
-		}
-		return nil
-	})
-	var out []string
-	for id := range others {
-		other, err := wi.Get(ctx, id)
-		if err != nil {
-			continue
-		}
-		entries, err := ledgerStore.ListByStory(ctx, id, "")
-		if err != nil {
-			continue
-		}
-		clk, _ := clockFor(ctx, other)
-		start, end, haveEngage, haveTerminal := costview.StoryWindow(entries, clk)
-		if !haveEngage {
-			continue
-		}
-		if !haveTerminal {
-			end = now
-		}
-		if !start.After(to) && !end.Before(from) {
-			out = append(out, id)
-		}
-	}
-	sort.Strings(out)
-	return out
 }

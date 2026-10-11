@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/bobmcallan/satelle/internal/agentcli"
 )
 
 // callerID is the PreToolUse caller's resolved model and how it was found.
@@ -68,7 +70,7 @@ func resolveCaller(raw []byte, fs callerFS) callerID {
 			return id
 		}
 	}
-	if transcript != "" && isSubagentTranscript(transcript) {
+	if transcript != "" && agentcli.IsClaudeSubagentTranscript(transcript) {
 		if m := lastAssistantModel(fs, transcript); m != "" {
 			return callerID{
 				Transcript: transcript,
@@ -103,15 +105,6 @@ func firstNonEmpty(ss ...string) string {
 	return ""
 }
 
-func isSubagentTranscript(path string) bool {
-	return strings.Contains(filepath.ToSlash(path), "/subagents/")
-}
-
-func subagentGlob(transcript string) string {
-	base := strings.TrimSuffix(transcript, ".jsonl")
-	return filepath.Join(base, "subagents", "*.jsonl")
-}
-
 func findToolUseModel(fs callerFS, transcript, toolID string) callerID {
 	seen := map[string]bool{}
 	var paths []string
@@ -125,11 +118,11 @@ func findToolUseModel(fs callerFS, transcript, toolID string) callerID {
 	}
 	add(transcript)
 	if transcript != "" {
-		matches, _ := fs.Glob(subagentGlob(transcript))
+		matches, _ := fs.Glob(agentcli.ClaudeSubagentGlob(transcript))
 		for _, m := range matches {
 			add(m)
 		}
-		if isSubagentTranscript(transcript) {
+		if agentcli.IsClaudeSubagentTranscript(transcript) {
 			matches, _ = fs.Glob(filepath.Join(filepath.Dir(transcript), "*.jsonl"))
 			for _, m := range matches {
 				add(m)
@@ -217,7 +210,7 @@ func mtimeHeuristicCaller(fs callerFS, transcript string) (callerID, bool) {
 	if err != nil {
 		mainTime = 0
 	}
-	matches, _ := fs.Glob(subagentGlob(transcript))
+	matches, _ := fs.Glob(agentcli.ClaudeSubagentGlob(transcript))
 	newest := ""
 	var newestTime int64
 	for _, p := range matches {

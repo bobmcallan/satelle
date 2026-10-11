@@ -17,6 +17,9 @@ type DriverRowView struct {
 	CacheRead, CacheWrite string
 	USD                   string
 	AgentTime             string
+	// Note is the row's attribution reason — which stories share its window, or the
+	// adapter's subagent qualifier — or "" when the row is exact and unqualified.
+	Note string
 }
 
 // FormatDriverRows renders rows into per-session DriverRowView lines plus a
@@ -38,9 +41,12 @@ func FormatDriverRows(rows []DriverRow) ([]DriverRowView, *DriverRowView) {
 	var totalWallMs int64
 	for _, d := range rows {
 		freshIn, outCol, cacheRead, cacheWrite := "—", "—", "—", "—"
-		if d.measured() {
+		// An ambiguous row shows its own figures, but none of them enters the TOTAL.
+		if d.measured() || d.Ambiguous() {
 			freshIn, outCol = FormatTokens(d.FreshInput), FormatTokens(d.Output)
 			cacheRead, cacheWrite = FormatTokens(d.CacheRead), FormatTokens(d.CacheWrite)
+		}
+		if d.measured() {
 			totalFresh += d.FreshInput
 			totalOut += d.Output
 			totalCacheRead += d.CacheRead
@@ -48,13 +54,19 @@ func FormatDriverRows(rows []DriverRow) ([]DriverRowView, *DriverRowView) {
 			measured++
 		}
 		calls := "—"
-		if d.measured() && d.ModelCalls != nil {
+		if (d.measured() || d.Ambiguous()) && d.ModelCalls != nil {
 			calls = fmt.Sprintf("%d", *d.ModelCalls)
-			totalCalls += *d.ModelCalls
-			counted++
+			if d.measured() {
+				totalCalls += *d.ModelCalls
+				counted++
+			}
 		}
 		usd := FormatUSD(0, 0, 1)
 		switch {
+		case d.Ambiguous():
+			if d.CostUSD != nil {
+				usd = FormatUSD(*d.CostUSD, 1, 0)
+			}
 		case d.CostUSD != nil:
 			usd = FormatUSD(*d.CostUSD, 1, 0)
 			totalUSD += *d.CostUSD
@@ -68,6 +80,8 @@ func FormatDriverRows(rows []DriverRow) ([]DriverRowView, *DriverRowView) {
 		totalWallMs += wallMs
 		trigger := d.Trigger
 		switch {
+		case d.Ambiguous():
+			trigger += " (" + AmbiguousLabel + ")"
 		case d.Backfilled && d.Available:
 			trigger += " (" + BackfilledLabel + ")"
 		case d.Backfilled:
@@ -78,7 +92,7 @@ func FormatDriverRows(rows []DriverRow) ([]DriverRowView, *DriverRowView) {
 		out = append(out, DriverRowView{
 			SessionID: d.SessionID, Executable: d.Executable, Trigger: trigger,
 			FreshIn: freshIn, Out: outCol, Calls: calls, CacheRead: cacheRead, CacheWrite: cacheWrite,
-			USD: usd, AgentTime: FormatDuration(wallMs),
+			USD: usd, AgentTime: FormatDuration(wallMs), Note: d.AttributionReason,
 		})
 	}
 	totalCallsCol := "—"

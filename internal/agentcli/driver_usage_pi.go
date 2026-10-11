@@ -48,14 +48,14 @@ func piSessionDirName(repoRoot string) string {
 // false. Measured, not inferred: testdata/driver/pi_inflight_probe.{jsonl,log,
 // result.md} is a timestamped probe on a real pi session in which all three
 // tool calls found their own calling row already in the file.
-func piDriverSnapshot(sessionID, repoRoot string) DriverSnapshot {
+func piDriverSnapshot(sessionID, repoRoot string, hints []string) DriverSnapshot {
 	snap := DriverSnapshot{SessionID: sessionID, Executable: HarnessPi}
 	fail := func(reason string) DriverSnapshot {
 		snap.UnavailableReason = reason
 		snap.CostUnavailableReason = reason
 		return snap
 	}
-	rec, reason := readPiSession(sessionID, repoRoot)
+	rec, reason := readPiSession(sessionID, repoRoot, hints...)
 	if reason != "" {
 		return fail(reason)
 	}
@@ -123,19 +123,22 @@ func piFileNameTime(path string) time.Time {
 // readPiSession is the one pi session-record iterator: the cumulative reader and
 // the windowed reader both fold its rows, so the two cannot drift apart. A non-empty
 // reason says why the record could not be read, pi-named.
-func readPiSession(sessionID, repoRoot string) (piSessionRecord, string) {
+//
+// The record is located by session id: repoRoot's tree, then each hint root's, then
+// every tree (locateSessionRecord).
+func readPiSession(sessionID, repoRoot string, hints ...string) (piSessionRecord, string) {
 	var rec piSessionRecord
-	dir := filepath.Join(piHomeDir(), "sessions", piSessionDirName(repoRoot))
-	matches, _ := filepath.Glob(filepath.Join(dir, "*_"+sessionID+".jsonl"))
-	if len(matches) == 0 {
-		return rec, fmt.Sprintf("pi: session record for %s not found under %s", sessionID, dir)
+	path, reason := locateSessionRecord(HarnessPi, sessionID, filepath.Join(piHomeDir(), "sessions"),
+		piSessionDirName, "*_"+sessionID+".jsonl", append([]string{repoRoot}, hints...))
+	if reason != "" {
+		return rec, reason
 	}
-	f, err := os.Open(matches[len(matches)-1])
+	f, err := os.Open(path)
 	if err != nil {
 		return rec, fmt.Sprintf("pi: session record unreadable: %v", err)
 	}
 	defer f.Close()
-	rec.created = piFileNameTime(matches[len(matches)-1])
+	rec.created = piFileNameTime(path)
 	headerSeen := false
 
 	scanner := bufio.NewScanner(f)

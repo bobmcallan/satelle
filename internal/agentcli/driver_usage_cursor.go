@@ -24,7 +24,10 @@ const (
 	cursorDriverCostReason = "cursor: no per-token price is published for cursor models; usage is billed through the cursor account"
 	// The stop payload marks a turn and carries no per-request count.
 	cursorDriverModelCallsReason = "cursor: the stop payload reports per-turn usage and carries no model-call count"
-	cursorNoStopReason           = "cursor: no stop-hook usage recorded for this session (cursor reports usage only on interactive stop events; print mode emits none)"
+	// satelle records only cursor's `stop` hook (RecordCursorStop), so a subagent's
+	// spend can neither be seen nor ruled out in the recorded stops.
+	cursorSubagentNote = "cursor: subagent use undeterminable from recorded hooks; subagent spend inclusion unverified"
+	cursorNoStopReason = "cursor: no stop-hook usage recorded for this session (cursor reports usage only on interactive stop events; print mode emits none)"
 )
 
 // cursorStopLine is one recorded stop: a turn's usage and the time satelle saw it.
@@ -193,6 +196,7 @@ func cursorDriverSnapshot(sessionID string) DriverSnapshot {
 		return fail(cursorNoStopReason)
 	}
 	snap.Available = true
+	snap.SubagentNote = cursorSubagentNote
 	snap.MayUndercountInFlightTurn = true // usage arrives only when a turn ends
 	snap.CostUnavailableReason = cursorDriverCostReason
 	snap.ModelCallsUnavailableReason = cursorDriverModelCallsReason
@@ -235,6 +239,7 @@ func cursorWindowUsage(sessionID string, from, to time.Time) DriverWindowUsage {
 		return fail(fmt.Sprintf("cursor: no recorded stop usage between %s and %s", from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano)))
 	}
 	w.Available = true
+	w.SubagentNote = cursorSubagentNote
 	w.CostUnavailableReason = cursorDriverCostReason
 	w.ModelCallsUnavailableReason = cursorDriverModelCallsReason
 	return w
