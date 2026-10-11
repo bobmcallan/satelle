@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -171,6 +173,62 @@ type definitionEditPayload struct {
 	// Source names where an applied edit came from ("<doc>#<heading>"); empty for
 	// an edit made directly.
 	Source string `json:"source,omitempty"`
+	EditorIdentity
+}
+
+// EditorIdentity is the session and executable behind a definition edit — the
+// part of "who" the person actor does not say (sty_a8885220). Every field is
+// optional so a row written before this identity was recorded still parses; a
+// row written after it carries either the pair or IdentityUnavailable, never a
+// silent empty.
+type EditorIdentity struct {
+	SessionID  string `json:"session_id,omitempty"`
+	Executable string `json:"executable,omitempty"`
+	// IdentityUnavailable names, adapter by adapter, what could not be resolved.
+	IdentityUnavailable string `json:"identity_unavailable,omitempty"`
+}
+
+// resolveEditorIdentity names the session making this edit and the harness it
+// runs under. What cannot be resolved is stated, not left empty.
+func resolveEditorIdentity() EditorIdentity {
+	sid := config.ResolveSession()
+	exe := agentcli.HarnessUnknown
+	if sid != "" {
+		exe = driverSessionHarness(sid)
+	} else if h, ok := agentcli.InLoopHarnessFromEnv(os.Environ()); ok {
+		exe = h
+	}
+	id := EditorIdentity{SessionID: sid}
+	var gaps []string
+	if sid == "" {
+		gaps = append(gaps, "session: no session id in SATELLE_SESSION, the harness environment or a published session")
+	}
+	if exe == agentcli.HarnessUnknown {
+		gaps = append(gaps, fmt.Sprintf("executable: no adapter (%s, %s, %s, %s) recognised the session",
+			agentcli.HarnessClaude, agentcli.HarnessGrok, agentcli.HarnessPi, agentcli.HarnessCursor))
+	} else {
+		id.Executable = exe
+	}
+	id.IdentityUnavailable = strings.Join(gaps, "; ")
+	return id
+}
+
+// storyUpdatedPayload is a story_updated row's payload: the editor and, for a
+// definition edit, the before and after of each changed field. A row written
+// before this payload existed has none and decodes to the zero value.
+type storyUpdatedPayload struct {
+	EditorIdentity
+	Fields []AmendField `json:"fields,omitempty"`
+}
+
+// storyUpdatedPayloadFor renders the story_updated payload for one committed
+// story-set. It is always present, so even a tag or priority edit names its editor.
+func storyUpdatedPayloadFor(id EditorIdentity, edits []AmendField) json.RawMessage {
+	b, err := json.Marshal(storyUpdatedPayload{EditorIdentity: id, Fields: edits})
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 // recordDefinitionEdits appends one definition_edited row per field a committed
@@ -179,7 +237,7 @@ type definitionEditPayload struct {
 // falling back to the executor role the other definition rows use. Best-effort
 // like every other trail row: a failed append never reverts the edit that
 // already committed.
-func recordDefinitionEdits(ctx context.Context, it workitem.Item, edits []AmendField, now time.Time) {
+func recordDefinitionEdits(ctx context.Context, it workitem.Item, edits []AmendField, id EditorIdentity, now time.Time) {
 	if len(edits) == 0 {
 		return
 	}
@@ -188,7 +246,7 @@ func recordDefinitionEdits(ctx context.Context, it workitem.Item, edits []AmendF
 		actor = "executor"
 	}
 	for _, f := range edits {
-		payload, err := json.Marshal(definitionEditPayload{Field: f.Field, Old: f.Old, New: f.New, Actor: actor})
+		payload, err := json.Marshal(definitionEditPayload{Field: f.Field, Old: f.Old, New: f.New, Actor: actor, EditorIdentity: id})
 		if err != nil {
 			continue
 		}
@@ -207,6 +265,7 @@ type DefinitionEdit struct {
 	// Source is "<doc>#<heading>" for an edit applied from an accepted document.
 	Source string `json:"source,omitempty"`
 	At     string `json:"at,omitempty"`
+	EditorIdentity
 }
 
 // DefinitionEditsFrom enumerates the definition edits among a story's ledger
@@ -222,7 +281,8 @@ func editsFrom(entries []ledger.Entry) []DefinitionEdit {
 		}
 		out = append(out, DefinitionEdit{
 			Field: p.Field, Old: p.Old, New: p.New, Actor: p.Actor, Source: p.Source,
-			At: e.CreatedAt.UTC().Format(time.RFC3339),
+			EditorIdentity: p.EditorIdentity,
+			At:             e.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
 	return out

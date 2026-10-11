@@ -435,6 +435,11 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			definitionEdits = amendFields(current, amendReq{
 				Title: req.Title, Body: req.Body, AcceptanceCriteria: req.AcceptanceCriteria, Category: req.Category,
 			})
+			// An edit still in the entry state is a new definition: the create
+			// gate judges it, before anything is written (sty_a8885220).
+			if err := runEditCreateGate(ctx, current, definitionEdits, now); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -900,7 +905,8 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			return nil, staleWriteError(current, req.Status, err)
 		}
 	}
-	recordDefinitionEdits(ctx, it, definitionEdits, commitNow)
+	editor := resolveEditorIdentity()
+	recordDefinitionEdits(ctx, it, definitionEdits, editor, commitNow)
 	// Release the seat on transition into terminal (Msquare) or park (agent=reviewer).
 	// Force-release: exit is config-driven and must free the seat even when the
 	// exit CLI process is not the acquire-time owner (default owner is stable
@@ -1007,7 +1013,12 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		if it.Kind == workitem.KindTask || it.Kind == workitem.KindExecution {
 			ledgerKind = ledger.KindTaskUpdated
 		}
-		appendLedger(ctx, it.ID, ledgerKind, fmt.Sprintf("updated %s", it.Kind), commitNow)
+		actor := resolveActor()
+		if actor == "" {
+			actor = "executor"
+		}
+		appendLedgerEntry(ctx, it.ID, ledgerKind, actor, fmt.Sprintf("updated %s", it.Kind),
+			storyUpdatedPayloadFor(editor, definitionEdits), commitNow)
 	}
 	// Mirror the mutation to the flat operation log (sty_be257fef): the status
 	// transition and/or the tag before/after, so a read-only reviewer can verify a

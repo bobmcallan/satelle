@@ -67,10 +67,30 @@ func requestsStatus(req json.RawMessage) bool {
 // dispatchesOnStatusChange is the predicate of a <kind>-set verb: a status
 // change with any reviewer-side seam wired.
 func dispatchesOnStatusChange(req json.RawMessage) bool {
+	if requestsDefinitionEdit(req) && createReviewer != nil {
+		// An entry-state definition edit runs the create gate (runEditCreateGate).
+		// Whether the story is still in its entry state is not known from the
+		// request, so this errs towards handing the call to a detached run.
+		return true
+	}
 	if !requestsStatus(req) {
 		return false
 	}
 	return transitionGater != nil || executorDispatcher != nil || stepSummariser != nil
+}
+
+// requestsDefinitionEdit reports whether a set request names a definition field.
+func requestsDefinitionEdit(req json.RawMessage) bool {
+	var r struct {
+		Title              *string `json:"title"`
+		Body               *string `json:"body"`
+		AcceptanceCriteria *string `json:"acceptance_criteria"`
+		Category           *string `json:"category"`
+	}
+	if json.Unmarshal(req, &r) != nil {
+		return false
+	}
+	return r.Title != nil || r.Body != nil || r.AcceptanceCriteria != nil || r.Category != nil
 }
 
 // dispatchesOnGatedCreate is the predicate of a <kind>-create verb: a repo that
