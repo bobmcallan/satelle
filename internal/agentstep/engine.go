@@ -24,6 +24,7 @@
 package agentstep
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -2181,19 +2182,24 @@ const (
 	retrospectSkill = "satelle-retrospective"
 )
 
-// Retrospect dispatches the retrospective agent over a finished story: it pulls
-// the story + its plan/summary/ledger by id, then emits 1–3 improvement PROPOSALS
-// as backlog stories (its Bash(satelle:*) grant). Invoked per-story by
-// `satelle story retrospect` — kept opt-in rather than auto-on-done so its cost
-// (visible via `satelle story cost`, sty_a699ad14) is measured before it is made
-// always-on. Returns the dispatch result (with captured output + token/wall-time
-// cost) so the verb layer can record an agent_invocation for the cost view.
+// Retrospect dispatches the retrospective agent over a finished story or
+// container: it pulls the story + its plan/summary/ledger by id (a container's
+// payload also carries its children, so each child's ledger can be pulled) and
+// files improvement PROPOSALS as backlog stories (its Bash(satelle:*) grant).
+// Invoked by `satelle story retrospect`, which the orchestrator relays when the
+// route declares an `advise` at the closing step — nothing fires on entering done
+// (flat dispatch). Returns the dispatch result (with captured output +
+// token/wall-time cost) so the verb layer can record an agent_invocation for the
+// cost view. It changes no item's status.
 //
-// modelOverride is `satelle story retrospect --model` (sty_7069bced): a
-// per-dispatch instruction recorded with source=agent, one tier below the
-// binding's own model= and above the inherited/creator session tiers. Empty
-// behaves exactly as before.
-func (g *Engine) Retrospect(ctx context.Context, item workitem.Item, modelOverride string) (verb.DispatchResult, error) {
+// spec.Agent / spec.Skill are the route-declared advisor; empty falls back to the
+// built-in retrospective. spec.Model is `satelle story retrospect --model`
+// (sty_7069bced): a per-dispatch instruction recorded with source=agent, one tier
+// below the binding's own model= and above the inherited/creator session tiers.
+func (g *Engine) Retrospect(ctx context.Context, item workitem.Item, spec verb.RetrospectSpec) (verb.DispatchResult, error) {
+	modelOverride := spec.Model
+	retrospectAgent := cmp.Or(spec.Agent, retrospectAgent)
+	retrospectSkill := cmp.Or(spec.Skill, retrospectSkill)
 	if g.namedAgents == nil {
 		return verb.DispatchResult{}, fmt.Errorf("no agents layer is wired — cannot dispatch the %q agent", retrospectAgent)
 	}
@@ -2235,6 +2241,9 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item, modelOverri
 	g.emitActivity(item.ID, "retrospective", 1, 1)
 	g.emitProgress("running retrospective on %s (may take a few minutes)…", item.ID)
 	retroPayload := transitionPayload{Story: item, From: item.Status, To: item.Status, ReviewSkill: retrospectSkill}
+	if g.children != nil {
+		retroPayload.Children = g.children(ctx, item)
+	}
 	g.fillPayloadDocs(ctx, item.ID, &retroPayload, nil)
 	// Model selection (sty_7069bced): binding.Model wins outright when set;
 	// otherwise modelOverride (--model) is a per-dispatch instruction, then the

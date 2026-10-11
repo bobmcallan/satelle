@@ -150,7 +150,7 @@ func TestRetrospectCarriesCacheSplit(t *testing.T) {
 		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Bash(satelle:*)", Model: "glm-4.6"}, true
 	})
 	g.newRunner = func(string, string) (agentcli.Runner, error) { return r, nil }
-	res, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1", Title: "T", Status: "done"}, "")
+	res, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1", Title: "T", Status: "done"}, verb.RetrospectSpec{})
 	if err != nil {
 		t.Fatal(err)
 	}

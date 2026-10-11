@@ -13,6 +13,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -136,7 +137,7 @@ func TestRetrospectHonorsNoImplicitCheckTimeoutCap(t *testing.T) {
 	})
 
 	start := time.Now()
-	res, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1", Status: "done"}, "")
+	res, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1", Status: "done"}, verb.RetrospectSpec{})
 	if err != nil {
 		t.Fatalf("Retrospect must not be cut by g.checkTimeout: %v", err)
 	}
