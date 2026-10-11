@@ -580,6 +580,14 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			fmt.Sprintf("transition %s→%s", current.Status, *req.Status)); err != nil {
 			return nil, err
 		}
+		// Apply the accepted document's criteria (sty_4d9df9a0) while the
+		// definition is still editable, and rebind current so the performer and
+		// every reviewer below read the applied text, not the stale snapshot.
+		applied, err := applyPlannedCriteria(ctx, current, *req.Status, now)
+		if err != nil {
+			return nil, err
+		}
+		current = applied
 	}
 	// Propose (sty_5262592e): a destination step that declares `propose` runs
 	// its performer BEFORE the entry gates, on the source status, so the gates

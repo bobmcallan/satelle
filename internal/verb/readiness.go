@@ -3,7 +3,11 @@ package verb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -36,6 +40,86 @@ func stepProposes(ctx context.Context, current workitem.Item, to string) bool {
 	}
 	st, found := spec.StateNamed(to)
 	return found && st.Propose
+}
+
+// planCriteriaActor is the actor on the definition_edited row written when an
+// accepted document's criteria are applied on entry, so the trail tells that
+// edit apart from one a person or the driving session made.
+const planCriteriaActor = "accepted-plan"
+
+// applyPlannedCriteria applies, on entry to a step that declares
+// `apply_criteria`, the acceptance criteria authored under the declared heading
+// in the declared story document (sty_4d9df9a0). It returns the updated item
+// when it writes and `current` unchanged otherwise, so the caller can rebind it
+// before any performer or reviewer reads the story. The document, the heading
+// and the step are all route data. A missing document, a missing or empty
+// section, or text the story already carries writes nothing; an unreadable
+// document refuses the transition rather than skipping the apply silently.
+func applyPlannedCriteria(ctx context.Context, current workitem.Item, to string, now time.Time) (workitem.Item, error) {
+	if current.Kind != workitem.KindStory {
+		return current, nil
+	}
+	spec, _, _, ok := governingSpec(ctx, current)
+	if !ok || !spec.HasEdge(current.Status, to) {
+		return current, nil
+	}
+	st, found := spec.StateNamed(to)
+	if !found || st.ApplyCriteriaDoc == "" || st.ApplyCriteriaHeading == "" {
+		return current, nil
+	}
+	file, dir := safeName(st.ApplyCriteriaDoc), attachmentDir(current)
+	if file == "" || dir == "" {
+		return current, nil
+	}
+	data, err := os.ReadFile(filepath.Join(dir, file))
+	if errors.Is(err, fs.ErrNotExist) {
+		return current, nil
+	}
+	if err != nil {
+		return current, fmt.Errorf("verb: transition %s→%s: reading the %q document to apply its criteria: %w", current.Status, to, st.ApplyCriteriaDoc, err)
+	}
+	criteria := markdownSection(string(data), st.ApplyCriteriaHeading)
+	if criteria == "" || strings.Join(strings.Fields(criteria), " ") == strings.Join(strings.Fields(current.AcceptanceCriteria), " ") {
+		return current, nil
+	}
+	store, err := requireWorkItem()
+	if err != nil {
+		return current, err
+	}
+	updated, err := store.Update(ctx, current.ID, workitem.UpdateInput{AcceptanceCriteria: &criteria, ExpectStatus: &current.Status}, now)
+	if err != nil {
+		return current, fmt.Errorf("verb: transition %s→%s: applying the criteria from the %q document: %w", current.Status, to, st.ApplyCriteriaDoc, err)
+	}
+	payload, perr := json.Marshal(definitionEditPayload{
+		Field: "acceptance_criteria", Old: current.AcceptanceCriteria, New: criteria,
+		Actor: planCriteriaActor, Source: st.ApplyCriteriaDoc + "#" + st.ApplyCriteriaHeading,
+	})
+	if perr == nil {
+		appendLedgerEntry(ctx, current.ID, ledger.KindDefinitionEdited, planCriteriaActor,
+			fmt.Sprintf("definition applied from the accepted plan document %q (section %q)", st.ApplyCriteriaDoc, st.ApplyCriteriaHeading),
+			payload, now)
+	}
+	return updated, nil
+}
+
+// markdownSection returns the text under the "## <heading>" line of doc, up to
+// the next "## " heading or the end, trimmed. Empty when the heading is absent.
+func markdownSection(doc, heading string) string {
+	var out []string
+	in := false
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "##") && len(line) > 2 && (line[2] == ' ' || line[2] == '\t') {
+			if in {
+				break
+			}
+			in = strings.TrimSpace(line[2:]) == heading
+			continue
+		}
+		if in {
+			out = append(out, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
 }
 
 // refuseSpentRejectBudget refuses another presentation of the current→to edge
@@ -84,6 +168,9 @@ type definitionEditPayload struct {
 	Old   string `json:"old"`
 	New   string `json:"new"`
 	Actor string `json:"actor,omitempty"`
+	// Source names where an applied edit came from ("<doc>#<heading>"); empty for
+	// an edit made directly.
+	Source string `json:"source,omitempty"`
 }
 
 // recordDefinitionEdits appends one definition_edited row per field a committed
@@ -117,7 +204,9 @@ type DefinitionEdit struct {
 	Old   string `json:"old"`
 	New   string `json:"new"`
 	Actor string `json:"actor,omitempty"`
-	At    string `json:"at,omitempty"`
+	// Source is "<doc>#<heading>" for an edit applied from an accepted document.
+	Source string `json:"source,omitempty"`
+	At     string `json:"at,omitempty"`
 }
 
 func editsFrom(entries []ledger.Entry) []DefinitionEdit {
@@ -128,7 +217,7 @@ func editsFrom(entries []ledger.Entry) []DefinitionEdit {
 			continue
 		}
 		out = append(out, DefinitionEdit{
-			Field: p.Field, Old: p.Old, New: p.New, Actor: p.Actor,
+			Field: p.Field, Old: p.Old, New: p.New, Actor: p.Actor, Source: p.Source,
 			At: e.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
