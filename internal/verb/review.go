@@ -416,9 +416,20 @@ func SetExecutorDispatcher(d ExecutorDispatcher) { executorDispatcher = d }
 
 // Retrospector dispatches the retrospective agent over a finished story to emit
 // improvement proposals (sty_b53730e2). Implemented in internal/agentstep; verb
-// holds only the seam. modelOverride is `story retrospect --model` (sty_7069bced).
+// holds only the seam.
 type Retrospector interface {
-	Retrospect(ctx context.Context, item workitem.Item, modelOverride string) (DispatchResult, error)
+	Retrospect(ctx context.Context, item workitem.Item, spec RetrospectSpec) (DispatchResult, error)
+}
+
+// RetrospectSpec is what `story retrospect` asks the dispatcher to run. Agent and
+// Skill come from the advise declaration on the item's route (wfroute.AdvisorsFrom)
+// — the verb holds the route, the dispatcher only runs what it is handed — and
+// either left empty falls back to the dispatcher's built-in retrospective.
+// Model is `story retrospect --model` (sty_7069bced).
+type RetrospectSpec struct {
+	Agent string
+	Skill string
+	Model string
 }
 
 var retrospector Retrospector

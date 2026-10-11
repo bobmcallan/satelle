@@ -4498,7 +4498,7 @@ func TestRetrospectDispatchesNamedAgent(t *testing.T) {
 		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Bash(satelle:*)", Model: "glm-4.6"}, true
 	})
 	g.newRunner = func(string, string) (agentcli.Runner, error) { return r, nil }
-	res, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1", Title: "T", Status: "done"}, "")
+	res, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1", Title: "T", Status: "done"}, verb.RetrospectSpec{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4526,7 +4526,7 @@ func TestRetrospectRecordsSystemPromptAndPayloadBytes(t *testing.T) {
 		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Bash(satelle:*)", Model: "glm-4.6"}, true
 	})
 	g.newRunner = func(string, string) (agentcli.Runner, error) { return r, nil }
-	res, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1", Title: "T", Status: "done"}, "")
+	res, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1", Title: "T", Status: "done"}, verb.RetrospectSpec{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4541,12 +4541,88 @@ func TestRetrospectRecordsSystemPromptAndPayloadBytes(t *testing.T) {
 	}
 }
 
+// TestRetrospectRunsSpecSkillAndAgent (sty_da018b06 AC1): the agent binding and
+// the skill rubric are the route-declared ones the verb hands in, and the result
+// names them; an empty spec runs the built-in retrospective.
+func TestRetrospectRunsSpecSkillAndAgent(t *testing.T) {
+	declared := docindex.Doc{Kind: "skills", Name: "route-declared-retro", Body: conformantSkill("route-declared-retro", "declared rubric")}
+	g, _ := newEngine(t, "ok", fakeDocs{skillBody: "builtin rubric", skillFound: true, extraSkills: []docindex.Doc{declared}})
+	r := &fakeRunner{out: "ok"}
+	var asked []string
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		asked = append(asked, name)
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Bash(satelle:*)", Model: "glm-4.6"}, true
+	})
+	g.newRunner = func(string, string) (agentcli.Runner, error) { return r, nil }
+
+	res, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1", Status: "done"},
+		verb.RetrospectSpec{Agent: "route-agent", Skill: "route-declared-retro"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skill != "route-declared-retro" || res.Agent != "route-agent" {
+		t.Fatalf("res = agent %q skill %q, want route-agent @route-declared-retro", res.Agent, res.Skill)
+	}
+	if len(asked) != 1 || asked[0] != "route-agent" {
+		t.Errorf("binding looked up as %v, want [route-agent]", asked)
+	}
+	if !strings.Contains(r.got.SystemPrompt, "declared rubric") || strings.Contains(r.got.SystemPrompt, "builtin rubric") {
+		t.Errorf("the declared skill must be the rubric run:\n%s", r.got.SystemPrompt)
+	}
+
+	res, err = g.Retrospect(context.Background(), workitem.Item{ID: "sty_1", Status: "done"}, verb.RetrospectSpec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skill != "satelle-retrospective" || res.Agent != "retrospective" {
+		t.Fatalf("empty spec ran agent %q skill %q, want the built-in retrospective", res.Agent, res.Skill)
+	}
+}
+
+// TestRetrospectPayloadCarriesChildren (sty_da018b06 AC2): a container's resolved
+// children ride in the retrospective payload so the skill can pull each ledger; a
+// leaf story carries none.
+func TestRetrospectPayloadCarriesChildren(t *testing.T) {
+	g, _ := newEngine(t, "ok", fakeDocs{skillBody: "rubric", skillFound: true})
+	r := &fakeRunner{out: "ok"}
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
+	})
+	g.newRunner = func(string, string) (agentcli.Runner, error) { return r, nil }
+	g.SetChildrenResolver(func(_ context.Context, item workitem.Item) []ChildState {
+		if item.ID != "sty_parent" {
+			return nil
+		}
+		return []ChildState{{ID: "sty_child1", Status: "done"}, {ID: "sty_child2", Status: "cancelled"}}
+	})
+
+	if _, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_parent", Status: "done", Category: "epic-parent"}, verb.RetrospectSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Children []ChildState `json:"children"`
+	}
+	if err := json.Unmarshal([]byte(r.got.Payload), &got); err != nil {
+		t.Fatalf("payload is not JSON: %v\n%s", err, r.got.Payload)
+	}
+	if len(got.Children) != 2 || got.Children[0] != (ChildState{ID: "sty_child1", Status: "done"}) || got.Children[1] != (ChildState{ID: "sty_child2", Status: "cancelled"}) {
+		t.Fatalf("children = %+v, want the two resolved children", got.Children)
+	}
+
+	if _, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_leaf", Status: "done"}, verb.RetrospectSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(r.got.Payload, `"children"`) {
+		t.Errorf("a leaf story's payload must carry no children:\n%s", r.got.Payload)
+	}
+}
+
 // TestRetrospectMissingBindingErrors: no [retrospective] binding is a clear
 // refusal (the mechanism never silently no-ops).
 func TestRetrospectMissingBindingErrors(t *testing.T) {
 	g, _ := newEngine(t, "", fakeDocs{})
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) { return config.AgentBinding{}, false })
-	if _, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1"}, ""); err == nil {
+	if _, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1"}, verb.RetrospectSpec{}); err == nil {
 		t.Fatal("want an error naming the missing [retrospective] binding")
 	}
 }
@@ -4559,7 +4635,7 @@ func TestRetrospectRequiresSatelleCLI(t *testing.T) {
 		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Grep,Glob"}, true
 	})
 	g.newRunner = func(string, string) (agentcli.Runner, error) { return &fakeRunner{}, nil }
-	if _, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1"}, ""); err == nil {
+	if _, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1"}, verb.RetrospectSpec{}); err == nil {
 		t.Fatal("want an error when the grant has no context channel")
 	}
 }

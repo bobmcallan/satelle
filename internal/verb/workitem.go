@@ -1481,9 +1481,11 @@ func storyResummarise(ctx context.Context, raw json.RawMessage) (json.RawMessage
 	return json.Marshal(map[string]any{"story_id": it.ID, "from": req.From, "to": req.To, "resummarised": true})
 }
 
-// storyRetrospect dispatches the retrospective agent over a finished story
-// (sty_b53730e2): it reads the story + its plan/summary/ledger and files 1–3
-// improvement PROPOSALS as backlog stories. The dispatch's token/wall-time cost is
+// storyRetrospect dispatches the retrospective advisor over a finished story or
+// container (sty_b53730e2, sty_da018b06): the route's declared `advise` agent and
+// skill (retrospectSpecFor) read the story + its plan/summary/ledger (a container's
+// children too) and file improvement PROPOSALS as backlog stories. It changes no
+// item's status. The dispatch's token/wall-time cost is
 // recorded on an agent_invocation entry so `satelle story cost` rolls it up like
 // any other gate/step.
 // retrospectReq is the request body for story-retrospect. Model is
@@ -1492,6 +1494,24 @@ func storyResummarise(ctx context.Context, raw json.RawMessage) (json.RawMessage
 type retrospectReq struct {
 	ID    string `json:"id"`
 	Model string `json:"model,omitempty"`
+}
+
+// retrospectSpecFor reads the advisor the item's route declares at its current
+// step — `advise = { agent, skill }` as derived by wfroute.AdvisorsFrom — so the
+// route, not the binary, names what runs at close. A route that declares none
+// (or no governing route) leaves the spec empty and the dispatcher falls back to
+// its built-in retrospective.
+func retrospectSpecFor(ctx context.Context, it workitem.Item) RetrospectSpec {
+	d, _, ok := governingRoute(ctx, it)
+	if !ok {
+		return RetrospectSpec{}
+	}
+	for _, a := range d.Advisors {
+		if a.Step == it.Status && a.Agent != "" {
+			return RetrospectSpec{Agent: a.Agent, Skill: a.Skill}
+		}
+	}
+	return RetrospectSpec{}
 }
 
 func storyRetrospect(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
@@ -1513,7 +1533,9 @@ func storyRetrospect(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	if err != nil {
 		return nil, err
 	}
-	res, rerr := retrospector.Retrospect(ctx, it, req.Model)
+	spec := retrospectSpecFor(ctx, it)
+	spec.Model = req.Model
+	res, rerr := retrospector.Retrospect(ctx, it, spec)
 	now := time.Now()
 	if res.Dispatched {
 		// Record the dispatch's cost/model on an agent_invocation entry, so the

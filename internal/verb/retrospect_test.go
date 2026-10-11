@@ -14,11 +14,13 @@ type fakeRetro struct {
 	res           verb.DispatchResult
 	err           error
 	gotModel      string
+	gotSpec       verb.RetrospectSpec
 	gotModelCalls int
 }
 
-func (f *fakeRetro) Retrospect(ctx context.Context, item workitem.Item, modelOverride string) (verb.DispatchResult, error) {
-	f.gotModel = modelOverride
+func (f *fakeRetro) Retrospect(ctx context.Context, item workitem.Item, spec verb.RetrospectSpec) (verb.DispatchResult, error) {
+	f.gotSpec = spec
+	f.gotModel = spec.Model
 	f.gotModelCalls++
 	return f.res, f.err
 }
