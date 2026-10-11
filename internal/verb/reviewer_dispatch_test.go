@@ -47,6 +47,8 @@ var reviewerDispatchSites = map[string][]string{
 		"story-resummarise", "story-retrospect",
 	},
 	"amend.go": {"story-amend"},
+	// An entry-state definition edit runs the create gate (sty_a8885220).
+	"edit_gate.go": {"story-set", "task-set", "execution-set"},
 }
 
 func TestEveryReviewerDispatchSiteDeclaresItself(t *testing.T) {
@@ -135,6 +137,12 @@ func TestDispatchesReviewer_Predicates(t *testing.T) {
 	createReviewer = stubCreateReviewer{}
 	if !DispatchesReviewer("story-create", json.RawMessage(`{"title":"t"}`)) {
 		t.Error("gate_create must dispatch")
+	}
+	if !DispatchesReviewer("story-set", setTitle) {
+		t.Error("a definition edit with a create gate wired must dispatch")
+	}
+	if DispatchesReviewer("story-set", json.RawMessage(`{"id":"sty_x","priority":"high"}`)) {
+		t.Error("a priority edit must not dispatch")
 	}
 	amendReviewer = stubAmendReviewer{}
 	if !DispatchesReviewer("story-amend", json.RawMessage(`{"id":"sty_x"}`)) {

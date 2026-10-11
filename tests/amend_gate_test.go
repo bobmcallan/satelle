@@ -118,6 +118,16 @@ func TestAmendGateOnAFreshlyInitialisedRepo(t *testing.T) {
 			t.Errorf("ledger must record the before/after and the reason, missing %q:\n%s", want, led)
 		}
 	}
+	// sty_c5171eb9: both amend-review runs (the reject and the accept) are on the
+	// amended story as an invocation plus a verdict, and story cost lists them.
+	for _, want := range []string{"amend_review", "review_reject", "review_accept", "agent_invocation", "satelle-story-amend-review"} {
+		if !strings.Contains(led, want) {
+			t.Errorf("amended story ledger should carry %q from its amend-review runs:\n%s", want, led)
+		}
+	}
+	if cost := mustRun(t, testBin, repo, "story", "cost", id); !strings.Contains(cost, "satelle-story-amend-review") {
+		t.Errorf("story cost should list the amend-review runs:\n%s", cost)
+	}
 }
 
 // TestAmendStaysFailClosedWhenTheHookIsMissingOrBroken (sty_5c768dd3 AC4):

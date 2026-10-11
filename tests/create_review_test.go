@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -64,14 +65,41 @@ func TestCreateContentReviewGate(t *testing.T) {
 		t.Errorf("a rejected draft must NOT persist:\n%s", list)
 	}
 
+	// The rejected create persisted no story, but its reviewer run is recorded
+	// repo-scoped (sty_c5171eb9): an invocation and the reject verdict, readable
+	// with no story id.
+	for _, kind := range []string{"agent_invocation", "review_reject"} {
+		led := mustRun(t, testBin, repo, "ledger", "list", "--kind", kind)
+		if !strings.Contains(led, "create_review") || !strings.Contains(led, "satelle-story-create-review") {
+			t.Errorf("a rejected create must leave a repo-scoped %s row for its create-review:\n%s", kind, led)
+		}
+	}
+
 	// Flip the verdict to accept: the same draft now persists.
 	setVerdict("accept", "")
-	if out, err := run(t, testBin, repo, "story", "create", "--category", "feature",
-		"--title", "Add a widget", "--body", "Render a widget on the dashboard", "--acceptance", "1. the widget renders"); err != nil {
-		t.Fatalf("content-review accept should allow creation: %v\n%s", err, out)
+	created, err := run(t, testBin, repo, "story", "create", "--category", "feature",
+		"--title", "Add a widget", "--body", "Render a widget on the dashboard", "--acceptance", "1. the widget renders")
+	if err != nil {
+		t.Fatalf("content-review accept should allow creation: %v\n%s", err, created)
 	}
 	if list := mustRun(t, testBin, repo, "story", "list"); !strings.Contains(list, "Add a widget") {
 		t.Errorf("an accepted draft should persist:\n%s", list)
+	}
+
+	// The accepted create carries the same rows on the story it created, and
+	// `story cost` folds the create-review run in.
+	id := regexp.MustCompile(`sty_[0-9a-f]{8}`).FindString(created)
+	if id == "" {
+		t.Fatalf("no story id in create output:\n%s", created)
+	}
+	led := mustRun(t, testBin, repo, "ledger", "list", "--story", id)
+	for _, want := range []string{"agent_invocation", "review_accept", "satelle-story-create-review", "create_review"} {
+		if !strings.Contains(led, want) {
+			t.Errorf("created story ledger should carry %q from its create-review:\n%s", want, led)
+		}
+	}
+	if cost := mustRun(t, testBin, repo, "story", "cost", id); !strings.Contains(cost, "satelle-story-create-review") {
+		t.Errorf("story cost should list the create-review run:\n%s", cost)
 	}
 }
 
