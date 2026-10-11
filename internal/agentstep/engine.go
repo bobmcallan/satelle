@@ -556,7 +556,10 @@ func (g *Engine) SetConstitution(body string) { g.constitution = strings.TrimSpa
 // (id + status) so a container close gate judges the children-resolved rule from
 // the payload satelle builds — not an on-disk story mirror. The list is a
 // SNAPSHOT taken when the reviewer is prepared: a hint to the reviewer, never the
-// close check, which re-reads the set at the commit (sty_9f4f8e12). Nil-safe: an
+// close check, which re-reads the set at the commit (sty_9f4f8e12). The same
+// snapshot rides the reviewer, retrospective, chat and performer payloads (the
+// named-executor dispatch and the cloud prompt, via performerPayload), so a
+// performer without a shell is judged on the real children. Nil-safe: an
 // unwired resolver simply injects no children.
 func (g *Engine) SetChildrenResolver(fn func(ctx context.Context, item workitem.Item) []ChildState) {
 	g.children = fn
@@ -1195,6 +1198,26 @@ const (
 	// performer whole; only a longer body is cut and marked Truncated.
 	messageBodyBudget = 8 << 10
 )
+
+// performerPayload builds the payload a step's performer is dispatched with —
+// the named-executor dispatch and the cloud prompt both go through it, so the
+// two cannot drift. It carries the story, its attached documents, the container's
+// children (when a resolver is wired and the item has any) and the messages
+// addressed to the agent, "executor" and its resolved role. Provider-neutral: the
+// children ride the payload, so a performer with read-only tools needs no shell.
+func (g *Engine) performerPayload(ctx context.Context, item workitem.Item, toStatus, skill, agent string, binding config.AgentBinding) transitionPayload {
+	tp := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: skill}
+	g.fillPayloadDocs(ctx, item.ID, &tp, nil)
+	if g.children != nil {
+		tp.Children = g.children(ctx, item)
+	}
+	addrs := []string{agent, "executor"}
+	if role := config.ResolvedRole(agent, binding); role != "" {
+		addrs = append(addrs, role)
+	}
+	g.fillMessages(ctx, item.ID, addrs, &tp, nil)
+	return tp
+}
 
 // fillMessages attaches engagement-windowed agent messages for recipient.
 // Runs AFTER fillPayloadDocs / fillDiff and never touches those counters.
@@ -2049,13 +2072,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	} else {
 		g.emitProgress("dispatching step %s to named agent %s (may take several minutes)…", toStatus, dispatchAgent)
 	}
-	execPayload := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: dispatchSkill}
-	g.fillPayloadDocs(ctx, item.ID, &execPayload, nil)
-	execAddrs := []string{dispatchAgent, "executor"}
-	if role := config.ResolvedRole(dispatchAgent, binding); role != "" {
-		execAddrs = append(execAddrs, role)
-	}
-	g.fillMessages(ctx, item.ID, execAddrs, &execPayload, nil)
+	execPayload := g.performerPayload(ctx, item, toStatus, dispatchSkill, dispatchAgent, binding)
 	charter := executorCharter(dispatchAgent, toStatus, wfName)
 	var finalArtifact *agentartifact.Artifact
 	var invRes InvokeResult

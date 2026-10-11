@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -5683,5 +5684,68 @@ func TestStructureRefusalNamesTheOpenDiagnosis(t *testing.T) {
 	var ref wfgovern.Refusal
 	if !errors.As(err, &ref) || ref.TrackingStory != "sty_906f59df" {
 		t.Errorf("typed refusal must carry the story id, got %+v", ref)
+	}
+}
+
+// TestDispatchExecutorPayloadCarriesChildren (sty_b91dc1ac): a dispatched
+// performer's stdin payload carries the container's resolved children, on the
+// plain invoke path and on the artifact-attempt path, through a generic command
+// binding; with no resolver (or no children) the payload has no children key.
+func TestDispatchExecutorPayloadCarriesChildren(t *testing.T) {
+	attemptSkill := strings.Replace(contractedDispatchSkill, "output_ac_coverage: true", "output_ac_coverage: true\nattempt_repair_max: 1", 1)
+	resolved := []ChildState{{ID: "sty_child1", Status: "done"}, {ID: "sty_child2", Status: "backlog"}}
+	two := func(context.Context, workitem.Item) []ChildState { return resolved }
+	tests := []struct {
+		name     string
+		skill    string
+		out      string
+		resolver func(context.Context, workitem.Item) []ChildState
+		want     []ChildState
+	}{
+		{"plain invoke", "alignment rubric", "did the work", two, resolved},
+		{"attempt policy", attemptSkill, `{"artifact":{"body":"## AC1\ncovered\n\n## AC2\ncovered"}}`, two, resolved},
+		{"no resolver", "alignment rubric", "did the work", nil, nil},
+		{"no children", "alignment rubric", "did the work", func(context.Context, workitem.Item) []ChildState { return nil }, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			docs := fakeDocs{workflow: dispatchWF, skillBody: tc.skill, skillFound: true}
+			g, _ := newEngine(t, "", docs)
+			r := &fakeRunner{out: tc.out}
+			g.newRunner = func(string, string) (agentcli.Runner, error) { return r, nil }
+			g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+				return config.AgentBinding{Command: "fake -p {system}", Tools: "read_file,grep,list_dir"}, true
+			})
+			g.SetArtifactAttacher(func(_ context.Context, _ workitem.Item, name, typ, _ string) (string, string, error) {
+				return name, typ, nil
+			})
+			if tc.resolver != nil {
+				g.SetChildrenResolver(tc.resolver)
+			}
+			if _, err := g.DispatchExecutor(context.Background(), workitem.Item{
+				ID: "sty_epic", Status: "backlog", Category: "epic-parent", AcceptanceCriteria: "1. first\n2. second",
+			}, "plan"); err != nil {
+				t.Fatal(err)
+			}
+			var raw map[string]any
+			if err := json.Unmarshal([]byte(r.got.Payload), &raw); err != nil {
+				t.Fatalf("payload is not JSON: %v\n%s", err, r.got.Payload)
+			}
+			if tc.want == nil {
+				if _, ok := raw["children"]; ok {
+					t.Fatalf("payload must carry no children key:\n%s", r.got.Payload)
+				}
+				return
+			}
+			var got struct {
+				Children []ChildState `json:"children"`
+			}
+			if err := json.Unmarshal([]byte(r.got.Payload), &got); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got.Children, tc.want) {
+				t.Fatalf("children = %+v, want %+v", got.Children, tc.want)
+			}
+		})
 	}
 }

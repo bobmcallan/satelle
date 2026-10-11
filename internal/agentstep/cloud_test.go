@@ -2,10 +2,12 @@ package agentstep
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -641,5 +643,35 @@ func TestOpenSessionRefusesCloudBinding(t *testing.T) {
 	}
 	if opened {
 		t.Error("an opener was built for a cloud binding")
+	}
+}
+
+// A cloud performer is told the container's children in its payload, exactly as
+// the local performer is (sty_b91dc1ac).
+func TestCloudPromptPayloadCarriesChildren(t *testing.T) {
+	f := newCloudFix(t)
+	b := cloudBinding("claude -p {system}", "", cloudTestLongLimit)
+	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), b)
+	want := []ChildState{{ID: "sty_child1", Status: "done"}, {ID: "sty_child2", Status: "backlog"}}
+	ce.SetChildrenResolver(func(context.Context, workitem.Item) []ChildState { return want })
+	p, err := ce.cloudPrompt(context.Background(), cloudItem(), "plan", "cloudy", b, []string{"cloud-step"}, "cloud-step", "branch-x", "nonce-x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const open = "payload:\n\n```json\n"
+	i := strings.Index(p, open)
+	if i < 0 {
+		t.Fatalf("no payload fence:\n%s", p)
+	}
+	body := p[i+len(open):]
+	body = body[:strings.Index(body, "\n```")]
+	var got struct {
+		Children []ChildState `json:"children"`
+	}
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("payload is not JSON: %v\n%s", err, body)
+	}
+	if !reflect.DeepEqual(got.Children, want) {
+		t.Fatalf("children = %+v, want %+v", got.Children, want)
 	}
 }

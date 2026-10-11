@@ -208,13 +208,7 @@ func (g *Engine) cloudPrompt(ctx context.Context, item workitem.Item, toStatus, 
 		return "", fmt.Errorf("cloud dispatch needs the %q skill: %w", cloudPerformerSkill, err)
 	}
 	performer = stripFrontmatter(performer)
-	payload := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: skill}
-	g.fillPayloadDocs(ctx, item.ID, &payload, nil)
-	addrs := []string{agent, "executor"}
-	if role := config.ResolvedRole(agent, binding); role != "" {
-		addrs = append(addrs, role)
-	}
-	g.fillMessages(ctx, item.ID, addrs, &payload, nil)
+	payload := g.performerPayload(ctx, item, toStatus, skill, agent, binding)
 	pj, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("cloud dispatch payload: %w", err)

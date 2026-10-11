@@ -1,3 +1,8 @@
+## [0.0.645] - 2026-10-11
+
+### Fixed
+- **A container's readiness performer receives the container's children.** A dispatched performer step — local executor dispatch and the cloud/remote performer prompt alike — now carries the container's children (id and status) in its payload, from the same resolver the reviewer, retrospective and chat payloads use, so an epic readied by a performer with read-only tools is judged on its real children. Both performer sites build their payload through one shared builder. (sty_b91dc1ac)
+
 ## [0.0.644] - 2026-10-11
 
 ### Added
