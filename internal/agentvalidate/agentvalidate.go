@@ -910,12 +910,12 @@ func gateAlloc(workflow, node, skill, agent, bindingModel, stepModel string) Gat
 // so is a cloud binding, whose prompt carries the whole payload
 // (config.NeedsContextChannel owns both exemptions).
 func performerChannelProblem(workflow, node, section string, b config.AgentBinding) string {
-	if !config.NeedsContextChannel(b) || config.GrantsContextChannel(b.Tools) {
+	if !config.NeedsContextChannel(b) || config.BindingGrantsContextChannel(b) {
 		return ""
 	}
 	return fmt.Sprintf(
-		"workflow %q node %q allocates performer agent=%s whose agents.toml [%s] tools grant has no context channel — a dispatched agent starts with no history and must pull the story; add `Bash(satelle:*)` for the satelle CLI, or `read_file` for disk reads under ~/.satelle/<repo-key>/stories/<id>/. Dispatch will otherwise be refused",
-		workflow, node, section, section)
+		"workflow %q node %q allocates performer agent=%s whose agents.toml [%s] tools grant has no context channel — a dispatched agent starts with no history and must pull the story; add `Bash(satelle:*)` for the satelle CLI, or %s under ~/.satelle/<repo-key>/stories/<id>/. Dispatch will otherwise be refused",
+		workflow, node, section, section, agentcli.ContextChannelHint(agentcli.AdapterName(b.CommandTemplate())))
 }
 
 // checkBinding validates one binding and builds its Grant. It reports the same
@@ -974,7 +974,7 @@ func checkBinding(section string, b config.AgentBinding, vars map[string]string)
 		Role:              role,
 		Principles:        b.ResolvedPrinciples(),
 		RoleInferred:      config.RoleInferred(b),
-		ContextChannel:    config.GrantsContextChannel(b.Tools),
+		ContextChannel:    config.BindingGrantsContextChannel(b),
 	}
 	// idle_timeout is what actually bounds a dispatch; an explicit hard timeout
 	// smaller than it would cut a progressing agent before the stall detector

@@ -98,12 +98,17 @@ func (a acpRunner) RunUsage(ctx context.Context, req Request) ([]byte, UsageResu
 		return nil, UsageResult{}, err
 	}
 	out, usage, err := runOneShotUsage(ctx, sess, req)
+	if adapterOf(a.binary, a.args) == HarnessPi {
+		// satelle reads no pi acp protocol: never a silent zero.
+		return out, piTransportUnsupported(InterfaceACP), err
+	}
 	if !usage.Available && usage.UnavailableReason == "" {
 		usage = acpUnavailableUsage(acpAdapterLabel(a.binary, a.args))
 	}
 	if usage.ModelResolved == "" {
 		usage.ModelResolved = noModelReport(acpAdapterLabel(a.binary, a.args))
 	}
+	usage.stampAdapter(adapterOf(a.binary, a.args))
 	return out, usage, err
 }
 

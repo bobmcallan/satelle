@@ -196,6 +196,11 @@ const (
 // whole prompt. Rows recorded before that change omitted cache and understate
 // input — they keep that meaning; no migration rewrites them.
 type UsageResult struct {
+	// Adapter names the harness that produced this usage (HarnessClaude,
+	// HarnessGrok, HarnessPi, HarnessCursor), stamped by agentcli from the binding's
+	// spawn so a ledger row names the adapter even when the usage is available.
+	// Empty when the spawn is unrecognised (HarnessUnknown is never recorded).
+	Adapter      string
 	InputTokens  int
 	OutputTokens int
 	TotalTokens  int
@@ -552,6 +557,34 @@ func (t templateRunner) Run(ctx context.Context, req Request) ([]byte, error) {
 		return runProcess(ctx, t.binary, args, creq)
 	}
 	return runProcess(ctx, t.binary, reviewerArgs(t.binary, buildArgs(t.argTemplate, req), req), req)
+}
+
+// RunUsage implements UsageRunner for the command transport. Every adapter but pi
+// reports usage on stdout, so it is what runOnce's Run+UnwrapUsage fallback
+// returned. pi prints plain text and keeps its usage in its own session record, so
+// that run is attributed from the record (piRunUsage), or recorded as a pi-named
+// unavailable — never the generic "transport reported no usage" (sty_58a9bdc8).
+func (t templateRunner) RunUsage(ctx context.Context, req Request) ([]byte, UsageResult, error) {
+	if adapterOf(t.binary, t.argTemplate) != HarnessPi {
+		out, err := t.Run(ctx, req)
+		if err != nil {
+			return out, UsageResult{}, err
+		}
+		text, usage := UnwrapUsage(out)
+		usage.stampAdapter(adapterOf(t.binary, t.argTemplate))
+		return text, usage, nil
+	}
+	start := time.Now()
+	out, err := t.Run(ctx, req)
+	return out, piRunUsage(req.Dir, start, time.Now()), err
+}
+
+// stampAdapter records the harness behind a spawn on its usage. An unrecognised
+// spawn stays empty rather than naming a guess ([[satelle-agent-agnostic]] §3).
+func (u *UsageResult) stampAdapter(adapter string) {
+	if adapter != HarnessUnknown {
+		u.Adapter = adapter
+	}
 }
 
 // buildArgs substitutes the placeholders in an argv template against req.

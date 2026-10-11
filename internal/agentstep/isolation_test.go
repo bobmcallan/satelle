@@ -303,6 +303,53 @@ func TestInvoke_OperatorAttestedReviewer(t *testing.T) {
 	})
 }
 
+// A pi binding is a recognised adapter (sty_58a9bdc8): it is never the
+// unknown-adapter gap, and an operator-attested declaration on it is redundant —
+// the ledger records pi's own offered tools and gap, not the attested source.
+func TestInvoke_PiReviewerIsRecognised(t *testing.T) {
+	const ro = "read,grep,find,ls"
+	attested := config.AgentBinding{Isolation: config.IsolationOperatorAttested}
+
+	t.Run("restricted pi command: no warning, offered tools from the flag", func(t *testing.T) {
+		path, marker := startCounter(t, "pi", isolationVerdict)
+		res, warn := warnedInvoke(t, "command", path+" -p {payload} --tools read,grep,find,ls", ro, config.AgentBinding{})
+		if res.Err != nil || starts(marker) != 1 {
+			t.Fatalf("err = %v starts = %d", res.Err, starts(marker))
+		}
+		if warn != "" {
+			t.Errorf("a restricted pi binding warned: %q", warn)
+		}
+		if res.OfferedToolCount == nil || *res.OfferedToolCount != 4 || res.OfferedToolsSource != agentcli.OfferedSourceFlag {
+			t.Errorf("offered = %v (%q), want 4 via flag", res.OfferedToolCount, res.OfferedToolsSource)
+		}
+	})
+
+	t.Run("unrestricted pi command: a pi-named gap, never the unknown-adapter one", func(t *testing.T) {
+		path, _ := startCounter(t, "pi", isolationVerdict)
+		res, warn := warnedInvoke(t, "command", path+" -p {payload}", ro, config.AgentBinding{})
+		if res.Err != nil {
+			t.Fatalf("refused: %v", res.Err)
+		}
+		if strings.Count(warn, "warning:") != 1 || !strings.Contains(warn, "pi/command") || strings.Contains(warn, "no adapter knows") {
+			t.Errorf("warning = %q, want one pi/command warning", warn)
+		}
+		if !strings.Contains(res.IsolationLimitation, "pi/command") || res.OfferedToolCount != nil {
+			t.Errorf("limitation = %q count = %v, want the pi gap and no count", res.IsolationLimitation, res.OfferedToolCount)
+		}
+	})
+
+	t.Run("operator-attested pi: the adapter's description, not the attested source", func(t *testing.T) {
+		path, _ := startCounter(t, "pi", isolationVerdict)
+		res, _ := warnedInvoke(t, "command", path+" -p {payload} --tools read,grep,find,ls", ro, attested)
+		if res.Err != nil {
+			t.Fatalf("refused: %v", res.Err)
+		}
+		if res.OfferedToolsSource != agentcli.OfferedSourceFlag || res.OfferedToolCount == nil || *res.OfferedToolCount != 4 {
+			t.Errorf("source = %q count = %v, want pi's flag-sourced 4 tools, not %q", res.OfferedToolsSource, res.OfferedToolCount, agentcli.OfferedSourceAttested)
+		}
+	})
+}
+
 // AC5: every reviewer invocation records system_prompt_bytes and the offered
 // tool figure with its source, per adapter. The count is what the harness
 // offers (rendered --tools, or the harness's own init report) — never the grant

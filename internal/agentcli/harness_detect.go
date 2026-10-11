@@ -2,7 +2,6 @@ package agentcli
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"strings"
 )
 
@@ -51,28 +50,14 @@ var sessionMarkers = []sessionMarker{
 
 // HarnessOf names the harness behind a binding's command line, for lookups keyed
 // by harness (the [harness.<name>] tables): HarnessClaude, HarnessGrok,
-// HarnessPi, HarnessCursor or HarnessUnknown. It is NOT the reviewer-isolation classifier.
-// AdapterName answers for claude, grok and cursor (adapterOf: cursor-agent is the
-// executable named exactly so or cursor-agent-*; the bare names cursor and agent
-// are too common to claim, sty_7d098d50), and pi stays HarnessUnknown there on
-// purpose: preflight's no-tool-trim gap, the operator-attested path and the
-// unrecognised-adapter handling all key on it, so recognising pi in that switch
-// would quietly turn an explicit gap into a silent pass. The two agree everywhere
-// except pi. pi is the executable named exactly pi or pi-*, which excludes pip
-// and the like.
+// HarnessPi, HarnessCursor or HarnessUnknown. It is the reviewer-isolation
+// classifier too: both answer through adapterOf, so there is one rule (cursor-agent
+// is the executable named exactly so or cursor-agent-*, pi exactly pi or pi-*,
+// which excludes pip and the like; the bare names cursor and agent are too common
+// to claim, sty_7d098d50). pi was once left unknown there (sty_f141c77f);
+// sty_58a9bdc8 recognises it, since preflight now reports pi's own gap.
 func HarnessOf(command string) string {
-	if h := AdapterName(command); h != HarnessUnknown {
-		return h
-	}
-	fields := strings.Fields(command)
-	if len(fields) == 0 {
-		return HarnessUnknown
-	}
-	base := strings.ToLower(filepath.Base(fields[0]))
-	if base == "pi" || strings.HasPrefix(base, "pi-") {
-		return HarnessPi
-	}
-	return HarnessUnknown
+	return AdapterName(command)
 }
 
 // SessionMarkerEnvNames lists the environment keys DetectSessionHarnesses

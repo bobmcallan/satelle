@@ -99,6 +99,9 @@ func (g *Engine) runArtifactAttempts(
 			Skill: skill, Actor: "executor",
 		})
 		totalUsage.Duration += lastResult.Usage.Duration
+		if lastResult.Usage.Adapter != "" {
+			totalUsage.Adapter = lastResult.Usage.Adapter
+		}
 		if lastResult.Usage.Available {
 			totalUsage.Available = true
 			totalUsage.InputTokens += lastResult.Usage.InputTokens
@@ -202,7 +205,7 @@ func (g *Engine) runArtifactAttempts(
 					return withUsage(lastResult, totalUsage), nil, fmt.Errorf(
 						"attempt_escalate_binding %q has role=reviewer; quality escalation requires a performer", section)
 				}
-				if !config.GrantsContextChannel(binding.Tools) {
+				if !config.BindingGrantsContextChannel(binding) {
 					return withUsage(lastResult, totalUsage), nil, fmt.Errorf(
 						"attempt_escalate_binding %q has no read-only context channel", section)
 				}

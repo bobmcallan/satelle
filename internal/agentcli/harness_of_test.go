@@ -31,19 +31,38 @@ func TestHarnessOf(t *testing.T) {
 	}
 }
 
-// Pinned: the isolation classifier is NOT changed by HarnessOf. pi stays
-// unrecognised for reviewer isolation (preflight's no-tool-trim gap, the
-// operator-attested path), so the two differ for pi and agree elsewhere.
-func TestHarnessOfDoesNotWidenReviewerIsolation(t *testing.T) {
-	for _, command := range []string{"pi -p {system}", "/usr/bin/pi-agent"} {
+// Pinned (sty_58a9bdc8, reversing sty_f141c77f): pi is recognised by the one
+// classifier, so dispatch, preflight, agent validate and [harness.<name>] lookups
+// agree. The binary alone decides — a pi command carrying `--model …grok…` stays
+// pi — and pip is not pi.
+func TestPiIsRecognisedAdapter(t *testing.T) {
+	for _, command := range []string{
+		"pi -p {system}",
+		"/usr/bin/pi-agent",
+		"/usr/local/bin/pi -p {payload}",
+		"pi --model openrouter/x-ai/grok-4 -p",
+		"pi -p --model openrouter/anthropic/claude-sonnet-4",
+	} {
+		if got := AdapterName(command); got != HarnessPi {
+			t.Errorf("AdapterName(%q) = %q, want pi", command, got)
+		}
+		if got := HarnessOf(command); got != HarnessPi {
+			t.Errorf("HarnessOf(%q) = %q, want pi", command, got)
+		}
+		if UnrecognisedCommand(command) {
+			t.Errorf("UnrecognisedCommand(%q) must be false for pi", command)
+		}
+		r, err := RunnerFromCommand(command + " -p")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if UnrecognisedRunner(r) {
+			t.Errorf("UnrecognisedRunner(%q) must be false for pi", command)
+		}
+	}
+	for _, command := range []string{"pip install", "pimento", "/usr/bin/pidgin -p"} {
 		if got := AdapterName(command); got != HarnessUnknown {
-			t.Errorf("AdapterName(%q) = %q, must stay unknown for isolation", command, got)
-		}
-		if !UnrecognisedCommand(command) {
-			t.Errorf("UnrecognisedCommand(%q) must stay true", command)
-		}
-		if HarnessOf(command) != HarnessPi {
-			t.Errorf("HarnessOf(%q) must be pi", command)
+			t.Errorf("AdapterName(%q) = %q, want unknown", command, got)
 		}
 	}
 	// cursor-agent is recognised by HarnessOf (sty_7d098d50) and, since it became a

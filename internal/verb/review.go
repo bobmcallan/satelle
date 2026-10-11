@@ -202,6 +202,9 @@ type ToolIsolation struct {
 // its zero split is unreported, not measured. Both are absent on a row whose
 // provider reported its own split, and on rows written before this existed.
 type UsageNote struct {
+	// Adapter names the harness the usage came from (set by agentcli), so a row
+	// whose usage was available still says which adapter produced it.
+	Adapter                string `json:"adapter,omitempty"`
 	UsageUnavailableReason string `json:"usage_unavailable_reason,omitempty"`
 	CacheSplitUnavailable  bool   `json:"cache_split_unavailable,omitempty"`
 }

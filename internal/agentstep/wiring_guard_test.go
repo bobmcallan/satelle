@@ -93,7 +93,7 @@ func newGuardRig(t *testing.T, root, command string, cfg config.Config) guardRig
 		}, nil
 	}
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
-		return config.AgentBinding{Interface: "stream", Command: command, Tools: "read_file,grep,list_dir"}, true
+		return config.AgentBinding{Interface: "stream", Command: command, Tools: "read,read_file,grep,list_dir"}, true
 	})
 	warn := &bytes.Buffer{}
 	g.SetWarnWriter(warn)

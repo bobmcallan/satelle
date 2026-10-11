@@ -101,6 +101,23 @@ type piUsageRow struct {
 type piSessionRecord struct {
 	rows      []piUsageRow
 	lastModel string
+	// created is when pi created the session: the {"type":"session"} header's
+	// timestamp, else the file name's UTC prefix. Zero when neither parses.
+	created time.Time
+}
+
+// piFileNameTime parses the UTC prefix of a pi session file name
+// (<2006-01-02T15-04-05-000Z>_<sessionId>.jsonl).
+func piFileNameTime(path string) time.Time {
+	prefix, _, ok := strings.Cut(filepath.Base(path), "_")
+	if !ok {
+		return time.Time{}
+	}
+	t, err := time.Parse("2006-01-02T15-04-05-000Z", prefix)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 // readPiSession is the one pi session-record iterator: the cumulative reader and
@@ -118,6 +135,8 @@ func readPiSession(sessionID, repoRoot string) (piSessionRecord, string) {
 		return rec, fmt.Sprintf("pi: session record unreadable: %v", err)
 	}
 	defer f.Close()
+	rec.created = piFileNameTime(matches[len(matches)-1])
+	headerSeen := false
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
@@ -146,6 +165,12 @@ func readPiSession(sessionID, repoRoot string) (piSessionRecord, string) {
 		}
 		if json.Unmarshal(line, &row) != nil {
 			continue
+		}
+		if row.Type == "session" && !headerSeen {
+			headerSeen = true
+			if t, err := time.Parse(time.RFC3339Nano, row.Timestamp); err == nil {
+				rec.created = t
+			}
 		}
 		if row.Type == "model_change" && row.ModelID != "" {
 			rec.lastModel = row.ModelID
@@ -178,6 +203,22 @@ func readPiSession(sessionID, repoRoot string) (piSessionRecord, string) {
 	return rec, ""
 }
 
+// piWindowRows is the rows of rec timestamped inside [from, to] (inclusive at
+// both ends) and how many rows carry no parseable timestamp, so cannot be placed.
+// It is the one window filter: piWindowUsage and the per-run reader both fold it.
+func piWindowRows(rec piSessionRecord, from, to time.Time) (rows []piUsageRow, untimed int) {
+	for _, r := range rec.rows {
+		switch {
+		case r.at.IsZero():
+			untimed++
+		case r.at.Before(from) || r.at.After(to):
+		default:
+			rows = append(rows, r)
+		}
+	}
+	return rows, untimed
+}
+
 // piWindowUsage sums the assistant rows pi wrote inside [from, to] (inclusive at
 // both ends). The attribution is by each row's own timestamp, so the figure is
 // derived from timestamps, not a live-measured delta. A window with no usage in it,
@@ -194,16 +235,9 @@ func piWindowUsage(sessionID, repoRoot string, from, to time.Time) DriverWindowU
 	if reason != "" {
 		return fail(reason)
 	}
-	untimed := 0
+	rows, untimed := piWindowRows(rec, from, to)
 	var cost float64
-	for _, r := range rec.rows {
-		if r.at.IsZero() {
-			untimed++
-			continue
-		}
-		if r.at.Before(from) || r.at.After(to) {
-			continue
-		}
+	for _, r := range rows {
 		w.FreshInputTokens += r.input
 		w.OutputTokens += r.output
 		w.CacheReadInputTokens += r.cacheRead

@@ -652,9 +652,12 @@ func RoleInferred(b AgentBinding) bool {
 //
 //  1. satelle CLI via shell: `Bash(satelle…)`, broad `Bash`/`Bash(*)`, or `*`.
 //  2. Disk reads of story documents under the home-keyed runtime plane
-//     (~/.satelle/<repo-key>/stories/<id>/) via the grok-native `read_file`
-//     tool (used when headless Grok cannot enable run_terminal_command).
-//     The in-repo `.satelle/stories/` path is obsolete (sty_58fa970e).
+//     (~/.satelle/<repo-key>/stories/<id>/) via the adapter's own read tool
+//     (agentcli.ContextReadTools: e.g. grok-native `read_file`, used when
+//     headless Grok cannot enable run_terminal_command). adapter is the
+//     binding's agentcli.AdapterName, so a read tool of one adapter does not
+//     count on another. The in-repo `.satelle/stories/` path is obsolete
+//     (sty_58fa970e).
 //
 // A grant with neither channel leaves the agent silently context-starved, so
 // dispatch refuses it loudly. Claude-only `Read` (without Bash) is intentionally
@@ -669,7 +672,8 @@ func RoleInferred(b AgentBinding) bool {
 // about any grant string. It carries its own quote-stripping tokenizer rather
 // than reusing splitList so that a quoted TOML token ("Bash(satelle:*)") is
 // judged identically on both paths.
-func GrantsContextChannel(tools string) bool {
+func GrantsContextChannel(adapter, tools string) bool {
+	readTools := agentcli.ContextReadTools(adapter)
 	for _, raw := range strings.Split(tools, ",") {
 		t := strings.Trim(strings.TrimSpace(raw), `"'`)
 		if t == "" {
@@ -678,11 +682,19 @@ func GrantsContextChannel(tools string) bool {
 		if t == "*" || t == "Bash" || t == "Bash(*)" || strings.HasPrefix(t, "Bash(satelle") {
 			return true
 		}
-		if t == "read_file" {
-			return true
+		for _, r := range readTools {
+			if t == r {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// BindingGrantsContextChannel is GrantsContextChannel for a binding: the adapter is
+// the one behind its command, so callers never classify it themselves.
+func BindingGrantsContextChannel(b AgentBinding) bool {
+	return GrantsContextChannel(agentcli.AdapterName(b.CommandTemplate()), b.Tools)
 }
 
 // NeedsContextChannel reports whether a binding allocated to a performing node
