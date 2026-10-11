@@ -1,3 +1,25 @@
+## [0.0.644] - 2026-10-11
+
+### Added
+- **A malformed readiness plan is refused before any reviewer runs.** A plan contract that declares `output_criteria_section` now has its `## Acceptance criteria` section checked: any line that is not a numbered criterion (a stray bullet, a tool line-number prefix) refuses the edge with the offending lines named, before the reviewers are dispatched. (sty_44dd5159)
+- **The accepted plan's criteria are applied when implementation starts.** A step that declares `apply_criteria` copies the accepted plan's `## Acceptance criteria` section onto the story verbatim, recorded as a definition edit from the plan, and the entry gates judge the applied text. (sty_4d9df9a0)
+- **A container's retrospective runs the advisor its route declares and sees its children.** `satelle story retrospect` runs the route's `advise = { agent, skill }` for the item's current step (falling back to the built-in retrospective). A container's payload carries its children. The embedded `satelle-epic-retrospective` skill drafts each finding as a story classified bug or context under a new follow-up epic, implementing nothing. (sty_da018b06)
+
+### Fixed
+- **A gate re-judges when evidence was recorded after its last verdict.** A verdict now records when its presentation cycle ended. A later story log or attach marks the previous verdict stale instead of letting the gate re-issue it unchanged. The gate's own bookkeeping rows never count. (sty_0225fc2f)
+- **A rework relay opens with the performer when it has an unanswered directed message**, and a consultant's READY cannot end the relay while that message is unanswered. (sty_ec74ab22)
+- **A story's change set is measured from its engagement baseline**, not from a park/resume re-anchor written while it sat in backlog. (sty_12ce4271)
+- **`satelle ledger list` shows a story's newest rows** and says on stderr how many older rows were left out. Gates see the same window and are told when rows were omitted. An oldest-first paging mode remains for readers that walk a whole ledger, such as review capture. (sty_523edea7)
+- **A story engaged from its own worktree is not refused because another engaged story is editing the main tree.** The trunk line names whose changes they are; a dirty main no engaged story accounts for is still refused. (sty_f1db1260)
+
+### Changed
+- This completes epic:improve-loop. Its reviewer comparison chose opus as this repo's gate reviewer: same measured quality as Fable at about a third of the cost. (sty_3ca9c3c9)
+
+## [serve-v0.0.149] - 2026-10-11
+
+### Changed
+- The serve binary carries the ledger newest-window reader, the prior-verdict staleness rule and the plan-criteria checks. (sty_3ca9c3c9)
+
 ## [0.0.643] - 2026-10-11
 
 ### Added
