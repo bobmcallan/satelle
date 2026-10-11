@@ -933,6 +933,10 @@ type PriorVerdict struct {
 	Attempt           int    `json:"attempt"`
 	Reviewed          string `json:"reviewed,omitempty"`
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+	// ReviewedStale/EvidenceSince: ledger evidence was recorded after this
+	// verdict's cycle ended, so Reviewed is withheld and the gate re-judges.
+	ReviewedStale bool                 `json:"reviewed_stale,omitempty"`
+	EvidenceSince []verb.EvidenceSince `json:"evidence_since,omitempty"`
 }
 
 // PriorVerdictFrom is the one conversion from a ledger prior verdict to the
@@ -945,6 +949,8 @@ func PriorVerdictFrom(v verb.PriorVerdict) PriorVerdict {
 		CreatedAt:         v.CreatedAt,
 		Reviewed:          v.Reviewed,
 		ReviewedTruncated: v.ReviewedTruncated,
+		ReviewedStale:     v.ReviewedStale,
+		EvidenceSince:     v.EvidenceSince,
 	}
 }
 
