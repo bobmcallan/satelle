@@ -241,7 +241,8 @@ func MessagesSince(ctx context.Context, itemID string, addresses []string) []Age
 
 // currentEngagementWindow is the SHA and time MessagesSince windows on, and
 // the SHA story-message stamps. Resume re-anchor wins over the first
-// baseline so write and read cannot diverge (sty_2db624d0). The pre-engagement
+// baseline so write and read cannot diverge (sty_2db624d0); a re-anchor taken
+// before the first baseline is no anchor (sty_12ce4271). The pre-engagement
 // choice is made here too, so the stamp and the read share one decision.
 func currentEngagementWindow(ctx context.Context, storyID string) (sha string, at time.Time, ok bool) {
 	if at, pre := preEngagementWindow(ctx, storyID); pre {
