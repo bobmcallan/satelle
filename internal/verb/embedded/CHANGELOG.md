@@ -1,3 +1,9 @@
+## [0.0.650] - 2026-10-11
+
+### Added
+- **Sync one story or epic by id.** `satelle sync workstate` push, pull and snapshot accept story ids: push sends only those work items and the ledger rows whose story id is among them, and pull uses the server's story-scoped, paged Snapshot (satelle-server 0.1.159, `story_ids`) and applies the same reconcile as a full pull. A scoped pass never touches the project's since-cursor or checkpoint and never falls back to a full pass. An epic container id expands to its members by the epic tag from the local store; a container with no local members is named with a notice to pass the member ids. An unknown id, or a server that ignores the scope, is refused with a message saying which. The canonical proto adopts `repeated string story_ids = 6`. (sty_991b6900)
+- This completes epic:sync-paging: the client pages Snapshot and sends only what changed since its last pass (0.0.648, 0.0.649), and can sync a named story or epic. (sty_af63104e)
+
 ## [0.0.649] - 2026-10-11
 
 ### Fixed
