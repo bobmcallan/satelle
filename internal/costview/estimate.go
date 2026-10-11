@@ -52,3 +52,39 @@ func EstimateFor(estimates []Estimate, unit string) (Estimate, bool) {
 	}
 	return Estimate{}, false
 }
+
+// Actual is one measured actual figure read off a finished story's tags, in
+// the unit recordActual wrote it in. Unit is one of "fresh-input", "output",
+// "cache-read" or "cache-write".
+type Actual struct {
+	Unit  string  `json:"unit"`
+	Value float64 `json:"value"`
+}
+
+// actualUnits are the actual-<unit> tags ParseActuals reads — the token
+// figures recordActual (verb/workitem.go) is the sole writer of. A dollar unit
+// is deliberately absent, as it is for estimates.
+var actualUnits = []string{"fresh-input", "output", "cache-read", "cache-write"}
+
+// ParseActuals reads actual-<unit>:<value> tags off tags. A value that does not
+// parse as a number — notably recordActual's "unavailable" marker — is skipped,
+// so an unmeasured figure is absent rather than a false zero.
+func ParseActuals(tags []string) []Actual {
+	var out []Actual
+	for _, unit := range actualUnits {
+		prefix := "actual-" + unit + ":"
+		for _, t := range tags {
+			v, ok := strings.CutPrefix(t, prefix)
+			if !ok {
+				continue
+			}
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				continue
+			}
+			out = append(out, Actual{Unit: unit, Value: f})
+			break
+		}
+	}
+	return out
+}

@@ -741,6 +741,9 @@ the estimate greps those TAGS, not a plan section, so a figure written only into
 the plan artifact leaves the gate unsatisfied. Record it before requesting the
 transition the gate fires on.
 
+Run ` + "`satelle story comparables <id>`" + ` first and estimate within its spread; the
+satelle-estimate-actual-review gate rejects an estimate outside it.
+
 --time takes a duration (30m, 2h, 1h30m) or a bare number of MINUTES (38).`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
@@ -765,6 +768,40 @@ transition the gate fires on.
 	estimate.Flags().StringVar(&eTime, "time", "", "legacy unit: estimated duration (30m, 2h, or a bare number of minutes)")
 	estimate.Flags().IntVar(&eTokens, "tokens", 0, "legacy unit: a bare estimated token count (never usd or fresh input)")
 	estimate.Flags().StringVar(&eBasis, "basis", "", "optional note on the estimate basis")
+
+	var cmpLimit int
+	var cmpIgnore []string
+	comparables := &cobra.Command{
+		Use:   "comparables <id>",
+		Short: "List finished stories whose measured token actuals an estimate can be compared against",
+		Long: `Enumerate the finished stories comparable to <id>: terminal by their own
+workflow, not a container (no children), and carrying a measured token actual
+(actual-fresh-input / actual-output / actual-cache-read / actual-cache-write).
+Ranked same category first, then by count of shared tags, then most recently
+updated. A figure a story never measured is omitted, never shown as zero.
+
+Run it BEFORE ` + "`satelle story estimate`" + ` and estimate within the spread it shows:
+the satelle-estimate-actual-review gate reads the same list and rejects an
+estimate no comparable supports. It decides nothing itself.
+
+--ignore-prefix names tag prefixes left out of the shared-tag count (repeatable);
+there is no default, the gate passes the ones it wants ignored. --limit caps the
+list (0 = every comparable). Pass the global --json for the plain form.`,
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := map[string]any{"id": args[0]}
+			if cmpLimit > 0 {
+				req["limit"] = cmpLimit
+			}
+			if len(cmpIgnore) > 0 {
+				req["ignore_prefixes"] = cmpIgnore
+			}
+			return dispatch(cmd, "story-comparables", req)
+		},
+	}
+	comparables.Flags().IntVar(&cmpLimit, "limit", 0, "cap the list (0 = every comparable)")
+	comparables.Flags().StringArrayVar(&cmpIgnore, "ignore-prefix", nil, "tag prefix to leave out of the shared-tag count; repeatable")
 
 	actual := &cobra.Command{
 		Use:   "actual <id>",
@@ -1033,7 +1070,7 @@ routine close step.`,
 	}
 	retrospect.Flags().String("model", "", "model for this dispatch, overriding agents.toml (recorded with source=agent)")
 
-	return []*cobra.Command{estimate, actual, backfill, log, cost, resummarise, retrospect}
+	return []*cobra.Command{estimate, comparables, actual, backfill, log, cost, resummarise, retrospect}
 }
 
 // parseLogData turns a list of "key=value" flags into a typed data map: a

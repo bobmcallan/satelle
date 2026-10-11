@@ -413,6 +413,25 @@ func TestParseEstimatesKeepsUnit(t *testing.T) {
 	}
 }
 
+// TestParseActualsReadsTokenFiguresOnly pins that ParseActuals reads the four
+// token figures recordActual writes, skips the "unavailable" marker, and never
+// reads a dollar or minutes tag.
+func TestParseActualsReadsTokenFiguresOnly(t *testing.T) {
+	got := costview.ParseActuals([]string{
+		"actual-usd:86.73", "actual-minutes:127", "actual-fresh-input:unavailable",
+		"actual-output:585123", "actual-cache-read:9", "actual-cache-write:4", "epic:x",
+	})
+	want := map[string]float64{"output": 585123, "cache-read": 9, "cache-write": 4}
+	if len(got) != len(want) {
+		t.Fatalf("ParseActuals = %+v, want exactly %v", got, want)
+	}
+	for _, a := range got {
+		if v, ok := want[a.Unit]; !ok || v != a.Value {
+			t.Errorf("unexpected actual %+v", a)
+		}
+	}
+}
+
 // TestOwnDriverRowIsSeparate pins AC4: a driver row's figures are folded into
 // AgentMs/tokens but Own also reports it as its own DriverRows entry, never
 // silently merged with dispatch Rows.
