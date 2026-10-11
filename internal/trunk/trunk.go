@@ -66,6 +66,13 @@ type Options struct {
 	// only the remote-tracking symref, but it contacts the remote, so a caller
 	// opts in: the engage path does not, the worktree cut and `trunk sync` do.
 	ResolveHead bool
+	// DirtyOwner lets a caller say whose uncommitted changes a dirty trunk
+	// checkout holds (sty_f1db1260). It is asked only when the checkout is a
+	// different working tree from the one Check was run in; a non-empty answer
+	// means the changes belong to someone else's work, so they are reported but
+	// do not make the state Dirty. The trunk package knows nothing of who that
+	// someone is. Nil means every dirty trunk checkout is Dirty.
+	DirtyOwner func(checkout string) string
 }
 
 // Report is what Check found. State is the one-word answer; the rest is the
@@ -89,11 +96,19 @@ type Report struct {
 	// they are the old and the new tip.
 	From string `json:"from,omitempty"`
 	To   string `json:"to,omitempty"`
+	// DirtyOwner and DirtyCheckout are set when the trunk checkout has
+	// uncommitted changes that Options.DirtyOwner attributed to another's work:
+	// the working tree, and who it belongs to. State then comes from the compare.
+	DirtyOwner    string `json:"dirty_owner,omitempty"`
+	DirtyCheckout string `json:"dirty_checkout,omitempty"`
 }
 
 // Quiet reports whether the state needs no word to the operator: nothing to
-// compare, or nothing different.
-func (r Report) Quiet() bool { return r.State == "" || r.State == Level || r.State == Skipped }
+// compare, or nothing different. Changes attributed to another's work are
+// always worth a word.
+func (r Report) Quiet() bool {
+	return r.DirtyOwner == "" && (r.State == "" || r.State == Level || r.State == Skipped)
+}
 
 // Line renders the one-line report. The engage path and `satelle trunk sync`
 // print this same text, and the ledger row's body is it.
@@ -101,6 +116,14 @@ func (r Report) Line() string { return "satelle: trunk " + r.Detail() }
 
 // Detail is Line without its "satelle: trunk " prefix.
 func (r Report) Detail() string {
+	d := r.stateDetail()
+	if r.DirtyOwner != "" {
+		d += fmt.Sprintf("; uncommitted changes in %s belong to engaged story %s", r.DirtyCheckout, r.DirtyOwner)
+	}
+	return d
+}
+
+func (r Report) stateDetail() string {
 	switch r.State {
 	case Level:
 		return fmt.Sprintf("%s level with %s/%s", r.Trunk, r.Remote, r.Trunk)
@@ -171,9 +194,18 @@ func Check(ctx context.Context, dir string, opts Options) Report {
 			return skipped(rep, serr.Error())
 		}
 		if status != "" {
-			rep.State = Dirty
-			rep.Reason = fmt.Sprintf("uncommitted changes in %s", checkout)
-			return rep
+			// Dirt in another working tree that the caller can account for is not
+			// this tree's to refuse on; dirt in this tree never is excused.
+			owner := ""
+			if opts.DirtyOwner != nil && !sameDir(checkout, top) {
+				owner = opts.DirtyOwner(checkout)
+			}
+			if owner == "" {
+				rep.State = Dirty
+				rep.Reason = fmt.Sprintf("uncommitted changes in %s", checkout)
+				return rep
+			}
+			rep.DirtyOwner, rep.DirtyCheckout = owner, checkout
 		}
 	}
 
