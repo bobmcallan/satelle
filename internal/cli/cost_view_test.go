@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -104,8 +105,16 @@ func TestPrintCostSummaryRendersSharedFixture(t *testing.T) {
 			t.Errorf("printCostSummary missing %q; got:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "$") {
-		t.Errorf("printCostSummary must not show a dollar estimate or dollar actual:\n%s", out)
+	// A dollar figure is either the derived `cost` or the provider's `reported`
+	// one, never an unlabelled second figure (sty_6267abb7 AC8). This fixture
+	// configures no pricing, so the only dollars are the labelled reported ones.
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "$") && !strings.HasPrefix(line, "reported") {
+			t.Errorf("unlabelled dollar figure %q in:\n%s", line, out)
+		}
+	}
+	if !regexp.MustCompile(`(?m)^cost\s+unavailable \(no pricing configured\)`).MatchString(out) {
+		t.Errorf("printCostSummary missing the derived cost line:\n%s", out)
 	}
 }
 

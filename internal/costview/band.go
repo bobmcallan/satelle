@@ -18,7 +18,7 @@ func (f Figures) CostBand() string {
 	if !f.HasRows() {
 		return "" // nothing measured -> no band
 	}
-	total := f.FreshInput + f.UnsplitTokens + f.Output + f.CacheRead + f.CacheWrite
+	total := f.TotalTokens()
 	switch {
 	case total < 200000:
 		return "low"
@@ -27,6 +27,13 @@ func (f Figures) CostBand() string {
 	default:
 		return "high"
 	}
+}
+
+// TotalTokens is the class sum the band weighs and a subscription share is
+// priced on: fresh input + unsplit input + output + cache read + cache write.
+// One definition, so the band and the share cannot disagree about "total".
+func (f Figures) TotalTokens() int {
+	return f.FreshInput + f.UnsplitTokens + f.Output + f.CacheRead + f.CacheWrite
 }
 
 // FormatCostBand renders CostBand for display. An empty band (nothing

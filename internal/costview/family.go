@@ -15,6 +15,9 @@ type FamilyCost struct {
 	Root     Story   `json:"root"`
 	Children []Story `json:"children,omitempty"`
 	Total    Figures `json:"total"`
+	// Seats rolls the per-seat tokens and derived cost of root and every
+	// descendant up by seat.
+	Seats []SeatLine `json:"seats,omitempty"`
 }
 
 // Family walks items by ParentID starting at root.ID, any depth, each id
@@ -29,7 +32,7 @@ type FamilyCost struct {
 // span: the earliest engage across root and every descendant, to the latest
 // terminal (or now) across the same set. Root.Figures.ElapsedMs always stays
 // root's own clock.
-func Family(root workitem.Item, items []workitem.Item, entriesByID map[string][]ledger.Entry, clockFor func(workitem.Item) Clock, now time.Time) FamilyCost {
+func Family(root workitem.Item, items []workitem.Item, entriesByID map[string][]ledger.Entry, clockFor func(workitem.Item) Clock, now time.Time, opts ...Option) FamilyCost {
 	byParent := map[string][]workitem.Item{}
 	for _, it := range items {
 		if it.ParentID != "" {
@@ -37,7 +40,8 @@ func Family(root workitem.Item, items []workitem.Item, entriesByID map[string][]
 		}
 	}
 
-	rootStory := Own(root, entriesByID[root.ID], clockFor(root), now)
+	rootStory := Own(root, entriesByID[root.ID], clockFor(root), now, opts...)
+	seats := rootStory.Seats
 
 	visited := map[string]bool{root.ID: true}
 	var walk func(parentID string) ([]Story, *Span)
@@ -49,7 +53,8 @@ func Family(root workitem.Item, items []workitem.Item, entriesByID map[string][]
 				continue
 			}
 			visited[k.ID] = true
-			own := Own(k, entriesByID[k.ID], clockFor(k), now)
+			own := Own(k, entriesByID[k.ID], clockFor(k), now, opts...)
+			seats = MergeSeats(seats, own.Seats)
 			grandchildren, gcSpan := walk(k.ID)
 			total := own.Figures
 			for _, gc := range grandchildren {
@@ -79,7 +84,7 @@ func Family(root workitem.Item, items []workitem.Item, entriesByID map[string][]
 	if len(children) > 0 {
 		total.ElapsedMs = elapsedFromSpan(UnionSpan(rootStory.Span, childSpan))
 	}
-	return FamilyCost{Root: rootStory, Children: children, Total: total}
+	return FamilyCost{Root: rootStory, Children: children, Total: total, Seats: seats}
 }
 
 // elapsedFromSpan derives an ElapsedMs figure from a (possibly nil) Span: -1

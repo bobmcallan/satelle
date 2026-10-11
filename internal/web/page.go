@@ -424,6 +424,7 @@ const templatesSrc = `
   </li>{{end}}</ol>{{else}}<div class="empty">No runs yet — create one with <code>satelle execution create --parent {{.Item.ID}}</code>.</div>{{end}}{{end}}
   {{with .Cost}}<h4>Cost</h4>
   <dl class="cost-summary">
+    <dt>Cost</dt><dd class="cost-derived">{{.Cost}}</dd>
     <dt>Band</dt><dd>{{.Band}}</dd>
     <dt>Fresh in</dt><dd>{{.FreshIn}}{{if .EstFreshIn}} <span class="cost-est">({{.EstFreshIn}})</span>{{end}}</dd>
     <dt>Out</dt><dd>{{.Out}}{{if .EstOut}} <span class="cost-est">({{.EstOut}})</span>{{end}}</dd>
@@ -433,17 +434,27 @@ const templatesSrc = `
     <dt>Elapsed (wall)</dt><dd>{{.Elapsed}}{{if .EstElapsed}} <span class="cost-est">({{.EstElapsed}})</span>{{end}}</dd>
     <dt>Agent time (dispatch+driver)</dt><dd>{{.AgentTime}}</dd>
   </dl>
+  {{if .Seats}}<h4>By seat</h4>
+  <table class="panel-table cost-seats">
+    <thead><tr><th>Seat</th><th>Fresh in</th><th>Cache read</th><th>Cache write</th><th>Out</th><th>Cost</th></tr></thead>
+    <tbody>{{range .Seats}}<tr><td class="id">{{.Seat}}</td><td>{{.FreshIn}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Out}}</td><td>{{.Cost}}</td></tr>{{end}}</tbody>
+  </table>{{end}}
   {{if .LegacyEstimate}}<div class="cost-legacy-estimate">{{.LegacyEstimate}}</div>{{end}}
   <div class="cost-driver-coverage">{{.DriverLine}}</div>
   {{range .DriverAdapters}}<div class="cost-adapter-coverage">{{.}}</div>{{end}}
   {{if .Family}}<h4>Family</h4>
   <table class="panel-table cost-family">
-    <thead><tr><th>Child</th><th>Band</th><th>Fresh in</th><th>Out</th><th>Cache read</th><th>Cache write</th><th>Elapsed</th></tr></thead>
+    <thead><tr><th>Child</th><th>Cost</th><th>Band</th><th>Fresh in</th><th>Out</th><th>Cache read</th><th>Cache write</th><th>Elapsed</th></tr></thead>
     <tbody>
-      {{range .Family}}<tr><td class="id">{{.ID}}</td><td>{{.Band}}</td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Elapsed}}</td></tr>{{end}}
-      {{with .FamilyTotal}}<tr class="cost-family-total"><td>{{.ID}}</td><td>{{.Band}}</td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Elapsed}}</td></tr>{{end}}
+      {{range .Family}}<tr><td class="id">{{.ID}}</td><td>{{.Cost}}</td><td>{{.Band}}</td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Elapsed}}</td></tr>{{end}}
+      {{with .FamilyTotal}}<tr class="cost-family-total"><td>{{.ID}}</td><td>{{.Cost}}</td><td>{{.Band}}</td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Elapsed}}</td></tr>{{end}}
     </tbody>
   </table>
+  {{if .FamilySeats}}<h4>Family by seat</h4>
+  <table class="panel-table cost-seats cost-family-seats">
+    <thead><tr><th>Seat</th><th>Fresh in</th><th>Cache read</th><th>Cache write</th><th>Out</th><th>Cost</th></tr></thead>
+    <tbody>{{range .FamilySeats}}<tr><td class="id">{{.Seat}}</td><td>{{.FreshIn}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Out}}</td><td>{{.Cost}}</td></tr>{{end}}</tbody>
+  </table>{{end}}
   <div class="cost-driver-coverage">{{.FamilyDriverLine}}</div>
   {{range .FamilyAdapters}}<div class="cost-adapter-coverage">{{.}}</div>{{end}}{{end}}
   {{if .DriverRows}}<h4>Driver sessions</h4>
