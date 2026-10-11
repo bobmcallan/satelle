@@ -1,3 +1,21 @@
+## [0.0.646] - 2026-10-11
+
+### Added
+- **A dispatched pi binding is treated as pi.** One classifier names the adapter, so a dispatched pi command is no longer recorded as an unknown command. Its usage, cache split, cost and resolved model are read from pi's own session record, or recorded as a pi-named unavailable reason. pi's `read` tool counts as a context channel, and isolation preflight checks pi's `--tools` / `--exclude-tools` against the grant. Usage ledger rows now name their adapter. (sty_58a9bdc8)
+- **A rework relay stops when a round brings no new evidence.** When a performer reply changes nothing (no file change, attachment or counted ledger row) and the consultant's objection is unchanged, the relay ends with a `no_progress` outcome instead of spending its budget. The ledger row records the outcome, rounds, budget and last objection. Which ledger rows count as evidence is decided in one place, `verb.IsEvidenceRow`, which the stale-verdict check now uses too. (sty_e596be56)
+
+### Fixed
+- **A gate agent that fails records why.** Retry, failure and timeout telemetry rows on the reviewer, executor and summariser paths carry a redacted, bounded `cause`, and a cause the telemetry validator refuses no longer drops the row. (sty_9bc496e1)
+- **A story moved back to a non-performing state frees its engagement seat**, so the next story engages without a manual `satelle story seat release`. (sty_e6755855)
+
+### Changed
+- This completes epic:improve-loop-followup: the improve-loop retrospective follow-ups and the remote-Ready proof findings. The planner now records where the rule or seam it touches already lives before designing, and the architecture review owns the single-ownership check (authored substrate, sty_650d0834). (sty_3705b8bb)
+
+## [serve-v0.0.150] - 2026-10-11
+
+### Changed
+- The serve binary carries the pi adapter classification and usage reading, the adapter-aware context-channel rule and the agent-dispatch help topic. (sty_3705b8bb)
+
 ## [0.0.645] - 2026-10-11
 
 ### Fixed
