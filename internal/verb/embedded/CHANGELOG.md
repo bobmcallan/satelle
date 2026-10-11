@@ -1,3 +1,8 @@
+## [0.0.648] - 2026-10-11
+
+### Changed
+- **The canonical sync proto carries Snapshot paging and since-cursor fields at satelle-server's numbers.** `api/checkout_sync.proto` adds SnapshotRequest `page_size = 3`, `page_token = 4`, `since_token = 5` and SnapshotResponse `next_page_token = 3`, `sync_token = 4`, matching satelle-server's published contract; existing fields keep their numbers. The proto comment documents the meaning (page_size 0 keeps the unpaged contract; tokens are opaque; a repeated row is possible, a missed row is not), `internal/hosted/syncpb` is regenerated, the `api` JSON mirror gains the same fields, and the README no longer calls Snapshot unpaged. No caller sends the new fields yet. (sty_70ba9615)
+
 ## [0.0.647] - 2026-10-11
 
 ### Added

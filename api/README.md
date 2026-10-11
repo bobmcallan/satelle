@@ -50,8 +50,9 @@ Unary Sync messages (`Apply`, `Snapshot`, `Refresh`) are capped at **64 MiB**
 (67108864 bytes) in each direction. The CLI sets this as a per-call option
 (`MaxCallRecvMsgSize` / `MaxCallSendMsgSize`); grpc-go's default recv cap is
 4 MiB, which real project snapshots already exceed (satelle ~24 MiB). A server
-with a lower recv cap will reject large `Apply` batches. Snapshot is unpaged,
-so a whole project's work-state rides in one message.
+with a lower recv cap will reject large `Apply` batches. `Snapshot` supports
+optional paging and since-cursors (`page_size` 0 keeps the unpaged
+single-message contract); the field meaning lives in `checkout_sync.proto`.
 
 ## Endpoints
 

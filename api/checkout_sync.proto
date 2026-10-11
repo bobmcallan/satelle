@@ -14,9 +14,9 @@
 //
 // Unary Sync messages are capped at 64 MiB (67108864 bytes) in each direction.
 // The CLI sets MaxCallRecvMsgSize / MaxCallSendMsgSize accordingly; satelle-server
-// should set MaxRecvMsgSize / MaxSendMsgSize to match. Snapshot is unpaged today,
-// so a whole project's work-state rides in one message (paging is a follow-up
-// if a project exceeds the cap).
+// should set MaxRecvMsgSize / MaxSendMsgSize to match. Snapshot's unpaged form
+// (page_size 0) still rides in one message; paging (page_size > 0) bounds each
+// response.
 
 syntax = "proto3";
 
@@ -41,14 +41,28 @@ message ApplyResponse {
   int32 ledger = 2;
 }
 
+// Paging and since-cursors (field numbers shared with satelle-server
+// sty_8d5f91d0; this repo sty_70ba9615).
+// page_size 0 keeps the unpaged contract: the whole result in one message.
+// page_size > 0 returns at most that many items AND at most that many ledger
+// rows per response (the server caps it), plus next_page_token until the
+// pass is complete. The last response of a pass (and every unpaged response)
+// carries sync_token; send it as since_token on the next pass to receive only
+// rows changed since this pass began. A repeated row is possible, a missed
+// row is not. Tokens are opaque.
 message SnapshotRequest {
   string project = 1;
   string kind = 2; // optional filter (story|execution)
+  int32 page_size = 3;
+  string page_token = 4;  // next_page_token from the previous page of this pass
+  string since_token = 5; // sync_token from a previous pass
 }
 
 message SnapshotResponse {
   repeated WorkItem items = 1;
   repeated LedgerEntry ledger = 2;
+  string next_page_token = 3; // empty on the last page of a pass
+  string sync_token = 4;      // set on the last page of a pass
 }
 
 message WorkItem {

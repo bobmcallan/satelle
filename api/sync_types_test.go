@@ -69,6 +69,11 @@ func TestCheckoutSyncProtoContract(t *testing.T) {
 		"refresh_token",
 		"access_token",
 		"expires_in",
+		"page_size = 3",
+		"page_token = 4",
+		"since_token = 5",
+		"next_page_token = 3",
+		"sync_token = 4",
 	} {
 		if !strings.Contains(proto, want) {
 			t.Errorf("checkout_sync.proto missing %q", want)

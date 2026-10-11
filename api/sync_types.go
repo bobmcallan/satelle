@@ -24,17 +24,24 @@ type ApplyResponse struct {
 }
 
 // SnapshotRequest is the Sync.Snapshot input. Kind optionally filters items
-// (story|execution).
+// (story|execution). The paging fields are documented on SnapshotRequest in
+// checkout_sync.proto.
 type SnapshotRequest struct {
-	Project string `json:"project"`
-	Kind    string `json:"kind,omitempty"`
+	Project    string `json:"project"`
+	Kind       string `json:"kind,omitempty"`
+	PageSize   int32  `json:"page_size,omitempty"`
+	PageToken  string `json:"page_token,omitempty"`
+	SinceToken string `json:"since_token,omitempty"`
 }
 
 // SnapshotResponse is the Sync.Snapshot result: current items and ledger the
-// caller may read.
+// caller may read. The token fields are documented on SnapshotResponse in
+// checkout_sync.proto.
 type SnapshotResponse struct {
-	Items  []WorkItem    `json:"items"`
-	Ledger []LedgerEntry `json:"ledger"`
+	Items         []WorkItem    `json:"items"`
+	Ledger        []LedgerEntry `json:"ledger"`
+	NextPageToken string        `json:"next_page_token,omitempty"`
+	SyncToken     string        `json:"sync_token,omitempty"`
 }
 
 // WorkItem is one work-state row on the checkout-sync wire. JSON keys match
