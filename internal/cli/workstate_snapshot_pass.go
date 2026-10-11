@@ -35,6 +35,7 @@ const (
 	passFull    = "full"
 	passSince   = "since"
 	passResumed = "resumed"
+	passScoped  = "scoped"
 )
 
 // passReport is what a pass did. Hosted holds the opted-in items this pass
@@ -45,6 +46,10 @@ type passReport struct {
 	Items, Ledger, Kept int
 	Hosted              []hosted.WorkstateItem
 }
+
+// complete reports whether the pass received everything it asked for rather than
+// only what changed since an earlier one.
+func (r passReport) complete() bool { return r.Kind == passFull || r.Kind == passScoped }
 
 // label is the "(since pass, 2 page(s))" the summary lines carry.
 func (r passReport) label() string {
@@ -166,17 +171,8 @@ func runPagedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer, 
 		return p.rep, err
 	}
 	now := time.Now().UTC()
-	// A story's transition may land on a later page than the story itself; now
-	// every page is in, forward the statuses that were waiting on one.
-	if !force {
-		for id, st := range p.pending {
-			if serr := applyHostedWorkstateStatus(ctx, a, workitem.Item{ID: id, Status: st}, now); serr != nil && !errors.Is(serr, workitem.ErrNotFound) {
-				return p.rep, fmt.Errorf("apply status for %s: %w — re-run is safe (upsert-by-id)", id, serr)
-			}
-		}
-	}
-	if _, _, verr := verb.SyncStoryBacklog(ctx, a.Store.Stories, now); verr != nil {
-		return p.rep, fmt.Errorf("regenerate story views after %d item(s), %d ledger: %w — store rows landed; re-run is safe", p.rep.Items, p.rep.Ledger, verr)
+	if err := p.settle(ctx, now); err != nil {
+		return p.rep, err
 	}
 	if res.SyncToken == "" {
 		// The server issued no token (it does not page yet): nothing to send
@@ -191,9 +187,25 @@ func runPagedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer, 
 	return p.rep, nil
 }
 
-// page applies one page and checkpoints it. A repeated row is absorbed by the
-// upsert-by-id, so a resumed or since pass may deliver one twice.
-func (p *snapshotPass) page(ctx context.Context, pg hosted.SnapshotPage) error {
+// settle closes a pass whose pages are all in: a story's transition may land on
+// a later page than the story itself, so the statuses still waiting on one are
+// forwarded now, then the story views are regenerated once.
+func (p *snapshotPass) settle(ctx context.Context, now time.Time) error {
+	if !p.force {
+		for id, st := range p.pending {
+			if serr := applyHostedWorkstateStatus(ctx, p.a, workitem.Item{ID: id, Status: st}, now); serr != nil && !errors.Is(serr, workitem.ErrNotFound) {
+				return fmt.Errorf("apply status for %s: %w — re-run is safe (upsert-by-id)", id, serr)
+			}
+		}
+	}
+	if _, _, verr := verb.SyncStoryBacklog(ctx, p.a.Store.Stories, now); verr != nil {
+		return fmt.Errorf("regenerate story views after %d item(s), %d ledger: %w — store rows landed; re-run is safe", p.rep.Items, p.rep.Ledger, verr)
+	}
+	return nil
+}
+
+// optedIn is the part of a page the opted-in areas let through.
+func (p *snapshotPass) optedIn(pg hosted.SnapshotPage) ([]hosted.WorkstateItem, []hosted.WorkstateLedgerRow) {
 	items, ledgerRows := pg.Items, pg.Ledger
 	if !(p.optIn["stories"] || p.optIn["executions"]) {
 		items = nil
@@ -201,6 +213,37 @@ func (p *snapshotPass) page(ctx context.Context, pg hosted.SnapshotPage) error {
 	if !p.optIn["ledger"] {
 		ledgerRows = nil
 	}
+	return items, ledgerRows
+}
+
+// page applies one page and checkpoints it. A repeated row is absorbed by the
+// upsert-by-id, so a resumed or since pass may deliver one twice.
+func (p *snapshotPass) page(ctx context.Context, pg hosted.SnapshotPage) error {
+	if err := p.apply(ctx, pg); err != nil {
+		return err
+	}
+	if pg.NextPageToken == "" {
+		return nil
+	}
+	now := time.Now().UTC()
+	cp := hosted.SnapshotToken{
+		Token: p.keep, Areas: p.areas, StoreID: p.storeID, SavedAt: now,
+		ResumePageToken: pg.NextPageToken, ResumeSince: p.since,
+	}
+	if len(p.pending) > 0 {
+		cp.Pending = p.pending
+	}
+	if err := hosted.SaveSnapshotToken(p.server, p.project, p.a.RepoRoot, cp); err != nil {
+		return fmt.Errorf("save snapshot checkpoint: %w", err)
+	}
+	return nil
+}
+
+// apply checks one page against the local store (a pull only), upserts it and
+// forwards the statuses it carries. It touches no token or checkpoint, so the
+// scoped pass can share it with the full one.
+func (p *snapshotPass) apply(ctx context.Context, pg hosted.SnapshotPage) error {
+	items, ledgerRows := p.optedIn(pg)
 	if p.mode == snapshotModePull && !p.force {
 		if err := checkWorkstatePullConflicts(ctx, p.a, p.optIn, items, ledgerRows); err != nil {
 			return err
@@ -227,28 +270,15 @@ func (p *snapshotPass) page(ctx context.Context, pg hosted.SnapshotPage) error {
 			}
 		}
 	}
-	if pg.NextPageToken == "" {
-		return nil
-	}
-	cp := hosted.SnapshotToken{
-		Token: p.keep, Areas: p.areas, StoreID: p.storeID, SavedAt: now,
-		ResumePageToken: pg.NextPageToken, ResumeSince: p.since,
-	}
-	if len(p.pending) > 0 {
-		cp.Pending = p.pending
-	}
-	if err := hosted.SaveSnapshotToken(p.server, p.project, p.a.RepoRoot, cp); err != nil {
-		return fmt.Errorf("save snapshot checkpoint: %w", err)
-	}
 	return nil
 }
 
 // inFlightCandidates is the story set a pull reports in-flight stories over.
-// A full pass received every hosted story. A since or resumed pass received
-// only some, so the local stories stand in: they are the same set once the
-// project has been synced.
+// A full or scoped pass received every story it asked for. A since or resumed
+// pass received only some, so the local stories stand in: they are the same set
+// once the project has been synced.
 func inFlightCandidates(ctx context.Context, a *app.App, rep passReport) []hosted.WorkstateItem {
-	if rep.Kind == passFull {
+	if rep.complete() {
 		return rep.Hosted
 	}
 	local, err := a.Store.Stories.List(ctx, workitem.ListFilter{Kind: workitem.KindStory, Limit: 2000})

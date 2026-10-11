@@ -162,6 +162,13 @@ func (x *ApplyResponse) GetLedger() int32 {
 // carries sync_token; send it as since_token on the next pass to receive only
 // rows changed since this pass began. A repeated row is possible, a missed
 // row is not. Tokens are opaque.
+//
+// Story scoping (satelle-server sty_1a1f65e5; this repo sty_991b6900): a
+// non-empty story_ids limits the pass to the work items with those ids and the
+// ledger rows whose story_id is one of them. Paging, page tokens and
+// since-cursors behave as for an unscoped pass; send the same story_ids with
+// every page and with since_token. The server does not expand an epic: the
+// client names the container and its member stories.
 type SnapshotRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
@@ -169,6 +176,7 @@ type SnapshotRequest struct {
 	PageSize      int32                  `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	PageToken     string                 `protobuf:"bytes,4,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`    // next_page_token from the previous page of this pass
 	SinceToken    string                 `protobuf:"bytes,5,opt,name=since_token,json=sinceToken,proto3" json:"since_token,omitempty"` // sync_token from a previous pass
+	StoryIds      []string               `protobuf:"bytes,6,rep,name=story_ids,json=storyIds,proto3" json:"story_ids,omitempty"`       // optional scope: at most 1000, none empty
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -236,6 +244,13 @@ func (x *SnapshotRequest) GetSinceToken() string {
 		return x.SinceToken
 	}
 	return ""
+}
+
+func (x *SnapshotRequest) GetStoryIds() []string {
+	if x != nil {
+		return x.StoryIds
+	}
+	return nil
 }
 
 type SnapshotResponse struct {
@@ -597,7 +612,7 @@ const file_checkout_sync_proto_rawDesc = "" +
 	"\x06ledger\x18\x03 \x03(\v2\x1c.satelle.sync.v1.LedgerEntryR\x06ledger\"=\n" +
 	"\rApplyResponse\x12\x14\n" +
 	"\x05items\x18\x01 \x01(\x05R\x05items\x12\x16\n" +
-	"\x06ledger\x18\x02 \x01(\x05R\x06ledger\"\x9c\x01\n" +
+	"\x06ledger\x18\x02 \x01(\x05R\x06ledger\"\xb9\x01\n" +
 	"\x0fSnapshotRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x1b\n" +
@@ -605,7 +620,8 @@ const file_checkout_sync_proto_rawDesc = "" +
 	"\n" +
 	"page_token\x18\x04 \x01(\tR\tpageToken\x12\x1f\n" +
 	"\vsince_token\x18\x05 \x01(\tR\n" +
-	"sinceToken\"\xc0\x01\n" +
+	"sinceToken\x12\x1b\n" +
+	"\tstory_ids\x18\x06 \x03(\tR\bstoryIds\"\xc0\x01\n" +
 	"\x10SnapshotResponse\x12/\n" +
 	"\x05items\x18\x01 \x03(\v2\x19.satelle.sync.v1.WorkItemR\x05items\x124\n" +
 	"\x06ledger\x18\x02 \x03(\v2\x1c.satelle.sync.v1.LedgerEntryR\x06ledger\x12&\n" +

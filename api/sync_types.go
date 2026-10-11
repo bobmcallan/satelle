@@ -32,6 +32,8 @@ type SnapshotRequest struct {
 	PageSize   int32  `json:"page_size,omitempty"`
 	PageToken  string `json:"page_token,omitempty"`
 	SinceToken string `json:"since_token,omitempty"`
+	// StoryIDs optionally scopes the pass: at most 1000, none empty.
+	StoryIDs []string `json:"story_ids,omitempty"`
 }
 
 // SnapshotResponse is the Sync.Snapshot result: current items and ledger the

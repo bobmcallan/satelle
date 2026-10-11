@@ -72,6 +72,7 @@ func TestCheckoutSyncProtoContract(t *testing.T) {
 		"page_size = 3",
 		"page_token = 4",
 		"since_token = 5",
+		"story_ids = 6",
 		"next_page_token = 3",
 		"sync_token = 4",
 	} {

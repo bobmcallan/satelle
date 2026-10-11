@@ -57,9 +57,10 @@ area is opted in, and a pull merges into local rows rather than replacing them.`
 	var pushServer string
 	var dryRun, full bool
 	push := &cobra.Command{
-		Use:         "push",
+		Use:         "push [story-or-epic-id...]",
 		Short:       "Replicate opted-in work-state areas to the personal workspace",
 		Annotations: needsStore(),
+		Args:        cobra.ArbitraryArgs,
 		Long: `push upserts local stories, task-executions, and ledger entries, for areas whose
 [sync] scope is personal or shared, into the bound hosted project's personal
 collection (origin=cli-sync). Only records changed since the last successful
@@ -67,11 +68,15 @@ push are sent; --full re-sends everything. A team workspace binding does NOT
 redirect work-state. Requires "satelle project bind <slug>". Pull is the recover
 path: "satelle sync workstate pull".
 
+Given story ids, or an epic container id (it stands for its epic:<theme>
+members too), it pushes only those and their ledger rows, whole, and leaves the
+cursor alone.
+
 A story in progress is held, with a "held <id>" line, until its engagement tree
 is clean and its HEAD is on a remote-tracking ref; the next push sends it.
 [sync] hold_unpushed = false turns this off.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSyncWorkstatePush(cmd, pushServer, dryRun, full)
+			return runSyncWorkstatePush(cmd, pushServer, dryRun, full, args...)
 		},
 	}
 	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
@@ -82,25 +87,28 @@ is clean and its HEAD is on a remote-tracking ref; the next push sends it.
 	var pullServer string
 	var pullDryRun, force, pullVerbose bool
 	pull := &cobra.Command{
-		Use:         "pull",
+		Use:         "pull [story-or-epic-id...]",
 		Short:       "Restore opted-in work-state from the personal workspace into the local store",
 		Annotations: needsStore(),
+		Args:        cobra.ArbitraryArgs,
 		Long: `pull fetches the bound hosted PROJECT's personal stories, executions and
-ledger entries for areas whose [sync] scope is personal or shared, and merges
-them into the local DB by id. Story attachment files are not mirrored.
+ledger entries for opted-in [sync] areas, and merges them into the local DB by
+id. Story attachment files are not mirrored.
 
-Local-only rows are kept. The pull refuses, naming each id, only where it would
-lose local information: a story changed locally since hosted, or a ledger row
-whose payload differs. --force lets hosted win (local-only rows stay; an
-existing ledger row is never rewritten).
+Local-only rows are kept. The pull refuses only where it would lose local
+information: a story changed locally since hosted, or a ledger row whose
+payload differs. --force lets hosted win.
 
 Afterwards it names each pulled story whose status claims code the git remote
 lacks, as of the last fetch; --verbose lists stories that left work with no
 recorded head. It changes nothing.
 
-Local-scoped areas are skipped. Requires "satelle project bind <slug>".`,
+With story ids, or an epic container id held locally, it pulls only those and
+an epic's members, refusing if the server cannot scope the pass or lacks an id.
+
+Requires "satelle project bind <slug>".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSyncWorkstatePull(cmd, pullServer, pullDryRun, force, pullVerbose)
+			return runSyncWorkstatePull(cmd, pullServer, pullDryRun, force, pullVerbose, args...)
 		},
 	}
 	pull.Flags().StringVar(&pullServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
@@ -112,9 +120,10 @@ Local-scoped areas are skipped. Requires "satelle project bind <slug>".`,
 	var snapServer string
 	var snapForce bool
 	snap := &cobra.Command{
-		Use:         "snapshot",
+		Use:         "snapshot [story-or-epic-id...]",
 		Short:       "Pull current hosted work-state into the local store (lazy Snapshot)",
 		Annotations: needsStore(),
+		Args:        cobra.ArbitraryArgs,
 		Long: `snapshot fetches the bound project's work-state via gRPC Sync/Snapshot and
 materializes opted-in areas into the local store. Local-only areas are a no-op.
 satelled may exec this verb; it does not talk to the hosted server itself.
@@ -126,9 +135,11 @@ upserts hosted over those rows.
 The project arrives in pages, each applied as it lands. The last completed
 pass's token is kept per hosted-server, project and repo, so the next pass
 receives only changes; a cut-short pass resumes at its last page. A full pass
-runs with no token, with --force, or when the areas, store or token change.`,
+runs with no token, with --force, or when the areas, store or token change.
+
+Story or epic ids scope it as for pull.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSyncWorkstateSnapshot(cmd, snapServer, snapForce)
+			return runSyncWorkstateSnapshot(cmd, snapServer, snapForce, args...)
 		},
 	}
 	snap.Flags().StringVar(&snapServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
@@ -138,7 +149,7 @@ runs with no token, with --force, or when the areas, store or token change.`,
 	return group
 }
 
-func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string, force bool) error {
+func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string, force bool, ids ...string) error {
 	a, err := appFrom(cmd)
 	if err != nil {
 		return err
@@ -151,6 +162,10 @@ func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string, force bool) 
 		fmt.Fprintln(cmd.OutOrStdout(), "workstate snapshot: all areas local, nothing to pull")
 		return nil
 	}
+	sc, err := resolveScope(cmd.Context(), a, ids, false)
+	if err != nil {
+		return err
+	}
 	server := resolveServer(serverArg)
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
@@ -160,7 +175,12 @@ func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string, force bool) 
 		return err
 	}
 	client := newHostedClient(cmd.Context(), server, a.RepoRoot)
-	rep, err := runPagedWorkstateSnapshot(cmd.Context(), a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModeSnapshot)
+	var rep passReport
+	if sc.scoped() {
+		rep, err = runScopedWorkstateSnapshot(cmd.Context(), a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModeSnapshot, sc)
+	} else {
+		rep, err = runPagedWorkstateSnapshot(cmd.Context(), a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModeSnapshot)
+	}
 	if err != nil {
 		return err
 	}
@@ -209,7 +229,7 @@ var (
 	workstateLedgerChunk = 1000
 )
 
-func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full bool) error {
+func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full bool, ids ...string) (retErr error) {
 	a, err := appFrom(cmd)
 	if err != nil {
 		return err
@@ -228,12 +248,30 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		fmt.Fprintln(out, "No work-state to push — every work-state area is local. Set [sync] stories|ledger|executions = personal|shared to opt in.")
 		return nil
 	}
+	sc, err := resolveScope(cmd.Context(), a, ids, true)
+	if err != nil {
+		return err
+	}
+	scope := sc.Set // nil unless ids were named
+	if scope != nil {
+		defer func() {
+			if retErr != nil {
+				return
+			}
+			for _, id := range sc.EmptyEpics {
+				emptyEpicNotice(cmd.ErrOrStderr(), id)
+			}
+		}()
+	}
 	if dryRun {
 		fmt.Fprintf(out, "Would push work-state areas to bound project personal collection on %s:\n", server)
 		for _, area := range WorkstateAreas {
 			if optIn[area] {
 				fmt.Fprintf(out, "  %s -> personal\n", area)
 			}
+		}
+		if sc.scoped() {
+			fmt.Fprintf(out, "  scoped to %d id(s): %s\n", len(sc.IDs), strings.Join(sc.IDs, ", "))
 		}
 		return dryRunHolds(cmd, a, optIn, out, server)
 	}
@@ -244,13 +282,26 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	}
 
 	repoRoot := a.RepoRoot
-	cursor, err := hosted.LoadWorkstateCursor(server, project, repoRoot)
-	if err != nil {
-		return fmt.Errorf("load workstate cursor: %w", err)
+	// The repo's recorded push state is the project push's; a scoped push does not
+	// make the repo "pushed".
+	recordOK := func() {
+		if scope == nil {
+			recordWorkstatePush(a.RepoRoot, true, "")
+		}
 	}
-	hadCursor := !cursor.ItemsUpdatedAt.IsZero() || !cursor.LedgerCreatedAt.IsZero() || cursor.LedgerSeq > 0
-	if full {
-		cursor = hosted.WorkstateCursor{}
+	// A scoped push sends its stories whole and reads no cursor: the stored cursor
+	// describes the project push, and a scoped one must not move it.
+	var cursor hosted.WorkstateCursor
+	var hadCursor bool
+	if scope == nil {
+		cursor, err = hosted.LoadWorkstateCursor(server, project, repoRoot)
+		if err != nil {
+			return fmt.Errorf("load workstate cursor: %w", err)
+		}
+		hadCursor = !cursor.ItemsUpdatedAt.IsZero() || !cursor.LedgerCreatedAt.IsZero() || cursor.LedgerSeq > 0
+		if full {
+			cursor = hosted.WorkstateCursor{}
+		}
 	}
 	if optIn["ledger"] {
 		var reset bool
@@ -263,7 +314,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		}
 	}
 
-	batch, maxItems, lmark, ledgerRows, err := collectWorkstateRows(cmd.Context(), a, optIn, cursor)
+	batch, maxItems, lmark, ledgerRows, err := collectWorkstateRows(cmd.Context(), a, optIn, cursor, scope)
 	if err != nil {
 		return err
 	}
@@ -325,7 +376,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 			if len(batch.Items) == 0 && len(batch.Ledger) == 0 {
 				fmt.Fprintln(out, "No work-state rows to push after holding unpushed stories.")
 				reconcilePendingClaims(cmd.Context(), out, errw, site)
-				recordWorkstatePush(a.RepoRoot, true, "")
+				recordOK()
 				return nil
 			}
 		}
@@ -433,19 +484,24 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 			return err
 		}
 	}
-	// Advance cursor only after full success.
-	next := hosted.WorkstateCursor{
-		ItemsUpdatedAt:  maxItems,
-		LedgerCreatedAt: lmark.createdAt,
-		LedgerSeq:       lmark.seq,
-		LedgerAnchorID:  lmark.anchorID,
-		LedgerStoreID:   lmark.storeID,
+	if scope != nil {
+		fmt.Fprintf(out, "scoped push to project %q personal collection on %s: %d item(s), %d ledger entr(y/ies).\n",
+			project, server, totalItems, totalLedger)
+	} else {
+		// Advance cursor only after full success.
+		next := hosted.WorkstateCursor{
+			ItemsUpdatedAt:  maxItems,
+			LedgerCreatedAt: lmark.createdAt,
+			LedgerSeq:       lmark.seq,
+			LedgerAnchorID:  lmark.anchorID,
+			LedgerStoreID:   lmark.storeID,
+		}
+		if err := hosted.SaveWorkstateCursor(server, project, repoRoot, next); err != nil {
+			return fmt.Errorf("save workstate cursor: %w", err)
+		}
+		fmt.Fprintf(out, "Pushed work-state to project %q personal collection on %s: %d item(s), %d ledger entr(y/ies).\n",
+			project, server, totalItems, totalLedger)
 	}
-	if err := hosted.SaveWorkstateCursor(server, project, repoRoot, next); err != nil {
-		return fmt.Errorf("save workstate cursor: %w", err)
-	}
-	fmt.Fprintf(out, "Pushed work-state to project %q personal collection on %s: %d item(s), %d ledger entr(y/ies).\n",
-		project, server, totalItems, totalLedger)
 	if len(held) > 0 {
 		fmt.Fprintf(out, "%d stor(y/ies) held until their code is on the remote.\n", len(held))
 	}
@@ -453,7 +509,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	if released := releaseAtRest(cmd.Context(), errw, a, site, publishedStoryIDs(publishedItems, publishedLedger)); len(released) > 0 {
 		fmt.Fprintf(out, "released the hosted hold on %s.\n", strings.Join(released, ", "))
 	}
-	recordWorkstatePush(a.RepoRoot, true, "")
+	recordOK()
 	return nil
 }
 
@@ -502,7 +558,7 @@ func filterItemsAfter(items []json.RawMessage, since time.Time) []json.RawMessag
 	return out
 }
 
-func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, verbose bool) error {
+func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, verbose bool, ids ...string) error {
 	a, err := appFrom(cmd)
 	if err != nil {
 		return err
@@ -522,12 +578,19 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 		fmt.Fprintln(out, "No work-state to pull — every work-state area is local. Set [sync] stories|ledger|executions = personal|shared to opt in.")
 		return nil
 	}
+	sc, err := resolveScope(ctx, a, ids, false)
+	if err != nil {
+		return err
+	}
 	if dryRun {
 		fmt.Fprintf(out, "Would pull work-state areas from bound project personal collection on %s:\n", server)
 		for _, area := range WorkstateAreas {
 			if optIn[area] {
 				fmt.Fprintf(out, "  personal -> %s\n", area)
 			}
+		}
+		if sc.scoped() {
+			fmt.Fprintf(out, "  scoped to %d id(s): %s\n", len(sc.IDs), strings.Join(sc.IDs, ", "))
 		}
 		return nil
 	}
@@ -539,7 +602,12 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 
 	client := newHostedClient(ctx, server, a.RepoRoot)
 
-	rep, err := runPagedWorkstateSnapshot(ctx, a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModePull)
+	var rep passReport
+	if sc.scoped() {
+		rep, err = runScopedWorkstateSnapshot(ctx, a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModePull, sc)
+	} else {
+		rep, err = runPagedWorkstateSnapshot(ctx, a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModePull)
+	}
 	if err != nil {
 		if errors.Is(err, hosted.ErrLoginRequired) || errors.Is(err, ErrWorkstatePullConflict) {
 			return err
@@ -551,7 +619,7 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 	defer reportInFlight(ctx, out, cmd.ErrOrStderr(),
 		holdSite{client: client, server: server, project: project, repoRoot: a.RepoRoot}, inFlightCandidates(ctx, a, rep))
 	if nItems == 0 && nLedger == 0 && nKept == 0 {
-		if rep.Kind == passFull {
+		if rep.complete() {
 			fmt.Fprintf(out, "No work-state rows to pull (%s; hosted opted-in areas are empty).\n", rep.label())
 		} else {
 			fmt.Fprintf(out, "No work-state rows to pull (%s; nothing changed on hosted since the last pass).\n", rep.label())
@@ -976,14 +1044,17 @@ func validateLedgerCursor(ctx context.Context, a *app.App, cursor hosted.Worksta
 // row already pushed (sty_4a31e1ed). Returns the batch plus the marks observed
 // (seeded from the cursor so empty areas never rewind it).
 func collectWorkstateSince(ctx context.Context, a *app.App, optIn map[string]bool, cursor hosted.WorkstateCursor) (hosted.WorkstateIngest, time.Time, ledgerMark, error) {
-	batch, maxItems, mark, _, err := collectWorkstateRows(ctx, a, optIn, cursor)
+	batch, maxItems, mark, _, err := collectWorkstateRows(ctx, a, optIn, cursor, nil)
 	return batch, maxItems, mark, err
 }
 
 // collectWorkstateRows is collectWorkstateSince plus, for each collected ledger
 // row in batch order, who owns it and where it sits — what the unpushed-code
 // hold needs to cut the ledger cursor ahead of a held row (sty_7361569a).
-func collectWorkstateRows(ctx context.Context, a *app.App, optIn map[string]bool, cursor hosted.WorkstateCursor) (hosted.WorkstateIngest, time.Time, ledgerMark, []ledgerRowMeta, error) {
+//
+// A non-nil scope keeps only the items whose own id it names and the ledger rows
+// of the stories it names (sty_991b6900); nil collects everything past the cursor.
+func collectWorkstateRows(ctx context.Context, a *app.App, optIn map[string]bool, cursor hosted.WorkstateCursor, scope scopeSet) (hosted.WorkstateIngest, time.Time, ledgerMark, []ledgerRowMeta, error) {
 	var rows []ledgerRowMeta
 	var batch hosted.WorkstateIngest
 	maxItems := cursor.ItemsUpdatedAt
@@ -1005,6 +1076,9 @@ func collectWorkstateRows(ctx context.Context, a *app.App, optIn map[string]bool
 				break
 			}
 			for _, it := range items {
+				if !scope.HasItem(it.ID) {
+					continue
+				}
 				raw, merr := marshalWorkstateItem(it)
 				if merr != nil {
 					return merr
@@ -1047,6 +1121,10 @@ func collectWorkstateRows(ctx context.Context, a *app.App, optIn map[string]bool
 				break
 			}
 			for _, e := range entries {
+				maxLedger.seq = e.Seq // the page cursor: advances past rows the scope skips
+				if !scope.HasLedger(e.StoryID) {
+					continue
+				}
 				raw, merr := marshalWorkstateLedger(e.Entry)
 				if merr != nil {
 					return batch, maxItems, maxLedger, rows, merr
@@ -1056,7 +1134,6 @@ func collectWorkstateRows(ctx context.Context, a *app.App, optIn map[string]bool
 				if e.CreatedAt.After(maxLedger.createdAt) {
 					maxLedger.createdAt = e.CreatedAt
 				}
-				maxLedger.seq = e.Seq
 				maxLedger.anchorID = e.ID
 			}
 			if len(entries) < workstateLedgerChunk {
@@ -1096,7 +1173,7 @@ func dryRunHolds(cmd *cobra.Command, a *app.App, optIn map[string]bool, out io.W
 			return err
 		}
 	}
-	batch, _, _, rows, err := collectWorkstateRows(cmd.Context(), a, optIn, cursor)
+	batch, _, _, rows, err := collectWorkstateRows(cmd.Context(), a, optIn, cursor, nil)
 	if err != nil {
 		return err
 	}

@@ -50,12 +50,20 @@ message ApplyResponse {
 // carries sync_token; send it as since_token on the next pass to receive only
 // rows changed since this pass began. A repeated row is possible, a missed
 // row is not. Tokens are opaque.
+//
+// Story scoping (satelle-server sty_1a1f65e5; this repo sty_991b6900): a
+// non-empty story_ids limits the pass to the work items with those ids and the
+// ledger rows whose story_id is one of them. Paging, page tokens and
+// since-cursors behave as for an unscoped pass; send the same story_ids with
+// every page and with since_token. The server does not expand an epic: the
+// client names the container and its member stories.
 message SnapshotRequest {
   string project = 1;
   string kind = 2; // optional filter (story|execution)
   int32 page_size = 3;
   string page_token = 4;  // next_page_token from the previous page of this pass
   string since_token = 5; // sync_token from a previous pass
+  repeated string story_ids = 6; // optional scope: at most 1000, none empty
 }
 
 message SnapshotResponse {
