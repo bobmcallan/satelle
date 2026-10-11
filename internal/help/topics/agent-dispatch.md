@@ -412,6 +412,14 @@ The isolated agent returns one canonical final object:
 {"artifact":{"name":"plan","type":"plan","body":"# Plan\n\n## AC1\n..."}}
 ```
 
+An optional `output_criteria_section: <heading>` also checks the shape of one
+section of the body: under the exact, case-sensitive line `## <heading>` (to the
+next `## ` line), every non-blank line must be a numbered criterion (`N. text`
+or `N) text`), starting at column 0. A tool line-number prefix (`30|3. x`), a
+bullet, indentation or prose is named in the refusal by its line within the
+section, so a malformed section fails before any reviewer runs. A body without
+the section is not refused by this check.
+
 Satelle decodes command and ACP results through the same seam, validates the
 declared fields and optional acceptance-criterion coverage, and attaches the
 typed document before committing the workflow transition. A decode, validation,

@@ -129,3 +129,64 @@ func TestValidateAllReportsEveryMissingCriterion(t *testing.T) {
 		}
 	}
 }
+
+func TestParseContractReadsCriteriaSection(t *testing.T) {
+	c, err := ParseContract("---\noutput_name: plan\noutput_type: plan\noutput_criteria_section: Acceptance criteria\n---\nrubric")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.CriteriaSection != "Acceptance criteria" || !c.Active() {
+		t.Fatalf("contract = %#v", c)
+	}
+}
+
+func TestCriteriaSectionFindings(t *testing.T) {
+	const heading = "Acceptance criteria"
+	section := func(lines ...string) string {
+		return "# Plan\n\n## Acceptance criteria\n" + strings.Join(lines, "\n") + "\n\n## AC1\n- not judged here\n"
+	}
+	cases := []struct {
+		name   string
+		body   string
+		keyed  bool // false: the contract does not declare the key
+		want   []string
+		quotes []string
+	}{
+		{name: "tool line-number prefix", body: section("1. one", "30|3. three"), keyed: true, want: []string{"line 2"}, quotes: []string{"30|3. three"}},
+		{name: "unnumbered bullet", body: section("1. one", "- bullet"), keyed: true, want: []string{"line 2"}, quotes: []string{"- bullet"}},
+		{name: "indented sub-item", body: section("1. one", "  2. sub"), keyed: true, want: []string{"line 2"}, quotes: []string{"2. sub"}},
+		{name: "single-space indent", body: section("1. one", " 2. sub"), keyed: true, want: []string{"line 2"}, quotes: []string{"2. sub"}},
+		{name: "prose between criteria", body: section("1. one", "some prose", "2. two"), keyed: true, want: []string{"line 2"}, quotes: []string{"some prose"}},
+		{name: "several offenders", body: section("30|1. one", "2. two", "- three"), keyed: true, want: []string{"line 1", "line 3"}, quotes: []string{"30|1. one", "- three"}},
+		{name: "well-formed with blanks", body: section("1. one", "", "2) two", "3. three"), keyed: true},
+		{name: "section absent", body: "# Plan\n\n## AC1\n- bullet\n", keyed: true},
+		{name: "heading is case-sensitive", body: "## Acceptance Criteria\n- bullet\n", keyed: true},
+		{name: "section ends at next heading", body: "## Acceptance criteria\n1. one\n## Risks\n- bullet\n", keyed: true},
+		{name: "no key, malformed body", body: section("- bullet")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Contract{Name: "plan", Type: "plan"}
+			if tc.keyed {
+				c.CriteriaSection = heading
+			}
+			_, findings := ValidateAll(Artifact{Body: tc.body}, c, "")
+			if len(findings) != len(tc.want) {
+				t.Fatalf("findings = %q, want %d", findings, len(tc.want))
+			}
+			for i, f := range findings {
+				if !strings.Contains(f, tc.want[i]) || !strings.Contains(f, tc.quotes[i]) {
+					t.Errorf("finding %d = %q, want %q quoting %q", i, f, tc.want[i], tc.quotes[i])
+				}
+			}
+		})
+	}
+}
+
+func TestCriteriaSectionFindingTruncatesLongLines(t *testing.T) {
+	long := "- " + strings.Repeat("x", 200)
+	got := criteriaSectionFindings("## Acceptance criteria\n"+long+"\n", "Acceptance criteria")
+	if len(got) != 1 || strings.Contains(got[0], strings.Repeat("x", 100)) || !strings.Contains(got[0], "…") {
+		t.Fatalf("findings = %q", got)
+	}
+}
