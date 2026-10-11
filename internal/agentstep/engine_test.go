@@ -3391,6 +3391,27 @@ var planEdgeWorkflow = spineWF("", "cancelled", "",
 	"in_progress|executor||satelle-story-plan-review",
 	"done|||satelle-story-done-review")
 
+// TestPriorVerdictFromCarriesStaleness (sty_0225fc2f): the converter copies the
+// stale marker and the evidence list, and a fresh verdict keeps its quotation.
+func TestPriorVerdictFromCarriesStaleness(t *testing.T) {
+	stale := PriorVerdictFrom(verb.PriorVerdict{
+		Skill: "s", Decision: "reject", ReviewedStale: true,
+		EvidenceSince: []verb.EvidenceSince{{Kind: "telemetry_event", Event: "plan-consumed", CreatedAt: "2026-10-11T00:00:00Z"}},
+	})
+	if !stale.ReviewedStale || stale.Reviewed != "" || len(stale.EvidenceSince) != 1 || stale.EvidenceSince[0].Event != "plan-consumed" {
+		t.Fatalf("stale conversion = %+v", stale)
+	}
+	raw, err := json.Marshal(stale)
+	if err != nil || !strings.Contains(string(raw), `"reviewed_stale":true`) || !strings.Contains(string(raw), `"evidence_since"`) {
+		t.Fatalf("payload json = %s (%v)", raw, err)
+	}
+	fresh := PriorVerdictFrom(verb.PriorVerdict{Skill: "s", Decision: "reject", Reviewed: "words"})
+	raw, _ = json.Marshal(fresh)
+	if fresh.Reviewed != "words" || strings.Contains(string(raw), "reviewed_stale") || strings.Contains(string(raw), "evidence_since") {
+		t.Fatalf("fresh conversion = %s", raw)
+	}
+}
+
 // TestGatePayloadIncludesPriorVerdicts (sty_0f5e600c AC1/AC2): the edge's earlier
 // verdicts ride the gate payload oldest-first, numbered from 1 over the FULL
 // history and windowed to the most recent five; a first attempt carries no key at

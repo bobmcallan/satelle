@@ -337,6 +337,49 @@ func TestReviewedQuotationRoundTrip(t *testing.T) {
 	}
 }
 
+// TestPriorVerdictStaleReachesGatePayload (sty_0225fc2f AC1): after a real reject,
+// a story log event makes the next presentation's prior_verdicts carry no
+// quotation, reviewed_stale and the evidence; a presentation with nothing new
+// recorded keeps the quotation.
+func TestPriorVerdictStaleReachesGatePayload(t *testing.T) {
+	const quote = "STALE-E2E-QUOTATION"
+	runner, story := newPVHarness(t, []string{
+		verdictJSON("reject", "needs plan-consumed", quote),
+		verdictJSON("reject", "still", quote),
+		verdictJSON("accept", "ok", quote),
+	}, nil)
+	present := func() {
+		t.Helper()
+		if _, err := dispatchRaw(t, "story-set", map[string]any{"id": story.ID, "status": "in_progress"}); err == nil {
+			t.Fatal("want the reviewer's reject")
+		}
+	}
+	present()
+	// Nothing recorded since: the quotation survives so an unchanged
+	// presentation can still re-issue.
+	present()
+	if !strings.Contains(runner.priorFiles[1], quote) || strings.Contains(runner.priorFiles[1], "reviewed_stale") {
+		t.Fatalf("unchanged presentation lost its quotation:\n%s", runner.priorFiles[1])
+	}
+	call(t, "story-log", map[string]any{"id": story.ID, "kind": "plan-consumed"})
+	if err := json.Unmarshal(call(t, "story-set", map[string]any{"id": story.ID, "status": "in_progress"}), new(workitem.Item)); err != nil {
+		t.Fatal(err)
+	}
+	var priors []agentstep.PriorVerdict
+	if err := json.Unmarshal([]byte(runner.priorFiles[2]), &priors); err != nil {
+		t.Fatalf("prior file: %v\n%s", err, runner.priorFiles[2])
+	}
+	latest := priors[len(priors)-1]
+	if latest.Reviewed != "" || !latest.ReviewedStale || len(latest.EvidenceSince) != 1 ||
+		latest.EvidenceSince[0].Kind != ledger.KindTelemetryEvent || latest.EvidenceSince[0].Event != "plan-consumed" {
+		t.Fatalf("latest prior verdict = %+v, want stale with the plan-consumed evidence", latest)
+	}
+	// Only the latest verdict is withheld; older ones are left as recorded.
+	if priors[0].ReviewedStale || priors[0].Reviewed != quote {
+		t.Fatalf("older prior verdict = %+v, want untouched", priors[0])
+	}
+}
+
 func fmtNotes(v any) string {
 	s, _ := v.(string)
 	return s

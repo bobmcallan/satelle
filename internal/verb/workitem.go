@@ -1887,11 +1887,15 @@ func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.R
 		BundleSize int         `json:"bundle_size,omitempty"`
 		Seats      []PanelSeat `json:"seats,omitempty"`
 		Combine    string      `json:"combine,omitempty"`
+		// RecordedAt is when the row was appended — after the gate run finished,
+		// unlike the row's CreatedAt (the transition's start). PriorVerdicts reads
+		// it as the end of the review cycle (sty_0225fc2f).
+		RecordedAt string `json:"recorded_at,omitempty"`
 	}{From: from, To: to, Attempt: attempt, Skill: rv.Skill, Order: rv.Order, System: rv.System,
 		Notes: rv.Notes, Reasoning: rv.Reasoning, Reviewed: rv.Reviewed, ReviewedTruncated: rv.ReviewedTruncated, Accept: rv.Accept,
 		Model: rv.Model, ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models,
 		BundleID: rv.BundleID, BundleSize: len(rv.BundleSkills),
-		Seats: rv.Seats, Combine: rv.Combine}
+		Seats: rv.Seats, Combine: rv.Combine, RecordedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil
