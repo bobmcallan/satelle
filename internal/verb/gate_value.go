@@ -67,7 +67,9 @@ func ComputeGateValue(ctx context.Context, opts GateValueOptions) (costview.Gate
 		}
 
 	default:
-		// Repo-wide: every story's agent_invocation and review rows, paged
+		// Repo-wide: every story's agent_invocation and review rows — including
+		// the storyless rows a rejected create_review leaves, since that create
+		// persisted no story to carry them — paged
 		// internally by ForEachKind so a scan larger than one page is never
 		// silently truncated. The bucket key is unused by costview.GateValue
 		// (it only ranges over the map's values), so one key covers the scan.

@@ -163,6 +163,9 @@ func runAmendGate(ctx context.Context, current workitem.Item, fields []AmendFiel
 	if !dec.Gated {
 		return GateDecision{}, undeclared
 	}
+	// The run is recorded on the amended story whether it accepts or rejects: a
+	// rejection changes nothing on the story, but the reviewer was still paid for.
+	recordLifecycleReview(ctx, current.ID, "amend_review", current.Status, current.Status, dec, time.Now())
 	if !dec.Accept {
 		return GateDecision{}, fmt.Errorf("amendment of %s rejected by %s: %s", current.ID, dec.Skill, dec.Notes)
 	}

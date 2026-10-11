@@ -108,6 +108,11 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 		// runs first inside it). A bare create stays legal by design: stories
 		// start as stubs and the WORKFLOW gates enforce structure progressively;
 		// `satelle reindex` reports non-conformant open stories as warnings.
+		var createDec GateDecision // recorded on the ledger once the story has an id
+		createTo := req.Status
+		if createTo == "" {
+			createTo = workitem.StatusBacklog
+		}
 		if createReviewer != nil {
 			dec, gerr := createReviewer.ReviewCreate(ctx, CreateDraft{
 				Kind:               string(kind),
@@ -122,8 +127,12 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 				return nil, gerr
 			}
 			if dec.Gated && !dec.Accept {
+				// A rejected create persists no story, so its run is recorded
+				// repo-scoped (empty story id) where the gate-value view reads it.
+				recordLifecycleReview(ctx, "", "create_review", "create", createTo, dec, now)
 				return nil, fmt.Errorf("%s rejected by %s: %s", kind, dec.Skill, dec.Notes)
 			}
+			createDec = dec
 			if dec.Gated {
 				RecordVerdict(fmt.Sprintf("accepted %s create by %s: decision=accept notes=%s", kind, dec.Skill, dec.Notes))
 			}
@@ -204,8 +213,11 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 			Assignee:           resolveAssignee(),
 		}, now)
 		if err != nil {
+			// The reviewer ran and was paid for; keep its spend repo-scoped.
+			recordLifecycleReview(ctx, "", "create_review", "create", createTo, createDec, now)
 			return nil, err
 		}
+		recordLifecycleReview(ctx, it.ID, "create_review", "create", it.Status, createDec, now)
 		// Create-into-engaging: claim the seat now that the id exists (sty_8426b9c0).
 		if _, _, aerr := acquireEngagementLease(ctx, it, it.Status); aerr != nil {
 			// Best-effort: item was created; surface the seat error so the operator
@@ -612,16 +624,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		// top-level verdict so both paths record identically.
 		reviewers := dec.Reviewers
 		if len(reviewers) == 0 && dec.Gated {
-			reviewers = []ReviewerVerdict{{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning,
-				Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated,
-				Command: dec.Command, Context: dec.Context, Model: dec.Model,
-				ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
-				TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
-				UsageAvailable: dec.UsageAvailable,
-				TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
-				CostUSD: dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
-				SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
-				ToolIsolation: dec.ToolIsolation}}
+			reviewers = []ReviewerVerdict{verdictFromDecision(dec)}
 		}
 		// Ledger ALL verdicts first (accepts and rejects), then refuse if any
 		// rejected — so parallel multi-reviewer rounds record every row
@@ -1770,6 +1773,79 @@ func appendLedgerEntry(ctx context.Context, storyID, kind, actor, body string, p
 		Body:    body,
 		Payload: payload,
 	}, now)
+}
+
+// verdictFromDecision lifts a single-reviewer GateDecision into the
+// ReviewerVerdict the ledger writers take, so an edge gate and a lifecycle hook
+// (create_review, amend_review) record one decision identically.
+func verdictFromDecision(dec GateDecision) ReviewerVerdict {
+	return ReviewerVerdict{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning,
+		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated,
+		Command: dec.Command, Context: dec.Context, Model: dec.Model,
+		ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
+		TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
+		UsageAvailable: dec.UsageAvailable,
+		TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
+		CostUSD: dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
+		SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
+		ToolIsolation: dec.ToolIsolation}
+}
+
+// withOperation stamps a lifecycle operation (create_review, amend_review) on a
+// ledger payload so the timeline can tell a lifecycle-hook row from an edge row.
+func withOperation(payload json.RawMessage, operation string) json.RawMessage {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(payload, &m) != nil || m == nil {
+		return payload
+	}
+	op, err := json.Marshal(operation)
+	if err != nil {
+		return payload
+	}
+	m["operation"] = op
+	b, err := json.Marshal(m)
+	if err != nil {
+		return payload
+	}
+	return b
+}
+
+// recordLifecycleReview writes a lifecycle-hook reviewer run (create_review,
+// amend_review) to the ledger the way an edge gate is recorded: an
+// agent_invocation row carrying command, model, usage (or its adapter-named
+// unavailable) and duration, then the review_accept / review_reject row with the
+// reviewer's notes. storyID is empty for a rejected create — it persists no
+// story, so its rows are repo-scoped (empty story id), which the repo-wide
+// gate-value view reads. from→to is the edge the hook guards: create→<status>
+// for a create, <status>→<status> for an amend.
+//
+// A deterministic ACCEPT (no Command: the structure check, or a repo that
+// declares no hook) invoked no agent and judged nothing worth a row, so it is
+// not recorded; a deterministic REJECT still is, since it explains a refusal.
+// Best-effort, like every ledger write.
+func recordLifecycleReview(ctx context.Context, storyID, operation, from, to string, dec GateDecision, now time.Time) {
+	if !dec.Gated {
+		return
+	}
+	rv := verdictFromDecision(dec)
+	if rv.Command == "" && rv.Accept {
+		return
+	}
+	attempt := ledger.NewAttemptID()
+	if rv.Command != "" {
+		appendLedgerEntry(ctx, storyID, ledger.KindAgentInvocation, "reviewer",
+			fmt.Sprintf("invoked reviewer (%s) for %s with @skill:%s", rv.Command, operation, rv.Context),
+			withOperation(invocationPayload(from, to, rv), operation), now)
+	}
+	if !rv.Accept {
+		appendLedgerEntry(ctx, storyID, ledger.KindReviewReject, "reviewer",
+			fmt.Sprintf("rejected %s by %s: %s", operation, rv.Skill, rv.Notes),
+			withOperation(reviewerPayload(from, to, rv, attempt), operation), now)
+		return
+	}
+	appendLedgerEntry(ctx, storyID, ledger.KindReviewAccept, "reviewer",
+		fmt.Sprintf("accepted %s by %s: decision=accept notes=%s%s", operation, rv.Skill, rv.Notes, formatReasoningSuffix(rv.Reasoning)),
+		withOperation(reviewerPayload(from, to, rv, attempt), operation), now)
 }
 
 // appendOpLog mirrors a state-mutating verb to the flat-file operation log a
