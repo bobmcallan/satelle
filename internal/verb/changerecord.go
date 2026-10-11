@@ -187,10 +187,43 @@ func recordResumeReanchor(ctx context.Context, item workitem.Item, from, to stri
 	appendLedgerEntry(ctx, item.ID, ledger.KindChangeRecord, "executor", body, raw, now)
 }
 
-// latestResumeReanchor returns the newest re-anchor row's SHA and time, if any.
-// ok is false when the story never parked, or git was unavailable at resume.
+// engagementStart is when the story first took its tree: the first engagement
+// baseline's time. ok is false for a story that was never engaged. Engagement
+// starts the measurement, so an anchor row written before it (a park/resume
+// re-anchor, or a full change_record, taken while the story sat in backlog) is
+// not an anchor and must never stand in for the baseline.
+func engagementStart(ctx context.Context, storyID string) (time.Time, bool) {
+	_, _, at, err := firstEngagementBaseline(ctx, storyID)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return at, true
+}
+
+// engagedRows drops the rows created before the story's first engagement
+// baseline. The cut is strict: the engaging edge's own row shares the
+// baseline's time and stays. A story never engaged keeps every row.
+func engagedRows(ctx context.Context, storyID string, recs []ledger.Entry) []ledger.Entry {
+	start, ok := engagementStart(ctx, storyID)
+	if !ok {
+		return recs
+	}
+	out := make([]ledger.Entry, 0, len(recs))
+	for _, r := range recs {
+		if !r.CreatedAt.Before(start) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// latestResumeReanchor returns the newest re-anchor row's SHA and time, if any,
+// ignoring re-anchors written before the story's first engagement baseline.
+// ok is false when the story never parked after engaging, or git was unavailable
+// at resume.
 func latestResumeReanchor(ctx context.Context, storyID string) (sha string, at time.Time, ok bool) {
-	return latestResumeReanchorExcept(ctx, storyID, "")
+	start, _ := engagementStart(ctx, storyID)
+	return latestResumeReanchorSince(ctx, storyID, "", start)
 }
 
 // latestResumeReanchorExcept is latestResumeReanchor ignoring re-anchors that
@@ -198,6 +231,12 @@ func latestResumeReanchor(ctx context.Context, storyID string) (sha string, at t
 // same instant as its status_transition, so a caller asking "did anything
 // engage after entering that state" must not count it.
 func latestResumeReanchorExcept(ctx context.Context, storyID, skipTo string) (sha string, at time.Time, ok bool) {
+	return latestResumeReanchorSince(ctx, storyID, skipTo, time.Time{})
+}
+
+// latestResumeReanchorSince is latestResumeReanchorExcept also ignoring rows
+// created before notBefore (zero keeps every row).
+func latestResumeReanchorSince(ctx context.Context, storyID, skipTo string, notBefore time.Time) (sha string, at time.Time, ok bool) {
 	ls, err := requireLedger()
 	if err != nil {
 		return "", time.Time{}, false
@@ -208,7 +247,7 @@ func latestResumeReanchorExcept(ctx context.Context, storyID, skipTo string) (sh
 	}
 	for i := len(recs) - 1; i >= 0; i-- {
 		var p changeRecordPayload
-		if json.Unmarshal(recs[i].Payload, &p) != nil {
+		if json.Unmarshal(recs[i].Payload, &p) != nil || recs[i].CreatedAt.Before(notBefore) {
 			continue
 		}
 		if p.ReanchorResume && p.HeadSHA != "" && (skipTo == "" || p.To != skipTo) {
@@ -299,7 +338,7 @@ func changeRecordAnchor(ctx context.Context, storyID string) (sinceSHA string, h
 	// SHA anyway; skipping them explicitly keeps the two anchor walks symmetric.
 	recs, err := ls.ListByStory(ctx, storyID, ledger.KindChangeRecord)
 	if err == nil {
-		if p, ok := lastFullChangeRecord(recs); ok && p.HeadSHA != "" {
+		if p, ok := lastFullChangeRecord(engagedRows(ctx, storyID, recs)); ok && p.HeadSHA != "" {
 			return p.HeadSHA, p.HeadSHA, ""
 		}
 	}
@@ -341,6 +380,7 @@ func changeRecordSinceTime(ctx context.Context, storyID string) (time.Time, bool
 	}
 	recs, err := ls.ListByStory(ctx, storyID, ledger.KindChangeRecord)
 	if err == nil {
+		recs = engagedRows(ctx, storyID, recs)
 		for i := len(recs) - 1; i >= 0; i-- {
 			var p changeRecordPayload
 			if json.Unmarshal(recs[i].Payload, &p) == nil && p.PartialEnumeration {
