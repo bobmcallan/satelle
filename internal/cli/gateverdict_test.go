@@ -34,6 +34,22 @@ func TestVerdictBlock_IsTheVerdictAndNothingElse(t *testing.T) {
 	}
 }
 
+// sty_e2b78a8d: the block delivered for a transition with several functional
+// checks carries each check's short notes and none of their script text.
+func TestVerdictBlock_FunctionalCheckNotesCarryNoScript(t *testing.T) {
+	v := gatehandle.Verdict{
+		Meta:  gatehandle.Meta{ID: "gw_chk", Argv: []string{"story", "set", "sty_chk"}, Story: "sty_chk"},
+		Lines: acceptLinesFromChecks(t),
+	}
+	got := renderGateVerdict(v)
+	if strings.Contains(got, checkScriptSentinel) {
+		t.Errorf("the delivered block carries the check script:\n%s", got)
+	}
+	if !strings.Contains(got, "functional check passed") || !strings.Contains(got, "result-line-from-check") {
+		t.Errorf("the delivered block lacks the check's short notes:\n%s", got)
+	}
+}
+
 // A create's product is the one thing the driver cannot fetch by name: its id
 // rides in the verdict block, without the record around it.
 func TestVerdictBlock_ACreateReturnsItsIDNotItsRecord(t *testing.T) {

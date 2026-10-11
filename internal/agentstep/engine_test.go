@@ -3204,6 +3204,72 @@ func TestFunctionalCheckGate(t *testing.T) {
 	})
 }
 
+// sty_e2b78a8d: a functional check's verdict notes carry the check's own output
+// and a short label — never the script body, which stays readable in the skill.
+func TestFunctionalCheckNotes_CarryOutputNotScript(t *testing.T) {
+	const sentinel = "SCRIPT-SENTINEL-77c1"
+	wf := spineWF("", "", "",
+		"in_progress|executor",
+		"integrated|executor||satelle-story-integration-review",
+		"done")
+	engine := func(t *testing.T, script string) *Engine {
+		body := "---\nname: satelle-story-integration-review\ntype: skill\ndescription: integration functional check\n---\n# Gate\n\n```check\n# " +
+			sentinel + "\n" + script + "\n```\n"
+		g, _ := newEngine(t, ``, fakeDocs{workflow: wf, skillBody: body, skillFound: true})
+		g.repoRoot = t.TempDir() // the check runs in the repo root — use a real dir
+		return g
+	}
+
+	t.Run("accept: label, skill and the check's result lines", func(t *testing.T) {
+		g := engine(t, "echo ok-line")
+		dec, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "integrated")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !dec.Accept {
+			t.Fatalf("want accept, got %+v", dec)
+		}
+		for _, want := range []string{"functional check passed", "satelle-story-integration-review", "ok-line"} {
+			if !strings.Contains(dec.Notes, want) {
+				t.Errorf("accept notes lack %q: %q", want, dec.Notes)
+			}
+		}
+		if strings.Contains(dec.Notes, sentinel) || strings.Contains(dec.Notes, "echo ok-line") {
+			t.Errorf("accept notes carry the check script: %q", dec.Notes)
+		}
+	})
+
+	t.Run("accept of a silent check is the label alone", func(t *testing.T) {
+		g := engine(t, "true")
+		dec, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "integrated")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "functional check passed (satelle-story-integration-review)"; dec.Notes != want {
+			t.Errorf("notes = %q, want %q", dec.Notes, want)
+		}
+	})
+
+	t.Run("reject: exit code, the full failure output, no script", func(t *testing.T) {
+		g := engine(t, "echo first-failure; echo second-failure; echo third-failure >&2; exit 3")
+		dec, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "integrated")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if dec.Accept {
+			t.Fatalf("want reject, got %+v", dec)
+		}
+		for _, want := range []string{"functional check failed", "exit 3", "first-failure", "second-failure", "third-failure"} {
+			if !strings.Contains(dec.Notes, want) {
+				t.Errorf("reject notes lack %q: %q", want, dec.Notes)
+			}
+		}
+		if strings.Contains(dec.Notes, sentinel) || strings.Contains(dec.Notes, "echo first-failure") {
+			t.Errorf("reject notes carry the check script: %q", dec.Notes)
+		}
+	})
+}
+
 var errFakeExit = errFake("exit status 1")
 
 type errFake string

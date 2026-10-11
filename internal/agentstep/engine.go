@@ -4174,11 +4174,24 @@ func (g *Engine) runCheck(ctx context.Context, itemID, skill, command, payload s
 		} else {
 			notes = compact.CompressLog(out, compact.LogConfig{}, nil)
 		}
-		dec.Notes = fmt.Sprintf("functional check failed (`%s`): %v\n%s", command, err, notes)
+		// The label names the skill, never the script: the script stays readable
+		// in the skill file, and echoing it into every verdict floods the
+		// driver's context (sty_e2b78a8d).
+		label := "functional check failed (" + skill
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			label += fmt.Sprintf(", exit %d", ee.ExitCode())
+		}
+		dec.Notes = fmt.Sprintf("%s): %v\n%s", label, err, notes)
 		return dec
 	}
 	dec.Accept = true
-	dec.Notes = "functional check passed: `" + command + "`"
+	dec.Notes = "functional check passed (" + skill + ")"
+	// A passing check's own result lines ride along, bounded by the default log
+	// compression; the wired compressor stays failure-only.
+	if res := strings.TrimSpace(compact.CompressLog(out, compact.LogConfig{}, nil)); res != "" {
+		dec.Notes += "\n" + res
+	}
 	return dec
 }
 
