@@ -123,6 +123,41 @@ func TestSingleStoryBlockedFreesSeat(t *testing.T) {
 	}
 }
 
+// recoverStoryWF is singleStoryWF plus the declared plan → backlog recover edge.
+var recoverStoryWF = map[string]string{
+	"step": singleStoryWF["step"],
+	"done": strings.Replace(singleStoryWF["done"], "park = { state = \"blocked\" }\n",
+		"park = { state = \"blocked\" }\nrecover = { step = \"backlog\", from = [\"plan\"] }\n", 1),
+}
+
+// A declared move back from a performing state to a non-performing, non-exit
+// one (plan → backlog) ends the engagement: the seat is freed and the next
+// story engages with no manual `seat release`.
+func TestSingleStoryBackToEntryFreesSeat(t *testing.T) {
+	wireWithWorkflows(t, recoverStoryWF)
+
+	var a, b workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Returned", "category": "feature"}), &a)
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Next", "category": "feature"}), &b)
+
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "plan"}), &a)
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "backlog"}), &a)
+	if a.Status != "backlog" {
+		t.Fatalf("move back failed: %q", a.Status)
+	}
+	seats, serr := verb.Dispatch(context.Background(), "story-seat-list", nil)
+	if serr != nil {
+		t.Fatalf("story-seat-list: %v", serr)
+	}
+	if strings.Contains(string(seats), a.ID) {
+		t.Fatalf("story %s returned to backlog still holds a seat: %s", a.ID, seats)
+	}
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": b.ID, "status": "plan"}), &b)
+	if b.Status != "plan" {
+		t.Fatalf("B should engage after A returned to backlog: %q", b.Status)
+	}
+}
+
 func TestSingleStoryCreateIntoEngagingRefused(t *testing.T) {
 	wireWithWorkflows(t, singleStoryWF)
 

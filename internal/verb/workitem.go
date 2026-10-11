@@ -916,9 +916,15 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			}
 			settled = true
 		} else {
-			// Non-engaging, non-exit target after a lease was claimed for an
-			// engaging path should not happen; treat as settled so we do not
-			// roll back a committed status.
+			// Non-engaging, non-exit target (a declared move back out of the
+			// performing states, e.g. plan → backlog): the engagement is over,
+			// so free the seat the story held. ForceRelease for the same
+			// owner-mismatch reason as the exit branch. When governance did not
+			// resolve (!ok) nothing was classed, so keep the fail-open: settle
+			// without releasing. Either way the committed status is not rolled back.
+			if ok {
+				forceReleaseEngagementLease(ctx, it.ID)
+			}
 			settled = true
 		}
 	} else {
