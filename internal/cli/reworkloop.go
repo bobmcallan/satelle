@@ -54,6 +54,12 @@ type reworkLoop struct {
 	// Both are supplied by the command so the prose stays out of the loop.
 	Seed      string
 	CoderSeed string
+	// Pending holds the directed messages the performer has not answered, each
+	// already prefixed with its sender. The command supplies them (it owns the
+	// ledger read) so the loop stays transport- and store-free. When set, the
+	// performer acts on them FIRST, and a consultant READY cannot end the relay
+	// until the performer has returned a non-empty reply.
+	Pending []string
 	// CoderIdleTimeout / ConsultIdleTimeout bound one turn on their respective
 	// session with a Watchdog (sty_752c4ef2) — each side may configure its own
 	// idle_timeout=. ≤0 disables stall detection for that side.
@@ -63,6 +69,13 @@ type reworkLoop struct {
 // Run drives the relay. The consultant speaks first (it reviews the slice as it
 // stands), then each round is consultant→coder→consultant. It returns as soon
 // as the consultant emits READY, or when the budget is spent.
+//
+// The exception is a performer holding an unanswered directed message (Pending):
+// it opens the relay, so the consultant never judges a slice whose pending
+// defect nobody has acted on, and the consultant's first turn carries the
+// performer's reply. That opening turn is not a round — Rounds still counts
+// consultant judgments. Until the performer has returned a non-empty reply, READY
+// does not converge: it is answered by re-sending the message.
 //
 // Every turn is ledgered with its real from/to roles AND cc="*": the direction
 // is the conversation's, the audience is whoever later judges this edge.
@@ -75,6 +88,32 @@ func (l *reworkLoop) Run(ctx context.Context) (reworkResult, error) {
 	}
 	res := reworkResult{}
 	turn := l.Seed
+	coderSeeded := false
+	answered := len(l.Pending) == 0
+	// coderTurn sends the performer one ask, with the coder seed on the first.
+	coderTurn := func(ask string) (string, error) {
+		if !coderSeeded && strings.TrimSpace(l.CoderSeed) != "" {
+			ask = l.CoderSeed + "\n\n" + ask
+		}
+		coderSeeded = true
+		reply, err := l.exchange(ctx, l.Coder, l.CoderRole, l.ConsultRole, ask, l.CoderIdleTimeout)
+		if err == nil && strings.TrimSpace(reply) != "" {
+			answered = true
+		}
+		return reply, err
+	}
+
+	if !answered {
+		fmt.Fprintf(l.Out, "\n— opening: %s —\n", l.CoderRole)
+		reply, err := coderTurn(pendingPreamble(l.Pending))
+		if err != nil {
+			return res, err
+		}
+		if answered {
+			turn = l.Seed + "\n\n" + reply
+		}
+	}
+
 	for round := 1; round <= l.Rounds; round++ {
 		fmt.Fprintf(l.Out, "\n— round %d/%d: %s —\n", round, l.Rounds, l.ConsultRole)
 		verdict, err := l.exchange(ctx, l.Consultant, l.ConsultRole, l.CoderRole, turn, l.ConsultIdleTimeout)
@@ -83,25 +122,47 @@ func (l *reworkLoop) Run(ctx context.Context) (reworkResult, error) {
 		}
 		res.Rounds = round
 		ready, objection := parseReadyMarker(verdict)
-		if ready {
+		ask := objection
+		switch {
+		case ready && answered:
 			res.Converged = true
 			res.LastObjection = ""
 			return res, nil
+		case ready:
+			// READY is a relay signal, never a verdict, and it was given over a
+			// slice the performer has not acted on: send the message again.
+			objection = unansweredObjection(l.CoderRole, l.Pending)
+			ask = pendingPreamble(l.Pending)
+		case !answered:
+			ask = pendingPreamble(l.Pending) + "\n\nThe reviewer's finding:\n" + objection
 		}
 		res.LastObjection = objection
 
 		fmt.Fprintf(l.Out, "\n— round %d/%d: %s —\n", round, l.Rounds, l.CoderRole)
-		ask := objection
-		if round == 1 && strings.TrimSpace(l.CoderSeed) != "" {
-			ask = l.CoderSeed + "\n\n" + objection
-		}
-		reply, err := l.exchange(ctx, l.Coder, l.CoderRole, l.ConsultRole, ask, l.CoderIdleTimeout)
+		reply, err := coderTurn(ask)
 		if err != nil {
 			return res, err
 		}
 		turn = reply
 	}
 	return res, nil
+}
+
+// pendingPreamble is what the performer is told when it holds directed messages
+// it has not answered.
+func pendingPreamble(pending []string) string {
+	return "Messages addressed to you that you have not yet answered. Act on them in the working tree before the reviewer re-checks, then reply with what you changed:\n\n- " +
+		strings.Join(pending, "\n- ")
+}
+
+// unansweredObjection is the last objection when the relay could not finish
+// because a directed message was never answered: it names that message.
+func unansweredObjection(coder string, pending []string) string {
+	first := strings.Join(strings.Fields(pending[0]), " ")
+	if r := []rune(first); len(r) > 160 {
+		first = string(r[:160]) + "…"
+	}
+	return fmt.Sprintf("unanswered directed message for %s: %s", coder, first)
 }
 
 // exchange sends one turn to a session, ledgers the reply under its real

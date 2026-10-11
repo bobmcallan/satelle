@@ -142,6 +142,35 @@ func TestMessagesSinceExcludes(t *testing.T) {
 	}
 }
 
+// A role's own message to someone else is outside MessagesSince(role) but must
+// be visible to EngagementMessages, so a reader can tell a role has replied.
+func TestEngagementMessagesIncludesOutbound(t *testing.T) {
+	wire(t)
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "outbound"}), &it)
+	payload, _ := json.Marshal(map[string]any{"head_sha": "abc123", "dirty": false, "to": "in_progress"})
+	call(t, "ledger-append", map[string]any{
+		"story_id": it.ID, "kind": ledger.KindEngagementBaseline, "payload": json.RawMessage(payload),
+	})
+	separate()
+	call(t, "story-message", map[string]any{"id": it.ID, "from": "orchestrator", "to": "executor", "body": "in"})
+	call(t, "story-message", map[string]any{"id": it.ID, "from": "executor", "to": "orchestrator", "body": "out"})
+
+	ctx := context.Background()
+	for _, m := range verb.MessagesSince(ctx, it.ID, []string{"executor"}) {
+		if m.Body == "out" {
+			t.Fatalf("MessagesSince(executor) returned the executor's outbound message")
+		}
+	}
+	var bodies []string
+	for _, m := range verb.EngagementMessages(ctx, it.ID) {
+		bodies = append(bodies, m.Body)
+	}
+	if got := strings.Join(bodies, ","); got != "in,out" {
+		t.Errorf("EngagementMessages bodies = %q, want %q", got, "in,out")
+	}
+}
+
 func TestMessagesSinceAfterReanchor(t *testing.T) {
 	wire(t)
 	var it workitem.Item

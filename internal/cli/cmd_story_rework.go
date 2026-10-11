@@ -26,21 +26,21 @@ func storyReworkCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rework <id>",
 		Short: "Run the step's bounded rework relay — a coder session and a consulting reviewer session",
-		Long: `Relay the current step's performer binding and its consult binding as two live
+		Long: `Relay the step's performer binding and its consult binding as two live
 sessions until the consultant says ready or the round budget is spent. The step
 opts in: rework = { consult = "reviewer", rounds = 3 }.
 
-Termination contract: the consultant's reply must END with a line that is
-exactly READY or NOT READY: <reason>. Anything else counts as not ready and
-consumes a round. --rounds may only LOWER the authored budget.
+An unanswered directed message to the performer (addressed to its binding by
+name, no later reply from it) opens the relay performer-first, and READY cannot
+end the relay while it stands.
 
-Turns are ledgered as agent_message rows with real from/to roles and cc="*", so
-satelle story messages <id> reads as the conversation and the edge reviewer
-gets the transcript. Prints {converged, rounds, last_objection}.
+The consultant's reply must END with a line exactly READY or NOT READY: <reason>;
+anything else consumes a round. --rounds may only LOWER the authored budget.
 
-Does NOT change status: ready is a signal, never a verdict — the entry gate
-still decides, cold and one-shot.
+Turns are ledgered as agent_message rows (cc="*"), so satelle story messages <id>
+reads as the conversation. Prints {converged, rounds, last_objection}.
 
+Does NOT change status: ready is a signal, never a verdict.
 See satelle help agent-dispatch.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
@@ -251,6 +251,10 @@ func runStoryRework(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	var pending []string
+	for _, m := range unansweredDirected(verb.EngagementMessages(ctx, it.ID), rw.CoderBinding) {
+		pending = append(pending, fmt.Sprintf("from %s: %s", m.From, strings.TrimSpace(m.Body)))
+	}
 	loop := &reworkLoop{
 		Coder: coder, Consultant: consultant,
 		CoderRole: rw.CoderBinding, ConsultRole: rw.ConsultBinding,
@@ -259,6 +263,7 @@ func runStoryRework(cmd *cobra.Command, args []string) error {
 		Out:                out,
 		Seed:               consultPayload + "\n\n" + reworkSeed(rw),
 		CoderSeed:          coderPayload + "\n\n" + reworkCoderSeed(rw),
+		Pending:            pending,
 		CoderIdleTimeout:   coderIdle,
 		ConsultIdleTimeout: consultIdle,
 	}
@@ -278,6 +283,27 @@ func runStoryRework(cmd *cobra.Command, args []string) error {
 		return runErr
 	}
 	return nil
+}
+
+// unansweredDirected returns the messages addressed to coder by name that it has
+// not answered, oldest first (msgs is oldest first). A later message FROM coder
+// answers everything before it, whoever it was addressed to — msgs must be the
+// unfiltered window (verb.EngagementMessages), not one filtered to the coder's
+// inbox. Broadcasts do not count, and neither do the
+// relay's own transcript rows (cc="*"): those are conversation, not a directive,
+// and a relay that ended on the consultant's READY must not make the next one
+// start coder-first.
+func unansweredDirected(msgs []verb.AgentMessage, coder string) []verb.AgentMessage {
+	var out []verb.AgentMessage
+	for _, m := range msgs {
+		switch {
+		case m.From == coder:
+			out = nil
+		case m.To == coder && m.Cc != "*":
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // reworkSeed is the consultant's first turn: the ask and the termination
