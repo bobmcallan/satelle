@@ -96,6 +96,34 @@ func AppendTelemetry(ctx context.Context, storyID, actor, kind string, data map[
 	return nil
 }
 
+// refusedTelemetryValue replaces a string value validateTelemetryData would
+// refuse, so a row keeps its other fields (see AppendTelemetryKeepRow).
+const refusedTelemetryValue = "[refused: credential-shaped]"
+
+// AppendTelemetryKeepRow is AppendTelemetry for the engine's own dispatch
+// telemetry (agent-retry/agent-failure/agent-timeout), whose rows carry the
+// outcome class a diagnosis and the timeline read. When validation refuses the
+// row, every credential-shaped string VALUE is replaced by a marker and the row
+// is appended again, so a token-shaped cause never costs the row its outcome.
+// A data key whose NAME looks like a credential is still dropped.
+func AppendTelemetryKeepRow(ctx context.Context, storyID, actor, kind string, data map[string]any) error {
+	err := AppendTelemetry(ctx, storyID, actor, kind, data)
+	if err == nil || kind == "" {
+		return err
+	}
+	kept := make(map[string]any, len(data))
+	for k, v := range data {
+		if secretKeyPattern.MatchString(k) {
+			continue
+		}
+		if s, ok := v.(string); ok && looksLikeSecret(s) {
+			v = refusedTelemetryValue
+		}
+		kept[k] = v
+	}
+	return AppendTelemetry(ctx, storyID, actor, kind, kept)
+}
+
 // joinTelemetryData renders data as a comma-separated "key=value" list for a
 // ledger body, in sorted-key order for determinism.
 func joinTelemetryData(data map[string]any) string {

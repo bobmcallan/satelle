@@ -733,6 +733,7 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 				g.logReviewerFailure(skill, attempt, attempts, rerr, nil)
 				g.telemetryEvent(ctx, storyID, actor, "agent-timeout", map[string]any{
 					"skill": skill, "step": step, "attempt": attempt, "attempts": attempts,
+					"cause": causeOf(rerr),
 				})
 				return InvokeResult{Command: cmdStr, Err: fmt.Errorf(
 					"reviewer: %s timed out after %s — the gate did not complete and the transition was NOT enacted; retry when the agent backend is responsive", skill, timeout)}
@@ -741,6 +742,7 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 			g.logReviewerFailure(skill, attempt, attempts, rerr, nil)
 			g.telemetryEvent(ctx, storyID, actor, "agent-retry", map[string]any{
 				"skill": skill, "step": step, "attempt": attempt, "attempts": attempts, "outcome": classifyOutcome(rerr),
+				"cause": causeOf(rerr),
 			})
 			continue
 		}
@@ -753,6 +755,7 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 				g.logReviewerFailure(skill, attempt, attempts, perr, out)
 				g.telemetryEvent(ctx, storyID, actor, "agent-retry", map[string]any{
 					"skill": skill, "step": step, "attempt": attempt, "attempts": attempts, "outcome": "no-verdict",
+					"cause": causeOf(perr),
 				})
 				continue
 			}
@@ -778,6 +781,7 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 			g.logReviewerFailure(skill, attempt, attempts, perr, out)
 			g.telemetryEvent(ctx, storyID, actor, "agent-retry", map[string]any{
 				"skill": skill, "step": step, "attempt": attempt, "attempts": attempts, "outcome": "no-verdict",
+				"cause": causeOf(perr),
 			})
 			continue
 		}
@@ -792,9 +796,9 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 	if len(bytes.TrimSpace(lastOut)) > 0 && g.logDir != "" {
 		where = " — full reviewer output logged to " + filepath.Join(g.logDir, "reviewer.log")
 	}
-	g.telemetryEvent(ctx, storyID, actor, "agent-failure", map[string]any{
+	g.telemetryEvent(ctx, storyID, actor, "agent-failure", withCause(map[string]any{
 		"skill": skill, "step": step, "attempts": attempts, "outcome": classifyOutcome(lastErr),
-	})
+	}, lastErr))
 	if req.Expect == ExpectVerdicts && lastNoVerdict {
 		// The session ran but named no verdict for any rubric, and the repair
 		// attempts did not change that: every rubric fails closed (sty_23e10d92).

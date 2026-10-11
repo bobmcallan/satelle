@@ -323,6 +323,24 @@ func classifyOutcome(err error) string {
 	return "error"
 }
 
+// causeOf is the diagnostic text a failed attempt leaves on its telemetry row
+// beside the outcome class: the error the transport returned, stripped,
+// redacted and bounded by agentcli.SafeText. "" for a nil error.
+func causeOf(err error) string {
+	if err == nil {
+		return ""
+	}
+	return agentcli.SafeText(err.Error())
+}
+
+// withCause adds err's bounded cause to a telemetry data map and returns it.
+func withCause(data map[string]any, err error) map[string]any {
+	if c := causeOf(err); c != "" {
+		data["cause"] = c
+	}
+	return data
+}
+
 // New builds a Engine over the agent runner and doc index. model "" inherits the
 // agent's default; the tool grant is read-only.
 func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Engine {
@@ -2130,7 +2148,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		if res.UsageAvailable {
 			failData["tokens_total"] = res.TokensTotal
 		}
-		g.telemetryEvent(ctx, item.ID, "executor", "agent-failure", failData)
+		g.telemetryEvent(ctx, item.ID, "executor", "agent-failure", withCause(failData, invRes.Err))
 		return res, fmt.Errorf("named agent %q failed performing step %q: %w", dispatchAgent, toStatus, invRes.Err)
 	}
 	// A performer reject is not a crash. The verb parks the story as blocked
@@ -3499,6 +3517,7 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 			if errors.Is(rerr, context.DeadlineExceeded) && ctx.Err() == nil {
 				g.telemetryEvent(ctx, item.ID, section, "agent-timeout", map[string]any{
 					"skill": summariserSkill, "step": to, "attempt": attempt, "attempts": attempts,
+					"cause": causeOf(rerr),
 				})
 				return soft("mandatory step summary timed out after %s", g.agentTimeout)
 			}
@@ -3506,6 +3525,7 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 			g.logReviewerFailure(summariserSkill, attempt, attempts, rerr, nil)
 			g.telemetryEvent(ctx, item.ID, section, "agent-retry", map[string]any{
 				"skill": summariserSkill, "step": to, "attempt": attempt, "attempts": attempts, "outcome": classifyOutcome(rerr),
+				"cause": causeOf(rerr),
 			})
 			continue // transient — retry
 		}
@@ -3529,11 +3549,12 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 		g.logReviewerFailure(summariserSkill, attempt, attempts, lastErr, out)
 		g.telemetryEvent(ctx, item.ID, section, "agent-retry", map[string]any{
 			"skill": summariserSkill, "step": to, "attempt": attempt, "attempts": attempts, "outcome": "empty-output",
+			"cause": causeOf(lastErr),
 		})
 	}
-	g.telemetryEvent(ctx, item.ID, section, "agent-failure", map[string]any{
+	g.telemetryEvent(ctx, item.ID, section, "agent-failure", withCause(map[string]any{
 		"skill": summariserSkill, "step": to, "attempts": attempts, "outcome": classifyOutcome(lastErr),
-	})
+	}, lastErr))
 	return soft("mandatory step summary failed after %d attempts: %v", attempts, lastErr)
 }
 
