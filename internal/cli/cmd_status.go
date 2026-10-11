@@ -10,6 +10,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -26,7 +27,8 @@ something writes to a place you did not expect. For "can satelle govern here at
 all", use satelle doctor, which judges rather than reports.
 
 It also names the hosted server and the hosted project this checkout syncs to,
-read from config alone: no network call, no sign-in needed.`,
+and whether satelle acts through a session token (SATELLE_TOKEN) or a stored
+login: no network call, no sign-in needed, and never a credential.`,
 		Annotations: needsStore(),
 		// --line is the Claude statusline renderer (sty_4e6f0788). It must never
 		// fail loudly, so it does NOT go through the store bootstrap: openAppForCmd
@@ -79,10 +81,13 @@ read from config alone: no network call, no sign-in needed.`,
 			// Real availability, not a config echo (sty_fb5e6d96): the URL a
 			// user opens plus whether anything is answering on it.
 			fmt.Fprintf(w, "web service\t%s\n", probeWebAvailability().statusValue())
-			// Hosted binding (sty_1c4ad7e2): config resolvers only — no network,
-			// no credential lookup, so status renders signed out and offline.
+			// Hosted binding (sty_1c4ad7e2): config resolvers only, no network, so
+			// status renders offline. The identity row (sty_e82d5f49) adds one local
+			// credential-file read through resolveUser — still no network, and no
+			// signed-in state needed.
 			fmt.Fprintf(w, "hosted server\t%s\n", config.ResolveHostedServer(a.Config))
 			fmt.Fprintf(w, "hosted project\t%s\n", hostedProjectValue(a.Config, a.RepoRoot))
+			fmt.Fprintf(w, "identity\t%s\n", identitySourceValue(resolveUser(a.Config, a.RepoRoot)))
 			for _, s := range config.MachineScopeStrays(a.DataDir) {
 				fmt.Fprintf(w, "config stray\t%s\n", s.Warning())
 			}
@@ -132,6 +137,19 @@ func hostedProjectValue(cfg config.Config, repoRoot string) string {
 		return "not bound — run satelle project bind <slug>"
 	}
 	return fmt.Sprintf("not bound — sync would use %q; run satelle project bind <slug>", slug)
+}
+
+// identitySourceValue is the status row for the identity source: fixed text per
+// source, never the token, the account, or any value derived from them. Who the
+// user is stays with satelle whoami.
+func identitySourceValue(u userIdentity) string {
+	switch u.Source {
+	case userSourceSession:
+		return "session token (" + hosted.SessionTokenEnv + ")"
+	case userSourceAccount:
+		return "stored login (satelle login)"
+	}
+	return "none — local-only (git user); run satelle login"
 }
 
 // runtimeResidueLine reports in-repo .satelle/stories when the runtime plane is
