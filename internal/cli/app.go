@@ -280,7 +280,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// sees each dispatch ATTEMPT (a killed/timed-out subprocess) the verb
 			// layer never does, so it writes those events itself via this sink.
 			rev.SetTelemetry(func(ctx context.Context, storyID, actor, kind string, data map[string]any) {
-				_ = verb.AppendTelemetry(ctx, storyID, actor, kind, data)
+				_ = verb.AppendTelemetryKeepRow(ctx, storyID, actor, kind, data)
 			})
 			verb.SetTransitionGater(rev)
 			// Stamp the governing workflow on every story at create — independent of
@@ -439,7 +439,7 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 	// a denied ask-the-user through this sink (sty_ff50f788); unwired, the row
 	// is silently dropped.
 	rev.SetTelemetry(func(ctx context.Context, storyID, actor, kind string, data map[string]any) {
-		_ = verb.AppendTelemetry(ctx, storyID, actor, kind, data)
+		_ = verb.AppendTelemetryKeepRow(ctx, storyID, actor, kind, data)
 	})
 	return rev, a, nil
 }

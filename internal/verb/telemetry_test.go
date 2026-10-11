@@ -3,6 +3,7 @@ package verb_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -72,6 +73,36 @@ func TestAppendTelemetryRefusesSecretValue(t *testing.T) {
 		map[string]any{"note": "sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD"})
 	if err == nil {
 		t.Fatal("a token-shaped value must be refused")
+	}
+}
+
+// TestAppendTelemetryKeepRowKeepsOutcome (sty_9bc496e1): the engine's dispatch
+// telemetry must not lose its row, outcome included, because a failure cause
+// came back token-shaped — the credential-shaped value is replaced instead.
+func TestAppendTelemetryKeepRowKeepsOutcome(t *testing.T) {
+	wire(t)
+	var created struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "T"}), &created)
+
+	err := verb.AppendTelemetryKeepRow(context.Background(), created.ID, "reviewer", "agent-failure",
+		map[string]any{"outcome": "error", "cause": "sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD"})
+	if err != nil {
+		t.Fatalf("a token-shaped cause must not lose the row, got: %v", err)
+	}
+	var entries []map[string]any
+	json.Unmarshal(call(t, "ledger-list", map[string]any{"story_id": created.ID, "kind": "telemetry_event"}), &entries)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 telemetry_event entry, got %d: %+v", len(entries), entries)
+	}
+	payload, _ := entries[0]["payload"].(map[string]any)
+	data, _ := payload["data"].(map[string]any)
+	if data["outcome"] != "error" {
+		t.Errorf("outcome lost: %+v", data)
+	}
+	if c, _ := data["cause"].(string); c == "" || strings.Contains(c, "sk-abc") {
+		t.Errorf("cause should be the refusal marker, got %q", c)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
@@ -5014,6 +5015,25 @@ func hasOutcome(recs []telemetryRec, kind, want string) bool {
 	return false
 }
 
+// assertCauses requires every agent-retry/agent-failure row to carry a non-empty
+// cause (sty_9bc496e1) and at least one error-outcome row to carry wantErrText.
+func assertCauses(t *testing.T, recs []telemetryRec, wantErrText string) {
+	t.Helper()
+	found := false
+	for _, rec := range recs {
+		cause, _ := rec.data["cause"].(string)
+		if cause == "" {
+			t.Errorf("%s row carries no cause: %v", rec.kind, rec.data)
+		}
+		if o, _ := rec.data["outcome"].(string); o == "error" && strings.Contains(cause, wantErrText) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no error-outcome row carries a cause containing %q", wantErrText)
+	}
+}
+
 // classifyOutcome names WHY a dispatched invocation failed — the label that
 // makes the telemetry queryable rather than a free-text body string.
 func TestClassifyOutcome(t *testing.T) {
@@ -5065,6 +5085,7 @@ func TestGate_recordsRetryAndFailureTelemetry(t *testing.T) {
 	if !hasOutcome(*recs, "agent-retry", "error") {
 		t.Error("an errored attempt should record outcome=error")
 	}
+	assertCauses(t, *recs, errFakeAgent.Error())
 	for _, rec := range *recs {
 		if rec.actor != "reviewer" {
 			t.Errorf("reviewer telemetry actor = %q, want reviewer", rec.actor)
@@ -5128,10 +5149,88 @@ func TestSummarise_recordsRetryAndFailureTelemetry(t *testing.T) {
 	if !hasOutcome(*recs, "agent-retry", "empty-output") {
 		t.Error("an empty summary attempt should record outcome=empty-output")
 	}
+	assertCauses(t, *recs, errFakeAgent.Error())
 	for _, rec := range *recs {
 		if s, _ := rec.data["skill"].(string); s != summariserSkill {
 			t.Errorf("summariser telemetry skill = %q, want %q", s, summariserSkill)
 		}
+	}
+}
+
+// A gate agent that fails on the command transport leaves WHY on its telemetry
+// rows (sty_9bc496e1): the exit status and stderr head the transport returned,
+// redacted and bounded — not only outcome=error. The runner is the real command
+// transport, so the asserted text is the text agentcli builds, not a stub's.
+func TestAgentFailureRecordsBoundedCause_CommandTransport(t *testing.T) {
+	cases := []struct {
+		name, stderr string
+		exit         int
+		check        func(t *testing.T, cause string)
+	}{
+		{"exit status and stderr", "rate limited", 2, func(t *testing.T, cause string) {
+			for _, want := range []string{"exit status 2", "rate limited"} {
+				if !strings.Contains(cause, want) {
+					t.Errorf("cause %q lacks %q", cause, want)
+				}
+			}
+		}},
+		{"over-long stderr is truncated on a rune boundary", strings.Repeat("é", 2000), 1, func(t *testing.T, cause string) {
+			if !utf8.ValidString(cause) {
+				t.Errorf("cause is not valid UTF-8: %q", cause)
+			}
+			if n := utf8.RuneCountInString(cause); n > 241 {
+				t.Errorf("cause is %d runes, want at most 241 (240 + ellipsis)", n)
+			}
+			if !strings.HasPrefix(cause, "agentcli:") || !strings.HasSuffix(cause, "…") {
+				t.Errorf("cause should keep its head and end in an ellipsis, got %q", cause)
+			}
+		}},
+		{"a secret in stderr is redacted", "token=abc123", 3, func(t *testing.T, cause string) {
+			if !strings.Contains(cause, "token=[REDACTED]") || strings.Contains(cause, "abc123") {
+				t.Errorf("cause should redact the token, got %q", cause)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "failing-agent")
+			script := "#!/bin/sh\ncat > /dev/null\nprintf '%s' '" + tc.stderr + "' >&2\nexit " + fmt.Sprint(tc.exit) + "\n"
+			if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			runner, err := agentcli.RunnerFromBinding("command", path+" -p {payload}")
+			if err != nil {
+				t.Fatal(err)
+			}
+			g := New(&fakeRunner{}, fakeDocs{}, t.TempDir(), "")
+			g.backoff = func(int) time.Duration { return 0 }
+			g.SetWarnWriter(nil)
+			recs := captureTelemetry(g)
+			res := g.Invoke(context.Background(), InvokeRequest{
+				Binding: config.AgentBinding{Tools: "Read,Grep,Glob", Principles: config.PrinciplesNone},
+				Section: "reviewer", Rubric: "judge", Payload: map[string]string{"story": "sty_1"},
+				Expect: ExpectVerdict, Runner: runner, Skill: "test-skill", StoryID: "sty_1", Step: "done", Actor: "reviewer",
+			})
+			if res.Err == nil {
+				t.Fatal("a runner that exits non-zero should fail the invocation")
+			}
+			if got := countKind(*recs, "agent-retry"); got != defaultReviewerAttempts {
+				t.Fatalf("want %d agent-retry rows, got %d", defaultReviewerAttempts, got)
+			}
+			if got := countKind(*recs, "agent-failure"); got != 1 {
+				t.Fatalf("want 1 agent-failure row, got %d", got)
+			}
+			for _, rec := range *recs {
+				if rec.kind != "agent-retry" && rec.kind != "agent-failure" {
+					continue
+				}
+				cause, _ := rec.data["cause"].(string)
+				if cause == "" {
+					t.Fatalf("%s row carries no cause: %v", rec.kind, rec.data)
+				}
+				tc.check(t, cause)
+			}
+		})
 	}
 }
 
@@ -5200,6 +5299,9 @@ func TestDispatchExecutor_recordsFailureTelemetry(t *testing.T) {
 	}
 	if o, _ := rec.data["outcome"].(string); o != "signal:killed" {
 		t.Errorf("telemetry outcome = %q, want signal:killed", o)
+	}
+	if c, _ := rec.data["cause"].(string); !strings.Contains(c, "signal: killed") {
+		t.Errorf("telemetry cause = %q, want the runner error text", c)
 	}
 }
 
