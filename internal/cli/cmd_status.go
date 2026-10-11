@@ -23,7 +23,10 @@ database and runtime plane live, and how many stories, tasks and docs it holds.
 
 The orientation command in an unfamiliar checkout, and the first check when
 something writes to a place you did not expect. For "can satelle govern here at
-all", use satelle doctor, which judges rather than reports.`,
+all", use satelle doctor, which judges rather than reports.
+
+It also names the hosted server and the hosted project this checkout syncs to,
+read from config alone: no network call, no sign-in needed.`,
 		Annotations: needsStore(),
 		// --line is the Claude statusline renderer (sty_4e6f0788). It must never
 		// fail loudly, so it does NOT go through the store bootstrap: openAppForCmd
@@ -76,6 +79,10 @@ all", use satelle doctor, which judges rather than reports.`,
 			// Real availability, not a config echo (sty_fb5e6d96): the URL a
 			// user opens plus whether anything is answering on it.
 			fmt.Fprintf(w, "web service\t%s\n", probeWebAvailability().statusValue())
+			// Hosted binding (sty_1c4ad7e2): config resolvers only — no network,
+			// no credential lookup, so status renders signed out and offline.
+			fmt.Fprintf(w, "hosted server\t%s\n", config.ResolveHostedServer(a.Config))
+			fmt.Fprintf(w, "hosted project\t%s\n", hostedProjectValue(a.Config, a.RepoRoot))
 			for _, s := range config.MachineScopeStrays(a.DataDir) {
 				fmt.Fprintf(w, "config stray\t%s\n", s.Warning())
 			}
@@ -110,6 +117,21 @@ all", use satelle doctor, which judges rather than reports.`,
 		"render one line for a terminal statusline: local web service link plus <story_id>::<stage> (read-only; always exits 0). "+
 			"Opt in by setting it as statusLine.command in your own "+claudeUserSettingsRel+" — satelle never installs it")
 	register(c)
+}
+
+// hostedProjectValue is the status row for the hosted project binding. An
+// explicit binding shows the slug; otherwise the row says the checkout is not
+// bound and names the directory-derived slug sync would fall back to, so it is
+// neither misreported as bound nor hidden.
+func hostedProjectValue(cfg config.Config, repoRoot string) string {
+	slug := config.ResolveBoundProject(cfg, repoRoot)
+	if cfg.SyncProject() != "" {
+		return slug
+	}
+	if slug == "" {
+		return "not bound — run satelle project bind <slug>"
+	}
+	return fmt.Sprintf("not bound — sync would use %q; run satelle project bind <slug>", slug)
 }
 
 // runtimeResidueLine reports in-repo .satelle/stories when the runtime plane is
