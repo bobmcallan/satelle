@@ -62,3 +62,23 @@ func TestStatusWarnsOnInRepoStoriesResidue(t *testing.T) {
 		t.Fatalf("absent stories dir must be silent, got %q", got)
 	}
 }
+
+// TestHostedProjectValue (sty_1c4ad7e2): explicit binding shows the slug; an
+// unbound checkout says so and names the derived default and the remedy.
+func TestHostedProjectValue(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "My Repo")
+	bound := config.Config{Sync: map[string]string{"project": "alpha"}}
+	if got := hostedProjectValue(bound, root); got != "alpha" {
+		t.Errorf("explicit = %q, want alpha", got)
+	}
+	got := hostedProjectValue(config.Config{}, root)
+	for _, want := range []string{"not bound", "my-repo", "satelle project bind"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("derived = %q, missing %q", got, want)
+		}
+	}
+	got = hostedProjectValue(config.Config{}, "")
+	if !strings.Contains(got, "not bound") || !strings.Contains(got, "satelle project bind") {
+		t.Errorf("empty root = %q", got)
+	}
+}
