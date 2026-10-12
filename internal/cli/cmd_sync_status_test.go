@@ -164,7 +164,9 @@ func TestSyncStatusBehindAndDiverged(t *testing.T) {
 
 	b.write("skills/x.md", "from B\n")
 	out, _ = b.status()
-	wantState(t, out, "skills", "diverged")
+	if cols := wantState(t, out, "skills", "diverged"); !strings.Contains(cols[4], "satelle sync reconcile") || strings.Contains(cols[4], "deploy") {
+		t.Errorf("diverged next = %q, want reconcile and not deploy", cols[4])
+	}
 	if rec := b.recorded(); rec["skills"].State != "diverged" || rec["workflows"].State != "in step" {
 		t.Errorf("recorded = %+v", rec)
 	}
@@ -186,8 +188,8 @@ func TestSyncStatusUnmerged(t *testing.T) {
 		t.Fatalf("an unmerged area must exit non-zero:\n%s", out)
 	}
 	cols := wantState(t, out, "skills", "unmerged")
-	if !strings.Contains(cols[4], "skills/x.md") {
-		t.Errorf("next must name the unmerged path: %q", cols[4])
+	if !strings.Contains(cols[4], "skills/x.md") || !strings.Contains(cols[4], "satelle sync reconcile") {
+		t.Errorf("next must name reconcile and the unmerged path: %q", cols[4])
 	}
 }
 

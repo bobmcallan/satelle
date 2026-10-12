@@ -208,7 +208,7 @@ func runSyncDocumentsPull(cmd *cobra.Command, serverArg, workspaceArg string) er
 	// A documents snapshot on the hosted copy governs the pull: it applies what
 	// the snapshot names, honours deletions, and parks a file changed on both
 	// sides (sty_fe5a8ed4). Without one the cursor-driven pull below runs as before.
-	if handled, serr := pullDocumentsSnapshot(cmd, cfg, repoRoot, dataDir, client, server, project); handled || serr != nil {
+	if handled, serr := pullDocumentsSnapshot(cmd, cfg, repoRoot, dataDir, client, server, project, nil); handled || serr != nil {
 		return serr
 	}
 

@@ -371,8 +371,29 @@ type PullJob struct {
 	Area    string
 	Version int
 	Plan    PullPlan
-	base    *hosted.AreaBase
-	remote  Record
+	// Choices are the operator's sides by path (sty_b0873ec3); Stage applies them
+	// to the plan before it does anything. Save keeps the bytes a choice replaces,
+	// and must be set when any choice replaces some.
+	Choices map[string]Side
+	Save    SaveFunc
+	// Saved lists what Stage kept, in path order, once the choices are applied.
+	Saved  []SavedFile
+	base   *hosted.AreaBase
+	remote Record
+	heads  map[string]string
+	chosen bool
+}
+
+// SaveFunc keeps the bytes a choice is about to replace and returns where it
+// put them. from says whose bytes they are.
+type SaveFunc func(area, path string, from Origin, body []byte) (string, error)
+
+// SavedFile is one file kept before a choice replaced it.
+type SavedFile struct {
+	Path   string
+	Side   Side
+	From   Origin
+	Stored string
 }
 
 // PlanPull reads the hosted snapshot and plans the pull of one area against the
@@ -395,7 +416,125 @@ func (d *Driver) PlanPull(ctx context.Context, area string, local map[string]str
 	if err != nil {
 		return nil, d.unavailable(err)
 	}
-	return &PullJob{Area: area, Version: version, Plan: PlanPull(base, rec, version, local, heads), base: base, remote: rec}, nil
+	return &PullJob{Area: area, Version: version, Plan: PlanPull(base, rec, version, local, heads), base: base, remote: rec, heads: heads}, nil
+}
+
+// choose applies the job's choices to a plan, naming every path it refuses.
+func (j *PullJob) choose(plan *PullPlan) error {
+	paths := make([]string, 0, len(j.Choices))
+	for p := range j.Choices {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	var refused []string
+	for _, p := range paths {
+		if _, err := plan.Choose(j.remote, j.heads, p, j.Choices[p]); err != nil {
+			refused = append(refused, err.Error())
+		}
+	}
+	if len(refused) > 0 {
+		return fmt.Errorf("sync reconcile %s: %s", j.Area, strings.Join(refused, "; "))
+	}
+	return nil
+}
+
+// CheckChoices reports every choice the plan would refuse, changing nothing: it
+// tries them on a copy. A caller with several areas checks them all before it
+// stages any.
+func (j *PullJob) CheckChoices() error {
+	plan := PullPlan{Entries: append([]Entry(nil), j.Plan.Entries...), Base: hosted.AreaBase{Version: j.Plan.Base.Version, Files: map[string]string{}}}
+	for p, s := range j.Plan.Base.Files {
+		plan.Base.Files[p] = s
+	}
+	if len(j.Plan.Base.Unmerged) > 0 {
+		plan.Base.Unmerged = map[string]string{}
+		for p, s := range j.Plan.Base.Unmerged {
+			plan.Base.Unmerged[p] = s
+		}
+	}
+	return j.choose(&plan)
+}
+
+// BaseVersion is the snapshot this checkout last synced for the area, 0 when
+// it never did.
+func (j *PullJob) BaseVersion() int {
+	if j.base == nil {
+		return 0
+	}
+	return j.base.Version
+}
+
+// HostedBytes returns a path's hosted head bytes; ok=false when the hosted copy
+// has none.
+func (d *Driver) HostedBytes(ctx context.Context, path string) ([]byte, bool, error) {
+	body, err := d.Blobs.Get(ctx, path)
+	if errors.Is(err, ErrBlobMissing) {
+		return nil, false, nil
+	}
+	return body, err == nil, err
+}
+
+// ApplyChoices rewrites the plan with the job's choices and keeps every file a
+// choice replaces. Every choice is checked before anything is read or saved, and
+// every save is made before the caller stages anything, so a refused choice or a
+// failed save leaves the tree as it was. Stage runs it too; a second run is a
+// no-op, so a caller with several areas can apply all of them first.
+func (d *Driver) ApplyChoices(ctx context.Context, job *PullJob) error {
+	if len(job.Choices) == 0 || job.chosen {
+		return nil
+	}
+	job.chosen = true
+	if err := job.choose(&job.Plan); err != nil {
+		return err
+	}
+	for _, e := range job.Plan.Entries {
+		if e.Chosen == 0 {
+			continue
+		}
+		sf := SavedFile{Path: e.Path, Side: e.Chosen, From: e.Overridden}
+		if e.Overridden != OriginNone {
+			body, err := d.overriddenBytes(ctx, job.Area, e)
+			if err != nil {
+				return err
+			}
+			if job.Save == nil {
+				return fmt.Errorf("sync reconcile %s: no way to keep %s's %s copy", job.Area, e.Path, e.Overridden)
+			}
+			if sf.Stored, err = job.Save(job.Area, e.Path, e.Overridden, body); err != nil {
+				return fmt.Errorf("sync reconcile %s: keep %s's %s copy: %w", job.Area, e.Path, e.Overridden, err)
+			}
+		}
+		job.Saved = append(job.Saved, sf)
+	}
+	return nil
+}
+
+// overriddenBytes reads the bytes a choice replaces: this machine's file as it is
+// on disk, or the hosted head (the parked conflict copy for a conflict an earlier
+// pull left).
+func (d *Driver) overriddenBytes(ctx context.Context, area string, e Entry) ([]byte, error) {
+	if e.Overridden == OriginLocal {
+		body, err := os.ReadFile(filepath.Join(d.DataDir, filepath.FromSlash(e.Path)))
+		if err != nil {
+			return nil, fmt.Errorf("sync reconcile %s: read %s: %w", area, e.Path, err)
+		}
+		return body, nil
+	}
+	if e.ClearCopy {
+		body, err := os.ReadFile(filepath.Join(d.DataDir, filepath.FromSlash(CopyPath(area, e.Path))))
+		if err != nil {
+			return nil, fmt.Errorf("sync reconcile %s: read the parked copy of %s: %w", area, e.Path, err)
+		}
+		return body, nil
+	}
+	body, ok, err := d.HostedBytes(ctx, e.Path)
+	if err != nil {
+		return nil, fmt.Errorf("sync reconcile %s: fetch %s: %w", area, e.Path, err)
+	}
+	if !ok || SHA(body) != e.Remote {
+		return nil, fmt.Errorf("sync reconcile %s: %s: hosted bytes incomplete — retry after the upload lands", area, e.Path)
+	}
+	return body, nil
 }
 
 // Stage carries out everything a pull does outside the restore itself — parks
@@ -404,10 +543,18 @@ func (d *Driver) PlanPull(ctx context.Context, area string, local map[string]str
 // The caller restores them (through whatever per-area handling it needs), then
 // calls Commit.
 func (d *Driver) Stage(ctx context.Context, job *PullJob) ([]subsync.File, error) {
+	if err := d.ApplyChoices(ctx, job); err != nil {
+		return nil, err
+	}
 	var writes []subsync.File
 	var deletes []string
 	for i := range job.Plan.Entries {
 		e := &job.Plan.Entries[i]
+		if e.ClearCopy {
+			if err := os.Remove(filepath.Join(d.DataDir, filepath.FromSlash(CopyPath(job.Area, e.Path)))); err != nil && !os.IsNotExist(err) {
+				return nil, err
+			}
+		}
 		switch e.Action {
 		case Write, Conflict:
 			body, err := d.Blobs.Get(ctx, e.Path)
@@ -479,6 +626,17 @@ func (j *PullJob) demote(e *Entry) {
 }
 
 func (d *Driver) report(job *PullJob) {
+	for _, s := range job.Saved {
+		verb := "kept local"
+		if s.Side == TakeHosted {
+			verb = "took hosted"
+		}
+		if s.Stored == "" {
+			d.printf("  %s: %s\n", verb, s.Path)
+			continue
+		}
+		d.printf("  %s: %s — %s copy saved at %s\n", verb, s.Path, s.From, s.Stored)
+	}
 	for _, e := range job.Plan.Entries {
 		switch e.Action {
 		case Delete:

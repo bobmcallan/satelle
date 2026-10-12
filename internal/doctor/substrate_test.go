@@ -163,8 +163,16 @@ func TestSubstrateRecordedBehindAndDiverged(t *testing.T) {
 		f := inStepFixture(t)
 		f.record("skills", state, f.now.Add(-time.Hour))
 		got := find(f.check(), health.IDSyncSubstrateBehind)
-		if len(got) != 1 || got[0].Artifact != "skills" || got[0].Title != "Substrate "+state || !strings.Contains(got[0].Remediation, "satelle sync config deploy") {
-			t.Errorf("%s: %v", state, got)
+		if len(got) != 1 || got[0].Artifact != "skills" || got[0].Title != "Substrate "+state {
+			t.Fatalf("%s: %v", state, got)
+		}
+		// Behind is a plain pull; diverged is a choice between two sides' changes.
+		want, not := "satelle sync config deploy", "satelle sync reconcile"
+		if state == snapsync.StateDiverged {
+			want, not = not, want
+		}
+		if !strings.Contains(got[0].Remediation, want) || strings.Contains(got[0].Remediation, not) {
+			t.Errorf("%s: remediation %q must name %q and not %q", state, got[0].Remediation, want, not)
 		}
 	}
 }

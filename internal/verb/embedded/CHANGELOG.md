@@ -1,3 +1,12 @@
+## [0.0.656] - 2026-10-13
+
+### Added
+- **`satelle sync reconcile`** brings two machines whose substrate has diverged back in step deliberately. Run bare, it only reads: for every opted-in area (or those named) it lists each path whose local and hosted copies differ, its class (changed here only, changed on hosted only, changed on both, added or deleted on either side, still unmerged) and what a plain pull would do. `--diff <area>/<path>` prints a unified diff of the hosted copy against the local one, labelled with the hosted snapshot. `--apply` carries out the pull with per-path `--take-local`/`--take-hosted` or per-area `--take-local-all`/`--take-hosted-all` choices; an unchosen path changed on both sides is parked as a conflict copy, and a choice that cannot be honoured is refused by name before any file is written. Whatever a choice replaces is first saved through the substrate backup under the runtime `backups/sync-replaced/{local,hosted}/<area>/<path>`. It never pushes: run `satelle sync` afterwards, with no `--force`. Settings keep the local project binding and agents are rehydrated, as a deploy does. (sty_b0873ec3)
+
+### Changed
+- `satelle sync status` and `satelle doctor` name `satelle sync reconcile` as the next step for a diverged or unmerged area, in place of deploy. (sty_b0873ec3)
+- `satelle workflow` line diffs are now unified diffs from the shared diff helper. (sty_b0873ec3)
+
 ## [0.0.655] - 2026-10-12
 
 ### Added

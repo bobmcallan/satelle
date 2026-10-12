@@ -268,7 +268,10 @@ func (s *configDeploySnapshots) owns(cfg config.Config, repoRoot, path string) b
 // planConfigDeploySnapshots plans each config area the hosted copy holds a
 // snapshot for. An area with no snapshot — or a server that cannot read them —
 // is simply not governed, and deploys every head as it always did.
-func planConfigDeploySnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir string, client *hosted.Client, server, project string, manifest []hosted.ConfigItem) (*configDeploySnapshots, error) {
+//
+// A reconcile (rc non-nil, sty_b0873ec3) plans only the areas it names, rewrites
+// only what the plan changes, and hands each job the operator's choices.
+func planConfigDeploySnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir string, client *hosted.Client, server, project string, manifest []hosted.ConfigItem, rc *reconcileApply) (*configDeploySnapshots, error) {
 	has := map[string]bool{}
 	for _, it := range manifest {
 		if area, ok := snapsync.AreaOfRecordPath(it.Path); ok {
@@ -279,31 +282,24 @@ func planConfigDeploySnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, 
 	s.driver = newSnapDriver(cfg, client, cmd.OutOrStdout(), server, project, repoRoot, dataDir,
 		"satelle sync rehydrate", newConfigRecords(client, project, manifest),
 		&configBlobs{client: client, project: project, manifest: manifest})
-	s.driver.Materialize = true
+	s.driver.Materialize = rc == nil
 	for _, area := range config.ConfigAreas {
-		if !has[area] {
+		if !has[area] || (rc != nil && !rc.areas[area]) {
 			continue
 		}
-		local, err := snapsync.LocalShas(cfg, repoRoot, area)
+		local, err := pullLocalShas(cfg, repoRoot, server, project, s.driver, area)
 		if err != nil {
 			// An unreadable local file (an agents layer that does not decode) must
 			// not stop a deploy that exists to restore the tree.
+			if rc != nil {
+				return nil, fmt.Errorf("%s: cannot read the local files: %w", area, err)
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s: cannot read the local files (%v) — deploying every head.\n", area, err)
 			continue
 		}
-		if area == "settings" && len(local) > 0 {
-			// A fresh clone's satelle.toml is the binding `project bind` wrote, which
-			// a push redacts: with no base to say otherwise it is a placeholder, so
-			// the hosted settings are restored rather than parked as a conflict.
-			if _, synced, berr := hosted.LoadAreaBase(server, project, s.driver.RepoRoot, area); berr == nil && !synced {
-				if placeholder, perr := config.PlaceholderSettings(cfg, repoRoot); perr == nil && placeholder {
-					local = nil
-				}
-			}
-		}
 		job, err := s.driver.PlanPull(cmd.Context(), area, local)
 		var unavailable *snapsync.UnavailableError
-		if errors.As(err, &unavailable) {
+		if errors.As(err, &unavailable) && rc == nil {
 			fmt.Fprintf(cmd.OutOrStdout(), "%s: %v — deploying every head.\n", area, err)
 			continue
 		}
@@ -313,6 +309,7 @@ func planConfigDeploySnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, 
 		if job == nil {
 			continue
 		}
+		rc.arm(job)
 		s.areas[area] = true
 		s.jobs = append(s.jobs, job)
 	}
@@ -321,6 +318,13 @@ func planConfigDeploySnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, 
 
 // stage runs every job's side effects and returns the files to restore.
 func (s *configDeploySnapshots) stage(ctx context.Context) ([]subsync.File, error) {
+	// Every area's choices are applied, and what they replace saved, before any
+	// area removes or parks a file, so a save that fails leaves the tree as it was.
+	for _, job := range s.jobs {
+		if err := s.driver.ApplyChoices(ctx, job); err != nil {
+			return nil, err
+		}
+	}
 	var files []subsync.File
 	for _, job := range s.jobs {
 		ws, err := s.driver.Stage(ctx, job)
@@ -356,42 +360,91 @@ func (s *configDeploySnapshots) recordStates(ctx context.Context, cfg config.Con
 	recordAreaStates(ctx, cfg, repoRoot, s.driver, areas)
 }
 
+// pullLocalShas is the sha of each local file of the area as a pull compares it
+// with the hosted snapshot (sty_fe5a8ed4): what a push would send, except that a
+// fresh clone's placeholder settings count as no local file at all.
+func pullLocalShas(cfg config.Config, repoRoot, server, project string, d *snapsync.Driver, area string) (map[string]string, error) {
+	local, err := snapsync.LocalShas(cfg, repoRoot, area)
+	if err != nil {
+		return nil, err
+	}
+	if area == "settings" && len(local) > 0 {
+		// A fresh clone's satelle.toml is the binding `project bind` wrote, which
+		// a push redacts: with no base to say otherwise it is a placeholder, so
+		// the hosted settings are restored rather than parked as a conflict.
+		if _, synced, berr := hosted.LoadAreaBase(server, project, d.RepoRoot, area); berr == nil && !synced {
+			if placeholder, perr := config.PlaceholderSettings(cfg, repoRoot); perr == nil && placeholder {
+				return nil, nil
+			}
+		}
+	}
+	return local, nil
+}
+
 // pullDocumentsSnapshot is the documents pull when the hosted copy holds a
 // documents snapshot. handled=false sends the caller to the cursor-driven pull.
-func pullDocumentsSnapshot(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir string, client *hosted.Client, server, project string) (bool, error) {
+// A reconcile (rc non-nil) hands the job the operator's choices instead.
+func pullDocumentsSnapshot(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir string, client *hosted.Client, server, project string, rc *reconcileApply) (bool, error) {
+	dp, handled, err := planDocumentsPull(cmd, cfg, repoRoot, dataDir, client, server, project, rc)
+	if dp == nil {
+		return handled, err
+	}
+	return true, dp.run(cmd, cfg, repoRoot, dataDir, server, project)
+}
+
+// documentsPull is a planned documents snapshot pull: the driver and the job it
+// planned. A reconcile plans it first so the documents choices are saved before
+// any area stages, then runs it after the config areas.
+type documentsPull struct {
+	d   *snapsync.Driver
+	job *snapsync.PullJob
+}
+
+// planDocumentsPull plans the documents pull. A nil result means there is nothing
+// to run: handled=false sends the caller to the cursor-driven pull, handled=true
+// carries err.
+func planDocumentsPull(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir string, client *hosted.Client, server, project string, rc *reconcileApply) (*documentsPull, bool, error) {
 	manifest, err := client.ConfigManifest(cmd.Context(), project)
 	if err != nil {
 		if errors.Is(err, hosted.ErrLoginRequired) {
-			return true, err
+			return nil, true, err
 		}
-		return false, nil
+		return nil, false, nil
 	}
-	out := cmd.OutOrStdout()
-	d := newSnapDriver(cfg, client, out, server, project, repoRoot, dataDir,
+	d := newSnapDriver(cfg, client, cmd.OutOrStdout(), server, project, repoRoot, dataDir,
 		"satelle sync documents pull", newConfigRecords(client, project, manifest),
 		&docBlobs{client: client, project: project})
 	local, err := snapsync.LocalShas(cfg, repoRoot, "documents")
 	if err != nil {
-		return true, err
+		return nil, true, err
 	}
 	job, err := d.PlanPull(cmd.Context(), "documents", local)
 	var unavailable *snapsync.UnavailableError
 	if errors.As(err, &unavailable) {
-		return false, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return true, err
+		return nil, true, err
 	}
 	if job == nil {
-		return false, nil
+		return nil, false, nil
 	}
+	rc.arm(job)
+	return &documentsPull{d: d, job: job}, true, nil
+}
+
+// run stages and restores the planned documents pull and commits its base. The
+// choices are applied by Stage if the caller has not already applied them.
+func (dp *documentsPull) run(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir, server, project string) error {
+	d, job := dp.d, dp.job
+	out := cmd.OutOrStdout()
 	writes, err := d.Stage(cmd.Context(), job)
 	if err != nil {
-		return true, err
+		return err
 	}
 	res, err := subsync.Restore(dataDir, writes)
 	if err != nil {
-		return true, fmt.Errorf("restore documents: %w", err)
+		return fmt.Errorf("restore documents: %w", err)
 	}
 	for _, f := range res.Failed {
 		fmt.Fprintf(out, "  could not write %s: %v\n", f.Path, f.Err)
@@ -401,7 +454,7 @@ func pullDocumentsSnapshot(cmd *cobra.Command, cfg config.Config, repoRoot, data
 		failed[f.Path] = true
 	}
 	if err := d.Commit(job, failed); err != nil {
-		return true, err
+		return err
 	}
 	recordAreaStates(cmd.Context(), cfg, repoRoot, d, []string{"documents"})
 	// Hosted heads Restore would refuse (a partition poisoned with backups/
@@ -427,7 +480,7 @@ func pullDocumentsSnapshot(cmd *cobra.Command, cfg config.Config, repoRoot, data
 	default:
 		fmt.Fprintf(out, "Pulled %d document(s) from project %q personal collection on %s into %s%s.\n", res.Written, project, server, dataDir, tail)
 	}
-	return true, nil
+	return nil
 }
 
 // lastSyncedNotes renders the recorded base of each non-local area for

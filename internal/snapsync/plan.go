@@ -51,6 +51,16 @@ type Entry struct {
 	Path   string
 	Action Action
 	Remote string
+	// Local is the sha of this machine's file when the plan was made, "" when
+	// absent. Choose reads it to tell a missing file from an untouched one.
+	Local string
+	// Chosen is the side the operator picked for this path (0: the three-way
+	// default stands). Overridden names whose bytes that choice replaces, so the
+	// driver can save them first. ClearCopy asks the driver to remove the parked
+	// conflict copy of an earlier conflict the choice has settled.
+	Chosen     Side
+	Overridden Origin
+	ClearCopy  bool
 }
 
 // PullPlan is the outcome of PlanPull: a decision per path and the base this
@@ -87,7 +97,7 @@ func PlanPull(base *hosted.AreaBase, remote Record, remoteVersion int, local, he
 	nb := hosted.AreaBase{Version: remoteVersion, Files: map[string]string{}}
 	var entries []Entry
 	add := func(p string, a Action, remoteSHA string) {
-		entries = append(entries, Entry{Path: p, Action: a, Remote: remoteSHA})
+		entries = append(entries, Entry{Path: p, Action: a, Remote: remoteSHA, Local: local[p]})
 	}
 	paths := map[string]struct{}{}
 	for p := range remote.Files {

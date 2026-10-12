@@ -109,9 +109,9 @@ func nextCommand(st snapsync.AreaStatus) string {
 	case snapsync.StateBehind:
 		return pull
 	case snapsync.StateDiverged:
-		return pull + ", merge, then satelle sync"
+		return "satelle sync reconcile, then satelle sync"
 	case snapsync.StateUnmerged:
-		return "merge " + strings.Join(st.Unmerged, ", ") + ", delete its conflict copy, then satelle sync"
+		return "satelle sync reconcile (or merge " + strings.Join(st.Unmerged, ", ") + " and delete its conflict copy), then satelle sync"
 	}
 	if errors.Is(st.Err, hosted.ErrLoginRequired) {
 		return "satelle login"

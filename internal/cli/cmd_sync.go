@@ -81,6 +81,7 @@ a whole-area reading gets wrong. Read-only.`,
 	syncCmd.AddCommand(newSyncBindingsCmd())
 	syncCmd.AddCommand(newSyncRehydrateCmd())
 	syncCmd.AddCommand(newSyncStatusCmd())
+	syncCmd.AddCommand(newSyncReconcileCmd())
 	register(syncCmd)
 }
 
@@ -592,6 +593,14 @@ func runSyncConfigDeploy(cmd *cobra.Command, serverArg, workspaceArg string, ver
 }
 
 func runSyncConfigDeployOutcome(cmd *cobra.Command, serverArg, workspaceArg string, version int) (deployOutcome, error) {
+	return runSyncConfigDeployWith(cmd, serverArg, workspaceArg, version, nil)
+}
+
+// runSyncConfigDeployWith is the deploy. A reconcile (rc non-nil, sty_b0873ec3)
+// runs it for the areas it names, over their snapshot plans alone, so a file the
+// plan leaves be is not rewritten; the per-file handling — the agents rehydrate,
+// the settings binding — is the deploy's own.
+func runSyncConfigDeployWith(cmd *cobra.Command, serverArg, workspaceArg string, version int, rc *reconcileApply) (deployOutcome, error) {
 	cfg, repoRoot, dataDir, err := loadRepoConfig()
 	if err != nil {
 		return deployOutcome{}, err
@@ -628,7 +637,7 @@ func runSyncConfigDeployOutcome(cmd *cobra.Command, serverArg, workspaceArg stri
 	// snapshots. The records themselves are never deployed.
 	var snaps *configDeploySnapshots
 	if version == 0 {
-		snaps, err = planConfigDeploySnapshots(cmd, cfg, repoRoot, dataDir, client, server, project, manifest)
+		snaps, err = planConfigDeploySnapshots(cmd, cfg, repoRoot, dataDir, client, server, project, manifest, rc)
 		if err != nil {
 			return deployOutcome{}, err
 		}
@@ -649,7 +658,7 @@ func runSyncConfigDeployOutcome(cmd *cobra.Command, serverArg, workspaceArg stri
 		}
 	}
 	for _, item := range manifest {
-		if _, isRecord := snapsync.AreaOfRecordPath(item.Path); isRecord || snaps.owns(cfg, repoRoot, item.Path) {
+		if _, isRecord := snapsync.AreaOfRecordPath(item.Path); isRecord || snaps.owns(cfg, repoRoot, item.Path) || rc != nil {
 			continue
 		}
 		if item.Path == config.ConfigName {
@@ -669,6 +678,10 @@ func runSyncConfigDeployOutcome(cmd *cobra.Command, serverArg, workspaceArg stri
 		files = append(files, subsync.File{Path: item.Path, Content: content})
 	}
 	if len(files) == 0 && (snaps == nil || len(snaps.jobs) == 0) {
+		if rc != nil {
+			fmt.Fprintln(out, "Nothing to reconcile — the hosted copy holds no snapshot for the chosen config areas.")
+			return deployOutcome{}, nil
+		}
 		fmt.Fprintf(out, "Nothing to deploy — version %d matched no files in workspace %q.\n", version, sourceName)
 		return deployOutcome{}, nil
 	}
@@ -736,6 +749,10 @@ func runSyncConfigDeployOutcome(cmd *cobra.Command, serverArg, workspaceArg stri
 	}
 	if n := len(res.Skipped); n > 0 {
 		tail += fmt.Sprintf(", %d skipped (local-only path)", n)
+	}
+	if rc != nil {
+		fmt.Fprintf(out, "Reconciled %d file(s) from project %q on %s into %s.\n", res.Written, project, server, dataDir)
+		return outcome, nil
 	}
 	fmt.Fprintf(out, "Deployed %d file(s) (%s%s) from %s workspace %q into %s.\n", res.Written, pinned, tail, server, sourceName, dataDir)
 	return outcome, nil

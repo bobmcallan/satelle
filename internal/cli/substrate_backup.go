@@ -32,6 +32,9 @@ const (
 	BackupKindDiverged    BackupKind = "diverged"
 	BackupKindPreMutation BackupKind = "pre-mutation"
 	BackupKindRestore     BackupKind = "restore"
+	// BackupKindSyncReplaced holds the copy of a file a `sync reconcile` choice
+	// replaced: sync-replaced/{local,hosted}/<area>/<path> (sty_b0873ec3).
+	BackupKindSyncReplaced BackupKind = "sync-replaced"
 )
 
 // BackupResult describes where a pre-mutation copy landed.

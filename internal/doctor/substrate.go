@@ -101,7 +101,7 @@ func judgeSubstrateArea(cfg config.Config, repoRoot, dataDir, abs, server, proje
 	if len(drift.Unmerged) > 0 {
 		out = append(out, health.Error(health.IDSyncSubstrateUnmerged, "Substrate "+snapsync.StateUnmerged,
 			fmt.Sprintf("%s: a pull left %s unmerged", area, pathList(drift.Unmerged))).
-			About(area).WithRemediation(fmt.Sprintf("merge it, delete %s, then run `satelle sync`", filepath.Join(dataDir, filepath.FromSlash(snapsync.CopyPath(area, drift.Unmerged[0]))))))
+			About(area).WithRemediation(fmt.Sprintf("run `satelle sync reconcile` and choose a side per change (or merge it and delete %s), then run `satelle sync`", filepath.Join(dataDir, filepath.FromSlash(snapsync.CopyPath(area, drift.Unmerged[0]))))))
 	}
 	if len(drift.Changed) > 0 {
 		since, state := "the last synced snapshot", snapsync.StateUnpushed
@@ -140,7 +140,7 @@ func substrateRemediation(area, state string) string {
 		pull = "`satelle sync documents pull`"
 	}
 	if state == snapsync.StateDiverged {
-		return "run " + pull + ", merge any conflicts, then `satelle sync`"
+		return "run `satelle sync reconcile` and choose a side per change, then `satelle sync`"
 	}
 	return "run " + pull
 }
