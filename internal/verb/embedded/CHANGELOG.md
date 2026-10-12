@@ -1,3 +1,8 @@
+## [0.0.654] - 2026-10-12
+
+### Added
+- **A story's attached documents now travel with the story.** When `[sync] stories` is personal or shared, `satelle sync workstate push` (which satelled already runs) uploads every markdown attachment of the local stories, including the `type: change` patch, into the bound project's personal collection; `satelle sync workstate pull` and `snapshot` write them into the other machine's attachment store, so `satelle story doc <id> <name>` returns the same body there. Which files upload is decided by a per-file uploaded-state record, not by the ledger area or the rows a push sent, so attachments made before this release upload on the first push after upgrade with no extra command. The attachment leg runs on every exit path of the push, skips held and out-of-scope stories, and retries a failed upload on the next push. A pull never silently overwrites a local attachment that differs from the hosted copy (`--force` lets hosted win). Binary attachments stay local and are reported as not mirrored. This reverses sty_948ad5df's "patches stay local" decision. (sty_4d42e13e)
+
 ## [0.0.653] - 2026-10-12
 
 ### Added

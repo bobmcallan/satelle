@@ -343,6 +343,109 @@ func ItemDocs(ctx context.Context, id string) ([]DocBody, error) {
 	return out, nil
 }
 
+// AttachmentFile is one markdown attachment as it sits on disk: its file name
+// (with the .md extension) and its raw bytes, frontmatter included.
+type AttachmentFile struct {
+	Name    string
+	Content []byte
+}
+
+// safeItemID reports whether id is a bare directory name, so an id taken from the
+// wire or from disk can never address a path outside the attachment root.
+func safeItemID(id string) bool {
+	return id != "" && baseSafe(id) == id
+}
+
+// StoryAttachmentIDs lists the ids of the stories that have an attachment dir
+// under the runtime stories dir. Empty (not an error) when the dir is missing, so
+// a machine that never attached anything has nothing to mirror.
+func StoryAttachmentIDs() ([]string, error) {
+	if storyDir == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(storyDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("verb: story attachment ids: %w", err)
+	}
+	var ids []string
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "sty_") {
+			ids = append(ids, e.Name())
+		}
+	}
+	return ids, nil
+}
+
+// StoryAttachmentFiles returns a story's markdown attachment files, name-sorted,
+// with their raw bytes, and the number of binary attachments (those carrying a
+// sidecar), which are never returned: the hosted documents store holds text only.
+// Empty (not an error) when the story has no attachment dir.
+func StoryAttachmentFiles(id string) (files []AttachmentFile, binary int, err error) {
+	if storyDir == "" || !safeItemID(id) {
+		return nil, 0, nil
+	}
+	dir := filepath.Join(storyDir, id)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, 0, nil
+		}
+		return nil, 0, fmt.Errorf("verb: story attachment files: %w", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() {
+			continue
+		}
+		if file, ok := strings.CutSuffix(name, SidecarSuffix); ok {
+			if _, serr := os.Stat(filepath.Join(dir, file)); serr == nil {
+				binary++
+			}
+			continue
+		}
+		if !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		if _, serr := os.Stat(filepath.Join(dir, name+SidecarSuffix)); serr == nil {
+			continue // a binary attachment that happens to end in .md
+		}
+		data, rerr := os.ReadFile(filepath.Join(dir, name))
+		if rerr != nil {
+			return nil, 0, fmt.Errorf("verb: story attachment files: %w", rerr)
+		}
+		files = append(files, AttachmentFile{Name: name, Content: data})
+	}
+	return files, binary, nil
+}
+
+// WriteStoryAttachmentFile stores one markdown attachment file under the story's
+// attachment dir exactly as given: the frontmatter is already inside content, so
+// a file mirrored from another machine reads back byte for byte. Unlike
+// writeAttachedDoc it records no ledger row — the attachment was recorded on the
+// machine that made it, and that row travels with the ledger area.
+func WriteStoryAttachmentFile(id, file string, content []byte) error {
+	if storyDir == "" {
+		return fmt.Errorf("verb: story dir not configured")
+	}
+	if !safeItemID(id) {
+		return fmt.Errorf("verb: attachment story id %q is not a bare id", id)
+	}
+	if file == "" || baseSafe(file) != file || !strings.HasSuffix(file, ".md") {
+		return fmt.Errorf("verb: attachment file %q is not a bare markdown file name", file)
+	}
+	dir := filepath.Join(storyDir, id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("verb: write attachment: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, file), content, 0o644); err != nil {
+		return fmt.Errorf("verb: write attachment: %w", err)
+	}
+	return nil
+}
+
 // docMeta pulls the type/name from a doc file's frontmatter (best-effort). The
 // returned values feed the doc list/get views.
 func docMeta(s string) (typ, name string) {

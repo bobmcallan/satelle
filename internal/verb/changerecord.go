@@ -18,15 +18,20 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-// Caps (package vars so tests may shrink them). Disk retention only —
-// type:change attachments are excluded from gate payloads (sty_948ad5df).
+// Caps (package vars so tests may shrink them). type:change attachments are
+// excluded from gate payloads (sty_948ad5df). sty_948ad5df also kept the patch off
+// the sync wire; sty_4d42e13e REVERSES that: with [sync] stories opted in, the
+// patch travels as a story attachment through the personal documents collection
+// (never inside the workstate Apply), so another machine can read what a story
+// changed. The cap above still bounds what is retained, hence what is uploaded.
 var (
 	changeRecordPatchLimit = 1 << 20 // 1 MiB
 	changeRecordFileLimit  = 2000
 )
 
 // changeRecordPayload is the ledger payload for KindChangeRecord.
-// Paths and counts only — never file content (sync-safe half).
+// Paths and counts only — never file content, so the ledger row stays small; the
+// patch itself is the story's type:change attachment (see above).
 type changeRecordPayload struct {
 	From           string   `json:"from"`
 	To             string   `json:"to"`

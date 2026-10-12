@@ -71,7 +71,6 @@ func probeTree(tree string) treeProbe {
 // classifyHolds decides which stories in the batch are held. Only stories the
 // batch names are looked at, as an item row or as the owner of a ledger row.
 func classifyHolds(ctx context.Context, a *app.App, items []json.RawMessage, rows []ledgerRowMeta) (holdResult, error) {
-	res := holdResult{held: map[string]string{}, unavailable: map[string]string{}}
 	ids := map[string]bool{}
 	for _, raw := range items {
 		if id := rawItemID(raw); id != "" {
@@ -83,6 +82,13 @@ func classifyHolds(ctx context.Context, a *app.App, items []json.RawMessage, row
 			ids[r.storyID] = true
 		}
 	}
+	return classifyHoldIDs(ctx, a, ids)
+}
+
+// classifyHoldIDs decides which of the named stories are held, for callers that
+// have story ids but no batch (the attachment leg of a push).
+func classifyHoldIDs(ctx context.Context, a *app.App, ids map[string]bool) (holdResult, error) {
+	res := holdResult{held: map[string]string{}, unavailable: map[string]string{}}
 	probes := map[string]treeProbe{}
 	for _, id := range slices.Sorted(maps.Keys(ids)) {
 		it, err := a.Store.Stories.Get(ctx, id)

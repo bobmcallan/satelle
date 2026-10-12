@@ -72,6 +72,7 @@ func TestExcludedLocalMatchesRestore(t *testing.T) {
 		"stories/sty_x.md",
 		"stories/sty_x/shot.png", // binary attachment path (sty_40e5a305 AC9)
 		"stories/sty_x/shot.png.satelle.json",
+		"stories/sty_x/change-in_progress-done.md", // mirrored by workstate sync (sty_4d42e13e), never by the config-document pull
 		"satelle.db",
 		"satelle.db-wal",
 		"satelle.local.toml",

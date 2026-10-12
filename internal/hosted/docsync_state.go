@@ -37,6 +37,17 @@ type documentSyncStateFile struct {
 	// SnapshotTokens holds, per (server, project, repo), where this checkout's
 	// work-state Snapshot pass stands (sty_2cb4e1f6).
 	SnapshotTokens map[string]SnapshotToken `json:"snapshot_tokens,omitempty"`
+	// AttachmentsUploaded records, per (server, project, repo), the content hash of
+	// each story attachment this machine has confirmed in the hosted documents
+	// store ("<id>/<file>" → sha256 hex). It is the selector of which attachments
+	// still need uploading, so it is independent of the work-state cursors: an
+	// attachment behind them, or one whose ledger row never travelled, is found by
+	// its hash alone (sty_4d42e13e).
+	AttachmentsUploaded map[string]map[string]string `json:"attachments_uploaded,omitempty"`
+	// AttachmentCursors is the documents changed-since cursor of the last
+	// attachment pull, per (server, project, repo), kept apart from the document
+	// pull's own cursor.
+	AttachmentCursors map[string]string `json:"attachment_cursors,omitempty"`
 }
 
 // SnapshotToken is a checkout's work-state Snapshot position for one (server,
@@ -392,6 +403,77 @@ func ClearPendingClaim(server, project, repoRoot, id string) error {
 	if len(m) == 0 {
 		delete(state.Pending, key)
 	}
+	return writeDocumentSyncState(state)
+}
+
+// LoadUploadedAttachments returns the attachment hashes this machine has confirmed
+// hosted for the key ("<id>/<file>" → sha256 hex). A missing file or key is empty.
+func LoadUploadedAttachments(server, project, repoRoot string) (map[string]string, error) {
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for k, v := range state.AttachmentsUploaded[documentCursorKey(server, project, repoRoot)] {
+		out[k] = v
+	}
+	return out, nil
+}
+
+// RecordUploadedAttachments merges confirmed attachment hashes into the key's
+// record in one atomic write. Call it only for files the server confirmed (or
+// whose hosted copy is known identical), so a failed upload stays unrecorded and
+// is retried by the next push.
+func RecordUploadedAttachments(server, project, repoRoot string, confirmed map[string]string) error {
+	if len(confirmed) == 0 {
+		return nil
+	}
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return err
+	}
+	if state.AttachmentsUploaded == nil {
+		state.AttachmentsUploaded = map[string]map[string]string{}
+	}
+	key := documentCursorKey(server, project, repoRoot)
+	m := state.AttachmentsUploaded[key]
+	if m == nil {
+		m = map[string]string{}
+	}
+	for k, v := range confirmed {
+		m[k] = v
+	}
+	state.AttachmentsUploaded[key] = m
+	return writeDocumentSyncState(state)
+}
+
+// LoadAttachmentCursor returns the stored attachment pull cursor, or "" when none.
+func LoadAttachmentCursor(server, project, repoRoot string) (string, error) {
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return "", err
+	}
+	return state.AttachmentCursors[documentCursorKey(server, project, repoRoot)], nil
+}
+
+// SaveAttachmentCursor persists the attachment pull cursor for the key.
+func SaveAttachmentCursor(server, project, repoRoot, cursor string) error {
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return err
+	}
+	if state.AttachmentCursors == nil {
+		state.AttachmentCursors = map[string]string{}
+	}
+	state.AttachmentCursors[documentCursorKey(server, project, repoRoot)] = cursor
 	return writeDocumentSyncState(state)
 }
 

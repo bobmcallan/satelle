@@ -63,18 +63,18 @@ area is opted in, and a pull merges into local rows rather than replacing them.`
 		Args:        cobra.ArbitraryArgs,
 		Long: `push upserts local stories, task-executions, and ledger entries, for areas whose
 [sync] scope is personal or shared, into the bound hosted project's personal
-collection (origin=cli-sync). Only records changed since the last successful
-push are sent; --full re-sends everything. A team workspace binding does NOT
-redirect work-state. Requires "satelle project bind <slug>". Pull is the recover
-path: "satelle sync workstate pull".
+collection. Only records changed since the last push are sent; --full re-sends
+everything. Requires "satelle project bind <slug>".
 
-Given story ids, or an epic container id (it stands for its epic:<theme>
-members too), it pushes only those and their ledger rows, whole, and leaves the
-cursor alone.
+With stories opted in it also uploads each story's markdown attachments, change
+patches included, to that collection, so another machine can read them (this
+reverses "patches stay local"); binary ones never leave the machine.
 
-A story in progress is held, with a "held <id>" line, until its engagement tree
-is clean and its HEAD is on a remote-tracking ref; the next push sends it.
-[sync] hold_unpushed = false turns this off.`,
+Given story ids, or an epic container id, it pushes only those and their ledger
+rows, whole, and leaves the cursor alone.
+
+A story in progress is held until its engagement tree is clean and its HEAD is
+on a remote-tracking ref ([sync] hold_unpushed = false turns this off).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncWorkstatePush(cmd, pushServer, dryRun, full, args...)
 		},
@@ -93,20 +93,19 @@ is clean and its HEAD is on a remote-tracking ref; the next push sends it.
 		Args:        cobra.ArbitraryArgs,
 		Long: `pull fetches the bound hosted PROJECT's personal stories, executions and
 ledger entries for opted-in [sync] areas, and merges them into the local DB by
-id. Story attachment files are not mirrored.
+id. With stories opted in it also writes their markdown attachments, change
+patches included, into the attachment store; binary ones stay local.
 
 Local-only rows are kept. The pull refuses only where it would lose local
 information: a story changed locally since hosted, or a ledger row whose
-payload differs. --force lets hosted win.
+payload differs; a differing attachment is kept and named. --force lets hosted
+win.
 
 Afterwards it names each pulled story whose status claims code the git remote
-lacks, as of the last fetch; --verbose lists stories that left work with no
-recorded head. It changes nothing.
+lacks; --verbose also lists stories that left work with no head.
 
 With story ids, or an epic container id held locally, it pulls only those and
-an epic's members, refusing if the server cannot scope the pass or lacks an id.
-
-Requires "satelle project bind <slug>".`,
+an epic's members. Requires "satelle project bind".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncWorkstatePull(cmd, pullServer, pullDryRun, force, pullVerbose, args...)
 		},
@@ -191,6 +190,9 @@ func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string, force bool, 
 		project, rep.label(), rep.Items, rep.Ledger)
 	if rep.Kept > 0 {
 		fmt.Fprintf(cmd.OutOrStdout(), "%d item(s) kept — local copy is newer than hosted\n", rep.Kept)
+	}
+	if optIn["stories"] {
+		pullStoryAttachments(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), a, client, server, project, sc.Set, force)
 	}
 	return nil
 }
@@ -282,6 +284,28 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	}
 
 	repoRoot := a.RepoRoot
+	// Story attachments go on every exit of the push that got this far — the early
+	// "up to date" and everything-held returns included — because the uploaded-state
+	// record, not the rows sent, says what is left to upload. The client is shared
+	// with the main flow when it was built, else made only if a file needs it.
+	var client *hosted.Client
+	clientFor := func() *hosted.Client {
+		if client == nil {
+			client = newHostedClient(cmd.Context(), server, a.RepoRoot)
+		}
+		return client
+	}
+	// It runs after error exits too (a failed Apply, a bad cursor): the files owe
+	// nothing to the rows. It is fault-isolated — its failures go to stderr and
+	// never touch retErr, so it can neither fail a clean push nor mask a real error.
+	defer func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "attachments: %v\n", r)
+			}
+		}()
+		pushStoryAttachments(cmd.Context(), out, cmd.ErrOrStderr(), a, optIn, clientFor, server, project, scope)
+	}()
 	// The repo's recorded push state is the project push's; a scoped push does not
 	// make the repo "pushed".
 	recordOK := func() {
@@ -344,7 +368,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		return nil
 	}
 
-	client := newHostedClient(cmd.Context(), server, a.RepoRoot)
+	client = clientFor()
 	site := holdSite{client: client, server: server, project: project, repoRoot: repoRoot}
 	errw := cmd.ErrOrStderr()
 
@@ -613,6 +637,10 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 			return err
 		}
 		return fmt.Errorf("snapshot workstate: %w", err)
+	}
+	// The pulled stories' attachments follow them, whether or not any row moved.
+	if optIn["stories"] {
+		defer pullStoryAttachments(ctx, out, cmd.ErrOrStderr(), a, client, server, project, sc.Set, force)
 	}
 	nItems, nLedger, nKept := rep.Items, rep.Ledger, rep.Kept
 	// Stories in flight elsewhere are worth knowing even when nothing was pulled.
