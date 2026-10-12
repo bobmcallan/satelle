@@ -1,3 +1,14 @@
+## [0.0.657] - 2026-10-13
+
+### Added
+- **Authored substrate and documents now reach the personal project on their own, the way work state does.** satelled's reconcile pass, after the work-state push, runs `satelle sync config push --snapshot-only` and `satelle sync documents push --snapshot-only` for every registered repo, so an authored change (by a verb or a direct file edit) is on the hosted copy within one reconcile interval with no `satelle sync`. It never pulls, deploys, or passes `--force`/`--prune`; a repo whose areas are all local is a silent no-op, and the push verbs keep sole ownership of opt-in and project binding. (sty_a66e1846)
+- **`--snapshot-only` on `satelle sync config push` and `satelle sync documents push`** refuses, uploading nothing and exiting non-zero, when an area is behind, diverged or unmerged, or when the hosted snapshot or manifest cannot be read, instead of falling back to a plain per-file upload. A behind, diverged or unmerged refusal is recorded so `satelle sync status`, the engagement advisory and `satelle doctor` report it; an unavailable refusal records nothing and shows as a live `unavailable`. Without the flag the verbs behave as before. (sty_a66e1846)
+
+## [serve-v0.0.156] - 2026-10-13
+
+### Changed
+- satelled's reconcile pass pushes opted-in authored config and documents with `--snapshot-only` after the work-state push, logging one line per failure streak, so a diverged machine is never overwritten and never fills the log. (sty_a66e1846)
+
 ## [0.0.656] - 2026-10-13
 
 ### Added

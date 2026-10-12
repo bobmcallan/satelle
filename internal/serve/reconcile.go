@@ -64,6 +64,12 @@ type Reconciler struct {
 	// Always invoked (opt-in is the CLI's decision). Periodic backstop for a
 	// Notify dropped between ingest and debounce fire (sty_c526753a AC4).
 	Push func(ctx context.Context, repoPath string) error
+	// SubstratePush execs the CLI config and documents push verbs
+	// (substratepush.go); nil means substratePushViaCLI. Always invoked (opt-in,
+	// binding and refusal are the verbs' decisions). Run after Push. Its outcome
+	// is logged on its own streak and never reaches Record, which persists the
+	// snapshot leg.
+	SubstratePush func(ctx context.Context, repoPath string) error
 	// Log receives a line when a repo STARTS failing, when its reason CHANGES,
 	// and when it recovers — never once per pass per failing repo (sty_a2162ee3).
 	// nil discards.
@@ -177,12 +183,22 @@ func (r *Reconciler) pass(ctx context.Context) {
 			push = func(context.Context, string) error { return nil }
 		}
 	}
+	substrate := r.SubstratePush
+	if substrate == nil {
+		if r.Reseed == nil {
+			substrate = substratePushViaCLI
+		} else {
+			// Tests inject Reseed; do not exec the CLI unless they also set SubstratePush.
+			substrate = func(context.Context, string) error { return nil }
+		}
+	}
 	seen := map[string]bool{}
 	for _, path := range r.Targets(ctx) {
 		if ctx.Err() != nil {
 			return
 		}
 		seen[path] = true
+		seen[path+substrateKeySuffix] = true
 		runCtx, cancel := context.WithTimeout(ctx, r.timeout())
 		err := reseed(runCtx, path)
 		if serr := snapshot(runCtx, path); serr != nil {
@@ -199,8 +215,10 @@ func (r *Reconciler) pass(ctx context.Context) {
 				err = perr
 			}
 		}
+		serr := substrate(runCtx, path)
 		cancel()
 		r.report(path, err)
+		r.reportSubstrate(path, serr)
 	}
 	// Forget repos this pass no longer targets (partition removed, directory
 	// gone). Keeping the entry would emit a bogus "recovered" line across a gap
@@ -227,11 +245,31 @@ func (r *Reconciler) report(path string, err error) {
 		}
 		r.Record(path, err == nil, reason)
 	}
-	prev := r.failing[path]
+	r.track(path, path, err)
+}
+
+// substrateKeySuffix keys a repo's substrate-leg streak apart from its
+// work-state streak, so each is logged once and recovers on its own.
+const substrateKeySuffix = " substrate"
+
+// reportSubstrate is report for the substrate leg: the same one-line-per-streak
+// log discipline, but nothing is recorded — Record persists the snapshot leg, and
+// a substrate refusal (a behind area, an unreadable hosted copy) is not a
+// work-state failure. A refusal that has a recordable state is already in
+// syncstate, written by the push verb itself.
+func (r *Reconciler) reportSubstrate(path string, err error) {
+	key := path + substrateKeySuffix
+	r.track(key, key, err)
+}
+
+// track is the streak bookkeeping both legs share: key identifies the streak,
+// label is what the log line names.
+func (r *Reconciler) track(key, label string, err error) {
+	prev := r.failing[key]
 	if err == nil {
 		if prev != nil {
-			r.logf("mirror reconcile %s: recovered after %d failed pass(es)", path, prev.passes)
-			delete(r.failing, path)
+			r.logf("mirror reconcile %s: recovered after %d failed pass(es)", label, prev.passes)
+			delete(r.failing, key)
 		}
 		// Steady-state success has never been logged and must not start being.
 		return
@@ -243,11 +281,11 @@ func (r *Reconciler) report(path string, err error) {
 	}
 	// First failure, or the reason changed. The format is byte-identical to the
 	// line this loop has always written, so an operator's grep still matches.
-	r.logf("mirror reconcile %s: %v", path, err)
+	r.logf("mirror reconcile %s: %v", label, err)
 	if r.failing == nil {
 		r.failing = map[string]*repoFailure{}
 	}
-	r.failing[path] = &repoFailure{reason: reason, passes: 1}
+	r.failing[key] = &repoFailure{reason: reason, passes: 1}
 }
 
 // mirrorTargets returns the repo paths of every partition the mirror renders

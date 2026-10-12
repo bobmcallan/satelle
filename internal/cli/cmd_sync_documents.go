@@ -51,6 +51,7 @@ catalog. Requires "satelle project bind <slug>".`,
 	push.Flags().BoolVar(&dryRun, "dry-run", false, "List what would be pushed without contacting the server.")
 	push.Flags().Bool("prune", false, pruneFlagUsage)
 	push.Flags().Bool("force", false, forceFlagUsage)
+	push.Flags().Bool("snapshot-only", false, snapshotOnlyFlagUsage)
 	group.AddCommand(push)
 
 	var pullServer, pullWorkspace string

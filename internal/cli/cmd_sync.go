@@ -335,6 +335,7 @@ Pushes publish each area as one snapshot (deletes propagate) and are refused whe
 	push.Flags().BoolVar(&dryRun, "dry-run", false, "List what would be pushed without contacting the server.")
 	push.Flags().Bool("prune", false, pruneFlagUsage)
 	push.Flags().Bool("force", false, forceFlagUsage)
+	push.Flags().Bool("snapshot-only", false, snapshotOnlyFlagUsage)
 	group.AddCommand(push)
 
 	var deployServer, deployWorkspace string
@@ -454,6 +455,9 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 	if manifest, merr := client.ConfigManifest(cmd.Context(), project); merr != nil {
 		if errors.Is(merr, hosted.ErrLoginRequired) {
 			return merr
+		}
+		if snapshotOnlyRequested(cmd) {
+			return snapshotOnlyRefusal(merr)
 		}
 		fmt.Fprintf(out, "config manifest unavailable (%v) — uploading every file.\n", merr)
 	} else {

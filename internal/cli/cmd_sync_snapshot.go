@@ -134,7 +134,12 @@ type pushOutcome struct{ created, unchanged, notUploaded int }
 // runSnapshotPush prepares every area's push first — so a refusal in any area
 // uploads nothing anywhere — then runs them. handled=false means snapshots are
 // unavailable on this server and the caller should use the plain upload.
-func runSnapshotPush(ctx context.Context, d *snapsync.Driver, areaFiles map[string][]snapsync.PushFile, areas []string) (out pushOutcome, handled bool, err error) {
+//
+// snapshotOnly (--snapshot-only, sty_a66e1846) closes that fallback: where the
+// hosted snapshot cannot be read the push is refused instead, because the plain
+// upload is the one path that cannot tell a behind or diverged machine from an
+// in-step one, and an unattended caller must never overwrite on doubt.
+func runSnapshotPush(ctx context.Context, d *snapsync.Driver, areaFiles map[string][]snapsync.PushFile, areas []string, snapshotOnly bool) (out pushOutcome, handled bool, err error) {
 	var jobs []*snapsync.PushJob
 	var refusals []string
 	for _, area := range areas {
@@ -146,6 +151,9 @@ func runSnapshotPush(ctx context.Context, d *snapsync.Driver, areaFiles map[stri
 		case perr == nil:
 			jobs = append(jobs, job)
 		case errors.As(perr, &unavailable):
+			if snapshotOnly {
+				return out, true, snapshotOnlyRefusal(perr)
+			}
 			if d.Out != nil {
 				fmt.Fprintf(d.Out, "%v — pushing without a snapshot.\n", perr)
 			}
@@ -171,6 +179,12 @@ func runSnapshotPush(ctx context.Context, d *snapsync.Driver, areaFiles map[stri
 	return out, true, nil
 }
 
+// snapshotOnlyRefusal is the error a --snapshot-only push exits with when it
+// could not read the hosted snapshot or manifest. Nothing was uploaded.
+func snapshotOnlyRefusal(cause error) error {
+	return fmt.Errorf("snapshot-only: %w — not pushing without a behind/diverged check", cause)
+}
+
 // pushConfigSnapshots is the config push when the hosted copy can hold snapshots.
 func pushConfigSnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir string, client *hosted.Client, server, project string, manifest []hosted.ConfigItem, files []config.ConfigFile) (pushOutcome, bool, error) {
 	byArea := map[string][]snapsync.PushFile{}
@@ -192,7 +206,7 @@ func pushConfigSnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, dataDi
 		&configBlobs{client: client, project: project, manifest: manifest})
 	d.Prune = pruneRequested(cmd)
 	d.Force = forceRequested(cmd)
-	out, handled, err := runSnapshotPush(cmd.Context(), d, byArea, areas)
+	out, handled, err := runSnapshotPush(cmd.Context(), d, byArea, areas, snapshotOnlyRequested(cmd))
 	if handled {
 		// A refused push records why it was refused (behind, unmerged) just as a
 		// completed one records in step.
@@ -210,6 +224,9 @@ func pushDocumentsSnapshot(cmd *cobra.Command, cfg config.Config, repoRoot, data
 		if errors.Is(err, hosted.ErrLoginRequired) {
 			return pushOutcome{}, true, err
 		}
+		if snapshotOnlyRequested(cmd) {
+			return pushOutcome{}, true, snapshotOnlyRefusal(err)
+		}
 		return pushOutcome{}, false, nil
 	}
 	pf := make([]snapsync.PushFile, 0, len(files))
@@ -221,7 +238,7 @@ func pushDocumentsSnapshot(cmd *cobra.Command, cfg config.Config, repoRoot, data
 		&docBlobs{client: client, project: project})
 	d.Prune = pruneRequested(cmd)
 	d.Force = forceRequested(cmd)
-	out, handled, err := runSnapshotPush(cmd.Context(), d, map[string][]snapsync.PushFile{"documents": pf}, []string{"documents"})
+	out, handled, err := runSnapshotPush(cmd.Context(), d, map[string][]snapsync.PushFile{"documents": pf}, []string{"documents"}, snapshotOnlyRequested(cmd))
 	if handled {
 		recordAreaStates(cmd.Context(), cfg, repoRoot, d, []string{"documents"})
 	}
@@ -246,6 +263,17 @@ const forceFlagUsage = "Publish this tree as the next snapshot even when the hos
 // that does not define it (a test's bare command) reads as false.
 func forceRequested(cmd *cobra.Command) bool {
 	f := cmd.Flags().Lookup("force")
+	return f != nil && f.Value.String() == "true"
+}
+
+// snapshotOnlyFlagUsage is the one help text the config and documents pushes
+// share for --snapshot-only.
+const snapshotOnlyFlagUsage = "Push only through the snapshot check: refuse, uploading nothing and exiting non-zero, when the area is behind, diverged or unmerged or the hosted snapshot or manifest cannot be read, instead of falling back to a plain upload. satelled passes this on every unattended push."
+
+// snapshotOnlyRequested reads --snapshot-only from the command that is running.
+// A command that does not define it (a test's bare command) reads as false.
+func snapshotOnlyRequested(cmd *cobra.Command) bool {
+	f := cmd.Flags().Lookup("snapshot-only")
 	return f != nil && f.Value.String() == "true"
 }
 
