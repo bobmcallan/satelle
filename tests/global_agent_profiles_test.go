@@ -63,8 +63,8 @@ func TestGlobalProfileConsumedByRepo(t *testing.T) {
 	}
 	for _, want := range []string{
 		`source: command = "claude -p`,
-		"(profile:shared-reviewer)",
-		`source: model = "repo-pinned" (repo)`,
+		"← profile:shared-reviewer",
+		`source: model = "repo-pinned" ← repo`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("validate should report provenance %q:\n%s", want, out)

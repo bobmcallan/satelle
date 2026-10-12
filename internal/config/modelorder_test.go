@@ -171,7 +171,7 @@ func TestResolveAgentsBaseline_ModelOrderLayers(t *testing.T) {
 	baseline := AgentsConfig{ModelOrder: map[string][]ModelRank{"nosuch": {{"nosuch-1"}}, "claude": {{"haiku"}}}}
 	workspace := AgentsConfig{ModelOrder: map[string][]ModelRank{"grok": {{"grok-4.7"}}, "claude": {{"sonnet"}}}}
 	repo := AgentsConfig{ModelOrder: map[string][]ModelRank{"claude": {{"opus"}}}}
-	out, _, err := ResolveAgentsBaseline(baseline, repo, workspace, GlobalAgentsConfig{})
+	out, _, err := ResolveAgentsBaseline(baseline, AgentLayers{Repo: repo, Workspace: workspace}, GlobalAgentsConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}

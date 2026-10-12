@@ -18,7 +18,7 @@ func TestDoctorHealthyRepo(t *testing.T) {
 	mustRun(t, testBin, repo, "reindex")
 
 	out := mustRun(t, testBin, repo, "doctor")
-	for _, want := range []string{"HEALTHY", "Agent grants (effective value → source)", "(repo)"} {
+	for _, want := range []string{"HEALTHY", "Agent grants (effective value → source)", "← repo"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("doctor output missing %q:\n%s", want, out)
 		}

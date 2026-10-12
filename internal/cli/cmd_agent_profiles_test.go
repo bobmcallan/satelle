@@ -135,12 +135,12 @@ func TestGrantSourcesRenderWithoutSecretValues(t *testing.T) {
 	printGrantSources(buf, g)
 	out := buf.String()
 	for _, want := range []string{
-		`command = "claude -p {system}" (profile:claude-opus)`,
-		`tools = "Read,Grep,Glob" (embedded)`,
-		`model = "opus" (global-role:claude-opus)`,
-		`effort = "low" (repo)`,
-		"env (profile:claude-opus) — values withheld",
-		"settings (repo) — values withheld",
+		`command = "claude -p {system}" ← profile:claude-opus (~/.satelle/agents.toml)`,
+		`tools = "Read,Grep,Glob" ← embedded`,
+		`model = "opus" ← global-role:claude-opus (~/.satelle/agents.toml)`,
+		`effort = "low" ← repo (.satelle/workflows/agents.toml)`,
+		"env ← profile:claude-opus (~/.satelle/agents.toml) — values withheld",
+		"settings ← repo (.satelle/workflows/agents.toml) — values withheld",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing source line %q in:\n%s", want, out)

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/agentvalidate"
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/health"
 )
 
@@ -156,11 +157,17 @@ func RenderGrantSources(w io.Writer, indent string, g agentvalidate.Grant) {
 	}
 	sort.Strings(fields)
 	for _, f := range fields {
+		// Each tier is followed by the file (or origin) that supplied it, so the
+		// operator can tell which file to edit (sty_5c56143b).
+		tier := g.Sources[f]
+		if file := config.SourceFile(tier); file != tier {
+			tier = fmt.Sprintf("%s (%s)", tier, file)
+		}
 		if f == "env" || f == "settings" {
-			fmt.Fprintf(w, "%ssource: %s (%s) — values withheld\n", indent, f, g.Sources[f])
+			fmt.Fprintf(w, "%ssource: %s ← %s — values withheld\n", indent, f, tier)
 			continue
 		}
-		fmt.Fprintf(w, "%ssource: %s = %q (%s)\n", indent, f, vals[f], g.Sources[f])
+		fmt.Fprintf(w, "%ssource: %s = %q ← %s\n", indent, f, vals[f], tier)
 	}
 }
 

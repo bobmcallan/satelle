@@ -1,3 +1,15 @@
+## [0.0.664] - 2026-10-13
+
+### Added
+- **`agents.local.toml`: machine-specific agent configuration that never leaves the machine.** A file beside the repo's shared `agents.toml` overrides it field by field for this machine only (command paths, `profile=` references into the machine catalog, `[defaults]` such as `use_global_roles`). It never syncs, satelle init's managed gitignore block ignores it, and it is not indexed as a document. The resolver loads the repo, workspace and local layers through one owner, used by dispatch, `satelle agent validate`, `satelle doctor` and `satelle workflow show`. Only agent bindings get a local layer; workflows, principles, skills and settings do not. (sty_5c56143b)
+- `satelle agent validate` and `satelle doctor` show, for every effective agent field, the layer that supplied it and the file to edit (`source: model = "opus" ← local (<path to the local file>)`). (sty_5c56143b)
+- A shared `agents.toml` that names `profile=` or sets `use_global_roles = true` depends on one machine's catalog; doctor and agent validate now warn and point at `agents.local.toml`. (sty_5c56143b)
+
+## [serve-v0.0.159] - 2026-10-13
+
+### Changed
+- The service binary resolves agent bindings with the machine-local agents layer. (sty_5c56143b)
+
 ## [0.0.663] - 2026-10-13
 
 ### Fixed

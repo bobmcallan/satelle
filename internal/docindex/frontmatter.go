@@ -29,9 +29,10 @@ func Indexable(path string) bool {
 	//
 	// The SYNCED workspace bindings layer (agents.workspace.toml, sty_01949949)
 	// sits in the same directory and is the same kind of thing: configuration,
-	// not a document. Same exclusion, same reason.
+	// not a document. Same exclusion, same reason. So is this machine's
+	// agents.local.toml override (sty_5c56143b).
 	switch strings.ToLower(filepath.Base(path)) {
-	case "agents.toml", "agents.workspace.toml":
+	case "agents.toml", "agents.workspace.toml", "agents.local.toml":
 		return false
 	}
 	switch strings.ToLower(filepath.Ext(path)) {

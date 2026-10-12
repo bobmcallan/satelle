@@ -43,7 +43,8 @@ them — the role set travels with the process it serves. The product already
 behaves this way: `satelle init` scaffolds a runnable agents file whose seeded
 body says secrets never belong in it, load is fail-closed on a missing or
 malformed agents.toml, and the managed gitignore block ignores
-`satelle.local.toml` and `.satelle/satelle`, never `workflows/agents.toml`.
+`satelle.local.toml`, `workflows/agents.local.toml` and `.satelle/satelle`,
+never `workflows/agents.toml`.
 Operator-local pressure is relieved elsewhere: `profile=` keeps command, model,
 and effort machine-side; `[vars]` plus `satelle.local.toml` keep secrets out of
 the tree; repo-inline values still win per field. None of this forces git
@@ -116,6 +117,12 @@ by field; a reference cycle is refused, naming the loop.
 
 Highest first:
 
+0. **local** — an inline value in `.satelle/workflows/agents.local.toml`, this
+   machine's override of the shared file. Same schema, field by field, and it
+   may name the `profile=` and set `[defaults] use_global_roles` for this machine
+   alone. It is gitignored and **never syncs**; `agent validate` and `doctor`
+   warn on a `profile=` or `use_global_roles` left in the shared file. Only
+   agents.toml has a local twin.
 1. **repo** — an inline value on the binding in `.satelle/workflows/agents.toml`
 2. **profile** — the profile the binding explicitly names via `profile=`
    (and, transitively, whatever that profile extends)
@@ -143,10 +150,10 @@ it:
 
 ```
 GRANT [reviewer] role=reviewer … model="opus" effort="low" …
-       source: command = "claude -p …" (profile:claude-opus)
-       source: effort = "low" (repo)
-       source: model = "opus" (profile:claude-opus)
-       source: tools = "Read,Grep,Glob" (embedded)
+       source: command = "claude -p …" ← profile:claude-opus (~/.satelle/agents.toml)
+       source: effort = "low" ← repo (.satelle/workflows/agents.toml)
+       source: model = "opus" ← local (.satelle/workflows/agents.local.toml)
+       source: tools = "Read,Grep,Glob" ← embedded
 ```
 
 `env` and `settings` lines name the field and its source only — values may be

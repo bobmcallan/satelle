@@ -66,7 +66,7 @@ func TestEffectiveValidateReportsSameRoleAsWarning(t *testing.T) {
 		Reviewer: config.AgentBinding{Role: config.RoleReviewer, Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob"},
 		Agents:   map[string]config.AgentBinding{"orchestrator": inLoop},
 	}
-	r := ValidateEffectiveLayered(repo, config.AgentsConfig{}, config.GlobalAgentsConfig{}, nil, nil, nil)
+	r := ValidateEffectiveLayered(config.AgentLayers{Repo: repo}, config.GlobalAgentsConfig{}, nil, nil, nil)
 
 	fs := sameRoleFindings(r)
 	if len(fs) != 1 {
@@ -101,7 +101,7 @@ func TestEffectiveValidateBaselineShapeDoesNotWarn(t *testing.T) {
 		Executor: config.AgentBinding{Role: config.RoleAgent, Command: "in-loop"},
 		Reviewer: config.AgentBinding{Role: config.RoleReviewer, Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob"},
 	}
-	r := ValidateEffectiveLayered(repo, config.AgentsConfig{}, config.GlobalAgentsConfig{}, nil, nil, nil)
+	r := ValidateEffectiveLayered(config.AgentLayers{Repo: repo}, config.GlobalAgentsConfig{}, nil, nil, nil)
 	if fs := sameRoleFindings(r); len(fs) != 0 {
 		t.Fatalf("baseline shape must not warn, got %v", fs)
 	}

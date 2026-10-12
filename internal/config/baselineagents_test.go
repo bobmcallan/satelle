@@ -53,11 +53,11 @@ func TestBaselineRepoOverridesOneSeat(t *testing.T) {
 	cat := catalog(t, baselineCatalog)
 	repo := repoAgents(t, "[reviewer]\nprofile = \"grok-reviewer\"\n")
 
-	plain, plainProv, err := ResolveAgentsBaseline(base, AgentsConfig{}, AgentsConfig{}, cat)
+	plain, plainProv, err := ResolveAgentsBaseline(base, AgentLayers{}, cat)
 	if err != nil {
 		t.Fatal(err)
 	}
-	over, overProv, err := ResolveAgentsBaseline(base, repo, AgentsConfig{}, cat)
+	over, overProv, err := ResolveAgentsBaseline(base, AgentLayers{Repo: repo}, cat)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestBaselineSeatResolvesFromProfile(t *testing.T) {
 	// Opt-in is the only path from [roles] onto a seat that names no profile,
 	// including a seat that exists only on the baseline.
 	optIn := repoAgents(t, "[defaults]\nuse_global_roles = true\n")
-	agents, prov, err := ResolveAgentsBaseline(base, optIn, AgentsConfig{}, cat)
+	agents, prov, err := ResolveAgentsBaseline(base, AgentLayers{Repo: optIn}, cat)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestBaselineSeatResolvesFromProfile(t *testing.T) {
 	}
 
 	repo := repoAgents(t, "[planner]\nprofile = \"claude-agent\"\n")
-	agents, prov, err = ResolveAgentsBaseline(base, repo, AgentsConfig{}, cat)
+	agents, prov, err = ResolveAgentsBaseline(base, AgentLayers{Repo: repo}, cat)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestBaselineSeatResolvesFromProfile(t *testing.T) {
 func TestBaselineRoleConflictRefused(t *testing.T) {
 	base := baselineOrFail(t)
 	repo := repoAgents(t, "[planner]\nrole = \"reviewer\"\n")
-	if _, _, err := ResolveAgentsBaseline(base, repo, AgentsConfig{}, GlobalAgentsConfig{}); err == nil {
+	if _, _, err := ResolveAgentsBaseline(base, AgentLayers{Repo: repo}, GlobalAgentsConfig{}); err == nil {
 		t.Fatal("want role-identity refusal against the baseline")
 	}
 }

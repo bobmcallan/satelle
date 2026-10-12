@@ -51,7 +51,7 @@ func TestInitSeedsCommentedReworkBindingsAndDocs(t *testing.T) {
 			t.Errorf("baseline seat %s must be granted:\n%s", seat, out)
 		}
 	}
-	if !strings.Contains(out, `(baseline)`) {
+	if !strings.Contains(out, `← baseline`) {
 		t.Errorf("baseline seats must record baseline provenance:\n%s", out)
 	}
 	for _, want := range []string{"GRANT [executor]", "GRANT [reviewer]"} {

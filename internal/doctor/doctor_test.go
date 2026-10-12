@@ -520,7 +520,10 @@ func TestProvenanceReachesTheReport(t *testing.T) {
 	}
 	var buf strings.Builder
 	RenderText(&buf, []Report{r}, true, false)
-	for _, want := range []string{`model = "repo-pinned" (repo)`, "(profile:catalog-judge)"} {
+	for _, want := range []string{
+		`model = "repo-pinned" ← repo (.satelle/workflows/agents.toml)`,
+		"← profile:catalog-judge (~/.satelle/agents.toml)",
+	} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("render missing %q:\n%s", want, buf.String())
 		}

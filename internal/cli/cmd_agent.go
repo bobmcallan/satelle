@@ -224,7 +224,12 @@ grant is printed.
 
 Reach for it after editing agents.toml or a step's agent allocation. It reads
 both authored files together, so an orphaned binding and a dangling reference
-are both visible here rather than at the next dispatch.`,
+are both visible here rather than at the next dispatch.
+
+Each field is printed with the layer and file that supplied it. Precedence:
+agents.local.toml > agents.toml > agents.workspace.toml > embedded baseline >
+profile= / [roles] base. agents.local.toml is this machine's override; it never
+syncs, so keep profile= and use_global_roles there, not in shared agents.toml.`,
 		Args:        cobra.NoArgs,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -235,9 +240,9 @@ are both visible here rather than at the next dispatch.`,
 			out := cmd.OutOrStdout()
 			dataDir := a.PlaneDir()
 
-			agents, lerr := config.LoadAgents(dataDir)
-			if lerr != nil {
-				return fmt.Errorf("agents.toml: %w", lerr)
+			layers, _ := config.LoadAgentLayers(dataDir)
+			if layers.RepoErr != nil {
+				return fmt.Errorf("agents.toml: %w", layers.RepoErr)
 			}
 			// The machine-wide profile catalog is EXECUTION configuration only
 			// (sty_c7dfeedf). A broken catalog is reported here as a problem, not a
@@ -249,9 +254,16 @@ are both visible here rather than at the next dispatch.`,
 			// The synced workspace bindings layer (sty_01949949) sits under the
 			// repo's file in the ladder; it is judged here so the grants printed
 			// are the ones that will run, each field naming its source.
-			workspace, werr := config.LoadWorkspaceAgents(dataDir)
-			if werr != nil {
-				fmt.Fprintf(out, "FAIL  %v\n", werr)
+			if layers.WorkspaceErr != nil {
+				fmt.Fprintf(out, "FAIL  %v\n", layers.WorkspaceErr)
+			}
+			if layers.LocalErr != nil {
+				fmt.Fprintf(out, "FAIL  %v\n", layers.LocalErr)
+			}
+			if _, serr := os.Stat(config.LocalAgentsPath(dataDir)); serr == nil {
+				fmt.Fprintf(out, "Machine-local layer: %s (present — top of the ladder; never syncs; source shown per field)\n", config.LocalAgentsRel)
+			} else {
+				fmt.Fprintf(out, "Machine-local layer: %s (absent — no machine override)\n", config.LocalAgentsRel)
 			}
 			if _, serr := os.Stat(config.WorkspaceAgentsPath(dataDir)); serr == nil {
 				fmt.Fprintf(out, "Workspace bindings layer: %s (present — a repo field wins; a workspace field fills a blank; source shown per field)\n", config.WorkspaceAgentsRel)
@@ -279,7 +291,7 @@ are both visible here rather than at the next dispatch.`,
 			// Skill bodies too, from the same resolver doctor uses — otherwise this
 			// command and `satelle doctor` would report the reviewer shell grant
 			// differently on the same tree (sty_338a53f8).
-			report := agentvalidate.ValidateEffectiveLayered(agents, workspace, global, a.PlaneConfig().Vars, governing,
+			report := agentvalidate.ValidateEffectiveLayered(layers, global, a.PlaneConfig().Vars, governing,
 				doctor.SkillBodyResolver(dataDir))
 			printProfileCatalog(out, global)
 			fmt.Fprintln(out, "Agent grants (resolved):")

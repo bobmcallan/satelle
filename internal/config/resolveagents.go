@@ -3,6 +3,9 @@
 //
 // The ladder, highest first:
 //
+//  0. local   — an inline value in .satelle/workflows/agents.local.toml, this
+//     machine's own override, which never syncs (sty_5c56143b); it may also name
+//     the profile=, taking precedence over the repo's
 //  1. repo    — an inline value on the binding in .satelle/workflows/agents.toml
 //  2. profile — the catalog profile the binding EXPLICITLY names via profile=
 //     (and, transitively, whatever that profile extends)
@@ -41,7 +44,45 @@ const (
 	// SourceBaseline labels a field supplied by the embedded baseline seat list
 	// (BaselineAgents) — the lowest overlay, under the workspace and repo tiers.
 	SourceBaseline = "baseline"
+	// SourceLocal labels a field supplied by the machine-local override
+	// (agents.local.toml, sty_5c56143b) — the top tier, above the repo's file.
+	SourceLocal = "local"
 )
+
+// SourceFile names the file (or origin) behind a Provenance label, so a display
+// can say WHERE a field came from and not only which tier. A key-wise merged
+// map field carries a composite label ("local+repo"); each part is mapped and
+// the distinct files are joined. An unknown label is returned unchanged.
+func SourceFile(label string) string {
+	var files []string
+	for _, part := range strings.Split(label, "+") {
+		f := sourceFile(part)
+		dup := false
+		for _, e := range files {
+			dup = dup || e == f
+		}
+		if !dup {
+			files = append(files, f)
+		}
+	}
+	return strings.Join(files, " + ")
+}
+
+func sourceFile(label string) string {
+	switch {
+	case label == SourceLocal:
+		return DefaultDataDir + "/" + LocalAgentsRel
+	case label == SourceRepo:
+		return DefaultDataDir + "/" + AgentsRel
+	case label == SourceWorkspace:
+		return DefaultDataDir + "/" + WorkspaceAgentsRel
+	case strings.HasPrefix(label, "profile:"), strings.HasPrefix(label, "global-role:"):
+		return GlobalAgentsLabel
+	case label == SourceBaseline, label == SourceEmbedded:
+		return SourceEmbedded
+	}
+	return label
+}
 
 // SourceProfile labels a field won by an explicitly referenced catalog profile.
 func SourceProfile(profile string) string { return "profile:" + profile }
@@ -97,11 +138,7 @@ type EffectiveAgents struct {
 // on its own — two independently-merging call sites is the defect this exists to
 // prevent. repoVars is the repo's [vars] KV (may be nil).
 func LoadEffectiveAgents(dataDir string, repoVars map[string]string) (EffectiveAgents, error) {
-	repo, err := LoadAgents(dataDir)
-	if err != nil {
-		return EffectiveAgents{}, err
-	}
-	workspace, err := LoadWorkspaceAgents(dataDir)
+	layers, err := LoadAgentLayers(dataDir)
 	if err != nil {
 		return EffectiveAgents{}, err
 	}
@@ -113,7 +150,7 @@ func LoadEffectiveAgents(dataDir string, repoVars map[string]string) (EffectiveA
 	if err != nil {
 		return EffectiveAgents{}, err
 	}
-	agents, prov, err := ResolveAgentsBaseline(baseline, repo, workspace, global)
+	agents, prov, err := ResolveAgentsBaseline(baseline, layers, global)
 	if err != nil {
 		return EffectiveAgents{}, err
 	}
@@ -173,7 +210,7 @@ func ResolveAgents(repo AgentsConfig, global GlobalAgentsConfig) (AgentsConfig, 
 // not the repo's alone. Defaults stay the repo's: the workspace does not opt a
 // repo into global roles or a secondary it did not write.
 func ResolveAgentsLayered(repo, workspace AgentsConfig, global GlobalAgentsConfig) (AgentsConfig, Provenance, error) {
-	return ResolveAgentsBaseline(AgentsConfig{}, repo, workspace, global)
+	return ResolveAgentsBaseline(AgentsConfig{}, AgentLayers{Repo: repo, Workspace: workspace}, global)
 }
 
 // ResolveAgentsBaseline is ResolveAgentsLayered with the embedded baseline seat
@@ -184,13 +221,19 @@ func ResolveAgentsLayered(repo, workspace AgentsConfig, global GlobalAgentsConfi
 // catalog's [roles] default reaches a seat only when the repo set
 // use_global_roles, whether or not the repo named that seat. A zero baseline
 // resolves byte-identically to ResolveAgentsLayered.
-func ResolveAgentsBaseline(baseline, repo, workspace AgentsConfig, global GlobalAgentsConfig) (AgentsConfig, Provenance, error) {
-	out := AgentsConfig{Defaults: repo.Defaults, Agents: map[string]AgentBinding{}}
+//
+// The machine-local layer (agents.local.toml, sty_5c56143b) is the top tier: it
+// overlays the repo's file field by field, may name the profile= (taking
+// precedence over the repo's), and its [defaults] keys override the repo's key
+// by key. An empty local layer resolves byte-identically to before.
+func ResolveAgentsBaseline(baseline AgentsConfig, layers AgentLayers, global GlobalAgentsConfig) (AgentsConfig, Provenance, error) {
+	repo, workspace, local := layers.Repo, layers.Workspace, layers.Local
+	out := AgentsConfig{Defaults: overlayDefaults(repo.Defaults, local.Defaults), Agents: map[string]AgentBinding{}}
 	prov := Provenance{}
-	useRoles := repo.Defaults.UseGlobalRoles
+	useRoles := out.Defaults.UseGlobalRoles
 
-	resolve := func(section string, baseB, repoB, wsB AgentBinding) (AgentBinding, error) {
-		merged, src, err := resolveBindingProfile(section, baseB, repoB, wsB, global, useRoles)
+	resolve := func(section string, baseB, repoB, wsB, localB AgentBinding) (AgentBinding, error) {
+		merged, src, err := resolveBindingProfile(section, baseB, repoB, wsB, localB, global, useRoles)
 		if err != nil {
 			return AgentBinding{}, err
 		}
@@ -200,15 +243,15 @@ func ResolveAgentsBaseline(baseline, repo, workspace AgentsConfig, global Global
 	}
 
 	var err error
-	if out.Executor, err = resolve("executor", baseline.Executor, repo.Executor, workspace.Executor); err != nil {
+	if out.Executor, err = resolve("executor", baseline.Executor, repo.Executor, workspace.Executor, local.Executor); err != nil {
 		return AgentsConfig{}, nil, err
 	}
-	if out.Reviewer, err = resolve("reviewer", baseline.Reviewer, repo.Reviewer, workspace.Reviewer); err != nil {
+	if out.Reviewer, err = resolve("reviewer", baseline.Reviewer, repo.Reviewer, workspace.Reviewer, local.Reviewer); err != nil {
 		return AgentsConfig{}, nil, err
 	}
 	seen := map[string]bool{}
 	var names []string
-	for _, layer := range []map[string]AgentBinding{baseline.Agents, repo.Agents, workspace.Agents} {
+	for _, layer := range []map[string]AgentBinding{baseline.Agents, repo.Agents, workspace.Agents, local.Agents} {
 		for n := range layer {
 			if !seen[n] {
 				seen[n] = true
@@ -218,14 +261,44 @@ func ResolveAgentsBaseline(baseline, repo, workspace AgentsConfig, global Global
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		b, rerr := resolve(name, baseline.Agents[name], repo.Agents[name], workspace.Agents[name])
+		b, rerr := resolve(name, baseline.Agents[name], repo.Agents[name], workspace.Agents[name], local.Agents[name])
 		if rerr != nil {
 			return AgentsConfig{}, nil, rerr
 		}
 		out.Agents[name] = b
 	}
-	out.ModelOrder = layerModelOrder(baseline.ModelOrder, workspace.ModelOrder, repo.ModelOrder)
+	out.ModelOrder = layerModelOrder(baseline.ModelOrder, workspace.ModelOrder, repo.ModelOrder, local.ModelOrder)
 	return out, prov, nil
+}
+
+// overlayDefaults lays the machine-local [defaults] over the repo's key by key:
+// a key the local file leaves unset keeps the repo's value. use_global_roles is
+// a bool, so the local file can switch it ON but cannot switch a shared true off
+// (the shared file is warned off carrying it in the first place).
+func overlayDefaults(base, top AgentsDefaults) AgentsDefaults {
+	out := base
+	if strings.TrimSpace(top.Secondary) != "" {
+		out.Secondary = top.Secondary
+	}
+	if top.UseGlobalRoles {
+		out.UseGlobalRoles = true
+	}
+	if len(top.LiveInterfaceOrder) > 0 {
+		out.LiveInterfaceOrder = top.LiveInterfaceOrder
+	}
+	if strings.TrimSpace(top.IdleTimeout) != "" {
+		out.IdleTimeout = top.IdleTimeout
+	}
+	if strings.TrimSpace(top.BusyTimeout) != "" {
+		out.BusyTimeout = top.BusyTimeout
+	}
+	if top.ContextBudget != 0 {
+		out.ContextBudget = top.ContextBudget
+	}
+	if top.TurnBudget != 0 {
+		out.TurnBudget = top.TurnBudget
+	}
+	return out
 }
 
 // layerModelOrder folds the [model_order] layers per executable key: the
@@ -252,15 +325,18 @@ func layerModelOrder(layers ...map[string][]ModelRank) map[string][]ModelRank {
 // catalog, returning the effective binding and its per-field sources. Order:
 // the profile chain (reached only by the REPO's explicit reference or opt-in)
 // is the base; the workspace layer overlays it; the repo overlays last.
-func resolveBindingProfile(section string, baseB, repoB, wsB AgentBinding, global GlobalAgentsConfig, useRoles bool) (AgentBinding, map[string]string, error) {
+func resolveBindingProfile(section string, baseB, repoB, wsB, localB AgentBinding, global GlobalAgentsConfig, useRoles bool) (AgentBinding, map[string]string, error) {
 	base := AgentBinding{}
 	baseSrc := map[string]string{}
 
-	// profile= on the repo seat wins; a baseline seat may name one too.
-	// [roles] is reached only when the repo set use_global_roles. A seat the
-	// repo did not name does not get its own path to the catalog: a machine
-	// [roles] default must not retarget a repo that never asked.
-	profileRef := repoB.Profile
+	// profile= on the machine-local seat wins, then the repo seat; a baseline
+	// seat may name one too. [roles] is reached only when use_global_roles was
+	// set. A seat nobody named does not get its own path to the catalog: a
+	// machine [roles] default must not retarget a repo that never asked.
+	profileRef, profileFile := localB.Profile, LocalAgentsName
+	if strings.TrimSpace(profileRef) == "" {
+		profileRef, profileFile = repoB.Profile, AgentsConfigName
+	}
 	if strings.TrimSpace(profileRef) == "" {
 		profileRef = baseB.Profile
 	}
@@ -268,7 +344,7 @@ func resolveBindingProfile(section string, baseB, repoB, wsB AgentBinding, globa
 	if ref := strings.TrimSpace(profileRef); ref != "" {
 		chain, err := global.resolveChain(ref)
 		if err != nil {
-			return AgentBinding{}, nil, fmt.Errorf("%s [%s] profile: %w", AgentsConfigName, section, err)
+			return AgentBinding{}, nil, fmt.Errorf("%s [%s] profile: %w", profileFile, section, err)
 		}
 		base, baseSrc = foldChain(global, chain, SourceProfile)
 	} else if useRoles {
@@ -276,6 +352,9 @@ func resolveBindingProfile(section string, baseB, repoB, wsB AgentBinding, globa
 		// that opt-in there is no path from the catalog to a binding that did not
 		// name a profile, which is what keeps a same-name profile inert.
 		roleB := repoB
+		if strings.TrimSpace(roleB.Role) == "" {
+			roleB.Role = localB.Role
+		}
 		if strings.TrimSpace(roleB.Role) == "" {
 			roleB.Role = baseB.Role
 		}
@@ -316,6 +395,22 @@ func resolveBindingProfile(section string, baseB, repoB, wsB AgentBinding, globa
 			AgentsConfigName, section, repoB.Role, baseB.Role)
 	}
 
+	// The machine-local override is held to the same identity rule against every
+	// shared statement of the role: the repo's binding, the baseline seat and the
+	// profile it references.
+	localRole := strings.ToLower(strings.TrimSpace(localB.Role))
+	for _, shared := range []struct{ role, from string }{
+		{repoB.Role, AgentsConfigName + " [" + section + "]"},
+		{baseB.Role, "the baseline seat"},
+		{base.Role, "the profile it references (" + GlobalAgentsLabel + ")"},
+	} {
+		if r := strings.ToLower(strings.TrimSpace(shared.role)); localRole != "" && r != "" && localRole != r {
+			return AgentBinding{}, nil, fmt.Errorf(
+				"%s [%s] declares role=%q but %s declares role=%q — role is identity and must agree",
+				LocalAgentsName, section, localB.Role, shared.from, shared.role)
+		}
+	}
+
 	// Workspace under repo: a synced binding fills what the repo left blank and
 	// never overrides what the repo wrote. profile= is never taken from the
 	// workspace layer (a catalog name means nothing on another machine; ingest
@@ -330,6 +425,8 @@ func resolveBindingProfile(section string, baseB, repoB, wsB AgentBinding, globa
 	merged, src := overlayBinding(base, baseSrc, baseB, SourceBaseline)
 	merged, src = overlayBinding(merged, src, wsB, SourceWorkspace)
 	merged, src = overlayBinding(merged, src, repoB, SourceRepo)
+	localB.Profile = ""
+	merged, src = overlayBinding(merged, src, localB, SourceLocal)
 	merged.Profile = profileRef
 	return merged, src, nil
 }

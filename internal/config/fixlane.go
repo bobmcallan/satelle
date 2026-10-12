@@ -156,6 +156,7 @@ func (c Config) substrateClassesInTree(repoRoot string) FixLaneConfig {
 		ReviewerRubrics: file(
 			filepath.Join(data, AgentsConfigDir, AgentsConfigName),
 			filepath.Join(data, AgentsConfigDir, WorkspaceAgentsName),
+			filepath.Join(data, AgentsConfigDir, LocalAgentsName),
 			filepath.Join(data, AgentsConfigDir, ActorsConfigName),
 			filepath.Join(data, AgentsConfigName),
 			filepath.Join(data, ActorsConfigName),
@@ -194,6 +195,7 @@ func (c Config) outOfTreeProcessClasses(repoRoot string) FixLaneConfig {
 		ReviewerRubrics: file(
 			filepath.Join(data, AgentsConfigDir, AgentsConfigName),
 			filepath.Join(data, AgentsConfigDir, WorkspaceAgentsName),
+			filepath.Join(data, AgentsConfigDir, LocalAgentsName),
 			filepath.Join(data, AgentsConfigDir, ActorsConfigName),
 			filepath.Join(data, AgentsConfigName),
 			filepath.Join(data, ActorsConfigName),

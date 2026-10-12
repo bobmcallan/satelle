@@ -45,6 +45,11 @@ func TestIndexableSkipsBinaryAttachments(t *testing.T) {
 		"shot.png.satelle.json",
 		"spec.pdf",
 		"notes.txt",
+		// agents-layer configuration, not documents — including the machine-local
+		// override (sty_5c56143b)
+		"workflows/agents.toml",
+		"workflows/agents.workspace.toml",
+		"workflows/agents.local.toml",
 	} {
 		if Indexable(p) {
 			t.Errorf("Indexable(%q) = true, want false", p)

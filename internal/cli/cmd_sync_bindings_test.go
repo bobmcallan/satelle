@@ -333,10 +333,10 @@ func TestAgentValidateNamesWorkspaceSource(t *testing.T) {
 	if !strings.Contains(out, "Workspace bindings layer: "+config.WorkspaceAgentsRel+" (present") {
 		t.Errorf("validate should report the layer:\n%s", out)
 	}
-	if !strings.Contains(out, "(workspace)") {
+	if !strings.Contains(out, "← workspace (.satelle/workflows/agents.workspace.toml)") {
 		t.Errorf("validate should attribute workspace-supplied fields:\n%s", out)
 	}
-	if !strings.Contains(out, `model = "opus" (repo)`) {
+	if !strings.Contains(out, `model = "opus" ← repo (.satelle/workflows/agents.toml)`) {
 		t.Errorf("validate should attribute repo fields:\n%s", out)
 	}
 }

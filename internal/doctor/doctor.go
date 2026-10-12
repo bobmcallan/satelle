@@ -138,8 +138,8 @@ func Check(ctx context.Context, o Opts) Report {
 
 	// 1. The effective agents layer, resolved against the machine-wide catalog,
 	//    with every binding/allocation/hook rule owned by agentvalidate.
-	repoAgents, agentsErr := config.LoadAgents(dataDir)
-	if agentsErr != nil {
+	layers, _ := config.LoadAgentLayers(dataDir)
+	if agentsErr := layers.RepoErr; agentsErr != nil {
 		rep.Findings = append(rep.Findings, health.Error(health.IDAgentsLoad, "Unreadable agents layer",
 			fmt.Sprintf("%s/%s: %v", config.DefaultDataDir, config.AgentsRel, agentsErr)).
 			WithRemediation("fix the file, or delete it and run `satelle init` to reseed the default").
@@ -155,12 +155,19 @@ func Check(ctx context.Context, o Opts) Report {
 	// The synced workspace bindings layer (sty_01949949) is judged with the
 	// repo's file so doctor and `satelle agent validate` describe the same
 	// effective bindings. Absent is the zero layer; unreadable is a finding.
-	workspaceAgents, wsErr := config.LoadWorkspaceAgents(dataDir)
-	if wsErr != nil {
+	if wsErr := layers.WorkspaceErr; wsErr != nil {
 		rep.Findings = append(rep.Findings, health.Error(health.IDAgentsLoad, "Unreadable workspace bindings layer",
 			fmt.Sprintf("%s/%s: %v", config.DefaultDataDir, config.WorkspaceAgentsRel, wsErr)).
 			WithRemediation("re-run `satelle sync bindings pull`, or delete the file to drop the layer").
 			About(config.DefaultDataDir+"/"+config.WorkspaceAgentsRel))
+	}
+	// This machine's override (sty_5c56143b) is judged with the rest, so doctor
+	// and `satelle agent validate` describe the same effective bindings.
+	if localErr := layers.LocalErr; localErr != nil {
+		rep.Findings = append(rep.Findings, health.Error(health.IDAgentsLoad, "Unreadable machine-local agents layer",
+			fmt.Sprintf("%s/%s: %v", config.DefaultDataDir, config.LocalAgentsRel, localErr)).
+			WithRemediation("fix the file, or delete it to drop this machine's override").
+			About(config.DefaultDataDir+"/"+config.LocalAgentsRel))
 	}
 
 	// Two workflow sets, deliberately: ALLOCATION checks judge everything that
@@ -178,12 +185,12 @@ func Check(ctx context.Context, o Opts) Report {
 	// Skill BODIES ride along: a check that judges a deployed repo can see whether
 	// a reviewer's rubric shells `satelle`, and so whether a shell grant is live
 	// rather than idle (sty_338a53f8).
-	av := agentvalidate.ValidateEffectiveLayered(repoAgents, workspaceAgents, global, vars, governing, SkillBodyResolver(dataDir))
+	av := agentvalidate.ValidateEffectiveLayered(layers, global, vars, governing, SkillBodyResolver(dataDir))
 	rep.Findings = append(rep.Findings, av.Findings...)
 	rep.Grants = av.Grants
 	rep.Gates = av.Gates
 	rep.Sources = av.Provenance
-	rep.Env = envKeys(repoAgents, config.LayerVars(global.Vars, vars))
+	rep.Env = envKeys(layers.Authored(), config.LayerVars(global.Vars, vars))
 
 	// 2. Authored substrate contracts, store-free (doctor runs before indexing).
 	for _, kind := range []string{"workflows", "skills", "principles", "tasks"} {

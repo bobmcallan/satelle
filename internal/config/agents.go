@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,6 +45,60 @@ const WorkspaceAgentsRel = AgentsConfigDir + "/" + WorkspaceAgentsName
 // WorkspaceAgentsPath is where the synced workspace bindings layer lives.
 func WorkspaceAgentsPath(dataDir string) string {
 	return filepath.Join(dataDir, AgentsConfigDir, WorkspaceAgentsName)
+}
+
+// LocalAgentsName is the MACHINE-LOCAL override of agents.toml (sty_5c56143b):
+// the minimal per-machine difference (command paths, profile= into this
+// machine's ~/.satelle catalog) that must never travel with the shared file.
+// The `.local` segment is what keeps it off every sync path (LocalOnlyPath);
+// the managed .gitignore block keeps it out of git. It uses agents.toml's own
+// schema and is the TOP layer of the ladder. Only agents.toml has a local twin —
+// no other substrate file gains one.
+const LocalAgentsName = "agents.local.toml"
+
+// LocalAgentsRel is the data-dir-relative slash path of the machine-local layer.
+const LocalAgentsRel = AgentsConfigDir + "/" + LocalAgentsName
+
+// LocalAgentsPath is where the machine-local agents override lives.
+func LocalAgentsPath(dataDir string) string {
+	return filepath.Join(dataDir, AgentsConfigDir, LocalAgentsName)
+}
+
+// AgentLayers is the authored agents layers read from one data dir: Local (this
+// machine) over Repo (agents.toml) over Workspace (synced bindings). The *Err
+// fields carry a per-layer load failure so a surface that reports each layer
+// separately (doctor) can; a layer that failed to load is the zero layer.
+type AgentLayers struct {
+	Repo, Workspace, Local          AgentsConfig
+	RepoErr, WorkspaceErr, LocalErr error
+}
+
+// LoadAgentLayers is the ONE reader of the authored agents layers: every surface
+// that resolves or validates agents loads them here, so none can drop the local
+// layer. All three are read even when one fails; the returned error joins the
+// per-layer failures (nil when all loaded). An absent file is the zero layer.
+func LoadAgentLayers(dataDir string) (AgentLayers, error) {
+	var l AgentLayers
+	l.Repo, l.RepoErr = LoadAgents(dataDir)
+	l.Workspace, l.WorkspaceErr = LoadWorkspaceAgents(dataDir)
+	l.Local, l.LocalErr = LoadLocalAgents(dataDir)
+	return l, errors.Join(l.RepoErr, l.WorkspaceErr, l.LocalErr)
+}
+
+// Authored folds the repo and local layers into the one view of what this
+// machine's agents.toml says — what a validator judges when full resolution
+// fails, so a seat named only locally is still checked.
+func (l AgentLayers) Authored() AgentsConfig {
+	out := AgentsConfig{Defaults: overlayDefaults(l.Repo.Defaults, l.Local.Defaults), Agents: map[string]AgentBinding{}}
+	out.Executor, _ = overlayBinding(l.Repo.Executor, nil, l.Local.Executor, SourceLocal)
+	out.Reviewer, _ = overlayBinding(l.Repo.Reviewer, nil, l.Local.Reviewer, SourceLocal)
+	for _, layer := range []map[string]AgentBinding{l.Repo.Agents, l.Local.Agents} {
+		for n := range layer {
+			out.Agents[n], _ = overlayBinding(l.Repo.Agents[n], nil, l.Local.Agents[n], SourceLocal)
+		}
+	}
+	out.ModelOrder = layerModelOrder(l.Repo.ModelOrder, l.Local.ModelOrder)
+	return out
 }
 
 // AgentsPath resolves the repo agents layer, preferring the canonical location
@@ -1017,6 +1072,25 @@ func LoadWorkspaceAgents(dataDir string) (AgentsConfig, error) {
 	ac, err := loadAgentsBody(string(b))
 	if err != nil {
 		return AgentsConfig{}, fmt.Errorf("%s: %w", WorkspaceAgentsRel, err)
+	}
+	return ac, nil
+}
+
+// LoadLocalAgents reads the machine-local override (LocalAgentsPath). Absent is
+// the zero config and a nil error, so a machine with no override resolves
+// byte-identically to before; an unreadable or malformed file is an error naming
+// it (sty_5c56143b).
+func LoadLocalAgents(dataDir string) (AgentsConfig, error) {
+	b, err := os.ReadFile(LocalAgentsPath(dataDir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return AgentsConfig{}, nil
+		}
+		return AgentsConfig{}, fmt.Errorf("%s: %w", LocalAgentsRel, err)
+	}
+	ac, err := loadAgentsBody(string(b))
+	if err != nil {
+		return AgentsConfig{}, fmt.Errorf("%s: %w", LocalAgentsRel, err)
 	}
 	return ac, nil
 }

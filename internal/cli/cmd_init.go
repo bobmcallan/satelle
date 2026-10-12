@@ -2184,7 +2184,8 @@ func gitignoreBlockFor(existing string) string {
 # RECOMMENDED defaults — the operator owns .gitignore. .satelle is git-optional
 # overall (continuity is local disk or personal rehydrate). When a team tracks
 # process under .satelle, workflows/agents.toml is intended to be committed
-# (roles workflows name; sty_552d2d87) — it is deliberately NOT listed below.
+# (roles workflows name; sty_552d2d87) — it is deliberately NOT listed below;
+# its machine-local twin, agents.local.toml, is.
 # Execution detail belongs in ~/.satelle/agents.toml; secrets in satelle.local.toml.
 # Continuity is local disk by default; with [sync] <area> = personal the bound
 # hosted project backs that area up and can rehydrate it (push = backup;
@@ -2194,6 +2195,8 @@ func gitignoreBlockFor(existing string) string {
 # to that logs directory and is listed here only when .satelle/ is not already ignored.
 # Sync credentials and cursors live under ~/.config/satelle.
 ` + logsLine + `.satelle/satelle.local.toml
+# this machine's agents override (command paths, profile= into ~/.satelle) never leaves the machine
+.satelle/workflows/agents.local.toml
 # the repo-local pinned binary (satelle update --local) is local state, never committed
 .satelle/satelle
 ` + managedEditExemptGitignore() + gitignoreMarkerEnd + "\n"

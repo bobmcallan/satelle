@@ -217,6 +217,7 @@ func TestExcludedLocalWithholdsDotLocal(t *testing.T) {
 		"skills/secret.local.md",
 		"notes.local.md",
 		"secrets.local/keys.md",
+		"workflows/agents.local.toml", // the machine-local agents override (sty_5c56143b)
 	} {
 		if !ExcludedLocal(p) {
 			t.Errorf("ExcludedLocal(%q) = false, want true", p)
