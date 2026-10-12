@@ -1,3 +1,8 @@
+## [0.0.662] - 2026-10-13
+
+### Changed
+- This completes epic:substrate-lean, the follow-up to epic:substrate-hygiene: a rule every reviewer obeys is stated once, in the embedded `satelle-reviewer-verdict` principle delivered with every judging dispatch (0.0.660), the override-skill test holds authored overrides to that single source (0.0.661), and this repo's authored substrate dropped its own copies and its dead and duplicated references and budgets every dispatched seat and the per-prompt reminder, so `satelle doctor` reports no duplicated guidance, unresolved reference, stale index entry or unbudgeted seat. (sty_c9514d92)
+
 ## [0.0.661] - 2026-10-13
 
 ### Fixed
