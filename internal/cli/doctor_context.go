@@ -34,6 +34,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/agentstep"
+	"github.com/bobmcallan/satelle/internal/condense"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ctxaudit"
 	"github.com/bobmcallan/satelle/internal/docindex"
@@ -92,7 +93,8 @@ func assembleContexts(ctx context.Context, repoRoot, dataDir string) *contextAud
 		a.constitution = ctxaudit.Doc{Kind: "constitution", Name: "constitution", Where: relTo(repoRoot, constPath), Body: constitution}
 	}
 	workflows := doctor.GoverningWorkflows(dataDir)
-	a.env = injectedEnv{Cfg: a.cfg, Docs: a.docs, Workflows: workflows, Constitution: constitution, ConstPath: constPath}
+	rules, _ := condenseRules(dataDir)
+	a.env = injectedEnv{Cfg: a.cfg, Docs: a.docs, Workflows: workflows, Constitution: constitution, ConstPath: constPath, Rules: rules}
 	eff, err := config.LoadEffectiveAgents(dataDir, a.cfg.Vars)
 	a.env.Agents, a.env.AgentsErr = eff.Agents, err
 	a.vars = eff.Vars
@@ -218,6 +220,13 @@ func (a *contextAudit) dispatchFindings(ctx context.Context) health.Findings {
 			continue
 		}
 		tokens, budget, set, over := judgeInjected(r.Bytes, r.Label, inj)
+		if set && condense.Pointered(r.Rungs) {
+			out = append(out, health.Error(health.IDContextDispatchPointered, "Seat context needs read pointers to fit its budget",
+				fmt.Sprintf("%s fits its budget of %d tokens only by replacing resident rules with read pointers (%s); the seat starts without them",
+					r.Label, budget, strings.Join(pointeredNames(r.Rungs), ", "))).
+				About(r.Label).
+				WithRemediation("raise [validate.injected.budget] "+budgetKey(r.Label)+", or shorten the skill this seat is handed"))
+		}
 		switch {
 		case !set:
 			out = append(out, health.Info(health.IDContextDispatchUnbudgeted, "Seat context has no budget",
@@ -232,6 +241,17 @@ func (a *contextAudit) dispatchFindings(ctx context.Context) health.Findings {
 		}
 	}
 	out = append(out, a.reminderFindings()...)
+	return out
+}
+
+// pointeredNames lists the resident documents a fit reduced to a read pointer.
+func pointeredNames(rungs []condense.Rung) []string {
+	var out []string
+	for _, r := range rungs {
+		if r.Rung == condense.RungPointer {
+			out = append(out, r.Name)
+		}
+	}
 	return out
 }
 

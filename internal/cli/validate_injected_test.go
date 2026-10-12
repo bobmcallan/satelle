@@ -43,7 +43,9 @@ func injectedFixture(t *testing.T, agentsTOML string) injectedEnv {
 	pad := func(n int) string { return strings.Repeat("rule text. ", n) }
 	res := func(name string, n int) docindex.Doc {
 		return docindex.Doc{Kind: "principles", Name: name,
-			Body: "---\nname: " + name + "\ntags: [principles:session]\n---\n# " + name + "\n" + pad(n)}
+			// Every sentence holds a negation, a protected token, so the lead rung
+			// keeps all of it: this set stays over the claude limit after the ladder.
+			Body: "---\nname: " + name + "\ntags: [principles:session]\n---\n# " + name + "\n" + strings.Repeat("never skip rule text. ", n/2)}
 	}
 	done, _ := embeddedDefault("workflows", "done")
 	step, _ := embeddedDefault("workflows", "step")
@@ -106,7 +108,7 @@ func TestInjectedDriverRowsAreOnePerHarnessAndMatchTheHookAssembly(t *testing.T)
 	claude, grok := rowFor(t, rows, "driver[claude]"), rowFor(t, rows, "driver[grok]")
 	always := selectAlwaysDocs(mustList(t, env, "principles"))
 	for h, row := range map[string]injectedRow{"claude": claude, "grok": grok} {
-		want, _ := sessionAssembly(env.Constitution, always, env.ConstPath, h, env.Cfg.ContextLimit(h), 0)
+		want, _ := sessionAssembly(env.Constitution, always, env.ConstPath, h, env.Cfg.ContextLimit(h), 0, env.Rules)
 		if row.Bytes != len(want) {
 			t.Errorf("driver[%s] = %d bytes, want the hook's assembly length %d", h, row.Bytes, len(want))
 		}

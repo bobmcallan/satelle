@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -530,32 +529,30 @@ func TestStripFrontmatter(t *testing.T) {
 	}
 }
 
-// diagnosisPrincipleName is the authored session principle. The test copies the
-// repo file; it does not embed a second copy of the prose.
+// diagnosisPrincipleName names the fixture session principle.
 const diagnosisPrincipleName = "satelle-diagnosis-is-hypothesis"
 
 // diagnosisProofPhrase sits in the principle body and not in the description or
 // the first heading, so a compact index line cannot satisfy the assertion.
 const diagnosisProofPhrase = "unproven until discovery proves"
 
-func diagnosisPrincipleFile(t *testing.T) string {
-	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	dir := filepath.Dir(file)
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return filepath.Join(dir, ".satelle", "principles", diagnosisPrincipleName+".md")
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatal("go.mod not found above the test file")
-		}
-		dir = parent
-	}
-}
+// diagnosisPrincipleFixture is a self-contained session-tagged principle. The
+// test builds it in a temp repo; it does not read this repo's gitignored
+// substrate. The proof phrase sits in the body only, never in the description
+// or the first heading.
+const diagnosisPrincipleFixture = `---
+name: satelle-diagnosis-is-hypothesis
+type: principle
+tags: [type:principle, principles:session]
+applies_to: ["*"]
+description: A fixture principle whose body carries a phrase the index line cannot copy.
+---
+
+# satelle-diagnosis-is-hypothesis — a fixture heading
+
+What you perceive about the code is unproven until discovery proves it. Record
+it as intent and evidence.
+`
 
 func diagnosisParts(body string) (desc, heading, prose string) {
 	prose = stripFrontmatter(body)
@@ -582,21 +579,15 @@ func diagnosisParts(body string) (desc, heading, prose string) {
 }
 
 // TestDispatchedSeatInlinesDiagnosisPrinciple: a dispatched seat's system prompt
-// is built from sessionPrinciples after the repo principle is copied into a temp
+// is built from sessionPrinciples after the fixture principle is written into a temp
 // repo and reindexed. sessionPrinciples joins stripped bodies and does not prefix
 // the doc name, so the name has to sit in the body — the heading carries
 // satelle-diagnosis-is-hypothesis. Both sessionPrinciples and the system prompt
 // must contain that name and the body phrase. The phrase is not in the
 // description or the first heading, so an index line cannot satisfy it.
 func TestDispatchedSeatInlinesDiagnosisPrinciple(t *testing.T) {
-	raw, err := os.ReadFile(diagnosisPrincipleFile(t))
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			t.Skip("satelle-diagnosis-is-hypothesis is repo-local substrate (.satelle is gitignored); not present in this checkout")
-		}
-		t.Fatal(err)
-	}
-	body := string(raw)
+	raw := []byte(diagnosisPrincipleFixture)
+	body := diagnosisPrincipleFixture
 	if !strings.Contains(body, "name: "+diagnosisPrincipleName) {
 		t.Fatalf("principle file is not named %s", diagnosisPrincipleName)
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/condense"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/structure"
@@ -35,6 +36,9 @@ type injectedRow struct {
 	Bytes       int
 	Note        string
 	Unavailable string
+	// Rungs is the rung each resident document of a dispatched seat was delivered
+	// at after the budget fit; nil for a row that is not a fitted seat.
+	Rungs []condense.Rung
 }
 
 // injectedEnv is everything the report reads, resolved by the caller so the core
@@ -47,6 +51,9 @@ type injectedEnv struct {
 	ConstPath    string
 	Agents       config.AgentsConfig
 	AgentsErr    error
+	// Rules is how a resident document is condensed to fit (zero: the embedded
+	// defaults). Every size in the report is measured after that fit.
+	Rules condense.Rules
 }
 
 // seatUse is what the route asks one agents.toml section to run: the skills it
@@ -222,10 +229,10 @@ func driverRows(env injectedEnv, always []docindex.Doc) []injectedRow {
 	var rows []injectedRow
 	for _, h := range harnesses {
 		limit := env.Cfg.ContextLimit(h)
-		content, omitted := sessionAssembly(env.Constitution, always, env.ConstPath, h, limit, 0)
+		content, omitted := sessionAssembly(env.Constitution, always, env.ConstPath, h, limit, 0, env.Rules)
 		row := injectedRow{Group: "seat", Label: "driver[" + h + "]", Bytes: len(content)}
 		if len(omitted) > 0 {
-			full, _ := sessionAssembly(env.Constitution, always, env.ConstPath, h, 1<<30, 0)
+			full, _ := sessionAssembly(env.Constitution, always, env.ConstPath, h, 1<<30, 0, env.Rules)
 			row.Note = fmt.Sprintf("limit %d bytes; %d bytes omitted, indexed instead: %s",
 				limit, max(len(full)-len(content), 0), strings.Join(omitted, ", "))
 		} else {
@@ -267,14 +274,28 @@ func dispatchedRows(ctx context.Context, env injectedEnv) []injectedRow {
 			rows = append(rows, row)
 			continue
 		}
-		in := agentstep.SeatPromptInput{Kind: seat.kind, Section: seat.section, Step: seat.step, Workflow: wfgovern.DerivedRouteName}
+		in := agentstep.SeatPromptInput{
+			Kind: seat.kind, Section: seat.section, Step: seat.step, Workflow: wfgovern.DerivedRouteName,
+			Rules: env.Rules, Shell: agentcli.GrantAdmitsShell(binding.Tools),
+		}
 		if binding.InjectsPrinciples() {
 			in.Constitution = strings.TrimSpace(env.Constitution)
-			in.Resident = agentstep.ResidentPrinciples(ctx, env.Docs, binding.ResolvedPrinciples())
+			in.Principles = agentstep.ResidentPrincipleDocs(ctx, env.Docs, binding.ResolvedPrinciples())
+		}
+		// The seat is sized after the fit its dispatch applies, against the same
+		// budget, so the report prints what a dispatch would send.
+		if tokens, ok := env.Cfg.Validate.Injected.BudgetFor(row.Label); ok {
+			in.BudgetBytes = tokens * env.Cfg.Validate.Injected.ResolveBytesPerToken()
 		}
 		name, body := largestSkill(ctx, env.Docs, seat.skills)
 		in.Rubric = body
-		row.Bytes = len(agentstep.SeatSystemPrompt(in))
+		payload, perr := agentstep.SeatPayloadFor(in)
+		if perr != nil {
+			row.Unavailable = seat.section + ": " + perr.Error()
+			rows = append(rows, row)
+			continue
+		}
+		row.Bytes, row.Rungs = len(payload.SystemPrompt), payload.Rungs
 		switch {
 		case name != "":
 			row.Note = "largest skill " + name
@@ -332,7 +353,7 @@ func printInjectedReport(out io.Writer, rows []injectedRow, cfg config.InjectedC
 		tokens := (r.Bytes + bpt - 1) / bpt
 		level, budget := "INFO", "no budget"
 		if b, ok := cfg.BudgetFor(r.Label); ok {
-			budget = fmt.Sprintf("budget %d tokens", b)
+			budget = fmt.Sprintf("within budget %d tokens", b)
 			if tokens > b {
 				level, budget = "WARN", fmt.Sprintf("over budget %d tokens", b)
 			}
@@ -352,9 +373,10 @@ func reportInjected(ctx context.Context, out io.Writer, a *app.App) {
 	applySessionContextFacts(a.Config)
 	workflows, _ := a.Store.DocIndex.List(ctx, "workflows")
 	constPath := a.PlaneConstitution()
+	rules, _ := condenseRules(a.PlaneDir())
 	env := injectedEnv{
 		Cfg: a.Config, Docs: a.Store.DocIndex, Workflows: workflows,
-		Constitution: readConstitution(constPath), ConstPath: constPath,
+		Constitution: readConstitution(constPath), ConstPath: constPath, Rules: rules,
 	}
 	eff, err := config.LoadEffectiveAgents(a.PlaneDir(), a.PlaneConfig().Vars)
 	env.Agents, env.AgentsErr = eff.Agents, err

@@ -137,37 +137,28 @@ type invocation struct {
 	scratch    string // this dispatch's scratch dir; "" → no scratch briefing (sty_e7aaf8b1)
 	judging    bool   // Expect judges: the work item is paths, the briefing says so
 	shell      bool   // the grant admits a shell, so the judging briefing keeps the CLI lines
+	section    string // agents.toml section the seat runs under; names its budget
+	storyID    string // the story the dispatch serves; keys the originals of condensed documents
 }
 
-// promptParts are the pieces of an isolated agent's system prompt. Empty parts
-// are omitted, so a selector of none simply leaves constitution and resident
-// empty.
+// promptParts are the pieces of an isolated agent's system prompt that follow
+// the constitution and the principles (BuildSeatPayload fits those). Empty parts
+// are omitted.
 type promptParts struct {
-	constitution string // project constitution body, trimmed
-	resident     string // resolved principle bodies
-	charter      string // role charter
-	scratch      string // this dispatch's scratch dir
-	rubric       string // the skill body
-	judging      bool   // use the judging briefing instead of the pull-context call to action
-	shell        bool   // judging briefing also names the three CLI lines
+	charter string // role charter
+	scratch string // this dispatch's scratch dir
+	rubric  string // the skill body
+	judging bool   // use the judging briefing instead of the pull-context call to action
+	shell   bool   // judging briefing also names the three CLI lines
 }
 
-// composeSystemPrompt is the ONE canonical assembly order: constitution and
-// principles, role charter, scratch briefing, pull-context call-to-action, skill
-// rubric. Shared by buildRequest and the injected-size report (SeatSystemPrompt),
-// so the number the report prints is the length of what a dispatch sends.
+// composeSystemPrompt is the canonical order of everything after the constitution
+// and principles: role charter, scratch briefing, pull-context call-to-action,
+// skill rubric. BuildSeatPayload puts the fitted constitution and principles in
+// front of it, for buildRequest and the injected-size report alike, so the number
+// the report prints is the length of what a dispatch sends.
 func composeSystemPrompt(p promptParts) string {
 	var b strings.Builder
-	if p.constitution != "" {
-		b.WriteString("# Project constitution\n\n")
-		b.WriteString(p.constitution)
-		b.WriteString("\n\n")
-	}
-	if p.resident != "" {
-		b.WriteString("# Always-resident principles (satelle)\n\n")
-		b.WriteString(p.resident)
-		b.WriteString("\n\n")
-	}
 	if p.charter != "" {
 		b.WriteString(p.charter)
 		b.WriteString("\n\n")
@@ -200,17 +191,30 @@ func composeSystemPrompt(p promptParts) string {
 // grant/model/dir. It is the single insertion point for anything satelle wants
 // EVERY isolated agent to receive.
 func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Request, error) {
-	parts := promptParts{
-		charter: inv.charter, scratch: inv.scratch, rubric: inv.rubric,
-		judging: inv.judging, shell: inv.shell,
+	in := SeatPayloadInput{
+		Charter: inv.charter, Scratch: inv.scratch, Rubric: inv.rubric,
+		Judging: inv.judging, Shell: inv.shell,
 	}
 	// Principles selector (design §5): when not none, constitution rides order-zero
 	// then the selected principles — SessionStart parity (cmd_hook renderAlwaysContent).
 	if inv.principles != "" && inv.principles != config.PrinciplesNone {
-		parts.constitution = strings.TrimSpace(g.constitution)
-		parts.resident = g.resolvePrinciples(ctx, inv.principles)
+		in.Constitution = g.constitution
+		in.Principles = ResidentPrincipleDocs(ctx, g.docs, inv.principles)
+		// The seat's budget fits them (sty_df21b2db). Without a store to keep the
+		// originals behind their markers there is no condensing: the seat gets
+		// them as written, as it did before the budget existed.
+		if tokens, ok := g.injected.BudgetFor(inv.section); ok && inv.section != "" {
+			if off := g.seatOffloader(ctx, inv.storyID); off != nil {
+				in.Section, in.Offload, in.Rules = inv.section, off, g.condenseRules
+				in.BudgetBytes = tokens * g.injected.ResolveBytesPerToken()
+			}
+		}
 	}
-	systemPrompt := composeSystemPrompt(parts)
+	seat, err := BuildSeatPayload(in)
+	if err != nil {
+		return agentcli.Request{}, err
+	}
+	systemPrompt := seat.SystemPrompt
 	payload, err := json.Marshal(inv.payload)
 	if err != nil {
 		return agentcli.Request{}, err
@@ -323,6 +327,8 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		maxTurns:   binding.TurnBudget,
 		settings:   binding.Settings,
 		env:        binding.Env,
+		section:    section,
+		storyID:    req.StoryID,
 	}
 	// Fall back to engine reviewer caches when the binding leaves grant fields
 	// empty (tests that only set g.tools/g.model still work until order:3 deletes
@@ -901,24 +907,12 @@ func (g *Engine) runOnceBusyRaw(ctx context.Context, runner agentcli.Runner, req
 	return text, usage, nil
 }
 
-// resolvePrinciples returns principle bodies for the given selector (design §5.1).
-// session = principles:session-tagged (+ operating principle guarantee);
-// system = embedded docs; project = non-embedded; all = every body; none = empty;
-// comma-list = union (name-sorted, deduped).
-func (g *Engine) resolvePrinciples(ctx context.Context, selector string) string {
-	return ResidentPrinciples(ctx, g.docs, selector)
-}
-
-// ResidentPrinciples is resolvePrinciples over any doc source, exported so the
-// injected-size report measures the exact text a dispatched seat receives rather
-// than a second implementation of the selector.
-func ResidentPrinciples(ctx context.Context, docs DocGetter, selector string) string {
-	return joinPrincipleBodies(ResidentPrincipleDocs(ctx, docs, selector))
-}
-
-// ResidentPrincipleDocs is the set of principle DOCUMENTS ResidentPrinciples
-// joins, in the order a seat receives them — exported so the context audit can
-// name each document a seat is handed rather than only their joined text.
+// ResidentPrincipleDocs returns the principle documents a seat is handed for the
+// given selector (design §5.1), in the order it receives them: session =
+// principles:session-tagged (+ operating principle guarantee); system = embedded
+// docs; project = non-embedded; all = every body; none = empty; comma-list =
+// union (name-sorted, deduped). Exported so the injected-size report and the
+// context audit measure exactly what a dispatch fits and sends.
 func ResidentPrincipleDocs(ctx context.Context, docs DocGetter, selector string) []docindex.Doc {
 	selector = strings.TrimSpace(selector)
 	if selector == "" || selector == config.PrinciplesNone {

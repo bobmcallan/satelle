@@ -422,6 +422,9 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 	// question, out of scope here.
 	rev.SetPriorVerdictsResolver(priorVerdictsResolver())
 	rev.SetMessagesResolver(messagesResolver()) // create-path engine; harmless, never fills a transition payload
+	// The store a seat's condensed documents are kept in (sty_df21b2db): the
+	// rework relay opens its sessions on this engine.
+	rev.SetDiffOffloader(diffOffloader(a))
 	eff, err := requireAgents(a)
 	if err != nil {
 		return nil, nil, err
@@ -747,6 +750,10 @@ func applyAgentGrants(rev *agentstep.Engine, a *app.App, agents config.AgentsCon
 	// principles ≠ none (design §5.3) — SessionStart parity with cmd_hook.
 	if a != nil {
 		rev.SetConstitution(readConstitution(a.PlaneConstitution()))
+		// Each seat's system prompt is fitted to its [validate.injected] budget by
+		// the same condense ladder SessionStart uses (sty_df21b2db).
+		rules, _ := condenseRules(a.PlaneDir())
+		rev.SetInjected(a.Config.Validate.Injected, rules)
 	}
 	// Select the reviewer's agent CLI from the agents-layer command binding
 	// (default claude). An unset/in-loop command keeps the global [agent] cli

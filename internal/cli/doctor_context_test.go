@@ -11,6 +11,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/agentstep"
+	"github.com/bobmcallan/satelle/internal/condense"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/doctor"
 	"github.com/bobmcallan/satelle/internal/health"
@@ -142,6 +143,53 @@ func TestDoctorSeatOverBudgetWarnsAndWithinBudgetIsQuiet(t *testing.T) {
 		if got := mentioning(byID(all, id), "reviewer[claude/command]"); len(got) != 0 {
 			t.Fatalf("a seat within its budget is quiet, got %s %+v", id, got)
 		}
+	}
+}
+
+// A seat whose budget is met only by replacing resident rules with read pointers
+// is an error: the seat would start without rules meant for it (sty_df21b2db).
+// A budget the ladder can meet is quiet, and the report and the audit size the
+// seat from the same dispatchedRows.
+func TestDoctorSeatFittedOnlyByPointersIsAnError(t *testing.T) {
+	f := newCtxFixture(t, "")
+	f.write("workflows/agents.toml", f.claudeAgents())
+
+	rowAt := func(budget int) (injectedRow, health.Findings) {
+		f.write("satelle.toml", "[validate.injected.budget]\nreviewer = "+strconv.Itoa(budget)+"\n")
+		a := assembleContexts(context.Background(), f.repo, f.dataDir)
+		var row injectedRow
+		for _, r := range dispatchedRows(context.Background(), a.env) {
+			if strings.HasPrefix(r.Label, "reviewer[claude/command]") {
+				row = r
+			}
+		}
+		return row, byID(a.dispatchFindings(context.Background()), health.IDContextDispatchPointered)
+	}
+
+	// Find the smallest budget the ladder can meet, then step below it.
+	roomy, quiet := rowAt(1 << 20)
+	if len(quiet) != 0 || condense.Pointered(roomy.Rungs) {
+		t.Fatalf("a roomy budget needs no pointer: %+v %+v", roomy.Rungs, quiet)
+	}
+	full := roomy.Bytes
+	tight, errs := rowAt((full / 4) / 2) // half the full size, in tokens
+	if !condense.Pointered(tight.Rungs) {
+		t.Fatalf("fixture must force the pointer rung, got %+v at %d bytes", tight.Rungs, tight.Bytes)
+	}
+	got := mentioning(errs, "reviewer[claude/command]", "read pointers")
+	if len(got) != 1 || got[0].Severity != health.SeverityError {
+		t.Fatalf("a pointered seat is an ERROR finding, got %+v", errs)
+	}
+	for _, n := range pointeredNames(tight.Rungs) {
+		if !strings.Contains(got[0].Detail, n) {
+			t.Errorf("the finding must name %s: %s", n, got[0].Detail)
+		}
+	}
+
+	// validate and doctor read one number: the row dispatchedRows computes.
+	over := byID(checksFor(f), health.IDContextDispatchOverBudget)
+	if len(over) == 1 && !strings.Contains(over[0].Detail, strconv.Itoa(tight.Bytes)+" bytes") {
+		t.Errorf("doctor and the report must size the seat identically (%d bytes): %s", tight.Bytes, over[0].Detail)
 	}
 }
 

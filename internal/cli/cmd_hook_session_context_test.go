@@ -4,11 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -298,8 +295,7 @@ func TestHookContext_UnwritableRuntimeDirStillEmits(t *testing.T) {
 	}
 }
 
-// diagnosisPrincipleName is the authored session principle. Tests copy the repo
-// file into the temp repo; they do not carry a second copy of its text.
+// diagnosisPrincipleName names the fixture session principle.
 const diagnosisPrincipleName = "satelle-diagnosis-is-hypothesis"
 
 // diagnosisProofPhrase is a sentence fragment that lives in the principle body
@@ -307,33 +303,23 @@ const diagnosisPrincipleName = "satelle-diagnosis-is-hypothesis"
 // copies only those, so an indexed emit cannot contain this phrase.
 const diagnosisProofPhrase = "unproven until discovery proves"
 
-// diagnosisPrincipleBody reads the repo's authored principle. The path is taken
-// from this file, not the process cwd, because session fixtures chdir.
-func diagnosisPrincipleBody(t *testing.T) string {
-	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	dir := filepath.Dir(file)
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			b, err := os.ReadFile(filepath.Join(dir, config.DefaultDataDir, "principles", diagnosisPrincipleName+".md"))
-			if err != nil {
-				if errors.Is(err, fs.ErrNotExist) {
-					t.Skip("satelle-diagnosis-is-hypothesis is repo-local substrate (.satelle is gitignored); not present in this checkout")
-				}
-				t.Fatal(err)
-			}
-			return string(b)
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatal("go.mod not found above the test file")
-		}
-		dir = parent
-	}
-}
+// diagnosisPrincipleFixture is a self-contained session-tagged principle. The
+// tests build it in a temp repo; they do not read this repo's gitignored
+// substrate. The proof phrase sits in the body only, never in the description
+// or the first heading.
+const diagnosisPrincipleFixture = `---
+name: satelle-diagnosis-is-hypothesis
+type: principle
+tags: [type:principle, principles:session]
+applies_to: ["*"]
+description: A fixture principle whose body carries a phrase the index line cannot copy.
+---
+
+# satelle-diagnosis-is-hypothesis — a fixture heading
+
+What you perceive about the code is unproven until discovery proves it. Record
+it as intent and evidence.
+`
 
 // requireDiagnosisProof fails unless the phrase is in the body and absent from
 // the two fields principleIndexLine would copy.
@@ -382,11 +368,11 @@ func diagnosisParts(body string) (desc, heading, prose string) {
 	return desc, heading, prose
 }
 
-// seedDiagnosisPrinciple copies the repo principle into the temp repo and
-// reindexes it, so the hook reads the same bytes the repo authors.
+// seedDiagnosisPrinciple writes the fixture principle into the temp repo and
+// reindexes it.
 func seedDiagnosisPrinciple(t *testing.T, repo string) {
 	t.Helper()
-	body := diagnosisPrincipleBody(t)
+	body := diagnosisPrincipleFixture
 	requireDiagnosisProof(t, body)
 	dir := filepath.Join(repo, config.DefaultDataDir, "principles")
 	if err := os.MkdirAll(dir, 0o755); err != nil {

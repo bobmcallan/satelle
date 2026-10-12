@@ -8,6 +8,8 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/retrieve"
 	"github.com/bobmcallan/satelle/internal/reviewscore"
 	"github.com/bobmcallan/satelle/internal/verb"
 )
@@ -49,6 +51,45 @@ func TestJudgeCaseCorpusCaseSendsTheDiffAndReturnsTheVerdict(t *testing.T) {
 	}
 	if res.Usage.Available || !strings.Contains(res.Usage.Reason, "unavailable") {
 		t.Errorf("a stub that reports no usage must say so, got %+v", res.Usage)
+	}
+}
+
+// The scored seat is fitted exactly as a dispatched one: the arm judged under a
+// token budget receives its resident principles condensed, the arm with the
+// ladder off receives them as written (sty_df21b2db AC5).
+func TestJudgeCaseFitsTheSeatPromptToItsBudget(t *testing.T) {
+	principles := []docindex.Doc{seatPrinciple(config.OperatingPrinciple, 12), seatPrinciple("p-two", 10)}
+	run := func(inj config.InjectedConfig) string {
+		r := &fakeRunner{out: `{"decision":"accept","notes":"ok"}`}
+		j, err := NewCaseJudge(CaseJudgeOptions{
+			Root:    t.TempDir(),
+			Binding: "reviewer",
+			Docs:    fakeDocs{skillFound: true, skillBody: "rubric", extraPrinciples: principles},
+			Resolve: func(name string) (config.AgentBinding, bool) {
+				return config.AgentBinding{Role: "reviewer", Command: "fake -p --append-system-prompt {system}"}, name == "reviewer"
+			},
+			NewRunner: func(string, string) (agentcli.Runner, error) { return r, nil },
+			Injected:  inj,
+			Offload:   func(_ context.Context, _ string, c []byte) (string, error) { return retrieve.Hash(c), nil },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := j.Judge(context.Background(), reviewscore.Case{
+			ID: "c1", Skill: "satelle-code-ac-review", StoryID: "sty_c1", Diff: "+x\n", ExpectedVerdict: reviewscore.VerdictAccept,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return r.got.SystemPrompt
+	}
+	full := run(config.InjectedConfig{})
+	if strings.Contains(full, "Retrieve more") {
+		t.Fatalf("the ladder-off arm must receive every principle as written")
+	}
+	budget := len(full) - 1200
+	fitted := run(config.InjectedConfig{BytesPerToken: 1, Budget: map[string]int{"reviewer": budget}})
+	if len(fitted) > budget || !strings.Contains(fitted, "Retrieve more") {
+		t.Errorf("the budgeted arm must be condensed within %d bytes, got %d:\n%s", budget, len(fitted), fitted)
 	}
 }
 

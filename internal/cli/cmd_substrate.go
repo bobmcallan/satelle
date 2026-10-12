@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/app"
@@ -35,6 +36,7 @@ over the binary's sparse embedded defaults.
   satelle substrate list --effective   provenance default|edited|authored
   satelle substrate edit <kind> <name> materialize a default for editing
   satelle substrate prune              remove unedited seed copies (dry-run default)
+  satelle substrate condense           the rules a resident document is condensed by
 
 See decision-substrate-planes-local-first.`,
 	}
@@ -110,7 +112,31 @@ is why this cannot quietly discard your work.`,
 	}
 	pruneCmd.Flags().BoolVar(&yes, "yes", false, "actually remove files (default is dry-run)")
 
-	root.AddCommand(listCmd, editCmd, pruneCmd)
+	condenseCmd := &cobra.Command{
+		Use:   "condense",
+		Short: "Print the rules a resident document is condensed by (embedded defaults + repo override)",
+		Long: `Print the effective condense rules as TOML: the binary's embedded defaults with
+<data dir>/config/condense.toml laid over them, key by key.
+
+These rules decide how a resident document is fitted when its context has a size
+budget: the ladder, the filler dropped, the tokens never edited, where a clause
+or a sentence ends. Read-only; the authored documents are never changed.`,
+		Args:        cobra.NoArgs,
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := appFrom(cmd)
+			if err != nil {
+				return err
+			}
+			rules, rerr := condenseRules(a.DataDir)
+			if rerr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "satelle: %s does not parse, showing the embedded rules: %v\n", config.CondenseOverrideRel, rerr)
+			}
+			return toml.NewEncoder(cmd.OutOrStdout()).Encode(rules)
+		},
+	}
+
+	root.AddCommand(listCmd, editCmd, pruneCmd, condenseCmd)
 	register(root)
 }
 

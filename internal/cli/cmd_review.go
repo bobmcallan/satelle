@@ -31,10 +31,14 @@ var newReviewJudge = func(cmd *cobra.Command, binding string) (reviewscore.Judge
 	if err != nil {
 		return nil, "", err
 	}
+	rules, _ := condenseRules(a.PlaneDir())
 	j, err := agentstep.NewCaseJudge(agentstep.CaseJudgeOptions{
-		Root:    a.RepoRoot,
-		Binding: binding,
-		Docs:    a.Store.DocIndex,
+		Root:     a.RepoRoot,
+		Binding:  binding,
+		Docs:     a.Store.DocIndex,
+		Injected: scoreInjected(a.Config.Validate.Injected, binding, scoreSeatBudget),
+		Rules:    rules,
+		Offload:  diffOffloader(a),
 		Resolve: func(name string) (config.AgentBinding, bool) {
 			b, ok := eff.Agents.RawBinding(name)
 			if !ok {
@@ -47,6 +51,34 @@ var newReviewJudge = func(cmd *cobra.Command, binding string) (reviewscore.Judge
 		return nil, "", err
 	}
 	return j, j.Adapter(), nil
+}
+
+// scoreSeatBudget is `review score --seat-budget`: -1 judges the seat under the
+// repo's own [validate.injected.budget], 0 with the ladder off (every resident
+// document in full), N under a budget of N tokens.
+var scoreSeatBudget = -1
+
+// scoreInjected is the injected config a scored seat runs under for the flag.
+func scoreInjected(repo config.InjectedConfig, binding string, flag int) config.InjectedConfig {
+	switch {
+	case flag < 0:
+		return repo
+	case flag == 0:
+		return config.InjectedConfig{}
+	}
+	return config.InjectedConfig{BytesPerToken: repo.BytesPerToken, Budget: map[string]int{binding: flag}}
+}
+
+// scoreArm labels a score report with the seat budget it was judged under, so a
+// comparison of two runs of one binding says which is which.
+func scoreArm(binding string, flag int) string {
+	switch {
+	case flag < 0:
+		return binding
+	case flag == 0:
+		return binding + " [ladder off]"
+	}
+	return fmt.Sprintf("%s [%d-token budget]", binding, flag)
 }
 
 func init() {
@@ -104,7 +136,7 @@ and workers default to 1.`,
 				return err
 			}
 			rep := reviewscore.Score(cmd.Context(), cases, judge, reviewscore.Options{
-				Binding: sBinding, Adapter: adapter, Runs: sRuns, Workers: sWorkers,
+				Binding: scoreArm(sBinding, scoreSeatBudget), Adapter: adapter, Runs: sRuns, Workers: sWorkers,
 			})
 			out := sOut
 			if out == "" {
@@ -124,6 +156,7 @@ and workers default to 1.`,
 	score.Flags().StringVar(&sOut, "out", "", "JSON report path (default: a file under the OS temp dir)")
 	score.Flags().IntVar(&sRuns, "runs", 1, "times each case is judged")
 	score.Flags().IntVar(&sWorkers, "workers", 1, "concurrent judgements")
+	score.Flags().IntVar(&scoreSeatBudget, "seat-budget", -1, "token budget the judging seat's prompt is fitted to: -1 the repo's [validate.injected.budget], 0 ladder off (every resident document in full)")
 
 	var cLedger, cExpect, cOut, cRubric, cPatch string
 	var cNoPatch bool

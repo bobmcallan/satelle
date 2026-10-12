@@ -46,6 +46,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/compact"
+	"github.com/bobmcallan/satelle/internal/condense"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/placement"
@@ -269,6 +270,13 @@ type Engine struct {
 	// the step's own and the allocated binding's. The zero value is "unset" — the
 	// binary ships no number.
 	defaultBudget config.Budget
+	// injected is the repo's [validate.injected] table: the per-seat budget, in
+	// estimated tokens, a dispatched seat's system prompt is fitted to
+	// (sty_df21b2db). Zero value: no budget, every resident document in full.
+	injected config.InjectedConfig
+	// condenseRules is how a resident document is condensed to fit that budget;
+	// zero means the embedded defaults.
+	condenseRules condense.Rules
 	// cloudPoll / cloudDefaultDeadline pace and bound the wait for a cloud
 	// performer's pushed branch (sty_82cffd60): the poll interval, and the
 	// deadline a cloud binding gets when it sets no timeout. Tests shorten both.
@@ -278,6 +286,12 @@ type Engine struct {
 
 // SetDefaultBudget wires the repo's [defaults] spend bounds.
 func (g *Engine) SetDefaultBudget(b config.Budget) { g.defaultBudget = b }
+
+// SetInjected wires the repo's [validate.injected] table, whose per-seat budget a
+// dispatched seat's system prompt is fitted to, and the rules it is condensed by.
+func (g *Engine) SetInjected(cfg config.InjectedConfig, rules condense.Rules) {
+	g.injected, g.condenseRules = cfg, rules
+}
 
 // SetLeftoverRule wires the repo's leftover-sweep configuration
 // (sty_e7aaf8b1). Unset (the zero value) disables the sweep.
@@ -2473,6 +2487,8 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 		env:        binding.Env,
 		principles: binding.ResolvedPrinciples(),
 		scratch:    scratchDir,
+		section:    name,
+		storyID:    item.ID,
 	})
 	if err != nil {
 		finishScratch(scratchDir, false)

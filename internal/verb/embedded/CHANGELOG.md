@@ -1,3 +1,16 @@
+## [0.0.653] - 2026-10-12
+
+### Added
+- **Every agent satelle starts receives all of its resident context within its harness budget.** Context is fitted when it is assembled, along a configured ladder (full → filler-dropped → lead → pointer): the lead rung keeps headings, code, each paragraph's and list item's first sentence and the whole clause around every protected token. A condensed body carries a `satelle retrieve` marker that returns the authored text byte for byte, so the authored constitution, principles and skills stay as long and readable as their authors write them. The SessionStart render and every dispatched seat's payload go through one shared fit (`internal/condense`); a seat's budget is `[validate.injected.budget]` in estimated tokens, and `satelle validate` and `satelle doctor` report the fitted size. A budgeted seat that still needs the pointer rung is the error finding `context.dispatch.pointered`. (sty_df21b2db)
+- **The condensing rules are configuration.** The embedded `condense.toml` (drop phrases, protected patterns, clause delimiters, sentence terminators, sentence exceptions and ladder order) can be overridden per repo under `.satelle/config/condense.toml`; Go recognises only markdown structure. `satelle substrate condense` shows what the ladder does to a document. (sty_df21b2db)
+- **`satelle review score --seat-budget <tokens>`** scores a reviewer binding with a chosen seat budget (`0` turns the ladder off, `-1` uses the repo's budget), so condensed and full prompts can be compared with `satelle review compare`. (sty_df21b2db)
+- **`satelle-substrate-simplify-audit`**, an embedded proposal-only skill with the task `tsk_substrate-simplify-audit`, proposes terse rewrites of the constitution, principles, skills and workflows under the condensing rules and never applies them. (sty_df21b2db)
+
+## [serve-v0.0.154] - 2026-10-12
+
+### Changed
+- The service binary carries the shared context-fitting package used by the SessionStart hook and dispatched seats. (sty_df21b2db)
+
 ## [0.0.652] - 2026-10-12
 
 ### Added

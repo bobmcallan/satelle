@@ -117,6 +117,7 @@ const (
 	IDContextSessionOverflow     = "context.session.overflow"     // SessionStart context omits documents to read pointers under a harness limit
 	IDContextSessionUnavailable  = "context.session.unavailable"  // a bound harness's SessionStart context cannot be rendered
 	IDContextDispatchOverBudget  = "context.dispatch.over_budget" // a dispatched seat or reminder exceeds its configured budget
+	IDContextDispatchPointered   = "context.dispatch.pointered"   // a budgeted seat fits only by replacing resident rules with read pointers
 	IDContextDispatchUnbudgeted  = "context.dispatch.unbudgeted"  // a dispatched seat or reminder has no configured budget
 	IDContextDispatchUnavailable = "context.dispatch.unavailable" // a seat's context cannot be sized
 	IDContextDuplicateVerbatim   = "context.duplicate.verbatim"   // a passage is copied word-for-word between two documents

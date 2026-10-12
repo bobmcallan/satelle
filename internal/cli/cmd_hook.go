@@ -38,6 +38,8 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/compact"
+	"github.com/bobmcallan/satelle/internal/condense"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/docstory"
@@ -2517,7 +2519,15 @@ func assembleSessionContext(a *app.App, harness string, limit int, unit string) 
 	if overhead < 0 {
 		overhead = 0
 	}
-	content, omitted := sessionAssemblyUnit(constitution, always, constPath, harness, limit, overhead, unit)
+	rules, rerr := condenseRules(a.PlaneDir())
+	if rerr != nil {
+		fmt.Fprintf(os.Stderr, "satelle hook context: %s — %v\n", config.CondenseOverrideRel, rerr)
+	}
+	var off compact.Offloader
+	if a.Store.Retrieve != nil {
+		off = retrieveAdapter{ctx: context.Background(), store: a.Store.Retrieve}
+	}
+	content, omitted := sessionAssemblyUnit(constitution, always, constPath, harness, limit, overhead, unit, rules, off)
 	content = wrap(content)
 	return content, omitted
 }
@@ -2610,16 +2620,18 @@ func contextUnitName(unit string) string {
 // the volatile lines around it (web probe, drift advisories, seat block) will
 // add; `satelle validate` passes 0 to size the stable part, so the hook and the
 // report cannot disagree about what a harness receives.
-func sessionAssembly(constitution string, always []docindex.Doc, constPath, harness string, limit, overhead int) (string, []string) {
-	return sessionAssemblyUnit(constitution, always, constPath, harness, limit, overhead, "bytes")
+func sessionAssembly(constitution string, always []docindex.Doc, constPath, harness string, limit, overhead int, rules condense.Rules) (string, []string) {
+	return sessionAssemblyUnit(constitution, always, constPath, harness, limit, overhead, "bytes", rules, nil)
 }
 
 // sessionAssemblyUnit is sessionAssembly with an explicit budget unit. "bytes"
 // keeps the existing len path; "characters" counts runes. validate and the
-// SessionStart path stay on bytes.
-func sessionAssemblyUnit(constitution string, always []docindex.Doc, constPath, harness string, limit, overhead int, unit string) (string, []string) {
+// SessionStart path stay on bytes. off keeps the originals of condensed bodies;
+// nil sizes the render without storing anything (validate and doctor).
+func sessionAssemblyUnit(constitution string, always []docindex.Doc, constPath, harness string, limit, overhead int, unit string, rules condense.Rules, off compact.Offloader) (string, []string) {
 	return renderAlwaysContent(constitution, always, alwaysRender{
 		Budget: limit - overhead, Harness: harness, ConstitutionPath: constPath, Unit: unit,
+		Rules: rules, Offload: off,
 	})
 }
 
@@ -2798,6 +2810,11 @@ type alwaysRender struct {
 	// path, unchanged. "characters" or "runes" uses utf8.RuneCountInString for a
 	// tool-event clip. The omit header names this unit.
 	Unit string
+	// Rules is how a body that does not fit is condensed. Zero means the embedded
+	// defaults. Offload is where the originals of condensed bodies are kept; nil
+	// sizes the markers without storing anything (an estimate, not a delivery).
+	Rules   condense.Rules
+	Offload compact.Offloader
 }
 
 func (r alwaysRender) measure() func(string) int {
@@ -2840,134 +2857,75 @@ func principleIndexLine(d docindex.Doc) string {
 
 // renderAlwaysContent assembles the bounded injection body + the standing index
 // instruction. The project constitution (when present) rides FIRST as order-zero
-// context, then the session-resident principles, each in full while the budget
-// holds. A body that does not fit is never silently cut: it is replaced by an
-// index line carrying its pull command, under a directive that tells the agent
-// what was omitted for which harness limit and to read it before working
-// (sty_ce1a2733). Returns the content and the names omitted (nil when all fit;
-// "constitution" when the constitution itself was indexed). The instruction is
-// present whenever it fits, so the pull-on-reference discipline is taught
-// from day one. A clip tighter than the chrome keeps the omit header's read
-// instruction and as many index lines as fit, and never cuts a body.
+// context, then the session-resident principles. What fits in full is delivered
+// in full; the rest is stepped down the condense ladder (condense.Fit owns it),
+// each condensed body carrying a marker that retrieves the original. Only a set
+// that cannot fit even condensed falls to index lines carrying their pull
+// command, under a directive that tells the agent what was omitted for which
+// harness limit and to read it before working (sty_ce1a2733). Returns the content
+// and the names omitted to a pointer (nil when none; "constitution" when the
+// constitution itself was indexed). The instruction is present whenever it fits,
+// so the pull-on-reference discipline is taught from day one.
 func renderAlwaysContent(constitution string, docs []docindex.Doc, r alwaysRender) (string, []string) {
-	const principlesHeading = "# Always-resident principles (satelle)\n\n"
-	measure := r.measure()
-	type entry struct{ name, full, index string }
-	var entries []entry
+	var items []condense.Item
+	consPath := r.ConstitutionPath
+	if consPath == "" {
+		consPath = ".satelle/constitution.md"
+	}
+	if constitution != "" {
+		// What a marker retrieves is the authored file, frontmatter and all.
+		raw, _ := os.ReadFile(r.ConstitutionPath)
+		items = append(items, condense.Item{
+			Name: "constitution", Heading: "# Project constitution", Body: constitution, Original: string(raw),
+			Pointer: "- `constitution` — the project constitution — read: the file `" + consPath + "`",
+		})
+	}
 	for _, d := range docs {
 		body := strings.TrimSpace(stripFrontmatter(d.Body))
 		if body == "" {
 			continue
 		}
-		entries = append(entries, entry{d.Name, "### " + d.Name + "\n\n" + body, principleIndexLine(d)})
+		items = append(items, condense.Item{
+			Name: d.Name, Group: "# Always-resident principles (satelle)", Heading: "### " + d.Name,
+			Body: body, Original: d.Body, Pointer: principleIndexLine(d),
+		})
 	}
-	consPath := r.ConstitutionPath
-	if consPath == "" {
-		consPath = ".satelle/constitution.md"
+	rules := r.Rules
+	if rules.Unset() {
+		rules, _ = condenseRules("")
 	}
-	consFull := "# Project constitution\n\n" + constitution
-	consIndex := "- `constitution` — the project constitution — read: the file `" + consPath + "`"
-
-	// Everything in full, when it fits. The byte path measures with len; a
-	// tool-event clip measures with runes. The choice is the unit, not a second renderer.
-	total := measure(alwaysIndexInstruction)
-	if constitution != "" {
-		total += measure(consFull) + 2
+	frame := condense.Frame{
+		PointerHeader: "OMITTED FOR THE " + strings.ToUpper(r.Harness) + " CONTEXT LIMIT (" + strconv.Itoa(r.Budget) +
+			" " + r.unitName() + "): the following are not inlined — read each now with the command shown, before doing any work.",
+		Trailer: alwaysIndexInstruction,
 	}
-	if len(entries) > 0 {
-		total += measure(principlesHeading)
-		for _, e := range entries {
-			total += measure(e.full) + 2
+	out, rungs, err := condense.Fit(items, frame, max(r.Budget, 1), r.measure(), rules, r.Offload)
+	if err != nil {
+		return "", nil
+	}
+	var omitted []string
+	for _, rg := range rungs {
+		if rg.Rung == condense.RungPointer {
+			omitted = append(omitted, rg.Name)
 		}
-	}
-	all := total <= r.Budget
-
-	header := "OMITTED FOR THE " + strings.ToUpper(r.Harness) + " CONTEXT LIMIT (" + strconv.Itoa(r.Budget) +
-		" " + r.unitName() + "): the following are not inlined — read each now with the command shown, before doing any work."
-	// Reserve the fixed parts and every index line not yet decided; a body goes
-	// in full only if the remainder still fits with the rest indexed.
-	reserve := measure(alwaysIndexInstruction) + measure(header) + measure(principlesHeading) + 8
-	if constitution != "" {
-		reserve += measure(consIndex) + 1
-	}
-	for _, e := range entries {
-		reserve += measure(e.index) + 1
-	}
-	used := 0
-	fits := func(full, index string) bool {
-		return all || used+measure(full)+2+reserve-measure(index)-1 <= r.Budget
-	}
-	var omitted, parts, idx []string
-	var b strings.Builder
-	if constitution != "" {
-		if fits(consFull, consIndex) {
-			b.WriteString(consFull + "\n\n")
-			used += measure(consFull) + 2
-			reserve -= measure(consIndex) + 1
-		} else {
-			idx = append(idx, consIndex)
-			omitted = append(omitted, "constitution")
-		}
-	}
-	for _, e := range entries {
-		if fits(e.full, e.index) {
-			parts = append(parts, e.full)
-			used += measure(e.full) + 2
-			reserve -= measure(e.index) + 1
-		} else {
-			idx = append(idx, e.index)
-			omitted = append(omitted, e.name)
-		}
-	}
-	if len(parts) > 0 {
-		b.WriteString(principlesHeading)
-		b.WriteString(strings.Join(parts, "\n\n"))
-		b.WriteString("\n\n")
-	}
-	if len(idx) > 0 {
-		b.WriteString(header + "\n")
-		b.WriteString(strings.Join(idx, "\n"))
-		b.WriteString("\n\n")
-	}
-	b.WriteString(alwaysIndexInstruction)
-	out := b.String()
-	// A clip tighter than the fixed chrome (header + standing instruction +
-	// index lines) cannot hold that form. Recompose from whole lines so the
-	// result stays inside the budget without cutting a principle body. The
-	// SessionStart byte path does not hit this: its budgets fit the chrome.
-	if r.Budget > 0 && measure(out) > r.Budget {
-		out = composeWithinContextBudget(header, idx, alwaysIndexInstruction, r.Budget, measure)
 	}
 	return out, omitted
 }
 
-// composeWithinContextBudget keeps the omit header (it names the unit and the
-// read instruction) and as many index lines as fit, then the standing
-// instruction if room remains. It never slices a line.
-func composeWithinContextBudget(header string, idx []string, instruction string, budget int, measure func(string) int) string {
-	var lines []string
-	used := 0
-	add := func(line string, sep int) bool {
-		n := measure(line) + sep
-		if used+n > budget {
-			return false
-		}
-		lines = append(lines, line)
-		used += n
-		return true
+// condenseRules resolves the condense rules for a repo: the embedded defaults
+// with <dataDir>/config/condense.toml laid over them. A repo override that does
+// not parse yields the embedded rules and the error, so a typo costs the
+// override and never the context.
+func condenseRules(dataDir string) (condense.Rules, error) {
+	rules, err := condense.ParseRules(config.EmbeddedCondense(), config.CondenseOverride(dataDir))
+	if err == nil {
+		return rules, nil
 	}
-	if header != "" {
-		add(header, 1)
+	embedded, eerr := condense.ParseRules(config.EmbeddedCondense())
+	if eerr != nil {
+		return condense.Rules{}, eerr
 	}
-	for _, line := range idx {
-		if !add(line, 1) {
-			break
-		}
-	}
-	if instruction != "" && used+measure(instruction)+1 <= budget {
-		lines = append(lines, instruction)
-	}
-	return strings.Join(lines, "\n")
+	return embedded, err
 }
 
 // readConstitution returns the project constitution body (frontmatter stripped),

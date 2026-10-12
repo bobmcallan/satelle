@@ -13,6 +13,9 @@ the single exported regex `retrieve.MarkerRE` (`internal/retrieve/marker.go`):
 
 - an inline marker: `<<ccr:HASH>>`
 - a summary line: `[N lines compressed to M. Retrieve more: satelle retrieve HASH]`
+- a condensed-document line: `[Retrieve more: satelle retrieve HASH]`, which a
+  resident principle carries when its context had a size budget and it was
+  delivered condensed; the stored bytes are the authored file
 
 `HASH` is always 24 lowercase hex characters — the first 24 hex characters of
 the content's sha256 digest (`retrieve.Hash`). `retrieve.FindHashes(s)` returns

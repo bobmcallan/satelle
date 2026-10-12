@@ -265,7 +265,8 @@ func (f fsDocs) Get(ctx context.Context, kind, name string) (docindex.Doc, error
 func renderSessionContext(dataDir string, h harnessBinding) (string, []string) {
 	docs, _ := fsDocs{dataDir}.List(context.Background(), "principles")
 	constPath := filepath.Join(dataDir, config.DefaultConstitutionName)
-	return sessionAssemblyUnit(readConstitution(constPath), selectAlwaysDocs(docs), constPath, h.Name, h.Limit, 0, h.Unit)
+	rules, _ := condenseRules(dataDir)
+	return sessionAssemblyUnit(readConstitution(constPath), selectAlwaysDocs(docs), constPath, h.Name, h.Limit, 0, h.Unit, rules, nil)
 }
 
 // measureContext is the size of content in the unit its harness counts in.
