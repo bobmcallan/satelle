@@ -63,6 +63,13 @@ type seatUse struct {
 	kind    agentstep.SeatKind
 	step    string
 	skills  []string
+	judges  bool // the section serves a gate step, so its dispatch judges and is handed the verdict rules
+}
+
+// gate marks the seat as serving a gate step and returns it.
+func (s *seatUse) gate() *seatUse {
+	s.judges = true
+	return s
 }
 
 func (s *seatUse) add(skill string) {
@@ -112,7 +119,7 @@ func routeSeats(workflows []docindex.Doc) []*seatUse {
 				case "executor", "planner", "coder":
 					continue
 				}
-				get(st.Agent, agentstep.SeatReviewer, st.On[0]).add(st.Skill)
+				get(st.Agent, agentstep.SeatReviewer, st.On[0]).gate().add(st.Skill)
 			case st.Agent != "" && st.Agent != "executor" && st.Agent != config.RoleReviewer:
 				get(st.Agent, agentstep.SeatPerformer, st.Name).add(st.Skill)
 			}
@@ -123,7 +130,7 @@ func routeSeats(workflows []docindex.Doc) []*seatUse {
 				skills = []string{tr.Skill}
 			}
 			for _, sk := range skills {
-				get(tr.Agent, agentstep.SeatReviewer, tr.To).add(sk)
+				get(tr.Agent, agentstep.SeatReviewer, tr.To).gate().add(sk)
 			}
 		}
 		for _, r := range d.Reworks {
@@ -277,6 +284,10 @@ func dispatchedRows(ctx context.Context, env injectedEnv) []injectedRow {
 		in := agentstep.SeatPromptInput{
 			Kind: seat.kind, Section: seat.section, Step: seat.step, Workflow: wfgovern.DerivedRouteName,
 			Rules: env.Rules, Shell: agentcli.GrantAdmitsShell(binding.Tools),
+			Judging: seat.judges,
+		}
+		if seat.judges {
+			in.Verdict = agentstep.ReviewerVerdictDoc(ctx, env.Docs)
 		}
 		if binding.InjectsPrinciples() {
 			in.Constitution = strings.TrimSpace(env.Constitution)

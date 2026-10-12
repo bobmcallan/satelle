@@ -1,3 +1,14 @@
+## [0.0.660] - 2026-10-13
+
+### Changed
+- **Every gate reviewer receives the verdict rules from one embedded principle, `satelle-reviewer-verdict`.** The re-presented-edge (quotation) rules and the rule that every verdict sets `reviewed` were restated verbatim in eleven embedded reviewer skills; they now live once and are appended to every judging dispatch, single-gate and bundled, after the judging briefing and before the rubric. Non-judging dispatches (performers, consultants, the always-on summary seats) do not receive it. Each skill keeps its own verdict JSON shape and points at the principle. A repo overrides the rules by authoring its own principle of the same name. On the review corpus the verdicts are unchanged (recall 5/6, false blockers 1/6, escapes 0/6 before and after). (sty_79df1e7e)
+- The injected-size estimate (`satelle validate`) and `satelle doctor`'s seat audit add the shared verdict rules only to seats that judge, keyed on judging rather than seat kind, so both report what a dispatch actually sends. (sty_79df1e7e)
+
+## [serve-v0.0.158] - 2026-10-13
+
+### Changed
+- The service binary carries the shared reviewer verdict rules and the judging-keyed seat prompt composition. (sty_79df1e7e)
+
 ## [0.0.659] - 2026-10-13
 
 ### Added

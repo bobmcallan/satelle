@@ -169,14 +169,14 @@ func TestSeatPayloadUsesFit(t *testing.T) {
 
 func TestSeatPayloadFallsToPointersOnlyPastTheLadder(t *testing.T) {
 	_, _, principles := seatEngine(t, 0)
-	got, err := SeatPayloadFor(SeatPromptInput{Kind: SeatReviewer, Section: "reviewer", Principles: principles, Rubric: "RUBRIC", BudgetBytes: 1300})
+	got, err := SeatPayloadFor(SeatPromptInput{Kind: SeatReviewer, Judging: true, Section: "reviewer", Principles: principles, Rubric: "RUBRIC", BudgetBytes: 1300})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !condense.Pointered(got.Rungs) {
 		t.Errorf("a budget no condensed body can meet falls to pointers, got %v", got.Rungs)
 	}
-	roomy, err := SeatPayloadFor(SeatPromptInput{Kind: SeatReviewer, Section: "reviewer", Principles: principles, Rubric: "RUBRIC", BudgetBytes: 6500})
+	roomy, err := SeatPayloadFor(SeatPromptInput{Kind: SeatReviewer, Judging: true, Section: "reviewer", Principles: principles, Rubric: "RUBRIC", BudgetBytes: 6500})
 	if err != nil {
 		t.Fatal(err)
 	}

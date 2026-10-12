@@ -35,6 +35,13 @@ var substrateFS embed.FS
 // (.satelle/principles).
 const OperatingPrinciple = "satelle-agent-goals"
 
+// ReviewerVerdictPrinciple is the on-demand principle holding the verdict rules
+// every judging reviewer obeys (the re-presented-edge rules and the rule that
+// every verdict sets `reviewed`). A judging dispatch is handed it once, in place
+// of each reviewer skill restating it; a repo overrides it by authoring
+// .satelle/principles/<this name>.md.
+const ReviewerVerdictPrinciple = "satelle-reviewer-verdict"
+
 // EmbeddedDefault is one canonical default artifact carried in the binary.
 type EmbeddedDefault struct {
 	Kind string // workflows | principles | skills | tasks (the substrate subdir)

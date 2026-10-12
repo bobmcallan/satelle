@@ -149,6 +149,16 @@ func (a *contextAudit) seatContexts(ctx context.Context) []ctxaudit.Context {
 				c.Parts = append(c.Parts, a.constitution)
 			}
 			for _, d := range agentstep.ResidentPrincipleDocs(ctx, a.docs, binding.ResolvedPrinciples()) {
+				if seat.judges && d.Name == config.ReviewerVerdictPrinciple {
+					continue // delivered once below, as the dispatch composes it
+				}
+				c.Parts = append(c.Parts, a.toDoc(d))
+			}
+		}
+		// A judging seat is handed the shared verdict rules once, as its dispatch
+		// composes them, so the audit sees them where the skills no longer restate them.
+		if seat.judges && agentstep.ReviewerVerdictDoc(ctx, a.docs) != "" {
+			if d, err := a.docs.Get(ctx, "principles", config.ReviewerVerdictPrinciple); err == nil {
 				c.Parts = append(c.Parts, a.toDoc(d))
 			}
 		}

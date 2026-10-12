@@ -150,6 +150,7 @@ type promptParts struct {
 	rubric  string // the skill body
 	judging bool   // use the judging briefing instead of the pull-context call to action
 	shell   bool   // judging briefing also names the three CLI lines
+	verdict string // the shared verdict rules (ReviewerVerdictDoc); written only when judging
 }
 
 // composeSystemPrompt is the canonical order of everything after the constitution
@@ -175,6 +176,12 @@ func composeSystemPrompt(p promptParts) string {
 	// summariser (SeatSystemPrompt leaves judging unset).
 	if p.judging {
 		b.WriteString(judgingContextBriefing(p.shell))
+		// The verdict rules every judging reviewer obeys ride once, ahead of the
+		// rubric that owns only its own verdict shape.
+		if v := strings.TrimSpace(p.verdict); v != "" {
+			b.WriteString("\n\n")
+			b.WriteString(v)
+		}
 	} else {
 		b.WriteString(pullContextCallToAction)
 	}
@@ -194,6 +201,9 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 	in := SeatPayloadInput{
 		Charter: inv.charter, Scratch: inv.scratch, Rubric: inv.rubric,
 		Judging: inv.judging, Shell: inv.shell,
+	}
+	if inv.judging {
+		in.Verdict = ReviewerVerdictDoc(ctx, g.docs)
 	}
 	// Principles selector (design §5): when not none, constitution rides order-zero
 	// then the selected principles — SessionStart parity (cmd_hook renderAlwaysContent).
@@ -983,6 +993,23 @@ func ResidentPrincipleDocs(ctx context.Context, docs DocGetter, selector string)
 	}
 	sort.Slice(picked, func(i, j int) bool { return picked[i].Name < picked[j].Name })
 	return picked
+}
+
+// ReviewerVerdictDoc returns the body of the shared reviewer-verdict principle
+// (config.ReviewerVerdictPrinciple) with its frontmatter stripped: the rules every
+// judging dispatch is handed once, in place of each reviewer skill restating them.
+// A repo document of that name shadows the embedded default, so the rules stay
+// configuration. "" when the document is missing or blank. Exported so the
+// injected-size report and the context audit measure what a dispatch sends.
+func ReviewerVerdictDoc(ctx context.Context, docs DocGetter) string {
+	if docs == nil {
+		return ""
+	}
+	d, err := docs.Get(ctx, "principles", config.ReviewerVerdictPrinciple)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(stripFrontmatter(d.Body))
 }
 
 // isolatedAgentBriefing is the shared body of every isolated-agent charter.

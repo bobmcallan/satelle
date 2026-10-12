@@ -22,6 +22,10 @@ that shells out to `bash scripts/deploy-check.sh` is the violation: the gate's
 logic has leaked out of the skill, so the gate can break when that file moves,
 and the skill no longer describes what it enforces. Inline the logic instead.
 
+The shared verdict contract, [[satelle-reviewer-verdict]], arrives with every
+judging dispatch, so a reviewer skill owns only its own verdict JSON shape and
+still depends on nothing outside its prompt.
+
 ## What a self-contained check MAY do
 
 Self-contained is about the gate's *definition*, not its *reach*. The embedded

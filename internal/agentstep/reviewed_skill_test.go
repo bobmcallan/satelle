@@ -1,12 +1,15 @@
 package agentstep
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/structure"
 )
 
@@ -28,10 +31,6 @@ var laterSections = []later{
 		"verify every prior blocking finding",
 		"a criterion or plan section that changed",
 	}},
-	{"internal/config/substrate/skills/satelle-story-plan-review.md", "## 4. Later rounds", false, []string{
-		"verify the prior findings",
-		"acceptance criterion that changed (open definition_edits.path)",
-	}},
 	{".satelle/skills/satelle-story-architecture-review.md", "", true, []string{
 		"verify each prior finding",
 		"acceptance criterion that changed (open definition_edits.path)",
@@ -41,10 +40,6 @@ var laterSections = []later{
 		"acceptance criterion that changed (open definition_edits.path)",
 	}},
 	{".satelle/skills/satelle-story-intent-review.md", "## Later rounds", false, []string{
-		"changed definition field",
-		"verify every prior finding",
-	}},
-	{"internal/config/substrate/skills/satelle-story-intent-review.md", "## Later rounds", false, []string{
 		"changed definition field",
 		"verify every prior finding",
 	}},
@@ -80,14 +75,75 @@ var leftoverSkills = []struct {
 	}},
 }
 
-// TestEmbeddedReviewerSkillsQuotationComparison (AC7) walks the embedded skill
+// sharedVerdictPhrases are the passages of the shared reviewer-verdict
+// principle: the re-presented-edge rules and the `reviewed`-required paragraph.
+// An embedded reviewer skill states neither (it owns only its verdict JSON
+// shape); the principle holds them and every judging dispatch is handed them.
+var sharedVerdictPhrases = []string{"quotation comparison governs", "is required on every judgment"}
+
+// embeddedPrincipleDocs is the embedded principles as a DocGetter, the way a
+// repo with no override resolves them.
+func embeddedPrincipleDocs() fakeDocs {
+	var ps []docindex.Doc
+	for _, d := range config.EmbeddedDefaults() {
+		if d.Kind == "principles" {
+			ps = append(ps, docindex.Doc{Kind: "principles", Name: d.Name, Body: d.Body, Embedded: true})
+		}
+	}
+	return fakeDocs{extraPrinciples: ps}
+}
+
+// TestEmbeddedReviewerSkillsQuotationComparison (AC3) walks the embedded skill
 // root, which every checkout has. A skill is in the set when its frontmatter
 // tags include type:reviewer, do not include type:functional-check, and the
-// body has no ```check fence.
+// body has no ```check fence. The verdict rules live once, in the shared
+// principle: no selected skill body restates them, yet the judging prompt each
+// is composed into carries all of them.
 func TestEmbeddedReviewerSkillsQuotationComparison(t *testing.T) {
 	root := moduleRoot(t)
-	selected := selectQuotationReviewers(t, filepath.Join(root, "internal", "config", "substrate", "skills"))
+	selected := quotationReviewerPaths(t, filepath.Join(root, "internal", "config", "substrate", "skills"))
 	assertOutsideReviewerSet(t, selected)
+
+	verdict := ReviewerVerdictDoc(context.Background(), embeddedPrincipleDocs())
+	if verdict == "" {
+		t.Fatalf("embedded principle %s must resolve", config.ReviewerVerdictPrinciple)
+	}
+	assertQuotationRules(t, "principle "+config.ReviewerVerdictPrinciple, verdict)
+	for _, path := range selected {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := string(raw)
+		for _, phrase := range sharedVerdictPhrases {
+			if strings.Contains(strings.ToLower(body), phrase) {
+				t.Errorf("%s restates %q, which belongs to %s alone", path, phrase, config.ReviewerVerdictPrinciple)
+			}
+		}
+		if !strings.Contains(body, `"reviewed":`) {
+			t.Errorf("%s must still own its verdict JSON shape, including the reviewed field", path)
+		}
+		// The pointer lives in the frontmatter description; a body section for it
+		// would be the same run of words in every skill, which doctor reports.
+		if desc := descriptionOf(body); !strings.Contains(desc, "[["+config.ReviewerVerdictPrinciple+"]]") {
+			t.Errorf("%s description must point at %s", path, config.ReviewerVerdictPrinciple)
+		}
+		for _, heading := range []string{"## re-presented edge", "later rounds"} {
+			if strings.Contains(strings.ToLower(body), heading) {
+				t.Errorf("%s carries a %q section; the rules live in %s", path, heading, config.ReviewerVerdictPrinciple)
+			}
+		}
+		seat, err := BuildSeatPayload(SeatPayloadInput{
+			Charter: reviewerCharter(), Rubric: body, Judging: true, Verdict: verdict,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertQuotationPhrases(t, path+" (composed judging prompt)", seat.SystemPrompt)
+		if n := strings.Count(seat.SystemPrompt, sharedVerdictPhrases[0]); n != 1 {
+			t.Errorf("%s: the composed judging prompt carries the re-presented-edge rules %d times, want once", path, n)
+		}
+	}
 	for _, name := range []string{"satelle-story-scope-review.md", "satelle-story-done-review.md"} {
 		var hits []string
 		for _, path := range selected {
@@ -151,9 +207,8 @@ func TestOverrideReviewerSkillsQuotationComparison(t *testing.T) {
 	assertLaterRounds(t, root, overrideSkillsRel)
 }
 
-// selectQuotationReviewers returns the reviewer skills under dir and asserts
-// each carries the quotation instruction.
-func selectQuotationReviewers(t *testing.T, dir string) []string {
+// quotationReviewerPaths returns the reviewer skills under dir.
+func quotationReviewerPaths(t *testing.T, dir string) []string {
 	t.Helper()
 	paths, err := reviewerSkillMarkdown(dir)
 	if err != nil {
@@ -165,11 +220,9 @@ func selectQuotationReviewers(t *testing.T, dir string) []string {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !quotationReviewer(string(body)) {
-			continue
+		if quotationReviewer(string(body)) {
+			selected = append(selected, path)
 		}
-		selected = append(selected, path)
-		assertQuotationPhrases(t, path, string(body))
 	}
 	if len(selected) == 0 {
 		t.Fatalf("no reviewer skills selected under %s", dir)
@@ -177,7 +230,35 @@ func selectQuotationReviewers(t *testing.T, dir string) []string {
 	return selected
 }
 
+// selectQuotationReviewers returns the reviewer skills under dir and asserts
+// each carries the quotation instruction itself: the repo's override skills
+// still state it in the skill body.
+func selectQuotationReviewers(t *testing.T, dir string) []string {
+	t.Helper()
+	selected := quotationReviewerPaths(t, dir)
+	for _, path := range selected {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertQuotationPhrases(t, path, string(body))
+	}
+	return selected
+}
+
+// assertQuotationPhrases asserts body states the quotation rules and its own
+// verdict JSON carries the reviewed field.
 func assertQuotationPhrases(t *testing.T, path, body string) {
+	t.Helper()
+	assertQuotationRules(t, path, body)
+	if !strings.Contains(body, `"reviewed":`) {
+		t.Errorf("%s verdict JSON omits the reviewed field", path)
+	}
+}
+
+// assertQuotationRules asserts body states the re-presented-edge rules and the
+// reviewed-required rule.
+func assertQuotationRules(t *testing.T, path, body string) {
 	t.Helper()
 	lower := strings.ToLower(body)
 	for _, phrase := range []string{
@@ -197,9 +278,17 @@ func assertQuotationPhrases(t *testing.T, path, body string) {
 			t.Errorf("%s missing %q", path, phrase)
 		}
 	}
-	if !strings.Contains(body, `"reviewed":`) {
-		t.Errorf("%s verdict JSON omits the reviewed field", path)
+}
+
+// descriptionOf is the frontmatter description line of a skill, "" when absent.
+func descriptionOf(body string) string {
+	head := strings.TrimSuffix(strings.TrimSuffix(body, stripFrontmatter(body)), "\n")
+	for _, line := range strings.Split(head, "\n") {
+		if v, ok := strings.CutPrefix(line, "description:"); ok {
+			return strings.TrimSpace(v)
+		}
 	}
+	return ""
 }
 
 func assertOutsideReviewerSet(t *testing.T, selected []string) {
@@ -235,16 +324,24 @@ func assertLaterRounds(t *testing.T, root, prefix string) {
 		}
 		norm := normaliseLaterRound(raw)
 		folded := strings.ToLower(norm)
-		if !strings.Contains(folded, "quotation comparison governs") {
-			t.Errorf("%s later-round section does not state the quotation rule:\n%s", sec.rel, raw)
-		}
-		for _, phrase := range []string{
-			"the first verdict",
-			"sets `reviewed`",
-			"the same `reviewed` string",
-		} {
-			if !strings.Contains(folded, phrase) {
-				t.Errorf("%s later-round section missing %q:\n%s", sec.rel, phrase, raw)
+		if strings.HasPrefix(sec.rel, embeddedSkillsRel) {
+			// The embedded skills delegate the quotation rules to the shared
+			// reviewer-verdict principle, which the judging dispatch carries.
+			if !strings.Contains(norm, "[["+config.ReviewerVerdictPrinciple+"]]") {
+				t.Errorf("%s later-round section must point at %s:\n%s", sec.rel, config.ReviewerVerdictPrinciple, raw)
+			}
+		} else {
+			if !strings.Contains(folded, "quotation comparison governs") {
+				t.Errorf("%s later-round section does not state the quotation rule:\n%s", sec.rel, raw)
+			}
+			for _, phrase := range []string{
+				"the first verdict",
+				"sets `reviewed`",
+				"the same `reviewed` string",
+			} {
+				if !strings.Contains(folded, phrase) {
+					t.Errorf("%s later-round section missing %q:\n%s", sec.rel, phrase, raw)
+				}
 			}
 		}
 		for _, phrase := range sec.forbid {

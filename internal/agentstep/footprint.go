@@ -35,6 +35,7 @@ type SeatPayloadInput struct {
 	Rubric       string         // the skill body
 	Judging      bool           // the judging briefing replaces the pull-context call to action
 	Shell        bool           // the judging briefing also names the CLI lines
+	Verdict      string         // the shared verdict rules (ReviewerVerdictDoc); delivered only when Judging
 
 	// Section names the seat in the pointer directive. BudgetBytes is the size the
 	// whole prompt is fitted to; zero or less leaves the ladder off, and every
@@ -63,7 +64,7 @@ type SeatPayload struct {
 // rubric — the instructions the seat acts on — are always delivered as written.
 func BuildSeatPayload(in SeatPayloadInput) (SeatPayload, error) {
 	tail := composeSystemPrompt(promptParts{
-		charter: in.Charter, scratch: in.Scratch, rubric: in.Rubric, judging: in.Judging, shell: in.Shell,
+		charter: in.Charter, scratch: in.Scratch, rubric: in.Rubric, judging: in.Judging, shell: in.Shell, verdict: in.Verdict,
 	})
 	var items []condense.Item
 	if c := strings.TrimSpace(in.Constitution); c != "" {
@@ -72,6 +73,11 @@ func BuildSeatPayload(in SeatPayloadInput) (SeatPayload, error) {
 	for _, d := range in.Principles {
 		body := strings.TrimSpace(stripFrontmatter(d.Body))
 		if body == "" {
+			continue
+		}
+		// A judging seat is handed the verdict rules in the tail; a selector that
+		// also picks them up (system, all) must not deliver them a second time.
+		if in.Judging && strings.TrimSpace(in.Verdict) != "" && d.Name == config.ReviewerVerdictPrinciple {
 			continue
 		}
 		items = append(items, condense.Item{
@@ -115,6 +121,12 @@ type SeatPromptInput struct {
 	Principles   []docindex.Doc
 	// Rubric is the seat's skill body (its largest one, for a size estimate).
 	Rubric string
+	// Judging is whether the seat judges a gate — the dispatch that is handed the
+	// judging briefing and Verdict. A summary seat of a reviewer kind does not
+	// judge, so the estimate keys on this and not on Kind.
+	Judging bool
+	// Verdict is ReviewerVerdictDoc's text; delivered only when Judging.
+	Verdict string
 	// Shell is whether the seat's grant admits a shell, which a judging
 	// reviewer's briefing then spells three more CLI lines for.
 	Shell bool
@@ -146,7 +158,7 @@ func SeatPayloadFor(in SeatPromptInput) (SeatPayload, error) {
 	}
 	return BuildSeatPayload(SeatPayloadInput{
 		Constitution: in.Constitution, Principles: in.Principles, Charter: charter, Rubric: in.Rubric,
-		Scratch: estimateScratch, Judging: in.Kind == SeatReviewer, Shell: in.Shell,
+		Scratch: estimateScratch, Judging: in.Judging, Verdict: in.Verdict, Shell: in.Shell,
 		Section: in.Section, BudgetBytes: in.BudgetBytes, Rules: in.Rules, Offload: in.Offload,
 	})
 }
