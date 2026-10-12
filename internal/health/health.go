@@ -109,6 +109,15 @@ const (
 	IDSyncConfig   = "sync.config"        // stale_after missing or unparseable
 	IDStatusDrift  = "story.status.drift" // work-item row disagrees with last status_transition
 
+	// Substrate sync health (sty_7562055c): the authored areas and documents
+	// against the last synced base and the last recorded hosted check. Offline.
+	IDSyncSubstrateOk        = "sync.substrate_ok"        // every non-local area is in step (or every area is local)
+	IDSyncSubstrateUnpushed  = "sync.substrate_unpushed"  // local files differ from the last synced base
+	IDSyncSubstrateUnmerged  = "sync.substrate_unmerged"  // a pull left paths for merging
+	IDSyncSubstrateBehind    = "sync.substrate_behind"    // the last recorded check says behind or diverged
+	IDSyncSubstrateUnchecked = "sync.substrate_unchecked" // no recorded check, or older than stale_after
+	IDSyncSubstrateUnbound   = "sync.substrate_unbound"   // a non-local area but no signed-in server or bound project
+
 	// The context every agent actually receives (sty_a17afa15): what the
 	// SessionStart hook injects per harness and what each dispatched seat is
 	// handed. Every one is advisory (WARN or INFO) — a context that is too big,
@@ -146,6 +155,8 @@ var ids = []string{
 	IDProcessUnreadable, IDProcessAbsent, IDProcessDivergent,
 	IDScaffoldStale, IDScaffoldMissing, IDRepoUnreadable, IDConfigStray, IDSubstrateUnlocked, IDBreakingUnacknowledged,
 	IDSyncLocal, IDSyncOk, IDSyncFailing, IDSyncUnbacked, IDSyncConfig,
+	IDSyncSubstrateOk, IDSyncSubstrateUnpushed, IDSyncSubstrateUnmerged, IDSyncSubstrateBehind,
+	IDSyncSubstrateUnchecked, IDSyncSubstrateUnbound,
 	IDStatusDrift,
 	IDContextSessionOverflow, IDContextSessionUnavailable, IDContextDispatchOverBudget,
 	IDContextDispatchUnbudgeted, IDContextDispatchUnavailable, IDContextDuplicateVerbatim,

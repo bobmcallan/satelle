@@ -80,6 +80,7 @@ a whole-area reading gets wrong. Read-only.`,
 	syncCmd.AddCommand(newSyncWorkstateCmd())
 	syncCmd.AddCommand(newSyncBindingsCmd())
 	syncCmd.AddCommand(newSyncRehydrateCmd())
+	syncCmd.AddCommand(newSyncStatusCmd())
 	register(syncCmd)
 }
 
@@ -206,7 +207,7 @@ func rehydrateAllLocalNote(settingsRestored bool) string {
 		}
 	}
 	if !settingsRestored {
-		return "rehydrate: note — satelle.toml was not restored from hosted (the bound project has no settings/satelle.toml, or it was never pushed from a machine with [sync] settings or all = personal). Documents and workstate pulls will no-op until you push config from a machine that has content (`satelle sync config push`) or hand-set [sync] here once."
+		return "rehydrate: note — satelle.toml was not restored from hosted (the bound project's settings area holds no `satelle.toml`, or it was never pushed from a machine with [sync] settings or all = personal; `satelle sync status` shows what the project holds). Documents and workstate pulls will no-op until you push config from a machine that has content (`satelle sync config push`) or hand-set [sync] here once."
 	}
 	return "rehydrate: note — satelle.toml was restored and every area is still local (the hosted scopes genuinely opt nothing in). Documents and workstate pulls will no-op until [sync] opts an area into personal."
 }
@@ -699,6 +700,7 @@ func runSyncConfigDeployOutcome(cmd *cobra.Command, serverArg, workspaceArg stri
 		if err := snaps.commit(res); err != nil {
 			return deployOutcome{}, fmt.Errorf("deploy: record synced snapshot: %w", err)
 		}
+		snaps.recordStates(cmd.Context(), cfg, repoRoot)
 	}
 	outcome := deployOutcome{
 		Written:      res.Written,

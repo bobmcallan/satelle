@@ -1,3 +1,19 @@
+## [0.0.655] - 2026-10-12
+
+### Added
+- **`satelle sync status`** contacts the bound project and prints, for every non-local config area and `documents`, whether this machine is `in step`, `unpushed`, `behind`, `diverged`, `unmerged`, `never synced` or `unavailable`, with the local base version, the hosted effective version and the next command to run. The state comes from the same push-planning path `satelle sync` uses, so an orphaned record is not reported as behind and a pending pull is. It exits non-zero when any area is not in step. (sty_7562055c)
+- **Substrate drift is visible before work starts.** Engaging a story into a performing state runs that check within a short timeout and prints one advisory line naming each out-of-step area and the command to run; offline or unbound it uses the recorded state and says `unverified (offline/unbound)`. It never refuses engagement. The SessionStart context prints the same line from recorded state, and an in-step machine prints nothing. (sty_7562055c)
+- **`satelle doctor` reports unpushed, unmerged, behind or diverged substrate as an error**, without contacting the server: local files that differ from the last synced base, unmerged paths in the base, a recorded behind/diverged check, or a check older than `[sync] stale_after`. An unbound server or project with a non-local area names `satelle login` / `satelle project bind`. With `stale_after` unset it warns that substrate staleness is not judged. (sty_7562055c)
+
+### Changed
+- Every `satelle sync status` run and every config/documents push, pull, deploy and rehydrate records each handled area's state, derived from the push-planning path after the operation rather than assumed from its success. (sty_7562055c)
+- `satelle sync rehydrate` restores `satelle.toml` when the bound project's settings snapshot names it; when it does not, the note names the hosted key and points to `satelle sync status`. (sty_7562055c)
+
+## [serve-v0.0.155] - 2026-10-12
+
+### Changed
+- The service binary carries the shared sync-status and substrate-health packages used by `satelle sync status` and `satelle doctor`. (sty_7562055c)
+
 ## [0.0.654] - 2026-10-12
 
 ### Added

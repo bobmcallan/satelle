@@ -258,6 +258,9 @@ func Check(ctx context.Context, o Opts) Report {
 		globalDir = config.GlobalDir()
 	}
 	rep.Findings = append(rep.Findings, checkSyncHealth(o.RepoRoot, dataDir, globalDir, time.Now())...)
+	// 5c'. Substrate and documents against their last synced base and the last
+	// recorded hosted check (sty_7562055c). Offline: never contacts the server.
+	rep.Findings = append(rep.Findings, CheckSubstrateSync(o.RepoRoot, dataDir, globalDir, time.Now())...)
 
 	// 5d. The context every agent receives (deterministic; injected authority).
 	if o.ContextChecks != nil && strings.TrimSpace(o.RepoRoot) != "" {

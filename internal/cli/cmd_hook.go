@@ -2493,6 +2493,9 @@ func assembleSessionContext(a *app.App, harness string, limit int, unit string) 
 	// replacing the other. Advisory only: versionDriftAdvisory has no error
 	// channel, so `hook context` keeps its fail-open contract.
 	versionLine := versionDriftAdvisory(a.RepoRoot)
+	// Substrate continuity (sty_7562055c): from local and recorded state only —
+	// SessionStart never waits on the server. Silent when in step.
+	substrateLine := substrateAdvisoryOffline(a.RepoRoot, a.DataDir)
 	// An auto-raised diagnosis is worth nothing unread (sty_88d40a60): when the
 	// indexer has filed a high-priority system story about an authored document
 	// that fails its structure check, name it here. Silent when there is none.
@@ -2510,6 +2513,7 @@ func assembleSessionContext(a *app.App, harness string, limit int, unit string) 
 			}
 		}
 		content = prependContextLine(content, versionLine)
+		content = prependContextLine(content, substrateLine)
 		content = prependContextLine(content, docStoryLine)
 		return appendSeatToContext(content, seat, 0)
 	}

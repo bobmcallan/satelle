@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/BurntSushi/toml"
 )
 
 // Scope is a position on the local -> personal -> shared sync ladder for a
@@ -212,6 +214,23 @@ func FileShared(scope Scope, frontmatter string) bool {
 // list is the candidate set the walk resolves a tier for.
 var ConfigAreas = []string{"workflows", "principles", "skills", "constitution", "agents", "tasks", "settings"}
 
+// SubstrateAreas are the areas whose files a sync would move to the hosted
+// copy: the config areas and documents, minus those whose [sync] scope is local.
+// Everything that reports on substrate continuity takes its areas here.
+func SubstrateAreas(cfg Config) ([]string, error) {
+	var out []string
+	for _, area := range append(append([]string{}, ConfigAreas...), "documents") {
+		sc, err := ScopeFor(cfg, area)
+		if err != nil {
+			return nil, err
+		}
+		if sc != LocalScope {
+			out = append(out, area)
+		}
+	}
+	return out, nil
+}
+
 // ConfigTier flags whether a file is eligible to be exposed via satelle publish
 // (SharedTier) or stays purely personal (PersonalTier). It is NOT a sync push
 // destination — satelle sync always writes to the personal workspace; Tier ==
@@ -367,6 +386,37 @@ func AreaFiles(cfg Config, repoRoot, area string) ([]ConfigFile, error) {
 		return nil, err
 	}
 	return assemble(files).Files, nil
+}
+
+// PlaceholderSettings reports whether the settings area on disk holds nothing a
+// push would send: no satelle.toml, or one carrying only what push redacts — the
+// repo binding `project bind` writes into a fresh clone. Such a file is a
+// placeholder, not an authored copy, so a deploy must not treat it as a change
+// that conflicts with the hosted settings (sty_7562055c).
+func PlaceholderSettings(cfg Config, repoRoot string) (bool, error) {
+	files, err := AreaFiles(cfg, repoRoot, "settings")
+	if err != nil {
+		return false, err
+	}
+	for _, f := range files {
+		var doc map[string]any
+		if toml.Unmarshal(f.Content, &doc) != nil || !emptyTables(doc) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// emptyTables reports whether a decoded TOML document has no values at all —
+// only tables that are themselves empty.
+func emptyTables(m map[string]any) bool {
+	for _, v := range m {
+		sub, ok := v.(map[string]any)
+		if !ok || !emptyTables(sub) {
+			return false
+		}
+	}
+	return true
 }
 
 // SyncAreaOf names the config or documents area a server-relative path belongs

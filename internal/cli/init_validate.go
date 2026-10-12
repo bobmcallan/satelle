@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
@@ -59,7 +60,7 @@ func validateDeployment(out io.Writer, dataDir string) error {
 		// Sync backup state is runtime health, not a scaffold defect. `satelle
 		// doctor` still fails these (sty_30696eeb); init/migrate must not refuse
 		// a repo that has not yet pushed.
-		if f.ID == health.IDSyncUnbacked || f.ID == health.IDSyncFailing || f.ID == health.IDSyncConfig {
+		if strings.HasPrefix(f.ID, "sync.") {
 			fmt.Fprintf(out, "WARN  [%s] %s\n", f.ID, f.Detail)
 			continue
 		}

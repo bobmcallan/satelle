@@ -157,8 +157,14 @@ func (d *Driver) read(ctx context.Context, area string) ReadFunc {
 }
 
 func (d *Driver) conflictCopyExists(area string) func(string) bool {
+	return copyExistsIn(d.DataDir, area)
+}
+
+// copyExistsIn reports whether an area's parked conflict copy of a path is on
+// disk under dataDir.
+func copyExistsIn(dataDir, area string) func(string) bool {
 	return func(p string) bool {
-		_, err := os.Stat(filepath.Join(d.DataDir, filepath.FromSlash(CopyPath(area, p))))
+		_, err := os.Stat(filepath.Join(dataDir, filepath.FromSlash(CopyPath(area, p))))
 		return err == nil
 	}
 }
@@ -247,28 +253,47 @@ type PushResult struct {
 // It returns *ErrBehind or *ErrUnmerged when the push must not happen, and
 // *UnavailableError when snapshots cannot be read at all.
 func (d *Driver) PreparePush(ctx context.Context, area string, files []PushFile) (*PushJob, error) {
-	base, err := d.loadBase(area)
-	if err != nil {
-		return nil, err
-	}
-	effVersion, eff, err := d.effective(ctx, area, base)
-	if err != nil {
-		return nil, err
-	}
-	heads, err := d.areaHeads(ctx, area)
-	if err != nil {
-		return nil, d.unavailable(err)
-	}
-	job := &PushJob{Area: area, files: map[string][]byte{}, local: map[string]string{}, effVersion: effVersion, eff: eff}
+	job := &PushJob{Area: area, files: map[string][]byte{}, local: map[string]string{}}
 	for _, f := range files {
 		job.files[f.Path] = f.Content
 		job.local[f.Path] = SHA(f.Content)
 	}
-	job.plan, err = PlanPush(area, d.PullCmd, d.By, d.Prune, d.Force, base, effVersion, eff, job.local, heads, d.conflictCopyExists(area))
+	p, err := d.planPush(ctx, area, job.local, d.Force)
 	if err != nil {
 		return nil, err
 	}
+	job.effVersion, job.eff, job.plan = p.effVersion, p.eff, p.plan
 	return job, nil
+}
+
+// plannedPush is what the shared push-planning path decided, with the inputs it
+// decided from.
+type plannedPush struct {
+	base       *hosted.AreaBase
+	effVersion int
+	eff        Record
+	plan       PushPlan
+}
+
+// planPush is the one push-planning path: load this checkout's base, walk to the
+// hosted effective snapshot, and plan the push of local over it. PreparePush and
+// Status both run it, so what a push would refuse and what status reports can
+// never disagree. On a refusal the inputs read so far come back with the error.
+func (d *Driver) planPush(ctx context.Context, area string, local map[string]string, force bool) (plannedPush, error) {
+	var p plannedPush
+	var err error
+	if p.base, err = d.loadBase(area); err != nil {
+		return p, err
+	}
+	if p.effVersion, p.eff, err = d.effective(ctx, area, p.base); err != nil {
+		return p, err
+	}
+	heads, err := d.areaHeads(ctx, area)
+	if err != nil {
+		return p, d.unavailable(err)
+	}
+	p.plan, err = PlanPush(area, d.PullCmd, d.By, d.Prune, force, p.base, p.effVersion, p.eff, local, heads, d.conflictCopyExists(area))
+	return p, err
 }
 
 // Push runs a prepared job: claim the snapshot, re-walk to confirm the claim

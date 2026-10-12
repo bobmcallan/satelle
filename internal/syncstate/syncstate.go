@@ -2,7 +2,7 @@
 // (sty_30696eeb). serve, doctor, and the mirror UI all read/write it without
 // crossing the serve→cli/hosted fences.
 //
-// Two field groups share one file. Each writer re-loads and merges only its
+// Three field groups share one file. Each writer re-loads and merges only its
 // own group (satelled and `satelle sync` are separate processes). A torn read
 // is "no state", never a parse error that fails doctor.
 package syncstate
@@ -34,6 +34,19 @@ type State struct {
 	SnapshotLastFailure time.Time `json:"snapshot_last_failure,omitempty"`
 	SnapshotReason      string    `json:"snapshot_reason,omitempty"`
 	SnapshotPasses      int       `json:"snapshot_passes,omitempty"`
+
+	// SubstrateAreas is the last verified state of each substrate area against
+	// the hosted copy (sty_7562055c). The states are the words snapsync.Status
+	// produces, recorded by whoever just asked it — never assumed from an
+	// operation having succeeded. Which paths are unmerged is NOT kept here: the
+	// area's synced base owns that.
+	SubstrateAreas map[string]SubstrateArea `json:"substrate_areas,omitempty"`
+}
+
+// SubstrateArea is one area's recorded state and when it was verified.
+type SubstrateArea struct {
+	State     string    `json:"state"`
+	CheckedAt time.Time `json:"checked_at"`
 }
 
 var mu sync.Mutex
@@ -98,6 +111,22 @@ func RecordSnapshot(globalDir, repoPath string, success bool, reason, scope stri
 		} else {
 			s.SnapshotReason = reason
 			s.SnapshotPasses = 1
+		}
+	})
+}
+
+// RecordSubstrate merges the verified state of the given areas (area -> state)
+// into the substrate group, leaving every other area's record as it was.
+func RecordSubstrate(globalDir, repoPath string, areas map[string]string, now time.Time) error {
+	if len(areas) == 0 {
+		return nil
+	}
+	return record(globalDir, repoPath, "", func(s *State) {
+		if s.SubstrateAreas == nil {
+			s.SubstrateAreas = map[string]SubstrateArea{}
+		}
+		for area, state := range areas {
+			s.SubstrateAreas[area] = SubstrateArea{State: state, CheckedAt: now}
 		}
 	})
 }

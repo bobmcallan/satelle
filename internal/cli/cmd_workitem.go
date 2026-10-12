@@ -187,6 +187,12 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 			if group == "story" {
 				refreshStoryBacklog(cmd)
 			}
+			// Entering a performing state is the point a developer is about to
+			// work: say so when their substrate is not in step with the hosted
+			// copy (sty_7562055c). Advisory only.
+			if group == "story" && f.Changed("status") {
+				substrateEngagementAdvisory(cmd, args[0])
+			}
 			// Category warn-mode advisory on an explicit --category change only
 			// (sty_b2315e17): a status-only set on a legacy category never trips it.
 			if f.Changed("category") {

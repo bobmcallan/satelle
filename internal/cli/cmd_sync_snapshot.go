@@ -192,7 +192,13 @@ func pushConfigSnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, dataDi
 		&configBlobs{client: client, project: project, manifest: manifest})
 	d.Prune = pruneRequested(cmd)
 	d.Force = forceRequested(cmd)
-	return runSnapshotPush(cmd.Context(), d, byArea, areas)
+	out, handled, err := runSnapshotPush(cmd.Context(), d, byArea, areas)
+	if handled {
+		// A refused push records why it was refused (behind, unmerged) just as a
+		// completed one records in step.
+		recordAreaStates(cmd.Context(), cfg, repoRoot, d, areas)
+	}
+	return out, handled, err
 }
 
 // pushDocumentsSnapshot is the documents push when the hosted copy can hold
@@ -215,7 +221,11 @@ func pushDocumentsSnapshot(cmd *cobra.Command, cfg config.Config, repoRoot, data
 		&docBlobs{client: client, project: project})
 	d.Prune = pruneRequested(cmd)
 	d.Force = forceRequested(cmd)
-	return runSnapshotPush(cmd.Context(), d, map[string][]snapsync.PushFile{"documents": pf}, []string{"documents"})
+	out, handled, err := runSnapshotPush(cmd.Context(), d, map[string][]snapsync.PushFile{"documents": pf}, []string{"documents"})
+	if handled {
+		recordAreaStates(cmd.Context(), cfg, repoRoot, d, []string{"documents"})
+	}
+	return out, handled, err
 }
 
 // pruneFlagUsage is the one help text every command that takes --prune shares.
@@ -237,19 +247,6 @@ const forceFlagUsage = "Publish this tree as the next snapshot even when the hos
 func forceRequested(cmd *cobra.Command) bool {
 	f := cmd.Flags().Lookup("force")
 	return f != nil && f.Value.String() == "true"
-}
-
-// localShas is the sha of each file of an area as a push would send it.
-func localShas(cfg config.Config, repoRoot, area string) (map[string]string, error) {
-	files, err := config.AreaFiles(cfg, repoRoot, area)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]string, len(files))
-	for _, f := range files {
-		out[f.Path] = snapsync.SHA(f.Content)
-	}
-	return out, nil
 }
 
 // configDeploySnapshots holds the areas a deploy is driving from a snapshot.
@@ -287,12 +284,22 @@ func planConfigDeploySnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, 
 		if !has[area] {
 			continue
 		}
-		local, err := localShas(cfg, repoRoot, area)
+		local, err := snapsync.LocalShas(cfg, repoRoot, area)
 		if err != nil {
 			// An unreadable local file (an agents layer that does not decode) must
 			// not stop a deploy that exists to restore the tree.
 			fmt.Fprintf(cmd.OutOrStdout(), "%s: cannot read the local files (%v) — deploying every head.\n", area, err)
 			continue
+		}
+		if area == "settings" && len(local) > 0 {
+			// A fresh clone's satelle.toml is the binding `project bind` wrote, which
+			// a push redacts: with no base to say otherwise it is a placeholder, so
+			// the hosted settings are restored rather than parked as a conflict.
+			if _, synced, berr := hosted.LoadAreaBase(server, project, s.driver.RepoRoot, area); berr == nil && !synced {
+				if placeholder, perr := config.PlaceholderSettings(cfg, repoRoot); perr == nil && placeholder {
+					local = nil
+				}
+			}
 		}
 		job, err := s.driver.PlanPull(cmd.Context(), area, local)
 		var unavailable *snapsync.UnavailableError
@@ -339,6 +346,16 @@ func (s *configDeploySnapshots) commit(res subsync.Result) error {
 	return nil
 }
 
+// recordStates records where each deployed area now stands against the hosted
+// copy, asked of the driver rather than assumed from the deploy having committed.
+func (s *configDeploySnapshots) recordStates(ctx context.Context, cfg config.Config, repoRoot string) {
+	areas := make([]string, 0, len(s.jobs))
+	for _, job := range s.jobs {
+		areas = append(areas, job.Area)
+	}
+	recordAreaStates(ctx, cfg, repoRoot, s.driver, areas)
+}
+
 // pullDocumentsSnapshot is the documents pull when the hosted copy holds a
 // documents snapshot. handled=false sends the caller to the cursor-driven pull.
 func pullDocumentsSnapshot(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir string, client *hosted.Client, server, project string) (bool, error) {
@@ -353,7 +370,7 @@ func pullDocumentsSnapshot(cmd *cobra.Command, cfg config.Config, repoRoot, data
 	d := newSnapDriver(cfg, client, out, server, project, repoRoot, dataDir,
 		"satelle sync documents pull", newConfigRecords(client, project, manifest),
 		&docBlobs{client: client, project: project})
-	local, err := localShas(cfg, repoRoot, "documents")
+	local, err := snapsync.LocalShas(cfg, repoRoot, "documents")
 	if err != nil {
 		return true, err
 	}
@@ -386,6 +403,7 @@ func pullDocumentsSnapshot(cmd *cobra.Command, cfg config.Config, repoRoot, data
 	if err := d.Commit(job, failed); err != nil {
 		return true, err
 	}
+	recordAreaStates(cmd.Context(), cfg, repoRoot, d, []string{"documents"})
 	// Hosted heads Restore would refuse (a partition poisoned with backups/
 	// entries, sty_84f14ace) are not part of any snapshot; they are still reported,
 	// so a pull that skipped something never reads as "up to date".

@@ -92,6 +92,51 @@ func TestConfigAreasExcludesDocumentsAndWorkState(t *testing.T) {
 	}
 }
 
+// SubstrateAreas is the config areas plus documents, filtered by [sync] scope.
+func TestSubstrateAreasFollowScope(t *testing.T) {
+	if got, err := SubstrateAreas(Config{}); err != nil || len(got) != 0 {
+		t.Fatalf("default scopes are local: %v %v", got, err)
+	}
+	got, err := SubstrateAreas(Config{Sync: map[string]string{"skills": "personal", "documents": "personal"}})
+	if err != nil || len(got) != 2 || got[0] != "skills" || got[1] != "documents" {
+		t.Fatalf("explicit scopes = %v %v", got, err)
+	}
+	all, err := SubstrateAreas(Config{Sync: map[string]string{"all": "personal", "tasks": "local"}})
+	if err != nil || len(all) != len(ConfigAreas) { // every config area but tasks, plus documents
+		t.Fatalf("all = personal with tasks local = %v %v", all, err)
+	}
+	if _, err := SubstrateAreas(Config{Sync: map[string]string{"skills": "bogus"}}); err == nil {
+		t.Fatal("an invalid scope must be an error")
+	}
+}
+
+// A settings file holding only what a push redacts is a placeholder; anything
+// authored is not.
+func TestPlaceholderSettings(t *testing.T) {
+	for body, want := range map[string]bool{
+		"":                                 true,
+		"[sync]\nproject = \"p\"\n":        true,
+		"[hosted]\nproject = \"p\"\n":      true,
+		"# a comment\n[sync]\n":            true,
+		"[sync]\nall = \"personal\"\n":     false,
+		"[sync]\nproject = \"p\"\nx = 1\n": false,
+		"[review]\ngate_create = false\n":  false,
+		"this is not toml [":               false,
+	} {
+		repo := t.TempDir()
+		writeFile(t, repo, ".satelle/satelle.toml", body)
+		cfg := Config{Sync: map[string]string{"settings": "personal"}}
+		got, err := PlaceholderSettings(cfg, repo)
+		if err != nil || got != want {
+			t.Errorf("PlaceholderSettings(%q) = %v, %v; want %v", body, got, err, want)
+		}
+	}
+	// No satelle.toml at all is a placeholder too.
+	if got, err := PlaceholderSettings(Config{Sync: map[string]string{"settings": "personal"}}, t.TempDir()); err != nil || !got {
+		t.Errorf("a missing satelle.toml = %v, %v", got, err)
+	}
+}
+
 // TestConfigFilesSkipsLocalArea: a local-scope area (the default, and an
 // explicit local) contributes nothing — AC1 skip scope=local.
 func TestConfigFilesSkipsLocalArea(t *testing.T) {
