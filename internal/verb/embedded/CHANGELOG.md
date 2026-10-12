@@ -1,3 +1,8 @@
+## [0.0.661] - 2026-10-13
+
+### Fixed
+- The test that reads a checkout's authored reviewer-skill overrides now holds them to the single-source verdict rules: an override that restates the `satelle-reviewer-verdict` rules is what it flags, matching the embedded-skills test, instead of demanding the old copies. It failed on any developer machine whose substrate followed the new rule; CI skips it because the authored substrate is not in the checkout. (sty_60fe625e)
+
 ## [0.0.660] - 2026-10-13
 
 ### Changed

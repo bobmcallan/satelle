@@ -2,9 +2,9 @@ package agentstep
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -18,37 +18,11 @@ const (
 	overrideSkillsRel = ".satelle/skills/"
 )
 
-// later is one later-round section the quotation rule must be stated in.
-type later struct {
-	rel     string
-	heading string
-	bold    bool
-	forbid  []string
-}
-
-var laterSections = []later{
-	{".satelle/skills/satelle-story-plan-review.md", "## 6. Later rounds", false, []string{
-		"verify every prior blocking finding",
-		"a criterion or plan section that changed",
-	}},
-	{".satelle/skills/satelle-story-architecture-review.md", "", true, []string{
-		"verify each prior finding",
-		"acceptance criterion that changed (open definition_edits.path)",
-	}},
-	{".satelle/skills/satelle-story-integration-coverage-review.md", "", true, []string{
-		"verify each prior finding",
-		"acceptance criterion that changed (open definition_edits.path)",
-	}},
-	{".satelle/skills/satelle-story-intent-review.md", "## Later rounds", false, []string{
-		"changed definition field",
-		"verify every prior finding",
-	}},
-}
-
-// The plan descriptions and the architecture and coverage headings sit
-// outside the later-round body. The same normaliser has to see them, or
-// "verify prior findings" and "then verify" stay in the skill and the test
-// still passes.
+// A reviewer skill must not tell a later round to verify prior findings: the
+// re-presented-edge rules live in the shared principle. The plan descriptions
+// and the architecture and coverage headings sit outside any one section, so
+// the whole normalised body is checked, or "verify prior findings" and "then
+// verify" stay in the skill and the test still passes.
 var leftoverSkills = []struct {
 	rel     string
 	phrases []string
@@ -57,6 +31,8 @@ var leftoverSkills = []struct {
 		"later rounds verify prior findings",
 		"verify prior findings",
 		"number your findings so the next round can answer each one",
+		"verify every prior blocking finding",
+		"a criterion or plan section that changed",
 	}},
 	{"internal/config/substrate/skills/satelle-story-plan-review.md", []string{
 		"later rounds verify prior findings",
@@ -67,11 +43,19 @@ var leftoverSkills = []struct {
 		"every blocker first, then verify",
 		"then verify",
 		"verify prior findings",
+		"verify each prior finding",
+		"acceptance criterion that changed (open definition_edits.path)",
 	}},
 	{".satelle/skills/satelle-story-integration-coverage-review.md", []string{
 		"every blocker first, then verify",
 		"then verify",
 		"verify prior findings",
+		"verify each prior finding",
+		"acceptance criterion that changed (open definition_edits.path)",
+	}},
+	{".satelle/skills/satelle-story-intent-review.md", []string{
+		"changed definition field",
+		"verify every prior finding",
 	}},
 }
 
@@ -110,39 +94,7 @@ func TestEmbeddedReviewerSkillsQuotationComparison(t *testing.T) {
 	}
 	assertQuotationRules(t, "principle "+config.ReviewerVerdictPrinciple, verdict)
 	for _, path := range selected {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		body := string(raw)
-		for _, phrase := range sharedVerdictPhrases {
-			if strings.Contains(strings.ToLower(body), phrase) {
-				t.Errorf("%s restates %q, which belongs to %s alone", path, phrase, config.ReviewerVerdictPrinciple)
-			}
-		}
-		if !strings.Contains(body, `"reviewed":`) {
-			t.Errorf("%s must still own its verdict JSON shape, including the reviewed field", path)
-		}
-		// The pointer lives in the frontmatter description; a body section for it
-		// would be the same run of words in every skill, which doctor reports.
-		if desc := descriptionOf(body); !strings.Contains(desc, "[["+config.ReviewerVerdictPrinciple+"]]") {
-			t.Errorf("%s description must point at %s", path, config.ReviewerVerdictPrinciple)
-		}
-		for _, heading := range []string{"## re-presented edge", "later rounds"} {
-			if strings.Contains(strings.ToLower(body), heading) {
-				t.Errorf("%s carries a %q section; the rules live in %s", path, heading, config.ReviewerVerdictPrinciple)
-			}
-		}
-		seat, err := BuildSeatPayload(SeatPayloadInput{
-			Charter: reviewerCharter(), Rubric: body, Judging: true, Verdict: verdict,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		assertQuotationPhrases(t, path+" (composed judging prompt)", seat.SystemPrompt)
-		if n := strings.Count(seat.SystemPrompt, sharedVerdictPhrases[0]); n != 1 {
-			t.Errorf("%s: the composed judging prompt carries the re-presented-edge rules %d times, want once", path, n)
-		}
+		assertDelegatesVerdictRules(t, path, verdict)
 	}
 	for _, name := range []string{"satelle-story-scope-review.md", "satelle-story-done-review.md"} {
 		var hits []string
@@ -155,12 +107,14 @@ func TestEmbeddedReviewerSkillsQuotationComparison(t *testing.T) {
 			t.Errorf("%s must be selected once under the embedded skills root, got %v", name, hits)
 		}
 	}
-	assertLaterRounds(t, root, embeddedSkillsRel)
+	assertNoLeftoverPhrases(t, root, embeddedSkillsRel)
 }
 
-// TestOverrideReviewerSkillsQuotationComparison (AC7) runs the same checks
-// over the repo's live override skills. .satelle/ is gitignored operator
-// substrate, so a clean checkout and CI do not have it and the test skips.
+// TestOverrideReviewerSkillsQuotationComparison (AC7) holds the repo's live
+// override skills to the same single-source rule as the embedded ones: the
+// verdict rules live in the shared principle and no override restates them.
+// .satelle/ is gitignored operator substrate, so a clean checkout and CI do not
+// have it and the test skips.
 func TestOverrideReviewerSkillsQuotationComparison(t *testing.T) {
 	root := moduleRoot(t)
 	dir := filepath.Join(root, ".satelle", "skills")
@@ -169,7 +123,7 @@ func TestOverrideReviewerSkillsQuotationComparison(t *testing.T) {
 	} else if err != nil {
 		t.Fatal(err)
 	}
-	selected := selectQuotationReviewers(t, dir)
+	selected := quotationReviewerPaths(t, dir)
 	assertOutsideReviewerSet(t, selected)
 	for _, name := range []string{"satelle-story-deploy-review.md", "satelle-story-integration-review.md"} {
 		body, err := os.ReadFile(filepath.Join(dir, name))
@@ -195,7 +149,7 @@ func TestOverrideReviewerSkillsQuotationComparison(t *testing.T) {
 		}
 	}
 	if !sawIntegration {
-		t.Error("satelle-integration-review is type:reviewer only and must carry the instruction")
+		t.Error("satelle-integration-review is type:reviewer only and must delegate to " + config.ReviewerVerdictPrinciple)
 	}
 	for _, name := range []string{"satelle-story-scope-review.md", "satelle-story-done-review.md"} {
 		for _, path := range selected {
@@ -204,7 +158,101 @@ func TestOverrideReviewerSkillsQuotationComparison(t *testing.T) {
 			}
 		}
 	}
-	assertLaterRounds(t, root, overrideSkillsRel)
+	verdict := ReviewerVerdictDoc(context.Background(), embeddedPrincipleDocs())
+	if verdict == "" {
+		t.Fatalf("embedded principle %s must resolve", config.ReviewerVerdictPrinciple)
+	}
+	for _, path := range selected {
+		assertDelegatesVerdictRules(t, path, verdict)
+	}
+	assertNoLeftoverPhrases(t, root, overrideSkillsRel)
+}
+
+// recordingTB counts the errors a check reports instead of failing the test, so
+// a check can be shown to flag a bad skill.
+type recordingTB struct {
+	testing.TB
+	errs []string
+}
+
+func (r *recordingTB) Errorf(format string, args ...any) {
+	r.errs = append(r.errs, fmt.Sprintf(format, args...))
+}
+
+// TestAssertDelegatesVerdictRules proves the shared single-source check fails a
+// skill that restates the verdict rules and passes one that delegates them.
+func TestAssertDelegatesVerdictRules(t *testing.T) {
+	verdict := ReviewerVerdictDoc(context.Background(), embeddedPrincipleDocs())
+	if verdict == "" {
+		t.Fatalf("embedded principle %s must resolve", config.ReviewerVerdictPrinciple)
+	}
+	skill := func(extra string) string {
+		return "---\nname: tmp-review\ntags: [type:reviewer]\n" +
+			"description: A temporary reviewer. A re-presented edge follows [[" + config.ReviewerVerdictPrinciple + "]]\n---\n\n" +
+			"# Review\n\nReply `{\"verdict\": \"accept\", \"reviewed\": \"<quoted words>\"}`.\n" + extra
+	}
+	run := func(body string) []string {
+		path := filepath.Join(t.TempDir(), "tmp-review.md")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		rec := &recordingTB{TB: t}
+		assertDelegatesVerdictRules(rec, path, verdict)
+		return rec.errs
+	}
+	t.Run("restating override is flagged", func(t *testing.T) {
+		if errs := run(skill("\nQuotation comparison governs a re-presented edge.\n")); len(errs) == 0 {
+			t.Error("a skill restating the verdict rules must be reported")
+		}
+	})
+	t.Run("delegating override passes", func(t *testing.T) {
+		if errs := run(skill("")); len(errs) != 0 {
+			t.Errorf("a delegating skill must pass, got %v", errs)
+		}
+	})
+}
+
+// assertDelegatesVerdictRules holds one reviewer skill to the single-source
+// rule: the verdict rules live in the shared principle, so the skill restates
+// none of them, points at the principle from its description, carries no
+// re-presented-edge or later-rounds section, owns its verdict JSON including
+// the reviewed field, and is composed into a judging prompt that carries the
+// rules exactly once.
+func assertDelegatesVerdictRules(t testing.TB, path, verdict string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, phrase := range sharedVerdictPhrases {
+		if strings.Contains(strings.ToLower(body), phrase) {
+			t.Errorf("%s restates %q, which belongs to %s alone", path, phrase, config.ReviewerVerdictPrinciple)
+		}
+	}
+	if !strings.Contains(body, `"reviewed":`) {
+		t.Errorf("%s must still own its verdict JSON shape, including the reviewed field", path)
+	}
+	// The pointer lives in the frontmatter description; a body section for it
+	// would be the same run of words in every skill, which doctor reports.
+	if desc := descriptionOf(body); !strings.Contains(desc, "[["+config.ReviewerVerdictPrinciple+"]]") {
+		t.Errorf("%s description must point at %s", path, config.ReviewerVerdictPrinciple)
+	}
+	for _, heading := range []string{"## re-presented edge", "later rounds"} {
+		if strings.Contains(strings.ToLower(body), heading) {
+			t.Errorf("%s carries a %q section; the rules live in %s", path, heading, config.ReviewerVerdictPrinciple)
+		}
+	}
+	seat, err := BuildSeatPayload(SeatPayloadInput{
+		Charter: reviewerCharter(), Rubric: body, Judging: true, Verdict: verdict,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertQuotationPhrases(t, path+" (composed judging prompt)", seat.SystemPrompt)
+	if n := strings.Count(seat.SystemPrompt, sharedVerdictPhrases[0]); n != 1 {
+		t.Errorf("%s: the composed judging prompt carries the re-presented-edge rules %d times, want once", path, n)
+	}
 }
 
 // quotationReviewerPaths returns the reviewer skills under dir.
@@ -230,25 +278,9 @@ func quotationReviewerPaths(t *testing.T, dir string) []string {
 	return selected
 }
 
-// selectQuotationReviewers returns the reviewer skills under dir and asserts
-// each carries the quotation instruction itself: the repo's override skills
-// still state it in the skill body.
-func selectQuotationReviewers(t *testing.T, dir string) []string {
-	t.Helper()
-	selected := quotationReviewerPaths(t, dir)
-	for _, path := range selected {
-		body, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		assertQuotationPhrases(t, path, string(body))
-	}
-	return selected
-}
-
 // assertQuotationPhrases asserts body states the quotation rules and its own
 // verdict JSON carries the reviewed field.
-func assertQuotationPhrases(t *testing.T, path, body string) {
+func assertQuotationPhrases(t testing.TB, path, body string) {
 	t.Helper()
 	assertQuotationRules(t, path, body)
 	if !strings.Contains(body, `"reviewed":`) {
@@ -258,7 +290,7 @@ func assertQuotationPhrases(t *testing.T, path, body string) {
 
 // assertQuotationRules asserts body states the re-presented-edge rules and the
 // reviewed-required rule.
-func assertQuotationRules(t *testing.T, path, body string) {
+func assertQuotationRules(t testing.TB, path, body string) {
 	t.Helper()
 	lower := strings.ToLower(body)
 	for _, phrase := range []string{
@@ -305,60 +337,10 @@ func assertOutsideReviewerSet(t *testing.T, selected []string) {
 	}
 }
 
-// assertLaterRounds checks the later-round sections and leftovers whose rel
+// assertNoLeftoverPhrases checks the leftover phrases for each skill whose rel
 // path starts with prefix.
-func assertLaterRounds(t *testing.T, root, prefix string) {
+func assertNoLeftoverPhrases(t *testing.T, root, prefix string) {
 	t.Helper()
-	for _, sec := range laterSections {
-		if !strings.HasPrefix(sec.rel, prefix) {
-			continue
-		}
-		body, err := os.ReadFile(filepath.Join(root, sec.rel))
-		if err != nil {
-			t.Fatal(err)
-		}
-		raw, ok := laterRoundSection(string(body), sec.heading, sec.bold)
-		if !ok {
-			t.Errorf("%s: later-round section not found", sec.rel)
-			continue
-		}
-		norm := normaliseLaterRound(raw)
-		folded := strings.ToLower(norm)
-		if strings.HasPrefix(sec.rel, embeddedSkillsRel) {
-			// The embedded skills delegate the quotation rules to the shared
-			// reviewer-verdict principle, which the judging dispatch carries.
-			if !strings.Contains(norm, "[["+config.ReviewerVerdictPrinciple+"]]") {
-				t.Errorf("%s later-round section must point at %s:\n%s", sec.rel, config.ReviewerVerdictPrinciple, raw)
-			}
-		} else {
-			if !strings.Contains(folded, "quotation comparison governs") {
-				t.Errorf("%s later-round section does not state the quotation rule:\n%s", sec.rel, raw)
-			}
-			for _, phrase := range []string{
-				"the first verdict",
-				"sets `reviewed`",
-				"the same `reviewed` string",
-			} {
-				if !strings.Contains(folded, phrase) {
-					t.Errorf("%s later-round section missing %q:\n%s", sec.rel, phrase, raw)
-				}
-			}
-		}
-		for _, phrase := range sec.forbid {
-			if strings.Contains(folded, strings.ToLower(phrase)) {
-				t.Errorf("%s still contains %q", sec.rel, phrase)
-			}
-		}
-		if strings.Contains(norm, "definition_edits") {
-			t.Errorf("%s later-round section still contains definition_edits:\n%s", sec.rel, norm)
-		}
-		if strings.Contains(norm, "updated_at") || strings.Contains(folded, "since that accept") || strings.Contains(folded, "last title") {
-			t.Errorf("%s uses a timestamp as the test that the words are unchanged:\n%s", sec.rel, norm)
-		}
-		if isoDateTime.MatchString(norm) {
-			t.Errorf("%s later-round section contains an ISO-8601 datetime:\n%s", sec.rel, norm)
-		}
-	}
 	for _, item := range leftoverSkills {
 		if !strings.HasPrefix(item.rel, prefix) {
 			continue
@@ -375,8 +357,6 @@ func assertLaterRounds(t *testing.T, root, prefix string) {
 		}
 	}
 }
-
-var isoDateTime = regexp.MustCompile(`\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}`)
 
 // quotationReviewer is the tag rule: type:reviewer, not type:functional-check,
 // and no ```check fence. It does not treat "has no check" as the definition.
@@ -416,43 +396,6 @@ func reviewerSkillMarkdown(root string) ([]string, error) {
 		return nil
 	})
 	return out, err
-}
-
-func laterRoundSection(body, heading string, bold bool) (string, bool) {
-	if bold {
-		// The paragraph opens "**Later rounds.**" — the period sits inside
-		// the emphasis, so the mark is the opening words, not a closed "**".
-		const mark = "**Later rounds."
-		i := strings.Index(body, mark)
-		if i < 0 {
-			return "", false
-		}
-		rest := body[i:]
-		if j := strings.Index(rest, "\n\n"); j >= 0 {
-			rest = rest[:j]
-		}
-		return rest, true
-	}
-	lines := strings.Split(body, "\n")
-	start := -1
-	for i, ln := range lines {
-		if strings.HasPrefix(strings.TrimSpace(ln), heading) {
-			start = i
-			break
-		}
-	}
-	if start < 0 {
-		return "", false
-	}
-	var b []string
-	b = append(b, lines[start])
-	for _, ln := range lines[start+1:] {
-		if strings.HasPrefix(ln, "## ") {
-			break
-		}
-		b = append(b, ln)
-	}
-	return strings.Join(b, "\n"), true
 }
 
 // normaliseLaterRound strips markdown emphasis and collapses whitespace.
