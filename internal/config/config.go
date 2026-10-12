@@ -168,6 +168,10 @@ type Config struct {
 	// Validate tunes what `satelle validate` reports beyond structure — today the
 	// injected-context size and its warn-only budgets. See ValidateConfig.
 	Validate ValidateConfig `toml:"validate"`
+	// Doctor tunes the context audit `satelle doctor` runs (the verbatim
+	// duplication threshold). The default ships embedded in
+	// substrate/config/doctor.toml; see ResolveDuplicateMinWords.
+	Doctor DoctorConfig `toml:"doctor"`
 	// Worktree declares what a worktree opened for a story needs
 	// (sty_804c566b): the gitignored paths it carries from the main tree and the
 	// branch and location templates. See WorktreeConfig.

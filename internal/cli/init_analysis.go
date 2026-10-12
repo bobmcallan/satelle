@@ -156,15 +156,24 @@ func managedEditExemptGitignore() string {
 func analyzeSubstrate(dataDir, repoRoot string) []substrateDefect {
 	var out []substrateDefect
 
-	// Placement (fatal): stamps, residency, scope, tag axes, ceiling.
-	constitution := readConstitution(filepath.Join(dataDir, "constitution.md"))
-	for _, p := range auditPlacement(dataDir, config.EmbeddedDefaults(), constitution) {
+	// Placement (fatal): stamps, residency, scope, tag axes.
+	for _, p := range auditPlacement(dataDir, config.EmbeddedDefaults()) {
 		file, defect := splitPlacementProblem(p)
 		out = append(out, substrateDefect{
 			File:   file,
 			Defect: defect,
 			Fix:    placementFixChannel(defect),
 			Fatal:  true,
+		})
+	}
+	// Resident-set ceiling (advisory): judged against every bound harness, and
+	// never fatal — an overflowing set degrades to read pointers on that harness.
+	for _, p := range residentCeilingWarnings(dataDir, repoRoot) {
+		out = append(out, substrateDefect{
+			File:   config.DefaultDataDir + "/constitution.md",
+			Defect: p,
+			Fix:    "trim the constitution or a principles:session principle (see `satelle doctor` for the omitted documents)",
+			Fatal:  false,
 		})
 	}
 
@@ -232,7 +241,6 @@ func analyzeSubstrate(dataDir, repoRoot string) []substrateDefect {
 		}
 	}
 
-	_ = repoRoot // reserved for future absolute-path reports; keep signature stable
 	return out
 }
 

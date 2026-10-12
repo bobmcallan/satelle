@@ -19,6 +19,24 @@ func TestRetiredSubstrateKnownCases(t *testing.T) {
 	}
 }
 
+// The four bare structure reviewers were retired when structural conformance
+// became deterministic code; a citation of one is stale, so each has a row
+// (and TestStructureReviewersNotEmbedded pins that none ships).
+func TestRetiredStructureReviewers(t *testing.T) {
+	for _, name := range []string{
+		"satelle-skill-review", "satelle-workflow-review", "satelle-principle-review", "satelle-story-review",
+	} {
+		e, ok := LookupRetired(name)
+		if !ok {
+			t.Errorf("%q must be retired", name)
+			continue
+		}
+		if e.Kind != "skills" || e.Replacement != "" || e.Version == "" || e.Note == "" {
+			t.Errorf("%q entry: %+v", name, e)
+		}
+	}
+}
+
 func TestRetiredSubstrateConsistentWithEmbedded(t *testing.T) {
 	live := map[string]bool{}
 	for _, d := range EmbeddedDefaults() {

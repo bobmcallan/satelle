@@ -1338,16 +1338,32 @@ func (g *Engine) alwaysPrinciples(ctx context.Context) string {
 // sessionPrinciples is alwaysPrinciples over any doc source, shared with
 // ResidentPrinciples.
 func sessionPrinciples(ctx context.Context, docs DocGetter) string {
-	seen := map[string]bool{}
+	return joinPrincipleBodies(sessionPrincipleDocs(ctx, docs))
+}
+
+// joinPrincipleBodies is the text a seat receives for a resolved principle set:
+// each body without its frontmatter, blank ones dropped, a blank line between.
+func joinPrincipleBodies(picked []docindex.Doc) string {
 	var bodies []string
+	for _, d := range picked {
+		if body := strings.TrimSpace(stripFrontmatter(d.Body)); body != "" {
+			bodies = append(bodies, body)
+		}
+	}
+	return strings.Join(bodies, "\n\n")
+}
+
+// sessionPrincipleDocs is the session-resident principle documents, in the order
+// a seat receives them.
+func sessionPrincipleDocs(ctx context.Context, docs DocGetter) []docindex.Doc {
+	seen := map[string]bool{}
+	var picked []docindex.Doc
 	add := func(d docindex.Doc) {
 		if seen[d.Name] {
 			return
 		}
 		seen[d.Name] = true
-		if body := strings.TrimSpace(stripFrontmatter(d.Body)); body != "" {
-			bodies = append(bodies, body)
-		}
+		picked = append(picked, d)
 	}
 	if listed, err := docs.List(ctx, "principles"); err == nil {
 		sort.Slice(listed, func(i, j int) bool { return listed[i].Name < listed[j].Name })
@@ -1364,7 +1380,7 @@ func sessionPrinciples(ctx context.Context, docs DocGetter) string {
 			add(d)
 		}
 	}
-	return strings.Join(bodies, "\n\n")
+	return picked
 }
 
 // hasSessionTag reports whether a doc's FRONTMATTER carries the principles:session
@@ -4103,6 +4119,11 @@ func WorkflowSkillProblems(w docindex.Doc, resolve func(skill string) bool) []st
 	}
 	return problems
 }
+
+// ReferencedWorkflowSkills is referencedWorkflowSkills for a caller outside the
+// package: every skill one half of a derived route names, which is the set a
+// route WIRES. The context audit asks it which skills anything references.
+func ReferencedWorkflowSkills(body string) []string { return referencedWorkflowSkills(body) }
 
 // referencedWorkflowSkills lists every skill one half of a derived route names —
 // a step's executor rubrics and entry reviewers, an always-on gate, a park or

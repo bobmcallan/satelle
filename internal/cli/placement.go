@@ -6,8 +6,11 @@
 //     embedded_sha (order:1 provenance)
 //  2. the only legal principles:* tag is principles:session (order:3 residency)
 //  3. no inert scope: key on principles (order:3 removed that axis)
-//  4. resident set + constitution fit the largest per-harness SessionStart
-//     limit (order:4 diet; config.Config.ContextLimit)
+//
+// The resident-set CEILING is not among them: how large the set may be depends
+// on the harness that receives it, and a set a harness degrades to read
+// pointers is advice, not a defect that stops a repo. It is judged per bound
+// harness by residentCeilingWarnings, at WARN severity, wherever it is shown.
 //
 // Anchored under `satelle principle validate` (whole-set, nameFilter empty) —
 // same pattern as workflow consistency. Complements the semantic
@@ -22,20 +25,18 @@ import (
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/docindex"
 )
 
 // auditPlacement runs the placement checks over dataDir (.satelle).
-// embedded is typically config.EmbeddedDefaults(); constitution is the
-// already-read constitution body (may be empty). Returns problem strings;
-// empty means clean. Includes unknown tag axes on principles.
-func auditPlacement(dataDir string, embedded []config.EmbeddedDefault, constitution string) []string {
+// embedded is typically config.EmbeddedDefaults(). Returns problem strings;
+// empty means clean. Includes unknown tag axes on principles. Every one is a
+// FAIL; the advisory resident-set ceiling is residentCeilingWarnings.
+func auditPlacement(dataDir string, embedded []config.EmbeddedDefault) []string {
 	var out []string
 	out = append(out, checkEmbeddedStamps(dataDir, embedded)...)
 	out = append(out, checkResidencyMarkers(dataDir)...)
 	out = append(out, checkPrincipleScope(dataDir)...)
 	out = append(out, checkUnknownTagAxes(dataDir)...)
-	out = append(out, checkResidentCeiling(dataDir, constitution)...)
 	return out
 }
 
@@ -136,34 +137,46 @@ func checkPrincipleScope(dataDir string) []string {
 	return out
 }
 
-// checkResidentCeiling: constitution + session-tagged principles must fit under
-// the largest configured harness limit (same renderer as SessionStart injection).
-func checkResidentCeiling(dataDir string, constitution string) []string {
-	var docs []docindex.Doc
-	for _, path := range principleFiles(dataDir) {
-		body, err := os.ReadFile(path)
-		if err != nil {
+// sessionFit is how one bound harness receives the SessionStart context: the
+// size rendered under its limit and what degraded to read pointers.
+type sessionFit struct {
+	Harness  harnessBinding
+	Rendered int
+	Omitted  []string
+}
+
+// sessionFits renders the SessionStart context once for each bound harness —
+// the same renderer and limit as `satelle hook context --harness <h>` — and
+// returns the fit of each, plus the harnesses that could not be judged. It is
+// the single measurement `satelle doctor`, `satelle init` and `satelle
+// principle validate` report from.
+func sessionFits(dataDir, repoRoot string) ([]sessionFit, []harnessGap) {
+	harnesses, gaps := boundHarnesses(dataDir, repoRoot)
+	fits := make([]sessionFit, 0, len(harnesses))
+	for _, h := range harnesses {
+		content, omitted := renderSessionContext(dataDir, h)
+		fits = append(fits, sessionFit{Harness: h, Rendered: measureContext(content, h), Omitted: omitted})
+	}
+	return fits, gaps
+}
+
+// residentCeilingWarnings is the ONE place the resident-set ceiling is turned
+// into a message, and the one place it is downgraded to advice: a set that
+// overflows a bound harness's limit degrades to read pointers there (the agent
+// is told in-context), which `satelle init` and `satelle principle validate`
+// show as WARN. Doctor reports the same measurement under its own identifier.
+func residentCeilingWarnings(dataDir, repoRoot string) []string {
+	fits, _ := sessionFits(dataDir, repoRoot)
+	var out []string
+	for _, f := range fits {
+		if len(f.Omitted) == 0 {
 			continue
 		}
-		if !docHasTag(string(body), sessionTag) {
-			continue
-		}
-		name := strings.TrimSuffix(filepath.Base(path), ".md")
-		docs = append(docs, docindex.Doc{Kind: "principles", Name: name, Body: string(body)})
+		out = append(out, fmt.Sprintf(
+			"resident principle set + constitution exceeds the %s SessionStart limit (%d %s; omitted: %s); trim a session-tagged principle",
+			f.Harness.Name, f.Harness.Limit, f.Harness.Unit, strings.Join(f.Omitted, ", ")))
 	}
-	// A set that overflows one harness's limit degrades to an index there (the
-	// agent is told in-context); it is a placement defect only when it overflows
-	// even the roomiest configured harness, where nothing would ride inline.
-	// Judged against the embedded per-harness defaults: this check is store- and
-	// config-free, like every other placement invariant.
-	limit := config.Config{}.MaxContextLimit()
-	_, omitted := renderAlwaysContent(constitution, docs, alwaysRender{Budget: limit, Harness: "largest configured"})
-	if len(omitted) > 0 {
-		return []string{fmt.Sprintf(
-			"resident principle set + constitution exceeds the largest SessionStart harness limit (%d bytes; omitted: %s); trim a session-tagged principle",
-			limit, strings.Join(omitted, ", "))}
-	}
-	return nil
+	return out
 }
 
 // principleFiles lists dataDir/principles/*.md, skipping reserved keep-files.

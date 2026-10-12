@@ -22,6 +22,36 @@ which is exactly what the constitution forbids.
 | Cross-workflow consistency — ambiguous `applies_to`, unresolved skills | the workflow consistency check |
 | Required binaries — each isolated binding's executable is on PATH | doctor |
 | Harness hook scaffolding vs this binary's canonical wrappers | the scaffold check |
+| The context every agent receives — fit, size, duplication, references | the context audit (below) |
+
+## The context every agent receives
+
+Instruction text is paid for on every call, so doctor checks what is actually
+delivered, using the same renderers the hook and the dispatch use. All of it is
+advisory (WARN or INFO), and none of it makes a model call.
+
+| Identifier | What it reports |
+| --- | --- |
+| `context.session.overflow` | the SessionStart context, rendered once per **bound harness** (the harness of each seat's command, plus the harnesses installed for an in-loop seat), omits documents to read pointers under that harness's own limit — naming the harness, the limit, the rendered size and each omitted document |
+| `context.session.unavailable` | a harness could not be judged: no `[harness.<name>]` table, or a seat command no adapter recognises (never assumed to be any provider) |
+| `context.dispatch.over_budget` / `.unbudgeted` / `.unavailable` | the size of each dispatched seat's context (planner, coder, reviewers, summariser, consult) and of the per-prompt reminder, against the budget **you** configured: `[validate.injected.budget]` (tokens) for a seat, that table or the harness's `tool_context_limit_chars` for the reminder. No budget configured is INFO, not a pass — the binary ships none |
+| `context.duplicate.verbatim` | a run of at least `[doctor] duplicate_min_words` words copied word-for-word between two documents, compared against every principle and skill (authored and embedded, resident or on-demand, linked or not). Point at the source with `[[name]]` instead of restating it |
+| `context.ref.unresolved` / `.unwired` / `context.index.stale` | a `[[name]]` or backticked `satelle-…` name that resolves to nothing or is retired; a skill that is named but that no route, gate, hook, summary, advisor or task wires; a `documents/index.md` entry whose document is gone |
+
+`satelle init` and `satelle principle validate` judge the resident-set ceiling
+against the same bound harnesses and show it as WARN.
+
+## `--context-review` — opt-in semantic review
+
+Paraphrase is not word-for-word, so it cannot be found by comparison.
+`--context-review` runs the repo's reviewer binding — **a model call** — once for
+each distinct assembled context, read-only and one-shot, under the
+`satelle-context-audit` rubric (an authored `.satelle/skills/` copy overrides the
+embedded one, including its output contract). The payload is the context plus an
+index of every principle and skill, so a restatement of a document the context
+never receives is still found (`context.duplicate.semantic`). A reviewer that
+cannot run, or whose reply does not parse, is `context.review.unavailable`,
+naming the adapter. Without the flag no agent is spawned.
 
 ## Two configuration layers, deliberately kept apart
 

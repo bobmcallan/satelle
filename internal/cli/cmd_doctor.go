@@ -26,11 +26,12 @@ import (
 
 func init() {
 	var (
-		all     bool
-		live    bool
-		asJSON  bool
-		verbose bool
-		timeout time.Duration
+		all               bool
+		live              bool
+		contextReviewFlag bool
+		asJSON            bool
+		verbose           bool
+		timeout           time.Duration
 	)
 	cmd := &cobra.Command{
 		Use:   "doctor",
@@ -95,11 +96,14 @@ killed and reaped on the deadline or on cancellation.`,
 				a, err = oa, nil
 			}
 			opts := doctor.Opts{
-				Live:          live,
-				LiveTimeout:   timeout,
-				ScaffoldDrift: scaffoldFindings,
-				StatusDrift:   statusDriftFindings,
-				BreakingDrift: breakingDriftFindings,
+				Live:            live,
+				LiveTimeout:     timeout,
+				ScaffoldDrift:   scaffoldFindings,
+				StatusDrift:     statusDriftFindings,
+				BreakingDrift:   breakingDriftFindings,
+				ContextChecks:   contextChecks,
+				ContextReview:   contextReviewFlag,
+				ContextReviewer: contextReview,
 			}
 			if a != nil {
 				opts.RepoRoot = a.RepoRoot
@@ -139,6 +143,7 @@ killed and reaped on the deadline or on cancellation.`,
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "check every registered workspace repository, each independently")
 	cmd.Flags().BoolVar(&live, "live", false, "additionally run bounded provider probes (spawns provider processes; no paid model call)")
+	cmd.Flags().BoolVar(&contextReviewFlag, "context-review", false, "additionally run the semantic context review: the reviewer binding (a model call) judges each assembled context for paraphrased restatements, under the satelle-context-audit rubric (an authored .satelle/skills file overrides it). Ordinary doctor also reports each bound harness's SessionStart fit, seat/reminder sizes against configured budgets, verbatim duplication ([doctor] duplicate_min_words) and unresolved satelle references, with no model call")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the machine-readable report")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "also list every workflow node/edge allocation (and force detail under --all)")
 	cmd.Flags().DurationVar(&timeout, "timeout", doctor.DefaultLiveTimeout, "per-probe deadline for --live")

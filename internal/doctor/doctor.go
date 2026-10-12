@@ -63,6 +63,17 @@ type Opts struct {
 	// stamp reader and the drift classification live in internal/cli. Nil means
 	// the check is skipped.
 	BreakingDrift func(repoRoot string) health.Findings
+	// ContextChecks reports on the context every agent actually receives — the
+	// SessionStart injection per bound harness, each dispatched seat, duplicated
+	// guidance and unresolved references (sty_a17afa15). Injected for the same
+	// reason as ScaffoldDrift: the renderers live in internal/cli. It makes no
+	// model or network call. Nil means the checks are skipped.
+	ContextChecks func(ctx context.Context, repoRoot, dataDir string) health.Findings
+	// ContextReview opts into the semantic half of the context audit: it spawns
+	// the repo's configured reviewer binding (a model call). Off by default, like
+	// Live. It runs ContextReviewer, and only when that is set.
+	ContextReview   bool
+	ContextReviewer func(ctx context.Context, repoRoot, dataDir string) health.Findings
 	// Process and ProcessRoot are the process-of-record config and root, with
 	// RepoRoot as the invoking tree. When Process is set and the invoking tree is
 	// a linked worktree whose own copy of the authored process differs from the
@@ -248,9 +259,20 @@ func Check(ctx context.Context, o Opts) Report {
 	}
 	rep.Findings = append(rep.Findings, checkSyncHealth(o.RepoRoot, dataDir, globalDir, time.Now())...)
 
+	// 5d. The context every agent receives (deterministic; injected authority).
+	if o.ContextChecks != nil && strings.TrimSpace(o.RepoRoot) != "" {
+		rep.Findings = append(rep.Findings, o.ContextChecks(ctx, o.RepoRoot, dataDir)...)
+	}
+
 	// 6. Live probes — opt-in, bounded, and never part of the deterministic pass.
 	if o.Live {
 		rep.Findings = append(rep.Findings, probeGrants(ctx, o, av.Grants)...)
+	}
+
+	// 7. The semantic context review — opt-in, because it spawns the repo's
+	// reviewer binding. Without the flag no agent is spawned.
+	if o.ContextReview && o.ContextReviewer != nil && strings.TrimSpace(o.RepoRoot) != "" {
+		rep.Findings = append(rep.Findings, o.ContextReviewer(ctx, o.RepoRoot, dataDir)...)
 	}
 
 	rep.OK = rep.Findings.OK()

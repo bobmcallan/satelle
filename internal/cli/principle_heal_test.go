@@ -223,7 +223,7 @@ func TestHealPrincipleFrontmatterInitPath(t *testing.T) {
 		t.Fatalf("heal lost content:\n%s", s)
 	}
 	// Placement clean for this file after heal
-	probs := auditPlacement(dataDir, nil, "")
+	probs := auditPlacement(dataDir, nil)
 	for _, p := range probs {
 		if strings.Contains(p, "scoped") {
 			t.Fatalf("placement still flags healed principle: %v", probs)

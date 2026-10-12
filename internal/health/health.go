@@ -109,6 +109,23 @@ const (
 	IDSyncConfig   = "sync.config"        // stale_after missing or unparseable
 	IDStatusDrift  = "story.status.drift" // work-item row disagrees with last status_transition
 
+	// The context every agent actually receives (sty_a17afa15): what the
+	// SessionStart hook injects per harness and what each dispatched seat is
+	// handed. Every one is advisory (WARN or INFO) — a context that is too big,
+	// repeats itself or names something that does not resolve degrades an agent,
+	// it does not stop satelle governing.
+	IDContextSessionOverflow     = "context.session.overflow"     // SessionStart context omits documents to read pointers under a harness limit
+	IDContextSessionUnavailable  = "context.session.unavailable"  // a bound harness's SessionStart context cannot be rendered
+	IDContextDispatchOverBudget  = "context.dispatch.over_budget" // a dispatched seat or reminder exceeds its configured budget
+	IDContextDispatchUnbudgeted  = "context.dispatch.unbudgeted"  // a dispatched seat or reminder has no configured budget
+	IDContextDispatchUnavailable = "context.dispatch.unavailable" // a seat's context cannot be sized
+	IDContextDuplicateVerbatim   = "context.duplicate.verbatim"   // a passage is copied word-for-word between two documents
+	IDContextDuplicateSemantic   = "context.duplicate.semantic"   // a reviewer judged one document to restate another (opt-in)
+	IDContextRefUnresolved       = "context.ref.unresolved"       // a satelle reference names nothing that resolves, or a retired name
+	IDContextRefUnwired          = "context.ref.unwired"          // a named skill exists but no route, gate, hook, summary or task wires it
+	IDContextIndexStale          = "context.index.stale"          // documents/index.md lists a document that does not exist
+	IDContextReviewUnavailable   = "context.review.unavailable"   // the opt-in semantic reviewer could not run or its output did not parse
+
 	// Live probes (opt-in only).
 	IDLiveOK           = "live.ok"            // a provider answered
 	IDLiveAuth         = "live.auth"          // the provider reported an authentication problem
@@ -129,6 +146,10 @@ var ids = []string{
 	IDScaffoldStale, IDScaffoldMissing, IDRepoUnreadable, IDConfigStray, IDSubstrateUnlocked, IDBreakingUnacknowledged,
 	IDSyncLocal, IDSyncOk, IDSyncFailing, IDSyncUnbacked, IDSyncConfig,
 	IDStatusDrift,
+	IDContextSessionOverflow, IDContextSessionUnavailable, IDContextDispatchOverBudget,
+	IDContextDispatchUnbudgeted, IDContextDispatchUnavailable, IDContextDuplicateVerbatim,
+	IDContextDuplicateSemantic, IDContextRefUnresolved, IDContextRefUnwired, IDContextIndexStale,
+	IDContextReviewUnavailable,
 	IDLiveOK, IDLiveAuth, IDLiveTimeout, IDLiveSpawn, IDLiveACPHandshake,
 }
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 func TestScaffoldConstitutionMarkerIsSubstring(t *testing.T) {
@@ -18,6 +19,7 @@ func TestScaffoldConstitutionMarkerIsSubstring(t *testing.T) {
 }
 
 func TestAnalyzeSubstrateUneditedConstitution(t *testing.T) {
+	testutil.IsolateHome(t) // the ceiling advisory resolves the effective agents layer
 	dataDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dataDir, "constitution.md"), []byte(scaffoldConstitution), 0o644); err != nil {
 		t.Fatal(err)
@@ -57,6 +59,7 @@ gate_create = true
 }
 
 func TestAnalyzeSubstrateConfigMissing(t *testing.T) {
+	testutil.IsolateHome(t)
 	dataDir := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(dataDir, "principles"), 0o755)
 	// Authored constitution (no marker).
@@ -102,6 +105,7 @@ func TestAnalyzeSubstrateConfigMissing(t *testing.T) {
 // TestAnalyzeSubstrateGateCreateMissing: a toml with edit_exempt present but
 // no [review] gate_create yields an advisory whose Fix carries the table Block.
 func TestAnalyzeSubstrateGateCreateMissing(t *testing.T) {
+	testutil.IsolateHome(t)
 	dataDir := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(dataDir, "principles"), 0o755)
 	if err := os.WriteFile(filepath.Join(dataDir, "constitution.md"), []byte("# Real constitution\n"), 0o644); err != nil {
@@ -138,6 +142,7 @@ edit_exempt_paths = [".satelle/", ".gitignore"]
 // TestAnalyzeSubstrateGateCreateOverlayParity: an overlay-only definition of
 // gate_create is "defined" for analyzeSubstrate — same semantics as create.
 func TestAnalyzeSubstrateGateCreateOverlayParity(t *testing.T) {
+	testutil.IsolateHome(t)
 	dataDir := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(dataDir, "principles"), 0o755)
 	if err := os.WriteFile(filepath.Join(dataDir, "constitution.md"), []byte("# Real\n"), 0o644); err != nil {
@@ -166,6 +171,7 @@ func TestAnalyzeSubstrateGateCreateOverlayParity(t *testing.T) {
 // entry and pointing at migrate; a list that already carries the full set is
 // quiet; an empty list is a deliberate opt-out.
 func TestAnalyzeSubstrateEditExemptMissingManaged(t *testing.T) {
+	testutil.IsolateHome(t)
 	cases := []struct {
 		name    string
 		toml    string
@@ -218,6 +224,7 @@ func TestAnalyzeSubstrateEditExemptMissingManaged(t *testing.T) {
 }
 
 func TestAnalyzeSubstrateEditExemptGlobsMissingManaged(t *testing.T) {
+	testutil.IsolateHome(t)
 	cases := []struct {
 		name    string
 		toml    string

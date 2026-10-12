@@ -30,7 +30,7 @@ func TestAuditPlacementCleanSeed(t *testing.T) {
 		}
 	}
 	// No constitution — ceiling covers resident principles only.
-	probs := auditPlacement(dataDir, config.EmbeddedDefaults(), "")
+	probs := auditPlacement(dataDir, config.EmbeddedDefaults())
 	if len(probs) != 0 {
 		t.Fatalf("clean seeded repo must pass placement, got: %v", probs)
 	}
@@ -50,7 +50,7 @@ func TestAuditPlacementFlagsMissingStamp(t *testing.T) {
 		t.Fatal("need an embedded principle")
 	}
 	writePrinciple(t, dataDir, sample.Name, sample.Body)
-	probs := auditPlacement(dataDir, config.EmbeddedDefaults(), "")
+	probs := auditPlacement(dataDir, config.EmbeddedDefaults())
 	found := false
 	for _, p := range probs {
 		if strings.Contains(p, "missing embedded_sha") && strings.Contains(p, sample.Name) {
@@ -65,7 +65,7 @@ func TestAuditPlacementFlagsMissingStamp(t *testing.T) {
 func TestAuditPlacementFlagsIllegalResidencyTag(t *testing.T) {
 	dataDir := t.TempDir()
 	writePrinciple(t, dataDir, "bad-global", "---\nname: bad-global\ntype: principle\ntags: [type:principle, principles:global]\n---\n\n# x\n\nbody\n")
-	probs := auditPlacement(dataDir, nil, "")
+	probs := auditPlacement(dataDir, nil)
 	found := false
 	for _, p := range probs {
 		if strings.Contains(p, "principles:global") {
@@ -80,7 +80,7 @@ func TestAuditPlacementFlagsIllegalResidencyTag(t *testing.T) {
 func TestAuditPlacementFlagsPrincipleScope(t *testing.T) {
 	dataDir := t.TempDir()
 	writePrinciple(t, dataDir, "scoped", "---\nname: scoped\nscope: project\ntype: principle\ntags: [type:principle]\n---\n\n# x\n\nbody\n")
-	probs := auditPlacement(dataDir, nil, "")
+	probs := auditPlacement(dataDir, nil)
 	found := false
 	for _, p := range probs {
 		if strings.Contains(p, "scope:") && strings.Contains(p, "scoped") {
@@ -92,20 +92,75 @@ func TestAuditPlacementFlagsPrincipleScope(t *testing.T) {
 	}
 }
 
-func TestAuditPlacementFlagsOverCeiling(t *testing.T) {
-	dataDir := t.TempDir()
-	// One huge session-tagged principle forces truncation.
-	big := "---\nname: huge\ntype: principle\ntags: [type:principle, principles:session]\n---\n\n# Huge\n\n" + strings.Repeat("x", config.Config{}.MaxContextLimit()+100)
-	writePrinciple(t, dataDir, "huge", big)
-	probs := auditPlacement(dataDir, nil, "")
-	found := false
-	for _, p := range probs {
-		if strings.Contains(p, "SessionStart harness limit") {
-			found = true
+// The resident-set ceiling is judged against every BOUND harness, not the
+// roomiest one: a set between the claude limit (9500) and the largest limit
+// (16384) used to pass and now overflows claude — as a warning, never a FAIL.
+func TestResidentCeilingWarnsForTheBoundHarnessThatOverflows(t *testing.T) {
+	f := residentFixture(t)
+	warns := residentCeilingWarnings(f.dataDir, f.repo)
+	if len(warns) != 1 || !strings.Contains(warns[0], "claude SessionStart limit (9500 bytes") {
+		t.Fatalf("want one warning for claude, got %v", warns)
+	}
+	// It is not a placement FAIL.
+	for _, p := range auditPlacement(f.dataDir, config.EmbeddedDefaults()) {
+		if strings.Contains(p, "SessionStart") {
+			t.Errorf("the ceiling must not be a placement problem: %q", p)
 		}
 	}
-	if !found {
-		t.Fatalf("expected ceiling flag, got %v", probs)
+}
+
+// A set that fits the bound harness raises nothing, whatever the other harnesses
+// would make of it.
+func TestResidentCeilingQuietWhenTheBoundHarnessFits(t *testing.T) {
+	f := newCtxFixture(t, "")
+	f.write("workflows/agents.toml", "[executor]\ncommand = \"in-loop\"\n\n[reviewer]\nrole = \"reviewer\"\ncommand = \""+grokSeatCmd+"\"\n")
+	// Every harness a seat binds (the baseline seats carry claude's command) must
+	// fit; a roomy limit on each makes the set fit them all.
+	f.write("satelle.toml", "[harness.claude]\ncontext_limit_bytes = 1000000\n\n[harness.grok]\ntool_context_limit_chars = 1000000\n")
+	if warns := residentCeilingWarnings(f.dataDir, f.repo); len(warns) != 0 {
+		t.Fatalf("a roomy bound harness must not warn, got %v", warns)
+	}
+}
+
+// `satelle principle validate` prints the ceiling as WARN and still succeeds.
+func TestPrincipleValidatePrintsCeilingAsWarnNotFail(t *testing.T) {
+	repo := tempRepo(t)
+	dataDir := filepath.Join(repo, ".satelle")
+	f := &ctxFixture{t: t, repo: repo, dataDir: dataDir}
+	f.write("workflows/agents.toml", f.claudeAgents())
+	base, _ := renderSessionContext(dataDir, harnessBinding{Name: "claude", Limit: 1 << 30, Unit: "bytes"})
+	pad := 13000 - len(base)
+	if pad < 100 {
+		pad = 100
+	}
+	f.principle("satelle-fixture-big", "# Big\n\n"+strings.Repeat("alpha beta gamma delta ", pad/23+1), true)
+
+	out, err := runRoot(t, "principle", "validate")
+	if err != nil {
+		t.Fatalf("a ceiling overflow must not fail principle validate: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "WARN  principles (ceiling) — resident principle set + constitution exceeds the claude SessionStart limit") {
+		t.Fatalf("want the ceiling as a WARN line, got:\n%s", out)
+	}
+	if strings.Contains(out, "FAIL  principles (placement)") {
+		t.Fatalf("the ceiling is not a placement FAIL:\n%s", out)
+	}
+}
+
+// `satelle init` shows the same overflow as an advisory defect, not a fatal one.
+func TestAnalyzeSubstrateReportsCeilingAsAdvisory(t *testing.T) {
+	f := residentFixture(t)
+	var seen bool
+	for _, d := range analyzeSubstrate(f.dataDir, f.repo) {
+		if strings.Contains(d.Defect, "SessionStart limit") {
+			seen = true
+			if d.Fatal {
+				t.Errorf("a ceiling overflow must not be fatal to init: %+v", d)
+			}
+		}
+	}
+	if !seen {
+		t.Fatal("init must report the claude overflow")
 	}
 }
 
@@ -192,7 +247,7 @@ func TestAuditPlacementFlagsUnknownTagAxis(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(princ, "bad.md"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	probs := auditPlacement(dataDir, nil, "")
+	probs := auditPlacement(dataDir, nil)
 	var sawAxis, sawResidency bool
 	for _, p := range probs {
 		if strings.Contains(p, "unknown tag axis") && strings.Contains(p, "kind") {

@@ -913,13 +913,20 @@ func (g *Engine) resolvePrinciples(ctx context.Context, selector string) string 
 // injected-size report measures the exact text a dispatched seat receives rather
 // than a second implementation of the selector.
 func ResidentPrinciples(ctx context.Context, docs DocGetter, selector string) string {
+	return joinPrincipleBodies(ResidentPrincipleDocs(ctx, docs, selector))
+}
+
+// ResidentPrincipleDocs is the set of principle DOCUMENTS ResidentPrinciples
+// joins, in the order a seat receives them — exported so the context audit can
+// name each document a seat is handed rather than only their joined text.
+func ResidentPrincipleDocs(ctx context.Context, docs DocGetter, selector string) []docindex.Doc {
 	selector = strings.TrimSpace(selector)
 	if selector == "" || selector == config.PrinciplesNone {
-		return ""
+		return nil
 	}
 	// Back-compat: session path is alwaysPrinciples (operating-principle guarantee).
 	if selector == config.PrinciplesSession {
-		return sessionPrinciples(ctx, docs)
+		return sessionPrincipleDocs(ctx, docs)
 	}
 
 	want := map[string]bool{}
@@ -930,23 +937,19 @@ func ResidentPrinciples(ctx context.Context, docs DocGetter, selector string) st
 		}
 	}
 	if want[config.PrinciplesSession] && len(want) == 1 {
-		return sessionPrinciples(ctx, docs)
+		return sessionPrincipleDocs(ctx, docs)
 	}
 
 	// Collect by classification.
-	type pick struct {
-		name string
-		body string
-	}
-	var picked []pick
+	var picked []docindex.Doc
 	seen := map[string]bool{}
 	add := func(d docindex.Doc) {
 		if seen[d.Name] {
 			return
 		}
 		seen[d.Name] = true
-		if body := strings.TrimSpace(stripFrontmatter(d.Body)); body != "" {
-			picked = append(picked, pick{d.Name, body})
+		if strings.TrimSpace(stripFrontmatter(d.Body)) != "" {
+			picked = append(picked, d)
 		}
 	}
 	match := func(d docindex.Doc) bool {
@@ -984,15 +987,8 @@ func ResidentPrinciples(ctx context.Context, docs DocGetter, selector string) st
 			}
 		}
 	}
-	if len(picked) == 0 {
-		return ""
-	}
-	sort.Slice(picked, func(i, j int) bool { return picked[i].name < picked[j].name })
-	var bodies []string
-	for _, p := range picked {
-		bodies = append(bodies, p.body)
-	}
-	return strings.Join(bodies, "\n\n")
+	sort.Slice(picked, func(i, j int) bool { return picked[i].Name < picked[j].Name })
+	return picked
 }
 
 // isolatedAgentBriefing is the shared body of every isolated-agent charter.

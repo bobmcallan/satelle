@@ -40,6 +40,33 @@ var RetiredSubstrate = map[string]RetiredEntry{
 		Replacement: "",
 		Note:        "folded into the constitution's \"Configuration over code\" section",
 	},
+	// The four bare structure reviewers were LLM rubrics until structural
+	// conformance became deterministic code (internal/structure). They have no
+	// embedded default and no successor skill: a citation of one is stale.
+	"satelle-skill-review": {
+		Kind:        "skills",
+		Version:     "0.0.11",
+		Replacement: "",
+		Note:        "structure is judged by deterministic code (internal/structure), not an LLM reviewer",
+	},
+	"satelle-workflow-review": {
+		Kind:        "skills",
+		Version:     "0.0.11",
+		Replacement: "",
+		Note:        "structure is judged by deterministic code (internal/structure), not an LLM reviewer",
+	},
+	"satelle-principle-review": {
+		Kind:        "skills",
+		Version:     "0.0.11",
+		Replacement: "",
+		Note:        "structure is judged by deterministic code (internal/structure), not an LLM reviewer",
+	},
+	"satelle-story-review": {
+		Kind:        "skills",
+		Version:     "0.0.11",
+		Replacement: "",
+		Note:        "the create-time structure check is deterministic code (internal/structure), not an LLM reviewer",
+	},
 	"satelle-plan-typesafe-review": {
 		Kind:        "skills",
 		Version:     "0.0.511",

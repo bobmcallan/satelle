@@ -161,10 +161,15 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 	// no principle scope:, resident set under SessionStart ceiling. Whole-set
 	// only — same anchor pattern as workflow consistency.
 	if kind == "principles" && nameFilter == "" {
-		constitution := readConstitution(a.PlaneConstitution())
-		for _, p := range auditPlacement(dataDir, config.EmbeddedDefaults(), constitution) {
+		for _, p := range auditPlacement(dataDir, config.EmbeddedDefaults()) {
 			failed++
 			fmt.Fprintf(out, "FAIL  principles (placement) — %s\n", p)
+		}
+		// The resident-set ceiling is judged against every bound harness and is
+		// advice, not a failure: a harness that cannot take the set inline is
+		// told in-context and reads the rest on demand.
+		for _, p := range residentCeilingWarnings(dataDir, a.RepoRoot) {
+			fmt.Fprintf(out, "WARN  principles (ceiling) — %s\n", p)
 		}
 		// Wikilink resolution: every [[target]] in substrate must resolve.
 		// Anchored here so `satelle principle validate` and the top-level

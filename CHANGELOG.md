@@ -1,3 +1,18 @@
+## [0.0.652] - 2026-10-12
+
+### Added
+- **`satelle doctor` checks the context every agent actually receives.** It renders the SessionStart context once per harness the repo binds, with the same renderer and limit as `satelle hook context --harness <h>`, and warns when a document is replaced by a read pointer, naming the harness, its limit, the rendered bytes and each omitted document. It reports the size of each dispatched seat's context and of the per-prompt reminder against budgets from configuration (`[validate.injected.budget]`, or the harness's `tool_context_limit_chars`): over budget is a WARN, no budget is an INFO naming the row as unbudgeted, and no budget number lives in Go. It reports guidance copied verbatim between the parts of a context or from any principle or skill in the substrate, including on-demand ones the context never links; the overlap threshold is `duplicate_min_words` under `[doctor]` (embedded `doctor.toml`, overridable). It reports unresolved satelle references (unknown or retired `[[name]]` and backticked `satelle-…` names), skills nothing wires, and `documents/index.md` entries whose document is gone. (sty_a17afa15)
+- **`satelle doctor --context-review`** (opt-in, like `--live`) runs the semantic half: for each assembled context it spawns the repo's reviewer binding read-only with the `satelle-context-audit` rubric, resolved disk-first so a repo-authored copy of that skill overrides the embedded default, and reports each paraphrased restatement as a finding. Plain `satelle doctor` spawns no agent. (sty_a17afa15)
+
+### Changed
+- **The resident-principle ceiling is judged against every bound harness**, not the largest of any harness. `satelle init` and `satelle principle validate` report a set that overflows a bound harness's limit as a WARN for that harness, so neither fails on it. (sty_a17afa15)
+- `[[name]]` resolution has one implementation (`internal/ctxaudit`), shared by `satelle validate` and `satelle doctor`; `satelle validate` output is unchanged. The retired-name registry gains rows for the bare structure reviewers `satelle-skill-review`, `satelle-workflow-review`, `satelle-principle-review` and `satelle-story-review`. (sty_a17afa15)
+
+## [serve-v0.0.153] - 2026-10-12
+
+### Changed
+- The service binary carries the shared context-audit packages used by `satelle doctor`. (sty_a17afa15)
+
 ## [0.0.651] - 2026-10-11
 
 ### Added
