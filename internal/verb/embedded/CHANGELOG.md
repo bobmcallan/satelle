@@ -1,3 +1,8 @@
+## [0.0.659] - 2026-10-13
+
+### Added
+- This completes epic:substrate-continuity: a developer's authored substrate now has the same continuity as their work state. Story attachments, change patches included, travel with work-state sync (0.0.654); a machine knows before work starts whether its substrate is unpushed, behind or diverged, and `satelle doctor` fails on it (0.0.655); diverged machines are reconciled deliberately with `satelle sync reconcile`, the overridden side saved first (0.0.656); satelled pushes authored config and documents on its own and never over a behind or diverged hosted copy (0.0.657); and `satelle sync status --story` with the `satelle-substrate-pushed-check` gate keeps a story from closing while the substrate it changed exists only on one machine (0.0.658). (sty_e4c22781)
+
 ## [0.0.658] - 2026-10-13
 
 ### Added
