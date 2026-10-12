@@ -209,7 +209,7 @@ type ErrBehind struct {
 	// Pending lists paths with remote changes this machine has not applied; set
 	// when the versions agree but a pull would still change something.
 	Pending []string
-	// PullCmd is the command that brings this machine up to date.
+	// PullCmd is the command that resolves the refused push.
 	PullCmd string
 }
 

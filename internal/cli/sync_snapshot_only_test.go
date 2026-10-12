@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/hosted"
 )
 
 // `sync config push --snapshot-only` and `sync documents push --snapshot-only`
@@ -234,4 +236,76 @@ func TestPushWithoutSnapshotOnlyStillFallsBackToPlainUpload(t *testing.T) {
 			}
 		})
 	}
+}
+
+// requireReconcileRemedy asserts a refusal names the command that keeps the
+// developer's work (sty_aeff3dc7): reconcile shows both sides and backs up the
+// one it overrides, where a rehydrate or a pull overwrites the local tree.
+func requireReconcileRemedy(t *testing.T, label string, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("%s: the push was not refused", label)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "satelle sync reconcile") {
+		t.Errorf("%s: refusal does not name satelle sync reconcile: %q", label, msg)
+	}
+	for _, bad := range []string{"sync rehydrate", "sync documents pull"} {
+		if strings.Contains(msg, bad) {
+			t.Errorf("%s: refusal names %q: %q", label, bad, msg)
+		}
+	}
+}
+
+// A push behind the hosted copy — plain, and the unattended --snapshot-only one
+// satelled runs — names reconcile for both the config and the documents areas.
+func TestRefusedPushNamesReconcile(t *testing.T) {
+	for _, k := range snapKinds {
+		t.Run(k.name, func(t *testing.T) {
+			ts, f := newSnapServer(t)
+			seedCred(t, ts.URL)
+			a := publishedMachine(t, ts.URL)
+			b := newSnapMachine(t, ts.URL)
+			b.deploy()
+			b.pullDocs()
+			a.write(k.file, "from A\n")
+			a.pushConfig()
+			a.pushDocs()
+			b.write(k.file, "from B\n")
+
+			_, err := k.run(b)
+			requireReconcileRemedy(t, k.name+" plain push", err)
+			requireReconcileRemedy(t, k.name+" --snapshot-only push", k.refused(t, f, b))
+		})
+	}
+}
+
+// Hosted changes this machine has not applied — the snapshot versions agree,
+// but the hosted copy holds a file this tree and its base lack — refuse the push
+// naming reconcile.
+func TestPendingPathsRefusalNamesReconcile(t *testing.T) {
+	ts, _ := newSnapServer(t)
+	seedCred(t, ts.URL)
+	a := newSnapMachine(t, ts.URL)
+	a.write("skills/x.md", "x\n")
+	a.write("skills/y.md", "y\n")
+	a.pushConfig()
+
+	b := newSnapMachine(t, ts.URL)
+	b.deploy()
+	b.remove("skills/y.md")
+	base, ok := b.base("skills")
+	if !ok {
+		t.Fatal("B has no recorded base after its deploy")
+	}
+	delete(base.Files, "skills/y.md")
+	if err := hosted.SaveAreaBase(b.url, "probe", b.repo, "skills", base); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := b.tryPushConfig()
+	if err == nil || !strings.Contains(err.Error(), "not yet applied here") {
+		t.Fatalf("want the pending-paths refusal, got %v", err)
+	}
+	requireReconcileRemedy(t, "pending paths", err)
 }

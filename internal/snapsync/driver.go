@@ -65,7 +65,7 @@ type Driver struct {
 	Blobs   Blobs
 	// Owns reports whether a server path belongs to the area.
 	Owns func(area, path string) bool
-	// PullCmd names the command that pulls this driver's route, for refusals.
+	// PullCmd names the command that resolves a refused push, for ErrBehind.
 	PullCmd string
 	// Prune makes a first claim (no hosted snapshot yet) publish this tree as the
 	// whole truth instead of carrying forward hosted files it lacks.

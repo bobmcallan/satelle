@@ -253,13 +253,13 @@ func TestPlanPushRefusals(t *testing.T) {
 	eff := rec(0, map[string]string{"a": "1"})
 
 	// Behind: base 1, hosted effective 2.
-	_, err := PlanPush("skills", "satelle sync rehydrate", "loc", false, false, &hosted.AreaBase{Version: 1, Files: map[string]string{"a": "1"}}, 2, eff,
+	_, err := PlanPush("skills", "satelle sync reconcile", "loc", false, false, &hosted.AreaBase{Version: 1, Files: map[string]string{"a": "1"}}, 2, eff,
 		map[string]string{"a": "1"}, map[string]string{"a": "1"}, none)
 	var behind *ErrBehind
 	if !errors.As(err, &behind) || behind.Base != 1 || behind.Effective != 2 {
 		t.Fatalf("err = %v, want ErrBehind{1,2}", err)
 	}
-	for _, want := range []string{"snapshot 2", "snapshot 1", "satelle sync rehydrate"} {
+	for _, want := range []string{"snapshot 2", "snapshot 1", "satelle sync reconcile"} {
 		if !contains(err.Error(), want) {
 			t.Errorf("message %q lacks %q", err.Error(), want)
 		}

@@ -115,15 +115,20 @@ func (b *docBlobs) Put(ctx context.Context, path string, content []byte) (bool, 
 	return res.Created, err
 }
 
+// pushRefusalRemedy is the command a refused push names: reconcile shows both
+// sides and backs up the one it overrides, where a rehydrate or a pull would
+// overwrite the local work the refusal is protecting.
+const pushRefusalRemedy = "satelle sync reconcile"
+
 // newSnapDriver builds the shared driver for one route.
-func newSnapDriver(cfg config.Config, client *hosted.Client, out io.Writer, server, project, repoRoot, dataDir, pullCmd string, rec snapsync.Records, blobs snapsync.Blobs) *snapsync.Driver {
+func newSnapDriver(cfg config.Config, client *hosted.Client, out io.Writer, server, project, repoRoot, dataDir string, rec snapsync.Records, blobs snapsync.Blobs) *snapsync.Driver {
 	abs, err := filepath.Abs(repoRoot)
 	if err != nil {
 		abs = repoRoot
 	}
 	return &snapsync.Driver{
 		Server: server, Project: project, RepoRoot: abs, DataDir: dataDir,
-		By: client.Location(), Records: rec, Blobs: blobs, Out: out, PullCmd: pullCmd,
+		By: client.Location(), Records: rec, Blobs: blobs, Out: out, PullCmd: pushRefusalRemedy,
 		Owns: func(area, p string) bool { return config.SyncAreaOf(cfg, repoRoot, p) == area },
 	}
 }
@@ -202,7 +207,7 @@ func pushConfigSnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, dataDi
 		}
 	}
 	d := newSnapDriver(cfg, client, cmd.OutOrStdout(), server, project, repoRoot, dataDir,
-		"satelle sync rehydrate", newConfigRecords(client, project, manifest),
+		newConfigRecords(client, project, manifest),
 		&configBlobs{client: client, project: project, manifest: manifest})
 	d.Prune = pruneRequested(cmd)
 	d.Force = forceRequested(cmd)
@@ -234,7 +239,7 @@ func pushDocumentsSnapshot(cmd *cobra.Command, cfg config.Config, repoRoot, data
 		pf = append(pf, snapsync.PushFile{Path: f.Path, Content: f.Content})
 	}
 	d := newSnapDriver(cfg, client, cmd.OutOrStdout(), server, project, repoRoot, dataDir,
-		"satelle sync documents pull", newConfigRecords(client, project, manifest),
+		newConfigRecords(client, project, manifest),
 		&docBlobs{client: client, project: project})
 	d.Prune = pruneRequested(cmd)
 	d.Force = forceRequested(cmd)
@@ -308,7 +313,7 @@ func planConfigDeploySnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, 
 	}
 	s := &configDeploySnapshots{areas: map[string]bool{}}
 	s.driver = newSnapDriver(cfg, client, cmd.OutOrStdout(), server, project, repoRoot, dataDir,
-		"satelle sync rehydrate", newConfigRecords(client, project, manifest),
+		newConfigRecords(client, project, manifest),
 		&configBlobs{client: client, project: project, manifest: manifest})
 	s.driver.Materialize = rc == nil
 	for _, area := range config.ConfigAreas {
@@ -440,7 +445,7 @@ func planDocumentsPull(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir 
 		return nil, false, nil
 	}
 	d := newSnapDriver(cfg, client, cmd.OutOrStdout(), server, project, repoRoot, dataDir,
-		"satelle sync documents pull", newConfigRecords(client, project, manifest),
+		newConfigRecords(client, project, manifest),
 		&docBlobs{client: client, project: project})
 	local, err := snapsync.LocalShas(cfg, repoRoot, "documents")
 	if err != nil {

@@ -283,13 +283,13 @@ func (s *substrateDrivers) forArea(area string) *snapsync.Driver {
 	if area == "documents" {
 		if s.documentsDriver == nil {
 			s.documentsDriver = newSnapDriver(s.cfg, s.client, nil, s.server, s.project, s.repoRoot, s.dataDir,
-				"satelle sync documents pull", records, &docBlobs{client: s.client, project: s.project})
+				records, &docBlobs{client: s.client, project: s.project})
 		}
 		return s.documentsDriver
 	}
 	if s.configDriver == nil {
 		s.configDriver = newSnapDriver(s.cfg, s.client, nil, s.server, s.project, s.repoRoot, s.dataDir,
-			"satelle sync rehydrate", records, &configBlobs{client: s.client, project: s.project, manifest: s.manifest})
+			records, &configBlobs{client: s.client, project: s.project, manifest: s.manifest})
 	}
 	return s.configDriver
 }

@@ -448,10 +448,13 @@ func TestSnapshotPushRefusedWhenBehind(t *testing.T) {
 	if err == nil {
 		t.Fatalf("B pushed over a newer snapshot it never pulled:\n%s", out)
 	}
-	for _, want := range []string{"snapshot 2", "snapshot 1", `satelle sync rehydrate`} {
+	for _, want := range []string{"snapshot 2", "snapshot 1", `satelle sync reconcile`} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal %q lacks %q", err.Error(), want)
 		}
+	}
+	if strings.Contains(err.Error(), "sync rehydrate") {
+		t.Errorf("refusal names rehydrate, which overwrites the local tree: %q", err.Error())
 	}
 	if n := len(f.putLog()) - before; n != 0 {
 		t.Errorf("a refused push made %d PUT(s): %v", n, f.putLog()[before:])

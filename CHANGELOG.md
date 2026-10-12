@@ -1,3 +1,8 @@
+## [0.0.663] - 2026-10-13
+
+### Fixed
+- A refused substrate push now names `satelle sync reconcile` as the way forward. Config and documents pushes refused because the hosted copy is ahead or has changes not yet applied here (including satelled's automatic `--snapshot-only` push) used to say `run "satelle sync rehydrate" first` or `satelle sync documents pull`, which overwrite the local tree; reconcile shows both sides and backs up the overridden one. The remedy is fixed in one place, so no push path can name a different command. (sty_aeff3dc7)
+
 ## [0.0.662] - 2026-10-13
 
 ### Changed
