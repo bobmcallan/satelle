@@ -305,6 +305,36 @@ var fenceFixtures = map[string][]fenceCase{
 			wantExit: 0,
 		},
 	},
+	"satelle-substrate-pushed-check": {
+		{
+			// `satelle sync status --story` exits 0: every touched area is in step
+			// (or behind), or the story touched no synced substrate.
+			name:       "accepts when sync status --story exits zero",
+			sid:        "sty_a1b2c3d4",
+			pathPrefix: "bin",
+			setup:      syncStatusShim(0, "skills in step"),
+			wantExit:   0,
+			wantStdout: "skills in step",
+			wantAlso:   []string{"sync status --story sty_a1b2c3d4"},
+		},
+		{
+			name:       "rejects when sync status --story exits non-zero, carrying its output",
+			sid:        "sty_a1b2c3d4",
+			pathPrefix: "bin",
+			setup:      syncStatusShim(1, "skills unpushed — run satelle sync"),
+			wantExit:   1,
+			wantStdout: "skills unpushed — run satelle sync",
+			wantAlso:   []string{"sty_a1b2c3d4 changed substrate that is not on the hosted copy"},
+		},
+		{
+			name:       "rejects a payload that names no story",
+			stdin:      `{"from":"in_progress","to":"done"}`,
+			pathPrefix: "bin",
+			setup:      syncStatusShim(0, "unused"),
+			wantExit:   1,
+			wantStdout: "could not read the story id",
+		},
+	},
 	"satelle-route-drift-check": {
 		{
 			// The common path: no route_drift block in the payload, so there is
@@ -787,6 +817,23 @@ func comparablesShim(exit1 bool, rows ...comparableRow) func(*testing.T, string)
 		} else {
 			script += "if [ \"$1 $2\" = \"story comparables\" ]; then cat <<'J'\n" + body + "\nJ\nfi\n"
 		}
+		shim := filepath.Join(repo, "bin", "satelle")
+		mustWrite(t, shim, script)
+		if err := os.Chmod(shim, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// syncStatusShim writes a bin/satelle stub standing in for the mechanism the
+// substrate-pushed check delegates to: it echoes its arguments and out, then
+// exits with exit when called as `sync status --story <id>`.
+func syncStatusShim(exit int, out string) func(*testing.T, string) {
+	return func(t *testing.T, repo string) {
+		t.Helper()
+		script := "#!/usr/bin/env bash\n" +
+			"if [ \"$1 $2 $3\" != \"sync status --story\" ]; then echo \"unexpected: $*\"; exit 99; fi\n" +
+			"echo \"$*\"\necho '" + out + "'\nexit " + fmt.Sprint(exit) + "\n"
 		shim := filepath.Join(repo, "bin", "satelle")
 		mustWrite(t, shim, script)
 		if err := os.Chmod(shim, 0o755); err != nil {

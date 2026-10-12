@@ -485,15 +485,7 @@ func walkAreaFiles(cfg Config, repoRoot, area string, scope Scope) ([]ConfigFile
 		if d.IsDir() {
 			return nil
 		}
-		if isReservedView(filepath.Base(p)) {
-			return nil
-		}
-		// The agents layer sits IN the workflows dir but is its own sync area with
-		// its own tier and redaction semantics (sty_10f732ed). Without this skip the
-		// directory walk would push it a second time under a workflows/ key.
-		if area == "workflows" && (filepath.Base(p) == AgentsConfigName || filepath.Base(p) == WorkspaceAgentsName) {
-			// agents.workspace.toml is the SYNCED workspace layer (sty_01949949):
-			// it came from the team catalog and is never pushed back as config.
+		if walkSkips(area, filepath.Base(p)) {
 			return nil
 		}
 		rel, rerr := filepath.Rel(location, p)
@@ -514,6 +506,60 @@ func walkAreaFiles(cfg Config, repoRoot, area string, scope Scope) ([]ConfigFile
 		return nil, fmt.Errorf("sync area %q: %w", area, walkErr)
 	}
 	return out, nil
+}
+
+// walkSkips reports whether a file basename inside a directory area is never
+// part of that area's push: a generated read-only view, and — in workflows — the
+// agents layer, which sits IN the workflows dir but is its own sync area with its
+// own tier and redaction semantics (sty_10f732ed); without this skip the walk
+// would push it a second time under a workflows/ key. agents.workspace.toml is
+// the SYNCED workspace layer (sty_01949949): it came from the team catalog and is
+// never pushed back as config. The one rule behind walkAreaFiles and AreaOfRepoPath.
+func walkSkips(area, base string) bool {
+	if isReservedView(base) {
+		return true
+	}
+	return area == "workflows" && (base == AgentsConfigName || base == WorkspaceAgentsName)
+}
+
+// AreaOfRepoPath names the config or documents area a tree path belongs to, or ""
+// for a path no area owns. path is repo-relative (as story-diff reports it) or
+// absolute; the answer follows ConfigAreaLocation, so a relocated data dir or
+// [substrate_roots] entry is honoured, and the skips are walkAreaFiles' own, so a
+// path maps to an area exactly when that area's push would carry it. SyncAreaOf is
+// the other direction of the same question for server keys, which are stable
+// regardless of where the tree keeps its files.
+func AreaOfRepoPath(cfg Config, repoRoot, path string) string {
+	abs := filepath.FromSlash(path)
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(repoRoot, abs)
+	}
+	abs = filepath.Clean(abs)
+	// Single-file areas first: the agents layer lives under workflows/, so it
+	// must be claimed before the workflows directory is.
+	for _, area := range []string{"settings", "constitution", "agents"} {
+		if loc, _ := ConfigAreaLocation(cfg, repoRoot, area); loc != "" && filepath.Clean(loc) == abs {
+			return area
+		}
+	}
+	if abs == filepath.Clean(filepath.Join(cfg.ResolveDataDir(repoRoot), filepath.FromSlash(AgentsRel))) {
+		return "agents"
+	}
+	for _, area := range []string{"workflows", "principles", "skills", "tasks", "documents"} {
+		loc, isDir := ConfigAreaLocation(cfg, repoRoot, area)
+		if !isDir || loc == "" {
+			continue
+		}
+		rel, err := filepath.Rel(loc, abs)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		if walkSkips(area, filepath.Base(abs)) {
+			continue
+		}
+		return area
+	}
+	return ""
 }
 
 // readConfigFile reads one file's bytes and resolves its tier. serverPath is the

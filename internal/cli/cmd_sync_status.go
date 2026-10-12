@@ -7,8 +7,10 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -19,10 +21,11 @@ import (
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/snapsync"
 	"github.com/bobmcallan/satelle/internal/syncstate"
+	"github.com/bobmcallan/satelle/internal/verb"
 )
 
 func newSyncStatusCmd() *cobra.Command {
-	var server string
+	var server, story string
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Print whether each synced area is in step with the bound project's hosted copy",
@@ -34,14 +37,158 @@ synced, the hosted snapshot and the next command to run.
 The state comes from the planning a push runs, so a push that would be refused
 shows as the reason. Exits non-zero when any area is not in step. Each verified
 state is recorded, so "satelle doctor" and a new engagement can report it
-without the server.`,
+without the server.
+
+--story <id> checks only the areas that story changed: non-zero while any is
+not on the hosted copy (in step and behind pass), zero and offline when it
+touched no synced substrate.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if story != "" {
+				// The story's change sets live in the local store, which a bare
+				// "sync status" never needs, so only this form opens it.
+				if err := openAppForCmd(cmd); err != nil {
+					return err
+				}
+				return runSyncStatusForStory(cmd, server, story)
+			}
 			return runSyncStatus(cmd, server)
 		},
 	}
 	cmd.Flags().StringVar(&server, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
+	cmd.Flags().StringVar(&story, "story", "", "Check only the synced areas this story's change touched (non-zero while any is not on the hosted copy).")
 	return cmd
+}
+
+// noEngagementBaseline is the text of story-diff's no-baseline answer: the story
+// was never engaged, so its live leg is legitimately empty. Pinned by a test, as
+// the verb package keeps the sentinel itself private.
+const noEngagementBaseline = "no engagement baseline"
+
+// storyTouchedPaths is the union of a story's recorded change sets and its live
+// "story diff --include-substrate" leg, both asked of the story-diff verb. A
+// story with no engagement baseline has no live leg; any other refusal (a foreign
+// tree, git unavailable) is returned, because an unreadable change set must not
+// read as "touched nothing". Worktree stories report their main-tree substrate
+// edits relative to the process root, which is the root the caller maps against.
+func storyTouchedPaths(ctx context.Context, storyID string) ([]string, error) {
+	var paths []string
+	for _, leg := range []map[string]any{{"recorded": true}, {"include_substrate": true}} {
+		leg["id"] = storyID
+		body, err := json.Marshal(leg)
+		if err != nil {
+			return nil, err
+		}
+		raw, err := verb.Dispatch(ctx, "story-diff", body)
+		if err != nil {
+			if strings.Contains(err.Error(), noEngagementBaseline) {
+				continue
+			}
+			return nil, fmt.Errorf("story diff %s: %w", storyID, err)
+		}
+		var d struct {
+			Files            []string `json:"files"`
+			ProcessRootFiles []string `json:"process_root_files"`
+		}
+		if err := json.Unmarshal(raw, &d); err != nil {
+			return nil, fmt.Errorf("story diff %s: %w", storyID, err)
+		}
+		paths = append(paths, d.Files...)
+		paths = append(paths, d.ProcessRootFiles...)
+	}
+	return paths, nil
+}
+
+// loadProcessRepoConfig is loadRepoConfig for the process of record: the main
+// tree's config and root when this is a linked worktree, where the substrate
+// lives (".satelle" is never in the worktree). In the main tree the two agree.
+func loadProcessRepoConfig() (config.Config, string, string, error) {
+	loc, locPath, err := config.Load("")
+	if err != nil && !errors.Is(err, config.ErrNotFound) {
+		return config.Config{}, "", "", fmt.Errorf("load config: %w", err)
+	}
+	proc, root, _, err := config.LoadProcess(loc, locPath)
+	if err != nil {
+		return config.Config{}, "", "", fmt.Errorf("load config: %w", err)
+	}
+	return proc, root, proc.ResolveDataDir(root), nil
+}
+
+// runSyncStatusForStory checks the substrate one story changed against the hosted
+// copy. Which areas the story touched comes from the story-diff verb mapped
+// through config.AreaOfRepoPath; whether each is on the hosted copy comes from the
+// same probe plain "sync status" runs (snapsync.Driver.Status) and the remedy
+// from nextCommand. Nothing here decides a state.
+func runSyncStatusForStory(cmd *cobra.Command, serverArg, storyID string) error {
+	cfg, root, dataDir, err := loadProcessRepoConfig()
+	if err != nil {
+		return err
+	}
+	synced, err := config.SubstrateAreas(cfg)
+	if err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
+	var touched map[string][]string
+	if len(synced) > 0 {
+		paths, err := storyTouchedPaths(cmd.Context(), storyID)
+		if err != nil {
+			return err
+		}
+		touched = map[string][]string{}
+		for _, p := range paths {
+			if area := config.AreaOfRepoPath(cfg, root, p); area != "" && slices.Contains(synced, area) {
+				touched[area] = append(touched[area], p)
+			}
+		}
+	}
+	if len(touched) == 0 {
+		fmt.Fprintf(out, "story %s touched no synced substrate — nothing to check\n", storyID)
+		return nil
+	}
+	var areas []string
+	for _, a := range synced {
+		if len(touched[a]) > 0 {
+			areas = append(areas, a)
+			slices.Sort(touched[a])
+			touched[a] = slices.Compact(touched[a])
+		}
+	}
+
+	server := resolveServer(serverArg)
+	if server == "" {
+		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
+	}
+	project, err := resolveBoundProject(cfg, root)
+	if err != nil {
+		return err
+	}
+	client := newHostedClient(cmd.Context(), server, root)
+	statuses := probeSubstrate(cmd.Context(), cfg, root, dataDir, server, project, client, areas)
+	recordSubstrateStates(root, statuses)
+
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "AREA\tSTATE\tLOCAL BASE\tHOSTED\tNEXT\tTOUCHED")
+	var refused []string
+	for _, st := range statuses {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", st.Area, st.State, versionLabel(st.Base), versionLabel(st.Effective), nextCommand(st), strings.Join(touched[st.Area], ", "))
+		if st.State == snapsync.StateInStep || st.State == snapsync.StateBehind {
+			continue
+		}
+		reason := st.Area + " " + st.State
+		if st.State == snapsync.StateUnavailable && st.Err != nil {
+			reason += " (" + st.Err.Error() + ")"
+		}
+		refused = append(refused, fmt.Sprintf("%s — touched %s — run %s", reason, strings.Join(touched[st.Area], ", "), nextCommand(st)))
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	if len(refused) > 0 {
+		return fmt.Errorf("story %s changed substrate that is not on the hosted copy of project %q on %s:\n  %s",
+			storyID, project, server, strings.Join(refused, "\n  "))
+	}
+	return nil
 }
 
 func runSyncStatus(cmd *cobra.Command, serverArg string) error {

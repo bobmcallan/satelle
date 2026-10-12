@@ -1,3 +1,17 @@
+## [0.0.658] - 2026-10-13
+
+### Added
+- **`satelle sync status --story <id>`** answers whether the authored substrate a story changed is on the hosted copy. Its touched paths are the union of the story's recorded change sets and its live substrate diff, so edits made in the step being closed count before any change record exists; a story engaged from a linked worktree is mapped and probed against the main tree. It exits non-zero, naming the area, its state, the touched paths and the next command, when a touched area is unpushed, never synced, diverged, unmerged or unavailable; it passes in step and behind (the hosted copy already holds the change); a story that touched no synced substrate passes without contacting the server. (sty_fcfe32e5)
+- **`satelle-substrate-pushed-check`**, an embedded functional-check skill that runs `satelle sync status --story <id>` on the edge it is named on and accepts only on exit 0. It is not wired into the embedded route; a repo adds it to a step's `reviewers = [...]` in `step.toml`. (sty_fcfe32e5)
+
+### Changed
+- A repo-relative tree path maps to its sync area through one helper built on the area-location owner, so relocated `[substrate_roots]`, a non-default data dir, the settings, agents and constitution files are all recognised. (sty_fcfe32e5)
+
+## [serve-v0.0.157] - 2026-10-13
+
+### Changed
+- The service binary carries the shared repo-path-to-area mapping used by `satelle sync status --story`. (sty_fcfe32e5)
+
 ## [0.0.657] - 2026-10-13
 
 ### Added

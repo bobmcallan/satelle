@@ -1,17 +1,28 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/snapsync"
+	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/testutil"
+	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // Substrate continuity (sty_7562055c): `sync status`, and the state each sync
@@ -263,6 +274,16 @@ func TestSyncStatusAllLocalChecksNothing(t *testing.T) {
 	}
 }
 
+// The --story form opens the store itself (a bare "sync status" never does) and,
+// in a repo that syncs nothing, has nothing to ask the story about.
+func TestSyncStatusStoryFlagThroughRoot(t *testing.T) {
+	tempRepo(t)
+	out, err := runRoot(t, "sync", "status", "--story", "sty_00000000")
+	if err != nil || !strings.Contains(out, "touched no synced substrate") {
+		t.Fatalf("all-local --story status = %v\n%s", err, out)
+	}
+}
+
 // AC2: every operation leaves the state the driver reports afterwards.
 func TestSyncOperationsRecordDriverDerivedState(t *testing.T) {
 	ts, f := newSnapServer(t)
@@ -410,5 +431,477 @@ func TestSyncStatusTakesAreasFromConfigNotLayout(t *testing.T) {
 	}
 	for _, area := range []string{"principles", "tasks"} {
 		wantState(t, buf.String(), area, "never synced")
+	}
+}
+
+// --- `sync status --story` (sty_fcfe32e5) -----------------------------------
+//
+// A story that changed synced substrate cannot be done while that change exists
+// only on this machine. The tests drive the real story-diff verb over a real
+// store and git tree, and the real probe against the fake hosted server.
+
+// openGater lets every edge through: these tests read a story's change sets, not
+// its gates.
+type openGater struct{}
+
+func (openGater) Gate(context.Context, workitem.Item, string) (verb.GateDecision, error) {
+	return verb.GateDecision{Gated: false}, nil
+}
+
+// gitTree makes dir a git tree with one commit, its substrate dirs ignored the
+// way a real checkout's are: the authored process is never in git.
+func gitTree(t *testing.T, dir string, ignore ...string) {
+	t.Helper()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init")
+	git("config", "user.email", "t@t")
+	git("config", "user.name", "t")
+	writeRepoFile(t, dir, "a.go", "package a\n")
+	writeRepoFile(t, dir, ".gitignore", strings.Join(ignore, "\n")+"\n")
+	git("add", ".")
+	git("commit", "-m", "init")
+}
+
+// storyEnv is a story engaged from a tree, with the verb layer wired to its own
+// store. repo is the process-of-record root; tree is where the story was engaged
+// (repo itself, or a linked worktree of it).
+type storyEnv struct {
+	t  *testing.T
+	id string
+	db *store.DB
+}
+
+// engageSyncStory wires the verb layer, makes tree the working directory and engages
+// a story from it. SATELLE_CONFIG must already name the repo's config.
+func engageSyncStory(t *testing.T, tree string) *storyEnv {
+	t.Helper()
+	withVerbWiring(t)
+	cfg, cfgPath, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := config.RepoRootFromConfigPath(cfgPath)
+	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	wfDir := filepath.Join(t.TempDir(), "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range twoMachineRoute {
+		if err := os.WriteFile(filepath.Join(wfDir, name+".toml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.DocIndex.Sync(context.Background(), map[string]string{"workflows": wfDir}, time.Now()); err != nil {
+		t.Fatalf("sync workflows: %v", err)
+	}
+	verb.SetWorkItemStore(db.Stories)
+	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
+	verb.SetDocIndexStore(db.DocIndex)
+	verb.SetLeaseStore(db.Leases)
+	verb.SetStoryDir(filepath.Join(t.TempDir(), "stories"))
+	verb.SetAuthoredDirs(cfg.ResolveAuthoredDirs(repo))
+	verb.SetSubstrateConfigDir(cfg.ResolveDataDir(repo))
+	verb.SetTransitionGater(openGater{})
+	if tree != repo {
+		verb.SetWorktreeConfig(cfg, repo)
+		verb.SetProcessProbe(&verb.ProcessProbe{Process: cfg, ProcessRoot: repo, InvokingRoot: tree})
+	}
+	t.Chdir(tree)
+
+	e := &storyEnv{t: t, db: db}
+	var it workitem.Item
+	json.Unmarshal(e.dispatch("story-create", map[string]any{
+		"title": "touches substrate", "body": "goal", "acceptance_criteria": "1. ok",
+		"category": "feature", "tags": []string{"workflow:cr-wf"},
+	}), &it)
+	e.id = it.ID
+	return e
+}
+
+func (e *storyEnv) dispatch(name string, req map[string]any) json.RawMessage {
+	e.t.Helper()
+	raw, _ := json.Marshal(req)
+	resp, err := verb.Dispatch(context.Background(), name, raw)
+	if err != nil {
+		e.t.Fatalf("%s: %v", name, err)
+	}
+	return resp
+}
+
+func (e *storyEnv) engage() {
+	e.t.Helper()
+	e.dispatch("story-set", map[string]any{"id": e.id, "status": "in_progress"})
+}
+
+// recordChange writes a change_record row naming files, as a transition does.
+func (e *storyEnv) recordChange(files ...string) {
+	e.t.Helper()
+	payload, _ := json.Marshal(map[string]any{"from": "backlog", "to": "in_progress", "files": files, "file_count": len(files)})
+	if _, err := e.db.Ledger.Append(context.Background(), ledger.AppendInput{
+		StoryID: e.id, Kind: ledger.KindChangeRecord, Actor: "executor", Body: "change record", Payload: payload,
+	}, time.Now()); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// editAfterEngage writes a repo-relative file and stamps it later than the
+// engagement baseline, so the live substrate leg sees it.
+func editAfterEngage(t *testing.T, repo, rel, body string) {
+	t.Helper()
+	writeRepoFile(t, repo, rel, body)
+	later := time.Now().Add(2 * time.Second) // time-subject: mtime must clear the engagement baseline's timestamp
+	if err := os.Chtimes(filepath.Join(repo, filepath.FromSlash(rel)), later, later); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// editBeforeEngage writes a repo-relative file whose mtime predates any
+// engagement, so only a recorded change set can name it.
+func editBeforeEngage(t *testing.T, repo, rel, body string) {
+	t.Helper()
+	writeRepoFile(t, repo, rel, body)
+	earlier := time.Now().Add(-time.Hour) // time-subject: mtime must precede the engagement baseline's timestamp
+	if err := os.Chtimes(filepath.Join(repo, filepath.FromSlash(rel)), earlier, earlier); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// storyStatus runs `sync status --story` as this machine against server url,
+// returning stdout and the refusal (which is part of what the operator sees).
+func (m *snapMachine) storyStatusAt(url, id string) (string, error) {
+	m.use()
+	cmd, buf := testCmd()
+	err := runSyncStatusForStory(cmd, url, id)
+	out := buf.String()
+	if err != nil {
+		out += err.Error()
+	}
+	return out, err
+}
+
+func (m *snapMachine) storyStatus(id string) (string, error) { return m.storyStatusAt(m.url, id) }
+
+// storyMachine is a published machine with a git tree and a story engaged on it.
+func storyMachine(t *testing.T, url string) (*snapMachine, *storyEnv) {
+	t.Helper()
+	a := publishedMachine(t, url)
+	gitTree(t, a.repo, ".satelle/")
+	a.use()
+	e := engageSyncStory(t, a.repo)
+	e.engage()
+	return a, e
+}
+
+func wantRefusal(t *testing.T, out string, err error, parts ...string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("a story whose substrate is not on the hosted copy must exit non-zero:\n%s", out)
+	}
+	for _, p := range parts {
+		if !strings.Contains(out, p) {
+			t.Errorf("output must contain %q:\n%s", p, out)
+		}
+	}
+}
+
+// AC1 + AC4: a skill edited in the working tree after engagement, with no
+// change_record row yet, is refused in each state that is not on the hosted
+// copy — naming the area, the state, the path and the command that moves it on.
+func TestSyncStatusStoryRefusesSubstrateNotOnHostedCopy(t *testing.T) {
+	const touched = ".satelle/skills/x.md"
+
+	t.Run("unpushed", func(t *testing.T) {
+		ts, _ := newSnapServer(t)
+		seedCred(t, ts.URL)
+		a, e := storyMachine(t, ts.URL)
+		editAfterEngage(t, a.repo, touched, "edited\n")
+		out, err := a.storyStatus(e.id)
+		wantRefusal(t, out, err, "skills", "unpushed", touched, "satelle sync")
+		if strings.Contains(out, "workflows") || strings.Contains(out, "documents") {
+			t.Errorf("only the areas the story touched are judged:\n%s", out)
+		}
+	})
+
+	t.Run("never synced", func(t *testing.T) {
+		ts, _ := newSnapServer(t)
+		seedCred(t, ts.URL)
+		a := newSnapMachine(t, ts.URL)
+		gitTree(t, a.repo, ".satelle/")
+		a.use()
+		e := engageSyncStory(t, a.repo)
+		e.engage()
+		editAfterEngage(t, a.repo, touched, "x\n")
+		out, err := a.storyStatus(e.id)
+		wantRefusal(t, out, err, "skills", "never synced", touched, "satelle sync")
+	})
+
+	t.Run("diverged", func(t *testing.T) {
+		ts, _ := newSnapServer(t)
+		seedCred(t, ts.URL)
+		a, e := storyMachine(t, ts.URL)
+		b := newSnapMachine(t, ts.URL)
+		b.deploy()
+		b.write("skills/x.md", "from B\n")
+		b.pushConfig()
+		editAfterEngage(t, a.repo, touched, "from A\n")
+		out, err := a.storyStatus(e.id)
+		wantRefusal(t, out, err, "skills", "diverged", touched, "satelle sync reconcile, then satelle sync")
+	})
+
+	t.Run("unmerged", func(t *testing.T) {
+		ts, _ := newSnapServer(t)
+		seedCred(t, ts.URL)
+		a := publishedMachine(t, ts.URL)
+		b := newSnapMachine(t, ts.URL)
+		b.deploy()
+		a.write("skills/x.md", "from A\n")
+		a.pushConfig()
+		gitTree(t, b.repo, ".satelle/")
+		b.use()
+		e := engageSyncStory(t, b.repo)
+		e.engage()
+		editAfterEngage(t, b.repo, touched, "from B\n")
+		b.deploy() // conflict: both sides changed x.md
+		out, err := b.storyStatus(e.id)
+		wantRefusal(t, out, err, "skills", "unmerged", touched, "satelle sync reconcile")
+	})
+
+	t.Run("unavailable server", func(t *testing.T) {
+		ts, _ := newSnapServer(t)
+		seedCred(t, ts.URL)
+		a, e := storyMachine(t, ts.URL)
+		editAfterEngage(t, a.repo, touched, "edited\n")
+		const down = "http://127.0.0.1:1" // signed in to a server that is not answering
+		seedCred(t, down)
+		out, err := a.storyStatusAt(down, e.id)
+		wantRefusal(t, out, err, "skills", "unavailable", touched, "check the server, then satelle sync status")
+	})
+
+	t.Run("unavailable without login", func(t *testing.T) {
+		ts, _ := newSnapServer(t) // no credential seeded
+		a := newSnapMachine(t, ts.URL)
+		gitTree(t, a.repo, ".satelle/")
+		a.use()
+		e := engageSyncStory(t, a.repo)
+		e.engage()
+		editAfterEngage(t, a.repo, touched, "x\n")
+		out, err := a.storyStatus(e.id)
+		wantRefusal(t, out, err, "skills", "unavailable", touched, "satelle login")
+	})
+}
+
+// AC2: substrate the story touched that is in step, or behind a hosted copy that
+// holds the story's change, lets the story finish — and the output names the
+// state of each touched area.
+func TestSyncStatusStoryAcceptsInStepAndBehind(t *testing.T) {
+	const touched = ".satelle/skills/x.md"
+
+	t.Run("in step", func(t *testing.T) {
+		ts, _ := newSnapServer(t)
+		seedCred(t, ts.URL)
+		a, e := storyMachine(t, ts.URL)
+		editAfterEngage(t, a.repo, touched, "edited\n")
+		a.pushConfig()
+		out, err := a.storyStatus(e.id)
+		if err != nil {
+			t.Fatalf("pushed substrate must exit zero: %v\n%s", err, out)
+		}
+		wantState(t, out, "skills", "in step")
+		if !strings.Contains(out, touched) {
+			t.Errorf("the touched path must be named:\n%s", out)
+		}
+	})
+
+	t.Run("behind", func(t *testing.T) {
+		ts, _ := newSnapServer(t)
+		seedCred(t, ts.URL)
+		a, e := storyMachine(t, ts.URL)
+		editAfterEngage(t, a.repo, touched, "edited\n")
+		a.pushConfig()
+		b := newSnapMachine(t, ts.URL)
+		b.deploy()
+		b.write("skills/y.md", "from B\n")
+		b.pushConfig() // the hosted copy moves on past A, A's change in its history
+		out, err := a.storyStatus(e.id)
+		if err != nil {
+			t.Fatalf("a hosted copy that holds the story's change must exit zero: %v\n%s", err, out)
+		}
+		wantState(t, out, "skills", "behind")
+	})
+}
+
+// AC3: a story that touched no synced substrate is unaffected and the server is
+// never contacted.
+func TestSyncStatusStoryTouchedNoSyncedSubstrate(t *testing.T) {
+	for name, tc := range map[string]struct {
+		toml string
+		edit func(t *testing.T, repo string)
+	}{
+		"non-substrate path": {snapToml, func(t *testing.T, repo string) {
+			writeRepoFile(t, repo, "a.go", "package a\n\nvar changed = true\n")
+		}},
+		"local-scope area": {"[sync]\nskills = \"local\"\n" + boundProjectToml, func(t *testing.T, repo string) {
+			editAfterEngage(t, repo, ".satelle/skills/x.md", "x\n")
+		}},
+		"no sync table": {boundProjectToml, func(t *testing.T, repo string) {
+			editAfterEngage(t, repo, ".satelle/skills/x.md", "x\n")
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var hits atomic.Int32
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits.Add(1)
+				http.Error(w, "unreachable by design", http.StatusInternalServerError)
+			}))
+			defer ts.Close()
+			repo := syncConfigRepo(t, tc.toml)
+			gitTree(t, repo, ".satelle/")
+			pointAt(t, repo)
+			e := engageSyncStory(t, repo)
+			e.engage()
+			tc.edit(t, repo)
+
+			cmd, buf := testCmd()
+			if err := runSyncStatusForStory(cmd, ts.URL, e.id); err != nil {
+				t.Fatalf("a story that touched no synced substrate must exit zero: %v\n%s", err, buf.String())
+			}
+			if !strings.Contains(buf.String(), "touched no synced substrate") {
+				t.Errorf("output = %q", buf.String())
+			}
+			if n := hits.Load(); n != 0 {
+				t.Errorf("the server was contacted %d time(s)", n)
+			}
+		})
+	}
+}
+
+// AC4: the touched set is the union of the recorded change sets and the live
+// substrate leg, so a path named only by a change_record row — its file older
+// than the engagement — is still refused, and without the row the same state is
+// unaffected.
+func TestSyncStatusStoryRecordedOnlyPathIsRefused(t *testing.T) {
+	ts, _ := newSnapServer(t)
+	seedCred(t, ts.URL)
+	a := publishedMachine(t, ts.URL)
+	gitTree(t, a.repo, ".satelle/")
+	editBeforeEngage(t, a.repo, ".satelle/skills/y.md", "unpushed\n")
+	a.use()
+	e := engageSyncStory(t, a.repo)
+	e.engage()
+
+	out, err := a.storyStatus(e.id)
+	if err != nil || !strings.Contains(out, "touched no synced substrate") {
+		t.Fatalf("with no recorded row and no live edit the story touched nothing: %v\n%s", err, out)
+	}
+	e.recordChange(".satelle/skills/y.md")
+	out, err = a.storyStatus(e.id)
+	wantRefusal(t, out, err, "skills", "unpushed", ".satelle/skills/y.md", "satelle sync")
+}
+
+// AC7: the area comes from where this repo keeps its files, not from a literal
+// ".satelle/" — a relocated data dir is judged the same way.
+func TestSyncStatusStoryHonoursNonDefaultDataDir(t *testing.T) {
+	testutil.IsolateHome(t)
+	ts, _ := newSnapServer(t)
+	seedCred(t, ts.URL)
+	repo := t.TempDir()
+	writeRepoFile(t, repo, "meta/satelle.toml", "data_dir = \"meta\"\n[sync]\nskills = \"personal\"\n"+boundProjectToml)
+	writeRepoFile(t, repo, "meta/constitution.md", "# c\n")
+	t.Setenv("SATELLE_CONFIG", filepath.Join(repo, "meta", "satelle.toml"))
+	hosted.DocumentSyncStatePathOverride = filepath.Join(t.TempDir(), "doc-state.json")
+	t.Cleanup(func() { hosted.DocumentSyncStatePathOverride = "" })
+	gitTree(t, repo, "meta/")
+	e := engageSyncStory(t, repo)
+	e.engage()
+	editAfterEngage(t, repo, "meta/skills/x.md", "x\n")
+
+	cmd, buf := testCmd()
+	err := runSyncStatusForStory(cmd, ts.URL, e.id)
+	out := buf.String()
+	if err != nil {
+		out += err.Error()
+	}
+	wantRefusal(t, out, err, "skills", "never synced", "meta/skills/x.md", "satelle sync")
+}
+
+// AC8: a story engaged from a linked worktree makes its substrate edits in the
+// main tree; they are mapped and probed against the process of record.
+func TestSyncStatusStoryFromLinkedWorktree(t *testing.T) {
+	const touched = ".satelle/skills/z.md"
+	setup := func(t *testing.T) (*snapMachine, *storyEnv, string) {
+		ts, _ := newSnapServer(t)
+		seedCred(t, ts.URL)
+		a := publishedMachine(t, ts.URL)
+		gitTree(t, a.repo, ".satelle/")
+		wt := filepath.Join(t.TempDir(), "wt")
+		if out, err := exec.Command("git", "-C", a.repo, "worktree", "add", "-b", "wt-branch", wt).CombinedOutput(); err != nil {
+			t.Fatalf("git worktree add: %v\n%s", err, out)
+		}
+		a.use()
+		e := engageSyncStory(t, wt)
+		e.engage()
+		editAfterEngage(t, a.repo, touched, "z\n")
+		return a, e, wt
+	}
+	// status runs from the worktree with nothing naming the main tree's config:
+	// the process of record is found the way every worktree command finds it.
+	status := func(t *testing.T, a *snapMachine, id string) (string, error) {
+		a.use()
+		t.Setenv("SATELLE_CONFIG", "")
+		cmd, buf := testCmd()
+		err := runSyncStatusForStory(cmd, a.url, id)
+		out := buf.String()
+		if err != nil {
+			out += err.Error()
+		}
+		return out, err
+	}
+
+	t.Run("unpushed edit is refused", func(t *testing.T) {
+		a, e, _ := setup(t)
+		out, err := status(t, a, e.id)
+		wantRefusal(t, out, err, "skills", "unpushed", touched, "satelle sync")
+	})
+
+	t.Run("pushed edit passes", func(t *testing.T) {
+		a, e, _ := setup(t)
+		a.pushConfig()
+		out, err := status(t, a, e.id)
+		if err != nil {
+			t.Fatalf("a pushed worktree edit must exit zero: %v\n%s", err, out)
+		}
+		wantState(t, out, "skills", "in step")
+	})
+}
+
+// The no-baseline answer the check treats as an empty live leg is story-diff's
+// own text, and any other refusal is returned rather than read as "touched
+// nothing".
+func TestStoryTouchedPathsReadsUnengagedAndRefusesUnreadable(t *testing.T) {
+	repo := syncConfigRepo(t, snapToml)
+	gitTree(t, repo, ".satelle/")
+	pointAt(t, repo)
+	e := engageSyncStory(t, repo)
+
+	if _, err := verb.Dispatch(context.Background(), "story-diff", json.RawMessage(`{"id":"`+e.id+`","include_substrate":true}`)); err == nil || !strings.Contains(err.Error(), noEngagementBaseline) {
+		t.Fatalf("story-diff on an unengaged story must answer %q, got %v", noEngagementBaseline, err)
+	}
+	if paths, err := storyTouchedPaths(context.Background(), e.id); err != nil || len(paths) != 0 {
+		t.Errorf("an unengaged story touched nothing: %v, %v", paths, err)
+	}
+	if _, err := storyTouchedPaths(context.Background(), "sty_00000000"); err == nil {
+		t.Error("an unknown story must be an error, not an empty change set")
 	}
 }

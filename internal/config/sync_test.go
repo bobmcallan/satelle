@@ -189,3 +189,62 @@ func TestSyncAreasNoDuplicates(t *testing.T) {
 		}
 	}
 }
+
+// AreaOfRepoPath maps the repo-relative paths story-diff reports to the sync area
+// that would push them — through ConfigAreaLocation, so layout is honoured, and
+// through walkAreaFiles' skip rules, so a path no push carries maps to no area.
+func TestAreaOfRepoPath(t *testing.T) {
+	root := t.TempDir()
+	type tc struct{ path, want string }
+	run := func(t *testing.T, cfg Config, cases []tc) {
+		t.Helper()
+		for _, c := range cases {
+			if got := AreaOfRepoPath(cfg, root, c.path); got != c.want {
+				t.Errorf("AreaOfRepoPath(%q) = %q, want %q", c.path, got, c.want)
+			}
+		}
+	}
+
+	t.Run("default layout", func(t *testing.T) {
+		run(t, Config{}, []tc{
+			{".satelle/skills/x.md", "skills"},
+			{".satelle/skills/nested/y.md", "skills"},
+			{".satelle/principles/p.md", "principles"},
+			{".satelle/workflows/w.toml", "workflows"},
+			{".satelle/documents/d.md", "documents"},
+			{".satelle/tasks/t.md", "tasks"},
+			{".satelle/satelle.toml", "settings"},
+			{".satelle/constitution.md", "constitution"},
+			{".satelle/workflows/agents.toml", "agents"},
+			{".satelle/workflows/agents.workspace.toml", ""},
+			{".satelle/skills/index.md", ""},
+			{".satelle/skills/log.md", ""},
+			{".satelle/documents/README.md", ""},
+			{".satelle/skills", ""},
+			{".satelle/runtime/state.json", ""},
+			{"internal/x.go", ""},
+			{"skills/x.md", ""},
+			{"../outside/skills/x.md", ""},
+			{filepath.Join(root, ".satelle", "skills", "abs.md"), "skills"},
+		})
+	})
+
+	t.Run("non-default data dir", func(t *testing.T) {
+		run(t, Config{DataDir: "meta"}, []tc{
+			{"meta/skills/x.md", "skills"},
+			{"meta/satelle.toml", "settings"},
+			{"meta/constitution.md", "constitution"},
+			{"meta/workflows/agents.toml", "agents"},
+			{"meta/workflows/agents.workspace.toml", ""},
+			{".satelle/skills/x.md", ""},
+		})
+	})
+
+	t.Run("relocated substrate root", func(t *testing.T) {
+		run(t, Config{SubstrateRoots: map[string]string{"skills": "process"}}, []tc{
+			{"process/skills/x.md", "skills"},
+			{".satelle/skills/x.md", ""},
+			{".satelle/principles/p.md", "principles"},
+		})
+	})
+}
