@@ -318,3 +318,33 @@ requires = ["coded"]
 		t.Errorf("a route with no rework key must produce no rework finding: %v", r.Warnings)
 	}
 }
+
+// A rework consult is a live session that reads state its seed does not carry,
+// so its shell grant is used: the reviewer.unsafe "grants shell" advisory must
+// not tell the operator to remove it. The same binding with no consult, gate,
+// advisor or hook using it is still warned (sty_e6fd97d9).
+func TestValidate_ReworkConsultShellGrantIsUsed(t *testing.T) {
+	shellConsultant := liveConsultant()
+	shellConsultant.Tools = "Read,Grep,Glob,Bash(satelle:*)"
+
+	grantsShell := func(r Report) bool {
+		for _, f := range r.Findings {
+			if f.ID == health.IDReviewerUnsafe && strings.Contains(f.Detail, "grants shell") &&
+				strings.Contains(f.Detail, "[consultant]") {
+				return true
+			}
+		}
+		return false
+	}
+
+	named := Validate(reworkAgents(shellConsultant), nil, routeDocs(reworkDone, reworkStep("consultant")))
+	if grantsShell(named) {
+		t.Errorf("a rework consult's shell grant is used — no advisory expected: %v", named.Warnings)
+	}
+
+	// Named by no rework: nothing uses the grant, so the advisory stands.
+	unnamed := Validate(reworkAgents(shellConsultant), nil, routeDocs(reworkDone, reworkStep("coder")))
+	if !grantsShell(unnamed) {
+		t.Errorf("a shell-granting reviewer no rework consult uses must still be warned: %v", unnamed.Warnings)
+	}
+}

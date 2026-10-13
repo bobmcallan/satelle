@@ -1,3 +1,8 @@
+## [0.0.668] - 2026-10-13
+
+### Fixed
+- `satelle doctor` and `satelle agent validate` no longer warn that a step's rework consult binding "grants shell … never used". The consult is a live session that reads state its seed does not carry (an attachment re-attached mid-relay, the working tree), so following the warning would have blinded it. A reviewer binding whose shell grant no gate, advisor or rework consult uses is still warned. (sty_e6fd97d9)
+
 ## [0.0.667] - 2026-10-13
 
 ### Added

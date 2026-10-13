@@ -389,6 +389,8 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 	// advisors accumulate across every governed route so the shell-grant check
 	// below sees an advisor's rubric as a reachable skill too.
 	var advisors []wfroute.Advisor
+	// consults collects every rework consult binding, for the same check.
+	consults := map[string]bool{}
 	revModel := agents.ReviewerBinding().Model
 	// A DERIVED route has no per-workflow DOT, so its allocations would go
 	// unchecked if this loop only read authored graphs. Expand it into one
@@ -429,6 +431,7 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 			if w.Consult == "" {
 				continue
 			}
+			consults[w.Consult] = true
 			if w.Consult != "reviewer" && w.Consult != "executor" {
 				usedNamed[w.Consult] = true
 			}
@@ -631,7 +634,7 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 			continue
 		}
 		tok := config.ShellGrantToken(sec.b.Tools)
-		if tok == "" || shellGrantExercised(sec.name, r.Gates, advisors, skills) {
+		if tok == "" || shellGrantExercised(sec.name, r.Gates, advisors, consults, skills) {
 			continue
 		}
 		r.record(health.Warn(health.IDReviewerUnsafe, "Reviewer ceiling not expressed", fmt.Sprintf(
@@ -779,9 +782,17 @@ func checkHooks(doc docindex.Doc, agents config.AgentsConfig, revModel string, u
 // node rubric, a lifecycle hook, or an advisor's rubric — shells `satelle` in
 // its own body (sty_338a53f8).
 //
-// With no resolver it answers false, which is the pre-existing behaviour: no
-// evidence of use, so the advisory stands.
-func shellGrantExercised(section string, gates []GateAllocation, advisors []wfroute.Advisor, skills SkillBody) bool {
+// A rework consult binding is also a use, whatever any skill says: `satelle
+// story rework` opens it as a live session seeded once, and across rounds it
+// reads state the seed does not carry (the tree, re-attached evidence), which
+// only its own shell can reach (sty_e6fd97d9).
+//
+// With no resolver it answers false for everything else, which is the
+// pre-existing behaviour: no evidence of use, so the advisory stands.
+func shellGrantExercised(section string, gates []GateAllocation, advisors []wfroute.Advisor, consults map[string]bool, skills SkillBody) bool {
+	if consults[section] {
+		return true
+	}
 	if skills == nil {
 		return false
 	}
