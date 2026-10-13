@@ -64,6 +64,12 @@ func MigrateAgents(content string) (out string, changes []string, err error) {
 		if s.header == "defaults" || s.header == "models" || s.header == "model_order" {
 			continue
 		}
+		// A dotted sub-table ([coder.env], [coder.settings], [agents.coder.env])
+		// extends its parent binding's table; it is never a binding itself, so
+		// no per-binding migration may write into it.
+		if !isBindingHeader(s.header) {
+			continue
+		}
 		// harness → command
 		if !hasKeyInSection(lines, s.header, "command") {
 			if renameKeyInSection(lines, s.header, "harness", "command") {
@@ -234,6 +240,14 @@ func decodeAgents(content string, legacyNested bool) (AgentsConfig, error) {
 		}
 	}
 	return ac, nil
+}
+
+// isBindingHeader reports whether a table header names a binding table: an
+// undotted name, or the legacy agents.NAME form with an undotted NAME. Any
+// other dotted header is a sub-table (env, settings) of a binding — decodeAgents
+// reads it as part of its parent, never as a binding of its own.
+func isBindingHeader(header string) bool {
+	return !strings.Contains(strings.TrimPrefix(header, "agents."), ".")
 }
 
 // bindingForHeader maps a table header to the logical agent name + binding.

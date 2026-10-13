@@ -236,3 +236,97 @@ inject_principles = false
 		t.Fatalf("inject->principles: %s notes=%v", out, notes)
 	}
 }
+
+// subTableBody returns the lines of a table body (header excluded) so a test
+// can compare a sub-table before and after migration.
+func subTableBody(t *testing.T, text, header string) string {
+	t.Helper()
+	lines := strings.Split(text, "\n")
+	start, end := sectionRange(lines, header)
+	if start < 0 {
+		t.Fatalf("section [%s] missing:\n%s", header, text)
+	}
+	return strings.Join(lines[start:end], "\n")
+}
+
+func TestMigrateAgentsRoleNotInSubTable(t *testing.T) {
+	cases := []struct {
+		name     string
+		in       string
+		subTable string // sub-table header in the input
+		after    string // the same sub-table header after flattening
+	}{
+		{
+			name:     "env",
+			in:       "[coder]\nprinciples = \"session\"\n\n[coder.env]\nGOBIN = \"\"\n",
+			subTable: "coder.env",
+			after:    "coder.env",
+		},
+		{
+			name:     "settings",
+			in:       "[coder]\nprinciples = \"session\"\n\n[coder.settings]\nmodel = \"x\"\n",
+			subTable: "coder.settings",
+			after:    "coder.settings",
+		},
+		{
+			name:     "legacy nested env",
+			in:       "[agents.coder]\nprinciples = \"session\"\n\n[agents.coder.env]\nGOBIN = \"\"\n",
+			subTable: "agents.coder.env",
+			after:    "coder.env",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, changes, err := MigrateAgents(tc.in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(changes) == 0 {
+				t.Fatal("expected role to be added")
+			}
+			// role= lands in the binding table only.
+			if body := subTableBody(t, out, "coder"); !strings.Contains(body, "role =") {
+				t.Fatalf("binding [coder] missing role=:\n%s", out)
+			}
+			if got := strings.Count(out, "role ="); got != 1 {
+				t.Fatalf("want exactly one role=, got %d:\n%s", got, out)
+			}
+			// The sub-table body is byte-identical to its input body.
+			want := subTableBody(t, tc.in, tc.subTable)
+			if got := subTableBody(t, out, tc.after); got != want {
+				t.Fatalf("sub-table body changed:\n got %q\nwant %q", got, want)
+			}
+			// The live loader reads the role on the binding and none in its tables.
+			ac, err := decodeAgents(out, false)
+			if err != nil {
+				t.Fatalf("migrated output must parse: %v\n%s", err, out)
+			}
+			b := ac.Agents["coder"]
+			if b.Role != "agent" {
+				t.Fatalf("binding role = %q, want agent", b.Role)
+			}
+			for _, k := range []string{"role", "command", "principles"} {
+				if _, ok := b.Env[k]; ok {
+					t.Fatalf("env gained %q: %v", k, b.Env)
+				}
+				if _, ok := b.Settings[k]; ok {
+					t.Fatalf("settings gained %q: %v", k, b.Settings)
+				}
+			}
+		})
+	}
+}
+
+func TestMigrateAgentsRoleSubTableIdempotent(t *testing.T) {
+	in := "[coder]\nrole = \"agent\"\nprinciples = \"session\"\n\n[coder.env]\nGOBIN = \"\"\n"
+	out, changes, err := MigrateAgents(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != in {
+		t.Fatalf("output must equal input:\n got %q\nwant %q", out, in)
+	}
+	if len(changes) != 0 {
+		t.Fatalf("no changes expected, got %v", changes)
+	}
+}
