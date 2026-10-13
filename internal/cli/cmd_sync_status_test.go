@@ -103,7 +103,7 @@ func TestSyncStatusNeverSyncedExitsNonZero(t *testing.T) {
 	}
 	for _, area := range []string{"skills", "workflows", "documents"} {
 		cols := wantState(t, out, area, "never synced")
-		if cols[4] != "satelle sync" {
+		if cols[4] != "satelle sync push" {
 			t.Errorf("%s next = %q", area, cols[4])
 		}
 	}
@@ -143,7 +143,7 @@ func TestSyncStatusUnpushed(t *testing.T) {
 	if err == nil {
 		t.Fatalf("unpushed work must exit non-zero:\n%s", out)
 	}
-	if cols := wantState(t, out, "skills", "unpushed"); cols[4] != "satelle sync" {
+	if cols := wantState(t, out, "skills", "unpushed"); cols[4] != "satelle sync push" {
 		t.Errorf("next = %q", cols[4])
 	}
 	wantState(t, out, "workflows", "in step")
@@ -165,18 +165,20 @@ func TestSyncStatusBehindAndDiverged(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a machine behind must exit non-zero:\n%s", out)
 	}
-	if cols := wantState(t, out, "skills", "behind"); cols[4] != "satelle sync config deploy" {
+	// One pull verb for every area; the per-area deploy and documents pull are
+	// no longer what status points at.
+	if cols := wantState(t, out, "skills", "behind"); cols[4] != "satelle sync pull" {
 		t.Errorf("skills next = %q", cols[4])
 	}
-	if cols := wantState(t, out, "documents", "behind"); cols[4] != "satelle sync documents pull" {
+	if cols := wantState(t, out, "documents", "behind"); cols[4] != "satelle sync pull" {
 		t.Errorf("documents next = %q", cols[4])
 	}
 	wantState(t, out, "workflows", "in step")
 
 	b.write("skills/x.md", "from B\n")
 	out, _ = b.status()
-	if cols := wantState(t, out, "skills", "diverged"); !strings.Contains(cols[4], "satelle sync reconcile") || strings.Contains(cols[4], "deploy") {
-		t.Errorf("diverged next = %q, want reconcile and not deploy", cols[4])
+	if cols := wantState(t, out, "skills", "diverged"); !strings.Contains(cols[4], "satelle sync reconcile") || !strings.HasSuffix(cols[4], "then satelle sync push") || strings.Contains(cols[4], "deploy") {
+		t.Errorf("diverged next = %q, want reconcile, then satelle sync push", cols[4])
 	}
 	if rec := b.recorded(); rec["skills"].State != "diverged" || rec["workflows"].State != "in step" {
 		t.Errorf("recorded = %+v", rec)
@@ -628,7 +630,7 @@ func TestSyncStatusStoryRefusesSubstrateNotOnHostedCopy(t *testing.T) {
 		a, e := storyMachine(t, ts.URL)
 		editAfterEngage(t, a.repo, touched, "edited\n")
 		out, err := a.storyStatus(e.id)
-		wantRefusal(t, out, err, "skills", "unpushed", touched, "satelle sync")
+		wantRefusal(t, out, err, "skills", "unpushed", touched, "satelle sync push")
 		if strings.Contains(out, "workflows") || strings.Contains(out, "documents") {
 			t.Errorf("only the areas the story touched are judged:\n%s", out)
 		}
@@ -644,7 +646,7 @@ func TestSyncStatusStoryRefusesSubstrateNotOnHostedCopy(t *testing.T) {
 		e.engage()
 		editAfterEngage(t, a.repo, touched, "x\n")
 		out, err := a.storyStatus(e.id)
-		wantRefusal(t, out, err, "skills", "never synced", touched, "satelle sync")
+		wantRefusal(t, out, err, "skills", "never synced", touched, "satelle sync push")
 	})
 
 	t.Run("diverged", func(t *testing.T) {
@@ -657,7 +659,7 @@ func TestSyncStatusStoryRefusesSubstrateNotOnHostedCopy(t *testing.T) {
 		b.pushConfig()
 		editAfterEngage(t, a.repo, touched, "from A\n")
 		out, err := a.storyStatus(e.id)
-		wantRefusal(t, out, err, "skills", "diverged", touched, "satelle sync reconcile, then satelle sync")
+		wantRefusal(t, out, err, "skills", "diverged", touched, "satelle sync reconcile, then satelle sync push")
 	})
 
 	t.Run("unmerged", func(t *testing.T) {
@@ -807,7 +809,7 @@ func TestSyncStatusStoryRecordedOnlyPathIsRefused(t *testing.T) {
 	}
 	e.recordChange(".satelle/skills/y.md")
 	out, err = a.storyStatus(e.id)
-	wantRefusal(t, out, err, "skills", "unpushed", ".satelle/skills/y.md", "satelle sync")
+	wantRefusal(t, out, err, "skills", "unpushed", ".satelle/skills/y.md", "satelle sync push")
 }
 
 // AC7: the area comes from where this repo keeps its files, not from a literal
@@ -872,7 +874,7 @@ func TestSyncStatusStoryFromLinkedWorktree(t *testing.T) {
 	t.Run("unpushed edit is refused", func(t *testing.T) {
 		a, e, _ := setup(t)
 		out, err := status(t, a, e.id)
-		wantRefusal(t, out, err, "skills", "unpushed", touched, "satelle sync")
+		wantRefusal(t, out, err, "skills", "unpushed", touched, "satelle sync push")
 	})
 
 	t.Run("pushed edit passes", func(t *testing.T) {

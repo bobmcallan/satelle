@@ -238,19 +238,32 @@ func TestPushWithoutSnapshotOnlyStillFallsBackToPlainUpload(t *testing.T) {
 	}
 }
 
-// requireReconcileRemedy asserts a refusal names the command that keeps the
-// developer's work (sty_aeff3dc7): reconcile shows both sides and backs up the
-// one it overrides, where a rehydrate or a pull overwrites the local tree.
+// requireReconcileRemedy asserts a refusal of a diverged area names the command
+// that keeps the developer's work (sty_aeff3dc7): reconcile shows both sides and
+// backs up the one it overrides, where a rehydrate or a pull overwrites the local
+// tree.
 func requireReconcileRemedy(t *testing.T, label string, err error) {
+	t.Helper()
+	requireRemedy(t, label, err, "satelle sync reconcile", "satelle sync pull")
+}
+
+// requirePullRemedy asserts a refusal of an area that is only behind (nothing
+// here changed) names the pull, which overwrites nothing local (sty_0fa4f732).
+func requirePullRemedy(t *testing.T, label string, err error) {
+	t.Helper()
+	requireRemedy(t, label, err, "satelle sync pull", "satelle sync reconcile")
+}
+
+func requireRemedy(t *testing.T, label string, err error, want, notWant string) {
 	t.Helper()
 	if err == nil {
 		t.Fatalf("%s: the push was not refused", label)
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "satelle sync reconcile") {
-		t.Errorf("%s: refusal does not name satelle sync reconcile: %q", label, msg)
+	if !strings.Contains(msg, want) {
+		t.Errorf("%s: refusal does not name %s: %q", label, want, msg)
 	}
-	for _, bad := range []string{"sync rehydrate", "sync documents pull"} {
+	for _, bad := range []string{notWant, "sync rehydrate", "sync documents pull", "sync config deploy"} {
 		if strings.Contains(msg, bad) {
 			t.Errorf("%s: refusal names %q: %q", label, bad, msg)
 		}
@@ -258,7 +271,8 @@ func requireReconcileRemedy(t *testing.T, label string, err error) {
 }
 
 // A push behind the hosted copy — plain, and the unattended --snapshot-only one
-// satelled runs — names reconcile for both the config and the documents areas.
+// satelled runs — whose area this machine also changed names reconcile, for both
+// the config and the documents areas.
 func TestRefusedPushNamesReconcile(t *testing.T) {
 	for _, k := range snapKinds {
 		t.Run(k.name, func(t *testing.T) {
@@ -281,9 +295,9 @@ func TestRefusedPushNamesReconcile(t *testing.T) {
 }
 
 // Hosted changes this machine has not applied — the snapshot versions agree,
-// but the hosted copy holds a file this tree and its base lack — refuse the push
-// naming reconcile.
-func TestPendingPathsRefusalNamesReconcile(t *testing.T) {
+// but the hosted copy holds a file this tree and its base lack — refuse the push.
+// This machine changed nothing against its base, so the pull is the way forward.
+func TestPendingPathsRefusalNamesPull(t *testing.T) {
 	ts, _ := newSnapServer(t)
 	seedCred(t, ts.URL)
 	a := newSnapMachine(t, ts.URL)
@@ -307,5 +321,5 @@ func TestPendingPathsRefusalNamesReconcile(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not yet applied here") {
 		t.Fatalf("want the pending-paths refusal, got %v", err)
 	}
-	requireReconcileRemedy(t, "pending paths", err)
+	requirePullRemedy(t, "pending paths", err)
 }

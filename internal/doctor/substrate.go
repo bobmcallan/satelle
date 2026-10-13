@@ -101,7 +101,7 @@ func judgeSubstrateArea(cfg config.Config, repoRoot, dataDir, abs, server, proje
 	if len(drift.Unmerged) > 0 {
 		out = append(out, health.Error(health.IDSyncSubstrateUnmerged, "Substrate "+snapsync.StateUnmerged,
 			fmt.Sprintf("%s: a pull left %s unmerged", area, pathList(drift.Unmerged))).
-			About(area).WithRemediation(fmt.Sprintf("run `satelle sync reconcile` and choose a side per change (or merge it and delete %s), then run `satelle sync`", filepath.Join(dataDir, filepath.FromSlash(snapsync.CopyPath(area, drift.Unmerged[0]))))))
+			About(area).WithRemediation(fmt.Sprintf("run `satelle sync reconcile` and choose a side per change (or merge it and delete %s), then run `satelle sync push`", filepath.Join(dataDir, filepath.FromSlash(snapsync.CopyPath(area, drift.Unmerged[0]))))))
 	}
 	if len(drift.Changed) > 0 {
 		since, state := "the last synced snapshot", snapsync.StateUnpushed
@@ -110,7 +110,7 @@ func judgeSubstrateArea(cfg config.Config, repoRoot, dataDir, abs, server, proje
 		}
 		out = append(out, health.Error(health.IDSyncSubstrateUnpushed, "Substrate "+state,
 			fmt.Sprintf("%s: %s differ from %s", area, pathList(drift.Changed), since)).
-			About(area).WithRemediation("run `satelle sync`"))
+			About(area).WithRemediation("run `satelle sync push`"))
 	}
 
 	rec, checked := st.SubstrateAreas[area]
@@ -118,7 +118,7 @@ func judgeSubstrateArea(cfg config.Config, repoRoot, dataDir, abs, server, proje
 	case checked && (rec.State == snapsync.StateBehind || rec.State == snapsync.StateDiverged):
 		out = append(out, health.Error(health.IDSyncSubstrateBehind, "Substrate "+rec.State,
 			fmt.Sprintf("%s: the last hosted check (%s) found it %s", area, rec.CheckedAt.UTC().Format(time.RFC3339), rec.State)).
-			About(area).WithRemediation(substrateRemediation(area, rec.State)))
+			About(area).WithRemediation(substrateRemediation(rec.State)))
 	case !judged:
 	case !checked:
 		out = append(out, health.Error(health.IDSyncSubstrateUnchecked, "Substrate unchecked",
@@ -133,16 +133,12 @@ func judgeSubstrateArea(cfg config.Config, repoRoot, dataDir, abs, server, proje
 }
 
 // substrateRemediation is the command that brings an area back in step from the
-// given state.
-func substrateRemediation(area, state string) string {
-	pull := "`satelle sync config deploy`"
-	if area == "documents" {
-		pull = "`satelle sync documents pull`"
-	}
+// given state: a behind area is pulled, a diverged one reconciled and pushed.
+func substrateRemediation(state string) string {
 	if state == snapsync.StateDiverged {
-		return "run `satelle sync reconcile` and choose a side per change, then `satelle sync`"
+		return "run `satelle sync reconcile` and choose a side per change, then `satelle sync push`"
 	}
-	return "run " + pull
+	return "run `satelle sync pull`"
 }
 
 func pathList(paths []string) string {

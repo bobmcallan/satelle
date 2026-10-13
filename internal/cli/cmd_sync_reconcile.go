@@ -51,7 +51,7 @@ parked as a conflict).
 
 Whatever a choice replaces is saved first under the runtime backups/sync-replaced/
 {local,hosted}/<area>/<path>; a choice that cannot be honoured is refused, by name,
-before any file is written. It never pushes: run "satelle sync" afterwards.`,
+before any file is written. It never pushes: run "satelle sync push" afterwards.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o.areas = args
 			return runSyncReconcile(cmd, o)
@@ -75,6 +75,26 @@ type reconcileApply struct {
 	choices map[string]map[string]snapsync.Side // area -> path -> side
 	all     map[string]snapsync.Side            // area -> side for every differing path
 	save    snapsync.SaveFunc
+	// fastForward (a `sync pull`, sty_0fa4f732) restricts the apply to areas whose
+	// plan only brings in what the hosted copy changed; an area whose plan is
+	// anything else is left untouched and recorded in refused (area -> why).
+	fastForward bool
+	refused     map[string]string
+}
+
+// admit reports whether a planned job may be applied. Only a fast-forward pull
+// can refuse one: the plan is made again at the point of writing, so an edit
+// made since `sync status` classified the area turns it away here. That re-check
+// narrows the window to subsync.Restore but does not close it; a file edited
+// between this plan and the write is still replaced, which is why the pull
+// applies a plan that holds no local change rather than trusting the earlier
+// state alone.
+func (r *reconcileApply) admit(job *snapsync.PullJob) bool {
+	if r == nil || !r.fastForward || job.FastForward() {
+		return true
+	}
+	r.refused[job.Area] = "its pull is not a fast-forward (a local change, a conflict or an incomplete entry)"
+	return false
 }
 
 // arm gives a planned job its choices and the way to keep what they replace. A
@@ -202,7 +222,7 @@ func reconcilePreview(out io.Writer, areas []string, jobs map[string]*snapsync.P
 	for _, area := range areas {
 		job := jobs[area]
 		if job == nil {
-			fmt.Fprintf(out, "%s: the hosted copy holds no snapshot yet — nothing to reconcile (satelle sync publishes it)\n", area)
+			fmt.Fprintf(out, "%s: the hosted copy holds no snapshot yet — nothing to reconcile (satelle sync push publishes it)\n", area)
 			continue
 		}
 		var rows []snapsync.Entry
@@ -393,27 +413,52 @@ func reconcileApplyRun(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir,
 			rc.areas[area] = true
 		}
 	}
+	docs := jobs["documents"] != nil && containsString(areas, "documents")
+	if err := applySnapshotAreas(cmd, cfg, repoRoot, dataDir, server, project, o.server, rc, docs); err != nil {
+		return err
+	}
+
+	// Where each area stands now, asked of the driver: kept local changes are
+	// unpushed until "satelle sync push" publishes them.
+	sort.Strings(applied)
+	for _, area := range applied {
+		st := areaStatus(cmd.Context(), cfg, repoRoot, drivers.forArea(area), area)
+		fmt.Fprintf(out, "%s: %s — next: %s\n", area, st.State, nextCommand(st))
+	}
+	return nil
+}
+
+// applySnapshotAreas is the one area-restricted snapshot apply: it pulls the
+// config areas rc names (a config deploy over their snapshot plans alone) and,
+// when documents is set, the documents snapshot. A reconcile and a `sync pull`
+// share it, so neither reaches the deploy's materialise-every-head path, and the
+// agents ingest check and the local [sync] project binding stay the deploy's own.
+// An area a fast-forward rc turned away is recorded in rc.refused and written to
+// by nothing. serverArg is the --server flag as typed.
+func applySnapshotAreas(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir, server, project, serverArg string, rc *reconcileApply, documents bool) error {
 	// Every area's saves come before any area stages: the documents choices are
 	// applied (and what they replace kept) here, ahead of the config deploy, whose
 	// own areas do the same before they stage. A save that fails in either leaves
 	// the whole tree as it was.
 	var docs *documentsPull
-	if jobs["documents"] != nil && containsString(areas, "documents") {
+	if documents {
 		client := newHostedClient(cmd.Context(), server, repoRoot)
 		var handled bool
 		var perr error
 		if docs, handled, perr = planDocumentsPull(cmd, cfg, repoRoot, dataDir, client, server, project, rc); perr != nil {
 			return perr
 		}
-		if !handled || docs == nil {
+		if (!handled || docs == nil) && rc.refused["documents"] == "" {
 			return errors.New("documents: the hosted copy's snapshot could not be read")
 		}
-		if err := docs.d.ApplyChoices(cmd.Context(), docs.job); err != nil {
-			return err
+		if docs != nil {
+			if err := docs.d.ApplyChoices(cmd.Context(), docs.job); err != nil {
+				return err
+			}
 		}
 	}
 	if len(rc.areas) > 0 {
-		if _, err := runSyncConfigDeployWith(cmd, o.server, "", 0, rc); err != nil {
+		if _, err := runSyncConfigDeployWith(cmd, serverArg, "", 0, rc); err != nil {
 			return err
 		}
 	}
@@ -421,14 +466,6 @@ func reconcileApplyRun(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir,
 		if err := docs.run(cmd, cfg, repoRoot, dataDir, server, project); err != nil {
 			return err
 		}
-	}
-
-	// Where each area stands now, asked of the driver: kept local changes are
-	// unpushed until "satelle sync" publishes them.
-	sort.Strings(applied)
-	for _, area := range applied {
-		st := areaStatus(cmd.Context(), cfg, repoRoot, drivers.forArea(area), area)
-		fmt.Fprintf(out, "%s: %s — next: %s\n", area, st.State, nextCommand(st))
 	}
 	return nil
 }

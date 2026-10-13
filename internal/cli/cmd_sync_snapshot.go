@@ -115,10 +115,15 @@ func (b *docBlobs) Put(ctx context.Context, path string, content []byte) (bool, 
 	return res.Created, err
 }
 
-// pushRefusalRemedy is the command a refused push names: reconcile shows both
-// sides and backs up the one it overrides, where a rehydrate or a pull would
-// overwrite the local work the refusal is protecting.
-const pushRefusalRemedy = "satelle sync reconcile"
+// The commands a push refused for a hosted copy that is ahead names. snapsync
+// picks between them by the test `sync status` reports diverged with: a pull of
+// a behind area overwrites nothing local, so it is the way forward; a diverged
+// area still holds this machine's own changes, and only reconcile shows both
+// sides and backs up the one it overrides.
+const (
+	pushBehindRemedy   = "satelle sync pull"
+	pushDivergedRemedy = "satelle sync reconcile"
+)
 
 // newSnapDriver builds the shared driver for one route.
 func newSnapDriver(cfg config.Config, client *hosted.Client, out io.Writer, server, project, repoRoot, dataDir string, rec snapsync.Records, blobs snapsync.Blobs) *snapsync.Driver {
@@ -128,7 +133,7 @@ func newSnapDriver(cfg config.Config, client *hosted.Client, out io.Writer, serv
 	}
 	return &snapsync.Driver{
 		Server: server, Project: project, RepoRoot: abs, DataDir: dataDir,
-		By: client.Location(), Records: rec, Blobs: blobs, Out: out, PullCmd: pushRefusalRemedy,
+		By: client.Location(), Records: rec, Blobs: blobs, Out: out, PullCmd: pushBehindRemedy, DivergedCmd: pushDivergedRemedy,
 		Owns:     func(area, p string) bool { return config.SyncAreaOf(cfg, repoRoot, p) == area },
 		SkipBody: config.UneditedDefault,
 	}
@@ -344,6 +349,9 @@ func planConfigDeploySnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, 
 			continue
 		}
 		rc.arm(job)
+		if !rc.admit(job) {
+			continue
+		}
 		s.areas[area] = true
 		s.jobs = append(s.jobs, job)
 	}
@@ -464,6 +472,9 @@ func planDocumentsPull(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir 
 		return nil, false, nil
 	}
 	rc.arm(job)
+	if !rc.admit(job) {
+		return nil, true, nil
+	}
 	return &documentsPull{d: d, job: job}, true, nil
 }
 

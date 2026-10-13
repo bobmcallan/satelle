@@ -14,12 +14,14 @@ import (
 // The substrate push leg (sty_a66e1846): each reconcile pass execs the config and
 // documents push verbs after the work-state push.
 
-// AC2: the loop runs exactly these two verbs, and never pulls, deploys, forces or
-// prunes.
+// The loop runs exactly these verbs in this order — the two pushes, then the
+// fast-forward pull (sty_0fa4f732) — and never deploys, reconciles, rehydrates,
+// forces or prunes. The pull is the only one that pulls, and only by fast-forward.
 func TestSubstratePushArgvIsFixed(t *testing.T) {
 	want := [][]string{
 		{"sync", "config", "push", "--snapshot-only"},
 		{"sync", "documents", "push", "--snapshot-only"},
+		{"sync", "pull", "--fast-forward-only"},
 	}
 	if !reflect.DeepEqual(substratePushArgs, want) {
 		t.Fatalf("substrate argv = %v, want %v", substratePushArgs, want)
@@ -27,15 +29,21 @@ func TestSubstratePushArgvIsFixed(t *testing.T) {
 	for _, args := range substratePushArgs {
 		for _, a := range args {
 			switch a {
-			case "--force", "--prune", "pull", "deploy", "rehydrate", "reconcile":
-				t.Errorf("the unattended push passes %q: %v", a, args)
+			case "--force", "--prune", "deploy", "rehydrate", "reconcile":
+				t.Errorf("the unattended sync passes %q: %v", a, args)
 			}
 		}
+		if args[1] == "pull" && args[len(args)-1] != "--fast-forward-only" {
+			t.Errorf("the unattended pull is not fast-forward-only: %v", args)
+		}
+	}
+	if last := substratePushArgs[len(substratePushArgs)-1]; last[1] != "pull" {
+		t.Errorf("the pull must run after the pushes, got %v last", last)
 	}
 }
 
-// AC2: what is exec'd is that argv, in the repo, one child per verb; a refusal
-// in the first does not stop the second and both surface in the error.
+// What is exec'd is that argv, in the repo, one child per verb; a refusal in the
+// first does not stop the rest and surfaces in the error.
 func TestSubstratePushViaCLIExecsEachVerbInTheRepo(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a shell script as the satelle binary")
@@ -59,9 +67,26 @@ func TestSubstratePushViaCLIExecsEachVerbInTheRepo(t *testing.T) {
 		t.Fatal(rerr)
 	}
 	resolved, _ := filepath.EvalSymlinks(repo)
-	want := resolved + "|sync config push --snapshot-only\n" + resolved + "|sync documents push --snapshot-only\n"
+	want := resolved + "|sync config push --snapshot-only\n" + resolved + "|sync documents push --snapshot-only\n" +
+		resolved + "|sync pull --fast-forward-only\n"
 	if got := string(raw); got != want {
 		t.Fatalf("exec'd calls:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// A repo whose areas are in step or only unpushed makes every verb exit zero, so
+// the leg returns nil and no failure streak is logged.
+func TestSubstrateLegIsQuietWhenEveryVerbExitsZero(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a shell script as the satelle binary")
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "satelle"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	if err := substratePushViaCLI(context.Background(), t.TempDir()); err != nil {
+		t.Fatalf("exit-zero verbs must not fail the leg: %v", err)
 	}
 }
 

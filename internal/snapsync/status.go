@@ -59,7 +59,7 @@ func (d *Driver) Status(ctx context.Context, area string, local map[string]strin
 	case errors.As(err, &behind):
 		st.Pending = behind.Pending
 		st.State = StateBehind
-		if !sameFiles(local, baseFiles(p.base)) {
+		if behind.Diverged {
 			st.State = StateDiverged
 		}
 		return st, nil

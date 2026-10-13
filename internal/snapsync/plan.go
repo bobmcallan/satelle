@@ -209,8 +209,27 @@ type ErrBehind struct {
 	// Pending lists paths with remote changes this machine has not applied; set
 	// when the versions agree but a pull would still change something.
 	Pending []string
-	// PullCmd is the command that resolves the refused push.
+	// Diverged is set when this machine also changed the area since it last
+	// synced (the same test Driver.Status reports it with), so a pull is not safe.
+	Diverged bool
+	// PullCmd is the command that resolves the refused push: the pull for a
+	// behind area, the reconcile for a diverged one.
 	PullCmd string
+}
+
+// newErrBehind builds the push refusal for a hosted copy that is ahead of this
+// machine. Whether this machine also changed the area is decided here, once, and
+// picks the command the refusal names: a pull of a behind area overwrites
+// nothing local, a pull of a diverged one would.
+func newErrBehind(area string, base *hosted.AreaBase, effVersion int, pending []string, local map[string]string, pullCmd, divergedCmd string) *ErrBehind {
+	e := &ErrBehind{Area: area, Effective: effVersion, Pending: pending, PullCmd: pullCmd}
+	if base != nil {
+		e.Base = base.Version
+	}
+	if !sameFiles(local, baseFiles(base)) {
+		e.Diverged, e.PullCmd = true, divergedCmd
+	}
+	return e
 }
 
 func (e *ErrBehind) Error() string {
@@ -316,7 +335,7 @@ func unmergedRefusal(area string, base *hosted.AreaBase) *ErrUnmerged {
 // silently abandoning a file only another machine has. prune publishes this tree
 // as the whole truth instead: a head the tree lacks is dropped, which is how an
 // existing store's stale files are retired.
-func PlanPush(area, pullCmd, by string, prune, force bool, base *hosted.AreaBase, effVersion int, eff Record, local, heads map[string]string, copyExists func(path string) bool) (PushPlan, error) {
+func PlanPush(area, pullCmd, divergedCmd, by string, prune, force bool, base *hosted.AreaBase, effVersion int, eff Record, local, heads map[string]string, copyExists func(path string) bool) (PushPlan, error) {
 	baseVersion := 0
 	if base != nil {
 		baseVersion = base.Version
@@ -329,7 +348,7 @@ func PlanPush(area, pullCmd, by string, prune, force bool, base *hosted.AreaBase
 	forced := false
 	if effVersion != baseVersion {
 		if !force {
-			return PushPlan{}, &ErrBehind{Area: area, Base: baseVersion, Effective: effVersion, PullCmd: pullCmd}
+			return PushPlan{}, newErrBehind(area, base, effVersion, nil, local, pullCmd, divergedCmd)
 		}
 		forced = true
 	}
@@ -348,7 +367,7 @@ func PlanPush(area, pullCmd, by string, prune, force bool, base *hosted.AreaBase
 		}
 		if len(pending) > 0 {
 			if !force {
-				return PushPlan{}, &ErrBehind{Area: area, Base: baseVersion, Effective: effVersion, Pending: pending, PullCmd: pullCmd}
+				return PushPlan{}, newErrBehind(area, base, effVersion, pending, local, pullCmd, divergedCmd)
 			}
 			forced = true
 		}
