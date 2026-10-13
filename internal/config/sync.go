@@ -273,13 +273,20 @@ type ConfigFile struct {
 }
 
 // Bundle is an assembled set of files destined for transmission, plus the
-// server-relative paths withheld by LocalOnlyPath so a caller can REPORT them.
-// Work-state push transmits DB rows (no on-disk filename), so it is out of
-// scope for this exclusion by deliberate decision — not a gap.
+// server-relative paths left out so a caller can REPORT them, each under its own
+// reason. Work-state push transmits DB rows (no on-disk filename), so it is out
+// of scope for these exclusions by deliberate decision — not a gap.
 type Bundle struct {
 	Files    []ConfigFile
-	Withheld []string // sorted, server-relative
+	Withheld []string // sorted, server-relative: never leaves this machine (LocalOnlyPath)
+	// UneditedDefaults are the sorted, server-relative paths of files that are
+	// unedited embedded defaults (UneditedDefault). The installed binary supplies
+	// them, so they are not versioned or synced (sty_097833e8).
+	UneditedDefaults []string
 }
+
+// ExcludedCount is how many paths the bundle left out, for either reason.
+func (b Bundle) ExcludedCount() int { return len(b.Withheld) + len(b.UneditedDefaults) }
 
 // LocalOnlyPath reports whether a path is one that must NEVER be transmitted:
 // any path segment carrying a `.local` dot-component (satelle.local.toml,
@@ -311,21 +318,28 @@ func LocalOnlyPath(p string) bool {
 }
 
 // assemble is the single seam every push bundle passes through: it applies the
-// .local exclusion and the deterministic sort. Per-area walks never filter —
-// so a new area added to ConfigAreas inherits the guarantee automatically.
+// .local exclusion, drops unedited embedded defaults, and sorts
+// deterministically. Per-area walks never filter — so a new area added to
+// ConfigAreas inherits the guarantee automatically. Because push, status and
+// pull planning (AreaFiles) all read through here, they agree on what counts as
+// substrate the operator wrote.
 func assemble(files []ConfigFile) Bundle {
 	var kept []ConfigFile
-	var withheld []string
+	var withheld, defaults []string
 	for _, f := range files {
-		if LocalOnlyPath(f.Path) {
+		switch {
+		case LocalOnlyPath(f.Path):
 			withheld = append(withheld, f.Path)
-			continue
+		case UneditedDefault(f.Path, f.Content):
+			defaults = append(defaults, f.Path)
+		default:
+			kept = append(kept, f)
 		}
-		kept = append(kept, f)
 	}
 	sortConfigFiles(kept)
 	sort.Strings(withheld)
-	return Bundle{Files: kept, Withheld: withheld}
+	sort.Strings(defaults)
+	return Bundle{Files: kept, Withheld: withheld, UneditedDefaults: defaults}
 }
 
 // ConfigFiles walks the ConfigAreas under repoRoot, resolving each file's scope

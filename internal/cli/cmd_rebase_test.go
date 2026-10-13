@@ -94,11 +94,10 @@ func TestRunRebaseBacksUpAndWipes(t *testing.T) {
 	// virtually through the read-time overlay (sty_cc550a88). What the dirs must
 	// hold afterwards is asserted by TestRunRebaseLeavesDefaultsVirtual.
 	//
-	// The embedded default substrate-audit TASK is re-seeded though (additive — tasks is
-	// NOT a rebaseKind, so authored tasks are never wiped; only the absent default
-	// lands) (sty_d4360e90).
-	if !fileExists(filepath.Join(dataDir, "tasks", "tsk_substrate-audit.md")) {
-		t.Error("rebase did not re-seed the embedded substrate-audit task")
+	// Default tasks are virtual: rebase seeds none (tasks is NOT a rebaseKind, so
+	// authored tasks are never wiped either) (sty_097833e8).
+	if fileExists(filepath.Join(dataDir, "tasks", "tsk_substrate-audit.md")) {
+		t.Error("rebase seeded the embedded substrate-audit task — default tasks are virtual")
 	}
 	for _, kind := range rebaseKinds {
 		if !fileExists(filepath.Join(dataDir, kind, "README.md")) {
@@ -106,12 +105,12 @@ func TestRunRebaseBacksUpAndWipes(t *testing.T) {
 		}
 	}
 
-	// The report names the backup path and what it restored.
+	// The report names the backup path and what it backed up.
 	if !strings.Contains(out.String(), backupDir) {
 		t.Errorf("report does not name the backup path:\n%s", out.String())
 	}
-	if !strings.Contains(out.String(), "restored") {
-		t.Errorf("report does not summarise what was restored:\n%s", out.String())
+	if !strings.Contains(out.String(), "backed up") {
+		t.Errorf("report does not summarise what was backed up:\n%s", out.String())
 	}
 	// The help and the report must stop promising a redeploy that no longer
 	// happens — a command that lies about its own effect is the defect here.

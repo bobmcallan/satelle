@@ -19,7 +19,8 @@ it runs.
 Judges structure only, mirroring `structure.CheckTask` (`satelle task validate`):
 
 - the execution names a parent task (`parent_id`), and that header file exists
- under `.satelle/tasks/`;
+ under `.satelle/tasks/` (or, for a default task the binary ships, resolves
+ from the binary with no file);
 - the header is structurally valid: YAML frontmatter with `id`, `type: task`
  (OKF), `status`, and a `# Title` heading in the body.
 
@@ -40,7 +41,12 @@ case "$IN" in
 esac
 rest=${IN#*\"parent_id\":\"}; parent=${rest%%\"*}
 F=".satelle/tasks/$parent.md"
-[ -f "$F" ] || { echo "parent task header $F does not exist — a run executes an authored task"; exit 1; }
+if [ ! -f "$F" ]; then
+ # A default task is virtual: it has no header file, and the binary validates the
+ # copy it ships. A header that went missing is still refused.
+ satelle task validate "$parent" 2>/dev/null | grep -q "^PASS  tasks/$parent (embedded default)" && exit 0
+ echo "parent task header $F does not exist — a run executes an authored task"; exit 1
+fi
 head -1 "$F" | grep -q '^---$' || { echo "$F: missing YAML frontmatter"; exit 1; }
 grep -q '^id:' "$F" || { echo "$F: frontmatter missing id"; exit 1; }
 grep -Eq '^type:[[:space:]]*task[[:space:]]*$' "$F" || { echo "$F: frontmatter must have 'type: task' (OKF)"; exit 1; }

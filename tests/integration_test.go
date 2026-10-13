@@ -1274,7 +1274,7 @@ func TestRebaseResetsSubstrate(t *testing.T) {
 	// because the embedded defaults govern through the read-time overlay
 	// (sty_cc550a88).
 	out = mustRun(t, bin, repo, "rebase", "--yes")
-	if !strings.Contains(out, "backed up") || !strings.Contains(out, "restored") {
+	if !strings.Contains(out, "backed up") {
 		t.Errorf("rebase report incomplete:\n%s", out)
 	}
 	if _, serr := os.Stat(skill); serr == nil {

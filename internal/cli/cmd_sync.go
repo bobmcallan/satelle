@@ -418,15 +418,11 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 	}
 	files := bundle.Files
 	out := cmd.OutOrStdout()
-	printWithheldLocal := func() {
-		for _, p := range bundle.Withheld {
-			fmt.Fprintf(out, "  withheld (never syncs, .local): %s\n", p)
-		}
-	}
+	printWithheldLocal := func() { printBundleExclusions(out, bundle) }
 	if len(files) == 0 {
-		if len(bundle.Withheld) > 0 {
+		if n := bundle.ExcludedCount(); n > 0 {
 			printWithheldLocal()
-			fmt.Fprintf(out, "nothing to push (%d withheld)\n", len(bundle.Withheld))
+			fmt.Fprintf(out, "nothing to push (%d withheld)\n", n)
 			return nil
 		}
 		fmt.Fprintln(out, "No config to push — every config area is local. Set [sync] <area> = personal to opt in.")
@@ -510,6 +506,18 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 	fmt.Fprintf(out, "Pushed %d of %d config file(s) to project %q personal collection on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
 		uploaded, len(files), project, server, created, unchanged, notUploaded)
 	return nil
+}
+
+// printBundleExclusions names every path a push left out of the bundle, each
+// under its own reason: files that never leave the machine (.local), and unedited
+// embedded defaults the installed binary supplies (sty_097833e8).
+func printBundleExclusions(out io.Writer, b config.Bundle) {
+	for _, p := range b.Withheld {
+		fmt.Fprintf(out, "  withheld (never syncs, .local): %s\n", p)
+	}
+	for _, p := range b.UneditedDefaults {
+		fmt.Fprintf(out, "  withheld (unedited embedded default — comes from the binary): %s\n", p)
+	}
 }
 
 // headSHAByPath indexes ConfigItem.BlobSHA256 by path.
@@ -696,6 +704,10 @@ func runSyncConfigDeployWith(cmd *cobra.Command, serverArg, workspaceArg string,
 				return deployOutcome{}, ferr
 			}
 			return deployOutcome{}, fmt.Errorf("fetch %s: %w", item.Path, ferr)
+		}
+		if config.UneditedDefault(item.Path, content) {
+			fmt.Fprintf(out, "  kept binary default (hosted copy is an unedited embedded default): %s\n", item.Path)
+			continue
 		}
 		files = append(files, subsync.File{Path: item.Path, Content: content})
 	}

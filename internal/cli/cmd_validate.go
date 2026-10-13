@@ -74,6 +74,14 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 	}
 	validated, failed, exempt := validateAuthoredDir(out, kind, dir, nameFilter, resolve)
 
+	// A default task is virtual — init writes no header for it — so a named check
+	// with no such file on disk validates the copy the binary ships. That is how the
+	// begin-run gate tells a default task from a header that went missing.
+	if kind == "tasks" && nameFilter != "" && validated+failed+exempt == 0 {
+		v, f := validateEmbeddedTask(out, nameFilter)
+		validated, failed = validated+v, failed+f
+	}
+
 	// Cross-workflow consistency (ambiguous applies_to, unresolved referenced
 	// skills) — a whole-set check, so only for the workflows kind without a name.
 	if kind == "workflows" && nameFilter == "" {
@@ -258,6 +266,24 @@ func validateAuthoredDir(out io.Writer, kind, dir, nameFilter string, resolve fu
 		}
 	}
 	return validated, failed, exempt
+}
+
+// validateEmbeddedTask runs the task check over the copy of a default task the
+// binary ships, for a name with no file on disk. It reports nothing for a name
+// that is not a default.
+func validateEmbeddedTask(out io.Writer, name string) (validated, failed int) {
+	body, ok := embeddedDefault("tasks", name)
+	if !ok {
+		return 0, 0
+	}
+	if problems := structure.CheckTask(body); len(problems) > 0 {
+		for _, p := range problems {
+			fmt.Fprintf(out, "FAIL  tasks/%s — %s\n", name, p)
+		}
+		return 1, len(problems)
+	}
+	fmt.Fprintf(out, "PASS  tasks/%s (embedded default)\n", name)
+	return 1, 0
 }
 
 // reservedKeepFile reports whether fn is a reserved, non-authored keep-file that

@@ -99,9 +99,9 @@ func TestRunInitScaffolds(t *testing.T) {
 			t.Errorf("init must not seed unedited default %s (sty_29e5a9a5)", rel)
 		}
 	}
-	// Tasks plane carve-out: default task headers are still seeded (gates need files).
-	if _, err := os.Stat(filepath.Join(repo, ".satelle/tasks/tsk_substrate-audit.md")); err != nil {
-		t.Errorf("init must still seed tasks/tsk_substrate-audit.md: %v", err)
+	// Default tasks are virtual too: init seeds no tsk_*.md (sty_097833e8).
+	if _, err := os.Stat(filepath.Join(repo, ".satelle/tasks/tsk_substrate-audit.md")); err == nil {
+		t.Error("init must not seed tasks/tsk_substrate-audit.md — default tasks are virtual")
 	}
 	// Runtime DB is under ~/.satelle/<repo-key>/ (HOME isolated by runInitTest).
 	homeDB := filepath.Join(config.GlobalDir(), config.RepoKey(repo), config.DefaultDBName)
@@ -418,24 +418,29 @@ func TestPlanMigrateIncludesMissingStaleAfter(t *testing.T) {
 	}
 }
 
-// TestRunInitSeedsAuditTask asserts the embedded substrate-audit task is still
-// seeded (tasks plane carve-out — coded gates require an on-disk header) and is
-// re-runnable from done (sty_d4360e90). Workflows/skills stay virtual.
-func TestRunInitSeedsAuditTask(t *testing.T) {
+// TestRunInitAuditTaskIsVirtualAndRerunnable asserts the embedded substrate-audit
+// task is NOT seeded onto disk (it comes from the binary, so it never syncs as if
+// authored — sty_097833e8), is a well-formed re-runnable task at done
+// (sty_d4360e90), and that the begin-run gate accepts a new run under it by
+// resolving it from the binary.
+func TestRunInitAuditTaskIsVirtualAndRerunnable(t *testing.T) {
 	repo := t.TempDir()
 	if err := runInitTest(t, io.Discard, repo); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
 	dataDir := filepath.Join(repo, ".satelle")
-	body, err := os.ReadFile(filepath.Join(dataDir, "tasks", "tsk_substrate-audit.md"))
-	if err != nil {
-		t.Fatalf("init did not seed tasks/tsk_substrate-audit.md: %v", err)
+	if fileExists(filepath.Join(dataDir, "tasks", "tsk_substrate-audit.md")) {
+		t.Error("init seeded tasks/tsk_substrate-audit.md — default tasks are virtual")
 	}
-	if problems := structure.CheckTask(string(body)); len(problems) > 0 {
-		t.Errorf("seeded audit task fails CheckTask: %v", problems)
+	body, ok := embeddedDefault("tasks", "tsk_substrate-audit")
+	if !ok {
+		t.Fatal("embedded tsk_substrate-audit missing")
 	}
-	if !bytes.Contains(body, []byte("\nstatus: done\n")) {
-		t.Errorf("seeded audit task must sit at status: done, got:\n%s", body)
+	if problems := structure.CheckTask(body); len(problems) > 0 {
+		t.Errorf("embedded audit task fails CheckTask: %v", problems)
+	}
+	if !strings.Contains(body, "\nstatus: done\n") {
+		t.Errorf("embedded audit task must sit at status: done, got:\n%s", body)
 	}
 	// Workflows/skills still virtual.
 	if fileExists(filepath.Join(dataDir, "workflows", "done.md")) {
@@ -454,14 +459,47 @@ func TestRunInitSeedsAuditTask(t *testing.T) {
 		t.Fatal("embedded task-validate-before skill missing")
 	}
 	payload := `{"story":{"id":"exe_test0001","kind":"execution","title":"audit run","status":"backlog","parent_id":"tsk_substrate-audit","tags":[],"created_at":"2026-07-08T00:00:00Z","updated_at":"2026-07-08T00:00:00Z"},"from":"backlog","to":"in_progress","review_skill":"satelle-task-validate-before-review"}`
-	cmd := exec.Command("sh", "-c", checkScript(t, skillBody))
-	cmd.Dir = repo
-	cmd.Stdin = strings.NewReader(payload)
-	var gate bytes.Buffer
-	cmd.Stdout = &gate
-	cmd.Stderr = &gate
-	if err := cmd.Run(); err != nil {
-		t.Errorf("begin-run gate rejected a new run under the done audit task: %v\n%s", err, gate.String())
+	// A stand-in `satelle` on PATH validates exactly the default tasks, so the
+	// gate's virtual branch is exercised without depending on an installed binary.
+	bin := t.TempDir()
+	stub := "#!/bin/sh\n[ \"$1 $2 $3\" = \"task validate tsk_substrate-audit\" ] && echo 'PASS  tasks/tsk_substrate-audit (embedded default)'\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "satelle"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	run := func(payload string) (string, error) {
+		cmd := exec.Command("sh", "-c", checkScript(t, skillBody))
+		cmd.Dir = repo
+		cmd.Stdin = strings.NewReader(payload)
+		var gate bytes.Buffer
+		cmd.Stdout = &gate
+		cmd.Stderr = &gate
+		err := cmd.Run()
+		return gate.String(), err
+	}
+	if out, err := run(payload); err != nil {
+		t.Errorf("begin-run gate rejected a new run under the done audit task: %v\n%s", err, out)
+	}
+	// A parent that is neither a header file nor a default task is still refused.
+	if out, err := run(strings.ReplaceAll(payload, "tsk_substrate-audit", "tsk_nope")); err == nil {
+		t.Errorf("begin-run gate accepted a run under a task with no header and no default:\n%s", out)
+	}
+}
+
+// TestValidateEmbeddedTaskNamesOnlyShippedDefaults: with no file on disk, a named
+// task check passes a default task from the binary's own copy and says nothing for
+// any other name — the distinction the begin-run gate relies on.
+func TestValidateEmbeddedTaskNamesOnlyShippedDefaults(t *testing.T) {
+	var out strings.Builder
+	if v, f := validateEmbeddedTask(&out, "tsk_substrate-audit"); v != 1 || f != 0 {
+		t.Errorf("default task: validated=%d failed=%d\n%s", v, f, out.String())
+	}
+	if !strings.Contains(out.String(), "PASS  tasks/tsk_substrate-audit (embedded default)") {
+		t.Errorf("missing the PASS line the gate reads:\n%s", out.String())
+	}
+	out.Reset()
+	if v, f := validateEmbeddedTask(&out, "tsk_not_shipped"); v != 0 || f != 0 || out.Len() != 0 {
+		t.Errorf("a task the binary does not ship produced output: validated=%d failed=%d %q", v, f, out.String())
 	}
 }
 

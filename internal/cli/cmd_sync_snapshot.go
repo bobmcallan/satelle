@@ -129,7 +129,8 @@ func newSnapDriver(cfg config.Config, client *hosted.Client, out io.Writer, serv
 	return &snapsync.Driver{
 		Server: server, Project: project, RepoRoot: abs, DataDir: dataDir,
 		By: client.Location(), Records: rec, Blobs: blobs, Out: out, PullCmd: pushRefusalRemedy,
-		Owns: func(area, p string) bool { return config.SyncAreaOf(cfg, repoRoot, p) == area },
+		Owns:     func(area, p string) bool { return config.SyncAreaOf(cfg, repoRoot, p) == area },
+		SkipBody: config.UneditedDefault,
 	}
 }
 

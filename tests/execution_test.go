@@ -88,8 +88,9 @@ func TestExecutionLifecycleE2E(t *testing.T) {
 }
 
 // TestInitSeedsSubstrateAuditTask proves AC4 of sty_d4360e90 end-to-end via the
-// real binary: a FRESHLY-init'd repo (no manual substrate copy) seeds the
-// repo-agnostic substrate-audit task (tsk_substrate-audit) at `done`, and a NEW
+// real binary: a FRESHLY-init'd repo (no manual substrate copy) resolves the
+// repo-agnostic substrate-audit task (tsk_substrate-audit) at `done` — virtually,
+// with no header file on disk (sty_097833e8) — and a NEW
 // execution created under that done header resolves via the task workflow and
 // runs through its gates — the coded begin-run gate judges STRUCTURE only (never
 // the parent's status), so a done header accepts a fresh run. A second execution
@@ -100,14 +101,14 @@ func TestInitSeedsSubstrateAuditTask(t *testing.T) {
 	stubReviewerAccept(t, repo)       // the close gate is an LLM reviewer — keep hermetic
 	mustRun(t, testBin, repo, "reindex")
 
-	// The seeded audit task is present and sits at done.
+	// The default audit task is virtual — init writes no header file — and still
+	// resolves from the binary, sitting at done.
 	header := filepath.Join(repo, ".satelle", "tasks", "tsk_substrate-audit.md")
-	body, err := os.ReadFile(header)
-	if err != nil {
-		t.Fatalf("init did not seed the substrate-audit task: %v", err)
+	if _, err := os.Stat(header); err == nil {
+		t.Fatalf("init seeded %s — default tasks are virtual", header)
 	}
-	if !strings.Contains(string(body), "status: done") {
-		t.Errorf("seeded audit task must sit at done (re-runnable from done):\n%s", body)
+	if got := mustRun(t, testBin, repo, "task", "get", "tsk_substrate-audit"); !strings.Contains(got, `"status": "done"`) {
+		t.Errorf("the default audit task must resolve at done (re-runnable from done):\n%s", got)
 	}
 
 	// A new execution under the done header resolves via the task workflow and
@@ -117,8 +118,18 @@ func TestInitSeedsSubstrateAuditTask(t *testing.T) {
 	if eid == "" {
 		t.Fatal("no execution id")
 	}
-	mustRun(t, testBin, repo, "execution", "set", eid, "--status", "in_progress")
-	mustRun(t, testBin, repo, "execution", "set", eid, "--status", "done")
+	// The begin-run gate shells out to a bare `satelle` to validate the default
+	// task, so the binary under test leads PATH — otherwise the gate would ask
+	// whatever satelle is installed and prove nothing about this tree.
+	onPath := []string{"PATH=" + filepath.Dir(testBin) + string(os.PathListSeparator) + os.Getenv("PATH")}
+	set := func(id, status string) {
+		t.Helper()
+		if out, err := runEnv(t, testBin, repo, onPath, "execution", "set", id, "--status", status); err != nil {
+			t.Fatalf("execution set %s --status %s: %v\n%s", id, status, err, out)
+		}
+	}
+	set(eid, "in_progress")
+	set(eid, "done")
 
 	// Re-runnable from done: a SECOND execution under the same done header runs too.
 	eid2 := extractID(mustRun(t, testBin, repo, "execution", "create", "--parent", "tsk_substrate-audit",
@@ -126,7 +137,7 @@ func TestInitSeedsSubstrateAuditTask(t *testing.T) {
 	if eid2 == "" || eid2 == eid {
 		t.Fatalf("re-run should be a distinct new execution; got %q (first %q)", eid2, eid)
 	}
-	mustRun(t, testBin, repo, "execution", "set", eid2, "--status", "in_progress")
+	set(eid2, "in_progress")
 }
 
 // TestExecutionCodedEntryGateRejects proves the coded begin-run gate

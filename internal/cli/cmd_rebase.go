@@ -68,8 +68,8 @@ func init() {
      shipped versions and freeze this repo against the next upgrade. Use
      'satelle substrate edit <kind> <name>' to materialize one for editing.
 
-The embedded default TASK re-seeds, because a coded gate checks for an on-disk
-task header — tasks cannot live virtually, and authored tasks are never wiped.
+Default tasks are virtual — they resolve from the binary — so rebase seeds none.
+Authored tasks are never wiped.
 
 Repo CONFIGURATION that happens to live inside those dirs is preserved across
 the wipe and restored from the backup — today that is workflows/agents.toml, the
@@ -195,18 +195,15 @@ func runRebase(out io.Writer, in io.Reader, dataDir, runtimeDir string, yes bool
 		fmt.Fprintf(out, "  = %s (preserved — repo configuration, not default substrate)\n", rel)
 	}
 
-	// Tasks are the one carve-out, and it is pre-existing and principled: coded
-	// gates check for an on-disk task HEADER, so a task cannot live virtually.
 	// "tasks" is NOT a rebaseKind — authored tasks are repo content and are never
-	// wiped — making this purely additive healing (sty_d4360e90).
-	restored := 0
-	for _, line := range materializeTasks(dataDir, opts) {
+	// wiped. Default tasks are virtual (SyncTasks ingests them without a file), so
+	// rebase seeds none; an existing unedited copy is converged in place.
+	for _, line := range convergeOnDiskKinds(dataDir, map[string]bool{"tasks": true}, opts) {
 		fmt.Fprintln(out, line)
-		restored++
 	}
 
-	fmt.Fprintf(out, "rebase: backed up %d dir(s) to %s; restored %d default task(s); workflows/skills/principles now resolve from the embedded defaults (run `satelle reindex` to sync the index)\n",
-		backedUp, backupDir, restored)
+	fmt.Fprintf(out, "rebase: backed up %d dir(s) to %s; workflows/skills/principles/tasks now resolve from the embedded defaults (run `satelle reindex` to sync the index)\n",
+		backedUp, backupDir)
 	if _, err := writeDeployedVersion(dataDir); err != nil {
 		return fmt.Errorf("rebase: write deployed.version: %w", err)
 	}

@@ -6,7 +6,6 @@
 package tests
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,10 +54,11 @@ func TestReviewerObjectiveAuditTaskSeedsSkillVirtual(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	// Task plane still seeds; skill is virtual.
+	// Task and skill are both virtual (sty_097833e8): the task resolves from the
+	// binary with no header file.
 	task := filepath.Join(repo, ".satelle", "tasks", "tsk_reviewer-objective-audit.md")
-	if !fileExists(task) {
-		t.Fatal("init did not seed tsk_reviewer-objective-audit task")
+	if fileExists(task) {
+		t.Fatal("init seeded tsk_reviewer-objective-audit — default tasks are virtual")
 	}
 	skill := filepath.Join(repo, ".satelle", "skills", "satelle-reviewer-objective-audit.md")
 	if fileExists(skill) {
@@ -70,15 +70,14 @@ func TestReviewerObjectiveAuditTaskSeedsSkillVirtual(t *testing.T) {
 	if !strings.Contains(out, "PASS  skills/satelle-reviewer-objective-audit") {
 		t.Errorf("reviewer-objective-audit skill should validate:\n%s", out)
 	}
-	// The skill returns to VIRTUAL (rebase no longer re-seeds — sty_cc550a88);
-	// the TASK is the carve-out and does come back, because a coded gate checks
-	// for an on-disk task header.
+	// The skill returns to VIRTUAL (rebase no longer re-seeds — sty_cc550a88), and
+	// so does the task: rebase seeds no header for either.
 	mustRun(t, testBin, repo, "rebase", "--yes")
 	if fileExists(skill) {
 		t.Fatal("rebase must not re-seed satelle-reviewer-objective-audit")
 	}
-	if !fileExists(task) {
-		t.Fatal("rebase did not restore tsk_reviewer-objective-audit — tasks cannot live virtually")
+	if fileExists(task) {
+		t.Fatal("rebase seeded tsk_reviewer-objective-audit — default tasks are virtual")
 	}
 }
 
@@ -87,19 +86,16 @@ func TestContextAuditTaskSeedsSkillVirtual(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 
 	task := filepath.Join(repo, ".satelle", "tasks", "tsk_context-audit.md")
-	if !fileExists(task) {
-		t.Fatal("init did not seed tsk_context-audit task")
+	if fileExists(task) {
+		t.Fatal("init seeded tsk_context-audit — default tasks are virtual (sty_097833e8)")
 	}
 	skill := filepath.Join(repo, ".satelle", "skills", "satelle-context-audit.md")
 	if fileExists(skill) {
 		t.Fatal("init must not seed satelle-context-audit skill")
 	}
-	body, err := os.ReadFile(task)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(body), "status: done") {
-		t.Errorf("context-audit task must ship at done for re-run from done:\n%s", body)
+	mustRun(t, testBin, repo, "reindex")
+	if got := mustRun(t, testBin, repo, "task", "get", "tsk_context-audit"); !strings.Contains(got, `"status": "done"`) {
+		t.Errorf("context-audit task must resolve at done for re-run from done:\n%s", got)
 	}
 	materializeDefault(t, repo, "skills", "satelle-context-audit")
 	mustRun(t, testBin, repo, "reindex")

@@ -261,7 +261,7 @@ func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
 	if fileExists(homeDB) || p.RuntimeRelocate {
 		p.Residue = listLegacyResidue(dataDir)
 	}
-	p.PruneSeeds = listUneditedSeeds(dataDir)
+	p.PruneSeeds = config.UneditedSeedPaths(dataDir)
 	p.Gitignore = gitignoreNeedsConverge(repoRoot)
 	p.ExemptManaged = editExemptManagedMissing(dataDir)
 	p.ExemptGlobsManaged = editExemptGlobsManagedMissing(dataDir)
@@ -952,27 +952,6 @@ func listLegacyResidue(dataDir string) []string {
 // hasLegacyResidue is true when any obsolete in-repo runtime path exists.
 func hasLegacyResidue(dataDir string) bool {
 	return len(listLegacyResidue(dataDir)) > 0
-}
-
-// listUneditedSeeds returns dataDir-relative paths of unedited embedded seeds.
-func listUneditedSeeds(dataDir string) []string {
-	var out []string
-	for _, d := range config.EmbeddedDefaults() {
-		if d.Kind == "tasks" {
-			continue
-		}
-		rel := d.RelPath()
-		path := filepath.Join(dataDir, filepath.FromSlash(rel))
-		body, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		if isUneditedSeed(string(body), d.Body) {
-			out = append(out, rel)
-		}
-	}
-	sort.Strings(out)
-	return out
 }
 
 func removePath(path string) error {

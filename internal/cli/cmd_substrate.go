@@ -11,7 +11,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -232,22 +231,7 @@ func pruneSeat(ctx context.Context, a *app.App) (storyID, state string) {
 }
 
 func runSubstratePrune(ctx context.Context, out io.Writer, in io.Reader, dataDir string, opts BackupOpts, yes bool, storyID, storyState string) error {
-	var plan []string // rel paths to remove
-	for _, d := range config.EmbeddedDefaults() {
-		if d.Kind == "tasks" {
-			continue
-		}
-		rel := d.RelPath()
-		path := filepath.Join(dataDir, filepath.FromSlash(rel))
-		body, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		if isUneditedSeed(string(body), d.Body) {
-			plan = append(plan, rel)
-		}
-	}
-	sort.Strings(plan)
+	plan := config.UneditedSeedPaths(dataDir) // rel paths to remove, tasks included
 	if len(plan) == 0 {
 		fmt.Fprintln(out, "prune: no unedited seed copies found")
 		return nil

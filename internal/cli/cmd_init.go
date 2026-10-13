@@ -392,15 +392,11 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 		fmt.Fprintln(out, line)
 	}
 
-	// 3d. Tasks: dir + README, then seed embedded default task HEADERS onto disk.
-	// Unlike workflows/skills/principles (virtual List/Get overlay), tasks are
-	// workitem substrate whose coded gates check for an on-disk header file — so
-	// the default tasks stay seeded (scoped AC1 carve-out for the tasks plane;
-	// sty_29e5a9a5 plan Step 5 fallback). No generic example task.
+	// 3d. Tasks: dir + README only. Embedded default tasks are virtual like the
+	// other kinds — SyncTasks ingests them without a file — so they are never
+	// seeded onto disk, where they would sync as if authored (sty_097833e8). An
+	// existing unedited copy is converged in place by convergeOnDiskDefaults.
 	for _, line := range seedTasks(dataDir) {
-		fmt.Fprintln(out, line)
-	}
-	for _, line := range materializeTasks(dataDir, bopts) {
 		fmt.Fprintln(out, line)
 	}
 
@@ -2419,11 +2415,18 @@ func convergeOnDiskDefaults(dataDir string, backupOpts ...BackupOpts) []string {
 	if len(backupOpts) > 0 {
 		bopts = backupOpts[0]
 	}
+	return convergeOnDiskKinds(dataDir, nil, bopts)
+}
+
+// convergeOnDiskKinds is convergeOnDiskDefaults limited to the named kinds; nil
+// converges every kind. Tasks are included: a default task is virtual, but a
+// copy already on disk is converged in place like any other (sty_097833e8).
+func convergeOnDiskKinds(dataDir string, kinds map[string]bool, bopts BackupOpts) []string {
 	var backupAdvisoryOnce bool
 	var lines []string
 	for _, d := range config.EmbeddedDefaults() {
-		if d.Kind == "tasks" {
-			continue // SyncTasks owns virtual task ingest
+		if kinds != nil && !kinds[d.Kind] {
+			continue
 		}
 		// The default's REAL extension — a route source is .toml (sty_81bb0dde).
 		// Hardcoding .md here would stop converging an authored copy of it on disk.
@@ -2439,45 +2442,6 @@ func convergeOnDiskDefaults(dataDir string, backupOpts ...BackupOpts) []string {
 		case reconcileUnchanged, reconcileCreated:
 			// silence
 		default:
-			lines = append(lines, reconcileReportLine(verb, rel, bres.LocalPath))
-		}
-		if bres.Notice != "" && (!backupAdvisoryOnce || !strings.Contains(bres.Notice, "online/personal")) {
-			lines = append(lines, "  i "+bres.Notice)
-			if strings.Contains(bres.Notice, "online/personal") {
-				backupAdvisoryOnce = true
-			}
-		}
-	}
-	return lines
-}
-
-// materializeTasks writes every embedded default TASK into .satelle/tasks when
-// absent (sty_d4360e90). Tasks are authored substrate ingested by SyncTasks (not the
-// OKF doc index), so this lands the tsk_*.md header the task reconciler picks up — a
-// fresh repo gets the re-runnable substrate-audit and reviewer-objective-audit tasks
-// resolving via the task workflow immediately. An existing on-disk file (authored
-// or a prior seed) is never clobbered; rebase re-runs this to heal a removed default.
-func materializeTasks(dataDir string, backupOpts ...BackupOpts) []string {
-	var bopts BackupOpts
-	if len(backupOpts) > 0 {
-		bopts = backupOpts[0]
-	}
-	var backupAdvisoryOnce bool
-	var lines []string
-	dir := filepath.Join(dataDir, "tasks")
-	if _, err := ensureDir(dir); err != nil {
-		return lines
-	}
-	for _, d := range config.EmbeddedDefaults() {
-		if d.Kind != "tasks" {
-			continue
-		}
-		rel := "tasks/" + d.Name + ".md"
-		verb, bres, err := reconcileEmbeddedFile(dataDir, rel, d.Body, bopts)
-		if err != nil {
-			continue
-		}
-		if verb != reconcileUnchanged {
 			lines = append(lines, reconcileReportLine(verb, rel, bres.LocalPath))
 		}
 		if bres.Notice != "" && (!backupAdvisoryOnce || !strings.Contains(bres.Notice, "online/personal")) {

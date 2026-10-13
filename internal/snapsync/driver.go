@@ -77,9 +77,19 @@ type Driver struct {
 	// Materialize makes Stage return files already equal to the snapshot too (a
 	// deploy rewrites the whole tree; a documents pull does not).
 	Materialize bool
-	Out         io.Writer
+	// SkipBody reports whether a hosted file is one the installed binary already
+	// supplies (an unedited embedded default). Stage never writes such a file over
+	// the tree and never parks it as a conflict: the effective item stays the
+	// binary's own default (sty_097833e8). Nil skips nothing.
+	SkipBody func(path string, body []byte) bool
+	Out      io.Writer
 
 	heads map[string]string
+}
+
+// skip reports whether the driver's SkipBody predicate holds for the file.
+func (d *Driver) skip(path string, body []byte) bool {
+	return d.SkipBody != nil && d.SkipBody(path, body)
 }
 
 // SHA is the hex sha256 snapsync records for a file's bytes.
@@ -377,7 +387,10 @@ type PullJob struct {
 	Choices map[string]Side
 	Save    SaveFunc
 	// Saved lists what Stage kept, in path order, once the choices are applied.
-	Saved  []SavedFile
+	Saved []SavedFile
+	// Kept lists the paths Stage left to the installed binary because the hosted
+	// copy is an unedited embedded default (Driver.SkipBody).
+	Kept   []string
 	base   *hosted.AreaBase
 	remote Record
 	heads  map[string]string
@@ -565,6 +578,10 @@ func (d *Driver) Stage(ctx context.Context, job *PullJob) ([]subsync.File, error
 				job.demote(e)
 				continue
 			}
+			if d.skip(e.Path, body) {
+				job.keepBinaryDefault(e)
+				continue
+			}
 			if e.Action == Write {
 				writes = append(writes, subsync.File{Path: e.Path, Content: body})
 				continue
@@ -584,15 +601,23 @@ func (d *Driver) Stage(ctx context.Context, job *PullJob) ([]subsync.File, error
 			if err != nil && !errors.Is(err, ErrBlobMissing) {
 				return nil, fmt.Errorf("fetch %s: %w", e.Path, err)
 			}
-			if err == nil && SHA(body) == e.Remote {
+			if err == nil && SHA(body) == e.Remote && !d.skip(e.Path, body) {
 				writes = append(writes, subsync.File{Path: e.Path, Content: body})
 			}
 		case Delete:
+			// A local copy the binary supplies is never removed on the hosted
+			// copy's say-so: it is the binary's file, not synced bytes.
+			if cur, err := os.ReadFile(filepath.Join(d.DataDir, filepath.FromSlash(e.Path))); err == nil && d.skip(e.Path, cur) {
+				continue
+			}
 			deletes = append(deletes, e.Path)
 		case RemovedStale:
 			cur, err := os.ReadFile(filepath.Join(d.DataDir, filepath.FromSlash(e.Path)))
 			if err != nil {
 				return nil, fmt.Errorf("back up %s: %w", e.Path, err)
+			}
+			if d.skip(e.Path, cur) {
+				continue
 			}
 			if err := subsync.WriteAside(d.DataDir, subsync.AsidePath(subsync.RemovedDir, job.Area, e.Path), cur); err != nil {
 				return nil, err
@@ -605,6 +630,27 @@ func (d *Driver) Stage(ctx context.Context, job *PullJob) ([]subsync.File, error
 	}
 	d.report(job)
 	return writes, nil
+}
+
+// keepBinaryDefault turns a planned Write or Conflict whose hosted bytes are an
+// unedited embedded default into no change at all: the file is not written, no
+// conflict copy is parked, and a local edit of the path stays in place to be
+// published by the next push. The planned base already records the snapshot's
+// sha for the path, so a later pull plans nothing for it — a missing local file
+// reads as one this machine does not hold, which is exactly the binary's default.
+func (j *PullJob) keepBinaryDefault(e *Entry) {
+	if e.Action == Conflict {
+		delete(j.Plan.Base.Unmerged, e.Path)
+		if len(j.Plan.Base.Unmerged) == 0 {
+			j.Plan.Base.Unmerged = nil
+		}
+		j.Plan.Base.Files[e.Path] = e.Remote
+	}
+	e.Action = LocalDeleted
+	if e.Local != "" {
+		e.Action = KeepLocal
+	}
+	j.Kept = append(j.Kept, e.Path)
 }
 
 // demote turns a planned Write or Conflict into Incomplete when the hosted copy
@@ -636,6 +682,9 @@ func (d *Driver) report(job *PullJob) {
 			continue
 		}
 		d.printf("  %s: %s — %s copy saved at %s\n", verb, s.Path, s.From, s.Stored)
+	}
+	for _, p := range job.Kept {
+		d.printf("  kept binary default (hosted copy is an unedited embedded default): %s\n", p)
 	}
 	for _, e := range job.Plan.Entries {
 		switch e.Action {

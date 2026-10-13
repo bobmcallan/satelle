@@ -89,19 +89,15 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	}
 	files := bundle.Files
 	out := cmd.OutOrStdout()
-	printWithheldLocal := func() {
-		for _, p := range bundle.Withheld {
-			fmt.Fprintf(out, "  withheld (never syncs, .local): %s\n", p)
-		}
-	}
+	printWithheldLocal := func() { printBundleExclusions(out, bundle) }
 	if scope == config.LocalScope {
 		fmt.Fprintln(out, "documents scope is local — skipping. Set [sync] documents = personal to opt in.")
 		return nil
 	}
 	if len(files) == 0 {
-		if len(bundle.Withheld) > 0 {
+		if n := bundle.ExcludedCount(); n > 0 {
 			printWithheldLocal()
-			fmt.Fprintf(out, "nothing to push (%d withheld)\n", len(bundle.Withheld))
+			fmt.Fprintf(out, "nothing to push (%d withheld)\n", n)
 			return nil
 		}
 		fmt.Fprintln(out, "No documents to push — documents area is empty.")

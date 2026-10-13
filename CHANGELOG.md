@@ -1,3 +1,14 @@
+## [0.0.666] - 2026-10-13
+
+### Changed
+- **Only substrate you edited or authored is versioned and synced; an unedited embedded default always comes from the installed binary.** A file that is an unedited copy of an embedded default (a self-consistent stamp, or byte-identical to the default) is left out of every push bundle and of every local-side comparison (`satelle sync status`, pull planning, reconcile), so upgrading the binary on one machine no longer looks like a substrate edit that conflicts with another, and a pull no longer replaces a newer default with an older materialised copy. The push output names such files separately from `.local` ones. (sty_097833e8)
+- `satelle init` and `satelle rebase` no longer write copies of the embedded default tasks; they resolve from the binary, an existing unedited copy is still converged in place, and `satelle substrate prune` and `satelle migrate` now remove unedited task copies through one shared enumeration. (sty_097833e8)
+
+## [serve-v0.0.161] - 2026-10-13
+
+### Changed
+- The service binary leaves unedited embedded defaults out of the substrate it pushes. (sty_097833e8)
+
 ## [0.0.665] - 2026-10-13
 
 ### Breaking

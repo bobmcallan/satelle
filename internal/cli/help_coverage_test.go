@@ -54,7 +54,7 @@ var longWordWaiver = map[string]int{
 	"satelle workspace add":   284, // registration + machine-scope seed target
 	"satelle doctor":          280, // the readiness checklist it runs, item by item
 	"satelle init":            274, // what the scaffold writes and what it leaves alone
-	"satelle rebase":          263, // DESTRUCTIVE: backup, reset, what is not recoverable
+	"satelle rebase":          257, // DESTRUCTIVE: backup, reset, what is not recoverable
 	"satelle sync":            220, // the four areas and the personal/team scoping rules
 	"satelle service install": 189, // user vs system unit, lingering, the sudo boundary
 	"satelle sync rehydrate":  174, // recovery protocol from a hosted project
