@@ -1,3 +1,20 @@
+## [0.0.667] - 2026-10-13
+
+### Added
+- **`satelle sync pull`**: configuration that is only behind the hosted copy is brought in as a fast-forward, through the same area-restricted snapshot path reconcile uses, so nothing local is ever overwritten; every other area is reported with its next command (unpushed -> `satelle sync push`, diverged -> `satelle sync reconcile`). satelled runs it as `--fast-forward-only` beside its automatic push, so a machine catches up on its own. A refused push now tells behind (`satelle sync pull`) from diverged (`satelle sync reconcile`), and status, doctor and reconcile name the git-aligned verbs. (sty_0fa4f732)
+
+### Changed
+- Ledger rows and executions are pushed append-only: a story held on another machine no longer stops this machine's ledger entries, and executions are never held (one predicate covers engage, push, pending claims, held-back refresh and the hold verbs). A record the server still refuses is skipped and named without aborting the push. Story fields as ledger events and server-side execution holds are follow-ups (sty_d5dd2c14, sty_1cb9f98f). (sty_52b93691)
+
+### Fixed
+- `satelle init`'s role migration adds `role=` to the binding's own table, never inside a sub-table such as `[coder.env]`. (sty_7356785b)
+- This completes epic:repo-substrate-sync: a repo's configuration travels to every machine identically, trunk-style. Refused pushes name reconcile (0.0.663); machine-specific agent fields live in `agents.local.toml` (0.0.664); configuration is validated before push and the hosted copy is exactly what was pushed (0.0.665); unedited embedded defaults never travel (0.0.666); and behind configuration is pulled on its own, operational data is append-only, and init's migration is fixed (this release). (sty_0abdcc03)
+
+## [serve-v0.0.162] - 2026-10-13
+
+### Changed
+- satelled's reconcile pass also runs `satelle sync pull --fast-forward-only`, and the service binary carries the append-only work-state push. (sty_0fa4f732, sty_52b93691)
+
 ## [0.0.666] - 2026-10-13
 
 ### Changed
