@@ -3,13 +3,16 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/workitem"
 	"github.com/bobmcallan/satelle/internal/worktree"
 )
 
@@ -91,6 +94,9 @@ func classifyHoldIDs(ctx context.Context, a *app.App, ids map[string]bool) (hold
 	res := holdResult{held: map[string]string{}, unavailable: map[string]string{}}
 	probes := map[string]treeProbe{}
 	for _, id := range slices.Sorted(maps.Keys(ids)) {
+		if !workitem.Holdable(id) {
+			continue // append-only: never held back, never re-checked-out
+		}
 		it, err := a.Store.Stories.Get(ctx, id)
 		if err != nil {
 			continue // not a work item on this machine: nothing to hold it by
@@ -176,6 +182,82 @@ func itemsCursorBefore(kept []json.RawMessage, earliestHeld, old time.Time) time
 		}
 	}
 	return best
+}
+
+func rawItemUpdatedAt(raw json.RawMessage) time.Time {
+	var w struct {
+		UpdatedAt time.Time `json:"updated_at"`
+	}
+	_ = json.Unmarshal(raw, &w)
+	return w.UpdatedAt
+}
+
+// earliestUpdatedAt is the earliest updated_at among the named items; zero when
+// none of them is in items.
+func earliestUpdatedAt(items []json.RawMessage, ids map[string]bool) time.Time {
+	var out time.Time
+	for _, raw := range items {
+		if !ids[rawItemID(raw)] {
+			continue
+		}
+		out = earliestOf(out, rawItemUpdatedAt(raw))
+	}
+	return out
+}
+
+// earliestOf is the earliest of the non-zero times; zero when all are zero.
+func earliestOf(ts ...time.Time) time.Time {
+	var out time.Time
+	for _, t := range ts {
+		if !t.IsZero() && (out.IsZero() || t.Before(out)) {
+			out = t
+		}
+	}
+	return out
+}
+
+// refusals are the records the hosted server refused as held during one push,
+// each skipped on its own. A refused item pins the items cursor at its
+// updated_at; a refused ledger row pins the ledger cursor before its story's
+// earliest row.
+type refusals struct {
+	earliestItem  time.Time
+	ledgerStories map[string]string
+}
+
+func newRefusals() *refusals {
+	return &refusals{ledgerStories: map[string]string{}}
+}
+
+// heldRefusal is the held error behind err, naming id; nil when err is not a
+// held refusal.
+func heldRefusal(err error, id string) *hosted.HeldError {
+	var held *hosted.HeldError
+	if id == "" || !errors.As(err, &held) {
+		return nil
+	}
+	h := *held
+	h.ItemID = id
+	return &h
+}
+
+// item records a refused item; nil when err is not a held refusal.
+func (r *refusals) item(raw json.RawMessage, err error) *hosted.HeldError {
+	h := heldRefusal(err, rawItemID(raw))
+	if h != nil {
+		r.earliestItem = earliestOf(r.earliestItem, rawItemUpdatedAt(raw))
+	}
+	return h
+}
+
+// ledger records a refused ledger row under its story; nil when err is not a
+// held refusal.
+func (r *refusals) ledger(raw json.RawMessage, err error) *hosted.HeldError {
+	h := heldRefusal(err, rawLedgerStoryID(raw))
+	if h != nil {
+		r.ledgerStories[h.ItemID] = "held elsewhere"
+	}
+	return h
 }
 
 // ledgerMarkBeforeHold is the ledger position to save when rows were held: the

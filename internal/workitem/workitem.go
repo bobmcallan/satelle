@@ -9,6 +9,7 @@ package workitem
 
 import (
 	"fmt"
+	"strings"
 	"time"
 	"uuid"
 )
@@ -84,6 +85,17 @@ func (k Kind) idPrefix() string {
 	default:
 		return "sty_"
 	}
+}
+
+// Holdable reports whether a kind of record may carry a hosted hold. Executions
+// are append-only: two machines' executions are two records, never one record
+// two machines contend for, so there is nothing to hold (sty_52b93691).
+func (k Kind) Holdable() bool { return k != KindExecution }
+
+// Holdable reports whether the record with this id may carry a hosted hold. It
+// is the id form of Kind.Holdable, for the callers that have an id and no record.
+func Holdable(id string) bool {
+	return !strings.HasPrefix(id, KindExecution.idPrefix())
 }
 
 // newID returns a fresh id for the kind in the <prefix><8hex> form.

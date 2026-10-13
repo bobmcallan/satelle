@@ -64,6 +64,45 @@ type fakeWorkstateServer struct {
 	// FailedPrecondition.
 	ignoreScope    bool
 	snapRejectCall int
+	// refuseHeld names records (item ids, or the story id of a ledger row) the
+	// server refuses as held by another location, as one that still holds
+	// executions does (sty_1cb9f98f). A request carrying any of them is refused whole.
+	refuseHeld map[string]bool
+}
+
+// refusesHeld reports whether the request carries a record refuseHeld names.
+func (f *fakeWorkstateServer) refusesHeld(req *syncpb.ApplyRequest) bool {
+	idOf := func(raw []byte, field string) string {
+		var m map[string]any
+		_ = json.Unmarshal(raw, &m)
+		id, _ := m[field].(string)
+		return id
+	}
+	for _, it := range req.GetItems() {
+		if f.refuseHeld[idOf(it.GetRecord(), "id")] {
+			return true
+		}
+	}
+	for _, e := range req.GetLedger() {
+		if f.refuseHeld[idOf(e.GetRecord(), "story_id")] {
+			return true
+		}
+	}
+	return false
+}
+
+// sent counts the items and ledger rows the server has been sent for project, in
+// every Apply it accepted.
+func (f *fakeWorkstateServer) sent(project string) (items, ledger int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, p := range f.posts[project] {
+		its, _ := p["items"].([]any)
+		led, _ := p["ledger"].([]any)
+		items += len(its)
+		ledger += len(led)
+	}
+	return items, ledger
 }
 
 // expireTokens invalidates every since_token and page_token issued so far.
@@ -167,6 +206,9 @@ func (s *fakeWorkstateGRPC) Apply(ctx context.Context, req *syncpb.ApplyRequest)
 	s.f.postN++
 	if s.f.failOnPost > 0 && s.f.postN == s.f.failOnPost {
 		return nil, status.Error(codes.Internal, "injected failure")
+	}
+	if s.f.refusesHeld(req) {
+		return nil, status.Error(codes.FailedPrecondition, "record held by location loc_refuser")
 	}
 	key := req.GetProject()
 	if s.f.itemsByID[key] == nil {

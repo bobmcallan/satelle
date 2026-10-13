@@ -12,6 +12,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // The hosted hold is the marker that tells another machine a story is in flight
@@ -40,6 +41,12 @@ func reconcilePendingClaims(ctx context.Context, out, errw io.Writer, h holdSite
 	}
 	var collided map[string]*hosted.HeldError
 	for _, id := range slices.Sorted(maps.Keys(pending)) {
+		if !workitem.Holdable(id) {
+			// A claim recorded before executions stopped being held: drop it
+			// rather than place a fresh server hold.
+			_ = hosted.ClearPendingClaim(h.server, h.project, h.repoRoot, id)
+			continue
+		}
 		st, err := h.client.Checkout(ctx, h.project, id)
 		var held *hosted.HeldError
 		switch {
@@ -54,7 +61,7 @@ func reconcilePendingClaims(ctx context.Context, out, errw io.Writer, h holdSite
 			if held.Hold.Label != "" {
 				label = " (" + held.Hold.Label + ")"
 			}
-			fmt.Fprintf(out, "collision: %s was engaged here at %s without a hosted hold, but location %s%s holds it — its remaining rows are not sent; satelle story hold takeover %s\n",
+			fmt.Fprintf(out, "collision: %s was engaged here at %s without a hosted hold, but location %s%s holds it — its record is not sent until takeover, its ledger entries are; satelle story hold takeover %s\n",
 				id, pending[id], held.Hold.LocationID, label, id)
 		case err != nil:
 			fmt.Fprintf(errw, "satelle: hold for %s stays pending: %v\n", id, err)
@@ -154,20 +161,6 @@ func rawLedgerStoryID(raw json.RawMessage) string {
 	}
 	_ = json.Unmarshal(raw, &w)
 	return w.StoryID
-}
-
-// withoutStories drops the ledger rows of the named stories.
-func withoutStories(ledgerRows []json.RawMessage, drop map[string]*hosted.HeldError) []json.RawMessage {
-	if len(drop) == 0 {
-		return ledgerRows
-	}
-	keep := make([]json.RawMessage, 0, len(ledgerRows))
-	for _, raw := range ledgerRows {
-		if _, d := drop[rawLedgerStoryID(raw)]; !d {
-			keep = append(keep, raw)
-		}
-	}
-	return keep
 }
 
 // holdTimeLabel says how long a hold has stood. "since" is claimed only when the
