@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // storyHoldCommands is `satelle story hold {checkout,release,takeover}`.
@@ -127,7 +128,16 @@ func holdClient(cmd *cobra.Command, serverArg string) (client *hosted.Client, pr
 	return newHostedClient(cmd.Context(), server, repoRoot), project, repoRoot, nil
 }
 
+// errExecutionNotHoldable refuses a hold verb that would place a hold on an
+// execution. Executions are append-only; there is nothing to contend for.
+func errExecutionNotHoldable(id string) error {
+	return fmt.Errorf("%s is an execution; executions are append-only and are never held", id)
+}
+
 func runStoryHoldCheckout(cmd *cobra.Command, serverArg, id string) error {
+	if !workitem.Holdable(id) {
+		return errExecutionNotHoldable(id)
+	}
 	client, project, repoRoot, err := holdClient(cmd, serverArg)
 	if err != nil {
 		return err
@@ -155,6 +165,9 @@ func runStoryHoldRelease(cmd *cobra.Command, serverArg, id string) error {
 }
 
 func runStoryHoldTakeover(cmd *cobra.Command, serverArg, id string) error {
+	if !workitem.Holdable(id) {
+		return errExecutionNotHoldable(id)
+	}
 	client, project, repoRoot, err := holdClient(cmd, serverArg)
 	if err != nil {
 		return err

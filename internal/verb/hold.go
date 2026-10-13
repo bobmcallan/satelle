@@ -48,8 +48,11 @@ func ClearHoldClaimer() {
 // engagement (sty_dec88606). The claimer has recorded the claim, and the next
 // push places the hold or reports the collision. Any other claimer error is
 // treated the same way, unrecorded.
+//
+// An execution is append-only and never held (workitem.Kind.Holdable), so it
+// claims nothing and is never refused.
 func refuseHeldElsewhere(ctx context.Context, current workitem.Item) error {
-	if holdClaimer == nil {
+	if holdClaimer == nil || !current.Kind.Holdable() {
 		return nil
 	}
 	info, err := holdClaimer(ctx, current.ID)

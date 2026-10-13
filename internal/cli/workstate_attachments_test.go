@@ -532,7 +532,7 @@ func TestAttachmentLegRunsWhenEveryRowIsHeldElsewhere(t *testing.T) {
 // attachments; the free story's go.
 func TestAttachmentHeldElsewhereKeepsItsAttachmentBack(t *testing.T) {
 	url, hs, docs := holdDocsServer(t)
-	workstateRepo(t, storiesOnlyToml)
+	repo := workstateRepo(t, storiesOnlyToml)
 	free := createStoryID(t, "free story")
 	foreign := createStoryID(t, "held by another location")
 	hs.setHolder(foreign, otherLoc, "desk")
@@ -543,6 +543,14 @@ func TestAttachmentHeldElsewhereKeepsItsAttachmentBack(t *testing.T) {
 	if !strings.Contains(out, "skip "+foreign+" (held elsewhere)") {
 		t.Errorf("the foreign-held row should be skipped: %q", out)
 	}
+	// Single-owner record (sty_52b93691 AC5): reported once with the takeover
+	// pointer, and sent on the first push after the hold is released.
+	if n := strings.Count(out, "skip "+foreign); n != 1 {
+		t.Errorf("the foreign-held row is reported %d times, want once: %q", n, out)
+	}
+	if !strings.Contains(out, "satelle story hold takeover "+foreign) {
+		t.Errorf("the skip line should point at takeover: %q", out)
+	}
 	if _, ok := docs.file("stories/" + free + "/plan.md"); !ok {
 		t.Error("the free story's attachment should be uploaded")
 	}
@@ -551,6 +559,21 @@ func TestAttachmentHeldElsewhereKeepsItsAttachmentBack(t *testing.T) {
 	}
 	if !strings.Contains(out, "1 held with their stories") {
 		t.Errorf("push should count the held attachment: %q", out)
+	}
+
+	// Once the hold is released the record goes on the first push after it.
+	hs.mu.Lock()
+	delete(hs.holders, foreign)
+	hs.mu.Unlock()
+	if err := hosted.ForgetHold(url, "probe", repo, foreign); err != nil {
+		t.Fatal(err)
+	}
+	out = runPush(t, url)
+	if strings.Contains(out, "skip "+foreign) {
+		t.Errorf("a released story must not be skipped again: %q", out)
+	}
+	if !hs.f.hasItem("probe", foreign) {
+		t.Error("the released story's record should be sent on the first push after release")
 	}
 }
 

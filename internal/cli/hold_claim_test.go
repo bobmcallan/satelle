@@ -440,8 +440,9 @@ func TestPushPlacesTheHoldOfAStoryEngagedBeforeItsFirstPush(t *testing.T) {
 	}
 }
 
-// AC4 (ii): another location got there first → a collision line, none of the
-// story's rows sent, the rest of the push proceeds.
+// AC4 (ii): another location got there first → a collision line, the story's
+// record not sent but this machine's ledger entries are, the rest of the push
+// proceeds.
 func TestPushReportsACollisionForAStoryHeldByAnotherLocation(t *testing.T) {
 	fx := newHoldFixture(t, holdNoGit)
 	id := createStoryID(t, "engaged before first push, taken meanwhile")
@@ -460,8 +461,16 @@ func TestPushReportsACollisionForAStoryHeldByAnotherLocation(t *testing.T) {
 			t.Errorf("collision output missing %q:\n%s", want, out)
 		}
 	}
-	if fx.f.hasItem("probe", id) || fx.f.ledgerCount("probe", id) != 0 {
-		t.Error("rows of the story another location holds were sent")
+	if fx.f.hasItem("probe", id) {
+		t.Error("the record of the story another location holds was sent")
+	}
+	if fx.f.ledgerCount("probe", id) == 0 {
+		t.Error("this machine's ledger entries for the story were not sent")
+	}
+	_, ledgerAfterFirst := fx.f.sent("probe")
+	fx.push(t)
+	if _, n := fx.f.sent("probe"); n != ledgerAfterFirst {
+		t.Errorf("a second push sent %d more ledger rows; the cursor should have passed them", n-ledgerAfterFirst)
 	}
 	if !fx.f.hasItem("probe", other) {
 		t.Error("the rest of the push did not proceed")
@@ -526,7 +535,16 @@ func TestPushCollidesAnOfflineEngageOfAKnownStory(t *testing.T) {
 	fx.hs.setDown(false)
 	fx.hs.setHolder(id, otherLoc, "desk")
 
+	_, ledgerBefore := fx.f.sent("probe")
 	out := fx.push(t)
+	_, ledgerAfter := fx.f.sent("probe")
+	if ledgerAfter == ledgerBefore {
+		t.Error("this machine's ledger entries for the collided story were not sent")
+	}
+	fx.push(t)
+	if _, n := fx.f.sent("probe"); n != ledgerAfter {
+		t.Errorf("a second push sent %d more ledger rows", n-ledgerAfter)
+	}
 
 	for _, want := range []string{"collision: " + id, otherLoc, "desk", "satelle story hold takeover " + id} {
 		if !strings.Contains(out, want) {

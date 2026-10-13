@@ -40,6 +40,24 @@ func TestRefuseHeldElsewhere(t *testing.T) {
 	}
 }
 
+// An execution is append-only and never held: engaging one claims no hold, even
+// when the claimer would report another location as its holder.
+func TestRefuseHeldElsewhereClaimsNoHoldForAnExecution(t *testing.T) {
+	withWiring(t)
+	called := false
+	SetHoldClaimer(func(ctx context.Context, itemID string) (HoldInfo, error) {
+		called = true
+		return HoldInfo{Holder: "loc_other", HeldElsewhere: true}, nil
+	})
+	it := workitem.Item{ID: "exe_h", Status: workitem.StatusBacklog, Kind: workitem.KindExecution}
+	if err := refuseHeldElsewhere(context.Background(), it); err != nil {
+		t.Fatalf("an execution must not be refused: %v", err)
+	}
+	if called {
+		t.Fatal("the hold claimer was called for an execution")
+	}
+}
+
 func TestRefuseHeldElsewhereFailOpen(t *testing.T) {
 	it := workitem.Item{ID: "sty_h", Kind: workitem.KindStory}
 	withWiring(t)
