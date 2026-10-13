@@ -5,7 +5,9 @@
 // substrate (config areas and documents) used to move only on an explicit
 // `satelle sync`, so an edit under .satelle, a reindex or a skill change reached
 // nothing until the developer remembered. This leg closes that on the same
-// seam: each reconcile pass execs the two push verbs, after the work-state push.
+// seam: each reconcile pass execs the two push verbs, after the work-state push,
+// then `sync pull --fast-forward-only` so substrate that is only behind the
+// hosted copy comes in with no command typed (sty_0fa4f732).
 //
 // serve decides nothing here. Whether an area is opted in, whether the repo is
 // bound, and whether the machine is behind, diverged or unmerged are the verbs'
@@ -22,18 +24,25 @@ import (
 	"strings"
 )
 
-// substratePushArgs is the exact argv of each substrate push the loop runs.
-// --snapshot-only is what makes an unattended push safe: it never falls back to
-// the plain upload that cannot tell a diverged machine from an in-step one. The
-// loop never pulls or deploys, and never passes --force (which would override a
-// newer hosted snapshot) or --prune (which would drop hosted files).
+// substratePushArgs is the exact argv of each substrate verb the loop runs: the
+// two pushes, then the fast-forward pull (sty_0fa4f732). --snapshot-only is what
+// makes an unattended push safe: it never falls back to the plain upload that
+// cannot tell a diverged machine from an in-step one. --fast-forward-only is
+// what makes the unattended pull safe: it writes only an area that is behind with
+// no local change, so it never overwrites a local edit, and it never touches
+// work-state. The pull runs after the pushes, so a push refused because the
+// hosted copy is ahead (it writes nothing) is followed by the pull that brings
+// the area in. The loop never deploys or reconciles, and never passes --force
+// (which would override a newer hosted snapshot) or --prune (which would drop
+// hosted files).
 var substratePushArgs = [][]string{
 	{"sync", "config", "push", "--snapshot-only"},
 	{"sync", "documents", "push", "--snapshot-only"},
+	{"sync", "pull", "--fast-forward-only"},
 }
 
-// substratePushViaCLI runs every substrate push inside repoPath. A refusal in one
-// does not stop the other; the errors are joined.
+// substratePushViaCLI runs every substrate verb inside repoPath. A refusal in one
+// does not stop the next; the errors are joined.
 func substratePushViaCLI(ctx context.Context, repoPath string) error {
 	bin, err := satelleBinary()
 	if err != nil {

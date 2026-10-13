@@ -167,9 +167,12 @@ func TestSubstrateRecordedBehindAndDiverged(t *testing.T) {
 			t.Fatalf("%s: %v", state, got)
 		}
 		// Behind is a plain pull; diverged is a choice between two sides' changes.
-		want, not := "satelle sync config deploy", "satelle sync reconcile"
+		want, not := "satelle sync pull", "satelle sync reconcile"
 		if state == snapsync.StateDiverged {
-			want, not = not, want
+			want, not = "satelle sync reconcile", "satelle sync pull"
+			if !strings.Contains(got[0].Remediation, "then `satelle sync push`") {
+				t.Errorf("diverged: remediation %q must end with the push", got[0].Remediation)
+			}
 		}
 		if !strings.Contains(got[0].Remediation, want) || strings.Contains(got[0].Remediation, not) {
 			t.Errorf("%s: remediation %q must name %q and not %q", state, got[0].Remediation, want, not)

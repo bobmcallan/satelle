@@ -65,8 +65,10 @@ type Driver struct {
 	Blobs   Blobs
 	// Owns reports whether a server path belongs to the area.
 	Owns func(area, path string) bool
-	// PullCmd names the command that resolves a refused push, for ErrBehind.
-	PullCmd string
+	// PullCmd names the command that resolves a push refused because the hosted
+	// copy is ahead and nothing here changed; DivergedCmd the one for a machine
+	// that changed the area too (ErrBehind).
+	PullCmd, DivergedCmd string
 	// Prune makes a first claim (no hosted snapshot yet) publish this tree as the
 	// whole truth instead of carrying forward hosted files it lacks.
 	Prune bool
@@ -242,6 +244,7 @@ type PushJob struct {
 	effVersion int
 	eff        Record
 	plan       PushPlan
+	base       *hosted.AreaBase
 }
 
 // Claims reports whether running the job will claim a new snapshot.
@@ -272,7 +275,7 @@ func (d *Driver) PreparePush(ctx context.Context, area string, files []PushFile)
 	if err != nil {
 		return nil, err
 	}
-	job.effVersion, job.eff, job.plan = p.effVersion, p.eff, p.plan
+	job.effVersion, job.eff, job.plan, job.base = p.effVersion, p.eff, p.plan, p.base
 	return job, nil
 }
 
@@ -302,7 +305,7 @@ func (d *Driver) planPush(ctx context.Context, area string, local map[string]str
 	if err != nil {
 		return p, d.unavailable(err)
 	}
-	p.plan, err = PlanPush(area, d.PullCmd, d.By, d.Prune, force, p.base, p.effVersion, p.eff, local, heads, d.conflictCopyExists(area))
+	p.plan, err = PlanPush(area, d.PullCmd, d.DivergedCmd, d.By, d.Prune, force, p.base, p.effVersion, p.eff, local, heads, d.conflictCopyExists(area))
 	return p, err
 }
 
@@ -333,7 +336,7 @@ func (d *Driver) Push(ctx context.Context, job *PushJob) (PushResult, error) {
 		if won != v {
 			// Another machine claimed the same parent first. Our record stays on
 			// the hosted copy as a dead head every reader ignores.
-			return res, &ErrBehind{Area: job.Area, Base: job.effVersion, Effective: won, PullCmd: d.PullCmd}
+			return res, newErrBehind(job.Area, job.base, won, nil, job.local, d.PullCmd, d.DivergedCmd)
 		}
 		res.Claimed, res.Version = true, v
 		// The base is what THIS tree holds, not the record: a first claim may carry
@@ -475,6 +478,33 @@ func (j *PullJob) BaseVersion() int {
 		return 0
 	}
 	return j.base.Version
+}
+
+// FastForward reports whether applying the plan only brings in what the hosted
+// copy changed: every entry is already in step, or an incoming write or delete
+// of a path this machine holds exactly as its base recorded (or lacks, as the
+// base does). A conflict, a kept local change, a locally deleted path, an
+// unresolved conflict copy or an incomplete entry makes it false, so a
+// fast-forward can never overwrite or discard a local edit and never leaves a
+// path half-pulled. It is the one owner of that rule; the plan itself is the
+// three-way table in PlanPull.
+func (j *PullJob) FastForward() bool {
+	for _, e := range j.Plan.Entries {
+		switch e.Action {
+		case InSync:
+		case Write, Delete:
+			var base string
+			if j.base != nil {
+				base = j.base.Files[e.Path]
+			}
+			if e.Local != base {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // HostedBytes returns a path's hosted head bytes; ok=false when the hosted copy

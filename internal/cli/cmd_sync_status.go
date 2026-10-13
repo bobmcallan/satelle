@@ -244,21 +244,17 @@ func versionLabel(v int) string {
 
 // nextCommand is the command that moves an area on from its state.
 func nextCommand(st snapsync.AreaStatus) string {
-	pull := "satelle sync config deploy"
-	if st.Area == "documents" {
-		pull = "satelle sync documents pull"
-	}
 	switch st.State {
 	case snapsync.StateInStep:
 		return "-"
 	case snapsync.StateUnpushed, snapsync.StateNeverSynced:
-		return "satelle sync"
+		return "satelle sync push"
 	case snapsync.StateBehind:
-		return pull
+		return "satelle sync pull"
 	case snapsync.StateDiverged:
-		return "satelle sync reconcile, then satelle sync"
+		return "satelle sync reconcile, then satelle sync push"
 	case snapsync.StateUnmerged:
-		return "satelle sync reconcile (or merge " + strings.Join(st.Unmerged, ", ") + " and delete its conflict copy), then satelle sync"
+		return "satelle sync reconcile (or merge " + strings.Join(st.Unmerged, ", ") + " and delete its conflict copy), then satelle sync push"
 	}
 	if errors.Is(st.Err, hosted.ErrLoginRequired) {
 		return "satelle login"

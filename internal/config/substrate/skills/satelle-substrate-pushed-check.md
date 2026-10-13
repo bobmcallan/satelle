@@ -20,8 +20,9 @@ exit 0**:
   accepted;
 - a touched area that is **unpushed**, **never synced**, **diverged**,
   **unmerged** or **unavailable** — rejected, with the area, its state, the
-  touched paths and the command that moves it on printed (`satelle sync`,
-  `satelle sync reconcile`, `satelle login`, …);
+  touched paths and the command that moves it on printed (`satelle sync push`,
+  `satelle sync reconcile`, `satelle login`, …; a **behind** area is brought in
+  by `satelle sync pull`);
 - a story that touched **no synced substrate** (only non-substrate paths, only
   `local`-scope areas, or a repo with no `[sync]` areas) — accepted without
   contacting the server.
