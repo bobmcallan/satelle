@@ -4,11 +4,13 @@ package cli
 // (sty_01949949, order:5 of epic:agent-messaging).
 //
 // push publishes the repo's agents layer (.satelle/workflows/agents.toml) into
-// the bound TEAM workspace's publish catalog under kind "agents", REDACTED by
-// config.RedactAgentsTransport (env values, absolute command paths, profile
-// names never leave the machine). pull fetches that catalog entry, redacts it
-// AGAIN on ingest (a catalog entry from an older, unredacted path must not land
-// live bindings), and writes it as the workspace layer
+// the bound TEAM workspace's publish catalog under kind "agents", exactly as it
+// is on disk — after config.CheckAgents has REFUSED a file that carries
+// machine-specific content (env values, absolute command paths, profile names
+// belong in agents.local.toml, which never leaves the machine) and the deployed
+// system has validated. pull fetches that catalog entry, checks it AGAIN on
+// ingest (a catalog entry from an older push must not land machine-specific
+// values as live bindings), and writes it as the workspace layer
 // .satelle/workflows/agents.workspace.toml — a separate file the resolver
 // merges UNDER the repo's own agents.toml (a repo field wins; a workspace field
 // fills a blank; a workspace-only table applies). Executables and ${VAR}
@@ -38,9 +40,10 @@ func newSyncBindingsCmd() *cobra.Command {
 		Long: `Move the agents layer between this repo and its bound team workspace.
 
 push publishes .satelle/workflows/agents.toml into the team catalog (kind
-"agents") with env values, absolute command paths and profile names redacted:
+"agents") exactly as it is on disk, and refuses a file that carries
+machine-specific content — env values, absolute command paths, profile names:
 the workspace decides roles, interface, model, effort and skills; executables
-and credentials stay on each machine.
+and credentials stay on each machine, in .satelle/workflows/agents.local.toml.
 
 pull applies the catalog entry as .satelle/workflows/agents.workspace.toml — a
 LAYER UNDER the repo's own agents.toml. A repo field wins, a workspace field
@@ -55,43 +58,42 @@ nothing.`,
 	var dryRun bool
 	push := &cobra.Command{
 		Use:   "push",
-		Short: "Publish the redacted agents layer to the team workspace catalog (kind agents)",
+		Short: "Publish the agents layer to the team workspace catalog (kind agents)",
 		Long: `push reads this repo's .satelle/workflows/agents.toml (the REPO layer only —
-never the resolved layer, so the machine-wide profile catalog is not exported),
-redacts it, and publishes it into the bound team workspace's catalog under kind
-"agents" at workflows/agents.toml. Identical content is idempotent.
+never the resolved layer, so the machine-wide profile catalog is not exported)
+and publishes it, byte for byte, into the bound team workspace's catalog (kind
+"agents"). Identical content is idempotent.
 
-Redaction is what every agents-kind transport shares: literal env values are
-blanked (keys and pure ${VAR} references survive), secret-shaped settings and
-settings.env values are blanked the same way, absolute paths become their base
-name, profile= is dropped. The body is re-loaded after redaction; one that does
-not parse is an error, never sent.
+Before any network call it refuses machine-specific content — a literal env
+value, an absolute path, profile=, use_global_roles — naming the field and
+pointing at .satelle/workflows/agents.local.toml, which never leaves this
+machine. See 'satelle help agent-dispatch'.
 
---dry-run prints the redacted layer and contacts nothing. A repo with no hosted
-server or no team workspace does nothing and contacts nothing.`,
+--dry-run runs those checks and contacts nothing. A repo with no hosted server
+or no team workspace does nothing and contacts nothing.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncBindingsPush(cmd, pushServer, pushWorkspace, dryRun)
 		},
 	}
 	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	push.Flags().StringVar(&pushWorkspace, "workspace", "", "Team workspace to publish into (overrides the active workspace).")
-	push.Flags().BoolVar(&dryRun, "dry-run", false, "Print the redacted layer that would be published; contact nothing.")
+	push.Flags().BoolVar(&dryRun, "dry-run", false, "Run the refusal and validation checks and print the layer that would be published; contact nothing.")
 	group.AddCommand(push)
 
 	var pullServer, pullWorkspace string
 	pull := &cobra.Command{
 		Use:   "pull",
 		Short: "Apply the team workspace's agents layer under this repo's agents.toml",
-		Long: `pull fetches the team workspace's published workflows/agents.toml, redacts it
-again on ingest, and writes it to .satelle/workflows/agents.workspace.toml.
-The authored agents.toml is never rewritten.
+		Long: `pull fetches the team workspace's published workflows/agents.toml, checks it
+on ingest, and writes it as published to .satelle/workflows/agents.workspace.toml.
+agents.toml and agents.local.toml are never rewritten. A published layer that
+carries machine-specific content is refused, naming the field.
 
 That file is a LAYER UNDER the repo's agents.toml: a repo field wins, a
 workspace field fills a repo blank, a workspace-only table applies whole. A
-blank the redaction left is dropped, never merged, so it cannot shadow this
-machine's environment; executables resolve on the local PATH and ${VAR} from
-the local [vars]. 'satelle agent validate' names each field's source; see
-'satelle help agent-dispatch' for the full contract.
+blank value is dropped, never merged; executables resolve on the local PATH and
+${VAR} from the local [vars]. 'satelle agent validate' names each field's
+source; see 'satelle help agent-dispatch' for the full contract.
 
 Nothing published → a note and no file. No hosted server or no team workspace
 → nothing done, nothing contacted.`,
@@ -141,12 +143,16 @@ func runSyncBindingsPush(cmd *cobra.Command, serverArg, workspaceArg string, dry
 		}
 		return fmt.Errorf("read %s: %w", config.AgentsRel, err)
 	}
-	body, err := config.RedactAgentsTransport(raw)
-	if err != nil {
-		return fmt.Errorf("sync bindings push: %w", err)
+	// Refuse before any network call — a dry run included. The body that is sent
+	// is the file's own bytes: nothing is rewritten on the way out (sty_89b9df20).
+	if err := checkPushFiles("sync bindings push", []config.ConfigFile{{Area: "agents", Path: config.AgentsRel, Content: raw}}); err != nil {
+		return err
+	}
+	if err := preflightPush(out, dataDir); err != nil {
+		return err
 	}
 	if dryRun {
-		fmt.Fprintf(out, "Would publish %s (kind agents, redacted) to team %q on %s:\n\n%s", config.AgentsRel, team, server, body)
+		fmt.Fprintf(out, "Would publish %s (kind agents) to team %q on %s:\n\n%s", config.AgentsRel, team, server, raw)
 		return nil
 	}
 	// newHostedClient stamps x-satelle-location (sty_e88d77ce) — the only way
@@ -156,7 +162,7 @@ func runSyncBindingsPush(cmd *cobra.Command, serverArg, workspaceArg string, dry
 	if err != nil {
 		return fmt.Errorf("resolve team workspace: %w", err)
 	}
-	item, err := client.PublishFile(cmd.Context(), wsID, config.AgentsRel, "agents", bindingsPublishTitle, body)
+	item, err := client.PublishFile(cmd.Context(), wsID, config.AgentsRel, "agents", bindingsPublishTitle, raw)
 	if err != nil {
 		if errors.Is(err, hosted.ErrLoginRequired) || errors.Is(err, hosted.ErrNotPublisher) {
 			return err
@@ -164,7 +170,7 @@ func runSyncBindingsPush(cmd *cobra.Command, serverArg, workspaceArg string, dry
 		return fmt.Errorf("publish %s: %w", config.AgentsRel, err)
 	}
 	if item.Created {
-		fmt.Fprintf(out, "published %s v%d (new) to team %q — redacted: env values, absolute command paths, profile names\n", config.AgentsRel, item.Version, team)
+		fmt.Fprintf(out, "published %s v%d (new) to team %q\n", config.AgentsRel, item.Version, team)
 	} else {
 		fmt.Fprintf(out, "%s unchanged at v%d on team %q\n", config.AgentsRel, item.Version, team)
 	}
@@ -198,18 +204,18 @@ func runSyncBindingsPull(cmd *cobra.Command, serverArg, workspaceArg string) err
 		}
 		return fmt.Errorf("fetch published %s: %w", config.AgentsRel, err)
 	}
-	// Ingest does not trust the catalog: redact again so a pre-existing
-	// unredacted entry cannot land absolute paths or env values as live
-	// bindings. A body that does not decode is refused; nothing is written.
-	body, err := config.RedactAgentsTransport(content)
-	if err != nil {
-		return fmt.Errorf("sync bindings pull: refusing to apply team %q agents layer v%d: %w", team, meta.Version, err)
+	// Ingest does not trust the catalog: check again so a pre-existing entry that
+	// carries absolute paths or env values cannot land them as live bindings. A
+	// body that does not decode, or carries machine-specific content, is refused
+	// with the pointer to agents.local.toml; nothing is written or altered.
+	if err := ingestAgents(fmt.Sprintf("sync bindings pull (team %q v%d)", team, meta.Version), content); err != nil {
+		return err
 	}
 	dest := config.WorkspaceAgentsPath(dataDir)
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(dest, body, 0o644); err != nil {
+	if err := os.WriteFile(dest, content, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", config.WorkspaceAgentsRel, err)
 	}
 	fmt.Fprintf(out, "applied team %q agents layer v%d → %s (layer under %s; executables and ${VAR} resolve locally)\n",

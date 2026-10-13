@@ -64,8 +64,11 @@ const (
 	// IDAgentsSharedProfile / IDAgentsSharedGlobalRoles: the SHARED agents.toml
 	// carries a reference into this machine's ~/.satelle catalog (a profile= or
 	// use_global_roles), which does not travel — it belongs in agents.local.toml.
-	IDAgentsSharedProfile     = "agents.shared.profile"
-	IDAgentsSharedGlobalRoles = "agents.shared.global_roles"
+	// IDAgentsSharedMachineValue: it carries a value that belongs to one machine
+	// (a literal env value, a literal secret, an absolute path, harness=).
+	IDAgentsSharedProfile      = "agents.shared.profile"
+	IDAgentsSharedGlobalRoles  = "agents.shared.global_roles"
+	IDAgentsSharedMachineValue = "agents.shared.machine_value"
 
 	// Reviewer / allocation safety.
 	IDReviewerUnsafe = "reviewer.unsafe" // a reviewer's permission ceiling is escaped
@@ -154,7 +157,7 @@ const (
 // silently collapsing two defects into one identifier.
 var ids = []string{
 	IDAgentsLoad, IDAgentsBinding, IDAgentsProfileBroken, IDAgentsSameRole, IDEnvUnresolved,
-	IDAgentsSharedProfile, IDAgentsSharedGlobalRoles,
+	IDAgentsSharedProfile, IDAgentsSharedGlobalRoles, IDAgentsSharedMachineValue,
 	IDReviewerUnsafe, IDReviewerIsolation, IDNodeAlloc, IDHookAlloc,
 	IDBinaryMissing, IDBinaryMalformed,
 	IDWorkflowStructure, IDWorkflowConsistency,

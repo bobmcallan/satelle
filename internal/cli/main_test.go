@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"testing"
 
@@ -72,5 +73,23 @@ func runIsolated(m *testing.M) int {
 	defer os.RemoveAll(dir)
 	_ = os.Setenv("XDG_CONFIG_HOME", dir)
 	recordGateDelivered = restoringRecorder(recordGateDelivered)
+	// The push tests exercise push MECHANICS over throwaway fixtures (a skill
+	// named x whose body is "x") that are not valid substrate, so the validation a
+	// push runs (sty_89b9df20) is stood down for them. The tests of that
+	// validation call useRealPushValidator.
+	realPushValidator = pushValidator
+	pushValidator = func(io.Writer, string) int { return 0 }
 	return m.Run()
+}
+
+// realPushValidator is the validation a push really runs, kept aside while the
+// rest of the suite runs with it stood down.
+var realPushValidator func(io.Writer, string) int
+
+// useRealPushValidator restores the real push validation for one test.
+func useRealPushValidator(t *testing.T) {
+	t.Helper()
+	prev := pushValidator
+	pushValidator = realPushValidator
+	t.Cleanup(func() { pushValidator = prev })
 }

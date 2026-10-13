@@ -414,11 +414,11 @@ func resolveBindingProfile(section string, baseB, repoB, wsB, localB AgentBindin
 	// Workspace under repo: a synced binding fills what the repo left blank and
 	// never overrides what the repo wrote. profile= is never taken from the
 	// workspace layer (a catalog name means nothing on another machine; ingest
-	// redaction drops it anyway). A blank env/settings value on this tier is
-	// "declared, unsatisfied" — the layer arrived redacted — and is DROPPED
-	// before the merge, so it can never lay `KEY=` over the machine's real
-	// environment or --settings over settings.local.json (AC3). A ${VAR}
-	// reference survives redaction and is resolved locally at wiring time.
+	// refuses a layer that carries one). A blank env/settings value on this tier is
+	// "declared, unsatisfied" and is DROPPED before the merge, so it can never lay
+	// `KEY=` over the machine's real environment or --settings over
+	// settings.local.json (AC3). A ${VAR} reference is kept and is resolved
+	// locally at wiring time.
 	wsB.Profile = ""
 	wsB = PruneUnsatisfied(wsB)
 	baseB.Profile = ""

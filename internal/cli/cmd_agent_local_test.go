@@ -47,7 +47,7 @@ func TestSharedProfileWarnedByAgentValidateAndDoctor(t *testing.T) {
 	localLayerRepo(t, localLayerShared+"profile = \"judge\"\n", "")
 	for _, verb := range []string{"agent validate", "doctor"} {
 		out, _ := runRoot(t, strings.Fields(verb)...)
-		for _, want := range []string{`[reviewer] declares profile="judge"`, ".satelle/workflows/agents.local.toml"} {
+		for _, want := range []string{`[reviewer] profile: profile="judge"`, ".satelle/workflows/agents.local.toml"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("%s must warn on a shared profile=, missing %q:\n%s", verb, want, out)
 			}
@@ -64,7 +64,7 @@ func TestLocalLayerShownByAgentValidateAndDoctor(t *testing.T) {
 		if verb == "agent validate" && err != nil {
 			t.Fatalf("%s: %v\n%s", verb, err, out)
 		}
-		if strings.Contains(out, "declares profile=") {
+		if strings.Contains(out, "[reviewer] profile: profile=") {
 			t.Errorf("%s: a profile= only in agents.local.toml must not warn:\n%s", verb, out)
 		}
 		for _, want := range []string{

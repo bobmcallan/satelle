@@ -318,12 +318,12 @@ design rather than an error. Deploy OVERWRITES the local authored copy.`,
 		Long: `push walks the authored-config areas (workflows/principles/skills/constitution/
 agents/tasks/settings) per their resolved [sync] scope — skipping local areas — and uploads
 each file as a new version into this repo's bound hosted PROJECT's personal
-collection only (epic:sync-publish). The settings area is satelle.toml (including
-[sync] scopes); [sync] project is redacted at push so a deploy cannot rebind
-another repo. Identical content is idempotent (no new version). Files with a
-.local segment are never uploaded (reported as withheld). Team is not a sync
-destination; use satelle publish to expose artifacts to a team catalog.
-Requires "satelle project bind <slug>".
+collection only (epic:sync-publish). Files go exactly as on disk, except satelle.toml
+loses [sync] project and [hosted] project (named). Before anything is
+sent, a shared agents.toml carrying machine-specific content is refused (see
+'satelle help agent-dispatch') and the deployed system must validate, as for
+'satelle init'. Files with a .local segment are never uploaded. Team is not a
+sync destination (use satelle publish). Requires "satelle project bind <slug>".
 
 Pushes publish each area as one snapshot (deletes propagate) and are refused when another machine pushed since your last sync: deploy first, or pass --force to publish this tree over it.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -332,7 +332,7 @@ Pushes publish each area as one snapshot (deletes propagate) and are refused whe
 	}
 	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	push.Flags().StringVar(&pushWorkspace, "workspace", "", "Ignored for push (sync is personal-only; kept for flag compatibility).")
-	push.Flags().BoolVar(&dryRun, "dry-run", false, "List what would be pushed without contacting the server.")
+	push.Flags().BoolVar(&dryRun, "dry-run", false, "List what would be pushed, and run the refusal and validation checks, without contacting the server.")
 	push.Flags().Bool("prune", false, pruneFlagUsage)
 	push.Flags().Bool("force", false, forceFlagUsage)
 	push.Flags().Bool("snapshot-only", false, snapshotOnlyFlagUsage)
@@ -435,6 +435,15 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 	if note := sharedSyncNote(files); note != "" {
 		fmt.Fprintln(out, note)
 	}
+	// Refuse before anything else — a dry run included — so a configuration that
+	// would not work on another machine is never published (sty_89b9df20).
+	if err := checkPushFiles("sync config push", files); err != nil {
+		return err
+	}
+	if err := preflightPush(out, dataDir); err != nil {
+		return err
+	}
+	printWithheldBinding(out, files)
 	if dryRun {
 		fmt.Fprintf(out, "Would push %d config file(s) to bound project personal collection on %s:\n", len(files), server)
 		for _, f := range files {
@@ -534,10 +543,41 @@ func contentMatchesSHA(sha string, content []byte) bool {
 	return hex.EncodeToString(sum[:]) == sha
 }
 
-// rehydrateDeployedAgents applies rehydrateAgentsForWrite to the agents-layer
-// entry of a deploy set and drops the workspace layer if an old manifest
-// carries one.
-func rehydrateDeployedAgents(out io.Writer, dataDir string, files []subsync.File) ([]subsync.File, error) {
+// checkPushFiles refuses a push whose agents layer carries machine-specific
+// content (config.CheckAgents owns the rules). The bytes are checked, never
+// altered: what a push sends is exactly what is on disk, so the file itself must
+// be clean, and the refusal points at agents.local.toml (sty_89b9df20). verb names
+// the command in the refusal.
+func checkPushFiles(verb string, files []config.ConfigFile) error {
+	for _, f := range files {
+		if f.Area != "agents" {
+			continue
+		}
+		refusals, err := config.CheckAgentsTransport(f.Content)
+		if err != nil {
+			return fmt.Errorf("%s refused: %s: %w", verb, f.Path, err)
+		}
+		if err := config.RefusalsError(verb, refusals); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// printWithheldBinding names each satelle.toml key a push leaves out because it
+// binds this checkout to a hosted project — the one thing a push still withholds.
+func printWithheldBinding(out io.Writer, files []config.ConfigFile) {
+	for _, f := range files {
+		for _, key := range f.Withheld {
+			fmt.Fprintf(out, "settings: withheld %s from %s (this machine's project binding)\n", key, config.ConfigName)
+		}
+	}
+}
+
+// ingestDeployedAgents drops the workspace layer from a deploy set if an old
+// manifest carries one, and refuses an agents layer that carries
+// machine-specific content (ingestAgents).
+func ingestDeployedAgents(out io.Writer, files []subsync.File) ([]subsync.File, error) {
 	kept := files[:0]
 	for _, f := range files {
 		switch f.Path {
@@ -545,50 +585,28 @@ func rehydrateDeployedAgents(out io.Writer, dataDir string, files []subsync.File
 			fmt.Fprintf(out, "agents: %s is the synced workspace layer — not deployed from the personal store (use `satelle sync bindings pull`).\n", f.Path)
 			continue
 		case config.AgentsRel:
-			content, skip, err := rehydrateAgentsForWrite(out, dataDir, "deploy", f.Content)
-			if err != nil {
+			if err := ingestAgents("sync config deploy", f.Content); err != nil {
 				return nil, err
 			}
-			if skip {
-				continue
-			}
-			f.Content = content
 		}
 		kept = append(kept, f)
 	}
 	return kept, nil
 }
 
-// rehydrateAgentsForWrite is the ONE ingest step for a REDACTED agents layer
-// about to be written over the authored .satelle/workflows/agents.toml —
-// `sync config deploy`, `publish adopt`, `publish check --update` all pass
-// through it (sty_01949949). It returns the bytes to write, or skip=true when
-// the authored file already matches the store copy after redaction and must be
-// left byte-for-byte alone. A local file that cannot be parsed is reported and
-// the store copy is written as-is (the operator asked for the store's config;
-// a broken local file is not worth more than that). verb names the caller in
-// the messages.
-func rehydrateAgentsForWrite(out io.Writer, dataDir, verb string, content []byte) ([]byte, bool, error) {
-	localPath, _ := config.AgentsPath(dataDir)
-	local, rerr := os.ReadFile(localPath)
-	if rerr != nil && !os.IsNotExist(rerr) {
-		return nil, false, fmt.Errorf("%s: read %s: %w", verb, config.AgentsRel, rerr)
+// ingestAgents is the ONE ingest check for a hosted agents layer about to be
+// written over the authored .satelle/workflows/agents.toml (`sync config deploy`,
+// `publish adopt`, `publish check --update`, `sync bindings pull`). The layer is
+// written as-is — the file carries what the operator pushed — so a body that
+// carries machine-specific content (one an older push left in the store) is
+// refused with the pointer to agents.local.toml instead of being altered or
+// landed as live bindings. agents.local.toml itself is never touched.
+func ingestAgents(verb string, content []byte) error {
+	refusals, err := config.CheckAgentsTransport(content)
+	if err != nil {
+		return fmt.Errorf("%s refused: the hosted %s: %w", verb, config.AgentsRel, err)
 	}
-	if os.IsNotExist(rerr) || len(local) == 0 {
-		fmt.Fprintf(out, "agents: %s written from the store copy — no local %s to re-apply values from. The copy is redacted: literal env values are blank (supply them locally) and ${VAR} references resolve from this machine's [vars].\n", config.AgentsRel, config.AgentsRel)
-		return content, false, nil
-	}
-	merged, keepLocal, herr := config.RehydrateAgents(content, local)
-	if herr != nil {
-		fmt.Fprintf(out, "agents: could not merge local values into the %s copy of %s (%v) — writing the store copy; re-enter env values and profile= locally.\n", verb, config.AgentsRel, herr)
-		return content, false, nil
-	}
-	if keepLocal {
-		fmt.Fprintf(out, "agents: %s kept — the store copy matches the authored file after redaction.\n", config.AgentsRel)
-		return nil, true, nil
-	}
-	fmt.Fprintf(out, "agents: %s written with local env values, command paths and profile= re-applied (the store copy is redacted).\n", config.AgentsRel)
-	return merged, false, nil
+	return config.RefusalsError(verb+" (hosted copy)", refusals)
 }
 
 func runSyncConfigDeploy(cmd *cobra.Command, serverArg, workspaceArg string, version int) error {
@@ -602,8 +620,8 @@ func runSyncConfigDeployOutcome(cmd *cobra.Command, serverArg, workspaceArg stri
 
 // runSyncConfigDeployWith is the deploy. A reconcile (rc non-nil, sty_b0873ec3)
 // runs it for the areas it names, over their snapshot plans alone, so a file the
-// plan leaves be is not rewritten; the per-file handling — the agents rehydrate,
-// the settings binding — is the deploy's own.
+// plan leaves be is not rewritten; the per-file handling — the agents ingest
+// check, the settings binding — is the deploy's own.
 func runSyncConfigDeployWith(cmd *cobra.Command, serverArg, workspaceArg string, version int, rc *reconcileApply) (deployOutcome, error) {
 	cfg, repoRoot, dataDir, err := loadRepoConfig()
 	if err != nil {
@@ -689,17 +707,15 @@ func runSyncConfigDeployWith(cmd *cobra.Command, serverArg, workspaceArg string,
 		fmt.Fprintf(out, "Nothing to deploy — version %d matched no files in workspace %q.\n", version, sourceName)
 		return deployOutcome{}, nil
 	}
-	// The agents layer in the store is REDACTED (sty_01949949): materialising it
-	// over the authored file would blank live env values, drop profile= and
-	// strip command paths. Rehydrate from the on-disk file — or leave the file
-	// untouched when the store holds nothing the repo does not already have.
-	// The synced workspace layer is never deployed from the personal store.
-	files, err = rehydrateDeployedAgents(out, dataDir, files)
+	// The agents layer is written as hosted — a push sends the file's bytes — so
+	// one that carries machine-specific content is refused, never altered. The
+	// synced workspace layer is never deployed from the personal store.
+	files, err = ingestDeployedAgents(out, files)
 	if err != nil {
 		return deployOutcome{}, err
 	}
 	// Capture the local binding before restore; re-apply after so a hosted
-	// satelle.toml (even an older unredacted one) cannot rebind this repo.
+	// satelle.toml (even an older one that carries it) cannot rebind this repo.
 	boundProject := project
 	cfgPath := filepath.Join(dataDir, config.ConfigName)
 	res, err := subsync.Restore(dataDir, files)

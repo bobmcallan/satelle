@@ -1,72 +1,65 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/hosted"
 )
 
-const authoredAgentsWithSecrets = `# authored by hand — comments must survive a no-op deploy
-[executor]
-role    = "agent"
-command = "in-loop"
-
-[reviewer]
-role    = "reviewer"
-profile = "claude-opus"
-command = "/opt/local/bin/claude -p --output-format json --append-system-prompt {system} --model {model}"
-tools   = "Read,Grep,Glob"
-model   = "opus"
-env     = { ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
-`
-
-// TestSyncConfigAgentsPushDeployRoundTripKeepsLocalValues (sty_01949949
-// code-ac review): the personal config store holds a REDACTED agents layer, so
-// a deploy must not blank the authored file. Round trip 1: push then deploy
-// into the same repo → the file is byte-identical (kept). Round trip 2: a
-// changed store copy deploys with the store's layout and the local env value,
-// absolute command path and profile= re-applied.
+// TestSyncConfigAgentsPushDeployRoundTripKeepsLocalValues (sty_89b9df20 AC8): the
+// personal config store holds the agents layer exactly as pushed, so a deploy
+// writes it as-is and never touches this machine's agents.local.toml — where its
+// inline tools and command live. Round trip 1: push then deploy into the same
+// repo → agents.toml byte-identical. Round trip 2: another checkout pushes a
+// changed layer; deploying it here writes those bytes and the local file is left
+// alone. A legacy store body carrying machine-specific content is refused.
 func TestSyncConfigAgentsPushDeployRoundTripKeepsLocalValues(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\nagents = \"personal\"\n"+boundProjectToml)
-	_ = os.Remove(filepath.Join(repo, ".satelle", "agents.toml")) // legacy location seeded by the helper
-	writeRepoFile(t, repo, ".satelle/workflows/agents.toml", authoredAgentsWithSecrets)
-	pointAt(t, repo)
+	repo := agentsPushRepo(t, "[sync]\nagents = \"personal\"\n"+boundProjectToml, pushableAgents)
+	writeRepoFile(t, repo, ".satelle/workflows/agents.local.toml", localAgentsFixture)
 	agentsPath := filepath.Join(repo, ".satelle", "workflows", "agents.toml")
+	localPath := filepath.Join(repo, ".satelle", "workflows", "agents.local.toml")
+	read := func(p string) string {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
 
 	cmd, buf := testCmd()
 	if err := runSyncConfigPush(cmd, ts.URL, "", false); err != nil {
 		t.Fatalf("push: %v\n%s", err, buf.String())
 	}
 
-	// Round trip 1: nothing changed upstream → the authored bytes are untouched.
+	// Round trip 1: push then deploy leaves both files byte-identical.
 	cmd2, buf2 := testCmd()
 	if err := runSyncConfigDeploy(cmd2, ts.URL, "personal", 0); err != nil {
 		t.Fatalf("deploy: %v\n%s", err, buf2.String())
 	}
-	got, _ := os.ReadFile(agentsPath)
-	if string(got) != authoredAgentsWithSecrets {
-		t.Fatalf("deploy must not rewrite an authored agents.toml the store already matches:\n%s\n--- output\n%s", got, buf2.String())
+	if got := read(agentsPath); got != pushableAgents {
+		t.Fatalf("deploy must leave agents.toml byte-identical:\n%s\n--- output\n%s", got, buf2.String())
 	}
-	if !strings.Contains(buf2.String(), "agents: workflows/agents.toml kept") {
-		t.Errorf("deploy output should say the file was kept: %s", buf2.String())
+	if got := read(localPath); got != localAgentsFixture {
+		t.Fatalf("deploy touched agents.local.toml:\n%s", got)
 	}
 
 	// Round trip 2: another checkout pushes a changed layer (model bumped, a
-	// binding added); deploying it here must keep this machine's values.
-	other := syncConfigRepo(t, "[sync]\nagents = \"personal\"\n"+boundProjectToml)
-	_ = os.Remove(filepath.Join(other, ".satelle", "agents.toml"))
-	pointAt(t, other)
+	// binding added); deploying it here writes exactly those bytes.
+	other := agentsPushRepo(t, "[sync]\nagents = \"personal\"\n"+boundProjectToml, pushableAgents)
 	// A checkout that has never synced must pull before it can publish over the
 	// hosted snapshot (sty_fe5a8ed4); then it edits and pushes.
 	cmdPull, bufPull := testCmd()
 	if err := runSyncConfigDeploy(cmdPull, ts.URL, "personal", 0); err != nil {
 		t.Fatalf("other pull: %v\n%s", err, bufPull.String())
 	}
-	changed := strings.Replace(authoredAgentsWithSecrets, `model   = "opus"`, `model   = "sonnet"`, 1) +
+	changed := strings.Replace(pushableAgents, `model   = "opus"`, `model   = "sonnet"`, 1) +
 		"\n[summariser]\nrole = \"reviewer\"\ncommand = \"claude -p {system}\"\n"
 	writeRepoFile(t, other, ".satelle/workflows/agents.toml", changed)
 	cmd3, buf3 := testCmd()
@@ -79,17 +72,31 @@ func TestSyncConfigAgentsPushDeployRoundTripKeepsLocalValues(t *testing.T) {
 	if err := runSyncConfigDeploy(cmd4, ts.URL, "personal", 0); err != nil {
 		t.Fatalf("deploy 2: %v\n%s", err, buf4.String())
 	}
-	merged, _ := os.ReadFile(agentsPath)
-	s := string(merged)
-	for _, want := range []string{`model = "sonnet"`, `ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}"`, `/opt/local/bin/claude -p`, `profile = "claude-opus"`, "[summariser]"} {
-		if !strings.Contains(s, want) {
-			t.Errorf("deployed agents.toml missing %q:\n%s", want, s)
+	if got := read(agentsPath); got != changed {
+		t.Fatalf("deploy must write the hosted agents.toml as pushed:\n%s", got)
+	}
+	if got := read(localPath); got != localAgentsFixture {
+		t.Fatalf("deploy touched agents.local.toml — its inline tools and command must survive:\n%s", got)
+	}
+
+	// A legacy store body (an older push left machine-specific content in it) is
+	// refused, with the pointer, and nothing local is altered.
+	legacy := agentsPushRepo(t, "[sync]\nagents = \"personal\"\n[hosted]\nproject = \"legacy\"\n", pushableAgents)
+	client := hosted.NewClient(ts.URL, hosted.FileStore{}, nil)
+	if _, err := client.PushConfigFile(context.Background(), "legacy", "workflows/agents.toml", []byte(secretAgentsToml)); err != nil {
+		t.Fatalf("seed legacy store body: %v", err)
+	}
+	cmd5, buf5 := testCmd()
+	err := runSyncConfigDeploy(cmd5, ts.URL, "personal", 0)
+	if err == nil {
+		t.Fatalf("a legacy store body carrying machine-specific content was deployed:\n%s", buf5.String())
+	}
+	for _, want := range []string{"agents.toml [reviewer] command", "agents.toml [reviewer] env.ANTHROPIC_BASE_URL", ".satelle/workflows/agents.local.toml"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal lacks %q:\n%v", want, err)
 		}
 	}
-	if strings.Contains(s, `ANTHROPIC_AUTH_TOKEN = ""`) {
-		t.Errorf("deploy blanked a live env value:\n%s", s)
-	}
-	if !strings.Contains(buf4.String(), "re-applied") {
-		t.Errorf("deploy output should say local values were re-applied: %s", buf4.String())
+	if got := read(filepath.Join(legacy, ".satelle", "workflows", "agents.toml")); got != pushableAgents {
+		t.Errorf("a refused deploy altered agents.toml:\n%s", got)
 	}
 }

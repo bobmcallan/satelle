@@ -171,7 +171,7 @@ func TestWorkspaceLayerVarsResolveLocally(t *testing.T) {
 }
 
 // TestWorkspaceBlankValuesNeverShadowTheMachine (AC3, code-ac review): a pulled
-// layer arrives redacted — literal env values blank, ${VAR} references kept.
+// layer declares blank env values and keeps ${VAR} references.
 // A blank on the workspace tier is dropped from the effective binding, so it
 // can never lay `KEY=` over the machine's real environment or a blank secret
 // over settings.local.json; a reference resolves from the local [vars] and

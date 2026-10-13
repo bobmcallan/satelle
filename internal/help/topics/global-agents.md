@@ -121,8 +121,9 @@ Highest first:
    machine's override of the shared file. Same schema, field by field, and it
    may name the `profile=` and set `[defaults] use_global_roles` for this machine
    alone. It is gitignored and **never syncs**; `agent validate` and `doctor`
-   warn on a `profile=` or `use_global_roles` left in the shared file. Only
-   agents.toml has a local twin.
+   warn on machine-specific content left in the shared file (`profile=`,
+   `use_global_roles`, a literal env value, an absolute path), and a push of it
+   is refused (`satelle help agent-dispatch`). Only agents.toml has a local twin.
 1. **repo** — an inline value on the binding in `.satelle/workflows/agents.toml`
 2. **profile** — the profile the binding explicitly names via `profile=`
    (and, transitively, whatever that profile extends)

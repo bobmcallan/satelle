@@ -110,7 +110,7 @@ func TestSubstrateAreasFollowScope(t *testing.T) {
 	}
 }
 
-// A settings file holding only what a push redacts is a placeholder; anything
+// A settings file holding only what a push withholds is a placeholder; anything
 // authored is not.
 func TestPlaceholderSettings(t *testing.T) {
 	for body, want := range map[string]bool{
@@ -532,12 +532,13 @@ func TestLocalOnlyPathSettingsOverlay(t *testing.T) {
 	}
 }
 
-// TestRedactForTransmitStripsHostedProject: only settings area is redacted.
-func TestRedactForTransmitStripsHostedProject(t *testing.T) {
+// TestStripRepoBindingWithholdsProject: only the settings area loses its project
+// binding, and what was withheld is reported.
+func TestStripRepoBindingWithholdsProject(t *testing.T) {
 	body := []byte("[sync]\nall = \"personal\"\nproject = \"from-sync\"\n[hosted]\nproject = \"alpha\"\nserver = \"https://x\"\n")
-	gotB, err := redactForTransmit("settings", body)
-	if err != nil {
-		t.Fatal(err)
+	gotB, withheld := stripRepoBinding("settings", body)
+	if strings.Join(withheld, ",") != "[sync] project,[hosted] project" {
+		t.Errorf("withheld = %v", withheld)
 	}
 	got := string(gotB)
 	if strings.Contains(got, `project = "alpha"`) || strings.Contains(got, `project = "from-sync"`) {
@@ -546,34 +547,25 @@ func TestRedactForTransmitStripsHostedProject(t *testing.T) {
 	if !strings.Contains(got, `all = "personal"`) {
 		t.Errorf("sync lost: %s", got)
 	}
-	// other areas unchanged
-	other, err := redactForTransmit("skills", body)
-	if err != nil {
-		t.Fatal(err)
+	// other areas unchanged, nothing withheld
+	other, withheld := stripRepoBinding("skills", body)
+	if string(other) != string(body) || len(withheld) != 0 {
+		t.Error("non-settings area was altered")
 	}
-	if string(other) != string(body) {
-		t.Error("non-settings area was redacted")
+	// a settings file with no project binding withholds nothing
+	clean := []byte("[sync]\nall = \"personal\"\n")
+	if same, withheld := stripRepoBinding("settings", clean); string(same) != string(clean) || len(withheld) != 0 {
+		t.Errorf("a settings file with no project binding must pass untouched: %q withheld %v", same, withheld)
 	}
 }
 
-// TestRedactForTransmitAgentsArea (sty_01949949 R1): the agents area goes
-// through RedactAgentsTransport on the sync config push path — the same
-// redaction every agents-kind transport shares — and an unparseable agents
-// body is an error, never shipped raw.
-func TestRedactForTransmitAgentsArea(t *testing.T) {
-	body := []byte("[reviewer]\nrole = \"reviewer\"\ncommand = \"/opt/local/bin/claude -p --append-system-prompt {system}\"\nenv = { ANTHROPIC_AUTH_TOKEN = \"sk-literal-secret\", ANTHROPIC_BASE_URL = \"${BASE_URL}\" }\n")
-	got, err := redactForTransmit("agents", body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(got)
-	if strings.Contains(s, "sk-literal-secret") || strings.Contains(s, "/opt/local/bin") {
-		t.Fatalf("agents area not redacted on the sync path:\n%s", s)
-	}
-	if !strings.Contains(s, "ANTHROPIC_AUTH_TOKEN") || !strings.Contains(s, "${BASE_URL}") || !strings.Contains(s, "claude -p") {
-		t.Fatalf("redaction must keep env keys, ${VAR} references and the base command:\n%s", s)
-	}
-	if _, err := redactForTransmit("agents", []byte("[reviewer\nnot toml")); err == nil {
-		t.Fatal("unparseable agents body must be an error, not passed through raw")
+// TestStripRepoBindingLeavesAgentsAlone (sty_89b9df20): the agents layer travels
+// byte-identical — machine-specific content in it is refused at push, never
+// rewritten on the way out.
+func TestStripRepoBindingLeavesAgentsAlone(t *testing.T) {
+	body := []byte("# authored\n[reviewer]\nrole = \"reviewer\"\nprofile = \"claude-opus\"\ncommand = \"/opt/local/bin/claude -p --append-system-prompt {system}\"\nenv = { ANTHROPIC_AUTH_TOKEN = \"sk-literal-secret\" }\n")
+	got, withheld := stripRepoBinding("agents", body)
+	if string(got) != string(body) || len(withheld) != 0 {
+		t.Fatalf("agents area must pass through unchanged:\n%s\nwithheld %v", got, withheld)
 	}
 }

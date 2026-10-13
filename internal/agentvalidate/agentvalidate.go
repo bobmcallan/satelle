@@ -203,33 +203,24 @@ func validateEffective(layers config.AgentLayers, global config.GlobalAgentsConf
 	return validateEffectiveBaseline(config.AgentsConfig{}, layers, global, repoVars, workflows, skills)
 }
 
-// sharedMachineRefs warns on every reference in the SHARED agents.toml that only
-// resolves against one machine's ~/.satelle catalog: a binding's profile= and a
-// [defaults] use_global_roles. They do not travel with the file, so each belongs
-// in agents.local.toml (sty_5c56143b). A warning, not a refusal: existing repos
-// keep working.
+// sharedMachineRefs warns on everything in the SHARED agents.toml that belongs to
+// one machine — config.CheckAgents owns the rules, the same ones `satelle sync
+// config push` refuses on: a profile= or use_global_roles that resolves only
+// against one machine's ~/.satelle catalog, a literal env value or secret, an
+// absolute path or command, a retired harness=. They do not travel with the file,
+// so each belongs in agents.local.toml (sty_5c56143b). A warning here, not a
+// refusal: existing repos keep working; only a push refuses.
 func sharedMachineRefs(repo config.AgentsConfig) []health.Finding {
 	var out []health.Finding
-	move := "move it into " + config.DefaultDataDir + "/" + config.LocalAgentsRel + ", which never leaves this machine"
-	warn := func(section string, b config.AgentBinding) {
-		if strings.TrimSpace(b.Profile) == "" {
-			return
+	for _, r := range config.CheckAgents(repo) {
+		id, title, about := health.IDAgentsSharedMachineValue, "Shared agents.toml carries a machine-specific value", r.Section
+		switch r.Rule {
+		case config.RuleProfile:
+			id, title = health.IDAgentsSharedProfile, "Shared agents.toml names a machine profile"
+		case config.RuleGlobalRoles:
+			id, title, about = health.IDAgentsSharedGlobalRoles, "Shared agents.toml opts into machine roles", r.Section+"."+r.Field
 		}
-		out = append(out, health.Warn(health.IDAgentsSharedProfile, "Shared agents.toml names a machine profile",
-			fmt.Sprintf("%s [%s] declares profile=%q: a profile resolves only against the ~/.satelle catalog of the machine that has it, but this file is shared — %s",
-				config.AgentsConfigName, section, b.Profile, move)).
-			About(section).WithRemediation(move))
-	}
-	warn("executor", repo.Executor)
-	warn("reviewer", repo.Reviewer)
-	for _, name := range sortedNames(repo.Agents) {
-		warn(name, repo.Agents[name])
-	}
-	if repo.Defaults.UseGlobalRoles {
-		out = append(out, health.Warn(health.IDAgentsSharedGlobalRoles, "Shared agents.toml opts into machine roles",
-			fmt.Sprintf("%s [defaults] use_global_roles = true reaches into the ~/.satelle [roles] catalog of whichever machine reads it, but this file is shared — %s",
-				config.AgentsConfigName, move)).
-			About("defaults.use_global_roles").WithRemediation(move))
+		out = append(out, health.Warn(id, title, r.Error()).About(about).WithRemediation(config.MoveToLocalAgents))
 	}
 	return out
 }

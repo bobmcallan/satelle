@@ -89,7 +89,7 @@ func UpsertKey(content, section, key, value string) string {
 
 // RemoveKey drops a single `key = …` assignment inside section, leaving every
 // other line (including comments) verbatim. A missing section or key is a no-op.
-// Used by redactForTransmit to strip [hosted] project from a settings push
+// Used by stripRepoBinding to strip [hosted] project from a settings push
 // (sty_ea18294f) without a full TOML re-encode.
 func RemoveKey(content, section, key string) string {
 	lines := strings.Split(content, "\n")

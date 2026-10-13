@@ -403,7 +403,7 @@ func pullLocalShas(cfg config.Config, repoRoot, server, project string, d *snaps
 	}
 	if area == "settings" && len(local) > 0 {
 		// A fresh clone's satelle.toml is the binding `project bind` wrote, which
-		// a push redacts: with no base to say otherwise it is a placeholder, so
+		// a push withholds: with no base to say otherwise it is a placeholder, so
 		// the hosted settings are restored rather than parked as a conflict.
 		if _, synced, berr := hosted.LoadAreaBase(server, project, d.RepoRoot, area); berr == nil && !synced {
 			if placeholder, perr := config.PlaceholderSettings(cfg, repoRoot); perr == nil && placeholder {

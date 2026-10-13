@@ -47,31 +47,9 @@ func validateDeployment(out io.Writer, dataDir string) error {
 		}
 	}
 
-	rep := doctor.Check(context.Background(), doctor.Opts{
-		RepoRoot:      repoRoot,
-		DataDir:       dataDir,
-		ScaffoldDrift: scaffoldFindings,
-	})
-	for _, f := range rep.Findings.WithSeverity(health.SeverityWarn) {
-		fmt.Fprintf(out, "WARN  [%s] %s\n", f.ID, f.Detail)
-	}
-	deployOK := true
-	for _, f := range rep.Findings.WithSeverity(health.SeverityError) {
-		// Sync backup state is runtime health, not a scaffold defect. `satelle
-		// doctor` still fails these (sty_30696eeb); init/migrate must not refuse
-		// a repo that has not yet pushed.
-		if strings.HasPrefix(f.ID, "sync.") {
-			fmt.Fprintf(out, "WARN  [%s] %s\n", f.ID, f.Detail)
-			continue
-		}
-		deployOK = false
-		failed++
-		fmt.Fprintf(out, "FAIL  [%s] %s\n", f.ID, f.Detail)
-		if f.Remediation != "" {
-			fmt.Fprintf(out, "      fix: %s\n", f.Remediation)
-		}
-	}
-	if deployOK {
+	systemFailed := validateSystem(out, dataDir, false)
+	failed += systemFailed
+	if systemFailed == 0 {
 		fmt.Fprintln(out, "PASS  agents layer, workflows, skills, principles, tasks")
 	}
 
@@ -86,6 +64,61 @@ func validateDeployment(out io.Writer, dataDir string) error {
 		return fmt.Errorf("init: the deployed system failed validation (%d problem(s)) — fix the reported files and re-run `satelle init`", failed)
 	}
 	fmt.Fprintln(out, "PASS  deployed system validates green")
+	return nil
+}
+
+// validateSystem runs doctor.Check over the deployed system under dataDir, prints
+// its findings and returns how many are errors. `sync.*` findings are warnings
+// here, never failures: sync backup state is runtime health, not a scaffold defect
+// — `satelle doctor` still fails them (sty_30696eeb), but init/migrate must not
+// refuse a repo that has not yet pushed, nor a push refuse for not having pushed.
+//
+// forPush judges the configuration as another machine would load it (this
+// machine's agents.local.toml and the synced workspace layer are left out) and
+// prints only the failures: a push names what stops it, not every advisory.
+func validateSystem(out io.Writer, dataDir string, forPush bool) (failed int) {
+	rep := doctor.Check(context.Background(), doctor.Opts{
+		RepoRoot:                  filepath.Dir(dataDir),
+		DataDir:                   dataDir,
+		ScaffoldDrift:             scaffoldFindings,
+		ExcludeMachineAgentLayers: forPush,
+	})
+	if !forPush {
+		for _, f := range rep.Findings.WithSeverity(health.SeverityWarn) {
+			fmt.Fprintf(out, "WARN  [%s] %s\n", f.ID, f.Detail)
+		}
+	}
+	for _, f := range rep.Findings.WithSeverity(health.SeverityError) {
+		if strings.HasPrefix(f.ID, "sync.") {
+			if !forPush {
+				fmt.Fprintf(out, "WARN  [%s] %s\n", f.ID, f.Detail)
+			}
+			continue
+		}
+		failed++
+		fmt.Fprintf(out, "FAIL  [%s] %s\n", f.ID, f.Detail)
+		if f.Remediation != "" {
+			fmt.Fprintf(out, "      fix: %s\n", f.Remediation)
+		}
+	}
+	return failed
+}
+
+// pushValidator is the validation preflightPush runs: validateSystem judged for a
+// push. It is a variable only so the tests of push MECHANICS — which push
+// throwaway fixtures that are not valid substrate — can stand it down (TestMain);
+// the validation tests put the real one back (realPushValidator).
+var pushValidator = func(out io.Writer, dataDir string) int { return validateSystem(out, dataDir, true) }
+
+// preflightPush is the check every push of configuration runs before it contacts
+// the server (sty_89b9df20): the same deployed-system validation `satelle init`
+// runs, judged as another machine would load the configuration. A configuration
+// that fails it is refused, so a push never publishes what would not load on
+// the machine that receives it.
+func preflightPush(out io.Writer, dataDir string) error {
+	if failed := pushValidator(out, dataDir); failed > 0 {
+		return fmt.Errorf("push refused: the configuration fails validation (%d problem(s)) — fix the findings above", failed)
+	}
 	return nil
 }
 

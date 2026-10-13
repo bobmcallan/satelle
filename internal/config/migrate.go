@@ -172,7 +172,7 @@ func removeKeyInSection(lines []string, header, key string) {
 
 // decodeAgents is the ONE agents-layer classifier (sty_01949949): every
 // top-level table is sorted into `defaults` / `executor` / `reviewer` / a flat
-// named binding. LoadAgents, LoadWorkspaceAgents, RedactAgentsTransport and
+// named binding. LoadAgents, LoadWorkspaceAgents, CheckAgentsTransport and
 // MigrateAgents all call it, so a new section type is classified in one place.
 //
 // legacyNested is the single difference between its callers: MigrateAgents

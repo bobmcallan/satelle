@@ -110,32 +110,22 @@ env     = { ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}", ANTHROPIC_BASE_URL = "https
 settings = { env = { CLAUDE_TOKEN = "live-secret" }, model = "opus" }
 `
 
-// TestSyncBindingsPushRedactsAndStampsLocation (AC1, AC4): what reaches the
-// catalog carries the env KEY and the base command, never the ${VAR}, the
-// settings secret or the absolute path; the request carries a valid
-// x-satelle-location; the kind is agents; and the body still loads.
-func TestSyncBindingsPushRedactsAndStampsLocation(t *testing.T) {
+// TestSyncBindingsPushPublishesFileBytesAndStampsLocation (AC1, AC4): what
+// reaches the catalog is the file's own bytes — comments, ${VAR} references and
+// blanks included; the request carries a valid x-satelle-location; the kind is
+// agents; and the body loads.
+func TestSyncBindingsPushPublishesFileBytesAndStampsLocation(t *testing.T) {
 	ts, f := newFakeBindingsServer(t)
 	seedCred(t, ts.URL)
-	repo := syncConfigRepo(t, "[hosted]\nworkspace = \"Acme\"\n")
-	writeRepoFile(t, repo, ".satelle/workflows/agents.toml", secretAgentsToml)
-	pointAt(t, repo)
+	agentsPushRepo(t, "[hosted]\nworkspace = \"Acme\"\n", pushableAgents)
 
 	cmd, buf := testCmd()
 	if err := runSyncBindingsPush(cmd, ts.URL, "", false); err != nil {
 		t.Fatalf("push: %v\n%s", err, buf.String())
 	}
 	body := string(f.putBody)
-	for _, leak := range []string{"https://literal.example", "/opt/local/bin", "live-secret"} {
-		if strings.Contains(body, leak) {
-			t.Errorf("published body leaks %q:\n%s", leak, body)
-		}
-	}
-	// Keys travel; so does a pure ${VAR} reference (a name, not a value).
-	for _, keep := range []string{"ANTHROPIC_AUTH_TOKEN", "${GLM_API_KEY}", "ANTHROPIC_BASE_URL", "claude -p --output-format json", "CLAUDE_TOKEN"} {
-		if !strings.Contains(body, keep) {
-			t.Errorf("published body lost %q:\n%s", keep, body)
-		}
+	if body != pushableAgents {
+		t.Errorf("published body is not the file's bytes:\n%s", body)
 	}
 	if f.putKind != "agents" {
 		t.Errorf("kind = %q, want agents", f.putKind)
@@ -144,7 +134,7 @@ func TestSyncBindingsPushRedactsAndStampsLocation(t *testing.T) {
 	if loc == "" || !hosted.ValidLocationID(loc) {
 		t.Errorf("%s header = %q, want a valid location id", hosted.LocationHeader, loc)
 	}
-	// The redacted body must still load as an agents layer.
+	// The published body loads as an agents layer.
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, config.AgentsConfigDir), 0o755); err != nil {
 		t.Fatal(err)
@@ -156,11 +146,11 @@ func TestSyncBindingsPushRedactsAndStampsLocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("published body does not load: %v\n%s", err, body)
 	}
-	if ac.Reviewer.Env["ANTHROPIC_AUTH_TOKEN"] != "${GLM_API_KEY}" || ac.Reviewer.Env["ANTHROPIC_BASE_URL"] != "" || !strings.HasPrefix(ac.Reviewer.Command, "claude -p") {
+	if ac.Reviewer.Env["ANTHROPIC_AUTH_TOKEN"] != "${GLM_API_KEY}" || !strings.HasPrefix(ac.Reviewer.Command, "claude -p") {
 		t.Errorf("loaded reviewer = %+v", ac.Reviewer)
 	}
-	if !strings.Contains(buf.String(), "redacted") {
-		t.Errorf("push output should say the layer was redacted: %s", buf.String())
+	if strings.Contains(strings.ToLower(buf.String()), "redact") {
+		t.Errorf("push output still claims redaction: %s", buf.String())
 	}
 	// A second push of unchanged config is a no-op version-wise.
 	cmd2, buf2 := testCmd()
@@ -206,15 +196,16 @@ func TestSyncBindingsUnboundIsNoOp(t *testing.T) {
 	}
 }
 
-// TestSyncBindingsPullAppliesRedactedLayer (AC2, AC3, R2): a catalog entry —
-// here an UNREDACTED one, as an older path could have left — lands as the
-// workspace layer with absolute paths and env values stripped, and the
-// effective ladder then shows the repo winning field by field with the
-// workspace named as the source of what it supplied.
-func TestSyncBindingsPullAppliesRedactedLayer(t *testing.T) {
+// TestSyncBindingsPullAppliesLayerAsPublished (AC2, AC3, AC8): a catalog entry
+// lands as the workspace layer exactly as published, and the effective ladder
+// then shows the repo winning field by field with the workspace named as the
+// source of what it supplied. A blank the layer declares is "declared,
+// unsatisfied" — it never shadows the machine's own value.
+func TestSyncBindingsPullAppliesLayerAsPublished(t *testing.T) {
 	ts, f := newFakeBindingsServer(t)
 	seedCred(t, ts.URL)
-	f.stored = []byte("[reviewer]\nrole = \"reviewer\"\ncommand = \"/opt/x/claude -p {system}\"\ntools = \"Read\"\nmodel = \"sonnet\"\nenv = { TOKEN = \"leaked\", BASE_URL = \"${BASE_URL}\" }\nsettings = { apiKey = \"live\", model = \"sonnet\" }\n\n[coder]\nrole = \"agent\"\ncommand = \"/usr/local/bin/claude -p {system}\"\n")
+	published := "[reviewer]\nrole = \"reviewer\"\ncommand = \"claude -p {system}\"\ntools = \"Read\"\nmodel = \"sonnet\"\nenv = { TOKEN = \"\", BASE_URL = \"${BASE_URL}\" }\nsettings = { apiKey = \"\", model = \"sonnet\" }\n\n[coder]\nrole = \"agent\"\ncommand = \"claude -p {system}\"\n"
+	f.stored = []byte(published)
 	f.version = 3
 	repo := syncConfigRepo(t, "[hosted]\nworkspace = \"Acme\"\n")
 	writeRepoFile(t, repo, ".satelle/workflows/agents.toml", "[reviewer]\nrole = \"reviewer\"\nmodel = \"opus\"\n")
@@ -229,12 +220,8 @@ func TestSyncBindingsPullAppliesRedactedLayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspace layer not written: %v", err)
 	}
-	s := string(layer)
-	if strings.Contains(s, "/opt/x") || strings.Contains(s, "/usr/local/bin") || strings.Contains(s, "leaked") || strings.Contains(s, "live") {
-		t.Fatalf("ingest must redact the catalog entry:\n%s", s)
-	}
-	if !strings.Contains(s, "TOKEN") || !strings.Contains(s, "${BASE_URL}") {
-		t.Fatalf("ingest must keep env keys and ${VAR} references:\n%s", s)
+	if string(layer) != published {
+		t.Fatalf("ingest must write the layer as published:\n%s", layer)
 	}
 	// The authored file is untouched.
 	authored, _ := os.ReadFile(filepath.Join(dataDir, config.AgentsRel))
@@ -249,17 +236,17 @@ func TestSyncBindingsPullAppliesRedactedLayer(t *testing.T) {
 		t.Errorf("repo field must win: %+v", eff.Agents.Reviewer)
 	}
 	if eff.Agents.Reviewer.Tools != "Read" || !strings.HasPrefix(eff.Agents.Reviewer.Command, "claude -p") {
-		t.Errorf("workspace must fill blanks with the redacted command: %+v", eff.Agents.Reviewer)
+		t.Errorf("workspace must fill blanks with its command: %+v", eff.Agents.Reviewer)
 	}
 	if eff.Provenance.Source("reviewer", "tools") != config.SourceWorkspace || eff.Provenance.Source("reviewer", "model") != config.SourceRepo {
 		t.Errorf("provenance = %+v", eff.Provenance["reviewer"])
 	}
-	// AC3: the EFFECTIVE binding never carries a blank the layer left — the
+	// AC3: the EFFECTIVE binding never carries a blank the layer declares — the
 	// machine's own TOKEN (from its shell) is not shadowed by `TOKEN=` — while
 	// the ${VAR} reference is carried for local resolution; the blank secret
 	// setting does not ride into --settings.
 	if _, shadowed := eff.Agents.Reviewer.Env["TOKEN"]; shadowed {
-		t.Fatalf("a redacted blank must not shadow the machine environment: %+v", eff.Agents.Reviewer.Env)
+		t.Fatalf("a blank must not shadow the machine environment: %+v", eff.Agents.Reviewer.Env)
 	}
 	if eff.Agents.Reviewer.Env["BASE_URL"] != "${BASE_URL}" {
 		t.Errorf("reference must be carried: %+v", eff.Agents.Reviewer.Env)
@@ -272,6 +259,41 @@ func TestSyncBindingsPullAppliesRedactedLayer(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "v3") || !strings.Contains(buf.String(), config.WorkspaceAgentsRel) {
 		t.Errorf("pull output = %q", buf.String())
+	}
+}
+
+// TestSyncBindingsPullRefusesMachineSpecificLayer (AC8): a catalog entry an older
+// push left carrying absolute paths and env values is refused with the pointer to
+// agents.local.toml — nothing is written, nothing altered, and the authored files
+// are left as they were.
+func TestSyncBindingsPullRefusesMachineSpecificLayer(t *testing.T) {
+	ts, f := newFakeBindingsServer(t)
+	seedCred(t, ts.URL)
+	f.stored = []byte(secretAgentsToml)
+	f.version = 2
+	repo := agentsPushRepo(t, "[hosted]\nworkspace = \"Acme\"\n", pushableAgents)
+	const local = "[reviewer]\ncommand = \"/opt/x/claude -p {system}\"\n"
+	writeRepoFile(t, repo, ".satelle/workflows/agents.local.toml", local)
+
+	cmd, buf := testCmd()
+	err := runSyncBindingsPull(cmd, ts.URL, "")
+	if err == nil {
+		t.Fatalf("a machine-specific catalog entry was applied:\n%s", buf.String())
+	}
+	for _, want := range []string{"agents.toml [reviewer] command", "agents.toml [reviewer] env.ANTHROPIC_BASE_URL", ".satelle/workflows/agents.local.toml"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal lacks %q:\n%v", want, err)
+		}
+	}
+	dataDir := filepath.Join(repo, ".satelle")
+	if _, serr := os.Stat(config.WorkspaceAgentsPath(dataDir)); serr == nil {
+		t.Error("a refused layer must not be written")
+	}
+	if got, _ := os.ReadFile(filepath.Join(dataDir, config.AgentsRel)); string(got) != pushableAgents {
+		t.Errorf("agents.toml was altered:\n%s", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dataDir, "workflows", config.LocalAgentsName)); string(got) != local {
+		t.Errorf("agents.local.toml was altered:\n%s", got)
 	}
 }
 
@@ -293,20 +315,26 @@ func TestSyncBindingsPullNothingPublished(t *testing.T) {
 	}
 }
 
-// TestSyncBindingsPushDryRunContactsNothing: --dry-run prints the redacted
-// layer and makes no request.
+// TestSyncBindingsPushDryRunContactsNothing: --dry-run prints the layer that would
+// be published and makes no request; a layer that would be refused is refused the
+// same way, and still no request is made.
 func TestSyncBindingsPushDryRunContactsNothing(t *testing.T) {
 	ts, f := newFakeBindingsServer(t)
 	seedCred(t, ts.URL)
-	repo := syncConfigRepo(t, "[hosted]\nworkspace = \"Acme\"\n")
-	writeRepoFile(t, repo, ".satelle/workflows/agents.toml", secretAgentsToml)
-	pointAt(t, repo)
+	repo := agentsPushRepo(t, "[hosted]\nworkspace = \"Acme\"\n", pushableAgents)
 	cmd, buf := testCmd()
 	if err := runSyncBindingsPush(cmd, ts.URL, "", true); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(buf.String(), "live-secret") || strings.Contains(buf.String(), "https://literal.example") || !strings.Contains(buf.String(), "ANTHROPIC_AUTH_TOKEN") {
-		t.Errorf("dry-run must print the redacted layer: %s", buf.String())
+	if !strings.Contains(buf.String(), "ANTHROPIC_AUTH_TOKEN") || !strings.Contains(buf.String(), "${GLM_API_KEY}") {
+		t.Errorf("dry-run must print the layer: %s", buf.String())
+	}
+
+	writeRepoFile(t, repo, ".satelle/workflows/agents.toml", secretAgentsToml)
+	cmd2, buf2 := testCmd()
+	err := runSyncBindingsPush(cmd2, ts.URL, "", true)
+	if err == nil || !strings.Contains(err.Error(), "agents.local.toml") {
+		t.Fatalf("dry-run must report what would be refused and fail: err=%v\n%s", err, buf2.String())
 	}
 	if n := f.count(); n != 0 {
 		t.Fatalf("dry-run contacted the server %d time(s)", n)

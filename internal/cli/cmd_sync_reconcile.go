@@ -311,8 +311,8 @@ func reconcileDiff(cmd *cobra.Command, cfg config.Config, repoRoot string, drive
 	if !haveLocal {
 		localLabel += " (absent on local)"
 	}
-	if area == "agents" || area == "settings" {
-		fmt.Fprintln(out, "note: the local side is shown as a push sends it (secrets redacted)")
+	if area == "settings" {
+		fmt.Fprintln(out, "note: the local side is shown as a push sends it ([sync] project and [hosted] project withheld)")
 	}
 	printUnifiedDiff(out, hostedLabel, localLabel, string(body), local)
 	return nil

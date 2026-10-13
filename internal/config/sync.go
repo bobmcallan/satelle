@@ -265,7 +265,11 @@ type ConfigFile struct {
 	Area    string     // the config-area name (skills, constitution, agents, tasks, ...)
 	Path    string     // server-relative path under the workspace-config root
 	Tier    ConfigTier // PersonalTier | SharedTier (label only; sync dest is personal)
-	Content []byte     // verbatim file bytes
+	Content []byte     // the bytes a push sends: the file verbatim, less Withheld
+	// Withheld names the satelle.toml keys a push left out of Content because they
+	// bind this machine's checkout to a hosted project ("[hosted] project"). Empty
+	// for every other file, whose Content is byte-identical to what is on disk.
+	Withheld []string
 }
 
 // Bundle is an assembled set of files destined for transmission, plus the
@@ -377,7 +381,8 @@ func filesForArea(cfg Config, repoRoot, area string) ([]ConfigFile, Scope, error
 }
 
 // AreaFiles reads one config or documents area's files exactly as a push would
-// bundle them — same walk, same redaction, same .local withholding — but without
+// bundle them — same walk, same project-binding withholding, same .local
+// withholding — but without
 // consulting the area's [sync] scope. A pull needs the local side of a
 // three-way comparison for an area whether or not this machine would push it.
 func AreaFiles(cfg Config, repoRoot, area string) ([]ConfigFile, error) {
@@ -389,7 +394,7 @@ func AreaFiles(cfg Config, repoRoot, area string) ([]ConfigFile, error) {
 }
 
 // PlaceholderSettings reports whether the settings area on disk holds nothing a
-// push would send: no satelle.toml, or one carrying only what push redacts — the
+// push would send: no satelle.toml, or one carrying only what push withholds — the
 // repo binding `project bind` writes into a fresh clone. Such a file is a
 // placeholder, not an authored copy, so a deploy must not treat it as a change
 // that conflicts with the hosted settings (sty_7562055c).
@@ -511,7 +516,7 @@ func walkAreaFiles(cfg Config, repoRoot, area string, scope Scope) ([]ConfigFile
 // walkSkips reports whether a file basename inside a directory area is never
 // part of that area's push: a generated read-only view, and — in workflows — the
 // agents layer, which sits IN the workflows dir but is its own sync area with its
-// own tier and redaction semantics (sty_10f732ed); without this skip the walk
+// own tier (sty_10f732ed); without this skip the walk
 // would push it a second time under a workflows/ key. agents.workspace.toml is
 // the SYNCED workspace layer (sty_01949949): it came from the team catalog and is
 // never pushed back as config. The one rule behind walkAreaFiles and AreaOfRepoPath.
@@ -565,7 +570,8 @@ func AreaOfRepoPath(cfg Config, repoRoot, path string) string {
 // readConfigFile reads one file's bytes and resolves its tier. serverPath is the
 // already-computed server-relative key; absPath is the on-disk source. A missing
 // single-file area (constitution/agents/settings not yet seeded) is benign — ok=false.
-// Content is passed through redactForTransmit so repo-identifying keys never leave.
+// Content is the file verbatim, except that stripRepoBinding withholds a
+// satelle.toml's project binding (reported in ConfigFile.Withheld).
 func readConfigFile(area, absPath, serverPath string, scope Scope) (ConfigFile, bool, error) {
 	body, err := os.ReadFile(absPath)
 	if err != nil {
@@ -574,38 +580,36 @@ func readConfigFile(area, absPath, serverPath string, scope Scope) (ConfigFile, 
 		}
 		return ConfigFile{}, false, fmt.Errorf("read %s: %w", absPath, err)
 	}
-	body, err = redactForTransmit(area, body)
-	if err != nil {
-		return ConfigFile{}, false, fmt.Errorf("%s: %w", absPath, err)
-	}
+	body, withheld := stripRepoBinding(area, body)
 	tier := PersonalTier
 	if scope == SharedScope {
 		tier = SharedTier
 	} else if scope == PersonalScope && FileShared(PersonalScope, string(body)) {
 		tier = SharedTier
 	}
-	return ConfigFile{Area: area, Path: serverPath, Tier: tier, Content: body}, true, nil
+	return ConfigFile{Area: area, Path: serverPath, Tier: tier, Content: body, Withheld: withheld}, true, nil
 }
 
-// redactForTransmit strips machine-local and repo-identifying content from a
-// file about to leave the machine. For the settings area (satelle.toml) it
-// removes [hosted] project so a push cannot rebind another repo; deploy
-// re-applies the local binding after restore (the load-bearing guard against
-// older unredacted hosted copies). For the agents area it applies
-// RedactAgentsTransport — env values, absolute command paths, profile names —
-// the same redaction every agents-kind transport shares (sty_01949949). An
-// agents body that does not decode is an error, never shipped raw. All other
-// areas pass through byte-identical.
-func redactForTransmit(area string, body []byte) ([]byte, error) {
-	switch area {
-	case "settings":
-		s := RemoveKey(string(body), "sync", "project")
-		return []byte(RemoveKey(s, "hosted", "project")), nil
-	case "agents":
-		return RedactAgentsTransport(body)
-	default:
+// stripRepoBinding withholds the keys that bind a checkout to a hosted project
+// from a file about to leave the machine, and names what it withheld. For the
+// settings area (satelle.toml) it removes [sync] project and [hosted] project so a
+// push cannot rebind another repo; deploy re-applies the local binding after
+// restore (the load-bearing guard against older hosted copies that carry one).
+// Every other area — the agents layer included — passes through byte-identical:
+// machine-specific agents content is refused at push (CheckAgents), never altered.
+func stripRepoBinding(area string, body []byte) ([]byte, []string) {
+	if area != "settings" {
 		return body, nil
 	}
+	s := string(body)
+	var withheld []string
+	for _, k := range []struct{ section, label string }{{"sync", "[sync] project"}, {"hosted", "[hosted] project"}} {
+		if next := RemoveKey(s, k.section, "project"); next != s {
+			withheld = append(withheld, k.label)
+			s = next
+		}
+	}
+	return []byte(s), withheld
 }
 
 // sortConfigFiles orders files by server Path for a deterministic push.

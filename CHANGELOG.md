@@ -1,3 +1,17 @@
+## [0.0.665] - 2026-10-13
+
+### Breaking
+- A push of configuration (`satelle sync config push`, satelled's automatic push, `satelle publish`, `satelle sync bindings push`) now refuses a shared `agents.toml` that carries machine-specific content instead of silently stripping it: `profile=` or `harness=`, an absolute command path, a literal (non-`${VAR}`) value in a binding's `env` or a settings `env` table, a secret-shaped settings key, an absolute path anywhere in settings, or `use_global_roles`. To heal: run `satelle agent validate` to list each value, move those fields into `agents.local.toml` beside `agents.toml` (it overrides field by field and never leaves the machine), then push again. `satelle sync status` and `satelle sync reconcile` keep working meanwhile.
+
+### Changed
+- **Configuration is validated before it is pushed, and the hosted copy is exactly what was pushed.** Push runs the same deployed-system validation `satelle init` runs (without this machine's local and pulled workspace agent layers) and refuses before any network call; the pushed bytes are the local file's bytes. The only exception is `satelle.toml`'s `[sync]`/`[hosted]` project binding, which stays on the machine and is now named in the push output. Pull and deploy no longer merge local values back into a redacted file; they take the hosted content as is or refuse. (sty_89b9df20)
+- `satelle agent validate` and `satelle doctor` warn on every machine-specific value in the shared file, using the same checker the push uses. (sty_89b9df20)
+
+## [serve-v0.0.160] - 2026-10-13
+
+### Changed
+- The service binary carries the pre-push configuration checker. (sty_89b9df20)
+
 ## [0.0.664] - 2026-10-13
 
 ### Added

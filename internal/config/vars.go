@@ -175,7 +175,7 @@ func dedupeSorted(in []string) []string {
 	return out
 }
 
-func sortedKeys(m map[string]AgentBinding) []string {
+func sortedKeys[V any](m map[string]V) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)

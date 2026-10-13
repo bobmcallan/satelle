@@ -141,29 +141,15 @@ func TestEncodeAgents_ModelOrderNotABinding(t *testing.T) {
 	}
 }
 
-func TestRedactAgentsTransport_KeepsModelOrder(t *testing.T) {
-	out, err := RedactAgentsTransport([]byte(modelOrderDoc))
+// [model_order] is shared configuration, not machine-specific content: the
+// transport check neither refuses it nor reads it as a binding.
+func TestCheckAgentsTransport_AllowsModelOrder(t *testing.T) {
+	refusals, err := CheckAgentsTransport([]byte(modelOrderDoc))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ac := decodeOrder(t, string(out))
-	for _, exe := range []string{"claude", "grok"} {
-		if len(ac.OrderFor(exe)) == 0 {
-			t.Errorf("redacted transport lost the %s list", exe)
-		}
-	}
-}
-
-func TestRehydrateAgents_KeepsModelOrder(t *testing.T) {
-	store := "[model_order]\ngrok = [\"grok-4.7\"]\n\n[executor]\ncommand = \"in-loop\"\n"
-	local := "[model_order]\ngrok = [\"local-only\"]\n\n[executor]\ncommand = \"in-loop\"\n\n[extra]\ncommand = \"x\"\n"
-	out, _, err := RehydrateAgents([]byte(store), []byte(local))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ac := decodeOrder(t, string(out))
-	if got := ac.OrderFor("grok"); len(got) != 1 || got[0].First() != "grok-4.7" {
-		t.Errorf("rehydrate dropped the store order: %v", got)
+	if len(refusals) != 0 {
+		t.Errorf("[model_order] must not be refused: %v", refusals)
 	}
 }
 

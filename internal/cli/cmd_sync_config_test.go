@@ -164,7 +164,7 @@ func syncConfigRepo(t *testing.T, satelleToml string) string {
 	if err := os.WriteFile(filepath.Join(dir, "satelle.toml"), []byte(satelleToml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "agents.toml"), []byte("[executor]\nharness = \"in-loop\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "agents.toml"), []byte("[executor]\ncommand = \"in-loop\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return repo
@@ -500,8 +500,8 @@ func TestSyncConfigDeployPreservesHostedProject(t *testing.T) {
 	seedCred(t, ts.URL)
 
 	// Seed hosted store with satelle.toml that claims project=alpha (old-binary shape).
-	// PushConfigFile writes bytes verbatim to the fake store (no client-side redact),
-	// so this models an older binary's unredacted push.
+	// PushConfigFile writes bytes verbatim to the fake store, so this models an
+	// older binary's push that carried the project binding.
 	foreign := "[sync]\nall = \"personal\"\n[hosted]\nproject = \"alpha\"\n"
 	client := hosted.NewClient(ts.URL, hosted.FileStore{}, nil)
 	if _, err := client.PushConfigFile(t.Context(), "beta", "satelle.toml", []byte(foreign)); err != nil {
@@ -545,8 +545,9 @@ func TestSyncConfigDeployPreservesHostedProject(t *testing.T) {
 	}
 }
 
-// TestSyncConfigPushSettingsRedactsAndExcludesLocal (sty_ea18294f AC2 CLI).
-func TestSyncConfigPushSettingsRedactsAndExcludesLocal(t *testing.T) {
+// TestSyncConfigPushSettingsWithholdsProjectAndExcludesLocal (sty_ea18294f AC2
+// CLI): the project binding is withheld and named; satelle.local.toml never goes.
+func TestSyncConfigPushSettingsWithholdsProjectAndExcludesLocal(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 	repo := syncConfigRepo(t, "[sync]\nall = \"personal\"\n"+boundProjectToml)
@@ -557,6 +558,9 @@ func TestSyncConfigPushSettingsRedactsAndExcludesLocal(t *testing.T) {
 	cmd, buf := testCmd()
 	if err := runSyncConfigPush(cmd, ts.URL, "", false); err != nil {
 		t.Fatalf("push: %v\n%s", err, buf.String())
+	}
+	if !strings.Contains(buf.String(), "settings: withheld [hosted] project from satelle.toml") {
+		t.Errorf("the withheld binding is not named:\n%s", buf.String())
 	}
 	// Read back from server via client
 	client := hosted.NewClient(ts.URL, hosted.FileStore{}, nil)

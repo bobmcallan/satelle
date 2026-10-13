@@ -74,6 +74,12 @@ type Opts struct {
 	// Live. It runs ContextReviewer, and only when that is set.
 	ContextReview   bool
 	ContextReviewer func(ctx context.Context, repoRoot, dataDir string) health.Findings
+	// ExcludeMachineAgentLayers judges the agents layer as ANOTHER machine would
+	// load it: this machine's agents.local.toml and the synced agents.workspace.toml
+	// are left out of the resolution, so an allocation that resolves only through
+	// them fails here as it would there. A push sets it (sty_89b9df20); the machine
+	// catalog stays in, as every machine has its own.
+	ExcludeMachineAgentLayers bool
 	// Process and ProcessRoot are the process-of-record config and root, with
 	// RepoRoot as the invoking tree. When Process is set and the invoking tree is
 	// a linked worktree whose own copy of the authored process differs from the
@@ -139,6 +145,10 @@ func Check(ctx context.Context, o Opts) Report {
 	// 1. The effective agents layer, resolved against the machine-wide catalog,
 	//    with every binding/allocation/hook rule owned by agentvalidate.
 	layers, _ := config.LoadAgentLayers(dataDir)
+	if o.ExcludeMachineAgentLayers {
+		layers.Workspace, layers.WorkspaceErr = config.AgentsConfig{}, nil
+		layers.Local, layers.LocalErr = config.AgentsConfig{}, nil
+	}
 	if agentsErr := layers.RepoErr; agentsErr != nil {
 		rep.Findings = append(rep.Findings, health.Error(health.IDAgentsLoad, "Unreadable agents layer",
 			fmt.Sprintf("%s/%s: %v", config.DefaultDataDir, config.AgentsRel, agentsErr)).

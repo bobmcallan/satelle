@@ -419,7 +419,8 @@ func TestReconcileTwoMachinesEndInStep(t *testing.T) {
 }
 
 // AC6: the settings and agents areas reconcile through the deploy's per-file
-// handling: the local project binding survives and agents are rehydrated.
+// handling: the local project binding survives, the hosted agents layer is taken
+// as it was pushed, and this machine's agents.local.toml is left alone.
 func TestReconcileSettingsAndAgentsKeepLocalValues(t *testing.T) {
 	ts, _ := newSnapServer(t)
 	seedCred(t, ts.URL)
@@ -427,25 +428,27 @@ func TestReconcileSettingsAndAgentsKeepLocalValues(t *testing.T) {
 	mk := func() *snapMachine {
 		m := &snapMachine{t: t, url: ts.URL, repo: syncConfigRepo(t, toml), state: filepath.Join(t.TempDir(), "document-sync-state.json")}
 		_ = os.Remove(filepath.Join(m.repo, ".satelle", "agents.toml"))
-		m.write("workflows/agents.toml", authoredAgentsWithSecrets)
+		m.write("workflows/agents.toml", pushableAgents)
 		return m
 	}
 	a, b := mk(), mk()
+	b.write("workflows/agents.local.toml", localAgentsFixture)
 	a.pushConfig()
 	b.deploy()
 
-	a.write("workflows/agents.toml", strings.Replace(authoredAgentsWithSecrets, `model   = "opus"`, `model   = "sonnet"`, 1))
+	sonnet := strings.Replace(pushableAgents, `model   = "opus"`, `model   = "sonnet"`, 1)
+	a.write("workflows/agents.toml", sonnet)
 	a.write("satelle.toml", toml+"[backup]\nlocal_only = true\n")
 	a.pushConfig()
-	b.write("workflows/agents.toml", strings.Replace(authoredAgentsWithSecrets, `model   = "opus"`, `model   = "haiku"`, 1))
+	b.write("workflows/agents.toml", strings.Replace(pushableAgents, `model   = "opus"`, `model   = "haiku"`, 1))
 	b.write("satelle.toml", toml+"# edited on B\n")
 
 	out := b.mustReconcile("--apply", "--take-hosted-all", "agents", "--take-hosted-all", "settings")
-	agents := b.read("workflows/agents.toml")
-	for _, want := range []string{`model = "sonnet"`, `ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}"`, `/opt/local/bin/claude -p`, `profile = "claude-opus"`} {
-		if !strings.Contains(agents, want) {
-			t.Errorf("agents not rehydrated: missing %q\n%s\n--- output\n%s", want, agents, out)
-		}
+	if agents := b.read("workflows/agents.toml"); agents != sonnet {
+		t.Errorf("the hosted agents layer must be taken as pushed:\n%s\n--- output\n%s", agents, out)
+	}
+	if got := b.read("workflows/agents.local.toml"); got != localAgentsFixture {
+		t.Errorf("reconcile touched agents.local.toml:\n%s", got)
 	}
 	settings := b.read("satelle.toml")
 	if !strings.Contains(settings, "local_only = true") {

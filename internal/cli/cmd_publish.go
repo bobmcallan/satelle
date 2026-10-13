@@ -182,24 +182,7 @@ func runPublishPush(cmd *cobra.Command, serverArg, workspaceArg, kind, title str
 		}
 		norm = append(norm, rel)
 	}
-	if dryRun {
-		fmt.Fprintf(out, "Would publish %d path(s) to team workspace %q on %s:\n", len(norm), teamName, server)
-		for _, p := range norm {
-			k := kind
-			if k == "" {
-				k = inferPublishKind(p)
-			}
-			fmt.Fprintf(out, "  [%s] %s\n", k, p)
-		}
-		return nil
-	}
-	client := hosted.NewClient(server, hosted.DefaultStore(), nil)
-	wsID, err := client.ActiveWorkspaceID(cmd.Context(), teamName)
-	if err != nil {
-		return fmt.Errorf("resolve team workspace: %w", err)
-	}
-	var created, skipped int
-	for _, rel := range norm {
+	readPath := func(rel string) ([]byte, error) {
 		abs := filepath.Join(dataDir, filepath.FromSlash(rel))
 		// Also allow paths relative to repo root under .satelle/
 		if _, err := os.Stat(abs); err != nil {
@@ -210,23 +193,57 @@ func runPublishPush(cmd *cobra.Command, serverArg, workspaceArg, kind, title str
 		}
 		content, err := os.ReadFile(abs)
 		if err != nil {
-			return fmt.Errorf("read %s: %w", rel, err)
+			return nil, fmt.Errorf("read %s: %w", rel, err)
 		}
-		k := kind
-		if k == "" {
-			k = inferPublishKind(rel)
+		return content, nil
+	}
+	kindOf := func(rel string) string {
+		if kind != "" {
+			return kind
 		}
-		if k == "agents" || inferPublishKind(rel) == "agents" {
-			// Redaction is a property of agents-kind transport, not of one verb
-			// (sty_01949949): env values, absolute command paths and profile names
-			// never leave the machine whichever command carried the file — and
-			// whichever --kind the caller typed for the agents path.
-			redacted, rerr := config.RedactAgentsTransport(content)
-			if rerr != nil {
-				return fmt.Errorf("publish %s: %w", rel, rerr)
-			}
-			content = redacted
+		return inferPublishKind(rel)
+	}
+	// An agents layer is sent exactly as it is on disk, so it is checked first —
+	// whichever --kind the caller typed for the agents path, and a dry run too:
+	// machine-specific content is refused, pointing at agents.local.toml, before
+	// any network call (sty_89b9df20). Everything published must also leave a
+	// deployed system that validates.
+	var agentsFiles []config.ConfigFile
+	for _, rel := range norm {
+		if kindOf(rel) != "agents" && inferPublishKind(rel) != "agents" {
+			continue
 		}
+		content, err := readPath(rel)
+		if err != nil {
+			return err
+		}
+		agentsFiles = append(agentsFiles, config.ConfigFile{Area: "agents", Path: rel, Content: content})
+	}
+	if err := checkPushFiles("publish push", agentsFiles); err != nil {
+		return err
+	}
+	if err := preflightPush(out, dataDir); err != nil {
+		return err
+	}
+	if dryRun {
+		fmt.Fprintf(out, "Would publish %d path(s) to team workspace %q on %s:\n", len(norm), teamName, server)
+		for _, p := range norm {
+			fmt.Fprintf(out, "  [%s] %s\n", kindOf(p), p)
+		}
+		return nil
+	}
+	client := hosted.NewClient(server, hosted.DefaultStore(), nil)
+	wsID, err := client.ActiveWorkspaceID(cmd.Context(), teamName)
+	if err != nil {
+		return fmt.Errorf("resolve team workspace: %w", err)
+	}
+	var created, skipped int
+	for _, rel := range norm {
+		content, err := readPath(rel)
+		if err != nil {
+			return err
+		}
+		k := kindOf(rel)
 		item, perr := client.PublishFile(cmd.Context(), wsID, rel, k, title, content)
 		if perr != nil {
 			if errors.Is(perr, hosted.ErrLoginRequired) {
@@ -313,18 +330,11 @@ func runPublishAdopt(cmd *cobra.Command, serverArg, workspaceArg string, version
 		return fmt.Errorf("fetch published %s: %w", path, err)
 	}
 	if path == config.AgentsRel {
-		// A published agents layer is REDACTED (sty_01949949): never write it
-		// straight over the authored file.
-		merged, skip, herr := rehydrateAgentsForWrite(cmd.OutOrStdout(), dataDir, "adopt", content)
-		if herr != nil {
-			return herr
+		// A published agents layer is written as published; one that carries
+		// machine-specific content is refused, never altered (sty_89b9df20).
+		if err := ingestAgents("publish adopt", content); err != nil {
+			return err
 		}
-		if skip {
-			return saveAdoption(dataDir, adoptionRecord{
-				Workspace: teamName, Path: path, Version: meta.Version, Kind: meta.Kind, PublisherID: meta.PublisherID,
-			})
-		}
-		content = merged
 	}
 	if res, err := subsync.Restore(dataDir, []subsync.File{{Path: path, Content: content}}); err != nil {
 		return fmt.Errorf("write local copy: %w", err)
@@ -392,22 +402,10 @@ func runPublishCheck(cmd *cobra.Command, serverArg, workspaceArg string, doUpdat
 			continue
 		}
 		if rec.Path == config.AgentsRel {
-			// Same ingest rule as adopt/deploy: a redacted agents layer is
-			// rehydrated from the authored file, never written raw over it.
-			merged, skip, herr := rehydrateAgentsForWrite(out, dataDir, "update", content)
-			if herr != nil {
-				return herr
+			// Same ingest rule as adopt/deploy: written as published, or refused.
+			if err := ingestAgents("publish check --update", content); err != nil {
+				return err
 			}
-			if skip {
-				rec.Version = meta.Version
-				rec.PublisherID = meta.PublisherID
-				if err := saveAdoption(dataDir, rec); err != nil {
-					return err
-				}
-				updates++
-				continue
-			}
-			content = merged
 		}
 		if res, err := subsync.Restore(dataDir, []subsync.File{{Path: rec.Path, Content: content}}); err != nil {
 			return fmt.Errorf("update %s: %w", rec.Path, err)

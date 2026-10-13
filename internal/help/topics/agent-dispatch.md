@@ -695,7 +695,7 @@ one file:
 
 - `satelle sync bindings push [--dry-run]` publishes this repo's
   `.satelle/workflows/agents.toml` into the bound TEAM workspace's publish
-  catalog (kind `agents`), **redacted**.
+  catalog (kind `agents`), exactly as it is on disk.
 - `satelle sync bindings pull` applies that catalog entry as
   `.satelle/workflows/agents.workspace.toml` — a separate file, so sync never
   rewrites authored bytes. The bare `satelle sync` aggregate pulls it too when
@@ -707,29 +707,37 @@ one file:
   is refused. `satelle agent validate` prints the layer's presence and names
   the source of every effective field (`source: tools = "…" (workspace)`).
 
-**Redaction is a property of the agents kind, not of a verb.** Every transport
-of an agents layer — `sync bindings push`, `publish push` of
-`workflows/agents.toml` (whatever `--kind` was typed), the `agents` area of
-`sync config push`, and `sync bindings pull` on **ingest** — goes through the
-same function: literal `env` values are blanked (keys survive: "this binding
-needs `ANTHROPIC_AUTH_TOKEN`"; a pure `${VAR}` reference survives too — a
-variable name is not a secret, and it is what lets the receiving machine's
-`[vars]` fail-fast fire), secret-shaped `settings` values and everything under
-`settings.env` are blanked the same way, absolute path strings anywhere in
-`command` or `settings` are reduced to their base name, `profile=` is dropped.
-A body that does not parse is an error, never shipped raw. Ingest redacts again
-so a catalog entry an older path left unredacted cannot land absolute paths or
-env values as live bindings.
+**A push sends the file as written and refuses what belongs to one machine.**
+Every push of an agents layer — `sync bindings push`, `publish push` of
+`workflows/agents.toml` (whatever `--kind` was typed) and the `agents` area of
+`sync config push` (`--snapshot-only` and `--dry-run` included) — checks the
+file first, before any network call, and refuses when it carries: a literal
+`env` value (in a binding's `env` or under `settings.env`), a literal value
+under a secret-shaped `settings` key, an absolute path (anywhere in `settings`,
+or a token of `command`), `profile=` or `harness=`, or
+`[defaults] use_global_roles = true`. A pure `${VAR}` reference is a variable
+name, not a value, so it travels; so does a blank ("declared, unsatisfied").
+Each refusal names the file, section and field and points at
+`.satelle/workflows/agents.local.toml`, which never leaves the machine —
+`satelle doctor` and `satelle init` warn on the same rules. Nothing is
+rewritten on the way out. A body that does not parse is an error, never sent.
 
-**A blank left by redaction is "declared, unsatisfied", never a value.** The
-workspace tier drops blank env keys and blank secret settings before it is
-merged, so a pulled layer can never lay `KEY=` over the machine's real
-environment or a blank secret over `settings.local.json`. And when a redacted
-store copy is written back over the authored `agents.toml` — `sync config
-deploy`, `publish adopt`, `publish check --update` — the file is either left
-byte-for-byte alone (the store matches it after redaction) or the store's
-layout is deployed with this machine's env values, command paths and
-`profile=` re-applied from the local file.
+A push also runs the validation `satelle init` runs, judged as another machine
+would load the configuration: `agents.local.toml` and `agents.workspace.toml`
+are left out, so an allocation that resolves only through them refuses the
+push. `sync.*` findings stay warnings, as in init. One thing is still withheld
+from `satelle.toml`: `[sync] project` and `[hosted] project`, each named in the
+push output, so a deploy cannot rebind another repo.
+
+**Ingest writes the hosted layer as it is, or refuses it.** `sync bindings
+pull`, `sync config deploy`, `publish adopt` and `publish check --update` check
+the hosted agents layer with the same rules; one an older push left carrying
+machine-specific content is refused with the pointer above rather than altered
+or landed as live bindings. `agents.toml` is written exactly as hosted and
+`agents.local.toml` is never touched. The workspace tier drops blank env keys
+and blank secret settings before it is merged, so a pulled layer can never lay
+`KEY=` over the machine's real environment or a blank secret over
+`settings.local.json`.
 
 **Executables and `${VAR}` resolve on the machine that runs the binding.** The
 workspace says `claude -p …`; this machine's PATH decides whether `claude`
