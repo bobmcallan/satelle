@@ -197,15 +197,23 @@ func SessionContextOutput(harness, event, context, notice string) []byte {
 }
 
 // contextWithNotice keeps a notice the harness cannot show the user in the
-// model's context, unless the context already carries it.
+// model's context, line by line, skipping each line the context already carries
+// (a notice may join several advisories, each placed in context by its owner).
 func contextWithNotice(context, notice string) string {
-	if strings.TrimSpace(notice) == "" || strings.Contains(context, notice) {
+	var missing []string
+	for _, line := range strings.Split(notice, "\n") {
+		if strings.TrimSpace(line) != "" && !strings.Contains(context, line) {
+			missing = append(missing, line)
+		}
+	}
+	if len(missing) == 0 {
 		return context
 	}
+	added := strings.Join(missing, "\n")
 	if strings.TrimSpace(context) == "" {
-		return notice
+		return added
 	}
-	return notice + "\n\n" + context
+	return added + "\n\n" + context
 }
 
 // StopAllow is the Stop-hook allow-with-note payload: no decision field, so the
