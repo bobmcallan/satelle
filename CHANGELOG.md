@@ -1,3 +1,20 @@
+## [0.0.670] - 2026-10-14
+
+### Added
+- **A session start tells the user when this machine's substrate is behind, unpushed or unmerged**, and names the command that brings it in step, on the same user notice as the release line. The line comes from recorded state only and never waits on the server. It is marked unverified exactly when `satelle doctor` reports the area unchecked. A stale record starts one detached `satelle sync status`, at most once every 10 minutes. `.local` files are never counted as drift. (sty_f1a3851d)
+- **Stories held on another machine or by a remote agent are visible.** Every work-state pass, including the since-mode snapshot satelled runs, records which stories another location holds (with its label and when it was last seen) and clears released or finished holds. A session start, `satelle story get` and `satelle story list` show them. Stories whose local and hosted copies differ in content are recorded as conflicts and named at session start. They are never resolved silently, and they clear once the copies agree. (sty_6e5fc41c)
+- **`satelle story hold takeover` waits until the holder is out of the way.** The hold moves only when the holder released it, the story is terminal on the hosted copy, or the holder was last seen longer ago than `[sync] hold_stale_after` (default 2h, seeded into `satelle.toml` by `satelle init`). In addition, the story's status and code must both be in step. A holder whose work started but whose produced code is not reachable here is refused, because the code may exist only in its tree. `--force` overrides the refusal and is recorded on the ledger. See `satelle help story-hold`. (sty_6e5fc41c)
+
+### Changed
+- The session-start notice composes the release, substrate and story-sync lines as one user notice (Claude Code `systemMessage`, pi `notify()`). Cursor and Grok have no user-facing channel, so they carry it in model context only, and Grok gets it at its first tool event. (sty_f1a3851d, sty_6e5fc41c)
+- The update integration tests run outside any repo, so a checkout's own `.satelle` no longer makes the post-update assessment exec their fake binary. (sty_5c820360)
+- This completes epic:currency-advisory: a session start checks the binary (0.0.669), the repo substrate and the stories, and tells the user what to run when any is out of date. (sty_5c820360)
+
+## [serve-v0.0.164] - 2026-10-14
+
+### Changed
+- The service binary carries the hold-recording snapshot pass, the extended hold registry and the story-conflict record. (sty_6e5fc41c)
+
 ## [0.0.669] - 2026-10-14
 
 ### Added
