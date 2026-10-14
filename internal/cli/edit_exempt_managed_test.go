@@ -60,9 +60,14 @@ func TestManagedEditExemptGlobsAreNarrow(t *testing.T) {
 	if !strings.Contains(scaffoldToml, "edit_exempt_globs = "+defaultEditExemptGlobsTOML()) {
 		t.Error("scaffoldToml must seed [gate] edit_exempt_globs from defaultEditExemptGlobsTOML")
 	}
+	need := gitignoreNeeded("", t.TempDir())
 	for _, g := range want {
-		if !strings.Contains(gitignoreBlock, g+"\n") {
-			t.Errorf("managed .gitignore block missing dump pattern %q", g)
+		var found bool
+		for _, n := range need {
+			found = found || n == g
+		}
+		if !found {
+			t.Errorf("needed .gitignore set missing dump pattern %q: %v", g, need)
 		}
 	}
 }

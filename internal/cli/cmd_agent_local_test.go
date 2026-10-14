@@ -92,21 +92,15 @@ func TestAgentValidateHelpNamesLocalLayer(t *testing.T) {
 	}
 }
 
-// The managed gitignore block that init writes ignores the machine-local file.
-func TestGitignoreBlockIgnoresLocalAgents(t *testing.T) {
-	repo := t.TempDir()
-	if _, err := ensureGitignore(repo); err != nil {
-		t.Fatal(err)
-	}
-	gi, err := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	if err != nil {
-		t.Fatal(err)
-	}
+// When .satelle/ itself is not ignored (the operator negates part of it), the
+// needed set carries the machine-local agents file.
+func TestGitignoreNeededIgnoresLocalAgents(t *testing.T) {
+	need := gitignoreNeeded("!.satelle/workflows/agents.toml\n", t.TempDir())
 	var found bool
-	for _, line := range strings.Split(string(gi), "\n") {
+	for _, line := range need {
 		found = found || line == ".satelle/workflows/agents.local.toml"
 	}
 	if !found {
-		t.Errorf("managed .gitignore block must ignore .satelle/workflows/agents.local.toml:\n%s", gi)
+		t.Errorf("needed set must ignore .satelle/workflows/agents.local.toml when .satelle/ is not ignored: %v", need)
 	}
 }

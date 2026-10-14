@@ -139,11 +139,16 @@ func TestMigrateConvergesLegacyFixture(t *testing.T) {
 		t.Fatal("agents.toml.bak must survive migrate — it is the operator's backup, not runtime residue")
 	}
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	if strings.Contains(string(gi), ".satelle/satelle.db") {
-		t.Errorf("gitignore still ignores .satelle/satelle.db:\n%s", gi)
+	// Add-only (sty_dbc0be85): the operator's existing lines stay as written.
+	if !strings.Contains(string(gi), ".satelle/satelle.db\n") {
+		t.Errorf("gitignore converge must not remove an existing line:\n%s", gi)
 	}
 	if !strings.Contains(string(gi), ".satelle/satelle.local.toml") {
-		t.Errorf("gitignore missing current local.toml entry:\n%s", gi)
+		t.Errorf("gitignore missing needed local.toml entry:\n%s", gi)
+	}
+	if !strings.Contains(apply.String(), "added missing .gitignore entries: ") ||
+		!strings.Contains(apply.String(), ".satelle/satelle.local.toml") {
+		t.Errorf("migrate must name the entries it added:\n%s", apply.String())
 	}
 	if !strings.Contains(apply.String(), "migrate complete") {
 		t.Errorf("expected complete line:\n%s", apply.String())
@@ -165,29 +170,68 @@ func TestMigrateConvergesLegacyFixture(t *testing.T) {
 	}
 }
 
-func TestConvergeGitignoreRewritesManagedBlock(t *testing.T) {
-	// sty_87c8a69c: content between markers becomes current; outside preserved.
-	in := "node_modules/\n# >>> satelle (managed) >>>\n.satelle/satelle.db\n# <<< satelle (managed) <<<\n# keep me\n"
-	out, changed := convergeGitignore(in)
-	if !changed {
-		t.Fatal("expected change")
+// TestConvergeGitignoreLeavesSettledFileUntouched (sty_dbc0be85 AC1): a file
+// that already holds every entry satelle needs is not changed, whatever the
+// wording of an existing managed block or whether it has one at all.
+func TestConvergeGitignoreLeavesSettledFileUntouched(t *testing.T) {
+	settled := ".satelle/\nsty_*_body.md\nsty_*_ac.md\n"
+	for name, in := range map[string]string{
+		"older-wording block": "node_modules/\n# >>> satelle (managed) >>>\n# another header\n" + settled + ".satelle/satelle.db\n# <<< satelle (managed) <<<\n# keep me\n",
+		"current block":       "# >>> satelle (managed) >>>\n" + settled + "# <<< satelle (managed) <<<\n",
+		"operator only":       "node_modules/\n" + settled,
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, added, changed := convergeGitignore(in, t.TempDir())
+			if changed || len(added) != 0 || out != in {
+				t.Errorf("settled file changed=%v added=%v:\n%s", changed, added, out)
+			}
+		})
 	}
-	if !strings.Contains(out, "node_modules/") {
-		t.Error("lost content before markers")
-	}
-	if !strings.Contains(out, "# keep me") {
-		t.Error("lost content after markers")
-	}
-	if strings.Contains(out, ".satelle/satelle.db") {
-		t.Error("stale .satelle/satelle.db ignore should be gone")
-	}
-	if !strings.Contains(out, ".satelle/satelle.local.toml") {
-		t.Error("current block missing local.toml")
-	}
-	// Already current → no change.
-	_, changed2 := convergeGitignore(out)
-	if changed2 {
-		t.Error("converged body should be stable")
+}
+
+// TestConvergeGitignoreAddsOnlyMissing (sty_dbc0be85 AC5): a file missing
+// entries gains exactly those lines; every original line keeps its content and
+// order, for each of the three insertion shapes.
+func TestConvergeGitignoreAddsOnlyMissing(t *testing.T) {
+	for name, tc := range map[string]struct {
+		in        string
+		inBlock   bool
+		wantAdded []string
+	}{
+		"no markers":        {in: "node_modules/\n.satelle/\n", wantAdded: []string{"sty_*_body.md", "sty_*_ac.md"}},
+		"inside the block":  {in: "foo/\n# >>> satelle (managed) >>>\n.satelle/\n# <<< satelle (managed) <<<\nbar/\n", inBlock: true, wantAdded: []string{"sty_*_body.md", "sty_*_ac.md"}},
+		"start marker only": {in: "foo/\n# >>> satelle (managed) >>>\n.satelle/", wantAdded: []string{"sty_*_body.md", "sty_*_ac.md"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, added, changed := convergeGitignore(tc.in, t.TempDir())
+			if !changed || strings.Join(added, ",") != strings.Join(tc.wantAdded, ",") {
+				t.Fatalf("changed=%v added=%v, want %v", changed, added, tc.wantAdded)
+			}
+			// Every original line survives, in order.
+			rest := out
+			for _, l := range strings.Split(strings.TrimSuffix(tc.in, "\n"), "\n") {
+				i := strings.Index(rest, l)
+				if i < 0 {
+					t.Fatalf("original line %q lost or reordered:\n%s", l, out)
+				}
+				rest = rest[i+len(l):]
+			}
+			for _, a := range tc.wantAdded {
+				if !strings.Contains(out, a+"\n") {
+					t.Errorf("added line %q missing:\n%s", a, out)
+				}
+			}
+			if tc.inBlock && strings.Index(out, "sty_*_body.md") > strings.Index(out, gitignoreMarkerEnd) {
+				t.Errorf("lines must land before the end marker:\n%s", out)
+			}
+			if strings.Count(out, gitignoreMarker) != 1 {
+				t.Errorf("exactly one managed block expected:\n%s", out)
+			}
+			// Second pass: nothing left to add.
+			if _, _, again := convergeGitignore(out, t.TempDir()); again {
+				t.Errorf("second pass should change nothing:\n%s", out)
+			}
+		})
 	}
 }
 
@@ -198,24 +242,28 @@ func TestEnsureGitignoreConvergesStaleBlock(t *testing.T) {
 	if err := os.WriteFile(giPath, []byte(stale), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	changed, err := ensureGitignore(repo)
-	if err != nil || !changed {
-		t.Fatalf("converge: changed=%v err=%v", changed, err)
+	added, err := ensureGitignore(repo)
+	if err != nil || len(added) == 0 {
+		t.Fatalf("converge: added=%v err=%v", added, err)
 	}
 	got, _ := os.ReadFile(giPath)
 	s := string(got)
 	if !strings.Contains(s, "foo/") || !strings.Contains(s, "bar/") {
 		t.Errorf("outside content lost:\n%s", s)
 	}
-	if strings.Contains(s, ".satelle/logs/") {
-		t.Errorf("stale trailing-slash logs entry remains:\n%s", s)
+	// Add-only: the operator's .satelle/logs/ rule stays as written and counts
+	// as the logs entry, so no second logs line appears.
+	if !strings.Contains(s, ".satelle/logs/\n") || strings.Contains(s, ".satelle/logs\n") {
+		t.Errorf("existing logs rule must be kept as written and not duplicated:\n%s", s)
 	}
-	if !strings.Contains(s, ".satelle/logs\n") && !strings.Contains(s, ".satelle/logs\r") {
-		t.Errorf("pointer entry .satelle/logs must be kept:\n%s", s)
+	for _, want := range []string{".satelle/satelle.local.toml", ".satelle/workflows/agents.local.toml", ".satelle/satelle"} {
+		if !strings.Contains(s, want+"\n") {
+			t.Errorf("missing needed line %q:\n%s", want, s)
+		}
 	}
-	changed2, _ := ensureGitignore(repo)
-	if changed2 {
-		t.Error("second ensure should be no-op")
+	added2, _ := ensureGitignore(repo)
+	if len(added2) != 0 {
+		t.Errorf("second ensure should be no-op, added %v", added2)
 	}
 }
 

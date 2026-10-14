@@ -1,7 +1,7 @@
 // `satelle migrate` — one deterministic verb converging a repo to the current
 // substrate-planes structure (sty_a3915840 / epic:substrate-planes). Composes
 // existing mechanism: home-keyed runtime relocation, legacy residue removal,
-// unedited-seed prune, gitignore managed-block convergence, then deployment
+// unedited-seed prune, add-only gitignore convergence, then deployment
 // validation. Dry-run by default; --yes applies.
 package cli
 
@@ -43,7 +43,7 @@ func init() {
                             migrate's scan roots (e.g. next to the machine-wide
                             catalog, or a path you control)
   3. substrate prune      — remove unedited embedded-default seed copies
-  4. gitignore converge   — rewrite the managed .gitignore block to the current form
+  4. gitignore converge   — add any missing satelle entries; never rewrite existing lines
   5. config converge      — append missing managed entries to non-empty
                             [gate] edit_exempt_paths / edit_exempt_globs
                             (operator additions kept; empty untouched)
@@ -99,7 +99,7 @@ type migratePlan struct {
 	RuntimeRelocate bool     // need runtime migrate (legacy DB present, home not yet)
 	Residue         []string // dataDir-relative paths/globs to remove
 	PruneSeeds      []string // dataDir-relative unedited seed paths
-	Gitignore       bool     // managed block needs converge
+	Gitignore       bool     // satelle entries missing from .gitignore
 	// ExemptManaged lists path prefixes still missing from [gate]
 	// edit_exempt_paths (footprint + draft prefixes). An absent key
 	// materialises the seed set; empty list is a deliberate opt-out.
@@ -670,7 +670,7 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 		}
 	}
 	if plan.Gitignore {
-		fmt.Fprintln(out, "  gitignore:        converge managed block")
+		fmt.Fprintln(out, "  gitignore:        add missing satelle entries")
 	} else {
 		fmt.Fprintln(out, "  gitignore:        (already current)")
 	}
@@ -812,12 +812,12 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 
 	if plan.Gitignore {
 		fmt.Fprintln(out, "\n→ gitignore converge")
-		changed, err := ensureGitignore(repoRoot)
+		added, err := ensureGitignore(repoRoot)
 		if err != nil {
 			return fmt.Errorf("migrate: gitignore: %w", err)
 		}
-		if changed {
-			fmt.Fprintln(out, "  updated .gitignore managed block")
+		if len(added) > 0 {
+			fmt.Fprintln(out, "  added missing .gitignore entries: "+strings.Join(added, ", "))
 		} else {
 			fmt.Fprintln(out, "  .gitignore already current")
 		}

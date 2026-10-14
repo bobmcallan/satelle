@@ -272,13 +272,13 @@ func (tc tidyContext) eligible(p string) (abs, rel, reason string) {
 	if first := strings.SplitN(rel, string(filepath.Separator), 2)[0]; first == ".git" {
 		return "", "", "outside worktree (inside .git)"
 	}
-	if gitListed(tc.worktree, "ls-files", "--", rel) {
+	if GitListed(tc.worktree, "ls-files", "--", rel) {
 		return "", "", "tracked"
 	}
-	if gitListed(tc.worktree, "ls-tree", "-r", "--name-only", "HEAD", "--", rel) {
+	if GitListed(tc.worktree, "ls-tree", "-r", "--name-only", "HEAD", "--", rel) {
 		return "", "", "exists in HEAD"
 	}
-	if tc.baseHead != "" && gitListed(tc.worktree, "ls-tree", "-r", "--name-only", tc.baseHead, "--", rel) {
+	if tc.baseHead != "" && GitListed(tc.worktree, "ls-tree", "-r", "--name-only", tc.baseHead, "--", rel) {
 		return "", "", "exists in HEAD (engagement baseline)"
 	}
 	old := ""
@@ -298,9 +298,10 @@ func (tc tidyContext) eligible(p string) (abs, rel, reason string) {
 	return abs, rel, ""
 }
 
-// gitListed reports whether a git listing command names anything for its
-// pathspec. A git error (e.g. no commits yet) counts as "names nothing".
-func gitListed(worktree string, args ...string) bool {
+// GitListed reports whether a git listing command names anything for its
+// pathspec. A git error (e.g. no commits yet, or not a git repo) counts as
+// "names nothing".
+func GitListed(worktree string, args ...string) bool {
 	cmd := exec.Command("git", append([]string{"-C", worktree}, args...)...)
 	out, err := cmd.Output()
 	return err == nil && len(strings.TrimSpace(string(out))) > 0

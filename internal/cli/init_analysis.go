@@ -141,16 +141,6 @@ func defaultEditExemptGlobsTOML() string {
 	return "[" + strings.Join(quoted, ", ") + "]"
 }
 
-func managedEditExemptGitignore() string {
-	var b strings.Builder
-	b.WriteString("# agent story-reference dumps (edit-gate exempt via [gate] edit_exempt_globs)\n")
-	for _, g := range managedEditExemptGlobs {
-		b.WriteString(g)
-		b.WriteByte('\n')
-	}
-	return b.String()
-}
-
 // analyzeSubstrate gathers placement + constitution-author + config-reconciliation
 // defects for dataDir/repoRoot. Pure over the filesystem; store-free.
 func analyzeSubstrate(dataDir, repoRoot string) []substrateDefect {
