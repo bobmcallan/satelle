@@ -2,7 +2,8 @@
 // (sty_30696eeb). serve, doctor, and the mirror UI all read/write it without
 // crossing the serve→cli/hosted fences.
 //
-// Three field groups share one file. Each writer re-loads and merges only its
+// Four field groups share one file (push, snapshot, substrate areas, and the
+// substrate refresh attempt stamp). Each writer re-loads and merges only its
 // own group (satelled and `satelle sync` are separate processes). A torn read
 // is "no state", never a parse error that fails doctor.
 package syncstate
@@ -41,6 +42,11 @@ type State struct {
 	// operation having succeeded. Which paths are unmerged is NOT kept here: the
 	// area's synced base owns that.
 	SubstrateAreas map[string]SubstrateArea `json:"substrate_areas,omitempty"`
+
+	// SubstrateCheckedAttempt is when a session start last started a detached
+	// `satelle sync status` to refresh SubstrateAreas. It only debounces that
+	// refresh; it says nothing about the areas' state.
+	SubstrateCheckedAttempt time.Time `json:"substrate_checked_attempt,omitempty"`
 }
 
 // SubstrateArea is one area's recorded state and when it was verified.
@@ -129,6 +135,12 @@ func RecordSubstrate(globalDir, repoPath string, areas map[string]string, now ti
 			s.SubstrateAreas[area] = SubstrateArea{State: state, CheckedAt: now}
 		}
 	})
+}
+
+// MarkSubstrateAttempt stamps now as the last start of a substrate refresh,
+// leaving every other field as it was.
+func MarkSubstrateAttempt(globalDir, repoPath string, now time.Time) error {
+	return record(globalDir, repoPath, "", func(s *State) { s.SubstrateCheckedAttempt = now })
 }
 
 func record(globalDir, repoPath, scope string, merge func(*State)) error {

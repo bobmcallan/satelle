@@ -205,7 +205,9 @@ func TestHookContextSubstrateAdvisoryDriftedAndInStep(t *testing.T) {
 		t.Fatal("SessionStart context was not emitted")
 	}
 	lines := advisoryLines(content)
-	if len(lines) != 1 || !strings.Contains(lines[0], "skills unpushed") || !strings.Contains(lines[0], "satelle sync status") || !strings.Contains(lines[0], "unverified (offline/unbound)") {
+	// The record is fresh, so the line is not marked unverified, and the one
+	// drifted area names the command that brings it in step.
+	if len(lines) != 1 || !strings.Contains(lines[0], "skills unpushed") || !strings.Contains(lines[0], "run `satelle sync push`") || strings.Contains(lines[0], "unverified") {
 		t.Fatalf("drifted SessionStart advisory = %v\n%s", lines, content)
 	}
 	if !strings.Contains(content, "CONSTITUTION-MARKER-sty_507d3d9c") {
