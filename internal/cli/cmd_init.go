@@ -236,6 +236,11 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 		if serr != nil {
 			return fmt.Errorf("init: seed [sync] stale_after: %w", serr)
 		}
+		holdStaleChanged, herr2 := healHoldStaleAfter(dataDir)
+		if herr2 != nil {
+			return fmt.Errorf("init: seed [sync] hold_stale_after: %w", herr2)
+		}
+		staleChanged = staleChanged || holdStaleChanged
 		fixLaneChanged, ferr := healFixLane(dataDir)
 		if ferr != nil {
 			return fmt.Errorf("init: seed [fix_lane]: %w", ferr)
@@ -245,11 +250,11 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 		}
 		switch {
 		case hostedChanged && staleChanged:
-			fmt.Fprintf(out, "~ %s ([hosted] folded into [sync]; stale_after seeded)\n", config.DefaultDataDir+"/"+config.ConfigName)
+			fmt.Fprintf(out, "~ %s ([hosted] folded into [sync]; [sync] keys seeded)\n", config.DefaultDataDir+"/"+config.ConfigName)
 		case hostedChanged:
 			fmt.Fprintf(out, "~ %s ([hosted] folded into [sync])\n", config.DefaultDataDir+"/"+config.ConfigName)
 		case staleChanged:
-			fmt.Fprintf(out, "~ %s ([sync] stale_after seeded)\n", config.DefaultDataDir+"/"+config.ConfigName)
+			fmt.Fprintf(out, "~ %s ([sync] keys seeded)\n", config.DefaultDataDir+"/"+config.ConfigName)
 		default:
 			fmt.Fprintln(out, initLine(false, config.DefaultDataDir+"/"+config.ConfigName))
 		}
@@ -1850,12 +1855,15 @@ const scaffoldTomlAfterExempt = `
 # choice — satelle does not require it. Git is for the application repo.
 # Areas: documents, workflows, principles, skills, constitution, agents, tasks,
 # settings (satelle.toml, including [sync]), stories, ledger, executions.
-# Reserved keys: 'all' (blanket default), server, project, workspace, stale_after.
+# Reserved keys: 'all' (blanket default), server, project, workspace, stale_after,
+# hold_stale_after (how long another location's hold on a story may go unseen
+# before the holder is presumed dead; stale_after judges the local mirror instead).
 # Unset server = https://satelle.dev. Unset project = this repo's directory name.
 # satelle login records the machine-wide server; satelle project bind <slug>
 # writes [sync] project when the directory name is not the slug you want.
 [sync]
 stale_after = "24h"
+hold_stale_after = "2h"
 # >>> satelle-example: enable sync (uncomment to opt in)
 # [sync]
 # all = "personal"               # every area personal unless overridden below

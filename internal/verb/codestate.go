@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -56,6 +57,26 @@ type WorkState struct {
 	// BaselineTree is the working tree the story was first engaged from ("" when
 	// no baseline records one).
 	BaselineTree string
+	// BaselineHead is the commit the story was first engaged at ("" when no
+	// baseline records one).
+	BaselineHead string
+}
+
+// Started is true when work began on the story: it is in an executor state, or
+// the ledger records it leaving one.
+func (w WorkState) Started() bool { return w.InFlight || w.LeftWork }
+
+// ClaimedHeads are the commits the story's ledger says exist: the one it was
+// engaged at and the one its work ended at, without blanks or repeats. Whether
+// they are reachable is for git to say (sty_6e5fc41c).
+func (w WorkState) ClaimedHeads() []string {
+	var heads []string
+	for _, h := range []string{w.BaselineHead, w.PostWorkHead} {
+		if h != "" && !slices.Contains(heads, h) {
+			heads = append(heads, h)
+		}
+	}
+	return heads
 }
 
 // StoryWorkState walks item's governing route and ledger. A story whose route
@@ -117,6 +138,7 @@ func StoryWorkState(ctx context.Context, item workitem.Item) (WorkState, error) 
 	}
 	if base, _, _, berr := firstEngagementBaseline(ctx, item.ID); berr == nil {
 		ws.BaselineTree = base.Worktree
+		ws.BaselineHead = base.HeadSHA
 	}
 	return ws, nil
 }

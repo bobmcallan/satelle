@@ -9,11 +9,11 @@ func TestHoldRegistryRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	DocumentSyncStatePathOverride = filepath.Join(dir, "document-sync-state.json")
 	t.Cleanup(func() { DocumentSyncStatePathOverride = "" })
-	if err := RecordHold("https://s.example", "p", "/repo", "sty_a", "loc_self"); err != nil {
+	if err := RecordHold("https://s.example", "p", "/repo", "sty_a", HoldRecord{Location: "loc_self"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := LoadHolds("https://s.example", "p", "/repo")
-	if err != nil || got["sty_a"] != "loc_self" {
+	if err != nil || got["sty_a"].Location != "loc_self" {
 		t.Fatalf("load = %v %v", got, err)
 	}
 	if err := ForgetHold("https://s.example", "p", "/repo", "sty_a"); err != nil {

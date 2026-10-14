@@ -109,11 +109,12 @@ func TestTakeoverOutputNamesPrevious(t *testing.T) {
 	seedCred(t, ts.URL)
 	workstateRepo(t, "[hosted]\nproject = \"probe\"\n")
 
-	cmd, buf := testCmd()
-	if err := runStoryHoldTakeover(cmd, ts.URL, "sty_h"); err != nil {
+	// The checks have their own tests (cmd_story_hold_takeover_test.go); this one
+	// is about what the moved hold prints, so it overrides them.
+	out, err := runRoot(t, "story", "hold", "takeover", "sty_h", "--server", ts.URL, "--force", "--reason", "output test")
+	if err != nil {
 		t.Fatal(err)
 	}
-	out := buf.String()
 	if !strings.Contains(out, "loc_prev_cccccccc") || !strings.Contains(out, "last seen") {
 		t.Fatalf("takeover output = %q", out)
 	}
@@ -141,11 +142,11 @@ func TestTakeoverOutputServerOnly(t *testing.T) {
 	seedCred(t, ts.URL)
 	workstateRepo(t, "[hosted]\nproject = \"probe\"\n")
 
-	cmd, buf := testCmd()
-	if err := runStoryHoldTakeover(cmd, ts.URL, "sty_h"); err != nil {
+	out, err := runRoot(t, "story", "hold", "takeover", "sty_h", "--server", ts.URL, "--force", "--reason", "output test")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(buf.String(), "unheld") {
-		t.Fatalf("unheld takeover = %q", buf.String())
+	if !strings.Contains(out, "unheld") {
+		t.Fatalf("unheld takeover = %q", out)
 	}
 }

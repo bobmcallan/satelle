@@ -2436,10 +2436,12 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 			return nil
 		}
 	}
-	// The release line rides in model context AND, through the harness's own
-	// user channel, to the user (agentcli.SessionContextOutput below).
-	releaseLine := releaseAdvisoryFor(a)
-	content, omitted := assembleSessionContext(a, harness, limit, unit, releaseLine)
+	// The release line and the story-sync line (conflicts and holds recorded by
+	// the last work-state passes) ride in model context AND, through the
+	// harness's own user channel, to the user (agentcli.SessionContextOutput
+	// below) — one notice, the lines joined, neither put in the other's place.
+	notice := joinAdvisoryLines(releaseAdvisoryFor(a), storySyncAdvisoryFor(a))
+	content, omitted := assembleSessionContext(a, harness, limit, unit, notice)
 	if len(omitted) > 0 {
 		fmt.Fprintf(stderr,
 			"satelle hook context: %s exceeded the %s harness limit (%d %s) — indexed with a read instruction: %s\n",
@@ -2448,7 +2450,7 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 	if strings.TrimSpace(content) == "" {
 		return nil
 	}
-	fmt.Fprintln(out, string(agentcli.SessionContextOutput(harness, emitEvent, content, releaseLine)))
+	fmt.Fprintln(out, string(agentcli.SessionContextOutput(harness, emitEvent, content, notice)))
 	// The marker is written only after a channel-matching emit of non-empty
 	// additionalContext. A non-matching event (including SessionStart when the
 	// channel is elsewhere) writes nothing. Marker errors are swallowed.

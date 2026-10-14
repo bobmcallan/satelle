@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -16,6 +17,12 @@ type HoldInfo struct {
 	HolderLabel   string
 	LastSeen      string
 	HeldElsewhere bool
+	// PresumedDead and Age are the claimer's judgement of the holder's silence
+	// (hosted.HoldPresumedDead against [sync] hold_stale_after), made where the
+	// time is parsed so verb never reads one. Age is zero when last-seen is
+	// unknown.
+	PresumedDead bool
+	Age          time.Duration
 }
 
 // ErrHoldPending is returned by a claimer that could not place the hold — the
@@ -75,6 +82,19 @@ func refuseHeldElsewhere(ctx context.Context, current workitem.Item) error {
 	if label != "" {
 		label = " (" + label + ")"
 	}
-	return fmt.Errorf("%s is held by location %s%s%s — satelle story hold takeover %s",
-		current.ID, info.Holder, label, seen, current.ID)
+	return fmt.Errorf("%s is held by location %s%s%s — %s; satelle story hold takeover %s",
+		current.ID, info.Holder, label, seen, holderLiveness(info), current.ID)
+}
+
+// holderLiveness says whether the holder still looks alive, from the claimer's
+// judgement: the refusal is the same either way, but a live holder is to be
+// asked to release, and one presumed dead can be taken over.
+func holderLiveness(info HoldInfo) string {
+	if info.PresumedDead {
+		return fmt.Sprintf("holder presumed dead (no sign for %s)", info.Age.Round(time.Minute))
+	}
+	if info.LastSeen == "" {
+		return "holder liveness unknown"
+	}
+	return "holder live"
 }

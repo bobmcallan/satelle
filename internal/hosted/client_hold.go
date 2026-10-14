@@ -251,6 +251,24 @@ func logTime(e map[string]any) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// HoldPresumedDead is the one judgement of whether a holder has gone quiet: its
+// last-seen is older than staleAfter at now. age is how long ago it was seen.
+// A last-seen that is empty or does not parse says nothing, so the holder is not
+// presumed dead (dead false, age 0) — an advisory is never made from a time it
+// cannot read.
+func HoldPresumedDead(lastSeen string, staleAfter time.Duration, now time.Time) (dead bool, age time.Duration) {
+	s := strings.TrimSpace(lastSeen)
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return false, 0
+	}
+	age = now.Sub(t.UTC()).Truncate(time.Second)
+	if age < 0 {
+		age = 0
+	}
+	return staleAfter > 0 && age > staleAfter, age
+}
+
 // FormatLastSeen renders an RFC3339 timestamp plus relative age.
 func FormatLastSeen(rfc3339 string) string {
 	s := strings.TrimSpace(rfc3339)

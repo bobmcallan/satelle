@@ -400,6 +400,56 @@ func TestHealStaleAfterSeedsMissingKey(t *testing.T) {
 	}
 }
 
+// AC7 (sty_6e5fc41c): init and migrate seed [sync] hold_stale_after = "2h" when
+// the key is absent, and leave a set value alone.
+func TestHealHoldStaleAfterSeedsMissingKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "satelle.toml")
+	if err := os.WriteFile(path, []byte("[review]\ngate_create = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := healHoldStaleAfter(dir)
+	if err != nil || !changed {
+		t.Fatalf("expected heal to insert hold_stale_after: changed=%v err=%v", changed, err)
+	}
+	got, _ := os.ReadFile(path)
+	if !strings.Contains(string(got), `hold_stale_after = "2h"`) {
+		t.Fatalf("missing hold_stale_after:\n%s", got)
+	}
+	if changed, err = healHoldStaleAfter(dir); err != nil || changed {
+		t.Fatalf("second heal must not change: changed=%v err=%v", changed, err)
+	}
+	if !strings.Contains(scaffoldToml, `hold_stale_after = "2h"`) {
+		t.Error("a fresh init scaffold must seed hold_stale_after")
+	}
+
+	setPath := filepath.Join(t.TempDir(), "satelle.toml")
+	if err := os.WriteFile(setPath, []byte("[sync]\nhold_stale_after = \"30m\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err = healHoldStaleAfter(filepath.Dir(setPath)); err != nil || changed {
+		t.Fatalf("a set value must be left alone: changed=%v err=%v", changed, err)
+	}
+	if got, _ = os.ReadFile(setPath); !strings.Contains(string(got), `"30m"`) || strings.Contains(string(got), `"2h"`) {
+		t.Fatalf("set value was clobbered:\n%s", got)
+	}
+}
+
+func TestPlanMigrateIncludesMissingHoldStaleAfter(t *testing.T) {
+	testutil.IsolateHome(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "satelle.toml"), []byte("[sync]\nstale_after = \"24h\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := planMigrate(config.Config{}, t.TempDir(), dir)
+	if !p.HoldStaleAfter || p.StaleAfter {
+		t.Fatalf("plan = StaleAfter %v HoldStaleAfter %v; want only hold_stale_after missing", p.StaleAfter, p.HoldStaleAfter)
+	}
+	if p.empty() {
+		t.Fatal("plan must not be empty when hold_stale_after is missing")
+	}
+}
+
 func TestPlanMigrateIncludesMissingStaleAfter(t *testing.T) {
 	testutil.IsolateHome(t)
 	dir := t.TempDir()

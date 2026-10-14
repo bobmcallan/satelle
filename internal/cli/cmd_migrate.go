@@ -117,6 +117,8 @@ type migratePlan struct {
 	HostedTableDrop bool
 	// StaleAfter is true when [sync] stale_after is absent (sty_30696eeb).
 	StaleAfter bool
+	// HoldStaleAfter is true when [sync] hold_stale_after is absent (sty_6e5fc41c).
+	HoldStaleAfter bool
 	// WorkflowRetire lists DOT workflow files superseded by an authored,
 	// PARSEABLE done.toml + step.toml (sty_9835070d). Actionable work: migrate
 	// removes them.
@@ -267,7 +269,8 @@ func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
 	p.ExemptGlobsManaged = editExemptGlobsManagedMissing(dataDir)
 	p.HostedToSync = hostedBindingMissingOnSync(dataDir)
 	p.HostedTableDrop = hasHostedTable(dataDir)
-	p.StaleAfter = staleAfterMissing(dataDir)
+	p.StaleAfter = syncKeyMissing(dataDir, "stale_after")
+	p.HoldStaleAfter = syncKeyMissing(dataDir, "hold_stale_after")
 	p.WorkflowRetire, p.WorkflowConvertPending = workflowConversionState(dataDir)
 	p.RetiredRefs = planRetiredRefs(dataDir)
 	p.MachineStrays = config.MachineScopeStrays(dataDir)
@@ -603,7 +606,7 @@ func printConversionPending(out io.Writer, pending []string) {
 
 func (p migratePlan) empty() bool {
 	return !p.RuntimeRelocate && len(p.Residue) == 0 && len(p.PruneSeeds) == 0 &&
-		!p.Gitignore && len(p.ExemptManaged) == 0 && len(p.ExemptGlobsManaged) == 0 && len(p.HostedToSync) == 0 && !p.HostedTableDrop && !p.StaleAfter && len(p.WorkflowRetire) == 0 &&
+		!p.Gitignore && len(p.ExemptManaged) == 0 && len(p.ExemptGlobsManaged) == 0 && len(p.HostedToSync) == 0 && !p.HostedTableDrop && !p.StaleAfter && !p.HoldStaleAfter && len(p.WorkflowRetire) == 0 &&
 		len(p.StampRewrite) == 0 && len(p.RetiredRefs) == 0 && len(p.MachineStrays) == 0
 }
 
@@ -694,6 +697,9 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 	}
 	if plan.StaleAfter {
 		fmt.Fprintln(out, "  config:           seed [sync] stale_after = \"24h\"")
+	}
+	if plan.HoldStaleAfter {
+		fmt.Fprintln(out, "  config:           seed [sync] hold_stale_after = \"2h\"")
 	}
 	if len(plan.WorkflowRetire) == 0 {
 		fmt.Fprintln(out, "  workflows:        (none superseded)")
@@ -853,7 +859,7 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 		}
 	}
 
-	if len(plan.ExemptManaged) > 0 || len(plan.ExemptGlobsManaged) > 0 || len(plan.HostedToSync) > 0 || plan.HostedTableDrop || plan.StaleAfter {
+	if len(plan.ExemptManaged) > 0 || len(plan.ExemptGlobsManaged) > 0 || len(plan.HostedToSync) > 0 || plan.HostedTableDrop || plan.StaleAfter || plan.HoldStaleAfter {
 		fmt.Fprintln(out, "\n→ config converge")
 		if len(plan.ExemptManaged) > 0 {
 			changed, err := ensureEditExemptManaged(dataDir)
@@ -894,6 +900,11 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 		return fmt.Errorf("migrate: [sync] stale_after: %w", err)
 	} else if changed {
 		fmt.Fprintln(out, "  seeded [sync] stale_after = \"24h\"")
+	}
+	if changed, err := healHoldStaleAfter(dataDir); err != nil {
+		return fmt.Errorf("migrate: [sync] hold_stale_after: %w", err)
+	} else if changed {
+		fmt.Fprintln(out, "  seeded [sync] hold_stale_after = \"2h\"")
 	}
 
 	if len(plan.MachineStrays) > 0 {
@@ -1110,18 +1121,30 @@ func healHostedBinding(dataDir string) (bool, error) {
 	return true, nil
 }
 
-func staleAfterMissing(dataDir string) bool {
+func syncKeyMissing(dataDir, key string) bool {
 	path := filepath.Join(dataDir, config.ConfigName)
 	cfg, _, err := config.Load(path)
 	if err != nil {
 		return false
 	}
-	return strings.TrimSpace(cfg.Sync["stale_after"]) == ""
+	return strings.TrimSpace(cfg.Sync[key]) == ""
 }
 
 // healStaleAfter writes [sync] stale_after = "24h" when the key is absent
 // (sty_30696eeb). An already-set value is not clobbered.
 func healStaleAfter(dataDir string) (bool, error) {
+	return healSyncKey(dataDir, "stale_after", "24h")
+}
+
+// healHoldStaleAfter writes [sync] hold_stale_after = "2h" when the key is
+// absent (sty_6e5fc41c), so the silence after which a holder is presumed dead
+// is visible in configuration. An already-set value is not clobbered.
+func healHoldStaleAfter(dataDir string) (bool, error) {
+	return healSyncKey(dataDir, "hold_stale_after", "2h")
+}
+
+// healSyncKey writes [sync] key = value when the key is absent.
+func healSyncKey(dataDir, key, value string) (bool, error) {
 	path := filepath.Join(dataDir, config.ConfigName)
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -1134,10 +1157,10 @@ func healStaleAfter(dataDir string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if strings.TrimSpace(cfg.Sync["stale_after"]) != "" {
+	if strings.TrimSpace(cfg.Sync[key]) != "" {
 		return false, nil
 	}
-	content := config.UpsertKey(string(raw), "sync", "stale_after", strconv.Quote("24h"))
+	content := config.UpsertKey(string(raw), "sync", key, strconv.Quote(value))
 	if content == string(raw) {
 		return false, nil
 	}

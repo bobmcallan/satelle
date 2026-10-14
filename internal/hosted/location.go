@@ -197,6 +197,22 @@ func LocationID(repoRoot string) (string, error) {
 	return id, nil
 }
 
+// KnownLocationID is LocationID without the side effects: the persisted id for
+// repoRoot, or "" when none is stored or it cannot be read. It never derives or
+// writes one, so a session-start read leaves no state behind.
+func KnownLocationID(repoRoot string) string {
+	locationMu.Lock()
+	defer locationMu.Unlock()
+	state, err := loadLocationState()
+	if err != nil {
+		return ""
+	}
+	if e, ok := state.Locations[locationRepoKey(repoRoot)]; ok && ValidLocationID(e.ID) {
+		return e.ID
+	}
+	return ""
+}
+
 // LocationRegistered reports whether repoRoot's id has been registered on server.
 func LocationRegistered(repoRoot, server string) bool {
 	locationMu.Lock()

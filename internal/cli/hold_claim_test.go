@@ -40,6 +40,7 @@ type fakeHoldServer struct {
 	log       map[string][]map[string]any
 	down      bool
 	checkouts []string // "<id>@<location>"
+	takeovers []string // "<id>@<location>"
 	releases  []string
 }
 
@@ -60,6 +61,20 @@ func (h *fakeHoldServer) setHolder(id, loc, label string) {
 	defer h.mu.Unlock()
 	h.known[id] = true
 	h.holders[id] = hosted.HoldState{LocationID: loc, Label: label, LastSeenAt: otherSeen}
+}
+
+// setHolderSeen is setHolder with the last-seen the test reasons about.
+func (h *fakeHoldServer) setHolderSeen(id, loc, label, seen string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.known[id] = true
+	h.holders[id] = hosted.HoldState{LocationID: loc, Label: label, LastSeenAt: seen}
+}
+
+func (h *fakeHoldServer) takeoverIDs() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.takeovers)
 }
 
 func (h *fakeHoldServer) setDown(down bool) {
@@ -131,6 +146,22 @@ func (h *fakeHoldServer) routes(mux *http.ServeMux, f *fakeWorkstateServer) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": "held", "hold": cur})
 			return
 		}
+		now := hosted.HoldState{LocationID: in.LocationID, Label: "box", LastSeenAt: time.Now().UTC().Format(time.RFC3339)}
+		h.holders[id] = now
+		_ = json.NewEncoder(w).Encode(now)
+	})
+	mux.HandleFunc("POST "+item+"/takeover", func(w http.ResponseWriter, r *http.Request) {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if !gate(w, r) {
+			return
+		}
+		id := r.PathValue("id")
+		var in struct {
+			LocationID string `json:"location_id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		h.takeovers = append(h.takeovers, id+"@"+in.LocationID)
 		now := hosted.HoldState{LocationID: in.LocationID, Label: "box", LastSeenAt: time.Now().UTC().Format(time.RFC3339)}
 		h.holders[id] = now
 		_ = json.NewEncoder(w).Encode(now)
@@ -242,7 +273,7 @@ func (fx *holdFixture) heldHere(t *testing.T, id string) bool {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return reg[id] == fx.loc
+	return reg[id].Location == fx.loc
 }
 
 // AC1: an unheld story is checked out before the engage takes its lease; one
@@ -572,7 +603,7 @@ func TestPushRefreshesTheHoldOfAHeldBackStory(t *testing.T) {
 	hs.known[w.dirty] = true
 	hs.holders[w.dirty] = hosted.HoldState{LocationID: loc, Label: "box", LastSeenAt: otherSeen}
 	hs.mu.Unlock()
-	if err := hosted.RecordHold(w.url, "probe", w.repo, w.dirty, loc); err != nil {
+	if err := hosted.RecordHold(w.url, "probe", w.repo, w.dirty, hosted.HoldRecord{Location: loc}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -602,7 +633,7 @@ func TestPushReleasesTheHoldOfAPublishedStoryAtRest(t *testing.T) {
 	putInState(t, parked, "blocked", "", "", false)
 	for _, id := range []string{finished, parked, w.dirty} {
 		hs.setHolder(id, loc, "box")
-		if err := hosted.RecordHold(w.url, "probe", w.repo, id, loc); err != nil {
+		if err := hosted.RecordHold(w.url, "probe", w.repo, id, hosted.HoldRecord{Location: loc}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -621,7 +652,7 @@ func TestPushReleasesTheHoldOfAPublishedStoryAtRest(t *testing.T) {
 	if _, ok := reg[finished]; ok {
 		t.Error("a released story is still in the local registry")
 	}
-	if reg[w.dirty] != loc {
+	if reg[w.dirty].Location != loc {
 		t.Error("the held-back story's registry entry was dropped")
 	}
 	if hs.holder(w.dirty).LocationID != loc {

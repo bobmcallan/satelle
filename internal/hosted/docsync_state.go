@@ -21,10 +21,11 @@ import (
 type documentSyncStateFile struct {
 	Cursors   map[string]string          `json:"cursors"`
 	Workstate map[string]WorkstateCursor `json:"workstate,omitempty"`
-	// Holds is a local cache of which story ids this checkout holds
-	// (sty_f6cff549). Server is still authority; push uses this to skip
-	// foreign-held items without forking a second copy.
-	Holds map[string]map[string]string `json:"holds,omitempty"`
+	// Holds is a local cache of which location holds each story (sty_f6cff549),
+	// this checkout's own and other locations'. Server is still authority; push
+	// uses this to skip foreign-held items without forking a second copy, and the
+	// session-start advisory and `story get|list` read the other locations'.
+	Holds map[string]map[string]HoldRecord `json:"holds,omitempty"`
 	// Pending is the stories engaged here while the hosted hold could not be
 	// placed (server unreachable, or the story never pushed): id → engage time.
 	// The next work-state push claims them (sty_52eb8c2f).
@@ -267,33 +268,58 @@ func SaveWorkstateCursor(server, project, repoRoot string, c WorkstateCursor) er
 	return writeDocumentSyncState(state)
 }
 
-// LoadHolds returns the local hold registry for the key (id → location id).
-func LoadHolds(server, project, repoRoot string) (map[string]string, error) {
+// HoldRecord is what the local registry keeps of one story's hold: who holds it,
+// what the server last saw of them, and when this checkout last asked. The
+// legacy registry value was the bare holder location, which still loads.
+type HoldRecord struct {
+	Location  string    `json:"location"`
+	Label     string    `json:"label,omitempty"`
+	LastSeen  string    `json:"last_seen,omitempty"`
+	CheckedAt time.Time `json:"checked_at,omitzero"`
+}
+
+// UnmarshalJSON reads the current object and the legacy bare-string value.
+func (r *HoldRecord) UnmarshalJSON(b []byte) error {
+	var s string
+	if json.Unmarshal(b, &s) == nil {
+		*r = HoldRecord{Location: s}
+		return nil
+	}
+	type plain HoldRecord
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	*r = HoldRecord(p)
+	return nil
+}
+
+// HoldRecordFrom is the registry record for a hold the server just reported.
+func HoldRecordFrom(h HoldState, now time.Time) HoldRecord {
+	return HoldRecord{Location: h.LocationID, Label: h.Label, LastSeen: h.LastSeenAt, CheckedAt: now.UTC()}
+}
+
+// LoadHolds returns the local hold registry for the key (id → record).
+func LoadHolds(server, project, repoRoot string) (map[string]HoldRecord, error) {
 	docSyncMu.Lock()
 	defer docSyncMu.Unlock()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return nil, err
 	}
-	if state.Holds == nil {
-		return map[string]string{}, nil
-	}
 	out := state.Holds[documentCursorKey(server, project, repoRoot)]
-	if out == nil {
-		return map[string]string{}, nil
-	}
-	cp := make(map[string]string, len(out))
+	cp := make(map[string]HoldRecord, len(out))
 	for k, v := range out {
 		cp[k] = v
 	}
 	return cp, nil
 }
 
-// RecordHold records that this location holds id.
-func RecordHold(server, project, repoRoot, id, locationID string) error {
+// RecordHold records who holds id.
+func RecordHold(server, project, repoRoot, id string, rec HoldRecord) error {
 	id = strings.TrimSpace(id)
-	locationID = strings.TrimSpace(locationID)
-	if id == "" || locationID == "" {
+	rec.Location = strings.TrimSpace(rec.Location)
+	if id == "" || rec.Location == "" {
 		return nil
 	}
 	docSyncMu.Lock()
@@ -303,15 +329,64 @@ func RecordHold(server, project, repoRoot, id, locationID string) error {
 		return err
 	}
 	if state.Holds == nil {
-		state.Holds = map[string]map[string]string{}
+		state.Holds = map[string]map[string]HoldRecord{}
 	}
 	key := documentCursorKey(server, project, repoRoot)
 	m := state.Holds[key]
 	if m == nil {
-		m = map[string]string{}
+		m = map[string]HoldRecord{}
 	}
-	m[id] = locationID
+	m[id] = rec
 	state.Holds[key] = m
+	return writeDocumentSyncState(state)
+}
+
+// ReconcileHolds applies one lookup pass to the registry: found is what the
+// server reported for the stories asked about, checked is every story the pass
+// asked about or knows to be at rest. A found hold is recorded; a checked story
+// with no hold found is dropped when the registry has another location holding
+// it. A hold of this checkout's own (self) is left to the release path, which
+// owns it.
+func ReconcileHolds(server, project, repoRoot, self string, found map[string]HoldRecord, checked []string) error {
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return err
+	}
+	key := documentCursorKey(server, project, repoRoot)
+	m := state.Holds[key]
+	if m == nil {
+		m = map[string]HoldRecord{}
+	}
+	changed := false
+	for _, id := range checked {
+		if _, ok := found[id]; ok {
+			continue
+		}
+		if rec, ok := m[id]; ok && rec.Location != self {
+			delete(m, id)
+			changed = true
+		}
+	}
+	for id, rec := range found {
+		if strings.TrimSpace(id) == "" || strings.TrimSpace(rec.Location) == "" {
+			continue
+		}
+		m[id] = rec
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	if state.Holds == nil {
+		state.Holds = map[string]map[string]HoldRecord{}
+	}
+	if len(m) == 0 {
+		delete(state.Holds, key)
+	} else {
+		state.Holds[key] = m
+	}
 	return writeDocumentSyncState(state)
 }
 

@@ -41,6 +41,19 @@ type State struct {
 	// operation having succeeded. Which paths are unmerged is NOT kept here: the
 	// area's synced base owns that.
 	SubstrateAreas map[string]SubstrateArea `json:"substrate_areas,omitempty"`
+
+	// StoryConflicts are the stories a sync pass did not apply because the local
+	// and hosted copies differ in content (sty_6e5fc41c). A pass records the
+	// disagreement and never resolves it; a later pass that applies the story, or
+	// finds both copies identical, clears it.
+	StoryConflicts map[string]StoryConflict `json:"story_conflicts,omitempty"`
+}
+
+// StoryConflict is one story the local and hosted copies disagree on: why the
+// pass left it, and when.
+type StoryConflict struct {
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
 }
 
 // SubstrateArea is one area's recorded state and when it was verified.
@@ -127,6 +140,40 @@ func RecordSubstrate(globalDir, repoPath string, areas map[string]string, now ti
 		}
 		for area, state := range areas {
 			s.SubstrateAreas[area] = SubstrateArea{State: state, CheckedAt: now}
+		}
+	})
+}
+
+// RecordStoryConflicts merges one pass's findings into the story-conflict group:
+// conflicts (id -> reason) are recorded, cleared ids are dropped, and every other
+// story's record is left as it was. Nothing is written when there is nothing to
+// change, so an in-step repo gains no state file.
+func RecordStoryConflicts(globalDir, repoPath string, conflicts map[string]string, cleared []string, now time.Time) error {
+	if len(conflicts) == 0 && len(cleared) == 0 {
+		return nil
+	}
+	if len(conflicts) == 0 {
+		s, ok, err := Load(globalDir, repoPath)
+		if err != nil || !ok || len(s.StoryConflicts) == 0 {
+			return err
+		}
+	}
+	return record(globalDir, repoPath, "", func(s *State) {
+		for _, id := range cleared {
+			delete(s.StoryConflicts, id)
+		}
+		for id, reason := range conflicts {
+			if s.StoryConflicts == nil {
+				s.StoryConflicts = map[string]StoryConflict{}
+			}
+			// A story still in conflict keeps the time it was first found.
+			if prev, ok := s.StoryConflicts[id]; ok && prev.Reason == reason {
+				continue
+			}
+			s.StoryConflicts[id] = StoryConflict{Reason: reason, At: now}
+		}
+		if len(s.StoryConflicts) == 0 {
+			s.StoryConflicts = nil
 		}
 	})
 }

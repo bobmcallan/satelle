@@ -87,6 +87,16 @@ const syncStaleAfterKey = "stale_after"
 // not published. Reserved so it is never treated as an area.
 const syncHoldUnpushedKey = "hold_unpushed"
 
+// syncHoldStaleAfterKey is the [sync] duration after which a story's holder,
+// unseen by the hosted server, is presumed dead (sty_6e5fc41c). It judges the
+// holder, not the local mirror: stale_after judges how old the local copy of the
+// work-state is, this judges how long another location has been silent.
+const syncHoldStaleAfterKey = "hold_stale_after"
+
+// DefaultHoldStaleAfter is the holder silence after which a hold is presumed
+// dead when [sync] hold_stale_after is absent.
+const DefaultHoldStaleAfter = 2 * time.Hour
+
 // WorkstateAreas are the [sync] areas that form the work-state kind.
 var WorkstateAreas = []string{"stories", "executions", "ledger"}
 
@@ -94,7 +104,7 @@ var WorkstateAreas = []string{"stories", "executions", "ledger"}
 // never looks them up; they must never be minted as SyncAreas.
 var reservedSyncKeys = map[string]bool{
 	syncAllKey: true, syncServerKey: true, syncProjectKey: true, syncWorkspaceKey: true,
-	syncStaleAfterKey: true, syncHoldUnpushedKey: true,
+	syncStaleAfterKey: true, syncHoldUnpushedKey: true, syncHoldStaleAfterKey: true,
 }
 
 // SyncTable is the [sync] table: area name -> scope, plus the reserved
@@ -156,6 +166,25 @@ func WorkstateStaleAfter(cfg Config) (time.Duration, bool, error) {
 		return 0, false, fmt.Errorf("sync: stale_after must be positive, got %s", d)
 	}
 	return d, true, nil
+}
+
+// HoldStaleAfter reads [sync] hold_stale_after: how long the hosted server may
+// go without seeing a story's holder before the holder is presumed dead. Missing
+// means DefaultHoldStaleAfter; an unparseable or non-positive value is a config
+// error.
+func HoldStaleAfter(cfg Config) (time.Duration, error) {
+	raw := strings.TrimSpace(cfg.Sync[syncHoldStaleAfterKey])
+	if raw == "" {
+		return DefaultHoldStaleAfter, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("sync: hold_stale_after %q is not a duration: %w", raw, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("sync: hold_stale_after must be positive, got %s", d)
+	}
+	return d, nil
 }
 
 func buildSyncAreas() []string {
