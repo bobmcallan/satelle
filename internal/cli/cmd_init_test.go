@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
@@ -121,16 +122,14 @@ func TestRunInitScaffolds(t *testing.T) {
 	if strings.Contains(string(gi), ".satelle/satelle.db") {
 		t.Error("gitignore must not list satelle.db — runtime is home-keyed")
 	}
-	// sty_52634ccf reversal: the pointer is listed (slashless) so it is never
-	// committed on repos that track .satelle/. Storage stays home-keyed.
-	if !strings.Contains(string(gi), ".satelle/logs\n") && !strings.Contains(string(gi), ".satelle/logs\r") {
-		t.Error("gitignore must list .satelle/logs — the pointer, not storage")
+	// sty_dbc0be85: with no setting for .satelle, the default is one `.satelle/`
+	// rule — it covers the logs pointer, local.toml and the pinned binary, so
+	// the finer local-state lines are added only when .satelle/ is not ignored.
+	if !gitignoreTextIgnoresSatelleDir(string(gi)) {
+		t.Errorf("gitignore must ignore .satelle/ on a fresh init:\n%s", gi)
 	}
 	if strings.Contains(string(gi), ".satelle/logs/") {
 		t.Error("gitignore must not list .satelle/logs/ (trailing slash misses the symlink)")
-	}
-	if !strings.Contains(string(gi), ".satelle/satelle.local.toml") {
-		t.Error("gitignore missing satelle.local.toml entry")
 	}
 	if strings.Contains(string(gi), "\n.satelle/satelle.toml\n") {
 		t.Error("gitignore should not ignore the committed toml")
@@ -769,12 +768,12 @@ func TestEnsureGitignoreAppendsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	added, err := ensureGitignore(repo)
-	if err != nil || !added {
+	if err != nil || len(added) == 0 {
 		t.Fatalf("first ensureGitignore: added=%v err=%v", added, err)
 	}
 	added2, _ := ensureGitignore(repo)
-	if added2 {
-		t.Error("second ensureGitignore should be a no-op")
+	if len(added2) != 0 {
+		t.Errorf("second ensureGitignore should be a no-op, added %v", added2)
 	}
 	gi, _ := os.ReadFile(giPath)
 	if !strings.Contains(string(gi), "node_modules/") {
@@ -799,15 +798,13 @@ func TestEnsureGitignoreAppendsOnce(t *testing.T) {
 			t.Errorf("managed gitignore must not ignore agents.toml (repo agents is committed substrate); got rule %q", trim)
 		}
 	}
-	if !strings.Contains(string(gi), "sty_552d2d87") {
-		t.Error("managed gitignore comment should name sty_552d2d87 (agents posture)")
-	}
 }
 
-// TestRunInitConvergesStaleGitignore (sty_87c8a69c AC1/AC4): re-running init on a
-// repo with a pre-relocation managed block rewrites between the markers and
-// leaves operator content outside them.
-func TestRunInitConvergesStaleGitignore(t *testing.T) {
+// TestRunInitLeavesSettledGitignoreUntouched (sty_dbc0be85 AC1): re-running
+// init on a repo whose .gitignore already settles everything satelle needs — an
+// older-wording managed block here — leaves the file byte-identical and its
+// mtime unchanged, and reports it unchanged.
+func TestRunInitLeavesSettledGitignoreUntouched(t *testing.T) {
 	repo := t.TempDir()
 	// Pre-seed a minimal satelle tree so init is a re-run, not a first scaffold
 	// that also creates agents/db. Stale managed block is the subject under test.
@@ -823,38 +820,62 @@ func TestRunInitConvergesStaleGitignore(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "agents.toml"), []byte("[executor]\nharness = \"in-loop\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	stale := "node_modules/\n# >>> satelle (managed) >>>\n.satelle/satelle.db\n.satelle/logs/\n.satelle/backups/\n.satelle/stories/\n# <<< satelle (managed) <<<\n# keep-me\n"
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(stale), 0o644); err != nil {
+	old := "node_modules/\n# >>> satelle (managed) >>>\n# an older wording of the header\n.satelle/\n.satelle/satelle.db\n.satelle/logs/\nsty_*_body.md\nsty_*_ac.md\n# <<< satelle (managed) <<<\n# keep-me\n"
+	giPath := filepath.Join(repo, ".gitignore")
+	if err := os.WriteFile(giPath, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(giPath, past, past); err != nil {
 		t.Fatal(err)
 	}
 	var out strings.Builder
 	if err := runInitTest(t, &out, repo); err != nil {
 		t.Fatalf("runInit: %v\n%s", err, out.String())
 	}
-	gi, err := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	gi, err := os.ReadFile(giPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := string(gi)
-	if !strings.Contains(s, "node_modules/") {
-		t.Error("content before markers must survive")
+	if string(gi) != old {
+		t.Errorf(".gitignore changed on init re-run:\n%s", gi)
 	}
-	if !strings.Contains(s, "# keep-me") {
-		t.Error("content after markers must survive")
+	fi, err := os.Stat(giPath)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, staleEntry := range []string{".satelle/satelle.db", ".satelle/backups/", ".satelle/stories/"} {
-		if strings.Contains(s, staleEntry) {
-			t.Errorf("stale ignore %q must be gone after init re-run:\n%s", staleEntry, s)
-		}
+	if !fi.ModTime().Equal(past) {
+		t.Errorf(".gitignore mtime changed: %v, want %v", fi.ModTime(), past)
 	}
-	if !strings.Contains(s, ".satelle/logs\n") && !strings.Contains(s, ".satelle/logs\r") {
-		t.Errorf("pointer entry .satelle/logs must be kept:\n%s", s)
+	if !strings.Contains(out.String(), "= .gitignore") {
+		t.Errorf("init should report .gitignore unchanged:\n%s", out.String())
 	}
-	if !strings.Contains(s, ".satelle/satelle.local.toml") {
-		t.Errorf("current block must list local.toml:\n%s", s)
+}
+
+// TestRunInitIgnoresFreshHarnessDirOnce (sty_dbc0be85 AC4): init scaffolds the
+// harness hooks before it writes .gitignore, so a fresh `--harness claude` adds
+// .claude/ on the first run and a second run leaves the bytes equal.
+func TestRunInitIgnoresFreshHarnessDirOnce(t *testing.T) {
+	repo := t.TempDir()
+	gitInitRepo(t, repo)
+	isolateUserHome(t)
+	giPath := filepath.Join(repo, ".gitignore")
+	if err := runInit(io.Discard, repo, true, []string{"claude"}); err != nil {
+		t.Fatalf("first init: %v", err)
 	}
-	if strings.Count(s, gitignoreMarker) != 1 {
-		t.Error("exactly one managed block expected")
+	first, err := os.ReadFile(giPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gitignoreHasRule(string(first), ".claude") {
+		t.Fatalf("first run must add .claude/:\n%s", first)
+	}
+	if err := runInit(io.Discard, repo, true, []string{"claude"}); err != nil {
+		t.Fatalf("second init: %v", err)
+	}
+	second, _ := os.ReadFile(giPath)
+	if string(first) != string(second) {
+		t.Errorf("second run changed .gitignore:\n--- first\n%s\n--- second\n%s", first, second)
 	}
 }
 

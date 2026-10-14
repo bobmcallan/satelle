@@ -26,6 +26,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 )
@@ -67,8 +68,8 @@ init/install end by VALIDATING the deployed system — the agents layer must loa
 and every substrate artifact must pass its deterministic structure check — and
 exit non-zero when validation fails (broken configuration refuses to run).
 
-Re-running is safe: authored files are preserved; the managed .gitignore block
-is rewritten between its markers to the current form (sty_87c8a69c). The report
+Re-running is safe: authored files are preserved and .gitignore only gains
+missing entries; your .satelle and harness-dir settings are kept. The report
 shows what was added versus already present.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -423,19 +424,24 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 	// 5a. .satelle/logs pointer to the home-keyed runtime logs directory.
 	plantLogsPointer(out, repoRoot)
 
-	// 5. .gitignore managed block — ignore in-repo local-state only (local.toml,
-	//    pinned binary). Runtime files no longer live under the repo.
-	if added, gerr := ensureGitignore(repoRoot); gerr != nil {
-		return gerr
-	} else {
-		fmt.Fprintln(out, initLine(added, ".gitignore (satelle local-state block)"))
-	}
-
-	// 6. Process hooks ON DEMAND — Claude (.claude/settings.json) and/or Grok
+	// 5. Process hooks ON DEMAND — Claude (.claude/settings.json) and/or Grok
 	//    (.grok/hooks/satelle.json) when forced via --harness or when those dirs
 	//    already exist. Never PATH, never a silent claude default.
 	if err := ensureProcessHooks(out, repoRoot, forcedHarness); err != nil {
 		return err
+	}
+
+	// 6. .gitignore — add only the entries satelle needs that the file does not
+	//    already settle (in-repo local-state, the harness dirs just scaffolded in
+	//    step 5, the story-dump globs). Written after the hooks so a harness dir
+	//    created on this run is seen on this run. An existing operator setting for
+	//    any of them is left as it is.
+	if added, gerr := ensureGitignore(repoRoot); gerr != nil {
+		return gerr
+	} else if len(added) > 0 {
+		fmt.Fprintln(out, initLine(true, ".gitignore (added: "+strings.Join(added, ", ")+")"))
+	} else {
+		fmt.Fprintln(out, initLine(false, ".gitignore (satelle entries)"))
 	}
 
 	// 6b. Local workspace registry (sty_3bdbdc38) — register this repo so the
@@ -2170,40 +2176,74 @@ placeholder. -->
 // gitignoreMarker opens the managed block ensureGitignore maintains.
 const gitignoreMarker = "# >>> satelle (managed) >>>"
 
-// gitignoreMarkerEnd closes the managed block. Content between the markers is
-// owned by satelle and rewritten on every init/migrate (sty_87c8a69c).
+// gitignoreMarkerEnd closes the managed block. satelle only ever ADDS lines
+// inside the markers, just before this one; it never rewrites what is there.
 const gitignoreMarkerEnd = "# <<< satelle (managed) <<<"
 
-// gitignoreBlock is the RECOMMENDED ignore set for a repo that tracks
-// .satelle (the .satelle/logs pointer line is included). gitignoreBlockFor omits
-// that pointer when the existing file already ignores all of .satelle/.
-var gitignoreBlock = gitignoreBlockFor("")
-
-func gitignoreBlockFor(existing string) string {
-	logsLine := ""
-	if !gitignoreTextIgnoresSatelleDir(existing) {
-		logsLine = ".satelle/logs\n"
-	}
+// gitignoreBlockWrap wraps lines in a fresh managed block. It is used only when
+// the file has no managed block yet; the entries themselves come from
+// gitignoreNeeded, the one statement of what satelle needs.
+func gitignoreBlockWrap(lines []string) string {
 	return gitignoreMarker + `
-# RECOMMENDED defaults — the operator owns .gitignore. .satelle is git-optional
-# overall (continuity is local disk or personal rehydrate). When a team tracks
-# process under .satelle, workflows/agents.toml is intended to be committed
-# (roles workflows name; sty_552d2d87) — it is deliberately NOT listed below;
-# its machine-local twin, agents.local.toml, is.
-# Execution detail belongs in ~/.satelle/agents.toml; secrets in satelle.local.toml.
-# Continuity is local disk by default; with [sync] <area> = personal the bound
-# hosted project backs that area up and can rehydrate it (push = backup;
-# documents pull / config deploy = sync down). Git is not the recovery path.
-# Runtime state (satelle.db, backups, stories cache) lives under
-# ~/.satelle/<repo-key>/ — outside the repo. .satelle/logs is a symlink pointer
-# to that logs directory and is listed here only when .satelle/ is not already ignored.
-# Sync credentials and cursors live under ~/.config/satelle.
-` + logsLine + `.satelle/satelle.local.toml
-# this machine's agents override (command paths, profile= into ~/.satelle) never leaves the machine
-.satelle/workflows/agents.local.toml
-# the repo-local pinned binary (satelle update --local) is local state, never committed
-.satelle/satelle
-` + managedEditExemptGitignore() + gitignoreMarkerEnd + "\n"
+# satelle adds only entries it needs that this file does not already settle;
+# the operator owns .gitignore and any rule written here or elsewhere is kept.
+# Runtime state lives under ~/.satelle/<repo-key>/, outside the repo.
+` + strings.Join(lines, "\n") + "\n" + gitignoreMarkerEnd + "\n"
+}
+
+// gitignoreNeeded is the one statement of what satelle needs in the repo's
+// .gitignore: the lines missing from text, judged by what text already settles
+// (never by byte-equality of a managed block). Every path — the first scaffold
+// (text empty), re-runs, migrate's plan — goes through it, so a repo that already
+// holds the needed set yields nothing and its .gitignore is left untouched.
+//
+//   - .satelle/ by default, unless the file already has a rule that matches or
+//     negates .satelle or a path under it, or git tracks files under .satelle/
+//     (the team chose to commit process). Any existing .satelle rule stays as
+//     written; when .satelle/ itself is not ignored only the local-state lines
+//     below are added, each only when no rule already targets it.
+//   - each harness dir satelle deploys into that is present in the repo
+//     (substrateLockFootprint), as <dir>/ — unless the file already has a rule or
+//     negation for it or git tracks files under it: the operator may commit it.
+//   - the story-dump globs the edit gate exempts (managedEditExemptGlobs).
+func gitignoreNeeded(text, repoRoot string) []string {
+	var need []string
+	if !gitignoreHasSetting(text, ".satelle") && !verb.GitListed(repoRoot, "ls-files", "--", ".satelle") {
+		need = append(need, ".satelle/")
+	} else if !gitignoreTextIgnoresSatelleDir(text) {
+		for _, l := range []string{
+			// the .satelle/logs symlink pointer to the home-keyed runtime logs
+			".satelle/logs",
+			".satelle/satelle.local.toml",
+			// this machine's agents override (command paths, profile= into ~/.satelle) never leaves the machine
+			".satelle/workflows/agents.local.toml",
+			// the repo-local pinned binary (satelle update --local) is local state, never committed
+			".satelle/satelle",
+		} {
+			if !gitignoreHasRule(text, l) {
+				need = append(need, l)
+			}
+		}
+	}
+	for _, e := range substrateLockFootprint() {
+		d := strings.TrimSuffix(e, "/")
+		if d == ".gitignore" {
+			continue
+		}
+		if fi, err := os.Stat(filepath.Join(repoRoot, d)); err != nil || !fi.IsDir() {
+			continue
+		}
+		if !gitignoreHasSetting(text, d) && !verb.GitListed(repoRoot, "ls-files", "--", d) {
+			need = append(need, d+"/")
+		}
+	}
+	// agent story-reference dumps (edit-gate exempt via [gate] edit_exempt_globs)
+	for _, g := range managedEditExemptGlobs {
+		if !gitignoreHasRule(text, g) {
+			need = append(need, g)
+		}
+	}
+	return need
 }
 
 // ensureWorkspaceRegistration registers repoRoot in the machine-local workspace
@@ -2278,42 +2318,41 @@ func printWorkspaceMembership(out io.Writer, abs string, priorErr error) {
 	fmt.Fprintln(out, "workspace: not-member — join with `satelle workspace add`")
 }
 
-// ensureGitignore writes or converges the managed block in the repo's
-// .gitignore (sty_87c8a69c / sty_a3915840):
-//   - no file → create with the current block
-//   - no markers → append the current block
-//   - markers present → rewrite content BETWEEN them to the current form;
-//     text outside the markers is preserved
-//
-// Returns whether the file content changed.
-func ensureGitignore(repoRoot string) (bool, error) {
+// ensureGitignore adds to the repo's .gitignore the entries satelle needs that
+// the file does not already settle (gitignoreNeeded) and returns the lines it
+// added; nil means the file was left untouched (sty_dbc0be85). It never
+// rewrites, removes or reorders an existing line.
+//   - no file → create it with a managed block of the needed lines
+//   - no markers → append a managed block of the needed lines
+//   - markers present → insert the needed lines just before the end marker
+func ensureGitignore(repoRoot string) ([]string, error) {
 	path := filepath.Join(repoRoot, ".gitignore")
 	raw, err := os.ReadFile(path)
-	switch {
-	case err == nil:
-		next, changed := convergeGitignore(string(raw))
-		if !changed {
-			return false, nil
-		}
-		if werr := os.WriteFile(path, []byte(next), 0o644); werr != nil {
-			return false, fmt.Errorf("init: write %s: %w", path, werr)
-		}
-		return true, nil
-	case os.IsNotExist(err):
-		if werr := os.WriteFile(path, []byte(gitignoreBlockFor("")), 0o644); werr != nil {
-			return false, fmt.Errorf("init: write %s: %w", path, werr)
-		}
-		return true, nil
-	default:
-		return false, fmt.Errorf("init: read %s: %w", path, err)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("init: read %s: %w", path, err)
 	}
+	next, added, changed := convergeGitignore(string(raw), repoRoot)
+	if !changed {
+		return nil, nil
+	}
+	if werr := os.WriteFile(path, []byte(next), 0o644); werr != nil {
+		return nil, fmt.Errorf("init: write %s: %w", path, werr)
+	}
+	return added, nil
 }
 
-// convergeGitignore returns the file body with the managed block current.
-// Pure: no IO. changed is false when next equals in (already converged).
-func convergeGitignore(in string) (next string, changed bool) {
-	// Normalize line endings for comparison only; preserve file ending style lightly.
-	if !strings.Contains(in, gitignoreMarker) {
+// convergeGitignore returns in with the missing needed lines added. Pure over
+// in apart from the git probes gitignoreNeeded makes in repoRoot. changed is
+// false when nothing is missing: marker presence and the wording of any
+// existing managed block are never compared.
+func convergeGitignore(in, repoRoot string) (next string, added []string, changed bool) {
+	missing := gitignoreNeeded(in, repoRoot)
+	if len(missing) == 0 {
+		return in, nil, false
+	}
+	add := strings.Join(missing, "\n") + "\n"
+	start := strings.Index(in, gitignoreMarker)
+	if start < 0 {
 		body := in
 		if body != "" && !strings.HasSuffix(body, "\n") {
 			body += "\n"
@@ -2321,50 +2360,29 @@ func convergeGitignore(in string) (next string, changed bool) {
 		if body != "" {
 			body += "\n"
 		}
-		return body + gitignoreBlockFor(in), true
+		return body + gitignoreBlockWrap(missing), missing, true
 	}
-	start := strings.Index(in, gitignoreMarker)
-	// Find end marker after start; if missing, replace from start to EOF.
-	rest := in[start:]
-	endRel := strings.Index(rest, gitignoreMarkerEnd)
-	var before, after string
-	before = in[:start]
-	if endRel < 0 {
-		after = ""
-	} else {
-		afterStart := start + endRel + len(gitignoreMarkerEnd)
-		// Consume a single trailing newline on the end marker if present.
-		if afterStart < len(in) && in[afterStart] == '\n' {
-			afterStart++
+	if endRel := strings.Index(in[start:], gitignoreMarkerEnd); endRel >= 0 {
+		end := start + endRel
+		head := in[:end]
+		if !strings.HasSuffix(head, "\n") {
+			head += "\n"
 		}
-		after = in[afterStart:]
+		return head + add + in[end:], missing, true
 	}
-	// Keep a single newline before the managed block when there is prior content.
-	if before != "" && !strings.HasSuffix(before, "\n") {
-		before += "\n"
+	// A start marker with no end: extend the block to EOF and close it.
+	body := in
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
 	}
-	out := before + gitignoreBlockFor(in)
-	if after != "" {
-		if !strings.HasPrefix(after, "\n") && !strings.HasSuffix(out, "\n") {
-			out += "\n"
-		}
-		out += after
-	}
-	if out == in {
-		return in, false
-	}
-	return out, true
+	return body + add + gitignoreMarkerEnd + "\n", missing, true
 }
 
-// gitignoreNeedsConverge reports whether .gitignore's managed block differs
-// from the current form (or is missing). Used by migrate plan reporting.
+// gitignoreNeedsConverge reports whether .gitignore lacks an entry satelle
+// needs (a missing file lacks them all). Used by migrate plan reporting.
 func gitignoreNeedsConverge(repoRoot string) bool {
-	path := filepath.Join(repoRoot, ".gitignore")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return true // missing → will create
-	}
-	_, changed := convergeGitignore(string(raw))
+	raw, _ := os.ReadFile(filepath.Join(repoRoot, ".gitignore"))
+	_, _, changed := convergeGitignore(string(raw), repoRoot)
 	return changed
 }
 

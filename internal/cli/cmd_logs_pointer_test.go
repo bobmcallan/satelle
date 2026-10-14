@@ -76,10 +76,8 @@ func TestInitPointerIsGitIgnored_TrackedSatelle(t *testing.T) {
 	if err := runInitTest(t, &out, repo); err != nil {
 		t.Fatal(err)
 	}
-	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	if !strings.Contains(string(gi), ".satelle/logs\n") {
-		t.Fatalf("managed block missing pointer:\n%s", gi)
-	}
+	// sty_dbc0be85: a fresh init ignores .satelle/ as a whole, which covers the
+	// pointer; the check-ignore below is the proof.
 	for _, args := range [][]string{{"init"}, {"check-ignore", ".satelle/logs"}} {
 		c := exec.Command("git", args...)
 		c.Dir = repo
@@ -88,6 +86,26 @@ func TestInitPointerIsGitIgnored_TrackedSatelle(t *testing.T) {
 		} else if err != nil && args[0] == "init" {
 			t.Fatalf("git init: %v\n%s", err, out)
 		}
+	}
+}
+
+// A repo that tracks part of .satelle/ (a negation here) keeps its own setting;
+// init adds only the pointer line, which is what keeps the symlink uncommitted.
+func TestInitPointerListed_PartlyTrackedSatelle(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".satelle/*\n!.satelle/workflows/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := runInitTest(t, &out, repo); err != nil {
+		t.Fatal(err)
+	}
+	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	if !strings.HasPrefix(string(gi), ".satelle/*\n!.satelle/workflows/\n") {
+		t.Fatalf("the operator's lines must stay as written:\n%s", gi)
+	}
+	if !strings.Contains(string(gi), ".satelle/logs\n") {
+		t.Fatalf("pointer line missing:\n%s", gi)
 	}
 }
 

@@ -45,13 +45,61 @@ func EnsureLogsPointer(repoRoot, runtimeLogs string) error {
 	return os.Symlink(target, link)
 }
 
+// gitignoreRuleTarget reads one .gitignore line as the path it targets: blank
+// and comment lines are not rules (ok false); a leading "!" marks a negation;
+// a leading "/" and a trailing "/", "/*" or "/**" are dropped, so ".claude/*"
+// and "/.claude/" both target ".claude".
+func gitignoreRuleTarget(line string) (target string, negated bool, ok bool) {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return "", false, false
+	}
+	if strings.HasPrefix(line, "!") {
+		negated = true
+		line = line[1:]
+	}
+	line = strings.TrimPrefix(line, "/")
+	for _, suffix := range []string{"/**", "/*", "/"} {
+		if strings.HasSuffix(line, suffix) {
+			line = strings.TrimSuffix(line, suffix)
+			break
+		}
+	}
+	if line == "" {
+		return "", false, false
+	}
+	return line, negated, true
+}
+
+// gitignoreHasSetting reports whether the operator's .gitignore already holds a
+// setting for path: a rule, positive or "!" negation, that targets path or a
+// path under it. satelle leaves such a path exactly as the operator chose.
+func gitignoreHasSetting(content, path string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if t, _, ok := gitignoreRuleTarget(line); ok && (t == path || strings.HasPrefix(t, path+"/")) {
+			return true
+		}
+	}
+	return false
+}
+
+// gitignoreHasRule reports whether any rule, positive or negated, targets
+// exactly path.
+func gitignoreHasRule(content, path string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if t, _, ok := gitignoreRuleTarget(line); ok && t == path {
+			return true
+		}
+	}
+	return false
+}
+
+// gitignoreTextIgnoresSatelleDir reports a positive whole-directory ignore of
+// .satelle (".satelle", ".satelle/", "/.satelle", "/.satelle/"). A ".satelle/*"
+// rule is not one: it can be re-opened by a negation.
 func gitignoreTextIgnoresSatelleDir(content string) bool {
 	for _, line := range strings.Split(content, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		switch line {
+		switch strings.TrimSpace(line) {
 		case ".satelle", ".satelle/", "/.satelle", "/.satelle/":
 			return true
 		}
