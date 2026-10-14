@@ -78,6 +78,10 @@ overwritten — which is also why remove leaves yours in place.`,
 			}
 			out := cmd.OutOrStdout()
 			for _, r := range rs {
+				if r.Path == "" { // a harness with no launcher: nothing written
+					fmt.Fprintf(out, "%s %s launcher (%s)\n", r.Action, r.Name, r.Note)
+					continue
+				}
 				fmt.Fprintf(out, "%s %s launcher → %s", r.Action, r.Name, r.Path)
 				if r.Note != "" {
 					fmt.Fprintf(out, " (%s)", r.Note)
@@ -201,7 +205,7 @@ you mean to stop satelle governing the harness — not as tidying.`,
 		},
 	}
 
-	agents.AddCommand(install, remove)
+	agents.AddCommand(install, remove, newAgentsLaunchCmd(), newAgentsCredentialCmd())
 	register(agents)
 }
 
@@ -221,10 +225,15 @@ func expandAgentTargets(name string) ([]string, error) {
 // pi and cursor have none (launcher isolation is a separate story), so such a
 // target has no launcher step and "all" covers the launchers that exist.
 func installLaunchers(home, name string) ([]agentinstall.Result, error) {
-	if noLauncherAgent(name) {
-		return nil, nil
+	n := strings.ToLower(strings.TrimSpace(name))
+	if noLauncherAgent(n) {
+		return []agentinstall.Result{agentinstall.NoLauncherResult(n)}, nil
 	}
-	return agentinstall.Install(home, name)
+	rs, err := agentinstall.Install(home, name)
+	if err == nil && n == "all" {
+		rs = append(rs, agentinstall.NoLauncherResult("pi"), agentinstall.NoLauncherResult(agentcli.HarnessCursor))
+	}
+	return rs, err
 }
 
 func removeLaunchers(home, name string) ([]agentinstall.Result, error) {

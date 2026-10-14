@@ -66,6 +66,10 @@ type AdapterCapabilities struct {
 	// cloud from a local worktree and told the branch to push (sty_82cffd60).
 	// Where it cannot, the adapter names that it has no cloud runner.
 	CloudLaunch Capability
+	// CloudIdentity: a session started through the harness's satelle launcher
+	// runs as the cloud identity its agent profile names (sty_b61d2066). Where the
+	// harness has no launcher, the adapter names that.
+	CloudIdentity Capability
 }
 
 // CapabilityTable returns the table in the order help prints it.
@@ -99,6 +103,7 @@ func CapabilityTable() []AdapterCapabilities {
 	}
 	for i := range rows {
 		rows[i].CloudLaunch = cloudLaunchCapability(rows[i].Adapter)
+		rows[i].CloudIdentity = cloudIdentityCapability(rows[i].Adapter)
 	}
 	return rows
 }
@@ -127,11 +132,11 @@ func ReasonForNoModel(harness string) string {
 }
 
 // capabilityColumns are the table headings, in cell order.
-var capabilityColumns = []string{"usage", "cache split", "resolved model", "model inheritance", "live session", "tool trim", "offered tools", "turn budget", "cloud launch"}
+var capabilityColumns = []string{"usage", "cache split", "resolved model", "model inheritance", "live session", "tool trim", "offered tools", "turn budget", "cloud launch", "cloud identity"}
 
 // cells returns the row's cells in capabilityColumns order.
 func (a AdapterCapabilities) cells() []Capability {
-	return []Capability{a.Usage, a.CacheSplit, a.ResolvedModel, a.ModelInheritance, a.LiveSession, a.ToolTrim, a.OfferedTools, a.TurnBudget, a.CloudLaunch}
+	return []Capability{a.Usage, a.CacheSplit, a.ResolvedModel, a.ModelInheritance, a.LiveSession, a.ToolTrim, a.OfferedTools, a.TurnBudget, a.CloudLaunch, a.CloudIdentity}
 }
 
 // CapabilityTableMarkdown renders CapabilityTable as the markdown table

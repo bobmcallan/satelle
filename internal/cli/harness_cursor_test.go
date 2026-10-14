@@ -61,7 +61,10 @@ func TestAgentsInstallCursorWritesHooksFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agents install cursor: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "created cursor scaffold") || strings.Contains(out, "launcher") {
+	// No launcher script is written; the missing launcher is recorded as the
+	// cloud identity being unavailable under the adapter's name (sty_b61d2066).
+	if !strings.Contains(out, "created cursor scaffold") || strings.Contains(out, "launcher →") ||
+		!strings.Contains(out, "cloud identity: unavailable (cursor has no satelle launcher)") {
 		t.Errorf("cursor has a scaffold and no launcher: %s", out)
 	}
 	f, raw := readCursorHooks(t, repo)

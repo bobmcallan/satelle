@@ -24,15 +24,9 @@ const (
 	RelBin = "agents/bin"
 )
 
-// known agents installable by name.
-var known = []string{"claude", "grok"}
-
-// Agents returns the installable names (stable order).
-func Agents() []string {
-	out := make([]string, len(known))
-	copy(out, known)
-	return out
-}
+// Agents returns the installable names (stable order): the harnesses that have
+// a launcher, as agentcli owns that set.
+func Agents() []string { return agentcli.LauncherHarnesses() }
 
 // Result is one install/remove outcome.
 type Result struct {
@@ -91,13 +85,20 @@ func LauncherPath(home, name string) string {
 
 // Content returns the launcher script body for name.
 func Content(name string) (string, error) {
-	switch name {
-	case "claude":
-		return launcherScript("claude", "claude"), nil
-	case "grok":
-		return launcherScript("grok", "grok"), nil
-	default:
-		return "", fmt.Errorf("agentinstall: unknown agent %q (want claude, grok, or all)", name)
+	if !agentcli.HasLauncher(name) {
+		return "", fmt.Errorf("agentinstall: unknown agent %q (want %s, or all)", name, strings.Join(Agents(), ", "))
+	}
+	return launcherScript(name), nil
+}
+
+// NoLauncherResult is the install outcome for a harness with no launcher (pi,
+// cursor): nothing is written, and the cloud identity is recorded as unavailable
+// under the adapter's name rather than silently absent.
+func NoLauncherResult(name string) Result {
+	return Result{
+		Name:   name,
+		Action: "skipped",
+		Note:   fmt.Sprintf("cloud identity: unavailable (%s)", agentcli.CloudIdentityUnavailable(name)),
 	}
 }
 
@@ -140,30 +141,24 @@ func BindingSnippet(name, launcherPath string) string {
 func expandName(name string) ([]string, error) {
 	n := strings.ToLower(strings.TrimSpace(name))
 	if n == "all" {
-		out := make([]string, len(known))
-		copy(out, known)
-		return out, nil
+		return Agents(), nil
 	}
-	for _, k := range known {
-		if n == k {
-			return []string{n}, nil
-		}
+	if agentcli.HasLauncher(n) {
+		return []string{n}, nil
 	}
 	return nil, fmt.Errorf("agentinstall: unknown agent %q (want %s, or all)",
-		name, strings.Join(known, ", "))
+		name, strings.Join(Agents(), ", "))
 }
 
-func launcherScript(name, execLine string) string {
-	// Derive exec targets from shipped constants so launchers cannot drift.
-	// claude/grok wrap the bare binary.
-	switch name {
-	case "claude":
-		execLine = agentcli.CLIClaude
-	case "grok":
-		execLine = agentcli.CLIGrok
-	}
-	return fmt.Sprintf("#!/bin/sh\n%s %s — do not edit\nexec %s \"$@\"\n",
-		MarkerPrefix, name, execLine)
+// launcherScript hands the session to `satelle agents launch`, which signs in as
+// the cloud identity the repo's agent profile names (if any) and then execs the
+// harness. With satelle off PATH it execs the bare harness — exactly what the
+// launcher did before identities existed. The exec target comes from agentcli's
+// launcher set so launchers cannot drift from it.
+func launcherScript(name string) string {
+	bin := agentcli.LauncherBinary(name)
+	return fmt.Sprintf("#!/bin/sh\n%s %s — do not edit\ncommand -v satelle >/dev/null 2>&1 && exec satelle agents launch %s -- \"$@\"\nexec %s \"$@\"\n",
+		MarkerPrefix, name, name, bin)
 }
 
 func installOne(binDir, name string) (Result, error) {

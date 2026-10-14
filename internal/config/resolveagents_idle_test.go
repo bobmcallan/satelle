@@ -167,6 +167,8 @@ func TestOverlayBindingCarriesEveryScalarField(t *testing.T) {
 					fv.Set(reflect.ValueOf(map[string]string{"k": "v"}))
 				case reflect.Interface:
 					fv.Set(reflect.ValueOf(map[string]any{"k": "v"}))
+				case reflect.Map: // cloud: provider -> its table
+					fv.Set(reflect.ValueOf(map[string]map[string]string{"k": {"k": "v"}}))
 				default:
 					t.Fatalf("unhandled map element kind for %s, extend overlayBinding and this test", tag)
 				}

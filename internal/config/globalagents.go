@@ -25,6 +25,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/cloudid"
 )
 
 const (
@@ -82,6 +83,7 @@ var globalAgentsBindingKeys = map[string]bool{
 	"settings":     true,
 	"secondary":    true,
 	"isolation":    true,
+	"cloud":        true, // the cloud identity a launcher signs in as (sty_b61d2066)
 }
 
 // globalAgentsPolicyKeys are keys that would make a profile decide PROCESS
@@ -255,6 +257,9 @@ func (g GlobalAgentsConfig) validate() error {
 		if err := checkBindingTimeout(GlobalAgentsLabel, section, b); err != nil {
 			return err
 		}
+		if err := checkBindingCloud(GlobalAgentsLabel, section, name, b); err != nil {
+			return err
+		}
 		if _, err := g.resolveChain(name); err != nil {
 			return fmt.Errorf("[%s]: %w", section, err)
 		}
@@ -348,6 +353,29 @@ func checkBindingIsolation(file, section string, b AgentBinding) error {
 	return nil
 }
 
+// checkBindingCloud validates a catalog profile's cloud identity through the
+// provider adapters (cloudid): known providers and keys, required keys present,
+// every credential exactly one ${NAME} reference — a literal secret is refused.
+func checkBindingCloud(file, section, name string, b AgentBinding) error {
+	if len(b.Cloud) == 0 {
+		return nil
+	}
+	if err := cloudid.ValidProfileName(name); err != nil {
+		return fmt.Errorf("%s [%s] cloud: %w", file, section, err)
+	}
+	providers := make([]string, 0, len(b.Cloud))
+	for p := range b.Cloud {
+		providers = append(providers, p)
+	}
+	sort.Strings(providers)
+	for _, p := range providers {
+		if err := cloudid.Validate(p, b.Cloud[p]); err != nil {
+			return fmt.Errorf("%s [%s] %w", file, section, err)
+		}
+	}
+	return nil
+}
+
 // checkBindingTimeout is the shared timeout check (see checkBindingInterface).
 // It validates both the optional hard Timeout ceiling and idle_timeout
 // (sty_752c4ef2) — a typo in either is caught at load, not at first dispatch.
@@ -381,7 +409,44 @@ func StarterGlobalAgents(cli string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf(starterGlobalAgentsTemplate, cli, cli, runner.Command(), DefaultReviewerTools, cli, runner.Command(), cli, cli), nil
+	return fmt.Sprintf(starterGlobalAgentsTemplate, cli, cli, runner.Command(), DefaultReviewerTools, cli, runner.Command(), cli, cli) + cloudStarterComment(), nil
+}
+
+// CloudIdentityLimits is the one statement of what a cloud identity setting
+// does and does not do. The starter catalog and the launch command's help both
+// carry it, so neither can claim more than the other (sty_b61d2066).
+const CloudIdentityLimits = `satelle SELECTS the cloud identity; it does not enforce rights or isolate secrets.
+The cloud's roles and policy, plus a separate OS user for the agent, do the enforcing.`
+
+// cloudStarterComment is the commented cloud-identity section appended to the
+// starter catalog: the shape, the limits, and what each provider persists.
+func cloudStarterComment() string {
+	var b strings.Builder
+	b.WriteString("\n# Cloud identity (optional) — the Azure or AWS identity a session started through a\n")
+	b.WriteString("# satelle launcher (`satelle agents install claude`) runs as. A repo selects it by\n")
+	b.WriteString("# naming the profile; credentials are ${NAME} references into [vars] above, never\n")
+	b.WriteString("# literals. No identity is configured by default.\n#\n")
+	for _, l := range strings.Split(CloudIdentityLimits, "\n") {
+		b.WriteString("# " + l + "\n")
+	}
+	b.WriteString("#\n")
+	for _, p := range cloudid.Providers() {
+		b.WriteString("# " + p.Persistence() + "\n")
+	}
+	b.WriteString("#\n")
+	b.WriteString("# [profiles.ops-agent.cloud.azure]\n")
+	b.WriteString("# tenant        = \"<tenant id>\"\n")
+	b.WriteString("# client_id     = \"<app id>\"\n")
+	b.WriteString("# client_secret = \"${OPS_AZ_SECRET}\"\n")
+	b.WriteString("# subscription  = \"<subscription id>\"   # optional\n")
+	b.WriteString("#\n")
+	b.WriteString("# [profiles.ops-agent.cloud.aws]\n")
+	b.WriteString("# access_key_id     = \"${OPS_AWS_KEY}\"\n")
+	b.WriteString("# secret_access_key = \"${OPS_AWS_SECRET}\"\n")
+	b.WriteString("# region            = \"ap-southeast-2\"\n")
+	b.WriteString("# role_arn          = \"arn:aws:iam::123456789012:role/ops\"   # optional: assume-role\n")
+	b.WriteString("# duration          = \"3600\"                                 # optional: seconds\n")
+	return b.String()
 }
 
 const starterGlobalAgentsTemplate = `# satelle machine-wide agent PROFILE catalog (~/.satelle/agents.toml).

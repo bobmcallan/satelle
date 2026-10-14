@@ -173,6 +173,47 @@ The catalog's `[vars]` is the base; a repo's own `[vars]` (and its gitignored
 dispatch wiring, so a machine-wide secret referenced as `${NAME}` reaches the
 agent process without ever being written into a repository.
 
+## Cloud identity
+
+A profile may name the Azure or AWS identity a session runs as. A session started
+through a launcher from `satelle agents install claude|grok` signs in as it
+before the harness starts; one started any other way runs as you, and the
+session-start hook says so. Nothing is configured by default.
+
+```toml
+# ~/.satelle/agents.toml
+[vars]
+OPS_AZ_SECRET = "..."
+
+[profiles.ops.cloud.azure]
+tenant        = "..."
+client_id     = "..."
+client_secret = "${OPS_AZ_SECRET}"    # a reference, never a literal
+subscription  = "..."                 # optional
+
+[profiles.ops.cloud.aws]
+access_key_id     = "${OPS_AWS_KEY}"
+secret_access_key = "${OPS_AWS_SECRET}"
+region            = "ap-southeast-2"
+role_arn          = "arn:aws:iam::123456789012:role/ops"   # optional
+```
+
+Select it on this machine in `.satelle/workflows/agents.local.toml` (a catalog
+name means nothing on another machine, so it is not synced):
+
+```toml
+[executor]
+command = "in-loop"
+profile = "ops"
+```
+
+References resolve from the catalog `[vars]` and the repo's gitignored
+`satelle.local.toml` only — never from the committed `satelle.toml`.
+`satelle agent validate` rejects a literal secret and a reference nothing
+defines. pi and cursor have no launcher, so their identity is recorded as
+unavailable. What each provider keeps, and what satelle does not enforce:
+`satelle agents launch --help`.
+
 ## Migrating
 
 Nothing is required. With no catalog present, every existing repo — including

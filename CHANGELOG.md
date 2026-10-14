@@ -1,3 +1,16 @@
+## [0.0.672] - 2026-10-15
+
+### Added
+- **An agent session can run cloud commands as its own Azure or AWS identity.** A profile in `~/.satelle/agents.toml` can name a `cloud` identity per provider. Its credential is a `${NAME}` reference into the machine's `[vars]` (or the gitignored `satelle.local.toml`), never a committed value. Start the session through a launcher from `satelle agents install` (`satelle-claude`, `satelle-grok`). It signs in as the identity the repo's in-loop profile names, then runs the harness. With no identity configured, it behaves exactly as before. See `satelle help global-agents`. (sty_b61d2066)
+- **satelle never puts the long-lived secret in the agent's environment, argv, repo or logs.** On AWS the agent receives only STS session credentials, through `credential_process`. On Azure the `az` CLI keeps the service principal's secret in its own cache under the profile's `AZURE_CONFIG_DIR`. The agent runs as the same OS user, so only a separate OS user truly isolates a secret. satelle selects the identity; it does not enforce rights. (sty_b61d2066)
+- When a repo's profile names an identity but the session was not started through the launcher, session start warns the agent. The warning reads local state only. pi and cursor have no launcher, so they report `cloud identity: unavailable`. (sty_b61d2066)
+- `satelle validate` and `satelle agent validate` reject a malformed identity, an unknown provider or a literal secret, without echoing the value. (sty_b61d2066)
+
+## [serve-v0.0.165] - 2026-10-15
+
+### Changed
+- The service binary carries the cloud-identity profile schema and validation. (sty_b61d2066)
+
 ## [0.0.671] - 2026-10-15
 
 ### Fixed
