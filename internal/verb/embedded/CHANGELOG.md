@@ -1,3 +1,13 @@
+## [0.0.671] - 2026-10-15
+
+### Fixed
+- **`satelle init` and `satelle migrate` (including the `satelle init` an update tells you to run) no longer leave `.gitignore` modified when nothing is missing.** satelle adds an entry only when it is needed and the file has no setting for it, and it never rewrites the managed block to a release's new wording. The defaults are `.satelle/` and the harness dirs satelle deploys into (`.claude/`, `.grok/`, `.pi/`, `.cursor/`). An operator rule for one of them, including a `!` negation, is kept as written. A dir whose files git tracks (for example, a committed `.claude`) is never ignored. A repo that already ignores what satelle needs sees no change, and a fresh `init` settles `.gitignore` in one run. (sty_dbc0be85)
+
+### Changed
+- The integration suite starts every child process outside any satelle repo by default, and a guard test fails if that default is removed. A verb that behaves differently inside a repo is therefore exercised the same way in a worktree, in CI and in an operator checkout that has `.satelle`. The per-test working-directory workarounds are removed. (sty_5f3d3da6)
+- The plan skill and the architecture review name the kinds of existing owner a plan must search for: where state is stored, how a process is spawned or detached, how a root or pin is detected, which constant decides freshness or liveness, and which record already holds the same fact. (sty_32917083)
+- This completes epic:currency-advisory-followup. (sty_19849046)
+
 ## [0.0.670] - 2026-10-14
 
 ### Added
