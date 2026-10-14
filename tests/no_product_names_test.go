@@ -11,7 +11,7 @@ import (
 // TestInternalGoHasNoFable pins sty_bdeff052 AC3: the binary ships no
 // product-family name. Test files are excluded.
 func TestInternalGoHasNoFable(t *testing.T) {
-	root := filepath.Join("..", "internal")
+	root := filepath.Join(moduleRoot(), "internal")
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err

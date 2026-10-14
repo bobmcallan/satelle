@@ -32,10 +32,7 @@ type cloudHookEnv struct {
 // files, on branch.
 func newCloudHookEnv(t *testing.T, branch string) cloudHookEnv {
 	t.Helper()
-	root, err := filepath.Abs("..")
-	if err != nil {
-		t.Fatal(err)
-	}
+	root := moduleRoot()
 	e := cloudHookEnv{repo: t.TempDir(), home: t.TempDir()}
 	for _, rel := range []string{cloudHookScript, cloudHookSettings} {
 		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))

@@ -128,7 +128,7 @@ func TestMain(m *testing.M) {
 	// after m.Run, any new suite-owned serve is a leak — kill it and fail the suite.
 	beforeParts := captureMirrorPartitionKeys(hostRootsAtStart.SatelleHome)
 	beforeServes := liveServePIDs()
-	var xdgBackstop string
+	var xdgBackstop, cwdBackstop string
 	exit := func(code int) {
 		// Always print coverage so a green run still says full vs PARTIAL
 		// (sty_948a2d42) — silence must not read as verified clean.
@@ -168,6 +168,9 @@ func TestMain(m *testing.M) {
 		if xdgBackstop != "" {
 			_ = os.RemoveAll(xdgBackstop)
 		}
+		if cwdBackstop != "" {
+			_ = os.RemoveAll(cwdBackstop)
+		}
 		os.Exit(code)
 	}
 
@@ -184,6 +187,10 @@ func TestMain(m *testing.M) {
 		// (e.g. make build && SATELLE_BIN=./satelle go test …).
 		testBin = abs
 		if xdgBackstop, err = isolateXDGConfig(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			exit(1)
+		}
+		if cwdBackstop, err = isolateCwd(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			exit(1)
 		}
@@ -224,6 +231,13 @@ func TestMain(m *testing.M) {
 		_ = os.RemoveAll(dir)
 		exit(1)
 	}
+	// The build above ran from the module root (build.Dir = ".."); only now does
+	// the suite leave the checkout.
+	if cwdBackstop, err = isolateCwd(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		_ = os.RemoveAll(dir)
+		exit(1)
+	}
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	exit(code)
@@ -244,6 +258,45 @@ func isolateXDGConfig() (string, error) {
 		return "", fmt.Errorf("setenv XDG_CONFIG_HOME: %w", err)
 	}
 	return dir, nil
+}
+
+// isolateCwd moves the whole test process into a fresh temp dir that is outside
+// any satelle repo, so a satelle child started without an explicit Dir inherits a
+// non-repo working directory whichever checkout runs the suite (sty_5f3d3da6).
+// Without it the child inherits tests/ inside the running checkout: a gate
+// worktree or CI carries no .satelle (it is git-ignored) while the operator's
+// checkout does, so a verb that behaves differently inside a repo passed the
+// gates and failed at release. Tests that need a repo set cmd.Dir themselves.
+// It fails closed when the dir is inside the checkout or config.FindDataDir —
+// satelle's own repo discovery — finds a .satelle above it. Returns the dir for
+// cleanup. Paths into the checkout are reached through moduleRoot(), never "..".
+func isolateCwd() (string, error) {
+	dir, err := os.MkdirTemp("", "satelle-itest-cwd-*")
+	if err != nil {
+		return "", fmt.Errorf("mkdtemp cwd: %w", err)
+	}
+	if reason := cwdInsideRepo(dir); reason != "" {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("working directory default is inside a satelle repo: %s", reason)
+	}
+	if err := os.Chdir(dir); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("chdir to %s: %w", dir, err)
+	}
+	return dir, nil
+}
+
+// cwdInsideRepo reports why dir counts as inside a satelle repo, or "" when it
+// does not: it is the checkout or under it, or satelle's own discovery finds a
+// .satelle directory at or above it.
+func cwdInsideRepo(dir string) string {
+	if root := moduleRoot(); dir == root || strings.HasPrefix(dir, root+string(filepath.Separator)) {
+		return dir + " is inside the checkout " + root
+	}
+	if found, ok := config.FindDataDir(dir); ok {
+		return dir + " has a satelle data dir at " + found
+	}
+	return ""
 }
 
 // hostSurface is a content-addressed snapshot of production host state the

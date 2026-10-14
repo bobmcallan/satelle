@@ -16,17 +16,7 @@ func TestBuildVersionScript(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
 	}
-	script, err := filepath.Abs(filepath.Join("..", "scripts", "build-version.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(script); err != nil {
-		// Running from repo root (go test ./tests/…)
-		script, err = filepath.Abs(filepath.Join("scripts", "build-version.sh"))
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
+	script := filepath.Join(moduleRoot(), "scripts", "build-version.sh")
 	if _, err := os.Stat(script); err != nil {
 		t.Fatalf("build-version.sh not found: %v", err)
 	}
