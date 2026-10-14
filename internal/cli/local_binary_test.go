@@ -82,6 +82,48 @@ func TestLocalReexecTarget(t *testing.T) {
 	}
 }
 
+// TestRepoPinAgreesWithReexec (sty_15a374a8 AC4): the re-exec and every other
+// "is this repo pinned" asker go through repoPin, so for any cwd they agree: a
+// binary that is not the pin re-execs exactly when repoPin reports one.
+func TestRepoPinAgreesWithReexec(t *testing.T) {
+	pinned := t.TempDir()
+	pin := mkLocalPin(t, pinned)
+	nested := filepath.Join(pinned, "deep")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A .satelle/satelle that is a directory is no pin.
+	dirPin := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dirPin, ".satelle", "satelle"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unpinned := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(unpinned, ".satelle"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, cwd string
+		want      bool
+	}{
+		{"pinned root", pinned, true},
+		{"pinned nested", nested, true},
+		{"pin is a directory", dirPin, false},
+		{"repo without a pin", unpinned, false},
+		{"outside any repo", t.TempDir(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := repoPin(tc.cwd)
+			if ok != tc.want || (ok && got != pin) {
+				t.Fatalf("repoPin = %q,%v; want pin=%v", got, ok, tc.want)
+			}
+			target, reexec := localReexecTarget(tc.cwd, "/usr/local/bin/satelle", false)
+			if reexec != ok || target != got {
+				t.Fatalf("localReexecTarget = %q,%v disagrees with repoPin %q,%v", target, reexec, got, ok)
+			}
+		})
+	}
+}
+
 func TestPinRepoRootOf(t *testing.T) {
 	// A <root>/.satelle/satelle path is the repo-local pin → local mode.
 	if got, ok := pinRepoRootOf("/home/me/proj/.satelle/satelle"); !ok || got != "/home/me/proj" {

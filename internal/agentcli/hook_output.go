@@ -129,19 +129,112 @@ type cursorSessionContextOut struct {
 	AdditionalContext string `json:"additional_context"`
 }
 
-// SessionContextOutput returns the JSON bytes (no trailing newline) of a
-// session-context answer for a harness that has its own shape, and ok=false for
-// every other harness, whose answer is the Claude-shaped hookSpecificOutput
-// envelope the caller already builds.
-func SessionContextOutput(harness, text string) (out []byte, ok bool) {
-	if harness != HarnessCursor {
-		return nil, false
-	}
-	b, err := json.Marshal(cursorSessionContextOut{AdditionalContext: text})
+// HookContextOut is the Claude Code hook output that injects advisory context:
+// the one envelope every context-bearing event (SessionStart, UserPromptSubmit,
+// PreToolUse allow-with-nudge) is answered with, and the one place the top-level
+// systemMessage — the channel a harness shows the USER — is added to it. Exported
+// so a caller can decode an answer it received (the cli tests do).
+type HookContextOut struct {
+	HookSpecificOutput struct {
+		HookEventName      string `json:"hookEventName"`
+		PermissionDecision string `json:"permissionDecision,omitempty"`
+		AdditionalContext  string `json:"additionalContext"`
+	} `json:"hookSpecificOutput"`
+	// SystemMessage is shown to the user, not the model. Absent unless a notice
+	// was given (SessionContextOutput).
+	SystemMessage string `json:"systemMessage,omitempty"`
+}
+
+// HookEnvelope returns the JSON bytes (no trailing newline) of the Claude-shaped
+// context answer for event. permissionDecision "" omits the field (SessionStart
+// makes no permission decision; a PreToolUse allow-with-nudge sets "allow").
+// notice "" omits systemMessage.
+func HookEnvelope(event, permissionDecision, context, notice string) []byte {
+	var doc HookContextOut
+	doc.HookSpecificOutput.HookEventName = event
+	doc.HookSpecificOutput.PermissionDecision = permissionDecision
+	doc.HookSpecificOutput.AdditionalContext = context
+	doc.SystemMessage = notice
+	b, err := json.Marshal(doc)
 	if err != nil {
-		panic("agentcli: marshal session context: " + err.Error())
+		panic("agentcli: marshal hook envelope: " + err.Error())
 	}
-	return b, true
+	return b
+}
+
+// SessionContextOutput returns the JSON bytes (no trailing newline) of a
+// session-context answer: context for the model, and notice — a short line the
+// user should also see — through the harness's own user-visible channel.
+//
+//   - claude: the hookSpecificOutput envelope for event plus a top-level
+//     systemMessage.
+//   - pi: the same document; the extension's session_start passes systemMessage
+//     to notify().
+//   - cursor: additional_context only. UNSUPPORTED for the user: no capture under
+//     testdata/cursor shows a sessionStart user-facing field being displayed
+//     (user_message is documented only on deny answers, 12-snake). Revisit with a
+//     probe if cursor documents one.
+//   - grok: context only. UNSUPPORTED: Grok Build documents no user-visible
+//     SessionStart channel.
+//
+// For an unsupported harness the notice is kept in model context, once: a caller
+// that already placed the line in context (the release line) is not duplicated.
+// Callers pass text, never a field name. An unrecognised harness takes the
+// claude shape, as every other hook answer does.
+func SessionContextOutput(harness, event, context, notice string) []byte {
+	switch harness {
+	case HarnessCursor:
+		b, err := json.Marshal(cursorSessionContextOut{AdditionalContext: contextWithNotice(context, notice)})
+		if err != nil {
+			panic("agentcli: marshal session context: " + err.Error())
+		}
+		return b
+	case HarnessGrok:
+		return HookEnvelope(event, "", contextWithNotice(context, notice), "")
+	default:
+		return HookEnvelope(event, "", context, notice)
+	}
+}
+
+// contextWithNotice keeps a notice the harness cannot show the user in the
+// model's context, unless the context already carries it.
+func contextWithNotice(context, notice string) string {
+	if strings.TrimSpace(notice) == "" || strings.Contains(context, notice) {
+		return context
+	}
+	if strings.TrimSpace(context) == "" {
+		return notice
+	}
+	return notice + "\n\n" + context
+}
+
+// StopAllow is the Stop-hook allow-with-note payload: no decision field, so the
+// stop proceeds, and systemMessage surfaces the note to the operator. It is
+// deliberately NOT a block — the JSON on stdout must never read as a block on
+// this path (sty_211d8419).
+//
+// Pending and Limited are the settle answer of a harness that cannot hold its
+// stop (HarnessFacts.SettleNotifyOnly), and are absent from every other
+// harness's output: Pending names gate runs still going, whose verdict the
+// harness adapter asks for again; Limited names runs whose verdict was left
+// undelivered because the run ends at settle.
+type StopAllow struct {
+	SystemMessage string   `json:"systemMessage"`
+	Pending       []string `json:"pending,omitempty"`
+	Limited       []string `json:"limited,omitempty"`
+}
+
+// StopAllowOutput returns the JSON bytes (no trailing newline) of allow, or nil
+// for a harness whose Stop allow carries no output (SilentStopAllow).
+func StopAllowOutput(harness string, allow StopAllow) []byte {
+	if SilentStopAllow(harness) {
+		return nil
+	}
+	b, err := json.Marshal(allow)
+	if err != nil {
+		panic("agentcli: marshal stop allow: " + err.Error())
+	}
+	return b
 }
 
 // cursorStopOut is cursor-agent's stop output: a followup_message re-prompts the

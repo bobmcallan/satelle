@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/store"
 )
@@ -546,7 +547,7 @@ func TestHookContextAndPrompt_PiHarness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hook context: %v\n%s", err, out)
 	}
-	var ctxOut hookContextOut
+	var ctxOut agentcli.HookContextOut
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &ctxOut); err != nil {
 		t.Fatalf("context output is not the additionalContext envelope: %v\n%s", err, out)
 	}
@@ -557,7 +558,7 @@ func TestHookContextAndPrompt_PiHarness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hook prompt: %v\n%s", err, out)
 	}
-	var promptOut hookContextOut
+	var promptOut agentcli.HookContextOut
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &promptOut); err != nil {
 		t.Fatalf("prompt output is not the additionalContext envelope: %v\n%s", err, out)
 	}

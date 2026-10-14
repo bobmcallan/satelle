@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // TestServeReleaseFoundBeyondFirstPage proves AC1 of sty_0dcedb0d against the
@@ -279,6 +281,7 @@ func TestServeRetagReplacesSameVersion(t *testing.T) {
 	}
 	resetUpdateFlags(t)
 	t.Cleanup(func() { resetUpdateFlags(t) })
+	testutil.IsolateHome(t) // update writes the release cache under GlobalDir
 	installDir := t.TempDir()
 	t.Setenv("SATELLE_INSTALL_DIR", installDir)
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/lease"
@@ -1176,7 +1177,7 @@ func TestRunHookPromptEmitsReminder(t *testing.T) {
 	if err := runHookPrompt(&buf); err != nil {
 		t.Fatalf("runHookPrompt: %v", err)
 	}
-	var got hookContextOut
+	var got agentcli.HookContextOut
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Fatalf("prompt output not valid JSON: %v (%s)", err, buf.String())
 	}
@@ -1483,7 +1484,7 @@ func TestPromptNoSeatIsUnchanged(t *testing.T) {
 	if err := runHookPrompt(&buf); err != nil {
 		t.Fatalf("runHookPrompt: %v", err)
 	}
-	var got hookContextOut
+	var got agentcli.HookContextOut
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Fatalf("prompt output not valid JSON: %v (%s)", err, buf.String())
 	}

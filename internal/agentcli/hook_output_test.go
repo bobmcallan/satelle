@@ -75,17 +75,53 @@ func TestPreToolUseDenyMatchRecognisesOwnShape(t *testing.T) {
 	}
 }
 
-// sty_7d098d50 AC7: cursor's session-context answer is additional_context; no
-// other harness has its own shape, so the caller builds the Claude envelope.
+// sty_7d098d50 AC7 / sty_15a374a8 AC6: each harness's session-context answer,
+// with and without a user notice. Claude and pi carry it as a top-level
+// systemMessage; cursor and grok have no user channel, so the notice stays in
+// model context — once, never duplicating a line the context already holds.
 func TestSessionContextOutput(t *testing.T) {
-	b, ok := SessionContextOutput(HarnessCursor, "CTX")
-	if !ok || string(b) != `{"additional_context":"CTX"}` {
-		t.Fatalf("SessionContextOutput(cursor) = %s, %v", b, ok)
+	const env = `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"CTX"}`
+	for _, tc := range []struct {
+		name, harness, event, ctx, notice, want string
+	}{
+		{"claude, notice", HarnessClaude, "SessionStart", "CTX", "N", env + `,"systemMessage":"N"}`},
+		{"claude, no notice", HarnessClaude, "SessionStart", "CTX", "", env + `}`},
+		{"pi, notice", HarnessPi, "SessionStart", "CTX", "N", env + `,"systemMessage":"N"}`},
+		{"unknown takes the claude shape", HarnessUnknown, "SessionStart", "CTX", "N", env + `,"systemMessage":"N"}`},
+		{"claude, other event name", HarnessClaude, "sessionStart", "CTX", "", `{"hookSpecificOutput":{"hookEventName":"sessionStart","additionalContext":"CTX"}}`},
+		{"cursor, no notice", HarnessCursor, "sessionStart", "CTX", "", `{"additional_context":"CTX"}`},
+		{"cursor, notice kept in context", HarnessCursor, "sessionStart", "CTX", "N", `{"additional_context":"N\n\nCTX"}`},
+		{"cursor, notice already in context", HarnessCursor, "sessionStart", "N\n\nCTX", "N", `{"additional_context":"N\n\nCTX"}`},
+		{"grok, no notice", HarnessGrok, "SessionStart", "CTX", "", env + `}`},
+		{"grok, notice kept in context, no systemMessage", HarnessGrok, "SessionStart", "CTX", "N",
+			`{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"N\n\nCTX"}}`},
+		{"grok, notice already in context", HarnessGrok, "SessionStart", "N\n\nCTX", "N",
+			`{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"N\n\nCTX"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := string(SessionContextOutput(tc.harness, tc.event, tc.ctx, tc.notice)); got != tc.want {
+				t.Fatalf("got  %s\nwant %s", got, tc.want)
+			}
+		})
 	}
-	for _, h := range []string{HarnessClaude, HarnessGrok, HarnessPi, HarnessUnknown, ""} {
-		if b, ok := SessionContextOutput(h, "CTX"); ok || b != nil {
-			t.Errorf("SessionContextOutput(%q) = %s, %v; want no own shape", h, b, ok)
-		}
+}
+
+// sty_15a374a8 AC6: the Claude envelope and the Stop allow-with-note are encoded
+// here and nowhere else; their bytes are the ones the cli emitted before.
+func TestHookEnvelopeAndStopAllow(t *testing.T) {
+	if got := string(HookEnvelope("PreToolUse", "allow", "NUDGE", "")); got !=
+		`{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","additionalContext":"NUDGE"}}` {
+		t.Errorf("allow-with-nudge = %s", got)
+	}
+	if got := string(StopAllowOutput(HarnessClaude, StopAllow{SystemMessage: "n"})); got != `{"systemMessage":"n"}` {
+		t.Errorf("stop note = %s", got)
+	}
+	if got := string(StopAllowOutput(HarnessPi, StopAllow{SystemMessage: "n", Pending: []string{"g"}, Limited: []string{"l"}})); got !=
+		`{"systemMessage":"n","pending":["g"],"limited":["l"]}` {
+		t.Errorf("stop settle answer = %s", got)
+	}
+	if got := StopAllowOutput(HarnessCursor, StopAllow{SystemMessage: "n"}); got != nil {
+		t.Errorf("cursor stop allow = %s, want nothing", got)
 	}
 }
 

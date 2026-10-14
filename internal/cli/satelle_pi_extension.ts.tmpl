@@ -255,6 +255,9 @@ export default function (pi: ExtensionAPI) {
 			const d = await runDirect(b, claudeEvent("SessionStart", ctx, { source: "startup" }), ctx);
 			const add = d.ok ? d.doc?.hookSpecificOutput?.additionalContext : undefined;
 			if (typeof add === "string" && add.trim()) parts.push(add);
+			// systemMessage is the user-visible notice (a newer release exists):
+			// the model reads it in additionalContext, the user reads it here.
+			if (typeof d.doc?.systemMessage === "string" && d.doc.systemMessage) notify(ctx, d.doc.systemMessage, "info");
 		}
 		sessionContext = parts.join("\n\n");
 	});

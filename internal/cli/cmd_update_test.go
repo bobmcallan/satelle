@@ -1437,6 +1437,7 @@ func TestUpdateRetagReplacesSameVersion(t *testing.T) {
 	}
 	resetUpdateFlags(t)
 	t.Cleanup(func() { resetUpdateFlags(t) })
+	testutil.IsolateHome(t) // update writes the release cache under GlobalDir
 	installDir := t.TempDir()
 	t.Setenv("SATELLE_INSTALL_DIR", installDir)
 
@@ -1523,6 +1524,7 @@ func TestUpdateForceReinstallsWhenMatch(t *testing.T) {
 	}
 	resetUpdateFlags(t)
 	t.Cleanup(func() { resetUpdateFlags(t) })
+	testutil.IsolateHome(t) // update writes the release cache under GlobalDir
 	installDir := t.TempDir()
 	t.Setenv("SATELLE_INSTALL_DIR", installDir)
 
@@ -1599,6 +1601,7 @@ func TestUpdateUnknownIdentityLeavesBinary(t *testing.T) {
 	}
 	resetUpdateFlags(t)
 	t.Cleanup(func() { resetUpdateFlags(t) })
+	testutil.IsolateHome(t) // update writes the release cache under GlobalDir
 	installDir := t.TempDir()
 	t.Setenv("SATELLE_INSTALL_DIR", installDir)
 
@@ -1654,6 +1657,7 @@ func TestUpdateCheckReportsIdentity(t *testing.T) {
 	}
 	resetUpdateFlags(t)
 	t.Cleanup(func() { resetUpdateFlags(t) })
+	testutil.IsolateHome(t) // update writes the release cache under GlobalDir
 	installDir := t.TempDir()
 	t.Setenv("SATELLE_INSTALL_DIR", installDir)
 

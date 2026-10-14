@@ -57,7 +57,7 @@ func TestSettleStopAllowsAGateStillRunning(t *testing.T) {
 		if settle == 1 && time.Since(start) < 40*time.Millisecond {
 			t.Errorf("the hook did not wait out its one bound (%s)", time.Since(start))
 		}
-		var allow stopAllowOut
+		var allow agentcli.StopAllow
 		if err := json.Unmarshal([]byte(line), &allow); err != nil || strings.Contains(line, `"decision"`) {
 			t.Fatalf("settle %d: a still-running gate must allow the stop, not block it: %q", settle, line)
 		}
@@ -140,7 +140,7 @@ func TestSettleNoWakeRecordsALimitationAndDeliversNothing(t *testing.T) {
 	if time.Since(start) > 5*time.Second {
 		t.Errorf("a run that ends at settle waited (%s)", time.Since(start))
 	}
-	var allow stopAllowOut
+	var allow agentcli.StopAllow
 	if err := json.Unmarshal([]byte(line), &allow); err != nil || strings.Contains(line, `"decision"`) {
 		t.Fatalf("a run that ends at settle must not block: %q", line)
 	}

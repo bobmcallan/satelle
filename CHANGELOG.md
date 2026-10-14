@@ -1,3 +1,17 @@
+## [0.0.669] - 2026-10-14
+
+### Added
+- **`satelle update` assesses the repo right after installing.** Inside a satelle repo it runs the newly installed binary's `satelle doctor`, so the repo is judged against the new default substrate in the same step. A failing assessment exits non-zero and names `satelle init`. The install is kept. In a repo pinned with `.satelle/satelle`, update says the repo runs its pinned binary and names `satelle update --local` instead. Outside a repo, including `$HOME` with its global `~/.satelle`, no assessment runs. The guidance for other registered repos is unchanged. Update now prints one `satelle <ver> · satelled <ver>` line. (sty_15a374a8)
+- **A session start tells the user when a newer satelle or satelled release exists.** The check reads a machine-wide release cache under the satelle home and never waits on the network. A cache older than 24h, or a missing one, starts one detached `satelle update --check`, at most once every 10 minutes. A line from a stale cache is marked unverified. A dev build, or a binary ahead of the latest release, stays silent. `satelle update` and `satelle update --check` write the cache. (sty_15a374a8)
+
+### Changed
+- Session-start advice reaches the user, not only the agent. Claude Code shows it as a hook `systemMessage`, and pi shows it through `notify()`. Cursor and Grok have no proven user-facing session-start field, so their advice stays in the model's context. Every harness's hook output shape (the context envelope and the Stop allow-with-note) is now built in one place. (sty_15a374a8)
+
+## [serve-v0.0.163] - 2026-10-14
+
+### Changed
+- The service binary carries the shared hook-output envelope and the global-home path helper. (sty_15a374a8)
+
 ## [0.0.668] - 2026-10-13
 
 ### Fixed

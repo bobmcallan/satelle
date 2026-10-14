@@ -2436,7 +2436,10 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 			return nil
 		}
 	}
-	content, omitted := assembleSessionContext(a, harness, limit, unit)
+	// The release line rides in model context AND, through the harness's own
+	// user channel, to the user (agentcli.SessionContextOutput below).
+	releaseLine := releaseAdvisoryFor(a)
+	content, omitted := assembleSessionContext(a, harness, limit, unit, releaseLine)
 	if len(omitted) > 0 {
 		fmt.Fprintf(stderr,
 			"satelle hook context: %s exceeded the %s harness limit (%d %s) — indexed with a read instruction: %s\n",
@@ -2445,12 +2448,7 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 	if strings.TrimSpace(content) == "" {
 		return nil
 	}
-	if b, ok := agentcli.SessionContextOutput(harness, content); ok {
-		// A harness with its own session-context shape (cursor's additional_context).
-		fmt.Fprintln(out, string(b))
-	} else if err := emitAdditionalContext(out, emitEvent, "", content); err != nil {
-		return nil // fail open
-	}
+	fmt.Fprintln(out, string(agentcli.SessionContextOutput(harness, emitEvent, content, releaseLine)))
 	// The marker is written only after a channel-matching emit of non-empty
 	// additionalContext. A non-matching event (including SessionStart when the
 	// channel is elsewhere) writes nothing. Marker errors are swallowed.
@@ -2463,8 +2461,10 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 // assembleSessionContext renders the session principle set — constitution,
 // principles:session docs, advisories, seat — under the budget the caller
 // resolved. unit is "bytes" (len, the SessionStart path) or "characters"
-// (runes, a tool-event clip). Fail-open: a list error returns empty content.
-func assembleSessionContext(a *app.App, harness string, limit int, unit string) (string, []string) {
+// (runes, a tool-event clip). releaseLine is the release-currency advisory
+// ("" when none), placed beside the version-drift line. Fail-open: a list error
+// returns empty content.
+func assembleSessionContext(a *app.App, harness string, limit int, unit, releaseLine string) (string, []string) {
 	if a == nil || a.Store == nil || a.Store.DocIndex == nil {
 		return "", nil
 	}
@@ -2513,6 +2513,7 @@ func assembleSessionContext(a *app.App, harness string, limit int, unit string) 
 			}
 		}
 		content = prependContextLine(content, versionLine)
+		content = prependContextLine(content, releaseLine)
 		content = prependContextLine(content, substrateLine)
 		content = prependContextLine(content, docStoryLine)
 		return appendSeatToContext(content, seat, 0)
@@ -3035,18 +3036,6 @@ func stripFrontmatter(body string) string {
 	return body
 }
 
-// hookContextOut is the Claude Code hook output that injects advisory context.
-// PermissionDecision is optional (omitempty): the SessionStart context injector
-// omits it (no decision); a PreToolUse allow-with-nudge sets "allow" plus the
-// additionalContext the model reads on its next turn.
-type hookContextOut struct {
-	HookSpecificOutput struct {
-		HookEventName      string `json:"hookEventName"`
-		PermissionDecision string `json:"permissionDecision,omitempty"`
-		AdditionalContext  string `json:"additionalContext"`
-	} `json:"hookSpecificOutput"`
-}
-
 // emitAdditionalContext writes the hook JSON that adds advisory context. event is
 // the hook event name; context is the body the model reads (a system reminder for
 // SessionStart; beside the tool result for PreToolUse). permissionDecision is
@@ -3064,15 +3053,7 @@ type hookContextOut struct {
 // Claude rejects top-level decision/reason — a real schema conflict that context
 // injection does not share. Finding recorded on sty_e16a2cd7 as grok-prompt-contract.
 func emitAdditionalContext(out io.Writer, event, permissionDecision, context string) error {
-	var doc hookContextOut
-	doc.HookSpecificOutput.HookEventName = event
-	doc.HookSpecificOutput.PermissionDecision = permissionDecision
-	doc.HookSpecificOutput.AdditionalContext = context
-	b, err := json.Marshal(doc)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintln(out, string(b))
+	fmt.Fprintln(out, string(agentcli.HookEnvelope(event, permissionDecision, context, "")))
 	return nil
 }
 
@@ -3284,7 +3265,7 @@ func runHookStopcheck(raw []byte, out io.Writer) error {
 	// said, so nothing is claimed and the verdict stays for the next turn.
 	var wake *resumeWake
 	defer func() { wake.settle() }()
-	var settle *stopAllowOut
+	var settle *agentcli.StopAllow
 	if !isDispatchedProcess() && agentcli.StopWithinCap(stopHarness(raw), raw) {
 		facts := agentcli.FactsFor(stopHarness(raw))
 		if !facts.SettleNotifyOnly {
@@ -3303,7 +3284,7 @@ func runHookStopcheck(raw []byte, out io.Writer) error {
 			if d.text != "" {
 				return emitStopBlock(out, d.text)
 			}
-			settle = &stopAllowOut{SystemMessage: d.note, Pending: d.pending, Limited: limited}
+			settle = &agentcli.StopAllow{SystemMessage: d.note, Pending: d.pending, Limited: limited}
 			for _, id := range limited {
 				settle.SystemMessage = joinNonEmpty("\n", settle.SystemMessage, fmt.Sprintf("satelle: gate %s undelivered — %s", id, facts.NoWakeLimitation))
 			}
@@ -3521,36 +3502,20 @@ func stopcheckSiblingNote(holder seatInfo, extra int, paths []string, now time.T
 		len(paths), formatSeat(holder, now), session, more)
 }
 
-// stopAllowOut is the Stop-hook allow-with-note payload: no decision field, so
-// the stop proceeds, and systemMessage surfaces the note to the operator. It is
-// deliberately NOT stopBlockOut — the JSON on stdout must never read as a block
-// on this path (sty_211d8419).
-//
-// Pending and Limited are the settle answer of a harness that cannot hold its
-// stop (agentcli.HarnessFacts.SettleNotifyOnly), and are absent from every other
-// harness's output: Pending names gate runs still going, whose verdict the
-// harness adapter asks for again; Limited names runs whose verdict was left
-// undelivered because the run ends at settle.
-type stopAllowOut struct {
-	SystemMessage string   `json:"systemMessage"`
-	Pending       []string `json:"pending,omitempty"`
-	Limited       []string `json:"limited,omitempty"`
-}
-
-// emitStopNote writes the allow-with-note JSON (one line) and returns nil.
+// emitStopNote writes the allow-with-note JSON (one line) and returns nil. The
+// payload is agentcli.StopAllow: no decision field, so the stop proceeds, and
+// systemMessage surfaces the note to the operator. It is deliberately NOT
+// stopBlockOut — the JSON on stdout must never read as a block on this path
+// (sty_211d8419).
 func emitStopNote(out io.Writer, note string) error {
-	return emitStopAllow(out, stopAllowOut{SystemMessage: note})
+	return emitStopAllow(out, agentcli.StopAllow{SystemMessage: note})
 }
 
-func emitStopAllow(out io.Writer, allow stopAllowOut) error {
-	if agentcli.SilentStopAllow(stopEmitHarness) {
-		return nil // a harness whose only Stop channel re-prompts takes no note
+func emitStopAllow(out io.Writer, allow agentcli.StopAllow) error {
+	// A harness whose only Stop channel re-prompts takes no note (nil).
+	if b := agentcli.StopAllowOutput(stopEmitHarness, allow); b != nil {
+		fmt.Fprintln(out, string(b))
 	}
-	b, err := json.Marshal(allow)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintln(out, string(b))
 	return nil
 }
 

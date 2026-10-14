@@ -23,11 +23,32 @@ const localBinaryName = "satelle"
 
 // findDotSatelleRoot walks up from start looking for a directory that contains a
 // .satelle/ subdir, returning that directory. The repo root is where .satelle/
-// lives, mirroring how the rest of satelle resolves a repo.
+// lives, mirroring how the rest of satelle resolves a repo. The machine-wide
+// home (~/.satelle) is never a repo's data dir, so the walk passes over it.
 func findDotSatelleRoot(start string) (string, bool) {
 	dir := start
 	for {
-		if fi, err := os.Stat(filepath.Join(dir, config.DefaultDataDir)); err == nil && fi.IsDir() {
+		data := filepath.Join(dir, config.DefaultDataDir)
+		if fi, err := os.Stat(data); err == nil && fi.IsDir() && !config.IsGlobalDir(data) {
+			return dir, true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+	}
+}
+
+// findRepoConfigRoot walks up from start for a directory holding
+// .satelle/satelle.toml — the walk config.ResolvePath makes — and returns it.
+// This is "inside a satelle repo" for actions that judge the repo itself: the
+// config file is what only a repo carries, so a bare .satelle/ (the global home,
+// a stray directory) is never matched.
+func findRepoConfigRoot(start string) (string, bool) {
+	dir := start
+	for {
+		if fi, err := os.Stat(filepath.Join(dir, config.DefaultDataDir, config.ConfigName)); err == nil && fi.Mode().IsRegular() {
 			return dir, true
 		}
 		parent := filepath.Dir(dir)
@@ -62,6 +83,23 @@ func resolvePathOrSelf(p string) string {
 	return p
 }
 
+// repoPin is the single check for a repo-local pin: the regular file
+// <repo>/.satelle/satelle of the nearest .satelle/ ancestor of cwd. The re-exec,
+// the post-update assessment and the session-start release line all ask it, so
+// they cannot disagree about whether a repo is pinned.
+func repoPin(cwd string) (string, bool) {
+	root, ok := findDotSatelleRoot(cwd)
+	if !ok {
+		return "", false
+	}
+	local := filepath.Join(root, config.DefaultDataDir, localBinaryName)
+	fi, err := os.Stat(local)
+	if err != nil || !fi.Mode().IsRegular() {
+		return "", false
+	}
+	return local, true
+}
+
 // localReexecTarget is the PURE decision behind the local-binary dispatch: given
 // the cwd, the currently-running executable path (self), and whether the loop
 // marker is already set, it returns the repo-local binary to re-exec and true —
@@ -72,13 +110,8 @@ func localReexecTarget(cwd, self string, marker bool) (string, bool) {
 	if marker {
 		return "", false
 	}
-	root, ok := findDotSatelleRoot(cwd)
+	local, ok := repoPin(cwd)
 	if !ok {
-		return "", false
-	}
-	local := filepath.Join(root, config.DefaultDataDir, localBinaryName)
-	fi, err := os.Stat(local)
-	if err != nil || !fi.Mode().IsRegular() {
 		return "", false
 	}
 	if resolvePathOrSelf(local) == resolvePathOrSelf(self) {

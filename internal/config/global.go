@@ -204,11 +204,34 @@ func GlobalDir() string {
 	if testing.Testing() {
 		panic("satelle: test resolved GlobalDir() with no SATELLE_HOME set — use testutil.IsolateHome(t); refusing to touch the real ~/.satelle")
 	}
+	return defaultGlobalDir()
+}
+
+func defaultGlobalDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ".satelle-global"
 	}
 	return filepath.Join(home, ".satelle")
+}
+
+// IsGlobalDir reports whether dir is the machine-wide satelle home. Unlike
+// GlobalDir it never panics, so a read-only repo walk-up can ask it: the global
+// home is named .satelle like a repo's data dir and must not be mistaken for one.
+func IsGlobalDir(dir string) bool {
+	g := strings.TrimSpace(os.Getenv("SATELLE_HOME"))
+	if g == "" {
+		g = defaultGlobalDir()
+	}
+	if filepath.Clean(dir) == filepath.Clean(g) {
+		return true
+	}
+	di, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	gi, err := os.Stat(g)
+	return err == nil && os.SameFile(di, gi)
 }
 
 // GlobalConfigPath returns the path to the global config file.

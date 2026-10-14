@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/store"
@@ -184,7 +185,7 @@ func TestStopcheckSeatScopeMatrix(t *testing.T) {
 				}
 			}
 			if tc.wantMentionsHolder {
-				var note stopAllowOut
+				var note agentcli.StopAllow
 				if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &note); err != nil || note.SystemMessage == "" {
 					t.Fatalf("allow-with-note payload = %q (%v)", out, err)
 				}

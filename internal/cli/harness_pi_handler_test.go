@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/agentcli"
 )
 
 // The pi extension is TypeScript, so its handlers can only be exercised by
@@ -320,6 +322,31 @@ func TestPiHandler_SessionContextAndPromptReminder(t *testing.T) {
 	_ = json.Unmarshal([]byte(r.stdin()[2]), &ev)
 	if ev["hook_event_name"] != "UserPromptSubmit" || ev["prompt"] != "do it" {
 		t.Errorf("prompt event = %v", ev)
+	}
+}
+
+// sty_15a374a8 AC6: a notice satelle puts in the session-context answer's
+// systemMessage reaches the USER through pi's notify(); an answer without one
+// notifies nothing, and the model-facing context is unchanged either way.
+func TestPiHandler_SessionStartNoticeReachesUser(t *testing.T) {
+	r := newPiRig(t)
+	r.can("reindex", "", 0)
+	r.can("context", string(agentcli.SessionContextOutput("pi", "SessionStart", "SESSION-PRINCIPLES-MARKER", "RELEASE-NOTICE-MARKER")), 0)
+	out := r.drive(true,
+		piStep{Event: "session_start", Arg: map[string]any{}},
+		piStep{Event: "before_agent_start", Arg: map[string]any{"prompt": "go", "systemPrompt": "BASE"}},
+	)
+	if len(out.Notices) != 1 || out.Notices[0].Msg != "RELEASE-NOTICE-MARKER" || out.Notices[0].Level != "info" {
+		t.Fatalf("session_start must notify the user once with the notice: %+v", out.Notices)
+	}
+	if sp, _ := out.Results[1].Result["systemPrompt"].(string); !strings.Contains(sp, "SESSION-PRINCIPLES-MARKER") {
+		t.Errorf("the model context must still ride the system prompt: %q", sp)
+	}
+
+	r.can("context", string(agentcli.SessionContextOutput("pi", "SessionStart", "SESSION-PRINCIPLES-MARKER", "")), 0)
+	out = r.drive(true, piStep{Event: "session_start", Arg: map[string]any{}})
+	if len(out.Notices) != 0 {
+		t.Fatalf("no notice, no notification: %+v", out.Notices)
 	}
 }
 

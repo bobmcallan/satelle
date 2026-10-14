@@ -28,6 +28,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/releasestate"
 )
 
 const updateRepo = "bobmcallan/satelle"
@@ -124,9 +125,11 @@ global service.`,
 				// Surface serve channel too when independent (sty_19ff03f4), including
 				// the artifact-identity verdict so dogfood can read it (sty_1cd2ff01).
 				if !local {
-					if st, serr := latestServeReleaseTag(ctx, updateRepo); serr == nil {
-						serveTarget := installedDaemonPath(target)
-						installedServe, servePresent := serveInstalledVersion(serveTarget)
+					st, serr := latestServeReleaseTag(ctx, updateRepo)
+					serveTarget := installedDaemonPath(target)
+					installedServe, servePresent := serveInstalledVersion(serveTarget)
+					recordReleaseCheck(latest, st, installedServe)
+					if serr == nil {
 						if !servePresent {
 							fmt.Fprintf(out, "latest serve release: %s (not installed)\n", st)
 						} else {
@@ -192,6 +195,12 @@ global service.`,
 					fmt.Fprintf(out, "installed %s (%s)\n", serveTarget, serveTag)
 					cliUpdated = true // restart so serve process can pick up sibling if re-exec path
 				}
+				// Both halves are now at their resolved release: cache them for the
+				// SessionStart release line, and name both versions in the output.
+				cliVer, _ := installedBanner(target)
+				serveVer, _ := installedServeBanner(installedAt)
+				recordReleaseCheck(latest, serveTag, serveVer)
+				fmt.Fprintf(out, "satelle %s · satelled %s\n", orUnknown(cliVer), orUnknown(serveVer))
 			}
 			// The global service runs the global binary; a repo-local pin does not
 			// drive it, so only restart for a global update.
@@ -203,8 +212,11 @@ global service.`,
 					return err
 				}
 			}
+			// The assessment prints first; a failed one is returned only after the
+			// estate guidance, so that guidance is never lost to it.
+			assessErr := assessAfterUpdate(ctx, out, target, latest, cliReplaced, local)
 			printEstateGuidance(out, cliReplaced, local)
-			return nil
+			return assessErr
 		},
 	}
 	cmd.Flags().BoolVar(&check, "check", false, "report whether an update is available without installing")
@@ -236,6 +248,81 @@ func printEstateGuidance(out io.Writer, cliReplaced, local bool) {
 	fmt.Fprintln(out, "scaffolding deployed by the previous binary is now stale:")
 	fmt.Fprintln(out, "  satelle doctor --all      # read-only: which registered repos are stale")
 	fmt.Fprintln(out, "  satelle init --all        # dry-run: what healing them would change")
+}
+
+// runAssessment executes bin with args, streaming its output to out. It is the
+// seam through which update runs the newly installed binary against the current
+// repo; tests replace it.
+var runAssessment = func(ctx context.Context, out io.Writer, bin string, args ...string) error {
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Stdout, cmd.Stderr = out, out
+	return cmd.Run()
+}
+
+// assessAfterUpdate realigns the CURRENT repo with the binary just installed
+// (sty_15a374a8): it runs the new binary's `doctor` here and prints its findings
+// under a heading naming the new version, so drift from the new default
+// substrate is reported by the update itself rather than by a later session's
+// stamp warning.
+//
+// It is quiet unless the CLI was replaced globally and cwd is inside a satelle
+// repo. A repo that pins its own binary (.satelle/satelle) keeps running that
+// pin, so the new version's judgement does not apply to it: it is told which
+// version it runs and how to move it, with no assessment under the new heading.
+// An unhealthy assessment does not undo the install; it fails the verb with the
+// heal named, because a green exit would hide an unaligned repo.
+func assessAfterUpdate(ctx context.Context, out io.Writer, target, latest string, cliReplaced, local bool) error {
+	if !cliReplaced || local {
+		return nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	if _, inRepo := findRepoConfigRoot(cwd); !inRepo {
+		return nil
+	}
+	if pin, pinned := repoPin(cwd); pinned {
+		ver, _ := installedBanner(pin)
+		fmt.Fprintf(out, "\nThis repo runs its pinned binary %s; run `satelle update --local` to move it.\n", orUnknown(ver))
+		return nil
+	}
+	fmt.Fprintf(out, "\nassessing this repo against satelle %s:\n", latest)
+	if err := runAssessment(ctx, out, target, "doctor"); err != nil {
+		reason := ""
+		if _, isExit := err.(*exec.ExitError); !isExit {
+			reason = fmt.Sprintf(" (could not run doctor: %v)", err)
+		}
+		return fmt.Errorf("binary updated to %s; this repo is not aligned%s — run `satelle init` to heal", latest, reason)
+	}
+	return nil
+}
+
+// orUnknown names an unreadable version, so an output line never has a hole.
+func orUnknown(v string) string {
+	if v == "" {
+		return "(unknown)"
+	}
+	return v
+}
+
+// recordReleaseCheck writes the resolved releases to the machine-wide release
+// cache the SessionStart hook reads (sty_15a374a8). An empty serveLatest keeps
+// the previous one (the serve lookup failed or no serve release exists); the
+// running satelled version is always the one just observed. The cache is
+// advisory, so a failed write never fails the verb.
+func recordReleaseCheck(cliLatest, serveLatest, serveRunning string) {
+	dir := config.GlobalDir()
+	st, _, _ := releasestate.Load(dir)
+	if cliLatest != "" {
+		st.CLILatest = cliLatest
+	}
+	if serveLatest != "" {
+		st.ServeLatest = serveLatest
+	}
+	st.ServeRunning = serveRunning
+	st.CheckedAt = time.Now().UTC()
+	_ = releasestate.Record(dir, st)
 }
 
 // installTarget is the binary update replaces: SATELLE_INSTALL_DIR (else
