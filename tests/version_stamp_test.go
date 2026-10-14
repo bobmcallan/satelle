@@ -15,7 +15,7 @@ import (
 // tests/). Usable from TestMain (no *testing.T). Keys include "satelle.version:",
 // "satelle.build:", "satelled.version:".
 func readVersionField(key string) (string, error) {
-	b, err := os.ReadFile(filepath.Join("..", ".version"))
+	b, err := os.ReadFile(filepath.Join(moduleRoot(), ".version"))
 	if err != nil {
 		return "", err
 	}
@@ -89,7 +89,7 @@ func TestMakefileStampsPerArtifactVersions(t *testing.T) {
 	serveVer := repoServeVersion(t)
 	build := repoBuildDate(t)
 	cmd := exec.Command("make", "-n", "build")
-	cmd.Dir = ".."
+	cmd.Dir = moduleRoot()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("make -n build: %v\n%s", err, out)
@@ -152,14 +152,11 @@ func TestBuildDateBakedFromVersionFile(t *testing.T) {
 		" -X " + pkg + ".BuildTime=" + build
 	bin := filepath.Join(t.TempDir(), "satelle-dated")
 	b := exec.Command("go", "build", "-ldflags", ldflags, "-o", bin, "./cmd/satelle")
-	b.Dir = ".."
+	b.Dir = moduleRoot()
 	if out, err := b.CombinedOutput(); err != nil {
 		t.Fatalf("ldflags build: %v\n%s", err, out)
 	}
-	// Run outside the source tree so a repo-local .satelle/satelle pin is not
-	// re-exec'd in place of the stamped binary under test.
 	cmd := exec.Command(bin, "version")
-	cmd.Dir = t.TempDir()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("satelle version: %v\n%s", err, out)
@@ -186,16 +183,13 @@ func TestVersionBakedFromLdflags(t *testing.T) {
 
 	bin := filepath.Join(t.TempDir(), "satelle-stamped")
 	build := exec.Command("go", "build", "-ldflags", ldflags, "-o", bin, "./cmd/satelle")
-	build.Dir = ".."
+	build.Dir = moduleRoot()
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("ldflags build: %v\n%s", err, out)
 	}
 
-	// Isolated cwd: avoid re-exec into this repo's .satelle/satelle pin.
-	runDir := t.TempDir()
 	for _, args := range [][]string{{"version"}, {"--version"}} {
 		cmd := exec.Command(bin, args...)
-		cmd.Dir = runDir
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("satelle %v: %v\n%s", args, err, out)

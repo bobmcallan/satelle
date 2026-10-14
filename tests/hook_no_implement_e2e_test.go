@@ -145,7 +145,7 @@ func TestHookNoImplementE2E_InstalledWrapper(t *testing.T) {
 					t.Fatalf("explain: %v\n%s", err, exOut)
 				}
 				got := strings.ReplaceAll(string(exOut), sess, "$SESS")
-				golden := filepath.Join("testdata", "hookexplain", "e2e-"+p.name+".golden")
+				golden := filepath.Join(moduleRoot(), "tests", "testdata", "hookexplain", "e2e-"+p.name+".golden")
 				wantb, err := os.ReadFile(golden)
 				if err != nil {
 					t.Fatalf("golden %s: %v", golden, err)

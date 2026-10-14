@@ -43,9 +43,6 @@ func TestUpdateReplacesBinary(t *testing.T) {
 
 	installDir := t.TempDir()
 	cmd := exec.Command(testBin, "update", "--no-restart")
-	// Run outside any repo: since sty_15a374a8 an update inside a satelle repo
-	// runs the installed binary's doctor, and this fake binary cannot run.
-	cmd.Dir = t.TempDir()
 	cmd.Env = append(os.Environ(),
 		"SATELLE_RELEASE_API="+srv.URL+"/api/releases/latest",
 		"SATELLE_RELEASE_LIST_API="+srv.URL+"/api/releases",
@@ -112,9 +109,6 @@ func TestUpdateAlreadyCurrentReportsNoRestartAdvice(t *testing.T) {
 	}
 
 	cmd := exec.Command(testBin, "update")
-	// Run outside any repo: since sty_15a374a8 an update inside a satelle repo
-	// runs the installed binary's doctor, and this fake binary cannot run.
-	cmd.Dir = t.TempDir()
 	cmd.Env = append(os.Environ(),
 		"SATELLE_RELEASE_API="+srv.URL+"/api/releases/latest",
 		"SATELLE_RELEASE_LIST_API="+srv.URL+"/api/releases",
@@ -229,9 +223,6 @@ func TestUpdateInstallsServeFromLaterPage(t *testing.T) {
 		"SATELLE_INSTALL_DIR="+installDir,
 	)
 	cmd := exec.Command(testBin, "update", "--no-restart")
-	// Run outside any repo: since sty_15a374a8 an update inside a satelle repo
-	// runs the installed binary's doctor, and this fake binary cannot run.
-	cmd.Dir = t.TempDir()
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -287,9 +278,6 @@ func TestUpdateFailsWhenServeReleaseUnresolvable(t *testing.T) {
 	}
 
 	cmd := exec.Command(testBin, "update", "--no-restart")
-	// Run outside any repo: since sty_15a374a8 an update inside a satelle repo
-	// runs the installed binary's doctor, and this fake binary cannot run.
-	cmd.Dir = t.TempDir()
 	cmd.Env = append(os.Environ(),
 		"SATELLE_RELEASE_API="+srv.URL+"/api/releases/latest",
 		"SATELLE_RELEASE_LIST_API="+srv.URL+"/api/releases",

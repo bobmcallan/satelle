@@ -29,11 +29,7 @@ func writeEnforcementRoute(t *testing.T, repo string) {
 // elsewhere — here, under the tests package dir.
 func foreignRepoDir(t *testing.T) string {
 	t.Helper()
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir, err := os.MkdirTemp(wd, ".foreign-repo-")
+	dir, err := os.MkdirTemp(filepath.Join(moduleRoot(), "tests"), ".foreign-repo-")
 	if err != nil {
 		t.Fatal(err)
 	}
