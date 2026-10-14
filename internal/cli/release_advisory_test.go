@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/releasestate"
 	"github.com/bobmcallan/satelle/internal/testutil"
@@ -192,5 +193,29 @@ func TestHookContextReleaseNotice(t *testing.T) {
 				t.Errorf("the release line must be in model context exactly once, got %d", n)
 			}
 		})
+	}
+}
+
+// TestReleaseAdvisorySpawnsOnlyThroughTheSeam (sty_15a374a8 release): a release
+// build with no cache starts its refresh through releaseRefresh and nothing
+// else. TestMain makes that seam a no-op because os.Executable is the test
+// binary here; a gatherer that spawned directly would run a detached copy of
+// the suite from every test that stamps a release version, and each copy would
+// start more (the CI timeout on 99bb9097).
+func TestReleaseAdvisorySpawnsOnlyThroughTheSeam(t *testing.T) {
+	testutil.IsolateHome(t)
+	old := buildinfo.Version
+	buildinfo.Version = "0.0.900"
+	t.Cleanup(func() { buildinfo.Version = old })
+	calls := 0
+	prev := releaseRefresh
+	releaseRefresh = func() { calls++ }
+	t.Cleanup(func() { releaseRefresh = prev })
+
+	if line := releaseAdvisory(&app.App{RepoRoot: t.TempDir()}); line != "" {
+		t.Fatalf("a missing cache advises nothing; got %q", line)
+	}
+	if calls != 1 {
+		t.Fatalf("missing cache: want exactly one refresh through releaseRefresh, got %d", calls)
 	}
 }

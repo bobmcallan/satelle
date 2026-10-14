@@ -37,6 +37,10 @@ func TestMain(m *testing.M) {
 	// hand-off has its own tests and turns itself on there (gatecaller_test.go);
 	// everything else keeps the synchronous path it was written against.
 	_ = os.Setenv(gateModeEnv, string(gateModeInteractive))
+	// The same holds for the session-start release refresh: os.Executable is
+	// this test binary, so a real spawn would run a detached copy of the suite.
+	// Its decision is tested through releaseAdvisoryAt's injected spawner.
+	releaseRefresh = func() {}
 	// Isolate gate/seat tests from the AMBIENT process environment: when this
 	// test binary itself runs under a real satelle dispatch (a named-agent
 	// step, or — as when this test was written — a rework-relay coder session

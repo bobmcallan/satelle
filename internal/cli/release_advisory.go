@@ -31,6 +31,13 @@ const (
 // replace it (the real gatherer is silent for the dev build a test runs as).
 var releaseAdvisoryFor = releaseAdvisory
 
+// releaseRefresh is the spawner the real gatherer starts. Under `go test`,
+// os.Executable is the test binary, so a test that stamps a release version
+// and runs the real hook would start a detached copy of the whole suite, and
+// each copy starts more. TestMain replaces it with a no-op; tests of the spawn
+// decision inject their own spawner into releaseAdvisoryAt.
+var releaseRefresh = spawnReleaseRefresh
+
 // releaseAdvisory gathers the inputs releaseCurrencyLine decides on. In a pinned
 // repo the hook already runs AS the pin (Execute re-execs into it), so the build
 // version here is the pin's. A dev build neither advises nor refreshes. It has
@@ -42,7 +49,7 @@ func releaseAdvisory(a *app.App) string {
 		return ""
 	}
 	_, pinned := repoPin(a.RepoRoot)
-	return releaseAdvisoryAt(config.GlobalDir(), running, pinned, time.Now(), spawnReleaseRefresh)
+	return releaseAdvisoryAt(config.GlobalDir(), running, pinned, time.Now(), releaseRefresh)
 }
 
 // releaseAdvisoryAt is the gatherer over explicit inputs: read the cache, start
