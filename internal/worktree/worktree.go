@@ -75,6 +75,15 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 	return out, nil
 }
 
+// Fetch updates every remote of dir's repository, so a commit another machine
+// pushed becomes reachable here (sty_6e5fc41c). It is the one call in this
+// package that touches the network; a caller that cannot afford to wait bounds
+// ctx, and treats a failure as "could not look", never as "not there".
+func Fetch(ctx context.Context, dir string) error {
+	_, err := git(ctx, dir, "fetch", "--quiet", "--all")
+	return err
+}
+
 func cleanEnv() []string {
 	var env []string
 	for _, kv := range os.Environ() {

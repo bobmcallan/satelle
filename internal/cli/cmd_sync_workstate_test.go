@@ -1087,8 +1087,8 @@ func TestPartitionByHoldSkipsForeign(t *testing.T) {
 	hosted.DocumentSyncStatePathOverride = filepath.Join(t.TempDir(), "document-sync-state.json")
 	t.Cleanup(func() { hosted.DocumentSyncStatePathOverride = "" })
 	server, project, repo := "https://s.example", "probe", "/repo"
-	_ = hosted.RecordHold(server, project, repo, "sty_foreign", "loc_other")
-	_ = hosted.RecordHold(server, project, repo, "sty_mine", "loc_self")
+	_ = hosted.RecordHold(server, project, repo, "sty_foreign", hosted.HoldRecord{Location: "loc_other"})
+	_ = hosted.RecordHold(server, project, repo, "sty_mine", hosted.HoldRecord{Location: "loc_self"})
 	mine, _ := marshalWorkstateItem(workitem.Item{ID: "sty_mine", Kind: workitem.KindStory, Title: "m"})
 	foreign, _ := marshalWorkstateItem(workitem.Item{ID: "sty_foreign", Kind: workitem.KindStory, Title: "f"})
 	c := hosted.NewClient(server, hosted.FileStore{}, nil)

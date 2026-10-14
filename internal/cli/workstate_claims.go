@@ -8,9 +8,12 @@ import (
 	"io"
 	"maps"
 	"slices"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -51,7 +54,7 @@ func reconcilePendingClaims(ctx context.Context, out, errw io.Writer, h holdSite
 		var held *hosted.HeldError
 		switch {
 		case errors.As(err, &held):
-			_ = hosted.RecordHold(h.server, h.project, h.repoRoot, id, held.Hold.LocationID)
+			_ = hosted.RecordHold(h.server, h.project, h.repoRoot, id, hosted.HoldRecordFrom(held.Hold, time.Now()))
 			_ = hosted.ClearPendingClaim(h.server, h.project, h.repoRoot, id)
 			if collided == nil {
 				collided = map[string]*hosted.HeldError{}
@@ -66,7 +69,7 @@ func reconcilePendingClaims(ctx context.Context, out, errw io.Writer, h holdSite
 		case err != nil:
 			fmt.Fprintf(errw, "satelle: hold for %s stays pending: %v\n", id, err)
 		default:
-			_ = hosted.RecordHold(h.server, h.project, h.repoRoot, id, st.LocationID)
+			_ = hosted.RecordHold(h.server, h.project, h.repoRoot, id, hosted.HoldRecordFrom(st, time.Now()))
 			_ = hosted.ClearPendingClaim(h.server, h.project, h.repoRoot, id)
 		}
 	}
@@ -92,14 +95,14 @@ func refreshHeldBack(ctx context.Context, out, errw io.Writer, h holdSite, held 
 		return
 	}
 	for _, id := range slices.Sorted(maps.Keys(held)) {
-		if reg[id] != h.client.Location() {
+		if reg[id].Location != h.client.Location() {
 			continue
 		}
 		_, err := h.client.Checkout(ctx, h.project, id)
 		var taken *hosted.HeldError
 		switch {
 		case errors.As(err, &taken):
-			_ = hosted.RecordHold(h.server, h.project, h.repoRoot, id, taken.Hold.LocationID)
+			_ = hosted.RecordHold(h.server, h.project, h.repoRoot, id, hosted.HoldRecordFrom(taken.Hold, time.Now()))
 			fmt.Fprintf(out, "hold lost: %s\n", taken.Error())
 		case err != nil:
 			fmt.Fprintf(errw, "satelle: hold refresh for %s: %v\n", id, err)
@@ -118,7 +121,7 @@ func releaseAtRest(ctx context.Context, errw io.Writer, a *app.App, h holdSite, 
 	}
 	var released []string
 	for _, id := range slices.Sorted(maps.Keys(published)) {
-		if reg[id] != h.client.Location() {
+		if reg[id].Location != h.client.Location() {
 			continue
 		}
 		it, err := a.Store.Stories.Get(ctx, id)
@@ -188,41 +191,115 @@ func describeHold(ctx context.Context, h holdSite, id string, st hosted.HoldStat
 	return fmt.Sprintf("%s held by location %s%s, %s", id, st.LocationID, label, holdTimeLabel(ctx, h, id, st))
 }
 
-// reportInFlight lists the pulled stories another location holds. The hosted
-// copy of a story whose activity is held back keeps its pre-engage status, so
-// the status says nothing about whether it is in flight: every story that is not
-// terminal on its route is asked. The server offers no project-wide hold
-// listing, so that is one lookup per such story; a failed lookup stops the
-// probing with one warning and never fails the pull.
-func reportInFlight(ctx context.Context, out, errw io.Writer, h holdSite, items []hosted.WorkstateItem) {
+// holdLookupBudget bounds the hold lookups of one pass, so a slow server cannot
+// hold a satelled snapshot past its own deadline. Stories not reached are asked
+// again by the next pass.
+const holdLookupBudget = 60 * time.Second
+
+// holdLookupIDs names the stories a pass asks the server about. The hosted copy
+// of a story whose activity is held back keeps its pre-engage status, and a hold
+// taken or released does not change the story row at all, so what a pass
+// received says nothing about holds: every local story is a candidate, plus any
+// id the registry already has held by another location (so a release is always
+// re-checked), or just the named ids for a scoped pass. A story terminal on its
+// route is returned in atRest: it needs no lookup, and any hold recorded for it
+// is stale. The server offers no project-wide hold listing, so ask costs one
+// lookup per story.
+func holdLookupIDs(ctx context.Context, a *app.App, rep passReport, scope []string, recorded map[string]hosted.HoldRecord, self string) (ask, atRest []string) {
+	ids := map[string]bool{}
+	if len(scope) > 0 {
+		for _, id := range scope {
+			ids[id] = true
+		}
+	} else {
+		for _, hi := range rep.Hosted {
+			if hi.Kind == string(workitem.KindStory) {
+				ids[hi.ID] = true
+			}
+		}
+		if local, err := a.Store.Stories.List(ctx, workitem.ListFilter{Kind: workitem.KindStory, Limit: 2000}); err == nil {
+			for _, it := range local {
+				ids[it.ID] = true
+			}
+		}
+		for id, rec := range recorded {
+			if rec.Location != self {
+				ids[id] = true
+			}
+		}
+	}
+	for _, id := range slices.Sorted(maps.Keys(ids)) {
+		if !workitem.Holdable(id) {
+			continue
+		}
+		if it, err := a.Store.Stories.Get(ctx, id); err == nil {
+			if rest := verb.StoryRouteRest(ctx, it); rest.Known && rest.Terminal {
+				atRest = append(atRest, id)
+				continue
+			}
+		}
+		ask = append(ask, id)
+	}
+	return ask, atRest
+}
+
+// lookupHolds asks the server who holds each id. checked is every id the server
+// answered for, held or not; a lookup that fails stops the probing and returns
+// the ids reached so far with the error, so the caller never treats an id it did
+// not reach as released.
+func lookupHolds(ctx context.Context, client *hosted.Client, project string, ids []string) (found map[string]hosted.HoldState, checked []string, err error) {
+	found = map[string]hosted.HoldState{}
+	for _, id := range ids {
+		st, lerr := client.ItemHold(ctx, project, id)
+		if lerr != nil && !errors.Is(lerr, hosted.ErrItemNotFound) {
+			return found, checked, fmt.Errorf("%s: %w", id, lerr)
+		}
+		checked = append(checked, id)
+		if st.LocationID != "" {
+			found[id] = st
+		}
+	}
+	return found, checked, nil
+}
+
+// syncHolds is the hold half of a work-state pass (sty_6e5fc41c): it looks up the
+// pass's candidate stories, records every hold another location has on one in
+// the local registry with its label, last-seen and the time it was checked, and
+// clears the recorded holds that were released or whose story finished. A failed
+// lookup never fails the pass; it stops with one warning and records only what it
+// reached. It returns the holds found, for a verb that prints them.
+func syncHolds(ctx context.Context, errw io.Writer, a *app.App, h holdSite, rep passReport, scope []string) map[string]hosted.HoldState {
 	self := h.client.Location()
 	if self == "" {
-		return
+		return nil
 	}
+	recorded, _ := hosted.LoadHolds(h.server, h.project, h.repoRoot)
+	ask, atRest := holdLookupIDs(ctx, a, rep, scope, recorded, self)
+	lctx, cancel := context.WithTimeout(ctx, holdLookupBudget)
+	defer cancel()
+	found, checked, err := lookupHolds(lctx, h.client, h.project, ask)
+	if err != nil {
+		fmt.Fprintf(errw, "satelle: in-flight check stopped at %v\n", err)
+	}
+	now := time.Now().UTC()
+	records := make(map[string]hosted.HoldRecord, len(found))
+	for id, st := range found {
+		records[id] = hosted.HoldRecordFrom(st, now)
+	}
+	if rerr := hosted.ReconcileHolds(h.server, h.project, h.repoRoot, self, records, append(checked, atRest...)); rerr != nil {
+		fmt.Fprintf(errw, "satelle: record holds: %v\n", rerr)
+	}
+	return found
+}
+
+// reportInFlight lists the stories another location holds.
+func reportInFlight(ctx context.Context, out io.Writer, h holdSite, found map[string]hosted.HoldState) {
+	self := h.client.Location()
 	var lines []string
-	for _, hi := range items {
-		if hi.Kind != "story" {
-			continue
+	for _, id := range slices.Sorted(maps.Keys(found)) {
+		if st := found[id]; st.LocationID != self {
+			lines = append(lines, "  "+describeHold(ctx, h, id, st))
 		}
-		it, err := parseWorkstateItem(hi)
-		if err != nil {
-			continue
-		}
-		if rest := verb.StoryRouteRest(ctx, it); rest.Known && rest.Terminal {
-			continue
-		}
-		st, err := h.client.ItemHold(ctx, h.project, hi.ID)
-		if errors.Is(err, hosted.ErrItemNotFound) {
-			continue
-		}
-		if err != nil {
-			fmt.Fprintf(errw, "satelle: in-flight check stopped at %s: %v\n", hi.ID, err)
-			break
-		}
-		if st.LocationID == "" || st.LocationID == self {
-			continue
-		}
-		lines = append(lines, "  "+describeHold(ctx, h, hi.ID, st))
 	}
 	if len(lines) == 0 {
 		return
@@ -231,4 +308,11 @@ func reportInFlight(ctx context.Context, out, errw io.Writer, h holdSite, items 
 	for _, l := range lines {
 		fmt.Fprintln(out, l)
 	}
+}
+
+// recordStoryConflicts persists what a pass found about story disagreements, for
+// the session-start advisory to read (sty_6e5fc41c). It writes even when the
+// pass failed: a refused pull is exactly the conflict to record.
+func recordStoryConflicts(a *app.App, rep passReport) {
+	_ = syncstate.RecordStoryConflicts(config.GlobalDir(), a.RepoRoot, rep.Stories.Conflicts, rep.Stories.Cleared, time.Now().UTC())
 }

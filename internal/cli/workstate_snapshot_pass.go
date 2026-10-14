@@ -45,6 +45,50 @@ type passReport struct {
 	Pages               int
 	Items, Ledger, Kept int
 	Hosted              []hosted.WorkstateItem
+	// Stories is what the pass found about story disagreements (sty_6e5fc41c).
+	Stories storyOutcome
+}
+
+// Reasons a story is recorded as in conflict.
+const (
+	conflictLocalAhead  = "local copy is ahead of hosted"
+	conflictPullRefused = "pull refused: local and hosted differ"
+)
+
+// storyOutcome is the story disagreements one pass found: Conflicts maps a story
+// id to why the pass left it alone, Cleared lists the stories the pass applied
+// or found identical on both sides. Its methods accept a nil receiver, so a
+// caller with nowhere to record passes nil.
+type storyOutcome struct {
+	Conflicts map[string]string
+	Cleared   []string
+}
+
+func (o *storyOutcome) conflict(id, reason string) {
+	if o == nil {
+		return
+	}
+	if o.Conflicts == nil {
+		o.Conflicts = map[string]string{}
+	}
+	o.Conflicts[id] = reason
+}
+
+func (o *storyOutcome) clear(id string) {
+	if o != nil {
+		o.Cleared = append(o.Cleared, id)
+	}
+}
+
+// refused records the stories a refused pull named. Any other error records
+// nothing.
+func (o *storyOutcome) refused(err error) {
+	var pc *workstatePullConflict
+	if errors.As(err, &pc) {
+		for _, id := range pc.Stories {
+			o.conflict(id, conflictPullRefused)
+		}
+	}
 }
 
 // complete reports whether the pass received everything it asked for rather than
@@ -246,11 +290,12 @@ func (p *snapshotPass) apply(ctx context.Context, pg hosted.SnapshotPage) error 
 	items, ledgerRows := p.optedIn(pg)
 	if p.mode == snapshotModePull && !p.force {
 		if err := checkWorkstatePullConflicts(ctx, p.a, p.optIn, items, ledgerRows); err != nil {
+			p.rep.Stories.refused(err)
 			return err
 		}
 	}
 	now := time.Now().UTC()
-	applied, nItems, nLedger, nKept, err := upsertWorkstatePage(ctx, p.a, p.optIn, items, ledgerRows, p.force, now)
+	applied, nItems, nLedger, nKept, err := upsertWorkstatePage(ctx, p.a, p.optIn, items, ledgerRows, p.force, now, &p.rep.Stories)
 	p.rep.Items += nItems
 	p.rep.Ledger += nLedger
 	p.rep.Kept += nKept
@@ -271,34 +316,4 @@ func (p *snapshotPass) apply(ctx context.Context, pg hosted.SnapshotPage) error 
 		}
 	}
 	return nil
-}
-
-// inFlightCandidates is the story set a pull reports in-flight stories over.
-// A full or scoped pass received every story it asked for. A since or resumed
-// pass received only some, so the local stories stand in: they are the same set
-// once the project has been synced.
-func inFlightCandidates(ctx context.Context, a *app.App, rep passReport) []hosted.WorkstateItem {
-	if rep.complete() {
-		return rep.Hosted
-	}
-	local, err := a.Store.Stories.List(ctx, workitem.ListFilter{Kind: workitem.KindStory, Limit: 2000})
-	if err != nil {
-		return rep.Hosted
-	}
-	out := slices.Clone(rep.Hosted)
-	seen := map[string]bool{}
-	for _, hi := range rep.Hosted {
-		seen[hi.ID] = true
-	}
-	for _, it := range local {
-		if seen[it.ID] {
-			continue
-		}
-		raw, merr := marshalWorkstateItem(it)
-		if merr != nil {
-			continue
-		}
-		out = append(out, hosted.WorkstateItem{ID: it.ID, Kind: string(it.Kind), Status: it.Status, Title: it.Title, Record: raw})
-	}
-	return out
 }

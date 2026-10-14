@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -37,6 +38,39 @@ func TestRefuseHeldElsewhere(t *testing.T) {
 	})
 	if err := refuseHeldElsewhere(context.Background(), it); err != nil {
 		t.Fatalf("held here: %v", err)
+	}
+}
+
+// AC4 (sty_6e5fc41c): the refusal stays, and it names the holder, its last-seen
+// and whether the holder is live or presumed dead.
+func TestRefuseHeldElsewhereSaysLiveOrPresumedDead(t *testing.T) {
+	withWiring(t)
+	it := workitem.Item{ID: "sty_h", Status: workitem.StatusBacklog, Kind: workitem.KindStory}
+	for _, tc := range []struct {
+		name string
+		info HoldInfo
+		want string
+		not  string
+	}{
+		{"fresh", HoldInfo{Holder: "loc_other", HolderLabel: "desk", LastSeen: "2026-10-14T11:55:00Z", HeldElsewhere: true, Age: 5 * time.Minute}, "holder live", "presumed dead"},
+		{"stale", HoldInfo{Holder: "loc_other", HolderLabel: "desk", LastSeen: "2026-10-14T05:00:00Z", HeldElsewhere: true, PresumedDead: true, Age: 7 * time.Hour}, "holder presumed dead (no sign for 7h0m0s)", "holder live"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			SetHoldClaimer(func(context.Context, string) (HoldInfo, error) { return tc.info, nil })
+			err := refuseHeldElsewhere(context.Background(), it)
+			if err == nil {
+				t.Fatal("a held story must stay refused")
+			}
+			msg := err.Error()
+			for _, want := range []string{"loc_other", "desk", "last seen " + tc.info.LastSeen, tc.want, "hold takeover sty_h"} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("refusal missing %q: %s", want, msg)
+				}
+			}
+			if strings.Contains(msg, tc.not) {
+				t.Errorf("refusal must not say %q: %s", tc.not, msg)
+			}
+		})
 	}
 }
 

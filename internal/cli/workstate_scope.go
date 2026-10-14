@@ -174,6 +174,7 @@ func runScopedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer,
 		for _, pg := range pages {
 			items, ledgerRows := p.optedIn(pg)
 			if err := checkWorkstatePullConflicts(ctx, a, optIn, items, ledgerRows); err != nil {
+				p.rep.Stories.refused(err)
 				return p.rep, err
 			}
 		}
@@ -188,6 +189,14 @@ func runScopedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer,
 	}
 	if err := p.settle(ctx, time.Now().UTC()); err != nil {
 		return p.rep, err
+	}
+	// A pull keeps the rows it applied (apply); a snapshot keeps them here, so a
+	// caller of the scoped pass can read the hosted copy of each story it named.
+	// The pages are held in memory anyway, and the scope is capped.
+	if mode != snapshotModePull {
+		for _, id := range sc.IDs {
+			p.rep.Hosted = append(p.rep.Hosted, got[id])
+		}
 	}
 
 	// A container the local store did not hold arrived on its own: the server does

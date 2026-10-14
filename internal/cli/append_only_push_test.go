@@ -48,7 +48,7 @@ func TestPushDeliversAnExecutionWhoseIDCarriesAForeignHold(t *testing.T) {
 	fx := newHoldFixture(t, appendOnlyToml)
 	exe := createExecutionID(t, "run held elsewhere")
 	fx.hs.setHolder(exe, otherLoc, "desk")
-	if err := hosted.RecordHold(fx.ts.URL, "probe", fx.repo, exe, otherLoc); err != nil {
+	if err := hosted.RecordHold(fx.ts.URL, "probe", fx.repo, exe, hosted.HoldRecord{Location: otherLoc}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -68,7 +68,7 @@ func TestPushNeverHoldsBackOrChecksOutAnExecution(t *testing.T) {
 	fx := newHoldFixture(t, holdBackToml)
 	exe := createExecutionID(t, "run held here")
 	fx.hs.setHolder(exe, fx.loc, "box")
-	if err := hosted.RecordHold(fx.ts.URL, "probe", fx.repo, exe, fx.loc); err != nil {
+	if err := hosted.RecordHold(fx.ts.URL, "probe", fx.repo, exe, hosted.HoldRecord{Location: fx.loc}); err != nil {
 		t.Fatal(err)
 	}
 

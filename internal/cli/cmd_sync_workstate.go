@@ -180,8 +180,14 @@ func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string, force bool, 
 	} else {
 		rep, err = runPagedWorkstateSnapshot(cmd.Context(), a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModeSnapshot)
 	}
+	recordStoryConflicts(a, rep)
 	if err != nil {
 		return err
+	}
+	// Who holds which story is read after the pages land, so a hold taken or
+	// released since the last pass is recorded for the session-start advisory.
+	if optIn["stories"] {
+		syncHolds(cmd.Context(), cmd.ErrOrStderr(), a, holdSite{client: client, server: server, project: project, repoRoot: a.RepoRoot}, rep, sc.IDs)
 	}
 	if err := pushMirrorAfterWorkstate(cmd.Context(), a, rep.Items+rep.Ledger); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "workstate: mirror push warning: %v\n", err)
@@ -673,6 +679,7 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 	} else {
 		rep, err = runPagedWorkstateSnapshot(ctx, a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModePull)
 	}
+	recordStoryConflicts(a, rep)
 	if err != nil {
 		if errors.Is(err, hosted.ErrLoginRequired) || errors.Is(err, ErrWorkstatePullConflict) {
 			return err
@@ -685,8 +692,10 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 	}
 	nItems, nLedger, nKept := rep.Items, rep.Ledger, rep.Kept
 	// Stories in flight elsewhere are worth knowing even when nothing was pulled.
-	defer reportInFlight(ctx, out, cmd.ErrOrStderr(),
-		holdSite{client: client, server: server, project: project, repoRoot: a.RepoRoot}, inFlightCandidates(ctx, a, rep))
+	defer func() {
+		site := holdSite{client: client, server: server, project: project, repoRoot: a.RepoRoot}
+		reportInFlight(ctx, out, site, syncHolds(ctx, cmd.ErrOrStderr(), a, site, rep, sc.IDs))
+	}()
 	if nItems == 0 && nLedger == 0 && nKept == 0 {
 		if rep.complete() {
 			fmt.Fprintf(out, "No work-state rows to pull (%s; hosted opted-in areas are empty).\n", rep.label())
@@ -778,6 +787,8 @@ func checkWorkstatePullConflicts(ctx context.Context, a *app.App, optIn map[stri
 		}
 	}
 	var conflicts []string
+	stories := slices.Clone(found["stories"])
+	slices.Sort(stories)
 	for _, area := range WorkstateAreas {
 		ids := found[area]
 		if len(ids) == 0 {
@@ -794,9 +805,23 @@ func checkWorkstatePullConflicts(ctx context.Context, a *app.App, optIn map[stri
 	if len(conflicts) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%w: %s — re-run with --force to let hosted win (local-only rows kept; an existing ledger row is never rewritten)",
-		ErrWorkstatePullConflict, strings.Join(conflicts, "; "))
+	return &workstatePullConflict{
+		err: fmt.Errorf("%w: %s — re-run with --force to let hosted win (local-only rows kept; an existing ledger row is never rewritten)",
+			ErrWorkstatePullConflict, strings.Join(conflicts, "; ")),
+		Stories: stories,
+	}
 }
+
+// workstatePullConflict is the refusal checkWorkstatePullConflicts returns. It
+// reads and unwraps as ErrWorkstatePullConflict; Stories carries the story ids
+// that differ so the pass can record them (sty_6e5fc41c).
+type workstatePullConflict struct {
+	err     error
+	Stories []string
+}
+
+func (e *workstatePullConflict) Error() string { return e.err.Error() }
+func (e *workstatePullConflict) Unwrap() error { return e.err }
 
 // workstateItemsDiffer compares the fields a work-state record carries, leaving
 // the timestamps out: they say which side is newer, not whether the content differs.
@@ -837,7 +862,12 @@ func jsonPayloadEqual(a, b json.RawMessage) bool {
 // forwarding and the story-view regeneration are the caller's: a paged pass
 // writes each page here and regenerates the views once at the end. On a
 // mid-batch error it reports how many landed and that re-run is safe.
-func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool, items []hosted.WorkstateItem, ledgerRows []hosted.WorkstateLedgerRow, force bool, now time.Time) (applied []workitem.Item, nItems, nLedger, nKept int, err error) {
+//
+// out, when set, collects what the page says about story disagreements: a
+// local row kept whose content differs from the hosted one is a conflict, and a
+// story applied or kept with identical content clears any recorded one. The
+// local copy is never changed to resolve it (sty_6e5fc41c).
+func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool, items []hosted.WorkstateItem, ledgerRows []hosted.WorkstateLedgerRow, force bool, now time.Time, out *storyOutcome) (applied []workitem.Item, nItems, nLedger, nKept int, err error) {
 	for _, hi := range items {
 		area := workstateAreaForKind(hi.Kind)
 		if area == "" || !optIn[area] {
@@ -848,12 +878,19 @@ func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool,
 			return applied, nItems, nLedger, nKept, fmt.Errorf("materialize item %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hi.ID, nItems, nLedger, perr)
 		}
 		if !force {
-			keep, kerr := keepLocalWorkstateItem(ctx, a, it)
+			keep, local, kerr := keepLocalWorkstateItem(ctx, a, it)
 			if kerr != nil {
 				return applied, nItems, nLedger, nKept, fmt.Errorf("compare item %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hi.ID, nItems, nLedger, kerr)
 			}
 			if keep {
 				nKept++
+				if it.Kind == workitem.KindStory {
+					if workstateItemsDiffer(local, it) {
+						out.conflict(it.ID, conflictLocalAhead)
+					} else {
+						out.clear(it.ID)
+					}
+				}
 				continue
 			}
 		}
@@ -870,6 +907,9 @@ func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool,
 		}
 		applied = append(applied, it)
 		nItems++
+		if it.Kind == workitem.KindStory {
+			out.clear(it.ID)
+		}
 	}
 	if optIn["ledger"] {
 		for _, hr := range ledgerRows {
@@ -913,30 +953,31 @@ func applyHostedWorkstateStatus(ctx context.Context, a *app.App, incoming workit
 }
 
 // keepLocalWorkstateItem reports whether the local row (or its ledger) is
-// newer than the incoming hosted item, so upserting would rewind status.
-func keepLocalWorkstateItem(ctx context.Context, a *app.App, incoming workitem.Item) (bool, error) {
+// newer than the incoming hosted item, so upserting would rewind status. It
+// returns the local row it compared, for a caller that records the difference.
+func keepLocalWorkstateItem(ctx context.Context, a *app.App, incoming workitem.Item) (bool, workitem.Item, error) {
 	local, err := a.Store.Stories.Get(ctx, incoming.ID)
 	if err != nil {
 		if errors.Is(err, workitem.ErrNotFound) {
-			return false, nil
+			return false, workitem.Item{}, nil
 		}
-		return false, err
+		return false, workitem.Item{}, err
 	}
 	if local.UpdatedAt.After(incoming.UpdatedAt) {
-		return true, nil
+		return true, local, nil
 	}
 	e, ok, lerr := verb.LatestStatusTransition(ctx, a.Store.Ledger, incoming.ID)
 	if lerr != nil {
-		return false, lerr
+		return false, local, lerr
 	}
 	if !ok {
-		return false, nil
+		return false, local, nil
 	}
 	to := verb.TransitionTo(e)
 	if to != "" && to != incoming.Status && e.CreatedAt.After(incoming.UpdatedAt) {
-		return true, nil
+		return true, local, nil
 	}
-	return false, nil
+	return false, local, nil
 }
 
 func workstateAreaForKind(kind string) string {
@@ -1321,14 +1362,14 @@ func partitionByHold(ctx context.Context, client *hosted.Client, server, project
 			keep = append(keep, raw)
 			continue
 		}
-		if loc, ok := reg[id]; ok && loc != "" && self != "" && loc != self {
-			skipped = append(skipped, &hosted.HeldError{ItemID: id, Hold: hosted.HoldState{LocationID: loc}})
+		if rec, ok := reg[id]; ok && rec.Location != "" && self != "" && rec.Location != self {
+			skipped = append(skipped, &hosted.HeldError{ItemID: id, Hold: hosted.HoldState{LocationID: rec.Location, Label: rec.Label, LastSeenAt: rec.LastSeen}})
 			continue
 		}
-		if self != "" && (reg[id] == "" || reg[id] != self) {
+		if self != "" && reg[id].Location != self {
 			st, herr := client.ItemHold(ctx, project, id)
 			if herr == nil && st.LocationID != "" && st.LocationID != self {
-				_ = hosted.RecordHold(server, project, repoRoot, id, st.LocationID)
+				_ = hosted.RecordHold(server, project, repoRoot, id, hosted.HoldRecordFrom(st, time.Now()))
 				skipped = append(skipped, &hosted.HeldError{ItemID: id, Hold: st})
 				continue
 			}

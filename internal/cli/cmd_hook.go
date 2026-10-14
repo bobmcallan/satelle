@@ -2442,7 +2442,11 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 	// The substrate line (sty_f1a3851d) joins it: from local and recorded state
 	// only, silent when this machine's substrate is in step.
 	substrateLine := substrateAdvisoryFor(a)
-	content, omitted := assembleSessionContext(a, harness, limit, unit, releaseLine, substrateLine)
+	// The story-sync line (sty_6e5fc41c): conflicts and holds recorded by the
+	// last work-state passes. One notice, the lines joined, none put in
+	// another's place.
+	storyLine := storySyncAdvisoryFor(a)
+	content, omitted := assembleSessionContext(a, harness, limit, unit, releaseLine, substrateLine, storyLine)
 	if len(omitted) > 0 {
 		fmt.Fprintf(stderr,
 			"satelle hook context: %s exceeded the %s harness limit (%d %s) — indexed with a read instruction: %s\n",
@@ -2451,7 +2455,7 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 	if strings.TrimSpace(content) == "" {
 		return nil
 	}
-	fmt.Fprintln(out, string(agentcli.SessionContextOutput(harness, emitEvent, content, joinNotice(releaseLine, substrateLine))))
+	fmt.Fprintln(out, string(agentcli.SessionContextOutput(harness, emitEvent, content, joinNotice(releaseLine, substrateLine, storyLine))))
 	// The marker is written only after a channel-matching emit of non-empty
 	// additionalContext. A non-matching event (including SessionStart when the
 	// channel is elsewhere) writes nothing. Marker errors are swallowed.
@@ -2466,9 +2470,9 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 // resolved. unit is "bytes" (len, the SessionStart path) or "characters"
 // (runes, a tool-event clip). releaseLine is the release-currency advisory
 // ("" when none), placed beside the version-drift line; substrateLine is the
-// substrate-currency advisory, likewise. Fail-open: a list error
-// returns empty content.
-func assembleSessionContext(a *app.App, harness string, limit int, unit, releaseLine, substrateLine string) (string, []string) {
+// substrate-currency advisory, likewise, and storyLine the story-sync advisory
+// (held and conflicted stories). Fail-open: a list error returns empty content.
+func assembleSessionContext(a *app.App, harness string, limit int, unit, releaseLine, substrateLine, storyLine string) (string, []string) {
 	if a == nil || a.Store == nil || a.Store.DocIndex == nil {
 		return "", nil
 	}
@@ -2516,6 +2520,7 @@ func assembleSessionContext(a *app.App, harness string, limit int, unit, release
 		content = prependContextLine(content, versionLine)
 		content = prependContextLine(content, releaseLine)
 		content = prependContextLine(content, substrateLine)
+		content = prependContextLine(content, storyLine)
 		content = prependContextLine(content, docStoryLine)
 		return appendSeatToContext(content, seat, 0)
 	}

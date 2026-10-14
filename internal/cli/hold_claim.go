@@ -47,19 +47,26 @@ func hostedHoldClaimer(a *app.App) func(ctx context.Context, itemID string) (ver
 		var held *hosted.HeldError
 		switch {
 		case errors.As(err, &held):
-			return verb.HoldInfo{
+			_ = hosted.RecordHold(server, project, a.RepoRoot, itemID, hosted.HoldRecordFrom(held.Hold, time.Now()))
+			info := verb.HoldInfo{
 				Holder:        held.Hold.LocationID,
 				HolderLabel:   held.Hold.Label,
 				LastSeen:      held.Hold.LastSeenAt,
 				HeldElsewhere: true,
-			}, nil
+			}
+			// A malformed [sync] hold_stale_after must not hide the refusal: the
+			// holder is then simply not judged dead.
+			if staleAfter, serr := config.HoldStaleAfter(a.Config); serr == nil {
+				info.PresumedDead, info.Age = hosted.HoldPresumedDead(held.Hold.LastSeenAt, staleAfter, time.Now())
+			}
+			return info, nil
 		case err != nil:
 			if rerr := hosted.RecordPendingClaim(server, project, a.RepoRoot, itemID, time.Now()); rerr != nil {
 				return verb.HoldInfo{}, fmt.Errorf("%w (and the pending claim could not be recorded: %v): %v", verb.ErrHoldPending, rerr, err)
 			}
 			return verb.HoldInfo{}, fmt.Errorf("%w: %v", verb.ErrHoldPending, err)
 		}
-		_ = hosted.RecordHold(server, project, a.RepoRoot, itemID, st.LocationID)
+		_ = hosted.RecordHold(server, project, a.RepoRoot, itemID, hosted.HoldRecordFrom(st, time.Now()))
 		_ = hosted.ClearPendingClaim(server, project, a.RepoRoot, itemID)
 		info := verb.HoldInfo{Holder: st.LocationID, HolderLabel: st.Label, LastSeen: st.LastSeenAt}
 		mu.Lock()

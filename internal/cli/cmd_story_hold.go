@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -57,16 +58,25 @@ List/get still work; engaging requires checkout again.`,
 			return runStoryHoldRelease(cmd, server, args[0])
 		},
 	}
+	var force bool
+	var reason string
 	takeover := &cobra.Command{
-		Use:         "takeover <id>",
-		Short:       "Move the hosted hold to this location",
-		Long:        `Take over a story held by another location. Names the previous location and last_seen. Holds do not expire; takeover is the recovery path for a dead location.`,
+		Use:   "takeover <id>",
+		Short: "Move the hosted hold to this location, once the holder is out of the way and the story is in step",
+		Long: `Take over a story held by another location. The hold moves only when the holder
+is out of the way (released, finished, or silent past [sync] hold_stale_after),
+this machine's copy of the status agrees with the hosted copy, and the commits
+the story's ledger claims are in this repository. A refused takeover names each
+failing check and its fix. --force --reason <text> is the only override, and is
+recorded in the story's ledger. See: satelle help story-hold.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStoryHoldTakeover(cmd, server, args[0])
+			return runStoryHoldTakeover(cmd, server, args[0], force, reason)
 		},
 	}
+	takeover.Flags().BoolVar(&force, "force", false, "Take over although a check failed (needs --reason; recorded in the story's ledger).")
+	takeover.Flags().StringVar(&reason, "reason", "", "Why the takeover overrides the failed checks (only with --force).")
 	show := &cobra.Command{
 		Use:   "show <id>",
 		Short: "Show who holds a story on the hosted server, and since when",
@@ -146,7 +156,7 @@ func runStoryHoldCheckout(cmd *cobra.Command, serverArg, id string) error {
 	if err != nil {
 		return err
 	}
-	_ = hosted.RecordHold(resolveServer(serverArg), project, repoRoot, id, h.LocationID)
+	_ = hosted.RecordHold(resolveServer(serverArg), project, repoRoot, id, hosted.HoldRecordFrom(h, time.Now()))
 	fmt.Fprintf(cmd.OutOrStdout(), "checked out %s — held here (%s)\n", id, h.LocationID)
 	return nil
 }
@@ -164,19 +174,50 @@ func runStoryHoldRelease(cmd *cobra.Command, serverArg, id string) error {
 	return nil
 }
 
-func runStoryHoldTakeover(cmd *cobra.Command, serverArg, id string) error {
+func runStoryHoldTakeover(cmd *cobra.Command, serverArg, id string, force bool, reason string) error {
 	if !workitem.Holdable(id) {
 		return errExecutionNotHoldable(id)
+	}
+	reason = strings.TrimSpace(reason)
+	if force && reason == "" {
+		return fmt.Errorf("--force needs --reason <text>: the override and its reason are recorded in the story's ledger")
+	}
+	if !force && reason != "" {
+		return fmt.Errorf("--reason only goes with --force")
+	}
+	a, err := appFrom(cmd)
+	if err != nil {
+		return err
 	}
 	client, project, repoRoot, err := holdClient(cmd, serverArg)
 	if err != nil {
 		return err
 	}
+	server := resolveServer(serverArg)
+	failed, err := assessTakeover(cmd.Context(), a, cmd.ErrOrStderr(), client, server, project, id, time.Now())
+	if err != nil {
+		return err
+	}
+	if len(failed) > 0 && !force {
+		var b strings.Builder
+		fmt.Fprintf(&b, "takeover of %s refused — %d check(s) failed:", id, len(failed))
+		for _, c := range failed {
+			fmt.Fprintf(&b, "\n  - %s", c)
+		}
+		fmt.Fprintf(&b, "\n--force --reason <text> overrides, and records the reason and these checks in the story's ledger")
+		return errors.New(b.String())
+	}
 	res, err := client.TakeoverHold(cmd.Context(), project, id)
 	if err != nil {
 		return err
 	}
-	_ = hosted.RecordHold(resolveServer(serverArg), project, repoRoot, id, res.Hold.LocationID)
+	_ = hosted.RecordHold(server, project, repoRoot, id, hosted.HoldRecordFrom(res.Hold, time.Now()))
+	if len(failed) > 0 {
+		if err := recordForcedTakeover(cmd.Context(), a, id, reason, failed); err != nil {
+			return fmt.Errorf("hold moved here, but recording the override in the ledger failed: %w", err)
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "forced past %d failed check(s); recorded in the ledger of %s\n", len(failed), id)
+	}
 	if strings.TrimSpace(res.Previous.LocationID) == "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "hold moved here (%s) — was unheld\n", res.Hold.LocationID)
 		return nil

@@ -111,7 +111,11 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return dispatch(cmd, group+"-get", map[string]any{"id": args[0]})
+			req := map[string]any{"id": args[0]}
+			if group == "story" {
+				return dispatchWithHeld(cmd, group+"-get", req)
+			}
+			return dispatch(cmd, group+"-get", req)
 		},
 	}
 
@@ -130,6 +134,9 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 			putIf(req, "tag", lTag)
 			if lLimit > 0 {
 				req["limit"] = lLimit
+			}
+			if group == "story" {
+				return dispatchWithHeld(cmd, group+"-list", req)
 			}
 			return dispatch(cmd, group+"-list", req)
 		},

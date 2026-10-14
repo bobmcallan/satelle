@@ -2,8 +2,8 @@
 // (sty_30696eeb). serve, doctor, and the mirror UI all read/write it without
 // crossing the serve→cli/hosted fences.
 //
-// Four field groups share one file (push, snapshot, substrate areas, and the
-// substrate refresh attempt stamp). Each writer re-loads and merges only its
+// Five field groups share one file (push, snapshot, substrate areas, the
+// substrate refresh attempt stamp, and story conflicts). Each writer re-loads and merges only its
 // own group (satelled and `satelle sync` are separate processes). A torn read
 // is "no state", never a parse error that fails doctor.
 package syncstate
@@ -47,6 +47,18 @@ type State struct {
 	// `satelle sync status` to refresh SubstrateAreas. It only debounces that
 	// refresh; it says nothing about the areas' state.
 	SubstrateCheckedAttempt time.Time `json:"substrate_checked_attempt,omitempty"`
+	// StoryConflicts are the stories a sync pass did not apply because the local
+	// and hosted copies differ in content (sty_6e5fc41c). A pass records the
+	// disagreement and never resolves it; a later pass that applies the story, or
+	// finds both copies identical, clears it.
+	StoryConflicts map[string]StoryConflict `json:"story_conflicts,omitempty"`
+}
+
+// StoryConflict is one story the local and hosted copies disagree on: why the
+// pass left it, and when.
+type StoryConflict struct {
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
 }
 
 // SubstrateArea is one area's recorded state and when it was verified.
@@ -141,6 +153,40 @@ func RecordSubstrate(globalDir, repoPath string, areas map[string]string, now ti
 // leaving every other field as it was.
 func MarkSubstrateAttempt(globalDir, repoPath string, now time.Time) error {
 	return record(globalDir, repoPath, "", func(s *State) { s.SubstrateCheckedAttempt = now })
+}
+
+// RecordStoryConflicts merges one pass's findings into the story-conflict group:
+// conflicts (id -> reason) are recorded, cleared ids are dropped, and every other
+// story's record is left as it was. Nothing is written when there is nothing to
+// change, so an in-step repo gains no state file.
+func RecordStoryConflicts(globalDir, repoPath string, conflicts map[string]string, cleared []string, now time.Time) error {
+	if len(conflicts) == 0 && len(cleared) == 0 {
+		return nil
+	}
+	if len(conflicts) == 0 {
+		s, ok, err := Load(globalDir, repoPath)
+		if err != nil || !ok || len(s.StoryConflicts) == 0 {
+			return err
+		}
+	}
+	return record(globalDir, repoPath, "", func(s *State) {
+		for _, id := range cleared {
+			delete(s.StoryConflicts, id)
+		}
+		for id, reason := range conflicts {
+			if s.StoryConflicts == nil {
+				s.StoryConflicts = map[string]StoryConflict{}
+			}
+			// A story still in conflict keeps the time it was first found.
+			if prev, ok := s.StoryConflicts[id]; ok && prev.Reason == reason {
+				continue
+			}
+			s.StoryConflicts[id] = StoryConflict{Reason: reason, At: now}
+		}
+		if len(s.StoryConflicts) == 0 {
+			s.StoryConflicts = nil
+		}
+	})
 }
 
 func record(globalDir, repoPath, scope string, merge func(*State)) error {
