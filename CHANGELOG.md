@@ -1,3 +1,8 @@
+## [0.0.673] - 2026-10-15
+
+### Changed
+- The review corpus covers create review. A rejected case, modelled on the cancelled sty_b61d2066 draft that hardcoded Azure and AWS sign-in into the binary, and an accepted generic-mechanism case pin the satelle repo's rule that user configuration is never hardcoded in the binary. The rule lives in this repo's own reviewers (create, intent, architecture and code-AC review) and principle, and satelle's built-in reviewers that other repos inherit are unchanged. (sty_476e9bf3, sty_82659a8a)
+
 ## [0.0.672] - 2026-10-15
 
 ### Added
