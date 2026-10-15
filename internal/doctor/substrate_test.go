@@ -117,6 +117,17 @@ func TestSubstrateInStepIsInfo(t *testing.T) {
 	}
 }
 
+// An opted-in area holding nothing a push would send (init scaffold only) has no
+// base and no drift: with its in-step record it raises no finding (sty_09b6b0e4).
+func TestSubstrateScaffoldOnlyAreaIsInStep(t *testing.T) {
+	f := newSubstrateFixture(t, ".satelle", substrateToml)
+	f.record("skills", snapsync.StateInStep, f.now.Add(-time.Hour))
+	got := f.check()
+	if !got.OK() || len(find(got, health.IDSyncSubstrateOk)) != 1 || len(got) != 1 {
+		t.Fatalf("a scaffold-only area must be exactly one info finding: %v", got)
+	}
+}
+
 func TestSubstrateUnpushedNamesAreaAndRemediation(t *testing.T) {
 	f := inStepFixture(t)
 	f.write("skills/x.md", "edited\n")
