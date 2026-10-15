@@ -10,7 +10,7 @@ import (
 )
 
 // TestCorpusCoverage lists the frozen corpus (t.Logf, visible under -v) and
-// fails if any of the six required rubrics has no defect case or no valid
+// fails if any of the required rubrics has no defect case or no valid
 // case. It also checks the two structural invariants every case must hold:
 // a non-empty change.diff, and label/expected_verdict agreement.
 func TestCorpusCoverage(t *testing.T) {
@@ -194,6 +194,7 @@ func TestCorpusDefectsCiteSource(t *testing.T) {
 // premise check for this story (sty_51a04b93): the reviewer that actually
 // gates each transition in this repo's step.toml.
 var rubricSkill = map[string]string{
+	"create":         "satelle-story-create-review",
 	"ready":          "satelle-story-ready-review",
 	"start":          "satelle-story-plan-review",
 	"integration":    "satelle-integration-review",

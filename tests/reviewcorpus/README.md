@@ -2,8 +2,8 @@
 
 THE frozen corpus named by epic sty_1e037210's close criterion (token
 accountability for reviewer runs): a fixture of known-defect and known-valid
-changes for every proof rubric this epic's shipped process alters — ready,
-start, integration, implementation, coverage, and done. Later reviewer-process
+changes for every proof rubric this epic's shipped process alters — create,
+ready, start, integration, implementation, coverage, and done. Later reviewer-process
 changes are judged against this corpus; it is not regenerated per change.
 
 Consumers reuse `reviewcorpus.Dir()` and `reviewcorpus.Load` rather than
@@ -25,7 +25,7 @@ expected `reject`) and one `valid` case (an expected `accept`).
 ```json
 {
   "id": "...",
-  "rubric": "ready|start|integration|implementation|coverage|done",
+  "rubric": "create|ready|start|integration|implementation|coverage|done",
   "skill": "satelle-...-review",
   "label": "defect|valid",
   "story_id": "sty_...",
@@ -56,6 +56,7 @@ The mapping is this repo's `.satelle/workflows/step.toml`, not a guess:
 
 | rubric | skill | transition |
 | --- | --- | --- |
+| create | `satelle-story-create-review` | story create (draft) |
 | ready | `satelle-story-ready-review` | backlog → ready |
 | start | `satelle-story-plan-review` | plan → in_progress |
 | integration | `satelle-integration-review` | integration → release |
