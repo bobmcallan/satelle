@@ -350,15 +350,20 @@ syncs, so keep profile= and use_global_roles there, not in shared agents.toml.`,
 				}
 			}
 			failed := 0
-			// A broken catalog (a literal secret in a cloud identity, an unknown
-			// provider key) is a failure, not only a printed line. gerr was
+			// A broken catalog (a literal secret in a launch step, a malformed
+			// launch table) is a failure, not only a printed line. gerr was
 			// printed above, so only the reference lines are reported here.
 			if gerr != nil {
 				failed++
 			}
-			for _, p := range cloudRefProblems(a, global) {
+			for _, p := range launchRefProblems(a, global) {
 				failed++
 				fmt.Fprintf(out, "FAIL  %s\n", p)
+			}
+			if eff, eerr := config.LoadEffectiveAgents(dataDir, nil); eerr == nil {
+				if w := config.InLoopEnvWarning(eff, global); w != "" {
+					fmt.Fprintf(out, "WARN  %s\n", w)
+				}
 			}
 			for _, w := range report.Warnings {
 				fmt.Fprintf(out, "WARN  %s\n", w)
@@ -395,16 +400,16 @@ syncs, so keep profile= and use_global_roles there, not in shared agents.toml.`,
 	}
 }
 
-// cloudRefProblems is the one owner of the cloud-identity reference check shared
+// launchRefProblems is the one owner of the launch-secret reference check shared
 // by `satelle agent validate` and the top-level `satelle validate`: every ${NAME}
-// a catalog identity references must be defined where a credential may come from
-// (sty_b61d2066). Lines name profile, provider and variable, never a value.
-func cloudRefProblems(a *app.App, global config.GlobalAgentsConfig) []string {
+// a catalog profile's step secrets reference must be defined where a secret may
+// come from (sty_b8310408). Lines name profile and variable, never a value.
+func launchRefProblems(a *app.App, global config.GlobalAgentsConfig) []string {
 	root := a.ProcessRoot
 	if strings.TrimSpace(root) == "" {
 		root = a.RepoRoot
 	}
-	return config.CloudRefProblems(global, config.LocalVarsAt(root), a.PlaneConfig().Vars)
+	return config.LaunchRefProblems(global, config.LocalVarsAt(root), a.PlaneConfig().Vars)
 }
 
 // persistAgentCLI saves cli into the global config, preserving other settings.

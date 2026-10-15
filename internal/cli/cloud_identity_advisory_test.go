@@ -90,7 +90,7 @@ func hookContextDoc(t *testing.T, harness, session string) sessionDoc {
 // session that skipped the launcher — in model context and in the user notice —
 // and says nothing to one that went through it. Nothing runs and nothing is
 // fetched: PATH holds no provider CLI and the proxy is unroutable.
-func TestHookContext_CloudIdentityWarning(t *testing.T) {
+func TestHookContext_LaunchStepsWarning(t *testing.T) {
 	for _, harness := range []string{"claude", "grok"} {
 		t.Run(harness+"/not launched", func(t *testing.T) {
 			cloudAdvisoryRepo(t, true)
@@ -104,10 +104,8 @@ func TestHookContext_CloudIdentityWarning(t *testing.T) {
 			if !strings.Contains(text, want) || !strings.Contains(text, `profile "ops"`) {
 				t.Errorf("missing the not-launched warning (%q):\n%s", want, text)
 			}
-			for _, secret := range []string{sentAzureSecret, sentAWSSecret, sentAWSKeyID} {
-				if strings.Contains(text, secret) {
-					t.Errorf("the warning carries %s", secret)
-				}
+			if strings.Contains(text, sentToken) {
+				t.Errorf("the warning carries the secret")
 			}
 			if harness == "claude" {
 				// Claude delivers the line to the model AND, as systemMessage, to the user.
@@ -122,17 +120,17 @@ func TestHookContext_CloudIdentityWarning(t *testing.T) {
 		t.Run(harness+"/launched", func(t *testing.T) {
 			cloudAdvisoryRepo(t, true)
 			t.Setenv(config.LauncherEnv, harness)
-			if text := hookContextText(t, harness, "cloud-ok-"+harness); strings.Contains(text, "cloud identity") {
+			if text := hookContextText(t, harness, "cloud-ok-"+harness); strings.Contains(text, "launch steps") {
 				t.Errorf("a launched session was warned:\n%s", text)
 			}
 		})
 	}
 
-	t.Run("no identity named", func(t *testing.T) {
+	t.Run("no steps declared", func(t *testing.T) {
 		cloudAdvisoryRepo(t, false)
 		t.Setenv(config.LauncherEnv, "")
-		if text := hookContextText(t, "claude", "cloud-none"); strings.Contains(text, "cloud identity") {
-			t.Errorf("a repo with no identity was warned:\n%s", text)
+		if text := hookContextText(t, "claude", "cloud-none"); strings.Contains(text, "launch steps") {
+			t.Errorf("a repo with no launch steps was warned:\n%s", text)
 		}
 	})
 
@@ -143,7 +141,7 @@ func TestHookContext_CloudIdentityWarning(t *testing.T) {
 			cloudAdvisoryRepo(t, true)
 			t.Setenv(config.LauncherEnv, "")
 			text := hookContextText(t, harness, "cloud-unavail-"+harness)
-			want := "cloud identity: unavailable (" + harness + " has no satelle launcher)"
+			want := "launch steps: unavailable (" + harness + " has no satelle launcher)"
 			if !strings.Contains(text, want) {
 				t.Errorf("missing %q:\n%s", want, text)
 			}
@@ -156,7 +154,7 @@ func TestHookContext_CloudIdentityWarning(t *testing.T) {
 
 // The decision is a pure function of the profile, the harness and the
 // environment it is handed.
-func TestCloudIdentityLine(t *testing.T) {
+func TestLaunchLine(t *testing.T) {
 	cases := []struct {
 		name, harness string
 		env           []string
@@ -167,14 +165,14 @@ func TestCloudIdentityLine(t *testing.T) {
 		{"claude, empty marker", "claude", []string{config.LauncherEnv + "="}, "not started through"},
 		{"claude, launched", "claude", []string{config.LauncherEnv + "=claude"}, ""},
 		{"grok, launched", "grok", []string{config.LauncherEnv + "=grok"}, ""},
-		{"pi", "pi", nil, "cloud identity: unavailable (pi has no satelle launcher)"},
-		{"cursor", "cursor", []string{config.LauncherEnv + "=cursor"}, "cloud identity: unavailable (cursor has no satelle launcher)"},
+		{"pi", "pi", nil, "launch steps: unavailable (pi has no satelle launcher)"},
+		{"cursor", "cursor", []string{config.LauncherEnv + "=cursor"}, "launch steps: unavailable (cursor has no satelle launcher)"},
 		{"harness from env", "", []string{"CLAUDECODE=1"}, "not started through `satelle-claude`"},
 		{"unknown harness", "", nil, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := cloudIdentityLine("ops", c.harness, c.env)
+			got := launchLine("ops", c.harness, c.env)
 			if c.want == "" {
 				if got != "" {
 					t.Fatalf("line = %q, want none", got)

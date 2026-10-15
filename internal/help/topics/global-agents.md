@@ -173,46 +173,87 @@ The catalog's `[vars]` is the base; a repo's own `[vars]` (and its gitignored
 dispatch wiring, so a machine-wide secret referenced as `${NAME}` reaches the
 agent process without ever being written into a repository.
 
-## Cloud identity
+## Launch steps
 
-A profile may name the Azure or AWS identity a session runs as. A session started
-through a launcher from `satelle agents install claude|grok` signs in as it
-before the harness starts; one started any other way runs as you, and the
-session-start hook says so. Nothing is configured by default.
+A profile may declare what a session needs before its harness starts: commands
+to run, environment to set and environment to clear. A session started through a
+launcher from `satelle agents install claude|grok` runs the in-loop profile's
+steps, in order, then starts the harness; one started any other way skips them,
+and the session-start hook says so. Nothing is configured by default, and
+satelle knows no tool a step runs.
 
 ```toml
-# ~/.satelle/agents.toml
-[vars]
-OPS_AZ_SECRET = "..."
+[profiles.<name>.launch]
+set   = { KEY = "literal or ${SATELLE_PROFILE_DIR}/x" }   # the session's environment
+unset = ["KEY"]                                           # removed from the session
 
-[profiles.ops.cloud.azure]
-tenant        = "..."
-client_id     = "..."
-client_secret = "${OPS_AZ_SECRET}"    # a reference, never a literal
-subscription  = "..."                 # optional
-
-[profiles.ops.cloud.aws]
-access_key_id     = "${OPS_AWS_KEY}"
-secret_access_key = "${OPS_AWS_SECRET}"
-region            = "ap-southeast-2"
-role_arn          = "arn:aws:iam::123456789012:role/ops"   # optional
+[[profiles.<name>.launch.steps]]
+run     = ["cmd", "arg"]                  # argv; literals or ${SATELLE_PROFILE_DIR}
+env     = { KEY = "…" }                   # this step's environment; same rule
+secrets = { KEY = "${NAME}" }             # exactly one [vars] reference; this step only
 ```
 
-Select it on this machine in `.satelle/workflows/agents.local.toml` (a catalog
-name means nothing on another machine, so it is not synced):
+`${SATELLE_PROFILE_DIR}` is the directory satelle keeps for the profile
+(`~/.satelle/profiles/<name>`). A `${NAME}` that names a `[vars]` secret is
+allowed in exactly one place, a step's `secrets` value, and it reaches that
+step's process environment and nothing else — not the session's environment, not
+any argv, not the repo, not a log. A step that needs the secret on its command
+line expands it from its own environment (`sh -c`, below). A failing step stops
+the launch with that step's exit status and a message naming only its index and
+command.
+
+Two examples, written as configuration only. Each step signs in to a config
+directory under `${SATELLE_PROFILE_DIR}`, and `set` points the session at the same
+directory. Azure:
+
+```toml
+[profiles.ops-az.launch]
+set = { AZURE_CONFIG_DIR = "${SATELLE_PROFILE_DIR}/az" }
+
+[[profiles.ops-az.launch.steps]]
+run     = ["sh", "-c", 'az login --service-principal -u "$AZ_CLIENT_ID" -p "$AZ_SECRET" --tenant "$AZ_TENANT"']
+env     = { AZURE_CONFIG_DIR = "${SATELLE_PROFILE_DIR}/az" }
+secrets = { AZ_CLIENT_ID = "${AZ_CLIENT_ID}", AZ_SECRET = "${AZ_SECRET}", AZ_TENANT = "${AZ_TENANT}" }
+```
+
+AWS:
+
+```toml
+[profiles.ops-aws.launch]
+set = { AWS_CONFIG_FILE = "${SATELLE_PROFILE_DIR}/aws/config", AWS_SHARED_CREDENTIALS_FILE = "${SATELLE_PROFILE_DIR}/aws/credentials", AWS_PROFILE = "default" }
+unset = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"]
+
+[[profiles.ops-aws.launch.steps]]
+run     = ["sh", "-c", 'aws configure set aws_access_key_id "$K" && aws configure set aws_secret_access_key "$S"']
+env     = { AWS_CONFIG_FILE = "${SATELLE_PROFILE_DIR}/aws/config", AWS_SHARED_CREDENTIALS_FILE = "${SATELLE_PROFILE_DIR}/aws/credentials" }
+secrets = { K = "${AWS_KEY_ID}", S = "${AWS_SECRET}" }
+```
+
+Select the profile on this machine in `.satelle/workflows/agents.local.toml` (a
+catalog name means nothing on another machine, so it is not synced):
 
 ```toml
 [executor]
 command = "in-loop"
-profile = "ops"
+profile = "ops-az"
 ```
 
 References resolve from the catalog `[vars]` and the repo's gitignored
 `satelle.local.toml` only — never from the committed `satelle.toml`.
-`satelle agent validate` rejects a literal secret and a reference nothing
-defines. pi and cursor have no launcher, so their identity is recorded as
-unavailable. What each provider keeps, and what satelle does not enforce:
-`satelle agents launch --help`.
+`satelle agent validate` rejects a malformed table, a literal secret, a `[vars]`
+reference anywhere but a step's `secrets`, and a reference nothing defines. It
+warns when the in-loop profile has an `env`: the in-loop session execs no child,
+so that `env` is not applied — use `launch.set`. pi and cursor have no launcher,
+so launch steps are recorded as unavailable for them. A catalog still carrying
+the 0.0.672 `[profiles.<name>.cloud]` table fails to load and points here.
+
+**What satelle does and does not do.** satelle runs what the profile declares; it
+does not enforce rights or isolate secrets. The cloud's roles and policy, plus a
+separate OS user for the agent, do the enforcing: an agent running as the same OS
+user can read anything that user can. A tool a step runs may persist credentials
+in its own cache, such as the config directories above, and that cache is
+readable by the agent too. A step's own tool may also hold a secret briefly in
+its argv while the step runs, before the agent exists.
 
 ## Migrating
 

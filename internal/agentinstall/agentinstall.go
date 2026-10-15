@@ -92,13 +92,13 @@ func Content(name string) (string, error) {
 }
 
 // NoLauncherResult is the install outcome for a harness with no launcher (pi,
-// cursor): nothing is written, and the cloud identity is recorded as unavailable
+// cursor): nothing is written, and launch steps are recorded as unavailable
 // under the adapter's name rather than silently absent.
 func NoLauncherResult(name string) Result {
 	return Result{
 		Name:   name,
 		Action: "skipped",
-		Note:   fmt.Sprintf("cloud identity: unavailable (%s)", agentcli.CloudIdentityUnavailable(name)),
+		Note:   fmt.Sprintf("launch steps: unavailable (%s)", agentcli.LaunchStepsUnavailable(name)),
 	}
 }
 
@@ -150,10 +150,10 @@ func expandName(name string) ([]string, error) {
 		name, strings.Join(Agents(), ", "))
 }
 
-// launcherScript hands the session to `satelle agents launch`, which signs in as
-// the cloud identity the repo's agent profile names (if any) and then execs the
+// launcherScript hands the session to `satelle agents launch`, which runs the
+// launch steps the repo's agent profile declares (if any) and then execs the
 // harness. With satelle off PATH it execs the bare harness — exactly what the
-// launcher did before identities existed. The exec target comes from agentcli's
+// launcher did before launch steps existed. The exec target comes from agentcli's
 // launcher set so launchers cannot drift from it.
 func launcherScript(name string) string {
 	bin := agentcli.LauncherBinary(name)

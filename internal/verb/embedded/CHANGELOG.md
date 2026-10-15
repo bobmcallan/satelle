@@ -1,3 +1,13 @@
+## [0.0.674] - 2026-10-15
+
+### Added
+- **A profile can declare the steps and environment a session needs before its harness starts.** `[profiles.<name>.launch]` takes ordered `steps` (`run`, `env`, `secrets`), `set` and `unset`. A session started through a launcher from `satelle agents install` (`satelle-claude`, `satelle-grok`) runs the in-loop profile's steps in order, then starts the harness; with nothing declared it behaves exactly as before. A failing step stops the launch with that step's exit status and a message naming only its index and command. A `${NAME}` secret is allowed only as a step's `secrets` value and reaches that step's process alone; `run`, `env` and `set` may reference only the reserved `${SATELLE_PROFILE_DIR}`. `satelle help global-agents` shows an Azure and an AWS example, written as configuration only. satelle runs what the profile declares and does not enforce rights or isolate secrets; a tool a step runs may keep credentials in its own cache. (sty_b8310408)
+- `satelle agent validate` warns when the profile resolved as the in-loop seat has an `env`, which that seat never applies, and names `launch.set`. (sty_b8310408)
+
+### Changed
+- **The 0.0.672 `[profiles.<name>.cloud]` table is gone.** satelle knows no cloud provider, CLI or sign-in command: which of those a session needs is your configuration, not the binary's. A catalog that still carries a `cloud` table fails to load with a pointer to `[profiles.<name>.launch]` and `satelle help global-agents`. The hidden `satelle agents credential` command is removed, and a launch sets `SATELLE_LAUNCH_PROFILE` in place of `SATELLE_CLOUD_PROFILE`. (sty_b8310408)
+- The session-start warning, the pi and cursor `unavailable` record and the capability matrix column are provider-neutral: they read `launch steps` rather than `cloud identity`. (sty_b8310408)
+
 ## [0.0.673] - 2026-10-15
 
 ### Changed

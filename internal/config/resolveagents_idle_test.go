@@ -110,6 +110,7 @@ var overlayExcluded = map[string]string{
 	"context_budget":    "repo-only integer bound: overlayBinding carries it (TestOverlayBindingCarriesBudgets), a catalog profile may not",
 	"turn_budget":       "repo-only integer bound: overlayBinding carries it (TestOverlayBindingCarriesBudgets), a catalog profile may not",
 	"collect_doc":       "repo-only: names the story document this repo's gates read; overlayBinding carries the repo tier's (TestOverlayBindingCarriesCollectDoc), a catalog profile may not",
+	"cloud":             "decode-only: the 0.0.672 identity table, refused at load (LegacyCloudProblem), never overlaid",
 }
 
 func TestOverlayBindingCarriesCollectDoc(t *testing.T) {
@@ -167,11 +168,11 @@ func TestOverlayBindingCarriesEveryScalarField(t *testing.T) {
 					fv.Set(reflect.ValueOf(map[string]string{"k": "v"}))
 				case reflect.Interface:
 					fv.Set(reflect.ValueOf(map[string]any{"k": "v"}))
-				case reflect.Map: // cloud: provider -> its table
-					fv.Set(reflect.ValueOf(map[string]map[string]string{"k": {"k": "v"}}))
 				default:
 					t.Fatalf("unhandled map element kind for %s, extend overlayBinding and this test", tag)
 				}
+			case reflect.Ptr: // launch: the table, replaced whole
+				fv.Set(reflect.ValueOf(&LaunchSpec{Steps: []LaunchStep{{Run: []string{"x"}}}}))
 			default:
 				t.Fatalf("unhandled field kind %s for %s, extend overlayBinding and this test", f.Type.Kind(), tag)
 			}

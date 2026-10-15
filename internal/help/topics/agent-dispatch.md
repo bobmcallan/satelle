@@ -1136,7 +1136,7 @@ adapter-named reason on the ledger row, never a silent zero or a Claude default
 (`satelle-agent-agnostic`). `internal/agentcli/capabilities.go` is the source of
 this table and a test checks every cell against the code that produces it.
 
-| adapter | usage | cache split | resolved model | model inheritance | live session | tool trim | offered tools | turn budget | cloud launch | cloud identity |
+| adapter | usage | cache split | resolved model | model inheritance | live session | tool trim | offered tools | turn budget | cloud launch | launch steps |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | claude command | yes | yes | yes | yes | unavailable: interface=command is one-shot only | yes | yes | yes | yes | yes |
 | claude stream | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes |
@@ -1155,9 +1155,9 @@ linux or darwin and reports unavailable on any other host when asked to launch.
 A harness with no runner fails the dispatch with `cloud session: unavailable for
 adapter <name>` and launches nothing.
 
-**cloud identity** means a session started through the harness's satelle launcher
-runs as the Azure or AWS identity its agent profile names (see `satelle agents
-launch --help`). A harness with no launcher records `unavailable: <harness> has no
+**launch steps** means a session started through the harness's satelle launcher
+runs the launch steps its in-loop agent profile declares (see `satelle help
+global-agents`). A harness with no launcher records `unavailable: <harness> has no
 satelle launcher`.
 
 ### Cloud performer — `interface = "cloud"` (sty_82cffd60)

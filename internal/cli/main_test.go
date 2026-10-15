@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -41,6 +43,12 @@ func TestMain(m *testing.M) {
 	// this test binary, so a real spawn would run a detached copy of the suite.
 	// Its decision is tested through releaseAdvisoryAt's injected spawner.
 	releaseRefresh = func() {}
+	// A launch step is whatever the operator's profile declares (a sign-in, a
+	// login): it must never run for real under `go test`. A test that drives fake
+	// step scripts opts in with useRealLaunchSteps.
+	runLaunchStep = func(context.Context, string, []string, []string) error {
+		return errors.New("a real launch step ran under go test — stub runLaunchStep or call useRealLaunchSteps with fake scripts")
+	}
 	// And for the substrate refresh, for the same reason (substrateAdvisory).
 	substrateRefresh = func(string) {}
 	// Isolate gate/seat tests from the AMBIENT process environment: when this

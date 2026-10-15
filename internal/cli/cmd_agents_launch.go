@@ -1,8 +1,9 @@
 // `satelle agents launch <harness> -- args` is what a launcher installed by
-// `satelle agents install` runs (sty_b61d2066, epic:agent-cloud-identity). It
-// signs the session in as the cloud identity the repo's in-loop agent profile
-// names, then REPLACES itself with the harness: the process is exec'd, never
-// detached, so the harness is the same process the operator started.
+// `satelle agents install` runs (sty_b8310408, epic:agent-cloud-identity). It
+// runs the launch steps the repo's in-loop agent profile declares, then
+// REPLACES itself with the harness: the process is exec'd, never detached, so
+// the harness is the same process the operator started. satelle knows no tool
+// a step runs; what the steps do is the profile's configuration.
 package cli
 
 import (
@@ -18,14 +19,26 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
-	"github.com/bobmcallan/satelle/internal/cloudid"
 	"github.com/bobmcallan/satelle/internal/config"
 )
 
-// errCloudConfigUnloadable marks a repo or catalog that could not be read, as
-// distinct from an identity that is named but cannot be resolved. The first
+// errLaunchConfigUnloadable marks a repo or catalog that could not be read, as
+// distinct from steps that are declared but cannot be resolved or run. The first
 // launches as today; the second refuses to start.
-var errCloudConfigUnloadable = errors.New("configuration could not be loaded")
+var errLaunchConfigUnloadable = errors.New("configuration could not be loaded")
+
+// launchStepError is a launch step that failed. Its message names only the step
+// index and the base name of its command — never its argv or environment, which
+// may carry a secret — and the process exits with the step's own status.
+type launchStepError struct {
+	index int
+	name  string
+	code  int
+}
+
+func (e *launchStepError) Error() string {
+	return fmt.Sprintf("launch: step %d (%s) exited %d", e.index, e.name, e.code)
+}
 
 // launchExec replaces the process with the harness. A seam so tests observe the
 // final environment and argv without exec'ing the test binary away.
@@ -36,25 +49,38 @@ var launchExec = func(path string, argv, env []string) error {
 // launchEnv is the process environment a launch composes onto.
 var launchEnv = os.Environ
 
-// cloudSelectionAt resolves the in-loop cloud identity of the repo whose
-// process data dir and root are given. A load failure wraps
-// errCloudConfigUnloadable.
-func cloudSelectionAt(dataDir, root string) (config.CloudSelection, bool, error) {
+// runLaunchStep runs one launch step. A seam: TestMain replaces it with a
+// refusal, so a real step never runs under `go test`; a test that drives fake
+// step scripts opts in to realRunLaunchStep for its own duration.
+var runLaunchStep = realRunLaunchStep
+
+// realRunLaunchStep runs one launch step to completion, in dir, with exactly
+// env, and stdio inherited so an interactive sign-in can prompt.
+func realRunLaunchStep(ctx context.Context, dir string, argv, env []string) error {
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir, cmd.Env = dir, env
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+// launchSelectionAt resolves the in-loop launch steps of the repo whose process
+// data dir and root are given. A load failure wraps errLaunchConfigUnloadable.
+func launchSelectionAt(dataDir, root string) (config.LaunchSelection, bool, error) {
 	eff, err := config.LoadEffectiveAgents(dataDir, nil)
 	if err != nil {
-		return config.CloudSelection{}, false, fmt.Errorf("%w: %v", errCloudConfigUnloadable, err)
+		return config.LaunchSelection{}, false, fmt.Errorf("%w: %v", errLaunchConfigUnloadable, err)
 	}
 	global, err := config.LoadGlobalAgents()
 	if err != nil {
-		return config.CloudSelection{}, false, fmt.Errorf("%w: %v", errCloudConfigUnloadable, err)
+		return config.LaunchSelection{}, false, fmt.Errorf("%w: %v", errLaunchConfigUnloadable, err)
 	}
-	return config.InLoopCloudIdentity(eff, global, config.LocalVarsAt(root))
+	return config.InLoopLaunchSteps(eff, global, config.LocalVarsAt(root))
 }
 
-// cloudSelectionFromCwd is cloudSelectionAt for the repo containing the working
-// directory, without opening the store (a launch must stay cheap and must not
-// write into a repo). Outside a satelle repo there is nothing to select.
-func cloudSelectionFromCwd() (config.CloudSelection, bool, error) {
+// launchSelectionFromCwd is launchSelectionAt for the repo containing the
+// working directory, without opening the store (a launch must stay cheap and
+// must not write into a repo). Outside a satelle repo there is nothing to select.
+func launchSelectionFromCwd() (config.LaunchSelection, string, bool, error) {
 	loc, locPath, err := config.Load("")
 	if err != nil {
 		if errors.Is(err, config.ErrNotFound) {
@@ -62,17 +88,20 @@ func cloudSelectionFromCwd() (config.CloudSelection, bool, error) {
 			// satelle.toml. Outside any .satelle/ there is nothing to select.
 			dir, found := config.FindDataDir("")
 			if !found {
-				return config.CloudSelection{}, false, nil
+				return config.LaunchSelection{}, "", false, nil
 			}
-			return cloudSelectionAt(dir, filepath.Dir(dir))
+			root := filepath.Dir(dir)
+			sel, ok, err := launchSelectionAt(dir, root)
+			return sel, root, ok, err
 		}
-		return config.CloudSelection{}, false, fmt.Errorf("%w: %v", errCloudConfigUnloadable, err)
+		return config.LaunchSelection{}, "", false, fmt.Errorf("%w: %v", errLaunchConfigUnloadable, err)
 	}
 	proc, root, _, err := config.LoadProcess(loc, locPath)
 	if err != nil {
-		return config.CloudSelection{}, false, fmt.Errorf("%w: %v", errCloudConfigUnloadable, err)
+		return config.LaunchSelection{}, "", false, fmt.Errorf("%w: %v", errLaunchConfigUnloadable, err)
 	}
-	return cloudSelectionAt(config.ResolveProcessDataDir(proc, root), root)
+	sel, ok, err := launchSelectionAt(config.ResolveProcessDataDir(proc, root), root)
+	return sel, root, ok, err
 }
 
 // launchPlan is what planLaunch decides to exec.
@@ -82,66 +111,96 @@ type launchPlan struct {
 	Env    []string
 }
 
-// planLaunch composes the launch of harness: the harness environment plus, when
-// the repo's in-loop profile names a cloud identity, the sign-in each provider
-// adapter performs. Repo or catalog config that cannot load launches the harness
-// as today (stderr says why the identity was skipped); an identity that is named
-// but cannot be resolved or signed in refuses, because launching as the
-// operator's own identity instead would be the wrong identity, silently.
+// planLaunch composes the launch of harness: it runs the steps the repo's
+// in-loop profile declares, in order, then returns the harness environment.
+// Repo or catalog config that cannot load launches the harness as today (stderr
+// says why the steps were skipped); steps that are declared but cannot be
+// resolved or that fail refuse, because starting the harness without them would
+// run it in the wrong environment, silently.
 func planLaunch(ctx context.Context, harness string, args []string, stderr func(string)) (launchPlan, error) {
-	if reason := agentcli.CloudIdentityUnavailable(harness); reason != "" {
-		return launchPlan{}, fmt.Errorf("cloud identity: unavailable (%s)", reason)
+	if reason := agentcli.LaunchStepsUnavailable(harness); reason != "" {
+		return launchPlan{}, fmt.Errorf("launch steps: unavailable (%s)", reason)
 	}
 	harness = strings.ToLower(strings.TrimSpace(harness))
 	plan := launchPlan{Binary: agentcli.LauncherBinary(harness), Args: args}
 	set := map[string]string{config.LauncherEnv: harness}
-	var unset []string
+	// The 0.0.672 marker name is always cleared: an enclosing session's value
+	// would claim steps this launch did not run.
+	unset := []string{config.LegacyLaunchProfileEnv}
 
-	sel, ok, err := cloudSelectionFromCwd()
+	sel, root, ok, err := launchSelectionFromCwd()
 	switch {
-	case err != nil && errors.Is(err, errCloudConfigUnloadable):
-		stderr(fmt.Sprintf("satelle: cloud identity not applied — %v", err))
+	case err != nil && errors.Is(err, errLaunchConfigUnloadable):
+		stderr(fmt.Sprintf("satelle: launch steps not applied — %v", err))
 		ok = false
 	case err != nil:
-		return launchPlan{}, fmt.Errorf("cloud identity for profile %q: %w", sel.Profile, err)
+		return launchPlan{}, fmt.Errorf("launch steps for profile %q: %w", sel.Profile, err)
 	}
 	if ok {
-		stateDir := filepath.Join(config.GlobalDir(), "cloud", sel.Profile)
-		for _, name := range sel.ProviderNames() {
-			p, found := cloudid.Lookup(name)
-			if !found {
-				return launchPlan{}, fmt.Errorf("cloud identity: no adapter for provider %q", name)
-			}
-			ov, err := p.Prepare(ctx, sel.Profile, sel.Providers[name], stateDir)
-			if err != nil {
-				return launchPlan{}, fmt.Errorf("cloud identity for profile %q: %w", sel.Profile, err)
-			}
-			for k, v := range ov.Set {
-				set[k] = v
-			}
-			unset = append(unset, ov.Unset...)
+		if err := os.MkdirAll(sel.Dir, 0o700); err != nil {
+			return launchPlan{}, fmt.Errorf("launch steps for profile %q: %w", sel.Profile, err)
 		}
-		set[config.CloudProfileEnv] = sel.Profile
+		for i, step := range sel.Steps {
+			env := composeStepEnv(launchEnv(), sel.Dir, step)
+			if err := runLaunchStep(ctx, root, step.Run, env); err != nil {
+				return launchPlan{}, stepFailure(i, step.Run[0], err)
+			}
+		}
+		for k, v := range sel.Set {
+			set[k] = v
+		}
+		set[config.ProfileDirVar] = sel.Dir
+		set[config.LaunchProfileEnv] = sel.Profile
+		unset = append(unset, sel.Unset...)
 	} else {
-		// A marker inherited from an enclosing launched session would claim an
-		// identity this one does not have.
-		unset = append(unset, config.CloudProfileEnv)
+		// A marker inherited from an enclosing launched session would claim steps
+		// this one did not run.
+		unset = append(unset, config.LaunchProfileEnv)
 	}
 	plan.Env = agentcli.ComposeLaunchEnv(launchEnv(), set, unset)
 	return plan, nil
 }
 
+// composeStepEnv is a step's process environment: the launcher's own, the
+// profile directory, the step's literal env, and last its resolved secrets. The
+// secrets reach this process alone; the harness environment is composed apart.
+func composeStepEnv(base []string, dir string, step config.ResolvedStep) []string {
+	overlay := map[string]string{config.ProfileDirVar: dir}
+	for k, v := range step.Env {
+		overlay[k] = v
+	}
+	for k, v := range step.Secrets {
+		overlay[k] = v
+	}
+	return agentcli.ComposeLaunchEnv(base, overlay, nil)
+}
+
+// stepFailure maps a step's error to the one launchStepError a launch reports.
+// A command that could not be started exits 127, as a shell would.
+func stepFailure(index int, command string, err error) *launchStepError {
+	code := 127
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		if code = ee.ExitCode(); code <= 0 {
+			code = 1
+		}
+	}
+	return &launchStepError{index: index, name: filepath.Base(command), code: code}
+}
+
 func newAgentsLaunchCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "launch <" + strings.Join(agentcli.LauncherHarnesses(), "|") + "> [-- harness args...]",
-		Short: "Start a harness as the cloud identity its agent profile names (run by the satelle launchers)",
-		Long: `Run by the launchers from 'satelle agents install'. Signs the session in as the
-cloud identity the repo's in-loop profile names, then replaces itself with the
-harness. Setup: satelle help global-agents.
+		Short: "Start a harness after running the launch steps its agent profile declares (run by the satelle launchers)",
+		Long: `Run by the launchers from 'satelle agents install'. Runs the launch steps the
+repo's in-loop profile declares, in order, then replaces itself with the
+harness. With nothing declared it just starts the harness. Setup and examples:
+satelle help global-agents.
 
-satelle never puts the long-lived secret in the agent's environment, argv, repo
-or logs. What each provider keeps:
-` + cloudid.PersistenceHelp() + config.CloudIdentityLimits,
+A step's secrets reach that step's process only: satelle never places a [vars]
+secret in the harness's environment or argv, in the repo or in logs.
+
+` + config.LaunchStepLimits,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			plan, err := planLaunch(cmd.Context(), args[0], args[1:], func(s string) {
@@ -155,48 +214,6 @@ or logs. What each provider keeps:
 				return fmt.Errorf("launch: %s not found on PATH", plan.Binary)
 			}
 			return launchExec(path, append([]string{plan.Binary}, plan.Args...), plan.Env)
-		},
-	}
-}
-
-// newAgentsCredentialCmd is the hidden `agents credential aws <profile>`: the
-// credential_process the satelle-owned AWS config names. It prints STS SESSION
-// credentials as JSON and nothing else; the long-lived keys are resolved in
-// memory, handed to one aws child through its environment, and never printed.
-func newAgentsCredentialCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:    "credential aws <profile>",
-		Short:  "Print AWS session credentials for a profile (credential_process; not for direct use)",
-		Hidden: true,
-		Args:   cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if args[0] != "aws" {
-				return fmt.Errorf("credential: provider %q mints no session credentials (want aws)", args[0])
-			}
-			global, err := config.LoadGlobalAgents()
-			if err != nil {
-				return err
-			}
-			var local map[string]string
-			if _, locPath, lerr := config.Load(""); lerr == nil {
-				local = config.LocalVarsAt(config.InvokingRoot(locPath))
-			} else if dir, found := config.FindDataDir(""); found {
-				local = config.LocalVarsAt(filepath.Dir(dir))
-			}
-			sel, ok, err := config.ResolveCloudProfile(global, args[1], local)
-			if err != nil {
-				return err
-			}
-			table := sel.Providers["aws"]
-			if !ok || table == nil {
-				return fmt.Errorf("credential: profile %q carries no aws cloud identity", args[1])
-			}
-			out, err := cloudid.SessionCredentials(cmd.Context(), args[1], table)
-			if err != nil {
-				return err
-			}
-			_, err = cmd.OutOrStdout().Write(append(out, '\n'))
-			return err
 		},
 	}
 }

@@ -38,21 +38,22 @@ func LauncherHarnesses() []string {
 	return out
 }
 
-// CloudIdentityUnavailable is the adapter-named reason a harness cannot run as a
-// cloud identity: it has no launcher to sign in through. Empty when it has one.
-func CloudIdentityUnavailable(harness string) string {
+// LaunchStepsUnavailable is the adapter-named reason a harness cannot run a
+// profile's launch steps: it has no launcher to run them through. Empty when it
+// has one.
+func LaunchStepsUnavailable(harness string) string {
 	if HasLauncher(harness) {
 		return ""
 	}
 	return fmt.Sprintf("%s has no satelle launcher", strings.TrimSpace(harness))
 }
 
-// cloudIdentityCapability is the CapabilityTable cloud-identity cell for an
-// adapter row ("<provider> <transport>"): available when its provider has a
-// launcher, else unavailable with the adapter-named reason.
-func cloudIdentityCapability(adapter string) Capability {
+// launchStepsCapability is the CapabilityTable launch-steps cell for an adapter
+// row ("<harness> <transport>"): available when its harness has a launcher, else
+// unavailable with the adapter-named reason.
+func launchStepsCapability(adapter string) Capability {
 	harness, _, _ := strings.Cut(adapter, " ")
-	if reason := CloudIdentityUnavailable(harness); reason != "" {
+	if reason := LaunchStepsUnavailable(harness); reason != "" {
 		return no(reason)
 	}
 	return yes()
@@ -61,9 +62,7 @@ func cloudIdentityCapability(adapter string) Capability {
 // ComposeLaunchEnv is the environment of a launched harness: base with every
 // unset name removed, then overlay layered on it through composeEnv (overlay
 // wins). It is the same composition every other child gets; the unsets are not
-// a secret filter — a provider adapter declares one only because the provider's
-// own precedence would otherwise let an ambient credential outrank the identity
-// the profile selected.
+// a secret filter — they are whatever the profile's launch table declares.
 func ComposeLaunchEnv(base []string, overlay map[string]string, unset []string) []string {
 	if len(unset) > 0 {
 		drop := make(map[string]bool, len(unset))

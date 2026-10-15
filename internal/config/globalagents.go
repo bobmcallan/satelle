@@ -25,7 +25,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/bobmcallan/satelle/internal/agentcli"
-	"github.com/bobmcallan/satelle/internal/cloudid"
 )
 
 const (
@@ -83,7 +82,8 @@ var globalAgentsBindingKeys = map[string]bool{
 	"settings":     true,
 	"secondary":    true,
 	"isolation":    true,
-	"cloud":        true, // the cloud identity a launcher signs in as (sty_b61d2066)
+	"launch":       true, // the steps a launcher runs before the harness starts (sty_b8310408)
+	"cloud":        true, // decode-only: the 0.0.672 identity table, refused with a pointer to launch
 }
 
 // globalAgentsPolicyKeys are keys that would make a profile decide PROCESS
@@ -257,7 +257,7 @@ func (g GlobalAgentsConfig) validate() error {
 		if err := checkBindingTimeout(GlobalAgentsLabel, section, b); err != nil {
 			return err
 		}
-		if err := checkBindingCloud(GlobalAgentsLabel, section, name, b); err != nil {
+		if err := checkBindingLaunch(GlobalAgentsLabel, section, name, b); err != nil {
 			return err
 		}
 		if _, err := g.resolveChain(name); err != nil {
@@ -353,25 +353,21 @@ func checkBindingIsolation(file, section string, b AgentBinding) error {
 	return nil
 }
 
-// checkBindingCloud validates a catalog profile's cloud identity through the
-// provider adapters (cloudid): known providers and keys, required keys present,
-// every credential exactly one ${NAME} reference — a literal secret is refused.
-func checkBindingCloud(file, section, name string, b AgentBinding) error {
-	if len(b.Cloud) == 0 {
+// checkBindingLaunch validates a catalog profile's launch table: well-formed
+// steps, and the reference rule (a [vars] reference only as a step's secrets
+// value). A 0.0.672 cloud table is refused with a pointer to the launch form.
+func checkBindingLaunch(file, section, name string, b AgentBinding) error {
+	if len(b.LegacyCloud) > 0 {
+		return fmt.Errorf("%s %w", file, LegacyCloudProblem(section))
+	}
+	if b.Launch == nil {
 		return nil
 	}
-	if err := cloudid.ValidProfileName(name); err != nil {
-		return fmt.Errorf("%s [%s] cloud: %w", file, section, err)
+	if err := ValidProfileName(name); err != nil {
+		return fmt.Errorf("%s [%s] launch: %w", file, section, err)
 	}
-	providers := make([]string, 0, len(b.Cloud))
-	for p := range b.Cloud {
-		providers = append(providers, p)
-	}
-	sort.Strings(providers)
-	for _, p := range providers {
-		if err := cloudid.Validate(p, b.Cloud[p]); err != nil {
-			return fmt.Errorf("%s [%s] %w", file, section, err)
-		}
+	if err := ValidateLaunch(b.Launch); err != nil {
+		return fmt.Errorf("%s [%s] %w", file, section, err)
 	}
 	return nil
 }
@@ -409,43 +405,36 @@ func StarterGlobalAgents(cli string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf(starterGlobalAgentsTemplate, cli, cli, runner.Command(), DefaultReviewerTools, cli, runner.Command(), cli, cli) + cloudStarterComment(), nil
+	return fmt.Sprintf(starterGlobalAgentsTemplate, cli, cli, runner.Command(), DefaultReviewerTools, cli, runner.Command(), cli, cli) + launchStarterComment(), nil
 }
 
-// CloudIdentityLimits is the one statement of what a cloud identity setting
-// does and does not do. The starter catalog and the launch command's help both
-// carry it, so neither can claim more than the other (sty_b61d2066).
-const CloudIdentityLimits = `satelle SELECTS the cloud identity; it does not enforce rights or isolate secrets.
-The cloud's roles and policy, plus a separate OS user for the agent, do the enforcing.`
+// LaunchStepLimits is the one statement of what launch steps do and do not do.
+// The starter catalog and the launch command's help both carry it, so neither
+// can claim more than the other (sty_b8310408).
+const LaunchStepLimits = `satelle runs what the profile declares; it does not enforce rights or isolate secrets.
+The cloud's roles and policy, plus a separate OS user for the agent, do the enforcing.
+A tool a step runs may persist credentials in its own cache, which an agent running as the same OS user can read.`
 
-// cloudStarterComment is the commented cloud-identity section appended to the
-// starter catalog: the shape, the limits, and what each provider persists.
-func cloudStarterComment() string {
+// launchStarterComment is the commented launch-steps section appended to the
+// starter catalog: the shape and the limits, naming no tool.
+func launchStarterComment() string {
 	var b strings.Builder
-	b.WriteString("\n# Cloud identity (optional) — the Azure or AWS identity a session started through a\n")
-	b.WriteString("# satelle launcher (`satelle agents install claude`) runs as. A repo selects it by\n")
-	b.WriteString("# naming the profile; credentials are ${NAME} references into [vars] above, never\n")
-	b.WriteString("# literals. No identity is configured by default.\n#\n")
-	for _, l := range strings.Split(CloudIdentityLimits, "\n") {
+	b.WriteString("\n# Launch steps (optional) — what a session started through a satelle launcher\n")
+	b.WriteString("# (`satelle agents install claude`) runs before the harness starts. A repo selects it\n")
+	b.WriteString("# by naming the profile; a secret is a ${NAME} reference into [vars] above, allowed\n")
+	b.WriteString("# only as a step's secrets value. Nothing is configured by default.\n")
+	b.WriteString("# Examples and the rules: satelle help global-agents\n#\n")
+	for _, l := range strings.Split(LaunchStepLimits, "\n") {
 		b.WriteString("# " + l + "\n")
 	}
 	b.WriteString("#\n")
-	for _, p := range cloudid.Providers() {
-		b.WriteString("# " + p.Persistence() + "\n")
-	}
-	b.WriteString("#\n")
-	b.WriteString("# [profiles.ops-agent.cloud.azure]\n")
-	b.WriteString("# tenant        = \"<tenant id>\"\n")
-	b.WriteString("# client_id     = \"<app id>\"\n")
-	b.WriteString("# client_secret = \"${OPS_AZ_SECRET}\"\n")
-	b.WriteString("# subscription  = \"<subscription id>\"   # optional\n")
-	b.WriteString("#\n")
-	b.WriteString("# [profiles.ops-agent.cloud.aws]\n")
-	b.WriteString("# access_key_id     = \"${OPS_AWS_KEY}\"\n")
-	b.WriteString("# secret_access_key = \"${OPS_AWS_SECRET}\"\n")
-	b.WriteString("# region            = \"ap-southeast-2\"\n")
-	b.WriteString("# role_arn          = \"arn:aws:iam::123456789012:role/ops\"   # optional: assume-role\n")
-	b.WriteString("# duration          = \"3600\"                                 # optional: seconds\n")
+	b.WriteString("# [profiles.ops-agent.launch]\n")
+	b.WriteString("# set   = { EXAMPLE_CONFIG_DIR = \"${SATELLE_PROFILE_DIR}/example\" }\n")
+	b.WriteString("# unset = [\"EXAMPLE_TOKEN\"]\n")
+	b.WriteString("# [[profiles.ops-agent.launch.steps]]\n")
+	b.WriteString("# run     = [\"example-cli\", \"login\"]\n")
+	b.WriteString("# env     = { EXAMPLE_CONFIG_DIR = \"${SATELLE_PROFILE_DIR}/example\" }\n")
+	b.WriteString("# secrets = { EXAMPLE_SECRET = \"${OPS_SECRET}\" }\n")
 	return b.String()
 }
 

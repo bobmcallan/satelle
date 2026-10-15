@@ -2,7 +2,7 @@ package cli
 
 import (
 	"crypto/sha256"
-	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,51 +14,63 @@ import (
 	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
-// Unique sentinels for the long-lived secrets: finding one where it must not be
-// is a leak.
-const (
-	sentAzureSecret = "SENTINEL-AZ-SECRET-c0ffee01"
-	sentAWSKeyID    = "SENTINEL-AWS-KEYID-c0ffee02"
-	sentAWSSecret   = "SENTINEL-AWS-SECRET-c0ffee03"
-)
+// A unique sentinel for the [vars] secret: finding it where it must not be is a
+// leak.
+const sentToken = "SENTINEL-OPS-TOKEN-c0ffee01"
 
+// launchCatalog declares a profile with two steps. The first receives the
+// secret and the profile dir; the second receives neither. The programs are fake
+// scripts the fixture puts on PATH.
 const launchCatalog = `
 [vars]
-OPS_AZ_SECRET = "` + sentAzureSecret + `"
-OPS_AWS_KEY = "` + sentAWSKeyID + `"
-OPS_AWS_SECRET = "` + sentAWSSecret + `"
+OPS_TOKEN = "` + sentToken + `"
 
 [profiles.ops]
 role = "agent"
 command = "in-loop"
 
-[profiles.ops.cloud.azure]
-tenant = "tenant-1"
-client_id = "client-1"
-client_secret = "${OPS_AZ_SECRET}"
-subscription = "sub-1"
+[profiles.ops.launch]
+set = { CFG_DIR = "${SATELLE_PROFILE_DIR}/cfg" }
+unset = ["AMBIENT_TOKEN"]
 
-[profiles.ops.cloud.aws]
-access_key_id = "${OPS_AWS_KEY}"
-secret_access_key = "${OPS_AWS_SECRET}"
-region = "ap-southeast-2"
+[[profiles.ops.launch.steps]]
+run = ["stepone", "--dir", "${SATELLE_PROFILE_DIR}/one"]
+env = { STEP_DIR = "${SATELLE_PROFILE_DIR}/one" }
+secrets = { TOK = "${OPS_TOKEN}" }
+
+[[profiles.ops.launch.steps]]
+run = ["steptwo"]
 `
 
+// useRealLaunchSteps lets the test run its fake step scripts for real, and
+// restores the TestMain refusal afterwards.
+func useRealLaunchSteps(t *testing.T) {
+	t.Helper()
+	prev := runLaunchStep
+	runLaunchStep = realRunLaunchStep
+	t.Cleanup(func() { runLaunchStep = prev })
+}
+
 // launchFixture is a repo whose machine-local agents layer selects the ops
-// profile, a machine catalog carrying its identity, and fake az/aws/claude/grok
-// on PATH. launchExec runs the harness synchronously (no process is replaced and
-// none is left behind), so the test sees the final argv and environment.
+// profile, a machine catalog declaring its steps, and fake stepone/steptwo/
+// claude/grok on PATH. launchExec runs the harness synchronously (no process is
+// replaced and none is left behind), so the test sees the final argv and
+// environment.
 type launchFixture struct {
 	repo, home, binDir string
-	logs               map[string]string // program → its recorded argv + env
+	order              string            // every fake program appends its name here, in run order
+	got                string            // stepone writes the TOK it received here
+	logs               map[string]string // program → its recorded argv, cwd and env
+	execArgv, execEnv  []string          // what launchExec was handed
 }
 
 func newLaunchFixture(t *testing.T, catalog, localAgents string) *launchFixture {
 	t.Helper()
+	useRealLaunchSteps(t)
 	home := testutil.IsolateHome(t)
 	t.Setenv("SATELLE_CONFIG", "")
 	t.Setenv(config.LauncherEnv, "")
-	t.Setenv(config.CloudProfileEnv, "")
+	t.Setenv(config.LaunchProfileEnv, "")
 	repo := t.TempDir()
 	wf := filepath.Join(repo, config.DefaultDataDir, "workflows")
 	if err := os.MkdirAll(wf, 0o755); err != nil {
@@ -79,15 +91,18 @@ func newLaunchFixture(t *testing.T, catalog, localAgents string) *launchFixture 
 		write(filepath.Join(home, config.GlobalAgentsName), catalog)
 	}
 
-	f := &launchFixture{repo: repo, home: home, binDir: t.TempDir(), logs: map[string]string{}}
-	for _, prog := range []string{"az", "aws", "claude", "grok"} {
-		log := filepath.Join(t.TempDir(), prog+".log")
+	scratch := t.TempDir()
+	f := &launchFixture{repo: repo, home: home, binDir: t.TempDir(), logs: map[string]string{},
+		order: filepath.Join(scratch, "order"), got: filepath.Join(scratch, "got")}
+	for _, prog := range []string{"stepone", "steptwo", "claude", "grok"} {
+		log := filepath.Join(scratch, prog+".log")
 		f.logs[prog] = log
-		tail := "exit 0"
-		if prog == "aws" {
-			tail = `printf '%s' '{"Credentials":{"AccessKeyId":"ASIASESSION","SecretAccessKey":"sess-secret","SessionToken":"sess-token","Expiration":"2026-10-15T10:00:00Z"}}'`
+		extra := ""
+		if prog == "stepone" {
+			extra = "printf %s \"$TOK\" > \"" + f.got + "\"\n"
 		}
-		script := "#!/bin/sh\n{ echo \"ARGV: $*\"; env; } >> \"" + log + "\"\n" + tail + "\n"
+		script := "#!/bin/sh\n{ echo \"ARGV: $*\"; echo \"PWD: $(pwd -P)\"; env; } >> \"" + log + "\"\n" +
+			"echo " + prog + " >> \"" + f.order + "\"\n" + extra + "exit 0\n"
 		write(filepath.Join(f.binDir, prog), script)
 		if err := os.Chmod(filepath.Join(f.binDir, prog), 0o755); err != nil {
 			t.Fatal(err)
@@ -97,6 +112,7 @@ func newLaunchFixture(t *testing.T, catalog, localAgents string) *launchFixture 
 
 	prev := launchExec
 	launchExec = func(path string, argv, env []string) error {
+		f.execArgv, f.execEnv = argv, env
 		cmd := exec.Command(path, argv[1:]...)
 		cmd.Env = env
 		return cmd.Run()
@@ -115,56 +131,74 @@ func (f *launchFixture) log(t *testing.T, prog string) string {
 	return string(b)
 }
 
+func (f *launchFixture) ran(t *testing.T) string {
+	t.Helper()
+	b, _ := os.ReadFile(f.order)
+	return strings.Join(strings.Fields(string(b)), ",")
+}
+
+// replaceStep rewrites a fake program as a script body.
+func (f *launchFixture) replaceStep(t *testing.T, prog, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(f.binDir, prog), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 const localOps = "[executor]\ncommand = \"in-loop\"\nprofile = \"ops\"\n"
 
-// AC2 + AC5: a session started through the launcher runs as the profile's
-// identity, for claude and for grok. The fake CLIs record exactly what satelle
-// handed them.
-func TestAgentsLaunch_RunsAsTheProfileIdentity(t *testing.T) {
+// AC2: a session started through the launcher runs the profile's steps in
+// declared order, each in the repo root with its own environment, then starts
+// the harness with the session environment the profile declared.
+func TestAgentsLaunch_RunsStepsInOrderThenTheHarness(t *testing.T) {
 	for _, harness := range []string{"claude", "grok"} {
 		t.Run(harness, func(t *testing.T) {
 			f := newLaunchFixture(t, launchCatalog, localOps)
-			t.Setenv("AZURE_CLIENT_SECRET", "ambient-sp-secret")
-			t.Setenv("AWS_ACCESS_KEY_ID", "ambient-aws-key")
+			t.Setenv("AMBIENT_TOKEN", "ambient-value")
+			dir := filepath.Join(f.home, "profiles", "ops")
 
 			out, err := runRoot(t, "agents", "launch", harness, "--", "--resume", "abc")
 			if err != nil {
 				t.Fatalf("launch: %v\n%s", err, out)
 			}
-			az := f.log(t, "az")
+			if got, want := f.ran(t), "stepone,steptwo,"+harness; got != want {
+				t.Fatalf("run order = %s, want %s", got, want)
+			}
+			one := f.log(t, "stepone")
+			repoReal, _ := filepath.EvalSymlinks(f.repo)
 			for _, want := range []string{
-				"ARGV: login --service-principal -u client-1 --tenant tenant-1 -p " + sentAzureSecret,
-				"ARGV: account set --subscription sub-1",
-				"AZURE_CONFIG_DIR=" + filepath.Join(f.home, "cloud", "ops", "azure"),
+				"ARGV: --dir " + dir + "/one",
+				"PWD: " + repoReal,
+				"STEP_DIR=" + dir + "/one",
+				config.ProfileDirVar + "=" + dir,
+				"TOK=" + sentToken,
 			} {
-				if !strings.Contains(az, want) {
-					t.Errorf("fake az lacks %q:\n%s", want, az)
+				if !strings.Contains(one, want) {
+					t.Errorf("step 0 lacks %q:\n%s", want, one)
 				}
 			}
-			cfg, err := os.ReadFile(filepath.Join(f.home, "cloud", "ops", "aws", "config"))
-			if err != nil || !strings.Contains(string(cfg), "credential_process = satelle agents credential aws ops") {
-				t.Errorf("aws config = %q (%v), want the credential_process", cfg, err)
+			if two := f.log(t, "steptwo"); strings.Contains(two, "TOK=") || strings.Contains(two, "STEP_DIR=") {
+				t.Errorf("step 1 received step 0's environment:\n%s", two)
 			}
 			h := f.log(t, harness)
 			for _, want := range []string{
 				"ARGV: --resume abc",
-				"AZURE_CONFIG_DIR=" + filepath.Join(f.home, "cloud", "ops", "azure"),
-				"AWS_CONFIG_FILE=" + filepath.Join(f.home, "cloud", "ops", "aws", "config"),
-				"AWS_SHARED_CREDENTIALS_FILE=" + filepath.Join(f.home, "cloud", "ops", "aws", "credentials"),
-				"AWS_PROFILE=satelle-ops",
+				"CFG_DIR=" + dir + "/cfg",
+				config.ProfileDirVar + "=" + dir,
 				config.LauncherEnv + "=" + harness,
-				config.CloudProfileEnv + "=ops",
+				config.LaunchProfileEnv + "=ops",
 			} {
 				if !strings.Contains(h, want) {
 					t.Errorf("%s did not receive %q:\n%s", harness, want, h)
 				}
 			}
-			// Ambient credentials outrank the selected profile in the providers'
-			// own chains, so the adapters remove them.
-			for _, gone := range []string{"AZURE_CLIENT_SECRET=", "AWS_ACCESS_KEY_ID="} {
+			for _, gone := range []string{"AMBIENT_TOKEN=", "TOK=", "STEP_DIR="} {
 				if strings.Contains(h, gone) {
-					t.Errorf("%s still has ambient %s", harness, gone)
+					t.Errorf("%s still has %s", harness, gone)
 				}
+			}
+			if st, err := os.Stat(dir); err != nil || st.Mode().Perm() != 0o700 {
+				t.Errorf("profile dir = %v (%v), want mode 0700", st, err)
 			}
 			if _, err := os.Stat(filepath.Join(f.repo, ".env")); err == nil {
 				t.Error("a .env file exists in the repo")
@@ -173,113 +207,101 @@ func TestAgentsLaunch_RunsAsTheProfileIdentity(t *testing.T) {
 	}
 }
 
-// AC3: the long-lived secrets never reach the launched agent's environment or
-// argv, and satelle writes them nowhere — not the repo, not agents.toml, not its
-// own files under the home, not what it printed.
-func TestAgentsLaunch_NeverPlacesLongLivedSecrets(t *testing.T) {
+// AC2: a failing step stops the launch with that step's own exit status and a
+// message naming only the step index and command; the harness never starts.
+func TestAgentsLaunch_FailingStepStopsTheLaunch(t *testing.T) {
+	t.Run("step exits non-zero", func(t *testing.T) {
+		f := newLaunchFixture(t, launchCatalog, localOps)
+		f.replaceStep(t, "stepone", "echo stepone >> \""+f.order+"\"\nexit 4")
+		out, err := runRoot(t, "agents", "launch", "claude")
+		var lse *launchStepError
+		if !errors.As(err, &lse) || lse.code != 4 {
+			t.Fatalf("err = %v, want a launchStepError with exit status 4", err)
+		}
+		if err.Error() != "launch: step 0 (stepone) exited 4" {
+			t.Errorf("message = %q, want only the step index and command name", err.Error())
+		}
+		if strings.Contains(err.Error()+out, sentToken) {
+			t.Error("the failure printed the secret")
+		}
+		if got := f.ran(t); got != "stepone" {
+			t.Errorf("ran %q, want only the failing step", got)
+		}
+		if f.log(t, "claude") != "" {
+			t.Error("the harness ran after a failed step")
+		}
+	})
+	t.Run("command cannot be started", func(t *testing.T) {
+		f := newLaunchFixture(t, strings.Replace(launchCatalog, `"stepone"`, `"no-such-step-command"`, 1), localOps)
+		_, err := runRoot(t, "agents", "launch", "claude")
+		var lse *launchStepError
+		if !errors.As(err, &lse) || lse.code != 127 || lse.index != 0 || lse.name != "no-such-step-command" {
+			t.Fatalf("err = %v, want step 0 to exit 127", err)
+		}
+		if f.log(t, "claude") != "" {
+			t.Error("the harness ran after a failed step")
+		}
+	})
+}
+
+// AC3: the [vars] secret reaches the step that asked for it and nothing else:
+// not the harness's environment or argv, not the repo, not satelle's own files
+// under the home, not what satelle printed, and the catalog is not rewritten.
+func TestAgentsLaunch_NeverPlacesTheSecret(t *testing.T) {
 	f := newLaunchFixture(t, launchCatalog, localOps)
 	catalogPath := filepath.Join(f.home, config.GlobalAgentsName)
 	before := sha256.Sum256(mustRead(t, catalogPath))
 
-	out, err := runRoot(t, "agents", "launch", "claude", "--", "go")
+	stdout, stderr, err := runRootSplit(t, "", "agents", "launch", "claude", "--", "go")
 	if err != nil {
-		t.Fatalf("launch: %v\n%s", err, out)
+		t.Fatalf("launch: %v\n%s", err, stderr)
 	}
-	sentinels := []string{sentAzureSecret, sentAWSKeyID, sentAWSSecret}
-
-	agent := f.log(t, "claude")
-	if agent == "" {
-		t.Fatal("the harness never ran")
+	// The step itself received it.
+	if got := string(mustRead(t, f.got)); got != sentToken {
+		t.Fatalf("step 0 received TOK = %q, want the sentinel", got)
 	}
-	for _, s := range sentinels {
-		if strings.Contains(agent, s) {
-			t.Errorf("the agent's argv or environment carries %s:\n%s", s, agent)
+	if f.execEnv == nil || f.execArgv == nil {
+		t.Fatal("the harness was never exec'd")
+	}
+	for name, hay := range map[string]string{
+		"exec'd environment": strings.Join(f.execEnv, "\n"),
+		"exec'd argv":        strings.Join(f.execArgv, "\n"),
+		"harness record":     f.log(t, "claude"),
+		"stdout":             stdout,
+		"stderr":             stderr,
+	} {
+		if strings.Contains(hay, sentToken) {
+			t.Errorf("%s carries the secret:\n%s", name, hay)
 		}
-		if strings.Contains(out, s) {
-			t.Errorf("launch printed %s:\n%s", s, out)
-		}
 	}
-	// The azure secret is in the argv of the az login child alone, and that child
-	// had exited before the harness started.
-	if !strings.Contains(f.log(t, "az"), sentAzureSecret) {
-		t.Error("expected the az login child to carry the secret in its own argv")
-	}
-	// AWS: the long-lived keys reach no child at launch; they are minted into
-	// session credentials later, by credential_process.
-	if f.log(t, "aws") != "" {
-		t.Error("launch ran the aws CLI; minting belongs to credential_process")
-	}
-
-	if after := sha256.Sum256(mustRead(t, catalogPath)); before != after {
+	// The catalog is untouched, and its only copy is the operator's own [vars]
+	// entry; the profile section holds just the reference.
+	catalog := string(mustRead(t, catalogPath))
+	if after := sha256.Sum256([]byte(catalog)); before != after {
 		t.Error("launch rewrote agents.toml")
 	}
-	// Everything satelle wrote: the repo tree, and the home apart from the
-	// operator's own agents.toml and the cache the az CLI owns.
+	if n := strings.Count(catalog, sentToken); n != 1 || !strings.Contains(catalog, "OPS_TOKEN = \""+sentToken+"\"") {
+		t.Errorf("the secret appears %d times in agents.toml, want only the [vars] line", n)
+	}
+	// Everything satelle could have written: the repo tree and the whole home
+	// (HOME holds the profile dir and any log), apart from the operator's catalog.
 	for _, root := range []string{f.repo, f.home} {
 		_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() || p == catalogPath {
 				return nil
 			}
-			b, _ := os.ReadFile(p)
-			for _, s := range sentinels {
-				if strings.Contains(string(b), s) {
-					t.Errorf("%s holds %s", p, s)
-				}
+			if b, _ := os.ReadFile(p); strings.Contains(string(b), sentToken) {
+				t.Errorf("%s holds the secret", p)
 			}
 			return nil
 		})
 	}
 }
 
-// credential_process mints session credentials from the long-lived keys held in
-// memory, prints them, and prints nothing else.
-func TestAgentsCredentialAWS_PrintsSessionCredentialsOnly(t *testing.T) {
-	f := newLaunchFixture(t, launchCatalog, localOps)
-	stdout, stderr, err := runRootSplit(t, "", "agents", "credential", "aws", "ops")
-	if err != nil {
-		t.Fatalf("credential: %v\n%s", err, stderr)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal([]byte(stdout), &doc); err != nil || doc["Version"] != float64(1) {
-		t.Fatalf("stdout must be exactly the credential_process JSON, got %q (%v)", stdout, err)
-	}
-	for _, want := range []string{`"Version":1`, `"AccessKeyId":"ASIASESSION"`, `"SessionToken":"sess-token"`} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("stdout lacks %s: %q", want, stdout)
-		}
-	}
-	for _, s := range []string{sentAWSKeyID, sentAWSSecret, sentAzureSecret} {
-		if strings.Contains(stdout, s) || strings.Contains(stderr, s) {
-			t.Errorf("credential printed %s", s)
-		}
-	}
-	rec := f.log(t, "aws")
-	if !strings.Contains(rec, "AWS_ACCESS_KEY_ID="+sentAWSKeyID) || strings.Contains(strings.SplitN(rec, "\n", 2)[0], sentAWSKeyID) {
-		t.Errorf("long-lived keys must reach the aws child by environment only:\n%s", rec)
-	}
-	if err := filepath.Walk(f.home, func(p string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() && p != filepath.Join(f.home, config.GlobalAgentsName) {
-			if b, _ := os.ReadFile(p); strings.Contains(string(b), "sess-token") || strings.Contains(string(b), sentAWSSecret) {
-				t.Errorf("credential wrote a credential to %s", p)
-			}
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := runRootSplit(t, "", "agents", "credential", "aws", "missing"); err == nil {
-		t.Error("credential for an unknown profile succeeded")
-	}
-	if _, _, err := runRootSplit(t, "", "agents", "credential", "azure", "ops"); err == nil {
-		t.Error("credential for azure succeeded; only aws mints session credentials")
-	}
-}
-
-// AC2: with no identity configured, outside a repo, or with repo configuration
+// AC2: with no launch table, outside a repo, with no catalog, or with config
 // that cannot load, the launcher behaves as it always did: the harness starts
-// with the parent's environment plus only the launcher marker, and no provider
-// CLI runs.
-func TestAgentsLaunch_NoIdentityBehavesAsToday(t *testing.T) {
+// with the parent's environment plus only the launcher marker, and no step runs.
+func TestAgentsLaunch_NoDeclarationBehavesAsToday(t *testing.T) {
 	cases := []struct {
 		name    string
 		catalog string
@@ -288,8 +310,8 @@ func TestAgentsLaunch_NoIdentityBehavesAsToday(t *testing.T) {
 		warns   bool
 	}{
 		{name: "no profile named", catalog: launchCatalog, local: ""},
-		{name: "profile without cloud", catalog: launchCatalog + "\n[profiles.plain]\nrole = \"agent\"\n", local: "[executor]\ncommand = \"in-loop\"\nprofile = \"plain\"\n"},
-		{name: "no catalog", catalog: "", local: localOps, warns: true},
+		{name: "profile without launch", catalog: launchCatalog + "\n[profiles.plain]\nrole = \"agent\"\n", local: "[executor]\ncommand = \"in-loop\"\nprofile = \"plain\"\n"},
+		{name: "no catalog", catalog: "", local: localOps},
 		{name: "outside a repo", catalog: launchCatalog, local: localOps, prep: func(t *testing.T, f *launchFixture) { t.Chdir(t.TempDir()) }},
 		{name: "unloadable repo config", catalog: launchCatalog, local: localOps, warns: true, prep: func(t *testing.T, f *launchFixture) {
 			if err := os.WriteFile(filepath.Join(f.repo, config.DefaultDataDir, config.ConfigName), []byte("[[[ not toml"), 0o644); err != nil {
@@ -303,71 +325,80 @@ func TestAgentsLaunch_NoIdentityBehavesAsToday(t *testing.T) {
 			if c.prep != nil {
 				c.prep(t, f)
 			}
-			stdout, stderr, err := runRootSplit(t, "", "agents", "launch", "claude", "--", "x")
+			_, stderr, err := runRootSplit(t, "", "agents", "launch", "claude", "--", "x")
 			if err != nil {
 				t.Fatalf("launch: %v\n%s", err, stderr)
 			}
-			_ = stdout
-			if f.log(t, "az") != "" || f.log(t, "aws") != "" {
-				t.Error("a provider CLI ran")
+			if got := f.ran(t); got != "claude" {
+				t.Errorf("ran %q, want only the harness", got)
 			}
 			h := f.log(t, "claude")
 			if !strings.Contains(h, "ARGV: x") || !strings.Contains(h, config.LauncherEnv+"=claude") {
 				t.Errorf("harness did not start as launched:\n%s", h)
 			}
-			for _, absent := range []string{"AZURE_CONFIG_DIR=", "AWS_PROFILE=", "AWS_CONFIG_FILE=", config.CloudProfileEnv + "="} {
+			for _, absent := range []string{"CFG_DIR=", config.ProfileDirVar + "=", config.LaunchProfileEnv + "="} {
 				if strings.Contains(h, absent) {
-					t.Errorf("harness env carries %s with no identity configured", absent)
+					t.Errorf("harness env carries %s with nothing declared", absent)
 				}
 			}
-			if _, err := os.Stat(filepath.Join(f.home, "cloud")); err == nil {
-				t.Error("a cloud state dir was created with no identity configured")
+			if _, err := os.Stat(filepath.Join(f.home, "profiles")); err == nil {
+				t.Error("a profile dir was created with nothing declared")
 			}
-			if c.warns && !strings.Contains(stderr, "cloud identity not applied") && c.name == "unloadable repo config" {
-				t.Errorf("an unloadable repo config should say why no identity was applied:\n%s", stderr)
+			if c.warns && !strings.Contains(stderr, "launch steps not applied") {
+				t.Errorf("an unloadable config should say why no steps were applied:\n%s", stderr)
 			}
 		})
 	}
 }
 
-// A named identity that cannot be resolved or signed in refuses to start: the
-// harness never runs as the operator's own identity by accident.
-func TestAgentsLaunch_RefusesWhenTheIdentityCannotBeUsed(t *testing.T) {
-	t.Run("unresolved reference", func(t *testing.T) {
-		f := newLaunchFixture(t, strings.Replace(launchCatalog, `OPS_AZ_SECRET = "`+sentAzureSecret+`"`, "", 1), localOps)
-		_, err := runRoot(t, "agents", "launch", "claude")
-		if err == nil || !strings.Contains(err.Error(), "${OPS_AZ_SECRET}") {
-			t.Fatalf("err = %v, want a refusal naming the reference", err)
+// AC2: the composed plan with nothing declared is exactly today's: the parent's
+// environment with only SATELLE_LAUNCHER added and the profile markers (this
+// launch's and the 0.0.672 name) removed.
+func TestPlanLaunch_NoDeclarationPlanEqualsToday(t *testing.T) {
+	newLaunchFixture(t, launchCatalog, "")
+	prev := launchEnv
+	launchEnv = func() []string {
+		return []string{"PATH=/bin", "KEEP=1", config.LaunchProfileEnv + "=stale", config.LegacyLaunchProfileEnv + "=stale"}
+	}
+	t.Cleanup(func() { launchEnv = prev })
+
+	plan, err := planLaunch(t.Context(), "claude", []string{"a"}, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"PATH=/bin": true, "KEEP=1": true, config.LauncherEnv + "=claude": true}
+	if len(plan.Env) != len(want) {
+		t.Fatalf("env = %v, want exactly %v", plan.Env, want)
+	}
+	for _, kv := range plan.Env {
+		if !want[kv] {
+			t.Errorf("unexpected %q in %v", kv, plan.Env)
 		}
-		if f.log(t, "claude") != "" || f.log(t, "az") != "" {
-			t.Error("something ran despite the refusal")
-		}
-	})
-	t.Run("sign-in fails", func(t *testing.T) {
-		f := newLaunchFixture(t, launchCatalog, localOps)
-		fail := "#!/bin/sh\necho \"" + sentAzureSecret + "\" >&2\nexit 4\n"
-		if err := os.WriteFile(filepath.Join(f.binDir, "az"), []byte(fail), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		out, err := runRoot(t, "agents", "launch", "claude")
-		if err == nil || !strings.Contains(err.Error(), "az exited 4") {
-			t.Fatalf("err = %v, want az exited 4", err)
-		}
-		if strings.Contains(err.Error(), sentAzureSecret) || strings.Contains(out, sentAzureSecret) {
-			t.Error("the failure printed the secret")
-		}
-		if f.log(t, "claude") != "" {
-			t.Error("the harness ran after a failed sign-in")
-		}
-	})
+	}
+	if plan.Binary != "claude" || len(plan.Args) != 1 || plan.Args[0] != "a" {
+		t.Errorf("plan = %+v", plan)
+	}
 }
 
-// AC5: pi and cursor have no launcher; the identity is recorded unavailable
+// A declared secret that cannot be resolved refuses to start, naming the
+// reference: the harness never runs without the steps it was configured with.
+func TestAgentsLaunch_RefusesWhenAReferenceCannotBeResolved(t *testing.T) {
+	f := newLaunchFixture(t, strings.Replace(launchCatalog, `OPS_TOKEN = "`+sentToken+`"`, "", 1), localOps)
+	_, err := runRoot(t, "agents", "launch", "claude")
+	if err == nil || !strings.Contains(err.Error(), "${OPS_TOKEN}") {
+		t.Fatalf("err = %v, want a refusal naming the reference", err)
+	}
+	if got := f.ran(t); got != "" {
+		t.Errorf("%q ran despite the refusal", got)
+	}
+}
+
+// AC5: pi and cursor have no launcher; launch steps are recorded unavailable
 // under the adapter's name, at install and at launch.
 func TestAgentsLaunch_NoLauncherHarnessesRecordUnavailable(t *testing.T) {
 	newLaunchFixture(t, launchCatalog, localOps)
 	for _, h := range []string{"pi", "cursor"} {
-		want := "cloud identity: unavailable (" + h + " has no satelle launcher)"
+		want := "launch steps: unavailable (" + h + " has no satelle launcher)"
 		if _, err := runRoot(t, "agents", "launch", h); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("launch %s: err = %v, want %q", h, err, want)
 		}
@@ -387,8 +418,8 @@ func TestAgentsLaunch_NoLauncherHarnessesRecordUnavailable(t *testing.T) {
 	}
 }
 
-// AC6 (+AC3's per-provider persistence): the help says satelle selects and does
-// not enforce, who does, and what each provider keeps.
+// AC6: the launch help states the limits and points at the setup topic, which
+// carries the schema and names where the profile is selected.
 func TestAgentsLaunchHelpStatesTheLimits(t *testing.T) {
 	out, err := runRoot(t, "agents", "launch", "--help")
 	if err != nil {
@@ -399,31 +430,33 @@ func TestAgentsLaunchHelpStatesTheLimits(t *testing.T) {
 		"does not enforce rights or isolate secrets",
 		"roles and policy",
 		"separate OS user",
-		"Azure: the az CLI stores the service-principal secret in its cache under AZURE_CONFIG_DIR (~/.satelle/cloud/<profile>/azure)",
-		"AWS: the agent receives only STS session credentials via credential_process",
+		"persist credentials in its own cache",
 		"satelle help global-agents",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("launch help lacks %q:\n%s", want, out)
 		}
 	}
-	// The setup the help points at exists and names where the profile is selected.
+	if strings.Contains(flat, "as the Azure or AWS identity") {
+		t.Error("launch help claims the launcher runs as a cloud identity")
+	}
 	topic, ok := help.Get("global-agents")
 	if !ok {
 		t.Fatal("global-agents help topic missing")
 	}
-	for _, want := range []string{"## Cloud identity", "agents.local.toml", `${OPS_AZ_SECRET}`, "never from the committed `satelle.toml`"} {
+	for _, want := range []string{"## Launch steps", "agents.local.toml", "${SATELLE_PROFILE_DIR}", "never from the committed `satelle.toml`"} {
 		if !strings.Contains(topic.Body, want) {
 			t.Errorf("global-agents topic lacks %q", want)
 		}
 	}
 }
 
-// AC1: `satelle agent validate` fails on a malformed identity or a literal
-// secret, and on a reference no permitted [vars] source defines.
-func TestAgentValidate_CloudIdentity(t *testing.T) {
+// AC1: `satelle agent validate` fails on a malformed declaration, a literal
+// secret, a [vars] reference outside a step's secrets and a reference no
+// permitted [vars] source defines, and never echoes a value.
+func TestAgentValidate_LaunchSteps(t *testing.T) {
 	t.Run("literal secret", func(t *testing.T) {
-		newLaunchFixture(t, strings.Replace(launchCatalog, `"${OPS_AZ_SECRET}"`, `"hunter2-literal"`, 1), "")
+		newLaunchFixture(t, strings.Replace(launchCatalog, `"${OPS_TOKEN}"`, `"hunter2-literal"`, 1), "")
 		out, err := runRoot(t, "agent", "validate")
 		if err == nil || !strings.Contains(err.Error()+out, "literal secret") {
 			t.Fatalf("err = %v, want a literal-secret failure:\n%s", err, out)
@@ -432,10 +465,34 @@ func TestAgentValidate_CloudIdentity(t *testing.T) {
 			t.Error("validate echoed the literal")
 		}
 	})
+	t.Run("vars reference outside secrets", func(t *testing.T) {
+		newLaunchFixture(t, strings.Replace(launchCatalog, `run = ["steptwo"]`, `run = ["steptwo", "${OPS_TOKEN}"]`, 1), "")
+		out, err := runRoot(t, "agent", "validate")
+		if err == nil || !strings.Contains(err.Error()+out, "only a step's secrets may reference a [vars] entry") {
+			t.Fatalf("err = %v, want the reference-rule failure:\n%s", err, out)
+		}
+		if strings.Contains(err.Error()+out, sentToken) {
+			t.Error("validate echoed the secret")
+		}
+	})
+	t.Run("legacy cloud table", func(t *testing.T) {
+		newLaunchFixture(t, "[profiles.ops]\nrole = \"agent\"\n[profiles.ops.cloud.vendor]\nsecret = \"hunter2-literal\"\n", "")
+		out, err := runRoot(t, "agent", "validate")
+		if err == nil {
+			t.Fatalf("a legacy cloud table validated:\n%s", out)
+		}
+		got := err.Error() + out
+		if !strings.Contains(got, "[profiles.ops.launch]") || !strings.Contains(got, "satelle help global-agents") {
+			t.Fatalf("err = %v, want a pointer to [profiles.ops.launch] and the help topic:\n%s", err, out)
+		}
+		if strings.Contains(got, "hunter2-literal") {
+			t.Error("validate echoed the legacy value")
+		}
+	})
 	t.Run("reference defined only in the committed repo vars", func(t *testing.T) {
-		f := newLaunchFixture(t, strings.Replace(launchCatalog, `OPS_AZ_SECRET = "`+sentAzureSecret+`"`, "", 1), "")
+		f := newLaunchFixture(t, strings.Replace(launchCatalog, `OPS_TOKEN = "`+sentToken+`"`, "", 1), "")
 		cfg := filepath.Join(f.repo, config.DefaultDataDir, config.ConfigName)
-		if err := os.WriteFile(cfg, []byte("[vars]\nOPS_AZ_SECRET = \"committed\"\n"), 0o644); err != nil {
+		if err := os.WriteFile(cfg, []byte("[vars]\nOPS_TOKEN = \"committed\"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		out, err := runRoot(t, "agent", "validate")
@@ -444,33 +501,51 @@ func TestAgentValidate_CloudIdentity(t *testing.T) {
 		}
 		// The gitignored overlay is an accepted source.
 		local := filepath.Join(f.repo, config.DefaultDataDir, config.LocalConfigName)
-		if err := os.WriteFile(local, []byte("[vars]\nOPS_AZ_SECRET = \"local\"\n"), 0o644); err != nil {
+		if err := os.WriteFile(local, []byte("[vars]\nOPS_TOKEN = \"local\"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if out, err := runRoot(t, "agent", "validate"); err != nil {
 			t.Fatalf("a local-overlay reference should validate: %v\n%s", err, out)
 		}
 	})
-	t.Run("valid identity", func(t *testing.T) {
+	t.Run("valid declaration", func(t *testing.T) {
 		newLaunchFixture(t, launchCatalog, localOps)
-		if out, err := runRoot(t, "agent", "validate"); err != nil {
-			t.Fatalf("a valid identity should validate: %v\n%s", err, out)
+		out, err := runRoot(t, "agent", "validate")
+		if err != nil {
+			t.Fatalf("a valid declaration should validate: %v\n%s", err, out)
+		}
+		if strings.Contains(out, "launch.set") {
+			t.Errorf("warned about env with none declared:\n%s", out)
+		}
+	})
+	t.Run("in-loop seat with env warns", func(t *testing.T) {
+		catalog := launchCatalog + "\n[profiles.withenv]\nrole = \"agent\"\nenv = { ANTHROPIC_BASE_URL = \"https://x.invalid\" }\n"
+		newLaunchFixture(t, catalog, strings.Replace(localOps, `"ops"`, `"withenv"`, 1))
+		out, err := runRoot(t, "agent", "validate")
+		if err != nil {
+			t.Fatalf("a warning must not fail validate: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "WARN  profile withenv is the in-loop seat") || !strings.Contains(out, "launch.set") {
+			t.Errorf("missing the in-loop env warning:\n%s", out)
+		}
+		if strings.Contains(out, "x.invalid") {
+			t.Error("the warning echoed an env value")
 		}
 	})
 }
 
-// AC1: the top-level `satelle validate` rejects the same broken identities as
+// AC1: the top-level `satelle validate` rejects the same broken declarations as
 // `agent validate` (one shared check), and never echoes the literal.
-func TestValidateAll_CloudIdentity(t *testing.T) {
-	t.Run("valid identity passes", func(t *testing.T) {
+func TestValidateAll_LaunchSteps(t *testing.T) {
+	t.Run("valid declaration passes", func(t *testing.T) {
 		newLaunchFixture(t, launchCatalog, localOps)
 		out, err := runRoot(t, "validate")
-		if err != nil || !strings.Contains(out, "PASS  cloud identities") {
-			t.Fatalf("a valid identity should validate: %v\n%s", err, out)
+		if err != nil || !strings.Contains(out, "PASS  launch steps") {
+			t.Fatalf("a valid declaration should validate: %v\n%s", err, out)
 		}
 	})
 	t.Run("literal secret", func(t *testing.T) {
-		newLaunchFixture(t, strings.Replace(launchCatalog, `"${OPS_AZ_SECRET}"`, `"hunter2-literal"`, 1), "")
+		newLaunchFixture(t, strings.Replace(launchCatalog, `"${OPS_TOKEN}"`, `"hunter2-literal"`, 1), "")
 		out, err := runRoot(t, "validate")
 		// The store-backed bootstrap (requireAgents) refuses a broken catalog
 		// before the verb runs, so the failure may arrive as the error rather than
@@ -483,9 +558,9 @@ func TestValidateAll_CloudIdentity(t *testing.T) {
 		}
 	})
 	t.Run("reference defined only in the committed repo vars", func(t *testing.T) {
-		f := newLaunchFixture(t, strings.Replace(launchCatalog, `OPS_AZ_SECRET = "`+sentAzureSecret+`"`, "", 1), "")
+		f := newLaunchFixture(t, strings.Replace(launchCatalog, `OPS_TOKEN = "`+sentToken+`"`, "", 1), "")
 		cfg := filepath.Join(f.repo, config.DefaultDataDir, config.ConfigName)
-		if err := os.WriteFile(cfg, []byte("[vars]\nOPS_AZ_SECRET = \"committed-literal\"\n"), 0o644); err != nil {
+		if err := os.WriteFile(cfg, []byte("[vars]\nOPS_TOKEN = \"committed-literal\"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		out, err := runRoot(t, "validate")

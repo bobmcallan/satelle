@@ -143,6 +143,11 @@ func Execute() error {
 		}
 	}
 	finishGateRun(err)
+	// A failed launch step ends the launch with that step's own exit status.
+	var lse *launchStepError
+	if errors.As(err, &lse) {
+		os.Exit(lse.code)
+	}
 	return err
 }
 

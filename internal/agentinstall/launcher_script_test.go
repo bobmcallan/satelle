@@ -41,7 +41,7 @@ func TestContentFollowsLauncherSet(t *testing.T) {
 func TestNoLauncherResultNamesTheAdapter(t *testing.T) {
 	for _, h := range []string{"pi", agentcli.HarnessCursor} {
 		r := NoLauncherResult(h)
-		if r.Path != "" || r.Note != "cloud identity: unavailable ("+h+" has no satelle launcher)" {
+		if r.Path != "" || r.Note != "launch steps: unavailable ("+h+" has no satelle launcher)" {
 			t.Errorf("%s: %+v", h, r)
 		}
 	}

@@ -43,9 +43,9 @@ func TestAgentsInstallPi_WritesExtension(t *testing.T) {
 		t.Fatalf("agents install pi: %v\n%s", err, out)
 	}
 	// No launcher script is written; the missing launcher is recorded as the
-	// cloud identity being unavailable under the adapter's name (sty_b61d2066).
+	// launch steps being unavailable under the adapter's name (sty_b8310408).
 	if !strings.Contains(out, "created pi scaffold") || strings.Contains(out, "launcher →") ||
-		!strings.Contains(out, "cloud identity: unavailable (pi has no satelle launcher)") {
+		!strings.Contains(out, "launch steps: unavailable (pi has no satelle launcher)") {
 		t.Errorf("pi has a scaffold and no launcher: %s", out)
 	}
 	raw, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(piExtensionRel)))
