@@ -70,6 +70,15 @@ func (d *Driver) Status(ctx context.Context, area string, local map[string]strin
 		return st, err
 	}
 	switch {
+	case len(local) == 0:
+		// Nothing local to send: a push has no file to upload and cannot publish
+		// a deletion, so the area is never unpushed or never synced. Any hosted
+		// copy is what differs, and a pull is the way to it.
+		if st.Pending = hostedPaths(p); len(st.Pending) > 0 {
+			st.State = StateBehind
+		} else {
+			st.State = StateInStep
+		}
 	case p.base == nil && p.effVersion == 0:
 		st.State = StateNeverSynced
 	case p.plan.Claim || len(p.plan.Uploads) > 0 || !sameFiles(local, baseFiles(p.base)):
@@ -78,6 +87,29 @@ func (d *Driver) Status(ctx context.Context, area string, local map[string]strin
 		st.State = StateInStep
 	}
 	return st, nil
+}
+
+// hostedPaths lists, sorted, every path the hosted copy holds for the area: live
+// heads, the effective snapshot's files and the base's files.
+func hostedPaths(p plannedPush) []string {
+	seen := map[string]struct{}{}
+	for path, sha := range p.heads {
+		if sha != "" {
+			seen[path] = struct{}{}
+		}
+	}
+	for path := range p.eff.Files {
+		seen[path] = struct{}{}
+	}
+	for path := range baseFiles(p.base) {
+		seen[path] = struct{}{}
+	}
+	var out []string
+	for path := range seen {
+		out = append(out, path)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func baseFiles(b *hosted.AreaBase) map[string]string {

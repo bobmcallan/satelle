@@ -1,3 +1,9 @@
+## [0.0.674] - 2026-10-15
+
+### Fixed
+- **A repo whose opted-in areas hold nothing to push is reported fully in step.** An area with nothing local and nothing on the hosted copy is now in step instead of 'never synced'. `satelle sync status` never suggests a `satelle sync push` that cannot change an area, and an area with hosted content but nothing local is behind, with NEXT `satelle sync pull`. doctor and the session-start warning agree. A freshly opted-in repo that holds only init scaffold, such as the id4me service repos, can now show every area in step. (sty_09b6b0e4)
+- This completes epic:sync-empty-areas. (sty_e0a8d3a4)
+
 ## [0.0.673] - 2026-10-15
 
 ### Changed
