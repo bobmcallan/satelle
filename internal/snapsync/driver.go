@@ -285,6 +285,7 @@ type plannedPush struct {
 	base       *hosted.AreaBase
 	effVersion int
 	eff        Record
+	heads      map[string]string
 	plan       PushPlan
 }
 
@@ -305,6 +306,7 @@ func (d *Driver) planPush(ctx context.Context, area string, local map[string]str
 	if err != nil {
 		return p, d.unavailable(err)
 	}
+	p.heads = heads
 	p.plan, err = PlanPush(area, d.PullCmd, d.DivergedCmd, d.By, d.Prune, force, p.base, p.effVersion, p.eff, local, heads, d.conflictCopyExists(area))
 	return p, err
 }

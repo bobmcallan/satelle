@@ -101,11 +101,13 @@ func TestSyncStatusNeverSyncedExitsNonZero(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a machine that never synced must exit non-zero:\n%s", out)
 	}
-	for _, area := range []string{"skills", "workflows", "documents"} {
-		cols := wantState(t, out, area, "never synced")
-		if cols[4] != "satelle sync push" {
-			t.Errorf("%s next = %q", area, cols[4])
-		}
+	cols := wantState(t, out, "skills", "never synced")
+	if cols[4] != "satelle sync push" {
+		t.Errorf("skills next = %q", cols[4])
+	}
+	// Nothing local and nothing hosted: a push has nothing to send (sty_09b6b0e4).
+	for _, area := range []string{"workflows", "documents"} {
+		wantState(t, out, area, "in step")
 	}
 	if len(a.recorded()) != 3 {
 		t.Errorf("status must record each verified area: %v", a.recorded())
@@ -419,7 +421,11 @@ func TestSyncStatusTakesAreasFromConfigNotLayout(t *testing.T) {
 	}
 	areas := append(append([]string{}, config.ConfigAreas...), "documents")
 	for _, area := range areas {
-		wantState(t, buf.String(), area, "never synced")
+		want := "in step" // nothing local to push (sty_09b6b0e4)
+		if area == "constitution" || area == "skills" || area == "settings" {
+			want = "never synced"
+		}
+		wantState(t, buf.String(), area, want)
 	}
 
 	cmd, buf = testCmd()
@@ -428,11 +434,8 @@ func TestSyncStatusTakesAreasFromConfigNotLayout(t *testing.T) {
 	}
 	cmd, buf = testCmd()
 	_ = runSyncStatus(cmd, ts.URL)
-	for _, area := range []string{"constitution", "skills", "settings"} {
+	for _, area := range areas {
 		wantState(t, buf.String(), area, "in step")
-	}
-	for _, area := range []string{"principles", "tasks"} {
-		wantState(t, buf.String(), area, "never synced")
 	}
 }
 
