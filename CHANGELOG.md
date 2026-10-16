@@ -1,3 +1,11 @@
+## [0.0.681] - 2026-10-17
+
+### Added
+- `satelle update` and the session-start release check authenticate to the GitHub API with the operator's token, when one is set. They read `GH_TOKEN` and then `GITHUB_TOKEN`, the GitHub CLI's own conventions. That gives the authenticated rate limit instead of the 60-an-hour anonymous limit every caller on an IP shares. Asset and checksum downloads stay anonymous. The token is only ever a request header: it is never printed, logged or stored. (sty_66dce129)
+
+### Changed
+- A GitHub API rate limit is now reported as one, with the URL, the status and when it resets. Previously it showed as a bare `403 Forbidden`. When no token was sent, the message says to set `GH_TOKEN` or `GITHUB_TOKEN`. (sty_66dce129)
+
 ## [0.0.680] - 2026-10-17
 
 ### Fixed
