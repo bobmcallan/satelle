@@ -20,12 +20,14 @@ func TestContentFollowsLauncherSet(t *testing.T) {
 		}
 		for _, want := range []string{
 			MarkerPrefix,
-			"command -v satelle >/dev/null 2>&1 && exec satelle agents launch " + h + ` -- "$@"`,
 			"exec " + agentcli.LauncherBinary(h) + ` "$@"`,
 		} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s launcher lacks %q:\n%s", h, want, body)
 			}
+		}
+		if strings.Contains(body, "satelle agents launch") {
+			t.Errorf("%s launcher calls back into satelle:\n%s", h, body)
 		}
 	}
 	for _, h := range []string{"pi", agentcli.HarnessCursor, "nope"} {
@@ -41,7 +43,7 @@ func TestContentFollowsLauncherSet(t *testing.T) {
 func TestNoLauncherResultNamesTheAdapter(t *testing.T) {
 	for _, h := range []string{"pi", agentcli.HarnessCursor} {
 		r := NoLauncherResult(h)
-		if r.Path != "" || r.Note != "cloud identity: unavailable ("+h+" has no satelle launcher)" {
+		if r.Path != "" || r.Action != "skipped" || r.Note != "no satelle launcher for "+h {
 			t.Errorf("%s: %+v", h, r)
 		}
 	}
@@ -74,25 +76,19 @@ func fakeBin(t *testing.T, names ...string) (dir, log string) {
 	return dir, log
 }
 
-// With satelle on PATH the launcher hands over to `satelle agents launch`; with
-// it off PATH the launcher execs the bare harness, as it did before identities.
+// The launcher execs the bare harness whether or not satelle is on PATH: it never
+// calls back into satelle.
 func TestLauncherScriptDispatch(t *testing.T) {
 	for _, h := range agentcli.LauncherHarnesses() {
-		t.Run(h+"/via satelle", func(t *testing.T) {
-			bin, log := fakeBin(t, "satelle", h)
-			runLauncher(t, h, bin, "--resume", "x")
-			got, _ := os.ReadFile(log)
-			if want := "satelle agents launch " + h + " -- --resume x\n"; string(got) != want {
-				t.Errorf("calls = %q, want %q", got, want)
-			}
-		})
-		t.Run(h+"/satelle off PATH", func(t *testing.T) {
-			bin, log := fakeBin(t, h)
-			runLauncher(t, h, bin, "--resume", "x")
-			got, _ := os.ReadFile(log)
-			if want := h + " --resume x\n"; string(got) != want {
-				t.Errorf("calls = %q, want %q", got, want)
-			}
-		})
+		for _, onPath := range [][]string{{h}, {"satelle", h}} {
+			t.Run(h+"/"+strings.Join(onPath, "+"), func(t *testing.T) {
+				bin, log := fakeBin(t, onPath...)
+				runLauncher(t, h, bin, "--resume", "x")
+				got, _ := os.ReadFile(log)
+				if want := h + " --resume x\n"; string(got) != want {
+					t.Errorf("calls = %q, want %q", got, want)
+				}
+			})
+		}
 	}
 }

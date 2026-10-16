@@ -92,13 +92,12 @@ func Content(name string) (string, error) {
 }
 
 // NoLauncherResult is the install outcome for a harness with no launcher (pi,
-// cursor): nothing is written, and the cloud identity is recorded as unavailable
-// under the adapter's name rather than silently absent.
+// cursor): nothing is written, and the skip is named rather than silently absent.
 func NoLauncherResult(name string) Result {
 	return Result{
 		Name:   name,
 		Action: "skipped",
-		Note:   fmt.Sprintf("cloud identity: unavailable (%s)", agentcli.CloudIdentityUnavailable(name)),
+		Note:   fmt.Sprintf("no satelle launcher for %s", name),
 	}
 }
 
@@ -150,15 +149,13 @@ func expandName(name string) ([]string, error) {
 		name, strings.Join(Agents(), ", "))
 }
 
-// launcherScript hands the session to `satelle agents launch`, which signs in as
-// the cloud identity the repo's agent profile names (if any) and then execs the
-// harness. With satelle off PATH it execs the bare harness — exactly what the
-// launcher did before identities existed. The exec target comes from agentcli's
-// launcher set so launchers cannot drift from it.
+// launcherScript is a marker-owned wrapper that execs the bare harness: a stable
+// satelle-owned path a binding's `command` can name. It never calls back into
+// satelle. The exec target comes from agentcli's launcher set so launchers
+// cannot drift from it.
 func launcherScript(name string) string {
-	bin := agentcli.LauncherBinary(name)
-	return fmt.Sprintf("#!/bin/sh\n%s %s — do not edit\ncommand -v satelle >/dev/null 2>&1 && exec satelle agents launch %s -- \"$@\"\nexec %s \"$@\"\n",
-		MarkerPrefix, name, name, bin)
+	return fmt.Sprintf("#!/bin/sh\n%s %s — do not edit\nexec %s \"$@\"\n",
+		MarkerPrefix, name, agentcli.LauncherBinary(name))
 }
 
 func installOne(binDir, name string) (Result, error) {

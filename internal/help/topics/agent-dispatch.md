@@ -1136,12 +1136,12 @@ adapter-named reason on the ledger row, never a silent zero or a Claude default
 (`satelle-agent-agnostic`). `internal/agentcli/capabilities.go` is the source of
 this table and a test checks every cell against the code that produces it.
 
-| adapter | usage | cache split | resolved model | model inheritance | live session | tool trim | offered tools | turn budget | cloud launch | cloud identity |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| claude command | yes | yes | yes | yes | unavailable: interface=command is one-shot only | yes | yes | yes | yes | yes |
-| claude stream | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes |
-| grok command | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | unavailable: interface=command is one-shot only | yes | yes | yes | unavailable: grok command has no cloud runner | yes |
-| grok acp | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | yes | unavailable: grok agent stdio has no tool-list flag and reports no permission mode, so a grok acp reviewer runs with a warning that its tools are not held to the grant | unavailable: grok agent stdio neither trims nor reports offered tools | unavailable: grok agent stdio has no turn-limit argv or session option, so a turn_budget is recorded and checked against reported turns only | unavailable: grok acp has no cloud runner | yes |
+| adapter | usage | cache split | resolved model | model inheritance | live session | tool trim | offered tools | turn budget | cloud launch |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| claude command | yes | yes | yes | yes | unavailable: interface=command is one-shot only | yes | yes | yes | yes |
+| claude stream | yes | yes | yes | yes | yes | yes | yes | yes | yes |
+| grok command | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | unavailable: interface=command is one-shot only | yes | yes | yes | unavailable: grok command has no cloud runner |
+| grok acp | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | yes | unavailable: grok agent stdio has no tool-list flag and reports no permission mode, so a grok acp reviewer runs with a warning that its tools are not held to the grant | unavailable: grok agent stdio neither trims nor reports offered tools | unavailable: grok agent stdio has no turn-limit argv or session option, so a turn_budget is recorded and checked against reported turns only | unavailable: grok acp has no cloud runner |
 
 **turn budget** means the harness itself is handed the repo's `turn_budget`
 through the `{max_turns}` placeholder in the binding's command template and
@@ -1154,11 +1154,6 @@ runner: it runs `claude --cloud` under a pty provided by `script`, so it needs
 linux or darwin and reports unavailable on any other host when asked to launch.
 A harness with no runner fails the dispatch with `cloud session: unavailable for
 adapter <name>` and launches nothing.
-
-**cloud identity** means a session started through the harness's satelle launcher
-runs as the Azure or AWS identity its agent profile names (see `satelle agents
-launch --help`). A harness with no launcher records `unavailable: <harness> has no
-satelle launcher`.
 
 ### Cloud performer — `interface = "cloud"` (sty_82cffd60)
 

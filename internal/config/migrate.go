@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -208,12 +209,18 @@ func decodeAgents(content string, legacyNested bool) (AgentsConfig, error) {
 				return AgentsConfig{}, fmt.Errorf("parse [model_order]: %w", err)
 			}
 		case "executor":
+			if err := refuseRetiredBindingTables(md, key); err != nil {
+				return AgentsConfig{}, err
+			}
 			var b AgentBinding
 			if err := md.PrimitiveDecode(prim, &b); err != nil {
 				return AgentsConfig{}, fmt.Errorf("parse [executor]: %w", err)
 			}
 			ac.Executor = b
 		case "reviewer":
+			if err := refuseRetiredBindingTables(md, key); err != nil {
+				return AgentsConfig{}, err
+			}
 			var b AgentBinding
 			if err := md.PrimitiveDecode(prim, &b); err != nil {
 				return AgentsConfig{}, fmt.Errorf("parse [reviewer]: %w", err)
@@ -229,9 +236,15 @@ func decodeAgents(content string, legacyNested bool) (AgentsConfig, error) {
 				return AgentsConfig{}, fmt.Errorf("parse [agents]: %w", err)
 			}
 			for n, b := range nested {
+				if err := refuseRetiredBindingTables(md, key, n); err != nil {
+					return AgentsConfig{}, err
+				}
 				ac.Agents[n] = b
 			}
 		default:
+			if err := refuseRetiredBindingTables(md, key); err != nil {
+				return AgentsConfig{}, err
+			}
 			var b AgentBinding
 			if err := md.PrimitiveDecode(prim, &b); err != nil {
 				return AgentsConfig{}, fmt.Errorf("parse [%s]: %w", key, err)
@@ -240,6 +253,23 @@ func decodeAgents(content string, legacyNested bool) (AgentsConfig, error) {
 		}
 	}
 	return ac, nil
+}
+
+// refuseRetiredBindingTables refuses a binding whose table the file has
+// declared a retired sub-table under (`cloud`, `launch`): satelle no longer
+// manages cloud identity (sty_c00782a3). binding is the path of the binding
+// decodeAgents has just classified — its own classification, never a list of
+// seats — so a custom flat binding is covered and [defaults] never reaches it.
+func refuseRetiredBindingTables(md toml.MetaData, binding ...string) error {
+	for _, k := range md.Keys() {
+		if len(k) <= len(binding) || !slices.Equal(k[:len(binding)], binding) {
+			continue
+		}
+		if slices.Contains(globalAgentsRetiredKeys, k[len(binding)]) {
+			return retiredTableError(strings.Join(k[:len(binding)+1], "."), ".satelle/workflows/"+AgentsConfigName)
+		}
+	}
+	return nil
 }
 
 // isBindingHeader reports whether a table header names a binding table: an

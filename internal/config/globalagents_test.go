@@ -240,6 +240,12 @@ func TestStarterGlobalAgentsIsSecretFreeAndValid(t *testing.T) {
 	if _, err := StarterGlobalAgents("not-a-cli"); err == nil {
 		t.Error("an unknown CLI must not produce a catalog")
 	}
+	// satelle manages no cloud identity: the template says nothing about one.
+	for _, banned := range []string{"cloud identity", "azure", "aws", "credential_process", "[profiles.ops-agent.cloud"} {
+		if strings.Contains(strings.ToLower(body), banned) {
+			t.Errorf("starter catalog mentions %q", banned)
+		}
+	}
 }
 
 // writeGlobalCatalog writes body to the isolated home's catalog path.

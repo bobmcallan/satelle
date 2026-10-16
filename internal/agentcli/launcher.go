@@ -1,16 +1,14 @@
 package agentcli
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 )
 
 // launcherBinaries maps a harness that has a satelle launcher (`satelle agents
-// install`, sty_b61d2066) to the binary the launcher finally execs. It is the
-// ONE owner of "this harness has a launcher": agentinstall.Content switches on
-// it, and the install note, the `agents launch` refusal, the session-start
-// warning and the capability-table cell all read it, so none can disagree.
+// install`) to the binary the launcher execs. It is the ONE owner of "this
+// harness has a launcher": agentinstall.Content switches on it, and the install
+// note and BindingSnippet read it, so none can disagree.
 var launcherBinaries = map[string]string{
 	HarnessClaude: CLIClaude,
 	HarnessGrok:   CLIGrok,
@@ -36,51 +34,4 @@ func LauncherHarnesses() []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// CloudIdentityUnavailable is the adapter-named reason a harness cannot run as a
-// cloud identity: it has no launcher to sign in through. Empty when it has one.
-func CloudIdentityUnavailable(harness string) string {
-	if HasLauncher(harness) {
-		return ""
-	}
-	return fmt.Sprintf("%s has no satelle launcher", strings.TrimSpace(harness))
-}
-
-// cloudIdentityCapability is the CapabilityTable cloud-identity cell for an
-// adapter row ("<provider> <transport>"): available when its provider has a
-// launcher, else unavailable with the adapter-named reason.
-func cloudIdentityCapability(adapter string) Capability {
-	harness, _, _ := strings.Cut(adapter, " ")
-	if reason := CloudIdentityUnavailable(harness); reason != "" {
-		return no(reason)
-	}
-	return yes()
-}
-
-// ComposeLaunchEnv is the environment of a launched harness: base with every
-// unset name removed, then overlay layered on it through composeEnv (overlay
-// wins). It is the same composition every other child gets; the unsets are not
-// a secret filter — a provider adapter declares one only because the provider's
-// own precedence would otherwise let an ambient credential outrank the identity
-// the profile selected.
-func ComposeLaunchEnv(base []string, overlay map[string]string, unset []string) []string {
-	if len(unset) > 0 {
-		drop := make(map[string]bool, len(unset))
-		for _, k := range unset {
-			drop[k] = true
-		}
-		kept := make([]string, 0, len(base))
-		for _, kv := range base {
-			key := kv
-			if i := strings.IndexByte(kv, '='); i >= 0 {
-				key = kv[:i]
-			}
-			if !drop[key] {
-				kept = append(kept, kv)
-			}
-		}
-		base = kept
-	}
-	return composeEnv(base, overlay)
 }

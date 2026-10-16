@@ -1,3 +1,18 @@
+## [0.0.676] - 2026-10-16
+
+### Breaking
+- **A `cloud` table now fails to load: satelle no longer manages cloud identity or credentials.** Signing in, choosing an identity and limiting its rights are your own tooling and the cloud's RBAC, not satelle's. A catalog profile or repo binding that declares `[profiles.<name>.cloud…]` or `[<seat>.cloud…]` is refused by every command that reads it, and by `satelle agent validate` and `satelle validate`, with a message naming the table. To migrate by hand: delete the `[profiles.<name>.cloud…]` table from `~/.satelle/agents.toml`, and any `[<seat>.cloud…]` table from the repo's `.satelle/workflows/agents.toml`. A `launch` table is refused the same way. Then run `satelle agents install all` to rewrite the installed launchers, which no longer call back into satelle. `$SATELLE_HOME/cloud/` is no longer written or read and can be deleted. (sty_c00782a3)
+
+### Removed
+- `satelle agents launch` and the hidden `satelle agents credential`, the launcher's cloud sign-in, and the `SATELLE_LAUNCHER` and `SATELLE_CLOUD_PROFILE` markers. (sty_c00782a3)
+- The session-start warning that a session skipped the launcher, the `cloud identity` column of the capability table, and the `cloud identities` section of `satelle validate` (now an `agent catalog` load check). (sty_c00782a3)
+- `satelle agents install` for pi and cursor reports `no satelle launcher for <name>` instead of `cloud identity: unavailable`. (sty_c00782a3)
+
+## [serve-v0.0.166] - 2026-10-16
+
+### Changed
+- The service binary drops the cloud-identity profile schema; a `cloud` table is refused as in the CLI. (sty_c00782a3)
+
 ## [0.0.675] - 2026-10-16
 
 ### Fixed

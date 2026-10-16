@@ -7,7 +7,7 @@
 // `satelle agent validate` (sty_93eec36d) is the store-backed check of this repo's
 // .satelle/workflows/agents.toml + workflow agent= bindings — the same authority init and
 // story engagement use. The top-level `satelle validate` runs the per-kind
-// substrate checks and shares this file's cloud-identity check (cloudRefProblems).
+// substrate checks and the machine catalog load check.
 package cli
 
 import (
@@ -24,7 +24,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/agentvalidate"
-	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/doctor"
@@ -350,15 +349,10 @@ syncs, so keep profile= and use_global_roles there, not in shared agents.toml.`,
 				}
 			}
 			failed := 0
-			// A broken catalog (a literal secret in a cloud identity, an unknown
-			// provider key) is a failure, not only a printed line. gerr was
-			// printed above, so only the reference lines are reported here.
+			// A broken catalog (a retired table, an unknown key) is a failure, not
+			// only a printed line; gerr was printed above.
 			if gerr != nil {
 				failed++
-			}
-			for _, p := range cloudRefProblems(a, global) {
-				failed++
-				fmt.Fprintf(out, "FAIL  %s\n", p)
 			}
 			for _, w := range report.Warnings {
 				fmt.Fprintf(out, "WARN  %s\n", w)
@@ -393,18 +387,6 @@ syncs, so keep profile= and use_global_roles there, not in shared agents.toml.`,
 			return nil
 		},
 	}
-}
-
-// cloudRefProblems is the one owner of the cloud-identity reference check shared
-// by `satelle agent validate` and the top-level `satelle validate`: every ${NAME}
-// a catalog identity references must be defined where a credential may come from
-// (sty_b61d2066). Lines name profile, provider and variable, never a value.
-func cloudRefProblems(a *app.App, global config.GlobalAgentsConfig) []string {
-	root := a.ProcessRoot
-	if strings.TrimSpace(root) == "" {
-		root = a.RepoRoot
-	}
-	return config.CloudRefProblems(global, config.LocalVarsAt(root), a.PlaneConfig().Vars)
 }
 
 // persistAgentCLI saves cli into the global config, preserving other settings.

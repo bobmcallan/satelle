@@ -53,25 +53,15 @@ silently. Read-only, deterministic, no agent — run it after any substrate edit
 				}
 			}
 			fmt.Fprintf(out, "\nwikilink problems: %d\n\n", len(problems))
-			// The machine catalog's cloud identities (sty_b61d2066): a literal
-			// secret or malformed entry is a load error, an undefined ${NAME} a
-			// reference problem. Same check, same owner as `agent validate`; the
-			// lines name the field, never the value.
-			fmt.Fprintln(out, "# cloud identities")
-			cloudFailed := 0
-			global, gerr := config.LoadGlobalAgents()
-			if gerr != nil {
-				cloudFailed++
+			// The machine catalog must load: a retired table or an unknown key is
+			// a load error, the same one `agent validate` reports.
+			fmt.Fprintln(out, "# agent catalog")
+			if _, gerr := config.LoadGlobalAgents(); gerr != nil {
+				failed++
 				fmt.Fprintf(out, "FAIL  %v\n", gerr)
+			} else {
+				fmt.Fprintln(out, "PASS  agent catalog")
 			}
-			for _, p := range cloudRefProblems(a, global) {
-				cloudFailed++
-				fmt.Fprintf(out, "FAIL  %s\n", p)
-			}
-			if cloudFailed == 0 {
-				fmt.Fprintln(out, "PASS  cloud identities")
-			}
-			failed += cloudFailed
 			fmt.Fprintln(out)
 			// Informational: an exceeded budget warns and never counts as a failure.
 			reportInjected(context.Background(), out, a)

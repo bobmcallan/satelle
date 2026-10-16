@@ -485,18 +485,6 @@ func overlayBinding(base AgentBinding, baseSrc map[string]string, top AgentBindi
 		src["turn_budget"] = topSrc
 	}
 
-	// The cloud identity merges provider-wise: a provider the top tier names
-	// replaces the base's table for that provider; the rest of the base stays.
-	if len(top.Cloud) > 0 {
-		out.Cloud = make(map[string]map[string]string, len(base.Cloud)+len(top.Cloud))
-		for p, t := range base.Cloud {
-			out.Cloud[p] = t
-		}
-		for p, t := range top.Cloud {
-			out.Cloud[p] = t
-		}
-		src["cloud"] = mapSource(len(base.Cloud) > 0, topSrc, baseSrc["cloud"])
-	}
 	if len(top.Env) > 0 {
 		out.Env = mergeStringMap(base.Env, top.Env)
 		src["env"] = mapSource(len(base.Env) > 0, topSrc, baseSrc["env"])

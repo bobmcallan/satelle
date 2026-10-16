@@ -313,6 +313,9 @@ func TestShippedChangelogMarksDOTRetirement(t *testing.T) {
 //   - 0.0.665, configuration validated before push (sty_89b9df20). Manual:
 //     move machine-specific agent fields into agents.local.toml; init does not
 //     move them.
+//   - 0.0.676, satelle no longer manages cloud identity (sty_c00782a3). Manual:
+//     delete a `cloud` table from the catalog or a repo binding; init does not
+//     edit them.
 //
 // What stays invariant is the shape: at-or-after the newest marker is quiet, and
 // the warning a repo below it gets carries that release's own bullets.
@@ -338,8 +341,10 @@ func TestShippedChangelogSparesCurrentRepos(t *testing.T) {
 		{"0.0.607", true, "stamped at the estimate flag removal, but predates the push check at 0.0.665"},
 		{"0.0.608", true, "past 0.0.607, but still predates 0.0.665"},
 		{"0.0.664", true, "the release just before the push check"},
-		{"0.0.665", false, "stamped AT the newest Breaking release"},
-		{"0.0.666", false, "past it"},
+		{"0.0.665", true, "stamped at the push check, but predates the cloud table removal at 0.0.676"},
+		{"0.0.675", true, "the release just before the cloud table removal"},
+		{"0.0.676", false, "stamped AT the newest Breaking release"},
+		{"0.0.677", false, "past it"},
 	}
 	for _, c := range cases {
 		entries, err := verb.ChangelogRange(c.deployed, future)

@@ -195,16 +195,6 @@ const (
 	// RESERVED key: it overrides any binding-authored [env] value of the
 	// same name.
 	ScratchEnv = "SATELLE_SCRATCH"
-
-	// LauncherEnv and CloudProfileEnv mark a session started through a satelle
-	// launcher (`satelle agents launch`, sty_b61d2066): LauncherEnv names the
-	// harness it launched and CloudProfileEnv the profile whose cloud identity it
-	// signed in as (absent when none was configured). The session-start hook reads
-	// LauncherEnv to warn a session that skipped the launcher. Same honest-posture
-	// boundary as the dispatch markers: a spoofed or inherited value only silences
-	// an advisory, it grants nothing.
-	LauncherEnv     = "SATELLE_LAUNCHER"
-	CloudProfileEnv = "SATELLE_CLOUD_PROFILE"
 )
 
 // Principles selector tokens for AgentBinding.Principles — which principles ride
@@ -332,13 +322,6 @@ type AgentBinding struct {
 	// them, and [defaults] backs them. See Budget.
 	ContextBudget int `toml:"context_budget"`
 	TurnBudget    int `toml:"turn_budget"`
-	// Cloud names the cloud identity a session started through a satelle launcher
-	// runs as (sty_b61d2066): provider (azure | aws) → that provider's keys, each
-	// credential a ${NAME} reference into the machine [vars]. Catalog profiles
-	// only — a repo binding selects an identity by naming the profile, never by
-	// carrying credentials. satelle SELECTS the identity; it does not enforce what
-	// the identity may do. See cloudid and `satelle agents launch --help`.
-	Cloud map[string]map[string]string `toml:"cloud"`
 }
 
 // IsolationOperatorAttested is the one valid isolation= value.
@@ -1172,10 +1155,6 @@ func (a AgentsConfig) validateTimeouts() error {
 // command / the shipped live order).
 func (a AgentsConfig) validateInterfaces() error {
 	check := func(section string, b AgentBinding) error {
-		if len(b.Cloud) > 0 {
-			return fmt.Errorf("%s [%s] cloud: a repo binding cannot carry a cloud identity — define it under [profiles.<name>.cloud.<provider>] in %s and select it with profile = \"<name>\"",
-				AgentsConfigName, section, GlobalAgentsLabel)
-		}
 		if err := checkBindingIsolation(AgentsConfigName, section, b); err != nil {
 			return err
 		}

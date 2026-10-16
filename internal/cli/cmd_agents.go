@@ -205,7 +205,7 @@ you mean to stop satelle governing the harness — not as tidying.`,
 		},
 	}
 
-	agents.AddCommand(install, remove, newAgentsLaunchCmd(), newAgentsCredentialCmd())
+	agents.AddCommand(install, remove)
 	register(agents)
 }
 
