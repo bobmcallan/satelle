@@ -1,3 +1,22 @@
+## [0.0.679] - 2026-10-17
+
+### Added
+- A repo can subscribe to published command-policy lists with `[[gate.command_policy]]`. Each subscription has a `name`, exactly one source, and an optional `max_age`. The source is a hosted catalog `workspace` + `path` (satelle.dev by default) or a third-party `url`.
+  - satelle ships no list and fetches nothing until a repo subscribes.
+  - Subscribed rules use the command-rule grammar and run after the repo's own `[[gate.command_rule]]` entries, so a repo rule for the same command wins.
+  - The rules are cached per repo under the satelle home, never in the tree. Session start reads only that cache. When the cache is stale, session start starts at most one background `satelle policy refresh` and never waits on it. The command hook makes no network call.
+  - A failed refresh keeps the last good list and warns at the next session start, naming the subscription and the reason. Failures include an unreachable source, a catalog body that does not match the catalog's checksum, and a list that does not parse.
+  - A `url` source provides no checksum, so its list is labelled unverified.
+  - See `satelle help command-rules`. (sty_041bf275)
+
+### Fixed
+- An accepted `satelle story amend` of a story's acceptance criteria survives re-entry to a step that applies the plan's criteria. Re-entering `in_progress` used to copy the plan's older criteria back over the amendment silently. Now the apply is skipped and the transition reports that the plan's criteria differ. (sty_89804a0e)
+
+## [serve-v0.0.169] - 2026-10-17
+
+### Changed
+- The service binary carries the shared config change for command-policy subscriptions. (sty_041bf275)
+
 ## [0.0.678] - 2026-10-16
 
 ### Breaking
