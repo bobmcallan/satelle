@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -577,6 +578,36 @@ func updateAvailable(current, latest string) bool {
 
 func normVer(v string) string { return strings.TrimPrefix(strings.TrimSpace(v), "v") }
 
+// githubToken is the operator's GitHub token from the GitHub CLI's own
+// environment conventions (GH_TOKEN, then GITHUB_TOKEN), or "" when none is set.
+func githubToken() string {
+	if t := strings.TrimSpace(os.Getenv("GH_TOKEN")); t != "" {
+		return t
+	}
+	return strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+}
+
+// githubAPIGet is the one GET for the release API (latest and list). It sends
+// the operator's token, when there is one, to get the authenticated rate limit
+// instead of the 60-an-hour limit every anonymous caller on the IP shares. The
+// token goes to whatever SATELLE_RELEASE_API / SATELLE_RELEASE_LIST_API name:
+// the operator sets both. Asset and checksum downloads are not API calls and
+// stay anonymous. A rate limit is reported as one, with the remedy only when no
+// token was sent; the token itself is only ever a request header.
+func githubAPIGet(ctx context.Context, url string) ([]byte, error) {
+	token := githubToken()
+	body, err := httpGetBytesAuth(ctx, url, githubAccept, token)
+	var rl *rateLimitError
+	if errors.As(err, &rl) {
+		hint := ""
+		if token == "" {
+			hint = "; set GH_TOKEN or GITHUB_TOKEN to use the authenticated limit"
+		}
+		return nil, fmt.Errorf("GitHub API rate limit exceeded: %w%s", err, hint)
+	}
+	return body, err
+}
+
 // latestReleaseTag queries the release API for the latest tag. The API URL is
 // the GitHub default, overridable via SATELLE_RELEASE_API (mirrors, tests).
 func latestReleaseTag(ctx context.Context, repo string) (string, error) {
@@ -584,7 +615,7 @@ func latestReleaseTag(ctx context.Context, repo string) (string, error) {
 	if url == "" {
 		url = fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
 	}
-	body, err := httpGetBytes(ctx, url, githubAccept)
+	body, err := githubAPIGet(ctx, url)
 	if err != nil {
 		return "", err
 	}
@@ -625,7 +656,7 @@ func latestServeReleaseTag(ctx context.Context, repo string) (string, error) {
 		base = fmt.Sprintf("https://api.github.com/repos/%s/releases", repo)
 	}
 	return highestPrefixedTagInPages(func(page int) ([]byte, error) {
-		return httpGetBytes(ctx, releaseListPageURL(base, page), githubAccept)
+		return githubAPIGet(ctx, releaseListPageURL(base, page))
 	}, "serve-v", maxReleasePages)
 }
 
