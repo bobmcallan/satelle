@@ -18,6 +18,11 @@
 #     SATELLE_TEST_HOST_HOME, SATELLE_TEST_HOST_XDG_CONFIG_HOME (the caller's
 #     XDG_CONFIG_HOME, else $HOME/.config) and SATELLE_TEST_HOST_SATELLE_HOME
 #     (only when the caller has SATELLE_HOME set);
+#   - SATELLE_RELEASE_API, SATELLE_RELEASE_LIST_API and SATELLE_RELEASE_BASE fixed
+#     to a closed loopback endpoint, whatever the caller exports, so a release
+#     check started by a session-start hook in a test never reaches GitHub or
+#     spends its rate limit (sty_02579374). A test that needs a release server
+#     appends its own values to the command's environment;
 #   - of the caller's other variables, ONLY the allowlist below plus every
 #     SATELLE_TEST_PROBE_* variable. Anything else is dropped.
 # The wrapper does not change which tests exist; operator-config checks stay
@@ -73,6 +78,9 @@ set -- \
 	"GOMODCACHE=$gomodcache" \
 	"GOCACHE=$gocache" \
 	"GOPATH=$gopath" \
+	"SATELLE_RELEASE_API=http://127.0.0.1:9/hermetic/releases/latest" \
+	"SATELLE_RELEASE_LIST_API=http://127.0.0.1:9/hermetic/releases" \
+	"SATELLE_RELEASE_BASE=http://127.0.0.1:9/hermetic/dl" \
 	"$@"
 
 env -i "$@"

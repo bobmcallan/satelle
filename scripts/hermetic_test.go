@@ -82,6 +82,39 @@ func TestHermeticWrapperEnvironment(t *testing.T) {
 	}
 }
 
+// TestHermeticWrapperPinsReleaseEndpoints proves the wrapped command sees the
+// three release-API overrides as loopback URLs whatever the caller exports, so a
+// release check a test starts can never reach GitHub (sty_02579374).
+func TestHermeticWrapperPinsReleaseEndpoints(t *testing.T) {
+	names := []string{"SATELLE_RELEASE_API", "SATELLE_RELEASE_LIST_API", "SATELLE_RELEASE_BASE"}
+	cmd := exec.Command("sh", "hermetic.sh", "--", "env")
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + t.TempDir(),
+		"SATELLE_RELEASE_API=https://api.github.com/x",
+		"SATELLE_RELEASE_LIST_API=https://api.github.com/y",
+		"SATELLE_RELEASE_BASE=https://github.com/z",
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("hermetic.sh: %v", err)
+	}
+	got := map[string]string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok {
+			got[k] = v
+		}
+	}
+	for _, name := range names {
+		if !strings.HasPrefix(got[name], "http://127.0.0.1:") {
+			t.Errorf("%s = %q, want a loopback URL whatever the caller exports", name, got[name])
+		}
+	}
+	if strings.Contains(string(out), "github.com") {
+		t.Errorf("the wrapped environment still names github.com:\n%s", out)
+	}
+}
+
 // TestHermeticWrapperCleansUpAndKeepsStatus proves the temp dir is removed and
 // the wrapped command's exit status survives.
 func TestHermeticWrapperCleansUpAndKeepsStatus(t *testing.T) {
