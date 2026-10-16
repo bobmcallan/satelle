@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -49,6 +50,49 @@ func stepProposes(ctx context.Context, current workitem.Item, to string) bool {
 // edit apart from one a person or the driving session made.
 const planCriteriaActor = "accepted-plan"
 
+// applyOut is where the notice that a plan's criteria were not applied is
+// printed. Stderr, like the other transition-time notices, so `--json` stdout
+// stays parseable.
+var applyOut io.Writer = os.Stderr
+
+// SetApplyOutput redirects the criteria-apply notice; nil restores stderr (tests).
+func SetApplyOutput(w io.Writer) {
+	if w == nil {
+		w = os.Stderr
+	}
+	applyOut = w
+}
+
+// criteriaLastAmended reports whether the latest ledger row to change a story's
+// acceptance criteria is an accepted amendment. Rows are read oldest first. A
+// later definition_edited row (a re-presented readiness applying new plan text)
+// puts the plan back in charge, so only the LAST change decides.
+func criteriaLastAmended(entries []ledger.Entry) bool {
+	amended := false
+	for _, e := range entries {
+		switch e.Kind {
+		case ledger.KindDefinitionEdited:
+			var p definitionEditPayload
+			if json.Unmarshal(e.Payload, &p) == nil && p.Field == "acceptance_criteria" {
+				amended = false
+			}
+		case ledger.KindDefinitionAmended:
+			var p struct {
+				Fields []AmendField `json:"fields"`
+			}
+			if json.Unmarshal(e.Payload, &p) != nil {
+				continue
+			}
+			for _, f := range p.Fields {
+				if f.Field == "acceptance_criteria" {
+					amended = true
+				}
+			}
+		}
+	}
+	return amended
+}
+
 // applyPlannedCriteria applies, on entry to a step that declares
 // `apply_criteria`, the acceptance criteria authored under the declared heading
 // in the declared story document (sty_4d9df9a0). It returns the updated item
@@ -57,6 +101,11 @@ const planCriteriaActor = "accepted-plan"
 // and the step are all route data. A missing document, a missing or empty
 // section, or text the story already carries writes nothing; an unreadable
 // document refuses the transition rather than skipping the apply silently.
+//
+// An accepted `story amend` outranks the plan (sty_89804a0e): after readiness the
+// amend gate is the authority over the definition, so when the criteria were last
+// changed by an amendment the plan's differing text is not applied. The skip
+// writes no row and prints a notice naming the drift.
 func applyPlannedCriteria(ctx context.Context, current workitem.Item, to string, now time.Time) (workitem.Item, error) {
 	if current.Kind != workitem.KindStory {
 		return current, nil
@@ -82,6 +131,11 @@ func applyPlannedCriteria(ctx context.Context, current workitem.Item, to string,
 	}
 	criteria := markdownSection(string(data), st.ApplyCriteriaHeading)
 	if criteria == "" || strings.Join(strings.Fields(criteria), " ") == strings.Join(strings.Fields(current.AcceptanceCriteria), " ") {
+		return current, nil
+	}
+	if criteriaLastAmended(storyLedgerEntries(ctx, current.ID)) {
+		fmt.Fprintf(applyOut, "satelle: %s: criteria not applied from the %q document (section %q) — the plan's criteria differ from the amended criteria (last changed by an accepted amend); the story keeps the amended text\n",
+			current.ID, st.ApplyCriteriaDoc, st.ApplyCriteriaHeading)
 		return current, nil
 	}
 	store, err := requireWorkItem()

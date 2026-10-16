@@ -172,6 +172,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// A detached gate run also appends each line to its verdict log, the only
 	// channel that reaches the driving session.
 	verb.SetTrunkOutput(trunkOutput(cmd.ErrOrStderr()))
+	// A plan's criteria skipped in favour of an accepted amend are reported on
+	// the same channel, so the operator driving the transition sees why.
+	verb.SetApplyOutput(trunkOutput(cmd.ErrOrStderr()))
 	// Process-of-record reporting (sty_d6e209aa): where the authored process
 	// lives, so an absent workflows dir or a divergent worktree copy is reported
 	// at engage, in a refusal and in the route document. Data only — nothing is
