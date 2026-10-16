@@ -1,3 +1,13 @@
+## [0.0.684] - 2026-10-17
+
+### Fixed
+- The process-tree CPU sample no longer reports a reaped child's CPU as 0. When a child is reaped mid-scan, the scan is torn; it is now detected and taken again. This also stops TestProcTreeCPUKeepsReapedChildCPU from failing intermittently in CI. (sty_673ec869)
+
+## [serve-v0.0.170] - 2026-10-17
+
+### Changed
+- The service binary carries the process-tree CPU sampling fix. (sty_673ec869)
+
 ## [0.0.683] - 2026-10-17
 
 ### Fixed
