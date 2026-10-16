@@ -6,7 +6,7 @@ and no default list**: with nothing authored, nothing is refused or warned.
 
 ```toml
 [[gate.command_rule]]
-pattern = "TOOL delete"          # an argv prefix; a token of * matches any one token
+pattern = "TOOL delete"          # an argv prefix; see Pattern syntax below
 action  = "deny"                 # "deny" refuses before it runs; "warn" lets it run
 allow   = ["in_progress"]        # story statuses or step names where it passes
 message = "delete changes shared state"
@@ -15,6 +15,33 @@ message = "delete changes shared state"
 The first rule that matches any simple command in the line, in file order, wins.
 `satelle validate` rejects a malformed rule, and an `allow` entry that names no
 state of the route.
+
+## Pattern syntax
+
+A pattern is whitespace-separated tokens compared with the command's argv. It
+matches when its tokens are a **prefix** of the argv: arguments after the last
+token are ignored. Examples use the fictional tools `orbctl` and `fetchy`.
+
+| Token | Matches |
+| --- | --- |
+| `word` | a token equal to `word` |
+| `*` | any one token |
+| `**` | any run of tokens, none included |
+| `**/NAME` | first token only: a program whose last path element is `NAME`, however it is invoked |
+| `*TEXT*` | one token containing `TEXT`, such as a host inside a URL or `--url=...` |
+
+```toml
+pattern = "orbctl scale * --force"           # exact words, * for one token
+pattern = "**/orbctl"                        # orbctl, /opt/x/orbctl, ./orbctl, ~/bin/orbctl, $HOME/bin/orbctl
+pattern = "**/fetchy ** *api.example.test*"  # fetchy with that host at any argument position
+```
+
+`**/NAME` compares text only: no PATH lookup, no symlink resolution, no variable
+expansion. `$HOME/bin/orbctl` matches because its text ends in `/orbctl`; a
+variable that holds the whole program (`$TOOL`) does not. A token holding `*`
+that is none of these forms (`a*`, `*a`, `***`, `*a*b*`), or `**/NAME` anywhere
+but first, is a malformed pattern; `satelle validate` names the rule and the
+field `pattern`, never the value.
 
 ## What happens
 

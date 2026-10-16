@@ -699,8 +699,8 @@ const (
 )
 
 // CommandRule is one repo-authored judgement of an agent's shell command line.
-// Pattern is a whitespace-split argv prefix, where a token of "*" matches any
-// one token. Allow lists the story statuses or workflow step names at which the
+// Pattern is a whitespace-split argv prefix; see CommandRuleToken for the token
+// forms (a word, *, **, **/NAME as the first token, and *TEXT*). Allow lists the story statuses or workflow step names at which the
 // command passes; empty means no status or step lets it pass. Message is shown
 // to the agent. The first matching rule, in file order, wins.
 type CommandRule struct {
@@ -708,6 +708,18 @@ type CommandRule struct {
 	Action  string   `toml:"action"`
 	Allow   []string `toml:"allow"`
 	Message string   `toml:"message"`
+	// Tokens is Pattern classified once by ValidateGateCommandRules, so the hook
+	// does not parse it on every command. Never read from TOML.
+	Tokens []CommandRuleToken `toml:"-"`
+}
+
+// Compiled is the rule's classified pattern: the one load validated, or a parse
+// into buf for a rule built without validation.
+func (r CommandRule) Compiled(buf []CommandRuleToken) ([]CommandRuleToken, error) {
+	if r.Tokens != nil {
+		return r.Tokens, nil
+	}
+	return AppendCommandRuleTokens(buf[:0], r.Pattern)
 }
 
 // CommandRuleError is a [[gate.command_rule]] that load refused. It names the
@@ -738,12 +750,101 @@ type ParseError struct {
 func (e *ParseError) Error() string { return fmt.Sprintf("config: parse %s: %v", e.Path, e.Err) }
 func (e *ParseError) Unwrap() error { return e.Err }
 
-// CommandRuleTokens splits a rule pattern into its argv tokens.
-func CommandRuleTokens(pattern string) []string { return strings.Fields(pattern) }
+// CommandRuleKind is how one pattern token compares with argv.
+type CommandRuleKind int
+
+const (
+	// CommandRuleWord matches a token equal to Text.
+	CommandRuleWord CommandRuleKind = iota
+	// CommandRuleAny is "*": any one token.
+	CommandRuleAny
+	// CommandRuleRun is "**": any number of tokens, none included.
+	CommandRuleRun
+	// CommandRuleProgram is "**/NAME", first token only: argv[0] whose text
+	// after its last "/" is Text, however the program was invoked.
+	CommandRuleProgram
+	// CommandRuleContains is "*TEXT*": one token holding Text.
+	CommandRuleContains
+)
+
+// CommandRuleToken is one classified token of a rule pattern.
+type CommandRuleToken struct {
+	Kind CommandRuleKind
+	Text string
+}
+
+// ParseCommandRulePattern classifies a rule pattern's whitespace-split tokens.
+// It is the one grammar: validation and matching both read it. The error is a
+// reason only, never the pattern text.
+func ParseCommandRulePattern(pattern string) ([]CommandRuleToken, error) {
+	return AppendCommandRuleTokens(nil, pattern)
+}
+
+var (
+	errRuleSyntax   = errors.New("tokens must be plain words or wildcards, with no shell syntax or quotes")
+	errRuleProgPos  = errors.New("**/NAME is allowed only as the first token")
+	errRuleProgName = errors.New("**/NAME needs a program name with no / or *")
+	errRuleWildcard = errors.New("a token holding * must be exactly *, **, **/NAME or *TEXT*")
+)
+
+// AppendCommandRuleTokens is ParseCommandRulePattern into dst, so a caller with
+// a stack buffer classifies a pattern without allocating.
+func AppendCommandRuleTokens(dst []CommandRuleToken, pattern string) ([]CommandRuleToken, error) {
+	start := -1
+	for i := 0; i <= len(pattern); i++ {
+		if i < len(pattern) && pattern[i] != ' ' && (pattern[i] < '\t' || pattern[i] > '\r') {
+			if start < 0 {
+				start = i
+			}
+			continue
+		}
+		if start < 0 {
+			continue
+		}
+		f := pattern[start:i]
+		start = -1
+		for j := 0; j < len(f); j++ {
+			if commandRuleMeta[f[j]] {
+				return nil, errRuleSyntax
+			}
+		}
+		switch {
+		case f == "*":
+			dst = append(dst, CommandRuleToken{Kind: CommandRuleAny})
+		case f == "**":
+			dst = append(dst, CommandRuleToken{Kind: CommandRuleRun})
+		case strings.HasPrefix(f, "**/"):
+			name := f[len("**/"):]
+			if len(dst) != 0 {
+				return nil, errRuleProgPos
+			}
+			if name == "" || strings.ContainsAny(name, "/*") {
+				return nil, errRuleProgName
+			}
+			dst = append(dst, CommandRuleToken{Kind: CommandRuleProgram, Text: name})
+		case !strings.Contains(f, "*"):
+			dst = append(dst, CommandRuleToken{Kind: CommandRuleWord, Text: f})
+		case len(f) > 2 && f[0] == '*' && f[len(f)-1] == '*' && !strings.Contains(f[1:len(f)-1], "*"):
+			dst = append(dst, CommandRuleToken{Kind: CommandRuleContains, Text: f[1 : len(f)-1]})
+		default:
+			return nil, errRuleWildcard
+		}
+	}
+	return dst, nil
+}
 
 // commandRuleMetaChars are shell syntax a pattern token may not hold: a rule
 // matches the argv tokens of one simple command, never shell syntax.
 const commandRuleMetaChars = ";&|<>()$`\\\"'"
+
+// commandRuleMeta is commandRuleMetaChars as a byte table, so classifying a
+// token on the hook path is one pass with no set built per call.
+var commandRuleMeta = func() (m [256]bool) {
+	for i := 0; i < len(commandRuleMetaChars); i++ {
+		m[commandRuleMetaChars[i]] = true
+	}
+	return m
+}()
 
 // ValidateGateCommandRules refuses a malformed [[gate.command_rule]] with a
 // *CommandRuleError. It checks closed sets only and holds no workflow
@@ -754,15 +855,14 @@ func ValidateGateCommandRules(c Config, path string) error {
 		return &CommandRuleError{Path: path, Index: i, Field: field, Reason: reason}
 	}
 	for i, r := range c.Gate.CommandRules {
-		toks := CommandRuleTokens(r.Pattern)
+		toks, err := ParseCommandRulePattern(r.Pattern)
+		if err != nil {
+			return bad(i, "pattern", err.Error())
+		}
 		if len(toks) == 0 {
 			return bad(i, "pattern", "must not be empty")
 		}
-		for _, t := range toks {
-			if strings.ContainsAny(t, commandRuleMetaChars) {
-				return bad(i, "pattern", "tokens must be plain words or *, with no shell syntax or quotes")
-			}
-		}
+		c.Gate.CommandRules[i].Tokens = toks
 		switch r.Action {
 		case CommandRuleDeny, CommandRuleWarn:
 		default:

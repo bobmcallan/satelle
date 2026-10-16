@@ -110,21 +110,52 @@ func segmentArgv(toks []bashTok) []string {
 	return argv[i:]
 }
 
-// patternMatchesArgv reports whether pattern's tokens are an argv prefix, where
-// "*" matches any one token.
-func patternMatchesArgv(pattern []string, argv []string) bool {
-	if len(pattern) == 0 || len(argv) < len(pattern) {
+// patternMatchesArgv reports whether pattern is an argv prefix: a word is equal,
+// "*" is any one token, "**" any run of tokens (none included), a program token
+// is argv[0] by its last path element, and a contains token is one token holding
+// its text. Trailing argv beyond the pattern is ignored. A "**" backtracks to
+// its last run only, so matching is linear in pattern and argv, with no
+// allocation.
+func patternMatchesArgv(pattern []config.CommandRuleToken, argv []string) bool {
+	if len(pattern) == 0 {
 		return false
 	}
-	for i, p := range pattern {
-		if p == "*" {
+	pi, ai, star, starAi := 0, 0, 0, 0
+	for pi < len(pattern) {
+		t := pattern[pi]
+		switch {
+		case t.Kind == config.CommandRuleRun:
+			pi++
+			star, starAi = pi, ai
+			continue
+		case ai < len(argv) && tokenMatches(t, argv[ai]):
+			pi++
+			ai++
+			continue
+		case star > 0 && starAi < len(argv):
+			starAi++
+			pi, ai = star, starAi
 			continue
 		}
-		if argv[i] != p {
-			return false
-		}
+		return false
 	}
 	return true
+}
+
+// tokenMatches reports whether one non-run pattern token matches one argv token.
+// The placeholder for a token that is not a plain word matches only "*".
+func tokenMatches(t config.CommandRuleToken, arg string) bool {
+	switch t.Kind {
+	case config.CommandRuleAny:
+		return true
+	case config.CommandRuleWord:
+		return arg == t.Text
+	case config.CommandRuleProgram:
+		return arg != unquotedPlaceholder && arg[strings.LastIndexByte(arg, '/')+1:] == t.Text
+	case config.CommandRuleContains:
+		return arg != unquotedPlaceholder && strings.Contains(arg, t.Text)
+	}
+	return false
 }
 
 // matchCommandRule returns the index of the first rule, in file order, whose
@@ -139,8 +170,12 @@ func matchCommandRule(rules []config.CommandRule, command string) (int, bool) {
 			argvs = append(argvs, a)
 		}
 	}
+	var buf [16]config.CommandRuleToken
 	for i, r := range rules {
-		pat := config.CommandRuleTokens(r.Pattern)
+		pat, err := r.Compiled(buf[:])
+		if err != nil {
+			continue // load refuses a malformed pattern, so none reaches here
+		}
 		for _, a := range argvs {
 			if patternMatchesArgv(pat, a) {
 				return i, true

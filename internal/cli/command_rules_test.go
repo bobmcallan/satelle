@@ -344,7 +344,7 @@ message = "second"
 
 // The example's names stay out of the binary: AC4.
 func TestExampleNamesAbsentFromProductionGo(t *testing.T) {
-	banned := []string{"orbctl"}
+	banned := []string{"orbctl", "fetchy", "api.example.test"}
 	root := filepath.Join("..", "..")
 	var scanned int
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -645,6 +645,7 @@ func TestCommitgateHelpStatesScopeAndNoIdentity(t *testing.T) {
 		"satelle manages no identity or rights",
 		"the tool's own permissions and the account it runs as enforce what a command may do",
 		"ships **no rule",
+		"**/NAME", "*TEXT*", "any run of tokens",
 	} {
 		if !strings.Contains(topicFlat, want) {
 			t.Errorf("help command-rules lacks %q", want)
