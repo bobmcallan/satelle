@@ -3260,7 +3260,8 @@ func runHookStopcheck(raw []byte, out io.Writer) error {
 	// A dispatched process never takes this wait: it inherits the driver's
 	// SATELLE_SESSION, so the handle it would wait on is the very gate that is
 	// waiting for it to exit — a cycle only idle_timeout ends. The driving
-	// session, which is not dispatched, still waits.
+	// session, which is not dispatched, still waits. For the same reason the
+	// ungated-edit check below (stopcheckEdits) never judges a dispatched process.
 	//
 	// A harness that caps the continuations of a turn (resumeWakeFor) is woken by
 	// resuming its session instead of by a note it would count: see resumeWake.
@@ -3341,10 +3342,16 @@ func joinNonEmpty(sep string, parts ...string) string {
 // stopcheckEdits is the ungated-edit half of the Stop hook: the block reason when
 // the tree has uncommitted non-exempt changes and no live seat, or the note when
 // a sibling session holds the seat; both empty when nothing is wrong or nothing
-// can be known.
+// can be known. It judges only the driving session: a process satelle dispatched
+// (a reviewer, planner, coder or any other seat) holds no seat of its own, and a
+// block would run another turn whose output replaces the final output satelle
+// reads as its verdict. The driving session's own Stop still flags the tree.
 func stopcheckEdits(raw []byte) (block, note string, err error) {
 	if stopHookActive(raw) {
 		return "", "", nil // anti-loop: never re-block a stop we already blocked
+	}
+	if isDispatchedProcess() {
+		return "", "", nil // not the driver: its final output is a verdict, never to be displaced
 	}
 	root, ok := repoRootForHook()
 	if !ok {

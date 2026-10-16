@@ -240,24 +240,45 @@ func TestStopcheckFailOpenPathsUnchanged(t *testing.T) {
 	})
 }
 
-// A dispatched process skips the gate-wait but not the ungated-edit check
-// (sty_aeb8a138 AC4): with a dirty non-exempt tree and no running gate of its
-// own it still reports that tree, and the driver's running gate does not hold it.
-func TestStopcheckDispatchedStillReportsDirtyTree(t *testing.T) {
-	t.Run("no gate", func(t *testing.T) {
-		repo, _ := stopcheckRepo(t, seatNone)
+// A dispatched process never judges the tree (sty_c7577f0e, superseding
+// sty_aeb8a138 AC4): its final output is a verdict, and a block would run another
+// turn that replaces it. A dirty tree, with no seat or with a sibling's seat,
+// stays silent for every dispatch marker; the driver's running gate does not
+// hold it.
+func TestStopcheckDispatchedNeverJudgesTree(t *testing.T) {
+	markers := []string{config.DispatchAgentEnv, config.DispatchStepEnv, config.DispatchItemEnv, config.SpawnEnv}
+	for _, marker := range markers {
+		t.Run("no seat/"+marker, func(t *testing.T) {
+			repo, _ := stopcheckRepo(t, seatNone)
+			dirtyTree(t, repo)
+			var buf bytes.Buffer
+			if err := runHookStopcheck([]byte("{}"), &buf); err != nil {
+				t.Fatalf("stopcheck: %v", err)
+			}
+			if !strings.Contains(buf.String(), "STOP BLOCKED") {
+				t.Fatalf("the driving session (no marker) must still block: %q", buf.String())
+			}
+			t.Setenv(marker, "reviewer")
+			buf.Reset()
+			if err := runHookStopcheck([]byte("{}"), &buf); err != nil {
+				t.Fatalf("stopcheck: %v", err)
+			}
+			if buf.Len() != 0 {
+				t.Fatalf("a dispatched stop (%s) must be silent on a dirty tree: %q", marker, buf.String())
+			}
+		})
+	}
+	t.Run("sibling seat", func(t *testing.T) {
+		repo, _ := stopcheckRepo(t, seatOther)
 		dirtyTree(t, repo)
-		t.Setenv(config.DispatchAgentEnv, "reviewer")
 		var buf bytes.Buffer
-		if err := runHookStopcheck([]byte("{}"), &buf); err != nil {
-			t.Fatalf("stopcheck: %v", err)
+		if err := runHookStopcheck([]byte("{}"), &buf); err != nil || !strings.Contains(buf.String(), siblingSession) {
+			t.Fatalf("the driving session must still get the sibling note: out=%q err=%v", buf.String(), err)
 		}
-		var blk stopBlockOut
-		if err := json.Unmarshal([]byte(strings.TrimSpace(buf.String())), &blk); err != nil || blk.Decision != "block" {
-			t.Fatalf("block payload = %q (%v)", buf.String(), err)
-		}
-		if !strings.Contains(blk.Reason, "STOP BLOCKED") || !strings.Contains(blk.Reason, "internal/foo.go") {
-			t.Fatalf("a dispatched stop must report the dirty tree: %q", blk.Reason)
+		t.Setenv(config.SpawnEnv, "1")
+		buf.Reset()
+		if err := runHookStopcheck([]byte("{}"), &buf); err != nil || buf.Len() != 0 {
+			t.Fatalf("a dispatched stop must emit no sibling note: out=%q err=%v", buf.String(), err)
 		}
 	})
 	t.Run("driver's gate still running", func(t *testing.T) {
@@ -265,7 +286,7 @@ func TestStopcheckDispatchedStillReportsDirtyTree(t *testing.T) {
 		dirtyTree(t, repo)
 		t.Setenv(stopGateWaitEnv, "10s")
 		t.Setenv(config.DispatchAgentEnv, "reviewer")
-		h := runningGateForSession(t, gateStoreForTest(t), "sty_x", thisSession)
+		runningGateForSession(t, gateStoreForTest(t), "sty_x", thisSession)
 
 		start := time.Now()
 		var buf bytes.Buffer
@@ -277,9 +298,8 @@ func TestStopcheckDispatchedStillReportsDirtyTree(t *testing.T) {
 		if elapsed := time.Since(start); elapsed > 5*time.Second {
 			t.Errorf("a dispatched stop waited on the driver's gate (%s)", elapsed)
 		}
-		out := buf.String()
-		if strings.Contains(out, h.ID) || !strings.Contains(out, "internal/foo.go") {
-			t.Fatalf("a dispatched stop must report the dirty tree, not the gate: %q", out)
+		if buf.Len() != 0 {
+			t.Fatalf("a dispatched stop must say nothing, neither gate nor tree: %q", buf.String())
 		}
 	})
 }

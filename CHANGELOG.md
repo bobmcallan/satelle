@@ -1,3 +1,8 @@
+## [0.0.675] - 2026-10-16
+
+### Fixed
+- **A dirty working tree no longer turns a dispatched reviewer's accept into "no verdict".** The Stop hook's check for uncommitted changes with no engaged story now applies only to the driving session. A process satelle dispatched (reviewer, planner, coder or any other seat) is never blocked or noted by it, so its final output stays the verdict satelle reads. Before, a repo left with uncommitted changes and no story could not raise a new story: every create review was read as "no verdict". The driving session's own Stop still blocks on a dirty tree with no seat, as before. (sty_c7577f0e)
+
 ## [0.0.674] - 2026-10-15
 
 ### Fixed
