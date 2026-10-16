@@ -591,10 +591,16 @@ func parameterizedHookScriptBody() string {
 	// One infra arm and one deny-recognition arm per harness that has its own
 	// deny shape (agentcli.HookDenyHarnesses); the encodings and globs come from
 	// the adapter, never restated here. The default arm is Claude's.
-	var infraArms, denyArms strings.Builder
+	var infraArms, denyArms, warnArms strings.Builder
 	for _, h := range agentcli.HookDenyHarnesses() {
 		fmt.Fprintf(&infraArms, "  %s) infra='%s' ;;\n", h, shQuote(infraDenyJSON(h)))
 		fmt.Fprintf(&denyArms, "    %s) case \"$1\" in %s) return 0;; esac ;;\n", h, agentcli.PreToolUseDenyMatch(h))
+	}
+	// A PreToolUse warn (a repo's [[gate.command_rule]] warn) is an exit-0 answer
+	// that is not a deny; without a pass-through arm docase would drop it, or turn
+	// a warned git commit/push into the infra deny.
+	for _, h := range agentcli.HookWarnHarnesses() {
+		fmt.Fprintf(&warnArms, "    %s) case \"$1\" in %s) return 0;; esac ;;\n", h, agentcli.PreToolUseWarnMatch(h))
 	}
 	return fmt.Sprintf(`#!/bin/sh
 %s
@@ -622,6 +628,11 @@ structured_deny(){
   esac
   return 1
 }
+structured_warn(){
+  case "$harness" in
+%s  esac
+  return 1
+}
 deny_infra(){ printf '%%s\n' "$infra"; exit 0; }
 run_hook(){
   errfile=$(mktemp "${TMPDIR:-/tmp}/satelle-hook.XXXXXX") || errfile=""
@@ -646,6 +657,7 @@ if [ "$sub" = "commitgate" ]; then
   if [ "$code" -eq 0 ]; then
     if [ -z "$o" ]; then exit 0; fi
     if structured_deny "$o"; then printf '%%s\n' "$o"; exit 0; fi
+    if structured_warn "$o"; then printf '%%s\n' "$o"; exit 0; fi
     docase
   fi
   if structured_deny "$o"; then printf '%%s\n' "$o"; exit 0; fi
@@ -661,7 +673,7 @@ fi
 if structured_deny "$o"; then printf '%%s\n' "$o"; exit 0; fi
 deny_infra
 `, failVisibleMarker, infraArms.String(), shQuote(infraDenyJSON("claude")),
-		denyArms.String(), agentcli.PreToolUseDenyMatch(agentcli.HarnessClaude))
+		denyArms.String(), agentcli.PreToolUseDenyMatch(agentcli.HarnessClaude), warnArms.String())
 }
 
 // failVisibleScriptBody returns the canonical wrapper body. The single script
@@ -1808,6 +1820,22 @@ const scaffoldTomlAfterExempt = `
 # [gate.command_allow]
 # push = ["release"]
 # allow_outside_tree_edits = false
+# command_rule — OPT-IN repo-authored judgement of an agent's shell command line
+# (sty_a74551d6). satelle ships no rule: with none authored nothing is refused or
+# warned. Each [[gate.command_rule]] has a pattern (a whitespace-split argv
+# prefix; a token of * matches any one token), an action ("deny" refuses the
+# command before it runs; "warn" lets it run and tells the agent, where the
+# harness can deliver that), allow (story statuses or workflow step names at
+# which the command passes; empty = never passes) and a message. The first
+# matching rule, in file order, wins. Best-effort: only the visible command line
+# is judged, so wrappers, eval, aliases and scripts bypass a rule. satelle
+# manages no identity or rights — the tool's own permissions and the account it
+# runs as enforce what a command may do. Example:
+# [[gate.command_rule]]
+# pattern = "TOOL delete"
+# action = "deny"
+# allow = ["in_progress"]
+# message = "delete changes shared state"
 # handoff — whether a gate-running verb called by an agent (or with no terminal)
 # returns a handle and delivers the verdict later by notification, instead of
 # holding the foreground. "auto" (default) hands off only when a configured

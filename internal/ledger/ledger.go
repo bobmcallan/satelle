@@ -174,6 +174,13 @@ const (
 	// {path, status, lane}; nothing in it is harness-specific. Enumeration only —
 	// the lock list is configuration.
 	KindSubstrateLockDeny = "substrate_lock_deny"
+	// KindCommandRule records one agent command a repo-authored
+	// [[gate.command_rule]] matched and let run, or refused (sty_a74551d6).
+	// Payload is {command, rule_index, pattern, action, decision, delivered,
+	// status, step}. It is not a KindToolPermission row: that records a harness's
+	// per-session permission decision, this records a repo rule judged against a
+	// story's status. Enumeration only — the rules are configuration.
+	KindCommandRule = "command_rule"
 	// KindRecoveryChoice records the driver's decision after a dispatch ended
 	// without a completion (sty_f0ed2473): Payload is {choice, reason, state, log,
 	// last_event, file_count} with choice one of redispatch | finish | park. The

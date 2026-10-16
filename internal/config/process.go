@@ -41,7 +41,9 @@ func InvokingRoot(locationPath string) string {
 //
 // processPath is the file whose bytes are the process of record — the path
 // Load opened, or the path that was missing. It is empty when the invoking
-// tree is the main tree and that tree has no config file.
+// tree is the main tree and that tree has no config file. On a parse or
+// validation error it is the file Load named for the failure (the overlay when
+// the overlay failed), so a caller can say which file to fix.
 func LoadProcess(location Config, locationPath string) (process Config, processRoot, processPath string, err error) {
 	if strings.TrimSpace(os.Getenv("SATELLE_CONFIG")) != "" {
 		return location, InvokingRoot(locationPath), locationPath, nil
@@ -60,7 +62,7 @@ func LoadProcess(location Config, locationPath string) (process Config, processR
 			}
 			return Config{}, main, path, nil
 		}
-		return Config{}, "", "", lerr
+		return Config{}, "", path, lerr
 	}
 	return cfg, main, path, nil
 }
@@ -93,11 +95,11 @@ func ResolveProcessConstitution(process Config, processRoot string) string {
 func LoadInvokingProcess() (process Config, invokingRoot, processRoot, processPath string, err error) {
 	loc, locPath, lerr := Load("")
 	if lerr != nil && !errors.Is(lerr, ErrNotFound) {
-		return Config{}, "", "", "", lerr
+		return Config{}, "", "", locPath, lerr
 	}
 	process, processRoot, processPath, err = LoadProcess(loc, locPath)
 	if err != nil {
-		return Config{}, "", "", "", err
+		return Config{}, "", "", processPath, err
 	}
 	return process, InvokingRoot(locPath), processRoot, processPath, nil
 }

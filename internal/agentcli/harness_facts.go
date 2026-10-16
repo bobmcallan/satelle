@@ -60,6 +60,11 @@ type HarnessFacts struct {
 	// PromptContextNote qualifies PromptContext (how it is delivered), appended
 	// to the yes/unavailable cell.
 	PromptContextNote string
+	// PreToolUseWarn: the harness delivers an allow-with-message PreToolUse
+	// answer to the model, so a repo's warn rule (sty_a74551d6) reaches the agent
+	// while the command still runs. Where it is unavailable the command runs and
+	// the warning is recorded, not delivered.
+	PreToolUseWarn Capability
 	// SessionContextChannel is the event that delivers the session principle
 	// set. Empty until a config-seeing caller records it via SetSessionContext.
 	// agentcli does not know the event or the clip — no compiled default.
@@ -89,6 +94,7 @@ func HarnessFactsTable() []HarnessFacts {
 			InTurnWake:        "a Stop-block wakes the session; cap 8 (CLAUDE_CODE_STOP_HOOK_BLOCK_CAP default) — measured on claude 2.1.288: a live always-block Stop probe was overridden after 9 consecutive blocks (session db658341-256f-413c-ac4e-c6c48922fbf5, 2026-10-03). Past the cap, or after a StopFailure/SessionEnd, a gate is delivered by resuming the same session with the verdict as the prompt (sty_7e4393fc)",
 			PromptContext:     yes(),
 			PromptContextNote: "delivered, and the scaffold's engaged reminder rides it",
+			PreToolUseWarn:    yes(),
 		},
 		{
 			Harness:          HarnessGrok,
@@ -105,6 +111,9 @@ func HarnessFactsTable() []HarnessFacts {
 			// feedback each count as a continuation.
 			InTurnWake:    "cap 8 continuations (a Stop-block and a non-error Stop feedback each count); after 8 the gate is overridden, hooks are not consulted and the turn ends; the counter resets on the next user prompt — measured from grok's stop_gate.rs notes and porting list. Past the cap a gate is delivered by resuming the same session with the verdict as the prompt (sty_eac9b28d)",
 			PromptContext: no("grok: SessionStart stdout is ignored; UserPromptSubmit additionalContext is discarded"),
+			// grok documents additionalContext as a Claude-compat channel, but no
+			// probe has shown a PreToolUse answer carrying it reaching the model.
+			PreToolUseWarn: no("grok: PreToolUse additionalContext is a documented Claude-compat channel but unverified for PreToolUse by any probe"),
 		},
 		{
 			Harness:          HarnessPi,
@@ -130,6 +139,7 @@ func HarnessFactsTable() []HarnessFacts {
 			NoWakeLimitation:  "pi: a non-interactive (print or JSON) run ends at agent_settled, which is notification-only, so the gate verdict cannot be sent as a user message; it stays undelivered and is put in front of the model by UserPromptSubmit additionalContext in the next session",
 			PromptContext:     yes(),
 			PromptContextNote: "the extension injects it into the system prompt via before_agent_start",
+			PreToolUseWarn:    no("pi: a tool_call handler returns only {block, reason} or undefined; notify() reaches only the UI; a non-interactive run cannot send a message"),
 		},
 		{
 			Harness:          HarnessCursor,
@@ -146,6 +156,7 @@ func HarnessFactsTable() []HarnessFacts {
 			// foreground.
 			CompletionNotification: yes(),
 			InTurnWake:             "a stop hook's followup_message re-prompts the session; cap 4 (loop_count 0-3 take a followup, a followup at 4 produces no further turn) — measured on cursor-agent 2026.10.01, testdata/cursor/20-cap. Past the cap the verdict is left pending and delivered at the stop of the session's next turn, where the count restarts. unavailable: cursor: print mode (-p) dispatches no stop event (testdata/cursor/4-hooks.log), so a gate outlasting cursor's 30s shell foreground is not delivered to a print-mode driver, which holds the foreground instead",
+			PreToolUseWarn:         no("cursor: native deny carries agent_message; no allow-with-message field is verified for preToolUse"),
 			PromptContext:          no("cursor: the prompt reminder (beforeSubmitPrompt) is unavailable — print mode does not dispatch it and interactive delivery is unproven (sty_7d098d50); session context rides sessionStart"),
 		},
 	}
@@ -171,6 +182,7 @@ func FactsFor(harness string) HarnessFacts {
 		CompletionNotification: no(h + ": no completion-notification path is wired for this harness"),
 		InTurnWake:             "unavailable: " + h + ": no in-turn wake path is recorded for this harness",
 		PromptContext:          no(h + ": no prompt additionalContext path is recorded for this harness"),
+		PreToolUseWarn:         no(h + ": no PreToolUse warn path is recorded for this harness"),
 	})
 }
 
@@ -287,7 +299,7 @@ func (f HarnessFacts) SessionContextCell() string {
 }
 
 // harnessFactsColumns are the harness-facts table headings, in cell order.
-var harnessFactsColumns = []string{"background cutoff", "completion notification", "in-turn wake / budget", "prompt additionalContext", "session context channel"}
+var harnessFactsColumns = []string{"background cutoff", "completion notification", "in-turn wake / budget", "prompt additionalContext", "PreToolUse warn", "session context channel"}
 
 // HarnessFactsTableMarkdown renders HarnessFactsTable as the markdown table
 // `satelle help agent-dispatch` carries, so the docs cannot say a harness can
@@ -300,7 +312,7 @@ func HarnessFactsTableMarkdown() string {
 	b.WriteString("| --- |" + strings.Repeat(" --- |", len(harnessFactsColumns)) + "\n")
 	for _, f := range HarnessFactsTable() {
 		f = applySessionContext(f)
-		fmt.Fprintf(&b, "| %s | %s — %s | %s | %s | %s | %s |\n", f.Harness, f.BackgroundCutoff, f.CutoffBasis, f.CompletionNotification.Cell(), f.InTurnWake, f.PromptContextCell(), f.SessionContextCell())
+		fmt.Fprintf(&b, "| %s | %s — %s | %s | %s | %s | %s | %s |\n", f.Harness, f.BackgroundCutoff, f.CutoffBasis, f.CompletionNotification.Cell(), f.InTurnWake, f.PromptContextCell(), f.PreToolUseWarn.Cell(), f.SessionContextCell())
 	}
 	return b.String()
 }

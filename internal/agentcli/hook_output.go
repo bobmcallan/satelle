@@ -109,6 +109,50 @@ func PreToolUseDenyMatch(harness string) string {
 	return hookDenyShapeFor(harness).match
 }
 
+// warnShape is one harness's PreToolUse allow-with-message recognition glob for
+// the wrapper. Only a harness whose HarnessFacts.PreToolUseWarn is available has
+// one: every other harness's warning is recorded, never delivered or guessed at.
+type warnShape struct {
+	harness string
+	match   string
+}
+
+var hookWarnShapes = []warnShape{
+	{harness: HarnessClaude, match: `*'"additionalContext"'*`},
+}
+
+// PreToolUseWarn returns the JSON bytes (no trailing newline) of a PreToolUse
+// allow-with-message for harness carrying message, or nil when the harness
+// cannot deliver one (HarnessFacts.PreToolUseWarn). The command still runs; the
+// answer carries no permission decision.
+func PreToolUseWarn(harness, message string) []byte {
+	if !FactsFor(harness).PreToolUseWarn.Available {
+		return nil
+	}
+	return HookEnvelope("PreToolUse", "", message, "")
+}
+
+// PreToolUseWarnMatch returns the shell case-glob that recognises harness's
+// PreToolUse warn in a hook verb's stdout, or "" when the harness has none.
+func PreToolUseWarnMatch(harness string) string {
+	for _, s := range hookWarnShapes {
+		if s.harness == harness {
+			return s.match
+		}
+	}
+	return ""
+}
+
+// HookWarnHarnesses lists the harnesses with a PreToolUse warn shape (the
+// wrapper generates one pass-through arm per entry).
+func HookWarnHarnesses() []string {
+	out := make([]string, 0, len(hookWarnShapes))
+	for _, s := range hookWarnShapes {
+		out = append(out, s.harness)
+	}
+	return out
+}
+
 // HookDenyHarnesses lists the harnesses that have their own deny shape (the
 // wrapper generates one case arm per entry; everything else is the default arm).
 func HookDenyHarnesses() []string {

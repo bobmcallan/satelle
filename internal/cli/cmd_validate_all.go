@@ -3,10 +3,12 @@ package cli
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/doctor"
 )
 
 func init() {
@@ -61,6 +63,21 @@ silently. Read-only, deterministic, no agent — run it after any substrate edit
 				fmt.Fprintf(out, "FAIL  %v\n", gerr)
 			} else {
 				fmt.Fprintln(out, "PASS  agent catalog")
+			}
+			fmt.Fprintln(out)
+			// Command rules (sty_a74551d6): a malformed rule is refused at config
+			// load; an allow entry naming no state of the route is doctor's finding.
+			fmt.Fprintln(out, "# command rules")
+			if proc, _, _, _, perr := config.LoadInvokingProcess(); perr != nil {
+				failed++
+				fmt.Fprintf(out, "FAIL  %v\n", perr)
+			} else if fs := doctor.CheckCommandRuleAllowNames(proc, doctor.GoverningWorkflowsAt(filepath.Join(dataDir, "workflows"))); len(fs) > 0 {
+				for _, f := range fs {
+					failed++
+					fmt.Fprintf(out, "FAIL  %s: %s\n", f.Title, f.Detail)
+				}
+			} else {
+				fmt.Fprintln(out, "PASS  command rules")
 			}
 			fmt.Fprintln(out)
 			// Informational: an exceeded budget warns and never counts as a failure.

@@ -86,6 +86,7 @@ const (
 	// Authored substrate.
 	IDWorkflowStructure   = "workflow.structure"   // a workflow/skill/principle/task fails its structure contract
 	IDWorkflowConsistency = "workflow.consistency" // cross-workflow consistency (ambiguity, unresolved skills)
+	IDCommandRuleAllow    = "command_rule.allow"   // a [[gate.command_rule]] allow entry names no state of any route
 
 	// The process of record (sty_d6e209aa): where the repository's authored
 	// process is missing, unreadable or overridden, satelle says so rather than
@@ -160,7 +161,7 @@ var ids = []string{
 	IDAgentsSharedProfile, IDAgentsSharedGlobalRoles, IDAgentsSharedMachineValue,
 	IDReviewerUnsafe, IDReviewerIsolation, IDNodeAlloc, IDHookAlloc,
 	IDBinaryMissing, IDBinaryMalformed,
-	IDWorkflowStructure, IDWorkflowConsistency,
+	IDWorkflowStructure, IDWorkflowConsistency, IDCommandRuleAllow,
 	IDProcessUnreadable, IDProcessAbsent, IDProcessDivergent,
 	IDScaffoldStale, IDScaffoldMissing, IDRepoUnreadable, IDConfigStray, IDSubstrateUnlocked, IDBreakingUnacknowledged,
 	IDSyncLocal, IDSyncOk, IDSyncFailing, IDSyncUnbacked, IDSyncConfig,

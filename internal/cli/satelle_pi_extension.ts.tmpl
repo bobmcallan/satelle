@@ -190,6 +190,10 @@ function wrapperVerdict(r: Run): Verdict {
 		return { kind: "deny", reason: String(hso.permissionDecisionReason ?? "satelle: denied") };
 	}
 	if (r.code === 0 && doc === undefined) return { kind: "allow" };
+	// An exit-0 JSON answer with no deny is an allow that carries a message (a
+	// repo's warn rule): the command still runs. It is never an infrastructure
+	// failure, which would block a warned git commit/push.
+	if (r.code === 0 && doc !== null && typeof doc === "object") return { kind: "allow" };
 	return { kind: "infra", why: r.stderr.trim() || r.stdout.trim() || `exit ${r.code}` };
 }
 

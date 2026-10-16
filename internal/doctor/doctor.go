@@ -239,6 +239,12 @@ func Check(ctx context.Context, o Opts) Report {
 			WithRemediation("fix the workflow's applies_to or the skill it names"))
 	}
 
+	// 3b. A command rule's allow list names states of the route (sty_a74551d6);
+	// config load cannot judge that, and the hook must not.
+	if o.Process != nil {
+		rep.Findings = append(rep.Findings, CheckCommandRuleAllowNames(*o.Process, governing)...)
+	}
+
 	// 4. Required binaries: every isolated binding's executable must be runnable.
 	rep.Findings = append(rep.Findings, checkBinaries(av.Grants)...)
 

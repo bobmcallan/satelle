@@ -240,7 +240,7 @@ workflow declaring no route blocks the edit.`,
 				// under a locked prefix is refused before the exemption is
 				// consulted (sty_dc77e118).
 				if holders := substrateLockHolders(info, engaged, live); len(holders) > 0 {
-					if err := bashSubstrateLockGate(cmd, raw, command, func() ([]seatInfo, error) { return holders, nil }); err != nil {
+					if err := bashSubstrateLockGate(cmd, raw, command, loadGateProcess(), func() ([]seatInfo, error) { return holders, nil }); err != nil {
 						return err
 					}
 				}
@@ -286,25 +286,27 @@ workflow declaring no route blocks the edit.`,
 		Use:   "commitgate",
 		Short: "PreToolUse Bash gate — foreign-tree containment + engaged-story commit/push",
 		Long: `commitgate is the PreToolUse handler for Bash. It first applies foreign-tree
-containment: a command whose mutation target resolves inside a git working tree
-whose root differs from the session anchor is denied unless [gate]
-allow_outside_tree_edits is true. Temp and non-repo paths are not fenced. Then, for git commit/push only, it denies unless a story is engaged. It
-fails closed on store/listing/workflow-resolution errors (sty_f3d5d4b8).
+containment: a command mutating a git working tree other than the session
+anchor's is denied unless [gate] allow_outside_tree_edits is true. Then, for git
+commit/push only, it denies unless a story is engaged. It
+fails closed on store/listing/workflow-resolution errors.
 
-Step policy (sty_c21490cc): when [gate.command_allow] is authored (e.g.
-push = ["release"]), the engaged story must be at a listed status for that
-git subcommand.
+Step policy: [gate.command_allow] (push = ["release"]) limits a git subcommand
+to the listed story statuses.
 
-Substrate lock (sty_dc77e118): a command whose classified target, or whose
-interpreter arguments or heredoc (python, node, perl, ruby, sh -c), name locked
-substrate is refused — even if it only READS. Not seen, so allowed:
-python3 tool.py and '.sat'+'elle'. See 'hook gate --help'.
+Command rules: the repo's [[gate.command_rule]] entries deny or warn; satelle
+ships none ('help command-rules'). Best-effort: wrappers, eval and scripts
+bypass them. satelle manages no identity or rights: the tool's own permissions
+and the account it runs as enforce what a command may do.
 
-Attribution (sty_3a9b06fe): a commit/push goes to the seat of the worktree
-holding its effective directory (hook tree moved by each cd, then its own -C),
-else the hook's own tree's seat.`,
+Substrate lock: a command whose target or interpreter arguments
+name locked substrate is refused, even if it only READS. Not seen: python3
+tool.py and '.sat'+'elle'. See 'hook gate --help'.
+
+Attribution: a commit/push goes to the seat of the worktree it runs in (each cd,
+then its own -C), else the hook's own tree's seat.`,
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (rerr error) {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
 			resumeWakeFor(raw).activity() // a tool call: the session is mid-turn
 			// Only a shell reaches the rest of this verb from a harness whose hook
@@ -314,9 +316,28 @@ else the hook's own tree's seat.`,
 				return nil
 			}
 			command := bashCommandFromEvent(raw)
+			// A command rule that matched and let the command run (allowed by the
+			// story's status, or a warn) is recorded and, for a warn, delivered
+			// only once every later check has also let it through: a deny after a
+			// warn must leave one answer on stdout, not two.
+			var ruled commandRuleDecision
+			defer func() {
+				if rerr != nil || !ruled.Matched {
+					return
+				}
+				h := commandHarness(raw)
+				if ruled.Decision == commandRuleWarned {
+					_ = emitAdditionalContext(cmd.OutOrStdout(), h, "PreToolUse", "", ruled.Reason)
+				}
+				recordCommandRule(ruled, command, h)
+			}()
 			// Containment BEFORE the engaged-story branch: a foreign-tree mutation
 			// is wrong even with a story engaged (sty_aadd4d6c / sty_a8454d10).
-			if !allowOutsideTreeEdits() {
+			// The process config loads once for this call: containment, command
+			// rules and command_allow all read this one load, so the hook starts
+			// one `git rev-parse` for its config and no more.
+			gp := loadGateProcess()
+			if !allowOutsideTreeEditsFrom(gp) {
 				cands := mutationTargets(command, sessionAnchor())
 				if path, foreignRoot, ok := foreignTreeTarget(sessionAnchor(), cands); ok {
 					return denyPreToolUse(cmd, raw, outsideAnchorBashReason(path, foreignRoot))
@@ -331,7 +352,7 @@ else the hook's own tree's seat.`,
 			// is locked substrate is refused even though .satelle/ is exempt from
 			// the engaged-story gate (sty_dc77e118). Seats resolve only when the
 			// command has a lockable candidate.
-			if err := bashSubstrateLockGate(cmd, raw, command, func() ([]seatInfo, error) {
+			if err := bashSubstrateLockGate(cmd, raw, command, gp, func() ([]seatInfo, error) {
 				var err error
 				sid = bindSessionID(raw)
 				info, engaged, live, err = resolveSeats(true, sid)
@@ -358,6 +379,28 @@ else the hook's own tree's seat.`,
 					return denyPreToolUse(cmd, raw, hookDenyReason(info, live, dm, rm, sid, time.Now().UTC()))
 				}
 			}
+			// Repo-authored command rules (sty_a74551d6), before command_allow. The
+			// seat is read only for a command a rule matched, so with no rules, or
+			// no match, this adds nothing but the config load. Rules that fail to
+			// load refuse every shell command: dropping them would turn every
+			// authored deny off without a signal.
+			rules, refuse := commandRulesFrom(gp)
+			if refuse != "" {
+				return denyPreToolUse(cmd, raw, refuse)
+			}
+			if len(rules) > 0 {
+				ruled = evalCommandRules(rules, command, func() (seatInfo, bool, error) {
+					if seatResolved {
+						return info, engaged, nil
+					}
+					i, e, _, err := resolveSeats(false, bindSessionID(raw))
+					return i, e, err
+				})
+				if ruled.Decision == commandRuleDenied {
+					recordCommandRule(ruled, command, commandHarness(raw))
+					return denyPreToolUse(cmd, raw, ruled.Reason)
+				}
+			}
 			// Engage gate still applies only to commit/push (today's default).
 			// Opt-in [gate.command_allow] may restrict those (or other git
 			// subcommands) further by story status (sty_c21490cc).
@@ -369,7 +412,8 @@ else the hook's own tree's seat.`,
 					break
 				}
 			}
-			if !needsEngage && !commandAllowRestricts(subs) {
+			allowPolicy := commandAllowFrom(gp)
+			if !needsEngage && !commandAllowRestrictsWith(allowPolicy, subs) {
 				return nil // not a gated command — allow
 			}
 			// Heartbeat only for gated commands (after the early return above) —
@@ -423,7 +467,7 @@ else the hook's own tree's seat.`,
 				if st == "" {
 					st = info.State
 				}
-				if reason, deny := commandAllowDeny(subs, st); deny {
+				if reason, deny := commandAllowDenyWith(allowPolicy, subs, st); deny {
 					return denyPreToolUse(cmd, raw, reason+seatSuffix(info, time.Now().UTC()))
 				}
 			}
@@ -1653,12 +1697,8 @@ func anchorFrom(getenv func(string) string, cfgRoot string) string {
 	return filepath.Clean(cfgRoot)
 }
 
-// commandAllowRestricts reports whether any git subcommand is listed in the
+// commandAllowRestrictsWith reports whether any git subcommand is listed in the
 // opt-in [gate.command_allow] policy (even if not commit/push).
-func commandAllowRestricts(subs []string) bool {
-	return commandAllowRestrictsWith(loadCommandAllow(), subs)
-}
-
 func commandAllowRestrictsWith(policy map[string][]string, subs []string) bool {
 	if len(policy) == 0 {
 		return false
@@ -1671,13 +1711,9 @@ func commandAllowRestrictsWith(policy map[string][]string, subs []string) bool {
 	return false
 }
 
-// commandAllowDeny returns a deny reason when a restricted subcommand is not
+// commandAllowDenyWith returns a deny reason when a restricted subcommand is not
 // permitted at the engaged story's current status. deny=false when allowed or
 // unconfigured.
-func commandAllowDeny(subs []string, storyStatus string) (reason string, deny bool) {
-	return commandAllowDenyWith(loadCommandAllow(), subs, storyStatus)
-}
-
 func commandAllowDenyWith(policy map[string][]string, subs []string, storyStatus string) (reason string, deny bool) {
 	if len(policy) == 0 {
 		return "", false
@@ -1713,7 +1749,26 @@ func commandAllowDenyWith(policy map[string][]string, subs []string, storyStatus
 
 // loadCommandAllow returns the opt-in [gate.command_allow] map (nil/empty = off).
 func loadCommandAllow() map[string][]string {
-	proc, _, _, _, err := config.LoadInvokingProcess()
+	return commandAllowFrom(loadGateProcess())
+}
+
+// gateProcess is one load of the invoking process config. LoadInvokingProcess
+// resolves the canonical repo root through `git rev-parse`, so a hook call loads
+// it once and every check in that call reads this value (sty_a74551d6 AC5).
+type gateProcess struct {
+	proc     config.Config
+	invoking string
+	path     string
+	err      error
+}
+
+func loadGateProcess() gateProcess {
+	proc, invoking, _, path, err := config.LoadInvokingProcess()
+	return gateProcess{proc: proc, invoking: invoking, path: path, err: err}
+}
+
+func commandAllowFrom(gp gateProcess) map[string][]string {
+	proc, err := gp.proc, gp.err
 	if err != nil || len(proc.Gate.CommandAllow) == 0 {
 		return nil
 	}
@@ -1730,11 +1785,14 @@ func loadCommandAllow() map[string][]string {
 // Non-repo paths are never fenced. On config load failure, returns false
 // (containment stays on).
 func allowOutsideTreeEdits() bool {
-	proc, _, _, _, err := config.LoadInvokingProcess()
-	if err != nil {
+	return allowOutsideTreeEditsFrom(loadGateProcess())
+}
+
+func allowOutsideTreeEditsFrom(gp gateProcess) bool {
+	if gp.err != nil {
 		return false
 	}
-	return proc.Gate.AllowOutsideTreeEdits
+	return gp.proc.Gate.AllowOutsideTreeEdits
 }
 
 // outsideAnchorBashReason is the agent-facing deny when a Bash mutation target
@@ -2175,12 +2233,17 @@ func outsideRepoEditErr(path, foreignRoot string) error {
 // deny to structured stdout + handler exit 0; it never discards stderr and then
 // exits 2. The harness is detected from the PreToolUse event envelope (raw).
 func denyPreToolUse(cmd *cobra.Command, raw []byte, reason string) error {
-	h := hookHarnessFlag
-	if h == "" {
-		h = harnessFromEvent(raw)
-	}
-	_ = emitPreToolUseDeny(cmd.OutOrStdout(), h, reason)
+	_ = emitPreToolUseDeny(cmd.OutOrStdout(), commandHarness(raw), reason)
 	return fmt.Errorf("%s", reason)
+}
+
+// commandHarness is the harness a PreToolUse event came from: the wrapper's
+// --harness, else sniffed from the event envelope.
+func commandHarness(raw []byte) string {
+	if hookHarnessFlag != "" {
+		return hookHarnessFlag
+	}
+	return harnessFromEvent(raw)
 }
 
 // harnessFromEvent classifies a hook event envelope as claude, grok or
@@ -3058,7 +3121,19 @@ func stripFrontmatter(body string) string {
 // UserPromptSubmit output envelope. PreToolUse deny still splits harnesses because
 // Claude rejects top-level decision/reason — a real schema conflict that context
 // injection does not share. Finding recorded on sty_e16a2cd7 as grok-prompt-contract.
-func emitAdditionalContext(out io.Writer, event, permissionDecision, context string) error {
+//
+// PreToolUse with no permission decision is a warn (sty_a74551d6): the command
+// runs and the agent is told why it was flagged. Whether a harness carries that
+// to the model is a per-harness fact (agentcli HarnessFacts.PreToolUseWarn), so
+// harness picks the encoding and a harness that cannot deliver one gets nothing
+// on stdout. Every other event keeps the one Claude-shaped envelope.
+func emitAdditionalContext(out io.Writer, harness, event, permissionDecision, context string) error {
+	if event == "PreToolUse" && permissionDecision == "" {
+		if b := agentcli.PreToolUseWarn(harness, context); b != nil {
+			fmt.Fprintln(out, string(b))
+		}
+		return nil
+	}
 	fmt.Fprintln(out, string(agentcli.HookEnvelope(event, permissionDecision, context, "")))
 	return nil
 }
@@ -3210,7 +3285,7 @@ func runHookPromptWith(out io.Writer, gatesInContext bool) error {
 			body += "\n\n" + verdicts
 		}
 	}
-	return emitAdditionalContext(out, "UserPromptSubmit", "", body)
+	return emitAdditionalContext(out, "", "UserPromptSubmit", "", body)
 }
 
 // runHookStopcheck is the Stop handler: a post-hoc detector for the exact

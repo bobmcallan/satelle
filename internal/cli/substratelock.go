@@ -126,7 +126,13 @@ type lockConfig struct {
 // also fails closed to that default, with the seeded dump globs so the
 // story-reference dumps stay writable.
 func loadSubstrateLockConfig() lockConfig {
-	_, invoking, _, processPath, lerr := config.LoadInvokingProcess()
+	return lockConfigFrom(loadGateProcess())
+}
+
+// lockConfigFrom is loadSubstrateLockConfig over an already-loaded process
+// config, so a hook call that has loaded it does not load it again.
+func lockConfigFrom(gp gateProcess) lockConfig {
+	invoking, processPath, lerr := gp.invoking, gp.path, gp.err
 	var content []byte
 	var rerr error
 	if lerr != nil || strings.TrimSpace(processPath) == "" {
@@ -283,8 +289,8 @@ func bashLockCandidates(command string, cfg lockConfig) []string {
 // read tools and `satelle doc get`. A substrate-lane holder is never refused. The
 // backstop for the invisible cases is unchanged: substrate diffs are seen at the
 // commit and at integration review.
-func bashSubstrateLockGate(cmd *cobra.Command, raw []byte, command string, holders func() ([]seatInfo, error)) error {
-	cfg := loadSubstrateLockConfig()
+func bashSubstrateLockGate(cmd *cobra.Command, raw []byte, command string, gp gateProcess, holders func() ([]seatInfo, error)) error {
+	cfg := lockConfigFrom(gp)
 	cands := bashLockCandidates(command, cfg)
 	if len(cands) == 0 {
 		return nil

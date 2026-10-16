@@ -26,6 +26,12 @@ structured_deny(){
   esac
   return 1
 }
+structured_warn(){
+  case "$harness" in
+    claude) case "$1" in *'"additionalContext"'*) return 0;; esac ;;
+  esac
+  return 1
+}
 deny_infra(){ printf '%s\n' "$infra"; exit 0; }
 run_hook(){
   errfile=$(mktemp "${TMPDIR:-/tmp}/satelle-hook.XXXXXX") || errfile=""
@@ -50,6 +56,7 @@ if [ "$sub" = "commitgate" ]; then
   if [ "$code" -eq 0 ]; then
     if [ -z "$o" ]; then exit 0; fi
     if structured_deny "$o"; then printf '%s\n' "$o"; exit 0; fi
+    if structured_warn "$o"; then printf '%s\n' "$o"; exit 0; fi
     docase
   fi
   if structured_deny "$o"; then printf '%s\n' "$o"; exit 0; fi
