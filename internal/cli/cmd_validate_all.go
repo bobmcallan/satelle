@@ -80,6 +80,13 @@ silently. Read-only, deterministic, no agent — run it after any substrate edit
 				fmt.Fprintln(out, "PASS  command rules")
 			}
 			fmt.Fprintln(out)
+			// Command policy subscriptions (sty_041bf275): a malformed one is refused
+			// at config load, reported above. What follows is the cache only — no
+			// network call — and a list that is missing, stale or failed is a warning,
+			// never a validation failure.
+			fmt.Fprintln(out, "# command policy")
+			reportPolicyCache(out)
+			fmt.Fprintln(out)
 			// Informational: an exceeded budget warns and never counts as a failure.
 			reportInjected(context.Background(), out, a)
 			if failed > 0 {

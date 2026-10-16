@@ -64,6 +64,42 @@ If the rules cannot be loaded (a malformed rule, or a config that does not
 parse), every shell command is refused with the file, rule and field, rather
 than silently dropping the denies.
 
+## Subscribing to a shared list
+
+Rather than write every rule, a repo can subscribe to a list published on the
+satelle.dev catalog or by a third party at a URL. satelle publishes no list: a
+repo that does not subscribe has none, and nothing is fetched.
+
+```toml
+[[gate.command_policy]]
+name      = "cloud"
+workspace = "acme"                 # a team workspace's publish catalog ...
+path      = "policy/cloud.toml"    # ... and the path published in it
+max_age   = "24h"                  # optional; default 24h
+
+[[gate.command_policy]]
+name = "vendor"
+url  = "https://example.com/commands.toml"
+```
+
+A list holds `[[command_rule]]` entries under the grammar above. Its rules apply
+**after** the repo's own, so a repo rule that matches the same command wins, and a
+subscribed rule still judges every command no repo rule matches.
+
+Session start reads only the local cache, kept under satelle's per-repo state
+directory. When a list is missing or older than its `max_age` it starts one
+detached `satelle policy refresh` and does not wait; the command path makes no
+network call. A list older than its `max_age` is named unverified in the
+session-start warning, with the time it was last fetched. A refresh that fails
+(source unreachable, a list that does not parse, a catalog body that does not
+match the catalog's checksum) keeps the last good list, and the next session start
+names the subscription and the reason. `satelle policy status` shows the cache.
+
+**A URL list is unverified.** A URL gives no checksum or signature, so satelle
+cannot check what it serves, and the session-start warning says the list is from
+an unverified source. Subscribe to a URL only if you trust whoever serves it. A
+catalog list is checked against the sha256 the catalog returns for it.
+
 ## What it is not
 
 satelle judges only the command line it sees, with the same best-effort

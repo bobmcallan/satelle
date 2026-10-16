@@ -43,6 +43,8 @@ func TestMain(m *testing.M) {
 	releaseRefresh = func() {}
 	// And for the substrate refresh, for the same reason (substrateAdvisory).
 	substrateRefresh = func(string) {}
+	// And for the command-policy refresh (policyAdvisory).
+	policyRefresh = func(string) {}
 	// Isolate gate/seat tests from the AMBIENT process environment: when this
 	// test binary itself runs under a real satelle dispatch (a named-agent
 	// step, or — as when this test was written — a rework-relay coder session

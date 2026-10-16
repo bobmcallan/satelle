@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/syncstate"
 )
 
 // Repo-authored agent command rules (sty_a74551d6). satelle ships no rule and no
@@ -60,7 +62,19 @@ const commandRuleMaxRecorded = 1000
 func commandRulesFrom(gp gateProcess) (rules []config.CommandRule, refuse string) {
 	err, path := gp.err, gp.path
 	if err == nil {
-		return gp.proc.Gate.CommandRules, ""
+		if len(gp.proc.Gate.CommandPolicies) == 0 {
+			return gp.proc.Gate.CommandRules, ""
+		}
+		return append(slices.Clip(gp.proc.Gate.CommandRules), subscribedRules(gp.proc.Gate.CommandPolicies, gp.invoking)...), ""
+	}
+	var cpe *config.CommandPolicyError
+	if errors.As(err, &cpe) {
+		// The repo's own rules sit in the same file and cannot be read either, so
+		// dropping them would silently turn every authored deny off.
+		if cpe.Index < 0 {
+			return nil, fmt.Sprintf("satelle: command policy subscriptions in %s failed to load: key %s: %s — every shell command is refused until the file loads; fix it and retry", cpe.Path, cpe.Field, cpe.Reason)
+		}
+		return nil, fmt.Sprintf("satelle: command policy subscriptions in %s failed to load: subscription %d field %s: %s — every shell command is refused until the file loads; fix it and retry", cpe.Path, cpe.Index, cpe.Field, cpe.Reason)
 	}
 	var cre *config.CommandRuleError
 	if errors.As(err, &cre) {
@@ -78,6 +92,38 @@ func commandRulesFrom(gp gateProcess) (rules []config.CommandRule, refuse string
 		return nil, fmt.Sprintf("satelle: config %s failed to parse, so its command rules cannot be read: %v — every shell command is refused until the file parses; fix it and retry", p, pe.Err)
 	}
 	return nil, ""
+}
+
+// subscribedRules is the rules of each declared subscription's last good cached
+// list, in declaration order, each tagged with its subscription's name. They
+// follow the repo's own rules, so a repo rule that matches the same command wins
+// (the first match wins). The cache is read at invoking — the root the call's
+// git-identity memo already holds — so the key starts no git process; RepoKey
+// collapses worktrees, so it is the same file the refresh writes. A missing,
+// torn or re-pointed cache entry, or a list that no longer parses, contributes
+// no rules and never refuses a command: failing closed on a cache would turn a
+// network failure into a block on every shell command.
+func subscribedRules(subs []config.CommandPolicy, invoking string) []config.CommandRule {
+	st, ok, err := syncstate.LoadPolicy(config.GlobalDir(), invoking)
+	if err != nil || !ok {
+		return nil
+	}
+	var out []config.CommandRule
+	for _, sub := range subs {
+		e, cached := policyCached(sub, st)
+		if !cached || e.RulesTOML == "" {
+			continue
+		}
+		rules, perr := config.ParseCommandPolicyList([]byte(e.RulesTOML))
+		if perr != nil {
+			continue
+		}
+		for i := range rules {
+			rules[i].Source = sub.Name
+		}
+		out = append(out, rules...)
+	}
+	return out
 }
 
 // unquotedPlaceholder stands in for an argv token that is not a plain word (a
@@ -235,7 +281,7 @@ func evalCommandRules(rules []config.CommandRule, command string, seat func() (s
 	}
 	if rule.Action == config.CommandRuleWarn {
 		d.Decision = commandRuleWarned
-		d.Reason = "satelle: " + strings.TrimSpace(rule.Message)
+		d.Reason = "satelle: " + strings.TrimSpace(rule.Message) + commandRuleOrigin(rule)
 		if len(rule.Allow) > 0 {
 			d.Reason += " — this command passes without a warning only while a story is engaged at one of: " + strings.Join(rule.Allow, ", ")
 		}
@@ -252,7 +298,7 @@ func evalCommandRules(rules []config.CommandRule, command string, seat func() (s
 
 // commandRuleDenyText is the refusal: the rule's message, and what to engage.
 func commandRuleDenyText(rule config.CommandRule, allow []string, engagedAt string) string {
-	msg := "satelle: " + strings.TrimSpace(rule.Message)
+	msg := "satelle: " + strings.TrimSpace(rule.Message) + commandRuleOrigin(rule)
 	if len(allow) == 0 {
 		return msg + " — refused in every status; no engaged story lifts this command rule"
 	}
@@ -263,11 +309,25 @@ func commandRuleDenyText(rule config.CommandRule, allow []string, engagedAt stri
 	return fmt.Sprintf("%s — refused: %s. Engage a story at one of: %s", msg, where, strings.Join(allow, ", "))
 }
 
+// commandRuleOrigin names the subscription a rule came from, so an agent can see
+// that a refusal is a subscribed list's and not the repo's own; "" for a repo rule.
+func commandRuleOrigin(rule config.CommandRule) string {
+	if rule.Source == "" {
+		return ""
+	}
+	return " (command policy " + rule.Source + ")"
+}
+
+// commandRuleSourceRepo is a ledger row's source for a rule the repo authored.
+const commandRuleSourceRepo = "repo"
+
 // commandRulePayload is the ledger row for a matched command rule.
 type commandRulePayload struct {
 	Command   string `json:"command"`
 	RuleIndex int    `json:"rule_index"`
 	Pattern   string `json:"pattern"`
+	// Source is "repo" for a rule the repo authored, else the subscription's name.
+	Source    string `json:"source"`
 	Action    string `json:"action"`
 	Decision  string `json:"decision"`
 	Delivered bool   `json:"delivered"`
@@ -287,8 +347,12 @@ func recordCommandRule(gs *gateStore, d commandRuleDecision, command, harness st
 		command = command[:commandRuleMaxRecorded]
 	}
 	delivered := d.Decision == commandRuleWarned && agentcli.FactsFor(harness).PreToolUseWarn.Available
+	source := commandRuleSourceRepo
+	if d.Rule.Source != "" {
+		source = d.Rule.Source
+	}
 	payload, err := json.Marshal(commandRulePayload{
-		Command: command, RuleIndex: d.Index, Pattern: d.Rule.Pattern, Action: d.Rule.Action,
+		Command: command, RuleIndex: d.Index, Pattern: d.Rule.Pattern, Source: source, Action: d.Rule.Action,
 		Decision: d.Decision, Delivered: delivered, Status: d.Status, Step: d.Step,
 	})
 	if err != nil {

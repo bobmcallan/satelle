@@ -637,6 +637,7 @@ type GateConfig struct {
 	AllowOutsideTreeEdits  bool                `toml:"allow_outside_tree_edits"`
 	CommandAllow           map[string][]string `toml:"command_allow"`
 	CommandRules           []CommandRule       `toml:"command_rule"`
+	CommandPolicies        []CommandPolicy     `toml:"command_policy"`
 	NoImplementModels      []string            `toml:"no_implement_models"`
 	NoImplementMessage     string              `toml:"no_implement_message"`
 	NoImplementExemptPaths []string            `toml:"no_implement_exempt_paths"`
@@ -711,6 +712,9 @@ type CommandRule struct {
 	// Tokens is Pattern classified once by ValidateGateCommandRules, so the hook
 	// does not parse it on every command. Never read from TOML.
 	Tokens []CommandRuleToken `toml:"-"`
+	// Source names the subscription a rule came from; empty for a rule the repo
+	// authored. Never read from TOML.
+	Source string `toml:"-"`
 }
 
 // Compiled is the rule's classified pattern: the one load validated, or a parse
@@ -1160,11 +1164,14 @@ func Load(explicitPath string) (Config, string, error) {
 	if err := undecodedCommandRuleKeys(md, path); err != nil {
 		return Config{}, path, err
 	}
+	if err := undecodedCommandPolicyKeys(md, path); err != nil {
+		return Config{}, path, err
+	}
 	// Overlay the gitignored per-user satelle.local.toml beside the committed
 	// file; its set fields win. Decoding over the populated cfg leaves absent
 	// fields untouched. An absent overlay is not an error.
 	localPath := filepath.Join(filepath.Dir(path), LocalConfigName)
-	rulePath := path
+	rulePath, policyPath := path, path
 	if lb, lerr := os.ReadFile(localPath); lerr == nil {
 		lmd, derr := toml.Decode(string(lb), &cfg)
 		if derr != nil {
@@ -1175,6 +1182,12 @@ func Load(explicitPath string) (Config, string, error) {
 		}
 		if err := undecodedCommandRuleKeys(lmd, localPath); err != nil {
 			return Config{}, localPath, err
+		}
+		if err := undecodedCommandPolicyKeys(lmd, localPath); err != nil {
+			return Config{}, localPath, err
+		}
+		if lmd.IsDefined("gate", "command_policy") {
+			policyPath = localPath
 		}
 		if lmd.IsDefined("gate", "command_rule") {
 			rulePath = localPath
@@ -1192,6 +1205,9 @@ func Load(explicitPath string) (Config, string, error) {
 	}
 	if err := ValidateGateCommandRules(cfg, rulePath); err != nil {
 		return Config{}, rulePath, err
+	}
+	if err := ValidateGateCommandPolicies(cfg, policyPath); err != nil {
+		return Config{}, policyPath, err
 	}
 	if err := validateDiffRankPatterns(cfg, path); err != nil {
 		return Config{}, path, err
