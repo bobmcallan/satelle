@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"runtime"
 	"strings"
 	"testing"
 
@@ -202,31 +201,7 @@ func TestCommandRulesRelativeCostNewSyntax(t *testing.T) {
 	rules := newSyntaxBenchRules()
 	const command = "cd /srv/app && git status --short | grep -v x; ls -la internal/cli"
 	seat := func() (seatInfo, bool, error) { return seatInfo{}, false, nil }
-	// The best of five, so a busy machine running the whole suite cannot fail a
-	// ratio that holds when measured quietly.
-	best := 0.0
-	for try := 0; try < 5; try++ {
-		runtime.GC()
-		eval := testing.Benchmark(func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				evalCommandRules(rules, command, seat)
-			}
-		})
-		scan := testing.Benchmark(func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				gitSubcommands(command)
-			}
-		})
-		if scan.NsPerOp() == 0 {
-			t.Skip("scan baseline too fast to measure")
-		}
-		ratio := float64(eval.NsPerOp()) / float64(scan.NsPerOp())
-		if best == 0 || ratio < best {
-			best = ratio
-		}
-		if best <= 5 {
-			return
-		}
-	}
-	t.Errorf("100 new-syntax rules cost %.1fx the tokenizer pass at best", best)
+	checkRelativeCost(t,
+		func() { evalCommandRules(rules, command, seat) },
+		func() { gitSubcommands(command) })
 }
