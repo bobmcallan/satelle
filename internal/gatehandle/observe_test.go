@@ -2,6 +2,7 @@ package gatehandle
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -74,6 +75,30 @@ func TestProbe_TestKnobMakesLivenessUnavailable(t *testing.T) {
 	t.Setenv(EnvLiveness, "unavailable")
 	if live, start := probeProcess(os.Getpid()); live != Unknown || start != "" {
 		t.Fatalf("probe = %v %q, want unknown with no identity", live, start)
+	}
+}
+
+// ProbePID answers for a real process: alive while it runs, gone once it is killed
+// and reaped, unknown under the test knob.
+func TestProbePID_ReportsGoneAfterExit(t *testing.T) {
+	c := exec.Command("sleep", "30")
+	if err := c.Start(); err != nil {
+		t.Skipf("cannot start sleep: %v", err)
+	}
+	if got := ProbePID(c.Process.Pid); got != Alive {
+		t.Errorf("a running child = %v, want Alive", got)
+	}
+	_ = c.Process.Kill()
+	_ = c.Wait()
+	if got := ProbePID(c.Process.Pid); got != Gone {
+		t.Errorf("a killed, reaped child = %v, want Gone", got)
+	}
+	if got := ProbePID(os.Getpid()); got != Alive {
+		t.Errorf("this process = %v, want Alive", got)
+	}
+	t.Setenv(EnvLiveness, "unavailable")
+	if got := ProbePID(os.Getpid()); got != Unknown {
+		t.Errorf("with %s=unavailable = %v, want Unknown", EnvLiveness, got)
 	}
 }
 

@@ -284,7 +284,7 @@ func TestXRepo_StalePointerIsHarmless(t *testing.T) {
 // forwarded and the handle names no other repo — the same-repo shape is as before.
 func TestXRepo_SameRepoHandOffWritesNoPointer(t *testing.T) {
 	aRoot, _, a, _ := twoRepos(t)
-	hold, _ := holdGate(t) // released on cleanup
+	hold, _ := holdGate(t) // the cleanup drain stops the child
 	args := append([]string{"gatetest", "--say", "same"}, hold...)
 	useGateHandOff(t, "300ms", args)
 	t.Setenv(config.SessionEnv, xrepoSession)
@@ -347,7 +347,7 @@ func TestXRepo_HandOffFindsTheServingRepoFromItsPublishedHooks(t *testing.T) {
 // inherited the identity of: its handles are never routed to that session.
 func TestXRepo_DispatchedProcessWritesNoPointer(t *testing.T) {
 	aRoot, bRoot, a, _ := twoRepos(t)
-	hold, _ := holdGate(t) // released on cleanup
+	hold, _ := holdGate(t) // the cleanup drain stops the child
 	args := append([]string{"gatetest", "--say", "dispatched"}, hold...)
 	useGateHandOff(t, "300ms", args)
 	t.Setenv("SATELLE_PROJECT_DIR", aRoot)
@@ -365,7 +365,7 @@ func TestXRepo_DispatchedProcessWritesNoPointer(t *testing.T) {
 // A hand-off with no session has nobody to route to: nothing is forwarded.
 func TestXRepo_NoSessionNoPointer(t *testing.T) {
 	aRoot, bRoot, a, b := twoRepos(t)
-	hold, _ := holdGate(t) // released on cleanup
+	hold, _ := holdGate(t) // the cleanup drain stops the child
 	args := append([]string{"gatetest", "--say", "anon"}, hold...)
 	useGateHandOff(t, "300ms", args)
 	t.Setenv("SATELLE_PROJECT_DIR", aRoot)

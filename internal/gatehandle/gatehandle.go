@@ -302,6 +302,15 @@ func probeProcess(pid int) (Liveness, string) {
 	return osProbe(pid)
 }
 
+// ProbePID reports whether pid is still a live process, by the same probe the
+// handle state uses (a zombie counts as Gone). Unlike Observe it does not stop at
+// a recorded result, so a caller can tell when a run that has finished writing
+// its verdict is also gone.
+func ProbePID(pid int) Liveness {
+	l, _ := probe(pid)
+	return l
+}
+
 // Reasons a handle Died, and why liveness is unverified. They are delivered, so
 // each says what happened.
 const (

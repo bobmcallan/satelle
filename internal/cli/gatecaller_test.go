@@ -60,7 +60,8 @@ type gateTestReq struct {
 
 // holdGate returns the gatetest arguments that keep the gate running until
 // release is called. release also runs on cleanup, so a gate left running by a
-// failed test (its child is a detached process) is let go at once.
+// failed test (its child is a detached process) is let go at once; useGateHandOff's
+// drain then stops that child before the test's temp dirs are removed.
 func holdGate(t *testing.T) (args []string, release func()) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "release-gate")
@@ -153,9 +154,74 @@ func useGateHandOff(t *testing.T, wait string, args []string) {
 	gateChildCommand = func(argv []string) (*exec.Cmd, error) {
 		c := exec.Command(os.Args[0], argv...)
 		c.Env = append(os.Environ(), "SATELLE_CLI_REEXEC=1")
+		gateChildren.record(t, c)
 		return c, nil
 	}
 	t.Cleanup(func() { gateArgv, gateChildCommand = oldArgv, oldChild })
+	t.Cleanup(func() { drainGateChildren(t) })
+}
+
+// gateChildren records the detached gate children each test started, so cleanup
+// can stop them. A child outlives the call that handed off — that is the
+// hand-off — so without this it wakes when holdGate's release runs on cleanup and
+// writes its verdict, result and output into the runtime gates/<id> directory
+// while the t.TempDir RemoveAll registered earlier is deleting it ("unlinkat …
+// gates/gw_…: directory not empty").
+var gateChildren childLog
+
+type childLog struct {
+	mu   sync.Mutex
+	cmds map[*testing.T][]*exec.Cmd
+}
+
+func (l *childLog) record(t *testing.T, c *exec.Cmd) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.cmds == nil {
+		l.cmds = map[*testing.T][]*exec.Cmd{}
+	}
+	l.cmds[t] = append(l.cmds[t], c)
+}
+
+func (l *childLog) take(t *testing.T) []*exec.Cmd {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	cmds := l.cmds[t]
+	delete(l.cmds, t)
+	return cmds
+}
+
+// drainGateChildren kills every gate child this test started and waits until
+// each is gone, so nothing writes into the test's tree once it returns. A killed
+// child writes nothing more, so the drain does not depend on whether the test
+// released its hold first. The production goroutine in startGateChild owns Wait
+// and the exit status; the drain only kills and probes the pid, which is why a
+// second Wait (a race under -race) is never made here.
+func drainGateChildren(t *testing.T) {
+	t.Helper()
+	for _, c := range gateChildren.take(t) {
+		if c.Process == nil {
+			continue // never started
+		}
+		pid := c.Process.Pid
+		_ = c.Process.Kill() // an already-exited child answers with a harmless error
+		deadline := time.Now().Add(testutil.WaitBudget)
+		for {
+			live := gatehandle.ProbePID(pid)
+			if live == gatehandle.Gone {
+				break
+			}
+			if live == gatehandle.Unknown {
+				t.Logf("gate child %d: exit cannot be verified on this platform", pid)
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Errorf("gate child %d still running %s after being killed", pid, testutil.WaitBudget)
+				break
+			}
+			time.Sleep(5 * time.Millisecond) // poll tick
+		}
+	}
 }
 
 func gateStoreForTest(t *testing.T) *gatehandle.Store {
@@ -370,6 +436,73 @@ func TestHandOff_SlowGateReturnsHandleThenDeliversOnce(t *testing.T) {
 	// Exactly once.
 	if again := deliverFinishedGates(store, "", 0); again != "" {
 		t.Fatalf("a delivered run was delivered again:\n%s", again)
+	}
+}
+
+// dirListing is the names and sizes under dir, so two calls can show nothing was
+// written or removed between them.
+func dirListing(t *testing.T, dir string) string {
+	t.Helper()
+	var b strings.Builder
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			return ierr
+		}
+		fmt.Fprintf(&b, "%s %d\n", p, info.Size())
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("listing %s: %v", dir, err)
+	}
+	return b.String()
+}
+
+// sty_66439878: the detached gate child outlives the hand-off call by design, but
+// not the test. Once drainGateChildren returns, the child is gone — even though
+// its hold was released and it was about to write its verdict — so nothing writes
+// into gates/<handle> and the directory can be removed.
+func TestHandOff_NoChildOutlivesTheTestDrain(t *testing.T) {
+	_ = tempRepo(t)
+	hold, release := holdGate(t)
+	args := append([]string{"gatetest", "--say", "drain"}, hold...)
+	useGateHandOff(t, "300ms", args)
+
+	out, err := runRoot(t, args...)
+	if err != nil && !errors.Is(err, errGateHandedOff) {
+		t.Fatalf("pending must exit clean: %v\n%s", err, out)
+	}
+	var p pendingPayload
+	if jerr := json.Unmarshal([]byte(strings.TrimSpace(out)), &p); jerr != nil || p.Gate != "pending" {
+		t.Fatalf("want a pending payload: %v\n%s", jerr, out)
+	}
+	store := gateStoreForTest(t)
+	m, merr := store.Meta(p.Handle)
+	if merr != nil || m.PID <= 0 {
+		t.Fatalf("the handle records no child pid: %+v %v", m, merr)
+	}
+	if got := gatehandle.ProbePID(m.PID); got != gatehandle.Alive {
+		t.Fatalf("the held child = %v, want Alive before the drain", got)
+	}
+
+	release() // the child wakes and starts writing its verdict...
+	drainGateChildren(t)
+
+	// ...and the drain returned only once it was gone.
+	if got := gatehandle.ProbePID(m.PID); got != gatehandle.Gone {
+		t.Fatalf("after the drain the child = %v, want Gone", got)
+	}
+	handleDir := filepath.Join(store.Dir(), p.Handle)
+	before := dirListing(t, handleDir)
+	time.Sleep(250 * time.Millisecond) // time-subject: several of the gate's 10ms ticks, for a writer that should be gone
+	if after := dirListing(t, handleDir); after != before {
+		t.Fatalf("something still wrote into %s after the drain:\nbefore:\n%s\nafter:\n%s", handleDir, before, after)
+	}
+	if err := os.RemoveAll(handleDir); err != nil {
+		t.Fatalf("the handle dir could not be removed after the drain: %v", err)
 	}
 }
 
