@@ -1,3 +1,8 @@
+## [0.0.680] - 2026-10-17
+
+### Fixed
+- The integration suite and CI no longer spend the shared GitHub API rate limit. `scripts/hermetic.sh` pins the release-check endpoints (`SATELLE_RELEASE_API`, `SATELLE_RELEASE_LIST_API`, `SATELLE_RELEASE_BASE`) to a closed loopback address. A session-start release check in a test's fresh satelle home therefore never reaches GitHub and leaves no process behind. A full `make integration` run now makes no GitHub API requests; previously one run could exhaust the anonymous 60-an-hour limit and fail the next `satelle update`. (sty_02579374)
+
 ## [0.0.679] - 2026-10-17
 
 ### Added
