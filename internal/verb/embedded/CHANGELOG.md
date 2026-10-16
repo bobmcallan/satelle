@@ -1,3 +1,8 @@
+## [0.0.683] - 2026-10-17
+
+### Fixed
+- The gate hand-off tests no longer fail CI on TempDir cleanup. They wait for the detached gate child, a re-exec of the test binary that writes the verdict into the test's gates directory, before cleanup runs. `gatehandle.ProbePID` exposes the existing liveness probe for that wait. (sty_66439878)
+
 ## [0.0.682] - 2026-10-17
 
 0.0.681 was never published. Its CI test run failed on every attempt because of the timing check fixed below, so the release workflow never cut it. Everything listed under [0.0.681] ships in this release.
