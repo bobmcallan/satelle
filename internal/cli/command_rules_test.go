@@ -552,13 +552,20 @@ func TestCommandRulesApplyToDispatchedAgents(t *testing.T) {
 	t.Setenv(config.DispatchAgentEnv, "planner")
 	t.Setenv(config.DispatchStepEnv, "plan")
 	t.Setenv(config.DispatchItemEnv, id)
-	out, err := commitgateOn(t, "claude", "orbctl delete x")
-	if err != nil {
-		// The planner's step is not in the allow list, so it is refused.
-		if reason := ruleDenyReason(t, out); !strings.Contains(reason, "removes shared state") {
-			t.Errorf("dispatched deny reason = %s", reason)
-		}
+	// The seat is at in_progress, which the example allows, so orbctl delete runs;
+	// the dispatched agent reaches the rule and the seat all the same.
+	if out, err := commitgateOn(t, "claude", "orbctl delete x"); err != nil || strings.TrimSpace(out) != "" {
+		t.Errorf("dispatched agent at an allowed status: %v %q", err, out)
 	}
+	setStoryStatus(t, id, "backlog")
+	out, err := commitgateOn(t, "claude", "orbctl delete x")
+	if err == nil {
+		t.Fatalf("dispatched agent not refused at backlog:\n%s", out)
+	}
+	if reason := ruleDenyReason(t, out); !strings.Contains(reason, "removes shared state") {
+		t.Errorf("dispatched deny reason = %s", reason)
+	}
+	setStoryStatus(t, id, "in_progress")
 	out, err = commitgateOn(t, "claude", "orbctl scale web 2")
 	if err != nil || !strings.Contains(out, "orbctl scale changes capacity") {
 		t.Errorf("a dispatched agent receives the warn: %v %q", err, out)

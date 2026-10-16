@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"unicode"
 )
 
@@ -81,9 +82,65 @@ func pathIdentity(repoRoot string) (identity, basename string) {
 	return abs, filepath.Base(abs)
 }
 
+// gitIdentityMemo is the scoped memo of gitCommonIdentity. It is off unless a
+// caller holds MemoGitIdentity: a long-lived process must see a tree gain a .git.
+var gitIdentityMemo struct {
+	mu      sync.Mutex
+	holders int
+	byRoot  map[string]gitIdentityResult
+}
+
+type gitIdentityResult struct {
+	identity, basename string
+	ok                 bool
+}
+
+// MemoGitIdentity makes gitCommonIdentity run `git rev-parse` once per repo root
+// until the returned release is called. A short-lived hook call holds it so that
+// resolving the config, the runtime dir and the store key share one spawn
+// instead of starting git for each (sty_a74551d6 AC5). Holds nest; the memo is
+// dropped when the last one is released.
+func MemoGitIdentity() (release func()) {
+	gitIdentityMemo.mu.Lock()
+	gitIdentityMemo.holders++
+	if gitIdentityMemo.byRoot == nil {
+		gitIdentityMemo.byRoot = map[string]gitIdentityResult{}
+	}
+	gitIdentityMemo.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			gitIdentityMemo.mu.Lock()
+			defer gitIdentityMemo.mu.Unlock()
+			if gitIdentityMemo.holders--; gitIdentityMemo.holders == 0 {
+				gitIdentityMemo.byRoot = nil
+			}
+		})
+	}
+}
+
 // gitCommonIdentity resolves identity via git's common dir. Returns ok=false when
 // git is unavailable or the path is not a git work tree.
 func gitCommonIdentity(repoRoot string) (identity, basename string, ok bool) {
+	gitIdentityMemo.mu.Lock()
+	memo := gitIdentityMemo.byRoot != nil
+	r, hit := gitIdentityMemo.byRoot[repoRoot]
+	gitIdentityMemo.mu.Unlock()
+	if hit {
+		return r.identity, r.basename, r.ok
+	}
+	identity, basename, ok = gitCommonIdentityUncached(repoRoot)
+	if memo {
+		gitIdentityMemo.mu.Lock()
+		if gitIdentityMemo.byRoot != nil {
+			gitIdentityMemo.byRoot[repoRoot] = gitIdentityResult{identity, basename, ok}
+		}
+		gitIdentityMemo.mu.Unlock()
+	}
+	return identity, basename, ok
+}
+
+func gitCommonIdentityUncached(repoRoot string) (identity, basename string, ok bool) {
 	// `--path-format=absolute` makes git print the common dir absolute from any
 	// worktree; git < 2.31 rejects the flag, so retry the bare form, which may
 	// print a path relative to repoRoot.

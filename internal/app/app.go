@@ -152,6 +152,14 @@ func Open() (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	return OpenLoaded(loc, locPath, proc, procRoot)
+}
+
+// OpenLoaded is Open from a config load the caller already made: loc and locPath
+// are the config.Load("") result, proc and procRoot the config.LoadProcess result
+// for them. A hook that has resolved its config opens the store from it without
+// loading again.
+func OpenLoaded(loc config.Config, locPath string, proc config.Config, procRoot string) (*App, error) {
 	// Repo root as the location load has always computed it: the directory
 	// that holds the file Load found, otherwise the working directory.
 	invoking := config.InvokingRoot(locPath)

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
-	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
 )
@@ -241,10 +240,11 @@ type commandRulePayload struct {
 	Step      string `json:"step"`
 }
 
-// recordCommandRule appends a matched rule to the engaged story's ledger. With
-// no engaged story there is no ledger to write to. A failure to record never
+// recordCommandRule appends a matched rule to the engaged story's ledger through
+// the call's shared store (gateStore), which the caller closes. With no engaged
+// story there is no ledger to write to. A failure to record never
 // changes the decision.
-func recordCommandRule(d commandRuleDecision, command, harness string) {
+func recordCommandRule(gs *gateStore, d commandRuleDecision, command, harness string) {
 	if !d.Matched || !d.Engaged || d.ItemID == "" {
 		return
 	}
@@ -259,11 +259,10 @@ func recordCommandRule(d commandRuleDecision, command, harness string) {
 	if err != nil {
 		return
 	}
-	a, err := app.Open()
+	a, err := gs.open()
 	if err != nil {
 		return
 	}
-	defer func() { _ = a.Close() }()
 	_, _ = a.Store.Ledger.Append(context.Background(), ledger.AppendInput{
 		StoryID: d.ItemID, Kind: ledger.KindCommandRule, Actor: "command-rule",
 		Body:    fmt.Sprintf("command rule %d (%s %s) %s a command while %s was at %s", d.Index, d.Rule.Action, d.Rule.Pattern, d.Decision, d.ItemID, d.Status),

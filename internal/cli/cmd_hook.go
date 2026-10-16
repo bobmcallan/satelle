@@ -31,6 +31,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -316,6 +317,16 @@ then its own -C), else the hook's own tree's seat.`,
 				return nil
 			}
 			command := bashCommandFromEvent(raw)
+			// One `git rev-parse` resolves the repo identity for the whole call:
+			// the config load, the store's runtime dir and the repo marker all
+			// ask for it, and none of them may start git again (sty_a74551d6 AC5).
+			defer config.MemoGitIdentity()()
+			defer holdSessionWorktree()()
+			// The one store this call opens for command rules, shared by the seat
+			// read and the ledger row. Opened lazily, so a call no rule matched
+			// never opens it. Deferred first, so it closes after the record below.
+			gs := &gateStore{}
+			defer gs.close()
 			// A command rule that matched and let the command run (allowed by the
 			// story's status, or a warn) is recorded and, for a warn, delivered
 			// only once every later check has also let it through: a deny after a
@@ -329,7 +340,7 @@ then its own -C), else the hook's own tree's seat.`,
 				if ruled.Decision == commandRuleWarned {
 					_ = emitAdditionalContext(cmd.OutOrStdout(), h, "PreToolUse", "", ruled.Reason)
 				}
-				recordCommandRule(ruled, command, h)
+				recordCommandRule(gs, ruled, command, h)
 			}()
 			// Containment BEFORE the engaged-story branch: a foreign-tree mutation
 			// is wrong even with a story engaged (sty_aadd4d6c / sty_a8454d10).
@@ -337,6 +348,7 @@ then its own -C), else the hook's own tree's seat.`,
 			// rules and command_allow all read this one load, so the hook starts
 			// one `git rev-parse` for its config and no more.
 			gp := loadGateProcess()
+			gs.gp = gp
 			if !allowOutsideTreeEditsFrom(gp) {
 				cands := mutationTargets(command, sessionAnchor())
 				if path, foreignRoot, ok := foreignTreeTarget(sessionAnchor(), cands); ok {
@@ -393,11 +405,10 @@ then its own -C), else the hook's own tree's seat.`,
 					if seatResolved {
 						return info, engaged, nil
 					}
-					i, e, _, err := resolveSeats(false, bindSessionID(raw))
-					return i, e, err
+					return gs.seat(bindSessionID(raw))
 				})
 				if ruled.Decision == commandRuleDenied {
-					recordCommandRule(ruled, command, commandHarness(raw))
+					recordCommandRule(gs, ruled, command, commandHarness(raw))
 					return denyPreToolUse(cmd, raw, ruled.Reason)
 				}
 			}
@@ -817,17 +828,27 @@ func resolveSeats(touch bool, sessionID string) (info seatInfo, engaged bool, li
 func resolveSeatsFor(touch bool, sessionID, targetTree string) (info seatInfo, engaged bool, live []seatInfo, err error) {
 	a, openErr := app.Open()
 	if openErr != nil {
-		// An ungoverned repo has no seat to determine — a session opened in an
-		// ordinary non-satelle directory must go INERT, not error (sty_20a7824c).
-		// This is strictly quieter than before: previously such a session paid
-		// for a materialised runtime plane and then got a "fix config and retry"
-		// it could not act on. Any other open failure still reports.
-		if errors.Is(openErr, app.ErrNotInitialised) {
-			return seatInfo{}, false, nil, nil
-		}
-		return seatInfo{}, false, nil, fmt.Errorf("cannot determine engagement (store open failed: %w) — fix config and retry", openErr)
+		return seatOpenFailed(openErr)
 	}
 	defer func() { _ = a.Close() }()
+	return resolveSeatsOn(a, touch, sessionID, targetTree)
+}
+
+// seatOpenFailed is the seat answer for a store that would not open.
+func seatOpenFailed(openErr error) (info seatInfo, engaged bool, live []seatInfo, err error) {
+	// An ungoverned repo has no seat to determine — a session opened in an
+	// ordinary non-satelle directory must go INERT, not error (sty_20a7824c).
+	// This is strictly quieter than before: previously such a session paid
+	// for a materialised runtime plane and then got a "fix config and retry"
+	// it could not act on. Any other open failure still reports.
+	if errors.Is(openErr, app.ErrNotInitialised) {
+		return seatInfo{}, false, nil, nil
+	}
+	return seatInfo{}, false, nil, fmt.Errorf("cannot determine engagement (store open failed: %w) — fix config and retry", openErr)
+}
+
+// resolveSeatsOn is resolveSeatsFor on an App the caller opened and closes.
+func resolveSeatsOn(a *app.App, touch bool, sessionID, targetTree string) (info seatInfo, engaged bool, live []seatInfo, err error) {
 	ctx := context.Background()
 	wfs, werr := a.Store.DocIndex.List(ctx, "workflows")
 	if werr != nil {
@@ -1056,12 +1077,66 @@ func unstampedAmbiguous(live, dropped []seatInfo, sessionID string) bool {
 	return len(live)+len(dropped) > 1
 }
 
+// sessionWorktreeMemo holds sessionWorktree's answer for one hook call. The
+// seat read asks for it several times (unstamped, unmatched or multi-seat
+// sessions), and each ask would otherwise start `git rev-parse --show-toplevel`.
+// Off unless held, so nothing outside a hook call sees a stale answer.
+var sessionWorktreeMemo struct {
+	mu      sync.Mutex
+	holders int
+	set     bool
+	tree    string
+}
+
+// holdSessionWorktree memoises sessionWorktree until the returned release is
+// called. A hook call does not change directory, so the answer cannot move.
+func holdSessionWorktree() (release func()) {
+	sessionWorktreeMemo.mu.Lock()
+	sessionWorktreeMemo.holders++
+	sessionWorktreeMemo.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			sessionWorktreeMemo.mu.Lock()
+			defer sessionWorktreeMemo.mu.Unlock()
+			if sessionWorktreeMemo.holders--; sessionWorktreeMemo.holders == 0 {
+				sessionWorktreeMemo.set, sessionWorktreeMemo.tree = false, ""
+			}
+		})
+	}
+}
+
 // sessionWorktree resolves the git working tree this hook process runs in.
 // Empty when git cannot answer — callers then fall back rather than guess.
 var sessionWorktree = func() string {
+	sessionWorktreeMemo.mu.Lock()
+	held, set, tree := sessionWorktreeMemo.holders > 0, sessionWorktreeMemo.set, sessionWorktreeMemo.tree
+	sessionWorktreeMemo.mu.Unlock()
+	if set {
+		return tree
+	}
+	tree = sessionWorktreeUncached()
+	if held {
+		sessionWorktreeMemo.mu.Lock()
+		if sessionWorktreeMemo.holders > 0 {
+			sessionWorktreeMemo.set, sessionWorktreeMemo.tree = true, tree
+		}
+		sessionWorktreeMemo.mu.Unlock()
+	}
+	return tree
+}
+
+func sessionWorktreeUncached() string {
 	dir, err := os.Getwd()
 	if err != nil {
 		return ""
+	}
+	// Inside a hook call the repo identity is already resolved by the one
+	// `git rev-parse --git-common-dir`; the toplevel comes from it and the
+	// `.git` entry above dir, so the seat read starts no process of its own. Only
+	// a tree that identity cannot confirm asks git.
+	if tree, ok := config.WorktreeOfMemoised(dir); ok {
+		return tree
 	}
 	out, gerr := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
 	if gerr != nil {
@@ -1760,11 +1835,68 @@ type gateProcess struct {
 	invoking string
 	path     string
 	err      error
+	// loc, locPath and procRoot are the other halves of the same load, so the
+	// store can open from it (gateStore) instead of loading the config again.
+	loc      config.Config
+	locPath  string
+	procRoot string
 }
 
+// loadGateProcess is config.LoadInvokingProcess, keeping the location config
+// and the process root it computed on the way.
 func loadGateProcess() gateProcess {
-	proc, invoking, _, path, err := config.LoadInvokingProcess()
-	return gateProcess{proc: proc, invoking: invoking, path: path, err: err}
+	loc, locPath, lerr := config.Load("")
+	if lerr != nil && !errors.Is(lerr, config.ErrNotFound) {
+		return gateProcess{path: locPath, err: lerr}
+	}
+	proc, procRoot, path, err := config.LoadProcess(loc, locPath)
+	if err != nil {
+		return gateProcess{path: path, err: err}
+	}
+	return gateProcess{
+		proc: proc, invoking: config.InvokingRoot(locPath), path: path,
+		loc: loc, locPath: locPath, procRoot: procRoot,
+	}
+}
+
+// gateStore is the one store a commitgate call opens for command rules, from the
+// gateProcess already loaded: the seat read and the ledger row share it, so a
+// matched command adds store I/O and no second config load or process.
+type gateStore struct {
+	gp     gateProcess
+	a      *app.App
+	err    error
+	opened bool
+}
+
+func (g *gateStore) open() (*app.App, error) {
+	if !g.opened {
+		g.opened = true
+		if g.gp.err != nil {
+			g.err = g.gp.err
+		} else {
+			g.a, g.err = app.OpenLoaded(g.gp.loc, g.gp.locPath, g.gp.proc, g.gp.procRoot)
+		}
+	}
+	return g.a, g.err
+}
+
+func (g *gateStore) close() {
+	if g.a != nil {
+		_ = g.a.Close()
+		g.a = nil
+	}
+}
+
+// seat is resolveSeats(false, ...) on the shared store.
+func (g *gateStore) seat(sessionID string) (seatInfo, bool, error) {
+	a, err := g.open()
+	if err != nil {
+		info, engaged, _, serr := seatOpenFailed(err)
+		return info, engaged, serr
+	}
+	info, engaged, _, serr := resolveSeatsOn(a, false, sessionID, "")
+	return info, engaged, serr
 }
 
 func commandAllowFrom(gp gateProcess) map[string][]string {
