@@ -166,6 +166,54 @@ func TestProcTreeCPUKeepsReapedChildCPU(t *testing.T) {
 	}
 }
 
+// fakeProcs is an injected /proc: list reports a root (pid 100) and its child
+// (pid 101); the child's stat is always gone (reaped). rootStat supplies the
+// root's reading for its n-th read (0-based).
+func fakeProcs(rootStat func(n int) procStat) (list func() ([]int, error), stat func(int) (procStat, bool), calls *int) {
+	calls, reads := new(int), 0
+	list = func() ([]int, error) { return []int{100, 101}, nil }
+	stat = func(pid int) (procStat, bool) {
+		*calls++
+		if pid != 100 {
+			return procStat{}, false
+		}
+		reads++
+		return rootStat(reads - 1), true
+	}
+	return list, stat, calls
+}
+
+// TestProcTreeCPURetakesTornScan (sty_673ec869): a reap that lands mid-scan (the
+// root read before the reap, its child gone by the time it is read) is detected
+// and the scan re-taken, so the reaped child's CPU is in the returned total.
+func TestProcTreeCPURetakesTornScan(t *testing.T) {
+	list, stat, _ := fakeProcs(func(n int) procStat {
+		if n == 0 { // first scan read: the child is not reaped yet
+			return procStat{ppid: 1, self: 1}
+		}
+		return procStat{ppid: 1, self: 1, children: 25}
+	})
+	got, ok := procTreeCPUWith(100, list, stat)
+	if !ok || got != 26 {
+		t.Fatalf("procTreeCPUWith = %d, %v; want 26, true (the reaped child's 25 ticks included)", got, ok)
+	}
+}
+
+// TestProcTreeCPUBoundedRescan (sty_673ec869): a tree that reaps on every pass
+// still returns, after a bounded number of attempts.
+func TestProcTreeCPUBoundedRescan(t *testing.T) {
+	list, stat, calls := fakeProcs(func(n int) procStat {
+		return procStat{ppid: 1, children: uint64(n)} // grows on every read
+	})
+	if _, ok := procTreeCPUWith(100, list, stat); !ok {
+		t.Fatal("ok = false for a present root")
+	}
+	// Per attempt: a scan read of each listed pid, then a verify read of each in-tree pid.
+	if limit := procTreeScanAttempts * (2 + 1); *calls > limit {
+		t.Fatalf("%d stat reads; want at most %d (%d attempts)", *calls, limit, procTreeScanAttempts)
+	}
+}
+
 // TestProcTreeCPUGoneRoot: a reaped root reports ok=false.
 func TestProcTreeCPUGoneRoot(t *testing.T) {
 	cmd := exec.Command("true")
