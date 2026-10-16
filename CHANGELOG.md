@@ -1,3 +1,18 @@
+## [0.0.677] - 2026-10-16
+
+### Added
+- A repo can deny or warn on agent shell commands with its own `[[gate.command_rule]]` entries. Each entry has a `pattern`, an `action` (`deny` or `warn`), an optional `allow` list of statuses or steps, and a `message`. satelle ships no rules: with none configured, nothing is refused or warned. A deny refuses the command before it runs, naming the rule's message and what to engage. A warn lets the command run and tells the agent why (claude; grok, pi and cursor are recorded as unavailable, each with its reason). A deny with no `allow` list refuses in every status. Rules apply in the driving session, in dispatched agents and in fresh clones. Every matched allow or warn is recorded on the engaged story's ledger. `satelle help command-rules` has the format, and it notes that satelle judges only the command line it sees: wrappers and scripts bypass it, and the account a command runs as is what limits it. (sty_a74551d6)
+- `satelle validate` and `satelle doctor` report an `allow` entry that names no status or step in the repo's workflows. (sty_a74551d6)
+
+### Changed
+- A malformed command rule, or a TOML syntax error in the repo's satelle config, now makes commitgate refuse every shell command. The refusal names the file, the rule index and the field, never the value, and says how to fix it. The Edit and Write tools stay open so the file can be fixed. Previously a broken config let read-only commands through. (sty_a74551d6)
+- commitgate opens the store from the config it has already loaded, so a hook call starts git once on every path. (sty_a74551d6)
+
+## [serve-v0.0.167] - 2026-10-16
+
+### Changed
+- The service binary carries the shared config and store changes: typed config load errors and opening the store from an already-loaded config. (sty_a74551d6)
+
 ## [0.0.676] - 2026-10-16
 
 ### Breaking
