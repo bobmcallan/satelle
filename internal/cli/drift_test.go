@@ -343,8 +343,10 @@ func TestShippedChangelogSparesCurrentRepos(t *testing.T) {
 		{"0.0.664", true, "the release just before the push check"},
 		{"0.0.665", true, "stamped at the push check, but predates the cloud table removal at 0.0.676"},
 		{"0.0.675", true, "the release just before the cloud table removal"},
-		{"0.0.676", false, "stamped AT the newest Breaking release"},
-		{"0.0.677", false, "past it"},
+		{"0.0.676", true, "stamped at the cloud table removal, but predates the pattern syntax at 0.0.678"},
+		{"0.0.677", true, "the release just before the pattern syntax"},
+		{"0.0.678", false, "stamped AT the newest Breaking release"},
+		{"0.0.679", false, "past it"},
 	}
 	for _, c := range cases {
 		entries, err := verb.ChangelogRange(c.deployed, future)

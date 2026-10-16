@@ -1,3 +1,16 @@
+## [0.0.678] - 2026-10-16
+
+### Breaking
+- **A command rule pattern token that holds `*` must now be one of the documented forms.** A `[[gate.command_rule]]` pattern written for 0.0.677 with a `*` inside a token (for example `a*`, `*a` or `*a*b*`), or with `**/NAME` anywhere but first, now fails to load. While it fails, commitgate refuses every shell command, naming the file, the rule index and the field `pattern`. To fix it by hand: run `satelle validate` to find the rule, then rewrite that token as an exact word, `*`, `**`, `**/NAME` (first token only) or `*TEXT*`. See `satelle help command-rules`. A pattern with no `*` inside a token is unaffected. (sty_f54540d1)
+
+### Added
+- Command rule patterns can match a program however it is invoked, and text anywhere in an argument. `**` matches any run of tokens. `**/NAME` as the first token matches a program whose last path element is `NAME`: a bare name, a path, `~/...` or `$HOME/...`. `*TEXT*` matches one token containing `TEXT`, such as a host inside a URL. Matching compares text only, with no PATH lookup or variable expansion, and adds no process. (sty_f54540d1)
+
+## [serve-v0.0.168] - 2026-10-16
+
+### Changed
+- The service binary carries the shared config change: the command rule pattern grammar and its validation. (sty_f54540d1)
+
 ## [0.0.677] - 2026-10-16
 
 ### Added
