@@ -1,3 +1,10 @@
+## [0.0.682] - 2026-10-17
+
+0.0.681 was never published. Its CI test run failed on every attempt because of the timing check fixed below, so the release workflow never cut it. Everything listed under [0.0.681] ships in this release.
+
+### Fixed
+- The command-rule relative-cost checks no longer fail CI on a loaded runner. Both checks now use one shared measurement and one bound: interleaved, fixed-iteration samples with the noise tolerated. A real slowdown still fails them. The proof that rule evaluation adds no measurable latency (sty_a74551d6 AC5) stays a real check. (sty_c77a3cf2)
+
 ## [0.0.681] - 2026-10-17
 
 ### Added
