@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -469,16 +468,6 @@ func compareArtifactIdentity(localSum, publishedSum string, err error) artifactI
 	return artifactDiffer
 }
 
-// parseChecksumLine extracts the leading hex field from a sha256 line
-// ("<hex>  <name>"). Shared by verifyChecksum and publishedChecksum.
-func parseChecksumLine(shaLine string) string {
-	want := strings.TrimSpace(shaLine)
-	if i := strings.IndexAny(want, " \t"); i > 0 {
-		want = want[:i]
-	}
-	return want
-}
-
 // fileChecksum returns the sha256 hex of the file at path.
 func fileChecksum(path string) (string, error) {
 	data, err := os.ReadFile(path)
@@ -497,7 +486,7 @@ func publishedChecksum(ctx context.Context, repo, tag, binary string) (string, e
 		base = fmt.Sprintf("https://github.com/%s/releases/download", repo)
 	}
 	name := assetNameFor(binary, tag)
-	line, err := httpGetBytes(ctx, base+"/"+tag+"/"+name+".sha256")
+	line, err := httpGetBytes(ctx, base+"/"+tag+"/"+name+".sha256", githubAccept)
 	if err != nil {
 		return "", err
 	}
@@ -595,7 +584,7 @@ func latestReleaseTag(ctx context.Context, repo string) (string, error) {
 	if url == "" {
 		url = fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
 	}
-	body, err := httpGetBytes(ctx, url)
+	body, err := httpGetBytes(ctx, url, githubAccept)
 	if err != nil {
 		return "", err
 	}
@@ -636,7 +625,7 @@ func latestServeReleaseTag(ctx context.Context, repo string) (string, error) {
 		base = fmt.Sprintf("https://api.github.com/repos/%s/releases", repo)
 	}
 	return highestPrefixedTagInPages(func(page int) ([]byte, error) {
-		return httpGetBytes(ctx, releaseListPageURL(base, page))
+		return httpGetBytes(ctx, releaseListPageURL(base, page), githubAccept)
 	}, "serve-v", maxReleasePages)
 }
 
@@ -842,44 +831,23 @@ func resolveDaemonIdentity(ctx context.Context, repo, tag, localPath string) (lo
 // downloadAndReplaceFrom is the injectable core: baseURL/<name> is the binary,
 // baseURL/<name>.sha256 the checksum. Split out so tests serve local fixtures.
 func downloadAndReplaceFrom(ctx context.Context, baseURL, name, target string) error {
-	bin, err := httpGetBytes(ctx, baseURL+"/"+name)
+	bin, err := httpGetBytes(ctx, baseURL+"/"+name, githubAccept)
 	if err != nil {
 		return fmt.Errorf("download %s: %w", name, err)
 	}
-	shaLine, err := httpGetBytes(ctx, baseURL+"/"+name+".sha256")
+	shaLine, err := httpGetBytes(ctx, baseURL+"/"+name+".sha256", githubAccept)
 	if err != nil {
 		return fmt.Errorf("download checksum: %w", err)
 	}
 	if err := verifyChecksum(bin, string(shaLine)); err != nil {
-		return err
+		return fmt.Errorf("%w — aborting, binary unchanged", err)
 	}
 	return replaceExecutable(target, bin)
 }
 
-func httpGetBytes(ctx context.Context, url string) ([]byte, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s: %s", url, resp.Status)
-	}
-	return io.ReadAll(resp.Body)
-}
-
-// verifyChecksum checks data against the sha256 in shaLine ("<hex>  <name>").
-func verifyChecksum(data []byte, shaLine string) error {
-	want := parseChecksumLine(shaLine)
-	sum := sha256.Sum256(data)
-	got := hex.EncodeToString(sum[:])
-	if !strings.EqualFold(want, got) {
-		return fmt.Errorf("sha256 mismatch (want %s, got %s) — aborting, binary unchanged", want, got)
-	}
-	return nil
-}
+// githubAccept is the Accept header the update path sends to GitHub and to the
+// release downloads.
+const githubAccept = "application/vnd.github+json"
 
 // replaceExecutable atomically replaces target with data: write a temp file in
 // the same directory, chmod 0755, then rename over target. A running copy keeps

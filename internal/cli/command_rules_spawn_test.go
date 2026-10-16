@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -134,5 +135,40 @@ func TestCommitgateMatchedPathSpawnsAgainstNoRuleBaseline(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A repo that subscribes to a command-policy list reads its cache on the command
+// path. Run from a linked worktree, the process root is the main tree's, which
+// the call's git-identity memo does not hold, so keying the cache on it would
+// start a second `git rev-parse --git-common-dir`. The cache is read at the
+// invoking root the memo holds: exactly one spawn, and the list still applies.
+func TestCommitgateSubscribedListInLinkedWorktreeStartsOneGitIdentity(t *testing.T) {
+	const src = "https://example.com/p.toml"
+	repo, _ := ruleRepo(t, seatNone, "\n[[gate.command_policy]]\nname = \"cloud\"\nurl = \""+src+"\"\n")
+	wt := filepath.Join(t.TempDir(), "wt")
+	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "-q", "-b", "policy-wt", wt, "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add: %v\n%s", err, out)
+	}
+	seedPolicy(t, repo, "cloud", src, "url",
+		"[[command_rule]]\npattern = \"orbctl nuke\"\naction = \"deny\"\nmessage = \"subscribed: never\"\n", time.Now())
+	t.Chdir(wt)
+	t.Setenv("SATELLE_CONFIG", "")
+	spawns := countGitSpawns(t)
+	out, err := commitgateOn(t, "claude", "orbctl nuke")
+	if err == nil {
+		t.Fatalf("the subscribed deny did not apply from the linked worktree:\n%s", out)
+	}
+	if reason := ruleDenyReason(t, out); !strings.Contains(reason, "subscribed: never") {
+		t.Fatalf("reason = %q", reason)
+	}
+	var loads []string
+	for _, s := range spawns() {
+		if strings.Contains(s, "--git-common-dir") {
+			loads = append(loads, s)
+		}
+	}
+	if len(loads) != 1 {
+		t.Errorf("a subscribed call from a linked worktree started %d `git rev-parse --git-common-dir` (want 1): %q", len(loads), loads)
 	}
 }
