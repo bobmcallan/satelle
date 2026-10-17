@@ -45,6 +45,10 @@ type passReport struct {
 	Pages               int
 	Items, Ledger, Kept int
 	Hosted              []hosted.WorkstateItem
+	// Scope is the scope a scoped pass fetched — the resolved one, widened by the
+	// members a pull took from the server — so the caller's attachment and hold
+	// steps cover them too. Zero for an unscoped pass.
+	Scope scopeResolution
 	// Stories is what the pass found about story disagreements (sty_6e5fc41c).
 	Stories storyOutcome
 }
