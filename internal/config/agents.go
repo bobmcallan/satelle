@@ -734,15 +734,14 @@ func RoleInferred(b AgentBinding) bool {
 //  1. satelle CLI via shell: `Bash(satelle…)`, broad `Bash`/`Bash(*)`, or `*`.
 //  2. Disk reads of story documents under the home-keyed runtime plane
 //     (~/.satelle/<repo-key>/stories/<id>/) via the adapter's own read tool
-//     (agentcli.ContextReadTools: e.g. grok-native `read_file`, used when
-//     headless Grok cannot enable run_terminal_command). adapter is the
-//     binding's agentcli.AdapterName, so a read tool of one adapter does not
-//     count on another. The in-repo `.satelle/stories/` path is obsolete
-//     (sty_58fa970e).
+//     (agentcli.ContextReadTools: Claude `Read`, pi `read`, grok-native
+//     `read_file`, used when headless Grok cannot enable run_terminal_command).
+//     adapter is the binding's agentcli.AdapterName, so a read tool of one
+//     adapter does not count on another. The in-repo `.satelle/stories/` path
+//     is obsolete (sty_58fa970e).
 //
 // A grant with neither channel leaves the agent silently context-starved, so
-// dispatch refuses it loudly. Claude-only `Read` (without Bash) is intentionally
-// NOT accepted: the Claude pull path is the satelle CLI, not a disk-first rubric.
+// dispatch refuses it loudly.
 //
 // REVIEWERS need no channel — satelle injects the attachments into the transition
 // payload's docs array and reviewer bindings never reach dispatch. A shell grant

@@ -2222,7 +2222,7 @@ func TestDispatchExecutorRefusesWithoutSatelleCLI(t *testing.T) {
 	fr := &fakeRunner{out: "ok"}
 	g.newRunner = func(string, string) (agentcli.Runner, error) { return fr, nil }
 
-	// No context channel (Claude Read alone is not enough) → refused, agent not run.
+	// No context channel (Read is claude's tool, not this unknown adapter's) → refused, agent not run.
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
 		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Grep,Glob"}, true
 	})
@@ -2280,6 +2280,41 @@ func TestDispatchExecutorAcceptsGrokReadFileChannel(t *testing.T) {
 	_, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan")
 	if err == nil || !strings.Contains(err.Error(), "context channel") {
 		t.Fatalf("want channel-less refusal, got %v", err)
+	}
+	if fr.got.SystemPrompt != "" {
+		t.Error("channel-less grant must refuse BEFORE running the agent")
+	}
+}
+
+// TestDispatchExecutorClaudeReadChannel: Claude's own `Read` tool is its disk-read
+// context channel, so a shell-free read-only claude grant dispatches; a claude grant
+// with no read tool and no satelle shell is refused naming `Read`, never read_file.
+func TestDispatchExecutorClaudeReadChannel(t *testing.T) {
+	docs := fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	fr := &fakeRunner{out: "ok"}
+	g.newRunner = func(string, string) (agentcli.Runner, error) { return fr, nil }
+
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Command: "claude -p {system}", Tools: "Read,Grep,Glob"}, true
+	})
+	if _, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan"); err != nil {
+		t.Fatalf("claude Read should be a context channel: %v", err)
+	}
+	if fr.got.SystemPrompt == "" {
+		t.Error("claude Read grant must reach the run")
+	}
+
+	fr.got = agentcli.Request{}
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Command: "claude -p {system}", Tools: "Grep,Glob"}, true
+	})
+	_, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan")
+	if err == nil || !strings.Contains(err.Error(), "context channel") {
+		t.Fatalf("want channel-less refusal, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "`Read` for disk reads") || strings.Contains(err.Error(), "read_file") {
+		t.Errorf("refusal must name `Read`, not read_file: %v", err)
 	}
 	if fr.got.SystemPrompt != "" {
 		t.Error("channel-less grant must refuse BEFORE running the agent")

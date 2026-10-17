@@ -1,3 +1,13 @@
+## [0.0.694] - 2026-10-18
+
+### Fixed
+- A dispatched Claude performer whose grant holds Claude's `Read` tool has a context channel, so a read-only performer can run with no shell and still pull its story. Each adapter's disk-read tool is now the name it actually offers (`Read` for claude, `read` for pi, `read_file` for grok and unknown adapters); before, a Claude grant of `Read,Grep,Glob` failed `satelle agent validate` and was refused at dispatch with a hint naming `read_file`, which Claude does not have. A grant with no read tool and no satelle shell is still refused, and the hint names the right tool for that adapter. (sty_105360e2)
+
+## [serve-v0.0.173] - 2026-10-18
+
+### Changed
+- The service binary carries the per-adapter disk-read tool names used to judge a performer's context channel (internal/config/agents.go, internal/agentcli/pi_seat.go). (sty_105360e2)
+
 ## [0.0.693] - 2026-10-18
 
 Epic remote-ready (sty_0e87acd6): Ready runs without holding a seat.

@@ -436,7 +436,7 @@ func TestContextReadTools(t *testing.T) {
 	for adapter, want := range map[string][]string{
 		HarnessPi:      {"read"},
 		HarnessGrok:    {"read_file"},
-		HarnessClaude:  {"read_file"},
+		HarnessClaude:  {"Read"},
 		HarnessUnknown: {"read_file"},
 	} {
 		if got := ContextReadTools(adapter); !reflect.DeepEqual(got, want) {
@@ -445,6 +445,9 @@ func TestContextReadTools(t *testing.T) {
 	}
 	if got := ContextChannelHint(HarnessPi); !strings.Contains(got, "`read`") || strings.Contains(got, "read_file") {
 		t.Errorf("pi hint = %q, want it to name `read` and not read_file", got)
+	}
+	if got := ContextChannelHint(HarnessClaude); !strings.Contains(got, "`Read` for disk reads") || strings.Contains(got, "read_file") {
+		t.Errorf("claude hint = %q, want it to name `Read` and not read_file", got)
 	}
 	if got := ContextChannelHint(HarnessGrok); !strings.Contains(got, "`read_file`") {
 		t.Errorf("grok hint = %q, want it to name `read_file`", got)

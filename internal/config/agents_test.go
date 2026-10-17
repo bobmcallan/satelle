@@ -529,7 +529,7 @@ func TestGrantsContextChannel(t *testing.T) {
 		want  bool
 	}{
 		{"", false},
-		{"Read,Grep,Glob", false}, // Claude-only Read is deliberately NOT a channel
+		{"Read,Grep,Glob", false}, // Read is claude's disk-read tool, not the unknown adapter's
 		{"write,search_replace", false},
 		{"grep,list_dir,write", false},
 		{"Bash(satelle:*)", true},
@@ -567,7 +567,10 @@ func TestGrantsContextChannelIsAdapterAware(t *testing.T) {
 		{"pi", "read_file", false},
 		{"pi", "Bash(satelle:*)", true},
 		{"claude", "read", false},
-		{"claude", "Read", false},
+		{"claude", "Read", true},
+		{"claude", "Read,Grep,Glob", true},
+		{"claude", "Grep,Glob", false},
+		{"claude", "read_file", false},
 		{"grok", "read", false},
 		{"grok", "read_file", true},
 		{"unknown", "read", false},

@@ -141,7 +141,8 @@ func TestUntrustedStep_Performer(t *testing.T) {
 			[]string{"adapter pi/command cannot hold it read-only"}},
 		{"claude satelle cli", config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Tools: "Bash(satelle:*)"},
 			[]string{"grant admits shell tool Bash(satelle:*)"}},
-		{"claude read-only has no channel", config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob"},
+		{"claude read-only with Read has a channel", config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob"}, nil},
+		{"claude read-only has no channel", config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Tools: "Grep,Glob"},
 			[]string{"no read-only context channel for adapter claude"}},
 		{"claude every class", config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Tools: "Bash(satelle:*),Task,WebFetch,mcp__x__y,Write,Edit,Mystery"},
 			[]string{"shell tool", "subprocess tool Task", "network tool WebFetch", "mcp tool mcp__x__y", "write tool Write", "edit tool Edit", "unknown tool Mystery"}},
@@ -194,7 +195,7 @@ func TestUntrustedStep_PanelSeats(t *testing.T) {
 func TestUntrustedStep_AttributeAbsentIsUnaffected(t *testing.T) {
 	for name, perf := range map[string]config.AgentBinding{
 		"satelle cli": {Command: agentcli.DefaultClaudeCommand, Tools: "Bash(satelle:*)"},
-		"read only":   {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob"},
+		"read only":   {Command: agentcli.DefaultClaudeCommand, Tools: "Grep,Glob"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := Validate(untrustedAgents(perf, config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Tools: "Bash(satelle:*)"}), nil,

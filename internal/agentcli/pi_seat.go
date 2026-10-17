@@ -81,12 +81,16 @@ func piPreflight(iface, label string, args []string, grant string) []IsolationGa
 }
 
 // ContextReadTools names the tools whose presence in a binding's grant gives a
-// dispatched agent of adapter a way to read the story files from disk. pi's is
-// `read`; every other adapter keeps the grok-native `read_file`, which is also what
-// an adapter satelle has no name for has always been judged by.
+// dispatched agent of adapter a way to read the story files from disk: the disk-read
+// tool that adapter actually offers. Claude's is `Read`, pi's is `read`; every other
+// adapter keeps the grok-native `read_file`, which is also what an adapter satelle
+// has no name for has always been judged by.
 func ContextReadTools(adapter string) []string {
-	if adapter == HarnessPi {
+	switch adapter {
+	case HarnessPi:
 		return []string{piReadTool}
+	case HarnessClaude:
+		return []string{"Read"}
 	}
 	return []string{"read_file"}
 }

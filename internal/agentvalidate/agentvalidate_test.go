@@ -801,9 +801,9 @@ func TestValidate_ContextChannelFindings(t *testing.T) {
 		wantProblem bool
 		wantWarning bool
 	}{{
-		name:        "claude-only Read is not a channel — matches the runtime refusal",
+		name:        "claude without Read or a shell is not a channel — matches the runtime refusal",
 		section:     "planner",
-		binding:     config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob", Model: "opus"},
+		binding:     config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Tools: "Grep,Glob", Model: "opus"},
 		wantProblem: true,
 	}, {
 		name:        "empty grant",
@@ -830,8 +830,12 @@ func TestValidate_ContextChannelFindings(t *testing.T) {
 		// A repo-agnostic name (AC5): nothing keys off "planner".
 		name:        "arbitrary binding name is reported, not a known one",
 		section:     "architect",
-		binding:     config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob", Model: "opus"},
+		binding:     config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Tools: "Grep,Glob", Model: "opus"},
 		wantProblem: true,
+	}, {
+		name:    "claude Read is its disk-read channel",
+		section: "planner",
+		binding: config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob", Model: "opus"},
 	}}
 
 	for _, tc := range cases {
@@ -855,7 +859,7 @@ func TestValidate_ContextChannelFindings(t *testing.T) {
 				if !strings.Contains(got, tc.section) {
 					t.Errorf("problem must name the binding %q: %s", tc.section, got)
 				}
-				if !strings.Contains(got, "Bash(satelle:*)") || !strings.Contains(got, "read_file") {
+				if !strings.Contains(got, "Bash(satelle:*)") || !strings.Contains(got, "for disk reads") {
 					t.Errorf("problem must name BOTH fixes: %s", got)
 				}
 				if !strings.Contains(got, `node "plan"`) {
@@ -895,6 +899,34 @@ func TestValidate_PiContextChannel(t *testing.T) {
 	}
 	if findingWith(run(agentcli.DefaultClaudeCommand, "read").Problems, "no context channel") == "" {
 		t.Error("`read` on a claude binding must not be accepted as a context channel")
+	}
+}
+
+// A dispatched Claude performer's context channel is Claude's own `Read` tool: a
+// read-only grant passes with no shell, and a grant with no read tool and no satelle
+// shell is still refused with a finding that names `Read`, not the grok read_file.
+func TestValidate_ClaudeContextChannel(t *testing.T) {
+	run := func(tools string) Report {
+		agents := config.AgentsConfig{
+			Executor: config.AgentBinding{Command: "in-loop"},
+			Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
+			Agents:   map[string]config.AgentBinding{"planner": {Command: agentcli.DefaultClaudeCommand, Tools: tools}},
+		}
+		return Validate(agents, nil, channelWF("planner"))
+	}
+	if got := findingWith(run("Read,Grep,Glob").Problems, "no context channel"); got != "" {
+		t.Errorf("claude with Read: unexpected context-channel problem: %s", got)
+	}
+	if got := findingWith(run("read_file").Problems, "no context channel"); got == "" {
+		t.Error("`read_file` on a claude binding must not be accepted as a context channel")
+	}
+	r := run("Grep,Glob")
+	got := findingWith(r.Problems, "no context channel")
+	if got == "" || r.OK() {
+		t.Fatalf("claude without Read: want a context-channel problem, got problems=%v", r.Problems)
+	}
+	if !strings.Contains(got, "`Read` for disk reads") || strings.Contains(got, "read_file") {
+		t.Errorf("claude finding must name `Read`, not read_file: %s", got)
 	}
 }
 

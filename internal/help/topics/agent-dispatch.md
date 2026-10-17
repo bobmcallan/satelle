@@ -89,9 +89,9 @@ The two roles get their context by opposite routes, so they need opposite grants
   reconstruct context by *pulling* the story, its documents, and the ledger, so
   the grant must carry a **context channel**: either `Bash(satelle:*)` (a broad
   `Bash`, `Bash(*)` or `*` also qualifies) for the read-only satelle CLI, **or**
-  `read_file` for disk reads under `~/.satelle/<repo-key>/stories/<id>/`.
-  Claude-only `Read` does **not** qualify — the Claude pull path is the CLI, not
-  a disk-first rubric.
+  the adapter's own disk-read tool for disk reads under
+  `~/.satelle/<repo-key>/stories/<id>/` (Claude `Read`, pi `read`, grok
+  `read_file`); another adapter's tool name does not qualify.
 - **Reviewers** (`role = "reviewer"`, named by a step's `reviewers:` or by a
   `[[gate]]` entry) need **no channel**: satelle *pushes* the attachments into the transition payload's
   `docs` array, and reviewer bindings never reach the dispatch path that
@@ -1380,8 +1380,8 @@ permission mode the harness runs in:
   `--tools`, a cursor performer not asking for `--mode ask`, an in-loop or cloud
   seat), or, for a performer, whose read-only grant leaves it no context channel.
   One finding per cause, naming the binding and the step. A pi seat with
-  `--tools {tools}` and `tools = "read,grep,find,ls"` passes; a claude performer
-  cannot, because its only context channel is the satelle CLI through a shell.
+  `--tools {tools}` and `tools = "read,grep,find,ls"` passes, and so does a claude performer granted
+  `Read,Grep,Glob`; a claude performer with neither `Read` nor a satelle shell cannot.
 - **Recorded.** Each reviewer `agent_invocation` row carries
   `system_prompt_bytes`, `offered_tool_count` and `offered_tools_source`
   (`flag`, `harness` — claude stream's own `system/init` tool list — or
