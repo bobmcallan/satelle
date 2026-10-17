@@ -2,13 +2,19 @@ package verb_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -328,5 +334,315 @@ func TestWaveWritesNothing(t *testing.T) {
 	}
 	if after := snap(); after != before {
 		t.Errorf("story wave changed the store (stories, ledger or leases):\nbefore %s\nafter  %s", before, after)
+	}
+}
+
+// --- cross-repo depends-on:<repo>/<id> ---
+
+const sibName = "satelle-server"
+
+// mkSibling builds a real satelle repo called name: the given workflows on disk,
+// and a database under the isolated runtime plane holding whatever build creates.
+// A nil build leaves the repo with no database at all.
+func mkSibling(t *testing.T, name string, workflows map[string]string, build func(db *store.DB)) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), name)
+	wfDir := filepath.Join(root, config.DefaultDataDir, "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, config.DefaultDataDir, config.ConfigName), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for n, body := range workflows {
+		if err := os.WriteFile(filepath.Join(wfDir, n+".toml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if build == nil {
+		return root
+	}
+	db, err := store.Open(config.Config{}.ResolveDB(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	build(db)
+	return root
+}
+
+// sibStory creates one story in a sibling database and returns its id.
+func sibStory(t *testing.T, db *store.DB, in workitem.CreateInput) string {
+	t.Helper()
+	in.Kind = workitem.KindStory
+	in.Title = "sibling"
+	it, err := db.Stories.Create(context.Background(), in, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return it.ID
+}
+
+// siblingEpic wires the invoking repo with the wave workflows, registers the
+// sibling roots, and returns an epic whose children may depend across repos.
+func siblingEpic(t *testing.T, registry map[string][]string) workitem.Item {
+	t.Helper()
+	wireWithWorkflows(t, waveWF("parallel"))
+	verb.StubSiblingRegistry(t, registry, t.TempDir())
+	return waveEpic(t)
+}
+
+func waitingOn(t *testing.T, res verb.WaveResult, child workitem.Item) verb.WaveBlocker {
+	t.Helper()
+	o, ok := omittedByID(res, child.ID)
+	if !ok || len(o.WaitingOn) != 1 {
+		t.Fatalf("%s must be omitted waiting on exactly one dependency, got %+v", child.ID, res.Omitted)
+	}
+	if !strings.Contains(o.Reason, o.WaitingOn[0].ID+" ("+o.WaitingOn[0].Status+")") && !o.WaitingOn[0].Cancelled {
+		t.Errorf("reason %q must carry the blocker as <id> (<status>)", o.Reason)
+	}
+	return o.WaitingOn[0]
+}
+
+// AC4: a child is runnable only when the sibling story is terminal on the sibling's
+// own route; otherwise it is omitted naming <repo>/<id> and the sibling status.
+func TestWaveCrossRepoDependency(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	var done, running string
+	root := mkSibling(t, sibName, waveWF("parallel"), func(db *store.DB) {
+		done = sibStory(t, db, workitem.CreateInput{Category: "fix", Status: "done"})
+		running = sibStory(t, db, workitem.CreateInput{Category: "fix", Status: "in_progress"})
+	})
+	epic := siblingEpic(t, map[string][]string{sibName: {root}})
+	ready := waveChild(t, "depends-on:"+sibName+"/"+done)
+	held := waveChild(t, "depends-on:"+sibName+"/"+running)
+
+	res, err := wave(t, epic.ID)
+	if err != nil {
+		t.Fatalf("wave: %v", err)
+	}
+	if !reflect.DeepEqual(res.Runnable, []string{ready.ID}) {
+		t.Errorf("runnable = %v, want only the child whose sibling story is done (%s)", res.Runnable, ready.ID)
+	}
+	b := waitingOn(t, res, held)
+	if b.ID != sibName+"/"+running || b.Status != "in_progress" {
+		t.Errorf("waiting_on = %+v, want %s/%s (in_progress)", b, sibName, running)
+	}
+}
+
+// AC5: a sibling story that is done under an open container does not satisfy the
+// edge — for an epic-set parent and for a parent_id ancestor.
+func TestWaveCrossRepoDependencyNeedsEveryContainerTerminal(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	var openEpic, underOpenEpic, closedEpicChild, grand, underGrand string
+	root := mkSibling(t, sibName, waveWF("parallel"), func(db *store.DB) {
+		openEpic = sibStory(t, db, workitem.CreateInput{Category: "epic-parent", Status: "ready", Tags: []string{"epic:open"}})
+		underOpenEpic = sibStory(t, db, workitem.CreateInput{Category: "fix", Status: "done", Tags: []string{"epic:open"}})
+		sibStory(t, db, workitem.CreateInput{Category: "epic-parent", Status: "done", Tags: []string{"epic:closed"}})
+		closedEpicChild = sibStory(t, db, workitem.CreateInput{Category: "fix", Status: "done", Tags: []string{"epic:closed"}})
+		grand = sibStory(t, db, workitem.CreateInput{Category: "fix", Status: "in_progress"})
+		mid := sibStory(t, db, workitem.CreateInput{Category: "fix", Status: "done", ParentID: grand})
+		underGrand = sibStory(t, db, workitem.CreateInput{Category: "fix", Status: "done", ParentID: mid})
+	})
+	epic := siblingEpic(t, map[string][]string{sibName: {root}})
+	byEpic := waveChild(t, "depends-on:"+sibName+"/"+underOpenEpic)
+	byGrand := waveChild(t, "depends-on:"+sibName+"/"+underGrand)
+	ok := waveChild(t, "depends-on:"+sibName+"/"+closedEpicChild)
+
+	res, err := wave(t, epic.ID)
+	if err != nil {
+		t.Fatalf("wave: %v", err)
+	}
+	if !reflect.DeepEqual(res.Runnable, []string{ok.ID}) {
+		t.Errorf("runnable = %v, want only the child under a closed epic (%s)", res.Runnable, ok.ID)
+	}
+	if b := waitingOn(t, res, byEpic); b.Status != "done; container "+openEpic+" open" || b.ID != sibName+"/"+underOpenEpic {
+		t.Errorf("epic-set container: waiting_on = %+v", b)
+	}
+	o, _ := omittedByID(res, byEpic.ID)
+	if want := sibName + "/" + underOpenEpic + " (done; container " + openEpic + " open)"; !strings.Contains(o.Reason, want) {
+		t.Errorf("reason %q must contain %q", o.Reason, want)
+	}
+	if b := waitingOn(t, res, byGrand); b.Status != "done; container "+grand+" open" {
+		t.Errorf("parent_id ancestor: waiting_on = %+v, want the grandparent %s named", b, grand)
+	}
+}
+
+// AC5/AC6: a done sibling story whose parent_id names no story cannot be judged
+// finished — its container is unknown — so the edge is unresolved, never satisfied.
+func TestWaveCrossRepoDependencyMissingContainerIsUnresolved(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	var orphan string
+	root := mkSibling(t, sibName, waveWF("parallel"), func(db *store.DB) {
+		orphan = sibStory(t, db, workitem.CreateInput{Category: "fix", Status: "done", ParentID: "sty_00000000"})
+	})
+	epic := siblingEpic(t, map[string][]string{sibName: {root}})
+	child := waveChild(t, "depends-on:"+sibName+"/"+orphan)
+
+	res, err := wave(t, epic.ID)
+	if err != nil {
+		t.Fatalf("wave: %v", err)
+	}
+	if len(res.Runnable) != 0 {
+		t.Errorf("runnable = %v, want none: the sibling story's container is missing", res.Runnable)
+	}
+	if b := waitingOn(t, res, child); !strings.HasPrefix(b.Status, "unresolved: ") || !strings.Contains(b.Status, "sty_00000000") {
+		t.Errorf("waiting_on = %+v, want an unresolved status naming the missing container", b)
+	}
+}
+
+// AC6: whatever cannot be read is a blocker whose status starts "unresolved:",
+// never a satisfied dependency.
+func TestWaveCrossRepoUnresolvedIsABlocker(t *testing.T) {
+	cases := []struct {
+		name  string
+		tag   func(t *testing.T) (registry map[string][]string, ref string, after func(t *testing.T))
+		wants []string
+	}{
+		{
+			name: "story not found",
+			tag: func(t *testing.T) (map[string][]string, string, func(*testing.T)) {
+				root := mkSibling(t, sibName, waveWF("parallel"), func(db *store.DB) {})
+				return map[string][]string{sibName: {root}}, "sty_deadbeef", nil
+			},
+			wants: []string{"not found"},
+		},
+		{
+			name: "ambiguous repo name",
+			tag: func(t *testing.T) (map[string][]string, string, func(*testing.T)) {
+				var id string
+				root := mkSibling(t, sibName, waveWF("parallel"), func(db *store.DB) {
+					id = sibStory(t, db, workitem.CreateInput{Category: "fix", Status: "done"})
+				})
+				// Unambiguous when the tag is written, ambiguous when wave reads it.
+				return map[string][]string{sibName: {root}}, id, func(t *testing.T) {
+					verb.StubSiblingRegistry(t, map[string][]string{sibName: {root, t.TempDir()}}, t.TempDir())
+				}
+			},
+			wants: []string{"ambiguous repo name"},
+		},
+		{
+			name: "unreadable workflows",
+			tag: func(t *testing.T) (map[string][]string, string, func(*testing.T)) {
+				var id string
+				root := mkSibling(t, sibName, waveWF("parallel"), func(db *store.DB) {
+					id = sibStory(t, db, workitem.CreateInput{Category: "fix", Status: "done"})
+				})
+				wf := filepath.Join(root, config.DefaultDataDir, "workflows")
+				if err := os.RemoveAll(wf); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(wf, []byte("not a directory"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return map[string][]string{sibName: {root}}, id, nil
+			},
+			wants: []string{"workflows", "unreadable"},
+		},
+		{
+			name: "absent database",
+			tag: func(t *testing.T) (map[string][]string, string, func(*testing.T)) {
+				root := mkSibling(t, sibName, waveWF("parallel"), nil)
+				return map[string][]string{sibName: {root}}, "sty_deadbeef", nil
+			},
+			wants: []string{"no such file"},
+		},
+		{
+			name: "a selected column is missing",
+			tag: func(t *testing.T) (map[string][]string, string, func(*testing.T)) {
+				var id string
+				root := mkSibling(t, sibName, waveWF("parallel"), func(db *store.DB) {
+					id = sibStory(t, db, workitem.CreateInput{Category: "fix", Status: "done"})
+					if _, err := db.SQL().Exec(`ALTER TABLE work_items DROP COLUMN assignee`); err != nil {
+						t.Fatal(err)
+					}
+				})
+				return map[string][]string{sibName: {root}}, id, nil
+			},
+			wants: []string{"read stories", "assignee"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SATELLE_HOME", t.TempDir())
+			registry, ref, after := tc.tag(t)
+			epic := siblingEpic(t, registry)
+			child := waveChild(t, "depends-on:"+sibName+"/"+ref)
+			if after != nil {
+				after(t)
+			}
+			res, err := wave(t, epic.ID)
+			if err != nil {
+				t.Fatalf("an unresolved dependency must not fail wave: %v", err)
+			}
+			if len(res.Runnable) != 0 {
+				t.Fatalf("an unresolved dependency must never be satisfied, runnable = %v", res.Runnable)
+			}
+			b := waitingOn(t, res, child)
+			if !strings.HasPrefix(b.Status, "unresolved:") {
+				t.Fatalf("status = %q, want it to begin %q", b.Status, "unresolved:")
+			}
+			for _, w := range tc.wants {
+				if !strings.Contains(b.Status, w) {
+					t.Errorf("status %q must say why: missing %q", b.Status, w)
+				}
+			}
+		})
+	}
+}
+
+// AC7: a cancelled sibling story does not satisfy the edge and reads as cancelled.
+func TestWaveCrossRepoCancelledDependency(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	var id string
+	root := mkSibling(t, sibName, waveWF("parallel"), func(db *store.DB) {
+		id = sibStory(t, db, workitem.CreateInput{Category: "fix", Status: "cancelled"})
+	})
+	epic := siblingEpic(t, map[string][]string{sibName: {root}})
+	child := waveChild(t, "depends-on:"+sibName+"/"+id)
+
+	res, err := wave(t, epic.ID)
+	if err != nil {
+		t.Fatalf("wave: %v", err)
+	}
+	o, ok := omittedByID(res, child.ID)
+	if !ok || !strings.Contains(o.Reason, "cancelled") || len(o.WaitingOn) != 1 || !o.WaitingOn[0].Cancelled || o.WaitingOn[0].ID != sibName+"/"+id {
+		t.Fatalf("a cancelled sibling story must be reported cancelled: %+v", res.Omitted)
+	}
+}
+
+// AC8: the sibling is read in-process and read-only — its database file is
+// byte-identical, with an unchanged mtime, after a wave call.
+func TestWaveCrossRepoReadLeavesTheSiblingDatabaseUntouched(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	var id string
+	root := mkSibling(t, sibName, waveWF("parallel"), func(db *store.DB) {
+		id = sibStory(t, db, workitem.CreateInput{Category: "fix", Status: "done"})
+	})
+	epic := siblingEpic(t, map[string][]string{sibName: {root}})
+	child := waveChild(t, "depends-on:"+sibName+"/"+id)
+
+	dbPath := config.Config{}.ResolveDB(root)
+	fingerprint := func() (string, time.Time) {
+		b, err := os.ReadFile(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st, err := os.Stat(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fmt.Sprintf("%x", sha256.Sum256(b)), st.ModTime()
+	}
+	sumBefore, mtimeBefore := fingerprint()
+	res, err := wave(t, epic.ID)
+	if err != nil {
+		t.Fatalf("wave: %v", err)
+	}
+	if !reflect.DeepEqual(res.Runnable, []string{child.ID}) {
+		t.Fatalf("runnable = %v, want the child (sibling story is done)", res.Runnable)
+	}
+	if sumAfter, mtimeAfter := fingerprint(); sumAfter != sumBefore || !mtimeAfter.Equal(mtimeBefore) {
+		t.Errorf("the sibling database changed: sha %s -> %s, mtime %v -> %v", sumBefore, sumAfter, mtimeBefore, mtimeAfter)
 	}
 }

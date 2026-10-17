@@ -88,7 +88,7 @@ func buildUIDrainSnapshot(ctx context.Context, a *app.App) (*mirror.Snapshot, er
 // this: the mirror overwrites a partition's slug from whichever snapshot arrives
 // last, so one builder on the raw root undoes the others.
 func partitionSlug(a *app.App) string {
-	return filepath.Base(config.CanonicalRepoRoot(a.RepoRoot))
+	return config.RepoName(a.RepoRoot)
 }
 
 func buildUISnapshotOpts(ctx context.Context, a *app.App, drain bool) (*mirror.Snapshot, error) {
@@ -206,7 +206,7 @@ func buildUISnapshotOpts(ctx context.Context, a *app.App, drain bool) (*mirror.S
 	// still said the worktree.
 	canon := config.CanonicalRepoRoot(a.RepoRoot)
 	id := mirror.IdentityMeta{
-		ProjectName: filepath.Base(canon),
+		ProjectName: config.RepoName(a.RepoRoot),
 		RepoRoot:    canon,
 		FooterEmail: resolveUser(a.Config, a.RepoRoot).Display(),
 	}

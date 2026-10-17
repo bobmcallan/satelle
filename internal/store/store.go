@@ -78,9 +78,14 @@ func Open(path string) (*DB, error) {
 		}
 	}
 
-	di := docindex.New(sqldb)
-	di.SetDefaults(embeddedDefaultDocs())
+	return wire(sqldb), nil
+}
 
+// wire attaches the domain stores to an opened handle. It runs no migration and
+// writes nothing, so Open and OpenReadOnly share it.
+func wire(sqldb *sql.DB) *DB {
+	di := docindex.New(sqldb)
+	di.SetDefaults(EmbeddedDefaultDocs())
 	return &DB{
 		db:       sqldb,
 		Ledger:   ledger.New(sqldb),
@@ -88,7 +93,46 @@ func Open(path string) (*DB, error) {
 		DocIndex: di,
 		Leases:   lease.New(sqldb),
 		Retrieve: retrieve.New(sqldb),
-	}, nil
+	}
+}
+
+// ReadOnlyDSN is the one definition of a read-only sqlite connection string: the
+// file opened mode=ro with a busy timeout. It deliberately carries no query_only
+// pragma — VACUUM INTO, which cli.vacuumInto runs through it, is a read of the
+// source that query_only could refuse — so OpenReadOnly adds that itself.
+func ReadOnlyDSN(path string) string {
+	return "file:" + filepath.ToSlash(path) + "?mode=ro&_pragma=busy_timeout(5000)"
+}
+
+// OpenReadOnly opens an EXISTING database at path for reading only, for a caller
+// that must see another repo's stories without touching that repo: mode=ro and
+// query_only, no mkdir, no create, no migration, no marker check, no journal_mode
+// change. An absent path is an error and nothing is created. A database whose
+// schema this build does not know fails at the read, not here, so the caller
+// reports it rather than treating the data as present.
+//
+// immutable=1 is not used: the other repo may be live, and an immutable open
+// would serve a stale page set. Under mode=ro SQLite may create transient
+// -wal/-shm sidecars beside a WAL database; they carry no story data and the
+// main database file is not written.
+func OpenReadOnly(path string) (*DB, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, fmt.Errorf("store: empty database path")
+	}
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("store: open read-only %s: %w", path, err)
+	}
+	sqldb, err := sql.Open("sqlite", ReadOnlyDSN(path)+"&_pragma=query_only(1)")
+	if err != nil {
+		return nil, fmt.Errorf("store: open read-only %s: %w", path, err)
+	}
+	sqldb.SetMaxOpenConns(1)
+	// sql.Open is lazy; a file that is not a database fails here, not at first read.
+	if err := sqldb.Ping(); err != nil {
+		sqldb.Close()
+		return nil, fmt.Errorf("store: open read-only %s: %w", path, err)
+	}
+	return wire(sqldb), nil
 }
 
 func init() {
@@ -106,10 +150,10 @@ func embeddedWorkflowBody(name string) string {
 	return ""
 }
 
-// embeddedDefaultDocs maps the binary's canonical default substrate into
+// EmbeddedDefaultDocs maps the binary's canonical default substrate into
 // docindex.Doc seeds (Kind/Name/Body) for the read-time overlay. config is the
 // single source of those bytes; the doc index fills in headline/hash/path.
-func embeddedDefaultDocs() []docindex.Doc {
+func EmbeddedDefaultDocs() []docindex.Doc {
 	defs := config.EmbeddedDefaults()
 	out := make([]docindex.Doc, 0, len(defs))
 	for _, d := range defs {

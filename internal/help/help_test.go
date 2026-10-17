@@ -718,6 +718,39 @@ func TestEmbeddedHelpHasNoUnreachableReferences(t *testing.T) {
 	}
 }
 
+// TestEpicWaveDocumentsCrossRepoDependsOn: the cross-repo depends-on form, the
+// name it takes, when it is satisfied, and that unresolved blocks are all in
+// `satelle help epic-wave`.
+func TestEpicWaveDocumentsCrossRepoDependsOn(t *testing.T) {
+	wave, ok := Get("epic-wave")
+	if !ok {
+		t.Fatal("epic-wave topic not found")
+	}
+	start := strings.Index(wave.Body, "## Depending on a story in another repo")
+	if start < 0 {
+		t.Fatal("epic-wave topic lost its cross-repo depends-on section")
+	}
+	section := wave.Body[start:]
+	if end := strings.Index(section[3:], "\n## "); end >= 0 {
+		section = section[:end+3]
+	}
+	for _, want := range []string{
+		"depends-on:<repo>/<story id>",
+		"satelle workspace list",      // where the repo name comes from
+		"not the hosted project slug", // and what it is not
+		"**its own",                   // satisfied by the other repo's route...
+		"container",                   // ...and every container above the story
+		"(done; container <id> open)",
+		"**Unresolved is a blocker.**",
+		"unresolved: <why>",
+		"read-only",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("epic-wave cross-repo section missing %q", want)
+		}
+	}
+}
+
 // TestRemotePlacementTopics (sty_dde8b6a4): where a parallel epic child runs is
 // stated in `satelle help epic-wave`, and the two step.toml keys that declare it
 // in `satelle help agent-dispatch`.

@@ -37,6 +37,38 @@ line names the dependency (a cancelled one is called out as cancelled).
 There is no fallback to `order:` or to every child — the declaration is the
 authority.
 
+## Depending on a story in another repo
+
+`depends-on:<repo>/<story id>` (for example `depends-on:satelle-server/sty_620c56ea`)
+holds a child until a story in **another registered repo** is finished — for a
+change that must not ship before the other repo's does. `<repo>` is the repo's
+registry name: the last segment of its path in `satelle workspace list`, the same
+name the web partition shows. It is not the hosted project slug.
+
+- **Write time** checks only the form: `<repo>` must match exactly one registered
+  repo, not this one (a worktree counts as its main tree), and `<story id>` must
+  be a story id. Whether the story exists is wave's question. A cross-repo target
+  is outside the epic-set and cycle checks, and a story whose only dependencies
+  are cross-repo needs no epic set. There is no cross-repo cycle check.
+- **Satisfied** only when the other repo's story is terminal on **its own
+  route** and every **container** above it — its `parent_id` chain and the
+  epic-parent of each `epic:<theme>` it carries — is terminal too. A child's done
+  does not carry the release; the container's close does. Otherwise the child is
+  omitted, and the line reads `<repo>/<id> (<status>)`, or
+  `<repo>/<id> (done; container <id> open)` when the story is done under an open
+  container. A cancelled story is called out as cancelled, as for a local one.
+- **Unresolved is a blocker.** A repo that is not registered, an ambiguous repo
+  name, a missing `.satelle/` or database, a workflow that cannot be read, a route
+  that governs no story, or a story that is not found makes the dependency
+  `unresolved: <why>`. Wave still exits zero and omits the child; it never treats
+  an unreadable dependency as satisfied.
+- **Read-only.** The other repo is read in-process: its database is opened
+  read-only (nothing created, nothing migrated) and its workflows are read from
+  disk (nothing indexed). No command runs in it and its tree is not touched.
+
+Cut a child that depends across repos from trunk; its dependency's change lives in
+another repo and is not on any branch here.
+
 ## Engagement honours the wave
 
 Entering an engaging status (`satelle story set <child> --status plan`) is

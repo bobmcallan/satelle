@@ -1,3 +1,13 @@
+## [0.0.696] - 2026-10-18
+
+### Added
+- A story can depend on a story in another registered satelle repo: `depends-on:<repo>/<story id>`, where `<repo>` is the name `satelle workspace list` shows. `satelle story wave` holds the dependent child until the other repo's story, and every container above it (its parent chain and its epic), is terminal on that repo's own route. An epic child's done therefore counts only once its epic, which carries the release, has closed. A repo, workflow, database or story that cannot be read is reported as `unresolved:` and blocks; it never counts as satisfied. The other repo is read in-process and read-only (no create, no migrate, no index write). A tag naming an unregistered or ambiguous repo, or this repo, is refused when written. See `satelle help epic-wave`. (sty_d00307f7)
+
+## [serve-v0.0.174] - 2026-10-18
+
+### Changed
+- The service binary carries the shared repo-name rule (`config.RepoName`), the read-only workflow read (`docindex.ReadWorkflowDocs`) and the cross-repo `depends-on` help text. (sty_d00307f7)
+
 ## [0.0.695] - 2026-10-18
 
 ### Fixed

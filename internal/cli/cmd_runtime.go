@@ -16,6 +16,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/store"
 	_ "modernc.org/sqlite"
 )
 
@@ -573,8 +574,7 @@ func vacuumInto(srcDB, dstDB string) error {
 		return err
 	}
 	// Open source read-only so we never mutate the operator's live ledger.
-	dsn := "file:" + filepath.ToSlash(srcDB) + "?mode=ro&_pragma=busy_timeout(5000)"
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", store.ReadOnlyDSN(srcDB))
 	if err != nil {
 		return err
 	}

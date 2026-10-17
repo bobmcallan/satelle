@@ -272,7 +272,11 @@ func assessWave(ctx context.Context, store *workitem.Store, wfs []docindex.Doc, 
 	for _, c := range set.Children {
 		cache[c.ID], known[c.ID] = waveStateOf(wfs, c), true
 	}
+	siblings := &siblingReader{}
 	state := func(id string) (waveState, bool) {
+		if repo, sid, cross := splitDependsOnTarget(id); cross {
+			return siblings.state(ctx, repo, sid), true
+		}
 		if known[id] {
 			return cache[id], true
 		}

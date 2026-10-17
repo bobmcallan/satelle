@@ -78,6 +78,9 @@ var wiringVars = []wiringVar{
 	{"embeddedChangelog", &embeddedChangelog}, // go:embed content; tests substitute a fixture
 	{"driverWindowReader", &driverWindowReader},
 	{"driverSnapshotter", &driverSnapshotter},
+	{"findRegistered", &findRegistered},   // cross-repo depends-on: the workspace registry lookup
+	{"currentRepoRoot", &currentRepoRoot}, // ... the invoking repo's root
+	{"loadSibling", &loadSibling},         // ... the read-only read of a sibling repo
 }
 
 // wiringExempt names every package-level variable that is NOT per-invocation

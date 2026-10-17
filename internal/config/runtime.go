@@ -386,3 +386,16 @@ func CanonicalRepoRoot(repoRoot string) string {
 	}
 	return main
 }
+
+// RepoName is the name a repo goes by in the workspace registry and the web
+// partition: the base of its canonical root, so a worktree and its main tree are
+// one name. It is what `satelle workspace list` shows and what a cross-repo
+// `depends-on:<repo>/<id>` names.
+//
+// It is NOT the hosted project slug. Slugify and ResolveBoundProject own that
+// different fact — the project a repo syncs to, which a `[sync] project` override
+// can change and which is slugified — so a repo can sync as one name and be
+// registered as another. Do not use either for registry identity.
+func RepoName(repoRoot string) string {
+	return filepath.Base(CanonicalRepoRoot(repoRoot))
+}

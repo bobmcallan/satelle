@@ -282,7 +282,6 @@ func (s *Store) List(ctx context.Context, kind string) ([]Doc, error) {
 	}
 	defer rows.Close()
 	out := []Doc{}
-	seen := map[string]struct{}{}
 	for rows.Next() {
 		var (
 			d              Doc
@@ -295,15 +294,25 @@ func (s *Store) List(ctx context.Context, kind string) ([]Doc, error) {
 		d.ModTime = parseTime(modS)
 		d.IndexedAt = parseTime(indexedS)
 		out = append(out, d)
-		seen[d.Kind+"\x00"+d.Name] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// Overlay defaults that have no disk row. Kind filter applies; re-sort so
-	// SessionStart injection order matches pure-disk ordering (AC5).
+	return overlayDefaults(out, s.defaults, kind), nil
+}
+
+// overlayDefaults appends the embedded defaults whose (kind,name) has no doc in
+// disk — disk always wins — honouring a kind filter (empty = every kind), and
+// re-sorts so SessionStart injection order matches pure-disk ordering (AC5). It
+// is the one overlay List and ReadWorkflowDocs share.
+func overlayDefaults(disk, defaults []Doc, kind string) []Doc {
+	seen := make(map[string]struct{}, len(disk))
+	for _, d := range disk {
+		seen[d.Kind+"\x00"+d.Name] = struct{}{}
+	}
 	kindFilter := strings.TrimSpace(kind)
-	for _, def := range s.defaults {
+	out := disk
+	for _, def := range defaults {
 		if kindFilter != "" && def.Kind != kindFilter {
 			continue
 		}
@@ -318,7 +327,47 @@ func (s *Store) List(ctx context.Context, kind string) ([]Doc, error) {
 		}
 		return out[i].Name < out[j].Name
 	})
-	return out, nil
+	return out
+}
+
+// ReadWorkflowDocs is the read-only twin of Store.List("workflows"): it reads the
+// authored workflows in dir straight from disk and overlays defaults, with no
+// index and no write of any kind — the way to read ANOTHER repo's process without
+// touching its database. It keeps List's unreadable semantics: an unreadable dir,
+// or a file or subdirectory inside it that cannot be read, yields ONLY the
+// UnreadableDoc sentinel (no embedded overlay), so a process that exists and
+// cannot be seen is never silently replaced by the binary's default
+// (sty_d6e209aa). An absent or empty dir yields the defaults alone.
+func ReadWorkflowDocs(dir string, defaults []Doc) []Doc {
+	dir = strings.TrimSpace(dir)
+	disk := []Doc{}
+	if dir != "" {
+		if state, perr := ProbeDir(dir); state == DirUnreadable {
+			return []Doc{UnreadableDoc("workflows", dir, perr)}
+		}
+		files, err := walkMarkdown(dir)
+		if err != nil {
+			return []Doc{unreadableFrom(dir, err)}
+		}
+		for _, fi := range files {
+			d, err := docFromFile("workflows", fi)
+			if err != nil {
+				return []Doc{unreadableFrom(fi.path, err)}
+			}
+			disk = append(disk, d)
+		}
+	}
+	return overlayDefaults(disk, defaults, "workflows")
+}
+
+// unreadableFrom builds the sentinel for err, naming the path a *ReadError carries
+// and falling back to path for any other failure.
+func unreadableFrom(path string, err error) Doc {
+	var rerr *ReadError
+	if errors.As(err, &rerr) {
+		return UnreadableDoc("workflows", rerr.Path, rerr.Err)
+	}
+	return UnreadableDoc("workflows", path, err)
 }
 
 // Count returns the effective doc count for a kind (empty kind = all kinds),
@@ -470,17 +519,20 @@ func (s *Store) indexedPaths(ctx context.Context, kind string) (map[string]index
 	return out, rows.Err()
 }
 
-func (s *Store) upsert(ctx context.Context, kind string, fi fileInfo, now time.Time) error {
+// docFromFile reads one authored file into a Doc, exactly as authored. A read
+// failure carries a *ReadError, so a caller can tell an unreadable file from any
+// other failure.
+func docFromFile(kind string, fi fileInfo) (Doc, error) {
 	body, err := os.ReadFile(fi.path)
 	if err != nil {
-		return fmt.Errorf("docindex: read %s: %w", fi.path, &ReadError{Path: fi.path, Err: err})
+		return Doc{}, fmt.Errorf("docindex: read %s: %w", fi.path, &ReadError{Path: fi.path, Err: err})
 	}
 	// Workflows are indexed exactly as authored. The DOT normalisation that used
 	// to run here existed only to feed the DOT parser; with that front end retired
 	// a lifecycle is done.toml + step.toml, which the index stores verbatim
 	// (sty_d953c5d8).
 	sum := sha256.Sum256(body)
-	d := Doc{
+	return Doc{
 		Kind:     kind,
 		Name:     strings.TrimSuffix(filepath.Base(fi.path), filepath.Ext(fi.path)),
 		Path:     fi.path,
@@ -489,6 +541,13 @@ func (s *Store) upsert(ctx context.Context, kind string, fi fileInfo, now time.T
 		Hash:     hex.EncodeToString(sum[:]),
 		Size:     int64(len(body)),
 		ModTime:  fi.mod,
+	}, nil
+}
+
+func (s *Store) upsert(ctx context.Context, kind string, fi fileInfo, now time.Time) error {
+	d, err := docFromFile(kind, fi)
+	if err != nil {
+		return err
 	}
 	_, err = s.db.ExecContext(ctx, `
         INSERT INTO authored_docs (kind, name, path, headline, body, hash, size, mod_time, indexed_at)

@@ -12,7 +12,8 @@ import (
 )
 
 // DependsOnPrefix prefixes the tag that declares one story's dependency on
-// another story in the same epic set. Distinct from `order:` (sprint position)
+// another story in the same epic set, or — written <repo>/<story id> — on a story
+// in another registered repo (dependson_sibling.go). Distinct from `order:` (sprint position)
 // and `blocked-by:` (the park cue for a world that is not ready). The binary
 // validates the declaration; it does not compute a wave or change engagement
 // from it.
@@ -133,7 +134,19 @@ func checkDependsOn(ctx context.Context, store dependsOnStore, self, parentID st
 // which replace their stored edges, so a cycle that only closes across the
 // batch's own changes is found (sty_af0b1761).
 func checkDependsOnPending(ctx context.Context, store dependsOnStore, self, parentID string, tags []string, pending map[string][]string) error {
-	targets := dependsOnTargets(tags)
+	var targets []string
+	for _, t := range dependsOnTargets(tags) {
+		if repo, id, cross := splitDependsOnTarget(t); cross {
+			// A story in another repo has no place in this repo's epic set or
+			// cycle graph; it is judged by the registry alone, here, and by its
+			// own repo's route when wave reads it.
+			if err := checkSiblingTarget(t, repo, id); err != nil {
+				return err
+			}
+			continue
+		}
+		targets = append(targets, t)
+	}
 	if len(targets) == 0 {
 		return nil
 	}
@@ -162,7 +175,7 @@ func checkDependsOnPending(ctx context.Context, store dependsOnStore, self, pare
 		}
 		for _, it := range items {
 			allowed[it.ID] = true
-			if to := dependsOnTargets(it.Tags); len(to) > 0 {
+			if to := localDependsOnTargets(it.Tags); len(to) > 0 {
 				edges[it.ID] = to
 			}
 		}

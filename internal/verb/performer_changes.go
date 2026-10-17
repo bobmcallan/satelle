@@ -137,7 +137,7 @@ func planPerformerChanges(ctx context.Context, store dependsOnStore, container w
 			for _, t := range c.Tags {
 				if strings.HasPrefix(t, DependsOnPrefix) {
 					touched[c.Story] = i
-					pending[c.Story] = dependsOnTargets(canon)
+					pending[c.Story] = localDependsOnTargets(canon)
 				}
 			}
 		case "create-child":

@@ -13,12 +13,12 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/lease"
+	"github.com/bobmcallan/satelle/internal/store"
 	_ "modernc.org/sqlite"
 )
 
@@ -54,8 +54,7 @@ func detectLiveRuntime(cfg config.Config, repoRoot, legacyDB string) ([]liveHold
 // scanLiveLeases opens legacyDB read-only and returns non-stale engagement
 // leases. A missing engagement_lease table (pre-lease DB) yields no holders.
 func scanLiveLeases(legacyDB string) ([]liveHolder, error) {
-	dsn := "file:" + filepath.ToSlash(legacyDB) + "?mode=ro&_pragma=busy_timeout(5000)"
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", store.ReadOnlyDSN(legacyDB))
 	if err != nil {
 		return nil, fmt.Errorf("live-runtime: open legacy db: %w", err)
 	}
