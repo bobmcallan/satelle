@@ -20,6 +20,7 @@ status = "plan"
 agent = "planner"
 skills = ["plan"]
 propose = true
+mark = "ready"
 reject_budget = 3
 reviewers = ["gate-a"]
 requires = ["raised"]
@@ -48,14 +49,14 @@ func TestRouteRendersReadinessKnobs(t *testing.T) {
 	for _, s := range route.Steps {
 		byStatus[s.Status] = s
 	}
-	if p := byStatus["plan"]; !p.Propose || p.RejectBudget != 3 || p.Freeze {
+	if p := byStatus["plan"]; !p.Propose || p.RejectBudget != 3 || p.Freeze || p.Mark != "ready" {
 		t.Errorf("plan step = %+v, want propose and a budget of 3", p)
 	}
 	if c := byStatus["in_progress"]; !c.Freeze || c.Propose {
 		t.Errorf("in_progress step = %+v, want freeze", c)
 	}
 	out := route.Render("backlog")
-	for _, want := range []string{"performer runs before the entry gates", "rejected 3 time(s) before the story parks", "definition freezes on entry"} {
+	for _, want := range []string{"performer runs before the entry gates", `marks the story with the tag "ready"`, "rejected 3 time(s) before the story parks", "definition freezes on entry"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered route must say %q:\n%s", want, out)
 		}

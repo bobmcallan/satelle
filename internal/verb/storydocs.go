@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -21,7 +22,7 @@ func init() {
 }
 
 // KindStoryDocAttached records a document attachment on the story's ledger.
-const KindStoryDocAttached = "story_doc_attached"
+const KindStoryDocAttached = ledger.KindStoryDocAttached
 
 // attachmentDir resolves an item's attachment/bundle directory by KIND
 // (sty_890b86cb). A story's docs live under the home-keyed runtime stories dir
@@ -156,6 +157,9 @@ func writeAttachedDoc(ctx context.Context, item workitem.Item, name, typ, body s
 	payload, _ := json.Marshal(map[string]string{"name": bare, "type": typ})
 	appendLedgerEntry(ctx, item.ID, KindStoryDocAttached, "",
 		fmt.Sprintf("attached %s document %q", typ, bare), payload, now)
+	// A plan attached after an accepted readiness round voids it, whichever path
+	// attached it (sty_a32bd6a9): this core serves `story attach` and the engine.
+	voidReadinessOnAttach(ctx, item, bare)
 	return bare, typ, nil
 }
 

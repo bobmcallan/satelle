@@ -18,6 +18,7 @@ status = "plan"
 agent = "planner"
 skills = ["plan"]
 propose = true
+mark = "ready"
 reject_budget = 3
 reviewers = ["gate-a", "gate-b"]
 requires = ["raised"]
@@ -63,12 +64,18 @@ func TestReadinessKnobsParseOntoStepAndState(t *testing.T) {
 	if !st.Propose || st.RejectBudget != 3 {
 		t.Errorf("readied = propose %v budget %d, want true / 3", st.Propose, st.RejectBudget)
 	}
+	if st.Mark != "ready" {
+		t.Errorf("readied mark = %q, want the declared tag (sty_a32bd6a9)", st.Mark)
+	}
+	if got := stepProviding(t, cat, "coded").Mark; got != "" {
+		t.Errorf("a step that declares no mark has none, got %q", got)
+	}
 	if !stepProviding(t, cat, "coded").Freeze {
 		t.Error("coded must carry freeze")
 	}
 	spec := readinessSpec(t)
 	plan, ok := spec.StateNamed("plan")
-	if !ok || !plan.Propose || plan.RejectBudget != 3 || plan.Freeze {
+	if !ok || !plan.Propose || plan.RejectBudget != 3 || plan.Freeze || plan.Mark != "ready" {
 		t.Errorf("plan state = %+v (found %v)", plan, ok)
 	}
 	if coded, _ := spec.StateNamed("in_progress"); !coded.Freeze {

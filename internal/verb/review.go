@@ -410,6 +410,26 @@ type ExecutorDispatcher interface {
 	DispatchExecutor(ctx context.Context, item workitem.Item, toStatus string) (DispatchResult, error)
 }
 
+// PerformerResolution answers whether entering a step dispatches a named
+// performer. Reason says why not when Dispatched is false.
+type PerformerResolution struct {
+	Agent      string
+	Dispatched bool
+	Reason     string
+	// OutputName is the document name the performer's skill declares for its
+	// artifact (output_name); empty when the skill declares no output contract.
+	OutputName string
+}
+
+// PerformerResolver is the engine's single rule for who performs a step
+// (DispatchExecutor applies it too), exposed so a caller that must know BEFORE
+// it runs anything — `satelle story ready` — asks the same rule a presented
+// edge uses rather than keeping a second copy (sty_a32bd6a9). The dispatcher
+// wired with SetExecutorDispatcher implements it.
+type PerformerResolver interface {
+	StepPerformer(ctx context.Context, item workitem.Item, toStatus string) (PerformerResolution, error)
+}
+
 // executorDispatcher is wired at bootstrap beside the transition gater. Nil
 // keeps every step in-loop (today's behaviour).
 var executorDispatcher ExecutorDispatcher

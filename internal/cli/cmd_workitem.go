@@ -242,6 +242,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyCostCommands()...)
 		parent.AddCommand(storyDiffCommand())
 		parent.AddCommand(storyWaveCommand())
+		parent.AddCommand(storyReadyCommand())
 		parent.AddCommand(storyProofCommand())
 		parent.AddCommand(storyDefinitionEditsCommand())
 		parent.AddCommand(storySyncCommand())
@@ -1533,6 +1534,73 @@ See 'satelle help epic-wave' for the full contract; --json prints the response.`
 			}
 			for _, o := range res.Omitted {
 				fmt.Fprintf(out, "# omitted %s: %s\n", o.ID, o.Reason)
+			}
+			return nil
+		},
+	}
+}
+
+// storyReadyCommand builds `satelle story ready <id> [<id>...]`: ready backlog
+// stories and epics without engaging them (sty_a32bd6a9). It runs each story's
+// readiness step — the one its route declares — records the verdicts on the
+// story, and marks it only when the repo's own readiness gates accept.
+func storyReadyCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "ready <id> [<id>...]",
+		Short: "Ready backlog stories or epics without engaging them",
+		Long: `Run each story's readiness step — its performer, then its reviewers — and
+record the verdicts on the story, without changing its status or taking the
+engagement seat. A story whose readiness gates accept gets the tag the step's
+mark key declares; the work starts later. An epic readies its backlog children
+first, then runs its own step, and is marked only when every child is.
+
+A story is refused, and the others still run, when it is not at the route's start
+status, its round budget is spent, or its step declares no mark or has no
+dispatched performer. One line per story: <id> marked|not-accepted|refused[: why];
+exit is non-zero unless every story was marked. See 'satelle help workflow-convert'.`,
+		Args:        cobra.MinimumNArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			body, err := json.Marshal(map[string]any{"ids": args})
+			if err != nil {
+				return err
+			}
+			// A readiness round runs a performer and reviewers, so an agent caller
+			// hands it to a detached run exactly as it does a gated transition.
+			if verb.DispatchesReviewer("story-ready", body) {
+				if handled, herr := handOffGate(cmd, "story-ready", args[0]); handled {
+					return herr
+				}
+			}
+			resp, err := verb.Dispatch(cmd.Context(), "story-ready", body)
+			if err != nil {
+				return err
+			}
+			var results []verb.ReadyResult
+			if err := json.Unmarshal(resp, &results); err != nil {
+				return fmt.Errorf("story ready: decode response: %w", err)
+			}
+			if v, _ := cmd.Flags().GetBool("json"); v {
+				if err := printJSON(cmd, resp); err != nil {
+					return err
+				}
+			} else {
+				out := cmd.OutOrStdout()
+				for _, r := range results {
+					fmt.Fprintln(out, r.Line())
+					for _, c := range r.Children {
+						fmt.Fprintln(out, "  "+c.Line())
+					}
+				}
+			}
+			unmarked := 0
+			for _, r := range results {
+				if !r.Marked() {
+					unmarked++
+				}
+			}
+			if unmarked > 0 {
+				return fmt.Errorf("story ready: %d of %d not marked", unmarked, len(results))
 			}
 			return nil
 		},

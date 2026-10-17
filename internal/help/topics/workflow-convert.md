@@ -97,8 +97,8 @@ does not make obvious, and the one every conversion gets wrong.**
 
 Step keys: `status`, `agent`, `skills`, `reviewers`, `reviewer_agent`,
 `parallel`, `bundle`, `requires`, `applies_to`, `advise`, `rework`, `propose`,
-`freeze`, `reject_budget`, `waits_on_children`, `schedule`, `after_children`,
-`start`, `terminal`.
+`freeze`, `reject_budget`, `mark`, `waits_on_children`, `schedule`,
+`after_children`, `start`, `terminal`.
 
 `bundle = true` runs the step's entry reviewers that can share one session as
 ONE reviewer session: every rubric rides the prompt verbatim under its own
@@ -140,7 +140,7 @@ provides, the step must require a `waits_on_children` step, and the two keys
 cannot sit on one step. The step may name an `agent`, which then takes the
 container's seat on entry. Absent, nothing changes.
 
-Three keys turn a step into a **readiness step** — a performer that produces an
+Four keys turn a step into a **readiness step** — a performer that produces an
 artifact the entry reviewers then judge, while the story stays editable:
 
 - `propose = true` runs the step's performer (`agent` + `skills`, both required)
@@ -151,6 +151,16 @@ artifact the entry reviewers then judge, while the story stays editable:
   edge — one gate run, however many reviewers rejected in it. Once spent, the next
   presentation is refused with the last objection quoted, and the orchestrator
   parks the story and asks the developer; a resume restarts the count.
+- `mark = "<tag>"` is the tag `satelle story ready` puts on a story (or, on a
+  container's `waits_on_children` step, an epic) whose readiness round was
+  accepted, so a pass can ready backlog stories **without engaging them**. It is a
+  display marker only: whether readiness still holds is decided from the ledger
+  (the latest readiness attempt is accepted, with no definition edit and no plan
+  attached after it), and the mark is removed when it stops holding. The binary
+  compiles in no tag name — a readiness step that declares no `mark` is refused by
+  `story ready`, naming the missing key. `story ready` also needs the step's
+  performer to be a dispatched agent (not empty, `executor`, `reviewer`, or bound
+  in-loop); see `satelle story ready --help`.
 - `freeze = true` makes entry to the step the point where title, body, acceptance
   criteria and category freeze. At most one step of a route may declare it. With
   none, the definition freezes when the story leaves the entry state. Until then

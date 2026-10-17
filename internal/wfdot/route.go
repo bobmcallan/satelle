@@ -96,6 +96,11 @@ type Step struct {
 	// reorders two calls the binary already makes and decides no verdict
 	// (sty_5262592e).
 	Propose bool
+	// Mark is the tag a readiness round that was accepted puts on the story
+	// (`satelle story ready`): a display marker only, the ledger decides whether
+	// readiness holds. The binary compiles in no tag name; a readiness step that
+	// declares none cannot be readied without engagement (sty_a32bd6a9).
+	Mark string
 	// Freeze makes entry to this step the point where a story's definition (title,
 	// body, acceptance criteria, category) freezes. Without any step declaring it
 	// the legacy rule applies: the definition freezes when the story leaves the
@@ -469,6 +474,7 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			AppliesTo:     st.AppliesTo,
 
 			Propose:      st.Propose,
+			Mark:         st.Mark,
 			Freeze:       st.Freeze,
 			RejectBudget: st.RejectBudget,
 

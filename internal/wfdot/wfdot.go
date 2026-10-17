@@ -207,7 +207,10 @@ type State struct {
 	// rejected presentations of the entry edge before the orchestrator parks.
 	// Carried on State like Agent and Model — dispatch and transition input, not
 	// a consultation instruction.
-	Propose      bool
+	Propose bool
+	// Mark is the tag an accepted readiness round puts on the story
+	// (sty_a32bd6a9); empty when the step declares none.
+	Mark         string
 	Freeze       bool
 	RejectBudget int
 	// ApplyCriteriaDoc / ApplyCriteriaHeading: entry to this step applies the

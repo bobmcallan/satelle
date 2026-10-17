@@ -34,6 +34,24 @@ const (
 	KindStatusReconcile = "status_reconcile"
 	KindReviewAccept    = "review_accept"
 	KindReviewReject    = "review_reject"
+	// KindPerformerReject is a readiness round's performer verdict when it did not
+	// accept: the performer rejected the premise, or failed to run. It is written
+	// beside the review rows, under the same `attempt` id, so a round whose gate
+	// never ran is still a round the counters see (sty_a32bd6a9).
+	KindPerformerReject = "performer_reject"
+	// KindReadinessAccept records that a readiness round was accepted — the
+	// performer did not reject and every reviewer the step declares accepted. It
+	// names the attempt, so a later presentation can reuse it (KindReadinessReuse)
+	// and a reader can ask whether readiness still holds (sty_a32bd6a9).
+	KindReadinessAccept = "readiness_accept"
+	// KindReadinessReuse records that a presented readiness edge did not run its
+	// performer or reviewers because the readiness accepted in the attempt it
+	// names still holds.
+	KindReadinessReuse = "readiness_reuse"
+	// KindStoryDocAttached records a document attached to a story or task. Its
+	// payload names the document, which is how a reader tells a plan attached
+	// after an accepted readiness round.
+	KindStoryDocAttached = "story_doc_attached"
 	// KindGateSkipped records that an edge DECLARED a gate whose skill does not
 	// resolve, so the transition advanced with no reviewer and no verdict. It is
 	// deliberately its own kind: folding it into a comment would bury it, and

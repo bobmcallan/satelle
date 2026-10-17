@@ -152,9 +152,12 @@ type Step struct {
 	// the rejected presentations of the entry edge allowed before the story parks
 	// (sty_5262592e). Read off the derived State like Agent — declared, never a
 	// decision of the binary.
-	Propose      bool `json:"propose,omitempty"`
-	Freeze       bool `json:"freeze,omitempty"`
-	RejectBudget int  `json:"reject_budget,omitempty"`
+	Propose bool `json:"propose,omitempty"`
+	// Mark is the tag an accepted readiness round puts on the story
+	// (sty_a32bd6a9).
+	Mark         string `json:"mark,omitempty"`
+	Freeze       bool   `json:"freeze,omitempty"`
+	RejectBudget int    `json:"reject_budget,omitempty"`
 	// ApplyCriteriaDoc / ApplyCriteriaHeading: entry applies the criteria authored
 	// under that heading in that story document to the story (sty_4d9df9a0).
 	ApplyCriteriaDoc     string `json:"apply_criteria_doc,omitempty"`
@@ -271,6 +274,7 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 		Terminal:   st.Shape == "Msquare",
 
 		Propose:      st.Propose,
+		Mark:         st.Mark,
 		Freeze:       st.Freeze,
 		RejectBudget: st.RejectBudget,
 
@@ -482,6 +486,9 @@ func renderKnobs(s Step) string {
 	}
 	if s.RejectBudget > 0 {
 		parts = append(parts, fmt.Sprintf("entry may be rejected %d time(s) before the story parks and the developer is asked", s.RejectBudget))
+	}
+	if s.Mark != "" {
+		parts = append(parts, fmt.Sprintf("an accepted readiness round marks the story with the tag %q", s.Mark))
 	}
 	if s.Freeze {
 		parts = append(parts, "the definition freezes on entry")

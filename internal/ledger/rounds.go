@@ -53,60 +53,47 @@ type RejectedRounds struct {
 	LastNotes string
 }
 
-// CountRejectedRounds counts the rejected PRESENTATIONS of the from→to edge in
-// entries (oldest first). A presentation is one gate run, identified by the
-// attempt id its rows carry; it is rejected when any of its rows is a reject, so
-// a round where 3 of 4 reviewers reject counts once. A row written before attempt
-// ids existed carries none and counts as a round of its own (conservative).
-//
-// The count restarts at every status_transition row of the story: a rejected
-// presentation leaves the status unchanged, so consecutive rejected rounds have
-// no transition between them, while a park, a resume or an accepted advance
-// always writes one.
-func CountRejectedRounds(entries []Entry, from, to string) RejectedRounds {
-	var out RejectedRounds
-	rejected := map[string]bool{}
-	legacy := 0
-	for _, e := range entries {
-		switch e.Kind {
-		case KindStatusTransition:
-			out = RejectedRounds{}
-			rejected = map[string]bool{}
-			legacy = 0
-		case KindReviewReject:
-			r, ok := decodeEdgeRow(e)
-			if !ok || r.From != from || r.To != to {
-				continue
-			}
-			id := r.Attempt
-			if id == "" {
-				legacy++
-				id = fmt.Sprintf("legacy-%d", legacy)
-			}
-			rejected[id] = true
-			out.Rounds = len(rejected)
-			out.LastSkill, out.LastNotes = r.Skill, r.Notes
-		}
-	}
-	return out
+// AttemptOutcome is the verdict of ONE presentation (one attempt id) of an edge.
+// It is the single place that decides whether a presentation was accepted or
+// rejected: every counter and every reader of readiness asks it, so the
+// edge-rounds tally, the reject budget and readiness-holds cannot disagree
+// (sty_a32bd6a9).
+type AttemptOutcome struct {
+	// Attempt is the id the attempt's rows carry; "legacy-N" for a row written
+	// before attempt ids existed, each of which is a round of its own.
+	Attempt string
+	// Rejected is true when any row of the attempt is a reviewer reject or a
+	// performer reject (a performer that rejected the premise or failed to run).
+	Rejected bool
+	// Accepted is the complement: no row of the attempt rejected.
+	Accepted bool
+	// Skill and Notes are the newest rejecting row's reviewer (or performer) and
+	// objection; empty on an accepted attempt.
+	Skill string
+	Notes string
+	// AcceptAt is the index in the entries slice of the attempt's
+	// readiness_accept row, or -1 when it has none.
+	AcceptAt int
 }
 
-// EdgeRounds counts the presentations of the from→to edge in entries, as
-// accepted and rejected rounds. A round is one gate run, identified by the
-// attempt id its verdict rows carry, however many reviewers voted in it: it is
-// rejected when any of its rows is a reject, accepted otherwise (a panel with a
-// dissenting seat that still passes is an accept). A row written before attempt
-// ids existed carries none and counts as a round of its own (conservative).
-//
-// Unlike CountRejectedRounds the tally does not restart at a status_transition:
-// it is the edge's whole history in entries, so a caller that wants a window
-// passes the slice it means. Pure enumeration — which total is good or bad is
-// the reader's, not decided here.
-func EdgeRounds(entries []Entry, from, to string) (accepted, rejected int) {
-	rejectedIDs, acceptedIDs := map[string]bool{}, map[string]bool{}
+func isRejectKind(kind string) bool {
+	return kind == KindReviewReject || kind == KindPerformerReject
+}
+
+func isVerdictKind(kind string) bool {
+	return isRejectKind(kind) || kind == KindReviewAccept || kind == KindReadinessAccept
+}
+
+// edgeAttempts enumerates the from→to edge's attempts in entries, oldest first,
+// grouped by the attempt id their verdict rows carry. A step with reviewers and a
+// step with a performer only are read the same way: the rows of an attempt are
+// the reviewer verdicts, the performer's reject, and the readiness accept.
+func edgeAttempts(entries []Entry, from, to string) []AttemptOutcome {
+	var out []AttemptOutcome
+	index := map[string]int{}
 	legacy := 0
-	for _, e := range entries {
-		if e.Kind != KindReviewAccept && e.Kind != KindReviewReject {
+	for i, e := range entries {
+		if !isVerdictKind(e.Kind) {
 			continue
 		}
 		r, ok := decodeEdgeRow(e)
@@ -118,18 +105,134 @@ func EdgeRounds(entries []Entry, from, to string) (accepted, rejected int) {
 			legacy++
 			id = fmt.Sprintf("legacy-%d", legacy)
 		}
-		if e.Kind == KindReviewReject {
-			rejectedIDs[id] = true
-		} else {
-			acceptedIDs[id] = true
+		n, seen := index[id]
+		if !seen {
+			n = len(out)
+			index[id] = n
+			out = append(out, AttemptOutcome{Attempt: id, AcceptAt: -1})
+		}
+		switch {
+		case isRejectKind(e.Kind):
+			out[n].Rejected = true
+			out[n].Skill, out[n].Notes = r.Skill, r.Notes
+		case e.Kind == KindReadinessAccept:
+			out[n].AcceptAt = i
 		}
 	}
-	for id := range acceptedIDs {
-		if !rejectedIDs[id] {
+	for i := range out {
+		out[i].Accepted = !out[i].Rejected
+	}
+	return out
+}
+
+// AttemptAccepted reports whether the from→to edge's attempt has no rejecting
+// row in entries: the rule a readiness accept is written under. An attempt with
+// no rows yet (a performer-only step before its accept is written) has nothing
+// that rejects it.
+func AttemptAccepted(entries []Entry, from, to, attempt string) bool {
+	for _, o := range edgeAttempts(entries, from, to) {
+		if o.Attempt == attempt {
+			return o.Accepted
+		}
+	}
+	return true
+}
+
+// CountRejectedRounds counts the rejected PRESENTATIONS of the from→to edge in
+// entries (oldest first). A presentation is one round, identified by the attempt
+// id its rows carry; it is rejected by the single rule edgeAttempts applies, so a
+// round where 3 of 4 reviewers reject counts once, and a round whose performer
+// rejected or failed counts once even though its gate never ran. A row written
+// before attempt ids existed carries none and counts as a round of its own
+// (conservative).
+//
+// The count restarts at every status_transition row of the story: a rejected
+// presentation leaves the status unchanged, so consecutive rejected rounds have
+// no transition between them, while a park, a resume or an accepted advance
+// always writes one.
+func CountRejectedRounds(entries []Entry, from, to string) RejectedRounds {
+	start := 0
+	for i, e := range entries {
+		if e.Kind == KindStatusTransition {
+			start = i + 1
+		}
+	}
+	var out RejectedRounds
+	for _, o := range edgeAttempts(entries[start:], from, to) {
+		if o.Rejected {
+			out.Rounds++
+			out.LastSkill, out.LastNotes = o.Skill, o.Notes
+		}
+	}
+	return out
+}
+
+// EdgeRounds counts the presentations of the from→to edge in entries, as
+// accepted and rejected rounds, under the same rule as CountRejectedRounds: a
+// round is rejected when any of its rows rejects, accepted otherwise (a panel
+// with a dissenting seat that still passes is an accept). A row written before
+// attempt ids existed carries none and counts as a round of its own
+// (conservative).
+//
+// Unlike CountRejectedRounds the tally does not restart at a status_transition:
+// it is the edge's whole history in entries, so a caller that wants a window
+// passes the slice it means. Pure enumeration — which total is good or bad is
+// the reader's, not decided here.
+func EdgeRounds(entries []Entry, from, to string) (accepted, rejected int) {
+	for _, o := range edgeAttempts(entries, from, to) {
+		if o.Rejected {
+			rejected++
+		} else {
 			accepted++
 		}
 	}
-	return accepted, len(rejectedIDs)
+	return accepted, rejected
+}
+
+// ReadinessHolds reports whether the from→to edge's readiness was accepted and
+// still holds, from the ledger alone, and names the accepted attempt. It holds
+// only while the LATEST attempt on the edge is an accepted one with a
+// readiness_accept row, no definition edit followed it, and the step's plan
+// document was not attached after it. Any later attempt — a rejected re-run
+// included — or an edit or a plan attach voids it. A mark tag on the story is
+// never read here.
+//
+// planDoc is the name of the document the step's performer attaches, as its skill
+// declares it (output_name): configuration, so nothing here names one. With none
+// declared no attach voids the readiness.
+func ReadinessHolds(entries []Entry, from, to, planDoc string) (attempt string, ok bool) {
+	attempts := edgeAttempts(entries, from, to)
+	if len(attempts) == 0 {
+		return "", false
+	}
+	last := attempts[len(attempts)-1]
+	if last.Rejected || last.AcceptAt < 0 {
+		return "", false
+	}
+	if len(DefinitionEditedAfter(entries, last.AcceptAt)) > 0 || docAttachedAfter(entries, last.AcceptAt, planDoc) {
+		return "", false
+	}
+	return last.Attempt, true
+}
+
+// docAttachedAfter reports whether a document named name was attached after the
+// row at index at.
+func docAttachedAfter(entries []Entry, at int, name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, e := range entries[at+1:] {
+		if e.Kind != KindStoryDocAttached {
+			continue
+		}
+		var p struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(e.Payload, &p) == nil && p.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // DefinitionEditedSince returns the definition_edited rows that postdate the
@@ -146,6 +249,16 @@ func DefinitionEditedSince(entries []Entry, from, to string) []Entry {
 		}
 	}
 	if at < 0 {
+		return nil
+	}
+	return DefinitionEditedAfter(entries, at)
+}
+
+// DefinitionEditedAfter returns the definition_edited rows after the row at
+// index at in entries (oldest first). DefinitionEditedSince anchors it on a
+// status transition; ReadinessHolds anchors it on a readiness accept.
+func DefinitionEditedAfter(entries []Entry, at int) []Entry {
+	if at < 0 || at >= len(entries) {
 		return nil
 	}
 	var out []Entry

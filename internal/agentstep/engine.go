@@ -1899,6 +1899,133 @@ func (g *Engine) busyTimeoutFor(section string, b config.AgentBinding) (time.Dur
 	return b.BusyTimeoutDuration(g.busyTimeout)
 }
 
+// performerResolution is resolvePerformer's whole answer: the verb-facing
+// verdict plus the resolved route, placement and binding DispatchExecutor goes on
+// to run.
+type performerResolution struct {
+	verb.PerformerResolution
+	spec    wfdot.Spec
+	wfName  string
+	target  *wfdot.State
+	placed  placement.Decision
+	binding config.AgentBinding
+}
+
+// resolvePerformer is the engine's ONE rule for who performs a step: the TARGET
+// state's named spine agent= performer, and nothing else. Flat dispatch
+// (sty_05a5e203): the orchestrator is the sole scheduler, so entering a state
+// never fires an agent of its own. An agent-less, executor or reviewer state, a
+// role=reviewer binding that is a judge and not a performer, and a binding whose
+// command is the in-loop session all dispatch nothing — the driving session
+// performs, or an ADVISOR named on the route is consulted by the orchestrator at
+// a moment it chooses. A missing binding, or a role=reviewer binding allocated on
+// a performing node, is an ERROR: a broken definition never silently falls back
+// in-loop (sty_d0d6bb67). DispatchExecutor and StepPerformer both ask it, so a
+// presented edge and `story ready` cannot disagree (sty_a32bd6a9).
+//
+// emit says whether to record the placement telemetry event; only the dispatch
+// itself does.
+func (g *Engine) resolvePerformer(ctx context.Context, item workitem.Item, toStatus string, emit bool) (performerResolution, error) {
+	none := func(reason string) (performerResolution, error) {
+		return performerResolution{PerformerResolution: verb.PerformerResolution{Reason: reason}}, nil
+	}
+	spec, wfName, err := g.activeSpec(ctx, item)
+	if err != nil {
+		if ungoverned(err) {
+			return none("no workflow governs this item")
+		}
+		return performerResolution{}, err
+	}
+	var target *wfdot.State
+	for i := range spec.States {
+		if spec.States[i].Name == toStatus {
+			target = &spec.States[i]
+			break
+		}
+	}
+	if target == nil {
+		return none(fmt.Sprintf("the workflow declares no step %q", toStatus))
+	}
+	switch target.Agent {
+	case "":
+		return none(fmt.Sprintf("step %q allocates no performer (agent is empty)", toStatus))
+	case "executor", "reviewer":
+		return none(fmt.Sprintf("step %q is allocated to agent=%s, which is not a dispatched performer", toStatus, target.Agent))
+	}
+	// Placement (sty_dde8b6a4): a parallel epic child's step may be declared to
+	// run in a cloud session (step.toml remote_agent). Otherwise, or when the
+	// session is not signed in, the step's own agent performs, unchanged.
+	placed := placement.Decide(ctx, item, *target)
+	dispatchAgent := placed.Agent
+	if placed.Note != "" && emit {
+		g.telemetryEvent(ctx, item.ID, "executor", "placement", map[string]any{
+			"placement": placed.Note, "step": toStatus, "agent": dispatchAgent,
+		})
+	}
+	if g.namedAgents == nil {
+		return performerResolution{}, fmt.Errorf(
+			"workflow %q allocates state %q to named agent %q but no agents layer is wired", wfName, toStatus, dispatchAgent)
+	}
+	binding, found := g.namedAgents(dispatchAgent)
+	if !found {
+		return performerResolution{}, fmt.Errorf(
+			"workflow %q allocates state %q to agent %q but .satelle/workflows/agents.toml defines no [%s] binding — define it, or reassign the step",
+			wfName, toStatus, dispatchAgent, dispatchAgent)
+	}
+	// Design §9 (a): when the resolved binding is role=reviewer, it is a judge
+	// not a performer — do not dispatch as ExpectPerform (isNamedPerformer).
+	// Fail loud when a role=reviewer binding is allocated on a performing node.
+	if config.ResolvedRole(dispatchAgent, binding) == config.RoleReviewer {
+		return performerResolution{}, fmt.Errorf(
+			"workflow %q allocates performing state %q to agent %q with role=reviewer — judges advance status only via gates; use a gated edge or scoped on= node",
+			wfName, toStatus, dispatchAgent)
+	}
+	if !isNamedPerformer(dispatchAgent, binding) {
+		return none(fmt.Sprintf("step %q agent %q is not a named performer", toStatus, dispatchAgent))
+	}
+	if config.IsInLoopCommand(binding.CommandTemplate()) {
+		return none(fmt.Sprintf("step %q agent %q is bound in-loop: the driving session performs it", toStatus, dispatchAgent))
+	}
+	return performerResolution{
+		PerformerResolution: verb.PerformerResolution{Agent: dispatchAgent, Dispatched: true},
+		spec:                spec, wfName: wfName, target: target, placed: placed, binding: binding,
+	}, nil
+}
+
+// StepPerformer implements verb.PerformerResolver: whether entering toStatus
+// dispatches a named performer, under the rule DispatchExecutor itself uses.
+//
+// A dispatched performer's skill may declare an output contract; its output_name
+// is the document the step attaches, reported as OutputName so a caller that must
+// recognise that document (the readiness check) reads it from the skill rather
+// than naming one itself.
+func (g *Engine) StepPerformer(ctx context.Context, item workitem.Item, toStatus string) (verb.PerformerResolution, error) {
+	perf, err := g.resolvePerformer(ctx, item, toStatus, false)
+	if err != nil || !perf.Dispatched {
+		return perf.PerformerResolution, err
+	}
+	skill := firstStr(perf.spec.ExecutorSkillsFor(toStatus, item.Tags))
+	if skill == "" {
+		skill = perf.target.Skill
+	}
+	if skill == "" {
+		return perf.PerformerResolution, nil
+	}
+	body, serr := g.skillBody(ctx, skill)
+	if errors.Is(serr, docindex.ErrNotFound) {
+		return perf.PerformerResolution, nil
+	}
+	if serr != nil {
+		return perf.PerformerResolution, serr
+	}
+	contract, cerr := agentartifact.ParseContract(body)
+	if cerr != nil {
+		return perf.PerformerResolution, fmt.Errorf("skill %q output contract: %w", skill, cerr)
+	}
+	perf.OutputName = contract.Name
+	return perf.PerformerResolution, nil
+}
+
 // DispatchExecutor implements verb.ExecutorDispatcher: when the TARGET state of
 // an accepted transition is allocated to a NAMED agent (agent=<name>, neither
 // "executor" nor "reviewer"), the binding's harness performs the step
@@ -1916,57 +2043,19 @@ func (g *Engine) busyTimeoutFor(section string, b config.AgentBinding) (time.Dur
 // steps never call steps, so an advisor is consulted by the orchestrator at a
 // moment it chooses, and the route names which advisor that is.
 func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toStatus string) (verb.DispatchResult, error) {
-	spec, wfName, err := g.activeSpec(ctx, item)
+	perf, err := g.resolvePerformer(ctx, item, toStatus, true)
 	if err != nil {
-		if ungoverned(err) {
-			return verb.DispatchResult{}, nil
-		}
 		return verb.DispatchResult{}, err
 	}
-	var target *wfdot.State
-	for i := range spec.States {
-		if spec.States[i].Name == toStatus {
-			target = &spec.States[i]
-			break
-		}
-	}
-	if target == nil {
+	if !perf.Dispatched {
 		return verb.DispatchResult{}, nil
 	}
-	// Resolve WHO performs: a named spine agent= performer, and nothing else.
-	// Flat dispatch (sty_05a5e203): the orchestrator is the sole scheduler, so
-	// entering a state never fires an agent of its own. An agent-less, executor or
-	// reviewer state dispatches nothing — an ADVISOR named on the route is
-	// consulted by the orchestrator, at a moment it chooses, and never by entry.
-	// Spine skill + surface-matched augmentations compose additively
-	// (sty_8225d8a5); dispatchSkill is the first (primary) name for telemetry.
-	if target.Agent == "" || target.Agent == "executor" || target.Agent == "reviewer" {
-		return verb.DispatchResult{}, nil
-	}
-	// Placement (sty_dde8b6a4): a parallel epic child's step may be declared to
-	// run in a cloud session (step.toml remote_agent). Otherwise, or when the
-	// session is not signed in, the step's own agent performs, unchanged.
-	placed := placement.Decide(ctx, item, *target)
-	dispatchAgent := placed.Agent
-	if placed.Note != "" {
-		g.telemetryEvent(ctx, item.ID, "executor", "placement", map[string]any{
-			"placement": placed.Note, "step": toStatus, "agent": dispatchAgent,
-		})
-	}
+	target, wfName, spec, placed := perf.target, perf.wfName, perf.spec, perf.placed
+	dispatchAgent, binding := perf.Agent, perf.binding
 	composed := spec.ExecutorSkillsFor(toStatus, item.Tags)
 	dispatchSkill := firstStr(composed)
 	if dispatchSkill == "" {
 		dispatchSkill = target.Skill
-	}
-	if g.namedAgents == nil {
-		return verb.DispatchResult{}, fmt.Errorf(
-			"workflow %q allocates state %q to named agent %q but no agents layer is wired", wfName, toStatus, dispatchAgent)
-	}
-	binding, found := g.namedAgents(dispatchAgent)
-	if !found {
-		return verb.DispatchResult{}, fmt.Errorf(
-			"workflow %q allocates state %q to agent %q but .satelle/workflows/agents.toml defines no [%s] binding — define it, or reassign the step",
-			wfName, toStatus, dispatchAgent, dispatchAgent)
 	}
 	// Model selection (sty_7069bced): binding.Model wins outright when set;
 	// otherwise the step's own model= (target.Model) is a per-dispatch
@@ -1990,17 +2079,6 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		config.Budget{Context: target.ContextBudget, Turns: target.TurnBudget},
 		binding.Budget(), g.defaultBudget)
 	binding.ContextBudget, binding.TurnBudget = budget.Context, budget.Turns
-	// Design §9 (a): when the resolved binding is role=reviewer, it is a judge
-	// not a performer — do not dispatch as ExpectPerform (isNamedPerformer).
-	// Fail loud when a role=reviewer binding is allocated on a performing node.
-	if config.ResolvedRole(dispatchAgent, binding) == config.RoleReviewer {
-		return verb.DispatchResult{}, fmt.Errorf(
-			"workflow %q allocates performing state %q to agent %q with role=reviewer — judges advance status only via gates; use a gated edge or scoped on= node",
-			wfName, toStatus, dispatchAgent)
-	}
-	if !isNamedPerformer(dispatchAgent, binding) {
-		return verb.DispatchResult{}, nil
-	}
 	// A cloud performer returns a pushed branch, not stdout: it runs and is
 	// collected on its own path, which never reaches the runner below.
 	if binding.ResolvedInterface() == config.InterfaceCloud {

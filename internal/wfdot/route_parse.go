@@ -150,6 +150,10 @@ type stepWire struct {
 	Propose      bool `toml:"propose"`
 	Freeze       bool `toml:"freeze"`
 	RejectBudget *int `toml:"reject_budget"`
+	// Mark is the tag an accepted readiness round puts on a story
+	// (sty_a32bd6a9). Optional: absent means the step cannot be readied without
+	// engagement, never a default tag name.
+	Mark string `toml:"mark"`
 	// WaitsOnChildren marks a step at which a container idles while its child
 	// stories are driven: it holds the status, but nothing performs on the
 	// container itself (sty_7f3e6fd3).
@@ -446,6 +450,7 @@ func ParseSteps(body string) (Catalogue, error) {
 			Start:         s.Start,
 			Terminal:      s.Terminal,
 			Propose:       s.Propose,
+			Mark:          strings.TrimSpace(s.Mark),
 			Freeze:        s.Freeze,
 
 			WaitsOnChildren: s.WaitsOnChildren,

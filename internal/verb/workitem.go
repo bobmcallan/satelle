@@ -591,9 +591,18 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	// reject_budget refuses another presentation once that many have been
 	// rejected — before any performer or reviewer is paid for. The count is a
 	// ledger enumeration; the budget and the wording of the ask are route data.
+	// Readiness reuse (sty_a32bd6a9): a presented readiness edge whose readiness was
+	// accepted and still holds runs neither its performer nor its reviewers, so no
+	// presentation is made and the round budget has nothing to refuse.
+	readinessReused := ""
 	if transitioning {
-		if err := refuseSpentRejectBudget(ctx, current, *req.Status); err != nil {
-			return nil, err
+		readinessReused = readinessReusable(ctx, current, *req.Status)
+	}
+	if transitioning {
+		if readinessReused == "" {
+			if err := refuseSpentRejectBudget(ctx, current, *req.Status); err != nil {
+				return nil, err
+			}
 		}
 		// Start-of-work trunk check (sty_9f3e51d1): on the first entry into an
 		// engaging state, with the seat held and before any performer or gate
@@ -618,104 +627,33 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	// judge what the performer produced. The route declares the order; this only
 	// sequences the two calls below.
 	proposeFirst := transitioning && stepProposes(ctx, current, *req.Status)
+	// One attempt id per presentation, stamped on every verdict row a gate run
+	// writes, so a rejected ROUND is countable however many reviewers ran. A
+	// readiness (propose) round creates it up front so its performer rows carry it
+	// too (sty_a32bd6a9); any other edge creates it when its gate runs.
+	attempt := ""
+	if proposeFirst {
+		attempt = ledger.NewAttemptID()
+	}
+	// readinessMark is the tag an accepted readiness round puts on the story, once
+	// the transition has committed (sty_a32bd6a9); empty when none was accepted or
+	// the step declares no mark.
+	readinessMark := ""
 	runGate := func() error {
 		if !(transitioning && transitionGater != nil) {
 			return nil
 		}
-		// One attempt id per presentation, stamped on every verdict row this run
-		// writes, so a rejected ROUND is countable however many reviewers ran.
-		attempt := ledger.NewAttemptID()
-		dec, gerr := transitionGater.Gate(ctx, current, *req.Status)
+		if attempt == "" {
+			attempt = ledger.NewAttemptID()
+		}
+		round, gerr := recordGateRound(ctx, current, *req.Status, attempt, now)
 		if gerr != nil {
 			return gerr
 		}
-		// An edge may carry several reviewers (a transition's reviewer list plus
-		// the always-on system layer). Record each reviewer's verdict as its own
-		// ledger row, in order, so the trail names who judged the edge and how. The
-		// single-reviewer path returns no Reviewers — synthesise one from the
-		// top-level verdict so both paths record identically.
-		reviewers := dec.Reviewers
-		if len(reviewers) == 0 && dec.Gated {
-			reviewers = []ReviewerVerdict{verdictFromDecision(dec)}
-		}
-		// Ledger ALL verdicts first (accepts and rejects), then refuse if any
-		// rejected — so parallel multi-reviewer rounds record every row
-		// (sty_4f0a15db AC2). Serial short-circuit still only returns reviewers
-		// up to the first reject, so single-reject message format is unchanged.
-		var rejects []ReviewerVerdict
-		bundled := map[string]bool{}
-		for _, rv := range reviewers {
-			// A panel fold leaves Command empty on the skill row and carries one
-			// stamp per seat that started. Write those first, then the single
-			// skill-level verdict. A dissent stays inside seats — it is not a
-			// second review_reject, and a seat that never started has no stamp.
-			for _, stamp := range rv.SeatStamps {
-				if stamp.Command == "" {
-					continue
-				}
-				seat := stamp.Seat
-				if seat == "" {
-					seat = stamp.Skill
-				}
-				appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "reviewer",
-					fmt.Sprintf("invoked reviewer (%s) for %s→%s with @skill:%s seat %s", stamp.Command, current.Status, *req.Status, stamp.Skill, seat),
-					invocationPayload(current.Status, *req.Status, stamp), now)
-			}
-			// Record HOW the isolated agent was invoked before its verdict — the
-			// resolved command/harness and the injected skill/rubric file — so the
-			// timeline shows what command ran with what context (sty_fb3e0873). Only
-			// an LLM reviewer carries a Command; a functional check invokes no agent.
-			// A bundled session is ONE invocation however many rubrics it judged
-			// (sty_23e10d92): its row is written once, with the bundle's usage, on
-			// the first of its verdicts. A panel fold leaves Command empty so this
-			// write does not fire a duplicate for the skill row.
-			if rv.Command != "" && !(rv.BundleID != "" && bundled[rv.BundleID]) {
-				inv, rubrics := rv, rv.Context
-				if rv.BundleID != "" {
-					bundled[rv.BundleID] = true
-					inv.Skill = strings.Join(rv.BundleSkills, "+")
-					rubrics = strings.Join(rv.BundleSkills, ",")
-				}
-				appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "reviewer",
-					fmt.Sprintf("invoked reviewer (%s) for %s→%s with @skill:%s", rv.Command, current.Status, *req.Status, rubrics),
-					invocationPayload(current.Status, *req.Status, inv), now)
-			}
-			if !rv.Accept {
-				appendLedgerEntry(ctx, current.ID, ledger.KindReviewReject, "reviewer",
-					fmt.Sprintf("rejected %s→%s by %s: %s", current.Status, *req.Status, rv.Skill, rv.Notes),
-					reviewerPayload(current.Status, *req.Status, rv, attempt), now)
-				rejects = append(rejects, rv)
-				continue
-			}
-			acceptBody := fmt.Sprintf("accepted %s→%s by %s: decision=accept notes=%s%s",
-				current.Status, *req.Status, rv.Skill, rv.Notes, formatReasoningSuffix(rv.Reasoning))
-			appendLedgerEntry(ctx, current.ID, ledger.KindReviewAccept, "reviewer",
-				acceptBody, reviewerPayload(current.Status, *req.Status, rv, attempt), now)
-			// Transparency (design §6.2 / epic AC): surface accept verdicts too —
-			// decision, notes, reasoning on stderr (reject already returns as error).
-			EmitVerdict(acceptBody)
-		}
-		if len(rejects) > 0 {
-			notifyChange(panelTopic(current.Kind))
-			return multiRejectError(current.Status, *req.Status, rejects)
-		}
-		// An edge may have DECLARED a gate whose skill does not resolve. That gate
-		// degraded to advisory and judged nothing, so this advance is ungated —
-		// record it as such. Without this row the trail is indistinguishable from
-		// an edge that never carried a gate at all, which is the silence
-		// sty_d59ec6a9 is about. It does not block: fail-open is deliberate.
-		for _, skill := range dec.Unresolved {
-			skippedBody := fmt.Sprintf(
-				"advanced %s→%s UNGATED — gate skill %q does not resolve in the substrate, so no reviewer judged this transition",
-				current.Status, *req.Status, skill)
-			appendLedgerEntry(ctx, current.ID, ledger.KindGateSkipped, "reviewer",
-				skippedBody, transitionPayload(current.Status, *req.Status, skill), now)
-			EmitVerdict(skippedBody)
-		}
-		if len(reviewers) > 0 {
+		if len(round.Reviewers) > 0 {
 			gatedAccepted = true
 		}
-		routeVerdicts, routeUnresolved = reviewers, dec.Unresolved
+		routeVerdicts, routeUnresolved = round.Reviewers, round.Unresolved
 		return nil
 	}
 
@@ -737,7 +675,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			author = "executor"
 		}
 		appendLedgerEntry(ctx, current.ID, ledger.KindComment, author,
-			notes, transitionPayload(current.Status, park, res.Skill), now)
+			notes, attemptPayload(current.Status, park, res.Skill, attempt), now)
 		var parked map[string]json.RawMessage
 		if json.Unmarshal(raw, &parked) != nil {
 			return nil, nil, false
@@ -747,69 +685,36 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		if merr != nil {
 			return nil, nil, false
 		}
-		out, err = workItemSetCore(ctx, reraw) // the outer workItemSet annotates once
+		// The park transition names the readiness round it ends (sty_a32bd6a9).
+		out, err = workItemSetCore(withParkAttempt(ctx, attempt), reraw) // the outer workItemSet annotates once
 		return out, err, true
 	}
 	performStep := func() (json.RawMessage, error) {
 		if !(transitioning && executorDispatcher != nil) {
 			return nil, nil
 		}
-		res, derr := executorDispatcher.DispatchExecutor(ctx, current, *req.Status)
-		if derr != nil {
+		run := dispatchPerformer(ctx, current, *req.Status, attempt, proposeFirst, now)
+		if run.Err != nil {
 			// A performer that judged the premise wrong parks the story: the
 			// notes go on the timeline and the set re-enters for the park edge.
 			// Any other failure is a plain refusal.
-			var rejected *PerformerReject
-			if errors.As(derr, &rejected) && strings.TrimSpace(rejected.Notes) != "" {
+			if run.Reject != nil {
 				if park := resumeParkName(ctx, current); park != "" && park != *req.Status {
-					if out, perr, handled := parkWith(park, rejected.Notes, res); handled {
+					if out, perr, handled := parkWith(park, run.Reject.Notes, run.Res); handled {
 						return out, perr
 					}
 				}
 			}
-			appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "executor",
-				fmt.Sprintf("named-agent dispatch failed for %s→%s: %v", current.Status, *req.Status, derr),
-				transitionPayload(current.Status, *req.Status, res.Skill), now)
-			notifyChange(panelTopic(current.Kind))
-			return nil, fmt.Errorf("transition %s→%s refused: %v", current.Status, *req.Status, derr)
+			recordDispatchFailure(ctx, current, *req.Status, attempt, run.Res, run.Err, now)
+			return nil, fmt.Errorf("transition %s→%s refused: %v", current.Status, *req.Status, run.Err)
 		}
-		if res.Dispatched {
-			// Record the resolved model (when the binding pins one) so the ledger shows
-			// WHICH model ran the step — the audit trail for per-step model mixing
-			// (sty_5d48317b). The env (endpoint + token) is never recorded.
-			modelNote := ""
-			if res.Model != "" {
-				modelNote = " on model " + res.Model
-			}
-			appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "executor",
-				fmt.Sprintf("dispatched step %q to named agent %q%s (%s) with @skill:%s",
-					*req.Status, res.Agent, modelNote, res.Command, res.Skill),
-				dispatchPayload(current.Status, *req.Status, res), now)
-			// A dispatched task-execution run's captured output is written through as
-			// an OKF run-output doc under its task folder (sty_890b86cb) — the same
-			// write seam the in-loop execution-record verb uses. Best-effort: a write
-			// failure is recorded, not fatal (the run already happened).
-			if current.Kind == workitem.KindExecution && res.Output != "" {
-				if _, werr := recordRunOutput(current, res.Output, now); werr != nil {
-					appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "executor",
-						"run-output record failed: "+werr.Error(),
-						transitionPayload(current.Status, *req.Status, res.Skill), now)
-				}
-			}
-			// Spend budgets (sty_a7914904): with none configured this only warns
-			// and records; a bound the repo set and the run exceeded routes to
-			// rework (the step declares a loop) or parks the story blocked.
-			park := resumeParkName(ctx, current)
-			notes, refuse := applyDispatchBudget(ctx, current, *req.Status, res,
-				stepDeclaresRework(ctx, current, *req.Status), park, now)
-			if refuse != nil {
-				notifyChange(panelTopic(current.Kind))
-				return nil, fmt.Errorf("transition %s→%s refused: %v", current.Status, *req.Status, refuse)
-			}
-			if notes != "" {
-				if out, perr, handled := parkWith(park, notes, res); handled {
-					return out, perr
-				}
+		if run.Refuse != nil {
+			notifyChange(panelTopic(current.Kind))
+			return nil, fmt.Errorf("transition %s→%s refused: %v", current.Status, *req.Status, run.Refuse)
+		}
+		if run.ParkNotes != "" {
+			if out, perr, handled := parkWith(resumeParkName(ctx, current), run.ParkNotes, run.Res); handled {
+				return out, perr
 			}
 		}
 		return nil, nil
@@ -818,12 +723,20 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	// for a `propose` step — performer then gates, so the gate payload carries the
 	// artifact the performer just attached. A failure at either call leaves the
 	// story at its source status, and the deferred guard frees the seat.
-	if proposeFirst {
+	if proposeFirst && readinessReused != "" {
+		// The readiness accepted in that attempt still holds: neither the performer
+		// nor the reviewers run again (sty_a32bd6a9).
+		recordReadinessReuse(ctx, current, current.Status, *req.Status, readinessReused)
+	} else if proposeFirst {
 		if out, perr := performStep(); out != nil || perr != nil {
 			return out, perr
 		}
 		if gerr := runGate(); gerr != nil {
 			return nil, gerr
+		}
+		step, _ := destinationStep(ctx, current, *req.Status)
+		if recordReadinessAccept(ctx, current, current.Status, *req.Status, attempt, readinessEdge{To: *req.Status, Step: step}.name()) {
+			readinessMark = step.Mark
 		}
 	} else {
 		if gerr := runGate(); gerr != nil {
@@ -898,7 +811,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 				Kind:    ledger.KindStatusTransition,
 				Actor:   "executor",
 				Body:    fmt.Sprintf("%s → %s", current.Status, *req.Status),
-				Payload: transitionPayload(current.Status, *req.Status, ""),
+				Payload: attemptPayload(current.Status, *req.Status, "", parkAttemptFrom(ctx)),
 			}, commitNow)
 			return aerr
 		})
@@ -914,6 +827,11 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	}
 	editor := resolveEditorIdentity()
 	recordDefinitionEdits(ctx, it, definitionEdits, editor, commitNow)
+	// An accepted readiness round marks the story once it has committed, with the
+	// tag the step declares (sty_a32bd6a9). Best-effort: the round is on the ledger.
+	if readinessMark != "" {
+		_ = markReady(ctx, it.ID, readinessMark)
+	}
 	// Release the seat on transition into terminal (Msquare) or park (agent=reviewer).
 	// Force-release: exit is config-driven and must free the seat even when the
 	// exit CLI process is not the acquire-time owner (default owner is stable
@@ -953,7 +871,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		if !transitionInTx {
 			appendLedgerEntry(ctx, it.ID, ledger.KindStatusTransition, "executor",
 				fmt.Sprintf("%s → %s", current.Status, *req.Status),
-				transitionPayload(current.Status, *req.Status, ""), commitNow)
+				attemptPayload(current.Status, *req.Status, "", parkAttemptFrom(ctx)), commitNow)
 		}
 		// First entry into an engaging state: record engagement baseline once
 		// (sty_da169e03). Enumerates git HEAD for later satelle story diff;
@@ -1577,7 +1495,7 @@ func storyRetrospect(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		// retrospective shows in `satelle story cost` beside the gates it reviews.
 		appendLedgerEntry(ctx, it.ID, ledger.KindAgentInvocation, "executor",
 			fmt.Sprintf("retrospective on %s (%s) with @skill:%s", it.ID, res.Model, res.Skill),
-			dispatchPayload("done", "retrospect", res), now)
+			dispatchPayload("done", "retrospect", res, ""), now)
 	}
 	if rerr != nil {
 		return nil, rerr
@@ -1975,11 +1893,19 @@ func equalStringSet(a, b []string) bool {
 // transitionPayload is the {from,to,skill} JSON stamped on review/transition
 // ledger rows so the progress column can reconstruct the workflow trail.
 func transitionPayload(from, to, skill string) json.RawMessage {
+	return attemptPayload(from, to, skill, "")
+}
+
+// attemptPayload is transitionPayload stamped with the attempt id of the
+// readiness round the row belongs to, under the same `attempt` key the review
+// rows carry (sty_a32bd6a9). An empty attempt writes the plain payload.
+func attemptPayload(from, to, skill, attempt string) json.RawMessage {
 	p := struct {
-		From  string `json:"from"`
-		To    string `json:"to"`
-		Skill string `json:"skill,omitempty"`
-	}{From: from, To: to, Skill: skill}
+		From    string `json:"from"`
+		To      string `json:"to"`
+		Skill   string `json:"skill,omitempty"`
+		Attempt string `json:"attempt,omitempty"`
+	}{From: from, To: to, Skill: skill, Attempt: attempt}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil
@@ -2036,10 +1962,11 @@ func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.R
 // dispatchPayload stamps a named-executor agent_invocation row with its model and
 // token/wall-time cost (sty_a699ad14), so the per-gate cost view can roll up a
 // dispatched step (planner, coder) the same way it does a reviewer gate.
-func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
+func dispatchPayload(from, to string, res DispatchResult, attempt string) json.RawMessage {
 	p := struct {
 		From           string       `json:"from"`
 		To             string       `json:"to"`
+		Attempt        string       `json:"attempt,omitempty"`
 		Agent          string       `json:"agent"`
 		Skill          string       `json:"skill,omitempty"`
 		Command        string       `json:"command,omitempty"`
@@ -2069,7 +1996,7 @@ func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
 		Budget *BudgetReport `json:"budget,omitempty"`
 		// Cloud records a cloud-performed step's session, branch and collected commit.
 		Cloud *CloudDispatch `json:"cloud,omitempty"`
-	}{From: from, To: to, Agent: res.Agent, Skill: res.Skill, Command: res.Command, Model: res.Model,
+	}{From: from, To: to, Attempt: attempt, Agent: res.Agent, Skill: res.Skill, Command: res.Command, Model: res.Model,
 		ModelResolved: res.ModelResolved, ModelSource: res.ModelSource, Models: res.Models,
 		TokensIn: res.TokensIn, TokensOut: res.TokensOut, TokensTotal: res.TokensTotal, DurationMs: res.DurationMs,
 		UsageAvailable: res.UsageAvailable,
