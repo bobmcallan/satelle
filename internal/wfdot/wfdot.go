@@ -218,6 +218,10 @@ type State struct {
 	// (sty_4d9df9a0).
 	ApplyCriteriaDoc     string
 	ApplyCriteriaHeading string
+	// ApplyChangeOps / ApplyChangeTags: the operations a propose step's performer
+	// may report as `changes` and the tag prefixes it may add (sty_af0b1761).
+	ApplyChangeOps  []string
+	ApplyChangeTags []string
 	// WaitsOnChildren: a container idles here while its children are driven
 	// (sty_7f3e6fd3). Read through Spec.WaitsOnChildren.
 	WaitsOnChildren bool

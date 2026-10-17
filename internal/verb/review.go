@@ -3,6 +3,7 @@ package verb
 import (
 	"context"
 
+	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -373,6 +374,10 @@ type DispatchResult struct {
 	// under the parent task's folder, so a run's evidence is discoverable per task
 	// rather than only in the central executor.log.
 	Output string `json:"output,omitempty"`
+	// Changes are the story-configuration changes the performer reported in its
+	// final response (sty_af0b1761), decoded by the shared agentartifact seam.
+	// The verb applies them only on a step that declares apply_changes.
+	Changes []agentartifact.Change `json:"-"`
 	// ArtifactName/Type identify a Satelle-owned structured step artifact
 	// attached before the transition committed.
 	ArtifactName string `json:"artifact_name,omitempty"`

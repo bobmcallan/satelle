@@ -162,6 +162,10 @@ type Step struct {
 	// under that heading in that story document to the story (sty_4d9df9a0).
 	ApplyCriteriaDoc     string `json:"apply_criteria_doc,omitempty"`
 	ApplyCriteriaHeading string `json:"apply_criteria_heading,omitempty"`
+	// ApplyChangeOps / ApplyChangeTags: the changes the step's performer may
+	// report and the tag prefixes it may add (sty_af0b1761).
+	ApplyChangeOps  []string `json:"apply_change_ops,omitempty"`
+	ApplyChangeTags []string `json:"apply_change_tags,omitempty"`
 	// WaitsOnChildren: a container idles at this step while its children are
 	// driven, so it does not count as performing (sty_7f3e6fd3).
 	WaitsOnChildren bool `json:"waits_on_children,omitempty"`
@@ -280,6 +284,8 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 
 		ApplyCriteriaDoc:     st.ApplyCriteriaDoc,
 		ApplyCriteriaHeading: st.ApplyCriteriaHeading,
+		ApplyChangeOps:       st.ApplyChangeOps,
+		ApplyChangeTags:      st.ApplyChangeTags,
 
 		WaitsOnChildren: st.WaitsOnChildren,
 		Schedule:        st.Schedule,
@@ -495,6 +501,9 @@ func renderKnobs(s Step) string {
 	}
 	if s.ApplyCriteriaDoc != "" && s.ApplyCriteriaHeading != "" {
 		parts = append(parts, fmt.Sprintf("entry applies the criteria authored under %q in the %s document", s.ApplyCriteriaHeading, s.ApplyCriteriaDoc))
+	}
+	if len(s.ApplyChangeOps) > 0 {
+		parts = append(parts, fmt.Sprintf("the performer's reported changes (%s, tags %s) are applied to the record before the gates", strings.Join(s.ApplyChangeOps, ", "), strings.Join(s.ApplyChangeTags, ", ")))
 	}
 	if s.WaitsOnChildren {
 		parts = append(parts, "the container waits here while its children are driven; it is not performing")

@@ -206,6 +206,19 @@ type performerRun struct {
 	// park; ParkNotes is one it broke where the story would park blocked.
 	Refuse    error
 	ParkNotes string
+	// Item is the story as the performer's reported changes left it, set only when
+	// they were applied (sty_af0b1761). The caller rebinds it before the step's
+	// gates run, so they judge the repaired record.
+	Item *workitem.Item
+}
+
+// rebind returns the story the gates should judge: the one the performer's
+// reported changes left, or current when none were applied.
+func (r performerRun) rebind(current workitem.Item) workitem.Item {
+	if r.Item != nil {
+		return *r.Item
+	}
+	return current
 }
 
 // dispatchPerformer runs the named performer a step allocates and records its
@@ -220,8 +233,23 @@ func dispatchPerformer(ctx context.Context, current workitem.Item, to, attempt s
 	if derr != nil {
 		run.Err = derr
 		var rejected *PerformerReject
-		if errors.As(derr, &rejected) && strings.TrimSpace(rejected.Notes) != "" {
-			run.Reject = rejected
+		if errors.As(derr, &rejected) {
+			// A reject may carry changes: they are applied within the same limits
+			// and the reject is still recorded. A change the limits refuse is added
+			// to the notes, so the reject says what was and was not applied.
+			if len(rejected.Changes) > 0 {
+				item, cerr := applyPerformerChanges(ctx, current, to, res, rejected.Changes, now)
+				if cerr != nil {
+					rejected = &PerformerReject{Notes: strings.TrimSpace(rejected.Notes + " (" + cerr.Error() + ")")}
+					derr = rejected
+				} else {
+					run.Item = &item
+				}
+			}
+			if strings.TrimSpace(rejected.Notes) != "" {
+				run.Reject = rejected
+			}
+			run.Err = derr
 		}
 		if readiness {
 			recordPerformerReject(ctx, current, to, attempt, res, derr.Error(), now)
@@ -242,6 +270,20 @@ func dispatchPerformer(ctx context.Context, current workitem.Item, to, attempt s
 		fmt.Sprintf("dispatched step %q to named agent %q%s (%s) with @skill:%s",
 			to, res.Agent, modelNote, res.Command, res.Skill),
 		dispatchPayload(current.Status, to, res, attempt), now)
+	// The configuration changes the performer reported are applied now, before
+	// the step's gates run, so they judge the repaired record (sty_af0b1761). A
+	// refused batch applied nothing and fails the round like any dispatch failure.
+	if len(res.Changes) > 0 {
+		item, cerr := applyPerformerChanges(ctx, current, to, res, res.Changes, now)
+		if cerr != nil {
+			run.Err = cerr
+			if readiness {
+				recordPerformerReject(ctx, current, to, attempt, res, cerr.Error(), now)
+			}
+			return run
+		}
+		run.Item = &item
+	}
 	// A dispatched task-execution run's captured output is written through as
 	// an OKF run-output doc under its task folder (sty_890b86cb) — the same
 	// write seam the in-loop execution-record verb uses. Best-effort: a write
@@ -401,6 +443,7 @@ func runReadinessRound(ctx context.Context, item workitem.Item, edge readinessEd
 		return res
 	}
 	run := dispatchPerformer(ctx, item, edge.To, attempt, true, now)
+	item = run.rebind(item)
 	switch {
 	case run.Err != nil:
 		recordDispatchFailure(ctx, item, edge.To, attempt, run.Res, run.Err, now)

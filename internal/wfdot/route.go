@@ -113,6 +113,10 @@ type Step struct {
 	// means the step applies nothing (sty_4d9df9a0).
 	ApplyCriteriaDoc     string
 	ApplyCriteriaHeading string
+	// ApplyChangeOps / ApplyChangeTags declare the changes a propose step's
+	// performer may report and the tag prefixes it may add (sty_af0b1761).
+	ApplyChangeOps  []string
+	ApplyChangeTags []string
 	// RejectBudget is the most rejected presentations of this step's entry edge
 	// before the orchestrator must park the story and ask the developer. Zero
 	// means no declared budget. The unit is a PRESENTATION (one gate run),
@@ -480,6 +484,8 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 
 			ApplyCriteriaDoc:     st.ApplyCriteriaDoc,
 			ApplyCriteriaHeading: st.ApplyCriteriaHeading,
+			ApplyChangeOps:       st.ApplyChangeOps,
+			ApplyChangeTags:      st.ApplyChangeTags,
 
 			WaitsOnChildren: st.WaitsOnChildren,
 			Schedule:        st.Schedule,

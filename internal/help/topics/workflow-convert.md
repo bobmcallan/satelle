@@ -97,8 +97,8 @@ does not make obvious, and the one every conversion gets wrong.**
 
 Step keys: `status`, `agent`, `skills`, `reviewers`, `reviewer_agent`,
 `parallel`, `bundle`, `requires`, `applies_to`, `advise`, `rework`, `propose`,
-`freeze`, `reject_budget`, `mark`, `waits_on_children`, `schedule`,
-`after_children`, `start`, `terminal`.
+`freeze`, `reject_budget`, `mark`, `apply_changes`, `waits_on_children`,
+`schedule`, `after_children`, `start`, `terminal`.
 
 `bundle = true` runs the step's entry reviewers that can share one session as
 ONE reviewer session: every rubric rides the prompt verbatim under its own
@@ -139,6 +139,11 @@ not (`satelle help epic-wave`). The name must be an obligation some step
 provides, the step must require a `waits_on_children` step, and the two keys
 cannot sit on one step. The step may name an `agent`, which then takes the
 container's seat on entry. Absent, nothing changes.
+
+`apply_changes = { ops = [...], tags = [...] }` lets a `propose` step's read-only
+performer report story-configuration changes for satelle to apply before the
+gates run; it is refused when the route is loaded on a step without `propose`
+(`satelle help agent-dispatch`).
 
 Four keys turn a step into a **readiness step** — a performer that produces an
 artifact the entry reviewers then judge, while the story stays editable:

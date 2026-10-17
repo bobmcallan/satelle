@@ -2262,8 +2262,17 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	// A performer reject is not a crash. The verb parks the story as blocked
 	// and puts the notes on the timeline (sty_b8a0d062). No verdict is a
 	// normal performer. An accept proceeds.
+	//
+	// A performer that cannot write may report the configuration changes it wants
+	// beside its verdict or artifact; the verb applies them on the record
+	// (sty_af0b1761). The decode is the shared one, so every adapter reports alike.
+	changes, _, cerr := agentartifact.DecodeChanges(invRes.Stdout)
+	if cerr != nil {
+		return res, fmt.Errorf("named agent %q reported changes for step %q that cannot be read: %w", dispatchAgent, toStatus, cerr)
+	}
+	res.Changes = changes
 	if dec, derr := parseDecision(invRes.Stdout); derr == nil && !dec.Accept {
-		return res, &verb.PerformerReject{Notes: dec.Notes}
+		return res, &verb.PerformerReject{Notes: dec.Notes, Changes: changes}
 	}
 	if outputContract.Active() {
 		if !attemptPolicy.Active() {

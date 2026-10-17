@@ -159,8 +159,14 @@ var activeRig *readyRig
 // newReadyRig wires the route and a dispatcher and gater that accept everything.
 func newReadyRig(t *testing.T, mark, reviewers string) *readyRig {
 	t.Helper()
+	return newRigFor(t, readyStepToml(mark, reviewers))
+}
+
+// newRigFor is newReadyRig over an arbitrary step catalogue.
+func newRigFor(t *testing.T, stepToml string) *readyRig {
+	t.Helper()
 	withWiring(t)
-	wireWithWorkflows(t, routeHalves(readyDoneToml, readyStepToml(mark, reviewers)))
+	wireWithWorkflows(t, routeHalves(readyDoneToml, stepToml))
 	verb.SetStoryDir(t.TempDir())
 	r := &readyRig{
 		d: &roundDispatcher{t: t, calls: map[string]int{}, docName: "plan"},

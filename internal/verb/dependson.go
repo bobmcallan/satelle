@@ -125,6 +125,14 @@ type dependsOnStore interface {
 // story's FINAL effective tag set; self is "" on create. It is a no-op when the
 // tags declare no dependency, so every other flow is unchanged.
 func checkDependsOn(ctx context.Context, store dependsOnStore, self, parentID string, tags []string) error {
+	return checkDependsOnPending(ctx, store, self, parentID, tags, nil)
+}
+
+// checkDependsOnPending is checkDependsOn judged against a batch not yet
+// written: pending holds the depends-on edges the batch gives other stories,
+// which replace their stored edges, so a cycle that only closes across the
+// batch's own changes is found (sty_af0b1761).
+func checkDependsOnPending(ctx context.Context, store dependsOnStore, self, parentID string, tags []string, pending map[string][]string) error {
 	targets := dependsOnTargets(tags)
 	if len(targets) == 0 {
 		return nil
@@ -162,6 +170,9 @@ func checkDependsOn(ctx context.Context, store dependsOnStore, self, parentID st
 	if parentID != "" {
 		allowed[parentID] = true
 		scope = append(scope, "parent "+parentID)
+	}
+	for id, to := range pending {
+		edges[id] = to
 	}
 	sort.Strings(scope)
 	return validateDependsOn(self, targets, exists, allowed, strings.Join(scope, ", "), edges)
