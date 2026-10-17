@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -301,5 +302,104 @@ func TestScratchProbe(t *testing.T) {
 		t.Skip("scratch skip, not on the allowlist")
 	case "fail":
 		t.Fatal("scratch failure")
+	}
+}
+
+// gitIn runs git in dir for a -tree fixture.
+func gitIn(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	ident := []string{"-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}
+	if out, err := exec.Command("git", append(append([]string{"-C", dir}, ident...), args...)...).CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// treeRepo is a git repo with one committed file, for the -tree guard.
+func treeRepo(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "kept.go"), []byte("package p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, dir, "add", "kept.go")
+	gitIn(t, dir, "commit", "-q", "-m", "add")
+	return dir
+}
+
+// runTree runs skipcheck over a child shell script, with the guard on tree when
+// tree is non-empty, and returns (exit, stderr). The script sees tree as $1.
+func runTree(t *testing.T, tree, script string) (int, string) {
+	t.Helper()
+	var args []string
+	if tree != "" {
+		args = append(args, "-tree", tree)
+	}
+	args = append(args, "--", "sh", "-c", script, "sh", tree)
+	var out, errb bytes.Buffer
+	return run(args, &out, &errb), errb.String()
+}
+
+func TestTreeGuardFailsWhenTheRunWritesIntoTheTree(t *testing.T) {
+	for name, c := range map[string]struct{ script, want string }{
+		"a new file":     {`printf 'package p\n' > "$1/planted.go"`, "appeared planted.go"},
+		"a changed file": {`printf 'package q\n' > "$1/kept.go"`, "changed kept.go"},
+		"a removed file": {`rm "$1/kept.go"`, "changed kept.go"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, stderr := runTree(t, treeRepo(t), c.script)
+			if got != 1 {
+				t.Fatalf("exit = %d, want 1 for a run that changed the tree:\n%s", got, stderr)
+			}
+			if !strings.Contains(stderr, "changed the source tree") || !strings.Contains(stderr, c.want) {
+				t.Errorf("report is missing %q:\n%s", c.want, stderr)
+			}
+		})
+	}
+}
+
+func TestTreeGuardPassesWhenTheRunLeavesTheTreeAlone(t *testing.T) {
+	for name, script := range map[string]string{
+		"writes only elsewhere":        `printf x > "$1/../skipcheck-scratch-$$"; rm "$1/../skipcheck-scratch-$$"`,
+		"plants a file and removes it": `printf x > "$1/gone.go"; rm "$1/gone.go"`,
+		"does nothing to the tree":     `true`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := treeRepo(t)
+			// Already dirty before the run and left alone by it: not the run's doing.
+			if err := os.WriteFile(filepath.Join(dir, "preexisting.go"), []byte("package p\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got, stderr := runTree(t, dir, script); got != 0 {
+				t.Fatalf("exit = %d, want 0:\n%s", got, stderr)
+			}
+		})
+	}
+}
+
+func TestTreeGuardNamesAnUntrackedFileTheRunRemoved(t *testing.T) {
+	dir := treeRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "mine.go"), []byte("package p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, stderr := runTree(t, dir, `rm "$1/mine.go"`)
+	if got != 1 || !strings.Contains(stderr, "vanished mine.go") {
+		t.Fatalf("exit = %d, want 1 naming `vanished mine.go`:\n%s", got, stderr)
+	}
+}
+
+func TestTreeGuardOffByDefault(t *testing.T) {
+	dir := treeRepo(t)
+	if got, stderr := runTree(t, "", `printf x > "`+filepath.Join(dir, "planted.go")+`"`); got != 0 {
+		t.Fatalf("exit = %d, want 0 without -tree:\n%s", got, stderr)
+	}
+}
+
+func TestTreeGuardOnANonRepoIsASetupError(t *testing.T) {
+	if got, _ := runTree(t, t.TempDir(), `true`); got != 2 {
+		t.Fatalf("exit = %d, want 2", got)
 	}
 }

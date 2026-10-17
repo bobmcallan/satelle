@@ -78,11 +78,16 @@ HERMETIC := sh scripts/hermetic.sh --
 # (UNIT_STALL) so a test that really hangs is still named long before it. The
 # deadline is unit-only: the integration suite has tests with their own, longer
 # budgets and keeps the plain SKIPCHECK.
+#
+# The unit run also passes -tree ., so a test that writes into the source tree
+# fails the run by file name: packages run in parallel, and a file planted in the
+# tree races every source-walking test elsewhere (sty_6b98ba1f). The integration
+# run builds into the tree and is not guarded.
 STRICT ?=
 ifeq ($(STRICT),1)
 UNIT_STALL := 5m
 SKIPCHECK := go run ./scripts/skipcheck -allow scripts/skip-allow.txt --
-UNIT_SKIPCHECK := go run ./scripts/skipcheck -allow scripts/skip-allow.txt -stall $(UNIT_STALL) --
+UNIT_SKIPCHECK := go run ./scripts/skipcheck -allow scripts/skip-allow.txt -stall $(UNIT_STALL) -tree . --
 UNIT_STRICTFLAGS := -json -count=3 -shuffle=on -timeout 30m
 INTEG_STRICTFLAGS := -json -shuffle=on
 endif

@@ -2,7 +2,7 @@
 // the run when the child fails or when any test or subtest skips without being
 // on the reviewed allowlist (sty_53c3f311).
 //
-// Usage: skipcheck [-allow FILE] [-stall DURATION] -- go test -json [flags] [packages]
+// Usage: skipcheck [-allow FILE] [-stall DURATION] [-tree DIR] -- go test -json [flags] [packages]
 //
 // It is a wrapper, not a pipe: make runs recipes under /bin/sh, which has no
 // pipefail, so `go test -json | filter` would turn a failing run green.
@@ -14,6 +14,13 @@
 // binary is left behind (sty_3f2a5c78). It is off by default: it is a hang
 // backstop beneath a package timeout, and the caller sets it per suite.
 //
+// With -tree DIR, the run must also leave that git working tree as it found it:
+// files git reports as untracked or modified, and the commit HEAD points at, are
+// recorded before the child starts and compared after it exits. A test that
+// plants a file in the source tree is racing every source-walking test in other
+// packages, which run in parallel with it (sty_6b98ba1f). Gitignored output is
+// not compared.
+//
 // The allowlist decides which skips are acceptable; this program only reads it.
 // An entry is one line, `<package> <TestName[/subtest]> <reason>`. The reason is
 // required. Blank lines and lines starting with # are ignored. Matching is exact
@@ -23,6 +30,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -31,6 +39,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -285,20 +294,122 @@ func report(w io.Writer, bad []Skip) {
 	fmt.Fprintln(w, "skipcheck: fix the skip, or add `<package> <test> <reason>` to the allowlist after review.")
 }
 
+// treeState is what a run could change in a git working tree: the commit it sits
+// on, and every path git reports as differing from it with a fingerprint of the
+// content. Gitignored output is not in it: build products are not source.
+type treeState struct {
+	head  string
+	files map[string]string
+}
+
+// snapshotTree records dir's state with git. A path that is dirty before the run
+// and untouched by it appears in both snapshots unchanged, so it is not reported.
+func snapshotTree(dir string) (treeState, error) {
+	git := func(args ...string) ([]byte, error) {
+		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
+		if err != nil {
+			return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+		}
+		return out, nil
+	}
+	head, err := git("rev-parse", "HEAD")
+	if err != nil {
+		return treeState{}, err
+	}
+	status, err := git("status", "--porcelain=v1", "-z", "--untracked-files=all")
+	if err != nil {
+		return treeState{}, err
+	}
+	st := treeState{head: strings.TrimSpace(string(head)), files: map[string]string{}}
+	entries := strings.Split(string(status), "\x00")
+	for i := 0; i < len(entries); i++ {
+		e := entries[i]
+		if len(e) < 4 {
+			continue
+		}
+		code, path := e[:2], e[3:]
+		if strings.ContainsAny(code, "RC") {
+			i++ // a rename or copy carries its source as the next entry
+		}
+		st.files[path] = code + " " + fingerprint(filepath.Join(dir, path))
+	}
+	return st, nil
+}
+
+// fingerprint is a hash of the file's content, or of its target for a symlink,
+// and "deleted" when there is no such path.
+func fingerprint(path string) string {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "deleted"
+	}
+	var body []byte
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, _ := os.Readlink(path)
+		body = []byte(target)
+	} else if body, err = os.ReadFile(path); err != nil {
+		return "unreadable"
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(body))
+}
+
+// diffTree lists, one line per difference, what the run did to the tree.
+func diffTree(before, after treeState) []string {
+	var out []string
+	if before.head != after.head {
+		out = append(out, fmt.Sprintf("moved HEAD %s -> %s", before.head, after.head))
+	}
+	// A path git did not list is a clean tracked file. So a file that is new to
+	// the listing appeared only if it is untracked, and one that left the listing
+	// vanished only if it was; a tracked file in either case was changed.
+	untracked := func(state string) bool { return strings.HasPrefix(state, "?? ") }
+	seen := map[string]bool{}
+	for p, b := range before.files {
+		seen[p] = true
+		switch a, ok := after.files[p]; {
+		case !ok && untracked(b):
+			out = append(out, "vanished "+p)
+		case !ok, a != b:
+			out = append(out, "changed "+p)
+		}
+	}
+	for p, a := range after.files {
+		if seen[p] {
+			continue
+		}
+		if untracked(a) {
+			out = append(out, "appeared "+p)
+		} else {
+			out = append(out, "changed "+p)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func reportTree(w io.Writer, changes []string) {
+	fmt.Fprintln(w, "\nskipcheck: the test run changed the source tree:")
+	for _, c := range changes {
+		fmt.Fprintf(w, "  %s\n", c)
+	}
+	fmt.Fprintln(w, "skipcheck: a test must write only to a temp directory; a source-walking test in another package races a file planted in the tree.")
+}
+
 // run returns the process exit status: the child's non-zero status when it
-// failed, 2 for a usage or setup error, 1 for a stalled test or an unlisted skip,
-// else 0.
+// failed, 2 for a usage or setup error, 1 for a stalled test, an unlisted skip or
+// a changed source tree, else 0.
 func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("skipcheck", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	allowPath := fs.String("allow", "", "allowed-skip list (`<package> <test> <reason>` per line)")
 	stall := fs.Duration("stall", 0, "fail the run, and kill the child's process group, when a test runs this long with no result (0 = off)")
+	tree := fs.String("tree", "", "git working tree `DIR` the run must leave as it found it: fail when the run adds, changes or removes a file there (empty = off)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	cmdline := fs.Args()
 	if len(cmdline) == 0 {
-		fmt.Fprintln(stderr, "usage: skipcheck [-allow FILE] [-stall DURATION] -- go test -json [flags] [packages]")
+		fmt.Fprintln(stderr, "usage: skipcheck [-allow FILE] [-stall DURATION] [-tree DIR] -- go test -json [flags] [packages]")
 		return 2
 	}
 	if *stall < 0 {
@@ -309,6 +420,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "skipcheck: %v\n", err)
 		return 2
+	}
+
+	var before treeState
+	if *tree != "" {
+		if before, err = snapshotTree(*tree); err != nil {
+			fmt.Fprintf(stderr, "skipcheck: -tree %s: %v\n", *tree, err)
+			return 2
+		}
 	}
 
 	child := exec.Command(cmdline[0], cmdline[1:]...)
@@ -370,6 +489,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 			reportStalled(stderr, hung, *stall)
 		}
 	}
+	var changed []string
+	if *tree != "" {
+		after, err := snapshotTree(*tree)
+		if err != nil {
+			fmt.Fprintf(stderr, "skipcheck: -tree %s: %v\n", *tree, err)
+			return 2
+		}
+		if changed = diffTree(before, after); len(changed) > 0 {
+			reportTree(stderr, changed)
+		}
+	}
 	var ee *exec.ExitError
 	switch {
 	case len(hung) > 0:
@@ -381,7 +511,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1 // killed by a signal
 	case waitErr != nil, scanErr != nil:
 		return 2
-	case len(bad) > 0:
+	case len(bad) > 0, len(changed) > 0:
 		return 1
 	}
 	return 0

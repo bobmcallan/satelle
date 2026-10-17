@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -140,92 +141,86 @@ func TestServeGateWatchesInternalServe(t *testing.T) {
 	}
 }
 
-// serveVersionBumped reports whether the working tree's satelled.version
-// already differs from the one in the latest serve-v* tag. When it does, the
-// gate passes on the version comparison alone and no planted file can change
-// that. Old tags still carry satelle-serve.version (compatibility fallback).
-func serveVersionBumped(t *testing.T, root string) bool {
+// gitTestIdent is the identity and signing override every commit these tests
+// make carries, so they need no configured git user.
+var gitTestIdent = []string{"-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false"}
+
+// commitAll commits every change in dir under the test identity.
+func commitAll(t *testing.T, dir, msg string) {
 	t.Helper()
-	base := run(t, root, "git", "tag", "-l", "serve-v*", "--sort=-v:refname")
-	if i := strings.IndexByte(base, '\n'); i >= 0 {
-		base = base[:i]
-	}
-	if base == "" {
-		return false
-	}
-	serveVer := func(body string) string {
-		var legacy string
-		for _, ln := range strings.Split(body, "\n") {
-			if f := strings.Fields(ln); len(f) >= 2 {
-				switch f[0] {
-				case "satelled.version:":
-					return f[1]
-				case "satelle-serve.version:":
-					legacy = f[1]
-				}
-			}
-		}
-		return legacy
-	}
-	head, err := os.ReadFile(filepath.Join(root, ".version"))
+	gitInDir(t, dir, append(append([]string{}, gitTestIdent...), "commit", "-a", "-m", msg)...)
+}
+
+// overlayGateScript writes root's working-tree gate script into dir and commits
+// it there when that changes anything, so the gate's own diff never counts it.
+// The tests judge the script under edit, not the last committed one (see
+// repoRoot).
+func overlayGateScript(t *testing.T, root, dir string) {
+	t.Helper()
+	script, err := os.ReadFile(filepath.Join(root, gateScript))
 	if err != nil {
-		t.Fatalf("read .version: %v", err)
+		t.Fatalf("read %s: %v", gateScript, err)
 	}
-	tagged := run(t, root, "git", "show", base+":.version")
-	return serveVer(string(head)) != serveVer(tagged)
+	dst := filepath.Join(dir, gateScript)
+	writeFile(t, dst, string(script))
+	if err := os.Chmod(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if gitInDir(t, dir, "status", "--porcelain") != "" {
+		commitAll(t, dir, "overlay the gate script")
+	}
 }
 
-// gateRun runs the gate itself and reports whether it passed.
-func gateRun(t *testing.T, root string) (bool, string) {
+// privateClone returns a throwaway clone of src with its own objects and tags,
+// carrying the working-tree gate script, and with HEAD tagged serve-v999999.0.0.
+// That tag sorts above every real one, so it is the gate's baseline and the
+// clone starts with no serve-path change whatever src's tag or bump state is.
+// Probe files are planted here and never in src: tests that walk the real source
+// tree run in parallel with this package (sty_6b98ba1f).
+func privateClone(t *testing.T, src string) string {
 	t.Helper()
-	cmd := exec.Command("bash", gateScript)
-	cmd.Dir = root
-	out, err := cmd.CombinedOutput()
-	return err == nil, string(out)
+	parent := t.TempDir()
+	clone := filepath.Join(parent, "clone")
+	gitInDir(t, parent, "clone", "--quiet", "--no-local", src, clone)
+	overlayGateScript(t, src, clone)
+	gitInDir(t, clone, "tag", "serve-v999999.0.0")
+	return clone
 }
 
-// TestServeGateSeesNewFiles closes the hole a path-prefix check hides: `git
-// diff` cannot see an UNTRACKED file, and the release path runs this gate before
-// staging. So adding a brand-new source file to a serve package — as real a
-// change as editing one — would have passed green.
-//
-// The _test.go leg is the matching carve-out: a test file is compiled into
-// `go test`, never into the shipped binary, so it cannot make a running service
-// stale and must not demand a serve release.
-func TestServeGateSeesNewFiles(t *testing.T) {
-	root := repoRoot(t)
+// probeServeGate plants the probe files in a private clone of src and returns
+// how many planted-file assertions it ran. It skips only when src has no
+// verified serve-tag baseline, the two states in which a gate verdict says
+// nothing. How far src's serve version leads its newest tag does not matter,
+// because the clone judges against its own HEAD. srcEnv is the environment of
+// the gate run that checks src's baseline (nil on the real tree, which uses
+// origin).
+func probeServeGate(t *testing.T, src string, srcEnv []string) int {
+	t.Helper()
 	// The gate compares against the latest serve-v* tag. With no tag it exits
 	// early and answers ok to everything, so a planted file would "pass" and this
 	// test would report a hole that is not there — or worse, miss one that is.
 	// That is not hypothetical: it is how this test first failed CI, on a default
 	// shallow, tagless checkout. Refuse to conclude anything instead.
-	if run(t, root, "git", "tag", "-l", "serve-v*") == "" {
+	if gitInDir(t, src, "tag", "-l", "serve-v*") == "" {
 		t.Skip("no serve-v* tag in this clone — the gate has no baseline, so planting a file proves nothing")
 	}
-	// A tree whose serve version is ALREADY bumped past the baseline tag cannot
-	// be made to fail by planting anything: the gate's verdict turns on the
-	// version comparison, which already passes. Asserting "planting a file makes
-	// it fail" there tests nothing and fails for the wrong reason — observed on
-	// exactly the release that first needed a serve bump after this test landed.
-	//
-	// This is the third precondition of the same kind (tagless clone, dirty
-	// baseline, bumped version). They share one rule: never conclude anything
-	// from a gate that could not have failed.
-	if serveVersionBumped(t, root) {
-		t.Skip("satelled.version is already ahead of the baseline tag — the gate cannot fail, so planting a file proves nothing")
+	// sty_da6c3874: a stale or unverifiable remote baseline fails the gate before
+	// any planted file can matter.
+	if _, out := gateIn(t, src, srcEnv); strings.Contains(out, serveGateStaleBaseline) || strings.Contains(out, serveGateCannotVerify) {
+		t.Skipf("serve-tag baseline not verified in this clone, so planting a file proves nothing:\n%s", out)
 	}
-	if ok, out := gateRun(t, root); !ok {
-		// sty_da6c3874: a stale or unverifiable remote baseline also fails the
-		// gate before any planted file can matter — same skip rule.
-		if strings.Contains(out, serveGateStaleBaseline) || strings.Contains(out, serveGateCannotVerify) {
-			t.Skipf("serve-tag baseline not verified in this clone, so planting a file proves nothing:\n%s", out)
-		}
-		t.Skipf("gate is already failing in this tree, so planting a file proves nothing:\n%s", out)
+
+	clone := privateClone(t, src)
+	env := []string{"SERVE_TAG_REMOTE=" + clone}
+	if code, out := gateIn(t, clone, env); code != 0 {
+		t.Fatalf("the unplanted clone must pass the gate, exit %d:\n%s", code, out)
 	}
+
 	// The probe must carry the package clause its directory already uses. A
 	// mismatched one breaks `go list -deps`, and the gate then fails closed for
 	// that reason instead of the one under test — which is correct behaviour and
 	// a useless test.
+	var asserted int
 	for _, c := range []struct {
 		rel      string
 		pkg      string
@@ -239,21 +234,104 @@ func TestServeGateSeesNewFiles(t *testing.T) {
 		{"internal/cli/zz_gate_probe.go", "cli", true,
 			"a new file outside the serve build must not demand a serve release"},
 	} {
-		path := filepath.Join(root, c.rel)
-		if _, err := os.Stat(path); err == nil {
-			t.Fatalf("%s already exists — refusing to clobber it", c.rel)
+		path := filepath.Join(clone, c.rel)
+		writeFile(t, path, "package "+c.pkg+"\n")
+		// While a probe is planted, none may exist in src: a source-walking test
+		// elsewhere in the module would see it vanish under it.
+		if planted, _ := filepath.Glob(filepath.Join(src, "internal", "*", "zz_gate_probe*")); len(planted) > 0 {
+			t.Fatalf("probe files in the source tree %s: %v", src, planted)
 		}
-		if err := os.WriteFile(path, []byte("package "+c.pkg+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		ok, out := gateRun(t, root)
+		code, out := gateIn(t, clone, env)
 		if err := os.Remove(path); err != nil {
 			t.Fatal(err)
 		}
-		if ok != c.wantPass {
+		if ok := code == 0; ok != c.wantPass {
 			t.Errorf("with %s present the gate %s — %s\n%s", c.rel,
 				map[bool]string{true: "PASSED", false: "FAILED"}[ok], c.why, out)
 		}
+		asserted++
+	}
+	return asserted
+}
+
+// TestServeGateSeesNewFiles closes the hole a path-prefix check hides: `git
+// diff` cannot see an UNTRACKED file, and the release path runs this gate before
+// staging. So adding a brand-new source file to a serve package — as real a
+// change as editing one — would have passed green.
+//
+// The _test.go leg is the matching carve-out: a test file is compiled into
+// `go test`, never into the shipped binary, so it cannot make a running service
+// stale and must not demand a serve release.
+func TestServeGateSeesNewFiles(t *testing.T) {
+	requireGitAndGo(t)
+	if n := probeServeGate(t, repoRoot(t), nil); n != 3 {
+		t.Fatalf("the probe ran %d planted-file assertions, want 3", n)
+	}
+}
+
+// TestServeGateProbeRunsWhenServeBumped proves the probe does not skip on a tree
+// whose serve version is ahead of its newest serve-v* tag — a serve bump pushed
+// and not yet released, the normal state between that push and its release. It
+// builds exactly that source: a serve-v* tag on the pre-bump commit and a
+// committed satelled.version patch bump on top.
+func TestServeGateProbeRunsWhenServeBumped(t *testing.T) {
+	requireGitAndGo(t)
+	root := repoRoot(t)
+	parent := t.TempDir()
+	src := filepath.Join(parent, "src")
+	gitInDir(t, parent, "clone", "--quiet", "--no-local", root, src)
+	overlayGateScript(t, root, src)
+	for _, tag := range strings.Fields(gitInDir(t, src, "tag", "-l", "serve-v*")) {
+		gitInDir(t, src, "tag", "-d", tag)
+	}
+	gitInDir(t, src, "tag", "serve-v0.0.1")
+
+	versionPath := filepath.Join(src, ".version")
+	body, err := os.ReadFile(versionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(body), "\n")
+	var bumped bool
+	for i, ln := range lines {
+		f := strings.Fields(ln)
+		if len(f) != 2 || f[0] != "satelled.version:" {
+			continue
+		}
+		parts := strings.Split(f[1], ".")
+		patch, err := strconv.Atoi(parts[len(parts)-1])
+		if err != nil {
+			t.Fatalf("satelled.version %q has no numeric patch: %v", f[1], err)
+		}
+		parts[len(parts)-1] = strconv.Itoa(patch + 1)
+		lines[i] = f[0] + " " + strings.Join(parts, ".")
+		bumped = true
+	}
+	if !bumped {
+		t.Fatalf("no satelled.version line in %s", versionPath)
+	}
+	writeFile(t, versionPath, strings.Join(lines, "\n"))
+	commitAll(t, src, "bump the serve version")
+
+	// The source is ahead of its newest tag and its baseline verifies, so the
+	// probe has no reason to skip.
+	env := []string{"SERVE_TAG_REMOTE=" + src}
+	code, out := gateIn(t, src, env)
+	if code != 0 || strings.Contains(out, serveGateStaleBaseline) || strings.Contains(out, serveGateCannotVerify) {
+		t.Fatalf("the bumped source must have a verified baseline, exit %d:\n%s", code, out)
+	}
+
+	var sub *testing.T
+	var n int
+	t.Run("probe", func(st *testing.T) {
+		sub = st
+		n = probeServeGate(st, src, env)
+	})
+	if sub.Skipped() {
+		t.Fatal("the probe skipped on a bumped, unreleased tree")
+	}
+	if n != 3 {
+		t.Fatalf("the probe ran %d planted-file assertions on a bumped tree, want 3", n)
 	}
 }
 
