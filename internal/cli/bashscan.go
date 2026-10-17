@@ -1116,61 +1116,109 @@ func sedPathArgs(toks []bashTok, cwd string) []string {
 }
 
 // redirectTargets finds >file, >>file, > file, and tee destinations.
+//
+// The redirect walk reads tokens, not bare words, so a quoted word in the target
+// slot is seen: `> "/tmp/x.log"` names /tmp/x.log. Dropping string tokens (as
+// wordsOnly does) lost that target and took the next bare word instead — for
+// `> "f" 2>&1` the operator `2>` — which resolved inside the repo and made a
+// scratch redirect look like a source edit. The target is unquoted with unquoteTok
+// and resolved exactly as a mutation-verb argument is (commandArgWords), so one
+// quoted path has one verdict in every slot.
+//
+// An operator (isRedirectOp) is never a target, and a heredoc token never is.
 // Fd-duplication forms (n>&m, n>&-, >&m) contribute no file target — tokenizeBash
-// splits on '&', so "2>&1" arrives as words "2>", "&", "1" (sty_74c0556f).
+// splits on '&', so "2>&1" arrives as words "2>", "&", "1" (sty_74c0556f). An
+// unresolvable target ($UNSET, $(cmd), a variable assigned earlier in the same
+// command) resolves onto cwd and stays gated; nothing is treated as foreign.
 func redirectTargets(seg []bashTok, cwd string) []string {
 	var out []string
-	// Reconstruct a minimal stream of word values including glued redirects.
+	// tee [opts] FILE… — bare words only.
 	words := wordsOnly(seg)
-	for i := 0; i < len(words); i++ {
-		w := words[i]
-		// tee [opts] FILE…
-		if filepath.Base(w) == "tee" {
-			for j := i + 1; j < len(words); j++ {
-				if strings.HasPrefix(words[j], "-") {
-					continue
-				}
-				out = append(out, resolvePath(cwd, words[j]))
+	for i, w := range words {
+		if filepath.Base(w) != "tee" {
+			continue
+		}
+		for _, a := range words[i+1:] {
+			if !strings.HasPrefix(a, "-") {
+				out = append(out, resolvePath(cwd, a))
 			}
 		}
+	}
+	// target is the file named by the token in a target slot: a bare word or a
+	// quoted word unquoted. Operators, heredocs and empty words name none.
+	target := func(t bashTok) (string, bool) {
+		switch {
+		case t.Kind == "word" && t.Value != "" && !isRedirectOp(t.Value):
+			return t.Value, true
+		case t.Kind == "string" && t.Value != "HEREDOC" && t.Raw == "":
+			return unquoteTok(t.Value), true
+		}
+		return "", false
+	}
+	for i := 0; i < len(seg); i++ {
+		t := seg[i]
+		if t.Kind != "word" || t.Value == "" {
+			continue
+		}
+		w := t.Value
 		// Glued: >file or >>file or 2>file
-		if strings.Contains(w, ">") {
+		if strings.Contains(w, ">") && !isRedirectOp(w) {
 			if p := gluedRedirectPath(w); p != "" {
 				out = append(out, resolvePath(cwd, p))
 			}
 		}
-		// Spaced: > file / >> file / 1> file / 2> & 1 (fd dup) / > & file (csh)
-		if w == ">" || w == ">>" || w == "1>" || w == "2>" || w == "&>" || w == ">&" {
-			if i+1 >= len(words) || strings.HasPrefix(words[i+1], ">") {
-				continue
-			}
-			next := words[i+1]
-			// After a redirect op, "&" is either n>&m (fd duplication) or csh
-			// ">& file" / "> & file" (file target is the word after "&").
-			if next == "&" {
-				if i+2 < len(words) && isFdDupTarget(words[i+2]) {
+		// Spaced: > file / >> file / 2> file / 2> & 1 (fd dup) / > & file (csh)
+		if !isRedirectOp(w) || i+1 >= len(seg) {
+			continue
+		}
+		next := seg[i+1]
+		if next.Kind == "word" && strings.HasPrefix(next.Value, ">") {
+			continue // glued target, or a following operator: handled on its own turn
+		}
+		// After a redirect op, "&" is either n>&m (fd duplication) or csh
+		// ">& file" / "> & file" (file target is the word after "&").
+		if next.Kind == "word" && next.Value == "&" {
+			if i+2 < len(seg) {
+				if after := seg[i+2]; after.Kind == "word" && isFdDupTarget(after.Value) {
 					i += 2 // skip "&" and the fd / "-"
 					continue
 				}
-				if i+2 < len(words) {
-					out = append(out, resolvePath(cwd, words[i+2]))
+				if p, ok := target(seg[i+2]); ok {
+					out = append(out, resolvePath(cwd, p))
 					i += 2
 					continue
 				}
-				i++ // trailing bare "&" after redirect — no file
-				continue
 			}
-			// One-token ">&" / "&>" followed by fd or path (defensive; tokenizer
-			// usually splits ">&m" at '&').
-			if w == ">&" && isFdDupTarget(next) {
-				i++
-				continue
-			}
-			out = append(out, resolvePath(cwd, next))
+			i++ // trailing bare "&" after redirect — no file
+			continue
+		}
+		// One-token ">&" followed by fd or path (defensive; tokenizer usually
+		// splits ">&m" at '&').
+		if strings.HasSuffix(w, ">&") && next.Kind == "word" && isFdDupTarget(next.Value) {
+			i++
+			continue
+		}
+		if p, ok := target(next); ok {
+			out = append(out, resolvePath(cwd, p))
 			i++
 		}
 	}
 	return out
+}
+
+// isRedirectOp reports whether w is a bare redirect operator with no glued
+// target: >, >>, >|, >&, optionally prefixed by a file descriptor number or &
+// (N>, N>>, &>, &>>). Such a word is never a target.
+func isRedirectOp(w string) bool {
+	rest := strings.TrimLeft(w, "0123456789")
+	if rest == w {
+		rest = strings.TrimPrefix(w, "&")
+	}
+	switch rest {
+	case ">", ">>", ">|", ">&":
+		return true
+	}
+	return false
 }
 
 // isFdDupTarget reports whether s is a bash fd-duplication target: all digits
@@ -1265,7 +1313,6 @@ func resolvePath(cwd, p string) string {
 	if p == "" {
 		return ""
 	}
-	// Strip simple surrounding quotes if tokenizer left them (shouldn't for words).
 	if filepath.IsAbs(p) {
 		return filepath.Clean(p)
 	}

@@ -1,3 +1,8 @@
+## [0.0.689] - 2026-10-17
+
+### Fixed
+- A shell redirect to a quoted path is no longer refused as a source edit. The Bash hook's write classifier dropped a double-quoted redirect target and took the next word instead, so `make test > "/tmp/scratch/out.log" 2>&1` resolved the operator `2>` as a file inside the repo and was denied unless this session held an executor seat (seen as "more than one performing story, none holds a seat for session …"). A quoted redirect target is now unquoted and resolved exactly as the same word is for a mutation-verb argument, so a scratch write under `[gate] edit_exempt_paths` passes whatever the seat state. Redirect operators (`>`, `>>`, `>|`, `>&`, `2>`, `&>`, …) are never taken as targets and a heredoc is never a target. A redirect into the repo, quoted or not, is still judged as an edit, and a `$VAR` target the hook cannot expand stays gated. (sty_e642df17)
+
 ## [0.0.688] - 2026-10-17
 
 ### Fixed
