@@ -124,3 +124,63 @@ func TestStatusAuthoredContentIsNeverSyncedThenUnpushedThenInStep(t *testing.T) 
 		t.Fatalf("edited after the push: state = %q, want %q", st.State, StateUnpushed)
 	}
 }
+
+// A base ahead of the hosted head belongs to a replaced store, so it is no base:
+// the area reads as the hosted copy that is there, and no state it reports names a
+// pull that has no snapshot to pull (sty_1217a400).
+func TestVoidBaseIsNoBase(t *testing.T) {
+	const f = "skills/a.md"
+	voidBase := func(t *testing.T, d *Driver, files map[string]string) {
+		t.Helper()
+		b := hosted.AreaBase{Version: 3, Files: map[string]string{}}
+		for p, body := range files {
+			b.Files[p] = SHA([]byte(body))
+		}
+		if err := hosted.SaveAreaBase(d.Server, d.Project, d.RepoRoot, "skills", b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	local := map[string]string{f: SHA([]byte("a\n"))}
+
+	t.Run("local matching the void base is never synced, and a push claims it", func(t *testing.T) {
+		d := testDriver(t, newMemHosted(), nil)
+		voidBase(t, d, map[string]string{f: "a\n"})
+		st := statusOf(t, d, local)
+		if st.State != StateNeverSynced || st.Base != 0 {
+			t.Fatalf("status = %+v, want never synced with no base", st)
+		}
+		job, err := d.PreparePush(context.Background(), "skills", []PushFile{{Path: f, Content: []byte("a\n")}})
+		if err != nil {
+			t.Fatalf("a push over a void base must not be refused as behind: %v", err)
+		}
+		if !job.Claims() {
+			t.Error("the push must claim the local copy as the first snapshot")
+		}
+	})
+
+	t.Run("nothing local over hosted heads is behind with no snapshot", func(t *testing.T) {
+		h := newMemHosted()
+		h.blobs[f] = []byte("a\n")
+		d := testDriver(t, h, nil)
+		voidBase(t, d, nil)
+		st := statusOf(t, d, map[string]string{})
+		if st.State != StateBehind || st.Effective != 0 || !reflect.DeepEqual(st.Pending, []string{f}) {
+			t.Fatalf("status = %+v, want behind, no snapshot, pending [%s]", st, f)
+		}
+	})
+
+	t.Run("a pull plans against no base", func(t *testing.T) {
+		h := newMemHosted()
+		h.snapshot(map[string]string{f: "a\n"})
+		d := testDriver(t, h, nil)
+		voidBase(t, d, nil)
+		// The hosted head (1) is below the base (3): the snapshot is walked from 0.
+		job, err := d.PlanPull(context.Background(), "skills", map[string]string{})
+		if err != nil || job == nil {
+			t.Fatalf("PlanPull = %v, %v", job, err)
+		}
+		if job.BaseVersion() != 0 || job.Version != 1 {
+			t.Errorf("job base/version = %d/%d, want 0/1", job.BaseVersion(), job.Version)
+		}
+	})
+}

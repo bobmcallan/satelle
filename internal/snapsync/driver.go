@@ -200,27 +200,34 @@ func (d *Driver) loadBase(area string) (*hosted.AreaBase, error) {
 	return &b, nil
 }
 
-// effective reads the record head and walks to the effective snapshot.
-func (d *Driver) effective(ctx context.Context, area string, base *hosted.AreaBase) (int, Record, error) {
+// effective reads the record head and walks to the effective snapshot. It also
+// returns the base the walk started from: a base ahead of the hosted head belongs
+// to a replaced store (Effective resets it), so it comes back nil — this checkout
+// then holds no base for the hosted copy that is there, and every caller plans
+// against that rather than the stale version.
+func (d *Driver) effective(ctx context.Context, area string, base *hosted.AreaBase) (*hosted.AreaBase, int, Record, error) {
 	head, err := d.Records.Head(ctx, area)
 	if err != nil {
-		return 0, Record{}, d.unavailable(err)
+		return base, 0, Record{}, d.unavailable(err)
 	}
 	baseVersion := 0
 	if base != nil {
 		baseVersion = base.Version
 	}
+	if baseVersion > head {
+		base, baseVersion = nil, 0
+	}
 	v, rec, err := Effective(baseVersion, head, d.read(ctx, area))
 	if err != nil {
-		return 0, Record{}, d.unavailable(err)
+		return base, 0, Record{}, d.unavailable(err)
 	}
 	if v == 0 && head > 0 {
 		// Records exist but none can be read or decoded (a store without pinned
 		// reads, say). A readable chain always has a first claim, so this is not
 		// "no snapshot" — it is "cannot tell".
-		return 0, Record{}, d.unavailable(fmt.Errorf("%d %s snapshot record(s) on the hosted copy are unreadable", head, area))
+		return base, 0, Record{}, d.unavailable(fmt.Errorf("%d %s snapshot record(s) on the hosted copy are unreadable", head, area))
 	}
-	return v, rec, nil
+	return base, v, rec, nil
 }
 
 func (d *Driver) unavailable(err error) error {
@@ -299,7 +306,7 @@ func (d *Driver) planPush(ctx context.Context, area string, local map[string]str
 	if p.base, err = d.loadBase(area); err != nil {
 		return p, err
 	}
-	if p.effVersion, p.eff, err = d.effective(ctx, area, p.base); err != nil {
+	if p.base, p.effVersion, p.eff, err = d.effective(ctx, area, p.base); err != nil {
 		return p, err
 	}
 	heads, err := d.areaHeads(ctx, area)
@@ -423,7 +430,7 @@ func (d *Driver) PlanPull(ctx context.Context, area string, local map[string]str
 	if err != nil {
 		return nil, err
 	}
-	version, rec, err := d.effective(ctx, area, base)
+	base, version, rec, err := d.effective(ctx, area, base)
 	if err != nil {
 		return nil, err
 	}

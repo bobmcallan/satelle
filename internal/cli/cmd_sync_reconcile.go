@@ -165,11 +165,10 @@ func runSyncReconcile(cmd *cobra.Command, o reconcileOpts) error {
 		return err
 	}
 	client := newHostedClient(cmd.Context(), server, repoRoot)
-	manifest, err := client.ConfigManifest(cmd.Context(), project)
+	drivers, err := newSubstrateDrivers(cmd.Context(), cfg, repoRoot, dataDir, server, project, client)
 	if err != nil {
 		return fmt.Errorf("fetch manifest: %w", err)
 	}
-	drivers := &substrateDrivers{cfg: cfg, repoRoot: repoRoot, dataDir: dataDir, server: server, project: project, client: client, manifest: manifest}
 
 	jobs := map[string]*snapsync.PullJob{}
 	for _, area := range areas {

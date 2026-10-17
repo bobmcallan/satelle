@@ -29,6 +29,9 @@ type snapFake struct {
 	docs        *fakeDocStore
 	puts        []string
 	onRecordPut func() // runs once, just before the next snapshot-record PUT is stored
+	// unreadableRecords makes every pinned read of a snapshot record 404, as a
+	// server without pinned reads does: records can be put but not read back.
+	unreadableRecords bool
 }
 
 func (f *snapFake) putLog() []string {
@@ -89,6 +92,15 @@ func newSnapServer(t *testing.T) (*httptest.Server, *snapFake) {
 				ver := 0
 				if v := r.URL.Query().Get("version"); v != "" {
 					ver = atoiOr0(v)
+				}
+				if _, isRecord := snapsync.AreaOfRecordPath(path); isRecord && ver > 0 {
+					f.mu.Lock()
+					hidden := f.unreadableRecords
+					f.mu.Unlock()
+					if hidden {
+						http.NotFound(w, r)
+						return
+					}
 				}
 				content, sha, ok := f.cfg.get(project, path, ver)
 				if !ok {

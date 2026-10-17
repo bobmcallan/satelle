@@ -274,6 +274,17 @@ type substrateDrivers struct {
 	configDriver, documentsDriver *snapsync.Driver
 }
 
+// newSubstrateDrivers fetches the hosted manifest the snapshot records ride and
+// builds the per-area drivers over it. It is the one place that does, so a probe,
+// a reconcile and a pull cannot disagree on how an area's driver is made.
+func newSubstrateDrivers(ctx context.Context, cfg config.Config, repoRoot, dataDir, server, project string, client *hosted.Client) (*substrateDrivers, error) {
+	manifest, err := client.ConfigManifest(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	return &substrateDrivers{cfg: cfg, repoRoot: repoRoot, dataDir: dataDir, server: server, project: project, client: client, manifest: manifest}, nil
+}
+
 func (s *substrateDrivers) forArea(area string) *snapsync.Driver {
 	records := newConfigRecords(s.client, s.project, s.manifest)
 	if area == "documents" {
@@ -294,7 +305,7 @@ func (s *substrateDrivers) forArea(area string) *snapsync.Driver {
 // cannot be read, or a missing login, makes every area unavailable rather than
 // failing the caller: engagement and doctor must not break on an offline machine.
 func probeSubstrate(ctx context.Context, cfg config.Config, repoRoot, dataDir, server, project string, client *hosted.Client, areas []string) []snapsync.AreaStatus {
-	manifest, err := client.ConfigManifest(ctx, project)
+	drivers, err := newSubstrateDrivers(ctx, cfg, repoRoot, dataDir, server, project, client)
 	if err != nil {
 		out := make([]snapsync.AreaStatus, 0, len(areas))
 		for _, a := range areas {
@@ -302,7 +313,6 @@ func probeSubstrate(ctx context.Context, cfg config.Config, repoRoot, dataDir, s
 		}
 		return out
 	}
-	drivers := &substrateDrivers{cfg: cfg, repoRoot: repoRoot, dataDir: dataDir, server: server, project: project, client: client, manifest: manifest}
 	out := make([]snapsync.AreaStatus, 0, len(areas))
 	for _, a := range areas {
 		out = append(out, areaStatus(ctx, cfg, repoRoot, drivers.forArea(a), a))

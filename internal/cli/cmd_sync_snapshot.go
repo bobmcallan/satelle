@@ -12,7 +12,6 @@ import (
 	"io"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -139,8 +138,20 @@ func newSnapDriver(cfg config.Config, client *hosted.Client, out io.Writer, serv
 	}
 }
 
-// pushOutcome is a snapshot push's blob counts, summed over areas.
-type pushOutcome struct{ created, unchanged, notUploaded int }
+// pushOutcome is a snapshot push's blob counts, summed over areas, and what each
+// area's push did: claimed a snapshot, or lost the race for one after claiming.
+type pushOutcome struct {
+	created, unchanged, notUploaded int
+	claimed, raced                  map[string]bool
+}
+
+// mark records that area's push did what set names, on first use of the map.
+func (o *pushOutcome) mark(set *map[string]bool, area string) {
+	if *set == nil {
+		*set = map[string]bool{}
+	}
+	(*set)[area] = true
+}
 
 // runSnapshotPush prepares every area's push first — so a refusal in any area
 // uploads nothing anywhere — then runs them. handled=false means snapshots are
@@ -152,7 +163,7 @@ type pushOutcome struct{ created, unchanged, notUploaded int }
 // in-step one, and an unattended caller must never overwrite on doubt.
 func runSnapshotPush(ctx context.Context, d *snapsync.Driver, areaFiles map[string][]snapsync.PushFile, areas []string, snapshotOnly bool) (out pushOutcome, handled bool, err error) {
 	var jobs []*snapsync.PushJob
-	var refusals []string
+	var refusals []error
 	for _, area := range areas {
 		job, perr := d.PreparePush(ctx, area, areaFiles[area])
 		var unavailable *snapsync.UnavailableError
@@ -170,18 +181,27 @@ func runSnapshotPush(ctx context.Context, d *snapsync.Driver, areaFiles map[stri
 			}
 			return out, false, nil
 		case errors.As(perr, &behind), errors.As(perr, &unmerged):
-			refusals = append(refusals, perr.Error())
+			refusals = append(refusals, perr)
 		default:
 			return out, true, perr
 		}
 	}
 	if len(refusals) > 0 {
-		return out, true, errors.New(strings.Join(refusals, "\n"))
+		// Joined, not flattened: the text is one refusal per line, and a caller
+		// can still tell which refusals they were.
+		return out, true, errors.Join(refusals...)
 	}
 	for _, job := range jobs {
 		res, perr := d.Push(ctx, job)
 		if perr != nil {
+			var behind *snapsync.ErrBehind
+			if errors.As(perr, &behind) {
+				out.mark(&out.raced, job.Area)
+			}
 			return out, true, perr
+		}
+		if res.Claimed {
+			out.mark(&out.claimed, job.Area)
 		}
 		out.created += res.Created
 		out.unchanged += res.Unchanged

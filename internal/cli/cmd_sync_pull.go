@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/snapsync"
 )
 
@@ -78,15 +79,15 @@ func newSyncPullCmd() *cobra.Command {
 behind, when the pull changes nothing this machine changed. Any other area is left
 byte-for-byte as it was and reported with its next command: unpushed or never
 synced, "satelle sync push"; diverged or unmerged, "satelle sync reconcile".
-It never pushes and never touches work-state.
+It never pushes a local file or touches work-state; hosted files with no snapshot, and
+nothing local, are first settled into a snapshot, then pulled.
 
 Exits non-zero when any area is diverged, unmerged, unavailable or could not be
-pulled; zero when every area is in step, unpushed, never synced or pulled.
+pulled; zero otherwise.
 
 --fast-forward-only applies the same rule and prints only the areas pulled or
-turned away. satelled runs it after its push, so a behind area comes in
-unattended. "satelle sync rehydrate" is the full-tree recovery that overwrites
-local files.`,
+turned away; satelled runs it after its push. "satelle sync rehydrate" is the
+full-tree recovery that overwrites local files.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncPull(cmd, server, fastForwardOnly)
@@ -135,10 +136,14 @@ func runSyncPull(cmd *cobra.Command, serverArg string, fastForwardOnly bool) err
 	}
 
 	rc := &reconcileApply{areas: map[string]bool{}, fastForward: true, refused: map[string]string{}}
+	refusedNext := map[string]string{}
+	if err := settleHeadsOnly(cmd, cfg, repoRoot, dataDir, server, project, client, statuses, rc, refusedNext); err != nil {
+		return fmt.Errorf("sync pull: %w", err)
+	}
 	var behind []string
 	documents := false
 	for _, st := range statuses {
-		if st.State != snapsync.StateBehind {
+		if st.State != snapsync.StateBehind || rc.refused[st.Area] != "" {
 			continue
 		}
 		behind = append(behind, st.Area)
@@ -181,13 +186,22 @@ func runSyncPull(cmd *cobra.Command, serverArg string, fastForwardOnly bool) err
 			}
 		case snapsync.StateBehind:
 			if why := rc.refused[st.Area]; why != "" {
-				fmt.Fprintf(out, "%s: behind, left unchanged — %s; next: satelle sync reconcile\n", st.Area, why)
+				next := refusedNext[st.Area]
+				if next == "" {
+					next = "satelle sync reconcile"
+				}
+				fmt.Fprintf(out, "%s: behind, left unchanged — %s; next: %s\n", st.Area, why, next)
 				failed = append(failed, st.Area+" is behind but "+why)
 				continue
 			}
 			after := now[st.Area]
 			if after.State != snapsync.StateInStep && after.State != snapsync.StateUnpushed {
-				fmt.Fprintf(out, "%s: pulled what it could, now %s; next: %s\n", st.Area, after.State, nextCommand(after))
+				next := nextCommand(after)
+				if after.State == snapsync.StateBehind && after.Effective == 0 {
+					// Still no snapshot to pull: another pull would do what this one did.
+					next = "check the server, then satelle sync status"
+				}
+				fmt.Fprintf(out, "%s: pulled what it could, now %s; next: %s\n", st.Area, after.State, next)
 				failed = append(failed, fmt.Sprintf("%s is still %s after the pull", st.Area, after.State))
 				continue
 			}
@@ -206,6 +220,62 @@ func runSyncPull(cmd *cobra.Command, serverArg string, fastForwardOnly bool) err
 	}
 	if len(failed) > 0 {
 		return errors.New("sync pull: " + strings.Join(failed, "; "))
+	}
+	return nil
+}
+
+// settleHeadsOnly gives each heads-only area its first snapshot, so the pull that
+// follows has something to fast-forward onto. Such an area is one the hosted copy
+// holds as per-file uploads with no snapshot (the plain-upload fallback), and this
+// machine holds nothing of: behind, with no effective snapshot. PlanPull has no
+// snapshot to plan from, so without this the pull changes nothing and status goes
+// on naming a pull.
+//
+// The snapshot is the heads exactly as they stand, published through the one push
+// composition (runSnapshotPush, snapshot-only so a server that cannot hold one is
+// refused, never sent the plain upload). It is claimed only while the freshly read
+// local set is empty, so the pull that follows can overwrite nothing: a file that
+// appeared since the probe leaves the area untouched. An area it cannot settle is
+// recorded in rc.refused, with the command that moves it on in refusedNext.
+func settleHeadsOnly(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir, server, project string, client *hosted.Client, statuses []snapsync.AreaStatus, rc *reconcileApply, refusedNext map[string]string) error {
+	var drivers *substrateDrivers
+	for _, st := range statuses {
+		if st.State != snapsync.StateBehind || st.Effective != 0 {
+			continue
+		}
+		if drivers == nil {
+			var err error
+			if drivers, err = newSubstrateDrivers(cmd.Context(), cfg, repoRoot, dataDir, server, project, client); err != nil {
+				return fmt.Errorf("fetch manifest: %w", err)
+			}
+		}
+		area := st.Area
+		d := drivers.forArea(area)
+		local, err := pullLocalShas(cfg, repoRoot, server, project, d, area)
+		if err != nil {
+			return fmt.Errorf("%s: read the local files: %w", area, err)
+		}
+		if len(local) > 0 {
+			rc.refused[area], refusedNext[area] = "a local file appeared since the status was read", "satelle sync status"
+			continue
+		}
+		out, _, err := runSnapshotPush(cmd.Context(), d, map[string][]snapsync.PushFile{area: nil}, []string{area}, true)
+		var unavailable *snapsync.UnavailableError
+		var behind *snapsync.ErrBehind
+		switch {
+		case err == nil && out.claimed[area]:
+		case err == nil, errors.As(err, &unavailable):
+			// The read-back fallback claims nothing a reader can see; a server that
+			// cannot read a snapshot cannot hold one.
+			rc.refused[area], refusedNext[area] = "the hosted copy cannot hold a snapshot", "check the server, then satelle sync status"
+		case errors.As(err, &behind) && (out.raced[area] || behind.Effective > 0):
+			// A snapshot exists now — another machine's claim won. The apply plans
+			// against it and fast-forwards or turns the area away.
+		case errors.As(err, &behind):
+			rc.refused[area], refusedNext[area] = "the hosted copy has no snapshot to pull", "satelle sync status"
+		default:
+			return fmt.Errorf("%s: %w", area, err)
+		}
 	}
 	return nil
 }
