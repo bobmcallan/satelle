@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/docstory"
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -276,6 +277,9 @@ func brokenRouteTrackingStory(ctx context.Context, wfs []docindex.Doc) string {
 // Any other dispatch error stays a refusal with status unchanged.
 type PerformerReject struct {
 	Notes string
+	// Changes are the story-configuration changes the performer reported beside
+	// its reject (sty_af0b1761); applied within the step's apply_changes limits.
+	Changes []agentartifact.Change
 }
 
 func (e *PerformerReject) Error() string {

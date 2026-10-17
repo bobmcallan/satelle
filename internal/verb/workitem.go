@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/trunk"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
@@ -70,182 +71,279 @@ func workflowStamp(tags []string) string {
 // an explicit caller-supplied workflow tag is never duplicated.
 func hasWorkflowStamp(tags []string) bool { return workflowStamp(tags) != "" }
 
+// createOrigin says who a created work item is recorded as created by: the
+// actor and source of its story_created row and the creator model, executable,
+// session and unknown-reason of its creator session_model row. The CLI create
+// leaves Actor and Source empty (its row is actor-less with no payload) and
+// records the driving session; a child a readiness performer reported records
+// the performer, never the driving session (sty_af0b1761).
+type createOrigin struct {
+	Actor     string
+	Source    string
+	Model     string
+	ModelExe  string
+	SessionID string
+	Reason    string
+}
+
+// sessionCreateOrigin is the origin of a work item created by the driving
+// session (sty_7069bced): config.SelectModel's creator tier reads the latest
+// session_model{creator} row for a story. There is no separate "creator"
+// publish: the creating session IS the in-loop session at creation time, so
+// this reads its already-published in-loop model, which createWorkItem
+// re-records under the creator role for THIS story. An unresolved session or
+// model records "unknown" via RecordSessionModel rather than skipping the write.
+func sessionCreateOrigin() createOrigin {
+	sid := config.ResolveSession()
+	model, exe, reason := config.ResolveSessionModel(sid, SessionModelRoleInLoop)
+	return createOrigin{Model: model, ModelExe: exe, SessionID: sid, Reason: reason}
+}
+
 func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (json.RawMessage, error) {
-	ledgerKind := ledger.KindStoryCreated
-	if kind == workitem.KindTask || kind == workitem.KindExecution {
-		ledgerKind = ledger.KindTaskCreated
-	}
 	return func(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
-		store, err := requireWorkItem()
-		if err != nil {
-			return nil, err
-		}
 		var req createReq
 		if err := decode(raw, &req); err != nil {
 			return nil, err
 		}
-		now := time.Now()
+		return createWorkItem(ctx, kind, req, sessionCreateOrigin())
+	}
+}
 
-		// Controlled tag vocabulary (sty_034d843c): validate + canonicalise BEFORE
-		// the create reviewer so a typo fails fast (no subprocess) and the
-		// reviewer sees the stored form. Unwired / empty vocab = no-op.
-		if canon, cerr := canonicaliseTags(req.Tags); cerr != nil {
-			return nil, cerr
-		} else {
-			req.Tags = canon
-		}
-		// Category vocabulary (sty_b2315e17): canonical casing always; hard-reject
-		// only when enforce=reject. Warn mode is surfaced on the CLI path.
-		if canon, cerr := canonicaliseCategory(req.Category); cerr != nil {
-			return nil, cerr
-		} else {
-			req.Category = canon
-		}
+// createWorkItem is the one create path: the CLI create and a child a readiness
+// performer reported both pass through it, so a story created either way meets
+// the same rules (tag and category vocabulary, the create review, the workflow
+// stamp, closed-epic tags, depends-on, the start-of-work check).
+// It returns the created item in the verb's wire form (JSON).
+func createWorkItem(ctx context.Context, kind workitem.Kind, req createReq, origin createOrigin) (json.RawMessage, error) {
+	p, err := prepareCreate(ctx, kind, req, origin)
+	if err != nil {
+		return nil, err
+	}
+	it, err := p.store(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return p.finish(ctx, it)
+}
 
-		// Required-structure gate: when a repo opts in, an isolated reviewer
-		// judges the draft before it is persisted (the deterministic
-		// structure.Story check — including the category rule, sty_af239840 —
-		// runs first inside it). A bare create stays legal by design: stories
-		// start as stubs and the WORKFLOW gates enforce structure progressively;
-		// `satelle reindex` reports non-conformant open stories as warnings.
-		var createDec GateDecision // recorded on the ledger once the story has an id
-		createTo := req.Status
-		if createTo == "" {
-			createTo = workitem.StatusBacklog
-		}
-		if createReviewer != nil {
-			dec, gerr := createReviewer.ReviewCreate(ctx, CreateDraft{
-				Kind:               string(kind),
-				Title:              req.Title,
-				Body:               req.Body,
-				AcceptanceCriteria: req.AcceptanceCriteria,
-				Priority:           req.Priority,
-				Category:           req.Category,
-				Tags:               req.Tags,
-			})
-			if gerr != nil {
-				return nil, gerr
-			}
-			if dec.Gated && !dec.Accept {
-				// A rejected create persists no story, so its run is recorded
-				// repo-scoped (empty story id) where the gate-value view reads it.
-				recordLifecycleReview(ctx, "", "create_review", "create", createTo, dec, now)
-				return nil, fmt.Errorf("%s rejected by %s: %s", kind, dec.Skill, dec.Notes)
-			}
-			createDec = dec
-			if dec.Gated {
-				RecordVerdict(fmt.Sprintf("accepted %s create by %s: decision=accept notes=%s", kind, dec.Skill, dec.Notes))
-			}
-		}
+// preparedCreate is a create that passed every rule that can refuse it and has
+// written nothing to the work-item store yet. Splitting the create here lets a
+// batch (the children a performer reported) validate and review every draft
+// before the first one is stored, so one refused child leaves none behind.
+type preparedCreate struct {
+	kind       workitem.Kind
+	req        createReq
+	origin     createOrigin
+	tags       []string
+	createDec  GateDecision // recorded on the ledger once the story has an id
+	createTo   string
+	stamped    string
+	trunkRep   trunk.Report // what the start-of-work trunk check found, if it ran
+	ledgerKind string
+	at         time.Time
+}
 
-		// Stamp the GOVERNING workflow on the story at create (sty_3800ac23): the
-		// chosen workflow is recorded as a workflow:<name> tag so gating reads the
-		// choice thereafter rather than re-deriving it by category. Independent of
-		// create-gating — a story is stamped whenever a workflow governs it.
-		// Only STORIES are stamped. A task is an authored header with no running
-		// lifecycle, and an execution resolves its workflow KIND-awarely at gate
-		// time (sty_ef08ce2a) — stamping either risks pinning the wildcard story
-		// workflow onto a task/execution, exactly what this epic forbids.
-		tags := req.Tags
-		stampedWorkflow := ""
-		if kind == workitem.KindStory && workflowResolver != nil && !hasWorkflowStamp(tags) {
-			wf, werr := workflowResolver.WorkflowNameFor(ctx, req.Category)
-			if werr != nil {
-				return nil, werr
-			}
-			if wf != "" {
-				stampedWorkflow = wf
-				tags = append(tags, "workflow:"+wf)
-			}
-		}
+// prepareCreate runs every check a create makes before the store write: the tag
+// and category vocabulary, the create review, the workflow stamp, closed-epic
+// tags, depends-on, and the single-story and start-of-work trunk checks.
+func prepareCreate(ctx context.Context, kind workitem.Kind, req createReq, origin createOrigin) (*preparedCreate, error) {
+	p := &preparedCreate{kind: kind, origin: origin, ledgerKind: ledger.KindStoryCreated, at: time.Now()}
+	if kind == workitem.KindTask || kind == workitem.KindExecution {
+		p.ledgerKind = ledger.KindTaskCreated
+	}
+	store, err := requireWorkItem()
+	if err != nil {
+		return nil, err
+	}
+	now := p.at
 
-		// A proposal naming an epic that already closed is filed without that tag,
-		// with a body note naming the container (sty_9f4f8e12).
-		if kind == workitem.KindStory {
-			tags, req.Body = dropClosedEpicTags(ctx, req.Category, tags, req.Body)
-			// depends-on:<story id> must name a story in the same epic set. The
-			// check reads the FINAL tags; there is no id yet, so only the not-a-
-			// story and outside-the-set refusals can apply.
-			if err := checkDependsOn(ctx, store, "", req.ParentID, tags); err != nil {
-				return nil, err
-			}
-		}
+	// Controlled tag vocabulary (sty_034d843c): validate + canonicalise BEFORE
+	// the create reviewer so a typo fails fast (no subprocess) and the
+	// reviewer sees the stored form. Unwired / empty vocab = no-op.
+	if canon, cerr := canonicaliseTags(req.Tags); cerr != nil {
+		return nil, cerr
+	} else {
+		req.Tags = canon
+	}
+	// Category vocabulary (sty_b2315e17): canonical casing always; hard-reject
+	// only when enforce=reject. Warn mode is surfaced on the CLI path.
+	if canon, cerr := canonicaliseCategory(req.Category); cerr != nil {
+		return nil, cerr
+	} else {
+		req.Category = canon
+	}
 
-		// Single-story process rule (sty_c7149f8a): refuse creating a story already
-		// in an engaging status when another story occupies that seat. Default
-		// create status is backlog (not engaging) — no-op unless create opts a
-		// non-default status.
-		var trunkRep trunk.Report // what the start-of-work trunk check found, if it ran
-		if kind == workitem.KindStory {
-			status := req.Status
-			if status == "" {
-				status = workitem.StatusBacklog
-			}
-			// ParentID rides along because the seat arbitration key may be
-			// derived from it (sty_c098dc2d) — a provisional without it would
-			// probe under the wrong key.
-			provisional := workitem.Item{
-				Kind: workitem.KindStory, Status: status, Category: req.Category, Tags: tags,
-				Title: req.Title, ParentID: req.ParentID,
-			}
-			if err := refuseSecondEngagingStory(ctx, "", status, provisional); err != nil {
-				return nil, err
-			}
-			// Start-of-work trunk check (sty_9f3e51d1): before the story row, the
-			// lease and the baseline, so a refusal leaves nothing behind and the
-			// baseline records the fast-forwarded HEAD.
-			var terr error
-			if trunkRep, terr = checkTrunkAtEngage(ctx, provisional, status, fmt.Sprintf("create into %s", status)); terr != nil {
-				return nil, terr
-			}
+	// Stamp the GOVERNING workflow on the story at create (sty_3800ac23): the
+	// chosen workflow is recorded as a workflow:<name> tag so gating reads the
+	// choice thereafter rather than re-deriving it by category. Independent of
+	// create-gating — a story is stamped whenever a workflow governs it.
+	// Only STORIES are stamped. A task is an authored header with no running
+	// lifecycle, and an execution resolves its workflow KIND-awarely at gate
+	// time (sty_ef08ce2a) — stamping either risks pinning the wildcard story
+	// workflow onto a task/execution, exactly what this epic forbids.
+	// Resolved before the create review so the readiness-mark refusal below can
+	// judge the draft against the route that will govern it.
+	tags := req.Tags
+	if kind == workitem.KindStory && workflowResolver != nil && !hasWorkflowStamp(tags) {
+		wf, werr := workflowResolver.WorkflowNameFor(ctx, req.Category)
+		if werr != nil {
+			return nil, werr
 		}
+		if wf != "" {
+			p.stamped = wf
+			tags = append(tags, "workflow:"+wf)
+		}
+	}
 
-		it, err := store.Create(ctx, workitem.CreateInput{
-			Kind:               kind,
+	// A story is never ready when it is created (sty_6e3ffa2f): only an accepted
+	// readiness round sets the route's readiness mark, so a create carrying it is
+	// refused before the reviewer runs or anything is stored.
+	draft := workitem.Item{Kind: kind, Category: req.Category, ParentID: req.ParentID, Tags: tags}
+	if err := refuseUnheldReadinessMark(ctx, draft, tags); err != nil {
+		return nil, err
+	}
+
+	// Required-structure gate: when a repo opts in, an isolated reviewer
+	// judges the draft before it is persisted (the deterministic
+	// structure.Story check — including the category rule, sty_af239840 —
+	// runs first inside it). A bare create stays legal by design: stories
+	// start as stubs and the WORKFLOW gates enforce structure progressively;
+	// `satelle reindex` reports non-conformant open stories as warnings.
+	p.createTo = req.Status
+	if p.createTo == "" {
+		p.createTo = workitem.StatusBacklog
+	}
+	if createReviewer != nil {
+		dec, gerr := createReviewer.ReviewCreate(ctx, CreateDraft{
+			Kind:               string(kind),
 			Title:              req.Title,
 			Body:               req.Body,
-			Status:             req.Status,
+			AcceptanceCriteria: req.AcceptanceCriteria,
 			Priority:           req.Priority,
 			Category:           req.Category,
-			ParentID:           req.ParentID,
-			AcceptanceCriteria: req.AcceptanceCriteria,
-			Tags:               tags,
-			Assignee:           resolveAssignee(),
-		}, now)
-		if err != nil {
-			// The reviewer ran and was paid for; keep its spend repo-scoped.
-			recordLifecycleReview(ctx, "", "create_review", "create", createTo, createDec, now)
+			Tags:               req.Tags,
+		})
+		if gerr != nil {
+			return nil, gerr
+		}
+		if dec.Gated && !dec.Accept {
+			// A rejected create persists no story, so its run is recorded
+			// repo-scoped (empty story id) where the gate-value view reads it.
+			recordLifecycleReview(ctx, "", "create_review", "create", p.createTo, dec, now)
+			return nil, fmt.Errorf("%s rejected by %s: %s", kind, dec.Skill, dec.Notes)
+		}
+		p.createDec = dec
+		if dec.Gated {
+			RecordVerdict(fmt.Sprintf("accepted %s create by %s: decision=accept notes=%s", kind, dec.Skill, dec.Notes))
+		}
+	}
+
+	// A proposal naming an epic that already closed is filed without that tag,
+	// with a body note naming the container (sty_9f4f8e12).
+	if kind == workitem.KindStory {
+		tags, req.Body = dropClosedEpicTags(ctx, req.Category, tags, req.Body)
+		// depends-on:<story id> must name a story in the same epic set. The
+		// check reads the FINAL tags; there is no id yet, so only the not-a-
+		// story and outside-the-set refusals can apply.
+		if err := checkDependsOn(ctx, store, "", req.ParentID, tags); err != nil {
 			return nil, err
 		}
-		recordLifecycleReview(ctx, it.ID, "create_review", "create", it.Status, createDec, now)
-		// Create-into-engaging: claim the seat now that the id exists (sty_8426b9c0).
-		if _, _, aerr := acquireEngagementLease(ctx, it, it.Status); aerr != nil {
-			// Best-effort: item was created; surface the seat error so the operator
-			// knows the create raced — rare (pre-check already refused when possible).
-			return nil, aerr
-		}
-		appendLedger(ctx, it.ID, ledgerKind, fmt.Sprintf("created %s %q", kind, it.Title), now)
-		recordTrunkCheck(ctx, it.ID, trunkRep, now)
-		if kind == workitem.KindStory {
-			recordCreatorSessionModel(ctx, it.ID)
-		}
-		if stampedWorkflow != "" {
-			appendLedger(ctx, it.ID, ledger.KindWorkflowStamped,
-				fmt.Sprintf("governing workflow: %s", stampedWorkflow), now)
-		}
-		// Create-straight-into-engaging: record engagement baseline (sty_da169e03).
-		maybeRecordEngagementBaseline(ctx, it, "", it.Status, now)
-		appendOpLog(string(kind)+"-create", it.ID,
-			fmt.Sprintf("status: %s; tags: [%s]", it.Status, strings.Join(it.Tags, ",")), now)
-		// A task/execution is authored substrate — materialise its file (the source
-		// of truth): a task header flat, an execution run under its task's folder
-		// (sty_c1f9e74c, sty_ef08ce2a). A no-op for stories.
-		if err := writeItemFile(it); err != nil {
-			return nil, fmt.Errorf("write item file: %w", err)
-		}
-		notifyChange(panelTopic(kind))
-		return json.Marshal(it)
 	}
+
+	// Single-story process rule (sty_c7149f8a): refuse creating a story already
+	// in an engaging status when another story occupies that seat. Default
+	// create status is backlog (not engaging) — no-op unless create opts a
+	// non-default status.
+	if kind == workitem.KindStory {
+		status := req.Status
+		if status == "" {
+			status = workitem.StatusBacklog
+		}
+		// ParentID rides along because the seat arbitration key may be
+		// derived from it (sty_c098dc2d) — a provisional without it would
+		// probe under the wrong key.
+		provisional := workitem.Item{
+			Kind: workitem.KindStory, Status: status, Category: req.Category, Tags: tags,
+			Title: req.Title, ParentID: req.ParentID,
+		}
+		if err := refuseSecondEngagingStory(ctx, "", status, provisional); err != nil {
+			return nil, err
+		}
+		// Start-of-work trunk check (sty_9f3e51d1): before the story row, the
+		// lease and the baseline, so a refusal leaves nothing behind and the
+		// baseline records the fast-forwarded HEAD.
+		var terr error
+		if p.trunkRep, terr = checkTrunkAtEngage(ctx, provisional, status, fmt.Sprintf("create into %s", status)); terr != nil {
+			return nil, terr
+		}
+	}
+	p.req = req
+	p.tags = tags
+	return p, nil
+}
+
+// store writes the prepared item to the work-item store and nothing else.
+func (p *preparedCreate) store(ctx context.Context) (workitem.Item, error) {
+	store, err := requireWorkItem()
+	if err != nil {
+		return workitem.Item{}, err
+	}
+	it, err := store.Create(ctx, workitem.CreateInput{
+		Kind:               p.kind,
+		Title:              p.req.Title,
+		Body:               p.req.Body,
+		Status:             p.req.Status,
+		Priority:           p.req.Priority,
+		Category:           p.req.Category,
+		ParentID:           p.req.ParentID,
+		AcceptanceCriteria: p.req.AcceptanceCriteria,
+		Tags:               p.tags,
+		Assignee:           resolveAssignee(),
+	}, p.at)
+	if err != nil {
+		// The reviewer ran and was paid for; keep its spend repo-scoped.
+		recordLifecycleReview(ctx, "", "create_review", "create", p.createTo, p.createDec, p.at)
+		return workitem.Item{}, err
+	}
+	return it, nil
+}
+
+// finish records the created item's ledger rows and returns it in wire form.
+func (p *preparedCreate) finish(ctx context.Context, it workitem.Item) (json.RawMessage, error) {
+	now := p.at
+	kind := p.kind
+	recordLifecycleReview(ctx, it.ID, "create_review", "create", it.Status, p.createDec, now)
+	// Create-into-engaging: claim the seat now that the id exists (sty_8426b9c0).
+	if _, _, aerr := acquireEngagementLease(ctx, it, it.Status); aerr != nil {
+		// Best-effort: item was created; surface the seat error so the operator
+		// knows the create raced — rare (pre-check already refused when possible).
+		return nil, aerr
+	}
+	var createdPayload json.RawMessage
+	if p.origin.Source != "" {
+		createdPayload, _ = json.Marshal(map[string]string{"source": p.origin.Source})
+	}
+	appendLedgerEntry(ctx, it.ID, p.ledgerKind, p.origin.Actor, fmt.Sprintf("created %s %q", kind, it.Title), createdPayload, now)
+	recordTrunkCheck(ctx, it.ID, p.trunkRep, now)
+	if kind == workitem.KindStory {
+		RecordSessionModel(ctx, it.ID, "", SessionModelRoleCreator, p.origin.Model, p.origin.ModelExe, p.origin.SessionID, p.origin.Reason)
+	}
+	if p.stamped != "" {
+		appendLedger(ctx, it.ID, ledger.KindWorkflowStamped,
+			fmt.Sprintf("governing workflow: %s", p.stamped), now)
+	}
+	// Create-straight-into-engaging: record engagement baseline (sty_da169e03).
+	maybeRecordEngagementBaseline(ctx, it, "", it.Status, now)
+	appendOpLog(string(kind)+"-create", it.ID,
+		fmt.Sprintf("status: %s; tags: [%s]", it.Status, strings.Join(it.Tags, ",")), now)
+	// A task/execution is authored substrate — materialise its file (the source
+	// of truth): a task header flat, an execution run under its task's folder
+	// (sty_c1f9e74c, sty_ef08ce2a). A no-op for stories.
+	if err := writeItemFile(it); err != nil {
+		return nil, fmt.Errorf("write item file: %w", err)
+	}
+	notifyChange(panelTopic(kind))
+	return json.Marshal(it)
 }
 
 // panelTopic maps a work-item kind to its realtime panel topic.
@@ -387,6 +485,12 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			return nil, cerr
 		}
 		req.Tags = &canon
+		// The readiness mark is set only by an accepted readiness round
+		// (sty_6e3ffa2f): the final set, whether merged or replaced, may not
+		// newly carry it while the story's readiness does not hold.
+		if err := refuseUnheldReadinessMark(ctx, current, canon); err != nil {
+			return nil, err
+		}
 		// depends-on:<story id> validation (the story-level epic edge): the final
 		// effective set must name stories in this story's epic set, with no
 		// self-edge and no cycle.
@@ -591,9 +695,18 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	// reject_budget refuses another presentation once that many have been
 	// rejected — before any performer or reviewer is paid for. The count is a
 	// ledger enumeration; the budget and the wording of the ask are route data.
+	// Readiness reuse (sty_a32bd6a9): a presented readiness edge whose readiness was
+	// accepted and still holds runs neither its performer nor its reviewers, so no
+	// presentation is made and the round budget has nothing to refuse.
+	readinessReused := ""
 	if transitioning {
-		if err := refuseSpentRejectBudget(ctx, current, *req.Status); err != nil {
-			return nil, err
+		readinessReused = readinessReusable(ctx, current, *req.Status)
+	}
+	if transitioning {
+		if readinessReused == "" {
+			if err := refuseSpentRejectBudget(ctx, current, *req.Status); err != nil {
+				return nil, err
+			}
 		}
 		// Start-of-work trunk check (sty_9f3e51d1): on the first entry into an
 		// engaging state, with the seat held and before any performer or gate
@@ -618,104 +731,33 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	// judge what the performer produced. The route declares the order; this only
 	// sequences the two calls below.
 	proposeFirst := transitioning && stepProposes(ctx, current, *req.Status)
+	// One attempt id per presentation, stamped on every verdict row a gate run
+	// writes, so a rejected ROUND is countable however many reviewers ran. A
+	// readiness (propose) round creates it up front so its performer rows carry it
+	// too (sty_a32bd6a9); any other edge creates it when its gate runs.
+	attempt := ""
+	if proposeFirst {
+		attempt = ledger.NewAttemptID()
+	}
+	// readinessMark is the tag an accepted readiness round puts on the story, once
+	// the transition has committed (sty_a32bd6a9); empty when none was accepted or
+	// the step declares no mark.
+	readinessMark := ""
 	runGate := func() error {
 		if !(transitioning && transitionGater != nil) {
 			return nil
 		}
-		// One attempt id per presentation, stamped on every verdict row this run
-		// writes, so a rejected ROUND is countable however many reviewers ran.
-		attempt := ledger.NewAttemptID()
-		dec, gerr := transitionGater.Gate(ctx, current, *req.Status)
+		if attempt == "" {
+			attempt = ledger.NewAttemptID()
+		}
+		round, gerr := recordGateRound(ctx, current, *req.Status, attempt, now)
 		if gerr != nil {
 			return gerr
 		}
-		// An edge may carry several reviewers (a transition's reviewer list plus
-		// the always-on system layer). Record each reviewer's verdict as its own
-		// ledger row, in order, so the trail names who judged the edge and how. The
-		// single-reviewer path returns no Reviewers — synthesise one from the
-		// top-level verdict so both paths record identically.
-		reviewers := dec.Reviewers
-		if len(reviewers) == 0 && dec.Gated {
-			reviewers = []ReviewerVerdict{verdictFromDecision(dec)}
-		}
-		// Ledger ALL verdicts first (accepts and rejects), then refuse if any
-		// rejected — so parallel multi-reviewer rounds record every row
-		// (sty_4f0a15db AC2). Serial short-circuit still only returns reviewers
-		// up to the first reject, so single-reject message format is unchanged.
-		var rejects []ReviewerVerdict
-		bundled := map[string]bool{}
-		for _, rv := range reviewers {
-			// A panel fold leaves Command empty on the skill row and carries one
-			// stamp per seat that started. Write those first, then the single
-			// skill-level verdict. A dissent stays inside seats — it is not a
-			// second review_reject, and a seat that never started has no stamp.
-			for _, stamp := range rv.SeatStamps {
-				if stamp.Command == "" {
-					continue
-				}
-				seat := stamp.Seat
-				if seat == "" {
-					seat = stamp.Skill
-				}
-				appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "reviewer",
-					fmt.Sprintf("invoked reviewer (%s) for %s→%s with @skill:%s seat %s", stamp.Command, current.Status, *req.Status, stamp.Skill, seat),
-					invocationPayload(current.Status, *req.Status, stamp), now)
-			}
-			// Record HOW the isolated agent was invoked before its verdict — the
-			// resolved command/harness and the injected skill/rubric file — so the
-			// timeline shows what command ran with what context (sty_fb3e0873). Only
-			// an LLM reviewer carries a Command; a functional check invokes no agent.
-			// A bundled session is ONE invocation however many rubrics it judged
-			// (sty_23e10d92): its row is written once, with the bundle's usage, on
-			// the first of its verdicts. A panel fold leaves Command empty so this
-			// write does not fire a duplicate for the skill row.
-			if rv.Command != "" && !(rv.BundleID != "" && bundled[rv.BundleID]) {
-				inv, rubrics := rv, rv.Context
-				if rv.BundleID != "" {
-					bundled[rv.BundleID] = true
-					inv.Skill = strings.Join(rv.BundleSkills, "+")
-					rubrics = strings.Join(rv.BundleSkills, ",")
-				}
-				appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "reviewer",
-					fmt.Sprintf("invoked reviewer (%s) for %s→%s with @skill:%s", rv.Command, current.Status, *req.Status, rubrics),
-					invocationPayload(current.Status, *req.Status, inv), now)
-			}
-			if !rv.Accept {
-				appendLedgerEntry(ctx, current.ID, ledger.KindReviewReject, "reviewer",
-					fmt.Sprintf("rejected %s→%s by %s: %s", current.Status, *req.Status, rv.Skill, rv.Notes),
-					reviewerPayload(current.Status, *req.Status, rv, attempt), now)
-				rejects = append(rejects, rv)
-				continue
-			}
-			acceptBody := fmt.Sprintf("accepted %s→%s by %s: decision=accept notes=%s%s",
-				current.Status, *req.Status, rv.Skill, rv.Notes, formatReasoningSuffix(rv.Reasoning))
-			appendLedgerEntry(ctx, current.ID, ledger.KindReviewAccept, "reviewer",
-				acceptBody, reviewerPayload(current.Status, *req.Status, rv, attempt), now)
-			// Transparency (design §6.2 / epic AC): surface accept verdicts too —
-			// decision, notes, reasoning on stderr (reject already returns as error).
-			EmitVerdict(acceptBody)
-		}
-		if len(rejects) > 0 {
-			notifyChange(panelTopic(current.Kind))
-			return multiRejectError(current.Status, *req.Status, rejects)
-		}
-		// An edge may have DECLARED a gate whose skill does not resolve. That gate
-		// degraded to advisory and judged nothing, so this advance is ungated —
-		// record it as such. Without this row the trail is indistinguishable from
-		// an edge that never carried a gate at all, which is the silence
-		// sty_d59ec6a9 is about. It does not block: fail-open is deliberate.
-		for _, skill := range dec.Unresolved {
-			skippedBody := fmt.Sprintf(
-				"advanced %s→%s UNGATED — gate skill %q does not resolve in the substrate, so no reviewer judged this transition",
-				current.Status, *req.Status, skill)
-			appendLedgerEntry(ctx, current.ID, ledger.KindGateSkipped, "reviewer",
-				skippedBody, transitionPayload(current.Status, *req.Status, skill), now)
-			EmitVerdict(skippedBody)
-		}
-		if len(reviewers) > 0 {
+		if len(round.Reviewers) > 0 {
 			gatedAccepted = true
 		}
-		routeVerdicts, routeUnresolved = reviewers, dec.Unresolved
+		routeVerdicts, routeUnresolved = round.Reviewers, round.Unresolved
 		return nil
 	}
 
@@ -737,7 +779,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			author = "executor"
 		}
 		appendLedgerEntry(ctx, current.ID, ledger.KindComment, author,
-			notes, transitionPayload(current.Status, park, res.Skill), now)
+			notes, attemptPayload(current.Status, park, res.Skill, attempt), now)
 		var parked map[string]json.RawMessage
 		if json.Unmarshal(raw, &parked) != nil {
 			return nil, nil, false
@@ -747,69 +789,39 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		if merr != nil {
 			return nil, nil, false
 		}
-		out, err = workItemSetCore(ctx, reraw) // the outer workItemSet annotates once
+		// The park transition names the readiness round it ends (sty_a32bd6a9).
+		out, err = workItemSetCore(withParkAttempt(ctx, attempt), reraw) // the outer workItemSet annotates once
 		return out, err, true
 	}
 	performStep := func() (json.RawMessage, error) {
 		if !(transitioning && executorDispatcher != nil) {
 			return nil, nil
 		}
-		res, derr := executorDispatcher.DispatchExecutor(ctx, current, *req.Status)
-		if derr != nil {
+		run := dispatchPerformer(ctx, current, *req.Status, attempt, proposeFirst, now)
+		// Changes the performer reported are already on the record: the gates and
+		// the commit below read it as repaired (sty_af0b1761).
+		current = run.rebind(current)
+		if run.Err != nil {
 			// A performer that judged the premise wrong parks the story: the
 			// notes go on the timeline and the set re-enters for the park edge.
 			// Any other failure is a plain refusal.
-			var rejected *PerformerReject
-			if errors.As(derr, &rejected) && strings.TrimSpace(rejected.Notes) != "" {
+			if run.Reject != nil {
 				if park := resumeParkName(ctx, current); park != "" && park != *req.Status {
-					if out, perr, handled := parkWith(park, rejected.Notes, res); handled {
+					if out, perr, handled := parkWith(park, run.Reject.Notes, run.Res); handled {
 						return out, perr
 					}
 				}
 			}
-			appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "executor",
-				fmt.Sprintf("named-agent dispatch failed for %s→%s: %v", current.Status, *req.Status, derr),
-				transitionPayload(current.Status, *req.Status, res.Skill), now)
-			notifyChange(panelTopic(current.Kind))
-			return nil, fmt.Errorf("transition %s→%s refused: %v", current.Status, *req.Status, derr)
+			recordDispatchFailure(ctx, current, *req.Status, attempt, run.Res, run.Err, now)
+			return nil, fmt.Errorf("transition %s→%s refused: %v", current.Status, *req.Status, run.Err)
 		}
-		if res.Dispatched {
-			// Record the resolved model (when the binding pins one) so the ledger shows
-			// WHICH model ran the step — the audit trail for per-step model mixing
-			// (sty_5d48317b). The env (endpoint + token) is never recorded.
-			modelNote := ""
-			if res.Model != "" {
-				modelNote = " on model " + res.Model
-			}
-			appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "executor",
-				fmt.Sprintf("dispatched step %q to named agent %q%s (%s) with @skill:%s",
-					*req.Status, res.Agent, modelNote, res.Command, res.Skill),
-				dispatchPayload(current.Status, *req.Status, res), now)
-			// A dispatched task-execution run's captured output is written through as
-			// an OKF run-output doc under its task folder (sty_890b86cb) — the same
-			// write seam the in-loop execution-record verb uses. Best-effort: a write
-			// failure is recorded, not fatal (the run already happened).
-			if current.Kind == workitem.KindExecution && res.Output != "" {
-				if _, werr := recordRunOutput(current, res.Output, now); werr != nil {
-					appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "executor",
-						"run-output record failed: "+werr.Error(),
-						transitionPayload(current.Status, *req.Status, res.Skill), now)
-				}
-			}
-			// Spend budgets (sty_a7914904): with none configured this only warns
-			// and records; a bound the repo set and the run exceeded routes to
-			// rework (the step declares a loop) or parks the story blocked.
-			park := resumeParkName(ctx, current)
-			notes, refuse := applyDispatchBudget(ctx, current, *req.Status, res,
-				stepDeclaresRework(ctx, current, *req.Status), park, now)
-			if refuse != nil {
-				notifyChange(panelTopic(current.Kind))
-				return nil, fmt.Errorf("transition %s→%s refused: %v", current.Status, *req.Status, refuse)
-			}
-			if notes != "" {
-				if out, perr, handled := parkWith(park, notes, res); handled {
-					return out, perr
-				}
+		if run.Refuse != nil {
+			notifyChange(panelTopic(current.Kind))
+			return nil, fmt.Errorf("transition %s→%s refused: %v", current.Status, *req.Status, run.Refuse)
+		}
+		if run.ParkNotes != "" {
+			if out, perr, handled := parkWith(resumeParkName(ctx, current), run.ParkNotes, run.Res); handled {
+				return out, perr
 			}
 		}
 		return nil, nil
@@ -818,12 +830,20 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	// for a `propose` step — performer then gates, so the gate payload carries the
 	// artifact the performer just attached. A failure at either call leaves the
 	// story at its source status, and the deferred guard frees the seat.
-	if proposeFirst {
+	if proposeFirst && readinessReused != "" {
+		// The readiness accepted in that attempt still holds: neither the performer
+		// nor the reviewers run again (sty_a32bd6a9).
+		recordReadinessReuse(ctx, current, current.Status, *req.Status, readinessReused)
+	} else if proposeFirst {
 		if out, perr := performStep(); out != nil || perr != nil {
 			return out, perr
 		}
 		if gerr := runGate(); gerr != nil {
 			return nil, gerr
+		}
+		step, _ := destinationStep(ctx, current, *req.Status)
+		if recordReadinessAccept(ctx, current, current.Status, *req.Status, attempt, readinessEdge{To: *req.Status, Step: step}.name()) {
+			readinessMark = step.Mark
 		}
 	} else {
 		if gerr := runGate(); gerr != nil {
@@ -898,7 +918,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 				Kind:    ledger.KindStatusTransition,
 				Actor:   "executor",
 				Body:    fmt.Sprintf("%s → %s", current.Status, *req.Status),
-				Payload: transitionPayload(current.Status, *req.Status, ""),
+				Payload: attemptPayload(current.Status, *req.Status, "", parkAttemptFrom(ctx)),
 			}, commitNow)
 			return aerr
 		})
@@ -914,6 +934,11 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	}
 	editor := resolveEditorIdentity()
 	recordDefinitionEdits(ctx, it, definitionEdits, editor, commitNow)
+	// An accepted readiness round marks the story once it has committed, with the
+	// tag the step declares (sty_a32bd6a9). Best-effort: the round is on the ledger.
+	if readinessMark != "" {
+		_ = markReady(ctx, it.ID, readinessMark)
+	}
 	// Release the seat on transition into terminal (Msquare) or park (agent=reviewer).
 	// Force-release: exit is config-driven and must free the seat even when the
 	// exit CLI process is not the acquire-time owner (default owner is stable
@@ -953,7 +978,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		if !transitionInTx {
 			appendLedgerEntry(ctx, it.ID, ledger.KindStatusTransition, "executor",
 				fmt.Sprintf("%s → %s", current.Status, *req.Status),
-				transitionPayload(current.Status, *req.Status, ""), commitNow)
+				attemptPayload(current.Status, *req.Status, "", parkAttemptFrom(ctx)), commitNow)
 		}
 		// First entry into an engaging state: record engagement baseline once
 		// (sty_da169e03). Enumerates git HEAD for later satelle story diff;
@@ -1577,7 +1602,7 @@ func storyRetrospect(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		// retrospective shows in `satelle story cost` beside the gates it reviews.
 		appendLedgerEntry(ctx, it.ID, ledger.KindAgentInvocation, "executor",
 			fmt.Sprintf("retrospective on %s (%s) with @skill:%s", it.ID, res.Model, res.Skill),
-			dispatchPayload("done", "retrospect", res), now)
+			dispatchPayload("done", "retrospect", res, ""), now)
 	}
 	if rerr != nil {
 		return nil, rerr
@@ -1975,11 +2000,19 @@ func equalStringSet(a, b []string) bool {
 // transitionPayload is the {from,to,skill} JSON stamped on review/transition
 // ledger rows so the progress column can reconstruct the workflow trail.
 func transitionPayload(from, to, skill string) json.RawMessage {
+	return attemptPayload(from, to, skill, "")
+}
+
+// attemptPayload is transitionPayload stamped with the attempt id of the
+// readiness round the row belongs to, under the same `attempt` key the review
+// rows carry (sty_a32bd6a9). An empty attempt writes the plain payload.
+func attemptPayload(from, to, skill, attempt string) json.RawMessage {
 	p := struct {
-		From  string `json:"from"`
-		To    string `json:"to"`
-		Skill string `json:"skill,omitempty"`
-	}{From: from, To: to, Skill: skill}
+		From    string `json:"from"`
+		To      string `json:"to"`
+		Skill   string `json:"skill,omitempty"`
+		Attempt string `json:"attempt,omitempty"`
+	}{From: from, To: to, Skill: skill, Attempt: attempt}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil
@@ -2036,10 +2069,11 @@ func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.R
 // dispatchPayload stamps a named-executor agent_invocation row with its model and
 // token/wall-time cost (sty_a699ad14), so the per-gate cost view can roll up a
 // dispatched step (planner, coder) the same way it does a reviewer gate.
-func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
+func dispatchPayload(from, to string, res DispatchResult, attempt string) json.RawMessage {
 	p := struct {
 		From           string       `json:"from"`
 		To             string       `json:"to"`
+		Attempt        string       `json:"attempt,omitempty"`
 		Agent          string       `json:"agent"`
 		Skill          string       `json:"skill,omitempty"`
 		Command        string       `json:"command,omitempty"`
@@ -2069,7 +2103,7 @@ func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
 		Budget *BudgetReport `json:"budget,omitempty"`
 		// Cloud records a cloud-performed step's session, branch and collected commit.
 		Cloud *CloudDispatch `json:"cloud,omitempty"`
-	}{From: from, To: to, Agent: res.Agent, Skill: res.Skill, Command: res.Command, Model: res.Model,
+	}{From: from, To: to, Attempt: attempt, Agent: res.Agent, Skill: res.Skill, Command: res.Command, Model: res.Model,
 		ModelResolved: res.ModelResolved, ModelSource: res.ModelSource, Models: res.Models,
 		TokensIn: res.TokensIn, TokensOut: res.TokensOut, TokensTotal: res.TokensTotal, DurationMs: res.DurationMs,
 		UsageAvailable: res.UsageAvailable,

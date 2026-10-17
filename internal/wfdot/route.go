@@ -96,11 +96,21 @@ type Step struct {
 	// reorders two calls the binary already makes and decides no verdict
 	// (sty_5262592e).
 	Propose bool
+	// Mark is the tag a readiness round that was accepted puts on the story
+	// (`satelle story ready`): a display marker only, the ledger decides whether
+	// readiness holds. The binary compiles in no tag name; a readiness step that
+	// declares none cannot be readied without engagement (sty_a32bd6a9).
+	Mark string
 	// Freeze makes entry to this step the point where a story's definition (title,
 	// body, acceptance criteria, category) freezes. Without any step declaring it
 	// the legacy rule applies: the definition freezes when the story leaves the
 	// entry state.
 	Freeze bool
+	// UntrustedInput declares that the text this step's seats read is untrusted
+	// (a story raised by an external party). It has no runtime effect: validate
+	// refuses a performer or reviewer on the step whose grant is not read-only.
+	// The step's author declares it; the binary never keys it on a step name.
+	UntrustedInput bool
 	// ApplyCriteriaDoc / ApplyCriteriaHeading declare that entry to this step
 	// applies the acceptance criteria authored under "## <heading>" in the story
 	// document <doc> to the story. Mechanism only: the binary copies the section
@@ -108,6 +118,10 @@ type Step struct {
 	// means the step applies nothing (sty_4d9df9a0).
 	ApplyCriteriaDoc     string
 	ApplyCriteriaHeading string
+	// ApplyChangeOps / ApplyChangeTags declare the changes a propose step's
+	// performer may report and the tag prefixes it may add (sty_af0b1761).
+	ApplyChangeOps  []string
+	ApplyChangeTags []string
 	// RejectBudget is the most rejected presentations of this step's entry edge
 	// before the orchestrator must park the story and ask the developer. Zero
 	// means no declared budget. The unit is a PRESENTATION (one gate run),
@@ -469,11 +483,16 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			AppliesTo:     st.AppliesTo,
 
 			Propose:      st.Propose,
+			Mark:         st.Mark,
 			Freeze:       st.Freeze,
 			RejectBudget: st.RejectBudget,
 
+			UntrustedInput: st.UntrustedInput,
+
 			ApplyCriteriaDoc:     st.ApplyCriteriaDoc,
 			ApplyCriteriaHeading: st.ApplyCriteriaHeading,
+			ApplyChangeOps:       st.ApplyChangeOps,
+			ApplyChangeTags:      st.ApplyChangeTags,
 
 			WaitsOnChildren: st.WaitsOnChildren,
 			Schedule:        st.Schedule,

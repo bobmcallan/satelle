@@ -207,14 +207,26 @@ type State struct {
 	// rejected presentations of the entry edge before the orchestrator parks.
 	// Carried on State like Agent and Model — dispatch and transition input, not
 	// a consultation instruction.
-	Propose      bool
+	Propose bool
+	// Mark is the tag an accepted readiness round puts on the story
+	// (sty_a32bd6a9); empty when the step declares none.
+	Mark         string
 	Freeze       bool
 	RejectBudget int
+	// UntrustedInput is the step's declaration that the text it reads (a story
+	// raised by an external party) is untrusted (Step.UntrustedInput). Validate
+	// then refuses any seat on the step that is not held read-only; nothing at
+	// runtime reads it.
+	UntrustedInput bool
 	// ApplyCriteriaDoc / ApplyCriteriaHeading: entry to this step applies the
 	// criteria authored under "## <heading>" in the story document <doc>
 	// (sty_4d9df9a0).
 	ApplyCriteriaDoc     string
 	ApplyCriteriaHeading string
+	// ApplyChangeOps / ApplyChangeTags: the operations a propose step's performer
+	// may report as `changes` and the tag prefixes it may add (sty_af0b1761).
+	ApplyChangeOps  []string
+	ApplyChangeTags []string
 	// WaitsOnChildren: a container idles here while its children are driven
 	// (sty_7f3e6fd3). Read through Spec.WaitsOnChildren.
 	WaitsOnChildren bool

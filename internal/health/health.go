@@ -76,8 +76,12 @@ const (
 	// tool allow-list inside its grant, or its adapter cannot deny an
 	// out-of-grant tool — dispatch would refuse it (sty_ef3efb51).
 	IDReviewerIsolation = "reviewer.isolation"
-	IDNodeAlloc         = "node.alloc"            // a workflow node/edge allocates a binding that does not resolve
-	IDHookAlloc         = "hook.alloc.unresolved" // a lifecycle hook's agent allocation is unusable
+	// IDStepUntrusted: a seat on a step that declares untrusted_input is not held
+	// read-only (a shell, network, write or unknown tool, an adapter that cannot
+	// trim tools, or no read-only context channel for a performer).
+	IDStepUntrusted = "step.untrusted_input"
+	IDNodeAlloc     = "node.alloc"            // a workflow node/edge allocates a binding that does not resolve
+	IDHookAlloc     = "hook.alloc.unresolved" // a lifecycle hook's agent allocation is unusable
 
 	// Required binaries.
 	IDBinaryMissing   = "binary.missing"   // a binding's executable is not on PATH
@@ -159,7 +163,7 @@ const (
 var ids = []string{
 	IDAgentsLoad, IDAgentsBinding, IDAgentsProfileBroken, IDAgentsSameRole, IDEnvUnresolved,
 	IDAgentsSharedProfile, IDAgentsSharedGlobalRoles, IDAgentsSharedMachineValue,
-	IDReviewerUnsafe, IDReviewerIsolation, IDNodeAlloc, IDHookAlloc,
+	IDReviewerUnsafe, IDReviewerIsolation, IDStepUntrusted, IDNodeAlloc, IDHookAlloc,
 	IDBinaryMissing, IDBinaryMalformed,
 	IDWorkflowStructure, IDWorkflowConsistency, IDCommandRuleAllow,
 	IDProcessUnreadable, IDProcessAbsent, IDProcessDivergent,

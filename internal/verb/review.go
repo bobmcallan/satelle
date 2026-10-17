@@ -3,6 +3,7 @@ package verb
 import (
 	"context"
 
+	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -207,6 +208,11 @@ type UsageNote struct {
 	Adapter                string `json:"adapter,omitempty"`
 	UsageUnavailableReason string `json:"usage_unavailable_reason,omitempty"`
 	CacheSplitUnavailable  bool   `json:"cache_split_unavailable,omitempty"`
+	// AuthMode is the auth mode (subscription, api_key, org, unrecorded) the
+	// binding behind the row is declared to run under (config.AgentBinding.Auth).
+	// Set by agentstep from the binding, never detected; absent on a row written
+	// before it existed.
+	AuthMode string `json:"auth_mode,omitempty"`
 }
 
 // ModelUsage is one model's token/cost entry from a transport's resolved-model
@@ -373,6 +379,10 @@ type DispatchResult struct {
 	// under the parent task's folder, so a run's evidence is discoverable per task
 	// rather than only in the central executor.log.
 	Output string `json:"output,omitempty"`
+	// Changes are the story-configuration changes the performer reported in its
+	// final response (sty_af0b1761), decoded by the shared agentartifact seam.
+	// The verb applies them only on a step that declares apply_changes.
+	Changes []agentartifact.Change `json:"-"`
 	// ArtifactName/Type identify a Satelle-owned structured step artifact
 	// attached before the transition committed.
 	ArtifactName string `json:"artifact_name,omitempty"`
@@ -408,6 +418,26 @@ type CloudDispatch struct {
 // (status unchanged). Implemented in internal/agentstep.
 type ExecutorDispatcher interface {
 	DispatchExecutor(ctx context.Context, item workitem.Item, toStatus string) (DispatchResult, error)
+}
+
+// PerformerResolution answers whether entering a step dispatches a named
+// performer. Reason says why not when Dispatched is false.
+type PerformerResolution struct {
+	Agent      string
+	Dispatched bool
+	Reason     string
+	// OutputName is the document name the performer's skill declares for its
+	// artifact (output_name); empty when the skill declares no output contract.
+	OutputName string
+}
+
+// PerformerResolver is the engine's single rule for who performs a step
+// (DispatchExecutor applies it too), exposed so a caller that must know BEFORE
+// it runs anything — `satelle story ready` — asks the same rule a presented
+// edge uses rather than keeping a second copy (sty_a32bd6a9). The dispatcher
+// wired with SetExecutorDispatcher implements it.
+type PerformerResolver interface {
+	StepPerformer(ctx context.Context, item workitem.Item, toStatus string) (PerformerResolution, error)
 }
 
 // executorDispatcher is wired at bootstrap beside the transition gater. Nil

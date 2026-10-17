@@ -78,6 +78,15 @@ type applyCriteriaRef struct {
 	Heading string `toml:"heading"`
 }
 
+// applyChangesRef is a step's `apply_changes = { ops = […], tags = […] }` — the
+// operations a propose step's performer may report as `changes` and the tag
+// prefixes it may add (sty_af0b1761). Configuration: the binary applies what the
+// route allows, the route names it.
+type applyChangesRef struct {
+	Ops  []string `toml:"ops"`
+	Tags []string `toml:"tags"`
+}
+
 type adviseRef struct {
 	Agent string `toml:"agent"`
 	Skill string `toml:"skill"`
@@ -143,6 +152,8 @@ type stepWire struct {
 	// ApplyCriteria is a POINTER for the same reason: absent means the step applies
 	// nothing, and a half-authored one is refused rather than ignored.
 	ApplyCriteria *applyCriteriaRef `toml:"apply_criteria"`
+	// ApplyChanges is a POINTER for the same reason as ApplyCriteria.
+	ApplyChanges *applyChangesRef `toml:"apply_changes"`
 	// Propose, Freeze and RejectBudget are the step's declared transition knobs
 	// (sty_5262592e). RejectBudget is a POINTER for the same reason Rework is: an
 	// absent key means "no budget" and an authored zero is a mis-authored one this
@@ -150,6 +161,14 @@ type stepWire struct {
 	Propose      bool `toml:"propose"`
 	Freeze       bool `toml:"freeze"`
 	RejectBudget *int `toml:"reject_budget"`
+	// Mark is the tag an accepted readiness round puts on a story
+	// (sty_a32bd6a9). Optional: absent means the step cannot be readied without
+	// engagement, never a default tag name.
+	Mark string `toml:"mark"`
+	// UntrustedInput declares that the text this step's seats read is untrusted
+	// (an external raiser's story): validate then refuses a seat on the step that
+	// is not held read-only.
+	UntrustedInput bool `toml:"untrusted_input"`
 	// WaitsOnChildren marks a step at which a container idles while its child
 	// stories are driven: it holds the status, but nothing performs on the
 	// container itself (sty_7f3e6fd3).
@@ -380,6 +399,35 @@ func trimPanel(in []string) ([]string, error) {
 	return out, nil
 }
 
+// ChangeOps is the closed set of operations a step's apply_changes may allow a
+// performer to report (sty_af0b1761).
+var ChangeOps = []string{"add-tags", "create-child"}
+
+// trimmedAll trims every entry of in and drops the empty ones.
+func trimmedAll(in []string) []string {
+	var out []string
+	for _, s := range in {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// unknownChangeOp returns the first op in ops outside ChangeOps, or "".
+func unknownChangeOp(ops []string) string {
+	for _, op := range ops {
+		known := false
+		for _, k := range ChangeOps {
+			known = known || op == k
+		}
+		if !known {
+			return op
+		}
+	}
+	return ""
+}
+
 // refusePanelShape is the parse refusal for a panel declaration, by key name.
 // A one-seat panel is the same shape as a single binding and may omit combine.
 // Two or more seats need a combine skill. combine without a panel, and panel
@@ -416,6 +464,7 @@ func ParseSteps(body string) (Catalogue, error) {
 	reworkDeclared := map[string]bool{}
 	budgetDeclared := map[string]bool{}
 	criteriaDeclared := map[string]bool{}
+	changesDeclared := map[string]bool{}
 	for _, provides := range sortedKeys(recs) {
 		var s stepWire
 		if err := md.PrimitiveDecode(recs[provides], &s); err != nil {
@@ -446,8 +495,10 @@ func ParseSteps(body string) (Catalogue, error) {
 			Start:         s.Start,
 			Terminal:      s.Terminal,
 			Propose:       s.Propose,
+			Mark:          strings.TrimSpace(s.Mark),
 			Freeze:        s.Freeze,
 
+			UntrustedInput:  s.UntrustedInput,
 			WaitsOnChildren: s.WaitsOnChildren,
 			Schedule:        s.Schedule,
 			AfterChildren:   strings.TrimSpace(s.AfterChildren),
@@ -482,6 +533,11 @@ func ParseSteps(body string) (Catalogue, error) {
 			st.ApplyCriteriaDoc = strings.TrimSpace(s.ApplyCriteria.Doc)
 			st.ApplyCriteriaHeading = strings.TrimSpace(s.ApplyCriteria.Heading)
 			criteriaDeclared[provides] = true
+		}
+		if s.ApplyChanges != nil {
+			st.ApplyChangeOps = trimmedAll(s.ApplyChanges.Ops)
+			st.ApplyChangeTags = trimmedAll(s.ApplyChanges.Tags)
+			changesDeclared[provides] = true
 		}
 		cat.Steps = append(cat.Steps, st)
 	}
@@ -539,6 +595,12 @@ func ParseSteps(body string) (Catalogue, error) {
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: propose needs the step to allocate a performer (agent = …) and its skills — there is nothing to run before the gates", st.Provides)
 		case criteriaDeclared[st.Provides] && (st.ApplyCriteriaDoc == "" || st.ApplyCriteriaHeading == ""):
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: apply_criteria needs both doc = \"<document>\" and heading = \"<heading>\" — half a declaration applies nothing", st.Provides)
+		case changesDeclared[st.Provides] && (len(st.ApplyChangeOps) == 0 || len(st.ApplyChangeTags) == 0):
+			return Catalogue{}, fmt.Errorf("step.toml: step %q: apply_changes needs ops = [...] and tags = [...] — half a declaration applies nothing", st.Provides)
+		case changesDeclared[st.Provides] && !st.Propose:
+			return Catalogue{}, fmt.Errorf("step.toml: step %q: apply_changes requires propose = true (the performer must run before the step's gates, so they judge the repaired record)", st.Provides)
+		case changesDeclared[st.Provides] && unknownChangeOp(st.ApplyChangeOps) != "":
+			return Catalogue{}, fmt.Errorf("step.toml: step %q: apply_changes op %q is not one of: %s", st.Provides, unknownChangeOp(st.ApplyChangeOps), strings.Join(ChangeOps, ", "))
 		case budgetDeclared[st.Provides] && st.RejectBudget < 1:
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: reject_budget must be >= 1 (a zero budget refuses the first presentation)", st.Provides)
 		}

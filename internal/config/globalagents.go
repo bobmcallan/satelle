@@ -82,6 +82,7 @@ var globalAgentsBindingKeys = map[string]bool{
 	"settings":     true,
 	"secondary":    true,
 	"isolation":    true,
+	"auth":         true,
 }
 
 // globalAgentsRetiredKeys are profile keys satelle once declared and no longer
@@ -276,6 +277,9 @@ func (g GlobalAgentsConfig) validate() error {
 		if err := checkBindingIsolation(GlobalAgentsLabel, section, b); err != nil {
 			return err
 		}
+		if err := checkBindingAuth(GlobalAgentsLabel, section, b); err != nil {
+			return err
+		}
 		if err := checkBindingTimeout(GlobalAgentsLabel, section, b); err != nil {
 			return err
 		}
@@ -370,6 +374,18 @@ func checkBindingIsolation(file, section string, b AgentBinding) error {
 		return fmt.Errorf("%s [%s] isolation %q: want %q", file, section, raw, IsolationOperatorAttested)
 	}
 	return nil
+}
+
+// checkBindingAuth is the shared auth= check (see checkBindingInterface): empty
+// or one of subscription, api_key, org — nothing else, notably not "unrecorded",
+// which is only what an undeclared binding resolves to.
+func checkBindingAuth(file, section string, b AgentBinding) error {
+	switch raw := strings.TrimSpace(b.Auth); strings.ToLower(raw) {
+	case "", AuthSubscription, AuthAPIKey, AuthOrg:
+		return nil
+	default:
+		return fmt.Errorf("%s [%s] auth %q: want %q, %q or %q", file, section, raw, AuthSubscription, AuthAPIKey, AuthOrg)
+	}
 }
 
 // checkBindingTimeout is the shared timeout check (see checkBindingInterface).

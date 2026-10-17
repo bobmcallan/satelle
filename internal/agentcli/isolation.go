@@ -174,6 +174,98 @@ func GrantAdmitsShell(grant string) bool {
 	return admitsFromGrant(grant, true).classes[ClassShell]
 }
 
+// ReadOnlyProblem is one reason a binding cannot be held to read-only access.
+// Class names the tool class a grant admits beyond reading; it is empty when the
+// cause is the adapter (it cannot trim or deny tools) rather than the grant.
+type ReadOnlyProblem struct {
+	Class ToolClass
+	Cause string
+}
+
+// readOnlyDenied are the classes a read-only grant must not admit, in report
+// order: everything dangerOrder names, then any tool no table knows.
+var readOnlyDenied = append(append([]ToolClass{}, dangerOrder...), ClassUnknown)
+
+// ReadOnlyGrantProblems is the ONE answer to whether a binding (its command, its
+// interface and its tool grant) is held to read-only access, for a step whose
+// input is untrusted text. It returns one problem per cause, none when the
+// binding is read-only:
+//
+//   - an adapter that holds read-only itself (ReadOnlyEnforced: cursor's forced
+//     ask mode) passes without reading the grant, which is advisory there; a
+//     cursor performer is only held when its template asks for ask mode, because
+//     satelle forces that for reviewers alone;
+//   - otherwise preflight must find no gap — the adapter must trim the offered
+//     tools to the grant, so an adapter no table names is refused;
+//   - and the grant itself must admit no shell, subprocess, network, mcp, write,
+//     edit or unknown tool, scoped entries (Bash(satelle:*)) included.
+//
+// It is built on the classifier above, so no provider tool name is judged
+// anywhere else. Whether a performer also has a context channel is not decided
+// here: config.GrantsContextChannel owns that.
+func ReadOnlyGrantProblems(command, iface, grant string, performer bool) []ReadOnlyProblem {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return []ReadOnlyProblem{{Cause: "the binding has no command, so nothing holds it read-only"}}
+	}
+	if len(fields) == 1 && strings.EqualFold(fields[0], "in-loop") {
+		return []ReadOnlyProblem{{Cause: "command in-loop is performed by the driving session with its own tools"}}
+	}
+	iface = strings.ToLower(strings.TrimSpace(iface))
+	if iface == "" {
+		iface = InterfaceCommand
+	}
+	adapter, args := adapterOf(fields[0], fields[1:]), fields[1:]
+	if adapter == HarnessCursor {
+		if cause := cursorReadOnlyProblem(args, iface, performer); cause != "" {
+			return []ReadOnlyProblem{{Cause: cause}}
+		}
+		return nil
+	}
+	var out []ReadOnlyProblem
+	for _, g := range preflight(iface, fields[0], args, grant) {
+		out = append(out, ReadOnlyProblem{Cause: fmt.Sprintf("adapter %s cannot hold it read-only: %s", g.Adapter, g.What)})
+	}
+	byClass := map[ToolClass][]string{}
+	for _, t := range parseGrant(grant) {
+		if c := ClassifyTool(t.Base); c != ClassRead {
+			byClass[c] = append(byClass[c], t.Name)
+		}
+	}
+	for _, c := range readOnlyDenied {
+		if names := byClass[c]; len(names) > 0 {
+			out = append(out, ReadOnlyProblem{Class: c, Cause: fmt.Sprintf("grant admits %s tool %s", c, strings.Join(names, ", "))})
+		}
+	}
+	return out
+}
+
+// cursorReadOnlyProblem is ReadOnlyGrantProblems' cursor case: "" when the seat is
+// held read-only, else why not. A reviewer is held by ReadOnlyEnforced (satelle
+// forces ask mode); a performer is not forced, so it must ask for ask mode itself
+// on the command transport, and the ACP transport never holds it.
+func cursorReadOnlyProblem(args []string, iface string, performer bool) string {
+	if !performer {
+		if _, err := ReadOnlyEnforced(HarnessCursor, args, iface); err != nil {
+			return strings.TrimPrefix(err.Error(), "agentcli: ")
+		}
+		return ""
+	}
+	if iface != InterfaceCommand {
+		return "cursor: satelle forces read-only mode for a reviewer only, so a performer on the " + iface + " transport is not held read-only"
+	}
+	modes := flagValues(args, "--mode")
+	for _, m := range modes {
+		if strings.ToLower(strings.TrimSpace(m)) != cursorReadOnlyMode {
+			return errCursorReadOnlyMode(m).Error()
+		}
+	}
+	if len(modes) == 0 {
+		return "cursor: satelle forces ask mode for a reviewer only, so a performer template must carry --mode " + cursorReadOnlyMode + " itself"
+	}
+	return ""
+}
+
 // allows reports whether a tool of class c named name is inside the grant. An
 // unknown class is admitted only by an exact name listed in the grant.
 func (a grantAdmits) allows(c ToolClass, name string) bool {

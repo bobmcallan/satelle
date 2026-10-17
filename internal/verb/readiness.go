@@ -15,6 +15,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -37,12 +38,19 @@ func init() {
 // resolved: an unresolvable route keeps the default order, and the gate itself
 // refuses on it.
 func stepProposes(ctx context.Context, current workitem.Item, to string) bool {
+	st, found := destinationStep(ctx, current, to)
+	return found && st.Propose
+}
+
+// destinationStep resolves the step the story is moving INTO over the declared
+// current→to edge. Not found when the route cannot be resolved or declares no
+// such edge.
+func destinationStep(ctx context.Context, current workitem.Item, to string) (wfdot.State, bool) {
 	spec, _, _, ok := governingSpec(ctx, current)
 	if !ok || !spec.HasEdge(current.Status, to) {
-		return false
+		return wfdot.State{}, false
 	}
-	st, found := spec.StateNamed(to)
-	return found && st.Propose
+	return spec.StateNamed(to)
 }
 
 // planCriteriaActor is the actor on the definition_edited row written when an
@@ -138,24 +146,64 @@ func applyPlannedCriteria(ctx context.Context, current workitem.Item, to string,
 			current.ID, st.ApplyCriteriaDoc, st.ApplyCriteriaHeading)
 		return current, nil
 	}
-	store, err := requireWorkItem()
-	if err != nil {
-		return current, err
-	}
-	updated, err := store.Update(ctx, current.ID, workitem.UpdateInput{AcceptanceCriteria: &criteria, ExpectStatus: &current.Status}, now)
-	if err != nil {
-		return current, fmt.Errorf("verb: transition %s→%s: applying the criteria from the %q document: %w", current.Status, to, st.ApplyCriteriaDoc, err)
-	}
-	payload, perr := json.Marshal(definitionEditPayload{
+	payload, err := json.Marshal(definitionEditPayload{
 		Field: "acceptance_criteria", Old: current.AcceptanceCriteria, New: criteria,
 		Actor: planCriteriaActor, Source: st.ApplyCriteriaDoc + "#" + st.ApplyCriteriaHeading,
 	})
-	if perr == nil {
-		appendLedgerEntry(ctx, current.ID, ledger.KindDefinitionEdited, planCriteriaActor,
-			fmt.Sprintf("definition applied from the accepted plan document %q (section %q)", st.ApplyCriteriaDoc, st.ApplyCriteriaHeading),
-			payload, now)
+	if err != nil {
+		return current, err
+	}
+	updated, err := applyToRecord(ctx, current, workitem.UpdateInput{AcceptanceCriteria: &criteria}, recordedWrite{
+		Kind: ledger.KindDefinitionEdited, Actor: planCriteriaActor,
+		Body:    fmt.Sprintf("definition applied from the accepted plan document %q (section %q)", st.ApplyCriteriaDoc, st.ApplyCriteriaHeading),
+		Payload: payload,
+	}, now)
+	if err != nil {
+		return current, fmt.Errorf("verb: transition %s→%s: applying the criteria from the %q document: %w", current.Status, to, st.ApplyCriteriaDoc, err)
 	}
 	return updated, nil
+}
+
+// recordedWrite is the one ledger row an applied write leaves on the record.
+type recordedWrite struct {
+	Kind    string
+	Actor   string
+	Body    string
+	Payload json.RawMessage
+}
+
+// applyToRecord is the one place a route-declared apply writes to a story: a
+// compare-and-set update against cur's status, then the single attributed row
+// that records the write, then the ready-mark sync. The accepted plan's criteria
+// (apply_criteria) and the changes a performer reports (apply_changes) both go
+// through it, so they share one write, one attribution and one sync.
+func applyToRecord(ctx context.Context, cur workitem.Item, in workitem.UpdateInput, row recordedWrite, now time.Time) (workitem.Item, error) {
+	updated, err := writeToRecord(ctx, cur, in, now)
+	if err != nil {
+		return cur, err
+	}
+	recordApplied(ctx, cur.ID, row, now)
+	return updated, nil
+}
+
+// writeToRecord is the store half of applyToRecord: the compare-and-set update
+// against cur's status, with no row and no sync. A batch that must be
+// all-or-nothing (the changes a performer reports) writes every update with it,
+// and only once all have landed records them with recordApplied.
+func writeToRecord(ctx context.Context, cur workitem.Item, in workitem.UpdateInput, now time.Time) (workitem.Item, error) {
+	store, err := requireWorkItem()
+	if err != nil {
+		return cur, err
+	}
+	in.ExpectStatus = &cur.Status
+	return store.Update(ctx, cur.ID, in, now)
+}
+
+// recordApplied is the record half of applyToRecord: the single attributed row
+// for a write that landed, then the ready-mark sync.
+func recordApplied(ctx context.Context, id string, row recordedWrite, now time.Time) {
+	appendLedgerEntry(ctx, id, row.Kind, row.Actor, row.Body, row.Payload, now)
+	syncReadyMark(ctx, id)
 }
 
 // markdownSection returns the text under the "## <heading>" line of doc, up to
@@ -307,6 +355,8 @@ func recordDefinitionEdits(ctx context.Context, it workitem.Item, edits []AmendF
 		appendLedgerEntry(ctx, it.ID, ledger.KindDefinitionEdited, actor,
 			fmt.Sprintf("definition edited while editable: %s (before and after are on the row)", f.Field), payload, now)
 	}
+	// An edit after an accepted readiness round voids it (sty_a32bd6a9).
+	syncReadyMark(ctx, it.ID)
 }
 
 // DefinitionEdit is one recorded edit, as enumerated for a gate payload or

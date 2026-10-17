@@ -399,9 +399,12 @@ func (g *Engine) runReviewerBundle(ctx context.Context, item workitem.Item, toSt
 	var lead verb.GateDecision
 	for k, d := range res.Decisions {
 		d.BundleID, d.BundleSkills = bundleID, skills
-		stampInvocation(&d, res, seat.modelSource)
 		if k == 0 {
 			g.setDecisionUsage(&d, res.Usage, seat.binding.Model)
+		}
+		// After the usage: setDecisionUsage replaces the whole UsageNote.
+		stampInvocation(&d, res, seat)
+		if k == 0 {
 			lead = d
 		} else {
 			// One measured call: name the seat's model on every verdict so the

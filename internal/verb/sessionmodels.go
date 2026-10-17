@@ -60,19 +60,6 @@ func RecordSessionModel(ctx context.Context, itemID, actor, role, model, executa
 	}, time.Now())
 }
 
-// recordCreatorSessionModel captures the story-creating session's model
-// (sty_7069bced) — config.SelectModel's creator tier reads the latest
-// session_model{creator} row for a story. There is no separate "creator"
-// publish: the creating session IS the in-loop session at creation time, so
-// this reads its already-published in-loop model and re-records it under the
-// creator role for THIS story. Best-effort: an unresolved session or model
-// records "unknown" via RecordSessionModel rather than skipping the write.
-func recordCreatorSessionModel(ctx context.Context, itemID string) {
-	sid := config.ResolveSession()
-	model, exe, reason := config.ResolveSessionModel(sid, SessionModelRoleInLoop)
-	RecordSessionModel(ctx, itemID, "", SessionModelRoleCreator, model, exe, sid, reason)
-}
-
 // recordEngageSessionModel captures the engaging session's model for itemID
 // (sty_7069bced) — config.SelectModel's inherited in-loop tier. Called on
 // every engaging transition, not just the first: a later engage (e.g.

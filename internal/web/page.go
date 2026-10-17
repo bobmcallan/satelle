@@ -436,8 +436,8 @@ const templatesSrc = `
   </dl>
   {{if .Seats}}<h4>By seat</h4>
   <table class="panel-table cost-seats">
-    <thead><tr><th>Seat</th><th>Fresh in</th><th>Cache read</th><th>Cache write</th><th>Out</th><th>Cost</th></tr></thead>
-    <tbody>{{range .Seats}}<tr><td class="id">{{.Seat}}</td><td>{{.FreshIn}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Out}}</td><td>{{.Cost}}</td></tr>{{end}}</tbody>
+    <thead><tr><th>Seat</th><th>Auth</th><th>Fresh in</th><th>Cache read</th><th>Cache write</th><th>Out</th><th>Cost</th></tr></thead>
+    <tbody>{{range .Seats}}<tr><td class="id">{{.Seat}}</td><td>{{.Auth}}</td><td>{{.FreshIn}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Out}}</td><td>{{.Cost}}</td></tr>{{end}}</tbody>
   </table>{{end}}
   {{if .LegacyEstimate}}<div class="cost-legacy-estimate">{{.LegacyEstimate}}</div>{{end}}
   <div class="cost-driver-coverage">{{.DriverLine}}</div>
@@ -452,8 +452,8 @@ const templatesSrc = `
   </table>
   {{if .FamilySeats}}<h4>Family by seat</h4>
   <table class="panel-table cost-seats cost-family-seats">
-    <thead><tr><th>Seat</th><th>Fresh in</th><th>Cache read</th><th>Cache write</th><th>Out</th><th>Cost</th></tr></thead>
-    <tbody>{{range .FamilySeats}}<tr><td class="id">{{.Seat}}</td><td>{{.FreshIn}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Out}}</td><td>{{.Cost}}</td></tr>{{end}}</tbody>
+    <thead><tr><th>Seat</th><th>Auth</th><th>Fresh in</th><th>Cache read</th><th>Cache write</th><th>Out</th><th>Cost</th></tr></thead>
+    <tbody>{{range .FamilySeats}}<tr><td class="id">{{.Seat}}</td><td>{{.Auth}}</td><td>{{.FreshIn}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.Out}}</td><td>{{.Cost}}</td></tr>{{end}}</tbody>
   </table>{{end}}
   <div class="cost-driver-coverage">{{.FamilyDriverLine}}</div>
   {{range .FamilyAdapters}}<div class="cost-adapter-coverage">{{.}}</div>{{end}}{{end}}

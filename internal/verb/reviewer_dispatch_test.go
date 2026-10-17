@@ -47,6 +47,9 @@ var reviewerDispatchSites = map[string][]string{
 		"story-resummarise", "story-retrospect",
 	},
 	"amend.go": {"story-amend"},
+	// A readiness round dispatches the step's performer and reviewers; both the
+	// presented edge and `story ready` run it (sty_a32bd6a9).
+	"readiness_round.go": {"story-set", "task-set", "execution-set", "story-ready"},
 	// An entry-state definition edit runs the create gate (sty_a8885220).
 	"edit_gate.go": {"story-set", "task-set", "execution-set"},
 }

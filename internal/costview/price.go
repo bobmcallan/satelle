@@ -260,7 +260,12 @@ func (pr *pricer) result(f Figures) DerivedCost {
 // seatOf: a dispatched agent's seat is agent@model, and the driving session's
 // is driver@model — plain driver when its model was not recorded.
 type SeatLine struct {
-	Seat                 string      `json:"seat"`
+	Seat string `json:"seat"`
+	// Auth is the auth mode of the seat's rows (ledger.AuthLabel; unrecorded for a
+	// row that recorded none and for the driving session). A seat whose rows ran
+	// under different modes lists them, comma-joined and sorted. It is separate
+	// from Derived.Mode, which is how the tokens are priced.
+	Auth                 string      `json:"auth"`
 	FreshInput           int         `json:"fresh_input"`
 	CacheRead            int         `json:"cache_read"`
 	CacheWrite           int         `json:"cache_write"`
@@ -297,31 +302,50 @@ func recordedModel(model, resolved string) string {
 // under its seat, and a superseded or baseline driver row adds no tokens.
 func BySeat(rows []Row, drivers []DriverRow, p Pricing) []SeatLine {
 	accs := map[string]*accumulator{}
-	get := func(seat string) *accumulator {
+	auths := map[string]string{}
+	get := func(seat, auth string) *accumulator {
 		a, ok := accs[seat]
 		if !ok {
 			a = &accumulator{price: newPricer(p)}
 			accs[seat] = a
 		}
+		auths[seat] = mergeAuth(auths[seat], auth)
 		return a
 	}
 	for _, row := range rows {
-		get(seatOf(row.Agent, recordedModel(row.Model, row.ModelResolved))).addDispatchRow(row)
+		get(seatOf(row.Agent, recordedModel(row.Model, row.ModelResolved)), ledger.AuthLabel(row.AuthMode)).addDispatchRow(row)
 	}
 	for _, d := range MarkSuperseded(append([]DriverRow(nil), drivers...)) {
-		get(seatOf(DriverSeat, recordedModel(d.Model, ""))).addDriverRow(d)
+		// The driving session is not a binding, so it declares no auth.
+		get(seatOf(DriverSeat, recordedModel(d.Model, "")), ledger.AuthUnrecorded).addDriverRow(d)
 	}
 	lines := make([]SeatLine, 0, len(accs))
 	for seat, a := range accs {
 		f := a.figures()
 		lines = append(lines, SeatLine{
-			Seat: seat, FreshInput: f.FreshInput, CacheRead: f.CacheRead, CacheWrite: f.CacheWrite, Output: f.Output,
+			Seat: seat, Auth: auths[seat], FreshInput: f.FreshInput, CacheRead: f.CacheRead, CacheWrite: f.CacheWrite, Output: f.Output,
 			UnsplitTokens: f.UnsplitTokens, UsageRows: f.UsageRows, UnsplitRows: f.UnsplitRows,
 			UsageUnavailableRows: f.UsageUnavailableRows, Derived: f.Derived,
 		})
 	}
 	sort.Slice(lines, func(i, j int) bool { return lines[i].Seat < lines[j].Seat })
 	return lines
+}
+
+// mergeAuth unions two comma-joined auth lists into a sorted, de-duplicated one.
+func mergeAuth(a, b string) string {
+	seen := map[string]bool{}
+	var modes []string
+	for _, list := range []string{a, b} {
+		for _, m := range strings.Split(list, ",") {
+			if m = strings.TrimSpace(m); m != "" && !seen[m] {
+				seen[m] = true
+				modes = append(modes, m)
+			}
+		}
+	}
+	sort.Strings(modes)
+	return strings.Join(modes, ",")
 }
 
 // MergeSeats sums two seat breakdowns by seat — the epic roll-up of its
@@ -334,6 +358,7 @@ func MergeSeats(a, b []SeatLine) []SeatLine {
 			byseat[l.Seat] = l
 			continue
 		}
+		cur.Auth = mergeAuth(cur.Auth, l.Auth)
 		cur.FreshInput += l.FreshInput
 		cur.CacheRead += l.CacheRead
 		cur.CacheWrite += l.CacheWrite
@@ -356,7 +381,7 @@ func MergeSeats(a, b []SeatLine) []SeatLine {
 // SeatLineView is a SeatLine pre-formatted once, so the CLI and the web page
 // render identical strings for identical ledger data.
 type SeatLineView struct {
-	Seat, FreshIn, CacheRead, CacheWrite, Out, Cost string
+	Seat, Auth, FreshIn, CacheRead, CacheWrite, Out, Cost string
 }
 
 // FormatSeatLines renders lines through the same token formatters the headline
@@ -368,6 +393,7 @@ func FormatSeatLines(lines []SeatLine) []SeatLineView {
 		splitRows := f.UsageRows - f.UnsplitRows
 		out = append(out, SeatLineView{
 			Seat:       l.Seat,
+			Auth:       ledger.AuthLabel(l.Auth),
 			FreshIn:    FormatSplitTokens(f.FreshInput, splitRows, f.UnsplitRows, f.UsageUnavailableRows),
 			CacheRead:  FormatSplitTokens(f.CacheRead, splitRows, f.UnsplitRows, f.UsageUnavailableRows),
 			CacheWrite: FormatSplitTokens(f.CacheWrite, splitRows, f.UnsplitRows, f.UsageUnavailableRows),

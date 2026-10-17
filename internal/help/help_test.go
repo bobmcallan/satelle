@@ -280,6 +280,45 @@ func TestAgentDispatchTopicListsEveryWarnedIsolationConfig(t *testing.T) {
 	}
 }
 
+// TestAgentDispatchTopicDocumentsApplyChanges (sty_af0b1761 AC7): the contract of
+// a read-only performer reporting changes is taught by the topic alone — the
+// declaration, that it requires propose, the ops, the tag prefixes and the
+// `changes` envelope, including on a reject line.
+func TestAgentDispatchTopicDocumentsApplyChanges(t *testing.T) {
+	top, ok := Get("agent-dispatch")
+	if !ok {
+		t.Fatal("agent-dispatch topic not found")
+	}
+	start := strings.Index(top.Body, "### Reporting configuration changes")
+	end := strings.Index(top.Body, "### Planner transport evidence")
+	if start < 0 || end < start {
+		t.Fatal("agent-dispatch topic lost its apply_changes section")
+	}
+	section := top.Body[start:end]
+	for _, want := range []string{
+		"apply_changes = { ops = [",
+		"tags = [\"order:\"",
+		"It requires `propose = true`",
+		"`add-tags`",
+		"`create-child`",
+		"prefixes a reported tag may carry",
+		`"changes":[`,
+		`{"op":"add-tags","story":`,
+		`{"op":"create-child","title":`,
+		"reject line",
+		"**all or nothing**",
+		"`story_updated`",
+		"`story_created`",
+		"performer:<step>",
+		"declares no `apply_changes`",
+		"`satelle story ready`",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("apply_changes section missing %q", want)
+		}
+	}
+}
+
 func TestAgentDispatchTopicModelSelection(t *testing.T) {
 	top, ok := Get("agent-dispatch")
 	if !ok {

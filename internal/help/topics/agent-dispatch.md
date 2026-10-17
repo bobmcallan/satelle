@@ -472,6 +472,71 @@ Legacy self-attaching steps remain supported. To migrate one:
    needed.
 4. Keep the workflow's exit review responsible for semantic artifact quality.
 
+### Reporting configuration changes — `apply_changes` (sty_af0b1761)
+
+A performer that cannot write — no shell, no `satelle` CLI, no edit tool — can
+still repair the stories it is judging. It **reports** the changes it wants and
+satelle **applies** them on the record, the way the driving session applies a
+planner's criteria. A step opts in beside `apply_criteria` in `step.toml`:
+
+```toml
+[ready]
+propose = true
+apply_changes = { ops = ["add-tags", "create-child"], tags = ["order:", "surface:", "lane:", "depends-on:"] }
+```
+
+- **It requires `propose = true`.** The performer must run before the step's
+  gates, so they judge the repaired record. `apply_changes` on a step without
+  `propose`, a declaration missing `ops` or `tags`, or an op other than
+  `add-tags` and `create-child` is refused when the route is loaded.
+- **`ops`** names what may be reported: `add-tags` (add tags to a story) and
+  `create-child` (file a new story under the container). **`tags`** lists the tag
+  prefixes a reported tag may carry; a tag under no listed prefix is refused.
+
+The performer reports a `changes` list beside its verdict or artifact — in the
+same final object, or standing alone, and on a reject line as well as an
+accept:
+
+```json
+{"decision":"accept","notes":"","changes":[
+  {"op":"add-tags","story":"sty_aaaa1111","tags":["order:2","lane:trunk"]},
+  {"op":"create-child","title":"Add the missing check","body":"…","acceptance":"1. …","category":"feature","tags":["surface:cli"]}
+]}
+```
+
+Every adapter hands its final text to the same decode, so the report reads the
+same from a claude command or stream, a grok command or ACP session, or pi. An
+unknown field in a change is an error, not ignored.
+
+Satelle applies a report before the step's gates run, on the engaged transition
+and under `satelle story ready` alike, within these limits, and
+**all or nothing**: a batch with any violation applies none of it, and the round
+fails with notes naming the offending change (`changes[N]`) and the limit.
+
+- the op must be declared; a change targets only the dispatched container or one
+  of its members (the `epic:<theme>` set for an epic-parent, the stories whose
+  `parent_id` is the container otherwise);
+- tags are only **added**, never removed, under a declared prefix and in the tag
+  vocabulary; `depends-on:` tags pass the checks `satelle story set` runs, with
+  a cycle check across the whole batch;
+- no `title`, `body`, `acceptance` or `category` of an existing story is changed;
+- a created child names no other story as its target, repeats no member's
+  title, passes the same create rules as `satelle story create` (vocabulary, the
+  create review, the workflow stamp, closed-epic tags) and is a member of the
+  container. Its recorded creator is the performer — its model, or an explicit
+  unknown — never the driving session.
+
+Each applied change leaves exactly one row that records it: a `story_updated`
+row for added tags, a `story_created` row for a created child, whose actor is the
+performer and whose payload names the source step (`performer:<step>`). A step
+that declares no `apply_changes` refuses a performer that reports `changes`,
+naming the missing declaration, and applies nothing.
+
+A performer that **rejects** the premise may carry `changes` on its reject line.
+They are applied within the same limits and the reject is recorded: the engaged
+story then parks blocked with the notes, while under `satelle story ready` the
+status does not change.
+
 ### Planner transport evidence
 
 For this repository the default `[planner]` remains Claude's non-interactive
@@ -1298,6 +1363,25 @@ permission mode the harness runs in:
   tools     = "Read,Grep,Glob"
   isolation = "operator-attested"
   ```
+- **`auth = "subscription" | "api_key" | "org"`** is a binding key in `agents.toml`
+  (and in a machine-wide `[profiles.<name>]`): how the binding is paid for and
+  authorised — the user's logged-in CLI, a per-call API key, or an organisation
+  account. It is declared, never detected, and any other value fails at load. Each
+  gate verdict row and each performer `agent-attempt` or dispatch row records it as
+  `auth_mode` (`unrecorded` for a binding that declares none, and for a row written
+  before it existed); `satelle story cost` shows it in an `auth` column beside the
+  seat, separate from the pricing mode (`[pricing]`), which alone decides what a
+  token costs.
+- **`untrusted_input = true`** on a `step.toml` step declares that the step reads
+  text from an external raiser. `satelle validate` then refuses a seat on it — its
+  `agent`, and its `reviewer_agent` or each `panel` seat — whose grant admits a
+  shell, subprocess, network, mcp, write, edit or unknown tool, whose adapter
+  cannot hold it read-only (an unrecognised harness, a pi command with no
+  `--tools`, a cursor performer not asking for `--mode ask`, an in-loop or cloud
+  seat), or, for a performer, whose read-only grant leaves it no context channel.
+  One finding per cause, naming the binding and the step. A pi seat with
+  `--tools {tools}` and `tools = "read,grep,find,ls"` passes; a claude performer
+  cannot, because its only context channel is the satelle CLI through a shell.
 - **Recorded.** Each reviewer `agent_invocation` row carries
   `system_prompt_bytes`, `offered_tool_count` and `offered_tools_source`
   (`flag`, `harness` — claude stream's own `system/init` tool list — or
