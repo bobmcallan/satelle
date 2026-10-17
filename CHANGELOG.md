@@ -1,3 +1,8 @@
+## [0.0.688] - 2026-10-17
+
+### Fixed
+- `satelle sync pull` settles an area whose hosted copy has per-file heads but no snapshot. It writes a first snapshot and then pulls it, so `satelle sync status` reports the area in step instead of "behind, NEXT pull" forever. That covers the case where the hosted store was replaced or reset under a base this checkout still holds. The settle publishes through the same snapshot push the reconcile uses, never overwrites a local file, treats losing a race to another machine as benign, and removes the "documents: the hosted copy's snapshot could not be read" error for a heads-only documents area. Status never suggests a pull that cannot change the area. (sty_1217a400)
+
 ## [0.0.687] - 2026-10-17
 
 ### Fixed
