@@ -416,11 +416,19 @@ func BenchmarkCommandRules(b *testing.B) {
 // same command, on the same host in the same window: a ratio, never a clock.
 //
 // A shared CI runner preempts a timed loop and only ever adds time, so the verdict
-// takes the quietest sample of each side (the minimum) rather than one sample or
-// one quiet pair. The bound sits about twice above the healthy ratio and well
-// below a real regression: re-tokenising once per rule costs 100x or more.
+// compares the median eval sample to the median scan sample. The minimum of each
+// side is a single extreme sample: one unusually quick scan inflates the ratio
+// (run 38988617675 divided by 1911ns against a 2478ns median and read 10.01x for a
+// healthy 8.05x). The median of the interleaved samples ignores up to two quick
+// or preempted outliers on each side independently, so a one-sided preemption
+// cannot move the verdict. It needs an odd relativeCostSamples.
+//
+// The bound is set from measured ratios. Healthy medians are about 3x locally and
+// 8.05x on the CI runner (run 38988617675), so 20x leaves 2.5x over CI. A
+// regression, re-tokenising once per rule, costs about 115x locally (56x to
+// 196x over 36 runs), so 20x sits 5x below it.
 const (
-	relativeCostBound   = 10.0
+	relativeCostBound   = 20.0
 	relativeCostSamples = 5
 	relativeCostIters   = 2000
 )
@@ -452,17 +460,22 @@ func relativeCostN(eval, scan func(), iters int) (evalNs, scanNs []int64) {
 	return evalNs, scanNs
 }
 
-// relativeCostVerdict is the ratio of the quietest eval sample to the quietest
-// scan sample. It errors when that ratio exceeds bound, and returns
-// errScanUnmeasurable when the quietest scan sample is zero.
+// median is the middle element of the sorted samples; the count is odd.
+func median(ns []int64) int64 {
+	return slices.Sorted(slices.Values(ns))[len(ns)/2]
+}
+
+// relativeCostVerdict is the ratio of the median eval sample to the median scan
+// sample. It errors when that ratio exceeds bound, and returns errScanUnmeasurable
+// when the median scan sample is zero.
 func relativeCostVerdict(evalNs, scanNs []int64, bound float64) (float64, error) {
-	minEval, minScan := slices.Min(evalNs), slices.Min(scanNs)
-	if minScan <= 0 {
+	medEval, medScan := median(evalNs), median(scanNs)
+	if medScan <= 0 {
 		return 0, errScanUnmeasurable
 	}
-	ratio := float64(minEval) / float64(minScan)
+	ratio := float64(medEval) / float64(medScan)
 	if ratio > bound {
-		return ratio, fmt.Errorf("rules cost %.1fx the tokenizer pass at best, over the %.0fx bound (eval %dns, scan %dns)", ratio, bound, minEval, minScan)
+		return ratio, fmt.Errorf("rules cost %.1fx the tokenizer pass by median, over the %.0fx bound (eval %dns, scan %dns)", ratio, bound, medEval, medScan)
 	}
 	return ratio, nil
 }
@@ -472,7 +485,7 @@ func checkRelativeCost(t *testing.T, eval, scan func()) {
 	t.Helper()
 	evalNs, scanNs := relativeCost(eval, scan)
 	ratio, err := relativeCostVerdict(evalNs, scanNs, relativeCostBound)
-	t.Logf("min ratio %.2f (eval %v ns, scan %v ns)", ratio, evalNs, scanNs)
+	t.Logf("median ratio %.2f (eval %v ns, scan %v ns)", ratio, evalNs, scanNs)
 	if errors.Is(err, errScanUnmeasurable) {
 		t.Skip(err.Error())
 	}
@@ -495,8 +508,9 @@ func TestCommandRulesRelativeCost(t *testing.T) {
 		func() { gitSubcommands(command) })
 }
 
-// A pass seen in CI at 5.4x (eval 16856ns, scan 3138ns) and a one-sided
-// preemption of either side are scheduler noise, not a regression.
+// A pass seen in CI at 5.4x (eval 16856ns, scan 3138ns), the samples of CI run
+// 38988617675 (10.01x by minimums, 8.05x by medians) and a one-sided preemption
+// of either side are scheduler noise, not a regression.
 func TestRelativeCostToleratesNoise(t *testing.T) {
 	cases := map[string]struct{ eval, scan []int64 }{
 		"one outlier pair among healthy ones": {
@@ -506,6 +520,10 @@ func TestRelativeCostToleratesNoise(t *testing.T) {
 		"every pair at the CI ratio": {
 			[]int64{16856, 16856, 16856, 16856, 16856},
 			[]int64{3138, 3138, 3138, 3138, 3138},
+		},
+		"CI run 38988617675": {
+			[]int64{19127, 20870, 22192, 19951, 19648},
+			[]int64{2478, 1911, 3130, 2861, 2096},
 		},
 		"eval preempted in one sample, scan in another": {
 			[]int64{60000, 13000, 13500, 12800, 13200},
@@ -537,14 +555,16 @@ func TestRelativeCostCatchesRegression(t *testing.T) {
 		evalCommandRules(rules, command, seat)
 	}
 	evalNs, scanNs := relativeCostN(slow, func() { gitSubcommands(command) }, 100)
-	if ratio, err := relativeCostVerdict(evalNs, scanNs, relativeCostBound); err == nil || errors.Is(err, errScanUnmeasurable) {
+	ratio, err := relativeCostVerdict(evalNs, scanNs, relativeCostBound)
+	t.Logf("re-tokenising per rule: median ratio %.1f", ratio)
+	if err == nil || errors.Is(err, errScanUnmeasurable) {
 		t.Errorf("re-tokenising per rule passed the check (ratio %.1f, err %v)", ratio, err)
 	}
 
-	pureEval := []int64{60000, 62000, 61000, 63000, 60500}
+	pureEval := []int64{120000, 124000, 122000, 126000, 121000}
 	pureScan := []int64{3000, 3100, 3050, 3000, 3200}
 	if _, err := relativeCostVerdict(pureEval, pureScan, relativeCostBound); err == nil {
-		t.Error("a 20x ratio passed the check")
+		t.Error("a 40x ratio passed the check")
 	}
 }
 
