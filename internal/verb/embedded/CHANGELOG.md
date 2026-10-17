@@ -1,3 +1,23 @@
+## [0.0.693] - 2026-10-18
+
+Epic remote-ready (sty_0e87acd6): Ready runs without holding a seat.
+
+### Added
+- `satelle story ready <id>` readies a backlog story or epic without engaging it. It runs the route's readiness performer and gates, records every verdict on the story, and marks it ready only when the readiness gates accept; a rejected or failed round leaves status unchanged and counts as a rejected round against the reject budget. A step declares which mark it confers with `mark = "ready"`, and the performer that runs a step is resolved once for both the engaged and unengaged paths. (sty_a32bd6a9)
+- A read-only readiness performer can report the story configuration it would change (tags, priority, new child stories), and satelle applies the report on the record when the step declares `apply_changes`. Changes apply as one atomic batch, each recorded once on the ledger naming the performer; the title, body and acceptance criteria of an existing story are never changed this way, and a child created from a report passes the same create rules as one created by hand. A route that declares `apply_changes` on a step whose performer does not run before its gates is refused when loaded. (sty_af0b1761)
+- A readiness seat can run on an OpenRouter model. A binding declares `auth = "api_key"` or `auth = "subscription"`, the auth mode is stamped on each verdict and shown in `satelle story cost`, and a step marked `untrusted_input` refuses any binding that is not read-only. (sty_416cb61e)
+
+### Changed
+- A story is never ready when it is created, whoever creates it: a create that asks for the ready mark is refused, and only accepted readiness can confer it. (sty_6e3ffa2f)
+
+### Fixed
+- `satelle sync pull` of an epic by id on a machine that holds none of its stories brings the epic's members, not only the container. (sty_7b4742d0)
+
+## [serve-v0.0.172] - 2026-10-18
+
+### Changed
+- The service binary carries the readiness, performer-changes and binding-auth route keys (`mark`, `apply_changes`, `untrusted_input`, `auth`) so the project page parses routes that declare them. (sty_0e87acd6)
+
 ## [0.0.692] - 2026-10-17
 
 ### Fixed
