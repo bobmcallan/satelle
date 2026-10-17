@@ -1,3 +1,8 @@
+## [0.0.695] - 2026-10-18
+
+### Fixed
+- Re-release of 0.0.694 with a fresh build stamp: 0.0.694's published binary carried the previous release's `satelle.build`, and the release workflow does not rebuild a version whose tag exists. No behaviour change. (sty_105360e2)
+
 ## [0.0.694] - 2026-10-18
 
 ### Fixed
