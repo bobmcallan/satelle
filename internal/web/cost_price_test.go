@@ -56,7 +56,8 @@ func TestCostPanelShowsPricedSeatsAndFamily(t *testing.T) {
 
 	for _, want := range []string{
 		`<dt>Cost</dt><dd class="cost-derived">$4.5000 + unavailable (model unrecorded (adapter grok))</dd>`,
-		`<td class="id">coder@m-big</td><td>1000000</td>`,
+		`<th>Seat</th><th>Auth</th>`,
+		`<td class="id">coder@m-big</td><td>unrecorded</td><td>1000000</td>`, // a row written before auth_mode existed
 		`<td>$4.5000</td>`,
 		`<td class="id">driver</td>`, // driver model unrecorded → plain "driver" seat
 		"<h4>By seat</h4>",

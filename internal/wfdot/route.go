@@ -106,6 +106,11 @@ type Step struct {
 	// the legacy rule applies: the definition freezes when the story leaves the
 	// entry state.
 	Freeze bool
+	// UntrustedInput declares that the text this step's seats read is untrusted
+	// (a story raised by an external party). It has no runtime effect: validate
+	// refuses a performer or reviewer on the step whose grant is not read-only.
+	// The step's author declares it; the binary never keys it on a step name.
+	UntrustedInput bool
 	// ApplyCriteriaDoc / ApplyCriteriaHeading declare that entry to this step
 	// applies the acceptance criteria authored under "## <heading>" in the story
 	// document <doc> to the story. Mechanism only: the binary copies the section
@@ -481,6 +486,8 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			Mark:         st.Mark,
 			Freeze:       st.Freeze,
 			RejectBudget: st.RejectBudget,
+
+			UntrustedInput: st.UntrustedInput,
 
 			ApplyCriteriaDoc:     st.ApplyCriteriaDoc,
 			ApplyCriteriaHeading: st.ApplyCriteriaHeading,

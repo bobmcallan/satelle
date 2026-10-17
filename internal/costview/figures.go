@@ -184,6 +184,11 @@ type Row struct {
 	// usage decoder, and feed read-time pricing (price.go).
 	Adapter string               `json:"adapter,omitempty"`
 	Models  []ledger.ModelTokens `json:"models,omitempty"`
+	// AuthMode is the auth mode the row's binding was declared to run under, as
+	// the row recorded it; empty on a row written before it was recorded. It
+	// describes how the seat is authorised, never how it is priced (Pricing owns
+	// that), and is shown in its own column (ledger.AuthLabel).
+	AuthMode string `json:"auth_mode,omitempty"`
 }
 
 // DecodeRow decodes one agent_invocation ledger entry into a Row, or ok=false
@@ -232,6 +237,7 @@ func DecodeRow(e ledger.Entry) (Row, bool) {
 		BundleSkills:           meta.BundleSkills,
 		Adapter:                tel.Adapter,
 		Models:                 tel.ModelUsage,
+		AuthMode:               tel.AuthMode,
 	}
 	if row.Agent == "" {
 		row.Agent = tel.Agent

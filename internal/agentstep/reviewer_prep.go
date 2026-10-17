@@ -229,9 +229,11 @@ func (g *Engine) reviewerSeatFor(ctx context.Context, item workitem.Item, toStat
 }
 
 // stampInvocation copies what one Invoke run measured about itself onto the
-// decision it produced — the same fields for a lone gate and a bundled one.
-func stampInvocation(d *verb.GateDecision, res InvokeResult, modelSource string) {
-	d.ModelSource = modelSource
+// decision it produced — the same fields for a lone gate and a bundled one — and
+// the auth mode its seat's binding declares.
+func stampInvocation(d *verb.GateDecision, res InvokeResult, seat reviewerSeat) {
+	d.ModelSource = seat.modelSource
+	d.AuthMode = seat.binding.ResolvedAuth()
 	d.SystemPromptBytes = res.SystemPromptBytes
 	d.PayloadBytes = res.PayloadBytes
 	d.ToolIsolation = res.ToolIsolation

@@ -165,6 +165,10 @@ type stepWire struct {
 	// (sty_a32bd6a9). Optional: absent means the step cannot be readied without
 	// engagement, never a default tag name.
 	Mark string `toml:"mark"`
+	// UntrustedInput declares that the text this step's seats read is untrusted
+	// (an external raiser's story): validate then refuses a seat on the step that
+	// is not held read-only.
+	UntrustedInput bool `toml:"untrusted_input"`
 	// WaitsOnChildren marks a step at which a container idles while its child
 	// stories are driven: it holds the status, but nothing performs on the
 	// container itself (sty_7f3e6fd3).
@@ -494,6 +498,7 @@ func ParseSteps(body string) (Catalogue, error) {
 			Mark:          strings.TrimSpace(s.Mark),
 			Freeze:        s.Freeze,
 
+			UntrustedInput:  s.UntrustedInput,
 			WaitsOnChildren: s.WaitsOnChildren,
 			Schedule:        s.Schedule,
 			AfterChildren:   strings.TrimSpace(s.AfterChildren),

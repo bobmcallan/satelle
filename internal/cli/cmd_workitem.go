@@ -1387,9 +1387,9 @@ func printSeatLines(out io.Writer, title string, lines []costview.SeatLine) {
 	}
 	fmt.Fprintf(out, "\n%s\n", title)
 	sw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(sw, "SEAT\tFRESH IN\tCACHE READ\tCACHE WRITE\tOUT\tcost")
+	fmt.Fprintln(sw, "SEAT\tAUTH\tFRESH IN\tCACHE READ\tCACHE WRITE\tOUT\tcost")
 	for _, v := range costview.FormatSeatLines(lines) {
-		fmt.Fprintf(sw, "%s\t%s\t%s\t%s\t%s\t%s\n", v.Seat, v.FreshIn, v.CacheRead, v.CacheWrite, v.Out, v.Cost)
+		fmt.Fprintf(sw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", v.Seat, v.Auth, v.FreshIn, v.CacheRead, v.CacheWrite, v.Out, v.Cost)
 	}
 	_ = sw.Flush()
 	fmt.Fprintln(out)

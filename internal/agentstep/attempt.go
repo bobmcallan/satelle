@@ -288,6 +288,7 @@ func (g *Engine) recordArtifactAttempt(
 		data["model_usage"] = models
 	}
 	addUsageNote(data, usage)
+	data["auth_mode"] = binding.ResolvedAuth()
 	if usage.Available {
 		data["tokens_in"] = usage.InputTokens
 		data["tokens_out"] = usage.OutputTokens

@@ -42,6 +42,18 @@ func ModelRecorded(id string) bool {
 	return id != "" && id != modelUnavailable && !strings.HasPrefix(id, modelUnavailablePrefix)
 }
 
+// AuthUnrecorded is the auth mode of a row that recorded none: written before
+// auth_mode existed, or by a binding that declares no auth= (config.AgentBinding).
+const AuthUnrecorded = "unrecorded"
+
+// AuthLabel renders a row's auth mode, AuthUnrecorded when it recorded none.
+func AuthLabel(mode string) string {
+	if mode = strings.TrimSpace(mode); mode != "" {
+		return mode
+	}
+	return AuthUnrecorded
+}
+
 // Telemetry is display-ready agent-action fields from a single ledger entry
 // (sty_43d228e4 / sty_80233c10 / sty_56aae77a). Owned by ledger so the push-fed
 // web UI and verb story-cost share one reader without the web package importing
@@ -114,6 +126,10 @@ type Telemetry struct {
 	// order; empty when the transport reported one model or none.
 	Adapter    string
 	ModelUsage []ModelTokens
+	// AuthMode is the auth mode (subscription, api_key, org, unrecorded) of the
+	// binding that produced the row, as the row recorded it; empty on a row
+	// written before it was recorded (render it through AuthLabel).
+	AuthMode string
 }
 
 // ModelTokens is one model's token entry from a row's model_usage list. A zero
@@ -167,11 +183,13 @@ func EventTelemetry(e Entry) Telemetry {
 				// were measured; a bare zero is unknown.
 				avail = true
 			}
+			auth, _ := env.Data["auth_mode"].(string)
 			return Telemetry{
 				Outcome:        oc,
 				TokensTotal:    total,
 				DurationMs:     mapNum(env.Data, "duration_ms"),
 				UsageAvailable: avail,
+				AuthMode:       auth,
 			}
 		}
 	case KindReviewAccept:
@@ -199,11 +217,13 @@ func verdictTelemetry(payload []byte, outcome string) Telemetry {
 		Model         string `json:"model"`
 		ModelResolved string `json:"model_resolved"`
 		ModelSource   string `json:"model_source"`
+		AuthMode      string `json:"auth_mode"`
 	}
 	if err := json.Unmarshal(payload, &row); err == nil {
 		tel.Model = row.Model
 		tel.ModelResolved = row.ModelResolved
 		tel.ModelSource = row.ModelSource
+		tel.AuthMode = row.AuthMode
 	}
 	return tel
 }
@@ -219,6 +239,7 @@ func invocationTelemetry(payload []byte) Telemetry {
 	var row struct {
 		Agent             string   `json:"agent"`
 		Adapter           string   `json:"adapter"`
+		AuthMode          string   `json:"auth_mode"`
 		Model             string   `json:"model"`
 		ModelResolved     string   `json:"model_resolved"`
 		ModelSource       string   `json:"model_source"`
@@ -270,6 +291,7 @@ func invocationTelemetry(payload []byte) Telemetry {
 	return Telemetry{
 		Agent:                  row.Agent,
 		Adapter:                row.Adapter,
+		AuthMode:               row.AuthMode,
 		ModelUsage:             perModel,
 		Model:                  row.Model,
 		ModelResolved:          row.ModelResolved,

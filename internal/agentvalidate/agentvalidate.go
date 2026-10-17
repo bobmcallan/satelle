@@ -460,6 +460,7 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 		if !ok {
 			continue // structure.Doc / workflow validate owns unparseable bodies
 		}
+		checkUntrustedSteps(doc.Name, spec, agents, &r)
 		for _, st := range spec.States {
 			// Step-summary opt-in (sty_9a139c78): edge-less judge/summariser, not a
 			// spine performer. Named role=reviewer bindings (cheap Grok summariser)
@@ -531,7 +532,9 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 							"workflow %q node %q allocates agent=%s with role=reviewer on a performing node — use a gated edge or scoped on= node for judges",
 							doc.Name, st.Name, st.Agent))
 					}
-					if p := performerChannelProblem(doc.Name, st.Name, st.Agent, b); p != "" {
+					// An untrusted step's seats are judged by checkUntrustedSteps, whose
+					// channel finding replaces this one for the same binding.
+					if p := performerChannelProblem(doc.Name, st.Name, st.Agent, b); p != "" && !st.UntrustedInput {
 						r.allocProblem(p)
 					}
 					r.Gates = append(r.Gates, gateAlloc(doc.Name, st.Name, st.Skill, st.Agent, b.Model, st.Model))

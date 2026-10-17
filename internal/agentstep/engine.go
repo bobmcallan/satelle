@@ -2239,7 +2239,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		ModelResolved: dispatchModelResolved, Models: dispatchModels, ModelSource: modelChoice.Source,
 		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
 		DurationMs: invRes.Usage.Duration.Milliseconds(), UsageAvailable: invRes.Usage.Available,
-		TokensInFresh: invRes.Usage.FreshInputTokens, TokensCacheWrite: invRes.Usage.CacheCreationInputTokens, TokensCacheRead: invRes.Usage.CacheReadInputTokens, UsageNote: usageNote(invRes.Usage),
+		TokensInFresh: invRes.Usage.FreshInputTokens, TokensCacheWrite: invRes.Usage.CacheCreationInputTokens, TokensCacheRead: invRes.Usage.CacheReadInputTokens, UsageNote: usageNoteFor(invRes.Usage, binding),
 		CostUSD: invRes.Usage.CostUSD, CostUnavailableReason: invRes.Usage.CostUnavailableReason,
 		SystemPromptBytes: invRes.SystemPromptBytes, PayloadBytes: invRes.PayloadBytes,
 		Output: string(invRes.Stdout),
@@ -2424,7 +2424,7 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item, spec verb.R
 		ModelResolved: retroModelResolved, Models: retroModels, ModelSource: retroModelSource,
 		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
 		DurationMs: invRes.Usage.Duration.Milliseconds(), UsageAvailable: invRes.Usage.Available,
-		TokensInFresh: invRes.Usage.FreshInputTokens, TokensCacheWrite: invRes.Usage.CacheCreationInputTokens, TokensCacheRead: invRes.Usage.CacheReadInputTokens, UsageNote: usageNote(invRes.Usage),
+		TokensInFresh: invRes.Usage.FreshInputTokens, TokensCacheWrite: invRes.Usage.CacheCreationInputTokens, TokensCacheRead: invRes.Usage.CacheReadInputTokens, UsageNote: usageNoteFor(invRes.Usage, binding),
 		CostUSD: invRes.Usage.CostUSD, CostUnavailableReason: invRes.Usage.CostUnavailableReason,
 		SystemPromptBytes: invRes.SystemPromptBytes, PayloadBytes: invRes.PayloadBytes,
 		Output: string(invRes.Stdout),
@@ -2889,6 +2889,15 @@ func usageNote(u agentcli.UsageResult) verb.UsageNote {
 	return n
 }
 
+// usageNoteFor is usageNote plus the auth mode the binding behind the run
+// declares. The auth is the binding's configuration, not something the run
+// measured, so it comes from the binding and never from the usage.
+func usageNoteFor(u agentcli.UsageResult, b config.AgentBinding) verb.UsageNote {
+	n := usageNote(u)
+	n.AuthMode = b.ResolvedAuth()
+	return n
+}
+
 // addUsageNote stamps usageNote's fields onto a map-shaped ledger row.
 func addUsageNote(data map[string]any, u agentcli.UsageResult) {
 	n := usageNote(u)
@@ -3173,7 +3182,7 @@ func (g *Engine) decideReviewer(ctx context.Context, item workitem.Item, toStatu
 		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
 			"reviewer: %s produced no decision", skill)
 	}
-	stampInvocation(res.Decision, res, seat.modelSource)
+	stampInvocation(res.Decision, res, seat)
 	return *res.Decision, nil
 }
 
@@ -3252,7 +3261,7 @@ func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus
 			}
 			return
 		}
-		stampInvocation(res.Decision, res, seat.modelSource)
+		stampInvocation(res.Decision, res, seat)
 		runs[i] = panelSeatRun{
 			record: verb.PanelSeat{Seat: section, Accept: res.Decision.Accept, Notes: res.Decision.Notes},
 			stamp:  seatStamp(skill, section, res, res.Decision),
@@ -3665,7 +3674,7 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 				ModelResolved: summaryModelResolved, Models: summaryModels, ModelSource: modelSource,
 				TokensIn: usage.InputTokens, TokensOut: usage.OutputTokens, TokensTotal: usage.TotalTokens,
 				DurationMs: usage.Duration.Milliseconds(), UsageAvailable: usage.Available,
-				TokensInFresh: usage.FreshInputTokens, TokensCacheWrite: usage.CacheCreationInputTokens, TokensCacheRead: usage.CacheReadInputTokens, UsageNote: usageNote(usage),
+				TokensInFresh: usage.FreshInputTokens, TokensCacheWrite: usage.CacheCreationInputTokens, TokensCacheRead: usage.CacheReadInputTokens, UsageNote: usageNoteFor(usage, binding),
 				CostUSD: usage.CostUSD, CostUnavailableReason: usage.CostUnavailableReason,
 				SystemPromptBytes: len(req.SystemPrompt), PayloadBytes: len(req.Payload),
 				ToolIsolation: isolation,

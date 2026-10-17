@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/ledger"
 )
 
 // AgentsConfigName is the per-repo agents-binding file. It lives in the workflows
@@ -315,6 +316,13 @@ type AgentBinding struct {
 	// refused before it starts. It has no effect on a claude or grok binding — the
 	// adapter decides those. Any other value fails at load.
 	Isolation string `toml:"isolation"`
+	// Auth declares how this binding is paid for and authorised: "subscription"
+	// (the user's logged-in CLI), "api_key" (a per-call API key) or "org" (an
+	// organisation account). It is declared, never detected — sniffing the CLI
+	// would break agent-agnosticism — and is recorded on every verdict and
+	// performer attempt as auth_mode. Empty resolves to AuthUnrecorded; any other
+	// value fails at load. It never changes a price (costview.Pricing owns that).
+	Auth string `toml:"auth"`
 	// ContextBudget and TurnBudget are the repo's own spend bounds for this
 	// binding (sty_a7914904): input tokens (fresh + cache read + cache write) and
 	// model turns. Zero or absent means unset — there is no shipped default, and
@@ -326,6 +334,24 @@ type AgentBinding struct {
 
 // IsolationOperatorAttested is the one valid isolation= value.
 const IsolationOperatorAttested = "operator-attested"
+
+// The auth= values a binding may declare, and what a binding that declares none
+// (or a ledger row written before auth existed) resolves to.
+const (
+	AuthSubscription = "subscription"
+	AuthAPIKey       = "api_key"
+	AuthOrg          = "org"
+	AuthUnrecorded   = ledger.AuthUnrecorded
+)
+
+// ResolvedAuth is the binding's declared auth mode, or AuthUnrecorded when none
+// is declared.
+func (b AgentBinding) ResolvedAuth() string {
+	if a := strings.ToLower(strings.TrimSpace(b.Auth)); a != "" {
+		return a
+	}
+	return AuthUnrecorded
+}
 
 // OperatorAttested reports whether the binding declares isolation = "operator-attested".
 func (b AgentBinding) OperatorAttested() bool {
@@ -1156,6 +1182,9 @@ func (a AgentsConfig) validateTimeouts() error {
 func (a AgentsConfig) validateInterfaces() error {
 	check := func(section string, b AgentBinding) error {
 		if err := checkBindingIsolation(AgentsConfigName, section, b); err != nil {
+			return err
+		}
+		if err := checkBindingAuth(AgentsConfigName, section, b); err != nil {
 			return err
 		}
 		return checkBindingInterface(AgentsConfigName, section, b)

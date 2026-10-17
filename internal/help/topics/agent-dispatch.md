@@ -1363,6 +1363,25 @@ permission mode the harness runs in:
   tools     = "Read,Grep,Glob"
   isolation = "operator-attested"
   ```
+- **`auth = "subscription" | "api_key" | "org"`** is a binding key in `agents.toml`
+  (and in a machine-wide `[profiles.<name>]`): how the binding is paid for and
+  authorised — the user's logged-in CLI, a per-call API key, or an organisation
+  account. It is declared, never detected, and any other value fails at load. Each
+  gate verdict row and each performer `agent-attempt` or dispatch row records it as
+  `auth_mode` (`unrecorded` for a binding that declares none, and for a row written
+  before it existed); `satelle story cost` shows it in an `auth` column beside the
+  seat, separate from the pricing mode (`[pricing]`), which alone decides what a
+  token costs.
+- **`untrusted_input = true`** on a `step.toml` step declares that the step reads
+  text from an external raiser. `satelle validate` then refuses a seat on it — its
+  `agent`, and its `reviewer_agent` or each `panel` seat — whose grant admits a
+  shell, subprocess, network, mcp, write, edit or unknown tool, whose adapter
+  cannot hold it read-only (an unrecognised harness, a pi command with no
+  `--tools`, a cursor performer not asking for `--mode ask`, an in-loop or cloud
+  seat), or, for a performer, whose read-only grant leaves it no context channel.
+  One finding per cause, naming the binding and the step. A pi seat with
+  `--tools {tools}` and `tools = "read,grep,find,ls"` passes; a claude performer
+  cannot, because its only context channel is the satelle CLI through a shell.
 - **Recorded.** Each reviewer `agent_invocation` row carries
   `system_prompt_bytes`, `offered_tool_count` and `offered_tools_source`
   (`flag`, `harness` — claude stream's own `system/init` tool list — or

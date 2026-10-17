@@ -208,6 +208,11 @@ type UsageNote struct {
 	Adapter                string `json:"adapter,omitempty"`
 	UsageUnavailableReason string `json:"usage_unavailable_reason,omitempty"`
 	CacheSplitUnavailable  bool   `json:"cache_split_unavailable,omitempty"`
+	// AuthMode is the auth mode (subscription, api_key, org, unrecorded) the
+	// binding behind the row is declared to run under (config.AgentBinding.Auth).
+	// Set by agentstep from the binding, never detected; absent on a row written
+	// before it existed.
+	AuthMode string `json:"auth_mode,omitempty"`
 }
 
 // ModelUsage is one model's token/cost entry from a transport's resolved-model

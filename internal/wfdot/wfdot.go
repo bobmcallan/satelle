@@ -213,6 +213,11 @@ type State struct {
 	Mark         string
 	Freeze       bool
 	RejectBudget int
+	// UntrustedInput is the step's declaration that the text it reads (a story
+	// raised by an external party) is untrusted (Step.UntrustedInput). Validate
+	// then refuses any seat on the step that is not held read-only; nothing at
+	// runtime reads it.
+	UntrustedInput bool
 	// ApplyCriteriaDoc / ApplyCriteriaHeading: entry to this step applies the
 	// criteria authored under "## <heading>" in the story document <doc>
 	// (sty_4d9df9a0).

@@ -394,6 +394,7 @@ func bindingTable(b AgentBinding) map[string]any {
 	set("effort", b.Effort)
 	set("secondary", b.Secondary)
 	set("isolation", b.Isolation)
+	set("auth", b.Auth)
 	set("collect_doc", b.CollectDoc)
 	set("profile", b.Profile)
 	if b.ContextBudget != 0 {

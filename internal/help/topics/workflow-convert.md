@@ -97,8 +97,12 @@ does not make obvious, and the one every conversion gets wrong.**
 
 Step keys: `status`, `agent`, `skills`, `reviewers`, `reviewer_agent`,
 `parallel`, `bundle`, `requires`, `applies_to`, `advise`, `rework`, `propose`,
-`freeze`, `reject_budget`, `mark`, `apply_changes`, `waits_on_children`,
-`schedule`, `after_children`, `start`, `terminal`.
+`freeze`, `reject_budget`, `mark`, `apply_changes`, `untrusted_input`,
+`waits_on_children`, `schedule`, `after_children`, `start`, `terminal`.
+
+`untrusted_input = true` declares the step reads text from an external raiser. It
+changes nothing at runtime: `satelle validate` refuses a performer or reviewer seat
+on it that is not held read-only (see *agent-dispatch*, `untrusted_input`).
 
 `bundle = true` runs the step's entry reviewers that can share one session as
 ONE reviewer session: every rubric rides the prompt verbatim under its own
