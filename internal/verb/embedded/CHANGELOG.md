@@ -1,3 +1,8 @@
+## [0.0.685] - 2026-10-17
+
+### Fixed
+- The strict unit run (`make test STRICT=1`, which CI runs) no longer fails a release when a slow runner pushes internal/cli past Go's default 10-minute package timeout. The run now sets an explicit `-timeout 30m`. A unit-only per-test stall deadline (`UNIT_STALL`, 5m) still names a test that really hangs, long before that limit, and kills its whole process group so no test binary is left behind. The integration run keeps its own budgets. Locally, internal/cli takes 203s across three repetitions; the slowest single unit test takes 13.5s. (sty_3f2a5c78)
+
 ## [0.0.684] - 2026-10-17
 
 ### Fixed
