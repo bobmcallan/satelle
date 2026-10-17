@@ -1,3 +1,10 @@
+## [0.0.686] - 2026-10-17
+
+0.0.685 was never published. Its CI test run failed on the relative-cost bound fixed below, so the release workflow never cut it. Everything listed under [0.0.685] ships in this release.
+
+### Fixed
+- The command-rule relative-cost checks pass on healthy CI hardware. The verdict now compares the median rule-evaluation sample to the median tokenizer sample, instead of the fastest of each, so one quick tokenizer outlier cannot tip it. The bound is 20x, set from measured ratios: about 3x locally and about 8x on a CI runner. The regression it guards against (re-tokenising per rule) still measures 84x to 598x. A test replays the samples from the failed CI run. (sty_bc19e95d)
+
 ## [0.0.685] - 2026-10-17
 
 ### Fixed
