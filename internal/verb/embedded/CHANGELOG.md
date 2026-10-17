@@ -1,3 +1,13 @@
+## [0.0.690] - 2026-10-17
+
+### Fixed
+- `satelle doctor --all` judges each registered repo against that repo's own process of record, exactly as `satelle doctor` run inside it would. It used to reuse the invoking repo's process for every repo, so running it from one repo reported every other repo as a divergent worktree of it, with workflow FAILs for skills only the invoking repo ships. A separate repository is never reported as a worktree of the invoking one; process.divergent still fires for a real linked worktree, and a repo whose process config cannot be read gets one process.unreadable finding. (sty_2e86c0cc)
+
+## [serve-v0.0.171] - 2026-10-17
+
+### Changed
+- The service binary carries the per-repo process loader used by `satelle doctor --all` (internal/config/process.go). (sty_2e86c0cc)
+
 ## [0.0.689] - 2026-10-17
 
 ### Fixed

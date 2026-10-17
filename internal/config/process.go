@@ -48,6 +48,27 @@ func LoadProcess(location Config, locationPath string) (process Config, processR
 	if strings.TrimSpace(os.Getenv("SATELLE_CONFIG")) != "" {
 		return location, InvokingRoot(locationPath), locationPath, nil
 	}
+	return loadProcessFor(location, locationPath)
+}
+
+// LoadRepoProcess resolves the process of record for the repository rooted at
+// root, as if satelle were run inside it: its own location config, and the
+// canonical main tree when root is a linked worktree. SATELLE_CONFIG is
+// deliberately ignored — it describes the invoking session, not a repository
+// somebody else's session is inspecting, so honouring it would judge every
+// repo by one file. A missing location file is a zero location config.
+func LoadRepoProcess(root string) (process Config, processRoot, processPath string, err error) {
+	locPath := filepath.Join(root, DefaultDataDir, ConfigName)
+	loc, _, lerr := Load(locPath)
+	if lerr != nil && !errors.Is(lerr, os.ErrNotExist) && !errors.Is(lerr, ErrNotFound) {
+		return Config{}, "", locPath, lerr
+	}
+	return loadProcessFor(loc, locPath)
+}
+
+// loadProcessFor is LoadProcess without the SATELLE_CONFIG override: the
+// process of record for the tree locationPath belongs to.
+func loadProcessFor(location Config, locationPath string) (process Config, processRoot, processPath string, err error) {
 	invoking := InvokingRoot(locationPath)
 	main := CanonicalRepoRoot(invoking)
 	if sameResolvedPath(main, invoking) {

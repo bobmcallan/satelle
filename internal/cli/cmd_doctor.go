@@ -78,8 +78,9 @@ killed and reaped on the deadline or on cancellation.`,
 			// --all reports on the REGISTRY, not on this directory, so it must run
 			// from anywhere — including a non-satelle cwd, which is exactly where an
 			// operator lands after upgrading the binary (sty_0f471251). CheckAll
-			// resolves each registered repo itself and never reads these opts, so
-			// running with no app costs nothing.
+			// resolves each registered repo itself — its process of record
+			// included — and never reads this invoking repo's repo/process opts,
+			// so running with no app costs nothing.
 			//
 			// The single-repo path still requires the app: without a repo there is
 			// nothing for it to diagnose, and the refusal names `satelle init`.

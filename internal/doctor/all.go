@@ -68,9 +68,27 @@ func checkOne(ctx context.Context, o Opts, root string) (rep Report) {
 				WithRemediation("run `satelle init` there, or remove it with `satelle workspace remove`")},
 		}
 	}
+	// Judge the repo by ITS process of record, resolved exactly as `satelle
+	// doctor` run inside it would — never by the invoking repo's. The invoker's
+	// Process/ProcessRoot/DataDir describe a different repository, and judging
+	// this one by them reports it as broken by (and a worktree of) the repo the
+	// sweep was started from.
+	process, processRoot, processPath, err := config.LoadRepoProcess(root)
+	if err != nil {
+		return Report{
+			Repo: root,
+			OK:   false,
+			Findings: health.Findings{health.Error(health.IDProcessUnreadable, "Authored process unreadable",
+				fmt.Sprintf("could not read the process of record for %s: %v", root, err)).
+				About(processPath).
+				WithRemediation("fix the config named above, or remove the repo with `satelle workspace remove`")},
+		}
+	}
 	sub := o
 	sub.RepoRoot = root
-	sub.DataDir = dataDir
+	sub.Process = &process
+	sub.ProcessRoot = processRoot
+	sub.DataDir = config.ResolveProcessDataDir(process, processRoot)
 	return Check(ctx, sub)
 }
 
