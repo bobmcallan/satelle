@@ -69,15 +69,26 @@ HERMETIC := sh scripts/hermetic.sh --
 # that is not on scripts/skip-allow.txt. skipcheck runs go test as its own child
 # (no pipe, so no pipefail hazard under /bin/sh) and keeps its exit status. With
 # STRICT unset every variable below is empty and the recipes are as before.
+#
+# The unit run repeats every test three times and internal/cli is almost entirely
+# serial (t.Setenv/t.Chdir rule out t.Parallel), so its package total is long and a
+# CI runner 3x slower than a dev machine would cross Go's default 10m package
+# timeout without any test hanging (sty_3f2a5c78). UNIT_STRICTFLAGS therefore sets
+# an explicit -timeout, and UNIT_SKIPCHECK adds a per-test stall deadline
+# (UNIT_STALL) so a test that really hangs is still named long before it. The
+# deadline is unit-only: the integration suite has tests with their own, longer
+# budgets and keeps the plain SKIPCHECK.
 STRICT ?=
 ifeq ($(STRICT),1)
+UNIT_STALL := 5m
 SKIPCHECK := go run ./scripts/skipcheck -allow scripts/skip-allow.txt --
-UNIT_STRICTFLAGS := -json -count=3 -shuffle=on
+UNIT_SKIPCHECK := go run ./scripts/skipcheck -allow scripts/skip-allow.txt -stall $(UNIT_STALL) --
+UNIT_STRICTFLAGS := -json -count=3 -shuffle=on -timeout 30m
 INTEG_STRICTFLAGS := -json -shuffle=on
 endif
 
 test:
-	$(CREDGUARD) $(HERMETIC) $(SKIPCHECK) go test $(UNIT_STRICTFLAGS) $(TESTFLAGS) ./...
+	$(CREDGUARD) $(HERMETIC) $(UNIT_SKIPCHECK) go test $(UNIT_STRICTFLAGS) $(TESTFLAGS) ./...
 
 # integration builds the binary once, then drives it from ./tests via SATELLE_BIN
 # (no per-test rebuild). Run by hand with: SATELLE_BIN=$(command -v satelle) go test -tags integration ./tests/...

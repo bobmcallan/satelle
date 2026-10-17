@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const pkg = "example.com/m/p"
@@ -176,6 +177,117 @@ func TestParseAllowlistKeepsTheReason(t *testing.T) {
 	}
 	if got := allow[key{pkg, "TestX/sub"}]; got != "needs the real network" {
 		t.Fatalf("reason = %q", got)
+	}
+}
+
+// TestStallLivenessRules drives the running-set rules with a fake clock, so no
+// case depends on real elapsed time.
+func TestStallLivenessRules(t *testing.T) {
+	t0 := time.Unix(1000, 0)
+	at := func(s int) time.Time { return t0.Add(time.Duration(s) * time.Second) }
+	step := func(w *Watch, s int, action, test string) {
+		w.observe(event{Action: action, Package: pkg, Test: test}, at(s))
+	}
+	names := func(w *Watch, s int) string {
+		var n []string
+		for _, h := range w.expired(at(s)) {
+			n = append(n, h.Test)
+		}
+		return strings.Join(n, ",")
+	}
+
+	t.Run("a started test with no result is stalled", func(t *testing.T) {
+		w := newWatch(10 * time.Second)
+		step(w, 0, "run", "TestHang")
+		if got := names(w, 10); got != "" {
+			t.Fatalf("at the deadline = %q, want none (strictly past it)", got)
+		}
+		if got := names(w, 11); got != "TestHang" {
+			t.Fatalf("past the deadline = %q, want TestHang", got)
+		}
+	})
+	t.Run("a finished test is not stalled", func(t *testing.T) {
+		for _, end := range []string{"pass", "fail", "skip"} {
+			w := newWatch(10 * time.Second)
+			step(w, 0, "run", "TestA")
+			step(w, 1, end, "TestA")
+			if got := names(w, 100); got != "" {
+				t.Fatalf("after %s = %q, want none", end, got)
+			}
+		}
+	})
+	t.Run("a paused test is not stalled, and counts again from cont", func(t *testing.T) {
+		w := newWatch(10 * time.Second)
+		step(w, 0, "run", "TestPar")
+		step(w, 1, "pause", "TestPar")
+		if got := names(w, 100); got != "" {
+			t.Fatalf("while paused = %q, want none", got)
+		}
+		step(w, 100, "cont", "TestPar")
+		if got := names(w, 105); got != "" {
+			t.Fatalf("5s after cont = %q, want none", got)
+		}
+		if got := names(w, 111); got != "TestPar" {
+			t.Fatalf("11s after cont = %q, want TestPar", got)
+		}
+	})
+	t.Run("a repeated run under -count restarts the clock", func(t *testing.T) {
+		w := newWatch(10 * time.Second)
+		step(w, 0, "run", "TestA")
+		step(w, 5, "pass", "TestA")
+		step(w, 50, "run", "TestA")
+		if got := names(w, 55); got != "" {
+			t.Fatalf("5s into the second run = %q, want none", got)
+		}
+	})
+	t.Run("subtest progress keeps its running parent alive", func(t *testing.T) {
+		w := newWatch(10 * time.Second)
+		step(w, 0, "run", "TestP")
+		step(w, 8, "run", "TestP/a")
+		step(w, 9, "pass", "TestP/a")
+		step(w, 16, "run", "TestP/b")
+		if got := names(w, 24); got != "" {
+			t.Fatalf("parent with a live subtest = %q, want none", got)
+		}
+		// The hung subtest is named, with the parent that is waiting on it.
+		if got := names(w, 27); got != "TestP,TestP/b" {
+			t.Fatalf("hung subtest = %q, want TestP,TestP/b", got)
+		}
+	})
+	t.Run("a package result closes the tests it left open", func(t *testing.T) {
+		w := newWatch(10 * time.Second)
+		step(w, 0, "run", "TestCrashed")
+		w.observe(event{Action: "fail", Package: pkg}, at(1))
+		if got := names(w, 100); got != "" {
+			t.Fatalf("after the package failed = %q, want none", got)
+		}
+	})
+	t.Run("a nil watch ignores everything", func(t *testing.T) {
+		var w *Watch
+		w.observe(event{Action: "run", Package: pkg, Test: "TestA"}, at(0))
+	})
+}
+
+// TestStallOffByDefault: without -stall a slow test is left alone.
+func TestStallOffByDefault(t *testing.T) {
+	var out, errb bytes.Buffer
+	fixture := filepath.Join(t.TempDir(), "events.json")
+	if err := os.WriteFile(fixture, []byte(ev("run", "TestSlow", "")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--", "sh", "-c", `cat "$1"; sleep 0.3`, "sh", fixture}
+	if got := run(args, &out, &errb); got != 0 {
+		t.Fatalf("exit = %d, want 0 with no -stall:\n%s", got, errb.String())
+	}
+	if strings.Contains(errb.String(), "stalled") {
+		t.Fatalf("a stall was reported with no -stall:\n%s", errb.String())
+	}
+}
+
+func TestNegativeStallIsAUsageError(t *testing.T) {
+	var out, errb bytes.Buffer
+	if got := run([]string{"-stall", "-1s", "--", "true"}, &out, &errb); got != 2 {
+		t.Fatalf("exit = %d, want 2", got)
 	}
 }
 
