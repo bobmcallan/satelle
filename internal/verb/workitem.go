@@ -173,6 +173,36 @@ func prepareCreate(ctx context.Context, kind workitem.Kind, req createReq, origi
 		req.Category = canon
 	}
 
+	// Stamp the GOVERNING workflow on the story at create (sty_3800ac23): the
+	// chosen workflow is recorded as a workflow:<name> tag so gating reads the
+	// choice thereafter rather than re-deriving it by category. Independent of
+	// create-gating — a story is stamped whenever a workflow governs it.
+	// Only STORIES are stamped. A task is an authored header with no running
+	// lifecycle, and an execution resolves its workflow KIND-awarely at gate
+	// time (sty_ef08ce2a) — stamping either risks pinning the wildcard story
+	// workflow onto a task/execution, exactly what this epic forbids.
+	// Resolved before the create review so the readiness-mark refusal below can
+	// judge the draft against the route that will govern it.
+	tags := req.Tags
+	if kind == workitem.KindStory && workflowResolver != nil && !hasWorkflowStamp(tags) {
+		wf, werr := workflowResolver.WorkflowNameFor(ctx, req.Category)
+		if werr != nil {
+			return nil, werr
+		}
+		if wf != "" {
+			p.stamped = wf
+			tags = append(tags, "workflow:"+wf)
+		}
+	}
+
+	// A story is never ready when it is created (sty_6e3ffa2f): only an accepted
+	// readiness round sets the route's readiness mark, so a create carrying it is
+	// refused before the reviewer runs or anything is stored.
+	draft := workitem.Item{Kind: kind, Category: req.Category, ParentID: req.ParentID, Tags: tags}
+	if err := refuseUnheldReadinessMark(ctx, draft, tags); err != nil {
+		return nil, err
+	}
+
 	// Required-structure gate: when a repo opts in, an isolated reviewer
 	// judges the draft before it is persisted (the deterministic
 	// structure.Story check — including the category rule, sty_af239840 —
@@ -205,26 +235,6 @@ func prepareCreate(ctx context.Context, kind workitem.Kind, req createReq, origi
 		p.createDec = dec
 		if dec.Gated {
 			RecordVerdict(fmt.Sprintf("accepted %s create by %s: decision=accept notes=%s", kind, dec.Skill, dec.Notes))
-		}
-	}
-
-	// Stamp the GOVERNING workflow on the story at create (sty_3800ac23): the
-	// chosen workflow is recorded as a workflow:<name> tag so gating reads the
-	// choice thereafter rather than re-deriving it by category. Independent of
-	// create-gating — a story is stamped whenever a workflow governs it.
-	// Only STORIES are stamped. A task is an authored header with no running
-	// lifecycle, and an execution resolves its workflow KIND-awarely at gate
-	// time (sty_ef08ce2a) — stamping either risks pinning the wildcard story
-	// workflow onto a task/execution, exactly what this epic forbids.
-	tags := req.Tags
-	if kind == workitem.KindStory && workflowResolver != nil && !hasWorkflowStamp(tags) {
-		wf, werr := workflowResolver.WorkflowNameFor(ctx, req.Category)
-		if werr != nil {
-			return nil, werr
-		}
-		if wf != "" {
-			p.stamped = wf
-			tags = append(tags, "workflow:"+wf)
 		}
 	}
 
@@ -475,6 +485,12 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			return nil, cerr
 		}
 		req.Tags = &canon
+		// The readiness mark is set only by an accepted readiness round
+		// (sty_6e3ffa2f): the final set, whether merged or replaced, may not
+		// newly carry it while the story's readiness does not hold.
+		if err := refuseUnheldReadinessMark(ctx, current, canon); err != nil {
+			return nil, err
+		}
 		// depends-on:<story id> validation (the story-level epic edge): the final
 		// effective set must name stories in this story's epic set, with no
 		// self-edge and no cycle.

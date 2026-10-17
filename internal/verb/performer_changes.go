@@ -128,6 +128,9 @@ func planPerformerChanges(ctx context.Context, store dependsOnStore, container w
 			if err != nil {
 				return plan, refuseChange(i, c, err.Error())
 			}
+			if err := refuseUnheldReadinessMark(ctx, cur, canon); err != nil {
+				return plan, refuseChange(i, c, err.Error())
+			}
 			cur.Tags = canon
 			state[c.Story] = cur
 			plan.Tags = append(plan.Tags, tagWrite{Target: c.Story, Tags: c.Tags})

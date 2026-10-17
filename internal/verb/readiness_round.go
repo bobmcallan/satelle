@@ -471,6 +471,36 @@ func readinessHolds(ctx context.Context, item workitem.Item, edge readinessEdge)
 	return ledger.ReadinessHolds(storyLedgerEntries(ctx, item.ID), edge.From, edge.To, readinessDocName(ctx, item, edge.To))
 }
 
+// refuseUnheldReadinessMark is the one rule for who may put the readiness mark on
+// a story: only an accepted readiness round. finalTags is the tag set a write
+// would leave on item; the write is refused when it newly carries the mark while
+// item's readiness does not hold in the ledger. A mark a stored item already
+// carries is kept, never newly set, and a route that declares no mark refuses
+// nothing. A create passes a draft (no id, so it carries nothing and has no
+// ledger): a mark on it is always refused.
+func refuseUnheldReadinessMark(ctx context.Context, item workitem.Item, finalTags []string) error {
+	edge, err := readinessEdgeFor(ctx, item)
+	if err != nil || edge.Step.Mark == "" {
+		return nil
+	}
+	mark := edge.Step.Mark
+	if !hasTag(finalTags, mark) || (item.ID != "" && hasTag(item.Tags, mark)) {
+		return nil
+	}
+	if _, ok := readinessHolds(ctx, item, edge); ok {
+		return nil
+	}
+	return fmt.Errorf("readiness mark %q can be set only by an accepted readiness round: %s has none that holds", mark, describeItem(item))
+}
+
+// describeItem names item for a refusal: its id, or "a new <kind>" before it has one.
+func describeItem(item workitem.Item) string {
+	if item.ID == "" {
+		return "a new " + string(item.Kind)
+	}
+	return item.ID
+}
+
 // syncReadyMark removes the readiness mark from the story when its readiness
 // stops holding. The tag is a display marker only: the ledger decides, this just
 // keeps the display from claiming what the ledger no longer says. A no-op for a

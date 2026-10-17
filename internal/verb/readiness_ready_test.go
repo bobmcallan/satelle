@@ -544,8 +544,11 @@ func TestReadinessHoldsFromTheLedgerAlone(t *testing.T) {
 	t.Run("a hand-set mark with no accept does not hold", func(t *testing.T) {
 		r := newReadyRig(t, "ready", readyReviewers)
 		a := newStoryOf(t, "feature", "a")
-		call(t, "story-set", map[string]any{"id": a.ID, "add_tags": []string{"ready"}})
-		if holds(t, a.ID) {
+		// sty_6e3ffa2f: the hand-set mark is refused, not stored.
+		if _, err := dispatchRaw(t, "story-set", map[string]any{"id": a.ID, "add_tags": []string{"ready"}}); err == nil {
+			t.Fatal("a hand-set mark with no accepted readiness must be refused")
+		}
+		if hasMark(t, a.ID) || holds(t, a.ID) {
 			t.Fatal("a hand-set tag is not an accepted readiness")
 		}
 		// ...and it never skips readiness: presenting the edge runs the round.

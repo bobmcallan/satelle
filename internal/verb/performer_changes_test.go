@@ -24,8 +24,11 @@ const changesApply = `apply_changes = { ops = ["add-tags", "create-child"], tags
 
 // changesStep is the ready fixture with apply_changes (and the propose it needs)
 // declared on the container's ready step, and apply_changes on the story's.
-func changesStep() string {
-	s := strings.Replace(readyStepToml("ready", readyReviewers), "waits_on_children = true\n", "waits_on_children = true\npropose = true\n"+changesApply, 1)
+func changesStep() string { return changesStepMark("ready") }
+
+// changesStepMark is changesStep with the readiness steps' mark set to mark.
+func changesStepMark(mark string) string {
+	s := strings.Replace(readyStepToml(mark, readyReviewers), "waits_on_children = true\n", "waits_on_children = true\npropose = true\n"+changesApply, 1)
 	return strings.Replace(s, "propose = true\nreject_budget = 3\n", "propose = true\n"+changesApply+"reject_budget = 3\n", 1)
 }
 
@@ -44,9 +47,12 @@ type changesWorld struct {
 	epic, a, b, x workitem.Item
 }
 
-func newChangesWorld(t *testing.T) changesWorld {
+func newChangesWorld(t *testing.T) changesWorld { return newChangesWorldMark(t, "ready") }
+
+// newChangesWorldMark is newChangesWorld over readiness steps marking with mark.
+func newChangesWorldMark(t *testing.T, mark string) changesWorld {
 	t.Helper()
-	r := newRigFor(t, changesStep())
+	r := newRigFor(t, changesStepMark(mark))
 	t.Setenv("SATELLE_HOME", t.TempDir())
 	verb.SetWorkflowResolver(stubWorkflow{})
 	w := changesWorld{r: r}
