@@ -105,18 +105,18 @@ func performingStorySeatless(t *testing.T) {
 	}
 }
 
-// TestBashScratchRedirectAnySeatState (sty_e642df17): a shell command whose only
-// writes are redirects into an exempt location passes the PreToolUse hook with no
-// story engaged by this session, whatever the seat state — quoted or not, with a
-// descriptor duplication after it — while a redirect into the repo tree is still
-// refused with that state's reason. Each setup is the performing-story/seat count
-// that produces its deny text.
-func TestBashScratchRedirectAnySeatState(t *testing.T) {
-	setups := []struct {
-		name     string
-		setup    func(t *testing.T)
-		wantDeny string // fragment of the deny reason for a repo-tree redirect
-	}{
+// bashSeatState is one performing-story/seat setup and the deny text a repo-tree
+// write gets under it.
+type bashSeatState struct {
+	name     string
+	setup    func(t *testing.T)
+	wantDeny string
+}
+
+// bashSeatStateSetups are the performing-story/seat counts a Bash write is judged
+// under, each producing its own deny text.
+func bashSeatStateSetups() []bashSeatState {
+	return []bashSeatState{
 		{
 			name:     "no performing story, no seat",
 			setup:    func(t *testing.T) { t.Chdir(tempRepo(t)) },
@@ -136,6 +136,15 @@ func TestBashScratchRedirectAnySeatState(t *testing.T) {
 			wantDeny: "more than one performing story, none holds a seat for session sess-B",
 		},
 	}
+}
+
+// TestBashScratchRedirectAnySeatState (sty_e642df17): a shell command whose only
+// writes are redirects into an exempt location passes the PreToolUse hook with no
+// story engaged by this session, whatever the seat state — quoted or not, with a
+// descriptor duplication after it — while a redirect into the repo tree is still
+// refused with that state's reason.
+func TestBashScratchRedirectAnySeatState(t *testing.T) {
+	setups := bashSeatStateSetups()
 	allowed := []string{
 		`make test > "/tmp/sty_e642df17/maketest.log" 2>&1`,
 		`cmd > "/tmp/sty_e642df17/x.log"`,
@@ -154,13 +163,21 @@ func TestBashScratchRedirectAnySeatState(t *testing.T) {
 		// A variable assigned earlier in the same command is not resolved: gated.
 		"F=/tmp/sty_e642df17/out.md; cat >> $F <<'EOF'\nbody\nEOF",
 	}
+	checkBashWritesAnySeatState(t, setups, allowed, denied)
+}
+
+// checkBashWritesAnySeatState runs each command through both Bash hooks under
+// every setup: the allowed ones must pass, the denied ones must be refused with
+// that setup's reason.
+func checkBashWritesAnySeatState(t *testing.T, setups []bashSeatState, allowed, denied []string) {
+	t.Helper()
 	for _, s := range setups {
 		t.Run(s.name, func(t *testing.T) {
 			s.setup(t)
 			for _, c := range allowed {
 				for _, sub := range []string{"gate", "commitgate"} {
 					if out, err := runRootIn(t, sessionBBashEvent(c), "hook", sub); err != nil {
-						t.Errorf("hook %s denied scratch redirect %q: %v\n%s", sub, c, err, out)
+						t.Errorf("hook %s denied scratch write %q: %v\n%s", sub, c, err, out)
 					}
 				}
 			}
@@ -168,7 +185,7 @@ func TestBashScratchRedirectAnySeatState(t *testing.T) {
 				for _, sub := range []string{"gate", "commitgate"} {
 					out, err := runRootIn(t, sessionBBashEvent(c), "hook", sub)
 					if err == nil {
-						t.Errorf("hook %s allowed repo redirect %q:\n%s", sub, c, out)
+						t.Errorf("hook %s allowed repo write %q:\n%s", sub, c, out)
 						continue
 					}
 					if !denyReasonContains(out, s.wantDeny) {
@@ -178,4 +195,29 @@ func TestBashScratchRedirectAnySeatState(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBashWrappedQuotedTeeAnySeatState (sty_e79be13a): a quoted tee destination
+// gets the verdict of the bare one when tee runs behind a wrapper command — refused
+// into the repo tree with that seat state's reason, passed into an exempt location
+// whatever the seat state.
+func TestBashWrappedQuotedTeeAnySeatState(t *testing.T) {
+	denied := []string{
+		`true | env tee README.md`, // unquoted control
+		`true | env tee "README.md"`,
+		`sudo tee 'internal/x.go'`,
+		`nohup tee -a "README.md"`,
+		`xargs tee "README.md"`,
+		`stdbuf -o0 tee "README.md"`,
+		`echo x | tee "README.md"`,
+	}
+	allowed := []string{
+		`true | env tee "/tmp/sty_e79be13a/x.log"`,
+		`sudo tee '/tmp/sty_e79be13a/x.log'`,
+		`nohup tee -a "/tmp/sty_e79be13a/x.log"`,
+		`xargs tee "/tmp/sty_e79be13a/x.log"`,
+		`stdbuf -o0 tee "/tmp/sty_e79be13a/x.log"`,
+		`echo x | tee "/tmp/sty_e79be13a/x.log" > /dev/null`,
+	}
+	checkBashWritesAnySeatState(t, bashSeatStateSetups(), allowed, denied)
 }

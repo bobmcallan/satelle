@@ -72,6 +72,36 @@ func TestIsRedirectOp(t *testing.T) {
 	}
 }
 
+// TestQuotedTeeSameVerdictInEverySlot (sty_e79be13a): a path gets one verdict as
+// a tee destination (command word or behind a wrapper), a redirect target and a
+// mutation-verb argument, quoted or bare, in or out of the repo.
+func TestQuotedTeeSameVerdictInEverySlot(t *testing.T) {
+	const anchor = "/work/repo"
+	for _, p := range []string{"README.md", "internal/x.go", "/tmp/x/out.log"} {
+		for _, q := range []string{p, `"` + p + `"`, `'` + p + `'`} {
+			var want []string
+			for _, c := range []string{"echo x | tee " + q, "echo x | env tee " + q, "echo x > " + q, "rm " + q} {
+				home, foreign := bashMutationTargets(c, anchor)
+				got := append(append([]string{}, home...), foreign...)
+				if len(got) != 1 {
+					t.Fatalf("%q: targets %v, want one", c, got)
+				}
+				if want == nil {
+					want = got
+					continue
+				}
+				if got[0] != want[0] {
+					t.Errorf("%q: target %q, want %q", c, got[0], want[0])
+				}
+			}
+		}
+	}
+	got := redirectTargets(segOf(t, `tee "f" > /tmp/o`), "/work/repo")
+	if len(got) != 2 || got[0] != "/work/repo/f" || got[1] != "/tmp/o" {
+		t.Errorf(`tee "f" > /tmp/o: targets %q, want [/work/repo/f /tmp/o]`, got)
+	}
+}
+
 // TestQuotedPathSameVerdictInEverySlot (sty_e642df17): one quoted path resolves
 // to the same value as a redirect target, a mutation-verb argument and a sed -i
 // path, single- or double-quoted.

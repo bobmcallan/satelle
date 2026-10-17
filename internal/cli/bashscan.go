@@ -435,7 +435,7 @@ var dirFlagTable = map[string][]string{
 // they resolve outside the anchor) are containment targets.
 var mutationVerbs = map[string]bool{
 	"rm": true, "mv": true, "cp": true, "touch": true, "mkdir": true,
-	"install": true, "truncate": true, "dd": true, "sed": true, "tee": true,
+	"install": true, "truncate": true, "dd": true, "sed": true,
 	"chmod": true, "chown": true, "ln": true, "rsync": true,
 }
 
@@ -992,7 +992,7 @@ func mutationPathArgs(words []string, cwd string) []string {
 		return []string{resolvePath(cwd, positionals[len(positionals)-1])}
 	}
 
-	// All-args family: rm/touch/mkdir/chmod/chown/truncate/tee — every
+	// All-args family: rm/touch/mkdir/chmod/chown/truncate — every
 	// non-option arg is a mutation target (sed has its own extractor).
 	skipNext := false
 	for i := 1; i < len(words); i++ {
@@ -1132,18 +1132,6 @@ func sedPathArgs(toks []bashTok, cwd string) []string {
 // command) resolves onto cwd and stays gated; nothing is treated as foreign.
 func redirectTargets(seg []bashTok, cwd string) []string {
 	var out []string
-	// tee [opts] FILE… — bare words only.
-	words := wordsOnly(seg)
-	for i, w := range words {
-		if filepath.Base(w) != "tee" {
-			continue
-		}
-		for _, a := range words[i+1:] {
-			if !strings.HasPrefix(a, "-") {
-				out = append(out, resolvePath(cwd, a))
-			}
-		}
-	}
 	// target is the file named by the token in a target slot: a bare word or a
 	// quoted word unquoted. Operators, heredocs and empty words name none.
 	target := func(t bashTok) (string, bool) {
@@ -1154,6 +1142,33 @@ func redirectTargets(seg []bashTok, cwd string) []string {
 			return unquoteTok(t.Value), true
 		}
 		return "", false
+	}
+	// tee [opts] FILE… — the one place that decides what tee writes, whether tee
+	// is the command word or runs behind a wrapper (env, sudo, nohup, xargs,
+	// stdbuf, …). Each destination goes through target, so a quoted FILE is the
+	// same target as a bare one. A quoted word is never an option, and a redirect
+	// after tee is left to the redirect walk below.
+	for i, t := range seg {
+		if t.Kind != "word" || filepath.Base(t.Value) != "tee" {
+			continue
+		}
+		for j := i + 1; j < len(seg); j++ {
+			a := seg[j]
+			if a.Kind == "word" {
+				if strings.HasPrefix(a.Value, "-") {
+					continue
+				}
+				if strings.Contains(a.Value, ">") {
+					if isRedirectOp(a.Value) {
+						j++ // the redirect's own target
+					}
+					continue
+				}
+			}
+			if p, ok := target(a); ok {
+				out = append(out, resolvePath(cwd, p))
+			}
+		}
 	}
 	for i := 0; i < len(seg); i++ {
 		t := seg[i]

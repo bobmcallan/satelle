@@ -1,3 +1,8 @@
+## [0.0.691] - 2026-10-17
+
+### Fixed
+- A quoted `tee` destination behind a wrapper command is judged as a write. `true | env tee "README.md"` (and the same through `sudo`, `nohup`, `xargs` or `stdbuf`) passed the Bash hook with no engaged story, because the wrapper is the command word and the only scan that saw `tee` read bare words, dropping the quoted destination. One place now decides what `tee` writes, whether it is the command word or behind a wrapper, and a quoted destination is the same target as a bare one: into the repo it is refused without an engaged story, under `[gate] edit_exempt_paths` it passes whatever the seat state. Plain `tee` keeps its verdicts. (sty_e79be13a)
+
 ## [0.0.690] - 2026-10-17
 
 ### Fixed
