@@ -290,20 +290,23 @@ func TestSubstrateOnlyCheckFourPostures(t *testing.T) {
 	t.Run("non-substrate uncommitted rejects", func(t *testing.T) {
 		repo, sid := setup(t)
 		mustWrite(t, filepath.Join(repo, "pkg", "y.go"), "package pkg\n")
-		// Also need some substrate signal or empty rejects first — add docs
-		// so the union is non-empty but contains offenders.
 		mustWrite(t, filepath.Join(repo, "docs", "note.md"), "# n\n")
 		out, err := runEnv(t, testBin, repo, pathEnv, "story", "set", sid, "--status", "done")
 		if err == nil {
 			t.Fatalf("uncommitted code should reject:\n%s", out)
 		}
-		// AC2 path: offenders named. (Gate notes may embed the check script source,
-		// which mentions the empty-set message as text — assert on the enacted notes.)
-		if !strings.Contains(out, "touches non-substrate paths") {
-			t.Fatalf("uncommitted non-substrate must reject as offender path, got:\n%s", out)
+		// sty_37436717: the close guard refuses an uncommitted gated tree before
+		// any gate runs, so the substrate-only check never sees this posture; the
+		// refusal names the uncommitted paths and tells the operator to commit or
+		// discard them. The committed posture above still asserts the check.
+		if !strings.Contains(out, "uncommitted changes outside the edit-exempt paths") {
+			t.Fatalf("uncommitted non-substrate must be refused by the close guard, got:\n%s", out)
 		}
-		if !strings.Contains(out, "y.go") && !strings.Contains(out, "pkg/") {
-			t.Fatalf("reject must name the uncommitted non-substrate path, got:\n%s", out)
+		if !strings.Contains(out, "commit or discard") {
+			t.Fatalf("refusal must tell the operator to commit or discard, got:\n%s", out)
+		}
+		if !strings.Contains(out, "pkg/") {
+			t.Fatalf("refusal must name the uncommitted non-substrate path, got:\n%s", out)
 		}
 	})
 

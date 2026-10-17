@@ -1,3 +1,8 @@
+## [0.0.692] - 2026-10-17
+
+### Fixed
+- Closing a story is refused while the working tree its own live seat records holds uncommitted changes outside the edit-exempt paths. A close (done or cancelled) releases the seat, and with it the permission to commit, so the slice used to be left orphaned where no workflow step could commit it. The refusal names the paths (up to 20) and says to commit or discard them, then re-run the same command; status and seat are unchanged and no gate or performer runs. It applies to every workflow, including ones with no commit-evidence gate. A clean tree, changes only on exempt paths, a park to blocked, a non-terminal move, a story with no live seat, and any failure to read the tree all behave as before. (sty_37436717)
+
 ## [0.0.691] - 2026-10-17
 
 ### Fixed

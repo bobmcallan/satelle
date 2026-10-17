@@ -195,6 +195,10 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// the token's user, and is refused while it cannot — the empty holder would
 	// otherwise pass the wrong-holder guard unnoticed.
 	verb.SetEngageGuard(func(ctx context.Context) error { return ensureSessionPrincipal(ctx, a.Config, a.RepoRoot) })
+	// Close guard: a terminal move names the gated uncommitted paths of the
+	// story's seat tree before the seat is released. The classification stays
+	// with the edit gate's dirtyGatedPaths.
+	verb.SetDirtyPathsProbe(func(_ context.Context, tree string) ([]string, error) { return dirtyGatedPaths(tree) })
 	// Person actor for ledger rows that name the satelle user: the account
 	// PrincipalID when signed in, the git email when local-only.
 	verb.SetActorResolver(func() string { return resolveUser(a.Config, a.RepoRoot).Actor() })

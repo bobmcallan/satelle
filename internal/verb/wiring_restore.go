@@ -58,6 +58,7 @@ var wiringVars = []wiringVar{
 	// Resolvers, reviewers and hooks.
 	{"assigneeResolver", &assigneeResolver},
 	{"engageGuard", &engageGuard},
+	{"dirtyPathsProbe", &dirtyPathsProbe},
 	{"actorResolver", &actorResolver},
 	{"holdClaimer", &holdClaimer},
 	{"agentBudgets", &agentBudgets},

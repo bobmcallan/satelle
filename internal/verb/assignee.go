@@ -51,6 +51,17 @@ func runEngageGuard(ctx context.Context) error {
 	return engageGuard(ctx)
 }
 
+// dirtyPathsProbe lists the uncommitted, non-exempt (gated) paths in a git
+// working tree. The CLI wires it to its edit-gate classifier so the verb never
+// copies the exempt-path rules. Unwired is no probe: a close is never refused.
+var dirtyPathsProbe func(ctx context.Context, tree string) ([]string, error)
+
+// SetDirtyPathsProbe wires the dirty-tree probe used by refuseDirtyClose. Pass
+// nil to clear (tests).
+func SetDirtyPathsProbe(f func(ctx context.Context, tree string) ([]string, error)) {
+	dirtyPathsProbe = f
+}
+
 // actorResolver returns the satelle user as a ledger actor: the account
 // PrincipalID when signed in, the git email when local-only (wired by the CLI,
 // which owns the credential store and git). Distinct from assigneeResolver on

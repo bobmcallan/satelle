@@ -79,6 +79,7 @@ type wiringCase struct {
 func wiringCases() []wiringCase {
 	f := func() string { return "sentinel" }
 	guard := func(context.Context) error { return nil }
+	probe := func(context.Context, string) ([]string, error) { return nil, nil }
 	claim := func(context.Context, string) (HoldInfo, error) { return HoldInfo{}, nil }
 	note := func(string) {}
 	vocab := config.Config{Tags: config.TagsConfig{Vocabulary: map[string][]string{"wiring": {"sentinel"}}}}
@@ -97,6 +98,7 @@ func wiringCases() []wiringCase {
 		{fn: "SetAssigneeResolver", pre: ClearAssigneeResolver, call: func() { SetAssigneeResolver(f) }, want: []string{"assigneeResolver"}},
 		{fn: "ClearAssigneeResolver", pair: "SetAssigneeResolver", pre: func() { SetAssigneeResolver(f) }, call: ClearAssigneeResolver, want: []string{"assigneeResolver"}},
 		{fn: "SetEngageGuard", call: func() { SetEngageGuard(guard) }, want: []string{"engageGuard"}},
+		{fn: "SetDirtyPathsProbe", call: func() { SetDirtyPathsProbe(probe) }, want: []string{"dirtyPathsProbe"}},
 		{fn: "SetActorResolver", call: func() { SetActorResolver(f) }, want: []string{"actorResolver"}},
 		{fn: "SetAuthoredDirs", call: func() { SetAuthoredDirs(map[string]string{"wiring": "sentinel"}) }, want: []string{"authoredDirs"}},
 		{fn: "SetSubstrateConfigDir", call: func() { SetSubstrateConfigDir("wiring-sentinel") }, want: []string{"substrateConfigDir"}},

@@ -502,6 +502,13 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			if err := stopRequestBlocksForward(ctx, current, *req.Status); err != nil {
 				return nil, err
 			}
+			// A close releases the seat that permits committing the slice: refuse it
+			// while this story's own tree holds gated uncommitted changes. Before the
+			// lease, the abort guard, the gate and the dispatch, so a refusal changes
+			// nothing.
+			if err := refuseDirtyClose(ctx, current, *req.Status); err != nil {
+				return nil, err
+			}
 		}
 		// Assignee holder check (sty_8ccaa906): who may acquire the seat.
 		// Before the lease so a refusal never takes it. Non-engaging moves

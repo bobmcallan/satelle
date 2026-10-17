@@ -262,6 +262,48 @@ func stopRequestBlocksForward(ctx context.Context, item workitem.Item, targetSta
 		item.Status, targetStatus, l.StopRequestedBy, reason)
 }
 
+// maxDirtyClosePaths caps the paths a refused close names.
+const maxDirtyClosePaths = 20
+
+// refuseDirtyClose refuses a transition to a terminal state while the working
+// tree recorded on this story's own live seat holds uncommitted gated changes.
+// The close releases the seat, and with it the permission to commit, so the
+// operator must be told before the seat is gone. It is mechanism, not a
+// workflow gate: it applies to any workflow, and it runs before any gate or
+// performer is dispatched.
+//
+// The tree is read from the story's own lease row only — no engagement-baseline
+// fallback, no scan of other seats — so a story that holds no live seat names
+// nothing. A park is not a close (the story stays open and keeps its path back),
+// and every uncertainty (no probe, no lease, dead lease, no recorded tree, probe
+// error) fails open.
+func refuseDirtyClose(ctx context.Context, item workitem.Item, target string) error {
+	if dirtyPathsProbe == nil || !targetIsTerminalStateOnly(ctx, item, target) {
+		return nil
+	}
+	ls, err := requireLease()
+	if err != nil {
+		return nil
+	}
+	l, err := ls.Get(ctx, item.ID)
+	if err != nil || !lease.Alive(l, time.Now()) || l.Worktree == "" {
+		return nil
+	}
+	paths, err := dirtyPathsProbe(ctx, l.Worktree)
+	if err != nil || len(paths) == 0 {
+		return nil
+	}
+	shown, more := paths, ""
+	if len(shown) > maxDirtyClosePaths {
+		more = fmt.Sprintf("\n  +%d more", len(shown)-maxDirtyClosePaths)
+		shown = shown[:maxDirtyClosePaths]
+	}
+	return fmt.Errorf(
+		"satelle: refusing %s → %s — working tree %s has uncommitted changes outside the edit-exempt paths:\n  %s%s\n"+
+			"commit or discard them before closing — closing releases the seat that permits the commit; then re-run: satelle story set %s --status %s",
+		item.Status, target, l.Worktree, strings.Join(shown, "\n  "), more, item.ID, target)
+}
+
 // targetIsExitState reports terminal or park via the governing workflow DOT.
 func targetIsExitState(ctx context.Context, item workitem.Item, status string) bool {
 	spec, _, _, ok := governingSpec(ctx, item)
