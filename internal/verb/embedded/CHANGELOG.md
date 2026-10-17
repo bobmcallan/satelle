@@ -1,3 +1,9 @@
+## [0.0.687] - 2026-10-17
+
+### Fixed
+- No test writes into the repository's source tree any more. The serve-gate probe test (cmd/satelled TestServeGateSeesNewFiles) used to plant `zz_gate_probe` files in the real tree, which raced the parallel tests that walk `internal/`. It hit TestNoPriceLiteralsInProductCode in CI run 38990644923. The probe now plants its files only in a private clone, using the working-tree gate script. The strict unit run (`make test STRICT=1`) fails, naming the files, if any test leaves the real tree changed. (sty_6b98ba1f)
+- The serve-gate probe runs its assertions on a tree whose serve version is bumped but not yet tagged, the normal state between a serve push and its release. It no longer skips there, and the skip's CI allowlist entry is removed. This supersedes sty_5395c80a. (sty_6b98ba1f)
+
 ## [0.0.686] - 2026-10-17
 
 0.0.685 was never published. Its CI test run failed on the relative-cost bound fixed below, so the release workflow never cut it. Everything listed under [0.0.685] ships in this release.
