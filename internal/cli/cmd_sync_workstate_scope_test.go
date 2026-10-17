@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
@@ -391,39 +392,38 @@ func TestScopedEpicWithoutMembersSaysSo(t *testing.T) {
 		seedHostedScopeStory(f, m1, []string{scopeTheme}, "feature")
 		seedHostedScopeStory(f, m2, []string{scopeTheme}, "feature")
 
-		// (1) a fresh store: the container arrives alone.
+		// (1) a fresh store: the container arrives with its members, found on the
+		// server (sty_7b4742d0) — the request sequence is the scoped fetch that shows
+		// the epic-parent, one unscoped pass that finds its members, and the
+		// expanded scoped fetch.
 		out, err := runRoot(t, "sync", "workstate", "pull", epic)
 		if err != nil {
 			t.Fatalf("pull container: %v\n%s", err, out)
 		}
-		if c := strings.Count(out, notice(epic)); c != 1 {
-			t.Errorf("notice printed %d time(s), want 1:\n%s", c, out)
-		}
-		for _, want := range []string{"none are in the local store", "name the member story ids"} {
-			if !strings.Contains(out, want) {
-				t.Errorf("notice lacks %q:\n%s", want, out)
-			}
+		if strings.Contains(out, "container only") {
+			t.Errorf("an epic whose members arrived printed the notice:\n%s", out)
 		}
 		reqs := f.snapshotRequests()
-		if len(reqs) != 1 || !slices.Equal(reqs[0].GetStoryIds(), []string{epic}) {
-			t.Fatalf("requests = %v, want one naming only %s", reqs, epic)
+		if len(reqs) != 3 || !slices.Equal(reqs[0].GetStoryIds(), []string{epic}) ||
+			len(reqs[1].GetStoryIds()) != 0 || !slices.Equal(reqs[2].GetStoryIds(), sortedIDs(epic, m1, m2)) {
+			t.Fatalf("requests = %v, want [%s], unscoped, [%s %s %s]", reqs, epic, epic, m1, m2)
 		}
-		if s, _ := localCounts(t); s != 1 {
-			t.Errorf("stories after the first pull = %d, want only the container", s)
+		if s, _ := localCounts(t); s != 3 {
+			t.Errorf("stories after the first pull = %d, want the container and its two members", s)
 		}
 
-		// (2) the container is local now and still has no members: said again,
-		// and the request still names only the container.
+		// (2) the container is local now with its members: resolved locally, one
+		// request naming the container and its members.
 		out, err = runRoot(t, "sync", "workstate", "pull", epic)
 		if err != nil {
 			t.Fatalf("second pull: %v\n%s", err, out)
 		}
-		if c := strings.Count(out, notice(epic)); c != 1 {
-			t.Errorf("second pull printed the notice %d time(s), want 1:\n%s", c, out)
+		if strings.Contains(out, "container only") {
+			t.Errorf("second pull printed the notice:\n%s", out)
 		}
 		reqs = f.snapshotRequests()
-		if len(reqs) != 2 || !slices.Equal(reqs[1].GetStoryIds(), []string{epic}) {
-			t.Fatalf("second request story_ids = %v, want only %s", reqs[len(reqs)-1].GetStoryIds(), epic)
+		if len(reqs) != 4 || !slices.Equal(reqs[3].GetStoryIds(), sortedIDs(epic, m1, m2)) {
+			t.Fatalf("second pull requests = %v, want one more naming %s %s %s", reqs, epic, m1, m2)
 		}
 
 		// (3) naming the members syncs them, and there is nothing to say.
@@ -461,5 +461,219 @@ func TestScopedEpicWithoutMembersSaysSo(t *testing.T) {
 		if c := strings.Count(out, notice(epic.ID)); c != 1 {
 			t.Errorf("notice printed %d time(s), want 1:\n%s", c, out)
 		}
+	})
+}
+
+// remoteEpic is a hosted epic the local store has none of: the container, two
+// members carrying its theme, a story whose parent_id is the container but that
+// lacks the tag, and an unrelated story.
+type remoteEpic struct {
+	epic, m1, m2, child, other string
+}
+
+func seedRemoteEpic(f *fakeWorkstateServer) remoteEpic {
+	r := remoteEpic{epic: "sty_ep000001", m1: "sty_ep000002", m2: "sty_ep000003", child: "sty_ep000004", other: "sty_ep000005"}
+	seedHostedScopeStory(f, r.epic, []string{scopeTheme}, "epic-parent")
+	seedHostedScopeStory(f, r.m1, []string{scopeTheme}, "feature")
+	seedHostedScopeStory(f, r.m2, []string{scopeTheme}, "feature")
+	seedHostedScopeStory(f, r.child, nil, "feature")
+	f.mu.Lock()
+	f.itemsByID["probe"][r.child].(map[string]any)["parent_id"] = r.epic
+	f.mu.Unlock()
+	seedHostedScopeStory(f, r.other, nil, "feature")
+	return r
+}
+
+func requestIDs(f *fakeWorkstateServer) [][]string {
+	var out [][]string
+	for _, r := range f.snapshotRequests() {
+		out = append(out, r.GetStoryIds())
+	}
+	return out
+}
+
+// AC1: on a store holding none of an epic's stories, pulling the epic id applies
+// the container and the stories carrying its theme tag, with their ledger rows —
+// not a story that is only its parent_id child, and not an unrelated one.
+func TestScopedPullEpicNotLocalBringsMembers(t *testing.T) {
+	_, f, _ := pagingEnv(t, 50)
+	r := seedRemoteEpic(f)
+
+	out, err := runRoot(t, "sync", "workstate", "pull", r.epic)
+	if err != nil {
+		t.Fatalf("pull: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "container only") {
+		t.Errorf("notice printed for an epic whose members arrived:\n%s", out)
+	}
+	if s, l := localCounts(t); s != 3 || l != 3 {
+		t.Errorf("store holds %d stories / %d ledger rows, want 3 / 3", s, l)
+	}
+	for _, id := range []string{r.epic, r.m1, r.m2} {
+		if !localLedgerHas(t, "led_"+id) {
+			t.Errorf("ledger row of %s is missing", id)
+		}
+	}
+	for _, id := range []string{r.child, r.other} {
+		if localLedgerHas(t, "led_"+id) {
+			t.Errorf("%s is outside the epic set but its ledger row landed", id)
+		}
+	}
+	list, lerr := runRoot(t, "story", "list", "--limit", "50")
+	if lerr != nil {
+		t.Fatalf("list: %v\n%s", lerr, list)
+	}
+	for _, id := range []string{r.child, r.other} {
+		if strings.Contains(list, id) {
+			t.Errorf("%s landed:\n%s", id, list)
+		}
+	}
+	reqs := requestIDs(f)
+	if len(reqs) != 3 || !slices.Equal(reqs[2], sortedIDs(r.epic, r.m1, r.m2)) {
+		t.Errorf("request story_ids = %v, want the expanded scope last", reqs)
+	}
+}
+
+// AC2: a pull of a plain id the local store lacks sends one request naming only
+// that id, and so does one for an id the store holds.
+func TestScopedPullPlainMissingIDSendsOneRequest(t *testing.T) {
+	_, f, _ := pagingEnv(t, 50)
+	r := seedRemoteEpic(f)
+
+	for i := 1; i <= 2; i++ { // the second pull finds the story local
+		if out, err := runRoot(t, "sync", "workstate", "pull", r.other); err != nil {
+			t.Fatalf("pull %d: %v\n%s", i, err, out)
+		}
+		if got := requestIDs(f); len(got) != i || !slices.Equal(got[i-1], []string{r.other}) {
+			t.Fatalf("after pull %d requests = %v, want %d, the last naming only %s", i, got, i, r.other)
+		}
+	}
+}
+
+// AC3: only pull expands an epic; a snapshot of the epic id sends one request
+// naming only the epic.
+func TestScopedSnapshotDoesNotExpandRemoteEpic(t *testing.T) {
+	_, f, _ := pagingEnv(t, 50)
+	r := seedRemoteEpic(f)
+
+	if out, err := runRoot(t, "sync", "workstate", "snapshot", r.epic); err != nil {
+		t.Fatalf("snapshot: %v\n%s", err, out)
+	}
+	if got := requestIDs(f); len(got) != 1 || !slices.Equal(got[0], []string{r.epic}) {
+		t.Errorf("requests = %v, want one naming only %s", got, r.epic)
+	}
+	if s, _ := localCounts(t); s != 1 {
+		t.Errorf("stories = %d, want the container alone", s)
+	}
+}
+
+// AC4: members taken from the server arrive with their story attachments.
+func TestScopedPullEpicMembersBringAttachments(t *testing.T) {
+	url, f, d := attachmentServer(t)
+	workstateRepo(t, mergeToml)
+	if err := config.SaveGlobalHostedServer(url); err != nil {
+		t.Fatal(err)
+	}
+	r := seedRemoteEpic(f)
+	path := "stories/" + r.m1 + "/plan.md"
+	d.files[path] = []byte("---\nstory: " + r.m1 + "\ntype: plan\nname: plan\n---\n\nmember plan\n")
+	d.seq++
+	d.ver[path] = d.seq
+
+	if out, err := runRoot(t, "sync", "workstate", "pull", r.epic); err != nil {
+		t.Fatalf("pull: %v\n%s", err, out)
+	}
+	if body, err := storyDocBody(t, r.m1, "plan"); err != nil || !strings.Contains(body, "member plan") {
+		t.Errorf("the member's attachment did not land: body %q, err %v", body, err)
+	}
+}
+
+// AC4: members taken from the server go through the in-flight hold check.
+func TestScopedPullEpicMembersAreHoldChecked(t *testing.T) {
+	fx := newHoldFixture(t, pullSyncTm)
+	r := seedRemoteEpic(fx.f)
+	fx.hs.setHolder(r.m1, otherLoc, "desk")
+
+	out, err := runRoot(t, "sync", "workstate", "pull", "--server", fx.ts.URL, r.epic)
+	if err != nil {
+		t.Fatalf("pull: %v\n%s", err, out)
+	}
+	if rec, ok := fx.recordedHolds(t)[r.m1]; !ok || rec.Location != otherLoc {
+		t.Errorf("recorded holds = %+v, want %s held by %s", fx.recordedHolds(t), r.m1, otherLoc)
+	}
+	if !strings.Contains(out, r.m1) {
+		t.Errorf("the in-flight listing lacks %s:\n%s", r.m1, out)
+	}
+}
+
+// AC5: an epic the server holds with no members, or whose epic-parent has no
+// single theme tag, pulls as the container alone, with the notice and no refusal.
+func TestScopedPullEpicWithNothingToExpand(t *testing.T) {
+	cases := []struct {
+		name     string
+		tags     []string
+		requests int
+		want     string
+	}{
+		{"server has no members", []string{scopeTheme}, 2, "the server holds no members of it"},
+		{"no theme tag", []string{"area:x"}, 1, "carries no single epic:<theme> tag"},
+		{"two theme tags", []string{scopeTheme, "epic:other"}, 1, "carries no single epic:<theme> tag"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, f, _ := pagingEnv(t, 50)
+			const epic = "sty_ep000001"
+			seedHostedScopeStory(f, epic, c.tags, "epic-parent")
+
+			out, err := runRoot(t, "sync", "workstate", "pull", epic)
+			if err != nil {
+				t.Fatalf("pull: %v\n%s", err, out)
+			}
+			if n := strings.Count(out, "epic "+epic+": container only"); n != 1 || !strings.Contains(out, c.want) {
+				t.Errorf("notice printed %d time(s), want 1 containing %q:\n%s", n, c.want, out)
+			}
+			if s, _ := localCounts(t); s != 1 {
+				t.Errorf("stories = %d, want the container alone", s)
+			}
+			if got := requestIDs(f); len(got) != c.requests {
+				t.Errorf("requests = %v, want %d", got, c.requests)
+			}
+		})
+	}
+}
+
+// AC6: every expansion refusal applies nothing.
+func TestScopedPullEpicExpansionRefusalsApplyNothing(t *testing.T) {
+	refused := func(t *testing.T, want string) {
+		t.Helper()
+		out, err := runRoot(t, "sync", "workstate", "pull", "sty_ep000001")
+		if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "nothing applied") {
+			t.Fatalf("err = %v, out = %q; want a refusal containing %q", err, out, want)
+		}
+		if s, l := localCounts(t); s != 0 || l != 0 {
+			t.Errorf("store holds %d stories / %d ledger rows, want it unchanged", s, l)
+		}
+	}
+	t.Run("two epic-parents share the theme", func(t *testing.T) {
+		_, f, _ := pagingEnv(t, 50)
+		seedRemoteEpic(f)
+		seedHostedScopeStory(f, "sty_ep000009", []string{scopeTheme}, "epic-parent")
+		refused(t, "epic set undetermined")
+	})
+	t.Run("expanded scope exceeds the id cap", func(t *testing.T) {
+		_, f, _ := pagingEnv(t, 50)
+		seedRemoteEpic(f)
+		prev := maxScopeIDs
+		maxScopeIDs = 2
+		t.Cleanup(func() { maxScopeIDs = prev })
+		refused(t, "the server accepts at most 2")
+	})
+	t.Run("an expanded member is absent from the scoped response", func(t *testing.T) {
+		_, f, _ := pagingEnv(t, 50)
+		r := seedRemoteEpic(f)
+		f.mu.Lock()
+		f.omitOnCall = map[string]int{r.m1: 3} // scoped, unscoped, then the expanded fetch
+		f.mu.Unlock()
+		refused(t, r.m1+" not found on")
 	})
 }

@@ -64,6 +64,9 @@ type fakeWorkstateServer struct {
 	// FailedPrecondition.
 	ignoreScope    bool
 	snapRejectCall int
+	// omitOnCall drops an item id from the response of that 1-based Snapshot call,
+	// as a server whose answer lacks a story it was asked for (sty_7b4742d0).
+	omitOnCall map[string]int
 	// refuseHeld names records (item ids, or the story id of a ledger row) the
 	// server refuses as held by another location, as one that still holds
 	// executions does (sty_1cb9f98f). A request carrying any of them is refused whole.
@@ -290,7 +293,7 @@ func (s *fakeWorkstateGRPC) Snapshot(ctx context.Context, req *syncpb.SnapshotRe
 	kindFilter := req.GetKind()
 	for _, id := range slices.Sorted(maps.Keys(s.f.itemsByID[key])) {
 		m, ok := s.f.itemsByID[key][id].(map[string]any)
-		if !ok || !changed(s.f.itemVer, id) || (scope != nil && !scope[id]) {
+		if !ok || !changed(s.f.itemVer, id) || (scope != nil && !scope[id]) || s.f.omitOnCall[id] == s.f.gets {
 			continue
 		}
 		kind, _ := m["kind"].(string)

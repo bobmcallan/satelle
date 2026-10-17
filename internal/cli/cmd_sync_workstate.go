@@ -93,19 +93,19 @@ on a remote-tracking ref ([sync] hold_unpushed = false turns this off).`,
 		Args:        cobra.ArbitraryArgs,
 		Long: `pull fetches the bound hosted PROJECT's personal stories, executions and
 ledger entries for opted-in [sync] areas, and merges them into the local DB by
-id. With stories opted in it also writes their markdown attachments, change
-patches included, into the attachment store; binary ones stay local.
+id. With stories opted in it also writes their markdown attachments into the
+attachment store; binary ones stay local.
 
 Local-only rows are kept. The pull refuses only where it would lose local
 information: a story changed locally since hosted, or a ledger row whose
-payload differs; a differing attachment is kept and named. --force lets hosted
-win.
+payload differs. --force lets hosted win.
 
 Afterwards it names each pulled story whose status claims code the git remote
 lacks; --verbose also lists stories that left work with no head.
 
-With story ids, or an epic container id held locally, it pulls only those and
-an epic's members. Requires "satelle project bind".`,
+With story ids or an epic id it pulls only those; an epic not held locally has
+its members found on the server by the container's epic:<theme> tag. Requires
+"satelle project bind".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncWorkstatePull(cmd, pullServer, pullDryRun, force, pullVerbose, args...)
 		},
@@ -675,7 +675,11 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 
 	var rep passReport
 	if sc.scoped() {
+		sc.ExpandRemoteEpics = true
 		rep, err = runScopedWorkstateSnapshot(ctx, a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModePull, sc)
+		if err == nil && rep.Scope.scoped() {
+			sc = rep.Scope // the members taken from the server, for the attachment and hold steps
+		}
 	} else {
 		rep, err = runPagedWorkstateSnapshot(ctx, a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModePull)
 	}
