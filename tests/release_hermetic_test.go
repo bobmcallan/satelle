@@ -42,6 +42,17 @@ func newReleaseProxy(t *testing.T) *releaseProxy {
 	return p
 }
 
+// env routes a child process's non-loopback HTTP through the proxy. Go sends
+// requests to localhost and loopback IPs direct whatever the proxy variables
+// say, so a loopback fake is unaffected and anything else lands in recorded().
+func (p *releaseProxy) env() []string {
+	return []string{
+		"HTTPS_PROXY=" + p.srv.URL, "HTTP_PROXY=" + p.srv.URL,
+		"https_proxy=" + p.srv.URL, "http_proxy=" + p.srv.URL,
+		"NO_PROXY=", "no_proxy=",
+	}
+}
+
 func (p *releaseProxy) recorded() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -121,13 +132,8 @@ func releaseHookRun(t *testing.T, proxy *releaseProxy, dropEnv ...string) (home,
 		}
 		env = append(env, kv)
 	}
-	env = append(env,
-		"SATELLE_HOME="+home,
-		marker,
-		"HTTPS_PROXY="+proxy.srv.URL, "HTTP_PROXY="+proxy.srv.URL,
-		"https_proxy="+proxy.srv.URL, "http_proxy="+proxy.srv.URL,
-		"NO_PROXY=", "no_proxy=",
-	)
+	env = append(env, "SATELLE_HOME="+home, marker)
+	env = append(env, proxy.env()...)
 
 	repo := t.TempDir()
 	initCmd := exec.Command(testBin, "init")

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -185,12 +186,113 @@ func TestRunLogoutClearsCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd, _ := testCmd()
-	if err := runLogout(cmd, server); err != nil {
+	if err := runLogout(cmd, server, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Load(server); !errors.Is(err, hosted.ErrNoCredential) {
 		t.Fatalf("credential not cleared: %v", err)
 	}
+}
+
+// accessTokenWithSID is a JWT-shaped access token whose payload carries sid.
+func accessTokenWithSID(sid string) string {
+	enc := base64.RawURLEncoding.EncodeToString
+	return enc([]byte(`{"alg":"none"}`)) + "." + enc([]byte(`{"sub":"u1","sid":"`+sid+`"}`)) + ".sig"
+}
+
+// logoutFixture saves a credential for server and returns the store.
+func logoutFixture(t *testing.T, server, accessToken string) hosted.FileStore {
+	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	store := hosted.FileStore{}
+	if err := store.Save(hosted.Credential{ServerURL: server, AccessToken: accessToken, RefreshToken: "r"}); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func requireCredentialGone(t *testing.T, store hosted.FileStore, server string) {
+	t.Helper()
+	if _, err := store.Load(server); !errors.Is(err, hosted.ErrNoCredential) {
+		t.Fatalf("credential not cleared: %v", err)
+	}
+}
+
+// AC5: with a sid, logout deletes the credential and opens exactly
+// <server>/logout?session_id=<sid>, with no return_to or other parameter.
+func TestRunLogoutOpensServerLogoutWithSID(t *testing.T) {
+	const server = "https://logout.example"
+	store := logoutFixture(t, server, accessTokenWithSID("session/01+A"))
+	var opened []string
+	cmd, buf := testCmd()
+	err := runLogout(cmd, server, func(u string) error { opened = append(opened, u); return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := server + "/logout?session_id=session%2F01%2BA"
+	if len(opened) != 1 || opened[0] != want {
+		t.Fatalf("opened = %v, want exactly [%s]", opened, want)
+	}
+	requireCredentialGone(t, store, server)
+	if strings.Contains(buf.String(), "may still be signed in") {
+		t.Errorf("the provider session was ended; no warning expected:\n%s", buf.String())
+	}
+}
+
+// AC5: no sid → nothing to open, the credential is still deleted, and the user
+// is told the provider session may remain.
+func TestRunLogoutWithoutSIDWarns(t *testing.T) {
+	const server = "https://logout.example"
+	store := logoutFixture(t, server, "opaque-token")
+	cmd, buf := testCmd()
+	opened := false
+	if err := runLogout(cmd, server, func(string) error { opened = true; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if opened {
+		t.Error("no browser should open without a sid")
+	}
+	if !strings.Contains(buf.String(), "Local tokens were deleted") || !strings.Contains(buf.String(), "provider session may still be signed in") {
+		t.Errorf("missing provider-session warning:\n%s", buf.String())
+	}
+	requireCredentialGone(t, store, server)
+}
+
+// AC5: --no-browser prints the exact URL and the warning instead of opening.
+func TestRunLogoutNoBrowserPrintsURL(t *testing.T) {
+	const server = "https://logout.example"
+	store := logoutFixture(t, server, accessTokenWithSID("sess_1"))
+	cmd, buf := testCmd()
+	if err := runLogout(cmd, server, nil); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "\n  "+server+"/logout?session_id=sess_1\n") {
+		t.Errorf("exact logout URL not printed:\n%s", out)
+	}
+	if strings.Contains(out, "return_to") {
+		t.Errorf("logout URL must carry no return_to:\n%s", out)
+	}
+	if !strings.Contains(out, "provider session may still be signed in") {
+		t.Errorf("missing provider-session warning:\n%s", out)
+	}
+	requireCredentialGone(t, store, server)
+}
+
+// A browser that cannot be opened degrades to printing the URL; the credential
+// is gone either way.
+func TestRunLogoutBrowserFailurePrintsURL(t *testing.T) {
+	const server = "https://logout.example"
+	store := logoutFixture(t, server, accessTokenWithSID("sess_2"))
+	cmd, buf := testCmd()
+	if err := runLogout(cmd, server, func(string) error { return errors.New("no display") }); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, server+"/logout?session_id=sess_2") || !strings.Contains(out, "provider session may still be signed in") {
+		t.Errorf("fallback output incomplete:\n%s", out)
+	}
+	requireCredentialGone(t, store, server)
 }
 
 // TestLogoutPruneLoopback drives `satelle logout --prune-loopback` end to end:
@@ -288,4 +390,24 @@ func TestRunWhoamiHappy(t *testing.T) {
 	if !strings.Contains(buf.String(), "me@x.io") || !strings.Contains(buf.String(), "admin") {
 		t.Fatalf("identity not printed: %q", buf.String())
 	}
+}
+
+// TestLoginCallbackPortDefaultsToTheRegisteredPort pins the AC1 decision: the
+// callback listener defaults to the fixed port whose redirect URI is
+// registered exactly, and 0 stays available for an ephemeral port.
+func TestLoginCallbackPortDefaultsToTheRegisteredPort(t *testing.T) {
+	for _, c := range NewRootCmd().Commands() {
+		if c.Name() != "login" {
+			continue
+		}
+		f := c.Flags().Lookup("callback-port")
+		if f == nil {
+			t.Fatal("login has no --callback-port flag")
+		}
+		if f.DefValue != "53682" {
+			t.Errorf("--callback-port default = %s, want 53682", f.DefValue)
+		}
+		return
+	}
+	t.Fatal("login is not registered")
 }

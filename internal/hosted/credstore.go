@@ -11,6 +11,8 @@
 package hosted
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -47,6 +49,35 @@ type Credential struct {
 	// driven by an actual 401, not by this clock).
 	ExpiresAt string `toml:"expires_at,omitempty"`
 	CreatedAt string `toml:"created_at,omitempty"`
+	// TokenEndpoint, ClientID and Resource are what login discovered; refresh
+	// goes to this token endpoint with this client id and resource, never to the
+	// satelle server. A credential without TokenEndpoint predates discovery and
+	// needs a fresh login.
+	TokenEndpoint string `toml:"token_endpoint,omitempty"`
+	ClientID      string `toml:"client_id,omitempty"`
+	Resource      string `toml:"resource,omitempty"`
+}
+
+// SessionID is the sid claim of the access token's payload, or "" when the
+// token is not a JWT or carries none. The signature is NOT checked: the value
+// only names the provider session to end on logout, and the provider decides
+// what it is worth.
+func (c Credential) SessionID() string {
+	parts := strings.Split(c.AccessToken, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		Sid string `json:"sid"`
+	}
+	if json.Unmarshal(payload, &claims) != nil {
+		return ""
+	}
+	return claims.Sid
 }
 
 // credentialsFile is the on-disk TOML shape: an array of [[credential]] tables,

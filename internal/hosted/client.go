@@ -334,11 +334,7 @@ func (c *Client) getJSON(ctx context.Context, path string, out any) error {
 // parsed JSON {"error"|"message"} field over the raw body so callers surface a
 // clean message rather than a dump.
 func serverError(code int, body []byte) string {
-	var e struct {
-		Error   string `json:"error"`
-		Message string `json:"message"`
-	}
-	if json.Unmarshal(body, &e) == nil {
+	if e, ok := decodeAPIError(body); ok {
 		if msg := strings.TrimSpace(e.Error); msg != "" {
 			return fmt.Sprintf("HTTP %d: %s", code, msg)
 		}
@@ -347,6 +343,53 @@ func serverError(code int, body []byte) string {
 		}
 	}
 	return fmt.Sprintf("HTTP %d", code)
+}
+
+// apiError is the server's JSON error body: a machine code in error and an
+// optional human sentence in message.
+type apiError struct {
+	Error   string `json:"error"`
+	Message string `json:"message"`
+}
+
+// decodeAPIError parses body as an apiError; ok is false when it is not JSON.
+// The one parser behind serverError and the unknown_subject check.
+func decodeAPIError(body []byte) (apiError, bool) {
+	var e apiError
+	if json.Unmarshal(body, &e) != nil {
+		return apiError{}, false
+	}
+	return e, true
+}
+
+// unknownSubjectCode is the error code (REST JSON error, or the gRPC message
+// prefix before ": ") the server answers when the access token is valid but its
+// subject has never signed in at the server's own site.
+const unknownSubjectCode = "unknown_subject"
+
+// maxAuthErrBodyBytes bounds the 401 body read for the unknown_subject check.
+const maxAuthErrBodyBytes = 4 << 10
+
+// UnknownSubjectError is the server's refusal of a valid token whose subject
+// has no account yet. It carries the server's own message, shown as is. It is
+// final: refreshing cannot help, so nothing retries it.
+type UnknownSubjectError struct{ Message string }
+
+func (e *UnknownSubjectError) Error() string { return e.Message }
+
+// unknownSubject returns the typed refusal when body is a 401 whose JSON error
+// is exactly unknown_subject, else nil. Any other 401 body takes the normal
+// refresh path.
+func unknownSubject(body []byte) *UnknownSubjectError {
+	e, ok := decodeAPIError(body)
+	if !ok || e.Error != unknownSubjectCode {
+		return nil
+	}
+	msg := strings.TrimSpace(e.Message)
+	if msg == "" {
+		msg = unknownSubjectCode
+	}
+	return &UnknownSubjectError{Message: msg}
 }
 
 // doAuthed sends the request (payload nil for a body-less GET) with the bearer
@@ -371,16 +414,24 @@ func (c *Client) doAuthed(ctx context.Context, method, path string, payload []by
 		return resp, nil
 	}
 
+	// Read the refusal body (bounded) before deciding what it means.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxAuthErrBodyBytes))
+	resp.Body.Close()
+
+	// An unknown subject is final for any credential: refreshing cannot give the
+	// token an account, so show the server's message and stop.
+	if us := unknownSubject(body); us != nil {
+		return nil, us
+	}
+
 	// A session token is never refreshed: the server's 401 is final.
 	if cred.IsSession() {
-		resp.Body.Close()
 		return nil, ErrSessionTokenRefused
 	}
 
 	// Access token rejected — refresh, PERSIST the rotated refresh immediately
 	// (the old one dies on rotation; a late persist would strand a dead token on
 	// crash), then retry the request exactly once.
-	resp.Body.Close()
 	rotated, rErr := c.refreshAndPersist(ctx, cred)
 	if rErr != nil {
 		return nil, rErr
@@ -388,24 +439,32 @@ func (c *Client) doAuthed(ctx context.Context, method, path string, payload []by
 	return c.send(ctx, method, path, rotated.AccessToken, payload, contentType)
 }
 
-// refreshAndPersist runs the HTTP refresh_token grant and persists the rotated
-// pair. REST doAuthed is the only caller; gRPC withGRPCAuth uses
-// refreshOverGRPC so the satelled path never requires POST /oauth/token.
+// refreshAndPersist runs the refresh_token grant against the token endpoint
+// stored with the credential and persists the rotated pair. REST doAuthed and
+// gRPC withGRPCAuth share it, so the satelle server never sees a refresh. A
+// credential with no stored token endpoint predates discovery: it needs a fresh
+// login, and no request is made.
 func (c *Client) refreshAndPersist(ctx context.Context, cred Credential) (Credential, error) {
-	tok, rErr := refreshGrant(ctx, c.http, c.server, cred.RefreshToken)
+	if cred.TokenEndpoint == "" {
+		return Credential{}, fmt.Errorf("%w (stored credential has no token endpoint)", ErrLoginRequired)
+	}
+	tok, rErr := refreshGrant(ctx, c.http, cred)
 	if rErr != nil {
 		return Credential{}, fmt.Errorf("%w (refresh failed: %v)", ErrLoginRequired, rErr)
 	}
 	return c.persistRotated(cred, tok)
 }
 
-// persistRotated carries identity fields across rotation and saves the new pair.
-// Shared by the HTTP and gRPC grants so display_name/email/principal cannot
-// drift: credentialFromToken only knows the token response, so without this
-// the UI would lose identity ~1h after login.
+// persistRotated carries identity and discovery fields across rotation and
+// saves the new pair, so display_name/email/principal cannot drift and every
+// later refresh still reaches the same token endpoint with the same client id
+// and resource: credentialFromToken only knows the token response, so without
+// this the UI would lose identity ~1h after login and the second refresh would
+// have nowhere to go.
 func (c *Client) persistRotated(cred Credential, tok tokenResponse) (Credential, error) {
 	rotated := credentialFromToken(c.server, tok)
 	rotated.DisplayName, rotated.Email, rotated.PrincipalID = cred.DisplayName, cred.Email, cred.PrincipalID
+	rotated.TokenEndpoint, rotated.ClientID, rotated.Resource = cred.TokenEndpoint, cred.ClientID, cred.Resource
 	if sErr := c.store.Save(rotated); sErr != nil {
 		return Credential{}, fmt.Errorf("hosted: persist refreshed credential: %w", sErr)
 	}

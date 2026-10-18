@@ -15,16 +15,10 @@ import (
 	"time"
 )
 
-// ClientID is the public client identifier for the satelle CLI. It is a
-// constant (RFC 8252 native app, no client secret); the hosted server
-// special-cases the loopback redirect so no per-run dynamic registration is
-// needed.
-const ClientID = "satelle-cli"
-
 // defaultLoginTimeout bounds the wait for the browser to land the callback.
 const defaultLoginTimeout = 3 * time.Minute
 
-// tokenResponse is the /oauth/token success body (both grants).
+// tokenResponse is the token endpoint success body (both grants).
 type tokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -33,7 +27,7 @@ type tokenResponse struct {
 	Scope        string `json:"scope"`
 }
 
-// oauthError is the /oauth/token error body ({"error","error_description"}).
+// oauthError is the token endpoint error body ({"error","error_description"}).
 type oauthError struct {
 	Code        string `json:"error"`
 	Description string `json:"error_description"`
@@ -55,24 +49,31 @@ type LoginOptions struct {
 	Timeout time.Duration
 	// Out receives the "open this URL" prompt; nil discards it.
 	Out io.Writer
+	// Port is the loopback port for the callback listener. Zero picks an
+	// ephemeral port (RFC 8252 §7.3); `satelle login` defaults to a fixed port
+	// whose redirect URI is registered exactly.
+	Port int
 }
 
 // Flow is a split OAuth 2.1 + PKCE authorization-code flow: the CLI runs it in
 // one blocking call (Login), while the web server runs it across two HTTP
 // requests (AuthorizeURL on sign-in, Exchange on the callback). Both go through
 // this one seam so there is exactly one OAuth code path. A Flow is single-use.
+// Its endpoints come from discovery; nothing here names a provider.
 type Flow struct {
 	server      string
+	ep          endpoints
 	redirectURI string
 	pk          pkce
 	state       string
 }
 
-// NewFlow builds a flow for server with the given loopback redirect URI,
-// generating a fresh PKCE (S256) verifier + challenge and a random state. The
-// redirectURI MUST be reused byte-identically at Exchange (the server matches it
-// exactly) — holding it on the Flow guarantees that.
-func NewFlow(server, redirectURI string) (*Flow, error) {
+// newFlow builds a flow for server against the discovered endpoints with the
+// given loopback redirect URI, generating a fresh PKCE (S256) verifier +
+// challenge and a random state. The redirectURI MUST be reused byte-identically
+// at Exchange (the server matches it exactly) — holding it on the Flow
+// guarantees that.
+func newFlow(server string, ep endpoints, redirectURI string) (*Flow, error) {
 	server = normalizeServerURL(server)
 	if server == "" {
 		return nil, fmt.Errorf("hosted: server URL not set")
@@ -85,25 +86,27 @@ func NewFlow(server, redirectURI string) (*Flow, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Flow{server: server, redirectURI: redirectURI, pk: pk, state: state}, nil
+	return &Flow{server: server, ep: ep, redirectURI: redirectURI, pk: pk, state: state}, nil
 }
 
 // State is the CSRF state the callback must echo back.
 func (f *Flow) State() string { return f.state }
 
-// AuthorizeURL is the /oauth/authorize URL to send the browser to.
+// AuthorizeURL is the authorization endpoint URL to send the browser to.
 func (f *Flow) AuthorizeURL() string {
-	return buildAuthorizeURL(f.server, f.redirectURI, f.pk.challenge, f.state)
+	return buildAuthorizeURL(f.ep, f.redirectURI, f.pk.challenge, f.state)
 }
 
 // Exchange trades the authorization code for tokens and returns the resulting
 // (unpersisted) Credential. The caller persists it.
 func (f *Flow) Exchange(ctx context.Context, httpClient *http.Client, code string) (Credential, error) {
-	tok, err := exchangeCode(ctx, httpClient, f.server, code, f.redirectURI, f.pk.verifier)
+	tok, err := exchangeCode(ctx, httpClient, f.ep, code, f.redirectURI, f.pk.verifier)
 	if err != nil {
 		return Credential{}, err
 	}
-	return credentialFromToken(f.server, tok), nil
+	cred := credentialFromToken(f.server, tok)
+	cred.TokenEndpoint, cred.ClientID, cred.Resource = f.ep.TokenEndpoint, f.ep.ClientID, f.ep.Resource
+	return cred, nil
 }
 
 // pkce holds one flow's verifier + S256 challenge.
@@ -131,9 +134,10 @@ func randomURLToken(n int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// Login runs the loopback authorization-code + PKCE flow end to end against
-// server and returns the resulting Credential (NOT persisted — the caller
-// stores it). httpClient is the client used for the token exchange.
+// Login discovers server's authorization server, then runs the loopback
+// authorization-code + PKCE flow end to end against it and returns the
+// resulting Credential (NOT persisted — the caller stores it). httpClient is
+// the client used for discovery and the token exchange.
 func Login(ctx context.Context, httpClient *http.Client, server string, opts LoginOptions) (Credential, error) {
 	server = normalizeServerURL(server)
 	if server == "" {
@@ -144,10 +148,16 @@ func Login(ctx context.Context, httpClient *http.Client, server string, opts Log
 		timeout = defaultLoginTimeout
 	}
 
-	// 1. Loopback listener on an ephemeral port. Build the redirect URI ONCE and
-	//    reuse the exact string for BOTH authorize and the token exchange — the
-	//    server matches it byte-for-byte, so rebuilding it would fail.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ep, err := discover(ctx, httpClient, server)
+	if err != nil {
+		return Credential{}, err
+	}
+
+	// 1. Loopback listener (ephemeral port unless opts.Port is set). Build the
+	//    redirect URI ONCE and reuse the exact string for BOTH authorize and the
+	//    token exchange — the server matches it byte-for-byte, so rebuilding it
+	//    would fail.
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", opts.Port))
 	if err != nil {
 		return Credential{}, fmt.Errorf("hosted: open loopback listener: %w", err)
 	}
@@ -158,7 +168,7 @@ func Login(ctx context.Context, httpClient *http.Client, server string, opts Log
 	// 2. Build the flow — the same OAuth seam the web server uses. PKCE (S256) +
 	//    CSRF state live on it, and it holds redirectURI for a byte-identical
 	//    reuse at Exchange.
-	flow, err := NewFlow(server, redirectURI)
+	flow, err := newFlow(server, ep, redirectURI)
 	if err != nil {
 		return Credential{}, err
 	}
@@ -227,49 +237,64 @@ func Login(ctx context.Context, httpClient *http.Client, server string, opts Log
 	return flow.Exchange(ctx, httpClient, code)
 }
 
-// buildAuthorizeURL builds the /oauth/authorize URL. Method is always S256.
-func buildAuthorizeURL(server, redirectURI, challenge, state string) string {
+// loginScope is the scope every authorize request asks for; offline_access is
+// what makes the provider issue the refresh token the refresh path relies on.
+const loginScope = "openid email profile offline_access"
+
+// buildAuthorizeURL builds the authorization endpoint URL. Method is always
+// S256; resource (RFC 8707) names the API the token is for.
+func buildAuthorizeURL(ep endpoints, redirectURI, challenge, state string) string {
 	q := url.Values{}
 	q.Set("response_type", "code")
-	q.Set("client_id", ClientID)
+	q.Set("client_id", ep.ClientID)
 	q.Set("redirect_uri", redirectURI)
 	q.Set("state", state)
 	q.Set("code_challenge", challenge)
 	q.Set("code_challenge_method", "S256")
-	return server + "/oauth/authorize?" + q.Encode()
+	q.Set("resource", ep.Resource)
+	q.Set("scope", loginScope)
+	sep := "?"
+	if strings.Contains(ep.AuthorizationEndpoint, "?") {
+		sep = "&"
+	}
+	return ep.AuthorizationEndpoint + sep + q.Encode()
 }
 
 // exchangeCode performs the authorization_code grant.
-func exchangeCode(ctx context.Context, httpClient *http.Client, server, code, redirectURI, verifier string) (tokenResponse, error) {
+func exchangeCode(ctx context.Context, httpClient *http.Client, ep endpoints, code, redirectURI, verifier string) (tokenResponse, error) {
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
 	form.Set("redirect_uri", redirectURI)
-	form.Set("client_id", ClientID)
+	form.Set("client_id", ep.ClientID)
 	form.Set("code_verifier", verifier)
-	return postToken(ctx, httpClient, server, form)
+	form.Set("resource", ep.Resource)
+	return postToken(ctx, httpClient, ep.TokenEndpoint, form)
 }
 
-// refreshGrant performs the refresh_token grant, returning a rotated pair.
-func refreshGrant(ctx context.Context, httpClient *http.Client, server, refreshToken string) (tokenResponse, error) {
+// refreshGrant performs the refresh_token grant against the token endpoint,
+// client id and resource stored with cred, returning a rotated pair.
+func refreshGrant(ctx context.Context, httpClient *http.Client, cred Credential) (tokenResponse, error) {
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
-	form.Set("refresh_token", refreshToken)
-	form.Set("client_id", ClientID)
-	return postToken(ctx, httpClient, server, form)
+	form.Set("refresh_token", cred.RefreshToken)
+	form.Set("client_id", cred.ClientID)
+	form.Set("resource", cred.Resource)
+	return postToken(ctx, httpClient, cred.TokenEndpoint, form)
 }
 
-// postToken POSTs a form to /oauth/token and decodes the response, turning a
+// postToken POSTs a form to tokenEndpoint and decodes the response, turning a
 // non-200 into a typed *oauthError.
-func postToken(ctx context.Context, httpClient *http.Client, server string, form url.Values) (tokenResponse, error) {
+func postToken(ctx context.Context, httpClient *http.Client, tokenEndpoint string, form url.Values) (tokenResponse, error) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server+"/oauth/token", strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return tokenResponse{}, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return tokenResponse{}, fmt.Errorf("hosted: token request: %w", err)

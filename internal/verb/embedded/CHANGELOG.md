@@ -1,3 +1,14 @@
+## [0.0.700] - 2026-10-18
+
+### Changed
+- `satelle login` signs in at the authorization server the satelle server advertises (WorkOS AuthKit for satelle.dev), not at satelle-server's own OAuth server. It reads `<server>/.well-known/oauth-protected-resource/api`, then that authorization server's metadata, and runs PKCE S256 with a loopback redirect using the client id the server publishes (`satelle_client_id`). No identity provider, host or client id is built into the binary. Every authorize and token request carries `resource` set to the API resource (`https://satelle.dev/api`), and the scope is `openid email profile offline_access`. (sty_620c56ea)
+- The login callback listens on `http://127.0.0.1:53682/callback` by default. `--callback-port` changes the port, and `--callback-port 0` picks a free one for providers that accept any loopback port. (sty_620c56ea)
+- Token refresh, for REST and for gRPC sync, goes to the provider token endpoint saved with the credential. satelle-server's `/oauth/token` and `Sync.Refresh` are no longer called. A credential saved by an earlier `satelle login` keeps working until its access token expires; after that, satelle asks for `satelle login` once instead of refreshing. (sty_620c56ea)
+- `satelle logout` deletes the local credential, then opens (or with `--no-browser` prints) `<server>/logout?session_id=<sid>` to end the provider session. With no session id, or no browser, it says the local tokens were deleted but the provider session may still be signed in. (sty_620c56ea)
+
+### Added
+- A server refusal with `unknown_subject` (the account has never signed in at satelle.dev) is shown with the server's message, with no refresh and no retry, on REST and gRPC. (sty_620c56ea)
+
 ## [0.0.699] - 2026-10-18
 
 ### Fixed

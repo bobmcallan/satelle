@@ -71,7 +71,8 @@ func TestClientRefreshRotationOn401(t *testing.T) {
 	defer ts.Close()
 
 	store := &memStore{}
-	_ = store.Save(Credential{ServerURL: ts.URL, AccessToken: "access-1", RefreshToken: "refresh-1"})
+	_ = store.Save(Credential{ServerURL: ts.URL, AccessToken: "access-1", RefreshToken: "refresh-1",
+		TokenEndpoint: ts.URL + "/oauth/token", ClientID: "cid", Resource: "res"})
 
 	who, err := NewClient(ts.URL, store, ts.Client()).Me(context.Background())
 	if err != nil {
@@ -112,7 +113,8 @@ func TestSendStampsLocationHeaderIncludingRetry(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	store := &memStore{}
-	_ = store.Save(Credential{ServerURL: ts.URL, AccessToken: "access-1", RefreshToken: "refresh-1"})
+	_ = store.Save(Credential{ServerURL: ts.URL, AccessToken: "access-1", RefreshToken: "refresh-1",
+		TokenEndpoint: ts.URL + "/oauth/token", ClientID: "cid", Resource: "res"})
 	c := NewClient(ts.URL, store, ts.Client())
 	c.SetLocation("loc_header_retry_aaaaaa")
 	if _, err := c.Me(context.Background()); err != nil {
@@ -167,7 +169,8 @@ func TestClientRefreshPreservesIdentity(t *testing.T) {
 
 	store := &memStore{}
 	_ = store.Save(Credential{ServerURL: ts.URL, AccessToken: "access-1", RefreshToken: "refresh-1",
-		DisplayName: "Kept Name", Email: "kept@x.io", PrincipalID: "prin_p"})
+		DisplayName: "Kept Name", Email: "kept@x.io", PrincipalID: "prin_p",
+		TokenEndpoint: ts.URL + "/oauth/token", ClientID: "cid", Resource: "res"})
 
 	if _, err := NewClient(ts.URL, store, ts.Client()).Me(context.Background()); err != nil {
 		t.Fatalf("Me: %v", err)
@@ -194,7 +197,8 @@ func TestClientFailedRefreshIsLoginRequired(t *testing.T) {
 	defer ts.Close()
 
 	store := &memStore{}
-	_ = store.Save(Credential{ServerURL: ts.URL, AccessToken: "stale", RefreshToken: "dead"})
+	_ = store.Save(Credential{ServerURL: ts.URL, AccessToken: "stale", RefreshToken: "dead",
+		TokenEndpoint: ts.URL + "/oauth/token", ClientID: "cid", Resource: "res"})
 
 	_, err := NewClient(ts.URL, store, ts.Client()).Me(context.Background())
 	if !errors.Is(err, ErrLoginRequired) {
@@ -305,7 +309,8 @@ func TestClientCreateProjectBodySurvivesRefresh(t *testing.T) {
 	defer ts.Close()
 
 	store := &memStore{}
-	_ = store.Save(Credential{ServerURL: ts.URL, AccessToken: "access-1", RefreshToken: "refresh-1"})
+	_ = store.Save(Credential{ServerURL: ts.URL, AccessToken: "access-1", RefreshToken: "refresh-1",
+		TokenEndpoint: ts.URL + "/oauth/token", ClientID: "cid", Resource: "res"})
 
 	p, err := NewClient(ts.URL, store, ts.Client()).CreateProject(context.Background(), "acme", "Acme Co")
 	if err != nil {
