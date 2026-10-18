@@ -72,7 +72,8 @@ func TestRegisterLocation401(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	store := &memStore{}
-	_ = store.Save(Credential{ServerURL: ts.URL, AccessToken: "stale", RefreshToken: "dead"})
+	_ = store.Save(Credential{ServerURL: ts.URL, AccessToken: "stale", RefreshToken: "dead",
+		TokenEndpoint: ts.URL + "/oauth/token", ClientID: "cid", Resource: "res"})
 	c := NewClient(ts.URL, store, ts.Client())
 	c.SetLocation("loc_unauth_xxxxxxxxxx")
 	err := c.RegisterLocation(context.Background(), "")

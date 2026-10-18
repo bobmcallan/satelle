@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,72 +16,145 @@ import (
 	"time"
 )
 
-// authServer is a stub OAuth 2.1 + PKCE authorization server for the flow tests.
-type authServer struct {
-	mu           sync.Mutex
-	challenge    string // captured from /oauth/authorize
-	stateEcho    string // state to echo back (default: the real one)
-	forceState   string // if set, echo THIS wrong state instead
-	forceError   string // if set, redirect with error= and no code
-	tokenCalls   int
-	gotVerifier  string
-	gotRedirect  string
-	gotGrant     string
-	gotClientID  string
-	authRedirect string // captured redirect_uri from authorize
+const (
+	fakeResource = "https://api.example/"
+	fakeClientID = "client-abc"
+)
+
+// oauthFakes is the two-server fake the login tests run against: a resource
+// server (the PRM and the API) and an authorization server (RFC 8414 metadata,
+// authorize, token) on a DIFFERENT host, so a CLI that assumed one server
+// would fail.
+type oauthFakes struct {
+	mu sync.Mutex
+	// resource server
+	resourceHits []string // every path the resource server saw
+	// authorization server
+	challenge    string
+	authQueries  []url.Values // every authorize query
+	tokenForms   []url.Values // every token form (code exchange and refresh)
+	authRedirect string
+	asHits       []string // every path the authorization server saw
+
+	stateEcho  string // state to echo back (default: the real one)
+	forceState string // if set, echo THIS wrong state instead
+	forceError string // if set, redirect with error= and no code
+	noClientID bool   // PRM omits satelle_client_id
+	openIDOnly bool   // RFC 8414 path 404s; only OIDC discovery answers
+	badIssuer  bool   // metadata issuer does not match
+
+	resourceURL string // http://127.0.0.1:port
+	asURL       string // http://localhost:port
 }
 
-func newAuthServer() (*authServer, *httptest.Server) {
-	a := &authServer{}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/oauth/authorize", func(w http.ResponseWriter, r *http.Request) {
+func newOAuthFakes(t *testing.T) *oauthFakes {
+	t.Helper()
+	f := &oauthFakes{}
+
+	asMux := http.NewServeMux()
+	metadata := func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.asHits = append(f.asHits, r.URL.Path)
+		openIDOnly, badIssuer := f.openIDOnly, f.badIssuer
+		f.mu.Unlock()
+		if openIDOnly && strings.Contains(r.URL.Path, "oauth-authorization-server") {
+			http.NotFound(w, r)
+			return
+		}
+		issuer := f.asURL
+		if badIssuer {
+			issuer = "https://elsewhere.example"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"issuer":                 issuer,
+			"authorization_endpoint": f.asURL + "/authorize",
+			"token_endpoint":         f.asURL + "/token",
+		})
+	}
+	asMux.HandleFunc("/.well-known/oauth-authorization-server", metadata)
+	asMux.HandleFunc("/.well-known/openid-configuration", metadata)
+	asMux.HandleFunc("/authorize", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		a.mu.Lock()
-		a.challenge = q.Get("code_challenge")
-		a.authRedirect = q.Get("redirect_uri")
-		method := q.Get("code_challenge_method")
-		a.mu.Unlock()
-		if method != "S256" {
+		f.mu.Lock()
+		f.asHits = append(f.asHits, r.URL.Path)
+		f.challenge = q.Get("code_challenge")
+		f.authRedirect = q.Get("redirect_uri")
+		f.authQueries = append(f.authQueries, q)
+		forceError, forceState := f.forceError, f.forceState
+		f.mu.Unlock()
+		if q.Get("code_challenge_method") != "S256" {
 			http.Error(w, "only S256", http.StatusBadRequest)
 			return
 		}
-		redirect := q.Get("redirect_uri")
-		state := q.Get("state")
 		vals := url.Values{}
-		if a.forceError != "" {
-			vals.Set("error", a.forceError)
-			vals.Set("state", state)
+		redirect := q.Get("redirect_uri")
+		if forceError != "" {
+			vals.Set("error", forceError)
+			vals.Set("state", q.Get("state"))
 			http.Redirect(w, r, redirect+"?"+vals.Encode(), http.StatusFound)
 			return
 		}
-		echo := state
-		if a.forceState != "" {
-			echo = a.forceState
+		echo := q.Get("state")
+		if forceState != "" {
+			echo = forceState
 		}
 		vals.Set("code", "auth-code-123")
 		vals.Set("state", echo)
 		http.Redirect(w, r, redirect+"?"+vals.Encode(), http.StatusFound)
 	})
-	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
+	asMux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
-		a.mu.Lock()
-		a.tokenCalls++
-		a.gotVerifier = r.Form.Get("code_verifier")
-		a.gotRedirect = r.Form.Get("redirect_uri")
-		a.gotGrant = r.Form.Get("grant_type")
-		a.gotClientID = r.Form.Get("client_id")
-		a.mu.Unlock()
+		f.mu.Lock()
+		f.asHits = append(f.asHits, r.URL.Path)
+		f.tokenForms = append(f.tokenForms, r.PostForm)
+		n := len(f.tokenForms)
+		f.mu.Unlock()
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"access_token":  "access-1",
-			"refresh_token": "refresh-1",
+			"access_token":  fmt.Sprintf("access-%d", n),
+			"refresh_token": fmt.Sprintf("refresh-%d", n),
 			"token_type":    "Bearer",
 			"expires_in":    3600,
 			"scope":         "satelle",
 		})
 	})
-	return a, httptest.NewServer(mux)
+	as := httptest.NewServer(asMux)
+	t.Cleanup(as.Close)
+	f.asURL = otherHost(t, as.URL)
+
+	rsMux := http.NewServeMux()
+	rsMux.HandleFunc("/.well-known/oauth-protected-resource/api", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.resourceHits = append(f.resourceHits, r.URL.Path)
+		noClientID := f.noClientID
+		f.mu.Unlock()
+		prm := map[string]any{
+			"resource":               fakeResource,
+			"authorization_servers":  []string{f.asURL, "https://unused.example"},
+			"satelle_client_id":      fakeClientID,
+			"bearer_methods_support": []string{"header"},
+		}
+		if noClientID {
+			delete(prm, "satelle_client_id")
+		}
+		_ = json.NewEncoder(w).Encode(prm)
+	})
+	// The root PRM is the MCP resource; the CLI must never read it.
+	rsMux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.resourceHits = append(f.resourceHits, r.URL.Path)
+		f.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resource":              "https://mcp.example/",
+			"authorization_servers": []string{"https://mcp-as.example"},
+		})
+	})
+	rs := httptest.NewServer(rsMux)
+	t.Cleanup(rs.Close)
+	f.resourceURL = rs.URL
+	requireLoopback(t, f.resourceURL, f.asURL)
+	return f
 }
 
 // browserGET returns an OpenBrowser that simply GETs the authorize URL, letting
@@ -96,83 +171,158 @@ func browserGET(t *testing.T) func(string) error {
 	}
 }
 
-func TestLoginHappyPath(t *testing.T) {
-	a, ts := newAuthServer()
-	defer ts.Close()
+func (f *oauthFakes) login(t *testing.T, opts LoginOptions) (Credential, error) {
+	t.Helper()
+	if opts.OpenBrowser == nil {
+		opts.OpenBrowser = browserGET(t)
+	}
+	if opts.Timeout == 0 {
+		opts.Timeout = 5 * time.Second
+	}
+	return Login(context.Background(), guardedClient(t), f.resourceURL, opts)
+}
 
-	cred, err := Login(context.Background(), ts.Client(), ts.URL, LoginOptions{
-		OpenBrowser: browserGET(t),
-		Timeout:     5 * time.Second,
-	})
+func TestLoginHappyPath(t *testing.T) {
+	f := newOAuthFakes(t)
+	cred, err := f.login(t, LoginOptions{})
 	if err != nil {
 		t.Fatalf("Login: %v", err)
 	}
 	if cred.AccessToken != "access-1" || cred.RefreshToken != "refresh-1" {
 		t.Fatalf("tokens not captured: %+v", cred)
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.tokenCalls != 1 {
-		t.Fatalf("expected exactly 1 token call, got %d", a.tokenCalls)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// AC2: only the API PRM was read, never the root one.
+	if len(f.resourceHits) != 1 || f.resourceHits[0] != "/.well-known/oauth-protected-resource/api" {
+		t.Errorf("resource server hits = %v, want only the /api PRM", f.resourceHits)
 	}
-	if a.gotGrant != "authorization_code" {
-		t.Errorf("grant_type = %q", a.gotGrant)
+	// AC2: the flow ran against the discovered endpoints on the other host.
+	if len(f.authQueries) != 1 || len(f.tokenForms) != 1 {
+		t.Fatalf("authorize=%d token=%d, want 1 and 1", len(f.authQueries), len(f.tokenForms))
 	}
-	if a.gotClientID != ClientID {
-		t.Errorf("client_id = %q, want %q", a.gotClientID, ClientID)
+	form := f.tokenForms[0]
+	if form.Get("grant_type") != "authorization_code" {
+		t.Errorf("grant_type = %q", form.Get("grant_type"))
 	}
-	// redirect_uri sent to /token must be byte-identical to the one authorize saw.
-	if a.gotRedirect != a.authRedirect {
-		t.Errorf("redirect_uri mismatch: token=%q authorize=%q", a.gotRedirect, a.authRedirect)
+	if form.Get("client_id") != fakeClientID || f.authQueries[0].Get("client_id") != fakeClientID {
+		t.Errorf("client_id = %q / %q, want %q", f.authQueries[0].Get("client_id"), form.Get("client_id"), fakeClientID)
 	}
-	if !strings.HasPrefix(a.gotRedirect, "http://127.0.0.1:") {
-		t.Errorf("redirect_uri not loopback: %q", a.gotRedirect)
+	// AC3: resource on the authorize URL and the code exchange.
+	if f.authQueries[0].Get("resource") != fakeResource || form.Get("resource") != fakeResource {
+		t.Errorf("resource = %q / %q, want %q", f.authQueries[0].Get("resource"), form.Get("resource"), fakeResource)
+	}
+	// offline_access is what gets the refresh token the refresh path uses.
+	if got := f.authQueries[0].Get("scope"); got != "openid email profile offline_access" {
+		t.Errorf("authorize scope = %q, want %q", got, "openid email profile offline_access")
+	}
+	// The credential remembers where to refresh.
+	if cred.TokenEndpoint != f.asURL+"/token" || cred.ClientID != fakeClientID || cred.Resource != fakeResource {
+		t.Errorf("discovery fields not stamped on the credential: %+v", cred)
+	}
+	// redirect_uri sent to the token endpoint must be byte-identical to the one
+	// authorize saw.
+	if form.Get("redirect_uri") != f.authRedirect {
+		t.Errorf("redirect_uri mismatch: token=%q authorize=%q", form.Get("redirect_uri"), f.authRedirect)
+	}
+	if !strings.HasPrefix(form.Get("redirect_uri"), "http://127.0.0.1:") {
+		t.Errorf("redirect_uri not loopback: %q", form.Get("redirect_uri"))
 	}
 	// The verifier must be 43-128 chars and S256-hash to the sent challenge.
-	if n := len(a.gotVerifier); n < 43 || n > 128 {
+	verifier := form.Get("code_verifier")
+	if n := len(verifier); n < 43 || n > 128 {
 		t.Errorf("verifier length %d out of range", n)
 	}
-	sum := sha256.Sum256([]byte(a.gotVerifier))
-	if got := base64.RawURLEncoding.EncodeToString(sum[:]); got != a.challenge {
-		t.Errorf("S256(verifier) %q != challenge %q", got, a.challenge)
+	sum := sha256.Sum256([]byte(verifier))
+	if got := base64.RawURLEncoding.EncodeToString(sum[:]); got != f.challenge {
+		t.Errorf("S256(verifier) %q != challenge %q", got, f.challenge)
+	}
+}
+
+func TestLoginDiscoveryFallsBackToOpenIDConfiguration(t *testing.T) {
+	f := newOAuthFakes(t)
+	f.openIDOnly = true
+	if _, err := f.login(t, LoginOptions{}); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.asHits) < 2 || f.asHits[0] != "/.well-known/oauth-authorization-server" || f.asHits[1] != "/.well-known/openid-configuration" {
+		t.Errorf("authorization server hits = %v, want RFC 8414 then OIDC", f.asHits)
+	}
+}
+
+func TestLoginDiscoveryFailuresAbortBeforeBrowser(t *testing.T) {
+	cases := map[string]func(*oauthFakes){
+		"no client id":    func(f *oauthFakes) { f.noClientID = true },
+		"issuer mismatch": func(f *oauthFakes) { f.badIssuer = true },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newOAuthFakes(t)
+			mutate(f)
+			opened := false
+			_, err := f.login(t, LoginOptions{OpenBrowser: func(string) error { opened = true; return nil }})
+			if err == nil {
+				t.Fatal("expected a discovery error")
+			}
+			if opened {
+				t.Error("the browser must not open when discovery fails")
+			}
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if len(f.authQueries) != 0 || len(f.tokenForms) != 0 {
+				t.Errorf("authorize=%d token=%d, want 0 and 0", len(f.authQueries), len(f.tokenForms))
+			}
+		})
+	}
+}
+
+func TestLoginFixedCallbackPort(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	f := newOAuthFakes(t)
+	if _, err := f.login(t, LoginOptions{Port: port}); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if want := fmt.Sprintf("http://127.0.0.1:%d/callback", port); f.authRedirect != want {
+		t.Errorf("redirect_uri = %q, want %q", f.authRedirect, want)
 	}
 }
 
 func TestLoginStateMismatchAbortsBeforeExchange(t *testing.T) {
-	a, ts := newAuthServer()
-	defer ts.Close()
-	a.forceState = "wrong-state"
-
-	_, err := Login(context.Background(), ts.Client(), ts.URL, LoginOptions{
-		OpenBrowser: browserGET(t),
-		Timeout:     3 * time.Second,
-	})
+	f := newOAuthFakes(t)
+	f.forceState = "wrong-state"
+	_, err := f.login(t, LoginOptions{Timeout: 3 * time.Second})
 	if err == nil || !strings.Contains(err.Error(), "state mismatch") {
 		t.Fatalf("expected state mismatch error, got %v", err)
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.tokenCalls != 0 {
-		t.Fatalf("token endpoint must NOT be called on state mismatch, got %d calls", a.tokenCalls)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.tokenForms) != 0 {
+		t.Fatalf("token endpoint must NOT be called on state mismatch, got %d calls", len(f.tokenForms))
 	}
 }
 
 func TestLoginErrorParamNoExchange(t *testing.T) {
-	a, ts := newAuthServer()
-	defer ts.Close()
-	a.forceError = "access_denied"
-
-	_, err := Login(context.Background(), ts.Client(), ts.URL, LoginOptions{
-		OpenBrowser: browserGET(t),
-		Timeout:     3 * time.Second,
-	})
+	f := newOAuthFakes(t)
+	f.forceError = "access_denied"
+	_, err := f.login(t, LoginOptions{Timeout: 3 * time.Second})
 	if err == nil || !strings.Contains(err.Error(), "access_denied") {
 		t.Fatalf("expected authorization error, got %v", err)
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.tokenCalls != 0 {
-		t.Fatalf("token endpoint must NOT be called on error redirect, got %d", a.tokenCalls)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.tokenForms) != 0 {
+		t.Fatalf("token endpoint must NOT be called on error redirect, got %d calls", len(f.tokenForms))
 	}
 }
 
@@ -191,4 +341,15 @@ func TestNewPKCEShape(t *testing.T) {
 	if want := base64.RawURLEncoding.EncodeToString(sum[:]); want != pk.challenge {
 		t.Errorf("challenge != S256(verifier)")
 	}
+}
+
+// AC3: a refresh carries the resource and client id login discovered, on every
+// rotation, and goes to the stored token endpoint.
+func TestRefreshGrantCarriesResourceAndClientID(t *testing.T) {
+	prov := newFakeProvider(t)
+	cred := prov.credential("https://hosted.example")
+	if _, err := refreshGrant(context.Background(), guardedClient(t), cred); err != nil {
+		t.Fatal(err)
+	}
+	prov.wantRefresh(t, 0, "refresh-1")
 }

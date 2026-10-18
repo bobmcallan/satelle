@@ -25,20 +25,16 @@ import (
 
 type stubSync struct {
 	syncpb.UnimplementedSyncServer
-	mu          sync.Mutex
-	auths       []string
-	locs        []string
-	applies     int
-	snaps       int
-	refreshes   int
-	refreshTok  string
-	refreshAuth []string
-	kind        string
-	fail        []error
-	apply       func(*syncpb.ApplyRequest) (*syncpb.ApplyResponse, error)
-	snap        func(*syncpb.SnapshotRequest) (*syncpb.SnapshotResponse, error)
-	refresh     func(*syncpb.RefreshRequest) (*syncpb.RefreshResponse, error)
-	refreshErr  error
+	mu        sync.Mutex
+	auths     []string
+	locs      []string
+	applies   int
+	snaps     int
+	refreshes int // Sync.Refresh RPCs received; the CLI must never send one
+	kind      string
+	fail      []error
+	apply     func(*syncpb.ApplyRequest) (*syncpb.ApplyResponse, error)
+	snap      func(*syncpb.SnapshotRequest) (*syncpb.SnapshotResponse, error)
 }
 
 func (s *stubSync) recordAuth(ctx context.Context) {
@@ -98,26 +94,8 @@ func (s *stubSync) Snapshot(ctx context.Context, req *syncpb.SnapshotRequest) (*
 func (s *stubSync) Refresh(ctx context.Context, req *syncpb.RefreshRequest) (*syncpb.RefreshResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	md, _ := metadata.FromIncomingContext(ctx)
-	vals := md.Get("authorization")
-	if len(vals) == 0 {
-		s.refreshAuth = append(s.refreshAuth, "")
-	} else {
-		s.refreshAuth = append(s.refreshAuth, vals[0])
-	}
 	s.refreshes++
-	s.refreshTok = req.GetRefreshToken()
-	if s.refreshErr != nil {
-		return nil, s.refreshErr
-	}
-	if s.refresh != nil {
-		return s.refresh(req)
-	}
-	return &syncpb.RefreshResponse{
-		AccessToken:  "access-2",
-		RefreshToken: "refresh-2",
-		ExpiresIn:    3600,
-	}, nil
+	return nil, status.Error(codes.Unimplemented, "the CLI refreshes at the provider, not here")
 }
 
 func newTestGRPCClient(t *testing.T, stub *stubSync, store Store, httpClient *http.Client) *Client {
@@ -309,13 +287,13 @@ func TestSnapshotTransportError(t *testing.T) {
 }
 
 func TestApplyRefreshesOnUnauthenticated(t *testing.T) {
+	prov := newFakeProvider(t)
 	store := &memStore{}
-	_ = store.Save(Credential{
-		ServerURL: "http://hosted.example", AccessToken: "access-1", RefreshToken: "refresh-1",
-		DisplayName: "A", Email: "a@b.c", PrincipalID: "u1",
-	})
+	cred := prov.credential("http://hosted.example")
+	cred.DisplayName, cred.Email, cred.PrincipalID = "A", "a@b.c", "u1"
+	_ = store.Save(cred)
 	stub := &stubSync{fail: []error{status.Error(codes.Unauthenticated, "unauthenticated")}}
-	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
+	c := newTestGRPCClient(t, stub, store, guardedClient(t))
 
 	res, err := c.Apply(context.Background(), "probe", WorkstateIngest{
 		Items: []json.RawMessage{json.RawMessage(`{"id":"sty_1"}`)},
@@ -329,12 +307,14 @@ func TestApplyRefreshesOnUnauthenticated(t *testing.T) {
 	if stub.applies != 2 {
 		t.Fatalf("applies = %d", stub.applies)
 	}
-	if stub.refreshes != 1 || stub.refreshTok != "refresh-1" {
-		t.Fatalf("refresh = %d tok=%q", stub.refreshes, stub.refreshTok)
+	// AC4: the refresh reached the provider, never satelle-server's Sync.Refresh.
+	if stub.refreshes != 0 {
+		t.Fatalf("Sync.Refresh RPCs = %d, want 0", stub.refreshes)
 	}
-	if len(stub.refreshAuth) != 1 || stub.refreshAuth[0] != "" {
-		t.Fatalf("refresh must not carry bearer, got %v", stub.refreshAuth)
+	if n := len(prov.refreshes()); n != 1 {
+		t.Fatalf("provider refreshes = %d, want 1", n)
 	}
+	prov.wantRefresh(t, 0, "refresh-1")
 	if len(stub.auths) != 2 || stub.auths[0] != "Bearer access-1" || stub.auths[1] != "Bearer access-2" {
 		t.Fatalf("auths = %v", stub.auths)
 	}
@@ -345,16 +325,19 @@ func TestApplyRefreshesOnUnauthenticated(t *testing.T) {
 	if got.RefreshToken != "refresh-2" || got.DisplayName != "A" || got.Email != "a@b.c" || got.PrincipalID != "u1" {
 		t.Fatalf("rotated cred = %+v", got)
 	}
+	if got.TokenEndpoint != prov.tokenURL() || got.ClientID != "client-abc" || got.Resource != "https://api.example/" {
+		t.Fatalf("discovery fields lost across rotation: %+v", got)
+	}
 }
 
 func TestSnapshotRefreshesOnUnauthenticated(t *testing.T) {
+	prov := newFakeProvider(t)
 	store := &memStore{}
-	_ = store.Save(Credential{
-		ServerURL: "http://hosted.example", AccessToken: "access-1", RefreshToken: "refresh-1",
-		DisplayName: "A", Email: "a@b.c", PrincipalID: "u1",
-	})
+	cred := prov.credential("http://hosted.example")
+	cred.DisplayName, cred.Email, cred.PrincipalID = "A", "a@b.c", "u1"
+	_ = store.Save(cred)
 	stub := &stubSync{fail: []error{status.Error(codes.Unauthenticated, "unauthenticated")}}
-	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
+	c := newTestGRPCClient(t, stub, store, guardedClient(t))
 	_, _, _, err := snapshotAll(c, "probe", "", SnapshotOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -362,15 +345,75 @@ func TestSnapshotRefreshesOnUnauthenticated(t *testing.T) {
 	if stub.snaps != 2 {
 		t.Fatalf("snaps = %d", stub.snaps)
 	}
-	if stub.refreshes != 1 || stub.refreshTok != "refresh-1" {
-		t.Fatalf("refresh = %d tok=%q", stub.refreshes, stub.refreshTok)
+	if stub.refreshes != 0 || len(prov.refreshes()) != 1 {
+		t.Fatalf("Sync.Refresh = %d, provider refreshes = %d; want 0 and 1", stub.refreshes, len(prov.refreshes()))
 	}
+	prov.wantRefresh(t, 0, "refresh-1")
 	got, err := store.Load("http://hosted.example")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.RefreshToken != "refresh-2" || got.DisplayName != "A" {
 		t.Fatalf("rotated cred = %+v", got)
+	}
+}
+
+// AC6: an Unauthenticated whose message starts "unknown_subject: " is shown
+// with the server's message, with one RPC, no provider refresh, no retry.
+func TestApplyUnknownSubjectIsShownNotRetried(t *testing.T) {
+	const msg = "Sign in at https://satelle.dev first, then retry."
+	prov := newFakeProvider(t)
+	store := &memStore{}
+	_ = store.Save(prov.credential("http://hosted.example"))
+	stub := &stubSync{fail: []error{status.Error(codes.Unauthenticated, "unknown_subject: "+msg)}}
+	c := newTestGRPCClient(t, stub, store, guardedClient(t))
+	_, err := c.Apply(context.Background(), "probe", WorkstateIngest{
+		Items: []json.RawMessage{json.RawMessage(`{"id":"sty_1"}`)},
+	})
+	var us *UnknownSubjectError
+	if !errors.As(err, &us) || us.Message != msg || !strings.Contains(err.Error(), msg) {
+		t.Fatalf("err = %v, want UnknownSubjectError with the server's message", err)
+	}
+	if errors.Is(err, ErrLoginRequired) {
+		t.Errorf("an unknown subject must not tell the user to run satelle login: %v", err)
+	}
+	if stub.applies != 1 || stub.refreshes != 0 || len(prov.refreshes()) != 0 {
+		t.Fatalf("applies=%d Sync.Refresh=%d provider refreshes=%d; want 1, 0, 0", stub.applies, stub.refreshes, len(prov.refreshes()))
+	}
+}
+
+// A different Unauthenticated message is not unknown_subject: it refreshes.
+func TestApplyOtherUnauthenticatedMessageStillRefreshes(t *testing.T) {
+	prov := newFakeProvider(t)
+	store := &memStore{}
+	_ = store.Save(prov.credential("http://hosted.example"))
+	stub := &stubSync{fail: []error{status.Error(codes.Unauthenticated, "sign in at satelle.dev first")}}
+	c := newTestGRPCClient(t, stub, store, guardedClient(t))
+	if _, err := c.Apply(context.Background(), "probe", WorkstateIngest{
+		Items: []json.RawMessage{json.RawMessage(`{"id":"sty_1"}`)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if stub.applies != 2 || len(prov.refreshes()) != 1 {
+		t.Fatalf("applies=%d provider refreshes=%d; want 2 and 1", stub.applies, len(prov.refreshes()))
+	}
+}
+
+// A credential from before discovery has no token endpoint: login is required
+// and nothing is sent anywhere.
+func TestApplyCredentialWithoutTokenEndpointIsLoginRequired(t *testing.T) {
+	store := &memStore{}
+	_ = store.Save(Credential{ServerURL: "http://hosted.example", AccessToken: "access-1", RefreshToken: "refresh-1"})
+	stub := &stubSync{fail: []error{status.Error(codes.Unauthenticated, "unauthenticated")}}
+	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
+	_, err := c.Apply(context.Background(), "probe", WorkstateIngest{
+		Items: []json.RawMessage{json.RawMessage(`{"id":"sty_1"}`)},
+	})
+	if !errors.Is(err, ErrLoginRequired) {
+		t.Fatalf("err = %v, want ErrLoginRequired", err)
+	}
+	if stub.refreshes != 0 {
+		t.Fatalf("Sync.Refresh RPCs = %d, want 0", stub.refreshes)
 	}
 }
 
@@ -419,15 +462,12 @@ func TestSnapshotResourceExhaustedNamesCap(t *testing.T) {
 }
 
 func TestApplyRefreshFailureIsLoginRequired(t *testing.T) {
+	prov := newFakeProvider(t)
+	prov.deny = true
 	store := &memStore{}
-	_ = store.Save(Credential{
-		ServerURL: "http://hosted.example", AccessToken: "access-1", RefreshToken: "refresh-1",
-	})
-	stub := &stubSync{
-		fail:       []error{status.Error(codes.Unauthenticated, "unauthenticated")},
-		refreshErr: status.Error(codes.Unauthenticated, "invalid_grant"),
-	}
-	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
+	_ = store.Save(prov.credential("http://hosted.example"))
+	stub := &stubSync{fail: []error{status.Error(codes.Unauthenticated, "unauthenticated")}}
+	c := newTestGRPCClient(t, stub, store, guardedClient(t))
 	_, err := c.Apply(context.Background(), "probe", WorkstateIngest{
 		Items: []json.RawMessage{json.RawMessage(`{"id":"sty_1"}`)},
 	})
@@ -437,8 +477,8 @@ func TestApplyRefreshFailureIsLoginRequired(t *testing.T) {
 	if stub.applies != 1 {
 		t.Fatalf("applies = %d", stub.applies)
 	}
-	if stub.refreshes != 1 {
-		t.Fatalf("refreshes = %d", stub.refreshes)
+	if len(prov.refreshes()) != 1 || stub.refreshes != 0 {
+		t.Fatalf("provider refreshes = %d, Sync.Refresh = %d; want 1 and 0", len(prov.refreshes()), stub.refreshes)
 	}
 }
 

@@ -77,7 +77,7 @@ func (c *Client) Apply(ctx context.Context, project string, batch WorkstateInges
 	defer conn.Close()
 	cli := syncpb.NewSyncClient(conn)
 	var out *syncpb.ApplyResponse
-	err = c.withGRPCAuth(ctx, cli, func(ctx context.Context) error {
+	err = c.withGRPCAuth(ctx, func(ctx context.Context) error {
 		var rpcErr error
 		out, rpcErr = cli.Apply(ctx, req, syncCallOpts()...)
 		return rpcErr
@@ -143,7 +143,7 @@ func (c *Client) Snapshot(ctx context.Context, project, kind string, opts Snapsh
 			StoryIds: opts.StoryIDs,
 		}
 		var out *syncpb.SnapshotResponse
-		err = c.withGRPCAuth(ctx, cli, func(ctx context.Context) error {
+		err = c.withGRPCAuth(ctx, func(ctx context.Context) error {
 			var rpcErr error
 			out, rpcErr = cli.Snapshot(ctx, req, syncCallOpts()...)
 			return rpcErr
@@ -314,7 +314,7 @@ func hostnameOf(addr string) string {
 	return h
 }
 
-func (c *Client) withGRPCAuth(ctx context.Context, cli syncpb.SyncClient, fn func(ctx context.Context) error) error {
+func (c *Client) withGRPCAuth(ctx context.Context, fn func(ctx context.Context) error) error {
 	cred, err := c.store.Load(c.server)
 	if err != nil {
 		if errors.Is(err, ErrNoCredential) {
@@ -326,34 +326,31 @@ func (c *Client) withGRPCAuth(ctx context.Context, cli syncpb.SyncClient, fn fun
 	if err == nil || status.Code(err) != codes.Unauthenticated {
 		return err
 	}
+	// An unknown subject is final: refreshing cannot give the token an account.
+	if us := unknownSubjectFromStatus(status.Convert(err)); us != nil {
+		return us
+	}
 	if cred.IsSession() {
 		return ErrSessionTokenRefused
 	}
-	rotated, rErr := c.refreshOverGRPC(ctx, cli, cred)
+	// The refresh goes to the provider token endpoint stored with the
+	// credential, over HTTP — never to the satelle server's Sync.Refresh.
+	rotated, rErr := c.refreshAndPersist(ctx, cred)
 	if rErr != nil {
 		return rErr
 	}
 	return fn(c.callCtx(ctx, rotated.AccessToken))
 }
 
-// refreshOverGRPC rotates tokens via Sync.Refresh on the same connection as
-// Apply/Snapshot. The RPC is sent on the bare ctx — no bearer — because the
-// access token has just been rejected; the refresh token in the request is
-// the credential.
-func (c *Client) refreshOverGRPC(ctx context.Context, cli syncpb.SyncClient, cred Credential) (Credential, error) {
-	out, err := cli.Refresh(c.withLocation(ctx), &syncpb.RefreshRequest{RefreshToken: cred.RefreshToken}, syncCallOpts()...)
-	if err != nil {
-		return Credential{}, fmt.Errorf("%w (refresh failed: %v)", ErrLoginRequired, err)
+// unknownSubjectFromStatus maps an Unauthenticated status whose message starts
+// "unknown_subject: " onto *UnknownSubjectError, carrying the rest of the
+// message; any other status returns nil.
+func unknownSubjectFromStatus(st *status.Status) *UnknownSubjectError {
+	rest, ok := strings.CutPrefix(st.Message(), unknownSubjectCode+": ")
+	if !ok {
+		return nil
 	}
-	if out.GetAccessToken() == "" || out.GetRefreshToken() == "" {
-		return Credential{}, fmt.Errorf("%w (refresh failed: missing access or refresh token)", ErrLoginRequired)
-	}
-	tok := tokenResponse{
-		AccessToken:  out.GetAccessToken(),
-		RefreshToken: out.GetRefreshToken(),
-		ExpiresIn:    out.GetExpiresIn(),
-	}
-	return c.persistRotated(cred, tok)
+	return &UnknownSubjectError{Message: strings.TrimSpace(rest)}
 }
 
 func withBearer(ctx context.Context, token string) context.Context {
@@ -386,7 +383,8 @@ func (c *Client) mapSyncErr(op string, err error) error {
 }
 
 func mapGRPCErr(op string, err error) error {
-	if err == nil || errors.Is(err, ErrLoginRequired) {
+	var unknown *UnknownSubjectError
+	if err == nil || errors.Is(err, ErrLoginRequired) || errors.As(err, &unknown) {
 		return err
 	}
 	if st, ok := status.FromError(err); ok {

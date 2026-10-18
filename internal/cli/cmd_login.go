@@ -16,6 +16,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,12 +27,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// defaultCallbackPort is the fixed loopback port `satelle login` listens on, so
+// its redirect URI (http://127.0.0.1:53682/callback) can be registered exactly
+// with an authorization server that does not honour any-port loopback.
+const defaultCallbackPort = 53682
+
 func init() {
 	var (
 		serverArg    string
 		workspaceArg string
 		noBrowser    bool
 		timeout      time.Duration
+		callbackPort int
 	)
 
 	login := &cobra.Command{
@@ -48,9 +55,10 @@ default; a team-workspace name selects it). The selection is written to the
 gitignored per-user .satelle/satelle.local.toml, not the team-committed
 satelle.toml.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runLogin(cmd, serverArg, workspaceArg, noBrowser, timeout)
+			return runLogin(cmd, serverArg, workspaceArg, noBrowser, timeout, callbackPort)
 		},
 	}
+	login.Flags().IntVar(&callbackPort, "callback-port", defaultCallbackPort, "Loopback port for the browser callback (0 picks a free port). The default is the registered redirect URI.")
 	login.Flags().StringVar(&serverArg, "server", "", "Hosted server URL (recorded in the global config; overrides the configured server).")
 	login.Flags().StringVar(&workspaceArg, "workspace", "", "Record the active workspace (a team-workspace name, or id) for scoped sync; default is personal.")
 	login.Flags().BoolVar(&noBrowser, "no-browser", false, "Print the authorize URL instead of opening a browser.")
@@ -58,23 +66,25 @@ satelle.toml.`,
 	register(login)
 
 	var (
-		logoutServer  string
-		pruneLoopback bool
+		logoutServer    string
+		logoutNoBrowser bool
+		pruneLoopback   bool
 	)
 	logout := &cobra.Command{
 		Use:   "logout",
 		Short: "Clear stored hosted-server credentials",
 		Long: `Clear the stored hosted-server credentials on this machine.
 
-Local work is unaffected — satelle runs fully locally, and only the hosted sync
-and project commands need a session. Nothing already synced is withdrawn: this
-forgets a credential, it does not revoke or delete anything server-side.
+Local work is unaffected, and nothing already synced is withdrawn: this forgets
+a credential, it does not revoke anything server-side.
 
---prune-loopback instead removes the stale credentials that test runs left in
-the store: only entries whose URL host is loopback (127.0.0.0/8, ::1,
-localhost) AND that have no created_at and no email. Real
-logins, including to a local dev hosted server, stamp both and are kept, as is every
-non-loopback entry.`,
+The local credential is always deleted. If its access token carries a session
+id, logout then opens (--no-browser prints) the server's /logout page so the
+sign-in provider's browser session ends too; otherwise it says that session may
+still be signed in.
+
+--prune-loopback instead removes the stale loopback credentials test runs left
+in the store, and nothing else.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if pruneLoopback {
 				if strings.TrimSpace(logoutServer) != "" {
@@ -82,10 +92,15 @@ non-loopback entry.`,
 				}
 				return runLogoutPruneLoopback(cmd)
 			}
-			return runLogout(cmd, logoutServer)
+			open := hosted.OpenBrowser
+			if logoutNoBrowser {
+				open = nil
+			}
+			return runLogout(cmd, logoutServer, open)
 		},
 	}
 	logout.Flags().StringVar(&logoutServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
+	logout.Flags().BoolVar(&logoutNoBrowser, "no-browser", false, "Print the provider sign-out URL instead of opening a browser.")
 	logout.Flags().BoolVar(&pruneLoopback, "prune-loopback", false, "Remove only stored credentials for loopback hosts (127.0.0.0/8, ::1, localhost) that have no created_at and no email (left by test runs); real logins and non-loopback entries are kept.")
 	register(logout)
 
@@ -196,14 +211,14 @@ func workspaceNotFound(arg string, workspaces []hosted.Workspace) error {
 	return fmt.Errorf("workspace %q not found — available: %s (re-run login with one of these, or drop --workspace for your personal workspace)", arg, strings.Join(parts, ", "))
 }
 
-func runLogin(cmd *cobra.Command, serverArg, workspaceArg string, noBrowser bool, timeout time.Duration) error {
+func runLogin(cmd *cobra.Command, serverArg, workspaceArg string, noBrowser bool, timeout time.Duration, callbackPort int) error {
 	server := resolveServer(serverArg)
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — pass --server <url> (it is recorded globally for every repo)")
 	}
 	out := cmd.OutOrStdout()
 
-	opts := hosted.LoginOptions{Timeout: timeout, Out: out}
+	opts := hosted.LoginOptions{Timeout: timeout, Out: out, Port: callbackPort}
 	if !noBrowser {
 		opts.OpenBrowser = hosted.OpenBrowser
 	}
@@ -257,6 +272,14 @@ func runLogin(cmd *cobra.Command, serverArg, workspaceArg string, noBrowser bool
 	// (sty_467c6944). A failed identity fetch does not fail the login.
 	who, err := client.Me(cmd.Context())
 	if err != nil {
+		// First contact with an account that has not signed in at the server's
+		// own site: show the server's message and fail, rather than a vague
+		// "could not fetch identity". The tokens are already saved, so the
+		// retry after signing up needs no new browser round trip.
+		var unknown *hosted.UnknownSubjectError
+		if errors.As(err, &unknown) {
+			return unknown
+		}
 		if activeWorkspace != "" {
 			fmt.Fprintf(out, "Signed in to %s (active workspace %s; could not fetch identity: %v)\n", server, activeWorkspace, err)
 		} else {
@@ -272,18 +295,44 @@ func runLogin(cmd *cobra.Command, serverArg, workspaceArg string, noBrowser bool
 	return nil
 }
 
-func runLogout(cmd *cobra.Command, serverArg string) error {
+// providerSessionStillOpen is printed whenever logout cannot end the provider
+// session itself.
+const providerSessionStillOpen = "Local tokens were deleted, but the provider session may still be signed in."
+
+// runLogout deletes the local credential, then ends the provider session
+// through the server's /logout page named by the access token's sid claim.
+// open launches that URL; nil (--no-browser) prints it instead. The local
+// delete always happens first and never depends on the browser step.
+func runLogout(cmd *cobra.Command, serverArg string, open func(string) error) error {
 	server := resolveServer(serverArg)
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — pass --server <url>")
 	}
-	if err := (hosted.FileStore{}).Delete(server); err != nil {
+	store := hosted.FileStore{}
+	cred, _ := store.Load(server)
+	if err := store.Delete(server); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Logged out of %s.\n", server)
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Logged out of %s.\n", server)
 	if hosted.SessionToken() != "" {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s is still set — the session token remains active.\n", hosted.SessionTokenEnv)
+		fmt.Fprintf(out, "%s is still set — the session token remains active.\n", hosted.SessionTokenEnv)
 	}
+	sid := cred.SessionID()
+	if sid == "" {
+		fmt.Fprintln(out, providerSessionStillOpen)
+		return nil
+	}
+	logoutURL := server + "/logout?session_id=" + url.QueryEscape(sid)
+	if open == nil {
+		fmt.Fprintf(out, "Open this URL to end the provider session:\n\n  %s\n\n%s\n", logoutURL, providerSessionStillOpen)
+		return nil
+	}
+	if err := open(logoutURL); err != nil {
+		fmt.Fprintf(out, "Could not open a browser (%v). Open this URL to end the provider session:\n\n  %s\n\n%s\n", err, logoutURL, providerSessionStillOpen)
+		return nil
+	}
+	fmt.Fprintf(out, "Opened %s to end the provider session.\n", logoutURL)
 	return nil
 }
 
