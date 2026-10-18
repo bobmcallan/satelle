@@ -20,7 +20,7 @@ const (
 
 // A reviewer skill must not tell a later round to verify prior findings: the
 // re-presented-edge rules live in the shared principle. The plan descriptions
-// and the architecture and coverage headings sit outside any one section, so
+// and the architecture heading sit outside any one section, so
 // the whole normalised body is checked, or "verify prior findings" and "then
 // verify" stay in the skill and the test still passes.
 var leftoverSkills = []struct {
@@ -40,13 +40,6 @@ var leftoverSkills = []struct {
 		"number your findings so the next round can answer each one",
 	}},
 	{".satelle/skills/satelle-story-architecture-review.md", []string{
-		"every blocker first, then verify",
-		"then verify",
-		"verify prior findings",
-		"verify each prior finding",
-		"acceptance criterion that changed (open definition_edits.path)",
-	}},
-	{".satelle/skills/satelle-story-integration-coverage-review.md", []string{
 		"every blocker first, then verify",
 		"then verify",
 		"verify prior findings",
