@@ -537,10 +537,15 @@ func TestWorkflowConvertTopic(t *testing.T) {
 	for _, key := range []string{
 		"status", "requires", "reviewers", "reviewer_agent", "parallel",
 		"terminal", "start", "park", "cancel", "recover", "[[gate]]", "for", "mandatory",
+		"reviewer_carry",
 	} {
 		if !strings.Contains(top.Body, key) {
 			t.Errorf("the guide does not cover the %q key", key)
 		}
+	}
+	// The one value the key takes, spelled as an agent has to write it.
+	if want := `reviewer_carry = "until_accept"`; !strings.Contains(top.Body, want) {
+		t.Errorf("the guide does not document %q", want)
 	}
 	// The two mistakes the conversion actually makes: authoring the topology the
 	// binary owns, and forgetting that a category-specific workflow is a section.
