@@ -96,7 +96,7 @@ while in the step, and stage names REPEAT by design: several route families reac
 does not make obvious, and the one every conversion gets wrong.**
 
 Step keys: `status`, `agent`, `skills`, `reviewers`, `reviewer_agent`,
-`parallel`, `bundle`, `requires`, `applies_to`, `advise`, `rework`, `propose`,
+`parallel`, `bundle`, `reviewer_carry`, `requires`, `applies_to`, `advise`, `rework`, `propose`,
 `freeze`, `reject_budget`, `mark`, `apply_changes`, `untrusted_input`,
 `waits_on_children`, `schedule`, `after_children`, `start`, `terminal`.
 
@@ -117,6 +117,18 @@ share of it as an **allocation**, not a second measured call. The shipped
 catalogue leaves `bundle` off wherever the frozen review corpus
 (`tests/reviewcorpus`) does not hold a known defect and a known-valid case for
 every rubric the bundle would carry.
+
+`reviewer_carry = "until_accept"` (the only value; absent dispatches every
+reviewer every round) lets a re-presented entry edge leave a reviewer
+undispatched while another is dispatched, when that reviewer's latest verdict on
+the edge is an accept whose complete, non-stale `reviewed` quotation is still
+found verbatim in the current story card and documents. The accept is ledgered as
+a `review_accept` carrying `carried_from`, with no `agent_invocation` row. When
+every dispatched reviewer accepts, the carried reviewers are dispatched in the
+same gate call, so the round that advances the edge has a fresh verdict from every
+reviewer. A reject, a functional check and a panel are always dispatched. The
+key also stops the step performer's re-attached output document and directed
+messages to it from marking a verdict stale; every other evidence row still does.
 
 `waits_on_children = true` marks the step a **container** (a parent or epic)
 idles at while its child stories are driven. The container holds the status but

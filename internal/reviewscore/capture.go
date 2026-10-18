@@ -149,7 +149,7 @@ func Capture(in CaptureInput) (string, error) {
 	}
 	payload := ReplayPayload{
 		Patch: in.Patch, NoPatch: in.NoPatch,
-		PriorVerdicts:   verb.PriorVerdictsFrom(had, rp.From, rp.To),
+		PriorVerdicts:   verb.PriorVerdictsFrom(had, rp.From, rp.To, verb.StaleExemption{}),
 		DefinitionEdits: verb.DefinitionEditsFrom(had),
 		Title:           def.Title, Body: def.Body, AcceptanceCriteria: def.AcceptanceCriteria,
 		Category: def.Category, Tags: def.Tags, Docs: docs,

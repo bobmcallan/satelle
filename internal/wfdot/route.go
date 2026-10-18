@@ -63,6 +63,12 @@ type Step struct {
 	// tool grant run as ONE reviewer session returning one verdict per rubric
 	// (sty_23e10d92). Absent or false leaves every gate its own session.
 	Bundle bool
+	// ReviewerCarry is the step's entry-gate carry policy (sty_59720b8b). Empty
+	// is today's behaviour: every reviewer is dispatched every round.
+	// CarryUntilAccept lets a reviewer whose earlier accept still quotes the
+	// current material go undispatched while another reviewer rejects; the round
+	// that would advance the edge re-dispatches every carried reviewer.
+	ReviewerCarry string
 	// Provides is the obligation this step discharges. A step with no Provides
 	// is a role state (start or terminal marker), not an obligation-bearer.
 	Provides string
@@ -535,15 +541,16 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 	for i := 0; i+1 < len(spine); i++ {
 		from, to := spine[i], spine[i+1]
 		spec.Transitions = append(spec.Transitions, Transition{
-			From:     from.Name,
-			To:       to.Name,
-			Skill:    firstOf(to.Reviewers),
-			Skills:   to.Reviewers,
-			Agent:    to.ReviewerAgent,
-			Parallel: parallelFor(to),
-			Bundle:   to.Bundle && len(to.Reviewers) > 1,
-			Panel:    to.Panel,
-			Combine:  to.Combine,
+			From:          from.Name,
+			To:            to.Name,
+			Skill:         firstOf(to.Reviewers),
+			Skills:        to.Reviewers,
+			Agent:         to.ReviewerAgent,
+			Parallel:      parallelFor(to),
+			Bundle:        to.Bundle && len(to.Reviewers) > 1,
+			ReviewerCarry: to.ReviewerCarry,
+			Panel:         to.Panel,
+			Combine:       to.Combine,
 		})
 	}
 

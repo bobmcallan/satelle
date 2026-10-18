@@ -130,7 +130,7 @@ func (j *CaseJudge) run(ctx context.Context, c reviewscore.Case, skills []string
 		}
 		g.SetDocsResolver(func(context.Context, string) []DocState { return docs })
 		if len(p.PriorVerdicts) > 0 {
-			g.SetPriorVerdictsResolver(func(context.Context, string, string, string) []PriorVerdict {
+			g.SetPriorVerdictsResolver(func(context.Context, string, string, string, verb.StaleExemption) []PriorVerdict {
 				out := make([]PriorVerdict, 0, len(p.PriorVerdicts))
 				for _, v := range p.PriorVerdicts {
 					out = append(out, PriorVerdictFrom(v))

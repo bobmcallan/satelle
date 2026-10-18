@@ -531,12 +531,12 @@ func docsResolver(a *app.App) func(ctx context.Context, itemID string) []agentst
 // the delta instead of re-reading the artefact with no memory. verb.PriorVerdicts
 // reads the package-global ledger store wired above; a read failure degrades to
 // no prior verdicts and never fails the transition.
-func priorVerdictsResolver() func(ctx context.Context, itemID, from, to string) []agentstep.PriorVerdict {
-	return func(ctx context.Context, itemID, from, to string) []agentstep.PriorVerdict {
+func priorVerdictsResolver() func(ctx context.Context, itemID, from, to string, ex verb.StaleExemption) []agentstep.PriorVerdict {
+	return func(ctx context.Context, itemID, from, to string, ex verb.StaleExemption) []agentstep.PriorVerdict {
 		if itemID == "" {
 			return nil
 		}
-		verdicts, err := verb.PriorVerdicts(ctx, itemID, from, to)
+		verdicts, err := verb.PriorVerdicts(ctx, itemID, from, to, ex)
 		if err != nil || len(verdicts) == 0 {
 			return nil
 		}

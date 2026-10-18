@@ -113,6 +113,10 @@ type ReviewerVerdict struct {
 	Reviewed          string `json:"reviewed,omitempty"`
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
 	System            bool   `json:"system,omitempty"`
+	// CarriedFrom is the 1-based attempt index of the earlier verdict this one
+	// re-issues without a dispatch (sty_59720b8b); zero for a fresh judgment. A
+	// carried verdict has no Command, so no agent_invocation row is written.
+	CarriedFrom int `json:"carried_from,omitempty"`
 	// Command/Context name the agent invocation behind an LLM reviewer's verdict —
 	// the resolved harness command and the injected skill/rubric file — so the trail
 	// records HOW it was judged, not just the outcome. Empty for a functional check.

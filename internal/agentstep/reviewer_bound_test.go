@@ -98,7 +98,7 @@ func newBoundEngine(t *testing.T, repo string, runner agentcli.Runner, matter *b
 	g.SetMessagesResolver(func(context.Context, string, []string) []MessageState {
 		return []MessageState{{ID: "msg1", From: "coder", To: "reviewer", Body: matter.msg}}
 	})
-	g.SetPriorVerdictsResolver(func(context.Context, string, string, string) []PriorVerdict {
+	g.SetPriorVerdictsResolver(func(context.Context, string, string, string, verb.StaleExemption) []PriorVerdict {
 		return []PriorVerdict{{Skill: "bound-review", Decision: "reject", Notes: matter.notes}}
 	})
 	g.SetDefinitionEditsResolver(func(context.Context, string) []DefinitionEdit {

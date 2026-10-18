@@ -60,7 +60,7 @@ func TestPriorVerdictsFiltersToTheEdge(t *testing.T) {
 	seedVerdict(t, "sty_pv1", "status_transition", "plan", "in_progress", "", "NOT-A-VERDICT")
 	seedVerdict(t, "sty_other", "review_reject", "plan", "in_progress", "satelle-story-plan-review", "OTHER-STORY-NOTE")
 
-	got, err := verb.PriorVerdicts(ctx, "sty_pv1", "plan", "in_progress")
+	got, err := verb.PriorVerdicts(ctx, "sty_pv1", "plan", "in_progress", verb.StaleExemption{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestPriorVerdictsFiltersToTheEdge(t *testing.T) {
 	}
 
 	// A first attempt on an untried edge reads as nothing at all.
-	none, err := verb.PriorVerdicts(ctx, "sty_pv1", "in_progress", "done")
+	none, err := verb.PriorVerdicts(ctx, "sty_pv1", "in_progress", "done", verb.StaleExemption{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestPriorVerdictsFiltersToTheEdge(t *testing.T) {
 func TestPriorVerdictsWithoutLedgerIsInert(t *testing.T) {
 	withWiring(t)
 	verb.SetLedgerStore(nil)
-	got, err := verb.PriorVerdicts(context.Background(), "sty_none", "plan", "in_progress")
+	got, err := verb.PriorVerdicts(context.Background(), "sty_none", "plan", "in_progress", verb.StaleExemption{})
 	if err != nil || got != nil {
 		t.Fatalf("PriorVerdicts with no ledger = (%+v, %v), want (nil, nil)", got, err)
 	}
@@ -137,7 +137,7 @@ func telemetryKind(kind string) map[string]any {
 
 func latestVerdict(t *testing.T, storyID string) verb.PriorVerdict {
 	t.Helper()
-	got, err := verb.PriorVerdicts(context.Background(), storyID, "plan", "in_progress")
+	got, err := verb.PriorVerdicts(context.Background(), storyID, "plan", "in_progress", verb.StaleExemption{})
 	if err != nil || len(got) == 0 {
 		t.Fatalf("PriorVerdicts = (%+v, %v)", got, err)
 	}
@@ -258,7 +258,7 @@ func TestPriorVerdictIgnoresSiblingVerdictRows(t *testing.T) {
 			}, at)
 		}
 	}
-	got, err := verb.PriorVerdicts(context.Background(), "sty_sibling", "plan", "in_progress")
+	got, err := verb.PriorVerdicts(context.Background(), "sty_sibling", "plan", "in_progress", verb.StaleExemption{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,4 +275,64 @@ func TestPriorVerdictIgnoresSiblingVerdictRows(t *testing.T) {
 	if !found {
 		t.Fatalf("no pv-plan-review verdict in %+v", got)
 	}
+}
+
+// TestPriorVerdictStaleExemption (sty_59720b8b AC1/AC2): with an exemption, a
+// re-attach of the performer's output document and directed messages to the
+// performer leave the quotation in place; every other evidence row still marks
+// it stale, and with no exemption the same rows go stale as before.
+func TestPriorVerdictStaleExemption(t *testing.T) {
+	ex := verb.StaleExemption{DocName: "plan", Performer: "planner"}
+	type row struct {
+		name, kind string
+		payload    any
+	}
+	exempt := []row{
+		{"re-attach of the output document", verb.KindStoryDocAttached, map[string]any{"name": "plan", "type": "plan"}},
+		{"directed message to the performer", ledger.KindAgentMessage, map[string]any{"from": "orchestrator", "to": "planner", "body": "fix AC2"}},
+	}
+	counted := []row{
+		{"story log", ledger.KindTelemetryEvent, telemetryKind("plan-consumed")},
+		{"another document", verb.KindStoryDocAttached, map[string]any{"name": "ac-evidence", "type": "output"}},
+		{"message to another agent", ledger.KindAgentMessage, map[string]any{"from": "orchestrator", "to": "coder", "body": "x"}},
+		{"message to the performer copied to another address", ledger.KindAgentMessage, map[string]any{"from": "orchestrator", "to": "planner", "cc": "reviewer", "body": "x"}},
+		{"definition edit", ledger.KindDefinitionEdited, map[string]any{"field": "acceptance_criteria"}},
+	}
+	verdictWith := func(t *testing.T, rows []row, ex verb.StaleExemption) verb.PriorVerdict {
+		t.Helper()
+		db := wireLedgerOnly(t)
+		t0 := time.Now().Add(-time.Hour)
+		seedCycleVerdict(t, db, "sty_ex", "QUOTED-WORDS", t0, t0.Add(3*time.Second))
+		for i, r := range rows {
+			seedAt(t, db, "sty_ex", r.kind, r.payload, t0.Add(time.Duration(5+i)*time.Second))
+		}
+		got, err := verb.PriorVerdicts(context.Background(), "sty_ex", "plan", "in_progress", ex)
+		if err != nil || len(got) == 0 {
+			t.Fatalf("PriorVerdicts = (%+v, %v)", got, err)
+		}
+		return got[len(got)-1]
+	}
+	for _, tc := range exempt {
+		t.Run("exempt/"+tc.name, func(t *testing.T) {
+			if v := verdictWith(t, []row{tc}, ex); v.Reviewed != "QUOTED-WORDS" || v.ReviewedStale || v.EvidenceSince != nil {
+				t.Errorf("verdict = %+v, want the quotation kept", v)
+			}
+			if v := verdictWith(t, []row{tc}, verb.StaleExemption{}); v.Reviewed != "" || !v.ReviewedStale {
+				t.Errorf("without an exemption verdict = %+v, want stale", v)
+			}
+		})
+	}
+	for _, tc := range counted {
+		t.Run("still stale/"+tc.name, func(t *testing.T) {
+			if v := verdictWith(t, []row{tc}, ex); v.Reviewed != "" || !v.ReviewedStale || len(v.EvidenceSince) != 1 {
+				t.Errorf("verdict = %+v, want stale with the row listed", v)
+			}
+		})
+	}
+	t.Run("a mix stays stale", func(t *testing.T) {
+		v := verdictWith(t, []row{exempt[0], counted[0], exempt[1]}, ex)
+		if v.Reviewed != "" || !v.ReviewedStale || len(v.EvidenceSince) != 1 || v.EvidenceSince[0].Event != "plan-consumed" {
+			t.Errorf("verdict = %+v, want stale with only the story log listed", v)
+		}
+	})
 }

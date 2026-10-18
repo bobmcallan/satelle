@@ -139,12 +139,15 @@ type stepWire struct {
 	// from an absent key, and an authored `parallel = 0` (serial) must not read
 	// as "unset" (which defaults to DefaultParallelCap concurrent). This is the
 	// old ParallelSet bool, preserved deliberately.
-	Parallel  *int       `toml:"parallel"`
-	Bundle    bool       `toml:"bundle"`
-	Provides  string     `toml:"provides"`
-	Requires  []string   `toml:"requires"`
-	AppliesTo []string   `toml:"applies_to"`
-	Advise    *adviseRef `toml:"advise"`
+	Parallel *int `toml:"parallel"`
+	Bundle   bool `toml:"bundle"`
+	// ReviewerCarry is a closed enum (sty_59720b8b): absent dispatches every
+	// reviewer every round; "until_accept" carries an unchanged accept.
+	ReviewerCarry string     `toml:"reviewer_carry"`
+	Provides      string     `toml:"provides"`
+	Requires      []string   `toml:"requires"`
+	AppliesTo     []string   `toml:"applies_to"`
+	Advise        *adviseRef `toml:"advise"`
 	// Rework is a POINTER for the same reason Parallel is: an absent key must be
 	// distinguishable from an authored zero, because absent means "no loop" and
 	// `rounds = 0` is a mis-authored budget this parser refuses.
@@ -518,6 +521,7 @@ func ParseSteps(body string) (Catalogue, error) {
 			st.Parallel, st.ParallelSet = *s.Parallel, true
 		}
 		st.Bundle = s.Bundle
+		st.ReviewerCarry = strings.TrimSpace(s.ReviewerCarry)
 		if s.Advise != nil {
 			st.Advisor, st.AdvisorSkill = s.Advise.Agent, s.Advise.Skill
 		}
@@ -603,6 +607,11 @@ func ParseSteps(body string) (Catalogue, error) {
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: apply_changes op %q is not one of: %s", st.Provides, unknownChangeOp(st.ApplyChangeOps), strings.Join(ChangeOps, ", "))
 		case budgetDeclared[st.Provides] && st.RejectBudget < 1:
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: reject_budget must be >= 1 (a zero budget refuses the first presentation)", st.Provides)
+		}
+	}
+	for _, st := range cat.Steps {
+		if st.ReviewerCarry != "" && st.ReviewerCarry != CarryUntilAccept {
+			return Catalogue{}, fmt.Errorf("step.toml: step %q: reviewer_carry %q is invalid — the only value is %q (omit the key to dispatch every reviewer every round)", st.Provides, st.ReviewerCarry, CarryUntilAccept)
 		}
 	}
 	// schedule refusals: a value outside the closed set, or on a step that does

@@ -935,6 +935,10 @@ const (
 	SchedSequential = "sequential"
 )
 
+// CarryUntilAccept is the only value a step's `reviewer_carry` may take
+// (sty_59720b8b); an absent key dispatches every reviewer every round.
+const CarryUntilAccept = "until_accept"
+
 // DefaultParallelCap is the concurrency cap when an edge sets parallel=true
 // without a numeric limit (sty_4f0a15db). Bounded because reviewers share backends.
 const DefaultParallelCap = 4
@@ -963,6 +967,9 @@ type Transition struct {
 	// returning one verdict per rubric (sty_23e10d92). False is today's default:
 	// every gate is its own session. Edge-only, like Parallel.
 	Bundle bool
+	// ReviewerCarry is the target step's reviewer_carry policy (sty_59720b8b):
+	// "" or CarryUntilAccept. Edge-only, like Bundle.
+	ReviewerCarry string
 	// Panel / Combine are the target step's entry-gate seats and the check skill
 	// that folds them. Empty means the single Agent seat. Copied from the target
 	// step onto the spine edge only — role and recover edges do not carry them.

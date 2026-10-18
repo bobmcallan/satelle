@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -60,7 +61,7 @@ func TestSecondPresentationInvokesReviewer(t *testing.T) {
 	g, r := newEngine(t, `{"decision":"accept","notes":"again"}`, fakeDocs{
 		workflow: planEdgeWorkflow, skillBody: "rubric", skillFound: true,
 	})
-	g.SetPriorVerdictsResolver(func(context.Context, string, string, string) []PriorVerdict {
+	g.SetPriorVerdictsResolver(func(context.Context, string, string, string, verb.StaleExemption) []PriorVerdict {
 		return []PriorVerdict{{
 			Skill:    "satelle-story-plan-review",
 			Decision: "accept",

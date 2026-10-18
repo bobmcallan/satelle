@@ -100,7 +100,7 @@ func (g *Engine) prepareReviewer(ctx context.Context, item workitem.Item, toStat
 	// context, so the executor and retrospective payloads deliberately go without —
 	// a performer optimising for the last rejection instead of the story is the
 	// failure mode that would create.
-	g.fillPriorVerdicts(ctx, item.ID, item.Status, toStatus, &tp, mat)
+	g.fillPriorVerdicts(ctx, item.ID, item.Status, toStatus, g.staleExemption(ctx, item, toStatus), &tp, mat)
 	g.fillDefinitionEdits(ctx, item.ID, &tp, mat)
 	// Engagement diff rides the GATE payload only (sty_a125b440): reviewers
 	// without a shell need the slice; executors have one. fillDiff never

@@ -3544,7 +3544,7 @@ func TestGatePayloadIncludesPriorVerdicts(t *testing.T) {
 			CreatedAt: fmt.Sprintf("2026-08-24T0%d:00:00Z", i),
 		}
 	}
-	gateOnce := func(t *testing.T, resolver func(ctx context.Context, itemID, from, to string) []PriorVerdict) (string, map[string][]byte) {
+	gateOnce := func(t *testing.T, resolver func(ctx context.Context, itemID, from, to string, ex verb.StaleExemption) []PriorVerdict) (string, map[string][]byte) {
 		t.Helper()
 		g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: planEdgeWorkflow, skillBody: "rubric", skillFound: true})
 		if resolver != nil {
@@ -3559,7 +3559,7 @@ func TestGatePayloadIncludesPriorVerdicts(t *testing.T) {
 	t.Run("three rejects then an accept ride in order", func(t *testing.T) {
 		var gotFrom, gotTo, gotID string
 		history := []PriorVerdict{verdict(1, "reject"), verdict(2, "reject"), verdict(3, "reject"), verdict(4, "accept")}
-		payload, opened := gateOnce(t, func(_ context.Context, itemID, from, to string) []PriorVerdict {
+		payload, opened := gateOnce(t, func(_ context.Context, itemID, from, to string, _ verb.StaleExemption) []PriorVerdict {
 			gotID, gotFrom, gotTo = itemID, from, to
 			return history
 		})
@@ -3595,7 +3595,7 @@ func TestGatePayloadIncludesPriorVerdicts(t *testing.T) {
 		for i := 1; i <= 8; i++ {
 			all = append(all, verdict(i, "reject"))
 		}
-		payload, opened := gateOnce(t, func(_ context.Context, _, _, _ string) []PriorVerdict { return all })
+		payload, opened := gateOnce(t, func(_ context.Context, _, _, _ string, _ verb.StaleExemption) []PriorVerdict { return all })
 		file := string(openedAt(t, opened, payload, "prior_verdicts"))
 		for i := 1; i <= 8; i++ {
 			if !strings.Contains(file, fmt.Sprintf("PV-NOTE-%d", i)) {
@@ -3606,7 +3606,7 @@ func TestGatePayloadIncludesPriorVerdicts(t *testing.T) {
 			t.Errorf("attempts must be numbered over the full history:\n%s", file)
 		}
 		stdin := cappedGateStdin(t, planEdgeWorkflow, workitem.Item{ID: "sty_pv", Status: "plan"}, "in_progress", func(g *Engine) {
-			g.SetPriorVerdictsResolver(func(context.Context, string, string, string) []PriorVerdict { return all })
+			g.SetPriorVerdictsResolver(func(context.Context, string, string, string, verb.StaleExemption) []PriorVerdict { return all })
 		})
 		for i := 1; i <= 3; i++ {
 			if strings.Contains(stdin, fmt.Sprintf("PV-NOTE-%d", i)) {
@@ -3632,7 +3632,7 @@ func TestGatePayloadIncludesPriorVerdicts(t *testing.T) {
 		if payload, _ := gateOnce(t, nil); strings.Contains(payload, "prior_verdicts") {
 			t.Errorf("unwired resolver must inject nothing:\n%s", payload)
 		}
-		empty, _ := gateOnce(t, func(_ context.Context, _, _, _ string) []PriorVerdict { return nil })
+		empty, _ := gateOnce(t, func(_ context.Context, _, _, _ string, _ verb.StaleExemption) []PriorVerdict { return nil })
 		if strings.Contains(empty, "prior_verdicts") {
 			t.Errorf("a first attempt (no prior verdicts) must omit the key:\n%s", empty)
 		}
@@ -3652,7 +3652,7 @@ func TestPriorVerdictsBoundedAndDoNotStarveDocs(t *testing.T) {
 	g.SetDocsResolver(func(_ context.Context, _ string) []DocState {
 		return []DocState{{Name: "plan", Type: "plan", Body: planBody}}
 	})
-	g.SetPriorVerdictsResolver(func(_ context.Context, _, _, _ string) []PriorVerdict {
+	g.SetPriorVerdictsResolver(func(_ context.Context, _, _, _ string, _ verb.StaleExemption) []PriorVerdict {
 		return []PriorVerdict{{Skill: "satelle-story-plan-review", Decision: "reject", Notes: huge}}
 	})
 	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_pvbig", Status: "plan"}, "in_progress"); err != nil {
@@ -3674,7 +3674,7 @@ func TestPriorVerdictsBoundedAndDoNotStarveDocs(t *testing.T) {
 		g.SetDocsResolver(func(context.Context, string) []DocState {
 			return []DocState{{Name: "plan", Type: "plan", Body: planBody}}
 		})
-		g.SetPriorVerdictsResolver(func(context.Context, string, string, string) []PriorVerdict {
+		g.SetPriorVerdictsResolver(func(context.Context, string, string, string, verb.StaleExemption) []PriorVerdict {
 			return []PriorVerdict{{Skill: "satelle-story-plan-review", Decision: "reject", Notes: huge}}
 		})
 	})

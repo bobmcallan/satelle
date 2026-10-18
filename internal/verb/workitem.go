@@ -2039,6 +2039,7 @@ func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.R
 		Reviewed          string       `json:"reviewed,omitempty"`
 		ReviewedTruncated bool         `json:"reviewed_truncated,omitempty"`
 		Accept            bool         `json:"accept"`
+		CarriedFrom       int          `json:"carried_from,omitempty"`
 		Model             string       `json:"model,omitempty"`
 		ModelResolved     string       `json:"model_resolved,omitempty"`
 		ModelSource       string       `json:"model_source,omitempty"`
@@ -2055,7 +2056,7 @@ func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.R
 		// it as the end of the review cycle (sty_0225fc2f).
 		RecordedAt string `json:"recorded_at,omitempty"`
 	}{From: from, To: to, Attempt: attempt, Skill: rv.Skill, Order: rv.Order, System: rv.System,
-		Notes: rv.Notes, Reasoning: rv.Reasoning, Reviewed: rv.Reviewed, ReviewedTruncated: rv.ReviewedTruncated, Accept: rv.Accept,
+		Notes: rv.Notes, Reasoning: rv.Reasoning, Reviewed: rv.Reviewed, ReviewedTruncated: rv.ReviewedTruncated, Accept: rv.Accept, CarriedFrom: rv.CarriedFrom,
 		Model: rv.Model, ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models,
 		BundleID: rv.BundleID, BundleSize: len(rv.BundleSkills),
 		Seats: rv.Seats, Combine: rv.Combine, RecordedAt: time.Now().UTC().Format(time.RFC3339Nano)}

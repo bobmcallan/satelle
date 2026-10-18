@@ -114,7 +114,9 @@ type Engine struct {
 	// from→to edge (oldest first), so a re-review judges the delta instead of
 	// re-reading the artefact with no memory (sty_0f5e600c). Nil-safe: an unwired
 	// resolver injects nothing.
-	priorVerdicts func(ctx context.Context, itemID, from, to string) []PriorVerdict
+	// ex narrows what marks a verdict stale (sty_59720b8b); the zero value is the
+	// unqualified rule.
+	priorVerdicts func(ctx context.Context, itemID, from, to string, ex verb.StaleExemption) []PriorVerdict
 	// definitionEdits resolves the definition edits recorded for THIS item, oldest
 	// first, so an intent reviewer judges an edited AC against the story's purpose
 	// (sty_5262592e). Nil-safe: an unwired resolver injects nothing.
@@ -626,7 +628,7 @@ func (g *Engine) SetDocsResolver(fn func(ctx context.Context, itemID string) []D
 // from scratch (sty_0f5e600c). Enumeration, not verdict: the binary attaches the
 // rows, the reviewer skill decides what to do with them. Nil-safe: an unwired
 // resolver injects no prior verdicts.
-func (g *Engine) SetPriorVerdictsResolver(fn func(ctx context.Context, itemID, from, to string) []PriorVerdict) {
+func (g *Engine) SetPriorVerdictsResolver(fn func(ctx context.Context, itemID, from, to string, ex verb.StaleExemption) []PriorVerdict) {
 	g.priorVerdicts = fn
 }
 
@@ -1074,11 +1076,11 @@ func (g *Engine) fillPayloadDocs(ctx context.Context, itemID string, tp *transit
 // priorVerdictCount with each note capped. The two budgets stay separate on
 // purpose: this runs AFTER fillPayloadDocs and never touches its counter, so
 // prior verdicts provably cannot consume docsPayloadCeiling.
-func (g *Engine) fillPriorVerdicts(ctx context.Context, itemID, from, to string, tp *transitionPayload, mat *reviewerMaterial) {
+func (g *Engine) fillPriorVerdicts(ctx context.Context, itemID, from, to string, ex verb.StaleExemption, tp *transitionPayload, mat *reviewerMaterial) {
 	if g.priorVerdicts == nil || itemID == "" {
 		return
 	}
-	all := g.priorVerdicts(ctx, itemID, from, to)
+	all := g.priorVerdicts(ctx, itemID, from, to, ex)
 	if len(all) == 0 {
 		return
 	}
@@ -1551,6 +1553,25 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		}
 	}
 
+	// reviewer_carry (sty_59720b8b): a step that declares it may leave an
+	// unchanged earlier accept undispatched. Absent — the default — never enters
+	// this branch, so every reviewer is dispatched every round.
+	if g.edgeCarry(ctx, item, item.Status, toStatus) == wfdot.CarryUntilAccept {
+		if dec, handled, cerr := g.gateCarrying(ctx, item, toStatus, ordered, sysStart, parallelCap); handled {
+			return dec, cerr
+		}
+	}
+	all := make([]int, len(ordered))
+	for i := range all {
+		all[i] = i
+	}
+	return g.scheduleGate(ctx, item, toStatus, ordered, all, sysStart, parallelCap)
+}
+
+// runScheduled dispatches ordered under the edge's bundle, parallel or serial
+// scheduling and assembles the decision. Verdict Order is the position in
+// ordered; scheduleGate maps it back when ordered is a subset of the edge.
+func (g *Engine) runScheduled(ctx context.Context, item workitem.Item, toStatus string, ordered []reviewerRef, sysStart, parallelCap int) (verb.GateDecision, error) {
 	// Parallel opt-in (sty_4f0a15db): edge parallel=N|true runs reviewers
 	// concurrently (no short-circuit). Absent/0 or a single reviewer keeps the
 	// sequential first-reject loop byte-for-byte.

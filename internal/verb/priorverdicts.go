@@ -58,7 +58,7 @@ func isSelfLedgerKind(kind string) bool {
 // not among them.
 func isSelfTelemetryKind(kind string) bool {
 	switch kind {
-	case "agent-attempt", "gate-bundled", "agent-retry", "agent-failure",
+	case "agent-attempt", "gate-bundled", "gate-carried", "agent-retry", "agent-failure",
 		"agent-timeout", "agent-stalled", "scoped-gate-skipped",
 		"reviewer-isolation-warned", "agent-secondary-failover", "agent-interactive-denied":
 		return true
@@ -101,7 +101,7 @@ type priorVerdictRow struct {
 // Nil-safe when no ledger is wired, and never an error the caller must handle
 // specially: prior verdicts are additive context, so an unreadable row is
 // skipped rather than failing the transition it decorates.
-func PriorVerdicts(ctx context.Context, itemID, from, to string) ([]PriorVerdict, error) {
+func PriorVerdicts(ctx context.Context, itemID, from, to string, ex StaleExemption) ([]PriorVerdict, error) {
 	if ledgerStore == nil || strings.TrimSpace(itemID) == "" {
 		return nil, nil
 	}
@@ -109,13 +109,48 @@ func PriorVerdicts(ctx context.Context, itemID, from, to string) ([]PriorVerdict
 	if err != nil {
 		return nil, err
 	}
-	return PriorVerdictsFrom(entries, from, to), nil
+	return PriorVerdictsFrom(entries, from, to, ex), nil
+}
+
+// StaleExemption names the two kinds of row that do not mark a verdict stale
+// when a step declares reviewer_carry (sty_59720b8b): a re-attach of the step
+// performer's output document, and a directed message to that performer. Both
+// land in the document the reviewer's quotation is checked against, so a
+// quotation that still appears verbatim in it has captured the change. The zero
+// value exempts nothing — staleness is exactly the unqualified rule. The engine
+// is the only reader of the route key; it hands the resolved names in.
+type StaleExemption struct {
+	// DocName is the performer's output document name (e.g. "plan").
+	DocName string
+	// Performer is the agent the performer's directed messages are addressed to.
+	Performer string
+}
+
+// exempts reports whether e is a row the exemption excludes from evidence.
+func (x StaleExemption) exempts(e ledger.Entry) bool {
+	switch e.Kind {
+	case ledger.KindStoryDocAttached:
+		if x.DocName == "" {
+			return false
+		}
+		var d struct {
+			Name string `json:"name"`
+		}
+		return json.Unmarshal(e.Payload, &d) == nil && d.Name == x.DocName
+	case ledger.KindAgentMessage:
+		if x.Performer == "" {
+			return false
+		}
+		var m AgentMessage
+		return json.Unmarshal(e.Payload, &m) == nil && m.Cc == "" && m.To == x.Performer
+	}
+	return false
 }
 
 // PriorVerdictsFrom is the enumeration PriorVerdicts runs over a story's ledger
 // rows, oldest first. It is exported so a replay can rebuild what a gate injected
 // from rows alone.
-func PriorVerdictsFrom(entries []ledger.Entry, from, to string) []PriorVerdict {
+func PriorVerdictsFrom(entries []ledger.Entry, from, to string, ex StaleExemption) []PriorVerdict {
 	var out []PriorVerdict
 	var recorded []time.Time // parallel to out; zero when the row has no recorded_at
 	for _, e := range entries {
@@ -149,12 +184,12 @@ func PriorVerdictsFrom(entries []ledger.Entry, from, to string) []PriorVerdict {
 		}
 		recorded = append(recorded, at)
 	}
-	markStale(out, recorded, entries)
+	markStale(out, recorded, entries, ex)
 	return out
 }
 
 // markStale applies the staleness rule to each skill's latest verdict in out.
-func markStale(out []PriorVerdict, recorded []time.Time, entries []ledger.Entry) {
+func markStale(out []PriorVerdict, recorded []time.Time, entries []ledger.Entry, ex StaleExemption) {
 	latest := make(map[string]int, len(out))
 	for i, v := range out {
 		latest[v.Skill] = i
@@ -163,7 +198,7 @@ func markStale(out []PriorVerdict, recorded []time.Time, entries []ledger.Entry)
 		if recorded[i].IsZero() {
 			continue
 		}
-		since := evidenceAfter(entries, recorded[i])
+		since := evidenceAfter(entries, recorded[i], ex)
 		if len(since) == 0 {
 			continue
 		}
@@ -197,11 +232,12 @@ func IsEvidenceRow(e ledger.Entry) bool {
 }
 
 // evidenceAfter lists the rows recorded strictly after cycleEnd that are
-// evidence (IsEvidenceRow), oldest first, capped at maxEvidenceSince.
-func evidenceAfter(entries []ledger.Entry, cycleEnd time.Time) []EvidenceSince {
+// evidence (IsEvidenceRow) and not exempted by ex, oldest first, capped at
+// maxEvidenceSince.
+func evidenceAfter(entries []ledger.Entry, cycleEnd time.Time, ex StaleExemption) []EvidenceSince {
 	var since []EvidenceSince
 	for _, e := range entries {
-		if !e.CreatedAt.After(cycleEnd) || !IsEvidenceRow(e) {
+		if !e.CreatedAt.After(cycleEnd) || !IsEvidenceRow(e) || ex.exempts(e) {
 			continue
 		}
 		var event string

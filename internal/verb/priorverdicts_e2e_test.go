@@ -133,8 +133,8 @@ func TestSecondGateAttemptStdinCarriesPriorVerdict(t *testing.T) {
 	// The same wiring internal/cli/app.go performs at both agentstep.New sites:
 	// the engine's resolver IS verb.PriorVerdicts reading the ledger this
 	// transition writes.
-	rev.SetPriorVerdictsResolver(func(ctx context.Context, itemID, from, to string) []agentstep.PriorVerdict {
-		verdicts, err := verb.PriorVerdicts(ctx, itemID, from, to)
+	rev.SetPriorVerdictsResolver(func(ctx context.Context, itemID, from, to string, ex verb.StaleExemption) []agentstep.PriorVerdict {
+		verdicts, err := verb.PriorVerdicts(ctx, itemID, from, to, ex)
 		if err != nil {
 			t.Errorf("PriorVerdicts: %v", err)
 			return nil
@@ -199,7 +199,7 @@ func TestSecondGateAttemptStdinCarriesPriorVerdict(t *testing.T) {
 // newPVHarness is the prior-verdict gate fixture: a fresh store, the fixture
 // reviewer on plan → in_progress, and a story sitting at plan. resolver nil
 // reads the ledger through verb.PriorVerdicts and PriorVerdictFrom.
-func newPVHarness(t *testing.T, outs []string, resolver func(context.Context, string, string, string) []agentstep.PriorVerdict) (*captureRunner, workitem.Item) {
+func newPVHarness(t *testing.T, outs []string, resolver func(context.Context, string, string, string, verb.StaleExemption) []agentstep.PriorVerdict) (*captureRunner, workitem.Item) {
 	t.Helper()
 	withWiring(t)
 	db := wire(t)
@@ -213,8 +213,8 @@ func newPVHarness(t *testing.T, outs []string, resolver func(context.Context, st
 	runner := &captureRunner{outs: outs}
 	rev := agentstep.New(runner, db.DocIndex, t.TempDir(), "")
 	if resolver == nil {
-		resolver = func(ctx context.Context, itemID, from, to string) []agentstep.PriorVerdict {
-			verdicts, err := verb.PriorVerdicts(ctx, itemID, from, to)
+		resolver = func(ctx context.Context, itemID, from, to string, ex verb.StaleExemption) []agentstep.PriorVerdict {
+			verdicts, err := verb.PriorVerdicts(ctx, itemID, from, to, ex)
 			if err != nil {
 				t.Errorf("PriorVerdicts: %v", err)
 				return nil
@@ -312,7 +312,7 @@ func TestReviewedQuotationRoundTrip(t *testing.T) {
 	if strings.Contains(fmtNotes(last["notes"]), quote) {
 		t.Fatal("quotation was stored only inside notes")
 	}
-	got, err := verb.PriorVerdicts(context.Background(), story.ID, "plan", "in_progress")
+	got, err := verb.PriorVerdicts(context.Background(), story.ID, "plan", "in_progress", verb.StaleExemption{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -464,7 +464,7 @@ func TestReviewedCeilingLedgerOmitsPrefix(t *testing.T) {
 		if strings.Contains(string(raw), strings.Repeat("Z", 32)) {
 			t.Fatal("over-ceiling row stored a shortened quotation")
 		}
-		got, err := verb.PriorVerdicts(context.Background(), story.ID, "plan", "in_progress")
+		got, err := verb.PriorVerdicts(context.Background(), story.ID, "plan", "in_progress", verb.StaleExemption{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -505,7 +505,7 @@ func TestReviewedCeilingLedgerOmitsPrefix(t *testing.T) {
 		if _, ok := last["reviewed_truncated"]; ok {
 			t.Fatalf("at-ceiling flag = %#v, want it omitted", last["reviewed_truncated"])
 		}
-		got, err := verb.PriorVerdicts(context.Background(), story.ID, "plan", "in_progress")
+		got, err := verb.PriorVerdicts(context.Background(), story.ID, "plan", "in_progress", verb.StaleExemption{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -529,7 +529,7 @@ func TestLegacyReviewRowHasNoReviewed(t *testing.T) {
 	wireLedgerOnly(t)
 	const notes = "LEGACY-NOTES-NO-REVIEWED"
 	seedVerdict(t, "sty_legacy", ledger.KindReviewAccept, "plan", "in_progress", "pv-plan-review", notes)
-	got, err := verb.PriorVerdicts(context.Background(), "sty_legacy", "plan", "in_progress")
+	got, err := verb.PriorVerdicts(context.Background(), "sty_legacy", "plan", "in_progress", verb.StaleExemption{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -544,7 +544,7 @@ func TestLegacyReviewRowHasNoReviewed(t *testing.T) {
 		t.Fatalf("PriorVerdictFrom = %+v", conv)
 	}
 
-	runner, story := newPVHarness(t, []string{`{"decision":"accept","notes":"re-judged"}`}, func(context.Context, string, string, string) []agentstep.PriorVerdict {
+	runner, story := newPVHarness(t, []string{`{"decision":"accept","notes":"re-judged"}`}, func(context.Context, string, string, string, verb.StaleExemption) []agentstep.PriorVerdict {
 		return []agentstep.PriorVerdict{conv}
 	})
 	if err := json.Unmarshal(call(t, "story-set", map[string]any{"id": story.ID, "status": "in_progress"}), new(workitem.Item)); err != nil {
