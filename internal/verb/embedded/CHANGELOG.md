@@ -1,3 +1,9 @@
+## [0.0.697] - 2026-10-18
+
+### Fixed
+- The edit gate now refuses a source write made through an interpreter, the same as an Edit, `sed -i` or a redirect, when no story is engaged in an executor step. This covers python, node, perl and ruby running inline code (`-c`, `-e` and the like), and a shell running `-c`, a heredoc, a pipe, `-s` or `-`. Running a named script file (`python3 tool.py`, `bash script.sh`) is not affected, even with stdin piped in. An inline program run outside the tree counts as a write only when its text names the tree's root path. The substrate lock and the cross-repo fence are unchanged. (sty_5fac62b9)
+- A quoted argument to a satelle verb, such as a `--body "$(cat <<'EOF' … EOF)"` holding source paths, an odd quote, `>` or `rm`, is no longer read as a write. (sty_5fac62b9)
+
 ## [0.0.696] - 2026-10-18
 
 ### Added

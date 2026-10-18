@@ -98,20 +98,10 @@ func tokenizeBash(command string) []bashTok {
 			i = j
 			continue
 		}
-		// Double-quoted string (best-effort: \" and \\ escapes).
+		// Double-quoted string (best-effort: \" and \\ escapes, and a $( … )
+		// substitution inside it nests its own quotes and heredocs).
 		if command[i] == '"' {
-			j := i + 1
-			for j < n {
-				if command[j] == '\\' && j+1 < n {
-					j += 2
-					continue
-				}
-				if command[j] == '"' {
-					j++
-					break
-				}
-				j++
-			}
+			j := skipDoubleQuoted(command, i+1)
 			out = append(out, bashTok{Kind: "string", Value: command[i:j]})
 			i = j
 			continue
@@ -166,6 +156,94 @@ func tokenizeBash(command string) []bashTok {
 		i++
 	}
 	return out
+}
+
+// skipDoubleQuoted returns the index after the double-quoted string whose body
+// starts at i (just past the opening quote), or len(s) when it never closes. A
+// `$(` opens a substitution whose own quotes and heredoc bodies belong to it, so
+// an odd inner quote (`the "x file` inside `$(cat <<'EOF' … EOF)`) does not end the
+// outer string. A substitution that never closes is read as plain text, which is the
+// pre-nesting behaviour.
+func skipDoubleQuoted(s string, i int) int {
+	n := len(s)
+	for i < n {
+		switch {
+		case s[i] == '\\' && i+1 < n:
+			i += 2
+		case s[i] == '"':
+			return i + 1
+		case s[i] == '$' && i+1 < n && s[i+1] == '(':
+			if end, ok := skipSubstitution(s, i+2); ok {
+				i = end
+			} else {
+				i += 2
+			}
+		default:
+			i++
+		}
+	}
+	return n
+}
+
+// skipSubstitution returns the index after the `)` that closes a `$(` whose body
+// starts at i, and false when it never closes. Single and double quotes, nested
+// substitutions and `<<` heredocs inside it are skipped as units.
+func skipSubstitution(s string, i int) (int, bool) {
+	n, depth := len(s), 1
+	for i < n {
+		switch c := s[i]; {
+		case c == '\\' && i+1 < n:
+			i += 2
+		case c == '\'':
+			j := i + 1
+			for j < n && s[j] != '\'' {
+				j++
+			}
+			i = j + 1
+		case c == '"':
+			i = skipDoubleQuoted(s, i+1)
+		case c == '<' && i+1 < n && s[i+1] == '<' && !(i+2 < n && s[i+2] == '<'):
+			end, rest, ok := consumeHeredoc(s, i)
+			if !ok {
+				i += 2
+				continue
+			}
+			// The opener line can close the substitution (`<<EOF | wc)`).
+			if depth += parenDelta(rest); depth <= 0 {
+				return end, true
+			}
+			i = end
+		case c == '(':
+			depth++
+			i++
+		case c == ')':
+			if depth--; depth == 0 {
+				return i + 1, true
+			}
+			i++
+		default:
+			i++
+		}
+	}
+	return n, false
+}
+
+// parenDelta is the net `(` minus `)` in text outside single and double quotes.
+func parenDelta(text string) int {
+	d := 0
+	for i := 0; i < len(text); i++ {
+		switch text[i] {
+		case '(':
+			d++
+		case ')':
+			d--
+		case '\'', '"':
+			q := text[i]
+			for i++; i < len(text) && text[i] != q; i++ {
+			}
+		}
+	}
+	return d
 }
 
 // consumeHeredoc advances past a heredoc opener and its body. Returns the index
@@ -498,7 +576,9 @@ func bashMutationTargets(command, anchor string) (inHome, foreign []string) {
 			return
 		}
 
-		// satelle foreign verb classification.
+		// satelle foreign verb classification. Only bare words reach foreignSatelleVerb:
+		// a quoted argument (a --body naming source paths) is a string token and is
+		// never a target.
 		if cmd == "satelle" || filepath.Base(words[0]) == "satelle" {
 			if t, ok := foreignSatelleVerb(words, cwd); ok {
 				add(t)
@@ -639,38 +719,99 @@ func gitCommandDir(command, base string) string {
 // session's tree — or in a linked worktree of the session's own repository,
 // which the foreign-tree fence lets through (sty_bcf837ff) — not exempted by the
 // operator's [gate] edit_exempt_paths configuration.
+//
+// This is the edit gate's question, so beyond the named targets it also judges what
+// a command can do: an interpreter running inline program text (a code flag, `-`,
+// or stdin fed by a heredoc or pipe; interpreterInlineProgram) is a write wherever
+// its working dir is in the tree, because its writes are invisible to the command
+// line. The classifier never stats: isFile is the injected "is this an existing
+// regular file" check that tells a named script from a stray word; nil means no
+// file exists, which fails closed. bashMutationTargets, mutationTargets (the
+// cross-repo fence) and bashLockCandidates (the substrate lock) do not see this.
+//
+// bashMutatesTree is the production question, asking the real filesystem;
+// bashMutatesTreeWith takes the file check so a test can inject it.
 func bashMutatesTree(command, anchor string) bool {
+	return bashMutatesTreeWith(command, anchor, isRegularFile)
+}
+
+func bashMutatesTreeWith(command, anchor string, isFile func(string) bool) bool {
 	inHome, foreign := bashMutationTargets(command, anchor)
 	for _, target := range inHome {
 		if !exemptTarget(target) {
 			return true
 		}
 	}
+	anchor = filepath.Clean(anchor)
 	for _, target := range foreign {
-		if linkedTreeTarget(filepath.Clean(anchor), target) && !exemptTarget(target) {
+		if linkedTreeTarget(anchor, target) && !exemptTarget(target) {
 			return true
+		}
+	}
+	if anchor == "" || anchor == "." {
+		return false
+	}
+	var segs []bashSegment
+	forEachSegment(command, anchor, func(s bashSegment) { segs = append(segs, s) })
+	for j, s := range segs {
+		if len(s.Words) == 0 || filepath.Base(s.Words[0]) == "satelle" || !interpreterInlineProgram(s, isFile) {
+			continue
+		}
+		// In the tree (the root or any subdirectory), or in a linked worktree of
+		// the session's repository, the working dir is where the program writes.
+		if withinRoot(anchor, s.Cwd) || linkedTreeTarget(anchor, s.Cwd) {
+			if !exemptTarget(s.Cwd) {
+				return true
+			}
+			continue
+		}
+		// Elsewhere it is a write only when its program text names the session
+		// tree's root as a whole path token. Program text that is not on the
+		// command line (a script file, `python3 - < prog.py`) cannot be scanned.
+		for _, p := range programSegments(segs, j) {
+			for _, t := range p.Tokens {
+				text := t.Value
+				if t.Raw != "" {
+					text = t.Raw
+				}
+				for _, run := range lockPathRefs(text, []string{anchor}) {
+					if abs := resolvePath(p.Cwd, run); abs != "" && !exemptTarget(abs) {
+						return true
+					}
+				}
+			}
 		}
 	}
 	return false
 }
 
-// interpreterVerbs are the commands that run a program whose writes the
-// classifier cannot see from the command line alone: a classifier table of the
-// same kind as mutationVerbs. Which paths are locked stays configuration
-// ([gate] lock_substrate_paths); this only says which commands carry program
-// text the lock scans. A versioned python (python3.11) counts as python.
-var interpreterVerbs = map[string]bool{
-	"python": true, "python3": true, "node": true, "nodejs": true, "perl": true, "ruby": true,
+// programSegments is the segment at j and the segments piping into it, nearest
+// first: everything that supplies or is the interpreter's program text.
+func programSegments(segs []bashSegment, j int) []bashSegment {
+	var out []bashSegment
+	for k := j; k >= 0; k-- {
+		out = append(out, segs[k])
+		if !segs[k].Piped {
+			break
+		}
+	}
+	return out
 }
 
-// shellInterpreters run a program only when handed one with -c.
+// The interpreters (interpreterBase: python, node, perl, ruby and the shells in
+// shellInterpreters) run a program whose writes the classifier cannot see from the
+// command line alone. Which paths the substrate lock guards stays configuration
+// ([gate] lock_substrate_paths); the tables here only say which commands carry
+// program text. A versioned python (python3.11) counts as python.
+
+// shellInterpreters run a program from a c cluster (-c), from -s or `-`, or from
+// stdin when no script file is named.
 var shellInterpreters = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true}
 
-// isInterpreterCommand reports whether words (env assignments already stripped)
-// run an interpreter: a verb in interpreterVerbs, or a shell given -c (including a
-// flag cluster such as -ec or -lc). A leading `env [-opts] [NAME=val]…` is seen
-// through.
-func isInterpreterCommand(words []string) bool {
+// interpreterBase sees through a leading `env [-opts] [NAME=val]…` and names the
+// interpreter family of the command word ("python", "node", "perl", "ruby" or
+// "shell"), with the words after it. ok is false for any other command.
+func interpreterBase(words []string) (family string, rest []string, ok bool) {
 	i := 0
 	if len(words) > 0 && filepath.Base(words[0]) == "env" {
 		for i = 1; i < len(words); i++ {
@@ -681,20 +822,187 @@ func isInterpreterCommand(words []string) bool {
 		}
 	}
 	if i >= len(words) {
-		return false
+		return "", nil, false
 	}
 	base := filepath.Base(words[i])
-	if interpreterVerbs[base] {
-		return true
+	rest = words[i+1:]
+	if v, isPy := strings.CutPrefix(base, "python"); isPy && strings.Trim(v, "0123456789.") == "" {
+		return "python", rest, true
 	}
-	if rest, ok := strings.CutPrefix(base, "python"); ok && rest != "" && strings.Trim(rest, "0123456789.") == "" {
-		return true
+	switch {
+	case base == "node" || base == "nodejs":
+		return "node", rest, true
+	case base == "perl" || base == "ruby":
+		return base, rest, true
+	case shellInterpreters[base]:
+		return "shell", rest, true
 	}
-	if !shellInterpreters[base] {
+	return "", nil, false
+}
+
+// isInterpreterCommand reports whether words (env assignments already stripped)
+// run an interpreter: python, node, perl or ruby, or a shell given -c (including a
+// flag cluster such as -ec or -lc). A leading `env [-opts] [NAME=val]…` is seen
+// through.
+func isInterpreterCommand(words []string) bool {
+	family, rest, ok := interpreterBase(words)
+	if !ok {
 		return false
 	}
-	for _, w := range words[i+1:] {
-		if strings.HasPrefix(w, "-") && !strings.HasPrefix(w, "--") && strings.ContainsRune(w[1:], 'c') {
+	if family != "shell" {
+		return true
+	}
+	for _, w := range rest {
+		if interpreterCodeFlag(family, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// interpreterCodeFlag reports whether one flag word hands the interpreter its
+// program on the command line. Shells and python: a single-dash cluster containing
+// c (python's rest of the word is the code, so -BcCODE counts). Node: -e/-p, alone
+// or in a letters-only cluster, and --eval/--print. Perl and ruby: e (perl also E)
+// reached while reading the cluster left to right (see perlRubyCode).
+func interpreterCodeFlag(family, w string) bool {
+	if len(w) < 2 || w[0] != '-' {
+		return false
+	}
+	long := strings.HasPrefix(w, "--")
+	switch family {
+	case "shell", "python":
+		return !long && strings.ContainsRune(w[1:], 'c')
+	case "node":
+		if long {
+			name, _, _ := strings.Cut(w[2:], "=")
+			return name == "eval" || name == "print"
+		}
+		cl := w[1:]
+		if cl[0] == 'r' || strings.Trim(cl, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") != "" {
+			return false
+		}
+		return strings.ContainsAny(cl, "ep")
+	case "perl", "ruby":
+		return !long && perlRubyCode(family == "perl", w[1:])
+	}
+	return false
+}
+
+// perlRubyCode reads a perl or ruby flag cluster left to right and reports whether
+// it reaches a code letter. A letter that takes an attached value ends the
+// cluster, because the rest of the word is that value (perl -I/x, -Mfeature=say,
+// -i.bak, -xdir, -Fre, -Dflags, -d:Mod; ruby -rlib, -Cdir, -Ikdir).
+// l and 0 (and ruby T) consume only following digits; perl C consumes only the
+// characters of its unicode flags; every other letter is a plain switch, so
+// -lpe, -0pe, -Te, -de and -CSDAe all reach their e.
+func perlRubyCode(perl bool, cl string) bool {
+	for i := 0; i < len(cl); i++ {
+		switch c := cl[i]; c {
+		case 'e':
+			return true
+		case 'E':
+			if perl {
+				return true
+			}
+		case 'I', 'M', 'm', 'r', 'i', 'x', 'F':
+			return false
+		case 'C':
+			if !perl {
+				return false
+			}
+			for i+1 < len(cl) && strings.IndexByte("IOESioDALa0123456789", cl[i+1]) >= 0 {
+				i++
+			}
+		case 'D':
+			if perl {
+				return false
+			}
+		case 'd':
+			if perl && i+1 < len(cl) && cl[i+1] == ':' {
+				return false
+			}
+		case 'l', '0', 'T':
+			for i+1 < len(cl) && cl[i+1] >= '0' && cl[i+1] <= '9' {
+				i++
+			}
+		}
+	}
+	return false
+}
+
+// interpreterInlineProgram reports whether a segment runs an interpreter on
+// program text that is not in a named script file, so what it writes cannot be
+// read off the command line. The argument words are walked in order (quoted ones
+// included): `-`, a code flag (interpreterCodeFlag) or, for a shell, an s in a
+// cluster means inline; a flag that takes a separate value skips that value
+// unless it starts with `-` (then it is read as a flag); python -m names a script
+// module; the first non-flag word the injected isFile reports as an existing
+// regular file (resolved against the segment's working dir) is the script, after
+// which nothing is inline; any other non-flag word is skipped. With the words
+// exhausted and no script, the program is read from stdin, which is inline only
+// when a heredoc or a pipe feeds it (a bare interpreter is a REPL).
+//
+// Accepted fail-closed limits: an unknown --long flag on a shell or node takes the
+// next word, which can be the script; a script that does not exist yet reads as
+// inline; a python cluster with an attached -W/-X/-m value that contains a c reads
+// as code.
+func interpreterInlineProgram(seg bashSegment, isFile func(string) bool) bool {
+	family, args, ok := interpreterBase(commandArgWords(commandTokens(seg.Tokens, seg.Idx)))
+	if !ok {
+		return false
+	}
+	for i := 0; i < len(args); i++ {
+		w := args[i]
+		if w == "-" {
+			return true
+		}
+		takesValue := false
+		switch {
+		case family == "shell" && (w == "+o" || w == "+O"):
+			takesValue = true
+		case w == "--":
+		case !strings.HasPrefix(w, "-"):
+			if isFile != nil && isFile(resolvePath(seg.Cwd, w)) {
+				return false
+			}
+			continue
+		case interpreterCodeFlag(family, w):
+			return true
+		case strings.HasPrefix(w, "--"):
+			// Python, perl and ruby long flags take no separate value.
+			takesValue = (family == "shell" || family == "node") && !strings.Contains(w, "=")
+		default:
+			cl := w[1:]
+			switch family {
+			case "shell":
+				if strings.ContainsRune(cl, 's') {
+					return true
+				}
+				takesValue = strings.ContainsAny(cl, "oO")
+			case "python":
+				for k := 0; k < len(cl); k++ {
+					if cl[k] == 'm' {
+						return false // python -m <module>: a named script
+					}
+					if cl[k] == 'W' || cl[k] == 'X' {
+						takesValue = k == len(cl)-1
+						break
+					}
+				}
+			case "node":
+				takesValue = w == "-r"
+			}
+		}
+		if takesValue && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			i++
+		}
+	}
+	if seg.Piped {
+		return true
+	}
+	for _, t := range seg.Tokens {
+		if t.Kind == "string" && t.Value == "HEREDOC" {
 			return true
 		}
 	}
@@ -813,11 +1121,8 @@ func interpreterPathRefs(command, base string, lockPaths []string) (refs, assign
 			continue
 		}
 		interp = true
-		for k := j; k >= 0; k-- {
-			scanSegment(segs[k])
-			if !segs[k].Piped {
-				break
-			}
+		for _, p := range programSegments(segs, j) {
+			scanSegment(p)
 		}
 	}
 	if interp {

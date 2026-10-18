@@ -451,3 +451,129 @@ func TestTempWriteTargetsAreNotTreeMutations(t *testing.T) {
 		t.Error("var expanding into the anchor must stay a tree mutation")
 	}
 }
+
+// inlineAnchor is the session tree the inline-interpreter cases run against; the
+// fake file checker knows these files under it, so a named script is found without
+// touching the disk (sty_5fac62b9).
+const inlineAnchor = "/work/repo"
+
+// inlineHome is the HOME the inline test pins, so ~/.bashrc expands to a path the
+// fake checker knows: the --rcfile case passes only because --rcfile takes its value.
+const inlineHome = "/work/home"
+
+func inlineFiles(files ...string) func(string) bool {
+	known := map[string]bool{}
+	for _, f := range files {
+		if strings.HasPrefix(f, "/") {
+			known[f] = true
+			continue
+		}
+		known[inlineAnchor+"/"+f] = true
+	}
+	return func(p string) bool { return known[p] }
+}
+
+var inlineChecker = inlineFiles("tool.py", "build.js", "script.sh", "scripts/x.sh", "x.pl", "x.js",
+	"x.rb", "x.py", "setup.js", "d.json", "a.go", "x.go", "f", "x", "script",
+	inlineHome+"/.bashrc")
+
+// AC1: an interpreter handed inline program text writes where the command line
+// cannot show it, so the edit gate treats it as a tree write.
+func TestBashMutatesTreeInlineInterpreter(t *testing.T) {
+	t.Setenv("HOME", inlineHome)
+	for _, c := range []string{
+		"python3 - <<'PY'\nopen('a.go','w').write('x')\nPY",
+		`python3 -c "open('a.go','w')"`,
+		`cd internal && python3 -c "open('a.go','w')"`,
+		`python3 -BcCODE`,
+		`node -e "require('fs')"`,
+		`perl -pi -e 's/a/b/' f`,
+		`perl -i -lpe 's/a/b/' x.go`,
+		`perl -0pe 's/a/b/' f`,
+		`perl -Te 'print 1'`,
+		`perl -de 'print 1'`,
+		`perl -CSDAe 'print 1'`,
+		`ruby -de 'puts 1'`,
+		`ruby -We 'File.write("a.go","x")'`,
+		`ruby -Ee 'File.write("a.go","x")'`,
+		`bash -c "echo hi > a.go"`,
+		"cat x | python3 -",
+		"bash <<'SH'\nsed -i s/a/b/ x.go\nSH",
+		"cat script | sh",
+		"bash -s",
+		"sh -",
+		`bash -o pipefail -c "echo"`,
+		`bash --rcfile ~/.bashrc -c "echo"`,
+		`bash --login -c "echo"`,
+		`bash --noprofile --norc -c "echo"`,
+		`node -r ./setup.js -e "1"`,
+		`node --no-warnings -e "1"`,
+		`python3 -W ignore -c "1"`,
+		`X=1 python3 -c "1"`,
+		`env X=1 python3 -c "1"`,
+		`node --eval "1"`,
+		`python3.11 -c "1"`,
+		// AC3 fail-closed limits.
+		"bash -s arg <<'EOF'\nrm x.go\nEOF",
+		"cat d | python3 missing.py",
+		"cat s | bash --norc script.sh",
+		"python3 -Wignore::c x.py",
+	} {
+		if !bashMutatesTreeWith(c, inlineAnchor, inlineChecker) {
+			t.Errorf("bashMutatesTreeWith(%q) = false, want true", c)
+		}
+	}
+}
+
+// AC3: a named script file, a module, or a flag that is not a code flag leaves the
+// program off the command line's account.
+func TestBashMutatesTreeNamedScriptIsNotInline(t *testing.T) {
+	for _, c := range []string{
+		"python3 tool.py",
+		"python3 -m pytest",
+		"node build.js",
+		"bash script.sh",
+		"cat d.json | python3 tool.py",
+		`cat d.json | python3 "tool.py"`,
+		"python3 tool.py <<EOF\nrm x.go\nEOF",
+		"bash -e script.sh",
+		"bash -ex ./scripts/x.sh",
+		"python3 -E tool.py",
+		"perl -c x.pl",
+		"node -c x.js",
+		"perl -I/home/x/lib x.pl",
+		"ruby -E UTF-8 x.rb",
+		"python3 tool.py -c x",
+		"python3",
+		"node --version",
+	} {
+		if bashMutatesTreeWith(c, inlineAnchor, inlineChecker) {
+			t.Errorf("bashMutatesTreeWith(%q) = true, want false", c)
+		}
+	}
+	// With no checker no file exists: a piped script name fails closed.
+	if !bashMutatesTreeWith("cat d.json | python3 tool.py", inlineAnchor, nil) {
+		t.Error("a nil file checker must fail closed")
+	}
+}
+
+// AC4: outside the tree an inline program is a write only when its text names the
+// tree's root as a whole path token.
+func TestBashMutatesTreeInlineInterpreterOutsideTree(t *testing.T) {
+	for _, c := range []string{
+		`cd /tmp && python3 -c "open('/work/repo/a.go','w')"`,
+		"cd /tmp && cat <<'EOF' | python3 -\nopen('/work/repo/a.go','w')\nEOF",
+	} {
+		if !bashMutatesTreeWith(c, inlineAnchor, inlineChecker) {
+			t.Errorf("bashMutatesTreeWith(%q) = false, want true", c)
+		}
+	}
+	for _, c := range []string{
+		`cd /tmp && python3 -c 'print(1)'`,
+		`cd /tmp && python3 -c "open('/work/repo-other/x.go','w')"`,
+	} {
+		if bashMutatesTreeWith(c, inlineAnchor, inlineChecker) {
+			t.Errorf("bashMutatesTreeWith(%q) = true, want false", c)
+		}
+	}
+}

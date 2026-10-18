@@ -394,6 +394,26 @@ func TestGateAllowsReadOnlyShellDuringPlanButDeniesMutation(t *testing.T) {
 	}
 }
 
+// An interpreter fed a program on stdin writes where the command line cannot show
+// it, so the gate judges it as it does an Edit: refused outside an executor step,
+// allowed in one (sty_5fac62b9).
+func TestGateJudgesInterpreterHeredocLikeAnEdit(t *testing.T) {
+	prevHarness := hookHarnessFlag
+	hookHarnessFlag = ""
+	t.Cleanup(func() { hookHarnessFlag = prevHarness })
+	cmd := "python3 - <<'PY'\nopen('internal/foo.go','w').write('x')\nPY"
+	for _, handler := range []string{"gate", "commitgate"} {
+		editStateRepo(t, "plan", "plan", false)
+		if out, err := runRootIn(t, bashEvent(cmd), "hook", handler); err == nil || !strings.Contains(err.Error(), `at "plan"`) {
+			t.Fatalf("%s allowed a heredoc interpreter write outside an executor step: err=%v out=%s", handler, err, out)
+		}
+		editStateRepo(t, "in_progress", "in_progress", false)
+		if out, err := runRootIn(t, bashEvent(cmd), "hook", handler); err != nil {
+			t.Fatalf("%s denied a heredoc interpreter write in an executor step: %v\n%s", handler, err, out)
+		}
+	}
+}
+
 func TestGateFailsClosedForUnknownWorkflowStatus(t *testing.T) {
 	prevHarness := hookHarnessFlag
 	hookHarnessFlag = ""

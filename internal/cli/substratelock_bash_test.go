@@ -203,10 +203,13 @@ func TestSubstrateLockBashAllowed(t *testing.T) {
 		gate      string // [gate] extra
 		category  string
 		noSeat    bool
+		// editGate: the edit gate, not the lock, may refuse this one: an inline
+		// interpreter write needs an executor engagement like an Edit does.
+		editGate bool
 	}
 	cases := []tc{
 		{name: "no live seat: redirect", cmd: "echo x > .satelle/skills/x.md", noSeat: true},
-		{name: "no live seat: interpreter", cmd: `python3 -c "open('.satelle/x','w')"`, noSeat: true},
+		{name: "no live seat: interpreter", cmd: `python3 -c "open('.satelle/x','w')"`, noSeat: true, editGate: true},
 		{name: "substrate lane: redirect", cmd: "echo x > .satelle/skills/x.md", category: "substrate"},
 		{name: "substrate lane: rm", cmd: "rm .satelle/skills/x.md", category: "substrate"},
 		{name: "substrate lane: interpreter", cmd: `python3 -c "open('.satelle/x','w')"`, category: "substrate"},
@@ -257,8 +260,11 @@ func TestSubstrateLockBashAllowed(t *testing.T) {
 				// engaged so it passes, and what is asserted is only that no lock
 				// refusal appears.
 				out, err := runRootIn(t, bashEvent(c.cmd), "hook", handler)
-				if err != nil {
+				if err != nil && !c.editGate {
 					t.Fatalf("%q must stay allowed: %v\n%s", c.cmd, err, out)
+				}
+				if err != nil && strings.Contains(out, "substrate lock") {
+					t.Errorf("%q: a refusal here is the edit gate's, not the substrate lock's:\n%s", c.cmd, out)
 				}
 				if rows := ledgerRows(t, ledger.KindSubstrateLockDeny); len(rows) != 0 {
 					t.Errorf("an allowed command records no refusal, got %d", len(rows))

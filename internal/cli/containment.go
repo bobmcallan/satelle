@@ -134,6 +134,14 @@ func foreignRootFor(anchor, abs string) (root string, ok bool) {
 	return root, true
 }
 
+// isRegularFile reports whether path is an existing regular file. It is the stat
+// the edit-gate classifier (bashMutatesTree) is handed so it never stats itself:
+// a word naming such a file is a script, not inline program text.
+func isRegularFile(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().IsRegular()
+}
+
 // linkedTreeTarget reports whether abs lives in a tree the fence lets through
 // only because it shares the anchor's git common dir — a linked worktree of the
 // session repository, outside the anchor and outside the temp roots. Such a
