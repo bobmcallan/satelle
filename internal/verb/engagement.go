@@ -253,7 +253,7 @@ func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 // Errors on unknown story, missing baseline, empty head_sha, foreign tree, or
 // git failure — the reviewer-payload resolver maps those to a no-baseline marker
 // and must never fail a transition.
-func StoryDiff(ctx context.Context, id string, wantPatch bool) (StoryDiffResult, error) {
+func StoryDiff(ctx context.Context, id string, opts StoryDiffOpts) (StoryDiffResult, error) {
 	store, err := requireWorkItem()
 	if err != nil {
 		return StoryDiffResult{}, err
@@ -268,7 +268,16 @@ func StoryDiff(ctx context.Context, id string, wantPatch bool) (StoryDiffResult,
 	if it.Kind != workitem.KindStory {
 		return StoryDiffResult{}, fmt.Errorf("story-diff: %s is not a story", id)
 	}
-	return liveStoryDiff(ctx, it, wantPatch, false)
+	return liveStoryDiff(ctx, it, opts.Patch, opts.IncludeSubstrate)
+}
+
+// StoryDiffOpts selects what StoryDiff carries. The zero value is the git-only
+// enumeration; IncludeSubstrate adds the gitignored substrate the story changed
+// (paths, and with Patch their content), the way `satelle story diff
+// --include-substrate` does.
+type StoryDiffOpts struct {
+	Patch            bool
+	IncludeSubstrate bool
 }
 
 func liveStoryDiff(ctx context.Context, it workitem.Item, wantPatch, includeSubstrate bool) (StoryDiffResult, error) {
@@ -277,27 +286,88 @@ func liveStoryDiff(ctx context.Context, it workitem.Item, wantPatch, includeSubs
 		return StoryDiffResult{}, err
 	}
 	files := sl.Files
+	stat, patch := sl.Stat, sl.Patch
 	note := "enumeration only — no pass/fail; gates decide scope"
 	var processRoot string
 	var processFiles []string
 	// Opt-in substrate leg only (--include-substrate). Default live path stays
 	// git-only so scope-review is not polluted by mtime noise (sty_6469025e).
 	if includeSubstrate {
-		if !sl.BaseAt.IsZero() {
-			local, procRel, root := substrateChangedFilesSplit(sl.Dir, authoredDirs, substrateConfigDir, sl.BaseAt)
-			files = append(files, local...)
-			files = append(files, procRel...)
+		// A story past its terminal edge reads its recorded change_records: the
+		// mtime walk has no upper bound and would attribute to it every later edit
+		// another story made (sty_98a2816b). Deletions are not recorded, so a
+		// closed story reports none.
+		closed := targetIsTerminalStateOnly(ctx, it, it.Status)
+		var local, procRel, deleted []string
+		var root string
+		if closed {
+			local, procRel, root = recordedSubstrate(ctx, it.ID, sl.Dir)
+		} else {
+			if !sl.BaseAt.IsZero() {
+				local, procRel, root = substrateChangedFilesSplit(sl.Dir, authoredDirs, substrateConfigDir, sl.BaseAt)
+			}
+			// Deletions are measured against the FIRST engagement baseline's manifest,
+			// not the resume re-anchor above: the manifest says what existed when the
+			// story took the tree, and that is the only thing a vanished path can be
+			// compared to. Do not "fix" this to re-anchor with sinceSHA.
+			deleted = substrateDeletedFiles(sl.Dir, sl.Base.SubstrateManifest)
+		}
+		files = append(files, local...)
+		files = append(files, procRel...)
+		files = append(files, deleted...)
+		files = uniqueSorted(files)
+		if len(procRel) > 0 {
 			processRoot, processFiles = root, procRel
-			if len(procRel) > 0 {
-				note += "; process_root_files live in the main tree at " + root
+			note += "; process_root_files live in the main tree at " + root
+		}
+
+		// A path git already lists (a tracked substrate file) is in the git patch;
+		// only the rest needs the whole-file render.
+		inGit := map[string]bool{}
+		for _, f := range sl.Files {
+			inGit[f] = true
+		}
+		var added []substrateFile
+		for _, p := range local {
+			if !inGit[p] {
+				added = append(added, substrateFile{Rel: p, Abs: filepath.Join(sl.Dir, filepath.FromSlash(p))})
 			}
 		}
-		// Deletions are measured against the FIRST engagement baseline's manifest,
-		// not the resume re-anchor above: the manifest says what existed when the
-		// story took the tree, and that is the only thing a vanished path can be
-		// compared to. Do not "fix" this to re-anchor with sinceSHA.
-		files = append(files, substrateDeletedFiles(sl.Dir, sl.Base.SubstrateManifest)...)
-		files = uniqueSorted(files)
+		for _, p := range procRel {
+			added = append(added, substrateFile{Rel: p, Abs: filepath.Join(root, filepath.FromSlash(p))})
+		}
+		var gone []string
+		for _, p := range deleted {
+			if !inGit[p] {
+				gone = append(gone, p)
+			}
+		}
+		if s := substrateStat(added, gone); s != "" {
+			stat = strings.TrimRight(stat, "\n") + "\n" + s
+		}
+		if wantPatch {
+			var labels []string
+			if closed {
+				labels = append(labels, "current content; may postdate this story's close")
+			}
+			if len(added)+len(gone) > 0 {
+				to := time.Now()
+				if closed {
+					if at := closedAt(ctx, it); !at.IsZero() {
+						to = at
+					}
+				}
+				if others := concurrentEngagements(ctx, it, sl.BaseAt, to); len(others) > 0 {
+					labels = append(labels, "shared-attribution: also in flight "+strings.Join(others, ", ")+"; mtime cannot tell which story wrote these")
+				}
+			}
+			if sub := substratePatch(added, gone, labels); sub != "" {
+				if patch != "" && !strings.HasSuffix(patch, "\n") {
+					patch += "\n"
+				}
+				patch += sub
+			}
+		}
 	}
 	return StoryDiffResult{
 		StoryID: it.ID,
@@ -306,8 +376,8 @@ func liveStoryDiff(ctx context.Context, it workitem.Item, wantPatch, includeSubs
 		Baseline: sl.SinceSHA,
 		DirtyAt:  sl.Base.Dirty,
 		Files:    files,
-		Stat:     sl.Stat,
-		Patch:    sl.Patch,
+		Stat:     stat,
+		Patch:    patch,
 		Source:   "live",
 		Note:     note,
 

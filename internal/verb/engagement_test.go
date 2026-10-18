@@ -178,7 +178,7 @@ requires = ["coded"]
 
 	// sty_a125b440: the exported StoryDiff API is the same live derivation the
 	// JSON verb uses (payload injection shares it).
-	_, err := verb.StoryDiff(context.Background(), it.ID, true)
+	_, err := verb.StoryDiff(context.Background(), it.ID, verb.StoryDiffOpts{Patch: true})
 	if err != nil {
 		t.Fatalf("StoryDiff after engage: %v", err)
 	}
@@ -237,7 +237,7 @@ requires = ["coded"]
 		"category":            "feature",
 		"tags":                []string{"workflow:eng"},
 	}), &it)
-	_, err := verb.StoryDiff(context.Background(), it.ID, true)
+	_, err := verb.StoryDiff(context.Background(), it.ID, verb.StoryDiffOpts{Patch: true})
 	if err == nil {
 		t.Fatal("want error with no baseline")
 	}

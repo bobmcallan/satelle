@@ -21,6 +21,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/snapsync"
+	"github.com/bobmcallan/satelle/internal/textdiff"
 )
 
 // reconcileOpts are the flags of one `sync reconcile` run.
@@ -333,7 +334,7 @@ func reconcileDiff(cmd *cobra.Command, cfg config.Config, repoRoot string, drive
 	if area == "settings" {
 		fmt.Fprintln(out, "note: the local side is shown as a push sends it ([sync] project and [hosted] project withheld)")
 	}
-	printUnifiedDiff(out, hostedLabel, localLabel, string(body), local)
+	textdiff.Unified(out, hostedLabel, localLabel, string(body), local)
 	return nil
 }
 

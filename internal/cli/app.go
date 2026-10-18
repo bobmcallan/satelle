@@ -579,7 +579,7 @@ func diffResolver() func(ctx context.Context, itemID string) *agentstep.DiffStat
 		if itemID == "" {
 			return &agentstep.DiffState{NoBaseline: true, Note: "empty item id"}
 		}
-		res, err := verb.StoryDiff(ctx, itemID, true)
+		res, err := verb.StoryDiff(ctx, itemID, verb.StoryDiffOpts{Patch: true, IncludeSubstrate: true})
 		if err != nil {
 			return &agentstep.DiffState{NoBaseline: true, Note: err.Error()}
 		}

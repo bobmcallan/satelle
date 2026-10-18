@@ -356,7 +356,7 @@ func reworkEvidenceFingerprint(ctx context.Context, ls *ledger.Store, storyID st
 			fmt.Fprintf(h, "%d:%s\x00", len(p), p)
 		}
 	}
-	if d, err := verb.StoryDiff(ctx, storyID, true); err == nil {
+	if d, err := verb.StoryDiff(ctx, storyID, verb.StoryDiffOpts{Patch: true, IncludeSubstrate: true}); err == nil {
 		leg("tree", strings.Join(d.Files, "\n"), d.Stat, d.Patch)
 	} else {
 		leg("tree", "unavailable")

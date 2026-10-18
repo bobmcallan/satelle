@@ -1,3 +1,12 @@
+## [0.0.699] - 2026-10-18
+
+### Fixed
+- A judging reviewer's diff now includes the gitignored substrate the story changed (for example `.satelle/skills/` in a repo that keeps `.satelle/` out of git). Before, the reviewer's `material/diff.json` held no files and no patch for such a change, so instruction-change review could accept new skill text as "n/a" without seeing it. A new file appears as a whole-file add (`--- /dev/null`), a deleted one as a deleted-file entry, and the text goes through the same size limits and `satelle retrieve` offload as any patch. This applies to every judging gate and to `satelle story rework`. `satelle story diff` without `--include-substrate` is still git-only. (sty_98a2816b)
+- A closed story's substrate change set now comes from its recorded change records, so a substrate file another story edits after it closed is no longer listed as its own. (sty_98a2816b)
+
+### Added
+- When another story's engagement overlaps the judged story's (read from the ledger's engagement and terminal-transition rows, or a live lease), the substrate section of the reviewer's diff names that story, so a reviewer does not judge a sibling's edits as this story's own. (sty_98a2816b)
+
 ## [0.0.698] - 2026-10-18
 
 ### Added
