@@ -1,3 +1,16 @@
+## [0.0.698] - 2026-10-18
+
+### Added
+- A route step can declare `reviewer_carry = "until_accept"`. When its edge is re-presented after a rejection, a reviewer whose latest verdict is an accept, with a complete `reviewed` quotation still found word for word in the material, is not dispatched again. Its accept is recorded as carried (`carried_from` on the `review_accept` row, no agent invocation) while the rejecting reviewers iterate. Once every dispatched reviewer accepts, the carried reviewers are dispatched fresh in the same gate call, so the round that advances the edge has a fresh verdict from every reviewer. A reject, an empty, truncated or stale quotation, a quotation no longer in the material, a functional check or a panel is always dispatched. Carry works the same under serial, `parallel` and `bundle` scheduling. Without the key, every reviewer runs every round as before, and an unknown value is refused by the route parser. See `satelle help workflow-convert`. (sty_150a5b4d)
+
+### Changed
+- On a step that declares `reviewer_carry`, re-attaching the step performer's own output document and a directed message to the step performer no longer mark earlier verdicts stale. Any other new evidence still does. Before, every plan revision cleared every reviewer's quotation, so all reviewers re-judged in full every round. (sty_150a5b4d)
+
+## [serve-v0.0.175] - 2026-10-18
+
+### Changed
+- The service binary carries the `reviewer_carry` step key in the route parser (internal/wfdot). (sty_150a5b4d)
+
 ## [0.0.697] - 2026-10-18
 
 ### Fixed
