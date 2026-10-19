@@ -38,8 +38,6 @@ Every numbered AC must have a concrete claim **in the attached plan**
  Falsify checkable plan claims against the repo only when the plan asserts
  something already exists; do not rewrite the plan.
 
-Do not reject for style or for a design you prefer.
-
 ## 3. First pass: every blocking finding, once
 
 On the **first** presentation of this edge (the payload has no

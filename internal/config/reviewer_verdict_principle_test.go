@@ -23,3 +23,21 @@ func TestEmbeddedReviewerVerdictStatesCarriedAccepts(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbeddedReviewerVerdictStatesBlockingFindings: every judging reviewer is
+// told what a blocking finding must carry and that a review with none accepts.
+// Without that text each reviewer invents its own bar and rejects on
+// hypotheticals, preferences or nits.
+func TestEmbeddedReviewerVerdictStatesBlockingFindings(t *testing.T) {
+	body := embeddedBody(t, "principles", "satelle-reviewer-verdict")
+	for _, want := range []string{
+		"## Blocking findings",
+		"a hypothetical is not a finding",
+		"sits on this reviewer's own axis",
+		"A review with no such finding accepts",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("satelle-reviewer-verdict does not state %q", want)
+		}
+	}
+}

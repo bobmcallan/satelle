@@ -62,9 +62,8 @@ story — and it is decidable from the draft plus one file read.
 - **Reject** only when the body or ACs name a mechanism, artifact or capability
   this repo does not have, or had and removed, and you can **name the
   file/symbol** that shows it. Notes must cite that evidence.
-- **Never reject** for opinion: a design you would have chosen differently, a
-  preferred tradeoff, or a judgment that the work is not worthwhile. That is
-  create-and-match — out of scope for this gate.
+- **Never reject** for opinion: a preferred tradeoff, or a judgment that the
+  work is not worthwhile. That is create-and-match — out of scope for this gate.
 - **Out of scope** (not this gate's business): future outcomes, value, priority,
   whether the operator should do the work, and whether the work is worthwhile.
 

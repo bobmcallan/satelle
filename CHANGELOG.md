@@ -1,3 +1,13 @@
+## [0.0.703] - 2026-10-19
+
+### Changed
+- The `satelle-reviewer-verdict` principle, delivered with every judging reviewer dispatch, now states what a blocking finding must carry: a cited location or quoted text, a path that is actually reached (a hypothetical is not a finding), the reviewer's own axis, and not style or a preferred design. A review with no such finding accepts. The per-skill copies of the "no preference" rule in the embedded plan-review, create-review and instruction-change-review skills are removed, so the principle is their single owner. (sty_b5e0d394)
+
+## [serve-v0.0.177] - 2026-10-19
+
+### Changed
+- The service binary carries the updated embedded reviewer-verdict principle and reviewer skills. (sty_b5e0d394)
+
 ## [0.0.702] - 2026-10-19
 
 ### Fixed

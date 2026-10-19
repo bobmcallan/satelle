@@ -32,7 +32,7 @@ func TestInstructionChangeRubricStatesTheThreeTests(t *testing.T) {
 		"Supports accurate, readable code",
 		"About satelle and this project",
 		"Neither duplicates nor pads",
-		`"decision"`, "accept", "reject",
+		`"decision"`, "accept", "Reject",
 		"quote it, name the test it", // notes name the failing passage and the test
 		"read-only",
 	} {

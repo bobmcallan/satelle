@@ -42,7 +42,7 @@ text while keeping every rule passes test 3 even if the file is still long.
 - **Accept** when every added or rewritten passage passes all three tests.
 - **Reject** with one note per failing passage: quote it, name the test it
   fails (1, 2 or 3), and say the fix (delete it, point at the existing text,
-  correct it, or make it specific). Never reject for style alone.
+  correct it, or make it specific).
 
 
 ## Verdict

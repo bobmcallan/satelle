@@ -3,7 +3,7 @@ name: satelle-reviewer-verdict
 type: principle
 tags: [type:principle]
 applies_to: ["*"]
-description: The verdict rules every judging gate reviewer obeys — what a re-presented edge means and that every verdict sets `reviewed`. Delivered with every judging dispatch, so no reviewer skill restates it; a skill owns only its own verdict JSON shape.
+description: The verdict rules every judging gate reviewer obeys — what a re-presented edge means and that every verdict sets `reviewed`, and what a blocking finding must carry. Delivered with every judging dispatch, so no reviewer skill restates it; a skill owns only its own verdict JSON shape.
 ---
 
 # Reviewer verdict rules
@@ -23,5 +23,9 @@ A step that declares `reviewer_carry` narrows what withholds `reviewed`: the ste
 ## `reviewed` is required
 
 `reviewed` is required on every judgment, including the first verdict on this edge. It is the exact words this verdict rests on. Replace the slot; do not omit the field and do not copy the angle-bracket text. A citation of the same words repeats that same `reviewed` string.
+
+## Blocking findings
+
+A blocking finding cites a location or quotes text, names a path that is actually reached (trace the caller; a hypothetical is not a finding), sits on this reviewer's own axis, and is not style or a preference for another design. A review with no such finding accepts; do not inflate nits to fill it.
 
 See [[satelle-reviewer-self-contained]], [[satelle-agent-model]].
