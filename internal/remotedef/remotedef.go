@@ -69,16 +69,25 @@ type Host struct {
 	Start []string `toml:"start"`
 	Run   []string `toml:"run"`
 	Stop  []string `toml:"stop"`
+	// StoryCommand is the one command that works a single story on the host, with
+	// StoryPlaceholder standing for the story's id. It is a string, not an argv:
+	// it is the value the run command's {command} placeholder takes. Optional;
+	// when present it must carry the placeholder.
+	StoryCommand string `toml:"story_command"`
 	// Env is the environment the host commands run under. A credential-shaped
 	// name must hold a ${VAR} reference, never a value.
 	Env map[string]string `toml:"env"`
 }
 
 // Segment is one stretch of the lifecycle the remote serves: an entry status and
-// an exit status, both statuses of the remote's own workflow.
+// an exit status, both statuses of the remote's own workflow. Categories narrows
+// the segment to stories of those categories (each a category of the remote's own
+// workflow, with entry and exit on that category's route); none means every
+// category.
 type Segment struct {
-	Entry string `toml:"entry"`
-	Exit  string `toml:"exit"`
+	Entry      string   `toml:"entry"`
+	Exit       string   `toml:"exit"`
+	Categories []string `toml:"categories"`
 }
 
 // Trigger is one way the remote is started. Name is what the server's declared
@@ -169,6 +178,9 @@ type validation struct {
 	def *Definition
 	// states is every status of the remote's own workflow that parsed.
 	states map[string]bool
+	// routes is the statuses of each route that built, keyed by the done.toml
+	// section that governs it ("*" is the wildcard section).
+	routes map[string]map[string]bool
 	// docs is the remote's own workflow directory as agentvalidate reads it.
 	docs []docindex.Doc
 }
@@ -224,6 +236,9 @@ func (v *validation) checkDefinition() {
 		argv []string
 	}{{"host.start", def.Host.Start}, {"host.run", def.Host.Run}, {"host.stop", def.Host.Stop}} {
 		v.checkArgv(c.key, c.argv)
+	}
+	if c := def.Host.StoryCommand; c != "" && !strings.Contains(c, StoryPlaceholder) {
+		v.fail(DefinitionFile, "host.story_command", "must carry "+StoryPlaceholder+", which stands for the id of the story it works")
 	}
 	if len(def.Segments) == 0 {
 		v.fail(DefinitionFile, "segment", "required: name at least one lifecycle segment (entry and exit status)")
@@ -328,6 +343,7 @@ func sortedKeys(m map[string]any) []string {
 // statuses of every category whose route builds.
 func (v *validation) checkWorkflows() {
 	v.states = map[string]bool{}
+	v.routes = map[string]map[string]bool{}
 	done, okDone := v.read(doneFile)
 	step, okStep := v.read(stepFile)
 	if okDone {
@@ -354,9 +370,12 @@ func (v *validation) checkWorkflows() {
 		for _, p := range wfdot.Validate(spec) {
 			v.fail(doneFile, "["+l.Category+"]", p)
 		}
+		route := map[string]bool{}
 		for _, s := range spec.States {
 			v.states[s.Name] = true
+			route[s.Name] = true
 		}
+		v.routes[l.Category] = route
 	}
 }
 
@@ -389,7 +408,29 @@ func (v *validation) checkSegments() {
 	if len(known) > 0 {
 		declared = "it declares " + strings.Join(known, ", ")
 	}
+	declaredCats := make([]string, 0, len(v.routes))
+	for c := range v.routes {
+		declaredCats = append(declaredCats, c)
+	}
+	sort.Strings(declaredCats)
 	for i, s := range v.def.Segments {
+		// A category-scoped segment's statuses must be on each named category's
+		// route; an unscoped one only on some route of the workflow.
+		var scoped []map[string]bool
+		var scopedNames []string
+		for j, c := range s.Categories {
+			key := fmt.Sprintf("segment[%d].categories[%d]", i, j)
+			route, ok := v.routeFor(c)
+			switch {
+			case strings.TrimSpace(c) == "":
+				v.fail(DefinitionFile, key, "is empty")
+			case !ok:
+				v.fail(DefinitionFile, key, fmt.Sprintf("%q is not a category of this remote's own workflow (it declares %s)", c, listOrNone(declaredCats, "no categories")))
+			default:
+				scoped = append(scoped, route)
+				scopedNames = append(scopedNames, c)
+			}
+		}
 		for _, f := range []struct{ key, status string }{{"entry", s.Entry}, {"exit", s.Exit}} {
 			key := fmt.Sprintf("segment[%d].%s", i, f.key)
 			switch {
@@ -397,9 +438,53 @@ func (v *validation) checkSegments() {
 				v.fail(DefinitionFile, key, "required")
 			case !v.states[f.status]:
 				v.fail(DefinitionFile, key, fmt.Sprintf("%q is not a status of this remote's own workflow (%s)", f.status, declared))
+			default:
+				for k, route := range scoped {
+					if !route[f.status] {
+						v.fail(DefinitionFile, key, fmt.Sprintf("%q is not a status of the %s route", f.status, scopedNames[k]))
+					}
+				}
+			}
+		}
+		for j := 0; j < i; j++ {
+			if o := v.def.Segments[j]; o.Entry == s.Entry && categoriesOverlap(o.Categories, s.Categories) {
+				v.fail(DefinitionFile, fmt.Sprintf("segment[%d].entry", i), fmt.Sprintf("%q is also the entry of segment[%d] for an overlapping set of categories, so which segment takes a story would be ambiguous", s.Entry, j))
 			}
 		}
 	}
+}
+
+// routeFor is the route governing a category of the remote's own workflow: its
+// own done.toml section, else the wildcard section.
+func (v *validation) routeFor(category string) (map[string]bool, bool) {
+	if r, ok := v.routes[category]; ok {
+		return r, true
+	}
+	r, ok := v.routes[wfdot.WildcardCategory]
+	return r, ok
+}
+
+func listOrNone(items []string, none string) string {
+	if len(items) == 0 {
+		return none
+	}
+	return strings.Join(items, ", ")
+}
+
+// categoriesOverlap reports whether two category sets can both take the same
+// story; an empty set takes every category.
+func categoriesOverlap(a, b []string) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return true
+	}
+	for _, x := range a {
+		for _, y := range b {
+			if x == y {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // checkAgents judges the remote's bindings with the checks every agents layer

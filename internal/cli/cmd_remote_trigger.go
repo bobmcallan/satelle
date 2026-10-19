@@ -17,9 +17,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/remotedef"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -195,16 +197,17 @@ func newRemoteWakeCmd() *cobra.Command {
 		Short: "Handle a WakeRequest the server delivered: hand off the stories it selects",
 		Long: `Reads one WakeRequest (JSON) from stdin, or from the file --request names, and
 hands off to the named remote the story it names, or with no story every story
-at one of the remote's segment entry statuses. Each hand-off is a remote_handoff
-ledger entry naming the remote, the declared trigger (or none), the fire-record
-id and the story.
+its segments accept by entry status and category. Each hand-off is a
+remote_handoff ledger entry.
 
-Refused, with nothing recorded: a trigger the definition does not declare, a
-story at no entry status (the message names its status and the entry statuses),
-and a request with no fire-record id. A redelivered request records nothing new.
+Refused, with nothing recorded: an undeclared trigger, a story outside the
+contract (the message names its status, category and the contract), and a
+request with no fire-record id. A redelivered request records nothing new.
 
-The caller is the remote host's wake receiver, which has already checked the
-wake credential; none is read or stored here.`,
+A story a remote runs is re-read; one left outside the contract's exits or the
+local route is recorded as remote_handback.
+
+The caller has already checked the wake credential; none is read here.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -224,8 +227,13 @@ wake credential; none is read or stored here.`,
 			if err != nil {
 				return err
 			}
-			handoffs, err := remotedef.Wake(cmd.Context(), args[0], &def, req,
-				storyReader{a.Store.Stories}, ledgerRecorder{a.Store.Ledger})
+			// No Runner is wired here: a wake records its hand-offs and runs
+			// nothing, so no story is re-read for a hand-back.
+			handoffs, handbacks, err := remotedef.Wake(cmd.Context(), args[0], &def, req, remotedef.Wiring{
+				Stories:  storyReader{a.Store.Stories},
+				Recorder: ledgerRecorder{a.Store.Ledger},
+				Local:    localRoute{a.Store.Stories, a.Store.DocIndex},
+			})
 			if err != nil {
 				return err
 			}
@@ -236,6 +244,7 @@ wake credential; none is read or stored here.`,
 			for _, h := range handoffs {
 				fmt.Fprintf(out, "handed off %s to remote %s (trigger %s, fire %s)\n", h.Story, h.Remote, triggerOrNone(h.Trigger), h.FireID)
 			}
+			printHandbacks(out, handbacks)
 			return nil
 		},
 	}
@@ -269,33 +278,88 @@ func loadRemoteDef(name string) (remotedef.Definition, error) {
 	return remotedef.Load(dir)
 }
 
+// printHandbacks reports each story a remote left outside its contract or its
+// local route; a story that passed both is not mentioned.
+func printHandbacks(w io.Writer, handbacks []remotedef.Handback) {
+	for _, b := range handbacks {
+		fmt.Fprintf(w, "remote %s: %s\n", b.Remote, b.Report())
+	}
+}
+
 // storyReader adapts the story store to what a wake selects from.
 type storyReader struct{ s *workitem.Store }
 
-func (r storyReader) Status(ctx context.Context, id string) (string, error) {
+func (r storyReader) Story(ctx context.Context, id string) (remotedef.StoryRef, error) {
 	it, err := r.s.Get(ctx, id)
 	if err != nil {
-		return "", err
+		return remotedef.StoryRef{}, err
 	}
-	return it.Status, nil
+	return remotedef.StoryRef{ID: it.ID, Status: it.Status, Category: it.Category}, nil
 }
 
-func (r storyReader) IDsAt(ctx context.Context, status string) ([]string, error) {
+func (r storyReader) At(ctx context.Context, status string) ([]remotedef.StoryRef, error) {
 	items, err := r.s.List(ctx, workitem.ListFilter{Kind: workitem.KindStory, Status: status, Limit: 2000})
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]string, 0, len(items))
+	refs := make([]remotedef.StoryRef, 0, len(items))
 	for _, it := range items {
-		ids = append(ids, it.ID)
+		refs = append(refs, remotedef.StoryRef{ID: it.ID, Status: it.Status, Category: it.Category})
 	}
-	sort.Strings(ids)
-	return ids, nil
+	sort.Slice(refs, func(i, j int) bool { return refs[i].ID < refs[j].ID })
+	return refs, nil
+}
+
+// localRoute answers whether the local workflow governing a story declares a
+// status, by the same resolution every transition gate uses (wfgovern.SpecFor).
+type localRoute struct {
+	s    *workitem.Store
+	docs *docindex.Store
+}
+
+func (r localRoute) Declares(ctx context.Context, id, status string) (bool, string, error) {
+	it, err := r.s.Get(ctx, id)
+	if err != nil {
+		return false, "", err
+	}
+	wfs, err := r.docs.List(ctx, "workflows")
+	if err != nil {
+		return false, "", err
+	}
+	spec, route, _, err := wfgovern.SpecFor(wfs, it)
+	if err != nil {
+		return false, route, fmt.Errorf("story %s: local workflow does not resolve: %w", id, err)
+	}
+	for _, s := range spec.States {
+		if s.Name == status {
+			return true, route, nil
+		}
+	}
+	return false, route, nil
 }
 
 // ledgerRecorder records a hand-off as a remote_handoff ledger entry, once per
 // fire and story.
 type ledgerRecorder struct{ l *ledger.Store }
+
+// RecordHandback records a story left outside the contract or the local route as
+// a remote_handback ledger entry, once per fire, story and status.
+func (r ledgerRecorder) RecordHandback(ctx context.Context, b remotedef.Handback) error {
+	payload, err := json.Marshal(map[string]any{"remote": b.Remote, "status": b.Status, "in_contract": b.InContract, "local_known": b.LocalKnown, "reason": b.Reason})
+	if err != nil {
+		return err
+	}
+	refs, err := json.Marshal(map[string]string{"fire_id": b.FireID, "story": b.Story, "status": b.Status})
+	if err != nil {
+		return err
+	}
+	_, _, err = r.l.AppendOnce(ctx, ledger.AppendInput{
+		StoryID: b.Story, Kind: ledger.KindRemoteHandback, Actor: "remote",
+		Body:    fmt.Sprintf("remote %s left %s at %s: %s", b.Remote, b.Story, b.Status, b.Reason),
+		Payload: payload, Refs: refs,
+	}, time.Now())
+	return err
+}
 
 func (r ledgerRecorder) Record(ctx context.Context, h remotedef.Handoff) (bool, error) {
 	payload, err := json.Marshal(map[string]string{"remote": h.Remote, "trigger": h.Trigger, "kind": h.Kind, "fire_id": h.FireID})

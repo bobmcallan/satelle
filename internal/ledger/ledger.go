@@ -197,6 +197,11 @@ const (
 	// no second row; Payload is {remote, trigger, kind, fire_id}, trigger and
 	// kind empty when the wake named no declared trigger.
 	KindRemoteHandoff = "remote_handoff"
+	// KindRemoteHandback records a story a remote left at a status outside its
+	// contract's exits or one the story's local route does not declare. StoryID is
+	// the story; Refs is {fire_id, story, status}; Payload is {remote, status,
+	// in_contract, local_known, reason}.
+	KindRemoteHandback = "remote_handback"
 	// KindCommandRule records one agent command a repo-authored
 	// [[gate.command_rule]] matched and let run, or refused (sty_a74551d6).
 	// Payload is {command, rule_index, pattern, action, decision, delivered,

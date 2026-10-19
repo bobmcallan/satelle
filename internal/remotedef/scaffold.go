@@ -67,9 +67,12 @@ label = "your-host-label"
 start = ["your-host-cli", "start", "{label}"]
 run = ["your-host-cli", "run", "{label}", "{command}"]
 stop = ["your-host-cli", "stop", "{label}"]
+# The command that works one story on the host; {story} is the story's id.
+# story_command = "your-agent-cli {story}"
 
 # Lifecycle segments this remote serves: an entry and an exit status, both
-# statuses of this remote's own workflow (workflows/step.toml).
+# statuses of this remote's own workflow (workflows/step.toml). Optionally
+# categories = [...] narrows a segment to those story categories (none: every one).
 [[segment]]
 entry = "in_progress"
 exit = "done"

@@ -395,10 +395,11 @@ func TestWakeHandoff(t *testing.T) {
 		t.Errorf("a redelivered wake must add nothing, have %d rows", n)
 	}
 
-	// A story at no entry status is refused with its status and the entries.
+	// A story the contract does not accept is refused with its status, its
+	// category and the contract.
 	_, out, err = fire("nightly", "--story", backlog)
-	if err == nil || !strings.Contains(err.Error(), "story "+backlog+" is at backlog; remote edge accepts in_progress") {
-		t.Errorf("want a refusal naming the status and the entries, got %v\n%s", err, out)
+	if err == nil || !strings.Contains(err.Error(), "story "+backlog+` is at backlog with category "", which no segment accepts (accepts in_progress (any category))`) {
+		t.Errorf("want a refusal naming the status, category and contract, got %v\n%s", err, out)
 	}
 	if n := len(handoffRows(t, backlog)); n != 0 {
 		t.Errorf("a refused story must record nothing, have %d rows", n)
