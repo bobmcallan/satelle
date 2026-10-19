@@ -204,6 +204,10 @@ func (l fakeLocal) Declares(_ context.Context, _, status string) (bool, string, 
 	return l[status], "default", nil
 }
 
+func (l fakeLocal) Engages(context.Context, string, string) (bool, string, error) {
+	return false, "default", nil
+}
+
 func handbackDef() *Definition {
 	d := wakeDef()
 	d.Segments = []Segment{{Entry: "pushed", Exit: "merged"}, {Entry: "merged", Exit: "review"}}
@@ -295,6 +299,111 @@ func TestWakeRunErrorStopsTheSweep(t *testing.T) {
 		Wiring{Stories: st, Recorder: &fakeRecorder{}, Runner: run})
 	if err == nil || !strings.Contains(err.Error(), "host unreachable") || len(run.calls) != 1 {
 		t.Errorf("err = %v after %v, want the run error after the first call", err, run.calls)
+	}
+}
+
+// seatLocal is a local route with named engaging statuses, as the real route
+// classifies them; every status it is asked about is declared.
+type seatLocal struct{ engaging map[string]bool }
+
+func (l seatLocal) Declares(context.Context, string, string) (bool, string, error) {
+	return true, "default", nil
+}
+
+func (l seatLocal) Engages(_ context.Context, _, status string) (bool, string, error) {
+	return l.engaging[status], "default", nil
+}
+
+func TestWakeRefusesSeatTakingHandoff(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		segment  Segment
+		engaging map[string]bool
+	}{
+		{"an engaging exit", Segment{Entry: "ready", Exit: "plan"}, map[string]bool{"plan": true}},
+		{"an engaging entry with a seatless exit", Segment{Entry: "ready", Exit: "push"}, map[string]bool{"ready": true}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			def := &Definition{Segments: []Segment{c.segment}}
+			def.Host.StoryCommand = "agent drive {story}"
+			st := stories(StoryRef{ID: "sty_a", Status: "ready"})
+			run := &stubRunner{st: st}
+			rec := &fakeRecorder{}
+			_, _, err := Wake(context.Background(), "edge", def, WakeRequest{TriggerID: "f1", StoryID: "sty_a"},
+				Wiring{Stories: st, Recorder: rec, Runner: run, Local: seatLocal{c.engaging}})
+			if err == nil || !strings.Contains(err.Error(), "engagement seat") {
+				t.Fatalf("err = %v, want a refusal naming the engagement seat", err)
+			}
+			for name := range c.engaging {
+				if !strings.Contains(err.Error(), "status "+name) {
+					t.Errorf("err = %v, want it to name status %s", err, name)
+				}
+			}
+			if len(rec.seen) != 0 || len(rec.handbacks) != 0 || len(run.calls) != 0 {
+				t.Errorf("a refused hand-off records and runs nothing: recorded %v / %v, ran %v", rec.seen, rec.handbacks, run.calls)
+			}
+		})
+	}
+}
+
+func TestWakeSweepSkipsSeatTakingStories(t *testing.T) {
+	def := &Definition{Segments: []Segment{{Entry: "ready", Exit: "plan"}, {Entry: "push", Exit: "done"}}}
+	def.Host.StoryCommand = "agent drive {story}"
+	st := stories(StoryRef{ID: "sty_seat", Status: "ready"}, StoryRef{ID: "sty_free", Status: "push"})
+	run := &stubRunner{st: st, leaveAt: map[string]string{"sty_free": "done"}}
+	rec := &fakeRecorder{}
+	got, backs, err := Wake(context.Background(), "edge", def, WakeRequest{TriggerID: "f1"},
+		Wiring{Stories: st, Recorder: rec, Runner: run, Local: seatLocal{map[string]bool{"plan": true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Story != "sty_free" || fmt.Sprint(run.calls) != "[sty_free]" {
+		t.Errorf("handed off %+v, ran %v; want only sty_free", got, run.calls)
+	}
+	if len(rec.handbacks) != 1 || len(backs) != 1 {
+		t.Fatalf("want the seat-taking story reported and recorded once, got %+v / %+v", backs, rec.handbacks)
+	}
+	b := rec.handbacks[0]
+	if b.Story != "sty_seat" || !b.Refused || !b.HoldsSeat || !strings.HasPrefix(b.Reason, "refused before hand-off: ") || !strings.Contains(b.Reason, "engagement seat") {
+		t.Errorf("hand-back = %+v, want sty_seat refused before hand-off for the engagement seat", b)
+	}
+	if r := backs[0].Report(); strings.Contains(r, "left at") || !strings.HasPrefix(r, "story sty_seat refused before hand-off: ") {
+		t.Errorf("report = %q, want a refusal, never a status the remote left it at", r)
+	}
+}
+
+func TestWakeHandbackAtEngagingStatus(t *testing.T) {
+	// plan is a contract exit through the second segment, so the story left there
+	// passes the contract check and fails only on the seat.
+	def := &Definition{Segments: []Segment{{Entry: "push", Exit: "done"}, {Entry: "review", Exit: "plan"}}}
+	def.Host.StoryCommand = "agent drive {story}"
+	local := seatLocal{map[string]bool{"plan": true}}
+	for _, c := range []struct {
+		leaveAt  string
+		wantFail bool
+	}{{"plan", true}, {"done", false}} {
+		t.Run(c.leaveAt, func(t *testing.T) {
+			st := stories(StoryRef{ID: "sty_a", Status: "push"})
+			run := &stubRunner{st: st, leaveAt: map[string]string{"sty_a": c.leaveAt}}
+			rec := &fakeRecorder{}
+			_, backs, err := Wake(context.Background(), "edge", def, WakeRequest{TriggerID: "f1", StoryID: "sty_a"},
+				Wiring{Stories: st, Recorder: rec, Runner: run, Local: local})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !c.wantFail {
+				if len(backs) != 0 || len(rec.handbacks) != 0 {
+					t.Fatalf("a seatless status reports no failure, got %+v / %+v", backs, rec.handbacks)
+				}
+				return
+			}
+			if len(backs) != 1 || len(rec.handbacks) != 1 {
+				t.Fatalf("want one failed hand-back reported and recorded, got %+v / %+v", backs, rec.handbacks)
+			}
+			if b := rec.handbacks[0]; b.Status != "plan" || !b.HoldsSeat || b.Refused || !strings.Contains(b.Reason, "engagement seat") {
+				t.Errorf("hand-back = %+v, want status plan holding a seat, named in the reason", b)
+			}
+		})
 	}
 }
 

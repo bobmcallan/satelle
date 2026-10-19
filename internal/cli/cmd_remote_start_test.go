@@ -130,7 +130,7 @@ SSL_CERT_FILE = %q
 GIT_SSL_CAINFO = %q
 
 [[segment]]
-entry = "in_progress"
+entry = "backlog"
 exit = "done"
 
 [[trigger]]

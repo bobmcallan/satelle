@@ -57,7 +57,7 @@ func TestRemoteWakeRunsStoryOnFakeHost(t *testing.T) {
 		mark := t.TempDir()
 		t.Setenv("SATELLE_TEST_MARK", mark)
 		declareStoryHost(t, repo, "touch $MARK_DIR/{story}")
-		id := newStory(t, "in_progress")
+		id := newStory(t, "backlog")
 
 		out, err := runRootIn(t, `{"trigger_id":"fire_1","remote":"edge"}`, "remote", "wake", "edge")
 		if err != nil {
@@ -69,8 +69,8 @@ func TestRemoteWakeRunsStoryOnFakeHost(t *testing.T) {
 		if !strings.Contains(out, "handed off "+id) {
 			t.Errorf("no hand-off line for %s:\n%s", id, out)
 		}
-		if !strings.Contains(out, "story "+id+" left at in_progress") {
-			t.Errorf("the hand-back check did not report the story left at in_progress:\n%s", out)
+		if !strings.Contains(out, "story "+id+" left at backlog") {
+			t.Errorf("the hand-back check did not report the story left at backlog:\n%s", out)
 		}
 		if n := len(handbackRows(t, id)); n != 1 {
 			t.Errorf("want one remote_handback row for %s, got %d", id, n)
@@ -82,7 +82,7 @@ func TestRemoteWakeRunsStoryOnFakeHost(t *testing.T) {
 		mark := t.TempDir()
 		t.Setenv("SATELLE_TEST_MARK", mark)
 		declareStoryHost(t, repo, "")
-		id := newStory(t, "in_progress")
+		id := newStory(t, "backlog")
 
 		out, err := runRootIn(t, `{"trigger_id":"fire_1","remote":"edge"}`, "remote", "wake", "edge")
 		if err != nil {

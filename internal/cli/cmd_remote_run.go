@@ -1,4 +1,14 @@
-// `satelle remote run <name>` is the remote integration harness: it starts a
+// `satelle remote run` has two modes, chosen by its arguments.
+//
+// With --story or --tag it is the remote integration harness (runRemoteRun) and
+// the argument is a remote name. With neither, the argument is a story id and
+// the command hands that one story to the remote that serves its segment
+// (runRemoteHandOne): it selects from the local remote definitions those whose
+// contract accepts the story's status and category, and fires the chosen one
+// through the server. A repo with no remote, or a user signed out, is answered
+// and left untouched.
+//
+// The harness starts a
 // fresh node from the named definition, offers each selected story to it through
 // remotedef.Wake (so the definition's own contract decides what runs), brings
 // each story's hosted state home with a scoped sync pull, and reports what came
@@ -57,36 +67,53 @@ type storyReporter interface {
 	StoryReport(ctx context.Context, story string, since int64) (remotenode.StoryReportReply, error)
 }
 
+// errNoRemote is the answer when no defined remote serves the story's segment.
+var errNoRemote = errors.New("No remote; either configure one, or stop")
+
+// remoteRunMatch is a defined remote whose contract takes the story, with the
+// segment that takes it.
+type remoteRunMatch struct {
+	name    string
+	segment remotedef.Segment
+}
+
 func newRemoteRunCmd() *cobra.Command {
-	var server, record, tag string
+	var server, record, tag, remoteID string
 	var ids []string
 	run := &cobra.Command{
-		Use:   "run <name> (--story <id>... | --tag <tag>) --story-of-record <id>",
-		Short: "Start a fresh node from a remote definition, run its workflow on selected stories, and report",
-		Long: `Starts a node fresh (as "remote start" does), then offers each selected story
-(--story ids, or every story carrying --tag) through the remote's own contract;
-one outside it is reported refused and not run. Each story is pulled back from
-the hosted project, never pushed, and checked against the contract's exits and
-the local route.
+		Use:   "run <story-id> [--remote-id <id>] | run <name> (--story <id>... | --tag <tag>) --story-of-record <id>",
+		Short: "Hand a story to the remote that serves it, or run a fresh node's workflow on selected stories",
+		Long: `Two modes, chosen by the arguments. A <story-id> alone hands that story to the
+defined remote whose segment accepts it: --remote-id fires it at once, without it
+the matches and the fire command print.
 
-Per story it prints, and records in one remote_run row on --story-of-record: the
-status it was left at, the hand-back result, the reviewers' verdicts, where the
-node logged its sessions, and "gap: start configuration changed" if the node's
-own substrate changed during the story.
+With --story or --tag the argument is a remote name: the harness starts a fresh
+node, offers each selected story through the remote's contract, pulls each back
+(never pushes), and prints and records on --story-of-record the status left, the
+hand-back, reviewer verdicts, session paths, configuration changes and spend
+against spend_cap_usd. Needs satelle login.
 
-spend_cap_usd in remote.toml stops the run before the next story once the pulled
-usage reaches it. The node is stopped at the end unless the lifecycle is "idle".
-Needs satelle login.`,
+--remote-id with --story or --tag, and --story-of-record without them, are
+refused. See satelle help remote.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRemoteRun(cmd, args[0], server, record, ids, tag)
+			harness := len(ids) > 0 || tag != ""
+			switch {
+			case harness && remoteID != "":
+				return errors.New("--remote-id hands one story to a server remote; it cannot be combined with --story or --tag (the harness takes the remote by name)")
+			case !harness && record != "":
+				return errors.New("--story-of-record belongs to the harness: name the stories with --story <id>... or --tag <tag>")
+			case harness:
+				return runRemoteRun(cmd, args[0], server, record, ids, tag)
+			}
+			return runRemoteHandOne(cmd, args[0], server, remoteID)
 		},
 	}
-	run.Flags().StringSliceVar(&ids, "story", nil, "a story to run (repeatable); excludes --tag")
-	run.Flags().StringVar(&tag, "tag", "", "run every story carrying this tag; excludes --story")
-	run.Flags().StringVar(&record, "story-of-record", "", "the story the run's remote_preflight and remote_run rows are recorded on (required)")
-	_ = run.MarkFlagRequired("story-of-record")
+	run.Flags().StringSliceVar(&ids, "story", nil, "harness: a story to run (repeatable); excludes --tag")
+	run.Flags().StringVar(&tag, "tag", "", "harness: run every story carrying this tag; excludes --story")
+	run.Flags().StringVar(&record, "story-of-record", "", "harness: the story the run's remote_preflight and remote_run rows are recorded on (required with --story or --tag)")
+	run.Flags().StringVar(&remoteID, "remote-id", "", "hand one story: the remote's id on the server, to fire the story at it now")
 	run.Flags().StringVar(&server, "server", "", "Hosted server URL (overrides the configured machine hosted server)")
 	return run
 }
@@ -97,6 +124,8 @@ func runRemoteRun(cmd *cobra.Command, name, serverFlag, record string, ids []str
 		return errors.New("--story and --tag are alternatives: select stories by one or the other")
 	case len(ids) == 0 && tag == "":
 		return errors.New("name the stories to run with --story <id>... or --tag <tag>")
+	case strings.TrimSpace(record) == "":
+		return errors.New("--story-of-record is required: the story the run's rows are recorded on")
 	}
 	def, err := loadRemoteDef(name)
 	if err != nil {
@@ -433,4 +462,72 @@ func recordRemoteRun(ctx context.Context, l *ledger.Store, record string, sum re
 		Payload: payload,
 	}, sum.Ended)
 	return err
+}
+
+// runRemoteHandOne hands one story to the remote definition that serves its
+// segment, firing it through the server when remoteID is given.
+func runRemoteHandOne(cmd *cobra.Command, storyID, server, remoteID string) error {
+	ctx := cmd.Context()
+	out := cmd.OutOrStdout()
+
+	c, err := hostedClient(server)
+	if err != nil {
+		return err
+	}
+	if err := c.RequireCredential(ctx); err != nil {
+		return fmt.Errorf("%w — run \"satelle login\" first", err)
+	}
+
+	a, err := appFrom(cmd)
+	if err != nil {
+		return err
+	}
+	item, err := a.Store.Stories.Get(ctx, storyID)
+	if err != nil {
+		return err
+	}
+	names, err := remotedef.Names(remoteDataDir())
+	if err != nil {
+		return err
+	}
+	var matches []remoteRunMatch
+	for _, n := range names {
+		if len(remotedef.Validate(remotedef.Dir(remoteDataDir(), n))) > 0 {
+			fmt.Fprintf(out, "remote %s skipped: invalid (satelle remote validate %s)\n", n, n)
+			continue
+		}
+		def, err := loadRemoteDef(n)
+		if err != nil {
+			return err
+		}
+		if seg, err := def.Accepts(item.Status, item.Category); err == nil {
+			matches = append(matches, remoteRunMatch{n, seg})
+		}
+	}
+	if len(matches) == 0 {
+		return errNoRemote
+	}
+
+	local := localRoute{a.Store.Stories, a.Store.DocIndex}
+	for _, m := range matches {
+		reason, err := remotedef.SeatReason(ctx, local, storyID, m.segment, item.Status)
+		if err != nil {
+			return err
+		}
+		if reason != "" {
+			return fmt.Errorf("remote %s: story %s %s", m.name, storyID, reason)
+		}
+		fmt.Fprintf(out, "remote %s: segment %s → %s\n", m.name, m.segment.Entry, m.segment.Exit)
+	}
+
+	if remoteID == "" {
+		fmt.Fprintf(out, "to hand it off: satelle remote trigger fire <remote-id> --story %s\n", storyID)
+		return nil
+	}
+	res, err := c.FireRemote(ctx, remoteID, storyID, "")
+	if err != nil {
+		return err
+	}
+	printFired(out, remoteID, res)
+	return nil
 }

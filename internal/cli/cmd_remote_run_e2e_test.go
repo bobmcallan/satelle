@@ -11,8 +11,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // declareStoryCommand gives the rig's remote a host.story_command.
@@ -75,8 +77,8 @@ func TestRemoteRunStartsFreshThenRunsSelectedStories(t *testing.T) {
 	r.declarePreflight("succeed", "echo preflight-ran >> "+r.hostLog)
 	r.declareStoryCommand("echo story {story} >> " + r.hostLog)
 	useRunSync(t, movingSync{status: "done"})
-	selected := newStory(t, "in_progress")
-	other := newStory(t, "in_progress") // at the entry status, but not selected
+	selected := newStory(t, "backlog")
+	other := newStory(t, "backlog") // at the entry status, but not selected
 	record := newStory(t, "backlog")
 
 	out, err := runRoot(t, "remote", "run", "edge", "--server", r.server, "--story", selected, "--story-of-record", record)
@@ -112,12 +114,70 @@ func TestRemoteRunStartsFreshThenRunsSelectedStories(t *testing.T) {
 	}
 }
 
+// newTaggedStory seeds a story at status carrying tags, through the store.
+func newTaggedStory(t *testing.T, status string, tags ...string) string {
+	t.Helper()
+	a, err := app.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+	it, err := a.Store.Stories.Create(context.Background(), workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "tagged " + status, Status: status, Tags: tags,
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return it.ID
+}
+
+// AC2: --tag selects exactly the stories carrying the tag. Each is offered
+// through the contract: a tagged story at the entry status runs; a tagged story
+// outside the contract is reported refused and not run; untagged stories (at the
+// entry status or not) are not run.
+func TestRemoteRunTagSelectsExactlyTheTaggedStories(t *testing.T) {
+	r := newRemoteRig(t, "shutdown", "fake-agent --system {system} --tools {tools}")
+	r.declareStoryCommand("echo story {story} >> " + r.hostLog)
+	useRunSync(t, movingSync{status: "done"})
+	tagA := newTaggedStory(t, "backlog", "batch:one")
+	tagB := newTaggedStory(t, "backlog", "batch:one", "other")
+	outside := newTaggedStory(t, "done", "batch:one") // tagged, but not at the entry status
+	untagged := newStory(t, "backlog")                // at the entry status, not tagged
+	otherTag := newTaggedStory(t, "backlog", "batch:two")
+	record := newStory(t, "backlog")
+
+	out, err := runRoot(t, "remote", "run", "edge", "--server", r.server, "--tag", "batch:one", "--story-of-record", record)
+	if err != nil {
+		t.Fatalf("remote run --tag: %v\n%s", err, out)
+	}
+	log := r.log()
+	for _, id := range []string{tagA, tagB} {
+		if !strings.Contains(log, "story "+id) {
+			t.Errorf("tagged story %s was not run:\n%s", id, log)
+		}
+		if !strings.Contains(out, "story "+id+": left at done; hand-back ok") {
+			t.Errorf("no hand-back line for tagged story %s:\n%s", id, out)
+		}
+	}
+	for name, id := range map[string]string{"tagged outside the contract": outside, "untagged": untagged, "other tag": otherTag, "story of record": record} {
+		if strings.Contains(log, "story "+id) {
+			t.Errorf("%s story %s was run:\n%s", name, id, log)
+		}
+	}
+	if !strings.Contains(out, "story "+outside+": refused:") {
+		t.Errorf("the tagged story outside the contract is not reported refused:\n%s", out)
+	}
+	if got := strings.Count(log, "story sty_"); got != 2 {
+		t.Errorf("stories run = %d, want exactly the 2 tagged in-contract stories:\n%s", got, log)
+	}
+}
+
 // AC10: an idle lifecycle leaves the host running.
 func TestRemoteRunIdleLifecycleLeavesTheHost(t *testing.T) {
 	r := newRemoteRig(t, "idle", "fake-agent --system {system} --tools {tools}")
 	r.declareStoryCommand("echo story {story} >> " + r.hostLog)
 	useRunSync(t, movingSync{status: "done"})
-	selected, record := newStory(t, "in_progress"), newStory(t, "backlog")
+	selected, record := newStory(t, "backlog"), newStory(t, "backlog")
 
 	out, err := runRoot(t, "remote", "run", "edge", "--server", r.server, "--story", selected, "--story-of-record", record)
 	if err != nil {
@@ -134,7 +194,7 @@ func TestRemoteRunStopsTheHostAfterARunnerError(t *testing.T) {
 	r := newRemoteRig(t, "shutdown", "fake-agent --system {system} --tools {tools}")
 	r.declareStoryCommand("exit 7 # {story}")
 	useRunSync(t, movingSync{status: "done"})
-	selected, record := newStory(t, "in_progress"), newStory(t, "backlog")
+	selected, record := newStory(t, "backlog"), newStory(t, "backlog")
 
 	out, err := runRoot(t, "remote", "run", "edge", "--server", r.server, "--story", selected, "--story-of-record", record)
 	if err == nil {

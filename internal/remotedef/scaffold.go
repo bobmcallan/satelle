@@ -97,8 +97,11 @@ bootstrap = []
 # Lifecycle segments this remote serves: an entry and an exit status, both
 # statuses of this remote's own workflow (workflows/step.toml). Optionally
 # categories = [...] narrows a segment to those story categories (none: every one).
+# A story is handed off at the entry and back at the exit, and a status that is an
+# engaging state of the local workflow would hold an engagement seat there; so
+# enter and exit at statuses the local workflow holds no seat at.
 [[segment]]
-entry = "in_progress"
+entry = "backlog"
 exit = "done"
 
 # How the remote is started. name is unique and is what a fired trigger is

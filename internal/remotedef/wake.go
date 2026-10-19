@@ -42,12 +42,23 @@ type Handback struct {
 	InContract bool
 	// LocalKnown is whether the story's governing local route declares Status.
 	LocalKnown bool
+	// HoldsSeat is whether Status is an engaging state of the story's local route,
+	// one that would hold an engagement seat there.
+	HoldsSeat bool
+	// Refused marks a story that was never handed off: the wake refused it before
+	// the remote touched it, so Status is where the story still is, not where the
+	// remote left it.
+	Refused bool
 	// Reason names which check failed.
 	Reason string
 }
 
-// Report is the line a failing hand-back is reported as.
+// Report is the line a failing hand-back is reported as. A refused story reads
+// as refused before hand-off, never as a status the remote left it at.
 func (b Handback) Report() string {
+	if b.Refused {
+		return fmt.Sprintf("story %s %s", b.Story, b.Reason)
+	}
 	return fmt.Sprintf("story %s left at %s: %s", b.Story, b.Status, b.Reason)
 }
 
@@ -87,6 +98,39 @@ type LocalRoute interface {
 	// Declares reports whether the route governing story id declares status, and
 	// the route's name for the report.
 	Declares(ctx context.Context, id, status string) (declared bool, route string, err error)
+	// Engages reports whether status is a non-terminal engaging state of the
+	// route governing story id: a story at it holds an engagement seat. It is the
+	// same classification the engagement seat uses, not a list of this package's.
+	Engages(ctx context.Context, id, status string) (engages bool, route string, err error)
+}
+
+// refusedBeforeHandoff opens the reason of a story a wake refused to hand off.
+const refusedBeforeHandoff = "refused before hand-off: "
+
+// SeatReason is why handing story id off through seg would leave it holding an
+// engagement seat on the local workflow, or "" when it would not: the story's
+// current status (the entry) is checked first, then the segment's exit. A story
+// resting at a status that holds no seat is what lets any number of stories wait
+// there; one parked at an engaging status blocks every other. With no local
+// route there is nothing to check.
+func SeatReason(ctx context.Context, local LocalRoute, id string, seg Segment, status string) (string, error) {
+	if local == nil {
+		return "", nil
+	}
+	for _, s := range []string{status, seg.Exit} {
+		engages, route, err := local.Engages(ctx, id, s)
+		if err != nil {
+			return "", err
+		}
+		if engages {
+			return seatMessage(s, route), nil
+		}
+	}
+	return "", nil
+}
+
+func seatMessage(status, route string) string {
+	return fmt.Sprintf("status %s is an engaging state of the local %s route and would hold an engagement seat; hand off at a status that holds none", status, route)
 }
 
 // Wiring is what a wake needs beyond the definition. Runner nil makes a wake
@@ -213,6 +257,11 @@ func (d *Definition) ReturnsAt(status string) error {
 // sweep, handing off exactly the stories the contract accepts. A wake that is
 // refused records nothing, and a redelivered wake adds nothing.
 //
+// No story is handed off whose entry status, or whose segment's exit, would hold
+// an engagement seat on the local workflow (SeatReason). A named story is refused
+// with an error; a sweep skips it and reports and records it as a Handback marked
+// Refused, and still hands off the rest.
+//
 // With a Runner, each new hand-off is then run once, in id order, with the
 // rendered host.story_command; AfterRun, when wired, then runs; the story is
 // re-read afterwards and checked
@@ -242,13 +291,22 @@ func Wake(ctx context.Context, name string, def *Definition, req WakeRequest, w 
 	}
 
 	var ids []string
+	var refused []Handback
 	if req.StoryID != "" {
 		st, err := w.Stories.Story(ctx, req.StoryID)
 		if err != nil {
 			return nil, nil, err
 		}
-		if _, err := def.Accepts(st.Status, st.Category); err != nil {
+		seg, err := def.Accepts(st.Status, st.Category)
+		if err != nil {
 			return nil, nil, &RefusedError{Remote: remote, Story: st.ID, Cause: err}
+		}
+		reason, err := SeatReason(ctx, w.Local, st.ID, seg, st.Status)
+		if err != nil {
+			return nil, nil, err
+		}
+		if reason != "" {
+			return nil, nil, fmt.Errorf("remote %s: story %s %s", remote, st.ID, reason)
 		}
 		ids = []string{req.StoryID}
 	} else {
@@ -258,16 +316,34 @@ func Wake(ctx context.Context, name string, def *Definition, req WakeRequest, w 
 				return nil, nil, err
 			}
 			for _, st := range at {
-				if _, err := def.Accepts(st.Status, st.Category); err == nil {
-					ids = append(ids, st.ID)
+				seg, err := def.Accepts(st.Status, st.Category)
+				if err != nil {
+					continue
 				}
+				reason, err := SeatReason(ctx, w.Local, st.ID, seg, st.Status)
+				if err != nil {
+					return nil, nil, err
+				}
+				if reason != "" {
+					refused = append(refused, Handback{Remote: remote, FireID: req.TriggerID, Story: st.ID, Status: st.Status,
+						InContract: true, LocalKnown: true, HoldsSeat: true, Refused: true, Reason: refusedBeforeHandoff + reason})
+					continue
+				}
+				ids = append(ids, st.ID)
 			}
 		}
 		sort.Strings(ids)
+		sort.Slice(refused, func(i, j int) bool { return refused[i].Story < refused[j].Story })
 	}
 
 	var out []Handoff
 	var backs []Handback
+	for _, b := range refused {
+		if err := w.Recorder.RecordHandback(ctx, b); err != nil {
+			return out, backs, err
+		}
+		backs = append(backs, b)
+	}
 	for _, id := range ids {
 		h.Story = id
 		fresh, err := w.Recorder.Record(ctx, h)
@@ -304,8 +380,9 @@ func Wake(ctx context.Context, name string, def *Definition, req WakeRequest, w 
 }
 
 // checkHandback re-reads the story the remote just worked and holds its actual
-// status to the contract's exits and to the story's local route. failed is false
-// when it passes both.
+// status to the contract's exits, to the story's local route, and to the rule
+// that it must not rest at a status that holds an engagement seat. failed is
+// false when it passes all three.
 func checkHandback(ctx context.Context, def *Definition, h Handoff, w Wiring) (b Handback, failed bool, err error) {
 	st, err := w.Stories.Story(ctx, h.Story)
 	if err != nil {
@@ -325,6 +402,14 @@ func checkHandback(ctx context.Context, def *Definition, h Handoff, w Wiring) (b
 		if !declared {
 			b.LocalKnown = false
 			reasons = append(reasons, fmt.Sprintf("not a status of the local %s route", route))
+		}
+		engages, route, lerr := w.Local.Engages(ctx, h.Story, st.Status)
+		if lerr != nil {
+			return Handback{}, false, lerr
+		}
+		if engages {
+			b.HoldsSeat = true
+			reasons = append(reasons, seatMessage(st.Status, route))
 		}
 	}
 	b.Reason = strings.Join(reasons, "; ")
