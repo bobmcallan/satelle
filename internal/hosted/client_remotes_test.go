@@ -75,3 +75,46 @@ func TestFireRemoteOtherBadGatewayStaysGeneric(t *testing.T) {
 		})
 	}
 }
+
+// retireAnswering retires remote "rmt_1" against a server that answers code.
+func retireAnswering(t *testing.T, code int) error {
+	t.Helper()
+	var gotMethod, gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		w.WriteHeader(code)
+	}))
+	t.Cleanup(ts.Close)
+	store := &memStore{cred: Credential{ServerURL: ts.URL, AccessToken: "t", RefreshToken: "r"}, set: true}
+	err := NewClient(ts.URL, store, ts.Client()).RetireRemote(context.Background(), "rmt_1")
+	if gotMethod != http.MethodDelete || gotPath != "/api/v1/remotes/rmt_1" {
+		t.Errorf("RetireRemote sent %s %s", gotMethod, gotPath)
+	}
+	return err
+}
+
+func TestRetireRemoteTypesItsRefusals(t *testing.T) {
+	if err := retireAnswering(t, http.StatusNoContent); err != nil {
+		t.Fatalf("a 204 retires: %v", err)
+	}
+	var nf *RemoteNotFoundError
+	if err := retireAnswering(t, http.StatusNotFound); !errors.As(err, &nf) || nf.RemoteID != "rmt_1" {
+		t.Errorf("a 404 must be a *RemoteNotFoundError naming the remote, got %v", err)
+	}
+	var fb *RemoteForbiddenError
+	if err := retireAnswering(t, http.StatusForbidden); !errors.As(err, &fb) || fb.RemoteID != "rmt_1" {
+		t.Errorf("a 403 must be a *RemoteForbiddenError naming the remote, got %v", err)
+	}
+	if err := retireAnswering(t, http.StatusInternalServerError); err == nil || errors.As(err, &nf) || errors.As(err, &fb) {
+		t.Errorf("a 500 stays a generic error, got %v", err)
+	}
+}
+
+// A 404 on a fire (a POST) keeps the generic error: the typing is for a retire.
+func TestFireNotFoundStaysGeneric(t *testing.T) {
+	err := fireAnswering(t, http.StatusNotFound, "")
+	var nf *RemoteNotFoundError
+	if err == nil || errors.As(err, &nf) {
+		t.Errorf("a 404 on a fire must stay a generic error, got %v", err)
+	}
+}

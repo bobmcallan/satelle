@@ -43,13 +43,7 @@ call) and wakes the remote; these commands manage them through the server.
 	}
 	trigger.PersistentFlags().StringVar(&server, "server", "", "hosted server URL (default: the one you signed in to)")
 
-	client := func(cmd *cobra.Command) (*hosted.Client, error) {
-		s := resolveServer(server)
-		if s == "" {
-			return nil, fmt.Errorf("%w — run \"satelle login\" first (no hosted server configured)", hosted.ErrLoginRequired)
-		}
-		return hosted.NewClient(s, hosted.DefaultStore(), nil), nil
-	}
+	client := func(cmd *cobra.Command) (*hosted.Client, error) { return remoteClient(server) }
 	// checkDeclared holds a trigger name to the local definition named by --def.
 	checkDeclared := func(name string) error {
 		if def == "" || name == "" {
@@ -216,6 +210,16 @@ is still recorded. With --def, the trigger name is first checked against that de
 		setPaused("pause", "Pause a declared trigger: a fire naming it is refused", true),
 		setPaused("resume", "Resume a paused trigger", false))
 	return trigger
+}
+
+// remoteClient is the hosted client for the server flag (else the server signed
+// in to), shared by every command that talks to satelle-server about a remote.
+func remoteClient(server string) (*hosted.Client, error) {
+	s := resolveServer(server)
+	if s == "" {
+		return nil, fmt.Errorf("%w — run \"satelle login\" first (no hosted server configured)", hosted.ErrLoginRequired)
+	}
+	return hosted.NewClient(s, hosted.DefaultStore(), nil), nil
 }
 
 func newRemoteWakeCmd() *cobra.Command {

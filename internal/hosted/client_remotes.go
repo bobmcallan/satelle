@@ -90,6 +90,22 @@ func (e *TriggerInvalidError) Error() string {
 	return fmt.Sprintf("trigger %s rejected: %s", e.Trigger, e.Reason)
 }
 
+// RemoteNotFoundError is the server's 404 on a retire: the remote does not exist
+// for this caller, or it was already retired.
+type RemoteNotFoundError struct{ RemoteID string }
+
+func (e *RemoteNotFoundError) Error() string {
+	return fmt.Sprintf("remote %s not found or already retired", e.RemoteID)
+}
+
+// RemoteForbiddenError is the server's 403 on a retire: the caller is a member of
+// the remote's project but neither its creator nor an admin.
+type RemoteForbiddenError struct{ RemoteID string }
+
+func (e *RemoteForbiddenError) Error() string {
+	return fmt.Sprintf("only the remote's creator or an admin of its project may retire remote %s", e.RemoteID)
+}
+
 // wakeFailedCode is the outcome the server records for such a fire.
 const wakeFailedCode = "wake_failed"
 
@@ -99,9 +115,9 @@ func remoteRoute(remoteID, tail string) string {
 
 // remoteCall sends one authenticated request and returns the body of a 2xx
 // answer. A 409 is returned as the refusal's reason and recorded id, a 400 on a
-// PUT (a registration) as a *TriggerInvalidError, a 502 that says the wake failed as a *WakeFailedError;
-// any other non-2xx is a concise
-// server error.
+// PUT (a registration) as a *TriggerInvalidError, a 502 that says the wake failed as a *WakeFailedError,
+// a 403 or 404 on a DELETE (a retire) as a *RemoteForbiddenError or
+// *RemoteNotFoundError; any other non-2xx is a concise server error.
 func (c *Client) remoteCall(ctx context.Context, method, path string, payload any) ([]byte, error) {
 	var raw []byte
 	ctype := ""
@@ -125,6 +141,10 @@ func (c *Client) remoteCall(ctx context.Context, method, path string, payload an
 		return nil, ErrLoginRequired
 	case resp.StatusCode == http.StatusBadRequest && method == http.MethodPut:
 		return nil, &TriggerInvalidError{Reason: apiReason(body, "HTTP 400"), Trigger: bodyTrigger(body)}
+	case resp.StatusCode == http.StatusForbidden && method == http.MethodDelete:
+		return nil, &RemoteForbiddenError{}
+	case resp.StatusCode == http.StatusNotFound && method == http.MethodDelete:
+		return nil, &RemoteNotFoundError{}
 	case resp.StatusCode == http.StatusConflict:
 		return nil, &TriggerRefusedError{Reason: apiReason(body, "HTTP 409"), TriggerID: bodyTriggerID(body)}
 	case resp.StatusCode == http.StatusBadGateway && isWakeFailure(body):
@@ -264,6 +284,26 @@ func (c *Client) SetTriggerPaused(ctx context.Context, remoteID, name string, pa
 	}
 	_, err := c.remoteCall(ctx, http.MethodPost, remoteRoute(remoteID, "/declared-triggers/"+url.PathEscape(name)+"/"+action), struct{}{})
 	nameRefusal(err, name)
+	return err
+}
+
+// RetireRemote retires the remote on the server (DELETE /api/v1/remotes/{id}): it
+// drops out of every list, its declared triggers are deleted and its name is
+// freed, while its fire history stays readable and the user's wake secret is
+// untouched. A 404 is a *RemoteNotFoundError (unknown, not a member, or already
+// retired) and a 403 a *RemoteForbiddenError. Only the explicit `satelle remote
+// retire` command may call it: stopping or tearing down a node never retires its
+// remote.
+func (c *Client) RetireRemote(ctx context.Context, remoteID string) error {
+	_, err := c.remoteCall(ctx, http.MethodDelete, remoteRoute(remoteID, ""), nil)
+	var nf *RemoteNotFoundError
+	if errors.As(err, &nf) {
+		nf.RemoteID = remoteID
+	}
+	var fb *RemoteForbiddenError
+	if errors.As(err, &fb) {
+		fb.RemoteID = remoteID
+	}
 	return err
 }
 

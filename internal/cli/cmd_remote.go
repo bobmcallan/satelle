@@ -103,7 +103,7 @@ and its key. Exits non-zero when any remote has an error.`,
 		},
 	}
 
-	remote.AddCommand(create, validate, newRemoteTriggerCmd(), newRemoteWakeCmd())
+	remote.AddCommand(create, validate, newRemoteTriggerCmd(), newRemoteWakeCmd(), newRemoteRetireCmd())
 	register(remote)
 }
 
