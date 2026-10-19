@@ -97,6 +97,28 @@ exit = "done"
 # How the remote is started. kind is opaque to satelle.
 [[trigger]]
 kind = "manual"
+
+# The preflight runs these on the host before the remote starts. Uncomment and
+# replace each argv with your own tooling; expect is "succeed" (the host identity
+# can do it) or "refused" (the host must refuse it). legs names what a step holds
+# among data, untrusted and outbound; a step holding all three fails.
+#
+# [preflight]
+# env_probe = ["your-env-probe"]
+# file_probe = ["your-file-probe"]
+# allow_credentials = []
+#
+# [[step]]
+# name = "in_progress"
+# legs = ["data", "outbound"]
+#
+#   [[step.probe]]
+#   argv = ["your-probe", "allowed-action"]
+#   expect = "succeed"
+#
+#   [[step.probe]]
+#   argv = ["your-probe", "forbidden-action"]
+#   expect = "refused"
 `
 
 const scaffoldDone = `[meta]

@@ -33,6 +33,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/remotechan"
 	"github.com/bobmcallan/satelle/internal/remotedef"
 	"github.com/bobmcallan/satelle/internal/remotenode"
+	"github.com/bobmcallan/satelle/internal/remotepreflight"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
@@ -53,27 +54,30 @@ var (
 // remoteStartCommands are the `remote start` and `remote join` commands, attached
 // to the remote group by cmd_remote.go.
 func remoteStartCommands() []*cobra.Command {
-	var server, message string
+	var server, message, story string
 	start := &cobra.Command{
 		Use:   "start <name>",
 		Short: "Start a fresh node from a remote definition and print its ready report",
-		Long: `Validates the remote definition and starts a node from it using only the
-definition's own host commands: host.start, host.network (with the egress
-allowlist), then a held host.run that installs the pinned satelle, runs
-host.bootstrap and joins. The node enrolls on the sealed channel through the
-hosted relay, is sent the definition's workflows, skills and principles, fetches
-its declared repos read-only, and reports ready; the report is printed.
+		Long: `Starts a node from the remote definition using only its host commands:
+host.start, host.network (egress allowlist), the security preflight, then a held
+host.run that installs the pinned satelle, runs host.bootstrap and joins. The
+node enrolls on the sealed relay channel, is sent the definition's substrate,
+fetches its repos read-only and reports ready.
 
---message sends the node's agent one message as a job and prints its reply.
-When the run ends host.stop runs if the definition's lifecycle is "shutdown"
-(the default) and is skipped if it is "idle". Needs a signed-in satelle (satelle
-login): the relay is the hosted server's.`,
+The preflight runs each declared check on the host through host.run, never on
+this machine. Every result is printed and recorded on --story as a
+remote_preflight row; any check that fails stops the start and runs host.stop.
+
+--message sends the node's agent one message. host.stop runs at the end unless
+the lifecycle is "idle". Needs a signed-in satelle (satelle login).`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRemoteStart(cmd, args[0], server, message)
+			return runRemoteStart(cmd, args[0], server, message, story)
 		},
 	}
+	start.Flags().StringVar(&story, "story", "", "the story the preflight's results are recorded on (required)")
+	_ = start.MarkFlagRequired("story")
 	start.Flags().StringVar(&server, "server", "", "Hosted server URL (overrides the configured machine hosted server)")
 	start.Flags().StringVar(&message, "message", "", "send the node's agent this message and print its reply")
 
@@ -98,7 +102,7 @@ login): the relay is the hosted server's.`,
 	return []*cobra.Command{start, join}
 }
 
-func runRemoteStart(cmd *cobra.Command, name, serverFlag, message string) (err error) {
+func runRemoteStart(cmd *cobra.Command, name, serverFlag, message, story string) (err error) {
 	a, err := appFrom(cmd)
 	if err != nil {
 		return err
@@ -144,10 +148,14 @@ func runRemoteStart(cmd *cobra.Command, name, serverFlag, message string) (err e
 	run, err := remotenode.Start(ctx, remotenode.StartOptions{
 		Name: name, Def: def, DefDir: dir, Allow: allow,
 		Client: remoteHostedClient(srv), RelayURL: strings.TrimRight(srv, "/") + "/relay",
-		Env: env, ReleaseBase: releaseBase,
+		Env: env, ReleaseBase: releaseBase, StoryID: story,
 		Recorder: a.Store.Ledger, Log: hostLog, Channel: remoteChannelOptions,
 	})
 	if err != nil {
+		var pe *remotenode.PreflightError
+		if errors.As(err, &pe) {
+			printStartPreflight(out, name, pe.Checks)
+		}
 		return fmt.Errorf("remote %s: %w", name, err)
 	}
 	defer func() {
@@ -163,6 +171,7 @@ func runRemoteStart(cmd *cobra.Command, name, serverFlag, message string) (err e
 		}
 	}()
 
+	printStartPreflight(out, name, run.Preflight)
 	printReport(out, name, run.Report)
 	if message == "" {
 		return nil
@@ -189,6 +198,18 @@ func (l lockedWriter) Write(p []byte) (int, error) {
 	remoteOutMu.Lock()
 	defer remoteOutMu.Unlock()
 	return l.w.Write(p)
+}
+
+// printStartPreflight prints one line per check: step, argv, what the definition
+// expects and what the host did. Never a value the host printed.
+func printStartPreflight(out io.Writer, name string, checks []remotepreflight.Check) {
+	for _, c := range checks {
+		verdict := "ok  "
+		if !c.Pass {
+			verdict = "FAIL"
+		}
+		fmt.Fprintf(out, "remote %s: preflight %s %s\n", name, verdict, remotepreflight.Describe(c))
+	}
 }
 
 func printReport(out io.Writer, name string, r remotenode.Report) {

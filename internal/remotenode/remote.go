@@ -17,6 +17,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/release"
 	"github.com/bobmcallan/satelle/internal/remotechan"
 	"github.com/bobmcallan/satelle/internal/remotedef"
+	"github.com/bobmcallan/satelle/internal/remotepreflight"
 )
 
 // Ledger kinds for a node's host lifecycle live in package ledger; the payload of
@@ -47,7 +48,10 @@ type StartOptions struct {
 	// ReleaseBase is SATELLE_RELEASE_BASE as local satelle sees it ("" for the
 	// public releases); it is handed to the node's installer.
 	ReleaseBase string
-	// Recorder is where each host start and stop is recorded. Nil records nothing.
+	// StoryID is the story the preflight's remote_preflight rows are recorded on.
+	StoryID string
+	// Recorder is where each host start and stop and each preflight check is
+	// recorded. Nil records nothing.
 	Recorder remotechan.Recorder
 	// Log receives host command output; nil discards it.
 	Log io.Writer
@@ -66,6 +70,9 @@ const defaultReadyTimeout = 10 * time.Minute
 // End.
 type Run struct {
 	Report Report
+	// Preflight is every check of the definition's security preflight, which
+	// passed before the node was bootstrapped.
+	Preflight []remotepreflight.Check
 
 	opts StartOptions
 	cmds *Commands
@@ -75,6 +82,25 @@ type Run struct {
 	mu      sync.Mutex
 	pending map[string]chan result
 	ended   bool
+	// forceStop makes End run host.stop whatever the lifecycle: a host that
+	// failed its preflight is never left running.
+	forceStop bool
+}
+
+// PreflightError is a start refused because a check of the declared preflight
+// did not pass. Checks is every check that ran, in order.
+type PreflightError struct {
+	Checks []remotepreflight.Check
+}
+
+func (e *PreflightError) Error() string {
+	var failed []string
+	for _, c := range e.Checks {
+		if !c.Pass {
+			failed = append(failed, remotepreflight.Describe(c))
+		}
+	}
+	return "preflight failed, the remote was not started: " + strings.Join(failed, "; ")
 }
 
 type result struct {
@@ -91,7 +117,9 @@ type hostEvent struct {
 }
 
 // Start brings a node up from opts.Def and returns it ready: host.start, host.network,
-// a held host.run that installs the pinned satelle and joins, the channel's
+// the definition's security preflight run on the host through host.run (a check
+// that does not pass fails the start with a *PreflightError and host.stop runs
+// whatever the lifecycle), a held host.run that installs the pinned satelle and joins, the channel's
 // enrollment, the substrate sent over it, and the node's report. If anything after
 // host.start fails the run is ended (its lifecycle applied) before Start returns
 // the error. A report that names a different satelle version than the definition
@@ -115,6 +143,8 @@ func Start(ctx context.Context, opts StartOptions) (*Run, error) {
 	r.record(ctx, ledger.KindRemoteStart, nil)
 
 	if err := r.begin(ctx, substrate); err != nil {
+		var pe *PreflightError
+		r.forceStop = errors.As(err, &pe)
 		if endErr := r.End(ctx); endErr != nil {
 			err = errors.Join(err, endErr)
 		}
@@ -127,6 +157,11 @@ func Start(ctx context.Context, opts StartOptions) (*Run, error) {
 func (r *Run) begin(ctx context.Context, substrate []byte) error {
 	opts := r.opts
 	if err := r.cmds.Network(ctx, opts.Allow); err != nil {
+		return err
+	}
+	// The preflight judges the host as locked down, so it runs after
+	// host.network, and before anything is installed on it.
+	if err := r.preflight(ctx); err != nil {
 		return err
 	}
 
@@ -181,6 +216,21 @@ func (r *Run) begin(ctx context.Context, substrate []byte) error {
 
 	go r.pump()
 	go r.watchLost()
+	return nil
+}
+
+// preflight runs the definition's declared preflight on the host, through
+// host.run, and records every check on the story. A check that did not pass
+// refuses the start.
+func (r *Run) preflight(ctx context.Context) error {
+	res := remotepreflight.Run(ctx, r.opts.Def, r.cmds)
+	for _, c := range res.Checks {
+		r.appendRow(ctx, remotepreflight.LedgerRow(r.opts.Name, r.opts.StoryID, ledgerActor, c))
+	}
+	if !res.Passed {
+		return &PreflightError{Checks: res.Checks}
+	}
+	r.Preflight = res.Checks
 	return nil
 }
 
@@ -340,7 +390,7 @@ func (r *Run) End(ctx context.Context) error {
 	// stopping the host must still happen.
 	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopTimeout)
 	defer cancel()
-	if r.opts.Def.EffectiveLifecycle() == remotedef.LifecycleIdle {
+	if r.opts.Def.EffectiveLifecycle() == remotedef.LifecycleIdle && !r.forceStop {
 		r.record(sctx, ledger.KindRemoteIdle, nil)
 		return nil
 	}
@@ -352,21 +402,28 @@ func (r *Run) End(ctx context.Context) error {
 // record writes one host lifecycle entry; a failure to record is not a failure of
 // the run.
 func (r *Run) record(ctx context.Context, kind string, cause error) {
-	if r.opts.Recorder == nil {
-		return
-	}
 	ev := hostEvent{Remote: r.opts.Name, Label: r.opts.Def.Identity.Label, Lifecycle: r.opts.Def.EffectiveLifecycle()}
 	if cause != nil {
 		ev.Error = cause.Error()
 	}
 	payload, _ := json.Marshal(ev)
+	r.appendRow(ctx, ledger.AppendInput{Kind: kind, Actor: ledgerActor, Body: r.opts.Name, Payload: payload})
+}
+
+// ledgerActor is the actor of every ledger row a node's start writes.
+const ledgerActor = "remotenode"
+
+// appendRow writes one ledger row; a failure to record is not a failure of the
+// run.
+func (r *Run) appendRow(ctx context.Context, in ledger.AppendInput) {
+	if r.opts.Recorder == nil {
+		return
+	}
 	now := time.Now
 	if r.opts.Now != nil {
 		now = r.opts.Now
 	}
-	_, _ = r.opts.Recorder.Append(ctx, ledger.AppendInput{
-		Kind: kind, Actor: "remotenode", Body: r.opts.Name, Payload: payload,
-	}, now())
+	_, _ = r.opts.Recorder.Append(ctx, in, now())
 }
 
 func newJobID() (string, error) {

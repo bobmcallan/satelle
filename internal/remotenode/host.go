@@ -2,6 +2,7 @@ package remotenode
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/procgroup"
 	"github.com/bobmcallan/satelle/internal/remotedef"
+	"github.com/bobmcallan/satelle/internal/remotepreflight"
 )
 
 // KeyLinePrefix starts the stdout line on which the node prints its public key.
@@ -43,33 +45,44 @@ func (c *Commands) log() io.Writer {
 	return c.Log
 }
 
-func (c *Commands) label() string { return c.Def.Identity.Label }
-
-// Fill replaces each placeholder in every element of argv. pairs is
-// placeholder, value, placeholder, value, …
-func Fill(argv []string, pairs ...string) []string {
-	r := strings.NewReplacer(pairs...)
-	out := make([]string, len(argv))
-	for i, a := range argv {
-		out[i] = r.Replace(a)
-	}
-	return out
-}
-
 // Start runs host.start to completion.
 func (c *Commands) Start(ctx context.Context) error {
-	return c.run(ctx, "host.start", Fill(c.Def.Host.Start, "{label}", c.label()))
+	return c.run(ctx, "host.start", c.Def.HostArgv(c.Def.Host.Start, "", nil))
 }
 
 // Network runs host.network to completion with {allow} filled by the allowlist,
 // comma-joined.
 func (c *Commands) Network(ctx context.Context, allow []string) error {
-	return c.run(ctx, "host.network", Fill(c.Def.Host.Network, "{label}", c.label(), remotedef.PlaceholderAllow, strings.Join(allow, ",")))
+	return c.run(ctx, "host.network", c.Def.HostArgv(c.Def.Host.Network, "", allow))
 }
 
 // Stop runs host.stop to completion.
 func (c *Commands) Stop(ctx context.Context) error {
-	return c.run(ctx, "host.stop", Fill(c.Def.Host.Stop, "{label}", c.label()))
+	return c.run(ctx, "host.stop", c.Def.HostArgv(c.Def.Host.Stop, "", nil))
+}
+
+// Exec runs argv on the host, never on this machine: it is the {command} of
+// host.run, shell-quoted so it reaches the host as one command. It satisfies
+// remotepreflight.Host. The command's stdout is returned for the preflight to
+// read and not logged; its stderr goes to the log. A command that ran and exited
+// non-zero is an Outcome, not an error; one that could not be launched, or was
+// cut short by ctx, is an error.
+func (c *Commands) Exec(ctx context.Context, argv []string) (remotepreflight.Outcome, error) {
+	cmd := c.command(ctx, c.Def.HostArgv(c.Def.Host.Run, shellJoin(argv), nil))
+	var stdout bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, c.log()
+	err := cmd.Run()
+	if cerr := ctx.Err(); cerr != nil {
+		return remotepreflight.Outcome{}, cerr
+	}
+	var ee *exec.ExitError
+	switch {
+	case err == nil:
+		return remotepreflight.Outcome{Ran: true, Stdout: stdout.String()}, nil
+	case errors.As(err, &ee):
+		return remotepreflight.Outcome{Ran: true, Exit: ee.ExitCode(), Stdout: stdout.String()}, nil
+	}
+	return remotepreflight.Outcome{}, fmt.Errorf("host.run: %w", err)
 }
 
 // run executes argv to completion, in its own process group, killed with the
@@ -108,7 +121,7 @@ type keyResult struct {
 // Hold starts host.run with {command} filled and keeps it running. It does not
 // wait for it.
 func (c *Commands) Hold(ctx context.Context, command string) (*Held, error) {
-	argv := Fill(c.Def.Host.Run, "{label}", c.label(), "{command}", command)
+	argv := c.Def.HostRunArgv(command)
 	// Not CommandContext: the process outlives the call that started it and ends
 	// with Kill.
 	cmd := exec.Command(argv[0], argv[1:]...)

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"net/http"
@@ -249,7 +250,7 @@ func TestRemoteStartEndToEnd(t *testing.T) {
 		t.Fatal("the node root must start with no .satelle")
 	}
 
-	out, err := runRoot(t, "remote", "start", "edge", "--server", r.server, "--message", "hello node")
+	out, err := runRoot(t, "remote", "start", "edge", "--server", r.server, "--story", "sty_start", "--message", "hello node")
 	if err != nil {
 		t.Fatalf("remote start: %v\n%s", err, out)
 	}
@@ -321,10 +322,148 @@ func TestRemoteStartEndToEnd(t *testing.T) {
 	}
 }
 
+// declarePreflight appends a step with one probe per entry of probes (argv
+// joined by spaces, expecting expect) to the rig's definition. The rig's host.run
+// really runs the command, so a probe is a real command on this machine standing
+// in for the host.
+func (r *remoteRig) declarePreflight(expect string, probes ...string) {
+	r.t.Helper()
+	expects := make([]string, len(probes))
+	for i := range probes {
+		expects[i] = expect
+	}
+	r.declareProbes(expects, probes)
+}
+
+// declareProbes declares the probes under one step, each with its own
+// expectation: expects[i] is the expectation of the shell command probes[i].
+func (r *remoteRig) declareProbes(expects, probes []string) {
+	r.t.Helper()
+	path := filepath.Join(r.repo, ".satelle", filepath.FromSlash(config.RemotesDir), "edge", "remote.toml")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	var sb strings.Builder
+	sb.WriteString("\n[[step]]\nname = \"in_progress\"\n")
+	for i, p := range probes {
+		fmt.Fprintf(&sb, "[[step.probe]]\nargv = [\"sh\", \"-c\", %q]\nexpect = %q\n", p, expects[i])
+	}
+	if err := os.WriteFile(path, append(b, sb.String()...), 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+	if out, err := runRoot(r.t, "remote", "validate", "edge"); err != nil {
+		r.t.Fatalf("the preflight fixture must validate: %v\n%s", err, out)
+	}
+}
+
+// preflightRows lists the story's remote_preflight ledger rows.
+func (r *remoteRig) preflightRows(storyID string) []ledger.Entry {
+	r.t.Helper()
+	a, err := app.Open()
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	defer a.Close()
+	rows, err := a.Store.Ledger.List(context.Background(), ledger.ListFilter{Kind: ledger.KindRemotePreflight, StoryID: storyID})
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	return rows
+}
+
+// A real start prints every preflight check and records each as a
+// remote_preflight row on the --story story, before the node reports ready.
+func TestRemoteStartPrintsAndRecordsThePreflight(t *testing.T) {
+	r := newRemoteRig(t, "shutdown", "fake-agent --system {system} --tools {tools}")
+	r.declareProbes([]string{"succeed", "succeed", "refused"}, []string{"true", "echo hello", "exit 3"})
+
+	out, err := runRoot(t, "remote", "start", "edge", "--server", r.server, "--story", "sty_pf")
+	if err != nil {
+		t.Fatalf("remote start: %v\n%s", err, out)
+	}
+	// A passing line states the expectation beside the result, for a probe
+	// expected to succeed and for one expected to be refused.
+	for _, want := range []string{
+		"preflight ok",
+		"in_progress probe sh -c true: expected succeed, got exit 0 (pass)",
+		"in_progress probe sh -c echo hello: expected succeed, got exit 0 (pass)",
+		"in_progress probe sh -c exit 3: expected refused, got exit 3 (pass)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Index(out, "preflight ok") > strings.Index(out, "remote edge: ready") {
+		t.Errorf("the preflight must be reported before the node is ready:\n%s", out)
+	}
+	rows := r.preflightRows("sty_pf")
+	if len(rows) != 3 {
+		t.Fatalf("remote_preflight rows for the story = %d, want 3", len(rows))
+	}
+	for _, row := range rows {
+		var p struct {
+			Remote, Step, Kind, Expect, Outcome string
+			Pass                                bool
+			Argv                                []string
+		}
+		if err := json.Unmarshal(row.Payload, &p); err != nil {
+			t.Fatal(err)
+		}
+		if p.Remote != "edge" || p.Step != "in_progress" || p.Kind != "probe" || (p.Expect != "succeed" && p.Expect != "refused") || p.Outcome != "pass" || !p.Pass || len(p.Argv) != 3 {
+			t.Errorf("row payload = %s", row.Payload)
+		}
+	}
+	if n := len(r.preflightRows("sty_start")); n != 0 {
+		t.Errorf("rows leaked onto another story: %d", n)
+	}
+}
+
+// A probe whose outcome differs from its expectation stops the start before the
+// node is bootstrapped; host.stop runs and the error names the step and probe.
+func TestRemoteStartStopsOnAFailedProbe(t *testing.T) {
+	r := newRemoteRig(t, "idle", "fake-agent --system {system} --tools {tools}")
+	r.declarePreflight("refused", "true") // exits 0 where a refusal was expected
+
+	out, err := runRoot(t, "remote", "start", "edge", "--server", r.server, "--story", "sty_pf")
+	if err == nil {
+		t.Fatalf("start must fail:\n%s", out)
+	}
+	for _, want := range []string{"in_progress", "sh -c true"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should name %q", err, want)
+		}
+	}
+	if !strings.Contains(out, "preflight FAIL") || strings.Contains(out, "remote edge: ready") {
+		t.Errorf("want the failed check printed and no ready report:\n%s", out)
+	}
+	log := r.log()
+	if !strings.Contains(log, "stop edge-1") {
+		t.Errorf("host.stop must run after a failed preflight, even for an idle remote:\n%s", log)
+	}
+	if _, serr := os.Stat(filepath.Join(r.nodeHome, "bootstrap-ran")); serr == nil {
+		t.Error("the node was bootstrapped despite the failed preflight")
+	}
+	if rows := r.preflightRows("sty_pf"); len(rows) != 1 {
+		t.Errorf("remote_preflight rows = %d, want 1", len(rows))
+	}
+}
+
+// --story is required: a result with no story to carry it is refused.
+func TestRemoteStartRequiresAStory(t *testing.T) {
+	r := newRemoteRig(t, "shutdown", "fake-agent --system {system} --tools {tools}")
+	if _, err := runRoot(t, "remote", "start", "edge", "--server", r.server); err == nil {
+		t.Error("remote start without --story must be refused")
+	}
+	if r.log() != "" {
+		t.Errorf("no host command may run without --story:\n%s", r.log())
+	}
+}
+
 // AC9: an idle remote is left running: no host.stop, and the run says so.
 func TestRemoteStartIdleLeavesTheNodeRunning(t *testing.T) {
 	r := newRemoteRig(t, "idle", "fake-agent --system {system} --tools {tools}")
-	out, err := runRoot(t, "remote", "start", "edge", "--server", r.server)
+	out, err := runRoot(t, "remote", "start", "edge", "--server", r.server, "--story", "sty_start")
 	if err != nil {
 		t.Fatalf("remote start: %v\n%s", err, out)
 	}
@@ -342,7 +481,7 @@ func TestRemoteStartIdleLeavesTheNodeRunning(t *testing.T) {
 // AC6: a binding that does not resolve on the node fails the start, naming it.
 func TestRemoteStartUnresolvedBindingFailsNamingIt(t *testing.T) {
 	r := newRemoteRig(t, "shutdown", "no-such-agent-binary --system {system}")
-	out, err := runRoot(t, "remote", "start", "edge", "--server", r.server)
+	out, err := runRoot(t, "remote", "start", "edge", "--server", r.server, "--story", "sty_start")
 	if err == nil {
 		t.Fatalf("start must fail:\n%s", out)
 	}
@@ -370,7 +509,7 @@ func TestRemoteStartWrongVersionFailsNamingIt(t *testing.T) {
 	if err := os.WriteFile(path, []byte(strings.Replace(string(b), "SATELLE_TEST_VERSION = \""+pinnedVersion+"\"", `SATELLE_TEST_VERSION = "1.2.4"`, 1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := runRoot(t, "remote", "start", "edge", "--server", r.server)
+	out, err := runRoot(t, "remote", "start", "edge", "--server", r.server, "--story", "sty_start")
 	if err == nil {
 		t.Fatalf("start must fail:\n%s", out)
 	}
@@ -389,14 +528,14 @@ func TestRemoteStartRefusesAnInvalidDefinition(t *testing.T) {
 	if err := os.WriteFile(path, []byte(strings.Replace(string(b), `lifecycle = "shutdown"`, `lifecycle = "forever"`, 1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := runRoot(t, "remote", "start", "edge", "--server", r.server)
+	out, err := runRoot(t, "remote", "start", "edge", "--server", r.server, "--story", "sty_start")
 	if err == nil || !strings.Contains(out, "remote.toml: lifecycle") {
 		t.Fatalf("want a validation failure naming remote.toml: lifecycle; err=%v\n%s", err, out)
 	}
 	if r.log() != "" {
 		t.Errorf("no host command may run for an invalid definition:\n%s", r.log())
 	}
-	if _, err := runRoot(t, "remote", "start", "ghost", "--server", r.server); err == nil {
+	if _, err := runRoot(t, "remote", "start", "ghost", "--server", r.server, "--story", "sty_start"); err == nil {
 		t.Error("an undefined remote must be refused")
 	}
 }

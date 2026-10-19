@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -61,6 +62,57 @@ type Definition struct {
 	Host     Host      `toml:"host"`
 	Segments []Segment `toml:"segment"`
 	Triggers []Trigger `toml:"trigger"`
+	// Preflight is what is checked on the host before the remote starts, beyond
+	// the per-step probes.
+	Preflight Preflight `toml:"preflight"`
+	// Steps declare, per status of the remote's own workflow, the probes the
+	// preflight runs and the legs the step holds.
+	Steps []Step `toml:"step"`
+}
+
+// Expectations a probe carries: the outcome the preflight compares its run with.
+const (
+	// ExpectSucceed is a probe the host identity must be able to run.
+	ExpectSucceed = "succeed"
+	// ExpectRefused is a probe the host identity must be refused.
+	ExpectRefused = "refused"
+)
+
+// Legs a step may hold. A step holding all three can read private data, take in
+// untrusted input and send it out, which the preflight refuses.
+const (
+	LegData      = "data"
+	LegUntrusted = "untrusted"
+	LegOutbound  = "outbound"
+)
+
+var allLegs = []string{LegData, LegUntrusted, LegOutbound}
+
+// Preflight is the host-wide part of the preflight. Every argv is opaque text the
+// author owns; satelle runs it on the host and reads its stdout.
+type Preflight struct {
+	// EnvProbe prints the host's environment as KEY=VALUE lines.
+	EnvProbe []string `toml:"env_probe"`
+	// FileProbe prints one path per line for each credential file on the host.
+	FileProbe []string `toml:"file_probe"`
+	// AllowCredentials are the env key names and file paths the author accepts
+	// finding; anything else credential-shaped fails the preflight.
+	AllowCredentials []string `toml:"allow_credentials"`
+}
+
+// Step is one status of the remote's own workflow with what the preflight
+// checks for it.
+type Step struct {
+	Name   string   `toml:"name"`
+	Legs   []string `toml:"legs"`
+	Probes []Probe  `toml:"probe"`
+}
+
+// Probe is one command the preflight runs on the host and the outcome the
+// definition expects of it: ExpectSucceed or ExpectRefused.
+type Probe struct {
+	Argv   []string `toml:"argv"`
+	Expect string   `toml:"expect"`
 }
 
 // The two lifecycles a definition may name.
@@ -193,6 +245,7 @@ func Validate(dir string) []health.Finding {
 	v.checkDefinition()
 	v.checkWorkflows()
 	v.checkSegments()
+	v.checkSteps()
 	v.checkAgents()
 	v.checkDocs(skillsDir, "skills")
 	v.checkDocs(principlesDir, "principles")
@@ -271,6 +324,9 @@ func (v *validation) checkDefinition() {
 	v.checkLifecycle(def)
 	v.checkRepos(def)
 	v.checkAllow(def)
+	if len(def.Host.Run) > 0 && !argvHasCommand(def.Host.Run) {
+		v.fail(DefinitionFile, "host.run", "has no {command} placeholder; the host cannot run a step")
+	}
 	if len(def.Segments) == 0 {
 		v.fail(DefinitionFile, "segment", "required: name at least one lifecycle segment (entry and exit status)")
 	}
@@ -292,6 +348,51 @@ func (v *validation) checkDefinition() {
 	if _, err := toml.Decode(body, &raw); err == nil {
 		v.checkCredentials(raw)
 	}
+}
+
+// CommandPlaceholder is the argv token host.run carries where the step's command
+// goes.
+const CommandPlaceholder = "{command}"
+
+// HostArgv is one host command (host.start, host.network, host.run or host.stop)
+// with {label}, {command} and {allow} filled in; allow is joined with commas. It
+// is the single place the placeholders are resolved: whatever shows a line and
+// whatever runs it call this, so they cannot disagree. Each placeholder is
+// replaced in one pass, so a value that itself contains a placeholder is not
+// expanded again.
+func (d Definition) HostArgv(argv []string, command string, allow []string) []string {
+	r := strings.NewReplacer("{label}", d.Identity.Label, CommandPlaceholder, command, PlaceholderAllow, strings.Join(allow, ","))
+	out := make([]string, len(argv))
+	for i, a := range argv {
+		out[i] = r.Replace(a)
+	}
+	return out
+}
+
+// HostRunArgv is host.run for command.
+func (d Definition) HostRunArgv(command string) []string {
+	return d.HostArgv(d.Host.Run, command, nil)
+}
+
+// StepsHoldingAllLegs names the steps that declare data, untrusted-input and
+// outbound legs together, in definition order.
+func (d Definition) StepsHoldingAllLegs() []string {
+	var out []string
+	for _, s := range d.Steps {
+		if slices.Contains(s.Legs, LegData) && slices.Contains(s.Legs, LegUntrusted) && slices.Contains(s.Legs, LegOutbound) {
+			out = append(out, s.Name)
+		}
+	}
+	return out
+}
+
+func argvHasCommand(argv []string) bool {
+	for _, a := range argv {
+		if strings.Contains(a, CommandPlaceholder) {
+			return true
+		}
+	}
+	return false
 }
 
 func (v *validation) checkArgv(key string, argv []string) {
@@ -429,6 +530,46 @@ func (v *validation) checkSegments() {
 				v.fail(DefinitionFile, key, "required")
 			case !v.states[f.status]:
 				v.fail(DefinitionFile, key, fmt.Sprintf("%q is not a status of this remote's own workflow (%s)", f.status, declared))
+			}
+		}
+	}
+}
+
+// checkSteps is the only judge of probe form and step names: the preflight takes
+// a definition that passed it. A probe needs a command and an expectation; a step
+// is a status of the remote's own workflow; a leg is one the preflight knows.
+func (v *validation) checkSteps() {
+	if v.def == nil {
+		return // remote.toml did not decode; checkDefinition named why
+	}
+	if v.def.Preflight.EnvProbe != nil {
+		v.checkArgv("preflight.env_probe", v.def.Preflight.EnvProbe)
+	}
+	if v.def.Preflight.FileProbe != nil {
+		v.checkArgv("preflight.file_probe", v.def.Preflight.FileProbe)
+	}
+	for i, s := range v.def.Steps {
+		at := fmt.Sprintf("step[%d]", i)
+		switch {
+		case strings.TrimSpace(s.Name) == "":
+			v.fail(DefinitionFile, at+".name", "required: a status of this remote's own workflow")
+		case !v.states[s.Name]:
+			v.fail(DefinitionFile, at+".name", fmt.Sprintf("%q is not a status of this remote's own workflow", s.Name))
+		}
+		for _, l := range s.Legs {
+			if !slices.Contains(allLegs, l) {
+				v.fail(DefinitionFile, at+".legs", fmt.Sprintf("%q is not a leg; use %s", l, strings.Join(allLegs, ", ")))
+			}
+		}
+		for j, p := range s.Probes {
+			pk := fmt.Sprintf("%s.probe[%d]", at, j)
+			v.checkArgv(pk+".argv", p.Argv)
+			switch p.Expect {
+			case ExpectSucceed, ExpectRefused:
+			case "":
+				v.fail(DefinitionFile, pk+".expect", fmt.Sprintf("required: %s or %s", ExpectSucceed, ExpectRefused))
+			default:
+				v.fail(DefinitionFile, pk+".expect", fmt.Sprintf("%q is not %s or %s", p.Expect, ExpectSucceed, ExpectRefused))
 			}
 		}
 	}
