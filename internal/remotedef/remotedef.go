@@ -155,6 +155,9 @@ type Identity struct {
 // Host is the user's own tooling for reaching the host, each an argv list. The
 // placeholders {label}, {command} and {allow} are filled by whatever runs it.
 type Host struct {
+	// Name is the host's name as the team knows it, recorded verbatim on each
+	// remote_run row. Optional and opaque: satelle never derives one.
+	Name  string   `toml:"name"`
 	Start []string `toml:"start"`
 	// Network applies the egress allowlist to the host: {allow} in it is the
 	// comma-joined list of hosts (see Allowlist).

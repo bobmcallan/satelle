@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/procgroup"
 	"github.com/bobmcallan/satelle/internal/remotedef"
 	"github.com/bobmcallan/satelle/internal/remotepreflight"
@@ -88,7 +89,10 @@ func (c *Commands) Exec(ctx context.Context, argv []string) (remotepreflight.Out
 // run executes argv to completion, in its own process group, killed with the
 // whole group when ctx ends.
 func (c *Commands) run(ctx context.Context, what string, argv []string) error {
-	cmd := c.command(ctx, argv)
+	return c.runCmd(what, c.command(ctx, argv))
+}
+
+func (c *Commands) runCmd(what string, cmd *exec.Cmd) error {
 	cmd.Stdout, cmd.Stderr = c.log(), c.log()
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%s: %w", what, err)
@@ -98,9 +102,42 @@ func (c *Commands) run(ctx context.Context, what string, argv []string) error {
 
 // RunStory runs host.run to completion with {command} filled by command, the
 // definition's story command already rendered for one story. It is not Exec: the
-// command is one string, which Exec would quote a second time.
-func (c *Commands) RunStory(ctx context.Context, command string) error {
-	return c.run(ctx, "host.run", c.Def.HostRunArgv(command))
+// command is one string, which Exec would quote a second time. The process runs
+// under StoryEnv(h).
+func (c *Commands) RunStory(ctx context.Context, h remotedef.Handoff, command string) error {
+	cmd := c.command(ctx, c.Def.HostRunArgv(command))
+	cmd.Env = c.StoryEnv(h)
+	return c.runCmd("host.run", cmd)
+}
+
+// markerEnvs are the environment keys that tell satelle's own hooks and checks
+// what the process is: a hook reads the dispatch markers to grant edits and a
+// check reads the gate story. A step on a host is none of those, so none is
+// passed down from whatever invoked the wake.
+var markerEnvs = []string{
+	config.DispatchAgentEnv, config.DispatchStepEnv, config.DispatchItemEnv,
+	config.SpawnEnv, config.GateStoryEnv,
+}
+
+// StoryEnv is the environment a story's host.run process runs under: this
+// process's own, without the markers, then host.env, then the story, step and run
+// ids last so that host.env cannot shadow them.
+func (c *Commands) StoryEnv(h remotedef.Handoff) []string {
+	env := make([]string, 0, len(os.Environ())+len(c.Env)+3)
+outer:
+	for _, kv := range os.Environ() {
+		for _, k := range markerEnvs {
+			if strings.HasPrefix(kv, k+"=") {
+				continue outer
+			}
+		}
+		env = append(env, kv)
+	}
+	env = append(env, c.Env...)
+	return append(env,
+		config.RemoteStoryEnv+"="+h.Story,
+		config.RemoteStepEnv+"="+h.Step,
+		config.RemoteRunEnv+"="+h.RunID)
 }
 
 // StoryRunner is the remotedef.Runner that works a handed-off story on the host.
@@ -109,8 +146,8 @@ type StoryRunner struct{ Commands *Commands }
 var _ remotedef.Runner = StoryRunner{}
 
 // Run works the story by running its rendered command on the host.
-func (r StoryRunner) Run(ctx context.Context, _ remotedef.Handoff, command string) error {
-	return r.Commands.RunStory(ctx, command)
+func (r StoryRunner) Run(ctx context.Context, h remotedef.Handoff, command string) error {
+	return r.Commands.RunStory(ctx, h, command)
 }
 
 func (c *Commands) command(ctx context.Context, argv []string) *exec.Cmd {

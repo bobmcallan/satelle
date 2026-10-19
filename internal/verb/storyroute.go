@@ -72,13 +72,13 @@ func StoryRoute(ctx context.Context, id string) (string, error) {
 		return "", fmt.Errorf("verb: route: %s: %w", id, perr)
 	}
 	if body := readRouteDoc(item); body != "" {
-		return strings.TrimRight(body, "\n") + membersSection(ctx, item) + processOfRecordSection(), nil
+		return strings.TrimRight(body, "\n") + membersSection(ctx, item) + remoteRunsSection(ctx, item) + processOfRecordSection(), nil
 	}
 	d, wfName, ok := governingRoute(ctx, item)
 	if !ok {
 		return "", fmt.Errorf("verb: route: %s has no governing workflow with a parseable lifecycle", id)
 	}
-	return strings.TrimRight(renderRouteDoc(d, wfName, item, item.Status, ""), "\n") + membersSection(ctx, item) + processOfRecordSection(), nil
+	return strings.TrimRight(renderRouteDoc(d, wfName, item, item.Status, ""), "\n") + membersSection(ctx, item) + remoteRunsSection(ctx, item) + processOfRecordSection(), nil
 }
 
 // renderRouteDoc assembles the whole artifact: the plan half rendered fresh, then

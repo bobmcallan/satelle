@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -448,7 +449,7 @@ func resolveEngagementSlice(ctx context.Context, it workitem.Item, wantPatch boo
 // MAIN tree, the process of record, yet a story engaged from a linked worktree is
 // anchored to that worktree, so the check could not otherwise read its change
 // set. `story diff` honours it for the named story alone — see gateTreeOverride.
-const GateStoryEnv = "SATELLE_GATE_STORY"
+const GateStoryEnv = config.GateStoryEnv
 
 // storyAnchor is the working tree a story is engaged from: the live lease's tree
 // when one exists, else the engagement baseline's. Empty when unanchored.

@@ -178,6 +178,18 @@ const (
 	DispatchStepEnv  = "SATELLE_DISPATCH_STEP"
 	DispatchItemEnv  = "SATELLE_DISPATCH_ITEM"
 
+	// GateStoryEnv names the story a gate's functional check is judging; the
+	// engine exports it into the check's environment (sty_ab93f9a6).
+	GateStoryEnv = "SATELLE_GATE_STORY"
+
+	// RemoteStoryEnv, RemoteStepEnv and RemoteRunEnv are the ids a remote step's
+	// process receives (sty_2f3baf0a): the story, the step (the story's status at
+	// hand-off) and the run id recorded on the story's remote_run row. They are
+	// for the team's own tooling to stamp on what the step changes.
+	RemoteStoryEnv = "SATELLE_STORY_ID"
+	RemoteStepEnv  = "SATELLE_STEP"
+	RemoteRunEnv   = "SATELLE_RUN_ID"
+
 	// SpawnEnv marks every process satelle's own buildRequest assembles — the
 	// one seam every isolated dispatch, live session and step-summary run
 	// through — as satelle's own spawn rather than the in-loop driving session

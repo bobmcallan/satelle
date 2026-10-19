@@ -400,6 +400,31 @@ func (r ledgerRecorder) RecordHandback(ctx context.Context, b remotedef.Handback
 	return err
 }
 
+// RecordRun records one step run as a remote_run ledger entry, once per run id.
+// Its payload is the fixed ledger.RemoteRunPayload: no env, argv or credential.
+func (r ledgerRecorder) RecordRun(ctx context.Context, run remotedef.RunRecord) error {
+	p := ledger.RemoteRunPayload{
+		Remote: run.Remote, Version: run.Version, Host: run.Host, Label: run.Label,
+		Step: run.Step, RunID: run.RunID,
+		Started: run.Started.UTC().Format(time.RFC3339), Ended: run.Ended.UTC().Format(time.RFC3339),
+		Error: run.Error,
+	}
+	payload, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	refs, err := json.Marshal(map[string]string{"fire_id": run.FireID, "story": run.Story, "run_id": run.RunID})
+	if err != nil {
+		return err
+	}
+	_, _, err = r.l.AppendOnce(ctx, ledger.AppendInput{
+		StoryID: run.Story, Kind: ledger.KindRemoteRun, Actor: "remote",
+		Body:    fmt.Sprintf("remote %s ran %s of %s as %s (run %s)", run.Remote, run.Step, run.Story, run.Label, run.RunID),
+		Payload: payload, Refs: refs,
+	}, time.Now())
+	return err
+}
+
 func (r ledgerRecorder) Record(ctx context.Context, h remotedef.Handoff) (bool, error) {
 	payload, err := json.Marshal(map[string]string{"remote": h.Remote, "trigger": h.Trigger, "kind": h.Kind, "fire_id": h.FireID})
 	if err != nil {

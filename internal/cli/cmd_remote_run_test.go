@@ -170,7 +170,7 @@ func segmentDef(entry, exit string) *remotedef.Definition {
 func remoteRunRows(t *testing.T, story string) []ledger.Entry {
 	t.Helper()
 	var out []ledger.Entry
-	for _, e := range ledgerRows(t, ledger.KindRemoteRun) {
+	for _, e := range ledgerRows(t, ledger.KindRemoteRunSummary) {
 		if e.StoryID == story {
 			out = append(out, e)
 		}
