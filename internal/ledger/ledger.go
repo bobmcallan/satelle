@@ -211,6 +211,13 @@ const (
 	// the story itself is never changed. Enumeration only — the verdict is the
 	// reviewers', not Go's.
 	KindRemoteTest = "remote_test"
+	// KindRemotePreflight records one check of a remote's security preflight:
+	// Payload is {remote, step, kind, argv, expect, outcome, pass, detail} with
+	// kind one of probe | env | file | legs and outcome one of pass | fail |
+	// error | not-run. A value found on a host is never recorded, only key
+	// names, paths and exit codes. Enumeration only — the comparison is the
+	// definition's declared expectation, not Go's judgement of a service.
+	KindRemotePreflight = "remote_preflight"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional

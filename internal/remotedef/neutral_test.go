@@ -13,13 +13,18 @@ import (
 // word that merely contains one (draws, flying) does not trip it.
 var denied = regexp.MustCompile(`(?i)\b(fly|sprite|azure|aws|github|teleport|claude|anthropic|openai)\b`)
 
-// TestEngineNamesNoHostOrVendor scans the package's non-test source — code,
-// comments and the scaffold's placeholders alike — for a vendor. The definition
-// carries those as opaque strings its author owns; the engine holds no list.
+// TestEngineNamesNoHostOrVendor scans the non-test source of this package and of
+// remotepreflight — code, comments and the scaffold's placeholders alike — for a
+// vendor. The definition carries those as opaque strings its author owns; the
+// engine holds no list. This is the one denylist for both packages.
 func TestEngineNamesNoHostOrVendor(t *testing.T) {
-	files, err := filepath.Glob("*.go")
-	if err != nil || len(files) == 0 {
-		t.Fatalf("no source found: %v", err)
+	var files []string
+	for _, pattern := range []string{"*.go", "../remotepreflight/*.go"} {
+		found, err := filepath.Glob(pattern)
+		if err != nil || len(found) == 0 {
+			t.Fatalf("no source found for %s: %v", pattern, err)
+		}
+		files = append(files, found...)
 	}
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {

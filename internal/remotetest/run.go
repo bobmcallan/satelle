@@ -7,7 +7,9 @@
 // from a named base on a throwaway branch and removes afterwards. The
 // definition's host commands are rendered into the report as text and never
 // executed, the story and its documents are never written, and a cloud launch
-// is always refused — a test run stays on the developer's machine.
+// is always refused — a test run stays on the developer's machine. Before the
+// first edge the definition's security preflight runs against a stub host that
+// executes no probe; a failing check refuses the run.
 package remotetest
 
 import (
@@ -27,6 +29,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/remotedef"
+	"github.com/bobmcallan/satelle/internal/remotepreflight"
 	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -72,6 +75,9 @@ type Options struct {
 	StoryDocs func(ctx context.Context, itemID string) []agentstep.DocState
 	// Ledger appends one remote_test row. Nil appends none.
 	Ledger func(ctx context.Context, in ledger.AppendInput) error
+	// Host is what the preflight runs the definition's probes on. Nil is the stub
+	// host, which runs nothing: a test run never acts on a real estate.
+	Host remotepreflight.Host
 }
 
 // Step is one edge of the walk.
@@ -97,11 +103,14 @@ type Step struct {
 
 // Report is what a run did.
 type Report struct {
-	Remote   string   `json:"remote"`
-	Story    string   `json:"story"`
-	Identity string   `json:"identity,omitempty"`
-	Steps    []Step   `json:"steps,omitempty"`
-	Refusals []string `json:"refusals,omitempty"`
+	Remote   string `json:"remote"`
+	Story    string `json:"story"`
+	Identity string `json:"identity,omitempty"`
+	// Preflight is every check of the definition's security preflight, which runs
+	// before the first edge.
+	Preflight []remotepreflight.Check `json:"preflight,omitempty"`
+	Steps     []Step                  `json:"steps,omitempty"`
+	Refusals  []string                `json:"refusals,omitempty"`
 	// CloudRefused counts cloud launches the run refused at dispatch; the
 	// pre-flight makes it zero for any definition that was allowed to start.
 	CloudRefused int `json:"cloud_refused,omitempty"`
@@ -213,6 +222,28 @@ func Run(ctx context.Context, name, dir string, item workitem.Item, opts Options
 		return refuse()
 	}
 	edges := planEdges(&probs, spec, def, item, docs, agents, newRunner)
+	if len(probs.errs) > 0 {
+		return refuse()
+	}
+
+	// The preflight runs before anything is cut or dispatched, so a definition
+	// whose host would not pass it runs no edge and leaves no scratch tree.
+	var host remotepreflight.Host = remotepreflight.StubHost{}
+	if opts.Host != nil {
+		host = opts.Host
+	}
+	pre := remotepreflight.Run(ctx, def, host)
+	rep.Preflight = pre.Checks
+	for _, c := range pre.Checks {
+		if opts.Ledger != nil {
+			if lerr := opts.Ledger(ctx, preflightRow(name, item.ID, c)); lerr != nil {
+				return rep, fmt.Errorf("remote_preflight ledger row: %w", lerr)
+			}
+		}
+		if !c.Pass {
+			probs.addf("preflight %s", describeCheck(c))
+		}
+	}
 	if len(probs.errs) > 0 {
 		return refuse()
 	}
@@ -349,12 +380,7 @@ func runEdge(ctx context.Context, eng *agentstep.Engine, cur workitem.Item, e ed
 
 // hostLine renders host.run for command. It is text only: nothing here runs.
 func hostLine(def remotedef.Definition, command string) string {
-	argv := make([]string, len(def.Host.Run))
-	for i, a := range def.Host.Run {
-		a = strings.ReplaceAll(a, "{label}", def.Identity.Label)
-		argv[i] = strings.ReplaceAll(a, remotedef.CommandPlaceholder, command)
-	}
-	return strings.Join(argv, " ")
+	return strings.Join(def.HostRunArgv(command), " ")
 }
 
 func ledgerRow(remote, storyID string, s Step) ledger.AppendInput {
@@ -365,6 +391,30 @@ func ledgerRow(remote, storyID string, s Step) ledger.AppendInput {
 	return ledger.AppendInput{
 		StoryID: storyID, Kind: ledger.KindRemoteTest, Actor: Actor,
 		Body:    fmt.Sprintf("remote %s %s→%s: %s", remote, s.From, s.To, s.Verdict),
+		Payload: payload,
+	}
+}
+
+// describeCheck is a failing check as a refusal reason: where it is, then why.
+func describeCheck(c remotepreflight.Check) string {
+	where := c.Kind
+	if c.Step != "" {
+		where = c.Step + " " + c.Kind
+	}
+	if len(c.Argv) > 0 {
+		where += " " + strings.Join(c.Argv, " ")
+	}
+	return fmt.Sprintf("%s: %s (%s)", where, c.Detail, c.Outcome)
+}
+
+func preflightRow(remote, storyID string, c remotepreflight.Check) ledger.AppendInput {
+	payload, _ := json.Marshal(map[string]any{
+		"remote": remote, "step": c.Step, "kind": c.Kind, "argv": c.Argv, "expect": c.Expect,
+		"outcome": c.Outcome, "pass": c.Pass, "detail": c.Detail,
+	})
+	return ledger.AppendInput{
+		StoryID: storyID, Kind: ledger.KindRemotePreflight, Actor: Actor,
+		Body:    fmt.Sprintf("remote %s preflight %s: %s", remote, describeCheck(c), c.Outcome),
 		Payload: payload,
 	}
 }

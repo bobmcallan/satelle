@@ -10,8 +10,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -219,6 +221,7 @@ func printRemoteTest(cmd *cobra.Command, rep remotetest.Report, runErr error, as
 		fmt.Fprintln(out, string(b))
 		return runErr
 	}
+	printPreflight(out, rep)
 	var refused *remotetest.RefusedError
 	if errors.As(runErr, &refused) {
 		for _, r := range refused.Reasons {
@@ -241,6 +244,25 @@ func printRemoteTest(cmd *cobra.Command, rep remotetest.Report, runErr error, as
 		}
 	}
 	return runErr
+}
+
+// printPreflight prints one line per preflight check, whether it passed or not.
+func printPreflight(out io.Writer, rep remotetest.Report) {
+	if len(rep.Preflight) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "preflight for remote %s\n", rep.Remote)
+	for _, c := range rep.Preflight {
+		verdict := "pass"
+		if !c.Pass {
+			verdict = "FAIL"
+		}
+		fmt.Fprintf(out, "  %s  %s  expect=%s  %s  %s  %s\n",
+			dash(c.Step), c.Kind, dash(c.Expect), c.Outcome, verdict, strings.Join(c.Argv, " "))
+		if c.Detail != "" {
+			fmt.Fprintf(out, "      %s\n", c.Detail)
+		}
+	}
 }
 
 func dash(s string) string {
