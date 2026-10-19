@@ -82,23 +82,59 @@ func ProcessDivergence(invokingRoot, processRoot string, process Config) []Proce
 	if !wtHasCopy(invokingRoot, processRoot, process) {
 		return nil
 	}
-	var out []ProcessFinding
-	dirs := ResolveProcessAuthoredDirs(process, processRoot)
-	kinds := make([]string, 0, len(dirs))
-	for k := range dirs {
-		kinds = append(kinds, k)
-	}
-	sort.Strings(kinds)
-	for _, k := range kinds {
-		out = append(out, compareTree(invokingRoot, processRoot, dirs[k])...)
-	}
-	out = append(out, compareFile(invokingRoot, processRoot, ResolveProcessConstitution(process, processRoot))...)
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Path != out[j].Path {
-			return out[i].Path < out[j].Path
+	return DiffTreeHashes(hashesAt(process, processRoot, processRoot), hashesAt(process, processRoot, invokingRoot))
+}
+
+// ProcessHashes maps every file of the authored process at processRoot — each
+// ResolveProcessAuthoredDirs dir and the ResolveProcessConstitution file — to its
+// SHA-256, keyed by a slash-separated path relative to processRoot. A location
+// outside processRoot (an absolute substrate root) is left out. It is the one
+// walk of the process: ProcessDivergence compares two of these maps, and a remote
+// node reports one so local satelle can see what changed on it.
+func ProcessHashes(process Config, processRoot string) map[string]string {
+	return hashesAt(process, processRoot, processRoot)
+}
+
+// hashesAt is ProcessHashes with each location, resolved at processRoot,
+// re-anchored at anchor before it is read; the keys stay relative to processRoot.
+func hashesAt(process Config, processRoot, anchor string) map[string]string {
+	out := map[string]string{}
+	for _, dir := range ResolveProcessAuthoredDirs(process, processRoot) {
+		rel, ok := plainRelUnder(processRoot, dir)
+		if !ok {
+			continue
 		}
-		return out[i].Kind < out[j].Kind
-	})
+		for name, h := range treeHashes(filepath.Join(anchor, rel)) {
+			out[filepath.ToSlash(filepath.Join(rel, name))] = h
+		}
+	}
+	if rel, ok := plainRelUnder(processRoot, ResolveProcessConstitution(process, processRoot)); ok {
+		if h, ok := fileHash(filepath.Join(anchor, rel)); ok {
+			out[filepath.ToSlash(rel)] = h
+		}
+	}
+	return out
+}
+
+// DiffTreeHashes lists, sorted by path, every file in before that after lacks
+// (ProcessMissing) or differs on (ProcessChanged), and every file only after has
+// (ProcessExtra).
+func DiffTreeHashes(before, after map[string]string) []ProcessFinding {
+	var out []ProcessFinding
+	for p, bh := range before {
+		switch ah, present := after[p]; {
+		case !present:
+			out = append(out, ProcessFinding{Kind: ProcessMissing, Path: p})
+		case ah != bh:
+			out = append(out, ProcessFinding{Kind: ProcessChanged, Path: p})
+		}
+	}
+	for p := range after {
+		if _, present := before[p]; !present {
+			out = append(out, ProcessFinding{Kind: ProcessExtra, Path: p})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
 }
 
@@ -120,53 +156,6 @@ func plainRelUnder(root, p string) (string, bool) {
 		return "", false
 	}
 	return rel, true
-}
-
-// compareTree diffs mainDir's files against the same relative dir under the worktree.
-func compareTree(invokingRoot, processRoot, mainDir string) []ProcessFinding {
-	rel, ok := plainRelUnder(processRoot, mainDir)
-	if !ok {
-		return nil
-	}
-	wtDir := filepath.Join(invokingRoot, rel)
-	mainFiles := treeHashes(mainDir)
-	wtFiles := treeHashes(wtDir)
-	var out []ProcessFinding
-	for name, mh := range mainFiles {
-		p := filepath.ToSlash(filepath.Join(rel, name))
-		switch wh, present := wtFiles[name]; {
-		case !present:
-			out = append(out, ProcessFinding{Kind: ProcessMissing, Path: p})
-		case wh != mh:
-			out = append(out, ProcessFinding{Kind: ProcessChanged, Path: p})
-		}
-	}
-	for name := range wtFiles {
-		if _, present := mainFiles[name]; !present {
-			out = append(out, ProcessFinding{Kind: ProcessExtra, Path: filepath.ToSlash(filepath.Join(rel, name))})
-		}
-	}
-	return out
-}
-
-// compareFile diffs one file (the constitution) between the two trees.
-func compareFile(invokingRoot, processRoot, mainPath string) []ProcessFinding {
-	rel, ok := plainRelUnder(processRoot, mainPath)
-	if !ok {
-		return nil
-	}
-	mh, mok := fileHash(mainPath)
-	wh, wok := fileHash(filepath.Join(invokingRoot, rel))
-	p := filepath.ToSlash(rel)
-	switch {
-	case mok && !wok:
-		return []ProcessFinding{{Kind: ProcessMissing, Path: p}}
-	case !mok && wok:
-		return []ProcessFinding{{Kind: ProcessExtra, Path: p}}
-	case mok && wok && mh != wh:
-		return []ProcessFinding{{Kind: ProcessChanged, Path: p}}
-	}
-	return nil
 }
 
 // treeHashes maps every regular file under dir (relative path) to its SHA-256.

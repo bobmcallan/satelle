@@ -60,7 +60,7 @@ func oldRedactSettings(m map[string]any, underEnv bool) map[string]any {
 		case []any:
 			out[k] = oldRedactList(child)
 		default:
-			if underEnv || secretishKey(k) {
+			if underEnv || SecretishKey(k) {
 				if s, ok := v.(string); ok {
 					out[k] = oldRedactValue(s)
 				} else {

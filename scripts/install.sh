@@ -11,6 +11,14 @@
 #     channel), asset satelled-v<Y>-…, not latest. Older tags publish
 #     satelle-serve-v<Y>-… — compatibility fallback, not a current name.
 #
+# Pin a version (installs the CLI only; no GitHub API call is made):
+#
+#   curl -fsSL https://github.com/bobmcallan/satelle/releases/latest/download/install.sh | sh -s -- 0.0.643
+#
+# SATELLE_RELEASE_BASE overrides the download base exactly as `satelle update`
+# reads it: the directory release assets are downloaded from, one subdirectory
+# per tag (<base>/v<version>/<asset>).
+#
 # Next: `satelle init` in a repo, then `satelle service install`.
 set -eu
 
@@ -32,19 +40,31 @@ esac
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-# --- CLI (always releases/latest) ---
-# Fetch the API body to a FILE, then grep the file. Never `curl | grep -m1`:
-# grep exits on its first match, curl takes EPIPE mid-body and prints
-# `curl: (23) Failure writing output to destination` — a cosmetic error that
-# reads as a failed install (sty_87b5d4bc). No `2>/dev/null` and no `|| true`
-# here: this lookup is HARD-fail, so `set -e` aborts and curl's own diagnostic
-# (`curl: (6) Could not resolve host`, a 404, …) still reaches the operator.
-curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" -o "$tmp/latest.json"
-tag=$(grep -m1 '"tag_name"' "$tmp/latest.json" | cut -d'"' -f4)
-[ -n "$tag" ] || { echo "satelle install: could not resolve latest release" >&2; exit 1; }
+base="${SATELLE_RELEASE_BASE:-https://github.com/$REPO/releases/download}"
+version="${1:-}"
+
+if [ -n "$version" ]; then
+	# --- CLI (pinned: the tag is named, so nothing is looked up) ---
+	version="${version#v}"
+	case "$version" in
+		"" | *[!0-9.]*) echo "satelle install: version '$1' is not MAJOR.MINOR.PATCH" >&2; exit 1 ;;
+	esac
+	tag="v$version"
+else
+	# --- CLI (always releases/latest) ---
+	# Fetch the API body to a FILE, then grep the file. Never `curl | grep -m1`:
+	# grep exits on its first match, curl takes EPIPE mid-body and prints
+	# `curl: (23) Failure writing output to destination` — a cosmetic error that
+	# reads as a failed install (sty_87b5d4bc). No `2>/dev/null` and no `|| true`
+	# here: this lookup is HARD-fail, so `set -e` aborts and curl's own diagnostic
+	# (`curl: (6) Could not resolve host`, a 404, …) still reaches the operator.
+	curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" -o "$tmp/latest.json"
+	tag=$(grep -m1 '"tag_name"' "$tmp/latest.json" | cut -d'"' -f4)
+	[ -n "$tag" ] || { echo "satelle install: could not resolve latest release" >&2; exit 1; }
+fi
 
 name="satelle-$tag-$os-$arch"
-url="https://github.com/$REPO/releases/download/$tag/$name"
+url="$base/$tag/$name"
 
 echo "satelle install: fetching $name ..."
 curl -fsSL "$url" -o "$tmp/satelle"
@@ -83,7 +103,7 @@ install_daemon_asset() {
 	else
 		_name="${_base}-${_tag#serve-}-$os-$arch"
 	fi
-	_url="https://github.com/$REPO/releases/download/$_tag/$_name"
+	_url="$base/$_tag/$_name"
 	if curl -fsSL "$_url" -o "$tmp/satelled" 2>/dev/null \
 		&& curl -fsSL "$_url.sha256" -o "$tmp/satelled.sha256" 2>/dev/null; then
 		swant=$(cut -d' ' -f1 "$tmp/satelled.sha256")
@@ -104,21 +124,26 @@ install_daemon_asset() {
 	return 1
 }
 
-curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=30" -o "$tmp/releases.json" || true
-serve_tag=$(grep -oE '"tag_name": "serve-v[^"]+"' "$tmp/releases.json" 2>/dev/null \
-	| head -1 | cut -d'"' -f4 || true)
-if [ -n "$serve_tag" ]; then
-	if ! install_daemon_asset "$serve_tag" "satelled"; then
-		# Compatibility fallback — older serve-v* tags publish satelle-serve-… assets.
-		if ! install_daemon_asset "$serve_tag" "satelle-serve"; then
-			echo "satelle install: could not fetch satelled (or legacy satelle-serve) for $serve_tag — service install will fall back to satelle serve"
-		fi
-	fi
+if [ -n "$version" ]; then
+	# A pinned install is the CLI alone: finding the daemon release is an API call.
+	echo "satelle install: pinned $tag — satelled not installed (run without a version for the daemon)"
 else
-	# Pre-split releases may still carry both under v*; try same tag once.
-	if ! install_daemon_asset "$tag" "satelled"; then
-		if ! install_daemon_asset "$tag" "satelle-serve"; then
-			echo "satelle install: no satelled release yet — service install will fall back to satelle serve"
+	curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=30" -o "$tmp/releases.json" || true
+	serve_tag=$(grep -oE '"tag_name": "serve-v[^"]+"' "$tmp/releases.json" 2>/dev/null \
+		| head -1 | cut -d'"' -f4 || true)
+	if [ -n "$serve_tag" ]; then
+		if ! install_daemon_asset "$serve_tag" "satelled"; then
+			# Compatibility fallback — older serve-v* tags publish satelle-serve-… assets.
+			if ! install_daemon_asset "$serve_tag" "satelle-serve"; then
+				echo "satelle install: could not fetch satelled (or legacy satelle-serve) for $serve_tag — service install will fall back to satelle serve"
+			fi
+		fi
+	else
+		# Pre-split releases may still carry both under v*; try same tag once.
+		if ! install_daemon_asset "$tag" "satelled"; then
+			if ! install_daemon_asset "$tag" "satelle-serve"; then
+				echo "satelle install: no satelled release yet — service install will fall back to satelle serve"
+			fi
 		fi
 	fi
 fi

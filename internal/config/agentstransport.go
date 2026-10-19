@@ -75,9 +75,9 @@ func (r TransportRefusal) Error() string {
 	return fmt.Sprintf("%s [%s] %s: %s — %s", r.File, r.Section, r.Field, r.Reason, MoveToLocalAgents)
 }
 
-// carriesValue reports whether v is a literal that must not travel: anything but
+// CarriesValue reports whether v is a literal that must not travel: anything but
 // a blank or a pure ${VAR} reference.
-func carriesValue(v any) bool {
+func CarriesValue(v any) bool {
 	s, ok := v.(string)
 	if !ok {
 		return true
@@ -142,7 +142,7 @@ func checkBinding(section string, b AgentBinding) []TransportRefusal {
 		}
 	}
 	for _, k := range sortedKeys(b.Env) {
-		if carriesValue(b.Env[k]) {
+		if CarriesValue(b.Env[k]) {
 			add(RuleBindingEnv, "env."+k, "a literal env value belongs to one machine; only a pure ${VAR} reference travels")
 		}
 	}
@@ -172,11 +172,11 @@ func checkSettings(m map[string]any, path string, underEnv bool) []TransportRefu
 		default:
 			switch {
 			case underEnv:
-				if carriesValue(child) {
+				if CarriesValue(child) {
 					out = append(out, TransportRefusal{Rule: RuleSettingsEnv, Field: field, Reason: "a literal env value belongs to one machine; only a pure ${VAR} reference travels"})
 				}
-			case secretishKey(k):
-				if carriesValue(child) {
+			case SecretishKey(k):
+				if CarriesValue(child) {
 					out = append(out, TransportRefusal{Rule: RuleSettingsSecret, Field: field, Reason: "a literal secret-shaped value must not be shared; only a pure ${VAR} reference travels"})
 				}
 			default:
@@ -220,8 +220,8 @@ func checkSettingsScalar(v any, field string) []TransportRefusal {
 	return nil
 }
 
-// secretishKey reports whether a settings key names a credential-shaped value.
-func secretishKey(k string) bool {
+// SecretishKey reports whether a settings key names a credential-shaped value.
+func SecretishKey(k string) bool {
 	l := strings.ToLower(k)
 	for _, marker := range []string{"token", "secret", "password", "apikey", "api_key", "api-key"} {
 		if strings.Contains(l, marker) {

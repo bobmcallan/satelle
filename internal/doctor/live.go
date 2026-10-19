@@ -14,6 +14,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentvalidate"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/health"
+	"github.com/bobmcallan/satelle/internal/procgroup"
 )
 
 // Live provider probes — OPT-IN ONLY (`satelle doctor --live`).
@@ -99,8 +100,8 @@ func probeCommand(ctx context.Context, g agentvalidate.Grant, fields []string, t
 
 	start := time.Now()
 	cmd := exec.CommandContext(ctx, fields[0], "--version")
-	setProcessGroup(cmd)
-	cmd.Cancel = func() error { return killGroup(cmd) }
+	procgroup.Set(cmd)
+	cmd.Cancel = func() error { return procgroup.Kill(cmd) }
 	out, err := cmd.CombinedOutput()
 	elapsed := time.Since(start).Round(time.Millisecond)
 
@@ -132,8 +133,8 @@ func probeACP(ctx context.Context, g agentvalidate.Grant, fields []string, timeo
 
 	start := time.Now()
 	cmd := exec.CommandContext(ctx, fields[0], fields[1:]...)
-	setProcessGroup(cmd)
-	cmd.Cancel = func() error { return killGroup(cmd) }
+	procgroup.Set(cmd)
+	cmd.Cancel = func() error { return procgroup.Kill(cmd) }
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -148,7 +149,7 @@ func probeACP(ctx context.Context, g agentvalidate.Grant, fields []string, timeo
 	}
 	// Reap on every exit path — a leaked provider process is the failure mode.
 	defer func() {
-		_ = killGroup(cmd)
+		_ = procgroup.Kill(cmd)
 		_ = cmd.Wait()
 	}()
 

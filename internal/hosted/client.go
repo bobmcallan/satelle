@@ -392,51 +392,96 @@ func unknownSubject(body []byte) *UnknownSubjectError {
 	return &UnknownSubjectError{Message: msg}
 }
 
-// doAuthed sends the request (payload nil for a body-less GET) with the bearer
-// token; on 401 it refreshes once (persisting the rotated pair before retrying)
-// and resends. contentType is set on body-bearing requests ("" leaves it unset,
-// for GETs); contentJSON is the common JSON case. A missing credential or a
-// failed refresh yields ErrLoginRequired.
-func (c *Client) doAuthed(ctx context.Context, method, path string, payload []byte, contentType string) (*http.Response, error) {
+// RequireCredential is nil when a credential is stored for this client's server
+// and ErrLoginRequired when none is. It sends nothing: a stale token is caught
+// by the first real call's own 401 sequence.
+func (c *Client) RequireCredential(ctx context.Context) error {
+	return c.WithBearer(ctx, func(context.Context, string) (int, []byte, error) {
+		return http.StatusOK, nil, nil
+	})
+}
+
+// WithBearer is the one owner of the 401 sequence for any transport that
+// reports an HTTP status. It loads the stored credential (none yields
+// ErrLoginRequired before attempt runs) and runs attempt with the bearer. On a
+// 401 it reads the refusal: an unknown subject is final, a session token is
+// never refreshed (ErrSessionTokenRefused), otherwise it refreshes, persists the
+// ROTATED pair, and runs attempt exactly once more. attempt reports the status
+// and, for a 401, the bounded refusal body (BoundAuthBody); any other status is
+// the caller's to act on, so a second 401 returns nil and the caller reads what
+// its own attempt recorded. A failed refresh yields ErrLoginRequired.
+func (c *Client) WithBearer(ctx context.Context, attempt func(ctx context.Context, bearer string) (status int, body []byte, err error)) error {
 	cred, err := c.store.Load(c.server)
 	if err != nil {
 		if errors.Is(err, ErrNoCredential) {
-			return nil, ErrLoginRequired
+			return ErrLoginRequired
 		}
-		return nil, err
+		return err
 	}
 
-	resp, err := c.send(ctx, method, path, cred.AccessToken, payload, contentType)
+	status, body, err := attempt(ctx, cred.AccessToken)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if resp.StatusCode != http.StatusUnauthorized {
-		return resp, nil
+	if status != http.StatusUnauthorized {
+		return nil
 	}
-
-	// Read the refusal body (bounded) before deciding what it means.
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxAuthErrBodyBytes))
-	resp.Body.Close()
 
 	// An unknown subject is final for any credential: refreshing cannot give the
 	// token an account, so show the server's message and stop.
 	if us := unknownSubject(body); us != nil {
-		return nil, us
+		return us
 	}
 
 	// A session token is never refreshed: the server's 401 is final.
 	if cred.IsSession() {
-		return nil, ErrSessionTokenRefused
+		return ErrSessionTokenRefused
 	}
 
 	// Access token rejected — refresh, PERSIST the rotated refresh immediately
 	// (the old one dies on rotation; a late persist would strand a dead token on
-	// crash), then retry the request exactly once.
+	// crash), then retry exactly once.
 	rotated, rErr := c.refreshAndPersist(ctx, cred)
 	if rErr != nil {
-		return nil, rErr
+		return rErr
 	}
-	return c.send(ctx, method, path, rotated.AccessToken, payload, contentType)
+	_, _, err = attempt(ctx, rotated.AccessToken)
+	return err
+}
+
+// BoundAuthBody reads the bounded refusal body a WithBearer attempt reports with
+// a 401, then closes r — one reader, so REST and the relay upgrade bound it alike.
+func BoundAuthBody(r io.ReadCloser) []byte {
+	body, _ := io.ReadAll(io.LimitReader(r, maxAuthErrBodyBytes))
+	r.Close()
+	return body
+}
+
+// doAuthed sends the request (payload nil for a body-less GET) with the bearer
+// token through WithBearer: on 401 it refreshes once (persisting the rotated pair
+// before retrying) and resends. contentType is set on body-bearing requests ("" leaves it unset,
+// for GETs); contentJSON is the common JSON case. A missing credential or a
+// failed refresh yields ErrLoginRequired.
+func (c *Client) doAuthed(ctx context.Context, method, path string, payload []byte, contentType string) (*http.Response, error) {
+	var last *http.Response
+	err := c.WithBearer(ctx, func(ctx context.Context, bearer string) (int, []byte, error) {
+		resp, err := c.send(ctx, method, path, bearer, payload, contentType)
+		if err != nil {
+			return 0, nil, err
+		}
+		last = resp
+		if resp.StatusCode != http.StatusUnauthorized {
+			return resp.StatusCode, nil, nil
+		}
+		// A final 401 stays readable for the caller, bounded as the refusal check read it.
+		body := BoundAuthBody(resp.Body)
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return resp.StatusCode, body, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return last, nil
 }
 
 // refreshAndPersist runs the refresh_token grant against the token endpoint

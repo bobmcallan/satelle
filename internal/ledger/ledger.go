@@ -192,6 +192,16 @@ const (
 	// {path, status, lane}; nothing in it is harness-specific. Enumeration only —
 	// the lock list is configuration.
 	KindSubstrateLockDeny = "substrate_lock_deny"
+	// KindRemoteHandoff records one story a woken remote took on (sty_a9768210).
+	// StoryID is the story; Refs is {fire_id, story} so a redelivered wake adds
+	// no second row; Payload is {remote, trigger, kind, fire_id}, trigger and
+	// kind empty when the wake named no declared trigger.
+	KindRemoteHandoff = "remote_handoff"
+	// KindRemoteHandback records a story a remote left at a status outside its
+	// contract's exits or one the story's local route does not declare. StoryID is
+	// the story; Refs is {fire_id, story, status}; Payload is {remote, status,
+	// in_contract, local_known, reason}.
+	KindRemoteHandback = "remote_handback"
 	// KindCommandRule records one agent command a repo-authored
 	// [[gate.command_rule]] matched and let run, or refused (sty_a74551d6).
 	// Payload is {command, rule_index, pattern, action, decision, delivered,
@@ -205,6 +215,39 @@ const (
 	// row records the decision only — it never dispatches, transitions or parks.
 	// Enumeration only.
 	KindRecoveryChoice = "recovery_choice"
+	// KindRemoteEnrollRefused records a remote that tried to enroll on the
+	// sealed channel and was refused (sty_b20b3956): Payload is {session, reason}
+	// with reason one of token_used | token_expired | token_unknown |
+	// key_mismatch. The token itself is never recorded. Enumeration only.
+	KindRemoteEnrollRefused = "remote_enroll_refused"
+	// KindRemoteStart, KindRemoteStop and KindRemoteIdle record a remote node's
+	// host lifecycle (sty_2b6d0f7f): host.start ran, host.stop ran, or the run
+	// ended with the definition's lifecycle "idle" and the node left running.
+	// Payload is {remote, label, lifecycle} plus error when the host command
+	// failed. Enumeration only.
+	KindRemoteStart = "remote_start"
+	KindRemoteStop  = "remote_stop"
+	KindRemoteIdle  = "remote_idle"
+	// KindRemoteTest records one edge of a `satelle remote test` run: Payload is
+	// {remote, from, to, verdict, notes} with verdict one of accept | reject |
+	// performed | no-op. StoryID is the sample story the definition was run on;
+	// the story itself is never changed. Enumeration only — the verdict is the
+	// reviewers', not Go's.
+	KindRemoteTest = "remote_test"
+	// KindRemotePreflight records one check of a remote's security preflight:
+	// Payload is {remote, step, kind, argv, expect, outcome, pass, detail} with
+	// kind one of probe | env | file | legs and outcome one of pass | fail |
+	// error | not-run. A value found on a host is never recorded, only key
+	// names, paths and exit codes. Enumeration only — the comparison is the
+	// definition's declared expectation, not Go's judgement of a service.
+	KindRemotePreflight = "remote_preflight"
+	// KindRemoteRun records one `satelle remote run` (sty_1e4f7a2a), once, on the
+	// run's story of record. Payload is {run, remote, started, ended, stories[],
+	// spend_usd, cap_usd, capped, error}; each stories[] entry is {id, status,
+	// refused, in_contract, local_known, reason, verdicts[], sessions[], gap[],
+	// error}. Enumeration only — the verdicts are the reviewers', copied from the
+	// pulled ledger.
+	KindRemoteRun = "remote_run"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional

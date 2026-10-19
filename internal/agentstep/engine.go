@@ -284,6 +284,25 @@ type Engine struct {
 	// deadline a cloud binding gets when it sets no timeout. Tests shorten both.
 	cloudPoll            time.Duration
 	cloudDefaultDeadline time.Duration
+	// cloudDispatch launches a cloud performer's session. Nil means
+	// dispatchCloud; SetCloudDispatch replaces it, so a caller that must never
+	// reach a cloud (a local test run of a remote definition) installs a refusal
+	// instead of relying on every binding being checked first.
+	cloudDispatch cloudDispatchFunc
+}
+
+// cloudDispatchFunc is the shape of dispatchCloud, called as a method
+// expression so a replacement receives the engine it is installed on.
+type cloudDispatchFunc func(g *Engine, ctx context.Context, item workitem.Item, toStatus, wfName, agent string,
+	binding config.AgentBinding, composed []string, skill string, remotePlaced bool) (verb.DispatchResult, error)
+
+// SetCloudDispatch replaces the cloud performer launch. fn is called in place of
+// the real dispatch whenever a step resolves to a cloud binding.
+func (g *Engine) SetCloudDispatch(fn func(ctx context.Context, item workitem.Item, toStatus, agent string) (verb.DispatchResult, error)) {
+	g.cloudDispatch = func(_ *Engine, ctx context.Context, item workitem.Item, toStatus, _ string, agent string,
+		_ config.AgentBinding, _ []string, _ string, _ bool) (verb.DispatchResult, error) {
+		return fn(ctx, item, toStatus, agent)
+	}
 }
 
 // SetDefaultBudget wires the repo's [defaults] spend bounds.
@@ -367,7 +386,7 @@ func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Engine
 		agentTimeout: defaultHardTimeout, idleTimeout: defaultIdleTimeout,
 		busyTimeout: config.DefaultBusyTimeout,
 		cloudPoll:   defaultCloudPoll, cloudDefaultDeadline: defaultCloudDeadline,
-		newRunner: lookupRunner,
+		newRunner: LookupRunner,
 		newOpener: agentcli.OpenerFromBinding,
 		warnOut:   os.Stderr,
 	}
@@ -395,11 +414,14 @@ func (e *ExecutableNotFoundError) Error() string {
 
 func (e *ExecutableNotFoundError) Unwrap() error { return e.Err }
 
-// lookupRunner is the DEFAULT runner constructor: agentcli.RunnerFromBinding
+// LookupRunner is the DEFAULT runner constructor: agentcli.RunnerFromBinding
 // preceded by local executable resolution. It is the default rather than an
 // unconditional step inside DispatchExecutor so tests that inject fake commands
-// through the newRunner seam keep their transport-level fakes.
-func lookupRunner(iface, command string) (agentcli.Runner, error) {
+// through the newRunner seam keep their transport-level fakes. Exported so a
+// remote node can resolve every binding it was handed before it reports ready,
+// and a caller that must prove a binding runnable before dispatching (the remote
+// test run's pre-flight) asks the same question DispatchExecutor does.
+func LookupRunner(iface, command string) (agentcli.Runner, error) {
 	if tok := config.ExecutableToken(command); tok != "" {
 		if _, err := exec.LookPath(tok); err != nil {
 			return nil, &ExecutableNotFoundError{Command: command, Token: tok, Err: err}
@@ -2103,7 +2125,11 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	// A cloud performer returns a pushed branch, not stdout: it runs and is
 	// collected on its own path, which never reaches the runner below.
 	if binding.ResolvedInterface() == config.InterfaceCloud {
-		return g.dispatchCloud(ctx, item, toStatus, wfName, dispatchAgent, binding, composed, dispatchSkill, placed.Remote)
+		launch := g.cloudDispatch
+		if launch == nil {
+			launch = (*Engine).dispatchCloud
+		}
+		return launch(g, ctx, item, toStatus, wfName, dispatchAgent, binding, composed, dispatchSkill, placed.Remote)
 	}
 	if placed.Remote {
 		return verb.DispatchResult{}, fmt.Errorf(

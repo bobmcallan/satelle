@@ -16,6 +16,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/releasestate"
+	"github.com/bobmcallan/satelle/internal/semver"
 )
 
 const (
@@ -106,12 +107,12 @@ func releaseCurrencyLine(runningCLI, runningServe string, pinned bool, st releas
 // else "". Either side that is empty or does not parse as MAJOR.MINOR.PATCH
 // yields "": an advisory is never made from a version it cannot order.
 func outdated(running, latest string) string {
-	run, ok := parseTagVersion(tagVersion(running))
+	run, ok := semver.ParseStrict(tagVersion(running))
 	if !ok {
 		return ""
 	}
-	lat, ok := parseTagVersion(tagVersion(latest))
-	if !ok || !lessVersion(run, lat) {
+	lat, ok := semver.ParseStrict(tagVersion(latest))
+	if !ok || !semver.Less(run, lat) {
 		return ""
 	}
 	return tagVersion(running) + " → " + tagVersion(latest)

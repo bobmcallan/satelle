@@ -28,10 +28,12 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/release"
 	"github.com/bobmcallan/satelle/internal/releasestate"
+	"github.com/bobmcallan/satelle/internal/semver"
 )
 
-const updateRepo = "bobmcallan/satelle"
+const updateRepo = release.Repo
 
 func init() {
 	var check, noRestart, local, force bool
@@ -484,7 +486,7 @@ func fileChecksum(path string) (string, error) {
 func publishedChecksum(ctx context.Context, repo, tag, binary string) (string, error) {
 	base := os.Getenv("SATELLE_RELEASE_BASE")
 	if base == "" {
-		base = fmt.Sprintf("https://github.com/%s/releases/download", repo)
+		base = release.DownloadBase(repo)
 	}
 	name := assetNameFor(binary, tag)
 	line, err := httpGetBytes(ctx, base+"/"+tag+"/"+name+".sha256", githubAccept)
@@ -613,7 +615,7 @@ func githubAPIGet(ctx context.Context, url string) ([]byte, error) {
 func latestReleaseTag(ctx context.Context, repo string) (string, error) {
 	url := os.Getenv("SATELLE_RELEASE_API")
 	if url == "" {
-		url = fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
+		url = release.LatestAPI(repo)
 	}
 	body, err := githubAPIGet(ctx, url)
 	if err != nil {
@@ -653,7 +655,7 @@ const (
 func latestServeReleaseTag(ctx context.Context, repo string) (string, error) {
 	base := os.Getenv("SATELLE_RELEASE_LIST_API")
 	if base == "" {
-		base = fmt.Sprintf("https://api.github.com/repos/%s/releases", repo)
+		base = release.APIBase(repo)
 	}
 	return highestPrefixedTagInPages(func(page int) ([]byte, error) {
 		return githubAPIGet(ctx, releaseListPageURL(base, page))
@@ -728,14 +730,14 @@ func highestPrefixedTag(body []byte, prefix string) (string, error) {
 func highestTag(best string, tags []string, prefix string) string {
 	bestVer, haveBest := [3]int{}, false
 	if best != "" {
-		bestVer, haveBest = parseTagVersion(strings.TrimPrefix(best, prefix))
+		bestVer, haveBest = semver.ParseStrict(strings.TrimPrefix(best, prefix))
 	}
 	for _, t := range tags {
-		v, ok := parseTagVersion(strings.TrimPrefix(t, prefix))
+		v, ok := semver.ParseStrict(strings.TrimPrefix(t, prefix))
 		if !ok {
 			continue
 		}
-		if !haveBest || lessVersion(bestVer, v) {
+		if !haveBest || semver.Less(bestVer, v) {
 			best, bestVer, haveBest = t, v, true
 		}
 	}
@@ -759,43 +761,11 @@ func prefixedTagsOnPage(body []byte, prefix string) (tags []string, count int, e
 		if r.Draft || !strings.HasPrefix(r.TagName, prefix) {
 			continue
 		}
-		if _, ok := parseTagVersion(strings.TrimPrefix(r.TagName, prefix)); ok {
+		if _, ok := semver.ParseStrict(strings.TrimPrefix(r.TagName, prefix)); ok {
 			tags = append(tags, r.TagName)
 		}
 	}
 	return tags, len(releases), nil
-}
-
-// parseTagVersion parses a strict MAJOR.MINOR.PATCH of non-negative integers.
-// It is deliberately stricter than a general semver compare: a tag that does not
-// parse must never be chosen as the release to install.
-func parseTagVersion(s string) ([3]int, bool) {
-	var v [3]int
-	parts := strings.Split(s, ".")
-	if len(parts) != 3 {
-		return v, false
-	}
-	for i, p := range parts {
-		if p == "" || strings.Trim(p, "0123456789") != "" {
-			return v, false
-		}
-		n, err := strconv.Atoi(p)
-		if err != nil {
-			return v, false
-		}
-		v[i] = n
-	}
-	return v, true
-}
-
-// lessVersion reports whether a sorts before b.
-func lessVersion(a, b [3]int) bool {
-	for i := range a {
-		if a[i] != b[i] {
-			return a[i] < b[i]
-		}
-	}
-	return false
 }
 
 // downloadAndReplace downloads the platform asset for tag from repo's releases,
@@ -809,7 +779,7 @@ func downloadAndReplace(ctx context.Context, repo, tag, target string) error {
 func downloadAndReplaceNamed(ctx context.Context, repo, tag, binary, target string) error {
 	base := os.Getenv("SATELLE_RELEASE_BASE")
 	if base == "" {
-		base = fmt.Sprintf("https://github.com/%s/releases/download", repo)
+		base = release.DownloadBase(repo)
 	}
 	return downloadAndReplaceFrom(ctx, base+"/"+tag, assetNameFor(binary, tag), target)
 }

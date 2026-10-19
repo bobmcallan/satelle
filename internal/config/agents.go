@@ -24,6 +24,10 @@ const (
 	ActorsConfigName = "actors.toml"
 	// AgentsConfigDir is the data-dir-relative directory holding AgentsConfigName.
 	AgentsConfigDir = "workflows"
+	// RemotesDir is the data-dir-relative directory holding one self-contained
+	// remote definition per subdirectory (see package remotedef). It sits under
+	// config/, which is outside SyncAreas, so a definition is never synced.
+	RemotesDir = "config/remotes"
 )
 
 // AgentsRel is the data-dir-relative slash path of the repo agents layer — the
