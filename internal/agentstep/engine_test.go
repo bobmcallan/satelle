@@ -5731,7 +5731,7 @@ on = ["in_progress"]
 		},
 	}
 	g, _ := newEngine(t, `{"decision":"accept"}`, docs)
-	g.newRunner = lookupRunner
+	g.newRunner = LookupRunner
 	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
 		if name == "reviewer-unknown" {
 			// Non-in-loop command so the engine reaches RunnerFromBinding; true is on PATH.

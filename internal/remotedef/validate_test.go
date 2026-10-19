@@ -81,6 +81,25 @@ func TestScaffoldIsValid(t *testing.T) {
 	}
 }
 
+// A host.run with no {command} cannot run a step; remote validate and remote test
+// both report it from this one check.
+func TestHostRunNeedsCommandPlaceholder(t *testing.T) {
+	dir := scaffolded(t)
+	replaceIn(t, dir, "remote.toml", `run = ["your-host-cli", "run", "{label}", "{command}"]`, `run = ["your-host-cli", "run", "{label}"]`)
+	fs := Validate(dir)
+	if !hasFinding(fs, "remote.toml", "host.run") || len(fs) != 1 {
+		t.Fatalf("want one host.run finding, got:\n%s", strings.Join(details(fs), "\n"))
+	}
+	if !strings.Contains(fs[0].Detail, "{command}") {
+		t.Errorf("the finding must name the placeholder, got %q", fs[0].Detail)
+	}
+	// The placeholder may sit inside a larger argument.
+	replaceIn(t, dir, "remote.toml", `run = ["your-host-cli", "run", "{label}"]`, `run = ["your-host-cli", "run", "--cmd={command}"]`)
+	if fs := Validate(dir); len(fs) != 0 {
+		t.Errorf("an embedded {command} must satisfy the check, got:\n%s", strings.Join(details(fs), "\n"))
+	}
+}
+
 // TestAllErrorsReported puts independent defects in different files and keys and
 // expects every one named in a single run.
 func TestAllErrorsReported(t *testing.T) {

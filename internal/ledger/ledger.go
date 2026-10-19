@@ -205,6 +205,12 @@ const (
 	// row records the decision only — it never dispatches, transitions or parks.
 	// Enumeration only.
 	KindRecoveryChoice = "recovery_choice"
+	// KindRemoteTest records one edge of a `satelle remote test` run: Payload is
+	// {remote, from, to, verdict, notes} with verdict one of accept | reject |
+	// performed | no-op. StoryID is the sample story the definition was run on;
+	// the story itself is never changed. Enumeration only — the verdict is the
+	// reviewers', not Go's.
+	KindRemoteTest = "remote_test"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional

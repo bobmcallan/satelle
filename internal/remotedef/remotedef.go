@@ -223,6 +223,9 @@ func (v *validation) checkDefinition() {
 	}{{"host.start", def.Host.Start}, {"host.run", def.Host.Run}, {"host.stop", def.Host.Stop}} {
 		v.checkArgv(c.key, c.argv)
 	}
+	if len(def.Host.Run) > 0 && !argvHasCommand(def.Host.Run) {
+		v.fail(DefinitionFile, "host.run", "has no {command} placeholder; the host cannot run a step")
+	}
 	if len(def.Segments) == 0 {
 		v.fail(DefinitionFile, "segment", "required: name at least one lifecycle segment (entry and exit status)")
 	}
@@ -244,6 +247,19 @@ func (v *validation) checkDefinition() {
 	if _, err := toml.Decode(body, &raw); err == nil {
 		v.checkCredentials(raw)
 	}
+}
+
+// CommandPlaceholder is the argv token host.run carries where the step's command
+// goes.
+const CommandPlaceholder = "{command}"
+
+func argvHasCommand(argv []string) bool {
+	for _, a := range argv {
+		if strings.Contains(a, CommandPlaceholder) {
+			return true
+		}
+	}
+	return false
 }
 
 func (v *validation) checkArgv(key string, argv []string) {
