@@ -144,6 +144,7 @@ the definition cannot run, with the reasons, or an edge is rejected.`,
 
 	remote.AddCommand(create, validate, test, newRemoteTriggerCmd(), newRemoteWakeCmd())
 	remote.AddCommand(remoteStartCommands()...)
+	remote.AddCommand(newRemoteRunCmd())
 	register(remote)
 }
 

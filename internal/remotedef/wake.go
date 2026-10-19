@@ -97,7 +97,26 @@ type Wiring struct {
 	Recorder HandoffRecorder
 	Runner   Runner
 	Local    LocalRoute
+	// AfterRun, when set, is called with the story's id after Runner.Run and
+	// before the hand-back check, so a caller whose story is changed on the host
+	// can bring that state home first. Its error fails the story as a run error
+	// does. Nil does nothing.
+	AfterRun func(ctx context.Context, storyID string) error
 }
+
+// RefusedError is a wake that named a story the contract does not accept. It is
+// the only refusal a caller may carry on past; nothing was recorded or run.
+type RefusedError struct {
+	Remote string
+	Story  string
+	Cause  error
+}
+
+func (e *RefusedError) Error() string {
+	return fmt.Sprintf("remote %s: story %s %v", e.Remote, e.Story, e.Cause)
+}
+
+func (e *RefusedError) Unwrap() error { return e.Cause }
 
 // StoryPlaceholder stands for a story's id in host.story_command.
 const StoryPlaceholder = "{story}"
@@ -195,7 +214,8 @@ func (d *Definition) ReturnsAt(status string) error {
 // refused records nothing, and a redelivered wake adds nothing.
 //
 // With a Runner, each new hand-off is then run once, in id order, with the
-// rendered host.story_command; the story is re-read afterwards and checked
+// rendered host.story_command; AfterRun, when wired, then runs; the story is
+// re-read afterwards and checked
 // against the contract's exit statuses and against the local route. A failed
 // check is reported and recorded and does not stop the sweep; a run error does.
 // The wake returns once the last story is checked: it never polls.
@@ -228,7 +248,7 @@ func Wake(ctx context.Context, name string, def *Definition, req WakeRequest, w 
 			return nil, nil, err
 		}
 		if _, err := def.Accepts(st.Status, st.Category); err != nil {
-			return nil, nil, fmt.Errorf("remote %s: story %s %w", remote, st.ID, err)
+			return nil, nil, &RefusedError{Remote: remote, Story: st.ID, Cause: err}
 		}
 		ids = []string{req.StoryID}
 	} else {
@@ -263,6 +283,11 @@ func Wake(ctx context.Context, name string, def *Definition, req WakeRequest, w 
 		}
 		if err := w.Runner.Run(ctx, h, RenderStoryCommand(def, id)); err != nil {
 			return out, backs, fmt.Errorf("running story %s on remote %s: %w", id, remote, err)
+		}
+		if w.AfterRun != nil {
+			if err := w.AfterRun(ctx, id); err != nil {
+				return out, backs, fmt.Errorf("after running story %s on remote %s: %w", id, remote, err)
+			}
 		}
 		b, failed, err := checkHandback(ctx, def, h, w)
 		if err != nil {

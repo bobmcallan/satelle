@@ -55,6 +55,10 @@ type Definition struct {
 	// Lifecycle is what happens to the node when a run ends: "shutdown" (the
 	// default when absent) stops it with host.stop, "idle" leaves it running.
 	Lifecycle string `toml:"lifecycle"`
+	// SpendCapUSD bounds what one `satelle remote run` may spend in dollars of
+	// priced usage; a run stops before the next story once it is reached. Absent
+	// (nil) is uncapped; a value that is present must be positive.
+	SpendCapUSD *float64 `toml:"spend_cap_usd"`
 	// Repos are fetched onto the node read-only, each at its ref.
 	Repos    []Repo    `toml:"repo"`
 	Network  Network   `toml:"network"`
@@ -336,6 +340,9 @@ func (v *validation) checkDefinition() {
 		v.checkArgv(fmt.Sprintf("host.bootstrap[%d]", i), argv)
 	}
 	v.checkLifecycle(def)
+	if c := def.SpendCapUSD; c != nil && !(*c > 0) {
+		v.fail(DefinitionFile, "spend_cap_usd", fmt.Sprintf("%v is not a positive dollar amount; omit the key for an uncapped run", *c))
+	}
 	v.checkRepos(def)
 	v.checkAllow(def)
 	if len(def.Host.Run) > 0 && !argvHasCommand(def.Host.Run) {

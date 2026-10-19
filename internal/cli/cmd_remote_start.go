@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -102,49 +103,69 @@ the lifecycle is "idle". Needs a signed-in satelle (satelle login).`,
 	return []*cobra.Command{start, join}
 }
 
-func runRemoteStart(cmd *cobra.Command, name, serverFlag, message, story string) (err error) {
+// startedRemote is a node started from a local definition and the command's
+// handle on it: the app, the definition, the running node, and the streams every
+// write goes through.
+type startedRemote struct {
+	app  *app.App
+	name string
+	def  remotedef.Definition
+	env  []string
+	node *remotenode.Run
+	// out is the command's stdout and hostLog its host commands' stderr; both
+	// are locked, since host output arrives on goroutines.
+	out, hostLog io.Writer
+	ctx          context.Context
+	stop         context.CancelFunc
+}
+
+// startRemoteRun is the start both `remote start` and `remote run` open with:
+// load and validate the named definition, resolve the server, the allowlist and
+// the host env, and bring the node up through remotenode.Start (host.start,
+// host.network, the preflight, host.run and the join). When it returns an error
+// nothing is left running. Otherwise the caller owns the node and ends it with
+// finish.
+func startRemoteRun(cmd *cobra.Command, name, serverFlag, story string) (*startedRemote, error) {
 	a, err := appFrom(cmd)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Host command output arrives on goroutines while the report is printed from
 	// this one; one lock covers every write the command makes to its streams.
 	out := lockedWriter{cmd.OutOrStdout()}
 	hostLog := lockedWriter{cmd.ErrOrStderr()}
 	if !remotedef.ValidName(name) {
-		return fmt.Errorf("remote name %q must be lower-case letters, digits, - or _, starting with a letter or digit", name)
+		return nil, fmt.Errorf("remote name %q must be lower-case letters, digits, - or _, starting with a letter or digit", name)
 	}
 	dir := remotedef.Dir(remoteDataDir(), name)
 	if _, serr := os.Stat(dir); serr != nil {
-		return fmt.Errorf("no remote %q under %s/%s", name, config.DefaultDataDir, config.RemotesDir)
+		return nil, fmt.Errorf("no remote %q under %s/%s", name, config.DefaultDataDir, config.RemotesDir)
 	}
 	if verr := reportRemote(cmd, name, dir); verr != nil {
-		return verr
+		return nil, verr
 	}
 	def, err := remotedef.Load(dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	srv := resolveServer(serverFlag)
 	if srv == "" {
-		return errors.New("no hosted server configured — run \"satelle login\"")
+		return nil, errors.New("no hosted server configured — run \"satelle login\"")
 	}
 	u, err := url.Parse(srv)
 	if err != nil || u.Hostname() == "" {
-		return fmt.Errorf("hosted server %q is not a URL", srv)
+		return nil, fmt.Errorf("hosted server %q is not a URL", srv)
 	}
 	releaseBase := os.Getenv("SATELLE_RELEASE_BASE")
 	allow := remotedef.Allowlist(def, releaseHosts(releaseBase), u.Hostname())
 
 	env, err := hostEnv(a, def)
 	if err != nil {
-		return fmt.Errorf("remote %s: host.env: %w", name, err)
+		return nil, fmt.Errorf("remote %s: host.env: %w", name, err)
 	}
 
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	run, err := remotenode.Start(ctx, remotenode.StartOptions{
 		Name: name, Def: def, DefDir: dir, Allow: allow,
 		Client: remoteHostedClient(srv), RelayURL: strings.TrimRight(srv, "/") + "/relay",
@@ -152,31 +173,44 @@ func runRemoteStart(cmd *cobra.Command, name, serverFlag, message, story string)
 		Recorder: a.Store.Ledger, Log: hostLog, Channel: remoteChannelOptions,
 	})
 	if err != nil {
+		stop()
 		var pe *remotenode.PreflightError
 		if errors.As(err, &pe) {
 			printStartPreflight(out, name, pe.Checks)
 		}
-		return fmt.Errorf("remote %s: %w", name, err)
+		return nil, fmt.Errorf("remote %s: %w", name, err)
 	}
-	defer func() {
-		endErr := run.End(ctx)
-		lifecycle := def.EffectiveLifecycle()
-		switch {
-		case endErr != nil:
-			err = errors.Join(err, fmt.Errorf("remote %s: ending the run: %w", name, endErr))
-		case lifecycle == remotedef.LifecycleIdle:
-			fmt.Fprintf(out, "remote %s: left idle\n", name)
-		default:
-			fmt.Fprintf(out, "remote %s: stopped\n", name)
-		}
-	}()
+	return &startedRemote{app: a, name: name, def: def, env: env, node: run, out: out, hostLog: hostLog, ctx: ctx, stop: stop}, nil
+}
 
-	printStartPreflight(out, name, run.Preflight)
-	printReport(out, name, run.Report)
+// finish ends the run — applying the definition's lifecycle, whatever way the
+// command is leaving — says which it was, and joins a failure to end into *err.
+func (s *startedRemote) finish(err *error) {
+	defer s.stop()
+	endErr := s.node.End(s.ctx)
+	switch {
+	case endErr != nil:
+		*err = errors.Join(*err, fmt.Errorf("remote %s: ending the run: %w", s.name, endErr))
+	case s.def.EffectiveLifecycle() == remotedef.LifecycleIdle:
+		fmt.Fprintf(s.out, "remote %s: left idle\n", s.name)
+	default:
+		fmt.Fprintf(s.out, "remote %s: stopped\n", s.name)
+	}
+}
+
+func runRemoteStart(cmd *cobra.Command, name, serverFlag, message, story string) (err error) {
+	s, err := startRemoteRun(cmd, name, serverFlag, story)
+	if err != nil {
+		return err
+	}
+	defer s.finish(&err)
+
+	printStartPreflight(s.out, name, s.node.Preflight)
+	printReport(s.out, name, s.node.Report)
 	if message == "" {
 		return nil
 	}
-	body, err := run.Request(ctx, remotenode.AgentJob, remotenode.AgentRequest{Text: message})
+	body, err := s.node.Request(s.ctx, remotenode.AgentJob, remotenode.AgentRequest{Text: message})
 	if err != nil {
 		return fmt.Errorf("remote %s: agent: %w", name, err)
 	}
@@ -184,7 +218,7 @@ func runRemoteStart(cmd *cobra.Command, name, serverFlag, message, story string)
 	if err != nil {
 		return fmt.Errorf("remote %s: agent reply: %w", name, err)
 	}
-	fmt.Fprintln(out, rep.Text)
+	fmt.Fprintln(s.out, rep.Text)
 	return nil
 }
 
@@ -306,6 +340,7 @@ func runRemoteJoin(cmd *cobra.Command, root, relay, session, token string) error
 	node := remotenode.NewNode()
 	dataDir := filepath.Join(root, config.DefaultDataDir)
 	node.Handle(remotenode.AgentJob, agentJobHandler(dataDir, root))
+	node.Handle(remotenode.StoryReportJob, remotenode.StoryReportHandler(nodeProcess))
 	return node.Serve(ctx, sess, func(ctx context.Context, s remotenode.Setup) (remotenode.Report, error) {
 		return prepareNode(ctx, cmd, root, dataDir, s)
 	})
@@ -354,10 +389,25 @@ func prepareNode(ctx context.Context, cmd *cobra.Command, root, dataDir string, 
 	if err != nil {
 		return remotenode.Report{}, err
 	}
+	process, procRoot, err := nodeProcess()
+	if err != nil {
+		return remotenode.Report{}, err
+	}
 	return remotenode.Report{
 		Version: buildinfo.Resolve().Version, Workflows: categories,
 		Allow: s.Allow, Repos: repos, Bindings: bindings,
+		Now: time.Now().UnixNano(), Hashes: config.ProcessHashes(process, procRoot),
 	}, nil
+}
+
+// nodeProcess is the node's process config and the root it is anchored at: the
+// node's working root, which join has made the working directory.
+func nodeProcess() (config.Config, string, error) {
+	process, _, processRoot, _, err := config.LoadInvokingProcess()
+	if err != nil {
+		return config.Config{}, "", fmt.Errorf("the node's process config: %w", err)
+	}
+	return process, processRoot, nil
 }
 
 // resolveNodeBindings resolves every binding the remote's agents.toml defines

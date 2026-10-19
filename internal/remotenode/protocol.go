@@ -88,6 +88,11 @@ type Report struct {
 	Repos []FetchedRepo `json:"repos"`
 	// Bindings are the agents.toml bindings that resolved on the node.
 	Bindings []string `json:"bindings"`
+	// Now is the node's clock (unix nanoseconds) when it reported, and Hashes is
+	// config.ProcessHashes of its process then, after the preflight: the baseline
+	// a StoryReportJob is later compared with.
+	Now    int64             `json:"now"`
+	Hashes map[string]string `json:"hashes,omitempty"`
 	// Error, when set, is why the node could not become ready; the other fields
 	// are then unreliable.
 	Error string `json:"error,omitempty"`

@@ -61,6 +61,10 @@ wake_key = "REMOTE_WAKE_KEY"
 # host.stop; "idle" leaves it running.
 lifecycle = "shutdown"
 
+# Dollars of priced usage a "satelle remote run" may spend before it stops ahead
+# of its next story. Absent is uncapped; a value must be positive.
+# spend_cap_usd = 5.0
+
 # Repositories the node fetches, read-only, at a ref (https only). Add one
 # [[repo]] table per repository; each host joins the egress allowlist.
 # [[repo]]
