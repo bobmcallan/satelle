@@ -119,6 +119,19 @@ func runStoryRework(cmd *cobra.Command, args []string) error {
 	if handled, herr := handOffGate(cmd, "story-rework", id); handled {
 		return herr
 	}
+	rounds, _ := cmd.Flags().GetInt("rounds")
+	model, _ := cmd.Flags().GetString("model")
+	var res reworkResult
+	return runRework(cmd, id, rounds, model, &res)
+}
+
+// runRework is the relay itself, shared by `story rework` and the headless drive
+// (which runs a step's declared loop between presentations of a rejected edge).
+// roundsFlag lowers the authored budget (0 keeps it); modelFlag overrides the
+// coder's model. The relay's answer is written to *res, and also when the relay
+// ends in an error after it began, so the caller sees the rounds a failed relay
+// still cost. It runs in the caller's process: hand-off is the caller's decision.
+func runRework(cmd *cobra.Command, id string, roundsFlag int, modelFlag string, res *reworkResult) error {
 	eng, a, err := engineForCmd(cmd)
 	if err != nil {
 		return err
@@ -148,7 +161,7 @@ func runStoryRework(cmd *cobra.Command, args []string) error {
 	}
 	// The budget is CONFIGURATION. --rounds is an operator saying "spend less
 	// today", never "spend more than the route allows".
-	if n, _ := cmd.Flags().GetInt("rounds"); n > 0 {
+	if n := roundsFlag; n > 0 {
 		if n > rw.Rounds {
 			return fmt.Errorf("satelle story rework: --rounds %d exceeds the step's authored budget of %d — the budget is configuration; lower it in step.toml to raise it here", n, rw.Rounds)
 		}
@@ -216,8 +229,6 @@ func runStoryRework(cmd *cobra.Command, args []string) error {
 	// coder anything (sty_8e0b29a0). The relay marker rides only the coder
 	// spawn: ACP/stream snapshot os.Environ at open, and the consultant must
 	// not inherit a marker that names the coder binding.
-	modelFlag, _ := cmd.Flags().GetString("model")
-
 	var coder agentcli.Session
 	err = withRelayMarker(rw.CoderBinding, it.ID, func() error {
 		var openErr error
@@ -272,12 +283,13 @@ func runStoryRework(cmd *cobra.Command, args []string) error {
 			return reworkEvidenceFingerprint(ctx, a.Store.Ledger, it.ID)
 		},
 	}
-	res, runErr := loop.Run(ctx)
+	relay, runErr := loop.Run(ctx)
+	*res = relay
 	// The RESULT is recorded whether or not the relay finished cleanly: a relay
 	// that died on round two still cost two rounds, and the orchestrator needs
 	// to see that rather than infer it.
-	recordReworkResult(ctx, a.Store.Ledger, it.ID, rw, res)
-	body, mErr := json.Marshal(res)
+	recordReworkResult(ctx, a.Store.Ledger, it.ID, rw, relay)
+	body, mErr := json.Marshal(relay)
 	if mErr != nil {
 		return mErr
 	}

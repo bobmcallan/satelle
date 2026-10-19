@@ -299,7 +299,7 @@ func dispatchPerformer(ctx context.Context, current workitem.Item, to, attempt s
 	// and records; a bound the repo set and the run exceeded routes to
 	// rework (the step declares a loop) or parks the story blocked.
 	notes, refuse := applyDispatchBudget(ctx, current, to, res,
-		stepDeclaresRework(ctx, current, to), resumeParkName(ctx, current), now)
+		stepDeclaresRework(ctx, current, to), ResumeParkName(ctx, current), now)
 	run.Refuse, run.ParkNotes = refuse, notes
 	if readiness && refuse != nil {
 		recordPerformerReject(ctx, current, to, attempt, res, refuse.Error(), now)
@@ -316,6 +316,30 @@ func recordDispatchFailure(ctx context.Context, current workitem.Item, to, attem
 		fmt.Sprintf("named-agent dispatch failed for %s→%s: %v", current.Status, to, derr),
 		attemptPayload(current.Status, to, res.Skill, attempt), now)
 	notifyChange(panelTopic(current.Kind))
+}
+
+// RecordStepPerformance writes the agent_invocation row for a step performed
+// AFTER its entry — the headless run of an executor-allocated step — in the shape
+// dispatchPerformer writes for a named performer's step, so the cost and
+// timeline views read both alike. A failed run is recorded the same way a failed
+// dispatch is.
+func RecordStepPerformance(ctx context.Context, item workitem.Item, step string, res DispatchResult, runErr error) {
+	now := time.Now()
+	if runErr != nil {
+		appendLedgerEntry(ctx, item.ID, ledger.KindAgentInvocation, "executor",
+			fmt.Sprintf("executor run for step %q failed: %v", step, runErr),
+			attemptPayload(step, step, res.Skill, ""), now)
+		notifyChange(panelTopic(item.Kind))
+		return
+	}
+	modelNote := ""
+	if res.Model != "" {
+		modelNote = " on model " + res.Model
+	}
+	appendLedgerEntry(ctx, item.ID, ledger.KindAgentInvocation, "executor",
+		fmt.Sprintf("performed step %q with the %s binding%s (%s) with @skill:%s",
+			step, res.Agent, modelNote, res.Command, res.Skill),
+		dispatchPayload(step, step, res, ""), now)
 }
 
 // recordPerformerReject writes a readiness round's performer verdict when the

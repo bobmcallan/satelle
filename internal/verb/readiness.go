@@ -247,9 +247,25 @@ func refuseSpentRejectBudget(ctx context.Context, current workitem.Item, to stri
 	if rounds.Rounds < st.RejectBudget {
 		return nil
 	}
-	return fmt.Errorf(
+	return &RejectBudgetSpent{
+		From: current.Status, To: to, Rounds: rounds.Rounds, Budget: st.RejectBudget, Objection: rounds.ObjectionLine(),
+	}
+}
+
+// RejectBudgetSpent is the refusal for an edge whose destination step's
+// reject_budget rejected rounds are spent. It is the blocked-reason format, and
+// typed so a caller that parks on it (the headless drive) reads the objection.
+type RejectBudgetSpent struct {
+	From, To  string
+	Rounds    int
+	Budget    int
+	Objection string
+}
+
+func (e *RejectBudgetSpent) Error() string {
+	return fmt.Sprintf(
 		"transition %s→%s refused: edge rejected %d times (reject budget %d) — last objection: %q — decision needed: park the story to blocked with this reason and message the developer; a resume restarts the budget",
-		current.Status, to, rounds.Rounds, st.RejectBudget, rounds.ObjectionLine())
+		e.From, e.To, e.Rounds, e.Budget, e.Objection)
 }
 
 // storyLedgerEntries lists every ledger row of a story, oldest first; nil when

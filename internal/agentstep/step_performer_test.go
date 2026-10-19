@@ -7,6 +7,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -63,15 +64,17 @@ func TestStepPerformerIsTheRuleDispatchExecutorApplies(t *testing.T) {
 	cases := []struct {
 		to         string
 		dispatched bool
-		reason     string // substring of the reason when nothing is dispatched
-		errPart    string // substring of the error when the step is a broken definition
+		kind       verb.PerformerKind // what the answer classifies as; unchecked for a broken definition
+		reason     string             // substring of the reason when nothing is dispatched
+		errPart    string             // substring of the error when the step is a broken definition
 	}{
-		{"empty", false, "agent is empty", ""},
-		{"exec", false, "agent=executor", ""},
-		{"judge", false, "agent=reviewer", ""},
-		{"asjudge", false, "", "role=reviewer"},
-		{"inloop", false, "in-loop", ""},
-		{"named", true, "", ""},
+		{"empty", false, verb.PerformerNone, "agent is empty", ""},
+		{"exec", false, verb.PerformerExecutor, "agent=executor", ""},
+		{"judge", false, verb.PerformerNone, "agent=reviewer", ""},
+		{"asjudge", false, "", "", "role=reviewer"},
+		{"inloop", false, verb.PerformerInLoop, "in-loop", ""},
+		{"named", true, verb.PerformerDispatched, "", ""},
+		{"nowhere", false, verb.PerformerUndeclared, "declares no step", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.to, func(t *testing.T) {
@@ -93,6 +96,12 @@ func TestStepPerformerIsTheRuleDispatchExecutorApplies(t *testing.T) {
 			}
 			if got.Dispatched != tc.dispatched {
 				t.Fatalf("dispatched = %v (%s), want %v", got.Dispatched, got.Reason, tc.dispatched)
+			}
+			if tc.errPart == "" && got.Kind != tc.kind {
+				t.Errorf("kind = %q, want %q (%s)", got.Kind, tc.kind, got.Reason)
+			}
+			if tc.kind == verb.PerformerInLoop && got.Agent != "operator" {
+				t.Errorf("an in-loop answer names the agent bound in-loop, got %q", got.Agent)
 			}
 			if !tc.dispatched && tc.reason != "" && !strings.Contains(got.Reason, tc.reason) {
 				t.Errorf("reason %q should mention %q", got.Reason, tc.reason)

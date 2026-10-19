@@ -806,7 +806,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			// notes go on the timeline and the set re-enters for the park edge.
 			// Any other failure is a plain refusal.
 			if run.Reject != nil {
-				if park := resumeParkName(ctx, current); park != "" && park != *req.Status {
+				if park := ResumeParkName(ctx, current); park != "" && park != *req.Status {
 					if out, perr, handled := parkWith(park, run.Reject.Notes, run.Res); handled {
 						return out, perr
 					}
@@ -820,7 +820,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			return nil, fmt.Errorf("transition %s→%s refused: %v", current.Status, *req.Status, run.Refuse)
 		}
 		if run.ParkNotes != "" {
-			if out, perr, handled := parkWith(resumeParkName(ctx, current), run.ParkNotes, run.Res); handled {
+			if out, perr, handled := parkWith(ResumeParkName(ctx, current), run.ParkNotes, run.Res); handled {
 				return out, perr
 			}
 		}
@@ -2135,15 +2135,40 @@ func formatReasoningSuffix(reasoning string) string {
 func multiRejectError(from, to string, rejects []ReviewerVerdict) error {
 	if len(rejects) == 1 {
 		rv := rejects[0]
-		return fmt.Errorf("transition %s→%s rejected by %s: decision=reject notes=%s%s",
-			from, to, rv.Skill, rv.Notes, formatReasoningSuffix(rv.Reasoning))
+		return &GateRejection{From: from, To: to, Rejects: rejects, msg: fmt.Sprintf(
+			"transition %s→%s rejected by %s: decision=reject notes=%s%s",
+			from, to, rv.Skill, rv.Notes, formatReasoningSuffix(rv.Reasoning))}
 	}
 	var parts []string
 	for _, rv := range rejects {
 		parts = append(parts, fmt.Sprintf("rejected by %s: notes=%s%s",
 			rv.Skill, rv.Notes, formatReasoningSuffix(rv.Reasoning)))
 	}
-	return fmt.Errorf("transition %s→%s %s", from, to, strings.Join(parts, "; "))
+	return &GateRejection{From: from, To: to, Rejects: rejects,
+		msg: fmt.Sprintf("transition %s→%s %s", from, to, strings.Join(parts, "; "))}
+}
+
+// GateRejection is the refusal a presented edge returns when its reviewers
+// rejected it. The message is the historical prose; Rejects carries the verdicts
+// so a caller that relays the objection (the headless drive) reads the notes
+// rather than parsing the message.
+type GateRejection struct {
+	From, To string
+	Rejects  []ReviewerVerdict
+	msg      string
+}
+
+func (e *GateRejection) Error() string { return e.msg }
+
+// Notes joins every rejecting reviewer's notes, each led by the skill that
+// raised it, in the order the reviewers ran.
+func (e *GateRejection) Notes() string {
+	parts := make([]string, 0, len(e.Rejects))
+	for _, rv := range e.Rejects {
+		n := strings.TrimSpace(rv.Notes + formatReasoningSuffix(rv.Reasoning))
+		parts = append(parts, fmt.Sprintf("%s: %s", rv.Skill, n))
+	}
+	return strings.Join(parts, "\n")
 }
 
 // invocationPayload stamps an agent_invocation row with the resolved command and

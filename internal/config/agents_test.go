@@ -890,3 +890,33 @@ func TestLiveBinding_ExecutorEmptyCommandStaysInLoop(t *testing.T) {
 		t.Errorf("executor command = %q, want the in-loop default", b.CommandTemplate())
 	}
 }
+
+// OneShotBinding is how the headless drive reads [executor]: an unset command is
+// still the driving session (never a reviewer default), a headless command is a
+// one-shot run on the command transport — the live transport a stream-capable
+// command would pick for a session is not what a single run uses — and an
+// authored interface is never overridden.
+func TestOneShotBindingResolvesTheExecutorForASingleRun(t *testing.T) {
+	var unset AgentsConfig
+	b, ok := unset.OneShotBinding("executor")
+	if !ok || !IsInLoopCommand(b.CommandTemplate()) {
+		t.Errorf("an unset [executor] must stay in-loop, got %+v (found %v)", b, ok)
+	}
+
+	ac := AgentsConfig{Executor: AgentBinding{Command: "claude --output-format stream-json --input-format stream-json"}}
+	one, _ := ac.OneShotBinding("executor")
+	if got := one.ResolvedInterface(); got != InterfaceCommand {
+		t.Errorf("one-shot interface = %q, want %q", got, InterfaceCommand)
+	}
+	if live, _ := ac.LiveBinding("executor"); live.ResolvedInterface() == InterfaceCommand {
+		t.Errorf("fixture must be live-capable for the contrast to mean anything, live = %q", live.ResolvedInterface())
+	}
+
+	ac.Executor.Interface = InterfaceACP
+	if one, _ := ac.OneShotBinding("executor"); one.ResolvedInterface() != InterfaceACP {
+		t.Errorf("an authored interface wins, got %q", one.ResolvedInterface())
+	}
+	if _, ok := ac.OneShotBinding("nobody"); ok {
+		t.Errorf("an unknown binding must report not found")
+	}
+}
