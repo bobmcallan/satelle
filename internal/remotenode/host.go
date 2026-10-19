@@ -96,6 +96,23 @@ func (c *Commands) run(ctx context.Context, what string, argv []string) error {
 	return nil
 }
 
+// RunStory runs host.run to completion with {command} filled by command, the
+// definition's story command already rendered for one story. It is not Exec: the
+// command is one string, which Exec would quote a second time.
+func (c *Commands) RunStory(ctx context.Context, command string) error {
+	return c.run(ctx, "host.run", c.Def.HostRunArgv(command))
+}
+
+// StoryRunner is the remotedef.Runner that works a handed-off story on the host.
+type StoryRunner struct{ Commands *Commands }
+
+var _ remotedef.Runner = StoryRunner{}
+
+// Run works the story by running its rendered command on the host.
+func (r StoryRunner) Run(ctx context.Context, _ remotedef.Handoff, command string) error {
+	return r.Commands.RunStory(ctx, command)
+}
+
 func (c *Commands) command(ctx context.Context, argv []string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), c.Env...)

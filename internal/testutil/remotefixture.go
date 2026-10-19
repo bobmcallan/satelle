@@ -109,6 +109,7 @@ entry = "in_progress"
 exit = "done"
 
 [[trigger]]
+name = "manual"
 kind = "manual"
 `
 

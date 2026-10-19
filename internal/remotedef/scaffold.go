@@ -87,15 +87,20 @@ stop = ["your-host-cli", "stop", "{label}"]
 # Commands run on the node after the pinned satelle is installed and before it
 # joins, each an argv list, e.g. bootstrap = [["apt-get", "install", "-y", "git"]].
 bootstrap = []
+# The command that works one story on the host; {story} is the story's id.
+# story_command = "your-agent-cli {story}"
 
 # Lifecycle segments this remote serves: an entry and an exit status, both
-# statuses of this remote's own workflow (workflows/step.toml).
+# statuses of this remote's own workflow (workflows/step.toml). Optionally
+# categories = [...] narrows a segment to those story categories (none: every one).
 [[segment]]
 entry = "in_progress"
 exit = "done"
 
-# How the remote is started. kind is opaque to satelle.
+# How the remote is started. name is unique and is what a fired trigger is
+# addressed by; kind is opaque to satelle.
 [[trigger]]
+name = "manual"
 kind = "manual"
 
 # The preflight runs these on the host before the remote starts. Uncomment and

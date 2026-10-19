@@ -134,6 +134,7 @@ entry = "in_progress"
 exit = "done"
 
 [[trigger]]
+name = "manual"
 kind = "manual"
 `, pinnedVersion, lifecycle, r.git.URL, r.hostLog, r.hostLog, r.hostLog, r.nodeHome, r.nodeHome, pinnedVersion, relayCA, r.git.CAFile)
 	if err := os.WriteFile(filepath.Join(dir, "remote.toml"), []byte(toml), 0o644); err != nil {
