@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -16,6 +17,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/remotedef"
 	"github.com/bobmcallan/satelle/internal/subsync"
 )
 
@@ -131,9 +133,24 @@ func resolveTeamForPublish(cfg config.Config, workspaceArg string) (string, erro
 	return name, nil
 }
 
+// isRemotesPath reports whether a normalised data-dir-relative path is the
+// remotes directory or inside it.
+func isRemotesPath(rel string) bool {
+	return rel == config.RemotesDir || strings.HasPrefix(rel, config.RemotesDir+"/")
+}
+
+// A remote is one bundle published and fetched only by `satelle remote`, so the
+// generic publish verbs refuse it rather than write a bundle as one file.
+const (
+	errRemotePushOnly = `publish push: a remote is published only by "satelle remote publish <name>"`
+	errRemoteAdopt    = `publish adopt: a remote is fetched only by "satelle remote fetch <name> --version N"`
+)
+
 func inferPublishKind(path string) string {
 	p := strings.ToLower(path)
 	switch {
+	case isRemotesPath(p):
+		return remoteKind
 	case strings.HasPrefix(p, "documents/"):
 		return "document"
 	// The agents layer lives under workflows/ but is its own kind (sty_10f732ed),
@@ -158,6 +175,9 @@ func inferPublishKind(path string) string {
 }
 
 func runPublishPush(cmd *cobra.Command, serverArg, workspaceArg, kind, title string, dryRun bool, paths []string) error {
+	if kind == remoteKind {
+		return errors.New(errRemotePushOnly)
+	}
 	cfg, repoRoot, dataDir, err := loadRepoConfig()
 	if err != nil {
 		return err
@@ -179,6 +199,9 @@ func runPublishPush(cmd *cobra.Command, serverArg, workspaceArg, kind, title str
 		rel = strings.TrimPrefix(rel, ".satelle/")
 		if config.LocalOnlyPath(rel) {
 			return fmt.Errorf("publish %s: refusing — .local files never leave this machine", rel)
+		}
+		if isRemotesPath(rel) {
+			return errors.New(errRemotePushOnly)
 		}
 		norm = append(norm, rel)
 	}
@@ -317,6 +340,9 @@ func runPublishAdopt(cmd *cobra.Command, serverArg, workspaceArg string, version
 	}
 	path = strings.TrimPrefix(filepath.ToSlash(path), "./")
 	path = strings.TrimPrefix(path, ".satelle/")
+	if isRemotesPath(path) {
+		return errors.New(errRemoteAdopt)
+	}
 	client := hosted.NewClient(server, hosted.DefaultStore(), nil)
 	wsID, err := client.ActiveWorkspaceID(cmd.Context(), teamName)
 	if err != nil {
@@ -328,6 +354,9 @@ func runPublishAdopt(cmd *cobra.Command, serverArg, workspaceArg string, version
 			return err
 		}
 		return fmt.Errorf("fetch published %s: %w", path, err)
+	}
+	if meta.Kind == remoteKind {
+		return errors.New(errRemoteAdopt)
 	}
 	if path == config.AgentsRel {
 		// A published agents layer is written as published; one that carries
@@ -401,20 +430,29 @@ func runPublishCheck(cmd *cobra.Command, serverArg, workspaceArg string, doUpdat
 		if !doUpdate {
 			continue
 		}
-		if rec.Path == config.AgentsRel {
-			// Same ingest rule as adopt/deploy: written as published, or refused.
-			if err := ingestAgents("publish check --update", content); err != nil {
-				return err
+		if rec.Kind == remoteKind {
+			// A remote is a bundle: write its files, never the bundle as one file.
+			dir := remotedef.Dir(dataDir, path.Base(rec.Path))
+			if err := remotedef.Unbundle(dir, content, true); err != nil {
+				return fmt.Errorf("update %s: %w", rec.Path, err)
 			}
-		}
-		if res, err := subsync.Restore(dataDir, []subsync.File{{Path: rec.Path, Content: content}}); err != nil {
-			return fmt.Errorf("update %s: %w", rec.Path, err)
-		} else if ferr := res.Err(); ferr != nil {
-			// Single-file update: same reasoning as adopt above (sty_4c3729e7).
-			return fmt.Errorf("update %s: %w", rec.Path, ferr)
-		} else if res.Written == 0 && len(res.Skipped) > 0 {
-			// Single-file update: excluded path is a caller error (sty_84f14ace).
-			return fmt.Errorf("update %s: local-only path — refusing to write", rec.Path)
+			rec.BlobSHA256 = meta.BlobSHA256
+		} else {
+			if rec.Path == config.AgentsRel {
+				// Same ingest rule as adopt/deploy: written as published, or refused.
+				if err := ingestAgents("publish check --update", content); err != nil {
+					return err
+				}
+			}
+			if res, err := subsync.Restore(dataDir, []subsync.File{{Path: rec.Path, Content: content}}); err != nil {
+				return fmt.Errorf("update %s: %w", rec.Path, err)
+			} else if ferr := res.Err(); ferr != nil {
+				// Single-file update: same reasoning as adopt above (sty_4c3729e7).
+				return fmt.Errorf("update %s: %w", rec.Path, ferr)
+			} else if res.Written == 0 && len(res.Skipped) > 0 {
+				// Single-file update: excluded path is a caller error (sty_84f14ace).
+				return fmt.Errorf("update %s: local-only path — refusing to write", rec.Path)
+			}
 		}
 		rec.Version = meta.Version
 		rec.PublisherID = meta.PublisherID

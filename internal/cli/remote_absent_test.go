@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/hosted"
 )
 
 // A repo with no remote behaves as before: init, a hook and a story transition
@@ -55,6 +57,57 @@ func TestRepoWithNoRemoteIsUnaffected(t *testing.T) {
 	if out := run("remote", "validate"); !strings.Contains(out, "no remotes defined") {
 		t.Errorf("validate with no remotes: %q", out)
 	}
+}
+
+// The hosted remote verbs name the missing condition: no team workspace is the
+// publish message, a workspace with no stored sign-in is the login message, and
+// create and validate need neither.
+func TestRemoteHostedVerbsNameTheMissingCondition(t *testing.T) {
+	hostedVerbs := [][]string{
+		{"remote", "publish", "edge"},
+		{"remote", "list"},
+		{"remote", "fetch", "edge"},
+	}
+	t.Run("no team workspace", func(t *testing.T) {
+		repo := tempRepo(t)
+		t.Chdir(repo)
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		if _, err := runRoot(t, "remote", "create", "edge"); err != nil {
+			t.Fatal(err)
+		}
+		want := "no team workspace"
+		for _, args := range hostedVerbs {
+			out, err := runRoot(t, append(args, "--server", "http://127.0.0.1:1")...)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("%v: want an error containing %q, got err=%v\n%s", args, want, err, out)
+			}
+		}
+		if out, err := runRoot(t, "remote", "validate", "edge"); err != nil {
+			t.Errorf("validate must be unchanged: %v\n%s", err, out)
+		}
+	})
+	t.Run("workspace but no stored credential", func(t *testing.T) {
+		repo := tempRepo(t)
+		if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"),
+			[]byte("[review]\ngate_create = false\n[hosted]\nworkspace = \"Acme\"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(repo)
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		t.Setenv(hosted.SessionTokenEnv, "")
+		if _, err := runRoot(t, "remote", "create", "edge"); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range hostedVerbs {
+			out, err := runRoot(t, append(args, "--server", "http://127.0.0.1:1")...)
+			if !errors.Is(err, hosted.ErrLoginRequired) || !strings.Contains(err.Error(), hosted.ErrLoginRequired.Error()) {
+				t.Errorf("%v: want hosted.ErrLoginRequired, got err=%v\n%s", args, err, out)
+			}
+		}
+		if out, err := runRoot(t, "remote", "validate", "edge"); err != nil {
+			t.Errorf("validate must be unchanged: %v\n%s", err, out)
+		}
+	})
 }
 
 // The remotes directory sits outside every sync area, so a definition and the

@@ -19,6 +19,9 @@ type adoptionRecord struct {
 	Version     int    `json:"version"`
 	Kind        string `json:"kind,omitempty"`
 	PublisherID string `json:"publisher_id,omitempty"`
+	// BlobSHA256 is the sha256 of the published bytes this record adopted; a
+	// remote's run reads it, with Version, to name exactly what it ran.
+	BlobSHA256 string `json:"blob_sha256,omitempty"`
 }
 
 var adoptionMu sync.Mutex
