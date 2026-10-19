@@ -205,6 +205,11 @@ const (
 	// row records the decision only — it never dispatches, transitions or parks.
 	// Enumeration only.
 	KindRecoveryChoice = "recovery_choice"
+	// KindRemoteEnrollRefused records a remote that tried to enroll on the
+	// sealed channel and was refused (sty_b20b3956): Payload is {session, reason}
+	// with reason one of token_used | token_expired | token_unknown |
+	// key_mismatch. The token itself is never recorded. Enumeration only.
+	KindRemoteEnrollRefused = "remote_enroll_refused"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional
