@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -39,6 +42,19 @@ type stubServer struct {
 	t       *testing.T
 	ts      *httptest.Server
 	wakeURL string
+
+	// wakeFail makes a fire of a declared trigger record outcome wake_failed and
+	// answer 502 "wake failed", as satelle-server does when it cannot deliver the
+	// wake; noRecord leaves that fire unrecorded and badGateway answers a plain
+	// 502 instead, so the tests can show what the client must not accept.
+	wakeFail, noRecord, badGateway bool
+
+	// rejectNoCron makes a registration answer 400 for a schedule trigger without
+	// params.cron, naming the trigger unless nameless; source and event are what a
+	// fire's record and its pushed WakeRequest carry (no event when nil).
+	rejectNoCron, nameless bool
+	source                 string
+	event                  any
 
 	mu       sync.Mutex
 	seen     []seenRequest
@@ -102,8 +118,19 @@ func (s *stubServer) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		next := make([]hosted.DeclaredTrigger, 0, len(in.Triggers))
 		for _, t := range in.Triggers {
+			if s.rejectNoCron && t.Kind == "schedule" && t.Params["cron"] == "" {
+				e := map[string]string{"error": "invalid_params", "message": "schedule trigger " + t.Name + " requires params.cron", "trigger": t.Name}
+				if s.nameless {
+					delete(e, "trigger")
+				}
+				s.reply(w, http.StatusBadRequest, e)
+				return
+			}
 			if old := s.find(t.Name); old != nil {
 				t.Paused = old.Paused
+			}
+			if t.Params["cron"] != "" {
+				t.NextFireAt = "2026-10-20T03:00:00Z"
 			}
 			t.UpdatedAt = "2026-10-19T00:00:00Z"
 			next = append(next, t)
@@ -128,7 +155,9 @@ func (s *stubServer) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.Unmarshal(body, &in)
 		id := fmt.Sprintf("fire_%d", len(s.fires)+1)
-		s.fires = append(s.fires, hosted.FireRecord{ID: id, Trigger: in.Trigger})
+		if !s.noRecord {
+			s.fires = append(s.fires, hosted.FireRecord{ID: id, Trigger: in.Trigger, Source: s.source})
+		}
 		if in.Trigger != "" {
 			t := s.find(in.Trigger)
 			if t == nil || t.Paused {
@@ -136,14 +165,35 @@ func (s *stubServer) handle(w http.ResponseWriter, r *http.Request) {
 				if t != nil {
 					reason = "trigger is paused"
 				}
+				if n := len(s.fires); n > 0 && s.fires[n-1].ID == id {
+					s.fires[n-1].Outcome = "refused"
+				}
 				s.reply(w, http.StatusConflict, map[string]string{"error": "trigger_refused", "message": reason, "trigger_id": id})
 				return
 			}
 		}
+		if s.badGateway {
+			s.reply(w, http.StatusBadGateway, map[string]string{"error": "bad_gateway"})
+			return
+		}
+		if s.wakeFail {
+			if n := len(s.fires); n > 0 && s.fires[n-1].ID == id {
+				s.fires[n-1].Outcome = "wake_failed"
+			}
+			s.reply(w, http.StatusBadGateway, map[string]string{"error": "wake_failed", "message": "wake failed", "trigger_id": id})
+			return
+		}
 		if s.wakeURL != "" {
-			wake, _ := json.Marshal(map[string]string{
+			payload := map[string]any{
 				"trigger_id": id, "remote_id": stubRemoteID, "remote": "edge", "story_id": in.StoryID, "trigger": in.Trigger,
-			})
+			}
+			if s.source != "" {
+				payload["source"] = s.source
+			}
+			if s.event != nil {
+				payload["event"] = s.event
+			}
+			wake, _ := json.Marshal(payload)
 			req, _ := http.NewRequest(http.MethodPost, s.wakeURL, bytes.NewReader(wake))
 			req.Header.Set("Authorization", "Bearer wake-credential")
 			if resp, err := http.DefaultClient.Do(req); err == nil {
@@ -152,9 +202,39 @@ func (s *stubServer) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		s.reply(w, http.StatusOK, map[string]string{"trigger_id": id})
 	case rest == "/triggers" && r.Method == http.MethodGet:
-		s.reply(w, http.StatusOK, s.fires)
+		s.reply(w, http.StatusOK, s.newestFirst())
 	default:
 		http.NotFound(w, r)
+	}
+}
+
+// newestFirst is the fire records in the order satelle-server lists them: newest
+// first. The caller holds the lock.
+func (s *stubServer) newestFirst() []hosted.FireRecord {
+	out := make([]hosted.FireRecord, len(s.fires))
+	for i, r := range s.fires {
+		out[len(s.fires)-1-i] = r
+	}
+	return out
+}
+
+// nightlyCron is the params table of the fixture's "nightly" trigger, the one
+// trigger of the five that carries params.
+const nightlyCron = "[trigger.params]\ncron = \"0 3 * * *\"\n"
+
+// editEdgeDef rewrites remote "edge"'s remote.toml in repo, replacing from by to.
+func editEdgeDef(t *testing.T, repo, from, to string) {
+	t.Helper()
+	path := filepath.Join(repo, ".satelle", filepath.FromSlash(config.RemotesDir), "edge", "remote.toml")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), from) {
+		t.Fatalf("remote.toml lacks %q:\n%s", from, b)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(b), from, to, 1)), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -175,7 +255,7 @@ func remoteWithTriggers(t *testing.T) string {
 	if !strings.Contains(string(b), old) {
 		t.Fatalf("scaffold lacks the manual trigger:\n%s", b)
 	}
-	five := "[[trigger]]\nname = \"nightly\"\nkind = \"schedule\"\n\n" +
+	five := "[[trigger]]\nname = \"nightly\"\nkind = \"schedule\"\n" + nightlyCron + "\n" +
 		"[[trigger]]\nname = \"new-story\"\nkind = \"story-event\"\n\n" +
 		"[[trigger]]\nname = \"epic-drive\"\nkind = \"handoff\"\n\n" +
 		"[[trigger]]\nname = \"on-push\"\nkind = \"inbound-event\"\n\n" +
@@ -205,7 +285,8 @@ func TestRemoteTriggerCLI(t *testing.T) {
 	if r := last(); r.Method != "PUT" || r.Path != base+"/declared-triggers" {
 		t.Errorf("register sent %s %s", r.Method, r.Path)
 	} else {
-		want := `{"triggers":[{"name":"nightly","kind":"schedule"},{"name":"new-story","kind":"story-event"},{"name":"epic-drive","kind":"handoff"},{"name":"on-push","kind":"inbound-event"},{"name":"from-session","kind":"mcp"}]}`
+		// params go exactly as written; the triggers without any carry no params key.
+		want := `{"triggers":[{"name":"nightly","kind":"schedule","params":{"cron":"0 3 * * *"}},{"name":"new-story","kind":"story-event"},{"name":"epic-drive","kind":"handoff"},{"name":"on-push","kind":"inbound-event"},{"name":"from-session","kind":"mcp"}]}`
 		if r.Body != want {
 			t.Errorf("register body = %s\nwant %s", r.Body, want)
 		}
@@ -218,7 +299,7 @@ func TestRemoteTriggerCLI(t *testing.T) {
 	if r := last(); r.Method != "GET" || r.Path != base+"/declared-triggers" || r.Body != "" {
 		t.Errorf("list sent %s %s %q", r.Method, r.Path, r.Body)
 	}
-	for _, want := range []string{"NAME", "PAUSED", "nightly", "schedule", "from-session", "mcp"} {
+	for _, want := range []string{"NAME", "PAUSED", "PARAMS", "NEXT FIRE", "nightly", "schedule", "cron=0 3 * * *", "2026-10-20T03:00:00Z", "from-session", "mcp"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("list output lacks %q:\n%s", want, out)
 		}
@@ -442,6 +523,295 @@ func TestWakeHandoff(t *testing.T) {
 	}
 }
 
+// setStub changes the stub's behaviour between requests, under its lock.
+func (s *stubServer) setStub(f func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f()
+}
+
+// fireIDs is the set of fire-record ids in the listing. The server lists newest
+// first, so nothing here depends on the order.
+func fireIDs(recs []hosted.FireRecord) map[string]bool {
+	seen := map[string]bool{}
+	for _, r := range recs {
+		seen[r.FireID()] = true
+	}
+	return seen
+}
+
+// newFire returns the record in recs that is not in seen and carries trigger.
+func newFire(recs []hosted.FireRecord, seen map[string]bool, trigger string) (hosted.FireRecord, bool) {
+	for _, r := range recs {
+		if r.FireID() != "" && !seen[r.FireID()] && r.Trigger == trigger {
+			return r, true
+		}
+	}
+	return hosted.FireRecord{}, false
+}
+
+// checkNamedFire fires trigger on the remote and returns the output. A fire the
+// server accepted must be on record under the trigger's name. A fire it
+// answered with 502 "wake failed" also passes, when the listing shows a new
+// record carrying that name with outcome wake_failed. Any other error is
+// returned.
+func checkNamedFire(run func(...string) (string, error), list func() []hosted.FireRecord, remoteID, trigger string) (string, error) {
+	seen := fireIDs(list())
+	out, err := run("fire", remoteID, trigger)
+	var failed *hosted.WakeFailedError
+	wakeFailed := errors.As(err, &failed)
+	if err != nil && !wakeFailed {
+		return out, fmt.Errorf("fire %s: %w", trigger, err)
+	}
+	r, ok := newFire(list(), seen, trigger)
+	if !ok {
+		return out, fmt.Errorf("fire %s left no new record carrying the trigger name (error %v)", trigger, err)
+	}
+	if wakeFailed && r.Outcome != "wake_failed" {
+		return out, fmt.Errorf("a wake failure must record outcome wake_failed, got %+v", r)
+	}
+	return out, nil
+}
+
+// checkRefusedFire fires a trigger the server refuses (a paused one) and returns
+// the output. The refusal must carry the trigger's 409, and the listing must
+// show a new record for the trigger with outcome refused.
+func checkRefusedFire(run func(...string) (string, error), list func() []hosted.FireRecord, remoteID, trigger string) (string, error) {
+	seen := fireIDs(list())
+	out, err := run("fire", remoteID, trigger)
+	if err == nil || !strings.Contains(err.Error(), "trigger "+trigger+" refused") {
+		return out, fmt.Errorf("a paused trigger must be refused with its 409, got %v", err)
+	}
+	r, ok := newFire(list(), seen, trigger)
+	if !ok {
+		return out, fmt.Errorf("the refused fire must be recorded: no new record for %s", trigger)
+	}
+	if r.Outcome != "refused" {
+		return out, fmt.Errorf("a refused fire must record outcome refused, got %+v", r)
+	}
+	return out, nil
+}
+
+// TestRemoteTriggerFireWakeFailed proves, without the network, that a named fire
+// answered 502 "wake failed" and recorded is accepted and reported as a wake
+// failure with the fire recorded, and that nothing else is.
+func TestRemoteTriggerFireWakeFailed(t *testing.T) {
+	remoteWithTriggers(t)
+	srv := newStubServer(t, "")
+	run := func(args ...string) (string, error) {
+		return runRoot(t, append([]string{"remote", "trigger"}, append(args, "--server", srv.ts.URL)...)...)
+	}
+	list := func() []hosted.FireRecord {
+		srv.mu.Lock()
+		defer srv.mu.Unlock()
+		return srv.newestFirst()
+	}
+	if out, err := run("register", stubRemoteID, "--def", "edge"); err != nil {
+		t.Fatalf("register: %v\n%s", err, out)
+	}
+
+	srv.setStub(func() { srv.wakeFail = true })
+	if out, err := checkNamedFire(run, list, stubRemoteID, "nightly"); err != nil {
+		t.Fatalf("a recorded wake failure must pass: %v\n%s", err, out)
+	}
+	// What the command reports names the outcome and the record, not the status.
+	_, err := run("fire", stubRemoteID, "nightly")
+	if err == nil {
+		t.Fatal("a failed wake must still exit non-zero")
+	}
+	for _, want := range []string{"wake failed", "fire recorded as fire_2", "nightly"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("fire output lacks %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "HTTP 502") {
+		t.Errorf("fire output must name the outcome, not only the status: %v", err)
+	}
+
+	// A wake failure the server did not record is not accepted.
+	srv.setStub(func() { srv.noRecord = true })
+	if out, err := checkNamedFire(run, list, stubRemoteID, "nightly"); err == nil {
+		t.Errorf("an unrecorded wake failure must fail the check:\n%s", out)
+	}
+	srv.setStub(func() { srv.noRecord = false })
+
+	// A plain 502 is not a wake failure, whatever is on record.
+	srv.setStub(func() { srv.wakeFail, srv.badGateway = false, true })
+	if out, err := checkNamedFire(run, list, stubRemoteID, "nightly"); err == nil {
+		t.Errorf("a plain 502 must fail the check:\n%s", out)
+	}
+	if _, err := run("fire", stubRemoteID, "nightly"); err == nil || strings.Contains(err.Error(), "wake failed") {
+		t.Errorf("a plain 502 must stay a generic error, got %v", err)
+	}
+
+	// The listing is newest first and holds older "nightly" records by now; a
+	// refused fire is still found as the new one, with outcome refused.
+	srv.setStub(func() { srv.badGateway = false })
+	if out, err := run("pause", stubRemoteID, "nightly"); err != nil {
+		t.Fatalf("pause: %v\n%s", err, out)
+	}
+	if out, err := checkRefusedFire(run, list, stubRemoteID, "nightly"); err != nil {
+		t.Errorf("a recorded refusal must pass: %v\n%s", err, out)
+	}
+	srv.setStub(func() { srv.noRecord = true })
+	if out, err := checkRefusedFire(run, list, stubRemoteID, "nightly"); err == nil {
+		t.Errorf("an unrecorded refusal must fail the check:\n%s", out)
+	}
+}
+
+// TestRemoteTriggerRegisterRejected proves a server 400 on register is reported
+// with the server's reason and the trigger it names, and that the CLI itself
+// judges no params: the same cron-less definition registers when the server
+// accepts it.
+func TestRemoteTriggerRegisterRejected(t *testing.T) {
+	repo := remoteWithTriggers(t)
+	editEdgeDef(t, repo, nightlyCron, "")
+	srv := newStubServer(t, "")
+	register := func() (string, error) {
+		return runRoot(t, "remote", "trigger", "register", stubRemoteID, "--def", "edge", "--server", srv.ts.URL)
+	}
+
+	if out, err := register(); err != nil {
+		t.Fatalf("the CLI must not validate params; the server accepted them: %v\n%s", err, out)
+	}
+	if got := srv.find("nightly"); got == nil || got.Params != nil {
+		t.Errorf("a trigger without params must be stored without any: %+v", got)
+	}
+
+	srv.setStub(func() { srv.rejectNoCron = true })
+	_, err := register()
+	if err == nil {
+		t.Fatal("a 400 must fail the register")
+	}
+	for _, want := range []string{"trigger nightly rejected", "schedule trigger nightly requires params.cron"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("400 report lacks %q: %v", want, err)
+		}
+	}
+
+	srv.setStub(func() { srv.nameless = true })
+	_, err = register()
+	if err == nil || !strings.Contains(err.Error(), "trigger registration rejected: schedule trigger nightly requires params.cron") {
+		t.Errorf("a 400 naming no trigger must report the reason alone, got %v", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "trigger nightly rejected") {
+		t.Errorf("the CLI must not infer the trigger name: %v", err)
+	}
+}
+
+// TestWakeCarriesSourceAndEvent proves the fire's source and event ride on the
+// hand-off as the server sent them: a wake with no event records today's keys
+// plus source, and a push-shaped wake adds the event's fields without choosing
+// the story.
+func TestWakeCarriesSourceAndEvent(t *testing.T) {
+	remoteWithTriggers(t)
+	story := newStory(t, "in_progress")
+	rcv := &receiver{}
+	rcvSrv := httptest.NewServer(rcv)
+	t.Cleanup(rcvSrv.Close)
+	srv := newStubServer(t, rcvSrv.URL)
+	if out, err := runRoot(t, "remote", "trigger", "register", stubRemoteID, "--def", "edge", "--server", srv.ts.URL); err != nil {
+		t.Fatalf("register: %v\n%s", err, out)
+	}
+
+	// fire pushes the stub's WakeRequest to the receiver, hands it to the remote's
+	// wake handler and returns the new hand-off's payload and the command output.
+	fire := func(args ...string) (map[string]string, string) {
+		t.Helper()
+		before := len(handoffRows(t, story))
+		if o, err := runRoot(t, append([]string{"remote", "trigger", "fire", stubRemoteID, "--server", srv.ts.URL}, args...)...); err != nil {
+			t.Fatalf("fire %v: %v\n%s", args, err, o)
+		}
+		body, _ := rcv.take()
+		out, err := runRootIn(t, body, "remote", "wake", "edge")
+		if err != nil {
+			t.Fatalf("wake %s: %v\n%s", body, err, out)
+		}
+		rows := handoffRows(t, story)
+		if len(rows) != before+1 {
+			t.Fatalf("want one new hand-off for %s, have %d after %d\n%s", body, len(rows), before, out)
+		}
+		var p map[string]string
+		if err := json.Unmarshal(rows[len(rows)-1].Payload, &p); err != nil {
+			t.Fatal(err)
+		}
+		return p, out
+	}
+	keys := func(p map[string]string) string {
+		var ks []string
+		for k := range p {
+			ks = append(ks, k)
+		}
+		sort.Strings(ks)
+		return strings.Join(ks, ",")
+	}
+
+	// No event: today's payload keys plus source, with the value as sent.
+	for _, source := range []string{"api", "mcp", "schedule"} {
+		srv.setStub(func() { srv.source, srv.event = source, nil })
+		p, _ := fire("nightly", "--story", story)
+		if got, want := keys(p), "fire_id,kind,remote,source,trigger"; got != want {
+			t.Errorf("source %s: payload keys %s, want %s (%v)", source, got, want, p)
+		}
+		if p["source"] != source || p["remote"] != "edge" || p["trigger"] != "nightly" || p["kind"] != "schedule" {
+			t.Errorf("source %s: payload = %v", source, p)
+		}
+	}
+
+	// A push-shaped wake: no story_id, so it sweeps; branch and sha are passed
+	// on unchanged and the event picks nothing.
+	srv.setStub(func() {
+		srv.source = "push"
+		srv.event = map[string]string{"kind": "push", "repo": "acme/edge", "branch": "feature/x", "sha": "abc123"}
+	})
+	p, out := fire()
+	if p["source"] != "push" || p["event_kind"] != "push" || p["repo"] != "acme/edge" || p["branch"] != "feature/x" || p["sha"] != "abc123" {
+		t.Errorf("the push event must ride on the hand-off verbatim: %v", p)
+	}
+	if !strings.Contains(out, "at feature/x@abc123") {
+		t.Errorf("the wake line must show the event's branch and sha:\n%s", out)
+	}
+}
+
+// TestRemoteTriggerFires proves `fires` lists the server's fire records with
+// their source exactly as sent, a record that carries none shown as -.
+func TestRemoteTriggerFires(t *testing.T) {
+	remoteWithTriggers(t)
+	srv := newStubServer(t, "")
+	srv.setStub(func() {
+		srv.fires = []hosted.FireRecord{
+			{ID: "fire_1", Trigger: "nightly", Source: "api"},
+			{ID: "fire_2", Trigger: "from-session", Source: "mcp"},
+			{ID: "fire_3", Trigger: "nightly", Source: "schedule", Outcome: "wake_failed"},
+			{ID: "fire_4", Source: "push"},
+			{ID: "fire_5", Trigger: "nightly"},
+		}
+	})
+	out, err := runRoot(t, "remote", "trigger", "fires", stubRemoteID, "--server", srv.ts.URL)
+	if err != nil {
+		t.Fatalf("fires: %v\n%s", err, out)
+	}
+	if r := srv.requests(); len(r) != 1 || r[0].Method != "GET" || r[0].Path != "/api/v1/remotes/"+stubRemoteID+"/triggers" {
+		t.Errorf("fires must read the fire records once: %+v", r)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 1+5 || !strings.HasPrefix(lines[0], "FIRE") || !strings.Contains(lines[0], "SOURCE") {
+		t.Fatalf("want a header and five records:\n%s", out)
+	}
+	// newest first, as the stub lists them
+	for i, want := range [][]string{
+		{"fire_5", "nightly", "-", "-"},
+		{"fire_4", "none", "push", "-"},
+		{"fire_3", "nightly", "schedule", "wake_failed"},
+		{"fire_2", "from-session", "mcp", "-"},
+		{"fire_1", "nightly", "api", "-"},
+	} {
+		if got := strings.Fields(lines[i+1]); strings.Join(got, " ") != strings.Join(want, " ") {
+			t.Errorf("record %d = %v, want %v", i, got, want)
+		}
+	}
+}
+
 // TestRemoteTriggerLive runs the trigger commands against a real satelle-server.
 // It is skipped unless SATELLE_LIVE_SERVER (the base URL), SATELLE_LIVE_REMOTE
 // (the remote's server id) and SATELLE_TOKEN (a session token for a member who
@@ -454,6 +824,8 @@ func TestRemoteTriggerLive(t *testing.T) {
 	}
 	remoteWithTriggers(t)
 	t.Setenv(hosted.SessionTokenEnv, token) // remoteWithTriggers installs the stub's
+	// The fixture's schedule trigger keeps its params.cron: satelle-server refuses
+	// a schedule trigger without one, so every register here sends it.
 	run := func(args ...string) (string, error) {
 		return runRoot(t, append([]string{"remote", "trigger"}, append(args, "--server", server)...)...)
 	}
@@ -467,38 +839,56 @@ func TestRemoteTriggerLive(t *testing.T) {
 	}
 	client := hosted.NewClient(server, hosted.DefaultStore(), nil)
 	ctx := context.Background()
-	fireFor := func(trigger string) (hosted.FireRecord, bool) {
-		recs, err := client.ListFireRecords(ctx, remoteID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for i := len(recs) - 1; i >= 0; i-- {
-			if recs[i].Trigger == trigger {
-				return recs[i], true
-			}
-		}
-		return hosted.FireRecord{}, false
-	}
 
 	must("register", remoteID, "--def", "edge")
 	if out := must("list", remoteID); !strings.Contains(out, "nightly") || !strings.Contains(out, "from-session") {
 		t.Fatalf("list lacks the registered names:\n%s", out)
 	}
-	must("fire", remoteID, "nightly")
-	if rec, ok := fireFor("nightly"); !ok || rec.FireID() == "" {
-		t.Fatalf("the fire record must carry the trigger name nightly, got %+v (found %v)", rec, ok)
+	// satelle-server answers 502 "wake failed" when it records the fire but
+	// cannot deliver the wake; that is its contract, so it passes when the fire
+	// is on record under the trigger's name.
+	records := func() []hosted.FireRecord {
+		recs, err := client.ListFireRecords(ctx, remoteID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return recs
+	}
+	if out, err := checkNamedFire(run, records, remoteID, "nightly"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
 	must("pause", remoteID, "nightly")
 	if out := must("list", remoteID); !strings.Contains(out, "true") {
 		t.Errorf("list must show the paused trigger:\n%s", out)
 	}
-	before, _ := fireFor("nightly")
-	out, err := run("fire", remoteID, "nightly")
-	if err == nil || !strings.Contains(err.Error(), "trigger nightly refused") {
-		t.Fatalf("a paused trigger must be refused with its 409, got %v\n%s", err, out)
-	}
-	if after, ok := fireFor("nightly"); !ok || after.FireID() == before.FireID() {
-		t.Errorf("the refused fire must be recorded: before %+v after %+v", before, after)
+	if out, err := checkRefusedFire(run, records, remoteID, "nightly"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
 	must("resume", remoteID, "nightly")
+
+	// Last, because a register replaces the declared set: a schedule trigger with
+	// params.cron must come back from the server as sent, with a next fire time.
+	t.Run("schedule", func(t *testing.T) {
+		if os.Getenv("SATELLE_LIVE_SCHEDULE") != "1" {
+			t.Skip("SATELLE_LIVE_SCHEDULE not set: satelle-server sty_3732a17d not yet reported live")
+		}
+		must("register", remoteID, "--def", "edge")
+		triggers, err := client.ListDeclaredTriggers(ctx, remoteID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range triggers {
+			if d.Name != "nightly" {
+				continue
+			}
+			if want := (map[string]string{"cron": "0 3 * * *"}); !reflect.DeepEqual(d.Params, want) {
+				t.Fatalf("the server echoed params %v, want %v", d.Params, want)
+			}
+			if _, err := time.Parse(time.RFC3339, d.NextFireAt); err != nil {
+				t.Fatalf("next_fire_at %q is not an RFC3339 time: %v", d.NextFireAt, err)
+			}
+			return
+		}
+		t.Fatalf("the server lists no trigger nightly: %+v", triggers)
+	})
 }
