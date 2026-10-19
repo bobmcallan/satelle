@@ -1,3 +1,8 @@
+## [0.0.701] - 2026-10-19
+
+### Fixed
+- Cancelling a story is refused while the working tree its own live seat records holds uncommitted changes outside the edit-exempt paths, the same as closing it to done. 0.0.692 caught only the workflow's terminal states, so a cancel, which the route adds as a park that never resumes, still released the seat and left the slice orphaned. Parking to blocked is still allowed, because the story keeps its way back to the same tree. (sty_37436717)
+
 ## [0.0.700] - 2026-10-18
 
 ### Changed
