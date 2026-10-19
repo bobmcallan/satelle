@@ -11,7 +11,9 @@ import (
 // denied is the set of names the engine must never carry: a host, vendor, cloud,
 // identity provider, repo or model. Matched on word boundaries so an ordinary
 // word that merely contains one (draws, flying) does not trip it.
-var denied = regexp.MustCompile(`(?i)\b(fly|sprite|azure|aws|github|teleport|claude|anthropic|openai)\b`)
+// It also names the event-source and CI vocabulary, so the trigger and wake
+// source stay neutral about what fires a remote.
+var denied = regexp.MustCompile(`(?i)\b(fly|sprite|azure|aws|github|teleport|claude|anthropic|openai|gitlab|bitbucket|gitea|jenkins|circleci|travis|buildkite|webhook|cron)\b`)
 
 // TestEngineNamesNoHostOrVendor scans the package's non-test source — code,
 // comments and the scaffold's placeholders alike — for a vendor. The definition
@@ -50,12 +52,12 @@ func TestEngineNamesNoHostOrVendor(t *testing.T) {
 }
 
 func TestDeniedMatchesOnWordBoundaries(t *testing.T) {
-	for _, ok := range []string{"draws", "flying", "spritely", "a lawsuit"} {
+	for _, ok := range []string{"draws", "flying", "spritely", "a lawsuit", "macron", "cronies", "webhooks-free", "giteam", "travisty"} {
 		if denied.MatchString(ok) {
 			t.Errorf("%q must not match", ok)
 		}
 	}
-	for _, bad := range []string{"AWS", "run on aws.", "(Fly)", "github-hosted", "Claude"} {
+	for _, bad := range []string{"AWS", "run on aws.", "(Fly)", "github-hosted", "Claude", "GitLab", "bitbucket pipelines", "a webhook", "(cron)", "Gitea", "Jenkins", "circleci", "Travis", "buildkite"} {
 		if !denied.MatchString(bad) {
 			t.Errorf("%q must match", bad)
 		}

@@ -74,8 +74,10 @@ stop = ["your-host-cli", "stop", "{label}"]
 entry = "in_progress"
 exit = "done"
 
-# How the remote is started. kind is opaque to satelle.
+# How the remote is started. name is unique and is what a fired trigger is
+# addressed by; kind is opaque to satelle.
 [[trigger]]
+name = "manual"
 kind = "manual"
 `
 

@@ -260,7 +260,7 @@ func TestCredentialRule(t *testing.T) {
 
 func TestListOfTablesCredentialRefused(t *testing.T) {
 	dir := scaffolded(t)
-	replaceIn(t, dir, "remote.toml", "[[trigger]]\nkind = \"manual\"\n", "[[trigger]]\nkind = \"manual\"\n\n[[trigger]]\nkind = \"hook\"\n[trigger.params]\napi_key = \"abc\"\n")
+	replaceIn(t, dir, "remote.toml", "[[trigger]]\nname = \"manual\"\nkind = \"manual\"\n", "[[trigger]]\nname = \"manual\"\nkind = \"manual\"\n\n[[trigger]]\nname = \"hooked\"\nkind = \"hook\"\n[trigger.params]\napi_key = \"abc\"\n")
 	if fs := Validate(dir); !hasFinding(fs, "remote.toml", "trigger[1].params.api_key") {
 		t.Fatalf("a literal in a later array table must be refused; got:\n%s", strings.Join(details(fs), "\n"))
 	}

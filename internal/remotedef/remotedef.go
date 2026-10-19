@@ -81,8 +81,10 @@ type Segment struct {
 	Exit  string `toml:"exit"`
 }
 
-// Trigger is one way the remote is started. Kind is opaque to satelle.
+// Trigger is one way the remote is started. Name is what the server's declared
+// triggers and a wake are keyed by; Kind is opaque to satelle.
 type Trigger struct {
+	Name   string            `toml:"name"`
 	Kind   string            `toml:"kind"`
 	Params map[string]string `toml:"params"`
 }
@@ -226,9 +228,23 @@ func (v *validation) checkDefinition() {
 	if len(def.Segments) == 0 {
 		v.fail(DefinitionFile, "segment", "required: name at least one lifecycle segment (entry and exit status)")
 	}
+	seen := map[string]int{}
 	for i, t := range def.Triggers {
+		key := fmt.Sprintf("trigger[%d]", i)
+		switch {
+		case strings.TrimSpace(t.Name) == "":
+			v.fail(DefinitionFile, key+".name", "required: the name a fired trigger is addressed by")
+		case !ValidName(t.Name):
+			v.fail(DefinitionFile, key+".name", "must be lower-case letters, digits, - or _, starting with a letter or digit")
+		default:
+			if j, dup := seen[t.Name]; dup {
+				v.fail(DefinitionFile, key+".name", fmt.Sprintf("duplicate of trigger[%d]", j))
+			} else {
+				seen[t.Name] = i
+			}
+		}
 		if strings.TrimSpace(t.Kind) == "" {
-			v.fail(DefinitionFile, fmt.Sprintf("trigger[%d].kind", i), "required")
+			v.fail(DefinitionFile, key+".kind", "required")
 		}
 	}
 	for i, s := range def.Secrets {

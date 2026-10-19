@@ -192,6 +192,11 @@ const (
 	// {path, status, lane}; nothing in it is harness-specific. Enumeration only —
 	// the lock list is configuration.
 	KindSubstrateLockDeny = "substrate_lock_deny"
+	// KindRemoteHandoff records one story a woken remote took on (sty_a9768210).
+	// StoryID is the story; Refs is {fire_id, story} so a redelivered wake adds
+	// no second row; Payload is {remote, trigger, kind, fire_id}, trigger and
+	// kind empty when the wake named no declared trigger.
+	KindRemoteHandoff = "remote_handoff"
 	// KindCommandRule records one agent command a repo-authored
 	// [[gate.command_rule]] matched and let run, or refused (sty_a74551d6).
 	// Payload is {command, rule_index, pattern, action, decision, delivered,
