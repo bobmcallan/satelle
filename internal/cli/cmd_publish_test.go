@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/hosted"
@@ -22,6 +23,8 @@ import (
 type fakePublishStore struct {
 	mu   sync.Mutex
 	data map[string]map[string][]publishVer // wsID -> path -> versions
+	// requests counts every HTTP request the server received.
+	requests atomic.Int64
 }
 
 type publishVer struct {
@@ -88,6 +91,13 @@ func (s *fakePublishStore) list(wsID string) []map[string]any {
 
 // newFakePublishServer serves workspaces + /published catalog routes.
 func newFakePublishServer(t *testing.T) *httptest.Server {
+	ts, _ := newFakePublishServerStore(t)
+	return ts
+}
+
+// newFakePublishServerStore is newFakePublishServer that also hands back the
+// store, so a test can seed the catalog and count the requests that reached it.
+func newFakePublishServerStore(t *testing.T) (*httptest.Server, *fakePublishStore) {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	store := newFakePublishStore()
@@ -154,9 +164,12 @@ func newFakePublishServer(t *testing.T) *httptest.Server {
 			http.NotFound(w, r)
 		}
 	})
-	ts := httptest.NewServer(mux)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		store.requests.Add(1)
+		mux.ServeHTTP(w, r)
+	}))
 	t.Cleanup(ts.Close)
-	return ts
+	return ts, store
 }
 
 func itoa(n int) string {
