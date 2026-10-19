@@ -753,6 +753,43 @@ same allocated-binding rule when the rework verb marks the coder spawn with
 id so the hook binds that seat); unmarked sessions stay on the driving-session
 and in-flight dispatch branches.
 
+#### Headless drive — `satelle story drive` (sty_c0c795df)
+
+`satelle story drive <id>` walks a story along its route with no one at a
+prompt, for a repo whose bindings are all headless CLIs (claude, grok, pi, …).
+It presents each next edge through the same verb `story set --status` uses, so
+every edge is judged by its configured gates and ledgered as a local drive
+ledgers it. `drive.Story` (internal/drive) is the mechanism; it takes no
+harness, so a node's story command calls the same function.
+
+**Who performs a step** is the route's allocation, asked of the engine's one
+rule (`StepPerformer`): a step allocated to a named agent is dispatched by the
+move that enters it; a step allocated to `agent = "executor"` is performed, once
+the story is in it, by the `[executor]` binding run **one-shot** with that
+step's executor skills. Before any move the drive refuses (exit 1, naming the
+step and the `agents.toml` key) a route it cannot walk unattended: an
+executor-allocated step while `[executor] command` is `in-loop`, or a step whose
+named agent is bound in-loop.
+
+**A rejected edge.** The reviewers' notes go to the performer the engine names
+for the step (a `story message` from `orchestrator`; an executor step is
+re-run with them appended to its prompt), the step's declared
+`rework = { consult, rounds }` relay runs within its budget, and the edge is
+presented again. The story **parks** — a comment with the last objection, then
+the move to the workflow's blocked step — when the relay ends `budget` or
+`no_progress`, when the step's `reject_budget` is spent, when an edge whose step
+declares no `reject_budget` has been rejected ten times, or when the executor
+rejects its step. A performer reject and a broken spend bound park through the
+mechanisms that already do. A workflow with no park state leaves nowhere to put
+the question, so the drive refuses instead.
+
+**Exit status.** `0` the story reached a terminal step; `3` it is parked (the
+status and the recorded reason are printed); `1` the drive refused or a
+mechanism failed and the story stayed where it was. An agent caller's drive is
+handed off as one gated run, like `story rework`; inside that process every gate
+runs in the foreground, and the seat lease and ledger rows carry the resolved
+session.
+
 ### Workspace bindings layer — `satelle sync bindings` (sty_01949949)
 
 The agents layer can be decided centrally and executed locally. Two verbs and

@@ -289,9 +289,9 @@ func (e *PerformerReject) Error() string {
 	return e.Notes
 }
 
-// resumeParkName is the synthesised from="*" park state for this item's
+// ResumeParkName is the synthesised from="*" park state for this item's
 // lane, or "" when the lane has none.
-func resumeParkName(ctx context.Context, current workitem.Item) string {
+func ResumeParkName(ctx context.Context, current workitem.Item) string {
 	idx, err := requireDocIndex()
 	if err != nil {
 		return ""

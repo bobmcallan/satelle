@@ -220,6 +220,23 @@ func governingRoute(ctx context.Context, item workitem.Item) (wfgovern.DerivedRo
 	return d, name, true
 }
 
+// GoverningRoute is the route governing item — the spine it walks, the loops its
+// steps declare — resolved over the wired document index, with the reason when
+// none does. A caller that must walk the route (the headless drive) reads it
+// here rather than keeping its own copy of the resolution.
+func GoverningRoute(ctx context.Context, item workitem.Item) (wfgovern.DerivedRoute, error) {
+	idx, err := requireDocIndex()
+	if err != nil {
+		return wfgovern.DerivedRoute{}, err
+	}
+	wfs, err := idx.List(ctx, "workflows")
+	if err != nil {
+		return wfgovern.DerivedRoute{}, err
+	}
+	d, _, err := wfgovern.RouteFor(wfs, item)
+	return d, err
+}
+
 func reviewKindFor(accept bool) string {
 	if accept {
 		return "review_accept"

@@ -157,7 +157,7 @@ func finishGateRun(err error) {
 	}
 	res := gatehandle.Result{}
 	if err != nil {
-		res.ExitCode, res.Error = 1, err.Error()
+		res.ExitCode, res.Error = ExitCodeOf(err), err.Error()
 	}
 	_ = gatehandle.New(gateRun.runtime).Finish(gateRun.id, res)
 }
@@ -185,20 +185,36 @@ var errGateHandedOff = errors.New("gate handed off")
 // gateExitError is a replayed failure: the detached run already printed the
 // message to the stderr the caller has now been shown, so Execute must not print
 // it again.
-type gateExitError struct{ msg string }
+type gateExitError struct {
+	msg string
+	// code is the detached run's own exit code (a command may exit with more
+	// than 1, see ExitError); 0 means the generic failure, 1.
+	code int
+}
 
 func (e *gateExitError) Error() string { return e.msg }
+
+// ExitCode is the process exit code the replayed run asks for.
+func (e *gateExitError) ExitCode() int {
+	if e.code == 0 {
+		return 1
+	}
+	return e.code
+}
 
 // finishExecute maps the two hand-off outcomes onto Execute's contract and
 // reports whether err should still be printed.
 func finishExecute(err error) (out error, print bool) {
 	var ge *gateExitError
+	var ee *ExitError
 	switch {
 	case err == nil:
 		return nil, false
 	case errors.Is(err, errGateHandedOff):
 		return nil, false
 	case errors.As(err, &ge):
+		return err, false
+	case errors.As(err, &ee) && ee.Quiet:
 		return err, false
 	}
 	return err, true
@@ -413,7 +429,7 @@ func replayGate(cmd *cobra.Command, store *gatehandle.Store, v gatehandle.Verdic
 			msg = "gate run failed"
 		}
 		fmt.Fprintln(cmd.ErrOrStderr(), msg)
-		return &gateExitError{msg: msg}
+		return &gateExitError{msg: msg, code: v.Result.ExitCode}
 	}
 	out := verdictBlock(v)
 	if out == "" {

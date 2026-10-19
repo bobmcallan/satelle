@@ -309,6 +309,18 @@ func (st State) onRouteSpine() bool {
 	return len(st.On) == 0 && !(st.Agent == "reviewer" && st.Shape != "Msquare")
 }
 
+// SpineSteps lists the names of the route's steps in route order — the spine a
+// story walks from its start to a terminal step, never a gate or a role state.
+func (s Spec) SpineSteps() []string {
+	var out []string
+	for _, st := range s.States {
+		if st.onRouteSpine() {
+			out = append(out, st.Name)
+		}
+	}
+	return out
+}
+
 // SpineIndex is the position of the step called name among the route's steps, in
 // route order, or -1 when name is not a step on the route.
 func (s Spec) SpineIndex(name string) int {

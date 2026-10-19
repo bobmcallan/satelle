@@ -707,6 +707,18 @@ func (a AgentsConfig) LiveBinding(name string) (AgentBinding, bool) {
 	return a.EffectiveBinding(b, UseLive), true
 }
 
+// OneShotBinding is LiveBinding's one-shot counterpart: name's raw binding with
+// each role's baseline default (an unset [executor] command is in-loop), resolved
+// for a single headless run (EffectiveBinding, UseOneShot). The headless drive
+// performs an executor-allocated step through it.
+func (a AgentsConfig) OneShotBinding(name string) (AgentBinding, bool) {
+	b, ok := a.LiveRawBinding(name)
+	if !ok {
+		return AgentBinding{}, false
+	}
+	return a.EffectiveBinding(b, UseOneShot), true
+}
+
 // IsACP reports whether this binding uses the ACP transport.
 func (b AgentBinding) IsACP() bool {
 	return b.ResolvedInterface() == InterfaceACP

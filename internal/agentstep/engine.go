@@ -226,6 +226,11 @@ type Engine struct {
 	// over the raw binding, so an unset interface= picks the CLI's best live
 	// transport (epic:model-selection child 2). Nil falls back to namedAgents.
 	liveNamedAgents func(name string) (config.AgentBinding, bool)
+	// oneShotAgents resolves a binding for a ONE-SHOT run of a section the
+	// driving session would otherwise perform ([executor]): EffectiveBinding
+	// (UseOneShot) over the raw binding, with each role's own baseline default.
+	// Nil means no such run can be made (PerformExecutorStep refuses).
+	oneShotAgents func(name string) (config.AgentBinding, bool)
 	// resolveSecondary returns a fallback binding for rate-limit failover
 	// (sty_5bf61f89). Nil disables secondary retry.
 	resolveSecondary func(section string, b config.AgentBinding) (config.AgentBinding, string, bool)
@@ -1969,9 +1974,10 @@ type performerResolution struct {
 // emit says whether to record the placement telemetry event; only the dispatch
 // itself does.
 func (g *Engine) resolvePerformer(ctx context.Context, item workitem.Item, toStatus string, emit bool) (performerResolution, error) {
-	none := func(reason string) (performerResolution, error) {
-		return performerResolution{PerformerResolution: verb.PerformerResolution{Reason: reason}}, nil
+	answer := func(kind verb.PerformerKind, reason string) (performerResolution, error) {
+		return performerResolution{PerformerResolution: verb.PerformerResolution{Reason: reason, Kind: kind}}, nil
 	}
+	none := func(reason string) (performerResolution, error) { return answer(verb.PerformerNone, reason) }
 	spec, wfName, err := g.activeSpec(ctx, item)
 	if err != nil {
 		if ungoverned(err) {
@@ -1987,12 +1993,14 @@ func (g *Engine) resolvePerformer(ctx context.Context, item workitem.Item, toSta
 		}
 	}
 	if target == nil {
-		return none(fmt.Sprintf("the workflow declares no step %q", toStatus))
+		return answer(verb.PerformerUndeclared, fmt.Sprintf("the workflow declares no step %q", toStatus))
 	}
 	switch target.Agent {
 	case "":
 		return none(fmt.Sprintf("step %q allocates no performer (agent is empty)", toStatus))
-	case "executor", "reviewer":
+	case "executor":
+		return answer(verb.PerformerExecutor, fmt.Sprintf("step %q is allocated to agent=%s, which is not a dispatched performer", toStatus, target.Agent))
+	case "reviewer":
 		return none(fmt.Sprintf("step %q is allocated to agent=%s, which is not a dispatched performer", toStatus, target.Agent))
 	}
 	// Placement (sty_dde8b6a4): a parallel epic child's step may be declared to
@@ -2027,10 +2035,12 @@ func (g *Engine) resolvePerformer(ctx context.Context, item workitem.Item, toSta
 		return none(fmt.Sprintf("step %q agent %q is not a named performer", toStatus, dispatchAgent))
 	}
 	if config.IsInLoopCommand(binding.CommandTemplate()) {
-		return none(fmt.Sprintf("step %q agent %q is bound in-loop: the driving session performs it", toStatus, dispatchAgent))
+		pr, _ := answer(verb.PerformerInLoop, fmt.Sprintf("step %q agent %q is bound in-loop: the driving session performs it", toStatus, dispatchAgent))
+		pr.Agent = dispatchAgent
+		return pr, nil
 	}
 	return performerResolution{
-		PerformerResolution: verb.PerformerResolution{Agent: dispatchAgent, Dispatched: true},
+		PerformerResolution: verb.PerformerResolution{Agent: dispatchAgent, Dispatched: true, Kind: verb.PerformerDispatched},
 		spec:                spec, wfName: wfName, target: target, placed: placed, binding: binding,
 	}, nil
 }
@@ -2280,20 +2290,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			Actor:       "executor",
 		})
 	}
-	dispatchModelResolved, dispatchModels := toVerbModels(invRes.Usage)
-	res := verb.DispatchResult{
-		Dispatched: true, Agent: dispatchAgent, Command: invRes.Command, Model: modelChoice.Model, Skill: dispatchSkill,
-		ModelResolved: dispatchModelResolved, Models: dispatchModels, ModelSource: modelChoice.Source,
-		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
-		DurationMs: invRes.Usage.Duration.Milliseconds(), UsageAvailable: invRes.Usage.Available,
-		TokensInFresh: invRes.Usage.FreshInputTokens, TokensCacheWrite: invRes.Usage.CacheCreationInputTokens, TokensCacheRead: invRes.Usage.CacheReadInputTokens, UsageNote: usageNoteFor(invRes.Usage, binding),
-		CostUSD: invRes.Usage.CostUSD, CostUnavailableReason: invRes.Usage.CostUnavailableReason,
-		SystemPromptBytes: invRes.SystemPromptBytes, PayloadBytes: invRes.PayloadBytes,
-		Output: string(invRes.Stdout),
-	}
-	if invRes.Err == nil {
-		res.Budget = measureBudget(binding, budget, invRes.Usage)
-	}
+	res := performanceResult(dispatchAgent, dispatchSkill, binding, budget, modelChoice, invRes)
 	g.logExecutorRun(dispatchAgent, item.ID, toStatus, invRes.Stdout, invRes.Err)
 	if invRes.Err != nil {
 		failData := map[string]any{
@@ -2349,6 +2346,28 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		res.ArtifactName, res.ArtifactType = name, typ
 	}
 	return res, nil
+}
+
+// performanceResult is the record of one performer run: who ran, on what
+// command and model, at what cost, and what it printed. DispatchExecutor and
+// PerformExecutorStep both build it, so a dispatched step and an executor step
+// are recorded alike.
+func performanceResult(agent, skill string, binding config.AgentBinding, budget config.Budget, mc ModelChoice, invRes InvokeResult) verb.DispatchResult {
+	modelResolved, models := toVerbModels(invRes.Usage)
+	res := verb.DispatchResult{
+		Dispatched: true, Agent: agent, Command: invRes.Command, Model: mc.Model, Skill: skill,
+		ModelResolved: modelResolved, Models: models, ModelSource: mc.Source,
+		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
+		DurationMs: invRes.Usage.Duration.Milliseconds(), UsageAvailable: invRes.Usage.Available,
+		TokensInFresh: invRes.Usage.FreshInputTokens, TokensCacheWrite: invRes.Usage.CacheCreationInputTokens, TokensCacheRead: invRes.Usage.CacheReadInputTokens, UsageNote: usageNoteFor(invRes.Usage, binding),
+		CostUSD: invRes.Usage.CostUSD, CostUnavailableReason: invRes.Usage.CostUnavailableReason,
+		SystemPromptBytes: invRes.SystemPromptBytes, PayloadBytes: invRes.PayloadBytes,
+		Output: string(invRes.Stdout),
+	}
+	if invRes.Err == nil {
+		res.Budget = measureBudget(binding, budget, invRes.Usage)
+	}
+	return res
 }
 
 // dispatchRawSink creates a sibling raw transport trace only when explicitly

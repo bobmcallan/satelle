@@ -163,4 +163,14 @@ func TestSpineIndexAndObligationStepFollowRouteOrder(t *testing.T) {
 	if got := spec.SpineIndex("blocked-or-unknown"); got != -1 {
 		t.Errorf("SpineIndex of a status off the route = %d, want -1", got)
 	}
+	// SpineSteps is the same order SpineIndex numbers.
+	steps := spec.SpineSteps()
+	if len(steps) < 2 {
+		t.Fatalf("SpineSteps = %v, want the route's steps", steps)
+	}
+	for i, name := range steps {
+		if got := spec.SpineIndex(name); got != i {
+			t.Errorf("SpineSteps[%d] = %q but SpineIndex(%q) = %d", i, name, name, got)
+		}
+	}
 }

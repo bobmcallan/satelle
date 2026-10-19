@@ -430,10 +430,33 @@ type PerformerResolution struct {
 	Agent      string
 	Dispatched bool
 	Reason     string
+	// Kind says which of the engine's answers this is, so a caller that must act
+	// on the difference (the headless drive) reads it from the one owner instead
+	// of re-deriving it from the step's agent= key.
+	Kind PerformerKind
 	// OutputName is the document name the performer's skill declares for its
 	// artifact (output_name); empty when the skill declares no output contract.
 	OutputName string
 }
+
+// PerformerKind classifies a PerformerResolution.
+type PerformerKind string
+
+const (
+	// PerformerDispatched: a named agent whose headless binding performs the step
+	// when it is entered.
+	PerformerDispatched PerformerKind = "dispatched"
+	// PerformerExecutor: the step is allocated to agent=executor, so whoever the
+	// [executor] binding names performs it after it is entered.
+	PerformerExecutor PerformerKind = "executor"
+	// PerformerInLoop: a named agent bound in-loop — the driving session performs.
+	PerformerInLoop PerformerKind = "in-loop"
+	// PerformerNone: the step has no performer (agent-less, a reviewer step, a
+	// non-performer binding, or no workflow governs the item).
+	PerformerNone PerformerKind = "none"
+	// PerformerUndeclared: the workflow declares no such step.
+	PerformerUndeclared PerformerKind = "undeclared"
+)
 
 // PerformerResolver is the engine's single rule for who performs a step
 // (DispatchExecutor applies it too), exposed so a caller that must know BEFORE

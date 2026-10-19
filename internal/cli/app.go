@@ -442,6 +442,7 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 	rev.SetNamedAgents(eff.Agents.NamedBinding)
 	rev.SetDefaultBudget(eff.Agents.Defaults.Budget())
 	rev.SetLiveNamedAgents(eff.Agents.LiveBinding)
+	rev.SetOneShotAgents(eff.Agents.OneShotBinding)
 	rev.SetSessionModelsResolver(verb.SessionModels)
 	rev.SetInvocationRecorder(verb.AppendAgentInvocation)
 	rev.SetLeftoverRule(a.ProcessConfig.Dispatch.Leftovers)
