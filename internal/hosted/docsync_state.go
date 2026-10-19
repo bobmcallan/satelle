@@ -125,6 +125,11 @@ type AreaBase struct {
 	Version  int               `json:"version"`
 	Files    map[string]string `json:"files,omitempty"`
 	Unmerged map[string]string `json:"unmerged,omitempty"`
+	// Defaults are hosted files (path -> sha) a pull proved to be unedited
+	// embedded defaults the installed binary supplies, in a form the binary cannot
+	// predict from its own embedded bodies (an older stamp). Such a path is never
+	// written to the tree, so its sha is kept here to be recognised without a fetch.
+	Defaults map[string]string `json:"defaults,omitempty"`
 }
 
 func areaBaseKey(server, project, repoRoot, area string) string {

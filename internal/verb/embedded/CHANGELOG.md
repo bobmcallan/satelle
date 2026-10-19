@@ -1,3 +1,15 @@
+## [0.0.702] - 2026-10-19
+
+### Fixed
+- `satelle sync status`, `sync pull` and `doctor` no longer report an area behind, unpushed or diverged when the only difference is a hosted copy of an unedited embedded default (for example the default `tsk_*.md` tasks), which the binary supplies and sync never versions. Such an area reads in step, `sync pull` exits 0 and suggests no next step, and `sync reconcile` no longer lists the default as "deleted here only". Hosted bytes that are not an unedited default are still pulled, including on a first pull with no base, and a push never drops an edited task from the hosted copy. (sty_04e8c778)
+- An area with no local files (a directory holding only README.md) reads in step whenever `satelle sync reconcile` lists no differences for it, so `sync pull` no longer loops on "still behind". (sty_04e8c778)
+- `satelle sync reconcile` and `--diff` name a directory-area path by its server key once (`tasks/tsk_x.md`, never `tasks/tasks/tsk_x.md`); `--diff settings/satelle.toml` still resolves. (sty_04e8c778)
+
+## [serve-v0.0.176] - 2026-10-19
+
+### Changed
+- The service binary carries the config helper that lists the shas of an area's unedited embedded defaults (internal/config `AreaDefaultShas`), which sync and doctor use to classify a hosted default. (sty_04e8c778)
+
 ## [0.0.701] - 2026-10-19
 
 ### Fixed

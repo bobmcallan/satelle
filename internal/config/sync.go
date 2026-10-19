@@ -436,6 +436,39 @@ func AreaFiles(cfg Config, repoRoot, area string) ([]ConfigFile, error) {
 	return assemble(files).Files, nil
 }
 
+// AreaDefaultShas is the sha projection of UneditedDefault for one area: per
+// server-relative path, the shas of the file's bytes that UneditedDefault accepts
+// without a fetch — the embedded body, its current stamped form, and any on-disk
+// copy of the path that UneditedDefault accepts. The sync planner holds only shas
+// (and doctor runs offline), so it asks this where a snapsync.Driver.SkipBody asks
+// for bytes; a stamp of an older default is not predictable here, and SkipBody
+// still decides it when the bytes are fetched.
+func AreaDefaultShas(cfg Config, repoRoot, area string) (map[string]map[string]bool, error) {
+	out := map[string]map[string]bool{}
+	add := func(path, body string) {
+		if out[path] == nil {
+			out[path] = map[string]bool{}
+		}
+		out[path][SHA(body)] = true
+	}
+	for rel, body := range embeddedBodyByRel() {
+		if SyncAreaOf(cfg, repoRoot, rel) == area {
+			add(rel, body)
+			add(rel, ApplyStamp(body, SHA(body)))
+		}
+	}
+	files, err := walkAreaFiles(cfg, repoRoot, area, PersonalScope)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range files {
+		if !LocalOnlyPath(f.Path) && UneditedDefault(f.Path, f.Content) {
+			add(f.Path, string(f.Content))
+		}
+	}
+	return out, nil
+}
+
 // PlaceholderSettings reports whether the settings area on disk holds nothing a
 // push would send: no satelle.toml, or one carrying only what push withholds — the
 // repo binding `project bind` writes into a fresh clone. Such a file is a

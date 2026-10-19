@@ -225,12 +225,7 @@ func reconcilePreview(out io.Writer, areas []string, jobs map[string]*snapsync.P
 			fmt.Fprintf(out, "%s: the hosted copy holds no snapshot yet — nothing to reconcile (satelle sync push publishes it)\n", area)
 			continue
 		}
-		var rows []snapsync.Entry
-		for _, e := range job.Plan.Entries {
-			if e.Action != snapsync.InSync {
-				rows = append(rows, e)
-			}
-		}
+		rows := job.Plan.Differences()
 		if len(rows) == 0 {
 			fmt.Fprintf(out, "%s: no differences (hosted snapshot %d)\n", area, job.Version)
 			continue
@@ -254,6 +249,16 @@ func reconcilePreview(out io.Writer, areas []string, jobs map[string]*snapsync.P
 	return nil
 }
 
+// qualify is the operator-facing name of a plan path: <area>/<path>. A directory
+// area's server key already starts with the area (tasks/tsk_x.md), so it is named
+// by that key alone; a single-file area's (settings: satelle.toml) is prefixed.
+func qualify(area, path string) string {
+	if strings.HasPrefix(path, area+"/") {
+		return path
+	}
+	return area + "/" + path
+}
+
 // findReconcileEntry resolves an operator's <area>/<path> against the plans. The
 // path as listed (relative to the data dir) is accepted too, when only one area
 // has it. An in-step path is found too, so a choice naming one is refused by the
@@ -271,7 +276,7 @@ func findReconcileEntry(areas []string, jobs map[string]*snapsync.PullJob, arg s
 			continue
 		}
 		for _, e := range job.Plan.Entries {
-			if area+"/"+e.Path == arg {
+			if qualify(area, e.Path) == arg {
 				qualified = append(qualified, hit{area, e})
 			}
 			if e.Path == arg {
@@ -321,7 +326,7 @@ func reconcileDiff(cmd *cobra.Command, cfg config.Config, repoRoot string, drive
 	}
 	out := cmd.OutOrStdout()
 	class, def := snapsync.Describe(e)
-	fmt.Fprintf(out, "%s/%s — %s (a plain pull: %s)\n", area, e.Path, class, def)
+	fmt.Fprintf(out, "%s — %s (a plain pull: %s)\n", qualify(area, e.Path), class, def)
 	hostedLabel, localLabel := fmt.Sprintf("hosted (snapshot %d) %s", job.Version, e.Path), "local "+e.Path
 	if !haveHosted {
 		hostedLabel += " (absent on hosted)"

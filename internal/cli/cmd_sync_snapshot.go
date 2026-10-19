@@ -135,6 +135,9 @@ func newSnapDriver(cfg config.Config, client *hosted.Client, out io.Writer, serv
 		By: client.Location(), Records: rec, Blobs: blobs, Out: out, PullCmd: pushBehindRemedy, DivergedCmd: pushDivergedRemedy,
 		Owns:     func(area, p string) bool { return config.SyncAreaOf(cfg, repoRoot, p) == area },
 		SkipBody: config.UneditedDefault,
+		Defaults: func(area string) (map[string]map[string]bool, error) {
+			return config.AreaDefaultShas(cfg, repoRoot, area)
+		},
 	}
 }
 

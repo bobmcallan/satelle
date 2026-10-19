@@ -29,14 +29,14 @@ func chooseFixture() (PullPlan, Record, map[string]string) {
 		"remote-changed": "r1", "both-changed": "r3", "added-remote": "r10", "remote-changed-local-deleted": "r9",
 		"local-changed": "b2", "local-deleted": "b6", "incomplete": "stale", "unmerged": "ru2",
 	}
-	return PlanPull(base, remote, 2, local, heads), remote, heads
+	return PlanPull(base, remote, 2, local, heads, DefaultSet{}), remote, heads
 }
 
 func chooseNoBase() (PullPlan, Record, map[string]string) {
 	remote := rec(0, map[string]string{"missing": "m"})
 	local := map[string]string{"stale-done.md": "s", "notes.md": "n"}
 	heads := map[string]string{"missing": "m", "stale-done.md": "s"}
-	return PlanPull(nil, remote, 1, local, heads), remote, heads
+	return PlanPull(nil, remote, 1, local, heads, DefaultSet{}), remote, heads
 }
 
 func entryOf(t *testing.T, p PullPlan, path string) Entry {

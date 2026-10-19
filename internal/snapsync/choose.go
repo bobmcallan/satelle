@@ -67,6 +67,8 @@ func Describe(e Entry) (class, def string) {
 		return "deleted on hosted, changed here", "keep local"
 	case StillUnmerged:
 		return "still unmerged", "stay unmerged"
+	case BinaryDefault:
+		return "supplied by the binary (unedited default)", "-"
 	}
 	return "in step", "-"
 }
@@ -122,7 +124,7 @@ func (p *PullPlan) Choose(remote Record, heads map[string]string, path string, s
 
 	var saved Origin
 	switch e.Action {
-	case InSync:
+	case InSync, BinaryDefault:
 		return OriginNone, fmt.Errorf("%s: does not differ", path)
 	case Incomplete:
 		return OriginNone, incomplete
@@ -217,7 +219,7 @@ func ChooseAll(plan PullPlan, choices map[string]Side, side Side) map[string]Sid
 		choices = map[string]Side{}
 	}
 	for _, e := range plan.Entries {
-		if e.Action == InSync || e.Action == Incomplete {
+		if e.Action == InSync || e.Action == BinaryDefault || e.Action == Incomplete {
 			continue
 		}
 		if _, ok := choices[e.Path]; !ok {

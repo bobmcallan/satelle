@@ -44,6 +44,10 @@ const (
 	DeletedRemotelyKept
 	// StillUnmerged: a conflict from an earlier pull that has not been resolved.
 	StillUnmerged
+	// BinaryDefault: the snapshot holds a file this machine lacks that is an
+	// unedited embedded default (DefaultSet). The installed binary supplies it, so
+	// there is nothing to write, delete or publish: the path is in step.
+	BinaryDefault
 )
 
 // Entry is the decision for one path. Remote is the snapshot's sha for it.
@@ -81,6 +85,20 @@ func (p PullPlan) Count(a Action) int {
 	return n
 }
 
+// Differences returns, in path order, the entries a pull or a push would act on or
+// the operator would have to look at: everything but InSync and BinaryDefault. It
+// is the one definition of "this area differs from the hosted copy" that status,
+// pull and reconcile share.
+func (p PullPlan) Differences() []Entry {
+	var out []Entry
+	for _, e := range p.Entries {
+		if e.Action != InSync && e.Action != BinaryDefault {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // PlanPull decides, per path, how to bring local in line with the effective
 // snapshot (remote, at remoteVersion) given what this machine last synced.
 //
@@ -89,7 +107,9 @@ func (p PullPlan) Count(a Action) int {
 //	heads  — sha of each hosted head in the area, INCLUDING heads the snapshot no
 //	         longer names; used to tell an incomplete upload from a real one and
 //	         to recognise a stale copy of an abandoned head.
-func PlanPull(base *hosted.AreaBase, remote Record, remoteVersion int, local, heads map[string]string) PullPlan {
+//	set    — the unedited embedded defaults: a snapshot file local lacks whose sha
+//	         it holds is BinaryDefault, whether or not the base names the path.
+func PlanPull(base *hosted.AreaBase, remote Record, remoteVersion int, local, heads map[string]string, set DefaultSet) PullPlan {
 	var b hosted.AreaBase
 	if base != nil {
 		b = *base
@@ -142,6 +162,9 @@ func PlanPull(base *hosted.AreaBase, remote Record, remoteVersion int, local, he
 			case inLocal && lsha == rsha:
 				nb.Files[p] = rsha
 				add(p, InSync, rsha)
+			case !inLocal && set.Holds(p, rsha):
+				nb.Files[p] = rsha
+				add(p, BinaryDefault, rsha)
 			case !inLocal && base != nil && inBase && bsha == rsha:
 				nb.Files[p] = bsha
 				add(p, LocalDeleted, rsha)
@@ -196,6 +219,14 @@ func PlanPull(base *hosted.AreaBase, remote Record, remoteVersion int, local, he
 			add(p, LocalOnly, "")
 		}
 	}
+	for p, sha := range b.Defaults {
+		if nb.Files[p] == sha {
+			if nb.Defaults == nil {
+				nb.Defaults = map[string]string{}
+			}
+			nb.Defaults[p] = sha
+		}
+	}
 	return PullPlan{Entries: entries, Base: nb}
 }
 
@@ -221,12 +252,12 @@ type ErrBehind struct {
 // machine. Whether this machine also changed the area is decided here, once, and
 // picks the command the refusal names: a pull of a behind area overwrites
 // nothing local, a pull of a diverged one would.
-func newErrBehind(area string, base *hosted.AreaBase, effVersion int, pending []string, local map[string]string, pullCmd, divergedCmd string) *ErrBehind {
+func newErrBehind(area string, base *hosted.AreaBase, effVersion int, pending []string, local map[string]string, set DefaultSet, pullCmd, divergedCmd string) *ErrBehind {
 	e := &ErrBehind{Area: area, Effective: effVersion, Pending: pending, PullCmd: pullCmd}
 	if base != nil {
 		e.Base = base.Version
 	}
-	if !sameFiles(local, baseFiles(base)) {
+	if !set.sameFilesExcept(local, baseFiles(base)) {
 		e.Diverged, e.PullCmd = true, divergedCmd
 	}
 	return e
@@ -335,7 +366,7 @@ func unmergedRefusal(area string, base *hosted.AreaBase) *ErrUnmerged {
 // silently abandoning a file only another machine has. prune publishes this tree
 // as the whole truth instead: a head the tree lacks is dropped, which is how an
 // existing store's stale files are retired.
-func PlanPush(area, pullCmd, divergedCmd, by string, prune, force bool, base *hosted.AreaBase, effVersion int, eff Record, local, heads map[string]string, copyExists func(path string) bool) (PushPlan, error) {
+func PlanPush(area, pullCmd, divergedCmd, by string, prune, force bool, base *hosted.AreaBase, effVersion int, eff Record, local, heads map[string]string, set DefaultSet, copyExists func(path string) bool) (PushPlan, error) {
 	baseVersion := 0
 	if base != nil {
 		baseVersion = base.Version
@@ -348,7 +379,7 @@ func PlanPush(area, pullCmd, divergedCmd, by string, prune, force bool, base *ho
 	forced := false
 	if effVersion != baseVersion {
 		if !force {
-			return PushPlan{}, newErrBehind(area, base, effVersion, nil, local, pullCmd, divergedCmd)
+			return PushPlan{}, newErrBehind(area, base, effVersion, nil, local, set, pullCmd, divergedCmd)
 		}
 		forced = true
 	}
@@ -359,7 +390,7 @@ func PlanPush(area, pullCmd, divergedCmd, by string, prune, force bool, base *ho
 	}
 	if effVersion > 0 && !forced {
 		var pending []string
-		for _, e := range PlanPull(base, eff, effVersion, local, heads).Entries {
+		for _, e := range PlanPull(base, eff, effVersion, local, heads, set).Entries {
 			switch e.Action {
 			case Write, Delete, Conflict, Incomplete:
 				pending = append(pending, e.Path)
@@ -367,7 +398,7 @@ func PlanPush(area, pullCmd, divergedCmd, by string, prune, force bool, base *ho
 		}
 		if len(pending) > 0 {
 			if !force {
-				return PushPlan{}, newErrBehind(area, base, effVersion, pending, local, pullCmd, divergedCmd)
+				return PushPlan{}, newErrBehind(area, base, effVersion, pending, local, set, pullCmd, divergedCmd)
 			}
 			forced = true
 		}
@@ -388,7 +419,7 @@ func PlanPush(area, pullCmd, divergedCmd, by string, prune, force bool, base *ho
 	if err != nil {
 		return PushPlan{}, err
 	}
-	plan := PushPlan{Record: rec, Claim: !sameFiles(files, eff.Files), Forced: forced, BaseVersion: baseVersion}
+	plan := PushPlan{Record: rec, Claim: !set.sameFilesExcept(files, eff.Files), Forced: forced, BaseVersion: baseVersion}
 	if effVersion == 0 && prune && len(heads) > 0 {
 		plan.Claim = true // an empty tree pruning every stale head still publishes
 	}
@@ -399,18 +430,6 @@ func PlanPush(area, pullCmd, divergedCmd, by string, prune, force bool, base *ho
 	}
 	sort.Strings(plan.Uploads)
 	return plan, nil
-}
-
-func sameFiles(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for p, s := range a {
-		if b[p] != s {
-			return false
-		}
-	}
-	return true
 }
 
 // CopyPath is where a conflicting remote copy of an area's file is parked,

@@ -84,6 +84,11 @@ type Driver struct {
 	// the tree and never parks it as a conflict: the effective item stays the
 	// binary's own default (sty_097833e8). Nil skips nothing.
 	SkipBody func(path string, body []byte) bool
+	// Defaults is the sha projection of SkipBody for one area: per path, the shas
+	// of the bytes SkipBody accepts without a fetch (config.AreaDefaultShas). It
+	// feeds the DefaultSet that every comparison of local with the base or the
+	// snapshot goes through. Nil holds nothing.
+	Defaults func(area string) (map[string]map[string]bool, error)
 	Out      io.Writer
 
 	heads map[string]string
@@ -92,6 +97,19 @@ type Driver struct {
 // skip reports whether the driver's SkipBody predicate holds for the file.
 func (d *Driver) skip(path string, body []byte) bool {
 	return d.SkipBody != nil && d.SkipBody(path, body)
+}
+
+// defaultSet is the area's DefaultSet: the embedded defaults Defaults names joined
+// with those the recorded base already proved.
+func (d *Driver) defaultSet(area string, base *hosted.AreaBase) (DefaultSet, error) {
+	if d.Defaults == nil {
+		return NewDefaultSet(nil, base), nil
+	}
+	shas, err := d.Defaults(area)
+	if err != nil {
+		return DefaultSet{}, err
+	}
+	return NewDefaultSet(shas, base), nil
 }
 
 // SHA is the hex sha256 snapsync records for a file's bytes.
@@ -252,6 +270,7 @@ type PushJob struct {
 	eff        Record
 	plan       PushPlan
 	base       *hosted.AreaBase
+	set        DefaultSet
 }
 
 // Claims reports whether running the job will claim a new snapshot.
@@ -282,7 +301,7 @@ func (d *Driver) PreparePush(ctx context.Context, area string, files []PushFile)
 	if err != nil {
 		return nil, err
 	}
-	job.effVersion, job.eff, job.plan, job.base = p.effVersion, p.eff, p.plan, p.base
+	job.effVersion, job.eff, job.plan, job.base, job.set = p.effVersion, p.eff, p.plan, p.base, p.set
 	return job, nil
 }
 
@@ -293,6 +312,7 @@ type plannedPush struct {
 	effVersion int
 	eff        Record
 	heads      map[string]string
+	set        DefaultSet
 	plan       PushPlan
 }
 
@@ -314,7 +334,10 @@ func (d *Driver) planPush(ctx context.Context, area string, local map[string]str
 		return p, d.unavailable(err)
 	}
 	p.heads = heads
-	p.plan, err = PlanPush(area, d.PullCmd, d.DivergedCmd, d.By, d.Prune, force, p.base, p.effVersion, p.eff, local, heads, d.conflictCopyExists(area))
+	if p.set, err = d.defaultSet(area, p.base); err != nil {
+		return p, err
+	}
+	p.plan, err = PlanPush(area, d.PullCmd, d.DivergedCmd, d.By, d.Prune, force, p.base, p.effVersion, p.eff, local, heads, p.set, d.conflictCopyExists(area))
 	return p, err
 }
 
@@ -345,7 +368,7 @@ func (d *Driver) Push(ctx context.Context, job *PushJob) (PushResult, error) {
 		if won != v {
 			// Another machine claimed the same parent first. Our record stays on
 			// the hosted copy as a dead head every reader ignores.
-			return res, newErrBehind(job.Area, job.base, won, nil, job.local, d.PullCmd, d.DivergedCmd)
+			return res, newErrBehind(job.Area, job.base, won, nil, job.local, job.set, d.PullCmd, d.DivergedCmd)
 		}
 		res.Claimed, res.Version = true, v
 		// The base is what THIS tree holds, not the record: a first claim may carry
@@ -406,6 +429,7 @@ type PullJob struct {
 	base   *hosted.AreaBase
 	remote Record
 	heads  map[string]string
+	set    DefaultSet
 	chosen bool
 }
 
@@ -441,7 +465,11 @@ func (d *Driver) PlanPull(ctx context.Context, area string, local map[string]str
 	if err != nil {
 		return nil, d.unavailable(err)
 	}
-	return &PullJob{Area: area, Version: version, Plan: PlanPull(base, rec, version, local, heads), base: base, remote: rec, heads: heads}, nil
+	set, err := d.defaultSet(area, base)
+	if err != nil {
+		return nil, err
+	}
+	return &PullJob{Area: area, Version: version, Plan: PlanPull(base, rec, version, local, heads, set), base: base, remote: rec, heads: heads, set: set}, nil
 }
 
 // choose applies the job's choices to a plan, naming every path it refuses.
@@ -500,13 +528,15 @@ func (j *PullJob) BaseVersion() int {
 func (j *PullJob) FastForward() bool {
 	for _, e := range j.Plan.Entries {
 		switch e.Action {
-		case InSync:
+		case InSync, BinaryDefault:
 		case Write, Delete:
 			var base string
 			if j.base != nil {
 				base = j.base.Files[e.Path]
 			}
-			if e.Local != base {
+			// A path the base holds as an unedited default is one this machine
+			// lacks by design, exactly as the base says.
+			if e.Local != base && !(e.Local == "" && j.set.Holds(e.Path, base)) {
 				return false
 			}
 		default:
@@ -674,9 +704,10 @@ func (d *Driver) Stage(ctx context.Context, job *PullJob) ([]subsync.File, error
 // keepBinaryDefault turns a planned Write or Conflict whose hosted bytes are an
 // unedited embedded default into no change at all: the file is not written, no
 // conflict copy is parked, and a local edit of the path stays in place to be
-// published by the next push. The planned base already records the snapshot's
-// sha for the path, so a later pull plans nothing for it — a missing local file
-// reads as one this machine does not hold, which is exactly the binary's default.
+// published by the next push. The planned base records the snapshot's sha for the
+// path, and as a proven default (Base.Defaults), so a later pull and the status
+// probe plan nothing for it — a missing local file is the binary's own default,
+// even in a stamp form the binary cannot predict from its embedded bodies.
 func (j *PullJob) keepBinaryDefault(e *Entry) {
 	if e.Action == Conflict {
 		delete(j.Plan.Base.Unmerged, e.Path)
@@ -685,9 +716,14 @@ func (j *PullJob) keepBinaryDefault(e *Entry) {
 		}
 		j.Plan.Base.Files[e.Path] = e.Remote
 	}
-	e.Action = LocalDeleted
+	e.Action = BinaryDefault
 	if e.Local != "" {
 		e.Action = KeepLocal
+	} else {
+		if j.Plan.Base.Defaults == nil {
+			j.Plan.Base.Defaults = map[string]string{}
+		}
+		j.Plan.Base.Defaults[e.Path] = e.Remote
 	}
 	j.Kept = append(j.Kept, e.Path)
 }

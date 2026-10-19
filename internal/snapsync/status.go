@@ -56,6 +56,9 @@ func (d *Driver) Status(ctx context.Context, area string, local map[string]strin
 	case errors.As(err, &unavailable), errors.Is(err, hosted.ErrLoginRequired):
 		st.State, st.Err = StateUnavailable, err
 		return st, nil
+	case errors.As(err, &behind) && !behind.Diverged && len(local) == 0 && p.effVersion > 0:
+		// Nothing local to send, so a push has nothing to be refused for: the pull's
+		// own plan, read below, says whether the hosted copy differs.
 	case errors.As(err, &behind):
 		st.Pending = behind.Pending
 		st.State = StateBehind
@@ -72,16 +75,26 @@ func (d *Driver) Status(ctx context.Context, area string, local map[string]strin
 	switch {
 	case len(local) == 0:
 		// Nothing local to send: a push has no file to upload and cannot publish
-		// a deletion, so the area is never unpushed or never synced. Any hosted
-		// copy is what differs, and a pull is the way to it.
-		if st.Pending = hostedPaths(p); len(st.Pending) > 0 {
+		// a deletion, so the area is never unpushed or never synced. What the
+		// hosted copy holds is what differs, and a pull is the way to it. With a
+		// snapshot that is the pull's own plan — what `sync reconcile` lists — so a
+		// snapshot of files the binary already supplies, or one that no longer names
+		// a stale head, leaves the area in step; with none, any head is a difference.
+		if p.effVersion > 0 {
+			for _, e := range PlanPull(p.base, p.eff, p.effVersion, local, p.heads, p.set).Differences() {
+				st.Pending = append(st.Pending, e.Path)
+			}
+		} else {
+			st.Pending = hostedPaths(p)
+		}
+		if len(st.Pending) > 0 {
 			st.State = StateBehind
 		} else {
 			st.State = StateInStep
 		}
 	case p.base == nil && p.effVersion == 0:
 		st.State = StateNeverSynced
-	case p.plan.Claim || len(p.plan.Uploads) > 0 || !sameFiles(local, baseFiles(p.base)):
+	case p.plan.Claim || len(p.plan.Uploads) > 0 || !p.set.sameFilesExcept(local, baseFiles(p.base)):
 		st.State = StateUnpushed
 	default:
 		st.State = StateInStep
@@ -90,7 +103,8 @@ func (d *Driver) Status(ctx context.Context, area string, local map[string]strin
 }
 
 // hostedPaths lists, sorted, every path the hosted copy holds for the area: live
-// heads, the effective snapshot's files and the base's files.
+// heads, the effective snapshot's files and the base's files. It is the pending set
+// of an area with no snapshot, where there is no plan to read it from.
 func hostedPaths(p plannedPush) []string {
 	seen := map[string]struct{}{}
 	for path, sha := range p.heads {
@@ -147,8 +161,10 @@ type Drift struct {
 
 // OfflineDrift compares local with the area's recorded base. A conflict whose
 // copy has been deleted counts as merged, exactly as when the driver loads the
-// base, so the two never disagree.
-func OfflineDrift(server, project, repoRoot, dataDir, area string, local map[string]string) (Drift, error) {
+// base, so the two never disagree. defaults is config.AreaDefaultShas for the
+// area: a base file that is an unedited embedded default is not a deletion, since
+// the local view never holds one.
+func OfflineDrift(server, project, repoRoot, dataDir, area string, local map[string]string, defaults map[string]map[string]bool) (Drift, error) {
 	b, ok, err := hosted.LoadAreaBase(server, project, repoRoot, area)
 	if err != nil {
 		return Drift{}, err
@@ -156,26 +172,10 @@ func OfflineDrift(server, project, repoRoot, dataDir, area string, local map[str
 	if ok {
 		b, _ = Resolve(b, copyExistsIn(dataDir, area))
 	}
-	d := Drift{Synced: ok, Version: b.Version, Changed: changedPaths(b.Files, local)}
+	d := Drift{Synced: ok, Version: b.Version, Changed: NewDefaultSet(defaults, &b).changedPaths(b.Files, local)}
 	for p := range b.Unmerged {
 		d.Unmerged = append(d.Unmerged, p)
 	}
 	sort.Strings(d.Unmerged)
 	return d, nil
-}
-
-func changedPaths(base, local map[string]string) []string {
-	var out []string
-	for p, s := range local {
-		if base[p] != s {
-			out = append(out, p)
-		}
-	}
-	for p := range base {
-		if _, ok := local[p]; !ok {
-			out = append(out, p)
-		}
-	}
-	sort.Strings(out)
-	return out
 }

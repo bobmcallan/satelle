@@ -147,7 +147,7 @@ func TestStageKeepsBinaryDefault(t *testing.T) {
 			t.Errorf("base lost %s", p)
 		}
 	}
-	again := PlanPull(&job.Plan.Base, h.recs[0], 1, map[string]string{"principles/clash.md": local["principles/clash.md"], "principles/authored.md": SHA([]byte("authored\n"))}, mustHeads(t, h))
+	again := PlanPull(&job.Plan.Base, h.recs[0], 1, map[string]string{"principles/clash.md": local["principles/clash.md"], "principles/authored.md": SHA([]byte("authored\n"))}, mustHeads(t, h), DefaultSet{})
 	for _, e := range again.Entries {
 		switch e.Action {
 		case Write, Delete, Conflict, Incomplete:

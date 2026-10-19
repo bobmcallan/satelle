@@ -23,7 +23,12 @@ func statusOf(t *testing.T, d *Driver, local map[string]string) AreaStatus {
 
 func saveBase(t *testing.T, d *Driver, files map[string]string) {
 	t.Helper()
-	b := hosted.AreaBase{Version: 1, Files: map[string]string{}}
+	saveBaseAt(t, d, 1, files)
+}
+
+func saveBaseAt(t *testing.T, d *Driver, version int, files map[string]string) {
+	t.Helper()
+	b := hosted.AreaBase{Version: version, Files: map[string]string{}}
 	for p, body := range files {
 		b.Files[p] = SHA([]byte(body))
 	}
@@ -75,6 +80,76 @@ func TestStatusEmptyLocalAreaNeverSuggestsAPush(t *testing.T) {
 	}
 }
 
+// sty_04e8c778 AC1: with a snapshot, an area with nothing local reads in step
+// exactly when the pull's own plan — what `sync reconcile` lists — has no
+// difference. A hosted head the snapshot no longer names is not one.
+func TestStatusEmptyLocalAreaFollowsTheReconcilePlan(t *testing.T) {
+	const f, g = "skills/a.md", "skills/b.md"
+	cases := []struct {
+		name        string
+		hosted      func(h *memHosted)
+		baseVersion int
+		base        map[string]string
+		want        string
+		pending     []string
+	}{
+		{name: "an empty snapshot over an abandoned head, base at the snapshot",
+			hosted:      func(h *memHosted) { h.snapshot(map[string]string{f: "a\n"}); h.snapshot(map[string]string{}) },
+			baseVersion: 2, base: map[string]string{}, want: StateInStep},
+		{name: "an empty snapshot over an abandoned head, no base",
+			hosted: func(h *memHosted) { h.snapshot(map[string]string{f: "a\n"}); h.snapshot(map[string]string{}) },
+			want:   StateInStep},
+		{name: "an abandoned head beside a snapshot naming another file",
+			hosted: func(h *memHosted) { h.snapshot(map[string]string{f: "a\n"}); h.snapshot(map[string]string{g: "b\n"}) },
+			want:   StateBehind, pending: []string{g}},
+		{name: "a base that holds a file the snapshot dropped is diverged, as before",
+			hosted:      func(h *memHosted) { h.snapshot(map[string]string{f: "a\n"}); h.snapshot(map[string]string{g: "b\n"}) },
+			baseVersion: 1, base: map[string]string{f: "a\n"}, want: StateDiverged},
+		{name: "heads with no snapshot", hosted: func(h *memHosted) { h.blobs[f] = []byte("a\n") }, want: StateBehind, pending: []string{f}},
+		{name: "a snapshot and no base", hosted: func(h *memHosted) { h.snapshot(map[string]string{f: "a\n"}) }, want: StateBehind, pending: []string{f}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newMemHosted()
+			c.hosted(h)
+			d := testDriver(t, h, nil)
+			if c.base != nil {
+				saveBaseAt(t, d, c.baseVersion, c.base)
+			}
+			st := statusOf(t, d, map[string]string{})
+			if st.State != c.want || !reflect.DeepEqual(st.Pending, c.pending) {
+				t.Fatalf("status = %q pending %v, want %q pending %v", st.State, st.Pending, c.want, c.pending)
+			}
+			job, err := d.PlanPull(context.Background(), "skills", map[string]string{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var listed []string
+			if job != nil {
+				for _, e := range job.Plan.Differences() {
+					listed = append(listed, e.Path)
+				}
+			}
+			if (len(listed) == 0) != (st.State == StateInStep) && job != nil {
+				t.Errorf("status %q but the pull plan lists %v", st.State, listed)
+			}
+		})
+	}
+}
+
+func TestPullPlanDifferencesOmitsWhatNeedsNoChange(t *testing.T) {
+	plan := PullPlan{Entries: []Entry{
+		{Path: "a", Action: InSync}, {Path: "b", Action: BinaryDefault}, {Path: "c", Action: Write}, {Path: "d", Action: LocalDeleted},
+	}}
+	var got []string
+	for _, e := range plan.Differences() {
+		got = append(got, e.Path)
+	}
+	if want := []string{"c", "d"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Differences = %v, want %v", got, want)
+	}
+}
+
 // A nil local map is the same empty area.
 func TestStatusNilLocalIsEmpty(t *testing.T) {
 	if st := statusOf(t, testDriver(t, newMemHosted(), nil), nil); st.State != StateInStep {
@@ -91,11 +166,11 @@ func TestStatusEmptyLocalWithBaseRecordsWhatPullDoes(t *testing.T) {
 	rec := Record{Files: map[string]string{f: sha}}
 	base := &hosted.AreaBase{Version: 1, Files: map[string]string{f: sha}}
 
-	withBase := PlanPull(base, rec, 1, nil, map[string]string{f: sha})
+	withBase := PlanPull(base, rec, 1, nil, map[string]string{f: sha}, DefaultSet{})
 	if len(withBase.Entries) != 1 || withBase.Entries[0].Action != LocalDeleted {
 		t.Fatalf("pull with a base and nothing local = %+v, want one LocalDeleted", withBase.Entries)
 	}
-	noBase := PlanPull(nil, rec, 1, nil, map[string]string{f: sha})
+	noBase := PlanPull(nil, rec, 1, nil, map[string]string{f: sha}, DefaultSet{})
 	if len(noBase.Entries) != 1 || noBase.Entries[0].Action != Write {
 		t.Fatalf("pull with no base and nothing local = %+v, want one Write", noBase.Entries)
 	}

@@ -91,7 +91,12 @@ func judgeSubstrateArea(cfg config.Config, repoRoot, dataDir, abs, server, proje
 		return health.Findings{health.Warn(health.IDSyncConfig, title,
 			fmt.Sprintf("%s: cannot read the local files (%v); not judged", area, err)).About(repoRoot)}
 	}
-	drift, err := snapsync.OfflineDrift(server, project, abs, dataDir, area, local)
+	defaults, err := config.AreaDefaultShas(cfg, repoRoot, area)
+	if err != nil {
+		return health.Findings{health.Warn(health.IDSyncConfig, title,
+			fmt.Sprintf("%s: cannot read the local files (%v); not judged", area, err)).About(repoRoot)}
+	}
+	drift, err := snapsync.OfflineDrift(server, project, abs, dataDir, area, local, defaults)
 	if err != nil {
 		return health.Findings{health.Warn(health.IDSyncConfig, title,
 			fmt.Sprintf("%s: cannot read the synced base (%v); not judged", area, err)).About(repoRoot)}

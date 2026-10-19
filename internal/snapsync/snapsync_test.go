@@ -145,7 +145,7 @@ func TestPlanPullThreeWay(t *testing.T) {
 		"same": "b5", "remote-deleted-local-edited": "l7", "added-local": "l11",
 	}
 	heads := map[string]string{"remote-changed": "r1", "both-changed": "r3", "added-remote": "r10", "remote-changed-local-deleted": "r9"}
-	plan := PlanPull(base, remote, 2, local, heads)
+	plan := PlanPull(base, remote, 2, local, heads, DefaultSet{})
 	got := actions(plan)
 	want := map[string]Action{
 		"remote-changed":               Write,
@@ -205,19 +205,19 @@ func TestPullJobFastForward(t *testing.T) {
 		{"a local addition", copyLocal(func(m map[string]string) { m["new"] = "n" }), heads, false},
 		{"an incomplete entry", baseLocal, map[string]string{"changed": "old", "added": "r9", "gone-here": "r5"}, false},
 	} {
-		plan := PlanPull(base, remote, 2, tc.local, tc.heads)
+		plan := PlanPull(base, remote, 2, tc.local, tc.heads, DefaultSet{})
 		job := &PullJob{Plan: plan, base: base}
 		if got := job.FastForward(); got != tc.want {
 			t.Errorf("%s: FastForward = %v, want %v (actions %v)", tc.name, got, tc.want, actions(plan))
 		}
 	}
 	// A fresh machine with no base and no files takes the whole snapshot.
-	fresh := &PullJob{Plan: PlanPull(nil, remote, 2, map[string]string{}, heads)}
+	fresh := &PullJob{Plan: PlanPull(nil, remote, 2, map[string]string{}, heads, DefaultSet{})}
 	if fresh.FastForward() {
 		t.Errorf("a snapshot naming bytes the hosted copy lacks is not a fast-forward: %v", actions(fresh.Plan))
 	}
 	full := map[string]string{"changed": "r1", "same": "b3", "added": "r9", "edited": "b4", "gone-here": "r5"}
-	fresh = &PullJob{Plan: PlanPull(nil, remote, 2, map[string]string{}, full)}
+	fresh = &PullJob{Plan: PlanPull(nil, remote, 2, map[string]string{}, full, DefaultSet{})}
 	if !fresh.FastForward() {
 		t.Errorf("a fresh machine taking a complete snapshot is a fast-forward: %v", actions(fresh.Plan))
 	}
@@ -226,7 +226,7 @@ func TestPullJobFastForward(t *testing.T) {
 func TestPlanPullIncompleteLeavesPathAlone(t *testing.T) {
 	base := &hosted.AreaBase{Version: 1, Files: map[string]string{"f": "old"}}
 	// The snapshot names new bytes but the hosted head is still the old ones.
-	plan := PlanPull(base, rec(1, map[string]string{"f": "new"}), 2, map[string]string{"f": "old"}, map[string]string{"f": "old"})
+	plan := PlanPull(base, rec(1, map[string]string{"f": "new"}), 2, map[string]string{"f": "old"}, map[string]string{"f": "old"}, DefaultSet{})
 	if got := actions(plan)["f"]; got != Incomplete {
 		t.Fatalf("action = %v, want Incomplete", got)
 	}
@@ -234,7 +234,7 @@ func TestPlanPullIncompleteLeavesPathAlone(t *testing.T) {
 		t.Errorf("an incomplete path keeps its old base sha, got %q", plan.Base.Files["f"])
 	}
 	// Local already equal to the snapshot is in sync whatever the head holds.
-	plan = PlanPull(base, rec(1, map[string]string{"f": "new"}), 2, map[string]string{"f": "new"}, map[string]string{"f": "old"})
+	plan = PlanPull(base, rec(1, map[string]string{"f": "new"}), 2, map[string]string{"f": "new"}, map[string]string{"f": "old"}, DefaultSet{})
 	if got := actions(plan)["f"]; got != InSync {
 		t.Fatalf("local == snapshot: action = %v, want InSync", got)
 	}
@@ -248,7 +248,7 @@ func TestPlanPullNoBase(t *testing.T) {
 	}
 	// stale-done.md equals an abandoned head; notes.md was never published.
 	heads := map[string]string{"equal": "e", "differs": "r", "missing": "m", "stale-done.md": "s"}
-	plan := PlanPull(nil, remote, 1, local, heads)
+	plan := PlanPull(nil, remote, 1, local, heads, DefaultSet{})
 	got := actions(plan)
 	want := map[string]Action{
 		"equal": InSync, "differs": Conflict, "missing": Write,
@@ -267,7 +267,7 @@ func TestPlanPullNoBase(t *testing.T) {
 
 func TestPlanPullStillUnmerged(t *testing.T) {
 	base := &hosted.AreaBase{Version: 2, Files: map[string]string{"x": "old"}, Unmerged: map[string]string{"x": "r"}}
-	plan := PlanPull(base, rec(0, map[string]string{"x": "r"}), 2, map[string]string{"x": "mine"}, map[string]string{"x": "r"})
+	plan := PlanPull(base, rec(0, map[string]string{"x": "r"}), 2, map[string]string{"x": "mine"}, map[string]string{"x": "r"}, DefaultSet{})
 	if got := actions(plan)["x"]; got != StillUnmerged {
 		t.Fatalf("action = %v, want StillUnmerged", got)
 	}
@@ -300,7 +300,7 @@ func TestPlanPushRefusals(t *testing.T) {
 
 	// Behind: base 1, hosted effective 2, nothing changed here — a pull is safe.
 	_, err := PlanPush("skills", "satelle sync pull", "satelle sync reconcile", "loc", false, false, &hosted.AreaBase{Version: 1, Files: map[string]string{"a": "1"}}, 2, eff,
-		map[string]string{"a": "1"}, map[string]string{"a": "1"}, none)
+		map[string]string{"a": "1"}, map[string]string{"a": "1"}, DefaultSet{}, none)
 	var behind *ErrBehind
 	if !errors.As(err, &behind) || behind.Base != 1 || behind.Effective != 2 || behind.Diverged {
 		t.Fatalf("err = %v, want ErrBehind{1,2} not diverged", err)
@@ -317,13 +317,13 @@ func TestPlanPushRefusals(t *testing.T) {
 	// Diverged: the same hosted snapshot, but this machine edited "a" too — the
 	// refusal names reconcile, by the test Driver.Status reports diverged with.
 	_, err = PlanPush("skills", "satelle sync pull", "satelle sync reconcile", "loc", false, false, &hosted.AreaBase{Version: 1, Files: map[string]string{"a": "1"}}, 2, eff,
-		map[string]string{"a": "edited"}, map[string]string{"a": "1"}, none)
+		map[string]string{"a": "edited"}, map[string]string{"a": "1"}, DefaultSet{}, none)
 	if !errors.As(err, &behind) || !behind.Diverged || !contains(err.Error(), "satelle sync reconcile") || contains(err.Error(), "satelle sync pull") {
 		t.Fatalf("err = %v, want a diverged ErrBehind naming reconcile", err)
 	}
 
 	// A machine that has never synced, against a hosted snapshot.
-	_, err = PlanPush("skills", "pull", "reconcile", "loc", false, false, nil, 2, eff, map[string]string{"a": "1"}, nil, none)
+	_, err = PlanPush("skills", "pull", "reconcile", "loc", false, false, nil, 2, eff, map[string]string{"a": "1"}, nil, DefaultSet{}, none)
 	if !errors.As(err, &behind) || behind.Base != 0 {
 		t.Fatalf("no base vs snapshot 2: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestPlanPushRefusals(t *testing.T) {
 	// Unmerged.
 	_, err = PlanPush("skills", "pull", "reconcile", "loc", false, false,
 		&hosted.AreaBase{Version: 2, Files: map[string]string{"a": "1"}, Unmerged: map[string]string{"a": "r"}}, 2, eff,
-		map[string]string{"a": "1"}, map[string]string{"a": "1"}, none)
+		map[string]string{"a": "1"}, map[string]string{"a": "1"}, DefaultSet{}, none)
 	var um *ErrUnmerged
 	if !errors.As(err, &um) || um.Paths[0] != "a" || !contains(err.Error(), "backups/sync-conflicts/skills/a") {
 		t.Fatalf("err = %v, want ErrUnmerged naming the copy", err)
@@ -339,7 +339,7 @@ func TestPlanPushRefusals(t *testing.T) {
 
 	// Versions agree but a hosted change is not applied here yet.
 	_, err = PlanPush("skills", "pull", "reconcile", "loc", false, false, &hosted.AreaBase{Version: 2, Files: map[string]string{"a": "0"}}, 2,
-		rec(0, map[string]string{"a": "1"}), map[string]string{"a": "0"}, map[string]string{"a": "1"}, none)
+		rec(0, map[string]string{"a": "1"}), map[string]string{"a": "0"}, map[string]string{"a": "1"}, DefaultSet{}, none)
 	if !errors.As(err, &behind) || len(behind.Pending) != 1 {
 		t.Fatalf("err = %v, want ErrBehind with pending paths", err)
 	}
@@ -351,7 +351,7 @@ func TestPlanPushPublishesWholeStateAndOnlyChangedBlobs(t *testing.T) {
 	eff := rec(3, map[string]string{"keep": "k", "edit": "e0", "drop": "d"})
 	local := map[string]string{"keep": "k", "edit": "e1", "new": "n"}
 	heads := map[string]string{"keep": "k", "edit": "e0", "drop": "d"}
-	plan, err := PlanPush("skills", "pull", "reconcile", "loc", false, false, base, 4, eff, local, heads, none)
+	plan, err := PlanPush("skills", "pull", "reconcile", "loc", false, false, base, 4, eff, local, heads, DefaultSet{}, none)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func TestPlanPushPublishesWholeStateAndOnlyChangedBlobs(t *testing.T) {
 	}
 
 	// Nothing changed: no claim.
-	plan, err = PlanPush("skills", "pull", "reconcile", "loc", false, false, base, 4, eff, map[string]string{"keep": "k", "edit": "e0", "drop": "d"}, heads, none)
+	plan, err = PlanPush("skills", "pull", "reconcile", "loc", false, false, base, 4, eff, map[string]string{"keep": "k", "edit": "e0", "drop": "d"}, heads, DefaultSet{}, none)
 	if err != nil || plan.Claim || len(plan.Uploads) != 0 {
 		t.Fatalf("unchanged tree: %+v %v, want no claim and no uploads", plan, err)
 	}
@@ -381,10 +381,10 @@ func TestPlanPushForceOverBehind(t *testing.T) {
 	// Behind: this machine last synced snapshot 1, the hosted copy is at 3. A plain
 	// push is refused; the forced one publishes this tree on parent 3.
 	base := &hosted.AreaBase{Version: 1, Files: map[string]string{"a": "a0"}}
-	if _, err := PlanPush("skills", "pull", "reconcile", "loc", false, false, base, 3, eff, local, heads, none); err == nil {
+	if _, err := PlanPush("skills", "pull", "reconcile", "loc", false, false, base, 3, eff, local, heads, DefaultSet{}, none); err == nil {
 		t.Fatal("a behind push without force must be refused")
 	}
-	plan, err := PlanPush("skills", "pull", "reconcile", "loc", false, true, base, 3, eff, local, heads, none)
+	plan, err := PlanPush("skills", "pull", "reconcile", "loc", false, true, base, 3, eff, local, heads, DefaultSet{}, none)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,10 +400,10 @@ func TestPlanPushForceOverBehind(t *testing.T) {
 
 	// Versions agree but a hosted change is not applied here: also overridden.
 	base = &hosted.AreaBase{Version: 3, Files: map[string]string{"a": "a0", "b": "b1"}}
-	if _, err := PlanPush("skills", "pull", "reconcile", "loc", false, false, base, 3, eff, local, heads, none); err == nil {
+	if _, err := PlanPush("skills", "pull", "reconcile", "loc", false, false, base, 3, eff, local, heads, DefaultSet{}, none); err == nil {
 		t.Fatal("a push over unapplied hosted changes without force must be refused")
 	}
-	plan, err = PlanPush("skills", "pull", "reconcile", "loc", false, true, base, 3, eff, local, heads, none)
+	plan, err = PlanPush("skills", "pull", "reconcile", "loc", false, true, base, 3, eff, local, heads, DefaultSet{}, none)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +413,7 @@ func TestPlanPushForceOverBehind(t *testing.T) {
 
 	// Nothing to override: force does not mark an ordinary push as forced.
 	base = &hosted.AreaBase{Version: 3, Files: eff.Files}
-	plan, err = PlanPush("skills", "pull", "reconcile", "loc", false, true, base, 3, eff, eff.Files, heads, none)
+	plan, err = PlanPush("skills", "pull", "reconcile", "loc", false, true, base, 3, eff, eff.Files, heads, DefaultSet{}, none)
 	if err != nil || plan.Forced || plan.Claim {
 		t.Fatalf("in-sync tree: %+v %v, want no claim and not forced", plan, err)
 	}
@@ -425,7 +425,7 @@ func TestPlanPushForceStillRefusesUnmerged(t *testing.T) {
 	for _, baseVersion := range []int{3, 1} { // versions agree, then behind
 		base := &hosted.AreaBase{Version: baseVersion, Files: map[string]string{"a": "1"}, Unmerged: map[string]string{"a": "r"}}
 		plan, err := PlanPush("skills", "pull", "reconcile", "loc", false, true, base, 3, eff,
-			map[string]string{"a": "1"}, map[string]string{"a": "1"}, none)
+			map[string]string{"a": "1"}, map[string]string{"a": "1"}, DefaultSet{}, none)
 		var um *ErrUnmerged
 		if !errors.As(err, &um) || um.Paths[0] != "a" {
 			t.Fatalf("base %d: err = %v, want ErrUnmerged", baseVersion, err)
@@ -440,7 +440,7 @@ func TestPlanPushFirstClaimCarriesForwardUnlessPruned(t *testing.T) {
 	none := func(string) bool { return false }
 	local := map[string]string{"mine": "m"}
 	heads := map[string]string{"theirs": "t", "mine": "old"}
-	plan, err := PlanPush("documents", "pull", "reconcile", "loc", false, false, nil, 0, Record{}, local, heads, none)
+	plan, err := PlanPush("documents", "pull", "reconcile", "loc", false, false, nil, 0, Record{}, local, heads, DefaultSet{}, none)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,7 +450,7 @@ func TestPlanPushFirstClaimCarriesForwardUnlessPruned(t *testing.T) {
 	if !reflect.DeepEqual(plan.Uploads, []string{"mine"}) {
 		t.Errorf("uploads = %v", plan.Uploads)
 	}
-	plan, err = PlanPush("documents", "pull", "reconcile", "loc", true, false, nil, 0, Record{}, local, heads, none)
+	plan, err = PlanPush("documents", "pull", "reconcile", "loc", true, false, nil, 0, Record{}, local, heads, DefaultSet{}, none)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,12 +458,12 @@ func TestPlanPushFirstClaimCarriesForwardUnlessPruned(t *testing.T) {
 		t.Errorf("--prune must drop hosted files the tree lacks: %v", plan.Record.Files)
 	}
 	// Prune of an empty tree still publishes.
-	plan, _ = PlanPush("documents", "pull", "reconcile", "loc", true, false, nil, 0, Record{}, map[string]string{}, heads, none)
+	plan, _ = PlanPush("documents", "pull", "reconcile", "loc", true, false, nil, 0, Record{}, map[string]string{}, heads, DefaultSet{}, none)
 	if !plan.Claim {
 		t.Error("pruning every stale head from an empty tree must still claim")
 	}
 	// Nothing anywhere: nothing to publish.
-	plan, _ = PlanPush("documents", "pull", "reconcile", "loc", false, false, nil, 0, Record{}, map[string]string{}, map[string]string{}, none)
+	plan, _ = PlanPush("documents", "pull", "reconcile", "loc", false, false, nil, 0, Record{}, map[string]string{}, map[string]string{}, DefaultSet{}, none)
 	if plan.Claim {
 		t.Error("an empty tree against an empty store must not claim")
 	}

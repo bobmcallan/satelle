@@ -158,9 +158,13 @@ func TestReconcileDiffShowsBothSides(t *testing.T) {
 			t.Errorf("diff missing %q:\n%s", want, out)
 		}
 	}
-	// The <area>/<path> form names the same path.
-	if qualified := b.mustReconcile("--diff", "skills/skills/x.md"); !strings.Contains(qualified, "-x from A") {
-		t.Errorf("<area>/<path> not accepted:\n%s", qualified)
+	// A directory area's server key already starts with the area, so it names the
+	// path once (sty_04e8c778): the header never reads skills/skills/x.md.
+	if !strings.Contains(out, "skills/x.md — changed on both") || strings.Contains(out, "skills/skills/") {
+		t.Errorf("the diff header must name the server key once:\n%s", out)
+	}
+	if _, err := b.reconcile("--diff", "skills/skills/x.md"); err == nil {
+		t.Error("the doubled skills/skills/x.md names no path")
 	}
 	out = b.mustReconcile("--diff", "skills/anew.md")
 	if !strings.Contains(out, "(absent on local)") || !strings.Contains(out, "-anew") {
