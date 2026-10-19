@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/buildinfo"
+	"github.com/bobmcallan/satelle/internal/semver"
 )
 
 // embeddedChangelog is the binary-shipped CHANGELOG — the only consumer channel
@@ -230,29 +230,6 @@ func ChangelogRange(from, to string) ([]ChangelogEntry, error) {
 	return out, nil
 }
 
-// cmpSemver compares X.Y.Z numeric triples. Returns -1, 0, 1.
-// Non-parseable parts compare as 0.
-func cmpSemver(a, b string) int {
-	ap := parseSemver(a)
-	bp := parseSemver(b)
-	for i := 0; i < 3; i++ {
-		if ap[i] < bp[i] {
-			return -1
-		}
-		if ap[i] > bp[i] {
-			return 1
-		}
-	}
-	return 0
-}
-
-func parseSemver(v string) [3]int {
-	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
-	parts := strings.Split(v, ".")
-	var out [3]int
-	for i := 0; i < 3 && i < len(parts); i++ {
-		n, _ := strconv.Atoi(parts[i])
-		out[i] = n
-	}
-	return out
-}
+// cmpSemver compares X.Y.Z numeric triples leniently (semver.Cmp): returns -1,
+// 0, 1, and a non-parseable part compares as 0.
+func cmpSemver(a, b string) int { return semver.Cmp(a, b) }

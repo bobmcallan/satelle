@@ -29,6 +29,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/releasestate"
+	"github.com/bobmcallan/satelle/internal/semver"
 )
 
 const updateRepo = "bobmcallan/satelle"
@@ -728,14 +729,14 @@ func highestPrefixedTag(body []byte, prefix string) (string, error) {
 func highestTag(best string, tags []string, prefix string) string {
 	bestVer, haveBest := [3]int{}, false
 	if best != "" {
-		bestVer, haveBest = parseTagVersion(strings.TrimPrefix(best, prefix))
+		bestVer, haveBest = semver.ParseStrict(strings.TrimPrefix(best, prefix))
 	}
 	for _, t := range tags {
-		v, ok := parseTagVersion(strings.TrimPrefix(t, prefix))
+		v, ok := semver.ParseStrict(strings.TrimPrefix(t, prefix))
 		if !ok {
 			continue
 		}
-		if !haveBest || lessVersion(bestVer, v) {
+		if !haveBest || semver.Less(bestVer, v) {
 			best, bestVer, haveBest = t, v, true
 		}
 	}
@@ -759,43 +760,11 @@ func prefixedTagsOnPage(body []byte, prefix string) (tags []string, count int, e
 		if r.Draft || !strings.HasPrefix(r.TagName, prefix) {
 			continue
 		}
-		if _, ok := parseTagVersion(strings.TrimPrefix(r.TagName, prefix)); ok {
+		if _, ok := semver.ParseStrict(strings.TrimPrefix(r.TagName, prefix)); ok {
 			tags = append(tags, r.TagName)
 		}
 	}
 	return tags, len(releases), nil
-}
-
-// parseTagVersion parses a strict MAJOR.MINOR.PATCH of non-negative integers.
-// It is deliberately stricter than a general semver compare: a tag that does not
-// parse must never be chosen as the release to install.
-func parseTagVersion(s string) ([3]int, bool) {
-	var v [3]int
-	parts := strings.Split(s, ".")
-	if len(parts) != 3 {
-		return v, false
-	}
-	for i, p := range parts {
-		if p == "" || strings.Trim(p, "0123456789") != "" {
-			return v, false
-		}
-		n, err := strconv.Atoi(p)
-		if err != nil {
-			return v, false
-		}
-		v[i] = n
-	}
-	return v, true
-}
-
-// lessVersion reports whether a sorts before b.
-func lessVersion(a, b [3]int) bool {
-	for i := range a {
-		if a[i] != b[i] {
-			return a[i] < b[i]
-		}
-	}
-	return false
 }
 
 // downloadAndReplace downloads the platform asset for tag from repo's releases,
