@@ -210,6 +210,14 @@ const (
 	// with reason one of token_used | token_expired | token_unknown |
 	// key_mismatch. The token itself is never recorded. Enumeration only.
 	KindRemoteEnrollRefused = "remote_enroll_refused"
+	// KindRemoteStart, KindRemoteStop and KindRemoteIdle record a remote node's
+	// host lifecycle (sty_2b6d0f7f): host.start ran, host.stop ran, or the run
+	// ended with the definition's lifecycle "idle" and the node left running.
+	// Payload is {remote, label, lifecycle} plus error when the host command
+	// failed. Enumeration only.
+	KindRemoteStart = "remote_start"
+	KindRemoteStop  = "remote_stop"
+	KindRemoteIdle  = "remote_idle"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional

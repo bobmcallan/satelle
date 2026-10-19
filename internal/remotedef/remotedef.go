@@ -50,11 +50,44 @@ type Definition struct {
 	Secrets []string `toml:"secrets"`
 	// WakeKey is the .env key name of the wake-only credential used to start the
 	// node.
-	WakeKey  string    `toml:"wake_key"`
+	WakeKey string `toml:"wake_key"`
+	// Lifecycle is what happens to the node when a run ends: "shutdown" (the
+	// default when absent) stops it with host.stop, "idle" leaves it running.
+	Lifecycle string `toml:"lifecycle"`
+	// Repos are fetched onto the node read-only, each at its ref.
+	Repos    []Repo    `toml:"repo"`
+	Network  Network   `toml:"network"`
 	Identity Identity  `toml:"identity"`
 	Host     Host      `toml:"host"`
 	Segments []Segment `toml:"segment"`
 	Triggers []Trigger `toml:"trigger"`
+}
+
+// The two lifecycles a definition may name.
+const (
+	LifecycleShutdown = "shutdown"
+	LifecycleIdle     = "idle"
+)
+
+// EffectiveLifecycle is the lifecycle in force: the one named, else shutdown.
+func (d Definition) EffectiveLifecycle() string {
+	if d.Lifecycle == "" {
+		return LifecycleShutdown
+	}
+	return d.Lifecycle
+}
+
+// Repo is one repository the node fetches, read-only: an https URL and the ref
+// (branch, tag or commit) to check out.
+type Repo struct {
+	URL string `toml:"url"`
+	Ref string `toml:"ref"`
+}
+
+// Network is the node's egress beyond what the definition already implies.
+type Network struct {
+	// Allow are extra hostnames (or *.domain) the node may reach.
+	Allow []string `toml:"allow"`
 }
 
 // Identity is the host identity the remote runs under: a label the platform
@@ -64,11 +97,17 @@ type Identity struct {
 }
 
 // Host is the user's own tooling for reaching the host, each an argv list. The
-// placeholders {label} and {command} are filled by whatever later runs it.
+// placeholders {label}, {command} and {allow} are filled by whatever runs it.
 type Host struct {
 	Start []string `toml:"start"`
-	Run   []string `toml:"run"`
-	Stop  []string `toml:"stop"`
+	// Network applies the egress allowlist to the host: {allow} in it is the
+	// comma-joined list of hosts (see Allowlist).
+	Network []string `toml:"network"`
+	Run     []string `toml:"run"`
+	Stop    []string `toml:"stop"`
+	// Bootstrap are commands run on the node, in order, after the pinned satelle
+	// is installed and before it joins. Each is an argv list.
+	Bootstrap [][]string `toml:"bootstrap"`
 	// Env is the environment the host commands run under. A credential-shaped
 	// name must hold a ${VAR} reference, never a value.
 	Env map[string]string `toml:"env"`
@@ -220,9 +259,18 @@ func (v *validation) checkDefinition() {
 	for _, c := range []struct {
 		key  string
 		argv []string
-	}{{"host.start", def.Host.Start}, {"host.run", def.Host.Run}, {"host.stop", def.Host.Stop}} {
+	}{{"host.start", def.Host.Start}, {"host.network", def.Host.Network}, {"host.run", def.Host.Run}, {"host.stop", def.Host.Stop}} {
 		v.checkArgv(c.key, c.argv)
 	}
+	if len(def.Host.Network) > 0 && !argvHas(def.Host.Network, PlaceholderAllow) {
+		v.fail(DefinitionFile, "host.network", "must carry "+PlaceholderAllow+": the egress allowlist is passed there")
+	}
+	for i, argv := range def.Host.Bootstrap {
+		v.checkArgv(fmt.Sprintf("host.bootstrap[%d]", i), argv)
+	}
+	v.checkLifecycle(def)
+	v.checkRepos(def)
+	v.checkAllow(def)
 	if len(def.Segments) == 0 {
 		v.fail(DefinitionFile, "segment", "required: name at least one lifecycle segment (entry and exit status)")
 	}

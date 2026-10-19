@@ -367,7 +367,7 @@ func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Engine
 		agentTimeout: defaultHardTimeout, idleTimeout: defaultIdleTimeout,
 		busyTimeout: config.DefaultBusyTimeout,
 		cloudPoll:   defaultCloudPoll, cloudDefaultDeadline: defaultCloudDeadline,
-		newRunner: lookupRunner,
+		newRunner: LookupRunner,
 		newOpener: agentcli.OpenerFromBinding,
 		warnOut:   os.Stderr,
 	}
@@ -395,11 +395,12 @@ func (e *ExecutableNotFoundError) Error() string {
 
 func (e *ExecutableNotFoundError) Unwrap() error { return e.Err }
 
-// lookupRunner is the DEFAULT runner constructor: agentcli.RunnerFromBinding
+// LookupRunner is the DEFAULT runner constructor: agentcli.RunnerFromBinding
 // preceded by local executable resolution. It is the default rather than an
 // unconditional step inside DispatchExecutor so tests that inject fake commands
-// through the newRunner seam keep their transport-level fakes.
-func lookupRunner(iface, command string) (agentcli.Runner, error) {
+// through the newRunner seam keep their transport-level fakes. Exported so a
+// remote node can resolve every binding it was handed before it reports ready.
+func LookupRunner(iface, command string) (agentcli.Runner, error) {
 	if tok := config.ExecutableToken(command); tok != "" {
 		if _, err := exec.LookPath(tok); err != nil {
 			return nil, &ExecutableNotFoundError{Command: command, Token: tok, Err: err}

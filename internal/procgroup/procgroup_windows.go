@@ -1,22 +1,20 @@
 //go:build windows
 
-package doctor
+package procgroup
 
 import "os/exec"
 
-// Process-group control for live probes, Windows flavour.
-//
 // Windows has no POSIX process groups, and the Unix Setpgid/Kill pair does not
 // exist in its syscall package. Killing the child directly is the portable
-// behaviour available here: the probe still bounds and terminates what it
+// behaviour available here: the caller still bounds and terminates what it
 // started, it simply cannot guarantee the same reach over grandchildren that a
 // process-group signal gives on Unix.
 
-// setProcessGroup is a no-op on Windows.
-func setProcessGroup(_ *exec.Cmd) {}
+// Set is a no-op on Windows.
+func Set(_ *exec.Cmd) {}
 
-// killGroup terminates the spawned process.
-func killGroup(cmd *exec.Cmd) error {
+// Kill terminates the spawned process.
+func Kill(cmd *exec.Cmd) error {
 	if cmd.Process == nil {
 		return nil
 	}

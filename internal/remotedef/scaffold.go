@@ -57,16 +57,36 @@ secrets = []
 # .env key name of the credential used only to wake the node.
 wake_key = "REMOTE_WAKE_KEY"
 
+# What happens to the node when a run ends: "shutdown" (the default) stops it with
+# host.stop; "idle" leaves it running.
+lifecycle = "shutdown"
+
+# Repositories the node fetches, read-only, at a ref (https only). Add one
+# [[repo]] table per repository; each host joins the egress allowlist.
+# [[repo]]
+# url = "https://git.example.com/team/project.git"
+# ref = "main"
+
+[network]
+# Extra hostnames (or *.domain) the node may reach, beyond the satelle release
+# hosts, the hosted server and the repo hosts, which are always allowed.
+allow = []
+
 [identity]
 # The identity label your platform understands; satelle treats it as opaque.
 label = "your-host-label"
 
 [host]
 # Your own tooling for reaching the host, each an argv list. {label} is the
-# identity label and {command} the command to run on the host.
+# identity label, {command} the command to run on the host and {allow} the
+# comma-joined egress allowlist.
 start = ["your-host-cli", "start", "{label}"]
+network = ["your-host-cli", "network", "{label}", "{allow}"]
 run = ["your-host-cli", "run", "{label}", "{command}"]
 stop = ["your-host-cli", "stop", "{label}"]
+# Commands run on the node after the pinned satelle is installed and before it
+# joins, each an argv list, e.g. bootstrap = [["apt-get", "install", "-y", "git"]].
+bootstrap = []
 
 # Lifecycle segments this remote serves: an entry and an exit status, both
 # statuses of this remote's own workflow (workflows/step.toml).

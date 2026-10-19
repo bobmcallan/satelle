@@ -67,7 +67,7 @@ func NewCaseJudge(opts CaseJudgeOptions) (*CaseJudge, error) {
 		}
 	}
 	if opts.NewRunner == nil {
-		opts.NewRunner = lookupRunner
+		opts.NewRunner = LookupRunner
 	}
 	b, ok := opts.Resolve(opts.Binding)
 	if !ok {

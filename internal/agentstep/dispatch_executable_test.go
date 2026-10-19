@@ -17,7 +17,7 @@ import (
 // the error names the binding and the program, and nothing runs in-loop instead.
 func TestDispatchRefusesMissingExecutable(t *testing.T) {
 	docs := fakeDocs{workflow: dispatchWF}
-	g, r := newEngine(t, "", docs) // default newRunner: lookupRunner
+	g, r := newEngine(t, "", docs) // default newRunner: LookupRunner
 	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
 		return config.AgentBinding{Role: "agent", Command: "satelle-nonexistent-xyz -p {system}", Tools: "Read"}, true
 	})
@@ -46,14 +46,14 @@ func TestLookupRunnerResolvesOnLocalPath(t *testing.T) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	r, err := lookupRunner("command", "satelle-fake-agent -p {system}")
+	r, err := LookupRunner("command", "satelle-fake-agent -p {system}")
 	if err != nil || r == nil {
 		t.Fatalf("resolvable command: runner=%v err=%v", r, err)
 	}
-	if r, err := lookupRunner("command", "in-loop"); err != nil || r != nil {
+	if r, err := LookupRunner("command", "in-loop"); err != nil || r != nil {
 		t.Fatalf("in-loop must not look up anything: %v %v", r, err)
 	}
-	_, err = lookupRunner("command", "satelle-nonexistent-xyz -p {system}")
+	_, err = LookupRunner("command", "satelle-nonexistent-xyz -p {system}")
 	var enf *ExecutableNotFoundError
 	if !errors.As(err, &enf) || enf.Token != "satelle-nonexistent-xyz" {
 		t.Fatalf("want ExecutableNotFoundError naming the token, got %v", err)

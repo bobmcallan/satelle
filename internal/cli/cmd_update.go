@@ -28,11 +28,12 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/release"
 	"github.com/bobmcallan/satelle/internal/releasestate"
 	"github.com/bobmcallan/satelle/internal/semver"
 )
 
-const updateRepo = "bobmcallan/satelle"
+const updateRepo = release.Repo
 
 func init() {
 	var check, noRestart, local, force bool
@@ -485,7 +486,7 @@ func fileChecksum(path string) (string, error) {
 func publishedChecksum(ctx context.Context, repo, tag, binary string) (string, error) {
 	base := os.Getenv("SATELLE_RELEASE_BASE")
 	if base == "" {
-		base = fmt.Sprintf("https://github.com/%s/releases/download", repo)
+		base = release.DownloadBase(repo)
 	}
 	name := assetNameFor(binary, tag)
 	line, err := httpGetBytes(ctx, base+"/"+tag+"/"+name+".sha256", githubAccept)
@@ -614,7 +615,7 @@ func githubAPIGet(ctx context.Context, url string) ([]byte, error) {
 func latestReleaseTag(ctx context.Context, repo string) (string, error) {
 	url := os.Getenv("SATELLE_RELEASE_API")
 	if url == "" {
-		url = fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
+		url = release.LatestAPI(repo)
 	}
 	body, err := githubAPIGet(ctx, url)
 	if err != nil {
@@ -654,7 +655,7 @@ const (
 func latestServeReleaseTag(ctx context.Context, repo string) (string, error) {
 	base := os.Getenv("SATELLE_RELEASE_LIST_API")
 	if base == "" {
-		base = fmt.Sprintf("https://api.github.com/repos/%s/releases", repo)
+		base = release.APIBase(repo)
 	}
 	return highestPrefixedTagInPages(func(page int) ([]byte, error) {
 		return githubAPIGet(ctx, releaseListPageURL(base, page))
@@ -778,7 +779,7 @@ func downloadAndReplace(ctx context.Context, repo, tag, target string) error {
 func downloadAndReplaceNamed(ctx context.Context, repo, tag, binary, target string) error {
 	base := os.Getenv("SATELLE_RELEASE_BASE")
 	if base == "" {
-		base = fmt.Sprintf("https://github.com/%s/releases/download", repo)
+		base = release.DownloadBase(repo)
 	}
 	return downloadAndReplaceFrom(ctx, base+"/"+tag, assetNameFor(binary, tag), target)
 }

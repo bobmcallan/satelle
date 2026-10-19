@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
 )
 
@@ -15,6 +16,10 @@ import (
 // the package's tests.
 func TestMain(m *testing.M) {
 	if os.Getenv("SATELLE_CLI_REEXEC") == "1" {
+		// A test that fakes a release installs this binary as "satelle <version>".
+		if v := os.Getenv("SATELLE_TEST_VERSION"); v != "" {
+			buildinfo.Version = v
+		}
 		initGateRun()
 		root := NewRootCmd()
 		root.SetArgs(os.Args[1:])
