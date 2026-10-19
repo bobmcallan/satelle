@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -39,6 +40,12 @@ type stubServer struct {
 	t       *testing.T
 	ts      *httptest.Server
 	wakeURL string
+
+	// wakeFail makes a fire of a declared trigger record outcome wake_failed and
+	// answer 502 "wake failed", as satelle-server does when it cannot deliver the
+	// wake; noRecord leaves that fire unrecorded and badGateway answers a plain
+	// 502 instead, so the tests can show what the client must not accept.
+	wakeFail, noRecord, badGateway bool
 
 	mu       sync.Mutex
 	seen     []seenRequest
@@ -128,7 +135,9 @@ func (s *stubServer) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.Unmarshal(body, &in)
 		id := fmt.Sprintf("fire_%d", len(s.fires)+1)
-		s.fires = append(s.fires, hosted.FireRecord{ID: id, Trigger: in.Trigger})
+		if !s.noRecord {
+			s.fires = append(s.fires, hosted.FireRecord{ID: id, Trigger: in.Trigger})
+		}
 		if in.Trigger != "" {
 			t := s.find(in.Trigger)
 			if t == nil || t.Paused {
@@ -136,9 +145,23 @@ func (s *stubServer) handle(w http.ResponseWriter, r *http.Request) {
 				if t != nil {
 					reason = "trigger is paused"
 				}
+				if n := len(s.fires); n > 0 && s.fires[n-1].ID == id {
+					s.fires[n-1].Outcome = "refused"
+				}
 				s.reply(w, http.StatusConflict, map[string]string{"error": "trigger_refused", "message": reason, "trigger_id": id})
 				return
 			}
+		}
+		if s.badGateway {
+			s.reply(w, http.StatusBadGateway, map[string]string{"error": "bad_gateway"})
+			return
+		}
+		if s.wakeFail {
+			if n := len(s.fires); n > 0 && s.fires[n-1].ID == id {
+				s.fires[n-1].Outcome = "wake_failed"
+			}
+			s.reply(w, http.StatusBadGateway, map[string]string{"error": "wake_failed", "message": "wake failed", "trigger_id": id})
+			return
 		}
 		if s.wakeURL != "" {
 			wake, _ := json.Marshal(map[string]string{
@@ -152,10 +175,20 @@ func (s *stubServer) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		s.reply(w, http.StatusOK, map[string]string{"trigger_id": id})
 	case rest == "/triggers" && r.Method == http.MethodGet:
-		s.reply(w, http.StatusOK, s.fires)
+		s.reply(w, http.StatusOK, s.newestFirst())
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// newestFirst is the fire records in the order satelle-server lists them: newest
+// first. The caller holds the lock.
+func (s *stubServer) newestFirst() []hosted.FireRecord {
+	out := make([]hosted.FireRecord, len(s.fires))
+	for i, r := range s.fires {
+		out[len(s.fires)-1-i] = r
+	}
+	return out
 }
 
 // remoteWithTriggers creates remote "edge" and gives it the five trigger kinds.
@@ -441,6 +474,142 @@ func TestWakeHandoff(t *testing.T) {
 	}
 }
 
+// setStub changes the stub's behaviour between requests, under its lock.
+func (s *stubServer) setStub(f func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f()
+}
+
+// fireIDs is the set of fire-record ids in the listing. The server lists newest
+// first, so nothing here depends on the order.
+func fireIDs(recs []hosted.FireRecord) map[string]bool {
+	seen := map[string]bool{}
+	for _, r := range recs {
+		seen[r.FireID()] = true
+	}
+	return seen
+}
+
+// newFire returns the record in recs that is not in seen and carries trigger.
+func newFire(recs []hosted.FireRecord, seen map[string]bool, trigger string) (hosted.FireRecord, bool) {
+	for _, r := range recs {
+		if r.FireID() != "" && !seen[r.FireID()] && r.Trigger == trigger {
+			return r, true
+		}
+	}
+	return hosted.FireRecord{}, false
+}
+
+// checkNamedFire fires trigger on the remote and returns the output. A fire the
+// server accepted must be on record under the trigger's name. A fire it
+// answered with 502 "wake failed" also passes, when the listing shows a new
+// record carrying that name with outcome wake_failed. Any other error is
+// returned.
+func checkNamedFire(run func(...string) (string, error), list func() []hosted.FireRecord, remoteID, trigger string) (string, error) {
+	seen := fireIDs(list())
+	out, err := run("fire", remoteID, trigger)
+	var failed *hosted.WakeFailedError
+	wakeFailed := errors.As(err, &failed)
+	if err != nil && !wakeFailed {
+		return out, fmt.Errorf("fire %s: %w", trigger, err)
+	}
+	r, ok := newFire(list(), seen, trigger)
+	if !ok {
+		return out, fmt.Errorf("fire %s left no new record carrying the trigger name (error %v)", trigger, err)
+	}
+	if wakeFailed && r.Outcome != "wake_failed" {
+		return out, fmt.Errorf("a wake failure must record outcome wake_failed, got %+v", r)
+	}
+	return out, nil
+}
+
+// checkRefusedFire fires a trigger the server refuses (a paused one) and returns
+// the output. The refusal must carry the trigger's 409, and the listing must
+// show a new record for the trigger with outcome refused.
+func checkRefusedFire(run func(...string) (string, error), list func() []hosted.FireRecord, remoteID, trigger string) (string, error) {
+	seen := fireIDs(list())
+	out, err := run("fire", remoteID, trigger)
+	if err == nil || !strings.Contains(err.Error(), "trigger "+trigger+" refused") {
+		return out, fmt.Errorf("a paused trigger must be refused with its 409, got %v", err)
+	}
+	r, ok := newFire(list(), seen, trigger)
+	if !ok {
+		return out, fmt.Errorf("the refused fire must be recorded: no new record for %s", trigger)
+	}
+	if r.Outcome != "refused" {
+		return out, fmt.Errorf("a refused fire must record outcome refused, got %+v", r)
+	}
+	return out, nil
+}
+
+// TestRemoteTriggerFireWakeFailed proves, without the network, that a named fire
+// answered 502 "wake failed" and recorded is accepted and reported as a wake
+// failure with the fire recorded, and that nothing else is.
+func TestRemoteTriggerFireWakeFailed(t *testing.T) {
+	remoteWithTriggers(t)
+	srv := newStubServer(t, "")
+	run := func(args ...string) (string, error) {
+		return runRoot(t, append([]string{"remote", "trigger"}, append(args, "--server", srv.ts.URL)...)...)
+	}
+	list := func() []hosted.FireRecord {
+		srv.mu.Lock()
+		defer srv.mu.Unlock()
+		return srv.newestFirst()
+	}
+	if out, err := run("register", stubRemoteID, "--def", "edge"); err != nil {
+		t.Fatalf("register: %v\n%s", err, out)
+	}
+
+	srv.setStub(func() { srv.wakeFail = true })
+	if out, err := checkNamedFire(run, list, stubRemoteID, "nightly"); err != nil {
+		t.Fatalf("a recorded wake failure must pass: %v\n%s", err, out)
+	}
+	// What the command reports names the outcome and the record, not the status.
+	_, err := run("fire", stubRemoteID, "nightly")
+	if err == nil {
+		t.Fatal("a failed wake must still exit non-zero")
+	}
+	for _, want := range []string{"wake failed", "fire recorded as fire_2", "nightly"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("fire output lacks %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "HTTP 502") {
+		t.Errorf("fire output must name the outcome, not only the status: %v", err)
+	}
+
+	// A wake failure the server did not record is not accepted.
+	srv.setStub(func() { srv.noRecord = true })
+	if out, err := checkNamedFire(run, list, stubRemoteID, "nightly"); err == nil {
+		t.Errorf("an unrecorded wake failure must fail the check:\n%s", out)
+	}
+	srv.setStub(func() { srv.noRecord = false })
+
+	// A plain 502 is not a wake failure, whatever is on record.
+	srv.setStub(func() { srv.wakeFail, srv.badGateway = false, true })
+	if out, err := checkNamedFire(run, list, stubRemoteID, "nightly"); err == nil {
+		t.Errorf("a plain 502 must fail the check:\n%s", out)
+	}
+	if _, err := run("fire", stubRemoteID, "nightly"); err == nil || strings.Contains(err.Error(), "wake failed") {
+		t.Errorf("a plain 502 must stay a generic error, got %v", err)
+	}
+
+	// The listing is newest first and holds older "nightly" records by now; a
+	// refused fire is still found as the new one, with outcome refused.
+	srv.setStub(func() { srv.badGateway = false })
+	if out, err := run("pause", stubRemoteID, "nightly"); err != nil {
+		t.Fatalf("pause: %v\n%s", err, out)
+	}
+	if out, err := checkRefusedFire(run, list, stubRemoteID, "nightly"); err != nil {
+		t.Errorf("a recorded refusal must pass: %v\n%s", err, out)
+	}
+	srv.setStub(func() { srv.noRecord = true })
+	if out, err := checkRefusedFire(run, list, stubRemoteID, "nightly"); err == nil {
+		t.Errorf("an unrecorded refusal must fail the check:\n%s", out)
+	}
+}
+
 // TestRemoteTriggerLive runs the trigger commands against a real satelle-server.
 // It is skipped unless SATELLE_LIVE_SERVER (the base URL), SATELLE_LIVE_REMOTE
 // (the remote's server id) and SATELLE_TOKEN (a session token for a member who
@@ -466,38 +635,30 @@ func TestRemoteTriggerLive(t *testing.T) {
 	}
 	client := hosted.NewClient(server, hosted.DefaultStore(), nil)
 	ctx := context.Background()
-	fireFor := func(trigger string) (hosted.FireRecord, bool) {
-		recs, err := client.ListFireRecords(ctx, remoteID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for i := len(recs) - 1; i >= 0; i-- {
-			if recs[i].Trigger == trigger {
-				return recs[i], true
-			}
-		}
-		return hosted.FireRecord{}, false
-	}
 
 	must("register", remoteID, "--def", "edge")
 	if out := must("list", remoteID); !strings.Contains(out, "nightly") || !strings.Contains(out, "from-session") {
 		t.Fatalf("list lacks the registered names:\n%s", out)
 	}
-	must("fire", remoteID, "nightly")
-	if rec, ok := fireFor("nightly"); !ok || rec.FireID() == "" {
-		t.Fatalf("the fire record must carry the trigger name nightly, got %+v (found %v)", rec, ok)
+	// satelle-server answers 502 "wake failed" when it records the fire but
+	// cannot deliver the wake; that is its contract, so it passes when the fire
+	// is on record under the trigger's name.
+	records := func() []hosted.FireRecord {
+		recs, err := client.ListFireRecords(ctx, remoteID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return recs
+	}
+	if out, err := checkNamedFire(run, records, remoteID, "nightly"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
 	must("pause", remoteID, "nightly")
 	if out := must("list", remoteID); !strings.Contains(out, "true") {
 		t.Errorf("list must show the paused trigger:\n%s", out)
 	}
-	before, _ := fireFor("nightly")
-	out, err := run("fire", remoteID, "nightly")
-	if err == nil || !strings.Contains(err.Error(), "trigger nightly refused") {
-		t.Fatalf("a paused trigger must be refused with its 409, got %v\n%s", err, out)
-	}
-	if after, ok := fireFor("nightly"); !ok || after.FireID() == before.FireID() {
-		t.Errorf("the refused fire must be recorded: before %+v after %+v", before, after)
+	if out, err := checkRefusedFire(run, records, remoteID, "nightly"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
 	must("resume", remoteID, "nightly")
 }

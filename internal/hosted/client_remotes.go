@@ -51,13 +51,38 @@ func (e *TriggerRefusedError) Error() string {
 	return msg
 }
 
+// WakeFailedError is the server's 502 on a fire whose wake it could not deliver:
+// the server still recorded the fire (under TriggerID, when it names it) with
+// the outcome wake_failed, so the fire happened and only the delivery did not.
+type WakeFailedError struct {
+	Trigger   string
+	Reason    string
+	TriggerID string
+}
+
+func (e *WakeFailedError) Error() string {
+	name := e.Trigger
+	if name == "" {
+		name = "(unnamed)"
+	}
+	msg := fmt.Sprintf("trigger %s fired, wake failed: %s; fire recorded", name, e.Reason)
+	if e.TriggerID != "" {
+		msg += " as " + e.TriggerID
+	}
+	return msg
+}
+
+// wakeFailedCode is the outcome the server records for such a fire.
+const wakeFailedCode = "wake_failed"
+
 func remoteRoute(remoteID, tail string) string {
 	return "/api/v1/remotes/" + url.PathEscape(remoteID) + tail
 }
 
 // remoteCall sends one authenticated request and returns the body of a 2xx
-// answer. A 409 is returned as the refusal's reason and recorded id; any other
-// non-2xx is a concise server error.
+// answer. A 409 is returned as the refusal's reason and recorded id, a 502 that
+// says the wake failed as a *WakeFailedError; any other non-2xx is a concise
+// server error.
 func (c *Client) remoteCall(ctx context.Context, method, path string, payload any) ([]byte, error) {
 	var raw []byte
 	ctype := ""
@@ -80,14 +105,17 @@ func (c *Client) remoteCall(ctx context.Context, method, path string, payload an
 	case resp.StatusCode == http.StatusUnauthorized:
 		return nil, ErrLoginRequired
 	case resp.StatusCode == http.StatusConflict:
-		return nil, &TriggerRefusedError{Reason: conflictReason(body), TriggerID: conflictTriggerID(body)}
+		return nil, &TriggerRefusedError{Reason: apiReason(body, "HTTP 409"), TriggerID: bodyTriggerID(body)}
+	case resp.StatusCode == http.StatusBadGateway && isWakeFailure(body):
+		return nil, &WakeFailedError{Reason: apiReason(body, "HTTP 502"), TriggerID: bodyTriggerID(body)}
 	default:
 		return nil, fmt.Errorf("hosted: %s %s: %s", method, path, serverError(resp.StatusCode, body))
 	}
 }
 
-// conflictReason is the server's own sentence for a 409, else its code.
-func conflictReason(body []byte) string {
+// apiReason is the server's own sentence for an error answer, else its code,
+// else fallback.
+func apiReason(body []byte, fallback string) string {
 	if e, ok := decodeAPIError(body); ok {
 		if m := strings.TrimSpace(e.Message); m != "" {
 			return m
@@ -96,10 +124,24 @@ func conflictReason(body []byte) string {
 			return m
 		}
 	}
-	return "HTTP 409"
+	return fallback
 }
 
-func conflictTriggerID(body []byte) string {
+// isWakeFailure reports whether a 502 body says the wake could not be
+// delivered, by its code or its sentence; any other 502 (a proxy's, say) is not
+// a recorded fire.
+func isWakeFailure(body []byte) bool {
+	e, ok := decodeAPIError(body)
+	if !ok {
+		return false
+	}
+	if strings.TrimSpace(e.Error) == wakeFailedCode {
+		return true
+	}
+	return strings.Contains(strings.ToLower(e.Message+" "+e.Error), "wake failed")
+}
+
+func bodyTriggerID(body []byte) string {
 	var r FireResult
 	_ = json.Unmarshal(body, &r)
 	return r.TriggerID
@@ -127,7 +169,8 @@ func (c *Client) ListDeclaredTriggers(ctx context.Context, remoteID string) ([]D
 }
 
 // FireRemote fires the remote (POST …/fire), naming a declared trigger and/or a
-// story; either may be empty. A 409 returns a *TriggerRefusedError.
+// story; either may be empty. A 409 returns a *TriggerRefusedError and a 502
+// wake failure a *WakeFailedError.
 func (c *Client) FireRemote(ctx context.Context, remoteID, storyID, trigger string) (FireResult, error) {
 	body := map[string]string{}
 	if storyID != "" {
@@ -148,11 +191,12 @@ func (c *Client) FireRemote(ctx context.Context, remoteID, storyID, trigger stri
 
 // FireRecord is one fire the server recorded (GET …/triggers). The record's id
 // is what a wake carries as trigger_id; Trigger is the declared name, empty for
-// an unnamed fire.
+// an unnamed fire. Outcome is what the server recorded, such as wake_failed.
 type FireRecord struct {
 	ID        string `json:"id"`
 	TriggerID string `json:"trigger_id"`
 	Trigger   string `json:"trigger"`
+	Outcome   string `json:"outcome,omitempty"`
 }
 
 // FireID is the record's id, whichever field the server carried it in.
@@ -185,11 +229,15 @@ func (c *Client) SetTriggerPaused(ctx context.Context, remoteID, name string, pa
 	return err
 }
 
-// nameRefusal fills the trigger name into a refusal the server answered without
-// one.
+// nameRefusal fills the trigger name into a refusal or wake failure the server
+// answered without one.
 func nameRefusal(err error, trigger string) {
 	var refused *TriggerRefusedError
 	if errors.As(err, &refused) {
 		refused.Trigger = trigger
+	}
+	var failed *WakeFailedError
+	if errors.As(err, &failed) {
+		failed.Trigger = trigger
 	}
 }

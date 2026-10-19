@@ -132,7 +132,8 @@ state; dropped ones go. Refuses a definition that does not validate.
 		Long: `Asks the server to fire the remote. A trigger names one of its declared
 triggers; a story names the story to run (none starts the remote's sweep of its
 entry statuses). An undeclared or paused trigger is refused with the server's
-reason. With --def, the trigger name is first checked against that definition.
+reason. A wake the server could not deliver is reported as wake failed; the fire
+is still recorded. With --def, the trigger name is first checked against that definition.
 
 ` + remoteIDHelp,
 		Args: cobra.RangeArgs(1, 2),
