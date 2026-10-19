@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -139,48 +138,9 @@ func RelPath(repoRoot, p string) (string, bool) {
 	return p, true
 }
 
-// Match reports whether rel (slash-separated, repo-relative) matches glob. A
-// glob without a "/" matches a basename at any depth; otherwise it is matched
-// segment by segment against the repo-relative path, "**" standing for any run
-// of segments (including none). Blank and malformed globs never match — a bad
-// glob must not fail open toward matching everything.
-func Match(glob, rel string) bool {
-	glob = strings.TrimSpace(glob)
-	if glob == "" || rel == "" {
-		return false
-	}
-	if !strings.Contains(glob, "/") {
-		ok, err := path.Match(glob, path.Base(rel))
-		return err == nil && ok
-	}
-	return matchSegments(strings.Split(glob, "/"), strings.Split(rel, "/"))
-}
-
-func matchSegments(pat, segs []string) bool {
-	for len(pat) > 0 {
-		if pat[0] == "**" {
-			rest := pat[1:]
-			if len(rest) == 0 {
-				return len(segs) > 0 // "dir/**" needs something beneath dir
-			}
-			for i := 0; i <= len(segs); i++ {
-				if matchSegments(rest, segs[i:]) {
-					return true
-				}
-			}
-			return false
-		}
-		if len(segs) == 0 {
-			return false
-		}
-		ok, err := path.Match(pat[0], segs[0])
-		if err != nil || !ok {
-			return false
-		}
-		pat, segs = pat[1:], segs[1:]
-	}
-	return len(segs) == 0
-}
+// Match reports whether rel (slash-separated, repo-relative) matches glob; the
+// matching rules live in config.GlobMatch.
+func Match(glob, rel string) bool { return config.GlobMatch(glob, rel) }
 
 func matchAny(globs []string, rel string) bool {
 	for _, g := range globs {

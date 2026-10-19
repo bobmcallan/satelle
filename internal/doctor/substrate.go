@@ -70,10 +70,14 @@ func CheckSubstrateSync(repoRoot, dataDir, globalDir string, now time.Time) heal
 	if lerr != nil {
 		return append(out, health.Warn(health.IDSyncConfig, "Substrate sync state", lerr.Error()).About(repoRoot))
 	}
+	ign, ierr := config.LoadIgnore(dataDir)
+	if ierr != nil {
+		return append(out, health.Warn(health.IDSyncConfig, "Substrate sync ignore", ierr.Error()+"; substrate sync not judged").About(dataDir))
+	}
 
 	bad := 0
 	for _, area := range areas {
-		found := judgeSubstrateArea(cfg, repoRoot, dataDir, abs, server, project, area, st, threshold, judged, now)
+		found := judgeSubstrateArea(cfg, repoRoot, dataDir, abs, server, project, area, ign, st, threshold, judged, now)
 		bad += len(found)
 		out = append(out, found...)
 	}
@@ -84,19 +88,19 @@ func CheckSubstrateSync(repoRoot, dataDir, globalDir string, now time.Time) heal
 	return out
 }
 
-func judgeSubstrateArea(cfg config.Config, repoRoot, dataDir, abs, server, project, area string, st syncstate.State, threshold time.Duration, judged bool, now time.Time) health.Findings {
+func judgeSubstrateArea(cfg config.Config, repoRoot, dataDir, abs, server, project, area string, ign config.Ignore, st syncstate.State, threshold time.Duration, judged bool, now time.Time) health.Findings {
 	title := "Substrate " + area
-	local, err := snapsync.LocalShas(cfg, repoRoot, area)
+	local, err := snapsync.LocalShas(cfg, repoRoot, area, ign)
 	if err != nil {
 		return health.Findings{health.Warn(health.IDSyncConfig, title,
 			fmt.Sprintf("%s: cannot read the local files (%v); not judged", area, err)).About(repoRoot)}
 	}
-	defaults, err := config.AreaDefaultShas(cfg, repoRoot, area)
+	defaults, err := config.AreaDefaultShas(cfg, repoRoot, area, ign)
 	if err != nil {
 		return health.Findings{health.Warn(health.IDSyncConfig, title,
 			fmt.Sprintf("%s: cannot read the local files (%v); not judged", area, err)).About(repoRoot)}
 	}
-	drift, err := snapsync.OfflineDrift(server, project, abs, dataDir, area, local, defaults)
+	drift, err := snapsync.OfflineDrift(server, project, abs, dataDir, area, local, defaults, ign)
 	if err != nil {
 		return health.Findings{health.Warn(health.IDSyncConfig, title,
 			fmt.Sprintf("%s: cannot read the synced base (%v); not judged", area, err)).About(repoRoot)}

@@ -337,7 +337,7 @@ func TestStatusInStepWithAnUneditedSeedHostedLacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	local, err := snapsync.LocalShas(cfg, repoRoot, "skills")
+	local, err := snapsync.LocalShas(cfg, repoRoot, "skills", config.Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,11 +506,11 @@ func TestUpgradeConvergeIsNotASubstrateChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bundleBefore, err := config.ConfigFiles(cfg, repoRoot)
+	bundleBefore, err := config.ConfigFiles(cfg, repoRoot, config.Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	shasBefore, err := snapsync.LocalShas(cfg, repoRoot, "principles")
+	shasBefore, err := snapsync.LocalShas(cfg, repoRoot, "principles", config.Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -523,11 +523,11 @@ func TestUpgradeConvergeIsNotASubstrateChange(t *testing.T) {
 		t.Fatalf("test premise: the older seed was not converged (%v):\n%s", lines, on)
 	}
 
-	bundleAfter, err := config.ConfigFiles(cfg, repoRoot)
+	bundleAfter, err := config.ConfigFiles(cfg, repoRoot, config.Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	shasAfter, err := snapsync.LocalShas(cfg, repoRoot, "principles")
+	shasAfter, err := snapsync.LocalShas(cfg, repoRoot, "principles", config.Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}

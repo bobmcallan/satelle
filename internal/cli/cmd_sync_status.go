@@ -271,6 +271,7 @@ type substrateDrivers struct {
 	server, project               string
 	client                        *hosted.Client
 	manifest                      []hosted.ConfigItem
+	ign                           config.Ignore // the .satelleignore, loaded once with the drivers
 	configDriver, documentsDriver *snapsync.Driver
 }
 
@@ -282,20 +283,24 @@ func newSubstrateDrivers(ctx context.Context, cfg config.Config, repoRoot, dataD
 	if err != nil {
 		return nil, err
 	}
-	return &substrateDrivers{cfg: cfg, repoRoot: repoRoot, dataDir: dataDir, server: server, project: project, client: client, manifest: manifest}, nil
+	ign, err := config.LoadIgnore(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	return &substrateDrivers{cfg: cfg, repoRoot: repoRoot, dataDir: dataDir, server: server, project: project, client: client, manifest: manifest, ign: ign}, nil
 }
 
 func (s *substrateDrivers) forArea(area string) *snapsync.Driver {
 	records := newConfigRecords(s.client, s.project, s.manifest)
 	if area == "documents" {
 		if s.documentsDriver == nil {
-			s.documentsDriver = newSnapDriver(s.cfg, s.client, nil, s.server, s.project, s.repoRoot, s.dataDir,
+			s.documentsDriver = newSnapDriver(s.cfg, s.client, nil, s.server, s.project, s.repoRoot, s.dataDir, s.ign,
 				records, &docBlobs{client: s.client, project: s.project})
 		}
 		return s.documentsDriver
 	}
 	if s.configDriver == nil {
-		s.configDriver = newSnapDriver(s.cfg, s.client, nil, s.server, s.project, s.repoRoot, s.dataDir,
+		s.configDriver = newSnapDriver(s.cfg, s.client, nil, s.server, s.project, s.repoRoot, s.dataDir, s.ign,
 			records, &configBlobs{client: s.client, project: s.project, manifest: s.manifest})
 	}
 	return s.configDriver
@@ -323,7 +328,7 @@ func probeSubstrate(ctx context.Context, cfg config.Config, repoRoot, dataDir, s
 // areaStatus is snapsync's Status with any failure folded into an unavailable
 // answer, so one unreadable area never hides the others.
 func areaStatus(ctx context.Context, cfg config.Config, repoRoot string, d *snapsync.Driver, area string) snapsync.AreaStatus {
-	local, err := snapsync.LocalShas(cfg, repoRoot, area)
+	local, err := snapsync.LocalShas(cfg, repoRoot, area, d.Ignore)
 	if err != nil {
 		return snapsync.AreaStatus{Area: area, State: snapsync.StateUnavailable, Err: fmt.Errorf("read local files: %w", err)}
 	}

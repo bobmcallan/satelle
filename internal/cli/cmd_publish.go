@@ -191,17 +191,34 @@ func runPublishPush(cmd *cobra.Command, serverArg, workspaceArg, kind, title str
 		return err
 	}
 	out := cmd.OutOrStdout()
-	// Normalise and refuse .local paths before dry-run listing or any ReadFile
-	// so secrets never load and an explicit caller mistake is a hard error.
+	ign, err := config.LoadIgnore(dataDir)
+	if err != nil {
+		return err
+	}
+	// Normalise and refuse .local and .satelleignore paths before dry-run listing
+	// or any ReadFile so secrets never load and an explicit caller mistake is a
+	// hard error.
 	norm := make([]string, 0, len(paths))
 	for _, p := range paths {
-		rel := strings.TrimPrefix(filepath.ToSlash(p), "./")
+		// Cleaned first, so the checks below and readPath see one spelling of the
+		// path: "config/./.env" or "workflows/../config/.env" cannot slip past a
+		// match on "config/.env" and still read it.
+		rel := strings.TrimPrefix(path.Clean(filepath.ToSlash(p)), "/")
 		rel = strings.TrimPrefix(rel, ".satelle/")
+		// A path that climbs out of the data dir names nothing under it for the
+		// ignore check to judge, yet Join can resolve it back in ("../.satelle/
+		// config/.env"), so it is refused outright.
+		if rel == ".." || strings.HasPrefix(rel, "../") {
+			return fmt.Errorf("publish %s: refusing — path is outside the .satelle data dir", p)
+		}
 		if config.LocalOnlyPath(rel) {
 			return fmt.Errorf("publish %s: refusing — .local files never leave this machine", rel)
 		}
 		if isRemotesPath(rel) {
 			return errors.New(errRemotePushOnly)
+		}
+		if ign.Match(rel) {
+			return fmt.Errorf("publish %s: refusing — matched by %s", rel, config.IgnoreFileName)
 		}
 		norm = append(norm, rel)
 	}

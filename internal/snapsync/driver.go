@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/subsync"
 )
@@ -89,9 +90,46 @@ type Driver struct {
 	// feeds the DefaultSet that every comparison of local with the base or the
 	// snapshot goes through. Nil holds nothing.
 	Defaults func(area string) (map[string]map[string]bool, error)
-	Out      io.Writer
+	// Ignore is the command's loaded .satelleignore. Owns drops the hosted heads
+	// of a path it matches; the driver drops it from the base and the snapshot
+	// record the same way, once, as they enter (loadBase, effective) — so Status,
+	// PlanPull and planPush never see it. The zero value applies the default
+	// patterns only.
+	Ignore config.Ignore
+	Out    io.Writer
 
 	heads map[string]string
+}
+
+// dropIgnored returns files without the paths d.Ignore names. A map with none
+// of them comes back as is; otherwise it is a copy, never the caller's map.
+func (d *Driver) dropIgnored(files map[string]string) map[string]string {
+	return DropIgnored(d.Ignore.Match, files)
+}
+
+// DropIgnored returns files without the paths ignore names; the same map when
+// there are none, otherwise a copy. A nil ignore keeps everything.
+func DropIgnored(ignore func(string) bool, files map[string]string) map[string]string {
+	if ignore == nil {
+		return files
+	}
+	var out map[string]string
+	for p := range files {
+		if !ignore(p) {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]string, len(files))
+			for q, t := range files {
+				out[q] = t
+			}
+		}
+		delete(out, p)
+	}
+	if out == nil {
+		return files
+	}
+	return out
 }
 
 // skip reports whether the driver's SkipBody predicate holds for the file.
@@ -215,6 +253,11 @@ func (d *Driver) loadBase(area string) (*hosted.AreaBase, error) {
 			return nil, err
 		}
 	}
+	// Only the copy handed to callers drops ignored paths; what was saved above
+	// is the base as recorded.
+	b.Files = d.dropIgnored(b.Files)
+	b.Unmerged = d.dropIgnored(b.Unmerged)
+	b.Defaults = d.dropIgnored(b.Defaults)
 	return &b, nil
 }
 
@@ -245,6 +288,7 @@ func (d *Driver) effective(ctx context.Context, area string, base *hosted.AreaBa
 		// "no snapshot" — it is "cannot tell".
 		return base, 0, Record{}, d.unavailable(fmt.Errorf("%d %s snapshot record(s) on the hosted copy are unreadable", head, area))
 	}
+	rec.Files = d.dropIgnored(rec.Files)
 	return base, v, rec, nil
 }
 

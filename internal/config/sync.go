@@ -347,17 +347,17 @@ func LocalOnlyPath(p string) bool {
 }
 
 // assemble is the single seam every push bundle passes through: it applies the
-// .local exclusion, drops unedited embedded defaults, and sorts
-// deterministically. Per-area walks never filter — so a new area added to
+// .local and .satelleignore exclusions (both listed in Bundle.Withheld), drops
+// unedited embedded defaults, and sorts deterministically. Per-area walks never filter — so a new area added to
 // ConfigAreas inherits the guarantee automatically. Because push, status and
 // pull planning (AreaFiles) all read through here, they agree on what counts as
 // substrate the operator wrote.
-func assemble(files []ConfigFile) Bundle {
+func assemble(files []ConfigFile, ign Ignore) Bundle {
 	var kept []ConfigFile
 	var withheld, defaults []string
 	for _, f := range files {
 		switch {
-		case LocalOnlyPath(f.Path):
+		case LocalOnlyPath(f.Path), ign.Match(f.Path):
 			withheld = append(withheld, f.Path)
 		case UneditedDefault(f.Path, f.Content):
 			defaults = append(defaults, f.Path)
@@ -381,7 +381,7 @@ func assemble(files []ConfigFile) Bundle {
 // Paths matching LocalOnlyPath are withheld (listed in Bundle.Withheld, never in
 // Files). Files are returned sorted by Path. A non-existent area on disk is benign
 // (nothing to push yet). An explicitly invalid scope is a hard error.
-func ConfigFiles(cfg Config, repoRoot string) (Bundle, error) {
+func ConfigFiles(cfg Config, repoRoot string, ign Ignore) (Bundle, error) {
 	var out []ConfigFile
 	for _, area := range ConfigAreas {
 		files, _, err := filesForArea(cfg, repoRoot, area)
@@ -390,7 +390,7 @@ func ConfigFiles(cfg Config, repoRoot string) (Bundle, error) {
 		}
 		out = append(out, files...)
 	}
-	return assemble(out), nil
+	return assemble(out, ign), nil
 }
 
 // DocumentFiles walks the documents area under repoRoot with the same scope/
@@ -399,12 +399,12 @@ func ConfigFiles(cfg Config, repoRoot string) (Bundle, error) {
 // resolved scope so the CLI can print a clear "scope=local, skipping" message
 // instead of an ambiguous empty list. Documents is its own sync kind (order:6)
 // — not part of ConfigAreas. Paths matching LocalOnlyPath are withheld.
-func DocumentFiles(cfg Config, repoRoot string) (Bundle, Scope, error) {
+func DocumentFiles(cfg Config, repoRoot string, ign Ignore) (Bundle, Scope, error) {
 	files, scope, err := filesForArea(cfg, repoRoot, "documents")
 	if err != nil {
 		return Bundle{}, scope, err
 	}
-	return assemble(files), scope, nil
+	return assemble(files, ign), scope, nil
 }
 
 // filesForArea walks one named area under repoRoot, applying ScopeFor + tier
@@ -428,12 +428,12 @@ func filesForArea(cfg Config, repoRoot, area string) ([]ConfigFile, Scope, error
 // withholding — but without
 // consulting the area's [sync] scope. A pull needs the local side of a
 // three-way comparison for an area whether or not this machine would push it.
-func AreaFiles(cfg Config, repoRoot, area string) ([]ConfigFile, error) {
+func AreaFiles(cfg Config, repoRoot, area string, ign Ignore) ([]ConfigFile, error) {
 	files, err := walkAreaFiles(cfg, repoRoot, area, PersonalScope)
 	if err != nil {
 		return nil, err
 	}
-	return assemble(files).Files, nil
+	return assemble(files, ign).Files, nil
 }
 
 // AreaDefaultShas is the sha projection of UneditedDefault for one area: per
@@ -443,7 +443,7 @@ func AreaFiles(cfg Config, repoRoot, area string) ([]ConfigFile, error) {
 // (and doctor runs offline), so it asks this where a snapsync.Driver.SkipBody asks
 // for bytes; a stamp of an older default is not predictable here, and SkipBody
 // still decides it when the bytes are fetched.
-func AreaDefaultShas(cfg Config, repoRoot, area string) (map[string]map[string]bool, error) {
+func AreaDefaultShas(cfg Config, repoRoot, area string, ign Ignore) (map[string]map[string]bool, error) {
 	out := map[string]map[string]bool{}
 	add := func(path, body string) {
 		if out[path] == nil {
@@ -452,7 +452,7 @@ func AreaDefaultShas(cfg Config, repoRoot, area string) (map[string]map[string]b
 		out[path][SHA(body)] = true
 	}
 	for rel, body := range embeddedBodyByRel() {
-		if SyncAreaOf(cfg, repoRoot, rel) == area {
+		if SyncAreaOf(cfg, repoRoot, rel, ign) == area {
 			add(rel, body)
 			add(rel, ApplyStamp(body, SHA(body)))
 		}
@@ -462,7 +462,7 @@ func AreaDefaultShas(cfg Config, repoRoot, area string) (map[string]map[string]b
 		return nil, err
 	}
 	for _, f := range files {
-		if !LocalOnlyPath(f.Path) && UneditedDefault(f.Path, f.Content) {
+		if !LocalOnlyPath(f.Path) && !ign.Match(f.Path) && UneditedDefault(f.Path, f.Content) {
 			add(f.Path, string(f.Content))
 		}
 	}
@@ -474,8 +474,8 @@ func AreaDefaultShas(cfg Config, repoRoot, area string) (map[string]map[string]b
 // repo binding `project bind` writes into a fresh clone. Such a file is a
 // placeholder, not an authored copy, so a deploy must not treat it as a change
 // that conflicts with the hosted settings (sty_7562055c).
-func PlaceholderSettings(cfg Config, repoRoot string) (bool, error) {
-	files, err := AreaFiles(cfg, repoRoot, "settings")
+func PlaceholderSettings(cfg Config, repoRoot string, ign Ignore) (bool, error) {
+	files, err := AreaFiles(cfg, repoRoot, "settings", ign)
 	if err != nil {
 		return false, err
 	}
@@ -506,7 +506,13 @@ func emptyTables(m map[string]any) bool {
 // of [substrate_roots], so the owner is a function of the key alone — which is
 // what lets a puller decide whether a hosted path the current snapshot does not
 // name was published and then deleted, or was never an area's to begin with.
-func SyncAreaOf(cfg Config, repoRoot, path string) string {
+// A path ign matches belongs to no area either: it is never synced, so a hosted
+// copy of it is not a difference. ign is passed in, never cached, so the answer
+// follows the .satelleignore the command loaded.
+func SyncAreaOf(cfg Config, repoRoot, path string, ign Ignore) string {
+	if ign.Match(path) {
+		return ""
+	}
 	switch path {
 	case AgentsRel:
 		return "agents"

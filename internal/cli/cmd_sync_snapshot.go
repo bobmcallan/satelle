@@ -124,8 +124,9 @@ const (
 	pushDivergedRemedy = "satelle sync reconcile"
 )
 
-// newSnapDriver builds the shared driver for one route.
-func newSnapDriver(cfg config.Config, client *hosted.Client, out io.Writer, server, project, repoRoot, dataDir string, rec snapsync.Records, blobs snapsync.Blobs) *snapsync.Driver {
+// newSnapDriver builds the shared driver for one route. ign is the command's
+// loaded .satelleignore (config.LoadIgnore), passed in rather than cached.
+func newSnapDriver(cfg config.Config, client *hosted.Client, out io.Writer, server, project, repoRoot, dataDir string, ign config.Ignore, rec snapsync.Records, blobs snapsync.Blobs) *snapsync.Driver {
 	abs, err := filepath.Abs(repoRoot)
 	if err != nil {
 		abs = repoRoot
@@ -133,11 +134,12 @@ func newSnapDriver(cfg config.Config, client *hosted.Client, out io.Writer, serv
 	return &snapsync.Driver{
 		Server: server, Project: project, RepoRoot: abs, DataDir: dataDir,
 		By: client.Location(), Records: rec, Blobs: blobs, Out: out, PullCmd: pushBehindRemedy, DivergedCmd: pushDivergedRemedy,
-		Owns:     func(area, p string) bool { return config.SyncAreaOf(cfg, repoRoot, p) == area },
+		Owns:     func(area, p string) bool { return config.SyncAreaOf(cfg, repoRoot, p, ign) == area },
 		SkipBody: config.UneditedDefault,
 		Defaults: func(area string) (map[string]map[string]bool, error) {
-			return config.AreaDefaultShas(cfg, repoRoot, area)
+			return config.AreaDefaultShas(cfg, repoRoot, area, ign)
 		},
+		Ignore: ign,
 	}
 }
 
@@ -220,7 +222,7 @@ func snapshotOnlyRefusal(cause error) error {
 }
 
 // pushConfigSnapshots is the config push when the hosted copy can hold snapshots.
-func pushConfigSnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir string, client *hosted.Client, server, project string, manifest []hosted.ConfigItem, files []config.ConfigFile) (pushOutcome, bool, error) {
+func pushConfigSnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir string, ign config.Ignore, client *hosted.Client, server, project string, manifest []hosted.ConfigItem, files []config.ConfigFile) (pushOutcome, bool, error) {
 	byArea := map[string][]snapsync.PushFile{}
 	for _, f := range files {
 		byArea[f.Area] = append(byArea[f.Area], snapsync.PushFile{Path: f.Path, Content: f.Content})
@@ -235,7 +237,7 @@ func pushConfigSnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, dataDi
 			areas = append(areas, area)
 		}
 	}
-	d := newSnapDriver(cfg, client, cmd.OutOrStdout(), server, project, repoRoot, dataDir,
+	d := newSnapDriver(cfg, client, cmd.OutOrStdout(), server, project, repoRoot, dataDir, ign,
 		newConfigRecords(client, project, manifest),
 		&configBlobs{client: client, project: project, manifest: manifest})
 	d.Prune = pruneRequested(cmd)
@@ -252,7 +254,7 @@ func pushConfigSnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, dataDi
 // pushDocumentsSnapshot is the documents push when the hosted copy can hold
 // snapshots. The records ride the config route, so it reads that manifest; a
 // server without one gets the plain upload.
-func pushDocumentsSnapshot(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir string, client *hosted.Client, server, project string, files []config.ConfigFile) (pushOutcome, bool, error) {
+func pushDocumentsSnapshot(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir string, ign config.Ignore, client *hosted.Client, server, project string, files []config.ConfigFile) (pushOutcome, bool, error) {
 	manifest, err := client.ConfigManifest(cmd.Context(), project)
 	if err != nil {
 		if errors.Is(err, hosted.ErrLoginRequired) {
@@ -267,7 +269,7 @@ func pushDocumentsSnapshot(cmd *cobra.Command, cfg config.Config, repoRoot, data
 	for _, f := range files {
 		pf = append(pf, snapsync.PushFile{Path: f.Path, Content: f.Content})
 	}
-	d := newSnapDriver(cfg, client, cmd.OutOrStdout(), server, project, repoRoot, dataDir,
+	d := newSnapDriver(cfg, client, cmd.OutOrStdout(), server, project, repoRoot, dataDir, ign,
 		newConfigRecords(client, project, manifest),
 		&docBlobs{client: client, project: project})
 	d.Prune = pruneRequested(cmd)
@@ -324,7 +326,7 @@ func (s *configDeploySnapshots) owns(cfg config.Config, repoRoot, path string) b
 	if s == nil {
 		return false
 	}
-	return s.areas[config.SyncAreaOf(cfg, repoRoot, path)]
+	return s.areas[config.SyncAreaOf(cfg, repoRoot, path, s.driver.Ignore)]
 }
 
 // planConfigDeploySnapshots plans each config area the hosted copy holds a
@@ -340,8 +342,12 @@ func planConfigDeploySnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, 
 			has[area] = true
 		}
 	}
+	ign, err := config.LoadIgnore(dataDir)
+	if err != nil {
+		return nil, err
+	}
 	s := &configDeploySnapshots{areas: map[string]bool{}}
-	s.driver = newSnapDriver(cfg, client, cmd.OutOrStdout(), server, project, repoRoot, dataDir,
+	s.driver = newSnapDriver(cfg, client, cmd.OutOrStdout(), server, project, repoRoot, dataDir, ign,
 		newConfigRecords(client, project, manifest),
 		&configBlobs{client: client, project: project, manifest: manifest})
 	s.driver.Materialize = rc == nil
@@ -429,7 +435,7 @@ func (s *configDeploySnapshots) recordStates(ctx context.Context, cfg config.Con
 // with the hosted snapshot (sty_fe5a8ed4): what a push would send, except that a
 // fresh clone's placeholder settings count as no local file at all.
 func pullLocalShas(cfg config.Config, repoRoot, server, project string, d *snapsync.Driver, area string) (map[string]string, error) {
-	local, err := snapsync.LocalShas(cfg, repoRoot, area)
+	local, err := snapsync.LocalShas(cfg, repoRoot, area, d.Ignore)
 	if err != nil {
 		return nil, err
 	}
@@ -438,7 +444,7 @@ func pullLocalShas(cfg config.Config, repoRoot, server, project string, d *snaps
 		// a push withholds: with no base to say otherwise it is a placeholder, so
 		// the hosted settings are restored rather than parked as a conflict.
 		if _, synced, berr := hosted.LoadAreaBase(server, project, d.RepoRoot, area); berr == nil && !synced {
-			if placeholder, perr := config.PlaceholderSettings(cfg, repoRoot); perr == nil && placeholder {
+			if placeholder, perr := config.PlaceholderSettings(cfg, repoRoot, d.Ignore); perr == nil && placeholder {
 				return nil, nil
 			}
 		}
@@ -476,10 +482,14 @@ func planDocumentsPull(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir 
 		}
 		return nil, false, nil
 	}
-	d := newSnapDriver(cfg, client, cmd.OutOrStdout(), server, project, repoRoot, dataDir,
+	ign, err := config.LoadIgnore(dataDir)
+	if err != nil {
+		return nil, true, err
+	}
+	d := newSnapDriver(cfg, client, cmd.OutOrStdout(), server, project, repoRoot, dataDir, ign,
 		newConfigRecords(client, project, manifest),
 		&docBlobs{client: client, project: project})
-	local, err := snapsync.LocalShas(cfg, repoRoot, "documents")
+	local, err := snapsync.LocalShas(cfg, repoRoot, "documents", ign)
 	if err != nil {
 		return nil, true, err
 	}
@@ -531,7 +541,7 @@ func (dp *documentsPull) run(cmd *cobra.Command, cfg config.Config, repoRoot, da
 	skipped := 0
 	if heads, herr := d.Heads(cmd.Context()); herr == nil {
 		for p := range heads {
-			if subsync.ExcludedLocal(p) {
+			if subsync.ExcludedLocalBy(p, d.Ignore) {
 				skipped++
 			}
 		}

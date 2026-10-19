@@ -71,10 +71,11 @@ func (r Result) Err() error {
 // lets a deploy walk only config areas yet still refuse a hostile or corrupt
 // manifest that names a live database. The .local segment rule is shared with
 // the push bundler (config.LocalOnlyPath) so a file that reached the server from
-// an older client cannot be written back down either.
-func excludedLocal(rel string) bool {
+// an older client cannot be written back down either. Paths the repo's
+// .satelleignore (ign) lists are never written down either.
+func excludedLocal(rel string, ign config.Ignore) bool {
 	rel = filepath.ToSlash(rel)
-	if config.LocalOnlyPath(rel) {
+	if config.LocalOnlyPath(rel) || ign.Match(rel) {
 		return true
 	}
 	switch rel {
@@ -100,12 +101,18 @@ func excludedLocal(rel string) bool {
 // Returns false when the path fails cleanRel (absolute, "..", empty, …): those
 // are Restore hard-errors, not skips — pre-filtering them would swallow the
 // escape guard.
-func ExcludedLocal(p string) bool {
+//
+// It applies the built-in exclusions and the default ignore only; a caller that
+// holds the repo's loaded .satelleignore passes it through ExcludedLocalBy.
+func ExcludedLocal(p string) bool { return ExcludedLocalBy(p, config.Ignore{}) }
+
+// ExcludedLocalBy is ExcludedLocal with the repo's loaded .satelleignore.
+func ExcludedLocalBy(p string, ign config.Ignore) bool {
 	rel, err := cleanRel(p)
 	if err != nil {
 		return false
 	}
-	return excludedLocal(rel)
+	return excludedLocal(rel, ign)
 }
 
 // Restore writes files under <dataDir>, each byte-for-byte, parent dirs created,
@@ -132,12 +139,16 @@ func ExcludedLocal(p string) bool {
 // rather than refused.
 func Restore(dataDir string, files []File) (Result, error) {
 	var res Result
+	ign, err := config.LoadIgnore(dataDir)
+	if err != nil {
+		return res, fmt.Errorf("subsync: restore: %w", err)
+	}
 	for _, f := range files {
 		rel, err := cleanRel(f.Path)
 		if err != nil {
 			return res, fmt.Errorf("subsync: restore %q: %w", f.Path, err)
 		}
-		if excludedLocal(rel) {
+		if excludedLocal(rel, ign) {
 			res.Skipped = append(res.Skipped, rel)
 			continue
 		}
@@ -199,12 +210,16 @@ func WriteAside(dataDir, rel string, content []byte) error {
 // It returns the paths it actually removed.
 func Remove(dataDir string, rels []string) ([]string, error) {
 	var removed []string
+	ign, err := config.LoadIgnore(dataDir)
+	if err != nil {
+		return removed, fmt.Errorf("subsync: remove: %w", err)
+	}
 	for _, p := range rels {
 		rel, err := cleanRel(p)
 		if err != nil {
 			return removed, fmt.Errorf("subsync: remove %q: %w", p, err)
 		}
-		if excludedLocal(rel) {
+		if excludedLocal(rel, ign) {
 			continue
 		}
 		dest := filepath.Join(dataDir, filepath.FromSlash(rel))
