@@ -202,6 +202,12 @@ const (
 	// the story; Refs is {fire_id, story, status}; Payload is {remote, status,
 	// in_contract, local_known, reason}.
 	KindRemoteHandback = "remote_handback"
+	// KindRemoteRun records one step a remote ran on its host (sty_2f3baf0a): the
+	// join between a story and whatever the step changed. StoryID is the story;
+	// Refs is {fire_id, story, run_id}; Payload is {remote, version, host, label,
+	// step, run_id, started, ended} plus error when the run failed. Never an
+	// environment value, argv or credential. Enumeration only.
+	KindRemoteRun = "remote_run"
 	// KindCommandRule records one agent command a repo-authored
 	// [[gate.command_rule]] matched and let run, or refused (sty_a74551d6).
 	// Payload is {command, rule_index, pattern, action, decision, delivered,
@@ -242,6 +248,20 @@ const (
 	// definition's declared expectation, not Go's judgement of a service.
 	KindRemotePreflight = "remote_preflight"
 )
+
+// RemoteRunPayload is the payload of a KindRemoteRun row: the one shape the
+// recorder writes and the route reads. Fixed fields only; the times are RFC 3339.
+type RemoteRunPayload struct {
+	Remote  string `json:"remote"`
+	Version string `json:"version"`
+	Host    string `json:"host"`
+	Label   string `json:"label"`
+	Step    string `json:"step"`
+	RunID   string `json:"run_id"`
+	Started string `json:"started"`
+	Ended   string `json:"ended"`
+	Error   string `json:"error,omitempty"`
+}
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional
 // correlation ids — a row may be scoped to either, both, or neither.

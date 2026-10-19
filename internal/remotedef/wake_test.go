@@ -42,6 +42,12 @@ func (f fakeStories) At(_ context.Context, status string) ([]StoryRef, error) {
 type fakeRecorder struct {
 	seen      map[string]Handoff
 	handbacks []Handback
+	runs      []RunRecord
+}
+
+func (r *fakeRecorder) RecordRun(_ context.Context, run RunRecord) error {
+	r.runs = append(r.runs, run)
+	return nil
 }
 
 func (r *fakeRecorder) Record(_ context.Context, h Handoff) (bool, error) {

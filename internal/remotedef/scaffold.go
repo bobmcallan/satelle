@@ -77,6 +77,8 @@ allow = []
 label = "your-host-label"
 
 [host]
+# The host's name as your team knows it; recorded on each remote_run row.
+# name = "your-host-name"
 # Your own tooling for reaching the host, each an argv list. {label} is the
 # identity label, {command} the command to run on the host and {allow} the
 # comma-joined egress allowlist.
@@ -87,7 +89,10 @@ stop = ["your-host-cli", "stop", "{label}"]
 # Commands run on the node after the pinned satelle is installed and before it
 # joins, each an argv list, e.g. bootstrap = [["apt-get", "install", "-y", "git"]].
 bootstrap = []
-# The command that works one story on the host; {story} is the story's id.
+# The command that works one story on the host; {story} is the story's id. Local
+# satelle runs host.run with SATELLE_STORY_ID, SATELLE_STEP and SATELLE_RUN_ID set,
+# matching the run it records; carry them onto the host in your host.run tooling
+# (as you do host.env) to stamp them on commits, pull requests and resource tags.
 # story_command = "your-agent-cli {story}"
 
 # Lifecycle segments this remote serves: an entry and an exit status, both

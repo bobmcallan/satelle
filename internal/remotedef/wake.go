@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/bobmcallan/satelle/internal/ledger"
 )
 
 // WakeRequest is what the server delivers to a remote's wake endpoint when a
@@ -21,13 +24,30 @@ type WakeRequest struct {
 
 // Handoff is one story a wake handed to the remote: the remote, the declared
 // trigger and its kind (both empty for an unnamed fire), the fire-record id and
-// the story.
+// the story, the step it is handed over at (its status at hand-off) and the id of
+// the run (empty until the wake mints one for a run).
 type Handoff struct {
 	Remote  string
 	Trigger string
 	Kind    string
 	FireID  string
 	Story   string
+	Step    string
+	RunID   string
+}
+
+// RunRecord is one step run on the remote's host, as recorded on the story: where
+// (remote, pinned version, host name) and as whom (identity label) it ran, the
+// step and run id, and when. It has no env, argv or credential field, so none can
+// reach the ledger through it. Error is the runner's, empty on success.
+type RunRecord struct {
+	Handoff
+	Version string
+	Host    string
+	Label   string
+	Started time.Time
+	Ended   time.Time
+	Error   string
 }
 
 // Handback is a story the remote left somewhere the contract or the local
@@ -73,6 +93,8 @@ type HandoffRecorder interface {
 	Record(ctx context.Context, h Handoff) (bool, error)
 	// RecordHandback records a story left outside the contract or the local route.
 	RecordHandback(ctx context.Context, b Handback) error
+	// RecordRun records one step run, whether it succeeded or failed.
+	RecordRun(ctx context.Context, r RunRecord) error
 }
 
 // Runner works one handed-off story on the host. command is the definition's
@@ -91,12 +113,13 @@ type LocalRoute interface {
 
 // Wiring is what a wake needs beyond the definition. Runner nil makes a wake
 // record-only: stories are handed off and nothing is run or checked. Local nil
-// skips the local-route check.
+// skips the local-route check. Now nil is time.Now.
 type Wiring struct {
 	Stories  StoryReader
 	Recorder HandoffRecorder
 	Runner   Runner
 	Local    LocalRoute
+	Now      func() time.Time
 }
 
 // StoryPlaceholder stands for a story's id in host.story_command.
@@ -221,7 +244,7 @@ func Wake(ctx context.Context, name string, def *Definition, req WakeRequest, w 
 		}
 	}
 
-	var ids []string
+	var picked []StoryRef
 	if req.StoryID != "" {
 		st, err := w.Stories.Story(ctx, req.StoryID)
 		if err != nil {
@@ -230,7 +253,7 @@ func Wake(ctx context.Context, name string, def *Definition, req WakeRequest, w 
 		if _, err := def.Accepts(st.Status, st.Category); err != nil {
 			return nil, nil, fmt.Errorf("remote %s: story %s %w", remote, st.ID, err)
 		}
-		ids = []string{req.StoryID}
+		picked = []StoryRef{st}
 	} else {
 		for _, e := range def.EntryStatuses() {
 			at, err := w.Stories.At(ctx, e)
@@ -239,17 +262,22 @@ func Wake(ctx context.Context, name string, def *Definition, req WakeRequest, w 
 			}
 			for _, st := range at {
 				if _, err := def.Accepts(st.Status, st.Category); err == nil {
-					ids = append(ids, st.ID)
+					picked = append(picked, st)
 				}
 			}
 		}
-		sort.Strings(ids)
+		sort.Slice(picked, func(i, j int) bool { return picked[i].ID < picked[j].ID })
 	}
 
+	now := w.Now
+	if now == nil {
+		now = time.Now
+	}
 	var out []Handoff
 	var backs []Handback
-	for _, id := range ids {
-		h.Story = id
+	for _, st := range picked {
+		id := st.ID
+		h.Story, h.Step, h.RunID = id, st.Status, ""
 		fresh, err := w.Recorder.Record(ctx, h)
 		if err != nil {
 			return out, backs, err
@@ -261,8 +289,18 @@ func Wake(ctx context.Context, name string, def *Definition, req WakeRequest, w 
 		if w.Runner == nil {
 			continue
 		}
-		if err := w.Runner.Run(ctx, h, RenderStoryCommand(def, id)); err != nil {
-			return out, backs, fmt.Errorf("running story %s on remote %s: %w", id, remote, err)
+		h.RunID = ledger.NewRunID()
+		rec := RunRecord{Handoff: h, Version: def.SatelleVersion, Host: def.Host.Name, Label: def.Identity.Label, Started: now()}
+		runErr := w.Runner.Run(ctx, h, RenderStoryCommand(def, id))
+		rec.Ended = now()
+		if runErr != nil {
+			rec.Error = runErr.Error()
+		}
+		if err := w.Recorder.RecordRun(ctx, rec); err != nil {
+			return out, backs, err
+		}
+		if runErr != nil {
+			return out, backs, fmt.Errorf("running story %s on remote %s: %w", id, remote, runErr)
 		}
 		b, failed, err := checkHandback(ctx, def, h, w)
 		if err != nil {
