@@ -392,6 +392,15 @@ func unknownSubject(body []byte) *UnknownSubjectError {
 	return &UnknownSubjectError{Message: msg}
 }
 
+// RequireCredential is nil when a credential is stored for this client's server
+// and ErrLoginRequired when none is. It sends nothing: a stale token is caught
+// by the first real call's own 401 sequence.
+func (c *Client) RequireCredential(ctx context.Context) error {
+	return c.WithBearer(ctx, func(context.Context, string) (int, []byte, error) {
+		return http.StatusOK, nil, nil
+	})
+}
+
 // WithBearer is the one owner of the 401 sequence for any transport that
 // reports an HTTP status. It loads the stored credential (none yields
 // ErrLoginRequired before attempt runs) and runs attempt with the bearer. On a

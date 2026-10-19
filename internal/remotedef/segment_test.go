@@ -36,7 +36,7 @@ terminal = true
 requires = ["reviewed"]
 
 [closed]`)
-	replaceIn(t, dir, "remote.toml", "[[segment]]\nentry = \"in_progress\"\nexit = \"done\"\n", segments)
+	replaceIn(t, dir, "remote.toml", "[[segment]]\nentry = \"backlog\"\nexit = \"done\"\n", segments)
 	return dir
 }
 

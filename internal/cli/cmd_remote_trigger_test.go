@@ -339,8 +339,8 @@ func handoffRows(t *testing.T, story string) []ledger.Entry {
 
 func TestWakeHandoff(t *testing.T) {
 	remoteWithTriggers(t)
-	inA, inB := newStory(t, "in_progress"), newStory(t, "in_progress")
-	backlog := newStory(t, "backlog")
+	inA, inB := newStory(t, "backlog"), newStory(t, "backlog")
+	backlog := newStory(t, "plan") // an entry is backlog here; plan is no entry
 
 	rcv := &receiver{}
 	rcvSrv := httptest.NewServer(rcv)
@@ -398,7 +398,7 @@ func TestWakeHandoff(t *testing.T) {
 	// A story the contract does not accept is refused with its status, its
 	// category and the contract.
 	_, out, err = fire("nightly", "--story", backlog)
-	if err == nil || !strings.Contains(err.Error(), "story "+backlog+` is at backlog with category "", which no segment accepts (accepts in_progress (any category))`) {
+	if err == nil || !strings.Contains(err.Error(), "story "+backlog+` is at plan with category "", which no segment accepts (accepts backlog (any category))`) {
 		t.Errorf("want a refusal naming the status, category and contract, got %v\n%s", err, out)
 	}
 	if n := len(handoffRows(t, backlog)); n != 0 {

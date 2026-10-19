@@ -9,6 +9,18 @@ import (
 	"github.com/bobmcallan/satelle/internal/hosted"
 )
 
+// hostedClient builds a client for the server the --server flag, or else the
+// configured one, names, or fails with ErrLoginRequired when there is none. Unlike
+// newHostedClient it stamps no location id: profile backup and the remote
+// commands are not sync/story calls.
+func hostedClient(serverFlag string) (*hosted.Client, error) {
+	server := resolveServer(serverFlag)
+	if server == "" {
+		return nil, fmt.Errorf("%w — run \"satelle login\" first (no hosted server configured)", hosted.ErrLoginRequired)
+	}
+	return hosted.NewClient(server, hosted.DefaultStore(), nil), nil
+}
+
 // newHostedClient builds an authenticated client for a bound-repo sync/story
 // call and attaches this checkout's location id (sty_e88d77ce). Login, project
 // create/list, publish, and profile backup keep using hosted.NewClient so they

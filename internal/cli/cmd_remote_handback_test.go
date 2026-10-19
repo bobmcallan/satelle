@@ -62,6 +62,15 @@ func TestHandbackAdaptersOverTheStore(t *testing.T) {
 		}
 	}
 
+	// Engages is the engagement seat's own classification: working states take a
+	// seat; the start state, a terminal state and an unknown one do not.
+	for status, want := range map[string]bool{"in_progress": true, "backlog": false, "done": false, "no_such_status": false} {
+		got, route, err := local.Engages(ctx, it.ID, status)
+		if err != nil || got != want || route == "" {
+			t.Errorf("Engages(%s) = %v, %q, %v; want %v and a named route", status, got, route, err, want)
+		}
+	}
+
 	rec := ledgerRecorder{a.Store.Ledger}
 	b := remotedef.Handback{Remote: "edge", FireID: "fire_1", Story: it.ID, Status: "merged", LocalKnown: true, Reason: "outside the contract's exit statuses (done)"}
 	for i := 0; i < 2; i++ {

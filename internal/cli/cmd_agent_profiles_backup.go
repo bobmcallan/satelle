@@ -87,7 +87,7 @@ before overwrite. [vars] was not uploaded — re-enter secrets after restore.`,
 }
 
 func runProfilesPush(cmd *cobra.Command, serverFlag string) error {
-	client, err := profilesHostedClient(serverFlag)
+	client, err := hostedClient(serverFlag)
 	if err != nil {
 		return err
 	}
@@ -118,7 +118,7 @@ func runProfilesPush(cmd *cobra.Command, serverFlag string) error {
 }
 
 func runProfilesRestore(cmd *cobra.Command, serverFlag string, force bool) error {
-	client, err := profilesHostedClient(serverFlag)
+	client, err := hostedClient(serverFlag)
 	if err != nil {
 		return err
 	}
@@ -156,12 +156,4 @@ func runProfilesRestore(cmd *cobra.Command, serverFlag string, force bool) error
 	fmt.Fprintf(cmd.OutOrStdout(), "restored personal store agents.toml → %s\n", path)
 	fmt.Fprintln(cmd.OutOrStdout(), "re-enter [vars] secrets locally if profiles reference ${NAME}")
 	return nil
-}
-
-func profilesHostedClient(serverFlag string) (*hosted.Client, error) {
-	server := resolveServer(serverFlag)
-	if server == "" {
-		return nil, fmt.Errorf("%w — run \"satelle login\" first (no hosted server configured)", hosted.ErrLoginRequired)
-	}
-	return hosted.NewClient(server, hosted.DefaultStore(), nil), nil
 }

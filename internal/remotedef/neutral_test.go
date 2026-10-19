@@ -21,7 +21,7 @@ var denied = regexp.MustCompile(`(?i)\b(fly|sprite|azure|aws|github|teleport|cla
 // engine holds no list. This is the one denylist for both packages.
 func TestEngineNamesNoHostOrVendor(t *testing.T) {
 	var files []string
-	for _, pattern := range []string{"*.go", "../remotepreflight/*.go"} {
+	for _, pattern := range []string{"*.go", "../remotepreflight/*.go", "../cli/cmd_remote_run.go"} {
 		found, err := filepath.Glob(pattern)
 		if err != nil || len(found) == 0 {
 			t.Fatalf("no source found for %s: %v", pattern, err)

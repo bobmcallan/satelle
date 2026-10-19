@@ -216,6 +216,19 @@ func TestClientNoCredentialIsLoginRequired(t *testing.T) {
 	}
 }
 
+func TestRequireCredential(t *testing.T) {
+	if err := NewClient("https://example", &memStore{}, nil).RequireCredential(context.Background()); !errors.Is(err, ErrLoginRequired) {
+		t.Fatalf("no stored credential: got %v, want ErrLoginRequired", err)
+	}
+	store := &memStore{}
+	if err := store.Save(Credential{ServerURL: "https://example", AccessToken: "tok"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewClient("https://example", store, nil).RequireCredential(context.Background()); err != nil {
+		t.Fatalf("stored credential: got %v, want nil", err)
+	}
+}
+
 func TestClientCreateProjectHappy(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/projects", func(w http.ResponseWriter, r *http.Request) {

@@ -23,6 +23,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/remotedef"
 	"github.com/bobmcallan/satelle/internal/remotenode"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -46,13 +47,6 @@ call) and wakes the remote; these commands manage them through the server.
 	}
 	trigger.PersistentFlags().StringVar(&server, "server", "", "hosted server URL (default: the one you signed in to)")
 
-	client := func(cmd *cobra.Command) (*hosted.Client, error) {
-		s := resolveServer(server)
-		if s == "" {
-			return nil, fmt.Errorf("%w — run \"satelle login\" first (no hosted server configured)", hosted.ErrLoginRequired)
-		}
-		return hosted.NewClient(s, hosted.DefaultStore(), nil), nil
-	}
 	// checkDeclared holds a trigger name to the local definition named by --def.
 	checkDeclared := func(name string) error {
 		if def == "" || name == "" {
@@ -94,7 +88,7 @@ state; dropped ones go. Refuses a definition that does not validate.
 			for _, t := range d.Triggers {
 				declared = append(declared, hosted.DeclaredTrigger{Name: t.Name, Kind: t.Kind})
 			}
-			c, err := client(cmd)
+			c, err := hostedClient(server)
 			if err != nil {
 				return err
 			}
@@ -112,7 +106,7 @@ state; dropped ones go. Refuses a definition that does not validate.
 		Long:  remoteIDHelp,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := client(cmd)
+			c, err := hostedClient(server)
 			if err != nil {
 				return err
 			}
@@ -148,7 +142,7 @@ reason. With --def, the trigger name is first checked against that definition.
 			if err := checkDeclared(name); err != nil {
 				return err
 			}
-			c, err := client(cmd)
+			c, err := hostedClient(server)
 			if err != nil {
 				return err
 			}
@@ -156,7 +150,7 @@ reason. With --def, the trigger name is first checked against that definition.
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "fired remote %s (fire record %s)\n", args[0], res.TriggerID)
+			printFired(cmd.OutOrStdout(), args[0], res)
 			return nil
 		},
 	}
@@ -172,7 +166,7 @@ reason. With --def, the trigger name is first checked against that definition.
 				if err := checkDeclared(args[1]); err != nil {
 					return err
 				}
-				c, err := client(cmd)
+				c, err := hostedClient(server)
 				if err != nil {
 					return err
 				}
@@ -264,6 +258,11 @@ The caller has already checked the wake credential; none is read here.`,
 	return wake
 }
 
+// printFired reports a fire the server accepted, for `trigger fire` and `run`.
+func printFired(w io.Writer, remoteID string, res hosted.FireResult) {
+	fmt.Fprintf(w, "fired remote %s (fire record %s)\n", remoteID, res.TriggerID)
+}
+
 func triggerOrNone(s string) string {
 	if s == "" {
 		return "none"
@@ -329,18 +328,42 @@ type localRoute struct {
 	docs *docindex.Store
 }
 
-func (r localRoute) Declares(ctx context.Context, id, status string) (bool, string, error) {
+// spec is the workflow spec governing story id, with the route's name.
+func (r localRoute) spec(ctx context.Context, id string) (wfdot.Spec, string, error) {
 	it, err := r.s.Get(ctx, id)
 	if err != nil {
-		return false, "", err
+		return wfdot.Spec{}, "", err
 	}
 	wfs, err := r.docs.List(ctx, "workflows")
 	if err != nil {
-		return false, "", err
+		return wfdot.Spec{}, "", err
 	}
 	spec, route, _, err := wfgovern.SpecFor(wfs, it)
 	if err != nil {
-		return false, route, fmt.Errorf("story %s: local workflow does not resolve: %w", id, err)
+		return wfdot.Spec{}, route, fmt.Errorf("story %s: local workflow does not resolve: %w", id, err)
+	}
+	return spec, route, nil
+}
+
+// Engages reports whether status is one of the route's non-terminal engaging
+// states, the classification the engagement seat is held by (anyEngaged).
+func (r localRoute) Engages(ctx context.Context, id, status string) (bool, string, error) {
+	spec, route, err := r.spec(ctx, id)
+	if err != nil {
+		return false, route, err
+	}
+	for _, s := range spec.NonTerminalEngagingStates() {
+		if s == status {
+			return true, route, nil
+		}
+	}
+	return false, route, nil
+}
+
+func (r localRoute) Declares(ctx context.Context, id, status string) (bool, string, error) {
+	spec, route, err := r.spec(ctx, id)
+	if err != nil {
+		return false, route, err
 	}
 	for _, s := range spec.States {
 		if s.Name == status {
@@ -357,7 +380,7 @@ type ledgerRecorder struct{ l *ledger.Store }
 // RecordHandback records a story left outside the contract or the local route as
 // a remote_handback ledger entry, once per fire, story and status.
 func (r ledgerRecorder) RecordHandback(ctx context.Context, b remotedef.Handback) error {
-	payload, err := json.Marshal(map[string]any{"remote": b.Remote, "status": b.Status, "in_contract": b.InContract, "local_known": b.LocalKnown, "reason": b.Reason})
+	payload, err := json.Marshal(map[string]any{"remote": b.Remote, "status": b.Status, "in_contract": b.InContract, "local_known": b.LocalKnown, "holds_seat": b.HoldsSeat, "refused": b.Refused, "reason": b.Reason})
 	if err != nil {
 		return err
 	}
@@ -365,9 +388,13 @@ func (r ledgerRecorder) RecordHandback(ctx context.Context, b remotedef.Handback
 	if err != nil {
 		return err
 	}
+	body := fmt.Sprintf("remote %s left %s at %s: %s", b.Remote, b.Story, b.Status, b.Reason)
+	if b.Refused {
+		body = fmt.Sprintf("remote %s did not take %s at %s; %s", b.Remote, b.Story, b.Status, b.Reason)
+	}
 	_, _, err = r.l.AppendOnce(ctx, ledger.AppendInput{
 		StoryID: b.Story, Kind: ledger.KindRemoteHandback, Actor: "remote",
-		Body:    fmt.Sprintf("remote %s left %s at %s: %s", b.Remote, b.Story, b.Status, b.Reason),
+		Body:    body,
 		Payload: payload, Refs: refs,
 	}, time.Now())
 	return err
