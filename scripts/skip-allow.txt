@@ -24,3 +24,6 @@ github.com/bobmcallan/satelle/internal/cli TestCheckBreakingDriftBreakingRange g
 # Opt-in live runs that spend real money or tokens; never enabled on CI.
 github.com/bobmcallan/satelle/internal/agentstep TestParityLive live parity run is opt-in (SATELLE_PARITY=1) and spends real money
 github.com/bobmcallan/satelle/internal/remotechan TestRelayInteropProduction opt-in run against the production relay (SATELLE_RELAY_INTEROP=1) needs a real sign-in and the network; never enabled on CI
+github.com/bobmcallan/satelle/internal/cli TestLiveRetire opt-in run against satelle.dev (SATELLE_LIVE_SERVER, SATELLE_LIVE_PROJECT, SATELLE_TOKEN) registers and retires a real remote; never enabled on CI
+github.com/bobmcallan/satelle/internal/cli TestRemoteLivePublishListFetch opt-in run against satelle.dev (SATELLE_LIVE_SERVER, SATELLE_LIVE_WORKSPACE) publishes a permanent team artifact; never enabled on CI
+github.com/bobmcallan/satelle/internal/cli TestRemoteTriggerLive opt-in run against satelle.dev (SATELLE_LIVE_SERVER, SATELLE_LIVE_REMOTE, SATELLE_TOKEN) fires a real remote's triggers; never enabled on CI
