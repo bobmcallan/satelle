@@ -1,3 +1,21 @@
+## [0.0.704] - 2026-10-20
+
+### Added
+- Remote workflows (epic sty_bcbfd920, first eighteen stories). A remote is an optional, separately defined satelle that runs a story's or a task's workflow on another host. Nothing changes for a repo with no remote. (sty_688ca074)
+  - `satelle remote create|validate` scaffold and check a remote definition under `.satelle/config/remotes/<name>`: a pinned satelle version, its own workflows, skills, principles and agent bindings, host commands (start, run, network, bootstrap, stop), an opaque host identity label, lifecycle segments with a hand-off contract (accepted statuses and categories, and the exits it may leave a story at), triggers, a per-step security preflight, and secret key names only. Credentials in a definition are refused. (sty_ce770f12, sty_5096ab53, sty_80fe4dd4)
+  - `satelle remote test` runs a definition's own workflow on a sample story in a scratch worktree against a stub host that executes no host command or probe, and refuses cloud dispatch. (sty_cd09eeca, sty_80fe4dd4)
+  - `satelle remote start` builds a fresh node at the pinned version, runs the declared preflight on the host before bootstrap, locks egress to the declared allowlist, fetches repos read-only, and joins the node over a sealed, outbound-only relay channel (X25519 + AES-256-GCM, single-use enrollment, launch-pinned key, per-job heartbeats) proven against the production relay. (sty_b20b3956, sty_2b6d0f7f, sty_b6b0518e)
+  - `satelle remote trigger register|list|fire|pause|resume` manage a remote's named triggers on satelle.dev, forwarding each trigger's params unchanged; `satelle remote wake` handles a fired trigger within the hand-off contract, and every hand-off or hand-back that would leave a story holding a local engagement seat is refused. (sty_a9768210, sty_3da40e43, sty_8ddc056c, sty_8fa6790c)
+  - `satelle remote run <story-id>` hands one story to the remote whose segment accepts it; `satelle remote run <name> --story|--tag … --story-of-record <id>` runs a workflow on selected stories on a fresh node and reports verdicts, sessions, spend and start-configuration gaps. A remote's sweep runs each accepted story on the real host through the one host.run resolver, and every step it runs is recorded with the remote, its version, the host, the identity label and the story, step and run ids. (sty_2bc9eebf, sty_1e4f7a2a, sty_2f3baf0a)
+  - `satelle remote publish|list|fetch` publish a validated remote to the team workspace as numbered versions; generic `publish push` and `adopt` refuse remotes. `satelle remote retire` retires a registered remote after confirmation. (sty_1c2b81cf, sty_6b03d673)
+- `satelle story drive <id>` takes a story through its configured route with no interactive session, relays review findings to the performer, and parks it blocked with the question when a person must decide. (sty_c0c795df)
+- `.satelleignore` keeps matched paths, and `config/.env` always, out of sync push, snapshot, status, doctor and publish. (sty_73765f96)
+
+## [serve-v0.0.178] - 2026-10-20
+
+### Changed
+- The service binary carries the remote-workflows ledger kinds, the story-drive executor step and the workflow and readiness changes they need. (sty_688ca074)
+
 ## [0.0.703] - 2026-10-19
 
 ### Changed
