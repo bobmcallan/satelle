@@ -247,13 +247,13 @@ const (
 	// names, paths and exit codes. Enumeration only — the comparison is the
 	// definition's declared expectation, not Go's judgement of a service.
 	KindRemotePreflight = "remote_preflight"
-	// KindRemoteRun records one `satelle remote run` (sty_1e4f7a2a), once, on the
-	// run's story of record. Payload is {run, remote, started, ended, stories[],
-	// spend_usd, cap_usd, capped, error}; each stories[] entry is {id, status,
-	// refused, in_contract, local_known, reason, verdicts[], sessions[], gap[],
-	// error}. Enumeration only — the verdicts are the reviewers', copied from the
-	// pulled ledger.
-	KindRemoteRun = "remote_run"
+	// KindRemoteRunSummary records one `satelle remote run` (sty_1e4f7a2a), once,
+	// on the run's story of record. Payload is {run, remote, started, ended,
+	// stories[], spend_usd, cap_usd, capped, error}; each stories[] entry is {id,
+	// status, refused, in_contract, local_known, reason, verdicts[], sessions[],
+	// gap[], error}. Enumeration only — the verdicts are the reviewers', copied
+	// from the pulled ledger. Distinct from KindRemoteRun, the per-step row.
+	KindRemoteRunSummary = "remote_run_summary"
 )
 
 // RemoteRunPayload is the payload of a KindRemoteRun row: the one shape the

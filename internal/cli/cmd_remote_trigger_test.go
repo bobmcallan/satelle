@@ -705,7 +705,7 @@ func TestRemoteTriggerRegisterRejected(t *testing.T) {
 // the story.
 func TestWakeCarriesSourceAndEvent(t *testing.T) {
 	remoteWithTriggers(t)
-	story := newStory(t, "in_progress")
+	story := newStory(t, "backlog")
 	rcv := &receiver{}
 	rcvSrv := httptest.NewServer(rcv)
 	t.Cleanup(rcvSrv.Close)

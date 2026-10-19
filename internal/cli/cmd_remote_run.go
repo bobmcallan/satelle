@@ -112,7 +112,7 @@ refused. See satelle help remote.`,
 	}
 	run.Flags().StringSliceVar(&ids, "story", nil, "harness: a story to run (repeatable); excludes --tag")
 	run.Flags().StringVar(&tag, "tag", "", "harness: run every story carrying this tag; excludes --story")
-	run.Flags().StringVar(&record, "story-of-record", "", "harness: the story the run's remote_preflight and remote_run rows are recorded on (required with --story or --tag)")
+	run.Flags().StringVar(&record, "story-of-record", "", "harness: the story the run's remote_preflight and remote_run_summary rows are recorded on (required with --story or --tag)")
 	run.Flags().StringVar(&remoteID, "remote-id", "", "hand one story: the remote's id on the server, to fire the story at it now")
 	run.Flags().StringVar(&server, "server", "", "Hosted server URL (overrides the configured machine hosted server)")
 	return run
@@ -258,7 +258,7 @@ type runStory struct {
 	Gap        []string     `json:"gap"`
 }
 
-// remoteRunSummary is the payload of a remote_run row.
+// remoteRunSummary is the payload of a remote_run_summary row.
 type remoteRunSummary struct {
 	Run      string     `json:"run"`
 	Remote   string     `json:"remote"`
@@ -450,14 +450,14 @@ func printSpend(out io.Writer, usd float64, unpriced int, limit *float64) {
 	fmt.Fprintf(out, "spend $%.4f %s%s\n", usd, against, note)
 }
 
-// recordRemoteRun writes the run's one remote_run row on the story of record.
+// recordRemoteRun writes the run's one remote_run_summary row on the story of record.
 func recordRemoteRun(ctx context.Context, l *ledger.Store, record string, sum remoteRunSummary) error {
 	payload, err := json.Marshal(sum)
 	if err != nil {
 		return err
 	}
 	_, err = l.Append(ctx, ledger.AppendInput{
-		StoryID: record, Kind: ledger.KindRemoteRun, Actor: "remote",
+		StoryID: record, Kind: ledger.KindRemoteRunSummary, Actor: "remote",
 		Body:    fmt.Sprintf("remote %s run %s: %d story(ies), spend $%.4f", sum.Remote, sum.Run, len(sum.Stories), sum.SpendUSD),
 		Payload: payload,
 	}, sum.Ended)
