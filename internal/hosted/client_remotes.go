@@ -16,13 +16,17 @@ import (
 	"strings"
 )
 
-// DeclaredTrigger is one trigger a remote declares to the server. Paused and
-// UpdatedAt are filled by the server on a list.
+// DeclaredTrigger is one trigger a remote declares to the server. Params are the
+// definition's trigger params, forwarded untouched (the server validates the
+// kinds it knows and stores the rest opaquely); Paused, UpdatedAt and NextFireAt
+// are filled by the server on a list.
 type DeclaredTrigger struct {
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	Paused    bool   `json:"paused,omitempty"`
-	UpdatedAt string `json:"updated_at,omitempty"`
+	Name       string            `json:"name"`
+	Kind       string            `json:"kind"`
+	Params     map[string]string `json:"params,omitempty"`
+	Paused     bool              `json:"paused,omitempty"`
+	UpdatedAt  string            `json:"updated_at,omitempty"`
+	NextFireAt string            `json:"next_fire_at,omitempty"`
 }
 
 // FireResult is what the server answers a fire with: the fire-record id.
@@ -72,6 +76,20 @@ func (e *WakeFailedError) Error() string {
 	return msg
 }
 
+// TriggerInvalidError is the server's 400 on a registration: its reason and, when
+// it names one, the trigger it rejected. The client never judges params itself.
+type TriggerInvalidError struct {
+	Trigger string
+	Reason  string
+}
+
+func (e *TriggerInvalidError) Error() string {
+	if e.Trigger == "" {
+		return "trigger registration rejected: " + e.Reason
+	}
+	return fmt.Sprintf("trigger %s rejected: %s", e.Trigger, e.Reason)
+}
+
 // wakeFailedCode is the outcome the server records for such a fire.
 const wakeFailedCode = "wake_failed"
 
@@ -80,8 +98,9 @@ func remoteRoute(remoteID, tail string) string {
 }
 
 // remoteCall sends one authenticated request and returns the body of a 2xx
-// answer. A 409 is returned as the refusal's reason and recorded id, a 502 that
-// says the wake failed as a *WakeFailedError; any other non-2xx is a concise
+// answer. A 409 is returned as the refusal's reason and recorded id, a 400 on a
+// PUT (a registration) as a *TriggerInvalidError, a 502 that says the wake failed as a *WakeFailedError;
+// any other non-2xx is a concise
 // server error.
 func (c *Client) remoteCall(ctx context.Context, method, path string, payload any) ([]byte, error) {
 	var raw []byte
@@ -104,6 +123,8 @@ func (c *Client) remoteCall(ctx context.Context, method, path string, payload an
 		return body, nil
 	case resp.StatusCode == http.StatusUnauthorized:
 		return nil, ErrLoginRequired
+	case resp.StatusCode == http.StatusBadRequest && method == http.MethodPut:
+		return nil, &TriggerInvalidError{Reason: apiReason(body, "HTTP 400"), Trigger: bodyTrigger(body)}
 	case resp.StatusCode == http.StatusConflict:
 		return nil, &TriggerRefusedError{Reason: apiReason(body, "HTTP 409"), TriggerID: bodyTriggerID(body)}
 	case resp.StatusCode == http.StatusBadGateway && isWakeFailure(body):
@@ -141,6 +162,19 @@ func isWakeFailure(body []byte) bool {
 	return strings.Contains(strings.ToLower(e.Message+" "+e.Error), "wake failed")
 }
 
+// bodyTrigger is the trigger name an error body carries, when the server names one.
+func bodyTrigger(body []byte) string {
+	var r struct {
+		Trigger string `json:"trigger"`
+		Name    string `json:"name"`
+	}
+	_ = json.Unmarshal(body, &r)
+	if r.Trigger != "" {
+		return r.Trigger
+	}
+	return r.Name
+}
+
 func bodyTriggerID(body []byte) string {
 	var r FireResult
 	_ = json.Unmarshal(body, &r)
@@ -148,11 +182,13 @@ func bodyTriggerID(body []byte) string {
 }
 
 // PutDeclaredTriggers replaces the remote's declared set with triggers
-// (PUT …/declared-triggers). The server keeps the paused state of kept names.
+// (PUT …/declared-triggers), each with its params as given (the field is left out
+// when they are empty). The server keeps the paused state of kept names; its 400
+// is a *TriggerInvalidError.
 func (c *Client) PutDeclaredTriggers(ctx context.Context, remoteID string, triggers []DeclaredTrigger) error {
 	out := make([]DeclaredTrigger, len(triggers))
 	for i, t := range triggers {
-		out[i] = DeclaredTrigger{Name: t.Name, Kind: t.Kind}
+		out[i] = DeclaredTrigger{Name: t.Name, Kind: t.Kind, Params: t.Params}
 	}
 	_, err := c.remoteCall(ctx, http.MethodPut, remoteRoute(remoteID, "/declared-triggers"), map[string]any{"triggers": out})
 	return err
@@ -191,11 +227,13 @@ func (c *Client) FireRemote(ctx context.Context, remoteID, storyID, trigger stri
 
 // FireRecord is one fire the server recorded (GET …/triggers). The record's id
 // is what a wake carries as trigger_id; Trigger is the declared name, empty for
-// an unnamed fire. Outcome is what the server recorded, such as wake_failed.
+// an unnamed fire. Source is the surface the fire came through, as the server
+// states it; Outcome is what the server recorded, such as wake_failed.
 type FireRecord struct {
 	ID        string `json:"id"`
 	TriggerID string `json:"trigger_id"`
 	Trigger   string `json:"trigger"`
+	Source    string `json:"source,omitempty"`
 	Outcome   string `json:"outcome,omitempty"`
 }
 

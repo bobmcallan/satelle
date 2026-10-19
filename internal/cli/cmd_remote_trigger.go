@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -69,9 +70,11 @@ call) and wakes the remote; these commands manage them through the server.
 	register := &cobra.Command{
 		Use:   "register <remote-id> --def <name>",
 		Short: "Replace the server's declared triggers with the definition's [[trigger]] set",
-		Long: `Sends the name and kind of every [[trigger]] in the named remote definition,
-replacing the server's declared set. Triggers kept by name keep their paused
-state; dropped ones go. Refuses a definition that does not validate.
+		Long: `Sends the name, kind and params of every [[trigger]] in the named remote
+definition, replacing the server's declared set. Params go exactly as written
+(none are sent for a trigger without any) and are not checked here: the server
+judges them and a 400 is reported with its reason. Triggers kept by name keep
+their paused state; dropped ones go. Refuses a definition that does not validate.
 
 ` + remoteIDHelp,
 		Args: cobra.ExactArgs(1),
@@ -88,7 +91,7 @@ state; dropped ones go. Refuses a definition that does not validate.
 			}
 			declared := make([]hosted.DeclaredTrigger, 0, len(d.Triggers))
 			for _, t := range d.Triggers {
-				declared = append(declared, hosted.DeclaredTrigger{Name: t.Name, Kind: t.Kind})
+				declared = append(declared, hosted.DeclaredTrigger{Name: t.Name, Kind: t.Kind, Params: t.Params})
 			}
 			c, err := client(cmd)
 			if err != nil {
@@ -117,9 +120,35 @@ state; dropped ones go. Refuses a definition that does not validate.
 				return err
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tKIND\tPAUSED\tUPDATED")
+			fmt.Fprintln(w, "NAME\tKIND\tPAUSED\tPARAMS\tNEXT FIRE\tUPDATED")
 			for _, t := range ts {
-				fmt.Fprintf(w, "%s\t%s\t%t\t%s\n", t.Name, t.Kind, t.Paused, t.UpdatedAt)
+				fmt.Fprintf(w, "%s\t%s\t%t\t%s\t%s\t%s\n", t.Name, t.Kind, t.Paused, paramsOrDash(t.Params), dashIfEmpty(t.NextFireAt), t.UpdatedAt)
+			}
+			return w.Flush()
+		},
+	}
+
+	fires := &cobra.Command{
+		Use:   "fires <remote-id>",
+		Short: "List the fires the server recorded for the remote, with their source and outcome",
+		Long: `Lists the server's fire records for the remote, refused ones included. SOURCE is
+the surface the fire came through, shown exactly as the server sends it.
+
+` + remoteIDHelp,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client(cmd)
+			if err != nil {
+				return err
+			}
+			recs, err := c.ListFireRecords(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			fmt.Fprintln(w, "FIRE\tTRIGGER\tSOURCE\tOUTCOME")
+			for _, r := range recs {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.FireID(), triggerOrNone(r.Trigger), dashIfEmpty(r.Source), dashIfEmpty(r.Outcome))
 			}
 			return w.Flush()
 		},
@@ -183,7 +212,7 @@ is still recorded. With --def, the trigger name is first checked against that de
 	}
 
 	trigger.PersistentFlags().StringVar(&def, "def", "", "the remote definition (by name) to read triggers from or check a name against")
-	trigger.AddCommand(register, list, fire,
+	trigger.AddCommand(register, list, fires, fire,
 		setPaused("pause", "Pause a declared trigger: a fire naming it is refused", true),
 		setPaused("resume", "Resume a paused trigger", false))
 	return trigger
@@ -198,11 +227,12 @@ func newRemoteWakeCmd() *cobra.Command {
 hands off to the named remote the story it names, or with no story every story
 at one of the remote's segment entry statuses. Each hand-off is a remote_handoff
 ledger entry naming the remote, the declared trigger (or none), the fire-record
-id and the story.
+id and the story, plus the fire's source and any event's kind, repo, branch and
+sha as sent. An event never chooses the story.
 
 Refused, with nothing recorded: a trigger the definition does not declare, a
-story at no entry status (the message names its status and the entry statuses),
-and a request with no fire-record id. A redelivered request records nothing new.
+story at no entry status, and a request with no fire-record id. A redelivered
+request records nothing new.
 
 The caller is the remote host's wake receiver, which has already checked the
 wake credential; none is read or stored here.`,
@@ -235,13 +265,38 @@ wake credential; none is read or stored here.`,
 				fmt.Fprintln(out, "no new hand-off")
 			}
 			for _, h := range handoffs {
-				fmt.Fprintf(out, "handed off %s to remote %s (trigger %s, fire %s)\n", h.Story, h.Remote, triggerOrNone(h.Trigger), h.FireID)
+				at := ""
+				if h.Branch != "" {
+					at = " at " + h.Branch + "@" + h.SHA
+				}
+				fmt.Fprintf(out, "handed off %s to remote %s (trigger %s, fire %s)%s\n", h.Story, h.Remote, triggerOrNone(h.Trigger), h.FireID, at)
 			}
 			return nil
 		},
 	}
 	wake.Flags().StringVar(&request, "request", "-", "where the WakeRequest JSON is read from: - for stdin, or a file")
 	return wake
+}
+
+func dashIfEmpty(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// paramsOrDash renders a trigger's params as k=v pairs sorted by key.
+func paramsOrDash(p map[string]string) string {
+	keys := make([]string, 0, len(p))
+	for k := range p {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pairs := make([]string, len(keys))
+	for i, k := range keys {
+		pairs[i] = k + "=" + p[k]
+	}
+	return dashIfEmpty(strings.Join(pairs, ","))
 }
 
 func triggerOrNone(s string) string {
@@ -299,7 +354,15 @@ func (r storyReader) IDsAt(ctx context.Context, status string) ([]string, error)
 type ledgerRecorder struct{ l *ledger.Store }
 
 func (r ledgerRecorder) Record(ctx context.Context, h remotedef.Handoff) (bool, error) {
-	payload, err := json.Marshal(map[string]string{"remote": h.Remote, "trigger": h.Trigger, "kind": h.Kind, "fire_id": h.FireID})
+	fields := map[string]string{"remote": h.Remote, "trigger": h.Trigger, "kind": h.Kind, "fire_id": h.FireID}
+	// The fire's source and event ride along as sent; a wake that carries none
+	// records exactly the keys above.
+	for k, v := range map[string]string{"source": h.Source, "event_kind": h.EventKind, "repo": h.Repo, "branch": h.Branch, "sha": h.SHA} {
+		if v != "" {
+			fields[k] = v
+		}
+	}
+	payload, err := json.Marshal(fields)
 	if err != nil {
 		return false, err
 	}

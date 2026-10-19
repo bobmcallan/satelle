@@ -2,8 +2,10 @@ package remotedef
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -107,5 +109,67 @@ func TestWakeRecordsKindOfTheDeclaredTrigger(t *testing.T) {
 		fakeStories{"sty_a": "in_progress"}, rec)
 	if err != nil || len(got) != 1 || got[0].Kind != "schedule" {
 		t.Fatalf("got %+v, %v; want one hand-off of kind schedule", got, err)
+	}
+}
+
+func TestWakeCarriesSourceAndEvent(t *testing.T) {
+	stories := fakeStories{"sty_a": "in_progress", "sty_b": "plan", "sty_c": "backlog"}
+	ctx := context.Background()
+	push := &WakeEvent{Kind: "push", Repo: "acme/edge", Branch: "feature/x", SHA: "abc123"}
+	for _, c := range []struct {
+		name string
+		req  WakeRequest
+		want []string // story ids handed off, in order
+	}{
+		{"story and event: only the story runs", WakeRequest{TriggerID: "f1", StoryID: "sty_a", Source: "push", Event: push}, []string{"sty_a"}},
+		{"event without story: sweeps", WakeRequest{TriggerID: "f2", Source: "push", Event: push}, []string{"sty_a", "sty_b"}},
+		{"no event", WakeRequest{TriggerID: "f3", Source: "schedule"}, []string{"sty_a", "sty_b"}},
+		{"source and event kind are opaque", WakeRequest{TriggerID: "f4", Source: "other", Event: &WakeEvent{Kind: "elsewhere", Branch: "b", SHA: "s"}}, []string{"sty_a", "sty_b"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := Wake(ctx, "edge", wakeDef(), c.req, stories, &fakeRecorder{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ids []string
+			for _, h := range got {
+				ids = append(ids, h.Story)
+				if h.Source != c.req.Source {
+					t.Errorf("source = %q, want %q", h.Source, c.req.Source)
+				}
+				if e := c.req.Event; e == nil {
+					if h.EventKind != "" || h.Repo != "" || h.Branch != "" || h.SHA != "" {
+						t.Errorf("a wake with no event must carry no event fields: %+v", h)
+					}
+				} else if h.EventKind != e.Kind || h.Repo != e.Repo || h.Branch != e.Branch || h.SHA != e.SHA {
+					t.Errorf("hand-off %+v must carry the event %+v verbatim", h, *e)
+				}
+			}
+			if fmt.Sprint(ids) != fmt.Sprint(c.want) {
+				t.Errorf("handed off %v, want %v", ids, c.want)
+			}
+		})
+	}
+}
+
+func TestWakeRequestParsesSourceAndEvent(t *testing.T) {
+	for _, c := range []struct {
+		name, body string
+		want       WakeRequest
+	}{
+		{"push", `{"trigger_id":"f1","source":"push","event":{"kind":"push","repo":"acme/edge","branch":"main","sha":"abc"}}`,
+			WakeRequest{TriggerID: "f1", Source: "push", Event: &WakeEvent{Kind: "push", Repo: "acme/edge", Branch: "main", SHA: "abc"}}},
+		{"null event", `{"trigger_id":"f2","source":"api","event":null}`, WakeRequest{TriggerID: "f2", Source: "api"}},
+		{"no source or event", `{"trigger_id":"f3"}`, WakeRequest{TriggerID: "f3"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var got WakeRequest
+			if err := json.Unmarshal([]byte(c.body), &got); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("got %+v, want %+v", got, c.want)
+			}
+		})
 	}
 }

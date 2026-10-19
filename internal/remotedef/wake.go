@@ -10,24 +10,43 @@ import (
 // WakeRequest is what the server delivers to a remote's wake endpoint when a
 // trigger fires: the fire-record id, the remote, the story the fire named (none
 // starts a sweep) and the declared trigger's name (none is the remote's default
-// handling). The tags are the server's wire names.
+// handling). Source is the surface the fire came through and Event what caused
+// it, if anything; both are carried as the server sent them and never compared
+// to a value here. The tags are the server's wire names.
 type WakeRequest struct {
-	TriggerID string `json:"trigger_id"`
-	RemoteID  string `json:"remote_id"`
-	Remote    string `json:"remote"`
-	StoryID   string `json:"story_id,omitempty"`
-	Trigger   string `json:"trigger,omitempty"`
+	TriggerID string     `json:"trigger_id"`
+	RemoteID  string     `json:"remote_id"`
+	Remote    string     `json:"remote"`
+	StoryID   string     `json:"story_id,omitempty"`
+	Trigger   string     `json:"trigger,omitempty"`
+	Source    string     `json:"source,omitempty"`
+	Event     *WakeEvent `json:"event,omitempty"`
+}
+
+// WakeEvent is the event a fire carries (null when it has none). Its fields are
+// opaque strings, passed on to the run unchanged.
+type WakeEvent struct {
+	Kind   string `json:"kind"`
+	Repo   string `json:"repo"`
+	Branch string `json:"branch"`
+	SHA    string `json:"sha"`
 }
 
 // Handoff is one story a wake handed to the remote: the remote, the declared
 // trigger and its kind (both empty for an unnamed fire), the fire-record id and
-// the story.
+// the story, with the fire's source and the event's fields as the server sent
+// them (empty when it sent none).
 type Handoff struct {
-	Remote  string
-	Trigger string
-	Kind    string
-	FireID  string
-	Story   string
+	Remote    string
+	Trigger   string
+	Kind      string
+	FireID    string
+	Story     string
+	Source    string
+	EventKind string
+	Repo      string
+	Branch    string
+	SHA       string
 }
 
 // StoryReader is the stories a wake selects from.
@@ -73,7 +92,8 @@ func (d *Definition) AcceptsEntry(status string) bool {
 // the hand-offs it newly recorded. A named trigger must be declared by this
 // definition — matched on its name, never on the fire-record id; an unnamed wake
 // is the remote's default handling. A named story is handed off only while at an
-// entry status; otherwise the wake is a sweep, handing off every story at one. A
+// entry status; otherwise the wake is a sweep, handing off every story at one. The
+// request's event never selects a story: it rides on each hand-off. A
 // wake that is refused records nothing, and a redelivered wake adds nothing.
 func Wake(ctx context.Context, name string, def *Definition, req WakeRequest, stories StoryReader, rec HandoffRecorder) ([]Handoff, error) {
 	remote := strings.TrimSpace(req.Remote)
@@ -83,7 +103,10 @@ func Wake(ctx context.Context, name string, def *Definition, req WakeRequest, st
 	if strings.TrimSpace(req.TriggerID) == "" {
 		return nil, fmt.Errorf("wake request for remote %s carries no trigger_id (the fire-record id)", remote)
 	}
-	h := Handoff{Remote: remote, FireID: req.TriggerID}
+	h := Handoff{Remote: remote, FireID: req.TriggerID, Source: req.Source}
+	if e := req.Event; e != nil {
+		h.EventKind, h.Repo, h.Branch, h.SHA = e.Kind, e.Repo, e.Branch, e.SHA
+	}
 	if req.Trigger != "" {
 		found := false
 		for _, t := range def.Triggers {
