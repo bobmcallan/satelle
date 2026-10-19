@@ -248,7 +248,7 @@ func (m *snapMachine) pushUnchecked() {
 	if err != nil {
 		m.t.Fatal(err)
 	}
-	bundle, err := config.ConfigFiles(cfg, repoRoot)
+	bundle, err := config.ConfigFiles(cfg, repoRoot, config.Ignore{})
 	if err != nil {
 		m.t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func (m *snapMachine) pushUnchecked() {
 	if err != nil {
 		m.t.Fatal(err)
 	}
-	if _, handled, err := pushConfigSnapshots(cmd, cfg, repoRoot, dataDir, client, m.url, project, manifest, bundle.Files); err != nil || !handled {
+	if _, handled, err := pushConfigSnapshots(cmd, cfg, repoRoot, dataDir, config.Ignore{}, client, m.url, project, manifest, bundle.Files); err != nil || !handled {
 		m.t.Fatalf("unchecked push: handled=%v err=%v", handled, err)
 	}
 }

@@ -277,7 +277,7 @@ func TestStatusInStepWithAnUneditedSeedTheHostedCopyLacks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	local, err := LocalShas(cfg, repo, "skills")
+	local, err := LocalShas(cfg, repo, "skills", config.Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,12 +305,12 @@ func TestLocalShasUnchangedWhenASeedConverges(t *testing.T) {
 		"skills/satelle-step-summary.md": config.ApplyStamp(older, config.SHA(older)),
 		"skills/mine.md":                 "authored\n",
 	})
-	before, err := LocalShas(cfg, repo, "skills")
+	before, err := LocalShas(cfg, repo, "skills", config.Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	writeTree(t, repo, map[string]string{"skills/satelle-step-summary.md": config.ApplyStamp(step, config.SHA(step))})
-	after, err := LocalShas(cfg, repo, "skills")
+	after, err := LocalShas(cfg, repo, "skills", config.Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}

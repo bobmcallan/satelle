@@ -83,7 +83,11 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
-	bundle, scope, err := config.DocumentFiles(cfg, repoRoot)
+	ign, err := config.LoadIgnore(dataDir)
+	if err != nil {
+		return err
+	}
+	bundle, scope, err := config.DocumentFiles(cfg, repoRoot, ign)
 	if err != nil {
 		return err
 	}
@@ -122,7 +126,7 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	client := newHostedClient(cmd.Context(), server, repoRoot)
 	// Publish the area's whole state as a snapshot (sty_fe5a8ed4); a server that
 	// cannot hold snapshots falls through to the plain upload below.
-	snap, handled, serr := pushDocumentsSnapshot(cmd, cfg, repoRoot, dataDir, client, server, project, files)
+	snap, handled, serr := pushDocumentsSnapshot(cmd, cfg, repoRoot, dataDir, ign, client, server, project, files)
 	if serr != nil {
 		return serr
 	}

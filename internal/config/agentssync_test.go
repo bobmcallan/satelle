@@ -18,7 +18,7 @@ func TestAgentsFilePushedExactlyOnce(t *testing.T) {
 	writeFile(t, repo, ".satelle/workflows/done.md", "---\nname: done\ntype: workflow\nscope: project\n---\n\n## *\n- raised\n")
 
 	cfg := Config{Sync: map[string]string{"workflows": "shared", "agents": "personal"}}
-	b, err := ConfigFiles(cfg, repo)
+	b, err := ConfigFiles(cfg, repo, Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestLegacyPathRepoPushesUnderCanonicalKey(t *testing.T) {
 	writeFile(t, repo, ".satelle/agents.toml", "[executor]\ncommand = \"in-loop\"\n")
 
 	cfg := Config{Sync: map[string]string{"agents": "personal"}}
-	b, err := ConfigFiles(cfg, repo)
+	b, err := ConfigFiles(cfg, repo, Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestConfigFilesNeverIncludesMachineCatalog(t *testing.T) {
 	// A machine catalog path must never appear even if the home has one — ConfigFiles
 	// walks repoRoot only.
 	cfg := Config{Sync: map[string]string{"all": "personal"}}
-	b, err := ConfigFiles(cfg, repo)
+	b, err := ConfigFiles(cfg, repo, Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestConfigFilesNeverIncludesMachineCatalog(t *testing.T) {
 	}
 	// Repo agents still ships under its workflows-relative key when agents/workflows sync.
 	cfg2 := Config{Sync: map[string]string{"agents": "personal", "workflows": "personal"}}
-	b2, err := ConfigFiles(cfg2, repo)
+	b2, err := ConfigFiles(cfg2, repo, Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}

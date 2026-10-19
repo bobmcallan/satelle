@@ -33,7 +33,7 @@ func findConfigFile(files []ConfigFile, path string) (ConfigFile, bool) {
 func TestDocumentFilesScopeLocalSkipped(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, ".satelle/documents/note.md", "body")
-	b, scope, err := DocumentFiles(Config{}, repo)
+	b, scope, err := DocumentFiles(Config{}, repo, Ignore{})
 	if err != nil {
 		t.Fatalf("DocumentFiles: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestDocumentFilesSharedFlagPromotes(t *testing.T) {
 	writeFile(t, repo, ".satelle/documents/private.md", "---\ntype: document\n---\npriv\n")
 	writeFile(t, repo, ".satelle/documents/shared.md", "---\ntype: document\nshared: true\n---\nteam\n")
 	cfg := Config{Sync: map[string]string{"documents": "personal"}}
-	b, scope, err := DocumentFiles(cfg, repo)
+	b, scope, err := DocumentFiles(cfg, repo, Ignore{})
 	if err != nil {
 		t.Fatalf("DocumentFiles: %v", err)
 	}
@@ -126,13 +126,13 @@ func TestPlaceholderSettings(t *testing.T) {
 		repo := t.TempDir()
 		writeFile(t, repo, ".satelle/satelle.toml", body)
 		cfg := Config{Sync: map[string]string{"settings": "personal"}}
-		got, err := PlaceholderSettings(cfg, repo)
+		got, err := PlaceholderSettings(cfg, repo, Ignore{})
 		if err != nil || got != want {
 			t.Errorf("PlaceholderSettings(%q) = %v, %v; want %v", body, got, err, want)
 		}
 	}
 	// No satelle.toml at all is a placeholder too.
-	if got, err := PlaceholderSettings(Config{Sync: map[string]string{"settings": "personal"}}, t.TempDir()); err != nil || !got {
+	if got, err := PlaceholderSettings(Config{Sync: map[string]string{"settings": "personal"}}, t.TempDir(), Ignore{}); err != nil || !got {
 		t.Errorf("a missing satelle.toml = %v, %v", got, err)
 	}
 }
@@ -143,7 +143,7 @@ func TestConfigFilesSkipsLocalArea(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, ".satelle/skills/a.md", "body")
 	// No [sync] table -> every area local -> nothing to push.
-	b, err := ConfigFiles(Config{}, repo)
+	b, err := ConfigFiles(Config{}, repo, Ignore{})
 	if err != nil {
 		t.Fatalf("ConfigFiles: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestConfigFilesSkipsLocalArea(t *testing.T) {
 		t.Errorf("local-scope walk returned %d files, want 0: %+v", len(b.Files), b.Files)
 	}
 	// Explicit local behaves the same.
-	b, err = ConfigFiles(Config{Sync: map[string]string{"skills": "local"}}, repo)
+	b, err = ConfigFiles(Config{Sync: map[string]string{"skills": "local"}}, repo, Ignore{})
 	if err != nil {
 		t.Fatalf("ConfigFiles: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestConfigFilesTierResolution(t *testing.T) {
 	writeFile(t, repo, ".satelle/workflows/agents.workspace.toml", "[reviewer]\nrole = \"reviewer\"\n")
 
 	cfg := Config{Sync: map[string]string{"skills": "personal", "principles": "shared", "agents": "personal", "workflows": "personal"}}
-	b, err := ConfigFiles(cfg, repo)
+	b, err := ConfigFiles(cfg, repo, Ignore{})
 	if err != nil {
 		t.Fatalf("ConfigFiles: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestConfigFilesExcludesReservedViews(t *testing.T) {
 	writeFile(t, repo, ".satelle/skills/log.md", "generated")
 	writeFile(t, repo, ".satelle/skills/README.md", "readme")
 	cfg := Config{Sync: map[string]string{"skills": "shared"}}
-	b, err := ConfigFiles(cfg, repo)
+	b, err := ConfigFiles(cfg, repo, Ignore{})
 	if err != nil {
 		t.Fatalf("ConfigFiles: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestConfigFilesServerPathStableUnderSubstrateRoots(t *testing.T) {
 	alt := filepath.Join(repo, "elsewhere")
 	writeFile(t, repo, "elsewhere/skills/relocated.md", "body")
 	cfg := Config{Sync: map[string]string{"skills": "shared"}, SubstrateRoots: map[string]string{"skills": alt}}
-	b, err := ConfigFiles(cfg, repo)
+	b, err := ConfigFiles(cfg, repo, Ignore{})
 	if err != nil {
 		t.Fatalf("ConfigFiles: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestConfigFilesSortedDeterministically(t *testing.T) {
 	writeFile(t, repo, ".satelle/skills/alpha.md", "a")
 	writeFile(t, repo, ".satelle/principles/mid.md", "m")
 	cfg := Config{Sync: map[string]string{"skills": "shared", "principles": "shared"}}
-	b, err := ConfigFiles(cfg, repo)
+	b, err := ConfigFiles(cfg, repo, Ignore{})
 	if err != nil {
 		t.Fatalf("ConfigFiles: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestConfigFilesSortedDeterministically(t *testing.T) {
 func TestConfigFilesInvalidScopeErrors(t *testing.T) {
 	repo := t.TempDir()
 	cfg := Config{Sync: map[string]string{"skills": "bogus"}}
-	if _, err := ConfigFiles(cfg, repo); err == nil {
+	if _, err := ConfigFiles(cfg, repo, Ignore{}); err == nil {
 		t.Error("ConfigFiles with an invalid scope did not error")
 	}
 }
@@ -317,7 +317,7 @@ func TestAssembleWithholdsLocalFiles(t *testing.T) {
 		{Path: "skills/secret.local.md", Content: []byte("secret")},
 		{Path: "notes.local.md", Content: []byte("x")},
 	}
-	b := assemble(in)
+	b := assemble(in, Ignore{})
 	if len(b.Files) != 1 || b.Files[0].Path != "skills/keep.md" {
 		t.Fatalf("Files = %+v, want only skills/keep.md", b.Files)
 	}
@@ -337,7 +337,7 @@ func TestSkillsAreaWithholdsLocalFile(t *testing.T) {
 	writeFile(t, repo, ".satelle/skills/keep.md", "body")
 	writeFile(t, repo, ".satelle/skills/my-thing.local.md", "SECRET")
 	cfg := Config{Sync: map[string]string{"skills": "personal"}}
-	b, err := ConfigFiles(cfg, repo)
+	b, err := ConfigFiles(cfg, repo, Ignore{})
 	if err != nil {
 		t.Fatalf("ConfigFiles: %v", err)
 	}
@@ -404,7 +404,7 @@ func TestEveryConfigAreaWithholdsLocal(t *testing.T) {
 		writeFile(t, repo, ".satelle/"+area+"/thing.local.md", "secret")
 	}
 	// Config areas
-	b, err := ConfigFiles(Config{Sync: cfgSync}, repo)
+	b, err := ConfigFiles(Config{Sync: cfgSync}, repo, Ignore{})
 	if err != nil {
 		t.Fatalf("ConfigFiles: %v", err)
 	}
@@ -431,7 +431,7 @@ func TestEveryConfigAreaWithholdsLocal(t *testing.T) {
 		}
 	}
 	// documents area
-	db, _, err := DocumentFiles(Config{Sync: cfgSync}, repo)
+	db, _, err := DocumentFiles(Config{Sync: cfgSync}, repo, Ignore{})
 	if err != nil {
 		t.Fatalf("DocumentFiles: %v", err)
 	}
@@ -467,7 +467,7 @@ func TestLocalExclusionIgnoresConfig(t *testing.T) {
 		{Sync: map[string]string{"skills": "personal"}},
 	}
 	for i, cfg := range cases {
-		b, err := ConfigFiles(cfg, repo)
+		b, err := ConfigFiles(cfg, repo, Ignore{})
 		if err != nil {
 			t.Fatalf("case %d: %v", i, err)
 		}
@@ -498,7 +498,7 @@ func TestSettingsBundleExcludesLocalOverlay(t *testing.T) {
 	const secret = "SUPER_SECRET_TOKEN_XYZ"
 	writeFile(t, repo, ".satelle/satelle.local.toml", "[vars]\nAPI_KEY = \""+secret+"\"\n")
 	cfg := Config{Sync: map[string]string{"all": "personal"}}
-	b, err := ConfigFiles(cfg, repo)
+	b, err := ConfigFiles(cfg, repo, Ignore{})
 	if err != nil {
 		t.Fatalf("ConfigFiles: %v", err)
 	}

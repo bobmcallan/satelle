@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 )
 
@@ -478,5 +479,54 @@ func TestPublishPushRefusesLocalPath(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), ".local") {
 		t.Errorf("error should name .local: %v", err)
+	}
+}
+
+// A path .satelleignore lists, and config/.env with no .satelleignore at all,
+// are refused by publish — a dry run included — before any file is read or any
+// request is made (sty_73765f96).
+func TestPublishPushRefusesIgnoredPath(t *testing.T) {
+	repo := syncConfigRepo(t, "[hosted]\nworkspace = \"Acme\"\n")
+	writeRepoFile(t, repo, ".satelle/config/.env", "TOKEN=secret\n")
+	writeRepoFile(t, repo, ".satelle/skills/drafts.md", "draft\n")
+	writeRepoFile(t, repo, ".satelle/skills/ok.md", "ok\n")
+	pointAt(t, repo)
+
+	for _, dry := range []bool{true, false} {
+		cmd, buf := testCmd()
+		err := runPublishPush(cmd, "https://example.invalid", "Acme", "", "", dry, []string{".satelle/config/.env"})
+		if err == nil || !strings.Contains(err.Error(), config.IgnoreFileName) {
+			t.Fatalf("dry=%v: config/.env must be refused with no .satelleignore: %v\n%s", dry, err, buf.String())
+		}
+	}
+
+	// A spelling that is not the cleaned path must not get past the check.
+	for _, spelled := range []string{"config/./.env", "config//.env", "workflows/../config/.env", "./config/.env", ".satelle/skills/../config/.env", "/config/.env"} {
+		cmd, buf := testCmd()
+		err := runPublishPush(cmd, "https://example.invalid", "Acme", "", "", true, []string{spelled})
+		if err == nil || !strings.Contains(err.Error(), config.IgnoreFileName) {
+			t.Fatalf("%q must be refused as config/.env: %v\n%s", spelled, err, buf.String())
+		}
+	}
+
+	// A path that climbs out of the data dir is refused, however it would resolve.
+	for _, escaping := range []string{"../.satelle/config/.env", "..", "skills/../../.satelle/config/.env", "../x.md"} {
+		for _, dry := range []bool{true, false} {
+			cmd, buf := testCmd()
+			err := runPublishPush(cmd, "https://example.invalid", "Acme", "", "", dry, []string{escaping})
+			if err == nil || !strings.Contains(err.Error(), "outside") {
+				t.Fatalf("dry=%v: %q must be refused as outside the data dir: %v\n%s", dry, escaping, err, buf.String())
+			}
+		}
+	}
+
+	writeRepoFile(t, repo, ".satelle/"+config.IgnoreFileName, "drafts.md\n")
+	cmd, buf := testCmd()
+	if err := runPublishPush(cmd, "https://example.invalid", "Acme", "", "", true, []string{"skills/drafts.md"}); err == nil || !strings.Contains(err.Error(), config.IgnoreFileName) {
+		t.Fatalf("an ignored path must be refused: %v\n%s", err, buf.String())
+	}
+	cmd, buf = testCmd()
+	if err := runPublishPush(cmd, "https://example.invalid", "Acme", "", "", true, []string{"skills/ok.md"}); err != nil {
+		t.Fatalf("a path nothing ignores must still publish: %v\n%s", err, buf.String())
 	}
 }

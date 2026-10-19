@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 )
 
@@ -15,7 +16,7 @@ func TestOfflineDriftReadsTheRecordedBase(t *testing.T) {
 	data := t.TempDir()
 	const server, project, repo = "https://example.test", "p", "/repo"
 
-	d, err := OfflineDrift(server, project, repo, data, "skills", map[string]string{"skills/a.md": "1"}, nil)
+	d, err := OfflineDrift(server, project, repo, data, "skills", map[string]string{"skills/a.md": "1"}, nil, config.Ignore{})
 	if err != nil || d.Synced || !reflect.DeepEqual(d.Changed, []string{"skills/a.md"}) {
 		t.Fatalf("never synced: %+v %v", d, err)
 	}
@@ -31,7 +32,7 @@ func TestOfflineDriftReadsTheRecordedBase(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(data, filepath.FromSlash(CopyPath("skills", "skills/b.md"))), []byte("theirs"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d, err = OfflineDrift(server, project, repo, data, "skills", local, nil)
+	d, err = OfflineDrift(server, project, repo, data, "skills", local, nil, config.Ignore{})
 	if err != nil || !d.Synced || d.Version != 3 {
 		t.Fatalf("synced: %+v %v", d, err)
 	}
@@ -48,7 +49,7 @@ func TestOfflineDriftReadsTheRecordedBase(t *testing.T) {
 	if err := os.Remove(filepath.Join(data, filepath.FromSlash(CopyPath("skills", "skills/b.md")))); err != nil {
 		t.Fatal(err)
 	}
-	d, _ = OfflineDrift(server, project, repo, data, "skills", local, nil)
+	d, _ = OfflineDrift(server, project, repo, data, "skills", local, nil, config.Ignore{})
 	if len(d.Unmerged) != 0 {
 		t.Errorf("Unmerged = %v after the copy was deleted", d.Unmerged)
 	}
@@ -71,14 +72,14 @@ func TestOfflineDriftIgnoresABaseOnlyDefault(t *testing.T) {
 	}
 	defaults := map[string]map[string]bool{"tasks/tsk_default.md": {"d1": true}}
 
-	d, err := OfflineDrift(server, project, repo, t.TempDir(), "tasks", map[string]string{"tasks/tsk_mine.md": "m1"}, defaults)
+	d, err := OfflineDrift(server, project, repo, t.TempDir(), "tasks", map[string]string{"tasks/tsk_mine.md": "m1"}, defaults, config.Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"tasks/tsk_gone.md"}; !reflect.DeepEqual(d.Changed, want) {
 		t.Errorf("Changed = %v, want %v (defaults — projected or recorded — are not deletions)", d.Changed, want)
 	}
-	d, _ = OfflineDrift(server, project, repo, t.TempDir(), "tasks", map[string]string{"tasks/tsk_mine.md": "edited", "tasks/tsk_gone.md": "g1"}, defaults)
+	d, _ = OfflineDrift(server, project, repo, t.TempDir(), "tasks", map[string]string{"tasks/tsk_mine.md": "edited", "tasks/tsk_gone.md": "g1"}, defaults, config.Ignore{})
 	if want := []string{"tasks/tsk_mine.md"}; !reflect.DeepEqual(d.Changed, want) {
 		t.Errorf("Changed = %v, want %v (an edited local file still counts)", d.Changed, want)
 	}

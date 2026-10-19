@@ -355,14 +355,14 @@ design rather than an error. Deploy OVERWRITES the local authored copy.`,
 		Long: `push walks the authored-config areas (workflows/principles/skills/constitution/
 agents/tasks/settings) per their resolved [sync] scope — skipping local areas — and uploads
 each file as a new version into this repo's bound hosted PROJECT's personal
-collection only (epic:sync-publish). Files go exactly as on disk, except satelle.toml
-loses [sync] project and [hosted] project (named). Before anything is
-sent, a shared agents.toml carrying machine-specific content is refused (see
-'satelle help agent-dispatch') and the deployed system must validate, as for
-'satelle init'. Files with a .local segment are never uploaded. Team is not a
-sync destination (use satelle publish). Requires "satelle project bind <slug>".
+collection only (epic:sync-publish). Files go as on disk, except satelle.toml
+loses [sync] project and [hosted] project. Before sending, a shared agents.toml
+with machine-specific content is refused (see 'satelle help agent-dispatch') and
+the deployed system must validate, as for 'satelle init'. Never uploaded: .local
+files, config/.env, paths in <data dir>/.satelleignore. Team is not a sync
+destination (use satelle publish). Requires "satelle project bind <slug>".
 
-Pushes publish each area as one snapshot (deletes propagate) and are refused when another machine pushed since your last sync: deploy first, or pass --force to publish this tree over it.`,
+Pushes publish each area as one snapshot (deletes propagate), refused when another machine pushed since your last sync: deploy first, or pass --force.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncConfigPush(cmd, pushServer, pushWorkspace, dryRun)
 		},
@@ -449,7 +449,11 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
-	bundle, err := config.ConfigFiles(cfg, repoRoot)
+	ign, err := config.LoadIgnore(dataDir)
+	if err != nil {
+		return err
+	}
+	bundle, err := config.ConfigFiles(cfg, repoRoot, ign)
 	if err != nil {
 		return err
 	}
@@ -508,7 +512,7 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 		// refused when this machine is behind, so it never overwrites a newer
 		// push from another machine. A server that cannot hold snapshots falls
 		// through to the plain upload below.
-		snap, handled, serr := pushConfigSnapshots(cmd, cfg, repoRoot, dataDir, client, server, project, manifest, files)
+		snap, handled, serr := pushConfigSnapshots(cmd, cfg, repoRoot, dataDir, ign, client, server, project, manifest, files)
 		if serr != nil {
 			return serr
 		}
@@ -546,11 +550,16 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 }
 
 // printBundleExclusions names every path a push left out of the bundle, each
-// under its own reason: files that never leave the machine (.local), and unedited
+// under its own reason: files that never leave the machine (.local, or named by
+// .satelleignore), and unedited
 // embedded defaults the installed binary supplies (sty_097833e8).
 func printBundleExclusions(out io.Writer, b config.Bundle) {
 	for _, p := range b.Withheld {
-		fmt.Fprintf(out, "  withheld (never syncs, .local): %s\n", p)
+		if config.LocalOnlyPath(p) {
+			fmt.Fprintf(out, "  withheld (never syncs, .local): %s\n", p)
+		} else {
+			fmt.Fprintf(out, "  withheld (never syncs, %s): %s\n", config.IgnoreFileName, p)
+		}
 	}
 	for _, p := range b.UneditedDefaults {
 		fmt.Fprintf(out, "  withheld (unedited embedded default — comes from the binary): %s\n", p)
@@ -842,6 +851,14 @@ func runSyncScopes(cmd *cobra.Command, args []string) error {
 	// What this checkout last synced for each area (sty_fe5a8ed4): shown only
 	// once an area has a recorded base, so an area never synced prints as before.
 	lastSynced, unmerged := lastSyncedNotes(a.Config, a.RepoRoot)
+	dataDir := a.DataDir
+	if dataDir == "" {
+		dataDir = a.Config.ResolveDataDir(a.RepoRoot)
+	}
+	ign, err := config.LoadIgnore(dataDir)
+	if err != nil {
+		return err
+	}
 	for _, area := range config.SyncAreas {
 		scope, err := config.ScopeFor(a.Config, area)
 		if err != nil {
@@ -864,7 +881,7 @@ func runSyncScopes(cmd *cobra.Command, args []string) error {
 		if path == "" {
 			continue
 		}
-		shared, withheld, err := areaFileNotes(path, isDir, scope)
+		shared, withheld, err := areaFileNotes(dataDir, path, isDir, scope, ign)
 		if err != nil {
 			return fmt.Errorf("sync area %q: %w", area, err)
 		}
@@ -916,20 +933,34 @@ func syncAreaPath(a *app.App, area string) (path string, isDir bool) {
 	}
 }
 
+// ignoredUnder reports whether the file at absolute-or-repo path p, taken
+// relative to dataDir, is one ign keeps out of the sync. A file outside dataDir
+// has no server key, so it is never ignored.
+func ignoredUnder(dataDir, p string, ign config.Ignore) bool {
+	rel, err := filepath.Rel(dataDir, p)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return ign.Match(filepath.ToSlash(rel))
+}
+
 // areaFileNotes walks an area's on-disk location and returns two lists:
 //   - shared: markdown files with frontmatter shared:true (personal-scope only;
 //     same filter as the historical sharedFilesIn)
 //   - withheld: any file whose basename/path carries a .local segment, every
-//     extension, so operators see what the bundler will keep back
+//     extension, or that .satelleignore names, so operators see what the
+//     bundler will keep back
 //
 // A non-existent path is benign (empty results, not an error).
-func areaFileNotes(path string, isDir bool, scope config.Scope) (shared, withheld []string, err error) {
+func areaFileNotes(dataDir, path string, isDir bool, scope config.Scope, ign config.Ignore) (shared, withheld []string, err error) {
 	noteOne := func(p string) error {
 		base := filepath.Base(p)
 		// Basename is enough: LocalOnlyPath matches on any segment's .local
 		// component (directory segments like secrets.local/ are covered when
 		// walking files under them, since each file path is checked fully).
-		if config.LocalOnlyPath(filepath.ToSlash(p)) || config.LocalOnlyPath(base) {
+		// A .satelleignore match is judged on the data-dir-relative path, the
+		// same key the bundler withholds it under.
+		if config.LocalOnlyPath(filepath.ToSlash(p)) || config.LocalOnlyPath(base) || ignoredUnder(dataDir, p, ign) {
 			withheld = append(withheld, p)
 			return nil // withheld files are not also listed as shared
 		}

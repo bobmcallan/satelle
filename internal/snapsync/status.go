@@ -134,8 +134,8 @@ func baseFiles(b *hosted.AreaBase) map[string]string {
 }
 
 // LocalShas is the sha of each file of an area as a push would send it.
-func LocalShas(cfg config.Config, repoRoot, area string) (map[string]string, error) {
-	files, err := config.AreaFiles(cfg, repoRoot, area)
+func LocalShas(cfg config.Config, repoRoot, area string, ign config.Ignore) (map[string]string, error) {
+	files, err := config.AreaFiles(cfg, repoRoot, area, ign)
 	if err != nil {
 		return nil, err
 	}
@@ -163,8 +163,10 @@ type Drift struct {
 // copy has been deleted counts as merged, exactly as when the driver loads the
 // base, so the two never disagree. defaults is config.AreaDefaultShas for the
 // area: a base file that is an unedited embedded default is not a deletion, since
-// the local view never holds one.
-func OfflineDrift(server, project, repoRoot, dataDir, area string, local map[string]string, defaults map[string]map[string]bool) (Drift, error) {
+// the local view never holds one. A path ign matches is dropped from the base
+// and from local at entry — the offline twin of Driver.Ignore — so it is never
+// a difference.
+func OfflineDrift(server, project, repoRoot, dataDir, area string, local map[string]string, defaults map[string]map[string]bool, ign config.Ignore) (Drift, error) {
 	b, ok, err := hosted.LoadAreaBase(server, project, repoRoot, area)
 	if err != nil {
 		return Drift{}, err
@@ -172,6 +174,10 @@ func OfflineDrift(server, project, repoRoot, dataDir, area string, local map[str
 	if ok {
 		b, _ = Resolve(b, copyExistsIn(dataDir, area))
 	}
+	b.Files = DropIgnored(ign.Match, b.Files)
+	b.Unmerged = DropIgnored(ign.Match, b.Unmerged)
+	b.Defaults = DropIgnored(ign.Match, b.Defaults)
+	local = DropIgnored(ign.Match, local)
 	d := Drift{Synced: ok, Version: b.Version, Changed: NewDefaultSet(defaults, &b).changedPaths(b.Files, local)}
 	for p := range b.Unmerged {
 		d.Unmerged = append(d.Unmerged, p)

@@ -309,7 +309,7 @@ func reconcileDiff(cmd *cobra.Command, cfg config.Config, repoRoot string, drive
 		return err
 	}
 	job := jobs[area]
-	files, err := config.AreaFiles(cfg, repoRoot, area)
+	files, err := config.AreaFiles(cfg, repoRoot, area, drivers.ign)
 	if err != nil {
 		return fmt.Errorf("%s: read the local files: %w", area, err)
 	}

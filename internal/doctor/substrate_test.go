@@ -294,3 +294,48 @@ func TestCheckFailsUnpushedSubstrate(t *testing.T) {
 		t.Fatalf("unpushed substrate must not PASS: %v", r.Findings)
 	}
 }
+
+// A path .satelleignore lists is never a difference (sty_73765f96): one that was
+// never pushed, one whose local content differs from the recorded base and one
+// deleted since it all leave the area in step. Each is a difference without the
+// ignore.
+func TestSubstrateIgnoredPathIsNeverDrift(t *testing.T) {
+	cases := []struct {
+		name string
+		set  func(f *substrateFixture)
+	}{
+		{"never pushed", func(f *substrateFixture) { f.write("skills/secret.md", "mine\n") }},
+		{"differs from the recorded base", func(f *substrateFixture) {
+			f.base("skills", map[string]string{"skills/x.md": "x\n", "skills/secret.md": "base\n"}, nil)
+			f.write("skills/secret.md", "edited\n")
+		}},
+		{"deleted since the recorded base", func(f *substrateFixture) {
+			f.base("skills", map[string]string{"skills/x.md": "x\n", "skills/secret.md": "base\n"}, nil)
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := inStepFixture(t)
+			c.set(f)
+			if got := find(f.check(), health.IDSyncSubstrateUnpushed); len(got) != 1 {
+				t.Fatalf("without an ignore the path must read as unpushed: %v", f.check())
+			}
+			f.write(config.IgnoreFileName, "secret.md\n")
+			got := f.check()
+			if !got.OK() || len(find(got, health.IDSyncSubstrateUnpushed)) != 0 || len(got) != 1 {
+				t.Fatalf("an ignored path must leave the substrate in step: %v", got)
+			}
+		})
+	}
+}
+
+// An unreadable .satelleignore is reported, not read as empty.
+func TestSubstrateUnreadableIgnoreIsNotJudged(t *testing.T) {
+	f := inStepFixture(t)
+	if err := os.Mkdir(filepath.Join(f.data, config.IgnoreFileName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.check(); len(find(got, health.IDSyncConfig)) == 0 {
+		t.Fatalf("want a sync config warning for an unreadable %s: %v", config.IgnoreFileName, got)
+	}
+}
