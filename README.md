@@ -300,3 +300,5 @@ hermetic default path.
 ## License
 
 MIT — see [LICENSE](./LICENSE).
+
+PR remote dry-run sample: this line is never merged.
