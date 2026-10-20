@@ -53,6 +53,18 @@ func (f *fakeClock) Tick(d time.Duration) (<-chan time.Time, func()) {
 	}
 }
 
+// waitTickers waits until n tickers are registered. A session starts its loss
+// monitor in a goroutine, so a test that advances the clock straight after
+// connecting can step past the moment the monitor's ticker would have been due.
+func (f *fakeClock) waitTickers(t *testing.T, n int) {
+	t.Helper()
+	eventually(t, fmt.Sprintf("%d tickers on the fake clock", n), func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return len(f.tickers) >= n
+	})
+}
+
 // Advance moves time forward by d, firing every ticker whose deadline passes.
 func (f *fakeClock) Advance(d time.Duration) {
 	f.mu.Lock()

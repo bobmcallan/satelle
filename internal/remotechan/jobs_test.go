@@ -107,6 +107,7 @@ func TestStalledJobReportedLost(t *testing.T) {
 func TestJobThatNeverBeatsIsLost(t *testing.T) {
 	h := newHarness(t, true)
 	local, _, _ := h.connect(t)
+	h.clock.waitTickers(t, 2) // both sessions' loss monitors
 	local.Expect("silent")
 	for i := 0; i < int((LostAfter+HeartbeatInterval)/HeartbeatInterval); i++ {
 		step(h.clock)
