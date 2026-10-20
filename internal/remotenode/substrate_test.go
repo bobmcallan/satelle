@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/bobmcallan/satelle/internal/remotedef"
 )
 
 func tarOf(t *testing.T, entries ...tar.Header) []byte {
@@ -37,11 +35,31 @@ func tarOf(t *testing.T, entries ...tar.Header) []byte {
 	return buf.Bytes()
 }
 
-func TestSubstrateRoundTripReplacesTheDirectories(t *testing.T) {
-	def := remotedef.Dir(t.TempDir(), "edge")
-	if err := remotedef.Scaffold(def, "1.2.3"); err != nil {
-		t.Fatal(err)
+// writeDefinition writes a small definition into dir: one file in each of the
+// SubstrateDirs, and a remote.toml the substrate must not carry.
+func writeDefinition(t *testing.T, dir string) {
+	t.Helper()
+	for rel, body := range map[string]string{
+		"remote.toml":                  "host commands",
+		"workflows/done.toml":          "done",
+		"workflows/step.toml":          "step",
+		"workflows/agents.toml":        "agents",
+		"skills/remote-work.md":        "skill",
+		"principles/remote-conduct.md": "principle",
+	} {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
+}
+
+func TestSubstrateRoundTripReplacesTheDirectories(t *testing.T) {
+	def := t.TempDir()
+	writeDefinition(t, def)
 	packed, err := PackSubstrate(def)
 	if err != nil {
 		t.Fatal(err)
@@ -115,10 +133,8 @@ func TestUnpackRefusesAnythingOutsideTheSubstrate(t *testing.T) {
 }
 
 func TestPackRefusesAnOversizedSubstrate(t *testing.T) {
-	def := remotedef.Dir(t.TempDir(), "edge")
-	if err := remotedef.Scaffold(def, "1.2.3"); err != nil {
-		t.Fatal(err)
-	}
+	def := t.TempDir()
+	writeDefinition(t, def)
 	// Incompressible bytes, past the cap.
 	big := make([]byte, MaxSubstrateBytes+4096)
 	if _, err := rand.Read(big); err != nil {

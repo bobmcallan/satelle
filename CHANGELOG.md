@@ -1,3 +1,13 @@
+## [Unreleased]
+
+### Breaking
+- The CLI no longer carries a remote control plane. A remote is team-only and server-only: it is defined, validated, published, secreted, launched and run through satelle-server (the satelle MCP). Nothing replaces these in the CLI, and there is no shim or deprecation window. (sty_9d85a9c3)
+  - Removed: `satelle remote` and every subcommand (`create`, `validate`, `test`, `trigger register|list|fire|pause|resume`, `wake`, `run`, `retire`, `key create|register|rotate`, `identity`, `check`, `start`, `publish`, `list`, `fetch`) and `satelle secret push|list`. They exit as unknown commands.
+  - `satelle publish push`, `adopt` and `check --update` no longer recognise a remote bundle or refuse `config/remotes/` paths specially; a remote is published from the server. Existing `.satelle/config/remotes/` directories are left on disk and are no longer read.
+  - The `remote-secrets` help topic is gone, and `config/.env` is no longer read by the CLI (it was the source for `satelle secret push` alone).
+  - Removed with them: the remote preflight and test-run packages, the node bootstrap script, the node launch (`Start`), the host commands and the `satelle.dev` secret, key, trigger and retire client calls.
+- A machine acting as a remote node still runs from the satelle binary, as a hidden node mode rather than a developer command: `satelle node join --root <dir> --relay <url> --session <id> --token <single-use>` (was `satelle remote join`). It prints its key line, unpacks the substrate it is sent, reports ready and serves jobs, and `satelle story drive` on a node still reads its run's secrets from the environment. satelle-server's launcher builds this command line.
+
 ## [0.0.705] - 2026-10-20
 
 ### Added

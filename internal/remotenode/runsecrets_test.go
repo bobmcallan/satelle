@@ -11,8 +11,7 @@ import (
 
 func secretDef() remotedef.Definition {
 	return remotedef.Definition{
-		RemoteID: "rmt_a",
-		Identity: remotedef.Identity{Label: "L", Key: "SATELLE_REMOTE_KEY"},
+		Identity: remotedef.Identity{Key: "SATELLE_REMOTE_KEY"},
 		Secret: []remotedef.SecretDecl{
 			{Key: "CLAUDE_CODE_OAUTH_TOKEN", Scope: remotedef.ScopePersonal, From: remotedef.FromEnv},
 			{Key: "TEAM_KEY", Scope: remotedef.ScopeTeam, Workspace: "0f7b1c55-3b8e-4c8a-9d7a-5d2d3c1a9b10", From: remotedef.FromEnv},
@@ -46,19 +45,6 @@ func TestRunSecretsEnvRoundTrip(t *testing.T) {
 	}
 	if !back.Active() {
 		t.Error("a carrier with a run and secrets is active")
-	}
-}
-
-// The wake and start paths append RemoteEnv, which carries no run id and nothing
-// at all for a definition with no [[secret]].
-func TestRemoteEnvOmitsTheRunAndIsNilWithoutSecrets(t *testing.T) {
-	if env := RemoteEnv(remotedef.Definition{RemoteID: "rmt_a"}, "rmt_a", "https://satelle.dev"); env != nil {
-		t.Errorf("no [[secret]] must export nothing, got %v", env)
-	}
-	env := RemoteEnv(secretDef(), "rmt_x", "https://satelle.dev")
-	joined := strings.Join(env, "\n")
-	if strings.Contains(joined, config.RemoteServerRunEnv) || !strings.Contains(joined, config.RemoteIDEnv+"=rmt_x") {
-		t.Errorf("RemoteEnv = %v", env)
 	}
 }
 

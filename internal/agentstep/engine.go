@@ -321,15 +321,6 @@ func (g *Engine) SetRunSecrets(values map[string]string, unset []string) {
 type cloudDispatchFunc func(g *Engine, ctx context.Context, item workitem.Item, toStatus, wfName, agent string,
 	binding config.AgentBinding, composed []string, skill string, remotePlaced bool) (verb.DispatchResult, error)
 
-// SetCloudDispatch replaces the cloud performer launch. fn is called in place of
-// the real dispatch whenever a step resolves to a cloud binding.
-func (g *Engine) SetCloudDispatch(fn func(ctx context.Context, item workitem.Item, toStatus, agent string) (verb.DispatchResult, error)) {
-	g.cloudDispatch = func(_ *Engine, ctx context.Context, item workitem.Item, toStatus, _ string, agent string,
-		_ config.AgentBinding, _ []string, _ string, _ bool) (verb.DispatchResult, error) {
-		return fn(ctx, item, toStatus, agent)
-	}
-}
-
 // SetDefaultBudget wires the repo's [defaults] spend bounds.
 func (g *Engine) SetDefaultBudget(b config.Budget) { g.defaultBudget = b }
 

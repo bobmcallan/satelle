@@ -60,9 +60,6 @@ func New(t testing.TB) *Dev {
 	return d
 }
 
-// NewHandler returns a stub with no server of its own, to be mounted elsewhere.
-func NewHandler() *Dev { return newDev() }
-
 func newDev() *Dev {
 	seed, _ := base64.StdEncoding.DecodeString(SeedB64)
 	return &Dev{pub: ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)}

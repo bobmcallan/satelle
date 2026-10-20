@@ -26,11 +26,6 @@ func NewAttemptID() string { return fmt.Sprintf("att_%s", uuid.NewV4().String()[
 // it produced, so the rows of one measured call can be found together.
 func NewBundleID() string { return fmt.Sprintf("bun_%s", uuid.NewV4().String()[:8]) }
 
-// NewRunID returns a fresh id for ONE run of a story's step on a remote
-// (sty_2f3baf0a): recorded on the remote_run row and exported to the step's
-// process as its run id, so what the step changed can be joined back to the row.
-func NewRunID() string { return fmt.Sprintf("run_%s", uuid.NewV4().String()[:8]) }
-
 // edgeRow is the from/to/attempt/notes shape a review or transition row's
 // payload carries. Extra keys are ignored.
 type edgeRow struct {

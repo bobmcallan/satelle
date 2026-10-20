@@ -14,20 +14,18 @@ import (
 	"github.com/bobmcallan/satelle/internal/remotenode/devtest"
 )
 
-// The start path's carrier is the sealed Setup: Start sends opts.Run, the node's
-// Prepare receives it with the registered run id, and a job the node then serves
-// reads through the stub satelle.dev with that id — the run id never reaches the
-// node's process environment.
-func TestStartCarriesTheRunInTheSealedSetup(t *testing.T) {
+// The attach path's carrier is the sealed Setup: the controller sends setup.Run,
+// the node's Prepare receives it with the registered run id, and a job the node
+// then serves reads through the stub satelle.dev with that id — the run id never
+// reaches the node's process environment.
+func TestAttachCarriesTheRunInTheSealedSetup(t *testing.T) {
 	d := devtest.New(t)
 	t.Setenv("SATELLE_REMOTE_KEY", devtest.SeedB64)
 	t.Setenv(config.RemoteServerRunEnv, "")
 
-	r := newRig(t, "")
-	opts := r.options()
+	r := newRig(t)
 	rs := NewRunSecrets(secretDef(), "rmt_a", d.URL, "trg_x")
 	rs.Secrets = rs.Secrets[:1]
-	opts.Run = rs
 
 	var mu sync.Mutex
 	var got Setup
@@ -47,18 +45,12 @@ func TestStartCarriesTheRunInTheSealedSetup(t *testing.T) {
 		return json.Marshal(keys)
 	})
 
-	h := r.runNode(node, func(_ context.Context, s Setup) (Report, error) {
+	run, _ := r.attach(node, func(_ context.Context, s Setup) (Report, error) {
 		mu.Lock()
 		got = s
 		mu.Unlock()
 		return Report{Version: "1.2.3", Workflows: []string{"*"}, Allow: s.Allow}, nil
-	}, r.clock)
-	_ = h
-	run, err := Start(testCtx(t), opts)
-	if err != nil {
-		t.Fatalf("Start: %v\nhost log: %v", err, r.hostLog())
-	}
-	t.Cleanup(func() { _ = run.End(context.Background()) })
+	}, Setup{Run: rs}, nil)
 
 	mu.Lock()
 	gotRun := got.Run
@@ -70,7 +62,7 @@ func TestStartCarriesTheRunInTheSealedSetup(t *testing.T) {
 		t.Error("the carrier holds a key or a value")
 	}
 	if os.Getenv(config.RemoteServerRunEnv) != "" {
-		t.Error("the start path must not carry the run id through the process environment")
+		t.Error("the attach path must not carry the run id through the process environment")
 	}
 
 	body, err := run.Request(testCtx(t), "read", struct{}{})

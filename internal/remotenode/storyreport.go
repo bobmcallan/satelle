@@ -68,17 +68,3 @@ func StoryReportHandler(load func() (config.Config, string, error)) Handler {
 		return json.Marshal(rep)
 	}
 }
-
-// StoryReport asks the node for the report on story, counting sessions from since
-// (a node-clock Now). The reply's Now is the since to ask next.
-func (r *Run) StoryReport(ctx context.Context, story string, since int64) (StoryReportReply, error) {
-	body, err := r.Request(ctx, StoryReportJob, StoryReportRequest{Story: story, Since: since})
-	if err != nil {
-		return StoryReportReply{}, err
-	}
-	var rep StoryReportReply
-	if err := json.Unmarshal(body, &rep); err != nil {
-		return StoryReportReply{}, fmt.Errorf("remotenode: malformed story report: %w", err)
-	}
-	return rep, nil
-}

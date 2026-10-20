@@ -6,11 +6,11 @@ package remotenode
 // the remote proves itself. It holds NAMES, never a value and never a key. It
 // travels two ways that cannot drift because both are this type:
 //
-//   - the start path seals it into Setup (Setup.Run), and the node's agent
+//   - the controller seals it into Setup (Setup.Run), and the node's agent
 //     handler reads from it;
-//   - the run and wake paths export it as SATELLE_SERVER_RUN_ID and the
-//     SATELLE_REMOTE_* variables (Env) to the host.run process, where
-//     `satelle story drive` reads it back (RunSecretsFromEnv).
+//   - the launcher exports it as SATELLE_SERVER_RUN_ID and the SATELLE_REMOTE_*
+//     variables (Env) to the process on the node, where `satelle story drive`
+//     reads it back (RunSecretsFromEnv).
 
 import (
 	"encoding/json"
@@ -154,16 +154,6 @@ func SecretRefs(def remotedef.Definition) []SecretRef {
 // known.
 func NewRunSecrets(def remotedef.Definition, remoteID, server, runID string) RunSecrets {
 	return RunSecrets{ServerRunID: runID, RemoteID: remoteID, Server: server, Identity: def.IdentityRef(), Secrets: SecretRefs(def)}
-}
-
-// RemoteEnv is the SATELLE_REMOTE_* part of the carrier for def, which the host
-// environment builder appends for every host path. It is nil for a definition
-// with no [[secret]]: such a remote exports nothing and reads nothing.
-func RemoteEnv(def remotedef.Definition, remoteID, server string) []string {
-	if !def.HasSecrets() {
-		return nil
-	}
-	return NewRunSecrets(def, remoteID, server, "").Env()
 }
 
 func encodeSecretRefs(refs []SecretRef) string {

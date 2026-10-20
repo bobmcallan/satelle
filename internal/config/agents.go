@@ -24,10 +24,6 @@ const (
 	ActorsConfigName = "actors.toml"
 	// AgentsConfigDir is the data-dir-relative directory holding AgentsConfigName.
 	AgentsConfigDir = "workflows"
-	// RemotesDir is the data-dir-relative directory holding one self-contained
-	// remote definition per subdirectory (see package remotedef). It sits under
-	// config/, which is outside SyncAreas, so a definition is never synced.
-	RemotesDir = "config/remotes"
 )
 
 // AgentsRel is the data-dir-relative slash path of the repo agents layer — the
@@ -182,20 +178,11 @@ const (
 	// engine exports it into the check's environment (sty_ab93f9a6).
 	GateStoryEnv = "SATELLE_GATE_STORY"
 
-	// RemoteStoryEnv, RemoteStepEnv and RemoteRunEnv are the ids a remote step's
-	// process receives (sty_2f3baf0a): the story, the step (the story's status at
-	// hand-off) and the run id recorded on the story's remote_run row. They are
-	// for the team's own tooling to stamp on what the step changes.
-	RemoteStoryEnv = "SATELLE_STORY_ID"
-	RemoteStepEnv  = "SATELLE_STEP"
-	RemoteRunEnv   = "SATELLE_RUN_ID"
-
 	// The names a remote's secret reads are carried under (sty_0b1c72a9). None
 	// holds a value: the server's id for the run, the remote's server id, the
 	// satelle.dev base, the declared secrets as KEY:scope[:workspace] and how the
 	// remote proves itself (key:<ENV> or oidc). remotenode.RunSecrets owns their
-	// shape; SATELLE_SERVER_RUN_ID is the fire's trigger_id or the owner's
-	// registered run, and is distinct from SATELLE_RUN_ID, the local ledger run.
+	// shape; SATELLE_SERVER_RUN_ID is the run satelle.dev registered for the node.
 	RemoteServerRunEnv = "SATELLE_SERVER_RUN_ID"
 	RemoteIDEnv        = "SATELLE_REMOTE_ID"
 	RemoteServerEnv    = "SATELLE_REMOTE_SERVER"
