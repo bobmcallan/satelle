@@ -45,6 +45,9 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 		// Product default (sty_9fa1023d): agents do not write documentation that
 		// restates code or configuration, or that nothing reads.
 		"satelle-no-drifting-docs",
+		// Product default (sty_a8a308aa): agents review a workflow's structure,
+		// never the practice a developer or team configures.
+		"satelle-review-structure-not-process",
 	} {
 		if body, ok := embedded[name]; !ok {
 			t.Errorf("operating principle %q must be embedded, but is missing from EmbeddedDefaults()", name)
@@ -54,7 +57,7 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 	}
 	// Surviving pin: these must be session-resident — residency is a curated
 	// product choice per principle, not a general corpus rule.
-	for _, name := range []string{"satelle-cross-repo-containment", "satelle-no-drifting-docs"} {
+	for _, name := range []string{"satelle-cross-repo-containment", "satelle-no-drifting-docs", "satelle-review-structure-not-process"} {
 		if body := embedded[name]; body != "" {
 			tagsLine := ""
 			for _, line := range strings.Split(body, "\n") {
@@ -161,5 +164,51 @@ func TestStructureReviewersNotEmbedded(t *testing.T) {
 		if d.Kind == "skills" && retired[d.Name] {
 			t.Errorf("structure reviewer %q is still embedded — it should be retired (deterministic check in internal/structure)", d.Name)
 		}
+	}
+}
+
+// TestReviewStructureNotProcessScope (sty_a8a308aa AC2): the principle binds
+// every agent seat and holds a reviewer to its ACs and its gate.
+func TestReviewStructureNotProcessScope(t *testing.T) {
+	body, ok := embeddedPrinciples()["satelle-review-structure-not-process"]
+	if !ok {
+		t.Fatal("satelle-review-structure-not-process must be embedded")
+	}
+	flat := strings.Join(strings.Fields(body), " ")
+	for _, want := range []string{
+		"never its process",
+		"well formed, resolves and can run",
+		"missing skill", "unresolvable binding", "cycle", "state with no exit", "unreachable gate",
+		"poor, unusual or contrary to your training",
+		"never stop, ask, warn or object",
+		"orchestrator", "planners", "coders", "executors", "reviewer gates",
+		"against its ACs and its gate, never the configured practice",
+		"[[satelle-configure-freely]]", "[[satelle-agent-goals]]",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("principle missing %q", want)
+		}
+	}
+}
+
+// TestAgentGoalsStopRuleIsStructural (sty_a8a308aa AC3): the surface-and-stop
+// rule names structural gaps only and points at the structure-not-process rule.
+func TestAgentGoalsStopRuleIsStructural(t *testing.T) {
+	body, ok := embeddedPrinciples()["satelle-agent-goals"]
+	if !ok {
+		t.Fatal("satelle-agent-goals must be embedded")
+	}
+	flat := strings.Join(strings.Fields(body), " ")
+	if !strings.Contains(flat, "[[satelle-review-structure-not-process]]") {
+		t.Error("satelle-agent-goals must link [[satelle-review-structure-not-process]]")
+	}
+	if !strings.Contains(flat, "When a **structural** gap blocks the loop") {
+		t.Error("satelle-agent-goals stop rule must be limited to a structural gap")
+	}
+	if !strings.Contains(flat, "surface a structural gap and stop") {
+		t.Error("satelle-agent-goals description must say 'surface a structural gap and stop'")
+	}
+	if strings.Contains(flat, "human-only decision") {
+		t.Error("satelle-agent-goals must not name a practice choice a human-only decision")
 	}
 }

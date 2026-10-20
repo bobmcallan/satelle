@@ -1,3 +1,16 @@
+## [0.0.706] - 2026-10-20
+
+### Added
+- New session-resident principle `satelle-review-structure-not-process`: agents review a workflow's structure (well formed, resolves, can run) and never its process. The practice a developer or team configures (who accepts, which gates, a skipped step) is carried out without stopping, asking, warning or objecting, by every agent satelle runs, reviewer gates included. (sty_a8a308aa)
+
+### Changed
+- `satelle-agent-goals` stops only on a structural gap and links the new principle. Its wording is tightened so the session-resident set still fits every harness limit. (sty_a8a308aa)
+
+## [serve-v0.0.180] - 2026-10-20
+
+### Changed
+- The service binary embeds the new `satelle-review-structure-not-process` principle and the revised `satelle-agent-goals`. (sty_a8a308aa)
+
 ## [0.0.705] - 2026-10-20
 
 ### Added
