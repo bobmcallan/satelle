@@ -1,3 +1,17 @@
+## [0.0.705] - 2026-10-20
+
+### Added
+- Remote secrets. A remote declares each secret it reads as `[[secret]]` in its definition: key, scope (personal or team), source (`from = "env"` or a command) and an optional `expires` or `ttl`, never a value. `satelle secret push <remote>` sends each declared value to satelle.dev under its scope and grants it to the remote; `satelle secret list` shows keys, scopes, readers and expiry, never a value. A node reads each secret through a signed, run-bound request and hands it only to that run's agent, never writing it. (sty_e951fd7a, sty_0b1c72a9)
+- `satelle remote key create|register|rotate` manage a remote's Ed25519 identity, `satelle remote identity` binds a platform workload identity (OIDC) instead, and `satelle remote check` reports a declared secret that is missing, ungranted or within 14 days of expiry. A definition records its satelle.dev id as `remote_id`. (sty_e951fd7a, sty_0b1c72a9)
+
+### Changed
+- A story a remote leaves at its own workflow's declared park state (`park = { state = "blocked" }` in the remote's done.toml) is a valid hand-back, not an off-contract status. (sty_e951fd7a, sty_c44d1f94)
+
+## [serve-v0.0.179] - 2026-10-20
+
+### Changed
+- The service binary carries the agent-environment and `.env` handling the remote secrets path shares, and the remote-secrets help topic. (sty_e951fd7a)
+
 ## [0.0.704] - 2026-10-20
 
 ### Added
