@@ -73,6 +73,8 @@ type Store struct {
 	db execer
 	// failAppend, when set, makes the next Append return that error (tests).
 	failAppend error
+	// stamper, when set, adds the configuration digests to agent_invocation rows.
+	stamper InvocationStamper
 }
 
 // New returns a Store bound to db.
@@ -96,6 +98,75 @@ func (s *Store) InjectAppendError(err error) {
 	}
 }
 
+// InvocationStamper returns payload keys to add to an agent_invocation row about
+// to be appended (the digests of the configuration the run used). A key the
+// payload already carries is never overwritten. The returned error is the
+// stamper's own to report: Append merges whatever keys came back and never fails
+// because stamping did.
+type InvocationStamper func(ctx context.Context, in AppendInput) (map[string]string, error)
+
+// SetInvocationStamper installs the stamper Append applies to every
+// KindAgentInvocation row, and only to those. Pass nil to remove it.
+//
+// The stamper, and any write it makes (the configuration bundle attachment),
+// runs outside any transaction and before the row's own INSERT: with the pool
+// capped at one connection a stamper that touched the database while the caller
+// held a transaction would wait on that transaction forever. A transaction-bound
+// store (WithTx) therefore does not stamp.
+func (s *Store) SetInvocationStamper(f InvocationStamper) {
+	if s != nil {
+		s.stamper = f
+	}
+}
+
+// stamp merges the stamper's keys into payload when the row is an
+// agent_invocation on a store that is not transaction-bound and the payload is a
+// JSON object. Keys already present are kept as written; new ones are appended
+// after the existing ones, so a stamped payload reads as the unstamped one plus
+// the stamp.
+func (s *Store) stamp(ctx context.Context, in AppendInput, payload json.RawMessage) json.RawMessage {
+	if s == nil || s.stamper == nil || in.Kind != KindAgentInvocation {
+		return payload
+	}
+	if _, inTx := s.db.(*sql.Tx); inTx {
+		return payload
+	}
+	var have map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &have); err != nil || have == nil {
+		return payload
+	}
+	extra, _ := s.stamper(ctx, in)
+	keys := make([]string, 0, len(extra))
+	for k := range extra {
+		if _, dup := have[k]; !dup {
+			keys = append(keys, k)
+		}
+	}
+	if len(keys) == 0 {
+		return payload
+	}
+	slices.Sort(keys)
+	body := strings.TrimRight(string(payload), " \t\r\n")
+	body = strings.TrimSuffix(body, "}")
+	sep := ","
+	if len(have) == 0 {
+		sep = ""
+	}
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(body, " \t\r\n"))
+	for _, k := range keys {
+		kb, _ := json.Marshal(k)
+		vb, _ := json.Marshal(extra[k])
+		b.WriteString(sep)
+		b.Write(kb)
+		b.WriteByte(':')
+		b.Write(vb)
+		sep = ","
+	}
+	b.WriteByte('}')
+	return json.RawMessage(b.String())
+}
+
 // Append inserts one row and returns it. Kind is required; now defaults to
 // time.Now().UTC() when zero. Payload/Refs default to {}/[] when empty.
 func (s *Store) Append(ctx context.Context, in AppendInput, now time.Time) (Entry, error) {
@@ -115,6 +186,7 @@ func (s *Store) Append(ctx context.Context, in AppendInput, now time.Time) (Entr
 	if len(payload) == 0 {
 		payload = json.RawMessage("{}")
 	}
+	payload = s.stamp(ctx, in, payload)
 	refs := in.Refs
 	if len(refs) == 0 {
 		refs = json.RawMessage("[]")

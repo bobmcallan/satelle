@@ -205,7 +205,7 @@ func setOf(ids []string) map[string]bool {
 }
 
 // pullStoryAttachments is the attachment leg of `sync workstate pull` and
-// `snapshot`: it lists the personal collection's changes since the stored cursor
+// `snapshot`: it lists the bound project's changes since the stored cursor
 // and writes each stories/<id>/<file>.md of a story this machine holds into the
 // attachment store, so `satelle story doc` reads it. A local file that differs
 // from hosted is kept and named unless force is set; a local file hosted lacks is

@@ -51,6 +51,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/placement"
 	"github.com/bobmcallan/satelle/internal/retrieve"
+	"github.com/bobmcallan/satelle/internal/sessionconfig"
 	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -1086,6 +1087,12 @@ func (g *Engine) fillPayloadDocs(ctx context.Context, itemID string, tp *transit
 		// not ride the cumulative payload ceiling or starve plan/step-summary
 		// (sty_948ad5df). Pull via satelle story doc / story diff --recorded.
 		if strings.EqualFold(d.Type, "change") {
+			continue
+		}
+		// A configuration bundle (internal/sessionconfig) is the whole substrate
+		// a past run used: a record for `satelle story session`, not a document
+		// to judge, and it would starve the plan of the payload budget.
+		if strings.EqualFold(d.Type, sessionconfig.DocType) {
 			continue
 		}
 		// The route document is the OPERATOR's artifact (sty_39e2d9df): it grows by

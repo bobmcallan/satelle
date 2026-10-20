@@ -83,7 +83,7 @@ func assessTakeoverStatus(ctx context.Context, a *app.App, errw io.Writer, clien
 		return false, &takeoverCheck{name, "could not scope the story: " + err.Error(), fix}
 	}
 	rep, perr := runScopedWorkstateSnapshot(ctx, a, errw, client, server, project, optIn, false, snapshotModeSnapshot, sc)
-	recordStoryConflicts(a, rep)
+	recordStoryConflicts(ctx, a, client, project, rep)
 	if perr != nil {
 		return false, &takeoverCheck{name, "could not compare local and hosted: " + perr.Error(), "check the connection and `satelle login`, then " + fix}
 	}

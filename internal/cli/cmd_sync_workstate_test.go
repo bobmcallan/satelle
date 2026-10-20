@@ -422,8 +422,8 @@ func TestSyncWorkstatePushPersonalAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("push: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "personal collection") && !strings.Contains(out, "personal workspace") {
-		t.Fatalf("push output should name personal workspace: %q", out)
+	if !strings.Contains(out, `project "probe"`) || strings.Contains(out, "personal collection") {
+		t.Fatalf("push output should name the bound project as the destination: %q", out)
 	}
 	if f.postCount("probe") != 1 {
 		t.Fatalf("personal posts = %d, want 1", f.postCount("probe"))
@@ -525,8 +525,8 @@ func TestSyncWorkstatePushIgnoresTeamBinding(t *testing.T) {
 	if f.postCount("ws-team") != 0 {
 		t.Error("shared-scope workstate must NOT route to team workspace")
 	}
-	if !strings.Contains(out, "personal collection") && !strings.Contains(out, "personal workspace") {
-		t.Fatalf("output should confirm personal dest: %q", out)
+	if !strings.Contains(out, `project "probe"`) || strings.Contains(out, "personal collection") {
+		t.Fatalf("output should confirm the bound project as dest: %q", out)
 	}
 }
 
@@ -691,6 +691,9 @@ func TestSyncWorkstatePullRoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(out, "Pulled work-state") {
 		t.Fatalf("pull output: %q", out)
+	}
+	if !strings.Contains(out, `project "probe"`) || strings.Contains(out, "personal collection") {
+		t.Fatalf("pull output should name the bound project as the source: %q", out)
 	}
 
 	got, err := runRoot(t, "story", "get", styID)
@@ -1267,5 +1270,36 @@ func TestPushMirrorAfterWorkstate(t *testing.T) {
 	mu.Unlock()
 	if gotHits != 0 {
 		t.Fatalf("upserted=0 posts=%d, want 0", gotHits)
+	}
+}
+
+// The sync help names the bound project as the destination, never a "personal
+// collection" (sty_9914df10 AC1).
+func TestSyncHelpNamesTheBoundProjectNotAPersonalCollection(t *testing.T) {
+	for _, args := range [][]string{
+		{"sync", "workstate", "--help"}, {"sync", "workstate", "push", "--help"}, {"sync", "workstate", "pull", "--help"},
+		{"sync", "documents", "push", "--help"}, {"sync", "documents", "pull", "--help"},
+		{"sync", "config", "push", "--help"}, {"sync", "config", "deploy", "--help"},
+	} {
+		out, err := runRoot(t, args...)
+		if err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+		// Collapse whitespace so a phrase wrapped across a help line still matches.
+		flat := strings.Join(strings.Fields(out), " ")
+		if strings.Contains(flat, "personal collection") {
+			t.Errorf("%v help still says \"personal collection\":\n%s", args, out)
+		}
+		if strings.Contains(flat, "personal workspace") {
+			t.Errorf("%v help still names the personal workspace as the destination:\n%s", args, out)
+		}
+	}
+	for _, args := range [][]string{
+		{"sync", "workstate", "--help"}, {"sync", "workstate", "push", "--help"}, {"sync", "workstate", "pull", "--help"},
+	} {
+		out, _ := runRoot(t, args...)
+		if !strings.Contains(strings.Join(strings.Fields(out), " "), "bound hosted project") {
+			t.Errorf("%v help should name the bound project:\n%s", args, out)
+		}
 	}
 }

@@ -65,6 +65,12 @@ const (
 	// (the skill/rubric file) — so the timeline shows what command ran with what
 	// context, not just the verdict (sty_fb3e0873).
 	KindAgentInvocation = "agent_invocation"
+	// KindOverlap records that a sync pass found two holders on one story: its
+	// local and hosted copies disagreed, or a push was refused by a hold another
+	// location or user owns. Payload {local_holder, remote_holder, remote_user,
+	// reason, source: conflict|hold}. A record of the overlap, never an arbiter of
+	// it (sty_9914df10).
+	KindOverlap = "overlap"
 	// Estimate/actual: an agent self-reports a plan estimate at begin-work and the
 	// actual cost at close. Recorded as story tags (estimate-*/actual-*) and as
 	// these ledger rows so the per-story close-out can compare estimate vs actual.
