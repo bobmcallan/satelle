@@ -88,7 +88,6 @@ field is accept|reject and notes carries your reasons.
 
 // remoteFixtureToml is the fixture's remote.toml; %s is the host sentinel.
 const remoteFixtureToml = `satelle_version = "1.2.3"
-secrets = []
 wake_key = "REMOTE_WAKE_KEY"
 
 [identity]

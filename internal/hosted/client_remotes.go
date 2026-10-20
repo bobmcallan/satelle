@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -119,38 +118,25 @@ func remoteRoute(remoteID, tail string) string {
 // a 403 or 404 on a DELETE (a retire) as a *RemoteForbiddenError or
 // *RemoteNotFoundError; any other non-2xx is a concise server error.
 func (c *Client) remoteCall(ctx context.Context, method, path string, payload any) ([]byte, error) {
-	var raw []byte
-	ctype := ""
-	if payload != nil {
-		var err error
-		if raw, err = json.Marshal(payload); err != nil {
-			return nil, fmt.Errorf("hosted: encode %s: %w", path, err)
-		}
-		ctype = contentJSON
+	body, err := c.authedCall(ctx, method, path, payload)
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		return body, err
 	}
-	resp, err := c.doAuthed(ctx, method, path, raw, ctype)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body = ae.body
 	switch {
-	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		return body, nil
-	case resp.StatusCode == http.StatusUnauthorized:
-		return nil, ErrLoginRequired
-	case resp.StatusCode == http.StatusBadRequest && method == http.MethodPut:
+	case ae.Status == http.StatusBadRequest && method == http.MethodPut:
 		return nil, &TriggerInvalidError{Reason: apiReason(body, "HTTP 400"), Trigger: bodyTrigger(body)}
-	case resp.StatusCode == http.StatusForbidden && method == http.MethodDelete:
+	case ae.Status == http.StatusForbidden && method == http.MethodDelete:
 		return nil, &RemoteForbiddenError{}
-	case resp.StatusCode == http.StatusNotFound && method == http.MethodDelete:
+	case ae.Status == http.StatusNotFound && method == http.MethodDelete:
 		return nil, &RemoteNotFoundError{}
-	case resp.StatusCode == http.StatusConflict:
+	case ae.Status == http.StatusConflict:
 		return nil, &TriggerRefusedError{Reason: apiReason(body, "HTTP 409"), TriggerID: bodyTriggerID(body)}
-	case resp.StatusCode == http.StatusBadGateway && isWakeFailure(body):
+	case ae.Status == http.StatusBadGateway && isWakeFailure(body):
 		return nil, &WakeFailedError{Reason: apiReason(body, "HTTP 502"), TriggerID: bodyTriggerID(body)}
 	default:
-		return nil, fmt.Errorf("hosted: %s %s: %s", method, path, serverError(resp.StatusCode, body))
+		return nil, fmt.Errorf("hosted: %s %s: %s", method, path, serverError(ae.Status, body))
 	}
 }
 

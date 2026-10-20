@@ -25,6 +25,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/health"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/remotedef"
@@ -46,11 +47,14 @@ host, the identity label that host runs under, the lifecycle segments it serves
 and its triggers. It lives in .satelle/config/remotes/<name>/ and is read only
 from there — never from this repo's .satelle/workflows.
 
-The definition holds no secret value: it names the .env keys
-(.satelle/config/.env) its agents may read, and a ${VAR} reference where a
-credential-shaped key needs one. Host commands, the identity label and trigger
+The definition holds no secret value: it declares each secret by key, scope and
+source, and uses a ${VAR} reference where a credential-shaped key needs one. Host
+commands, the identity label and trigger
 kinds are opaque to satelle. Local satelle needs no remote; with none defined,
-nothing here runs.`,
+nothing here runs.
+
+A remote declares each secret it reads from satelle.dev as a [[secret]]; see
+satelle help remote-secrets, satelle secret and satelle remote key|identity|check.`,
 	}
 
 	create := &cobra.Command{
@@ -144,7 +148,7 @@ the definition cannot run, with the reasons, or an edge is rejected.`,
 	_ = test.MarkFlagRequired("story")
 	_ = test.MarkFlagRequired("base")
 
-	remote.AddCommand(create, validate, test, newRemoteTriggerCmd(), newRemoteWakeCmd(), newRemoteRunCmd(), newRemoteRetireCmd())
+	remote.AddCommand(create, validate, test, newRemoteTriggerCmd(), newRemoteWakeCmd(), newRemoteRunCmd(), newRemoteRetireCmd(), newRemoteKeyCmd(), newRemoteIdentityCmd(), newRemoteCheckCmd())
 	remote.AddCommand(remoteStartCommands()...)
 	remote.AddCommand(remotePublishCommands()...)
 	register(remote)
@@ -499,12 +503,18 @@ func remoteDataDir() string {
 func reportRemote(cmd *cobra.Command, name, dir string) error {
 	out := cmd.OutOrStdout()
 	findings := remotedef.Validate(dir)
-	if len(findings) == 0 {
+	errs := remotedef.Errors(findings)
+	for _, f := range findings {
+		if f.Severity != health.SeverityError {
+			fmt.Fprintf(out, "WARN  remote %s: %s\n", name, f.Detail)
+		}
+	}
+	if len(errs) == 0 {
 		fmt.Fprintf(out, "remote %s: valid\n", name)
 		return nil
 	}
-	for _, f := range findings {
+	for _, f := range errs {
 		fmt.Fprintf(out, "FAIL  remote %s: %s\n", name, f.Detail)
 	}
-	return fmt.Errorf("remote %s: %d error(s)", name, len(findings))
+	return fmt.Errorf("remote %s: %d error(s)", name, len(errs))
 }

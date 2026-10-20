@@ -48,18 +48,18 @@ func (c *Commands) log() io.Writer {
 
 // Start runs host.start to completion.
 func (c *Commands) Start(ctx context.Context) error {
-	return c.run(ctx, "host.start", c.Def.HostArgv(c.Def.Host.Start, "", nil))
+	return c.run(ctx, "host.start", c.Def.HostArgv(c.Def.Host.Start, "", nil, ""))
 }
 
 // Network runs host.network to completion with {allow} filled by the allowlist,
 // comma-joined.
 func (c *Commands) Network(ctx context.Context, allow []string) error {
-	return c.run(ctx, "host.network", c.Def.HostArgv(c.Def.Host.Network, "", allow))
+	return c.run(ctx, "host.network", c.Def.HostArgv(c.Def.Host.Network, "", allow, ""))
 }
 
 // Stop runs host.stop to completion.
 func (c *Commands) Stop(ctx context.Context) error {
-	return c.run(ctx, "host.stop", c.Def.HostArgv(c.Def.Host.Stop, "", nil))
+	return c.run(ctx, "host.stop", c.Def.HostArgv(c.Def.Host.Stop, "", nil, ""))
 }
 
 // Exec runs argv on the host, never on this machine: it is the {command} of
@@ -69,7 +69,7 @@ func (c *Commands) Stop(ctx context.Context) error {
 // non-zero is an Outcome, not an error; one that could not be launched, or was
 // cut short by ctx, is an error.
 func (c *Commands) Exec(ctx context.Context, argv []string) (remotepreflight.Outcome, error) {
-	cmd := c.command(ctx, c.Def.HostArgv(c.Def.Host.Run, shellJoin(argv), nil))
+	cmd := c.command(ctx, c.Def.HostArgv(c.Def.Host.Run, shellJoin(argv), nil, ""))
 	var stdout bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, c.log()
 	err := cmd.Run()
@@ -110,6 +110,29 @@ func (c *Commands) RunStory(ctx context.Context, h remotedef.Handoff, command st
 	return c.runCmd("host.run", cmd)
 }
 
+// Token runs the definition's identity token command with {aud} filled and returns
+// the token it prints. It is how a node on a platform with workload identity
+// proves itself for one run: the command runs where the Commands do, under the
+// same process group rules as every host command, and its output is the token and
+// nothing else, so it is never logged.
+func (c *Commands) Token(ctx context.Context, aud string) (string, error) {
+	argv := c.Def.TokenArgv(aud)
+	if len(argv) == 0 {
+		return "", errors.New("the definition declares no identity.oidc token command")
+	}
+	cmd := c.command(ctx, argv)
+	var stdout bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, c.log()
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("identity token command: %w", err)
+	}
+	tok := strings.TrimSpace(stdout.String())
+	if tok == "" {
+		return "", errors.New("the identity token command printed no token")
+	}
+	return tok, nil
+}
+
 // markerEnvs are the environment keys that tell satelle's own hooks and checks
 // what the process is: a hook reads the dispatch markers to grant edits and a
 // check reads the gate story. A step on a host is none of those, so none is
@@ -134,10 +157,17 @@ outer:
 		env = append(env, kv)
 	}
 	env = append(env, c.Env...)
-	return append(env,
+	env = append(env,
 		config.RemoteStoryEnv+"="+h.Story,
 		config.RemoteStepEnv+"="+h.Step,
 		config.RemoteRunEnv+"="+h.RunID)
+	// The fire's id (or the owner's registered run) is satelle.dev's id for the
+	// run the story's secrets are read under; only a remote that declares secrets
+	// has any.
+	if c.Def.HasSecrets() && h.FireID != "" {
+		env = append(env, config.RemoteServerRunEnv+"="+h.FireID)
+	}
+	return env
 }
 
 // StoryRunner is the remotedef.Runner that works a handed-off story on the host.

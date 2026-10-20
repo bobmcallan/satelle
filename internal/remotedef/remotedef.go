@@ -46,9 +46,13 @@ const (
 type Definition struct {
 	// SatelleVersion pins the satelle the remote runs (MAJOR.MINOR.PATCH).
 	SatelleVersion string `toml:"satelle_version"`
-	// Secrets are the .satelle/config/.env key names the remote's agents may
-	// read. Names only — a value never appears in a definition.
-	Secrets []string `toml:"secrets"`
+	// RemoteID is the id satelle.dev gave the remote (rmt_…). It is optional until
+	// the remote is registered; every call that addresses the remote on the
+	// server takes it from here (RequireRemoteID).
+	RemoteID string `toml:"remote_id"`
+	// Secret declares each secret the remote reads from satelle.dev: its key,
+	// scope, source and lifetime. A value never appears in a definition.
+	Secret []SecretDecl `toml:"secret"`
 	// WakeKey is the .env key name of the wake-only credential used to start the
 	// node.
 	WakeKey string `toml:"wake_key"`
@@ -147,9 +151,15 @@ type Network struct {
 }
 
 // Identity is the host identity the remote runs under: a label the platform
-// understands. satelle treats it as an opaque string.
+// understands, which satelle treats as an opaque string, and how the remote
+// proves itself to satelle.dev when it reads a secret: Key names the host
+// environment variable that holds its Ed25519 private key (the host's secret
+// store puts it there), or OIDC binds a platform workload identity. Neither
+// holds a key.
 type Identity struct {
-	Label string `toml:"label"`
+	Label string        `toml:"label"`
+	Key   string        `toml:"key"`
+	OIDC  *OIDCIdentity `toml:"oidc"`
 }
 
 // Host is the user's own tooling for reaching the host, each an argv list. The
@@ -254,6 +264,17 @@ func decode(body string) (Definition, toml.MetaData, error) {
 	return def, md, err
 }
 
+// Errors is the findings that are errors; the rest are advice that never blocks.
+func Errors(findings []health.Finding) []health.Finding {
+	var out []health.Finding
+	for _, f := range findings {
+		if f.Severity == health.SeverityError {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // Validate checks the remote in dir and returns every error it finds, one
 // finding each. Every check runs on its own, so a defect in one file never
 // hides a defect in another. Each finding names its file relative to dir and
@@ -318,7 +339,14 @@ func (v *validation) checkDefinition() {
 	}
 	v.def = &def
 	for _, k := range md.Undecoded() {
-		v.fail(DefinitionFile, k.String(), "unknown key")
+		switch {
+		case k.String() == "secrets":
+			v.fail(DefinitionFile, "secrets", "was replaced: declare each secret as a [[secret]] with key, scope and from")
+		case len(k) > 0 && k[0] == "secret":
+			// checkSecrets names the secret the unknown field is on.
+		default:
+			v.fail(DefinitionFile, k.String(), "unknown key")
+		}
 	}
 
 	switch {
@@ -376,17 +404,13 @@ func (v *validation) checkDefinition() {
 			v.fail(DefinitionFile, key+".kind", "required")
 		}
 	}
-	for i, s := range def.Secrets {
-		if !envKeyPattern.MatchString(s) {
-			v.fail(DefinitionFile, fmt.Sprintf("secrets[%d]", i), "is not a well-formed .env key name (A-Z, 0-9 and _)")
-		}
-	}
 	if def.WakeKey != "" && !envKeyPattern.MatchString(def.WakeKey) {
 		v.fail(DefinitionFile, "wake_key", "is not a well-formed .env key name (A-Z, 0-9 and _)")
 	}
 
 	var raw map[string]any
 	if _, err := toml.Decode(body, &raw); err == nil {
+		v.checkSecrets(def, raw)
 		v.checkCredentials(raw)
 	}
 }
@@ -395,14 +419,15 @@ func (v *validation) checkDefinition() {
 // goes.
 const CommandPlaceholder = "{command}"
 
-// HostArgv is one host command (host.start, host.network, host.run or host.stop)
-// with {label}, {command} and {allow} filled in; allow is joined with commas. It
-// is the single place the placeholders are resolved: whatever shows a line and
-// whatever runs it call this, so they cannot disagree. Each placeholder is
-// replaced in one pass, so a value that itself contains a placeholder is not
-// expanded again.
-func (d Definition) HostArgv(argv []string, command string, allow []string) []string {
-	r := strings.NewReplacer("{label}", d.Identity.Label, CommandPlaceholder, command, PlaceholderAllow, strings.Join(allow, ","))
+// HostArgv is one host command (host.start, host.network, host.run or host.stop,
+// or the identity's token command) with {label}, {command}, {allow} and {aud}
+// filled in; allow is joined with commas and aud is the audience a token is
+// minted for. It is the single place the placeholders are resolved: whatever
+// shows a line and whatever runs it call this, so they cannot disagree. Each
+// placeholder is replaced in one pass, so a value that itself contains a
+// placeholder is not expanded again.
+func (d Definition) HostArgv(argv []string, command string, allow []string, aud string) []string {
+	r := strings.NewReplacer("{label}", d.Identity.Label, CommandPlaceholder, command, PlaceholderAllow, strings.Join(allow, ","), PlaceholderAud, aud)
 	out := make([]string, len(argv))
 	for i, a := range argv {
 		out[i] = r.Replace(a)
@@ -412,7 +437,7 @@ func (d Definition) HostArgv(argv []string, command string, allow []string) []st
 
 // HostRunArgv is host.run for command.
 func (d Definition) HostRunArgv(command string) []string {
-	return d.HostArgv(d.Host.Run, command, nil)
+	return d.HostArgv(d.Host.Run, command, nil, "")
 }
 
 // StepsHoldingAllLegs names the steps that declare data, untrusted-input and
@@ -469,17 +494,25 @@ func (v *validation) checkCredentials(raw map[string]any) {
 				walk(fmt.Sprintf("%s[%d]", path, i), key, item)
 			}
 		default:
-			if config.SecretishKey(key) && config.CarriesValue(val) {
-				v.fail(DefinitionFile, path, "credential-shaped key holds a literal value; hold a ${VAR} reference, or name a .env key in secrets")
+			if !holdsNameNotValue(path) && config.SecretishKey(key) && config.CarriesValue(val) {
+				v.fail(DefinitionFile, path, "credential-shaped key holds a literal value; hold a ${VAR} reference, or declare the secret as a [[secret]]")
 			}
 		}
 	}
 	for _, k := range sortedKeys(raw) {
-		if k == "secrets" || k == "wake_key" {
-			continue
+		if k == "secret" || k == "wake_key" {
+			continue // names and sources, judged by checkSecrets and above
 		}
 		walk(k, k, raw[k])
 	}
+}
+
+// holdsNameNotValue reports whether the credential-shaped key at path holds an
+// environment variable name or a command, never a value: identity.key names the
+// variable the host's secret store sets, and identity.oidc.token is the argv
+// that mints a token.
+func holdsNameNotValue(path string) bool {
+	return path == "identity.key" || strings.HasPrefix(path, "identity.oidc.token")
 }
 
 func join(path, k string) string {

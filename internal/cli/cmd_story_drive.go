@@ -41,6 +41,13 @@ func runStoryDrive(cmd *cobra.Command, args []string) error {
 	if handled, herr := handOffGate(cmd, "story-drive", id); handled {
 		return herr
 	}
+	// A remote's run reads its secrets from satelle.dev before any agent starts,
+	// and only when the host handed this process a run to read for.
+	stopSecrets, err := wireRunSecrets(cmd.Context(), cmd.ErrOrStderr())
+	if err != nil {
+		return err
+	}
+	defer stopSecrets()
 	eng, _, err := engineForCmd(cmd)
 	if err != nil {
 		return err

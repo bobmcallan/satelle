@@ -272,7 +272,17 @@ The caller has already checked the wake credential.`,
 			// records the hand-offs and runs nothing, so no story is re-read for
 			// a hand-back.
 			if strings.TrimSpace(def.Host.StoryCommand) != "" {
-				env, err := hostEnv(a, def)
+				// The wake carries the remote's id as satelle.dev knows it; a definition
+				// that sets its own remote_id must agree, or this wake is for another
+				// remote and its host is not run.
+				if def.RemoteID != "" && req.RemoteID != "" && def.RemoteID != req.RemoteID {
+					return fmt.Errorf("wake for %s does not match remote_id %s of remote %s", req.RemoteID, def.RemoteID, args[0])
+				}
+				remoteID := req.RemoteID
+				if remoteID == "" {
+					remoteID = def.RemoteID
+				}
+				env, err := hostEnv(a, def, remoteID, "")
 				if err != nil {
 					return fmt.Errorf("remote %s: host.env: %w", args[0], err)
 				}

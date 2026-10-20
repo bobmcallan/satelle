@@ -46,13 +46,26 @@ func scaffoldFiles(version string) []scaffoldFile {
 const scaffoldRemoteToml = `# A remote definition: a defined version of satelle that runs somewhere else.
 # Everything it needs is in this directory — its workflows, skills, principles and
 # bindings are its own and never read the repo's. It holds no secret value:
-# name .env keys (.satelle/config/.env), reference ${VAR}s, never paste a value.
+# declare secrets as [[secret]], reference ${VAR}s, never paste a value.
 
 # The satelle version this remote runs: MAJOR.MINOR.PATCH.
 satelle_version = "%s"
 
-# .env key names the remote's agents may read (names only, never values).
-secrets = []
+# The id satelle.dev gave this remote once you registered it there. The calls that
+# address the remote on the server (secret push, remote key, start, run) read it
+# from here; satelle does not register remotes.
+# remote_id = "rmt_..."
+
+# Each secret the remote reads from satelle.dev, declared by key, scope and
+# source, never by value. from = "env" reads the key from the local .env file;
+# from = ["argv", ...] runs a command that prints the value. expires (a date) or
+# ttl (36h, 30d) says when it lapses, at most one of them. Team scope also names
+# the team workspace's id.
+# [[secret]]
+# key = "CLAUDE_CODE_OAUTH_TOKEN"
+# scope = "personal"
+# from = "env"
+# expires = "2027-10-01"
 
 # .env key name of the credential used only to wake the node.
 wake_key = "REMOTE_WAKE_KEY"
@@ -79,6 +92,12 @@ allow = []
 [identity]
 # The identity label your platform understands; satelle treats it as opaque.
 label = "your-host-label"
+# How the remote proves itself to satelle.dev when it reads a secret. key names
+# the host environment variable that holds its Ed25519 private key (see satelle
+# remote key create); or bind a platform workload identity instead, with
+# [identity.oidc] issuer = "https://...", subject = "...",
+# token = ["your-cli", "token", "{aud}"].
+# key = "SATELLE_REMOTE_KEY"
 
 [host]
 # The host's name as your team knows it; recorded on each remote_run row.

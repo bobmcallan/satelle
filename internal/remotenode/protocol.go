@@ -59,13 +59,16 @@ type RepoSpec struct {
 
 // Setup is everything local satelle sends a node once it is admitted. It holds
 // no credential: the substrate is the remote's workflows, skills and principles,
-// and Allow is the egress local satelle applied to the host.
+// Allow is the egress local satelle applied to the host, and Run names the
+// secrets the node reads from satelle.dev for its run (names and ids, never a
+// value and never the remote's key).
 type Setup struct {
 	// Substrate is the gzip-compressed tar of the remote's workflows, skills and
 	// principles (see PackSubstrate).
 	Substrate []byte     `json:"substrate"`
 	Allow     []string   `json:"allow"`
 	Repos     []RepoSpec `json:"repos"`
+	Run       RunSecrets `json:"run"`
 }
 
 // FetchedRepo is one repo as the node fetched it.

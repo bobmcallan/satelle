@@ -436,6 +436,38 @@ func TestComposeEnv(t *testing.T) {
 	}
 }
 
+// composeEnv honours Unset: a named parent variable is dropped, set or not in the
+// overlay's way, and the rest survive (sty_0b1c72a9).
+func TestComposeEnvHonoursUnset(t *testing.T) {
+	base := []string{"PATH=/bin", "SATELLE_REMOTE_KEY=seed", "HOME=/root"}
+	got := composeEnv(base, nil, "SATELLE_REMOTE_KEY")
+	if contains(got, "SATELLE_REMOTE_KEY=seed") {
+		t.Errorf("an unset name survived: %v", got)
+	}
+	if !contains(got, "PATH=/bin") || !contains(got, "HOME=/root") {
+		t.Errorf("unset dropped more than its name: %v", got)
+	}
+	got = composeEnv(base, map[string]string{"X": "1"}, "SATELLE_REMOTE_KEY")
+	if contains(got, "SATELLE_REMOTE_KEY=seed") || !contains(got, "X=1") {
+		t.Errorf("unset with an overlay: %v", got)
+	}
+	if len(composeEnv(base, nil)) != len(base) {
+		t.Error("with nothing to overlay or unset the base is unchanged")
+	}
+}
+
+// The child process really does not see an unset parent variable.
+func TestRunProcessDoesNotPassAnUnsetVariable(t *testing.T) {
+	t.Setenv("SATELLE_UNSET_PROBE", "leaked")
+	out, err := runProcess(context.Background(), "sh", []string{"-c", `printf '%s' "${SATELLE_UNSET_PROBE-absent}"`}, Request{Unset: []string{"SATELLE_UNSET_PROBE"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != "absent" {
+		t.Errorf("the child saw %q", out)
+	}
+}
+
 // TestRunInheritsParentEnvNoFilter pins the NO-FILTERING contract: the dispatched
 // subprocess inherits the launching shell's env UNCHANGED (no denylist, no
 // allowlist), with only the binding's agents.toml `env` overlay added. A sentinel

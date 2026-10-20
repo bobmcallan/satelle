@@ -30,7 +30,7 @@ func TestRemoteCreateThenValidate(t *testing.T) {
 		}
 	}
 	toml, _ := os.ReadFile(filepath.Join(dir, "remote.toml"))
-	for _, key := range []string{"satelle_version", "[host]", "start =", "run =", "stop =", "[identity]", "label =", "[[segment]]", "[[trigger]]", "secrets =", "wake_key ="} {
+	for _, key := range []string{"satelle_version", "[host]", "start =", "run =", "stop =", "[identity]", "label =", "[[segment]]", "[[trigger]]", "[[secret]]", "remote_id", "wake_key ="} {
 		if !strings.Contains(string(toml), key) {
 			t.Errorf("remote.toml lacks %s", key)
 		}

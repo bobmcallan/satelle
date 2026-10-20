@@ -197,7 +197,7 @@ func Run(ctx context.Context, name, dir string, item workitem.Item, opts Options
 		rep.Refusals = r.Reasons
 		return rep, r
 	}
-	if findings := remotedef.Validate(dir); len(findings) > 0 {
+	if findings := remotedef.Errors(remotedef.Validate(dir)); len(findings) > 0 {
 		for _, f := range findings {
 			probs.addf("%s", f.Detail)
 		}

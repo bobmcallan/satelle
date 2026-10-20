@@ -31,6 +31,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -126,6 +127,11 @@ type Request struct {
 	// Env is NEVER included in Command() evidence, logs, or error strings
 	// (sty_001558ce).
 	Env map[string]string
+	// Unset names variables of the parent environment the subprocess must NOT
+	// receive (composeEnv drops them). It is how a request keeps a credential the
+	// launching process holds — a remote's private key — from an agent: Env can
+	// only set, never remove (sty_0b1c72a9).
+	Unset []string
 	// Sink, when non-nil, receives a live TEE of the subprocess's stdout/stderr AS
 	// IT RUNS (stderr lines prefixed "[stderr] "), so a caller can write it to a
 	// tailable per-dispatch log an operator watches while a long dispatch runs —
@@ -711,9 +717,11 @@ func maxTurnsValue(n int) string {
 // then overlay's pairs are appended in sorted-key order. The binding-wins
 // guarantee and the deterministic order are OURS — not delegated to os/exec's
 // duplicate-key behaviour — so it is unit-testable without an exec. An empty
-// overlay returns base unchanged (sty_001558ce).
-func composeEnv(base []string, overlay map[string]string) []string {
-	if len(overlay) == 0 {
+// overlay returns base unchanged (sty_001558ce). Names in unset are dropped from
+// base and, being absent from the result, are not set in the child at all — the
+// one way to keep a variable of the parent (a remote's private key) from an agent.
+func composeEnv(base []string, overlay map[string]string, unset ...string) []string {
+	if len(overlay) == 0 && len(unset) == 0 {
 		return base
 	}
 	out := make([]string, 0, len(base)+len(overlay))
@@ -722,7 +730,7 @@ func composeEnv(base []string, overlay map[string]string) []string {
 		if i := strings.IndexByte(kv, '='); i >= 0 {
 			key = kv[:i]
 		}
-		if _, shadowed := overlay[key]; !shadowed {
+		if _, shadowed := overlay[key]; !shadowed && !slices.Contains(unset, key) {
 			out = append(out, kv)
 		}
 	}
@@ -768,7 +776,7 @@ func runProcess(ctx context.Context, binary string, args []string, req Request) 
 	if req.Dir != "" {
 		cmd.Dir = req.Dir
 	}
-	cmd.Env = composeEnv(os.Environ(), req.Env)
+	cmd.Env = composeEnv(os.Environ(), req.Env, req.Unset...)
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {

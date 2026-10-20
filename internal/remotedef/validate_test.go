@@ -287,15 +287,15 @@ func TestListOfTablesCredentialRefused(t *testing.T) {
 
 func TestKeyNames(t *testing.T) {
 	good := scaffolded(t)
-	replaceIn(t, good, "remote.toml", "secrets = []", `secrets = ["CLAUDE_CODE_OAUTH_TOKEN", "_X1"]`)
+	appendTo(t, good, "remote.toml", "\n[[secret]]\nkey = \"CLAUDE_CODE_OAUTH_TOKEN\"\nscope = \"personal\"\nfrom = \"env\"\n\n[[secret]]\nkey = \"_X1\"\nscope = \"personal\"\nfrom = \"env\"\n")
 	if fs := Validate(good); len(fs) != 0 {
 		t.Errorf("well-formed key names must be accepted, got:\n%s", strings.Join(details(fs), "\n"))
 	}
 	bad := scaffolded(t)
-	replaceIn(t, bad, "remote.toml", "secrets = []", `secrets = ["lower", "A B"]`)
+	appendTo(t, bad, "remote.toml", "\n[[secret]]\nkey = \"lower\"\nscope = \"personal\"\nfrom = \"env\"\n")
 	replaceIn(t, bad, "remote.toml", `wake_key = "REMOTE_WAKE_KEY"`, `wake_key = "bad key"`)
 	fs := Validate(bad)
-	for _, key := range []string{"secrets[0]", "secrets[1]", "wake_key"} {
+	for _, key := range []string{"secret[0] (lower).key", "wake_key"} {
 		if !hasFinding(fs, "remote.toml", key) {
 			t.Errorf("want a finding for %s, got:\n%s", key, strings.Join(details(fs), "\n"))
 		}

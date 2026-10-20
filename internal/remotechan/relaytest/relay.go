@@ -37,6 +37,7 @@ type Relay struct {
 	attempts int
 	upgrades int
 	reject   int
+	other    http.Handler
 }
 
 // New starts a relay for the life of t.
@@ -102,7 +103,24 @@ func (r *Relay) Frames() []Frame {
 	return out
 }
 
+// Mount serves every path outside /relay/ with h, so a test can put a stand-in for
+// the server's other routes on the host the relay is under.
+func (r *Relay) Mount(h http.Handler) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.other = h
+}
+
 func (r *Relay) serve(w http.ResponseWriter, req *http.Request) {
+	if !strings.HasPrefix(req.URL.Path, "/relay/") {
+		r.mu.Lock()
+		other := r.other
+		r.mu.Unlock()
+		if other != nil {
+			other.ServeHTTP(w, req)
+			return
+		}
+	}
 	session := strings.TrimPrefix(req.URL.Path, "/relay/")
 	role := req.URL.Query().Get("role")
 

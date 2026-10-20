@@ -279,7 +279,7 @@ func openACPSession(ctx context.Context, a acpRunner, req Request, pol Permissio
 	if req.Dir != "" {
 		cmd.Dir = req.Dir
 	}
-	cmd.Env = composeEnv(os.Environ(), req.Env)
+	cmd.Env = composeEnv(os.Environ(), req.Env, req.Unset...)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

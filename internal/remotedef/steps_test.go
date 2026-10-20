@@ -106,14 +106,18 @@ func TestHostArgvIsTheSingleResolver(t *testing.T) {
 		Network: []string{"cli", "net", "{label}", "--allow={allow}"},
 		Run:     []string{"cli", "run", "{label}", "--cmd={command}"},
 	}}
-	if got := strings.Join(def.HostArgv(def.Host.Network, "", []string{"a.example", "*.b.example"}), "|"); got != "cli|net|lbl|--allow=a.example,*.b.example" {
+	if got := strings.Join(def.HostArgv(def.Host.Network, "", []string{"a.example", "*.b.example"}, ""), "|"); got != "cli|net|lbl|--allow=a.example,*.b.example" {
 		t.Errorf("HostArgv(network) = %q", got)
 	}
-	if got, want := def.HostRunArgv("go"), def.HostArgv(def.Host.Run, "go", nil); strings.Join(got, "|") != strings.Join(want, "|") {
+	if got, want := def.HostRunArgv("go"), def.HostArgv(def.Host.Run, "go", nil, ""); strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("HostRunArgv = %q, HostArgv = %q", got, want)
 	}
+	// {aud} is resolved by the same function: a token command takes the audience.
+	if got := strings.Join(def.HostArgv([]string{"tok", "--aud={aud}", "{label}"}, "", nil, "https://x/runs/trg_1"), "|"); got != "tok|--aud=https://x/runs/trg_1|lbl" {
+		t.Errorf("HostArgv({aud}) = %q", got)
+	}
 	// A value carrying a placeholder is data, not a second substitution.
-	if got := def.HostArgv([]string{"{command}"}, "{label}", nil); got[0] != "{label}" {
+	if got := def.HostArgv([]string{"{command}"}, "{label}", nil, ""); got[0] != "{label}" {
 		t.Errorf("a command containing {label} was expanded: %q", got[0])
 	}
 }

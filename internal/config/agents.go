@@ -190,6 +190,18 @@ const (
 	RemoteStepEnv  = "SATELLE_STEP"
 	RemoteRunEnv   = "SATELLE_RUN_ID"
 
+	// The names a remote's secret reads are carried under (sty_0b1c72a9). None
+	// holds a value: the server's id for the run, the remote's server id, the
+	// satelle.dev base, the declared secrets as KEY:scope[:workspace] and how the
+	// remote proves itself (key:<ENV> or oidc). remotenode.RunSecrets owns their
+	// shape; SATELLE_SERVER_RUN_ID is the fire's trigger_id or the owner's
+	// registered run, and is distinct from SATELLE_RUN_ID, the local ledger run.
+	RemoteServerRunEnv = "SATELLE_SERVER_RUN_ID"
+	RemoteIDEnv        = "SATELLE_REMOTE_ID"
+	RemoteServerEnv    = "SATELLE_REMOTE_SERVER"
+	RemoteSecretsEnv   = "SATELLE_REMOTE_SECRETS"
+	RemoteIdentityEnv  = "SATELLE_REMOTE_IDENTITY"
+
 	// SpawnEnv marks every process satelle's own buildRequest assembles — the
 	// one seam every isolated dispatch, live session and step-summary run
 	// through — as satelle's own spawn rather than the in-loop driving session

@@ -45,6 +45,9 @@ type StartOptions struct {
 	RelayURL string
 	// Env is the host commands' extra environment, KEY=VALUE.
 	Env []string
+	// Run names the secrets the node reads from satelle.dev for this start's run,
+	// sent in the sealed Setup. The zero value reads nothing.
+	Run RunSecrets
 	// ReleaseBase is SATELLE_RELEASE_BASE as local satelle sees it ("" for the
 	// public releases); it is handed to the node's installer.
 	ReleaseBase string
@@ -186,7 +189,7 @@ func (r *Run) begin(ctx context.Context, substrate []byte) error {
 	}
 	r.sess = sess
 
-	setup, err := encode(typeSetup, Setup{Substrate: substrate, Allow: opts.Allow, Repos: repoSpecs(opts.Def.Repos)})
+	setup, err := encode(typeSetup, Setup{Substrate: substrate, Allow: opts.Allow, Repos: repoSpecs(opts.Def.Repos), Run: opts.Run})
 	if err != nil {
 		return err
 	}

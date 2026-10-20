@@ -345,11 +345,13 @@ func serverError(code int, body []byte) string {
 	return fmt.Sprintf("HTTP %d", code)
 }
 
-// apiError is the server's JSON error body: a machine code in error and an
-// optional human sentence in message.
+// apiError is the server's JSON error body: a machine code in error, an
+// optional human sentence in message and, on a refused request, the reason
+// code in reason.
 type apiError struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
+	Reason  string `json:"reason"`
 }
 
 // decodeAPIError parses body as an apiError; ok is false when it is not JSON.

@@ -294,6 +294,25 @@ type Engine struct {
 	// reach a cloud (a local test run of a remote definition) installs a refusal
 	// instead of relying on every binding being checked first.
 	cloudDispatch cloudDispatchFunc
+
+	// runSecrets yields the values a remote run read from satelle.dev, handed only
+	// to the step performer's process environment, and the names of the parent
+	// environment no isolated agent may inherit (a remote's private key). It is a
+	// source, asked on each request, because the engine that dispatches a step is
+	// built before the run's secrets are read. Neither is written anywhere
+	// (sty_0b1c72a9).
+	runSecrets func() (values map[string]string, unset []string)
+}
+
+// SetRunSecretsSource wires where a remote run's secrets come from. The values it
+// returns reach only the step performer's request (never a reviewer's or a
+// summariser's); the unset names are dropped from every request's environment.
+// Nothing here is logged or persisted.
+func (g *Engine) SetRunSecretsSource(src func() (map[string]string, []string)) { g.runSecrets = src }
+
+// SetRunSecrets wires a fixed set of run secrets; see SetRunSecretsSource.
+func (g *Engine) SetRunSecrets(values map[string]string, unset []string) {
+	g.runSecrets = func() (map[string]string, []string) { return values, unset }
 }
 
 // cloudDispatchFunc is the shape of dispatchCloud, called as a method

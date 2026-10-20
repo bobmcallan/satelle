@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -112,6 +113,12 @@ type startedRemote struct {
 	def  remotedef.Definition
 	env  []string
 	node *remotenode.Run
+	// run is the satelle.dev run the owner registered for this start's secrets;
+	// the zero value when the remote declares none. client and stopRefresh end and
+	// keep it alive.
+	run         remotenode.RunSecrets
+	client      *hosted.Client
+	stopRefresh func()
 	// out is the command's stdout and hostLog its host commands' stderr; both
 	// are locked, since host output arrives on goroutines.
 	out, hostLog io.Writer
@@ -160,19 +167,47 @@ func startRemoteRun(cmd *cobra.Command, name, serverFlag, story string) (*starte
 	releaseBase := os.Getenv("SATELLE_RELEASE_BASE")
 	allow := remotedef.Allowlist(def, releaseHosts(releaseBase), u.Hostname())
 
-	env, err := hostEnv(a, def)
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+
+	// A remote that declares secrets reads them from satelle.dev under a run its
+	// owner registers here, once, before anything is started.
+	var (
+		runSecs remotenode.RunSecrets
+		dev     *hosted.Client
+	)
+	remoteID := def.RemoteID
+	if def.HasSecrets() {
+		if remoteID, err = def.RequireRemoteID(name); err != nil {
+			stop()
+			return nil, err
+		}
+		dev = secretHostedClient(srv)
+		if err = refreshTTLSecrets(ctx, hostLog, dev, def, time.Now()); err != nil {
+			stop()
+			return nil, fmt.Errorf("remote %s: %w", name, err)
+		}
+		reg, rerr := dev.CreateRun(ctx, remoteID)
+		if rerr != nil {
+			stop()
+			return nil, fmt.Errorf("remote %s: register run: %w", name, rerr)
+		}
+		runSecs = remotenode.NewRunSecrets(def, remoteID, srv, reg.RunID)
+	}
+	env, err := hostEnv(a, def, remoteID, srv)
 	if err != nil {
+		endOwnerRun(dev, runSecs)
+		stop()
 		return nil, fmt.Errorf("remote %s: host.env: %w", name, err)
 	}
 
-	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	run, err := remotenode.Start(ctx, remotenode.StartOptions{
-		Name: name, Def: def, DefDir: dir, Allow: allow,
+		Name: name, Def: def, DefDir: dir, Allow: allow, Run: runSecs,
 		Client: remoteHostedClient(srv), RelayURL: strings.TrimRight(srv, "/") + "/relay",
 		Env: env, ReleaseBase: releaseBase, StoryID: story,
 		Recorder: a.Store.Ledger, Log: hostLog, Channel: remoteChannelOptions,
 	})
 	if err != nil {
+		endOwnerRun(dev, runSecs)
 		stop()
 		var pe *remotenode.PreflightError
 		if errors.As(err, &pe) {
@@ -180,13 +215,55 @@ func startRemoteRun(cmd *cobra.Command, name, serverFlag, story string) (*starte
 		}
 		return nil, fmt.Errorf("remote %s: %w", name, err)
 	}
-	return &startedRemote{app: a, name: name, def: def, env: env, node: run, out: out, hostLog: hostLog, ctx: ctx, stop: stop}, nil
+	s := &startedRemote{app: a, name: name, def: def, env: env, node: run, run: runSecs, client: dev, out: out, hostLog: hostLog, ctx: ctx, stop: stop}
+	if runSecs.Active() {
+		s.stopRefresh = keepOwnerRunAlive(ctx, dev, runSecs)
+	}
+	return s, nil
+}
+
+// endOwnerRun ends the run the owner registered, with the owner's login; a run
+// that was never registered, or cannot be ended, is left to lapse on its own
+// clock (30 minutes).
+func endOwnerRun(c *hosted.Client, rs remotenode.RunSecrets) {
+	if c == nil || rs.ServerRunID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_ = c.EndOwnerRun(ctx, rs.RemoteID, rs.ServerRunID)
+}
+
+// keepOwnerRunAlive refreshes the owner's run while the node works, so a start
+// that outlasts the run's 30 minutes keeps reading. The returned stop ends it.
+func keepOwnerRunAlive(ctx context.Context, c *hosted.Client, rs remotenode.RunSecrets) (stop func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(remotenode.RefreshEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				_ = c.RefreshOwnerRun(ctx, rs.RemoteID, rs.ServerRunID)
+			}
+		}
+	}()
+	return func() { cancel(); <-done }
 }
 
 // finish ends the run — applying the definition's lifecycle, whatever way the
 // command is leaving — says which it was, and joins a failure to end into *err.
 func (s *startedRemote) finish(err *error) {
 	defer s.stop()
+	if s.stopRefresh != nil {
+		s.stopRefresh()
+	}
+	// The run was the owner's: it ends with the node, whichever way the command leaves.
+	defer endOwnerRun(s.client, s.run)
 	endErr := s.node.End(s.ctx)
 	switch {
 	case endErr != nil:
@@ -267,40 +344,48 @@ func shortCommit(c string) string {
 	return c
 }
 
-// hostEnv expands the definition's host.env — ${VAR} references resolve against
-// the layered [vars] and, for names those do not define, the process
-// environment — into KEY=VALUE pairs.
-func hostEnv(a *app.App, def remotedef.Definition) ([]string, error) {
-	if len(def.Host.Env) == 0 {
-		return nil, nil
-	}
-	eff, err := config.LoadEffectiveAgents(a.DataDir, a.PlaneConfig().Vars)
-	if err != nil {
-		return nil, err
-	}
-	vars := map[string]string{}
-	for _, kv := range os.Environ() {
-		if k, v, ok := strings.Cut(kv, "="); ok {
+// hostEnv is the environment the definition's host commands run under, for the
+// start, run and wake paths alike: its host.env — ${VAR} references resolve
+// against the layered [vars] and, for names those do not define, the process
+// environment — as KEY=VALUE pairs, then, for a remote that declares [[secret]],
+// the SATELLE_REMOTE_* names a node reads its secrets by (remotenode.RemoteEnv).
+// remoteID is the remote's id on satelle.dev: the definition's on start and run,
+// the wake's own on a wake. server is the satelle.dev the node reads from: the one
+// a --server flag chose on start and run, else (empty) the configured one. The
+// carrier holds names and ids, never a value.
+func hostEnv(a *app.App, def remotedef.Definition, remoteID, server string) ([]string, error) {
+	var out []string
+	if len(def.Host.Env) > 0 {
+		eff, err := config.LoadEffectiveAgents(a.DataDir, a.PlaneConfig().Vars)
+		if err != nil {
+			return nil, err
+		}
+		vars := map[string]string{}
+		for _, kv := range os.Environ() {
+			if k, v, ok := strings.Cut(kv, "="); ok {
+				vars[k] = v
+			}
+		}
+		for k, v := range eff.Vars {
 			vars[k] = v
 		}
-	}
-	for k, v := range eff.Vars {
-		vars[k] = v
-	}
-	keys := make([]string, 0, len(def.Host.Env))
-	for k := range def.Host.Env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	out := make([]string, 0, len(keys))
-	for _, k := range keys {
-		v, err := config.ExpandVars(def.Host.Env[k], vars)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", k, err)
+		keys := make([]string, 0, len(def.Host.Env))
+		for k := range def.Host.Env {
+			keys = append(keys, k)
 		}
-		out = append(out, k+"="+v)
+		sort.Strings(keys)
+		for _, k := range keys {
+			v, err := config.ExpandVars(def.Host.Env[k], vars)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", k, err)
+			}
+			out = append(out, k+"="+v)
+		}
 	}
-	return out, nil
+	if server == "" {
+		server = config.ResolveHostedServer(a.PlaneConfig())
+	}
+	return append(out, remotenode.RemoteEnv(def, remoteID, server)...), nil
 }
 
 // runRemoteJoin is the node's side. It runs in the working root: init creates the
@@ -339,9 +424,18 @@ func runRemoteJoin(cmd *cobra.Command, root, relay, session, token string) error
 
 	node := remotenode.NewNode()
 	dataDir := filepath.Join(root, config.DefaultDataDir)
-	node.Handle(remotenode.AgentJob, agentJobHandler(dataDir, root))
+	// The run the sealed Setup names is what the agent job reads its secrets under.
+	var setupRun atomic.Pointer[remotenode.RunSecrets]
+	run := func() remotenode.RunSecrets {
+		if r := setupRun.Load(); r != nil {
+			return *r
+		}
+		return remotenode.RunSecrets{}
+	}
+	node.Handle(remotenode.AgentJob, agentJobHandler(dataDir, root, run))
 	node.Handle(remotenode.StoryReportJob, remotenode.StoryReportHandler(nodeProcess))
 	return node.Serve(ctx, sess, func(ctx context.Context, s remotenode.Setup) (remotenode.Report, error) {
+		setupRun.Store(&s.Run)
 		return prepareNode(ctx, cmd, root, dataDir, s)
 	})
 }
@@ -473,9 +567,11 @@ func doneCategories(dataDir string) ([]string, error) {
 
 // agentJobHandler answers an agent job by running the remote's agent binding on
 // the message: the executor if it names a command, else the first agent binding
-// by name that does. The binding's env is not applied here — a secret reaches
-// the agent through its own story, not this one.
-func agentJobHandler(dataDir, root string) remotenode.Handler {
+// by name that does. The binding's env is not applied here. The agent gets the
+// secrets the run declares, read from satelle.dev under the run the sealed Setup
+// named, in its process environment alone; the node's own private key is dropped
+// from it. A secret satelle.dev refuses stops the job before the agent starts.
+func agentJobHandler(dataDir, root string, run func() remotenode.RunSecrets) remotenode.Handler {
 	return func(ctx context.Context, body json.RawMessage) (json.RawMessage, error) {
 		var req remotenode.AgentRequest
 		if err := json.Unmarshal(body, &req); err != nil {
@@ -493,9 +589,19 @@ func agentJobHandler(dataDir, root string) remotenode.Handler {
 		if err != nil {
 			return nil, fmt.Errorf("binding %q: %w", name, err)
 		}
+		rs := run()
+		var secrets map[string]string
+		if rs.Active() {
+			values, _, serr := remotenode.SecretsForRun(ctx, rs, os.Getenv)
+			if serr != nil {
+				return nil, serr
+			}
+			secrets = values
+		}
 		raw, err := runner.Run(ctx, agentcli.Request{
 			SystemPrompt: "You are the agent on a satelle remote node. Answer the developer's message.",
 			Payload:      req.Text, AllowedTools: b.Tools, Model: b.Model, Dir: root,
+			Env: secrets, Unset: unsetOf(rs),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("binding %q: %w", name, err)

@@ -106,7 +106,7 @@ func openStreamSession(ctx context.Context, s streamRunner, req Request, pol Per
 	if req.Dir != "" {
 		cmd.Dir = req.Dir
 	}
-	cmd.Env = composeEnv(os.Environ(), req.Env)
+	cmd.Env = composeEnv(os.Environ(), req.Env, req.Unset...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("agentcli: stream: stdin: %w", err)

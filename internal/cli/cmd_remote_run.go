@@ -155,7 +155,7 @@ func runRemoteRun(cmd *cobra.Command, name, serverFlag, record string, ids []str
 
 	started := time.Now()
 	plan := remoteRunPlan{
-		Name: name, RunID: newRunID(), Def: &s.def, Record: record, IDs: ids,
+		Name: name, RunID: newRunID(), ServerRunID: s.run.ServerRunID, Def: &s.def, Record: record, IDs: ids,
 		Baseline: s.node.Report, Started: started, Node: s.node,
 		Stories:  storyReader{items},
 		Recorder: ledgerRecorder{a.Store.Ledger},
@@ -217,11 +217,15 @@ func newRunID() string {
 // ledger, the host and the sync.
 type remoteRunPlan struct {
 	Name, RunID, Record string
-	Def                 *remotedef.Definition
-	IDs                 []string
-	Baseline            remotenode.Report
-	Started             time.Time
-	Node                storyReporter
+	// ServerRunID is satelle.dev's id for the run the owner registered, when the
+	// remote declares secrets. It takes the fire's place in the wake, so the story
+	// command reads its secrets under it; RunID stays the local run's own id.
+	ServerRunID string
+	Def         *remotedef.Definition
+	IDs         []string
+	Baseline    remotenode.Report
+	Started     time.Time
+	Node        storyReporter
 
 	Stories  remotedef.StoryReader
 	Recorder remotedef.HandoffRecorder
@@ -330,7 +334,11 @@ func capReached(limit *float64, spent float64) bool { return limit != nil && spe
 // runOne offers one story to the remote and reads back what it left, filling st.
 // since and prev advance to this story's node clock and configuration hashes.
 func (p remoteRunPlan) runOne(ctx context.Context, w remotedef.Wiring, st *runStory, since *int64, prev *map[string]string, window time.Time) error {
-	_, backs, err := remotedef.Wake(ctx, p.Name, p.Def, remotedef.WakeRequest{TriggerID: p.RunID, Remote: p.Name, StoryID: st.ID}, w)
+	fire := p.RunID
+	if p.ServerRunID != "" {
+		fire = p.ServerRunID
+	}
+	_, backs, err := remotedef.Wake(ctx, p.Name, p.Def, remotedef.WakeRequest{TriggerID: fire, Remote: p.Name, StoryID: st.ID}, w)
 	var refused *remotedef.RefusedError
 	if errors.As(err, &refused) {
 		st.Refused = refused.Cause.Error()
@@ -492,7 +500,7 @@ func runRemoteHandOne(cmd *cobra.Command, storyID, server, remoteID string) erro
 	}
 	var matches []remoteRunMatch
 	for _, n := range names {
-		if len(remotedef.Validate(remotedef.Dir(remoteDataDir(), n))) > 0 {
+		if len(remotedef.Errors(remotedef.Validate(remotedef.Dir(remoteDataDir(), n)))) > 0 {
 			fmt.Fprintf(out, "remote %s skipped: invalid (satelle remote validate %s)\n", n, n)
 			continue
 		}

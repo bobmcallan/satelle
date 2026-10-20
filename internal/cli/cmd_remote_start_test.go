@@ -100,7 +100,6 @@ func newRemoteRig(t *testing.T, lifecycle, workerCommand string) *remoteRig {
 	}
 	dir := filepath.Join(r.repo, ".satelle", filepath.FromSlash(config.RemotesDir), "edge")
 	toml := fmt.Sprintf(`satelle_version = %q
-secrets = []
 wake_key = "REMOTE_WAKE_KEY"
 lifecycle = %q
 

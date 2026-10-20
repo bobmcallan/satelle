@@ -31,9 +31,9 @@ var gitSpawns = map[string]string{
 }
 
 // resolvedNames are the identifiers that stand for a host-command placeholder.
-var resolvedNames = map[string]bool{"CommandPlaceholder": true, "PlaceholderAllow": true}
+var resolvedNames = map[string]bool{"CommandPlaceholder": true, "PlaceholderAllow": true, "PlaceholderAud": true}
 
-var resolvedLiterals = map[string]bool{"{command}": true, "{label}": true, "{allow}": true}
+var resolvedLiterals = map[string]bool{"{command}": true, "{label}": true, "{allow}": true, "{aud}": true}
 
 // scanOwners parses each file (repo-relative slash path to source) and reports
 // every host-command spawn outside spawnOwner and every placeholder resolution
