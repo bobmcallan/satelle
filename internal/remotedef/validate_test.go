@@ -283,6 +283,46 @@ func TestKeyNames(t *testing.T) {
 	}
 }
 
+// A secrets entry equal to the definition's own wake_key is refused, whatever
+// that key is named: the wake-only credential is no agent's to read.
+func TestSecretsRefuseTheWakeKey(t *testing.T) {
+	dir := scaffolded(t)
+	replaceIn(t, dir, "remote.toml", `wake_key = "REMOTE_WAKE_KEY"`, `wake_key = "MY_WAKER"`)
+	replaceIn(t, dir, "remote.toml", "secrets = []", `secrets = ["API_TOKEN", "MY_WAKER"]`)
+	fs := Validate(dir)
+	if !hasFinding(fs, "remote.toml", "secrets[1]") || hasFinding(fs, "remote.toml", "secrets[0]") {
+		t.Fatalf("want a finding for secrets[1] only, got:\n%s", strings.Join(details(fs), "\n"))
+	}
+
+	// The default wake key name is not special: with another wake_key it is an
+	// ordinary secret.
+	ok := scaffolded(t)
+	replaceIn(t, ok, "remote.toml", `wake_key = "REMOTE_WAKE_KEY"`, `wake_key = "MY_WAKER"`)
+	replaceIn(t, ok, "remote.toml", "secrets = []", `secrets = ["REMOTE_WAKE_KEY"]`)
+	if fs := Validate(ok); len(fs) != 0 {
+		t.Errorf("only the definition's own wake_key is refused, got:\n%s", strings.Join(details(fs), "\n"))
+	}
+}
+
+// A binding's env may reference ${KEY} for a key the definition names under
+// secrets (the node fetches it at launch) and for no other.
+func TestBindingEnvMayReferenceOnlyListedSecrets(t *testing.T) {
+	dir := scaffolded(t)
+	replaceIn(t, dir, "remote.toml", "secrets = []", `secrets = ["API_TOKEN"]`)
+	b, err := os.ReadFile(filepath.Join(dir, "workflows", "agents.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "workflows/agents.toml", string(b)+"\n[worker.env]\nFROM_ENV = \"${API_TOKEN}\"\n")
+	if fs := Validate(dir); len(fs) != 0 {
+		t.Fatalf("a listed secret must resolve, got:\n%s", strings.Join(details(fs), "\n"))
+	}
+	replaceIn(t, dir, "workflows/agents.toml", "${API_TOKEN}", "${UNLISTED}")
+	if got := strings.Join(details(Validate(dir)), "\n"); !strings.Contains(got, "unknown var ${UNLISTED}") {
+		t.Errorf("want the unknown-var finding for an unlisted secret, got:\n%s", got)
+	}
+}
+
 func TestLabelIsOpaque(t *testing.T) {
 	for _, label := range []string{"x", "team/ci runner:1", "any thing, at all"} {
 		dir := scaffolded(t)

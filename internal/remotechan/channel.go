@@ -136,6 +136,10 @@ func newSession(ctx context.Context, role Role, conn *websocket.Conn, send *seal
 // Role is which end this is.
 func (s *Session) Role() Role { return s.role }
 
+// Clock is the time source the session runs on, so a caller that paces work by
+// the job liveness it reports (the secret run refresh) keeps time with it.
+func (s *Session) Clock() Clock { return s.clock }
+
 // Send delivers body to the other end, sealed. job names the job it belongs to
 // ("" for none).
 func (s *Session) Send(ctx context.Context, job string, body []byte) error {

@@ -163,6 +163,7 @@ type rig struct {
 	defDir   string
 	def      remotedef.Definition
 	chanOpts []remotechan.Option
+	secrets  SecretService
 }
 
 const rigServer = "https://satelle.test"
@@ -217,7 +218,7 @@ func (r *rig) options() StartOptions {
 	return StartOptions{
 		Name: "edge", Def: r.def, DefDir: r.defDir,
 		Allow:  remotedef.Allowlist(r.def, []string{"rel.example.com"}, "satelle.test"),
-		Client: r.client, RelayURL: r.relay.URL(), Recorder: r.ledger,
+		Client: r.client, RelayURL: r.relay.URL(), Recorder: r.ledger, Secrets: r.secrets,
 		Channel: r.chanOpts, ReadyTimeout: 20 * time.Second,
 		Now: r.clock.Now,
 	}

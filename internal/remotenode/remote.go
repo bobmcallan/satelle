@@ -47,6 +47,9 @@ type StartOptions struct {
 	// ReleaseBase is SATELLE_RELEASE_BASE as local satelle sees it ("" for the
 	// public releases); it is handed to the node's installer.
 	ReleaseBase string
+	// Secrets is satelle-server's secrets service, the one place a secret value
+	// is held. Nil answers every secret request with a refusal.
+	Secrets SecretService
 	// Recorder is where each host start and stop is recorded. Nil records nothing.
 	Recorder remotechan.Recorder
 	// Log receives host command output; nil discards it.
@@ -73,13 +76,24 @@ type Run struct {
 	held *Held
 
 	mu      sync.Mutex
-	pending map[string]chan result
+	pending map[string]*pendingJob
 	ended   bool
 }
 
 type result struct {
 	body json.RawMessage
 	err  error
+}
+
+// pendingJob is a request local satelle is waiting on. run is the server-side
+// run registered for it ("" when the remote reads no secret), closed is set once
+// the job has finished or been reported lost, and nonces are the secret requests
+// already seen in it. All three are guarded by Run.mu.
+type pendingJob struct {
+	ch     chan result
+	run    string
+	closed bool
+	nonces map[string]bool
 }
 
 // hostEvent is the payload of a remote_start, remote_stop and remote_idle entry.
@@ -97,7 +111,7 @@ type hostEvent struct {
 // the error. A report that names a different satelle version than the definition
 // pins, or an error of the node's own, fails the start.
 func Start(ctx context.Context, opts StartOptions) (*Run, error) {
-	r := &Run{opts: opts, pending: map[string]chan result{}}
+	r := &Run{opts: opts, pending: map[string]*pendingJob{}}
 	r.cmds = &Commands{Def: opts.Def, Env: opts.Env, Log: opts.Log}
 	if r.opts.ReadyTimeout <= 0 {
 		r.opts.ReadyTimeout = defaultReadyTimeout
@@ -196,6 +210,11 @@ func repoSpecs(in []remotedef.Repo) []RepoSpec {
 // reply. The job heartbeats on the channel while the node works; if its
 // heartbeats stop or the channel ends first, Request returns an error wrapping
 // ErrJobLost. A job type is any name the node registered a handler for.
+//
+// When the definition lists secrets and a SecretService is configured, the job
+// has a run on the server: registered before the job is sent (a failure to
+// register fails the request), refreshed while the job is live and ended however
+// Request returns. The node's secret requests are answered only inside that run.
 func (r *Run) Request(ctx context.Context, jobType string, body any) (json.RawMessage, error) {
 	payload, err := encode(jobType, body)
 	if err != nil {
@@ -205,26 +224,38 @@ func (r *Run) Request(ctx context.Context, jobType string, body any) (json.RawMe
 	if err != nil {
 		return nil, err
 	}
-	ch := make(chan result, 1)
+	pj := &pendingJob{ch: make(chan result, 1), nonces: map[string]bool{}}
 	r.mu.Lock()
 	if r.ended {
 		r.mu.Unlock()
 		return nil, fmt.Errorf("%w: the run has ended", ErrJobLost)
 	}
-	r.pending[id] = ch
+	r.pending[id] = pj
 	r.mu.Unlock()
 	defer func() {
 		r.mu.Lock()
+		pj.closed = true
 		delete(r.pending, id)
 		r.mu.Unlock()
 	}()
+
+	// A remote that may read secrets has its run registered before the job is
+	// sent and ended when the job finishes or is lost, by whatever way Request
+	// returns.
+	if r.readsSecrets() {
+		end, err := r.beginSecretRun(ctx, id, pj)
+		if err != nil {
+			return nil, err
+		}
+		defer end()
+	}
 
 	r.sess.Expect(id)
 	if err := r.sess.Send(ctx, id, payload); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrJobLost, err)
 	}
 	select {
-	case res := <-ch:
+	case res := <-pj.ch:
 		return res.body, res.err
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -265,6 +296,10 @@ func (r *Run) pump() {
 		}
 		var res result
 		env, derr := decode(m.Body)
+		if derr == nil && env.Type == typeSecretGet {
+			go r.answerSecret(m.Job, env)
+			continue
+		}
 		var rep reply
 		switch {
 		case derr != nil:
@@ -294,15 +329,20 @@ func (r *Run) watchLost() {
 	}
 }
 
+// deliver ends the pending job with res: a reply, or the report that it is lost.
+// The job is closed first, so no secret is answered for it afterwards.
 func (r *Run) deliver(job string, res result) {
 	r.mu.Lock()
-	ch := r.pending[job]
+	pj := r.pending[job]
+	if pj != nil {
+		pj.closed = true
+	}
 	r.mu.Unlock()
-	if ch == nil {
+	if pj == nil {
 		return // a finished job's late heartbeat or done
 	}
 	select {
-	case ch <- res:
+	case pj.ch <- res:
 	default:
 	}
 }
@@ -310,9 +350,10 @@ func (r *Run) deliver(job string, res result) {
 func (r *Run) failAll(err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, ch := range r.pending {
+	for _, pj := range r.pending {
+		pj.closed = true
 		select {
-		case ch <- result{err: err}:
+		case pj.ch <- result{err: err}:
 		default:
 		}
 	}

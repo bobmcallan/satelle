@@ -283,6 +283,9 @@ func (v *validation) checkDefinition() {
 		if !envKeyPattern.MatchString(s) {
 			v.fail(DefinitionFile, fmt.Sprintf("secrets[%d]", i), "is not a well-formed .env key name (A-Z, 0-9 and _)")
 		}
+		if def.WakeKey != "" && s == def.WakeKey {
+			v.fail(DefinitionFile, fmt.Sprintf("secrets[%d]", i), "is the wake_key: the wake-only credential is readable by the server's waker and by no agent")
+		}
 	}
 	if def.WakeKey != "" && !envKeyPattern.MatchString(def.WakeKey) {
 		v.fail(DefinitionFile, "wake_key", "is not a well-formed .env key name (A-Z, 0-9 and _)")
@@ -457,7 +460,16 @@ func (v *validation) checkAgents() {
 		v.fail(agentsFile, "parse", err.Error())
 		return
 	}
-	report := agentvalidate.ValidateEffectiveLayered(config.AgentLayers{Repo: repo}, config.GlobalAgentsConfig{}, nil, v.docs, v.skillBody)
+	// A binding's ${VAR} resolves on the node from the secrets the definition
+	// names, fetched when the agent starts; a name outside that list is unknown.
+	var vars map[string]string
+	if v.def != nil {
+		vars = make(map[string]string, len(v.def.Secrets))
+		for _, k := range v.def.Secrets {
+			vars[k] = ""
+		}
+	}
+	report := agentvalidate.ValidateEffectiveLayered(config.AgentLayers{Repo: repo}, config.GlobalAgentsConfig{}, vars, v.docs, v.skillBody)
 	for _, f := range report.Findings {
 		if f.Severity == health.SeverityError {
 			key := f.Artifact

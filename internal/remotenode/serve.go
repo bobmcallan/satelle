@@ -23,10 +23,17 @@ type Handler func(ctx context.Context, body json.RawMessage) (json.RawMessage, e
 type Node struct {
 	mu       sync.Mutex
 	handlers map[string]Handler
+	// sess is the admitted session, set when Serve starts; active is the jobs
+	// being served and waiters the secret requests awaiting an answer, by nonce.
+	sess    *remotechan.Session
+	active  map[string]struct{}
+	waiters map[string]*secretWaiter
 }
 
 // NewNode returns a Node with no job types.
-func NewNode() *Node { return &Node{handlers: map[string]Handler{}} }
+func NewNode() *Node {
+	return &Node{handlers: map[string]Handler{}, active: map[string]struct{}{}, waiters: map[string]*secretWaiter{}}
+}
 
 // Handle registers the handler for a job type. A later story adds its own type
 // here; an unregistered type is answered as unsupported, never ignored.
@@ -49,6 +56,9 @@ func (n *Node) handler(jobType string) (Handler, bool) {
 // ends with its reply. It returns nil when local satelle closed the channel, and
 // prepare's error (after reporting it) if the node could not become ready.
 func (n *Node) Serve(ctx context.Context, sess *remotechan.Session, prepare Prepare) error {
+	n.mu.Lock()
+	n.sess = sess
+	n.mu.Unlock()
 	m, err := sess.Recv(ctx)
 	if err != nil {
 		return fmt.Errorf("remotenode: waiting for setup: %w", err)
@@ -90,6 +100,10 @@ func (n *Node) Serve(ctx context.Context, sess *remotechan.Session, prepare Prep
 		if m.Job == "" {
 			continue // nothing outside a job is expected after setup
 		}
+		if env, derr := decode(m.Body); derr == nil && (env.Type == typeSecretValue || env.Type == typeSecretDenied) {
+			n.deliverSecret(m.Job, env) // an answer to a request this node made, not a new job
+			continue
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -107,6 +121,15 @@ func (n *Node) refuse(ctx context.Context, sess *remotechan.Session, why string)
 // serveJob answers one request: heartbeat while the handler runs, send its
 // reply, then announce the job done.
 func (n *Node) serveJob(ctx context.Context, sess *remotechan.Session, m remotechan.Message) {
+	n.mu.Lock()
+	n.active[m.Job] = struct{}{}
+	n.mu.Unlock()
+	defer func() {
+		n.mu.Lock()
+		delete(n.active, m.Job)
+		n.mu.Unlock()
+	}()
+	ctx = context.WithValue(ctx, jobCtxKey{}, m.Job)
 	job := sess.StartJob(m.Job)
 	var r reply
 	env, err := decode(m.Body)

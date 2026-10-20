@@ -20,6 +20,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/hosted/secretstest"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/release"
 	"github.com/bobmcallan/satelle/internal/remotechan"
@@ -45,6 +46,7 @@ type remoteRig struct {
 	server    string // hosted server base the relay lives under
 	relay     *relaytest.Relay
 	git       *gittest.Server
+	secrets   *secretstest.Server // satelle-server's secrets routes; local satelle's hosted client points here
 	nodeHome  string
 	nodeRoot  string
 	hostLog   string
@@ -66,7 +68,7 @@ func newRemoteRig(t *testing.T, lifecycle, workerCommand string) *remoteRig {
 			t.Skipf("%s is not installed", tool)
 		}
 	}
-	r := &remoteRig{t: t, relay: relaytest.New(t), git: gittest.New(t)}
+	r := &remoteRig{t: t, relay: relaytest.New(t), git: gittest.New(t), secrets: secretstest.New(t)}
 	installer, err := filepath.Abs(filepath.Join("..", "..", "scripts", "install.sh")) // before the chdir
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +82,9 @@ func newRemoteRig(t *testing.T, lifecycle, workerCommand string) *remoteRig {
 	r.hostLog = filepath.Join(t.TempDir(), "host.log")
 
 	// The sign-in and the relay's certificate, as the node's process will see them.
-	client := hosted.NewClient(r.server, &e2eStore{cred: hosted.Credential{ServerURL: r.server, AccessToken: "access-1"}}, nil)
+	// The client's server is the secrets stand-in; the relay dial goes to the
+	// relay URL `remote start --server` names and takes only the bearer from it.
+	client := hosted.NewClient(r.secrets.URL(), &e2eStore{cred: hosted.Credential{ServerURL: r.server, AccessToken: "access-1"}}, nil)
 	prevClient, prevOpts := remoteHostedClient, remoteChannelOptions
 	remoteHostedClient = func(string) *hosted.Client { return client }
 	remoteChannelOptions = []remotechan.Option{remotechan.WithHTTPClient(r.relay.Client())}

@@ -218,6 +218,10 @@ const (
 	KindRemoteStart = "remote_start"
 	KindRemoteStop  = "remote_stop"
 	KindRemoteIdle  = "remote_idle"
+	// KindSecretRead records one request by a remote's agent for a secret key
+	// (sty_d9acc2b5): Payload is {key, remote, run, outcome, reason} with outcome
+	// allowed or denied. It never carries a value. Enumeration only.
+	KindSecretRead = "secret.read"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional

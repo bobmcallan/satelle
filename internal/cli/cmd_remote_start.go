@@ -141,9 +141,10 @@ func runRemoteStart(cmd *cobra.Command, name, serverFlag, message string) (err e
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	client := remoteHostedClient(srv)
 	run, err := remotenode.Start(ctx, remotenode.StartOptions{
 		Name: name, Def: def, DefDir: dir, Allow: allow,
-		Client: remoteHostedClient(srv), RelayURL: strings.TrimRight(srv, "/") + "/relay",
+		Client: client, Secrets: client, RelayURL: strings.TrimRight(srv, "/") + "/relay",
 		Env: env, ReleaseBase: releaseBase,
 		Recorder: a.Store.Ledger, Log: hostLog, Channel: remoteChannelOptions,
 	})
@@ -284,7 +285,15 @@ func runRemoteJoin(cmd *cobra.Command, root, relay, session, token string) error
 
 	node := remotenode.NewNode()
 	dataDir := filepath.Join(root, config.DefaultDataDir)
-	node.Handle(remotenode.AgentJob, agentJobHandler(dataDir, root))
+	// The agent's `satelle secret get` reaches this process over a socket. A node
+	// that cannot serve one (a path too long for a socket) still serves jobs, and
+	// the binding's ${VAR}s still resolve at launch.
+	if closeSock, serr := node.ServeSocket(ctx, remotenode.SocketPath(dataDir)); serr != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "join: no secret socket: %v\n", serr)
+	} else {
+		defer closeSock()
+	}
+	node.Handle(remotenode.AgentJob, agentJobHandler(dataDir, root, node.FetchSecret))
 	return node.Serve(ctx, sess, func(ctx context.Context, s remotenode.Setup) (remotenode.Report, error) {
 		return prepareNode(ctx, cmd, root, dataDir, s)
 	})
@@ -402,9 +411,10 @@ func doneCategories(dataDir string) ([]string, error) {
 
 // agentJobHandler answers an agent job by running the remote's agent binding on
 // the message: the executor if it names a command, else the first agent binding
-// by name that does. The binding's env is not applied here — a secret reaches
-// the agent through its own story, not this one.
-func agentJobHandler(dataDir, root string) remotenode.Handler {
+// by name that does. Before the agent starts, the ${VAR} references in the
+// binding's env are resolved with values fetched for this job through fetch, and
+// only the resolved env reaches the agent's process, in memory.
+func agentJobHandler(dataDir, root string, fetch remotenode.SecretFetch) remotenode.Handler {
 	return func(ctx context.Context, body json.RawMessage) (json.RawMessage, error) {
 		var req remotenode.AgentRequest
 		if err := json.Unmarshal(body, &req); err != nil {
@@ -422,9 +432,13 @@ func agentJobHandler(dataDir, root string) remotenode.Handler {
 		if err != nil {
 			return nil, fmt.Errorf("binding %q: %w", name, err)
 		}
+		env, settings, err := resolveBindingSecrets(ctx, b, fetch)
+		if err != nil {
+			return nil, fmt.Errorf("binding %q: %w", name, err)
+		}
 		raw, err := runner.Run(ctx, agentcli.Request{
 			SystemPrompt: "You are the agent on a satelle remote node. Answer the developer's message.",
-			Payload:      req.Text, AllowedTools: b.Tools, Model: b.Model, Dir: root,
+			Payload:      req.Text, AllowedTools: b.Tools, Model: b.Model, Settings: settings, Env: env, Dir: root,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("binding %q: %w", name, err)
@@ -432,6 +446,40 @@ func agentJobHandler(dataDir, root string) remotenode.Handler {
 		text, _ := agentcli.UnwrapUsage(raw)
 		return json.Marshal(remotenode.AgentReply{Text: strings.TrimSpace(string(text))})
 	}
+}
+
+// resolveBindingSecrets resolves b's env and settings for one job: each ${VAR}
+// they reference is fetched through fetch (the sealed path to local satelle, which
+// checks the remote's definition and grant) and expanded by
+// config.ResolveAgentEnvs, the one owner of binding ${VAR} expansion. It returns
+// exactly the binding's own env and settings, resolved; a definition secret the
+// binding does not reference is never fetched. A refused key fails the job
+// before the agent starts. Errors name the key, never a value.
+func resolveBindingSecrets(ctx context.Context, b config.AgentBinding, fetch remotenode.SecretFetch) (env map[string]string, settings string, err error) {
+	refs := config.VarRefs(b)
+	vars := make(map[string]string, len(refs))
+	for _, key := range refs {
+		if fetch == nil {
+			return nil, "", fmt.Errorf("secret %s: this node has no secret channel", key)
+		}
+		v, ferr := fetch(ctx, remotenode.JobID(ctx), key)
+		if ferr != nil {
+			return nil, "", ferr
+		}
+		vars[key] = v
+	}
+	res, err := config.ResolveAgentEnvs(config.AgentsConfig{Executor: b}, vars)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(res.Executor.Settings) > 0 {
+		sb, merr := json.Marshal(res.Executor.Settings)
+		if merr != nil {
+			return nil, "", merr
+		}
+		settings = string(sb)
+	}
+	return res.Executor.Env, settings, nil
 }
 
 // talkBinding picks the binding that answers a message.
