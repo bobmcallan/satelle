@@ -313,6 +313,9 @@ func EncodeAgents(a AgentsConfig) ([]byte, error) {
 	if t := modelOrderTable(a.ModelOrder); len(t) > 0 {
 		tables["model_order"] = t
 	}
+	if t := contextTable(a.Context); len(t) > 0 {
+		tables["context"] = t
+	}
 	if t := bindingTable(a.Executor); len(t) > 0 {
 		tables["executor"] = t
 	}
@@ -321,7 +324,7 @@ func EncodeAgents(a AgentsConfig) ([]byte, error) {
 	}
 	for name, b := range a.Agents {
 		switch name {
-		case "defaults", "models", "model_order", "executor", "reviewer", "agents":
+		case "defaults", "models", "model_order", "context", "executor", "reviewer", "agents":
 			continue // cannot be a named binding in the flat form
 		}
 		t := bindingTable(b)

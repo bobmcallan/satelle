@@ -250,9 +250,15 @@ type acpSession struct {
 	ctx       context.Context
 	// adapter names the ACP peer (acpAdapterLabel) for a no-model reason.
 	adapter string
+	// harness is the adapter token (adapterOf) behind the spawn, for a
+	// context-source error that must name "<adapter>/acp".
+	harness string
 }
 
 func openACPSession(ctx context.Context, a acpRunner, req Request, pol PermissionPolicy) (Session, error) {
+	if err := requireContext(adapterOf(a.binary, a.args), InterfaceACP, req); err != nil {
+		return nil, err
+	}
 	if pol == nil {
 		pol = acpPolicyFor(req)
 	}
@@ -313,6 +319,7 @@ func openACPSession(ctx context.Context, a acpRunner, req Request, pol Permissio
 		onEvent: fanout, ev: evCh, closeEv: closeEv, stopHB: stopHB,
 		stderrBuf: &stderrBuf, ctx: ctx,
 		adapter: acpAdapterLabel(a.binary, a.args),
+		harness: adapterOf(a.binary, a.args),
 	}
 	sess.wg.Add(1)
 	go func() {
@@ -326,6 +333,7 @@ func openACPSession(ctx context.Context, a acpRunner, req Request, pol Permissio
 	client.setCapture(req.Capture)
 	if req.ReadOnly {
 		client.setReviewer(cursorACPGrant(sess.adapter, req.AllowedTools), strings.ReplaceAll(sess.adapter, " ", "/"), req.OnIsolation)
+		client.admitContext(adapterOf(a.binary, a.args), req.ContextServers)
 	}
 	sess.client = client
 
@@ -482,6 +490,9 @@ func (s *acpSession) handshake(ctx context.Context, req Request) error {
 		AuthMethods []struct {
 			ID string `json:"id"`
 		} `json:"authMethods"`
+		AgentCapabilities struct {
+			MCPCapabilities acpMCPCaps `json:"mcpCapabilities"`
+		} `json:"agentCapabilities"`
 	}
 	_ = json.Unmarshal(initRes, &initObj)
 	methodID := ""
@@ -505,9 +516,15 @@ func (s *acpSession) handshake(ctx context.Context, req Request) error {
 	// interactive Ask). The grant is applied after the fact, through the
 	// permission policy (handlePermission), and interactive asks are denied or
 	// auto-answered at runtime (sty_32795645).
+	// The declared context sources are the only MCP servers a session is given
+	// (sty_12499ecc); none declared is the empty list it always was.
+	mcpServers, err := acpMCPServers(s.harness, req.ContextServers, initObj.AgentCapabilities.MCPCapabilities)
+	if err != nil {
+		return err
+	}
 	sessRes, err := c.request(ctx, "session/new", map[string]any{
 		"cwd":        cwd,
-		"mcpServers": []any{},
+		"mcpServers": mcpServers,
 	})
 	if err != nil {
 		return fmt.Errorf("session/new: %w", err)
@@ -770,6 +787,16 @@ func (c *acpClient) setReviewer(grant, label string, notify func(IsolationNote))
 	c.denied = map[string]bool{}
 	c.breached = map[string]bool{}
 	c.notify = notify
+	c.mu.Unlock()
+}
+
+// admitContext extends a reviewer's admission set with the exact tools its
+// context sources allow-list. A call is admitted only by a name that maps onto a
+// declared (server, tool) pair; an MCP call the mapper does not recognise stays
+// denied.
+func (c *acpClient) admitContext(adapter string, servers []ContextServer) {
+	c.mu.Lock()
+	c.admits = c.admits.withContext(adapter, servers)
 	c.mu.Unlock()
 }
 

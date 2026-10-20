@@ -131,7 +131,12 @@ func (g *Engine) PerformExecutorStep(ctx context.Context, item workitem.Item, st
 	}
 	invokeBinding := binding
 	invokeBinding.Model = mc.Model
+	offer, oerr := g.contextOffer(ctx, item, step)
+	if oerr != nil {
+		return verb.DispatchResult{}, oerr
+	}
 	invRes := g.Invoke(ctx, InvokeRequest{
+		Context:     offer,
 		Binding:     invokeBinding,
 		Section:     "executor",
 		Rubric:      rubric,

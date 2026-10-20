@@ -561,6 +561,16 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 						doc.Name, st.Name, st.RemoteAgent, st.RemoteAgent, config.ResolvedRole(st.RemoteAgent, rb), rb.ResolvedInterface()))
 				}
 			}
+			// context (sty_12499ecc): every read-only context source the step offers
+			// must be declared as [context.<name>] in agents.toml — a name that is
+			// not would refuse every dispatch for the step at run time.
+			for _, name := range st.Context {
+				if _, ok := agents.ContextSource(name); !ok {
+					r.allocProblem(fmt.Sprintf(
+						"workflow %q step %q declares context source %q with no [context.%s] in agents.toml",
+						doc.Name, st.Name, name, name))
+				}
+			}
 			// on_enter_agent was validated here as a one-shot entry performer. Flat
 			// dispatch retired it (sty_05a5e203): no node dispatches on entry, so
 			// there is no entry binding to resolve. An ADVISOR the orchestrator

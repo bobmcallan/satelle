@@ -62,7 +62,7 @@ func (s streamRunner) Run(ctx context.Context, req Request) ([]byte, error) {
 func (s streamRunner) RunUsage(ctx context.Context, req Request) ([]byte, UsageResult, error) {
 	pol := defaultPermissionPolicy(toolsAllowMutators(req.AllowedTools))
 	if req.ReadOnly {
-		pol = ReviewerPermissionPolicy(req.AllowedTools)
+		pol = ReviewerPermissionPolicyWithContext(req.AllowedTools, adapterOf(s.binary, s.args), req.ContextServers)
 	}
 	sess, err := openStreamSession(ctx, s, req, pol)
 	if err != nil {
@@ -98,10 +98,18 @@ type streamSession struct {
 }
 
 func openStreamSession(ctx context.Context, s streamRunner, req Request, pol PermissionPolicy) (Session, error) {
+	adapter := adapterOf(s.binary, s.args)
+	if err := requireContext(adapter, InterfaceStream, req); err != nil {
+		return nil, err
+	}
 	if pol == nil {
 		pol = defaultPermissionPolicy(toolsAllowMutators(req.AllowedTools))
 	}
-	args := reviewerArgs(s.binary, buildArgs(s.args, req), req)
+	render, flag, err := contextRender(adapter, req)
+	if err != nil {
+		return nil, err
+	}
+	args := withContextFlag(reviewerArgs(s.binary, buildArgs(s.args, render), req), flag)
 	cmd := exec.CommandContext(ctx, s.binary, args...)
 	if req.Dir != "" {
 		cmd.Dir = req.Dir

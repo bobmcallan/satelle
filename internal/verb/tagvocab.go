@@ -1,7 +1,11 @@
 package verb
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // tag vocabulary wiring (sty_034d843c): config-declared controlled tag
@@ -35,6 +39,32 @@ func canonicaliseTags(tags []string) ([]string, error) {
 		return tags, nil
 	}
 	return tagVocabCfg.CanonicaliseTags(tags)
+}
+
+// referencesOf reads the requirement references off a story's tags under the
+// wired [tags] references namespaces (sty_12499ecc). Unwired, or with no
+// namespace declared, a tag is only a tag.
+func referencesOf(tags []string) []config.Reference {
+	if !tagVocabWired {
+		return nil
+	}
+	return tagVocabCfg.References(tags)
+}
+
+// referencesSection renders the references appended to the route view, read live
+// from the story's tags so it is never stale. Empty when the story has none, so a
+// route without references reads exactly as before.
+func referencesSection(item workitem.Item) string {
+	refs := referencesOf(item.Tags)
+	if len(refs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n## References\n\n")
+	for _, r := range refs {
+		fmt.Fprintf(&b, "- %s (`%s`)\n", r, r.Tag)
+	}
+	return strings.TrimRight(b.String(), "\n") + "\n"
 }
 
 // canonicaliseCategory validates and rewrites category against the wired

@@ -73,6 +73,13 @@ func ResolveAgentEnvs(a AgentsConfig, vars map[string]string) (AgentsConfig, err
 			res.Agents[name] = rb
 		}
 	}
+	// The read-only context sources' url/command/args/headers resolve the same
+	// way, so a header secret lives in [vars] and never in the repo.
+	rctx, err := resolveContext(a.Context, vars)
+	if err != nil {
+		return AgentsConfig{}, err
+	}
+	res.Context = rctx
 	return res, nil
 }
 

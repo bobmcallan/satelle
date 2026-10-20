@@ -97,6 +97,10 @@ type InvokeRequest struct {
 	// Skills names every rubric a bundled (ExpectVerdicts) run judges, in the
 	// order its verdicts are wanted. Ignored by the other contracts.
 	Skills []string
+	// Context is what this dispatch is offered: the read-only sources its step
+	// declares and the story's references (sty_12499ecc). Nil when the step
+	// offers none, which is every other dispatch.
+	Context *ContextOffer
 }
 
 // InvokeResult is the outcome of one Invoke call.
@@ -140,6 +144,7 @@ type invocation struct {
 	section    string // agents.toml section the seat runs under; names its budget
 	storyID    string // the story the dispatch serves; keys the originals of condensed documents
 	performer  bool   // the step's performer, the one request that receives a run's secrets
+	context    *ContextOffer
 }
 
 // promptParts are the pieces of an isolated agent's system prompt that follow
@@ -152,6 +157,7 @@ type promptParts struct {
 	judging bool   // use the judging briefing instead of the pull-context call to action
 	shell   bool   // judging briefing also names the three CLI lines
 	verdict string // the shared verdict rules (ReviewerVerdictDoc); written only when judging
+	context string // the context-sources block (contextBriefing); omitted when empty
 }
 
 // composeSystemPrompt is the canonical order of everything after the constitution
@@ -177,6 +183,10 @@ func composeSystemPrompt(p promptParts) string {
 	// summariser (SeatSystemPrompt leaves judging unset).
 	if p.judging {
 		b.WriteString(judgingContextBriefing(p.shell))
+		if p.context != "" {
+			b.WriteString("\n\n")
+			b.WriteString(p.context)
+		}
 		// The verdict rules every judging reviewer obeys ride once, ahead of the
 		// rubric that owns only its own verdict shape.
 		if v := strings.TrimSpace(p.verdict); v != "" {
@@ -185,6 +195,10 @@ func composeSystemPrompt(p promptParts) string {
 		}
 	} else {
 		b.WriteString(pullContextCallToAction)
+		if p.context != "" {
+			b.WriteString("\n\n")
+			b.WriteString(p.context)
+		}
 	}
 	if p.rubric != "" {
 		b.WriteString("\n\n---\n\n")
@@ -201,7 +215,7 @@ func composeSystemPrompt(p promptParts) string {
 func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Request, error) {
 	in := SeatPayloadInput{
 		Charter: inv.charter, Scratch: inv.scratch, Rubric: inv.rubric,
-		Judging: inv.judging, Shell: inv.shell,
+		Judging: inv.judging, Shell: inv.shell, Context: contextBriefing(inv.context),
 	}
 	if inv.judging {
 		in.Verdict = ReviewerVerdictDoc(ctx, g.docs)
@@ -274,6 +288,8 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 		Settings:     settings,
 		Env:          env,
 		Dir:          g.repoRoot,
+
+		ContextServers: inv.context.servers(),
 	}, nil
 }
 
@@ -354,6 +370,7 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		section:    section,
 		storyID:    req.StoryID,
 		performer:  expect == ExpectPerform,
+		context:    req.Context,
 	}
 	// Fall back to engine reviewer caches when the binding leaves grant fields
 	// empty (tests that only set g.tools/g.model still work until order:3 deletes
@@ -591,6 +608,7 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 			n := agentcli.OfferedToolCount(reported)
 			isolation.OfferedToolCount, isolation.OfferedToolsSource = &n, agentcli.OfferedSourceHarness
 		}
+		isolation.ContextSources = req.Context.names()
 		res.ToolIsolation = isolation
 	}
 	g.ledgerInteractiveDenied(ctx, req, section, askedNow)
@@ -794,6 +812,7 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 				decs[i].Gated = true
 				decs[i].Command = cmdStr
 				decs[i].Context = decs[i].Skill
+				stampConsulted(&decs[i], req.Context.names())
 			}
 			return InvokeResult{Stdout: out, Usage: usage, Command: cmdStr, Decisions: decs}
 		}
@@ -820,6 +839,7 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 		dec.Skill = skill
 		dec.Command = cmdStr
 		dec.Context = skill
+		stampConsulted(&dec, req.Context.names())
 		g.setDecisionUsage(&dec, usage, agentReq.Model)
 		return InvokeResult{Stdout: out, Usage: usage, Command: cmdStr, Decision: &dec}
 	}

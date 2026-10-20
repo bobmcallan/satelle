@@ -42,6 +42,10 @@ func (g *Engine) runArtifactAttempts(
 		maxTotal = 1
 	}
 
+	offer, oerr := g.contextOffer(ctx, item, toStatus)
+	if oerr != nil {
+		return InvokeResult{}, nil, oerr
+	}
 	started := time.Now()
 	section, binding, runner, runTimeout, runIdle := initialSection, initialBinding, initialRunner, timeout, idle
 	phase := "initial"
@@ -91,6 +95,7 @@ func (g *Engine) runArtifactAttempts(
 		attemptBinding := binding
 		attemptBinding.Model = current.Model
 		lastResult = g.Invoke(ctx, InvokeRequest{
+			Context: offer,
 			Binding: attemptBinding, Section: section, Rubric: attemptRubric,
 			Payload: payload,
 			Charter: charter,

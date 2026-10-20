@@ -407,6 +407,15 @@ func workItemGet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	if err != nil {
 		return nil, err
 	}
+	// The requirement references the story's tags carry under a declared
+	// namespace (sty_12499ecc), shown beside the tags; absent when it has none,
+	// so the record reads exactly as before.
+	if refs := referencesOf(it.Tags); len(refs) > 0 {
+		return json.Marshal(struct {
+			workitem.Item
+			References []config.Reference `json:"references"`
+		}{it, refs})
+	}
 	return json.Marshal(it)
 }
 
@@ -2055,9 +2064,17 @@ func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.R
 		// unlike the row's CreatedAt (the transition's start). PriorVerdicts reads
 		// it as the end of the review cycle (sty_0225fc2f).
 		RecordedAt string `json:"recorded_at,omitempty"`
+		// ContextSources are the read-only sources this verdict's reviewer was
+		// offered, Consulted the lookups it reports having made through them, and
+		// ConsultedDropped the reported ones that named a source it was not offered
+		// (sty_12499ecc). All absent when the step offers none.
+		ContextSources   []string       `json:"context_sources,omitempty"`
+		Consulted        []ConsultedRef `json:"consulted,omitempty"`
+		ConsultedDropped int            `json:"consulted_dropped,omitempty"`
 	}{From: from, To: to, Attempt: attempt, Skill: rv.Skill, Order: rv.Order, System: rv.System,
 		Notes: rv.Notes, Reasoning: rv.Reasoning, Reviewed: rv.Reviewed, ReviewedTruncated: rv.ReviewedTruncated, Accept: rv.Accept, CarriedFrom: rv.CarriedFrom,
 		Model: rv.Model, ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models,
+		ContextSources: rv.ContextSources, Consulted: rv.Consulted, ConsultedDropped: rv.ConsultedDropped,
 		BundleID: rv.BundleID, BundleSize: len(rv.BundleSkills),
 		Seats: rv.Seats, Combine: rv.Combine, RecordedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	b, err := json.Marshal(p)

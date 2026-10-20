@@ -189,8 +189,13 @@ type stepWire struct {
 	// step's own agent (sty_dde8b6a4).
 	RemoteAgent string   `toml:"remote_agent"`
 	LocalTags   []string `toml:"local_tags"`
-	Start       bool     `toml:"start"`
-	Terminal    bool     `toml:"terminal"`
+	// Context names the read-only context sources (agents.toml
+	// [context.<name>]) offered to every agent dispatched for an edge entering
+	// this step (sty_12499ecc). The names are the repo's; whether each is declared
+	// is checked where agents.toml is in hand, never here.
+	Context  []string `toml:"context"`
+	Start    bool     `toml:"start"`
+	Terminal bool     `toml:"terminal"`
 	// ContextBudget and TurnBudget are the step's own spend bounds for its
 	// performer (sty_a7914904), overriding the allocated binding's. Zero or
 	// absent means unset; a negative value is refused. The numbers are the
@@ -507,6 +512,7 @@ func ParseSteps(body string) (Catalogue, error) {
 			AfterChildren:   strings.TrimSpace(s.AfterChildren),
 			RemoteAgent:     strings.TrimSpace(s.RemoteAgent),
 			LocalTags:       s.LocalTags,
+			Context:         trimmedAll(s.Context),
 			ContextBudget:   s.ContextBudget,
 			TurnBudget:      s.TurnBudget,
 		}

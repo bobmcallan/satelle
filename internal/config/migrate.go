@@ -62,7 +62,7 @@ func MigrateAgents(content string) (out string, changes []string, err error) {
 		// below must not touch them (a bare header would otherwise fall
 		// through bindingForHeader's default case and get a spurious
 		// role="agent" injected).
-		if s.header == "defaults" || s.header == "models" || s.header == "model_order" {
+		if s.header == "defaults" || s.header == "models" || s.header == "model_order" || s.header == "context" {
 			continue
 		}
 		// A dotted sub-table ([coder.env], [coder.settings], [agents.coder.env])
@@ -207,6 +207,11 @@ func decodeAgents(content string, legacyNested bool) (AgentsConfig, error) {
 		case "model_order":
 			if err := md.PrimitiveDecode(prim, &ac.ModelOrder); err != nil {
 				return AgentsConfig{}, fmt.Errorf("parse [model_order]: %w", err)
+			}
+		case "context":
+			// Read-only context sources (sty_12499ecc), never a binding.
+			if err := md.PrimitiveDecode(prim, &ac.Context); err != nil {
+				return AgentsConfig{}, fmt.Errorf("parse [context]: %w", err)
 			}
 		case "executor":
 			if err := refuseRetiredBindingTables(md, key); err != nil {

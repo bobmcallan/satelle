@@ -57,6 +57,8 @@ type bundleEntry struct {
 	Reasoning         string `json:"reasoning"`
 	Reviewed          string `json:"reviewed,omitempty"`
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+	// Consulted is rawDecision's, per rubric (sty_12499ecc).
+	Consulted []verb.ConsultedRef `json:"consulted,omitempty"`
 }
 
 type bundleEnvelope struct {
@@ -86,6 +88,7 @@ func parseBundleDecisions(out []byte, skills []string) ([]verb.GateDecision, err
 				Reasoning:         e.Reasoning,
 				Reviewed:          reviewed,
 				ReviewedTruncated: truncated,
+				ToolIsolation:     verb.ToolIsolation{Consulted: e.Consulted},
 			}
 		}
 	}
@@ -367,7 +370,12 @@ func (g *Engine) runReviewerBundle(ctx context.Context, item workitem.Item, toSt
 	tp := preps[0].tp
 	tp.ReviewSkill = ""
 	tp.ReviewSkills = skills
+	offer, oerr := g.contextOffer(ctx, item, toStatus)
+	if oerr != nil {
+		return nil, oerr
+	}
 	res := g.Invoke(ctx, InvokeRequest{
+		Context:     offer,
 		Binding:     seat.binding,
 		Section:     seat.section,
 		Rubric:      bundleRubric(preps),

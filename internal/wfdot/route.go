@@ -155,6 +155,11 @@ type Step struct {
 	// step never runs remotely.
 	RemoteAgent string
 	LocalTags   []string
+	// Context names the read-only context sources offered to every agent
+	// dispatched for an edge entering this step (sty_12499ecc): its performer, its
+	// route reviewers and its gate-table reviewers. Declarations only — the
+	// source itself is agents.toml's. Empty means the step offers none.
+	Context []string
 	// ContextBudget / TurnBudget are this step's own spend bounds for its
 	// performer (sty_a7914904): input tokens and model turns. They override the
 	// allocated binding's, which override [defaults]. Zero means unset — nothing
@@ -505,6 +510,7 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			AfterChildren:   st.AfterChildren,
 			RemoteAgent:     st.RemoteAgent,
 			LocalTags:       st.LocalTags,
+			Context:         st.Context,
 		})
 	}
 

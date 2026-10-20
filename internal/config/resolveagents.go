@@ -268,6 +268,7 @@ func ResolveAgentsBaseline(baseline AgentsConfig, layers AgentLayers, global Glo
 		out.Agents[name] = b
 	}
 	out.ModelOrder = layerModelOrder(baseline.ModelOrder, workspace.ModelOrder, repo.ModelOrder, local.ModelOrder)
+	out.Context = layerContext(baseline.Context, workspace.Context, repo.Context, local.Context)
 	return out, prov, nil
 }
 

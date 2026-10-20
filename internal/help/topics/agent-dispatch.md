@@ -915,6 +915,52 @@ satelle agents install grok
 
 Claude remains the default init `[reviewer]` preset until an operator opts in.
 
+### Read-only context sources — `[context.<name>]` (sty_12499ecc)
+
+A step can offer the agents dispatched for it a read-only MCP server — a
+requirement tracker, a code mirror — so a planner or reviewer sees the requirement
+as well as the code. Which server is configuration; the binary names none.
+
+```toml
+# .satelle/workflows/agents.toml
+[context.tracker]
+kind      = "mcp"
+url       = "https://tracker.example/mcp"   # http; or command/args for stdio
+read_only = true                            # required: the operator's attestation
+tools     = ["get_issue", "search_issues"]  # required allow-list, exact tool names
+[context.tracker.headers]
+Authorization = "Bearer ${TRACKER_TOKEN}"   # ${VAR} from [vars]; never in the repo
+
+# .satelle/workflows/step.toml — on the step whose entry edge should offer it
+[coded]
+context = ["tracker"]
+```
+
+Every agent dispatched for an edge **entering** that step gets the source: the
+performer, the route reviewers and the `[[gate]]`-table reviewers — and no other
+step's dispatches do. An agent is admitted to exactly the declared tools; any other
+MCP tool stays denied. A name the step lists that agents.toml does not declare
+refuses the dispatch (and `satelle agent validate` reports it).
+
+| Adapter / transport | Behaviour |
+| --- | --- |
+| claude / command, stream | `--mcp-config` plus the declared tools pre-approved |
+| grok, cursor, pi / acp | `session/new` `mcpServers`; an `http` source needs the peer to advertise it |
+| every other row (grok, cursor, pi over command or stream; an unrecognised harness; cloud) | the dispatch fails with `context sources not supported by <adapter>/<transport>` |
+
+Header values are secrets: they reach the spawn and nothing else — never
+`Command()` evidence, logs, errors or a cloud session.
+
+A story's links to its source requirements are tags in a namespace the repo
+declares — `[tags] references = ["ref"]` in satelle.toml makes
+`ref:<system>:<key>` a **reference**, shown by `story get` and `story route`; a tag
+in any other namespace is a plain tag. A judging dispatch's briefing lists the
+offered sources and the story's references; the **rule** for using them, and what a
+verdict's `consulted` list means, is the `satelle-reviewer-verdict` principle's.
+Each verdict records `context_sources` (offered) and `consulted` (the reviewer's own
+report, kept only for offered sources; the rest counted in `consulted_dropped`) on
+its ledger row and in `story route`.
+
 ## The command template — full templates and placeholders
 
 Each binding's **`command`** says *how* the agent runs. With **`interface =

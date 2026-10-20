@@ -302,6 +302,13 @@ type Engine struct {
 	// built before the run's secrets are read. Neither is written anywhere
 	// (sty_0b1c72a9).
 	runSecrets func() (values map[string]string, unset []string)
+	// contextSource resolves a declared read-only context source by name
+	// (agents.toml [context.<name>], already ${VAR}-resolved); references reads the
+	// requirement references off a story's tags. Both are wired from
+	// configuration (SetContextSources, SetReferences); unwired, no dispatch is
+	// offered a source and behaviour is unchanged (sty_12499ecc).
+	contextSource func(name string) (agentcli.ContextServer, bool)
+	references    func(tags []string) []config.Reference
 }
 
 // SetRunSecretsSource wires where a remote run's secrets come from. The values it
@@ -2153,7 +2160,18 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	binding.ContextBudget, binding.TurnBudget = budget.Context, budget.Turns
 	// A cloud performer returns a pushed branch, not stdout: it runs and is
 	// collected on its own path, which never reaches the runner below.
+	offer, oerr := g.contextOffer(ctx, item, toStatus)
+	if oerr != nil {
+		return verb.DispatchResult{}, oerr
+	}
 	if binding.ResolvedInterface() == config.InterfaceCloud {
+		// A provider-hosted session cannot be handed a local MCP server, and a
+		// resolved header secret must never leave this machine (sty_12499ecc): a
+		// step that declares sources is a named error, never a silent omission.
+		if offer != nil {
+			return verb.DispatchResult{}, fmt.Errorf("step %q declares context sources for cloud binding [%s]: %w",
+				toStatus, dispatchAgent, agentcli.ContextSupport(agentcli.HarnessOf(binding.CommandTemplate()), agentcli.ContextTransportCloud))
+		}
 		launch := g.cloudDispatch
 		if launch == nil {
 			launch = (*Engine).dispatchCloud
@@ -2292,6 +2310,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		invokeBinding := binding
 		invokeBinding.Model = modelChoice.Model
 		invRes = g.Invoke(ctx, InvokeRequest{
+			Context:     offer,
 			Binding:     invokeBinding,
 			Section:     dispatchAgent,
 			Rubric:      rubric,
@@ -3275,7 +3294,12 @@ func (g *Engine) decideReviewer(ctx context.Context, item workitem.Item, toStatu
 // and each panel seat. The payload is the prepared transition, never another
 // seat's stdout.
 func (g *Engine) invokeReviewerSeat(ctx context.Context, item workitem.Item, toStatus, skill string, prep reviewerPrep, seat reviewerSeat) InvokeResult {
+	offer, err := g.contextOffer(ctx, item, toStatus)
+	if err != nil {
+		return InvokeResult{Err: err}
+	}
 	return g.Invoke(ctx, InvokeRequest{
+		Context:     offer,
 		Binding:     seat.binding,
 		Section:     seat.section,
 		Rubric:      prep.body,
@@ -4619,6 +4643,10 @@ type rawDecision struct {
 	Reasoning         string `json:"reasoning"`
 	Reviewed          string `json:"reviewed,omitempty"`
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+	// Consulted is the optional list of lookups the reviewer reports having made
+	// through an offered context source (sty_12499ecc). It is filtered to the
+	// offered sources before it is recorded.
+	Consulted []verb.ConsultedRef `json:"consulted,omitempty"`
 }
 
 // applyReviewed bounds a quotation to reviewedCeiling before the decision is
@@ -4655,6 +4683,7 @@ func parseDecision(out []byte) (verb.GateDecision, error) {
 				Reviewed:          reviewed,
 				ReviewedTruncated: truncated,
 			}
+			d.Consulted = rd.Consulted
 			found = &d
 		}
 	}

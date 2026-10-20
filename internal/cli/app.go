@@ -746,6 +746,20 @@ func applyAgentGrants(rev *agentstep.Engine, a *app.App, agents config.AgentsCon
 	// The per-executable [model_order] feeds config.SelectModel's order tier
 	// (sty_4fde0a50); every engine that resolves a model gets it here.
 	rev.SetModelOrder(agents.OrderFor)
+	// Read-only context sources (sty_12499ecc): wired only when the repo declares
+	// some, so a repo without any dispatches exactly as before.
+	if len(agents.Context) > 0 {
+		rev.SetContextSources(func(name string) (agentcli.ContextServer, bool) {
+			src, ok := agents.ContextSource(name)
+			if !ok {
+				return agentcli.ContextServer{}, false
+			}
+			return src.Server(name), true
+		})
+		if a != nil {
+			rev.SetReferences(a.Config.References)
+		}
+	}
 	// The wiring guard reads the main tree's configuration, never the
 	// invoking worktree's own, so a worktree cannot exempt itself
 	// (sty_f141c77f).

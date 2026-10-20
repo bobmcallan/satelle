@@ -197,6 +197,24 @@ type ToolIsolation struct {
 	// IsolationLimitation is an adapter-named limitation (prompt trim / skills
 	// list / tool trim unavailable), empty when there is none.
 	IsolationLimitation string `json:"isolation_limitation,omitempty"`
+	// ContextSources names the read-only context sources the reviewer was OFFERED
+	// for this edge (sty_12499ecc): what satelle handed it, whether or not it used
+	// any. Empty when the step offers none.
+	ContextSources []string `json:"context_sources,omitempty"`
+	// Consulted is what the reviewer REPORTED looking up through an offered source:
+	// one entry per source and reference. It is self-reported — the only check is
+	// the filter to ContextSources — so it records what the reviewer said it
+	// consulted, not what it proved. ConsultedDropped counts the entries that named
+	// a source that was not offered and were dropped.
+	Consulted        []ConsultedRef `json:"consulted,omitempty"`
+	ConsultedDropped int            `json:"consulted_dropped,omitempty"`
+}
+
+// ConsultedRef is one lookup a reviewer reports having made: the offered source
+// it went through and the reference it looked up there (sty_12499ecc).
+type ConsultedRef struct {
+	Source string `json:"source"`
+	Ref    string `json:"ref"`
 }
 
 // UsageNote is the explicit-unavailable evidence beside a row's token numbers

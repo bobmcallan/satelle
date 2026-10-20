@@ -143,6 +143,10 @@ func classifyKind(kind string) ToolClass {
 type grantAdmits struct {
 	classes map[ToolClass]bool
 	names   map[string]bool
+	// declared are the exact MCP tool names the dispatch's context sources
+	// allow-list (context.go). They admit those names only: the MCP class stays
+	// denied, so a tool the sources do not declare is still refused.
+	declared map[string]bool
 }
 
 func admitsFromGrant(grant string, includeScoped bool) grantAdmits {
@@ -269,6 +273,9 @@ func cursorReadOnlyProblem(args []string, iface string, performer bool) string {
 // allows reports whether a tool of class c named name is inside the grant. An
 // unknown class is admitted only by an exact name listed in the grant.
 func (a grantAdmits) allows(c ToolClass, name string) bool {
+	if c == ClassMCP && a.declared[strings.ToLower(strings.TrimSpace(name))] {
+		return true
+	}
 	if c == ClassUnknown {
 		return name != "" && a.names[strings.ToLower(name)]
 	}
@@ -369,7 +376,11 @@ func worstClass(cs ...ToolClass) ToolClass {
 // Unknown, empty-kind and mislabelled tools are denied — never approved by
 // default.
 func ReviewerPermissionPolicy(grant string) PermissionPolicy {
-	admits := admitsFromGrant(grant, false)
+	return reviewerPolicyFrom(admitsFromGrant(grant, false))
+}
+
+// reviewerPolicyFrom is ReviewerPermissionPolicy over an admission set.
+func reviewerPolicyFrom(admits grantAdmits) PermissionPolicy {
 	return func(req PermissionRequest) PermissionDecision {
 		byName, byKind := ClassifyTool(req.ToolName), classifyKind(req.Kind)
 		if byName == ClassUnknown && req.ToolName != "" && byKind != ClassShell && byKind != ClassEdit && byKind != ClassNetwork {
@@ -782,6 +793,15 @@ func reviewerArgs(binary string, args []string, req Request) []string {
 		out = append(out, "--strict-mcp-config")
 	}
 	return out
+}
+
+// withContextFlag appends the claude --mcp-config flag a request's context
+// sources need, unless the template already carries one.
+func withContextFlag(args []string, flag string) []string {
+	if flag == "" || hasFlag(args, "--mcp-config") {
+		return args
+	}
+	return append(append([]string(nil), args...), flag)
 }
 
 // Where an offered-tool figure came from.

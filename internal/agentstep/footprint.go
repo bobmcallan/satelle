@@ -36,6 +36,7 @@ type SeatPayloadInput struct {
 	Judging      bool           // the judging briefing replaces the pull-context call to action
 	Shell        bool           // the judging briefing also names the CLI lines
 	Verdict      string         // the shared verdict rules (ReviewerVerdictDoc); delivered only when Judging
+	Context      string         // the context-sources block (contextBriefing); omitted when empty
 
 	// Section names the seat in the pointer directive. BudgetBytes is the size the
 	// whole prompt is fitted to; zero or less leaves the ladder off, and every
@@ -64,7 +65,7 @@ type SeatPayload struct {
 // rubric — the instructions the seat acts on — are always delivered as written.
 func BuildSeatPayload(in SeatPayloadInput) (SeatPayload, error) {
 	tail := composeSystemPrompt(promptParts{
-		charter: in.Charter, scratch: in.Scratch, rubric: in.Rubric, judging: in.Judging, shell: in.Shell, verdict: in.Verdict,
+		charter: in.Charter, scratch: in.Scratch, rubric: in.Rubric, judging: in.Judging, shell: in.Shell, verdict: in.Verdict, context: in.Context,
 	})
 	var items []condense.Item
 	if c := strings.TrimSpace(in.Constitution); c != "" {

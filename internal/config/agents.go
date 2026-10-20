@@ -103,6 +103,7 @@ func (l AgentLayers) Authored() AgentsConfig {
 		}
 	}
 	out.ModelOrder = layerModelOrder(l.Repo.ModelOrder, l.Local.ModelOrder)
+	out.Context = layerContext(l.Repo.Context, l.Local.Context)
 	return out
 }
 
@@ -916,6 +917,10 @@ type AgentsConfig struct {
 	// of models per executable token (claude, grok). It is what an
 	// unpinned dispatch with no same-executable inherited model follows.
 	ModelOrder map[string][]ModelRank `toml:"model_order"`
+	// Context is the [context.<name>] tables (sty_12499ecc): the read-only
+	// context sources a workflow step may offer the agents dispatched for it.
+	// `context` is a reserved section name, never a binding.
+	Context map[string]ContextSource `toml:"context"`
 }
 
 // ModelRank is one rank in an executable's model order: the names that are the
@@ -1116,6 +1121,9 @@ func loadAgentsBody(body string) (AgentsConfig, error) {
 		return AgentsConfig{}, err
 	}
 	if err := ac.validateInterfaces(); err != nil {
+		return AgentsConfig{}, err
+	}
+	if err := ac.validateContext(); err != nil {
 		return AgentsConfig{}, err
 	}
 	return ac, nil

@@ -171,6 +171,13 @@ type Request struct {
 	// tool that ran outside the grant without asking. It only reports — the run
 	// continues and its verdict stands. It may be called from a reader goroutine.
 	OnIsolation func(IsolationNote)
+	// ContextServers are the read-only context sources declared for this
+	// dispatch's step (sty_12499ecc). An adapter and transport that can carry
+	// them renders them and admits exactly their allow-listed tools; every other
+	// one fails the run before spawn with an error naming it (ContextSupport).
+	// Header values MAY be secrets, so like Env they never reach Command(),
+	// logs or error strings.
+	ContextServers []ContextServer
 }
 
 // CaptureMode selects which ACP agent_message_chunk text is returned as the
@@ -555,14 +562,22 @@ func (t templateRunner) Command() string {
 }
 
 func (t templateRunner) Run(ctx context.Context, req Request) ([]byte, error) {
-	if adapterOf(t.binary, t.argTemplate) == HarnessCursor {
+	adapter := adapterOf(t.binary, t.argTemplate)
+	if err := requireContext(adapter, InterfaceCommand, req); err != nil {
+		return nil, err
+	}
+	if adapter == HarnessCursor {
 		args, creq, err := cursorSpawn(buildArgs(t.argTemplate, req), req)
 		if err != nil {
 			return nil, err
 		}
 		return runProcess(ctx, t.binary, args, creq)
 	}
-	return runProcess(ctx, t.binary, reviewerArgs(t.binary, buildArgs(t.argTemplate, req), req), req)
+	render, flag, err := contextRender(adapter, req)
+	if err != nil {
+		return nil, err
+	}
+	return runProcess(ctx, t.binary, withContextFlag(reviewerArgs(t.binary, buildArgs(t.argTemplate, render), req), flag), req)
 }
 
 // RunUsage implements UsageRunner for the command transport. Every adapter but pi

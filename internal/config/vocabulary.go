@@ -26,6 +26,10 @@ type TagsConfig struct {
 	// Vocabulary maps a tag namespace (without trailing colon) to the allowed
 	// values for that namespace. Empty map / unset = no controlled namespaces.
 	Vocabulary map[string][]string `toml:"vocabulary"`
+	// References lists the tag namespaces whose tags are links to source
+	// requirements: [tags] references = ["ref"] makes ref:<system>:<key> a
+	// reference (sty_12499ecc). Empty means no tag is a reference.
+	References []string `toml:"references"`
 }
 
 // CanonicaliseTags validates tags against the configured vocabulary and
@@ -121,4 +125,52 @@ func joinAllowed(allowed []string) string {
 	cp := append([]string(nil), allowed...)
 	sort.Strings(cp)
 	return strings.Join(cp, "|")
+}
+
+// Reference is a story's link to a source requirement, carried as a tag in a
+// namespace the repo declared under [tags] references: <ns>:<system>:<key>
+// (sty_12499ecc). The namespace, the systems and the keys are all configuration —
+// the binary names no ticket system.
+type Reference struct {
+	// System names the source system and Key the requirement within it.
+	System string `json:"system"`
+	Key    string `json:"key"`
+	// Tag is the story tag the reference was read from, verbatim.
+	Tag string `json:"tag"`
+}
+
+// String renders a reference as "<system> <key>", the form every surface shows.
+func (r Reference) String() string { return r.System + " " + r.Key }
+
+// Ref is the reference in the compact "<system>:<key>" form a reviewer reports
+// back as the one it consulted.
+func (r Reference) Ref() string { return r.System + ":" + r.Key }
+
+// References returns the tags that are requirement references: a tag whose
+// namespace is declared under [tags] references and whose remainder is
+// <system>:<key>. A tag in an undeclared namespace, or without both parts, is not
+// a reference and stays the plain tag it is. Order follows tags.
+func (c Config) References(tags []string) []Reference {
+	if len(c.Tags.References) == 0 {
+		return nil
+	}
+	declared := make(map[string]bool, len(c.Tags.References))
+	for _, ns := range c.Tags.References {
+		if ns = strings.ToLower(strings.TrimSpace(ns)); ns != "" {
+			declared[ns] = true
+		}
+	}
+	var out []Reference
+	for _, tag := range tags {
+		ns, rest, ok := splitTag(tag)
+		if !ok || !declared[strings.ToLower(ns)] {
+			continue
+		}
+		system, key, ok := splitTag(rest)
+		if !ok {
+			continue
+		}
+		out = append(out, Reference{System: system, Key: key, Tag: tag})
+	}
+	return out
 }

@@ -236,7 +236,11 @@ func stampInvocation(d *verb.GateDecision, res InvokeResult, seat reviewerSeat) 
 	d.AuthMode = seat.binding.ResolvedAuth()
 	d.SystemPromptBytes = res.SystemPromptBytes
 	d.PayloadBytes = res.PayloadBytes
+	// What the reviewer reported consulting is its own answer, already filtered
+	// to the offered sources; the invocation's isolation record must not erase it.
+	consulted, dropped := d.Consulted, d.ConsultedDropped
 	d.ToolIsolation = res.ToolIsolation
+	d.Consulted, d.ConsultedDropped = consulted, dropped
 }
 
 // referencedPayload is the work item a judging reviewer receives. Inline fields

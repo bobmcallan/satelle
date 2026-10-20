@@ -72,13 +72,13 @@ func StoryRoute(ctx context.Context, id string) (string, error) {
 		return "", fmt.Errorf("verb: route: %s: %w", id, perr)
 	}
 	if body := readRouteDoc(item); body != "" {
-		return strings.TrimRight(body, "\n") + membersSection(ctx, item) + remoteRunsSection(ctx, item) + processOfRecordSection(), nil
+		return strings.TrimRight(body, "\n") + referencesSection(item) + membersSection(ctx, item) + remoteRunsSection(ctx, item) + processOfRecordSection(), nil
 	}
 	d, wfName, ok := governingRoute(ctx, item)
 	if !ok {
 		return "", fmt.Errorf("verb: route: %s has no governing workflow with a parseable lifecycle", id)
 	}
-	return strings.TrimRight(renderRouteDoc(d, wfName, item, item.Status, ""), "\n") + membersSection(ctx, item) + remoteRunsSection(ctx, item) + processOfRecordSection(), nil
+	return strings.TrimRight(renderRouteDoc(d, wfName, item, item.Status, ""), "\n") + referencesSection(item) + membersSection(ctx, item) + remoteRunsSection(ctx, item) + processOfRecordSection(), nil
 }
 
 // renderRouteDoc assembles the whole artifact: the plan half rendered fresh, then
@@ -130,6 +130,17 @@ func renderOutcome(itemID, from, to string, verdicts []ReviewerVerdict, unresolv
 		}
 		if reasoning := excerpt(v.Reasoning); reasoning != "" {
 			fmt.Fprintf(&b, "  - reasoning: %s\n", reasoning)
+		}
+		// The context the reviewer was offered, and what it reports it consulted
+		// of that (sty_12499ecc): the trail says which requirement a verdict saw.
+		if len(v.ContextSources) > 0 {
+			fmt.Fprintf(&b, "  - context: %s\n", strings.Join(v.ContextSources, ", "))
+			for _, c := range v.Consulted {
+				fmt.Fprintf(&b, "  - consulted: %s %s\n", c.Source, c.Ref)
+			}
+			if v.ConsultedDropped > 0 {
+				fmt.Fprintf(&b, "  - consulted entries dropped (source not offered): %d\n", v.ConsultedDropped)
+			}
 		}
 		fmt.Fprintf(&b, "  - full output: `satelle ledger list --story %s --kind %s`%s\n",
 			itemID, reviewKindFor(v.Accept), modelNote(v))

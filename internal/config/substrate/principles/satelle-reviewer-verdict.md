@@ -28,4 +28,10 @@ A step that declares `reviewer_carry` narrows what withholds `reviewed`: the ste
 
 A blocking finding cites a location or quotes text, names a path that is actually reached (trace the caller; a hypothetical is not a finding), sits on this reviewer's own axis, and is not style or a preference for another design. A review with no such finding accepts; do not inflate nits to fill it.
 
+## Context sources
+
+When your briefing lists a `Context sources` block, each source is a read-only tool server this edge offers you, with the tools allowed on it. The block also lists the story's references. Before you judge, look up each listed reference through an offered source, using only the tools the block allows for it, and judge the story against what you find there as well as against the material. Then list every lookup you made in the verdict as `consulted`: an array of `{"source": "<offered source name>", "ref": "<system>:<key>"}`, one entry per lookup. Omit `consulted` when you made none. A source or reference the block does not list is not yours to use or to report.
+
+`consulted` is your own report, not a measurement. satelle drops any entry that names a source it did not offer you and counts the drops on the verdict, so report only lookups you made.
+
 See [[satelle-reviewer-self-contained]], [[satelle-agent-model]].
