@@ -279,15 +279,26 @@ func (d *Definition) ExitStatuses() []string {
 	return out
 }
 
-// ReturnsAt is nil when status is one of the contract's exit statuses, else an
-// error naming them. It is the one owner of the exit rule.
+// ReturnsAt is nil when status is one of the contract's exit statuses or a park
+// state the remote's own workflow declares, else an error naming them. It is the
+// one owner of the exit rule. Whether the local route knows or holds a seat at
+// that status is checkHandback's question, asked of every status alike.
 func (d *Definition) ReturnsAt(status string) error {
 	for _, e := range d.ExitStatuses() {
 		if e == status {
 			return nil
 		}
 	}
-	return fmt.Errorf("outside the contract's exit statuses (%s)", strings.Join(d.ExitStatuses(), ", "))
+	for _, p := range d.ParkStates {
+		if p == status {
+			return nil
+		}
+	}
+	msg := fmt.Sprintf("outside the contract's exit statuses (%s)", strings.Join(d.ExitStatuses(), ", "))
+	if len(d.ParkStates) > 0 {
+		msg += fmt.Sprintf(" and its park state (%s)", strings.Join(d.ParkStates, ", "))
+	}
+	return fmt.Errorf("%s", msg)
 }
 
 // Wake handles one delivered WakeRequest for the remote called name and returns

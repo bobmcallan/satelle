@@ -76,6 +76,10 @@ type Definition struct {
 	// Steps declare, per status of the remote's own workflow, the probes the
 	// preflight runs and the legs the step holds.
 	Steps []Step `toml:"step"`
+	// ParkStates are the park states the remote's own workflow declares in
+	// workflows/done.toml. They are not part of remote.toml: Load reads them, and a
+	// story left at one is a valid hand-back (ReturnsAt).
+	ParkStates []string `toml:"-"`
 }
 
 // Expectations a probe carries: the outcome the preflight compares its run with.
@@ -255,6 +259,7 @@ func Load(dir string) (Definition, error) {
 	if un := md.Undecoded(); len(un) > 0 {
 		return Definition{}, fmt.Errorf("%s: unknown key %s", DefinitionFile, un[0])
 	}
+	def.ParkStates = parkStates(dir)
 	return def, nil
 }
 
