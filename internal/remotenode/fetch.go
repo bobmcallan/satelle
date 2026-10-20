@@ -20,7 +20,7 @@ const refusedPushURL = "refused://this-clone-is-read-only"
 // FetchRepos fetches each repo at its ref over https into reposDir/<name> and
 // returns what it fetched. The clone has no credential and a push URL that
 // refuses. env is added to git's environment (a test's trust roots, a proxy).
-func FetchRepos(ctx context.Context, reposDir string, repos []RepoSpec, env []string) ([]FetchedRepo, error) {
+func FetchRepos(ctx context.Context, reposDir string, repos []remotedef.Repo, env []string) ([]FetchedRepo, error) {
 	if len(repos) == 0 {
 		return nil, nil
 	}
@@ -38,7 +38,7 @@ func FetchRepos(ctx context.Context, reposDir string, repos []RepoSpec, env []st
 	return out, nil
 }
 
-func fetchRepo(ctx context.Context, reposDir string, r RepoSpec, env []string) (FetchedRepo, error) {
+func fetchRepo(ctx context.Context, reposDir string, r remotedef.Repo, env []string) (FetchedRepo, error) {
 	if u, err := url.Parse(r.URL); err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil {
 		return FetchedRepo{}, fmt.Errorf("repo %s: only an https URL without a credential is fetched", redactedHost(r.URL))
 	}

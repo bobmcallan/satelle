@@ -9,11 +9,12 @@
 // upgrade. The local end sends "Authorization: Bearer <satelle.dev access
 // token>"; the relay answers 401 for a bearer it does not accept, and the local
 // end then refreshes through hosted.Client.WithBearer and retries once. The
-// remote end sends no bearer: it holds only the session id and a single-use
-// enrollment token, and proves itself to the local end, not to the relay. The
-// local end dials first, then launches the node; a remote that arrives with no
-// local end waiting is refused (404). Every binary message from one end is
-// forwarded unchanged to the other; the relay never needs to parse one.
+// remote end sends "Authorization: Bearer <node token>", the token satelle.dev
+// gave the node it started; the relay answers 401 for one it does not accept and
+// admits an accepted remote into its session whether or not a local end is
+// waiting. The remote still proves itself to the local end, with its pinned key
+// and the enrollment token, not to the relay. Every binary message from one end
+// is forwarded unchanged to the other; the relay never needs to parse one.
 //
 // # Wire protocol
 //

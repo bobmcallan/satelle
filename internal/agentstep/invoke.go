@@ -139,7 +139,6 @@ type invocation struct {
 	shell      bool   // the grant admits a shell, so the judging briefing keeps the CLI lines
 	section    string // agents.toml section the seat runs under; names its budget
 	storyID    string // the story the dispatch serves; keys the originals of condensed documents
-	performer  bool   // the step's performer, the one request that receives a run's secrets
 }
 
 // promptParts are the pieces of an isolated agent's system prompt that follow
@@ -251,20 +250,7 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 		env[k] = v
 	}
 	env[config.SpawnEnv] = "1"
-	// A remote run's secrets go to the performer's process alone; the identity
-	// variable is dropped from every request, whatever its role.
-	var secretValues map[string]string
-	var unset []string
-	if g.runSecrets != nil {
-		secretValues, unset = g.runSecrets()
-	}
-	if inv.performer {
-		for k, v := range secretValues {
-			env[k] = v
-		}
-	}
 	return agentcli.Request{
-		Unset:        unset,
 		SystemPrompt: systemPrompt,
 		Payload:      string(payload),
 		AllowedTools: inv.tools,
@@ -353,7 +339,6 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		env:        binding.Env,
 		section:    section,
 		storyID:    req.StoryID,
-		performer:  expect == ExpectPerform,
 	}
 	// Fall back to engine reviewer caches when the binding leaves grant fields
 	// empty (tests that only set g.tools/g.model still work until order:3 deletes

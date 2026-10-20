@@ -1,9 +1,11 @@
 // `satelle node join` is what runs on a machine acting as a remote node: it
-// creates the node's data dir and store, unpacks the substrate the controller
-// sends over the sealed channel, reindexes it, fetches the declared repos
-// read-only, reports ready and serves the controller's jobs. It is a node mode,
-// not a developer command: remotes are defined, published, secreted and
-// launched through satelle-server, whose launcher builds this argv.
+// creates the node's data dir and store, fetches the definition it runs from
+// satelle.dev with its node token, installs and reindexes its substrate, joins
+// the relay session, fetches the declared repos read-only, reports ready and
+// serves the controller's jobs. It reads its secrets and ends its run through
+// satelle.dev with the same token. It is a node mode, not a developer command:
+// remotes are defined, published, secreted and launched through satelle-server,
+// whose launcher builds this argv.
 package cli
 
 import (
@@ -12,12 +14,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/remotechan"
+	"github.com/bobmcallan/satelle/internal/remotedef"
 	"github.com/bobmcallan/satelle/internal/remotenode"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 )
@@ -38,7 +41,16 @@ var (
 	nodeChannelOptions []remotechan.Option
 	// nodeIdentity makes the node's key.
 	nodeIdentity = remotechan.NewIdentity
+	// nodeServer is the satelle.dev the node asks for its definition and secrets.
+	nodeServer = func() string { return config.ResolveHostedServer(config.Config{}) }
+	// nodeHTTP is the HTTP client for those calls; nil is a 30 second default.
+	nodeHTTP *http.Client
+	// nodeFetchEnv is added to git's environment when the node fetches its repos.
+	nodeFetchEnv []string
 )
+
+// nodeEndTimeout bounds the one end call a stopping node makes.
+const nodeEndTimeout = 10 * time.Second
 
 func init() {
 	node := &cobra.Command{
@@ -49,7 +61,7 @@ func init() {
 	var root, relay, session, token string
 	join := &cobra.Command{
 		Use:    "join",
-		Short:  "Run on a remote node: set up from the substrate the controller sends and serve its jobs",
+		Short:  "Run on a remote node: set up from the definition satelle.dev serves and serve its jobs",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -57,13 +69,14 @@ func init() {
 		},
 	}
 	// These four flags are the launch contract: the server's launcher
-	// (satelle-server sty_ce4239e4) builds `satelle node join --root <dir>
-	// --relay <url> --session <id> --token <single-use>`. The key line on stdout
-	// and the node's own log on stderr are the other half of it.
+	// (satelle-server sty_c9013137) builds `satelle node join --root <dir>
+	// --relay <url> --session <id> --token <node token>`. The session is the
+	// node's id on satelle.dev, the key of every route the node calls. The key
+	// line on stdout and the node's own log on stderr are the other half of it.
 	join.Flags().StringVar(&root, "root", remotenode.NodeRoot, "the node's working root")
 	join.Flags().StringVar(&relay, "relay", "", "relay URL")
-	join.Flags().StringVar(&session, "session", "", "channel session id")
-	join.Flags().StringVar(&token, "token", "", "single-use enrollment token")
+	join.Flags().StringVar(&session, "session", "", "channel session id, which is the node's id on satelle.dev")
+	join.Flags().StringVar(&token, "token", "", "the node's bearer token for satelle.dev and the relay")
 	for _, f := range []string{"relay", "session", "token"} {
 		_ = join.MarkFlagRequired(f)
 	}
@@ -72,9 +85,19 @@ func init() {
 }
 
 // runNodeJoin is the node's side. It runs in the working root: init creates the
-// data dir and store, the key is printed for the controller to pin, and the node
-// then enrolls and serves.
+// data dir and store, the key is printed for the controller to pin, the node
+// fetches and installs its definition, and it then enrolls and serves. However it
+// stops, it tells satelle.dev once, which revokes its token.
 func runNodeJoin(cmd *cobra.Command, root, relay, session, token string) error {
+	client := remotenode.NewNodeClient(nodeServer(), session, token, nodeHTTP)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), nodeEndTimeout)
+		defer cancel()
+		if err := client.End(ctx); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "join: telling satelle.dev the node has ended: %v\n", err)
+		}
+	}()
+
 	root, err := expandNodeRoot(root)
 	if err != nil {
 		return err
@@ -99,28 +122,60 @@ func runNodeJoin(cmd *cobra.Command, root, relay, session, token string) error {
 
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	dataDir := filepath.Join(root, config.DefaultDataDir)
+	def, version, err := installNodeDefinition(ctx, cmd, client, dataDir)
+	if err != nil {
+		return fmt.Errorf("join: %w", err)
+	}
+
 	sess, err := remotechan.Join(ctx, relay, session, id, token, nodeChannelOptions...)
 	if err != nil {
+		var refused *remotechan.RelayStatusError
+		if errors.As(err, &refused) && refused.Status == http.StatusUnauthorized {
+			return &remotenode.TokenRefusedError{Route: "relay upgrade for session " + session}
+		}
 		return fmt.Errorf("join: %w", err)
 	}
 	defer sess.Close()
 
 	node := remotenode.NewNode()
-	dataDir := filepath.Join(root, config.DefaultDataDir)
-	// The run the sealed Setup names is what the agent job reads its secrets under.
-	var setupRun atomic.Pointer[remotenode.RunSecrets]
-	run := func() remotenode.RunSecrets {
-		if r := setupRun.Load(); r != nil {
-			return *r
-		}
-		return remotenode.RunSecrets{}
-	}
-	node.Handle(remotenode.AgentJob, agentJobHandler(dataDir, root, run))
+	node.Handle(remotenode.AgentJob, agentJobHandler(dataDir, root, client, def.Secret))
 	node.Handle(remotenode.StoryReportJob, remotenode.StoryReportHandler(nodeProcess))
-	return node.Serve(ctx, sess, func(ctx context.Context, s remotenode.Setup) (remotenode.Report, error) {
-		setupRun.Store(&s.Run)
-		return prepareNode(ctx, cmd, root, dataDir, s)
-	})
+	report, perr := prepareNode(ctx, root, dataDir, def, version)
+	if perr != nil {
+		report = remotenode.Report{Error: perr.Error()}
+	}
+	return node.Serve(ctx, sess, report)
+}
+
+// installNodeDefinition fetches the node's definition with its node token,
+// replaces the node's substrate with the definition's own and reindexes it through
+// the same pass `satelle reindex` runs. It returns what the node reads of the
+// definition's remote.toml and the version the definition was fetched at. Nothing
+// is installed unless the whole bundle checks out.
+func installNodeDefinition(ctx context.Context, cmd *cobra.Command, client *remotenode.NodeClient, dataDir string) (remotedef.Definition, string, error) {
+	bundle, version, err := client.Definition(ctx)
+	if err != nil {
+		return remotedef.Definition{}, "", err
+	}
+	// The store opens against what init scaffolded; the remote's own bindings are
+	// judged later by resolving them, not by the bootstrap.
+	if err := openAppForCmd(cmd); err != nil {
+		return remotedef.Definition{}, "", err
+	}
+	a, err := appFrom(cmd)
+	if err != nil {
+		return remotedef.Definition{}, "", err
+	}
+	def, err := remotenode.InstallDefinition(dataDir, bundle)
+	if err != nil {
+		return remotedef.Definition{}, "", fmt.Errorf("definition: %w", err)
+	}
+	if err := reindexSubstrate(cmd, a, false); err != nil {
+		return remotedef.Definition{}, "", fmt.Errorf("reindex: %w", err)
+	}
+	return def, version, nil
 }
 
 func expandNodeRoot(root string) (string, error) {
@@ -134,27 +189,11 @@ func expandNodeRoot(root string) (string, error) {
 	return filepath.Abs(root)
 }
 
-// prepareNode readies the node from its setup, in order: open the store init
-// created, replace the substrate with the remote's own, reindex it through the
-// same pass `satelle reindex` runs, fetch the repos, and resolve every binding.
-// Anything that fails is the node's error, which the controller reports.
-func prepareNode(ctx context.Context, cmd *cobra.Command, root, dataDir string, s remotenode.Setup) (remotenode.Report, error) {
-	// The store opens against what init scaffolded; the remote's own bindings are
-	// judged below by resolving them, not by the bootstrap.
-	if err := openAppForCmd(cmd); err != nil {
-		return remotenode.Report{}, err
-	}
-	a, err := appFrom(cmd)
-	if err != nil {
-		return remotenode.Report{}, err
-	}
-	if err := remotenode.UnpackSubstrate(dataDir, s.Substrate); err != nil {
-		return remotenode.Report{}, err
-	}
-	if err := reindexSubstrate(cmd, a, false); err != nil {
-		return remotenode.Report{}, fmt.Errorf("reindex: %w", err)
-	}
-	repos, err := remotenode.FetchRepos(ctx, filepath.Join(root, "repos"), s.Repos, nil)
+// prepareNode readies the node from the definition it installed, in order: fetch
+// the repos and resolve every binding. Anything that fails is the node's error,
+// which the controller reports.
+func prepareNode(ctx context.Context, root, dataDir string, def remotedef.Definition, version string) (remotenode.Report, error) {
+	repos, err := remotenode.FetchRepos(ctx, filepath.Join(root, "repos"), def.Repos, nodeFetchEnv)
 	if err != nil {
 		return remotenode.Report{}, err
 	}
@@ -171,8 +210,8 @@ func prepareNode(ctx context.Context, cmd *cobra.Command, root, dataDir string, 
 		return remotenode.Report{}, err
 	}
 	return remotenode.Report{
-		Version: buildinfo.Resolve().Version, Workflows: categories,
-		Allow: s.Allow, Repos: repos, Bindings: bindings,
+		Version: buildinfo.Resolve().Version, DefinitionVersion: version, Workflows: categories,
+		Allow: def.Allow(), Repos: repos, Bindings: bindings,
 		Now: time.Now().UnixNano(), Hashes: config.ProcessHashes(process, procRoot),
 	}, nil
 }
@@ -251,10 +290,10 @@ func doneCategories(dataDir string) ([]string, error) {
 // agentJobHandler answers an agent job by running the remote's agent binding on
 // the message: the executor if it names a command, else the first agent binding
 // by name that does. The binding's env is not applied here. The agent gets the
-// secrets the run declares, read from satelle.dev under the run the sealed Setup
-// named, in its process environment alone; the node's own private key is dropped
-// from it. A secret satelle.dev refuses stops the job before the agent starts.
-func agentJobHandler(dataDir, root string, run func() remotenode.RunSecrets) remotenode.Handler {
+// secrets the definition declares, read from satelle.dev with the node token, in
+// its process environment alone. A secret satelle.dev refuses stops the job
+// before the agent starts; a refused node token also stops the node (Serve).
+func agentJobHandler(dataDir, root string, client *remotenode.NodeClient, decls []remotedef.SecretDecl) remotenode.Handler {
 	return func(ctx context.Context, body json.RawMessage) (json.RawMessage, error) {
 		var req remotenode.AgentRequest
 		if err := json.Unmarshal(body, &req); err != nil {
@@ -272,19 +311,14 @@ func agentJobHandler(dataDir, root string, run func() remotenode.RunSecrets) rem
 		if err != nil {
 			return nil, fmt.Errorf("binding %q: %w", name, err)
 		}
-		rs := run()
-		var secrets map[string]string
-		if rs.Active() {
-			values, _, serr := remotenode.SecretsForRun(ctx, rs, os.Getenv)
-			if serr != nil {
-				return nil, serr
-			}
-			secrets = values
+		secrets, err := client.Secrets(ctx, decls)
+		if err != nil {
+			return nil, err
 		}
 		raw, err := runner.Run(ctx, agentcli.Request{
 			SystemPrompt: "You are the agent on a remote node. Answer the developer's message.",
 			Payload:      req.Text, AllowedTools: b.Tools, Model: b.Model, Dir: root,
-			Env: secrets, Unset: unsetOf(rs),
+			Env: secrets,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("binding %q: %w", name, err)

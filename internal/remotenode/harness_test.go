@@ -173,9 +173,9 @@ func (h *nodeHandle) dropChannel() {
 
 // open plays the launcher: it opens the channel and, once the relay has issued the
 // session and token, starts the node in-process joining with them, as
-// `satelle node join` does. clock is the node's own time source. It returns the
-// controller's session, ready for Attach.
-func (r *rig) open(node *Node, prepare Prepare, clock remotechan.Clock) (*remotechan.Session, *nodeHandle) {
+// `satelle node join` does, and serving with report. clock is the node's own time
+// source. It returns the controller's session, ready for Attach.
+func (r *rig) open(node *Node, report Report, clock remotechan.Clock) (*remotechan.Session, *nodeHandle) {
 	r.t.Helper()
 	id, err := remotechan.NewIdentity()
 	if err != nil {
@@ -195,7 +195,7 @@ func (r *rig) open(node *Node, prepare Prepare, clock remotechan.Clock) (*remote
 			h.sess = sess
 			h.mu.Unlock()
 			defer sess.Close()
-			h.done <- node.Serve(ctx, sess, prepare)
+			h.done <- node.Serve(ctx, sess, report)
 		}()
 		return id.Public(), nil
 	})
@@ -208,13 +208,13 @@ func (r *rig) open(node *Node, prepare Prepare, clock remotechan.Clock) (*remote
 
 // attach brings the rig's node up and returns the Run. nodeClock is the node's own
 // time source; nil shares the rig's clock.
-func (r *rig) attach(node *Node, prepare Prepare, setup Setup, nodeClock remotechan.Clock) (*Run, *nodeHandle) {
+func (r *rig) attach(node *Node, report Report, nodeClock remotechan.Clock) (*Run, *nodeHandle) {
 	r.t.Helper()
 	if nodeClock == nil {
 		nodeClock = r.clock
 	}
-	sess, h := r.open(node, prepare, nodeClock)
-	run, err := Attach(testCtx(r.t), sess, setup, 20*time.Second)
+	sess, h := r.open(node, report, nodeClock)
+	run, err := Attach(testCtx(r.t), sess, 20*time.Second)
 	if err != nil {
 		r.t.Fatalf("Attach: %v", err)
 	}
@@ -222,11 +222,9 @@ func (r *rig) attach(node *Node, prepare Prepare, setup Setup, nodeClock remotec
 	return run, h
 }
 
-// readyPrepare reports ready as version, unpacking nothing.
-func readyPrepare(version string) Prepare {
-	return func(_ context.Context, s Setup) (Report, error) {
-		return Report{Version: version, Workflows: []string{"*"}, Allow: s.Allow}, nil
-	}
+// ready is the report of a node that is ready as version.
+func ready(version string) Report {
+	return Report{Version: version, Workflows: []string{"*"}}
 }
 
 func echoNode() *Node {

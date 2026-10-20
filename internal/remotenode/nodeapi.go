@@ -1,0 +1,178 @@
+package remotenode
+
+// A node talks to satelle.dev with one credential, the node token the launcher
+// gave it, and about one thing: the node it is. The definition it runs from, each
+// secret it is granted and the end of its run are all routes under
+// /api/v1/remote-nodes/{id}, where {id} is the --session value the node was
+// started with (satelle-server sty_c9013137). A value a secret route returns is
+// handed to the caller in memory and goes nowhere else: not to disk, the ledger,
+// a log or an error.
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/remotedef"
+)
+
+// DefinitionVersionHeader carries the version of the definition a node fetched.
+const DefinitionVersionHeader = "X-Satelle-Definition-Version"
+
+// ErrDefinitionDigest: the definition's bytes do not hash to the ETag the server
+// sent with them, so they are not the stored bundle.
+var ErrDefinitionDigest = errors.New("the definition does not match its ETag")
+
+// TokenRefusedError: satelle.dev answered a node route with 401, so the node token
+// is bad or revoked. Route names the request, and nothing else is asked after it.
+type TokenRefusedError struct{ Route string }
+
+func (e *TokenRefusedError) Error() string {
+	return "the node token was refused or revoked by satelle.dev (" + e.Route + ")"
+}
+
+// SecretRefusal is satelle.dev's refusal of one secret's read, with the server's
+// own code and reason (a key the definition does not declare, or one that was not
+// granted). The agent is not started on one.
+type SecretRefusal struct {
+	Key string
+	Err *hosted.APIError
+}
+
+func (e *SecretRefusal) Error() string { return fmt.Sprintf("secret %s refused: %s", e.Key, e.Err) }
+func (e *SecretRefusal) Unwrap() error { return e.Err }
+
+// NodeClient is a node's calls to satelle.dev for the node whose id it carries.
+type NodeClient struct {
+	nodeID, token string
+	client        *hosted.Client
+
+	mu      sync.Mutex
+	refused bool
+	endOnce sync.Once
+	endErr  error
+}
+
+// NewNodeClient returns the client for node nodeID at server, authenticated by
+// token. A nil hc uses a 30 second timeout.
+func NewNodeClient(server, nodeID, token string, hc *http.Client) *NodeClient {
+	if hc == nil {
+		hc = &http.Client{Timeout: 30 * time.Second}
+	}
+	return &NodeClient{nodeID: nodeID, token: token, client: hosted.NewClient(server, nil, hc)}
+}
+
+func (c *NodeClient) path(tail string) string {
+	return "/api/v1/remote-nodes/" + url.PathEscape(c.nodeID) + tail
+}
+
+// do sends one request with the node token. A 401 is the token's refusal: it is
+// remembered, so call asks nothing further.
+func (c *NodeClient) do(ctx context.Context, method, tail string) ([]byte, http.Header, error) {
+	route := method + " " + c.path(tail)
+	body, h, err := c.client.SignedDo(ctx, hosted.SignedRequest{Method: method, Path: c.path(tail), Bearer: c.token})
+	var ae *hosted.APIError
+	if errors.As(err, &ae) && ae.Status == http.StatusUnauthorized {
+		c.mu.Lock()
+		c.refused = true
+		c.mu.Unlock()
+		return nil, nil, &TokenRefusedError{Route: route}
+	}
+	return body, h, err
+}
+
+// call is do unless the token has already been refused, in which case it makes no
+// request.
+func (c *NodeClient) call(ctx context.Context, method, tail string) ([]byte, http.Header, error) {
+	c.mu.Lock()
+	refused := c.refused
+	c.mu.Unlock()
+	if refused {
+		return nil, nil, &TokenRefusedError{Route: method + " " + c.path(tail)}
+	}
+	return c.do(ctx, method, tail)
+}
+
+// Definition fetches the stored bundle of the definition the node runs and the
+// version it was stored as. The bytes are exactly the stored bundle, and they must
+// hash to the ETag the server sent with them.
+func (c *NodeClient) Definition(ctx context.Context) (bundle []byte, version string, err error) {
+	body, h, err := c.call(ctx, http.MethodGet, "/definition")
+	if err != nil {
+		return nil, "", fmt.Errorf("definition: %w", err)
+	}
+	sum := sha256.Sum256(body)
+	etag := strings.TrimPrefix(strings.Trim(h.Get("ETag"), `"`), "W/")
+	if etag == "" {
+		return nil, "", fmt.Errorf("definition: %w: the answer has no ETag", ErrDefinitionDigest)
+	}
+	if !strings.EqualFold(etag, hex.EncodeToString(sum[:])) {
+		return nil, "", fmt.Errorf("definition: %w", ErrDefinitionDigest)
+	}
+	version = h.Get(DefinitionVersionHeader)
+	if version == "" {
+		return nil, "", fmt.Errorf("definition: the answer has no %s", DefinitionVersionHeader)
+	}
+	return body, version, nil
+}
+
+// Secret reads one secret's value. A key satelle.dev refuses (not declared by the
+// definition, or not granted to it) is a *SecretRefusal.
+func (c *NodeClient) Secret(ctx context.Context, key string) (string, error) {
+	raw, _, err := c.call(ctx, http.MethodPost, "/secrets/"+url.PathEscape(key))
+	if err != nil {
+		var ae *hosted.APIError
+		if errors.As(err, &ae) {
+			return "", &SecretRefusal{Key: key, Err: ae}
+		}
+		var tr *TokenRefusedError
+		if errors.As(err, &tr) {
+			return "", err
+		}
+		return "", fmt.Errorf("secret %s: %w", key, err)
+	}
+	var v struct {
+		Value string `json:"value"`
+	}
+	if json.Unmarshal(raw, &v) != nil {
+		return "", fmt.Errorf("secret %s: the answer is malformed", key)
+	}
+	return v.Value, nil
+}
+
+// Secrets reads every declared secret once, in declaration order, and returns
+// key → value. The first one refused stops the read and nothing is returned.
+func (c *NodeClient) Secrets(ctx context.Context, decls []remotedef.SecretDecl) (map[string]string, error) {
+	out := make(map[string]string, len(decls))
+	for _, d := range decls {
+		v, err := c.Secret(ctx, d.Key)
+		if err != nil {
+			return nil, err
+		}
+		out[d.Key] = v
+	}
+	return out, nil
+}
+
+// End tells satelle.dev the node's run is over, which revokes the node token. It
+// sends the request once however often it is called; a 401 means the token is
+// already gone, which is what End wanted.
+func (c *NodeClient) End(ctx context.Context) error {
+	c.endOnce.Do(func() {
+		_, _, err := c.do(ctx, http.MethodPost, "/end")
+		var tr *TokenRefusedError
+		if err != nil && !errors.As(err, &tr) {
+			c.endErr = fmt.Errorf("end: %w", err)
+		}
+	})
+	return c.endErr
+}

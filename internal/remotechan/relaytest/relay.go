@@ -29,15 +29,17 @@ type slot struct{ local, remote *websocket.Conn }
 type Relay struct {
 	srv *httptest.Server
 
-	mu       sync.Mutex
-	slots    map[string]*slot
-	conns    []*websocket.Conn
-	frames   []Frame
-	bearers  []string
-	attempts int
-	upgrades int
-	reject   int
-	other    http.Handler
+	mu            sync.Mutex
+	slots         map[string]*slot
+	conns         []*websocket.Conn
+	frames        []Frame
+	bearers       []string
+	remoteBearers []string
+	attempts      int
+	upgrades      int
+	reject        int
+	rejectRemote  int
+	other         http.Handler
 }
 
 // New starts a relay for the life of t.
@@ -71,6 +73,14 @@ func (r *Relay) RejectBearers(n int) {
 	r.reject = n
 }
 
+// RejectRemoteBearers makes the next n remote upgrades fail with 401 whatever
+// bearer they carry, as a relay does for a node token it does not accept.
+func (r *Relay) RejectRemoteBearers(n int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rejectRemote = n
+}
+
 // Attempts counts every upgrade request the relay received, rejected or not.
 func (r *Relay) Attempts() int {
 	r.mu.Lock()
@@ -90,6 +100,13 @@ func (r *Relay) Bearers() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]string(nil), r.bearers...)
+}
+
+// RemoteBearers lists the bearer each remote upgrade request carried, in order.
+func (r *Relay) RemoteBearers() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.remoteBearers...)
 }
 
 // Frames is a copy of every message the relay forwarded, in arrival order.
@@ -138,10 +155,24 @@ func (r *Relay) serve(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+	if role == "remote" {
+		// A node presents the token satelle.dev gave it; one without a token, or one
+		// the test scripts the relay to refuse, is not accepted.
+		bearer := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
+		r.remoteBearers = append(r.remoteBearers, bearer)
+		if r.rejectRemote > 0 || bearer == "" {
+			if r.rejectRemote > 0 {
+				r.rejectRemote--
+			}
+			r.mu.Unlock()
+			http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
+			return
+		}
+	}
 	sl := r.slots[session]
 	switch {
 	case role == "local" && sl != nil && sl.local != nil,
-		role == "remote" && (sl == nil || sl.local == nil || sl.remote != nil),
+		role == "remote" && sl != nil && sl.remote != nil,
 		role != "local" && role != "remote":
 		r.mu.Unlock()
 		http.Error(w, "no such pairing", http.StatusNotFound)

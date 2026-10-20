@@ -34,31 +34,23 @@ type result struct {
 	err  error
 }
 
-// Attach is the controller's end of an enrolled channel: it sends the node its
-// Setup, waits up to readyTimeout for the node's ready report, and starts routing
-// the node's replies and heartbeats to Request. sess is the channel remotechan.Open
-// returned, whose launcher started the node (`satelle node join`). An error of the
-// node's own, or a first message that is not its ready report, fails the attach and
-// closes sess.
-func Attach(ctx context.Context, sess *remotechan.Session, setup Setup, readyTimeout time.Duration) (*Run, error) {
+// Attach is the controller's end of an enrolled channel: it waits up to
+// readyTimeout for the node's ready report and starts routing the node's replies
+// and heartbeats to Request. sess is the channel remotechan.Open returned, whose
+// launcher started the node (`satelle node join`), which already holds its
+// definition. An error of the node's own, or a first message that is not its ready
+// report, fails the attach and closes sess.
+func Attach(ctx context.Context, sess *remotechan.Session, readyTimeout time.Duration) (*Run, error) {
 	r := &Run{sess: sess, pending: map[string]chan result{}}
-	if err := r.begin(ctx, setup, readyTimeout); err != nil {
+	if err := r.begin(ctx, readyTimeout); err != nil {
 		_ = sess.Close()
 		return nil, err
 	}
 	return r, nil
 }
 
-// begin sends Setup, reads the ready report and starts the reply routing.
-func (r *Run) begin(ctx context.Context, setup Setup, readyTimeout time.Duration) error {
-	body, err := encode(typeSetup, setup)
-	if err != nil {
-		return err
-	}
-	if err := r.sess.Send(ctx, "", body); err != nil {
-		return err
-	}
-
+// begin reads the ready report and starts the reply routing.
+func (r *Run) begin(ctx context.Context, readyTimeout time.Duration) error {
 	rctx, cancel := context.WithTimeout(ctx, readyTimeout)
 	defer cancel()
 	m, err := r.sess.Recv(rctx)

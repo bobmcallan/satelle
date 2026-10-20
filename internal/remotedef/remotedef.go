@@ -1,17 +1,17 @@
-// Package remotedef holds the part of a remote definition that a node still
-// reads: the secrets the remote declares and how it proves itself to satelle.dev
-// when it reads one. It runs nothing, opens nothing and holds no credential.
+// Package remotedef reads the part of a remote definition that a node needs: the
+// secrets the remote declares, the repos it fetches and the egress it is allowed.
+// A node receives the definition from satelle.dev, in the bundle it fetches with
+// its own node token, and Parse is the only reader of its remote.toml.
 //
-// Remotes are defined, validated, published, secreted, launched and run through
-// satelle-server; the CLI keeps no remote control plane, so nothing here loads or
-// checks a definition file.
+// The format and its validation are satelle-server's internal/remotedef: the
+// version a node receives was validated there, so Parse decodes only what the
+// node uses and tolerates every other key, including any the server adds later.
+// It runs nothing, opens nothing and holds no credential.
 package remotedef
 
 import (
-	"encoding/json"
 	"net/url"
 	"path"
-	"regexp"
 	"strings"
 )
 
@@ -29,73 +29,33 @@ const FromEnv = "env"
 // value comes from (FromEnv, or an argv that prints it); Workspace is the team
 // workspace id, for team scope only.
 type SecretDecl struct {
-	Key       string
-	Scope     string
-	From      any
-	Workspace string
+	Key       string `toml:"key"`
+	Scope     string `toml:"scope"`
+	From      any    `toml:"from"`
+	Workspace string `toml:"workspace"`
 }
 
-// OIDCIdentity is a platform workload identity: the remote proves itself with a
-// short-lived token the platform issues instead of a key. Token is the argv that
-// prints one for an audience, with PlaceholderAud standing for it.
-type OIDCIdentity struct {
-	Issuer  string
-	Subject string
-	Token   []string
+// Repo is one repository the node fetches, read-only: an https URL and the ref
+// (branch, tag or commit) to check out.
+type Repo struct {
+	URL string `toml:"url"`
+	Ref string `toml:"ref"`
 }
 
-// PlaceholderAud is the argv token an identity's token command carries where the
-// audience goes.
-const PlaceholderAud = "{aud}"
-
-// Identity is how the remote proves itself to satelle.dev when it reads a secret:
-// Key names the environment variable that holds its Ed25519 private key, or OIDC
-// binds a platform workload identity. Neither holds a key.
-type Identity struct {
-	Key  string
-	OIDC *OIDCIdentity
+// Network is the node's egress beyond what the definition already implies.
+type Network struct {
+	Allow []string `toml:"allow"`
 }
 
-// Definition is the secrets and identity of one remote.
+// Definition is the part of remote.toml a node reads.
 type Definition struct {
-	Secret   []SecretDecl
-	Identity Identity
+	Secret  []SecretDecl `toml:"secret"`
+	Repos   []Repo       `toml:"repo"`
+	Network Network      `toml:"network"`
 }
 
-// IdentityRef names how the remote proves itself, in the form a node reads it
-// back from its environment: "key:<ENV>" for a key held in the host's secret
-// store, "oidc:<token argv as a JSON array>" for a platform workload identity,
-// "" for neither. It holds a variable name and a command, never a key.
-func (d Definition) IdentityRef() string {
-	switch {
-	case d.Identity.OIDC != nil:
-		argv, _ := json.Marshal(d.Identity.OIDC.Token)
-		return "oidc:" + string(argv)
-	case d.Identity.Key != "":
-		return "key:" + d.Identity.Key
-	}
-	return ""
-}
-
-// TokenArgv is the identity's token command with PlaceholderAud filled. Each
-// argument is replaced in one pass, so an audience that itself contains the
-// placeholder is not expanded again.
-func (d Definition) TokenArgv(aud string) []string {
-	if d.Identity.OIDC == nil {
-		return nil
-	}
-	r := strings.NewReplacer(PlaceholderAud, aud)
-	out := make([]string, len(d.Identity.OIDC.Token))
-	for i, a := range d.Identity.OIDC.Token {
-		out[i] = r.Replace(a)
-	}
-	return out
-}
-
-var remoteIDPattern = regexp.MustCompile(`^rmt_[A-Za-z0-9_-]+$`)
-
-// ValidRemoteID reports whether id has the shape of a satelle.dev remote id.
-func ValidRemoteID(id string) bool { return remoteIDPattern.MatchString(id) }
+// Allow is the egress allowlist the definition declares.
+func (d Definition) Allow() []string { return d.Network.Allow }
 
 // RepoName is the directory a repo is cloned into: the last element of its URL
 // path without a .git suffix.
