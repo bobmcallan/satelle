@@ -50,6 +50,7 @@ type reviewerMaterial struct {
 	Messages        []MessageState
 	PriorVerdicts   []PriorVerdict
 	DefinitionEdits []DefinitionEdit
+	Deferred        []DeferredItem
 	// LedgerJSON is the store listing when List succeeded, including an empty
 	// array. LedgerErr is the unavailable reason ("ledger: …") when it did not.
 	LedgerJSON []byte
@@ -102,6 +103,7 @@ func (g *Engine) prepareReviewer(ctx context.Context, item workitem.Item, toStat
 	// failure mode that would create.
 	g.fillPriorVerdicts(ctx, item.ID, item.Status, toStatus, g.staleExemption(ctx, item, toStatus), &tp, mat)
 	g.fillDefinitionEdits(ctx, item.ID, &tp, mat)
+	g.fillDeferred(ctx, item.ID, skill, &tp, mat)
 	// Engagement diff rides the GATE payload only (sty_a125b440): reviewers
 	// without a shell need the slice; executors have one. fillDiff never
 	// errors — a missing baseline is a marker, not a refused transition.
@@ -252,6 +254,7 @@ type referencedPayload struct {
 	RouteDrift      *wfgovern.RouteDrift `json:"route_drift,omitempty"`
 	PriorVerdicts   *pathRef             `json:"prior_verdicts,omitempty"`
 	DefinitionEdits *pathRef             `json:"definition_edits,omitempty"`
+	Deferred        *pathRef             `json:"deferred,omitempty"`
 	Amendment       *AmendmentState      `json:"amendment,omitempty"`
 	Diff            *referencedDiff      `json:"diff,omitempty"`
 	Messages        *pathRef             `json:"messages,omitempty"`
@@ -363,6 +366,13 @@ func writeReviewerMaterial(scratch string, mat *reviewerMaterial, tp transitionP
 			return referencedPayload{}, err
 		}
 		ref.DefinitionEdits = &pathRef{Path: abs}
+	}
+	if len(mat.Deferred) > 0 {
+		abs, err := writeMaterialJSON(dir, "deferred.json", mat.Deferred)
+		if err != nil {
+			return referencedPayload{}, err
+		}
+		ref.Deferred = &pathRef{Path: abs}
 	}
 	if len(mat.LedgerJSON) > 0 && mat.LedgerErr == "" {
 		path := filepath.Join(dir, "ledger.json")

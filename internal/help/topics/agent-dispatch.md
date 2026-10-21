@@ -731,6 +731,20 @@ does not count) and the consultant repeated its objection. The ledger row also
 carries `stopped_reason`. Park or re-present per rule 4 of
 `satelle-agent-consultation`.
 
+**Deferrals.** The consultant's first-turn payload carries a `rework` object:
+the coder binding, its authored tool grant verbatim (`coder_tools`), and every
+reviewer gate on a later route step (`later_gates`, step + skill). An objection
+whose only remedy is outside that grant, or whose evidence a later gate owns,
+is written on its own line as `DEFERRED <owner>: <objection>` — `<owner>` being
+`grant` or a skill in `later_gates` (a final `NOT READY: DEFERRED <owner>: …`
+counts too). A deferral is never handed to the coder and does not count as the final
+NOT READY; a relay with only deferrals left ends
+`{"converged": true, "outcome": "converged_with_deferrals", "deferred": [...]}`,
+and the ledger row carries the same list. The deferred item reaches the owning
+gate's payload as `deferred` (including inside a bundled session). A `DEFERRED`
+line naming any other owner is an ordinary objection: it spends a round and is
+relayed.
+
 It **never** sets status. `READY` is a signal to the orchestrator, never a
 verdict: the orchestrator presents the edge, or — after the budget without
 ready, or after a declared number of gate rejections on the same edge — parks to

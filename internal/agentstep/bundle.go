@@ -362,17 +362,21 @@ func (g *Engine) runReviewerBundle(ctx context.Context, item workitem.Item, toSt
 	for k, p := range preps {
 		skills[k] = p.skill
 	}
-	// Every payload differs only in review_skill, so the first stands for all;
-	// the session is told which rubrics it judges instead.
+	// Every payload differs only in review_skill and in the deferrals its gate
+	// owns, so the first stands for all once the deferrals are merged (each item
+	// keeps its owner skill); the session is told which rubrics it judges.
 	tp := preps[0].tp
 	tp.ReviewSkill = ""
 	tp.ReviewSkills = skills
+	tp.Deferred = mergeDeferred(preps)
+	mat := preps[0].material
+	mat.Deferred = append([]DeferredItem(nil), tp.Deferred...)
 	res := g.Invoke(ctx, InvokeRequest{
 		Binding:     seat.binding,
 		Section:     seat.section,
 		Rubric:      bundleRubric(preps),
 		Payload:     tp,
-		Material:    &preps[0].material,
+		Material:    &mat,
 		Charter:     reviewerCharter(),
 		Expect:      ExpectVerdicts,
 		Timeout:     g.agentTimeout,

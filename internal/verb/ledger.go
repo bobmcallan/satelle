@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -132,4 +133,18 @@ func ListStoryLedger(ctx context.Context, storyID string) ([]byte, ledger.Window
 	}
 	b, err := json.Marshal(entries)
 	return b, win, err
+}
+
+// StoryLedgerKind returns every ledger row of kind for storyID, oldest first.
+// Nil-safe: no ledger wired, or an unreadable one, yields nothing.
+func StoryLedgerKind(ctx context.Context, storyID, kind string) []ledger.Entry {
+	led, err := requireLedger()
+	if err != nil || strings.TrimSpace(storyID) == "" {
+		return nil
+	}
+	entries, err := led.ListByStory(ctx, storyID, kind)
+	if err != nil {
+		return nil
+	}
+	return entries
 }

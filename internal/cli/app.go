@@ -18,6 +18,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/docstory"
 	"github.com/bobmcallan/satelle/internal/epicset"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/oplog"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -268,6 +269,11 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// Definition-edit injection (sty_5262592e): the intent reviewer judges
 			// each edited acceptance criterion against the story's purpose.
 			rev.SetDefinitionEditsResolver(definitionEditsResolver())
+			// Rework-relay deferrals (sty_83620b39): an objection the consult seat
+			// deferred to a later gate reaches that gate's payload.
+			rev.SetDeferralsResolver(func(ctx context.Context, itemID string) []agentstep.DeferredItem {
+				return agentstep.DeferralsFrom(verb.StoryLedgerKind(ctx, itemID, ledger.KindAgentInvocation))
+			})
 			// Engagement-diff injection (sty_a125b440): Bash-less reviewers
 			// receive the live slice in the transition payload. Enumeration
 			// only; a missing baseline is a marker, never a refused gate.

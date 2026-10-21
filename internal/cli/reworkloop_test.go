@@ -353,7 +353,7 @@ func TestParseReadyMarker(t *testing.T) {
 		{"case matters", "ready", false, "ready"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ready, objection := parseReadyMarker(tc.reply)
+			ready, objection, _ := parseConsultReply(tc.reply, nil)
 			if ready != tc.ready {
 				t.Errorf("ready = %v, want %v", ready, tc.ready)
 			}

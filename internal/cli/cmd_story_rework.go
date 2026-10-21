@@ -21,6 +21,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/placement"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
+	"github.com/bobmcallan/satelle/internal/wfroute"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -39,8 +40,8 @@ The consultant's reply must END with a line exactly READY or NOT READY: <reason>
 anything else consumes a round. --rounds may only LOWER the authored budget.
 
 Turns are ledgered as agent_message rows (cc="*"). Prints {converged, outcome,
-rounds, last_objection}; outcome no_progress means a round changed no evidence
-and repeated the objection, so the relay stopped early.
+rounds, last_objection, deferred}; outcome no_progress means a round changed no
+evidence and repeated the objection, so the relay stopped early.
 
 Does NOT change status: ready is a signal, never a verdict.
 See satelle help agent-dispatch.`,
@@ -256,7 +257,13 @@ func runRework(cmd *cobra.Command, id string, roundsFlag int, modelFlag string, 
 	// Both sides are seeded with the story payload — the ACs are the criteria
 	// for coder, consultant and gate alike, and a live session's command
 	// template need not carry {payload}.
-	consultPayload, err := eng.SessionSeed(ctx, it, rw.ConsultBinding)
+	// The consultant additionally learns what the coder's grant can run and which
+	// later gates own the evidence it cannot produce, so it can defer that
+	// evidence instead of holding the relay on it.
+	gates := laterGates(wfroute.Build(d.Spec, wfgovern.DerivedRouteName, it.Tags, d.Advisors, d.Reworks), it.Status)
+	consultPayload, err := eng.ConsultSeed(ctx, it, rw.ConsultBinding, agentstep.ReworkContext{
+		CoderBinding: rw.CoderBinding, CoderTools: coderBinding.Tools, LaterGates: gates,
+	})
 	if err != nil {
 		return err
 	}
@@ -277,6 +284,7 @@ func runRework(cmd *cobra.Command, id string, roundsFlag int, modelFlag string, 
 		Seed:               consultPayload + "\n\n" + reworkSeed(rw),
 		CoderSeed:          coderPayload + "\n\n" + reworkCoderSeed(rw),
 		Pending:            pending,
+		DeferOwners:        deferOwners(gates),
 		CoderIdleTimeout:   coderIdle,
 		ConsultIdleTimeout: consultIdle,
 		Evidence: func(ctx context.Context) (string, error) {
@@ -323,9 +331,43 @@ func unansweredDirected(msgs []verb.AgentMessage, coder string) []verb.AgentMess
 	return out
 }
 
+// laterGates lists the reviewer gates on route steps AFTER the one holding
+// status, in route order, without repeating a (step, skill) pair. These own the
+// evidence a performer at status cannot produce. The route is the one the relay
+// already derived; this does not derive the gate list a second time.
+func laterGates(route wfroute.Route, status string) []agentstep.LaterGate {
+	var out []agentstep.LaterGate
+	seen := map[agentstep.LaterGate]bool{}
+	after := false
+	for _, st := range route.Steps {
+		if !after {
+			after = st.Status == status
+			continue
+		}
+		for _, rv := range st.Reviewers {
+			g := agentstep.LaterGate{Step: st.Status, Skill: rv.Skill}
+			if !seen[g] {
+				seen[g] = true
+				out = append(out, g)
+			}
+		}
+	}
+	return out
+}
+
+// deferOwners is the set of owners a DEFERRED line may name: the grant and the
+// skill of every later gate.
+func deferOwners(gates []agentstep.LaterGate) map[string]bool {
+	owners := map[string]bool{agentstep.DeferOwnerGrant: true}
+	for _, g := range gates {
+		owners[g.Skill] = true
+	}
+	return owners
+}
+
 // reworkSeed is the consultant's first turn: the ask and the termination
 // contract. The CONTRACT lives in prose handed to the agent, not in a Go
-// branch — what Go owns is parsing the marker back (parseReadyMarker).
+// branch — what Go owns is parsing the marker back (parseConsultReply).
 func reworkSeed(rw reworkPlan) string {
 	return fmt.Sprintf(`Review the slice as it currently stands in the working tree against this story's acceptance criteria.
 
@@ -337,6 +379,12 @@ Answer with your findings, then end your reply with a FINAL LINE that is exactly
   NOT READY: <the single most important thing still wrong>
 
 The final line is a contract, not a formality: satelle reads it to decide whether to stop relaying. Anything else counts as NOT READY and spends a round.
+
+The payload's "rework" object states everything the coder may run ("coder_tools") and the reviewer gates that run LATER ("later_gates"). The coder cannot clear an objection whose remedy lies outside "coder_tools", and evidence a later gate owns is that gate's to produce. Do not hold the relay on either: write each one on its own line as
+
+  DEFERRED <owner>: <the objection>
+
+where <owner> is "grant" (the coder's tools cannot do it) or the "skill" of the later gate that owns the evidence. A deferred objection is handed to nobody and the gate receives it; end READY once only deferred objections remain. A DEFERRED line naming any other owner is an ordinary objection.
 
 READY is not a verdict and does not advance anything. The reviewer that gates this edge runs cold and one-shot afterwards; your reply is context for it. Do not run satelle story set and do not change this story's status.`,
 		rw.CoderBinding, rw.Rounds)
@@ -404,12 +452,13 @@ func recordReworkResult(ctx context.Context, ls *ledger.Store, storyID string, r
 	if ls == nil {
 		return
 	}
-	row := map[string]any{
-		"converged": res.Converged, "outcome": res.Outcome, "rounds": res.Rounds, "last_objection": res.LastObjection,
-		"coder": rw.CoderBinding, "consult": rw.ConsultBinding, "budget": rw.Rounds,
+	row := agentstep.ReworkRelayRecord{
+		Relay: agentstep.ReworkRelayMarker, Converged: res.Converged, Outcome: res.Outcome, Rounds: res.Rounds,
+		LastObjection: res.LastObjection, Coder: rw.CoderBinding, Consult: rw.ConsultBinding, Budget: rw.Rounds,
+		Deferred: res.Deferred,
 	}
 	if res.Outcome == outcomeNoProgress {
-		row["stopped_reason"] = "no new evidence and unchanged objection"
+		row.StoppedReason = "no new evidence and unchanged objection"
 	}
 	payload, err := json.Marshal(row)
 	if err != nil {
@@ -419,7 +468,7 @@ func recordReworkResult(ctx context.Context, ls *ledger.Store, storyID string, r
 		StoryID: storyID,
 		Kind:    ledger.KindAgentInvocation,
 		Actor:   rw.ConsultBinding,
-		Body:    fmt.Sprintf("rework outcome=%s converged=%t rounds=%d/%d", res.Outcome, res.Converged, res.Rounds, rw.Rounds),
+		Body:    fmt.Sprintf("rework outcome=%s converged=%t rounds=%d/%d deferred=%d", res.Outcome, res.Converged, res.Rounds, rw.Rounds, len(res.Deferred)),
 		Payload: payload,
 	}, time.Now())
 }

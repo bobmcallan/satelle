@@ -242,7 +242,7 @@ func openPayloadFiles(payload string) map[string][]byte {
 			read(d.PatchPath)
 		}
 	}
-	for _, key := range []string{"messages", "prior_verdicts", "definition_edits", "ledger"} {
+	for _, key := range []string{"messages", "prior_verdicts", "definition_edits", "deferred", "ledger"} {
 		raw, ok := top[key]
 		if !ok {
 			continue

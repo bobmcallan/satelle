@@ -1,3 +1,14 @@
+## [0.0.716] - 2026-10-21
+
+### Added
+- The rework relay's consult seat is told the coder's binding and grant (its tools, verbatim) and the later route gates that own evidence. A consult objection the coder cannot clear (its remedy is outside the grant, or a later gate owns the evidence) can be marked `DEFERRED <owner>: …`. It then does not hold the relay, which ends `converged_with_deferrals` with the deferrals in its JSON result and its ledger row. (sty_83620b39)
+- A deferred item reaches the gate that owns it as a `deferred` material file in that gate's payload, including when several gates share one bundled reviewer session. (sty_83620b39)
+
+## [serve-v0.0.185] - 2026-10-21
+
+### Changed
+- The service binary carries the rework-relay deferral ledger kind and the updated agent-dispatch help. (sty_83620b39)
+
 ## [0.0.715] - 2026-10-21
 
 ### Changed

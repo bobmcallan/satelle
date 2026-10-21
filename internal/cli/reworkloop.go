@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/agentstep"
 )
 
 // Ready markers. The CONTRACT is stated to the consultant in the relay's seed
@@ -26,14 +27,19 @@ import (
 const (
 	readyMarker    = "READY"
 	notReadyMarker = "NOT READY:"
+	deferMarker    = "DEFERRED"
 )
 
 // How a relay ended. Outcome is the one field that says so; Converged is kept
 // for readers that predate it.
 const (
-	outcomeConverged  = "converged"
-	outcomeBudget     = "budget"
-	outcomeNoProgress = "no_progress"
+	outcomeConverged = "converged"
+	// outcomeConvergedDeferred is converged with at least one objection recorded
+	// as owned by the coder's grant or a later gate: nothing was left for the
+	// coder to clear, and the owners are named in Deferred.
+	outcomeConvergedDeferred = "converged_with_deferrals"
+	outcomeBudget            = "budget"
+	outcomeNoProgress        = "no_progress"
 )
 
 // reworkResult is the relay's whole answer: did the consultant say ready, how
@@ -44,6 +50,9 @@ type reworkResult struct {
 	Outcome       string `json:"outcome,omitempty"`
 	Rounds        int    `json:"rounds"`
 	LastObjection string `json:"last_objection,omitempty"`
+	// Deferred lists the objections the consultant assigned to the grant or a
+	// later gate, accumulated across rounds. They were never relayed to the coder.
+	Deferred []agentstep.DeferredItem `json:"deferred,omitempty"`
 }
 
 // reworkLoop relays turns between a coder session and a consulting reviewer
@@ -69,6 +78,11 @@ type reworkLoop struct {
 	// performer acts on them FIRST, and a consultant READY cannot end the relay
 	// until the performer has returned a non-empty reply.
 	Pending []string
+	// DeferOwners is the set of owners a `DEFERRED <owner>: …` line may name: the
+	// grant, and the skill of each gate on a later route step. The command
+	// supplies it so the loop stays free of route knowledge. A DEFERRED line
+	// naming anyone else is an ordinary objection.
+	DeferOwners map[string]bool
 	// CoderIdleTimeout / ConsultIdleTimeout bound one turn on their respective
 	// session with a Watchdog (sty_752c4ef2) — each side may configure its own
 	// idle_timeout=. ≤0 disables stall detection for that side.
@@ -163,11 +177,15 @@ func (l *reworkLoop) Run(ctx context.Context) (reworkResult, error) {
 			return res, err
 		}
 		res.Rounds = round
-		ready, objection := parseReadyMarker(verdict)
+		ready, objection, deferred := parseConsultReply(verdict, l.DeferOwners)
+		res.Deferred = addDeferred(res.Deferred, deferred)
 		ask := objection
 		switch {
 		case ready && answered:
 			res.Converged, res.Outcome = true, outcomeConverged
+			if len(res.Deferred) > 0 {
+				res.Outcome = outcomeConvergedDeferred
+			}
 			res.LastObjection = ""
 			return res, nil
 		case ready:
@@ -260,34 +278,106 @@ func turnResult(sess agentcli.Session, rendered string) string {
 	return rendered
 }
 
-// parseReadyMarker reads the termination contract off a consultant's reply: its
-// FINAL non-empty line is `READY` or `NOT READY: <reason>`.
+// parseConsultReply reads the termination contract off a consultant's reply: its
+// FINAL non-empty line is `READY` or `NOT READY: <reason>`. Any line of the form
+// `DEFERRED <owner>: <objection>` whose owner is in owners declares a deferral —
+// an objection the coder cannot clear (the grant) or a later gate owns. A
+// deferral is handed to nobody, so it is neither the reason nor part of the
+// objection; a final line `NOT READY: DEFERRED <owner>: …` is a deferral too and
+// leaves nothing outstanding.
 //
-// An unparseable reply is NOT READY with the whole trimmed reply as the
-// objection, and it consumes a round. That is deliberate: a consultant that
-// cannot follow the contract must not be able to hang the loop, and the honest
-// reading of "it did not say ready" is that it is not ready.
-func parseReadyMarker(reply string) (ready bool, objection string) {
-	last := ""
-	for _, line := range strings.Split(reply, "\n") {
-		if t := strings.TrimSpace(line); t != "" {
-			last = t
+// A DEFERRED line naming an owner outside owners is an ordinary objection and
+// holds the relay. An unparseable reply is NOT READY with the whole trimmed
+// reply as the objection, and it consumes a round. That is deliberate: a
+// consultant that cannot follow the contract must not be able to hang the loop,
+// and the honest reading of "it did not say ready" is that it is not ready.
+func parseConsultReply(reply string, owners map[string]bool) (ready bool, objection string, deferred []agentstep.DeferredItem) {
+	lines := strings.Split(reply, "\n")
+	last := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			last = i
+		}
+	}
+	finalLine := ""
+	if last >= 0 {
+		finalLine = strings.TrimSpace(lines[last])
+	}
+	var held []string // DEFERRED lines whose owner the relay does not accept
+	for i, line := range lines {
+		if i == last && strings.HasPrefix(finalLine, notReadyMarker) {
+			continue // the final line is read below
+		}
+		if d, ok, isDefer := parseDeferred(strings.TrimSpace(line), owners); isDefer {
+			if ok {
+				deferred = append(deferred, d)
+			} else {
+				held = append(held, strings.TrimSpace(line))
+			}
 		}
 	}
 	switch {
-	case last == readyMarker:
-		return true, ""
-	case strings.HasPrefix(last, notReadyMarker):
-		reason := strings.TrimSpace(strings.TrimPrefix(last, notReadyMarker))
-		if reason == "" {
-			reason = "(no reason given)"
+	case finalLine == readyMarker:
+		ready = true
+	case strings.HasPrefix(finalLine, notReadyMarker):
+		reason := strings.TrimSpace(strings.TrimPrefix(finalLine, notReadyMarker))
+		if d, ok, _ := parseDeferred(reason, owners); ok {
+			deferred = append(deferred, d)
+			ready = true
+		} else {
+			if reason == "" {
+				reason = "(no reason given)"
+			}
+			objection = reason
 		}
-		return false, reason
+	default:
+		if t := strings.TrimSpace(reply); t != "" {
+			return false, t, deferred
+		}
+		return false, "consultant returned no reply", deferred
 	}
-	if t := strings.TrimSpace(reply); t != "" {
-		return false, t
+	if len(held) > 0 {
+		ready = false
+		if objection != "" {
+			held = append([]string{objection}, held...)
+		}
+		objection = strings.Join(held, "\n")
 	}
-	return false, "consultant returned no reply"
+	return ready, objection, deferred
+}
+
+// parseDeferred reads one `DEFERRED <owner>: <objection>` line. isDefer says the
+// line has that shape at all; ok says its owner is one the relay accepts.
+func parseDeferred(line string, owners map[string]bool) (item agentstep.DeferredItem, ok, isDefer bool) {
+	rest, found := strings.CutPrefix(line, deferMarker+" ")
+	if !found {
+		return item, false, false
+	}
+	owner, objection, found := strings.Cut(rest, ":")
+	if !found {
+		return item, false, true
+	}
+	owner = strings.TrimSpace(owner)
+	objection = strings.TrimSpace(objection)
+	if objection == "" {
+		objection = "(no objection given)"
+	}
+	return agentstep.DeferredItem{Owner: owner, Objection: objection}, owners[owner], true
+}
+
+// addDeferred appends items to have, skipping any whose owner and objection
+// (ignoring case and whitespace) are already there.
+func addDeferred(have, items []agentstep.DeferredItem) []agentstep.DeferredItem {
+next:
+	for _, it := range items {
+		for _, h := range have {
+			if h.Owner == it.Owner && sameObjection(h.Objection, it.Objection) {
+				continue next
+			}
+		}
+		have = append(have, it)
+	}
+	return have
 }
 
 // reworkCoderPolicy is the coder side's permission gate: a mutator passes only

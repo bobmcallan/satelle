@@ -121,6 +121,10 @@ type Engine struct {
 	// first, so an intent reviewer judges an edited AC against the story's purpose
 	// (sty_5262592e). Nil-safe: an unwired resolver injects nothing.
 	definitionEdits func(ctx context.Context, itemID string) []DefinitionEdit
+	// deferrals resolves the objections a rework relay's consult seat deferred
+	// to the grant or to a later gate; fillDeferred hands each gate its own.
+	// Nil-safe: an unwired resolver injects nothing.
+	deferrals func(ctx context.Context, itemID string) []DeferredItem
 	// itemDiff resolves the live engagement slice for a reviewer payload
 	// (sty_a125b440). Nil-safe: an unwired resolver injects no Diff. The
 	// resolver itself must never error — map missing baseline / git failure to
@@ -986,6 +990,15 @@ type transitionPayload struct {
 	// verdict — the binary computes it and decides nothing. Nil when the
 	// computation fails (unwired store, missing item) — never a fabricated zero.
 	MeasuredActual *verb.StoryActual `json:"measured_actual,omitempty"`
+	// Rework is present ONLY on the rework relay's consult-seat seed: the coder
+	// binding, its authored tool grant, and the later gates that own evidence the
+	// coder cannot produce (ConsultSeed). Absent everywhere else.
+	Rework *ReworkContext `json:"rework,omitempty"`
+	// Deferred carries the objections a rework relay deferred to THIS gate's
+	// skill — evidence the gate owns, not a defect the coder could clear. Absent
+	// when none, so every other gate's payload is unchanged. Enumeration, not
+	// verdict.
+	Deferred []DeferredItem `json:"deferred,omitempty"`
 }
 
 // MessageState is one agent_message as injected into a transition payload.
