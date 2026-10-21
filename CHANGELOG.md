@@ -1,3 +1,13 @@
+## [0.0.707] - 2026-10-21
+
+### Added
+- `satelle session name` prints one name for the agent session in this tree: short host · project · the worktree directory for a linked tree · the engaged story when this tree holds the live seat. `--harness <h>` reports `title: unavailable` for a harness with no session-name flag. (sty_88603414)
+- The claude launcher `satelle agents install claude` writes starts claude with `--name "$(satelle session name)"`, so ListAgents, SendMessage and the terminal show which machine, repo and story a session belongs to. A name you pass yourself (`--name`, `--name=`, `-n`) wins. Put `$SATELLE_HOME/agents/bin` on PATH and launch `satelle-claude`; `satelle help session` has the details. (sty_88603414)
+
+### Changed
+- `satelle init` rewrites an installed satelle-owned launcher whose content is out of date, and hints at the launcher for a harness that can name its sessions. (sty_88603414)
+- A checkout already registered with satelle.dev under an older label is registered again with its readable host · project label, so a hold owned by another machine shows that label. (sty_88603414)
+
 ## [0.0.706] - 2026-10-20
 
 ### Added
@@ -10,6 +20,7 @@
 
 ### Changed
 - The service binary embeds the new `satelle-review-structure-not-process` principle and the revised `satelle-agent-goals`. (sty_a8a308aa)
+- The service binary carries the per-harness session-name flags the launcher reads. (sty_88603414)
 
 ## [0.0.705] - 2026-10-20
 
