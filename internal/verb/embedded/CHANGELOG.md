@@ -1,3 +1,8 @@
+## [0.0.708] - 2026-10-21
+
+### Fixed
+- `satelle agent validate` and `satelle init` no longer warn `reviewer.unsafe` for a reviewer binding whose tool grant satelle already holds read-only, such as pi `--tools read,grep,find,ls`; a reviewer satelle cannot classify still warns, and a provable escape stays an error. (sty_ea948877)
+
 ## [0.0.707] - 2026-10-21
 
 ### Added

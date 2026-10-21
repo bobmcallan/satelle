@@ -192,12 +192,13 @@ func TestValidateHookCeilingIsOwnedByTheBindingCheck(t *testing.T) {
 		t.Errorf("problem should name the section and the escape: %v", r.Problems)
 	}
 
-	// Unexpressed ceiling → warning, not a hard failure.
+	// Unclassifiable ceiling (an adapter no table names, so agentcli cannot hold
+	// it read-only) → warning, not a hard failure.
 	loose := healthyAgents()
 	loose.Agents = map[string]config.AgentBinding{
 		"judge": {
 			Role:    config.RoleReviewer,
-			Command: "claude -p --append-system-prompt {system} --allowedTools {tools}",
+			Command: "mystery-agent -p --system {system} --tools {tools}",
 			Tools:   "Read,Grep,Glob",
 		},
 	}
