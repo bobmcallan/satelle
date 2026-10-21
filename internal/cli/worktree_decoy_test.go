@@ -184,7 +184,7 @@ func TestWorktreeDecoyIsNotTheProcessOfRecord(t *testing.T) {
 	lockCmd.SetOut(&locked)
 	lockCmd.SetErr(&locked)
 	lerr := substrateLockGate(lockCmd, []byte(`{"tool_input":{"file_path":".satelle/workflows/agents.toml"}}`),
-		".satelle/workflows/agents.toml", []seatInfo{{ItemID: "sty_holder", StoryStatus: "in_progress"}})
+		".satelle/workflows/agents.toml", &lockSeats{live: []seatInfo{{ItemID: "sty_holder", StoryStatus: "in_progress"}}})
 	if lerr == nil || !strings.Contains(lerr.Error(), "substrate lock") {
 		t.Fatalf("substrate lock did not refuse the worktree data dir (the decoy opts out): %v\n%s", lerr, locked.String())
 	}

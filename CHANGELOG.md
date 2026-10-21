@@ -1,3 +1,14 @@
+## [0.0.710] - 2026-10-21
+
+### Fixed
+- A substrate-lane story can change the substrate it was filed for while sibling epic children perform: when a session holds several seats and none matches the edited tree, the edit passes if exactly one of the session's own seats is a substrate story, and every other live seat gets one `substrate_change_note` ledger row naming the substrate story and the path. An edit attributed to a non-substrate story is still refused, for Edit and for a shell redirect alike, each path judged by its own tree. (sty_08569de9)
+- The substrate lock's refusal names each outside holder with its status and category, the condition that applied (own story not substrate, ambiguous across the session's seats, the session's own seat stale, or no seat attributed) and the fix for it, and never tells you to re-engage a lease that is not yours. (sty_08569de9)
+
+## [serve-v0.0.181] - 2026-10-21
+
+### Changed
+- The service binary knows the new `substrate_change_note` ledger kind. (sty_08569de9)
+
 ## [0.0.709] - 2026-10-21
 
 ### Added

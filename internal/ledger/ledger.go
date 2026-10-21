@@ -192,6 +192,13 @@ const (
 	// {path, status, lane}; nothing in it is harness-specific. Enumeration only —
 	// the lock list is configuration.
 	KindSubstrateLockDeny = "substrate_lock_deny"
+	// KindSubstrateChangeNote records, on a story that held a performing seat, one
+	// locked-substrate change a substrate-lane story made while it performed: the
+	// lock exists so a story cannot rewrite its OWN judge, and a sibling's judge
+	// changing mid-step is noted on the sibling rather than blocking the change.
+	// StoryID is the noted story; Payload is {path, substrate_story, status}.
+	// Enumeration only — the lock list is configuration.
+	KindSubstrateChangeNote = "substrate_change_note"
 	// KindRemoteHandoff records one story a woken remote took on (sty_a9768210).
 	// StoryID is the story; Refs is {fire_id, story} so a redelivered wake adds
 	// no second row; Payload is {remote, trigger, kind, fire_id}, trigger and

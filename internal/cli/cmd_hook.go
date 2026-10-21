@@ -140,9 +140,10 @@ performing seat, an edit under a [gate] lock_substrate_paths prefix (default
 .satelle/ when the key is absent) is REFUSED before the exemption is consulted,
 so a story cannot rewrite the workflows, skills and bindings that judge it.
 One harness-neutral predicate decides it for Claude, Grok and pi. The deny names
-the seat-holding story, the path and the lane out — a substrate-lane story
-(category "substrate", judged by satelle-workflow-change-review) may change
-substrate under its own seat — and lands on that story's ledger. Never locked:
+each holder (status, category), the path, the condition and fix, and lands on
+that ledger. A substrate-lane story (category "substrate", judged by
+satelle-workflow-change-review) may change substrate while siblings perform;
+they get substrate_change_note. Never locked:
 temp dirs, edit_exempt_globs matches, and the deployed footprint (.gitignore,
 .claude/, .grok/, .pi/). lock_substrate_paths = [] opts out; 'satelle doctor' reports it.
 
@@ -217,8 +218,8 @@ workflow declaring no route blocks the edit.`,
 				// prefix ([gate] lock_substrate_paths, default .satelle/) is refused
 				// HERE, before the exemption, by the same harness-neutral predicate
 				// for every harness (sty_992cffc6).
-				if holders := substrateLockHolders(info, engaged, live); len(holders) > 0 {
-					if err := substrateLockGate(cmd, raw, p, holders); err != nil {
+				if len(live) > 0 || engaged {
+					if err := substrateLockGate(cmd, raw, p, &lockSeats{info: info, engaged: engaged, live: live, sid: sid}); err != nil {
 						return err
 					}
 				}
@@ -240,8 +241,15 @@ workflow declaring no route blocks the edit.`,
 				// Edit: a classified target, or an interpreter's command text,
 				// under a locked prefix is refused before the exemption is
 				// consulted (sty_dc77e118).
-				if holders := substrateLockHolders(info, engaged, live); len(holders) > 0 {
-					if err := bashSubstrateLockGate(cmd, raw, command, loadGateProcess(), func() ([]seatInfo, error) { return holders, nil }); err != nil {
+				if len(live) > 0 || engaged {
+					seats := &lockSeats{info: info, engaged: engaged, live: live, sid: sid}
+					if err := bashSubstrateLockGate(cmd, raw, command, loadGateProcess(), func(tree string) (*lockSeats, error) {
+						if tree == "" {
+							return seats, nil
+						}
+						ti, te, tl, err := resolveSeatsFor(true, sid, tree)
+						return &lockSeats{info: ti, engaged: te, live: tl, sid: sid}, err
+					}); err != nil {
 						return err
 					}
 				}
@@ -364,12 +372,19 @@ then its own -C), else the hook's own tree's seat.`,
 			// is locked substrate is refused even though .satelle/ is exempt from
 			// the engaged-story gate (sty_dc77e118). Seats resolve only when the
 			// command has a lockable candidate.
-			if err := bashSubstrateLockGate(cmd, raw, command, gp, func() ([]seatInfo, error) {
-				var err error
+			// Each candidate is attributed by its own tree; the answer for a
+			// candidate with no tree is the anchor-tree one the mutation gate
+			// below reuses.
+			if err := bashSubstrateLockGate(cmd, raw, command, gp, func(tree string) (*lockSeats, error) {
 				sid = bindSessionID(raw)
+				if tree != "" {
+					ti, te, tl, err := resolveSeatsFor(true, sid, tree)
+					return &lockSeats{info: ti, engaged: te, live: tl, sid: sid}, err
+				}
+				var err error
 				info, engaged, live, err = resolveSeats(true, sid)
 				seatResolved = true
-				return substrateLockHolders(info, engaged, live), err
+				return &lockSeats{info: info, engaged: engaged, live: live, sid: sid}, err
 			}); err != nil {
 				return err
 			}

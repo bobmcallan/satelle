@@ -93,10 +93,19 @@ func TestSubstrateLockFootprintCoversManagedEntries(t *testing.T) {
 // to the one live seat the fixtures hold; the tests that need a session that
 // matches NO seat present one explicitly (holdersRepo).
 func claudeEditEvent(absPath string) string {
-	b, _ := json.Marshal(map[string]any{
+	return claudeEditEventAs(absPath, "")
+}
+
+// claudeEditEventAs is claudeEditEvent stamped with a session id.
+func claudeEditEventAs(absPath, sessionID string) string {
+	ev := map[string]any{
 		"transcript_path": "/x/transcript.jsonl", "tool_name": "Edit",
 		"tool_input": map[string]any{"file_path": absPath, "old_string": "a", "new_string": "b"},
-	})
+	}
+	if sessionID != "" {
+		ev["session_id"] = sessionID
+	}
+	b, _ := json.Marshal(ev)
 	return string(b)
 }
 
@@ -198,7 +207,9 @@ func TestSubstrateLockSameDenialForClaudeAndGrokShapes(t *testing.T) {
 	repo, _ := lockRepo(t, "feature", "")
 	const rel = ".satelle/workflows/agents.toml"
 
-	cOut, cErr := runRootIn(t, claudeEditEvent(filepath.Join(repo, rel)), "hook", "gate")
+	// Both carry session "g1": the refusal names the condition that applied, so
+	// the two shapes are identical only for the same session state.
+	cOut, cErr := runRootIn(t, claudeEditEventAs(filepath.Join(repo, rel), "g1"), "hook", "gate")
 	gOut, gErr := runRootIn(t, grokEditEvent(rel), "hook", "gate")
 	if cErr == nil || gErr == nil {
 		t.Fatalf("both shapes must be refused: claude err=%v grok err=%v\nclaude:%s\ngrok:%s", cErr, gErr, cOut, gOut)

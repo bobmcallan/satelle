@@ -81,8 +81,14 @@ func TestSubstrateLockBashClassifiedTargetsRefused(t *testing.T) {
 // The same refusal reaches a grok-shaped Bash event: the lock reads only the
 // harness-neutral command string.
 func TestSubstrateLockBashGrokShapedEvent(t *testing.T) {
-	repo, _ := lockRepo(t, "feature", "")
-	want := editDenyReason(t, repo, ".satelle/skills/x.md")
+	lockRepo(t, "feature", "")
+	// The control is the grok-shaped Edit: it carries the same session ("g1"), so
+	// the lock attributes both to the same condition and the text can match.
+	eOut, eErr := runRootIn(t, grokEditEvent(".satelle/skills/x.md"), "hook", "gate")
+	if eErr == nil {
+		t.Fatalf("the grok Edit control must be refused:\n%s", eOut)
+	}
+	want := denyReasonOf(t, eOut)
 	ev, _ := json.Marshal(map[string]any{
 		"hookEventName": "pre_tool_use", "sessionId": "g1", "toolName": "run_terminal_command",
 		"toolInput": map[string]any{"command": "echo x > .satelle/skills/x.md"},
