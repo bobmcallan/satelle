@@ -283,13 +283,16 @@ const nameSeparator = " · "
 // <short host> · <repo name>[ · <worktree dir>][ · <story id>]. The repo name is
 // config.RepoName (the same for a worktree and its main tree); the worktree
 // segment is present only for a linked worktree; the story segment is present
-// only when engagedID is non-empty.
+// only when engagedID is non-empty and differs from the worktree segment (a
+// worktree directory named after its story carries the id once).
 func SessionName(repoRoot, engagedID string) string {
 	parts := []string{ShortHost(), config.RepoName(repoRoot)}
+	wt := ""
 	if worktree.IsLinked(context.Background(), repoRoot) {
-		parts = append(parts, filepath.Base(locationRepoKey(repoRoot)))
+		wt = filepath.Base(locationRepoKey(repoRoot))
+		parts = append(parts, wt)
 	}
-	if id := strings.TrimSpace(engagedID); id != "" {
+	if id := strings.TrimSpace(engagedID); id != "" && id != wt {
 		parts = append(parts, id)
 	}
 	return strings.Join(parts, nameSeparator)
