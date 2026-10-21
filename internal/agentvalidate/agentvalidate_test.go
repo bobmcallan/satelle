@@ -7,6 +7,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/health"
 )
 
 func TestValidate_Healthy(t *testing.T) {
@@ -411,6 +412,46 @@ func TestValidate_ReviewerNoCeiling(t *testing.T) {
 	joined := strings.Join(r.Warnings, "\n")
 	if !strings.Contains(joined, "reviewer") || !strings.Contains(joined, "read-only ceiling") {
 		t.Errorf("expected ceiling warning naming reviewer:\n%s", joined)
+	}
+}
+
+// TestValidate_ReviewerReadOnlyGrantCeiling (sty_ea948877): a reviewer whose
+// adapter trims the offered tools to a read-only grant (pi --tools) is held
+// read-only by agentcli.ReadOnlyGrantProblems, so it passes the ceiling check; a
+// pi grant that admits a mutator still warns.
+func TestValidate_ReviewerReadOnlyGrantCeiling(t *testing.T) {
+	const pi = "pi -p --provider openrouter --tools {tools} --model {model} {system} {payload}"
+	for _, tc := range []struct {
+		name, tools string
+		warn        bool
+	}{
+		{"read-only grant", "read,grep,find,ls", false},
+		{"mutator grant", "read,bash,edit,write", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agents := config.AgentsConfig{
+				Executor: config.AgentBinding{Command: "in-loop"},
+				Reviewer: config.AgentBinding{Command: pi, Tools: tc.tools, Model: "openrouter/minimax/minimax-m3", Role: "reviewer"},
+			}
+			r := Validate(agents, nil, nil)
+			var unsafe []string
+			for _, f := range r.Findings {
+				if f.ID == health.IDReviewerUnsafe && f.Artifact == "reviewer" {
+					unsafe = append(unsafe, f.Detail)
+				}
+			}
+			if tc.warn && len(unsafe) == 0 {
+				t.Errorf("tools=%s: want a reviewer.unsafe warning, got none", tc.tools)
+			}
+			if !tc.warn && len(unsafe) > 0 {
+				t.Errorf("tools=%s: read-only grant must pass the ceiling check, got: %v", tc.tools, unsafe)
+			}
+			for _, g := range r.Grants {
+				if g.Name == "reviewer" && g.ReadOnly == tc.warn {
+					t.Errorf("tools=%s: grant ReadOnly=%v, want %v", tc.tools, g.ReadOnly, !tc.warn)
+				}
+			}
+		})
 	}
 }
 

@@ -1210,6 +1210,14 @@ func checkBinding(section string, b config.AgentBinding, vars map[string]string)
 				strings.Contains(resolved, "--deny") ||
 				(strings.Contains(resolved, "Read") && !strings.Contains(resolved, "Write"))
 		}
+		// The string heuristics above miss adapters that trim the offered tools
+		// to the grant (pi --tools read,grep,find,ls). ReadOnlyGrantProblems is
+		// the one answer to whether a binding is held read-only, so a binding it
+		// clears is read-only here too.
+		if !g.ReadOnly && len(agentcli.ReadOnlyGrantProblems(cmd, iface, b.Tools, role != config.RoleReviewer)) == 0 {
+			g.ReadOnly = true
+			addNote(&g, "ceiling: read-only tool grant")
+		}
 		// Placeholder completeness (sty_21db3670): buildArgs substitutes only
 		// tokens that equal {system} verbatim, so a multi-token isolated command
 		// without that token runs with no gate/skill rubric. Hard-fail.
