@@ -1,3 +1,8 @@
+## [0.0.709] - 2026-10-21
+
+### Added
+- `satelle remote join --token-stdin` reads the node's single-use enrollment token from the first line of stdin instead of argv, so it is not in the process list or an exec record. It stops at the newline without waiting for stdin to close, refuses an empty token, and never echoes, logs or writes the token or passes it to the node's agent. `--token` and `--token-stdin` are mutually exclusive and one is required; `--token` still works. (sty_5d7fa7f8)
+
 ## [0.0.708] - 2026-10-21
 
 ### Fixed

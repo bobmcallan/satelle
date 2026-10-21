@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -8,6 +9,8 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,6 +20,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
@@ -177,12 +181,44 @@ func (r *remoteRig) relayCA() string {
 // beside the asset, and <asset>.sha256 — where the asset is a wrapper that runs
 // this test binary as the satelle CLI.
 func (r *remoteRig) serveRelease(version string) {
-	t := r.t
 	exe, err := os.Executable()
 	if err != nil {
-		t.Fatal(err)
+		r.t.Fatal(err)
 	}
-	wrapper := []byte("#!/bin/sh\nSATELLE_CLI_REEXEC=1 exec '" + exe + "' \"$@\"\n")
+	r.serveReleaseWrapper(version, []byte("#!/bin/sh\nSATELLE_CLI_REEXEC=1 exec '"+exe+"' \"$@\"\n"))
+}
+
+// serveReleaseStdin publishes version as serveRelease does, except that the
+// `remote join --token <v>` the bootstrap runs becomes `remote join --token-stdin`
+// with <v> written to the node's stdin as a line and the pipe then held open, the
+// way the server's exec stdin stream does. <v> is also written to tokenFile, which
+// lives outside the node home, so a test can look for it.
+func (r *remoteRig) serveReleaseStdin(version, tokenFile string) {
+	exe, err := os.Executable()
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	// The held-open stdin keeps writing a blank line a second, which join never
+	// reads; it ends with the pipe when join exits.
+	r.serveReleaseWrapper(version, []byte(`#!/bin/sh
+if [ "$1 $2" = "remote join" ]; then
+	n=$#; tok=; skip=
+	for a in "$@"; do
+		if [ -n "$skip" ]; then tok=$a; skip=; continue; fi
+		if [ "$a" = --token ]; then skip=1; continue; fi
+		set -- "$@" "$a"
+	done
+	shift $n
+	printf '%s' "$tok" > '`+tokenFile+`'
+	{ printf '%s\n' "$tok"; while sleep 1 && printf '\n'; do :; done; } | SATELLE_CLI_REEXEC=1 '`+exe+`' "$@" --token-stdin
+	exit $?
+fi
+SATELLE_CLI_REEXEC=1 exec '`+exe+`' "$@"
+`))
+}
+
+func (r *remoteRig) serveReleaseWrapper(version string, wrapper []byte) {
+	t := r.t
 	sum := sha256.Sum256(wrapper)
 	asset := fmt.Sprintf("satelle-v%s-%s-%s", version, runtime.GOOS, runtime.GOARCH)
 	installer, err := os.ReadFile(r.installer)
@@ -549,5 +585,165 @@ func TestReleaseHostsIncludesTheMirror(t *testing.T) {
 	got := releaseHosts("https://mirror.example.net:8443/releases")
 	if last := got[len(got)-1]; last != "mirror.example.net" {
 		t.Errorf("the mirror host is missing from %v", got)
+	}
+}
+
+// AC1: the token is the first line of stdin. The read does not wait for stdin to
+// close, takes only the first line, and trims what surrounds the token.
+func TestReadTokenStdin(t *testing.T) {
+	t.Run("an open pipe after the newline", func(t *testing.T) {
+		pr, pw := io.Pipe()
+		defer pw.Close()
+		go func() { _, _ = pw.Write([]byte("tok\n")) }() // and never closed
+		type result struct {
+			tok string
+			err error
+		}
+		done := make(chan result, 1)
+		go func() {
+			tok, err := readTokenStdin(pr)
+			done <- result{tok, err}
+		}()
+		select {
+		case got := <-done:
+			if got.err != nil || got.tok != "tok" {
+				t.Errorf("readTokenStdin = %q, %v; want tok", got.tok, got.err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("readTokenStdin waited for stdin to close")
+		}
+	})
+	for name, tc := range map[string]struct{ in, want string }{
+		"more after the first line": {"tok\nextra", "tok"},
+		"surrounding whitespace":    {"  tok \t\r\n", "tok"},
+		"EOF with no newline":       {"  tok  ", "tok"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := readTokenStdin(strings.NewReader(tc.in))
+			if err != nil || got != tc.want {
+				t.Errorf("readTokenStdin(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
+			}
+		})
+	}
+}
+
+// joinUntouched runs `remote join` with args plus --root <tmp>/node under a temp
+// HOME, and fails the test if the join left a node behind: the root, its
+// .satelle, $HOME/satelle-node (the default root) or a changed working directory.
+// It returns the command's error.
+func joinUntouched(t *testing.T, stdin string, args ...string) error {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := filepath.Join(t.TempDir(), "node")
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := runRootIn(t, stdin, append([]string{"remote", "join", "--relay", "x", "--session", "s", "--root", root}, args...)...)
+	for _, p := range []string{root, filepath.Join(root, ".satelle"), filepath.Join(home, "satelle-node")} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s exists after a refused join (stat err %v)", p, err)
+		}
+	}
+	if got, _ := os.Getwd(); got != wd {
+		t.Errorf("working directory changed from %s to %s", wd, got)
+	}
+	return runErr
+}
+
+// AC2: an empty token on stdin is refused with a fixed message, before init.
+func TestJoinTokenStdinEmpty(t *testing.T) {
+	for name, in := range map[string]string{"newline": "\n", "whitespace": "   \n", "nothing": ""} {
+		t.Run(name, func(t *testing.T) {
+			err := joinUntouched(t, in, "--token-stdin")
+			if err == nil || err.Error() != "join: --token-stdin: no token on stdin" {
+				t.Errorf("error = %v, want the no-token refusal", err)
+			}
+		})
+	}
+}
+
+// AC3: exactly one of --token and --token-stdin, checked before init.
+func TestJoinTokenFlagsExclusive(t *testing.T) {
+	err := joinUntouched(t, "tok\n", "--token", "t", "--token-stdin")
+	if err == nil || !strings.Contains(err.Error(), "[token token-stdin]") || !strings.Contains(err.Error(), "none of the others can be") {
+		t.Errorf("both flags: error = %v, want the mutually-exclusive refusal", err)
+	}
+	err = joinUntouched(t, "tok\n")
+	if err == nil || !strings.Contains(err.Error(), "[token token-stdin]") || !strings.Contains(err.Error(), "at least one") {
+		t.Errorf("neither flag: error = %v, want the one-required refusal", err)
+	}
+}
+
+// AC1/AC4: `remote start` runs the node's join with --token-stdin on a stdin that
+// stays open and the node reaches ready; the token appears nowhere — not in the
+// output, the host log, the local ledger, a file on the node, or the argv and
+// environment of the agent the node spawns.
+func TestRemoteJoinTokenStdinKeepsTokenSecret(t *testing.T) {
+	r := newRemoteRig(t, "shutdown", "fake-agent-record --system {system} --tools {tools}")
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	r.serveReleaseStdin(pinnedVersion, tokenFile)
+	rec := t.TempDir() // outside the node home
+	bin := filepath.SplitList(os.Getenv("PATH"))[0]
+	writeExec(t, filepath.Join(bin, "fake-agent-record"),
+		"#!/bin/sh\nprintf '%s\\n' \"$@\" > '"+rec+"/argv'\nenv > '"+rec+"/env'\ncat\n")
+
+	out, err := runRoot(t, "remote", "start", "edge", "--server", r.server, "--story", "sty_start", "--message", "hello node")
+	if err != nil {
+		t.Fatalf("remote start: %v\n%s", err, out)
+	}
+	for _, want := range []string{"remote edge: ready", "hello node"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	tokBytes, err := os.ReadFile(tokenFile)
+	if err != nil || len(tokBytes) == 0 {
+		t.Fatalf("the node's join was not started with a token on its command line: %v", err)
+	}
+	tok := string(tokBytes)
+
+	if strings.Contains(out, tok) {
+		t.Error("the token is in the remote start output")
+	}
+	if strings.Contains(r.log(), tok) {
+		t.Errorf("the token is in the host log:\n%s", r.log())
+	}
+	a, err := app.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := a.Store.Ledger.List(context.Background(), ledger.ListFilter{StoryID: "sty_start"})
+	a.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		b, _ := json.Marshal(row)
+		if strings.Contains(string(b), tok) {
+			t.Errorf("the token is in a local ledger row: %s", b)
+		}
+	}
+	err = filepath.WalkDir(r.nodeHome, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		if b, err := os.ReadFile(path); err == nil && bytes.Contains(b, tokBytes) {
+			t.Errorf("the token is in %s", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"argv", "env"} {
+		b, err := os.ReadFile(filepath.Join(rec, name))
+		if err != nil {
+			t.Fatalf("the agent did not record its %s: %v", name, err)
+		}
+		if strings.Contains(string(b), tok) {
+			t.Errorf("the token is in the agent's %s", name)
+		}
 	}
 }

@@ -6,6 +6,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -84,12 +85,22 @@ the lifecycle is "idle". Needs a signed-in satelle (satelle login).`,
 	start.Flags().StringVar(&message, "message", "", "send the node's agent this message and print its reply")
 
 	var root, relay, session, token string
+	var tokenStdin bool
 	join := &cobra.Command{
 		Use:    "join",
 		Short:  "Run on a remote node: set up from the substrate local satelle sends and serve its jobs",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Read before the root is resolved or initialised, so a bad token
+			// leaves the node untouched.
+			if tokenStdin {
+				t, err := readTokenStdin(cmd.InOrStdin())
+				if err != nil {
+					return err
+				}
+				token = t
+			}
 			return runRemoteJoin(cmd, root, relay, session, token)
 		},
 	}
@@ -97,9 +108,12 @@ the lifecycle is "idle". Needs a signed-in satelle (satelle login).`,
 	join.Flags().StringVar(&relay, "relay", "", "relay URL")
 	join.Flags().StringVar(&session, "session", "", "channel session id")
 	join.Flags().StringVar(&token, "token", "", "single-use enrollment token")
-	for _, f := range []string{"relay", "session", "token"} {
+	join.Flags().BoolVar(&tokenStdin, "token-stdin", false, "read the single-use enrollment token from the first line of stdin, keeping it out of argv")
+	for _, f := range []string{"relay", "session"} {
 		_ = join.MarkFlagRequired(f)
 	}
+	join.MarkFlagsMutuallyExclusive("token", "token-stdin")
+	join.MarkFlagsOneRequired("token", "token-stdin")
 
 	return []*cobra.Command{start, join}
 }
@@ -386,6 +400,22 @@ func hostEnv(a *app.App, def remotedef.Definition, remoteID, server string) ([]s
 		server = config.ResolveHostedServer(a.PlaneConfig())
 	}
 	return append(out, remotenode.RemoteEnv(def, remoteID, server)...), nil
+}
+
+// readTokenStdin reads the enrollment token from r: the first line, or all of r
+// if it ends without a newline. It stops at the newline rather than at EOF, since
+// the writer (a server's exec stdin stream) may keep stdin open, and it never
+// closes r. Its errors are fixed text, so no token can reach them.
+func readTokenStdin(r io.Reader) (string, error) {
+	line, err := bufio.NewReader(r).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", errors.New("join: --token-stdin: cannot read stdin")
+	}
+	token := strings.TrimSpace(line)
+	if token == "" {
+		return "", errors.New("join: --token-stdin: no token on stdin")
+	}
+	return token, nil
 }
 
 // runRemoteJoin is the node's side. It runs in the working root: init creates the
