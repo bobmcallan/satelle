@@ -176,10 +176,15 @@ type stepWire struct {
 	// stories are driven: it holds the status, but nothing performs on the
 	// container itself (sty_7f3e6fd3).
 	WaitsOnChildren bool `toml:"waits_on_children"`
-	// Schedule is a container step's declared child schedule: SchedParallel or
-	// SchedSequential. A plain string, so an absent key stays "" — the binary does
-	// not guess one. Distinct from Parallel above, which is the reviewer fan-out.
+	// Schedule is the DEPRECATED container-step child schedule key: SchedParallel
+	// or SchedSequential. A plain string, so an absent key stays "". It keeps its
+	// meaning for existing repos; validate names it deprecated (LegacyScheduleSteps).
+	// Distinct from Parallel above, which is the reviewer fan-out.
 	Schedule string `toml:"schedule"`
+	// Sequential is the user's override of the parallel default: a waits_on_children
+	// step with sequential = true runs its container's children one at a time.
+	// Read through ChildSchedule.
+	Sequential bool `toml:"sequential"`
 	// AfterChildren names the obligation every child must have discharged on its
 	// own route before a container may enter this step. A plain string, so an
 	// absent key stays "" and container engagement is unchanged.
@@ -504,6 +509,7 @@ func ParseSteps(body string) (Catalogue, error) {
 			UntrustedInput:  s.UntrustedInput,
 			WaitsOnChildren: s.WaitsOnChildren,
 			Schedule:        s.Schedule,
+			Sequential:      s.Sequential,
 			AfterChildren:   strings.TrimSpace(s.AfterChildren),
 			RemoteAgent:     strings.TrimSpace(s.RemoteAgent),
 			LocalTags:       s.LocalTags,
@@ -615,14 +621,18 @@ func ParseSteps(body string) (Catalogue, error) {
 		}
 	}
 	// schedule refusals: a value outside the closed set, or on a step that does
-	// not wait on children, would be a silent no-op.
+	// not wait on children, would be a silent no-op; sequential = true beside the
+	// deprecated schedule = "parallel" is a contradiction.
 	for _, st := range cat.Steps {
 		switch {
-		case st.Schedule == "":
-		case st.Schedule != SchedParallel && st.Schedule != SchedSequential:
+		case st.Schedule != "" && st.Schedule != SchedParallel && st.Schedule != SchedSequential:
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: schedule %q is invalid — schedule must be one of: %s, %s", st.Provides, st.Schedule, SchedParallel, SchedSequential)
-		case !st.WaitsOnChildren:
+		case st.Schedule != "" && !st.WaitsOnChildren:
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: schedule is a container declaration — it needs waits_on_children = true", st.Provides)
+		case st.Sequential && !st.WaitsOnChildren:
+			return Catalogue{}, fmt.Errorf("step.toml: step %q: sequential is a container declaration — it needs waits_on_children = true", st.Provides)
+		case st.Sequential && st.Schedule == SchedParallel:
+			return Catalogue{}, fmt.Errorf("step.toml: step %q: sequential = true contradicts schedule = %q — drop the deprecated schedule key (parallel is the default)", st.Provides, SchedParallel)
 		}
 	}
 	if err := checkAfterChildren(cat); err != nil {

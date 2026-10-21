@@ -1506,9 +1506,10 @@ writes no status, lease or tag, and engages or dispatches nothing.
 
 A dependency is satisfied only when that story's own route says done — a
 cancelled one does not satisfy it, and the omitted child is listed (# omitted)
-with the dependency named. The container's route declares the schedule; with no
-schedule, or sequential and more than one runnable child, it exits non-zero
-and prints no id — it never picks by order: or created_at.
+with the dependency named. The schedule is parallel by default (every runnable
+child); a container's route opts out with sequential = true, and then more than
+one runnable child exits non-zero and prints no id — it never picks by order: or
+created_at.
 
 See 'satelle help epic-wave' for the full contract; --json prints the response.`,
 		Args:        cobra.ExactArgs(1),

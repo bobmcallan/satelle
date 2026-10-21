@@ -792,7 +792,7 @@ func TestRemotePlacementTopics(t *testing.T) {
 	}
 	section := wave.Body[start:]
 	for _, want := range []string{
-		"remote_agent", "local_tags", `schedule = "parallel"`, // the placement rule
+		"remote_agent", "local_tags", "parallel epic", "`sequential = true`", // the placement rule
 		"not signed in",                 // the fallback
 		"git push -u <remote> <branch>", // the driver's push duty
 		"satelle story rework",          // rework is refused...

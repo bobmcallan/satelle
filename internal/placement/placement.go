@@ -35,7 +35,8 @@ type Decision struct {
 
 // Decide places item's performance of step. The step's remote_agent performs it
 // only when every condition holds: the step declares one; item is a child of an
-// epic whose container declares schedule = "parallel"; item carries none of the
+// epic whose container is parallel (the default; sequential = true opts out);
+// item carries none of the
 // step's local_tags; and the session is signed in. A declared-remote step that
 // fails only the sign-in test falls back to the step's own agent with a note.
 func Decide(ctx context.Context, item workitem.Item, step wfdot.State) Decision {

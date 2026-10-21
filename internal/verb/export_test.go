@@ -6,6 +6,9 @@ import (
 	"time"
 )
 
+// SeatKeyFor exposes the seat arbitration key to the black-box seat tests.
+var SeatKeyFor = seatKeyFor
+
 // StubSiblingRegistry stands a workspace registry in for the real one: registry
 // maps a repo name to the roots registered under it, and current is the invoking
 // repo's root. The real lookups return on cleanup.

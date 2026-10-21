@@ -10,12 +10,18 @@ import (
 )
 
 // scheduleFixtureWFs is a route with an epic-parent lane whose waiting step
-// declares the child schedule ("" leaves it undeclared).
+// declares the deprecated schedule key ("" leaves it undeclared).
 func scheduleFixtureWFs(schedule string) []docindex.Doc {
 	line := ""
 	if schedule != "" {
 		line = "schedule = \"" + schedule + "\"\n"
 	}
+	return scheduleFixtureWFsLine(line)
+}
+
+// scheduleFixtureWFsLine is scheduleFixtureWFs with the schedule line authored
+// verbatim (e.g. `sequential = true`).
+func scheduleFixtureWFsLine(line string) []docindex.Doc {
 	return routeWFs(
 		`["*"]
 obligations = ["raised", "coded", "closed"]
@@ -75,8 +81,14 @@ func TestSeatScheduleInject(t *testing.T) {
 		t.Errorf("sequential inject must not carry the parallel worktree clause: %q", seq)
 	}
 
-	if got := seatScheduleLines([]string{"sty_kid"}, items, scheduleFixtureWFs("")); got != "" {
-		t.Errorf("unscheduled container must add no drive-epic text: %q", got)
+	// Nothing declared is parallel: the same inject as the deprecated key.
+	if got := seatScheduleLines([]string{"sty_kid"}, items, scheduleFixtureWFs("")); got != par {
+		t.Errorf("an unscheduled container is parallel by default: %q want %q", got, par)
+	}
+	// sequential = true is the override.
+	over := seatScheduleLines([]string{"sty_kid"}, items, scheduleFixtureWFsLine("sequential = true\n"))
+	if over != seq {
+		t.Errorf("sequential = true inject: %q want %q", over, seq)
 	}
 	if got := seatScheduleLines([]string{"sty_other"}, items, scheduleFixtureWFs("parallel")); got != "" {
 		t.Errorf("a holder outside any epic container must add nothing: %q", got)

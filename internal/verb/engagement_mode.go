@@ -1,12 +1,14 @@
 package verb
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/epicset"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -37,16 +39,20 @@ func ClearEngagementMode() { engagementParallel = config.ParallelNone }
 //     as a special case.
 //   - epic: the item's PARENT id, so sibling children of one epic co-hold the
 //     seat. A parentless story falls back to its own id and therefore claims the
-//     seat as a singleton (nothing else can match its key).
+//     seat as a singleton (nothing else can match its key). A child of a
+//     sequential epic (sequential = true on its container's waits_on_children
+//     step) falls back the same way: the route schedule only narrows the mode,
+//     it never widens it, so siblings conflict and run one at a time.
 //
-// The epic id is a string key lifted off ParentID; the parent is never read to
-// find it. A parent is not engaged unless its route declares a step with
+// The epic id is a string key lifted off ParentID; the container's route is read
+// only for that sequential check, and a failed lookup keeps the parent key. A parent is not engaged unless its route declares a step with
 // after_children, which may name a performer; a container idling at a
 // waits_on_children step still holds no lease. An epic-parent that does take a
 // seat claims it under its OWN id, which is the key its children share, so
 // parent and children co-hold from distinct worktrees.
-func seatKeyFor(item workitem.Item) string {
-	if engagementParallel == config.ParallelEpic && !epicset.IsEpicParent(item) {
+func seatKeyFor(ctx context.Context, item workitem.Item) string {
+	if engagementParallel == config.ParallelEpic && !epicset.IsEpicParent(item) &&
+		EpicChildSchedule(ctx, item) != wfdot.SchedSequential {
 		if p := strings.TrimSpace(item.ParentID); p != "" {
 			return p
 		}

@@ -1,3 +1,15 @@
+## [0.0.718] - 2026-10-21
+
+### Changed
+- A container's children run in parallel when nothing is configured. `satelle story wave` no longer refuses a container whose waits_on_children step declares no schedule, and under `[engagement] parallel = "epic"` its children may hold seats alongside each other from their own worktrees. (sty_eb5135ca)
+- `sequential = true` on the waits_on_children step is the one schedule setting, a user override. Wave then returns the runnable set only when it holds exactly one child, and siblings are limited to one seat. It is refused on any other step or beside `schedule = "parallel"`. (sty_eb5135ca)
+- The `schedule = "parallel" | "sequential"` key keeps its meaning, and `satelle validate` now warns that it is deprecated: omit it (parallel is the default) or set `sequential = true`. `satelle help epic-wave`, the workflow-convert help and `satelle story wave --help` describe the default and the override. (sty_eb5135ca)
+
+## [serve-v0.0.186] - 2026-10-21
+
+### Changed
+- The service binary resolves an unset container schedule as parallel. (sty_eb5135ca)
+
 ## [0.0.717] - 2026-10-21
 
 ### Fixed
