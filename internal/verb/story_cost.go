@@ -124,6 +124,56 @@ type StoryCost struct {
 	Family    *costview.FamilyCost `json:"family,omitempty"`
 }
 
+// ReviewRounds is `story cost --rounds`: the story's own review rounds and, when
+// it has children, the family's — each child's rounds and the per-edge totals
+// across the family. The own fields are costview.ReviewRoundsReport's, flat.
+type ReviewRounds struct {
+	costview.ReviewRoundsReport
+	Family *costview.FamilyRoundsReport `json:"family,omitempty"`
+}
+
+// ComputeReviewRounds reads storyID's ledger and builds how many times each gated
+// edge was presented and what each reviewer seat attempt measured. For a story
+// with children it adds each child's rounds and a family total per edge, from the
+// same family walk the cost roll-up uses. A repo with no work-item store, or an
+// id with no item, still gets the ledger's own rounds, as ComputeStoryCost does.
+func ComputeReviewRounds(ctx context.Context, storyID string) (ReviewRounds, error) {
+	ls, err := requireLedger()
+	if err != nil {
+		return ReviewRounds{}, err
+	}
+	entries, err := ls.ListByStory(ctx, storyID, "")
+	if err != nil {
+		return ReviewRounds{}, err
+	}
+	out := ReviewRounds{ReviewRoundsReport: costview.ReviewRounds(storyID, entries)}
+	wi, werr := requireWorkItem()
+	if werr != nil {
+		return out, nil
+	}
+	item, err := wi.Get(ctx, storyID)
+	switch {
+	case errors.Is(err, workitem.ErrNotFound):
+		return out, nil
+	case err != nil:
+		return ReviewRounds{}, err
+	}
+	items, byStory, err := familyEntries(ctx, wi, ls, item)
+	if err != nil {
+		return ReviewRounds{}, err
+	}
+	if items == nil {
+		return out, nil
+	}
+	stories := make([]costview.ReviewRoundsReport, 0, len(items))
+	for _, it := range items {
+		stories = append(stories, costview.ReviewRounds(it.ID, byStory[it.ID]))
+	}
+	family := costview.FamilyRounds(storyID, stories)
+	out.Family = &family
+	return out, nil
+}
+
 // mergeStepCost folds a self-reported actual + estimate onto r — the last
 // report for a step wins (a re-record overrides), matching whichever writer
 // produced it (the retired KindStepCost verb, or the current `story log

@@ -393,6 +393,9 @@ func classifyOutcome(err error) string {
 	if err == nil {
 		return "no-verdict"
 	}
+	if errors.Is(err, agentcli.ErrMaxTurns) {
+		return verb.OutcomeMaxTurns
+	}
 	if asStallError(err) != nil {
 		return "stalled"
 	}
@@ -1717,6 +1720,7 @@ func (g *Engine) runScheduled(ctx context.Context, item workitem.Item, toStatus 
 		result.TokensIn, result.TokensOut, result.TokensTotal = dec.TokensIn, dec.TokensOut, dec.TokensTotal
 		result.TokensInFresh, result.TokensCacheWrite, result.TokensCacheRead = dec.TokensInFresh, dec.TokensCacheWrite, dec.TokensCacheRead
 		result.UsageNote = dec.UsageNote
+		result.RunCounts = dec.RunCounts
 		result.CostUSD, result.CostUnavailableReason = dec.CostUSD, dec.CostUnavailableReason
 		result.SystemPromptBytes, result.PayloadBytes = dec.SystemPromptBytes, dec.PayloadBytes
 		result.ToolIsolation = dec.ToolIsolation
@@ -1796,7 +1800,8 @@ func reviewerVerdictOf(skill string, order int, system bool, dec verb.GateDecisi
 		TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 		UsageAvailable: dec.UsageAvailable,
 		TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
-		CostUSD: dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
+		RunCounts: dec.RunCounts,
+		CostUSD:   dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
 		SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
 		ToolIsolation: dec.ToolIsolation,
 		BundleID:      dec.BundleID, BundleSkills: dec.BundleSkills,
@@ -1861,6 +1866,7 @@ func assembleGate(ordered []reviewerRef, results []gateSlot, sysStart int) (verb
 		result.TokensIn, result.TokensOut, result.TokensTotal = pick.TokensIn, pick.TokensOut, pick.TokensTotal
 		result.TokensInFresh, result.TokensCacheWrite, result.TokensCacheRead = pick.TokensInFresh, pick.TokensCacheWrite, pick.TokensCacheRead
 		result.UsageNote = pick.UsageNote
+		result.RunCounts = pick.RunCounts
 		result.CostUSD, result.CostUnavailableReason = pick.CostUSD, pick.CostUnavailableReason
 		result.SystemPromptBytes, result.PayloadBytes = pick.SystemPromptBytes, pick.PayloadBytes
 		result.ToolIsolation = pick.ToolIsolation
@@ -3333,7 +3339,7 @@ func (g *Engine) decideReviewer(ctx context.Context, item workitem.Item, toStatu
 	}
 	res := g.invokeReviewerSeat(ctx, item, toStatus, skill, prep, seat)
 	if res.Err != nil {
-		return verb.GateDecision{Gated: true, Skill: skill}, res.Err
+		return verb.GateDecision{Gated: true, Skill: skill}, g.gateFailure(skill, res, seat)
 	}
 	if res.Decision == nil {
 		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
@@ -3417,8 +3423,11 @@ func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus
 				notes = res.Err.Error()
 			}
 			runs[i] = panelSeatRun{
-				record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: notes},
-				stamp:  seatStamp(skill, section, res, nil),
+				record: verb.PanelSeat{
+					Seat: section, Accept: false, Unavailable: true,
+					MaxTurns: errors.Is(res.Err, agentcli.ErrMaxTurns), Notes: notes,
+				},
+				stamp: g.seatStamp(skill, section, res, nil, seat),
 			}
 			return
 		}
@@ -3428,7 +3437,7 @@ func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus
 				Seat: section, Accept: res.Decision.Accept, Notes: res.Decision.Notes,
 				Reviewed: res.Decision.Reviewed, ReviewedTruncated: res.Decision.ReviewedTruncated,
 			},
-			stamp: seatStamp(skill, section, res, res.Decision),
+			stamp: g.seatStamp(skill, section, res, res.Decision, seat),
 		}
 	}
 	if cap <= 1 {
@@ -3462,19 +3471,34 @@ func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus
 
 // seatStamp is the invocation evidence for a seat whose process started.
 // Command empty means it never started, and the transition writer skips it.
-func seatStamp(skill, section string, res InvokeResult, dec *verb.GateDecision) verb.ReviewerVerdict {
+func (g *Engine) seatStamp(skill, section string, res InvokeResult, dec *verb.GateDecision, seat reviewerSeat) verb.ReviewerVerdict {
 	if res.Command == "" && (dec == nil || dec.Command == "") {
 		return verb.ReviewerVerdict{}
 	}
+	var rv verb.ReviewerVerdict
 	if dec != nil {
-		rv := reviewerVerdictOf(skill, 0, false, *dec)
-		rv.Seat = section
-		rv.SeatStamps = nil
-		rv.Seats = nil
-		rv.Combine = ""
-		return rv
+		rv = reviewerVerdictOf(skill, 0, false, *dec)
+	} else {
+		// A started seat that produced no verdict: its measured usage, turns and
+		// tool calls, and why it ended (turn cap or otherwise).
+		rv = g.failureStamp(skill, res, seat)
 	}
-	return verb.ReviewerVerdict{Skill: skill, Seat: section, Command: res.Command, Context: skill}
+	rv.Seat = section
+	rv.SeatStamps = nil
+	rv.Seats = nil
+	rv.Combine = ""
+	return rv
+}
+
+// gateFailure is the error a single-seat gate returns for an attempt that
+// produced no verdict. An attempt that started carries its invocation stamp, so
+// the round writer can record what it measured; one that never started is the
+// bare error.
+func (g *Engine) gateFailure(skill string, res InvokeResult, seat reviewerSeat) error {
+	if res.Command == "" {
+		return res.Err
+	}
+	return &verb.GateFailure{Err: res.Err, Stamps: []verb.ReviewerVerdict{g.failureStamp(skill, res, seat)}}
 }
 
 // foldPanel runs the combine check over the seat records and returns one
