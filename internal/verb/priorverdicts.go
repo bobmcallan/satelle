@@ -43,15 +43,18 @@ type EvidenceSince struct {
 const maxEvidenceSince = 20
 
 // isSelfLedgerKind reports whether kind is a ledger kind the binary writes about
-// its own review or dispatch bookkeeping. These are never evidence a rubric could
-// be waiting on, so they never mark a verdict stale — even when written after
-// the cycle ended.
+// its own review, dispatch, engagement or start-of-work bookkeeping. These are
+// never evidence a rubric could be waiting on, so they never mark a verdict
+// stale — even when written after the cycle ended. Every re-presentation re-engages
+// the story, which writes trunk_check and engagement_baseline; counting them
+// would clear the prior verdict's quotation on every such edge.
 func isSelfLedgerKind(kind string) bool {
 	switch kind {
 	case ledger.KindAgentInvocation, ledger.KindStepCost, ledger.KindDriverUsage,
 		ledger.KindSessionModel, ledger.KindToolPermission, ledger.KindSessionAdvisory,
 		ledger.KindBudgetOverrun, ledger.KindGateSkipped, ledger.KindCommandRule,
-		ledger.KindReviewAccept, ledger.KindReviewReject:
+		ledger.KindReviewAccept, ledger.KindReviewReject,
+		ledger.KindTrunkCheck, ledger.KindEngagementBaseline:
 		return true
 	}
 	return false
