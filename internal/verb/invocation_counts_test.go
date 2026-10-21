@@ -173,10 +173,21 @@ func TestPanelSeatRowsCarryTheAttemptAndTheirOwnCounts(t *testing.T) {
 			t.Errorf("seat %s attempt = %q, want the skill verdict's %q", r.Seat, r.Attempt, want)
 		}
 	}
-	if a := rows[0]; a.Seat != "seat-a" || a.Outcome != "" || a.Turns == nil || *a.Turns != 4 || a.ToolCalls == nil || *a.ToolCalls != 9 {
+	// Both seat rows are appended in the same instant, so their order is not
+	// defined: find each by its seat.
+	bySeat := map[string]int{}
+	for i, r := range rows {
+		bySeat[r.Seat] = i
+	}
+	ia, okA := bySeat["seat-a"]
+	ib, okB := bySeat["seat-b"]
+	if !okA || !okB {
+		t.Fatalf("rows = %+v, want one for seat-a and one for seat-b", rows)
+	}
+	if a := rows[ia]; a.Outcome != "" || a.Turns == nil || *a.Turns != 4 || a.ToolCalls == nil || *a.ToolCalls != 9 {
 		t.Errorf("seat-a row = %+v", a)
 	}
-	if b := rows[1]; b.Seat != "seat-b" || b.Outcome != verb.OutcomeMaxTurns || b.Turns != nil || b.TurnsUnavailableReason == "" {
+	if b := rows[ib]; b.Outcome != verb.OutcomeMaxTurns || b.Turns != nil || b.TurnsUnavailableReason == "" {
 		t.Errorf("seat-b row = %+v", b)
 	}
 }
