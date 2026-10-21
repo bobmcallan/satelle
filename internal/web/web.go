@@ -179,6 +179,22 @@ type detailData struct {
 	// MembersNote carries the reason when an epic-parent's set cannot be fixed.
 	Members     []epicset.Ref
 	MembersNote string
+	// Messages is a story's board: each message with its sender, addressee,
+	// state and overdue flag, folded by board.Fold (sty_73c9aa10).
+	Messages []messageVM
+}
+
+// messageVM is one message on a story's Messages panel. State is the folded
+// board state; Overdue is derived at render time, never stored.
+type messageVM struct {
+	ID       string
+	From     string // sending role, with the session name when it has one
+	To       string // the stored address token
+	State    string
+	Deadline string
+	Overdue  bool
+	Body     string
+	Created  time.Time
 }
 
 // costVM is one story's pre-formatted cost headline plus its family roll-up

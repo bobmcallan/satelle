@@ -464,6 +464,11 @@ ol.timeline li.tl-fail::before { background: #e74c3c; }
 .chip { font-size: 11px; font-family: var(--mono); padding: 0 7px; line-height: 1.7;
   color: var(--muted); background: var(--chip); border: 1px solid var(--line); border-radius: 0; }
 .chip-outcome { color: var(--ink); border-color: var(--muted); }
+/* message board states (sty_73c9aa10): waiting is the quiet default; only a
+   message that cannot be delivered or is past its deadline draws the eye. */
+.chip-msg-answered { color: var(--ink); border-color: #16a34a; }
+.chip-msg-undeliverable, .chip-msg-overdue { color: #e74c3c; border-color: #e74c3c; }
+.messages .msg-body { white-space: pre-wrap; }
 ol.timeline.hide-walltime .chip-walltime,
 ol.timeline.hide-tokens .chip-tokens,
 ol.timeline.hide-model .chip-model,

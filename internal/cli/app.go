@@ -283,6 +283,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// patch does, through the SAME retrieval store.
 			rev.SetCheckLogCompressor(checkLogCompressor(a))
 			rev.SetMessagesResolver(messagesResolver())
+			rev.SetMessageMarker(messageMarker())
 			rev.SetArtifactAttacher(verb.AttachItemDoc)
 			// Structured retry/failure/timeout telemetry (sty_b73c3236): the engine
 			// sees each dispatch ATTEMPT (a killed/timed-out subprocess) the verb
@@ -663,9 +664,22 @@ func messagesResolver() func(ctx context.Context, itemID string, addresses []str
 				Body:          m.Body,
 				CreatedAt:     m.CreatedAt.UTC().Format(time.RFC3339),
 				EngagementSHA: m.EngagementSHA,
+				State:         m.State,
 			}
 		}
 		return out
+	}
+}
+
+// messageMarker marks a message a performer's dispatch injected delivered
+// (sty_73c9aa10), through the same in-process verb `satelle story message-mark`
+// runs.
+func messageMarker() func(ctx context.Context, itemID, msgID, state string) error {
+	return func(ctx context.Context, itemID, msgID, state string) error {
+		_, err := verb.StoryMessageMark(ctx, verb.MarkRequest{
+			ID: itemID, Message: msgID, State: state, By: config.ResolveSession(),
+		})
+		return err
 	}
 }
 

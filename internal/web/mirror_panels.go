@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/board"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/costview"
 	"github.com/bobmcallan/satelle/internal/docindex"
@@ -478,6 +479,12 @@ func mirrorLoadDetail(ctx context.Context, s *mirror.Store, repoKey, group, id s
 		cost = mirrorBuildCostVM(ctx, s, repoKey, item, entriesByStory)
 	}
 
+	// Before the timeline reversal below, which reorders this slice in place.
+	var messages []messageVM
+	if group != "task" {
+		messages = buildMessageVMs(entriesByStory[id], time.Now())
+	}
+
 	events := entriesByStory[id]
 	// Reverse for timeline (newest first) — same as loadDetail.
 	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
@@ -525,8 +532,41 @@ func mirrorLoadDetail(ctx context.Context, s *mirror.Store, repoKey, group, id s
 	return detailData{
 		Item: item, Events: evs, Route: route, Docs: docs, Executions: executions,
 		TopBar: mirrorTopBar("", idMeta.FooterEmail), Cost: cost,
-		Members: members, MembersNote: membersNote,
+		Members: members, MembersNote: membersNote, Messages: messages,
 	}, idMeta, nil
+}
+
+// buildMessageVMs is the Messages panel of one story's mirrored ledger rows:
+// board.Fold's answer, oldest first, with the overdue flag at now. The relay's
+// own transcript rows (cc "*") are conversation, not messages anyone awaits, and
+// are left out as on the CLI board.
+func buildMessageVMs(entries []ledger.Entry, now time.Time) []messageVM {
+	var msgs, marks []ledger.Entry
+	for _, e := range entries {
+		switch e.Kind {
+		case ledger.KindAgentMessage:
+			if !board.Transcript(e) {
+				msgs = append(msgs, e)
+			}
+		case ledger.KindMessageMark:
+			marks = append(marks, e)
+		}
+	}
+	var out []messageVM
+	for _, m := range board.Fold(msgs, marks) {
+		vm := messageVM{
+			ID: m.ID, From: m.From, To: m.To, State: string(m.State),
+			Overdue: board.Overdue(m, now), Body: m.Body, Created: m.CreatedAt,
+		}
+		if m.FromSessionName != "" {
+			vm.From += " (" + m.FromSessionName + ")"
+		}
+		if m.Deadline != nil {
+			vm.Deadline = m.Deadline.UTC().Format(time.RFC3339)
+		}
+		out = append(out, vm)
+	}
+	return out
 }
 
 // mirrorBuildMembers is the container's member set for the story view

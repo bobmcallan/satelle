@@ -45,6 +45,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/board"
 	"github.com/bobmcallan/satelle/internal/compact"
 	"github.com/bobmcallan/satelle/internal/condense"
 	"github.com/bobmcallan/satelle/internal/config"
@@ -130,6 +131,9 @@ type Engine struct {
 	// (sty_2db624d0). Nil-safe: an unwired resolver injects nothing. The
 	// resolver itself must never error — skip unreadable rows.
 	itemMessages func(ctx context.Context, itemID string, addresses []string) []MessageState
+	// messageMarker marks a message delivered when a performer's payload
+	// carries it (sty_73c9aa10). Nil-safe.
+	messageMarker func(ctx context.Context, itemID, msgID, state string) error
 	// diffCompressor reduces a gate payload's patch (noise-strip then ranked
 	// hunk selection, sty_918e2086) before diffPayloadCeiling is ever applied —
 	// the compressor is the PRIMARY reducer, the ceiling stays a backstop. Nil
@@ -704,6 +708,13 @@ func (g *Engine) SetMessagesResolver(fn func(ctx context.Context, itemID string,
 	g.itemMessages = fn
 }
 
+// SetMessageMarker wires the writer of message marks (sty_73c9aa10) a
+// performer's dispatch uses to mark the messages it injects delivered. Nil
+// (unwired) injects messages exactly as before and marks nothing.
+func (g *Engine) SetMessageMarker(fn func(ctx context.Context, itemID, msgID, state string) error) {
+	g.messageMarker = fn
+}
+
 // SetDiffCompressor wires the ranked diff compressor (sty_918e2086) fillDiff
 // runs on a gate payload's patch before diffPayloadCeiling is applied. Nil
 // (unwired) leaves fillDiff's patch handling exactly as it was before this
@@ -980,6 +991,10 @@ type MessageState struct {
 	// Truncated marks a body cut at messageBodyBudget; the body then ends with
 	// the command that fetches the whole of it.
 	Truncated bool `json:"truncated,omitempty"`
+	// State is the message's board state when the resolver read it. It is not
+	// part of the payload an agent sees; it lets the engine mark only the
+	// messages still waiting.
+	State string `json:"-"`
 }
 
 // DiffState is the engagement-slice enumeration handed to a reviewer. JSON
@@ -1296,7 +1311,25 @@ func (g *Engine) performerPayload(ctx context.Context, item workitem.Item, toSta
 		addrs = append(addrs, role)
 	}
 	g.fillMessages(ctx, item.ID, addrs, &tp, nil)
+	g.markDelivered(ctx, item.ID, tp.Messages)
 	return tp
+}
+
+// markDelivered records the delivery of the messages a performer's payload
+// carries: each one still waiting is marked delivered (sty_73c9aa10). Only the
+// performer's own step does this — a reviewer's or a chat's payload reads the
+// messages without receiving them. Best-effort: a mark that cannot be written
+// is dropped, because messaging must never fail the step it rides on.
+func (g *Engine) markDelivered(ctx context.Context, itemID string, msgs []MessageState) {
+	if g.messageMarker == nil {
+		return
+	}
+	for _, m := range msgs {
+		if m.State != string(board.Waiting) || m.ID == "" {
+			continue
+		}
+		_ = g.messageMarker(ctx, itemID, m.ID, string(board.Delivered))
+	}
 }
 
 // fillMessages attaches engagement-windowed agent messages for recipient.

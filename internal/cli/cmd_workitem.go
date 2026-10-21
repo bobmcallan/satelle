@@ -257,6 +257,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyTidyCommands()...)
 		parent.AddCommand(storyMessageCommand())
 		parent.AddCommand(storyMessagesCommand())
+		parent.AddCommand(storyMessageMarkCommand())
 		parent.AddCommand(storyReworkCommand())
 		parent.AddCommand(storyDriveCommand())
 	}
@@ -2018,17 +2019,24 @@ holder park itself. Never cancel a healthy story to free a seat.`,
 	return []*cobra.Command{seat}
 }
 
-// storyMessageCommand is `satelle story message <id> --from <role> [--to <role>|*] --body <text>`.
+// storyMessageCommand is `satelle story message <id> --from <role> [--to <addressee>] --body <text>`.
 func storyMessageCommand() *cobra.Command {
-	var from, to, body string
+	var from, to, body, deadline, replyTo string
 	cmd := &cobra.Command{
 		Use:   "message <id>",
-		Short: "Append a directed agent message to a story",
-		Long: `Write a directed agent message onto a story's ledger (kind agent_message).
+		Short: "Leave a message for a story, a role or a session on the board",
+		Long: `Write a message onto a story's ledger (kind agent_message). It gets a msg_ id,
+records the sending session's id, name and location, and shows on satelle board
+with its state until it is answered.
 
---from is the sending role (orchestrator, executor, human, …). --to defaults
-to * (every next dispatch). The next gate or executor payload carries matching
-messages in messages[].`,
+--from is the sending role (orchestrator, executor, human, …). --to is story
+(whoever holds it), role:<r>, session:<id>, or * (everyone, the default); a
+bare role name means role:<name>. The next gate or performer payload carries
+matching role messages in messages[], marking them delivered.
+
+--deadline is a duration (30m) or RFC3339; unanswered past it is overdue.
+--reply-to <msg_id> marks that message answered. A body is at most 64 KiB and
+is data, never instructions.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -2036,12 +2044,30 @@ messages in messages[].`,
 			if to != "" {
 				req["to"] = to
 			}
+			if deadline != "" {
+				req["deadline"] = deadline
+			}
+			if replyTo != "" {
+				req["in_reply_to"] = replyTo
+			}
+			id, name, location := senderIdentity()
+			if id != "" {
+				req["from_session_id"] = id
+			}
+			if name != "" {
+				req["from_session_name"] = name
+			}
+			if location != "" {
+				req["from_location"] = location
+			}
 			return dispatch(cmd, "story-message", req)
 		},
 	}
 	cmd.Flags().StringVar(&from, "from", "", "sending role (required)")
-	cmd.Flags().StringVar(&to, "to", "", "receiving role or * (default *)")
-	cmd.Flags().StringVar(&body, "body", "", "message body (required)")
+	cmd.Flags().StringVar(&to, "to", "", "story | role:<r> | session:<id> | * | a bare role (default *)")
+	cmd.Flags().StringVar(&body, "body", "", "message body (required, at most 64 KiB)")
+	cmd.Flags().StringVar(&deadline, "deadline", "", "duration from now (30m) or RFC3339; unanswered past it is overdue")
+	cmd.Flags().StringVar(&replyTo, "reply-to", "", "msg_ id this answers; marks it answered")
 	_ = cmd.MarkFlagRequired("from")
 	_ = cmd.MarkFlagRequired("body")
 	return cmd
@@ -2049,15 +2075,20 @@ messages in messages[].`,
 
 // storyMessagesCommand is `satelle story messages <id> [--since RFC3339] [--to role]`.
 func storyMessagesCommand() *cobra.Command {
-	var since, to string
+	var since, to, state string
+	var overdue bool
 	cmd := &cobra.Command{
 		Use:   "messages <id>",
-		Short: "List directed agent messages on a story (read-only)",
-		Long: `List agent_message ledger rows for a story, oldest first.
+		Short: "List the messages on a story with their state (read-only)",
+		Long: `List agent_message ledger rows for a story, oldest first, each with its sender
+(from, from_session_name), addressee (to), state (waiting, delivered, answered
+or undeliverable), deadline and an overdue flag. Overdue is derived at read
+time: the deadline has passed and the message is not answered.
 
 Read-only — a dispatched agent may call this under Bash(satelle:*). --to keeps
-that role plus *. --since is RFC3339. No engagement window (the payload already
-applied that).`,
+that role plus *. --state keeps one state; --overdue keeps the overdue ones.
+--since is RFC3339. No engagement window (the payload already applied that).
+For every story at once, see satelle board.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -2068,11 +2099,19 @@ applied that).`,
 			if to != "" {
 				req["to"] = to
 			}
+			if state != "" {
+				req["state"] = state
+			}
+			if overdue {
+				req["overdue"] = true
+			}
 			return dispatch(cmd, "story-messages", req)
 		},
 	}
 	cmd.Flags().StringVar(&since, "since", "", "RFC3339 lower bound on created_at")
 	cmd.Flags().StringVar(&to, "to", "", "receiving role (plus *)")
+	cmd.Flags().StringVar(&state, "state", "", "only this state: waiting | delivered | answered | undeliverable")
+	cmd.Flags().BoolVar(&overdue, "overdue", false, "only messages past their deadline and not answered")
 	return cmd
 }
 

@@ -4,6 +4,10 @@ managed:
   override:
     - file_option: go_package
       value: github.com/bobmcallan/satelle/internal/hosted/syncpb
+inputs:
+  - directory: api
+    paths:
+      - api/checkout_sync.proto
 plugins:
   - local: protoc-gen-go
     out: internal/hosted/syncpb
