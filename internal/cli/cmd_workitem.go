@@ -900,16 +900,15 @@ prior entry.`,
 	// plan's own time/token figures) — this is measured runtime cost.
 	var bySkill, allStories bool
 	var skillStoryID, sessionID string
-	var gateValue bool
+	var gateValue, rounds bool
 	var gateEpicID, gateSince, gateUntil string
 	var gateJSON bool
 	cost := &cobra.Command{
 		Use:   "cost [id]",
 		Short: "Show the measured per-gate token + wall-time cost recorded for a story",
-		Long: `Show what a story actually cost to run: the derived cost, a cost band and fresh
-tokens headline, a per-seat breakdown, elapsed and agent time, the driving
-session's own line, and — for an epic-parent — the family roll-up. Below that,
-the per-gate detail from the agent-invocation ledger entries.
+		Long: `Show what a story actually cost to run: derived cost, band and fresh-token
+headline, per-seat breakdown, elapsed and agent time, the driving session's own
+line, an epic-parent's family roll-up, then per-gate agent-invocation detail.
 
 This is MEASURED transport cost, distinct from the estimate/actual tags. A row
 printed as "—" is unmeasured, never free. "cost" is priced at read time from
@@ -918,8 +917,10 @@ provider's own dollars.
 
 --by-skill rolls up agent_invocation rows by skill (--all or --story <id>).
 --session <id> lists every story that session drove, plus its remainder.
---gate-value reports invocations/dollars/fresh tokens/accepts/rejects/$-per-
-reject per skill and seat, scoped by --story, --epic, or --since/--until.`,
+--gate-value reports invocations, dollars, accepts and rejects per skill and
+seat (--story, --epic, --since/--until).
+--rounds <id> reports each gated edge's presentations and every reviewer seat
+attempt's turns, tool calls, outcome; an epic adds a family total.`,
 		Args:        cobra.MaximumNArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -973,6 +974,18 @@ reject per skill and seat, scoped by --story, --epic, or --since/--until.`,
 			}
 			if len(args) != 1 {
 				return fmt.Errorf("story cost: a story id is required (or pass --by-skill)")
+			}
+			if rounds {
+				rr, err := verb.ComputeReviewRounds(cmd.Context(), args[0])
+				if err != nil {
+					return err
+				}
+				if gateJSON {
+					enc := json.NewEncoder(cmd.OutOrStdout())
+					enc.SetIndent("", "  ")
+					return enc.Encode(rr)
+				}
+				return printReviewRounds(cmd, rr)
 			}
 			// A gate wait the harness has since flushed is closed here, by the read
 			// that wants its count (sty_c4b92c9e).
@@ -1040,7 +1053,8 @@ reject per skill and seat, scoped by --story, --epic, or --since/--until.`,
 	cost.Flags().StringVar(&gateEpicID, "epic", "", "with --gate-value, scope to an epic-parent and every descendant found by parent_id")
 	cost.Flags().StringVar(&gateSince, "since", "", "with --gate-value, only entries at/after this date (YYYY-MM-DD)")
 	cost.Flags().StringVar(&gateUntil, "until", "", "with --gate-value, only entries at/before this date (YYYY-MM-DD)")
-	cost.Flags().BoolVar(&gateJSON, "json", false, "with --gate-value, emit the GateValueReport as JSON")
+	cost.Flags().BoolVar(&rounds, "rounds", false, "report each gated edge's presentations and each seat attempt's turns, tool calls, outcome and duration (an epic id adds each child and a family total)")
+	cost.Flags().BoolVar(&gateJSON, "json", false, "with --gate-value or --rounds, emit the report as JSON")
 
 	// resummarise — re-run the step summariser for one edge to close a missing-
 	// summary gap (sty_a1151fb0). The remediation `satelle story cost`/the done-time

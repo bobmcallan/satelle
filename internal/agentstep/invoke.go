@@ -110,6 +110,10 @@ type InvokeResult struct {
 	// for is present as a fail-closed reject, never absent.
 	Decisions []verb.GateDecision
 	Err       error
+	// Counts is the run's turns and tool calls, or the adapter-named reason each
+	// is unavailable. Stamped for a judging invocation on every outcome, a failed
+	// attempt included — it is what such an attempt measured.
+	Counts verb.RunCounts
 	// SystemPromptBytes/PayloadBytes are the byte lengths of the system prompt
 	// and stdin payload satelle sent for this invocation (sty_363eaf55) —
 	// lengths only, never content.
@@ -444,6 +448,7 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	// system/init), when it does — the source of offered_tool_count over the
 	// rendered allow-list (sty_ef3efb51).
 	var harnessTools []string
+	tally := &toolTally{}
 	agentReq.OnEvent = func(ev agentcli.Event) {
 		eventMu.Lock()
 		defer eventMu.Unlock()
@@ -459,6 +464,7 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		case agentcli.EventHeartbeat:
 			g.emitProgress("agent %s still running…", section)
 		case agentcli.EventToolStart:
+			tally.add()
 			g.emitProgress("agent %s tool started: %s", section, progressLabel(ev.Tool))
 		case agentcli.EventToolEnd:
 			g.emitProgress("agent %s tool finished: %s", section, progressLabel(ev.Tool))
@@ -574,7 +580,14 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 			res = InvokeResult{Stdout: out, Usage: usage, Command: cmdStr, Err: runErr}
 		}
 	default: // ExpectVerdict, ExpectVerdicts
-		res = g.invokeVerdict(ctx, req, runner, agentReq, cmdStr, timeout, idle, busy)
+		res = g.invokeVerdict(ctx, req, runner, agentReq, cmdStr, timeout, idle, busy, tally)
+		// The run's turns and tool calls, on every outcome: a failed attempt
+		// measured them too. A decision carries them only on the verdict it
+		// produced; a bundle puts them on its first verdict.
+		res.Counts = tally.counts(res.Usage, binding.ResolvedInterface(), cmdStr)
+		if res.Decision != nil {
+			res.Decision.RunCounts = res.Counts
+		}
 	}
 	// Byte lengths of what satelle actually sent (sty_363eaf55) — lengths only,
 	// never content. Stamped uniformly regardless of outcome (success, failure,
@@ -722,7 +735,7 @@ func IsRateLimitOrUnavailable(err error, stdout []byte) bool {
 
 // invokeVerdict runs the ExpectVerdict retry loop: parse JSON/prose decision,
 // retry transient no-verdict, fail loud on timeout after attempts.
-func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner agentcli.Runner, agentReq agentcli.Request, cmdStr string, timeout, idle, busy time.Duration) InvokeResult {
+func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner agentcli.Runner, agentReq agentcli.Request, cmdStr string, timeout, idle, busy time.Duration, tally *toolTally) InvokeResult {
 	skill := req.Skill
 	if skill == "" {
 		skill = "reviewer"
@@ -755,6 +768,7 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 			return InvokeResult{Command: cmdStr, Err: werr}
 		}
 		g.emitProgress("running reviewer %s (attempt %d/%d, may take several minutes)…", skill, attempt, attempts)
+		tally.reset()
 		out, usage, rerr := g.runOnceBusy(ctx, runner, agentReq, timeout, idle, busy)
 		if rerr != nil {
 			if se := asStallError(rerr); se != nil {
@@ -769,7 +783,10 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 				return InvokeResult{Command: cmdStr, Err: fmt.Errorf(
 					"reviewer: %s timed out after %s — the gate did not complete and the transition was NOT enacted; retry when the agent backend is responsive", skill, timeout)}
 			}
-			lastErr, lastOut = rerr, nil
+			if agentcli.DetectMaxTurns(out) {
+				rerr = fmt.Errorf("%w: %w", agentcli.ErrMaxTurns, rerr)
+			}
+			lastErr, lastOut, lastUsage = rerr, nil, usage
 			g.logReviewerFailure(skill, attempt, attempts, rerr, nil)
 			g.telemetryEvent(ctx, storyID, actor, "agent-retry", map[string]any{
 				"skill": skill, "step": step, "attempt": attempt, "attempts": attempts, "outcome": classifyOutcome(rerr),
@@ -783,6 +800,11 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 			decs, perr := parseBundleDecisions(out, req.Skills)
 			if perr != nil {
 				lastErr, lastOut, lastUsage, lastNoVerdict = perr, out, usage, true
+				if agentcli.DetectMaxTurns(out) {
+					// Cut short at the turn cap, not a session that judged and named
+					// no verdict: it is an error, never a fail-closed reject.
+					lastErr, lastNoVerdict = fmt.Errorf("%w: %w", agentcli.ErrMaxTurns, perr), false
+				}
 				g.logReviewerFailure(skill, attempt, attempts, perr, out)
 				g.telemetryEvent(ctx, storyID, actor, "agent-retry", map[string]any{
 					"skill": skill, "step": step, "attempt": attempt, "attempts": attempts, "outcome": "no-verdict",
@@ -808,7 +830,10 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 				g.setDecisionUsage(&pd, usage, agentReq.Model)
 				return InvokeResult{Stdout: out, Usage: usage, Command: cmdStr, Decision: &pd}
 			}
-			lastErr, lastOut = perr, out
+			if agentcli.DetectMaxTurns(out) {
+				perr = fmt.Errorf("%w: %w", agentcli.ErrMaxTurns, perr)
+			}
+			lastErr, lastOut, lastUsage = perr, out, usage
 			g.logReviewerFailure(skill, attempt, attempts, perr, out)
 			g.telemetryEvent(ctx, storyID, actor, "agent-retry", map[string]any{
 				"skill": skill, "step": step, "attempt": attempt, "attempts": attempts, "outcome": "no-verdict",
@@ -843,7 +868,7 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 		}
 		return InvokeResult{Stdout: lastOut, Usage: lastUsage, Command: cmdStr, Decisions: decs}
 	}
-	return InvokeResult{Command: cmdStr, Err: fmt.Errorf(
+	return InvokeResult{Command: cmdStr, Usage: lastUsage, Err: fmt.Errorf(
 		"reviewer: %s produced no verdict after %d attempts (empty/ambiguous reviewer output or a transient agent failure — e.g. a rate-limited or killed subprocess under concurrent sessions; retry, or reduce concurrent satelle sessions): %w%s%s",
 		skill, attempts, lastErr, outputTail(lastOut), where)}
 }
@@ -925,7 +950,11 @@ func (g *Engine) runOnceBusyRaw(ctx context.Context, runner agentcli.Runner, req
 	raw, err := runner.Run(ctx, req)
 	elapsed := time.Since(start)
 	if err != nil {
-		return raw, agentcli.UsageResult{Duration: elapsed}, mapStall(err)
+		// A run the harness cut short (a turn cap exits non-zero) still reported
+		// what it used before it stopped: keep that, never read it as zero.
+		_, partial := agentcli.UnwrapUsage(raw)
+		partial.Duration = elapsed
+		return raw, partial, mapStall(err)
 	}
 	text, usage := agentcli.UnwrapUsage(raw)
 	usage.Duration = elapsed
