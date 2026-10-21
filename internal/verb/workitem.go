@@ -1825,6 +1825,8 @@ func appendLedgerEntry(ctx context.Context, storyID, kind, actor, body string, p
 func verdictFromDecision(dec GateDecision) ReviewerVerdict {
 	return ReviewerVerdict{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning,
 		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated,
+		ReviewMode: dec.ReviewMode, Coverage: dec.Coverage,
+		Turns: dec.Turns, TurnsUnavailableReason: dec.TurnsUnavailableReason,
 		Command: dec.Command, Context: dec.Context, Model: dec.Model,
 		ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 		TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
@@ -2039,6 +2041,8 @@ func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.R
 		Reasoning         string       `json:"reasoning,omitempty"`
 		Reviewed          string       `json:"reviewed,omitempty"`
 		ReviewedTruncated bool         `json:"reviewed_truncated,omitempty"`
+		ReviewMode        string       `json:"review_mode,omitempty"`
+		Coverage          *Coverage    `json:"coverage,omitempty"`
 		Accept            bool         `json:"accept"`
 		CarriedFrom       int          `json:"carried_from,omitempty"`
 		Model             string       `json:"model,omitempty"`
@@ -2057,7 +2061,7 @@ func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.R
 		// it as the end of the review cycle (sty_0225fc2f).
 		RecordedAt string `json:"recorded_at,omitempty"`
 	}{From: from, To: to, Attempt: attempt, Skill: rv.Skill, Order: rv.Order, System: rv.System,
-		Notes: rv.Notes, Reasoning: rv.Reasoning, Reviewed: rv.Reviewed, ReviewedTruncated: rv.ReviewedTruncated, Accept: rv.Accept, CarriedFrom: rv.CarriedFrom,
+		Notes: rv.Notes, Reasoning: rv.Reasoning, Reviewed: rv.Reviewed, ReviewedTruncated: rv.ReviewedTruncated, ReviewMode: rv.ReviewMode, Coverage: rv.Coverage, Accept: rv.Accept, CarriedFrom: rv.CarriedFrom,
 		Model: rv.Model, ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models,
 		BundleID: rv.BundleID, BundleSize: len(rv.BundleSkills),
 		Seats: rv.Seats, Combine: rv.Combine, RecordedAt: time.Now().UTC().Format(time.RFC3339Nano)}
@@ -2279,6 +2283,10 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		UsageNote
 		CostUSD               *float64 `json:"cost_usd,omitempty"`
 		CostUnavailableReason string   `json:"cost_unavailable_reason,omitempty"`
+		// Turns is the model turns the invocation reported; absent with the reason
+		// beside it when the adapter reported none (sty_93359e0f) — never a zero.
+		Turns                  *int   `json:"turns,omitempty"`
+		TurnsUnavailableReason string `json:"turns_unavailable_reason,omitempty"`
 		// SystemPromptBytes/PayloadBytes: byte lengths satelle sent, never content.
 		SystemPromptBytes int `json:"system_prompt_bytes,omitempty"`
 		PayloadBytes      int `json:"payload_bytes,omitempty"`
@@ -2298,6 +2306,7 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		UsageAvailable: rv.UsageAvailable,
 		TokensInFresh:  rv.TokensInFresh, TokensCacheWrite: rv.TokensCacheWrite, TokensCacheRead: rv.TokensCacheRead, UsageNote: rv.UsageNote,
 		CostUSD: rv.CostUSD, CostUnavailableReason: rv.CostUnavailableReason,
+		Turns: rv.Turns, TurnsUnavailableReason: rv.TurnsUnavailableReason,
 		SystemPromptBytes: rv.SystemPromptBytes, PayloadBytes: rv.PayloadBytes,
 		ToolIsolation: rv.ToolIsolation,
 		BundleID:      rv.BundleID, BundleSkills: rv.BundleSkills,

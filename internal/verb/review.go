@@ -28,8 +28,19 @@ type GateDecision struct {
 	// does not compare them to the story.
 	Reviewed          string
 	ReviewedTruncated bool
-	Skill             string            // the deciding reviewer skill
-	Reviewers         []ReviewerVerdict // per-reviewer verdicts in run order (empty for the legacy single-reviewer path)
+	// ReviewMode is the gate's declared review mode, set only for fail-fast (the
+	// engine reads it off the route; empty is full). Coverage is what the
+	// reviewer says it covered; nil means it stated nothing. Both are stored on
+	// the verdict row so the next presentation can tell a partial reject from a
+	// full one (sty_93359e0f).
+	ReviewMode string
+	Coverage   *Coverage
+	// Turns is the model turns the reviewer's invocation reported; nil with
+	// TurnsUnavailableReason set when the adapter reported none — never a zero.
+	Turns                  *int
+	TurnsUnavailableReason string
+	Skill                  string            // the deciding reviewer skill
+	Reviewers              []ReviewerVerdict // per-reviewer verdicts in run order (empty for the legacy single-reviewer path)
 	// Command/Context describe an isolated AGENT invocation (LLM reviewer): the
 	// resolved harness command and the injected-context source (skill/rubric file).
 	// Empty for a deterministic functional-check gate, which invokes no agent
@@ -112,7 +123,15 @@ type ReviewerVerdict struct {
 	Reasoning         string `json:"reasoning,omitempty"` // optional free-form reasoning (verdict contract)
 	Reviewed          string `json:"reviewed,omitempty"`
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
-	System            bool   `json:"system,omitempty"`
+	// ReviewMode / Coverage mirror GateDecision's (sty_93359e0f): the mode the
+	// gate declared (fail-fast only) and what the reviewer says it covered.
+	ReviewMode string    `json:"review_mode,omitempty"`
+	Coverage   *Coverage `json:"coverage,omitempty"`
+	// Turns / TurnsUnavailableReason mirror GateDecision's; they ride the
+	// agent_invocation row, not the verdict row.
+	Turns                  *int   `json:"turns,omitempty"`
+	TurnsUnavailableReason string `json:"turns_unavailable_reason,omitempty"`
+	System                 bool   `json:"system,omitempty"`
 	// CarriedFrom is the 1-based attempt index of the earlier verdict this one
 	// re-issues without a dispatch (sty_59720b8b); zero for a fresh judgment. A
 	// carried verdict has no Command, so no agent_invocation row is written.
@@ -181,6 +200,18 @@ type PanelSeat struct {
 	Accept      bool   `json:"accept"`
 	Unavailable bool   `json:"unavailable,omitempty"`
 	Notes       string `json:"notes,omitempty"`
+	// Coverage is what this seat says it covered (sty_93359e0f); nil when it
+	// stated nothing.
+	Coverage *Coverage `json:"coverage,omitempty"`
+}
+
+// Coverage is what a reviewer says its verdict covered. Complete means it judged
+// the whole artifact; false with StoppedAt means it stopped early at that finding
+// (fail-fast) and the remainder was not reviewed. The binary stores it and
+// carries it to the next presentation; it never judges it (sty_93359e0f).
+type Coverage struct {
+	Complete  bool   `json:"complete"`
+	StoppedAt string `json:"stopped_at,omitempty"`
 }
 
 // ToolIsolation is what a reviewer invocation's harness offered

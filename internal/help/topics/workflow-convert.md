@@ -96,7 +96,7 @@ while in the step, and stage names REPEAT by design: several route families reac
 does not make obvious, and the one every conversion gets wrong.**
 
 Step keys: `status`, `agent`, `skills`, `reviewers`, `reviewer_agent`,
-`parallel`, `bundle`, `reviewer_carry`, `requires`, `applies_to`, `advise`, `rework`, `propose`,
+`parallel`, `bundle`, `reviewer_carry`, `fail_fast`, `requires`, `applies_to`, `advise`, `rework`, `propose`,
 `freeze`, `reject_budget`, `mark`, `apply_changes`, `untrusted_input`,
 `waits_on_children`, `schedule`, `after_children`, `start`, `terminal`.
 
@@ -129,6 +129,22 @@ same gate call, so the round that advances the edge has a fresh verdict from eve
 reviewer. A reject, a functional check and a panel are always dispatched. The
 key also stops the step performer's re-attached output document and directed
 messages to it from marking a verdict stale; every other evidence row still does.
+
+**Review mode.** A gate reviews in one of two modes: `full` (the default; judge
+the whole artifact and report every finding) or `fail-fast` (stop at the first
+blocking finding and reject). Declare it where the gate is declared:
+`review_mode = "fail-fast"` on a `[[gate]]` (it covers a `panel` gate's every
+seat), or `fail_fast = ["<skill>", …]` on a step to run those of its entry
+`reviewers` fail-fast. Any other `review_mode` value, or a `fail_fast` entry that
+is not one of the step's reviewers, is refused by `satelle validate`. The seat's
+work item carries `review_mode: "fail-fast"` (absent for full), and its verdict
+may carry `coverage`: `{"complete": true}`, or `{"complete": false, "stopped_at":
+"<finding>"}`. The ledger stores the mode and coverage on the verdict row, and on
+each seat of a panel row. A fail-fast reject, or any verdict whose coverage is
+not complete, reaches the next presentation in `prior_verdicts` as `partial`: it
+is never carried as an accept, and the seat is told to judge the remainder it did
+not review. The rubric that makes a seat stop early lives in the repo's skill;
+satelle carries only the declaration and the record.
 
 `waits_on_children = true` marks the step a **container** (a parent or epic)
 idles at while its child stories are driven. The container holds the status but

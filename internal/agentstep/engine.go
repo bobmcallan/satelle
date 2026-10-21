@@ -938,6 +938,11 @@ type transitionPayload struct {
 	// payload (sty_23e10d92); ReviewSkill is empty then. Absent for a gate that
 	// runs alone, so its payload is byte-for-byte unchanged.
 	ReviewSkills []string `json:"review_skills,omitempty"`
+	// ReviewMode names the gate's declared review mode, and is present ONLY for
+	// fail-fast (sty_93359e0f): the seat stops at the first blocking finding,
+	// rejects, and says in its verdict where it stopped. Absent for the default
+	// full review, so that payload is byte-for-byte unchanged.
+	ReviewMode string `json:"review_mode,omitempty"`
 	// Children carries a container's child stories (id + status) so a parent/epic
 	// close gate judges the children-resolved rule from the PAYLOAD — satelle does
 	// the context selection — rather than reading any on-disk story mirror. Empty
@@ -1053,6 +1058,12 @@ type PriorVerdict struct {
 	// verdict's cycle ended, so Reviewed is withheld and the gate re-judges.
 	ReviewedStale bool                 `json:"reviewed_stale,omitempty"`
 	EvidenceSince []verb.EvidenceSince `json:"evidence_since,omitempty"`
+	// ReviewMode / Coverage / Partial: what the earlier verdict covered
+	// (sty_93359e0f). Partial means the earlier verdict stopped early, so the
+	// remainder it did not review is still unjudged.
+	ReviewMode string         `json:"review_mode,omitempty"`
+	Coverage   *verb.Coverage `json:"coverage,omitempty"`
+	Partial    bool           `json:"partial,omitempty"`
 }
 
 // PriorVerdictFrom is the one conversion from a ledger prior verdict to the
@@ -1067,6 +1078,9 @@ func PriorVerdictFrom(v verb.PriorVerdict) PriorVerdict {
 		ReviewedTruncated: v.ReviewedTruncated,
 		ReviewedStale:     v.ReviewedStale,
 		EvidenceSince:     v.EvidenceSince,
+		ReviewMode:        v.ReviewMode,
+		Coverage:          v.Coverage,
+		Partial:           v.Partial,
 	}
 }
 
@@ -1605,9 +1619,11 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 	// Build ordered gate list; edge skills share the edge's agent= binding
 	// (sty_a476a2f8). Scoped nodes carry their own agent=.
 	var ordered []reviewerRef
+	failFast := g.edgeFailFast(ctx, item, item.Status, toStatus)
 	for _, sk := range skills {
 		ordered = append(ordered, reviewerRef{
 			skill: sk, agent: edgeAgent, panel: edgePanel, combine: edgeCombine, parallel: parallelCap,
+			mode: failFastModeOf(failFast, sk),
 		})
 	}
 	sysStart := len(ordered)
@@ -1693,6 +1709,8 @@ func (g *Engine) runScheduled(ctx context.Context, item workitem.Item, toStatus 
 		result.Reasoning = dec.Reasoning
 		result.Reviewed = dec.Reviewed
 		result.ReviewedTruncated = dec.ReviewedTruncated
+		result.ReviewMode, result.Coverage = dec.ReviewMode, dec.Coverage
+		result.Turns, result.TurnsUnavailableReason = dec.Turns, dec.TurnsUnavailableReason
 		result.Command = dec.Command
 		result.Context = dec.Context
 		result.Model = dec.Model
@@ -1775,6 +1793,8 @@ func reviewerVerdictOf(skill string, order int, system bool, dec verb.GateDecisi
 	return verb.ReviewerVerdict{
 		Skill: skill, Order: order, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning,
 		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated, System: system,
+		ReviewMode: dec.ReviewMode, Coverage: dec.Coverage,
+		Turns: dec.Turns, TurnsUnavailableReason: dec.TurnsUnavailableReason,
 		Command: dec.Command, Context: dec.Context, Model: dec.Model,
 		ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 		TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
@@ -1837,6 +1857,8 @@ func assembleGate(ordered []reviewerRef, results []gateSlot, sysStart int) (verb
 		result.Reasoning = pick.Reasoning
 		result.Reviewed = pick.Reviewed
 		result.ReviewedTruncated = pick.ReviewedTruncated
+		result.ReviewMode, result.Coverage = pick.ReviewMode, pick.Coverage
+		result.Turns, result.TurnsUnavailableReason = pick.Turns, pick.TurnsUnavailableReason
 		result.Command = pick.Command
 		result.Context = pick.Context
 		result.Model = pick.Model
@@ -3263,7 +3285,7 @@ func (g *Engine) runReviewerRef(ctx context.Context, item workitem.Item, toStatu
 	if len(ref.panel) == 1 && !fold {
 		agent = ref.panel[0]
 	}
-	prep, err := g.prepareReviewer(ctx, item, toStatus, skill, agent, decorate)
+	prep, err := g.prepareReviewer(ctx, item, toStatus, skill, agent, withReviewMode(ref.mode, decorate))
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
@@ -3271,7 +3293,11 @@ func (g *Engine) runReviewerRef(ctx context.Context, item workitem.Item, toStatu
 		return verb.GateDecision{Gated: false, Skill: skill, Unresolved: []string{skill}}, nil
 	}
 	if !fold {
-		return g.decideReviewer(ctx, item, toStatus, skill, agent, prep)
+		dec, derr := g.decideReviewer(ctx, item, toStatus, skill, agent, prep)
+		if dec.Gated {
+			dec.ReviewMode = ref.mode
+		}
+		return dec, derr
 	}
 	if command := skillCheck(prep.body); command != "" {
 		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
@@ -3282,7 +3308,11 @@ func (g *Engine) runReviewerRef(ctx context.Context, item workitem.Item, toStatu
 		return verb.GateDecision{Gated: true, Skill: skill}, cerr
 	}
 	runs := g.runPanelSeats(ctx, item, toStatus, skill, ref.panel, prep, ref.parallel)
-	return g.foldPanel(ctx, skill, ref.combine, command, ref.panel, runs)
+	dec, ferr := g.foldPanel(ctx, skill, ref.combine, command, ref.panel, runs)
+	if dec.Gated {
+		dec.ReviewMode = ref.mode
+	}
+	return dec, ferr
 }
 
 // panelFolds reports whether this ref expands into seat runs and a combine
@@ -3405,7 +3435,7 @@ func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus
 		}
 		stampInvocation(res.Decision, res, seat)
 		runs[i] = panelSeatRun{
-			record: verb.PanelSeat{Seat: section, Accept: res.Decision.Accept, Notes: res.Decision.Notes},
+			record: verb.PanelSeat{Seat: section, Accept: res.Decision.Accept, Notes: res.Decision.Notes, Coverage: res.Decision.Coverage},
 			stamp:  seatStamp(skill, section, res, res.Decision),
 		}
 	}
@@ -3548,7 +3578,7 @@ func (g *Engine) scopedReviewers(ctx context.Context, item workitem.Item, toStat
 		if s.When != "" && !g.whenAllows(ctx, item, toStatus, s) {
 			continue
 		}
-		out = append(out, reviewerRef{skill: s.Skill, agent: s.Agent, panel: s.Panel, combine: s.Combine})
+		out = append(out, reviewerRef{skill: s.Skill, agent: s.Agent, panel: s.Panel, combine: s.Combine, mode: s.ReviewMode})
 	}
 	for _, s := range skipped {
 		g.telemetryEvent(ctx, item.ID, "reviewer", "scoped-gate-skipped", map[string]any{
@@ -3620,6 +3650,9 @@ type reviewerRef struct {
 	panel        []string
 	combine      string
 	parallel     int
+	// mode is the gate's declared review mode: wfdot.ReviewModeFailFast or empty
+	// (full). A panel's seats inherit it (sty_93359e0f).
+	mode string
 }
 
 // structureSkill is the required-structure reviewer that judges a draft work
@@ -4676,6 +4709,29 @@ type rawDecision struct {
 	Reasoning         string `json:"reasoning"`
 	Reviewed          string `json:"reviewed,omitempty"`
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+	// Coverage is what the reviewer says the verdict covered (sty_93359e0f):
+	// complete, or stopped early at a named finding. Optional; absent is stored
+	// as absent, never as complete.
+	Coverage json.RawMessage `json:"coverage,omitempty"`
+}
+
+// applyCoverage reads a reviewer's stated coverage, bounding stopped_at to
+// reviewedCeiling like the quotation it travels with. It is decoded apart from
+// the verdict so a malformed coverage costs the coverage, never the verdict:
+// absent or unreadable stays nil, which is stored as "stated nothing".
+func applyCoverage(raw json.RawMessage) *verb.Coverage {
+	var c struct {
+		Complete  bool   `json:"complete"`
+		StoppedAt string `json:"stopped_at"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &c) != nil {
+		return nil
+	}
+	stopped := strings.TrimSpace(c.StoppedAt)
+	if len(stopped) > reviewedCeiling {
+		stopped = stopped[:reviewedCeiling]
+	}
+	return &verb.Coverage{Complete: c.Complete, StoppedAt: stopped}
 }
 
 // applyReviewed bounds a quotation to reviewedCeiling before the decision is
@@ -4711,6 +4767,7 @@ func parseDecision(out []byte) (verb.GateDecision, error) {
 				Reasoning:         rd.Reasoning,
 				Reviewed:          reviewed,
 				ReviewedTruncated: truncated,
+				Coverage:          applyCoverage(rd.Coverage),
 			}
 			found = &d
 		}

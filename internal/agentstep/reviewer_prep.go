@@ -239,6 +239,15 @@ func stampInvocation(d *verb.GateDecision, res InvokeResult, seat reviewerSeat) 
 	d.SystemPromptBytes = res.SystemPromptBytes
 	d.PayloadBytes = res.PayloadBytes
 	d.ToolIsolation = res.ToolIsolation
+	// Turns ride the invocation row (sty_93359e0f): the count when the adapter
+	// reported one, else the reason beside a usage-reporting run — never a zero.
+	switch {
+	case res.Usage.TurnsAvailable:
+		n := res.Usage.Turns
+		d.Turns = &n
+	case res.Usage.Available:
+		d.TurnsUnavailableReason = agentcli.TurnsUnavailableReason(seat.binding.ResolvedInterface(), seat.binding.CommandTemplate())
+	}
 }
 
 // referencedPayload is the work item a judging reviewer receives. Inline fields
@@ -249,6 +258,7 @@ type referencedPayload struct {
 	To              string               `json:"to"`
 	ReviewSkill     string               `json:"review_skill"`
 	ReviewSkills    []string             `json:"review_skills,omitempty"`
+	ReviewMode      string               `json:"review_mode,omitempty"`
 	Children        []ChildState         `json:"children,omitempty"`
 	Docs            []referencedDoc      `json:"docs,omitempty"`
 	RouteDrift      *wfgovern.RouteDrift `json:"route_drift,omitempty"`
@@ -305,6 +315,7 @@ func writeReviewerMaterial(scratch string, mat *reviewerMaterial, tp transitionP
 		To:             tp.To,
 		ReviewSkill:    tp.ReviewSkill,
 		ReviewSkills:   tp.ReviewSkills,
+		ReviewMode:     tp.ReviewMode,
 		Children:       tp.Children,
 		RouteDrift:     tp.RouteDrift,
 		Amendment:      tp.Amendment,

@@ -51,12 +51,13 @@ func bundleRubric(preps []reviewerPrep) string {
 }
 
 type bundleEntry struct {
-	Skill             string `json:"skill"`
-	Decision          string `json:"decision"`
-	Notes             string `json:"notes"`
-	Reasoning         string `json:"reasoning"`
-	Reviewed          string `json:"reviewed,omitempty"`
-	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+	Skill             string          `json:"skill"`
+	Decision          string          `json:"decision"`
+	Notes             string          `json:"notes"`
+	Reasoning         string          `json:"reasoning"`
+	Reviewed          string          `json:"reviewed,omitempty"`
+	ReviewedTruncated bool            `json:"reviewed_truncated,omitempty"`
+	Coverage          json.RawMessage `json:"coverage,omitempty"`
 }
 
 type bundleEnvelope struct {
@@ -86,6 +87,7 @@ func parseBundleDecisions(out []byte, skills []string) ([]verb.GateDecision, err
 				Reasoning:         e.Reasoning,
 				Reviewed:          reviewed,
 				ReviewedTruncated: truncated,
+				Coverage:          applyCoverage(e.Coverage),
 			}
 		}
 	}
@@ -205,7 +207,9 @@ func (g *Engine) partitionBundles(ctx context.Context, item workitem.Item, toSta
 			units = append(units, single)
 			continue
 		}
-		key := bundleSeatKey(seat)
+		// Gates of different review modes never share a session: one brief cannot
+		// both stop at the first finding and judge everything (sty_93359e0f).
+		key := bundleSeatKey(seat) + "|" + ref.mode
 		if at, ok := groupAt[key]; ok {
 			units[at].idx = append(units[at].idx, i)
 			continue
@@ -304,7 +308,7 @@ func unitStopsEdge(results []gateSlot, u gateUnit) bool {
 func (g *Engine) runGateUnit(ctx context.Context, item workitem.Item, toStatus string, ordered []reviewerRef, u gateUnit, results []gateSlot) {
 	if len(u.idx) == 1 {
 		i := u.idx[0]
-		dec, err := g.runReviewer(ctx, item, toStatus, ordered[i].skill, ordered[i].agent)
+		dec, err := g.runReviewerRef(ctx, item, toStatus, ordered[i], nil)
 		results[i] = gateSlot{dec: dec, err: err}
 		return
 	}
@@ -333,7 +337,7 @@ func (g *Engine) runReviewerBundle(ctx context.Context, item workitem.Item, toSt
 	var live []int // indexes into refs that have a rubric to judge
 	var preps []reviewerPrep
 	for j, ref := range refs {
-		prep, err := g.prepareReviewer(ctx, item, toStatus, ref.skill, ref.agent, nil)
+		prep, err := g.prepareReviewer(ctx, item, toStatus, ref.skill, ref.agent, withReviewMode(ref.mode, nil))
 		if err != nil {
 			return nil, err
 		}
@@ -350,7 +354,7 @@ func (g *Engine) runReviewerBundle(ctx context.Context, item workitem.Item, toSt
 		return decs, nil
 	case 1:
 		// Nothing left to share a session with: judge it as any lone gate is.
-		dec, err := g.runReviewer(ctx, item, toStatus, refs[live[0]].skill, refs[live[0]].agent)
+		dec, err := g.runReviewerRef(ctx, item, toStatus, refs[live[0]], nil)
 		if err != nil {
 			return nil, err
 		}
@@ -403,6 +407,7 @@ func (g *Engine) runReviewerBundle(ctx context.Context, item workitem.Item, toSt
 	var lead verb.GateDecision
 	for k, d := range res.Decisions {
 		d.BundleID, d.BundleSkills = bundleID, skills
+		d.ReviewMode = refs[live[k]].mode
 		if k == 0 {
 			g.setDecisionUsage(&d, res.Usage, seat.binding.Model)
 		}

@@ -249,6 +249,9 @@ type State struct {
 	// node, so a gate panel and a step panel do not overwrite each other.
 	Panel   []string
 	Combine string
+	// ReviewMode is a gate node's declared review mode (RouteGate.ReviewMode):
+	// empty or ReviewModeFailFast.
+	ReviewMode string
 }
 
 // WaitsOnChildren reports whether the route declares that a story holding
@@ -378,6 +381,8 @@ type ScopedReviewer struct {
 	When    string   // functional-check skill; exit 1 skips the gate, empty → always runs
 	Panel   []string // this gate's seats; empty → the single Agent seat
 	Combine string   // functional-check skill that folds Panel; empty on a one-seat panel
+	// ReviewMode is the gate's declared mode: "" (full) or ReviewModeFailFast.
+	ReviewMode string
 }
 
 // ScopedReviewers returns the DECLARED, edge-less reviewer nodes that gate the
@@ -419,7 +424,7 @@ func (s Spec) ScopedReviewersSplit(toStatus string, tags []string) (enqueued, sk
 		if !(containsStr(st.On, "*") || containsStr(st.On, toStatus)) {
 			continue
 		}
-		ref := ScopedReviewer{Skill: st.Skill, Agent: st.Agent, When: st.When, Panel: st.Panel, Combine: st.Combine}
+		ref := ScopedReviewer{Skill: st.Skill, Agent: st.Agent, When: st.When, Panel: st.Panel, Combine: st.Combine, ReviewMode: st.ReviewMode}
 		if !tagsMatchAppliesTo(st.AppliesTo, tags) {
 			// Only applies_to-filtered nodes are "skipped"; absent applies_to never skips.
 			if len(st.AppliesTo) > 0 {
@@ -951,6 +956,15 @@ const (
 // (sty_59720b8b); an absent key dispatches every reviewer every round.
 const CarryUntilAccept = "until_accept"
 
+// The closed set of values a gate's `review_mode` may take. Full is the default
+// and today's behaviour: the reviewer judges the whole artifact and reports every
+// finding. FailFast stops at the first blocking finding and rejects, recording
+// where it stopped. An absent key is full.
+const (
+	ReviewModeFull     = "full"
+	ReviewModeFailFast = "fail-fast"
+)
+
 // DefaultParallelCap is the concurrency cap when an edge sets parallel=true
 // without a numeric limit (sty_4f0a15db). Bounded because reviewers share backends.
 const DefaultParallelCap = 4
@@ -987,6 +1001,10 @@ type Transition struct {
 	// step onto the spine edge only — role and recover edges do not carry them.
 	Panel   []string
 	Combine string
+	// FailFast lists the target step's entry reviewers (edge-named skills and
+	// panel skills) that run in fail-fast review mode. Empty means every edge
+	// reviewer runs full. Scoped gate nodes carry their own mode (State.ReviewMode).
+	FailFast []string
 }
 
 // Spec is the parsed lifecycle: states and gated transitions.
