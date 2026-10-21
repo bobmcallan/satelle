@@ -151,6 +151,8 @@ func TestSessionName(t *testing.T) {
 	}
 	linked := filepath.Join(t.TempDir(), "sty_wt")
 	runGit(t, main, "worktree", "add", "-q", "-b", "wt", linked)
+	same := filepath.Join(t.TempDir(), "sty_same")
+	runGit(t, main, "worktree", "add", "-q", "-b", "same", same)
 	host, repo := ShortHost(), config.RepoName(main)
 	cases := []struct {
 		name, root, story, want string
@@ -159,6 +161,7 @@ func TestSessionName(t *testing.T) {
 		{"main, story", main, "sty_1", host + " · " + repo + " · sty_1"},
 		{"linked, no story", linked, "", host + " · " + repo + " · sty_wt"},
 		{"linked, story", linked, "sty_1", host + " · " + repo + " · sty_wt · sty_1"},
+		{"linked, story named like worktree", same, "sty_same", host + " · " + repo + " · sty_same"},
 	}
 	for _, c := range cases {
 		if got := SessionName(c.root, c.story); got != c.want {

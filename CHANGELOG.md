@@ -1,3 +1,13 @@
+## [0.0.714] - 2026-10-21
+
+### Changed
+- A session name shows the engaged story id once when the linked worktree's directory is already named after that story: `<host> · <repo> · <id>`, not `<host> · <repo> · <id> · <id>`. A worktree whose name differs still shows both segments. (sty_f0a9e098)
+
+## [serve-v0.0.183] - 2026-10-21
+
+### Changed
+- The service binary carries the updated session help topic (the story id appears once). (sty_f0a9e098)
+
 ## [0.0.713] - 2026-10-21
 
 ### Added
