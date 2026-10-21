@@ -1,3 +1,11 @@
+## [0.0.713] - 2026-10-21
+
+### Added
+- A story shared with a team workspace (`[sync] stories = "shared"` with a resolved team workspace) has its markdown attachments pushed to that workspace's documents collection at `stories/<id>/<file>.md`, byte for byte, on a work-state push, and pulled back the same way. A team remote's run reads them there (for example a pr-route story's plan). The same rules as the personal leg apply: binaries never leave, held or unpushed stories wait, and unchanged files are skipped. A refused upload is reported, never counted as success. On `pull --force` the team copy wins for a shared story. (sty_61872918)
+
+### Changed
+- `satelle sync workstate` help no longer says attachments only ever go to the personal collection. (sty_61872918)
+
 ## [0.0.712] - 2026-10-21
 
 ### Added

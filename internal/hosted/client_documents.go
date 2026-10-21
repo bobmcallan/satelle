@@ -39,14 +39,26 @@ func documentsManifestRoute(project string) string {
 	return "/api/v1/projects/" + url.PathEscape(project) + "/documents"
 }
 
-// documentFileRoute is the per-path route, escaping each path segment so a path
-// with odd characters round-trips while the slashes that structure it survive.
+// workspaceDocumentsRoute is the team workspace's documents list/root (the member
+// route; sty_61872918). The argument is the workspace ID, not its name.
+func workspaceDocumentsRoute(workspaceID string) string {
+	return "/api/v1/workspaces/" + url.PathEscape(workspaceID) + "/documents"
+}
+
+// documentFileRoute is the project's per-path route.
 func documentFileRoute(project, path string) string {
+	return docFileRoute(documentsManifestRoute(project), path)
+}
+
+// docFileRoute is the per-path route under a documents root, escaping each path
+// segment so a path with odd characters round-trips while the slashes that
+// structure it survive.
+func docFileRoute(root, path string) string {
 	segs := strings.Split(path, "/")
 	for i, s := range segs {
 		segs[i] = url.PathEscape(s)
 	}
-	return documentsManifestRoute(project) + "/" + strings.Join(segs, "/")
+	return root + "/" + strings.Join(segs, "/")
 }
 
 // ListDocumentChanges returns documents that changed after since (empty since =
@@ -54,7 +66,17 @@ func documentFileRoute(project, path string) string {
 // pass as since. A missing credential yields ErrLoginRequired; other non-200s a
 // clean serverError.
 func (c *Client) ListDocumentChanges(ctx context.Context, project, since string) (DocumentChanges, error) {
-	route := documentsManifestRoute(project)
+	return c.listDocumentChanges(ctx, documentsManifestRoute(project), since)
+}
+
+// ListWorkspaceDocumentChanges is ListDocumentChanges for a team workspace's
+// collection, addressed by workspace ID.
+func (c *Client) ListWorkspaceDocumentChanges(ctx context.Context, workspaceID, since string) (DocumentChanges, error) {
+	return c.listDocumentChanges(ctx, workspaceDocumentsRoute(workspaceID), since)
+}
+
+func (c *Client) listDocumentChanges(ctx context.Context, root, since string) (DocumentChanges, error) {
+	route := root
 	if strings.TrimSpace(since) != "" {
 		route += "?since=" + url.QueryEscape(since)
 	}
@@ -79,7 +101,7 @@ func (c *Client) ListDocumentChanges(ctx context.Context, project, since string)
 	case http.StatusUnauthorized:
 		return DocumentChanges{}, ErrLoginRequired
 	default:
-		return DocumentChanges{}, fmt.Errorf("hosted: GET documents: %s", serverError(resp.StatusCode, body))
+		return DocumentChanges{}, fmt.Errorf("hosted: GET %s: %s", root, serverError(resp.StatusCode, body))
 	}
 }
 
@@ -88,10 +110,21 @@ func (c *Client) ListDocumentChanges(ctx context.Context, project, since string)
 // (HTTP 201) from an idempotent re-push of the current head (HTTP 200). A 409
 // yields ErrDocumentConflict; a missing credential yields ErrLoginRequired.
 func (c *Client) PushDocumentFile(ctx context.Context, project, path string, content []byte) (ConfigPushResult, error) {
+	return c.putDocument(ctx, documentFileRoute(project, path), path, content)
+}
+
+// PushWorkspaceDocumentFile is PushDocumentFile to
+// /api/v1/workspaces/{workspaceID}/documents/{path}. A non-2xx answer is an
+// error naming the route and the status, never a success.
+func (c *Client) PushWorkspaceDocumentFile(ctx context.Context, workspaceID, path string, content []byte) (ConfigPushResult, error) {
+	return c.putDocument(ctx, docFileRoute(workspaceDocumentsRoute(workspaceID), path), path, content)
+}
+
+func (c *Client) putDocument(ctx context.Context, route, path string, content []byte) (ConfigPushResult, error) {
 	if content == nil {
 		content = []byte{}
 	}
-	resp, err := c.doAuthed(ctx, http.MethodPut, documentFileRoute(project, path), content, "text/plain; charset=utf-8")
+	resp, err := c.doAuthed(ctx, http.MethodPut, route, content, "text/plain; charset=utf-8")
 	if err != nil {
 		return ConfigPushResult{}, err
 	}
@@ -113,7 +146,7 @@ func (c *Client) PushDocumentFile(ctx context.Context, project, path string, con
 	case http.StatusUnauthorized:
 		return ConfigPushResult{}, ErrLoginRequired
 	default:
-		return ConfigPushResult{}, fmt.Errorf("hosted: PUT document %s: %s", path, serverError(resp.StatusCode, body))
+		return ConfigPushResult{}, fmt.Errorf("hosted: PUT %s: %s", route, serverError(resp.StatusCode, body))
 	}
 }
 
@@ -121,7 +154,17 @@ func (c *Client) PushDocumentFile(ctx context.Context, project, path string, con
 // The returned etag is the blob sha256 from the ETag header. A 404 yields
 // ErrDocumentFileMissing.
 func (c *Client) DocumentFileContent(ctx context.Context, project, path string) ([]byte, string, error) {
-	resp, err := c.doAuthed(ctx, http.MethodGet, documentFileRoute(project, path), nil, "")
+	return c.getDocument(ctx, documentFileRoute(project, path))
+}
+
+// WorkspaceDocumentFileContent is DocumentFileContent from a team workspace's
+// collection, addressed by workspace ID.
+func (c *Client) WorkspaceDocumentFileContent(ctx context.Context, workspaceID, path string) ([]byte, string, error) {
+	return c.getDocument(ctx, docFileRoute(workspaceDocumentsRoute(workspaceID), path))
+}
+
+func (c *Client) getDocument(ctx context.Context, route string) ([]byte, string, error) {
+	resp, err := c.doAuthed(ctx, http.MethodGet, route, nil, "")
 	if err != nil {
 		return nil, "", err
 	}
@@ -135,6 +178,6 @@ func (c *Client) DocumentFileContent(ctx context.Context, project, path string) 
 	case http.StatusUnauthorized:
 		return nil, "", ErrLoginRequired
 	default:
-		return nil, "", fmt.Errorf("hosted: GET document %s: %s", path, serverError(resp.StatusCode, body))
+		return nil, "", fmt.Errorf("hosted: GET %s: %s", route, serverError(resp.StatusCode, body))
 	}
 }

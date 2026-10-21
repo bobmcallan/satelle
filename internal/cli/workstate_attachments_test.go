@@ -38,6 +38,8 @@ type fakeDocs struct {
 	puts    []string // URL paths of PUTs, in order
 	reqs    []string // URL paths of every documents request
 	failPut map[string]int
+	root    string // the documents route; the project's unless set (a team workspace's)
+	refuse  int    // when non-zero, every PUT is answered with this status
 }
 
 func newFakeDocs() *fakeDocs {
@@ -50,12 +52,19 @@ func sha256Hex(b []byte) string {
 }
 
 func (d *fakeDocs) routes(mux *http.ServeMux, _ *fakeWorkstateServer) {
-	const root = "/api/v1/projects/{project}/documents"
+	root := d.root
+	if root == "" {
+		root = "/api/v1/projects/{project}/documents"
+	}
 	mux.HandleFunc("PUT "+root+"/{path...}", func(w http.ResponseWriter, r *http.Request) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		d.reqs = append(d.reqs, r.URL.Path)
 		path := r.PathValue("path")
+		if d.refuse != 0 {
+			http.Error(w, "refused", d.refuse)
+			return
+		}
 		if d.failPut[path] > 0 {
 			d.failPut[path]--
 			http.Error(w, "injected", http.StatusInternalServerError)

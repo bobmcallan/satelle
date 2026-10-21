@@ -113,7 +113,8 @@ this reports before it acts.`,
 
 // resolveTeamWorkspaceName returns the team workspace name for publish (and
 // similar team-bound verbs): --workspace wins, else the configured active
-// workspace when it is a team, else "". Sync never uses this as a destination.
+// workspace when it is a team, else "". Sync's rows never use this as a
+// destination; only a shared stories scope's attachments do (sty_61872918).
 func resolveTeamWorkspaceName(cfg config.Config, workspaceArg string) string {
 	if ws := strings.TrimSpace(workspaceArg); ws != "" {
 		return ws

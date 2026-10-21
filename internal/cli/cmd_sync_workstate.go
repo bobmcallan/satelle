@@ -2,10 +2,13 @@ package cli
 
 // `satelle sync workstate` — personal work-state push (backup) and pull
 // (rehydrate). epic:scoped-sync order:7 delivered push; epic:workspace-rehydrate
-// order:3 adds pull. Always targets this repo's bound hosted PROJECT's personal
-// collection; a team active-workspace binding never redirects work-state. The
-// [sync] scope gates whether each work-state area (stories, ledger, executions)
-// is transferred (local → skip; personal|shared → personal+project).
+// order:3 adds pull. Rows always target this repo's bound hosted PROJECT's
+// personal collection; a team active-workspace binding never redirects work-state.
+// The one addition is story attachments: with [sync] stories = shared and a team
+// workspace resolved they also go to (and come back from) that workspace's
+// documents collection (sty_61872918). The [sync] scope gates whether each
+// work-state area (stories, ledger, executions) is transferred (local → skip;
+// personal|shared → personal+project).
 
 import (
 	"context"
@@ -31,8 +34,9 @@ import (
 )
 
 // WorkstateAreas are the [sync] areas that form the work-state kind. A shared
-// scope on any of these only means "eligible to leave the machine" — destination
-// remains the personal workspace.
+// scope on any of these only means "eligible to leave the machine" — rows go to
+// the personal workspace; the one other destination is the team workspace's
+// documents collection, which a shared stories scope also sends attachments to.
 var WorkstateAreas = config.WorkstateAreas
 
 // ErrWorkstatePullConflict is returned when local and hosted both have data for
@@ -50,8 +54,11 @@ func newSyncWorkstateCmd() *cobra.Command {
 hosted project's personal collection.
 
 This is the continuity path for the same work across machines, not a team
-channel: the personal collection is yours. Skipped entirely unless the workstate
-area is opted in, and a pull merges into local rows rather than replacing them.`,
+channel: the personal collection is yours. The one exception is story
+attachments: with [sync] stories = shared and a team workspace set, they are
+also copied to that team workspace's documents collection, which is what a team
+remote reads. Skipped entirely unless the workstate area is opted in, and a pull
+merges into local rows rather than replacing them.`,
 	}
 
 	var pushServer string
@@ -61,20 +68,20 @@ area is opted in, and a pull merges into local rows rather than replacing them.`
 		Short:       "Replicate opted-in work-state areas to the personal workspace",
 		Annotations: needsStore(),
 		Args:        cobra.ArbitraryArgs,
-		Long: `push upserts local stories, task-executions, and ledger entries, for areas whose
-[sync] scope is personal or shared, into the bound hosted project's personal
-collection. Only records changed since the last push are sent; --full re-sends
-everything. Requires "satelle project bind <slug>".
+		Long: `push upserts local stories, executions and ledger entries, for opted-in [sync]
+areas, into the bound hosted project's personal collection. Only changed records
+are sent; --full re-sends all. Requires "satelle project bind".
 
 With stories opted in it also uploads each story's markdown attachments, change
-patches included, to that collection, so another machine can read them (this
-reverses "patches stay local"); binary ones never leave the machine.
+patches included (binary ones never leave the machine). With [sync] stories =
+shared and [hosted] workspace set they also go to the team workspace's documents
+collection, for a team remote to read. A refused upload is reported with its
+route and retried next push.
 
-Given story ids, or an epic container id, it pushes only those and their ledger
-rows, whole, and leaves the cursor alone.
+Given story ids or an epic id it pushes only those, whole, leaving the cursor.
 
-A story in progress is held until its engagement tree is clean and its HEAD is
-on a remote-tracking ref ([sync] hold_unpushed = false turns this off).`,
+A story in progress is held until its engagement tree is clean and HEAD is on a
+remote-tracking ref ([sync] hold_unpushed = false turns this off).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncWorkstatePush(cmd, pushServer, dryRun, full, args...)
 		},
@@ -94,18 +101,17 @@ on a remote-tracking ref ([sync] hold_unpushed = false turns this off).`,
 		Long: `pull fetches the bound hosted PROJECT's personal stories, executions and
 ledger entries for opted-in [sync] areas, and merges them into the local DB by
 id. With stories opted in it also writes their markdown attachments into the
-attachment store; binary ones stay local.
+attachment store (binary ones stay local); with [sync] stories = shared it reads
+the team workspace's documents collection too, and --force takes a differing
+team copy.
 
-Local-only rows are kept. The pull refuses only where it would lose local
-information: a story changed locally since hosted, or a ledger row whose
-payload differs. --force lets hosted win.
+It refuses only where it would lose local information: a story changed locally
+since hosted, or a ledger row whose payload differs. --force lets hosted win.
 
-Afterwards it names each pulled story whose status claims code the git remote
-lacks; --verbose also lists stories that left work with no head.
+It then names each pulled story whose status claims code the git remote lacks
+(--verbose adds stories that left work with no head).
 
-With story ids or an epic id it pulls only those; an epic not held locally has
-its members found on the server by the container's epic:<theme> tag. Requires
-"satelle project bind".`,
+With story ids or an epic id it pulls only those. Requires "satelle project bind".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncWorkstatePull(cmd, pullServer, pullDryRun, force, pullVerbose, args...)
 		},
