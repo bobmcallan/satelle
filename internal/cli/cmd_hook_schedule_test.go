@@ -97,7 +97,8 @@ func TestSeatScheduleInject(t *testing.T) {
 
 // TestAgentGoalsDriveEpicText: the principle the session receives states both
 // drives, the stop rule, the worktree bases, and keeps the one-at-a-time rule
-// only for the no-schedule case (sty_4aefd2a9 AC1, AC3, AC5).
+// only outside a container or under sequential = true (sty_4aefd2a9 AC1, AC3,
+// AC5; sty_eb5135ca).
 func TestAgentGoalsDriveEpicText(t *testing.T) {
 	body, ok := embeddedDefault("principles", "satelle-agent-goals")
 	if !ok {
@@ -118,14 +119,14 @@ func TestAgentGoalsDriveEpicText(t *testing.T) {
 		"never cut from a branch that does not exist",
 		"not yet on trunk from that target's branch",
 		"A cancelled dependency is a stop",
-		"One story at a time — when the container declares no schedule.",
-		"This is not the rule once a container declares a schedule",
+		"One story at a time — outside a container, or when it sets sequential = true.",
+		"Inside a container, children run in parallel by default and the wave says who may start",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("principle missing %q", want)
 		}
 	}
-	// Every one-at-a-time statement is qualified by the no-schedule case.
+	// Every one-at-a-time statement is qualified by the schedule.
 	lower := strings.ToLower(flat)
 	for from := 0; ; {
 		i := strings.Index(lower[from:], "one at a time")
