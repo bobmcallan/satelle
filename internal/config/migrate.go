@@ -79,13 +79,13 @@ func MigrateAgents(content string) (out string, changes []string, err error) {
 			}
 		}
 		// expand bare claude|grok command values to full templates
-		if expandBareCommandInSection(lines, s.header) {
+		role := ResolvedRole(s.logical, s.binding)
+		if expandBareCommandInSection(lines, s.header, role) {
 			changed = true
 			expandN++
 		}
 		// add role=
 		if !hasKeyInSection(lines, s.header, "role") {
-			role := ResolvedRole(s.logical, s.binding)
 			// UpsertKey works on a joined string; rejoin and re-split after each add.
 			joined := strings.Join(lines, "\n")
 			joined = UpsertKey(joined, s.header, "role", strconv.Quote(role))
@@ -335,9 +335,10 @@ func renameKeyInSection(lines []string, section, oldKey, newKey string) bool {
 
 // expandBareCommandInSection rewrites a bare command = "claude"|"grok"
 // value to the full multi-token preset template (agentcli.NewRunner). Preserves
-// indent and any trailing comment; rewrites only the quoted RHS. Idempotent: a
-// multi-token value is left untouched. Returns true if a line was rewritten.
-func expandBareCommandInSection(lines []string, section string) bool {
+// indent and any trailing comment; rewrites only the quoted RHS. role (the
+// binding's ResolvedRole) picks the grok template. Idempotent: a multi-token
+// value is left untouched. Returns true if a line was rewritten.
+func expandBareCommandInSection(lines []string, section, role string) bool {
 	start, end := sectionRange(lines, section)
 	if start < 0 {
 		return false
@@ -397,6 +398,9 @@ func expandBareCommandInSection(lines []string, section string) bool {
 			return false
 		}
 		full := r.Command()
+		if tok == agentcli.CLIGrok {
+			full = agentcli.GrokCommandFor(role)
+		}
 		trailing := valPart[endq+1:] // space + comment, if any
 		lines[i] = prefix + spaces + strconv.Quote(full) + trailing
 		return true

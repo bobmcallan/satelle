@@ -1,3 +1,14 @@
+## [0.0.715] - 2026-10-21
+
+### Changed
+- A Grok reviewer binding written by the starter or by `satelle migrate` runs with a 32-turn budget (`--max-turns 32`); every other Grok role keeps 16. A code-verifying review batches 3-5 tool calls per turn and was measured at up to 60 calls, so 16 turns ended most first attempts at "Max turns reached" and an Opus+Grok all-accept panel could not pass. A binding's own command is unchanged. (sty_e5fb3626)
+- `satelle agent validate` reports every binding's effective turn budget and where it comes from, or the adapter's reason it has none. (sty_e5fb3626)
+
+## [serve-v0.0.184] - 2026-10-21
+
+### Changed
+- The service binary carries the role-specific Grok turn budget. (sty_e5fb3626)
+
 ## [0.0.714] - 2026-10-21
 
 ### Changed

@@ -421,7 +421,11 @@ func StarterGlobalAgents(cli string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf(starterGlobalAgentsTemplate, cli, cli, runner.Command(), DefaultReviewerTools, cli, runner.Command(), cli, cli), nil
+	reviewerCommand := runner.Command()
+	if strings.EqualFold(strings.TrimSpace(cli), agentcli.CLIGrok) {
+		reviewerCommand = agentcli.GrokCommandFor(RoleReviewer)
+	}
+	return fmt.Sprintf(starterGlobalAgentsTemplate, cli, cli, reviewerCommand, DefaultReviewerTools, cli, runner.Command(), cli, cli), nil
 }
 
 const starterGlobalAgentsTemplate = `# satelle machine-wide agent PROFILE catalog (~/.satelle/agents.toml).

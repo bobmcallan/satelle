@@ -379,6 +379,7 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 		g, _, _, fs := checkBinding(sec.name, b, vars)
 		g.Interface = iface
 		g.InterfaceReason = reason
+		addNote(&g, agentcli.EffectiveTurnBudget(iface, g.Command, agents.BudgetFor(b, config.Budget{}).Turns))
 		g.Sources = prov[sec.name]
 		r.Grants = append(r.Grants, g)
 		r.record(fs...)

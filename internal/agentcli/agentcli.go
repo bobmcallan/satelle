@@ -82,7 +82,36 @@ const DefaultClaudeStreamCommand = "claude -p --input-format stream-json --outpu
 // exact failure this preset removes. To widen grok's grant, author a full command
 // template instead of the bare preset. {model} is dropped (with -m) when unset, so
 // grok falls back to its own default unless the binding pins one (e.g. grok-4.5).
-const DefaultGrokCommand = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --reasoning-effort {effort} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format plain --max-turns 16 --no-subagents"
+//
+// This is the non-reviewer template (--max-turns grokAgentMaxTurns); a reviewer
+// seat is seeded from DefaultGrokReviewerCommand through GrokCommandFor.
+const DefaultGrokCommand = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --reasoning-effort {effort} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format plain --max-turns " + grokAgentMaxTurns + " --no-subagents"
+
+// grokAgentMaxTurns is the unchanged original turn cap of the grok preset. No
+// measurement covers the coder or other non-reviewer roles, so it stays as it was.
+const grokAgentMaxTurns = "16"
+
+// grokReviewerMaxTurns is the turn cap of the grok preset seeded for a reviewer
+// seat. satelle-server measured (2026-10-22) a code-verifying plan review making
+// 35-60 tool calls (mostly grep and list_dir to find a cited file:line) at 3-5
+// calls per turn, a 20-turn worst case, so the 16-turn cap ended most first
+// attempts at "Max turns reached" and three such failures spent the seat. 32 fits
+// that worst case with headroom, matches satelle-server's interim binding, and
+// still bounds a runaway at twice the old cap.
+const grokReviewerMaxTurns = "32"
+
+// DefaultGrokReviewerCommand is DefaultGrokCommand with the reviewer turn cap; the
+// rest of the template is identical.
+const DefaultGrokReviewerCommand = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --reasoning-effort {effort} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format plain --max-turns " + grokReviewerMaxTurns + " --no-subagents"
+
+// GrokCommandFor returns the grok preset template for a binding role: the
+// reviewer template for "reviewer", the non-reviewer one for anything else.
+func GrokCommandFor(role string) string {
+	if strings.EqualFold(strings.TrimSpace(role), "reviewer") {
+		return DefaultGrokReviewerCommand
+	}
+	return DefaultGrokCommand
+}
 
 // CursorCommand is the cursor-agent command template (sty_10c52ab3). cursor has no
 // system-prompt flag and a positional prompt suppresses stdin, so the template

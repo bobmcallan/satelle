@@ -51,6 +51,47 @@ func TurnBudgetSupport(iface, command string) Capability {
 	return yes()
 }
 
+// EffectiveTurnBudget describes, for an operator-facing report, the turn budget a
+// dispatch of a binding with this transport and command template runs with and
+// where it comes from: "turn budget: N (turn_budget)" when the template's
+// {max_turns} placeholder is filled from the configured turn_budget,
+// "turn budget: N (command --max-turns)" when the template itself carries the
+// flag, and otherwise "turn budget: none (<adapter-named reason>)". configured is
+// the resolved turn_budget (zero when unset). Every adapter decision lives here,
+// so a caller reports every binding the same way.
+func EffectiveTurnBudget(iface, command string, configured int) string {
+	fields := strings.Fields(command)
+	if strings.EqualFold(strings.TrimSpace(iface), "cloud") {
+		return "turn budget: none (" + AdapterLabel(iface, command) + ": a cloud session is not spawned from the command template, so no turn limit is passed)"
+	}
+	if strings.Contains(command, "{max_turns}") && TurnBudgetSupport(iface, command).Available {
+		if configured > 0 {
+			return fmt.Sprintf("turn budget: %d (turn_budget)", configured)
+		}
+		return "turn budget: none (" + AdapterLabel(iface, command) + ": no turn_budget set)"
+	}
+	if !strings.EqualFold(strings.TrimSpace(iface), InterfaceACP) && len(fields) > 0 && !strings.EqualFold(fields[0], "in-loop") {
+		if n, ok := literalMaxTurns(fields); ok {
+			return "turn budget: " + n + " (command --max-turns)"
+		}
+	}
+	return "turn budget: none (" + TurnBudgetSupport(iface, command).Reason + ")"
+}
+
+// literalMaxTurns returns the value of a literal `--max-turns N` (or
+// `--max-turns=N`) argument in a command template's fields.
+func literalMaxTurns(fields []string) (string, bool) {
+	for i, f := range fields {
+		if v, ok := strings.CutPrefix(f, "--max-turns="); ok && v != "" {
+			return v, true
+		}
+		if f == "--max-turns" && i+1 < len(fields) && !strings.HasPrefix(fields[i+1], "-") {
+			return fields[i+1], true
+		}
+	}
+	return "", false
+}
+
 // applyTurns records the run's own turn count when the output carried one; an
 // absent count leaves TurnsAvailable false, never a zero.
 func applyTurns(u *UsageResult, n *int) {

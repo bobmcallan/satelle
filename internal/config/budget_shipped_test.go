@@ -13,8 +13,9 @@ import (
 // the embedded substrate carries no context_budget/turn_budget, the config
 // defaults are zero, and no non-test Go source assigns one.
 //
-// (DefaultGrokCommand's `--max-turns 16` is a harness-template flag, authored
-// configuration for one adapter — not a satelle budget. It is not a
+// (DefaultGrokCommand's `--max-turns 16` and DefaultGrokReviewerCommand's
+// `--max-turns 32` are harness-template flags, authored configuration for one
+// adapter — not a satelle budget. They are not a
 // context_budget/turn_budget/MaxTurns assignment and stays out of this scan.)
 
 var budgetKeyValue = regexp.MustCompile(`(?m)^\s*(context_budget|turn_budget)\s*=\s*[0-9]`)
