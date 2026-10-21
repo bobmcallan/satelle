@@ -24,6 +24,10 @@ type PriorVerdict struct {
 	// EvidenceSince lists what was recorded since (sty_0225fc2f).
 	ReviewedStale bool            `json:"reviewed_stale,omitempty"`
 	EvidenceSince []EvidenceSince `json:"evidence_since,omitempty"`
+	// Seats is the panel fold recorded on a panel gate's verdict row, each seat
+	// with its own quotation. markStale clears every seat's quotation together
+	// with the row's, so a stale seat is re-judged in full (sty_da9e8d0a).
+	Seats []PanelSeat `json:"seats,omitempty"`
 }
 
 // EvidenceSince is one ledger row recorded after a verdict's review cycle
@@ -76,6 +80,8 @@ type priorVerdictRow struct {
 	Notes             string `json:"notes,omitempty"`
 	Reviewed          string `json:"reviewed,omitempty"`
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+	// Seats is the panel fold, one record per seat (reviewerPayload).
+	Seats []PanelSeat `json:"seats,omitempty"`
 	// RecordedAt is the wall-clock time the verdict row was appended, after the
 	// gate run that produced it finished. Rows written before the field existed
 	// carry none and are never marked stale.
@@ -177,6 +183,7 @@ func PriorVerdictsFrom(entries []ledger.Entry, from, to string, ex StaleExemptio
 			CreatedAt:         e.CreatedAt.UTC().Format(time.RFC3339),
 			Reviewed:          row.Reviewed,
 			ReviewedTruncated: row.ReviewedTruncated,
+			Seats:             row.Seats,
 		})
 		var at time.Time
 		if row.RecordedAt != "" {
@@ -203,6 +210,13 @@ func markStale(out []PriorVerdict, recorded []time.Time, entries []ledger.Entry,
 			continue
 		}
 		out[i].Reviewed, out[i].ReviewedTruncated = "", false
+		if len(out[i].Seats) > 0 {
+			seats := append([]PanelSeat(nil), out[i].Seats...)
+			for j := range seats {
+				seats[j].Reviewed, seats[j].ReviewedTruncated = "", false
+			}
+			out[i].Seats = seats
+		}
 		out[i].ReviewedStale, out[i].EvidenceSince = true, since
 	}
 }

@@ -176,11 +176,21 @@ type ReviewerVerdict struct {
 // PanelSeat is one seat's record inside a skill-level panel verdict. Accept
 // false with Unavailable true is not an accept — the combine check decides
 // whether that counts against the panel.
+//
+// Reviewed, ReviewedTruncated and Attempt are the seat's own quotation and the
+// attempt it was judged on, recorded as a single-seat verdict records them
+// (sty_da9e8d0a), so the next presentation of the edge can hand each seat its
+// own prior verdict. CarriedFrom is the attempt whose accept a carried seat
+// reuses; it is zero for a seat that was judged this round.
 type PanelSeat struct {
-	Seat        string `json:"seat"`
-	Accept      bool   `json:"accept"`
-	Unavailable bool   `json:"unavailable,omitempty"`
-	Notes       string `json:"notes,omitempty"`
+	Seat              string `json:"seat"`
+	Accept            bool   `json:"accept"`
+	Unavailable       bool   `json:"unavailable,omitempty"`
+	Notes             string `json:"notes,omitempty"`
+	Reviewed          string `json:"reviewed,omitempty"`
+	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+	Attempt           int    `json:"attempt,omitempty"`
+	CarriedFrom       int    `json:"carried_from,omitempty"`
 }
 
 // ToolIsolation is what a reviewer invocation's harness offered

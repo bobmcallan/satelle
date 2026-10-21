@@ -1,3 +1,8 @@
+## [0.0.717] - 2026-10-21
+
+### Fixed
+- A panel gate's seats each keep their own `reviewed` quotation (bounded and truncation-flagged like a single-seat verdict) and attempt on the combined review row. On the next presentation of the same edge, each seat is given its own prior verdict, so it judges only what changed. An unchanged seat accept carries, and a seat that was unavailable is judged in full. Before this, every panel round re-judged the whole artifact, because the combined row carried no seat's `reviewed`. (sty_da9e8d0a)
+
 ## [0.0.716] - 2026-10-21
 
 ### Added

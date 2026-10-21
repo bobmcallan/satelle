@@ -1053,6 +1053,13 @@ type PriorVerdict struct {
 	// verdict's cycle ended, so Reviewed is withheld and the gate re-judges.
 	ReviewedStale bool                 `json:"reviewed_stale,omitempty"`
 	EvidenceSince []verb.EvidenceSince `json:"evidence_since,omitempty"`
+	// Unavailable marks a panel seat's own entry for a round it never produced a
+	// verdict on (sty_da9e8d0a). It is a reject with no Reviewed, judged in full.
+	Unavailable bool `json:"unavailable,omitempty"`
+	// Seats is the panel fold of the ledger row this came from. It feeds
+	// seatPriorVerdicts and is never serialised: a seat sees its own entry, not
+	// the combined row.
+	Seats []verb.PanelSeat `json:"-"`
 }
 
 // PriorVerdictFrom is the one conversion from a ledger prior verdict to the
@@ -1067,6 +1074,7 @@ func PriorVerdictFrom(v verb.PriorVerdict) PriorVerdict {
 		ReviewedTruncated: v.ReviewedTruncated,
 		ReviewedStale:     v.ReviewedStale,
 		EvidenceSince:     v.EvidenceSince,
+		Seats:             v.Seats,
 	}
 }
 
@@ -1170,6 +1178,14 @@ func (g *Engine) fillPriorVerdicts(ctx context.Context, itemID, from, to string,
 	if mat != nil {
 		mat.PriorVerdicts = append([]PriorVerdict(nil), all...)
 	}
+	tp.PriorVerdicts = windowPriorVerdicts(all)
+}
+
+// windowPriorVerdicts is the most recent priorVerdictCount of all with each
+// note capped — what rides the payload inline. all is numbered over the full
+// history, so a window still reports how deep the edge is. A panel seat's own
+// priors take the same window.
+func windowPriorVerdicts(all []PriorVerdict) []PriorVerdict {
 	window := all
 	if len(window) > priorVerdictCount {
 		window = window[len(window)-priorVerdictCount:]
@@ -1178,11 +1194,11 @@ func (g *Engine) fillPriorVerdicts(ctx context.Context, itemID, from, to string,
 	for _, v := range window {
 		v.Notes = excerpt(v.Notes, priorVerdictNotesCeiling)
 		// Reviewed is the reviewer's quotation. It is copied whole onto this
-		// window and onto the material snapshot above. It is not excerpted:
+		// window and onto the material snapshot. It is not excerpted:
 		// a shortened quotation is not a citation.
 		out = append(out, v)
 	}
-	tp.PriorVerdicts = out
+	return out
 }
 
 // DefinitionEdit is one recorded edit to a story's definition while it was still
@@ -3281,8 +3297,7 @@ func (g *Engine) runReviewerRef(ctx context.Context, item workitem.Item, toStatu
 	if cerr != nil {
 		return verb.GateDecision{Gated: true, Skill: skill}, cerr
 	}
-	runs := g.runPanelSeats(ctx, item, toStatus, skill, ref.panel, prep, ref.parallel)
-	return g.foldPanel(ctx, skill, ref.combine, command, ref.panel, runs)
+	return g.runPanel(ctx, item, toStatus, skill, ref, command, prep)
 }
 
 // panelFolds reports whether this ref expands into seat runs and a combine
@@ -3381,7 +3396,11 @@ func (g *Engine) combineCommand(ctx context.Context, name string) (string, error
 // is an unavailable record; the loop continues. It is not a skill-level error.
 func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus, skill string, panel []string, prep reviewerPrep, cap int) []panelSeatRun {
 	runs := make([]panelSeatRun, len(panel))
+	// attempt is the edge's next verdict number over the FULL history, the scale
+	// fillPriorVerdicts numbers priors on; every seat of this round shares it.
+	attempt := len(prep.material.PriorVerdicts) + 1
 	one := func(i int, section string) {
+		defer func() { runs[i].record.Attempt = attempt }()
 		if ctx.Err() != nil {
 			runs[i] = panelSeatRun{record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: ctx.Err().Error()}}
 			return
@@ -3391,7 +3410,7 @@ func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus
 			runs[i] = panelSeatRun{record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: serr.Error()}}
 			return
 		}
-		res := g.invokeReviewerSeat(ctx, item, toStatus, skill, prep, seat)
+		res := g.invokeReviewerSeat(ctx, item, toStatus, skill, seatPrep(prep, skill, section), seat)
 		if res.Err != nil || res.Decision == nil {
 			notes := "reviewer produced no decision"
 			if res.Err != nil {
@@ -3405,8 +3424,11 @@ func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus
 		}
 		stampInvocation(res.Decision, res, seat)
 		runs[i] = panelSeatRun{
-			record: verb.PanelSeat{Seat: section, Accept: res.Decision.Accept, Notes: res.Decision.Notes},
-			stamp:  seatStamp(skill, section, res, res.Decision),
+			record: verb.PanelSeat{
+				Seat: section, Accept: res.Decision.Accept, Notes: res.Decision.Notes,
+				Reviewed: res.Decision.Reviewed, ReviewedTruncated: res.Decision.ReviewedTruncated,
+			},
+			stamp: seatStamp(skill, section, res, res.Decision),
 		}
 	}
 	if cap <= 1 {
@@ -3428,7 +3450,7 @@ func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
-				runs[i] = panelSeatRun{record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: ctx.Err().Error()}}
+				runs[i] = panelSeatRun{record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: ctx.Err().Error(), Attempt: attempt}}
 				return
 			}
 			one(i, section)
