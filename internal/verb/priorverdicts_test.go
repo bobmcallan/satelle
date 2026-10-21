@@ -169,6 +169,29 @@ func TestPriorVerdictStaleAfterNewEvidence(t *testing.T) {
 	}
 }
 
+// TestPriorVerdictIgnoresEngagementBookkeeping (sty_2d877fa2 AC1-3): the rows the
+// binary writes when a re-presented edge re-engages the story — trunk_check and
+// engagement_baseline — never end a verdict cycle, while a real plan attachment
+// recorded after them still does and is the only evidence listed.
+func TestPriorVerdictIgnoresEngagementBookkeeping(t *testing.T) {
+	db := wireLedgerOnly(t)
+	t0 := time.Now().Add(-time.Hour)
+
+	seedCycleVerdict(t, db, "sty_engage", "ENGAGE-WORDS", t0, t0.Add(3*time.Second))
+	for _, kind := range []string{ledger.KindTrunkCheck, ledger.KindEngagementBaseline} {
+		seedAt(t, db, "sty_engage", kind, map[string]any{}, t0.Add(time.Minute))
+		if v := latestVerdict(t, "sty_engage"); v.Reviewed != "ENGAGE-WORDS" || v.ReviewedStale || v.EvidenceSince != nil {
+			t.Fatalf("after %s verdict = %+v, want quotation kept and no stale marker", kind, v)
+		}
+	}
+
+	seedAt(t, db, "sty_engage", verb.KindStoryDocAttached, map[string]any{"name": "plan"}, t0.Add(2*time.Minute))
+	v := latestVerdict(t, "sty_engage")
+	if v.Reviewed != "" || !v.ReviewedStale || len(v.EvidenceSince) != 1 || v.EvidenceSince[0].Kind != verb.KindStoryDocAttached {
+		t.Fatalf("verdict = %+v, want stale with only the plan attachment listed", v)
+	}
+}
+
 // TestPriorVerdictUnchangedKeepsQuotation (AC2): no later evidence, or a legacy
 // verdict with no recorded_at, passes through exactly as before.
 func TestPriorVerdictUnchangedKeepsQuotation(t *testing.T) {
@@ -215,7 +238,8 @@ func TestPriorVerdictIgnoresCycleOwnRows(t *testing.T) {
 	selfTelemetry := []string{"agent-attempt", "gate-bundled", "agent-retry", "agent-failure", "agent-timeout",
 		"agent-stalled", "scoped-gate-skipped", "reviewer-isolation-warned", "agent-secondary-failover", "agent-interactive-denied"}
 	selfLedger := []string{ledger.KindAgentInvocation, ledger.KindStepCost, ledger.KindDriverUsage, ledger.KindSessionModel,
-		ledger.KindToolPermission, ledger.KindSessionAdvisory, ledger.KindBudgetOverrun, ledger.KindGateSkipped}
+		ledger.KindToolPermission, ledger.KindSessionAdvisory, ledger.KindBudgetOverrun, ledger.KindGateSkipped,
+		ledger.KindTrunkCheck, ledger.KindEngagementBaseline}
 	for _, id := range []string{"sty_bundle", "sty_propose"} {
 		for _, kind := range selfTelemetry {
 			seedAt(t, db, id, ledger.KindTelemetryEvent, telemetryKind(kind), t0.Add(time.Minute))

@@ -3,6 +3,7 @@ package ledger
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"uuid"
 )
@@ -39,6 +40,13 @@ type edgeRow struct {
 	Skill   string `json:"skill"`
 	Notes   string `json:"notes"`
 	Attempt string `json:"attempt"`
+	Agent   string `json:"agent"`
+	// Operation names the lifecycle hook (create_review, amend_review) a reviewer
+	// row records; empty on an edge's own rows.
+	Operation string `json:"operation"`
+	// StepSummary marks the step summariser's own invocation row, which
+	// evidences no presentation.
+	StepSummary bool `json:"step_summary"`
 }
 
 func decodeEdgeRow(e Entry) (edgeRow, bool) {
@@ -79,6 +87,9 @@ type AttemptOutcome struct {
 	// AcceptAt is the index in the entries slice of the attempt's
 	// readiness_accept row, or -1 when it has none.
 	AcceptAt int
+	// Rows are the indexes in the entries slice of the attempt's verdict rows,
+	// oldest first.
+	Rows []int
 }
 
 func isRejectKind(kind string) bool {
@@ -94,6 +105,13 @@ func isVerdictKind(kind string) bool {
 // step with a performer only are read the same way: the rows of an attempt are
 // the reviewer verdicts, the performer's reject, and the readiness accept.
 func edgeAttempts(entries []Entry, from, to string) []AttemptOutcome {
+	return edgeAttemptsOf(entries, from, to, false)
+}
+
+// edgeAttemptsOf is edgeAttempts; edgeOnly leaves out the rows a lifecycle hook
+// (create_review, amend_review) wrote, which guard an operation and are not a
+// presentation of the workflow's edge.
+func edgeAttemptsOf(entries []Entry, from, to string, edgeOnly bool) []AttemptOutcome {
 	var out []AttemptOutcome
 	index := map[string]int{}
 	legacy := 0
@@ -102,7 +120,7 @@ func edgeAttempts(entries []Entry, from, to string) []AttemptOutcome {
 			continue
 		}
 		r, ok := decodeEdgeRow(e)
-		if !ok || r.From != from || r.To != to {
+		if !ok || r.From != from || r.To != to || (edgeOnly && r.Operation != "") {
 			continue
 		}
 		id := r.Attempt
@@ -116,6 +134,7 @@ func edgeAttempts(entries []Entry, from, to string) []AttemptOutcome {
 			index[id] = n
 			out = append(out, AttemptOutcome{Attempt: id, AcceptAt: -1})
 		}
+		out[n].Rows = append(out[n].Rows, i)
 		switch {
 		case isRejectKind(e.Kind):
 			out[n].Rejected = true
@@ -192,6 +211,130 @@ func EdgeRounds(entries []Entry, from, to string) (accepted, rejected int) {
 		}
 	}
 	return accepted, rejected
+}
+
+// Presentation is ONE presentation of an edge to its gate: every row that
+// carries one attempt id. Accepted and Rejected follow the single rule
+// edgeAttempts applies to its verdict rows; NoVerdict marks a presentation that
+// wrote none — every seat that ran failed (an error, a turn cap), so only its
+// reviewer invocation rows exist — and is neither accepted nor rejected.
+type Presentation struct {
+	Attempt   string
+	Accepted  bool
+	Rejected  bool
+	NoVerdict bool
+	// Verdicts and Invocations are the indexes in the entries slice of the
+	// attempt's verdict rows and reviewer agent_invocation rows, oldest first.
+	Verdicts    []int
+	Invocations []int
+}
+
+// reviewerInvocation reports whether e is a reviewer agent_invocation row of the
+// workflow's own edge — not a performer's, a lifecycle hook's, the step
+// summariser's or a tool-permission event's — and decodes its edge fields.
+func reviewerInvocation(e Entry) (edgeRow, bool) {
+	if e.Kind != KindAgentInvocation || IsToolPermissionRow(e) {
+		return edgeRow{}, false
+	}
+	r, ok := decodeEdgeRow(e)
+	return r, ok && r.Agent == "reviewer" && r.Operation == "" && !r.StepSummary
+}
+
+// EdgePresentations enumerates the presentations of the from→to edge in entries,
+// oldest first: the attempts edgeAttempts finds from verdict rows, plus the
+// attempts only a reviewer invocation row evidences, so a presentation whose
+// seats all failed is counted rather than invisible. A reviewer invocation row
+// written before invocation rows carried an attempt id joins the attempt whose
+// verdict row names the same skill and was written at the same instant: one gate
+// run stamps every row it writes with the same time, so the instant — not row
+// order, which ties break by id — and the skill identify the run. A legacy row no
+// verdict matches (a step summariser's, say) is not a presentation and is left
+// out. It does not decide anything about reject budgets: a presentation with no
+// verdict is no reject (CountRejectedRounds and EdgeRounds read verdict rows only
+// and are unchanged).
+func EdgePresentations(entries []Entry, from, to string) []Presentation {
+	var out []Presentation
+	index := map[string]int{}
+	attempts := edgeAttemptsOf(entries, from, to, true)
+	type runSkill struct {
+		at    int64
+		skill string
+	}
+	legacy := map[runSkill]string{} // (instant a gate run wrote its rows, skill) -> its attempt
+	for _, a := range attempts {
+		index[a.Attempt] = len(out)
+		out = append(out, Presentation{Attempt: a.Attempt, Accepted: a.Accepted, Rejected: a.Rejected, Verdicts: a.Rows})
+		for _, i := range a.Rows {
+			if r, ok := decodeEdgeRow(entries[i]); ok && !entries[i].CreatedAt.IsZero() {
+				legacy[runSkill{entries[i].CreatedAt.UnixNano(), r.Skill}] = a.Attempt
+			}
+		}
+	}
+	for i, e := range entries {
+		r, ok := reviewerInvocation(e)
+		if !ok || r.From != from || r.To != to {
+			continue
+		}
+		id := r.Attempt
+		if id == "" && !e.CreatedAt.IsZero() {
+			// A bundle's row names every skill it judged, joined by "+".
+			for _, skill := range strings.Split(r.Skill, "+") {
+				if id = legacy[runSkill{e.CreatedAt.UnixNano(), skill}]; id != "" {
+					break
+				}
+			}
+		}
+		if id == "" {
+			continue
+		}
+		n, seen := index[id]
+		if !seen {
+			n = len(out)
+			index[id] = n
+			out = append(out, Presentation{Attempt: id, NoVerdict: true})
+		}
+		out[n].Invocations = append(out[n].Invocations, i)
+	}
+	first := func(p Presentation) int {
+		at := len(entries)
+		if len(p.Verdicts) > 0 {
+			at = p.Verdicts[0]
+		}
+		if len(p.Invocations) > 0 && p.Invocations[0] < at {
+			at = p.Invocations[0]
+		}
+		return at
+	}
+	sort.SliceStable(out, func(a, b int) bool { return first(out[a]) < first(out[b]) })
+	return out
+}
+
+// GatedEdges lists the distinct from→to edges that carry a reviewer verdict or a
+// reviewer invocation in entries, in the order each first appears. A lifecycle
+// hook's rows (create_review, amend_review) guard an operation, not an edge of
+// the route, and are left out.
+func GatedEdges(entries []Entry) [][2]string {
+	var out [][2]string
+	seen := map[[2]string]bool{}
+	for _, e := range entries {
+		var r edgeRow
+		var ok bool
+		if isVerdictKind(e.Kind) {
+			r, ok = decodeEdgeRow(e)
+			ok = ok && r.Operation == ""
+		} else {
+			r, ok = reviewerInvocation(e)
+		}
+		if !ok || r.From == "" && r.To == "" {
+			continue
+		}
+		k := [2]string{r.From, r.To}
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // ReadinessHolds reports whether the from→to edge's readiness was accepted and

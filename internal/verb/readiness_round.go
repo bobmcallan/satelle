@@ -104,6 +104,17 @@ func recordGateRound(ctx context.Context, current workitem.Item, to, attempt str
 	var out gateRound
 	dec, gerr := transitionGater.Gate(ctx, current, to)
 	if gerr != nil {
+		// A seat attempt that produced no verdict (a failed run, a turn cap)
+		// still measured something: record its invocation, under this
+		// presentation's attempt id, before the error is returned.
+		var failure *GateFailure
+		if errors.As(gerr, &failure) {
+			for _, stamp := range failure.Stamps {
+				appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "reviewer",
+					fmt.Sprintf("invoked reviewer (%s) for %s→%s with @skill:%s — %s", stamp.Command, current.Status, to, stamp.Skill, stamp.Outcome),
+					invocationPayload(current.Status, to, attempt, stamp), now)
+			}
+		}
 		return out, gerr
 	}
 	// An edge may carry several reviewers (a transition's reviewer list plus
@@ -136,7 +147,7 @@ func recordGateRound(ctx context.Context, current workitem.Item, to, attempt str
 			}
 			appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "reviewer",
 				fmt.Sprintf("invoked reviewer (%s) for %s→%s with @skill:%s seat %s", stamp.Command, current.Status, to, stamp.Skill, seat),
-				invocationPayload(current.Status, to, stamp), now)
+				invocationPayload(current.Status, to, attempt, stamp), now)
 		}
 		// Record HOW the isolated agent was invoked before its verdict — the
 		// resolved command/harness and the injected skill/rubric file — so the
@@ -155,7 +166,7 @@ func recordGateRound(ctx context.Context, current workitem.Item, to, attempt str
 			}
 			appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "reviewer",
 				fmt.Sprintf("invoked reviewer (%s) for %s→%s with @skill:%s", rv.Command, current.Status, to, rubrics),
-				invocationPayload(current.Status, to, inv), now)
+				invocationPayload(current.Status, to, attempt, inv), now)
 		}
 		if !rv.Accept {
 			appendLedgerEntry(ctx, current.ID, ledger.KindReviewReject, "reviewer",

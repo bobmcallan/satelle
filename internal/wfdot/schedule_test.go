@@ -106,3 +106,92 @@ func TestScheduleAndReviewerParallelAreTwoFields(t *testing.T) {
 		t.Errorf("schedule alone must not set reviewer fan-out: Parallel=%d ParallelSet=%v", st.Parallel, st.ParallelSet)
 	}
 }
+
+// A container step that declares nothing resolves to the default, parallel; the
+// authored Step stays as written.
+func TestAbsentScheduleResolvesToParallel(t *testing.T) {
+	body := scheduleSteps("")
+	cat, err := ParseSteps(body)
+	if err != nil {
+		t.Fatalf("ParseSteps: %v", err)
+	}
+	if got := stepProviding(t, cat, "ready").ChildSchedule(); got != SchedParallel || got != DefaultSchedule() {
+		t.Errorf("ChildSchedule = %q, want the default %q", got, SchedParallel)
+	}
+	spec, err := ParseRoute(waitsDone, body, "epic-parent", nil)
+	if err != nil {
+		t.Fatalf("ParseRoute: %v", err)
+	}
+	if st, _ := spec.StateNamed("ready"); st.Schedule != SchedParallel {
+		t.Errorf("State.Schedule = %q, want %q", st.Schedule, SchedParallel)
+	}
+	if st, _ := spec.StateNamed("raised"); st.Schedule != "" {
+		t.Errorf("a step that waits on no children has no schedule, got %q", st.Schedule)
+	}
+}
+
+// sequential = true is the user's override of the default.
+func TestSequentialTrueResolvesToSequential(t *testing.T) {
+	body := scheduleSteps("sequential = true")
+	cat, err := ParseSteps(body)
+	if err != nil {
+		t.Fatalf("ParseSteps: %v", err)
+	}
+	if got := stepProviding(t, cat, "ready").ChildSchedule(); got != SchedSequential {
+		t.Errorf("ChildSchedule = %q, want %q", got, SchedSequential)
+	}
+	spec, err := ParseRoute(waitsDone, body, "epic-parent", nil)
+	if err != nil {
+		t.Fatalf("ParseRoute: %v", err)
+	}
+	if st, _ := spec.StateNamed("ready"); st.Schedule != SchedSequential {
+		t.Errorf("State.Schedule = %q, want %q", st.Schedule, SchedSequential)
+	}
+	if len(LegacyScheduleSteps(cat)) != 0 {
+		t.Errorf("sequential = true is not the deprecated key: %v", LegacyScheduleSteps(cat))
+	}
+}
+
+// sequential agrees with the deprecated schedule = "sequential"; it contradicts
+// schedule = "parallel"; it needs waits_on_children.
+func TestSequentialRefusals(t *testing.T) {
+	if _, err := ParseSteps(scheduleSteps("sequential = true\nschedule = \"sequential\"")); err != nil {
+		t.Errorf("sequential = true beside schedule = sequential agrees and must parse: %v", err)
+	}
+	_, err := ParseSteps(scheduleSteps("sequential = true\nschedule = \"parallel\""))
+	if err == nil || !strings.Contains(err.Error(), "contradicts") || !strings.Contains(err.Error(), `"ready"`) {
+		t.Errorf("sequential = true beside schedule = parallel must be refused naming the step: %v", err)
+	}
+	body := strings.Replace(scheduleSteps("sequential = true"), "waits_on_children = true\n", "", 1)
+	_, err = ParseSteps(body)
+	if err == nil || !strings.Contains(err.Error(), "waits_on_children") || !strings.Contains(err.Error(), `"ready"`) {
+		t.Errorf("sequential on a non-container step must be refused naming the step: %v", err)
+	}
+	if _, err := ParseSteps(scheduleSteps("sequential = false")); err != nil {
+		t.Errorf("sequential = false is the default spelled out: %v", err)
+	}
+}
+
+// The deprecated key keeps its meaning and is listed for validate.
+func TestLegacyScheduleKeyKeepsMeaningAndIsListed(t *testing.T) {
+	for _, v := range []string{SchedParallel, SchedSequential} {
+		cat, err := ParseSteps(scheduleSteps(`schedule = "` + v + `"`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := stepProviding(t, cat, "ready").ChildSchedule(); got != v {
+			t.Errorf("schedule = %q resolves to %q, want %q", v, got, v)
+		}
+		legacy := LegacyScheduleSteps(cat)
+		if len(legacy) != 1 || legacy[0].Provides != "ready" || legacy[0].Schedule != v {
+			t.Errorf("LegacyScheduleSteps = %+v, want the ready step with %q", legacy, v)
+		}
+	}
+	cat, err := ParseSteps(scheduleSteps(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(LegacyScheduleSteps(cat)) != 0 {
+		t.Errorf("no key written, nothing deprecated: %v", LegacyScheduleSteps(cat))
+	}
+}

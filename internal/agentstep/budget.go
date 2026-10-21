@@ -27,14 +27,9 @@ func measureBudget(binding config.AgentBinding, budget config.Budget, u agentcli
 		}
 	}
 
-	if u.TurnsAvailable {
-		n := u.Turns
-		r.Turns = &n
-		if budget.Turns > 0 && n > budget.Turns {
-			r.Overruns = append(r.Overruns, verb.BudgetOverrun{Kind: verb.BudgetKindTurns, Budget: budget.Turns, Measured: n})
-		}
-	} else {
-		r.TurnsUnavailableReason = agentcli.TurnsUnavailableReason(iface, command)
+	r.Turns, r.TurnsUnavailableReason = turnsOf(u, iface, command)
+	if r.Turns != nil && budget.Turns > 0 && *r.Turns > budget.Turns {
+		r.Overruns = append(r.Overruns, verb.BudgetOverrun{Kind: verb.BudgetKindTurns, Budget: budget.Turns, Measured: *r.Turns})
 	}
 
 	if u.Available {

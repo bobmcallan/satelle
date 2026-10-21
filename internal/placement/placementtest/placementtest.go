@@ -8,6 +8,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,22 @@ obligations = ["raised", "coded", "closed"]
 [epic-parent]
 obligations = ["raised", "ready", "parent-closed"]
 `
+
+// scheduleLine renders the container step's schedule setting: nothing for "" (the
+// parallel default), a line verbatim when it already is one (SequentialKey), else
+// the deprecated `schedule = "<value>"` key.
+func scheduleLine(schedule string) string {
+	switch {
+	case schedule == "":
+		return ""
+	case strings.Contains(schedule, "="):
+		return schedule + "\n"
+	}
+	return `schedule = "` + schedule + `"` + "\n"
+}
+
+// SequentialKey is the user's override of the parallel default, for Wire.
+const SequentialKey = "sequential = true"
 
 func routeStep(schedule string) string {
 	return `[raised]
@@ -44,8 +61,7 @@ requires = ["coded"]
 [ready]
 status = "ready"
 waits_on_children = true
-schedule = "` + schedule + `"
-requires = ["raised"]
+` + scheduleLine(schedule) + `requires = ["raised"]
 
 [parent-closed]
 status = "done"
@@ -56,8 +72,9 @@ requires = ["ready"]
 }
 
 // Wire opens a real store whose workflows declare an epic route with the given
-// child schedule ("parallel" or "sequential"), wires it into verb and unwires it
-// on cleanup. The assignee resolver is left unwired: the session starts
+// child schedule — "" (nothing set: parallel), SequentialKey, or a deprecated
+// schedule value ("parallel" or "sequential") — wires it into verb and unwires
+// it on cleanup. The assignee resolver is left unwired: the session starts
 // local-only.
 func Wire(t *testing.T, schedule string) *store.DB {
 	t.Helper()

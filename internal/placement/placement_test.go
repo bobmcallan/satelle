@@ -28,6 +28,8 @@ func TestDecide(t *testing.T) {
 		wantNote   string
 	}{
 		{name: "parallel child signed in is remote", schedule: "parallel", signedIn: true, step: declared, wantAgent: "coder-cloud", wantRemote: true},
+		{name: "nothing set is parallel and remote", schedule: "", signedIn: true, step: declared, wantAgent: "coder-cloud", wantRemote: true},
+		{name: "sequential = true stays local", schedule: placementtest.SequentialKey, signedIn: true, step: declared, wantAgent: "coder"},
 		{name: "local tag pins the child local", schedule: "parallel", signedIn: true, step: declared, tags: []string{"lane:trunk"}, wantAgent: "coder"},
 		{name: "sequential epic stays local", schedule: "sequential", signedIn: true, step: declared, wantAgent: "coder"},
 		{name: "not an epic child stays local", schedule: "parallel", signedIn: true, step: declared, orphan: true, wantAgent: "coder"},

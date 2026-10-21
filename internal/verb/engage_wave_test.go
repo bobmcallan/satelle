@@ -20,6 +20,12 @@ func engageWaveWF(schedule string) map[string]string {
 	if schedule != "" {
 		line = `schedule = "` + schedule + `"` + "\n"
 	}
+	return engageWaveWFLine(line)
+}
+
+// engageWaveWFLine is engageWaveWF with the container step's schedule line
+// authored verbatim (e.g. the `sequential = true` override).
+func engageWaveWFLine(line string) map[string]string {
 	return routeHalves(
 		`["*"]
 obligations = ["raised", "planned", "coded", "closed"]
@@ -62,8 +68,14 @@ requires = ["coded"]
 // worktrees. It returns the store for lease assertions.
 func wireEngageWave(t *testing.T, schedule string) *store.DB {
 	t.Helper()
+	return wireEngageWaveWith(t, engageWaveWF(schedule))
+}
+
+// wireEngageWaveWith is wireEngageWave over an already-built workflow fixture.
+func wireEngageWaveWith(t *testing.T, wf map[string]string) *store.DB {
+	t.Helper()
 	withWiring(t)
-	db := wireWithWorkflowsStore(t, engageWaveWF(schedule))
+	db := wireWithWorkflowsStore(t, wf)
 	verb.SetEngagementMode(config.Config{Engagement: config.EngagementConfig{Parallel: config.ParallelEpic}})
 	return db
 }
@@ -203,24 +215,84 @@ func TestEngageMidFlightChildIsNotReRefused(t *testing.T) {
 	wantContains(t, setStatus(t, b.ID, "plan"), a.ID, b.ID, "depends-on")
 }
 
-// AC3: a container whose route declares no schedule. story wave refuses it, and
-// that refusal alone does not block engaging its child.
-func TestEngageUnscheduledContainerFollowsSeatModeOnly(t *testing.T) {
+// AC1: a container whose route declares no schedule is parallel — the wave
+// returns every runnable child, and engagement enforces it like any parallel
+// epic: a child waiting on a dependency is refused as off-wave.
+func TestEngageUnscheduledContainerIsParallelByDefault(t *testing.T) {
 	wireEngageWave(t, "")
 	epic, child := engageWaveEpic(t)
 	a := child()
-	b := child("depends-on:" + child().ID) // would be omitted if a schedule existed
+	dep := child()
+	b := child("depends-on:" + dep.ID)
 
-	if _, err := wave(t, epic.ID); err == nil || !strings.Contains(err.Error(), "no schedule is declared") {
-		t.Fatalf("story wave must refuse an unscheduled container: %v", err)
+	res, err := wave(t, epic.ID)
+	if err != nil || res.Schedule != "parallel" || len(res.Runnable) != 2 {
+		t.Fatalf("an unscheduled container must be parallel: %+v %v", res, err)
 	}
-	for _, id := range []string{a.ID, b.ID} {
-		if err := setStatus(t, id, "plan"); err != nil && strings.Contains(err.Error(), "not in the wave") {
-			t.Errorf("an unscheduled epic must not refuse engagement on the wave: %v", err)
-		}
+	wantContains(t, setStatus(t, b.ID, "plan"), dep.ID, "not in the wave")
+	if err := setStatus(t, a.ID, "plan"); err != nil {
+		t.Errorf("a wave-eligible child of an unscheduled epic must engage: %v", err)
 	}
-	if err := setStatus(t, a.ID, "plan"); err != nil && !strings.Contains(err.Error(), "engagement seat") {
-		t.Errorf("only the existing seat/tree rules may refuse: %v", err)
+}
+
+// AC1 (seat): with no schedule setting, under [engagement] parallel = "epic",
+// siblings of an epic hold seats alongside each other from distinct worktrees.
+func TestEngageUnscheduledSiblingsHoldSeatsFromDistinctWorktrees(t *testing.T) {
+	treeA, treeB := twoWorktrees(t)
+	chdir(t, treeA)
+	wireEngageWave(t, "")
+	_, child := engageWaveEpic(t)
+	a, b := child(), child()
+
+	if err := setStatus(t, a.ID, "plan"); err != nil {
+		t.Fatalf("first sibling: %v", err)
+	}
+	chdir(t, treeB)
+	if err := setStatus(t, b.ID, "plan"); err != nil {
+		t.Fatalf("an unscheduled epic's second sibling must hold a seat from its own worktree: %v", err)
+	}
+}
+
+// AC1/AC2 (seat key): [engagement] parallel stays the only switch that lets
+// siblings share a seat, and the route schedule only narrows it — a child of a
+// sequential epic keys on its own id even under epic mode, so siblings conflict.
+func TestSeatKeyFollowsTheContainerSchedule(t *testing.T) {
+	cases := []struct {
+		name       string
+		wf         map[string]string
+		mode       string
+		keyIsEpic  bool
+		lookupMiss bool
+	}{
+		{"default parallel, epic mode", engageWaveWFLine(""), config.ParallelEpic, true, false},
+		{"deprecated parallel, epic mode", engageWaveWF("parallel"), config.ParallelEpic, true, false},
+		{"sequential = true, epic mode", engageWaveWFLine("sequential = true\n"), config.ParallelEpic, false, false},
+		{"deprecated sequential, epic mode", engageWaveWF("sequential"), config.ParallelEpic, false, false},
+		{"default parallel, none mode", engageWaveWFLine(""), config.ParallelNone, false, false},
+		{"unresolvable container keeps the parent key", engageWaveWFLine("sequential = true\n"), config.ParallelEpic, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withWiring(t)
+			wireWithWorkflows(t, tc.wf)
+			verb.SetEngagementMode(config.Config{Engagement: config.EngagementConfig{Parallel: tc.mode}})
+			epic, child := engageWaveEpic(t)
+			c := child()
+			if tc.lookupMiss {
+				// A parent_id the store cannot resolve to an epic container: the
+				// schedule lookup fails and the key stays the mode's own.
+				c.ParentID = "sty_missing0"
+				c.Tags = nil
+				epic.ID = c.ParentID
+			}
+			want := c.ID
+			if tc.keyIsEpic {
+				want = epic.ID
+			}
+			if got := verb.SeatKeyFor(context.Background(), c); got != want {
+				t.Errorf("seat key = %q, want %q", got, want)
+			}
+		})
 	}
 }
 

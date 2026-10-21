@@ -71,7 +71,7 @@ func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatu
 		Owner:     owner,
 		State:     targetStatus,
 		StorySeat: occupiesSeat,
-		SeatKey:   seatKeyFor(item),
+		SeatKey:   seatKeyFor(ctx, item),
 		Worktree:  engagementWorktree(),
 		SessionID: sessionID,
 	})
@@ -376,7 +376,7 @@ func refuseSecondEngagingStoryDerived(ctx context.Context, excludeID, targetStat
 	// right after the probe), and the two would disagree the moment a repo
 	// admitted co-holders. Both keys are derived by seatKeyFor, each from its own
 	// item, so the default mode (unique key per item) still refuses everything.
-	selfKey := seatKeyFor(item)
+	selfKey := seatKeyFor(ctx, item)
 	for _, other := range others {
 		if other.ID == excludeID {
 			continue
@@ -386,7 +386,7 @@ func refuseSecondEngagingStoryDerived(ctx context.Context, excludeID, targetStat
 			continue
 		}
 		if engaged {
-			otherKey := seatKeyFor(other)
+			otherKey := seatKeyFor(ctx, other)
 			if selfKey != "" && otherKey != "" && selfKey == otherKey {
 				continue // admitted co-holder; the lease path owns the tree rule
 			}
@@ -441,7 +441,7 @@ func refuseSecondEngagingStory(ctx context.Context, excludeID, targetStatus stri
 		owner := lease.ResolveOwner()
 		_, outcome, holder, aerr := ls.AcquireWith(ctx, lease.AcquireOpts{
 			ItemID: probeID, Kind: "story", Owner: owner, State: targetStatus,
-			StorySeat: true, SeatKey: seatKeyFor(item), Worktree: engagementWorktree(),
+			StorySeat: true, SeatKey: seatKeyFor(ctx, item), Worktree: engagementWorktree(),
 		})
 		if aerr != nil {
 			return aerr

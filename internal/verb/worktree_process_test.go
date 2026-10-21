@@ -1,6 +1,7 @@
 package verb
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,7 +72,7 @@ func TestWorktreeSeatKeyUsesProcessConfig(t *testing.T) {
 		t.Fatalf("process mode = %q", a.ProcessConfig.ResolveEngagementParallel())
 	}
 	SetEngagementMode(a.ProcessConfig)
-	got := seatKeyFor(workitem.Item{ID: "sty_child", ParentID: "sty_epic", Category: "feature"})
+	got := seatKeyFor(context.Background(), workitem.Item{ID: "sty_child", ParentID: "sty_epic", Category: "feature"})
 	if got != "sty_epic" {
 		t.Fatalf("seat key = %q, want the parent id from the main tree's epic mode", got)
 	}

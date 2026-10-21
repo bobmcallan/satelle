@@ -3,7 +3,7 @@ name: satelle-agent-goals
 type: principle
 tags: [type:principle, principles:session]
 applies_to: ["*"]
-description: Drive a story to the terminal state of its configured workflow with every gate accepted. Status is the sole proof of done. Never route around a gate; surface a structural gap and stop. One story at a time unless the container declares a schedule; then the wave says who may start.
+description: Drive a story to the terminal state of its configured workflow with every gate accepted. Status is the sole proof of done. Never route around a gate; surface a structural gap and stop. One story at a time outside a container or under its sequential = true override; otherwise the wave says who may start.
 ---
 
 # Agent goals
@@ -34,9 +34,10 @@ and does not change status. When it returns, this session runs the next
 `satelle story set` the workflow names. An edit refusal on a step allocated to
 that performer fences source edits. The drive stays in this session.
 
-**One story at a time — when the container declares no schedule.** Drive a
-single engaged story to its terminal state before engaging another. This is not
-the rule once a container declares a schedule; see *Driving an epic*.
+**One story at a time — outside a container, or when it sets sequential = true.**
+Drive a single engaged story to its terminal state before engaging another.
+Inside a container, children run in parallel by default and the wave says who
+may start; see *Driving an epic*.
 
 **Epics close on their children.** An epic is complete only when every child
 story is terminal ([[satelle-story-classification]] defines the children).

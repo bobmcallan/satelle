@@ -55,19 +55,21 @@ func TestSeatKeyForModes(t *testing.T) {
 	child := workitem.Item{ID: "sty_child", Kind: workitem.KindStory, ParentID: "sty_epic"}
 	lone := workitem.Item{ID: "sty_lone", Kind: workitem.KindStory}
 
+	ctx := context.Background()
+
 	ClearEngagementMode()
-	if got := seatKeyFor(child); got != "sty_child" {
+	if got := seatKeyFor(ctx, child); got != "sty_child" {
 		t.Errorf("default mode key = %q, want the item's own id", got)
 	}
-	if got := seatKeyFor(lone); got != "sty_lone" {
+	if got := seatKeyFor(ctx, lone); got != "sty_lone" {
 		t.Errorf("default mode key (parentless) = %q", got)
 	}
 
 	engagementParallel = "epic"
-	if got := seatKeyFor(child); got != "sty_epic" {
+	if got := seatKeyFor(ctx, child); got != "sty_epic" {
 		t.Errorf("epic mode key = %q, want the parent id", got)
 	}
-	if got := seatKeyFor(lone); got != "sty_lone" {
+	if got := seatKeyFor(ctx, lone); got != "sty_lone" {
 		t.Errorf("epic mode parentless key = %q, want a singleton claim on its own id", got)
 	}
 }

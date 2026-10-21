@@ -1,3 +1,29 @@
+## [0.0.719] - 2026-10-21
+
+### Added
+- Every reviewer seat attempt's agent_invocation row records its turns and tool calls, each with an adapter-named reason when the harness reports none (never a bare zero). An attempt the harness stopped at its turn cap is recorded with outcome `max-turns`, distinct from a reject, and a seat with no verdict still leaves its usage row. `satelle story cost` reports a story's review rounds per gated edge (presentations, and per seat attempt its turns, tool calls, outcome and duration), with an epic form. (sty_46e950ab)
+
+### Fixed
+- Engagement bookkeeping rows the binary writes for itself (`trunk_check`, the engagement baseline) no longer end a reviewer's verdict cycle. Each presentation to plan re-engages the story, so before this fix every re-presented edge had its prior verdict marked `reviewed_stale` and was re-judged in full instead of on the difference. (sty_2d877fa2)
+- The embedded `satelle-agent-goals` principle ties "one story at a time" to being outside a container, or to the container's `sequential = true` override, not to a missing schedule. Since 0.0.718, a container with no schedule runs its children in parallel. (sty_eb5135ca)
+
+## [serve-v0.0.187] - 2026-10-21
+
+### Changed
+- The service binary carries the run-count and outcome fields on reviewer invocation rows, the corrected engagement-bookkeeping classification, and the revised agent-goals principle. (sty_46e950ab, sty_2d877fa2, sty_eb5135ca)
+
+## [0.0.718] - 2026-10-21
+
+### Changed
+- A container's children run in parallel when nothing is configured. `satelle story wave` no longer refuses a container whose waits_on_children step declares no schedule, and under `[engagement] parallel = "epic"` its children may hold seats alongside each other from their own worktrees. (sty_eb5135ca)
+- `sequential = true` on the waits_on_children step is the one schedule setting, a user override. Wave then returns the runnable set only when it holds exactly one child, and siblings are limited to one seat. It is refused on any other step or beside `schedule = "parallel"`. (sty_eb5135ca)
+- The `schedule = "parallel" | "sequential"` key keeps its meaning, and `satelle validate` now warns that it is deprecated: omit it (parallel is the default) or set `sequential = true`. `satelle help epic-wave`, the workflow-convert help and `satelle story wave --help` describe the default and the override. (sty_eb5135ca)
+
+## [serve-v0.0.186] - 2026-10-21
+
+### Changed
+- The service binary resolves an unset container schedule as parallel. (sty_eb5135ca)
+
 ## [0.0.717] - 2026-10-21
 
 ### Fixed

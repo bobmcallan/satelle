@@ -310,6 +310,9 @@ type claudeJSONEnvelope struct {
 	TotalCostUSD *float64 `json:"total_cost_usd"`
 	// NumTurns is the run's own turn count, when the envelope carries one.
 	NumTurns *int `json:"num_turns"`
+	// Subtype is the result's kind: "success", or an "error_*" kind such as
+	// error_max_turns, whose envelope carries usage and num_turns but no result.
+	Subtype string `json:"subtype"`
 }
 
 // grokJSONEnvelope is the shape of `grok -p … --output-format json` headless
@@ -362,7 +365,10 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 		return text, u
 	}
 	var claude claudeJSONEnvelope
-	if err := json.Unmarshal(trimmed, &claude); err == nil && claude.Result != "" {
+	// An error result (error_max_turns, …) has no `result` text but still reports
+	// what the run used: its usage and turns are read, and its stdout is returned
+	// verbatim so the caller can still see why it ended.
+	if err := json.Unmarshal(trimmed, &claude); err == nil && (claude.Result != "" || strings.HasPrefix(claude.Subtype, "error")) {
 		u := UsageResult{}
 		if claude.Usage != nil {
 			u.Available = true
@@ -385,6 +391,9 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 		}
 		applyCost(&u, claude.TotalCostUSD, "claude command")
 		applyTurns(&u, claude.NumTurns)
+		if claude.Result == "" {
+			return stdout, u
+		}
 		return []byte(claude.Result), u
 	}
 	var grok grokJSONEnvelope
