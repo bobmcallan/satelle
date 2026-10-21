@@ -23,7 +23,13 @@ type Frame struct {
 	Data []byte
 }
 
-type slot struct{ local, remote *websocket.Conn }
+// slot is one session's two ends. ready is non-nil while a local end has been
+// admitted but is not yet recorded in local (its upgrade is being answered): the
+// contract's "local end waiting" starts at the admission, not at the 101.
+type slot struct {
+	local, remote *websocket.Conn
+	ready         chan struct{}
+}
 
 // Relay is the stand-in relay. Create it with New.
 type Relay struct {
@@ -38,12 +44,15 @@ type Relay struct {
 	upgrades int
 	reject   int
 	other    http.Handler
+
+	holdArmed bool
+	holds     map[string]chan struct{}
 }
 
 // New starts a relay for the life of t.
 func New(t testing.TB) *Relay {
 	t.Helper()
-	r := &Relay{slots: map[string]*slot{}}
+	r := &Relay{slots: map[string]*slot{}, holds: map[string]chan struct{}{}}
 	r.srv = httptest.NewTLSServer(http.HandlerFunc(r.serve))
 	t.Cleanup(func() {
 		r.mu.Lock()
@@ -69,6 +78,17 @@ func (r *Relay) RejectBearers(n int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.reject = n
+}
+
+// HoldLocalUntilRemote makes the next admitted local upgrade wait, after its 101
+// is written and before the relay records it, until a remote upgrade request for
+// the same session reaches the relay (or the local's request ends). It pins the
+// window in which a launched remote can arrive before the local end is recorded,
+// so a test can prove the relay pairs it instead of refusing it.
+func (r *Relay) HoldLocalUntilRemote() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.holdArmed = true
 }
 
 // Attempts counts every upgrade request the relay received, rejected or not.
@@ -138,32 +158,78 @@ func (r *Relay) serve(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+	// A remote's arrival is signalled in the same critical section as its pairing
+	// decision, so a held local cannot be recorded before the remote is judged.
+	if role == "remote" {
+		if ch := r.holds[session]; ch != nil {
+			close(ch)
+			delete(r.holds, session)
+		}
+	}
 	sl := r.slots[session]
+	var wait, hold chan struct{}
 	switch {
-	case role == "local" && sl != nil && sl.local != nil,
-		role == "remote" && (sl == nil || sl.local == nil || sl.remote != nil),
-		role != "local" && role != "remote":
+	case role == "local" && (sl == nil || sl.local == nil && sl.ready == nil):
+		if sl == nil {
+			sl = &slot{}
+			r.slots[session] = sl
+		}
+		sl.ready = make(chan struct{})
+		if r.holdArmed {
+			r.holdArmed = false
+			hold = make(chan struct{})
+			r.holds[session] = hold
+		}
+	case role == "remote" && sl != nil && sl.remote == nil && (sl.local != nil || sl.ready != nil):
+		if sl.local == nil {
+			wait = sl.ready
+		}
+	default:
 		r.mu.Unlock()
 		http.Error(w, "no such pairing", http.StatusNotFound)
 		return
 	}
 	r.mu.Unlock()
 
+	if wait != nil {
+		select {
+		case <-wait:
+		case <-req.Context().Done():
+			return
+		}
+		r.mu.Lock()
+		sl = r.slots[session]
+		paired := sl != nil && sl.local != nil && sl.remote == nil
+		r.mu.Unlock()
+		if !paired {
+			http.Error(w, "no such pairing", http.StatusNotFound)
+			return
+		}
+	}
+
 	c, err := websocket.Accept(w, req, nil)
 	if err != nil {
+		if role == "local" {
+			r.release(session, sl)
+		}
 		return
 	}
 	c.SetReadLimit(1 << 20)
 
+	if hold != nil {
+		select {
+		case <-hold:
+		case <-req.Context().Done():
+		}
+	}
+
 	r.mu.Lock()
 	r.upgrades++
 	r.conns = append(r.conns, c)
-	if r.slots[session] == nil {
-		r.slots[session] = &slot{}
-	}
-	sl = r.slots[session]
 	if role == "local" {
 		sl.local = c
+		close(sl.ready)
+		sl.ready = nil
 	} else {
 		sl.remote = c
 	}
@@ -183,6 +249,20 @@ func (r *Relay) serve(w http.ResponseWriter, req *http.Request) {
 	c.CloseNow()
 	if peer != nil {
 		peer.CloseNow()
+	}
+}
+
+// release drops a local reservation whose upgrade failed, waking any remote
+// waiting on it (which then finds no local end and is refused).
+func (r *Relay) release(session string, sl *slot) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if sl.ready != nil {
+		close(sl.ready)
+		sl.ready = nil
+	}
+	if sl.local == nil && sl.remote == nil && r.slots[session] == sl {
+		delete(r.slots, session)
 	}
 }
 

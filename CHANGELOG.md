@@ -1,3 +1,8 @@
+## [0.0.711] - 2026-10-21
+
+### Fixed
+- The internal/remotechan relay tests no longer time out at their 20-second wait under full-suite or CI load. The test relay (relaytest.Relay) now registers the local end before it answers the upgrade, so a remote that arrives in between is paired instead of refused with a 404; a remote with no local end, a second remote on a paired session and an unknown role are still refused. Test support only; no shipped behaviour changes. (sty_656b6cfc)
+
 ## [0.0.710] - 2026-10-21
 
 ### Fixed

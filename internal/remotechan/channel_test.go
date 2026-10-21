@@ -267,6 +267,21 @@ func TestRelayStill401AfterRefreshIsRefused(t *testing.T) {
 	}
 }
 
+// The launched remote's upgrade can reach the relay before it has recorded the
+// local end whose 101 it just wrote; Open still pairs with it.
+func TestOpenPairsWhenRemoteArrivesDuringLocalRegistration(t *testing.T) {
+	h := newHarness(t, true)
+	h.relay.HoldLocalUntilRemote()
+	local, remote, _ := h.connect(t)
+	ctx := testCtx(t)
+	if err := local.Send(ctx, "", []byte("one")); err != nil {
+		t.Fatalf("local Send: %v", err)
+	}
+	if m, err := remote.Recv(ctx); err != nil || string(m.Body) != "one" {
+		t.Fatalf("remote Recv = %q, %v; want one", m.Body, err)
+	}
+}
+
 func TestJoinWithNoLocalEndIsRefused(t *testing.T) {
 	h := newHarness(t, true)
 	id, _ := NewIdentity()

@@ -275,6 +275,11 @@ func (h *harness) connect(t *testing.T) (local, remote *Session, spec LaunchSpec
 	l, res, specs := h.launcher(t, id, id.Public(), func(s LaunchSpec) string { return s.Token })
 	local, err = Open(testCtx(t), h.client, h.relay.URL(), l, h.opts()...)
 	if err != nil {
+		select {
+		case r := <-res: // the remote's side of a failed pairing, when it has one
+			t.Fatalf("Open: %v (remote Join: %v)", err, r.err)
+		default:
+		}
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { local.Close() })
