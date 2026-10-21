@@ -132,14 +132,32 @@ func releaseAtRest(ctx context.Context, errw io.Writer, a *app.App, h holdSite, 
 		if !rest.Known || !(rest.Terminal || rest.Parked) {
 			continue
 		}
-		if err := h.client.ReleaseHold(ctx, h.project, id); err != nil {
-			fmt.Fprintf(errw, "satelle: hold release for %s: %v\n", id, err)
-			continue
+		if dropHold(ctx, errw, h, id) {
+			released = append(released, id)
 		}
-		_ = hosted.ForgetHold(h.server, h.project, h.repoRoot, id)
-		released = append(released, id)
 	}
 	return released
+}
+
+// releaseHold releases id's hosted hold when it is held here, whatever state the
+// story is in: the caller is the run that took the hold and is done with it. It
+// reports whether a hold was released.
+func releaseHold(ctx context.Context, errw io.Writer, h holdSite, id string) bool {
+	reg, err := hosted.LoadHolds(h.server, h.project, h.repoRoot)
+	if err != nil || h.client.Location() == "" || reg[id].Location != h.client.Location() {
+		return false
+	}
+	return dropHold(ctx, errw, h, id)
+}
+
+// dropHold releases id's hold on the server and forgets the local record of it.
+func dropHold(ctx context.Context, errw io.Writer, h holdSite, id string) bool {
+	if err := h.client.ReleaseHold(ctx, h.project, id); err != nil {
+		fmt.Fprintf(errw, "satelle: hold release for %s: %v\n", id, err)
+		return false
+	}
+	_ = hosted.ForgetHold(h.server, h.project, h.repoRoot, id)
+	return true
 }
 
 // publishedStoryIDs names every story an ingest carried a row for.

@@ -60,6 +60,11 @@ const (
 	KindGateSkipped = "gate_skipped"
 	// KindStepSummary is the summariser's prose recap of an enacted transition.
 	KindStepSummary = "step_summary"
+	// KindDriveStopped records that a headless story drive ended short of its
+	// route's exit and could not park the story: the reason, the step and
+	// performer it stopped on, and the performer's last message. A park the drive
+	// did set is a comment row (source=drive) instead; the server alerts on both.
+	KindDriveStopped = "drive-stopped"
 	// KindAgentInvocation records HOW an isolated agent was invoked for a step —
 	// the agent role, the resolved command/harness, and the injected-context source
 	// (the skill/rubric file) — so the timeline shows what command ran with what

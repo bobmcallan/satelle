@@ -780,12 +780,24 @@ the move to the workflow's blocked step — when the relay ends `budget` or
 `no_progress`, when the step's `reject_budget` is spent, when an edge whose step
 declares no `reject_budget` has been rejected ten times, or when the executor
 rejects its step. A performer reject and a broken spend bound park through the
-mechanisms that already do. A workflow with no park state leaves nowhere to put
-the question, so the drive refuses instead.
+mechanisms that already do; the drive adds its own park comment to those.
+
+**Every end is a record.** After its first presentation a drive never ends short
+of the route's exit without one: a refused presentation, a performer that failed,
+a context that ended (a timeout, a cancel) or a session that ended without its
+verdict also park the story. Every park the drive writes is a comment row with
+payload `source=drive`, `step`, `performer`, `reason` (`step <s>, performer <p>:
+<what was missing>`), `last_message` (the tail, at most 2000 bytes, of the newest
+performer `agent_invocation` row's `last_message`) and `location_id`, which is
+what satelle-server alerts the developer on. A workflow with no park state, or a
+park the blocked gate refuses, leaves nowhere to put the question: the drive
+writes one `drive-stopped` row with the same payload and `park_error`, releases
+its own hold, and exits 1. A refusal before the first presentation (preflight, no
+route) parks and records nothing.
 
 **Exit status.** `0` the story reached a terminal step; `3` it is parked (the
-status and the recorded reason are printed); `1` the drive refused or a
-mechanism failed and the story stayed where it was. An agent caller's drive is
+status and the recorded reason are printed); `1` the drive refused before it
+began, or stopped and could not park (`<id> stopped at <status>: <reason>`). An agent caller's drive is
 handed off as one gated run, like `story rework`; inside that process every gate
 runs in the foreground, and the seat lease and ledger rows carry the resolved
 session.

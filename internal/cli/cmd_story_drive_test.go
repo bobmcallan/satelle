@@ -240,6 +240,7 @@ func TestStoryDriveWalksTheSpineToDone(t *testing.T) {
 func TestStoryDriveRefusesAnInLoopExecutor(t *testing.T) {
 	f := newDriveFixture(t, driveOpts{executorCommand: "in-loop"})
 	id := f.create()
+	before := len(f.rows(id))
 	out, err := runRoot(t, "story", "drive", id)
 	if err == nil {
 		t.Fatalf("an in-loop executor must be refused:\n%s", out)
@@ -255,12 +256,16 @@ func TestStoryDriveRefusesAnInLoopExecutor(t *testing.T) {
 	if got := storyStatus(t, id); got != "backlog" || len(f.edges(id)) != 0 {
 		t.Errorf("a refused drive makes no transition: status %q, edges %v", got, f.edges(id))
 	}
+	if after := f.rows(id); len(after) != before {
+		t.Errorf("a refusal before the first move writes nothing: %d ledger rows became %d", before, len(after))
+	}
 }
 
 // AC2, case 2: a step whose named agent is bound in-loop is refused the same way.
 func TestStoryDriveRefusesANamedAgentBoundInLoop(t *testing.T) {
 	f := newDriveFixture(t, driveOpts{coderCommand: "in-loop"})
 	id := f.create()
+	before := len(f.rows(id))
 	out, err := runRoot(t, "story", "drive", id)
 	if err == nil {
 		t.Fatalf("an in-loop named agent must be refused:\n%s", out)
@@ -272,6 +277,9 @@ func TestStoryDriveRefusesANamedAgentBoundInLoop(t *testing.T) {
 	}
 	if ExitCodeOf(err) != 1 || storyStatus(t, id) != "backlog" {
 		t.Errorf("a refusal exits 1 and moves nothing: %d, %q", ExitCodeOf(err), storyStatus(t, id))
+	}
+	if after := f.rows(id); len(after) != before {
+		t.Errorf("a refusal before the first move writes nothing: %d ledger rows became %d", before, len(after))
 	}
 }
 
@@ -376,20 +384,34 @@ func TestStoryDriveParksOnASpentRejectBudgetAndExitsThree(t *testing.T) {
 	}
 }
 
-// AC4: an edge with no reject_budget is bounded by the drive itself, and a
-// workflow that offers no park state to hold the question is a refusal (exit 1).
-func TestStoryDriveWithNoParkStateRefuses(t *testing.T) {
+// AC5: a workflow that offers no park state to hold the question cannot park the
+// story, so the drive records the stop as a drive-stopped row and exits 1, printing
+// where and why it stopped.
+func TestStoryDriveWithNoParkStateStops(t *testing.T) {
 	f := newDriveFixture(t, driveOpts{gateRejects: 999, rejectBudget: 1, noPark: true})
 	id := f.create()
 	out, err := runRoot(t, "story", "drive", id)
 	if err == nil {
-		t.Fatalf("a drive that must park but cannot has to refuse:\n%s", out)
+		t.Fatalf("a drive that must park but cannot has to stop:\n%s", out)
 	}
-	if ExitCodeOf(err) != 1 || !strings.Contains(err.Error(), "no park state") {
-		t.Errorf("want exit 1 naming the missing park state, got %d: %v", ExitCodeOf(err), err)
+	line := id + " stopped at backlog: step plan, performer planner:"
+	if ExitCodeOf(err) != 1 || !strings.Contains(out, line) || !strings.Contains(err.Error(), line) {
+		t.Errorf("want exit 1 and %q on the output, got %d: %v\n%s", line, ExitCodeOf(err), err, out)
 	}
 	if got := storyStatus(t, id); got == "blocked" {
 		t.Errorf("no park state exists, yet the story is %q", got)
+	}
+	var stops int
+	for _, e := range f.rows(id) {
+		if e.Kind == ledger.KindDriveStopped {
+			stops++
+			if !strings.Contains(e.Body, "NOTE-FIX-THE-PLAN") || !strings.Contains(string(e.Payload), "no park state") {
+				t.Errorf("the stop row must carry the objection and why it could not park: %q %s", e.Body, e.Payload)
+			}
+		}
+	}
+	if stops != 1 {
+		t.Errorf("want exactly one drive-stopped row, got %d", stops)
 	}
 }
 

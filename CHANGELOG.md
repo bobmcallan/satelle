@@ -1,3 +1,16 @@
+## [0.0.712] - 2026-10-21
+
+### Added
+- A headless `satelle story drive` never stops without a record. After its first presentation, every way a drive can end short of its route's exit parks the story at the route's park state, or, when the park itself cannot be set, writes a `drive-stopped` ledger row and releases the drive's own hold. Both rows carry `source: drive`, the step, the performer, the node's `location_id`, and the most recent performer run's own last output as `last_message`, so a performer that ends on a question is never left only in its transcript. satelle-server alerts on these rows. (sty_aaafe4e2)
+
+### Security
+- `last_message` never carries a value satelle resolved into the performer's environment: each such value is replaced by `[redacted:<KEY>]` before it is written. (sty_aaafe4e2)
+
+## [serve-v0.0.182] - 2026-10-21
+
+### Changed
+- The service binary knows the `drive-stopped` ledger kind and the updated agent-dispatch help. (sty_aaafe4e2)
+
 ## [0.0.711] - 2026-10-21
 
 ### Fixed

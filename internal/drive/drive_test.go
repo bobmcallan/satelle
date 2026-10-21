@@ -39,12 +39,22 @@ type scriptedGater struct {
 	rejects map[string]int
 	always  map[string]bool
 	seen    map[string]int
+	// errs fails the gate itself (not a rejection) on that edge.
+	errs map[string]error
+	// onGate runs before each verdict, outside the lock.
+	onGate func(to string)
 }
 
 func (g *scriptedGater) Gate(_ context.Context, _ workitem.Item, to string) (verb.GateDecision, error) {
+	if g.onGate != nil {
+		g.onGate(to)
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.seen[to]++
+	if err := g.errs[to]; err != nil {
+		return verb.GateDecision{}, err
+	}
 	if g.always[to] || g.seen[to] <= g.rejects[to] {
 		return verb.GateDecision{Gated: true, Accept: false, Skill: "stub-gate", Notes: fmt.Sprintf("OBJECTION-%d to %s", g.seen[to], to)}, nil
 	}
@@ -94,7 +104,7 @@ func newEnv(t *testing.T, done, step string) *env {
 	verb.SetDocIndexStore(db.DocIndex)
 	verb.SetLeaseStore(db.Leases)
 	verb.SetStoryDir(filepath.Join(dir, "stories"))
-	g := &scriptedGater{rejects: map[string]int{}, always: map[string]bool{}, seen: map[string]int{}}
+	g := &scriptedGater{rejects: map[string]int{}, always: map[string]bool{}, seen: map[string]int{}, errs: map[string]error{}}
 	verb.SetTransitionGater(g)
 	return &env{t: t, db: db, dir: dir, gater: g}
 }
@@ -147,6 +157,8 @@ type fakePerformers struct {
 	agents    map[string]string
 	executor  config.AgentBinding
 	onPerform func(item workitem.Item, step, notes string) error
+	// output is what the executor run printed last.
+	output string
 }
 
 func (f *fakePerformers) StepPerformer(_ context.Context, _ workitem.Item, step string) (verb.PerformerResolution, error) {
@@ -160,7 +172,7 @@ func (f *fakePerformers) StepPerformer(_ context.Context, _ workitem.Item, step 
 func (f *fakePerformers) ExecutorBinding() (config.AgentBinding, bool) { return f.executor, true }
 
 func (f *fakePerformers) PerformExecutorStep(_ context.Context, item workitem.Item, step, notes string) (verb.DispatchResult, error) {
-	res := verb.DispatchResult{Dispatched: true, Agent: "executor", Command: "fake-executor", Skill: "s"}
+	res := verb.DispatchResult{Dispatched: true, Agent: "executor", Command: "fake-executor", Skill: "s", Output: f.output, LastMessage: verb.LastMessage(f.output)}
 	if f.onPerform != nil {
 		return res, f.onPerform(item, step, notes)
 	}
@@ -230,6 +242,7 @@ func TestStoryDrivesAGrokShapedBindingToTheTerminalStep(t *testing.T) {
 	if got := len(res.Moves); got != 2 {
 		t.Errorf("moves = %+v, want one per edge", res.Moves)
 	}
+	e.wantNoDriveRecords(id)
 }
 
 // AC5: inside the drive's process every gate runs in the foreground (the story is
@@ -280,6 +293,7 @@ func TestStoryRunsUnderTheResolvedSession(t *testing.T) {
 func TestStoryRefusesAnInLoopExecutorBeforeAnyTransition(t *testing.T) {
 	e := newEnv(t, routeDone, workRoute)
 	id := e.story()
+	before := e.ledgerIDs()
 	perf := &fakePerformers{
 		kinds: map[string]verb.PerformerKind{"in_progress": verb.PerformerExecutor}, executor: config.AgentBinding{Command: "in-loop"},
 	}
@@ -290,6 +304,7 @@ func TestStoryRefusesAnInLoopExecutorBeforeAnyTransition(t *testing.T) {
 	if e.status(id) != "backlog" || len(e.rows(id, ledger.KindStatusTransition)) != 0 {
 		t.Errorf("a refused drive moves nothing: %q", e.status(id))
 	}
+	e.wantLedgerDelta(before)
 }
 
 // AC3: a relay that ends without agreement parks the story as blocked with its
@@ -429,20 +444,21 @@ func TestStoryParksWhenTheExecutorRejectsItsStep(t *testing.T) {
 	}
 }
 
-// AC4: an executor run that fails is a refusal that leaves the story at the step.
-func TestStoryLeavesTheStoryAtTheStepWhenTheExecutorFails(t *testing.T) {
+// An executor run that fails after the first presentation parks the story with the
+// failure as the reason, naming the step and the executor.
+func TestStoryParksWhenTheExecutorFails(t *testing.T) {
 	e := newEnv(t, routeDone, workRoute)
 	id := e.story()
 	perf := &fakePerformers{
 		kinds: map[string]verb.PerformerKind{"in_progress": verb.PerformerExecutor}, executor: headless(),
 		onPerform: func(workitem.Item, string, string) error { return fmt.Errorf("rate limited") },
 	}
-	_, err := drive.Story(context.Background(), id, drive.Options{Performers: perf})
-	if err == nil || !strings.Contains(err.Error(), "rate limited") {
-		t.Fatalf("want the failure surfaced, got %v", err)
+	res, err := drive.Story(context.Background(), id, drive.Options{Performers: perf})
+	if err != nil {
+		t.Fatalf("a failed run parks, it is not an error: %v", err)
 	}
-	if e.status(id) != "in_progress" {
-		t.Errorf("status = %q, want the step the story entered", e.status(id))
+	if !res.Parked || e.status(id) != "blocked" || !strings.HasPrefix(res.Reason, "step in_progress, performer executor:") || !strings.Contains(res.Reason, "rate limited") {
+		t.Errorf("want parked naming the step, the executor and the failure, got %+v (stored %q)", res, e.status(id))
 	}
 }
 

@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -68,7 +69,50 @@ type Options struct {
 	Rework Reworker
 	// Out receives one line per move and per rejection; nil discards them.
 	Out io.Writer
+	// Location / LocationLabel are this node's location identity
+	// (hosted.KnownLocationID, hosted.LocationLabel). They are stamped on every
+	// park and drive-stopped row so the server can tell a park made by a remote's
+	// drive from a person's.
+	Location      string
+	LocationLabel string
 }
+
+// Stopped is the error of a drive that ended short of its route's exit and could
+// not park the story as blocked (the workflow has no park state, or the park was
+// refused). It is never silent: a drive-stopped ledger row carrying Reason was
+// written first, and the story's own hold is released by the caller.
+type Stopped struct {
+	ID     string
+	Status string
+	Reason string
+	// ParkErr is why the story could not be parked.
+	ParkErr error
+}
+
+func (s *Stopped) Error() string {
+	return fmt.Sprintf("%s stopped at %s: %s", s.ID, s.Status, s.Reason)
+}
+
+func (s *Stopped) Unwrap() error { return s.ParkErr }
+
+// halt is a stop reported from inside a step: where the drive was, who was meant
+// to perform, and what was missing. A halt reached after the drive's first
+// presentation becomes a park (or a drive-stopped row); an empty performer is
+// derived from the step.
+type halt struct {
+	step, performer, what string
+	err                   error
+}
+
+func (h *halt) Error() string { return reasonf(h.step, h.performer, h.what) }
+func (h *halt) Unwrap() error { return h.err }
+func reasonf(step, performer, what string) string {
+	return fmt.Sprintf("step %s, performer %s: %s", step, performer, what)
+}
+
+// stopGrace bounds the writes that record a stop. They run detached from the
+// drive's own context, which is the very thing that may have ended.
+const stopGrace = 2 * time.Minute
 
 // Result is where the drive stopped.
 type Result struct {
@@ -121,6 +165,11 @@ type driver struct {
 	route wfgovern.DerivedRoute
 	spine []string
 	res   Result
+	// presented is set once the workflow has judged one of the drive's
+	// presentations (accepted, rejected, or ended by the context). A refusal
+	// before it is a refusal to start and records nothing; every end after it
+	// leaves a record.
+	presented bool
 }
 
 func (d *driver) run(ctx context.Context) (Result, error) {
@@ -144,23 +193,43 @@ func (d *driver) run(ctx context.Context) (Result, error) {
 	}
 	for {
 		if err := ctx.Err(); err != nil {
-			return Result{}, err
+			return d.fail(ctx, item, &halt{step: item.Status, err: err,
+				what: "the drive was interrupted before the story reached its exit: " + err.Error()})
 		}
 		if d.stopped(item) {
 			return d.finish(ctx, item), nil
 		}
 		next, err := d.successor(item.Status)
 		if err != nil {
-			return Result{}, err
+			return d.fail(ctx, item, err)
 		}
 		item, err = d.advance(ctx, item, next)
 		if err != nil {
-			return Result{}, err
+			return d.fail(ctx, item, err)
 		}
 		if d.res.Parked {
 			return d.res, nil
 		}
 	}
+}
+
+// fail ends a drive that cannot continue. Before the first presentation it is a
+// plain refusal. After it, the story is parked with the reason (a Result), or,
+// where it cannot be parked, a drive-stopped row records the stop and the error
+// is a *Stopped: the drive never ends short of its exit without a record.
+func (d *driver) fail(ctx context.Context, item workitem.Item, err error) (Result, error) {
+	var stopped *Stopped
+	if errors.As(err, &stopped) || !d.presented {
+		return Result{}, err
+	}
+	var h *halt
+	if !errors.As(err, &h) {
+		h = &halt{step: item.Status, what: err.Error(), err: err}
+	}
+	if perr := d.park(ctx, item, h.step, h.performer, h.what); perr != nil {
+		return Result{}, perr
+	}
+	return d.res, nil
 }
 
 // stopped reports whether the story is somewhere the drive does not move it from:
@@ -254,19 +323,28 @@ func (d *driver) advance(ctx context.Context, item workitem.Item, next string) (
 		fmt.Fprintf(d.out, "drive: %s presenting %s → %s\n", d.id, from, next)
 		_, err := d.set(ctx, next)
 		if err == nil {
+			d.presented = true
 			break
 		}
 		var spent *verb.RejectBudgetSpent
 		var rejected *verb.GateRejection
 		switch {
 		case errors.As(err, &spent):
-			return item, d.park(ctx, item, fmt.Sprintf(
+			d.presented = true
+			step, performer := d.blame(ctx, item, next, "")
+			return item, d.park(ctx, item, step, performer, fmt.Sprintf(
 				"the %s → %s edge was rejected %d times (reject budget %d); last objection: %s",
 				from, next, spent.Rounds, spent.Budget, spent.Objection))
 		case errors.As(err, &rejected):
+			d.presented = true
 			fmt.Fprintf(d.out, "drive: %s %s → %s rejected\n%s\n", d.id, from, next, rejected.Notes())
 			if limit > 0 && attempt >= limit {
-				return item, d.park(ctx, item, fmt.Sprintf(
+				skill := ""
+				if len(rejected.Rejects) > 0 {
+					skill = rejected.Rejects[0].Skill
+				}
+				step, performer := d.blame(ctx, item, next, skill)
+				return item, d.park(ctx, item, step, performer, fmt.Sprintf(
 					"the %s → %s edge was rejected %d times and its step declares no reject_budget; last objection: %s",
 					from, next, attempt, rejected.Notes()))
 			}
@@ -277,7 +355,12 @@ func (d *driver) advance(ctx context.Context, item workitem.Item, next string) (
 				return item, nil
 			}
 		default:
-			return item, fmt.Errorf("drive: %s → %s refused: %w", from, next, err)
+			// A context that ended mid-presentation (a timeout, a spend cap) is a
+			// stop worth a record even on the first presentation.
+			if ctx.Err() != nil {
+				d.presented = true
+			}
+			return item, &halt{step: next, err: err, what: fmt.Sprintf("presenting %s → %s was refused: %v", from, next, err)}
 		}
 	}
 	moved, err := d.load(ctx)
@@ -289,10 +372,10 @@ func (d *driver) advance(ctx context.Context, item workitem.Item, next string) (
 	case d.route.Spec.IsParkState(moved.Status):
 		// The set's own mechanism parked it: a performer rejected the premise, or a
 		// spend bound was broken where the story would park.
-		d.res.Parked, d.res.Status, d.res.Reason = true, moved.Status, d.recordedReason(ctx)
+		d.parkedByMechanism(ctx, moved, from, next)
 		return moved, nil
 	default:
-		return moved, fmt.Errorf("drive: presenting %s → %s left the story at %q", from, next, moved.Status)
+		return moved, &halt{step: next, what: fmt.Sprintf("presenting %s → %s left the story at %q", from, next, moved.Status)}
 	}
 	d.res.Moves = append(d.res.Moves, Move{From: from, To: next})
 	d.res.Status = next
@@ -316,50 +399,90 @@ func (d *driver) performEntered(ctx context.Context, item workitem.Item, step st
 }
 
 // perform runs the executor binding over step. A performer that rejects parks the
-// story with its notes; a run that fails is an error and leaves the story at the
-// step, where a re-run of the drive finds the exit gates judging what was done.
+// story with its notes; a run that fails stops the drive (a park, or a
+// drive-stopped row), leaving the story at the step, where a re-run of the drive
+// finds the exit gates judging what was done. The run's row is written detached
+// from ctx, so a run the context ended is still recorded.
 func (d *driver) perform(ctx context.Context, item workitem.Item, step, notes string) error {
 	fmt.Fprintf(d.out, "drive: %s performing %s with the executor binding\n", d.id, step)
 	run, err := d.opts.Performers.PerformExecutorStep(ctx, item, step, notes)
+	record := context.WithoutCancel(ctx)
 	var rejected *verb.PerformerReject
 	if errors.As(err, &rejected) {
-		verb.RecordStepPerformance(ctx, item, step, run, nil)
-		return d.park(ctx, item, fmt.Sprintf("the executor rejected step %s: %s", step, rejected.Error()))
+		verb.RecordStepPerformance(record, item, step, run, nil)
+		return d.park(ctx, item, step, "executor", fmt.Sprintf("the executor rejected step %s: %s", step, rejected.Error()))
 	}
-	verb.RecordStepPerformance(ctx, item, step, run, err)
+	verb.RecordStepPerformance(record, item, step, run, err)
 	if err != nil {
-		return fmt.Errorf("drive: step %q: %w", step, err)
+		return &halt{step: step, performer: "executor", err: err, what: fmt.Sprintf("the executor run failed: %v", err)}
 	}
 	return nil
 }
 
-// answerRejection carries a rejected edge's findings to whoever must act on them
-// before the edge is presented again. The performer is the one the engine names
-// for the edge's destination step, when entering it dispatches a performer (it is
-// re-dispatched with the findings on re-presentation); otherwise the step being
-// left, whose work the reviewers judged. A named performer gets the findings as a
-// message and, when the step it performed declares a rework relay, that relay
-// runs; the executor binding is re-run with them appended to its prompt. A relay
-// that ends without agreement, or an executor that rejects, parks the story
-// (Result.Parked) instead.
-func (d *driver) answerRejection(ctx context.Context, item workitem.Item, to, notes string) error {
-	from := item.Status
+// rejectionTarget is who acts on a rejected edge into to: the performer of the
+// destination step when entering it dispatches one (it is re-dispatched with the
+// findings on re-presentation), otherwise the step being left, whose work the
+// reviewers judged. step is the step that performer belongs to.
+func (d *driver) rejectionTarget(ctx context.Context, item workitem.Item, to string) (step string, target, fromPerf verb.PerformerResolution, err error) {
 	toPerf, err := d.opts.Performers.StepPerformer(ctx, item, to)
 	if err != nil {
-		return fmt.Errorf("drive: step %q: %w", to, err)
+		return "", target, fromPerf, &halt{step: to, err: err, what: err.Error()}
 	}
-	fromPerf, err := d.opts.Performers.StepPerformer(ctx, item, from)
+	fromPerf, err = d.opts.Performers.StepPerformer(ctx, item, item.Status)
 	if err != nil {
-		return fmt.Errorf("drive: step %q: %w", from, err)
+		return "", target, fromPerf, &halt{step: item.Status, err: err, what: err.Error()}
 	}
-	target := toPerf
-	if target.Kind != verb.PerformerDispatched {
-		target = fromPerf
+	if toPerf.Kind == verb.PerformerDispatched {
+		return to, toPerf, fromPerf, nil
+	}
+	return item.Status, fromPerf, fromPerf, nil
+}
+
+// blame names the step and performer a rejected edge into to is held against, for
+// the reason a park records. A step nobody performs is blamed on the gate that
+// rejected it (skill, when known).
+func (d *driver) blame(ctx context.Context, item workitem.Item, to, skill string) (step, performer string) {
+	step, target, _, err := d.rejectionTarget(ctx, item, to)
+	if err != nil {
+		return to, ""
+	}
+	performer = performerName(target)
+	if performer == "none" {
+		performer = "gate"
+		if skill != "" {
+			performer += ":" + skill
+		}
+	}
+	return step, performer
+}
+
+// performerName is how a reason names a step's performer.
+func performerName(perf verb.PerformerResolution) string {
+	switch {
+	case perf.Kind == verb.PerformerExecutor:
+		return "executor"
+	case perf.Agent != "":
+		return perf.Agent
+	}
+	return "none"
+}
+
+// answerRejection carries a rejected edge's findings to whoever must act on them
+// before the edge is presented again (rejectionTarget names them). A named
+// performer gets the findings as a message and, when the step it performed
+// declares a rework relay, that relay runs; the executor binding is re-run with
+// them appended to its prompt. A relay that ends without agreement, or an
+// executor that rejects, parks the story (Result.Parked) instead.
+func (d *driver) answerRejection(ctx context.Context, item workitem.Item, to, notes string) error {
+	from := item.Status
+	step, target, fromPerf, err := d.rejectionTarget(ctx, item, to)
+	if err != nil {
+		return err
 	}
 	switch target.Kind {
 	case verb.PerformerDispatched:
 		if err := d.message(ctx, target.Agent, notes); err != nil {
-			return err
+			return &halt{step: step, performer: target.Agent, err: err, what: err.Error()}
 		}
 	case verb.PerformerExecutor:
 		return d.perform(ctx, item, from, notes)
@@ -369,7 +492,7 @@ func (d *driver) answerRejection(ctx context.Context, item workitem.Item, to, no
 	}
 	rw, err := d.opts.Rework(ctx, d.id)
 	if err != nil {
-		return fmt.Errorf("drive: rework of step %q: %w", from, err)
+		return &halt{step: from, performer: fromPerf.Agent, err: err, what: fmt.Sprintf("the rework relay failed: %v", err)}
 	}
 	if rw.Converged {
 		return nil
@@ -378,7 +501,7 @@ func (d *driver) answerRejection(ctx context.Context, item workitem.Item, to, no
 	if objection == "" {
 		objection = notes
 	}
-	return d.park(ctx, item, fmt.Sprintf(
+	return d.park(ctx, item, from, fromPerf.Agent, fmt.Sprintf(
 		"the %s rework relay ended %s after %d round(s) without agreement; last objection: %s",
 		from, rw.Outcome, rw.Rounds, objection))
 }
@@ -402,27 +525,125 @@ func (d *driver) message(ctx context.Context, to, body string) error {
 	return nil
 }
 
-// park moves the story to the route's park state with reason recorded on its
-// timeline first, which is what the park gate reads. A workflow with no park
-// state leaves the drive nowhere to put the question, so it refuses.
-func (d *driver) park(ctx context.Context, item workitem.Item, reason string) error {
+// park ends the drive on what it was missing: it moves the story to the route's
+// park state with the reason (step, performer and what was missing) recorded on
+// its timeline first, which is what the park gate reads. Where the story cannot be
+// parked — the workflow offers no park state, or the park is refused — a
+// drive-stopped row records the stop instead and the error is a *Stopped, so no
+// end of a drive is without a record. An empty performer is derived from step.
+// The writes run detached from ctx: the context that ended may be the very thing
+// being recorded.
+func (d *driver) park(ctx context.Context, item workitem.Item, step, performer, what string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopGrace)
+	defer cancel()
+	if performer == "" {
+		performer = d.performerOf(ctx, item, step)
+	}
+	reason := reasonf(step, performer, what)
 	state := verb.ResumeParkName(ctx, item)
 	if state == "" {
-		return fmt.Errorf("drive: %s needs a person (%s) but the workflow offers no park state to hold the question", d.id, reason)
+		return d.stop(ctx, item, step, performer, reason, errors.New("the workflow offers no park state to hold the question"))
 	}
-	payload, _ := json.Marshal(map[string]string{"from": item.Status, "to": state, "source": "drive"})
-	entry, _ := json.Marshal(map[string]any{
-		"story_id": d.id, "kind": ledger.KindComment, "actor": "orchestrator", "body": reason, "payload": json.RawMessage(payload),
-	})
-	if _, err := verb.Dispatch(ctx, "ledger-append", entry); err != nil {
-		return fmt.Errorf("drive: record the question on %s: %w", d.id, err)
+	if err := d.recordParkComment(ctx, item, state, step, performer, reason); err != nil {
+		return d.stop(ctx, item, step, performer, reason, fmt.Errorf("record the question: %w", err))
 	}
 	if _, err := d.set(ctx, state); err != nil {
-		return fmt.Errorf("drive: park %s at %s: %w", d.id, state, err)
+		return d.stop(ctx, item, step, performer, reason, fmt.Errorf("park at %s: %w", state, err))
 	}
 	fmt.Fprintf(d.out, "drive: %s parked at %s\n", d.id, state)
 	d.res.Parked, d.res.Status, d.res.Reason = true, state, reason
 	return nil
+}
+
+// parkedByMechanism reports a story the set's own mechanism parked at the step it
+// was presenting (a performer rejected the premise, or a spend bound broke): the
+// mechanism wrote the reason, and the drive adds its own park record, naming the
+// step and performer and marking the park as a drive's, without a second move.
+func (d *driver) parkedByMechanism(ctx context.Context, moved workitem.Item, from, step string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopGrace)
+	defer cancel()
+	performer := d.performerOf(ctx, moved, step)
+	reason := reasonf(step, performer, d.recordedReason(ctx))
+	was := moved
+	was.Status = from
+	_ = d.recordParkComment(ctx, was, moved.Status, step, performer, reason)
+	d.res.Parked, d.res.Status, d.res.Reason = true, moved.Status, reason
+}
+
+// stop records a drive that ended with the story not parked: one drive-stopped
+// row with the reason, then the *Stopped the caller exits 1 on.
+func (d *driver) stop(ctx context.Context, item workitem.Item, step, performer, reason string, parkErr error) error {
+	payload := d.payload(ctx, item, "", step, performer, reason)
+	payload["park_error"] = parkErr.Error()
+	if err := d.appendRow(ctx, ledger.KindDriveStopped, reason, payload); err != nil {
+		parkErr = fmt.Errorf("%w (and the stop could not be recorded: %v)", parkErr, err)
+	}
+	fmt.Fprintf(d.out, "drive: %s stopped at %s: %s\n", d.id, item.Status, reason)
+	return &Stopped{ID: d.id, Status: item.Status, Reason: reason, ParkErr: parkErr}
+}
+
+// recordParkComment writes the comment row a park is announced by. Its payload is
+// what the server reads to tell a remote's park from a person's.
+func (d *driver) recordParkComment(ctx context.Context, item workitem.Item, to, step, performer, reason string) error {
+	return d.appendRow(ctx, ledger.KindComment, reason, d.payload(ctx, item, to, step, performer, reason))
+}
+
+func (d *driver) appendRow(ctx context.Context, kind, body string, payload map[string]any) error {
+	entry, _ := json.Marshal(map[string]any{
+		"story_id": d.id, "kind": kind, "actor": "orchestrator", "body": body, "payload": payload,
+	})
+	_, err := verb.Dispatch(ctx, "ledger-append", entry)
+	return err
+}
+
+// payload is the record of a drive's stop: the move it stands for, the step and
+// performer it names, the reason, what the performer last said, and the node it
+// happened on. source "drive" is what marks the row a headless drive's.
+func (d *driver) payload(ctx context.Context, item workitem.Item, to, step, performer, reason string) map[string]any {
+	return map[string]any{
+		"from": item.Status, "to": to, "source": "drive",
+		"step": step, "performer": performer, "reason": reason,
+		"last_message": d.lastMessage(ctx),
+		"location_id":  d.opts.Location, "location_label": d.opts.LocationLabel,
+	}
+}
+
+// lastMessageScan bounds how far back lastMessage reads the story's
+// agent_invocation rows for a performer's.
+const lastMessageScan = 200
+
+// lastMessage is the last_message of the story's newest performer
+// agent_invocation row: the newest row carrying that key, so a reviewer's or a
+// summariser's newer row is skipped. "" when no performer row carries one.
+func (d *driver) lastMessage(ctx context.Context) string {
+	req, _ := json.Marshal(map[string]any{"story_id": d.id, "kind": ledger.KindAgentInvocation, "limit": lastMessageScan})
+	raw, err := verb.Dispatch(ctx, "ledger-list", req)
+	if err != nil {
+		return ""
+	}
+	var rows []ledger.Entry
+	if json.Unmarshal(raw, &rows) != nil {
+		return ""
+	}
+	for i := len(rows) - 1; i >= 0; i-- {
+		var p struct {
+			LastMessage *string `json:"last_message"`
+		}
+		if json.Unmarshal(rows[i].Payload, &p) == nil && p.LastMessage != nil {
+			return *p.LastMessage
+		}
+	}
+	return ""
+}
+
+// performerOf names the performer of step for a reason: "executor", the named
+// agent, or "none" (the step has no performer, so its gates are what stopped).
+func (d *driver) performerOf(ctx context.Context, item workitem.Item, step string) string {
+	perf, err := d.opts.Performers.StepPerformer(ctx, item, step)
+	if err != nil {
+		return "unknown"
+	}
+	return performerName(perf)
 }
 
 // set presents a status move through the story-set verb.

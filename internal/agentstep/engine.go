@@ -310,6 +310,25 @@ type Engine struct {
 // Nothing here is logged or persisted.
 func (g *Engine) SetRunSecretsSource(src func() (map[string]string, []string)) { g.runSecrets = src }
 
+// scrubValues is every value satelle resolved into a performer's environment —
+// the binding's env after ${VAR} resolution, plus the run secrets the dispatch
+// injects — keyed by variable name. A performer's output is scrubbed of them
+// (verb.OutputTail) before any of it is written to the ledger.
+func (g *Engine) scrubValues(bindingEnv map[string]string) map[string]string {
+	var secrets map[string]string
+	if g.runSecrets != nil {
+		secrets, _ = g.runSecrets()
+	}
+	out := make(map[string]string, len(bindingEnv)+len(secrets))
+	for k, v := range bindingEnv {
+		out[k] = v
+	}
+	for k, v := range secrets {
+		out[k] = v
+	}
+	return out
+}
+
 // SetRunSecrets wires a fixed set of run secrets; see SetRunSecretsSource.
 func (g *Engine) SetRunSecrets(values map[string]string, unset []string) {
 	g.runSecrets = func() (map[string]string, []string) { return values, unset }
@@ -2309,7 +2328,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			Actor:       "executor",
 		})
 	}
-	res := performanceResult(dispatchAgent, dispatchSkill, binding, budget, modelChoice, invRes)
+	res := g.performanceResult(dispatchAgent, dispatchSkill, binding, budget, modelChoice, invRes)
 	g.logExecutorRun(dispatchAgent, item.ID, toStatus, invRes.Stdout, invRes.Err)
 	if invRes.Err != nil {
 		failData := map[string]any{
@@ -2371,7 +2390,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 // command and model, at what cost, and what it printed. DispatchExecutor and
 // PerformExecutorStep both build it, so a dispatched step and an executor step
 // are recorded alike.
-func performanceResult(agent, skill string, binding config.AgentBinding, budget config.Budget, mc ModelChoice, invRes InvokeResult) verb.DispatchResult {
+func (g *Engine) performanceResult(agent, skill string, binding config.AgentBinding, budget config.Budget, mc ModelChoice, invRes InvokeResult) verb.DispatchResult {
 	modelResolved, models := toVerbModels(invRes.Usage)
 	res := verb.DispatchResult{
 		Dispatched: true, Agent: agent, Command: invRes.Command, Model: mc.Model, Skill: skill,
@@ -2381,7 +2400,7 @@ func performanceResult(agent, skill string, binding config.AgentBinding, budget 
 		TokensInFresh: invRes.Usage.FreshInputTokens, TokensCacheWrite: invRes.Usage.CacheCreationInputTokens, TokensCacheRead: invRes.Usage.CacheReadInputTokens, UsageNote: usageNoteFor(invRes.Usage, binding),
 		CostUSD: invRes.Usage.CostUSD, CostUnavailableReason: invRes.Usage.CostUnavailableReason,
 		SystemPromptBytes: invRes.SystemPromptBytes, PayloadBytes: invRes.PayloadBytes,
-		Output: string(invRes.Stdout),
+		Output: string(invRes.Stdout), LastMessage: verb.OutputTail(string(invRes.Stdout), g.scrubValues(binding.Env)),
 	}
 	if invRes.Err == nil {
 		res.Budget = measureBudget(binding, budget, invRes.Usage)
@@ -2512,7 +2531,7 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item, spec verb.R
 		TokensInFresh: invRes.Usage.FreshInputTokens, TokensCacheWrite: invRes.Usage.CacheCreationInputTokens, TokensCacheRead: invRes.Usage.CacheReadInputTokens, UsageNote: usageNoteFor(invRes.Usage, binding),
 		CostUSD: invRes.Usage.CostUSD, CostUnavailableReason: invRes.Usage.CostUnavailableReason,
 		SystemPromptBytes: invRes.SystemPromptBytes, PayloadBytes: invRes.PayloadBytes,
-		Output: string(invRes.Stdout),
+		Output: string(invRes.Stdout), LastMessage: verb.OutputTail(string(invRes.Stdout), g.scrubValues(binding.Env)),
 	}
 	g.logExecutorRun(retrospectAgent, item.ID, "retrospect", invRes.Stdout, invRes.Err)
 	if invRes.Err != nil {
@@ -2726,7 +2745,7 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 	// same signal runOneShotUsage reads for a one-shot dispatch — so the close
 	// row below can report what the live session actually resolved/spent, not
 	// just what open intended. The caller's own onEvent still fires unchanged.
-	tracker := &liveUsageTracker{}
+	tracker := &liveUsageTracker{scrub: g.scrubValues(binding.Env)}
 	// A denied ask-the-user is ledgered as it happens (not at Close, so a
 	// killed session keeps the row), exactly as a one-shot dispatch does
 	// (sty_ff50f788). A consult session acts as its own binding; a driving one
@@ -2749,7 +2768,7 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 		return nil, err
 	}
 	return &liveModelSession{Session: sess, engine: g, ctx: ctx, storyID: item.ID, agent: name,
-		model: binding.Model, modelSource: modelSource, tracker: tracker,
+		model: binding.Model, modelSource: modelSource, tracker: tracker, performer: role == SessionRoleDriving,
 		scratch: scratchDir, repoRoot: g.repoRoot, sweepBefore: leftoverBefore}, nil
 }
 
@@ -2764,6 +2783,12 @@ type liveUsageTracker struct {
 	turns int
 	// splitMissing latches when any turn's provider reported no cache split.
 	splitMissing bool
+	// last is the tail of the most recent EventMessage's text: what the session
+	// last said, stamped on its close row as last_message.
+	last string
+	// scrub holds the values satelle resolved into the session's environment,
+	// which last never carries (verb.OutputTail).
+	scrub map[string]string
 }
 
 // wrap returns an EventHandler that folds each EventUsage into the running
@@ -2771,6 +2796,11 @@ type liveUsageTracker struct {
 // caller's own handler still sees every event.
 func (t *liveUsageTracker) wrap(next agentcli.EventHandler) agentcli.EventHandler {
 	return func(ev agentcli.Event) {
+		if ev.Kind == agentcli.EventMessage && ev.Text != "" {
+			t.mu.Lock()
+			t.last = verb.OutputTail(ev.Text, t.scrub)
+			t.mu.Unlock()
+		}
 		if ev.Kind == agentcli.EventUsage && ev.Usage != nil {
 			t.mu.Lock()
 			t.turns++
@@ -2865,6 +2895,13 @@ func (t *liveUsageTracker) total() (agentcli.UsageResult, int) {
 	return t.usage, t.turns
 }
 
+// lastMessage is the tail of the session's most recent message ("" when it sent none).
+func (t *liveUsageTracker) lastMessage() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.last
+}
+
 // liveModelSession decorates agentcli.Session to ledger a close row
 // (sty_7069bced): what the live session actually resolved/spent, mirroring
 // the open row OpenSessionAsWithModel already writes. Every other method
@@ -2876,6 +2913,7 @@ type liveModelSession struct {
 	storyID, agent     string
 	model, modelSource string
 	tracker            *liveUsageTracker
+	performer          bool // a driving (coder) seat, not a consultant
 	closeOnce          sync.Once
 	// scratch/repoRoot/sweepBefore back the scratch-dir lifecycle and leftover
 	// sweep this session owns at Close (sty_e7aaf8b1). sweepBefore is nil for a
@@ -2898,6 +2936,12 @@ func (s *liveModelSession) Close() error {
 			"tokens_in_fresh": u.FreshInputTokens, "tokens_cache_write": u.CacheCreationInputTokens, "tokens_cache_read": u.CacheReadInputTokens,
 			"duration_ms": u.Duration.Milliseconds(),
 			"turns":       turns,
+		}
+		if s.performer {
+			// The relay's coder seat is a performer: a drive that parks over its
+			// relay quotes this as the performer's last message. A consultant's
+			// close row is a reviewer's and carries none.
+			data["last_message"] = s.tracker.lastMessage()
 		}
 		if !u.Available && u.UnavailableReason == "" {
 			u.UnavailableReason = s.agent + " adapter: session reported no usage event"

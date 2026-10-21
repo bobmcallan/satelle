@@ -1,0 +1,98 @@
+package cli
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/ledger"
+)
+
+// The node a drive runs on is named on every record of its stop, so the server can
+// tell a remote's park from a person's (sty_aaafe4e2).
+
+func rowPayload(t *testing.T, e ledger.Entry) map[string]any {
+	t.Helper()
+	var p map[string]any
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		t.Fatalf("%s payload: %v", e.Kind, err)
+	}
+	return p
+}
+
+// AC6: the CLI fills the drive's location from hosted.KnownLocationID, on the park
+// comment and on the drive-stopped row alike.
+func TestStoryDrivePassesLocation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts driveOpts
+		kind string
+	}{
+		{"park comment", driveOpts{gateRejects: 999, rejectBudget: 1}, ledger.KindComment},
+		{"drive-stopped row", driveOpts{gateRejects: 999, rejectBudget: 1, noPark: true}, ledger.KindDriveStopped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newDriveFixture(t, tc.opts)
+			loc, err := hosted.LocationID(f.repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := f.create()
+			_, _ = runRoot(t, "story", "drive", id)
+			var found bool
+			for _, e := range f.rows(id) {
+				p := rowPayload(t, e)
+				if e.Kind != tc.kind || p["source"] != "drive" {
+					continue
+				}
+				found = true
+				if p["location_id"] != loc || hosted.KnownLocationID(f.repo) != loc || p["location_label"] != hosted.LocationLabel(f.repo) {
+					t.Errorf("%s payload = %v, want location %q labelled %q", e.Kind, p, loc, hosted.LocationLabel(f.repo))
+				}
+			}
+			if !found {
+				t.Fatalf("no %s row from the drive", tc.kind)
+			}
+		})
+	}
+}
+
+// AC7: a drive that stopped lets go of the hold its own run took, since a story
+// that is neither terminal nor parked is never released by a later push.
+func TestStoryDriveStoppedReleasesOwnHold(t *testing.T) {
+	fx := newHoldFixture(t, holdNoGit)
+	script := filepath.Join(t.TempDir(), "executor")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat >/dev/null\necho 'cannot go on' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agents := "[executor]\nrole = \"agent\"\ncommand = \"" + script + " -p {system}\"\ntools = \"Read,Grep,Glob,Edit,Write,Bash(satelle:*)\"\n\n" +
+		"[orchestrator]\nrole = \"agent\"\ncommand = \"in-loop\"\n"
+	if err := os.WriteFile(filepath.Join(fx.repo, ".satelle", "workflows", config.AgentsConfigName), []byte(agents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(filepath.Join(fx.repo, ".satelle", config.AgentsConfigName))
+	if out, err := runRoot(t, "reindex"); err != nil {
+		t.Fatalf("reindex: %v\n%s", err, out)
+	}
+	id := createStoryID(t, "stops under a hold")
+	fx.hs.mu.Lock()
+	fx.hs.known[id] = true
+	fx.hs.mu.Unlock()
+
+	out, err := runRoot(t, "story", "drive", id)
+	if ExitCodeOf(err) != 1 || !strings.Contains(out, id+" stopped at in_progress: step in_progress, performer executor:") {
+		t.Fatalf("want a stop at in_progress (exit 1), got %d: %v\n%s", ExitCodeOf(err), err, out)
+	}
+	if got := fx.hs.checkoutIDs(); !slices.Equal(got, []string{id + "@" + fx.loc}) {
+		t.Fatalf("the drive's engage must have taken the hold, checkouts = %v", got)
+	}
+	if !slices.Equal(fx.hs.releasedIDs(), []string{id}) || fx.hs.holder(id).LocationID != "" || fx.heldHere(t, id) {
+		t.Errorf("the stopped drive must release its own hold: releases=%v holder=%+v recorded=%v",
+			fx.hs.releasedIDs(), fx.hs.holder(id), fx.heldHere(t, id))
+	}
+}

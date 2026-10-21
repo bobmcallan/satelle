@@ -383,6 +383,11 @@ type DispatchResult struct {
 	// under the parent task's folder, so a run's evidence is discoverable per task
 	// rather than only in the central executor.log.
 	Output string `json:"output,omitempty"`
+	// LastMessage is the tail of Output that the run's ledger row carries as
+	// last_message, already scrubbed of every value satelle resolved into the
+	// performer's environment (OutputTail). Output itself is the raw capture and
+	// must never be the source of a ledger row.
+	LastMessage string `json:"-"`
 	// Changes are the story-configuration changes the performer reported in its
 	// final response (sty_af0b1761), decoded by the shared agentartifact seam.
 	// The verb applies them only on a step that declares apply_changes.

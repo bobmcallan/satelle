@@ -2,12 +2,18 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/drive"
+	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/verb"
 )
 
@@ -24,9 +30,10 @@ step's headless performer run and its gates judge, until the story is terminal.
 Refuses (exit 1) a route needing the driving session: an in-loop [executor] on
 an executor step, or a named agent bound in-loop. A rejection is relayed to the
 performer and rework runs within its budget; when a person must decide, the
-story parks at blocked with the objection recorded.
+story parks at blocked with the objection recorded. Any other end after the first
+presentation parks it too, or writes a drive-stopped row.
 
-Exit: 0 terminal, 3 parked, 1 refused or failed. See 'satelle help agent-dispatch'.`,
+Exit: 0 terminal, 3 parked, 1 refused or stopped. See 'satelle help agent-dispatch'.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE:        runStoryDrive,
@@ -48,13 +55,16 @@ func runStoryDrive(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer stopSecrets()
-	eng, _, err := engineForCmd(cmd)
+	eng, a, err := engineForCmd(cmd)
 	if err != nil {
 		return err
 	}
 	out := cmd.OutOrStdout()
 	res, err := drive.Story(cmd.Context(), id, drive.Options{
 		Performers: eng,
+		// The node's identity, so the server can tell this drive's park from a person's.
+		Location:      hosted.KnownLocationID(a.RepoRoot),
+		LocationLabel: hosted.LocationLabel(a.RepoRoot),
 		Rework: func(ctx context.Context, id string) (drive.Rework, error) {
 			var relay reworkResult
 			err := runRework(cmd, id, 0, "", &relay)
@@ -64,6 +74,16 @@ func runStoryDrive(cmd *cobra.Command, args []string) error {
 		},
 		Out: out,
 	})
+	var stopped *drive.Stopped
+	if errors.As(err, &stopped) {
+		// The drive ended short of its exit and could not park the story: the stop
+		// is on its ledger, and this run's own hold on it ends with the run.
+		releaseStoppedHold(cmd.Context(), cmd.ErrOrStderr(), a, id)
+		line := stopped.Error()
+		fmt.Fprintln(out, line)
+		verb.RecordVerdict(line)
+		return &ExitError{Code: 1, Err: errors.New(line), Quiet: true}
+	}
 	if err != nil {
 		return err
 	}
@@ -74,6 +94,25 @@ func runStoryDrive(cmd *cobra.Command, args []string) error {
 		return &ExitError{Code: exitParked, Err: fmt.Errorf("%s", summary), Quiet: true}
 	}
 	return nil
+}
+
+// holdReleaseGrace bounds the release of a stopped drive's hold, which runs even
+// when the drive's own context is what ended.
+const holdReleaseGrace = 30 * time.Second
+
+// releaseStoppedHold releases the hosted hold this drive's run took on id. A story
+// that is terminal or parked is released by the next push (releaseAtRest); a
+// stopped one is at rest nowhere, so the run that stopped it lets go of it. A
+// repo with no bound hosted project holds nothing.
+func releaseStoppedHold(ctx context.Context, errw io.Writer, a *app.App, id string) {
+	server := config.ResolveHostedServer(a.Config)
+	project := a.Config.SyncProject()
+	if server == "" || project == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), holdReleaseGrace)
+	defer cancel()
+	releaseHold(ctx, errw, holdSite{client: newHostedClient(ctx, server, a.RepoRoot), server: server, project: project, repoRoot: a.RepoRoot}, id)
 }
 
 // driveSummary is the one line a drive ends on.

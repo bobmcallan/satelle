@@ -147,7 +147,7 @@ func (g *Engine) PerformExecutorStep(ctx context.Context, item workitem.Item, st
 		Skill:       skill,
 		Actor:       "executor",
 	})
-	res := performanceResult("executor", skill, binding, budget, mc, invRes)
+	res := g.performanceResult("executor", skill, binding, budget, mc, invRes)
 	g.logExecutorRun("executor", item.ID, step, invRes.Stdout, invRes.Err)
 	if invRes.Err != nil {
 		g.telemetryEvent(ctx, item.ID, "executor", "agent-failure", withCause(map[string]any{

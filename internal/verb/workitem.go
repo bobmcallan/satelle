@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -2104,6 +2105,10 @@ func dispatchPayload(from, to string, res DispatchResult, attempt string) json.R
 		Budget *BudgetReport `json:"budget,omitempty"`
 		// Cloud records a cloud-performed step's session, branch and collected commit.
 		Cloud *CloudDispatch `json:"cloud,omitempty"`
+		// LastMessage is the tail of the run's output, present on every performer
+		// row (empty when the run printed nothing) so a drive that stops can quote
+		// what the performer last said.
+		LastMessage string `json:"last_message"`
 	}{From: from, To: to, Attempt: attempt, Agent: res.Agent, Skill: res.Skill, Command: res.Command, Model: res.Model,
 		ModelResolved: res.ModelResolved, ModelSource: res.ModelSource, Models: res.Models,
 		TokensIn: res.TokensIn, TokensOut: res.TokensOut, TokensTotal: res.TokensTotal, DurationMs: res.DurationMs,
@@ -2111,7 +2116,83 @@ func dispatchPayload(from, to string, res DispatchResult, attempt string) json.R
 		TokensInFresh:  res.TokensInFresh, TokensCacheWrite: res.TokensCacheWrite, TokensCacheRead: res.TokensCacheRead, UsageNote: res.UsageNote,
 		CostUSD: res.CostUSD, CostUnavailableReason: res.CostUnavailableReason,
 		SystemPromptBytes: res.SystemPromptBytes, PayloadBytes: res.PayloadBytes,
-		ArtifactName: res.ArtifactName, ArtifactType: res.ArtifactType, Budget: res.Budget, Cloud: res.Cloud}
+		ArtifactName: res.ArtifactName, ArtifactType: res.ArtifactType, Budget: res.Budget, Cloud: res.Cloud,
+		LastMessage: LastMessage(res.LastMessage)}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+// LastMessageMax bounds the output tail a performer row carries as last_message.
+const LastMessageMax = 2000
+
+// LastMessage is the tail of a performer's output kept on its agent_invocation
+// row: at most LastMessageMax bytes, cut on a UTF-8 boundary so the stored text
+// is always valid.
+func LastMessage(out string) string {
+	if len(out) <= LastMessageMax {
+		return out
+	}
+	tail := out[len(out)-LastMessageMax:]
+	for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+		tail = tail[1:]
+	}
+	return tail
+}
+
+// RedactMinLen is the shortest resolved env value OutputTail scrubs. A value
+// under it (a flag like "1", a two-letter region) would shred ordinary prose and
+// is not a credential; every longer non-empty value is scrubbed.
+const RedactMinLen = 4
+
+// RedactEnv replaces every occurrence in text of a value in env (at least
+// RedactMinLen bytes) with [redacted:KEY], naming the key and never the value.
+// Longer values go first so one that contains another is not left half-scrubbed;
+// two keys holding the same value are named by the first in key order.
+func RedactEnv(text string, env map[string]string) string {
+	if text == "" || len(env) == 0 {
+		return text
+	}
+	keys := make([]string, 0, len(env))
+	for k, v := range env {
+		if len(v) >= RedactMinLen {
+			keys = append(keys, k)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if li, lj := len(env[keys[i]]), len(env[keys[j]]); li != lj {
+			return li > lj
+		}
+		return keys[i] < keys[j]
+	})
+	for _, k := range keys {
+		text = strings.ReplaceAll(text, env[k], "[redacted:"+k+"]")
+	}
+	return text
+}
+
+// OutputTail is what a performer's output may leave in the ledger: the
+// LastMessage tail of out once every value satelle resolved into the performer's
+// environment (env) is scrubbed. The scrub runs before the cap, so a value the
+// cap would have cut in half is never left as a fragment.
+func OutputTail(out string, env map[string]string) string {
+	return LastMessage(RedactEnv(out, env))
+}
+
+// performerFailurePayload is attemptPayload for a performer's failed run, plus
+// the tail of whatever it printed before failing (already scrubbed, see
+// DispatchResult.LastMessage). It is separate from attemptPayload, the
+// transition rows' payload, which never carries output.
+func performerFailurePayload(from, to, skill, attempt, output string) json.RawMessage {
+	p := struct {
+		From        string `json:"from"`
+		To          string `json:"to"`
+		Skill       string `json:"skill,omitempty"`
+		Attempt     string `json:"attempt,omitempty"`
+		LastMessage string `json:"last_message"`
+	}{From: from, To: to, Skill: skill, Attempt: attempt, LastMessage: LastMessage(output)}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil

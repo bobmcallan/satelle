@@ -314,7 +314,7 @@ func dispatchPerformer(ctx context.Context, current workitem.Item, to, attempt s
 func recordDispatchFailure(ctx context.Context, current workitem.Item, to, attempt string, res DispatchResult, derr error, now time.Time) {
 	appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "executor",
 		fmt.Sprintf("named-agent dispatch failed for %s→%s: %v", current.Status, to, derr),
-		attemptPayload(current.Status, to, res.Skill, attempt), now)
+		performerFailurePayload(current.Status, to, res.Skill, attempt, res.LastMessage), now)
 	notifyChange(panelTopic(current.Kind))
 }
 
@@ -328,7 +328,7 @@ func RecordStepPerformance(ctx context.Context, item workitem.Item, step string,
 	if runErr != nil {
 		appendLedgerEntry(ctx, item.ID, ledger.KindAgentInvocation, "executor",
 			fmt.Sprintf("executor run for step %q failed: %v", step, runErr),
-			attemptPayload(step, step, res.Skill, ""), now)
+			performerFailurePayload(step, step, res.Skill, "", res.LastMessage), now)
 		notifyChange(panelTopic(item.Kind))
 		return
 	}
