@@ -59,6 +59,40 @@ func Install(home, name string) ([]Result, error) {
 	return out, nil
 }
 
+// Heal brings every INSTALLED launcher up to date with Content: a marker-owned
+// launcher whose body differs is rewritten, an unmarked file is left in place,
+// and a launcher that was never installed is not created. It is `satelle init`'s
+// launcher step, the counterpart of its hook heal, and applies installOne's rule.
+func Heal(home string) ([]Result, error) {
+	binDir := filepath.Join(home, RelBin)
+	var out []Result
+	for _, n := range Agents() {
+		if _, err := os.Stat(filepath.Join(binDir, "satelle-"+n)); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return out, fmt.Errorf("agentinstall: stat launcher %s: %w", n, err)
+		}
+		r, err := installOne(binDir, n)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// UsageNote tells the operator how to start a session through name's launcher so
+// it carries the satelle session name: the launcher path and the directory to put
+// on PATH. It is "" for a harness whose launcher cannot name a session.
+func UsageNote(home, name string) string {
+	if !agentcli.HasLauncher(name) || len(agentcli.LaunchNameFlags(name)) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("start %s sessions with %s to name them (satelle session name); add %s to PATH",
+		name, LauncherPath(home, name), filepath.Join(home, RelBin))
+}
+
 // Remove deletes satelle-owned launchers for name. Unmarked files are left with
 // Action skipped. Absent is exit-ok (Action absent).
 func Remove(home, name string) ([]Result, error) {
@@ -149,13 +183,35 @@ func expandName(name string) ([]string, error) {
 		name, strings.Join(Agents(), ", "))
 }
 
-// launcherScript is a marker-owned wrapper that execs the bare harness: a stable
-// satelle-owned path a binding's `command` can name. It never calls back into
-// satelle. The exec target comes from agentcli's launcher set so launchers
-// cannot drift from it.
+// launcherScript is a marker-owned wrapper that execs the harness: a stable
+// satelle-owned path a binding's `command` can name. The exec target and the
+// name flag come from agentcli's launcher set so launchers cannot drift from it.
+//
+// A harness with no launch name flag gets the bare exec and never calls back into
+// satelle. One with a flag asks `satelle session name` for the session's identity
+// and passes it unless the user already named the session; that call fails open —
+// no satelle, a failure, or an empty name all exec the bare harness.
 func launcherScript(name string) string {
-	return fmt.Sprintf("#!/bin/sh\n%s %s — do not edit\nexec %s \"$@\"\n",
-		MarkerPrefix, name, agentcli.LauncherBinary(name))
+	head := fmt.Sprintf("#!/bin/sh\n%s %s — do not edit\n", MarkerPrefix, name)
+	flags := agentcli.LaunchNameFlags(name)
+	if len(flags) == 0 {
+		return head + fmt.Sprintf("exec %s \"$@\"\n", agentcli.LauncherBinary(name))
+	}
+	var patterns []string
+	for _, f := range flags {
+		patterns = append(patterns, f)
+		if strings.HasPrefix(f, "--") {
+			patterns = append(patterns, f+"=*")
+		}
+	}
+	return head + fmt.Sprintf(`name=$(satelle session name 2>/dev/null) || name=""
+for a in "$@"; do
+  case "$a" in
+    %[1]s) name="" ;;
+  esac
+done
+exec %[2]s ${name:+%[3]s "$name"} "$@"
+`, strings.Join(patterns, "|"), agentcli.LauncherBinary(name), flags[0])
 }
 
 func installOne(binDir, name string) (Result, error) {

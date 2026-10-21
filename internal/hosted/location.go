@@ -8,6 +8,7 @@ package hosted
 // calls. Unbound repos never touch this file.
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,6 +18,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/worktree"
 )
 
 // LocationHeader is the REST header / gRPC metadata key a bound checkout sends.
@@ -31,6 +35,9 @@ var locationMu sync.Mutex
 type locationEntry struct {
 	ID         string          `json:"id"`
 	Registered map[string]bool `json:"registered,omitempty"`
+	// Labels is the label last sent for each server in Registered, so a location
+	// registered under an older label is registered again when the label changes.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 type locationStateFile struct {
@@ -213,8 +220,10 @@ func KnownLocationID(repoRoot string) string {
 	return ""
 }
 
-// LocationRegistered reports whether repoRoot's id has been registered on server.
-func LocationRegistered(repoRoot, server string) bool {
+// LocationRegisteredAs reports whether repoRoot's id has been registered on
+// server under exactly label. A location registered before labels were stored
+// has none recorded, so it reads as not registered under any label.
+func LocationRegisteredAs(repoRoot, server, label string) bool {
 	locationMu.Lock()
 	defer locationMu.Unlock()
 	state, err := loadLocationState()
@@ -222,15 +231,16 @@ func LocationRegistered(repoRoot, server string) bool {
 		return false
 	}
 	e, ok := state.Locations[locationRepoKey(repoRoot)]
-	if !ok || e.Registered == nil {
+	if !ok {
 		return false
 	}
-	return e.Registered[normalizeServerURL(server)]
+	srv := normalizeServerURL(server)
+	return e.Registered[srv] && e.Labels[srv] == label
 }
 
-// MarkLocationRegistered records a successful POST /api/v1/locations for
-// this repoRoot × server pair.
-func MarkLocationRegistered(repoRoot, server string) error {
+// MarkLocationRegistered records a successful POST /api/v1/locations for this
+// repoRoot × server pair, with the label that was sent.
+func MarkLocationRegistered(repoRoot, server, label string) error {
 	locationMu.Lock()
 	defer locationMu.Unlock()
 	state, err := loadLocationState()
@@ -242,16 +252,51 @@ func MarkLocationRegistered(repoRoot, server string) error {
 	if e.Registered == nil {
 		e.Registered = map[string]bool{}
 	}
-	e.Registered[normalizeServerURL(server)] = true
+	if e.Labels == nil {
+		e.Labels = map[string]string{}
+	}
+	srv := normalizeServerURL(server)
+	e.Registered[srv] = true
+	e.Labels[srv] = label
 	state.Locations[key] = e
 	return writeLocationState(state)
 }
 
-// LocationLabel is the human-readable register payload: hostname + repo path.
-func LocationLabel(repoRoot string) string {
+// ShortHost is the machine's hostname up to its first dot ("unknown" when it has
+// none): the one host spelling shared by the location label and the session name.
+func ShortHost() string {
 	host, err := os.Hostname()
-	if err != nil || strings.TrimSpace(host) == "" {
-		host = "unknown"
+	host = strings.TrimSpace(host)
+	if err != nil || host == "" {
+		return "unknown"
 	}
-	return strings.TrimSpace(host) + " " + locationRepoKey(repoRoot)
+	if i := strings.IndexByte(host, '.'); i > 0 {
+		host = host[:i]
+	}
+	return host
+}
+
+// nameSeparator joins the segments of a session name.
+const nameSeparator = " · "
+
+// SessionName is the one identity an agent session goes by:
+// <short host> · <repo name>[ · <worktree dir>][ · <story id>]. The repo name is
+// config.RepoName (the same for a worktree and its main tree); the worktree
+// segment is present only for a linked worktree; the story segment is present
+// only when engagedID is non-empty.
+func SessionName(repoRoot, engagedID string) string {
+	parts := []string{ShortHost(), config.RepoName(repoRoot)}
+	if worktree.IsLinked(context.Background(), repoRoot) {
+		parts = append(parts, filepath.Base(locationRepoKey(repoRoot)))
+	}
+	if id := strings.TrimSpace(engagedID); id != "" {
+		parts = append(parts, id)
+	}
+	return strings.Join(parts, nameSeparator)
+}
+
+// LocationLabel is the human-readable register payload: the session name without
+// a story (a location is a checkout, not a session).
+func LocationLabel(repoRoot string) string {
+	return SessionName(repoRoot, "")
 }

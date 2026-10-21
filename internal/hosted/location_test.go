@@ -2,10 +2,12 @@ package hosted
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
@@ -124,13 +126,61 @@ func TestLocationRegisteredRoundTrip(t *testing.T) {
 	if _, err := LocationID(repo); err != nil {
 		t.Fatal(err)
 	}
-	if LocationRegistered(repo, "https://satelle.dev/") {
+	if LocationRegisteredAs(repo, "https://satelle.dev/", "a") {
 		t.Fatal("not yet registered")
 	}
-	if err := MarkLocationRegistered(repo, "https://satelle.dev/"); err != nil {
+	if err := MarkLocationRegistered(repo, "https://satelle.dev/", "a"); err != nil {
 		t.Fatal(err)
 	}
-	if !LocationRegistered(repo, "https://satelle.dev") {
+	if !LocationRegisteredAs(repo, "https://satelle.dev", "a") {
 		t.Fatal("normalized server should match trailing-slash key")
+	}
+	if LocationRegisteredAs(repo, "https://satelle.dev", "b") {
+		t.Fatal("a different label must read as not registered")
+	}
+}
+
+// A linked worktree and its main tree share host and repo name; only the linked
+// tree adds its directory, and only a held story adds the story id.
+func TestSessionName(t *testing.T) {
+	main := t.TempDir()
+	runGit(t, main, "init", "-q", "-b", "main")
+	runGit(t, main, "-c", "user.email=a@b", "-c", "user.name=n", "commit", "-q", "--allow-empty", "-m", "i")
+	if err := os.MkdirAll(filepath.Join(main, ".satelle"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(t.TempDir(), "sty_wt")
+	runGit(t, main, "worktree", "add", "-q", "-b", "wt", linked)
+	host, repo := ShortHost(), config.RepoName(main)
+	cases := []struct {
+		name, root, story, want string
+	}{
+		{"main, no story", main, "", host + " · " + repo},
+		{"main, story", main, "sty_1", host + " · " + repo + " · sty_1"},
+		{"linked, no story", linked, "", host + " · " + repo + " · sty_wt"},
+		{"linked, story", linked, "sty_1", host + " · " + repo + " · sty_wt · sty_1"},
+	}
+	for _, c := range cases {
+		if got := SessionName(c.root, c.story); got != c.want {
+			t.Errorf("%s: SessionName = %q, want %q", c.name, got, c.want)
+		}
+	}
+	if got := LocationLabel(linked); got != SessionName(linked, "") {
+		t.Errorf("LocationLabel = %q, want the story-less session name", got)
+	}
+}
+
+func TestShortHostHasNoDomain(t *testing.T) {
+	if h := ShortHost(); h == "" || strings.Contains(h, ".") {
+		t.Fatalf("ShortHost = %q", h)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }

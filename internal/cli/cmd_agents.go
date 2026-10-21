@@ -88,6 +88,9 @@ overwritten — which is also why remove leaves yours in place.`,
 				}
 				fmt.Fprintln(out)
 				if r.Action == "created" || r.Action == "updated" || r.Action == "unchanged" {
+					if note := agentinstall.UsageNote(home, r.Name); note != "" {
+						fmt.Fprintf(out, "  %s\n", note)
+					}
 					if snip := agentinstall.BindingSnippet(r.Name, r.Path); snip != "" {
 						fmt.Fprintln(out, "  sample binding (paste into agents.toml; does not change default reviewer):")
 						for _, line := range strings.Split(strings.TrimRight(snip, "\n"), "\n") {

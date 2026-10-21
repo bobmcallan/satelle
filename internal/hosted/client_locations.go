@@ -52,8 +52,10 @@ func (c *Client) RegisterLocationPrincipal(ctx context.Context, label string) (s
 	}
 }
 
-// EnsureLocationRegistered registers c's location for repoRoot on server once.
-// A successful register is persisted so later calls short-circuit. The caller
+// EnsureLocationRegistered registers c's location for repoRoot on server once
+// per label. A successful register is persisted with the label sent so later
+// calls short-circuit; a location registered under an older label is registered
+// again. The caller
 // treats non-ErrLoginRequired failures as non-fatal.
 //
 // Under a session token the registration also yields the principal id, so it is
@@ -63,20 +65,21 @@ func EnsureLocationRegistered(ctx context.Context, c *Client, repoRoot, server s
 	if c == nil || c.location == "" {
 		return nil
 	}
+	label := LocationLabel(repoRoot)
 	if cred, err := c.store.Load(c.server); err == nil && cred.IsSession() {
-		if _, known := SessionPrincipal(cred); known && LocationRegistered(repoRoot, server) {
+		if _, known := SessionPrincipal(cred); known && LocationRegisteredAs(repoRoot, server, label) {
 			return nil
 		}
 		if _, err := ResolveSessionPrincipal(ctx, c, repoRoot, server); err != nil {
 			return err
 		}
-		return MarkLocationRegistered(repoRoot, server)
+		return MarkLocationRegistered(repoRoot, server, label)
 	}
-	if LocationRegistered(repoRoot, server) {
+	if LocationRegisteredAs(repoRoot, server, label) {
 		return nil
 	}
-	if err := c.RegisterLocation(ctx, LocationLabel(repoRoot)); err != nil {
+	if err := c.RegisterLocation(ctx, label); err != nil {
 		return err
 	}
-	return MarkLocationRegistered(repoRoot, server)
+	return MarkLocationRegistered(repoRoot, server, label)
 }

@@ -431,6 +431,12 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 		return err
 	}
 
+	// 5b. Launchers — heal an installed one to the current form, and hint at
+	//     the named-session launcher when it is not installed.
+	if err := healLaunchers(out); err != nil {
+		return err
+	}
+
 	// 6. .gitignore — add only the entries satelle needs that the file does not
 	//    already settle (in-repo local-state, the harness dirs just scaffolded in
 	//    step 5, the story-dump globs). Written after the hooks so a harness dir
