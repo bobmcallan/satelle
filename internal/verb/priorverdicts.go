@@ -18,6 +18,9 @@ type PriorVerdict struct {
 	CreatedAt         string `json:"created_at,omitempty"`
 	Reviewed          string `json:"reviewed,omitempty"`
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+	// Criteria is the verdict's per-criterion entries (sty_99d3162b). markStale
+	// clears each entry's Reviewed together with the row's.
+	Criteria []CriterionVerdict `json:"criteria,omitempty"`
 	// ReviewedStale marks a skill's latest verdict whose review cycle ended
 	// before new evidence was recorded on the story. Reviewed is then cleared —
 	// the rubric's "no reviewed string, re-judge" rule fires — and
@@ -80,6 +83,8 @@ type priorVerdictRow struct {
 	Notes             string `json:"notes,omitempty"`
 	Reviewed          string `json:"reviewed,omitempty"`
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+	// Criteria is the verdict's per-criterion entries (reviewerPayload).
+	Criteria []CriterionVerdict `json:"criteria,omitempty"`
 	// Seats is the panel fold, one record per seat (reviewerPayload).
 	Seats []PanelSeat `json:"seats,omitempty"`
 	// RecordedAt is the wall-clock time the verdict row was appended, after the
@@ -183,6 +188,7 @@ func PriorVerdictsFrom(entries []ledger.Entry, from, to string, ex StaleExemptio
 			CreatedAt:         e.CreatedAt.UTC().Format(time.RFC3339),
 			Reviewed:          row.Reviewed,
 			ReviewedTruncated: row.ReviewedTruncated,
+			Criteria:          row.Criteria,
 			Seats:             row.Seats,
 		})
 		var at time.Time
@@ -210,10 +216,12 @@ func markStale(out []PriorVerdict, recorded []time.Time, entries []ledger.Entry,
 			continue
 		}
 		out[i].Reviewed, out[i].ReviewedTruncated = "", false
+		out[i].Criteria = withoutQuotations(out[i].Criteria)
 		if len(out[i].Seats) > 0 {
 			seats := append([]PanelSeat(nil), out[i].Seats...)
 			for j := range seats {
 				seats[j].Reviewed, seats[j].ReviewedTruncated = "", false
+				seats[j].Criteria = withoutQuotations(seats[j].Criteria)
 			}
 			out[i].Seats = seats
 		}

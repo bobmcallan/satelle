@@ -834,6 +834,9 @@ const (
 	// Over it, the row records that the citation was truncated and omits the
 	// string. It is not a hash and not a comparison of the story.
 	reviewedCeiling = 8 << 10
+	// maxCriteria caps the per-criterion entries kept from one verdict
+	// (sty_99d3162b), so a runaway reviewer cannot grow a ledger row.
+	maxCriteria = 64
 )
 
 // diffPayloadCeiling bounds the patch body that rides in one reviewer payload,
@@ -999,6 +1002,18 @@ type transitionPayload struct {
 	// when none, so every other gate's payload is unchanged. Enumeration, not
 	// verdict.
 	Deferred []DeferredItem `json:"deferred,omitempty"`
+	// CriteriaSource names where the criteria this gate judges come from — the
+	// performing step's document section ("doc:plan#Acceptance criteria") or
+	// "story" — so a reviewer numbers its criteria[] entries by the right lines
+	// (sty_99d3162b). Absent when there are no numbered criteria.
+	CriteriaSource string `json:"criteria_source,omitempty"`
+	// CriteriaState marks each judged criterion settled or open for this seat on a
+	// re-presentation. Absent unless the edge carries or an earlier verdict
+	// recorded criteria, so an ordinary gate's payload is unchanged.
+	CriteriaState []criterionState `json:"criteria_state,omitempty"`
+	// PeerFindings are the other panel seats' open findings (never the seat's
+	// own). Absent outside a panel and when no peer has one.
+	PeerFindings []peerFinding `json:"peer_findings,omitempty"`
 }
 
 // MessageState is one agent_message as injected into a transition payload.
@@ -1049,6 +1064,9 @@ type PriorVerdict struct {
 	Attempt           int    `json:"attempt"`
 	Reviewed          string `json:"reviewed,omitempty"`
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+	// Criteria is the verdict's per-criterion entries (sty_99d3162b): what the
+	// seat said of each criterion, its text then and the quotation it rested on.
+	Criteria []verb.CriterionVerdict `json:"criteria,omitempty"`
 	// ReviewedStale/EvidenceSince: ledger evidence was recorded after this
 	// verdict's cycle ended, so Reviewed is withheld and the gate re-judges.
 	ReviewedStale bool                 `json:"reviewed_stale,omitempty"`
@@ -1072,6 +1090,7 @@ func PriorVerdictFrom(v verb.PriorVerdict) PriorVerdict {
 		CreatedAt:         v.CreatedAt,
 		Reviewed:          v.Reviewed,
 		ReviewedTruncated: v.ReviewedTruncated,
+		Criteria:          v.Criteria,
 		ReviewedStale:     v.ReviewedStale,
 		EvidenceSince:     v.EvidenceSince,
 		Seats:             v.Seats,
@@ -1790,7 +1809,7 @@ type gateSlot struct {
 func reviewerVerdictOf(skill string, order int, system bool, dec verb.GateDecision) verb.ReviewerVerdict {
 	return verb.ReviewerVerdict{
 		Skill: skill, Order: order, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning,
-		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated, System: system,
+		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated, Criteria: dec.Criteria, System: system,
 		Command: dec.Command, Context: dec.Context, Model: dec.Model,
 		ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 		TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
@@ -2143,6 +2162,7 @@ func (g *Engine) StepPerformer(ctx context.Context, item workitem.Item, toStatus
 		return perf.PerformerResolution, fmt.Errorf("skill %q output contract: %w", skill, cerr)
 	}
 	perf.OutputName = contract.Name
+	perf.CriteriaSection = contract.CriteriaSection
 	return perf.PerformerResolution, nil
 }
 
@@ -3340,6 +3360,7 @@ func (g *Engine) decideReviewer(ctx context.Context, item workitem.Item, toStatu
 			"reviewer: %s produced no decision", skill)
 	}
 	stampInvocation(res.Decision, res, seat)
+	prep.criteria.apply(res.Decision)
 	return *res.Decision, nil
 }
 
@@ -3410,7 +3431,8 @@ func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus
 			runs[i] = panelSeatRun{record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: serr.Error()}}
 			return
 		}
-		res := g.invokeReviewerSeat(ctx, item, toStatus, skill, seatPrep(prep, skill, section), seat)
+		sp := seatPrep(prep, skill, section)
+		res := g.invokeReviewerSeat(ctx, item, toStatus, skill, sp, seat)
 		if res.Err != nil || res.Decision == nil {
 			notes := "reviewer produced no decision"
 			if res.Err != nil {
@@ -3423,10 +3445,12 @@ func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus
 			return
 		}
 		stampInvocation(res.Decision, res, seat)
+		sp.criteria.apply(res.Decision)
 		runs[i] = panelSeatRun{
 			record: verb.PanelSeat{
 				Seat: section, Accept: res.Decision.Accept, Notes: res.Decision.Notes,
 				Reviewed: res.Decision.Reviewed, ReviewedTruncated: res.Decision.ReviewedTruncated,
+				Criteria: res.Decision.Criteria,
 			},
 			stamp: seatStamp(skill, section, res, res.Decision),
 		}
@@ -3486,15 +3510,21 @@ func (g *Engine) foldPanel(ctx context.Context, skill, combine, command string, 
 		Accept      bool   `json:"accept"`
 		Unavailable bool   `json:"unavailable"`
 		Notes       string `json:"notes"`
+		// Criteria is the seat's per-criterion entries when it recorded any;
+		// Accept is then its effective decision, derived from them.
+		Criteria []verb.CriterionVerdict `json:"criteria,omitempty"`
 	}
 	seats := make([]combineSeat, 0, len(panel))
 	records := make([]verb.PanelSeat, 0, len(panel))
 	var stamps []verb.ReviewerVerdict
+	var perSeat [][]verb.CriterionVerdict
 	for _, run := range runs {
 		seats = append(seats, combineSeat{
 			Seat: run.record.Seat, Accept: run.record.Accept,
 			Unavailable: run.record.Unavailable, Notes: run.record.Notes,
+			Criteria: run.record.Criteria,
 		})
+		perSeat = append(perSeat, run.record.Criteria)
 		records = append(records, run.record)
 		if run.stamp.Command != "" {
 			stamps = append(stamps, run.stamp)
@@ -3503,7 +3533,10 @@ func (g *Engine) foldPanel(ctx context.Context, skill, combine, command string, 
 	payload, err := json.Marshal(struct {
 		Seats    []combineSeat `json:"seats"`
 		Declared int           `json:"declared"`
-	}{Seats: seats, Declared: len(panel)})
+		// CriteriaCombined tallies the seats' entries per criterion; absent when
+		// no seat recorded any.
+		CriteriaCombined []criterionCombine `json:"criteria_combined,omitempty"`
+	}{Seats: seats, Declared: len(panel), CriteriaCombined: combineCriteria(perSeat)})
 	if err != nil {
 		return verb.GateDecision{Gated: true, Skill: skill}, err
 	}
@@ -4698,6 +4731,8 @@ type rawDecision struct {
 	Reasoning         string `json:"reasoning"`
 	Reviewed          string `json:"reviewed,omitempty"`
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+	// Criteria is the optional per-criterion verdict (sty_99d3162b).
+	Criteria []rawCriterion `json:"criteria,omitempty"`
 }
 
 // applyReviewed bounds a quotation to reviewedCeiling before the decision is
@@ -4733,6 +4768,7 @@ func parseDecision(out []byte) (verb.GateDecision, error) {
 				Reasoning:         rd.Reasoning,
 				Reviewed:          reviewed,
 				ReviewedTruncated: truncated,
+				Criteria:          parseCriteria(rd.Criteria),
 			}
 			found = &d
 		}

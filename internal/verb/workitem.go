@@ -1824,7 +1824,7 @@ func appendLedgerEntry(ctx context.Context, storyID, kind, actor, body string, p
 // (create_review, amend_review) record one decision identically.
 func verdictFromDecision(dec GateDecision) ReviewerVerdict {
 	return ReviewerVerdict{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning,
-		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated,
+		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated, Criteria: dec.Criteria,
 		Command: dec.Command, Context: dec.Context, Model: dec.Model,
 		ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 		TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
@@ -2029,22 +2029,23 @@ func attemptPayload(from, to, skill, attempt string) json.RawMessage {
 // presentation is countable however many reviewers judged it.
 func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.RawMessage {
 	p := struct {
-		From              string       `json:"from"`
-		To                string       `json:"to"`
-		Attempt           string       `json:"attempt,omitempty"`
-		Skill             string       `json:"skill,omitempty"`
-		Order             int          `json:"order"`
-		System            bool         `json:"system,omitempty"`
-		Notes             string       `json:"notes,omitempty"`
-		Reasoning         string       `json:"reasoning,omitempty"`
-		Reviewed          string       `json:"reviewed,omitempty"`
-		ReviewedTruncated bool         `json:"reviewed_truncated,omitempty"`
-		Accept            bool         `json:"accept"`
-		CarriedFrom       int          `json:"carried_from,omitempty"`
-		Model             string       `json:"model,omitempty"`
-		ModelResolved     string       `json:"model_resolved,omitempty"`
-		ModelSource       string       `json:"model_source,omitempty"`
-		Models            []ModelUsage `json:"model_usage,omitempty"`
+		From              string             `json:"from"`
+		To                string             `json:"to"`
+		Attempt           string             `json:"attempt,omitempty"`
+		Skill             string             `json:"skill,omitempty"`
+		Order             int                `json:"order"`
+		System            bool               `json:"system,omitempty"`
+		Notes             string             `json:"notes,omitempty"`
+		Reasoning         string             `json:"reasoning,omitempty"`
+		Reviewed          string             `json:"reviewed,omitempty"`
+		ReviewedTruncated bool               `json:"reviewed_truncated,omitempty"`
+		Criteria          []CriterionVerdict `json:"criteria,omitempty"`
+		Accept            bool               `json:"accept"`
+		CarriedFrom       int                `json:"carried_from,omitempty"`
+		Model             string             `json:"model,omitempty"`
+		ModelResolved     string             `json:"model_resolved,omitempty"`
+		ModelSource       string             `json:"model_source,omitempty"`
+		Models            []ModelUsage       `json:"model_usage,omitempty"`
 		// BundleID/BundleSize: this verdict came from one bundled session judging
 		// BundleSize rubrics (sty_23e10d92). The verdict row carries no usage — the
 		// bundle's single agent_invocation row does.
@@ -2057,7 +2058,7 @@ func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.R
 		// it as the end of the review cycle (sty_0225fc2f).
 		RecordedAt string `json:"recorded_at,omitempty"`
 	}{From: from, To: to, Attempt: attempt, Skill: rv.Skill, Order: rv.Order, System: rv.System,
-		Notes: rv.Notes, Reasoning: rv.Reasoning, Reviewed: rv.Reviewed, ReviewedTruncated: rv.ReviewedTruncated, Accept: rv.Accept, CarriedFrom: rv.CarriedFrom,
+		Notes: rv.Notes, Reasoning: rv.Reasoning, Reviewed: rv.Reviewed, ReviewedTruncated: rv.ReviewedTruncated, Criteria: rv.Criteria, Accept: rv.Accept, CarriedFrom: rv.CarriedFrom,
 		Model: rv.Model, ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models,
 		BundleID: rv.BundleID, BundleSize: len(rv.BundleSkills),
 		Seats: rv.Seats, Combine: rv.Combine, RecordedAt: time.Now().UTC().Format(time.RFC3339Nano)}

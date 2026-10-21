@@ -48,5 +48,7 @@ is a defect of the review, not of the plan: it costs a full round to surface.
 ## Verdict
 
 ```json
-{"decision": "accept", "notes": "", "reviewed": "<exact words this verdict rests on>"}
+{"decision": "accept", "notes": "", "reviewed": "<exact words this verdict rests on>", "criteria": [{"criterion": 1, "status": "accept", "finding": "", "reviewed": "<exact words this entry rests on>"}]}
 ```
+
+`criteria` is optional.

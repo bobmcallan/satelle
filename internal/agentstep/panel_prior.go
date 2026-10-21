@@ -46,6 +46,7 @@ func seatPriorVerdicts(all []PriorVerdict, skill, seat string) []PriorVerdict {
 				own.Decision = "accept"
 			}
 			own.Reviewed, own.ReviewedTruncated = rec.Reviewed, rec.ReviewedTruncated
+			own.Criteria = rec.Criteria
 		}
 		out = append(out, own)
 	}
@@ -55,10 +56,16 @@ func seatPriorVerdicts(all []PriorVerdict, skill, seat string) []PriorVerdict {
 // seatPrep is prep as one seat opens it: the same material, with the seat's own
 // prior verdicts in place of the edge's, both whole (material) and windowed
 // (inline payload). prep is a copy; the shared prep is not touched.
+//
+// The seat is also shown which criteria its own latest verdict settled, and the
+// other seats' open findings (sty_99d3162b) — never its own.
 func seatPrep(prep reviewerPrep, skill, seat string) reviewerPrep {
+	peers := peerFindingsFor(prep.material.PriorVerdicts, skill, seat)
 	own := seatPriorVerdicts(prep.material.PriorVerdicts, skill, seat)
 	prep.material.PriorVerdicts = own
 	prep.tp.PriorVerdicts = windowPriorVerdicts(own)
+	prep.tp.CriteriaState = prep.criteria.setState(prep.tp.Story, prep.material.Docs, own, skill)
+	prep.tp.PeerFindings = peers
 	return prep
 }
 
@@ -110,13 +117,14 @@ func (g *Engine) carriedSeats(ctx context.Context, item workitem.Item, toStatus,
 	attempt := len(prior) + 1
 	for i, seat := range panel {
 		pv, ok := latestSeatEntry(prior, skill, seat)
-		if !ok || !quotationCarries(pv, judged) {
+		if !ok || !quotationCarries(pv, judged) || !criteriaUnchanged(pv, prep.criteria.judged) {
 			fresh = append(fresh, i)
 			continue
 		}
 		carried = append(carried, carriedSeat{idx: i, run: panelSeatRun{record: verb.PanelSeat{
 			Seat: seat, Accept: true, Reviewed: pv.Reviewed, Attempt: attempt, CarriedFrom: pv.Attempt,
-			Notes: fmt.Sprintf("carried from attempt %d: quotation unchanged", pv.Attempt),
+			Criteria: carriedCriteria(pv.Criteria, pv.Attempt),
+			Notes:    fmt.Sprintf("carried from attempt %d: quotation unchanged", pv.Attempt),
 		}}})
 	}
 	return carried, fresh

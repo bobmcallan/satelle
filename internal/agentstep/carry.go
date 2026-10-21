@@ -44,7 +44,14 @@ func (g *Engine) staleExemption(ctx context.Context, item workitem.Item, toStatu
 		return verb.StaleExemption{}
 	}
 	perf, err := g.StepPerformer(ctx, item, toStatus)
-	if err != nil || !perf.Dispatched {
+	return exemptionOf(true, perf, err)
+}
+
+// exemptionOf is the stale exemption for a step already resolved: the performer's
+// output document and its directed messages when the edge carries and the step is
+// dispatched, nothing otherwise.
+func exemptionOf(carry bool, perf verb.PerformerResolution, err error) verb.StaleExemption {
+	if !carry || err != nil || !perf.Dispatched {
 		return verb.StaleExemption{}
 	}
 	return verb.StaleExemption{DocName: perf.OutputName, Performer: perf.Agent}
@@ -119,7 +126,11 @@ func (g *Engine) carryable(ctx context.Context, item workitem.Item, toStatus str
 	if g.priorVerdicts == nil {
 		return nil, all
 	}
-	prior := g.priorVerdicts(ctx, item.ID, item.Status, toStatus, g.staleExemption(ctx, item, toStatus))
+	perf, perr := g.StepPerformer(ctx, item, toStatus)
+	prior := g.priorVerdicts(ctx, item.ID, item.Status, toStatus, exemptionOf(true, perf, perr))
+	if perr != nil {
+		perf = verb.PerformerResolution{}
+	}
 	latest := make(map[string]int, len(prior))
 	for i, v := range prior {
 		latest[v.Skill] = i
@@ -128,6 +139,7 @@ func (g *Engine) carryable(ctx context.Context, item workitem.Item, toStatus str
 	var tp transitionPayload
 	g.fillPayloadDocs(ctx, item.ID, &tp, &mat)
 	judged := judgedText(item, mat.Docs)
+	criteria, _ := judgedCriteria(item, mat.Docs, perf)
 	for i, ref := range ordered {
 		pi, ok := latest[ref.skill]
 		if !ok || ref.skill == "" || len(ref.panel) > 0 || ref.combine != "" {
@@ -135,7 +147,7 @@ func (g *Engine) carryable(ctx context.Context, item workitem.Item, toStatus str
 			continue
 		}
 		pv := prior[pi]
-		if !quotationCarries(pv, judged) {
+		if !quotationCarries(pv, judged) || !criteriaUnchanged(pv, criteria) {
 			fresh = append(fresh, i)
 			continue
 		}
@@ -147,6 +159,7 @@ func (g *Engine) carryable(ctx context.Context, item workitem.Item, toStatus str
 		carried = append(carried, carriedRef{idx: i, verdict: verb.ReviewerVerdict{
 			Skill: ref.skill, Order: i, Accept: true, System: i >= sysStart,
 			Reviewed:    pv.Reviewed,
+			Criteria:    carriedCriteria(pv.Criteria, pi+1),
 			CarriedFrom: pi + 1,
 			Notes:       fmt.Sprintf("carried from attempt %d: quotation unchanged", pi+1),
 		}})

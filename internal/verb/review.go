@@ -28,8 +28,11 @@ type GateDecision struct {
 	// does not compare them to the story.
 	Reviewed          string
 	ReviewedTruncated bool
-	Skill             string            // the deciding reviewer skill
-	Reviewers         []ReviewerVerdict // per-reviewer verdicts in run order (empty for the legacy single-reviewer path)
+	// Criteria is the verdict's per-criterion entries (sty_99d3162b). Empty for a
+	// verdict that carries none, which is decided by its top-level decision.
+	Criteria  []CriterionVerdict
+	Skill     string            // the deciding reviewer skill
+	Reviewers []ReviewerVerdict // per-reviewer verdicts in run order (empty for the legacy single-reviewer path)
 	// Command/Context describe an isolated AGENT invocation (LLM reviewer): the
 	// resolved harness command and the injected-context source (skill/rubric file).
 	// Empty for a deterministic functional-check gate, which invokes no agent
@@ -112,7 +115,9 @@ type ReviewerVerdict struct {
 	Reasoning         string `json:"reasoning,omitempty"` // optional free-form reasoning (verdict contract)
 	Reviewed          string `json:"reviewed,omitempty"`
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
-	System            bool   `json:"system,omitempty"`
+	// Criteria is the verdict's per-criterion entries (sty_99d3162b).
+	Criteria []CriterionVerdict `json:"criteria,omitempty"`
+	System   bool               `json:"system,omitempty"`
 	// CarriedFrom is the 1-based attempt index of the earlier verdict this one
 	// re-issues without a dispatch (sty_59720b8b); zero for a fresh judgment. A
 	// carried verdict has no Command, so no agent_invocation row is written.
@@ -191,6 +196,9 @@ type PanelSeat struct {
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
 	Attempt           int    `json:"attempt,omitempty"`
 	CarriedFrom       int    `json:"carried_from,omitempty"`
+	// Criteria is the seat's own per-criterion entries (sty_99d3162b). Accept is
+	// then the seat's effective decision, derived from them (CriteriaAccept).
+	Criteria []CriterionVerdict `json:"criteria,omitempty"`
 }
 
 // ToolIsolation is what a reviewer invocation's harness offered
@@ -452,6 +460,10 @@ type PerformerResolution struct {
 	// OutputName is the document name the performer's skill declares for its
 	// artifact (output_name); empty when the skill declares no output contract.
 	OutputName string
+	// CriteriaSection is the heading the performer's skill declares for the
+	// numbered acceptance criteria inside its output document
+	// (output_criteria_section); empty when it declares none (sty_99d3162b).
+	CriteriaSection string
 }
 
 // PerformerKind classifies a PerformerResolution.

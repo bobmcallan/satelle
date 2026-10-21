@@ -57,6 +57,8 @@ type bundleEntry struct {
 	Reasoning         string `json:"reasoning"`
 	Reviewed          string `json:"reviewed,omitempty"`
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+	// Criteria is the optional per-criterion verdict (sty_99d3162b).
+	Criteria []rawCriterion `json:"criteria,omitempty"`
 }
 
 type bundleEnvelope struct {
@@ -86,6 +88,7 @@ func parseBundleDecisions(out []byte, skills []string) ([]verb.GateDecision, err
 				Reasoning:         e.Reasoning,
 				Reviewed:          reviewed,
 				ReviewedTruncated: truncated,
+				Criteria:          parseCriteria(e.Criteria),
 			}
 		}
 	}
@@ -408,6 +411,7 @@ func (g *Engine) runReviewerBundle(ctx context.Context, item workitem.Item, toSt
 		}
 		// After the usage: setDecisionUsage replaces the whole UsageNote.
 		stampInvocation(&d, res, seat)
+		preps[k].criteria.apply(&d)
 		if k == 0 {
 			lead = d
 		} else {
