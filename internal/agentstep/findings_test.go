@@ -29,7 +29,7 @@ func findingsOf(t *testing.T, rows ...PriorVerdict) []Finding {
 	t.Helper()
 	g, _ := newEngine(t, "", fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
 	g.SetPriorVerdictsResolver(priorResolver(rows...))
-	tp := g.performerPayload(context.Background(), workitem.Item{ID: "sty_f", Status: "backlog"}, "plan", "plan", "planner", config.AgentBinding{})
+	tp, _ := g.performerPayload(context.Background(), workitem.Item{ID: "sty_f", Status: "backlog"}, "plan", "plan", "planner", config.AgentBinding{}, "")
 	return tp.Findings
 }
 
@@ -78,7 +78,7 @@ func TestPerformerPayloadHasNoFindingsWhenNothingRejected(t *testing.T) {
 		t.Errorf("an accepted edge has nothing to answer, got %+v", got)
 	}
 	g, _ := newEngine(t, "", fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
-	tp := g.performerPayload(context.Background(), workitem.Item{ID: "sty_f", Status: "backlog"}, "plan", "plan", "planner", config.AgentBinding{})
+	tp, _ := g.performerPayload(context.Background(), workitem.Item{ID: "sty_f", Status: "backlog"}, "plan", "plan", "planner", config.AgentBinding{}, "")
 	b, _ := json.Marshal(tp)
 	if strings.Contains(string(b), "findings_to_answer") {
 		t.Errorf("an unwired resolver must leave the payload unchanged: %s", b)

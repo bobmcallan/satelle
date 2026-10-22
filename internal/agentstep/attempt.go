@@ -17,7 +17,8 @@ import (
 
 // runArtifactAttempts executes one substrate-declared, bounded
 // validate/repair/escalate policy. It retains invalid drafts only in memory and
-// returns only a final validated artifact to the caller.
+// returns only a final validated artifact to the caller. beforeAttempt runs
+// immediately before each attempt's invocation, with that attempt's number.
 func (g *Engine) runArtifactAttempts(
 	ctx context.Context,
 	item workitem.Item,
@@ -33,6 +34,7 @@ func (g *Engine) runArtifactAttempts(
 	onEvent agentcli.EventHandler,
 	contract agentartifact.Contract,
 	policy agentartifact.AttemptPolicy,
+	beforeAttempt func(attempt int),
 ) (InvokeResult, *agentartifact.Artifact, error) {
 	maxTotal := policy.MaxTotal
 	if maxTotal == 0 {
@@ -90,6 +92,7 @@ func (g *Engine) runArtifactAttempts(
 		// iteration's reset).
 		attemptBinding := binding
 		attemptBinding.Model = current.Model
+		beforeAttempt(attempt)
 		lastResult = g.Invoke(ctx, InvokeRequest{
 			Binding: attemptBinding, Section: section, Rubric: attemptRubric,
 			Payload: payload,

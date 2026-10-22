@@ -25,6 +25,15 @@ type telemetryEnvelope struct {
 	Data map[string]any `json:"data,omitempty"`
 }
 
+// TelemetryPlanConsumed is the event kind recording that a dispatched performer's
+// payload carried the document its step consumes (the plan). TelemetrySourceDispatch
+// is the data["source"] marking a row the dispatch engine wrote itself, as opposed
+// to the same kind logged by a driver with `satelle story log`.
+const (
+	TelemetryPlanConsumed   = "plan-consumed"
+	TelemetrySourceDispatch = "dispatch"
+)
+
 // secretKeyPattern matches a data key that looks like it names a credential —
 // refused outright regardless of its value (AC4: secrets/env are never
 // recorded in a logged event). Deliberately excludes the bare word "token":

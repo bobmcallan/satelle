@@ -208,7 +208,7 @@ func (g *Engine) cloudPrompt(ctx context.Context, item workitem.Item, toStatus, 
 		return "", fmt.Errorf("cloud dispatch needs the %q skill: %w", cloudPerformerSkill, err)
 	}
 	performer = stripFrontmatter(performer)
-	payload := g.performerPayload(ctx, item, toStatus, skill, agent, binding)
+	payload, _ := g.performerPayload(ctx, item, toStatus, skill, agent, binding, "")
 	pj, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("cloud dispatch payload: %w", err)
