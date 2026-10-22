@@ -1,7 +1,12 @@
-## [Unreleased]
+## [0.0.730] - 2026-10-22
 
 ### Changed
 - Locked substrate is never edit-exempt, in every repo. A change to a path under `[gate] lock_substrate_paths` (the `.satelle/` workflows, skills and agent bindings by default), made through Edit/Write or a shell command, is now refused unless this session is engaged in a substrate-category story. That includes the case where no story is engaged at all: before this change `.satelle/` was freely editable with nothing engaged, because the seeded `edit_exempt_paths` entry was consulted first. File a story with `--category substrate` and engage it. If the substrate itself prevents engagement (an invalid `step.toml`, say), ask the developer to repair it outside the agent session. Exempt paths that are not locked (`.gitignore`, the harness scaffolds, `/tmp`, story dumps) are unchanged. The rule is stated once, in `satelle help substrate`. (sty_66abc0e3)
+
+## [serve-v0.0.197] - 2026-10-22
+
+### Changed
+- The service binary carries the updated `satelle help substrate` topic (lock precedence over edit_exempt_paths). (sty_66abc0e3)
 
 ## [0.0.729] - 2026-10-22
 
