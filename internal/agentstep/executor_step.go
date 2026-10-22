@@ -131,7 +131,10 @@ func (g *Engine) PerformExecutorStep(ctx context.Context, item workitem.Item, st
 	}
 	invokeBinding := binding
 	invokeBinding.Model = mc.Model
-	execPayload := g.performerPayload(ctx, item, step, skill, "executor", binding)
+	execPayload, consumed := g.performerPayload(ctx, item, step, skill, "executor", binding, target.ApplyCriteriaDoc)
+	if consumed != nil {
+		g.recordDocConsumed(ctx, item.ID, "executor", step, *consumed, 1)
+	}
 	invRes := g.Invoke(ctx, InvokeRequest{
 		Binding:     invokeBinding,
 		Section:     "executor",

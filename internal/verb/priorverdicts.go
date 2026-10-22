@@ -74,9 +74,13 @@ func isSelfLedgerKind(kind string) bool {
 
 // isSelfTelemetryKind reports whether a telemetry envelope kind is one the
 // dispatch engine writes for itself. Driver-recorded telemetry (story log) is
-// not among them.
-func isSelfTelemetryKind(kind string) bool {
-	switch kind {
+// not among them — including a plan-consumed row, which is the engine's own only
+// when its data names source=dispatch.
+func isSelfTelemetryKind(env telemetryEnvelope) bool {
+	if env.Kind == TelemetryPlanConsumed {
+		return env.Data["source"] == TelemetrySourceDispatch
+	}
+	switch env.Kind {
 	case "agent-attempt", "gate-bundled", "gate-carried", "agent-retry", "agent-failure",
 		"agent-timeout", "agent-stalled", "scoped-gate-skipped",
 		"reviewer-isolation-warned", "agent-secondary-failover", "agent-interactive-denied":
@@ -277,7 +281,7 @@ func IsEvidenceRow(e ledger.Entry) bool {
 	switch e.Kind {
 	case ledger.KindTelemetryEvent:
 		var env telemetryEnvelope
-		if json.Unmarshal(e.Payload, &env) == nil && isSelfTelemetryKind(env.Kind) {
+		if json.Unmarshal(e.Payload, &env) == nil && isSelfTelemetryKind(env) {
 			return false
 		}
 	case ledger.KindAgentMessage:

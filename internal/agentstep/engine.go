@@ -26,6 +26,8 @@ package agentstep
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -974,6 +976,12 @@ type transitionPayload struct {
 	// Bash-less reviewer can judge without reading any disk path (sty_58fa970e).
 	// Bodies may be Truncated when the cumulative budget is spent.
 	Docs []DocState `json:"docs,omitempty"`
+	// PlanAttached says whether the document the dispatched step consumes (its
+	// apply_criteria doc, normally the plan) rode this payload. It is set, to true
+	// or false, only on a performer payload for a step that declares such a
+	// document; nil (absent) otherwise, so every other payload is byte-for-byte
+	// unchanged. Enumeration, not verdict.
+	PlanAttached *bool `json:"plan_attached,omitempty"`
 	// RouteDrift is present ONLY when the story's walked lane no longer matches
 	// the lane its category derives (sty_6e4f7fd8). Absent on every ordinary
 	// transition, so a reviewer that ignores it costs nothing and a gate that
@@ -1400,9 +1408,26 @@ const (
 // children (when a resolver is wired and the item has any) and the messages
 // addressed to the agent, "executor" and its resolved role. Provider-neutral: the
 // children ride the payload, so a performer with read-only tools needs no shell.
-func (g *Engine) performerPayload(ctx context.Context, item workitem.Item, toStatus, skill, agent string, binding config.AgentBinding) transitionPayload {
+//
+// consumes names the document the step consumes (its apply_criteria doc); empty
+// when it declares none. When set, PlanAttached reports whether that document
+// rode the payload, and the document itself is returned (full body, before any
+// ceiling trimming) for the caller to record as consumed; nil when absent.
+func (g *Engine) performerPayload(ctx context.Context, item workitem.Item, toStatus, skill, agent string, binding config.AgentBinding, consumes string) (transitionPayload, *DocState) {
 	tp := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: skill}
-	g.fillPayloadDocs(ctx, item.ID, &tp, nil)
+	var mat reviewerMaterial
+	g.fillPayloadDocs(ctx, item.ID, &tp, &mat)
+	var consumed *DocState
+	if consumes != "" {
+		for i := range mat.Docs {
+			if mat.Docs[i].Name == consumes {
+				consumed = &mat.Docs[i]
+				break
+			}
+		}
+		attached := consumed != nil
+		tp.PlanAttached = &attached
+	}
 	g.fillFindings(ctx, item, toStatus, &tp)
 	if g.children != nil {
 		tp.Children = g.children(ctx, item)
@@ -1412,7 +1437,30 @@ func (g *Engine) performerPayload(ctx context.Context, item workitem.Item, toSta
 		addrs = append(addrs, role)
 	}
 	g.fillMessages(ctx, item.ID, addrs, &tp, nil)
-	return tp
+	return tp, consumed
+}
+
+// recordDocConsumed writes the plan-consumed ledger row for one dispatch attempt:
+// the document the performer's payload carried, its content hash and the attempt.
+// It runs immediately before the performer is invoked, so the record exists
+// whether or not the performer says anything about the plan. source=dispatch marks
+// it as the engine's own row (verb.IsEvidenceRow), distinct from a driver's
+// `story log`. The hash carries a "sha256:" prefix: a bare 64-hex value is
+// credential-shaped to the telemetry writer's secret check and would be replaced
+// with a refusal marker.
+func (g *Engine) recordDocConsumed(ctx context.Context, itemID, agent, step string, doc DocState, attempt int) {
+	sum := doc.SHA256
+	if sum == "" {
+		raw := sha256.Sum256([]byte(doc.Body))
+		sum = hex.EncodeToString(raw[:])
+	}
+	g.telemetryEvent(ctx, itemID, agent, verb.TelemetryPlanConsumed, map[string]any{
+		"attachment":   doc.Name,
+		"content_hash": "sha256:" + sum,
+		"attempt":      attempt,
+		"step":         step,
+		"source":       verb.TelemetrySourceDispatch,
+	})
 }
 
 // fillMessages attaches engagement-windowed agent messages for recipient.
@@ -2403,7 +2451,12 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	} else {
 		g.emitProgress("dispatching step %s to named agent %s (may take several minutes)…", toStatus, dispatchAgent)
 	}
-	execPayload := g.performerPayload(ctx, item, toStatus, dispatchSkill, dispatchAgent, binding)
+	execPayload, consumed := g.performerPayload(ctx, item, toStatus, dispatchSkill, dispatchAgent, binding, target.ApplyCriteriaDoc)
+	recordConsumed := func(attempt int) {
+		if consumed != nil {
+			g.recordDocConsumed(ctx, item.ID, dispatchAgent, toStatus, *consumed, attempt)
+		}
+	}
 	charter := executorCharter(dispatchAgent, toStatus, wfName)
 	var finalArtifact *agentartifact.Artifact
 	var invRes InvokeResult
@@ -2413,13 +2466,14 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			ctx, item, toStatus, dispatchSkill, dispatchAgent, rubric,
 			execPayload, charter, binding, modelChoice, target.Model, config.ModelSourceStep,
 			runner, timeout, idle, rawSink, onEvent,
-			outputContract, attemptPolicy)
+			outputContract, attemptPolicy, recordConsumed)
 		if attemptErr != nil {
 			invRes.Err = attemptErr
 		}
 	} else {
 		invokeBinding := binding
 		invokeBinding.Model = modelChoice.Model
+		recordConsumed(1)
 		invRes = g.Invoke(ctx, InvokeRequest{
 			Binding:     invokeBinding,
 			Section:     dispatchAgent,

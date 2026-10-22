@@ -52,10 +52,20 @@ When the story was implemented by a **dispatched coder** (ledger / dispatch
 evidence / executor.log shows a `coder` dispatch for `in_progress`), the recorded
 evidence must show the coder consumed the plan before implementing:
 
-- a typed `plan-consumed` event in the ledger/op-log (`satelle story log … --kind plan-consumed`), **or**
+- a `plan-consumed` ledger row **written by satelle at dispatch** — a
+  `telemetry_event` of kind `plan-consumed` with `source: dispatch`, the dispatched
+  agent as actor, and `attachment`, `content_hash` and `attempt` in its data (read it
+  with `satelle ledger list --story <id>`). Satelle writes it before the coder runs,
+  whenever the coder's payload carried the plan attachment, so it **alone satisfies**
+  the check and the coder need not say anything; **or**
+- a typed `plan-consumed` event a driver logged (`satelle story log … --kind plan-consumed`), **or**
 - a `PLAN-CONSUMED:` (or plan-consumed) statement in the recorded run output
   (dispatch sink under `.satelle/logs/dispatch/`, or `executor.log`) naming the
   plan attachment and the plan steps followed.
+
+The coder's own statement is optional corroboration. A dispatch whose payload had
+`plan_attached: false` (no plan attachment) writes no such row — that is the
+absent-evidence case, not a pass.
 
 **Reject naming `check_plan_consumed`** only when the evidence channel exists for
 the story (a dispatched-coder run is recorded) **and** consumption evidence is

@@ -21,6 +21,11 @@ func TestIsEvidenceRow(t *testing.T) {
 		raw, _ := json.Marshal(telemetryKind(kind))
 		return ledger.Entry{Kind: ledger.KindTelemetryEvent, Payload: raw}
 	}
+	raw, _ := json.Marshal(map[string]any{
+		"kind": verb.TelemetryPlanConsumed,
+		"data": map[string]any{"attachment": "plan", "source": verb.TelemetrySourceDispatch},
+	})
+	dispatchConsumed := ledger.Entry{Kind: ledger.KindTelemetryEvent, Payload: raw}
 	for _, tc := range []struct {
 		name string
 		row  ledger.Entry
@@ -30,6 +35,9 @@ func TestIsEvidenceRow(t *testing.T) {
 		{"directed message (no cc)", msg(""), true},
 		{"driver story log", tel("plan-consumed"), true},
 		{"engine telemetry", tel("agent-attempt"), false},
+		// sty_1b0233ba: the dispatch engine's own plan-consumed row is self
+		// bookkeeping; the same kind from a driver's story log is evidence.
+		{"engine plan-consumed", dispatchConsumed, false},
 		{"tool permission", ledger.Entry{Kind: ledger.KindToolPermission}, false},
 		{"agent invocation", ledger.Entry{Kind: ledger.KindAgentInvocation}, false},
 		{"review verdict", ledger.Entry{Kind: ledger.KindReviewReject}, false},
