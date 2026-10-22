@@ -394,7 +394,14 @@ func (g *Engine) runReviewerBundle(ctx context.Context, item workitem.Item, toSt
 		Actor:       seat.section,
 	})
 	if res.Err != nil {
-		return nil, res.Err
+		if res.Command == "" {
+			return nil, res.Err
+		}
+		// One session judged every rubric, so its failure is one record naming
+		// them all, the way a judged bundle writes its single row.
+		stamp := g.failureStamp(strings.Join(skills, "+"), res, seat)
+		stamp.BundleSkills = skills
+		return nil, &verb.GateFailure{Err: res.Err, Stamps: []verb.ReviewerVerdict{stamp}}
 	}
 	if len(res.Decisions) != len(skills) {
 		return nil, fmt.Errorf("reviewer: bundled session for %s returned %d decisions, want %d",
@@ -410,6 +417,7 @@ func (g *Engine) runReviewerBundle(ctx context.Context, item workitem.Item, toSt
 		d.ReviewMode = refs[live[k]].mode
 		if k == 0 {
 			g.setDecisionUsage(&d, res.Usage, seat.binding.Model)
+			d.RunCounts = res.Counts
 		}
 		// After the usage: setDecisionUsage replaces the whole UsageNote.
 		stampInvocation(&d, res, seat)

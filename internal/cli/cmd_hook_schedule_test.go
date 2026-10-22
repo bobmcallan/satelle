@@ -10,12 +10,18 @@ import (
 )
 
 // scheduleFixtureWFs is a route with an epic-parent lane whose waiting step
-// declares the child schedule ("" leaves it undeclared).
+// declares the deprecated schedule key ("" leaves it undeclared).
 func scheduleFixtureWFs(schedule string) []docindex.Doc {
 	line := ""
 	if schedule != "" {
 		line = "schedule = \"" + schedule + "\"\n"
 	}
+	return scheduleFixtureWFsLine(line)
+}
+
+// scheduleFixtureWFsLine is scheduleFixtureWFs with the schedule line authored
+// verbatim (e.g. `sequential = true`).
+func scheduleFixtureWFsLine(line string) []docindex.Doc {
 	return routeWFs(
 		`["*"]
 obligations = ["raised", "coded", "closed"]
@@ -75,8 +81,14 @@ func TestSeatScheduleInject(t *testing.T) {
 		t.Errorf("sequential inject must not carry the parallel worktree clause: %q", seq)
 	}
 
-	if got := seatScheduleLines([]string{"sty_kid"}, items, scheduleFixtureWFs("")); got != "" {
-		t.Errorf("unscheduled container must add no drive-epic text: %q", got)
+	// Nothing declared is parallel: the same inject as the deprecated key.
+	if got := seatScheduleLines([]string{"sty_kid"}, items, scheduleFixtureWFs("")); got != par {
+		t.Errorf("an unscheduled container is parallel by default: %q want %q", got, par)
+	}
+	// sequential = true is the override.
+	over := seatScheduleLines([]string{"sty_kid"}, items, scheduleFixtureWFsLine("sequential = true\n"))
+	if over != seq {
+		t.Errorf("sequential = true inject: %q want %q", over, seq)
 	}
 	if got := seatScheduleLines([]string{"sty_other"}, items, scheduleFixtureWFs("parallel")); got != "" {
 		t.Errorf("a holder outside any epic container must add nothing: %q", got)
@@ -85,7 +97,8 @@ func TestSeatScheduleInject(t *testing.T) {
 
 // TestAgentGoalsDriveEpicText: the principle the session receives states both
 // drives, the stop rule, the worktree bases, and keeps the one-at-a-time rule
-// only for the no-schedule case (sty_4aefd2a9 AC1, AC3, AC5).
+// only outside a container or under sequential = true (sty_4aefd2a9 AC1, AC3,
+// AC5; sty_eb5135ca).
 func TestAgentGoalsDriveEpicText(t *testing.T) {
 	body, ok := embeddedDefault("principles", "satelle-agent-goals")
 	if !ok {
@@ -106,14 +119,14 @@ func TestAgentGoalsDriveEpicText(t *testing.T) {
 		"never cut from a branch that does not exist",
 		"not yet on trunk from that target's branch",
 		"A cancelled dependency is a stop",
-		"One story at a time — when the container declares no schedule.",
-		"This is not the rule once a container declares a schedule",
+		"One story at a time — outside a container, or when it sets sequential = true.",
+		"Inside a container, children run in parallel by default and the wave says who may start",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("principle missing %q", want)
 		}
 	}
-	// Every one-at-a-time statement is qualified by the no-schedule case.
+	// Every one-at-a-time statement is qualified by the schedule.
 	lower := strings.ToLower(flat)
 	for from := 0; ; {
 		i := strings.Index(lower[from:], "one at a time")

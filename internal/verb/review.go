@@ -2,6 +2,7 @@ package verb
 
 import (
 	"context"
+	"strings"
 
 	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -35,12 +36,8 @@ type GateDecision struct {
 	// full one (sty_93359e0f).
 	ReviewMode string
 	Coverage   *Coverage
-	// Turns is the model turns the reviewer's invocation reported; nil with
-	// TurnsUnavailableReason set when the adapter reported none — never a zero.
-	Turns                  *int
-	TurnsUnavailableReason string
-	Skill                  string            // the deciding reviewer skill
-	Reviewers              []ReviewerVerdict // per-reviewer verdicts in run order (empty for the legacy single-reviewer path)
+	Skill      string            // the deciding reviewer skill
+	Reviewers  []ReviewerVerdict // per-reviewer verdicts in run order (empty for the legacy single-reviewer path)
 	// Command/Context describe an isolated AGENT invocation (LLM reviewer): the
 	// resolved harness command and the injected-context source (skill/rubric file).
 	// Empty for a deterministic functional-check gate, which invokes no agent
@@ -76,6 +73,10 @@ type GateDecision struct {
 	TokensCacheWrite int
 	TokensCacheRead  int
 	UsageNote
+	// RunCounts is the invocation's turns and tool calls, or the adapter-named
+	// reason each is unavailable. Bundles carry it on the first verdict only,
+	// like usage.
+	RunCounts
 	// CostUSD/CostUnavailableReason are the invocation's dollar cost (sty_c4df7376),
 	// read from the provider's own figure — never a token count times a rate.
 	// CostUnavailableReason names the adapter and why when CostUSD is nil.
@@ -127,11 +128,7 @@ type ReviewerVerdict struct {
 	// gate declared (fail-fast only) and what the reviewer says it covered.
 	ReviewMode string    `json:"review_mode,omitempty"`
 	Coverage   *Coverage `json:"coverage,omitempty"`
-	// Turns / TurnsUnavailableReason mirror GateDecision's; they ride the
-	// agent_invocation row, not the verdict row.
-	Turns                  *int   `json:"turns,omitempty"`
-	TurnsUnavailableReason string `json:"turns_unavailable_reason,omitempty"`
-	System                 bool   `json:"system,omitempty"`
+	System     bool      `json:"system,omitempty"`
 	// CarriedFrom is the 1-based attempt index of the earlier verdict this one
 	// re-issues without a dispatch (sty_59720b8b); zero for a fresh judgment. A
 	// carried verdict has no Command, so no agent_invocation row is written.
@@ -165,6 +162,12 @@ type ReviewerVerdict struct {
 	TokensCacheWrite int `json:"tokens_cache_write,omitempty"`
 	TokensCacheRead  int `json:"tokens_cache_read,omitempty"`
 	UsageNote
+	// RunCounts mirrors GateDecision's: the invocation's turns and tool calls.
+	RunCounts
+	// Outcome is OutcomeUnavailable or OutcomeMaxTurns on the invocation stamp of
+	// an attempt that produced no verdict; empty on a verdict, whose accept or
+	// reject is the review row's own record.
+	Outcome string `json:"outcome,omitempty"`
 	// CostUSD/CostUnavailableReason mirror GateDecision's fields of the same
 	// name (sty_c4df7376), stamped on this verdict's own ledger row.
 	CostUSD               *float64 `json:"cost_usd,omitempty"`
@@ -195,11 +198,26 @@ type ReviewerVerdict struct {
 // PanelSeat is one seat's record inside a skill-level panel verdict. Accept
 // false with Unavailable true is not an accept — the combine check decides
 // whether that counts against the panel.
+//
+// Reviewed, ReviewedTruncated and Attempt are the seat's own quotation and the
+// attempt it was judged on, recorded as a single-seat verdict records them
+// (sty_da9e8d0a), so the next presentation of the edge can hand each seat its
+// own prior verdict. CarriedFrom is the attempt whose accept a carried seat
+// reuses; it is zero for a seat that was judged this round.
 type PanelSeat struct {
 	Seat        string `json:"seat"`
 	Accept      bool   `json:"accept"`
 	Unavailable bool   `json:"unavailable,omitempty"`
-	Notes       string `json:"notes,omitempty"`
+	// MaxTurns marks an unavailable seat that the harness stopped at its turn
+	// cap: the run was cut short, it did not judge. Set together with
+	// Unavailable, never instead of it, so a combine check that reads only
+	// unavailable keeps working.
+	MaxTurns          bool   `json:"max_turns,omitempty"`
+	Notes             string `json:"notes,omitempty"`
+	Reviewed          string `json:"reviewed,omitempty"`
+	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+	Attempt           int    `json:"attempt,omitempty"`
+	CarriedFrom       int    `json:"carried_from,omitempty"`
 	// Coverage is what this seat says it covered (sty_93359e0f); nil when it
 	// stated nothing.
 	Coverage *Coverage `json:"coverage,omitempty"`
@@ -213,6 +231,62 @@ type Coverage struct {
 	Complete  bool   `json:"complete"`
 	StoppedAt string `json:"stopped_at,omitempty"`
 }
+
+// Outcomes of a reviewer attempt that produced no verdict, recorded on its
+// agent_invocation row (ReviewerVerdict.Outcome). An accept or reject is the
+// verdict row's own record, never repeated here.
+const (
+	// OutcomeUnavailable: the seat could not judge — the run failed, timed out,
+	// stalled or its output named no verdict.
+	OutcomeUnavailable = "unavailable"
+	// OutcomeMaxTurns: the harness ended the run at its turn cap.
+	OutcomeMaxTurns = "max-turns"
+)
+
+// RunCounts is what one reviewer run measured about its own work, embedded flat
+// like UsageNote. Each figure is a pointer so "the harness reported none" (nil,
+// with the adapter-named reason beside it) is never confused with a measured
+// zero — satelle-agent-agnostic §2.
+type RunCounts struct {
+	// Turns is the model turns the run reported (the harness's own num_turns).
+	Turns                  *int   `json:"turns,omitempty"`
+	TurnsUnavailableReason string `json:"turns_unavailable_reason,omitempty"`
+	// ToolCalls is the tool calls satelle saw the run start, counted from the
+	// transport's tool events; it is set only for a transport that emits them.
+	ToolCalls                  *int   `json:"tool_calls,omitempty"`
+	ToolCallsUnavailableReason string `json:"tool_calls_unavailable_reason,omitempty"`
+}
+
+// named is c with a reason filled in for each figure that is neither measured
+// nor already explained, naming the harness binary of command. The engine names
+// the adapter before it gets here; this is the row writer's guard that a row from
+// any other path still records an absence, never a bare zero.
+func (c RunCounts) named(command string) RunCounts {
+	binary := "reviewer"
+	if fields := strings.Fields(command); len(fields) > 0 {
+		binary = fields[0]
+	}
+	if c.Turns == nil && c.TurnsUnavailableReason == "" {
+		c.TurnsUnavailableReason = binary + ": the run reported no turn count"
+	}
+	if c.ToolCalls == nil && c.ToolCallsUnavailableReason == "" {
+		c.ToolCallsUnavailableReason = binary + ": the run reported no tool-call count"
+	}
+	return c
+}
+
+// GateFailure is the error a reviewer gate returns when a seat attempt produced
+// no verdict (a failed run, a turn cap, an unparseable output): Err is the cause
+// and Stamps are the invocation records of the attempts that started, which the
+// round writer appends as agent_invocation rows before it returns the error, so
+// a presentation whose only seat failed still leaves its measured usage.
+type GateFailure struct {
+	Err    error
+	Stamps []ReviewerVerdict
+}
+
+func (e *GateFailure) Error() string { return e.Err.Error() }
+func (e *GateFailure) Unwrap() error { return e.Err }
 
 // ToolIsolation is what a reviewer invocation's harness offered
 // (sty_ef3efb51), embedded flat like UsageNote. OfferedToolCount is a pointer

@@ -60,28 +60,6 @@ func TestPanelRowStoresEachSeatsCoverage(t *testing.T) {
 	}
 }
 
-func TestInvocationRowCarriesTurnsOrTheirReason(t *testing.T) {
-	four := 4
-	with := rowOf(t, invocationPayload("plan", "in_progress", ReviewerVerdict{Skill: "gate", Turns: &four}))
-	if with["turns"] != float64(4) {
-		t.Errorf("turns = %v, want 4", with["turns"])
-	}
-	without := rowOf(t, invocationPayload("plan", "in_progress", ReviewerVerdict{Skill: "gate", TurnsUnavailableReason: "claude command: no turn count"}))
-	if _, ok := without["turns"]; ok {
-		t.Errorf("unreported turns must be absent, not zero: %v", without)
-	}
-	if without["turns_unavailable_reason"] != "claude command: no turn count" {
-		t.Errorf("reason = %v", without["turns_unavailable_reason"])
-	}
-	neither := rowOf(t, invocationPayload("plan", "in_progress", ReviewerVerdict{Skill: "gate"}))
-	if _, ok := neither["turns"]; ok {
-		t.Errorf("neither turns nor a reason when the run reported no usage: %v", neither)
-	}
-	if _, ok := neither["turns_unavailable_reason"]; ok {
-		t.Errorf("neither turns nor a reason when the run reported no usage: %v", neither)
-	}
-}
-
 func TestPartialVerdictDerivation(t *testing.T) {
 	stopped := &Coverage{StoppedAt: "AC2"}
 	for name, tc := range map[string]struct {

@@ -142,11 +142,14 @@ type Step struct {
 	// the edit gate and Stop hook do not count it while children are open
 	// (sty_7f3e6fd3). Authored in step.toml; the binary never names the status.
 	WaitsOnChildren bool
-	// Schedule is the container's declared child schedule (SchedParallel or
-	// SchedSequential), authored on a waits_on_children step. Empty means
-	// undeclared: the binary does not default it, compute a wave from it or
-	// change engagement because of it.
+	// Schedule is the DEPRECATED authored child-schedule key (SchedParallel or
+	// SchedSequential), kept as written so validate can name it
+	// (LegacyScheduleSteps). Empty when absent. Read the resolved schedule
+	// through ChildSchedule, never this field.
 	Schedule string
+	// Sequential is the authored `sequential = true` override of the parallel
+	// default, legal only on a waits_on_children step.
+	Sequential bool
 	// AfterChildren is the obligation every child must have discharged on its own
 	// route before a container may enter this step. The step may name a performer
 	// like any other; the binary only gates entry and the seat. Empty means the
@@ -508,7 +511,7 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			ApplyChangeTags:      st.ApplyChangeTags,
 
 			WaitsOnChildren: st.WaitsOnChildren,
-			Schedule:        st.Schedule,
+			Schedule:        st.ChildSchedule(),
 			AfterChildren:   st.AfterChildren,
 			RemoteAgent:     st.RemoteAgent,
 			LocalTags:       st.LocalTags,

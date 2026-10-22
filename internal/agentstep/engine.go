@@ -393,6 +393,9 @@ func classifyOutcome(err error) string {
 	if err == nil {
 		return "no-verdict"
 	}
+	if errors.Is(err, agentcli.ErrMaxTurns) {
+		return verb.OutcomeMaxTurns
+	}
 	if asStallError(err) != nil {
 		return "stalled"
 	}
@@ -1064,6 +1067,13 @@ type PriorVerdict struct {
 	ReviewMode string         `json:"review_mode,omitempty"`
 	Coverage   *verb.Coverage `json:"coverage,omitempty"`
 	Partial    bool           `json:"partial,omitempty"`
+	// Unavailable marks a panel seat's own entry for a round it never produced a
+	// verdict on (sty_da9e8d0a). It is a reject with no Reviewed, judged in full.
+	Unavailable bool `json:"unavailable,omitempty"`
+	// Seats is the panel fold of the ledger row this came from. It feeds
+	// seatPriorVerdicts and is never serialised: a seat sees its own entry, not
+	// the combined row.
+	Seats []verb.PanelSeat `json:"-"`
 }
 
 // PriorVerdictFrom is the one conversion from a ledger prior verdict to the
@@ -1081,6 +1091,7 @@ func PriorVerdictFrom(v verb.PriorVerdict) PriorVerdict {
 		ReviewMode:        v.ReviewMode,
 		Coverage:          v.Coverage,
 		Partial:           v.Partial,
+		Seats:             v.Seats,
 	}
 }
 
@@ -1184,6 +1195,14 @@ func (g *Engine) fillPriorVerdicts(ctx context.Context, itemID, from, to string,
 	if mat != nil {
 		mat.PriorVerdicts = append([]PriorVerdict(nil), all...)
 	}
+	tp.PriorVerdicts = windowPriorVerdicts(all)
+}
+
+// windowPriorVerdicts is the most recent priorVerdictCount of all with each
+// note capped — what rides the payload inline. all is numbered over the full
+// history, so a window still reports how deep the edge is. A panel seat's own
+// priors take the same window.
+func windowPriorVerdicts(all []PriorVerdict) []PriorVerdict {
 	window := all
 	if len(window) > priorVerdictCount {
 		window = window[len(window)-priorVerdictCount:]
@@ -1192,11 +1211,11 @@ func (g *Engine) fillPriorVerdicts(ctx context.Context, itemID, from, to string,
 	for _, v := range window {
 		v.Notes = excerpt(v.Notes, priorVerdictNotesCeiling)
 		// Reviewed is the reviewer's quotation. It is copied whole onto this
-		// window and onto the material snapshot above. It is not excerpted:
+		// window and onto the material snapshot. It is not excerpted:
 		// a shortened quotation is not a citation.
 		out = append(out, v)
 	}
-	tp.PriorVerdicts = out
+	return out
 }
 
 // DefinitionEdit is one recorded edit to a story's definition while it was still
@@ -1719,6 +1738,7 @@ func (g *Engine) runScheduled(ctx context.Context, item workitem.Item, toStatus 
 		result.TokensIn, result.TokensOut, result.TokensTotal = dec.TokensIn, dec.TokensOut, dec.TokensTotal
 		result.TokensInFresh, result.TokensCacheWrite, result.TokensCacheRead = dec.TokensInFresh, dec.TokensCacheWrite, dec.TokensCacheRead
 		result.UsageNote = dec.UsageNote
+		result.RunCounts = dec.RunCounts
 		result.CostUSD, result.CostUnavailableReason = dec.CostUSD, dec.CostUnavailableReason
 		result.SystemPromptBytes, result.PayloadBytes = dec.SystemPromptBytes, dec.PayloadBytes
 		result.ToolIsolation = dec.ToolIsolation
@@ -1794,13 +1814,13 @@ func reviewerVerdictOf(skill string, order int, system bool, dec verb.GateDecisi
 		Skill: skill, Order: order, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning,
 		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated, System: system,
 		ReviewMode: dec.ReviewMode, Coverage: dec.Coverage,
-		Turns: dec.Turns, TurnsUnavailableReason: dec.TurnsUnavailableReason,
 		Command: dec.Command, Context: dec.Context, Model: dec.Model,
 		ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 		TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 		UsageAvailable: dec.UsageAvailable,
 		TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
-		CostUSD: dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
+		RunCounts: dec.RunCounts,
+		CostUSD:   dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
 		SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
 		ToolIsolation: dec.ToolIsolation,
 		BundleID:      dec.BundleID, BundleSkills: dec.BundleSkills,
@@ -1867,6 +1887,7 @@ func assembleGate(ordered []reviewerRef, results []gateSlot, sysStart int) (verb
 		result.TokensIn, result.TokensOut, result.TokensTotal = pick.TokensIn, pick.TokensOut, pick.TokensTotal
 		result.TokensInFresh, result.TokensCacheWrite, result.TokensCacheRead = pick.TokensInFresh, pick.TokensCacheWrite, pick.TokensCacheRead
 		result.UsageNote = pick.UsageNote
+		result.RunCounts = pick.RunCounts
 		result.CostUSD, result.CostUnavailableReason = pick.CostUSD, pick.CostUnavailableReason
 		result.SystemPromptBytes, result.PayloadBytes = pick.SystemPromptBytes, pick.PayloadBytes
 		result.ToolIsolation = pick.ToolIsolation
@@ -3307,8 +3328,7 @@ func (g *Engine) runReviewerRef(ctx context.Context, item workitem.Item, toStatu
 	if cerr != nil {
 		return verb.GateDecision{Gated: true, Skill: skill}, cerr
 	}
-	runs := g.runPanelSeats(ctx, item, toStatus, skill, ref.panel, prep, ref.parallel)
-	dec, ferr := g.foldPanel(ctx, skill, ref.combine, command, ref.panel, runs)
+	dec, ferr := g.runPanel(ctx, item, toStatus, skill, ref, command, prep)
 	if dec.Gated {
 		dec.ReviewMode = ref.mode
 	}
@@ -3348,7 +3368,7 @@ func (g *Engine) decideReviewer(ctx context.Context, item workitem.Item, toStatu
 	}
 	res := g.invokeReviewerSeat(ctx, item, toStatus, skill, prep, seat)
 	if res.Err != nil {
-		return verb.GateDecision{Gated: true, Skill: skill}, res.Err
+		return verb.GateDecision{Gated: true, Skill: skill}, g.gateFailure(skill, res, seat)
 	}
 	if res.Decision == nil {
 		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
@@ -3411,7 +3431,11 @@ func (g *Engine) combineCommand(ctx context.Context, name string) (string, error
 // is an unavailable record; the loop continues. It is not a skill-level error.
 func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus, skill string, panel []string, prep reviewerPrep, cap int) []panelSeatRun {
 	runs := make([]panelSeatRun, len(panel))
+	// attempt is the edge's next verdict number over the FULL history, the scale
+	// fillPriorVerdicts numbers priors on; every seat of this round shares it.
+	attempt := len(prep.material.PriorVerdicts) + 1
 	one := func(i int, section string) {
+		defer func() { runs[i].record.Attempt = attempt }()
 		if ctx.Err() != nil {
 			runs[i] = panelSeatRun{record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: ctx.Err().Error()}}
 			return
@@ -3421,22 +3445,29 @@ func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus
 			runs[i] = panelSeatRun{record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: serr.Error()}}
 			return
 		}
-		res := g.invokeReviewerSeat(ctx, item, toStatus, skill, prep, seat)
+		res := g.invokeReviewerSeat(ctx, item, toStatus, skill, seatPrep(prep, skill, section), seat)
 		if res.Err != nil || res.Decision == nil {
 			notes := "reviewer produced no decision"
 			if res.Err != nil {
 				notes = res.Err.Error()
 			}
 			runs[i] = panelSeatRun{
-				record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: notes},
-				stamp:  seatStamp(skill, section, res, nil),
+				record: verb.PanelSeat{
+					Seat: section, Accept: false, Unavailable: true,
+					MaxTurns: errors.Is(res.Err, agentcli.ErrMaxTurns), Notes: notes,
+				},
+				stamp: g.seatStamp(skill, section, res, nil, seat),
 			}
 			return
 		}
 		stampInvocation(res.Decision, res, seat)
 		runs[i] = panelSeatRun{
-			record: verb.PanelSeat{Seat: section, Accept: res.Decision.Accept, Notes: res.Decision.Notes, Coverage: res.Decision.Coverage},
-			stamp:  seatStamp(skill, section, res, res.Decision),
+			record: verb.PanelSeat{
+				Seat: section, Accept: res.Decision.Accept, Notes: res.Decision.Notes,
+				Reviewed: res.Decision.Reviewed, ReviewedTruncated: res.Decision.ReviewedTruncated,
+				Coverage: res.Decision.Coverage,
+			},
+			stamp: g.seatStamp(skill, section, res, res.Decision, seat),
 		}
 	}
 	if cap <= 1 {
@@ -3458,7 +3489,7 @@ func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
-				runs[i] = panelSeatRun{record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: ctx.Err().Error()}}
+				runs[i] = panelSeatRun{record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: ctx.Err().Error(), Attempt: attempt}}
 				return
 			}
 			one(i, section)
@@ -3470,19 +3501,34 @@ func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus
 
 // seatStamp is the invocation evidence for a seat whose process started.
 // Command empty means it never started, and the transition writer skips it.
-func seatStamp(skill, section string, res InvokeResult, dec *verb.GateDecision) verb.ReviewerVerdict {
+func (g *Engine) seatStamp(skill, section string, res InvokeResult, dec *verb.GateDecision, seat reviewerSeat) verb.ReviewerVerdict {
 	if res.Command == "" && (dec == nil || dec.Command == "") {
 		return verb.ReviewerVerdict{}
 	}
+	var rv verb.ReviewerVerdict
 	if dec != nil {
-		rv := reviewerVerdictOf(skill, 0, false, *dec)
-		rv.Seat = section
-		rv.SeatStamps = nil
-		rv.Seats = nil
-		rv.Combine = ""
-		return rv
+		rv = reviewerVerdictOf(skill, 0, false, *dec)
+	} else {
+		// A started seat that produced no verdict: its measured usage, turns and
+		// tool calls, and why it ended (turn cap or otherwise).
+		rv = g.failureStamp(skill, res, seat)
 	}
-	return verb.ReviewerVerdict{Skill: skill, Seat: section, Command: res.Command, Context: skill}
+	rv.Seat = section
+	rv.SeatStamps = nil
+	rv.Seats = nil
+	rv.Combine = ""
+	return rv
+}
+
+// gateFailure is the error a single-seat gate returns for an attempt that
+// produced no verdict. An attempt that started carries its invocation stamp, so
+// the round writer can record what it measured; one that never started is the
+// bare error.
+func (g *Engine) gateFailure(skill string, res InvokeResult, seat reviewerSeat) error {
+	if res.Command == "" {
+		return res.Err
+	}
+	return &verb.GateFailure{Err: res.Err, Stamps: []verb.ReviewerVerdict{g.failureStamp(skill, res, seat)}}
 }
 
 // foldPanel runs the combine check over the seat records and returns one

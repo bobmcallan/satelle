@@ -239,15 +239,6 @@ func stampInvocation(d *verb.GateDecision, res InvokeResult, seat reviewerSeat) 
 	d.SystemPromptBytes = res.SystemPromptBytes
 	d.PayloadBytes = res.PayloadBytes
 	d.ToolIsolation = res.ToolIsolation
-	// Turns ride the invocation row (sty_93359e0f): the count when the adapter
-	// reported one, else the reason beside a usage-reporting run — never a zero.
-	switch {
-	case res.Usage.TurnsAvailable:
-		n := res.Usage.Turns
-		d.Turns = &n
-	case res.Usage.Available:
-		d.TurnsUnavailableReason = agentcli.TurnsUnavailableReason(seat.binding.ResolvedInterface(), seat.binding.CommandTemplate())
-	}
 }
 
 // referencedPayload is the work item a judging reviewer receives. Inline fields

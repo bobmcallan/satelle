@@ -98,7 +98,8 @@ does not make obvious, and the one every conversion gets wrong.**
 Step keys: `status`, `agent`, `skills`, `reviewers`, `reviewer_agent`,
 `parallel`, `bundle`, `reviewer_carry`, `fail_fast`, `requires`, `applies_to`, `advise`, `rework`, `propose`,
 `freeze`, `reject_budget`, `mark`, `apply_changes`, `untrusted_input`,
-`waits_on_children`, `schedule`, `after_children`, `start`, `terminal`.
+`waits_on_children`, `sequential`, `schedule` (deprecated), `after_children`,
+`start`, `terminal`.
 
 `untrusted_input = true` declares the step reads text from an external raiser. It
 changes nothing at runtime: `satelle validate` refuses a performer or reviewer seat
@@ -153,10 +154,13 @@ gate, the Stop hook and the deny messages do not count it as a performing seat.
 It counts again once every child is resolved. A story at a dispatched-performer
 step is not affected by having children — only the route's declaration waits.
 
-`schedule = "parallel"` or `"sequential"` is the container's declared child
-schedule. It is legal only on a `waits_on_children` step, any other value is
-refused, and an absent key stays absent — the binary never guesses one and never
-changes engagement because of it. `satelle story wave` reads it to report, read-only, which
+A container's children run in **parallel by default** — declare nothing. The
+override is `sequential = true`, which runs one child at a time. It is legal only
+on a `waits_on_children` step and is refused anywhere else or beside
+`schedule = "parallel"`. The older `schedule = "parallel"` or `"sequential"` key
+still works with the same meaning; `satelle validate` warns it is deprecated in
+favour of omitting it or setting `sequential = true`, and any other value is
+refused. `satelle story wave` reads the schedule to report, read-only, which
 children may start now (`satelle help epic-wave`). It is NOT the reviewer
 `parallel` integer (entry-gate fan-out); a step may set both and each keeps its
 own meaning. The story-level edge is a repeated `depends-on:<story id>` tag,

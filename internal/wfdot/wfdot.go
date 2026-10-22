@@ -230,8 +230,8 @@ type State struct {
 	// WaitsOnChildren: a container idles here while its children are driven
 	// (sty_7f3e6fd3). Read through Spec.WaitsOnChildren.
 	WaitsOnChildren bool
-	// Schedule is the container's declared child schedule (Step.Schedule); empty
-	// when undeclared.
+	// Schedule is the container's child schedule (Step.ChildSchedule): parallel
+	// unless the step says sequential; empty on a step that waits on no children.
 	Schedule string
 	// AfterChildren is the obligation every child must have discharged before a
 	// container enters this step (Step.AfterChildren); empty when undeclared.
@@ -945,12 +945,44 @@ func (s Spec) ExecutorSkillsFor(name string, tags []string) []string {
 	return append(out, augs...)
 }
 
-// The closed set of values a container step's `schedule` may take. Distinct from
-// the reviewer fan-out `parallel` integer.
+// The closed set of child schedules a container resolves to. `schedule = "..."`
+// is the deprecated way to author one; the default is parallel and the user's
+// override is `sequential = true`. Distinct from the reviewer fan-out `parallel`
+// integer.
 const (
 	SchedParallel   = "parallel"
 	SchedSequential = "sequential"
 )
+
+// DefaultSchedule is the child schedule of a container that declares nothing:
+// parallel. The one place the default is named; every reader of a container's
+// schedule reaches it through State.Schedule or here.
+func DefaultSchedule() string { return SchedParallel }
+
+// ChildSchedule is the child schedule this step declares for its container: ""
+// for a step that does not wait on children, sequential when sequential = true
+// (or the deprecated schedule = "sequential") is authored, else DefaultSchedule.
+func (s Step) ChildSchedule() string {
+	switch {
+	case !s.WaitsOnChildren:
+		return ""
+	case s.Sequential || s.Schedule == SchedSequential:
+		return SchedSequential
+	}
+	return DefaultSchedule()
+}
+
+// LegacyScheduleSteps lists the steps that still author the deprecated
+// `schedule` key, in catalogue order, for validate to name.
+func LegacyScheduleSteps(cat Catalogue) []Step {
+	var out []Step
+	for _, st := range cat.Steps {
+		if st.Schedule != "" {
+			out = append(out, st)
+		}
+	}
+	return out
+}
 
 // CarryUntilAccept is the only value a step's `reviewer_carry` may take
 // (sty_59720b8b); an absent key dispatches every reviewer every round.

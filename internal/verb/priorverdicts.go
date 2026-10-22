@@ -33,6 +33,10 @@ type PriorVerdict struct {
 	ReviewMode string    `json:"review_mode,omitempty"`
 	Coverage   *Coverage `json:"coverage,omitempty"`
 	Partial    bool      `json:"partial,omitempty"`
+	// Seats is the panel fold recorded on a panel gate's verdict row, each seat
+	// with its own quotation. markStale clears every seat's quotation together
+	// with the row's, so a stale seat is re-judged in full (sty_da9e8d0a).
+	Seats []PanelSeat `json:"seats,omitempty"`
 }
 
 // EvidenceSince is one ledger row recorded after a verdict's review cycle
@@ -48,15 +52,18 @@ type EvidenceSince struct {
 const maxEvidenceSince = 20
 
 // isSelfLedgerKind reports whether kind is a ledger kind the binary writes about
-// its own review or dispatch bookkeeping. These are never evidence a rubric could
-// be waiting on, so they never mark a verdict stale — even when written after
-// the cycle ended.
+// its own review, dispatch, engagement or start-of-work bookkeeping. These are
+// never evidence a rubric could be waiting on, so they never mark a verdict
+// stale — even when written after the cycle ended. Every re-presentation re-engages
+// the story, which writes trunk_check and engagement_baseline; counting them
+// would clear the prior verdict's quotation on every such edge.
 func isSelfLedgerKind(kind string) bool {
 	switch kind {
 	case ledger.KindAgentInvocation, ledger.KindStepCost, ledger.KindDriverUsage,
 		ledger.KindSessionModel, ledger.KindToolPermission, ledger.KindSessionAdvisory,
 		ledger.KindBudgetOverrun, ledger.KindGateSkipped, ledger.KindCommandRule,
-		ledger.KindReviewAccept, ledger.KindReviewReject:
+		ledger.KindReviewAccept, ledger.KindReviewReject,
+		ledger.KindTrunkCheck, ledger.KindEngagementBaseline:
 		return true
 	}
 	return false
@@ -87,6 +94,7 @@ type priorVerdictRow struct {
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
 	ReviewMode        string `json:"review_mode,omitempty"`
 	// Coverage / Seats are read to decide whether the verdict was partial.
+	// Seats is the panel fold, one record per seat (reviewerPayload).
 	Coverage *Coverage   `json:"coverage,omitempty"`
 	Seats    []PanelSeat `json:"seats,omitempty"`
 	// RecordedAt is the wall-clock time the verdict row was appended, after the
@@ -193,6 +201,7 @@ func PriorVerdictsFrom(entries []ledger.Entry, from, to string, ex StaleExemptio
 			ReviewMode:        row.ReviewMode,
 			Coverage:          row.Coverage,
 			Partial:           partialVerdict(decision, row),
+			Seats:             row.Seats,
 		})
 		var at time.Time
 		if row.RecordedAt != "" {
@@ -236,6 +245,13 @@ func markStale(out []PriorVerdict, recorded []time.Time, entries []ledger.Entry,
 			continue
 		}
 		out[i].Reviewed, out[i].ReviewedTruncated = "", false
+		if len(out[i].Seats) > 0 {
+			seats := append([]PanelSeat(nil), out[i].Seats...)
+			for j := range seats {
+				seats[j].Reviewed, seats[j].ReviewedTruncated = "", false
+			}
+			out[i].Seats = seats
+		}
 		out[i].ReviewedStale, out[i].EvidenceSince = true, since
 	}
 }

@@ -406,7 +406,9 @@ func TestReviewMode_SeatTurnsAreRecordedNotInvented(t *testing.T) {
 	r = &modeRunner{}
 	dec = modeGate(t, modeEngine(t, "", "", r, "rev-a"))
 	a = reviewerOf(t, dec, "rev-a")
-	if a.Turns != nil || a.TurnsUnavailableReason != "" {
-		t.Errorf("a run that reported no usage records neither turns nor a reason: %v %q", a.Turns, a.TurnsUnavailableReason)
+	// A run that reported no usage still names why it has no count: never a bare
+	// zero, never a silent gap (sty_46e950ab's RunCounts contract).
+	if a.Turns != nil || a.TurnsUnavailableReason == "" {
+		t.Errorf("a run that reported no usage records no turns and names the reason: %v %q", a.Turns, a.TurnsUnavailableReason)
 	}
 }

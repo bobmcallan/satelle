@@ -79,30 +79,39 @@ func collectDescendants(ctx context.Context, wi *workitem.Store, parentID string
 	return nil
 }
 
+// familyEntries is root followed by every descendant (collectDescendants' one
+// walk) with each one's ledger entries, oldest first. items is nil when root has
+// no children — the family views' whole trigger.
+func familyEntries(ctx context.Context, wi *workitem.Store, ls *ledger.Store, root workitem.Item) ([]workitem.Item, map[string][]ledger.Entry, error) {
+	var descendants []workitem.Item
+	if err := collectDescendants(ctx, wi, root.ID, map[string]bool{root.ID: true}, &descendants); err != nil {
+		return nil, nil, err
+	}
+	if len(descendants) == 0 {
+		return nil, nil, nil
+	}
+	items := append([]workitem.Item{root}, descendants...)
+	entries := map[string][]ledger.Entry{}
+	for _, it := range items {
+		es, err := ls.ListByStory(ctx, it.ID, "")
+		if err != nil {
+			return nil, nil, err
+		}
+		entries[it.ID] = es
+	}
+	return items, entries, nil
+}
+
 // computeFamilyCost gathers root and every descendant found by walking
 // parent_id (any depth, never gated by a category literal), fetches each
 // one's ledger entries, and folds them through costview.Family. It returns
 // nil when root has no children — the family section's whole trigger,
 // consistent whether the caller is ComputeStoryActual or the cost view (AC5).
 func computeFamilyCost(ctx context.Context, wi *workitem.Store, ls *ledger.Store, root workitem.Item, opts ...costview.Option) (*costview.FamilyCost, error) {
-	var descendants []workitem.Item
-	if err := collectDescendants(ctx, wi, root.ID, map[string]bool{root.ID: true}, &descendants); err != nil {
+	items, entries, err := familyEntries(ctx, wi, ls, root)
+	if err != nil || items == nil {
 		return nil, err
 	}
-	if len(descendants) == 0 {
-		return nil, nil
-	}
-
-	items := append([]workitem.Item{root}, descendants...)
-	entries := map[string][]ledger.Entry{}
-	for _, it := range items {
-		es, err := ls.ListByStory(ctx, it.ID, "")
-		if err != nil {
-			return nil, err
-		}
-		entries[it.ID] = es
-	}
-
 	family := costview.Family(root, items, entries, func(it workitem.Item) costview.Clock {
 		clk, _ := clockFor(ctx, it)
 		return clk

@@ -73,6 +73,40 @@ func judgedText(item workitem.Item, docs []DocState) string {
 	return b.String()
 }
 
+// quotationCarries is the one rule for whether a prior verdict's accept can be
+// carried: an accept with a complete, non-stale quotation that appears verbatim
+// in the material judged now. A reviewer's latest verdict and a panel seat's
+// latest verdict (seatPriorVerdicts) are both held to it; an unavailable seat is
+// projected to a reject, so it never carries. A partial verdict covered only part
+// of the artifact, so it never carries as acceptance of the rest (sty_93359e0f).
+func quotationCarries(pv PriorVerdict, judged string) bool {
+	return pv.Decision == "accept" && !pv.Partial && !pv.ReviewedStale && !pv.ReviewedTruncated &&
+		strings.TrimSpace(pv.Reviewed) != "" && strings.Contains(judged, pv.Reviewed)
+}
+
+// carryRound is the one sequence of a carried round, over units that are
+// reviewers (gateCarrying) or panel seats (runReviewerRef). carried and fresh
+// partition the units' positions. handled is false when nothing is carried, or
+// nothing is dispatched (carry is moot) — the caller then dispatches every unit
+// as it would without the key. Otherwise the fresh units are dispatched first.
+// A rejection decides the round and withCarried records the carried units beside
+// it. An acceptance dispatches the carried units fresh and merges the two
+// passes, so the round that advances holds a fresh verdict from every unit.
+func carryRound[R any](carried, fresh []int, dispatch func(idx []int) (R, error), rejected func(R) bool, withCarried func(R) R, merge func(first, confirm R) R) (res R, handled bool, err error) {
+	if len(carried) == 0 || len(fresh) == 0 {
+		return res, false, nil
+	}
+	first, err := dispatch(fresh)
+	if err != nil {
+		return first, true, err
+	}
+	if rejected(first) {
+		return withCarried(first), true, nil
+	}
+	confirm, err := dispatch(carried)
+	return merge(first, confirm), true, err
+}
+
 // carryable splits ordered into the reviewers whose latest verdict on the edge
 // is an accept with a complete, non-stale quotation found verbatim in the
 // current material, and the indexes that must be dispatched. A reject, a missing
@@ -102,9 +136,7 @@ func (g *Engine) carryable(ctx context.Context, item workitem.Item, toStatus str
 			continue
 		}
 		pv := prior[pi]
-		// A partial verdict covered only part of the artifact, so it is never
-		// carried as acceptance of the part it did not review (sty_93359e0f).
-		if pv.Decision != "accept" || pv.Partial || pv.ReviewedStale || pv.ReviewedTruncated || strings.TrimSpace(pv.Reviewed) == "" || !strings.Contains(judged, pv.Reviewed) {
+		if !quotationCarries(pv, judged) {
 			fresh = append(fresh, i)
 			continue
 		}
@@ -128,32 +160,27 @@ func (g *Engine) carryable(ctx context.Context, item workitem.Item, toStatus str
 // dispatched) — the caller then runs the edge as it would without the key.
 func (g *Engine) gateCarrying(ctx context.Context, item workitem.Item, toStatus string, ordered []reviewerRef, sysStart, parallelCap int) (verb.GateDecision, bool, error) {
 	carried, fresh := g.carryable(ctx, item, toStatus, ordered, sysStart)
-	if len(carried) == 0 || len(fresh) == 0 {
-		return verb.GateDecision{}, false, nil
-	}
-	dec, err := g.scheduleGate(ctx, item, toStatus, ordered, fresh, sysStart, parallelCap)
-	if err != nil {
-		return dec, true, err
-	}
-	if dec.Gated && !dec.Accept {
-		// A reject blocks the edge; the carried accepts are recorded beside it.
-		for _, c := range carried {
-			g.telemetryEvent(ctx, item.ID, "reviewer", "gate-carried", map[string]any{
-				"skill": c.verdict.Skill, "to": toStatus, "carried_from": c.verdict.CarriedFrom,
-			})
-			dec.Reviewers = append(dec.Reviewers, c.verdict)
-		}
-		sortReviewers(dec.Reviewers)
-		return dec, true, nil
-	}
-	// Every dispatched reviewer accepted: the round that advances the edge
-	// judges every carried reviewer fresh.
 	idx := make([]int, len(carried))
 	for j, c := range carried {
 		idx[j] = c.idx
 	}
-	confirm, err := g.scheduleGate(ctx, item, toStatus, ordered, idx, sysStart, parallelCap)
-	return mergeGate(dec, confirm), true, err
+	return carryRound(idx, fresh,
+		func(at []int) (verb.GateDecision, error) {
+			return g.scheduleGate(ctx, item, toStatus, ordered, at, sysStart, parallelCap)
+		},
+		func(dec verb.GateDecision) bool { return dec.Gated && !dec.Accept },
+		func(dec verb.GateDecision) verb.GateDecision {
+			// A reject blocks the edge; the carried accepts are recorded beside it.
+			for _, c := range carried {
+				g.telemetryEvent(ctx, item.ID, "reviewer", "gate-carried", map[string]any{
+					"skill": c.verdict.Skill, "to": toStatus, "carried_from": c.verdict.CarriedFrom,
+				})
+				dec.Reviewers = append(dec.Reviewers, c.verdict)
+			}
+			sortReviewers(dec.Reviewers)
+			return dec
+		},
+		mergeGate)
 }
 
 // scheduleGate dispatches the reviewers at idx (ascending positions in ordered)

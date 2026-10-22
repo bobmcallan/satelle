@@ -189,6 +189,19 @@ type Row struct {
 	// describes how the seat is authorised, never how it is priced (Pricing owns
 	// that), and is shown in its own column (ledger.AuthLabel).
 	AuthMode string `json:"auth_mode,omitempty"`
+	// Attempt is the id of the gate presentation the row belongs to and Seat the
+	// panel seat it ran as; Outcome is "unavailable" or "max-turns" for an
+	// attempt that produced no verdict. All empty on a row written before they
+	// were recorded, and Seat empty on a single-seat gate.
+	Attempt string `json:"attempt,omitempty"`
+	Seat    string `json:"seat,omitempty"`
+	Outcome string `json:"outcome,omitempty"`
+	// Turns and ToolCalls are the run's measured counts; nil means unavailable,
+	// with the adapter-named reason beside it — never a zero.
+	Turns                      *int   `json:"turns,omitempty"`
+	TurnsUnavailableReason     string `json:"turns_unavailable_reason,omitempty"`
+	ToolCalls                  *int   `json:"tool_calls,omitempty"`
+	ToolCallsUnavailableReason string `json:"tool_calls_unavailable_reason,omitempty"`
 }
 
 // DecodeRow decodes one agent_invocation ledger entry into a Row, or ok=false
@@ -209,6 +222,14 @@ func DecodeRow(e ledger.Entry) (Row, bool) {
 
 		BundleID     string   `json:"bundle_id"`
 		BundleSkills []string `json:"bundle_skills"`
+
+		Attempt                    string `json:"attempt"`
+		Seat                       string `json:"seat"`
+		Outcome                    string `json:"outcome"`
+		Turns                      *int   `json:"turns"`
+		TurnsUnavailableReason     string `json:"turns_unavailable_reason"`
+		ToolCalls                  *int   `json:"tool_calls"`
+		ToolCallsUnavailableReason string `json:"tool_calls_unavailable_reason"`
 	}
 	if err := json.Unmarshal(e.Payload, &meta); err != nil {
 		return Row{}, false
@@ -238,6 +259,10 @@ func DecodeRow(e ledger.Entry) (Row, bool) {
 		Adapter:                tel.Adapter,
 		Models:                 tel.ModelUsage,
 		AuthMode:               tel.AuthMode,
+
+		Attempt: meta.Attempt, Seat: meta.Seat, Outcome: meta.Outcome,
+		Turns: meta.Turns, TurnsUnavailableReason: meta.TurnsUnavailableReason,
+		ToolCalls: meta.ToolCalls, ToolCallsUnavailableReason: meta.ToolCallsUnavailableReason,
 	}
 	if row.Agent == "" {
 		row.Agent = tel.Agent

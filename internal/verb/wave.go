@@ -132,8 +132,9 @@ func (e errWaveTooWide) Error() string { return e.msg }
 
 // waveSchedule reads the child schedule the container's route declares: the one
 // on the container's current step when it has one, else the single value any
-// step declares. No declaration, or two different ones, is a refusal — there is
-// no default and no fallback to order: or to every child.
+// step declares. No declaration means the default, wfdot.DefaultSchedule
+// (parallel); two different ones that the status does not select is a refusal —
+// there is no fallback to order: or to every child.
 func waveSchedule(spec wfdot.Spec, status string) (string, error) {
 	if st, ok := spec.StateNamed(status); ok && st.Schedule != "" {
 		return st.Schedule, nil
@@ -148,7 +149,7 @@ func waveSchedule(spec wfdot.Spec, status string) (string, error) {
 	}
 	switch len(vals) {
 	case 0:
-		return "", errNoUsableSchedule{fmt.Sprintf("no schedule is declared on the container's route (set schedule = %q or %q on its waits_on_children step in step.toml)", wfdot.SchedParallel, wfdot.SchedSequential)}
+		return wfdot.DefaultSchedule(), nil
 	case 1:
 		return vals[0], nil
 	}
@@ -243,9 +244,9 @@ func storyWave(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 	return json.Marshal(res)
 }
 
-// errNoUsableSchedule marks a container whose route declares no single child
-// schedule (none, or two with its status selecting neither). story wave refuses
-// it; engagement does not, so an unscheduled epic keeps its existing behaviour.
+// errNoUsableSchedule marks a container whose route declares two different child
+// schedules with its status selecting neither. story wave refuses it; engagement
+// does not, so such an epic keeps its existing behaviour.
 type errNoUsableSchedule struct{ msg string }
 
 func (e errNoUsableSchedule) Error() string { return e.msg }

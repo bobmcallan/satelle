@@ -152,6 +152,13 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 		if rs.Present() {
 			lists, derr := wfdot.ParseDone(rs.Done)
 			cat, serr := wfdot.ParseSteps(rs.Step)
+			if serr == nil {
+				// The deprecated `schedule` key still works. WARN, never FAIL: the
+				// repo's route is valid, it only names a spelling that is going.
+				for _, st := range wfdot.LegacyScheduleSteps(cat) {
+					fmt.Fprintf(out, "WARN  workflows/step.toml — step %q: schedule = %q is deprecated — omit it (parallel is the default) or set sequential = true\n", st.Provides, st.Schedule)
+				}
+			}
 			if derr == nil && serr == nil {
 				unresolved := wfdot.UnresolvedObligations(lists, cat)
 				for _, p := range unresolved {
