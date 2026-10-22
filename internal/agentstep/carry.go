@@ -90,28 +90,18 @@ func collapseSpace(s string) string {
 }
 
 // quotationCarries is the one rule for whether a prior verdict's accept can be
-// carried: an accept with a complete, non-stale quotation that appears in the
-// material judged now. A reviewer's latest verdict and a panel seat's
-// latest verdict (seatPriorVerdicts) are both held to it; an unavailable seat is
-// projected to a reject, so it never carries. A partial verdict covered only part
-// of the artifact, so it never carries as acceptance of the rest (sty_93359e0f).
-// A verdict that recorded no per-criterion entries is matched exactly, as it
-// always was; one that recorded criteria is matched by words, ignoring layout.
+// carried: an accept with a complete, non-stale quotation whose words appear in
+// the material judged now. A reviewer's latest verdict, a panel seat's latest
+// verdict (seatPriorVerdicts) and a per-criterion settled check are all held to
+// it; an unavailable seat is projected to a reject, so it never carries. A
+// partial verdict covered only part of the artifact, so it never carries as
+// acceptance of the rest (sty_93359e0f). Every quotation is matched by words
+// (see collapseSpace), never by layout: a changed word does not carry.
 func quotationCarries(pv PriorVerdict, judged string) bool {
-	return quotationRests(pv, judged, len(pv.Criteria) > 0)
-}
-
-// quotationRests is quotationCarries with the match chosen: loose compares the
-// quotation and the material by words (see collapseSpace), else exactly. The
-// per-criterion settled check is always loose.
-func quotationRests(pv PriorVerdict, judged string, loose bool) bool {
 	if pv.Decision != "accept" || pv.Partial || pv.ReviewedStale || pv.ReviewedTruncated || strings.TrimSpace(pv.Reviewed) == "" {
 		return false
 	}
-	if loose {
-		return strings.Contains(collapseSpace(judged), collapseSpace(pv.Reviewed))
-	}
-	return strings.Contains(judged, pv.Reviewed)
+	return strings.Contains(collapseSpace(judged), collapseSpace(pv.Reviewed))
 }
 
 // carryRound is the one sequence of a carried round, over units that are
@@ -138,8 +128,8 @@ func carryRound[R any](carried, fresh []int, dispatch func(idx []int) (R, error)
 }
 
 // carryable splits ordered into the reviewers whose latest verdict on the edge
-// is an accept with a complete, non-stale quotation found verbatim in the
-// current material, and the indexes that must be dispatched. A reject, a missing
+// is an accept with a complete, non-stale quotation that quotationCarries
+// finds in the current material, and the indexes that must be dispatched. A reject, a missing
 // or truncated or stale quotation, a changed quotation, a partial verdict, a
 // functional check and a panel are always dispatched.
 func (g *Engine) carryable(ctx context.Context, item workitem.Item, toStatus string, ordered []reviewerRef, sysStart int) (carried []carriedRef, fresh []int) {

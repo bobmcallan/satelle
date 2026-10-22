@@ -255,7 +255,7 @@ func (c *criteriaPrep) setState(item workitem.Item, docs []DocState, prior []Pri
 			if e.Status == verb.CriterionAccepted {
 				rests.Decision = "accept"
 			}
-			if c.carry && e.Text == j.Text && quotationRests(rests, material, true) {
+			if c.carry && e.Text == j.Text && quotationCarries(rests, material) {
 				st.State = criterionSettled
 				if c.settled == nil {
 					c.settled = map[int]verb.CriterionVerdict{}
