@@ -1,3 +1,14 @@
+## [0.0.729] - 2026-10-22
+
+### Added
+- A step can refuse a re-presentation that does not answer the prior blocking findings. `[<step>.answer_progress]` takes `enabled = true` and `min_progress = N`, and is allowed only on a `propose` step. A re-presented performer must answer (`answers`) or change at least `min(N, findings offered)` of the prior blocking findings, or the round is refused as `unanswered findings` before any gate runs. The refusal lists the finding ids, counts against `reject_budget`, and saves the panel's cost. A finding counts as changed when the quotation it recorded no longer appears in the material the gates will judge. `satelle workflow show-route` shows the rule. (sty_73224b86)
+- `satelle story cost --rounds` reports each round's performer cost (turns, tokens, duration), the findings it answered against those it was offered, and where each edge converged. (sty_51d0f74a)
+
+## [serve-v0.0.196] - 2026-10-22
+
+### Changed
+- The service binary carries the answer-progress refusal and the per-round performer cost. (sty_73224b86, sty_51d0f74a)
+
 ## [0.0.728] - 2026-10-22
 
 ### Fixed
