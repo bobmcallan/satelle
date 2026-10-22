@@ -327,7 +327,44 @@ func dispatchPerformer(ctx context.Context, current workitem.Item, to, attempt s
 	} else if readiness && notes != "" {
 		recordPerformerReject(ctx, current, to, attempt, res, notes, now)
 	}
+	if readiness && run.Refuse == nil && run.ParkNotes == "" {
+		if refuse := refuseUnansweredFindings(ctx, current, to, res); refuse != nil {
+			run.Refuse = refuse
+			rejected := res
+			rejected.Skill = UnansweredFindingsSkill
+			recordPerformerReject(ctx, current, to, attempt, rejected, refuse.Error(), now)
+		}
+	}
 	return run
+}
+
+// UnansweredFindingsSkill is the skill name on the performer_reject row of a
+// round refused for leaving the prior blocking findings unprogressed
+// (sty_73224b86). It is distinct from the rework relay's no_progress outcome:
+// that ends a coder↔consultant conversation, this refuses a presentation.
+const UnansweredFindingsSkill = "unanswered-findings"
+
+// refuseUnansweredFindings applies the destination step's answer_progress rule to
+// how a re-presented performer's output stands against the blocking findings it
+// was offered (res.Progress): fewer than min(min_progress, offered) answered or
+// changed refuses the presentation before any gate runs. Nil when the rule is off,
+// nothing was offered, or enough progressed. The performer_reject row it is
+// recorded as counts against the step's reject_budget like any rejected round.
+func refuseUnansweredFindings(ctx context.Context, current workitem.Item, to string, res DispatchResult) error {
+	p := res.Progress
+	if p == nil || len(p.Offered) == 0 {
+		return nil
+	}
+	st, found := destinationStep(ctx, current, to)
+	if !found || !st.AnswerProgress {
+		return nil
+	}
+	required := p.Required(st.MinProgress)
+	if len(p.Progressed) >= required {
+		return nil
+	}
+	return fmt.Errorf("unanswered findings — %d of %d blocking findings answered or changed (required %d); unanswered: %s; answer each in `answers` or change the quoted text",
+		len(p.Progressed), len(p.Offered), required, strings.Join(p.Unprogressed, ", "))
 }
 
 // recordDispatchFailure writes the audit row for a dispatch that failed and was

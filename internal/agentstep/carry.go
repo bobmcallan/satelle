@@ -101,7 +101,15 @@ func quotationCarries(pv PriorVerdict, judged string) bool {
 	if pv.Decision != "accept" || pv.Partial || pv.ReviewedStale || pv.ReviewedTruncated || strings.TrimSpace(pv.Reviewed) == "" {
 		return false
 	}
-	return strings.Contains(collapseSpace(judged), collapseSpace(pv.Reviewed))
+	return quotationPresent(pv.Reviewed, judged)
+}
+
+// quotationPresent is the one word-match rule for whether a recorded quotation
+// still appears in material: quotationCarries holds an accept to it, and the
+// answer_progress rule holds a rejected finding's quotation to it, so carry and
+// progress can never disagree on a re-flowed passage.
+func quotationPresent(reviewed, material string) bool {
+	return strings.Contains(collapseSpace(material), collapseSpace(reviewed))
 }
 
 // carryRound is the one sequence of a carried round, over units that are

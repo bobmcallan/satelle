@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -34,6 +35,12 @@ type Finding struct {
 	NotesTruncated bool   `json:"notes_truncated,omitempty"`
 	Attempt        int    `json:"attempt"`
 	CreatedAt      string `json:"created_at,omitempty"`
+	// quotes are the complete quotations the verdict recorded: the seat's
+	// reviewed and each rejected criterion entry's. They are what the finding
+	// names (sty_73224b86); never serialised, so the performer's payload is
+	// unchanged. Empty when none is complete (an unavailable, stale or truncated
+	// verdict), which the progress rule reads as "names nothing it can check".
+	quotes []string
 }
 
 // FindingAnswers is the fact a gate is told about the performer's answers to the
@@ -63,8 +70,15 @@ func (g *Engine) fillFindings(ctx context.Context, item workitem.Item, toStatus 
 	if g.priorVerdicts == nil || item.ID == "" {
 		return
 	}
-	all := numberAttempts(g.priorVerdicts(ctx, item.ID, item.Status, toStatus, g.staleExemption(ctx, item, toStatus)))
-	tp.Findings = latestFindings(item.ID, all)
+	tp.Findings = FindingsFrom(item.ID, g.priorVerdicts(ctx, item.ID, item.Status, toStatus, g.staleExemption(ctx, item, toStatus)))
+}
+
+// FindingsFrom is the findings a performer re-presenting the edge is offered,
+// given the edge's prior verdicts oldest first (what the engine's resolver
+// returns). Exported so a test can build them from a ledger prior and drive them
+// through RecordFindingProgress, as the engine does.
+func FindingsFrom(itemID string, priors []PriorVerdict) []Finding {
+	return latestFindings(itemID, numberAttempts(priors))
 }
 
 // latestFindings lists the latest row of each gate skill on the edge, a panel's
@@ -111,13 +125,140 @@ func findingOf(itemID string, v PriorVerdict, seat string) Finding {
 	f := Finding{
 		ID: fmt.Sprintf("%s#%d", id, v.Attempt), Skill: v.Skill, Seat: seat, Decision: v.Decision,
 		Blocking: v.Decision == "reject" && !v.Unavailable, Unavailable: v.Unavailable,
-		Notes: v.Notes, Attempt: v.Attempt, CreatedAt: v.CreatedAt,
+		Notes: v.Notes, Attempt: v.Attempt, CreatedAt: v.CreatedAt, quotes: findingQuotes(v),
 	}
 	if len(f.Notes) > findingNotesBudget {
 		f.Notes = excerpt(f.Notes, findingNotesBudget) + " — fetch the full verdict: satelle ledger list --story " + itemID
 		f.NotesTruncated = true
 	}
 	return f
+}
+
+// findingQuotes lists the complete quotations a verdict rests on: its own
+// reviewed text and that of each rejected criterion entry. A stale, unavailable
+// or truncated quotation is not complete and is left out.
+func findingQuotes(v PriorVerdict) []string {
+	if v.Unavailable || v.ReviewedStale {
+		return nil
+	}
+	var out []string
+	if !v.ReviewedTruncated && strings.TrimSpace(v.Reviewed) != "" {
+		out = append(out, v.Reviewed)
+	}
+	for _, c := range v.Criteria {
+		if c.Status == verb.CriterionRejected && !c.ReviewedTruncated && strings.TrimSpace(c.Reviewed) != "" {
+			out = append(out, c.Reviewed)
+		}
+	}
+	return out
+}
+
+// ProgressMaterial is what a re-presented output is judged against: Judged is
+// the material the gates will read with the new output in place (the story card
+// and every document, the step's output replaced by the new one), Output the new
+// output document and Prior the one it replaces. HasOutput is false when the
+// step returned no output document, which never reads as a change.
+type ProgressMaterial struct {
+	Judged    string
+	Output    string
+	Prior     string
+	HasOutput bool
+}
+
+// computeProgress decides, per blocking finding offered, whether the output
+// answers it or changes what it names. Answered: the performer replied to it.
+// Changed: a complete quotation of it is no longer present in the judged
+// material (quotationPresent, the carry rule's word match); a finding with no
+// complete quotation is changed only when the output differs byte for byte from
+// the one it replaces. Enumeration only — the step's policy is the verb's.
+func computeProgress(offered []Finding, answers []agentartifact.Answer, m ProgressMaterial) *verb.FindingProgress {
+	answered := map[string]bool{}
+	for _, a := range answers {
+		answered[a.Finding] = true
+	}
+	var p verb.FindingProgress
+	for _, f := range offered {
+		if !f.Blocking {
+			continue
+		}
+		p.Offered = append(p.Offered, f.ID)
+		if findingProgressed(f, answered[f.ID], m) {
+			p.Progressed = append(p.Progressed, f.ID)
+		} else {
+			p.Unprogressed = append(p.Unprogressed, f.ID)
+		}
+	}
+	if len(p.Offered) == 0 {
+		return nil
+	}
+	return &p
+}
+
+func findingProgressed(f Finding, answered bool, m ProgressMaterial) bool {
+	if answered {
+		return true
+	}
+	if len(f.quotes) == 0 {
+		return m.HasOutput && m.Output != m.Prior
+	}
+	for _, q := range f.quotes {
+		if !quotationPresent(q, m.Judged) {
+			return true
+		}
+	}
+	return false
+}
+
+// RecordFindingProgress puts, on the performer's dispatch result, how its output
+// stands against the blocking findings it was offered. It runs once per
+// dispatch, at the point the output is final, after RecordFindingAnswers has
+// recorded the answers. A performer offered nothing is a no-op.
+func RecordFindingProgress(res *verb.DispatchResult, offered []Finding, m ProgressMaterial) {
+	res.Progress = computeProgress(offered, res.Answers, m)
+}
+
+// recordFindingProgress is RecordFindingProgress over the material the output is
+// judged against: artifact is the step's validated output document, nil when the
+// step returned none. Nothing is read when the performer was offered no blocking
+// finding.
+func (g *Engine) recordFindingProgress(ctx context.Context, res *verb.DispatchResult, item workitem.Item, offered []Finding, artifact *agentartifact.Artifact) {
+	if len(blockingFindingIDs(offered)) == 0 {
+		return
+	}
+	var out *string
+	name := ""
+	if artifact != nil {
+		out, name = &artifact.Body, artifact.Name
+	}
+	RecordFindingProgress(res, offered, g.progressMaterial(ctx, item, name, out))
+}
+
+// progressMaterial builds the material a performer's output is judged against:
+// the story card and its documents as the gates will read them, with the step's
+// output document (outputName) replaced by output when the step returned one.
+func (g *Engine) progressMaterial(ctx context.Context, item workitem.Item, outputName string, output *string) ProgressMaterial {
+	var docs []DocState
+	if g.itemDocs != nil && item.ID != "" {
+		docs = g.itemDocs(ctx, item.ID)
+	}
+	m := ProgressMaterial{HasOutput: output != nil}
+	kept := make([]DocState, 0, len(docs)+1)
+	for _, d := range docs {
+		if !judgeableDoc(d) {
+			continue
+		}
+		if output != nil && d.Name == outputName {
+			m.Prior = d.Body
+			continue
+		}
+		kept = append(kept, d)
+	}
+	if output != nil {
+		m.Output = *output
+		kept = append(kept, DocState{Name: outputName, Body: *output})
+	}
+	m.Judged = judgedText(item, kept)
+	return m
 }
 
 // blockingFindingIDs is the ids of the findings a performer is asked to answer.

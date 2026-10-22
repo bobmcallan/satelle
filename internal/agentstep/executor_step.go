@@ -172,6 +172,7 @@ func (g *Engine) PerformExecutorStep(ctx context.Context, item workitem.Item, st
 	if dec, derr := parseDecision(invRes.Stdout); derr == nil && !dec.Accept {
 		return res, &verb.PerformerReject{Notes: dec.Notes}
 	}
+	g.recordFindingProgress(ctx, &res, item, execPayload.Findings, nil)
 	// The executor attaches its documents itself (`satelle story attach`), so the
 	// sections it declares are looked for in what was attached since the step was
 	// entered as well as in its response; its commands come from this run's own

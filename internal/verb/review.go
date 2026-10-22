@@ -522,6 +522,11 @@ type DispatchResult struct {
 	// run's agent_invocation row so the gates can be told which went unanswered.
 	FindingsOffered []string               `json:"-"`
 	Answers         []agentartifact.Answer `json:"-"`
+	// Progress is which of the offered blocking findings the output answers or
+	// changes (sty_73224b86); nil when none was offered. An enumeration, computed
+	// where the output is final: dispatchPerformer applies the step's
+	// answer_progress policy to it.
+	Progress *FindingProgress `json:"-"`
 	// ArtifactName/Type identify a Satelle-owned structured step artifact
 	// attached before the transition committed.
 	ArtifactName string `json:"artifact_name,omitempty"`
@@ -712,3 +717,19 @@ var stepSummariser StepSummariser
 
 // SetStepSummariser wires the per-transition summariser. Pass nil to disable.
 func SetStepSummariser(s StepSummariser) { stepSummariser = s }
+
+// FindingProgress is the fact of how a re-presented performer's output stands
+// against the blocking findings it was offered (sty_73224b86): Offered lists
+// their ids, Progressed those it answered or whose quoted text it changed, and
+// Unprogressed the rest. Whether too few progressed is the step's policy.
+type FindingProgress struct {
+	Offered      []string
+	Progressed   []string
+	Unprogressed []string
+}
+
+// Required is how many offered findings must progress under min_progress: the
+// threshold capped at the number offered, so a single finding can always satisfy it.
+func (p FindingProgress) Required(minProgress int) int {
+	return min(max(minProgress, 1), len(p.Offered))
+}

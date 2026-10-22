@@ -87,6 +87,17 @@ type applyChangesRef struct {
 	Tags []string `toml:"tags"`
 }
 
+// answerProgressRef is a step's `[<step>.answer_progress] enabled = true
+// min_progress = N` (sty_73224b86): refuse a re-presentation whose performer
+// answers or changes too few of the prior blocking findings, before its gates
+// run. Both fields are pointers so an omitted `enabled` (a silent no-op) is
+// refused and an omitted `min_progress` defaults to 1. Distinct from the rework
+// relay's no_progress, which ends a coder↔consultant conversation.
+type answerProgressRef struct {
+	Enabled     *bool `toml:"enabled"`
+	MinProgress *int  `toml:"min_progress"`
+}
+
 type adviseRef struct {
 	Agent string `toml:"agent"`
 	Skill string `toml:"skill"`
@@ -167,6 +178,9 @@ type stepWire struct {
 	Propose      bool `toml:"propose"`
 	Freeze       bool `toml:"freeze"`
 	RejectBudget *int `toml:"reject_budget"`
+	// AnswerProgress is a POINTER like ApplyCriteria: absent means the rule is
+	// off, and a half-authored or misplaced table is refused rather than ignored.
+	AnswerProgress *answerProgressRef `toml:"answer_progress"`
 	// Mark is the tag an accepted readiness round puts on a story
 	// (sty_a32bd6a9). Optional: absent means the step cannot be readied without
 	// engagement, never a default tag name.
@@ -541,6 +555,22 @@ func ParseSteps(body string) (Catalogue, error) {
 		if s.RejectBudget != nil {
 			st.RejectBudget = *s.RejectBudget
 			budgetDeclared[provides] = true
+		}
+		if ap := s.AnswerProgress; ap != nil {
+			if ap.Enabled == nil {
+				return Catalogue{}, fmt.Errorf("step.toml: step %q: answer_progress needs enabled = true|false — a table without it does nothing", provides)
+			}
+			if !st.Propose {
+				return Catalogue{}, fmt.Errorf("step.toml: step %q: answer_progress requires propose = true (only a propose step runs its performer before its gates, so there is nothing to refuse before them)", provides)
+			}
+			st.MinProgress = 1
+			if ap.MinProgress != nil {
+				if *ap.MinProgress < 1 {
+					return Catalogue{}, fmt.Errorf("step.toml: step %q: answer_progress min_progress must be >= 1 (got %d)", provides, *ap.MinProgress)
+				}
+				st.MinProgress = *ap.MinProgress
+			}
+			st.AnswerProgress = *ap.Enabled
 		}
 		if s.Parallel != nil {
 			st.Parallel, st.ParallelSet = *s.Parallel, true

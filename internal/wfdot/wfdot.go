@@ -213,6 +213,10 @@ type State struct {
 	Mark         string
 	Freeze       bool
 	RejectBudget int
+	// AnswerProgress / MinProgress: the step's answer_progress rule
+	// (Step.AnswerProgress), read by the verb that dispatches the performer.
+	AnswerProgress bool
+	MinProgress    int
 	// UntrustedInput is the step's declaration that the text it reads (a story
 	// raised by an external party) is untrusted (Step.UntrustedInput). Validate
 	// then refuses any seat on the step that is not held read-only; nothing at
