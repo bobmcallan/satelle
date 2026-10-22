@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/trunk"
@@ -2109,6 +2110,11 @@ func dispatchPayload(from, to string, res DispatchResult, attempt string) json.R
 		// row (empty when the run printed nothing) so a drive that stops can quote
 		// what the performer last said.
 		LastMessage string `json:"last_message"`
+		// FindingsOffered/FindingAnswers record the blocking findings the
+		// performer was asked to answer and what it answered (sty_f948d345); the
+		// gate payload reads them back as a fact.
+		FindingsOffered []string               `json:"findings_offered,omitempty"`
+		FindingAnswers  []agentartifact.Answer `json:"finding_answers,omitempty"`
 	}{From: from, To: to, Attempt: attempt, Agent: res.Agent, Skill: res.Skill, Command: res.Command, Model: res.Model,
 		ModelResolved: res.ModelResolved, ModelSource: res.ModelSource, Models: res.Models,
 		TokensIn: res.TokensIn, TokensOut: res.TokensOut, TokensTotal: res.TokensTotal, DurationMs: res.DurationMs,
@@ -2117,7 +2123,7 @@ func dispatchPayload(from, to string, res DispatchResult, attempt string) json.R
 		CostUSD: res.CostUSD, CostUnavailableReason: res.CostUnavailableReason,
 		SystemPromptBytes: res.SystemPromptBytes, PayloadBytes: res.PayloadBytes,
 		ArtifactName: res.ArtifactName, ArtifactType: res.ArtifactType, Budget: res.Budget, Cloud: res.Cloud,
-		LastMessage: LastMessage(res.LastMessage)}
+		LastMessage: LastMessage(res.LastMessage), FindingsOffered: res.FindingsOffered, FindingAnswers: res.Answers}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil

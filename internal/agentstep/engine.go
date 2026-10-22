@@ -125,6 +125,10 @@ type Engine struct {
 	// to the grant or to a later gate; fillDeferred hands each gate its own.
 	// Nil-safe: an unwired resolver injects nothing.
 	deferrals func(ctx context.Context, itemID string) []DeferredItem
+	// findingAnswers reports how the performer of an edge answered the findings it
+	// was offered (sty_f948d345); fillFindingAnswers hands the gate the fact.
+	// Nil-safe: an unwired resolver injects nothing.
+	findingAnswers func(ctx context.Context, itemID, from, to string) (FindingAnswers, bool)
 	// itemDiff resolves the live engagement slice for a reviewer payload
 	// (sty_a125b440). Nil-safe: an unwired resolver injects no Diff. The
 	// resolver itself must never error — map missing baseline / git failure to
@@ -999,6 +1003,16 @@ type transitionPayload struct {
 	// when none, so every other gate's payload is unchanged. Enumeration, not
 	// verdict.
 	Deferred []DeferredItem `json:"deferred,omitempty"`
+	// Findings is present ONLY on the payload of a performer re-presenting an edge
+	// whose latest gate round rejected (sty_f948d345): each gate seat's latest
+	// verdict on that edge, a panel's seats individually. The performer answers
+	// each blocking one — adopted, or rebutted with evidence — in its output.
+	// Enumeration, not verdict.
+	Findings []Finding `json:"findings_to_answer,omitempty"`
+	// FindingAnswers is present ONLY on a gate payload whose edge's performer was
+	// offered findings: which it answered and which it left unanswered. A fact the
+	// gate's rubric weighs; Go never rejects on it.
+	FindingAnswers *FindingAnswers `json:"finding_answers,omitempty"`
 }
 
 // MessageState is one agent_message as injected into a transition payload.
@@ -1170,9 +1184,7 @@ func (g *Engine) fillPriorVerdicts(ctx context.Context, itemID, from, to string,
 	if len(all) == 0 {
 		return
 	}
-	for i := range all {
-		all[i].Attempt = i + 1
-	}
+	numberAttempts(all)
 	// Snapshot before the window. The copy does not share the backing array,
 	// so the note excerpts below cannot shorten the retained bodies.
 	if mat != nil {
@@ -1249,8 +1261,10 @@ func (g *Engine) fillDefinitionEdits(ctx context.Context, itemID string, tp *tra
 // fillDiff attaches the engagement slice under its own ceiling. Runs AFTER
 // fillPayloadDocs and never touches that counter. Called unconditionally on
 // the gate payload — no status-name switch (sty_a125b440 AC2). Gate payload
-// only: executor and retrospective payloads deliberately go without, matching
-// prior_verdicts (an executor modelling its own slice is the failure mode).
+// only: executor and retrospective payloads deliberately go without the diff (an
+// executor modelling its own slice is the failure mode). They go without the
+// full prior_verdicts history too; a performer re-presenting an edge gets only
+// each seat's latest verdict, as findings_to_answer (sty_f948d345).
 func (g *Engine) fillDiff(ctx context.Context, itemID string, tp *transitionPayload, mat *reviewerMaterial) {
 	if g.itemDiff == nil || itemID == "" {
 		return
@@ -1336,6 +1350,7 @@ const (
 func (g *Engine) performerPayload(ctx context.Context, item workitem.Item, toStatus, skill, agent string, binding config.AgentBinding) transitionPayload {
 	tp := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: skill}
 	g.fillPayloadDocs(ctx, item.ID, &tp, nil)
+	g.fillFindings(ctx, item, toStatus, &tp)
 	if g.children != nil {
 		tp.Children = g.children(ctx, item)
 	}
@@ -1349,7 +1364,7 @@ func (g *Engine) performerPayload(ctx context.Context, item workitem.Item, toSta
 
 // fillMessages attaches engagement-windowed agent messages for recipient.
 // Runs AFTER fillPayloadDocs / fillDiff and never touches those counters.
-// Oldest 20 kept; each body cut at messageBodyBudget with a fetch hint.
+// Newest 20 kept; each body cut at messageBodyBudget with a fetch hint.
 // Nil-safe; never errors.
 func (g *Engine) fillMessages(ctx context.Context, itemID string, addresses []string, tp *transitionPayload, mat *reviewerMaterial) {
 	if g.itemMessages == nil || itemID == "" {
@@ -1360,13 +1375,15 @@ func (g *Engine) fillMessages(ctx context.Context, itemID string, addresses []st
 		return
 	}
 	// The file keeps resolver order and the full bodies. The check payload
-	// stays the oldest messagesCount, each body cut at messageBodyBudget.
+	// stays the newest messagesCount (the resolver lists oldest first, so the tail
+	// is the newest — a relayed rejection is the last thing said, and the one that
+	// must not be dropped), each body cut at messageBodyBudget.
 	if mat != nil {
 		mat.Messages = append([]MessageState(nil), msgs...)
 	}
 	window := msgs
 	if len(window) > messagesCount {
-		window = window[:messagesCount]
+		window = window[len(window)-messagesCount:]
 	}
 	out := make([]MessageState, len(window))
 	for i := range window {
@@ -2382,6 +2399,9 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		return res, fmt.Errorf("named agent %q reported changes for step %q that cannot be read: %w", dispatchAgent, toStatus, cerr)
 	}
 	res.Changes = changes
+	if aerr := RecordFindingAnswers(&res, execPayload.Findings, invRes.Stdout); aerr != nil {
+		return res, fmt.Errorf("named agent %q reported answers for step %q that cannot be read: %w", dispatchAgent, toStatus, aerr)
+	}
 	if dec, derr := parseDecision(invRes.Stdout); derr == nil && !dec.Accept {
 		return res, &verb.PerformerReject{Notes: dec.Notes, Changes: changes}
 	}

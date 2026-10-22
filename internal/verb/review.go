@@ -402,6 +402,12 @@ type DispatchResult struct {
 	// final response (sty_af0b1761), decoded by the shared agentartifact seam.
 	// The verb applies them only on a step that declares apply_changes.
 	Changes []agentartifact.Change `json:"-"`
+	// FindingsOffered are the ids of the blocking findings the performer's
+	// payload asked it to answer, and Answers its per-finding replies decoded
+	// from its final response (sty_f948d345). dispatchPayload records both on the
+	// run's agent_invocation row so the gates can be told which went unanswered.
+	FindingsOffered []string               `json:"-"`
+	Answers         []agentartifact.Answer `json:"-"`
 	// ArtifactName/Type identify a Satelle-owned structured step artifact
 	// attached before the transition committed.
 	ArtifactName string `json:"artifact_name,omitempty"`

@@ -23,11 +23,12 @@ type Change struct {
 }
 
 // reportKeys are the top-level keys an object may carry and still be a
-// performer's response: the artifact envelope, a verdict line, and the changes
-// report. An object with any other key is some other JSON the response quoted.
+// performer's response: the artifact envelope, a verdict line, the changes
+// report and the findings answers. An object with any other key is some other
+// JSON the response quoted.
 var reportKeys = map[string]bool{
 	"artifact": true, "decision": true, "notes": true, "reasoning": true,
-	"reviewed": true, "reviewed_truncated": true, "changes": true,
+	"reviewed": true, "reviewed_truncated": true, "changes": true, "answers": true,
 }
 
 // DecodeChanges extracts the `changes` list from a final agent response: the

@@ -3,6 +3,7 @@ package agentstep
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -107,7 +108,7 @@ func TestReworkTranscriptRespectsTheExistingBudget(t *testing.T) {
 	for i := 0; i < messagesCount+7; i++ {
 		many = append(many, MessageState{
 			ID: "m" + string(rune('a'+i%26)), From: "consult", To: "coder",
-			Body: "NOT READY: " + strings.Repeat("y", messageBodyBudget+10),
+			Body: fmt.Sprintf("NOT READY %02d: ", i) + strings.Repeat("y", messageBodyBudget+10),
 		})
 	}
 	g.SetMessagesResolver(func(context.Context, string, []string) []MessageState { return many })
@@ -138,7 +139,11 @@ func TestReworkTranscriptRespectsTheExistingBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(wrap.Messages) != messagesCount {
-		t.Errorf("check messages = %d, want the existing cap %d", len(wrap.Messages), messagesCount)
+		t.Fatalf("check messages = %d, want the existing cap %d", len(wrap.Messages), messagesCount)
+	}
+	// The cap keeps the newest turns of a long relay, not the oldest.
+	if !strings.HasPrefix(wrap.Messages[0].Body, "NOT READY 07:") || !strings.HasPrefix(wrap.Messages[messagesCount-1].Body, fmt.Sprintf("NOT READY %02d:", messagesCount+6)) {
+		t.Errorf("window runs %.14q .. %.14q, want turn 07 .. the newest", wrap.Messages[0].Body, wrap.Messages[messagesCount-1].Body)
 	}
 	if !strings.Contains(wrap.Messages[0].Body, "[truncated]") {
 		t.Errorf("an over-long turn must be excerpted on the check stdin")
