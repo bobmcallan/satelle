@@ -16,6 +16,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -36,6 +37,9 @@ type reviewerPrep struct {
 	// material is the pre-cap bytes the fills already computed. The check path
 	// never reads it. A judging Invoke writes it under the dispatch scratch.
 	material reviewerMaterial
+	// criteria is what this gate knows about the criteria it judges and which of
+	// them its latest verdict settled (sty_99d3162b).
+	criteria criteriaPrep
 	// unresolved marks a DECLARED gate whose rubric is not installed: advisory,
 	// nothing judges it, and the caller records it as an ungated advance.
 	unresolved bool
@@ -98,13 +102,27 @@ func (g *Engine) prepareReviewer(ctx context.Context, item workitem.Item, toStat
 		tp.Children = g.children(ctx, item)
 	}
 	g.fillPayloadDocs(ctx, item.ID, &tp, mat)
-	// Prior verdicts ride ONLY the gate payload (sty_0f5e600c): they are re-review
-	// context, so the executor and retrospective payloads deliberately go without —
-	// a performer optimising for the last rejection instead of the story is the
-	// failure mode that would create.
-	g.fillPriorVerdicts(ctx, item.ID, item.Status, toStatus, g.staleExemption(ctx, item, toStatus), &tp, mat)
+	// The full prior-verdict history rides ONLY the gate payload (sty_0f5e600c):
+	// it is re-review context, so the executor and retrospective payloads go
+	// without it. The performer of a re-presented edge gets the latest verdict of
+	// each seat instead, as findings_to_answer (sty_f948d345), so it answers the
+	// findings and keeps the story, not the last rejection, as its authority.
+	// The edge's carry policy and the step's performer are resolved once: the
+	// performer decides both what keeps a prior verdict fresh and where the
+	// criteria under judgment live (sty_99d3162b).
+	carry := g.edgeCarry(ctx, item, item.Status, toStatus) == wfdot.CarryUntilAccept
+	perf, perr := g.StepPerformer(ctx, item, toStatus)
+	if perr != nil {
+		perf = verb.PerformerResolution{}
+	}
+	g.fillPriorVerdicts(ctx, item.ID, item.Status, toStatus, exemptionOf(carry, perf, perr), &tp, mat)
+	crit := criteriaPrep{carry: carry}
+	crit.judged, crit.source = judgedCriteria(item, mat.Docs, perf)
+	tp.CriteriaSource = crit.source
+	tp.CriteriaState = crit.setState(item, mat.Docs, mat.PriorVerdicts, skill)
 	g.fillDefinitionEdits(ctx, item.ID, &tp, mat)
 	g.fillDeferred(ctx, item.ID, skill, &tp, mat)
+	g.fillFindingAnswers(ctx, item, toStatus, &tp)
 	// Engagement diff rides the GATE payload only (sty_a125b440): reviewers
 	// without a shell need the slice; executors have one. fillDiff never
 	// errors — a missing baseline is a marker, not a refused transition.
@@ -132,7 +150,7 @@ func (g *Engine) prepareReviewer(ctx context.Context, item workitem.Item, toStat
 	if err != nil {
 		return reviewerPrep{}, err
 	}
-	return reviewerPrep{skill: skill, body: body, tp: tp, payload: payload, material: *mat}, nil
+	return reviewerPrep{skill: skill, body: body, tp: tp, payload: payload, material: *mat, criteria: crit}, nil
 }
 
 // fillLedger lists the story's ledger once, the same filter as
@@ -253,6 +271,7 @@ type referencedPayload struct {
 	To              string               `json:"to"`
 	ReviewSkill     string               `json:"review_skill"`
 	ReviewSkills    []string             `json:"review_skills,omitempty"`
+	ReviewMode      string               `json:"review_mode,omitempty"`
 	Children        []ChildState         `json:"children,omitempty"`
 	Docs            []referencedDoc      `json:"docs,omitempty"`
 	RouteDrift      *wfgovern.RouteDrift `json:"route_drift,omitempty"`
@@ -260,10 +279,14 @@ type referencedPayload struct {
 	DefinitionEdits *pathRef             `json:"definition_edits,omitempty"`
 	Deferred        *pathRef             `json:"deferred,omitempty"`
 	Citations       *pathRef             `json:"citations,omitempty"`
+	FindingAnswers  *FindingAnswers      `json:"finding_answers,omitempty"`
 	Amendment       *AmendmentState      `json:"amendment,omitempty"`
 	Diff            *referencedDiff      `json:"diff,omitempty"`
 	Messages        *pathRef             `json:"messages,omitempty"`
 	MeasuredActual  *verb.StoryActual    `json:"measured_actual,omitempty"`
+	CriteriaSource  string               `json:"criteria_source,omitempty"`
+	CriteriaState   []criterionState     `json:"criteria_state,omitempty"`
+	PeerFindings    []peerFinding        `json:"peer_findings,omitempty"`
 	Ledger          ledgerRef            `json:"ledger"`
 }
 
@@ -310,10 +333,15 @@ func writeReviewerMaterial(scratch string, mat *reviewerMaterial, tp transitionP
 		To:             tp.To,
 		ReviewSkill:    tp.ReviewSkill,
 		ReviewSkills:   tp.ReviewSkills,
+		ReviewMode:     tp.ReviewMode,
 		Children:       tp.Children,
 		RouteDrift:     tp.RouteDrift,
+		FindingAnswers: tp.FindingAnswers,
 		Amendment:      tp.Amendment,
 		MeasuredActual: tp.MeasuredActual,
+		CriteriaSource: tp.CriteriaSource,
+		CriteriaState:  tp.CriteriaState,
+		PeerFindings:   tp.PeerFindings,
 	}
 	if len(mat.Docs) > 0 {
 		docsDir := filepath.Join(dir, "docs")

@@ -131,11 +131,12 @@ func (g *Engine) PerformExecutorStep(ctx context.Context, item workitem.Item, st
 	}
 	invokeBinding := binding
 	invokeBinding.Model = mc.Model
+	execPayload := g.performerPayload(ctx, item, step, skill, "executor", binding)
 	invRes := g.Invoke(ctx, InvokeRequest{
 		Binding:     invokeBinding,
 		Section:     "executor",
 		Rubric:      rubric,
-		Payload:     g.performerPayload(ctx, item, step, skill, "executor", binding),
+		Payload:     execPayload,
 		Charter:     executorCharter("executor", step, wfName),
 		Expect:      ExpectPerform,
 		Timeout:     timeout,
@@ -155,6 +156,9 @@ func (g *Engine) PerformExecutorStep(ctx context.Context, item workitem.Item, st
 			"duration_ms": res.DurationMs, "usage_available": res.UsageAvailable,
 		}, invRes.Err))
 		return res, fmt.Errorf("the [executor] binding failed performing step %q: %w", step, invRes.Err)
+	}
+	if aerr := RecordFindingAnswers(&res, execPayload.Findings, invRes.Stdout); aerr != nil {
+		return res, fmt.Errorf("the [executor] binding reported answers for step %q that cannot be read: %w", step, aerr)
 	}
 	if dec, derr := parseDecision(invRes.Stdout); derr == nil && !dec.Accept {
 		return res, &verb.PerformerReject{Notes: dec.Notes}

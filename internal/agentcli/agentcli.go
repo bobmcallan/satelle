@@ -83,9 +83,14 @@ const DefaultClaudeStreamCommand = "claude -p --input-format stream-json --outpu
 // template instead of the bare preset. {model} is dropped (with -m) when unset, so
 // grok falls back to its own default unless the binding pins one (e.g. grok-4.5).
 //
+// The output form is json, not plain: plain carries no usage and no turn count, so
+// a grok seat's cost was unmeasured (sty_5ebcd6f9). The json envelope carries
+// `usage` and `num_turns` (UnwrapUsage reads both) and its `text` is unwrapped for
+// verdict parsing; it carries no tool events (ToolCallsUnavailableReason).
+//
 // This is the non-reviewer template (--max-turns grokAgentMaxTurns); a reviewer
 // seat is seeded from DefaultGrokReviewerCommand through GrokCommandFor.
-const DefaultGrokCommand = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --reasoning-effort {effort} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format plain --max-turns " + grokAgentMaxTurns + " --no-subagents"
+const DefaultGrokCommand = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --reasoning-effort {effort} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format json --max-turns " + grokAgentMaxTurns + " --no-subagents"
 
 // grokAgentMaxTurns is the unchanged original turn cap of the grok preset. No
 // measurement covers the coder or other non-reviewer roles, so it stays as it was.
@@ -102,7 +107,7 @@ const grokReviewerMaxTurns = "32"
 
 // DefaultGrokReviewerCommand is DefaultGrokCommand with the reviewer turn cap; the
 // rest of the template is identical.
-const DefaultGrokReviewerCommand = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --reasoning-effort {effort} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format plain --max-turns " + grokReviewerMaxTurns + " --no-subagents"
+const DefaultGrokReviewerCommand = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --reasoning-effort {effort} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format json --max-turns " + grokReviewerMaxTurns + " --no-subagents"
 
 // GrokCommandFor returns the grok preset template for a binding role: the
 // reviewer template for "reviewer", the non-reviewer one for anything else.
@@ -310,6 +315,9 @@ type claudeJSONEnvelope struct {
 	TotalCostUSD *float64 `json:"total_cost_usd"`
 	// NumTurns is the run's own turn count, when the envelope carries one.
 	NumTurns *int `json:"num_turns"`
+	// Subtype is the result's kind: "success", or an "error_*" kind such as
+	// error_max_turns, whose envelope carries usage and num_turns but no result.
+	Subtype string `json:"subtype"`
 }
 
 // grokJSONEnvelope is the shape of `grok -p … --output-format json` headless
@@ -362,7 +370,10 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 		return text, u
 	}
 	var claude claudeJSONEnvelope
-	if err := json.Unmarshal(trimmed, &claude); err == nil && claude.Result != "" {
+	// An error result (error_max_turns, …) has no `result` text but still reports
+	// what the run used: its usage and turns are read, and its stdout is returned
+	// verbatim so the caller can still see why it ended.
+	if err := json.Unmarshal(trimmed, &claude); err == nil && (claude.Result != "" || strings.HasPrefix(claude.Subtype, "error")) {
 		u := UsageResult{}
 		if claude.Usage != nil {
 			u.Available = true
@@ -385,14 +396,24 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 		}
 		applyCost(&u, claude.TotalCostUSD, "claude command")
 		applyTurns(&u, claude.NumTurns)
+		if claude.Result == "" {
+			return stdout, u
+		}
 		return []byte(claude.Result), u
 	}
 	var grok grokJSONEnvelope
-	if err := json.Unmarshal(trimmed, &grok); err == nil && strings.TrimSpace(grok.Text) != "" {
+	if err := json.Unmarshal(trimmed, &grok); err == nil && (strings.TrimSpace(grok.Text) != "" || grok.Usage != nil || grok.NumTurns != nil) {
 		// A grok envelope reports usage only when grok put a `usage` object on
 		// it; otherwise record it unavailable with the adapter's reason rather
 		// than a zero (sty_c8d45201), and the model explicitly unavailable
 		// rather than a zero value for a caller to guess at (sty_87b86044).
+		// A run cut off at its turn cap may leave `text` empty yet still report
+		// usage and turns: those are kept and stdout comes back verbatim, as the
+		// claude error branch does, so the caller can still see why it ended.
+		text := []byte(grok.Text)
+		if strings.TrimSpace(grok.Text) == "" {
+			text = stdout
+		}
 		if grok.Usage != nil {
 			u := claudeUsageFromMap(grok.Usage, "grok")
 			u.ModelResolved = noModelReport("grok command")
@@ -402,13 +423,13 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 			}
 			applyCost(u, grok.TotalCostUSD, "grok command")
 			applyTurns(u, grok.NumTurns)
-			return []byte(grok.Text), *u
+			return text, *u
 		}
 		u := unavailableUsage("grok", "--output-format json envelope carries no usage object")
 		u.ModelResolved = noModelReport("grok command")
 		applyCost(&u, grok.TotalCostUSD, "grok command")
 		applyTurns(&u, grok.NumTurns)
-		return []byte(grok.Text), u
+		return text, u
 	}
 	return stdout, UsageResult{}
 }

@@ -1521,7 +1521,7 @@ func seatModeLine(mode string) string {
 	return "seat mode: none — one performing story at a time."
 }
 
-// scheduleLine names the declared child schedule of an epic container and the
+// scheduleLine names the child schedule of an epic container and the
 // command that answers who may start. It formats a string only: it never reads
 // children, never derives a wave and never names a child — which child starts is
 // `satelle story wave`'s answer, not this line's. The worktree clause is stated
@@ -1539,8 +1539,8 @@ func scheduleLine(id, schedule string) string {
 
 // seatScheduleLines names the schedule of every scheduled epic container in
 // context: a seat holder that is itself an epic-parent, or whose parent is one.
-// Silent (empty) when no such container declares a schedule, so an unscheduled
-// repo gains no drive-epic text.
+// A container that declares nothing is parallel by default and is named so.
+// Silent (empty) when no holder is in an epic container.
 func seatScheduleLines(holders []string, items []workitem.Item, wfs []docindex.Doc) string {
 	byID := make(map[string]workitem.Item, len(items))
 	for _, it := range items {

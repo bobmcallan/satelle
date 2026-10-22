@@ -18,9 +18,10 @@ import (
 //
 // Everything that is not an unambiguous off-wave child passes (nil):
 //   - a story with no epic container, or one that is itself an epic-parent;
-//   - a container whose route declares no usable schedule — wave's "no
-//     schedule" refusal is a reporting refusal, not an engagement one, or every
-//     existing epic would lock;
+//   - a container whose route declares two schedules its status selects neither
+//     of — that refusal is a reporting one, not an engagement one, or such an
+//     epic would lock. A container declaring none is parallel by default, so it
+//     is enforced like any scheduled epic;
 //   - an epic whose set is undetermined, or any store/route lookup that fails
 //     (fail open, like waitsOnOpenChildrenAt: an unresolved route never blocks);
 //   - a child already mid-flight (its current status engaging): the wave keeps

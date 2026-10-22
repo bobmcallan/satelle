@@ -96,9 +96,10 @@ while in the step, and stage names REPEAT by design: several route families reac
 does not make obvious, and the one every conversion gets wrong.**
 
 Step keys: `status`, `agent`, `skills`, `reviewers`, `reviewer_agent`,
-`parallel`, `bundle`, `reviewer_carry`, `requires`, `applies_to`, `advise`, `rework`, `propose`,
+`parallel`, `bundle`, `reviewer_carry`, `fail_fast`, `requires`, `applies_to`, `advise`, `rework`, `propose`,
 `freeze`, `reject_budget`, `mark`, `apply_changes`, `untrusted_input`,
-`waits_on_children`, `schedule`, `after_children`, `start`, `terminal`.
+`waits_on_children`, `sequential`, `schedule` (deprecated), `after_children`,
+`start`, `terminal`.
 
 `untrusted_input = true` declares the step reads text from an external raiser. It
 changes nothing at runtime: `satelle validate` refuses a performer or reviewer seat
@@ -122,13 +123,30 @@ every rubric the bundle would carry.
 reviewer every round) lets a re-presented entry edge leave a reviewer
 undispatched while another is dispatched, when that reviewer's latest verdict on
 the edge is an accept whose complete, non-stale `reviewed` quotation is still
-found verbatim in the current story card and documents. The accept is ledgered as
+found in the current story card and documents, matched by its words and not its
+line breaks or spacing. The accept is ledgered as
 a `review_accept` carrying `carried_from`, with no `agent_invocation` row. When
 every dispatched reviewer accepts, the carried reviewers are dispatched in the
 same gate call, so the round that advances the edge has a fresh verdict from every
 reviewer. A reject, a functional check and a panel are always dispatched. The
 key also stops the step performer's re-attached output document and directed
 messages to it from marking a verdict stale; every other evidence row still does.
+
+**Review mode.** A gate reviews in one of two modes: `full` (the default; judge
+the whole artifact and report every finding) or `fail-fast` (stop at the first
+blocking finding and reject). Declare it where the gate is declared:
+`review_mode = "fail-fast"` on a `[[gate]]` (it covers a `panel` gate's every
+seat), or `fail_fast = ["<skill>", …]` on a step to run those of its entry
+`reviewers` fail-fast. Any other `review_mode` value, or a `fail_fast` entry that
+is not one of the step's reviewers, is refused by `satelle validate`. The seat's
+work item carries `review_mode: "fail-fast"` (absent for full), and its verdict
+may carry `coverage`: `{"complete": true}`, or `{"complete": false, "stopped_at":
+"<finding>"}`. The ledger stores the mode and coverage on the verdict row, and on
+each seat of a panel row. A fail-fast reject, or any verdict whose coverage is
+not complete, reaches the next presentation in `prior_verdicts` as `partial`: it
+is never carried as an accept, and the seat is told to judge the remainder it did
+not review. The rubric that makes a seat stop early lives in the repo's skill;
+satelle carries only the declaration and the record.
 
 `waits_on_children = true` marks the step a **container** (a parent or epic)
 idles at while its child stories are driven. The container holds the status but
@@ -137,10 +155,13 @@ gate, the Stop hook and the deny messages do not count it as a performing seat.
 It counts again once every child is resolved. A story at a dispatched-performer
 step is not affected by having children — only the route's declaration waits.
 
-`schedule = "parallel"` or `"sequential"` is the container's declared child
-schedule. It is legal only on a `waits_on_children` step, any other value is
-refused, and an absent key stays absent — the binary never guesses one and never
-changes engagement because of it. `satelle story wave` reads it to report, read-only, which
+A container's children run in **parallel by default** — declare nothing. The
+override is `sequential = true`, which runs one child at a time. It is legal only
+on a `waits_on_children` step and is refused anywhere else or beside
+`schedule = "parallel"`. The older `schedule = "parallel"` or `"sequential"` key
+still works with the same meaning; `satelle validate` warns it is deprecated in
+favour of omitting it or setting `sequential = true`, and any other value is
+refused. `satelle story wave` reads the schedule to report, read-only, which
 children may start now (`satelle help epic-wave`). It is NOT the reviewer
 `parallel` integer (entry-gate fan-out); a step may set both and each keeps its
 own meaning. The story-level edge is a repeated `depends-on:<story id>` tag,

@@ -1,3 +1,79 @@
+## [0.0.723] - 2026-10-22
+
+### Fixed
+- A Grok reviewer seat's turns and token usage are read from its real output and recorded on its invocation row, so `satelle story cost --rounds` measures every panel seat, not only Claude's. Before this fix, the default Grok reviewer command's plain output recorded "no turn count" and "transport reported no usage". (sty_5ebcd6f9)
+- An unchanged whole-verdict accept whose quotation the reviewer re-flowed (line breaks collapsed to spaces) is carried under `reviewer_carry`, matched by words as per-criterion quotations already are since 0.0.722. A quotation that differs in any word is still judged fresh. (sty_6ccbc5aa)
+
+## [serve-v0.0.191] - 2026-10-22
+
+### Changed
+- The service binary carries the updated agent-dispatch and workflow-convert help. (sty_5ebcd6f9, sty_6ccbc5aa)
+
+## [0.0.722] - 2026-10-22
+
+### Fixed
+- A per-criterion quotation is matched against the current material by its words, not its layout, so an unchanged criterion is marked settled and carried even when the reviewer re-flowed the plan's line breaks in its `reviewed` text. A real Opus reviewer did exactly that, so on 0.0.721 no criterion ever settled. A verdict that recorded no criteria is still carried by exact match, as before. (sty_99d3162b)
+
+## [serve-v0.0.190] - 2026-10-22
+
+### Changed
+- The service binary carries the per-criterion quotation match. (sty_99d3162b)
+
+## [0.0.721] - 2026-10-22
+
+### Added
+- A reviewer seat may return a verdict per acceptance criterion: `criteria[]` entries `{criterion, status accept|reject|unchecked, finding, reviewed}`, stored on the verdict row and on each panel seat. A verdict that sends criteria decides from them: any rejected, unchecked, missing, unparseable or out-of-range criterion means it does not accept, whatever its top-level decision says. On re-presentation, each seat's payload marks every criterion settled (its accept carries and its text is unchanged) or open, and a settled accept is carried without re-judging. Each panel seat also sees the other seats' open findings. A verdict with no `criteria[]` behaves as before. (sty_99d3162b)
+
+## [serve-v0.0.189] - 2026-10-22
+
+### Changed
+- The service binary carries per-criterion verdict records. (sty_99d3162b)
+
+## [0.0.720] - 2026-10-22
+
+### Added
+- A review gate, or a step's gates, can declare fail-fast (`fail_fast = ["<skill>"]` on a step, or `review_mode` on a `[[gate]]`). The seat's payload names the mode. A verdict records its coverage (complete, or stopped at a named finding) on the verdict row and on each panel seat. A partial (fail-fast) reject is never carried as acceptance of the unreviewed remainder: on re-presentation, the seat is told its prior coverage was partial and judges the remainder. A gate with no declared mode behaves exactly as before. The embedded `satelle-reviewer-verdict` principle gains "Review mode and partial verdicts". (sty_93359e0f)
+- A re-presented step's performer receives every gate seat's latest verdict on its edge (skill, seat, decision, notes, attempt), with a panel's seats listed individually. Notes over the bound are cut with an explicit marker and a fetch command. It also gets a `findings_to_answer` list. The performer's per-finding answers (adopted or rebutted, with evidence) are recorded on its invocation row, and the gates receive `finding_answers` with any finding left unanswered. Before this, the performer saw a rejection only if the orchestrator relayed it by hand. (sty_f948d345)
+
+### Fixed
+- The performer's message window keeps the newest directed messages within its bound, not the oldest, so a later round's relay is never the one dropped. (sty_f948d345)
+
+## [serve-v0.0.188] - 2026-10-22
+
+### Changed
+- The service binary carries the review-mode and coverage fields, and the performer findings and answers records. (sty_93359e0f, sty_f948d345)
+
+## [0.0.719] - 2026-10-21
+
+### Added
+- Every reviewer seat attempt's agent_invocation row records its turns and tool calls, each with an adapter-named reason when the harness reports none (never a bare zero). An attempt the harness stopped at its turn cap is recorded with outcome `max-turns`, distinct from a reject, and a seat with no verdict still leaves its usage row. `satelle story cost` reports a story's review rounds per gated edge (presentations, and per seat attempt its turns, tool calls, outcome and duration), with an epic form. (sty_46e950ab)
+
+### Fixed
+- Engagement bookkeeping rows the binary writes for itself (`trunk_check`, the engagement baseline) no longer end a reviewer's verdict cycle. Each presentation to plan re-engages the story, so before this fix every re-presented edge had its prior verdict marked `reviewed_stale` and was re-judged in full instead of on the difference. (sty_2d877fa2)
+- The embedded `satelle-agent-goals` principle ties "one story at a time" to being outside a container, or to the container's `sequential = true` override, not to a missing schedule. Since 0.0.718, a container with no schedule runs its children in parallel. (sty_eb5135ca)
+
+## [serve-v0.0.187] - 2026-10-21
+
+### Changed
+- The service binary carries the run-count and outcome fields on reviewer invocation rows, the corrected engagement-bookkeeping classification, and the revised agent-goals principle. (sty_46e950ab, sty_2d877fa2, sty_eb5135ca)
+
+## [0.0.718] - 2026-10-21
+
+### Changed
+- A container's children run in parallel when nothing is configured. `satelle story wave` no longer refuses a container whose waits_on_children step declares no schedule, and under `[engagement] parallel = "epic"` its children may hold seats alongside each other from their own worktrees. (sty_eb5135ca)
+- `sequential = true` on the waits_on_children step is the one schedule setting, a user override. Wave then returns the runnable set only when it holds exactly one child, and siblings are limited to one seat. It is refused on any other step or beside `schedule = "parallel"`. (sty_eb5135ca)
+- The `schedule = "parallel" | "sequential"` key keeps its meaning, and `satelle validate` now warns that it is deprecated: omit it (parallel is the default) or set `sequential = true`. `satelle help epic-wave`, the workflow-convert help and `satelle story wave --help` describe the default and the override. (sty_eb5135ca)
+
+## [serve-v0.0.186] - 2026-10-21
+
+### Changed
+- The service binary resolves an unset container schedule as parallel. (sty_eb5135ca)
+
+## [0.0.717] - 2026-10-21
+
+### Fixed
+- A panel gate's seats each keep their own `reviewed` quotation (bounded and truncation-flagged like a single-seat verdict) and attempt on the combined review row. On the next presentation of the same edge, each seat is given its own prior verdict, so it judges only what changed. An unchanged seat accept carries, and a seat that was unavailable is judged in full. Before this, every panel round re-judged the whole artifact, because the combined row carried no seat's `reviewed`. (sty_da9e8d0a)
+
 ## [0.0.716] - 2026-10-21
 
 ### Added

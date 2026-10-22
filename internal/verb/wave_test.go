@@ -21,12 +21,21 @@ import (
 
 // waveWF is one lane for every category plus an epic-parent lane that carries a
 // container step (`ready`, waits_on_children) declaring the child schedule.
-// schedule == "" leaves the key absent.
+// schedule == "" leaves the key absent; a non-empty value is the deprecated
+// `schedule` key.
 func waveWF(schedule string) map[string]string {
 	line := ""
 	if schedule != "" {
 		line = `schedule = "` + schedule + `"` + "\n"
 	}
+	return waveWFLine(line)
+}
+
+// waveSequentialWF declares the user's override, `sequential = true`.
+func waveSequentialWF() map[string]string { return waveWFLine("sequential = true\n") }
+
+// waveWFLine is waveWF with the container step's schedule line authored verbatim.
+func waveWFLine(line string) map[string]string {
 	return routeHalves(
 		`["*"]
 obligations = ["raised", "coded", "closed"]
@@ -135,6 +144,45 @@ func TestWaveParallelFourChildEpic(t *testing.T) {
 	}
 	if len(res.Omitted) != 0 {
 		t.Errorf("nothing waits on an unfinished dependency: %+v", res.Omitted)
+	}
+}
+
+// AC1: a container with no schedule setting is parallel — every runnable child.
+func TestWaveDefaultsToParallelWhenNothingIsSet(t *testing.T) {
+	wireWithWorkflows(t, waveWF(""))
+	epic, a, b, c, _ := fourChildEpic(t)
+
+	res, err := wave(t, epic.ID)
+	if err != nil {
+		t.Fatalf("an unscheduled container must be parallel, got refusal: %v", err)
+	}
+	want := []string{a.ID, b.ID, c.ID}
+	sort.Strings(want)
+	if !reflect.DeepEqual(res.Runnable, want) || res.Schedule != "parallel" {
+		t.Errorf("runnable = %v schedule = %q, want %v parallel", res.Runnable, res.Schedule, want)
+	}
+}
+
+// AC2: sequential = true is the override — more than one runnable child is
+// refused, exactly one is returned.
+func TestWaveSequentialTrueKeyIsTheOverride(t *testing.T) {
+	wireWithWorkflows(t, waveSequentialWF())
+	epic := waveEpic(t)
+	first := waveChild(t)
+	waiting := waveChild(t, "depends-on:"+first.ID)
+	other := waveChild(t)
+
+	if res, err := wave(t, epic.ID); err == nil || !strings.Contains(err.Error(), first.ID) || !strings.Contains(err.Error(), other.ID) {
+		t.Fatalf("two runnable children under sequential = true must be refused naming both: %+v %v", res, err)
+	}
+
+	// Chain the second runnable child behind the first: exactly one is eligible.
+	if _, err := verb.Dispatch(context.Background(), "story-set", []byte(`{"id":"`+other.ID+`","add_tags":["depends-on:`+waiting.ID+`"]}`)); err != nil {
+		t.Fatalf("add edge: %v", err)
+	}
+	res, err := wave(t, epic.ID)
+	if err != nil || !reflect.DeepEqual(res.Runnable, []string{first.ID}) || res.Schedule != "sequential" {
+		t.Errorf("one runnable child: runnable = %v schedule = %q err = %v, want [%s] sequential", res.Runnable, res.Schedule, err, first.ID)
 	}
 }
 
@@ -260,15 +308,6 @@ func TestWaveRefusals(t *testing.T) {
 		setup func(t *testing.T) workitem.Item
 		want  string
 	}{
-		"no declared schedule": {
-			wf: waveWF(""),
-			setup: func(t *testing.T) workitem.Item {
-				e := waveEpic(t)
-				waveChild(t)
-				return e
-			},
-			want: "no schedule is declared",
-		},
 		"two epic-parents on one tag": {
 			wf: waveWF("parallel"),
 			setup: func(t *testing.T) workitem.Item {

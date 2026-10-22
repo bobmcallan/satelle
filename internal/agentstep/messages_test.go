@@ -3,6 +3,7 @@ package agentstep
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -100,7 +101,10 @@ func TestGatePayloadIncludesMessages(t *testing.T) {
 			CreatedAt: "2026-09-09T00:00:00Z",
 		})
 	}
+	// many[0] is OLDER than the window and many[5] is its first message: the file
+	// keeps both whole, the check payload keeps only the newest messagesCount.
 	many[0].Body = long
+	many[5].Body = long
 	g.SetMessagesResolver(func(_ context.Context, itemID string, addrs []string) []MessageState {
 		if itemID != "sty_msg" {
 			t.Errorf("itemID = %q", itemID)
@@ -147,7 +151,31 @@ func TestGatePayloadIncludesMessages(t *testing.T) {
 	if len(wrap.Messages) != messagesCount {
 		t.Errorf("check messages = %d, want %d", len(wrap.Messages), messagesCount)
 	}
-	if !strings.Contains(wrap.Messages[0].Body, "[truncated]") {
+	// The window is the NEWEST messagesCount: the oldest five are dropped, the
+	// newest message is kept (sty_f948d345).
+	if wrap.Messages[0].ID != many[5].ID || wrap.Messages[len(wrap.Messages)-1].Body != many[len(many)-1].Body {
+		t.Errorf("window = first %q last %q, want it to start at message 5 and end at the newest", wrap.Messages[0].ID, wrap.Messages[len(wrap.Messages)-1].Body)
+	}
+	if !strings.Contains(wrap.Messages[0].Body, "[truncated]") || !wrap.Messages[0].Truncated {
 		t.Errorf("over-long body not excerpted on the check stdin: %q", wrap.Messages[0].Body[:40])
+	}
+}
+
+// TestMessageWindowKeepsTheNewest: with more messages than the bound, the window
+// keeps the tail — the newest relayed rejection must not be the one dropped.
+func TestMessageWindowKeepsTheNewest(t *testing.T) {
+	g := New(&countingRunner{out: `{"decision":"accept"}`}, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true}, "/repo", "")
+	var many []MessageState
+	for i := 0; i < messagesCount+5; i++ {
+		many = append(many, MessageState{ID: fmt.Sprintf("m%02d", i), From: "orchestrator", To: "planner", Body: fmt.Sprintf("round-%02d", i)})
+	}
+	g.SetMessagesResolver(func(context.Context, string, []string) []MessageState { return many })
+	var tp transitionPayload
+	g.fillMessages(context.Background(), "sty_win", []string{"planner"}, &tp, nil)
+	if len(tp.Messages) != messagesCount {
+		t.Fatalf("kept %d messages, want %d", len(tp.Messages), messagesCount)
+	}
+	if tp.Messages[0].ID != "m05" || tp.Messages[messagesCount-1].ID != fmt.Sprintf("m%02d", messagesCount+4) {
+		t.Errorf("window = %s..%s, want m05..newest", tp.Messages[0].ID, tp.Messages[messagesCount-1].ID)
 	}
 }

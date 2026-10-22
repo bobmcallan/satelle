@@ -274,6 +274,11 @@ func openAppForCmd(cmd *cobra.Command) error {
 			rev.SetDeferralsResolver(func(ctx context.Context, itemID string) []agentstep.DeferredItem {
 				return agentstep.DeferralsFrom(verb.StoryLedgerKind(ctx, itemID, ledger.KindAgentInvocation))
 			})
+			// Finding answers (sty_f948d345): a gate is told which of the findings
+			// its edge's performer was offered went unanswered.
+			rev.SetFindingAnswersResolver(func(ctx context.Context, itemID, from, to string) (agentstep.FindingAnswers, bool) {
+				return agentstep.FindingAnswersFrom(verb.StoryLedgerKind(ctx, itemID, ledger.KindAgentInvocation), from, to)
+			})
 			// Engagement-diff injection (sty_a125b440): Bash-less reviewers
 			// receive the live slice in the transition payload. Enumeration
 			// only; a missing baseline is a marker, never a refused gate.

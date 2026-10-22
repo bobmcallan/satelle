@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -137,7 +138,7 @@ func applyPlannedCriteria(ctx context.Context, current workitem.Item, to string,
 	if err != nil {
 		return current, fmt.Errorf("verb: transition %s→%s: reading the %q document to apply its criteria: %w", current.Status, to, st.ApplyCriteriaDoc, err)
 	}
-	criteria := markdownSection(string(data), st.ApplyCriteriaHeading)
+	criteria := agentartifact.Section(string(data), st.ApplyCriteriaHeading)
 	if criteria == "" || strings.Join(strings.Fields(criteria), " ") == strings.Join(strings.Fields(current.AcceptanceCriteria), " ") {
 		return current, nil
 	}
@@ -204,26 +205,6 @@ func writeToRecord(ctx context.Context, cur workitem.Item, in workitem.UpdateInp
 func recordApplied(ctx context.Context, id string, row recordedWrite, now time.Time) {
 	appendLedgerEntry(ctx, id, row.Kind, row.Actor, row.Body, row.Payload, now)
 	syncReadyMark(ctx, id)
-}
-
-// markdownSection returns the text under the "## <heading>" line of doc, up to
-// the next "## " heading or the end, trimmed. Empty when the heading is absent.
-func markdownSection(doc, heading string) string {
-	var out []string
-	in := false
-	for _, line := range strings.Split(doc, "\n") {
-		if strings.HasPrefix(line, "##") && len(line) > 2 && (line[2] == ' ' || line[2] == '\t') {
-			if in {
-				break
-			}
-			in = strings.TrimSpace(line[2:]) == heading
-			continue
-		}
-		if in {
-			out = append(out, line)
-		}
-	}
-	return strings.TrimSpace(strings.Join(out, "\n"))
 }
 
 // refuseSpentRejectBudget refuses another presentation of the current→to edge

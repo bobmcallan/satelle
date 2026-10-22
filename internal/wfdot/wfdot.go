@@ -230,8 +230,8 @@ type State struct {
 	// WaitsOnChildren: a container idles here while its children are driven
 	// (sty_7f3e6fd3). Read through Spec.WaitsOnChildren.
 	WaitsOnChildren bool
-	// Schedule is the container's declared child schedule (Step.Schedule); empty
-	// when undeclared.
+	// Schedule is the container's child schedule (Step.ChildSchedule): parallel
+	// unless the step says sequential; empty on a step that waits on no children.
 	Schedule string
 	// AfterChildren is the obligation every child must have discharged before a
 	// container enters this step (Step.AfterChildren); empty when undeclared.
@@ -249,6 +249,9 @@ type State struct {
 	// node, so a gate panel and a step panel do not overwrite each other.
 	Panel   []string
 	Combine string
+	// ReviewMode is a gate node's declared review mode (RouteGate.ReviewMode):
+	// empty or ReviewModeFailFast.
+	ReviewMode string
 }
 
 // WaitsOnChildren reports whether the route declares that a story holding
@@ -378,6 +381,8 @@ type ScopedReviewer struct {
 	When    string   // functional-check skill; exit 1 skips the gate, empty → always runs
 	Panel   []string // this gate's seats; empty → the single Agent seat
 	Combine string   // functional-check skill that folds Panel; empty on a one-seat panel
+	// ReviewMode is the gate's declared mode: "" (full) or ReviewModeFailFast.
+	ReviewMode string
 }
 
 // ScopedReviewers returns the DECLARED, edge-less reviewer nodes that gate the
@@ -419,7 +424,7 @@ func (s Spec) ScopedReviewersSplit(toStatus string, tags []string) (enqueued, sk
 		if !(containsStr(st.On, "*") || containsStr(st.On, toStatus)) {
 			continue
 		}
-		ref := ScopedReviewer{Skill: st.Skill, Agent: st.Agent, When: st.When, Panel: st.Panel, Combine: st.Combine}
+		ref := ScopedReviewer{Skill: st.Skill, Agent: st.Agent, When: st.When, Panel: st.Panel, Combine: st.Combine, ReviewMode: st.ReviewMode}
 		if !tagsMatchAppliesTo(st.AppliesTo, tags) {
 			// Only applies_to-filtered nodes are "skipped"; absent applies_to never skips.
 			if len(st.AppliesTo) > 0 {
@@ -940,16 +945,57 @@ func (s Spec) ExecutorSkillsFor(name string, tags []string) []string {
 	return append(out, augs...)
 }
 
-// The closed set of values a container step's `schedule` may take. Distinct from
-// the reviewer fan-out `parallel` integer.
+// The closed set of child schedules a container resolves to. `schedule = "..."`
+// is the deprecated way to author one; the default is parallel and the user's
+// override is `sequential = true`. Distinct from the reviewer fan-out `parallel`
+// integer.
 const (
 	SchedParallel   = "parallel"
 	SchedSequential = "sequential"
 )
 
+// DefaultSchedule is the child schedule of a container that declares nothing:
+// parallel. The one place the default is named; every reader of a container's
+// schedule reaches it through State.Schedule or here.
+func DefaultSchedule() string { return SchedParallel }
+
+// ChildSchedule is the child schedule this step declares for its container: ""
+// for a step that does not wait on children, sequential when sequential = true
+// (or the deprecated schedule = "sequential") is authored, else DefaultSchedule.
+func (s Step) ChildSchedule() string {
+	switch {
+	case !s.WaitsOnChildren:
+		return ""
+	case s.Sequential || s.Schedule == SchedSequential:
+		return SchedSequential
+	}
+	return DefaultSchedule()
+}
+
+// LegacyScheduleSteps lists the steps that still author the deprecated
+// `schedule` key, in catalogue order, for validate to name.
+func LegacyScheduleSteps(cat Catalogue) []Step {
+	var out []Step
+	for _, st := range cat.Steps {
+		if st.Schedule != "" {
+			out = append(out, st)
+		}
+	}
+	return out
+}
+
 // CarryUntilAccept is the only value a step's `reviewer_carry` may take
 // (sty_59720b8b); an absent key dispatches every reviewer every round.
 const CarryUntilAccept = "until_accept"
+
+// The closed set of values a gate's `review_mode` may take. Full is the default
+// and today's behaviour: the reviewer judges the whole artifact and reports every
+// finding. FailFast stops at the first blocking finding and rejects, recording
+// where it stopped. An absent key is full.
+const (
+	ReviewModeFull     = "full"
+	ReviewModeFailFast = "fail-fast"
+)
 
 // DefaultParallelCap is the concurrency cap when an edge sets parallel=true
 // without a numeric limit (sty_4f0a15db). Bounded because reviewers share backends.
@@ -987,6 +1033,10 @@ type Transition struct {
 	// step onto the spine edge only — role and recover edges do not carry them.
 	Panel   []string
 	Combine string
+	// FailFast lists the target step's entry reviewers (edge-named skills and
+	// panel skills) that run in fail-fast review mode. Empty means every edge
+	// reviewer runs full. Scoped gate nodes carry their own mode (State.ReviewMode).
+	FailFast []string
 }
 
 // Spec is the parsed lifecycle: states and gated transitions.

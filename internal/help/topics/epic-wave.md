@@ -9,8 +9,11 @@ agent. `--json` prints the full response (`runnable`, `omitted`, `schedule`).
 
 - **Membership** is the epic set — every story carrying the epic's `epic:<theme>`
   tag, the same set close uses. Not `parent_id`, not a second list.
-- **Schedule** is declared on the container's route: `schedule = "parallel"` or
-  `"sequential"` on its `waits_on_children` step in `step.toml`.
+- **Schedule** is **parallel by default** — a container that declares nothing runs
+  its children in parallel. The override is `sequential = true` on the container's
+  `waits_on_children` step in `step.toml`, which runs one child at a time. The older
+  `schedule = "parallel"` / `"sequential"` key still works with the same meaning;
+  `satelle validate` warns that it is deprecated.
 - **Edges** are the `depends-on:<story id>` tags on the children.
 
 ## The wave
@@ -22,14 +25,15 @@ A child is runnable when it is not terminal (not done, not cancelled) and every
 there. The child stays out of the wave and a `# omitted <id>: waiting on <dep>`
 line names the dependency (a cancelled one is called out as cancelled).
 
-- **parallel** returns every runnable child.
-- **sequential** returns the runnable set only when it holds exactly one id. With
+- **parallel** (the default) returns every runnable child.
+- **sequential** (`sequential = true`) returns the runnable set only when it holds exactly one id. With
   more than one it exits non-zero, names those ids, and says to add `depends-on`
   edges. It never picks one by `order:`, `created_at` or title.
 
 ## Refusals (non-zero exit, no id printed as runnable)
 
-- the container's route declares no schedule (or two different ones);
+- the container's route declares two different schedules and the container's status
+  selects neither (no schedule at all is not a refusal — it is parallel);
 - two epic-parents carry the epic tag;
 - the container has no `epic:<theme>` tag (or more than one);
 - the story is not an epic-parent.
@@ -72,17 +76,21 @@ another repo and is not on any branch here.
 ## Engagement honours the wave
 
 Entering an engaging status (`satelle story set <child> --status plan`) is
-refused for a child of a **scheduled** epic that the wave would not return, and
-the refusal quotes the wave's reason: the dependency that is not done, the
-sequential wave that is wider than one (add `depends-on`), or that the story is
-not in the epic set. A child the wave returns still meets the seat mode and the
+refused for a child of an epic that the wave would not return, and the refusal
+quotes the wave's reason: the dependency that is not done, the sequential wave
+that is wider than one (add `depends-on`), or that the story is not in the epic
+set. A child the wave returns still meets the seat mode and the
 one-engagement-per-worktree rule, so two eligible siblings co-engage only from
 distinct worktrees. Only a *new* engagement is checked; a child already
 mid-flight keeps moving.
 
-A container with no schedule is unchanged: the "no schedule" refusal above
-belongs to `story wave`, not to engagement. Stories that are not children of an
-epic are unaffected. See `satelle help workflow-convert` for `schedule` and `depends-on`.
+**Seats.** `[engagement] parallel = "epic"` is the only switch that lets siblings
+hold seats alongside each other; with the parallel default they do, from distinct
+worktrees. `sequential = true` narrows the same mode: the epic's children then
+key on their own ids, so only one of them holds a seat at a time. Under
+`parallel = "none"` the schedule changes nothing about seats. Stories that are
+not children of an epic are unaffected. See `satelle help workflow-convert` for
+`sequential` and `depends-on`.
 
 ## A container step that waits on a child obligation
 
@@ -113,8 +121,8 @@ in `step.toml` may declare `remote_agent = "<binding>"` (a `role = "agent"`,
 The step is then performed by `remote_agent`, in a cloud session, when **all** of
 these hold:
 
-- the child belongs to an epic whose container declares `schedule = "parallel"`
-  (the wave's own membership and schedule — a sequential epic, or a story that is
+- the child belongs to a parallel epic — the default, so any container that does not
+  set `sequential = true` (the wave's own membership and schedule — a sequential epic, or a story that is
   not an epic child, keeps the step's own `agent =`);
 - the child carries none of the step's `local_tags` (a tag the repo uses to pin a
   child local, such as the children that edit shared substrate);

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -478,6 +479,44 @@ func TestDispatchInvocationRowCarriesCacheSplit(t *testing.T) {
 	}
 	if len(row.Models) != 1 || row.Models[0].TokensCacheWrite != 17 || row.Models[0].TokensCacheRead != 23 {
 		t.Fatalf("model_usage cache split = %+v, want write=17 read=23", row.Models)
+	}
+}
+
+// TestDispatchPayloadCarriesFindingAnswers pins that a named-executor dispatch's
+// agent_invocation row records the findings the performer was offered and its
+// per-finding answers (sty_f948d345), which the gate payload reads back.
+func TestDispatchPayloadCarriesFindingAnswers(t *testing.T) {
+	withWiring(t)
+	db := wire(t)
+	d := &dispatcherStub{res: verb.DispatchResult{
+		Dispatched: true, Agent: "planner", Command: "fake {system}",
+		FindingsOffered: []string{"arch#1", "plan-review#1"},
+		Answers:         []agentartifact.Answer{{Finding: "arch#1", Answer: agentartifact.AnswerRebutted, Evidence: "engine.go:1336"}},
+	}}
+	verb.SetExecutorDispatcher(d)
+
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "backlog"}), &it)
+	if _, err := dispatchRaw(t, "story-set", map[string]any{"id": it.ID, "status": "in_progress"}); err != nil {
+		t.Fatalf("dispatch success must enact: %v", err)
+	}
+
+	entries, err := db.Ledger.ListByStory(context.Background(), it.ID, ledger.KindAgentInvocation)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("want 1 agent_invocation row, got %d err=%v", len(entries), err)
+	}
+	var row struct {
+		FindingsOffered []string               `json:"findings_offered"`
+		FindingAnswers  []agentartifact.Answer `json:"finding_answers"`
+	}
+	if err := json.Unmarshal(entries[0].Payload, &row); err != nil {
+		t.Fatal(err)
+	}
+	if len(row.FindingsOffered) != 2 || row.FindingsOffered[1] != "plan-review#1" {
+		t.Errorf("findings_offered = %v", row.FindingsOffered)
+	}
+	if len(row.FindingAnswers) != 1 || row.FindingAnswers[0].Finding != "arch#1" || row.FindingAnswers[0].Answer != "rebutted" {
+		t.Errorf("finding_answers = %+v", row.FindingAnswers)
 	}
 }
 

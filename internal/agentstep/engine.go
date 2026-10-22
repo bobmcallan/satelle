@@ -125,6 +125,10 @@ type Engine struct {
 	// to the grant or to a later gate; fillDeferred hands each gate its own.
 	// Nil-safe: an unwired resolver injects nothing.
 	deferrals func(ctx context.Context, itemID string) []DeferredItem
+	// findingAnswers reports how the performer of an edge answered the findings it
+	// was offered (sty_f948d345); fillFindingAnswers hands the gate the fact.
+	// Nil-safe: an unwired resolver injects nothing.
+	findingAnswers func(ctx context.Context, itemID, from, to string) (FindingAnswers, bool)
 	// itemDiff resolves the live engagement slice for a reviewer payload
 	// (sty_a125b440). Nil-safe: an unwired resolver injects no Diff. The
 	// resolver itself must never error — map missing baseline / git failure to
@@ -396,6 +400,9 @@ func (g *Engine) telemetryEvent(ctx context.Context, storyID, actor, kind string
 func classifyOutcome(err error) string {
 	if err == nil {
 		return "no-verdict"
+	}
+	if errors.Is(err, agentcli.ErrMaxTurns) {
+		return verb.OutcomeMaxTurns
 	}
 	if asStallError(err) != nil {
 		return "stalled"
@@ -846,6 +853,9 @@ const (
 	// Over it, the row records that the citation was truncated and omits the
 	// string. It is not a hash and not a comparison of the story.
 	reviewedCeiling = 8 << 10
+	// maxCriteria caps the per-criterion entries kept from one verdict
+	// (sty_99d3162b), so a runaway reviewer cannot grow a ledger row.
+	maxCriteria = 64
 )
 
 // diffPayloadCeiling bounds the patch body that rides in one reviewer payload,
@@ -950,6 +960,11 @@ type transitionPayload struct {
 	// payload (sty_23e10d92); ReviewSkill is empty then. Absent for a gate that
 	// runs alone, so its payload is byte-for-byte unchanged.
 	ReviewSkills []string `json:"review_skills,omitempty"`
+	// ReviewMode names the gate's declared review mode, and is present ONLY for
+	// fail-fast (sty_93359e0f): the seat stops at the first blocking finding,
+	// rejects, and says in its verdict where it stopped. Absent for the default
+	// full review, so that payload is byte-for-byte unchanged.
+	ReviewMode string `json:"review_mode,omitempty"`
 	// Children carries a container's child stories (id + status) so a parent/epic
 	// close gate judges the children-resolved rule from the PAYLOAD — satelle does
 	// the context selection — rather than reading any on-disk story mirror. Empty
@@ -1016,6 +1031,28 @@ type transitionPayload struct {
 	// the judged tree. Absent for every gate whose rubric does not opt in, so
 	// its payload is unchanged. Enumeration, not verdict.
 	Citations *CitationsState `json:"citations,omitempty"`
+	// CriteriaSource names where the criteria this gate judges come from — the
+	// performing step's document section ("doc:plan#Acceptance criteria") or
+	// "story" — so a reviewer numbers its criteria[] entries by the right lines
+	// (sty_99d3162b). Absent when there are no numbered criteria.
+	CriteriaSource string `json:"criteria_source,omitempty"`
+	// CriteriaState marks each judged criterion settled or open for this seat on a
+	// re-presentation. Absent unless the edge carries or an earlier verdict
+	// recorded criteria, so an ordinary gate's payload is unchanged.
+	CriteriaState []criterionState `json:"criteria_state,omitempty"`
+	// PeerFindings are the other panel seats' open findings (never the seat's
+	// own). Absent outside a panel and when no peer has one.
+	PeerFindings []peerFinding `json:"peer_findings,omitempty"`
+	// Findings is present ONLY on the payload of a performer re-presenting an edge
+	// whose latest gate round rejected (sty_f948d345): each gate seat's latest
+	// verdict on that edge, a panel's seats individually. The performer answers
+	// each blocking one — adopted, or rebutted with evidence — in its output.
+	// Enumeration, not verdict.
+	Findings []Finding `json:"findings_to_answer,omitempty"`
+	// FindingAnswers is present ONLY on a gate payload whose edge's performer was
+	// offered findings: which it answered and which it left unanswered. A fact the
+	// gate's rubric weighs; Go never rejects on it.
+	FindingAnswers *FindingAnswers `json:"finding_answers,omitempty"`
 }
 
 // MessageState is one agent_message as injected into a transition payload.
@@ -1066,10 +1103,26 @@ type PriorVerdict struct {
 	Attempt           int    `json:"attempt"`
 	Reviewed          string `json:"reviewed,omitempty"`
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+	// Criteria is the verdict's per-criterion entries (sty_99d3162b): what the
+	// seat said of each criterion, its text then and the quotation it rested on.
+	Criteria []verb.CriterionVerdict `json:"criteria,omitempty"`
 	// ReviewedStale/EvidenceSince: ledger evidence was recorded after this
 	// verdict's cycle ended, so Reviewed is withheld and the gate re-judges.
 	ReviewedStale bool                 `json:"reviewed_stale,omitempty"`
 	EvidenceSince []verb.EvidenceSince `json:"evidence_since,omitempty"`
+	// ReviewMode / Coverage / Partial: what the earlier verdict covered
+	// (sty_93359e0f). Partial means the earlier verdict stopped early, so the
+	// remainder it did not review is still unjudged.
+	ReviewMode string         `json:"review_mode,omitempty"`
+	Coverage   *verb.Coverage `json:"coverage,omitempty"`
+	Partial    bool           `json:"partial,omitempty"`
+	// Unavailable marks a panel seat's own entry for a round it never produced a
+	// verdict on (sty_da9e8d0a). It is a reject with no Reviewed, judged in full.
+	Unavailable bool `json:"unavailable,omitempty"`
+	// Seats is the panel fold of the ledger row this came from. It feeds
+	// seatPriorVerdicts and is never serialised: a seat sees its own entry, not
+	// the combined row.
+	Seats []verb.PanelSeat `json:"-"`
 }
 
 // PriorVerdictFrom is the one conversion from a ledger prior verdict to the
@@ -1082,8 +1135,13 @@ func PriorVerdictFrom(v verb.PriorVerdict) PriorVerdict {
 		CreatedAt:         v.CreatedAt,
 		Reviewed:          v.Reviewed,
 		ReviewedTruncated: v.ReviewedTruncated,
+		Criteria:          v.Criteria,
 		ReviewedStale:     v.ReviewedStale,
 		EvidenceSince:     v.EvidenceSince,
+		ReviewMode:        v.ReviewMode,
+		Coverage:          v.Coverage,
+		Partial:           v.Partial,
+		Seats:             v.Seats,
 	}
 }
 
@@ -1179,14 +1237,20 @@ func (g *Engine) fillPriorVerdicts(ctx context.Context, itemID, from, to string,
 	if len(all) == 0 {
 		return
 	}
-	for i := range all {
-		all[i].Attempt = i + 1
-	}
+	numberAttempts(all)
 	// Snapshot before the window. The copy does not share the backing array,
 	// so the note excerpts below cannot shorten the retained bodies.
 	if mat != nil {
 		mat.PriorVerdicts = append([]PriorVerdict(nil), all...)
 	}
+	tp.PriorVerdicts = windowPriorVerdicts(all)
+}
+
+// windowPriorVerdicts is the most recent priorVerdictCount of all with each
+// note capped — what rides the payload inline. all is numbered over the full
+// history, so a window still reports how deep the edge is. A panel seat's own
+// priors take the same window.
+func windowPriorVerdicts(all []PriorVerdict) []PriorVerdict {
 	window := all
 	if len(window) > priorVerdictCount {
 		window = window[len(window)-priorVerdictCount:]
@@ -1195,11 +1259,11 @@ func (g *Engine) fillPriorVerdicts(ctx context.Context, itemID, from, to string,
 	for _, v := range window {
 		v.Notes = excerpt(v.Notes, priorVerdictNotesCeiling)
 		// Reviewed is the reviewer's quotation. It is copied whole onto this
-		// window and onto the material snapshot above. It is not excerpted:
+		// window and onto the material snapshot. It is not excerpted:
 		// a shortened quotation is not a citation.
 		out = append(out, v)
 	}
-	tp.PriorVerdicts = out
+	return out
 }
 
 // DefinitionEdit is one recorded edit to a story's definition while it was still
@@ -1250,8 +1314,10 @@ func (g *Engine) fillDefinitionEdits(ctx context.Context, itemID string, tp *tra
 // fillDiff attaches the engagement slice under its own ceiling. Runs AFTER
 // fillPayloadDocs and never touches that counter. Called unconditionally on
 // the gate payload — no status-name switch (sty_a125b440 AC2). Gate payload
-// only: executor and retrospective payloads deliberately go without, matching
-// prior_verdicts (an executor modelling its own slice is the failure mode).
+// only: executor and retrospective payloads deliberately go without the diff (an
+// executor modelling its own slice is the failure mode). They go without the
+// full prior_verdicts history too; a performer re-presenting an edge gets only
+// each seat's latest verdict, as findings_to_answer (sty_f948d345).
 func (g *Engine) fillDiff(ctx context.Context, itemID string, tp *transitionPayload, mat *reviewerMaterial) {
 	if g.itemDiff == nil || itemID == "" {
 		return
@@ -1337,6 +1403,7 @@ const (
 func (g *Engine) performerPayload(ctx context.Context, item workitem.Item, toStatus, skill, agent string, binding config.AgentBinding) transitionPayload {
 	tp := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: skill}
 	g.fillPayloadDocs(ctx, item.ID, &tp, nil)
+	g.fillFindings(ctx, item, toStatus, &tp)
 	if g.children != nil {
 		tp.Children = g.children(ctx, item)
 	}
@@ -1350,7 +1417,7 @@ func (g *Engine) performerPayload(ctx context.Context, item workitem.Item, toSta
 
 // fillMessages attaches engagement-windowed agent messages for recipient.
 // Runs AFTER fillPayloadDocs / fillDiff and never touches those counters.
-// Oldest 20 kept; each body cut at messageBodyBudget with a fetch hint.
+// Newest 20 kept; each body cut at messageBodyBudget with a fetch hint.
 // Nil-safe; never errors.
 func (g *Engine) fillMessages(ctx context.Context, itemID string, addresses []string, tp *transitionPayload, mat *reviewerMaterial) {
 	if g.itemMessages == nil || itemID == "" {
@@ -1361,13 +1428,15 @@ func (g *Engine) fillMessages(ctx context.Context, itemID string, addresses []st
 		return
 	}
 	// The file keeps resolver order and the full bodies. The check payload
-	// stays the oldest messagesCount, each body cut at messageBodyBudget.
+	// stays the newest messagesCount (the resolver lists oldest first, so the tail
+	// is the newest — a relayed rejection is the last thing said, and the one that
+	// must not be dropped), each body cut at messageBodyBudget.
 	if mat != nil {
 		mat.Messages = append([]MessageState(nil), msgs...)
 	}
 	window := msgs
 	if len(window) > messagesCount {
-		window = window[:messagesCount]
+		window = window[len(window)-messagesCount:]
 	}
 	out := make([]MessageState, len(window))
 	for i := range window {
@@ -1622,9 +1691,11 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 	// Build ordered gate list; edge skills share the edge's agent= binding
 	// (sty_a476a2f8). Scoped nodes carry their own agent=.
 	var ordered []reviewerRef
+	failFast := g.edgeFailFast(ctx, item, item.Status, toStatus)
 	for _, sk := range skills {
 		ordered = append(ordered, reviewerRef{
 			skill: sk, agent: edgeAgent, panel: edgePanel, combine: edgeCombine, parallel: parallelCap,
+			mode: failFastModeOf(failFast, sk),
 		})
 	}
 	sysStart := len(ordered)
@@ -1710,6 +1781,8 @@ func (g *Engine) runScheduled(ctx context.Context, item workitem.Item, toStatus 
 		result.Reasoning = dec.Reasoning
 		result.Reviewed = dec.Reviewed
 		result.ReviewedTruncated = dec.ReviewedTruncated
+		result.ReviewMode, result.Coverage = dec.ReviewMode, dec.Coverage
+		result.Turns, result.TurnsUnavailableReason = dec.Turns, dec.TurnsUnavailableReason
 		result.Command = dec.Command
 		result.Context = dec.Context
 		result.Model = dec.Model
@@ -1718,6 +1791,7 @@ func (g *Engine) runScheduled(ctx context.Context, item workitem.Item, toStatus 
 		result.TokensIn, result.TokensOut, result.TokensTotal = dec.TokensIn, dec.TokensOut, dec.TokensTotal
 		result.TokensInFresh, result.TokensCacheWrite, result.TokensCacheRead = dec.TokensInFresh, dec.TokensCacheWrite, dec.TokensCacheRead
 		result.UsageNote = dec.UsageNote
+		result.RunCounts = dec.RunCounts
 		result.CostUSD, result.CostUnavailableReason = dec.CostUSD, dec.CostUnavailableReason
 		result.SystemPromptBytes, result.PayloadBytes = dec.SystemPromptBytes, dec.PayloadBytes
 		result.ToolIsolation = dec.ToolIsolation
@@ -1791,13 +1865,15 @@ type gateSlot struct {
 func reviewerVerdictOf(skill string, order int, system bool, dec verb.GateDecision) verb.ReviewerVerdict {
 	return verb.ReviewerVerdict{
 		Skill: skill, Order: order, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning,
-		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated, System: system,
+		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated, Criteria: dec.Criteria, System: system,
+		ReviewMode: dec.ReviewMode, Coverage: dec.Coverage,
 		Command: dec.Command, Context: dec.Context, Model: dec.Model,
 		ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 		TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 		UsageAvailable: dec.UsageAvailable,
 		TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
-		CostUSD: dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
+		RunCounts: dec.RunCounts,
+		CostUSD:   dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
 		SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
 		ToolIsolation: dec.ToolIsolation,
 		BundleID:      dec.BundleID, BundleSkills: dec.BundleSkills,
@@ -1854,6 +1930,8 @@ func assembleGate(ordered []reviewerRef, results []gateSlot, sysStart int) (verb
 		result.Reasoning = pick.Reasoning
 		result.Reviewed = pick.Reviewed
 		result.ReviewedTruncated = pick.ReviewedTruncated
+		result.ReviewMode, result.Coverage = pick.ReviewMode, pick.Coverage
+		result.Turns, result.TurnsUnavailableReason = pick.Turns, pick.TurnsUnavailableReason
 		result.Command = pick.Command
 		result.Context = pick.Context
 		result.Model = pick.Model
@@ -1862,6 +1940,7 @@ func assembleGate(ordered []reviewerRef, results []gateSlot, sysStart int) (verb
 		result.TokensIn, result.TokensOut, result.TokensTotal = pick.TokensIn, pick.TokensOut, pick.TokensTotal
 		result.TokensInFresh, result.TokensCacheWrite, result.TokensCacheRead = pick.TokensInFresh, pick.TokensCacheWrite, pick.TokensCacheRead
 		result.UsageNote = pick.UsageNote
+		result.RunCounts = pick.RunCounts
 		result.CostUSD, result.CostUnavailableReason = pick.CostUSD, pick.CostUnavailableReason
 		result.SystemPromptBytes, result.PayloadBytes = pick.SystemPromptBytes, pick.PayloadBytes
 		result.ToolIsolation = pick.ToolIsolation
@@ -2144,6 +2223,7 @@ func (g *Engine) StepPerformer(ctx context.Context, item workitem.Item, toStatus
 		return perf.PerformerResolution, fmt.Errorf("skill %q output contract: %w", skill, cerr)
 	}
 	perf.OutputName = contract.Name
+	perf.CriteriaSection = contract.CriteriaSection
 	return perf.PerformerResolution, nil
 }
 
@@ -2383,6 +2463,9 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		return res, fmt.Errorf("named agent %q reported changes for step %q that cannot be read: %w", dispatchAgent, toStatus, cerr)
 	}
 	res.Changes = changes
+	if aerr := RecordFindingAnswers(&res, execPayload.Findings, invRes.Stdout); aerr != nil {
+		return res, fmt.Errorf("named agent %q reported answers for step %q that cannot be read: %w", dispatchAgent, toStatus, aerr)
+	}
 	if dec, derr := parseDecision(invRes.Stdout); derr == nil && !dec.Accept {
 		return res, &verb.PerformerReject{Notes: dec.Notes, Changes: changes}
 	}
@@ -3280,7 +3363,7 @@ func (g *Engine) runReviewerRef(ctx context.Context, item workitem.Item, toStatu
 	if len(ref.panel) == 1 && !fold {
 		agent = ref.panel[0]
 	}
-	prep, err := g.prepareReviewer(ctx, item, toStatus, skill, agent, decorate)
+	prep, err := g.prepareReviewer(ctx, item, toStatus, skill, agent, withReviewMode(ref.mode, decorate))
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
@@ -3288,7 +3371,11 @@ func (g *Engine) runReviewerRef(ctx context.Context, item workitem.Item, toStatu
 		return verb.GateDecision{Gated: false, Skill: skill, Unresolved: []string{skill}}, nil
 	}
 	if !fold {
-		return g.decideReviewer(ctx, item, toStatus, skill, agent, prep)
+		dec, derr := g.decideReviewer(ctx, item, toStatus, skill, agent, prep)
+		if dec.Gated {
+			dec.ReviewMode = ref.mode
+		}
+		return dec, derr
 	}
 	if command := skillCheck(prep.body); command != "" {
 		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
@@ -3298,8 +3385,11 @@ func (g *Engine) runReviewerRef(ctx context.Context, item workitem.Item, toStatu
 	if cerr != nil {
 		return verb.GateDecision{Gated: true, Skill: skill}, cerr
 	}
-	runs := g.runPanelSeats(ctx, item, toStatus, skill, ref.panel, prep, ref.parallel)
-	return g.foldPanel(ctx, skill, ref.combine, command, ref.panel, runs)
+	dec, ferr := g.runPanel(ctx, item, toStatus, skill, ref, command, prep)
+	if dec.Gated {
+		dec.ReviewMode = ref.mode
+	}
+	return dec, ferr
 }
 
 // panelFolds reports whether this ref expands into seat runs and a combine
@@ -3335,13 +3425,14 @@ func (g *Engine) decideReviewer(ctx context.Context, item workitem.Item, toStatu
 	}
 	res := g.invokeReviewerSeat(ctx, item, toStatus, skill, prep, seat)
 	if res.Err != nil {
-		return verb.GateDecision{Gated: true, Skill: skill}, res.Err
+		return verb.GateDecision{Gated: true, Skill: skill}, g.gateFailure(skill, res, seat)
 	}
 	if res.Decision == nil {
 		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
 			"reviewer: %s produced no decision", skill)
 	}
 	stampInvocation(res.Decision, res, seat)
+	prep.criteria.apply(res.Decision)
 	return *res.Decision, nil
 }
 
@@ -3398,7 +3489,11 @@ func (g *Engine) combineCommand(ctx context.Context, name string) (string, error
 // is an unavailable record; the loop continues. It is not a skill-level error.
 func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus, skill string, panel []string, prep reviewerPrep, cap int) []panelSeatRun {
 	runs := make([]panelSeatRun, len(panel))
+	// attempt is the edge's next verdict number over the FULL history, the scale
+	// fillPriorVerdicts numbers priors on; every seat of this round shares it.
+	attempt := len(prep.material.PriorVerdicts) + 1
 	one := func(i int, section string) {
+		defer func() { runs[i].record.Attempt = attempt }()
 		if ctx.Err() != nil {
 			runs[i] = panelSeatRun{record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: ctx.Err().Error()}}
 			return
@@ -3408,22 +3503,32 @@ func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus
 			runs[i] = panelSeatRun{record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: serr.Error()}}
 			return
 		}
-		res := g.invokeReviewerSeat(ctx, item, toStatus, skill, prep, seat)
+		sp := seatPrep(prep, skill, section)
+		res := g.invokeReviewerSeat(ctx, item, toStatus, skill, sp, seat)
 		if res.Err != nil || res.Decision == nil {
 			notes := "reviewer produced no decision"
 			if res.Err != nil {
 				notes = res.Err.Error()
 			}
 			runs[i] = panelSeatRun{
-				record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: notes},
-				stamp:  seatStamp(skill, section, res, nil),
+				record: verb.PanelSeat{
+					Seat: section, Accept: false, Unavailable: true,
+					MaxTurns: errors.Is(res.Err, agentcli.ErrMaxTurns), Notes: notes,
+				},
+				stamp: g.seatStamp(skill, section, res, nil, seat),
 			}
 			return
 		}
 		stampInvocation(res.Decision, res, seat)
+		sp.criteria.apply(res.Decision)
 		runs[i] = panelSeatRun{
-			record: verb.PanelSeat{Seat: section, Accept: res.Decision.Accept, Notes: res.Decision.Notes},
-			stamp:  seatStamp(skill, section, res, res.Decision),
+			record: verb.PanelSeat{
+				Seat: section, Accept: res.Decision.Accept, Notes: res.Decision.Notes,
+				Reviewed: res.Decision.Reviewed, ReviewedTruncated: res.Decision.ReviewedTruncated,
+				Criteria: res.Decision.Criteria,
+				Coverage: res.Decision.Coverage,
+			},
+			stamp: g.seatStamp(skill, section, res, res.Decision, seat),
 		}
 	}
 	if cap <= 1 {
@@ -3445,7 +3550,7 @@ func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
-				runs[i] = panelSeatRun{record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: ctx.Err().Error()}}
+				runs[i] = panelSeatRun{record: verb.PanelSeat{Seat: section, Accept: false, Unavailable: true, Notes: ctx.Err().Error(), Attempt: attempt}}
 				return
 			}
 			one(i, section)
@@ -3457,19 +3562,34 @@ func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus
 
 // seatStamp is the invocation evidence for a seat whose process started.
 // Command empty means it never started, and the transition writer skips it.
-func seatStamp(skill, section string, res InvokeResult, dec *verb.GateDecision) verb.ReviewerVerdict {
+func (g *Engine) seatStamp(skill, section string, res InvokeResult, dec *verb.GateDecision, seat reviewerSeat) verb.ReviewerVerdict {
 	if res.Command == "" && (dec == nil || dec.Command == "") {
 		return verb.ReviewerVerdict{}
 	}
+	var rv verb.ReviewerVerdict
 	if dec != nil {
-		rv := reviewerVerdictOf(skill, 0, false, *dec)
-		rv.Seat = section
-		rv.SeatStamps = nil
-		rv.Seats = nil
-		rv.Combine = ""
-		return rv
+		rv = reviewerVerdictOf(skill, 0, false, *dec)
+	} else {
+		// A started seat that produced no verdict: its measured usage, turns and
+		// tool calls, and why it ended (turn cap or otherwise).
+		rv = g.failureStamp(skill, res, seat)
 	}
-	return verb.ReviewerVerdict{Skill: skill, Seat: section, Command: res.Command, Context: skill}
+	rv.Seat = section
+	rv.SeatStamps = nil
+	rv.Seats = nil
+	rv.Combine = ""
+	return rv
+}
+
+// gateFailure is the error a single-seat gate returns for an attempt that
+// produced no verdict. An attempt that started carries its invocation stamp, so
+// the round writer can record what it measured; one that never started is the
+// bare error.
+func (g *Engine) gateFailure(skill string, res InvokeResult, seat reviewerSeat) error {
+	if res.Command == "" {
+		return res.Err
+	}
+	return &verb.GateFailure{Err: res.Err, Stamps: []verb.ReviewerVerdict{g.failureStamp(skill, res, seat)}}
 }
 
 // foldPanel runs the combine check over the seat records and returns one
@@ -3481,15 +3601,21 @@ func (g *Engine) foldPanel(ctx context.Context, skill, combine, command string, 
 		Accept      bool   `json:"accept"`
 		Unavailable bool   `json:"unavailable"`
 		Notes       string `json:"notes"`
+		// Criteria is the seat's per-criterion entries when it recorded any;
+		// Accept is then its effective decision, derived from them.
+		Criteria []verb.CriterionVerdict `json:"criteria,omitempty"`
 	}
 	seats := make([]combineSeat, 0, len(panel))
 	records := make([]verb.PanelSeat, 0, len(panel))
 	var stamps []verb.ReviewerVerdict
+	var perSeat [][]verb.CriterionVerdict
 	for _, run := range runs {
 		seats = append(seats, combineSeat{
 			Seat: run.record.Seat, Accept: run.record.Accept,
 			Unavailable: run.record.Unavailable, Notes: run.record.Notes,
+			Criteria: run.record.Criteria,
 		})
+		perSeat = append(perSeat, run.record.Criteria)
 		records = append(records, run.record)
 		if run.stamp.Command != "" {
 			stamps = append(stamps, run.stamp)
@@ -3498,7 +3624,10 @@ func (g *Engine) foldPanel(ctx context.Context, skill, combine, command string, 
 	payload, err := json.Marshal(struct {
 		Seats    []combineSeat `json:"seats"`
 		Declared int           `json:"declared"`
-	}{Seats: seats, Declared: len(panel)})
+		// CriteriaCombined tallies the seats' entries per criterion; absent when
+		// no seat recorded any.
+		CriteriaCombined []criterionCombine `json:"criteria_combined,omitempty"`
+	}{Seats: seats, Declared: len(panel), CriteriaCombined: combineCriteria(perSeat)})
 	if err != nil {
 		return verb.GateDecision{Gated: true, Skill: skill}, err
 	}
@@ -3565,7 +3694,7 @@ func (g *Engine) scopedReviewers(ctx context.Context, item workitem.Item, toStat
 		if s.When != "" && !g.whenAllows(ctx, item, toStatus, s) {
 			continue
 		}
-		out = append(out, reviewerRef{skill: s.Skill, agent: s.Agent, panel: s.Panel, combine: s.Combine})
+		out = append(out, reviewerRef{skill: s.Skill, agent: s.Agent, panel: s.Panel, combine: s.Combine, mode: s.ReviewMode})
 	}
 	for _, s := range skipped {
 		g.telemetryEvent(ctx, item.ID, "reviewer", "scoped-gate-skipped", map[string]any{
@@ -3637,6 +3766,9 @@ type reviewerRef struct {
 	panel        []string
 	combine      string
 	parallel     int
+	// mode is the gate's declared review mode: wfdot.ReviewModeFailFast or empty
+	// (full). A panel's seats inherit it (sty_93359e0f).
+	mode string
 }
 
 // structureSkill is the required-structure reviewer that judges a draft work
@@ -4693,6 +4825,31 @@ type rawDecision struct {
 	Reasoning         string `json:"reasoning"`
 	Reviewed          string `json:"reviewed,omitempty"`
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+	// Criteria is the optional per-criterion verdict (sty_99d3162b).
+	Criteria []rawCriterion `json:"criteria,omitempty"`
+	// Coverage is what the reviewer says the verdict covered (sty_93359e0f):
+	// complete, or stopped early at a named finding. Optional; absent is stored
+	// as absent, never as complete.
+	Coverage json.RawMessage `json:"coverage,omitempty"`
+}
+
+// applyCoverage reads a reviewer's stated coverage, bounding stopped_at to
+// reviewedCeiling like the quotation it travels with. It is decoded apart from
+// the verdict so a malformed coverage costs the coverage, never the verdict:
+// absent or unreadable stays nil, which is stored as "stated nothing".
+func applyCoverage(raw json.RawMessage) *verb.Coverage {
+	var c struct {
+		Complete  bool   `json:"complete"`
+		StoppedAt string `json:"stopped_at"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &c) != nil {
+		return nil
+	}
+	stopped := strings.TrimSpace(c.StoppedAt)
+	if len(stopped) > reviewedCeiling {
+		stopped = stopped[:reviewedCeiling]
+	}
+	return &verb.Coverage{Complete: c.Complete, StoppedAt: stopped}
 }
 
 // applyReviewed bounds a quotation to reviewedCeiling before the decision is
@@ -4728,6 +4885,9 @@ func parseDecision(out []byte) (verb.GateDecision, error) {
 				Reasoning:         rd.Reasoning,
 				Reviewed:          reviewed,
 				ReviewedTruncated: truncated,
+				Criteria:          parseCriteria(rd.Criteria),
+				CriteriaSent:      len(rd.Criteria) > 0,
+				Coverage:          applyCoverage(rd.Coverage),
 			}
 			found = &d
 		}

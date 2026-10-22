@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/trunk"
@@ -1824,13 +1825,15 @@ func appendLedgerEntry(ctx context.Context, storyID, kind, actor, body string, p
 // (create_review, amend_review) record one decision identically.
 func verdictFromDecision(dec GateDecision) ReviewerVerdict {
 	return ReviewerVerdict{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning,
-		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated,
+		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated, Criteria: dec.Criteria,
+		ReviewMode: dec.ReviewMode, Coverage: dec.Coverage,
 		Command: dec.Command, Context: dec.Context, Model: dec.Model,
 		ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 		TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 		UsageAvailable: dec.UsageAvailable,
 		TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead, UsageNote: dec.UsageNote,
-		CostUSD: dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
+		RunCounts: dec.RunCounts,
+		CostUSD:   dec.CostUSD, CostUnavailableReason: dec.CostUnavailableReason,
 		SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
 		ToolIsolation: dec.ToolIsolation}
 }
@@ -1879,7 +1882,7 @@ func recordLifecycleReview(ctx context.Context, storyID, operation, from, to str
 	if rv.Command != "" {
 		appendLedgerEntry(ctx, storyID, ledger.KindAgentInvocation, "reviewer",
 			fmt.Sprintf("invoked reviewer (%s) for %s with @skill:%s", rv.Command, operation, rv.Context),
-			withOperation(invocationPayload(from, to, rv), operation), now)
+			withOperation(invocationPayload(from, to, attempt, rv), operation), now)
 	}
 	if !rv.Accept {
 		appendLedgerEntry(ctx, storyID, ledger.KindReviewReject, "reviewer",
@@ -2029,22 +2032,25 @@ func attemptPayload(from, to, skill, attempt string) json.RawMessage {
 // presentation is countable however many reviewers judged it.
 func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.RawMessage {
 	p := struct {
-		From              string       `json:"from"`
-		To                string       `json:"to"`
-		Attempt           string       `json:"attempt,omitempty"`
-		Skill             string       `json:"skill,omitempty"`
-		Order             int          `json:"order"`
-		System            bool         `json:"system,omitempty"`
-		Notes             string       `json:"notes,omitempty"`
-		Reasoning         string       `json:"reasoning,omitempty"`
-		Reviewed          string       `json:"reviewed,omitempty"`
-		ReviewedTruncated bool         `json:"reviewed_truncated,omitempty"`
-		Accept            bool         `json:"accept"`
-		CarriedFrom       int          `json:"carried_from,omitempty"`
-		Model             string       `json:"model,omitempty"`
-		ModelResolved     string       `json:"model_resolved,omitempty"`
-		ModelSource       string       `json:"model_source,omitempty"`
-		Models            []ModelUsage `json:"model_usage,omitempty"`
+		From              string             `json:"from"`
+		To                string             `json:"to"`
+		Attempt           string             `json:"attempt,omitempty"`
+		Skill             string             `json:"skill,omitempty"`
+		Order             int                `json:"order"`
+		System            bool               `json:"system,omitempty"`
+		Notes             string             `json:"notes,omitempty"`
+		Reasoning         string             `json:"reasoning,omitempty"`
+		Reviewed          string             `json:"reviewed,omitempty"`
+		ReviewedTruncated bool               `json:"reviewed_truncated,omitempty"`
+		Criteria          []CriterionVerdict `json:"criteria,omitempty"`
+		ReviewMode        string             `json:"review_mode,omitempty"`
+		Coverage          *Coverage          `json:"coverage,omitempty"`
+		Accept            bool               `json:"accept"`
+		CarriedFrom       int                `json:"carried_from,omitempty"`
+		Model             string             `json:"model,omitempty"`
+		ModelResolved     string             `json:"model_resolved,omitempty"`
+		ModelSource       string             `json:"model_source,omitempty"`
+		Models            []ModelUsage       `json:"model_usage,omitempty"`
 		// BundleID/BundleSize: this verdict came from one bundled session judging
 		// BundleSize rubrics (sty_23e10d92). The verdict row carries no usage — the
 		// bundle's single agent_invocation row does.
@@ -2057,7 +2063,8 @@ func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.R
 		// it as the end of the review cycle (sty_0225fc2f).
 		RecordedAt string `json:"recorded_at,omitempty"`
 	}{From: from, To: to, Attempt: attempt, Skill: rv.Skill, Order: rv.Order, System: rv.System,
-		Notes: rv.Notes, Reasoning: rv.Reasoning, Reviewed: rv.Reviewed, ReviewedTruncated: rv.ReviewedTruncated, Accept: rv.Accept, CarriedFrom: rv.CarriedFrom,
+		Notes: rv.Notes, Reasoning: rv.Reasoning, Reviewed: rv.Reviewed, ReviewedTruncated: rv.ReviewedTruncated, Criteria: rv.Criteria,
+		ReviewMode: rv.ReviewMode, Coverage: rv.Coverage, Accept: rv.Accept, CarriedFrom: rv.CarriedFrom,
 		Model: rv.Model, ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models,
 		BundleID: rv.BundleID, BundleSize: len(rv.BundleSkills),
 		Seats: rv.Seats, Combine: rv.Combine, RecordedAt: time.Now().UTC().Format(time.RFC3339Nano)}
@@ -2109,6 +2116,11 @@ func dispatchPayload(from, to string, res DispatchResult, attempt string) json.R
 		// row (empty when the run printed nothing) so a drive that stops can quote
 		// what the performer last said.
 		LastMessage string `json:"last_message"`
+		// FindingsOffered/FindingAnswers record the blocking findings the
+		// performer was asked to answer and what it answered (sty_f948d345); the
+		// gate payload reads them back as a fact.
+		FindingsOffered []string               `json:"findings_offered,omitempty"`
+		FindingAnswers  []agentartifact.Answer `json:"finding_answers,omitempty"`
 	}{From: from, To: to, Attempt: attempt, Agent: res.Agent, Skill: res.Skill, Command: res.Command, Model: res.Model,
 		ModelResolved: res.ModelResolved, ModelSource: res.ModelSource, Models: res.Models,
 		TokensIn: res.TokensIn, TokensOut: res.TokensOut, TokensTotal: res.TokensTotal, DurationMs: res.DurationMs,
@@ -2117,7 +2129,7 @@ func dispatchPayload(from, to string, res DispatchResult, attempt string) json.R
 		CostUSD: res.CostUSD, CostUnavailableReason: res.CostUnavailableReason,
 		SystemPromptBytes: res.SystemPromptBytes, PayloadBytes: res.PayloadBytes,
 		ArtifactName: res.ArtifactName, ArtifactType: res.ArtifactType, Budget: res.Budget, Cloud: res.Cloud,
-		LastMessage: LastMessage(res.LastMessage)}
+		LastMessage: LastMessage(res.LastMessage), FindingsOffered: res.FindingsOffered, FindingAnswers: res.Answers}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil
@@ -2255,10 +2267,14 @@ func (e *GateRejection) Notes() string {
 // invocationPayload stamps an agent_invocation row with the resolved command and
 // the injected-context source (skill/rubric file), correlated to the edge, so the
 // timeline can show HOW the agent was invoked alongside its verdict (sty_fb3e0873).
-func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
+// attempt is the id of the ONE gate run the row belongs to — the id its verdict
+// rows carry — so a presentation's seat attempts are joinable to it.
+func invocationPayload(from, to, attempt string, rv ReviewerVerdict) json.RawMessage {
+	rv.RunCounts = rv.RunCounts.named(rv.Command)
 	p := struct {
 		From           string       `json:"from"`
 		To             string       `json:"to"`
+		Attempt        string       `json:"attempt,omitempty"`
 		Agent          string       `json:"agent"`
 		Skill          string       `json:"skill,omitempty"`
 		Command        string       `json:"command,omitempty"`
@@ -2277,6 +2293,9 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		TokensCacheWrite int `json:"tokens_cache_write,omitempty"`
 		TokensCacheRead  int `json:"tokens_cache_read,omitempty"`
 		UsageNote
+		// RunCounts: the run's turns and tool calls, or the adapter-named reason
+		// each is unavailable — never a bare zero.
+		RunCounts
 		CostUSD               *float64 `json:"cost_usd,omitempty"`
 		CostUnavailableReason string   `json:"cost_unavailable_reason,omitempty"`
 		// SystemPromptBytes/PayloadBytes: byte lengths satelle sent, never content.
@@ -2292,16 +2311,21 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		// Seat is the agents.toml section when this row is one panel seat's
 		// invocation. Empty on a single-seat gate.
 		Seat string `json:"seat,omitempty"`
-	}{From: from, To: to, Agent: "reviewer", Skill: rv.Skill, Command: rv.Command, Context: rv.Context, Model: rv.Model,
+		// Outcome is OutcomeUnavailable or OutcomeMaxTurns when this attempt
+		// produced no verdict — the only record such an attempt has. Absent when it
+		// judged: the verdict row says accept or reject.
+		Outcome string `json:"outcome,omitempty"`
+	}{From: from, To: to, Attempt: attempt, Agent: "reviewer", Skill: rv.Skill, Command: rv.Command, Context: rv.Context, Model: rv.Model,
 		ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models,
 		TokensIn: rv.TokensIn, TokensOut: rv.TokensOut, TokensTotal: rv.TokensTotal, DurationMs: rv.DurationMs,
 		UsageAvailable: rv.UsageAvailable,
 		TokensInFresh:  rv.TokensInFresh, TokensCacheWrite: rv.TokensCacheWrite, TokensCacheRead: rv.TokensCacheRead, UsageNote: rv.UsageNote,
-		CostUSD: rv.CostUSD, CostUnavailableReason: rv.CostUnavailableReason,
+		RunCounts: rv.RunCounts,
+		CostUSD:   rv.CostUSD, CostUnavailableReason: rv.CostUnavailableReason,
 		SystemPromptBytes: rv.SystemPromptBytes, PayloadBytes: rv.PayloadBytes,
 		ToolIsolation: rv.ToolIsolation,
 		BundleID:      rv.BundleID, BundleSkills: rv.BundleSkills,
-		Seat: rv.Seat}
+		Seat: rv.Seat, Outcome: rv.Outcome}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil
@@ -2343,7 +2367,10 @@ func summariserInvocationPayload(from, to string, result SummaryResult) json.Raw
 		// ToolIsolation: offered tool count/source and the adapter limitation
 		// (sty_ef3efb51).
 		ToolIsolation
-	}{From: from, To: to, Agent: "reviewer", Skill: result.Context, Command: result.Command, Context: result.Context, Model: result.Model,
+		// StepSummary marks this as the summariser's row, not a gate seat's, so
+		// the review-rounds view does not count it as a presentation.
+		StepSummary bool `json:"step_summary"`
+	}{From: from, To: to, StepSummary: true, Agent: "reviewer", Skill: result.Context, Command: result.Command, Context: result.Context, Model: result.Model,
 		ModelResolved: result.ModelResolved, ModelSource: result.ModelSource, Models: result.Models,
 		TokensIn: result.TokensIn, TokensOut: result.TokensOut, TokensTotal: result.TokensTotal, DurationMs: result.DurationMs,
 		UsageAvailable: result.UsageAvailable,
