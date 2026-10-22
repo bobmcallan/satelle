@@ -201,7 +201,12 @@ workflow declaring no route blocks the edit.`,
 			// A session holding seats in several worktrees is attributed by the
 			// tree the edit targets (sty_42231b74); the fence below decides
 			// whether that tree may be edited at all.
-			info, engaged, live, engErr := gs.seatsFor(true, sid, treeOf(p))
+			// A shell command has no path; its first mutation target's tree stands in.
+			attribution := treeOf(p)
+			if p == "" && command != "" {
+				attribution = bashAttributionTree(command, sessionAnchor())
+			}
+			info, engaged, live, engErr := gs.seatsFor(true, sid, attribution)
 			seat = traceSeat{info: info, engaged: engaged, resolved: true}
 			if p != "" {
 				// Foreign-tree fence (sty_a8454d10 / sty_aadd4d6c): refuse edits
@@ -415,21 +420,33 @@ then its own -C), else the hook's own tree's seat.`,
 				return err
 			}
 			if bashMutatesTree(command, sessionAnchor()) {
-				if !seatResolved {
+				// The mutation is judged against the seat of the tree it lands in.
+				// That answer stays local unless it is the anchor-tree one the
+				// commit gate below reuses.
+				mInfo, mEngaged, mLive := info, engaged, live
+				if tree := bashAttributionTree(command, sessionAnchor()); tree != "" {
+					var err error
+					sid = bindSessionID(raw)
+					mInfo, mEngaged, mLive, err = resolveSeatsFor(true, sid, tree)
+					if err != nil {
+						return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
+					}
+				} else if !seatResolved {
 					var err error
 					sid = bindSessionID(raw)
 					info, engaged, live, err = resolveSeats(true, sid)
 					seatResolved = true
+					mInfo, mEngaged, mLive = info, engaged, live
 					if err != nil {
 						return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
 					}
 				}
 				dm, rm := currentDispatchMarker(), currentRelayMarker()
-				if !hookEditPermitted(info, dm, rm) {
-					if reason, ok := sessionSeatsUnmatched(engaged, live, sid, dm, rm); ok {
+				if !hookEditPermitted(mInfo, dm, rm) {
+					if reason, ok := sessionSeatsUnmatched(mEngaged, mLive, sid, dm, rm); ok {
 						return denyPreToolUse(cmd, raw, reason)
 					}
-					return denyPreToolUse(cmd, raw, hookDenyReason(info, live, dm, rm, sid, time.Now().UTC()))
+					return denyPreToolUse(cmd, raw, hookDenyReason(mInfo, mLive, dm, rm, sid, time.Now().UTC()))
 				}
 			}
 			// Repo-authored command rules (sty_a74551d6), before command_allow. The

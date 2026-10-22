@@ -509,6 +509,29 @@ var dirFlagTable = map[string][]string{
 	"tar":  {"-C"},
 }
 
+// gitReadOnlySubcommands is the closed list of git subcommands that only read.
+// A `git -C DIR` naming one of them does not mutate DIR; any other subcommand, or
+// one that cannot be parsed, stays a mutation, so the check fails closed.
+var gitReadOnlySubcommands = map[string]bool{
+	"diff": true, "status": true, "log": true, "show": true,
+	"rev-parse": true, "rev-list": true, "ls-files": true,
+}
+
+// gitReadOnlyInvocation reports whether words are a git command whose subcommand
+// only reads. A --output flag writes its operand, so it is never read-only.
+func gitReadOnlyInvocation(words []string) bool {
+	sub, _, ok := gitInvocation(words)
+	if !ok || !gitReadOnlySubcommands[sub] {
+		return false
+	}
+	for _, w := range words {
+		if w == "--output" || strings.HasPrefix(w, "--output=") {
+			return false
+		}
+	}
+	return true
+}
+
 // mutationVerbs are simple path-mutating commands whose path arguments (when
 // they resolve outside the anchor) are containment targets.
 var mutationVerbs = map[string]bool{
@@ -536,6 +559,13 @@ func mutationTargets(command, anchor string) []string {
 // foreign half preserves mutationTargets' containment surface; the inHome half
 // lets the workflow edit gate govern shell writes just like Edit/Write tools.
 func bashMutationTargets(command, anchor string) (inHome, foreign []string) {
+	return bashTargets(command, anchor, false)
+}
+
+// bashTargets is bashMutationTargets with the one question the substrate lock
+// asks differently: gitReads keeps the -C dir of a read-only git subcommand as a
+// target, because the lock refuses even a read of locked substrate.
+func bashTargets(command, anchor string, gitReads bool) (inHome, foreign []string) {
 	anchor = filepath.Clean(anchor)
 	if anchor == "" || anchor == "." {
 		return nil, nil
@@ -587,8 +617,9 @@ func bashMutationTargets(command, anchor string) (inHome, foreign []string) {
 			return
 		}
 
-		// Named dir flags (git -C, make -C, tar -C).
-		if flags, ok := dirFlagTable[cmd]; ok {
+		// Named dir flags (git -C, make -C, tar -C). A read-only git subcommand
+		// names no mutation of its -C dir.
+		if flags, ok := dirFlagTable[cmd]; ok && (gitReads || cmd != "git" || !gitReadOnlyInvocation(words)) {
 			for i := 1; i < len(words); i++ {
 				w := words[i]
 				for _, f := range flags {
@@ -713,6 +744,27 @@ func gitCommandDir(command, base string) string {
 		return ""
 	}
 	return dir
+}
+
+// bashAttributionTree is the git working tree a Bash command's first mutation
+// target lives in: an in-tree target first, then one in a linked worktree of the
+// session's repository. "" when it has none, so the session's own tree decides. It
+// is how a session holding seats in several worktrees attributes a shell mutation
+// to the seat of the tree it lands in, as treeOf does for an edit (sty_42231b74).
+func bashAttributionTree(command, anchor string) string {
+	inHome, foreign := bashMutationTargets(command, anchor)
+	for _, t := range inHome {
+		if !exemptTarget(t) {
+			return treeOf(t)
+		}
+	}
+	anchor = filepath.Clean(anchor)
+	for _, t := range foreign {
+		if linkedTreeTarget(anchor, t) && !exemptTarget(t) {
+			return treeOf(t)
+		}
+	}
+	return ""
 }
 
 // bashMutatesTree reports whether a command has a mutation target in the

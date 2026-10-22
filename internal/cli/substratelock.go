@@ -437,7 +437,7 @@ func bashLockCandidates(command string, cfg lockConfig) []string {
 	if strings.TrimSpace(anchor) == "" {
 		anchor = cfg.root
 	}
-	inHome, foreign := bashMutationTargets(command, anchor)
+	inHome, foreign := bashTargets(command, anchor, true)
 	out := append([]string{}, inHome...)
 	for _, t := range foreign {
 		if linkedTreeTarget(filepath.Clean(anchor), t) {
