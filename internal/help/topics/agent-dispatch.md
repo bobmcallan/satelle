@@ -1636,3 +1636,25 @@ on the wait's own requests, never a zero for one that was not measured.
 The Stop hook the scaffold writes carries a timeout longer than its wait
 (`satelle init` raises an older, shorter one), so it answers instead of being
 killed by the harness's default.
+
+## Waiving one gate check — `satelle story waive` (sty_bef97244)
+
+A gate that cannot be satisfied after the fact (evidence that can no longer be
+produced) is closed by a **developer decision on record**, not by an agent's
+say-so. `satelle story waive <id> --gate <skill> --check <name> --reason <text>`
+appends one `gate_waiver` ledger row, actor `developer`, only after the developer
+retypes the story id on the controlling terminal. It is refused, with no row,
+for an agent session (`SATELLE_SCRATCH`, `SATELLE_SESSION` or a harness marker)
+and when no terminal can be opened — there is no stdin fallback. `satelle ledger
+append` refuses the `gate_waiver` kind, so this command is the only writer;
+`satelle ledger list --kind gate_waiver` reads them.
+
+A waiver reaches only that story's payload for the gate whose skill it names, as
+`waivers` (absent when none). The gate's **rubric** decides whether to honour it
+for the named check, and lists what it honoured in its verdict's `waived`, which
+the `review_accept`/`review_reject` row records; a `waived` entry naming a check
+with no payload waiver is dropped. A waiver covers one check, never the gate.
+
+Honest posture: this raises the cost of a forged waiver and leaves a trail; it is
+not a sandbox. An agent with a pty-spawning tool, or with write access to the
+ledger store itself, could still fake the confirmation.

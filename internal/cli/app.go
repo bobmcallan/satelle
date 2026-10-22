@@ -22,6 +22,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/oplog"
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/waiver"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -274,6 +275,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 			rev.SetDeferralsResolver(func(ctx context.Context, itemID string) []agentstep.DeferredItem {
 				return agentstep.DeferralsFrom(verb.StoryLedgerKind(ctx, itemID, ledger.KindAgentInvocation))
 			})
+			// Developer waivers (sty_bef97244): a gate is handed the waivers the
+			// developer recorded for this story against its own skill.
+			rev.SetWaiversResolver(waiversResolver(a))
 			// Finding answers (sty_f948d345): a gate is told which of the findings
 			// its edge's performer was offered went unanswered.
 			rev.SetFindingAnswersResolver(func(ctx context.Context, itemID, from, to string) (agentstep.FindingAnswers, bool) {
@@ -560,6 +564,26 @@ func priorVerdictsResolver() func(ctx context.Context, itemID, from, to string, 
 		out := make([]agentstep.PriorVerdict, 0, len(verdicts))
 		for _, v := range verdicts {
 			out = append(out, agentstep.PriorVerdictFrom(v))
+		}
+		return out
+	}
+}
+
+// waiversResolver lists the developer waivers recorded for a story, for
+// gate-payload injection (sty_bef97244). An unreadable ledger degrades to no
+// waivers and never fails the transition.
+func waiversResolver(a *app.App) func(ctx context.Context, itemID string) []agentstep.WaiverItem {
+	return func(ctx context.Context, itemID string) []agentstep.WaiverItem {
+		ws, err := waiver.List(ctx, a.Store.Ledger, itemID)
+		if err != nil {
+			return nil
+		}
+		out := make([]agentstep.WaiverItem, 0, len(ws))
+		for _, w := range ws {
+			out = append(out, agentstep.WaiverItem{
+				ID: w.ID, Gate: w.Gate, Check: w.Check, Reason: w.Reason, Actor: w.Actor,
+				CreatedAt: w.CreatedAt.UTC().Format(time.RFC3339),
+			})
 		}
 		return out
 	}

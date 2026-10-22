@@ -1826,7 +1826,7 @@ func appendLedgerEntry(ctx context.Context, storyID, kind, actor, body string, p
 func verdictFromDecision(dec GateDecision) ReviewerVerdict {
 	return ReviewerVerdict{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning,
 		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated, Criteria: dec.Criteria,
-		ReviewMode: dec.ReviewMode, Coverage: dec.Coverage,
+		ReviewMode: dec.ReviewMode, Coverage: dec.Coverage, Waived: dec.Waived,
 		Command: dec.Command, Context: dec.Context, Model: dec.Model,
 		ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 		TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
@@ -2045,6 +2045,7 @@ func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.R
 		Criteria          []CriterionVerdict `json:"criteria,omitempty"`
 		ReviewMode        string             `json:"review_mode,omitempty"`
 		Coverage          *Coverage          `json:"coverage,omitempty"`
+		Waived            []string           `json:"waived,omitempty"`
 		Accept            bool               `json:"accept"`
 		CarriedFrom       int                `json:"carried_from,omitempty"`
 		Model             string             `json:"model,omitempty"`
@@ -2064,7 +2065,7 @@ func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.R
 		RecordedAt string `json:"recorded_at,omitempty"`
 	}{From: from, To: to, Attempt: attempt, Skill: rv.Skill, Order: rv.Order, System: rv.System,
 		Notes: rv.Notes, Reasoning: rv.Reasoning, Reviewed: rv.Reviewed, ReviewedTruncated: rv.ReviewedTruncated, Criteria: rv.Criteria,
-		ReviewMode: rv.ReviewMode, Coverage: rv.Coverage, Accept: rv.Accept, CarriedFrom: rv.CarriedFrom,
+		ReviewMode: rv.ReviewMode, Coverage: rv.Coverage, Waived: rv.Waived, Accept: rv.Accept, CarriedFrom: rv.CarriedFrom,
 		Model: rv.Model, ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models,
 		BundleID: rv.BundleID, BundleSize: len(rv.BundleSkills),
 		Seats: rv.Seats, Combine: rv.Combine, RecordedAt: time.Now().UTC().Format(time.RFC3339Nano)}
