@@ -55,6 +55,7 @@ type reviewerMaterial struct {
 	PriorVerdicts   []PriorVerdict
 	DefinitionEdits []DefinitionEdit
 	Deferred        []DeferredItem
+	Waivers         []WaiverItem
 	Citations       *CitationsState
 	// LedgerJSON is the store listing when List succeeded, including an empty
 	// array. LedgerErr is the unavailable reason ("ledger: …") when it did not.
@@ -122,6 +123,7 @@ func (g *Engine) prepareReviewer(ctx context.Context, item workitem.Item, toStat
 	tp.CriteriaState = crit.setState(item, mat.Docs, mat.PriorVerdicts, skill)
 	g.fillDefinitionEdits(ctx, item.ID, &tp, mat)
 	g.fillDeferred(ctx, item.ID, skill, &tp, mat)
+	g.fillWaivers(ctx, item.ID, skill, &tp, mat)
 	g.fillFindingAnswers(ctx, item, toStatus, &tp)
 	// Engagement diff rides the GATE payload only (sty_a125b440): reviewers
 	// without a shell need the slice; executors have one. fillDiff never
@@ -278,6 +280,7 @@ type referencedPayload struct {
 	PriorVerdicts   *pathRef             `json:"prior_verdicts,omitempty"`
 	DefinitionEdits *pathRef             `json:"definition_edits,omitempty"`
 	Deferred        *pathRef             `json:"deferred,omitempty"`
+	Waivers         *pathRef             `json:"waivers,omitempty"`
 	Citations       *pathRef             `json:"citations,omitempty"`
 	FindingAnswers  *FindingAnswers      `json:"finding_answers,omitempty"`
 	Amendment       *AmendmentState      `json:"amendment,omitempty"`
@@ -406,6 +409,13 @@ func writeReviewerMaterial(scratch string, mat *reviewerMaterial, tp transitionP
 			return referencedPayload{}, err
 		}
 		ref.Deferred = &pathRef{Path: abs}
+	}
+	if len(mat.Waivers) > 0 {
+		abs, err := writeMaterialJSON(dir, "waivers.json", mat.Waivers)
+		if err != nil {
+			return referencedPayload{}, err
+		}
+		ref.Waivers = &pathRef{Path: abs}
 	}
 	if mat.Citations != nil {
 		abs, err := writeMaterialJSON(dir, "citations.json", mat.Citations)

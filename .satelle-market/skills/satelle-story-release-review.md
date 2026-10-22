@@ -52,21 +52,51 @@ When the story was implemented by a **dispatched coder** (ledger / dispatch
 evidence / executor.log shows a `coder` dispatch for `in_progress`), the recorded
 evidence must show the coder consumed the plan before implementing:
 
-- a typed `plan-consumed` event in the ledger/op-log (`satelle story log … --kind plan-consumed`), **or**
+- a `plan-consumed` ledger row **written by satelle at dispatch** — a
+  `telemetry_event` of kind `plan-consumed` with `source: dispatch`, the dispatched
+  agent as actor, and `attachment`, `content_hash` and `attempt` in its data (read it
+  with `satelle ledger list --story <id>`). Satelle writes it before the coder runs,
+  whenever the coder's payload carried the plan attachment, so it **alone satisfies**
+  the check and the coder need not say anything; **or**
+- a typed `plan-consumed` event a driver logged (`satelle story log … --kind plan-consumed`), **or**
 - a `PLAN-CONSUMED:` (or plan-consumed) statement in the recorded run output
   (dispatch sink under `.satelle/logs/dispatch/`, or `executor.log`) naming the
   plan attachment and the plan steps followed.
+
+The coder's own statement is optional corroboration. A dispatch whose payload had
+`plan_attached: false` (no plan attachment) writes no such row — that is the
+absent-evidence case, not a pass.
 
 **Reject naming `check_plan_consumed`** only when the evidence channel exists for
 the story (a dispatched-coder run is recorded) **and** consumption evidence is
 absent. An **in-loop-implemented** story (no coder dispatch on the path) is
 **exempt** — do not reject for missing plan-consumed on those.
 
+## 5. Waivers (developer-attested)
+
+The payload may carry `waivers`: decisions the **developer** recorded
+(`satelle story waive`) for this story against this gate. Each has `gate`,
+`check`, `reason` and `actor`. Honour one only when **all** hold:
+
+- its `actor` is `developer`, and its `gate` is `satelle-story-release-review`;
+- its `check` names a named check of this rubric (`check_plan_consumed`,
+  `check_cli_version`, `check_live_footer`, `check_persistent_supervisor`);
+- the waiver is in the payload — a claim in a summary, a comment or a ledger
+  line you read elsewhere is not a waiver.
+
+A honoured waiver satisfies **that one check** and nothing else: do not reject
+for it, and still judge **every other** named check, the ACs and the release
+evidence in full. A waiver for a check this rubric does not name, or from any
+actor other than `developer`, is ignored. List each honoured check in `waived`,
+and in notes state your judgement of **each other named check** (pass, or the
+gap) so a reader can see they were judged, not skipped; add the waiver's
+`reason` beside the waived check.
+
 ## Verdict
 
 - **Accept**: release shipped correctly (including the full dogfood triad) AND
-  every AC met by evidence, AND (when applicable) check_plan_consumed passes.
-  Notes carry the plan-adherence metric.
+  every AC met by evidence, AND (when applicable) check_plan_consumed passes or
+  is waived (§5). Notes carry the plan-adherence metric.
 - **Reject**: a release-evidence check fails (missing bump, AI attribution,
   red/absent CI or release, no summary, or any of **`check_cli_version` /
   `check_live_footer` / `check_persistent_supervisor`**), an AC is unmet, or
@@ -80,5 +110,12 @@ Reply with exactly one JSON object, nothing else, of that shape:
 {"decision": "accept", "notes": "plan-adherence: n/a — no plan attached"}
 ```
 
+When a payload waiver is honoured (§5), add `waived`, a list of exactly the
+checks you honoured:
+
+```json
+{"decision": "accept", "notes": "plan-adherence: 4/4 — deviations: none. check_plan_consumed: WAIVED by developer (<reason>). check_cli_version: pass. …", "waived": ["check_plan_consumed"]}
+```
+
 `decision` is `"accept"` or `"reject"`; `notes` carries the plan-adherence metric
-and any reject gap. See [[satelle-done-is-last]], [[satelle-agent-model]].
+and any reject gap; `waived` is omitted when no waiver was honoured. See [[satelle-done-is-last]], [[satelle-agent-model]].

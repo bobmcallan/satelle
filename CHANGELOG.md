@@ -1,3 +1,21 @@
+## [0.0.726] - 2026-10-22
+
+### Added
+- `satelle story waive <id> --gate <skill> --check <name> --reason <text>` records one developer waiver of one named check of one gate on one story, as a `gate_waiver` ledger row with actor `developer`.
+  - It writes the row only after the story id is retyped on the controlling terminal. It is refused from an agent session or without a terminal, and there is no stdin fallback.
+  - `satelle ledger append` refuses the kind.
+  - The waiver reaches only that story's payload for that gate, as `waivers`. A verdict that honours it lists the check in `waived`, which the review row records. A `waived` entry with no matching payload waiver is dropped.
+  - The embedded release-review rubric honours a developer waiver for one named check and still judges every other check. (sty_bef97244)
+- satelle writes a `plan-consumed` row (attachment, content hash, attempt, `source: dispatch`) immediately before a dispatched performer runs whenever its payload carries the plan. The payload says `plan_attached: false` when it does not. The embedded release-review rubric accepts the dispatch-written row alone for `check_plan_consumed`, so the check no longer depends on the coder saying so. (sty_1b0233ba)
+
+### Changed
+- Help tests pin that `satelle help agent-dispatch` documents the satelle-delivered `findings_to_answer`, and that no help topic teaches a manual findings relay. (sty_d7e4f539)
+
+## [serve-v0.0.194] - 2026-10-22
+
+### Changed
+- The service binary carries the waiver verb, the dispatch-recorded plan consumption and the updated release-review rubric. (sty_bef97244, sty_1b0233ba)
+
 ## [0.0.725] - 2026-10-22
 
 ### Fixed

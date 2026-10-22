@@ -206,6 +206,13 @@ const (
 	// KindFixClaimUse records the ONE edit a recorded claim licensed. Refs carries
 	// {"claim": "<fix_claim entry id>"}; a claim with a use row is consumed.
 	KindFixClaimUse = "fix_claim_used"
+	// KindGateWaiver records a developer's waiver of ONE named check of ONE gate on
+	// ONE story (sty_bef97244). Actor is "developer". It is a reserved kind
+	// (IsReservedKind): only internal/waiver writes it, after the developer
+	// retypes the story id on the controlling terminal, so no agent session can
+	// produce one through `satelle ledger append`. Payload is waiver.Payload.
+	// Enumeration only — whether a gate honours a waiver is that gate's rubric.
+	KindGateWaiver = "gate_waiver"
 	// KindSubstrateLockDeny records one edit the edit gate refused under the
 	// substrate lock (sty_992cffc6): a story outside the substrate lane tried to
 	// change locked substrate while it held a performing seat. Payload is
@@ -323,6 +330,13 @@ type Entry struct {
 // workitem.Kind.newID for why a truncated id may not ride on New's current
 // algorithm (sty_5515036d).
 func NewID() string { return fmt.Sprintf("evt_%s", uuid.NewV4().String()[:8]) }
+
+// IsReservedKind reports whether kind is written only by its owning package and
+// so refused by the generic `ledger append` verb (sty_bef97244). Reading it
+// (`ledger list --kind`) is unaffected.
+func IsReservedKind(kind string) bool {
+	return kind == KindGateWaiver
+}
 
 // AppendInput is the typed shape of one ledger insert. Kind is required; every
 // correlation id and payload is optional.

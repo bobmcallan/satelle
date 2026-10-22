@@ -26,6 +26,8 @@ package agentstep
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -128,6 +130,10 @@ type Engine struct {
 	// to the grant or to a later gate; fillDeferred hands each gate its own.
 	// Nil-safe: an unwired resolver injects nothing.
 	deferrals func(ctx context.Context, itemID string) []DeferredItem
+	// waivers resolves the developer waivers recorded for an item (every gate,
+	// oldest first); fillWaivers hands each gate its own. Nil-safe: an unwired
+	// resolver injects nothing.
+	waivers func(ctx context.Context, itemID string) []WaiverItem
 	// findingAnswers reports how the performer of an edge answered the findings it
 	// was offered (sty_f948d345); fillFindingAnswers hands the gate the fact.
 	// Nil-safe: an unwired resolver injects nothing.
@@ -977,6 +983,12 @@ type transitionPayload struct {
 	// Bash-less reviewer can judge without reading any disk path (sty_58fa970e).
 	// Bodies may be Truncated when the cumulative budget is spent.
 	Docs []DocState `json:"docs,omitempty"`
+	// PlanAttached says whether the document the dispatched step consumes (its
+	// apply_criteria doc, normally the plan) rode this payload. It is set, to true
+	// or false, only on a performer payload for a step that declares such a
+	// document; nil (absent) otherwise, so every other payload is byte-for-byte
+	// unchanged. Enumeration, not verdict.
+	PlanAttached *bool `json:"plan_attached,omitempty"`
 	// RouteDrift is present ONLY when the story's walked lane no longer matches
 	// the lane its category derives (sty_6e4f7fd8). Absent on every ordinary
 	// transition, so a reviewer that ignores it costs nothing and a gate that
@@ -1029,6 +1041,10 @@ type transitionPayload struct {
 	// when none, so every other gate's payload is unchanged. Enumeration, not
 	// verdict.
 	Deferred []DeferredItem `json:"deferred,omitempty"`
+	// Waivers carries the developer waivers recorded for THIS story against THIS
+	// gate's skill (sty_bef97244). Absent when none, so every other gate's payload
+	// is unchanged. Enumeration, not verdict: whether to honour one is the rubric's.
+	Waivers []WaiverItem `json:"waivers,omitempty"`
 	// Citations carries the file:line citations of a document the gate's rubric
 	// names (frontmatter payload_citations), resolved to the lines they name in
 	// the judged tree. Absent for every gate whose rubric does not opt in, so
@@ -1403,9 +1419,26 @@ const (
 // children (when a resolver is wired and the item has any) and the messages
 // addressed to the agent, "executor" and its resolved role. Provider-neutral: the
 // children ride the payload, so a performer with read-only tools needs no shell.
-func (g *Engine) performerPayload(ctx context.Context, item workitem.Item, toStatus, skill, agent string, binding config.AgentBinding) transitionPayload {
+//
+// consumes names the document the step consumes (its apply_criteria doc); empty
+// when it declares none. When set, PlanAttached reports whether that document
+// rode the payload, and the document itself is returned (full body, before any
+// ceiling trimming) for the caller to record as consumed; nil when absent.
+func (g *Engine) performerPayload(ctx context.Context, item workitem.Item, toStatus, skill, agent string, binding config.AgentBinding, consumes string) (transitionPayload, *DocState) {
 	tp := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: skill}
-	g.fillPayloadDocs(ctx, item.ID, &tp, nil)
+	var mat reviewerMaterial
+	g.fillPayloadDocs(ctx, item.ID, &tp, &mat)
+	var consumed *DocState
+	if consumes != "" {
+		for i := range mat.Docs {
+			if mat.Docs[i].Name == consumes {
+				consumed = &mat.Docs[i]
+				break
+			}
+		}
+		attached := consumed != nil
+		tp.PlanAttached = &attached
+	}
 	g.fillFindings(ctx, item, toStatus, &tp)
 	if g.children != nil {
 		tp.Children = g.children(ctx, item)
@@ -1415,7 +1448,30 @@ func (g *Engine) performerPayload(ctx context.Context, item workitem.Item, toSta
 		addrs = append(addrs, role)
 	}
 	g.fillMessages(ctx, item.ID, addrs, &tp, nil)
-	return tp
+	return tp, consumed
+}
+
+// recordDocConsumed writes the plan-consumed ledger row for one dispatch attempt:
+// the document the performer's payload carried, its content hash and the attempt.
+// It runs immediately before the performer is invoked, so the record exists
+// whether or not the performer says anything about the plan. source=dispatch marks
+// it as the engine's own row (verb.IsEvidenceRow), distinct from a driver's
+// `story log`. The hash carries a "sha256:" prefix: a bare 64-hex value is
+// credential-shaped to the telemetry writer's secret check and would be replaced
+// with a refusal marker.
+func (g *Engine) recordDocConsumed(ctx context.Context, itemID, agent, step string, doc DocState, attempt int) {
+	sum := doc.SHA256
+	if sum == "" {
+		raw := sha256.Sum256([]byte(doc.Body))
+		sum = hex.EncodeToString(raw[:])
+	}
+	g.telemetryEvent(ctx, itemID, agent, verb.TelemetryPlanConsumed, map[string]any{
+		"attachment":   doc.Name,
+		"content_hash": "sha256:" + sum,
+		"attempt":      attempt,
+		"step":         step,
+		"source":       verb.TelemetrySourceDispatch,
+	})
 }
 
 // fillMessages attaches engagement-windowed agent messages for recipient.
@@ -1851,7 +1907,7 @@ func (g *Engine) runScheduled(ctx context.Context, item workitem.Item, toStatus 
 		result.Reasoning = dec.Reasoning
 		result.Reviewed = dec.Reviewed
 		result.ReviewedTruncated = dec.ReviewedTruncated
-		result.ReviewMode, result.Coverage = dec.ReviewMode, dec.Coverage
+		result.ReviewMode, result.Coverage, result.Waived = dec.ReviewMode, dec.Coverage, dec.Waived
 		result.Turns, result.TurnsUnavailableReason = dec.Turns, dec.TurnsUnavailableReason
 		result.Command = dec.Command
 		result.Context = dec.Context
@@ -1936,7 +1992,7 @@ func reviewerVerdictOf(skill string, order int, system bool, dec verb.GateDecisi
 	return verb.ReviewerVerdict{
 		Skill: skill, Order: order, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning,
 		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated, Criteria: dec.Criteria, System: system,
-		ReviewMode: dec.ReviewMode, Coverage: dec.Coverage,
+		ReviewMode: dec.ReviewMode, Coverage: dec.Coverage, Waived: dec.Waived,
 		Command: dec.Command, Context: dec.Context, Model: dec.Model,
 		ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 		TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
@@ -2000,7 +2056,7 @@ func assembleGate(ordered []reviewerRef, results []gateSlot, sysStart int) (verb
 		result.Reasoning = pick.Reasoning
 		result.Reviewed = pick.Reviewed
 		result.ReviewedTruncated = pick.ReviewedTruncated
-		result.ReviewMode, result.Coverage = pick.ReviewMode, pick.Coverage
+		result.ReviewMode, result.Coverage, result.Waived = pick.ReviewMode, pick.Coverage, pick.Waived
 		result.Turns, result.TurnsUnavailableReason = pick.Turns, pick.TurnsUnavailableReason
 		result.Command = pick.Command
 		result.Context = pick.Context
@@ -2486,7 +2542,12 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	} else {
 		g.emitProgress("dispatching step %s to named agent %s (may take several minutes)…", toStatus, dispatchAgent)
 	}
-	execPayload := g.performerPayload(ctx, item, toStatus, dispatchSkill, dispatchAgent, binding)
+	execPayload, consumed := g.performerPayload(ctx, item, toStatus, dispatchSkill, dispatchAgent, binding, target.ApplyCriteriaDoc)
+	recordConsumed := func(attempt int) {
+		if consumed != nil {
+			g.recordDocConsumed(ctx, item.ID, dispatchAgent, toStatus, *consumed, attempt)
+		}
+	}
 	charter := executorCharter(dispatchAgent, toStatus, wfName)
 	var finalArtifact *agentartifact.Artifact
 	var invRes InvokeResult
@@ -2496,13 +2557,14 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			ctx, item, toStatus, dispatchSkill, dispatchAgent, rubric,
 			execPayload, charter, binding, modelChoice, target.Model, config.ModelSourceStep,
 			runner, timeout, idle, rawSink, onEvent,
-			outputContract, attemptPolicy)
+			outputContract, attemptPolicy, recordConsumed)
 		if attemptErr != nil {
 			invRes.Err = attemptErr
 		}
 	} else {
 		invokeBinding := binding
 		invokeBinding.Model = modelChoice.Model
+		recordConsumed(1)
 		invRes = g.Invoke(ctx, InvokeRequest{
 			Binding:     invokeBinding,
 			Section:     dispatchAgent,
@@ -3529,6 +3591,7 @@ func (g *Engine) decideReviewer(ctx context.Context, item workitem.Item, toStatu
 	}
 	stampInvocation(res.Decision, res, seat)
 	prep.criteria.apply(res.Decision)
+	prep.keepWaived(res.Decision)
 	return *res.Decision, nil
 }
 
@@ -4902,6 +4965,10 @@ type rawDecision struct {
 	// complete, or stopped early at a named finding. Optional; absent is stored
 	// as absent, never as complete.
 	Coverage json.RawMessage `json:"coverage,omitempty"`
+	// Waived names the checks the reviewer honoured a payload waiver for
+	// (sty_bef97244). Optional; the engine drops any the payload carried no
+	// waiver for (prep.keepWaived).
+	Waived []string `json:"waived,omitempty"`
 }
 
 // applyCoverage reads a reviewer's stated coverage, bounding stopped_at to
@@ -4959,6 +5026,7 @@ func parseDecision(out []byte) (verb.GateDecision, error) {
 				Criteria:          parseCriteria(rd.Criteria),
 				CriteriaSent:      len(rd.Criteria) > 0,
 				Coverage:          applyCoverage(rd.Coverage),
+				Waived:            rd.Waived,
 			}
 			found = &d
 		}

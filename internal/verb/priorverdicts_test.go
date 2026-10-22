@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -359,4 +360,52 @@ func TestPriorVerdictStaleExemption(t *testing.T) {
 			t.Errorf("verdict = %+v, want stale with only the story log listed", v)
 		}
 	})
+}
+
+// sty_1b0233ba: the dispatch engine writes a plan-consumed row on every coder
+// dispatch, after the verdicts of the edge being re-presented. It is the engine's
+// own bookkeeping, so it must not clear a verdict's quotation — while the same
+// kind from a driver's story log (no source=dispatch) still does.
+func TestPriorVerdictIgnoresTheEnginesPlanConsumedRow(t *testing.T) {
+	engineRow := map[string]any{"kind": verb.TelemetryPlanConsumed, "data": map[string]any{
+		"attachment": "plan", "attempt": 1, "source": verb.TelemetrySourceDispatch,
+	}}
+	for _, tc := range []struct {
+		name      string
+		payload   map[string]any
+		wantStale bool
+	}{
+		{"engine row at dispatch", engineRow, false},
+		{"driver story log", telemetryKind(verb.TelemetryPlanConsumed), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := wireLedgerOnly(t)
+			t0 := time.Now().Add(-time.Hour)
+			seedCycleVerdict(t, db, "sty_pc", "QUOTED-WORDS", t0, t0.Add(3*time.Second))
+			seedAt(t, db, "sty_pc", ledger.KindTelemetryEvent, tc.payload, t0.Add(5*time.Second))
+			got, err := verb.PriorVerdicts(context.Background(), "sty_pc", "plan", "in_progress", verb.StaleExemption{})
+			if err != nil || len(got) == 0 {
+				t.Fatalf("PriorVerdicts = (%+v, %v)", got, err)
+			}
+			if v := got[len(got)-1]; v.ReviewedStale != tc.wantStale || (v.Reviewed == "") != tc.wantStale {
+				t.Errorf("verdict = %+v, want stale=%t", v, tc.wantStale)
+			}
+		})
+	}
+}
+
+// The engine's plan-consumed row carries its content hash as "sha256:<hex>": a
+// bare 64-hex value is credential-shaped and the telemetry writer would replace
+// it with a refusal marker, losing the hash.
+func TestPlanConsumedHashPassesTheTelemetryWriter(t *testing.T) {
+	hex64 := strings.Repeat("ab", 32)
+	data := func(hash string) map[string]any {
+		return map[string]any{"attachment": "plan", "content_hash": hash, "attempt": 1, "source": verb.TelemetrySourceDispatch}
+	}
+	if err := verb.AppendTelemetry(context.Background(), "sty_pc", "coder", verb.TelemetryPlanConsumed, data("sha256:"+hex64)); err != nil {
+		t.Errorf("prefixed hash refused: %v", err)
+	}
+	if err := verb.AppendTelemetry(context.Background(), "sty_pc", "coder", verb.TelemetryPlanConsumed, data(hex64)); err == nil {
+		t.Errorf("a bare 64-hex value is no longer refused; the sha256: prefix may be dropped")
+	}
 }
