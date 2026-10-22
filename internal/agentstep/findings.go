@@ -163,38 +163,26 @@ func FindingAnswersFrom(entries []ledger.Entry, from, to string) (fa FindingAnsw
 			continue
 		}
 		var row struct {
-			From            string                 `json:"from"`
-			To              string                 `json:"to"`
-			FindingsOffered []string               `json:"findings_offered"`
-			FindingAnswers  []agentartifact.Answer `json:"finding_answers"`
+			From string `json:"from"`
+			To   string `json:"to"`
+			agentartifact.FindingAnswersRecord
 		}
-		if json.Unmarshal(e.Payload, &row) != nil || row.From != from || row.To != to || len(row.FindingsOffered) == 0 {
+		if json.Unmarshal(e.Payload, &row) != nil || row.From != from || row.To != to || len(row.Offered) == 0 {
 			continue
 		}
 		if best == nil || !e.CreatedAt.Before(best.CreatedAt) {
-			best, offered, answers = e, row.FindingsOffered, row.FindingAnswers
+			best, offered, answers = e, row.Offered, row.Answers
 		}
 	}
 	if best == nil {
 		return FindingAnswers{}, false
 	}
-	asked := map[string]bool{}
-	for _, id := range offered {
-		asked[id] = true
+	fa.Answered, fa.Missing = agentartifact.MatchAnswers(offered, answers)
+	if fa.Missing == nil {
+		fa.Missing = []string{}
 	}
-	answered := map[string]bool{}
-	fa.Missing = []string{}
-	for _, a := range answers {
-		if asked[a.Finding] && !answered[a.Finding] {
-			answered[a.Finding] = true
-			a.Evidence = excerpt(a.Evidence, findingNotesBudget)
-			fa.Answered = append(fa.Answered, a)
-		}
-	}
-	for _, id := range offered {
-		if !answered[id] {
-			fa.Missing = append(fa.Missing, id)
-		}
+	for i := range fa.Answered {
+		fa.Answered[i].Evidence = excerpt(fa.Answered[i].Evidence, findingNotesBudget)
 	}
 	return fa, true
 }

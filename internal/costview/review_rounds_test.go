@@ -68,7 +68,7 @@ func seededRounds() []ledger.Entry {
 }
 
 func TestReviewRoundsReportsPresentationsAndSeatAttempts(t *testing.T) {
-	rep := ReviewRounds("sty_a", seededRounds())
+	rep := ReviewRounds("sty_a", "", seededRounds())
 	if len(rep.Edges) != 1 {
 		t.Fatalf("edges = %d, want backlog→plan only", len(rep.Edges))
 	}
@@ -117,7 +117,7 @@ func TestReviewRoundsLegacyRowSaysItWasNotRecorded(t *testing.T) {
 	legacy.CreatedAt = at
 	verdict := verdictEntry(ledger.KindReviewAccept, "att_1", "plan-review", nil)
 	verdict.CreatedAt = at
-	rep := ReviewRounds("sty_a", []ledger.Entry{legacy, verdict})
+	rep := ReviewRounds("sty_a", "", []ledger.Entry{legacy, verdict})
 	seat := rep.Edges[0].Rounds[0].Seats[0]
 	if seat.Turns != nil || seat.ToolCalls != nil || seat.TurnsUnavailableReason == "" || seat.ToolCallsUnavailableReason == "" {
 		t.Errorf("a legacy row's figures are unavailable with a reason: %+v", seat)
@@ -129,7 +129,7 @@ func TestReviewRoundsLegacyRowSaysItWasNotRecorded(t *testing.T) {
 
 // A bundle's one invocation judged every skill; any reject rejects it.
 func TestReviewRoundsBundleOutcomeIsRejectedWhenAnySkillRejects(t *testing.T) {
-	rep := ReviewRounds("sty_a", []ledger.Entry{
+	rep := ReviewRounds("sty_a", "", []ledger.Entry{
 		invocationEntry("att_1", "rev-a+rev-b", "", "", map[string]any{"bundle_skills": []string{"rev-a", "rev-b"}}),
 		verdictEntry(ledger.KindReviewAccept, "att_1", "rev-a", nil),
 		verdictEntry(ledger.KindReviewReject, "att_1", "rev-b", nil),
@@ -140,12 +140,12 @@ func TestReviewRoundsBundleOutcomeIsRejectedWhenAnySkillRejects(t *testing.T) {
 }
 
 func TestFamilyRoundsSumsAvailableFiguresAndCountsTheRest(t *testing.T) {
-	a := ReviewRounds("sty_child_a", seededRounds())
-	b := ReviewRounds("sty_child_b", []ledger.Entry{
+	a := ReviewRounds("sty_child_a", "", seededRounds())
+	b := ReviewRounds("sty_child_b", "", []ledger.Entry{
 		invocationEntry("att_1", "plan-review", "", "", map[string]any{"turns": 10, "tool_calls": 7}),
 		verdictEntry(ledger.KindReviewAccept, "att_1", "plan-review", nil),
 	})
-	root := ReviewRounds("sty_root", nil)
+	root := ReviewRounds("sty_root", "", nil)
 	fam := FamilyRounds("sty_root", []ReviewRoundsReport{root, a, b})
 	if len(fam.Total) != 1 {
 		t.Fatalf("totals = %+v, want one edge", fam.Total)
@@ -159,6 +159,7 @@ func TestFamilyRoundsSumsAvailableFiguresAndCountsTheRest(t *testing.T) {
 		// seat gave none. Tool calls 0 + 2 + 7; the claude seat and the capped seat gave none.
 		Turns: 20, UnavailableTurns: 2,
 		ToolCalls: 9, UnavailableToolCalls: 2,
+		Converged: 2, // both children's edges were accepted
 	}
 	if got != want {
 		t.Errorf("family total = %+v\nwant           %+v", got, want)

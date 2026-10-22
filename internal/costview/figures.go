@@ -230,9 +230,19 @@ func DecodeRow(e ledger.Entry) (Row, bool) {
 		TurnsUnavailableReason     string `json:"turns_unavailable_reason"`
 		ToolCalls                  *int   `json:"tool_calls"`
 		ToolCallsUnavailableReason string `json:"tool_calls_unavailable_reason"`
+
+		// A performer's row carries its turn count in its budget report, not at the
+		// top level a reviewer's row writes it.
+		Budget struct {
+			Turns                  *int   `json:"turns"`
+			TurnsUnavailableReason string `json:"turns_unavailable_reason"`
+		} `json:"budget"`
 	}
 	if err := json.Unmarshal(e.Payload, &meta); err != nil {
 		return Row{}, false
+	}
+	if meta.Turns == nil && meta.TurnsUnavailableReason == "" {
+		meta.Turns, meta.TurnsUnavailableReason = meta.Budget.Turns, meta.Budget.TurnsUnavailableReason
 	}
 	tel := ledger.EventTelemetry(e)
 	row := Row{

@@ -34,14 +34,16 @@ func printReviewRounds(cmd *cobra.Command, rr verb.ReviewRounds) error {
 			return err
 		}
 	}
-	fmt.Fprintf(out, "\nFAMILY TOTAL %s — attempts by outcome; turns and tool calls sum available figures only\n", rr.Family.RootID)
+	fmt.Fprintf(out, "\nFAMILY TOTAL %s — attempts by outcome; turns and tool calls sum available figures only; CONVERGED, STOPPED and OPEN count the stories' edges\n", rr.Family.RootID)
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "EDGE\tPRESENTATIONS\tACCEPTED\tREJECTED\tNO VERDICT\tACCEPT\tREJECT\tUNAVAILABLE\tMAX-TURNS\tTURNS\tTOOL CALLS")
+	fmt.Fprintln(w, "EDGE\tPRESENTATIONS\tACCEPTED\tREJECTED\tNO VERDICT\tACCEPT\tREJECT\tUNAVAILABLE\tMAX-TURNS\tTURNS\tTOOL CALLS\tPERF TURNS\tPERF TOKENS IN/OUT\tPERF DURATION\tPRESENTED\tANSWERED\tADOPTED\tREBUTTED\tCONVERGED\tSTOPPED\tOPEN")
 	for _, t := range rr.Family.Total {
-		fmt.Fprintf(w, "%s→%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+		fmt.Fprintf(w, "%s→%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%d/%d\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
 			t.From, t.To, t.Presentations, t.Accepted, t.Rejected, t.NoVerdict,
 			t.Attempts.Accept, t.Attempts.Reject, t.Attempts.Unavailable, t.Attempts.MaxTurns,
-			summedFigure(t.Turns, t.UnavailableTurns), summedFigure(t.ToolCalls, t.UnavailableToolCalls))
+			summedFigure(t.Turns, t.UnavailableTurns), summedFigure(t.ToolCalls, t.UnavailableToolCalls),
+			summedFigure(t.PerformerTurns, t.UnavailablePerformerTurns), t.PerformerTokensIn, t.PerformerTokensOut, fmtDurationMs(t.PerformerDurationMs),
+			t.FindingsPresented, t.Answered, t.Adopted, t.Rebutted, t.Converged, t.Stopped, t.Open)
 	}
 	return w.Flush()
 }
@@ -61,18 +63,25 @@ func printStoryRounds(cmd *cobra.Command, rep costview.ReviewRoundsReport) error
 		if i > 0 {
 			fmt.Fprintln(out)
 		}
-		fmt.Fprintf(out, "%s %s→%s: %d presentation(s) — %d accepted, %d rejected, %d no verdict\n",
-			rep.StoryID, e.From, e.To, e.Presentations, e.Accepted, e.Rejected, e.NoVerdict)
+		fmt.Fprintf(out, "%s %s→%s: %d presentation(s) — %d accepted, %d rejected, %d no verdict — %s\n",
+			rep.StoryID, e.From, e.To, e.Presentations, e.Accepted, e.Rejected, e.NoVerdict, edgeState(e))
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "ATTEMPT\tRESULT\tSEAT\tSKILL\tTURNS\tTOOL CALLS\tOUTCOME\tDURATION")
+		fmt.Fprintln(w, "ROUND\tATTEMPT\tRESULT\tSEAT\tSKILL\tTURNS\tTOOL CALLS\tOUTCOME\tDURATION\tTOKENS IN/OUT")
 		for _, r := range e.Rounds {
-			if len(r.Seats) == 0 {
-				fmt.Fprintf(w, "%s\t%s\t\t\t\t\t\t\n", r.Attempt, r.Result)
+			// The performer that re-presented the round sits beside its gate seats; its
+			// outcome cell says how many of the presented findings it answered.
+			if p := r.Performer; p != nil {
+				fmt.Fprintf(w, "%d\t%s\t%s\tperformer %s\t%s\t%s\t\tfindings %d answered %d (adopted %d, rebutted %d)\t%s\t%d/%d\n",
+					r.Round, r.Attempt, r.Result, p.Agent, p.Skill, countFigure(p.Turns, p.TurnsUnavailableReason),
+					p.FindingsPresented, p.Answered, p.Adopted, p.Rebutted, fmtDurationMs(p.DurationMs), p.TokensIn, p.TokensOut)
+			}
+			if len(r.Seats) == 0 && r.Performer == nil {
+				fmt.Fprintf(w, "%d\t%s\t%s\t\t\t\t\t\t\t\n", r.Round, r.Attempt, r.Result)
 				continue
 			}
 			for _, s := range r.Seats {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-					r.Attempt, r.Result, s.Seat, s.Skill,
+				fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t\n",
+					r.Round, r.Attempt, r.Result, s.Seat, s.Skill,
 					countFigure(s.Turns, s.TurnsUnavailableReason), countFigure(s.ToolCalls, s.ToolCallsUnavailableReason),
 					s.Outcome, fmtDurationMs(s.DurationMs))
 			}
@@ -82,6 +91,18 @@ func printStoryRounds(cmd *cobra.Command, rep costview.ReviewRoundsReport) error
 		}
 	}
 	return nil
+}
+
+// edgeState renders where an edge's rounds ended: the round it converged or
+// stopped at, or that it is still open.
+func edgeState(e costview.EdgeReviewRounds) string {
+	switch e.State {
+	case costview.EdgeConverged:
+		return fmt.Sprintf("converged at round %d", e.ConvergedAt)
+	case costview.EdgeStopped:
+		return fmt.Sprintf("stopped at round %d", e.StoppedAt)
+	}
+	return "open"
 }
 
 // countFigure renders a measured count, or "—" with the adapter-named reason it
