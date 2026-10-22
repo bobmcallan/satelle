@@ -215,6 +215,7 @@ func TestStoryCostRoundsOnAnEpicAddsEachChildAndAFamilyTotal(t *testing.T) {
 		Presentations: 4, Accepted: 2, Rejected: 1, NoVerdict: 1,
 		Attempts: costview.SeatOutcomes{Accept: 2, Reject: 1, Unavailable: 1, MaxTurns: 1},
 		Turns:    20, UnavailableTurns: 2, ToolCalls: 9, UnavailableToolCalls: 2,
+		Converged: 2,
 	}
 	if got != want {
 		t.Errorf("family total = %+v\nwant           %+v", got, want)
@@ -225,5 +226,127 @@ func TestStoryCostRoundsOnAnEpicAddsEachChildAndAFamilyTotal(t *testing.T) {
 	}
 	if len(ids) != 3 || ids[0] != epic {
 		t.Errorf("family stories = %v, want the epic then each child", ids)
+	}
+}
+
+// sty_51d0f74a: a performer row on the edge, shaped like dispatchPayload's.
+func perf(attempt string, budget map[string]any, extra map[string]any) roundsRow {
+	p := map[string]any{"from": "backlog", "to": "plan", "agent": "planner", "skill": "plan", "attempt": attempt, "usage_available": true, "budget": budget}
+	for k, v := range extra {
+		p[k] = v
+	}
+	return roundsRow{ledger.KindAgentInvocation, p}
+}
+
+// performerRoundsRows is backlog→plan presented twice: round 1 rejected, round 2
+// re-presented by a performer shown two findings that answered both (one adopted,
+// one rebutted) and one it was never shown; the gate then accepts.
+func performerRoundsRows() []roundsRow {
+	return []roundsRow{
+		perf("att_1", map[string]any{"turns": 7}, map[string]any{"tokens_in": 1000, "tokens_out": 200, "duration_ms": 3000}),
+		inv("att_1", "plan-review", "", "", map[string]any{"turns": 4}),
+		verdict(ledger.KindReviewReject, "att_1", nil),
+		perf("att_2", map[string]any{"turns_unavailable_reason": noTurnsReason}, map[string]any{
+			"tokens_in": 500, "tokens_out": 100, "duration_ms": 2000,
+			"findings_offered": []string{"plan-review#1", "rev-b#1"},
+			"finding_answers": []map[string]any{
+				{"finding": "plan-review#1", "answer": "adopted"},
+				{"finding": "rev-b#1", "answer": "rebutted", "evidence": "engine.go"},
+				{"finding": "z#9", "answer": "adopted"},
+			},
+		}),
+		inv("att_2", "plan-review", "", "", map[string]any{"turns": 3}),
+		verdict(ledger.KindReviewAccept, "att_2", nil),
+	}
+}
+
+func TestStoryCostRoundsPrintsThePerformerAndWhereTheEdgeConverged(t *testing.T) {
+	_, kids := roundsRepo(t, performerRoundsRows())
+	out, err := runRoot(t, "story", "cost", kids[0], "--rounds")
+	if err != nil {
+		t.Fatalf("story cost --rounds: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		kids[0] + " backlog→plan: 2 presentation(s) — 1 accepted, 1 rejected, 0 no verdict — converged at round 2",
+		"ROUND", "TOKENS IN/OUT",
+		"performer planner",
+		"1000/200", "3s", // round 1's tokens and duration
+		"findings 0 answered 0 (adopted 0, rebutted 0)",
+		"findings 2 answered 2 (adopted 1, rebutted 1)", // the stray z#9 answer is not counted
+		"— (" + noTurnsReason + ")",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--rounds output missing %q:\n%s", want, out)
+		}
+	}
+	var r1 string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "performer planner") && strings.Contains(line, "att_1") {
+			r1 = line
+		}
+	}
+	if !strings.Contains(r1, " 7 ") {
+		t.Errorf("round 1's performer row must carry its 7 turns: %q", r1)
+	}
+}
+
+func TestStoryCostRoundsJSONCarriesThePerformerOnTheRound(t *testing.T) {
+	_, kids := roundsRepo(t, performerRoundsRows())
+	out, err := runRoot(t, "story", "cost", kids[0], "--rounds", "--json")
+	if err != nil {
+		t.Fatalf("story cost --rounds --json: %v\n%s", err, out)
+	}
+	var rr verb.ReviewRounds
+	if err := json.Unmarshal([]byte(out), &rr); err != nil {
+		t.Fatalf("parse json: %v\n%s", err, out)
+	}
+	e := rr.Edges[0]
+	if e.State != costview.EdgeConverged || e.ConvergedAt != 2 {
+		t.Errorf("edge = %q converged at %d, want converged at 2", e.State, e.ConvergedAt)
+	}
+	p1, p2 := e.Rounds[0].Performer, e.Rounds[1].Performer
+	if p1 == nil || p1.Turns == nil || *p1.Turns != 7 || p1.TokensIn != 1000 || p1.TokensOut != 200 || p1.DurationMs != 3000 {
+		t.Errorf("round 1 performer = %+v", p1)
+	}
+	if p2 == nil || p2.Turns != nil || p2.TurnsUnavailableReason != noTurnsReason ||
+		p2.FindingsPresented != 2 || p2.Answered != 2 || p2.Adopted != 1 || p2.Rebutted != 1 {
+		t.Errorf("round 2 performer = %+v", p2)
+	}
+	for _, key := range []string{`"performer": {`, `"tokens_in": 1000`, `"turns": 7`, `"findings_presented": 2`, `"converged_at": 2`} {
+		if !strings.Contains(out, key) {
+			t.Errorf("--json missing %s:\n%s", key, out)
+		}
+	}
+}
+
+// An epic's family table totals the children's performers and edge states.
+func TestStoryCostRoundsOnAnEpicTotalsThePerformers(t *testing.T) {
+	stopped := performerRoundsRows()[:3] // one rejected round
+	epic, _ := roundsRepo(t, performerRoundsRows(), stopped)
+	out, err := runRoot(t, "story", "cost", epic, "--rounds")
+	if err != nil {
+		t.Fatalf("story cost <epic> --rounds: %v\n%s", err, out)
+	}
+	for _, want := range []string{"PERF TURNS", "PERF TOKENS IN/OUT", "PRESENTED", "ADOPTED", "REBUTTED", "CONVERGED", "STOPPED"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("family table missing %q:\n%s", want, out)
+		}
+	}
+	jsonOut, err := runRoot(t, "story", "cost", epic, "--rounds", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rr verb.ReviewRounds
+	if err := json.Unmarshal([]byte(jsonOut), &rr); err != nil {
+		t.Fatalf("parse json: %v\n%s", err, jsonOut)
+	}
+	got := rr.Family.Total[0]
+	if got.PerformerTurns != 14 || got.UnavailablePerformerTurns != 1 || got.PerformerTokensIn != 2500 || got.PerformerTokensOut != 500 ||
+		got.PerformerDurationMs != 8000 || got.FindingsPresented != 2 || got.Answered != 2 || got.Adopted != 1 || got.Rebutted != 1 {
+		t.Errorf("family performer totals = %+v", got)
+	}
+	// Both children are still in backlog, the edge's from-state: one converged, one open.
+	if got.Converged != 1 || got.Open != 1 || got.Stopped != 0 {
+		t.Errorf("edge states = converged %d stopped %d open %d, want 1/0/1", got.Converged, got.Stopped, got.Open)
 	}
 }

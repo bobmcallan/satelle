@@ -69,3 +69,36 @@ func DecodeAnswers(out []byte) ([]Answer, error) {
 	}
 	return answers, nil
 }
+
+// FindingAnswersRecord is the part of a performer's agent_invocation row that
+// records the blocking findings it was offered and what it answered
+// (sty_f948d345): the one decode of those two keys, shared by the gate payload
+// and the cost view so neither restates the key names.
+type FindingAnswersRecord struct {
+	Offered []string `json:"findings_offered"`
+	Answers []Answer `json:"finding_answers"`
+}
+
+// MatchAnswers pairs answers with the finding ids that were offered: answered
+// holds the first answer to each offered id, in answer order; an answer to an id
+// that was not offered, or a second answer to one already answered, is dropped.
+// missing lists the offered ids with no answer, in offered order.
+func MatchAnswers(offered []string, answers []Answer) (answered []Answer, missing []string) {
+	asked := map[string]bool{}
+	for _, id := range offered {
+		asked[id] = true
+	}
+	done := map[string]bool{}
+	for _, a := range answers {
+		if asked[a.Finding] && !done[a.Finding] {
+			done[a.Finding] = true
+			answered = append(answered, a)
+		}
+	}
+	for _, id := range offered {
+		if !done[id] {
+			missing = append(missing, id)
+		}
+	}
+	return answered, missing
+}

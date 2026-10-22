@@ -117,3 +117,32 @@ func TestEdgePresentationsSkipsTheStepSummariser(t *testing.T) {
 		t.Fatalf("only the gate's own seat counts: %+v", ps)
 	}
 }
+
+// sty_51d0f74a: a performer's agent_invocation row joins the presentation its
+// attempt id names, retries included; a hook's, a summariser's, another edge's,
+// an attempt-less and an unmatched-attempt row do not, and a performer row alone
+// never makes a presentation.
+func TestEdgePresentationsJoinsThePerformerRowsByAttempt(t *testing.T) {
+	perf := func(attempt string) Entry {
+		p := map[string]string{"from": "backlog", "to": "plan", "agent": "planner"}
+		if attempt != "" {
+			p["attempt"] = attempt
+		}
+		return row(KindAgentInvocation, p)
+	}
+	summary := row(KindAgentInvocation, map[string]string{"from": "backlog", "to": "plan", "agent": "planner", "attempt": "att_1"})
+	summary.Payload = json.RawMessage(`{"from":"backlog","to":"plan","agent":"planner","attempt":"att_1","step_summary":true}`)
+	elsewhere := row(KindAgentInvocation, map[string]string{"from": "plan", "to": "in_progress", "agent": "coder", "attempt": "att_1"})
+	entries := []Entry{
+		perf("att_1"), perf("att_1"), perf(""), perf("att_orphan"), summary, elsewhere,
+		invocation("att_1", "rev", ""), reject("att_1", "rev", "no"),
+		perf("att_2"), invocation("att_2", "rev", ""), accept("att_2", "rev"),
+	}
+	ps := EdgePresentations(entries, "backlog", "plan")
+	if len(ps) != 2 {
+		t.Fatalf("presentations = %d, want 2 (a performer row alone is no presentation): %+v", len(ps), ps)
+	}
+	if !reflect.DeepEqual(ps[0].Performers, []int{0, 1}) || !reflect.DeepEqual(ps[1].Performers, []int{8}) {
+		t.Errorf("performers = %v and %v, want the attempt's own rows [0 1] and [8]", ps[0].Performers, ps[1].Performers)
+	}
+}

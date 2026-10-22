@@ -66,3 +66,24 @@ func TestDecodeChangesBesideAnswers(t *testing.T) {
 		t.Fatalf("answers = %+v err=%v", answers, err)
 	}
 }
+
+// sty_51d0f74a: an answer counts only against an offered id, once; the offered
+// ids nobody answered are listed in offered order.
+func TestMatchAnswers(t *testing.T) {
+	offered := []string{"a#1", "b#1", "c#1"}
+	answered, missing := MatchAnswers(offered, []Answer{
+		{Finding: "b#1", Answer: AnswerRebutted},
+		{Finding: "z#9", Answer: AnswerAdopted}, // not offered
+		{Finding: "b#1", Answer: AnswerAdopted}, // a second answer to b#1
+		{Finding: "a#1", Answer: AnswerAdopted},
+	})
+	if len(answered) != 2 || answered[0].Finding != "b#1" || answered[0].Answer != AnswerRebutted || answered[1].Finding != "a#1" {
+		t.Errorf("answered = %+v, want b#1 (rebutted, its first answer) then a#1", answered)
+	}
+	if len(missing) != 1 || missing[0] != "c#1" {
+		t.Errorf("missing = %v, want [c#1]", missing)
+	}
+	if a, m := MatchAnswers(nil, []Answer{{Finding: "x#1", Answer: AnswerAdopted}}); len(a) != 0 || len(m) != 0 {
+		t.Errorf("nothing offered, nothing to answer: %v %v", a, m)
+	}
+}

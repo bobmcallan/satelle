@@ -227,6 +227,10 @@ type Presentation struct {
 	// attempt's verdict rows and reviewer agent_invocation rows, oldest first.
 	Verdicts    []int
 	Invocations []int
+	// Performers are the indexes of the attempt's performer agent_invocation rows
+	// (the named agent that re-presented the edge), oldest first: several when a
+	// retry ran. A performer row never makes a presentation of its own.
+	Performers []int
 }
 
 // reviewerInvocation reports whether e is a reviewer agent_invocation row of the
@@ -238,6 +242,18 @@ func reviewerInvocation(e Entry) (edgeRow, bool) {
 	}
 	r, ok := decodeEdgeRow(e)
 	return r, ok && r.Agent == "reviewer" && r.Operation == "" && !r.StepSummary
+}
+
+// performerInvocation reports whether e is the agent_invocation row of the named
+// performer that did the edge's step — any agent but the reviewer, with no
+// lifecycle-hook operation and not the step summariser's — and decodes its edge
+// fields.
+func performerInvocation(e Entry) (edgeRow, bool) {
+	if e.Kind != KindAgentInvocation || IsToolPermissionRow(e) {
+		return edgeRow{}, false
+	}
+	r, ok := decodeEdgeRow(e)
+	return r, ok && r.Agent != "" && r.Agent != "reviewer" && r.Operation == "" && !r.StepSummary
 }
 
 // EdgePresentations enumerates the presentations of the from→to edge in entries,
@@ -294,6 +310,19 @@ func EdgePresentations(entries []Entry, from, to string) []Presentation {
 			out = append(out, Presentation{Attempt: id, NoVerdict: true})
 		}
 		out[n].Invocations = append(out[n].Invocations, i)
+	}
+	// A performer's row joins the presentation its attempt id names. It never makes
+	// one, and a row with no attempt id is not joined: the performer writes its row
+	// at a different instant from the gate's, so the legacy instant rule does not
+	// hold for it.
+	for i, e := range entries {
+		r, ok := performerInvocation(e)
+		if !ok || r.From != from || r.To != to || r.Attempt == "" {
+			continue
+		}
+		if n, seen := index[r.Attempt]; seen {
+			out[n].Performers = append(out[n].Performers, i)
+		}
 	}
 	first := func(p Presentation) int {
 		at := len(entries)

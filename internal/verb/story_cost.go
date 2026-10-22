@@ -146,7 +146,8 @@ func ComputeReviewRounds(ctx context.Context, storyID string) (ReviewRounds, err
 	if err != nil {
 		return ReviewRounds{}, err
 	}
-	out := ReviewRounds{ReviewRoundsReport: costview.ReviewRounds(storyID, entries)}
+	// Without the item the story's status is unknown, so no edge is reported stopped.
+	out := ReviewRounds{ReviewRoundsReport: costview.ReviewRounds(storyID, "", entries)}
 	wi, werr := requireWorkItem()
 	if werr != nil {
 		return out, nil
@@ -158,6 +159,7 @@ func ComputeReviewRounds(ctx context.Context, storyID string) (ReviewRounds, err
 	case err != nil:
 		return ReviewRounds{}, err
 	}
+	out.ReviewRoundsReport = costview.ReviewRounds(storyID, item.Status, entries)
 	items, byStory, err := familyEntries(ctx, wi, ls, item)
 	if err != nil {
 		return ReviewRounds{}, err
@@ -167,7 +169,7 @@ func ComputeReviewRounds(ctx context.Context, storyID string) (ReviewRounds, err
 	}
 	stories := make([]costview.ReviewRoundsReport, 0, len(items))
 	for _, it := range items {
-		stories = append(stories, costview.ReviewRounds(it.ID, byStory[it.ID]))
+		stories = append(stories, costview.ReviewRounds(it.ID, it.Status, byStory[it.ID]))
 	}
 	family := costview.FamilyRounds(storyID, stories)
 	out.Family = &family

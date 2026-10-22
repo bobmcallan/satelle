@@ -919,8 +919,8 @@ provider's own dollars.
 --session <id> lists every story that session drove, plus its remainder.
 --gate-value reports invocations, dollars, accepts and rejects per skill and
 seat (--story, --epic, --since/--until).
---rounds <id> reports each gated edge's presentations and every reviewer seat
-attempt's turns, tool calls, outcome; an epic adds a family total.`,
+--rounds <id> reports each edge's presentations: seat and performer cost,
+findings answered, round converged; an epic adds a family total.`,
 		Args:        cobra.MaximumNArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -1053,7 +1053,7 @@ attempt's turns, tool calls, outcome; an epic adds a family total.`,
 	cost.Flags().StringVar(&gateEpicID, "epic", "", "with --gate-value, scope to an epic-parent and every descendant found by parent_id")
 	cost.Flags().StringVar(&gateSince, "since", "", "with --gate-value, only entries at/after this date (YYYY-MM-DD)")
 	cost.Flags().StringVar(&gateUntil, "until", "", "with --gate-value, only entries at/before this date (YYYY-MM-DD)")
-	cost.Flags().BoolVar(&rounds, "rounds", false, "report each gated edge's presentations and each seat attempt's turns, tool calls, outcome and duration (an epic id adds each child and a family total)")
+	cost.Flags().BoolVar(&rounds, "rounds", false, "report each gated edge's presentations, each seat attempt's turns, tool calls, outcome and duration, each round's performer cost and answered findings, and the round the edge converged or stopped at (an epic id adds each child and a family total)")
 	cost.Flags().BoolVar(&gateJSON, "json", false, "with --gate-value or --rounds, emit the report as JSON")
 
 	// resummarise — re-run the step summariser for one edge to close a missing-
