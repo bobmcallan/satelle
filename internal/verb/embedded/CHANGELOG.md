@@ -1,3 +1,18 @@
+## [0.0.727] - 2026-10-22
+
+### Added
+- Every step now records which skills reached its performer and checks that their use left the evidence they declare.
+  - Each delivered step skill is recorded with its name and sha256: on the agent_invocation row of a dispatched performer, or on a `skill_delivery` row when an in-loop step is entered. A skill that does not resolve is recorded as undelivered, never run silently.
+  - A skill may declare `evidence_sections`, `evidence_keys`, `evidence_commands` and `evidence_tools` in its frontmatter. `satelle validate` fails a malformed declaration and warns on a step skill that declares none.
+  - An always-on check compares the step's output and run trace with that evidence. It names each missing item, and reports an item as unverifiable (naming the adapter) when the harness has no trace channel for it. Back-edges, park and cancel are never judged.
+  - `skill_evidence` in the route source's `[meta]` chooses `record` (the default) or `reject`.
+  - Tool traces are written only while a story is engaged, and only for tools or commands a delivered skill declares. (sty_23ceeca2)
+
+## [serve-v0.0.195] - 2026-10-22
+
+### Changed
+- The service binary carries skill-delivery recording and the skill-evidence check. (sty_23ceeca2)
+
 ## [0.0.726] - 2026-10-22
 
 ### Added
