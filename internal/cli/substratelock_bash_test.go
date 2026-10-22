@@ -214,8 +214,8 @@ func TestSubstrateLockBashAllowed(t *testing.T) {
 		editGate bool
 	}
 	cases := []tc{
-		{name: "no live seat: redirect", cmd: "echo x > .satelle/skills/x.md", noSeat: true},
-		{name: "no live seat: interpreter", cmd: `python3 -c "open('.satelle/x','w')"`, noSeat: true, editGate: true},
+		{name: "no live seat: footprint redirect", cmd: "echo x > .claude/settings.json", noSeat: true},
+		{name: "no live seat: temp redirect", cmd: "echo x > /tmp/x", noSeat: true},
 		{name: "substrate lane: redirect", cmd: "echo x > .satelle/skills/x.md", category: "substrate"},
 		{name: "substrate lane: rm", cmd: "rm .satelle/skills/x.md", category: "substrate"},
 		{name: "substrate lane: interpreter", cmd: `python3 -c "open('.satelle/x','w')"`, category: "substrate"},
@@ -293,18 +293,18 @@ func TestSubstrateLockBashReadsConfigOnce(t *testing.T) {
 			}
 		})
 	}
-	t.Run("gate with no seat reads nothing", func(t *testing.T) {
+	t.Run("gate with no seat reads once and still locks", func(t *testing.T) {
 		repo := tempRepo(t)
 		t.Chdir(repo)
 		if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"), []byte(lockExemptToml), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		n := countLockConfigReads(t, os.ErrPermission)
-		if out, err := runRootIn(t, bashEvent("echo x > .satelle/skills/x.md"), "hook", "gate"); err != nil {
-			t.Fatalf("no seat: the lock must not act: %v\n%s", err, out)
+		n := countLockConfigReads(t, nil)
+		if out, err := runRootIn(t, bashEvent("echo x > .satelle/skills/x.md"), "hook", "gate"); err == nil {
+			t.Fatalf("no seat: locked substrate must be refused (sty_66abc0e3):\n%s", out)
 		}
-		if *n != 0 {
-			t.Fatalf("lock config reads = %d, want 0", *n)
+		if *n != 1 {
+			t.Fatalf("lock config reads = %d, want 1", *n)
 		}
 	})
 }

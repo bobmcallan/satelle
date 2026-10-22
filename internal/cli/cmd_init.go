@@ -1760,8 +1760,10 @@ gate_create = true
 # edit_exempt_paths lists repo-root-relative (or absolute) path prefixes whose
 # edits are exempt from the engaged-story edit gate. It is the SOLE exemption
 # source — the binary does NOT special-case the data dir or any managed path.
-# ".satelle/" is seeded so this repo's authored substrate (workflows/skills/
-# principles/documents/tasks/config) stays editable without a release.
+# ".satelle/" is seeded so this repo's authored data and documents stay editable
+# without a story. A path under lock_substrate_paths (below) is never exempt,
+# whatever is listed here: the seeded ".satelle/" is overridden for locked
+# substrate (workflows/skills/agent bindings). See 'satelle help substrate'.
 # The rest of the seeded list is the footprint SATELLE ITSELF deploys, unasked:
 # the ".gitignore" managed block init/migrate write (sty_f115e6bf), and the
 # harness hook scaffolds init installs under ".claude/" and ".grok/"
@@ -1802,21 +1804,21 @@ edit_exempt_globs = `
 // the seeded edit_exempt_globs value.
 const scaffoldTomlAfterExempt = `
 
-# lock_substrate_paths — path prefixes the edit gate REFUSES, while ANY story
-# holds a performing seat, to every story outside the substrate lane
-# (sty_992cffc6). It overrides edit_exempt_paths for a performing seat: without
-# it a story could rewrite the workflows, skills and agent bindings that are
-# about to judge it, and the change would leave no trace in its engagement diff.
-# The deny names the seat-holding story, the locked path and the lane out — a
-# story in the substrate lane (category "substrate", judged by
-# satelle-workflow-change-review) may change substrate under its own seat.
+# lock_substrate_paths — path prefixes the edit gate REFUSES to every session
+# not engaged in a substrate-lane story, whether or not any story is performing
+# (sty_992cffc6, sty_66abc0e3). It overrides edit_exempt_paths: without it an
+# edit could rewrite the workflows, skills and agent bindings that judge the
+# work, and the change would leave no trace in its engagement diff. The deny
+# names the locked path and the lane out — a story in the substrate lane
+# (category "substrate", judged by satelle-workflow-change-review) may change
+# substrate under its own seat. See 'satelle help substrate'.
 # The key is left commented on purpose: ABSENT means the default lock
 # (".satelle/"), so a repo is locked without it. Uncomment to pin or widen the
 # list. Never locked, whatever is listed: the process temp dir and /tmp,
 # edit_exempt_globs matches, and the footprint satelle deploys itself
 # (.gitignore, .claude/, .grok/, .pi/). An explicitly EMPTY list is the
-# documented opt-out, and 'satelle doctor' reports it. Shell (Bash) mutations
-# are not covered by this lock.
+# documented opt-out, and 'satelle doctor' reports it. The lock covers shell
+# (Bash) mutations too.
 # lock_substrate_paths = [".satelle/"]
 
 # command_allow — OPT-IN step-scoped git policy (sty_c21490cc). Keys are git

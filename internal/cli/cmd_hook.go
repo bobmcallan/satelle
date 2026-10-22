@@ -132,13 +132,12 @@ Exemption is CONFIGURATION, not code. An edit is exempt when its target falls
 under a [gate] edit_exempt_paths prefix (repo-root-relative or absolute) or
 matches an edit_exempt_globs filename pattern. 'satelle init' SEEDS .satelle/,
 the footprint it deploys (.gitignore, harness scaffolds) and story-dump names;
-the operator owns the lists. With empty lists even a .satelle/ edit needs an
-engaged story.
+the operator owns the lists.
 
-Exemption stops at a performing story. While a story holds a
-performing seat, an edit under a [gate] lock_substrate_paths prefix (default
-.satelle/ when the key is absent) is REFUSED before the exemption is consulted,
-so a story cannot rewrite the workflows, skills and bindings that judge it.
+Lock precedence over edit_exempt_paths: see 'satelle help substrate'. A path
+under a [gate] lock_substrate_paths prefix (default .satelle/ when the key is
+absent) is judged before the exemption is consulted, so no edit can rewrite the
+workflows, skills and bindings that judge the work.
 One harness-neutral predicate decides it for Claude, Grok and pi. The deny names
 each holder (status, category), the path, the condition and fix, and lands on
 that ledger. A substrate-lane story (category "substrate", judged by
@@ -236,15 +235,14 @@ workflow declaring no route blocks the edit.`,
 				// .satelle/ edit needs an engaged story: config decides in-repo
 				// paths, never a Go rule.
 				//
-				// The one thing exemption may not do is let a story rewrite the
-				// substrate that judges it: while a seat is performing, a locked
-				// prefix ([gate] lock_substrate_paths, default .satelle/) is refused
-				// HERE, before the exemption, by the same harness-neutral predicate
-				// for every harness (sty_992cffc6).
-				if len(live) > 0 || engaged {
-					if err := substrateLockGate(cmd, raw, p, &lockSeats{info: info, engaged: engaged, live: live, sid: sid}); err != nil {
-						return err
-					}
+				// The one thing exemption may not do is let an edit rewrite the
+				// substrate that judges the work: a locked prefix ([gate]
+				// lock_substrate_paths, default .satelle/) is judged HERE, before
+				// the exemption, whether or not any story is performing, by the
+				// same harness-neutral predicate for every harness (sty_992cffc6,
+				// sty_66abc0e3).
+				if err := substrateLockGate(cmd, raw, p, &lockSeats{info: info, engaged: engaged, live: live, sid: sid}); err != nil {
+					return err
 				}
 				if exemptTarget(p) {
 					return nil
@@ -264,17 +262,15 @@ workflow declaring no route blocks the edit.`,
 				// Edit: a classified target, or an interpreter's command text,
 				// under a locked prefix is refused before the exemption is
 				// consulted (sty_dc77e118).
-				if len(live) > 0 || engaged {
-					seats := &lockSeats{info: info, engaged: engaged, live: live, sid: sid}
-					if err := bashSubstrateLockGate(cmd, raw, command, loadGateProcess(), func(tree string) (*lockSeats, error) {
-						if tree == "" {
-							return seats, nil
-						}
-						ti, te, tl, err := resolveSeatsFor(true, sid, tree)
-						return &lockSeats{info: ti, engaged: te, live: tl, sid: sid}, err
-					}); err != nil {
-						return err
+				seats := &lockSeats{info: info, engaged: engaged, live: live, sid: sid}
+				if err := bashSubstrateLockGate(cmd, raw, command, loadGateProcess(), func(tree string) (*lockSeats, error) {
+					if tree == "" {
+						return seats, nil
 					}
+					ti, te, tl, err := resolveSeatsFor(true, sid, tree)
+					return &lockSeats{info: ti, engaged: te, live: tl, sid: sid}, err
+				}); err != nil {
+					return err
 				}
 				if !bashMutatesTree(command, sessionAnchor()) {
 					return nil

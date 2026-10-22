@@ -470,7 +470,9 @@ func TestHookGate_PiHarness_HonoursExemptions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"), []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	pathExempt := defaultEditExemptPaths()[0] + "documents/note.md"
+	// .satelle/ is seeded exempt but also locked (sty_66abc0e3), so the shipped
+	// path exemption is exercised on a footprint path the lock never covers.
+	pathExempt := ".claude/settings.json"
 	globExempt := strings.Replace(managedEditExemptGlobs[0], "*", "sty_0123abcd", 1)
 	for _, target := range []string{pathExempt, globExempt} {
 		if out, err := runRootIn(t, piHookEvent("Write", "file_path", target), "hook", "gate", "--harness", "pi"); err != nil {

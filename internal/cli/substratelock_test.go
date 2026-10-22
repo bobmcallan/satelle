@@ -225,12 +225,17 @@ func TestSubstrateLockSameDenialForClaudeAndGrokShapes(t *testing.T) {
 	}
 }
 
-// AC3: no story engaged — the exempt path stays writable, with the key absent
-// and with it present; a released (seatless) story does not lock either.
-func TestSubstrateLockInertWithoutSeat(t *testing.T) {
-	for _, tc := range []struct{ name, gate string }{
-		{"key absent", ""},
-		{"key present", "lock_substrate_paths = [\".satelle/\"]\n"},
+// With no story engaged the lock still holds (sty_66abc0e3), with the key absent
+// and with it present; a released (seatless) story does not lift it. The opt-out
+// is the explicit empty list.
+func TestSubstrateLockHoldsWithoutSeat(t *testing.T) {
+	for _, tc := range []struct {
+		name, gate string
+		want       bool // refused
+	}{
+		{"key absent", "", true},
+		{"key present", "lock_substrate_paths = [\".satelle/\"]\n", true},
+		{"explicit empty list is the opt-out", "lock_substrate_paths = []\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := tempRepo(t)
@@ -238,8 +243,12 @@ func TestSubstrateLockInertWithoutSeat(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"), []byte(lockExemptToml+tc.gate), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if out, err := runRootIn(t, claudeEditEvent(filepath.Join(repo, ".satelle", "skills", "x.md")), "hook", "gate"); err != nil {
-				t.Fatalf("with no story engaged an exempt path must stay writable: %v\n%s", err, out)
+			out, err := runRootIn(t, claudeEditEvent(filepath.Join(repo, ".satelle", "skills", "x.md")), "hook", "gate")
+			if tc.want && err == nil {
+				t.Fatalf("with no story engaged locked substrate must be refused:\n%s", out)
+			}
+			if !tc.want && err != nil {
+				t.Fatalf("an empty lock list must leave the exempt path writable: %v\n%s", err, out)
 			}
 		})
 	}
@@ -247,8 +256,8 @@ func TestSubstrateLockInertWithoutSeat(t *testing.T) {
 	t.Run("seat released", func(t *testing.T) {
 		repo, id := lockRepo(t, "feature", "")
 		forceRelease(t, id)
-		if out, err := runRootIn(t, claudeEditEvent(filepath.Join(repo, ".satelle", "skills", "x.md")), "hook", "gate"); err != nil {
-			t.Fatalf("a story whose seat was released holds no performing seat, so the lock is inert: %v\n%s", err, out)
+		if out, err := runRootIn(t, claudeEditEvent(filepath.Join(repo, ".satelle", "skills", "x.md")), "hook", "gate"); err == nil {
+			t.Fatalf("a story whose seat was released holds no seat, but the lock still refuses locked substrate:\n%s", out)
 		}
 	})
 }
@@ -386,18 +395,18 @@ func TestSubstrateLockGateReadsConfigOncePerEditAndOnlyUnderASeat(t *testing.T) 
 			t.Fatalf("lock gate config reads = %d, want 1", *n)
 		}
 	})
-	t.Run("no seat reads nothing", func(t *testing.T) {
+	t.Run("no seat reads the config once and still locks", func(t *testing.T) {
 		repo := tempRepo(t)
 		t.Chdir(repo)
 		if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"), []byte(lockExemptToml), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		n := countLockConfigReads(t, os.ErrPermission)
-		if out, err := runRootIn(t, claudeEditEvent(filepath.Join(repo, ".satelle", "skills", "x.md")), "hook", "gate"); err != nil {
-			t.Fatalf("no seat: the lock must not act: %v\n%s", err, out)
+		n := countLockConfigReads(t, nil)
+		if out, err := runRootIn(t, claudeEditEvent(filepath.Join(repo, ".satelle", "skills", "x.md")), "hook", "gate"); err == nil {
+			t.Fatalf("no seat: locked substrate must be refused (sty_66abc0e3):\n%s", out)
 		}
-		if *n != 0 {
-			t.Fatalf("lock gate config reads = %d, want 0", *n)
+		if *n != 1 {
+			t.Fatalf("lock gate config reads = %d, want 1", *n)
 		}
 	})
 }
@@ -576,10 +585,18 @@ func TestSubstrateLockHeldAgainstSessionThatMatchesNoSeat(t *testing.T) {
 // The lane out is per holder: substrate change is allowed only when EVERY live
 // holder is in the substrate lane; otherwise the deny names the ones that are not.
 func TestSubstrateLockLaneOutIsPerHolder(t *testing.T) {
-	t.Run("all holders in the lane", func(t *testing.T) {
-		repo, _, _ := holdersRepo(t, "substrate", "substrate")
-		if out, err := runRootIn(t, claudeEditEvent(filepath.Join(repo, ".satelle", "skills", "x.md")), "hook", "gate"); err != nil {
-			t.Fatalf("every holder in the substrate lane must allow the change: %v\n%s", err, out)
+	t.Run("all holders in the lane, session engaged in none", func(t *testing.T) {
+		// The session matches neither seat, so it is not engaged in the lane: the
+		// lock refuses with the no-engagement text whatever the holders are
+		// (sty_66abc0e3).
+		repo, a, b := holdersRepo(t, "substrate", "substrate")
+		out, err := runRootIn(t, claudeEditEvent(filepath.Join(repo, ".satelle", "skills", "x.md")), "hook", "gate")
+		if err == nil {
+			t.Fatalf("a session engaged in no substrate-lane story must be refused:\n%s", out)
+		}
+		reason := denyReasonOf(t, out)
+		if !strings.Contains(reason, "no engaged story in the substrate lane") || strings.Contains(reason, a.ID) || strings.Contains(reason, b.ID) {
+			t.Errorf("want the no-engagement text naming no holder: %s", reason)
 		}
 	})
 	t.Run("one holder outside the lane", func(t *testing.T) {

@@ -42,6 +42,14 @@ further — it backs up `workflows/ skills/ principles/` to a timestamped dir un
 the runtime `backups/`, wipes them, and redeploys the complete default solution
 (the "start clean" recovery).
 
+## Edit-gate lock precedence
+
+A path under [gate] lock_substrate_paths is never edit-exempt: editing it needs
+this session engaged in a substrate-lane story (category "substrate"), whatever
+else is performing. This overrides the `.satelle/` entry `satelle init` seeds in
+edit_exempt_paths; non-locked exempt paths stay exempt. The refusal is the same
+through Edit/Write and a shell mutation, with a story performing or with none.
+
 ## Pre-mutation backup
 
 Before init/restore/rebase **overwrites** an existing file under `.satelle/`,

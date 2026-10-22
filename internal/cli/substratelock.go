@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -189,6 +190,14 @@ func laneIDs(seats []seatInfo) string {
 // tree is the tree the lock list was resolved against. A lane with no Why (the
 // store could not be opened) names the holders only.
 func substrateLockReason(outside []seatInfo, relPath string, lane lockLane, cats map[string]string, tree string) string {
+	if len(outside) == 0 {
+		return fmt.Sprintf(
+			"satelle: substrate lock — %s is locked substrate and this session has no engaged story in the substrate lane: the workflows, skills and agent bindings under it are what judge the work, so it is changed only under a substrate-lane story, whether or not anything else is performing. "+
+				"Lane out: file a story with --category %s (judged by satelle-workflow-change-review) and engage it in this session. "+
+				"If the substrate itself prevents engagement (for example an invalid .satelle/workflows/step.toml), ask the developer to repair it outside the agent session. "+
+				"[gate] lock_substrate_paths sets which prefixes are locked; an empty list is the documented opt-out and `satelle doctor` reports it.",
+			relPath, substrateLaneCategory)
+	}
 	var who, finish string
 	if len(outside) == 1 {
 		who = "story " + laneHolderDesc(outside[0], cats) + " holds a performing seat"
@@ -308,9 +317,10 @@ func lockConfigFrom(gp gateProcess) lockConfig {
 // The lock is a function of who is making the change (substrateLane), never of
 // the harness or the model: a substrate-lane story's change passes whatever
 // siblings are performing (they get a ledger note, recordSubstrateChangeNotes, once the change is allowed),
-// and any other change is refused while a seat outside the lane is held. The
-// caller skips the gate when no seat is live, so with none held nothing is read
-// and an exempt path stays writable. A holder's category is read from the store
+// and any other change to locked substrate is refused — whether a seat outside
+// the lane is held or nothing is engaged at all. The caller runs the gate on
+// every edit; a path that is not locked (an exempt path outside the lock list)
+// is passed without reading the store. A holder's category is read from the store
 // and every doubt about it refuses — a lock that fails open is not a lock. The
 // committed config is read ONCE (loadSubstrateLockConfig).
 func substrateLockGate(cmd *cobra.Command, raw []byte, target string, seats *lockSeats) error {
@@ -367,6 +377,9 @@ func substrateLockJudge(cfg lockConfig, cmd *cobra.Command, raw []byte, target s
 		rel = filepath.ToSlash(r)
 	}
 	a, oerr := app.Open()
+	if errors.Is(oerr, app.ErrNotInitialised) {
+		return nil, nil // a repo satelle does not govern has no substrate to lock
+	}
 	if oerr != nil {
 		// Cannot read the store to confirm the lane: refuse, and say why.
 		return nil, denyPreToolUse(cmd, raw, substrateLockReason(seats.live, rel, lockLane{}, nil, lockBase)+" (the substrate lane could not be confirmed: "+oerr.Error()+")")
@@ -407,7 +420,12 @@ func substrateLockJudge(cfg lockConfig, cmd *cobra.Command, raw []byte, target s
 		}
 	}
 	if len(outside) == 0 {
-		return nil, nil // every holder is in the lane out
+		// Nothing outside the lane holds the lock, but this session is not in the
+		// lane either (no seat anywhere, another session's substrate seat, or an
+		// ambiguous pair of its own): locked substrate needs an engaged
+		// substrate-lane story whether or not anything else is performing. No
+		// holder is at fault, so no ledger row is written.
+		return nil, denyPreToolUse(cmd, raw, substrateLockReason(nil, rel, lane, cats, lockBase))
 	}
 	reason := substrateLockReason(outside, rel, lane, cats, lockBase)
 	if cerr != nil {
@@ -479,7 +497,8 @@ func bashLockCandidates(command string, cfg lockConfig) []string {
 // conservative the other way: an interpreter command whose text, or a NAME=value
 // assignment in the same command, names a locked path or the bare lock root is a
 // candidate even if it only reads it — reads have the
-// read tools and `satelle doc get`. A substrate-lane story's change is never refused. The
+// read tools and `satelle doc get`. A substrate-lane story's change is never refused; any other
+// change to locked substrate is, with a seat held or not (sty_66abc0e3). The
 // backstop for the invisible cases is unchanged: substrate diffs are seen at the
 // commit and at integration review.
 func bashSubstrateLockGate(cmd *cobra.Command, raw []byte, command string, gp gateProcess, seats func(tree string) (*lockSeats, error)) error {
@@ -504,9 +523,6 @@ func bashSubstrateLockGate(cmd *cobra.Command, raw []byte, command string, gp ga
 				return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
 			}
 			byTree[tree] = ss
-		}
-		if len(ss.live) == 0 && !ss.engaged {
-			continue
 		}
 		n, err := substrateLockJudge(cfg, cmd, raw, c, ss)
 		if err != nil {
