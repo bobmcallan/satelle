@@ -116,7 +116,7 @@ func (g *Engine) prepareReviewer(ctx context.Context, item workitem.Item, toStat
 		perf = verb.PerformerResolution{}
 	}
 	g.fillPriorVerdicts(ctx, item.ID, item.Status, toStatus, exemptionOf(carry, perf, perr), &tp, mat)
-	crit := criteriaPrep{carry: carry}
+	crit := criteriaPrep{carry: carry, requirePer: requiresPerCriterion(body)}
 	crit.judged, crit.source = judgedCriteria(item, mat.Docs, perf)
 	tp.CriteriaSource = crit.source
 	tp.CriteriaState = crit.setState(item, mat.Docs, mat.PriorVerdicts, skill)
