@@ -142,7 +142,8 @@ func PriorVerdicts(ctx context.Context, itemID, from, to string, ex StaleExempti
 // when a step declares reviewer_carry (sty_59720b8b): a re-attach of the step
 // performer's output document, and a directed message to that performer. Both
 // land in the document the reviewer's quotation is checked against, so a
-// quotation that still appears verbatim in it has captured the change. The zero
+// quotation whose words still appear in it (agentstep's quotationCarries) has
+// captured the change. The zero
 // value exempts nothing — staleness is exactly the unqualified rule. The engine
 // is the only reader of the route key; it hands the resolved names in.
 type StaleExemption struct {

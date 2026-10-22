@@ -6,11 +6,11 @@ import (
 	"github.com/bobmcallan/satelle/internal/verb"
 )
 
-// A model re-flows the line breaks of a passage it quotes. A verdict that
-// recorded per-criterion entries is matched by words, so the quotation still
-// carries and a changed word still does not. A verdict that recorded none is
-// matched exactly, as it always was (sty_99d3162b AC7).
-func TestQuotationCarriesMatchesByWordsOnlyForVerdictsWithCriteria(t *testing.T) {
+// A model re-flows the line breaks of a passage it quotes. Whether or not the
+// verdict recorded per-criterion entries, the quotation is matched by words, so
+// a re-flowed quotation still carries and a changed word still does not. The
+// match normalises its own copies: the quotation stays exactly as recorded.
+func TestQuotationCarriesMatchesByWords(t *testing.T) {
 	const judged = "intro\nthe premise holds\n\tacross   two lines\noutro"
 	withCriteria := []verb.CriterionVerdict{{Criterion: 1, Status: verb.CriterionAccepted}}
 	for _, tc := range []struct {
@@ -24,26 +24,33 @@ func TestQuotationCarriesMatchesByWordsOnlyForVerdictsWithCriteria(t *testing.T)
 		{"criteria: exact", "the premise holds\n\tacross   two lines", withCriteria, true},
 		{"criteria: a changed word", "the premise holds across three lines", withCriteria, false},
 		{"criteria: words joined", "the premiseholds across two lines", withCriteria, false},
-		{"no criteria: newlines became spaces", "the premise holds across two lines", nil, false},
+		{"no criteria: newlines became spaces", "the premise holds across two lines", nil, true},
+		{"no criteria: runs and tabs collapsed", "the premise   holds\t across two\nlines", nil, true},
 		{"no criteria: exact", "the premise holds\n\tacross   two lines", nil, true},
+		{"no criteria: a changed word", "the premise holds across three lines", nil, false},
+		{"no criteria: words joined", "the premiseholds across two lines", nil, false},
 	} {
 		pv := PriorVerdict{Decision: "accept", Reviewed: tc.reviewed, Criteria: tc.criteria}
 		if got := quotationCarries(pv, judged); got != tc.want {
 			t.Errorf("%s: quotationCarries = %v, want %v", tc.name, got, tc.want)
 		}
+		if pv.Reviewed != tc.reviewed {
+			t.Errorf("%s: the quotation was changed to %q", tc.name, pv.Reviewed)
+		}
 	}
 }
 
-// On a reviewer_carry edge a reviewer whose prior accept recorded criteria and
-// quoted the plan with its layout re-flowed is still carried; one that recorded
-// no criteria and re-flowed its quotation is dispatched fresh, as before.
-func TestCarryReflowedQuotationCarriesOnlyWithCriteria(t *testing.T) {
+// On a reviewer_carry edge a reviewer whose prior accept quoted the plan with its
+// layout re-flowed is carried, with or without recorded criteria; one that quoted
+// it with a word changed is dispatched fresh. The carried quotation stays as the
+// reviewer wrote it.
+func TestCarryReflowedQuotationCarries(t *testing.T) {
 	const reflowed = "PLAN-B  and\nPLAN-C" // carryPlan holds "PLAN-B and PLAN-C"
 	prior := []PriorVerdict{
 		{Skill: "rev-a", Decision: "accept", Reviewed: reflowed},
 		{Skill: "rev-b", Decision: "accept", Reviewed: reflowed,
 			Criteria: []verb.CriterionVerdict{{Criterion: 1, Status: verb.CriterionAccepted, Reviewed: reflowed, Text: "x"}}},
-		rejected("rev-c"),
+		{Skill: "rev-c", Decision: "accept", Reviewed: "PLAN-B but PLAN-C"},
 	}
 	for _, sc := range carrySchedulers {
 		t.Run(sc.name, func(t *testing.T) {
@@ -52,17 +59,19 @@ func TestCarryReflowedQuotationCarriesOnlyWithCriteria(t *testing.T) {
 			if dec.Accept {
 				t.Fatalf("rev-c rejects, so the edge is blocked: %+v", dec)
 			}
-			if n := r.sessionsFor("rev-b"); n != 0 {
-				t.Errorf("rev-b (criteria recorded) was dispatched %d time(s), want it carried", n)
+			for _, name := range []string{"rev-a", "rev-b"} {
+				if n := r.sessionsFor(name); n != 0 {
+					t.Errorf("%s was dispatched %d time(s), want it carried", name, n)
+				}
+				if v := reviewerOf(t, dec, name); !v.Accept || v.CarriedFrom == 0 || v.Reviewed != reflowed {
+					t.Errorf("%s = %+v, want a carried accept with its quotation as recorded", name, v)
+				}
 			}
-			if b := reviewerOf(t, dec, "rev-b"); !b.Accept || b.CarriedFrom != 2 {
-				t.Errorf("rev-b = %+v, want a carried accept from attempt 2", b)
+			if n := r.sessionsFor("rev-c"); n != 1 {
+				t.Errorf("rev-c (a changed word) was dispatched %d time(s), want 1", n)
 			}
-			if n := r.sessionsFor("rev-a"); n != 1 {
-				t.Errorf("rev-a (no criteria) was dispatched %d time(s), want 1: an exact match is required", n)
-			}
-			if a := reviewerOf(t, dec, "rev-a"); a.CarriedFrom != 0 {
-				t.Errorf("rev-a = %+v, want a fresh verdict", a)
+			if c := reviewerOf(t, dec, "rev-c"); c.CarriedFrom != 0 {
+				t.Errorf("rev-c = %+v, want a fresh verdict", c)
 			}
 		})
 	}

@@ -123,7 +123,8 @@ every rubric the bundle would carry.
 reviewer every round) lets a re-presented entry edge leave a reviewer
 undispatched while another is dispatched, when that reviewer's latest verdict on
 the edge is an accept whose complete, non-stale `reviewed` quotation is still
-found verbatim in the current story card and documents. The accept is ledgered as
+found in the current story card and documents, matched by its words and not its
+line breaks or spacing. The accept is ledgered as
 a `review_accept` carrying `carried_from`, with no `agent_invocation` row. When
 every dispatched reviewer accepts, the carried reviewers are dispatched in the
 same gate call, so the round that advances the edge has a fresh verdict from every
