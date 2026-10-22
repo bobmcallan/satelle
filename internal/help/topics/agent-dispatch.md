@@ -1148,15 +1148,16 @@ substrate, never in a harness's agent directory.
 
    Argv-first CLI example (payload on `-p` **and** still on stdin). Grok's
    single-turn flag is `-p`/`--single` — put **`{payload}`** there (not only on
-   stdin). Prefer `--output-format plain` so the model's decision JSON is on
-   stdout for gate parsing; `--output-format json` also works because satelle
-   unwraps Grok's `{ "text": "…" }` envelope the same way it unwraps Claude's
-   `{ "result": "…" }`. Use enough `--max-turns` for tool-using gates (1 is
-   often too low).
+   stdin). Prefer `--output-format json`: satelle unwraps Grok's
+   `{ "text": "…" }` envelope the same way it unwraps Claude's
+   `{ "result": "…" }`, and the envelope carries the run's `usage` and
+   `num_turns`, so its tokens and turns are recorded. `--output-format plain`
+   also parses, but records neither. Use enough `--max-turns` for tool-using
+   gates (1 is often too low).
 
    ```toml
    [architect]
-   command = "grok -p {payload} --system-prompt-override {system} --tools {tools} --always-approve --output-format plain --max-turns 8 --no-subagents"
+   command = "grok -p {payload} --system-prompt-override {system} --tools {tools} --always-approve --output-format json --max-turns 8 --no-subagents"
    tools   = "read_file,grep,list_dir,run_terminal_command"  # Grok-native tool ids
    # `read_file` IS a context channel (disk reads under ~/.satelle/<repo-key>/
    # stories/<id>/), so a Grok-native grant needs no Bash(satelle:*) to dispatch.

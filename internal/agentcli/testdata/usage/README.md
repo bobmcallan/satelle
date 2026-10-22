@@ -4,7 +4,7 @@ Provenance is stated per file — a fixture is only "captured" if it was.
 
 | file | provenance |
 |---|---|
-| `grok_json.json` | REAL, verbatim: `grok -p --output-format json` (grok 1.0.41, 2026-09-24). snake_case disjoint `usage`; `modelUsage` keyed `grok-4.5-build`. |
+| `grok_json.json` | REAL, verbatim: `grok -p --output-format json` (grok 1.0.41, 2026-09-24). snake_case disjoint `usage`; `num_turns`; `modelUsage` keyed `grok-4.5-build`. Captured with the bare `-p` form, not the reviewer preset's tool/turn flags; `--output-format json` is the form the shipped grok presets now use (sty_5ebcd6f9), pinned by `TestGrokPresets_MeasureTurnsAndTokensFromRealCapture`. |
 | `grok_streaming.jsonl` | REAL: `grok -p --output-format streaming-json`. The capture's 3 repeated `available_commands` lines were collapsed to one; the `text`, `usage` and `end` lines are verbatim. |
 | `grok_acp.jsonl` | REAL, verbatim: `grok agent stdio` — `response_completed` / `turn_completed` notifications and the `session/prompt` result with `_meta.usage` (camelCase; `inputTokens` includes `cachedReadTokens`). |
 | `claude_result.json` | Anthropic `--output-format json` envelope shape, as already asserted by the existing claude tests. |

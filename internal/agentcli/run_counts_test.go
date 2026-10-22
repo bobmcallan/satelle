@@ -63,7 +63,7 @@ func TestToolCalls_AvailabilityIsPerTransport(t *testing.T) {
 	}{
 		{"claude one-shot json", "command", DefaultClaudeCommand, false},
 		{"claude stream-json", "stream", DefaultClaudeStreamCommand, true},
-		{"grok plain (default reviewer)", "command", DefaultGrokReviewerCommand, false},
+		{"grok json (default reviewer)", "command", DefaultGrokReviewerCommand, false},
 		{"grok json", "command", "grok -p {payload} --output-format json", false},
 		{"grok streaming-json", "command", "grok -p {payload} --output-format streaming-json", true},
 		{"grok streaming fused flag", "command", "grok -p {payload} --output-format=streaming-json", true},

@@ -71,6 +71,21 @@ func envelopeWith(t *testing.T, name, key, text string) string {
 
 const acceptVerdict = `{"decision":"accept","notes":"ok"}`
 
+// grokOutputFor is what the grok CLI prints under command's --output-format: the
+// REAL json envelope (its text swapped for text) for json, the bare text for plain.
+// The shipped presets' form therefore decides what the tests below can measure.
+func grokOutputFor(t *testing.T, command, text string) string {
+	t.Helper()
+	switch {
+	case strings.Contains(command, "--output-format json"):
+		return envelopeWith(t, "grok_json.json", "text", text)
+	case strings.Contains(command, "--output-format plain"):
+		return text
+	}
+	t.Fatalf("command %q names no grok output form this test models", command)
+	return ""
+}
+
 func singleSeatGate(t *testing.T, r agentcli.Runner) (verb.GateDecision, error) {
 	t.Helper()
 	docs := fakeDocs{workflow: bundleEdgeWF("rev-a", ""), extraSkills: bundleSkillDocs("rev-a")}
@@ -108,19 +123,35 @@ func TestToolCallsZeroIsMeasuredOnlyWhereEventsAreReported(t *testing.T) {
 		t.Errorf("an event transport with no tool calls measured zero, got %v (%q)", dec.ToolCalls, dec.ToolCallsUnavailableReason)
 	}
 
-	oneShot := &countsRunner{command: agentcli.DefaultGrokReviewerCommand, tools: 5, out: acceptVerdict}
+	oneShot := &countsRunner{command: agentcli.DefaultGrokReviewerCommand, tools: 5, out: grokOutputFor(t, agentcli.DefaultGrokReviewerCommand, acceptVerdict)}
 	dec, err = singleSeatGate(t, oneShot)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if dec.ToolCalls != nil {
-		t.Errorf("a plain-output transport has no tool-call count, got %d", *dec.ToolCalls)
+		t.Errorf("a one-shot envelope transport has no tool-call count, got %d", *dec.ToolCalls)
 	}
 	if !strings.HasPrefix(dec.ToolCallsUnavailableReason, "grok command:") {
 		t.Errorf("tool-call reason = %q, want it to name the adapter", dec.ToolCallsUnavailableReason)
 	}
-	if dec.Turns != nil || !strings.HasPrefix(dec.TurnsUnavailableReason, "grok command:") {
-		t.Errorf("turns = %v (%q), want unavailable naming grok command", dec.Turns, dec.TurnsUnavailableReason)
+}
+
+// sty_5ebcd6f9: a grok seat run by the default reviewer command records its turns
+// and tokens on its row from the real json envelope, and its verdict still parses.
+func TestGrokReviewerDefaultCommandRowCarriesTurnsAndTokens(t *testing.T) {
+	cmd := agentcli.DefaultGrokReviewerCommand
+	dec, err := singleSeatGate(t, &countsRunner{command: cmd, out: grokOutputFor(t, cmd, acceptVerdict)})
+	if err != nil {
+		t.Fatalf("the verdict must still parse from the command's output form: %v", err)
+	}
+	if len(dec.Reviewers) == 0 || !dec.Reviewers[0].Accept {
+		t.Fatalf("reviewers = %+v, want an accept", dec.Reviewers)
+	}
+	if dec.Turns == nil || *dec.Turns != 1 || dec.TurnsUnavailableReason != "" {
+		t.Errorf("turns = %v (%q), want the envelope's num_turns 1", dec.Turns, dec.TurnsUnavailableReason)
+	}
+	if !dec.UsageAvailable || dec.TokensOut != 24 || dec.TokensIn != 6435+512 {
+		t.Errorf("usage = available %v in %d out %d, want the capture's tokens", dec.UsageAvailable, dec.TokensIn, dec.TokensOut)
 	}
 }
 
@@ -159,9 +190,12 @@ func gateFailureOf(t *testing.T, err error) *verb.GateFailure {
 }
 
 // AC2: the grok plain-output run that ends at the cap is a max-turns attempt —
-// with its own invocation stamp — and not a reject.
+// with its own invocation stamp — and not a reject. The command here is the plain
+// form on purpose: the cap text is a plain-output capture, and plain reports no
+// usage or turns.
 func TestMaxTurnsSingleSeatFromGrokCapOutput(t *testing.T) {
 	capText := string(usageFixtureBytes(t, "grok_max_turns.txt"))
+	const plainGrok = "grok -p {payload} --system-prompt-override {system} --output-format plain --max-turns 32"
 	for _, c := range []struct {
 		name string
 		err  error
@@ -170,7 +204,7 @@ func TestMaxTurnsSingleSeatFromGrokCapOutput(t *testing.T) {
 		{"exit zero, no verdict", nil},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			r := &countsRunner{command: agentcli.DefaultGrokReviewerCommand, out: capText, err: c.err}
+			r := &countsRunner{command: plainGrok, out: capText, err: c.err}
 			dec, err := singleSeatGate(t, r)
 			if err == nil {
 				t.Fatalf("a run cut short at the cap judged nothing; got %+v", dec)

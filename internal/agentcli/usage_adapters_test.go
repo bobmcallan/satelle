@@ -82,6 +82,57 @@ func TestUsageAdapter_GrokCommandJSON(t *testing.T) {
 	}
 }
 
+// grokRealCaptureFormat is the --output-format the REAL grok fixture
+// (grok_json.json, README provenance line) was captured with. The shipped grok
+// presets must use it, or the fixture proves nothing about what the shipped
+// command prints (sty_5ebcd6f9).
+const grokRealCaptureFormat = "json"
+
+// A grok seat run by the shipped default commands records its turns and tokens: the
+// output form they ask for is the one the REAL capture carries them in, and
+// UnwrapUsage reads them from that capture. Reverting a preset to `plain` fails.
+func TestGrokPresets_MeasureTurnsAndTokensFromRealCapture(t *testing.T) {
+	for name, command := range map[string]string{
+		"reviewer": DefaultGrokReviewerCommand,
+		"agent":    DefaultGrokCommand,
+	} {
+		t.Run(name, func(t *testing.T) {
+			formats := flagValues(strings.Fields(command)[1:], "--output-format")
+			if len(formats) != 1 || formats[0] != grokRealCaptureFormat {
+				t.Fatalf("--output-format = %v, want exactly [%s], the form the real capture carries usage and num_turns in", formats, grokRealCaptureFormat)
+			}
+			text, u := UnwrapUsage(usageFixture(t, "grok_json.json"))
+			if string(text) != "ok" {
+				t.Errorf("text = %q, want the envelope's text unwrapped for verdict parsing", text)
+			}
+			if !u.Available || u.InputTokens != 6435+512 || u.OutputTokens != 24 {
+				t.Errorf("tokens = %+v, want the capture's usage", u)
+			}
+			if !u.TurnsAvailable || u.Turns != 1 {
+				t.Errorf("turns = %d available=%v, want the capture's num_turns 1", u.Turns, u.TurnsAvailable)
+			}
+		})
+	}
+}
+
+// A run cut off at its turn cap can leave `text` empty while still reporting
+// usage and turns: they are kept, and stdout comes back verbatim so the caller
+// can see why it ended. The envelope is built here — NOT a capture (see the
+// README: no real turn-capped json run is recorded).
+func TestUnwrapUsage_GrokEmptyTextKeepsUsageAndTurns(t *testing.T) {
+	raw := []byte(`{"text":"","stopReason":"max_turns","usage":{"input_tokens":100,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":7,"total_tokens":107},"num_turns":4}`)
+	text, u := UnwrapUsage(raw)
+	if string(text) != string(raw) {
+		t.Errorf("an empty text returns stdout verbatim, got %q", text)
+	}
+	if !u.Available || u.InputTokens != 100 || u.OutputTokens != 7 {
+		t.Errorf("usage = %+v, want the envelope's tokens", u)
+	}
+	if !u.TurnsAvailable || u.Turns != 4 {
+		t.Errorf("turns = %d available=%v, want 4 true", u.Turns, u.TurnsAvailable)
+	}
+}
+
 // almostEqual compares dollar figures within float64 rounding noise.
 func almostEqual(a, b float64) bool {
 	d := a - b
