@@ -341,6 +341,56 @@ func TestAgentDispatchTopicDocumentsApplyChanges(t *testing.T) {
 	}
 }
 
+// TestAgentDispatchFindingsToAnswer (sty_d7e4f539 AC1): the topic teaches that a
+// re-presented performer is handed each gate seat's latest findings by satelle
+// itself (sty_f948d345) and answers each as adopted or rebutted.
+func TestAgentDispatchFindingsToAnswer(t *testing.T) {
+	top, ok := Get("agent-dispatch")
+	if !ok {
+		t.Fatal("agent-dispatch topic not found")
+	}
+	start := strings.Index(top.Body, "### Answering a re-presented edge's findings")
+	end := strings.Index(top.Body, "### Planner transport evidence")
+	if start < 0 || end < start {
+		t.Fatal("agent-dispatch topic lost its findings_to_answer section")
+	}
+	section := strings.Join(strings.Fields(top.Body[start:end]), " ")
+	for _, want := range []string{
+		"`findings_to_answer`",
+		"each gate seat's latest verdict",
+		"`answer` is `adopted` or `rebutted`",
+		"`finding_answers`",
+		"The newest directed messages are kept",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("findings_to_answer section missing %q", want)
+		}
+	}
+}
+
+// TestNoManualFindingsRelay (sty_d7e4f539 AC2): since sty_f948d345 (release
+// 0.0.720, commit 49cfc289) satelle delivers a re-presented edge's findings to the
+// performer itself, so no embedded topic may tell an orchestrator to relay them by
+// hand. The phrases are ones that only describe a manual relay; the automated
+// `story rework` relay and the drive's own forwarding do not use them.
+func TestNoManualFindingsRelay(t *testing.T) {
+	banned := []string{
+		"relay the reviewers' notes",
+		"relay each seat",
+		"relay them by hand",
+		"Round-N findings answered",
+		"receives reviewer findings only as messages",
+	}
+	for _, top := range List() {
+		body := strings.ToLower(strings.Join(strings.Fields(top.Body), " "))
+		for _, ban := range banned {
+			if strings.Contains(body, strings.ToLower(ban)) {
+				t.Errorf("help topic %q instructs a manual findings relay: %q", top.Name, ban)
+			}
+		}
+	}
+}
+
 func TestAgentDispatchTopicModelSelection(t *testing.T) {
 	top, ok := Get("agent-dispatch")
 	if !ok {
