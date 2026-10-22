@@ -31,9 +31,14 @@ type GateDecision struct {
 	ReviewedTruncated bool
 	// Criteria is the verdict's per-criterion entries (sty_99d3162b). Empty for a
 	// verdict that carries none, which is decided by its top-level decision.
-	Criteria  []CriterionVerdict
-	Skill     string            // the deciding reviewer skill
-	Reviewers []ReviewerVerdict // per-reviewer verdicts in run order (empty for the legacy single-reviewer path)
+	Criteria []CriterionVerdict
+	// CriteriaSent records that the reviewer sent a criteria[] at all, even when
+	// no entry survived normalising (an unparseable or unjudged number). It is
+	// in-process only: it keeps such a verdict deciding from its criteria rather
+	// than from its top-level decision.
+	CriteriaSent bool
+	Skill        string            // the deciding reviewer skill
+	Reviewers    []ReviewerVerdict // per-reviewer verdicts in run order (empty for the legacy single-reviewer path)
 	// Command/Context describe an isolated AGENT invocation (LLM reviewer): the
 	// resolved harness command and the injected-context source (skill/rubric file).
 	// Empty for a deterministic functional-check gate, which invokes no agent

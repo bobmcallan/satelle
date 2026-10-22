@@ -20,8 +20,9 @@ import (
 // carries and combines the entries.
 
 // criterionNo is a criterion number on the wire. A model may send 2, "2" or
-// "AC2"; anything else is -1, which parseCriteria drops, so a sloppy number
-// never costs the whole verdict.
+// "AC2"; anything else is -1, which parseCriteria drops. A dropped entry is a
+// criterion the reviewer did not judge: it never lets the top-level decision
+// stand in for the criteria (GateDecision.CriteriaSent, criteriaPrep.apply).
 type criterionNo int
 
 func (n *criterionNo) UnmarshalJSON(b []byte) error {
@@ -306,10 +307,16 @@ func peerFindingsFor(prior []PriorVerdict, skill, seat string) []peerFinding {
 // prior accept replaces whatever the seat returned for it (carried_from naming
 // the attempt), and the decision is then derived from the criteria
 // (verb.CriteriaAccept) — the top-level decision is recorded but does not decide.
-// A verdict with no criteria[] is untouched, so it is decided, stored and carried
-// exactly as it was before per-criterion verdicts existed.
+// A verdict with no criteria[] and nothing settled is untouched, so it is decided,
+// stored and carried exactly as it was before per-criterion verdicts existed.
+// When criteria are settled, the verdict records each one's carried accept even
+// if the seat sent no criteria[] (the carried accept does not depend on the seat's
+// output); and when no judged criterion is left open, the carried accepts decide —
+// the seat was shown nothing to judge, so its top-level reject can only be of a
+// settled criterion or a general objection it did not itemise.
 func (c criteriaPrep) apply(dec *verb.GateDecision) {
-	if dec == nil || len(dec.Criteria) == 0 {
+	sent := dec != nil && (len(dec.Criteria) > 0 || dec.CriteriaSent)
+	if dec == nil || (!sent && len(c.settled) == 0) {
 		return
 	}
 	top := dec.Accept
@@ -342,8 +349,26 @@ func (c criteriaPrep) apply(dec *verb.GateDecision) {
 			entries = append(entries, carried)
 		}
 	}
+	if len(entries) == 0 {
+		// criteria[] was sent but nothing in it names a judged criterion (an
+		// unparseable number, or one that was not judged). The verdict still decides
+		// from its criteria, so every judged criterion is recorded unchecked rather
+		// than the top-level decision standing for entries that never existed.
+		for _, j := range c.judged {
+			entries = append(entries, verb.CriterionVerdict{
+				Criterion: j.N, Status: verb.CriterionUnchecked, Text: j.Text,
+				Finding: "criteria[] carried no usable entry for this criterion",
+			})
+		}
+	}
 	sort.SliceStable(entries, func(a, b int) bool { return entries[a].Criterion < entries[b].Criterion })
 	dec.Criteria = entries
+	if !sent && len(c.settled) < len(c.judged) {
+		// No criteria[] and some criterion still open: the carried accepts are
+		// recorded, but nothing says what the seat judged of the open ones, so the
+		// top-level decision stands as it always did.
+		return
+	}
 	accept, failing := verb.CriteriaAccept(top, entries, c.numbers())
 	if len(c.judged) == 0 {
 		// Nothing numbered to judge: the top-level decision stands, and only a

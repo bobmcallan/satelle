@@ -44,6 +44,11 @@ func TestEmbeddedReviewerVerdictStatesCriteria(t *testing.T) {
 		"`peer_findings`",
 		"never your own",
 		"A verdict with no `criteria` is decided by its top-level `decision`",
+		// The exception: with every criterion settled the carried accepts decide, so
+		// a prose-only reject is dropped and a general objection must be criterion 0.
+		"when every criterion is `settled` the binary carries those accepts and decides from them",
+		"a prose-only reject is dropped",
+		"itemise any objection that belongs to no single criterion as criterion `0` in `criteria`",
 		"The whole-material judgment applies to a verdict without `criteria`",
 	} {
 		if !strings.Contains(body, want) {

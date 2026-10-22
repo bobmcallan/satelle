@@ -4793,6 +4793,7 @@ func parseDecision(out []byte) (verb.GateDecision, error) {
 				Reviewed:          reviewed,
 				ReviewedTruncated: truncated,
 				Criteria:          parseCriteria(rd.Criteria),
+				CriteriaSent:      len(rd.Criteria) > 0,
 			}
 			found = &d
 		}

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
@@ -384,6 +385,79 @@ func TestGateDecidesFromTheCriteria(t *testing.T) {
 	}
 }
 
+// A verdict that sent criteria[] decides from it even when no entry survives
+// normalising: every number unparseable ("AC-2", "AC2."), or none of them judged.
+// The top-level accept must never stand in for criteria that were not recorded.
+var unusableCriteria = []struct{ name, entries string }{
+	{"unparseable numbers", `[{"criterion":"AC-1","status":"accept"},{"criterion":"AC-2","status":"reject","finding":"x"},{"criterion":"AC3.","status":"accept"}]`},
+	{"out-of-range numbers", `[{"criterion":9,"status":"accept"}]`},
+	{"a number that is not a number", `[{"criterion":"two","status":"accept"},{"criterion":null,"status":"accept"}]`},
+}
+
+func TestGateRejectsAVerdictWhoseCriteriaCannotBeUsed(t *testing.T) {
+	for _, tc := range unusableCriteria {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCritFixture(t, critOpts{plan: critPlan(critLines...),
+				solo: `{"decision":"accept","notes":"NOTES","criteria":` + tc.entries + `}`})
+			dec, rv := f.gate(t)
+			if dec.Accept || rv.Accept {
+				t.Fatalf("a top-level accept with no usable criterion entry must not accept: %+v", rv)
+			}
+			if !strings.Contains(rv.Notes, "AC1, AC2, AC3") {
+				t.Errorf("notes %q should name every judged criterion", rv.Notes)
+			}
+			if len(rv.Criteria) != 3 {
+				t.Fatalf("criteria = %+v, want the three judged recorded", rv.Criteria)
+			}
+			for n := 1; n <= 3; n++ {
+				if e := entryOf(t, rv.Criteria, n); e.Status != verb.CriterionUnchecked || e.Text == "" {
+					t.Errorf("entry %d = %+v, want unchecked with its text", n, e)
+				}
+			}
+		})
+	}
+}
+
+func TestPanelSeatRejectsAVerdictWhoseCriteriaCannotBeUsed(t *testing.T) {
+	accAll := verdictJSON("accept", critEntry(1, "accept", ""), critEntry(2, "accept", ""), critEntry(3, "accept", ""))
+	for _, tc := range unusableCriteria {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCritFixture(t, critOpts{panel: true, plan: critPlan(critLines...),
+				s1: `{"decision":"accept","notes":"NOTES","criteria":` + tc.entries + `}`, s2: accAll})
+			dec, rv := f.gate(t)
+			s1, s2 := seatOf(t, rv, "s1"), seatOf(t, rv, "s2")
+			if s1.Accept || !s2.Accept {
+				t.Errorf("s1.Accept = %v, s2.Accept = %v, want only s2 to accept", s1.Accept, s2.Accept)
+			}
+			if dec.Accept {
+				t.Errorf("a seat with no usable criterion entry must block the panel: %+v", rv)
+			}
+			if len(s1.Criteria) != 3 || entryOf(t, s1.Criteria, 1).Status != verb.CriterionUnchecked {
+				t.Errorf("the seat record keeps its unchecked criteria: %+v", s1.Criteria)
+			}
+		})
+	}
+}
+
+// The bundle path applies the same rule to each verdict of the bundle.
+func TestBundleVerdictWhoseCriteriaCannotBeUsedDoesNotAccept(t *testing.T) {
+	for _, tc := range unusableCriteria {
+		t.Run(tc.name, func(t *testing.T) {
+			out := `{"verdicts":[{"skill":"rev-a","decision":"accept","criteria":` + tc.entries + `}]}`
+			decs, err := parseBundleDecisions([]byte(out), []string{"rev-a"})
+			if err != nil || len(decs) != 1 {
+				t.Fatalf("parse: %v %+v", err, decs)
+			}
+			d := decs[0]
+			c := criteriaPrep{judged: agentartifact.NumberedCriteria(strings.Join(critLines, "\n"))}
+			c.apply(&d)
+			if d.Accept || len(d.Criteria) != 3 {
+				t.Errorf("accept = %v, criteria = %+v", d.Accept, d.Criteria)
+			}
+		})
+	}
+}
+
 func TestGateRecordsAndStampsTheJudgedCriteria(t *testing.T) {
 	// The model sends a text and an entry for a criterion that is not judged; the
 	// binary keeps neither: it stamps the text from the plan section it judged.
@@ -578,6 +652,43 @@ func TestRePresentationCarriesSettledCriteria(t *testing.T) {
 		dec, rv := f.gate(t)
 		if !dec.Accept || len(rv.Criteria) != 3 {
 			t.Errorf("AC1 and AC3 are carried: %+v", rv)
+		}
+	})
+
+	t.Run("a seat that sends no criteria[] has its settled criteria carried", func(t *testing.T) {
+		const reject = `{"decision":"reject","notes":"AC1 is wrong"}`
+		// Nothing open: the carried accepts decide, so the top-level reject of a
+		// settled criterion does not hold the gate.
+		f := newCritFixture(t, critOpts{carry: true, plan: critPlan(critLines...), prior: []PriorVerdict{settledPrior()}, solo: reject})
+		dec, rv := f.gate(t)
+		if !dec.Accept || !rv.Accept || len(rv.Criteria) != 3 {
+			t.Fatalf("every criterion is settled, so the gate accepts: %+v", rv)
+		}
+		for n := 1; n <= 3; n++ {
+			if e := entryOf(t, rv.Criteria, n); e.Status != verb.CriterionAccepted || e.CarriedFrom != 1 {
+				t.Errorf("AC%d is the carried prior accept: %+v", n, e)
+			}
+		}
+		// One criterion open: its carried siblings are recorded, but the seat said
+		// nothing about the open one, so the top-level decision stands.
+		f = newCritFixture(t, critOpts{carry: true, plan: editedPlan(), prior: []PriorVerdict{settledPrior()}, solo: reject})
+		dec, rv = f.gate(t)
+		if dec.Accept || rv.Accept {
+			t.Errorf("an itemless reject with an open criterion still blocks: %+v", rv)
+		}
+		if len(rv.Criteria) != 2 || entryOf(t, rv.Criteria, 1).CarriedFrom != 1 || entryOf(t, rv.Criteria, 3).CarriedFrom != 1 {
+			t.Errorf("AC1 and AC3 are recorded as carried: %+v", rv.Criteria)
+		}
+		f = newCritFixture(t, critOpts{carry: true, plan: editedPlan(), prior: []PriorVerdict{settledPrior()}, solo: `{"decision":"accept"}`})
+		if dec, _ = f.gate(t); !dec.Accept {
+			t.Error("a verdict with no criteria[] and a top-level accept is decided as before")
+		}
+		// The same for a panel seat.
+		f = newCritFixture(t, critOpts{panel: true, carry: true, plan: critPlan(critLines...), prior: []PriorVerdict{settledPrior()},
+			s1: reject, s2: reject})
+		dec, rv = f.gate(t)
+		if s1 := seatOf(t, rv, "s1"); !s1.Accept || len(s1.Criteria) != 3 || entryOf(t, s1.Criteria, 2).CarriedFrom != 1 {
+			t.Errorf("the seat record carries its settled criteria and accepts: %+v", s1)
 		}
 	})
 

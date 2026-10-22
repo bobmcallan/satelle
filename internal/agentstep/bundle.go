@@ -89,6 +89,7 @@ func parseBundleDecisions(out []byte, skills []string) ([]verb.GateDecision, err
 				Reviewed:          reviewed,
 				ReviewedTruncated: truncated,
 				Criteria:          parseCriteria(e.Criteria),
+				CriteriaSent:      len(e.Criteria) > 0,
 			}
 		}
 	}
