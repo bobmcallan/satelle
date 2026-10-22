@@ -134,6 +134,10 @@ type Engine struct {
 	// resolver itself must never error — map missing baseline / git failure to
 	// a no-baseline marker so the transition cannot fail on enumeration.
 	itemDiff func(ctx context.Context, itemID string) *DiffState
+	// citationTree resolves the working tree a gate judges, which fillCitations
+	// reads the cited lines from. Nil-safe: an unwired resolver leaves every
+	// citation unresolved with the reason.
+	citationTree func(ctx context.Context, itemID string) (string, error)
 	// itemMessages resolves directed agent messages for a gate/executor payload
 	// (sty_2db624d0). Nil-safe: an unwired resolver injects nothing. The
 	// resolver itself must never error — skip unreadable rows.
@@ -726,6 +730,14 @@ func (g *Engine) SetDiffResolver(fn func(ctx context.Context, itemID string) *Di
 	g.itemDiff = fn
 }
 
+// SetCitationTreeResolver wires the resolver for the working tree a gate judges,
+// which a plan review's file:line citations are read from. Unlike the diff it
+// needs no engagement baseline. Nil-safe: unwired, every citation is listed as
+// unresolved with the reason.
+func (g *Engine) SetCitationTreeResolver(fn func(ctx context.Context, itemID string) (string, error)) {
+	g.citationTree = fn
+}
+
 // SetMessagesResolver wires the resolver that lists directed agent messages
 // for a dispatch payload (sty_2db624d0). addresses is the engine-built set
 // (binding name + protocol role + implicit *); the resolver matches `to` in
@@ -1014,6 +1026,11 @@ type transitionPayload struct {
 	// when none, so every other gate's payload is unchanged. Enumeration, not
 	// verdict.
 	Deferred []DeferredItem `json:"deferred,omitempty"`
+	// Citations carries the file:line citations of a document the gate's rubric
+	// names (frontmatter payload_citations), resolved to the lines they name in
+	// the judged tree. Absent for every gate whose rubric does not opt in, so
+	// its payload is unchanged. Enumeration, not verdict.
+	Citations *CitationsState `json:"citations,omitempty"`
 	// CriteriaSource names where the criteria this gate judges come from — the
 	// performing step's document section ("doc:plan#Acceptance criteria") or
 	// "story" — so a reviewer numbers its criteria[] entries by the right lines

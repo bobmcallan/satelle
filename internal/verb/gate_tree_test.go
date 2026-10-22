@@ -1,6 +1,9 @@
 package verb_test
 
 import (
+	"context"
+	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -65,6 +68,52 @@ func TestStoryDiffGateTreeOverride(t *testing.T) {
 		d, _ := f.diff(t, map[string]any{"include_substrate": true})
 		if !has(d.Files, mainSkill) {
 			t.Errorf("main-tree story must list its substrate: %v", d.Files)
+		}
+	})
+}
+
+// StoryGateTree names the tree a plan review's citations are read from. The
+// readiness edge runs before any engagement baseline exists, so it must resolve
+// without one.
+func TestStoryGateTreeWithoutBaseline(t *testing.T) {
+	canon := func(p string) string {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return r
+		}
+		return p
+	}
+
+	t.Run("a story never engaged resolves to the invoking toplevel", func(t *testing.T) {
+		f := newSubstrateFixture(t, true, wireProbeCfg)
+		var fresh struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(call(t, "story-create", map[string]any{
+			"title": "never engaged", "body": "g", "acceptance_criteria": "1. ok",
+			"category": "feature", "tags": []string{"workflow:cr-wf"},
+		}), &fresh); err != nil || fresh.ID == "" {
+			t.Fatalf("story-create: %v %+v", err, fresh)
+		}
+		chdir(t, f.main)
+		got, err := verb.StoryGateTree(context.Background(), fresh.ID)
+		if err != nil {
+			t.Fatalf("a story with no engagement baseline must still resolve: %v", err)
+		}
+		if canon(got) != canon(f.main) {
+			t.Errorf("tree = %q, want the invoking toplevel %q", got, f.main)
+		}
+	})
+
+	t.Run("an engaged story under its gate context resolves to its own worktree", func(t *testing.T) {
+		f := newSubstrateFixture(t, true, wireProbeCfg)
+		chdir(t, f.main)
+		if got, err := verb.StoryGateTree(context.Background(), f.story.ID); err != nil || canon(got) != canon(f.main) {
+			t.Errorf("without gate context the invoking tree stands: %q, %v", got, err)
+		}
+		t.Setenv(verb.GateStoryEnv, f.story.ID)
+		got, err := verb.StoryGateTree(context.Background(), f.story.ID)
+		if err != nil || canon(got) != canon(f.wt) {
+			t.Errorf("tree = %q, %v; want the story's worktree %q", got, err, f.wt)
 		}
 	})
 }

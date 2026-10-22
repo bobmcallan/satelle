@@ -4,6 +4,7 @@ scope: system
 type: skill
 tags: [type:skill, type:reviewer]
 description: Plan gate — on plan → in_progress, or backlog → plan when the readiness step proposes its plan before its gates. Read-only reviewer validates the ATTACHED plan against the story's numbered ACs, never inventing a competing plan. Raises every blocking finding in the first pass; a re-presented edge follows [[satelle-reviewer-verdict]].
+payload_citations: plan
 ---
 
 # Story plan review (plan gate)
@@ -22,6 +23,10 @@ You get `{story, from, to}` on stdin. You do not edit or implement.
 Plan is the `docs` entry named `plan` (`name`, `type`, `path`). The file at `path` is the plan body. Prefer that — it is how a Bash-less reviewer
 reads what it judges. When `truncated: true`, or for a fuller
 pull when shell is granted: `satelle story doc <sty_id> plan`.
+
+The payload's `citations` block holds each `path:line` the plan cites, already
+read from the tree you judge (the lines plus three either side, or why one no
+longer resolves). Start from those excerpts; open files only to check beyond them.
 
 Do **not** look under in-repo `.satelle/stories/` (obsolete post-relocation).
 

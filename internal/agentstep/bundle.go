@@ -380,6 +380,7 @@ func (g *Engine) runReviewerBundle(ctx context.Context, item workitem.Item, toSt
 	tp.Deferred = mergeDeferred(preps)
 	mat := preps[0].material
 	mat.Deferred = append([]DeferredItem(nil), tp.Deferred...)
+	tp.Citations, mat.Citations = bundleCitations(preps)
 	res := g.Invoke(ctx, InvokeRequest{
 		Binding:     seat.binding,
 		Section:     seat.section,

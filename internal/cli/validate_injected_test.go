@@ -2,13 +2,16 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 )
@@ -168,6 +171,41 @@ func TestInjectedDispatchedSeatsAreAdapterLabelled(t *testing.T) {
 	broken := rowFor(t, injectedRows(context.Background(), env), "reviewer")
 	if !strings.Contains(broken.Unavailable, "agents.toml does not load") {
 		t.Errorf("a broken agents.toml must name the cause, got %+v", broken)
+	}
+}
+
+// sty_d0c9245a AC3: a seat whose rubric opts into plan citations is reported at
+// the system prompt plus the citation ceiling; the fitted prompt itself, and every
+// seat that does not declare the key, are unchanged.
+func TestInjectedReportCountsCitationsForDeclaringSeat(t *testing.T) {
+	ctx := context.Background()
+	base := injectedFixture(t, injectedAgentsTOML)
+	before := injectedRows(ctx, base)
+
+	declaring := base
+	docs := append([]docindex.Doc(nil), base.Docs.(memDocs).docs...)
+	const key = "payload_citations: plan\n"
+	for i, d := range docs {
+		if d.Name == "satelle-story-intent-review" {
+			docs[i].Body = strings.Replace(d.Body, "tags:", key+"tags:", 1)
+		}
+	}
+	declaring.Docs = memDocs{docs: docs}
+	after := injectedRows(ctx, declaring)
+
+	b, a := rowFor(t, before, "reviewer[claude/"), rowFor(t, after, "reviewer[claude/")
+	// The key line itself is part of the rubric, so it is in the prompt too.
+	if want := b.Bytes + len(key) + agentstep.CitationsPayloadCeiling; a.Bytes != want {
+		t.Errorf("declaring seat = %d bytes, want %d (prompt %d + key line + the %d citation ceiling)", a.Bytes, want, b.Bytes, agentstep.CitationsPayloadCeiling)
+	}
+	if !strings.Contains(a.Note, fmt.Sprintf("includes up to %d bytes of plan citations", agentstep.CitationsPayloadCeiling)) {
+		t.Errorf("declaring seat must say what the figure includes: %q", a.Note)
+	}
+	if !reflect.DeepEqual(a.Rungs, b.Rungs) {
+		t.Errorf("the citation block must not enter the prompt fit: rungs %v vs %v", a.Rungs, b.Rungs)
+	}
+	if got, was := rowFor(t, after, "reviewer-summary[grok/"), rowFor(t, before, "reviewer-summary[grok/"); got.Bytes != was.Bytes || strings.Contains(got.Note, "citations") {
+		t.Errorf("a seat whose skills do not declare the key is unchanged: %+v vs %+v", got, was)
 	}
 }
 

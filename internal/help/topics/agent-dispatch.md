@@ -420,6 +420,21 @@ bullet, indentation or prose is named in the refusal by its line within the
 section, so a malformed section fails before any reviewer runs. A body without
 the section is not refused by this check.
 
+A reviewer skill may also declare `payload_citations: <doc type>` (for example
+`plan`). Its gate payload then carries a `citations` block (a `citations.json`
+material file): every `path:line` or `path:start-end` in the attached documents of
+that type, resolved to the lines it names — the lines plus three of context either
+side, each numbered — read from the working tree the gate judges at the time of the
+review, which needs no engagement baseline. A citation whose file or line is gone
+is listed as `unresolved` with the reason (`file not found`, `line N beyond end of
+file (K lines)`, `outside the judged tree`, `invalid span`, `judged tree
+unavailable: …`), never dropped. The block is bounded (a span is cut at 40 lines,
+at most 60 excerpts and 24 KiB in total); a citation past a bound stays listed as
+`omitted` and the block says `truncated`. Every other gate's payload is unchanged,
+and `satelle validate`'s injected-context report adds the 24 KiB ceiling to a seat
+whose skill declares the key. A reviewer may still open any file to check beyond
+the excerpts.
+
 Satelle decodes command and ACP results through the same seam, validates the
 declared fields and optional acceptance-criterion coverage, and attaches the
 typed document before committing the workflow transition. A decode, validation,
