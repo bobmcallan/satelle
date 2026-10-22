@@ -1,3 +1,9 @@
+## [0.0.728] - 2026-10-22
+
+### Fixed
+- A read-only git command into a linked worktree (`git -C <worktree> diff|status|log|show|rev-parse|rev-list|ls-files`) is no longer refused as a mutation of that tree. Before this fix, inspecting a worktree was blocked whenever a coder seat was live. A `--output` flag or any other subcommand still counts as a mutation, and the substrate lock still refuses even a read of locked substrate.
+- A shell mutation from a session holding seats in several worktrees is attributed to the seat of the tree it lands in, and a refusal names that seat. Before this fix it was attributed to whichever seat came first. (sty_56d50bf6)
+
 ## [0.0.727] - 2026-10-22
 
 ### Added
