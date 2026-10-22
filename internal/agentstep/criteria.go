@@ -232,7 +232,7 @@ func latestOf(prior []PriorVerdict, skill string) (PriorVerdict, bool) {
 // criteria are settled and which are open, and returns the payload's state. A
 // criterion is settled only on a reviewer_carry edge, and only when the latest
 // prior verdict accepted it, recorded the same criterion text, and left a
-// quotation that is still verbatim in the material judged now. Everything else —
+// quotation that is still in the material judged now, by words (layout aside). Everything else —
 // and criterion 0 — is open. The state is omitted when the edge neither carries
 // nor has a prior verdict with criteria, so an ordinary gate's payload is
 // unchanged.
@@ -255,7 +255,7 @@ func (c *criteriaPrep) setState(item workitem.Item, docs []DocState, prior []Pri
 			if e.Status == verb.CriterionAccepted {
 				rests.Decision = "accept"
 			}
-			if c.carry && e.Text == j.Text && quotationCarries(rests, material) {
+			if c.carry && e.Text == j.Text && quotationRests(rests, material, true) {
 				st.State = criterionSettled
 				if c.settled == nil {
 					c.settled = map[int]verb.CriterionVerdict{}

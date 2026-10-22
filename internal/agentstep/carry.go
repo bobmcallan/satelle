@@ -80,15 +80,38 @@ func judgedText(item workitem.Item, docs []DocState) string {
 	return b.String()
 }
 
+// collapseSpace folds every run of whitespace (spaces, tabs, newlines) to one
+// space. A model quoting a passage routinely re-flows its line breaks, so a
+// quotation of a criterion is matched against the material by words, never by
+// layout. Only the match is normalised: the recorded quotation and the judged
+// text stay exact.
+func collapseSpace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 // quotationCarries is the one rule for whether a prior verdict's accept can be
-// carried: an accept with a complete, non-stale quotation that appears verbatim
-// in the material judged now. A reviewer's latest verdict and a panel seat's
+// carried: an accept with a complete, non-stale quotation that appears in the
+// material judged now. A reviewer's latest verdict and a panel seat's
 // latest verdict (seatPriorVerdicts) are both held to it; an unavailable seat is
 // projected to a reject, so it never carries. A partial verdict covered only part
 // of the artifact, so it never carries as acceptance of the rest (sty_93359e0f).
+// A verdict that recorded no per-criterion entries is matched exactly, as it
+// always was; one that recorded criteria is matched by words, ignoring layout.
 func quotationCarries(pv PriorVerdict, judged string) bool {
-	return pv.Decision == "accept" && !pv.Partial && !pv.ReviewedStale && !pv.ReviewedTruncated &&
-		strings.TrimSpace(pv.Reviewed) != "" && strings.Contains(judged, pv.Reviewed)
+	return quotationRests(pv, judged, len(pv.Criteria) > 0)
+}
+
+// quotationRests is quotationCarries with the match chosen: loose compares the
+// quotation and the material by words (see collapseSpace), else exactly. The
+// per-criterion settled check is always loose.
+func quotationRests(pv PriorVerdict, judged string, loose bool) bool {
+	if pv.Decision != "accept" || pv.Partial || pv.ReviewedStale || pv.ReviewedTruncated || strings.TrimSpace(pv.Reviewed) == "" {
+		return false
+	}
+	if loose {
+		return strings.Contains(collapseSpace(judged), collapseSpace(pv.Reviewed))
+	}
+	return strings.Contains(judged, pv.Reviewed)
 }
 
 // carryRound is the one sequence of a carried round, over units that are
