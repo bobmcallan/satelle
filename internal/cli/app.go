@@ -278,6 +278,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// receive the live slice in the transition payload. Enumeration
 			// only; a missing baseline is a marker, never a refused gate.
 			rev.SetDiffResolver(diffResolver())
+			// Plan-citation excerpts: the tree a gate judges, resolved without
+			// requiring the engagement baseline the readiness edge lacks.
+			rev.SetCitationTreeResolver(verb.StoryGateTree)
 			// Ranked diff compressor (sty_918e2086): noise-strip then ranked hunk
 			// selection are the gate payload's PRIMARY patch reducer; the backstop
 			// offloader keeps the diffPayloadCeiling ceiling's overflow recoverable

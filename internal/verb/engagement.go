@@ -387,6 +387,40 @@ func liveStoryDiff(ctx context.Context, it workitem.Item, wantPatch, includeSubs
 	}, nil
 }
 
+// engagementTreeDir is the working tree a gate judges: the invoking directory's
+// git toplevel, replaced by the story's own anchor under GateStoryEnv
+// (gateTreeOverride). baselineTree may be empty — the anchor then comes from the
+// lease alone, or the invoking tree stands.
+func engagementTreeDir(ctx context.Context, storyID, baselineTree string) string {
+	dir, err := os.Getwd()
+	if err != nil {
+		dir = "."
+	}
+	if top := gitToplevel(dir); top != "" {
+		dir = top
+	}
+	if anchor := gateTreeOverride(ctx, storyID, baselineTree, dir); anchor != "" {
+		dir = anchor
+	}
+	return dir
+}
+
+// StoryGateTree is the working tree a gate judges the story in, resolved the way
+// resolveEngagementSlice resolves it but without requiring an engagement
+// baseline: the readiness edge runs before one exists. A recorded baseline's
+// worktree is the anchor fallback; without one the invoking tree (or the lease
+// anchor under GateStoryEnv) stands.
+func StoryGateTree(ctx context.Context, storyID string) (string, error) {
+	baselineTree := ""
+	if base, _, _, err := firstEngagementBaseline(ctx, storyID); err == nil {
+		baselineTree = base.Worktree
+	}
+	if _, err := os.Getwd(); err != nil {
+		return "", fmt.Errorf("judged tree: %w", err)
+	}
+	return engagementTreeDir(ctx, storyID, baselineTree), nil
+}
+
 // engagementSlice is the live git enumeration since a story's engagement
 // (or resume re-anchor). Owned by resolveEngagementSlice so story-diff and
 // story-proof cannot drift on WHEN / WHICH TREE (sty_76796b8e).
@@ -416,16 +450,7 @@ func resolveEngagementSlice(ctx context.Context, it workitem.Item, wantPatch boo
 	if sha, at, ok := latestResumeReanchor(ctx, it.ID); ok {
 		sinceSHA, baseAt = sha, at
 	}
-	dir, err := os.Getwd()
-	if err != nil {
-		dir = "."
-	}
-	if top := gitToplevel(dir); top != "" {
-		dir = top
-	}
-	if anchor := gateTreeOverride(ctx, it.ID, base.Worktree, dir); anchor != "" {
-		dir = anchor
-	}
+	dir := engagementTreeDir(ctx, it.ID, base.Worktree)
 	if aerr := refuseForeignTreeDiff(ctx, it.ID, base.Worktree, dir); aerr != nil {
 		return engagementSlice{}, fmt.Errorf("%w: %v", errForeignTree, aerr)
 	}

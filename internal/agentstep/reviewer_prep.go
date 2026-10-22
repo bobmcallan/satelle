@@ -51,6 +51,7 @@ type reviewerMaterial struct {
 	PriorVerdicts   []PriorVerdict
 	DefinitionEdits []DefinitionEdit
 	Deferred        []DeferredItem
+	Citations       *CitationsState
 	// LedgerJSON is the store listing when List succeeded, including an empty
 	// array. LedgerErr is the unavailable reason ("ledger: …") when it did not.
 	LedgerJSON []byte
@@ -108,6 +109,9 @@ func (g *Engine) prepareReviewer(ctx context.Context, item workitem.Item, toStat
 	// without a shell need the slice; executors have one. fillDiff never
 	// errors — a missing baseline is a marker, not a refused transition.
 	g.fillDiff(ctx, item.ID, &tp, mat)
+	// A rubric that opts in (payload_citations) gets the plan's file:line
+	// citations resolved to the lines they name; every other gate goes without.
+	g.fillCitations(ctx, item.ID, body, &tp, mat)
 	gateAddrs := []string{"reviewer"}
 	if strings.TrimSpace(gateAgent) != "" && gateAgent != "reviewer" {
 		gateAddrs = append(gateAddrs, gateAgent)
@@ -255,6 +259,7 @@ type referencedPayload struct {
 	PriorVerdicts   *pathRef             `json:"prior_verdicts,omitempty"`
 	DefinitionEdits *pathRef             `json:"definition_edits,omitempty"`
 	Deferred        *pathRef             `json:"deferred,omitempty"`
+	Citations       *pathRef             `json:"citations,omitempty"`
 	Amendment       *AmendmentState      `json:"amendment,omitempty"`
 	Diff            *referencedDiff      `json:"diff,omitempty"`
 	Messages        *pathRef             `json:"messages,omitempty"`
@@ -373,6 +378,13 @@ func writeReviewerMaterial(scratch string, mat *reviewerMaterial, tp transitionP
 			return referencedPayload{}, err
 		}
 		ref.Deferred = &pathRef{Path: abs}
+	}
+	if mat.Citations != nil {
+		abs, err := writeMaterialJSON(dir, "citations.json", mat.Citations)
+		if err != nil {
+			return referencedPayload{}, err
+		}
+		ref.Citations = &pathRef{Path: abs}
 	}
 	if len(mat.LedgerJSON) > 0 && mat.LedgerErr == "" {
 		path := filepath.Join(dir, "ledger.json")

@@ -315,9 +315,26 @@ func dispatchedRows(ctx context.Context, env injectedEnv) []injectedRow {
 		default:
 			row.Note = "no LLM skill on this seat's route"
 		}
+		// The plan citations ride the payload, not the system prompt: they add to
+		// what the seat is sent but not to the fitted prompt above.
+		if seat.judges && seatDeclaresCitations(ctx, env.Docs, seat.skills) {
+			row.Bytes += agentstep.CitationsPayloadCeiling
+			row.Note += fmt.Sprintf("; includes up to %d bytes of plan citations", agentstep.CitationsPayloadCeiling)
+		}
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+// seatDeclaresCitations reports whether any of the seat's skills opts into plan
+// citation excerpts (payload_citations).
+func seatDeclaresCitations(ctx context.Context, docs agentstep.DocGetter, names []string) bool {
+	for _, n := range names {
+		if d, err := docs.Get(ctx, "skills", n); err == nil && agentstep.DeclaresPayloadCitations(d.Body) {
+			return true
+		}
+	}
+	return false
 }
 
 // bindingFor resolves an agents.toml section the way dispatch does: the

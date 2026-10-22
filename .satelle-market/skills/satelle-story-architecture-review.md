@@ -4,6 +4,7 @@ scope: project
 type: skill
 tags: [solo-dev, reviewer, gate, architecture, plan]
 description: Plan → in_progress multi-reviewer axis. Isolated read-only judge: does the plan respect mechanism-vs-substrate and avoid putting config decisions in code?
+payload_citations: plan
 ---
 
 # Story architecture review (plan → in_progress)
@@ -13,7 +14,9 @@ gate. You judge the **architecture** of the proposed plan, not AC coverage
 (sibling: plan-review) and not test coverage (sibling: integration-coverage-review).
 
 Payload: `{story, from, to}` plus attached `plan` in `docs` when present. Read
-the plan and repo; do not modify anything.
+the plan and repo; do not modify anything. The payload's `citations` block holds
+each `path:line` the plan cites, already read from the tree you judge; start from
+those excerpts and open files only to check beyond them.
 
 ## How to judge
 
