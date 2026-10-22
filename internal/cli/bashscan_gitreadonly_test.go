@@ -112,14 +112,20 @@ func TestMultiSeatBashMutationDenyNamesTargetWorktreeSeat(t *testing.T) {
 	}
 }
 
-// AC3 (in-process): with two live seats, a read-only git -C into the other
-// worktree runs without a deny although that worktree's seat is not editable.
+// AC3 (in-process): with two live seats, both at a step the route allocates to a
+// non-executor agent (plan, planner), a read-only git -C into the other worktree
+// runs without a deny. This is the observed failure: before the fix the -C operand
+// was a mutation target, so the command was judged by a seat that may not edit and
+// denied; the same command spelled `git -C <wt> commit` still is, as the control.
 func TestMultiSeatGitReadOnlyIntoWorktreeNotDenied(t *testing.T) {
 	for _, hook := range []string{"gate", "commitgate"} {
 		bothOrders(t, func(t *testing.T, aFirst bool) {
-			f := twoSeatsInLinkedWorktrees(t, "in_progress", "plan", aFirst)
+			f := twoSeatsInLinkedWorktrees(t, "plan", "plan", aFirst)
 			if out, err := runRootIn(t, multiSeatBash("git -C "+f.wtB+" diff main --stat"), "hook", hook); err != nil {
 				t.Fatalf("%s: a read-only git -C into a sibling worktree must not be denied: %v\n%s", hook, err, out)
+			}
+			if out, err := runRootIn(t, multiSeatBash("git -C "+f.wtB+" commit -m x"), "hook", hook); err == nil {
+				t.Fatalf("%s: control — a writing git -C into the same worktree must still be refused:\n%s", hook, out)
 			}
 		})
 	}
