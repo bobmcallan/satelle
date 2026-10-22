@@ -2121,7 +2121,13 @@ func dispatchPayload(from, to string, res DispatchResult, attempt string) json.R
 		// gate payload reads them back as a fact.
 		FindingsOffered []string               `json:"findings_offered,omitempty"`
 		FindingAnswers  []agentartifact.Answer `json:"finding_answers,omitempty"`
+		// Skills is the manifest of the step skills delivered to the performer —
+		// name and content hash, or undelivered with the reason (sty_23ceeca2).
+		Skills []SkillDelivery `json:"skills,omitempty"`
+		// SkillEvidence is the skill-evidence check's answer for the run.
+		SkillEvidence *EvidenceReport `json:"skill_evidence,omitempty"`
 	}{From: from, To: to, Attempt: attempt, Agent: res.Agent, Skill: res.Skill, Command: res.Command, Model: res.Model,
+		Skills: res.Skills, SkillEvidence: res.Evidence,
 		ModelResolved: res.ModelResolved, ModelSource: res.ModelSource, Models: res.Models,
 		TokensIn: res.TokensIn, TokensOut: res.TokensOut, TokensTotal: res.TokensTotal, DurationMs: res.DurationMs,
 		UsageAvailable: res.UsageAvailable,
@@ -2197,14 +2203,17 @@ func OutputTail(out string, env map[string]string) string {
 // the tail of whatever it printed before failing (already scrubbed, see
 // DispatchResult.LastMessage). It is separate from attemptPayload, the
 // transition rows' payload, which never carries output.
-func performerFailurePayload(from, to, skill, attempt, output string) json.RawMessage {
+func performerFailurePayload(from, to, skill, attempt, output string, skills []SkillDelivery) json.RawMessage {
 	p := struct {
 		From        string `json:"from"`
 		To          string `json:"to"`
 		Skill       string `json:"skill,omitempty"`
 		Attempt     string `json:"attempt,omitempty"`
 		LastMessage string `json:"last_message"`
-	}{From: from, To: to, Skill: skill, Attempt: attempt, LastMessage: LastMessage(output)}
+		// Skills is the delivery manifest, recorded even when the run failed — a
+		// refusal for an undelivered skill leaves exactly this fact (sty_23ceeca2).
+		Skills []SkillDelivery `json:"skills,omitempty"`
+	}{From: from, To: to, Skill: skill, Attempt: attempt, LastMessage: LastMessage(output), Skills: skills}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil

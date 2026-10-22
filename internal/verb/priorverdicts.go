@@ -63,7 +63,7 @@ const maxEvidenceSince = 20
 func isSelfLedgerKind(kind string) bool {
 	switch kind {
 	case ledger.KindAgentInvocation, ledger.KindStepCost, ledger.KindDriverUsage,
-		ledger.KindSessionModel, ledger.KindToolPermission, ledger.KindSessionAdvisory,
+		ledger.KindSessionModel, ledger.KindToolPermission, ledger.KindToolTrace, ledger.KindSkillDelivery, ledger.KindSessionAdvisory,
 		ledger.KindBudgetOverrun, ledger.KindGateSkipped, ledger.KindCommandRule,
 		ledger.KindReviewAccept, ledger.KindReviewReject,
 		ledger.KindTrunkCheck, ledger.KindEngagementBaseline:

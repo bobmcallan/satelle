@@ -157,8 +157,25 @@ and '.sat'+'elle'.
 Fails closed: a store or listing error, unresolvable workflow, or
 workflow declaring no route blocks the edit.`,
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (rerr error) {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
+			// One git identity lookup and one store for the whole call (as
+			// commitgate holds them, sty_a74551d6 AC5): the seat read and the
+			// in-loop run trace below share them. The store opens lazily, so a call
+			// that resolves no seat never opens it.
+			defer config.MemoGitIdentity()()
+			gs := &gateStore{load: true}
+			defer gs.close()
+			// The in-loop run trace (sty_23ceeca2): a call this gate let through is
+			// recorded on the engaged story, while its step declares evidence a
+			// trace could show; a denied one never ran. The seat is the one the
+			// call resolved below, not a second resolution.
+			var seat traceSeat
+			defer func() {
+				if rerr == nil {
+					recordToolTrace(gs, raw, seat)
+				}
+			}()
 			// currentSeatTouch is resolved once so deny reasons can name a non-live
 			// holder without a second store open (sty_1738f973 AC6). A live
 			// owner-held seat is also heartbeated (sty_3bb1d8be). resolveSeats
@@ -167,7 +184,7 @@ workflow declaring no route blocks the edit.`,
 			sid := bindSessionID(raw)
 			resumeWakeFor(raw).activity() // a tool call: the session is mid-turn
 			p := filePathFromEvent(raw)
-			command := bashCommandFromEvent(raw)
+			command := agentcli.CommandFromHookEvent(raw)
 			// A harness whose hook file cannot filter by tool name sends this verb
 			// EVERY tool call, so classify it here (sty_7d098d50): an edit or write
 			// is judged below on its target, a shell is commitgate's, a tool the
@@ -184,7 +201,8 @@ workflow declaring no route blocks the edit.`,
 			// A session holding seats in several worktrees is attributed by the
 			// tree the edit targets (sty_42231b74); the fence below decides
 			// whether that tree may be edited at all.
-			info, engaged, live, engErr := resolveSeatsFor(true, sid, treeOf(p))
+			info, engaged, live, engErr := gs.seatsFor(true, sid, treeOf(p))
+			seat = traceSeat{info: info, engaged: engaged, resolved: true}
 			if p != "" {
 				// Foreign-tree fence (sty_a8454d10 / sty_aadd4d6c): refuse edits
 				// that land in ANOTHER git working tree unless the operator opts
@@ -324,7 +342,7 @@ then its own -C), else the hook's own tree's seat.`,
 			if !shellOrMatched(raw) {
 				return nil
 			}
-			command := bashCommandFromEvent(raw)
+			command := agentcli.CommandFromHookEvent(raw)
 			// One `git rev-parse` resolves the repo identity for the whole call:
 			// the config load, the store's runtime dir and the repo marker all
 			// ask for it, and none of them may start git again (sty_a74551d6 AC5).
@@ -357,6 +375,14 @@ then its own -C), else the hook's own tree's seat.`,
 			// one `git rev-parse` for its config and no more.
 			gp := loadGateProcess()
 			gs.gp = gp
+			// The in-loop run trace (sty_23ceeca2): a command this hook let run is
+			// recorded on the engaged story, on the store the call already holds. A
+			// matcher-less harness's gate has already seen this call.
+			defer func() {
+				if rerr == nil && !invokingNoToolMatcher(raw) {
+					recordToolTrace(gs, raw, traceSeat{})
+				}
+			}()
 			if !allowOutsideTreeEditsFrom(gp) {
 				cands := mutationTargets(command, sessionAnchor())
 				if path, foreignRoot, ok := foreignTreeTarget(sessionAnchor(), cands); ok {
@@ -1670,37 +1696,6 @@ func derivedSeat(items []workitem.Item, wfs []docindex.Doc) (seatInfo, bool, err
 	return other, false, nil
 }
 
-// bashCommandFromEvent pulls the bash command out of a PreToolUse event.
-// Accepts Claude Code's snake_case envelope (tool_input.command) AND Grok's
-// camelCase envelope (toolInput.command) — both harnesses fire the same hook
-// (epic:scoped-sync order:9 / sty_0d3665ee). Prefer the first non-empty value.
-func bashCommandFromEvent(raw []byte) string {
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &top); err != nil {
-		return ""
-	}
-	for _, key := range []string{"tool_input", "toolInput"} {
-		rawTI, ok := top[key]
-		if !ok || len(rawTI) == 0 {
-			continue
-		}
-		var ti map[string]json.RawMessage
-		if err := json.Unmarshal(rawTI, &ti); err != nil {
-			continue
-		}
-		cmdRaw, ok := ti["command"]
-		if !ok || len(cmdRaw) == 0 {
-			continue
-		}
-		// String form (Claude / Grok).
-		var s string
-		if err := json.Unmarshal(cmdRaw, &s); err == nil && s != "" {
-			return s
-		}
-	}
-	return ""
-}
-
 // filePathFromEvent pulls the edit target out of a PreToolUse edit event.
 // Claude Code: tool_input.file_path / tool_input.notebook_path.
 // Grok: toolInput.file_path | filePath | path | notebook_path | notebookPath.
@@ -1878,7 +1873,10 @@ func loadGateProcess() gateProcess {
 // gateProcess already loaded: the seat read and the ledger row share it, so a
 // matched command adds store I/O and no second config load or process.
 type gateStore struct {
-	gp     gateProcess
+	gp gateProcess
+	// load makes the first open load the process config itself (a call that may
+	// never need the store, such as the edit gate's skipped tools, pays nothing).
+	load   bool
 	a      *app.App
 	err    error
 	opened bool
@@ -1887,6 +1885,9 @@ type gateStore struct {
 func (g *gateStore) open() (*app.App, error) {
 	if !g.opened {
 		g.opened = true
+		if g.load {
+			g.gp = loadGateProcess()
+		}
 		if g.gp.err != nil {
 			g.err = g.gp.err
 		} else {
@@ -1901,6 +1902,15 @@ func (g *gateStore) close() {
 		_ = g.a.Close()
 		g.a = nil
 	}
+}
+
+// seatsFor is resolveSeatsFor on the shared store.
+func (g *gateStore) seatsFor(touch bool, sessionID, targetTree string) (info seatInfo, engaged bool, live []seatInfo, err error) {
+	a, oerr := g.open()
+	if oerr != nil {
+		return seatOpenFailed(oerr)
+	}
+	return resolveSeatsOn(a, touch, sessionID, targetTree)
 }
 
 // seat is resolveSeats(false, ...) on the shared store.

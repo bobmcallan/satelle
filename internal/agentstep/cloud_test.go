@@ -654,7 +654,7 @@ func TestCloudPromptPayloadCarriesChildren(t *testing.T) {
 	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), b)
 	want := []ChildState{{ID: "sty_child1", Status: "done"}, {ID: "sty_child2", Status: "backlog"}}
 	ce.SetChildrenResolver(func(context.Context, workitem.Item) []ChildState { return want })
-	p, err := ce.cloudPrompt(context.Background(), cloudItem(), "plan", "cloudy", b, []string{"cloud-step"}, "cloud-step", "branch-x", "nonce-x")
+	p, err := ce.cloudPrompt(context.Background(), cloudItem(), "plan", "cloudy", b, "rubric text", "cloud-step", "branch-x", "nonce-x")
 	if err != nil {
 		t.Fatal(err)
 	}

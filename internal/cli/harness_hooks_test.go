@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/agentcli"
 )
 
 // TestIncompleteHookEvents_PerHarness is AC3: a file the builder just wrote is
@@ -94,13 +96,13 @@ func TestHealRecognisesBuiltScaffold(t *testing.T) {
 // silently diverge from the other.
 func TestHarnessHooksIsTheOneDefinition(t *testing.T) {
 	for _, h := range []string{"claude", "grok"} {
-		if !harnessHooks(h).hasEvent("Stop") {
+		if !agentcli.HarnessHooks(h).HasEvent("Stop") {
 			t.Errorf("%s runs stopcheck and must expect Stop", h)
 		}
 	}
 	// An unknown harness falls back to the claude shape, which is what every
 	// caller already defaulted to.
-	if harnessHooks("").gateMatcher != harnessHooks("claude").gateMatcher {
+	if agentcli.HarnessHooks("").GateMatcher != agentcli.HarnessHooks("claude").GateMatcher {
 		t.Error("an unnamed harness must fall back to the claude shape")
 	}
 }

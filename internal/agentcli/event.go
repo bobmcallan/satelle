@@ -63,6 +63,11 @@ type Event struct {
 	Usage  *UsageResult      `json:"usage,omitempty"`
 	Error  string            `json:"error,omitempty"`
 	Meta   map[string]string `json:"meta,omitempty"`
+	// Command is the shell command a tool call ran, taken from the tool input's
+	// "command" (sty_23ceeca2) — empty for a non-shell tool or a transport whose
+	// tool events carry no input. Sanitized and bounded like Text; it is never
+	// written to the normalized log line (FormatEvent leaves it out).
+	Command string `json:"command,omitempty"`
 	// Model is set on EventSessionInit only: the model the transport's own
 	// init message reported the session opened with (sty_7069bced).
 	Model string `json:"model,omitempty"`
@@ -131,6 +136,38 @@ func FormatEvent(ev Event) string {
 		details = append(details, fmt.Sprintf("tokens=%d", ev.Usage.TotalTokens))
 	}
 	return fmt.Sprintf("%s\t%s\t%s\n", at.UTC().Format(time.RFC3339Nano), ev.Kind, strings.Join(details, " "))
+}
+
+// toolCommand extracts the shell command from a tool call's input object — a
+// string "command", or an argv array joined by spaces — sanitized for an event.
+// "" when the input carries none.
+func toolCommand(input any) string {
+	m, _ := input.(map[string]any)
+	switch c := m["command"].(type) {
+	case string:
+		return SafeText(c)
+	case []any:
+		parts := make([]string, 0, len(c))
+		for _, p := range c {
+			if s, ok := p.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		return SafeText(strings.Join(parts, " "))
+	}
+	return ""
+}
+
+// toolCommandRaw is toolCommand over a raw JSON tool input (ACP rawInput).
+func toolCommandRaw(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return ""
+	}
+	return toolCommand(v)
 }
 
 func newEvent(kind EventKind) Event {

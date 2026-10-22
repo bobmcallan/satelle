@@ -428,15 +428,15 @@ func TestNoCursorLiteralsInCliGateCode(t *testing.T) {
 // Only cursor sets the property today; a harness gaining it must be a decision.
 func TestOnlyCursorHasNoToolMatcher(t *testing.T) {
 	for _, h := range []string{"claude", "grok", "pi", "unknown", ""} {
-		if harnessHooks(h).NoToolMatcher {
-			t.Errorf("harnessHooks(%q).NoToolMatcher is set", h)
+		if agentcli.HarnessHooks(h).NoToolMatcher {
+			t.Errorf("HarnessHooks(%q).NoToolMatcher is set", h)
 		}
-		if hs := harnessHooks(h); hs.gateMatcher == "" || hs.commitMatcher == "" {
-			t.Errorf("harnessHooks(%q) has an empty matcher", h)
+		if hs := agentcli.HarnessHooks(h); hs.GateMatcher == "" || hs.CommitMatcher == "" {
+			t.Errorf("HarnessHooks(%q) has an empty matcher", h)
 		}
 	}
-	hs := harnessHooks(agentcli.HarnessCursor)
-	if !hs.NoToolMatcher || hs.gateMatcher != "" || hs.commitMatcher != "" {
+	hs := agentcli.HarnessHooks(agentcli.HarnessCursor)
+	if !hs.NoToolMatcher || hs.GateMatcher != "" || hs.CommitMatcher != "" {
 		t.Errorf("cursor spec = %+v, want NoToolMatcher with no matchers", hs)
 	}
 }

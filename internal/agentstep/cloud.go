@@ -98,6 +98,20 @@ func (g *Engine) dispatchCloud(ctx context.Context, item workitem.Item, toStatus
 			return res, fmt.Errorf("cloud dispatch refused: skill %q declares an output contract/attempt policy that a cloud session cannot return; binding [%s]", name, agent)
 		}
 	}
+	// Deliver the step's skills with the frontmatter dropped, and record what was
+	// delivered; a declared skill that does not resolve refuses the dispatch
+	// before anything starts (sty_23ceeca2).
+	delivered, err := g.composeSkills(ctx, composed, true)
+	if err != nil {
+		return res, err
+	}
+	res.Skills = delivered.Manifest
+	if rerr := g.undeliveredRefusal(ctx, delivered, wfName, toStatus, agent); rerr != nil {
+		return res, rerr
+	}
+	if missing := delivered.Undelivered(); len(missing) > 0 {
+		res.Evidence = &verb.EvidenceReport{Undelivered: missing} // record mode: flagged, not refused
+	}
 	deadline, err := binding.TimeoutDuration(g.cloudDefaultDeadline)
 	if err != nil {
 		return res, fmt.Errorf("named agent %q: invalid timeout in .satelle/workflows/agents.toml [%s]: %w", agent, agent, err)
@@ -130,7 +144,7 @@ func (g *Engine) dispatchCloud(ctx context.Context, item workitem.Item, toStatus
 		return res, fmt.Errorf("cloud dispatch refused: %w", err)
 	}
 
-	prompt, err := g.cloudPrompt(ctx, item, toStatus, agent, binding, composed, skill, branch, nonce)
+	prompt, err := g.cloudPrompt(ctx, item, toStatus, agent, binding, delivered.Rubric, skill, branch, nonce)
 	if err != nil {
 		return res, err
 	}
@@ -198,11 +212,7 @@ func (g *Engine) dispatchCloud(ctx context.Context, item workitem.Item, toStatus
 // prompt that would carry the hosted service's address or its session-token
 // variable name: a cloud session reaches neither, and must not be told of them.
 func (g *Engine) cloudPrompt(ctx context.Context, item workitem.Item, toStatus, agent string,
-	binding config.AgentBinding, composed []string, skill, branch, nonce string) (string, error) {
-	rubric, err := g.cloudRubric(ctx, composed)
-	if err != nil {
-		return "", err
-	}
+	binding config.AgentBinding, rubric, skill, branch, nonce string) (string, error) {
 	performer, err := g.skillBody(ctx, cloudPerformerSkill)
 	if err != nil {
 		return "", fmt.Errorf("cloud dispatch needs the %q skill: %w", cloudPerformerSkill, err)
@@ -230,30 +240,6 @@ func (g *Engine) cloudPrompt(ctx context.Context, item workitem.Item, toStatus, 
 		}
 	}
 	return prompt, nil
-}
-
-// cloudRubric is composeSkillBodies with each skill's YAML frontmatter dropped:
-// the frontmatter is substrate metadata a cloud session has no use for.
-func (g *Engine) cloudRubric(ctx context.Context, names []string) (string, error) {
-	var parts []string
-	for _, name := range names {
-		if name == "" {
-			continue
-		}
-		body, err := g.skillBody(ctx, name)
-		if errors.Is(err, docindex.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return "", err
-		}
-		body = strings.TrimSpace(stripFrontmatter(body))
-		if len(names) > 1 {
-			body = "# Skill: " + name + "\n\n" + body
-		}
-		parts = append(parts, body)
-	}
-	return strings.Join(parts, "\n\n---\n\n"), nil
 }
 
 // cloudForbidden lists the strings a cloud prompt must never carry.

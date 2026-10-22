@@ -169,6 +169,21 @@ const (
 	// view over-count. See IsToolPermissionRow for the read-time filter that
 	// also excludes the legacy rows written before this kind existed.
 	KindToolPermission = "tool_permission"
+	// KindSkillDelivery records the step skills satelle delivered to the DRIVING
+	// session when a story entered a step that session performs (sty_23ceeca2):
+	// Payload {from, to, attempt?, kind, skills:[{name, hash, delivered, reason?}]}.
+	// It is deliberately not a KindAgentInvocation row: nothing was invoked and no
+	// usage was measured, so the cost and unmeasured-row views must not count it
+	// (the lesson KindToolPermission already records). A dispatched performer's
+	// delivery rides its own agent_invocation row instead. Enumeration only.
+	KindSkillDelivery = "skill_delivery"
+	// KindToolTrace records one tool call the in-loop driving session made while a
+	// story was engaged, as the gate hooks saw it (sty_23ceeca2): Payload
+	// {harness, tool, command?} — the command's head only. It is the in-loop
+	// run trace the skill-evidence check reads; a harness whose hooks do not
+	// see a tool writes no row for it, which the check reports as unverifiable.
+	// Not an invocation and not a verdict: enumeration only.
+	KindToolTrace = "tool_trace"
 	// KindSessionAdvisory records the fresh-session warning given to the driver
 	// at engage (sty_a7914904): Payload verb.SessionAdvisoryPayload — the session,
 	// the trigger (other-story | context-budget) and what fired it. A warning

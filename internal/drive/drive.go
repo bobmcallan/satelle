@@ -409,10 +409,14 @@ func (d *driver) perform(ctx context.Context, item workitem.Item, step, notes st
 	record := context.WithoutCancel(ctx)
 	var rejected *verb.PerformerReject
 	if errors.As(err, &rejected) {
-		verb.RecordStepPerformance(record, item, step, run, nil)
+		_ = verb.RecordStepPerformance(record, item, step, run, nil)
 		return d.park(ctx, item, step, "executor", fmt.Sprintf("the executor rejected step %s: %s", step, rejected.Error()))
 	}
-	verb.RecordStepPerformance(record, item, step, run, err)
+	// A run the skill-evidence check refused (skill_evidence = reject) stops the
+	// drive as a failed run does: the story stays at the step.
+	if rerr := verb.RecordStepPerformance(record, item, step, run, err); err == nil && rerr != nil {
+		err = rerr
+	}
 	if err != nil {
 		return &halt{step: step, performer: "executor", err: err, what: fmt.Sprintf("the executor run failed: %v", err)}
 	}

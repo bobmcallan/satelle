@@ -748,7 +748,7 @@ func isScriptFormHookCommand(cmd, harness, sub, repoRoot string) bool {
 // prompt / stopcheck stay simple (fail open by design).
 // repoRoot makes PreToolUse script paths absolute (cwd-safe).
 func buildClaudeHookSettings(repoRoot string) []byte {
-	hs := harnessHooks("claude")
+	hs := agentcli.HarnessHooks("claude")
 	doc := map[string]any{
 		"hooks": map[string]any{
 			"SessionStart": []any{
@@ -759,11 +759,11 @@ func buildClaudeHookSettings(repoRoot string) []byte {
 			},
 			"PreToolUse": []any{
 				map[string]any{
-					"matcher": hs.gateMatcher,
+					"matcher": hs.GateMatcher,
 					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "claude", "gate")}},
 				},
 				map[string]any{
-					"matcher": hs.commitMatcher,
+					"matcher": hs.CommitMatcher,
 					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "claude", "commitgate")}},
 				},
 			},
@@ -780,7 +780,7 @@ func buildClaudeHookSettings(repoRoot string) []byte {
 		// is shared repo scaffold. The renderer stays; an operator who wants the
 		// line puts it in their own settings — see statusLineOptInNotice.
 	}
-	for _, ev := range hs.turnEndEvents {
+	for _, ev := range hs.TurnEndEvents {
 		doc["hooks"].(map[string]any)[ev] = []any{
 			map[string]any{"hooks": []any{map[string]any{"type": "command", "command": turnEndHookCommand("claude")}}},
 		}
@@ -822,7 +822,7 @@ func grokSessionContextEvent(repoRoot string) string {
 // UserPromptSubmit and Stop pass --harness grok (sty_719c4a7b AC2);
 // PreToolUse already does via renderHookCommand's positional harness arg.
 func buildGrokHookSettings(repoRoot string) []byte {
-	hs := harnessHooks("grok")
+	hs := agentcli.HarnessHooks("grok")
 	event := grokSessionContextEvent(repoRoot)
 	contextCmd := withGrokHarness("satelle hook context")
 	sessionHooks := []any{
@@ -837,11 +837,11 @@ func buildGrokHookSettings(repoRoot string) []byte {
 		},
 		"PreToolUse": []any{
 			map[string]any{
-				"matcher": hs.gateMatcher,
+				"matcher": hs.GateMatcher,
 				"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "grok", "gate")}},
 			},
 			map[string]any{
-				"matcher": hs.commitMatcher,
+				"matcher": hs.CommitMatcher,
 				"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "grok", "commitgate")}},
 			},
 		},
@@ -1274,9 +1274,9 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 	// The matchers the heal appends are the BUILDER's, from the one table
 	// (sty_338a53f8) — a heal that wrote a matcher no scaffold emits produced a
 	// file the create path would never have written.
-	hs := harnessHooks(harness)
-	gateMatcher := hs.gateMatcher
-	commitMatcher := hs.commitMatcher
+	hs := agentcli.HarnessHooks(harness)
+	gateMatcher := hs.GateMatcher
+	commitMatcher := hs.CommitMatcher
 	if !hookEventHasMarker(hooks["PreToolUse"], "satelle hook gate") &&
 		!hookEventHasMarker(hooks["PreToolUse"], "pretooluse-gate-") &&
 		!hookEventHasMarker(hooks["PreToolUse"], "satelle-hook.sh") {
@@ -1305,9 +1305,9 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 	}
 
 	// Reinforce only the events THIS harness's scaffold installs, as declared
-	// once in harnessHooks rather than repeated as a literal here.
+	// once in agentcli.HarnessHooks rather than repeated as a literal here.
 	for _, rh := range reinforcementSimpleHooks {
-		if !hs.hasEvent(rh.event) {
+		if !hs.HasEvent(rh.event) {
 			continue
 		}
 		if hookEventHasMarker(hooks[rh.event], rh.marker) {
@@ -1328,7 +1328,7 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 	}
 	// The turn-end events this harness fires (sty_7e4393fc), wired as the
 	// builder wires them.
-	for _, ev := range hs.turnEndEvents {
+	for _, ev := range hs.TurnEndEvents {
 		if hookEventHasMarker(hooks[ev], "satelle hook turnend") {
 			continue
 		}
@@ -1340,7 +1340,7 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 	// A Stop hook installed before gate hand-off (sty_c4b92c9e) carries no
 	// timeout, so the harness's default would cut its wait for a running gate
 	// short. Raise it in place — never lowering one the operator set.
-	if hs.hasEvent("Stop") && raiseStopHookTimeout(hooks["Stop"]) {
+	if hs.HasEvent("Stop") && raiseStopHookTimeout(hooks["Stop"]) {
 		added = append(added, "Stop timeout")
 	}
 	if len(added) == 0 && !changed {
@@ -1361,7 +1361,7 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 // heal. Empty when the full set is present or the file is unparseable (caller
 // may still WARN on unparseable separately).
 //
-// The expected set is PER HARNESS, read from the same harnessHooks table the
+// The expected set is PER HARNESS, read from the same agentcli.HarnessHooks table the
 // builder writes from (sty_338a53f8), so a complete file is never reported
 // incomplete.
 func incompleteHookEvents(path, harness string) []string {
@@ -1381,7 +1381,7 @@ func incompleteHookEvents(path, harness string) []string {
 		"Stop":             {"satelle hook stopcheck"},
 	}
 	var missing []string
-	for _, event := range harnessHooks(harness).events {
+	for _, event := range agentcli.HarnessHooks(harness).Events {
 		markers := need[event]
 		ok := false
 		for _, m := range markers {
@@ -1394,7 +1394,7 @@ func incompleteHookEvents(path, harness string) []string {
 			missing = append(missing, event)
 		}
 	}
-	for _, event := range harnessHooks(harness).turnEndEvents {
+	for _, event := range agentcli.HarnessHooks(harness).TurnEndEvents {
 		if !hookEventHasMarker(hooks[event], "satelle hook turnend") {
 			missing = append(missing, event)
 		}

@@ -3,6 +3,8 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/agentcli"
 )
 
 // TestPiExposesNoSubagentHook pins the premise behind pi carrying no subagent
@@ -20,8 +22,8 @@ func TestPiExposesNoSubagentHook(t *testing.T) {
 	if strings.Contains(strings.ToLower(piExtensionTemplate), "subagent") {
 		t.Error("the pi extension template names a subagent")
 	}
-	hs := harnessHooks("pi")
-	for _, m := range []string{hs.gateMatcher, hs.commitMatcher} {
+	hs := agentcli.HarnessHooks("pi")
+	for _, m := range []string{hs.GateMatcher, hs.CommitMatcher} {
 		for _, spawner := range []string{"task", "agent", "spawn_subagent"} {
 			if strings.Contains(strings.ToLower(m), spawner) {
 				t.Errorf("pi tool matcher %q names the spawner %q", m, spawner)

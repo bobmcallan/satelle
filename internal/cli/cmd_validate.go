@@ -142,6 +142,15 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 		}
 	}
 
+	// A step skill that declares no evidence gets only the delivery check
+	// (sty_23ceeca2). WARN, never FAIL: evidence is opt-in per skill, and a skill
+	// mid-authoring declares it last.
+	if kind == "skills" {
+		for _, name := range stepSkillsWithoutEvidence(dataDir, nameFilter) {
+			fmt.Fprintf(out, "WARN  skills/%s — step skill declares no evidence (evidence_sections, evidence_keys, evidence_commands or evidence_tools); only its delivery is checked\n", name)
+		}
+	}
+
 	// Cross-half route join (sty_5d712bc5): every obligation in every category
 	// table must resolve to a step table key. Per-file checks cannot see the
 	// sibling half, so this lives here — both whole-set and named forms, because
@@ -273,6 +282,36 @@ func validateAuthoredDir(out io.Writer, kind, dir, nameFilter string, resolve fu
 		}
 	}
 	return validated, failed, exempt
+}
+
+// stepSkillsWithoutEvidence names the skills the governing step catalogue
+// delivers to a step's performer (not reviewer gates) whose body declares no
+// evidence, in catalogue order and de-duplicated; nameFilter narrows to one. A
+// skill that does not resolve is the route check's finding, not this one's.
+func stepSkillsWithoutEvidence(dataDir, nameFilter string) []string {
+	rs := wfgovern.RouteSourceOf(doctor.GoverningWorkflows(dataDir))
+	if !rs.Present() {
+		return nil
+	}
+	cat, err := wfdot.ParseSteps(rs.Step)
+	if err != nil {
+		return nil
+	}
+	body := doctor.SkillBodyResolver(dataDir)
+	seen := map[string]bool{}
+	var out []string
+	for _, st := range cat.Steps {
+		for _, sk := range st.Skills {
+			if sk == "" || seen[sk] || (nameFilter != "" && nameFilter != sk) {
+				continue
+			}
+			seen[sk] = true
+			if b, ok := body(sk); ok && !structure.SkillDeclaresEvidence(b) {
+				out = append(out, sk)
+			}
+		}
+	}
+	return out
 }
 
 // validateEmbeddedTask runs the task check over the copy of a default task the

@@ -239,6 +239,7 @@ func (s *streamSession) readLoop() {
 				}
 				ev := newEvent(EventToolStart)
 				ev.Tool = tu.name
+				ev.Command = tu.command
 				ev.Status = "running"
 				emitEvent(s.onEvent, ev)
 			}
@@ -328,7 +329,7 @@ func streamAssistantText(raw map[string]any) string {
 	return b.String()
 }
 
-type streamToolUse struct{ id, name string }
+type streamToolUse struct{ id, name, command string }
 
 type streamToolResult struct {
 	id      string
@@ -362,7 +363,7 @@ func streamToolUses(raw map[string]any) []streamToolUse {
 			continue
 		}
 		id, _ := m["id"].(string)
-		out = append(out, streamToolUse{id: id, name: name})
+		out = append(out, streamToolUse{id: id, name: name, command: toolCommand(m["input"])})
 	}
 	return out
 }

@@ -88,10 +88,14 @@ func (g *Engine) PerformExecutorStep(ctx context.Context, item workitem.Item, st
 	if skill == "" {
 		skill = target.Skill
 	}
-	rubric, err := g.composeSkillBodies(ctx, composed)
+	delivered, err := g.composeSkills(ctx, composed, false)
 	if err != nil {
 		return verb.DispatchResult{}, err
 	}
+	if rerr := g.undeliveredRefusal(ctx, delivered, wfName, step, "executor"); rerr != nil {
+		return verb.DispatchResult{Skills: delivered.Manifest, Agent: "executor", Skill: skill}, rerr
+	}
+	rubric := delivered.Rubric
 	if n := strings.TrimSpace(notes); n != "" {
 		rubric = strings.TrimSpace(rubric + "\n\n## Findings from the last presentation of this step's exit\n\n" +
 			"The reviewers rejected the work this step produced. Address these, then stop:\n\n" + n)
@@ -115,14 +119,15 @@ func (g *Engine) PerformExecutorStep(ctx context.Context, item workitem.Item, st
 		defer closeSink()
 	}
 	var sinkMu sync.Mutex
-	onEvent := func(ev agentcli.Event) {
+	trace := &runTrace{}
+	onEvent := trace.handler(func(ev agentcli.Event) {
 		if eventSink == nil {
 			return
 		}
 		sinkMu.Lock()
 		_, _ = io.WriteString(eventSink, agentcli.FormatEvent(ev))
 		sinkMu.Unlock()
-	}
+	})
 	g.emitActivity(item.ID, "perform:"+step, 1, 1)
 	if sinkPath != "" {
 		g.emitProgress("performing step %s with the executor binding (may take several minutes)… live output: %s", step, sinkPath)
@@ -149,6 +154,7 @@ func (g *Engine) PerformExecutorStep(ctx context.Context, item workitem.Item, st
 		Actor:       "executor",
 	})
 	res := g.performanceResult("executor", skill, binding, budget, mc, invRes)
+	res.Skills = delivered.Manifest
 	g.logExecutorRun("executor", item.ID, step, invRes.Stdout, invRes.Err)
 	if invRes.Err != nil {
 		g.telemetryEvent(ctx, item.ID, "executor", "agent-failure", withCause(map[string]any{
@@ -162,6 +168,15 @@ func (g *Engine) PerformExecutorStep(ctx context.Context, item workitem.Item, st
 	}
 	if dec, derr := parseDecision(invRes.Stdout); derr == nil && !dec.Accept {
 		return res, &verb.PerformerReject{Notes: dec.Notes}
+	}
+	// The executor attaches its documents itself (`satelle story attach`), so the
+	// sections it declares are looked for in what was attached since the step was
+	// entered as well as in its response; its commands come from this run's own
+	// stream, which the record carries to the step's exit gate.
+	attached := g.attachedText(ctx, item.ID, g.stepTrace(ctx, item.ID, step))
+	res.Evidence = g.dispatchedEvidence(ctx, delivered, binding, string(invRes.Stdout), attached, trace, g.skillEvidenceMode(ctx))
+	if len(delivered.evidence) > 0 { // a step that declares nothing leaves no trace row
+		res.Trace = trace.record(binding)
 	}
 	return res, nil
 }

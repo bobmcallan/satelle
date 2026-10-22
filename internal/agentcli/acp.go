@@ -934,6 +934,7 @@ func (c *acpClient) handleUpdate(params json.RawMessage) {
 		if ev.Tool == "" {
 			ev.Tool = p.Update.ToolCallID
 		}
+		ev.Command = toolCommandRaw(p.Update.RawInput)
 		ev.Status = p.Update.Status
 		if ev.Status == "" && ev.Kind == EventToolStart {
 			ev.Status = "running"

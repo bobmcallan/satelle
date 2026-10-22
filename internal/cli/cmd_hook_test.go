@@ -309,20 +309,6 @@ git commit -m "docs (sty_abc)"`
 	}
 }
 
-func TestBashCommandFromEvent(t *testing.T) {
-	// Claude Code snake_case (tool_input.command).
-	if got := bashCommandFromEvent([]byte(`{"tool_input":{"command":"git push"}}`)); got != "git push" {
-		t.Errorf("claude bashCommandFromEvent = %q, want 'git push'", got)
-	}
-	// Grok camelCase (toolInput.command) — sty_0d3665ee.
-	if got := bashCommandFromEvent([]byte(`{"hookEventName":"pre_tool_use","toolName":"run_terminal_command","toolInput":{"command":"git commit -m x"}}`)); got != "git commit -m x" {
-		t.Errorf("grok bashCommandFromEvent = %q, want 'git commit -m x'", got)
-	}
-	if got := bashCommandFromEvent([]byte(`not json`)); got != "" {
-		t.Errorf("bad event should yield empty command, got %q", got)
-	}
-}
-
 func TestFilePathFromEvent(t *testing.T) {
 	// Claude Code snake_case.
 	if got := filePathFromEvent([]byte(`{"tool_input":{"file_path":"/a/b.go"}}`)); got != "/a/b.go" {

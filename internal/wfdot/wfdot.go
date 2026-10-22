@@ -770,27 +770,7 @@ const advanceOptionsCap = 2
 // When every surviving edge is terminal, park, or a back-edge, the result is
 // empty — callers fall back to their static text rather than inventing a step.
 func (s Spec) AdvanceOptions(from string) []Advance {
-	var terminals []string
-	for _, st := range s.States {
-		if st.Shape == "Msquare" {
-			terminals = append(terminals, st.Name)
-		}
-	}
-	// Per-terminal reverse distances — shared reverseDistFrom with doneReachable.
-	dists := make([]map[string]int, 0, len(terminals))
-	for _, t := range terminals {
-		dists = append(dists, s.reverseDistFrom([]string{t}))
-	}
-	isForward := func(to string) bool {
-		for _, dist := range dists {
-			fromDist, fromOK := dist[from]
-			toDist, toOK := dist[to]
-			if fromOK && toOK && toDist < fromDist {
-				return true
-			}
-		}
-		return false
-	}
+	isForward := s.forwardTest(from)
 	seen := map[string]bool{}
 	var out []Advance
 	for _, tr := range s.Transitions {
@@ -811,6 +791,38 @@ func (s Spec) AdvanceOptions(from string) []Advance {
 		out = out[:advanceOptionsCap]
 	}
 	return out
+}
+
+// IsForwardEdge reports whether from→to moves toward a terminal state, by the
+// per-terminal distance test AdvanceOptions applies, so a back-edge (rework to an
+// earlier step, a recovery edge) is false. Unlike AdvanceOptions it is neither
+// capped nor filtered by park/terminal targets; a caller that needs that asks
+// IsParkState / IsTerminalState itself.
+func (s Spec) IsForwardEdge(from, to string) bool { return s.forwardTest(from)(to) }
+
+// forwardTest returns the forward predicate for edges leaving from.
+func (s Spec) forwardTest(from string) func(to string) bool {
+	var terminals []string
+	for _, st := range s.States {
+		if st.Shape == "Msquare" {
+			terminals = append(terminals, st.Name)
+		}
+	}
+	// Per-terminal reverse distances — shared reverseDistFrom with doneReachable.
+	dists := make([]map[string]int, 0, len(terminals))
+	for _, t := range terminals {
+		dists = append(dists, s.reverseDistFrom([]string{t}))
+	}
+	return func(to string) bool {
+		for _, dist := range dists {
+			fromDist, fromOK := dist[from]
+			toDist, toOK := dist[to]
+			if fromOK && toOK && toDist < fromDist {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 // reverseDistFrom returns shortest-path distances walking edges in reverse from

@@ -748,7 +748,7 @@ func TestPendingMessage_NamesPathOrLimitation_NeverAPollInstruction(t *testing.T
 // the code, so it cannot claim a wake nothing wired.
 func TestCompletionNotification_CellsMatchTheScaffold(t *testing.T) {
 	for _, f := range agentcli.HarnessFactsTable() {
-		wired := harnessHooks(f.Harness).hasEvent("Stop")
+		wired := agentcli.HarnessHooks(f.Harness).HasEvent("Stop")
 		if f.CompletionNotification.Available && !wired {
 			t.Errorf("%s is recorded as delivering a completion notification but its scaffold installs no Stop hook", f.Harness)
 		}

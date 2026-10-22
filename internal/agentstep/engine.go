@@ -110,6 +110,9 @@ type Engine struct {
 	// (sty_58fa970e). Nil-safe: an unwired resolver injects no docs.
 	// Named itemDocs to avoid clashing with the docs DocGetter substrate field.
 	itemDocs func(ctx context.Context, itemID string) []DocState
+	// toolTrace reads the in-loop session's tool calls for the skill-evidence
+	// check (sty_23ceeca2); nil makes every in-loop command/tool item unverifiable.
+	toolTrace ToolTraceFunc
 	// priorVerdicts resolves the verdicts already recorded for THIS item on THIS
 	// from→to edge (oldest first), so a re-review judges the delta instead of
 	// re-reading the artefact with no memory (sty_0f5e600c). Nil-safe: an unwired
@@ -1607,6 +1610,73 @@ func stripFrontmatter(body string) string {
 // single-reviewer callers keep their contract. Gated=false (enact directly)
 // when no reviewer governs the edge.
 func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, error) {
+	dec, err := g.gateEdge(ctx, item, toStatus)
+	if err != nil {
+		return dec, err
+	}
+	return g.foldSkillEvidence(ctx, item, toStatus, dec), nil
+}
+
+// foldSkillEvidence runs the always-on skill-evidence check on a transition that
+// LEAVES a step the driving session performed, and folds its verdict into the
+// edge's decision (sty_23ceeca2). A dispatched step's check already ran when its
+// performer returned, against its output and event stream; this is the in-loop
+// counterpart, against the documents attached and the tool calls the gate hooks
+// recorded since the step was entered. Under the workflow's skill_evidence =
+// reject a gap refuses the edge; under the default it is only recorded. The
+// check never judges a back-edge or a move into a park or cancel state, which is
+// not the step's completion, and never fails the gate for its own errors.
+func (g *Engine) foldSkillEvidence(ctx context.Context, item workitem.Item, toStatus string, dec verb.GateDecision) verb.GateDecision {
+	if toStatus == item.Status || (dec.Gated && !dec.Accept) {
+		return dec // not a departure, or the edge is already refused
+	}
+	perf, err := g.resolvePerformer(ctx, item, item.Status, false)
+	if err != nil || (perf.Kind != verb.PerformerExecutor && perf.Kind != verb.PerformerInLoop) || perf.target == nil {
+		return dec
+	}
+	// Only the step's FORWARD exit is its completion: a back-edge (rework to an
+	// earlier step), a park and a cancel are not, and must never be refused for
+	// evidence the step has not had the chance to leave yet.
+	if to := g.stateNamed(perf.spec, toStatus); to == nil || to.Agent == "reviewer" || !perf.spec.IsForwardEdge(item.Status, toStatus) {
+		return dec
+	}
+	names := perf.spec.ExecutorSkillsFor(item.Status, item.Tags)
+	if len(names) == 0 && perf.target.Skill != "" {
+		names = []string{perf.target.Skill}
+	}
+	if len(names) == 0 {
+		return dec
+	}
+	report, err := g.inLoopEvidence(ctx, item, names)
+	if err != nil || report == nil {
+		return dec
+	}
+	verdict := report.Verdict(len(dec.Reviewers))
+	dec.Reviewers = append(dec.Reviewers, verdict)
+	if !dec.Gated {
+		dec.Gated, dec.Accept = true, true
+	}
+	if !verdict.Accept {
+		dec.Accept = false
+		dec.Skill = verb.SkillEvidenceCheck
+		dec.Notes = strings.TrimSpace(dec.Notes + "\n" + report.Notes())
+	}
+	return dec
+}
+
+// stateNamed returns the spec's state called name, or nil.
+func (g *Engine) stateNamed(spec wfdot.Spec, name string) *wfdot.State {
+	for i := range spec.States {
+		if spec.States[i].Name == name {
+			return &spec.States[i]
+		}
+	}
+	return nil
+}
+
+// gateEdge is Gate without the skill-evidence fold: the reviewers that govern the
+// edge, in order, then the always-on system layer.
+func (g *Engine) gateEdge(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, error) {
 	// Broken substrate refuses to run (sty_d0d6bb67): a governing workflow that
 	// fails its deterministic structure check must never gate work — refuse the
 	// transition with the problems, instead of silently proceeding under a broken
@@ -2146,7 +2216,11 @@ func (g *Engine) resolvePerformer(ctx context.Context, item workitem.Item, toSta
 	case "":
 		return none(fmt.Sprintf("step %q allocates no performer (agent is empty)", toStatus))
 	case "executor":
-		return answer(verb.PerformerExecutor, fmt.Sprintf("step %q is allocated to agent=%s, which is not a dispatched performer", toStatus, target.Agent))
+		pr, _ := answer(verb.PerformerExecutor, fmt.Sprintf("step %q is allocated to agent=%s, which is not a dispatched performer", toStatus, target.Agent))
+		// The route rides on the answer so DispatchExecutor can name the skills
+		// the driving session is handed (sty_23ceeca2).
+		pr.spec, pr.wfName, pr.target = spec, wfName, target
+		return pr, nil
 	case "reviewer":
 		return none(fmt.Sprintf("step %q is allocated to agent=%s, which is not a dispatched performer", toStatus, target.Agent))
 	}
@@ -2184,6 +2258,7 @@ func (g *Engine) resolvePerformer(ctx context.Context, item workitem.Item, toSta
 	if config.IsInLoopCommand(binding.CommandTemplate()) {
 		pr, _ := answer(verb.PerformerInLoop, fmt.Sprintf("step %q agent %q is bound in-loop: the driving session performs it", toStatus, dispatchAgent))
 		pr.Agent = dispatchAgent
+		pr.spec, pr.wfName, pr.target = spec, wfName, target
 		return pr, nil
 	}
 	return performerResolution{
@@ -2249,7 +2324,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		return verb.DispatchResult{}, err
 	}
 	if !perf.Dispatched {
-		return verb.DispatchResult{}, nil
+		return g.deliverInLoopSkills(ctx, item, toStatus, perf)
 	}
 	target, wfName, spec, placed := perf.target, perf.wfName, perf.spec, perf.placed
 	dispatchAgent, binding := perf.Agent, perf.binding
@@ -2362,9 +2437,16 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	// (sty_8225d8a5). Absent skills stay advisory here — the engagement guard
 	// already hard-blocks missing executor-path skills. LLM run goes through
 	// shared Invoke (sty_ba860c8a).
-	rubric, rerr := g.composeSkillBodies(ctx, composed)
+	delivered, rerr := g.composeSkills(ctx, composed, false)
 	if rerr != nil {
 		return verb.DispatchResult{}, rerr
+	}
+	rubric := delivered.Rubric
+	// A declared skill that does not resolve is recorded as undelivered. Under the
+	// workflow's skill_evidence = reject the step is refused; otherwise it runs and
+	// the gap is on the row and in front of the driver (sty_23ceeca2).
+	if rerr := g.undeliveredRefusal(ctx, delivered, wfName, toStatus, dispatchAgent); rerr != nil {
+		return verb.DispatchResult{Skills: delivered.Manifest, Agent: dispatchAgent, Skill: dispatchSkill}, rerr
 	}
 	// The hard ceiling falls back to g.agentTimeout (unset by default,
 	// sty_752c4ef2), NOT g.checkTimeout (defaultCheckTimeout, a functional-
@@ -2389,14 +2471,15 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		defer closeRaw()
 	}
 	var eventSinkMu sync.Mutex
-	onEvent := func(ev agentcli.Event) {
+	trace := &runTrace{}
+	onEvent := trace.handler(func(ev agentcli.Event) {
 		if eventSink == nil {
 			return
 		}
 		eventSinkMu.Lock()
 		_, _ = io.WriteString(eventSink, agentcli.FormatEvent(ev))
 		eventSinkMu.Unlock()
-	}
+	})
 	g.emitActivity(item.ID, "dispatch:"+toStatus, 1, 1)
 	if sinkPath != "" {
 		g.emitProgress("dispatching step %s to named agent %s (may take several minutes)… live output: %s", toStatus, dispatchAgent, sinkPath)
@@ -2439,6 +2522,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		})
 	}
 	res := g.performanceResult(dispatchAgent, dispatchSkill, binding, budget, modelChoice, invRes)
+	res.Skills = delivered.Manifest
 	g.logExecutorRun(dispatchAgent, item.ID, toStatus, invRes.Stdout, invRes.Err)
 	if invRes.Err != nil {
 		failData := map[string]any{
@@ -2469,12 +2553,24 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if dec, derr := parseDecision(invRes.Stdout); derr == nil && !dec.Accept {
 		return res, &verb.PerformerReject{Notes: dec.Notes, Changes: changes}
 	}
+	// The run is over: compare what it produced and did with the evidence each
+	// delivered skill declares (sty_23ceeca2). The artifact body is read at the
+	// return, once the contract below has decoded it.
+	mode := g.skillEvidenceMode(ctx)
+	done := func() (verb.DispatchResult, error) {
+		artifactBody := ""
+		if finalArtifact != nil {
+			artifactBody = finalArtifact.Body
+		}
+		res.Evidence = g.dispatchedEvidence(ctx, delivered, binding, string(invRes.Stdout), artifactBody, trace, mode)
+		return res, nil
+	}
 	if outputContract.Active() {
 		if !attemptPolicy.Active() {
 			artifact, derr := agentartifact.Decode(invRes.Stdout)
 			if derr != nil {
 				if !outputContract.Required && errors.Is(derr, agentartifact.ErrNoArtifact) {
-					return res, nil
+					return done()
 				}
 				return res, fmt.Errorf("named agent %q structured output for step %q: %w", dispatchAgent, toStatus, derr)
 			}
@@ -2485,7 +2581,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			finalArtifact = &artifact
 		}
 		if finalArtifact == nil {
-			return res, nil
+			return done()
 		}
 		if g.attachArtifact == nil {
 			return res, fmt.Errorf("named agent %q produced contracted output for step %q but no artifact attachment writer is configured", dispatchAgent, toStatus)
@@ -2496,7 +2592,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		}
 		res.ArtifactName, res.ArtifactType = name, typ
 	}
-	return res, nil
+	return done()
 }
 
 // performanceResult is the record of one performer run: who ran, on what
@@ -4711,31 +4807,6 @@ func firstStr(ss []string) string {
 		}
 	}
 	return ""
-}
-
-// composeSkillBodies loads and concatenates skill rubrics in order (spine first,
-// then augmentations — sty_8225d8a5). Missing skills are skipped (engagement
-// guard already hard-blocks them); other lookup errors surface.
-func (g *Engine) composeSkillBodies(ctx context.Context, names []string) (string, error) {
-	var parts []string
-	for _, name := range names {
-		if name == "" {
-			continue
-		}
-		body, err := g.skillBody(ctx, name)
-		if err != nil {
-			if errors.Is(err, docindex.ErrNotFound) {
-				continue
-			}
-			return "", err
-		}
-		if len(names) > 1 {
-			parts = append(parts, "# Skill: "+name+"\n\n"+body)
-		} else {
-			parts = append(parts, body)
-		}
-	}
-	return strings.Join(parts, "\n\n---\n\n"), nil
 }
 
 // reviewerSkillsFor scans a workflow body's transition lines for the (from→to)

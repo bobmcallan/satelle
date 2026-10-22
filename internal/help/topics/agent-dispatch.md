@@ -1144,6 +1144,54 @@ satelle:
   The plan and step-summary documents (pulled by id) are the sanctioned channel
   for carrying context forward — not the conversation.
 
+## Proving a step's skills were delivered and used (`skill_evidence`, sty_23ceeca2)
+
+A step names skills; satelle records that the performer got them and checks that
+its work shows they were followed. Nothing here needs an LLM.
+
+- **Delivery.** Every dispatched performer's `agent_invocation` row carries
+  `skills`: each step skill delivered, by name and the sha256 `hash` of the body
+  the substrate index holds. A step the driving session performs (`agent =
+  executor`, or a named agent bound in-loop) records the same list on an
+  `in-loop` row when the story enters the step, and `satelle story set` shows the
+  session the composed skills once. A skill that does not resolve is in the list
+  as `delivered: false` with a reason — never skipped.
+- **Declared evidence.** A skill may declare what its use leaves behind, in its
+  frontmatter, as comma-separated lists: `evidence_sections` (markdown headings in
+  the step's output document), `evidence_keys` (top-level keys of a dispatched
+  performer's final JSON), `evidence_commands` (shell-command prefixes among the
+  step's commands, matched on the command text) and `evidence_tools` (tool names
+  among its tool events). `satelle validate` rejects a malformed declaration and
+  warns on a step skill that declares none, which then gets the delivery check
+  only.
+- **The check.** Always on. When a dispatched performer returns, and when a story
+  leaves a step the driving session performed, satelle compares the output and
+  the run trace with each delivered skill's declaration and names every missing
+  item (`<skill>: missing section "X"`). A dispatched run's trace is its transport's
+  tool events; a headless executor run's is the same stream, recorded as one
+  `tool_trace` row with its performance; the driving session's is the `tool_trace`
+  rows the gate hooks write, which see only the tools each harness's hook matcher
+  lists (`agentcli.HarnessHooks`). A hook writes a row only while the engaged
+  step's skills declare `evidence_commands` or `evidence_tools` (the step's entry
+  row says so), so a step that declares nothing costs its edits and commands no
+  ledger write. An item the trace cannot show is reported **unverifiable**, naming
+  the adapter, and never counts as a gap.
+- **What the in-loop check reads.** Only what the step itself produced: documents
+  attached and tool calls recorded since the story entered the step, so an earlier
+  step's document (an old plan) never satisfies a later step's declared section.
+  It judges only the step's **forward exit**; a back-edge (rework to an earlier
+  step), a park and a cancel are never refused for evidence.
+- **Cloud sessions are delivery-only.** A step performed by a cloud session
+  (`interface = cloud`) records each skill delivered, and an undelivered skill
+  refuses under `reject` or is recorded under `record`; its declared evidence is
+  not compared, because the session's tool calls are not returned.
+- **Strictness is configuration.** `skill_evidence` in the route source's
+  `[meta]` (`done.toml`) is `record` or `reject`; the default is `record`. Under
+  `record` a gap or undelivered skill is written on the row and shown to the
+  driver, and the transition proceeds. Under `reject` a gap refuses the
+  transition (a dispatched step is refused before it runs when a declared skill
+  does not resolve). Any other value fails `satelle validate`.
+
 ## Gate/dispatch sequencing — judge the EXIT edge
 
 Dispatch fires **on entry to the target state, after the entry gate accepts** —

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/verb"
 )
@@ -61,8 +62,8 @@ func TestHookHarnessPublishesExecutable(t *testing.T) {
 	// — the same table the scaffold builder writes from — or this test would
 	// silently assert something the scaffold never installs.
 	for _, c := range cases {
-		if !harnessHooks(c.harness).hasEvent(c.event) {
-			t.Fatalf("%s does not install %s per harnessHooks — fixture/table drift", c.harness, c.event)
+		if !agentcli.HarnessHooks(c.harness).HasEvent(c.event) {
+			t.Fatalf("%s does not install %s per HarnessHooks — fixture/table drift", c.harness, c.event)
 		}
 	}
 

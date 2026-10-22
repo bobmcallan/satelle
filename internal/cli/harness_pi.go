@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/bobmcallan/satelle/internal/agentcli"
 )
 
 //go:embed satelle_pi_extension.ts.tmpl
@@ -52,11 +54,11 @@ type piBinding struct {
 // from harnessHooks("pi") — beside the claude and grok matchers — and the Stop
 // timeout from the constant the claude scaffold uses, so neither is restated.
 func piBindings() []piBinding {
-	hs := harnessHooks("pi")
+	hs := agentcli.HarnessHooks("pi")
 	direct := func(verb string) []string { return []string{"hook", verb, "--harness", "pi"} }
 	return []piBinding{
-		{Event: "PreToolUse", Pi: "tool_call", Form: piFormWrapper, Verb: "gate", Tools: hs.gateMatcher, TimeoutS: piWrapperTimeoutSec},
-		{Event: "PreToolUse", Pi: "tool_call", Form: piFormWrapper, Verb: "commitgate", Tools: hs.commitMatcher, TimeoutS: piWrapperTimeoutSec},
+		{Event: "PreToolUse", Pi: "tool_call", Form: piFormWrapper, Verb: "gate", Tools: hs.GateMatcher, TimeoutS: piWrapperTimeoutSec},
+		{Event: "PreToolUse", Pi: "tool_call", Form: piFormWrapper, Verb: "commitgate", Tools: hs.CommitMatcher, TimeoutS: piWrapperTimeoutSec},
 		{Event: "SessionStart", Pi: "session_start", Form: piFormDirect, Verb: "reindex", Argv: []string{"reindex"}, TimeoutS: piDirectTimeoutSec},
 		{Event: "SessionStart", Pi: "session_start", Form: piFormDirect, Verb: "context", Argv: direct("context"), TimeoutS: piDirectTimeoutSec},
 		{Event: "UserPromptSubmit", Pi: "before_agent_start", Form: piFormDirect, Verb: "prompt", Argv: direct("prompt"), TimeoutS: piDirectTimeoutSec},

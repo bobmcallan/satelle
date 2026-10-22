@@ -182,6 +182,46 @@ func TestRecordStepPerformanceCarriesLastMessage(t *testing.T) {
 	}
 }
 
+// sty_23ceeca2: a headless executor step is judged as a dispatched step is — a gap
+// is shown, and refuses the run only under skill_evidence = reject — and its run
+// stream is recorded as one tool_trace row for the step's exit gate.
+func TestRecordStepPerformanceAppliesTheEvidenceSettingAndRecordsTheStream(t *testing.T) {
+	withWiring(t)
+	db := wire(t)
+	it := newStoryAt(t, "in_progress")
+	gap := &verb.EvidenceReport{Items: []verb.EvidenceItem{{Skill: "ev", Kind: verb.EvidenceCommand, Name: "go test", Status: verb.EvidenceMissing}}}
+	trace := &verb.RunTrace{
+		Adapter: "claude", CommandsCovered: true, ToolsCovered: true,
+		Calls: []verb.TraceCall{{Tool: "Bash", Command: "go vet ./..."}},
+	}
+	res := verb.DispatchResult{Dispatched: true, Agent: "executor", Command: "fake", Evidence: gap, Trace: trace}
+
+	if err := verb.RecordStepPerformance(context.Background(), it, "in_progress", res, nil); err != nil {
+		t.Fatalf("under record a gap is shown, not refused: %v", err)
+	}
+	gap.Strict = true
+	err := verb.RecordStepPerformance(context.Background(), it, "in_progress", res, nil)
+	if err == nil || !strings.Contains(err.Error(), `missing command "go test"`) {
+		t.Fatalf("under reject the run is refused naming the gap, got %v", err)
+	}
+	rows := rowsOf(t, db, it.ID, ledger.KindToolTrace)
+	if len(rows) != 2 {
+		t.Fatalf("want one stream row per recorded run, got %d", len(rows))
+	}
+	var p verb.ToolTracePayload
+	if err := json.Unmarshal(rows[0].Payload, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Source != verb.ToolTraceStream || !p.CommandsCovered || len(p.Calls) != 1 || p.Calls[0].Command != "go vet ./..." {
+		t.Errorf("stream payload = %+v, want the run's calls with their coverage", p)
+	}
+	res.Trace = nil // a step that declares nothing carries no trace
+	_ = verb.RecordStepPerformance(context.Background(), it, "in_progress", res, nil)
+	if got := len(rowsOf(t, db, it.ID, ledger.KindToolTrace)); got != 2 {
+		t.Errorf("a run without a trace must add no tool_trace row, have %d", got)
+	}
+}
+
 // AC2: a transition, a reviewer's and a summariser's rows carry no last_message.
 func TestTransitionAndReviewerRowsHaveNoLastMessage(t *testing.T) {
 	withWiring(t)

@@ -526,6 +526,32 @@ type DispatchResult struct {
 	// Cloud is set when the step was performed by a cloud session
 	// (interface=cloud, sty_82cffd60): where it ran and what was collected.
 	Cloud *CloudDispatch `json:"cloud,omitempty"`
+	// Kind is who performs the step when nothing was dispatched: PerformerExecutor
+	// or PerformerInLoop mean the driving session does, and Skills/InLoopRubric
+	// then describe what satelle delivered to it (sty_23ceeca2).
+	Kind PerformerKind `json:"-"`
+	// Skills is the manifest of the step's skills as delivered (name, content hash,
+	// delivered or not), recorded on the invocation row. A skill that did not
+	// resolve is in it as undelivered; it is never silently dropped.
+	Skills []SkillDelivery `json:"-"`
+	// InLoopRubric is the composed skill text the driving session is shown on
+	// entry to an in-loop step; printing it is the delivery the Skills manifest
+	// records.
+	InLoopRubric string `json:"-"`
+	// Evidence is the skill-evidence check's answer for a dispatched step, run
+	// against the performer's output and run trace; nil when the step declares
+	// nothing to check.
+	Evidence *EvidenceReport `json:"-"`
+	// StrictSkills carries the workflow's skill_evidence setting for an in-loop
+	// delivery: true means an undelivered skill refuses the transition.
+	StrictSkills bool `json:"-"`
+	// TraceCommands and TraceTools say the in-loop step's skills declare commands or
+	// tools as evidence, so a gate hook must record the calls it lets through.
+	TraceCommands bool `json:"-"`
+	TraceTools    bool `json:"-"`
+	// Trace is a headless run's tool calls, recorded with its performance so the
+	// step's exit gate judges the same calls the run's own check did.
+	Trace *RunTrace `json:"-"`
 }
 
 // CloudDispatch is what a cloud-performed step records: the session, the branch

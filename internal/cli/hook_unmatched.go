@@ -43,7 +43,7 @@ func invokingHarness(raw []byte) string {
 
 // invokingNoToolMatcher reports whether the invoking harness has no tool matcher.
 func invokingNoToolMatcher(raw []byte) bool {
-	return harnessHooks(invokingHarness(raw)).NoToolMatcher
+	return agentcli.HarnessHooks(invokingHarness(raw)).NoToolMatcher
 }
 
 // toolNameFromEvent pulls the tool name out of a PreToolUse event: Claude and

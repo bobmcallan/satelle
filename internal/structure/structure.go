@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
@@ -135,7 +136,21 @@ func checkSkill(name, body string) []string {
 	if isReviewerSkillName(name, fm) {
 		p = append(p, ReviewerSkillContract(body)...)
 	}
+	// A declared evidence contract (sty_23ceeca2) is read by the skill-evidence
+	// check at run time; a malformed one would fail the dispatch then, so it fails
+	// validation now.
+	if _, err := agentartifact.ParseEvidence(body); err != nil {
+		p = append(p, "evidence declaration: "+err.Error())
+	}
 	return p
+}
+
+// SkillDeclaresEvidence reports whether a skill body declares any evidence_* item
+// the skill-evidence check can compare with a step's output and run trace. A
+// malformed declaration reads as not declaring (checkSkill reports it).
+func SkillDeclaresEvidence(body string) bool {
+	e, err := agentartifact.ParseEvidence(body)
+	return err == nil && e.Declared()
 }
 
 // isReviewerSkillName reports whether a skill is a gate-reviewer rubric that must
@@ -251,6 +266,12 @@ func checkRouteSource(name string, fm []string, body string, resolveSkill func(s
 	}
 	if fmHas(fm, "applies_to") {
 		p = append(p, "a route source must not declare applies_to — done.toml's `[<category>]` tables select it")
+	}
+	// skill_evidence (sty_23ceeca2): how strictly a skill delivery or evidence gap
+	// blocks. Absent means record; an unrecognised value is refused here rather
+	// than silently read as the default.
+	if mode := fmScalar(fm, "skill_evidence"); fmHas(fm, "skill_evidence") && !agentartifact.ValidEvidenceMode(mode) {
+		p = append(p, fmt.Sprintf("skill_evidence %q is not %s or %s", mode, agentartifact.EvidenceModeRecord, agentartifact.EvidenceModeReject))
 	}
 	switch name {
 	case wfgovern.RouteSourceDone:

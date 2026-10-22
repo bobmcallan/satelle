@@ -185,3 +185,35 @@ func HarnessFromHookEvent(raw []byte) string {
 	}
 	return HarnessUnknown
 }
+
+// CommandFromHookEvent pulls the shell command out of a PreToolUse event.
+// Accepts Claude Code's snake_case envelope (tool_input.command) AND Grok's
+// camelCase envelope (toolInput.command) — both harnesses fire the same hook
+// (epic:scoped-sync order:9 / sty_0d3665ee). Prefer the first non-empty value.
+// Empty when the event carries no command (a non-shell tool, or unparseable).
+func CommandFromHookEvent(raw []byte) string {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return ""
+	}
+	for _, key := range []string{"tool_input", "toolInput"} {
+		rawTI, ok := top[key]
+		if !ok || len(rawTI) == 0 {
+			continue
+		}
+		var ti map[string]json.RawMessage
+		if err := json.Unmarshal(rawTI, &ti); err != nil {
+			continue
+		}
+		cmdRaw, ok := ti["command"]
+		if !ok || len(cmdRaw) == 0 {
+			continue
+		}
+		// String form (Claude / Grok).
+		var s string
+		if err := json.Unmarshal(cmdRaw, &s); err == nil && s != "" {
+			return s
+		}
+	}
+	return ""
+}

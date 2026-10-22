@@ -212,7 +212,7 @@ func TestPiNoExtension_NoChange(t *testing.T) {
 // AC9: the pi scaffold covers the same event set as claude and grok, in the same
 // invocation form per event, so the three cannot drift apart.
 func TestHarnessHooks_PiMatchesFullEventSet(t *testing.T) {
-	want := append([]string(nil), fullHookEvents...)
+	want := append([]string(nil), agentcli.FullHookEvents...)
 	sort.Strings(want)
 	sorted := func(in []string) string {
 		out := append([]string(nil), in...)
@@ -220,7 +220,7 @@ func TestHarnessHooks_PiMatchesFullEventSet(t *testing.T) {
 		return strings.Join(out, ",")
 	}
 	for _, h := range []string{"claude", "grok", "pi"} {
-		if got := sorted(harnessHooks(h).events); got != strings.Join(want, ",") {
+		if got := sorted(agentcli.HarnessHooks(h).Events); got != strings.Join(want, ",") {
 			t.Errorf("%s events = %s, want %s", h, got, strings.Join(want, ","))
 		}
 	}
@@ -261,7 +261,7 @@ func TestHarnessHooks_PiMatchesFullEventSet(t *testing.T) {
 		if err := json.Unmarshal(build, &doc); err != nil {
 			t.Fatal(err)
 		}
-		for _, event := range fullHookEvents {
+		for _, event := range agentcli.FullHookEvents {
 			got := map[string]string{}
 			for _, g := range doc.Hooks[event] {
 				for _, h := range g.Hooks {
@@ -336,9 +336,9 @@ func sameMap(a, b map[string]string) bool {
 
 // The tool matchers live beside claude's and grok's, anchored whole names.
 func TestPiToolMatchersLiveInTheHarnessTable(t *testing.T) {
-	hs := harnessHooks("pi")
-	if hs.gateMatcher != "edit|write" || hs.commitMatcher != "bash" {
-		t.Fatalf("pi matchers = %q / %q", hs.gateMatcher, hs.commitMatcher)
+	hs := agentcli.HarnessHooks("pi")
+	if hs.GateMatcher != "edit|write" || hs.CommitMatcher != "bash" {
+		t.Fatalf("pi matchers = %q / %q", hs.GateMatcher, hs.CommitMatcher)
 	}
 	for _, b := range piBindings() {
 		if b.Form == piFormWrapper && b.Tools == "" {

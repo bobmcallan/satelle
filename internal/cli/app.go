@@ -263,6 +263,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// Attachment payload injection (sty_58fa970e): Bash-less reviewers
 			// receive plan/step-summary bodies in the transition payload.
 			rev.SetDocsResolver(docsResolver(a))
+			// In-loop run trace (sty_23ceeca2): the skill-evidence check compares a
+			// step the driving session performed with the tool calls its hooks saw.
+			rev.SetToolTraceResolver(toolTraceResolver())
 			// Prior-verdict injection (sty_0f5e600c): a re-reviewed edge carries
 			// what it already judged, so the gate judges the delta.
 			rev.SetPriorVerdictsResolver(priorVerdictsResolver())

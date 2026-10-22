@@ -268,6 +268,7 @@ func dispatchPerformer(ctx context.Context, current workitem.Item, to, attempt s
 		return run
 	}
 	if !res.Dispatched {
+		recordInLoopDelivery(ctx, current, to, attempt, res, &run, now)
 		return run
 	}
 	// Record the resolved model (when the binding pins one) so the ledger shows
@@ -311,6 +312,15 @@ func dispatchPerformer(ctx context.Context, current workitem.Item, to, attempt s
 	// rework (the step declares a loop) or parks the story blocked.
 	notes, refuse := applyDispatchBudget(ctx, current, to, res,
 		stepDeclaresRework(ctx, current, to), ResumeParkName(ctx, current), now)
+	// The skill-evidence check (sty_23ceeca2): a gap is always on the row above and
+	// in front of the driver; under the workflow's skill_evidence = reject it also
+	// refuses the step, as a broken spend bound does.
+	if res.Evidence != nil && len(res.Evidence.Gaps()) > 0 {
+		reportSkillEvidence(current.ID, to, res.Evidence)
+		if refuse == nil && notes == "" && res.Evidence.Blocks() {
+			refuse = fmt.Errorf("step %q refused by the skill-evidence check (workflow skill_evidence = reject): %s", to, res.Evidence.Notes())
+		}
+	}
 	run.Refuse, run.ParkNotes = refuse, notes
 	if readiness && refuse != nil {
 		recordPerformerReject(ctx, current, to, attempt, res, refuse.Error(), now)
@@ -325,7 +335,7 @@ func dispatchPerformer(ctx context.Context, current workitem.Item, to, attempt s
 func recordDispatchFailure(ctx context.Context, current workitem.Item, to, attempt string, res DispatchResult, derr error, now time.Time) {
 	appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "executor",
 		fmt.Sprintf("named-agent dispatch failed for %s→%s: %v", current.Status, to, derr),
-		performerFailurePayload(current.Status, to, res.Skill, attempt, res.LastMessage), now)
+		performerFailurePayload(current.Status, to, res.Skill, attempt, res.LastMessage, res.Skills), now)
 	notifyChange(panelTopic(current.Kind))
 }
 
@@ -334,14 +344,19 @@ func recordDispatchFailure(ctx context.Context, current workitem.Item, to, attem
 // dispatchPerformer writes for a named performer's step, so the cost and
 // timeline views read both alike. A failed run is recorded the same way a failed
 // dispatch is.
-func RecordStepPerformance(ctx context.Context, item workitem.Item, step string, res DispatchResult, runErr error) {
+//
+// The skill-evidence check (sty_23ceeca2) is applied as it is to a dispatched
+// step: its gap is in front of the driver, and under the workflow's
+// skill_evidence = reject the returned error says the run is refused. The run's
+// tool calls are recorded too, so the step's exit gate judges the same calls.
+func RecordStepPerformance(ctx context.Context, item workitem.Item, step string, res DispatchResult, runErr error) error {
 	now := time.Now()
 	if runErr != nil {
 		appendLedgerEntry(ctx, item.ID, ledger.KindAgentInvocation, "executor",
 			fmt.Sprintf("executor run for step %q failed: %v", step, runErr),
-			performerFailurePayload(step, step, res.Skill, "", res.LastMessage), now)
+			performerFailurePayload(step, step, res.Skill, "", res.LastMessage, res.Skills), now)
 		notifyChange(panelTopic(item.Kind))
-		return
+		return nil
 	}
 	modelNote := ""
 	if res.Model != "" {
@@ -351,6 +366,14 @@ func RecordStepPerformance(ctx context.Context, item workitem.Item, step string,
 		fmt.Sprintf("performed step %q with the %s binding%s (%s) with @skill:%s",
 			step, res.Agent, modelNote, res.Command, res.Skill),
 		dispatchPayload(step, step, res, ""), now)
+	recordRunTrace(ctx, item.ID, step, res.Trace, now)
+	if res.Evidence != nil && len(res.Evidence.Gaps()) > 0 {
+		reportSkillEvidence(item.ID, step, res.Evidence)
+		if res.Evidence.Blocks() {
+			return fmt.Errorf("step %q refused by the skill-evidence check (workflow skill_evidence = reject): %s", step, res.Evidence.Notes())
+		}
+	}
+	return nil
 }
 
 // recordPerformerReject writes a readiness round's performer verdict when the
