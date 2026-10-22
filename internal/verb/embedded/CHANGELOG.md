@@ -1,3 +1,13 @@
+## [0.0.725] - 2026-10-22
+
+### Fixed
+- A reviewer verdict whose `criteria[]` holds only the general entry (criterion 0) is read as a whole-story verdict: that entry decides, and no unchecked entries are invented for criteria the rubric never itemised. Before this fix, an axis gate such as scope review that accepted the story as a whole was recorded as "criteria not accepted: AC1, AC2, …", costing a full extra gate round. A rubric that wants one entry per criterion declares `verdict_criteria: required`; a lone general entry then rejects with notes naming the numbering mismatch (`expected AC1–ACn, got 0`). (sty_48a86a38)
+
+## [serve-v0.0.193] - 2026-10-22
+
+### Changed
+- The service binary carries the updated agent-dispatch help. (sty_48a86a38)
+
 ## [0.0.724] - 2026-10-22
 
 ### Added
