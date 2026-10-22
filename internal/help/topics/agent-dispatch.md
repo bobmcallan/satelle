@@ -537,6 +537,34 @@ They are applied within the same limits and the reject is recorded: the engaged
 story then parks blocked with the notes, while under `satelle story ready` the
 status does not change.
 
+### Answering a re-presented edge's findings — `findings_to_answer` (sty_f948d345)
+
+A performer dispatched for an edge whose latest gate round rejected receives, in
+its payload, `findings_to_answer`: each gate seat's latest verdict on that edge
+(a panel's seats listed individually) as `{id, skill, seat, decision, blocking,
+notes, attempt}`. An `id` is `<skill>[/<seat>]#<attempt>`. Notes longer than the
+payload bound are cut with a `[truncated]` marker and a
+`satelle ledger list --story <id>` fetch command. Nothing is sent on a first
+presentation or when the latest round accepted. The newest directed messages are
+kept in the payload window, not the oldest.
+
+The performer answers each blocking finding beside its artifact (or `changes`),
+in the same final object:
+
+```json
+{"artifact":{"name":"plan","type":"plan","body":"…"},"answers":[
+  {"finding":"arch-review/opus#1","answer":"adopted","evidence":"moved the owner to the existing seam"},
+  {"finding":"plan-review#1","answer":"rebutted","evidence":"engine.go:1336 shows performerPayload never fills it"}
+]}
+```
+
+`answer` is `adopted` or `rebutted`; an unknown value or field is an error, not
+ignored. Satelle records the offered ids (`findings_offered`) and the answers
+(`finding_answers`) on the dispatch's `agent_invocation` row, and tells the gates
+of that edge, as a fact in their payload (`finding_answers.missing`), which
+offered findings went unanswered. It never rejects on that fact: how strictly an
+answer must carry evidence is the gate's rubric.
+
 ### Planner transport evidence
 
 For this repository the default `[planner]` remains Claude's non-interactive

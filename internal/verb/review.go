@@ -37,8 +37,15 @@ type GateDecision struct {
 	// in-process only: it keeps such a verdict deciding from its criteria rather
 	// than from its top-level decision.
 	CriteriaSent bool
-	Skill        string            // the deciding reviewer skill
-	Reviewers    []ReviewerVerdict // per-reviewer verdicts in run order (empty for the legacy single-reviewer path)
+	// ReviewMode is the gate's declared review mode, set only for fail-fast (the
+	// engine reads it off the route; empty is full). Coverage is what the
+	// reviewer says it covered; nil means it stated nothing. Both are stored on
+	// the verdict row so the next presentation can tell a partial reject from a
+	// full one (sty_93359e0f).
+	ReviewMode string
+	Coverage   *Coverage
+	Skill      string            // the deciding reviewer skill
+	Reviewers  []ReviewerVerdict // per-reviewer verdicts in run order (empty for the legacy single-reviewer path)
 	// Command/Context describe an isolated AGENT invocation (LLM reviewer): the
 	// resolved harness command and the injected-context source (skill/rubric file).
 	// Empty for a deterministic functional-check gate, which invokes no agent
@@ -127,7 +134,11 @@ type ReviewerVerdict struct {
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
 	// Criteria is the verdict's per-criterion entries (sty_99d3162b).
 	Criteria []CriterionVerdict `json:"criteria,omitempty"`
-	System   bool               `json:"system,omitempty"`
+	// ReviewMode / Coverage mirror GateDecision's (sty_93359e0f): the mode the
+	// gate declared (fail-fast only) and what the reviewer says it covered.
+	ReviewMode string    `json:"review_mode,omitempty"`
+	Coverage   *Coverage `json:"coverage,omitempty"`
+	System     bool      `json:"system,omitempty"`
 	// CarriedFrom is the 1-based attempt index of the earlier verdict this one
 	// re-issues without a dispatch (sty_59720b8b); zero for a fresh judgment. A
 	// carried verdict has no Command, so no agent_invocation row is written.
@@ -220,6 +231,18 @@ type PanelSeat struct {
 	// Criteria is the seat's own per-criterion entries (sty_99d3162b). Accept is
 	// then the seat's effective decision, derived from them (CriteriaAccept).
 	Criteria []CriterionVerdict `json:"criteria,omitempty"`
+	// Coverage is what this seat says it covered (sty_93359e0f); nil when it
+	// stated nothing.
+	Coverage *Coverage `json:"coverage,omitempty"`
+}
+
+// Coverage is what a reviewer says its verdict covered. Complete means it judged
+// the whole artifact; false with StoppedAt means it stopped early at that finding
+// (fail-fast) and the remainder was not reviewed. The binary stores it and
+// carries it to the next presentation; it never judges it (sty_93359e0f).
+type Coverage struct {
+	Complete  bool   `json:"complete"`
+	StoppedAt string `json:"stopped_at,omitempty"`
 }
 
 // Outcomes of a reviewer attempt that produced no verdict, recorded on its
@@ -487,6 +510,12 @@ type DispatchResult struct {
 	// final response (sty_af0b1761), decoded by the shared agentartifact seam.
 	// The verb applies them only on a step that declares apply_changes.
 	Changes []agentartifact.Change `json:"-"`
+	// FindingsOffered are the ids of the blocking findings the performer's
+	// payload asked it to answer, and Answers its per-finding replies decoded
+	// from its final response (sty_f948d345). dispatchPayload records both on the
+	// run's agent_invocation row so the gates can be told which went unanswered.
+	FindingsOffered []string               `json:"-"`
+	Answers         []agentartifact.Answer `json:"-"`
 	// ArtifactName/Type identify a Satelle-owned structured step artifact
 	// attached before the transition committed.
 	ArtifactName string `json:"artifact_name,omitempty"`

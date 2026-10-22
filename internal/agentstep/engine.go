@@ -125,6 +125,10 @@ type Engine struct {
 	// to the grant or to a later gate; fillDeferred hands each gate its own.
 	// Nil-safe: an unwired resolver injects nothing.
 	deferrals func(ctx context.Context, itemID string) []DeferredItem
+	// findingAnswers reports how the performer of an edge answered the findings it
+	// was offered (sty_f948d345); fillFindingAnswers hands the gate the fact.
+	// Nil-safe: an unwired resolver injects nothing.
+	findingAnswers func(ctx context.Context, itemID, from, to string) (FindingAnswers, bool)
 	// itemDiff resolves the live engagement slice for a reviewer payload
 	// (sty_a125b440). Nil-safe: an unwired resolver injects no Diff. The
 	// resolver itself must never error — map missing baseline / git failure to
@@ -944,6 +948,11 @@ type transitionPayload struct {
 	// payload (sty_23e10d92); ReviewSkill is empty then. Absent for a gate that
 	// runs alone, so its payload is byte-for-byte unchanged.
 	ReviewSkills []string `json:"review_skills,omitempty"`
+	// ReviewMode names the gate's declared review mode, and is present ONLY for
+	// fail-fast (sty_93359e0f): the seat stops at the first blocking finding,
+	// rejects, and says in its verdict where it stopped. Absent for the default
+	// full review, so that payload is byte-for-byte unchanged.
+	ReviewMode string `json:"review_mode,omitempty"`
 	// Children carries a container's child stories (id + status) so a parent/epic
 	// close gate judges the children-resolved rule from the PAYLOAD — satelle does
 	// the context selection — rather than reading any on-disk story mirror. Empty
@@ -1017,6 +1026,16 @@ type transitionPayload struct {
 	// PeerFindings are the other panel seats' open findings (never the seat's
 	// own). Absent outside a panel and when no peer has one.
 	PeerFindings []peerFinding `json:"peer_findings,omitempty"`
+	// Findings is present ONLY on the payload of a performer re-presenting an edge
+	// whose latest gate round rejected (sty_f948d345): each gate seat's latest
+	// verdict on that edge, a panel's seats individually. The performer answers
+	// each blocking one — adopted, or rebutted with evidence — in its output.
+	// Enumeration, not verdict.
+	Findings []Finding `json:"findings_to_answer,omitempty"`
+	// FindingAnswers is present ONLY on a gate payload whose edge's performer was
+	// offered findings: which it answered and which it left unanswered. A fact the
+	// gate's rubric weighs; Go never rejects on it.
+	FindingAnswers *FindingAnswers `json:"finding_answers,omitempty"`
 }
 
 // MessageState is one agent_message as injected into a transition payload.
@@ -1074,6 +1093,12 @@ type PriorVerdict struct {
 	// verdict's cycle ended, so Reviewed is withheld and the gate re-judges.
 	ReviewedStale bool                 `json:"reviewed_stale,omitempty"`
 	EvidenceSince []verb.EvidenceSince `json:"evidence_since,omitempty"`
+	// ReviewMode / Coverage / Partial: what the earlier verdict covered
+	// (sty_93359e0f). Partial means the earlier verdict stopped early, so the
+	// remainder it did not review is still unjudged.
+	ReviewMode string         `json:"review_mode,omitempty"`
+	Coverage   *verb.Coverage `json:"coverage,omitempty"`
+	Partial    bool           `json:"partial,omitempty"`
 	// Unavailable marks a panel seat's own entry for a round it never produced a
 	// verdict on (sty_da9e8d0a). It is a reject with no Reviewed, judged in full.
 	Unavailable bool `json:"unavailable,omitempty"`
@@ -1096,6 +1121,9 @@ func PriorVerdictFrom(v verb.PriorVerdict) PriorVerdict {
 		Criteria:          v.Criteria,
 		ReviewedStale:     v.ReviewedStale,
 		EvidenceSince:     v.EvidenceSince,
+		ReviewMode:        v.ReviewMode,
+		Coverage:          v.Coverage,
+		Partial:           v.Partial,
 		Seats:             v.Seats,
 	}
 }
@@ -1192,9 +1220,7 @@ func (g *Engine) fillPriorVerdicts(ctx context.Context, itemID, from, to string,
 	if len(all) == 0 {
 		return
 	}
-	for i := range all {
-		all[i].Attempt = i + 1
-	}
+	numberAttempts(all)
 	// Snapshot before the window. The copy does not share the backing array,
 	// so the note excerpts below cannot shorten the retained bodies.
 	if mat != nil {
@@ -1271,8 +1297,10 @@ func (g *Engine) fillDefinitionEdits(ctx context.Context, itemID string, tp *tra
 // fillDiff attaches the engagement slice under its own ceiling. Runs AFTER
 // fillPayloadDocs and never touches that counter. Called unconditionally on
 // the gate payload — no status-name switch (sty_a125b440 AC2). Gate payload
-// only: executor and retrospective payloads deliberately go without, matching
-// prior_verdicts (an executor modelling its own slice is the failure mode).
+// only: executor and retrospective payloads deliberately go without the diff (an
+// executor modelling its own slice is the failure mode). They go without the
+// full prior_verdicts history too; a performer re-presenting an edge gets only
+// each seat's latest verdict, as findings_to_answer (sty_f948d345).
 func (g *Engine) fillDiff(ctx context.Context, itemID string, tp *transitionPayload, mat *reviewerMaterial) {
 	if g.itemDiff == nil || itemID == "" {
 		return
@@ -1358,6 +1386,7 @@ const (
 func (g *Engine) performerPayload(ctx context.Context, item workitem.Item, toStatus, skill, agent string, binding config.AgentBinding) transitionPayload {
 	tp := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: skill}
 	g.fillPayloadDocs(ctx, item.ID, &tp, nil)
+	g.fillFindings(ctx, item, toStatus, &tp)
 	if g.children != nil {
 		tp.Children = g.children(ctx, item)
 	}
@@ -1371,7 +1400,7 @@ func (g *Engine) performerPayload(ctx context.Context, item workitem.Item, toSta
 
 // fillMessages attaches engagement-windowed agent messages for recipient.
 // Runs AFTER fillPayloadDocs / fillDiff and never touches those counters.
-// Oldest 20 kept; each body cut at messageBodyBudget with a fetch hint.
+// Newest 20 kept; each body cut at messageBodyBudget with a fetch hint.
 // Nil-safe; never errors.
 func (g *Engine) fillMessages(ctx context.Context, itemID string, addresses []string, tp *transitionPayload, mat *reviewerMaterial) {
 	if g.itemMessages == nil || itemID == "" {
@@ -1382,13 +1411,15 @@ func (g *Engine) fillMessages(ctx context.Context, itemID string, addresses []st
 		return
 	}
 	// The file keeps resolver order and the full bodies. The check payload
-	// stays the oldest messagesCount, each body cut at messageBodyBudget.
+	// stays the newest messagesCount (the resolver lists oldest first, so the tail
+	// is the newest — a relayed rejection is the last thing said, and the one that
+	// must not be dropped), each body cut at messageBodyBudget.
 	if mat != nil {
 		mat.Messages = append([]MessageState(nil), msgs...)
 	}
 	window := msgs
 	if len(window) > messagesCount {
-		window = window[:messagesCount]
+		window = window[len(window)-messagesCount:]
 	}
 	out := make([]MessageState, len(window))
 	for i := range window {
@@ -1643,9 +1674,11 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 	// Build ordered gate list; edge skills share the edge's agent= binding
 	// (sty_a476a2f8). Scoped nodes carry their own agent=.
 	var ordered []reviewerRef
+	failFast := g.edgeFailFast(ctx, item, item.Status, toStatus)
 	for _, sk := range skills {
 		ordered = append(ordered, reviewerRef{
 			skill: sk, agent: edgeAgent, panel: edgePanel, combine: edgeCombine, parallel: parallelCap,
+			mode: failFastModeOf(failFast, sk),
 		})
 	}
 	sysStart := len(ordered)
@@ -1731,6 +1764,8 @@ func (g *Engine) runScheduled(ctx context.Context, item workitem.Item, toStatus 
 		result.Reasoning = dec.Reasoning
 		result.Reviewed = dec.Reviewed
 		result.ReviewedTruncated = dec.ReviewedTruncated
+		result.ReviewMode, result.Coverage = dec.ReviewMode, dec.Coverage
+		result.Turns, result.TurnsUnavailableReason = dec.Turns, dec.TurnsUnavailableReason
 		result.Command = dec.Command
 		result.Context = dec.Context
 		result.Model = dec.Model
@@ -1814,6 +1849,7 @@ func reviewerVerdictOf(skill string, order int, system bool, dec verb.GateDecisi
 	return verb.ReviewerVerdict{
 		Skill: skill, Order: order, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning,
 		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated, Criteria: dec.Criteria, System: system,
+		ReviewMode: dec.ReviewMode, Coverage: dec.Coverage,
 		Command: dec.Command, Context: dec.Context, Model: dec.Model,
 		ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 		TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
@@ -1877,6 +1913,8 @@ func assembleGate(ordered []reviewerRef, results []gateSlot, sysStart int) (verb
 		result.Reasoning = pick.Reasoning
 		result.Reviewed = pick.Reviewed
 		result.ReviewedTruncated = pick.ReviewedTruncated
+		result.ReviewMode, result.Coverage = pick.ReviewMode, pick.Coverage
+		result.Turns, result.TurnsUnavailableReason = pick.Turns, pick.TurnsUnavailableReason
 		result.Command = pick.Command
 		result.Context = pick.Context
 		result.Model = pick.Model
@@ -2408,6 +2446,9 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		return res, fmt.Errorf("named agent %q reported changes for step %q that cannot be read: %w", dispatchAgent, toStatus, cerr)
 	}
 	res.Changes = changes
+	if aerr := RecordFindingAnswers(&res, execPayload.Findings, invRes.Stdout); aerr != nil {
+		return res, fmt.Errorf("named agent %q reported answers for step %q that cannot be read: %w", dispatchAgent, toStatus, aerr)
+	}
 	if dec, derr := parseDecision(invRes.Stdout); derr == nil && !dec.Accept {
 		return res, &verb.PerformerReject{Notes: dec.Notes, Changes: changes}
 	}
@@ -3305,7 +3346,7 @@ func (g *Engine) runReviewerRef(ctx context.Context, item workitem.Item, toStatu
 	if len(ref.panel) == 1 && !fold {
 		agent = ref.panel[0]
 	}
-	prep, err := g.prepareReviewer(ctx, item, toStatus, skill, agent, decorate)
+	prep, err := g.prepareReviewer(ctx, item, toStatus, skill, agent, withReviewMode(ref.mode, decorate))
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
@@ -3313,7 +3354,11 @@ func (g *Engine) runReviewerRef(ctx context.Context, item workitem.Item, toStatu
 		return verb.GateDecision{Gated: false, Skill: skill, Unresolved: []string{skill}}, nil
 	}
 	if !fold {
-		return g.decideReviewer(ctx, item, toStatus, skill, agent, prep)
+		dec, derr := g.decideReviewer(ctx, item, toStatus, skill, agent, prep)
+		if dec.Gated {
+			dec.ReviewMode = ref.mode
+		}
+		return dec, derr
 	}
 	if command := skillCheck(prep.body); command != "" {
 		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
@@ -3323,7 +3368,11 @@ func (g *Engine) runReviewerRef(ctx context.Context, item workitem.Item, toStatu
 	if cerr != nil {
 		return verb.GateDecision{Gated: true, Skill: skill}, cerr
 	}
-	return g.runPanel(ctx, item, toStatus, skill, ref, command, prep)
+	dec, ferr := g.runPanel(ctx, item, toStatus, skill, ref, command, prep)
+	if dec.Gated {
+		dec.ReviewMode = ref.mode
+	}
+	return dec, ferr
 }
 
 // panelFolds reports whether this ref expands into seat runs and a combine
@@ -3460,6 +3509,7 @@ func (g *Engine) runPanelSeats(ctx context.Context, item workitem.Item, toStatus
 				Seat: section, Accept: res.Decision.Accept, Notes: res.Decision.Notes,
 				Reviewed: res.Decision.Reviewed, ReviewedTruncated: res.Decision.ReviewedTruncated,
 				Criteria: res.Decision.Criteria,
+				Coverage: res.Decision.Coverage,
 			},
 			stamp: g.seatStamp(skill, section, res, res.Decision, seat),
 		}
@@ -3627,7 +3677,7 @@ func (g *Engine) scopedReviewers(ctx context.Context, item workitem.Item, toStat
 		if s.When != "" && !g.whenAllows(ctx, item, toStatus, s) {
 			continue
 		}
-		out = append(out, reviewerRef{skill: s.Skill, agent: s.Agent, panel: s.Panel, combine: s.Combine})
+		out = append(out, reviewerRef{skill: s.Skill, agent: s.Agent, panel: s.Panel, combine: s.Combine, mode: s.ReviewMode})
 	}
 	for _, s := range skipped {
 		g.telemetryEvent(ctx, item.ID, "reviewer", "scoped-gate-skipped", map[string]any{
@@ -3699,6 +3749,9 @@ type reviewerRef struct {
 	panel        []string
 	combine      string
 	parallel     int
+	// mode is the gate's declared review mode: wfdot.ReviewModeFailFast or empty
+	// (full). A panel's seats inherit it (sty_93359e0f).
+	mode string
 }
 
 // structureSkill is the required-structure reviewer that judges a draft work
@@ -4757,6 +4810,29 @@ type rawDecision struct {
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
 	// Criteria is the optional per-criterion verdict (sty_99d3162b).
 	Criteria []rawCriterion `json:"criteria,omitempty"`
+	// Coverage is what the reviewer says the verdict covered (sty_93359e0f):
+	// complete, or stopped early at a named finding. Optional; absent is stored
+	// as absent, never as complete.
+	Coverage json.RawMessage `json:"coverage,omitempty"`
+}
+
+// applyCoverage reads a reviewer's stated coverage, bounding stopped_at to
+// reviewedCeiling like the quotation it travels with. It is decoded apart from
+// the verdict so a malformed coverage costs the coverage, never the verdict:
+// absent or unreadable stays nil, which is stored as "stated nothing".
+func applyCoverage(raw json.RawMessage) *verb.Coverage {
+	var c struct {
+		Complete  bool   `json:"complete"`
+		StoppedAt string `json:"stopped_at"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &c) != nil {
+		return nil
+	}
+	stopped := strings.TrimSpace(c.StoppedAt)
+	if len(stopped) > reviewedCeiling {
+		stopped = stopped[:reviewedCeiling]
+	}
+	return &verb.Coverage{Complete: c.Complete, StoppedAt: stopped}
 }
 
 // applyReviewed bounds a quotation to reviewedCeiling before the decision is
@@ -4794,6 +4870,7 @@ func parseDecision(out []byte) (verb.GateDecision, error) {
 				ReviewedTruncated: truncated,
 				Criteria:          parseCriteria(rd.Criteria),
 				CriteriaSent:      len(rd.Criteria) > 0,
+				Coverage:          applyCoverage(rd.Coverage),
 			}
 			found = &d
 		}

@@ -69,6 +69,10 @@ type Step struct {
 	// current material go undispatched while another reviewer rejects; the round
 	// that would advance the edge re-dispatches every carried reviewer.
 	ReviewerCarry string
+	// FailFast names the entry reviewers (a subset of Reviewers and Panel
+	// skills) that run in fail-fast review mode: stop at the first blocking
+	// finding and record where. Every reviewer not named runs full.
+	FailFast []string
 	// Provides is the obligation this step discharges. A step with no Provides
 	// is a role state (start or terminal marker), not an obligation-bearer.
 	Provides string
@@ -204,6 +208,9 @@ type RouteGate struct {
 	// to this skill.
 	Panel   []string
 	Combine string
+	// ReviewMode is this gate's review mode: empty (full) or ReviewModeFailFast.
+	// It covers the gate and every seat of its panel.
+	ReviewMode string
 }
 
 // List is one category's declaration of done: the obligations that must be
@@ -519,15 +526,16 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			continue
 		}
 		spec.States = append(spec.States, State{
-			Name:      "gate_" + g.Skill,
-			Agent:     g.Agent,
-			Skill:     g.Skill,
-			On:        g.On,
-			AppliesTo: g.AppliesTo,
-			Mandatory: g.Mandatory,
-			When:      g.When,
-			Panel:     g.Panel,
-			Combine:   g.Combine,
+			Name:       "gate_" + g.Skill,
+			Agent:      g.Agent,
+			Skill:      g.Skill,
+			On:         g.On,
+			AppliesTo:  g.AppliesTo,
+			Mandatory:  g.Mandatory,
+			When:       g.When,
+			Panel:      g.Panel,
+			Combine:    g.Combine,
+			ReviewMode: g.ReviewMode,
 		})
 	}
 
@@ -554,6 +562,7 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			ReviewerCarry: to.ReviewerCarry,
 			Panel:         to.Panel,
 			Combine:       to.Combine,
+			FailFast:      to.FailFast,
 		})
 	}
 

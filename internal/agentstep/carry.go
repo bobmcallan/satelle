@@ -84,9 +84,10 @@ func judgedText(item workitem.Item, docs []DocState) string {
 // carried: an accept with a complete, non-stale quotation that appears verbatim
 // in the material judged now. A reviewer's latest verdict and a panel seat's
 // latest verdict (seatPriorVerdicts) are both held to it; an unavailable seat is
-// projected to a reject, so it never carries.
+// projected to a reject, so it never carries. A partial verdict covered only part
+// of the artifact, so it never carries as acceptance of the rest (sty_93359e0f).
 func quotationCarries(pv PriorVerdict, judged string) bool {
-	return pv.Decision == "accept" && !pv.ReviewedStale && !pv.ReviewedTruncated &&
+	return pv.Decision == "accept" && !pv.Partial && !pv.ReviewedStale && !pv.ReviewedTruncated &&
 		strings.TrimSpace(pv.Reviewed) != "" && strings.Contains(judged, pv.Reviewed)
 }
 
@@ -116,8 +117,8 @@ func carryRound[R any](carried, fresh []int, dispatch func(idx []int) (R, error)
 // carryable splits ordered into the reviewers whose latest verdict on the edge
 // is an accept with a complete, non-stale quotation found verbatim in the
 // current material, and the indexes that must be dispatched. A reject, a missing
-// or truncated or stale quotation, a changed quotation, a functional check and a
-// panel are always dispatched.
+// or truncated or stale quotation, a changed quotation, a partial verdict, a
+// functional check and a panel are always dispatched.
 func (g *Engine) carryable(ctx context.Context, item workitem.Item, toStatus string, ordered []reviewerRef, sysStart int) (carried []carriedRef, fresh []int) {
 	all := make([]int, len(ordered))
 	for i := range ordered {

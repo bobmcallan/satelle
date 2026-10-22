@@ -1,3 +1,17 @@
+## [0.0.720] - 2026-10-22
+
+### Added
+- A review gate, or a step's gates, can declare fail-fast (`fail_fast = ["<skill>"]` on a step, or `review_mode` on a `[[gate]]`). The seat's payload names the mode. A verdict records its coverage (complete, or stopped at a named finding) on the verdict row and on each panel seat. A partial (fail-fast) reject is never carried as acceptance of the unreviewed remainder: on re-presentation, the seat is told its prior coverage was partial and judges the remainder. A gate with no declared mode behaves exactly as before. The embedded `satelle-reviewer-verdict` principle gains "Review mode and partial verdicts". (sty_93359e0f)
+- A re-presented step's performer receives every gate seat's latest verdict on its edge (skill, seat, decision, notes, attempt), with a panel's seats listed individually. Notes over the bound are cut with an explicit marker and a fetch command. It also gets a `findings_to_answer` list. The performer's per-finding answers (adopted or rebutted, with evidence) are recorded on its invocation row, and the gates receive `finding_answers` with any finding left unanswered. Before this, the performer saw a rejection only if the orchestrator relayed it by hand. (sty_f948d345)
+
+### Fixed
+- The performer's message window keeps the newest directed messages within its bound, not the oldest, so a later round's relay is never the one dropped. (sty_f948d345)
+
+## [serve-v0.0.188] - 2026-10-22
+
+### Changed
+- The service binary carries the review-mode and coverage fields, and the performer findings and answers records. (sty_93359e0f, sty_f948d345)
+
 ## [0.0.719] - 2026-10-21
 
 ### Added

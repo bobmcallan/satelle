@@ -101,10 +101,11 @@ func (g *Engine) prepareReviewer(ctx context.Context, item workitem.Item, toStat
 		tp.Children = g.children(ctx, item)
 	}
 	g.fillPayloadDocs(ctx, item.ID, &tp, mat)
-	// Prior verdicts ride ONLY the gate payload (sty_0f5e600c): they are re-review
-	// context, so the executor and retrospective payloads deliberately go without —
-	// a performer optimising for the last rejection instead of the story is the
-	// failure mode that would create.
+	// The full prior-verdict history rides ONLY the gate payload (sty_0f5e600c):
+	// it is re-review context, so the executor and retrospective payloads go
+	// without it. The performer of a re-presented edge gets the latest verdict of
+	// each seat instead, as findings_to_answer (sty_f948d345), so it answers the
+	// findings and keeps the story, not the last rejection, as its authority.
 	// The edge's carry policy and the step's performer are resolved once: the
 	// performer decides both what keeps a prior verdict fresh and where the
 	// criteria under judgment live (sty_99d3162b).
@@ -120,6 +121,7 @@ func (g *Engine) prepareReviewer(ctx context.Context, item workitem.Item, toStat
 	tp.CriteriaState = crit.setState(item, mat.Docs, mat.PriorVerdicts, skill)
 	g.fillDefinitionEdits(ctx, item.ID, &tp, mat)
 	g.fillDeferred(ctx, item.ID, skill, &tp, mat)
+	g.fillFindingAnswers(ctx, item, toStatus, &tp)
 	// Engagement diff rides the GATE payload only (sty_a125b440): reviewers
 	// without a shell need the slice; executors have one. fillDiff never
 	// errors — a missing baseline is a marker, not a refused transition.
@@ -265,12 +267,14 @@ type referencedPayload struct {
 	To              string               `json:"to"`
 	ReviewSkill     string               `json:"review_skill"`
 	ReviewSkills    []string             `json:"review_skills,omitempty"`
+	ReviewMode      string               `json:"review_mode,omitempty"`
 	Children        []ChildState         `json:"children,omitempty"`
 	Docs            []referencedDoc      `json:"docs,omitempty"`
 	RouteDrift      *wfgovern.RouteDrift `json:"route_drift,omitempty"`
 	PriorVerdicts   *pathRef             `json:"prior_verdicts,omitempty"`
 	DefinitionEdits *pathRef             `json:"definition_edits,omitempty"`
 	Deferred        *pathRef             `json:"deferred,omitempty"`
+	FindingAnswers  *FindingAnswers      `json:"finding_answers,omitempty"`
 	Amendment       *AmendmentState      `json:"amendment,omitempty"`
 	Diff            *referencedDiff      `json:"diff,omitempty"`
 	Messages        *pathRef             `json:"messages,omitempty"`
@@ -324,8 +328,10 @@ func writeReviewerMaterial(scratch string, mat *reviewerMaterial, tp transitionP
 		To:             tp.To,
 		ReviewSkill:    tp.ReviewSkill,
 		ReviewSkills:   tp.ReviewSkills,
+		ReviewMode:     tp.ReviewMode,
 		Children:       tp.Children,
 		RouteDrift:     tp.RouteDrift,
+		FindingAnswers: tp.FindingAnswers,
 		Amendment:      tp.Amendment,
 		MeasuredActual: tp.MeasuredActual,
 		CriteriaSource: tp.CriteriaSource,

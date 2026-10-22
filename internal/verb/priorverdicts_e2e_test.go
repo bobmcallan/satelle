@@ -201,11 +201,18 @@ func TestSecondGateAttemptStdinCarriesPriorVerdict(t *testing.T) {
 // reads the ledger through verb.PriorVerdicts and PriorVerdictFrom.
 func newPVHarness(t *testing.T, outs []string, resolver func(context.Context, string, string, string, verb.StaleExemption) []agentstep.PriorVerdict) (*captureRunner, workitem.Item) {
 	t.Helper()
+	return newPVHarnessOn(t, pvRouteWorkflow, outs, resolver)
+}
+
+// newPVHarnessOn is newPVHarness over the given route halves, so a test can
+// declare a step knob (sty_93359e0f: fail_fast) on the same fixture gate.
+func newPVHarnessOn(t *testing.T, route map[string]string, outs []string, resolver func(context.Context, string, string, string, verb.StaleExemption) []agentstep.PriorVerdict) (*captureRunner, workitem.Item) {
+	t.Helper()
 	withWiring(t)
 	db := wire(t)
 	verb.SetStoryDir(filepath.Join(t.TempDir(), "stories"))
 	wfDir, skillDir := t.TempDir(), t.TempDir()
-	writeRouteFiles(t, wfDir, pvRouteWorkflow)
+	writeRouteFiles(t, wfDir, route)
 	if err := os.WriteFile(filepath.Join(skillDir, "pv-plan-review.md"), []byte(pvReviewSkill), 0o644); err != nil {
 		t.Fatal(err)
 	}
