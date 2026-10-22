@@ -41,3 +41,28 @@ func TestEmbeddedReviewerVerdictStatesBlockingFindings(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbeddedReviewerVerdictStatesPartialPriorVerdicts (sty_93359e0f): the
+// re-presented-edge rule every judging seat receives says a partial prior
+// verdict (a fail-fast reject, or any verdict whose coverage is not complete)
+// leaves the remainder unjudged — judge it, never only the difference — and is
+// never carried or re-issued as an accept. Without this text "judge the
+// difference" reads a fail-fast reject as acceptance of what it never reviewed.
+func TestEmbeddedReviewerVerdictStatesPartialPriorVerdicts(t *testing.T) {
+	body := embeddedBody(t, "principles", "satelle-reviewer-verdict")
+	for _, want := range []string{
+		"review_mode",
+		"fail-fast",
+		"coverage",
+		"stopped_at",
+		"partial prior verdict",
+		"`partial: true`",
+		"the whole remainder of the material as a first review would",
+		"not only the difference",
+		"Never carry or re-issue a partial verdict as an accept",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("satelle-reviewer-verdict does not state %q", want)
+		}
+	}
+}

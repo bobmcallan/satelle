@@ -143,11 +143,14 @@ type stepWire struct {
 	Bundle   bool `toml:"bundle"`
 	// ReviewerCarry is a closed enum (sty_59720b8b): absent dispatches every
 	// reviewer every round; "until_accept" carries an unchanged accept.
-	ReviewerCarry string     `toml:"reviewer_carry"`
-	Provides      string     `toml:"provides"`
-	Requires      []string   `toml:"requires"`
-	AppliesTo     []string   `toml:"applies_to"`
-	Advise        *adviseRef `toml:"advise"`
+	ReviewerCarry string `toml:"reviewer_carry"`
+	// FailFast names the entry reviewers (edge-named skills and panel skills)
+	// that run in fail-fast review mode. Absent means every reviewer runs full.
+	FailFast  []string   `toml:"fail_fast"`
+	Provides  string     `toml:"provides"`
+	Requires  []string   `toml:"requires"`
+	AppliesTo []string   `toml:"applies_to"`
+	Advise    *adviseRef `toml:"advise"`
 	// Rework is a POINTER for the same reason Parallel is: an absent key must be
 	// distinguishable from an authored zero, because absent means "no loop" and
 	// `rounds = 0` is a mis-authored budget this parser refuses.
@@ -218,6 +221,9 @@ type gateWire struct {
 	// to this skill, and they do not overwrite a step-level panel.
 	Panel   []string `toml:"panel"`
 	Combine string   `toml:"combine"`
+	// ReviewMode is the gate's review mode ("full" or "fail-fast"). It covers the
+	// gate and every seat of its panel. Absent means full.
+	ReviewMode string `toml:"review_mode"`
 }
 
 // recordsOf splits a route-source body into its top-level tables: the reserved
@@ -436,6 +442,19 @@ func unknownChangeOp(ops []string) string {
 	return ""
 }
 
+// parseReviewMode validates a gate's declared review_mode against the closed
+// set and returns the canonical stored form: "" for full, ReviewModeFailFast.
+func parseReviewMode(declared, where string) (string, error) {
+	switch mode := strings.TrimSpace(declared); mode {
+	case "", ReviewModeFull:
+		return "", nil
+	case ReviewModeFailFast:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("%s: review_mode %q is invalid — it must be one of: %s, %s (omit the key for %s)", where, mode, ReviewModeFull, ReviewModeFailFast, ReviewModeFull)
+	}
+}
+
 // refusePanelShape is the parse refusal for a panel declaration, by key name.
 // A one-seat panel is the same shape as a single binding and may omit combine.
 // Two or more seats need a combine skill. combine without a panel, and panel
@@ -528,6 +547,7 @@ func ParseSteps(body string) (Catalogue, error) {
 		}
 		st.Bundle = s.Bundle
 		st.ReviewerCarry = strings.TrimSpace(s.ReviewerCarry)
+		st.FailFast = trimmedAll(s.FailFast)
 		if s.Advise != nil {
 			st.Advisor, st.AdvisorSkill = s.Advise.Agent, s.Advise.Skill
 		}
@@ -568,12 +588,17 @@ func ParseSteps(body string) (Catalogue, error) {
 		if err := refusePanelShape(panel, g.Combine, g.Agent, "agent", fmt.Sprintf("step.toml: [[gate]] %q", g.Skill)); err != nil {
 			return Catalogue{}, err
 		}
+		mode, merr := parseReviewMode(g.ReviewMode, fmt.Sprintf("step.toml: [[gate]] %q", g.Skill))
+		if merr != nil {
+			return Catalogue{}, merr
+		}
 		cat.Gates = append(cat.Gates, RouteGate{
 			Skill: g.Skill, Agent: g.Agent, On: g.On,
 			AppliesTo: g.AppliesTo, For: g.For, Mandatory: g.Mandatory,
-			When:    strings.TrimSpace(g.When),
-			Panel:   panel,
-			Combine: strings.TrimSpace(g.Combine),
+			When:       strings.TrimSpace(g.When),
+			Panel:      panel,
+			Combine:    strings.TrimSpace(g.Combine),
+			ReviewMode: mode,
 		})
 	}
 	if err := undecodedErr(md, "step.toml"); err != nil {
@@ -618,6 +643,15 @@ func ParseSteps(body string) (Catalogue, error) {
 	for _, st := range cat.Steps {
 		if st.ReviewerCarry != "" && st.ReviewerCarry != CarryUntilAccept {
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: reviewer_carry %q is invalid — the only value is %q (omit the key to dispatch every reviewer every round)", st.Provides, st.ReviewerCarry, CarryUntilAccept)
+		}
+	}
+	// fail_fast names edge reviewers; an entry that is neither a reviewer nor a
+	// panel skill of its step would be a silent no-op (sty_93359e0f).
+	for _, st := range cat.Steps {
+		for _, sk := range st.FailFast {
+			if !containsStr(st.Reviewers, sk) {
+				return Catalogue{}, fmt.Errorf("step.toml: step %q: fail_fast names %q, which is not one of the step's reviewers %v — fail_fast selects reviewers that run in %s review mode", st.Provides, sk, st.Reviewers, ReviewModeFailFast)
+			}
 		}
 	}
 	// schedule refusals: a value outside the closed set, or on a step that does

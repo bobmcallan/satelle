@@ -1,0 +1,3 @@
+I'll verify each criterion against the changed files. Reading the plan first, then the diff.
+Reading internal/verb/review.go to confirm the record fields.
+Max turns reached

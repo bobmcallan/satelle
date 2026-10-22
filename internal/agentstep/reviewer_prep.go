@@ -251,6 +251,7 @@ type referencedPayload struct {
 	To              string               `json:"to"`
 	ReviewSkill     string               `json:"review_skill"`
 	ReviewSkills    []string             `json:"review_skills,omitempty"`
+	ReviewMode      string               `json:"review_mode,omitempty"`
 	Children        []ChildState         `json:"children,omitempty"`
 	Docs            []referencedDoc      `json:"docs,omitempty"`
 	RouteDrift      *wfgovern.RouteDrift `json:"route_drift,omitempty"`
@@ -308,6 +309,7 @@ func writeReviewerMaterial(scratch string, mat *reviewerMaterial, tp transitionP
 		To:             tp.To,
 		ReviewSkill:    tp.ReviewSkill,
 		ReviewSkills:   tp.ReviewSkills,
+		ReviewMode:     tp.ReviewMode,
 		Children:       tp.Children,
 		RouteDrift:     tp.RouteDrift,
 		FindingAnswers: tp.FindingAnswers,

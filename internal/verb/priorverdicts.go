@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
 // PriorVerdict is one verdict already recorded for an item on one from→to edge.
@@ -24,6 +25,14 @@ type PriorVerdict struct {
 	// EvidenceSince lists what was recorded since (sty_0225fc2f).
 	ReviewedStale bool            `json:"reviewed_stale,omitempty"`
 	EvidenceSince []EvidenceSince `json:"evidence_since,omitempty"`
+	// ReviewMode is the mode the verdict's gate ran in when it was fail-fast;
+	// empty is full. Coverage is what the reviewer said it covered. Partial is
+	// derived: true when the verdict did not cover the whole artifact, so the
+	// remainder it did not review is still unjudged. A partial reject is never
+	// acceptance of that remainder (sty_93359e0f).
+	ReviewMode string    `json:"review_mode,omitempty"`
+	Coverage   *Coverage `json:"coverage,omitempty"`
+	Partial    bool      `json:"partial,omitempty"`
 	// Seats is the panel fold recorded on a panel gate's verdict row, each seat
 	// with its own quotation. markStale clears every seat's quotation together
 	// with the row's, so a stale seat is re-judged in full (sty_da9e8d0a).
@@ -43,15 +52,18 @@ type EvidenceSince struct {
 const maxEvidenceSince = 20
 
 // isSelfLedgerKind reports whether kind is a ledger kind the binary writes about
-// its own review or dispatch bookkeeping. These are never evidence a rubric could
-// be waiting on, so they never mark a verdict stale — even when written after
-// the cycle ended.
+// its own review, dispatch, engagement or start-of-work bookkeeping. These are
+// never evidence a rubric could be waiting on, so they never mark a verdict
+// stale — even when written after the cycle ended. Every re-presentation re-engages
+// the story, which writes trunk_check and engagement_baseline; counting them
+// would clear the prior verdict's quotation on every such edge.
 func isSelfLedgerKind(kind string) bool {
 	switch kind {
 	case ledger.KindAgentInvocation, ledger.KindStepCost, ledger.KindDriverUsage,
 		ledger.KindSessionModel, ledger.KindToolPermission, ledger.KindSessionAdvisory,
 		ledger.KindBudgetOverrun, ledger.KindGateSkipped, ledger.KindCommandRule,
-		ledger.KindReviewAccept, ledger.KindReviewReject:
+		ledger.KindReviewAccept, ledger.KindReviewReject,
+		ledger.KindTrunkCheck, ledger.KindEngagementBaseline:
 		return true
 	}
 	return false
@@ -80,8 +92,11 @@ type priorVerdictRow struct {
 	Notes             string `json:"notes,omitempty"`
 	Reviewed          string `json:"reviewed,omitempty"`
 	ReviewedTruncated bool   `json:"reviewed_truncated,omitempty"`
+	ReviewMode        string `json:"review_mode,omitempty"`
+	// Coverage / Seats are read to decide whether the verdict was partial.
 	// Seats is the panel fold, one record per seat (reviewerPayload).
-	Seats []PanelSeat `json:"seats,omitempty"`
+	Coverage *Coverage   `json:"coverage,omitempty"`
+	Seats    []PanelSeat `json:"seats,omitempty"`
 	// RecordedAt is the wall-clock time the verdict row was appended, after the
 	// gate run that produced it finished. Rows written before the field existed
 	// carry none and are never marked stale.
@@ -183,6 +198,9 @@ func PriorVerdictsFrom(entries []ledger.Entry, from, to string, ex StaleExemptio
 			CreatedAt:         e.CreatedAt.UTC().Format(time.RFC3339),
 			Reviewed:          row.Reviewed,
 			ReviewedTruncated: row.ReviewedTruncated,
+			ReviewMode:        row.ReviewMode,
+			Coverage:          row.Coverage,
+			Partial:           partialVerdict(decision, row),
 			Seats:             row.Seats,
 		})
 		var at time.Time
@@ -193,6 +211,23 @@ func PriorVerdictsFrom(entries []ledger.Entry, from, to string, ex StaleExemptio
 	}
 	markStale(out, recorded, entries, ex)
 	return out
+}
+
+// partialVerdict reports whether a recorded verdict left part of the artifact
+// unjudged: a reject from a fail-fast gate (it stopped at the first blocking
+// finding, so it said nothing about the rest), or any verdict — or panel seat —
+// whose stated coverage is not complete. An accept that stated no coverage, in
+// either mode, covered everything it was asked to.
+func partialVerdict(decision string, row priorVerdictRow) bool {
+	if row.Coverage != nil && !row.Coverage.Complete {
+		return true
+	}
+	for _, seat := range row.Seats {
+		if seat.Coverage != nil && !seat.Coverage.Complete {
+			return true
+		}
+	}
+	return decision == "reject" && row.ReviewMode == wfdot.ReviewModeFailFast
 }
 
 // markStale applies the staleness rule to each skill's latest verdict in out.

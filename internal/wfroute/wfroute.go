@@ -39,6 +39,9 @@ type Reviewer struct {
 	When    string   `json:"when,omitempty"`
 	Panel   []string `json:"panel,omitempty"`
 	Combine string   `json:"combine,omitempty"`
+	// ReviewMode is "fail-fast" when the gate stops at the first blocking finding;
+	// absent for the default full review.
+	ReviewMode string `json:"review_mode,omitempty"`
 }
 
 // Advisor names an agent the ORCHESTRATOR may consult at a step, and the rubric
@@ -316,7 +319,13 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 				continue
 			}
 			seen[sk] = true
-			step.Reviewers = append(step.Reviewers, Reviewer{Skill: sk, Agent: tr.Agent})
+			rv := Reviewer{Skill: sk, Agent: tr.Agent}
+			for _, ff := range tr.FailFast {
+				if ff == sk {
+					rv.ReviewMode = wfdot.ReviewModeFailFast
+				}
+			}
+			step.Reviewers = append(step.Reviewers, rv)
 		}
 	}
 	// The always-on scoped layer, exactly as the engine enqueues it.
@@ -328,7 +337,7 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 		seen[sr.Skill] = true
 		step.Reviewers = append(step.Reviewers, Reviewer{
 			Skill: sr.Skill, Agent: sr.Agent, Scoped: true, ByTag: appliesTo(spec, sr.Skill), When: sr.When,
-			Panel: sr.Panel, Combine: sr.Combine,
+			Panel: sr.Panel, Combine: sr.Combine, ReviewMode: sr.ReviewMode,
 		})
 	}
 	for _, sr := range skipped {
@@ -556,6 +565,9 @@ func renderGates(s Step) string {
 		}
 		if rv.When != "" {
 			label += " (conditional, when: " + rv.When + ")"
+		}
+		if rv.ReviewMode != "" {
+			label += " (" + rv.ReviewMode + " review)"
 		}
 		if len(rv.Panel) > 0 {
 			label += " (panel " + strings.Join(rv.Panel, ", ")

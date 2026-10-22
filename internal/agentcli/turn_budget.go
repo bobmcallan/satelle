@@ -1,6 +1,8 @@
 package agentcli
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -102,7 +104,74 @@ func applyTurns(u *UsageResult, n *int) {
 }
 
 // TurnsUnavailableReason is the adapter-named reason a run reported no turn
-// count, so a recorded absence is never read as zero turns.
+// count, so a recorded absence is never read as zero turns. A transport that
+// never carries one names that, instead of blaming the run's output.
 func TurnsUnavailableReason(iface, command string) string {
-	return fmt.Sprintf("%s: the run's output carried no turn count (num_turns)", AdapterLabel(iface, command))
+	label := AdapterLabel(iface, command)
+	switch strings.ToLower(strings.TrimSpace(iface)) {
+	case "cloud":
+		return "cloud: a cloud session is not spawned from a command template, so no turn count is read"
+	case InterfaceACP:
+		return label + ": the session protocol reports no turn count"
+	}
+	return fmt.Sprintf("%s: the run's output carried no turn count (num_turns)", label)
+}
+
+// ReportsToolEvents says whether a dispatch with this transport and command
+// template emits a tool-start event per tool call, so satelle can count them.
+// stream and acp always do; a command transport does only when its output format
+// is a JSONL event stream (stream-json, streaming-json) — its one-shot json
+// envelope and plain output carry the answer, never the tool calls. A zero count
+// from a transport that reports events is a measured zero; every other transport
+// has no count at all (ToolCallsUnavailableReason).
+func ReportsToolEvents(iface, command string) bool {
+	switch strings.ToLower(strings.TrimSpace(iface)) {
+	case InterfaceStream, InterfaceACP:
+		return true
+	case "cloud":
+		return false
+	}
+	fields := strings.Fields(command)
+	if len(fields) < 2 || strings.EqualFold(fields[0], "in-loop") {
+		return false
+	}
+	for _, format := range flagValues(fields[1:], "--output-format") {
+		if f := strings.ToLower(format); f == "stream-json" || f == "streaming-json" {
+			return true
+		}
+	}
+	return false
+}
+
+// ToolCallsUnavailableReason is the adapter-named reason a dispatch with this
+// transport and command template has no tool-call count (ReportsToolEvents
+// false), so a recorded absence is never read as zero calls.
+func ToolCallsUnavailableReason(iface, command string) string {
+	if strings.EqualFold(strings.TrimSpace(iface), "cloud") {
+		return "cloud: a cloud session is not spawned from a command template, so no tool events are seen"
+	}
+	return AdapterLabel(iface, command) + ": the transport emits no tool events (its output format is not stream-json or streaming-json), so tool calls are not counted"
+}
+
+// ErrMaxTurns marks a run the harness ended because it reached its turn cap
+// (the configured turn_budget / --max-turns). It is its own outcome: the run was
+// cut short, it did not reach a verdict, and it is not a reject.
+var ErrMaxTurns = errors.New("the harness ended the run at its turn cap (max turns reached)")
+
+// maxTurnsMarkers are the provider spellings of a turn-cap stop, matched
+// case-insensitively: grok prints "Max turns reached", and claude's result
+// envelope carries subtype "error_max_turns". Nothing outside this file knows
+// them.
+var maxTurnsMarkers = [][]byte{[]byte("max turns reached"), []byte("error_max_turns")}
+
+// DetectMaxTurns reports whether a run's output says the harness stopped it at
+// its turn cap. Callers consult it only for a run that produced no verdict.
+func DetectMaxTurns(out []byte) bool {
+	lower := bytes.ToLower(out)
+	for _, m := range maxTurnsMarkers {
+		if bytes.Contains(lower, m) {
+			return true
+		}
+	}
+	return false
 }

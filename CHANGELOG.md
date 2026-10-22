@@ -1,3 +1,17 @@
+## [0.0.719] - 2026-10-21
+
+### Added
+- Every reviewer seat attempt's agent_invocation row records its turns and tool calls, each with an adapter-named reason when the harness reports none (never a bare zero). An attempt the harness stopped at its turn cap is recorded with outcome `max-turns`, distinct from a reject, and a seat with no verdict still leaves its usage row. `satelle story cost` reports a story's review rounds per gated edge (presentations, and per seat attempt its turns, tool calls, outcome and duration), with an epic form. (sty_46e950ab)
+
+### Fixed
+- Engagement bookkeeping rows the binary writes for itself (`trunk_check`, the engagement baseline) no longer end a reviewer's verdict cycle. Each presentation to plan re-engages the story, so before this fix every re-presented edge had its prior verdict marked `reviewed_stale` and was re-judged in full instead of on the difference. (sty_2d877fa2)
+- The embedded `satelle-agent-goals` principle ties "one story at a time" to being outside a container, or to the container's `sequential = true` override, not to a missing schedule. Since 0.0.718, a container with no schedule runs its children in parallel. (sty_eb5135ca)
+
+## [serve-v0.0.187] - 2026-10-21
+
+### Changed
+- The service binary carries the run-count and outcome fields on reviewer invocation rows, the corrected engagement-bookkeeping classification, and the revised agent-goals principle. (sty_46e950ab, sty_2d877fa2, sty_eb5135ca)
+
 ## [0.0.718] - 2026-10-21
 
 ### Changed
