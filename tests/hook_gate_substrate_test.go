@@ -51,24 +51,39 @@ func setExemptPaths(t *testing.T, repo string, prefixes ...string) {
 	}
 }
 
-// TestHookGateExemptsSubstrate drives the real binary to prove the edit gate
-// exempts authored substrate under .satelle/ while still gating in-repo code, with
-// NO story engaged. Exemption is now config, not code (sty_8c3d345c): init SEEDS
-// edit_exempt_paths = [".satelle/", ".gitignore"], so a fresh repo keeps substrate
-// and satelle-managed .gitignore editable via that seeded config — the binary no
-// longer special-cases the data dir (sty_f115e6bf).
-func TestHookGateExemptsSubstrate(t *testing.T) {
+// unlockSubstrate appends the documented opt-out, an empty [gate]
+// lock_substrate_paths, to the [gate] table setExemptPaths wrote, so a case can
+// see what edit_exempt_paths alone decides once no prefix is locked.
+func unlockSubstrate(t *testing.T, repo string) {
+	t.Helper()
+	path := filepath.Join(repo, ".satelle", "satelle.toml")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read satelle.toml: %v", err)
+	}
+	if err := os.WriteFile(path, append(body, []byte("lock_substrate_paths = []\n")...), 0o644); err != nil {
+		t.Fatalf("write satelle.toml: %v", err)
+	}
+}
+
+// TestHookGateLocksSubstrateWithNoStory drives the real binary to prove that,
+// with NO story engaged, the edit gate refuses authored substrate under .satelle/
+// although init seeds it into edit_exempt_paths: a locked path is never exempt
+// (sty_66abc0e3). Satelle-managed .gitignore stays exempt (seeded, sty_f115e6bf),
+// and in-repo code stays gated.
+func TestHookGateLocksSubstrateWithNoStory(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	// No story engaged. Authored substrate under .satelle/ is ALLOWED (seeded exempt) …
+	// No story engaged. Authored substrate under .satelle/ is REFUSED: the default
+	// lock (.satelle/) is judged before the seeded exemption …
 	for _, sub := range []string{
 		filepath.Join(repo, ".satelle", "skills", "plan.md"),
 		filepath.Join(repo, ".satelle", "workflows", "done.toml"),
 		filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 	} {
-		if !gateEvent(t, repo, sub) {
-			t.Errorf("edit gate blocked authored substrate %s (should be exempt)", sub)
+		if gateEvent(t, repo, sub) {
+			t.Errorf("edit gate allowed locked substrate %s with no story engaged (lock precedes the seeded exemption)", sub)
 		}
 	}
 	// … satelle-managed .gitignore is ALLOWED (seeded exempt, sty_f115e6bf) …
@@ -123,9 +138,9 @@ func TestHookGateExemptsConfiguredPaths(t *testing.T) {
 	if !gateEvent(t, repo, vendorSkill) {
 		t.Error("edit gate blocked a .cursor/ edit after [gate] edit_exempt_paths opted it in (should be exempt)")
 	}
-	// … the configured data dir still works …
-	if !gateEvent(t, repo, filepath.Join(repo, ".satelle", "skills", "plan.md")) {
-		t.Error("edit gate blocked authored substrate under a configured .satelle/ prefix (should be exempt)")
+	// … a configured .satelle/ prefix does not exempt locked substrate …
+	if gateEvent(t, repo, filepath.Join(repo, ".satelle", "skills", "plan.md")) {
+		t.Error("edit gate allowed locked substrate under a configured .satelle/ prefix with no story engaged (lock precedes exemption)")
 	}
 	// … and in-repo CODE outside the exempt prefixes stays BLOCKED — including
 	// a harness path the seeded default WOULD have exempted, because the
@@ -159,26 +174,31 @@ func TestHookGateRelativePathGrokDenied(t *testing.T) {
 	if gateEventRaw(t, repo, `{"toolInput":{"path":"internal/cli/cmd_hook.go"}}`) {
 		t.Error("edit gate allowed a Grok-shape relative code path (must be gated like any code)")
 	}
-	// A relative SUBSTRATE path under the seeded .satelle/ prefix stays exempt.
-	if !gateEventRaw(t, repo, `{"tool_input":{"file_path":".satelle/skills/plan.md"}}`) {
-		t.Error("edit gate blocked a relative .satelle/ substrate path (seeded exempt — should be allowed)")
+	// A relative SUBSTRATE path is locked like the absolute one, seeded exemption
+	// or not (sty_66abc0e3).
+	if gateEventRaw(t, repo, `{"tool_input":{"file_path":".satelle/skills/plan.md"}}`) {
+		t.Error("edit gate allowed a relative .satelle/ substrate path with no story engaged (locked)")
 	}
 }
 
 // TestHookGateConfigDecidesSubstrate is the AC2 regression (sty_8c3d345c): the
-// binary does NOT hardcode the data dir. With an explicitly EMPTY edit_exempt_paths,
-// even a .satelle/ substrate edit is DENIED with no engaged story — config decides,
-// not a Go rule.
+// binary does NOT hardcode the data dir. With the lock opted out (empty [gate]
+// lock_substrate_paths, sty_66abc0e3), the exempt list alone decides: a .satelle/
+// edit is allowed under a .satelle/ prefix and DENIED with an explicitly EMPTY
+// edit_exempt_paths, with no engaged story — config decides, not a Go rule.
 func TestHookGateConfigDecidesSubstrate(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	// Seeded default (.satelle/ exempt): the substrate edit is allowed.
+	// .satelle/ exempt and nothing locked: the substrate edit is allowed.
+	setExemptPaths(t, repo, ".satelle/")
+	unlockSubstrate(t, repo)
 	if !gateEvent(t, repo, filepath.Join(repo, ".satelle", "skills", "plan.md")) {
-		t.Fatal("edit gate blocked a .satelle/ edit under the seeded exempt list (should be allowed)")
+		t.Fatal("edit gate blocked a .satelle/ edit under a .satelle/ exempt prefix with the lock opted out (should be allowed)")
 	}
-	// Empty the list: now the SAME edit is DENIED — no hardcoded data-dir exemption.
+	// Empty the exempt list too: now the SAME edit is DENIED — no hardcoded data-dir exemption.
 	setExemptPaths(t, repo)
+	unlockSubstrate(t, repo)
 	if gateEvent(t, repo, filepath.Join(repo, ".satelle", "skills", "plan.md")) {
 		t.Error("edit gate allowed a .satelle/ edit with an empty edit_exempt_paths (data dir must not be hardcoded exempt)")
 	}
