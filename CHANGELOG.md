@@ -1,3 +1,13 @@
+## [0.0.722] - 2026-10-22
+
+### Fixed
+- A per-criterion quotation is matched against the current material by its words, not its layout, so an unchanged criterion is marked settled and carried even when the reviewer re-flowed the plan's line breaks in its `reviewed` text. A real Opus reviewer did exactly that, so on 0.0.721 no criterion ever settled. A verdict that recorded no criteria is still carried by exact match, as before. (sty_99d3162b)
+
+## [serve-v0.0.190] - 2026-10-22
+
+### Changed
+- The service binary carries the per-criterion quotation match. (sty_99d3162b)
+
 ## [0.0.721] - 2026-10-22
 
 ### Added
