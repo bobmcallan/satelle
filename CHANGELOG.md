@@ -1,3 +1,14 @@
+## [0.0.723] - 2026-10-22
+
+### Fixed
+- A Grok reviewer seat's turns and token usage are read from its real output and recorded on its invocation row, so `satelle story cost --rounds` measures every panel seat, not only Claude's. Before this fix, the default Grok reviewer command's plain output recorded "no turn count" and "transport reported no usage". (sty_5ebcd6f9)
+- An unchanged whole-verdict accept whose quotation the reviewer re-flowed (line breaks collapsed to spaces) is carried under `reviewer_carry`, matched by words as per-criterion quotations already are since 0.0.722. A quotation that differs in any word is still judged fresh. (sty_6ccbc5aa)
+
+## [serve-v0.0.191] - 2026-10-22
+
+### Changed
+- The service binary carries the updated agent-dispatch and workflow-convert help. (sty_5ebcd6f9, sty_6ccbc5aa)
+
 ## [0.0.722] - 2026-10-22
 
 ### Fixed
