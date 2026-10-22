@@ -137,6 +137,13 @@ type Step struct {
 	// means no declared budget. The unit is a PRESENTATION (one gate run),
 	// however many reviewers it fanned out to.
 	RejectBudget int
+	// AnswerProgress turns on the unanswered-findings refusal for a propose step
+	// (sty_73224b86): a re-presentation whose performer answers or changes fewer
+	// than MinProgress of the prior blocking findings (capped at the number
+	// offered) is refused before its gates run. Off when the table is absent or
+	// enabled = false. MinProgress is always >= 1 once set.
+	AnswerProgress bool
+	MinProgress    int
 	// WaitsOnChildren marks a step at which a container idles while its child
 	// stories are driven. The seat holder there is not performing anything, so
 	// the edit gate and Stop hook do not count it while children are open
@@ -502,6 +509,9 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			Mark:         st.Mark,
 			Freeze:       st.Freeze,
 			RejectBudget: st.RejectBudget,
+
+			AnswerProgress: st.AnswerProgress,
+			MinProgress:    st.MinProgress,
 
 			UntrustedInput: st.UntrustedInput,
 

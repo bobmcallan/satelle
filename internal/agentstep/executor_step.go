@@ -163,5 +163,6 @@ func (g *Engine) PerformExecutorStep(ctx context.Context, item workitem.Item, st
 	if dec, derr := parseDecision(invRes.Stdout); derr == nil && !dec.Accept {
 		return res, &verb.PerformerReject{Notes: dec.Notes}
 	}
+	g.recordFindingProgress(ctx, &res, item, execPayload.Findings, nil)
 	return res, nil
 }

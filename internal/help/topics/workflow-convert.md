@@ -97,7 +97,7 @@ does not make obvious, and the one every conversion gets wrong.**
 
 Step keys: `status`, `agent`, `skills`, `reviewers`, `reviewer_agent`,
 `parallel`, `bundle`, `reviewer_carry`, `fail_fast`, `requires`, `applies_to`, `advise`, `rework`, `propose`,
-`freeze`, `reject_budget`, `mark`, `apply_changes`, `untrusted_input`,
+`freeze`, `reject_budget`, `answer_progress`, `mark`, `apply_changes`, `untrusted_input`,
 `waits_on_children`, `sequential`, `schedule` (deprecated), `after_children`,
 `start`, `terminal`.
 
@@ -193,6 +193,17 @@ artifact the entry reviewers then judge, while the story stays editable:
   edge — one gate run, however many reviewers rejected in it. Once spent, the next
   presentation is refused with the last objection quoted, and the orchestrator
   parks the story and asks the developer; a resume restarts the count.
+- `[<step>.answer_progress]` with `enabled = true|false` and `min_progress = N`
+  (N ≥ 1, default 1) is allowed only on a `propose` step; absent means off. A
+  re-presentation whose performer answers (`answers`) or changes fewer than
+  `min(N, findings offered)` of the prior **blocking** findings is refused as
+  `unanswered findings` before any gate runs, listing the ids. A finding is
+  *changed* when a quotation it recorded (a seat's `reviewed`, or a rejected
+  criterion's) no longer appears, by the carry rule's word match, in the material
+  the gates will judge; a finding with no complete quotation is changed only when
+  the step's output document differs. The refusal is a rejected round against
+  `reject_budget`. A step without `reviewer_carry` may have stale quotations,
+  which take the output-differs test. This is not the rework relay's `no_progress`.
 - `mark = "<tag>"` is the tag `satelle story ready` puts on a story (or, on a
   container's `waits_on_children` step, an epic) whose readiness round was
   accepted, so a pass can ready backlog stories **without engaging them**. It is a

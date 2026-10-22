@@ -161,6 +161,11 @@ type Step struct {
 	Mark         string `json:"mark,omitempty"`
 	Freeze       bool   `json:"freeze,omitempty"`
 	RejectBudget int    `json:"reject_budget,omitempty"`
+	// AnswerProgress / MinProgress: a re-presentation that answers or changes fewer
+	// than MinProgress of the prior blocking findings is refused before its gates
+	// run (sty_73224b86).
+	AnswerProgress bool `json:"answer_progress,omitempty"`
+	MinProgress    int  `json:"min_progress,omitempty"`
 	// ApplyCriteriaDoc / ApplyCriteriaHeading: entry applies the criteria authored
 	// under that heading in that story document to the story (sty_4d9df9a0).
 	ApplyCriteriaDoc     string `json:"apply_criteria_doc,omitempty"`
@@ -284,6 +289,9 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 		Mark:         st.Mark,
 		Freeze:       st.Freeze,
 		RejectBudget: st.RejectBudget,
+
+		AnswerProgress: st.AnswerProgress,
+		MinProgress:    st.MinProgress,
 
 		ApplyCriteriaDoc:     st.ApplyCriteriaDoc,
 		ApplyCriteriaHeading: st.ApplyCriteriaHeading,
@@ -501,6 +509,9 @@ func renderKnobs(s Step) string {
 	}
 	if s.RejectBudget > 0 {
 		parts = append(parts, fmt.Sprintf("entry may be rejected %d time(s) before the story parks and the developer is asked", s.RejectBudget))
+	}
+	if s.AnswerProgress {
+		parts = append(parts, fmt.Sprintf("a re-presentation that answers or changes fewer than %d prior blocking finding(s) is refused before its gates run", s.MinProgress))
 	}
 	if s.Mark != "" {
 		parts = append(parts, fmt.Sprintf("an accepted readiness round marks the story with the tag %q", s.Mark))

@@ -97,6 +97,10 @@ func renderRouteSteps(out io.Writer, route wfroute.Route, l wfdot.List) {
 			fmt.Fprintf(out, "       reject budget: %d — a rejected presentation returns the reviewers' notes to the requesting session and the story holds its source status; the presentation after %d rejected rounds is refused\n",
 				st.RejectBudget, st.RejectBudget)
 		}
+		if st.AnswerProgress {
+			fmt.Fprintf(out, "       answer progress: on, min_progress %d — a re-presentation that answers or changes fewer than %d of the prior blocking findings (capped at the number offered) is refused as unanswered findings before its gates run, and counts against the reject budget\n",
+				st.MinProgress, st.MinProgress)
+		}
 		for _, sk := range st.Skipped {
 			fmt.Fprintf(out, "       not run:    %s — needs tag %s\n", sk.Skill, strings.Join(sk.ByTag, "|"))
 		}

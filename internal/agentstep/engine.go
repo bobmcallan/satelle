@@ -1166,6 +1166,30 @@ type DocState struct {
 	SHA256      string `json:"sha256,omitempty"`
 }
 
+// judgeableDoc reports whether an attachment rides the material a gate judges:
+// every document but the three kinds below. fillPayloadDocs and the
+// answer_progress material (progressMaterial) both read it.
+func judgeableDoc(d DocState) bool {
+	// Binary attachments are disk retention only (sty_40e5a305): a screenshot
+	// larger than the ceiling would starve plan/step-summary. Never inline
+	// bodies or count them against the budget.
+	// Pull via satelle story doc <id> <name> --out <path>.
+	if d.Binary {
+		return false
+	}
+	// type:change patches are disk retention for on-demand review; they must
+	// not ride the cumulative payload ceiling or starve plan/step-summary
+	// (sty_948ad5df). Pull via satelle story doc / story diff --recorded.
+	if strings.EqualFold(d.Type, "change") {
+		return false
+	}
+	// The route document is the OPERATOR's artifact (sty_39e2d9df): it grows by
+	// one block per step, and injecting it into the gate that is about to write
+	// the NEXT block is both circular and quadratic in tokens. A reviewer already
+	// receives the plan and the step summaries. Pull via satelle story route.
+	return !strings.EqualFold(d.Type, verb.RouteDocName)
+}
+
 // fillPayloadDocs attaches resolved docs under the cumulative body budget.
 // After the binary, type:change, and route skips, every remaining doc is kept
 // with its full body on mat. The ceiling applies only to tp.Docs, which is
@@ -1182,24 +1206,7 @@ func (g *Engine) fillPayloadDocs(ctx context.Context, itemID string, tp *transit
 	out := make([]DocState, 0, len(all))
 	var retained []DocState
 	for _, d := range all {
-		// Binary attachments are disk retention only (sty_40e5a305): a screenshot
-		// larger than the ceiling would starve plan/step-summary. Never inline
-		// bodies or count them against the budget — continue, do not break.
-		// Pull via satelle story doc <id> <name> --out <path>.
-		if d.Binary {
-			continue
-		}
-		// type:change patches are disk retention for on-demand review; they must
-		// not ride the cumulative payload ceiling or starve plan/step-summary
-		// (sty_948ad5df). Pull via satelle story doc / story diff --recorded.
-		if strings.EqualFold(d.Type, "change") {
-			continue
-		}
-		// The route document is the OPERATOR's artifact (sty_39e2d9df): it grows by
-		// one block per step, and injecting it into the gate that is about to write
-		// the NEXT block is both circular and quadratic in tokens. A reviewer already
-		// receives the plan and the step summaries. Pull via satelle story route.
-		if strings.EqualFold(d.Type, verb.RouteDocName) {
+		if !judgeableDoc(d) {
 			continue
 		}
 		retained = append(retained, d)
@@ -2469,21 +2476,26 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if dec, derr := parseDecision(invRes.Stdout); derr == nil && !dec.Accept {
 		return res, &verb.PerformerReject{Notes: dec.Notes, Changes: changes}
 	}
-	if outputContract.Active() {
-		if !attemptPolicy.Active() {
-			artifact, derr := agentartifact.Decode(invRes.Stdout)
-			if derr != nil {
-				if !outputContract.Required && errors.Is(derr, agentartifact.ErrNoArtifact) {
-					return res, nil
-				}
-				return res, fmt.Errorf("named agent %q structured output for step %q: %w", dispatchAgent, toStatus, derr)
-			}
-			artifact, verr := agentartifact.Validate(artifact, outputContract, item.AcceptanceCriteria)
+	if outputContract.Active() && !attemptPolicy.Active() {
+		artifact, derr := agentartifact.Decode(invRes.Stdout)
+		switch {
+		case derr == nil:
+			validated, verr := agentartifact.Validate(artifact, outputContract, item.AcceptanceCriteria)
 			if verr != nil {
 				return res, fmt.Errorf("named agent %q structured output for step %q: %w", dispatchAgent, toStatus, verr)
 			}
-			finalArtifact = &artifact
+			finalArtifact = &validated
+		case !outputContract.Required && errors.Is(derr, agentartifact.ErrNoArtifact):
+			// An optional artifact the performer did not return: finalArtifact stays nil.
+		default:
+			return res, fmt.Errorf("named agent %q structured output for step %q: %w", dispatchAgent, toStatus, derr)
 		}
+	}
+	// The output is final here on every path (an attempt policy resolved it
+	// above, a plain contract just now), so this is where the performer's
+	// standing against the findings it was offered is read (sty_73224b86).
+	g.recordFindingProgress(ctx, &res, item, execPayload.Findings, finalArtifact)
+	if outputContract.Active() {
 		if finalArtifact == nil {
 			return res, nil
 		}
