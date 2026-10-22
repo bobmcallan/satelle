@@ -2,9 +2,12 @@ package verb_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/agentartifact"
+	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -111,6 +114,114 @@ func TestMinProgressIsCappedAtTheNumberOffered(t *testing.T) {
 			}
 			if got, want := r.gater.calls["plan"], gates+1; refused == (got == want) {
 				t.Errorf("gate calls = %d (was %d): the panel must run exactly when the presentation is not refused", got, gates)
+			}
+		})
+	}
+}
+
+// AC2, end to end: the panel's seats record their quotations on the ledger, the
+// re-presenting performer is offered the findings built from that prior
+// (agentstep.FindingsFrom over verb.PriorVerdicts), and its progress is the real
+// agentstep computation over the plan it attaches — nothing injects the fact.
+// The panel runs exactly when at least one finding is answered or has lost its
+// quotation, and a plan that keeps every quotation unanswered is refused.
+func TestProgressedFindingsRunTheGates(t *testing.T) {
+	const (
+		opusQuote = "the plan never says how AC2 is checked"
+		grokQuote = "rollback is described but not bounded"
+		oldPlan   = "# Plan\n" + opusQuote + ".\nAlso " + grokQuote + ".\n"
+		opusID    = "gate-a/opus#1"
+		grokID    = "gate-a/grok#1"
+	)
+	panelReject := verb.GateDecision{Gated: true, Accept: false, Skill: "gate-a", Reviewers: []verb.ReviewerVerdict{{
+		Skill: "gate-a", Accept: false, Notes: "both seats object",
+		Seats: []verb.PanelSeat{
+			{Seat: "opus", Notes: "AC2 unchecked", Reviewed: opusQuote},
+			{Seat: "grok", Notes: "rollback unbounded", Reviewed: grokQuote},
+		},
+	}}}
+	answer := func(id string) agentartifact.Answer {
+		return agentartifact.Answer{Finding: id, Answer: "adopted", Evidence: "see the plan"}
+	}
+
+	cases := []struct {
+		name    string
+		plan    string
+		answers []agentartifact.Answer
+		wantRun bool
+	}{
+		{"one finding answered, its quotation kept", oldPlan + "A new section.\n", []agentartifact.Answer{answer(opusID)}, true},
+		{"one quotation removed, nothing answered", "# Plan\n" + opusQuote + ".\nRollback is now bounded to ten minutes.\n", nil, true},
+		{"both findings answered", oldPlan + "Everything addressed.\n", []agentartifact.Answer{answer(opusID), answer(grokID)}, true},
+		{"quotations kept and nothing answered", oldPlan + "A new section that answers nothing.\n", nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newReadinessRig(t, answerProgressWF(5, ""), func(_ string, n int) verb.GateDecision {
+				if n == 1 {
+					return panelReject
+				}
+				return acceptAll()
+			})
+			presentation := 0
+			verb.SetExecutorDispatcher(dispatcherFunc(func(ctx context.Context, it workitem.Item, to string) (verb.DispatchResult, error) {
+				if to != "plan" {
+					return verb.DispatchResult{}, nil
+				}
+				presentation++
+				res := verb.DispatchResult{Dispatched: true, Agent: "planner", Skill: "plan"}
+				if presentation == 1 {
+					call(t, "story-doc-attach", map[string]any{"story_id": it.ID, "name": "plan", "type": "plan", "body": oldPlan})
+					return res, nil
+				}
+				verdicts, err := verb.PriorVerdicts(ctx, it.ID, it.Status, to, verb.StaleExemption{DocName: "plan", Performer: "planner"})
+				if err != nil {
+					t.Fatalf("prior verdicts: %v", err)
+				}
+				priors := make([]agentstep.PriorVerdict, 0, len(verdicts))
+				for _, v := range verdicts {
+					priors = append(priors, agentstep.PriorVerdictFrom(v))
+				}
+				findings := agentstep.FindingsFrom(it.ID, priors)
+				var ids []string
+				for _, f := range findings {
+					ids = append(ids, f.ID)
+				}
+				if strings.Join(ids, ",") != opusID+","+grokID {
+					t.Fatalf("the ledger prior must offer both seats' findings, got %v", ids)
+				}
+				call(t, "story-doc-attach", map[string]any{"story_id": it.ID, "name": "plan", "type": "plan", "body": c.plan})
+				res.Answers = c.answers
+				agentstep.RecordFindingProgress(&res, findings, agentstep.ProgressMaterial{
+					Judged: it.Title + "\n" + it.Body + "\n" + c.plan, Output: c.plan, Prior: oldPlan, HasOutput: true,
+				})
+				return res, nil
+			}))
+			it := newFeature(t)
+			if err := dispatchErr(t, "story-set", map[string]any{"id": it.ID, "status": "plan"}); !strings.Contains(err.Error(), "rejected") {
+				t.Fatalf("setup: the first presentation must be rejected by the panel, got %v", err)
+			}
+			gates := r.gater.calls["plan"]
+
+			body, _ := json.Marshal(map[string]any{"id": it.ID, "status": "plan"})
+			_, rerr := verb.Dispatch(context.Background(), "story-set", body)
+			refused := rerr != nil && strings.Contains(rerr.Error(), "unanswered findings")
+			if refused == c.wantRun {
+				t.Fatalf("refused = %v, want %v (err %v)", refused, !c.wantRun, rerr)
+			}
+			if got, want := r.gater.calls["plan"], gates+1; c.wantRun != (got == want) {
+				t.Errorf("gate calls = %d (was %d): the panel must run exactly when a finding progressed", got, gates)
+			}
+			rows := ledgerRows(t, it.ID, ledger.KindPerformerReject)
+			if c.wantRun && len(rows) != 0 {
+				t.Errorf("a presentation that runs the gates writes no performer_reject row, got %d", len(rows))
+			}
+			if !c.wantRun {
+				for _, id := range []string{opusID, grokID} {
+					if !strings.Contains(rerr.Error(), id) {
+						t.Errorf("the refusal must list %s, got: %v", id, rerr)
+					}
+				}
 			}
 		})
 	}

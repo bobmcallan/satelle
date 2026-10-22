@@ -70,8 +70,15 @@ func (g *Engine) fillFindings(ctx context.Context, item workitem.Item, toStatus 
 	if g.priorVerdicts == nil || item.ID == "" {
 		return
 	}
-	all := numberAttempts(g.priorVerdicts(ctx, item.ID, item.Status, toStatus, g.staleExemption(ctx, item, toStatus)))
-	tp.Findings = latestFindings(item.ID, all)
+	tp.Findings = FindingsFrom(item.ID, g.priorVerdicts(ctx, item.ID, item.Status, toStatus, g.staleExemption(ctx, item, toStatus)))
+}
+
+// FindingsFrom is the findings a performer re-presenting the edge is offered,
+// given the edge's prior verdicts oldest first (what the engine's resolver
+// returns). Exported so a test can build them from a ledger prior and drive them
+// through RecordFindingProgress, as the engine does.
+func FindingsFrom(itemID string, priors []PriorVerdict) []Finding {
+	return latestFindings(itemID, numberAttempts(priors))
 }
 
 // latestFindings lists the latest row of each gate skill on the edge, a panel's
