@@ -1,3 +1,13 @@
+## [0.0.724] - 2026-10-22
+
+### Added
+- A reviewer rubric may declare `payload_citations: plan` in its frontmatter. Its gate payload then carries every `path:line` and `path:start-end` citation in the story's plan, resolved to the cited lines (with three lines of context either side) in the tree the gate judges. A citation whose file or line no longer exists is listed as unresolved with the reason. The block is bounded at 24 KiB, with truncation marked, and `satelle validate`'s budget report counts it for a declaring seat. The embedded plan-review rubric declares it. On a real plan reviewed by the Opus and Grok panel, Opus made 9-12 tool calls instead of 14-17, and Grok 35-49 instead of 51-57. (sty_d0c9245a)
+
+## [serve-v0.0.192] - 2026-10-22
+
+### Changed
+- The service binary carries the updated agent-dispatch help and plan-review rubric. (sty_d0c9245a)
+
 ## [0.0.723] - 2026-10-22
 
 ### Fixed
