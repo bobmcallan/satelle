@@ -420,6 +420,12 @@ bullet, indentation or prose is named in the refusal by its line within the
 section, so a malformed section fails before any reviewer runs. A body without
 the section is not refused by this check.
 
+A reviewer skill that judges the story as a whole (a scope or architecture axis)
+returns a verdict whose `criteria[]` holds only the general entry (criterion 0):
+that entry then decides. A skill that declares `verdict_criteria: required` must
+itemise the judged criteria instead, and a lone general entry is rejected with
+notes naming the numbering mismatch (`expected AC1–ACn, got 0`).
+
 A reviewer skill may also declare `payload_citations: <doc type>` (for example
 `plan`). Its gate payload then carries a `citations` block (a `citations.json`
 material file): every `path:line` or `path:start-end` in the attached documents of

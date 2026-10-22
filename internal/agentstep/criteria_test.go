@@ -263,6 +263,8 @@ type critOpts struct {
 	storyAC      string
 	prior        []PriorVerdict
 	solo, s1, s2 string // the JSON each reviewer answers with
+	// requireCriteria gives the reviewer rubric `verdict_criteria: required`.
+	requireCriteria bool
 }
 
 func newCritFixture(t *testing.T, o critOpts) *critFixture {
@@ -276,7 +278,11 @@ func newCritFixture(t *testing.T, o critOpts) *critFixture {
 		ragent = ""
 	}
 	wf := spineWF("", "", "", "plan|planner|plan-skill|rev-a|"+ragent+"||"+extra, "done")
-	skills := append(bundleSkillDocs("rev-a"),
+	rubrics := bundleSkillDocs("rev-a")
+	if o.requireCriteria {
+		rubrics[0].Body = strings.Replace(rubrics[0].Body, "description: parallel test gate\n", "description: parallel test gate\nverdict_criteria: required\n", 1)
+	}
+	skills := append(rubrics,
 		docindex.Doc{Kind: "skills", Name: "fold", Body: panelFoldSkill},
 		docindex.Doc{Kind: "skills", Name: "plan-skill", Body: o.planSkill})
 	f := &critFixture{
@@ -455,6 +461,105 @@ func TestBundleVerdictWhoseCriteriaCannotBeUsedDoesNotAccept(t *testing.T) {
 				t.Errorf("accept = %v, criteria = %+v", d.Accept, d.Criteria)
 			}
 		})
+	}
+}
+
+// sty_48a86a38: an axis rubric judges the story as a whole, so a criteria[] that
+// holds only the general entry is its whole verdict, not a skipped AC list.
+
+const generalOnlyAccept = `{"decision":"accept","notes":"scope holds","criteria":[{"criterion":0,"status":"accept"}]}`
+
+func generalOnlyReject(decision string) string {
+	return `{"decision":"` + decision + `","notes":"NOTES","criteria":[{"criterion":0,"status":"reject","finding":"out of scope: X"}]}`
+}
+
+func TestGeneralOnlyVerdictDecidesForAWholeStoryRubric(t *testing.T) {
+	check := func(t *testing.T, accept bool, criteria []verb.CriterionVerdict, notes string) {
+		t.Helper()
+		if !accept {
+			t.Errorf("a lone general accept must accept: notes %q", notes)
+		}
+		if len(criteria) != 1 || criteria[0].Criterion != verb.GeneralCriterion || criteria[0].Status != verb.CriterionAccepted {
+			t.Errorf("criteria = %+v, want only the general accept, no invented entries", criteria)
+		}
+		if strings.Contains(notes, "criteria not accepted") {
+			t.Errorf("notes %q read as a rejection", notes)
+		}
+	}
+	t.Run("solo", func(t *testing.T) {
+		f := newCritFixture(t, critOpts{plan: critPlan(critLines...), solo: generalOnlyAccept})
+		dec, rv := f.gate(t)
+		check(t, dec.Accept && rv.Accept, rv.Criteria, rv.Notes)
+	})
+	t.Run("panel seat", func(t *testing.T) {
+		accAll := verdictJSON("accept", critEntry(1, "accept", ""), critEntry(2, "accept", ""), critEntry(3, "accept", ""))
+		f := newCritFixture(t, critOpts{panel: true, plan: critPlan(critLines...), s1: generalOnlyAccept, s2: accAll})
+		dec, rv := f.gate(t)
+		s1 := seatOf(t, rv, "s1")
+		check(t, s1.Accept && dec.Accept, s1.Criteria, s1.Notes)
+	})
+	t.Run("bundle", func(t *testing.T) {
+		out := `{"verdicts":[{"skill":"rev-a","decision":"accept","notes":"scope holds","criteria":[{"criterion":0,"status":"accept"}]}]}`
+		decs, err := parseBundleDecisions([]byte(out), []string{"rev-a"})
+		if err != nil || len(decs) != 1 {
+			t.Fatalf("parse: %v %+v", err, decs)
+		}
+		d := decs[0]
+		criteriaPrep{judged: agentartifact.NumberedCriteria(strings.Join(critLines, "\n"))}.apply(&d)
+		check(t, d.Accept, d.Criteria, d.Notes)
+	})
+}
+
+func TestGeneralOnlyRejectNamesTheGeneralFinding(t *testing.T) {
+	for _, decision := range []string{"accept", "reject"} {
+		t.Run("top-level "+decision, func(t *testing.T) {
+			f := newCritFixture(t, critOpts{plan: critPlan(critLines...), solo: generalOnlyReject(decision)})
+			dec, rv := f.gate(t)
+			if dec.Accept || rv.Accept {
+				t.Fatalf("a general reject must not accept: %+v", rv)
+			}
+			for _, want := range []string{"the general objection", "out of scope: X", "NOTES"} {
+				if !strings.Contains(rv.Notes, want) {
+					t.Errorf("notes %q should contain %q", rv.Notes, want)
+				}
+			}
+			if strings.Contains(rv.Notes, "AC1") {
+				t.Errorf("notes %q should not blame the numbered criteria", rv.Notes)
+			}
+			if len(rv.Criteria) != 1 {
+				t.Errorf("criteria = %+v, want only the general entry", rv.Criteria)
+			}
+		})
+	}
+}
+
+func TestGeneralOnlyVerdictRejectedWhenRubricRequiresCriteria(t *testing.T) {
+	f := newCritFixture(t, critOpts{plan: critPlan(critLines...), solo: generalOnlyAccept, requireCriteria: true})
+	dec, rv := f.gate(t)
+	if dec.Accept || rv.Accept {
+		t.Fatalf("a rubric requiring per-criterion entries must not accept a lone general entry: %+v", rv)
+	}
+	for _, want := range []string{"criteria numbering did not match", "expected AC1–AC3, got 0", "scope holds"} {
+		if !strings.Contains(rv.Notes, want) {
+			t.Errorf("notes %q should contain %q", rv.Notes, want)
+		}
+	}
+}
+
+func TestRequiresPerCriterion(t *testing.T) {
+	for _, tc := range []struct {
+		name, rubric string
+		want         bool
+	}{
+		{"required", "---\nname: r\nverdict_criteria: required\n---\nbody\n", true},
+		{"quoted", "---\nname: r\nverdict_criteria: \"required\"\n---\nbody\n", true},
+		{"another value", "---\nname: r\nverdict_criteria: optional\n---\nbody\n", false},
+		{"absent", "---\nname: r\n---\nbody\n", false},
+		{"no frontmatter", "verdict_criteria: required\n", false},
+	} {
+		if got := requiresPerCriterion(tc.rubric); got != tc.want {
+			t.Errorf("%s: requiresPerCriterion = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
 

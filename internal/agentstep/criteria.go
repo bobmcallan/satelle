@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/agentartifact"
+	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -190,6 +191,45 @@ type criteriaPrep struct {
 	// is the attempt it was recorded on.
 	settled      map[int]verb.CriterionVerdict
 	priorAttempt int
+	// requirePer is the rubric's frontmatter `verdict_criteria: required`: its
+	// verdict must itemise the judged criteria, so a lone general entry is a
+	// numbering mismatch rather than a whole-story verdict.
+	requirePer bool
+}
+
+// verdictCriteriaKey is the reviewer-skill frontmatter key that declares per-
+// criterion verdicts required (`verdict_criteria: required`). A rubric without
+// it judges the story as a whole when its criteria[] holds only the general entry.
+const verdictCriteriaKey = "verdict_criteria"
+
+// requiresPerCriterion reports whether a reviewer rubric declares that its
+// verdict must carry one entry per judged criterion.
+func requiresPerCriterion(rubric string) bool {
+	lines, ok := docindex.Frontmatter(rubric)
+	if !ok {
+		return false
+	}
+	prefix := verdictCriteriaKey + ":"
+	for _, l := range lines {
+		if t := strings.TrimSpace(l); strings.HasPrefix(t, prefix) {
+			return strings.Trim(strings.TrimSpace(strings.TrimPrefix(t, prefix)), `"'`) == "required"
+		}
+	}
+	return false
+}
+
+// numberRange is the judged criteria as "AC1–AC3" when contiguous, else the list.
+func (c criteriaPrep) numberRange() string {
+	sorted := append([]int(nil), c.numbers()...)
+	sort.Ints(sorted)
+	contiguous := len(sorted) > 1
+	for i := 1; i < len(sorted); i++ {
+		contiguous = contiguous && sorted[i] == sorted[i-1]+1
+	}
+	if contiguous {
+		return fmt.Sprintf("AC%d–AC%d", sorted[0], sorted[len(sorted)-1])
+	}
+	return verb.CriteriaFailure(sorted)
 }
 
 func (c criteriaPrep) numbers() []int {
@@ -348,6 +388,29 @@ func (c criteriaPrep) apply(dec *verb.GateDecision) {
 		if !replaced {
 			entries = append(entries, carried)
 		}
+	}
+	if sent && len(c.settled) == 0 && len(c.judged) > 0 && len(entries) == 1 && entries[0].Criterion == verb.GeneralCriterion {
+		// A lone general entry. An axis rubric (scope, architecture) judges the
+		// story as a whole, so that entry is its whole verdict: it decides, and no
+		// unchecked entries are invented for criteria the rubric never itemised. A
+		// rubric that requires per-criterion entries gets a reject naming the
+		// numbering mismatch instead.
+		general := entries[0]
+		dec.Criteria = entries
+		if c.requirePer {
+			dec.Accept = false
+			dec.Notes = prefixNotes(fmt.Sprintf("criteria numbering did not match: expected %s, got %d", c.numberRange(), verb.GeneralCriterion), dec.Notes)
+			return
+		}
+		dec.Accept = top && general.Status == verb.CriterionAccepted
+		if general.Status != verb.CriterionAccepted {
+			prefix := "criteria not accepted: the general objection"
+			if f := strings.TrimSpace(general.Finding); f != "" && !strings.Contains(dec.Notes, f) {
+				prefix += " — " + f
+			}
+			dec.Notes = prefixNotes(prefix, dec.Notes)
+		}
+		return
 	}
 	if len(entries) == 0 {
 		// criteria[] was sent but nothing in it names a judged criterion (an
