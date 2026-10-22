@@ -127,6 +127,10 @@ type Engine struct {
 	// to the grant or to a later gate; fillDeferred hands each gate its own.
 	// Nil-safe: an unwired resolver injects nothing.
 	deferrals func(ctx context.Context, itemID string) []DeferredItem
+	// waivers resolves the developer waivers recorded for an item (every gate,
+	// oldest first); fillWaivers hands each gate its own. Nil-safe: an unwired
+	// resolver injects nothing.
+	waivers func(ctx context.Context, itemID string) []WaiverItem
 	// findingAnswers reports how the performer of an edge answered the findings it
 	// was offered (sty_f948d345); fillFindingAnswers hands the gate the fact.
 	// Nil-safe: an unwired resolver injects nothing.
@@ -1034,6 +1038,10 @@ type transitionPayload struct {
 	// when none, so every other gate's payload is unchanged. Enumeration, not
 	// verdict.
 	Deferred []DeferredItem `json:"deferred,omitempty"`
+	// Waivers carries the developer waivers recorded for THIS story against THIS
+	// gate's skill (sty_bef97244). Absent when none, so every other gate's payload
+	// is unchanged. Enumeration, not verdict: whether to honour one is the rubric's.
+	Waivers []WaiverItem `json:"waivers,omitempty"`
 	// Citations carries the file:line citations of a document the gate's rubric
 	// names (frontmatter payload_citations), resolved to the lines they name in
 	// the judged tree. Absent for every gate whose rubric does not opt in, so
@@ -1829,7 +1837,7 @@ func (g *Engine) runScheduled(ctx context.Context, item workitem.Item, toStatus 
 		result.Reasoning = dec.Reasoning
 		result.Reviewed = dec.Reviewed
 		result.ReviewedTruncated = dec.ReviewedTruncated
-		result.ReviewMode, result.Coverage = dec.ReviewMode, dec.Coverage
+		result.ReviewMode, result.Coverage, result.Waived = dec.ReviewMode, dec.Coverage, dec.Waived
 		result.Turns, result.TurnsUnavailableReason = dec.Turns, dec.TurnsUnavailableReason
 		result.Command = dec.Command
 		result.Context = dec.Context
@@ -1914,7 +1922,7 @@ func reviewerVerdictOf(skill string, order int, system bool, dec verb.GateDecisi
 	return verb.ReviewerVerdict{
 		Skill: skill, Order: order, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning,
 		Reviewed: dec.Reviewed, ReviewedTruncated: dec.ReviewedTruncated, Criteria: dec.Criteria, System: system,
-		ReviewMode: dec.ReviewMode, Coverage: dec.Coverage,
+		ReviewMode: dec.ReviewMode, Coverage: dec.Coverage, Waived: dec.Waived,
 		Command: dec.Command, Context: dec.Context, Model: dec.Model,
 		ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 		TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
@@ -1978,7 +1986,7 @@ func assembleGate(ordered []reviewerRef, results []gateSlot, sysStart int) (verb
 		result.Reasoning = pick.Reasoning
 		result.Reviewed = pick.Reviewed
 		result.ReviewedTruncated = pick.ReviewedTruncated
-		result.ReviewMode, result.Coverage = pick.ReviewMode, pick.Coverage
+		result.ReviewMode, result.Coverage, result.Waived = pick.ReviewMode, pick.Coverage, pick.Waived
 		result.Turns, result.TurnsUnavailableReason = pick.Turns, pick.TurnsUnavailableReason
 		result.Command = pick.Command
 		result.Context = pick.Context
@@ -3487,6 +3495,7 @@ func (g *Engine) decideReviewer(ctx context.Context, item workitem.Item, toStatu
 	}
 	stampInvocation(res.Decision, res, seat)
 	prep.criteria.apply(res.Decision)
+	prep.keepWaived(res.Decision)
 	return *res.Decision, nil
 }
 
@@ -4885,6 +4894,10 @@ type rawDecision struct {
 	// complete, or stopped early at a named finding. Optional; absent is stored
 	// as absent, never as complete.
 	Coverage json.RawMessage `json:"coverage,omitempty"`
+	// Waived names the checks the reviewer honoured a payload waiver for
+	// (sty_bef97244). Optional; the engine drops any the payload carried no
+	// waiver for (prep.keepWaived).
+	Waived []string `json:"waived,omitempty"`
 }
 
 // applyCoverage reads a reviewer's stated coverage, bounding stopped_at to
@@ -4942,6 +4955,7 @@ func parseDecision(out []byte) (verb.GateDecision, error) {
 				Criteria:          parseCriteria(rd.Criteria),
 				CriteriaSent:      len(rd.Criteria) > 0,
 				Coverage:          applyCoverage(rd.Coverage),
+				Waived:            rd.Waived,
 			}
 			found = &d
 		}

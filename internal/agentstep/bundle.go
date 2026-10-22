@@ -61,6 +61,8 @@ type bundleEntry struct {
 	Criteria []rawCriterion `json:"criteria,omitempty"`
 	// Coverage is what the reviewer says the verdict covered (sty_93359e0f).
 	Coverage json.RawMessage `json:"coverage,omitempty"`
+	// Waived is the checks this rubric honoured a payload waiver for (sty_bef97244).
+	Waived []string `json:"waived,omitempty"`
 }
 
 type bundleEnvelope struct {
@@ -93,6 +95,7 @@ func parseBundleDecisions(out []byte, skills []string) ([]verb.GateDecision, err
 				Criteria:          parseCriteria(e.Criteria),
 				CriteriaSent:      len(e.Criteria) > 0,
 				Coverage:          applyCoverage(e.Coverage),
+				Waived:            e.Waived,
 			}
 		}
 	}
@@ -380,6 +383,8 @@ func (g *Engine) runReviewerBundle(ctx context.Context, item workitem.Item, toSt
 	tp.Deferred = mergeDeferred(preps)
 	mat := preps[0].material
 	mat.Deferred = append([]DeferredItem(nil), tp.Deferred...)
+	tp.Waivers = mergeWaivers(preps)
+	mat.Waivers = append([]WaiverItem(nil), tp.Waivers...)
 	tp.Citations, mat.Citations = bundleCitations(preps)
 	res := g.Invoke(ctx, InvokeRequest{
 		Binding:     seat.binding,
@@ -428,6 +433,7 @@ func (g *Engine) runReviewerBundle(ctx context.Context, item workitem.Item, toSt
 		// After the usage: setDecisionUsage replaces the whole UsageNote.
 		stampInvocation(&d, res, seat)
 		preps[k].criteria.apply(&d)
+		preps[k].keepWaived(&d)
 		if k == 0 {
 			lead = d
 		} else {

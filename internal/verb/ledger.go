@@ -42,6 +42,9 @@ func ledgerAppend(ctx context.Context, raw json.RawMessage) (json.RawMessage, er
 	if req.Kind == "" {
 		return nil, fmt.Errorf("verb: kind required")
 	}
+	if ledger.IsReservedKind(req.Kind) {
+		return nil, fmt.Errorf("verb: kind %s is written only by its owning command (a gate_waiver by `satelle story waive`)", req.Kind)
+	}
 	e, err := store.Append(ctx, ledger.AppendInput{
 		StoryID:   req.StoryID,
 		ProjectID: req.ProjectID,

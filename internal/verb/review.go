@@ -44,8 +44,12 @@ type GateDecision struct {
 	// full one (sty_93359e0f).
 	ReviewMode string
 	Coverage   *Coverage
-	Skill      string            // the deciding reviewer skill
-	Reviewers  []ReviewerVerdict // per-reviewer verdicts in run order (empty for the legacy single-reviewer path)
+	// Waived names the checks this verdict honoured a developer waiver for
+	// (sty_bef97244). The engine keeps only those the gate's payload carried a
+	// waiver for; the binary records them and judges nothing by them.
+	Waived    []string
+	Skill     string            // the deciding reviewer skill
+	Reviewers []ReviewerVerdict // per-reviewer verdicts in run order (empty for the legacy single-reviewer path)
 	// Command/Context describe an isolated AGENT invocation (LLM reviewer): the
 	// resolved harness command and the injected-context source (skill/rubric file).
 	// Empty for a deterministic functional-check gate, which invokes no agent
@@ -138,7 +142,9 @@ type ReviewerVerdict struct {
 	// gate declared (fail-fast only) and what the reviewer says it covered.
 	ReviewMode string    `json:"review_mode,omitempty"`
 	Coverage   *Coverage `json:"coverage,omitempty"`
-	System     bool      `json:"system,omitempty"`
+	// Waived mirrors GateDecision's: the checks a developer waiver was honoured for.
+	Waived []string `json:"waived,omitempty"`
+	System bool     `json:"system,omitempty"`
 	// CarriedFrom is the 1-based attempt index of the earlier verdict this one
 	// re-issues without a dispatch (sty_59720b8b); zero for a fresh judgment. A
 	// carried verdict has no Command, so no agent_invocation row is written.
