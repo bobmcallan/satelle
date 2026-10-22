@@ -1,3 +1,13 @@
+## [0.0.721] - 2026-10-22
+
+### Added
+- A reviewer seat may return a verdict per acceptance criterion: `criteria[]` entries `{criterion, status accept|reject|unchecked, finding, reviewed}`, stored on the verdict row and on each panel seat. A verdict that sends criteria decides from them: any rejected, unchecked, missing, unparseable or out-of-range criterion means it does not accept, whatever its top-level decision says. On re-presentation, each seat's payload marks every criterion settled (its accept carries and its text is unchanged) or open, and a settled accept is carried without re-judging. Each panel seat also sees the other seats' open findings. A verdict with no `criteria[]` behaves as before. (sty_99d3162b)
+
+## [serve-v0.0.189] - 2026-10-22
+
+### Changed
+- The service binary carries per-criterion verdict records. (sty_99d3162b)
+
 ## [0.0.720] - 2026-10-22
 
 ### Added
