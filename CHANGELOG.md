@@ -1,3 +1,10 @@
+## [0.0.736] - 2026-10-24
+
+### Fixed
+- Publishing story chains no longer gives up on a story whose earlier Append landed without this checkout seeing the reply. When the server's stale-base refusal arrives without its detail, push reads the story's latest event from the server and resumes from it, or reports the story as moved. It is never reported as a generic error.
+- Transient refusals of an Append (unavailable, a proxy 502, or a stream reset such as ENHANCE_YOUR_CALM) are retried a few times with backoff before being reported.
+- The record of what each story last published is saved under a file lock through a unique temporary file, once per push, so another satelle process writing the same state file can no longer make a push lose it. (sty_9bdf08c4)
+
 ## [0.0.735] - 2026-10-23
 
 ### Changed
