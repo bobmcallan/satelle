@@ -1,3 +1,16 @@
+## [0.0.733] - 2026-10-23
+
+### Added
+- Every ledger event for a story names the event it builds on (`base_id`) and the version of the workflow route that governed the story when it was written (`workflow_hash`), so a story's history is one linked chain that can be checked and replayed. On the derived route the version is a hash over both route halves as they govern, a legacy markdown workflow uses its own doc hash, and "" means nothing governed.
+  - The first time a database is opened, its existing events are linked into one chain per story, in their insertion order. Nothing else is rewritten, and old events keep an empty workflow hash rather than an invented one.
+  - Workstate sync carries both fields, so a pulled event keeps the chain it was written in.
+  - `satelle ledger verify [--story <id>]` reports every chain break (a missing base, a base after its event, more than one root, or a fork with no `chain_fork` record) and exits non-zero on any. It never repairs anything. (sty_41f61669)
+
+## [serve-v0.0.199] - 2026-10-23
+
+### Changed
+- The service binary reads and writes the linked, workflow-stamped ledger. (sty_41f61669)
+
 ## [0.0.732] - 2026-10-23
 
 ### Fixed
