@@ -1005,7 +1005,7 @@ func foldPulledStories(ctx context.Context, a *app.App, applied []workitem.Item,
 		if hosted.Kind != workitem.KindStory {
 			continue
 		}
-		if _, err := storyfold.SeedItem(ctx, a.Store.Ledger, hosted, now); err != nil {
+		if _, err := storyfold.SeedItem(ctx, a.Store.Ledger, hosted, storyfold.StatusFromChain, now); err != nil {
 			return fmt.Errorf("seed %s from the hosted row: %w", hosted.ID, err)
 		}
 		row, err := a.Store.Stories.Get(ctx, hosted.ID)

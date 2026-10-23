@@ -71,7 +71,7 @@ func TestSeedGivesALegacyStoryOneSnapshotAndNoMore(t *testing.T) {
 		if len(snapshots(t, db, task.ID)) != 0 {
 			t.Errorf("a task was seeded: its file is its source of truth")
 		}
-		if added, err := storyfold.SeedItem(ctx, db.Ledger, story, time.Now()); err != nil || added {
+		if added, err := storyfold.SeedItem(ctx, db.Ledger, story, storyfold.StatusFromRow, time.Now()); err != nil || added {
 			t.Errorf("SeedItem again = %v, %v; want nothing appended", added, err)
 		}
 		chain, err := db.Ledger.StoryChain(ctx, story.ID)
@@ -92,19 +92,16 @@ func TestSeedGivesALegacyStoryOneSnapshotAndNoMore(t *testing.T) {
 		if st.Status != "plan" || st.Title != "legacy" || st.Body != "the body" || len(st.Tags) != 2 {
 			t.Errorf("fold = %+v", st)
 		}
-		// The chain already had a transition, so the snapshot leaves status to it.
-		var p map[string]any
-		_ = json.Unmarshal(snaps[0].Payload, &p)
-		if _, has := p["status"]; has {
-			t.Errorf("the snapshot carries a status although the chain holds a transition: %v", p)
-		}
 		db.Close()
 	}
 }
 
-// A story whose chain holds no transition takes its status from the snapshot; one
-// whose row disagrees with its transitions keeps that disagreement visible.
-func TestSeedStatusComesFromTheSnapshotOnlyWhenTheChainHasNoTransition(t *testing.T) {
+// A legacy chain's transitions can contradict the story's row: sync inserted
+// events out of chronological order and the one-time link chained them in
+// insertion order, so the last transition on the chain is not where the story is.
+// The snapshot is the newest event and carries the row's status and park origin,
+// so the fold equals the row anyway.
+func TestSeedMakesTheFoldEqualTheRowWhateverTheLegacyTransitionsSay(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), ".satelle", "satelle.db")
 	db, err := Open(path)
@@ -112,27 +109,47 @@ func TestSeedStatusComesFromTheSnapshotOnlyWhenTheChainHasNoTransition(t *testin
 		t.Fatal(err)
 	}
 	fresh, _ := db.Stories.Create(ctx, workitem.CreateInput{Kind: workitem.KindStory, Title: "never moved", Status: "in_progress"}, time.Now())
-	drifted, _ := db.Stories.Create(ctx, workitem.CreateInput{Kind: workitem.KindStory, Title: "drifted", Status: "backlog"}, time.Now())
-	tr, _ := json.Marshal(map[string]string{"from": "backlog", "to": "done"})
-	if _, err := db.Ledger.Append(ctx, ledger.AppendInput{StoryID: drifted.ID, Kind: ledger.KindStatusTransition, Payload: tr}, time.Now()); err != nil {
+	// Row done; the chain's last (insertion-order) transition says in_progress.
+	outOfOrder, _ := db.Stories.Create(ctx, workitem.CreateInput{Kind: workitem.KindStory, Title: "out of order", Status: "done"}, time.Now())
+	// Row parked with an origin; the chain holds no park at all.
+	parked, _ := db.Stories.Create(ctx, workitem.CreateInput{Kind: workitem.KindStory, Title: "parked", Status: "blocked"}, time.Now())
+	park := "plan"
+	if _, err := db.Stories.Update(ctx, parked.ID, workitem.UpdateInput{ParkOrigin: &park}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	for _, c := range []struct{ id, from, to string }{
+		{outOfOrder.ID, "backlog", "done"},
+		{outOfOrder.ID, "plan", "in_progress"},
+		{parked.ID, "backlog", "plan"},
+	} {
+		tr, _ := json.Marshal(map[string]string{"from": c.from, "to": c.to})
+		if _, err := db.Ledger.Append(ctx, ledger.AppendInput{StoryID: c.id, Kind: ledger.KindStatusTransition, Payload: tr}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
 	n, err := storyfold.Seed(ctx, db.SQL(), db.Ledger, time.Now())
-	if err != nil || n != 2 {
-		t.Fatalf("Seed = %d, %v; want both stories seeded", n, err)
+	if err != nil || n != 3 {
+		t.Fatalf("Seed = %d, %v; want all three stories seeded", n, err)
 	}
 	if n, _ := storyfold.Seed(ctx, db.SQL(), db.Ledger, time.Now()); n != 0 {
 		t.Errorf("a second Seed seeded %d", n)
 	}
-	for id, want := range map[string]string{fresh.ID: "in_progress", drifted.ID: "done"} {
-		chain, _ := db.Ledger.StoryChain(ctx, id)
-		if st, _ := storyfold.Fold(chain, nil); st.Status != want {
-			t.Errorf("%s folds to %q, want %q", id, st.Status, want)
+	for _, id := range []string{fresh.ID, outOfOrder.ID, parked.ID} {
+		row := mustGet(t, db, id)
+		st := foldOf(t, db, id)
+		if st.Status != row.Status || st.ParkOrigin != row.ParkOrigin {
+			t.Errorf("%s folds to %q/%q, row is %q/%q", id, st.Status, st.ParkOrigin, row.Status, row.ParkOrigin)
 		}
-	}
-	rows := storyfold.Compare(mustGet(t, db, drifted.ID), foldOf(t, db, drifted.ID))
-	if len(rows) != 1 || rows[0].Field != "status" {
-		t.Errorf("drift = %+v, want the status disagreement left visible", rows)
+		if drifts := storyfold.Compare(row, st); len(drifts) != 0 {
+			t.Errorf("%s: fold differs from the row it was seeded from: %+v", id, drifts)
+		}
+		// Folding with the route's park classifier (reconcile and push do) gives the
+		// same answer: the snapshot, not the older transitions, decides park origin.
+		chain, _ := db.Ledger.StoryChain(ctx, id)
+		withPark, _ := storyfold.Fold(chain, func(s string) bool { return s == "blocked" })
+		if drifts := storyfold.Compare(row, withPark); len(drifts) != 0 {
+			t.Errorf("%s: fold with a park classifier differs from the row: %+v", id, drifts)
+		}
 	}
 	db.Close()
 }

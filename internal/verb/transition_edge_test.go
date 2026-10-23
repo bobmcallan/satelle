@@ -190,7 +190,7 @@ requires = ["coded"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := storyfold.SeedItem(context.Background(), db.Ledger, created, time.Now()); err != nil {
+	if _, err := storyfold.SeedItem(context.Background(), db.Ledger, created, storyfold.StatusFromRow, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	req, _ := json.Marshal(map[string]any{"id": created.ID, "status": "in_progress"})

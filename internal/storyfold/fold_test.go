@@ -77,8 +77,15 @@ func TestFoldTable(t *testing.T) {
 			ev(ledger.KindStoryCreated, map[string]string{"source": "legacy"}),
 			transition("backlog", "plan"),
 			ledger.Entry{Kind: ledger.KindDefinitionSnapshot, Payload: SnapshotPayloadOf(workitem.Item{
-				Title: "S", Body: "SB", Category: "fix", Tags: []string{"t"}}, false)}),
-			State{Status: "plan", Title: "S", Body: "SB", Category: "fix", Tags: []string{"t"}}},
+				Title: "S", Body: "SB", Category: "fix", Tags: []string{"t"}, Status: "blocked", ParkOrigin: "plan"}, true)}),
+			State{Status: "blocked", ParkOrigin: "plan", Title: "S", Body: "SB", Category: "fix", Tags: []string{"t"}}},
+		{"a snapshot overrides older transitions and later ones follow it", chain(
+			ev(ledger.KindStoryCreated, map[string]string{"source": "legacy"}),
+			transition("plan", "done"),
+			ledger.Entry{Kind: ledger.KindDefinitionSnapshot, Payload: SnapshotPayloadOf(workitem.Item{
+				Title: "S", Status: "in_progress"}, true)},
+			transition("in_progress", "blocked")),
+			State{Status: "blocked", ParkOrigin: "in_progress", Title: "S", Tags: []string{}}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

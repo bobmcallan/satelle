@@ -83,9 +83,10 @@ func CreatedPayloadOf(it workitem.Item, source string) json.RawMessage {
 }
 
 // SnapshotPayload is the payload of a definition_snapshot event: the row of a
-// story whose chain predates the fold. Status is omitted when the chain already
-// holds a status_transition, so the transitions stay the source of status and a
-// row that disagrees with them shows up as drift instead of being blessed.
+// story whose chain predates the fold. The snapshot is the newest event of such a
+// chain, so the fold applies what it carries as the state at that point, over
+// whatever the older events said. It carries the status unless the seed was told
+// the chain's own transitions decide it (see StatusSource).
 type SnapshotPayload struct {
 	Title              string   `json:"title"`
 	Body               string   `json:"body"`
@@ -97,7 +98,7 @@ type SnapshotPayload struct {
 }
 
 // SnapshotPayloadOf renders the snapshot of it; withStatus says whether the
-// snapshot is the only source of the story's status.
+// snapshot carries the row's status.
 func SnapshotPayloadOf(it workitem.Item, withStatus bool) json.RawMessage {
 	tags := it.Tags
 	if tags == nil {

@@ -14,15 +14,32 @@ import (
 // snapshotActor is the actor of a seeded snapshot: the binary, not a person.
 const snapshotActor = "satelle"
 
+// StatusSource says what decides the status of a story being seeded.
+type StatusSource int
+
+const (
+	// StatusFromRow takes the status from the row seeded from. It is for the
+	// story's own database: its legacy chain's transitions were chained in the
+	// order sync happened to insert them, which is not always the order they
+	// happened in, while the row is where the story really is. The snapshot carries
+	// the status, so the fold equals the row whatever the transitions say.
+	StatusFromRow StatusSource = iota
+	// StatusFromChain leaves status to the chain's transitions when it has any.
+	// It is for a row that arrived from the hosted copy beside a chain that was
+	// pulled in event order: the hosted row is the older cache and the chain wins.
+	StatusFromChain
+)
+
 // SeedItem gives a story whose chain predates the fold its starting point: one
-// definition_snapshot event, taken from it (the story's current row), linked onto
-// the end of the chain, so the fold of the story equals the row. A story whose
-// chain already defines its title (created by this binary, or already seeded) gets
-// nothing, so running it again appends nothing. It reports whether it appended.
+// definition_snapshot event, taken from it (the story's row), linked onto the end
+// of the chain, so the fold of the story equals the row — park origin included,
+// and status as src says. A story whose chain already defines its title (created
+// by this binary, or already seeded) gets nothing, so running it again appends
+// nothing. It reports whether it appended.
 //
 // Only a story is seeded; a task's file is its source of truth and an execution
 // is not folded.
-func SeedItem(ctx context.Context, led *ledger.Store, it workitem.Item, now time.Time) (bool, error) {
+func SeedItem(ctx context.Context, led *ledger.Store, it workitem.Item, src StatusSource, now time.Time) (bool, error) {
 	if led == nil {
 		return false, fmt.Errorf("storyfold: seed needs a ledger")
 	}
@@ -36,18 +53,20 @@ func SeedItem(ctx context.Context, led *ledger.Store, it workitem.Item, now time
 	if st, _ := Fold(chain, nil); st.Defined[FieldTitle] {
 		return false, nil
 	}
-	transitioned := false
-	for _, e := range chain {
-		if e.Kind == ledger.KindStatusTransition && TransitionTo(e) != "" {
-			transitioned = true
-			break
+	withStatus := true
+	if src == StatusFromChain {
+		for _, e := range chain {
+			if e.Kind == ledger.KindStatusTransition && TransitionTo(e) != "" {
+				withStatus = false
+				break
+			}
 		}
 	}
 	refs, _ := json.Marshal(map[string]string{ledger.KindDefinitionSnapshot: it.ID})
 	_, added, err := led.AppendOnce(ctx, ledger.AppendInput{
 		StoryID: it.ID, Kind: ledger.KindDefinitionSnapshot, Actor: snapshotActor,
 		Body:    "definition snapshot seeded from the story row",
-		Payload: SnapshotPayloadOf(it, !transitioned), Refs: refs,
+		Payload: SnapshotPayloadOf(it, withStatus), Refs: refs,
 	}, now)
 	if err != nil {
 		return false, fmt.Errorf("storyfold: seed %s: %w", it.ID, err)
@@ -102,7 +121,7 @@ func Seed(ctx context.Context, db *sql.DB, led *ledger.Store, now time.Time) (in
 		if err != nil {
 			return seeded, fmt.Errorf("storyfold: seed %s: %w", id, err)
 		}
-		added, err := SeedItem(ctx, led, it, now)
+		added, err := SeedItem(ctx, led, it, StatusFromRow, now)
 		if err != nil {
 			return seeded, err
 		}
