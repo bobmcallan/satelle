@@ -112,11 +112,7 @@ func workflowVersion(di *docindex.Store) ledger.WorkflowVersionFunc {
 		if err != nil {
 			return ""
 		}
-		doc, ok := wfgovern.GoverningWorkflow(docs, item)
-		if !ok || doc.Unreadable != "" {
-			return ""
-		}
-		return doc.Hash
+		return wfgovern.RouteVersion(docs, item)
 	}
 }
 

@@ -1076,15 +1076,17 @@ func parseWorkstateLedger(hr hosted.WorkstateLedgerRow) (ledger.Entry, error) {
 		})
 	}
 	var w struct {
-		ID        string          `json:"id"`
-		StoryID   string          `json:"story_id,omitempty"`
-		ProjectID string          `json:"project_id,omitempty"`
-		Kind      string          `json:"kind"`
-		Actor     string          `json:"actor,omitempty"`
-		Body      string          `json:"body,omitempty"`
-		Payload   json.RawMessage `json:"payload,omitempty"`
-		Refs      json.RawMessage `json:"refs,omitempty"`
-		CreatedAt time.Time       `json:"created_at"`
+		ID           string          `json:"id"`
+		StoryID      string          `json:"story_id,omitempty"`
+		ProjectID    string          `json:"project_id,omitempty"`
+		Kind         string          `json:"kind"`
+		Actor        string          `json:"actor,omitempty"`
+		Body         string          `json:"body,omitempty"`
+		Payload      json.RawMessage `json:"payload,omitempty"`
+		Refs         json.RawMessage `json:"refs,omitempty"`
+		CreatedAt    time.Time       `json:"created_at"`
+		BaseID       string          `json:"base_id,omitempty"`
+		WorkflowHash string          `json:"workflow_hash,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &w); err != nil {
 		return ledger.Entry{}, fmt.Errorf("decode record: %w", err)
@@ -1104,7 +1106,7 @@ func parseWorkstateLedger(hr hosted.WorkstateLedgerRow) (ledger.Entry, error) {
 	return ledger.Entry{
 		ID: w.ID, StoryID: w.StoryID, ProjectID: w.ProjectID, Kind: w.Kind,
 		Actor: w.Actor, Body: w.Body, Payload: w.Payload, Refs: w.Refs,
-		CreatedAt: w.CreatedAt,
+		CreatedAt: w.CreatedAt, BaseID: w.BaseID, WorkflowHash: w.WorkflowHash,
 	}, nil
 }
 
@@ -1423,10 +1425,15 @@ func marshalWorkstateLedger(e ledger.Entry) (json.RawMessage, error) {
 		Payload   json.RawMessage `json:"payload,omitempty"`
 		Refs      json.RawMessage `json:"refs,omitempty"`
 		CreatedAt time.Time       `json:"created_at"`
+		// BaseID and WorkflowHash ride along so the chain a machine wrote is the
+		// chain another machine pulls (sty_41f61669).
+		BaseID       string `json:"base_id,omitempty"`
+		WorkflowHash string `json:"workflow_hash,omitempty"`
 	}
 	w := wire{
 		ID: e.ID, StoryID: e.StoryID, ProjectID: e.ProjectID, Kind: e.Kind, Actor: e.Actor,
 		Body: e.Body, Payload: e.Payload, Refs: e.Refs, CreatedAt: e.CreatedAt,
+		BaseID: e.BaseID, WorkflowHash: e.WorkflowHash,
 	}
 	b, err := json.Marshal(w)
 	if err != nil {

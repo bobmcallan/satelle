@@ -11,6 +11,8 @@
 package wfgovern
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -313,6 +315,35 @@ func RouteFor(workflows []docindex.Doc, item workitem.Item) (DerivedRoute, strin
 		return DerivedRoute{}, DerivedRouteName, err
 	}
 	return d, DerivedRouteName, nil
+}
+
+// RouteVersion is the version of the workflow that governs item, as a content
+// hash (sty_41f61669): on a derived route a sha256 over the content hashes of the
+// two route halves AS THEY GOVERN (the authored half merged over the shipped
+// baseline, so a binary upgrade that changes the shipped route changes the
+// version); otherwise the governing legacy workflow doc's own Hash. It is ""
+// when nothing governs, and likewise when the route is refused (unreadable or
+// broken source) — a version names a workflow that resolved, and a refusal is not
+// one. It follows RouteFor's precedence by asking the same RouteGovernsErr.
+func RouteVersion(workflows []docindex.Doc, item workitem.Item) string {
+	if rs, ok, err := RouteGovernsErr(workflows, WorkflowCategory(item)); err != nil {
+		return ""
+	} else if ok {
+		return sha256Hex(sha256Hex(rs.Done) + "\n" + sha256Hex(rs.Step))
+	}
+	wf, ok := GoverningWorkflow(LifecycleWorkflows(workflows), item)
+	if !ok {
+		return ""
+	}
+	if wf.Hash != "" {
+		return wf.Hash
+	}
+	return sha256Hex(wf.Body)
+}
+
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }
 
 // DerivedRoute is one category's resolved route: the Spec every consumer reads,
