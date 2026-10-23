@@ -12,8 +12,8 @@
 #   - PATH=$(go env GOROOT)/bin:/usr/local/bin:/usr/bin:/bin -- the Go toolchain
 #     and the system bin dirs, no version-manager shims;
 #   - GOMODCACHE, GOCACHE and GOPATH read from `go env` BEFORE HOME is replaced,
-#     so the wrapped run uses the real module and build caches (no network, CI's
-#     setup-go cache still hits);
+#     so the wrapped run uses the real module and build caches (no network, a warm
+#     local cache still hits);
 #   - the caller's real host, for the few checks that must still watch it, as
 #     SATELLE_TEST_HOST_HOME, SATELLE_TEST_HOST_XDG_CONFIG_HOME (the caller's
 #     XDG_CONFIG_HOME, else $HOME/.config) and SATELLE_TEST_HOST_SATELLE_HOME
@@ -28,7 +28,7 @@
 # The wrapper does not change which tests exist; operator-config checks stay
 # behind the `operatorconfig` build tag (make operator-check).
 
-# SATELLE_CHROME points the browser e2e tests at a Chrome on CI (sty_53c3f311).
+# SATELLE_CHROME points the browser e2e tests at a non-default Chrome path (sty_53c3f311).
 ALLOW="TERM TMPDIR SATELLE_BIN SATELLE_CHROME GOFLAGS GOPROXY GOTOOLCHAIN GONOSUMDB GOPRIVATE GONOPROXY GOSUMDB"
 
 [ "$1" = "--" ] && shift

@@ -63,16 +63,16 @@ CREDGUARD := sh scripts/credguard.sh --
 # through TESTFLAGS. credguard stays OUTSIDE it so it keeps watching the real host.
 HERMETIC := sh scripts/hermetic.sh --
 
-# STRICT=1 is the CI mode (sty_53c3f311): unit tests run repeated and shuffled
-# (-count=3 -shuffle=on) to expose order and repetition leaks, integration tests
-# shuffled, and both run through scripts/skipcheck, which fails the run on a skip
+# STRICT=1 is the strict local mode (sty_53c3f311; CI runs no suites, sty_656793e6):
+# unit tests run repeated and shuffled (-count=3 -shuffle=on) to expose order and
+# repetition leaks, integration tests shuffled, and both run through scripts/skipcheck, which fails the run on a skip
 # that is not on scripts/skip-allow.txt. skipcheck runs go test as its own child
 # (no pipe, so no pipefail hazard under /bin/sh) and keeps its exit status. With
 # STRICT unset every variable below is empty and the recipes are as before.
 #
 # The unit run repeats every test three times and internal/cli is almost entirely
 # serial (t.Setenv/t.Chdir rule out t.Parallel), so its package total is long and a
-# CI runner 3x slower than a dev machine would cross Go's default 10m package
+# machine 3x slower than a typical dev machine would cross Go's default 10m package
 # timeout without any test hanging (sty_3f2a5c78). UNIT_STRICTFLAGS therefore sets
 # an explicit -timeout, and UNIT_SKIPCHECK adds a per-test stall deadline
 # (UNIT_STALL) so a test that really hangs is still named long before it. The

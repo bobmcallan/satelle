@@ -6,10 +6,10 @@
 #   <package import path> <TestName[/subtest]> <reason>
 #
 # The reason is required. Matching is exact on package and test name; there are
-# no globs and skip text is never matched. List only skips a strict run on CI
+# no globs and skip text is never matched. List only skips a strict run
 # actually produces, and add an entry only after reviewing why the skip is
 # acceptable there. The browser e2e tests (tests/) are deliberately NOT listed:
-# CI has Chrome, so a missing Chrome must fail the run.
+# a strict run needs Chrome, so a missing Chrome must fail the run.
 
 # .satelle/ is gitignored operator substrate, so a CI checkout has none of it.
 github.com/bobmcallan/satelle/internal/agentstep TestDispatchedSeatInlinesDiagnosisPrinciple repo-local principle under gitignored .satelle/ is absent from a CI checkout

@@ -7,7 +7,7 @@
 // It is a wrapper, not a pipe: make runs recipes under /bin/sh, which has no
 // pipefail, so `go test -json | filter` would turn a failing run green.
 // Here the child's exit status is read directly and wins. The test2json stream
-// is echoed to stdout so CI logs still read like a test run.
+// is echoed to stdout so the run's output still reads like a test run.
 //
 // With -stall, a test that has started and shown no result for that long fails
 // the run by name, and the child's whole process group is killed so no test

@@ -264,7 +264,7 @@ model: reviewer premise, DOT workflows, isolated fresh-context review).
 ## Development
 
 ```sh
-go test ./...           # unit + package tests (also run in CI)
+go test ./...           # unit + package tests (local; CI does not run them)
 make integration        # black-box CLI + browser end-to-end (local only)
 ```
 
@@ -277,7 +277,8 @@ GitHub CI, because it needs a browser and the running binary. `make integration`
 builds satelle once and passes it via `SATELLE_BIN` (point that at any binary to
 test it directly). Releases are cut by `.github/workflows/release.yml` when a
 CLI or serve version in `.version` has no matching tag yet (`vX` / `serve-vY`);
-each artifact is published independently. CI (`test.yml`) is unit + compile only.
+each artifact is published independently. CI (`test.yml`) runs gofmt, vet, build and the no-cgo static build only; the unit and
+integration suites run locally (`make test` / `make integration`, `STRICT=1` optional).
 
 satelle dogfoods itself — this repo is set up with `satelle init`, and its
 remaining build phases are tracked as stories in the local database.
@@ -286,13 +287,14 @@ remaining build phases are tracked as stories in the local database.
 
 | Where | What |
 |-------|------|
-| **GitHub CI** (`test` workflow) | `go build`, `go vet`, `gofmt`, `go test ./...`, and a no-cgo static build of every main under `cmd/` |
-| **Local** | `make integration` — integration + browser e2e under `tests/` (`-tags integration`); needs a real Chrome and drives the built binary |
+| **GitHub CI** (`test` workflow) | `go build`, `go vet`, `gofmt`, and a no-cgo static build of every main under `cmd/` (no test suites) |
+| **Local** | `make test` — unit + package tests; `make integration` — integration + browser e2e under `tests/` (`-tags integration`); needs a real Chrome and drives the built binary |
 | **Judgment** (`make judgment`) | Opt-in LLM rubric fixtures under `tests/llm/` (`-tags llm`). **Costs tokens**, calls a live model, not hermetic — run at release time or on demand, never in default CI. Nondeterminism-tolerant (best of three). The human half of this tier is the re-runnable audit tasks (`tsk_substrate-audit`, `tsk_reviewer-objective-audit`, `tsk_context-audit`). |
 | **Planner transport** (`make planner-bench`) | Opt-in live planner comparison under `tests/plannerbench/` (`-tags plannerbench`). **Costs tokens**, never CI. Writes schema-versioned per-run JSON, redacted raw results, attached artifacts, per-criterion findings, usage provenance, and Markdown summaries; infrastructure or under-sample failures exit non-zero while artifact-quality failures remain data. See `tests/plannerbench/EVIDENCE.md`. |
 
-Integration/e2e are intentionally **not** in GitHub CI (they need browser/binary
-fixtures). Run them before a release step when the workflow requires it. Property
+Unit, integration and e2e suites are intentionally **not** in GitHub CI (cost; the
+integration suite also needs browser/binary fixtures). Run them locally before a
+release step when the workflow requires it. Property
 tests over the embedded substrate (`internal/config/substrate_*_test.go`) and
 coded-check golden tables (`tests/substrate_check_fence_test.go`) stay in the
 hermetic default path.
