@@ -1,3 +1,18 @@
+## [0.0.734] - 2026-10-23
+
+### Changed
+- A story's status, definition, tags and park origin are now derived from its ledger chain. The stored story row is a cache, rebuilt from the chain after every change and after a sync pull. `satelle story get`, gate evaluation and `satelle story wave` read the chain, while listing still reads the row. Tasks are unchanged: their file stays the source of truth.
+  - On first open, every legacy story gets one `definition_snapshot` event taken from its current row (status and park origin included), so the chain agrees with the row however sync ordered its older events. On this repo that took about 17s, once, for 1,553 stories.
+  - `satelle story reconcile` reports every field where a row disagrees with its chain, and `--repair` rebuilds those rows from the chain.
+  - `satelle sync workstate push` checks each story's row against its chain before publishing. A story that disagrees is held back, and the report names the story, the field and the chain's value. Run `satelle story reconcile --repair`, then push again.
+  - Each distinct workflow version a story's events recorded travels in its chain as a `workflow_version` event carrying the route source. A story's transitions can be replayed, each against the workflow version it was made under, and an edge valid in neither version is reported as a break.
+  - Stories that `satelle reindex` files automatically start their chain with `story_created` and still skip the create gate. (sty_d84be8bc)
+
+## [serve-v0.0.200] - 2026-10-23
+
+### Changed
+- The service binary reads story state through the chain fold. (sty_d84be8bc)
+
 ## [0.0.733] - 2026-10-23
 
 ### Added
