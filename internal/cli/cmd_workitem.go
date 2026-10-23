@@ -517,19 +517,21 @@ not this command's.`,
 }
 
 // storyReconcileCommand builds `satelle story reconcile [--repair] [--json]`.
-// Default is a dry-run report of row/ledger status drift; --repair applies.
+// Default is a dry-run report of row/chain drift; --repair applies.
 func storyReconcileCommand() *cobra.Command {
 	var repair, asJSON bool
 	cmd := &cobra.Command{
 		Use:   "reconcile",
-		Short: "Detect (and optionally repair) story rows whose status disagrees with the ledger",
-		Long: `Compare each work-item row's status to its last status_transition ledger
-event. The ledger is the source of truth: a recorded transition whose 'to'
-does not match the row is drift.
+		Short: "Detect (and optionally repair) story rows that disagree with their ledger chain",
+		Long: `Compare each story row's status, title, body, acceptance criteria,
+category, tags and park origin to the fold of its ledger chain. The chain is the
+source of truth and the row a cache of it: a field on which they disagree is
+drift, and the chain's value is the one that is right. A story whose row has
+drifted is not published by 'satelle sync workstate push' until it is repaired.
 
-Default is a dry-run report. --repair sets each drifted row from the ledger
-and records a status_reconcile event. Dry-run exits non-zero when drift is
-found so the check is scriptable.`,
+Default is a dry-run report. --repair rebuilds each drifted row from the chain,
+names each repaired field, and records a status_reconcile event. Dry-run exits
+non-zero when drift is found so the check is scriptable.`,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := appFrom(cmd)
@@ -539,7 +541,7 @@ found so the check is scriptable.`,
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
 			if repair {
-				repaired, rerr := verb.RepairStatusDrift(ctx, a.Store.Stories, a.Store.Ledger, time.Now())
+				repaired, rerr := verb.RepairDrift(ctx, a.Store.Stories, a.Store.Ledger, time.Now())
 				if rerr != nil {
 					return rerr
 				}
@@ -549,16 +551,16 @@ found so the check is scriptable.`,
 					return enc.Encode(map[string]any{"repaired": repaired, "count": len(repaired)})
 				}
 				if len(repaired) == 0 {
-					fmt.Fprintln(out, "status: clean — no row disagrees with its last status_transition")
+					fmt.Fprintln(out, "status: clean — no row disagrees with its ledger chain")
 					return nil
 				}
-				fmt.Fprintf(out, "repaired %d stor(y/ies) from the ledger:\n", len(repaired))
+				fmt.Fprintf(out, "repaired %d field(s) from the ledger chain:\n", len(repaired))
 				for _, d := range repaired {
-					fmt.Fprintf(out, "  %s  %s → %s\n", d.ID, d.RowStatus, d.LedgerStatus)
+					fmt.Fprintf(out, "  %s  %s: %q → %q\n", d.ID, d.Field, d.Row, d.Chain)
 				}
 				return nil
 			}
-			drifts, derr := verb.DetectStatusDrift(ctx, a.Store.Stories, a.Store.Ledger)
+			drifts, derr := verb.DetectDrift(ctx, a.Store.Stories, a.Store.Ledger)
 			if derr != nil {
 				return derr
 			}
@@ -569,14 +571,13 @@ found so the check is scriptable.`,
 					return err
 				}
 			} else if len(drifts) == 0 {
-				fmt.Fprintln(out, "status: clean — no row disagrees with its last status_transition")
+				fmt.Fprintln(out, "status: clean — no row disagrees with its ledger chain")
 			} else {
-				fmt.Fprintf(out, "%d stor(y/ies) disagree with the ledger:\n", len(drifts))
+				fmt.Fprintf(out, "%d field(s) disagree with the ledger chain:\n", len(drifts))
 				for _, d := range drifts {
-					fmt.Fprintf(out, "  %s  row=%s ledger=%s  (last transition %s)\n",
-						d.ID, d.RowStatus, d.LedgerStatus, d.TransitionAt.UTC().Format(time.RFC3339))
+					fmt.Fprintf(out, "  %s  %s: row=%q chain=%q\n", d.ID, d.Field, d.Row, d.Chain)
 				}
-				fmt.Fprintln(out, "re-run with --repair to set each row from the ledger")
+				fmt.Fprintln(out, "re-run with --repair to rebuild each row from the chain")
 			}
 			if len(drifts) > 0 {
 				return fmt.Errorf("story reconcile: %d drifted", len(drifts))
@@ -584,7 +585,7 @@ found so the check is scriptable.`,
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&repair, "repair", false, "set drifted rows from the last status_transition")
+	cmd.Flags().BoolVar(&repair, "repair", false, "rebuild drifted rows from their ledger chain")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit machine-readable JSON")
 	return cmd
 }

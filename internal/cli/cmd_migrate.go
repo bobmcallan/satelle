@@ -7,6 +7,7 @@ package cli
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -227,7 +229,25 @@ func applyStamps(ctx context.Context, out io.Writer, dbPath string, plan []stamp
 	now := time.Now()
 	for _, s := range plan {
 		tags := s.Tags
-		if _, err := db.Stories.Update(ctx, s.ID, workitem.UpdateInput{Tags: &tags}, now); err != nil {
+		// The row rewrite and the story_updated that names the tags before and
+		// after land together, so the chain the row is a cache of carries the
+		// restamp (sty_d84be8bc).
+		err := db.InTx(ctx, func(tx *sql.Tx) error {
+			stories := db.Stories.WithTx(tx)
+			before, gerr := stories.Get(ctx, s.ID)
+			if gerr != nil {
+				return gerr
+			}
+			if _, uerr := stories.Update(ctx, s.ID, workitem.UpdateInput{Tags: &tags}, now); uerr != nil {
+				return uerr
+			}
+			if before.Kind != workitem.KindStory {
+				return nil
+			}
+			_, aerr := db.Ledger.WithTx(tx).Append(ctx, verb.TagChangeInput(s.ID, before.Tags, tags, "migrate", "migrate"), now)
+			return aerr
+		})
+		if err != nil {
 			return fmt.Errorf("migrate: restamp %s: %w", s.ID, err)
 		}
 		fmt.Fprintf(out, "  %s  %s%s → %s%s\n", s.ID,

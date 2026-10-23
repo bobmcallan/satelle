@@ -119,7 +119,7 @@ func readyOne(ctx context.Context, id string) ReadyResult {
 	if err != nil {
 		return refused(id, "%v", err)
 	}
-	item, err := store.Get(ctx, id)
+	item, err := storyState(ctx, id)
 	if err != nil {
 		return refused(id, "%v", err)
 	}

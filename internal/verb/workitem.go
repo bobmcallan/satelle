@@ -17,6 +17,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/storyfold"
 	"github.com/bobmcallan/satelle/internal/trunk"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -321,11 +322,17 @@ func (p *preparedCreate) finish(ctx context.Context, it workitem.Item) (json.Raw
 		// knows the create raced — rare (pre-check already refused when possible).
 		return nil, aerr
 	}
-	var createdPayload json.RawMessage
-	if p.origin.Source != "" {
-		createdPayload, _ = json.Marshal(map[string]string{"source": p.origin.Source})
+	if kind == workitem.KindStory {
+		// A story's creation carries its whole definition and initial status: the
+		// fold starts from it (sty_d84be8bc).
+		_ = AppendStoryCreated(ctx, ledgerStore, it, p.origin.Actor, p.origin.Source, now)
+	} else {
+		var createdPayload json.RawMessage
+		if p.origin.Source != "" {
+			createdPayload, _ = json.Marshal(map[string]string{"source": p.origin.Source})
+		}
+		appendLedgerEntry(ctx, it.ID, p.ledgerKind, p.origin.Actor, fmt.Sprintf("created %s %q", kind, it.Title), createdPayload, now)
 	}
-	appendLedgerEntry(ctx, it.ID, p.ledgerKind, p.origin.Actor, fmt.Sprintf("created %s %q", kind, it.Title), createdPayload, now)
 	recordTrunkCheck(ctx, it.ID, p.trunkRep, now)
 	if kind == workitem.KindStory {
 		RecordSessionModel(ctx, it.ID, "", SessionModelRoleCreator, p.origin.Model, p.origin.ModelExe, p.origin.SessionID, p.origin.Reason)
@@ -394,8 +401,7 @@ type idReq struct {
 }
 
 func workItemGet(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
-	store, err := requireWorkItem()
-	if err != nil {
+	if _, err := requireWorkItem(); err != nil {
 		return nil, err
 	}
 	var req idReq
@@ -405,7 +411,9 @@ func workItemGet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	if req.ID == "" {
 		return nil, fmt.Errorf("verb: id required")
 	}
-	it, err := store.Get(ctx, req.ID)
+	// A story's status, definition and park origin are the fold of its chain; the
+	// row is only the cache listing reads (sty_d84be8bc).
+	it, err := storyState(ctx, req.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -464,7 +472,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	// FROM state while the ledger already records the transition. Every write
 	// below therefore carries ExpectStatus = current.Status: a compare-and-set, so
 	// the loser of the race is refused loudly instead of silently winning.
-	current, err := store.Get(ctx, req.ID)
+	current, err := storyStateHealed(ctx, req.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -935,6 +943,30 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		}
 	}
 	editor := resolveEditorIdentity()
+	// The events that carry the committed write land before anything below that
+	// re-enters this verb (a ready-mark sync, a readiness mark): that call folds the
+	// chain first, and a write the chain does not yet hold would be rebuilt away
+	// (sty_d84be8bc).
+	if foldable(it) {
+		if transitioning {
+			// The transition event carries the status; tags that changed beside it
+			// are a story_updated of their own.
+			appendTagChange(ctx, it.ID, current.Tags, it.Tags, "story-set", "executor", commitNow)
+		} else {
+			// A story's tag change rides this same story_updated event, in the
+			// shape every tag writer records.
+			var tagEdit *storyfold.TagsChange
+			if !tagsEqual(current.Tags, it.Tags) {
+				tagEdit = &storyfold.TagsChange{Before: nonNil(current.Tags), After: nonNil(it.Tags)}
+			}
+			actor := resolveActor()
+			if actor == "" {
+				actor = "executor"
+			}
+			appendLedgerEntry(ctx, it.ID, ledger.KindStoryUpdated, actor, fmt.Sprintf("updated %s", it.Kind),
+				storyUpdatedPayloadFor(editor, definitionEdits, tagEdit), commitNow)
+		}
+	}
 	recordDefinitionEdits(ctx, it, definitionEdits, editor, commitNow)
 	// An accepted readiness round marks the story once it has committed, with the
 	// tag the step declares (sty_a32bd6a9). Best-effort: the round is on the ledger.
@@ -1042,7 +1074,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		if *req.Status == "done" && stepSummariser != nil && stepSummariser.MandatorySummary(ctx, it) {
 			surfaceMissingSummaries(ctx, it, commitNow)
 		}
-	} else {
+	} else if !foldable(it) {
 		ledgerKind := ledger.KindStoryUpdated
 		if it.Kind == workitem.KindTask || it.Kind == workitem.KindExecution {
 			ledgerKind = ledger.KindTaskUpdated
@@ -1052,7 +1084,13 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			actor = "executor"
 		}
 		appendLedgerEntry(ctx, it.ID, ledgerKind, actor, fmt.Sprintf("updated %s", it.Kind),
-			storyUpdatedPayloadFor(editor, definitionEdits), commitNow)
+			storyUpdatedPayloadFor(editor, definitionEdits, nil), commitNow)
+	}
+	// The row is a cache of the fold: bring it to what the chain now says.
+	if foldable(it) {
+		if rebuilt, rerr := rebuildCache(ctx, it.ID); rerr == nil {
+			it = rebuilt
+		}
 	}
 	// Mirror the mutation to the flat operation log (sty_be257fef): the status
 	// transition and/or the tag before/after, so a read-only reviewer can verify a
@@ -1143,7 +1181,7 @@ func storyRestamp(ctx context.Context, raw json.RawMessage) (json.RawMessage, er
 	if req.ID == "" {
 		return nil, fmt.Errorf("verb: id required")
 	}
-	current, err := store.Get(ctx, req.ID)
+	current, err := storyStateHealed(ctx, req.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1188,12 +1226,16 @@ func storyRestamp(ctx context.Context, raw json.RawMessage) (json.RawMessage, er
 	if err != nil {
 		return nil, err
 	}
+	appendTagChange(ctx, it.ID, current.Tags, it.Tags, "story-restamp", "executor", now)
 	oldLabel := old
 	if oldLabel == "" {
 		oldLabel = "(unstamped)"
 	}
 	appendLedger(ctx, it.ID, ledger.KindWorkflowStamped,
 		fmt.Sprintf("governing workflow re-stamped: %s -> %s", oldLabel, target), now)
+	if rebuilt, rerr := rebuildCache(ctx, it.ID); rerr == nil {
+		it = rebuilt
+	}
 	if td := tagsChanged(current.Tags, it.Tags); td != "" {
 		appendOpLog("story-restamp", it.ID, td, now)
 	}
@@ -1248,7 +1290,7 @@ func storyEstimate(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 	if req.Tokens <= 0 && req.Time == "" && req.FreshInput <= 0 && req.Output <= 0 {
 		return nil, fmt.Errorf("verb: estimate requires at least one of --fresh-input/--output, --time, or the legacy --tokens")
 	}
-	current, err := store.Get(ctx, req.ID)
+	current, err := storyStateHealed(ctx, req.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1285,7 +1327,11 @@ func storyEstimate(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 		body += " (basis: " + req.Basis + ")"
 	}
 	payload, _ := json.Marshal(kv)
+	appendTagChange(ctx, it.ID, current.Tags, it.Tags, "story-estimate", "executor", now)
 	appendLedgerEntry(ctx, it.ID, ledger.KindEstimateRecorded, "executor", body, payload, now)
+	if rebuilt, rerr := rebuildCache(ctx, it.ID); rerr == nil {
+		it = rebuilt
+	}
 	appendOpLog("story-estimate", it.ID, body, now)
 	notifyChange(panelTopic(it.Kind))
 	return json.Marshal(it)
@@ -1317,8 +1363,7 @@ type actualReq struct {
 // tag is left as stored — this verb does not write one. Records the full
 // StoryActual as the actual_recorded ledger payload.
 func storyActual(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
-	store, err := requireWorkItem()
-	if err != nil {
+	if _, err := requireWorkItem(); err != nil {
 		return nil, err
 	}
 	var req actualReq
@@ -1331,7 +1376,7 @@ func storyActual(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	if req.Time != "" || req.Tokens > 0 || req.USD > 0 || req.FreshInput > 0 || req.Output > 0 {
 		return nil, fmt.Errorf("verb: actual is computed from the ledger — run `satelle story actual %s` with no figures", req.ID)
 	}
-	current, err := store.Get(ctx, req.ID)
+	current, err := storyStateHealed(ctx, req.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1410,7 +1455,11 @@ func recordActual(ctx context.Context, current workitem.Item, at time.Time) (wor
 	}
 	body := fmt.Sprintf("actual recorded: %s", joinKeyedTags(kv))
 	payload, _ := json.Marshal(actual)
+	appendTagChange(ctx, it.ID, current.Tags, it.Tags, "story-actual", "executor", at)
 	appendLedgerEntry(ctx, it.ID, ledger.KindActualRecorded, "executor", body, payload, at)
+	if rebuilt, rerr := rebuildCache(ctx, it.ID); rerr == nil {
+		it = rebuilt
+	}
 	appendOpLog("story-actual", it.ID, body, at)
 	notifyChange(panelTopic(it.Kind))
 	return it, nil

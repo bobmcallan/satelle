@@ -203,7 +203,7 @@ func runScopedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer,
 	p := &snapshotPass{
 		a: a, errw: errw, server: server, project: project,
 		optIn: optIn, force: force, mode: mode,
-		rep: passReport{Kind: passScoped}, pending: map[string]string{},
+		rep: passReport{Kind: passScoped},
 	}
 	// fetchScoped asks the server for ids and holds every page, refusing a server
 	// that ignores the scope, a rejected page token and an id the server lacks.

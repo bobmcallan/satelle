@@ -660,7 +660,9 @@ func TestCLICreateKeepsItsStoryCreatedRow(t *testing.T) {
 	if len(rows) == 1 && len(rows[0].Payload) > 0 {
 		_ = json.Unmarshal(rows[0].Payload, &payload)
 	}
-	if len(rows) != 1 || rows[0].Actor != "" || len(payload) != 0 {
-		t.Errorf("the CLI story_created row must stay actor-less with no payload: %+v", rows)
+	// Actor-less and sourceless — the payload carries the story's definition and
+	// initial status for the fold (sty_d84be8bc), and no source.
+	if len(rows) != 1 || rows[0].Actor != "" || payload["source"] != nil || payload["title"] != "by hand" || payload["status"] != "backlog" {
+		t.Errorf("the CLI story_created row must stay actor-less and sourceless, carrying the definition: %+v", rows)
 	}
 }

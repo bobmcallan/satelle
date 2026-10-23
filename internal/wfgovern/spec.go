@@ -326,20 +326,47 @@ func RouteFor(workflows []docindex.Doc, item workitem.Item) (DerivedRoute, strin
 // broken source) — a version names a workflow that resolved, and a refusal is not
 // one. It follows RouteFor's precedence by asking the same RouteGovernsErr.
 func RouteVersion(workflows []docindex.Doc, item workitem.Item) string {
+	return RouteVersionSource(workflows, item).Hash
+}
+
+// Version is one resolved workflow version: its hash and the source that hashes
+// to it (sty_d84be8bc) — both route halves for a derived route, or the legacy
+// workflow body. Hash is "" when RouteVersion is.
+type Version struct {
+	Hash   string
+	Done   string
+	Step   string
+	Legacy string
+}
+
+// RouteVersionSource is RouteVersion's whole resolution, returning the text it
+// hashed beside the hash. RouteVersion calls it, so the hash an event records and
+// the source a chain archives come from one resolution and cannot differ.
+func RouteVersionSource(workflows []docindex.Doc, item workitem.Item) Version {
 	if rs, ok, err := RouteGovernsErr(workflows, WorkflowCategory(item)); err != nil {
-		return ""
+		return Version{}
 	} else if ok {
-		return sha256Hex(sha256Hex(rs.Done) + "\n" + sha256Hex(rs.Step))
+		return Version{Hash: RouteHash(rs.Done, rs.Step), Done: rs.Done, Step: rs.Step}
 	}
 	wf, ok := GoverningWorkflow(LifecycleWorkflows(workflows), item)
 	if !ok {
-		return ""
+		return Version{}
 	}
-	if wf.Hash != "" {
-		return wf.Hash
+	hash := wf.Hash
+	if hash == "" {
+		hash = sha256Hex(wf.Body)
 	}
-	return sha256Hex(wf.Body)
+	return Version{Hash: hash, Legacy: wf.Body}
 }
+
+// RouteHash is the version hash of a derived route from its two halves — what
+// RouteVersion records and what a replay re-derives from an archived source.
+func RouteHash(done, step string) string {
+	return sha256Hex(sha256Hex(done) + "\n" + sha256Hex(step))
+}
+
+// LegacyHash is the version hash of a legacy workflow from its body.
+func LegacyHash(body string) string { return sha256Hex(body) }
 
 func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))

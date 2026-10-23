@@ -98,6 +98,7 @@ func (w *takeoverWorld) leaveWork(t *testing.T, id, head string) {
 			t.Fatal(err)
 		}
 	}
+	settleRow(t, a, id)
 }
 
 // story creates a story, puts it in its state (published to the hosted copy), and
@@ -171,9 +172,7 @@ func TestTakeoverRefusedWhenTheStatusDiverged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Store.Stories.SetStatus(context.Background(), id, w.left, time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
+	moveRow(t, a, id, w.left)
 	_ = a.Close()
 
 	msg := w.refused(t, id)

@@ -188,15 +188,15 @@ func statusDriftFindings(repoRoot string) health.Findings {
 		return nil
 	}
 	defer db.Close()
-	drifts, derr := verb.DetectStatusDrift(context.Background(), db.Stories, db.Ledger)
+	drifts, derr := verb.DetectDrift(context.Background(), db.Stories, db.Ledger)
 	if derr != nil {
 		return health.Findings{health.Warn(health.IDStatusDrift, "Story status drift",
 			derr.Error()).About(repoRoot)}
 	}
 	var out health.Findings
 	for _, d := range drifts {
-		out = append(out, health.Error(health.IDStatusDrift, "Story status disagrees with ledger",
-			fmt.Sprintf("%s row=%s ledger=%s", d.ID, d.RowStatus, d.LedgerStatus)).
+		out = append(out, health.Error(health.IDStatusDrift, "Story disagrees with its ledger chain",
+			fmt.Sprintf("%s %s: row=%q chain=%q", d.ID, d.Field, d.Row, d.Chain)).
 			About(d.ID).WithRemediation("run `satelle story reconcile --repair`"))
 	}
 	return out

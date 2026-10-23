@@ -76,7 +76,8 @@ func finishLocally(t *testing.T, id string) workitem.Item {
 		t.Fatal(err)
 	}
 	defer a.Close()
-	it, err := a.Store.Stories.SetStatus(context.Background(), id, "done", time.Now().UTC())
+	moveRow(t, a, id, "done")
+	it, err := a.Store.Stories.Get(context.Background(), id)
 	if err != nil {
 		t.Fatal(err)
 	}

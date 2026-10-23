@@ -28,6 +28,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/storyfold"
 	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -392,18 +393,47 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	}
 	var held map[string]string
 	var earliestHeld time.Time
-	if holdOn {
-		res, herr := classifyHolds(cmd.Context(), a, batch.Items, ledgerRows)
-		if herr != nil {
-			return herr
+	codeHeld := 0 // stories held for unpushed code, apart from those withheld for drift
+	// A story's cached row is validated against the fold of its ledger chain before
+	// any of its events leave (sty_d84be8bc). One that disagrees is withheld like a
+	// held story — its rows stay behind the cursors — and the push reports it and
+	// fails once the others have been sent, so a withheld story is never silent.
+	drift, derr := classifyFoldDrift(cmd.Context(), a, batch.Items, ledgerRows)
+	if derr != nil {
+		return derr
+	}
+	for _, l := range drift.lines {
+		fmt.Fprintln(out, l)
+		fmt.Fprintln(errw, l)
+	}
+	if len(drift.held) > 0 {
+		driftErr := fmt.Errorf("%d stor(y/ies) withheld: the cached row disagrees with the ledger chain — run `satelle story reconcile --repair`, then push again", len(drift.held))
+		defer func() {
+			if retErr == nil {
+				retErr = driftErr
+			}
+		}()
+	}
+	if holdOn || len(drift.held) > 0 {
+		res := holdResult{held: map[string]string{}, unavailable: map[string]string{}}
+		if holdOn {
+			var herr error
+			if res, herr = classifyHolds(cmd.Context(), a, batch.Items, ledgerRows); herr != nil {
+				return herr
+			}
+			for _, l := range res.lines() {
+				fmt.Fprintln(out, l)
+			}
 		}
-		for _, l := range res.lines() {
-			fmt.Fprintln(out, l)
+		codeHeld = len(res.held)
+		withheld := maps.Clone(res.held)
+		for id, why := range drift.held {
+			withheld[id] = why
 		}
-		if len(res.held) > 0 {
-			held = res.held
+		if len(withheld) > 0 {
+			held = withheld
 			// The story's rows stay local, but its hosted marker must not go stale.
-			refreshHeldBack(cmd.Context(), out, errw, site, held)
+			refreshHeldBack(cmd.Context(), out, errw, site, res.held)
 			batch.Items, batch.Ledger, earliestHeld = withoutHeld(held, batch.Items, batch.Ledger, ledgerRows)
 			lmark = ledgerMarkBeforeHold(startMark, held, ledgerRows)
 			if !earliestHeld.IsZero() {
@@ -585,8 +615,8 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		fmt.Fprintf(out, "Pushed work-state to project %q personal collection on %s: %d item(s), %d ledger entr(y/ies).\n",
 			project, server, totalItems, totalLedger)
 	}
-	if len(held) > 0 {
-		fmt.Fprintf(out, "%d stor(y/ies) held until their code is on the remote.\n", len(held))
+	if codeHeld > 0 {
+		fmt.Fprintf(out, "%d stor(y/ies) held until their code is on the remote.\n", codeHeld)
 	}
 	// A published story at rest no longer needs its in-flight marker.
 	if released := releaseAtRest(cmd.Context(), errw, a, site, publishedStoryIDs(publishedItems, publishedLedger)); len(released) > 0 {
@@ -928,6 +958,19 @@ func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool,
 		}
 	}
 	if optIn["ledger"] {
+		// A row that arrives without a base is linked to the story's tail as it is
+		// inserted, so arrival order becomes its place in the chain the fold reads.
+		// Insert in the order the events were made, whatever order the page lists
+		// them in (sty_d84be8bc).
+		ledgerRows = slices.Clone(ledgerRows)
+		slices.SortStableFunc(ledgerRows, func(x, y hosted.WorkstateLedgerRow) int {
+			xe, xerr := parseWorkstateLedger(x)
+			ye, yerr := parseWorkstateLedger(y)
+			if xerr != nil || yerr != nil {
+				return 0
+			}
+			return xe.CreatedAt.Compare(ye.CreatedAt)
+		})
 		for _, hr := range ledgerRows {
 			e, perr := parseWorkstateLedger(hr)
 			if perr != nil {
@@ -939,38 +982,59 @@ func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool,
 			nLedger++
 		}
 	}
+	// The page's events are in: the rows it applied are now a cache of their chains.
+	if err := foldPulledStories(ctx, a, applied, force, now); err != nil {
+		return applied, nItems, nLedger, nKept, fmt.Errorf("%w — re-run is safe (upsert-by-id)", err)
+	}
 	return applied, nItems, nLedger, nKept, nil
 }
 
-// applyHostedWorkstateStatus moves stored status to match a hosted row when the
-// ledger authorises it (latest status_transition TO == incoming), or when there
-// is no local transition history yet (first import / newer-stamp apply with no
-// ledger). A hosted FROM that disagrees with a ledgered TO is left alone —
-// Upsert already kept stored status.
-func applyHostedWorkstateStatus(ctx context.Context, a *app.App, incoming workitem.Item, now time.Time) error {
-	local, err := a.Store.Stories.Get(ctx, incoming.ID)
-	if err != nil {
-		return err
-	}
-	if local.Status == incoming.Status {
-		return nil
-	}
-	e, ok, lerr := verb.LatestStatusTransition(ctx, a.Store.Ledger, incoming.ID)
-	if lerr != nil {
-		return lerr
-	}
-	if ok {
-		if verb.TransitionTo(e) != incoming.Status {
-			return nil
+// foldPulledStories brings the stories a pull applied under their chains
+// (sty_d84be8bc): a story whose chain predates the fold is seeded from the
+// hosted row it arrived with, then its cached row is rebuilt from the fold. The
+// chain decides status — a transition that disagrees with the hosted row's status
+// moves the row, and a story with no transition takes the hosted row's — so no
+// separate status forwarding exists. A task or execution is not folded.
+//
+// A forced pull lets the hosted copy win. The chain keeps any event only this
+// machine made (a ledger row is never rewritten), so the definition and tags the
+// hosted row carries are set back by an event of their own, after which the
+// rebuild lands them on the row.
+func foldPulledStories(ctx context.Context, a *app.App, applied []workitem.Item, force bool, now time.Time) error {
+	for _, hosted := range applied {
+		if hosted.Kind != workitem.KindStory {
+			continue
+		}
+		if _, err := storyfold.SeedItem(ctx, a.Store.Ledger, hosted, now); err != nil {
+			return fmt.Errorf("seed %s from the hosted row: %w", hosted.ID, err)
+		}
+		row, err := a.Store.Stories.Get(ctx, hosted.ID)
+		if err != nil {
+			return fmt.Errorf("read %s after pull: %w", hosted.ID, err)
+		}
+		if force {
+			st, _, ferr := verb.FoldStory(ctx, a.Store.Ledger, row)
+			if ferr != nil {
+				return fmt.Errorf("fold %s: %w", hosted.ID, ferr)
+			}
+			if in, ok := verb.HostedWinsInput(st, hosted, "sync workstate pull --force"); ok {
+				if _, aerr := a.Store.Ledger.Append(ctx, in, now); aerr != nil {
+					return fmt.Errorf("record the hosted copy winning on %s: %w", hosted.ID, aerr)
+				}
+			}
+		}
+		if _, err := verb.RebuildRow(ctx, a.Store.Stories, a.Store.Ledger, row, now); err != nil {
+			return fmt.Errorf("rebuild %s from its chain: %w", hosted.ID, err)
 		}
 	}
-	_, err = a.Store.Stories.SetStatus(ctx, incoming.ID, incoming.Status, now)
-	return err
+	return nil
 }
 
-// keepLocalWorkstateItem reports whether the local row (or its ledger) is
-// newer than the incoming hosted item, so upserting would rewind status. It
+// keepLocalWorkstateItem reports whether the local row is newer than the
+// incoming hosted item, so upserting would overwrite what was changed here. It
 // returns the local row it compared, for a caller that records the difference.
+// Status is not weighed: a story's status is the fold of its chain, which the
+// pull rebuilds the row from (foldPulledStories).
 func keepLocalWorkstateItem(ctx context.Context, a *app.App, incoming workitem.Item) (bool, workitem.Item, error) {
 	local, err := a.Store.Stories.Get(ctx, incoming.ID)
 	if err != nil {
@@ -979,21 +1043,7 @@ func keepLocalWorkstateItem(ctx context.Context, a *app.App, incoming workitem.I
 		}
 		return false, workitem.Item{}, err
 	}
-	if local.UpdatedAt.After(incoming.UpdatedAt) {
-		return true, local, nil
-	}
-	e, ok, lerr := verb.LatestStatusTransition(ctx, a.Store.Ledger, incoming.ID)
-	if lerr != nil {
-		return false, local, lerr
-	}
-	if !ok {
-		return false, local, nil
-	}
-	to := verb.TransitionTo(e)
-	if to != "" && to != incoming.Status && e.CreatedAt.After(incoming.UpdatedAt) {
-		return true, local, nil
-	}
-	return false, local, nil
+	return local.UpdatedAt.After(incoming.UpdatedAt), local, nil
 }
 
 func workstateAreaForKind(kind string) string {

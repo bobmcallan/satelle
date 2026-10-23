@@ -219,7 +219,7 @@ func storyWave(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 	if req.ID == "" {
 		return nil, fmt.Errorf("story-wave: id required")
 	}
-	container, err := store.Get(ctx, req.ID)
+	container, err := storyState(ctx, req.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +255,18 @@ func (e errNoUsableSchedule) Error() string { return e.msg }
 // wave of an epic-parent container. A schedule the route does not declare
 // surfaces as errNoUsableSchedule; an unresolvable set wraps epicset.ErrUndetermined.
 func assessWave(ctx context.Context, store *workitem.Store, wfs []docindex.Doc, container workitem.Item) (WaveResult, error) {
+	// Every story the wave classifies — the container, each child and each
+	// dependency — is read as its chain folds, not as its cached row says
+	// (sty_d84be8bc).
+	container, err := foldedItem(ctx, container)
+	if err != nil {
+		return WaveResult{}, err
+	}
 	set, err := epicset.Resolve(ctx, store, container)
+	if err != nil {
+		return WaveResult{}, err
+	}
+	children, err := overlayFold(ctx, set.Children)
 	if err != nil {
 		return WaveResult{}, err
 	}
@@ -270,7 +281,7 @@ func assessWave(ctx context.Context, store *workitem.Store, wfs []docindex.Doc, 
 
 	cache := map[string]waveState{}
 	known := map[string]bool{}
-	for _, c := range set.Children {
+	for _, c := range children {
 		cache[c.ID], known[c.ID] = waveStateOf(wfs, c), true
 	}
 	siblings := &siblingReader{}
@@ -282,13 +293,16 @@ func assessWave(ctx context.Context, store *workitem.Store, wfs []docindex.Doc, 
 			return cache[id], true
 		}
 		it, gerr := store.Get(ctx, id)
+		if gerr == nil {
+			it, gerr = foldedItem(ctx, it)
+		}
 		if gerr != nil {
 			return waveState{}, false
 		}
 		cache[id], known[id] = waveStateOf(wfs, it), true
 		return cache[id], true
 	}
-	runnable, omitted, err := computeWave(schedule, set.Children, state)
+	runnable, omitted, err := computeWave(schedule, children, state)
 	if err != nil {
 		// The omissions survive a refusal so engagement can quote a waiting
 		// child's own reason; story wave discards the result on error.

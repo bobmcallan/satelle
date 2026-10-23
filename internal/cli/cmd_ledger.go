@@ -201,6 +201,10 @@ can pipe {story, from, to} straight in. See satelle help reviewer-checks.`,
 names an earlier event of the same story, the story has exactly one root, and no
 two events share a base unless a chain_fork entry names them.
 
+It also replays each story's transitions, each against the workflow version its
+own event recorded (the story's workflow_version events archive them), and
+reports a transition whose edge that version does not declare.
+
 Prints one line per break (<story> <event> <kind>: <detail>) and exits non-zero
 when any is found; otherwise prints "chain ok" with the counts and exits 0.
 Read-only: a broken chain is reported, never repaired.`,
@@ -216,20 +220,24 @@ Read-only: a broken chain is reported, never repaired.`,
 			if err != nil {
 				return err
 			}
-			var rep ledger.ChainReport
+			var rep verb.LedgerVerifyReport
 			if err := json.Unmarshal(resp, &rep); err != nil {
 				return fmt.Errorf("ledger verify: decode: %w", err)
 			}
 			out := cmd.OutOrStdout()
-			if len(rep.Breaks) == 0 {
+			if len(rep.Breaks) == 0 && len(rep.ReplayBreaks) == 0 {
 				fmt.Fprintf(out, "chain ok (%d stories, %d events)\n", rep.Stories, rep.Events)
 				return nil
 			}
 			for _, b := range rep.Breaks {
 				fmt.Fprintf(out, "%s %s %s: %s\n", b.StoryID, b.EventID, b.Kind, b.Detail)
 			}
+			for _, b := range rep.ReplayBreaks {
+				fmt.Fprintf(out, "%s %s replay_%s: %s → %s under workflow %s: %s\n", b.StoryID, b.EventID, b.Reason, b.From, b.To, b.WorkflowHash, b.Detail)
+			}
 			return &ExitError{Code: 1, Quiet: true,
-				Err: fmt.Errorf("ledger verify: %d chain break(s) in %d stories, %d events", len(rep.Breaks), rep.Stories, rep.Events)}
+				Err: fmt.Errorf("ledger verify: %d chain break(s), %d replay break(s) in %d stories, %d events",
+					len(rep.Breaks), len(rep.ReplayBreaks), rep.Stories, rep.Events)}
 		},
 	}
 	verifyCmd.Flags().StringVar(&vStory, "story", "", "verify one story's chain (default: every story)")

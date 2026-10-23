@@ -18,7 +18,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/verb"
-	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // snapshotMode picks how a page is checked before it is applied: a pull refuses
@@ -134,8 +133,7 @@ type snapshotPass struct {
 	keep  string
 	since string
 
-	rep     passReport
-	pending map[string]string // story id → hosted status not yet forwarded
+	rep passReport
 }
 
 // runPagedWorkstateSnapshot pulls the project's work-state in pages, applying
@@ -158,7 +156,6 @@ func runPagedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer, 
 		a: a, errw: errw, server: server, project: project,
 		optIn: optIn, force: force, mode: mode, areas: areas, storeID: storeID,
 		keep: stored.Token, rep: passReport{Kind: passFull},
-		pending: map[string]string{},
 	}
 	var opts hosted.SnapshotOptions
 	positioned := stored.Token != "" || stored.ResumePageToken != ""
@@ -183,9 +180,6 @@ func runPagedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer, 
 		opts = hosted.SnapshotOptions{PageToken: stored.ResumePageToken, SinceToken: stored.ResumeSince}
 		p.since = stored.ResumeSince
 		p.rep.Kind = passResumed
-		for id, st := range stored.Pending {
-			p.pending[id] = st
-		}
 	case stored.Token != "":
 		opts = hosted.SnapshotOptions{SinceToken: stored.Token}
 		p.since = stored.Token
@@ -206,7 +200,6 @@ func runPagedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer, 
 		}
 		p.keep, p.since = "", ""
 		p.rep = passReport{Kind: passFull}
-		p.pending = map[string]string{}
 		res, err = client.Snapshot(ctx, project, "", hosted.SnapshotOptions{}, onPage)
 	}
 	p.rep.Pages = res.Pages
@@ -235,17 +228,11 @@ func runPagedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer, 
 	return p.rep, nil
 }
 
-// settle closes a pass whose pages are all in: a story's transition may land on
-// a later page than the story itself, so the statuses still waiting on one are
-// forwarded now, then the story views are regenerated once.
+// settle closes a pass whose pages are all in: the story views are regenerated
+// once. A story's status needs no forwarding here: each page rebuilds the rows it
+// applied from the fold of their chains, so a transition that lands on a later
+// page than its story moves that row when the page lands.
 func (p *snapshotPass) settle(ctx context.Context, now time.Time) error {
-	if !p.force {
-		for id, st := range p.pending {
-			if serr := applyHostedWorkstateStatus(ctx, p.a, workitem.Item{ID: id, Status: st}, now); serr != nil && !errors.Is(serr, workitem.ErrNotFound) {
-				return fmt.Errorf("apply status for %s: %w — re-run is safe (upsert-by-id)", id, serr)
-			}
-		}
-	}
 	if _, _, verr := verb.SyncStoryBacklog(ctx, p.a.Store.Stories, now); verr != nil {
 		return fmt.Errorf("regenerate story views after %d item(s), %d ledger: %w — store rows landed; re-run is safe", p.rep.Items, p.rep.Ledger, verr)
 	}
@@ -278,9 +265,6 @@ func (p *snapshotPass) page(ctx context.Context, pg hosted.SnapshotPage) error {
 		Token: p.keep, Areas: p.areas, StoreID: p.storeID, SavedAt: now,
 		ResumePageToken: pg.NextPageToken, ResumeSince: p.since,
 	}
-	if len(p.pending) > 0 {
-		cp.Pending = p.pending
-	}
 	if err := hosted.SaveSnapshotToken(p.server, p.project, p.a.RepoRoot, cp); err != nil {
 		return fmt.Errorf("save snapshot checkpoint: %w", err)
 	}
@@ -299,7 +283,7 @@ func (p *snapshotPass) apply(ctx context.Context, pg hosted.SnapshotPage) error 
 		}
 	}
 	now := time.Now().UTC()
-	applied, nItems, nLedger, nKept, err := upsertWorkstatePage(ctx, p.a, p.optIn, items, ledgerRows, p.force, now, &p.rep.Stories)
+	_, nItems, nLedger, nKept, err := upsertWorkstatePage(ctx, p.a, p.optIn, items, ledgerRows, p.force, now, &p.rep.Stories)
 	p.rep.Items += nItems
 	p.rep.Ledger += nLedger
 	p.rep.Kept += nKept
@@ -308,16 +292,6 @@ func (p *snapshotPass) apply(ctx context.Context, pg hosted.SnapshotPage) error 
 	}
 	if p.mode == snapshotModePull {
 		p.rep.Hosted = append(p.rep.Hosted, items...)
-	}
-	if !p.force {
-		for _, incoming := range applied {
-			if serr := applyHostedWorkstateStatus(ctx, p.a, incoming, now); serr != nil {
-				return fmt.Errorf("apply status for %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", incoming.ID, p.rep.Items, p.rep.Ledger, serr)
-			}
-			if local, gerr := p.a.Store.Stories.Get(ctx, incoming.ID); gerr == nil && local.Status != incoming.Status {
-				p.pending[incoming.ID] = incoming.Status
-			}
-		}
 	}
 	return nil
 }

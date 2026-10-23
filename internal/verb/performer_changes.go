@@ -2,7 +2,6 @@ package verb
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -277,7 +276,7 @@ func applyPerformerChanges(ctx context.Context, container workitem.Item, to stri
 		}
 	}
 	for _, w := range plan.Tags {
-		cur, err := store.Get(ctx, w.Target)
+		cur, err := storyStateHealed(ctx, w.Target)
 		if err != nil {
 			rollback()
 			return container, fmt.Errorf("performer changes: reading %s, none applied: %w", w.Target, err)
@@ -296,7 +295,9 @@ func applyPerformerChanges(ctx context.Context, container workitem.Item, to stri
 			rollback()
 			return container, fmt.Errorf("performer changes: adding tags to %s, none applied: %w", w.Target, err)
 		}
-		payload, _ := json.Marshal(map[string]any{"tags_added": added, "source": source})
+		// The one tag-change shape (sty_d84be8bc): the tags before and after, with the
+		// performer's source.
+		payload := tagChange(cur.Tags, canon, source)
 		tagsApplied = append(tagsApplied, tagApplied{before: cur, row: recordedWrite{
 			Kind: ledger.KindStoryUpdated, Actor: actor,
 			Body:    fmt.Sprintf("tags added by %s (%s): %s", actor, source, strings.Join(added, ", ")),
@@ -323,7 +324,7 @@ func applyPerformerChanges(ctx context.Context, container workitem.Item, to stri
 		syncReadyMark(ctx, container.ID)
 	}
 	notifyChange(panelTopic(container.Kind))
-	return store.Get(ctx, container.ID)
+	return storyState(ctx, container.ID)
 }
 
 // newTags returns the tags of after that before lacks, in order.

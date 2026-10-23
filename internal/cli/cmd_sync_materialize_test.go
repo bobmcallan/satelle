@@ -26,19 +26,13 @@ func testApp(t *testing.T) *app.App {
 }
 
 // materializeWorkstate applies one batch the way a single-page pass does: upsert
-// the rows, forward hosted status, regenerate the story views.
+// the rows (which rebuilds each applied story from its chain), regenerate the
+// story views.
 func materializeWorkstate(ctx context.Context, a *app.App, optIn map[string]bool, items []hosted.WorkstateItem, ledgerRows []hosted.WorkstateLedgerRow, force bool) (nItems, nLedger, nKept int, err error) {
 	now := time.Now().UTC()
-	applied, nItems, nLedger, nKept, err := upsertWorkstatePage(ctx, a, optIn, items, ledgerRows, force, now, nil)
+	_, nItems, nLedger, nKept, err = upsertWorkstatePage(ctx, a, optIn, items, ledgerRows, force, now, nil)
 	if err != nil {
 		return nItems, nLedger, nKept, err
-	}
-	if !force {
-		for _, incoming := range applied {
-			if serr := applyHostedWorkstateStatus(ctx, a, incoming, now); serr != nil {
-				return nItems, nLedger, nKept, serr
-			}
-		}
 	}
 	if _, _, verr := verb.SyncStoryBacklog(ctx, a.Store.Stories, now); verr != nil {
 		return nItems, nLedger, nKept, verr
@@ -159,9 +153,11 @@ func TestMaterializeAppliesNewerHostedRow(t *testing.T) {
 	}
 }
 
-func TestMaterializeLedgerAwareSkipWhenUpdatedAtRewound(t *testing.T) {
+func TestMaterializeLaterLocalTransitionWinsWhenUpdatedAtRewound(t *testing.T) {
 	// The vire shape: row.updated_at is already the old hosted value, but a
-	// later local status_transition says done.
+	// later local status_transition says done. The chain is the authority on
+	// status (sty_d84be8bc): the hosted row is applied, and the row it leaves is
+	// rebuilt from the fold, so the later transition is not lost.
 	a := testApp(t)
 	ctx := context.Background()
 	created := time.Date(2026, 8, 13, 2, 16, 53, 0, time.UTC)
@@ -180,19 +176,16 @@ func TestMaterializeLedgerAwareSkipWhenUpdatedAtRewound(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	nItems, _, nKept, err := materializeWorkstate(ctx, a, map[string]bool{"stories": true, "ledger": true},
-		[]hosted.WorkstateItem{hostedStory(it.ID, workitem.StatusBacklog, created)}, nil, false)
-	if err != nil {
+	if _, _, _, err := materializeWorkstate(ctx, a, map[string]bool{"stories": true, "ledger": true},
+		[]hosted.WorkstateItem{hostedStory(it.ID, workitem.StatusBacklog, created)}, nil, false); err != nil {
 		t.Fatal(err)
 	}
-	if nItems != 0 || nKept != 1 {
-		t.Fatalf("applied=%d kept=%d, want applied=0 kept=1 (ledger-aware)", nItems, nKept)
-	}
 	got, _ := a.Store.Stories.Get(ctx, it.ID)
-	if got.Status != workitem.StatusBacklog {
-		// row was already backlog — the point is we did not need to change it,
-		// and we must not have lost the later ledger event.
-		t.Errorf("status = %q", got.Status)
+	if got.Status != workitem.StatusDone {
+		t.Errorf("status = %q, want done: the later local transition is the chain's last word", got.Status)
+	}
+	if drifts, derr := verb.DetectDrift(ctx, a.Store.Stories, a.Store.Ledger); derr != nil || len(drifts) != 0 {
+		t.Errorf("drift after the pull = %+v, %v", drifts, derr)
 	}
 }
 
@@ -243,7 +236,7 @@ func TestMaterializeAppliesHostedForwardWithLocalHistory(t *testing.T) {
 	if got.Status != "in_progress" {
 		t.Errorf("status = %q, want in_progress", got.Status)
 	}
-	drifts, derr := verb.DetectStatusDrift(ctx, a.Store.Stories, a.Store.Ledger)
+	drifts, derr := verb.DetectDrift(ctx, a.Store.Stories, a.Store.Ledger)
 	if derr != nil {
 		t.Fatal(derr)
 	}

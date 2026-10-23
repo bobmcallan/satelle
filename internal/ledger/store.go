@@ -180,11 +180,32 @@ type Conn = execer
 // or "" when none applies or it cannot be told. It must not fail an append.
 type WorkflowVersionFunc func(ctx context.Context, c Conn, storyID string) string
 
+// WorkflowSource is one workflow version: its content hash and the source that
+// hashes to it — both route halves, or the legacy workflow body. It is the
+// payload of a KindWorkflowVersion event (sty_d84be8bc).
+type WorkflowSource struct {
+	Hash   string `json:"hash"`
+	Done   string `json:"done,omitempty"`
+	Step   string `json:"step,omitempty"`
+	Legacy string `json:"legacy,omitempty"`
+}
+
+// hasSource reports whether src carries any text a version event can archive.
+func (w WorkflowSource) hasSource() bool { return w.Done != "" || w.Step != "" || w.Legacy != "" }
+
+// WorkflowSourceFunc is WorkflowVersionFunc with the source that produced the
+// hash, from the same resolution, so the hash an event carries and the text the
+// chain archives cannot differ. Hash is "" when none applies. It must not fail
+// an append.
+type WorkflowSourceFunc func(ctx context.Context, c Conn, storyID string) WorkflowSource
+
 // Store wraps evidence-table operations against a shared sqlite handle.
 type Store struct {
 	db execer
-	// versionOf stamps WorkflowHash on an entry the caller gave none (nil = none).
-	versionOf WorkflowVersionFunc
+	// sourceOf stamps WorkflowHash on an entry the caller gave none and, when the
+	// resolution carries its source, makes sure the story's chain holds a
+	// KindWorkflowVersion event for that hash (nil = none).
+	sourceOf WorkflowSourceFunc
 	// failAppend, when set, makes the next Append return that error (tests).
 	failAppend error
 }
@@ -194,18 +215,71 @@ type Store struct {
 // resolver needs the work-item and doc stores, which this package must not depend
 // on. A copy made by WithTx keeps it.
 func (s *Store) SetWorkflowVersion(fn WorkflowVersionFunc) {
+	if s == nil {
+		return
+	}
+	if fn == nil {
+		s.sourceOf = nil
+		return
+	}
+	s.sourceOf = func(ctx context.Context, c Conn, storyID string) WorkflowSource {
+		return WorkflowSource{Hash: fn(ctx, c, storyID)}
+	}
+}
+
+// SetWorkflowSource installs a resolver that also names the source of the version
+// it returns, so Append and AppendOnce record a KindWorkflowVersion event, once
+// per hash per story, ahead of the first event that carries the hash. It replaces
+// SetWorkflowVersion; a copy made by WithTx keeps it.
+func (s *Store) SetWorkflowSource(fn WorkflowSourceFunc) {
 	if s != nil {
-		s.versionOf = fn
+		s.sourceOf = fn
 	}
 }
 
 // workflowHash is the hash an insert for storyID carries: the caller's own when
-// given, else the resolver's, else "".
+// given, else the resolver's, else "". When the resolver names its source and the
+// story's chain has no KindWorkflowVersion for the hash, it is appended first, so
+// the event that records the hash is never ahead of the version it names.
 func (s *Store) workflowHash(ctx context.Context, storyID, given string) string {
-	if given != "" || storyID == "" || s.versionOf == nil {
+	if given != "" || storyID == "" || s.sourceOf == nil {
 		return given
 	}
-	return s.versionOf(ctx, s.db, storyID)
+	src := s.sourceOf(ctx, s.db, storyID)
+	if src.Hash != "" && src.hasSource() {
+		s.recordVersion(ctx, storyID, src)
+	}
+	return src.Hash
+}
+
+// versionInput is the append of src as storyID's workflow_version event.
+func versionInput(storyID string, src WorkflowSource) AppendInput {
+	payload, _ := json.Marshal(src)
+	return AppendInput{
+		StoryID: storyID, Kind: KindWorkflowVersion, Actor: "satelle",
+		Body:    "workflow version " + src.Hash,
+		Payload: payload, Refs: versionRefs(storyID, src.Hash), WorkflowHash: src.Hash,
+	}
+}
+
+// versionRefs is the identity a KindWorkflowVersion event claims once: its story
+// and hash. It rides Refs so a pulled copy and a local one are the same event.
+func versionRefs(storyID, hash string) json.RawMessage {
+	b, _ := json.Marshal(map[string]string{"workflow_version": storyID + ":" + hash})
+	return b
+}
+
+// recordVersion appends the version event for src to storyID's chain unless one
+// is already there. Best-effort: a failure here must not fail the append that
+// asked, and the next append for the story tries again.
+func (s *Store) recordVersion(ctx context.Context, storyID string, src WorkflowSource) {
+	refs := versionRefs(storyID, src.Hash)
+	var have int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM evidence WHERE kind = ? AND refs = ? LIMIT 1`, KindWorkflowVersion, string(refs)).Scan(&have); err == nil {
+		return
+	}
+	_, _, _ = s.AppendOnce(ctx, versionInput(storyID, src), time.Time{})
 }
 
 // tailBase is the SQL expression naming storyID's current last entry — the base

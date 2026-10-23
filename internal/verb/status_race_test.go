@@ -85,13 +85,24 @@ func TestDispatchedAgentSeesPreTransitionRowAndUnguardedLateWriteReverts(t *test
 	if after.Status != workitem.StatusBacklog {
 		t.Fatalf("expected the unguarded late write to reproduce the revert, got status %q", after.Status)
 	}
-	drifts, err := verb.DetectStatusDrift(ctx, db.Stories, db.Ledger)
+	drifts, err := verb.DetectDrift(ctx, db.Stories, db.Ledger)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(drifts) != 1 || drifts[0].ID != id {
-		t.Fatalf("reconcile drift after the clobber = %+v, want exactly one for %s", drifts, id)
+	if got := fieldDrifts(drifts, "status"); len(got) != 1 || got[0].ID != id {
+		t.Fatalf("reconcile status drift after the clobber = %+v, want exactly one for %s", drifts, id)
 	}
+}
+
+// fieldDrifts keeps the drifts that name field.
+func fieldDrifts(drifts []verb.StoryDrift, field string) []verb.StoryDrift {
+	var out []verb.StoryDrift
+	for _, d := range drifts {
+		if d.Field == field {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // sty_38915987 AC1 — the vire sty_983803f5 sequence: after backlog→TO with the
@@ -168,12 +179,14 @@ func TestLateSnapshotWriteCannotRevertStatus(t *testing.T) {
 	if to := verb.TransitionTo(last); to != "in_progress" {
 		t.Fatalf("last status_transition TO = %q, want in_progress (body %q)", to, last.Body)
 	}
-	drifts, derr := verb.DetectStatusDrift(ctx, db.Stories, db.Ledger)
+	drifts, derr := verb.DetectDrift(ctx, db.Stories, db.Ledger)
 	if derr != nil {
 		t.Fatal(derr)
 	}
-	if len(drifts) != 0 {
-		t.Fatalf("DetectStatusDrift = %+v, want clean", drifts)
+	// The Upsert's body went to the row alone, so the body is drift now; the
+	// status, which this test is about, is not.
+	if got := fieldDrifts(drifts, "status"); len(got) != 0 {
+		t.Fatalf("status drift = %+v, want clean", got)
 	}
 }
 
@@ -199,7 +212,7 @@ func TestLateAgentWriteCannotRevertTransition(t *testing.T) {
 	if after.Status != "in_progress" {
 		t.Fatalf("status = %q after the refused late write, want in_progress", after.Status)
 	}
-	drifts, err := verb.DetectStatusDrift(ctx, db.Stories, db.Ledger)
+	drifts, err := verb.DetectDrift(ctx, db.Stories, db.Ledger)
 	if err != nil {
 		t.Fatal(err)
 	}

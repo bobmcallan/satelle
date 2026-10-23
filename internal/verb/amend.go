@@ -65,7 +65,7 @@ func storyAmend(ctx context.Context, raw json.RawMessage) (json.RawMessage, erro
 	if req.ID == "" {
 		return nil, fmt.Errorf("verb: id required")
 	}
-	current, err := store.Get(ctx, req.ID)
+	current, err := storyStateHealed(ctx, req.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -134,6 +134,9 @@ func storyAmend(ctx context.Context, raw json.RawMessage) (json.RawMessage, erro
 	appendLedgerEntry(ctx, it.ID, ledger.KindDefinitionAmended, "executor",
 		amendLedgerBody(fields, req.Reason, dec.Skill),
 		amendPayload(fields, req.Reason, dec), now)
+	if rebuilt, rerr := rebuildCache(ctx, it.ID); rerr == nil {
+		it = rebuilt
+	}
 	appendOpLog("story-amend", it.ID,
 		fmt.Sprintf("amended [%s] at status %s: %s", strings.Join(changed, ", "), current.Status, req.Reason), now)
 	notifyChange(panelTopic(it.Kind))

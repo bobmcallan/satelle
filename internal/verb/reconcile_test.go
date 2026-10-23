@@ -22,31 +22,28 @@ func TestDetectAndRepairStatusDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload, _ := json.Marshal(map[string]string{"from": "backlog", "to": "done"})
-	e, err := db.Ledger.Append(ctx, ledger.AppendInput{
+	if _, err := db.Ledger.Append(ctx, ledger.AppendInput{
 		StoryID: it.ID, Kind: ledger.KindStatusTransition, Actor: "executor",
 		Body: "backlog → done", Payload: payload,
-	}, now.Add(time.Minute))
-	if err != nil {
+	}, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 
-	drifts, err := verb.DetectStatusDrift(ctx, db.Stories, db.Ledger)
+	drifts, err := verb.DetectDrift(ctx, db.Stories, db.Ledger)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(drifts) != 1 || drifts[0].ID != it.ID || drifts[0].LedgerStatus != "done" {
+	if len(drifts) != 1 || drifts[0].ID != it.ID || drifts[0].Field != "status" ||
+		drifts[0].Row != "backlog" || drifts[0].Chain != "done" {
 		t.Fatalf("detect = %+v", drifts)
 	}
-	if drifts[0].TransitionID != e.ID {
-		t.Errorf("transition id = %q, want %s", drifts[0].TransitionID, e.ID)
-	}
 
-	repaired, err := verb.RepairStatusDrift(ctx, db.Stories, db.Ledger, now.Add(2*time.Minute))
+	repaired, err := verb.RepairDrift(ctx, db.Stories, db.Ledger, now.Add(2*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(repaired) != 1 {
-		t.Fatalf("repaired %d, want 1", len(repaired))
+	if len(repaired) != 1 || repaired[0].Field != "status" {
+		t.Fatalf("repaired %+v, want the one status field", repaired)
 	}
 	got, err := db.Stories.Get(ctx, it.ID)
 	if err != nil {
@@ -63,7 +60,7 @@ func TestDetectAndRepairStatusDrift(t *testing.T) {
 		t.Fatalf("status_reconcile rows = %d err=%v", len(recs), err)
 	}
 
-	again, err := verb.DetectStatusDrift(ctx, db.Stories, db.Ledger)
+	again, err := verb.DetectDrift(ctx, db.Stories, db.Ledger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +69,7 @@ func TestDetectAndRepairStatusDrift(t *testing.T) {
 	}
 }
 
-func TestDetectStatusDriftSkipsMatchingRow(t *testing.T) {
+func TestDetectDriftSkipsMatchingRow(t *testing.T) {
 	db := wire(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -88,12 +85,67 @@ func TestDetectStatusDriftSkipsMatchingRow(t *testing.T) {
 	}, now); err != nil {
 		t.Fatal(err)
 	}
-	drifts, err := verb.DetectStatusDrift(ctx, db.Stories, db.Ledger)
+	drifts, err := verb.DetectDrift(ctx, db.Stories, db.Ledger)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(drifts) != 0 {
 		t.Fatalf("matching row reported as drift: %+v", drifts)
+	}
+}
+
+// sty_d84be8bc AC5: reconcile compares every folded field, not just status, and
+// repairs each drifted field from the chain, naming it; a task, whose file is its
+// source of truth, is never folded or touched.
+func TestReconcileRepairsEveryDriftedFieldAndLeavesTasksAlone(t *testing.T) {
+	db := wire(t)
+	ctx := context.Background()
+	var it workitem.Item
+	if err := json.Unmarshal(call(t, "story-create", map[string]any{
+		"title": "folded", "body": "the body", "acceptance_criteria": "1. do it", "category": "feature", "tags": []string{"surface:cli"},
+	}), &it); err != nil {
+		t.Fatal(err)
+	}
+	task, err := db.Stories.Create(ctx, workitem.CreateInput{Kind: workitem.KindTask, Title: "a task", Body: "file body"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Corrupt the story row's body and tags directly, and the task's body.
+	if _, err := db.SQL().Exec(`UPDATE work_items SET body = 'corrupt', tags = '["corrupt"]' WHERE id = ?`, it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.SQL().Exec(`UPDATE work_items SET body = 'edited on disk' WHERE id = ?`, task.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	drifts, err := verb.DetectDrift(ctx, db.Stories, db.Ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := map[string]verb.StoryDrift{}
+	for _, d := range drifts {
+		if d.ID == task.ID {
+			t.Fatalf("a task was folded: %+v", d)
+		}
+		fields[d.Field] = d
+	}
+	if len(drifts) != 2 || fields["body"].Chain != "the body" || fields["body"].Row != "corrupt" || fields["tags"].Row != "corrupt" {
+		t.Fatalf("drift = %+v, want the body and tags of the story, each with the chain's value", drifts)
+	}
+
+	repaired, err := verb.RepairDrift(ctx, db.Stories, db.Ledger, time.Now())
+	if err != nil || len(repaired) != 2 {
+		t.Fatalf("repaired = %+v, %v; want both fields named", repaired, err)
+	}
+	row, _ := db.Stories.Get(ctx, it.ID)
+	if row.Body != "the body" || len(row.Tags) != len(it.Tags) {
+		t.Errorf("row after repair = body %q tags %v, want the chain's %q %v", row.Body, row.Tags, "the body", it.Tags)
+	}
+	if got, _ := db.Stories.Get(ctx, task.ID); got.Body != "edited on disk" {
+		t.Errorf("the task row was rewritten to %q", got.Body)
+	}
+	if again, _ := verb.DetectDrift(ctx, db.Stories, db.Ledger); len(again) != 0 {
+		t.Errorf("drift after repair: %+v", again)
 	}
 }
 

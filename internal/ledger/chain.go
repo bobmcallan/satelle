@@ -133,6 +133,16 @@ func (s *Store) storyEvents(ctx context.Context, storyID string) ([]Entry, error
 	return scanEntries(rows)
 }
 
+// StoryChain returns every event of a story in insertion (rowid) order — the
+// order a base must precede — with no row limit, for a reader that folds the
+// whole chain. Read-only.
+func (s *Store) StoryChain(ctx context.Context, storyID string) ([]Entry, error) {
+	if strings.TrimSpace(storyID) == "" {
+		return nil, fmt.Errorf("ledger: story_id required")
+	}
+	return s.storyEvents(ctx, storyID)
+}
+
 // VerifyStory verifies one story's chain. Read-only.
 func (s *Store) VerifyStory(ctx context.Context, storyID string) (ChainReport, error) {
 	if strings.TrimSpace(storyID) == "" {
@@ -152,26 +162,35 @@ func (s *Store) VerifyStory(ctx context.Context, storyID string) (ChainReport, e
 	return rep, nil
 }
 
-// VerifyAll verifies every story's chain, in story-id order. Read-only.
-func (s *Store) VerifyAll(ctx context.Context) (ChainReport, error) {
+// StoryIDs lists every story that has at least one event, in story-id order.
+func (s *Store) StoryIDs(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT DISTINCT story_id FROM evidence WHERE story_id <> '' ORDER BY story_id`)
 	if err != nil {
-		return ChainReport{}, fmt.Errorf("ledger: verify: %w", err)
+		return nil, fmt.Errorf("ledger: story ids: %w", err)
 	}
 	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return ChainReport{}, fmt.Errorf("ledger: verify: %w", err)
+			return nil, fmt.Errorf("ledger: story ids: %w", err)
 		}
 		ids = append(ids, id)
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
-		return ChainReport{}, fmt.Errorf("ledger: verify: %w", err)
+		return nil, fmt.Errorf("ledger: story ids: %w", err)
+	}
+	return ids, nil
+}
+
+// VerifyAll verifies every story's chain, in story-id order. Read-only.
+func (s *Store) VerifyAll(ctx context.Context) (ChainReport, error) {
+	ids, err := s.StoryIDs(ctx)
+	if err != nil {
+		return ChainReport{}, err
 	}
 	rep := ChainReport{Breaks: []ChainBreak{}}
 	for _, id := range ids {

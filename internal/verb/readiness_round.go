@@ -602,11 +602,10 @@ func describeItem(item workitem.Item) string {
 // story whose route declares no mark, that does not carry it, or whose readiness
 // holds. Best-effort, like the other trail rows.
 func syncReadyMark(ctx context.Context, id string) {
-	store, err := requireWorkItem()
-	if err != nil {
+	if _, err := requireWorkItem(); err != nil {
 		return
 	}
-	item, err := store.Get(ctx, id)
+	item, err := storyState(ctx, id)
 	if err != nil || item.Kind != workitem.KindStory {
 		return
 	}

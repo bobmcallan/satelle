@@ -182,10 +182,13 @@ func TestScopedPushSendsOnlyTheNamedStory(t *testing.T) {
 	if !slices.Equal(items, []string{fx.m1}) {
 		t.Errorf("posted items = %v, want only %s (no execution %s, task %s)", items, fx.m1, fx.exec, fx.task)
 	}
-	if !slices.Equal(rows, []string{fx.m1, fx.m1}) {
-		t.Errorf("posted ledger rows belong to %v, want exactly %s's two", rows, fx.m1)
+	// The two rows the fixture appended, the workflow_version the first of them
+	// brought into the chain, and the definition_snapshot the open seeded for a
+	// story created without a story_created (sty_d84be8bc).
+	if !slices.Equal(rows, []string{fx.m1, fx.m1, fx.m1, fx.m1}) {
+		t.Errorf("posted ledger rows belong to %v, want exactly %s's four", rows, fx.m1)
 	}
-	if !strings.Contains(out, "scoped push") || !strings.Contains(out, "1 item(s), 2 ledger") {
+	if !strings.Contains(out, "scoped push") || !strings.Contains(out, "1 item(s), 4 ledger") {
 		t.Errorf("scoped push summary = %q", out)
 	}
 	cursorAfter, err := hosted.LoadWorkstateCursor(ts.URL, "probe", repo)
@@ -214,7 +217,9 @@ func TestScopedEpicResolvesToContainerAndMembers(t *testing.T) {
 		if want := sortedIDs(fx.epic, fx.m1, fx.m2); !slices.Equal(items, want) {
 			t.Errorf("posted items = %v, want %v (unrelated %s and execution %s absent)", items, want, fx.other, fx.exec)
 		}
-		if want := sortedIDs(fx.epic, fx.epic, fx.m1, fx.m1, fx.m2, fx.m2); !slices.Equal(rows, want) {
+		// Each story's two fixture rows, plus the workflow_version and the
+		// definition_snapshot the chain gained (sty_d84be8bc).
+		if want := sortedIDs(fx.epic, fx.epic, fx.epic, fx.epic, fx.m1, fx.m1, fx.m1, fx.m1, fx.m2, fx.m2, fx.m2, fx.m2); !slices.Equal(rows, want) {
 			t.Errorf("posted ledger rows belong to %v, want %v", rows, want)
 		}
 		if strings.Contains(out, "container only") {
@@ -506,8 +511,11 @@ func TestScopedPullEpicNotLocalBringsMembers(t *testing.T) {
 	if strings.Contains(out, "container only") {
 		t.Errorf("notice printed for an epic whose members arrived:\n%s", out)
 	}
-	if s, l := localCounts(t); s != 3 || l != 3 {
-		t.Errorf("store holds %d stories / %d ledger rows, want 3 / 3", s, l)
+	// Each pulled story brings its one hosted ledger row, and gains the
+	// definition_snapshot seeded from its hosted row and the workflow_version that
+	// snapshot's append recorded (sty_d84be8bc).
+	if s, l := localCounts(t); s != 3 || l != 9 {
+		t.Errorf("store holds %d stories / %d ledger rows, want 3 / 9", s, l)
 	}
 	for _, id := range []string{r.epic, r.m1, r.m2} {
 		if !localLedgerHas(t, "led_"+id) {

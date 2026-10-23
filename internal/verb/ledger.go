@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/storyfold"
 )
 
 func init() {
@@ -22,8 +23,21 @@ type ledgerVerifyReq struct {
 	StoryID string `json:"story_id,omitempty"`
 }
 
-// ledgerVerify reports the chain breaks of one story or all of them. It reads
-// only: a break is reported, never repaired.
+// LedgerVerifyReport is ledger-verify's answer: the chain report, and beside it
+// the transitions that do not replay against the workflow version their event
+// recorded (sty_d84be8bc).
+type LedgerVerifyReport struct {
+	ledger.ChainReport
+	ReplayBreaks []storyfold.ReplayBreak `json:"replay_breaks"`
+	// ReplayUnchecked counts transitions that could not be replayed because they
+	// record no workflow hash, or a legacy workflow whose graph can no longer be
+	// read: reported, not held against the story.
+	ReplayUnchecked int `json:"replay_unchecked"`
+}
+
+// ledgerVerify reports the chain breaks of one story or all of them, and replays
+// each story's transitions against the workflow versions its events recorded. It
+// reads only: a break is reported, never repaired.
 func ledgerVerify(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	store, err := requireLedger()
 	if err != nil {
@@ -34,15 +48,29 @@ func ledgerVerify(ctx context.Context, raw json.RawMessage) (json.RawMessage, er
 		return nil, err
 	}
 	var rep ledger.ChainReport
-	if strings.TrimSpace(req.StoryID) != "" {
-		rep, err = store.VerifyStory(ctx, req.StoryID)
+	var ids []string
+	if id := strings.TrimSpace(req.StoryID); id != "" {
+		rep, err = store.VerifyStory(ctx, id)
+		ids = []string{id}
 	} else {
-		rep, err = store.VerifyAll(ctx)
+		if rep, err = store.VerifyAll(ctx); err == nil {
+			ids, err = store.StoryIDs(ctx)
+		}
 	}
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(rep)
+	out := LedgerVerifyReport{ChainReport: rep, ReplayBreaks: []storyfold.ReplayBreak{}}
+	for _, id := range ids {
+		chain, err := store.StoryChain(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		replay := storyfold.Replay(chain)
+		out.ReplayBreaks = append(out.ReplayBreaks, replay.Breaks...)
+		out.ReplayUnchecked += replay.Unrecorded + replay.Unreplayable
+	}
+	return json.Marshal(out)
 }
 
 // ledgerAppendReq is the request body for ledger-append. Kind is required.

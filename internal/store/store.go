@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/retrieve"
+	"github.com/bobmcallan/satelle/internal/storyfold"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -78,7 +80,16 @@ func Open(path string) (*DB, error) {
 		}
 	}
 
-	return wire(sqldb), nil
+	// Every migration has settled the rows, so a story whose chain predates the
+	// fold is seeded from its row now (sty_d84be8bc). Not in wire, which
+	// OpenReadOnly shares, and not in ledger.Migrate, which runs before the rows
+	// are migrated.
+	d := wire(sqldb)
+	if _, err := storyfold.Seed(context.Background(), sqldb, d.Ledger, time.Time{}); err != nil {
+		sqldb.Close()
+		return nil, err
+	}
+	return d, nil
 }
 
 // wire attaches the domain stores to an opened handle. It runs no migration and
@@ -87,7 +98,7 @@ func wire(sqldb *sql.DB) *DB {
 	di := docindex.New(sqldb)
 	di.SetDefaults(EmbeddedDefaultDocs())
 	led := ledger.New(sqldb)
-	led.SetWorkflowVersion(workflowVersion(di))
+	led.SetWorkflowSource(workflowVersion(di))
 	return &DB{
 		db:       sqldb,
 		Ledger:   led,
@@ -100,19 +111,21 @@ func wire(sqldb *sql.DB) *DB {
 
 // workflowVersion is the ledger's resolver for the workflow a story is judged
 // under (sty_41f61669): the content hash of the workflow wfgovern says governs the
-// story, "" when the story is unknown or no workflow applies. It reads through the
-// handle the append runs on, so it is safe inside a transaction.
-func workflowVersion(di *docindex.Store) ledger.WorkflowVersionFunc {
-	return func(ctx context.Context, c ledger.Conn, storyID string) string {
+// story, "" when the story is unknown or no workflow applies, with the source that
+// hashes to it (sty_d84be8bc). It reads through the handle the append runs on, so
+// it is safe inside a transaction.
+func workflowVersion(di *docindex.Store) ledger.WorkflowSourceFunc {
+	return func(ctx context.Context, c ledger.Conn, storyID string) ledger.WorkflowSource {
 		item, err := workitem.NewOn(c).Get(ctx, storyID)
 		if err != nil {
-			return ""
+			return ledger.WorkflowSource{}
 		}
 		docs, err := di.ListIndexed(ctx, c, "workflows")
 		if err != nil {
-			return ""
+			return ledger.WorkflowSource{}
 		}
-		return wfgovern.RouteVersion(docs, item)
+		v := wfgovern.RouteVersionSource(docs, item)
+		return ledger.WorkflowSource{Hash: v.Hash, Done: v.Done, Step: v.Step, Legacy: v.Legacy}
 	}
 }
 

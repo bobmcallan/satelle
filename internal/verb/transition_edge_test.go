@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/storyfold"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -179,21 +180,21 @@ terminal = true
 requires = ["coded"]
 `))
 	call(t, "doc-sync", map[string]any{"dirs": map[string]string{"workflows": wfDir}})
-	var created workitem.Item
-	if err := json.Unmarshal(call(t, "story-create", map[string]any{
-		"title": "t", "category": "fix", "body": "b", "acceptance_criteria": "1. a",
-	}), &created); err != nil {
+	// A story parked before park origins were recorded: its chain predates the
+	// fold, so the snapshot seeded from its row is the only word on its status,
+	// and that says blocked with no origin.
+	created, err := db.Stories.Create(context.Background(), workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "t", Category: "fix", Body: "b", AcceptanceCriteria: "1. a",
+		Status: "blocked",
+	}, time.Now())
+	if err != nil {
 		t.Fatal(err)
 	}
-	blocked := "blocked"
-	empty := ""
-	if _, err := db.Stories.Update(context.Background(), created.ID, workitem.UpdateInput{
-		Status: &blocked, ParkOrigin: &empty,
-	}, time.Now()); err != nil {
+	if _, err := storyfold.SeedItem(context.Background(), db.Ledger, created, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	req, _ := json.Marshal(map[string]any{"id": created.ID, "status": "in_progress"})
-	_, err := verb.Dispatch(context.Background(), "story-set", req)
+	_, err = verb.Dispatch(context.Background(), "story-set", req)
 	if err == nil {
 		t.Fatal("expected refuse")
 	}

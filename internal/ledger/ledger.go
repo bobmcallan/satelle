@@ -293,6 +293,18 @@ const (
 	// ids. VerifyChain accepts a shared base only when such a record names every
 	// event sharing it. Recognition only — nothing here writes one.
 	KindChainFork = "chain_fork"
+	// KindDefinitionSnapshot records a story's whole folded state — status,
+	// definition, tags, park origin — as its row held it, for a story whose chain
+	// predates the fold (sty_d84be8bc). It is appended once per story, linked into
+	// the chain like any event, so the fold of an existing story equals its row.
+	// Payload is storyfold.SnapshotPayload.
+	KindDefinitionSnapshot = "definition_snapshot"
+	// KindWorkflowVersion carries the workflow a story's events were made under
+	// (sty_d84be8bc): the hash and the source that hashes to it — both route halves,
+	// or the legacy workflow body — so a chain replays against the version each
+	// event recorded without the developer's repo. Appended once per hash per
+	// story, ahead of the first event that records the hash.
+	KindWorkflowVersion = "workflow_version"
 )
 
 // RemoteRunPayload is the payload of a KindRemoteRun row: the one shape the

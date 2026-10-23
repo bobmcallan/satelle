@@ -57,11 +57,10 @@ func recordRoute(ctx context.Context, item workitem.Item, from, to string, verdi
 // question "what is my route" is answerable from backlog, before any outcome
 // exists. That is what makes the route readable without opening a workflow file.
 func StoryRoute(ctx context.Context, id string) (string, error) {
-	store, err := requireWorkItem()
-	if err != nil {
+	if _, err := requireWorkItem(); err != nil {
 		return "", err
 	}
-	item, err := store.Get(ctx, id)
+	item, err := storyState(ctx, id)
 	if err != nil {
 		return "", fmt.Errorf("verb: route: %s: %w", id, err)
 	}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +11,9 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/storyfold"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -935,6 +938,30 @@ func TestMigrateRewritesFilePairWorkflowStamps(t *testing.T) {
 	wantTags := []string{"area:substrate", "workflow:" + wfgovern.DerivedRouteName, "surface:cli"}
 	if strings.Join(md.Tags, ",") != strings.Join(wantTags, ",") {
 		t.Errorf("tags = %v, want %v", md.Tags, wantTags)
+	}
+	// The restamp is on the story's chain as a story_updated naming the tags before
+	// and after, so the fold of the chain equals the rewritten row (sty_d84be8bc).
+	changes, err := after.Ledger.ListByStory(ctx, stale.ID, ledger.KindStoryUpdated)
+	if err != nil || len(changes) != 1 {
+		t.Fatalf("restamp story_updated rows = %d, %v; want 1", len(changes), err)
+	}
+	var change struct {
+		Tags   storyfold.TagsChange `json:"tags"`
+		Source string               `json:"source"`
+	}
+	if err := json.Unmarshal(changes[0].Payload, &change); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(change.Tags.Before, ",") != strings.Join(stale.Tags, ",") ||
+		strings.Join(change.Tags.After, ",") != strings.Join(wantTags, ",") || change.Source != "migrate" {
+		t.Errorf("restamp payload = %+v, want %v → %v from migrate", change, stale.Tags, wantTags)
+	}
+	chain, err := after.Ledger.StoryChain(ctx, stale.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := storyfold.Fold(chain, nil); len(storyfold.Compare(md, st)) != 0 {
+		t.Errorf("the fold of the chain differs from the restamped row: %+v", storyfold.Compare(md, st))
 	}
 	tm, err := after.Stories.Get(ctx, staleTOML.ID)
 	if err != nil {

@@ -231,5 +231,10 @@ func fileSystemStory(ctx context.Context, a *app.App, ch docindex.DocRef, notes 
 	if err != nil {
 		return "", false, err
 	}
+	// The store write above skips the create gate on purpose; the event that starts
+	// the story's chain is still the one every story gets (sty_d84be8bc).
+	if err := verb.AppendStoryCreated(ctx, a.Store.Ledger, it, "", "reindex", time.Now()); err != nil {
+		return "", false, err
+	}
 	return it.ID, true, nil
 }

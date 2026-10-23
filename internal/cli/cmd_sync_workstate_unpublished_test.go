@@ -125,6 +125,7 @@ func putInState(t *testing.T, id, status, tree, head string, baseline bool) {
 	}, now); err != nil {
 		t.Fatal(err)
 	}
+	settleRow(t, a, id) // the row is a cache of the chain just written
 	if !baseline {
 		return
 	}

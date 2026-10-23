@@ -16,6 +16,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/storyfold"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -204,6 +205,7 @@ func writeToRecord(ctx context.Context, cur workitem.Item, in workitem.UpdateInp
 // for a write that landed, then the ready-mark sync.
 func recordApplied(ctx context.Context, id string, row recordedWrite, now time.Time) {
 	appendLedgerEntry(ctx, id, row.Kind, row.Actor, row.Body, row.Payload, now)
+	_, _ = rebuildCache(ctx, id)
 	syncReadyMark(ctx, id)
 }
 
@@ -318,12 +320,17 @@ func resolveEditorIdentity() EditorIdentity {
 type storyUpdatedPayload struct {
 	EditorIdentity
 	Fields []AmendField `json:"fields,omitempty"`
+	// Tags names the story's tags before and after when the set changed them
+	// (sty_d84be8bc): the shape every tag writer records, so the fold reads one.
+	Tags *storyfold.TagsChange `json:"tags,omitempty"`
+	// Source names the writer when it is not a story-set (a forced pull).
+	Source string `json:"source,omitempty"`
 }
 
 // storyUpdatedPayloadFor renders the story_updated payload for one committed
 // story-set. It is always present, so even a tag or priority edit names its editor.
-func storyUpdatedPayloadFor(id EditorIdentity, edits []AmendField) json.RawMessage {
-	b, err := json.Marshal(storyUpdatedPayload{EditorIdentity: id, Fields: edits})
+func storyUpdatedPayloadFor(id EditorIdentity, edits []AmendField, tags *storyfold.TagsChange) json.RawMessage {
+	b, err := json.Marshal(storyUpdatedPayload{EditorIdentity: id, Fields: edits, Tags: tags})
 	if err != nil {
 		return nil
 	}
