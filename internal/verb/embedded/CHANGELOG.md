@@ -1,3 +1,12 @@
+## [0.0.735] - 2026-10-23
+
+### Changed
+- `satelle sync workstate push` publishes each story's new ledger events to satelle.dev by compare-and-append over gRPC (`satelle.chain.v1.Chain/Append`, satelle-server 0.1.208 or later). Each Append names the last event this checkout had published for that story, per server, project and repo. Story-scoped events no longer travel in the bulk `Apply`, and a refusal never places a hold.
+  - A stale base is reported as `the story <id> moved since <base>: re-read and decide`. Nothing more is sent for that story, local events are untouched, a story conflict is recorded, other stories continue, and push exits non-zero. If the server's newer events are this checkout's own earlier publish, push says `already published up to <id>: resuming from it` and sends only what follows.
+  - Large stories go as several Appends of at most 3 MiB, chained on the server's latest event, and replies up to 16 MiB are readable.
+  - Nothing is appended when the ledger area is not opted in or no server is configured.
+  - The first push after upgrading publishes every story's existing chain once. (sty_9bdf08c4)
+
 ## [0.0.734] - 2026-10-23
 
 ### Changed
