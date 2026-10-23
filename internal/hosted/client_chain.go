@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/bobmcallan/satelle/internal/hosted/syncpb"
 )
@@ -21,6 +22,34 @@ type ChainEvent struct {
 	BaseID          string
 	WorkflowVersion string
 	Payload         json.RawMessage
+}
+
+// MaxChainReplyBytes is the largest reply the client reads from Chain/Append: an
+// accepted Append echoes every stored event and a StaleBase detail echoes every
+// event the caller has not seen. It is set on each call, which takes precedence
+// over a dial default, and sits well above grpc-go's 4 MiB default and the 3 MiB
+// the CLI sends per call.
+const MaxChainReplyBytes = 16 << 20
+
+func chainCallOpts() []grpc.CallOption {
+	return []grpc.CallOption{grpc.MaxCallRecvMsgSize(MaxChainReplyBytes)}
+}
+
+// AppendFrameSize is the encoded size of an Append request that carries no events.
+func AppendFrameSize(project, storyID, base string) int {
+	return proto.Size(&syncpb.AppendRequest{Project: project, StoryId: storyID, BaseId: base})
+}
+
+// AppendEventSize is the encoded size one event adds to an Append request.
+func AppendEventSize(storyID string, e ChainEvent) int {
+	return proto.Size(&syncpb.AppendRequest{Events: []*syncpb.Event{newEvent(storyID, e)}})
+}
+
+func newEvent(storyID string, e ChainEvent) *syncpb.Event {
+	return &syncpb.Event{
+		Id: e.ID, StoryId: storyID, BaseId: e.BaseID,
+		WorkflowVersion: e.WorkflowVersion, Payload: e.Payload,
+	}
 }
 
 // StaleBaseError is the refusal of an Append whose base is no longer the story's
@@ -82,15 +111,12 @@ func (cc *ChainConn) Close() error { return cc.conn.Close() }
 func (cc *ChainConn) AppendStory(ctx context.Context, project, storyID, base string, events []ChainEvent) (string, error) {
 	req := &syncpb.AppendRequest{Project: project, StoryId: storyID, BaseId: base}
 	for _, e := range events {
-		req.Events = append(req.Events, &syncpb.Event{
-			Id: e.ID, StoryId: storyID, BaseId: e.BaseID,
-			WorkflowVersion: e.WorkflowVersion, Payload: append([]byte(nil), e.Payload...),
-		})
+		req.Events = append(req.Events, newEvent(storyID, e))
 	}
 	var out *syncpb.AppendResponse
 	err := cc.c.withGRPCAuth(ctx, func(ctx context.Context) error {
 		var rpcErr error
-		out, rpcErr = cc.cli.Append(ctx, req, syncCallOpts()...)
+		out, rpcErr = cc.cli.Append(ctx, req, chainCallOpts()...)
 		return rpcErr
 	})
 	if err != nil {

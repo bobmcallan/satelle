@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/bobmcallan/satelle/internal/hosted/syncpb"
 )
@@ -117,5 +118,47 @@ func TestAppendStoryMapsOtherRefusals(t *testing.T) {
 		if !strings.Contains(err.Error(), "grpc Append: "+tc.msg) {
 			t.Errorf("%v: err = %v, want the mapped message", tc.code, err)
 		}
+	}
+}
+
+// sty_9bdf08c4 AC11: the frame and per-event sizes add up to the encoded request,
+// which is what lets the CLI keep every Append under its cap.
+func TestAppendSizesAddUpToTheRequest(t *testing.T) {
+	events := []ChainEvent{
+		{ID: "evt_1", BaseID: "", WorkflowVersion: "wf", Payload: []byte(`{"a":1}`)},
+		{ID: "evt_2", BaseID: "evt_1", Payload: make([]byte, 300)},
+	}
+	req := &syncpb.AppendRequest{Project: "probe", StoryId: "sty_a", BaseId: "evt_0"}
+	size := AppendFrameSize("probe", "sty_a", "evt_0")
+	for _, e := range events {
+		req.Events = append(req.Events, newEvent("sty_a", e))
+		size += AppendEventSize("sty_a", e)
+	}
+	if want := proto.Size(req); size != want {
+		t.Fatalf("sizes add up to %d, the request encodes to %d", size, want)
+	}
+}
+
+// sty_9bdf08c4 AC11: a reply well past grpc-go's 4 MiB default is read — an accepted
+// Append's echo and a StaleBase detail both.
+func TestAppendStoryReadsRepliesPastTheGRPCDefault(t *testing.T) {
+	big := &syncpb.Event{Id: "evt_big", StoryId: "sty_a", Payload: make([]byte, 5<<20)}
+	cc := openStubChain(t, &stubChain{append: func(req *syncpb.AppendRequest) (*syncpb.AppendResponse, error) {
+		if req.GetBaseId() == "evt_1" {
+			st, err := status.New(codes.FailedPrecondition, "stale base").WithDetails(&syncpb.StaleBase{LatestId: "evt_big", Missing: []*syncpb.Event{big}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return nil, st.Err()
+		}
+		return &syncpb.AppendResponse{LatestId: "evt_big", Appended: []*syncpb.Event{big}}, nil
+	}})
+	if latest, err := cc.AppendStory(context.Background(), "probe", "sty_a", "", oneEvent); err != nil || latest != "evt_big" {
+		t.Fatalf("an accepted Append with a 5 MiB echo: latest = %q, err = %v", latest, err)
+	}
+	_, err := cc.AppendStory(context.Background(), "probe", "sty_a", "evt_1", oneEvent)
+	var stale *StaleBaseError
+	if !errors.As(err, &stale) || stale.LatestID != "evt_big" || stale.Missing != 1 {
+		t.Fatalf("a StaleBase with a 5 MiB detail: err = %v", err)
 	}
 }

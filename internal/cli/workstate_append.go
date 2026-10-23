@@ -187,24 +187,35 @@ func withoutStoryEntries(raws []json.RawMessage) []json.RawMessage {
 // is one this checkout already holds — its own earlier publish, whose head was
 // never saved — it resumes from that event once; the same chain is continued, not
 // merged. Any other stale base is the agent's to read and decide.
+//
+// The events go in batches of about appendBatchBytes, in chain order, each built on
+// the latest event the server accepted before it; the head is saved after every
+// accepted batch so an interrupted push resumes where it stopped. A stale base
+// part-way through is handled as at the start, from the batch it refused.
 func appendStory(ctx context.Context, w io.Writer, a *app.App, conn *hosted.ChainConn, server, project string, p storyAppend) error {
-	from := p.from
-	for resumed := false; ; resumed = true {
+	from, resumed := p.from, false
+	// events are the encoded events of p.order[start:], made once and again only
+	// when a resume reaches back before them.
+	start := from
+	events, err := chainEvents(p.order[start:])
+	if err != nil {
+		fmt.Fprintf(w, "the story %s was not published: %v\n", p.id, err)
+		return err
+	}
+	for from < len(p.order) {
 		base := ""
 		if from > 0 {
 			base = p.order[from-1].ID
 		}
-		if from >= len(p.order) {
-			return acceptStory(w, a, server, project, p.id, base)
-		}
-		events, err := chainEvents(p.order[from:])
-		if err != nil {
-			fmt.Fprintf(w, "the story %s was not published: %v\n", p.id, err)
-			return err
-		}
-		_, err = conn.AppendStory(ctx, project, p.id, base, events)
+		pending := events[from-start:]
+		n := batchLen(project, p.id, base, pending)
+		_, err := conn.AppendStory(ctx, project, p.id, base, pending[:n])
 		if err == nil {
-			return acceptStory(w, a, server, project, p.id, p.order[len(p.order)-1].ID)
+			from += n
+			if err := saveStoryHead(w, a, server, project, p.id, p.order[from-1].ID); err != nil {
+				return err
+			}
+			continue
 		}
 		var stale *hosted.StaleBaseError
 		if !errors.As(err, &stale) {
@@ -219,21 +230,47 @@ func appendStory(ctx context.Context, w io.Writer, a *app.App, conn *hosted.Chai
 			return err
 		}
 		fmt.Fprintf(w, "the story %s is already published up to %s: resuming from it\n", p.id, stale.LatestID)
-		if err := hosted.SaveStoryHead(server, project, a.RepoRoot, p.id, stale.LatestID); err != nil {
-			return fmt.Errorf("save story head: %w", err)
+		if err := saveStoryHead(w, a, server, project, p.id, stale.LatestID); err != nil {
+			return err
 		}
-		from = i + 1
+		from, resumed = i+1, true
+		if from < start {
+			start = from
+			if events, err = chainEvents(p.order[start:]); err != nil {
+				fmt.Fprintf(w, "the story %s was not published: %v\n", p.id, err)
+				return err
+			}
+		}
 	}
+	_ = syncstate.RecordStoryConflicts(config.GlobalDir(), a.RepoRoot, nil, []string{p.id}, time.Now().UTC())
+	return nil
 }
 
-// acceptStory records the story's new head and clears any conflict recorded for it.
-func acceptStory(w io.Writer, a *app.App, server, project, storyID, head string) error {
-	if head != "" {
-		if err := hosted.SaveStoryHead(server, project, a.RepoRoot, storyID, head); err != nil {
-			fmt.Fprintf(w, "the story %s was published but its head was not saved: %v\n", storyID, err)
-			return fmt.Errorf("save story head: %w", err)
+// appendBatchBytes caps the encoded size of one Append: well under the server's
+// 8 MiB request limit and, with the echo of the stored events, the 16 MiB the
+// client reads back. A var so a test can lower it.
+var appendBatchBytes = 3 << 20
+
+// batchLen is how many of events, taken from the front, go in one Append. An event
+// that alone passes the cap still goes alone: the server's answer to it is the
+// story's to report.
+func batchLen(project, storyID, base string, events []hosted.ChainEvent) int {
+	size, n := hosted.AppendFrameSize(project, storyID, base), 0
+	for _, e := range events {
+		size += hosted.AppendEventSize(storyID, e)
+		if n > 0 && size > appendBatchBytes {
+			break
 		}
+		n++
 	}
-	_ = syncstate.RecordStoryConflicts(config.GlobalDir(), a.RepoRoot, nil, []string{storyID}, time.Now().UTC())
+	return n
+}
+
+// saveStoryHead records the latest event the server accepted for the story.
+func saveStoryHead(w io.Writer, a *app.App, server, project, storyID, head string) error {
+	if err := hosted.SaveStoryHead(server, project, a.RepoRoot, storyID, head); err != nil {
+		fmt.Fprintf(w, "the story %s was published but its head was not saved: %v\n", storyID, err)
+		return fmt.Errorf("save story head: %w", err)
+	}
 	return nil
 }

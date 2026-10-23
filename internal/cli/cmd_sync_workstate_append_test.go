@@ -628,3 +628,100 @@ func TestChainOrderRefusesAForkAndAStrandedEvent(t *testing.T) {
 		t.Errorf("stranded event: err = %v", err)
 	}
 }
+
+// capForSplitting lowers appendBatchBytes to a size that holds the frame and the
+// largest of the story's events but rarely two, so any chain splits.
+func capForSplitting(t *testing.T, story string, local []ledger.Entry) {
+	t.Helper()
+	events, err := chainEvents(local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	largest := 0
+	for _, e := range events {
+		largest = max(largest, hosted.AppendEventSize(story, e))
+	}
+	old := appendBatchBytes
+	appendBatchBytes = hosted.AppendFrameSize("probe", story, local[0].ID) + largest + 1
+	t.Cleanup(func() { appendBatchBytes = old })
+}
+
+// sty_9bdf08c4 AC11: a story over the per-call cap is sent as several Appends in
+// chain order, each under the cap and based on the latest event the one before
+// accepted, and the head ends at the last event.
+func TestPushSplitsAStoryOverTheCapIntoChainedAppends(t *testing.T) {
+	ts, f := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	repo := workstateRepo(t, holdOffToml)
+	id := createStoryID(t, "alpha")
+	local := localChain(t, id)
+	if len(local) < 3 {
+		t.Fatalf("need at least 3 local events, have %d", len(local))
+	}
+	capForSplitting(t, id, local)
+
+	if out, err := pushRaw(t, ts.URL); err != nil {
+		t.Fatalf("push: %v\n%s", err, out)
+	}
+	reqs := f.chain.appendsFor(id)
+	if len(reqs) < 2 {
+		t.Fatalf("%d Appends, want the story split over the cap", len(reqs))
+	}
+	var sent []string
+	for i, r := range reqs {
+		if n := proto.Size(r); n > appendBatchBytes {
+			t.Errorf("Append %d is %d bytes, over the %d cap", i, n, appendBatchBytes)
+		}
+		wantBase := ""
+		if i > 0 {
+			wantBase = sent[len(sent)-1]
+		}
+		if r.GetBaseId() != wantBase {
+			t.Errorf("Append %d base = %q, want %q", i, r.GetBaseId(), wantBase)
+		}
+		sent = append(sent, eventIDs(r.GetEvents())...)
+	}
+	var want []string
+	for _, e := range local {
+		want = append(want, e.ID)
+	}
+	if !slices.Equal(sent, want) || !slices.Equal(f.chain.stored("probe", id), want) {
+		t.Errorf("sent %v, stored %v, want the chain %v once each", sent, f.chain.stored("probe", id), want)
+	}
+	if got := storyHeads(t, ts.URL, "probe", repo)[id]; got != want[len(want)-1] {
+		t.Errorf("head = %q, want the last event %q", got, want[len(want)-1])
+	}
+}
+
+// sty_9bdf08c4 AC11, AC3: a stale base part-way through a split story is reported
+// from that batch — the head stays at the last accepted batch and no more is sent.
+func TestPushReportsAStaleBaseMidStory(t *testing.T) {
+	ts, f := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	repo := workstateRepo(t, holdOffToml)
+	id := createStoryID(t, "alpha")
+	local := localChain(t, id)
+	capForSplitting(t, id, local)
+	calls := 0
+	f.chain.before = func(req *syncpb.AppendRequest, chain *[]*syncpb.Event) {
+		if calls++; calls == 2 { // someone else appends after the first batch
+			*chain = append(*chain, &syncpb.Event{Id: "evt_foreign", StoryId: id, BaseId: (*chain)[len(*chain)-1].GetId()})
+		}
+	}
+
+	out, err := pushRaw(t, ts.URL)
+	if err == nil {
+		t.Fatalf("push must exit non-zero:\n%s", out)
+	}
+	first := f.chain.appendsFor(id)[0]
+	lastSent := first.GetEvents()[len(first.GetEvents())-1].GetId()
+	if want := "the story " + id + " moved since " + lastSent + ": re-read and decide"; !strings.Contains(out, want) {
+		t.Errorf("report missing %q:\n%s", want, out)
+	}
+	if n := len(f.chain.appendsFor(id)); n != 2 {
+		t.Errorf("%d Appends, want the accepted batch and the refused one", n)
+	}
+	if got := storyHeads(t, ts.URL, "probe", repo)[id]; got != lastSent {
+		t.Errorf("head = %q, want the last accepted event %q", got, lastSent)
+	}
+}
