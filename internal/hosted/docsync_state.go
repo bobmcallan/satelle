@@ -76,8 +76,7 @@ type SnapshotToken struct {
 // LoadSnapshotToken returns the stored Snapshot position for the key, or the
 // zero value when none is stored. A missing file is not an error.
 func LoadSnapshotToken(server, project, repoRoot string) (SnapshotToken, error) {
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return SnapshotToken{}, err
@@ -87,8 +86,7 @@ func LoadSnapshotToken(server, project, repoRoot string) (SnapshotToken, error) 
 
 // SaveSnapshotToken persists the Snapshot position for the key (atomic).
 func SaveSnapshotToken(server, project, repoRoot string, t SnapshotToken) error {
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return err
@@ -103,8 +101,7 @@ func SaveSnapshotToken(server, project, repoRoot string, t SnapshotToken) error 
 // ClearSnapshotToken drops the Snapshot position for the key, so the next pass
 // is a full one.
 func ClearSnapshotToken(server, project, repoRoot string) error {
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return err
@@ -139,8 +136,7 @@ func areaBaseKey(server, project, repoRoot, area string) string {
 // LoadAreaBase returns the recorded base for an area. ok=false means this
 // checkout has never synced the area against this project.
 func LoadAreaBase(server, project, repoRoot, area string) (AreaBase, bool, error) {
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return AreaBase{}, false, err
@@ -151,8 +147,7 @@ func LoadAreaBase(server, project, repoRoot, area string) (AreaBase, bool, error
 
 // SaveAreaBase persists the base for an area (atomic, like every state write).
 func SaveAreaBase(server, project, repoRoot, area string, b AreaBase) error {
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return err
@@ -193,6 +188,37 @@ type WorkstateCursor struct {
 // CLI invocations in the same process (tests share the XDG dir).
 var docSyncMu sync.Mutex
 
+// lockDocSyncState serialises a read-modify-write of the state file against every
+// other writer: goroutines of this process through docSyncMu, and other satelle
+// processes (satelled, another repo's sync) through an advisory lock on a sibling
+// file. The file is shared by every checkout of the user, so a lone mutex lets two
+// processes overwrite each other's change. A lock file that cannot be opened
+// leaves the in-process guard only; the write itself stays atomic either way.
+// The returned func releases both.
+func lockDocSyncState() func() {
+	docSyncMu.Lock()
+	path, err := DocumentSyncStatePath()
+	if err != nil {
+		return docSyncMu.Unlock
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return docSyncMu.Unlock
+	}
+	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return docSyncMu.Unlock
+	}
+	if err := lockStateFile(f); err != nil {
+		_ = f.Close()
+		return docSyncMu.Unlock
+	}
+	return func() {
+		unlockStateFile(f)
+		_ = f.Close()
+		docSyncMu.Unlock()
+	}
+}
+
 // DocumentSyncStatePath returns the per-user document-sync cursor file:
 // same directory as credentials.toml, file document-sync-state.json.
 // Path overrides (tests) via DocumentSyncStatePathOverride.
@@ -222,8 +248,7 @@ func documentCursorKey(server, project, repoRoot string) string {
 // "" when none is stored (first pull / unknown key). A missing file is not an
 // error — it yields the empty cursor.
 func LoadDocumentCursor(server, project, repoRoot string) (string, error) {
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return "", err
@@ -234,8 +259,7 @@ func LoadDocumentCursor(server, project, repoRoot string) (string, error) {
 // SaveDocumentCursor persists the pull cursor for the key. Write is atomic
 // (tmp + rename) so a crash mid-write cannot corrupt the file.
 func SaveDocumentCursor(server, project, repoRoot, cursor string) error {
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return err
@@ -251,8 +275,7 @@ func SaveDocumentCursor(server, project, repoRoot, cursor string) error {
 // the key, or a zero cursor when none is stored (sty_88e83180). A missing file
 // is not an error.
 func LoadWorkstateCursor(server, project, repoRoot string) (WorkstateCursor, error) {
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return WorkstateCursor{}, err
@@ -266,8 +289,7 @@ func LoadWorkstateCursor(server, project, repoRoot string) (WorkstateCursor, err
 // SaveWorkstateCursor persists the work-state push cursor for the key. Atomic
 // tmp+rename; advances only on a confirmed successful push (sty_88e83180 AC3).
 func SaveWorkstateCursor(server, project, repoRoot string, c WorkstateCursor) error {
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return err
@@ -286,8 +308,16 @@ func SaveWorkstateCursor(server, project, repoRoot string, c WorkstateCursor) er
 // SaveStoryHead records eventID as the last event of storyID the server accepted
 // for the key, leaving the rest of the cursor as it was.
 func SaveStoryHead(server, project, repoRoot, storyID, eventID string) error {
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	return SaveStoryHeads(server, project, repoRoot, map[string]string{storyID: eventID})
+}
+
+// SaveStoryHeads records several stories' heads in one write of the state file,
+// which is rewritten whole and so is not worth rewriting once per story.
+func SaveStoryHeads(server, project, repoRoot string, set map[string]string) error {
+	if len(set) == 0 {
+		return nil
+	}
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return err
@@ -297,11 +327,13 @@ func SaveStoryHead(server, project, repoRoot, storyID, eventID string) error {
 	}
 	key := documentCursorKey(server, project, repoRoot)
 	c := state.Workstate[key]
-	heads := make(map[string]string, len(c.StoryHeads)+1)
+	heads := make(map[string]string, len(c.StoryHeads)+len(set))
 	for id, head := range c.StoryHeads {
 		heads[id] = head
 	}
-	heads[storyID] = eventID
+	for id, head := range set {
+		heads[id] = head
+	}
 	c.StoryHeads = heads
 	state.Workstate[key] = c
 	return writeDocumentSyncState(state)
@@ -340,8 +372,7 @@ func HoldRecordFrom(h HoldState, now time.Time) HoldRecord {
 
 // LoadHolds returns the local hold registry for the key (id → record).
 func LoadHolds(server, project, repoRoot string) (map[string]HoldRecord, error) {
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return nil, err
@@ -361,8 +392,7 @@ func RecordHold(server, project, repoRoot, id string, rec HoldRecord) error {
 	if id == "" || rec.Location == "" {
 		return nil
 	}
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return err
@@ -387,8 +417,7 @@ func RecordHold(server, project, repoRoot, id string, rec HoldRecord) error {
 // it. A hold of this checkout's own (self) is left to the release path, which
 // owns it.
 func ReconcileHolds(server, project, repoRoot, self string, found map[string]HoldRecord, checked []string) error {
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return err
@@ -435,8 +464,7 @@ func ForgetHold(server, project, repoRoot, id string) error {
 	if id == "" {
 		return nil
 	}
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return err
@@ -464,8 +492,7 @@ func RecordPendingClaim(server, project, repoRoot, id string, at time.Time) erro
 	if id == "" {
 		return nil
 	}
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return err
@@ -487,8 +514,7 @@ func RecordPendingClaim(server, project, repoRoot, id string, at time.Time) erro
 
 // PendingClaims returns the pending claims for the key (id → engage time).
 func PendingClaims(server, project, repoRoot string) (map[string]string, error) {
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return nil, err
@@ -502,8 +528,7 @@ func PendingClaims(server, project, repoRoot string) (map[string]string, error) 
 
 // ClearPendingClaim drops id from the pending claims.
 func ClearPendingClaim(server, project, repoRoot, id string) error {
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return err
@@ -523,8 +548,7 @@ func ClearPendingClaim(server, project, repoRoot, id string) error {
 // LoadUploadedAttachments returns the attachment hashes this machine has confirmed
 // hosted for the key ("<id>/<file>" → sha256 hex). A missing file or key is empty.
 func LoadUploadedAttachments(server, project, repoRoot string) (map[string]string, error) {
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return nil, err
@@ -544,8 +568,7 @@ func RecordUploadedAttachments(server, project, repoRoot string, confirmed map[s
 	if len(confirmed) == 0 {
 		return nil
 	}
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return err
@@ -567,8 +590,7 @@ func RecordUploadedAttachments(server, project, repoRoot string, confirmed map[s
 
 // LoadAttachmentCursor returns the stored attachment pull cursor, or "" when none.
 func LoadAttachmentCursor(server, project, repoRoot string) (string, error) {
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return "", err
@@ -578,8 +600,7 @@ func LoadAttachmentCursor(server, project, repoRoot string) (string, error) {
 
 // SaveAttachmentCursor persists the attachment pull cursor for the key.
 func SaveAttachmentCursor(server, project, repoRoot, cursor string) error {
-	docSyncMu.Lock()
-	defer docSyncMu.Unlock()
+	defer lockDocSyncState()()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return err
@@ -627,8 +648,19 @@ func writeDocumentSyncState(state documentSyncStateFile) error {
 	if err != nil {
 		return fmt.Errorf("hosted: encode document sync state: %w", err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
+	// A temp file of its own, never a fixed name: two writers sharing one name
+	// truncate each other's bytes and one rename finds the file already moved.
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("hosted: write document sync state: %w", err)
+	}
+	tmp := f.Name()
+	_, err = f.Write(append(raw, '\n'))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("hosted: write document sync state: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {

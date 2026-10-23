@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -115,17 +117,132 @@ func (cc *ChainConn) AppendStory(ctx context.Context, project, storyID, base str
 	}
 	var out *syncpb.AppendResponse
 	err := cc.c.withGRPCAuth(ctx, func(ctx context.Context) error {
-		var rpcErr error
-		out, rpcErr = cc.cli.Append(ctx, req, chainCallOpts()...)
-		return rpcErr
+		return retryTransient(ctx, func() (rpcErr error) {
+			out, rpcErr = cc.cli.Append(ctx, req, chainCallOpts()...)
+			return rpcErr
+		})
 	})
 	if err != nil {
 		if sb := staleBaseFromStatus(err); sb != nil {
 			return "", &StaleBaseError{StoryID: storyID, Base: base, LatestID: sb.GetLatestId(), Missing: len(sb.GetMissing())}
 		}
+		if bareStaleBase(err) {
+			// The refusal's detail echoes every event the caller has not seen and
+			// can be too large for the HTTP/2 trailers, so it arrives without it. The
+			// story's latest event is read instead and decides the same way.
+			// A read that fails too leaves the refusal as it came.
+			if stale, rerr := cc.staleBaseByRead(ctx, project, storyID, base); rerr == nil && stale != nil {
+				return "", stale
+			}
+		}
 		return "", cc.c.mapSyncErr("Append", err)
 	}
 	return out.GetLatestId(), nil
+}
+
+// chainRetryDelays are the waits before each retry of a call that failed
+// transiently: three retries, then the failure is reported. A var so tests run
+// without waiting.
+var chainRetryDelays = []time.Duration{500 * time.Millisecond, 2 * time.Second, 5 * time.Second}
+
+// SetChainRetryDelays replaces the waits between retries and returns a func that
+// restores them (tests only).
+func SetChainRetryDelays(d []time.Duration) (restore func()) {
+	prev := chainRetryDelays
+	chainRetryDelays = d
+	return func() { chainRetryDelays = prev }
+}
+
+// transientChainErr reports a failure of the transport rather than a decision of
+// the server: the server or a proxy in front of it is unavailable (including an
+// HTTP 502, which grpc-go reports as Unavailable), or reset the stream with
+// ENHANCE_YOUR_CALM, which grpc-go reports as ResourceExhausted.
+func transientChainErr(err error) bool {
+	st, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+	switch st.Code() {
+	case codes.Unavailable:
+		return true
+	case codes.ResourceExhausted:
+		return strings.Contains(st.Message(), "ENHANCE_YOUR_CALM")
+	}
+	return false
+}
+
+// retryTransient runs call, repeating it after each chainRetryDelays wait while it
+// fails transiently. An Append that did apply before its reply was lost is safe to
+// repeat: the repeat is refused as a stale base whose latest event is one this
+// checkout holds, which the caller resumes from.
+func retryTransient(ctx context.Context, call func() error) error {
+	err := call()
+	for _, d := range chainRetryDelays {
+		if err == nil || !transientChainErr(err) {
+			return err
+		}
+		t := time.NewTimer(d)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return err
+		case <-t.C:
+		}
+		err = call()
+	}
+	return err
+}
+
+// bareStaleBase reports a FailedPrecondition that carries no StaleBase detail and
+// is not a hold refusal.
+func bareStaleBase(err error) bool {
+	st, ok := status.FromError(err)
+	return ok && st.Code() == codes.FailedPrecondition && staleBaseFromStatus(err) == nil && heldErrorFromStatus(st) == nil
+}
+
+// staleBaseByRead learns where the story stands by reading the events after base.
+// It returns nil when the story is still at base, so the refusal was not a stale
+// base. A base the server does not know is read again from the start.
+func (cc *ChainConn) staleBaseByRead(ctx context.Context, project, storyID, base string) (*StaleBaseError, error) {
+	read := func(after string) (*syncpb.ReadResponse, error) {
+		var out *syncpb.ReadResponse
+		err := cc.c.withGRPCAuth(ctx, func(ctx context.Context) error {
+			return retryTransient(ctx, func() (rpcErr error) {
+				out, rpcErr = cc.cli.Read(ctx, &syncpb.ReadRequest{Project: project, StoryId: storyID, AfterId: after}, chainCallOpts()...)
+				return rpcErr
+			})
+		})
+		return out, err
+	}
+	out, err := read(base)
+	missing := 0
+	if err == nil {
+		missing = len(out.GetEvents())
+	} else if base != "" {
+		first := err
+		if out, err = read(""); err != nil {
+			return nil, errors.Join(first, err)
+		}
+		missing = len(out.GetEvents())
+		for i, e := range out.GetEvents() {
+			if e.GetId() == base {
+				missing = len(out.GetEvents()) - i - 1
+				break
+			}
+		}
+	} else {
+		return nil, err
+	}
+	latest := out.GetLatestId()
+	if latest == "" {
+		if evs := out.GetEvents(); len(evs) > 0 {
+			latest = evs[len(evs)-1].GetId()
+		}
+	}
+	if latest == "" || latest == base {
+		return nil, nil
+	}
+	return &StaleBaseError{StoryID: storyID, Base: base, LatestID: latest, Missing: missing}, nil
 }
 
 // staleBaseFromStatus returns the StaleBase detail of a FailedPrecondition

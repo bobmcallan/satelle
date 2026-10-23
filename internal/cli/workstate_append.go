@@ -42,6 +42,13 @@ func (p storyAppend) base() string {
 // planStoryAppends lists the stories with events past their head. It is not driven
 // by the bulk ledger mark: a story the server refused stays listed on every push
 // until it is accepted. scope narrows it to the stories a scoped push names.
+//
+// Every work item with ledger events is listed, tasks and executions as well as
+// stories: the bulk path carried all of them before, and the server keys a chain by
+// the item id it is given without reading its kind. The fold-drift check is
+// narrower (workstate_validate.go validates KindStory items only) because only a
+// story's status is folded from its events; that bears on what is withheld, not on
+// what is published.
 func planStoryAppends(ctx context.Context, a *app.App, scope scopeSet, heads map[string]string) ([]storyAppend, error) {
 	ids, err := a.Store.Ledger.StoryIDs(ctx)
 	if err != nil {
@@ -128,14 +135,21 @@ func chainEvents(entries []ledger.Entry) ([]hosted.ChainEvent, error) {
 // how many stories it published. A story the server refused or that cannot be sent
 // is reported on w and does not stop the others; the returned error counts them so
 // the push exits non-zero.
-func publishStoryEvents(ctx context.Context, w io.Writer, a *app.App, client *hosted.Client, server, project string, plan []storyAppend, held map[string]string) (int, error) {
+func publishStoryEvents(ctx context.Context, w io.Writer, a *app.App, client *hosted.Client, server, project string, plan []storyAppend, held map[string]string) (published int, err error) {
 	var conn *hosted.ChainConn
+	heads := &headSaver{server: server, project: project, root: a.RepoRoot, pending: map[string]string{}}
 	defer func() {
 		if conn != nil {
 			_ = conn.Close()
 		}
+		// The heads are written together, whichever way the loop ends. One that is
+		// lost costs nothing but a resume: the next push is refused as a stale base
+		// whose latest event is in the local chain, and continues from it.
+		if serr := heads.flush(w); serr != nil && err == nil {
+			err = serr
+		}
 	}()
-	published, failed := 0, 0
+	failed, sent := 0, 0
 	for _, p := range plan {
 		if _, withheld := held[p.id]; withheld {
 			continue
@@ -151,7 +165,11 @@ func publishStoryEvents(ctx context.Context, w io.Writer, a *app.App, client *ho
 				return published, fmt.Errorf("open the story chain: %w", err)
 			}
 		}
-		err := appendStory(ctx, w, a, conn, server, project, p)
+		if sent > 0 && !pause(ctx, appendPace) {
+			return published, ctx.Err()
+		}
+		sent++
+		err := appendStory(ctx, w, a, conn, project, p, heads)
 		switch {
 		case errors.Is(err, hosted.ErrLoginRequired):
 			return published, err
@@ -159,6 +177,9 @@ func publishStoryEvents(ctx context.Context, w io.Writer, a *app.App, client *ho
 			failed++
 		default:
 			published++
+		}
+		if sent%headFlushEvery == 0 {
+			_ = heads.flush(io.Discard) // kept pending on failure; the final flush reports it
 		}
 	}
 	if failed > 0 {
@@ -189,10 +210,11 @@ func withoutStoryEntries(raws []json.RawMessage) []json.RawMessage {
 // merged. Any other stale base is the agent's to read and decide.
 //
 // The events go in batches of about appendBatchBytes, in chain order, each built on
-// the latest event the server accepted before it; the head is saved after every
-// accepted batch so an interrupted push resumes where it stopped. A stale base
+// the latest event the server accepted before it; the head is handed to the saver
+// after every accepted batch, and a head lost to an interrupted push is recovered
+// by the resume above on the next one. A stale base
 // part-way through is handled as at the start, from the batch it refused.
-func appendStory(ctx context.Context, w io.Writer, a *app.App, conn *hosted.ChainConn, server, project string, p storyAppend) error {
+func appendStory(ctx context.Context, w io.Writer, a *app.App, conn *hosted.ChainConn, project string, p storyAppend, heads *headSaver) error {
 	from, resumed := p.from, false
 	// events are the encoded events of p.order[start:], made once and again only
 	// when a resume reaches back before them.
@@ -212,9 +234,7 @@ func appendStory(ctx context.Context, w io.Writer, a *app.App, conn *hosted.Chai
 		_, err := conn.AppendStory(ctx, project, p.id, base, pending[:n])
 		if err == nil {
 			from += n
-			if err := saveStoryHead(w, a, server, project, p.id, p.order[from-1].ID); err != nil {
-				return err
-			}
+			heads.set(p.id, p.order[from-1].ID)
 			continue
 		}
 		var stale *hosted.StaleBaseError
@@ -230,9 +250,7 @@ func appendStory(ctx context.Context, w io.Writer, a *app.App, conn *hosted.Chai
 			return err
 		}
 		fmt.Fprintf(w, "the story %s is already published up to %s: resuming from it\n", p.id, stale.LatestID)
-		if err := saveStoryHead(w, a, server, project, p.id, stale.LatestID); err != nil {
-			return err
-		}
+		heads.set(p.id, stale.LatestID)
 		from, resumed = i+1, true
 		if from < start {
 			start = from
@@ -266,11 +284,49 @@ func batchLen(project, storyID, base string, events []hosted.ChainEvent) int {
 	return n
 }
 
-// saveStoryHead records the latest event the server accepted for the story.
-func saveStoryHead(w io.Writer, a *app.App, server, project, storyID, head string) error {
-	if err := hosted.SaveStoryHead(server, project, a.RepoRoot, storyID, head); err != nil {
-		fmt.Fprintf(w, "the story %s was published but its head was not saved: %v\n", storyID, err)
-		return fmt.Errorf("save story head: %w", err)
+// appendPace is the wait between one story's Appends and the next, so a push of
+// many stories does not trip the rate limit of the proxy in front of the server. A
+// var so tests run without waiting.
+var appendPace = 25 * time.Millisecond
+
+// headFlushEvery is how many stories a push publishes between writes of their heads.
+const headFlushEvery = 100
+
+// pause waits d, or until ctx ends, and reports whether the wait completed.
+func pause(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
 	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+// headSaver collects the latest event the server accepted for each story during a
+// push and writes them in one update of the state file, which is shared by every
+// checkout and rewritten whole: one write per story is a rewrite per story.
+type headSaver struct {
+	server, project, root string
+	pending               map[string]string
+}
+
+func (h *headSaver) set(storyID, head string) { h.pending[storyID] = head }
+
+// flush writes the pending heads. They stay pending when the write fails, so a
+// later flush tries again.
+func (h *headSaver) flush(w io.Writer) error {
+	if len(h.pending) == 0 {
+		return nil
+	}
+	if err := hosted.SaveStoryHeads(h.server, h.project, h.root, h.pending); err != nil {
+		fmt.Fprintf(w, "%d stor(y/ies) were published but their heads were not saved: %v\n", len(h.pending), err)
+		return fmt.Errorf("save story heads: %w", err)
+	}
+	h.pending = map[string]string{}
 	return nil
 }

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -41,6 +42,32 @@ type fakeChain struct {
 	// before runs under the lock ahead of each Append, so a test can move a story
 	// on the server between two of a push's calls.
 	before func(req *syncpb.AppendRequest, chain *[]*syncpb.Event)
+	// transient lists errors a story's next Appends return, one per call, before it
+	// behaves normally.
+	transient map[string][]error
+	// bareStale refuses a stale base without the StaleBase detail, as the server
+	// does when the detail is too large for the HTTP/2 trailers.
+	bareStale bool
+}
+
+// Read serves the events after after_id, and the story's latest id.
+func (c *fakeChain) Read(_ context.Context, req *syncpb.ReadRequest) (*syncpb.ReadResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	chain := c.chains[chainKey(req.GetProject(), req.GetStoryId())]
+	events := chain
+	if after := req.GetAfterId(); after != "" {
+		i := slices.IndexFunc(chain, func(e *syncpb.Event) bool { return e.GetId() == after })
+		if i < 0 {
+			return nil, status.Error(codes.NotFound, "no such event")
+		}
+		events = chain[i+1:]
+	}
+	out := &syncpb.ReadResponse{Events: events}
+	if len(chain) > 0 {
+		out.LatestId = chain[len(chain)-1].GetId()
+	}
+	return out, nil
 }
 
 func newFakeChain(f *fakeWorkstateServer) *fakeChain {
@@ -62,9 +89,16 @@ func (c *fakeChain) Append(_ context.Context, req *syncpb.AppendRequest) (*syncp
 	if err := c.refuse[req.GetStoryId()]; err != nil {
 		return nil, err
 	}
+	if q := c.transient[req.GetStoryId()]; len(q) > 0 {
+		c.transient[req.GetStoryId()] = q[1:]
+		return nil, q[0]
+	}
 	latest := ""
 	if len(chain) > 0 {
 		latest = chain[len(chain)-1].GetId()
+	}
+	if req.GetBaseId() != latest && c.bareStale {
+		return nil, status.Error(codes.FailedPrecondition, "stale base: the story has moved on")
 	}
 	if req.GetBaseId() != latest {
 		var missing []*syncpb.Event
@@ -723,5 +757,107 @@ func TestPushReportsAStaleBaseMidStory(t *testing.T) {
 	}
 	if got := storyHeads(t, ts.URL, "probe", repo)[id]; got != lastSent {
 		t.Errorf("head = %q, want the last accepted event %q", got, lastSent)
+	}
+}
+
+// sty_9bdf08c4 AC12: a transient transport refusal — Unavailable, an HTTP 502
+// (Unavailable to grpc-go) or ENHANCE_YOUR_CALM — is retried and the story goes
+// through; one that outlasts the retries is reported per story, head unchanged.
+func TestPushRetriesATransientRefusal(t *testing.T) {
+	defer hosted.SetChainRetryDelays([]time.Duration{time.Millisecond, time.Millisecond, time.Millisecond})()
+	ts, f := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	repo := workstateRepo(t, holdOffToml)
+	flaky, down := createStoryID(t, "flaky"), createStoryID(t, "down")
+	f.chain.transient = map[string][]error{
+		flaky: {
+			status.Error(codes.Unavailable, "unexpected HTTP status code received from server: 502 (Bad Gateway)"),
+			status.Error(codes.ResourceExhausted, "stream terminated by RST_STREAM with error code: ENHANCE_YOUR_CALM"),
+		},
+		down: {
+			status.Error(codes.Unavailable, "502"), status.Error(codes.Unavailable, "502"),
+			status.Error(codes.Unavailable, "502"), status.Error(codes.Unavailable, "502"),
+			status.Error(codes.Unavailable, "502"),
+		},
+	}
+
+	out, err := pushRaw(t, ts.URL)
+	if err == nil {
+		t.Fatalf("a story the retries did not reach must make push exit non-zero:\n%s", out)
+	}
+	if n := len(f.chain.appendsFor(flaky)); n != 3 {
+		t.Errorf("flaky story: %d calls, want two failures and the success", n)
+	}
+	if got := f.chain.stored("probe", flaky); len(got) != len(localChain(t, flaky)) {
+		t.Errorf("flaky story stored %v, want its whole chain", got)
+	}
+	if got := storyHeads(t, ts.URL, "probe", repo); got[flaky] == "" || got[down] != "" {
+		t.Errorf("heads = %v, want the flaky story's only", got)
+	}
+	if n := len(f.chain.appendsFor(down)); n != 4 {
+		t.Errorf("down story: %d calls, want the first and three retries", n)
+	}
+	if !strings.Contains(out, "the story "+down+" was not published") || strings.Contains(out, "the story "+flaky+" was not published") {
+		t.Errorf("report:\n%s", out)
+	}
+}
+
+// sty_9bdf08c4 AC12: a FailedPrecondition with no StaleBase detail is resolved by
+// reading the story's latest event, then handled as an own prefix (AC4) ...
+func TestPushResolvesADetaillessRefusalAsItsOwnPrefix(t *testing.T) {
+	ts, f := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	repo := workstateRepo(t, holdOffToml)
+	id := createStoryID(t, "alpha")
+	local := localChain(t, id)
+	for _, e := range local[:2] {
+		f.chain.seed("probe", id, &syncpb.Event{Id: e.ID, StoryId: id, BaseId: e.BaseID})
+	}
+	f.chain.bareStale = true
+
+	out, err := pushRaw(t, ts.URL)
+	if err != nil {
+		t.Fatalf("push: %v\n%s", err, out)
+	}
+	if want := "the story " + id + " is already published up to " + local[1].ID + ": resuming from it"; !strings.Contains(out, want) {
+		t.Errorf("report missing %q:\n%s", want, out)
+	}
+	if strings.Contains(out, "stale base: the story has moved on") {
+		t.Errorf("reported as a generic error:\n%s", out)
+	}
+	if got := f.chain.stored("probe", id); len(got) != len(local) {
+		t.Errorf("server chain = %v, want %d events once each", got, len(local))
+	}
+	if got := storyHeads(t, ts.URL, "probe", repo)[id]; got != local[len(local)-1].ID {
+		t.Errorf("head = %q, want the last event", got)
+	}
+}
+
+// ... or, when the latest event is not in the local chain, as a story that moved.
+func TestPushResolvesADetaillessRefusalAsAMovedStory(t *testing.T) {
+	ts, f := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	repo := workstateRepo(t, holdOffToml)
+	id := createStoryID(t, "alpha")
+	f.chain.seed("probe", id, &syncpb.Event{Id: "evt_foreign", StoryId: id})
+	f.chain.bareStale = true
+
+	out, err := pushRaw(t, ts.URL)
+	if err == nil {
+		t.Fatalf("push must exit non-zero:\n%s", out)
+	}
+	for _, want := range []string{"the story " + id + " moved since its start: re-read and decide", "evt_foreign", "1 event"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report missing %q:\n%s", want, out)
+		}
+	}
+	if got := f.chain.stored("probe", id); !slices.Equal(got, []string{"evt_foreign"}) {
+		t.Errorf("server chain = %v, want it untouched", got)
+	}
+	if got := storyHeads(t, ts.URL, "probe", repo)[id]; got != "" {
+		t.Errorf("head = %q, want none", got)
+	}
+	if _, ok := storyConflicts(t, repo)[id]; !ok {
+		t.Errorf("no conflict recorded for %s", id)
 	}
 }

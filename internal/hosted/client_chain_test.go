@@ -20,6 +20,14 @@ import (
 type stubChain struct {
 	syncpb.UnimplementedChainServer
 	append func(*syncpb.AppendRequest) (*syncpb.AppendResponse, error)
+	read   func(*syncpb.ReadRequest) (*syncpb.ReadResponse, error)
+}
+
+func (s *stubChain) Read(_ context.Context, req *syncpb.ReadRequest) (*syncpb.ReadResponse, error) {
+	if s.read == nil {
+		return nil, status.Error(codes.Unimplemented, "no read")
+	}
+	return s.read(req)
 }
 
 func (s *stubChain) Append(_ context.Context, req *syncpb.AppendRequest) (*syncpb.AppendResponse, error) {
