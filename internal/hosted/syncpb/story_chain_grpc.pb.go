@@ -1,7 +1,7 @@
 // Vendored verbatim from satelle-server api/story_chain.proto: the server owns
 // this contract. Regenerate the Go client with `buf generate`. The CLI calls
 // Append only.
-
+//
 // Story event-chain gRPC contract (satelle-server sty_8cd87197; the CLI half is
 // satelle sty_9bdf08c4).
 //
