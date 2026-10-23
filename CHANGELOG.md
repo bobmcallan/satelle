@@ -1,3 +1,13 @@
+## [0.0.732] - 2026-10-23
+
+### Fixed
+- A number quoted mid-sentence in an acceptance criterion (for example "The handler returns 403. A retry succeeds.") is no longer read as a criterion number, so a planner is no longer failed for "missing acceptance criterion 403". Only a number that begins a criterion line, after optional indentation, counts; the `1.` and `1)` forms on their own lines parse as before. Criteria that put several numbers on one line are now read for the first only, as judged criteria already were. (sty_14f521e5)
+
+## [serve-v0.0.198] - 2026-10-23
+
+### Fixed
+- The service binary carries the line-anchored criterion-number parsing. (sty_14f521e5)
+
 ## [0.0.731] - 2026-10-23
 
 ### Fixed

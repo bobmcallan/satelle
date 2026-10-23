@@ -15,6 +15,13 @@ func TestSectionIsTheTextUnderTheHeading(t *testing.T) {
 	}
 }
 
+func TestNumberedCriteriaIgnoresMidSentenceNumber(t *testing.T) {
+	got := NumberedCriteria("2. The handler returns 403. A retry succeeds.")
+	if len(got) != 1 || got[0].N != 2 {
+		t.Fatalf("NumberedCriteria = %+v, want only criterion 2", got)
+	}
+}
+
 func TestNumberedCriteria(t *testing.T) {
 	text := "preamble\n1. first line\n   continues here\n\n2) second\n10. tenth\n2. duplicate\nignored continuation\n"
 	got := NumberedCriteria(text)

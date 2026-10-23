@@ -264,8 +264,8 @@ func ValidateAll(a Artifact, c Contract, acceptanceCriteria string) (Artifact, [
 		}
 	}
 	if c.ACCoverage {
-		for _, m := range numberedCriterion.FindAllStringSubmatch(acceptanceCriteria, -1) {
-			n := m[1]
+		for _, crit := range NumberedCriteria(acceptanceCriteria) {
+			n := strconv.Itoa(crit.N)
 			re := regexp.MustCompile(`(?im)(?:^|\b)AC\s*#?\s*` + regexp.QuoteMeta(n) + `\b|^\s*#{1,6}\s+.*\b` + regexp.QuoteMeta(n) + `\b|^\s*` + regexp.QuoteMeta(n) + `[.)]\s+`)
 			if !re.MatchString(a.Body) {
 				findings = append(findings, fmt.Sprintf("artifact.body: missing acceptance criterion %s", n))

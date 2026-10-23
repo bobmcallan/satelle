@@ -113,7 +113,7 @@ func TestValidateReportsMismatchAndMissingCriterion(t *testing.T) {
 	if _, err := Validate(Artifact{Name: "wrong", Body: "## AC1"}, c, "1. one"); err == nil || !strings.Contains(err.Error(), "artifact.name") {
 		t.Fatalf("name mismatch err = %v", err)
 	}
-	if _, err := Validate(Artifact{Body: "## AC1\ncovered"}, c, "1. one 2. two"); err == nil || !strings.Contains(err.Error(), "criterion 2") {
+	if _, err := Validate(Artifact{Body: "## AC1\ncovered"}, c, "1. one\n2. two"); err == nil || !strings.Contains(err.Error(), "criterion 2") {
 		t.Fatalf("missing criterion err = %v", err)
 	}
 }
@@ -127,6 +127,18 @@ func TestValidateAllReportsEveryMissingCriterion(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("findings %q missing %q", got, want)
 		}
+	}
+}
+
+func TestValidateAllIgnoresNumberQuotedMidSentence(t *testing.T) {
+	c := Contract{Name: "plan", Type: "plan", Required: true, ACCoverage: true}
+	const criteria = "1. First thing.\n2. The handler returns 403. A retry succeeds."
+	if _, findings := ValidateAll(Artifact{Body: "## AC1\ncovered\n## AC2\ncovered"}, c, criteria); len(findings) != 0 {
+		t.Fatalf("covering every real criterion reported %q", findings)
+	}
+	_, findings := ValidateAll(Artifact{Body: "## AC1\ncovered"}, c, criteria)
+	if got := strings.Join(findings, "\n"); got != "artifact.body: missing acceptance criterion 2" {
+		t.Fatalf("findings = %q, want only the missing criterion 2", got)
 	}
 }
 
