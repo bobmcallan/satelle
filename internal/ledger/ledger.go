@@ -288,6 +288,11 @@ const (
 	// gap[], error}. Enumeration only — the verdicts are the reviewers', copied
 	// from the pulled ledger. Distinct from KindRemoteRun, the per-step row.
 	KindRemoteRunSummary = "remote_run_summary"
+	// KindChainFork records that two or more events of one story deliberately
+	// share a base (sty_41f61669): Refs is the JSON array of the forking event
+	// ids. VerifyChain accepts a shared base only when such a record names every
+	// event sharing it. Recognition only — nothing here writes one.
+	KindChainFork = "chain_fork"
 )
 
 // RemoteRunPayload is the payload of a KindRemoteRun row: the one shape the
@@ -316,6 +321,15 @@ type Entry struct {
 	Payload   json.RawMessage `json:"payload,omitempty"`
 	Refs      json.RawMessage `json:"refs,omitempty"`
 	CreatedAt time.Time       `json:"created_at"`
+	// BaseID names the story event this one builds on (the story's previous
+	// entry when it was written); empty for a story's first event and for an
+	// entry with no story. A story's events form one chain through it (sty_41f61669).
+	BaseID string `json:"base_id,omitempty"`
+	// WorkflowHash is the content hash (docindex Doc.Hash) of the workflow that
+	// governed the story when the event was made, so a verdict can be re-checked
+	// against the exact workflow that produced it. Empty when none applied or when
+	// the event predates the field — an unknown version is never invented.
+	WorkflowHash string `json:"workflow_hash,omitempty"`
 }
 
 // EXEMPTION (sty_7db2ed7d): the ledger's Actor field is the event-AUTHOR (who
@@ -348,6 +362,9 @@ type AppendInput struct {
 	Body      string
 	Payload   json.RawMessage
 	Refs      json.RawMessage
+	// WorkflowHash, when set, is kept as given; otherwise the store resolves the
+	// governing workflow's hash for StoryID (SetWorkflowVersion).
+	WorkflowHash string
 }
 
 // ListFilter parameterises List. At least one selectable field (StoryID,

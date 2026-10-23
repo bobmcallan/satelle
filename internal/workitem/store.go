@@ -106,6 +106,13 @@ type Store struct{ db execer }
 // New returns a Store bound to db.
 func New(db *sql.DB) *Store { return &Store{db: db} }
 
+// Conn is a handle a Store can run on: the database or an open transaction.
+type Conn = execer
+
+// NewOn returns a Store bound to c, for a caller that holds a handle which may
+// be an open transaction (a ledger resolver reading inside the append's tx).
+func NewOn(c Conn) *Store { return &Store{db: c} }
+
 // WithTx returns a shallow copy bound to tx. The original store is unchanged.
 func (s *Store) WithTx(tx *sql.Tx) *Store {
 	if s == nil {

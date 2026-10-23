@@ -86,13 +86,37 @@ func Open(path string) (*DB, error) {
 func wire(sqldb *sql.DB) *DB {
 	di := docindex.New(sqldb)
 	di.SetDefaults(EmbeddedDefaultDocs())
+	led := ledger.New(sqldb)
+	led.SetWorkflowVersion(workflowVersion(di))
 	return &DB{
 		db:       sqldb,
-		Ledger:   ledger.New(sqldb),
+		Ledger:   led,
 		Stories:  workitem.New(sqldb),
 		DocIndex: di,
 		Leases:   lease.New(sqldb),
 		Retrieve: retrieve.New(sqldb),
+	}
+}
+
+// workflowVersion is the ledger's resolver for the workflow a story is judged
+// under (sty_41f61669): the content hash of the workflow wfgovern says governs the
+// story, "" when the story is unknown or no workflow applies. It reads through the
+// handle the append runs on, so it is safe inside a transaction.
+func workflowVersion(di *docindex.Store) ledger.WorkflowVersionFunc {
+	return func(ctx context.Context, c ledger.Conn, storyID string) string {
+		item, err := workitem.NewOn(c).Get(ctx, storyID)
+		if err != nil {
+			return ""
+		}
+		docs, err := di.ListIndexed(ctx, c, "workflows")
+		if err != nil {
+			return ""
+		}
+		doc, ok := wfgovern.GoverningWorkflow(docs, item)
+		if !ok || doc.Unreadable != "" {
+			return ""
+		}
+		return doc.Hash
 	}
 }
 

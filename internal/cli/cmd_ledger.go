@@ -193,6 +193,47 @@ can pipe {story, from, to} straight in. See satelle help reviewer-checks.`,
 		},
 	}
 
-	ledgerCmd.AddCommand(appendCmd, listCmd, recordRunCmd, citeRunCmd, citationCmd)
+	var vStory string
+	verifyCmd := &cobra.Command{
+		Use:   "verify",
+		Short: "Verify a story's event chain (every story with no --story)",
+		Long: `Check that each story's ledger events form one chain: every event's base_id
+names an earlier event of the same story, the story has exactly one root, and no
+two events share a base unless a chain_fork entry names them.
+
+Prints one line per break (<story> <event> <kind>: <detail>) and exits non-zero
+when any is found; otherwise prints "chain ok" with the counts and exits 0.
+Read-only: a broken chain is reported, never repaired.`,
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := map[string]any{}
+			putIf(req, "story_id", vStory)
+			body, err := json.Marshal(req)
+			if err != nil {
+				return fmt.Errorf("encode request: %w", err)
+			}
+			resp, err := verb.Dispatch(cmd.Context(), "ledger-verify", body)
+			if err != nil {
+				return err
+			}
+			var rep ledger.ChainReport
+			if err := json.Unmarshal(resp, &rep); err != nil {
+				return fmt.Errorf("ledger verify: decode: %w", err)
+			}
+			out := cmd.OutOrStdout()
+			if len(rep.Breaks) == 0 {
+				fmt.Fprintf(out, "chain ok (%d stories, %d events)\n", rep.Stories, rep.Events)
+				return nil
+			}
+			for _, b := range rep.Breaks {
+				fmt.Fprintf(out, "%s %s %s: %s\n", b.StoryID, b.EventID, b.Kind, b.Detail)
+			}
+			return &ExitError{Code: 1, Quiet: true,
+				Err: fmt.Errorf("ledger verify: %d chain break(s) in %d stories, %d events", len(rep.Breaks), rep.Stories, rep.Events)}
+		},
+	}
+	verifyCmd.Flags().StringVar(&vStory, "story", "", "verify one story's chain (default: every story)")
+
+	ledgerCmd.AddCommand(appendCmd, listCmd, recordRunCmd, citeRunCmd, citationCmd, verifyCmd)
 	register(ledgerCmd)
 }

@@ -12,21 +12,29 @@ import (
 )
 
 // schema is the evidence table, self-migrating (CREATE IF NOT EXISTS). No
-// UPDATE/DELETE path exists, so the log is append-only by construction.
+// UPDATE/DELETE path exists, so the log is append-only by construction — the one
+// exception is linkLegacyChains, which writes base_id once on rows that predate
+// the column and touches nothing else. base_id and workflow_hash are added to an
+// older table by Migrate (addColumns), so they are not part of any index here.
 const schema = `
 CREATE TABLE IF NOT EXISTS evidence (
-    id         TEXT PRIMARY KEY,
-    story_id   TEXT NOT NULL DEFAULT '',
-    project_id TEXT NOT NULL DEFAULT '',
-    kind       TEXT NOT NULL,
-    actor      TEXT NOT NULL DEFAULT '',
-    body       TEXT NOT NULL DEFAULT '',
-    payload    TEXT NOT NULL DEFAULT '{}',
-    refs       TEXT NOT NULL DEFAULT '[]',
-    created_at TEXT NOT NULL
+    id            TEXT PRIMARY KEY,
+    story_id      TEXT NOT NULL DEFAULT '',
+    project_id    TEXT NOT NULL DEFAULT '',
+    kind          TEXT NOT NULL,
+    actor         TEXT NOT NULL DEFAULT '',
+    body          TEXT NOT NULL DEFAULT '',
+    payload       TEXT NOT NULL DEFAULT '{}',
+    refs          TEXT NOT NULL DEFAULT '[]',
+    created_at    TEXT NOT NULL,
+    base_id       TEXT NOT NULL DEFAULT '',
+    workflow_hash TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_evidence_story ON evidence(story_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_evidence_kind  ON evidence(kind);`
+
+// entryCols is the column list every read selects, in the order scanEntry reads.
+const entryCols = `id, story_id, project_id, kind, actor, body, payload, refs, created_at, base_id, workflow_hash`
 
 // metaSchema holds per-database facts that must not survive the database being
 // replaced. The only key is instance_id, written once when the file is created.
@@ -36,7 +44,12 @@ CREATE TABLE IF NOT EXISTS ledger_meta (
     value TEXT NOT NULL
 );`
 
-const instanceIDKey = "instance_id"
+const (
+	instanceIDKey = "instance_id"
+	// chainLinkedKey marks a database whose pre-existing rows have been linked
+	// into per-story chains; linkLegacyChains runs once and never again.
+	chainLinkedKey = "chain_linked"
+)
 
 // Migrate creates the evidence table on db. Idempotent. Called by the store
 // opener alongside the other dynamic primitives' migrations.
@@ -44,8 +57,14 @@ func Migrate(db *sql.DB) error {
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("ledger: migrate: %w", err)
 	}
+	if err := addColumns(db); err != nil {
+		return err
+	}
 	if _, err := db.Exec(metaSchema); err != nil {
 		return fmt.Errorf("ledger: migrate: %w", err)
+	}
+	if err := linkLegacyChains(db); err != nil {
+		return err
 	}
 	// Read first so a plain open of an existing database takes no write lock.
 	var have string
@@ -60,6 +79,89 @@ func Migrate(db *sql.DB) error {
 	return nil
 }
 
+// addColumns adds the chain columns to an evidence table that predates them,
+// then the index that serves the tail lookup. Each step is skipped when already
+// present, so a plain open of a current database takes no write lock.
+func addColumns(db *sql.DB) error {
+	have := map[string]bool{}
+	rows, err := db.Query(`SELECT name FROM pragma_table_info('evidence')`)
+	if err != nil {
+		return fmt.Errorf("ledger: migrate columns: %w", err)
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return fmt.Errorf("ledger: migrate columns: %w", err)
+		}
+		have[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("ledger: migrate columns: %w", err)
+	}
+	rows.Close()
+	for _, col := range []string{"base_id", "workflow_hash"} {
+		if have[col] {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE evidence ADD COLUMN ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil &&
+			!strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("ledger: migrate %s column: %w", col, err)
+		}
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_evidence_base ON evidence(story_id, base_id)`); err != nil {
+		return fmt.Errorf("ledger: migrate base index: %w", err)
+	}
+	return nil
+}
+
+// linkLegacyChains links every story's rows that predate base_id into one chain,
+// each row naming the previous row of its story in insertion (rowid) order, then
+// records chainLinkedKey so it never runs again. It writes base_id only: no other
+// column changes and no row is dropped. workflow_hash stays empty on those rows
+// because the workflow they ran under is not known. Reads first, so a database
+// already linked takes no write lock.
+func linkLegacyChains(db *sql.DB) error {
+	var done string
+	err := db.QueryRow(`SELECT value FROM ledger_meta WHERE key = ?`, chainLinkedKey).Scan(&done)
+	if err == nil {
+		return nil
+	}
+	if err != sql.ErrNoRows {
+		return fmt.Errorf("ledger: migrate chain marker: %w", err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("ledger: link chains: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Re-check inside the write transaction: another opener may have linked first.
+	err = tx.QueryRow(`SELECT value FROM ledger_meta WHERE key = ?`, chainLinkedKey).Scan(&done)
+	if err == nil {
+		return nil
+	}
+	if err != sql.ErrNoRows {
+		return fmt.Errorf("ledger: migrate chain marker: %w", err)
+	}
+	if _, err := tx.Exec(`
+        UPDATE evidence SET base_id = COALESCE((
+            SELECT prev FROM (
+                SELECT id, LAG(id) OVER (PARTITION BY story_id ORDER BY rowid) AS prev
+                FROM evidence WHERE story_id <> ''
+            ) AS linked WHERE linked.id = evidence.id), '')
+        WHERE story_id <> '' AND base_id = ''`); err != nil {
+		return fmt.Errorf("ledger: link chains: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO ledger_meta (key, value) VALUES (?, '1')`, chainLinkedKey); err != nil {
+		return fmt.Errorf("ledger: link chains: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("ledger: link chains: %w", err)
+	}
+	return nil
+}
+
 // execer is the subset of *sql.DB / *sql.Tx that this store uses, so a
 // shallow copy can bind to an open transaction without a second connection.
 type execer interface {
@@ -68,11 +170,53 @@ type execer interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// Conn is the handle an append runs on — the plain database or the open
+// transaction the store is bound to. A WorkflowVersionFunc reads through it, so
+// a resolver called inside a transaction does not wait on a second connection
+// (the pool holds one) that the transaction itself is holding.
+type Conn = execer
+
+// WorkflowVersionFunc returns the content hash of the workflow governing storyID,
+// or "" when none applies or it cannot be told. It must not fail an append.
+type WorkflowVersionFunc func(ctx context.Context, c Conn, storyID string) string
+
 // Store wraps evidence-table operations against a shared sqlite handle.
 type Store struct {
 	db execer
+	// versionOf stamps WorkflowHash on an entry the caller gave none (nil = none).
+	versionOf WorkflowVersionFunc
 	// failAppend, when set, makes the next Append return that error (tests).
 	failAppend error
+}
+
+// SetWorkflowVersion installs the resolver Append and AppendOnce use to stamp the
+// workflow version a story is judged under. It is injected, not imported: the
+// resolver needs the work-item and doc stores, which this package must not depend
+// on. A copy made by WithTx keeps it.
+func (s *Store) SetWorkflowVersion(fn WorkflowVersionFunc) {
+	if s != nil {
+		s.versionOf = fn
+	}
+}
+
+// workflowHash is the hash an insert for storyID carries: the caller's own when
+// given, else the resolver's, else "".
+func (s *Store) workflowHash(ctx context.Context, storyID, given string) string {
+	if given != "" || storyID == "" || s.versionOf == nil {
+		return given
+	}
+	return s.versionOf(ctx, s.db, storyID)
+}
+
+// tailBase is the SQL expression naming storyID's current last entry — the base
+// of the entry being inserted — and its arguments. It is evaluated inside the
+// INSERT statement, so sqlite's single writer serialises it: two concurrent
+// appends cannot both read the same tail. An entry with no story has no chain.
+func tailBase(storyID string) (string, []any) {
+	if storyID == "" {
+		return "''", nil
+	}
+	return `COALESCE((SELECT id FROM evidence WHERE story_id = ? ORDER BY rowid DESC LIMIT 1), '')`, []any{storyID}
 }
 
 // New returns a Store bound to db.
@@ -130,11 +274,15 @@ func (s *Store) Append(ctx context.Context, in AppendInput, now time.Time) (Entr
 		Refs:      refs,
 		CreatedAt: now,
 	}
-	_, err := s.db.ExecContext(ctx, `
-        INSERT INTO evidence (id, story_id, project_id, kind, actor, body, payload, refs, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.StoryID, e.ProjectID, e.Kind, e.Actor, e.Body,
-		string(payload), string(refs), now.Format(time.RFC3339Nano))
+	e.WorkflowHash = s.workflowHash(ctx, in.StoryID, in.WorkflowHash)
+	base, baseArgs := tailBase(e.StoryID)
+	args := append([]any{e.ID, e.StoryID, e.ProjectID, e.Kind, e.Actor, e.Body,
+		string(payload), string(refs), now.Format(time.RFC3339Nano)}, baseArgs...)
+	args = append(args, e.WorkflowHash)
+	err := s.db.QueryRowContext(ctx, `
+        INSERT INTO evidence (id, story_id, project_id, kind, actor, body, payload, refs, created_at, base_id, workflow_hash)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, `+base+`, ?
+        RETURNING base_id`, args...).Scan(&e.BaseID)
 	if err != nil {
 		return Entry{}, fmt.Errorf("ledger: append: %w", err)
 	}
@@ -167,21 +315,23 @@ func (s *Store) AppendOnce(ctx context.Context, in AppendInput, now time.Time) (
 		ID: NewID(), StoryID: in.StoryID, ProjectID: in.ProjectID, Kind: in.Kind,
 		Actor: in.Actor, Body: in.Body, Payload: payload, Refs: in.Refs, CreatedAt: now,
 	}
-	res, err := s.db.ExecContext(ctx, `
-        INSERT INTO evidence (id, story_id, project_id, kind, actor, body, payload, refs, created_at)
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
-        WHERE NOT EXISTS (SELECT 1 FROM evidence WHERE kind = ? AND refs = ?)`,
-		e.ID, e.StoryID, e.ProjectID, e.Kind, e.Actor, e.Body,
-		string(payload), string(in.Refs), now.Format(time.RFC3339Nano),
-		in.Kind, string(in.Refs))
+	e.WorkflowHash = s.workflowHash(ctx, in.StoryID, in.WorkflowHash)
+	base, baseArgs := tailBase(e.StoryID)
+	args := append([]any{e.ID, e.StoryID, e.ProjectID, e.Kind, e.Actor, e.Body,
+		string(payload), string(in.Refs), now.Format(time.RFC3339Nano)}, baseArgs...)
+	args = append(args, e.WorkflowHash, in.Kind, string(in.Refs))
+	err := s.db.QueryRowContext(ctx, `
+        INSERT INTO evidence (id, story_id, project_id, kind, actor, body, payload, refs, created_at, base_id, workflow_hash)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, `+base+`, ?
+        WHERE NOT EXISTS (SELECT 1 FROM evidence WHERE kind = ? AND refs = ?)
+        RETURNING base_id`, args...).Scan(&e.BaseID)
+	if err == sql.ErrNoRows {
+		return e, false, nil
+	}
 	if err != nil {
 		return Entry{}, false, fmt.Errorf("ledger: append once: %w", err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return Entry{}, false, fmt.Errorf("ledger: append once: %w", err)
-	}
-	return e, n == 1, nil
+	return e, true, nil
 }
 
 // Upsert inserts an evidence row with a known id (workstate rehydrate). Uses
@@ -208,13 +358,26 @@ func (s *Store) Upsert(ctx context.Context, e Entry, now time.Time) (Entry, erro
 	if len(e.Refs) == 0 {
 		e.Refs = json.RawMessage("[]")
 	}
-	_, err := s.db.ExecContext(ctx, `
-        INSERT OR IGNORE INTO evidence (id, story_id, project_id, kind, actor, body, payload, refs, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.StoryID, e.ProjectID, e.Kind, e.Actor, e.Body,
-		string(e.Payload), string(e.Refs), e.CreatedAt.UTC().Format(time.RFC3339Nano))
-	if err != nil {
+	// The base it arrived with is kept; one arriving without is linked to the
+	// story's current tail, as an append would be.
+	base, baseArgs := "?", []any{e.BaseID}
+	if e.BaseID == "" {
+		base, baseArgs = tailBase(e.StoryID)
+	}
+	args := append([]any{e.ID, e.StoryID, e.ProjectID, e.Kind, e.Actor, e.Body,
+		string(e.Payload), string(e.Refs), e.CreatedAt.UTC().Format(time.RFC3339Nano)}, baseArgs...)
+	args = append(args, e.WorkflowHash)
+	var linked string
+	err := s.db.QueryRowContext(ctx, `
+        INSERT OR IGNORE INTO evidence (id, story_id, project_id, kind, actor, body, payload, refs, created_at, base_id, workflow_hash)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, `+base+`, ?
+        RETURNING base_id`, args...).Scan(&linked)
+	switch {
+	case err == sql.ErrNoRows: // the id was already present: nothing was written
+	case err != nil:
 		return Entry{}, fmt.Errorf("ledger: upsert: %w", err)
+	default:
+		e.BaseID = linked
 	}
 	return e, nil
 }
@@ -237,24 +400,13 @@ func (s *Store) GetByID(ctx context.Context, id string) (Entry, bool, error) {
 	if strings.TrimSpace(id) == "" {
 		return Entry{}, false, fmt.Errorf("ledger: id required")
 	}
-	var (
-		e             Entry
-		payload, refs string
-		created       string
-	)
-	err := s.db.QueryRowContext(ctx, `
-        SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at
-        FROM evidence WHERE id = ?`, id).
-		Scan(&e.ID, &e.StoryID, &e.ProjectID, &e.Kind, &e.Actor, &e.Body, &payload, &refs, &created)
+	e, err := scanEntry(s.db.QueryRowContext(ctx, `SELECT `+entryCols+` FROM evidence WHERE id = ?`, id))
 	if err == sql.ErrNoRows {
 		return Entry{}, false, nil
 	}
 	if err != nil {
 		return Entry{}, false, fmt.Errorf("ledger: get by id: %w", err)
 	}
-	e.Payload = json.RawMessage(payload)
-	e.Refs = json.RawMessage(refs)
-	e.CreatedAt = parseTime(created)
 	return e, true, nil
 }
 
@@ -313,9 +465,30 @@ func listQuery(f ListFilter, extraCols string) (string, []any, error) {
 		conds = append(conds, "(created_at, id) > (SELECT created_at, id FROM evidence WHERE id = ?)")
 		args = append(args, f.AfterID)
 	}
-	q := `SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at` + extraCols +
+	q := `SELECT ` + entryCols + extraCols +
 		` FROM evidence WHERE ` + strings.Join(conds, " AND ")
 	return q, args, nil
+}
+
+// rowScanner is the Scan of a *sql.Row or *sql.Rows.
+type rowScanner interface{ Scan(dest ...any) error }
+
+// scanEntry reads one entryCols row. extra receives trailing select expressions.
+func scanEntry(r rowScanner, extra ...any) (Entry, error) {
+	var (
+		e             Entry
+		payload, refs string
+		created       string
+	)
+	dest := append([]any{&e.ID, &e.StoryID, &e.ProjectID, &e.Kind,
+		&e.Actor, &e.Body, &payload, &refs, &created, &e.BaseID, &e.WorkflowHash}, extra...)
+	if err := r.Scan(dest...); err != nil {
+		return Entry{}, err
+	}
+	e.Payload = json.RawMessage(payload)
+	e.Refs = json.RawMessage(refs)
+	e.CreatedAt = parseTime(created)
+	return e, nil
 }
 
 // scanEntries reads rows of the listQuery columns into entries in row order.
@@ -323,19 +496,10 @@ func listQuery(f ListFilter, extraCols string) (string, []any, error) {
 func scanEntries(rows *sql.Rows, extra ...any) ([]Entry, error) {
 	out := []Entry{}
 	for rows.Next() {
-		var (
-			e             Entry
-			payload, refs string
-			created       string
-		)
-		dest := append([]any{&e.ID, &e.StoryID, &e.ProjectID, &e.Kind,
-			&e.Actor, &e.Body, &payload, &refs, &created}, extra...)
-		if err := rows.Scan(dest...); err != nil {
+		e, err := scanEntry(rows, extra...)
+		if err != nil {
 			return nil, fmt.Errorf("ledger: scan: %w", err)
 		}
-		e.Payload = json.RawMessage(payload)
-		e.Refs = json.RawMessage(refs)
-		e.CreatedAt = parseTime(created)
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -417,7 +581,7 @@ func (s *Store) ForEachKind(ctx context.Context, storyID, kind string, fn func(E
 			conds = append(conds, "(created_at > ? OR (created_at = ? AND id > ?))")
 			args = append(args, afterCreated, afterCreated, afterID)
 		}
-		q := `SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at FROM evidence WHERE ` +
+		q := `SELECT ` + entryCols + ` FROM evidence WHERE ` +
 			strings.Join(conds, " AND ") +
 			fmt.Sprintf(" ORDER BY created_at ASC, id ASC LIMIT %d", pageSize)
 
@@ -425,28 +589,11 @@ func (s *Store) ForEachKind(ctx context.Context, storyID, kind string, fn func(E
 		if err != nil {
 			return fmt.Errorf("ledger: for each kind: %w", err)
 		}
-		var page []Entry
-		for rows.Next() {
-			var (
-				e             Entry
-				payload, refs string
-				created       string
-			)
-			if err := rows.Scan(&e.ID, &e.StoryID, &e.ProjectID, &e.Kind,
-				&e.Actor, &e.Body, &payload, &refs, &created); err != nil {
-				rows.Close()
-				return fmt.Errorf("ledger: scan: %w", err)
-			}
-			e.Payload = json.RawMessage(payload)
-			e.Refs = json.RawMessage(refs)
-			e.CreatedAt = parseTime(created)
-			page = append(page, e)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
+		page, err := scanEntries(rows)
+		rows.Close()
+		if err != nil {
 			return err
 		}
-		rows.Close()
 
 		for _, e := range page {
 			if err := fn(e); err != nil {
@@ -489,7 +636,7 @@ func (s *Store) ListChangedSince(ctx context.Context, since time.Time, limit, of
 	if offset < 0 {
 		offset = 0
 	}
-	q := `SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at FROM evidence`
+	q := `SELECT ` + entryCols + ` FROM evidence`
 	var args []any
 	if !since.IsZero() {
 		bound := since.UTC().Truncate(time.Second).Format("2006-01-02T15:04:05")
@@ -502,23 +649,7 @@ func (s *Store) ListChangedSince(ctx context.Context, since time.Time, limit, of
 		return nil, fmt.Errorf("ledger: list changed since: %w", err)
 	}
 	defer rows.Close()
-	out := []Entry{}
-	for rows.Next() {
-		var (
-			e             Entry
-			payload, refs string
-			created       string
-		)
-		if err := rows.Scan(&e.ID, &e.StoryID, &e.ProjectID, &e.Kind,
-			&e.Actor, &e.Body, &payload, &refs, &created); err != nil {
-			return nil, fmt.Errorf("ledger: scan: %w", err)
-		}
-		e.Payload = json.RawMessage(payload)
-		e.Refs = json.RawMessage(refs)
-		e.CreatedAt = parseTime(created)
-		out = append(out, e)
-	}
-	return out, rows.Err()
+	return scanEntries(rows)
 }
 
 // SeqEntry is an evidence row with its position in insertion order.
@@ -543,7 +674,7 @@ func (s *Store) ListInsertedAfter(ctx context.Context, afterSeq int64, limit int
 		limit = 5000
 	}
 	rows, err := s.db.QueryContext(ctx, `
-        SELECT rowid, id, story_id, project_id, kind, actor, body, payload, refs, created_at
+        SELECT `+entryCols+`, rowid
         FROM evidence WHERE rowid > ? ORDER BY rowid ASC LIMIT ?`, afterSeq, limit)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: list inserted after: %w", err)
@@ -551,19 +682,12 @@ func (s *Store) ListInsertedAfter(ctx context.Context, afterSeq int64, limit int
 	defer rows.Close()
 	out := []SeqEntry{}
 	for rows.Next() {
-		var (
-			se            SeqEntry
-			payload, refs string
-			created       string
-		)
-		if err := rows.Scan(&se.Seq, &se.ID, &se.StoryID, &se.ProjectID, &se.Kind,
-			&se.Actor, &se.Body, &payload, &refs, &created); err != nil {
+		var seq int64
+		e, err := scanEntry(rows, &seq)
+		if err != nil {
 			return nil, fmt.Errorf("ledger: scan: %w", err)
 		}
-		se.Payload = json.RawMessage(payload)
-		se.Refs = json.RawMessage(refs)
-		se.CreatedAt = parseTime(created)
-		out = append(out, se)
+		out = append(out, SeqEntry{Seq: seq, Entry: e})
 	}
 	return out, rows.Err()
 }
@@ -608,8 +732,8 @@ func (s *Store) ListAll(ctx context.Context, limit int) ([]Entry, error) {
 	}
 	// Newest window under the budget, returned oldest-first for callers that
 	// expect chronological order (mirror still re-sorts per story).
-	q := fmt.Sprintf(`SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at FROM (
-		SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at FROM evidence
+	q := fmt.Sprintf(`SELECT `+entryCols+` FROM (
+		SELECT `+entryCols+` FROM evidence
 		ORDER BY created_at DESC, id DESC LIMIT %d
 	) ORDER BY created_at ASC, id ASC`, limit)
 	rows, err := s.db.QueryContext(ctx, q)
@@ -617,23 +741,7 @@ func (s *Store) ListAll(ctx context.Context, limit int) ([]Entry, error) {
 		return nil, fmt.Errorf("ledger: list all: %w", err)
 	}
 	defer rows.Close()
-	out := []Entry{}
-	for rows.Next() {
-		var (
-			e             Entry
-			payload, refs string
-			created       string
-		)
-		if err := rows.Scan(&e.ID, &e.StoryID, &e.ProjectID, &e.Kind,
-			&e.Actor, &e.Body, &payload, &refs, &created); err != nil {
-			return nil, fmt.Errorf("ledger: scan: %w", err)
-		}
-		e.Payload = json.RawMessage(payload)
-		e.Refs = json.RawMessage(refs)
-		e.CreatedAt = parseTime(created)
-		out = append(out, e)
-	}
-	return out, rows.Err()
+	return scanEntries(rows)
 }
 
 // parseTime decodes an RFC3339Nano timestamp, returning the zero time on a

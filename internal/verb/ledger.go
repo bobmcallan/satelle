@@ -13,6 +13,36 @@ import (
 func init() {
 	Register(&Verb{Name: "ledger-append", Description: "Append an entry to the evidence ledger", Invoke: ledgerAppend})
 	Register(&Verb{Name: "ledger-list", Description: "List ledger entries for a story/project/kind", Invoke: ledgerList})
+	Register(&Verb{Name: "ledger-verify", Description: "Verify the event chain of one story, or of every story (read-only)", Invoke: ledgerVerify})
+}
+
+// ledgerVerifyReq is the request body for ledger-verify. An empty story_id
+// verifies every story.
+type ledgerVerifyReq struct {
+	StoryID string `json:"story_id,omitempty"`
+}
+
+// ledgerVerify reports the chain breaks of one story or all of them. It reads
+// only: a break is reported, never repaired.
+func ledgerVerify(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	store, err := requireLedger()
+	if err != nil {
+		return nil, err
+	}
+	var req ledgerVerifyReq
+	if err := decode(raw, &req); err != nil {
+		return nil, err
+	}
+	var rep ledger.ChainReport
+	if strings.TrimSpace(req.StoryID) != "" {
+		rep, err = store.VerifyStory(ctx, req.StoryID)
+	} else {
+		rep, err = store.VerifyAll(ctx)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(rep)
 }
 
 // ledgerAppendReq is the request body for ledger-append. Kind is required.

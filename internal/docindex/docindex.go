@@ -269,14 +269,29 @@ func (s *Store) List(ctx context.Context, kind string) ([]Doc, error) {
 			}
 		}
 	}
-	q := `SELECT kind, name, path, headline, body, hash, size, mod_time, indexed_at FROM authored_docs`
+	return s.ListIndexed(ctx, s.db, kind)
+}
+
+// RowQuerier is the one method ListIndexed needs: the plain handle or the open
+// transaction a caller is already inside.
+type RowQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// ListIndexed is List's read without the workflows refresh from disk: the indexed
+// rows plus the embedded defaults, read through q. A caller already inside a
+// transaction passes it (the pool holds one connection, so a read on the plain
+// handle would wait on the transaction forever); it sees the index as of the last
+// Sync, which every gating read of workflows has just run.
+func (s *Store) ListIndexed(ctx context.Context, q RowQuerier, kind string) ([]Doc, error) {
+	query := `SELECT kind, name, path, headline, body, hash, size, mod_time, indexed_at FROM authored_docs`
 	var args []any
 	if strings.TrimSpace(kind) != "" {
-		q += ` WHERE kind = ?`
+		query += ` WHERE kind = ?`
 		args = append(args, kind)
 	}
-	q += ` ORDER BY kind ASC, name ASC`
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	query += ` ORDER BY kind ASC, name ASC`
+	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("docindex: list: %w", err)
 	}
