@@ -160,6 +160,19 @@ func dropHold(ctx context.Context, errw io.Writer, h holdSite, id string) bool {
 	return true
 }
 
+// releaseTerminalHold takes over and releases a hold another location left on a
+// story that is terminal on the hosted copy: a finished story has no hold, and
+// the holder need not cooperate (sty_aa9eaaba). A failure is logged and left for
+// the next pass to retry; it never fails the pass. Callers have already judged
+// the hosted copy terminal.
+func releaseTerminalHold(ctx context.Context, errw io.Writer, h holdSite, id string) bool {
+	if _, err := h.client.TakeoverHold(ctx, h.project, id); err != nil {
+		fmt.Fprintf(errw, "satelle: hold takeover for finished story %s: %v\n", id, err)
+		return false
+	}
+	return dropHold(ctx, errw, h, id)
+}
+
 // publishedStoryIDs names every story an ingest carried a row for.
 func publishedStoryIDs(items, ledgerRows []json.RawMessage) map[string]bool {
 	ids := map[string]bool{}
@@ -264,20 +277,27 @@ func holdLookupIDs(ctx context.Context, a *app.App, rep passReport, scope []stri
 // lookupHolds asks the server who holds each id. checked is every id the server
 // answered for, held or not; a lookup that fails stops the probing and returns
 // the ids reached so far with the error, so the caller never treats an id it did
-// not reach as released.
-func lookupHolds(ctx context.Context, client *hosted.Client, project string, ids []string) (found map[string]hosted.HoldState, checked []string, err error) {
+// not reach as released. A hold another location has on a story whose hosted
+// copy is terminal is not a hold (sty_aa9eaaba): it is left out of found and its
+// id is returned in terminal, for the caller to release on the server.
+func lookupHolds(ctx context.Context, client *hosted.Client, project string, ids []string) (found map[string]hosted.HoldState, terminal, checked []string, err error) {
 	found = map[string]hosted.HoldState{}
+	self := client.Location()
 	for _, id := range ids {
-		st, lerr := client.ItemHold(ctx, project, id)
+		st, hi, lerr := client.ItemHold(ctx, project, id)
 		if lerr != nil && !errors.Is(lerr, hosted.ErrItemNotFound) {
-			return found, checked, fmt.Errorf("%s: %w", id, lerr)
+			return found, terminal, checked, fmt.Errorf("%s: %w", id, lerr)
 		}
 		checked = append(checked, id)
-		if st.LocationID != "" {
+		switch {
+		case st.LocationID == "":
+		case st.LocationID != self && hostedItemTerminal(ctx, hi):
+			terminal = append(terminal, id)
+		default:
 			found[id] = st
 		}
 	}
-	return found, checked, nil
+	return found, terminal, checked, nil
 }
 
 // syncHolds is the hold half of a work-state pass (sty_6e5fc41c): it looks up the
@@ -295,9 +315,12 @@ func syncHolds(ctx context.Context, errw io.Writer, a *app.App, h holdSite, rep 
 	ask, atRest := holdLookupIDs(ctx, a, rep, scope, recorded, self)
 	lctx, cancel := context.WithTimeout(ctx, holdLookupBudget)
 	defer cancel()
-	found, checked, err := lookupHolds(lctx, h.client, h.project, ask)
+	found, terminal, checked, err := lookupHolds(lctx, h.client, h.project, ask)
 	if err != nil {
 		fmt.Fprintf(errw, "satelle: in-flight check stopped at %v\n", err)
+	}
+	for _, id := range terminal {
+		releaseTerminalHold(ctx, errw, h, id)
 	}
 	now := time.Now().UTC()
 	records := make(map[string]hosted.HoldRecord, len(found))

@@ -153,6 +153,14 @@ func (f *fakeWorkstateServer) hasItem(project, id string) bool {
 	return ok
 }
 
+// hostedItem is the record the server holds for id, or nil.
+func (f *fakeWorkstateServer) hostedItem(project, id string) map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, _ := f.itemsByID[project][id].(map[string]any)
+	return rec
+}
+
 func (f *fakeWorkstateServer) ledgerCount(project, storyID string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

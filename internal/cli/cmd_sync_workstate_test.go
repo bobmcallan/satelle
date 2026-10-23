@@ -1096,7 +1096,7 @@ func TestPartitionByHoldSkipsForeign(t *testing.T) {
 	foreign, _ := marshalWorkstateItem(workitem.Item{ID: "sty_foreign", Kind: workitem.KindStory, Title: "f"})
 	c := hosted.NewClient(server, hosted.FileStore{}, nil)
 	c.SetLocation("loc_self")
-	skipped, keep, err := partitionByHold(context.Background(), c, server, project, repo, []json.RawMessage{mine, foreign})
+	skipped, keep, _, err := partitionByHold(context.Background(), c, server, project, repo, []json.RawMessage{mine, foreign})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1200,7 +1200,7 @@ func TestPartitionByHoldProbesForeign(t *testing.T) {
 	c := hosted.NewClient(ts.URL, store, ts.Client())
 	c.SetLocation("loc_self_hold_aaaaaaaa")
 	raw, _ := marshalWorkstateItem(workitem.Item{ID: "sty_y", Kind: workitem.KindStory, Title: "y"})
-	skipped, keep, err := partitionByHold(context.Background(), c, ts.URL, "probe", "/repo", []json.RawMessage{raw})
+	skipped, keep, _, err := partitionByHold(context.Background(), c, ts.URL, "probe", "/repo", []json.RawMessage{raw})
 	if err != nil || len(keep) != 0 || len(skipped) != 1 {
 		t.Fatalf("keep=%d skip=%d err=%v", len(keep), len(skipped), err)
 	}

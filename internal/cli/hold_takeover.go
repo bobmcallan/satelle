@@ -64,6 +64,19 @@ func assessTakeover(ctx context.Context, a *app.App, errw io.Writer, client *hos
 	return failed, nil
 }
 
+// hostedItemTerminal reports whether the hosted copy of a story sits at a
+// terminal state of its governing route. A copy that cannot be read, or whose
+// route is unknown, is not terminal. A terminal story carries no hold, so this
+// is the one judgement every hold path asks of the hosted copy.
+func hostedItemTerminal(ctx context.Context, hi hosted.WorkstateItem) bool {
+	it, err := parseWorkstateItem(hi)
+	if err != nil {
+		return false
+	}
+	rest := verb.StoryRouteRest(ctx, it)
+	return rest.Known && rest.Terminal
+}
+
 // assessTakeoverStatus is the status check: a scoped snapshot of the story
 // records no conflict for it. It also reports whether the hosted copy is at a
 // terminal state of its route, which the liveness check accepts as the holder
@@ -93,10 +106,7 @@ func assessTakeoverStatus(ctx context.Context, a *app.App, errw io.Writer, clien
 			continue
 		}
 		hostedStatus = hi.Status
-		if it, perr := parseWorkstateItem(hi); perr == nil {
-			rest := verb.StoryRouteRest(ctx, it)
-			hostedTerminal = rest.Known && rest.Terminal
-		}
+		hostedTerminal = hostedItemTerminal(ctx, hi)
 	}
 	if reason, ok := rep.Stories.Conflicts[id]; ok {
 		localStatus := "unknown"
@@ -112,7 +122,7 @@ func assessTakeoverStatus(ctx context.Context, a *app.App, errw io.Writer, clien
 // story is terminal on the hosted copy, or the holder's last-seen is older than
 // [sync] hold_stale_after. A hold already held here needs no takeover assessed.
 func assessTakeoverLiveness(ctx context.Context, a *app.App, client *hosted.Client, project, id string, hostedTerminal bool, now time.Time) (*takeoverCheck, error) {
-	st, err := client.ItemHold(ctx, project, id)
+	st, hi, err := client.ItemHold(ctx, project, id)
 	if err != nil && !errors.Is(err, hosted.ErrItemNotFound) {
 		return nil, err
 	}
@@ -134,10 +144,17 @@ func assessTakeoverLiveness(ctx context.Context, a *app.App, client *hosted.Clie
 	if seen == "" {
 		seen = "never"
 	}
+	updated := "unknown"
+	if it, perr := parseWorkstateItem(hi); perr == nil && !it.UpdatedAt.IsZero() {
+		updated = hosted.FormatLastSeen(it.UpdatedAt.UTC().Format(time.RFC3339))
+	}
 	return &takeoverCheck{
 		Name:    "liveness",
-		Failure: fmt.Sprintf("holder %s is live: last seen %s", who, seen),
-		Fix:     fmt.Sprintf("ask it to run `satelle story hold release %s`, or wait until it has been silent for %s ([sync] hold_stale_after)", id, staleAfter),
+		Failure: fmt.Sprintf("holder %s is live: heartbeat last seen %s; story record last updated %s", who, seen, updated),
+		Fix: fmt.Sprintf("the heartbeat proves only that the holder's daemon is running, not that its session is working on this story; "+
+			"a story record unchanged long after the heartbeat is the sign to confirm with the holder. "+
+			"Ask it to run `satelle story hold release %s`, wait until its heartbeat has been silent for %s ([sync] hold_stale_after), "+
+			"or, once confirmed, `satelle story hold takeover %s --force --reason \"…\"`", id, staleAfter, id),
 	}, nil
 }
 

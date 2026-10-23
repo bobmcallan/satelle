@@ -83,7 +83,7 @@ func TestSessionTokenIsBearerOnRESTHold(t *testing.T) {
 	t.Cleanup(ts.Close)
 	store, _ := sessionEnv(t, ts.URL)
 	c := NewClient(ts.URL, store, ts.Client())
-	if _, err := c.ItemHold(context.Background(), "proj", "sty_1"); err != nil {
+	if _, _, err := c.ItemHold(context.Background(), "proj", "sty_1"); err != nil {
 		t.Fatal(err)
 	}
 	if got != "Bearer "+testSessionToken {
@@ -155,7 +155,7 @@ func TestSessionTokenNotFoundIsScope(t *testing.T) {
 	t.Cleanup(ts.Close)
 	store, _ := sessionEnv(t, ts.URL)
 	c := NewClient(ts.URL, store, ts.Client())
-	if _, err := c.ItemHold(context.Background(), "other", "sty_1"); err == nil || !strings.Contains(err.Error(), "not in this session token's scope") {
+	if _, _, err := c.ItemHold(context.Background(), "other", "sty_1"); err == nil || !strings.Contains(err.Error(), "not in this session token's scope") {
 		t.Errorf("REST 404 err = %v", err)
 	}
 

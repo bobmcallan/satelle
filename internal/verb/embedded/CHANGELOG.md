@@ -1,3 +1,12 @@
+## [0.0.731] - 2026-10-23
+
+### Fixed
+- A finished story's hold no longer stops another machine's work-state push. When a push or sync pass finds another location's hold on a story that is terminal on the hosted copy, satelle takes the hold over and releases it on the server, without needing the holder, and drops it from the local hold registry. Previously such a hold was recorded and the push's items cursor stopped before it permanently, so every push re-collected every story since then and was killed at the service's 2-minute budget ("push failing"). The cursor now moves past hosted-terminal stories and stops only before a real hold on a story still in flight. (sty_aa9eaaba)
+- A story terminal on the hosted copy is never recorded or reported as held: `satelle story hold show <id>` prints `<id> unheld (terminal)`, and `satelle story list` and the session-start advisory no longer list it. Holds on stories still in flight, the `skip <id> (held elsewhere)` line and the reachability and push-failing warnings are unchanged. (sty_aa9eaaba)
+
+### Changed
+- A takeover refused because the holder is live now names the holder's heartbeat time and the story record's last update, and says that the heartbeat proves only that the holder's daemon is running, not that its session is working on the story — confirm with the holder before `--force --reason`. (sty_aa9eaaba)
+
 ## [0.0.730] - 2026-10-22
 
 ### Changed

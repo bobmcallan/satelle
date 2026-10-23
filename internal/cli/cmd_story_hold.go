@@ -99,7 +99,7 @@ func runStoryHoldShow(cmd *cobra.Command, serverArg, id string) error {
 	if err != nil {
 		return err
 	}
-	st, err := client.ItemHold(cmd.Context(), project, id)
+	st, hi, err := client.ItemHold(cmd.Context(), project, id)
 	switch {
 	case errors.Is(err, hosted.ErrItemNotFound):
 		fmt.Fprintf(cmd.OutOrStdout(), "%s unheld (not on the hosted server yet)\n", id)
@@ -108,6 +108,9 @@ func runStoryHoldShow(cmd *cobra.Command, serverArg, id string) error {
 		return err
 	case st.LocationID == "":
 		fmt.Fprintf(cmd.OutOrStdout(), "%s unheld\n", id)
+		return nil
+	case st.LocationID != client.Location() && hostedItemTerminal(cmd.Context(), hi):
+		fmt.Fprintf(cmd.OutOrStdout(), "%s unheld (terminal)\n", id)
 		return nil
 	}
 	h := holdSite{client: client, server: resolveServer(serverArg), project: project, repoRoot: repoRoot}

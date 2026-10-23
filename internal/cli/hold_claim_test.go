@@ -42,6 +42,9 @@ type fakeHoldServer struct {
 	checkouts []string // "<id>@<location>"
 	takeovers []string // "<id>@<location>"
 	releases  []string
+	itemGets  int // GET item requests, the per-item hold lookups
+
+	failTakeover bool // a takeover is attempted (and logged) but answered 500
 }
 
 func newFakeHoldServer() *fakeHoldServer {
@@ -127,7 +130,14 @@ func (h *fakeHoldServer) routes(mux *http.ServeMux, f *fakeWorkstateServer) {
 			return
 		}
 		id := r.PathValue("id")
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "hold": h.holders[id]})
+		h.itemGets++
+		// The hosted copy rides along with its hold, as the real server's GET item
+		// is the flat item plus the hold (sty_aa9eaaba).
+		body := map[string]any{"id": id, "hold": h.holders[id]}
+		if rec := h.f.hostedItem("probe", id); rec != nil {
+			body["kind"], body["status"], body["title"], body["record"] = rec["kind"], rec["status"], rec["title"], rec
+		}
+		_ = json.NewEncoder(w).Encode(body)
 	})
 	mux.HandleFunc("POST "+item+"/checkout", func(w http.ResponseWriter, r *http.Request) {
 		h.mu.Lock()
@@ -162,6 +172,10 @@ func (h *fakeHoldServer) routes(mux *http.ServeMux, f *fakeWorkstateServer) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		h.takeovers = append(h.takeovers, id+"@"+in.LocationID)
+		if h.failTakeover {
+			http.Error(w, "takeover refused", http.StatusInternalServerError)
+			return
+		}
 		now := hosted.HoldState{LocationID: in.LocationID, Label: "box", LastSeenAt: time.Now().UTC().Format(time.RFC3339)}
 		h.holders[id] = now
 		_ = json.NewEncoder(w).Encode(now)

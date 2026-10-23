@@ -145,7 +145,7 @@ type TakeoverResult struct {
 // TakeoverHold POSTs …/takeover. Previous holder is read from GET item
 // (the takeover response is only the new hold — satelle-server holdJSON).
 func (c *Client) TakeoverHold(ctx context.Context, project, id string) (TakeoverResult, error) {
-	prev, _ := c.ItemHold(ctx, project, id)
+	prev, _, _ := c.ItemHold(ctx, project, id)
 	resp, err := c.postHold(ctx, project, id, "takeover", c.locationBody())
 	if err != nil {
 		return TakeoverResult{}, err
@@ -157,32 +157,36 @@ func (c *Client) TakeoverHold(ctx context.Context, project, id string) (Takeover
 	return TakeoverResult{Hold: h, Previous: prev}, nil
 }
 
-// ItemHold GETs one workstate item and returns its hold (empty if unheld).
-// Consumes the hosted GET item surface; does not republish REST ingest/list.
-func (c *Client) ItemHold(ctx context.Context, project, id string) (HoldState, error) {
+// ItemHold GETs one workstate item and returns its hold (empty if unheld) and the
+// hosted item itself, decoded from the same response so a caller can judge the
+// hosted copy's state without a second request. Consumes the hosted GET item
+// surface; does not republish REST ingest/list.
+func (c *Client) ItemHold(ctx context.Context, project, id string) (HoldState, WorkstateItem, error) {
 	resp, err := c.doAuthed(ctx, http.MethodGet, holdItemRoute(project, id, ""), nil, "")
 	if err != nil {
-		return HoldState{}, err
+		return HoldState{}, WorkstateItem{}, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusUnauthorized {
-		return HoldState{}, ErrLoginRequired
+		return HoldState{}, WorkstateItem{}, ErrLoginRequired
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		if scope := c.sessionScopeErr(); scope != nil {
-			return HoldState{}, scope
+			return HoldState{}, WorkstateItem{}, scope
 		}
-		return HoldState{}, fmt.Errorf("%w: GET item %s: %s", ErrItemNotFound, id, serverError(resp.StatusCode, body))
+		return HoldState{}, WorkstateItem{}, fmt.Errorf("%w: GET item %s: %s", ErrItemNotFound, id, serverError(resp.StatusCode, body))
 	}
 	if resp.StatusCode != http.StatusOK {
-		return HoldState{}, fmt.Errorf("hosted: GET item %s: %s", id, serverError(resp.StatusCode, body))
+		return HoldState{}, WorkstateItem{}, fmt.Errorf("hosted: GET item %s: %s", id, serverError(resp.StatusCode, body))
 	}
 	var env struct {
 		Hold HoldState `json:"hold"`
 	}
 	_ = json.Unmarshal(body, &env)
-	return env.Hold, nil
+	var item WorkstateItem
+	_ = json.Unmarshal(body, &item)
+	return env.Hold, item, nil
 }
 
 // HoldLog GETs …/checkout-log. Client-only this slice (ACs name the three

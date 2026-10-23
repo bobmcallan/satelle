@@ -224,7 +224,7 @@ func pushStoryAttachments(ctx context.Context, out, errw io.Writer, a *app.App, 
 			}
 		}
 		if len(probe) > 0 {
-			skipped, _, serr := partitionByHold(ctx, clientFor(), server, project, a.RepoRoot, probe)
+			skipped, _, _, serr := partitionByHold(ctx, clientFor(), server, project, a.RepoRoot, probe)
 			if serr != nil {
 				fmt.Fprintf(errw, "attachments: hold check: %v\n", serr)
 				return

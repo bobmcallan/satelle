@@ -26,13 +26,13 @@ func TestHoldNotFoundIsTyped(t *testing.T) {
 	})
 	c := holdTestClient(t, mux)
 
-	if _, err := c.ItemHold(context.Background(), "p", "sty_new"); !errors.Is(err, ErrItemNotFound) {
+	if _, _, err := c.ItemHold(context.Background(), "p", "sty_new"); !errors.Is(err, ErrItemNotFound) {
 		t.Fatalf("ItemHold 404 = %v, want ErrItemNotFound", err)
 	}
 	if _, err := c.Checkout(context.Background(), "p", "sty_new"); !errors.Is(err, ErrItemNotFound) {
 		t.Fatalf("Checkout 404 = %v, want ErrItemNotFound", err)
 	}
-	_, err := c.ItemHold(context.Background(), "p", "sty_broken")
+	_, _, err := c.ItemHold(context.Background(), "p", "sty_broken")
 	if err == nil || errors.Is(err, ErrItemNotFound) {
 		t.Fatalf("ItemHold 500 = %v, must be an error that is not ErrItemNotFound", err)
 	}

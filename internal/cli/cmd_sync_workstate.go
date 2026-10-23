@@ -421,9 +421,15 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	// Chunked push; cursor advances only after every chunk confirms (AC3).
 	// Prefer a single POST when both sides fit in one chunk (preserves the
 	// small-batch shape tests and production already rely on).
-	skipped, keep, skipErr := partitionByHold(cmd.Context(), client, server, project, repoRoot, batch.Items)
+	skipped, keep, terminalHeld, skipErr := partitionByHold(cmd.Context(), client, server, project, repoRoot, batch.Items)
 	if skipErr != nil {
 		return skipErr
+	}
+	// A story finished on the hosted copy has no hold: release what another
+	// location left on it before the ingest, so the server accepts the rows
+	// (sty_aa9eaaba).
+	for _, id := range terminalHeld {
+		releaseTerminalHold(cmd.Context(), errw, site, id)
 	}
 	skippedIDs := map[string]bool{}
 	for _, s := range skipped {
@@ -1353,14 +1359,21 @@ func maxItemUpdatedAt(items []json.RawMessage) time.Time {
 
 // partitionByHold drops items held by another location so push cannot fork
 // a second live copy (sty_f6cff549). Local registry is a cache; ItemHold
-// probes unknown ids. Probe errors fall through to Apply (server authority).
-func partitionByHold(ctx context.Context, client *hosted.Client, server, project, repoRoot string, items []json.RawMessage) (skipped []*hosted.HeldError, keep []json.RawMessage, err error) {
+// probes ids not held here, and a probe that fails leaves the cache's word
+// standing. A probe error on an uncached id falls through to Apply (server
+// authority).
+//
+// A story whose hosted copy is terminal carries no hold (sty_aa9eaaba): it is
+// kept, no hold is recorded for it and any stale record is forgotten, and its id
+// is returned in terminalHeld for the caller to release on the server. This
+// function never changes a hold on the server.
+func partitionByHold(ctx context.Context, client *hosted.Client, server, project, repoRoot string, items []json.RawMessage) (skipped []*hosted.HeldError, keep []json.RawMessage, terminalHeld []string, err error) {
 	if len(items) == 0 {
-		return nil, items, nil
+		return nil, items, nil, nil
 	}
 	reg, err := hosted.LoadHolds(server, project, repoRoot)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	self := client.Location()
 	keep = make([]json.RawMessage, 0, len(items))
@@ -1372,21 +1385,30 @@ func partitionByHold(ctx context.Context, client *hosted.Client, server, project
 			keep = append(keep, raw)
 			continue
 		}
-		if rec, ok := reg[id]; ok && rec.Location != "" && self != "" && rec.Location != self {
-			skipped = append(skipped, &hosted.HeldError{ItemID: id, Hold: hosted.HoldState{LocationID: rec.Location, Label: rec.Label, LastSeenAt: rec.LastSeen}})
-			continue
-		}
 		if self != "" && reg[id].Location != self {
-			st, herr := client.ItemHold(ctx, project, id)
-			if herr == nil && st.LocationID != "" && st.LocationID != self {
+			st, hi, herr := client.ItemHold(ctx, project, id)
+			cached := reg[id].Location != ""
+			switch {
+			case herr == nil && st.LocationID != "" && st.LocationID != self:
+				if hostedItemTerminal(ctx, hi) {
+					_ = hosted.ForgetHold(server, project, repoRoot, id)
+					terminalHeld = append(terminalHeld, id)
+					break
+				}
 				_ = hosted.RecordHold(server, project, repoRoot, id, hosted.HoldRecordFrom(st, time.Now()))
 				skipped = append(skipped, &hosted.HeldError{ItemID: id, Hold: st})
+				continue
+			case herr == nil && cached && st.LocationID == "":
+				_ = hosted.ForgetHold(server, project, repoRoot, id)
+			case herr != nil && cached:
+				rec := reg[id]
+				skipped = append(skipped, &hosted.HeldError{ItemID: id, Hold: hosted.HoldState{LocationID: rec.Location, Label: rec.Label, LastSeenAt: rec.LastSeen}})
 				continue
 			}
 		}
 		keep = append(keep, raw)
 	}
-	return skipped, keep, nil
+	return skipped, keep, terminalHeld, nil
 }
 
 // marshalWorkstateLedger encodes a ledger entry for ingest.

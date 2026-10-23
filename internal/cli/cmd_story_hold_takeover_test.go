@@ -198,14 +198,31 @@ func TestTakeoverRefusedWhenTheStatusDiverged(t *testing.T) {
 // says to ask it to release.
 func TestTakeoverRefusedWhileTheHolderIsLive(t *testing.T) {
 	w := newTakeoverWorld(t)
-	id := w.story(t, "live holder", time.Now().UTC().Format(time.RFC3339), func(string) {})
+	seen := time.Now().UTC().Format(time.RFC3339)
+	id := w.story(t, "live holder", seen, func(string) {})
+	rec := w.fx.f.hostedItem("probe", id)
+	updated, err := time.Parse(time.RFC3339Nano, rec["updated_at"].(string))
+	if err != nil {
+		t.Fatalf("hosted record updated_at: %v", err)
+	}
 
 	msg := w.refused(t, id)
 
-	for _, want := range []string{"liveness:", "desk", "is live", "story hold release " + id, "hold_stale_after"} {
+	for _, want := range []string{
+		"liveness:", "desk", "is live", "story hold release " + id, "hold_stale_after",
+		// Both times, each under its own name (sty_aa9eaaba).
+		"heartbeat last seen " + seen,
+		"story record last updated " + updated.UTC().Format(time.RFC3339),
+		// What the heartbeat does not prove, and what to do about it.
+		"only that the holder's daemon is running, not that its session is working on this story",
+		"confirm with the holder", "--force --reason",
+	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("refusal missing %q:\n%s", want, msg)
 		}
+	}
+	if strings.Contains(msg, "stalled") {
+		t.Errorf("the refusal must not declare the holder stalled:\n%s", msg)
 	}
 	if strings.Contains(msg, "code:") || strings.Contains(msg, "status:") {
 		t.Errorf("only the liveness check fails here:\n%s", msg)
