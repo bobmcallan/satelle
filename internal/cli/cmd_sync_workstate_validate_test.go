@@ -50,17 +50,16 @@ func TestPushWithholdsAStoryWhoseRowDisagreesWithItsChain(t *testing.T) {
 			t.Errorf("report missing %q:\n%s", want, out)
 		}
 	}
-	items, rows := postedRows(f)
+	items, _ := postedRows(f)
 	if !slices.Equal(items, []string{sound}) {
 		t.Errorf("posted items = %v, want only the sound story %s", items, sound)
 	}
-	for _, id := range rows {
-		if id == drifted {
-			t.Errorf("a ledger row of the withheld story %s left", drifted)
-		}
+	// Story events go by Append (sty_9bdf08c4).
+	if n := len(f.chain.appendsFor(drifted)); n != 0 {
+		t.Errorf("the withheld story %s was appended %d times", drifted, n)
 	}
-	if !slices.Contains(rows, sound) {
-		t.Errorf("the sound story's ledger rows did not publish: %v", rows)
+	if len(f.chain.stored("probe", sound)) == 0 {
+		t.Errorf("the sound story's events did not publish")
 	}
 
 	// Rebuilt from its chain, the story is published whole on the next push.
@@ -71,12 +70,12 @@ func TestPushWithholdsAStoryWhoseRowDisagreesWithItsChain(t *testing.T) {
 	if out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL); err != nil {
 		t.Fatalf("push after reconcile: %v\n%s", err, out)
 	}
-	items, rows = postedRows(f)
+	items, _ = postedRows(f)
 	if !slices.Contains(items, drifted) {
 		t.Errorf("the repaired story's item did not publish: %v", items)
 	}
-	if n := countOf(rows, drifted); n < 3 { // story_created, workflow_version, the reconcile row
-		t.Errorf("the withheld story's events did not follow: %d rows, %v", n, rows)
+	if n := len(f.chain.stored("probe", drifted)); n < 3 { // story_created, workflow_version, the reconcile row
+		t.Errorf("the withheld story's events did not follow: %d events", n)
 	}
 }
 

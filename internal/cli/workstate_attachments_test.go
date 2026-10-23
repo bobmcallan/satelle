@@ -285,10 +285,16 @@ func TestAttachmentExposure(t *testing.T) {
 
 func assertNoSecretInApply(t *testing.T, f *fakeWorkstateServer, secret string) {
 	t.Helper()
+	// Story events go by Chain/Append, not Apply (sty_9bdf08c4): the body is as
+	// absent from them as from the rows.
+	if f.chain.carries(secret) {
+		t.Error("an attachment body must never appear in a story event")
+	}
+	appends := f.chain.appendCount()
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if len(f.posts["probe"]) == 0 {
-		t.Fatal("expected at least one workstate Apply")
+	if len(f.posts["probe"]) == 0 && appends == 0 {
+		t.Fatal("expected at least one workstate Apply or story Append")
 	}
 	blob, _ := json.Marshal(f.posts)
 	if strings.Contains(string(blob), secret) {

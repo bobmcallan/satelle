@@ -5,6 +5,7 @@ package cli
 
 import (
 	"context"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -173,6 +174,15 @@ func TestScopedPushSendsOnlyTheNamedStory(t *testing.T) {
 	f.mu.Lock()
 	f.posts = map[string][]map[string]any{}
 	f.mu.Unlock()
+	// Every story's events went by Append in the project push; m1 then gains one
+	// more, which is all the scoped push may send (sty_9bdf08c4).
+	appendsBefore := f.chain.appendCount()
+	published := len(f.chain.stored("probe", fx.m1))
+	db := openScopeDB(t)
+	if _, err := db.Ledger.Append(context.Background(), ledger.AppendInput{StoryID: fx.m1, Kind: "note", Body: "after the project push"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
 
 	out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL, fx.m1)
 	if err != nil {
@@ -182,20 +192,24 @@ func TestScopedPushSendsOnlyTheNamedStory(t *testing.T) {
 	if !slices.Equal(items, []string{fx.m1}) {
 		t.Errorf("posted items = %v, want only %s (no execution %s, task %s)", items, fx.m1, fx.exec, fx.task)
 	}
-	// The two rows the fixture appended, the workflow_version the first of them
-	// brought into the chain, and the definition_snapshot the open seeded for a
-	// story created without a story_created (sty_d84be8bc).
-	if !slices.Equal(rows, []string{fx.m1, fx.m1, fx.m1, fx.m1}) {
-		t.Errorf("posted ledger rows belong to %v, want exactly %s's four", rows, fx.m1)
+	if len(rows) != 0 {
+		t.Errorf("Apply carried ledger rows of %v; story events go by Append", rows)
 	}
-	if !strings.Contains(out, "scoped push") || !strings.Contains(out, "1 item(s), 4 ledger") {
+	if n := f.chain.appendCount() - appendsBefore; n != 1 || len(f.chain.stored("probe", fx.m1)) != published+1 {
+		t.Errorf("the scoped push made %d Appends and the server holds %d of %s's events, want one Append adding one event to %d",
+			n, len(f.chain.stored("probe", fx.m1)), fx.m1, published)
+	}
+	if !strings.Contains(out, "scoped push") || !strings.Contains(out, "1 item(s), 0 ledger") {
 		t.Errorf("scoped push summary = %q", out)
 	}
 	cursorAfter, err := hosted.LoadWorkstateCursor(ts.URL, "probe", repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cursorAfter != cursorBefore {
+	// The story heads are the per-story record of what the server accepted; the
+	// project push position is everything else.
+	cursorBefore.StoryHeads, cursorAfter.StoryHeads = nil, nil
+	if !reflect.DeepEqual(cursorAfter, cursorBefore) {
 		t.Errorf("scoped push moved the cursor: %+v -> %+v", cursorBefore, cursorAfter)
 	}
 }
@@ -217,10 +231,20 @@ func TestScopedEpicResolvesToContainerAndMembers(t *testing.T) {
 		if want := sortedIDs(fx.epic, fx.m1, fx.m2); !slices.Equal(items, want) {
 			t.Errorf("posted items = %v, want %v (unrelated %s and execution %s absent)", items, want, fx.other, fx.exec)
 		}
+		if len(rows) != 0 {
+			t.Errorf("Apply carried ledger rows of %v; story events go by Append", rows)
+		}
 		// Each story's two fixture rows, plus the workflow_version and the
-		// definition_snapshot the chain gained (sty_d84be8bc).
-		if want := sortedIDs(fx.epic, fx.epic, fx.epic, fx.epic, fx.m1, fx.m1, fx.m1, fx.m1, fx.m2, fx.m2, fx.m2, fx.m2); !slices.Equal(rows, want) {
-			t.Errorf("posted ledger rows belong to %v, want %v", rows, want)
+		// definition_snapshot the chain gained (sty_d84be8bc), go by Append.
+		for _, id := range []string{fx.epic, fx.m1, fx.m2} {
+			if n := len(f.chain.stored("probe", id)); n != 4 {
+				t.Errorf("story %s: %d events appended, want its four", id, n)
+			}
+		}
+		for _, id := range []string{fx.other, fx.exec, fx.task} {
+			if n := len(f.chain.appendsFor(id)); n != 0 {
+				t.Errorf("%s is outside the epic but was appended %d times", id, n)
+			}
 		}
 		if strings.Contains(out, "container only") {
 			t.Errorf("an epic with members printed the empty-epic notice:\n%s", out)

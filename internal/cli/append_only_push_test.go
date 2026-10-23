@@ -158,8 +158,10 @@ func TestPushSkipsALedgerRowTheServerRefusesAsHeld(t *testing.T) {
 
 	out := fx.push(t)
 
-	if fx.f.ledgerCount("probe", refusedStory) != 0 || fx.f.hasItem("probe", refusedStory) {
-		t.Errorf("rows of the refused story were stored:\n%s", out)
+	// The refusal is of the item: the story's events go by Append, which holds nothing
+	// back (sty_9bdf08c4), so they are delivered either way.
+	if fx.f.hasItem("probe", refusedStory) {
+		t.Errorf("the refused story's item was stored:\n%s", out)
 	}
 	if !fx.f.hasItem("probe", other) || fx.f.ledgerCount("probe", other) == 0 {
 		t.Errorf("the rest of the push was not delivered:\n%s", out)

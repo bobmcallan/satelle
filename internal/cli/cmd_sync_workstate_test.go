@@ -71,6 +71,10 @@ type fakeWorkstateServer struct {
 	// server refuses as held by another location, as one that still holds
 	// executions does (sty_1cb9f98f). A request carrying any of them is refused whole.
 	refuseHeld map[string]bool
+	// chain is the Chain service served beside Sync (sty_9bdf08c4); applies
+	// captures every Apply request as it arrived.
+	chain   *fakeChain
+	applies []*syncpb.ApplyRequest
 }
 
 // refusesHeld reports whether the request carries a record refuseHeld names.
@@ -94,9 +98,13 @@ func (f *fakeWorkstateServer) refusesHeld(req *syncpb.ApplyRequest) bool {
 	return false
 }
 
-// sent counts the items and ledger rows the server has been sent for project, in
-// every Apply it accepted.
+// sent counts the items and ledger rows the server has been sent for project: the
+// rows of every Apply it accepted, and the story events it accepted by Append
+// (sty_9bdf08c4).
 func (f *fakeWorkstateServer) sent(project string) (items, ledger int) {
+	if f.chain != nil {
+		ledger = f.chain.eventCount(project) // before f.mu: the chain takes it while mirroring
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, p := range f.posts[project] {
@@ -171,11 +179,14 @@ func newFakeWorkstateServerWith(t *testing.T, routes func(mux *http.ServeMux, f 
 
 // attachTestGRPC installs a process-wide bufconn dialer for hosted.Client
 // gRPC (SetTestGRPCDial is not safe for t.Parallel).
-func attachTestGRPC(t *testing.T, srv syncpb.SyncServer) {
+func attachTestGRPC(t *testing.T, srv syncpb.SyncServer, extra ...func(*grpc.Server)) {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	gs := grpc.NewServer()
 	syncpb.RegisterSyncServer(gs, srv)
+	for _, register := range extra {
+		register(gs)
+	}
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(func() {
 		gs.Stop()
@@ -195,7 +206,8 @@ func attachTestGRPC(t *testing.T, srv syncpb.SyncServer) {
 // attachFakeWorkstateGRPC serves Sync against the same maps push/pull tests use.
 func attachFakeWorkstateGRPC(t *testing.T, f *fakeWorkstateServer) {
 	t.Helper()
-	attachTestGRPC(t, &fakeWorkstateGRPC{f: f})
+	f.chain = newFakeChain(f)
+	attachTestGRPC(t, &fakeWorkstateGRPC{f: f}, func(gs *grpc.Server) { syncpb.RegisterChainServer(gs, f.chain) })
 }
 
 type fakeWorkstateGRPC struct {
@@ -207,6 +219,7 @@ func (s *fakeWorkstateGRPC) Apply(ctx context.Context, req *syncpb.ApplyRequest)
 	s.f.mu.Lock()
 	defer s.f.mu.Unlock()
 	s.f.postN++
+	s.f.applies = append(s.f.applies, proto.Clone(req).(*syncpb.ApplyRequest))
 	if s.f.failOnPost > 0 && s.f.postN == s.f.failOnPost {
 		return nil, status.Error(codes.Internal, "injected failure")
 	}

@@ -181,6 +181,12 @@ type WorkstateCursor struct {
 	LedgerSeq      int64  `json:"ledger_seq,omitempty"`
 	LedgerAnchorID string `json:"ledger_anchor_id,omitempty"`
 	LedgerStoreID  string `json:"ledger_store_id,omitempty"`
+	// StoryHeads maps a story id to the last of its events this server accepted from
+	// this checkout (sty_9bdf08c4): the base the next Chain/Append names. It lives
+	// here so a rebind or another server starts a story from an empty base rather
+	// than a head the new project never saw. SaveStoryHead writes it per story;
+	// SaveWorkstateCursor leaves it alone unless the cursor it is given carries one.
+	StoryHeads map[string]string `json:"story_heads,omitempty"`
 }
 
 // docSyncMu serialises read-modify-write of the state file across concurrent
@@ -269,7 +275,35 @@ func SaveWorkstateCursor(server, project, repoRoot string, c WorkstateCursor) er
 	if state.Workstate == nil {
 		state.Workstate = map[string]WorkstateCursor{}
 	}
-	state.Workstate[documentCursorKey(server, project, repoRoot)] = c
+	key := documentCursorKey(server, project, repoRoot)
+	if c.StoryHeads == nil {
+		c.StoryHeads = state.Workstate[key].StoryHeads
+	}
+	state.Workstate[key] = c
+	return writeDocumentSyncState(state)
+}
+
+// SaveStoryHead records eventID as the last event of storyID the server accepted
+// for the key, leaving the rest of the cursor as it was.
+func SaveStoryHead(server, project, repoRoot, storyID, eventID string) error {
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return err
+	}
+	if state.Workstate == nil {
+		state.Workstate = map[string]WorkstateCursor{}
+	}
+	key := documentCursorKey(server, project, repoRoot)
+	c := state.Workstate[key]
+	heads := make(map[string]string, len(c.StoryHeads)+1)
+	for id, head := range c.StoryHeads {
+		heads[id] = head
+	}
+	heads[storyID] = eventID
+	c.StoryHeads = heads
+	state.Workstate[key] = c
 	return writeDocumentSyncState(state)
 }
 

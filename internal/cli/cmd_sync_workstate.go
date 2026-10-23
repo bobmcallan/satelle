@@ -369,8 +369,21 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	if !full && !cursor.ItemsUpdatedAt.IsZero() {
 		batch.Items = filterItemsAfter(batch.Items, cursor.ItemsUpdatedAt)
 	}
+	// The stories whose events are not yet on the server (sty_9bdf08c4). Heads are
+	// read apart from the cursor: a scoped push reads no cursor, and --full resends
+	// rows but not what the server already accepted.
+	var plan []storyAppend
+	if optIn["ledger"] {
+		stored, lerr := hosted.LoadWorkstateCursor(server, project, repoRoot)
+		if lerr != nil {
+			return fmt.Errorf("load workstate cursor: %w", lerr)
+		}
+		if plan, err = planStoryAppends(cmd.Context(), a, scope, stored.StoryHeads); err != nil {
+			return err
+		}
+	}
 
-	if len(batch.Items) == 0 && len(batch.Ledger) == 0 {
+	if len(batch.Items) == 0 && len(batch.Ledger) == 0 && len(plan) == 0 {
 		settlePendingClaims(cmd.Context(), out, cmd.ErrOrStderr(), a, server, project)
 		if hadCursor && !full {
 			fmt.Fprintf(out, "Work-state up to date on %s — no records changed since the last push.\n", server)
@@ -398,7 +411,13 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	// any of its events leave (sty_d84be8bc). One that disagrees is withheld like a
 	// held story — its rows stay behind the cursors — and the push reports it and
 	// fails once the others have been sent, so a withheld story is never silent.
-	drift, derr := classifyFoldDrift(cmd.Context(), a, batch.Items, ledgerRows)
+	// A story with events to append is classified whether or not the batch names it:
+	// its rows may sit behind the cursors while its events still leave.
+	classifyRows := slices.Clone(ledgerRows)
+	for _, p := range plan {
+		classifyRows = append(classifyRows, ledgerRowMeta{storyID: p.id})
+	}
+	drift, derr := classifyFoldDrift(cmd.Context(), a, batch.Items, classifyRows)
 	if derr != nil {
 		return derr
 	}
@@ -418,7 +437,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		res := holdResult{held: map[string]string{}, unavailable: map[string]string{}}
 		if holdOn {
 			var herr error
-			if res, herr = classifyHolds(cmd.Context(), a, batch.Items, ledgerRows); herr != nil {
+			if res, herr = classifyHolds(cmd.Context(), a, batch.Items, classifyRows); herr != nil {
 				return herr
 			}
 			for _, l := range res.lines() {
@@ -439,13 +458,34 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 			if !earliestHeld.IsZero() {
 				maxItems = itemsCursorBefore(batch.Items, earliestHeld, cursor.ItemsUpdatedAt)
 			}
-			if len(batch.Items) == 0 && len(batch.Ledger) == 0 {
-				fmt.Fprintln(out, "No work-state rows to push after holding unpushed stories.")
-				reconcilePendingClaims(cmd.Context(), out, errw, site)
-				recordOK()
-				return nil
-			}
 		}
+	}
+
+	// Story events go by compare-and-append, never through Apply (sty_9bdf08c4).
+	withStories := len(batch.Ledger)
+	batch.Ledger = withoutStoryEntries(batch.Ledger)
+	storyRowsDropped := len(batch.Ledger) < withStories
+	published, appendErr := publishStoryEvents(cmd.Context(), errw, a, client, server, project, plan, held)
+	if published > 0 {
+		fmt.Fprintf(out, "Published the events of %d stor(y/ies) to project %q on %s.\n", published, project, server)
+	}
+	if appendErr != nil {
+		if errors.Is(appendErr, hosted.ErrLoginRequired) {
+			recordWorkstatePush(a.RepoRoot, false, appendErr.Error())
+			return appendErr
+		}
+		recordOK = func() { recordWorkstatePush(a.RepoRoot, false, appendErr.Error()) }
+		defer func() {
+			if retErr == nil {
+				retErr = appendErr
+			}
+		}()
+	}
+	if held != nil && len(batch.Items) == 0 && len(batch.Ledger) == 0 {
+		fmt.Fprintln(out, "No work-state rows to push after holding unpushed stories.")
+		reconcilePendingClaims(cmd.Context(), out, errw, site)
+		recordOK()
+		return nil
 	}
 
 	// Chunked push; cursor advances only after every chunk confirms (AC3).
@@ -559,7 +599,8 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	// A collided story's record is already skipped above or refused by the server;
 	// its ledger entries are this machine's own, so they are sent regardless.
 	reconcilePendingClaims(cmd.Context(), out, errw, site)
-	if len(batch.Items) == 0 && len(batch.Ledger) == 0 && len(publishedItems) == 0 {
+	// Story rows were sent as events, so the ledger cursor still moves past them.
+	if len(batch.Items) == 0 && len(batch.Ledger) == 0 && len(publishedItems) == 0 && !storyRowsDropped {
 		fmt.Fprintln(out, "No work-state rows to push after hold partition.")
 		return nil
 	}

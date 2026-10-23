@@ -156,10 +156,20 @@ func TestWorkstatePushCursorAfterVacuumCopyResets(t *testing.T) {
 	seedCred(t, ts.URL)
 	repo := workstateRepo(t, ledgerPushToml)
 	createProbeStory(t)
+	// The anchor is a row of no story: a story's events are published by Append and
+	// have a head to keep, so deleting one would be a story diverging, not a cursor
+	// losing its place (sty_9bdf08c4).
+	withRepoStore(t, func(db *store.DB) {
+		if _, err := db.Ledger.Upsert(context.Background(), ledger.Entry{
+			ID: "evt_anchor001", Kind: ledger.KindStoryUpdated, Body: "anchor", CreatedAt: time.Now(),
+		}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	})
 	pushOK(t, ts.URL)
 	saved, err := hosted.LoadWorkstateCursor(ts.URL, "probe", repo)
-	if err != nil || saved.LedgerSeq <= 0 {
-		t.Fatalf("first push saved no position: %+v, %v", saved, err)
+	if err != nil || saved.LedgerSeq <= 0 || saved.LedgerAnchorID != "evt_anchor001" {
+		t.Fatalf("first push saved no position on the anchor: %+v, %v", saved, err)
 	}
 
 	dbPath := runtimeDBPath(t)

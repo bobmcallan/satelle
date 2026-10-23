@@ -25,6 +25,35 @@ func TestHoldRegistryRoundTrip(t *testing.T) {
 	}
 }
 
+// sty_9bdf08c4: story heads live in the workstate cursor, per server, project and
+// repo; the end-of-push cursor save carries none and must not wipe them.
+func TestStoryHeadsSurviveACursorSaveAndStayPerKey(t *testing.T) {
+	DocumentSyncStatePathOverride = filepath.Join(t.TempDir(), "document-sync-state.json")
+	t.Cleanup(func() { DocumentSyncStatePathOverride = "" })
+	const server, repo = "https://s.example", "/repo"
+	if err := SaveStoryHead(server, "p", repo, "sty_a", "evt_1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveStoryHead(server, "p", repo, "sty_b", "evt_2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveStoryHead(server, "p", repo, "sty_a", "evt_3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveWorkstateCursor(server, "p", repo, WorkstateCursor{LedgerSeq: 7}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadWorkstateCursor(server, "p", repo)
+	if err != nil || got.LedgerSeq != 7 || got.StoryHeads["sty_a"] != "evt_3" || got.StoryHeads["sty_b"] != "evt_2" {
+		t.Fatalf("cursor = %+v, %v; want seq 7 and both heads", got, err)
+	}
+	for _, other := range [][3]string{{server, "q", repo}, {"https://t.example", "p", repo}, {server, "p", "/other"}} {
+		if c, _ := LoadWorkstateCursor(other[0], other[1], other[2]); len(c.StoryHeads) != 0 {
+			t.Errorf("heads leaked to %v: %v", other, c.StoryHeads)
+		}
+	}
+}
+
 func TestDocumentCursorRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	DocumentSyncStatePathOverride = filepath.Join(dir, "document-sync-state.json")
