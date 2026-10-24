@@ -1,3 +1,8 @@
+## [0.0.738] - 2026-10-24
+
+### Fixed
+- When the server refuses a story's events because the story has moved, the "N event(s) not seen" count and the recorded conflict now use the server's own count (`missing_count`). The server lists at most a few of those events in the refusal, so the count was too low on a long chain. An older server that sends no count still gets the length of the list. (sty_e292e7f5)
+
 ## [0.0.737] - 2026-10-24
 
 ### Changed
