@@ -72,16 +72,15 @@ remote reads. Skipped entirely unless the workstate area is opted in.`,
 		Short:       "Replicate opted-in work-state areas to the bound hosted project",
 		Annotations: needsStore(),
 		Args:        cobra.ArbitraryArgs,
-		Long: `push upserts local stories, task-executions, and ledger entries, for areas whose
+		Long: `push upserts local stories, task-executions and ledger entries, for areas whose
 [sync] scope is personal or shared, into the bound hosted project. Only records
 changed since the last push are sent; --full re-sends everything. Requires
 "satelle project bind <slug>".
 
 With stories opted in it also uploads each story's markdown attachments, change
-patches included, to that project, so another machine can read them; binary ones
-never leave the machine. With [sync] stories = shared and [hosted] workspace set
-they also go to the team workspace's documents collection, for a team remote to
-read. A refused upload is reported with its route and retried next push.
+patches included; binary ones stay local. With [sync] stories = shared and
+[hosted] workspace set they also go to the team workspace's documents collection. A refused
+upload is retried next push.
 
 Given story ids or an epic id it pushes only those, whole, leaving the cursor.
 
