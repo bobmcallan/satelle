@@ -1,3 +1,13 @@
+## [0.0.749] - 2026-10-24
+
+### Changed
+- A child of an epic can no longer leave its route's entry state into an engaging status, by a transition or by `story create` straight into one, until its epic has passed its readiness round. The refusal names the epic and the command that readies it: `satelle story ready <epic>`. The epic's readiness review is what sets each child's `depends-on` edges and `lane:trunk`, so skipping it sent children down the wrong release path. Children on routes with no readiness step (substrate, docs) are covered too. Cancelling or parking an un-readied child stays open, an epic's own readiness round is not refused, and stories in no epic are unchanged. `satelle help epic-wave` states the rule. (sty_a476b913)
+
+## [serve-v0.0.207] - 2026-10-24
+
+### Changed
+- The service binary carries the updated epic-wave help. (sty_a476b913)
+
 ## [0.0.748] - 2026-10-24
 
 ### Added
