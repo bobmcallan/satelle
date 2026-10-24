@@ -1,3 +1,13 @@
+## [0.0.748] - 2026-10-24
+
+### Added
+- A workflow step can wait on a team remote's run for its story: `remote_wait = { remote = "<rmt_ id>", on = { accept = "<status>", reject = "<status>", stopped = "<status>" } }` in `step.toml`. `satelle validate` refuses an outcome mapped to an edge the route does not declare. `satelle story get` and `satelle story route` show where the story stands with that remote: queued with its position, running with its step, or concluded with its outcome. When the run concludes, the driver takes the mapped edge through the step's normal gates and relays the run's findings to the next performer. A park outcome goes through the drive's ordinary park, and an unmapped outcome parks. A run that ended without reporting counts as `stopped`. The run is read from satelle.dev (`GET /api/v1/remotes/{remote}/stories/{id}/run`); until that route is served, the step keeps waiting. A node whose status report carrying findings is refused resends it once without them. The binary holds no PR or GitHub logic: what a remote's outcome means is entirely workflow configuration. (sty_8c0f521d)
+
+## [serve-v0.0.206] - 2026-10-24
+
+### Changed
+- The service binary reads `remote_wait` on workflow steps. (sty_8c0f521d)
+
 ## [0.0.747] - 2026-10-24
 
 ### Added
