@@ -5,10 +5,11 @@ package remotenode
 // of it, created with the wake's subject as its inputs, driven through the
 // task's own route and validators by the same drive a story uses, and reported
 // to satelle.dev on the heartbeat as queued, running (with the step) and
-// concluded (with the outcome). The subject story item is never loaded or written:
-// the one thing recorded about it is an execution_link ledger row, written when the
-// run concludes, and the run is then pushed to the team workspace under the node's
-// own token.
+// concluded (with the outcome). The subject story item is never loaded or edited:
+// the only rows written on it are an execution_link row, written when the run
+// concludes, and an execution_stopped alert, written by the drive when the run ends
+// short of its route's exit. The run is then pushed to the team workspace under the
+// node's own token.
 
 import (
 	"context"
@@ -46,7 +47,7 @@ const ExecutionTag = "remote-node:"
 
 // Input names a run descriptor fills, when the task declares them.
 const (
-	InputStoryID       = "story_id"
+	InputStoryID       = workitem.InputStoryID
 	InputTrigger       = "trigger"
 	InputTriggerSource = "trigger_source"
 )

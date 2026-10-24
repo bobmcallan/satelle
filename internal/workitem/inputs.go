@@ -21,6 +21,11 @@ const (
 	InputBool   = "bool"
 )
 
+// InputStoryID names the input of an execution that holds its subject story: the
+// story a team remote's wake was made about. A node fills it from the run
+// descriptor, and a drive that stops the execution short writes its alert there.
+const InputStoryID = "story_id"
+
 // InputEnvPrefix prefixes every input's environment variable name; the rest is
 // the upper-cased input name.
 const InputEnvPrefix = "SATELLE_INPUT_"

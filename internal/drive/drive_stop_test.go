@@ -5,10 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/bobmcallan/satelle/internal/agentstep"
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/drive"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -25,6 +30,16 @@ const question = "Should I use X or Y?"
 // routeNoPark is routeDone without a park state.
 const routeNoPark = `["*"]
 obligations = ["raised", "coded", "closed"]
+cancel = { state = "cancelled" }
+`
+
+// routeExecutionParks is routeNoPark with an execution list that has a park
+// state: the wildcard list does not park an execution, so an execution is only
+// parked where its own list says so.
+const routeExecutionParks = routeNoPark + `
+[execution]
+obligations = ["raised", "coded", "closed"]
+park = { state = "blocked" }
 cancel = { state = "cancelled" }
 `
 
@@ -579,5 +594,285 @@ func TestDriveStopReasonsNameStepAndPerformer(t *testing.T) {
 				wantStopPayload(t, row, "*")
 			}
 		})
+	}
+}
+
+// An execution has no session watching it, so its drive's every end short of the
+// route's exit is recorded as stopped (sty_132e7781): a drive-stopped row on the
+// execution carrying outcome "stopped", and, when its story_id input names a
+// story, an execution_stopped alert on that story.
+
+// execution makes a task that declares story_id and one execution of it about
+// subject; "" leaves the input unset. It returns the task and the execution.
+func (e *env) execution(subject string) (task, exec workitem.Item) {
+	e.t.Helper()
+	ctx := context.Background()
+	task, err := e.db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindTask, Title: "sweep",
+		Inputs: []workitem.InputDecl{{Name: workitem.InputStoryID, Type: workitem.InputString}},
+	}, time.Now())
+	if err != nil {
+		e.t.Fatalf("create task: %v", err)
+	}
+	req := map[string]any{"title": "one sweep", "parent_id": task.ID}
+	if subject != "" {
+		req["inputs"] = map[string]string{workitem.InputStoryID: subject}
+	}
+	raw, err := verb.Dispatch(ctx, "execution-create", mustJSON(req))
+	if err != nil {
+		e.t.Fatalf("execution-create: %v", err)
+	}
+	if err := json.Unmarshal(raw, &exec); err != nil || exec.ID == "" {
+		e.t.Fatalf("execution-create: %v %q", err, raw)
+	}
+	return task, exec
+}
+
+// wantStoppedExecution checks the one drive-stopped row an execution's stop wrote
+// and, when subject names a story, the one execution_stopped alert on it. It
+// returns the row's payload.
+func (e *env) wantStoppedExecution(task, exec workitem.Item, subject, lastMessage string) map[string]any {
+	e.t.Helper()
+	_, stops := e.driveRows(exec.ID)
+	if len(stops) != 1 {
+		e.t.Fatalf("want exactly one drive-stopped row on the execution, got %d", len(stops))
+	}
+	p := wantStopPayload(e.t, stops[0], lastMessage)
+	if p["outcome"] != drive.OutcomeStopped {
+		e.t.Errorf("drive-stopped payload outcome = %v, want %q", p["outcome"], drive.OutcomeStopped)
+	}
+	if subject == "" {
+		return p
+	}
+	alerts := e.rows(subject, ledger.KindExecutionStopped)
+	if len(alerts) != 1 {
+		e.t.Fatalf("want exactly one execution_stopped row on the subject, got %d", len(alerts))
+	}
+	a := payloadOf(e.t, alerts[0])
+	if a["execution"] != exec.ID || a["task"] != task.ID || a["step"] != p["step"] || a["performer"] != p["performer"] || a["last_message"] != p["last_message"] {
+		e.t.Errorf("alert payload = %v, want the execution %s, task %s and the stop's step, performer and last_message %v", a, exec.ID, task.ID, p)
+	}
+	return p
+}
+
+// cancelOnResolve cancels the drive's context the first time the engine's
+// performer rule is asked, which is after the drive loaded the item and before it
+// presented anything.
+type cancelOnResolve struct {
+	*fakePerformers
+	cancel context.CancelFunc
+}
+
+func (c cancelOnResolve) StepPerformer(ctx context.Context, item workitem.Item, step string) (verb.PerformerResolution, error) {
+	c.cancel()
+	return c.fakePerformers.StepPerformer(ctx, item, step)
+}
+
+// A refusal before the first presentation, which a story's drive leaves
+// unrecorded, is a stop for an execution, and nothing is parked even where the
+// route could.
+func TestExecutionStoppedOnRefusal(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		perf *fakePerformers
+		gate func(*env)
+		want string
+	}{
+		{"unattended step",
+			&fakePerformers{kinds: map[string]verb.PerformerKind{"in_progress": verb.PerformerInLoop}, agents: map[string]string{"in_progress": "coder"}},
+			func(*env) {}, "bind a headless CLI"},
+		{"gate error on the first edge", &fakePerformers{},
+			func(e *env) { e.gater.errs["in_progress"] = errors.New("gate backend unreachable") }, "gate backend unreachable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t, routeExecutionParks, workRoute)
+			tc.gate(e)
+			subject := e.story()
+			task, exec := e.execution(subject)
+			_, err := drive.Story(context.Background(), exec.ID, opts(tc.perf))
+			var stopped *drive.Stopped
+			if !errors.As(err, &stopped) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want a *Stopped naming %q, got %v", tc.want, err)
+			}
+			if e.status(exec.ID) != "backlog" {
+				t.Errorf("status = %q, a refusal before the first presentation parks nothing", e.status(exec.ID))
+			}
+			e.wantStoppedExecution(task, exec, subject, "")
+			if parks, _ := e.driveRows(exec.ID); len(parks) != 0 {
+				t.Errorf("want no park comment, got %d", len(parks))
+			}
+		})
+	}
+}
+
+// A performer that fails, and a context that ends before or after the first
+// presentation, each leave one stop.
+func TestExecutionStoppedOnFailure(t *testing.T) {
+	t.Run("performer fails", func(t *testing.T) {
+		e := newEnv(t, routeNoPark, workRoute)
+		subject := e.story()
+		task, exec := e.execution(subject)
+		perf := &fakePerformers{
+			kinds: map[string]verb.PerformerKind{"in_progress": verb.PerformerExecutor}, executor: headless(), output: "rate limit hit",
+			onPerform: func(workitem.Item, string, string) error { return errors.New("rate limited") },
+		}
+		_, err := drive.Story(context.Background(), exec.ID, opts(perf))
+		var stopped *drive.Stopped
+		if !errors.As(err, &stopped) {
+			t.Fatalf("want a *Stopped, got %v", err)
+		}
+		p := e.wantStoppedExecution(task, exec, subject, "rate limit hit")
+		if p["step"] != "in_progress" || p["performer"] != "executor" {
+			t.Errorf("payload = %v, want the executor on in_progress", p)
+		}
+	})
+	t.Run("context ended before the first presentation", func(t *testing.T) {
+		e := newEnv(t, routeExecutionParks, workRoute)
+		subject := e.story()
+		task, exec := e.execution(subject)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		perf := cancelOnResolve{&fakePerformers{kinds: map[string]verb.PerformerKind{"in_progress": verb.PerformerExecutor}, executor: headless()}, cancel}
+		_, err := drive.Story(ctx, exec.ID, opts(perf))
+		var stopped *drive.Stopped
+		if !errors.As(err, &stopped) || !errors.Is(err, context.Canceled) {
+			t.Fatalf("want a *Stopped carrying the cancellation, got %v", err)
+		}
+		p := e.wantStoppedExecution(task, exec, subject, "")
+		if !strings.Contains(p["reason"].(string), "interrupted") {
+			t.Errorf("reason = %v, want the interruption named", p["reason"])
+		}
+	})
+	t.Run("context ended mid-step", func(t *testing.T) {
+		e := newEnv(t, routeNoPark, workRoute)
+		subject := e.story()
+		task, exec := e.execution(subject)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		perf := &fakePerformers{
+			kinds: map[string]verb.PerformerKind{"in_progress": verb.PerformerExecutor}, executor: headless(), output: "working on it",
+			onPerform: func(workitem.Item, string, string) error { cancel(); return nil },
+		}
+		_, err := drive.Story(ctx, exec.ID, opts(perf))
+		var stopped *drive.Stopped
+		if !errors.As(err, &stopped) {
+			t.Fatalf("want a *Stopped, got %v", err)
+		}
+		e.wantStoppedExecution(task, exec, subject, "working on it")
+	})
+}
+
+// A performer that ends on a question leaves the question on the stop and on the
+// alert, where the route has no park state and where it parks the execution too.
+func TestExecutionStoppedOnQuestion(t *testing.T) {
+	for _, tc := range []struct {
+		name, done string
+		parked     bool
+	}{{"no park state", routeNoPark, false}, {"parked as well", routeExecutionParks, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t, tc.done, workRoute)
+			e.gater.always["done"] = true
+			subject := e.story()
+			task, exec := e.execution(subject)
+			perf := &fakePerformers{kinds: map[string]verb.PerformerKind{"in_progress": verb.PerformerExecutor}, executor: headless(), output: question}
+			res, err := drive.Story(context.Background(), exec.ID, opts(perf))
+			var stopped *drive.Stopped
+			if tc.parked {
+				if err != nil || !res.Parked || e.status(exec.ID) != "blocked" {
+					var why error
+					if errors.As(err, &stopped) {
+						why = stopped.ParkErr
+					}
+					t.Fatalf("want the execution parked at blocked, got %v %+v (stored %q, park: %v)", err, res, e.status(exec.ID), why)
+				}
+				if parks, _ := e.driveRows(exec.ID); len(parks) != 1 {
+					t.Errorf("want the park comment the route's park writes, got %d", len(parks))
+				}
+			} else if !errors.As(err, &stopped) || e.status(exec.ID) != "in_progress" {
+				t.Fatalf("want a *Stopped at in_progress, got %v (stored %q)", err, e.status(exec.ID))
+			}
+			p := e.wantStoppedExecution(task, exec, subject, question)
+			if _, has := p["park_error"]; has == tc.parked {
+				t.Errorf("park_error present = %v, want it only where the park did not happen: %v", has, p)
+			}
+		})
+	}
+}
+
+// An execution whose story_id input is unset has no subject to alert.
+func TestExecutionWithoutASubjectWritesNoAlert(t *testing.T) {
+	e := newEnv(t, routeNoPark, workRoute)
+	e.gater.always["done"] = true
+	task, exec := e.execution("")
+	perf := &fakePerformers{kinds: map[string]verb.PerformerKind{"in_progress": verb.PerformerExecutor}, executor: headless(), output: question}
+	if _, err := drive.Story(context.Background(), exec.ID, opts(perf)); err == nil {
+		t.Fatal("want the drive stopped")
+	}
+	e.wantStoppedExecution(task, exec, "", question)
+	all, err := e.db.Ledger.ListAll(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range all {
+		if r.Kind == ledger.KindExecutionStopped {
+			t.Errorf("an execution with no subject wrote an execution_stopped row on %s", r.StoryID)
+		}
+	}
+}
+
+// An execution that reaches its route's terminal step records no stop.
+func TestExecutionConcludedRecordsNoStop(t *testing.T) {
+	e := newEnv(t, routeDone, workRoute)
+	subject := e.story()
+	_, exec := e.execution(subject)
+	perf := &fakePerformers{kinds: map[string]verb.PerformerKind{"in_progress": verb.PerformerExecutor}, executor: headless()}
+	res, err := drive.Story(context.Background(), exec.ID, opts(perf))
+	if err != nil || !res.Terminal {
+		t.Fatalf("want the execution done, got %v %+v", err, res)
+	}
+	e.wantNoDriveRecords(exec.ID)
+	if n := len(e.rows(subject, ledger.KindExecutionStopped)); n != 0 {
+		t.Errorf("a concluded execution wrote %d execution_stopped rows on its subject", n)
+	}
+}
+
+// The stop's last_message is the performer's already-redacted tail: a value the
+// binding's env resolved never reaches the stop row or the alert. The real engine
+// redacts, so it is the engine that runs here.
+func TestExecutionStopRedactsTheBindingEnv(t *testing.T) {
+	const secret = "s3cr3t-token-value"
+	e := newEnv(t, routeNoPark, workRoute)
+	e.gater.always["done"] = true
+	script := filepath.Join(t.TempDir(), "agent")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat >/dev/null\necho \"token is $API_TOKEN; should I continue?\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	eng := agentstep.New(nil, e.db.DocIndex, e.dir, "")
+	eng.SetOneShotAgents(func(name string) (config.AgentBinding, bool) {
+		if name != "executor" {
+			return config.AgentBinding{}, false
+		}
+		return config.AgentBinding{
+			Role: config.RoleAgent, Command: script + " -p {payload}", Tools: "read_file,grep,list_dir,write",
+			Env: map[string]string{"API_TOKEN": secret},
+		}, true
+	})
+	subject := e.story()
+	task, exec := e.execution(subject)
+	_, err := drive.Story(context.Background(), exec.ID, opts(eng))
+	var stopped *drive.Stopped
+	if !errors.As(err, &stopped) {
+		t.Fatalf("want a *Stopped, got %v", err)
+	}
+	p := e.wantStoppedExecution(task, exec, subject, "*")
+	if msg, _ := p["last_message"].(string); !strings.Contains(msg, "should I continue?") || !strings.Contains(msg, "[redacted:API_TOKEN]") {
+		t.Errorf("last_message = %q, want the performer's question with the token redacted", msg)
+	}
+	for _, id := range []string{exec.ID, subject} {
+		for _, row := range e.rows(id, "") {
+			if strings.Contains(string(row.Payload), secret) || strings.Contains(row.Body, secret) {
+				t.Errorf("%s row on %s carries the env value", row.Kind, id)
+			}
+		}
 	}
 }

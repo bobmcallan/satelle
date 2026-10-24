@@ -14,6 +14,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/drive"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/remotedef"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/testutil"
@@ -121,6 +122,39 @@ func (e *taskEnv) executions() []workitem.Item {
 		e.t.Fatal(err)
 	}
 	return its
+}
+
+// rows are the ledger rows of kind on id.
+func (e *taskEnv) rows(id, kind string) []ledger.Entry {
+	e.t.Helper()
+	rows, err := e.db.Ledger.ListByStory(context.Background(), id, kind)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return rows
+}
+
+// wantStopRecorded checks a run that ended short of its route left exactly one
+// drive-stopped row on its execution, outcome stopped, and one execution_stopped
+// alert on the wake's subject naming the execution and its task.
+func (e *taskEnv) wantStopRecorded(res TaskRunResult, lastMessage string) {
+	e.t.Helper()
+	stops := e.rows(res.Execution, ledger.KindDriveStopped)
+	if len(stops) != 1 {
+		e.t.Fatalf("drive-stopped rows on the execution = %d, want 1", len(stops))
+	}
+	var p map[string]any
+	if err := json.Unmarshal(stops[0].Payload, &p); err != nil || p["outcome"] != drive.OutcomeStopped || p["last_message"] != lastMessage {
+		e.t.Errorf("drive-stopped payload = %v (%v), want outcome stopped and last_message %q", p, err, lastMessage)
+	}
+	alerts := e.rows("sty_subject", ledger.KindExecutionStopped)
+	if len(alerts) != 1 {
+		e.t.Fatalf("execution_stopped rows on the subject = %d, want 1", len(alerts))
+	}
+	var a map[string]any
+	if err := json.Unmarshal(alerts[0].Payload, &a); err != nil || a["execution"] != res.Execution || a["task"] != e.task.ID || a["last_message"] != lastMessage {
+		e.t.Errorf("alert payload = %v (%v), want the execution %s, task %s and last_message %q", a, err, res.Execution, e.task.ID, lastMessage)
+	}
 }
 
 // executorOnly performs the working step with step and nothing else.
@@ -249,6 +283,12 @@ func TestRunTaskWithNoRecordedOutcomeReportsPerformed(t *testing.T) {
 			t.Errorf("heartbeat %+v: want the running state for the subject", s)
 		}
 	}
+	if n := len(e.rows(res.Execution, ledger.KindDriveStopped)); n != 0 {
+		t.Errorf("a concluded run wrote %d drive-stopped rows on its execution", n)
+	}
+	if n := len(e.rows("sty_subject", ledger.KindExecutionStopped)); n != 0 {
+		t.Errorf("a concluded run wrote %d execution_stopped rows on its subject", n)
+	}
 }
 
 // A performer that records no-op concludes the execution without error and the
@@ -273,7 +313,8 @@ func TestRunTaskReportsTheOutcomeThePerformerRecorded(t *testing.T) {
 
 // A run whose performer fails ends short of its route and is concluded as
 // rejected: parked where the route has a park state, an error where it has none
-// (the shipped execution route has none). A wake whose required input the
+// (the shipped execution route has none). Either way the execution carries one
+// stopped record and the subject story one alert. A wake whose required input the
 // descriptor does not carry makes no execution and is concluded as rejected too.
 func TestRunTaskThatDoesNotFinishConcludesRejected(t *testing.T) {
 	crash := executorOnly{step: func(workitem.Item) error { return errors.New("the agent crashed") }}
@@ -284,6 +325,7 @@ func TestRunTaskThatDoesNotFinishConcludesRejected(t *testing.T) {
 	if err != nil || !res.Drive.Parked || res.Outcome != verb.OutcomeReject {
 		t.Fatalf("result = %+v, %v, want a park reported as reject", res, err)
 	}
+	e.wantStopRecorded(res, "")
 	if sent := log.all(); sent[len(sent)-1].RunState != RunConcluded || sent[len(sent)-1].Outcome != verb.OutcomeReject {
 		t.Errorf("last heartbeat = %+v, want concluded/reject", sent[len(sent)-1])
 	}
@@ -295,6 +337,7 @@ func TestRunTaskThatDoesNotFinishConcludesRejected(t *testing.T) {
 	if !errors.As(err, &stopped) || res.Outcome != verb.OutcomeReject {
 		t.Fatalf("result = %+v, %v, want a drive-stopped error reported as reject", res, err)
 	}
+	eNoPark.wantStopRecorded(res, "")
 	if sent := logNoPark.all(); sent[len(sent)-1].RunState != RunConcluded || sent[len(sent)-1].Outcome != verb.OutcomeReject {
 		t.Errorf("last heartbeat = %+v, want concluded/reject", sent[len(sent)-1])
 	}

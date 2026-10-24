@@ -255,6 +255,14 @@ const (
 	// {execution, task, remote, outcome}. It is written once, when the run
 	// concludes, so it carries the outcome. Enumeration only.
 	KindExecutionLink = "execution_link"
+	// KindExecutionStopped is the alert a drive writes on an execution's subject
+	// story when the execution ended short of its route's exit (refused, failed,
+	// timed out, or a performer that ended on a question): StoryID is the subject
+	// the execution's story_id input names; Payload is the execution's
+	// drive-stopped payload plus {execution, task}. It is written for
+	// satelle-server to raise to the developer; the execution itself carries the
+	// drive-stopped row.
+	KindExecutionStopped = "execution_stopped"
 	// KindCommandRule records one agent command a repo-authored
 	// [[gate.command_rule]] matched and let run, or refused (sty_a74551d6).
 	// Payload is {command, rule_index, pattern, action, decision, delivered,

@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 	"time"
 
@@ -114,6 +115,12 @@ func reasonf(step, performer, what string) string {
 	return fmt.Sprintf("step %s, performer %s: %s", step, performer, what)
 }
 
+// OutcomeStopped is the outcome a drive-stopped row on an execution carries: the
+// execution ended short of its route's exit. It is a drive's record, not an
+// outcome a performer records, so it is not in verb.ValidOutcome and is never
+// sent as a run's outcome on the heartbeat.
+const OutcomeStopped = "stopped"
+
 // stopGrace bounds the writes that record a stop. They run detached from the
 // drive's own context, which is the very thing that may have ended.
 const stopGrace = 2 * time.Minute
@@ -174,6 +181,12 @@ type driver struct {
 	// before it is a refusal to start and records nothing; every end after it
 	// leaves a record.
 	presented bool
+	// exec is set when the item driven is an execution. An execution has no
+	// session watching it, so every end of its drive short of the exit leaves a
+	// stopped record, even a refusal before its first presentation.
+	exec bool
+	// recorded is set once the stop is recorded, so no path writes it twice.
+	recorded bool
 }
 
 func (d *driver) run(ctx context.Context) (Result, error) {
@@ -187,15 +200,16 @@ func (d *driver) run(ctx context.Context) (Result, error) {
 	if item.Kind != workitem.KindStory && item.Kind != workitem.KindExecution {
 		return Result{}, fmt.Errorf("drive: %s is not a story or execution", d.id)
 	}
+	d.exec = item.Kind == workitem.KindExecution
 	d.route, err = verb.GoverningRoute(ctx, item)
 	if err != nil {
-		return Result{}, fmt.Errorf("drive: %s has no route to walk: %w", d.id, err)
+		return d.fail(ctx, item, fmt.Errorf("drive: %s has no route to walk: %w", d.id, err))
 	}
 	d.spine = d.route.Spec.SpineSteps()
 	d.res.ID = d.id
 	if !d.stopped(item) {
 		if err := d.preflight(ctx, item); err != nil {
-			return Result{}, err
+			return d.fail(ctx, item, err)
 		}
 	}
 	for {
@@ -220,18 +234,33 @@ func (d *driver) run(ctx context.Context) (Result, error) {
 	}
 }
 
-// fail ends a drive that cannot continue. Before the first presentation it is a
-// plain refusal. After it, the story is parked with the reason (a Result), or,
-// where it cannot be parked, a drive-stopped row records the stop and the error
-// is a *Stopped: the drive never ends short of its exit without a record.
+// fail ends a drive that cannot continue. Before the first presentation a story's
+// drive is a plain refusal, while an execution's is recorded as stopped (nothing
+// is parked: nothing was presented). After it, the item is parked with the reason
+// (a Result), or, where it cannot be parked, a drive-stopped row records the stop
+// and the error is a *Stopped: the drive never ends short of its exit without a
+// record.
 func (d *driver) fail(ctx context.Context, item workitem.Item, err error) (Result, error) {
 	var stopped *Stopped
-	if errors.As(err, &stopped) || !d.presented {
+	if errors.As(err, &stopped) {
+		return Result{}, err
+	}
+	if !d.presented && !d.exec {
 		return Result{}, err
 	}
 	var h *halt
 	if !errors.As(err, &h) {
 		h = &halt{step: item.Status, what: err.Error(), err: err}
+	}
+	if !d.presented {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopGrace)
+		defer cancel()
+		performer := h.performer
+		if performer == "" {
+			performer = d.performerOf(ctx, item, h.step)
+		}
+		return Result{}, d.stop(ctx, item, h.step, performer, reasonf(h.step, performer, h.what),
+			fmt.Errorf("nothing was presented, so nothing was parked: %w", err))
 	}
 	if perr := d.park(ctx, item, h.step, h.performer, h.what); perr != nil {
 		return Result{}, perr
@@ -567,6 +596,7 @@ func (d *driver) park(ctx context.Context, item workitem.Item, step, performer, 
 	}
 	fmt.Fprintf(d.out, "drive: %s parked at %s\n", d.id, state)
 	d.res.Parked, d.res.Status, d.res.Reason = true, state, reason
+	d.recordExecutionStop(ctx, item, step, performer, reason)
 	return nil
 }
 
@@ -583,18 +613,63 @@ func (d *driver) parkedByMechanism(ctx context.Context, moved workitem.Item, fro
 	was.Status = from
 	_ = d.recordParkComment(ctx, was, moved.Status, step, performer, reason)
 	d.res.Parked, d.res.Status, d.res.Reason = true, moved.Status, reason
+	d.recordExecutionStop(ctx, was, step, performer, reason)
 }
 
-// stop records a drive that ended with the story not parked: one drive-stopped
+// stop records a drive that ended with the item not parked: one drive-stopped
 // row with the reason, then the *Stopped the caller exits 1 on.
 func (d *driver) stop(ctx context.Context, item workitem.Item, step, performer, reason string, parkErr error) error {
-	payload := d.payload(ctx, item, "", step, performer, reason)
-	payload["park_error"] = parkErr.Error()
-	if err := d.appendRow(ctx, ledger.KindDriveStopped, reason, payload); err != nil {
+	if err := d.recordStop(ctx, item, step, performer, reason, parkErr); err != nil {
 		parkErr = fmt.Errorf("%w (and the stop could not be recorded: %v)", parkErr, err)
 	}
 	fmt.Fprintf(d.out, "drive: %s stopped at %s: %s\n", d.id, item.Status, reason)
 	return &Stopped{ID: d.id, Status: item.Status, Reason: reason, ParkErr: parkErr}
+}
+
+// recordExecutionStop records the stop of an execution the drive parked, which
+// the park alone would leave without a drive-stopped row or an alert on its
+// subject. The park stands whether or not this write succeeds, so a failure is
+// logged. A story's park is its record and needs nothing more.
+func (d *driver) recordExecutionStop(ctx context.Context, item workitem.Item, step, performer, reason string) {
+	if !d.exec {
+		return
+	}
+	if err := d.recordStop(ctx, item, step, performer, reason, nil); err != nil {
+		fmt.Fprintf(d.out, "drive: %s: the stop could not be recorded: %v\n", d.id, err)
+	}
+}
+
+// recordStop writes the drive-stopped row for a drive that ended short of its
+// route's exit, once. An execution's row carries outcome "stopped", and when its
+// story_id input names a story the same stop is written there as an
+// execution_stopped alert. parkErr is why the item was not parked, nil when it was.
+func (d *driver) recordStop(ctx context.Context, item workitem.Item, step, performer, reason string, parkErr error) error {
+	if d.recorded {
+		return nil
+	}
+	d.recorded = true
+	payload := d.payload(ctx, item, "", step, performer, reason)
+	if d.exec {
+		payload["outcome"] = OutcomeStopped
+	}
+	if parkErr != nil {
+		payload["park_error"] = parkErr.Error()
+	}
+	err := d.appendRow(ctx, ledger.KindDriveStopped, reason, payload)
+	if subject := subjectOf(item); d.exec && subject != "" {
+		alert := maps.Clone(payload)
+		alert["execution"], alert["task"] = d.id, item.ParentID
+		if aerr := d.appendRowTo(ctx, subject, ledger.KindExecutionStopped, reason, alert); aerr != nil {
+			err = errors.Join(err, fmt.Errorf("alert %s: %w", subject, aerr))
+		}
+	}
+	return err
+}
+
+// subjectOf is the story an execution was made about: its story_id input.
+func subjectOf(item workitem.Item) string {
+	subject, _ := item.InputValues[workitem.InputStoryID].(string)
+	return strings.TrimSpace(subject)
 }
 
 // recordParkComment writes the comment row a park is announced by. Its payload is
@@ -604,8 +679,14 @@ func (d *driver) recordParkComment(ctx context.Context, item workitem.Item, to, 
 }
 
 func (d *driver) appendRow(ctx context.Context, kind, body string, payload map[string]any) error {
+	return d.appendRowTo(ctx, d.id, kind, body, payload)
+}
+
+// appendRowTo writes a row on the ledger of id, which is d.id or, for an
+// execution's alert, its subject story.
+func (d *driver) appendRowTo(ctx context.Context, id, kind, body string, payload map[string]any) error {
 	entry, _ := json.Marshal(map[string]any{
-		"story_id": d.id, "kind": kind, "actor": "orchestrator", "body": body, "payload": payload,
+		"story_id": id, "kind": kind, "actor": "orchestrator", "body": body, "payload": payload,
 	})
 	_, err := verb.Dispatch(ctx, "ledger-append", entry)
 	return err
