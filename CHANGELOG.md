@@ -1,3 +1,16 @@
+## [0.0.744] - 2026-10-24
+
+### Added
+- When a task-kind team remote's run concludes, the node sends its execution, the execution's ledger rows, the run-output document and one `execution_link` row on the subject story to satelle.dev in a single push under the node's own token (`POST /api/v1/remote-nodes/<id>/workstate`). The push needs no satelle login and names no project: satelle.dev records the batch in the remote's team project. After `satelle sync workstate pull`, `satelle story route` on the subject story shows a Remote executions line naming the execution, the task, the remote and the outcome. Personal execution sync is unchanged. Until satelle.dev accepts the route, the node logs the refused push and still ends cleanly. (sty_0ed01372)
+
+### Fixed
+- The embedded changelog that `satelle changelog` reads now includes the 0.0.743 entry, which the 0.0.743 release left out. (sty_0ed01372)
+
+## [serve-v0.0.203] - 2026-10-24
+
+### Changed
+- The service binary knows the `execution_link` ledger kind. (sty_0ed01372)
+
 ## [0.0.743] - 2026-10-24
 
 ### Added
