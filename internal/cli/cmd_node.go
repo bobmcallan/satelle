@@ -9,11 +9,13 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -59,29 +61,61 @@ func init() {
 		Hidden: true,
 	}
 	var root, relay, session, token string
+	var tokenStdin bool
 	join := &cobra.Command{
 		Use:    "join",
 		Short:  "Run on a remote node: set up from the definition satelle.dev serves and serve its jobs",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Read before the root is resolved or initialised, and before the
+			// end call is deferred, so a bad token leaves the node untouched.
+			if tokenStdin {
+				t, err := readTokenStdin(cmd.InOrStdin())
+				if err != nil {
+					return err
+				}
+				token = t
+			}
 			return runNodeJoin(cmd, root, relay, session, token)
 		},
 	}
-	// These four flags are the launch contract: the server's launcher
+	// These flags are the launch contract: the server's launcher
 	// (satelle-server sty_c9013137) builds `satelle node join --root <dir>
-	// --relay <url> --session <id> --token <node token>`. The session is the
-	// node's id on satelle.dev, the key of every route the node calls. The key
-	// line on stdout and the node's own log on stderr are the other half of it.
+	// --relay <url> --session <id>` and hands over the node token either as
+	// `--token <node token>` or, to keep it out of argv, a log and the process
+	// list, as `--token-stdin` with the token on the first line of stdin. The
+	// session is the node's id on satelle.dev, the key of every route the node
+	// calls. The key line on stdout and the node's own log on stderr are the
+	// other half of it.
 	join.Flags().StringVar(&root, "root", remotenode.NodeRoot, "the node's working root")
 	join.Flags().StringVar(&relay, "relay", "", "relay URL")
 	join.Flags().StringVar(&session, "session", "", "channel session id, which is the node's id on satelle.dev")
 	join.Flags().StringVar(&token, "token", "", "the node's bearer token for satelle.dev and the relay")
-	for _, f := range []string{"relay", "session", "token"} {
+	join.Flags().BoolVar(&tokenStdin, "token-stdin", false, "read the node's bearer token from the first line of stdin, keeping it out of argv")
+	for _, f := range []string{"relay", "session"} {
 		_ = join.MarkFlagRequired(f)
 	}
+	join.MarkFlagsMutuallyExclusive("token", "token-stdin")
+	join.MarkFlagsOneRequired("token", "token-stdin")
 	node.AddCommand(join)
 	register(node)
+}
+
+// readTokenStdin reads the node token from r: the first line, or all of r if it
+// ends without a newline. It stops at the newline rather than at EOF, since the
+// writer (a server's exec stdin stream) may keep stdin open, and it never closes
+// r. Its errors are fixed text, so no token can reach them.
+func readTokenStdin(r io.Reader) (string, error) {
+	line, err := bufio.NewReader(r).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", errors.New("join: --token-stdin: cannot read stdin")
+	}
+	token := strings.TrimSpace(line)
+	if token == "" {
+		return "", errors.New("join: --token-stdin: no token on stdin")
+	}
+	return token, nil
 }
 
 // runNodeJoin is the node's side. It runs in the working root: init creates the

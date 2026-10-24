@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
@@ -128,6 +129,9 @@ type nodeRig struct {
 	marker   string // the fake agent appends a line here each time it runs
 	repo     *gittest.Server
 	bundle   map[string]string
+	// tokenStdin makes join hand over the token on stdin (--token-stdin) rather
+	// than in argv.
+	tokenStdin bool
 }
 
 // newNodeRig sets the environment of a fresh machine with a fake agent on its PATH
@@ -215,7 +219,19 @@ func (r *nodeRig) join(stdout io.Writer, relayURL, session, token string) error 
 	resetFlagState(root)
 	root.SetOut(stdout)
 	root.SetErr(r.log)
-	root.SetArgs([]string{"node", "join", "--root", r.nodeRoot, "--relay", relayURL, "--session", session, "--token", token})
+	args := []string{"node", "join", "--root", r.nodeRoot, "--relay", relayURL, "--session", session}
+	if r.tokenStdin {
+		// The writer sends the token and a newline and is never closed while the
+		// node runs, as a server's exec stdin stream is not.
+		pr, pw := io.Pipe()
+		defer pw.Close()
+		go func() { _, _ = pw.Write([]byte(token + "\n")) }()
+		root.SetIn(pr)
+		args = append(args, "--token-stdin")
+	} else {
+		args = append(args, "--token", token)
+	}
+	root.SetArgs(args)
 	return executeRoot(root)
 }
 
@@ -560,5 +576,113 @@ func TestNodeJoinRelayRefusalIsTheTokensRefusal(t *testing.T) {
 	}
 	if n := fake.Count(http.MethodPost, "/end"); n != 1 {
 		t.Errorf("end calls = %d, want 1", n)
+	}
+}
+
+// AC1: handed the node token on the first line of stdin, with stdin left open,
+// `node join --token-stdin` joins exactly as `--token` does: the definition is
+// fetched and the relay is joined with that token as the bearer, and the node
+// ends itself once. The token is in no argv.
+func TestNodeJoinTokenStdin(t *testing.T) {
+	r := newNodeRig(t)
+	r.tokenStdin = true
+	run, fake, joined, spec := r.open(t)
+
+	calls := fake.Calls()
+	if len(calls) == 0 || calls[0].Path != "/api/v1/remote-nodes/"+spec.Session+"/definition" || calls[0].Auth != "Bearer "+spec.Token {
+		t.Fatalf("first call = %+v, want the definition fetch with the token read from stdin", calls)
+	}
+	if got := r.relay.RemoteBearers(); !reflect.DeepEqual(got, []string{spec.Token}) {
+		t.Errorf("relay remote bearers = %v, want [the node token]", got)
+	}
+	if rep := run.Report; rep.Error != "" || rep.DefinitionVersion != "v7" {
+		t.Errorf("report = %+v", rep)
+	}
+	if _, err := os.Stat(filepath.Join(r.nodeRoot, ".satelle", "skills", "remote-work.md")); err != nil {
+		t.Errorf("the definition was not installed: %v", err)
+	}
+
+	if err := run.End(); err != nil {
+		t.Errorf("End: %v", err)
+	}
+	if err := waitJoin(t, joined); err != nil {
+		t.Errorf("node join ended with %v\nnode log:\n%s", err, r.log)
+	}
+	if n := fake.Count(http.MethodPost, "/end"); n != 1 {
+		t.Errorf("end calls = %d, want 1", n)
+	}
+	if strings.Contains(r.log.String(), spec.Token) {
+		t.Error("the node token is in the node's log")
+	}
+}
+
+// refusedJoin runs `node join` with args and stdin, and fails the test unless
+// satelle.dev, the relay and the node root were all left untouched. It returns
+// the command's error.
+func (r *nodeRig) refusedJoin(stdin io.Reader, args ...string) error {
+	r.t.Helper()
+	fake := r.serve("nod_a", "node-token", r.encode())
+	root := NewRootCmd()
+	resetFlagState(root)
+	root.SetOut(io.Discard)
+	root.SetErr(r.log)
+	root.SetIn(stdin)
+	root.SetArgs(append([]string{"node", "join", "--root", r.nodeRoot, "--relay", r.relay.URL(), "--session", "nod_a"}, args...))
+	err := executeRoot(root)
+	if _, serr := os.Stat(r.nodeRoot); !errors.Is(serr, fs.ErrNotExist) {
+		r.t.Errorf("the node root exists after a refused join (stat err %v)", serr)
+	}
+	if calls := fake.Calls(); len(calls) != 0 {
+		r.t.Errorf("a refused join called satelle.dev: %+v", calls)
+	}
+	if r.relay.Attempts() != 0 {
+		r.t.Error("a refused join reached the relay")
+	}
+	return err
+}
+
+// AC2: an empty first line, or a stdin that fails, refuses with fixed text that
+// holds no token, before the node root is created or initialised.
+func TestNodeJoinTokenStdinRefusals(t *testing.T) {
+	const sentinel = "sekret-token"
+	for _, tc := range []struct {
+		name  string
+		stdin io.Reader
+		want  string
+	}{
+		{"empty line", strings.NewReader("\n"), "join: --token-stdin: no token on stdin"},
+		{"whitespace line", strings.NewReader("   \n"), "join: --token-stdin: no token on stdin"},
+		{"nothing", strings.NewReader(""), "join: --token-stdin: no token on stdin"},
+		{"read error", io.MultiReader(strings.NewReader(sentinel), iotest.ErrReader(errors.New("boom "+sentinel))), "join: --token-stdin: cannot read stdin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := newNodeRig(t).refusedJoin(tc.stdin, "--token-stdin")
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("join = %v, want %q", err, tc.want)
+			}
+			if strings.Contains(err.Error(), sentinel) {
+				t.Error("the refusal contains the token")
+			}
+		})
+	}
+}
+
+// AC3: exactly one of --token and --token-stdin is given, which flag validation
+// checks before anything runs.
+func TestNodeJoinTokenFlagsAreExclusiveAndRequired(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"both flags", []string{"--token", "t", "--token-stdin"}, "none of the others can be"},
+		{"neither flag", nil, "at least one"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := newNodeRig(t).refusedJoin(strings.NewReader("tok\n"), tc.args...)
+			if err == nil || !strings.Contains(err.Error(), "[token token-stdin]") || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("join = %v, want a flag-group refusal containing %q", err, tc.want)
+			}
+		})
 	}
 }

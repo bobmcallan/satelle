@@ -42,6 +42,14 @@ func TestRootHasNoRemoteControlPlane(t *testing.T) {
 	}
 }
 
+// `remote join` went with the rest of the group: the node mode is `node join`.
+func TestRemoteJoinIsNotACommand(t *testing.T) {
+	out, err := runRoot(t, "remote", "join", "--relay", "x", "--session", "s", "--token-stdin")
+	if err == nil || !strings.Contains(err.Error(), "unknown command") {
+		t.Errorf("satelle remote join = %q, %v; want an unknown-command error", out, err)
+	}
+}
+
 // The one remote verb left is the node mode: hidden, so no help lists it.
 func TestNodeJoinIsHidden(t *testing.T) {
 	for _, c := range NewRootCmd().Commands() {
