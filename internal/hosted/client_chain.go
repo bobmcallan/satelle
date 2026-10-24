@@ -56,13 +56,24 @@ func newEvent(storyID string, e ChainEvent) *syncpb.Event {
 
 // StaleBaseError is the refusal of an Append whose base is no longer the story's
 // latest event: nothing was stored. LatestID is the server's latest event and
-// Missing counts the events after Base that this machine has not seen. The
-// caller reads the story again and decides; nothing here merges or retries.
+// Missing counts the events after Base that this machine has not seen: the
+// server's missing_count, which can exceed the events its bounded detail lists.
+// The caller reads the story again and decides; nothing here merges or retries.
 type StaleBaseError struct {
 	StoryID  string
 	Base     string
 	LatestID string
 	Missing  int
+}
+
+// staleMissingCount is the server's missing_count, or the length of the missing
+// list for a server that does not send it (a real stale base has at least one
+// missing event, so zero means absent).
+func staleMissingCount(sb *syncpb.StaleBase) int {
+	if n := sb.GetMissingCount(); n > 0 {
+		return int(n)
+	}
+	return len(sb.GetMissing())
 }
 
 func (e *StaleBaseError) Error() string {
@@ -124,7 +135,7 @@ func (cc *ChainConn) AppendStory(ctx context.Context, project, storyID, base str
 	})
 	if err != nil {
 		if sb := staleBaseFromStatus(err); sb != nil {
-			return "", &StaleBaseError{StoryID: storyID, Base: base, LatestID: sb.GetLatestId(), Missing: len(sb.GetMissing())}
+			return "", &StaleBaseError{StoryID: storyID, Base: base, LatestID: sb.GetLatestId(), Missing: staleMissingCount(sb)}
 		}
 		if bareStaleBase(err) {
 			// The refusal's detail echoes every event the caller has not seen and

@@ -84,9 +84,15 @@ message AppendResponse {
 // StaleBase is the FAILED_PRECONDITION detail of a refused Append.
 message StaleBase {
   string latest_id = 1;
-  // Every event after the client's base, in chain order (the whole chain when
-  // the base is empty or not in the chain).
+  // The first events after the client's base, in chain order (from the start of
+  // the chain when the base is empty or not in the chain). Bounded so the whole
+  // detail stays within 1 KiB: a short chain returns every missing event, a long
+  // one a prefix. When len(missing) < missing_count the client reads the rest
+  // with Read.
   repeated Event missing = 2;
+  // How many events follow the client's base in all, whether or not missing
+  // carries them.
+  int64 missing_count = 3;
 }
 
 message ReadRequest {

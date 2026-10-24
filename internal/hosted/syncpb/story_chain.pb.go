@@ -272,9 +272,15 @@ func (x *AppendResponse) GetAppended() []*Event {
 type StaleBase struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	LatestId string                 `protobuf:"bytes,1,opt,name=latest_id,json=latestId,proto3" json:"latest_id,omitempty"`
-	// Every event after the client's base, in chain order (the whole chain when
-	// the base is empty or not in the chain).
-	Missing       []*Event `protobuf:"bytes,2,rep,name=missing,proto3" json:"missing,omitempty"`
+	// The first events after the client's base, in chain order (from the start of
+	// the chain when the base is empty or not in the chain). Bounded so the whole
+	// detail stays within 1 KiB: a short chain returns every missing event, a long
+	// one a prefix. When len(missing) < missing_count the client reads the rest
+	// with Read.
+	Missing []*Event `protobuf:"bytes,2,rep,name=missing,proto3" json:"missing,omitempty"`
+	// How many events follow the client's base in all, whether or not missing
+	// carries them.
+	MissingCount  int64 `protobuf:"varint,3,opt,name=missing_count,json=missingCount,proto3" json:"missing_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -321,6 +327,13 @@ func (x *StaleBase) GetMissing() []*Event {
 		return x.Missing
 	}
 	return nil
+}
+
+func (x *StaleBase) GetMissingCount() int64 {
+	if x != nil {
+		return x.MissingCount
+	}
+	return 0
 }
 
 type ReadRequest struct {
@@ -554,10 +567,11 @@ const file_story_chain_proto_rawDesc = "" +
 	"\x06events\x18\x04 \x03(\v2\x17.satelle.chain.v1.EventR\x06events\"b\n" +
 	"\x0eAppendResponse\x12\x1b\n" +
 	"\tlatest_id\x18\x01 \x01(\tR\blatestId\x123\n" +
-	"\bappended\x18\x02 \x03(\v2\x17.satelle.chain.v1.EventR\bappended\"[\n" +
+	"\bappended\x18\x02 \x03(\v2\x17.satelle.chain.v1.EventR\bappended\"\x80\x01\n" +
 	"\tStaleBase\x12\x1b\n" +
 	"\tlatest_id\x18\x01 \x01(\tR\blatestId\x121\n" +
-	"\amissing\x18\x02 \x03(\v2\x17.satelle.chain.v1.EventR\amissing\"]\n" +
+	"\amissing\x18\x02 \x03(\v2\x17.satelle.chain.v1.EventR\amissing\x12#\n" +
+	"\rmissing_count\x18\x03 \x01(\x03R\fmissingCount\"]\n" +
 	"\vReadRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x19\n" +
 	"\bstory_id\x18\x02 \x01(\tR\astoryId\x12\x19\n" +

@@ -3,6 +3,7 @@ package hosted
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -100,6 +101,50 @@ func TestAppendStoryMapsStaleBase(t *testing.T) {
 	}
 	if stale.StoryID != "sty_a" || stale.Base != "" || stale.LatestID != "evt_9" || stale.Missing != 2 || stale.Since() != "its start" {
 		t.Fatalf("stale = %+v", stale)
+	}
+}
+
+func staleBaseStub(t *testing.T, sb *syncpb.StaleBase) *stubChain {
+	t.Helper()
+	return &stubChain{append: func(*syncpb.AppendRequest) (*syncpb.AppendResponse, error) {
+		st, err := status.New(codes.FailedPrecondition, "stale base").WithDetails(sb)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return nil, st.Err()
+	}}
+}
+
+// sty_e292e7f5 AC2: a detail carrying missing_count reports it, even when the
+// bounded detail lists fewer events.
+func TestAppendStoryStaleBaseUsesMissingCount(t *testing.T) {
+	var listed []*syncpb.Event
+	for i := 0; i < 16; i++ {
+		listed = append(listed, &syncpb.Event{Id: fmt.Sprintf("evt_%d", i+1)})
+	}
+	cc := openStubChain(t, staleBaseStub(t, &syncpb.StaleBase{LatestId: "evt_40", Missing: listed, MissingCount: 40}))
+	_, err := cc.AppendStory(context.Background(), "probe", "sty_a", "", oneEvent)
+	var stale *StaleBaseError
+	if !errors.As(err, &stale) {
+		t.Fatalf("err = %v, want *StaleBaseError", err)
+	}
+	if stale.Missing != 40 || !strings.Contains(stale.Error(), "40 event(s) not seen") {
+		t.Fatalf("stale = %+v, err = %v, want Missing 40", stale, err)
+	}
+}
+
+// sty_e292e7f5 AC3: an older server sends no missing_count; the list length stands.
+func TestAppendStoryStaleBaseWithoutMissingCount(t *testing.T) {
+	cc := openStubChain(t, staleBaseStub(t, &syncpb.StaleBase{
+		LatestId: "evt_3", Missing: []*syncpb.Event{{Id: "evt_1"}, {Id: "evt_2"}, {Id: "evt_3"}},
+	}))
+	_, err := cc.AppendStory(context.Background(), "probe", "sty_a", "", oneEvent)
+	var stale *StaleBaseError
+	if !errors.As(err, &stale) {
+		t.Fatalf("err = %v, want *StaleBaseError", err)
+	}
+	if stale.Missing != 3 {
+		t.Fatalf("stale = %+v, want Missing 3", stale)
 	}
 }
 
