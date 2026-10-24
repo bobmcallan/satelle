@@ -3,6 +3,7 @@ package verb
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -35,7 +36,7 @@ func SignedIn() bool {
 
 // engageGuard runs before an engaging move's wrong-holder check. It lets the
 // CLI refuse an engage whose holder cannot yet be named (a session token whose
-// user is not resolved), instead of the empty holder passing refuseWrongHolder
+// user is not resolved), instead of the empty holder passing noticeOtherAssignee
 // silently. Unwired is no guard.
 var engageGuard func(ctx context.Context) error
 
@@ -66,7 +67,7 @@ func SetDirtyPathsProbe(f func(ctx context.Context, tree string) ([]string, erro
 // PrincipalID when signed in, the git email when local-only (wired by the CLI,
 // which owns the credential store and git). Distinct from assigneeResolver on
 // purpose: a holder id must stay a PrincipalID, and offline there is no holder,
-// so the git email never reaches refuseWrongHolder.
+// so the git email never reaches noticeOtherAssignee.
 var actorResolver func() string
 
 // SetActorResolver wires how person-valued ledger rows resolve the user. Pass
@@ -90,14 +91,15 @@ func resolveAssignee() string {
 	return assigneeResolver()
 }
 
-// refuseWrongHolder refuses an engaging move when the item is assigned to a
-// different principal. Empty me or empty assignee is allowed (offline / pre-
-// column). The message names the holder; it does not say allocated or actor.
-func refuseWrongHolder(current workitem.Item, me string) error {
+// noticeOtherAssignee prints a one-line notice when an engaging move is made by
+// someone other than the item's assignee (sty_40853d02). An assignment says who
+// is expected to work a story; it is not a lock, so the move proceeds. Empty me
+// or empty assignee says nothing (offline / pre-column).
+func noticeOtherAssignee(w io.Writer, current workitem.Item, me string) {
 	if me == "" || current.Assignee == "" || current.Assignee == me {
-		return nil
+		return
 	}
-	return fmt.Errorf("%s is assigned to %s — only its assignee may engage it", current.ID, current.Assignee)
+	fmt.Fprintf(w, "note: %s is assigned to %s\n", current.ID, current.Assignee)
 }
 
 // stampEmptyAssignee returns the current principal to persist when an

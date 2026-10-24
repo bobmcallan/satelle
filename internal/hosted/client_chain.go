@@ -193,11 +193,10 @@ func retryTransient(ctx context.Context, call func() error) error {
 	return err
 }
 
-// bareStaleBase reports a FailedPrecondition that carries no StaleBase detail and
-// is not a hold refusal.
+// bareStaleBase reports a FailedPrecondition that carries no StaleBase detail.
 func bareStaleBase(err error) bool {
 	st, ok := status.FromError(err)
-	return ok && st.Code() == codes.FailedPrecondition && staleBaseFromStatus(err) == nil && heldErrorFromStatus(st) == nil
+	return ok && st.Code() == codes.FailedPrecondition && staleBaseFromStatus(err) == nil
 }
 
 // staleBaseByRead learns where the story stands by reading the events after base.

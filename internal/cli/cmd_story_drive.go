@@ -4,14 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/bobmcallan/satelle/internal/app"
-	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/drive"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -77,8 +73,7 @@ func runStoryDrive(cmd *cobra.Command, args []string) error {
 	var stopped *drive.Stopped
 	if errors.As(err, &stopped) {
 		// The drive ended short of its exit and could not park the story: the stop
-		// is on its ledger, and this run's own hold on it ends with the run.
-		releaseStoppedHold(cmd.Context(), cmd.ErrOrStderr(), a, id)
+		// is on its ledger.
 		line := stopped.Error()
 		fmt.Fprintln(out, line)
 		verb.RecordVerdict(line)
@@ -94,25 +89,6 @@ func runStoryDrive(cmd *cobra.Command, args []string) error {
 		return &ExitError{Code: exitParked, Err: fmt.Errorf("%s", summary), Quiet: true}
 	}
 	return nil
-}
-
-// holdReleaseGrace bounds the release of a stopped drive's hold, which runs even
-// when the drive's own context is what ended.
-const holdReleaseGrace = 30 * time.Second
-
-// releaseStoppedHold releases the hosted hold this drive's run took on id. A story
-// that is terminal or parked is released by the next push (releaseAtRest); a
-// stopped one is at rest nowhere, so the run that stopped it lets go of it. A
-// repo with no bound hosted project holds nothing.
-func releaseStoppedHold(ctx context.Context, errw io.Writer, a *app.App, id string) {
-	server := config.ResolveHostedServer(a.Config)
-	project := a.Config.SyncProject()
-	if server == "" || project == "" {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), holdReleaseGrace)
-	defer cancel()
-	releaseHold(ctx, errw, holdSite{client: newHostedClient(ctx, server, a.RepoRoot), server: server, project: project, repoRoot: a.RepoRoot}, id)
 }
 
 // driveSummary is the one line a drive ends on.

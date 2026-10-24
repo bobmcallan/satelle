@@ -18,6 +18,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/docstory"
 	"github.com/bobmcallan/satelle/internal/epicset"
+	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/oplog"
@@ -204,10 +205,15 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// Person actor for ledger rows that name the satelle user: the account
 	// PrincipalID when signed in, the git email when local-only.
 	verb.SetActorResolver(func() string { return resolveUser(a.Config, a.RepoRoot).Actor() })
-	// Hosted story-hold (sty_dec88606, sty_52eb8c2f): an engaging move claims the
-	// story's hosted hold and is refused when another location holds it.
-	// Unwired when no server or no bound project.
-	verb.SetHoldClaimer(hostedHoldClaimer(a))
+	// The location a working_on row names (sty_40853d02): this machine's hosted
+	// location, empty when no server or no bound project. Read from local state
+	// only — no network, and nothing is claimed or refused.
+	verb.SetLocationResolver(func() (string, string) {
+		if config.ResolveHostedServer(a.Config) == "" || a.Config.SyncProject() == "" {
+			return "", ""
+		}
+		return hosted.KnownLocationID(a.RepoRoot), hosted.LocationLabel(a.RepoRoot)
+	})
 	// Engage precondition (sty_93eec36d): agents.toml + workflow agent= validation
 	// before a story leaves its entry state. agents already loaded by requireAgents.
 	// Vars are the LAYERED KV (machine-wide catalog [vars] under the repo's own,

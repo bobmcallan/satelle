@@ -120,6 +120,7 @@ const (
 	IDSyncFailing  = "sync.failing"       // standing hosted-push failure
 	IDSyncUnbacked = "sync.unbacked"      // last successful push older than stale_after
 	IDSyncConfig   = "sync.config"        // stale_after missing or unparseable
+	IDSyncRetired  = "sync.retired_key"   // [sync] hold_stale_after still set; hosted holds are gone (sty_40853d02)
 	IDStatusDrift  = "story.status.drift" // work-item row disagrees with last status_transition
 
 	// Substrate sync health (sty_7562055c): the authored areas and documents

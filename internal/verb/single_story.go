@@ -23,6 +23,10 @@ import (
 //     transition is a no-op (AC3: never two concurrent dispatches for one id).
 //     Sequential plan→in_progress still proceeds (lease.State != target).
 //   - err: conflict with another holder, or store failure.
+//
+// A seat newly taken (acquiredThisCall) is what appends the story's working_on
+// row (sty_40853d02) — by the caller, once the move it belongs to has committed
+// (recordSeatTaken), so a refused or rolled-back move leaves no row behind.
 func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatus string) (acquiredThisCall, alreadyInFlight bool, err error) {
 	engaging, ok := storyStatusIsEngaging(ctx, item, targetStatus)
 	if !ok {

@@ -475,19 +475,6 @@ func TestAttachmentPushHoldsAndScope(t *testing.T) {
 	})
 }
 
-// holdDocsServer is the fake workstate server with both the hosted hold surface
-// and the documents collection.
-func holdDocsServer(t *testing.T) (url string, hs *fakeHoldServer, docs *fakeDocs) {
-	t.Helper()
-	hs, docs = newFakeHoldServer(), newFakeDocs()
-	ts, _ := newFakeWorkstateServerWith(t, func(mux *http.ServeMux, f *fakeWorkstateServer) {
-		hs.routes(mux, f)
-		docs.routes(mux, f)
-	})
-	seedCred(t, ts.URL)
-	return ts.URL, hs, docs
-}
-
 // TestAttachmentLegRunsWhenTheRowPushFails (AC5): a push that fails — here the
 // Apply answers 500 — still sends the attachments, and the push still reports its
 // own error; the leg neither masks nor adds to it.
@@ -510,85 +497,6 @@ func TestAttachmentLegRunsWhenTheRowPushFails(t *testing.T) {
 	}
 	if want := mustDocBody(t, id, "plan"); string(got) != want {
 		t.Errorf("uploaded bytes differ: got %q want %q", got, want)
-	}
-}
-
-// TestAttachmentLegRunsWhenEveryRowIsHeldElsewhere (AC5): the "nothing after hold
-// partition" exit — every pending item belongs to a story another location holds —
-// still uploads the rest, and the foreign-held story's attachment stays back.
-func TestAttachmentLegRunsWhenEveryRowIsHeldElsewhere(t *testing.T) {
-	url, hs, docs := holdDocsServer(t)
-	workstateRepo(t, storiesOnlyToml)
-	free := createStoryID(t, "free story")
-	runPush(t, url) // moves the items cursor past the free story
-
-	foreign := createStoryID(t, "held by another location")
-	hs.setHolder(foreign, otherLoc, "desk")
-	attachDoc(t, foreign, "plan", "plan", "stays with the holder")
-	attachDoc(t, free, "late", "note", "attached after the cursor moved")
-
-	out := runPush(t, url)
-	if !strings.Contains(out, "No work-state rows to push after hold partition.") {
-		t.Fatalf("expected the nothing-after-hold-partition exit: %q", out)
-	}
-	if _, ok := docs.file("stories/" + free + "/late.md"); !ok {
-		t.Error("the attachment leg should still run on the hold-partition exit")
-	}
-	if _, ok := docs.file("stories/" + foreign + "/plan.md"); ok {
-		t.Error("a story held by another location must keep its attachment back")
-	}
-	if !strings.Contains(out, "held with their stories") {
-		t.Errorf("push should say the foreign-held attachment was held: %q", out)
-	}
-}
-
-// TestAttachmentHeldElsewhereKeepsItsAttachmentBack (AC5): alongside a push that
-// does send rows, a story another location holds sends neither its row nor its
-// attachments; the free story's go.
-func TestAttachmentHeldElsewhereKeepsItsAttachmentBack(t *testing.T) {
-	url, hs, docs := holdDocsServer(t)
-	repo := workstateRepo(t, storiesOnlyToml)
-	free := createStoryID(t, "free story")
-	foreign := createStoryID(t, "held by another location")
-	hs.setHolder(foreign, otherLoc, "desk")
-	attachDoc(t, free, "plan", "plan", "free plan")
-	attachDoc(t, foreign, "plan", "plan", "foreign plan")
-
-	out := runPush(t, url)
-	if !strings.Contains(out, "skip "+foreign+" (held elsewhere)") {
-		t.Errorf("the foreign-held row should be skipped: %q", out)
-	}
-	// Single-owner record (sty_52b93691 AC5): reported once with the takeover
-	// pointer, and sent on the first push after the hold is released.
-	if n := strings.Count(out, "skip "+foreign); n != 1 {
-		t.Errorf("the foreign-held row is reported %d times, want once: %q", n, out)
-	}
-	if !strings.Contains(out, "satelle story hold takeover "+foreign) {
-		t.Errorf("the skip line should point at takeover: %q", out)
-	}
-	if _, ok := docs.file("stories/" + free + "/plan.md"); !ok {
-		t.Error("the free story's attachment should be uploaded")
-	}
-	if _, ok := docs.file("stories/" + foreign + "/plan.md"); ok {
-		t.Error("the foreign-held story's attachment must stay back")
-	}
-	if !strings.Contains(out, "1 held with their stories") {
-		t.Errorf("push should count the held attachment: %q", out)
-	}
-
-	// Once the hold is released the record goes on the first push after it.
-	hs.mu.Lock()
-	delete(hs.holders, foreign)
-	hs.mu.Unlock()
-	if err := hosted.ForgetHold(url, "probe", repo, foreign); err != nil {
-		t.Fatal(err)
-	}
-	out = runPush(t, url)
-	if strings.Contains(out, "skip "+foreign) {
-		t.Errorf("a released story must not be skipped again: %q", out)
-	}
-	if !hs.f.hasItem("probe", foreign) {
-		t.Error("the released story's record should be sent on the first push after release")
 	}
 }
 

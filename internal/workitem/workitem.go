@@ -87,13 +87,16 @@ func (k Kind) idPrefix() string {
 	}
 }
 
-// Holdable reports whether a kind of record may carry a hosted hold. Executions
-// are append-only: two machines' executions are two records, never one record
-// two machines contend for, so there is nothing to hold (sty_52b93691).
+// Holdable reports whether a kind of record may be held back from a push until
+// its code is on the git remote ([sync] hold_unpushed). Executions are
+// append-only: two machines' executions are two records, never one record two
+// machines contend for, so there is nothing to hold (sty_52b93691). (Hosted
+// holds are gone, sty_40853d02.)
 func (k Kind) Holdable() bool { return k != KindExecution }
 
-// Holdable reports whether the record with this id may carry a hosted hold. It
-// is the id form of Kind.Holdable, for the callers that have an id and no record.
+// Holdable reports whether the record with this id may be held back from a push.
+// It is the id form of Kind.Holdable, for the callers that have an id and no
+// record.
 func Holdable(id string) bool {
 	return !strings.HasPrefix(id, KindExecution.idPrefix())
 }

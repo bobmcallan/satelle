@@ -277,7 +277,7 @@ func TestSubstrateLockRefusalNamesTheCondition(t *testing.T) {
 			want: func(map[string]string) []string {
 				return []string{"No performing seat is attributed to this session", "Engage the substrate story in this session", advice}
 			},
-			not: []string{"re-engage", "hold takeover"},
+			not: []string{"re-engage", "seat release"},
 		},
 		{
 			name: "own seat stale",
@@ -290,7 +290,7 @@ func TestSubstrateLockRefusalNamesTheCondition(t *testing.T) {
 			want: func(ids map[string]string) []string {
 				return []string{"own seat " + ids["F0"] + " (session sess) is stale", "re-engage it (`satelle story set " + ids["F0"] + " --status in_progress`)", advice}
 			},
-			not: []string{"hold takeover"},
+			not: []string{"seat release"},
 		},
 		{
 			name: "stale lease of another session",
@@ -301,7 +301,7 @@ func TestSubstrateLockRefusalNamesTheCondition(t *testing.T) {
 			},
 			holders: []string{"F1"},
 			want: func(ids map[string]string) []string {
-				return []string{"No performing seat is attributed to this session", "Stale lease " + ids["F0"] + " belongs to another session", "`satelle story hold takeover " + ids["F0"] + "`", advice}
+				return []string{"No performing seat is attributed to this session", "Stale lease " + ids["F0"] + " belongs to another session", "`satelle story seat release " + ids["F0"] + "`", advice}
 			},
 			not: []string{"re-engage", "is stale, so it was not counted"},
 		},
@@ -314,7 +314,7 @@ func TestSubstrateLockRefusalNamesTheCondition(t *testing.T) {
 			},
 			holders: []string{"F1"},
 			want: func(ids map[string]string) []string {
-				return []string{"Stale lease " + ids["F0"] + " belongs to no session", "`satelle story hold takeover " + ids["F0"] + "`"}
+				return []string{"Stale lease " + ids["F0"] + " belongs to no session", "`satelle story seat release " + ids["F0"] + "`"}
 			},
 			not: []string{"re-engage", "is stale, so it was not counted"},
 		},

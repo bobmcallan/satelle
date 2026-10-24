@@ -48,8 +48,8 @@ written to disk, a log or the ledger.
 
 ## What the token reaches
 
-Story holds, location registration and workstate sync (gRPC `Sync.Apply` and
-`Sync.Snapshot`), on its granted projects only. A project outside the token is
+Location registration, story events (gRPC `Chain.Append`) and workstate sync
+(gRPC `Sync.Apply` and `Sync.Snapshot`), on its granted projects only. A project outside the token is
 reported as `project not in this session token's scope`; every other route
 refuses the token.
 

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -62,9 +61,9 @@ func TestStoryDrivePassesLocation(t *testing.T) {
 	}
 }
 
-// AC7: a drive that stopped lets go of the hold its own run took, since a story
-// that is neither terminal nor parked is never released by a later push.
-func TestStoryDriveStoppedReleasesOwnHold(t *testing.T) {
+// A drive that stopped short of its exit has nothing to let go of: engaging takes
+// no hosted hold (sty_40853d02).
+func TestStoryDriveStoppedMakesNoHoldCalls(t *testing.T) {
 	fx := newHoldFixture(t, holdNoGit)
 	script := filepath.Join(t.TempDir(), "executor")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat >/dev/null\necho 'cannot go on' >&2\nexit 1\n"), 0o755); err != nil {
@@ -79,20 +78,12 @@ func TestStoryDriveStoppedReleasesOwnHold(t *testing.T) {
 	if out, err := runRoot(t, "reindex"); err != nil {
 		t.Fatalf("reindex: %v\n%s", err, out)
 	}
-	id := createStoryID(t, "stops under a hold")
-	fx.hs.mu.Lock()
-	fx.hs.known[id] = true
-	fx.hs.mu.Unlock()
+	id := createStoryID(t, "stops under a drive")
 
+	// The fixture's server fails the test on any hold route, so a drive that
+	// engaged, stopped and let go of a hold would be caught here.
 	out, err := runRoot(t, "story", "drive", id)
 	if ExitCodeOf(err) != 1 || !strings.Contains(out, id+" stopped at in_progress: step in_progress, performer executor:") {
 		t.Fatalf("want a stop at in_progress (exit 1), got %d: %v\n%s", ExitCodeOf(err), err, out)
-	}
-	if got := fx.hs.checkoutIDs(); !slices.Equal(got, []string{id + "@" + fx.loc}) {
-		t.Fatalf("the drive's engage must have taken the hold, checkouts = %v", got)
-	}
-	if !slices.Equal(fx.hs.releasedIDs(), []string{id}) || fx.hs.holder(id).LocationID != "" || fx.heldHere(t, id) {
-		t.Errorf("the stopped drive must release its own hold: releases=%v holder=%+v recorded=%v",
-			fx.hs.releasedIDs(), fx.hs.holder(id), fx.heldHere(t, id))
 	}
 }

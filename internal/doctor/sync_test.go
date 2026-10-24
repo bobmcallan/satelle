@@ -119,6 +119,35 @@ func TestCheckSyncHealthMissingThresholdWarns(t *testing.T) {
 	}
 }
 
+// sty_40853d02: a config still carrying [sync] hold_stale_after loads, passes,
+// and gets one retired notice; a config without it gets none.
+func TestCheckSyncHealthNamesTheRetiredHoldStaleAfterKey(t *testing.T) {
+	repo, data := writeRepoTOML(t, t.TempDir(), "[sync]\nall = \"local\"\nstale_after = \"24h\"\nhold_stale_after = \"2h\"\n")
+	got := checkSyncHealth(repo, data, t.TempDir(), time.Now())
+	if !got.OK() {
+		t.Fatalf("a retired key must not fail the check: %v", got)
+	}
+	n := 0
+	for _, f := range got {
+		if f.ID == health.IDSyncRetired {
+			n++
+			if f.Severity != health.SeverityInfo || !containsAll(f.Detail, "hold_stale_after", "retired") {
+				t.Errorf("retired notice = %+v, want one info line naming hold_stale_after as retired", f)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("retired notices = %d, want exactly one: %v", n, got)
+	}
+
+	repo2, data2 := writeRepoTOML(t, t.TempDir(), "[sync]\nall = \"local\"\nstale_after = \"24h\"\n")
+	for _, f := range checkSyncHealth(repo2, data2, t.TempDir(), time.Now()) {
+		if f.ID == health.IDSyncRetired {
+			t.Fatalf("a config without the key got a retired notice: %+v", f)
+		}
+	}
+}
+
 func TestWorkstateStaleAfterIsNotCompiledIn(t *testing.T) {
 	_, has, err := config.WorkstateStaleAfter(config.Config{})
 	if err != nil || has {

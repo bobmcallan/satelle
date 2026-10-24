@@ -2,8 +2,8 @@
 
 Every interactive agent session is named from what satelle knows about where it
 runs, so the operator can tell sessions apart in the harness's own list (Claude
-Code's `claude agents` / Remote Control) and in the hold records other machines
-see.
+Code's `claude agents` / Remote Control) and in the `working_on` rows other
+machines see on a story.
 
 ```
 satelle session name [--harness <h>]
@@ -23,7 +23,7 @@ prints the one identity:
   the id as its worktree segment alone.
 
 The same host · repo (· worktree) form is the label a checkout registers as its
-location with a hosted server, so a hold owned by another machine names it.
+location with a hosted server, so a story another machine last worked on names it.
 
 ## Naming at launch — the satelle launcher
 

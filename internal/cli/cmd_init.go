@@ -237,11 +237,6 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 		if serr != nil {
 			return fmt.Errorf("init: seed [sync] stale_after: %w", serr)
 		}
-		holdStaleChanged, herr2 := healHoldStaleAfter(dataDir)
-		if herr2 != nil {
-			return fmt.Errorf("init: seed [sync] hold_stale_after: %w", herr2)
-		}
-		staleChanged = staleChanged || holdStaleChanged
 		fixLaneChanged, ferr := healFixLane(dataDir)
 		if ferr != nil {
 			return fmt.Errorf("init: seed [fix_lane]: %w", ferr)
@@ -1897,15 +1892,12 @@ const scaffoldTomlAfterExempt = `
 # choice — satelle does not require it. Git is for the application repo.
 # Areas: documents, workflows, principles, skills, constitution, agents, tasks,
 # settings (satelle.toml, including [sync]), stories, ledger, executions.
-# Reserved keys: 'all' (blanket default), server, project, workspace, stale_after,
-# hold_stale_after (how long another location's hold on a story may go unseen
-# before the holder is presumed dead; stale_after judges the local mirror instead).
+# Reserved keys: 'all' (blanket default), server, project, workspace, stale_after.
 # Unset server = https://satelle.dev. Unset project = this repo's directory name.
 # satelle login records the machine-wide server; satelle project bind <slug>
 # writes [sync] project when the directory name is not the slug you want.
 [sync]
 stale_after = "24h"
-hold_stale_after = "2h"
 # >>> satelle-example: enable sync (uncomment to opt in)
 # [sync]
 # all = "personal"               # every area personal unless overridden below

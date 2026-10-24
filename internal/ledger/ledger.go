@@ -97,6 +97,12 @@ const (
 	// diff-since-engagement (sty_da169e03 / epic:scope-integrity). Enumeration
 	// only — no pass/fail in Go.
 	KindEngagementBaseline = "engagement_baseline"
+	// KindWorkingOn records that a location took a fresh engagement seat on a
+	// story (sty_40853d02): Payload {location, label, session, worktree, state}.
+	// It is visibility only — shown on `story get`/`story list` and the
+	// session-start advisory so other machines and team members see who is on a
+	// story. No code path reads it to refuse anything.
+	KindWorkingOn = "working_on"
 	// KindTrunkCheck records what the start-of-work trunk check found when a
 	// story first entered an engaging state (sty_9f3e51d1): body is the line
 	// shown to the operator, payload the trunk report. Never a verdict.

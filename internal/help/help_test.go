@@ -116,7 +116,7 @@ func TestSessionTokenTopic(t *testing.T) {
 		"satelle whoami",
 		"30 days",
 		"revoke",
-		"holds",
+		"location registration",
 		"workstate",
 		"snapshot",
 	} {

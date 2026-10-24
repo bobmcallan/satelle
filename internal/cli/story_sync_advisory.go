@@ -1,13 +1,16 @@
 package cli
 
 // Session-start story-sync advisory (sty_6e5fc41c): one line naming the stories
-// whose local and hosted copies disagree and the stories another location holds,
-// with each holder and when it was last seen. It reads recorded state only —
-// what the last work-state passes wrote — and never dials, so a session start
-// never waits on the server. A record older than the mirror freshness window is
-// marked unverified rather than presented as current.
+// whose local and hosted copies disagree and the stories another location last
+// worked on, with where and when (sty_40853d02). It reads recorded state only —
+// what the last work-state passes wrote and the local ledger's working_on rows —
+// and never dials, so a session start never waits on the server. The line is
+// marked unverified when the last good snapshot it rests on is older than the
+// mirror freshness window. It is information: nothing is blocked by a story
+// another location is on.
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"slices"
@@ -16,7 +19,6 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/syncstate"
 )
@@ -28,9 +30,10 @@ const storySyncMaxIDs = 5
 // replace it.
 var storySyncAdvisoryFor = storySyncAdvisory
 
-// storySyncAdvisory gathers the recorded conflicts and holds and decides the
-// line. It has no error channel: it feeds `satelle hook context`, which must
-// always exit 0, so unreadable state is "nothing to report".
+// storySyncAdvisory gathers the recorded conflicts and the stories another
+// location last worked on, and decides the line. It has no error channel: it
+// feeds `satelle hook context`, which must always exit 0, so unreadable state is
+// "nothing to report".
 func storySyncAdvisory(a *app.App) string {
 	if a == nil {
 		return ""
@@ -40,56 +43,25 @@ func storySyncAdvisory(a *app.App) string {
 	if st, ok, _ := syncstate.Load(config.GlobalDir(), a.RepoRoot); ok {
 		conflicts, snapshotAt = st.StoryConflicts, st.SnapshotLastSuccess
 	}
-	var holds map[string]hosted.HoldRecord
-	if project := config.ResolveBoundProject(a.Config, a.RepoRoot); project != "" {
-		if recorded, err := hosted.LoadHolds(config.ResolveHostedServer(a.Config), project, a.RepoRoot); err == nil {
-			self := hosted.KnownLocationID(a.RepoRoot)
-			holds = map[string]hosted.HoldRecord{}
-			for id, rec := range recorded {
-				if rec.Location != self {
-					holds[id] = rec
-				}
-			}
-		}
-	}
-	staleAfter, err := config.HoldStaleAfter(a.Config)
-	if err != nil {
-		staleAfter = config.DefaultHoldStaleAfter
-	}
-	return storySyncLine(conflicts, holds, snapshotAt, staleAfter, time.Now())
+	return storySyncLine(conflicts, otherWorking(context.Background(), a), snapshotAt, time.Now())
 }
 
 // storySyncLine is the DECISION: one advisory line, "" when no story is in
-// conflict or held elsewhere. Conflicts come first, then holds, each in id
-// order; at most storySyncMaxIDs stories are named. A holder is marked presumed
-// dead when its last-seen is older than staleAfter. The line is marked
-// unverified when the oldest record it rests on (a hold's check time, or the
-// last good snapshot for the conflicts) is older than the mirror freshness
-// window — or unknown.
-func storySyncLine(conflicts map[string]syncstate.StoryConflict, holds map[string]hosted.HoldRecord, snapshotAt time.Time, staleAfter time.Duration, now time.Time) string {
-	if len(conflicts) == 0 && len(holds) == 0 {
+// conflict or last worked on elsewhere. Conflicts come first, then the stories
+// another location is on, each in id order; at most storySyncMaxIDs stories are
+// named. The line is marked unverified when the last good snapshot it rests on is
+// older than the mirror freshness window — or unknown.
+func storySyncLine(conflicts map[string]syncstate.StoryConflict, working map[string]workingOnRow, snapshotAt time.Time, now time.Time) string {
+	if len(conflicts) == 0 && len(working) == 0 {
 		return ""
 	}
 	var entries []string
-	var oldest time.Time
-	known := true
-	note := func(t time.Time) {
-		if t.IsZero() {
-			known = false
-		} else if oldest.IsZero() || t.Before(oldest) {
-			oldest = t
-		}
-	}
-	if len(conflicts) > 0 {
-		note(snapshotAt)
-	}
 	for _, id := range slices.Sorted(maps.Keys(conflicts)) {
 		entries = append(entries, fmt.Sprintf("%s in conflict (%s)", id, conflicts[id].Reason))
 	}
-	for _, id := range slices.Sorted(maps.Keys(holds)) {
-		rec := holds[id]
-		note(rec.CheckedAt)
-		entries = append(entries, fmt.Sprintf("%s held by remote %s, %s", id, holderName(rec), lastSeenFor(rec, staleAfter, now)))
+	for _, id := range slices.Sorted(maps.Keys(working)) {
+		r := working[id]
+		entries = append(entries, fmt.Sprintf("%s last worked at %s %s ago", id, r.who(), r.age(now)))
 	}
 	more := ""
 	if len(entries) > storySyncMaxIDs {
@@ -97,34 +69,12 @@ func storySyncLine(conflicts map[string]syncstate.StoryConflict, holds map[strin
 		entries = entries[:storySyncMaxIDs]
 	}
 	line := "⚠️ satelle: story sync — " + strings.Join(entries, "; ") + more
-	if !known || now.Sub(oldest) > mirror.StaleAfter {
+	if snapshotAt.IsZero() || now.Sub(snapshotAt) > mirror.StaleAfter {
 		when := "never"
-		if known {
-			when = oldest.UTC().Format("2006-01-02 15:04 UTC")
+		if !snapshotAt.IsZero() {
+			when = snapshotAt.UTC().Format("2006-01-02 15:04 UTC")
 		}
 		line += fmt.Sprintf(" (unverified (last checked %s))", when)
 	}
-	return line + " — run `satelle story list`; `satelle story hold takeover <id>` takes a held story once its holder is out of the way."
-}
-
-// holderName is how a holder is named: its label, else its location id.
-func holderName(rec hosted.HoldRecord) string {
-	if rec.Label != "" {
-		return rec.Label
-	}
-	return rec.Location
-}
-
-// lastSeenFor renders a holder's last-seen with its age, and marks it presumed
-// dead when the silence outlasts staleAfter.
-func lastSeenFor(rec hosted.HoldRecord, staleAfter time.Duration, now time.Time) string {
-	if strings.TrimSpace(rec.LastSeen) == "" {
-		return "last seen unknown"
-	}
-	dead, age := hosted.HoldPresumedDead(rec.LastSeen, staleAfter, now)
-	out := fmt.Sprintf("last seen %s (%s ago)", rec.LastSeen, age.Round(time.Minute))
-	if dead {
-		out += ", presumed dead"
-	}
-	return out
+	return line + " — run `satelle story list`."
 }

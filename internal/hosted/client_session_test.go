@@ -74,16 +74,16 @@ func TestEnvStoreUnsetDelegatesToFile(t *testing.T) {
 	}
 }
 
-func TestSessionTokenIsBearerOnRESTHold(t *testing.T) {
+func TestSessionTokenIsBearerOnREST(t *testing.T) {
 	var got string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = r.Header.Get("Authorization")
-		_ = json.NewEncoder(w).Encode(map[string]any{"hold": map[string]string{"location_id": ""}})
+		_, _ = w.Write([]byte("content"))
 	}))
 	t.Cleanup(ts.Close)
 	store, _ := sessionEnv(t, ts.URL)
 	c := NewClient(ts.URL, store, ts.Client())
-	if _, _, err := c.ItemHold(context.Background(), "proj", "sty_1"); err != nil {
+	if _, _, err := c.ConfigFileContent(context.Background(), "proj", "a.md", 0); err != nil {
 		t.Fatal(err)
 	}
 	if got != "Bearer "+testSessionToken {
@@ -155,7 +155,8 @@ func TestSessionTokenNotFoundIsScope(t *testing.T) {
 	t.Cleanup(ts.Close)
 	store, _ := sessionEnv(t, ts.URL)
 	c := NewClient(ts.URL, store, ts.Client())
-	if _, _, err := c.ItemHold(context.Background(), "other", "sty_1"); err == nil || !strings.Contains(err.Error(), "not in this session token's scope") {
+	c.SetLocation("loc_session_test_aaaa")
+	if _, err := c.RegisterLocationPrincipal(context.Background(), "x"); err == nil || !strings.Contains(err.Error(), "not in this session token's scope") {
 		t.Errorf("REST 404 err = %v", err)
 	}
 

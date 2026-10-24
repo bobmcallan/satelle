@@ -113,7 +113,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			req := map[string]any{"id": args[0]}
 			if group == "story" {
-				return dispatchWithHeld(cmd, group+"-get", req)
+				return dispatchWithWorking(cmd, group+"-get", req)
 			}
 			return dispatch(cmd, group+"-get", req)
 		},
@@ -136,7 +136,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 				req["limit"] = lLimit
 			}
 			if group == "story" {
-				return dispatchWithHeld(cmd, group+"-list", req)
+				return dispatchWithWorking(cmd, group+"-list", req)
 			}
 			return dispatch(cmd, group+"-list", req)
 		},
@@ -253,7 +253,6 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyWorktreeCommand())
 		parent.AddCommand(storyRecoverCommand())
 		parent.AddCommand(storySeatCommands()...)
-		parent.AddCommand(storyHoldCommands())
 		parent.AddCommand(storyTidyCommands()...)
 		parent.AddCommand(storyMessageCommand())
 		parent.AddCommand(storyMessagesCommand())

@@ -19,6 +19,23 @@ func checkSyncHealth(repoRoot, dataDir, globalDir string, now time.Time) health.
 		return health.Findings{health.Warn(health.IDSyncConfig, "Workstate sync config",
 			"could not load satelle.toml; sync health not judged").About(cfgPath)}
 	}
+	return append(retiredSyncKeyFindings(cfg, cfgPath), checkWorkstatePush(cfg, cfgPath, repoRoot, globalDir, now)...)
+}
+
+// retiredSyncKeyFindings is the one-line notice for a [sync] key that hosted
+// holds once read and nothing reads now (sty_40853d02). It loads and is ignored;
+// the notice only says so, once.
+func retiredSyncKeyFindings(cfg config.Config, cfgPath string) health.Findings {
+	if !config.RetiredSyncKeyPresent(cfg) {
+		return nil
+	}
+	return health.Findings{health.Info(health.IDSyncRetired, "Retired [sync] key",
+		"[sync] "+config.RetiredSyncHoldStaleAfterKey+" is retired (hosted story holds were removed) and ignored").
+		About(cfgPath).WithRemediation("delete it, or run `satelle migrate --yes`")}
+}
+
+// checkWorkstatePush judges the recorded work-state push against cfg.
+func checkWorkstatePush(cfg config.Config, cfgPath, repoRoot, globalDir string, now time.Time) health.Findings {
 
 	allLocal := true
 	for _, area := range config.WorkstateAreas {

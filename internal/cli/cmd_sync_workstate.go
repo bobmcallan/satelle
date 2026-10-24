@@ -191,11 +191,6 @@ func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string, force bool, 
 	if err != nil {
 		return err
 	}
-	// Who holds which story is read after the pages land, so a hold taken or
-	// released since the last pass is recorded for the session-start advisory.
-	if optIn["stories"] {
-		syncHolds(cmd.Context(), cmd.ErrOrStderr(), a, holdSite{client: client, server: server, project: project, repoRoot: a.RepoRoot}, rep, sc.IDs)
-	}
 	if err := pushMirrorAfterWorkstate(cmd.Context(), a, rep.Items+rep.Ledger); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "workstate: mirror push warning: %v\n", err)
 	}
@@ -384,7 +379,6 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	}
 
 	if len(batch.Items) == 0 && len(batch.Ledger) == 0 && len(plan) == 0 {
-		settlePendingClaims(cmd.Context(), out, cmd.ErrOrStderr(), a, server, project)
 		if hadCursor && !full {
 			fmt.Fprintf(out, "Work-state up to date on %s — no records changed since the last push.\n", server)
 			recordWorkstatePush(a.RepoRoot, true, "")
@@ -395,7 +389,6 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	}
 
 	client = clientFor()
-	site := holdSite{client: client, server: server, project: project, repoRoot: repoRoot}
 	errw := cmd.ErrOrStderr()
 
 	// Hold a story whose code is not on the git remote (sty_7361569a). Held rows
@@ -451,8 +444,6 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		}
 		if len(withheld) > 0 {
 			held = withheld
-			// The story's rows stay local, but its hosted marker must not go stale.
-			refreshHeldBack(cmd.Context(), out, errw, site, res.held)
 			batch.Items, batch.Ledger, earliestHeld = withoutHeld(held, batch.Items, batch.Ledger, ledgerRows)
 			lmark = ledgerMarkBeforeHold(startMark, held, ledgerRows)
 			if !earliestHeld.IsZero() {
@@ -483,7 +474,6 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	}
 	if held != nil && len(batch.Items) == 0 && len(batch.Ledger) == 0 {
 		fmt.Fprintln(out, "No work-state rows to push after holding unpushed stories.")
-		reconcilePendingClaims(cmd.Context(), out, errw, site)
 		recordOK()
 		return nil
 	}
@@ -491,34 +481,11 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	// Chunked push; cursor advances only after every chunk confirms (AC3).
 	// Prefer a single POST when both sides fit in one chunk (preserves the
 	// small-batch shape tests and production already rely on).
-	skipped, keep, terminalHeld, skipErr := partitionByHold(cmd.Context(), client, server, project, repoRoot, batch.Items)
-	if skipErr != nil {
-		return skipErr
-	}
-	// A story finished on the hosted copy has no hold: release what another
-	// location left on it before the ingest, so the server accepts the rows
-	// (sty_aa9eaaba).
-	for _, id := range terminalHeld {
-		releaseTerminalHold(cmd.Context(), errw, site, id)
-	}
-	skippedIDs := map[string]bool{}
-	for _, s := range skipped {
-		fmt.Fprintf(out, "skip %s (held elsewhere): %s\n", s.ItemID, s.Error())
-		skippedIDs[s.ItemID] = true
-	}
-	// A record held elsewhere waits for takeover and nothing else does: the
-	// items cursor stops before the earliest such record rather than freezing,
-	// so the others advance and the record is re-collected once it is free
-	// (sty_f6cff549).
-	earliestStop := earliestUpdatedAt(batch.Items, skippedIDs)
-	batch.Items = keep
-	if len(keep) > 0 && earliestHeld.IsZero() {
-		maxItems = maxItemUpdatedAt(keep)
+	if len(batch.Items) > 0 && earliestHeld.IsZero() {
+		maxItems = maxItemUpdatedAt(batch.Items)
 	}
 	var totalItems, totalLedger int
-	var publishedItems, publishedLedger []json.RawMessage
-	refused := newRefusals()
-	send := func(items, ledgerRaw []json.RawMessage) error {
+	apply := func(items, ledgerRaw []json.RawMessage) error {
 		if items == nil {
 			items = []json.RawMessage{}
 		}
@@ -527,81 +494,19 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		}
 		res, perr := client.Apply(cmd.Context(), project, hosted.WorkstateIngest{Items: items, Ledger: ledgerRaw})
 		if perr != nil {
-			return perr
+			recordWorkstatePush(a.RepoRoot, false, perr.Error())
+			if errors.Is(perr, hosted.ErrLoginRequired) {
+				return perr
+			}
+			return fmt.Errorf("apply workstate: %w", perr)
 		}
 		totalItems += res.Items
 		totalLedger += res.Ledger
-		publishedItems = append(publishedItems, items...)
-		publishedLedger = append(publishedLedger, ledgerRaw...)
 		return nil
 	}
-	// A record the server refuses as held is skipped on its own and never fails
-	// the push (it names no record, so the refused chunk is retried a record at
-	// a time). The server will stop refusing once it treats executions as
-	// append-only (sty_1cb9f98f).
-	fail := func(err error) error {
-		recordWorkstatePush(a.RepoRoot, false, err.Error())
-		if errors.Is(err, hosted.ErrLoginRequired) {
-			return err
-		}
-		return fmt.Errorf("apply workstate: %w", err)
-	}
-	apply := func(items, ledgerRaw []json.RawMessage) error {
-		perr := send(items, ledgerRaw)
-		if perr == nil {
-			return nil
-		}
-		if !errors.Is(perr, hosted.ErrHeldElsewhere) {
-			return fail(perr)
-		}
-		for _, raw := range items {
-			if err := send([]json.RawMessage{raw}, nil); err != nil {
-				herr := refused.item(raw, err)
-				if herr == nil {
-					return fail(err)
-				}
-				fmt.Fprintf(out, "skip %s (held elsewhere): %s\n", herr.ItemID, herr.Error())
-			}
-		}
-		for _, raw := range ledgerRaw {
-			if err := send(nil, []json.RawMessage{raw}); err != nil {
-				herr := refused.ledger(raw, err)
-				if herr == nil {
-					return fail(err)
-				}
-				fmt.Fprintf(out, "skip ledger entry of %s (held elsewhere): %s\n", herr.ItemID, herr.Error())
-			}
-		}
-		return nil
-	}
-
-	// A story engaged here before the server could be asked has no hosted hold
-	// yet, and a story the server has never seen cannot be checked out until its
-	// item is there. So those items go first, alone; then every pending claim is
-	// placed, and a story another location got to loses its remaining rows
-	// (sty_52eb8c2f). They stay behind the cursors, so a takeover later sends them.
-	if pending, perr := hosted.PendingClaims(server, project, repoRoot); perr == nil && len(pending) > 0 {
-		var first, rest []json.RawMessage
-		for _, raw := range batch.Items {
-			if _, ok := pending[rawItemID(raw)]; ok {
-				first = append(first, raw)
-			} else {
-				rest = append(rest, raw)
-			}
-		}
-		if len(first) > 0 {
-			if err := apply(first, nil); err != nil {
-				return err
-			}
-			batch.Items = rest
-		}
-	}
-	// A collided story's record is already skipped above or refused by the server;
-	// its ledger entries are this machine's own, so they are sent regardless.
-	reconcilePendingClaims(cmd.Context(), out, errw, site)
 	// Story rows were sent as events, so the ledger cursor still moves past them.
-	if len(batch.Items) == 0 && len(batch.Ledger) == 0 && len(publishedItems) == 0 && !storyRowsDropped {
-		fmt.Fprintln(out, "No work-state rows to push after hold partition.")
+	if len(batch.Items) == 0 && len(batch.Ledger) == 0 && !storyRowsDropped {
+		fmt.Fprintln(out, "No work-state rows to push after the story events.")
 		return nil
 	}
 	type partial struct {
@@ -611,7 +516,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	var parts []partial
 	switch {
 	case len(batch.Items) == 0 && len(batch.Ledger) == 0:
-		// Everything went ahead of the claims.
+		// Only story rows were due and they went as events.
 	case len(batch.Items) <= workstateItemChunk && len(batch.Ledger) <= workstateLedgerChunk:
 		parts = []partial{{items: batch.Items, ledger: batch.Ledger}}
 	default:
@@ -631,17 +536,6 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		fmt.Fprintf(out, "scoped push to project %q personal collection on %s: %d item(s), %d ledger entr(y/ies).\n",
 			project, server, totalItems, totalLedger)
 	} else {
-		if stop := earliestOf(earliestStop, earliestHeld, refused.earliestItem); !stop.IsZero() {
-			maxItems = itemsCursorBefore(keep, stop, cursor.ItemsUpdatedAt)
-		}
-		if len(refused.ledgerStories) > 0 {
-			stopped := maps.Clone(held)
-			if stopped == nil {
-				stopped = map[string]string{}
-			}
-			maps.Copy(stopped, refused.ledgerStories)
-			lmark = ledgerMarkBeforeHold(startMark, stopped, ledgerRows)
-		}
 		// Advance cursor only after full success.
 		next := hosted.WorkstateCursor{
 			ItemsUpdatedAt:  maxItems,
@@ -658,10 +552,6 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	}
 	if codeHeld > 0 {
 		fmt.Fprintf(out, "%d stor(y/ies) held until their code is on the remote.\n", codeHeld)
-	}
-	// A published story at rest no longer needs its in-flight marker.
-	if released := releaseAtRest(cmd.Context(), errw, a, site, publishedStoryIDs(publishedItems, publishedLedger)); len(released) > 0 {
-		fmt.Fprintf(out, "released the hosted hold on %s.\n", strings.Join(released, ", "))
 	}
 	recordOK()
 	return nil
@@ -761,7 +651,7 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 		sc.ExpandRemoteEpics = true
 		rep, err = runScopedWorkstateSnapshot(ctx, a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModePull, sc)
 		if err == nil && rep.Scope.scoped() {
-			sc = rep.Scope // the members taken from the server, for the attachment and hold steps
+			sc = rep.Scope // the members taken from the server, for the attachment step
 		}
 	} else {
 		rep, err = runPagedWorkstateSnapshot(ctx, a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModePull)
@@ -778,11 +668,6 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 		defer pullStoryAttachments(ctx, out, cmd.ErrOrStderr(), a, client, server, project, sc.Set, force)
 	}
 	nItems, nLedger, nKept := rep.Items, rep.Ledger, rep.Kept
-	// Stories in flight elsewhere are worth knowing even when nothing was pulled.
-	defer func() {
-		site := holdSite{client: client, server: server, project: project, repoRoot: a.RepoRoot}
-		reportInFlight(ctx, out, site, syncHolds(ctx, cmd.ErrOrStderr(), a, site, rep, sc.IDs))
-	}()
 	if nItems == 0 && nLedger == 0 && nKept == 0 {
 		if rep.complete() {
 			fmt.Fprintf(out, "No work-state rows to pull (%s; hosted opted-in areas are empty).\n", rep.label())
@@ -954,6 +839,56 @@ func jsonPayloadEqual(a, b json.RawMessage) bool {
 // local row kept whose content differs from the hosted one is a conflict, and a
 // story applied or kept with identical content clears any recorded one. The
 // local copy is never changed to resolve it (sty_6e5fc41c).
+// orderLedgerRows is the order a page's ledger rows are inserted in: the order the
+// events were made (created_at, ties as they came), except that an event whose base
+// is another row of the page follows that row. Ties on created_at, and a clock that
+// ran behind within one command, would otherwise put an event ahead of the one it
+// builds on, and the story's chain would no longer be one a push can continue
+// (sty_40853d02: a machine that pulls a story and then works it).
+func orderLedgerRows(rows []hosted.WorkstateLedgerRow) []hosted.WorkstateLedgerRow {
+	type parsed struct {
+		row hosted.WorkstateLedgerRow
+		e   ledger.Entry
+		ok  bool
+	}
+	ps := make([]parsed, len(rows))
+	for i, r := range rows {
+		e, err := parseWorkstateLedger(r)
+		ps[i] = parsed{row: r, e: e, ok: err == nil}
+	}
+	slices.SortStableFunc(ps, func(x, y parsed) int {
+		if !x.ok || !y.ok {
+			return 0
+		}
+		return x.e.CreatedAt.Compare(y.e.CreatedAt)
+	})
+	at := make(map[string]int, len(ps))
+	for i, p := range ps {
+		if p.ok {
+			at[p.e.ID] = i
+		}
+	}
+	out := make([]hosted.WorkstateLedgerRow, 0, len(ps))
+	placed := make([]bool, len(ps))
+	var place func(i int)
+	place = func(i int) {
+		if placed[i] {
+			return
+		}
+		placed[i] = true // before the base, so a cycle in the data cannot recurse forever
+		if p := ps[i]; p.ok && p.e.BaseID != "" {
+			if j, in := at[p.e.BaseID]; in {
+				place(j)
+			}
+		}
+		out = append(out, ps[i].row)
+	}
+	for i := range ps {
+		place(i)
+	}
+	return out
+}
+
 func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool, items []hosted.WorkstateItem, ledgerRows []hosted.WorkstateLedgerRow, force bool, now time.Time, out *storyOutcome) (applied []workitem.Item, nItems, nLedger, nKept int, err error) {
 	for _, hi := range items {
 		area := workstateAreaForKind(hi.Kind)
@@ -1003,16 +938,7 @@ func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool,
 		// inserted, so arrival order becomes its place in the chain the fold reads.
 		// Insert in the order the events were made, whatever order the page lists
 		// them in (sty_d84be8bc).
-		ledgerRows = slices.Clone(ledgerRows)
-		slices.SortStableFunc(ledgerRows, func(x, y hosted.WorkstateLedgerRow) int {
-			xe, xerr := parseWorkstateLedger(x)
-			ye, yerr := parseWorkstateLedger(y)
-			if xerr != nil || yerr != nil {
-				return 0
-			}
-			return xe.CreatedAt.Compare(ye.CreatedAt)
-		})
-		for _, hr := range ledgerRows {
+		for _, hr := range orderLedgerRows(ledgerRows) {
 			e, perr := parseWorkstateLedger(hr)
 			if perr != nil {
 				return applied, nItems, nLedger, nKept, fmt.Errorf("materialize ledger %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hr.ID, nItems, nLedger, perr)
@@ -1448,60 +1374,6 @@ func maxItemUpdatedAt(items []json.RawMessage) time.Time {
 		}
 	}
 	return max
-}
-
-// partitionByHold drops items held by another location so push cannot fork
-// a second live copy (sty_f6cff549). Local registry is a cache; ItemHold
-// probes ids not held here, and a probe that fails leaves the cache's word
-// standing. A probe error on an uncached id falls through to Apply (server
-// authority).
-//
-// A story whose hosted copy is terminal carries no hold (sty_aa9eaaba): it is
-// kept, no hold is recorded for it and any stale record is forgotten, and its id
-// is returned in terminalHeld for the caller to release on the server. This
-// function never changes a hold on the server.
-func partitionByHold(ctx context.Context, client *hosted.Client, server, project, repoRoot string, items []json.RawMessage) (skipped []*hosted.HeldError, keep []json.RawMessage, terminalHeld []string, err error) {
-	if len(items) == 0 {
-		return nil, items, nil, nil
-	}
-	reg, err := hosted.LoadHolds(server, project, repoRoot)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	self := client.Location()
-	keep = make([]json.RawMessage, 0, len(items))
-	for _, raw := range items {
-		id := rawItemID(raw)
-		if id == "" || !workitem.Holdable(id) {
-			// An execution is append-only: a hold on its id, however it got
-			// there, never keeps it back.
-			keep = append(keep, raw)
-			continue
-		}
-		if self != "" && reg[id].Location != self {
-			st, hi, herr := client.ItemHold(ctx, project, id)
-			cached := reg[id].Location != ""
-			switch {
-			case herr == nil && st.LocationID != "" && st.LocationID != self:
-				if hostedItemTerminal(ctx, hi) {
-					_ = hosted.ForgetHold(server, project, repoRoot, id)
-					terminalHeld = append(terminalHeld, id)
-					break
-				}
-				_ = hosted.RecordHold(server, project, repoRoot, id, hosted.HoldRecordFrom(st, time.Now()))
-				skipped = append(skipped, &hosted.HeldError{ItemID: id, Hold: st})
-				continue
-			case herr == nil && cached && st.LocationID == "":
-				_ = hosted.ForgetHold(server, project, repoRoot, id)
-			case herr != nil && cached:
-				rec := reg[id]
-				skipped = append(skipped, &hosted.HeldError{ItemID: id, Hold: hosted.HoldState{LocationID: rec.Location, Label: rec.Label, LastSeenAt: rec.LastSeen}})
-				continue
-			}
-		}
-		keep = append(keep, raw)
-	}
-	return skipped, keep, terminalHeld, nil
 }
 
 // marshalWorkstateLedger encodes a ledger entry for ingest.

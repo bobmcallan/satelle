@@ -317,7 +317,8 @@ func (p *preparedCreate) finish(ctx context.Context, it workitem.Item) (json.Raw
 	kind := p.kind
 	recordLifecycleReview(ctx, it.ID, "create_review", "create", it.Status, p.createDec, now)
 	// Create-into-engaging: claim the seat now that the id exists (sty_8426b9c0).
-	if _, _, aerr := acquireEngagementLease(ctx, it, it.Status); aerr != nil {
+	seated, _, aerr := acquireEngagementLease(ctx, it, it.Status)
+	if aerr != nil {
 		// Best-effort: item was created; surface the seat error so the operator
 		// knows the create raced — rare (pre-check already refused when possible).
 		return nil, aerr
@@ -326,6 +327,9 @@ func (p *preparedCreate) finish(ctx context.Context, it workitem.Item) (json.Raw
 		// A story's creation carries its whole definition and initial status: the
 		// fold starts from it (sty_d84be8bc).
 		_ = AppendStoryCreated(ctx, ledgerStore, it, p.origin.Actor, p.origin.Source, now)
+		if seated {
+			recordSeatTaken(ctx, it, it.Status, now)
+		}
 	} else {
 		var createdPayload json.RawMessage
 		if p.origin.Source != "" {
@@ -624,19 +628,14 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 				return nil, err
 			}
 		}
-		// Assignee holder check (sty_8ccaa906): who may acquire the seat.
-		// Before the lease so a refusal never takes it. Non-engaging moves
-		// (park, cancel, field edits) are not blocked.
+		// Assignee notice (sty_8ccaa906, sty_40853d02): an assignment says who is
+		// expected to work the story; it never blocks an engage. Non-engaging moves
+		// (park, cancel, field edits) say nothing.
 		if eng, ok := storyStatusIsEngaging(ctx, current, *req.Status); ok && eng {
 			if err := runEngageGuard(ctx); err != nil {
 				return nil, err
 			}
-			if err := refuseWrongHolder(current, resolveAssignee()); err != nil {
-				return nil, err
-			}
-			if err := refuseHeldElsewhere(ctx, current); err != nil {
-				return nil, err
-			}
+			noticeOtherAssignee(os.Stderr, current, resolveAssignee())
 		}
 		acq, inFlight, aerr := acquireEngagementLease(ctx, current, *req.Status)
 		if aerr != nil {
@@ -647,6 +646,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			// no gate, no dispatch. Other field updates may still apply below.
 			if acq {
 				confirmEngagementLease(ctx, current.ID, *req.Status)
+				recordSeatTaken(ctx, current, *req.Status, now)
 			}
 			// inFlight / AlreadyHeld: seat already held — good enough for AC2.
 			// Fall through so title/tags/etc. updates still apply when combined.
@@ -1018,6 +1018,12 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		// (sty_da169e03). Enumerates git HEAD for later satelle story diff;
 		// never a verdict. Idempotent across park/resume.
 		maybeRecordEngagementBaseline(ctx, it, current.Status, *req.Status, commitNow)
+		// A seat this move newly took is visible on the ledger (sty_40853d02): one
+		// working_on row, after the transition that engaged it. A step under a seat
+		// already held, and a move that did not commit, write none.
+		if acquiredThisCall {
+			recordSeatTaken(ctx, it, *req.Status, commitNow)
+		}
 		// The engaging session's model is the in-loop tier config.SelectModel's
 		// inherited resolution reads (sty_7069bced). Recorded on every engaging
 		// transition, not just the first — a later engage (e.g. blocked→in_progress)

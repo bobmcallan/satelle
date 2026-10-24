@@ -13,27 +13,45 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/syncstate"
+	"github.com/bobmcallan/satelle/internal/verb"
 )
+
+// appendWorkingOn writes a working_on row to a's ledger as a pull from another
+// machine would leave it: the story need not exist locally.
+func appendWorkingOn(t *testing.T, a *app.App, storyID string, p verb.WorkingOnPayload, at time.Time) {
+	t.Helper()
+	payload, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Store.Ledger.Append(t.Context(), ledger.AppendInput{
+		StoryID: storyID, Kind: ledger.KindWorkingOn, Actor: "executor", Body: verb.WorkingOnText(p), Payload: payload,
+	}, at); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestStorySyncLine(t *testing.T) {
 	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
 	fresh := now.Add(-time.Minute)
-	staleAfter := 2 * time.Hour
-	live := hosted.HoldRecord{Location: "loc_a", Label: "desk", LastSeen: "2026-10-14T11:30:00Z", CheckedAt: fresh}
-	dead := hosted.HoldRecord{Location: "loc_b", LastSeen: "2026-10-14T05:00:00Z", CheckedAt: fresh}
+	row := func(location, label, session string, at time.Time) workingOnRow {
+		return workingOnRow{WorkingOnPayload: verb.WorkingOnPayload{Location: location, Label: label, Session: session, State: "in_progress"}, At: at}
+	}
+	desk := row("loc_a", "desk", "sess_1", now.Add(-30*time.Minute))
+	bare := row("loc_b", "", "", now.Add(-7*time.Hour))
 	conflict := map[string]syncstate.StoryConflict{"sty_c": {Reason: conflictLocalAhead, At: fresh}}
 
-	many := map[string]hosted.HoldRecord{}
+	many := map[string]workingOnRow{}
 	for _, id := range []string{"sty_1", "sty_2", "sty_3", "sty_4", "sty_5", "sty_6", "sty_7"} {
-		many[id] = live
+		many[id] = desk
 	}
 
 	for _, tc := range []struct {
 		name      string
 		conflicts map[string]syncstate.StoryConflict
-		holds     map[string]hosted.HoldRecord
+		working   map[string]workingOnRow
 		snapshot  time.Time
 		want      []string
 		not       []string
@@ -41,25 +59,22 @@ func TestStorySyncLine(t *testing.T) {
 	}{
 		{name: "nothing", empty: true},
 		{name: "conflict only", conflicts: conflict, snapshot: fresh,
-			want: []string{"sty_c in conflict (" + conflictLocalAhead + ")"}, not: []string{"held by", "unverified"}},
-		{name: "live holder", holds: map[string]hosted.HoldRecord{"sty_h": live},
-			want: []string{"sty_h held by remote desk", "last seen 2026-10-14T11:30:00Z (30m0s ago)"}, not: []string{"presumed dead", "unverified"}},
-		{name: "holder without a label is named by its location", holds: map[string]hosted.HoldRecord{"sty_h": dead},
-			want: []string{"sty_h held by remote loc_b", "presumed dead"}},
-		{name: "conflicts come before holds", conflicts: conflict, snapshot: fresh, holds: map[string]hosted.HoldRecord{"sty_a": live},
+			want: []string{"sty_c in conflict (" + conflictLocalAhead + ")"}, not: []string{"last worked", "unverified"}},
+		{name: "another location's work", working: map[string]workingOnRow{"sty_h": desk}, snapshot: fresh,
+			want: []string{"sty_h last worked at desk (sess_1) 30m0s ago"}, not: []string{"unverified", "takeover", "held", "dead"}},
+		{name: "a location without a label is named by its id", working: map[string]workingOnRow{"sty_h": bare}, snapshot: fresh,
+			want: []string{"sty_h last worked at loc_b 7h0m0s ago"}},
+		{name: "conflicts come before work", conflicts: conflict, snapshot: fresh, working: map[string]workingOnRow{"sty_a": desk},
 			want: []string{"sty_c in conflict"}},
-		{name: "a record older than the mirror window is unverified",
-			holds: map[string]hosted.HoldRecord{"sty_h": {Location: "loc_a", Label: "desk", LastSeen: "2026-10-14T11:30:00Z", CheckedAt: now.Add(-time.Hour)}},
-			want:  []string{"unverified (last checked 2026-10-14 11:00 UTC)"}},
-		{name: "a record never checked is unverified", holds: map[string]hosted.HoldRecord{"sty_h": {Location: "loc_a", LastSeen: "2026-10-14T11:30:00Z"}},
-			want: []string{"unverified (last checked never)"}},
-		{name: "conflicts rest on the last good snapshot", conflicts: conflict, snapshot: now.Add(-2 * time.Hour),
+		{name: "a snapshot older than the mirror window is unverified", working: map[string]workingOnRow{"sty_h": desk}, snapshot: now.Add(-2 * time.Hour),
 			want: []string{"unverified (last checked 2026-10-14 10:00 UTC)"}},
-		{name: "more than five are counted", holds: many,
-			want: []string{"sty_1 held", "sty_5 held", "(+2 more)"}, not: []string{"sty_6 held", "sty_7 held"}},
+		{name: "no snapshot is unverified", working: map[string]workingOnRow{"sty_h": desk},
+			want: []string{"unverified (last checked never)"}},
+		{name: "more than five are counted", working: many, snapshot: fresh,
+			want: []string{"sty_1 last", "sty_5 last", "(+2 more)"}, not: []string{"sty_6 last", "sty_7 last"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := storySyncLine(tc.conflicts, tc.holds, tc.snapshot, staleAfter, now)
+			got := storySyncLine(tc.conflicts, tc.working, tc.snapshot, now)
 			if tc.empty {
 				if got != "" {
 					t.Fatalf("line = %q, want none", got)
@@ -81,14 +96,14 @@ func TestStorySyncLine(t *testing.T) {
 			}
 		})
 	}
-	if got := storySyncLine(conflict, many, fresh, staleAfter, now); strings.Index(got, "sty_c") > strings.Index(got, "sty_1") {
-		t.Errorf("conflicts must be listed before holds: %s", got)
+	if got := storySyncLine(conflict, many, fresh, now); strings.Index(got, "sty_c") > strings.Index(got, "sty_1") {
+		t.Errorf("conflicts must be listed before work elsewhere: %s", got)
 	}
 }
 
 // storySyncHookRepo is a bound repo, with a counting hosted server as the machine
 // server so a call made at session start would be seen, whose recorded state
-// holds one story in conflict and one held elsewhere.
+// holds one story in conflict and one another location last worked on.
 func storySyncHookRepo(t *testing.T) (calls *atomic.Int32) {
 	t.Helper()
 	repo := sessionContextRepo(t)
@@ -107,12 +122,9 @@ func storySyncHookRepo(t *testing.T) (calls *atomic.Int32) {
 		t.Fatal(err)
 	}
 	root := a.RepoRoot
-	_ = a.Close()
 	now := time.Now().UTC()
-	rec := hosted.HoldRecord{Location: "loc_other_aaaaaaaa", Label: "desk", LastSeen: now.Add(-3 * time.Hour).Format(time.RFC3339), CheckedAt: now}
-	if err := hosted.RecordHold(ts.URL, "probe", root, "sty_heldelsewhere", rec); err != nil {
-		t.Fatal(err)
-	}
+	appendWorkingOn(t, a, "sty_workedelsewhere", verb.WorkingOnPayload{Location: "loc_other_aaaaaaaa", Label: "desk", Session: "sess_other", State: "in_progress"}, now.Add(-3*time.Hour))
+	_ = a.Close()
 	if err := syncstate.RecordSnapshot(config.GlobalDir(), root, true, "", "", now); err != nil {
 		t.Fatal(err)
 	}
@@ -150,12 +162,12 @@ func TestHookContextStorySyncNoticeJoinsTheReleaseLine(t *testing.T) {
 			if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
 				t.Fatalf("not JSON: %v\n%s", err, out.String())
 			}
-			for _, want := range []string{"RELEASE-LINE-MARKER", "sty_inconflict in conflict", "sty_heldelsewhere held by remote desk", "presumed dead"} {
+			for _, want := range []string{"RELEASE-LINE-MARKER", "sty_inconflict in conflict", "sty_workedelsewhere last worked at desk (sess_other) 3h0m0s ago"} {
 				if !strings.Contains(doc.SystemMessage, want) {
 					t.Errorf("systemMessage missing %q: %s", want, doc.SystemMessage)
 				}
 			}
-			if n := strings.Count(doc.HookSpecificOutput.AdditionalContext, "sty_heldelsewhere held by"); n != 1 {
+			if n := strings.Count(doc.HookSpecificOutput.AdditionalContext, "sty_workedelsewhere last worked at"); n != 1 {
 				t.Errorf("the story-sync line must be in model context once, got %d", n)
 			}
 			if n := calls.Load(); n != 0 {
@@ -206,7 +218,7 @@ func TestHookContextStorySyncLineReachesGrokModelOnceOnItsContextEvent(t *testin
 	if doc.SystemMessage != "" || strings.Contains(out.String(), "systemMessage") {
 		t.Errorf("grok has no user channel, got systemMessage in %s", out.String())
 	}
-	if n := strings.Count(doc.HookSpecificOutput.AdditionalContext, "sty_heldelsewhere held by"); n != 1 {
+	if n := strings.Count(doc.HookSpecificOutput.AdditionalContext, "sty_workedelsewhere last worked at"); n != 1 {
 		t.Errorf("the line must be in model context exactly once, got %d", n)
 	}
 	if n := calls.Load(); n != 0 {

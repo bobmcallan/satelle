@@ -1,42 +1,37 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
-	"time"
 )
 
-// [sync] hold_stale_after: missing means the 2h default, a duration sets it,
-// anything else is a config error, and it is never minted as an area
-// (sty_6e5fc41c).
-func TestHoldStaleAfter(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		sync    SyncTable
-		want    time.Duration
-		wantErr bool
-	}{
-		{"missing", nil, 2 * time.Hour, false},
-		{"blank", SyncTable{"hold_stale_after": " "}, 2 * time.Hour, false},
-		{"set", SyncTable{"hold_stale_after": "30m"}, 30 * time.Minute, false},
-		{"not a duration", SyncTable{"hold_stale_after": "soon"}, 0, true},
-		{"zero", SyncTable{"hold_stale_after": "0s"}, 0, true},
-		{"negative", SyncTable{"hold_stale_after": "-1h"}, 0, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := HoldStaleAfter(Config{Sync: tc.sync})
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
-			}
-			if err == nil && got != tc.want {
-				t.Errorf("HoldStaleAfter = %v, want %v", got, tc.want)
-			}
-		})
+// [sync] hold_stale_after is retired (sty_40853d02): hosted holds are gone and
+// nothing reads it. A config still carrying it loads, the key is never minted as
+// an area, and RetiredSyncKeyPresent is what lets `satelle doctor` name it.
+func TestRetiredHoldStaleAfterStillLoads(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "satelle.toml")
+	if err := os.WriteFile(path, []byte("[sync]\nstale_after = \"24h\"\nhold_stale_after = \"2h\"\nstories = \"personal\"\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if !reservedSyncKeys[syncHoldStaleAfterKey] {
-		t.Error("hold_stale_after must be a reserved [sync] key")
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatalf("a config carrying the retired key must load: %v", err)
+	}
+	if !RetiredSyncKeyPresent(cfg) {
+		t.Error("the retired key is present and must be reported")
+	}
+	if sc, err := ScopeFor(cfg, "stories"); err != nil || sc == LocalScope {
+		t.Errorf("stories scope = %v, %v; the retired key must not disturb the areas", sc, err)
+	}
+	if RetiredSyncKeyPresent(Config{Sync: SyncTable{"stale_after": "24h"}}) {
+		t.Error("a config without the key reports it")
+	}
+	if !reservedSyncKeys[RetiredSyncHoldStaleAfterKey] {
+		t.Error("hold_stale_after must stay a reserved [sync] key")
 	}
 	for _, a := range SyncAreas {
-		if a == syncHoldStaleAfterKey {
+		if a == RetiredSyncHoldStaleAfterKey {
 			t.Error("hold_stale_after minted as a sync area")
 		}
 	}

@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -195,10 +194,10 @@ func pushStoryAttachments(ctx context.Context, out, errw io.Writer, a *app.App, 
 		}
 	}
 
-	// A story whose code is not on the remote yet, or that another checkout holds,
-	// is held for its attachments exactly as it is for its rows; its files stay out
-	// of the record and go once the hold clears. A hold is per story, so every
-	// destination holds the same stories.
+	// A story whose code is not on the remote yet is held for its attachments
+	// exactly as it is for its rows; its files stay out of the record and go once
+	// the hold clears. A hold is per story, so every destination holds the same
+	// stories.
 	owing := map[string]bool{}
 	for _, d := range dests {
 		for id := range d.pending {
@@ -215,22 +214,6 @@ func pushStoryAttachments(ctx context.Context, out, errw io.Writer, a *app.App, 
 			}
 			for id := range res.held {
 				held[id] = true
-			}
-		}
-		var probe []json.RawMessage
-		for _, id := range slices.Sorted(maps.Keys(owing)) {
-			if !held[id] {
-				probe = append(probe, mustJSON(map[string]string{"id": id}))
-			}
-		}
-		if len(probe) > 0 {
-			skipped, _, _, serr := partitionByHold(ctx, clientFor(), server, project, a.RepoRoot, probe)
-			if serr != nil {
-				fmt.Fprintf(errw, "attachments: hold check: %v\n", serr)
-				return
-			}
-			for _, s := range skipped {
-				held[s.ItemID] = true
 			}
 		}
 	}

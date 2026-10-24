@@ -178,7 +178,7 @@ func TestVerbWiringGuardCatchesUnguarded(t *testing.T) {
 		want []string // line numbers expected, as ":N:"
 	}{
 		{"unguarded call", "func TestA(t *testing.T) {\n\tverb.SetStoryDir(\"x\")\n}\n", []string{":7:"}},
-		{"unguarded clear in cleanup", "func TestA(t *testing.T) {\n\tt.Cleanup(func() { verb.ClearHoldClaimer() })\n}\n", []string{":7:"}},
+		{"unguarded clear in cleanup", "func TestA(t *testing.T) {\n\tt.Cleanup(func() { verb.ClearLocationResolver() })\n}\n", []string{":7:"}},
 		{"unguarded function value", "func TestA(t *testing.T) {\n\tt.Cleanup(verb.ClearEngagementMode)\n}\n", []string{":7:"}},
 		{"unguarded add", "func TestA(t *testing.T) {\n\tverb.AddChangeNotifier(nil)\n}\n", []string{":7:"}},
 		{"guarded by the helper", "func TestA(t *testing.T) {\n\twithVerbWiring(t)\n\tverb.SetStoryDir(\"x\")\n}\n", nil},

@@ -60,7 +60,7 @@ var wiringVars = []wiringVar{
 	{"engageGuard", &engageGuard},
 	{"dirtyPathsProbe", &dirtyPathsProbe},
 	{"actorResolver", &actorResolver},
-	{"holdClaimer", &holdClaimer},
+	{"locationResolver", &locationResolver},
 	{"agentBudgets", &agentBudgets},
 	{"transitionGater", &transitionGater},
 	{"createReviewer", &createReviewer},
@@ -90,7 +90,6 @@ var wiringExempt = map[string]string{
 	"mu":    "the registry's sync.RWMutex; copying a mutex by value is a vet copylocks defect",
 
 	"ErrStoreNotConfigured": "Err* sentinel, assigned once at init and compared by identity",
-	"ErrHoldPending":        "Err* sentinel, assigned once at init and compared by identity",
 	"errNoBaseline":         "error sentinel, assigned once at init and compared by identity",
 	"errEmptyHead":          "error sentinel, assigned once at init and compared by identity",
 	"errForeignTree":        "error sentinel, assigned once at init and compared by identity",

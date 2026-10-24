@@ -80,7 +80,7 @@ func wiringCases() []wiringCase {
 	f := func() string { return "sentinel" }
 	guard := func(context.Context) error { return nil }
 	probe := func(context.Context, string) ([]string, error) { return nil, nil }
-	claim := func(context.Context, string) (HoldInfo, error) { return HoldInfo{}, nil }
+	loc := func() (string, string) { return "loc_sentinel", "" }
 	note := func(string) {}
 	vocab := config.Config{Tags: config.TagsConfig{Vocabulary: map[string][]string{"wiring": {"sentinel"}}}}
 	epic := config.Config{Engagement: config.EngagementConfig{Parallel: config.ParallelEpic}}
@@ -107,8 +107,8 @@ func wiringCases() []wiringCase {
 		{fn: "SetAgentBudgets", call: func() { SetAgentBudgets(func(string) config.Budget { return config.Budget{} }) }, want: []string{"agentBudgets"}},
 		{fn: "SetAgentsConfig", pre: ClearAgentsConfig, call: func() { SetAgentsConfig(agents, vars) }, want: []string{"agentsLayer", "agentsVars", "agentsWired"}},
 		{fn: "ClearAgentsConfig", pair: "SetAgentsConfig", pre: func() { SetAgentsConfig(agents, vars) }, call: ClearAgentsConfig, want: []string{"agentsLayer", "agentsVars", "agentsWired"}},
-		{fn: "SetHoldClaimer", call: func() { SetHoldClaimer(claim) }, want: []string{"holdClaimer"}},
-		{fn: "ClearHoldClaimer", pair: "SetHoldClaimer", pre: func() { SetHoldClaimer(claim) }, call: ClearHoldClaimer, want: []string{"holdClaimer"}},
+		{fn: "SetLocationResolver", call: func() { SetLocationResolver(loc) }, want: []string{"locationResolver"}},
+		{fn: "ClearLocationResolver", pair: "SetLocationResolver", pre: func() { SetLocationResolver(loc) }, call: ClearLocationResolver, want: []string{"locationResolver"}},
 		{fn: "SetProcessProbe", call: func() { SetProcessProbe(&ProcessProbe{InvokingRoot: "wiring-sentinel"}) }, want: []string{"processProbe"}},
 		{fn: "SetRetrieveRetention", call: func() { SetRetrieveRetention(7311) }, want: []string{"retrieveKeepDays"}},
 		{fn: "SetVerdictRecorder", call: func() { SetVerdictRecorder(note) }, want: []string{"verdictRecord"}},

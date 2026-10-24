@@ -1,27 +1,42 @@
 package hosted
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestHoldRegistryRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	DocumentSyncStatePathOverride = filepath.Join(dir, "document-sync-state.json")
+// sty_40853d02: the hold registry and pending claims are gone. A state file an
+// earlier build wrote still carries them; it loads, its other state is kept, and
+// the next write drops them.
+func TestLegacyHoldStateIsIgnoredAndDroppedOnWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "document-sync-state.json")
+	DocumentSyncStatePathOverride = path
 	t.Cleanup(func() { DocumentSyncStatePathOverride = "" })
-	if err := RecordHold("https://s.example", "p", "/repo", "sty_a", HoldRecord{Location: "loc_self"}); err != nil {
+	const server, repo = "https://s.example", "/repo"
+	key := documentCursorKey(server, "p", repo)
+	legacy := `{"cursors":{"` + key + `":"c1"},` +
+		`"holds":{"` + key + `":{"sty_a":{"location":"loc_other","label":"box"},"sty_b":"loc_legacy_string"}},` +
+		`"pending":{"` + key + `":{"sty_c":"2026-10-01T00:00:00Z"}}}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := LoadHolds("https://s.example", "p", "/repo")
-	if err != nil || got["sty_a"].Location != "loc_self" {
-		t.Fatalf("load = %v %v", got, err)
+	if got, err := LoadDocumentCursor(server, "p", repo); err != nil || got != "c1" {
+		t.Fatalf("cursor = %q, %v; want c1 from a file carrying legacy holds", got, err)
 	}
-	if err := ForgetHold("https://s.example", "p", "/repo", "sty_a"); err != nil {
+	if err := SaveStoryHead(server, "p", repo, "sty_a", "evt_1"); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = LoadHolds("https://s.example", "p", "/repo")
-	if _, ok := got["sty_a"]; ok {
-		t.Fatalf("forgot id still present: %v", got)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"holds"`) || strings.Contains(string(raw), `"pending"`) {
+		t.Fatalf("rewritten state still carries hold records:\n%s", raw)
+	}
+	if got, _ := LoadDocumentCursor(server, "p", repo); got != "c1" {
+		t.Fatalf("cursor after rewrite = %q, want c1", got)
 	}
 }
 

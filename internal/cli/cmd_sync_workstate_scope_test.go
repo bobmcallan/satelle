@@ -620,21 +620,18 @@ func TestScopedPullEpicMembersBringAttachments(t *testing.T) {
 	}
 }
 
-// AC4: members taken from the server go through the in-flight hold check.
-func TestScopedPullEpicMembersAreHoldChecked(t *testing.T) {
+// Members taken from the server are pulled with no hold lookup: the fixture's
+// server fails the test on any hold route (sty_40853d02).
+func TestScopedPullEpicMembersMakeNoHoldCalls(t *testing.T) {
 	fx := newHoldFixture(t, pullSyncTm)
 	r := seedRemoteEpic(fx.f)
-	fx.hs.setHolder(r.m1, otherLoc, "desk")
 
 	out, err := runRoot(t, "sync", "workstate", "pull", "--server", fx.ts.URL, r.epic)
 	if err != nil {
 		t.Fatalf("pull: %v\n%s", err, out)
 	}
-	if rec, ok := fx.recordedHolds(t)[r.m1]; !ok || rec.Location != otherLoc {
-		t.Errorf("recorded holds = %+v, want %s held by %s", fx.recordedHolds(t), r.m1, otherLoc)
-	}
-	if !strings.Contains(out, r.m1) {
-		t.Errorf("the in-flight listing lacks %s:\n%s", r.m1, out)
+	if strings.Contains(out, "in flight") {
+		t.Errorf("a pull must not list stories in flight on other locations:\n%s", out)
 	}
 }
 

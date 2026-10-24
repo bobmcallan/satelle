@@ -12,11 +12,11 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-// TestEngageGuardRefusesBeforeWrongHolder (sty_6ed6318d AC3): a session token
-// whose user is not yet resolved has an empty holder, which refuseWrongHolder
-// lets through; the engage guard refuses it first. Once the holder is known the
-// guard passes and the wrong-holder refusal applies as for any account.
-func TestEngageGuardRefusesBeforeWrongHolder(t *testing.T) {
+// TestEngageGuardRefusesUnresolvedHolder (sty_6ed6318d AC3): a session token
+// whose user is not yet resolved has an empty holder, which the assignee notice
+// passes over silently; the engage guard refuses it first. Once the holder is
+// known the guard passes and the engage goes through whoever the assignee is.
+func TestEngageGuardRefusesUnresolvedHolder(t *testing.T) {
 	withWiring(t)
 	db := wire(t)
 
@@ -40,16 +40,11 @@ func TestEngageGuardRefusesBeforeWrongHolder(t *testing.T) {
 		t.Fatalf("engage with an unresolved session: err = %v", err)
 	}
 
-	// Known, and not the assignee: the guard passes, the wrong-holder refusal applies.
+	// Known, and not the assignee: the guard passes and the engage goes through
+	// (an assignment is not a lock, sty_40853d02).
 	verb.SetAssigneeResolver(func() string { return "u_123" })
 	verb.SetEngageGuard(func(context.Context) error { return nil })
-	if err := engage(); err == nil || !strings.Contains(err.Error(), "assigned to u_other") {
-		t.Fatalf("engage as u_123: err = %v", err)
-	}
-
-	// Known, and the assignee: engages.
-	verb.SetAssigneeResolver(func() string { return "u_other" })
 	if err := engage(); err != nil {
-		t.Fatalf("assignee should engage: %v", err)
+		t.Fatalf("engage as u_123: %v", err)
 	}
 }

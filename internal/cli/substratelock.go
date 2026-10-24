@@ -234,7 +234,7 @@ func substrateLockReason(outside []seatInfo, relPath string, lane lockLane, cats
 			if lane.Stale.SessionID != "" {
 				owner = "another session"
 			}
-			cond += fmt.Sprintf("Stale lease %s belongs to %s (owner %s) — if its holder is gone, `satelle story hold takeover %s`. ", lane.Stale.ItemID, owner, lane.Stale.Owner, lane.Stale.ItemID)
+			cond += fmt.Sprintf("Stale lease %s belongs to %s (owner %s) — if its holder is gone, `satelle story seat release %s`. ", lane.Stale.ItemID, owner, lane.Stale.Owner, lane.Stale.ItemID)
 		}
 		cond += "Engage the substrate story in this session; if it is engaged, edit from its worktree. "
 	}

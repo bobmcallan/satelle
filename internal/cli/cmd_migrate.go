@@ -119,8 +119,9 @@ type migratePlan struct {
 	HostedTableDrop bool
 	// StaleAfter is true when [sync] stale_after is absent (sty_30696eeb).
 	StaleAfter bool
-	// HoldStaleAfter is true when [sync] hold_stale_after is absent (sty_6e5fc41c).
-	HoldStaleAfter bool
+	// HoldStaleAfterRetire is true when [sync] hold_stale_after is still set:
+	// hosted holds are gone and migrate removes the key (sty_40853d02).
+	HoldStaleAfterRetire bool
 	// WorkflowRetire lists DOT workflow files superseded by an authored,
 	// PARSEABLE done.toml + step.toml (sty_9835070d). Actionable work: migrate
 	// removes them.
@@ -290,7 +291,7 @@ func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
 	p.HostedToSync = hostedBindingMissingOnSync(dataDir)
 	p.HostedTableDrop = hasHostedTable(dataDir)
 	p.StaleAfter = syncKeyMissing(dataDir, "stale_after")
-	p.HoldStaleAfter = syncKeyMissing(dataDir, "hold_stale_after")
+	p.HoldStaleAfterRetire = syncKeyPresent(dataDir, config.RetiredSyncHoldStaleAfterKey)
 	p.WorkflowRetire, p.WorkflowConvertPending = workflowConversionState(dataDir)
 	p.RetiredRefs = planRetiredRefs(dataDir)
 	p.MachineStrays = config.MachineScopeStrays(dataDir)
@@ -626,7 +627,7 @@ func printConversionPending(out io.Writer, pending []string) {
 
 func (p migratePlan) empty() bool {
 	return !p.RuntimeRelocate && len(p.Residue) == 0 && len(p.PruneSeeds) == 0 &&
-		!p.Gitignore && len(p.ExemptManaged) == 0 && len(p.ExemptGlobsManaged) == 0 && len(p.HostedToSync) == 0 && !p.HostedTableDrop && !p.StaleAfter && !p.HoldStaleAfter && len(p.WorkflowRetire) == 0 &&
+		!p.Gitignore && len(p.ExemptManaged) == 0 && len(p.ExemptGlobsManaged) == 0 && len(p.HostedToSync) == 0 && !p.HostedTableDrop && !p.StaleAfter && !p.HoldStaleAfterRetire && len(p.WorkflowRetire) == 0 &&
 		len(p.StampRewrite) == 0 && len(p.RetiredRefs) == 0 && len(p.MachineStrays) == 0
 }
 
@@ -718,8 +719,8 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 	if plan.StaleAfter {
 		fmt.Fprintln(out, "  config:           seed [sync] stale_after = \"24h\"")
 	}
-	if plan.HoldStaleAfter {
-		fmt.Fprintln(out, "  config:           seed [sync] hold_stale_after = \"2h\"")
+	if plan.HoldStaleAfterRetire {
+		fmt.Fprintln(out, "  config:           remove retired [sync] hold_stale_after (hosted holds are gone)")
 	}
 	if len(plan.WorkflowRetire) == 0 {
 		fmt.Fprintln(out, "  workflows:        (none superseded)")
@@ -879,7 +880,7 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 		}
 	}
 
-	if len(plan.ExemptManaged) > 0 || len(plan.ExemptGlobsManaged) > 0 || len(plan.HostedToSync) > 0 || plan.HostedTableDrop || plan.StaleAfter || plan.HoldStaleAfter {
+	if len(plan.ExemptManaged) > 0 || len(plan.ExemptGlobsManaged) > 0 || len(plan.HostedToSync) > 0 || plan.HostedTableDrop || plan.StaleAfter || plan.HoldStaleAfterRetire {
 		fmt.Fprintln(out, "\n→ config converge")
 		if len(plan.ExemptManaged) > 0 {
 			changed, err := ensureEditExemptManaged(dataDir)
@@ -921,10 +922,10 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 	} else if changed {
 		fmt.Fprintln(out, "  seeded [sync] stale_after = \"24h\"")
 	}
-	if changed, err := healHoldStaleAfter(dataDir); err != nil {
+	if changed, err := retireHoldStaleAfter(dataDir); err != nil {
 		return fmt.Errorf("migrate: [sync] hold_stale_after: %w", err)
 	} else if changed {
-		fmt.Fprintln(out, "  seeded [sync] hold_stale_after = \"2h\"")
+		fmt.Fprintln(out, "  removed retired [sync] hold_stale_after")
 	}
 
 	if len(plan.MachineStrays) > 0 {
@@ -1156,11 +1157,37 @@ func healStaleAfter(dataDir string) (bool, error) {
 	return healSyncKey(dataDir, "stale_after", "24h")
 }
 
-// healHoldStaleAfter writes [sync] hold_stale_after = "2h" when the key is
-// absent (sty_6e5fc41c), so the silence after which a holder is presumed dead
-// is visible in configuration. An already-set value is not clobbered.
-func healHoldStaleAfter(dataDir string) (bool, error) {
-	return healSyncKey(dataDir, "hold_stale_after", "2h")
+// syncKeyPresent reports whether [sync] sets key in the repo config.
+func syncKeyPresent(dataDir, key string) bool {
+	path := filepath.Join(dataDir, config.ConfigName)
+	cfg, _, err := config.Load(path)
+	if err != nil {
+		return false
+	}
+	_, ok := cfg.Sync[key]
+	return ok
+}
+
+// retireHoldStaleAfter removes [sync] hold_stale_after when it is set
+// (sty_40853d02): the key judged how long a hosted hold's holder could go
+// unseen, and hosted holds are gone. Nothing else in the file is touched.
+func retireHoldStaleAfter(dataDir string) (bool, error) {
+	path := filepath.Join(dataDir, config.ConfigName)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	content := config.RemoveKey(string(raw), "sync", config.RetiredSyncHoldStaleAfterKey)
+	if content == string(raw) {
+		return false, nil
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // healSyncKey writes [sync] key = value when the key is absent.
