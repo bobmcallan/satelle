@@ -69,7 +69,16 @@ type reworkRef struct {
 	Rounds  int    `toml:"rounds"`
 }
 
-// adviseRef is a step's `advise = { agent = "…", skill = "…" }`.
+// remoteWaitWire is a step's `remote_wait = { remote = "…", on = { outcome =
+// "status", … } }` — the team remote whose run for the story this step waits on,
+// and the status each reported outcome moves the story to. Configuration: the
+// binary reads the run and takes the mapped edge, the route names both.
+type remoteWaitWire struct {
+	Remote string            `toml:"remote"`
+	On     map[string]string `toml:"on"`
+}
+
+// adviseRef is a step's `advise ={ agent = "…", skill = "…" }`.
 // applyCriteriaRef is a step's `[apply_criteria] doc = "…" heading = "…"` — the
 // story document and heading whose criteria entry to the step applies to the
 // story (sty_4d9df9a0). Configuration: the binary copies, the route names.
@@ -211,8 +220,13 @@ type stepWire struct {
 	// step's own agent (sty_dde8b6a4).
 	RemoteAgent string   `toml:"remote_agent"`
 	LocalTags   []string `toml:"local_tags"`
-	Start       bool     `toml:"start"`
-	Terminal    bool     `toml:"terminal"`
+	// RemoteWait declares that the story waits here on a team remote's run for
+	// it, and maps each outcome the run concludes with to the status it moves
+	// the story to. A POINTER so an absent key stays distinguishable from an
+	// authored empty table, which is refused.
+	RemoteWait *remoteWaitWire `toml:"remote_wait"`
+	Start      bool            `toml:"start"`
+	Terminal   bool            `toml:"terminal"`
 	// ContextBudget and TurnBudget are the step's own spend bounds for its
 	// performer (sty_a7914904), overriding the allocated binding's. Zero or
 	// absent means unset; a negative value is refused. The numbers are the
@@ -549,6 +563,13 @@ func ParseSteps(body string) (Catalogue, error) {
 			ContextBudget:   s.ContextBudget,
 			TurnBudget:      s.TurnBudget,
 		}
+		if s.RemoteWait != nil {
+			rw, err := parseRemoteWait(provides, s.RemoteWait, s.Agent)
+			if err != nil {
+				return Catalogue{}, err
+			}
+			st.RemoteWait = rw
+		}
 		if s.ContextBudget < 0 || s.TurnBudget < 0 {
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: context_budget and turn_budget must not be negative (0 or absent means unset)", provides)
 		}
@@ -703,6 +724,32 @@ func ParseSteps(body string) (Catalogue, error) {
 		return Catalogue{}, err
 	}
 	return cat, nil
+}
+
+// parseRemoteWait shapes a step's remote_wait declaration, refusing the forms
+// that would be silent no-ops: no remote, no outcomes, a blank outcome or
+// target, or a step that also names a performer (a waiting step has none). Whether
+// each target is an edge the route declares is decided at assembly, where the
+// recover, park and cancel edges exist.
+func parseRemoteWait(step string, w *remoteWaitWire, agent string) (*RemoteWait, error) {
+	remote := strings.TrimSpace(w.Remote)
+	switch {
+	case remote == "":
+		return nil, fmt.Errorf("step.toml: step %q: remote_wait needs remote = \"<team remote name>\" — a wait with no remote reads no run", step)
+	case len(w.On) == 0:
+		return nil, fmt.Errorf("step.toml: step %q: remote_wait needs on = { <outcome> = \"<status>\", … } — a wait that maps no outcome never moves the story", step)
+	case strings.TrimSpace(agent) != "":
+		return nil, fmt.Errorf("step.toml: step %q: remote_wait and agent = %q are contradictory — a step that waits on a remote run has no performer", step, agent)
+	}
+	on := make(map[string]string, len(w.On))
+	for outcome, target := range w.On {
+		outcome, target = strings.TrimSpace(outcome), strings.TrimSpace(target)
+		if outcome == "" || target == "" {
+			return nil, fmt.Errorf("step.toml: step %q: remote_wait on needs a non-empty outcome and a non-empty status (got %q → %q)", step, outcome, target)
+		}
+		on[outcome] = target
+	}
+	return &RemoteWait{Remote: remote, On: on}, nil
 }
 
 // checkAfterChildren refuses the after_children declarations that would be

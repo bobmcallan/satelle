@@ -69,6 +69,9 @@ type Node struct {
 	// Project is the team project POST .../workstate answers that it recorded the
 	// batch in; empty answers DefaultProject.
 	Project string
+	// RefuseFindings answers 400 to a PUT .../status that carries findings: a
+	// server that decodes the heartbeat strictly and predates the field.
+	RefuseFindings bool
 
 	srv     *httptest.Server
 	id      string
@@ -228,6 +231,9 @@ func (n *Node) answer(w http.ResponseWriter, r *http.Request) int {
 		var in map[string]string
 		if json.NewDecoder(r.Body).Decode(&in) != nil {
 			return reply(w, http.StatusBadRequest, `{"error":"invalid_body"}`)
+		}
+		if n.RefuseFindings && in["findings"] != "" {
+			return reply(w, http.StatusBadRequest, `{"error":"invalid_body","reason":"unknown field findings"}`)
 		}
 		n.mu.Lock()
 		n.status = append(n.status, in)

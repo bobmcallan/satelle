@@ -29,7 +29,9 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/runstatus"
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -80,6 +82,10 @@ type Options struct {
 	// drive from a person's.
 	Location      string
 	LocationLabel string
+	// Runs reads a team remote's run for the story, for a step that waits on one
+	// (wfdot.RemoteWait). Nil leaves such a step unwalkable: the drive refuses it
+	// rather than guess where the run stands.
+	Runs runstatus.Source
 }
 
 // Stopped is the error of a drive that ended short of its route's exit and could
@@ -135,6 +141,11 @@ type Result struct {
 	// is what was recorded on it.
 	Parked bool
 	Reason string
+	// Waiting: the story is at a step that waits on a team remote's run, and the
+	// run has not concluded (or concluded where this drive already took its edge).
+	// Reason is where the run stands. Nothing is parked or recorded; a later
+	// drive reads the run again.
+	Waiting bool
 	// Moves are the status moves this drive made, in order.
 	Moves []Move
 }
@@ -187,6 +198,10 @@ type driver struct {
 	exec bool
 	// recorded is set once the stop is recorded, so no path writes it twice.
 	recorded bool
+	// entryNotes are findings relayed to the executor binding when the step the
+	// story was just moved to is allocated to it; performEntered passes and clears
+	// them.
+	entryNotes string
 }
 
 func (d *driver) run(ctx context.Context) (Result, error) {
@@ -220,6 +235,17 @@ func (d *driver) run(ctx context.Context) (Result, error) {
 		if d.stopped(item) {
 			return d.finish(ctx, item), nil
 		}
+		if wait, ok := d.route.Spec.RemoteWaitOf(item.Status); ok {
+			moved, done, err := d.awaitRemote(ctx, item, wait)
+			if err != nil {
+				return d.fail(ctx, moved, err)
+			}
+			if done {
+				return d.res, nil
+			}
+			item = moved
+			continue
+		}
 		next, err := d.successor(item.Status)
 		if err != nil {
 			return d.fail(ctx, item, err)
@@ -232,6 +258,141 @@ func (d *driver) run(ctx context.Context) (Result, error) {
 			return d.res, nil
 		}
 	}
+}
+
+// awaitRemote reads where the team remote's run for the story stands, for a story
+// at a step that waits on it. A run still queued or running (or none) ends the
+// drive as Waiting. A concluded run takes the edge the step maps its outcome to:
+// a park goes through the drive's one park; any other edge is presented through
+// advance, so every gate, reject budget and move record applies, after the run's
+// findings are handed to whoever performs the step it leads to. done is true when
+// the drive ended here (waiting or parked); otherwise the story moved and the
+// returned item is where it now stands.
+func (d *driver) awaitRemote(ctx context.Context, item workitem.Item, wait wfdot.RemoteWait) (workitem.Item, bool, error) {
+	step := item.Status
+	if d.opts.Runs == nil {
+		return item, false, fmt.Errorf("drive: step %q waits on remote %q's run for the story, and no run source is wired", step, wait.Remote)
+	}
+	run, ok, err := d.opts.Runs.StoryRun(ctx, wait.Remote, d.id)
+	if err != nil {
+		return item, false, &halt{step: step, performer: wait.Remote, err: err,
+			what: fmt.Sprintf("could not read remote %q's run for the story: %v", wait.Remote, err)}
+	}
+	line := runstatus.Render(run, ok, wait.Remote)
+	fmt.Fprintf(d.out, "drive: %s at %s: %s\n", d.id, step, line)
+	if !ok || run.State != runstatus.Concluded {
+		d.res.Status, d.res.Waiting, d.res.Reason = step, true, line
+		return item, true, nil
+	}
+	if d.actedOn(ctx, wait.Remote, step, run.Key()) {
+		d.res.Status, d.res.Waiting, d.res.Reason = step, true, line+" (already acted on; waiting for a new run)"
+		return item, true, nil
+	}
+	moved, done, to, err := d.takeRunEdge(ctx, item, wait, run)
+	// The conclusion is acted on once the story has left the waiting step, even if
+	// an error followed the move (the entered step's performer failed, say): the
+	// next drive must not take the same edge again from a stale conclusion. An
+	// error that left the story at the step records nothing, so it is retried.
+	if err == nil || d.leftStep(ctx, moved, step) {
+		d.recordActed(ctx, wait.Remote, step, run, to)
+	}
+	if err != nil {
+		return moved, false, err
+	}
+	return moved, done, nil
+}
+
+// leftStep reports whether the story no longer stands at step. It re-reads the
+// story, since an edge that failed after its move returns the item as it was
+// before it; where the story cannot be read, the returned item is what is known.
+func (d *driver) leftStep(ctx context.Context, moved workitem.Item, step string) bool {
+	if now, err := d.load(context.WithoutCancel(ctx)); err == nil {
+		return now.Status != step
+	}
+	return moved.Status != step
+}
+
+// takeRunEdge acts on a concluded run: it takes the edge the step maps the run's
+// outcome to. to is where the story was sent (the park state for a park, empty
+// when the outcome maps to no edge and the story was parked for that).
+func (d *driver) takeRunEdge(ctx context.Context, item workitem.Item, wait wfdot.RemoteWait, run runstatus.Run) (moved workitem.Item, done bool, to string, err error) {
+	step := item.Status
+	target, mapped := wait.On[run.Outcome]
+	if !mapped {
+		return item, true, "", d.park(ctx, item, step, wait.Remote, fmt.Sprintf(
+			"remote %s run concluded with outcome %q, which the step's remote_wait maps to no edge", wait.Remote, run.Outcome))
+	}
+	concluded := fmt.Sprintf("remote %s run concluded: %s", wait.Remote, run.Outcome)
+	findings := strings.TrimSpace(run.Findings)
+	if d.route.Spec.IsParkState(target) {
+		why := concluded
+		if findings != "" {
+			why += "\n" + findings
+		}
+		return item, true, target, d.park(ctx, item, step, wait.Remote, why)
+	}
+	if err := d.relayRun(ctx, item, target, concluded, findings); err != nil {
+		return item, false, target, err
+	}
+	moved, err = d.advance(ctx, item, target)
+	d.entryNotes = ""
+	if err != nil {
+		return moved, false, target, err
+	}
+	return moved, d.res.Parked, target, nil
+}
+
+// actedOn reports whether the story's ledger holds a remote_wait_acted row for
+// this run's conclusion at this step: the guard that outlives the drive, so the
+// next `story drive` does not act on a stale conclusion again.
+func (d *driver) actedOn(ctx context.Context, remote, step, key string) bool {
+	for _, r := range verb.StoryLedgerKind(ctx, d.id, ledger.KindRemoteWaitActed) {
+		var p struct {
+			Remote string `json:"remote"`
+			Step   string `json:"step"`
+			RunKey string `json:"run_key"`
+		}
+		if json.Unmarshal(r.Payload, &p) == nil && p.Remote == remote && p.Step == step && p.RunKey == key {
+			return true
+		}
+	}
+	return false
+}
+
+// recordActed writes the row actedOn reads, once the edge was taken. It cannot
+// undo the move, so a failed write is reported rather than returned.
+func (d *driver) recordActed(ctx context.Context, remote, step string, run runstatus.Run, to string) {
+	ctx = context.WithoutCancel(ctx)
+	body := fmt.Sprintf("remote %s run concluded %s: edge taken from %s", remote, run.Outcome, step)
+	payload := map[string]any{"remote": remote, "step": step, "run_key": run.Key(), "outcome": run.Outcome, "to": to}
+	if err := d.appendRow(ctx, ledger.KindRemoteWaitActed, body, payload); err != nil {
+		fmt.Fprintf(d.out, "drive: %s: could not record that the run's conclusion was acted on: %v\n", d.id, err)
+	}
+}
+
+// relayRun hands a concluded run's findings to whoever performs the step the
+// story is about to move to, before the move, so the performer's entry carries
+// them: a named agent gets a message the dispatch payload includes, the executor
+// binding gets them as notes on its prompt. A step nobody performs has no one to
+// tell, and a run with no findings has nothing to say.
+func (d *driver) relayRun(ctx context.Context, item workitem.Item, target, concluded, findings string) error {
+	if findings == "" {
+		return nil
+	}
+	perf, err := d.opts.Performers.StepPerformer(ctx, item, target)
+	if err != nil {
+		return &halt{step: target, err: err, what: err.Error()}
+	}
+	body := concluded + "\n\n" + findings
+	switch perf.Kind {
+	case verb.PerformerDispatched:
+		if err := d.message(ctx, perf.Agent, body); err != nil {
+			return &halt{step: target, performer: perf.Agent, err: err, what: err.Error()}
+		}
+	case verb.PerformerExecutor:
+		d.entryNotes = body
+	}
+	return nil
 }
 
 // fail ends a drive that cannot continue. Before the first presentation a story's
@@ -432,10 +593,12 @@ func (d *driver) performEntered(ctx context.Context, item workitem.Item, step st
 	if err != nil {
 		return fmt.Errorf("drive: step %q: %w", step, err)
 	}
+	notes := d.entryNotes
+	d.entryNotes = ""
 	if perf.Kind != verb.PerformerExecutor {
 		return nil
 	}
-	return d.perform(ctx, item, step, "")
+	return d.perform(ctx, item, step, notes)
 }
 
 // perform runs the executor binding over step. A performer that rejects parks the

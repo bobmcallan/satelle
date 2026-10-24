@@ -22,6 +22,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/drive"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/remotedef"
+	"github.com/bobmcallan/satelle/internal/runstatus"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -91,6 +92,9 @@ type TaskRunResult struct {
 	// Outcome is what the node reported: the outcome on the execution's run-output
 	// doc, else performed when the route reached its end and reject when it did not.
 	Outcome string
+	// Findings is the text the performer recorded on that run-output doc, reported
+	// with the outcome.
+	Findings string
 	// Drive is where the drive stopped.
 	Drive drive.Result
 }
@@ -103,7 +107,7 @@ type TaskRunResult struct {
 func RunTask(ctx context.Context, tr TaskRun) (TaskRunResult, error) {
 	rep := newStatusReporter(tr.Client, tr.Desc.StoryID, tr.ResendEvery, tr.Drive.Out)
 	defer rep.stop()
-	rep.send(ctx, NodeStatus{RunState: RunQueued})
+	rep.send(ctx, NodeStatus{RunState: runstatus.Queued})
 
 	var res TaskRunResult
 	var exec workitem.Item
@@ -119,13 +123,14 @@ func RunTask(ctx context.Context, tr TaskRun) (TaskRunResult, error) {
 			if onMove != nil {
 				onMove(m)
 			}
-			rep.send(ctx, NodeStatus{RunState: RunRunning, Step: m.To})
+			rep.send(ctx, NodeStatus{RunState: runstatus.Running, Step: m.To})
 		}
 		if res.Drive, err = drive.Story(ctx, exec.ID, opts); err != nil {
 			return err
 		}
 		if cur, gerr := getItem(ctx, "execution", exec.ID); gerr == nil {
 			res.Outcome = verb.RunOutcome(cur)
+			res.Findings = verb.RunFindings(cur)
 		}
 		return nil
 	}()
@@ -141,7 +146,7 @@ func RunTask(ctx context.Context, tr TaskRun) (TaskRunResult, error) {
 	if exec.ID != "" {
 		tr.record(ctx, exec, res.Outcome)
 	}
-	rep.conclude(ctx, res.Outcome)
+	rep.conclude(ctx, res.Outcome, res.Findings)
 	return res, err
 }
 
@@ -360,9 +365,9 @@ func (r *statusReporter) resend() {
 	}
 }
 
-// conclude sends the concluded heartbeat with outcome, even when ctx has ended,
-// and sends nothing after it.
-func (r *statusReporter) conclude(ctx context.Context, outcome string) {
+// conclude sends the concluded heartbeat with outcome and the findings behind it,
+// even when ctx has ended, and sends nothing after it.
+func (r *statusReporter) conclude(ctx context.Context, outcome, findings string) {
 	r.sendMu.Lock()
 	defer r.sendMu.Unlock()
 	r.mu.Lock()
@@ -370,7 +375,7 @@ func (r *statusReporter) conclude(ctx context.Context, outcome string) {
 	r.mu.Unlock()
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), concludeGrace)
 	defer cancel()
-	r.put(cctx, NodeStatus{State: StateRunning, StoryID: r.storyID, RunState: RunConcluded, Outcome: outcome})
+	r.put(cctx, NodeStatus{State: StateRunning, StoryID: r.storyID, RunState: runstatus.Concluded, Outcome: outcome, Findings: findings})
 }
 
 // stop ends the resend loop and waits for it.

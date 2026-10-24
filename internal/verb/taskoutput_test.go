@@ -87,6 +87,31 @@ func TestExecutionRecordWritesTheOutcomeIntoTheRunOutputDoc(t *testing.T) {
 	}
 }
 
+// The findings a run reports are the performer's text on the run-output doc,
+// without the front matter or the generated heading, and a later record replaces
+// them while the recorded outcome stays.
+func TestRunFindingsReadsTheRunOutputBody(t *testing.T) {
+	wireTasks(t)
+	var task, run workitem.Item
+	json.Unmarshal(call(t, "task-create", map[string]any{"title": "Runnable"}), &task)
+	json.Unmarshal(call(t, "execution-create", map[string]any{"title": "r1", "parent_id": task.ID}), &run)
+
+	if got := verb.RunFindings(run); got != "" {
+		t.Fatalf("a run with no doc has findings %q, want none", got)
+	}
+	call(t, "execution-record", map[string]any{"id": run.ID, "output": "the diff breaks the build\nfix the import", "outcome": "reject"})
+	if got, want := verb.RunFindings(run), "the diff breaks the build\nfix the import"; got != want {
+		t.Errorf("findings = %q, want %q", got, want)
+	}
+	call(t, "execution-record", map[string]any{"id": run.ID, "output": "looks good"})
+	if got := verb.RunFindings(run); got != "looks good" {
+		t.Errorf("findings after a second record = %q, want looks good", got)
+	}
+	if got := verb.RunOutcome(run); got != verb.OutcomeReject {
+		t.Errorf("outcome = %q, want the earlier reject kept", got)
+	}
+}
+
 // TestAttachRootResolvesByKind proves the attachment root resolves by KIND
 // (sty_890b86cb): attaching to a TASK materialises under .satelle/tasks/<tsk_id>/,
 // never under .satelle/stories/, while a story attaches under stories/ as before.

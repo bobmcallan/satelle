@@ -206,24 +206,22 @@ func (c *NodeClient) PublishChannelKey(ctx context.Context, pub []byte) error {
 	return nil
 }
 
-// The run states a node reports for its task run, and the heartbeat state it is
-// reported under (satelle-server remotes.NodeRunning).
-const (
-	RunQueued    = "queued"
-	RunRunning   = "running"
-	RunConcluded = "concluded"
-
-	StateRunning = "running"
-)
+// StateRunning is the heartbeat state a node is reported under (satelle-server
+// remotes.NodeRunning). The run states it reports for its task run are
+// runstatus.Queued, runstatus.Running and runstatus.Concluded.
+const StateRunning = "running"
 
 // NodeStatus is the node's heartbeat, PUT to .../status. RunState and Outcome are
-// sent only when set, and Outcome only with RunConcluded.
+// sent only when set, and Outcome and Findings only with runstatus.Concluded.
 type NodeStatus struct {
 	State    string `json:"state"`
 	StoryID  string `json:"story_id,omitempty"`
 	Step     string `json:"step,omitempty"`
 	RunState string `json:"run_state,omitempty"`
 	Outcome  string `json:"outcome,omitempty"`
+	// Findings is what the run recorded behind its outcome, for the local driver
+	// to relay to the step it hands the story to.
+	Findings string `json:"findings,omitempty"`
 }
 
 // StatusReply is what the server says back to a heartbeat that the node uses:
@@ -232,9 +230,16 @@ type StatusReply struct {
 	LostAfterSeconds int `json:"lost_after_seconds"`
 }
 
-// Status sends one heartbeat.
+// Status sends one heartbeat. A report carrying findings that the server refuses
+// with 400 is sent once more without them: a server that decodes the heartbeat
+// strictly and predates the field would otherwise drop the concluded outcome too.
 func (c *NodeClient) Status(ctx context.Context, s NodeStatus) (StatusReply, error) {
 	raw, _, err := c.call(ctx, http.MethodPut, "/status", s)
+	var ae *hosted.APIError
+	if err != nil && s.Findings != "" && errors.As(err, &ae) && ae.Status == http.StatusBadRequest {
+		s.Findings = ""
+		raw, _, err = c.call(ctx, http.MethodPut, "/status", s)
+	}
 	if err != nil {
 		return StatusReply{}, fmt.Errorf("status: %w", err)
 	}

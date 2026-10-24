@@ -1881,6 +1881,7 @@ Read-only, and answerable without opening any workflow file.`,
 			if err != nil {
 				return err
 			}
+			body = withRemoteRunLine(cmd, args[0], body)
 			fmt.Fprintln(cmd.OutOrStdout(), strings.TrimRight(body, "\n"))
 			return nil
 		},

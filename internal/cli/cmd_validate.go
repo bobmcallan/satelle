@@ -190,6 +190,14 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 				}
 				if len(unresolved) > 0 {
 					fmt.Fprintln(out, "      an obligation names a step's TABLE KEY, never the status it declares — statuses repeat across steps by design")
+				} else {
+					// A route that cannot be assembled (a remote_wait outcome mapped
+					// to an edge the route does not declare, say) is a structural
+					// failure the first story to walk it would otherwise find.
+					for _, p := range wfdot.RouteErrors(lists, cat) {
+						failed++
+						fmt.Fprintf(out, "FAIL  workflows (route) — %s\n", p)
+					}
 				}
 			}
 		}

@@ -89,13 +89,16 @@ func driveOptions(cmd *cobra.Command, eng drive.Performers, a *app.App, out io.W
 				Converged: relay.Converged, Outcome: relay.Outcome, Rounds: relay.Rounds, LastObjection: relay.LastObjection,
 			}, err
 		},
-		Out: out,
+		Out:  out,
+		Runs: &lazyRunSource{cfg: a.Config},
 	}
 }
 
 // driveSummary is the one line a drive ends on.
 func driveSummary(res drive.Result) string {
 	switch {
+	case res.Waiting:
+		return fmt.Sprintf("%s waiting at %s: %s", res.ID, res.Status, res.Reason)
 	case res.Parked && res.Reason != "":
 		return fmt.Sprintf("%s parked at %s: %s", res.ID, res.Status, res.Reason)
 	case res.Parked:

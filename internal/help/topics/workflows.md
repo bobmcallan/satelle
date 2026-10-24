@@ -60,6 +60,21 @@ override the allocated binding's own and `[defaults]`, and the overrun
 consequence depends on whether the step has a `rework` key — see
 `satelle help agent-dispatch` (*Spend budgets*). The binary ships no value.
 
+A step that hands the story to a **team remote** and waits for it declares
+`remote_wait = { remote = "<team remote name>", on = { <outcome> = "<status>", … } }`
+(and no `agent`: nobody performs a waiting step). The local drive reads the
+remote's run for the story from satelle.dev — queued with its position, running
+with its step, concluded with its outcome — and `satelle story get` / `story
+route` show the same line. While the run is queued or running, `satelle story
+drive` ends waiting (exit 0) and records nothing. When it concludes, the drive
+takes the edge `on` maps the outcome to: through the step's gates like any move,
+or the park for a park status, relaying the run's findings to the performer of the
+step it leads to. An outcome `on` does not map parks the story. Each target must
+be an edge the route declares from the waiting step — spine successor, recover,
+park or cancel — and `satelle validate` fails (`FAIL  workflows (route)`) when it
+is not. Which remote, which outcomes and which statuses are all the repo's
+configuration; satelle names none of them.
+
 Both files carry a `[meta]` table (`name`, `type = "workflow"`, `scope`,
 `description`) and **must not** carry `applies_to` — done.toml's category tables
 are the selector, and a second one would be a second precedence rule. A lifecycle

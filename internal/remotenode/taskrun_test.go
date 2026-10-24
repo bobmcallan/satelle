@@ -16,6 +16,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/drive"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/remotedef"
+	"github.com/bobmcallan/satelle/internal/runstatus"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/testutil"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -306,8 +307,8 @@ func TestRunTaskReportsTheOutcomeThePerformerRecorded(t *testing.T) {
 		t.Fatalf("result = %+v, %v, want terminal with outcome no-op", res, err)
 	}
 	sent := log.all()
-	if last := sent[len(sent)-1]; last.RunState != RunConcluded || last.Outcome != verb.OutcomeNoOp {
-		t.Errorf("last heartbeat = %+v, want concluded/no-op", last)
+	if last := sent[len(sent)-1]; last.RunState != runstatus.Concluded || last.Outcome != verb.OutcomeNoOp || last.Findings != "nothing to do" {
+		t.Errorf("last heartbeat = %+v, want concluded/no-op carrying the recorded findings", last)
 	}
 }
 
@@ -326,7 +327,7 @@ func TestRunTaskThatDoesNotFinishConcludesRejected(t *testing.T) {
 		t.Fatalf("result = %+v, %v, want a park reported as reject", res, err)
 	}
 	e.wantStopRecorded(res, "")
-	if sent := log.all(); sent[len(sent)-1].RunState != RunConcluded || sent[len(sent)-1].Outcome != verb.OutcomeReject {
+	if sent := log.all(); sent[len(sent)-1].RunState != runstatus.Concluded || sent[len(sent)-1].Outcome != verb.OutcomeReject {
 		t.Errorf("last heartbeat = %+v, want concluded/reject", sent[len(sent)-1])
 	}
 
@@ -338,7 +339,7 @@ func TestRunTaskThatDoesNotFinishConcludesRejected(t *testing.T) {
 		t.Fatalf("result = %+v, %v, want a drive-stopped error reported as reject", res, err)
 	}
 	eNoPark.wantStopRecorded(res, "")
-	if sent := logNoPark.all(); sent[len(sent)-1].RunState != RunConcluded || sent[len(sent)-1].Outcome != verb.OutcomeReject {
+	if sent := logNoPark.all(); sent[len(sent)-1].RunState != runstatus.Concluded || sent[len(sent)-1].Outcome != verb.OutcomeReject {
 		t.Errorf("last heartbeat = %+v, want concluded/reject", sent[len(sent)-1])
 	}
 

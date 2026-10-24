@@ -263,6 +263,11 @@ const (
 	// satelle-server to raise to the developer; the execution itself carries the
 	// drive-stopped row.
 	KindExecutionStopped = "execution_stopped"
+	// KindRemoteWaitActed records that the local driver took the edge a step's
+	// remote_wait maps a team remote's concluded run to, so a later drive does not
+	// act on the same conclusion again. StoryID is the waiting story; Payload is
+	// {remote, step, run_key, outcome, to}. Enumeration only.
+	KindRemoteWaitActed = "remote_wait_acted"
 	// KindCommandRule records one agent command a repo-authored
 	// [[gate.command_rule]] matched and let run, or refused (sty_a74551d6).
 	// Payload is {command, rule_index, pattern, action, decision, delivered,

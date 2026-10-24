@@ -66,27 +66,48 @@ func RunOutputDoc(exec workitem.Item) (name, body string, ok bool) {
 // a run's result is read from. It is "" when no doc was written or the doc
 // records no outcome.
 func RunOutcome(exec workitem.Item) string {
-	if taskDir == "" || exec.ParentID == "" {
-		return ""
-	}
-	body, err := os.ReadFile(runOutputPath(exec))
-	if err != nil {
-		return ""
-	}
+	front, _ := readRunOutput(exec)
 	const key = "outcome: "
-	inFront := false
-	for _, ln := range strings.Split(string(body), "\n") {
-		switch {
-		case strings.TrimSpace(ln) == "---":
-			if inFront {
-				return ""
-			}
-			inFront = true
-		case inFront && strings.HasPrefix(ln, key):
+	for _, ln := range strings.Split(front, "\n") {
+		if strings.HasPrefix(ln, key) {
 			return strings.TrimSpace(strings.TrimPrefix(ln, key))
 		}
 	}
 	return ""
+}
+
+// RunFindings reads what a run recorded on exec's run-output doc: the text below
+// its front matter and its generated heading, which is what the performer wrote.
+// It is "" when no doc was written. It is read from the same record RunOutcome
+// reads, so a remote reports the outcome and the findings behind it together.
+func RunFindings(exec workitem.Item) string {
+	_, body := readRunOutput(exec)
+	body = strings.TrimSpace(body)
+	if rest, ok := strings.CutPrefix(body, "# Run output"); ok {
+		_, body, _ = strings.Cut(rest, "\n")
+	}
+	return strings.TrimSpace(body)
+}
+
+// readRunOutput splits exec's run-output doc into its front matter and its body.
+// Both are "" when there is no doc, or it has no front matter.
+func readRunOutput(exec workitem.Item) (front, body string) {
+	if taskDir == "" || exec.ParentID == "" {
+		return "", ""
+	}
+	raw, err := os.ReadFile(runOutputPath(exec))
+	if err != nil {
+		return "", ""
+	}
+	rest, ok := strings.CutPrefix(string(raw), "---\n")
+	if !ok {
+		return "", ""
+	}
+	front, body, ok = strings.Cut(rest, "\n---\n")
+	if !ok {
+		return "", ""
+	}
+	return front, body
 }
 
 // runOutputFileName is the per-run output doc name under the parent task folder.

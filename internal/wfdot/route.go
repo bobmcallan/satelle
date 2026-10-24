@@ -22,6 +22,16 @@ import (
 	"sort"
 )
 
+// RemoteWait is a step's declared wait on a team remote's run for the story:
+// the remote's name, and the status each outcome the run concludes with moves the
+// story to. Both are the repo's vocabulary; the binary names neither.
+type RemoteWait struct {
+	Remote string
+	// On maps a reported outcome to the status the story moves to. Every target
+	// is an edge the route declares from the waiting step (checked at assembly).
+	On map[string]string
+}
+
 // Step is one entry in the catalogue. It is deliberately flat — stage name,
 // agent, skills, reviewers — per the epic's "a step is agents, skills,
 // reviewers". Order is NOT a field: it is derived from Requires/Provides, so the
@@ -169,6 +179,10 @@ type Step struct {
 	// step never runs remotely.
 	RemoteAgent string
 	LocalTags   []string
+	// RemoteWait declares that a story holding this step waits on a team
+	// remote's run for it and maps the run's outcomes to edges. Nil when the step
+	// waits on no remote.
+	RemoteWait *RemoteWait
 	// ContextBudget / TurnBudget are this step's own spend bounds for its
 	// performer (sty_a7914904): input tokens and model turns. They override the
 	// allocated binding's, which override [defaults]. Zero means unset — nothing
@@ -365,6 +379,41 @@ func UnresolvedObligations(lists []List, cat Catalogue) []string {
 	return out
 }
 
+// RouteErrors assembles every category's route and reports each construction
+// refusal once, as "<category>: <reason>". A route is built for a story's tags,
+// so a refusal that only a tag-appended step provokes is found by also building
+// with each tag a category appends obligations for, and with all of them. It
+// skips a category whose obligations do not resolve — UnresolvedObligations
+// already names that, in the same words.
+func RouteErrors(lists []List, cat Catalogue) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, l := range lists {
+		tagSets := [][]string{nil}
+		var all []string
+		for k := range l.TagObligations {
+			all = append(all, k)
+		}
+		sort.Strings(all)
+		for _, k := range all {
+			tagSets = append(tagSets, []string{k})
+		}
+		if len(all) > 1 {
+			tagSets = append(tagSets, all)
+		}
+		for _, tags := range tagSets {
+			if _, err := BuildRoute(l, cat, tags); err != nil {
+				msg := l.Category + ": " + err.Error()
+				if !seen[msg] {
+					seen[msg] = true
+					out = append(out, msg)
+				}
+			}
+		}
+	}
+	return out
+}
+
 // SelectSteps returns the steps a category's route walks, topologically ordered.
 //
 // This is the ONE answer to "which steps did this category ask for". The
@@ -525,6 +574,7 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			AfterChildren:   st.AfterChildren,
 			RemoteAgent:     st.RemoteAgent,
 			LocalTags:       st.LocalTags,
+			RemoteWait:      st.RemoteWait,
 		})
 	}
 
@@ -615,7 +665,36 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			spec.Transitions = append(spec.Transitions, Transition{From: name, To: r.Step})
 		}
 	}
+	if err := checkRemoteWaits(spec, ordered); err != nil {
+		return Spec{}, err
+	}
 	return spec, nil
+}
+
+// checkRemoteWaits refuses a remote_wait outcome mapped to a status the route
+// does not declare an edge to from the waiting step. It runs once every edge
+// exists — spine, cancel, park and recover — and asks the spec's own edge table,
+// so a map can name a recovery or park edge but never invent a move.
+func checkRemoteWaits(spec Spec, ordered []Step) error {
+	for _, st := range ordered {
+		if st.RemoteWait == nil {
+			continue
+		}
+		outcomes := make([]string, 0, len(st.RemoteWait.On))
+		for o := range st.RemoteWait.On {
+			outcomes = append(outcomes, o)
+		}
+		sort.Strings(outcomes)
+		for _, o := range outcomes {
+			target := st.RemoteWait.On[o]
+			if !spec.Declares(st.Name, target) {
+				return fmt.Errorf(
+					"step %q: remote_wait maps outcome %q to %q, but the route declares no edge %s → %s (a remote_wait outcome may only take a spine, recover, park or cancel edge; declared from %s: %v)",
+					st.Name, o, target, st.Name, target, st.Name, spec.Successors(st.Name))
+			}
+		}
+	}
+	return nil
 }
 
 // parallelFor is the concurrency cap for a step's entry gates. Two or more

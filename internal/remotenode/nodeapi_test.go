@@ -11,6 +11,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/remotedef"
 	"github.com/bobmcallan/satelle/internal/remotenode/devtest"
+	"github.com/bobmcallan/satelle/internal/runstatus"
 )
 
 const (
@@ -56,11 +57,11 @@ func TestRunAndStatusUseTheNodeRoutes(t *testing.T) {
 	if err != nil || d != (RunDescriptor{Mode: "node", StoryID: "sty_1", Trigger: "nightly", TriggerSource: "schedule"}) {
 		t.Fatalf("Run = %+v, %v", d, err)
 	}
-	reply, err := client.Status(context.Background(), NodeStatus{State: StateRunning, StoryID: "sty_1", RunState: RunQueued})
+	reply, err := client.Status(context.Background(), NodeStatus{State: StateRunning, StoryID: "sty_1", RunState: runstatus.Queued})
 	if err != nil || reply.LostAfterSeconds != 90 {
 		t.Fatalf("Status = %+v, %v", reply, err)
 	}
-	if _, err := client.Status(context.Background(), NodeStatus{State: StateRunning, RunState: RunConcluded, Outcome: "no-op"}); err != nil {
+	if _, err := client.Status(context.Background(), NodeStatus{State: StateRunning, RunState: runstatus.Concluded, Outcome: "no-op"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -79,6 +80,34 @@ func TestRunAndStatusUseTheNodeRoutes(t *testing.T) {
 	}
 	if n := fake.Count(http.MethodPut, "/status"); n != 2 {
 		t.Errorf("status heartbeats = %d, want 2", n)
+	}
+}
+
+// A server that predates the findings field refuses the heartbeat with 400: the
+// report is sent once more without the findings, so the concluded outcome is kept.
+func TestStatusResendsWithoutFindingsWhenTheServerRefusesThem(t *testing.T) {
+	fake, client, _ := newFake(t)
+	fake.RefuseFindings = true
+
+	_, err := client.Status(context.Background(), NodeStatus{State: StateRunning, RunState: runstatus.Concluded, Outcome: "reject", Findings: "fix the import"})
+	if err != nil {
+		t.Fatalf("Status = %v, want the second report to succeed", err)
+	}
+	if n := fake.Count(http.MethodPut, "/status"); n != 2 {
+		t.Errorf("status requests = %d, want the refused one and one resend", n)
+	}
+	st := fake.Statuses()
+	if len(st) != 1 || st[0]["outcome"] != "reject" || st[0]["findings"] != "" {
+		t.Errorf("recorded statuses = %v, want one concluded report without findings", st)
+	}
+
+	// A refusal of a report with no findings is not retried.
+	before := fake.Count(http.MethodPut, "/status")
+	if _, err := client.Status(context.Background(), NodeStatus{State: StateRunning, RunState: runstatus.Running}); err != nil {
+		t.Fatal(err)
+	}
+	if n := fake.Count(http.MethodPut, "/status"); n != before+1 {
+		t.Errorf("a report without findings sent %d requests, want 1", n-before)
 	}
 }
 

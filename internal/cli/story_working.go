@@ -134,6 +134,9 @@ func dispatchWithWorking(cmd *cobra.Command, name string, req map[string]any) er
 		}
 		resp = markWorkingStories(resp, marks)
 	}
+	if name == "story-get" {
+		resp = withRemoteRun(cmd, requestStoryID(req), resp)
+	}
 	return renderResponse(cmd, name, requestStoryID(req), resp)
 }
 

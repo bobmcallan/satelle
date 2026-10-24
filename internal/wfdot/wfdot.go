@@ -244,6 +244,9 @@ type State struct {
 	// (Step.RemoteAgent / Step.LocalTags); empty when undeclared.
 	RemoteAgent string
 	LocalTags   []string
+	// RemoteWait is the step's declared wait on a team remote's run
+	// (Step.RemoteWait); nil when undeclared. Read through Spec.RemoteWaitOf.
+	RemoteWait *RemoteWait
 	// When is a gate node's optional enqueue precondition: the functional-check
 	// skill the engine runs before enqueuing it (RouteGate.When). Empty means the
 	// gate is unconditional.
@@ -264,6 +267,16 @@ type State struct {
 func (s Spec) WaitsOnChildren(status string) bool {
 	st, ok := s.StateNamed(status)
 	return ok && st.WaitsOnChildren
+}
+
+// RemoteWaitOf returns the team-remote wait the route declares at status, and
+// whether it declares one. Unknown names wait on nothing.
+func (s Spec) RemoteWaitOf(status string) (RemoteWait, bool) {
+	st, ok := s.StateNamed(status)
+	if !ok || st.RemoteWait == nil {
+		return RemoteWait{}, false
+	}
+	return *st.RemoteWait, true
 }
 
 // AfterChildren returns the obligation a container must see discharged by every
