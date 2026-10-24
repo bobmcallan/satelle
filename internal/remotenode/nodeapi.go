@@ -2,7 +2,7 @@ package remotenode
 
 // A node talks to satelle.dev with one credential, the node token the launcher
 // gave it, and about one thing: the node it is. The definition it runs from, each
-// secret it is granted and the end of its run are all routes under
+// secret it is granted, the record of its run (workstate) and the end of its run are all routes under
 // /api/v1/remote-nodes/{id}, where {id} is the --session value the node was
 // started with (satelle-server sty_c9013137). A value a secret route returns is
 // handed to the caller in memory and goes nowhere else: not to disk, the ledger,
@@ -221,6 +221,43 @@ func (c *NodeClient) Status(ctx context.Context, s NodeStatus) (StatusReply, err
 	}
 	var r StatusReply
 	_ = json.Unmarshal(raw, &r) // a reply without the window falls back to the default cadence
+	return r, nil
+}
+
+// RunOutput is one run-output document of an execution: its file name and text.
+type RunOutput struct {
+	Execution string `json:"execution"`
+	Name      string `json:"name"`
+	Body      string `json:"body"`
+}
+
+// NodeWorkstate is what a node pushes of its run, POSTed to .../workstate: the
+// execution, its ledger rows, the subject's link row (the rows are the same
+// encoding a personal `sync workstate push` sends) and the run-output documents.
+// It names no project; satelle.dev records it in the node's team workspace.
+type NodeWorkstate struct {
+	Items   []json.RawMessage `json:"items"`
+	Ledger  []json.RawMessage `json:"ledger"`
+	Outputs []RunOutput       `json:"outputs"`
+}
+
+// PushWorkstateReply is what satelle.dev says back to a push: the team project the
+// batch was recorded in and how many of each it took.
+type PushWorkstateReply struct {
+	Project string `json:"project"`
+	Items   int    `json:"items"`
+	Ledger  int    `json:"ledger"`
+	Outputs int    `json:"outputs"`
+}
+
+// PushWorkstate sends the node's run to its team workspace under the node token.
+func (c *NodeClient) PushWorkstate(ctx context.Context, w NodeWorkstate) (PushWorkstateReply, error) {
+	raw, _, err := c.call(ctx, http.MethodPost, "/workstate", w)
+	if err != nil {
+		return PushWorkstateReply{}, fmt.Errorf("workstate: %w", err)
+	}
+	var r PushWorkstateReply
+	_ = json.Unmarshal(raw, &r)
 	return r, nil
 }
 

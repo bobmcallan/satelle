@@ -250,6 +250,11 @@ const (
 	// step, run_id, started, ended} plus error when the run failed. Never an
 	// environment value, argv or credential. Enumeration only.
 	KindRemoteRun = "remote_run"
+	// KindExecutionLink joins a story to an execution a remote node ran about it:
+	// StoryID is the subject the wake named; Refs is {execution}; Payload is
+	// {execution, task, remote, outcome}. It is written once, when the run
+	// concludes, so it carries the outcome. Enumeration only.
+	KindExecutionLink = "execution_link"
 	// KindCommandRule records one agent command a repo-authored
 	// [[gate.command_rule]] matched and let run, or refused (sty_a74551d6).
 	// Payload is {command, rule_index, pattern, action, decision, delivered,
@@ -299,6 +304,15 @@ type RemoteRunPayload struct {
 	Started string `json:"started"`
 	Ended   string `json:"ended"`
 	Error   string `json:"error,omitempty"`
+}
+
+// ExecutionLinkPayload is the payload of a KindExecutionLink row: the one shape the
+// node writes and the route reads.
+type ExecutionLinkPayload struct {
+	Execution string `json:"execution"`
+	Task      string `json:"task"`
+	Remote    string `json:"remote"`
+	Outcome   string `json:"outcome"`
 }
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional

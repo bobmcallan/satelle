@@ -35,6 +35,8 @@ import (
 	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/drive"
+	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/remotechan"
 	"github.com/bobmcallan/satelle/internal/remotedef"
 	"github.com/bobmcallan/satelle/internal/remotenode"
@@ -218,11 +220,49 @@ func serveTaskWake(ctx context.Context, cmd *cobra.Command, node *remotenode.Nod
 	return node.ServeWithRun(ctx, sess, report, func(runCtx context.Context) {
 		res, rerr := remotenode.RunTask(runCtx, remotenode.TaskRun{
 			Def: def, Desc: desc, NodeID: session, Client: client, Drive: opts, ResendEvery: nodeStatusResend,
+			Pusher: client, Batch: nodeWorkstateBatch(cmd),
 		})
 		if rerr != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "join: the task run %s: %v\n", res.Execution, rerr)
 		}
 	})
+}
+
+// nodeWorkstateBatch collects what a task run pushes to the team workspace: the
+// execution, the ledger rows of the execution and of the subject (its link row)
+// and the execution's run-output doc. It reads only the node's own store and holds
+// no credential; the node token that sends it is the NodeClient's.
+func nodeWorkstateBatch(cmd *cobra.Command) func(context.Context, workitem.Item, string) (remotenode.NodeWorkstate, error) {
+	return func(ctx context.Context, exec workitem.Item, subject string) (remotenode.NodeWorkstate, error) {
+		a, err := appFrom(cmd)
+		if err != nil {
+			return remotenode.NodeWorkstate{}, err
+		}
+		scope := scopeSet{exec.ID: true}
+		if subject != "" {
+			scope[subject] = true
+		}
+		rows, _, _, _, err := collectWorkstateRows(ctx, a, map[string]bool{"executions": true, "ledger": true}, hosted.WorkstateCursor{}, scope)
+		if err != nil {
+			return remotenode.NodeWorkstate{}, err
+		}
+		// Of the subject's ledger only the link row is the run's; the rest is
+		// whatever the node's store holds of that story, and is not pushed.
+		batch := remotenode.NodeWorkstate{Items: rows.Items, Ledger: []json.RawMessage{}, Outputs: []remotenode.RunOutput{}}
+		for _, raw := range rows.Ledger {
+			var row struct {
+				StoryID string `json:"story_id"`
+				Kind    string `json:"kind"`
+			}
+			if json.Unmarshal(raw, &row) == nil && (row.StoryID == exec.ID || row.Kind == ledger.KindExecutionLink) {
+				batch.Ledger = append(batch.Ledger, raw)
+			}
+		}
+		if name, body, ok := verb.RunOutputDoc(exec); ok {
+			batch.Outputs = append(batch.Outputs, remotenode.RunOutput{Execution: exec.ID, Name: name, Body: body})
+		}
+		return batch, nil
+	}
 }
 
 // prepareTaskWake reads the wake's subject and builds how its execution is driven.

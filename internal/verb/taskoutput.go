@@ -49,6 +49,19 @@ func runOutputPath(exec workitem.Item) string {
 	return filepath.Join(execDir(exec.ParentID), runOutputFileName(exec.ID))
 }
 
+// RunOutputDoc is exec's run-output doc: its file name and its text. ok is false
+// when no doc was written.
+func RunOutputDoc(exec workitem.Item) (name, body string, ok bool) {
+	if taskDir == "" || exec.ParentID == "" {
+		return "", "", false
+	}
+	raw, err := os.ReadFile(runOutputPath(exec))
+	if err != nil {
+		return "", "", false
+	}
+	return runOutputFileName(exec.ID), string(raw), true
+}
+
 // RunOutcome reads the outcome recorded on exec's run-output doc: the one record
 // a run's result is read from. It is "" when no doc was written or the doc
 // records no outcome.

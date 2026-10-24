@@ -1,3 +1,8 @@
+## [0.0.743] - 2026-10-24
+
+### Added
+- A team remote whose definition declares `[drive] kind = "task"` runs one execution of its task per wake. The node installs the bundle's `tasks/tsk_<name>.md` and refuses to prepare when the task named by `drive.task` is missing. It maps the wake's subject (`story_id`, `trigger`, `trigger_source`) onto the inputs the task declares, and drives the execution through its own route without touching the subject story. It reports the run on its status heartbeat as queued, running with its step, and concluded with the outcome, re-sending well inside the server's lost-node window. `satelle execution record --outcome accept|reject|performed|no-op` lets the performer or validator record how the run ended, and a run that found nothing to do records `no-op`. A story-kind remote behaves as before. (sty_2af24ef9)
+
 ## [0.0.742] - 2026-10-24
 
 ### Added

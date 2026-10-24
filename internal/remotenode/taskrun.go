@@ -5,7 +5,10 @@ package remotenode
 // of it, created with the wake's subject as its inputs, driven through the
 // task's own route and validators by the same drive a story uses, and reported
 // to satelle.dev on the heartbeat as queued, running (with the step) and
-// concluded (with the outcome). The subject story is never loaded or written.
+// concluded (with the outcome). The subject story item is never loaded or written:
+// the one thing recorded about it is an execution_link ledger row, written when the
+// run concludes, and the run is then pushed to the team workspace under the node's
+// own token.
 
 import (
 	"context"
@@ -16,6 +19,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/drive"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/remotedef"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -52,6 +56,11 @@ type StatusSender interface {
 	Status(ctx context.Context, s NodeStatus) (StatusReply, error)
 }
 
+// WorkstatePusher is the push of a finished run; *NodeClient is the real one.
+type WorkstatePusher interface {
+	PushWorkstate(ctx context.Context, w NodeWorkstate) (PushWorkstateReply, error)
+}
+
 // TaskRun is what RunTask needs.
 type TaskRun struct {
 	// Def is the node's definition; it names the task (Def.TaskID).
@@ -65,6 +74,11 @@ type TaskRun struct {
 	// Drive is how the execution is driven: the performers, a rework relay, the
 	// log. Its OnMove is called as well as the node's own.
 	Drive drive.Options
+	// Pusher and Batch push the run to the team workspace once it has concluded:
+	// Batch collects the execution, its ledger rows (the subject's link row among
+	// them) and its run output. Either nil is no push.
+	Pusher WorkstatePusher
+	Batch  func(ctx context.Context, exec workitem.Item, subject string) (NodeWorkstate, error)
 	// ResendEvery, when set, replaces the heartbeat resend interval (a test's).
 	ResendEvery time.Duration
 }
@@ -91,9 +105,10 @@ func RunTask(ctx context.Context, tr TaskRun) (TaskRunResult, error) {
 	rep.send(ctx, NodeStatus{RunState: RunQueued})
 
 	var res TaskRunResult
+	var exec workitem.Item
 	err := func() error {
-		exec, err := executionFor(ctx, tr)
-		if err != nil {
+		var err error
+		if exec, err = executionFor(ctx, tr); err != nil {
 			return err
 		}
 		res.Execution = exec.ID
@@ -122,8 +137,62 @@ func RunTask(ctx context.Context, tr TaskRun) (TaskRunResult, error) {
 	case res.Outcome == "":
 		res.Outcome = verb.OutcomeReject
 	}
+	if exec.ID != "" {
+		tr.record(ctx, exec, res.Outcome)
+	}
 	rep.conclude(ctx, res.Outcome)
 	return res, err
+}
+
+// record writes the run's link row on the subject and pushes the run, before the
+// concluded heartbeat so the server holds the rows when it lists the run
+// concluded. Neither failing changes the run's outcome; each is logged.
+func (tr TaskRun) record(ctx context.Context, exec workitem.Item, outcome string) {
+	logf := func(what string, err error) {
+		if tr.Drive.Out != nil {
+			fmt.Fprintf(tr.Drive.Out, "node: %s: %v\n", what, err)
+		}
+	}
+	if err := tr.linkSubject(ctx, exec, outcome); err != nil {
+		logf("execution link", err)
+	}
+	if tr.Pusher == nil || tr.Batch == nil {
+		return
+	}
+	batch, err := tr.Batch(ctx, exec, tr.Desc.StoryID)
+	if err == nil {
+		_, err = tr.Pusher.PushWorkstate(ctx, batch)
+	}
+	if err != nil {
+		logf("workstate", err)
+	}
+}
+
+// linkSubject appends the execution_link row on the wake's subject story, once per
+// execution. A wake with no subject writes none.
+func (tr TaskRun) linkSubject(ctx context.Context, exec workitem.Item, outcome string) error {
+	subject := tr.Desc.StoryID
+	if subject == "" {
+		return nil
+	}
+	var linked []ledger.Entry
+	if err := dispatchJSON(ctx, "ledger-list", map[string]any{"story_id": subject, "kind": ledger.KindExecutionLink}, &linked); err != nil {
+		return err
+	}
+	for _, e := range linked {
+		var p ledger.ExecutionLinkPayload
+		if json.Unmarshal(e.Payload, &p) == nil && p.Execution == exec.ID {
+			return nil
+		}
+	}
+	var row ledger.Entry
+	return dispatchJSON(ctx, "ledger-append", map[string]any{
+		"story_id": subject,
+		"kind":     ledger.KindExecutionLink,
+		"actor":    "remote-node",
+		"payload":  ledger.ExecutionLinkPayload{Execution: exec.ID, Task: tr.Def.TaskID(), Remote: tr.NodeID, Outcome: outcome},
+		"refs":     map[string]string{"execution": exec.ID},
+	}, &row)
 }
 
 // executionFor is the execution of the node's task made for this node: the one it

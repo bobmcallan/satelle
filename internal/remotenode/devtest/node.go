@@ -1,6 +1,6 @@
 // Package devtest is a stand-in for the routes satelle.dev serves to a remote
 // node, for tests: GET /api/v1/remote-nodes/{id}/definition, GET .../run,
-// PUT .../status, POST .../secrets/{key} and POST .../end, all keyed by the node's id and taking
+// PUT .../status, POST .../secrets/{key}, POST .../workstate and POST .../end, all keyed by the node's id and taking
 // the node token as a bearer (satelle-server sty_c9013137). A call under any other
 // id is a 404; a bad token, or one an end call or Revoke has ended, is a 401. It
 // records every request. It is for tests only: nothing in the product imports it.
@@ -28,6 +28,26 @@ type Call struct {
 	Status int
 }
 
+// DefaultProject is the team project the fake records a pushed batch in.
+const DefaultProject = "team-project"
+
+// Batch is one POST .../workstate the fake received: the rows it carried and the
+// credential it carried them under.
+type Batch struct {
+	Auth    string            `json:"-"`
+	Project string            `json:"-"` // the project the fake answered it recorded the batch in
+	Items   []json.RawMessage `json:"items"`
+	Ledger  []json.RawMessage `json:"ledger"`
+	Outputs []Output          `json:"outputs"`
+}
+
+// Output is one run-output document of a Batch.
+type Output struct {
+	Execution string `json:"execution"`
+	Name      string `json:"name"`
+	Body      string `json:"body"`
+}
+
 // Node is the fake. Create it with NewNode.
 type Node struct {
 	// URL is the base URL to hand to the node as its satelle.dev.
@@ -45,6 +65,9 @@ type Node struct {
 	// LostAfterSeconds is the window every PUT .../status reply reports; 0 reports
 	// none.
 	LostAfterSeconds int
+	// Project is the team project POST .../workstate answers that it recorded the
+	// batch in; empty answers DefaultProject.
+	Project string
 
 	srv     *httptest.Server
 	id      string
@@ -56,6 +79,7 @@ type Node struct {
 	revoked bool
 	calls   []Call
 	status  []map[string]string
+	pushed  []Batch
 }
 
 // NewNode starts a fake for node id whose token is token, serving bundle as the
@@ -100,6 +124,13 @@ func (n *Node) Statuses() []map[string]string {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return append([]map[string]string(nil), n.status...)
+}
+
+// Pushed is every batch received on POST .../workstate, in order.
+func (n *Node) Pushed() []Batch {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]Batch(nil), n.pushed...)
 }
 
 // Count is how many requests ended with tail (for example "/end" or
@@ -172,6 +203,21 @@ func (n *Node) answer(w http.ResponseWriter, r *http.Request) int {
 		n.status = append(n.status, in)
 		n.mu.Unlock()
 		raw, _ := json.Marshal(map[string]int{"lost_after_seconds": n.LostAfterSeconds})
+		return reply(w, http.StatusOK, string(raw))
+	case r.Method == http.MethodPost && tail == "workstate":
+		in := Batch{Auth: r.Header.Get("Authorization")}
+		if json.NewDecoder(r.Body).Decode(&in) != nil {
+			return reply(w, http.StatusBadRequest, `{"error":"invalid_body"}`)
+		}
+		project := n.Project
+		if project == "" {
+			project = DefaultProject
+		}
+		in.Project = project
+		n.mu.Lock()
+		n.pushed = append(n.pushed, in)
+		n.mu.Unlock()
+		raw, _ := json.Marshal(map[string]any{"project": project, "items": len(in.Items), "ledger": len(in.Ledger), "outputs": len(in.Outputs)})
 		return reply(w, http.StatusOK, string(raw))
 	case r.Method == http.MethodPost && tail == "end":
 		n.Revoke()
