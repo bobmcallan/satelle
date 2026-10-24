@@ -1,3 +1,15 @@
+## [0.0.737] - 2026-10-24
+
+### Changed
+- No story is held across machines any more. The CLI makes no hosted hold calls (checkout, release, takeover, checkout-log or the hold heartbeat), and `satelle story hold` is removed. Engaging a story that another machine worked last just works. When two machines move the same story, the second push reports the compare-and-append conflict ("moved since …: re-read and decide").
+- Engaging a story appends a `working_on` event to its ledger, naming the location, session and worktree. Other machines see it after a pull in `satelle story get`, `story list` and the session-start line. It never blocks anyone.
+- One story per session is still refused locally from the local seat, with no network call.
+- Engaging a story assigned to someone else prints a note naming the assignee instead of refusing.
+- `[sync] hold_stale_after` is retired. init and migrate no longer write it, `satelle migrate` removes it, a config that still has it loads, and `satelle doctor` reports it as retired.
+
+### Fixed
+- A pulled story's events are stored in chain order, so its local chain verifies and the story can be pushed again from the machine that pulled it. (sty_40853d02)
+
 ## [0.0.736] - 2026-10-24
 
 ### Fixed
