@@ -1,3 +1,13 @@
+## [0.0.742] - 2026-10-24
+
+### Added
+- A task can declare typed inputs (`string`, `int` or `bool`, required or optional) in its task file. `satelle execution create --input name=value` records values for them and refuses a missing, undeclared or mistyped one. The execution's performer and validators receive the inputs as `SATELLE_INPUT_<NAME>` environment variables and in their payload. A task that declares no inputs behaves as before. (sty_fb0b2b91)
+
+## [serve-v0.0.202] - 2026-10-24
+
+### Changed
+- The service binary carries typed task inputs on executions. (sty_fb0b2b91)
+
 ## [0.0.741] - 2026-10-24
 
 ### Fixed
