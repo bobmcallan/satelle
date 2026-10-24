@@ -1,3 +1,13 @@
+## [0.0.747] - 2026-10-24
+
+### Added
+- An execution that stops short of its route is recorded as stopped. This covers an execution that is refused (including before its first presentation), fails, times out, or ends on a performer's question. The execution gets one `drive-stopped` row with outcome `stopped`, the step, the performer and the performer's last message, taken from the already-redacted invocation record so no secret value appears. When the execution's `story_id` input names a story, that story also gets one `execution_stopped` row naming the execution, its task, the step, the performer and the last message, so the developer sees it on the story. An execution that reaches its route's end records neither. A story's own drive parks exactly as before. (sty_132e7781)
+
+## [serve-v0.0.205] - 2026-10-24
+
+### Changed
+- The service binary knows the `execution_stopped` ledger kind. (sty_132e7781)
+
 ## [0.0.746] - 2026-10-24
 
 ### Fixed
