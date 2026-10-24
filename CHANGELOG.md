@@ -1,3 +1,18 @@
+## [0.0.746] - 2026-10-24
+
+### Fixed
+- The changelog, and the embedded copy that `satelle changelog` reads, carry the 0.0.745 entry, which the 0.0.745 release left out. (sty_7028d996)
+
+## [0.0.745] - 2026-10-24
+
+### Added
+- A binding in `agents.toml` can declare `placement = "local" | "remote" | "team:<path>"`; the default is `local`. `satelle validate` refuses any other value and names the bad binding. `satelle validate` and `satelle workflow show` print each binding's placement. A step that allocates a `remote` binding runs its performer on a node that satelle.dev starts for that step. The local end pairs with the node over the relay and trusts it only once the node's published channel key matches; there is no enroll token and no trust-on-first-use. The node runs the allocated binding with the step's prompt. A step that allocates a `team:<path>` binding wakes that team remote for the story and waits on its run (queued, running, concluded), dispatching no local performer. A repo with no `placement` field behaves exactly as before. The live remote and team paths need satelle.dev's performer-node, channel-key and story-run routes; until they ship, the remote leg refuses with an error naming them. (sty_7028d996)
+
+## [serve-v0.0.204] - 2026-10-24
+
+### Changed
+- The service binary reads the `placement` field on agents.toml bindings. (sty_7028d996)
+
 ## [0.0.744] - 2026-10-24
 
 ### Added
