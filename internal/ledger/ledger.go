@@ -70,6 +70,12 @@ const (
 	// (the skill/rubric file) — so the timeline shows what command ran with what
 	// context, not just the verdict (sty_fb3e0873).
 	KindAgentInvocation = "agent_invocation"
+	// KindOverlap records that a sync pass found two holders on one story: its
+	// local and hosted copies disagreed, or a push was refused by a hold another
+	// location or user owns. Payload {local_holder, remote_holder, remote_user,
+	// reason, source: conflict|hold}. A record of the overlap, never an arbiter of
+	// it (sty_9914df10).
+	KindOverlap = "overlap"
 	// Estimate/actual: an agent self-reports a plan estimate at begin-work and the
 	// actual cost at close. Recorded as story tags (estimate-*/actual-*) and as
 	// these ledger rows so the per-story close-out can compare estimate vs actual.
@@ -232,16 +238,6 @@ const (
 	// StoryID is the noted story; Payload is {path, substrate_story, status}.
 	// Enumeration only — the lock list is configuration.
 	KindSubstrateChangeNote = "substrate_change_note"
-	// KindRemoteHandoff records one story a woken remote took on (sty_a9768210).
-	// StoryID is the story; Refs is {fire_id, story} so a redelivered wake adds
-	// no second row; Payload is {remote, trigger, kind, fire_id}, trigger and
-	// kind empty when the wake named no declared trigger.
-	KindRemoteHandoff = "remote_handoff"
-	// KindRemoteHandback records a story a remote left at a status outside its
-	// contract's exits or one the story's local route does not declare. StoryID is
-	// the story; Refs is {fire_id, story, status}; Payload is {remote, status,
-	// in_contract, local_known, reason}.
-	KindRemoteHandback = "remote_handback"
 	// KindRemoteRun records one step a remote ran on its host (sty_2f3baf0a): the
 	// join between a story and whatever the step changed. StoryID is the story;
 	// Refs is {fire_id, story, run_id}; Payload is {remote, version, host, label,
@@ -266,34 +262,6 @@ const (
 	// with reason one of token_used | token_expired | token_unknown |
 	// key_mismatch. The token itself is never recorded. Enumeration only.
 	KindRemoteEnrollRefused = "remote_enroll_refused"
-	// KindRemoteStart, KindRemoteStop and KindRemoteIdle record a remote node's
-	// host lifecycle (sty_2b6d0f7f): host.start ran, host.stop ran, or the run
-	// ended with the definition's lifecycle "idle" and the node left running.
-	// Payload is {remote, label, lifecycle} plus error when the host command
-	// failed. Enumeration only.
-	KindRemoteStart = "remote_start"
-	KindRemoteStop  = "remote_stop"
-	KindRemoteIdle  = "remote_idle"
-	// KindRemoteTest records one edge of a `satelle remote test` run: Payload is
-	// {remote, from, to, verdict, notes} with verdict one of accept | reject |
-	// performed | no-op. StoryID is the sample story the definition was run on;
-	// the story itself is never changed. Enumeration only — the verdict is the
-	// reviewers', not Go's.
-	KindRemoteTest = "remote_test"
-	// KindRemotePreflight records one check of a remote's security preflight:
-	// Payload is {remote, step, kind, argv, expect, outcome, pass, detail} with
-	// kind one of probe | env | file | legs and outcome one of pass | fail |
-	// error | not-run. A value found on a host is never recorded, only key
-	// names, paths and exit codes. Enumeration only — the comparison is the
-	// definition's declared expectation, not Go's judgement of a service.
-	KindRemotePreflight = "remote_preflight"
-	// KindRemoteRunSummary records one `satelle remote run` (sty_1e4f7a2a), once,
-	// on the run's story of record. Payload is {run, remote, started, ended,
-	// stories[], spend_usd, cap_usd, capped, error}; each stories[] entry is {id,
-	// status, refused, in_contract, local_known, reason, verdicts[], sessions[],
-	// gap[], error}. Enumeration only — the verdicts are the reviewers', copied
-	// from the pulled ledger. Distinct from KindRemoteRun, the per-step row.
-	KindRemoteRunSummary = "remote_run_summary"
 	// KindChainFork records that two or more events of one story deliberately
 	// share a base (sty_41f61669): Refs is the JSON array of the forking event
 	// ids. VerifyChain accepts a shared base only when such a record names every

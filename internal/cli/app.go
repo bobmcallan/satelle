@@ -235,7 +235,6 @@ func openAppForCmd(cmd *cobra.Command) error {
 	if gc, gerr := config.LoadGlobal(); gerr == nil {
 		if runner, rerr := agentcli.NewRunner(gc.Agent.ResolveCLI()); rerr == nil {
 			rev := agentstep.New(runner, a.Store.DocIndex, a.RepoRoot, "")
-			rev.SetRunSecretsSource(runSecretsSource)
 			rev.SetLogDir(filepath.Join(a.RuntimeDir, "logs"), logRotation(a))
 			// A gated transition legitimately blocks for minutes while the nested
 			// reviewer runs — emit progress to stderr so it is visibly distinct from
@@ -450,7 +449,6 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 		return nil, nil, fmt.Errorf("an agent CLI is required: %w", err)
 	}
 	rev := agentstep.New(runner, a.Store.DocIndex, a.RepoRoot, "")
-	rev.SetRunSecretsSource(runSecretsSource)
 	rev.SetLogDir(filepath.Join(a.RuntimeDir, "logs"), logRotation(a))
 	// Same prior-verdict injection as the transition gater (sty_0f5e600c): this
 	// read-path engine gates `create` and the per-noun validates too. It

@@ -15,17 +15,13 @@ import (
 // EventMessages, closes it, and returns the rows it ledgered (open, close).
 func liveRows(t *testing.T, role SessionRole, msgs ...string) []map[string]any {
 	t.Helper()
-	return liveRowsWithEnv(t, role, nil, nil, msgs...)
+	return liveRowsWithEnv(t, role, nil, msgs...)
 }
 
-// liveRowsWithEnv is liveRows over a binding carrying env and an engine holding
-// run secrets.
-func liveRowsWithEnv(t *testing.T, role SessionRole, env, secrets map[string]string, msgs ...string) []map[string]any {
+// liveRowsWithEnv is liveRows over a binding carrying env.
+func liveRowsWithEnv(t *testing.T, role SessionRole, env map[string]string, msgs ...string) []map[string]any {
 	t.Helper()
 	g, _ := newEngine(t, "", fakeDocs{})
-	if secrets != nil {
-		g.SetRunSecrets(secrets, nil)
-	}
 	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
 		if name != "orchestrator" {
 			return config.AgentBinding{}, false
@@ -90,11 +86,11 @@ func TestConsultSessionCloseCarriesNoLastMessage(t *testing.T) {
 	}
 }
 
-// A value satelle resolved into the session's environment (a binding env value,
-// a run secret) never reaches the close row: the marker names the key.
+// A value satelle resolved into the session's environment (a binding env value)
+// never reaches the close row: the marker names the key.
 func TestLiveSessionCloseScrubsResolvedEnvValues(t *testing.T) {
 	rows := liveRowsWithEnv(t, SessionRoleDriving,
-		map[string]string{"TOKEN": "LOCAL-token"}, map[string]string{"DEPLOY_KEY": "run-secret-1"},
+		map[string]string{"TOKEN": "LOCAL-token", "DEPLOY_KEY": "run-secret-1"},
 		"token is LOCAL-token and key is run-secret-1, flag on")
 	got, _ := rows[1]["last_message"].(string)
 	if want := "token is [redacted:TOKEN] and key is [redacted:DEPLOY_KEY], flag on"; got != want {
@@ -103,11 +99,10 @@ func TestLiveSessionCloseScrubsResolvedEnvValues(t *testing.T) {
 }
 
 // The dispatch result keeps the raw capture for the run-output doc but its
-// ledger tail is scrubbed of the binding's env and the run secrets.
+// ledger tail is scrubbed of the binding's env.
 func TestPerformanceResultLastMessageIsScrubbedButOutputIsRaw(t *testing.T) {
 	g, _ := newEngine(t, "", fakeDocs{})
-	g.SetRunSecrets(map[string]string{"DEPLOY_KEY": "run-secret-1"}, nil)
-	binding := config.AgentBinding{Env: map[string]string{"TOKEN": "LOCAL-token"}}
+	binding := config.AgentBinding{Env: map[string]string{"TOKEN": "LOCAL-token", "DEPLOY_KEY": "run-secret-1"}}
 	out := "OBSERVED-TOKEN=LOCAL-token key=run-secret-1 ok"
 	res := g.performanceResult("coder", "skill", binding, config.Budget{}, ModelChoice{}, InvokeResult{Stdout: []byte(out)})
 	if res.Output != out {

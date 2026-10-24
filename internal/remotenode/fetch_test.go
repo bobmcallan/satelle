@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/remotedef"
 	"github.com/bobmcallan/satelle/internal/remotenode/gittest"
 )
 
@@ -18,7 +19,7 @@ func TestFetchReposOverHTTPSIsReadOnly(t *testing.T) {
 	g := gittest.New(t)
 	dir := t.TempDir()
 
-	got, err := FetchRepos(context.Background(), dir, []RepoSpec{{URL: g.URL, Ref: "main"}}, g.Env)
+	got, err := FetchRepos(context.Background(), dir, []remotedef.Repo{{URL: g.URL, Ref: "main"}}, g.Env)
 	if err != nil {
 		t.Fatalf("FetchRepos: %v", err)
 	}
@@ -53,7 +54,7 @@ func TestFetchReposOverHTTPSIsReadOnly(t *testing.T) {
 	}
 
 	// A tag pins an older commit than the branch tip.
-	got, err = FetchRepos(context.Background(), t.TempDir(), []RepoSpec{{URL: g.URL, Ref: "v1"}}, g.Env)
+	got, err = FetchRepos(context.Background(), t.TempDir(), []remotedef.Repo{{URL: g.URL, Ref: "v1"}}, g.Env)
 	if err != nil || len(got) != 1 || got[0].Commit != g.Tagged {
 		t.Fatalf("fetching v1 = %+v, %v; want commit %s", got, err, g.Tagged)
 	}
@@ -70,7 +71,7 @@ func TestFetchReposRefusesWhatIsNotPlainHTTPS(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			_, err := FetchRepos(context.Background(), dir, []RepoSpec{{URL: tc.url, Ref: tc.ref}}, nil)
+			_, err := FetchRepos(context.Background(), dir, []remotedef.Repo{{URL: tc.url, Ref: tc.ref}}, nil)
 			if err == nil {
 				t.Fatal("must refuse")
 			}

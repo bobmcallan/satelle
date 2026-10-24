@@ -282,11 +282,44 @@ func TestOpenPairsWhenRemoteArrivesDuringLocalRegistration(t *testing.T) {
 	}
 }
 
-func TestJoinWithNoLocalEndIsRefused(t *testing.T) {
+// AC9: the remote's upgrade carries the node token as its bearer.
+func TestJoinCarriesTheNodeTokenAsBearer(t *testing.T) {
+	h := newHarness(t, true)
+	_, _, spec := h.connect(t)
+	if got := h.relay.RemoteBearers(); len(got) != 1 || got[0] != spec.Token {
+		t.Fatalf("remote bearers = %v, want [%s]", got, spec.Token)
+	}
+}
+
+// AC9: a remote is admitted into its session with no local end waiting.
+func TestJoinIsAdmittedWithoutAWaitingLocal(t *testing.T) {
 	h := newHarness(t, true)
 	id, _ := NewIdentity()
-	_, err := Join(testCtx(t), h.relay.URL(), "no-such-session", id, "tok", h.opts()...)
-	if !errors.Is(err, ErrRelayRefused) || !strings.Contains(err.Error(), "404") {
-		t.Fatalf("Join = %v, want ErrRelayRefused (HTTP 404)", err)
+	ctx, cancel := context.WithCancel(testCtx(t))
+	done := make(chan error, 1)
+	go func() {
+		_, err := Join(ctx, h.relay.URL(), "no-local-yet", id, "node-token", h.opts()...)
+		done <- err
+	}()
+	eventually(t, "the relay to admit the remote", func() bool { return h.relay.Upgrades() == 1 })
+	if got := h.relay.RemoteBearers(); len(got) != 1 || got[0] != "node-token" {
+		t.Errorf("remote bearers = %v, want [node-token]", got)
+	}
+	cancel()
+	if err := <-done; err == nil {
+		t.Error("Join without a local end must not return a session")
+	}
+}
+
+// AC9: a relay that does not accept the node token answers 401, and Join says so
+// as a status a caller can tell from any other refusal.
+func TestJoinRefusedTokenIsA401(t *testing.T) {
+	h := newHarness(t, true)
+	h.relay.RejectRemoteBearers(1)
+	id, _ := NewIdentity()
+	_, err := Join(testCtx(t), h.relay.URL(), "s", id, "node-token", h.opts()...)
+	var rs *RelayStatusError
+	if !errors.Is(err, ErrRelayRefused) || !errors.As(err, &rs) || rs.Status != 401 || !strings.Contains(err.Error(), "401") {
+		t.Fatalf("Join = %v, want ErrRelayRefused with status 401", err)
 	}
 }

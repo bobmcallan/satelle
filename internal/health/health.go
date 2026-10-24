@@ -150,9 +150,6 @@ const (
 	IDContextIndexStale          = "context.index.stale"          // documents/index.md lists a document that does not exist
 	IDContextReviewUnavailable   = "context.review.unavailable"   // the opt-in semantic reviewer could not run or its output did not parse
 
-	// Remote definitions (satelle remote validate).
-	IDRemoteDefinition = "remote.definition" // a remote definition carries an error in one of its files
-
 	// Live probes (opt-in only).
 	IDLiveOK           = "live.ok"            // a provider answered
 	IDLiveAuth         = "live.auth"          // the provider reported an authentication problem
@@ -180,7 +177,6 @@ var ids = []string{
 	IDContextDispatchUnbudgeted, IDContextDispatchUnavailable, IDContextDuplicateVerbatim,
 	IDContextDuplicateSemantic, IDContextRefUnresolved, IDContextRefUnwired, IDContextIndexStale,
 	IDContextReviewUnavailable,
-	IDRemoteDefinition,
 	IDLiveOK, IDLiveAuth, IDLiveTimeout, IDLiveSpawn, IDLiveACPHandshake,
 }
 

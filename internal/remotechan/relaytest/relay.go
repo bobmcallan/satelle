@@ -35,15 +35,17 @@ type slot struct {
 type Relay struct {
 	srv *httptest.Server
 
-	mu       sync.Mutex
-	slots    map[string]*slot
-	conns    []*websocket.Conn
-	frames   []Frame
-	bearers  []string
-	attempts int
-	upgrades int
-	reject   int
-	other    http.Handler
+	mu            sync.Mutex
+	slots         map[string]*slot
+	conns         []*websocket.Conn
+	frames        []Frame
+	bearers       []string
+	remoteBearers []string
+	attempts      int
+	upgrades      int
+	reject        int
+	rejectRemote  int
+	other         http.Handler
 
 	holdArmed bool
 	holds     map[string]chan struct{}
@@ -91,6 +93,14 @@ func (r *Relay) HoldLocalUntilRemote() {
 	r.holdArmed = true
 }
 
+// RejectRemoteBearers makes the next n remote upgrades fail with 401 whatever
+// bearer they carry, as a relay does for a node token it does not accept.
+func (r *Relay) RejectRemoteBearers(n int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rejectRemote = n
+}
+
 // Attempts counts every upgrade request the relay received, rejected or not.
 func (r *Relay) Attempts() int {
 	r.mu.Lock()
@@ -110,6 +120,13 @@ func (r *Relay) Bearers() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]string(nil), r.bearers...)
+}
+
+// RemoteBearers lists the bearer each remote upgrade request carried, in order.
+func (r *Relay) RemoteBearers() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.remoteBearers...)
 }
 
 // Frames is a copy of every message the relay forwarded, in arrival order.
@@ -158,9 +175,21 @@ func (r *Relay) serve(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
-	// A remote's arrival is signalled in the same critical section as its pairing
-	// decision, so a held local cannot be recorded before the remote is judged.
 	if role == "remote" {
+		// A node presents the token satelle.dev gave it; one without a token, or one
+		// the test scripts the relay to refuse, is not accepted.
+		bearer := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
+		r.remoteBearers = append(r.remoteBearers, bearer)
+		if r.rejectRemote > 0 || bearer == "" {
+			if r.rejectRemote > 0 {
+				r.rejectRemote--
+			}
+			r.mu.Unlock()
+			http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
+			return
+		}
+		// A remote's arrival is signalled in the same critical section as its pairing
+		// decision, so a held local cannot be recorded before the remote is judged.
 		if ch := r.holds[session]; ch != nil {
 			close(ch)
 			delete(r.holds, session)
@@ -180,8 +209,13 @@ func (r *Relay) serve(w http.ResponseWriter, req *http.Request) {
 			hold = make(chan struct{})
 			r.holds[session] = hold
 		}
-	case role == "remote" && sl != nil && sl.remote == nil && (sl.local != nil || sl.ready != nil):
-		if sl.local == nil {
+	case role == "remote" && (sl == nil || sl.remote == nil):
+		// A node started by satelle.dev may reach the relay before the local end.
+		if sl == nil {
+			sl = &slot{}
+			r.slots[session] = sl
+		}
+		if sl.local == nil && sl.ready != nil {
 			wait = sl.ready
 		}
 	default:

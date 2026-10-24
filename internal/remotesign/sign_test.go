@@ -85,11 +85,10 @@ func TestSignerRefusesABadSeedWithoutEchoingIt(t *testing.T) {
 }
 
 func TestNonceShapeAndUniqueness(t *testing.T) {
-	seed, _, err := NewKey()
+	s, err := NewSigner(loadVector(t).SeedB64)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, _ := NewSigner(seed)
 	seen := map[string]bool{}
 	for i := 0; i < 50; i++ {
 		h, err := s.Sign(Request{Method: "POST", Path: "/p"})
@@ -103,25 +102,5 @@ func TestNonceShapeAndUniqueness(t *testing.T) {
 			t.Fatal("a nonce was reused")
 		}
 		seen[h.Nonce] = true
-	}
-}
-
-func TestNewKeyAndFingerprint(t *testing.T) {
-	seed, pub, err := NewKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if raw, _ := base64.StdEncoding.DecodeString(seed); len(raw) != 32 {
-		t.Errorf("seed is %d bytes", len(raw))
-	}
-	if raw, _ := base64.StdEncoding.DecodeString(pub); len(raw) != 32 {
-		t.Errorf("public key is %d bytes", len(raw))
-	}
-	fp, err := Fingerprint(pub)
-	if err != nil || !strings.HasPrefix(fp, "SHA256:") || strings.HasSuffix(fp, "=") {
-		t.Errorf("Fingerprint = %q, %v", fp, err)
-	}
-	if _, err := Fingerprint("zz"); err == nil {
-		t.Error("a malformed public key must be refused")
 	}
 }

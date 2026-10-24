@@ -1,14 +1,16 @@
 package cli
 
-// `satelle sync workstate` — personal work-state push (backup) and pull
-// (rehydrate). epic:scoped-sync order:7 delivered push; epic:workspace-rehydrate
-// order:3 adds pull. Rows always target this repo's bound hosted PROJECT's
-// personal collection; a team active-workspace binding never redirects work-state.
-// The one addition is story attachments: with [sync] stories = shared and a team
-// workspace resolved they also go to (and come back from) that workspace's
-// documents collection (sty_61872918). The [sync] scope gates whether each
-// work-state area (stories, ledger, executions) is transferred (local → skip;
-// personal|shared → personal+project).
+// `satelle sync workstate` — work-state push (backup) and pull (rehydrate).
+// epic:scoped-sync order:7 delivered push; epic:workspace-rehydrate order:3 adds
+// pull. Always targets this repo's bound hosted PROJECT: the server stores
+// work state per project, so a project in a team workspace is shared with every
+// member of that workspace and a personal project is yours alone; a team
+// active-workspace binding never redirects work-state. The one addition is story
+// attachments: with [sync] stories = shared and a team workspace resolved they
+// also go to (and come back from) that workspace's documents collection
+// (sty_61872918). The [sync] scope gates whether each work-state area (stories,
+// ledger, executions) is transferred (local → skip; personal|shared →
+// personal+project).
 
 import (
 	"context"
@@ -50,34 +52,36 @@ var ErrWorkstatePullConflict = errors.New("workstate pull conflict")
 func newSyncWorkstateCmd() *cobra.Command {
 	group := &cobra.Command{
 		Use:   "workstate",
-		Short: "Push/pull work state for this repo's bound hosted project personal collection (local default skips)",
-		Long: `Move work state — stories, tasks, ledger — between this repo and its bound
-hosted project's personal collection.
+		Short: "Push/pull work state for this repo's bound hosted project (local default skips)",
+		Long: `Move work state — stories, tasks, ledger, attachments — between this repo and
+its bound hosted project.
 
-This is the continuity path for the same work across machines, not a team
-channel: the personal collection is yours. The one exception is story
-attachments: with [sync] stories = shared and a team workspace set, they are
-also copied to that team workspace's documents collection, which is what a team
-remote reads. Skipped entirely unless the workstate area is opted in, and a pull
-merges into local rows rather than replacing them.`,
+The destination is the bound project, so everyone with a role on that project
+shares it: a project in a team workspace is shared with every member of that
+workspace, a personal project is yours alone. A story has two copies — local and
+the project — and a pull merges into local rows rather than replacing them. With
+[sync] stories = shared and a team workspace set, story attachments are also
+copied to that team workspace's documents collection, which is what a team
+remote reads. Skipped entirely unless the workstate area is opted in.`,
 	}
 
 	var pushServer string
 	var dryRun, full bool
 	push := &cobra.Command{
 		Use:         "push [story-or-epic-id...]",
-		Short:       "Replicate opted-in work-state areas to the personal workspace",
+		Short:       "Replicate opted-in work-state areas to the bound hosted project",
 		Annotations: needsStore(),
 		Args:        cobra.ArbitraryArgs,
-		Long: `push upserts local stories, executions and ledger entries, for opted-in [sync]
-areas, into the bound hosted project's personal collection. Only changed records
-are sent; --full re-sends all. Requires "satelle project bind".
+		Long: `push upserts local stories, task-executions, and ledger entries, for areas whose
+[sync] scope is personal or shared, into the bound hosted project. Only records
+changed since the last push are sent; --full re-sends everything. Requires
+"satelle project bind <slug>".
 
 With stories opted in it also uploads each story's markdown attachments, change
-patches included (binary ones never leave the machine). With [sync] stories =
-shared and [hosted] workspace set they also go to the team workspace's documents
-collection, for a team remote to read. A refused upload is reported with its
-route and retried next push.
+patches included, to that project, so another machine can read them; binary ones
+never leave the machine. With [sync] stories = shared and [hosted] workspace set
+they also go to the team workspace's documents collection, for a team remote to
+read. A refused upload is reported with its route and retried next push.
 
 Given story ids or an epic id it pushes only those, whole, leaving the cursor.
 
@@ -96,11 +100,11 @@ remote-tracking ref ([sync] hold_unpushed = false turns this off).`,
 	var pullDryRun, force, pullVerbose bool
 	pull := &cobra.Command{
 		Use:         "pull [story-or-epic-id...]",
-		Short:       "Restore opted-in work-state from the personal workspace into the local store",
+		Short:       "Restore opted-in work-state from the bound hosted project into the local store",
 		Annotations: needsStore(),
 		Args:        cobra.ArbitraryArgs,
-		Long: `pull fetches the bound hosted PROJECT's personal stories, executions and
-ledger entries for opted-in [sync] areas, and merges them into the local DB by
+		Long: `pull fetches the bound hosted project's stories, executions and ledger
+entries for opted-in [sync] areas, and merges them into the local DB by
 id. With stories opted in it also writes their markdown attachments into the
 attachment store (binary ones stay local); with [sync] stories = shared it reads
 the team workspace's documents collection too, and --force takes a differing
@@ -187,7 +191,7 @@ func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string, force bool, 
 	} else {
 		rep, err = runPagedWorkstateSnapshot(cmd.Context(), a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModeSnapshot)
 	}
-	recordStoryConflicts(a, rep)
+	recordStoryConflicts(cmd.Context(), a, client, project, rep)
 	if err != nil {
 		return err
 	}
@@ -274,7 +278,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		}()
 	}
 	if dryRun {
-		fmt.Fprintf(out, "Would push work-state areas to bound project personal collection on %s:\n", server)
+		fmt.Fprintf(out, "Would push work-state areas to the bound project on %s:\n", server)
 		for _, area := range WorkstateAreas {
 			if optIn[area] {
 				fmt.Fprintf(out, "  %s -> personal\n", area)
@@ -533,7 +537,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		}
 	}
 	if scope != nil {
-		fmt.Fprintf(out, "scoped push to project %q personal collection on %s: %d item(s), %d ledger entr(y/ies).\n",
+		fmt.Fprintf(out, "scoped push to project %q on %s: %d item(s), %d ledger entr(y/ies).\n",
 			project, server, totalItems, totalLedger)
 	} else {
 		// Advance cursor only after full success.
@@ -547,7 +551,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		if err := hosted.SaveWorkstateCursor(server, project, repoRoot, next); err != nil {
 			return fmt.Errorf("save workstate cursor: %w", err)
 		}
-		fmt.Fprintf(out, "Pushed work-state to project %q personal collection on %s: %d item(s), %d ledger entr(y/ies).\n",
+		fmt.Fprintf(out, "Pushed work-state to project %q on %s: %d item(s), %d ledger entr(y/ies).\n",
 			project, server, totalItems, totalLedger)
 	}
 	if codeHeld > 0 {
@@ -627,7 +631,7 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 		return err
 	}
 	if dryRun {
-		fmt.Fprintf(out, "Would pull work-state areas from bound project personal collection on %s:\n", server)
+		fmt.Fprintf(out, "Would pull work-state areas from the bound project on %s:\n", server)
 		for _, area := range WorkstateAreas {
 			if optIn[area] {
 				fmt.Fprintf(out, "  personal -> %s\n", area)
@@ -656,7 +660,7 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 	} else {
 		rep, err = runPagedWorkstateSnapshot(ctx, a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModePull)
 	}
-	recordStoryConflicts(a, rep)
+	recordStoryConflicts(ctx, a, client, project, rep)
 	if err != nil {
 		if errors.Is(err, hosted.ErrLoginRequired) || errors.Is(err, ErrWorkstatePullConflict) {
 			return err
@@ -679,7 +683,7 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 	if err := pushMirrorAfterWorkstate(ctx, a, nItems+nLedger); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "workstate: mirror push warning: %v\n", err)
 	}
-	fmt.Fprintf(out, "Pulled work-state from project %q personal collection on %s (%s): %d item(s), %d ledger entr(y/ies).\n",
+	fmt.Fprintf(out, "Pulled work-state from project %q on %s (%s): %d item(s), %d ledger entr(y/ies).\n",
 		project, server, rep.label(), nItems, nLedger)
 	if nKept > 0 {
 		fmt.Fprintf(out, "%d item(s) kept — local copy is newer than hosted\n", nKept)

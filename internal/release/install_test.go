@@ -30,7 +30,7 @@ var urlHost = regexp.MustCompile(`https?://([A-Za-z0-9.-]+)`)
 
 // TestInstallScriptNamesOnlyTheOrigins: the hosts scripts/install.sh builds URLs
 // on are exactly Origins — neither a host release does not own, nor an origin
-// the script forgot — so the egress derived from this package covers the script.
+// the script forgot.
 func TestInstallScriptNamesOnlyTheOrigins(t *testing.T) {
 	got := map[string]bool{}
 	for _, m := range urlHost.FindAllStringSubmatch(readRepoFile(t, "scripts", "install.sh"), -1) {
@@ -46,21 +46,12 @@ func TestInstallScriptNamesOnlyTheOrigins(t *testing.T) {
 	if strings.Join(gotList, ",") != strings.Join(want, ",") {
 		t.Errorf("install.sh names hosts %v, release.Origins is %v", gotList, want)
 	}
-	all := map[string]bool{}
-	for _, h := range Hosts() {
-		all[h] = true
-	}
-	for _, h := range want {
-		if !all[h] {
-			t.Errorf("Hosts() lacks origin %s", h)
-		}
-	}
 }
 
 // TestUpdateBuildsItsURLsFromThisPackage: cmd_update spells no release host.
 func TestUpdateBuildsItsURLsFromThisPackage(t *testing.T) {
 	src := readRepoFile(t, "internal", "cli", "cmd_update.go")
-	for _, host := range append(Origins(), redirectHosts...) {
+	for _, host := range Origins() {
 		for i, line := range strings.Split(src, "\n") {
 			if strings.Contains(line, "://"+host) && !strings.HasPrefix(strings.TrimSpace(line), "//") {
 				t.Errorf("cmd_update.go:%d names %s; build the URL with package release", i+1, host)
@@ -81,12 +72,6 @@ func TestURLBuilders(t *testing.T) {
 	}
 	if got, want := APIBase("o/r"), "https://api.github.com/repos/o/r/releases"; got != want {
 		t.Errorf("APIBase = %s", got)
-	}
-	if got, want := InstallScriptURL("o/r", "", "1.2.3"), "https://github.com/o/r/releases/latest/download/install.sh"; got != want {
-		t.Errorf("InstallScriptURL (no base) = %s", got)
-	}
-	if got, want := InstallScriptURL("o/r", "http://mirror/dl", "1.2.3"), "http://mirror/dl/v1.2.3/install.sh"; got != want {
-		t.Errorf("InstallScriptURL (base) = %s", got)
 	}
 }
 

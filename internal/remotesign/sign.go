@@ -12,7 +12,6 @@ package remotesign
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"strconv"
@@ -90,25 +89,4 @@ func newNonce() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
-}
-
-// NewKey makes a remote's identity: the seed (the private half, to be stored by
-// the host's secret store) and the public key, each as standard base64.
-func NewKey() (seed, public string, err error) {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return "", "", err
-	}
-	return base64.StdEncoding.EncodeToString(priv.Seed()), base64.StdEncoding.EncodeToString(pub), nil
-}
-
-// Fingerprint is the OpenSSH-style fingerprint satelle.dev reports for a public
-// key given as standard base64: SHA256: and the unpadded base64 of its SHA-256.
-func Fingerprint(publicB64 string) (string, error) {
-	raw, err := base64.StdEncoding.DecodeString(publicB64)
-	if err != nil || len(raw) != ed25519.PublicKeySize {
-		return "", fmt.Errorf("not the standard base64 of a %d-byte Ed25519 public key", ed25519.PublicKeySize)
-	}
-	sum := sha256.Sum256(raw)
-	return "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:]), nil
 }

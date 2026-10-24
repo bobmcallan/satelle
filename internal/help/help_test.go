@@ -24,24 +24,18 @@ func TestListContainsCoreTopics(t *testing.T) {
 	}
 }
 
-// The remote-secrets topic states what a host path must know to deliver a run's
-// secrets (sty_0b1c72a9): the env names and that host.run must forward them, where
-// from = "env" reads, that [vars] is no source, and that remote_id is copied from
-// the registration, which satelle does not do.
-func TestRemoteSecretsTopic(t *testing.T) {
-	top, ok := Get("remote-secrets")
-	if !ok {
-		t.Fatal("remote-secrets topic not found")
+// A remote's secrets are declared, pushed and read through satelle-server, so the
+// CLI ships no topic that teaches a removed command (sty_9d85a9c3).
+func TestNoHelpTopicTeachesTheRemoteControlPlane(t *testing.T) {
+	if _, ok := Get("remote-secrets"); ok {
+		t.Error("the remote-secrets topic still ships")
 	}
-	for _, want := range []string{
-		"[[secret]]", "remote_id", "satelle does not register remotes",
-		".satelle/config/.env", "`[vars]`",
-		"SATELLE_SERVER_RUN_ID", "SATELLE_REMOTE_ID", "SATELLE_REMOTE_SECRETS", "SATELLE_REMOTE_IDENTITY", "SATELLE_RUN_ID",
-		"only if `host.run` forwards", "satelle story drive",
-		"satelle secret push", "satelle remote check", "satelle remote key create",
-	} {
-		if !strings.Contains(top.Body, want) {
-			t.Errorf("remote-secrets topic lacks %q", want)
+	for _, top := range List() {
+		// Built by concatenation so the guard itself is no hit for AC6's grep.
+		for _, removed := range []string{"satelle" + " remote ", "satelle" + " secret "} {
+			if strings.Contains(top.Body, removed) {
+				t.Errorf("topic %q directs the reader to the removed command %q", top.Name, strings.TrimSpace(removed))
+			}
 		}
 	}
 }

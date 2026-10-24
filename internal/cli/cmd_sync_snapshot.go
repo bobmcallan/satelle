@@ -556,7 +556,7 @@ func (dp *documentsPull) run(cmd *cobra.Command, cfg config.Config, repoRoot, da
 	case res.Written == 0:
 		fmt.Fprintf(out, "Documents pull on %s%s.\n", server, tail)
 	default:
-		fmt.Fprintf(out, "Pulled %d document(s) from project %q personal collection on %s into %s%s.\n", res.Written, project, server, dataDir, tail)
+		fmt.Fprintf(out, "Pulled %d document(s) from project %q on %s into %s%s.\n", res.Written, project, server, dataDir, tail)
 	}
 	return nil
 }

@@ -2,26 +2,15 @@ package remotenode
 
 import (
 	"context"
-	"database/sql"
-	"encoding/base64"
 	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
-	"regexp"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/bobmcallan/satelle/internal/hosted"
-	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/remotechan"
 	"github.com/bobmcallan/satelle/internal/remotechan/relaytest"
-	"github.com/bobmcallan/satelle/internal/remotedef"
 )
 
 // fakeClock is a remotechan.Clock a test advances, the same shape remotechan's own
@@ -147,83 +136,24 @@ func (m *memStore) Load(string) (hosted.Credential, error) { return m.cred, nil 
 func (m *memStore) Save(c hosted.Credential) error         { m.cred = c; return nil }
 func (m *memStore) Delete(string) error                    { return nil }
 
-// rig is local satelle, a stand-in relay and a fake host: host commands that are
-// shell scripts, which log what they were handed and, for run, stand in for the
-// node's shell by recording the bootstrap command and printing the node's key.
+// rig is the controller's end of a stand-in relay and an in-process node.
 type rig struct {
 	t        *testing.T
 	relay    *relaytest.Relay
 	client   *hosted.Client
 	clock    *fakeClock
-	ledger   *ledger.Store
-	id       *remotechan.Identity
-	dir      string // fake host working dir
-	logPath  string
-	cmdPath  string
-	defDir   string
-	def      remotedef.Definition
 	chanOpts []remotechan.Option
 }
 
 const rigServer = "https://satelle.test"
 
-func newRig(t *testing.T, lifecycle string) *rig {
+func newRig(t *testing.T) *rig {
 	t.Helper()
 	r := &rig{t: t, relay: relaytest.New(t), clock: newFakeClock()}
 	r.client = hosted.NewClient(rigServer, &memStore{cred: hosted.Credential{ServerURL: rigServer, AccessToken: "access-1"}}, nil)
 	r.chanOpts = []remotechan.Option{remotechan.WithHTTPClient(r.relay.Client()), remotechan.WithClock(r.clock)}
-
-	db, err := sql.Open("sqlite", "file:remotenode-"+t.Name()+"?mode=memory&cache=shared")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Close() })
-	if err := ledger.Migrate(db); err != nil {
-		t.Fatal(err)
-	}
-	r.ledger = ledger.New(db)
-
-	if r.id, err = remotechan.NewIdentity(); err != nil {
-		t.Fatal(err)
-	}
-	r.dir = t.TempDir()
-	r.logPath = filepath.Join(r.dir, "host.log")
-	r.cmdPath = filepath.Join(r.dir, "bootstrap.sh")
-
-	r.defDir = remotedef.Dir(t.TempDir(), "edge")
-	if err := remotedef.Scaffold(r.defDir, "1.2.3"); err != nil {
-		t.Fatal(err)
-	}
-	def, err := remotedef.Load(r.defDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	def.Lifecycle = lifecycle
-	def.Identity.Label = "edge-1"
-	def.Repos = []remotedef.Repo{{URL: "https://git.example.com/team/tool.git", Ref: "main"}}
-	def.Host.Start = []string{"sh", "-c", `echo "start $0" >> "$1"`, "{label}", r.logPath}
-	def.Host.Network = []string{"sh", "-c", `echo "network $0 $1" >> "$2"`, "{label}", "{allow}", r.logPath}
-	def.Host.Stop = []string{"sh", "-c", `echo "stop $0" >> "$1"`, "{label}", r.logPath}
-	// run records the bootstrap command it was handed, prints the node's key the
-	// way join does, and then holds like an exec session until it is killed.
-	key := base64.StdEncoding.EncodeToString(r.id.Public())
-	def.Host.Run = []string{"sh", "-c", `printf '%s' "$2" > "$1"; echo "run $0" >> "$3"; echo "installing…"; echo "` + KeyLinePrefix + key + `"; exec sleep 600`,
-		"{label}", r.cmdPath, "{command}", r.logPath}
-	r.def = def
 	return r
 }
-
-func (r *rig) options() StartOptions {
-	return StartOptions{
-		Name: "edge", Def: r.def, DefDir: r.defDir,
-		Allow:  remotedef.Allowlist(r.def, []string{"rel.example.com"}, "satelle.test"),
-		Client: r.client, RelayURL: r.relay.URL(), Recorder: r.ledger,
-		Channel: r.chanOpts, ReadyTimeout: 20 * time.Second,
-		Now: r.clock.Now,
-	}
-}
-
-var joinArgs = regexp.MustCompile(`--relay '([^']*)' --session '([^']*)' --token '([^']*)'`)
 
 // nodeHandle is the in-process node.
 type nodeHandle struct {
@@ -241,77 +171,60 @@ func (h *nodeHandle) dropChannel() {
 	}
 }
 
-// runNode plays the node: once the fake host has recorded the bootstrap command
-// it joins with the arguments that command carries and serves. clock is the
-// node's own time source.
-func (r *rig) runNode(node *Node, prepare Prepare, clock remotechan.Clock) *nodeHandle {
-	h := &nodeHandle{done: make(chan error, 1)}
-	done := h.done
-	ctx := testCtx(r.t)
-	go func() {
-		var script []byte
-		deadline := time.Now().Add(20 * time.Second)
-		for time.Now().Before(deadline) {
-			if b, err := os.ReadFile(r.cmdPath); err == nil && len(b) > 0 {
-				script = b
-				break
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
-		m := joinArgs.FindSubmatch(script)
-		if m == nil {
-			done <- fmt.Errorf("the bootstrap command carries no join arguments:\n%s", script)
-			return
-		}
-		sess, err := remotechan.Join(ctx, string(m[1]), string(m[2]), r.id, string(m[3]),
-			remotechan.WithHTTPClient(r.relay.Client()), remotechan.WithClock(clock))
-		if err != nil {
-			done <- err
-			return
-		}
-		h.mu.Lock()
-		h.sess = sess
-		h.mu.Unlock()
-		defer sess.Close()
-		done <- node.Serve(ctx, sess, prepare)
-	}()
-	return h
-}
-
-// readyPrepare reports ready as version, unpacking nothing.
-func readyPrepare(version string) Prepare {
-	return func(_ context.Context, s Setup) (Report, error) {
-		return Report{Version: version, Workflows: []string{"*"}, Allow: s.Allow}, nil
-	}
-}
-
-func (r *rig) hostLog() []string {
-	b, _ := os.ReadFile(r.logPath)
-	var out []string
-	for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
-		if l != "" {
-			out = append(out, l)
-		}
-	}
-	return out
-}
-
-// entries reads the ledger entries of kind.
-func (r *rig) entries(kind string) []hostEvent {
+// open plays the launcher: it opens the channel and, once the relay has issued the
+// session and token, starts the node in-process joining with them, as
+// `satelle node join` does, and serving with report. clock is the node's own time
+// source. It returns the controller's session, ready for Attach.
+func (r *rig) open(node *Node, report Report, clock remotechan.Clock) (*remotechan.Session, *nodeHandle) {
 	r.t.Helper()
-	rows, err := r.ledger.List(context.Background(), ledger.ListFilter{Kind: kind})
+	id, err := remotechan.NewIdentity()
 	if err != nil {
 		r.t.Fatal(err)
 	}
-	var out []hostEvent
-	for _, e := range rows {
-		var ev hostEvent
-		if err := json.Unmarshal(e.Payload, &ev); err != nil {
-			r.t.Fatalf("payload %s: %v", e.Payload, err)
-		}
-		out = append(out, ev)
+	h := &nodeHandle{done: make(chan error, 1)}
+	ctx := testCtx(r.t)
+	launch := remotechan.LauncherFunc(func(_ context.Context, spec remotechan.LaunchSpec) ([]byte, error) {
+		go func() {
+			sess, err := remotechan.Join(ctx, spec.RelayURL, spec.Session, id, spec.Token,
+				remotechan.WithHTTPClient(r.relay.Client()), remotechan.WithClock(clock))
+			if err != nil {
+				h.done <- err
+				return
+			}
+			h.mu.Lock()
+			h.sess = sess
+			h.mu.Unlock()
+			defer sess.Close()
+			h.done <- node.Serve(ctx, sess, report)
+		}()
+		return id.Public(), nil
+	})
+	sess, err := remotechan.Open(ctx, r.client, r.relay.URL(), launch, r.chanOpts...)
+	if err != nil {
+		r.t.Fatalf("Open: %v", err)
 	}
-	return out
+	return sess, h
+}
+
+// attach brings the rig's node up and returns the Run. nodeClock is the node's own
+// time source; nil shares the rig's clock.
+func (r *rig) attach(node *Node, report Report, nodeClock remotechan.Clock) (*Run, *nodeHandle) {
+	r.t.Helper()
+	if nodeClock == nil {
+		nodeClock = r.clock
+	}
+	sess, h := r.open(node, report, nodeClock)
+	run, err := Attach(testCtx(r.t), sess, 20*time.Second)
+	if err != nil {
+		r.t.Fatalf("Attach: %v", err)
+	}
+	r.t.Cleanup(func() { _ = run.End() })
+	return run, h
+}
+
+// ready is the report of a node that is ready as version.
+func ready(version string) Report {
+	return Report{Version: version, Workflows: []string{"*"}}
 }
 
 func echoNode() *Node {
@@ -324,16 +237,6 @@ func echoNode() *Node {
 		return json.Marshal(AgentReply{Text: "echo: " + req.Text})
 	})
 	return n
-}
-
-// hostGone reports whether the held host.run process has exited.
-func hostGone(run *Run) bool {
-	select {
-	case <-run.HostDone():
-		return true
-	default:
-		return false
-	}
 }
 
 // remoteFrames counts the frames the relay has forwarded from the node.

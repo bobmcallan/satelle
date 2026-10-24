@@ -69,9 +69,8 @@ func TestRelayRefusesOutsideTheContract(t *testing.T) {
 	r := New(t)
 	ctx := testCtx(t)
 
-	_, resp, err := dial(ctx, r, "s1", "remote")
-	refusedWith(t, resp, err, http.StatusNotFound) // no local end at all
-
+	// A remote with no local end is admitted (sty_63f30d3b): a node started by
+	// satelle.dev can reach the relay first, so that is not outside the contract.
 	r.HoldLocalUntilRemote()
 	local, resp, err := dial(ctx, r, "s1", "local")
 	if err != nil {

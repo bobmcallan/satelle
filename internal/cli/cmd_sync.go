@@ -354,8 +354,8 @@ design rather than an error. Deploy OVERWRITES the local authored copy.`,
 		Short: "Upload authored config to the versioned store (a new version per file)",
 		Long: `push walks the authored-config areas (workflows/principles/skills/constitution/
 agents/tasks/settings) per their resolved [sync] scope — skipping local areas — and uploads
-each file as a new version into this repo's bound hosted PROJECT's personal
-collection only (epic:sync-publish). Files go as on disk, except satelle.toml
+each file as a new version into this repo's bound hosted PROJECT only
+(epic:sync-publish). Files go as on disk, except satelle.toml
 loses [sync] project and [hosted] project. Before sending, a shared agents.toml
 with machine-specific content is refused (see 'satelle help agent-dispatch') and
 the deployed system must validate, as for 'satelle init'. Never uploaded: .local
@@ -380,7 +380,7 @@ Pushes publish each area as one snapshot (deletes propagate), refused when anoth
 	deploy := &cobra.Command{
 		Use:   "deploy",
 		Short: "Materialize config from the store into this repo (set up X like Y)",
-		Long: `deploy fetches this repo's bound hosted PROJECT's personal config collection
+		Long: `deploy fetches this repo's bound hosted PROJECT's config
 (or an explicit --workspace when reading another developer's personal set) and
 writes every file byte-for-byte into this repo's data dir — including satelle.toml
 (settings) with its [sync] scopes when present. The local [sync] project
@@ -482,7 +482,7 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 	}
 	printWithheldBinding(out, files)
 	if dryRun {
-		fmt.Fprintf(out, "Would push %d config file(s) to bound project personal collection on %s:\n", len(files), server)
+		fmt.Fprintf(out, "Would push %d config file(s) to the bound project on %s:\n", len(files), server)
 		for _, f := range files {
 			fmt.Fprintf(out, "  %-40s -> personal\n", f.Path)
 		}
@@ -518,7 +518,7 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 		}
 		if handled {
 			printWithheldLocal()
-			fmt.Fprintf(out, "Pushed %d of %d config file(s) to project %q personal collection on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
+			fmt.Fprintf(out, "Pushed %d of %d config file(s) to project %q on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
 				snap.created+snap.unchanged, len(files), project, server, snap.created, snap.unchanged, snap.notUploaded)
 			return nil
 		}
@@ -544,7 +544,7 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 	}
 	printWithheldLocal()
 	uploaded := created + unchanged
-	fmt.Fprintf(out, "Pushed %d of %d config file(s) to project %q personal collection on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
+	fmt.Fprintf(out, "Pushed %d of %d config file(s) to project %q on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
 		uploaded, len(files), project, server, created, unchanged, notUploaded)
 	return nil
 }

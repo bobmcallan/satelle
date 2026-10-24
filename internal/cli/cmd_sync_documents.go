@@ -2,7 +2,7 @@ package cli
 
 // `satelle sync documents` — the CLI counterpart to the hosted workspace
 // path-document store. push/pull are PERSONAL ONLY (epic:sync-publish): local
-// .satelle/documents ↔ this repo's bound hosted project's personal collection.
+// .satelle/documents ↔ this repo's bound hosted project.
 // Team is not a sync destination — use satelle publish for the team catalog.
 
 import (
@@ -37,8 +37,9 @@ own, so treat it as an incoming edit, not a refresh.`,
 		Use:   "push",
 		Short: "Upload authored documents to the workspace store (a new version per file)",
 		Long: `push walks the documents area per its resolved [sync] scope — skipping local —
-and uploads each file as a new version into this repo's bound hosted PROJECT's
-personal collection only (epic:sync-publish). Identical content is idempotent.
+and uploads each file as a new version into this repo's bound hosted PROJECT
+only (epic:sync-publish), shared with every member of the project's workspace.
+Identical content is idempotent.
 Files with a .local segment are never uploaded (reported as withheld).
 Team is not a sync destination; use satelle publish to expose documents to a team
 catalog. Requires "satelle project bind <slug>".`,
@@ -59,7 +60,7 @@ catalog. Requires "satelle project bind <slug>".`,
 		Use:   "pull",
 		Short: "Pull document changes into this repo (incremental, byte-exact)",
 		Long: `pull fetches documents that changed since the last cursor from this repo's
-bound hosted PROJECT's personal collection only (epic:sync-publish) and writes
+bound hosted PROJECT only (epic:sync-publish) and writes
 them byte-for-byte into this repo's documents area. Up-to-date trees report
 "up to date". Requires "satelle project bind <slug>".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -111,7 +112,7 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 		fmt.Fprintln(out, note)
 	}
 	if dryRun {
-		fmt.Fprintf(out, "Would push %d document(s) to bound project personal collection on %s:\n", len(files), server)
+		fmt.Fprintf(out, "Would push %d document(s) to the bound project on %s:\n", len(files), server)
 		for _, f := range files {
 			fmt.Fprintf(out, "  %-40s -> personal\n", f.Path)
 		}
@@ -132,7 +133,7 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	}
 	if handled {
 		printWithheldLocal()
-		fmt.Fprintf(out, "Pushed %d of %d document(s) to project %q personal collection on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
+		fmt.Fprintf(out, "Pushed %d of %d document(s) to project %q on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
 			snap.created+snap.unchanged, len(files), project, server, snap.created, snap.unchanged, snap.notUploaded)
 		return nil
 	}
@@ -171,7 +172,7 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	}
 	printWithheldLocal()
 	uploaded := created + unchanged
-	fmt.Fprintf(out, "Pushed %d of %d document(s) to project %q personal collection on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
+	fmt.Fprintf(out, "Pushed %d of %d document(s) to project %q on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
 		uploaded, len(files), project, server, created, unchanged, notUploaded)
 	return nil
 }
@@ -251,7 +252,7 @@ func runSyncDocumentsPull(cmd *cobra.Command, serverArg, workspaceArg string) er
 		suffix = ", " + strings.Join(extra, ", ")
 	}
 	if written > 0 {
-		fmt.Fprintf(out, "Pulled %d document(s) from project %q personal collection on %s into %s%s.\n", written, project, server, dataDir, suffix)
+		fmt.Fprintf(out, "Pulled %d document(s) from project %q on %s into %s%s.\n", written, project, server, dataDir, suffix)
 	} else {
 		fmt.Fprintf(out, "Documents pull on %s%s; cursor advanced.\n", server, suffix)
 	}

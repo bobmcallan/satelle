@@ -256,6 +256,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyTidyCommands()...)
 		parent.AddCommand(storyMessageCommand())
 		parent.AddCommand(storyMessagesCommand())
+		parent.AddCommand(storySessionCommand())
 		parent.AddCommand(storyReworkCommand())
 		parent.AddCommand(storyWaiveCommand())
 		parent.AddCommand(storyDriveCommand())

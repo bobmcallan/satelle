@@ -1,17 +1,17 @@
-// Package remotenode runs a remote node end to end. Local satelle starts it from
-// a remote definition with the definition's own host commands, enrolls it on the
-// sealed channel (package remotechan, used unchanged), ships it the definition's
-// substrate, and asks it to report ready. The node side receives that setup,
-// fetches the declared repos read-only, and serves jobs.
+// Package remotenode runs a remote node end to end. satelle-server starts the
+// node (`satelle node join`), which fetches the definition it runs from with its
+// own node token (NodeClient), installs its substrate, enrolls on the sealed
+// channel (package remotechan), fetches the declared repos read-only, reports
+// ready and serves jobs. The controller end (Attach) waits for that report.
 //
-// The engine knows no host vendor: every host command is the user's own argv
-// from the definition, and the package only fills its placeholders, runs it under
-// package procgroup and records each start and stop in the evidence ledger.
+// The node reads its secrets and ends its run through the same client, so
+// satelle.dev, not a controller, decides what a node may read and when its token
+// stops working.
 //
 // Everything that crosses the channel is a JSON envelope inside a sealed
-// remotechan message. Setup and ready travel outside any job; a request is a job
-// named by a type ("agent" here, any other a later story registers) and its reply
-// is the same job's message, with the node heartbeating while it works.
+// remotechan message. Ready travels outside any job; a request is a job named by
+// a type ("agent" here, any other a later story registers) and its reply is the
+// same job's message, with the node heartbeating while it works.
 package remotenode
 
 import (
@@ -21,7 +21,6 @@ import (
 
 // Envelope types for the messages outside a job.
 const (
-	typeSetup = "setup" // local → node: the substrate, allowlist and repos
 	typeReady = "ready" // node → local: the report, or why it cannot be ready
 	typeReply = "reply" // node → local: a job's result
 )
@@ -51,26 +50,6 @@ func decode(b []byte) (envelope, error) {
 	return e, nil
 }
 
-// RepoSpec is one repository the node is asked to fetch.
-type RepoSpec struct {
-	URL string `json:"url"`
-	Ref string `json:"ref"`
-}
-
-// Setup is everything local satelle sends a node once it is admitted. It holds
-// no credential: the substrate is the remote's workflows, skills and principles,
-// Allow is the egress local satelle applied to the host, and Run names the
-// secrets the node reads from satelle.dev for its run (names and ids, never a
-// value and never the remote's key).
-type Setup struct {
-	// Substrate is the gzip-compressed tar of the remote's workflows, skills and
-	// principles (see PackSubstrate).
-	Substrate []byte     `json:"substrate"`
-	Allow     []string   `json:"allow"`
-	Repos     []RepoSpec `json:"repos"`
-	Run       RunSecrets `json:"run"`
-}
-
 // FetchedRepo is one repo as the node fetched it.
 type FetchedRepo struct {
 	Name   string `json:"name"`
@@ -84,9 +63,12 @@ type FetchedRepo struct {
 type Report struct {
 	// Version is the satelle the node runs.
 	Version string `json:"version"`
+	// DefinitionVersion is the version of the definition the node fetched and runs
+	// from (the X-Satelle-Definition-Version of its bundle).
+	DefinitionVersion string `json:"definition_version"`
 	// Workflows are the categories of the remote's own done.toml.
 	Workflows []string `json:"workflows"`
-	// Allow is the egress allowlist local satelle applied to the host.
+	// Allow is the egress allowlist the definition declares.
 	Allow []string      `json:"allow"`
 	Repos []FetchedRepo `json:"repos"`
 	// Bindings are the agents.toml bindings that resolved on the node.

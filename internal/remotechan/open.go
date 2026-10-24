@@ -21,6 +21,15 @@ import (
 // other than 101 that signing in again would not fix.
 var ErrRelayRefused = errors.New("remotechan: relay refused the connection")
 
+// RelayStatusError is ErrRelayRefused with the status the relay answered the
+// upgrade with, so a caller can tell a refused credential (401) from the rest.
+type RelayStatusError struct{ Status int }
+
+func (e *RelayStatusError) Error() string {
+	return fmt.Sprintf("%s (HTTP %d)", ErrRelayRefused.Error(), e.Status)
+}
+func (e *RelayStatusError) Is(target error) bool { return target == ErrRelayRefused }
+
 // ErrEnrollRefused is returned to a remote that local satelle refused.
 var ErrEnrollRefused = errors.New("remotechan: enrollment refused")
 
@@ -123,7 +132,7 @@ func Open(ctx context.Context, client *hosted.Client, relayURL string, launch La
 		return nil, err
 	}
 	if conn == nil {
-		return nil, fmt.Errorf("%w (HTTP %d)", ErrRelayRefused, status)
+		return nil, &RelayStatusError{Status: status}
 	}
 
 	token, err := o.tokens.Mint()
@@ -222,18 +231,19 @@ func (o *options) refused(ctx context.Context, session, reason string, cause err
 	return cause
 }
 
-// Join is the remote's end: dial the relay out (no bearer — the remote holds
-// only the session and its token), complete the handshake with the node's own
-// identity, and enroll with the single-use token Open minted. It returns an
-// admitted Session, ErrEnrollRefused if local satelle refused the token, or an
-// error if the channel closed first (as it does for a key local did not pin).
+// Join is the remote's end: dial the relay out with the node token as the
+// bearer, complete the handshake with the node's own identity, and enroll with
+// the same token. It returns an admitted Session, ErrEnrollRefused if local
+// satelle refused the token, a *RelayStatusError (401 for a token the relay does
+// not accept) if the relay refused the upgrade, or an error if the channel closed
+// first (as it does for a key local did not pin).
 func Join(ctx context.Context, relayURL, session string, id *Identity, token string, opts ...Option) (*Session, error) {
 	o := newOptions(opts)
-	conn, resp, err := dialRelay(ctx, o.http, relayURL, session, RoleRemote, "")
+	conn, resp, err := dialRelay(ctx, o.http, relayURL, session, RoleRemote, token)
 	if err != nil {
 		if resp != nil {
 			hosted.BoundAuthBody(resp.Body)
-			return nil, fmt.Errorf("%w (HTTP %d)", ErrRelayRefused, resp.StatusCode)
+			return nil, &RelayStatusError{Status: resp.StatusCode}
 		}
 		return nil, fmt.Errorf("remotechan: dial relay: %w", err)
 	}

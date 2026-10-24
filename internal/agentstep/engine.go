@@ -53,6 +53,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/placement"
 	"github.com/bobmcallan/satelle/internal/retrieve"
+	"github.com/bobmcallan/satelle/internal/sessionconfig"
 	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -315,59 +316,24 @@ type Engine struct {
 	// reach a cloud (a local test run of a remote definition) installs a refusal
 	// instead of relying on every binding being checked first.
 	cloudDispatch cloudDispatchFunc
-
-	// runSecrets yields the values a remote run read from satelle.dev, handed only
-	// to the step performer's process environment, and the names of the parent
-	// environment no isolated agent may inherit (a remote's private key). It is a
-	// source, asked on each request, because the engine that dispatches a step is
-	// built before the run's secrets are read. Neither is written anywhere
-	// (sty_0b1c72a9).
-	runSecrets func() (values map[string]string, unset []string)
 }
 
-// SetRunSecretsSource wires where a remote run's secrets come from. The values it
-// returns reach only the step performer's request (never a reviewer's or a
-// summariser's); the unset names are dropped from every request's environment.
-// Nothing here is logged or persisted.
-func (g *Engine) SetRunSecretsSource(src func() (map[string]string, []string)) { g.runSecrets = src }
-
 // scrubValues is every value satelle resolved into a performer's environment —
-// the binding's env after ${VAR} resolution, plus the run secrets the dispatch
-// injects — keyed by variable name. A performer's output is scrubbed of them
-// (verb.OutputTail) before any of it is written to the ledger.
+// the binding's env after ${VAR} resolution — keyed by variable name. A
+// performer's output is scrubbed of them (verb.OutputTail) before any of it is
+// written to the ledger.
 func (g *Engine) scrubValues(bindingEnv map[string]string) map[string]string {
-	var secrets map[string]string
-	if g.runSecrets != nil {
-		secrets, _ = g.runSecrets()
-	}
-	out := make(map[string]string, len(bindingEnv)+len(secrets))
+	out := make(map[string]string, len(bindingEnv))
 	for k, v := range bindingEnv {
 		out[k] = v
 	}
-	for k, v := range secrets {
-		out[k] = v
-	}
 	return out
-}
-
-// SetRunSecrets wires a fixed set of run secrets; see SetRunSecretsSource.
-func (g *Engine) SetRunSecrets(values map[string]string, unset []string) {
-	g.runSecrets = func() (map[string]string, []string) { return values, unset }
 }
 
 // cloudDispatchFunc is the shape of dispatchCloud, called as a method
 // expression so a replacement receives the engine it is installed on.
 type cloudDispatchFunc func(g *Engine, ctx context.Context, item workitem.Item, toStatus, wfName, agent string,
 	binding config.AgentBinding, composed []string, skill string, remotePlaced bool) (verb.DispatchResult, error)
-
-// SetCloudDispatch replaces the cloud performer launch. fn is called in place of
-// the real dispatch whenever a step resolves to a cloud binding.
-func (g *Engine) SetCloudDispatch(fn func(ctx context.Context, item workitem.Item, toStatus, agent string) (verb.DispatchResult, error)) {
-	g.cloudDispatch = func(_ *Engine, ctx context.Context, item workitem.Item, toStatus, _ string, agent string,
-		_ config.AgentBinding, _ []string, _ string, _ bool) (verb.DispatchResult, error) {
-		return fn(ctx, item, toStatus, agent)
-	}
-}
 
 // SetDefaultBudget wires the repo's [defaults] spend bounds.
 func (g *Engine) SetDefaultBudget(b config.Budget) { g.defaultBudget = b }
@@ -1200,6 +1166,12 @@ func judgeableDoc(d DocState) bool {
 	// not ride the cumulative payload ceiling or starve plan/step-summary
 	// (sty_948ad5df). Pull via satelle story doc / story diff --recorded.
 	if strings.EqualFold(d.Type, "change") {
+		return false
+	}
+	// A configuration bundle (internal/sessionconfig) is the whole substrate
+	// a past run used: a record for `satelle story session`, not a document
+	// to judge, and it would starve the plan of the payload budget.
+	if strings.EqualFold(d.Type, sessionconfig.DocType) {
 		return false
 	}
 	// The route document is the OPERATOR's artifact (sty_39e2d9df): it grows by

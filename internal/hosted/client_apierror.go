@@ -1,9 +1,8 @@
 package hosted
 
-// The typed answer to a request the server refused, and the two calls that
-// return it: authedCall (the signed-in user's bearer) and SignedCall (a remote
-// node's own signature). Both build the error from decodeAPIError, the one
-// parser of the server's error body, so a refusal reads the same on either path.
+// The typed answer to a request the server refused, and SignedCall, the call a
+// remote node makes on its own signature. The error is built from decodeAPIError,
+// the one parser of the server's error body.
 
 import (
 	"bytes"
@@ -22,9 +21,6 @@ type APIError struct {
 	Status int
 	Code   string
 	Reason string
-	// body is the answer as received, for the callers that layer their own
-	// mapping on it (remoteCall).
-	body []byte
 }
 
 func (e *APIError) Error() string {
@@ -43,7 +39,7 @@ func (e *APIError) Error() string {
 // come from decodeAPIError; a body that is not the server's JSON leaves the
 // status text as the code.
 func newAPIError(status int, body []byte) *APIError {
-	e := &APIError{Status: status, body: body}
+	e := &APIError{Status: status}
 	if parsed, ok := decodeAPIError(body); ok {
 		e.Code = strings.TrimSpace(parsed.Error)
 		e.Reason = strings.TrimSpace(parsed.Reason)
@@ -57,46 +53,18 @@ func newAPIError(status int, body []byte) *APIError {
 	return e
 }
 
-// maxCallBody bounds what authedCall and SignedCall read of an answer.
-const maxCallBody = 1 << 20
+// maxCallBody bounds what SignedCall reads of an answer: room for the definition
+// bundle a node fetches, which is the largest answer.
+const maxCallBody = 16 << 20
 
-// authedCall sends one request with the signed-in user's bearer and returns the
-// body of a 2xx answer. payload, when not nil, is sent as JSON. A 401 is
-// ErrLoginRequired and any other non-2xx an *APIError; a request body is never
-// put in an error.
-func (c *Client) authedCall(ctx context.Context, method, path string, payload any) ([]byte, error) {
-	var raw []byte
-	ctype := ""
-	if payload != nil {
-		var err error
-		if raw, err = json.Marshal(payload); err != nil {
-			return nil, fmt.Errorf("hosted: encode %s: %w", path, err)
-		}
-		ctype = contentJSON
-	}
-	resp, err := c.doAuthed(ctx, method, path, raw, ctype)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxCallBody))
-	switch {
-	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		return body, nil
-	case resp.StatusCode == http.StatusUnauthorized:
-		return nil, ErrLoginRequired
-	}
-	return nil, newAPIError(resp.StatusCode, body)
-}
-
-// SignedRequest is one request a remote node makes on its own authority: the
-// signature headers (or a workload identity token as Bearer) authenticate it, and
-// no satelle sign-in is involved.
+// SignedRequest is one request a remote node makes on its own authority: its
+// node token as Bearer (or request headers) authenticates it, and no satelle
+// sign-in is involved.
 type SignedRequest struct {
 	Method, Path string
-	// Header carries the signature headers.
+	// Header carries extra request headers.
 	Header map[string]string
-	// Bearer, when set, is a workload identity token sent as Authorization.
+	// Bearer, when set, is sent as Authorization: a node's own token.
 	Bearer string
 	// Body, when not nil, is sent as JSON.
 	Body any
@@ -106,17 +74,24 @@ type SignedRequest struct {
 // answer, else an *APIError carrying the server's code and reason. It does not
 // retry: a signature carries a nonce the server has then seen.
 func (c *Client) SignedCall(ctx context.Context, req SignedRequest) ([]byte, error) {
+	body, _, err := c.SignedDo(ctx, req)
+	return body, err
+}
+
+// SignedDo is SignedCall that also returns the headers of a 2xx answer, for a
+// caller that checks them (a node verifies the ETag of the definition it fetches).
+func (c *Client) SignedDo(ctx context.Context, req SignedRequest) ([]byte, http.Header, error) {
 	var rd io.Reader
 	if req.Body != nil {
 		raw, err := json.Marshal(req.Body)
 		if err != nil {
-			return nil, fmt.Errorf("hosted: encode %s: %w", req.Path, err)
+			return nil, nil, fmt.Errorf("hosted: encode %s: %w", req.Path, err)
 		}
 		rd = bytes.NewReader(raw)
 	}
 	hr, err := http.NewRequestWithContext(ctx, req.Method, c.server+req.Path, rd)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if req.Body != nil {
 		hr.Header.Set("Content-Type", contentJSON)
@@ -129,12 +104,15 @@ func (c *Client) SignedCall(ctx context.Context, req SignedRequest) ([]byte, err
 	}
 	resp, err := c.http.Do(hr)
 	if err != nil {
-		return nil, fmt.Errorf("hosted: %s %s: %w", req.Method, req.Path, err)
+		return nil, nil, fmt.Errorf("hosted: %s %s: %w", req.Method, req.Path, err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxCallBody))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxCallBody+1))
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return body, nil
+		if len(body) > maxCallBody {
+			return nil, nil, fmt.Errorf("hosted: %s %s: the answer is larger than %d bytes", req.Method, req.Path, maxCallBody)
+		}
+		return body, resp.Header, nil
 	}
-	return nil, newAPIError(resp.StatusCode, body)
+	return nil, nil, newAPIError(resp.StatusCode, body[:min(len(body), maxCallBody)])
 }

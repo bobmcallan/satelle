@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/sessionconfig"
 	"github.com/bobmcallan/satelle/internal/store"
 )
 
@@ -214,8 +215,11 @@ func OpenLoaded(loc config.Config, locPath string, proc config.Config, procRoot 
 	if named != procRoot {
 		processDataDir = config.ResolveProcessDataDir(proc, named)
 	}
-	st.DocIndex.SetRoots(config.ResolveProcessAuthoredDirs(proc, named))
-	return &App{
+	// One resolution feeds both the document index and the configuration stamp,
+	// so the stamp's paths are relative to the very roots the index scanned.
+	authored := config.ResolveProcessAuthoredDirs(proc, named)
+	st.DocIndex.SetRoots(authored)
+	a := &App{
 		Config:         loc,
 		ProcessConfig:  proc,
 		RepoRoot:       invoking,
@@ -225,7 +229,31 @@ func OpenLoaded(loc config.Config, locPath string, proc config.Config, procRoot 
 		RuntimeDir:     rt.Dir,
 		DBPath:         dbPath,
 		Store:          st,
-	}, nil
+	}
+	a.installConfigStamp(authored)
+	return a, nil
+}
+
+// installConfigStamp makes every agent_invocation row carry the digests of the
+// configuration the run used, and keeps that configuration on the story
+// (internal/sessionconfig). The bindings are read from the layered agents
+// config on each stamp, with no cache, like the document set.
+func (a *App) installConfigStamp(authored map[string]string) {
+	src := &sessionconfig.Source{
+		Docs:  a.Store.DocIndex,
+		Roots: authored,
+		Bindings: func() ([]byte, error) {
+			eff, err := config.LoadEffectiveAgents(a.PlaneDir(), a.PlaneConfig().Vars)
+			if err != nil {
+				return nil, err
+			}
+			return sessionconfig.BindingsJSON(eff.Agents)
+		},
+		Warn: func(err error) {
+			fmt.Fprintln(os.Stderr, "warning:", err)
+		},
+	}
+	a.Store.Ledger.SetInvocationStamper(src.Stamp)
 }
 
 // AuthoredDirs returns the kind→dir map the directory monitor watches/indexes,
