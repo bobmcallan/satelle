@@ -1,3 +1,8 @@
+## [0.0.750] - 2026-10-25
+
+### Fixed
+- `satelle node join` now runs the definition's `[host] bootstrap` commands. They run in order, once per node, after the node reads its definition and before it works the run, with no stdin and a bounded timeout per command. Until now nothing ran them: satelle.dev's sprite driver only applies the network policy, installs satelle and starts the join, so a remote whose bootstrap installed a tool (such as `gh`) started without it. A failing command (non-zero exit or timeout) fails the start, and the node reports a concluded reject naming the command's position and the reason (`bootstrap command 2: exit status 3`), never its output, environment or a secret; no run is worked. The report goes through the node's own status reporter, so it still reaches satelle.dev when the node is being stopped. (sty_99bb51e1)
+
 ## [0.0.749] - 2026-10-24
 
 ### Changed
