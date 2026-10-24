@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -49,6 +50,33 @@ func TestSyncAuthMetadata(t *testing.T) {
 	}
 	if len(got) != 1 {
 		t.Fatalf("unexpected extra keys: %#v", got)
+	}
+}
+
+// TestEverySyncProtoHasGeneratedOutput guards the buf template split
+// (sty_73c9aa10): the board has its own template and package, and every other
+// proto in api/ still generates into syncpb. A template that silently drops a
+// sync proto (or lets board.proto leak into syncpb) fails here.
+func TestEverySyncProtoHasGeneratedOutput(t *testing.T) {
+	protos, err := filepath.Glob("*.proto")
+	if err != nil || len(protos) == 0 {
+		t.Fatalf("glob api/*.proto: %v (%d found)", err, len(protos))
+	}
+	for _, p := range protos {
+		name := strings.TrimSuffix(p, ".proto")
+		dir := filepath.Join("..", "internal", "hosted", "syncpb")
+		if name == "board" {
+			if _, err := os.Stat(filepath.Join(dir, "board.pb.go")); err == nil {
+				t.Error("board.proto must not generate into syncpb")
+			}
+			if _, err := os.Stat(filepath.Join("..", "internal", "hosted", "boardpb", "board.pb.go")); err != nil {
+				t.Errorf("board.proto has no generated output in boardpb: %v", err)
+			}
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, name+".pb.go")); err != nil {
+			t.Errorf("%s has no generated output in syncpb: %v", p, err)
+		}
 	}
 }
 

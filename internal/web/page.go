@@ -465,6 +465,11 @@ const templatesSrc = `
       {{with .DriverTotal}}<tr class="cost-driver-total"><td>{{.SessionID}}</td><td></td><td></td><td>{{.FreshIn}}</td><td>{{.Out}}</td><td>{{.Calls}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td><td>{{.AgentTime}}</td></tr>{{end}}
     </tbody>
   </table>{{end}}{{end}}
+  {{if .Messages}}<h4>Messages</h4>
+  <table class="panel-table messages">
+    <thead><tr><th>Message</th><th>From</th><th>To</th><th>State</th><th>Deadline</th><th>Body</th></tr></thead>
+    <tbody>{{range .Messages}}<tr><td class="id">{{.ID}}</td><td>{{.From}}</td><td>{{.To}}</td><td><span class="chip chip-msg-{{.State}}">{{.State}}</span>{{if .Overdue}} <span class="chip chip-msg-overdue">overdue</span>{{end}}</td><td>{{.Deadline}}</td><td class="msg-body">{{.Body}}</td></tr>{{end}}</tbody>
+  </table>{{end}}
   {{with .Route}}<h4>Route</h4>
   <article class="doc-article route-doc" id="doc-route">{{.HTML}}</article>{{end}}
   {{if .Docs}}<h4>Documents</h4>

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/board"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -22,6 +23,11 @@ func init() {
 		Name:        "story-messages",
 		Description: "List directed agent messages on a story (read-only)",
 		Invoke:      storyMessages,
+	})
+	Register(&Verb{
+		Name:        "story-message-mark",
+		Description: "Record a message's delivery state: delivered, answered or undeliverable",
+		Invoke:      storyMessageMarkVerb,
 	})
 }
 
@@ -42,6 +48,17 @@ type AgentMessage struct {
 	Body          string    `json:"body"`
 	CreatedAt     time.Time `json:"created_at,omitempty"`
 	EngagementSHA string    `json:"engagement_sha"`
+	// Envelope is who sent the message and from where, its msg_ id, reply link
+	// and deadline (sty_73c9aa10). To is the stored address token: a role name,
+	// "*", "story:<id>" or "session:<id>" (board.Address).
+	board.Envelope
+	// State, AnswerID, UpdatedAt and Overdue are output only: the state folded
+	// from the message's message_mark rows, and the overdue flag derived at read
+	// time. They are never part of a stored payload.
+	State     string    `json:"state,omitempty"`
+	AnswerID  string    `json:"answer_id,omitempty"`
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
+	Overdue   bool      `json:"overdue,omitempty"`
 }
 
 type storyMessageReq struct {
@@ -50,12 +67,21 @@ type storyMessageReq struct {
 	To   string `json:"to,omitempty"`
 	Cc   string `json:"cc,omitempty"`
 	Body string `json:"body"`
+	// Deadline is a Go duration from now or an RFC3339 instant; InReplyTo a msg_
+	// id on this story; the From* fields identify the sending session.
+	Deadline        string `json:"deadline,omitempty"`
+	InReplyTo       string `json:"in_reply_to,omitempty"`
+	FromSessionID   string `json:"from_session_id,omitempty"`
+	FromSessionName string `json:"from_session_name,omitempty"`
+	FromLocation    string `json:"from_location,omitempty"`
 }
 
 type storyMessagesReq struct {
-	ID    string `json:"id"`
-	Since string `json:"since,omitempty"`
-	To    string `json:"to,omitempty"`
+	ID      string `json:"id"`
+	Since   string `json:"since,omitempty"`
+	To      string `json:"to,omitempty"`
+	State   string `json:"state,omitempty"`
+	Overdue bool   `json:"overdue,omitempty"`
 }
 
 func storyMessage(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
@@ -83,9 +109,8 @@ func storyMessage(ctx context.Context, raw json.RawMessage) (json.RawMessage, er
 	if body == "" {
 		return nil, fmt.Errorf("story-message: body required")
 	}
-	to := strings.TrimSpace(req.To)
-	if to == "" {
-		to = "*"
+	if len(body) > board.MaxBody {
+		return nil, fmt.Errorf("story-message: body is %d bytes; the cap is %d", len(body), board.MaxBody)
 	}
 	it, err := store.Get(ctx, id)
 	if err != nil {
@@ -93,6 +118,32 @@ func storyMessage(ctx context.Context, raw json.RawMessage) (json.RawMessage, er
 	}
 	if it.Kind != workitem.KindStory {
 		return nil, fmt.Errorf("story-message: %s is not a story", id)
+	}
+	to, err := board.Address(req.To, id)
+	if err != nil {
+		return nil, fmt.Errorf("story-message: %w", err)
+	}
+	now := time.Now()
+	env := board.Envelope{
+		MsgID:           board.NewID(),
+		InReplyTo:       strings.TrimSpace(req.InReplyTo),
+		FromSessionID:   strings.TrimSpace(req.FromSessionID),
+		FromSessionName: strings.TrimSpace(req.FromSessionName),
+		FromLocation:    strings.TrimSpace(req.FromLocation),
+	}
+	deadline, err := board.ParseDeadline(req.Deadline, now)
+	if err != nil {
+		return nil, fmt.Errorf("story-message: %w", err)
+	}
+	if !deadline.IsZero() {
+		env.Deadline = &deadline
+	}
+	if env.InReplyTo != "" {
+		if _, ok, ferr := findMessage(ctx, id, env.InReplyTo); ferr != nil {
+			return nil, ferr
+		} else if !ok {
+			return nil, fmt.Errorf("story-message: --reply-to %s is not a message on %s", env.InReplyTo, id)
+		}
 	}
 	engagementSHA := ""
 	if sha, _, ok := currentEngagementWindow(ctx, id); ok {
@@ -104,6 +155,7 @@ func storyMessage(ctx context.Context, raw json.RawMessage) (json.RawMessage, er
 		Cc:            strings.TrimSpace(req.Cc),
 		Body:          body,
 		EngagementSHA: engagementSHA,
+		Envelope:      env,
 	})
 	if err != nil {
 		return nil, err
@@ -114,12 +166,123 @@ func storyMessage(ctx context.Context, raw json.RawMessage) (json.RawMessage, er
 		Actor:   from,
 		Body:    body,
 		Payload: payload,
-	}, time.Now())
+	}, now)
 	if err != nil {
 		return nil, err
 	}
-	out := rowToAgentMessage(e)
-	return json.Marshal(out)
+	if env.InReplyTo != "" {
+		// A reply answers the message it names; the mark carries the reply's id.
+		if err := appendMark(ctx, ls, id, env.InReplyTo, board.Answered, env.MsgID, env.FromSessionID); err != nil {
+			return nil, err
+		}
+	}
+	m, _, err := findMessage(ctx, id, board.ID(e))
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(m)
+}
+
+// MarkRequest is one state change of a message, for in-process callers (the
+// dispatch engine, and the delivery paths that follow it) and for the
+// story-message-mark verb.
+type MarkRequest struct {
+	// ID is the story; Message the msg_ id on it.
+	ID      string `json:"id"`
+	Message string `json:"message"`
+	State   string `json:"state"`
+	// AnswerID names the reply that answered the message; only an answered mark
+	// may carry it.
+	AnswerID string `json:"answer_id,omitempty"`
+	// By is the session recording the mark.
+	By string `json:"by_session_id,omitempty"`
+}
+
+// StoryMessageMark records a delivered, answered or undeliverable mark for a
+// message on a story and returns the message with its new state. It is the one
+// writer of message_mark rows from outside this file. An unknown message, a
+// waiting state (a message with no mark already is) or an answer on any state
+// but answered is refused.
+func StoryMessageMark(ctx context.Context, req MarkRequest) (AgentMessage, error) {
+	ls, err := requireLedger()
+	if err != nil {
+		return AgentMessage{}, err
+	}
+	id, msg := strings.TrimSpace(req.ID), strings.TrimSpace(req.Message)
+	if id == "" || msg == "" {
+		return AgentMessage{}, fmt.Errorf("story-message-mark: story id and message id required")
+	}
+	state := board.State(strings.TrimSpace(req.State))
+	if state == board.Waiting || !state.Valid() {
+		return AgentMessage{}, fmt.Errorf("story-message-mark: state %q must be delivered, answered or undeliverable", req.State)
+	}
+	answer := strings.TrimSpace(req.AnswerID)
+	if answer != "" && state != board.Answered {
+		return AgentMessage{}, fmt.Errorf("story-message-mark: --answer only goes with state answered")
+	}
+	if _, ok, err := findMessage(ctx, id, msg); err != nil {
+		return AgentMessage{}, err
+	} else if !ok {
+		return AgentMessage{}, fmt.Errorf("story-message-mark: %s is not a message on %s", msg, id)
+	}
+	if answer != "" {
+		if _, ok, err := findMessage(ctx, id, answer); err != nil {
+			return AgentMessage{}, err
+		} else if !ok {
+			return AgentMessage{}, fmt.Errorf("story-message-mark: --answer %s is not a message on %s", answer, id)
+		}
+	}
+	if err := appendMark(ctx, ls, id, msg, state, answer, strings.TrimSpace(req.By)); err != nil {
+		return AgentMessage{}, err
+	}
+	m, _, err := findMessage(ctx, id, msg)
+	return m, err
+}
+
+func storyMessageMarkVerb(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	if _, err := requireWorkItem(); err != nil {
+		return nil, err
+	}
+	var req MarkRequest
+	if err := decode(raw, &req); err != nil {
+		return nil, err
+	}
+	m, err := StoryMessageMark(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(m)
+}
+
+// appendMark writes one message_mark row. Callers have already checked the
+// message exists.
+func appendMark(ctx context.Context, ls *ledger.Store, storyID, msgID string, state board.State, answerID, by string) error {
+	payload, err := json.Marshal(board.MarkPayload{State: state, AnswerID: answerID, BySessionID: by})
+	if err != nil {
+		return err
+	}
+	_, err = ls.Append(ctx, ledger.AppendInput{
+		StoryID: storyID,
+		Kind:    ledger.KindMessageMark,
+		Actor:   "satelle",
+		Payload: payload,
+		Refs:    board.MarkRefs(msgID),
+	}, time.Now())
+	return err
+}
+
+// findMessage returns the story's message with the given msg_ id, state folded.
+func findMessage(ctx context.Context, storyID, msgID string) (AgentMessage, bool, error) {
+	msgs, err := listAgentMessages(ctx, storyID)
+	if err != nil {
+		return AgentMessage{}, false, err
+	}
+	for _, m := range msgs {
+		if m.ID == msgID {
+			return m, true, nil
+		}
+	}
+	return AgentMessage{}, false, nil
 }
 
 func storyMessages(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
@@ -151,6 +314,10 @@ func storyMessages(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 		since = t
 	}
 	to := strings.TrimSpace(req.To)
+	state := strings.TrimSpace(req.State)
+	if state != "" && !board.State(state).Valid() {
+		return nil, fmt.Errorf("story-messages: --state %q must be waiting, delivered, answered or undeliverable", state)
+	}
 	msgs, err := listAgentMessages(ctx, id)
 	if err != nil {
 		return nil, err
@@ -158,6 +325,9 @@ func storyMessages(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 	out := make([]AgentMessage, 0, len(msgs))
 	for _, m := range msgs {
 		if !since.IsZero() && m.CreatedAt.Before(since) {
+			continue
+		}
+		if (state != "" && m.State != state) || (req.Overdue && !m.Overdue) {
 			continue
 		}
 		// Cc widens READ access only, and only when set: an empty Cc can never
@@ -180,21 +350,41 @@ func listAgentMessages(ctx context.Context, storyID string) ([]AgentMessage, err
 	if err != nil {
 		return nil, err
 	}
+	marks, err := ls.ListByStory(ctx, storyID, ledger.KindMessageMark)
+	if err != nil {
+		return nil, err
+	}
+	return foldAgentMessages(entries, marks, time.Now()), nil
+}
+
+// foldAgentMessages is rowToAgentMessage over every row with the state the
+// message_mark rows fold to and the overdue flag at now, oldest first. The fold
+// is board.Fold's; this only carries its answer onto the stored shape.
+func foldAgentMessages(entries, marks []ledger.Entry, now time.Time) []AgentMessage {
+	folded := make(map[string]board.Message, len(entries))
+	for _, f := range board.Fold(entries, marks) {
+		folded[f.ID] = f
+	}
 	out := make([]AgentMessage, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, rowToAgentMessage(e))
+		m := rowToAgentMessage(e)
+		if f, ok := folded[m.ID]; ok {
+			m.State, m.AnswerID, m.UpdatedAt = string(f.State), f.AnswerID, f.UpdatedAt
+			m.Overdue = board.Overdue(f, now)
+		}
+		out = append(out, m)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
-	return out, nil
+	return out
 }
 
 func rowToAgentMessage(e ledger.Entry) AgentMessage {
-	m := AgentMessage{ID: e.ID, CreatedAt: e.CreatedAt, Body: e.Body}
+	m := AgentMessage{CreatedAt: e.CreatedAt, Body: e.Body}
 	if len(e.Payload) > 0 {
 		_ = json.Unmarshal(e.Payload, &m)
-		m.ID = e.ID
 		m.CreatedAt = e.CreatedAt
 	}
+	m.ID = board.ID(e)
 	return m
 }
 

@@ -1038,8 +1038,12 @@ the agent **pulls** everything else itself, by id, with the read-only satelle CL
 - `satelle ledger list --story <id>` — the evidence ledger (transitions, review
   verdicts, summaries).
 - `satelle story messages <id>` — directed agent messages (kind `agent_message`),
-  oldest first; `--to` keeps that role plus `*`; `--since` is RFC3339. Read-only.
-  Write with `satelle story message <id> --from <role> [--to <role>|*] --body <text>`.
+  oldest first, each with its state (waiting, delivered, answered, undeliverable)
+  and an overdue flag; `--to` keeps that role plus `*`; `--since` is RFC3339.
+  Read-only. Write with `satelle story message <id> --from <role> [--to
+  story|role:<r>|session:<id>|*] --body <text>`; `satelle board` lists every
+  story's messages. A performer's dispatch marks the role messages it injects
+  delivered.
 
 A read-only reviewer whose grant excludes Bash judges attachments from the
 transition payload's `docs` array (injected by the engine, sty_58fa970e) and

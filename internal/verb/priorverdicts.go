@@ -65,7 +65,7 @@ func isSelfLedgerKind(kind string) bool {
 	case ledger.KindAgentInvocation, ledger.KindStepCost, ledger.KindDriverUsage,
 		ledger.KindSessionModel, ledger.KindToolPermission, ledger.KindToolTrace, ledger.KindSkillDelivery, ledger.KindSessionAdvisory,
 		ledger.KindBudgetOverrun, ledger.KindGateSkipped, ledger.KindCommandRule,
-		ledger.KindReviewAccept, ledger.KindReviewReject,
+		ledger.KindReviewAccept, ledger.KindReviewReject, ledger.KindMessageMark,
 		ledger.KindTrunkCheck, ledger.KindEngagementBaseline:
 		return true
 	}

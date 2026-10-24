@@ -6,7 +6,9 @@ publishes this; servers in any language implement it with their own types
 — the [OpenAPI spec](openapi.yaml) is the canonical definition of the REST
 surface. The [checkout-sync proto](checkout_sync.proto) is the canonical
 definition of the gRPC Sync service. satelle-server copies that proto
-verbatim; it is not implemented in this repo.
+verbatim; it is not implemented in this repo. The same holds for the
+[message-board proto](board.proto) (`service Board`: `Post`, `Fetch`, `Mark`),
+generated into `internal/hosted/boardpb`.
 
 ## Auth conventions
 

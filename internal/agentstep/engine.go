@@ -47,6 +47,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/board"
 	"github.com/bobmcallan/satelle/internal/compact"
 	"github.com/bobmcallan/satelle/internal/condense"
 	"github.com/bobmcallan/satelle/internal/config"
@@ -152,6 +153,10 @@ type Engine struct {
 	// (sty_2db624d0). Nil-safe: an unwired resolver injects nothing. The
 	// resolver itself must never error — skip unreadable rows.
 	itemMessages func(ctx context.Context, itemID string, addresses []string) []MessageState
+	// messagesDelivered marks the messages a performer's payload carried
+	// delivered (sty_73c9aa10). Nil-safe: unwired, nothing is marked. Its error
+	// is warned and dropped — messaging never fails the step it rides on.
+	messagesDelivered func(ctx context.Context, itemID string, msgIDs []string) error
 	// diffCompressor reduces a gate payload's patch (noise-strip then ranked
 	// hunk selection, sty_918e2086) before diffPayloadCeiling is ever applied —
 	// the compressor is the PRIMARY reducer, the ceiling stays a backstop. Nil
@@ -721,6 +726,13 @@ func (g *Engine) SetMessagesResolver(fn func(ctx context.Context, itemID string,
 	g.itemMessages = fn
 }
 
+// SetMessagesDelivered wires the writer of delivered marks (sty_73c9aa10) a
+// performer's dispatch calls with the ids of the role messages its payload
+// carries. Nil (unwired) injects messages exactly as before and marks nothing.
+func (g *Engine) SetMessagesDelivered(fn func(ctx context.Context, itemID string, msgIDs []string) error) {
+	g.messagesDelivered = fn
+}
+
 // SetDiffCompressor wires the ranked diff compressor (sty_918e2086) fillDiff
 // runs on a gate payload's patch before diffPayloadCeiling is applied. Nil
 // (unwired) leaves fillDiff's patch handling exactly as it was before this
@@ -1051,6 +1063,10 @@ type MessageState struct {
 	// Truncated marks a body cut at messageBodyBudget; the body then ends with
 	// the command that fetches the whole of it.
 	Truncated bool `json:"truncated,omitempty"`
+	// State is the message's board state when the resolver read it. It is not
+	// part of the payload an agent sees; it lets the engine mark delivered only
+	// the messages still waiting.
+	State string `json:"-"`
 }
 
 // DiffState is the engagement-slice enumeration handed to a reviewer. JSON
@@ -1427,7 +1443,38 @@ func (g *Engine) performerPayload(ctx context.Context, item workitem.Item, toSta
 		addrs = append(addrs, role)
 	}
 	g.fillMessages(ctx, item.ID, addrs, &tp, nil)
+	g.markDelivered(ctx, item.ID, addrs, tp.Messages)
 	return tp, consumed
+}
+
+// markDelivered records the delivery of the messages a performer's payload
+// carries: each one still waiting and addressed to the performer's role (or to
+// everyone) is marked delivered (sty_73c9aa10). Only the performer's own step
+// does this — a reviewer's payload and a chat preview read messages without
+// being the addressee receiving them. Best-effort: a mark that cannot be
+// written is warned and dropped.
+func (g *Engine) markDelivered(ctx context.Context, itemID string, addrs []string, msgs []MessageState) {
+	if g.messagesDelivered == nil {
+		return
+	}
+	want := map[string]bool{"*": true}
+	for _, a := range addrs {
+		if a = strings.TrimSpace(a); a != "" {
+			want[a] = true
+		}
+	}
+	var ids []string
+	for _, m := range msgs {
+		if m.ID != "" && m.State == string(board.Waiting) && want[m.To] {
+			ids = append(ids, m.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	if err := g.messagesDelivered(ctx, itemID, ids); err != nil {
+		g.warnf("satelle: warning: marking %d message(s) delivered on %s: %v", len(ids), itemID, err)
+	}
 }
 
 // recordDocConsumed writes the plan-consumed ledger row for one dispatch attempt:

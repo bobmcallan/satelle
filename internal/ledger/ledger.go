@@ -159,6 +159,12 @@ const (
 	// engagement_sha}. Not KindComment — a directed engagement-scoped row is
 	// not a human comment.
 	KindAgentMessage = "agent_message"
+	// KindMessageMark records one state change of an agent_message
+	// (sty_73c9aa10): Refs {message: msg_id}, Payload {state, answer_id,
+	// by_session_id}. Append-only — the message's current state is the fold of
+	// its marks, the latest winning (internal/board). A bookkeeping row about
+	// delivery, never evidence: verb.isSelfLedgerKind excludes it.
+	KindMessageMark = "message_mark"
 	// KindTidy / KindTidyRestore record one file `satelle story tidy` moved out
 	// of the tree, and its later restore (sty_d74e9b1b). Payload: src, dst,
 	// action — both absolute, so a restore needs nothing else.

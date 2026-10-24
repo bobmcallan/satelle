@@ -13,6 +13,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/board"
 	"github.com/bobmcallan/satelle/internal/compact"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
@@ -309,6 +310,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// patch does, through the SAME retrieval store.
 			rev.SetCheckLogCompressor(checkLogCompressor(a))
 			rev.SetMessagesResolver(messagesResolver())
+			rev.SetMessagesDelivered(messagesDelivered())
 			rev.SetArtifactAttacher(verb.AttachItemDoc)
 			// Structured retry/failure/timeout telemetry (sty_b73c3236): the engine
 			// sees each dispatch ATTEMPT (a killed/timed-out subprocess) the verb
@@ -708,9 +710,28 @@ func messagesResolver() func(ctx context.Context, itemID string, addresses []str
 				Body:          m.Body,
 				CreatedAt:     m.CreatedAt.UTC().Format(time.RFC3339),
 				EngagementSHA: m.EngagementSHA,
+				State:         m.State,
 			}
 		}
 		return out
+	}
+}
+
+// messagesDelivered marks the messages a performer's dispatch injected delivered
+// (sty_73c9aa10), through the same in-process verb `satelle story message-mark`
+// runs. A mark that fails does not stop the rest; the errors come back joined.
+func messagesDelivered() func(ctx context.Context, itemID string, msgIDs []string) error {
+	return func(ctx context.Context, itemID string, msgIDs []string) error {
+		var errs []error
+		by := config.ResolveSession()
+		for _, id := range msgIDs {
+			if _, err := verb.StoryMessageMark(ctx, verb.MarkRequest{
+				ID: itemID, Message: id, State: string(board.Delivered), By: by,
+			}); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
 	}
 }
 
