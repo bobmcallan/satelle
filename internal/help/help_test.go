@@ -822,6 +822,26 @@ func TestEpicWaveDocumentsCrossRepoDependsOn(t *testing.T) {
 	}
 }
 
+// TestEpicWaveHelpStatesEpicReadinessRule (sty_a476b913): a child cannot engage
+// before its epic is ready, the refusal names the readying command, and cancel
+// stays open.
+func TestEpicWaveHelpStatesEpicReadinessRule(t *testing.T) {
+	wave, ok := Get("epic-wave")
+	if !ok {
+		t.Fatal("epic-wave topic not found")
+	}
+	for _, want := range []string{
+		"## A child waits for its epic to be ready",
+		"cannot leave backlog into an engaging status",
+		"satelle\nstory ready <epic>",
+		"`cancel`",
+	} {
+		if !strings.Contains(wave.Body, want) {
+			t.Errorf("epic-wave topic missing %q", want)
+		}
+	}
+}
+
 // TestRemotePlacementTopics (sty_dde8b6a4): where a parallel epic child runs is
 // stated in `satelle help epic-wave`, and the two step.toml keys that declare it
 // in `satelle help agent-dispatch`.

@@ -735,6 +735,27 @@ func TestReadyEpicReadiesChildrenThenMarksIt(t *testing.T) {
 	}
 }
 
+// sty_a476b913: an epic's own readiness round, which readies its children, is not
+// refused for the epic being un-readied; once it ran, its children may engage.
+func TestStoryReadyOnUnreadiedEpicWithChildrenNotRefused(t *testing.T) {
+	_, epic, kids := epicRig(t, 2)
+	res := readyCall(t, epic.ID)[0]
+	if res.Outcome != verb.ReadyMarked || strings.Contains(res.Reason, "has not been readied") {
+		t.Fatalf("the epic's own round must not be refused: %+v", res)
+	}
+	for _, c := range res.Children {
+		if c.Outcome != verb.ReadyMarked || strings.Contains(c.Reason, "has not been readied") {
+			t.Errorf("child %s must be readied by the round: %+v", c.ID, c)
+		}
+	}
+	if !hasMark(t, epic.ID) {
+		t.Error("the epic carries the mark")
+	}
+	if err := setStatus(t, kids[0].ID, "plan"); err != nil && strings.Contains(err.Error(), "has not been readied") {
+		t.Errorf("a child of the readied epic must pass the readiness check: %v", err)
+	}
+}
+
 func TestReadyEpicWithARejectedChildIsNotMarked(t *testing.T) {
 	r, epic, kids := epicRig(t, 2)
 	bad := kids[1].ID

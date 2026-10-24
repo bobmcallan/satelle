@@ -290,6 +290,13 @@ func prepareCreate(ctx context.Context, kind workitem.Kind, req createReq, origi
 		if err := refuseSecondEngagingStory(ctx, "", status, provisional); err != nil {
 			return nil, err
 		}
+		// A child created straight into an engaging status needs its epic
+		// readied first (sty_a476b913), refused before the row exists.
+		if entry, ok := storyEntryState(ctx, provisional); ok {
+			if err := refuseUnreadiedEpic(ctx, provisional, entry, status); err != nil {
+				return nil, err
+			}
+		}
 		// Start-of-work trunk check (sty_9f3e51d1): before the story row, the
 		// lease and the baseline, so a refusal leaves nothing behind and the
 		// baseline records the fast-forwarded HEAD.

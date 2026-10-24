@@ -1,14 +1,19 @@
 package cli
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/store"
 )
 
 // Rework on a remote-placed child (sty_dde8b6a4): the step declares a rework
@@ -85,10 +90,13 @@ requires = ["ready"]
 	t.Setenv("E2E_CONSULT_REPLIES", "READY")
 	t.Setenv("E2E_CODER_REPLIES", "done")
 
-	if out, err := runRoot(t, "story", "create", "--title", "the epic", "--body", "container",
-		"--acceptance", "1. children close", "--category", "epic-parent", "--tags", "epic:w"); err != nil {
-		t.Fatalf("create epic: %v\n%s", err, out)
+	epicOut, err := runRoot(t, "story", "create", "--title", "the epic", "--body", "container",
+		"--acceptance", "1. children close", "--category", "epic-parent", "--tags", "epic:w")
+	if err != nil {
+		t.Fatalf("create epic: %v\n%s", err, epicOut)
 	}
+	// Children engage only once the epic's readiness round holds (sty_a476b913).
+	acceptEpicReadiness(t, jsonField(t, epicOut, "id"), "backlog", "ready")
 	tags := strings.Join(append([]string{"epic:w"}, childTags...), ",")
 	out, err := runRoot(t, "story", "create", "--title", "a parallel child", "--body", "child",
 		"--acceptance", "1. the relay is placement-aware", "--category", "chore", "--tags", tags)
@@ -100,6 +108,23 @@ requires = ["ready"]
 		t.Fatalf("engage child: %v\n%s", err, out)
 	}
 	return id
+}
+
+// acceptEpicReadiness records an accepted readiness round for the from→to edge of
+// the epic id, as story ready would.
+func acceptEpicReadiness(t *testing.T, id, from, to string) {
+	t.Helper()
+	db, err := store.Open(runtimeDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	payload, _ := json.Marshal(map[string]string{"from": from, "to": to, "attempt": "att_test"})
+	if _, err := db.Ledger.Append(context.Background(), ledger.AppendInput{
+		StoryID: id, Kind: ledger.KindReadinessAccept, Actor: "executor", Payload: payload,
+	}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func jsonField(t *testing.T, raw, key string) string {

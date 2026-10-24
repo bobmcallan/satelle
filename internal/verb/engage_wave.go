@@ -62,6 +62,66 @@ func refuseOffWave(ctx context.Context, item workitem.Item, targetStatus string)
 	return nil
 }
 
+// refuseUnreadiedEpic refuses the first move of an epic child out of its route's
+// entry state into an engaging status while the epic-parent that owns its set has
+// not passed its readiness round (sty_a476b913). The epic's round is what
+// sequences its children — depends-on edges, lane tags — so engaging a child
+// before it ran leaves them unset. It keys on the child's entry state, not on a
+// readiness step of the child, so a child on a route with no propose step (a
+// substrate or docs route) is covered too.
+//
+// fromStatus is the child's status before the move: the stored status on a
+// transition, the route's entry state for a create. Passes (nil):
+//   - anything but a story, an epic-parent itself, or a story in no epic set;
+//   - a move that does not leave the entry state, or whose target is not
+//     engaging, or is a cancel or terminal exit — abandoning a child of an
+//     un-readied epic stays open;
+//   - an epic whose route declares no readiness step, and any store, index or
+//     route lookup that fails (fail open, like refuseOffWave).
+//
+// It reads the ledger and writes nothing, so a refusal takes no seat.
+func refuseUnreadiedEpic(ctx context.Context, item workitem.Item, fromStatus, targetStatus string) error {
+	if item.Kind != workitem.KindStory || epicset.IsEpicParent(item) {
+		return nil
+	}
+	entry, ok := storyEntryState(ctx, item)
+	if !ok || fromStatus != entry || targetStatus == entry {
+		return nil
+	}
+	if engaging, ok := storyStatusIsEngaging(ctx, item, targetStatus); !ok || !engaging || isCancelOrTerminalExit(ctx, item, targetStatus) {
+		return nil
+	}
+	store, err := requireWorkItem()
+	if err != nil {
+		return nil
+	}
+	for _, container := range waveContainersOf(ctx, store, item) {
+		edge, err := readinessEdgeFor(ctx, container)
+		if err != nil {
+			continue
+		}
+		if _, holds := readinessHolds(ctx, container, edge); holds {
+			continue
+		}
+		subject := item.ID
+		if subject == "" {
+			subject = "new story"
+		}
+		return fmt.Errorf("satelle: refusing to move %s out of %q (-> %q) — its epic %s has not been readied (no accepted readiness round%s): run satelle story ready %s first, which sequences the epic's children",
+			subject, fromStatus, targetStatus, container.ID, markClause(edge), container.ID)
+	}
+	return nil
+}
+
+// markClause names the readiness mark an un-readied epic would carry, for the
+// refusal text; empty when the route declares no mark.
+func markClause(edge readinessEdge) string {
+	if edge.Step.Mark == "" {
+		return ""
+	}
+	return fmt.Sprintf("; it would carry %q", edge.Step.Mark)
+}
+
 // offWaveReason reports whether container's wave leaves item out, and why — the
 // wave's own words (an omitted child's reason, the sequential refusal), or the
 // set-membership gap for a parent_id-only child.

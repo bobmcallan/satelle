@@ -127,6 +127,7 @@ func afterChildrenScenario(t *testing.T) afterChildrenScene {
 	s.coded = acChild(t, s.epic, "fix")
 	s.cancelled = acChild(t, s.epic, "fix")
 	s.open = acChild(t, s.epic, "fix")
+	acceptEpicReadiness(t, s.db, s.epic.ID, "backlog", "ready")
 	moveTo(t, s.epic.ID, "ready")
 
 	for _, st := range []string{"plan", "in_progress", "integration", "done"} {

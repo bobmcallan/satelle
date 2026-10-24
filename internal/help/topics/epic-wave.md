@@ -73,6 +73,20 @@ name the web partition shows. It is not the hosted project slug.
 Cut a child that depends across repos from trunk; its dependency's change lives in
 another repo and is not on any branch here.
 
+## A child waits for its epic to be ready
+
+A child cannot leave backlog into an engaging status (`satelle story set <child>
+--status plan`, or `story create` straight into one) until its epic's readiness
+round holds. That round is what sequences the children — it adds the
+`depends-on` edges and the `lane:` tags — so a child engaged before it runs gets
+neither. The refusal names the epic and the command that readies it, `satelle
+story ready <epic>`, which readies the epic's children as part of its round and is
+not refused itself. The check keys on the child's entry state, so a child on a
+route with no readiness step is covered too. A story in no epic set, and the epic
+itself, are unaffected, and a child already mid-flight keeps moving. Leaving
+backlog without engaging stays open: you can still `cancel` (or park) a child of
+an epic that is not ready.
+
 ## Engagement honours the wave
 
 Entering an engaging status (`satelle story set <child> --status plan`) is

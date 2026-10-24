@@ -53,6 +53,11 @@ func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatu
 	if err := refuseOffWave(ctx, item, targetStatus); err != nil {
 		return false, false, err
 	}
+	// ... and only once its epic has been readied (sty_a476b913): the epic's
+	// round sets the lanes and edges the child's route depends on.
+	if err := refuseUnreadiedEpic(ctx, item, item.Status, targetStatus); err != nil {
+		return false, false, err
+	}
 	ls, err := requireLease()
 	if err != nil {
 		// Lease store not wired (tests that only need status): fall back to the
