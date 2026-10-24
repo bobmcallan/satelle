@@ -1,3 +1,15 @@
+## [0.0.739] - 2026-10-24
+
+The local-first-team epic (sty_340f3ae3) is complete. The CLI is local first, story events are a linked chain published by compare-and-append, no story is held across machines, and remotes are run only through satelle.dev.
+
+### Removed
+- The remote control plane has left the CLI. Remotes are defined, published, given secrets and run only through satelle-server and the satelle MCP. `satelle remote` (start, run, test, join, preflight), `satelle secret` and run secrets are gone, and so is `.satelle/config/remotes`. There is no compatibility path. (sty_9d85a9c3)
+
+### Changed
+- A node that satelle.dev starts runs through the hidden `satelle node join`. It fetches its definition with its own node token, reads its secrets, and ends itself through satelle.dev. `--token-stdin` reads that token from the first line of stdin, so it never appears in argv, a log or the process list. satelle-server launches nodes pinned at 0.0.739 or later with `node join`. (sty_63f30d3b, sty_74c02774)
+- A story's session (the configuration, inputs, logs and outputs of each run) travels with its project copy, so any member or machine can inspect and rebuild a run with `satelle story session`. Every agent invocation records the digests of the substrate and bindings it ran under. (sty_9914df10)
+- When a sync pass finds a story's two copies disagreeing, it appends an `overlap` row to the story's ledger, naming the other location that last worked on it. The row travels with the story. (sty_9914df10)
+
 ## [0.0.738] - 2026-10-24
 
 ### Fixed
