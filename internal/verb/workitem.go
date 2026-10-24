@@ -57,6 +57,9 @@ type createReq struct {
 	ParentID           string   `json:"parent_id,omitempty"`
 	AcceptanceCriteria string   `json:"acceptance_criteria,omitempty"`
 	Tags               []string `json:"tags,omitempty"`
+	// Inputs are the raw name=value strings of `execution create --input`; they
+	// are checked against the parent task's declarations (workitem.CoerceInputs).
+	Inputs map[string]string `json:"inputs,omitempty"`
 }
 
 // workflowStamp returns the workflow:<name> stamp carried in tags, or "" when
@@ -144,6 +147,7 @@ type preparedCreate struct {
 	trunkRep   trunk.Report // what the start-of-work trunk check found, if it ran
 	ledgerKind string
 	at         time.Time
+	inputs     map[string]any // an execution's typed input values, checked against its task
 }
 
 // prepareCreate runs every check a create makes before the store write: the tag
@@ -159,6 +163,20 @@ func prepareCreate(ctx context.Context, kind workitem.Kind, req createReq, origi
 		return nil, err
 	}
 	now := p.at
+
+	// Typed inputs: only an execution carries values, and they must satisfy what
+	// its task declares. Refused before anything is reviewed or stored.
+	if kind == workitem.KindExecution {
+		var decls []workitem.InputDecl
+		if task, terr := store.Get(ctx, req.ParentID); terr == nil {
+			decls = task.Inputs
+		}
+		if p.inputs, err = workitem.CoerceInputs(decls, req.Inputs); err != nil {
+			return nil, err
+		}
+	} else if len(req.Inputs) > 0 {
+		return nil, fmt.Errorf("--input applies only to an execution")
+	}
 
 	// Controlled tag vocabulary (sty_034d843c): validate + canonicalise BEFORE
 	// the create reviewer so a typo fails fast (no subprocess) and the
@@ -302,6 +320,7 @@ func (p *preparedCreate) store(ctx context.Context) (workitem.Item, error) {
 		AcceptanceCriteria: p.req.AcceptanceCriteria,
 		Tags:               p.tags,
 		Assignee:           resolveAssignee(),
+		InputValues:        p.inputs,
 	}, p.at)
 	if err != nil {
 		// The reviewer ran and was paid for; keep its spend repo-scoped.

@@ -53,7 +53,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 
 	// create
 	var cTitle, cBody, cStatus, cPriority, cCategory, cParent, cAccept string
-	var cTags []string
+	var cTags, cInputs []string
 	create := &cobra.Command{
 		Use:         "create",
 		Short:       "Create a " + group,
@@ -69,6 +69,17 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 			putIf(req, "acceptance_criteria", cAccept)
 			if len(cTags) > 0 {
 				req["tags"] = cTags
+			}
+			if len(cInputs) > 0 {
+				inputs := make(map[string]string, len(cInputs))
+				for _, kv := range cInputs {
+					name, val, ok := strings.Cut(kv, "=")
+					if !ok {
+						return fmt.Errorf("--input %q must be name=value", kv)
+					}
+					inputs[name] = val
+				}
+				req["inputs"] = inputs
 			}
 			if err := dispatch(cmd, group+"-create", req); err != nil {
 				return err
@@ -101,6 +112,9 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 	create.Flags().StringVar(&cParent, "parent", "", "parent item id")
 	create.Flags().StringVar(&cAccept, "acceptance", "", "acceptance criteria")
 	create.Flags().StringSliceVar(&cTags, "tags", nil, "comma-separated tags")
+	if group == "execution" {
+		create.Flags().StringArrayVar(&cInputs, "input", nil, "name=value for an input the task declares (repeatable)")
+	}
 	_ = create.MarkFlagRequired("title")
 
 	// get
@@ -2179,6 +2193,8 @@ checked; use story create for a one-off slice with acceptance criteria.
 
 --parent <tsk_id> is what makes it a run rather than an orphan, and the task
 header it names supplies both the action and the validators that gate the run.
+--input name=value (repeatable) sets an input the task declares in inputs_decl;
+a missing required, undeclared or mistyped input refuses the create.
 Record what the run produced with satelle execution record.`
 	}
 	return `Create a story. Reach for it before touching the repo: an edit needs an

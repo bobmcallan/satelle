@@ -89,6 +89,14 @@ func Migrate(db *sql.DB) error {
 		!strings.Contains(err.Error(), "duplicate column") {
 		return fmt.Errorf("workitem: migrate assignee column: %w", err)
 	}
+	// input_decls / input_values hold a task's declared inputs and an execution's
+	// values as JSON; '' = none, so existing rows are unchanged.
+	for _, col := range []string{"input_decls", "input_values"} {
+		if _, err := db.Exec(`ALTER TABLE work_items ADD COLUMN ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil &&
+			!strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("workitem: migrate %s column: %w", col, err)
+		}
+	}
 	return nil
 }
 
@@ -136,6 +144,8 @@ type CreateInput struct {
 	AcceptanceCriteria string
 	Tags               []string
 	Assignee           string
+	Inputs             []InputDecl
+	InputValues        map[string]any
 }
 
 // Create inserts a new item and returns it with its assigned id and timestamps.
@@ -168,15 +178,18 @@ func (s *Store) Create(ctx context.Context, in CreateInput, now time.Time) (Item
 		CreatedAt:          now,
 		UpdatedAt:          now,
 		Assignee:           in.Assignee,
+		Inputs:             in.Inputs,
+		InputValues:        in.InputValues,
 	}
 	tagsJSON, _ := json.Marshal(it.Tags)
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO work_items
-            (id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, assignee)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, assignee, input_decls, input_values)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		it.ID, string(it.Kind), it.Title, it.Body, it.Status, it.Priority, it.Category,
 		it.ParentID, it.AcceptanceCriteria, string(tagsJSON),
-		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), it.Assignee)
+		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), it.Assignee,
+		encodeDecls(it.Inputs), EncodeInputValues(it.InputValues))
 	if err != nil {
 		return Item{}, fmt.Errorf("workitem: create: %w", err)
 	}
@@ -245,6 +258,13 @@ func (s *Store) upsert(ctx context.Context, it Item, now time.Time, force bool) 
 		if strings.TrimSpace(it.ParkOrigin) == "" {
 			it.ParkOrigin = existing.ParkOrigin
 		}
+		// An execution's input values are fixed at create and never edited, so an
+		// incoming row without them (a workstate pull from a server that predates
+		// the field) keeps the stored ones. A task's declaration is NOT kept: its
+		// file is the source of truth and may drop or change it.
+		if len(it.InputValues) == 0 {
+			it.InputValues = existing.InputValues
+		}
 		// Status-preserve guard (sty_38915987): a full-row Upsert never moves
 		// status on an existing row. A now-stamped FROM snapshot (planner
 		// dispatch payload, workstate wire, markdown import) must not revert a
@@ -254,15 +274,16 @@ func (s *Store) upsert(ctx context.Context, it Item, now time.Time, force bool) 
 			it.Status = existing.Status
 		}
 	}
-	// archived, park_origin and assignee must be listed: INSERT OR REPLACE
-	// deletes+reinserts, so omitting a column would reset it to DEFAULT.
+	// archived, park_origin, assignee and the input columns must be listed: INSERT
+	// OR REPLACE deletes+reinserts, so omitting a column would reset it to DEFAULT.
 	_, err := s.db.ExecContext(ctx, `
         INSERT OR REPLACE INTO work_items
-            (id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived, park_origin, assignee)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived, park_origin, assignee, input_decls, input_values)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		it.ID, string(it.Kind), it.Title, it.Body, it.Status, it.Priority, it.Category,
 		it.ParentID, it.AcceptanceCriteria, string(tagsJSON),
-		it.CreatedAt.UTC().Format(time.RFC3339Nano), it.UpdatedAt.UTC().Format(time.RFC3339Nano), archived, it.ParkOrigin, it.Assignee)
+		it.CreatedAt.UTC().Format(time.RFC3339Nano), it.UpdatedAt.UTC().Format(time.RFC3339Nano), archived, it.ParkOrigin, it.Assignee,
+		encodeDecls(it.Inputs), EncodeInputValues(it.InputValues))
 	if err != nil {
 		return Item{}, fmt.Errorf("workitem: upsert: %w", err)
 	}
@@ -553,7 +574,7 @@ func (s *Store) ListChangedSince(ctx context.Context, kind Kind, since time.Time
 
 // selectCols is the shared SELECT prefix for Get/List, fixing column order so
 // one scan() serves both.
-const selectCols = `SELECT id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived, park_origin, assignee FROM work_items`
+const selectCols = `SELECT id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived, park_origin, assignee, input_decls, input_values FROM work_items`
 
 // scanner is satisfied by both *sql.Row and *sql.Rows.
 type scanner interface{ Scan(dest ...any) error }
@@ -564,10 +585,11 @@ func scan(sc scanner) (Item, error) {
 		kind, tags       string
 		created, updated string
 		archived         int
+		decls, values    string
 	)
 	if err := sc.Scan(&it.ID, &kind, &it.Title, &it.Body, &it.Status,
 		&it.Priority, &it.Category, &it.ParentID, &it.AcceptanceCriteria,
-		&tags, &created, &updated, &archived, &it.ParkOrigin, &it.Assignee); err != nil {
+		&tags, &created, &updated, &archived, &it.ParkOrigin, &it.Assignee, &decls, &values); err != nil {
 		return Item{}, err
 	}
 	it.Kind = Kind(kind)
@@ -576,7 +598,21 @@ func scan(sc scanner) (Item, error) {
 	it.CreatedAt = parseTime(created)
 	it.UpdatedAt = parseTime(updated)
 	it.Archived = archived != 0
+	if decls != "" {
+		_ = json.Unmarshal([]byte(decls), &it.Inputs)
+	}
+	it.InputValues = DecodeInputValues(values)
 	return it, nil
+}
+
+// encodeDecls renders a task's declarations as the JSON the input_decls column
+// holds; none encodes as ”.
+func encodeDecls(decls []InputDecl) string {
+	if len(decls) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(decls)
+	return string(b)
 }
 
 func nonNilTags(t []string) []string {

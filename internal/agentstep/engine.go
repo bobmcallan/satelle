@@ -901,23 +901,35 @@ func (g *Engine) SetRunner(r agentcli.Runner) {
 	}
 }
 
-// gateStoryKey carries the id of the story a functional check judges, from the
-// gate to execCheck, without widening the check seam every test double shares.
+// gateStoryKey / gateInputsKey carry the id of the item a functional check
+// judges, and that item's input values, from the gate to execCheck without
+// widening the check seam every test double shares.
 type gateStoryKey struct{}
+type gateInputsKey struct{}
 
-// withGateStory marks ctx as judging story id, so execCheck exports it to the
-// check as verb.GateStoryEnv (sty_ab93f9a6).
-func withGateStory(ctx context.Context, id string) context.Context {
-	if strings.TrimSpace(id) == "" {
+// withGateItem marks ctx as judging item, so execCheck exports its id to the
+// check as verb.GateStoryEnv (sty_ab93f9a6) and its input values as
+// SATELLE_INPUT_<NAME> variables.
+func withGateItem(ctx context.Context, item workitem.Item) context.Context {
+	if len(item.InputValues) > 0 {
+		ctx = context.WithValue(ctx, gateInputsKey{}, item.InputValues)
+	}
+	if strings.TrimSpace(item.ID) == "" {
 		return ctx
 	}
-	return context.WithValue(ctx, gateStoryKey{}, id)
+	return context.WithValue(ctx, gateStoryKey{}, item.ID)
 }
 
-// gateStoryFrom reports the story withGateStory marked ctx with, or "".
+// gateStoryFrom reports the story withGateItem marked ctx with, or "".
 func gateStoryFrom(ctx context.Context) string {
 	id, _ := ctx.Value(gateStoryKey{}).(string)
 	return id
+}
+
+// gateInputEnvFrom reports the SATELLE_INPUT_ variables withGateItem marked ctx with.
+func gateInputEnvFrom(ctx context.Context) map[string]string {
+	v, _ := ctx.Value(gateInputsKey{}).(map[string]any)
+	return workitem.InputEnv(v)
 }
 
 // execCheck runs command via `bash -c` in dir, returning combined stdout+stderr.
@@ -931,6 +943,14 @@ func execCheck(ctx context.Context, dir, command, payload string) (string, error
 	c.Dir = dir
 	if id := gateStoryFrom(ctx); id != "" {
 		c.Env = append(os.Environ(), verb.GateStoryEnv+"="+id)
+	}
+	if in := gateInputEnvFrom(ctx); len(in) > 0 {
+		if c.Env == nil {
+			c.Env = os.Environ()
+		}
+		for k, v := range in {
+			c.Env = append(c.Env, k+"="+v)
+		}
 	}
 	c.Stdin = strings.NewReader(payload)
 	out, err := c.CombinedOutput()
@@ -3604,7 +3624,7 @@ func (g *Engine) decideReviewer(ctx context.Context, item workitem.Item, toStatu
 	// output tail as notes. No LLM (the command IS the decision). This is the
 	// constitution's "skill + functional check" gate. Stays OUTSIDE Invoke (design §4.2).
 	if command := skillCheck(prep.body); command != "" {
-		return g.runCheck(ctx, item.ID, skill, command, string(prep.payload)), nil
+		return g.runCheck(ctx, item, skill, command, string(prep.payload)), nil
 	}
 	// LLM path: shared Invoke (sty_ba860c8a / sty_e21cbc08). Pre-flight (skill,
 	// structure, functional-check, missing-rubric advisory) stays above.
@@ -3930,7 +3950,7 @@ func (g *Engine) whenAllows(ctx context.Context, item workitem.Item, toStatus st
 	}
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	out, err := g.check(withGateStory(cctx, item.ID), g.repoRoot, command, string(payload))
+	out, err := g.check(withGateItem(cctx, item), g.repoRoot, command, string(payload))
 	if err == nil {
 		return true
 	}
@@ -4771,20 +4791,20 @@ func referencedWorkflowSkills(body string) []string {
 // verdict: exit 0 accepts, any non-zero (or a run error / timeout) rejects
 // with the command's output — reduced by the wired log compressor
 // (sty_ef930f81) — as actionable notes.
-func (g *Engine) runCheck(ctx context.Context, itemID, skill, command, payload string) verb.GateDecision {
+func (g *Engine) runCheck(ctx context.Context, item workitem.Item, skill, command, payload string) verb.GateDecision {
 	timeout := g.checkTimeout
 	if timeout <= 0 {
 		timeout = defaultCheckTimeout
 	}
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	out, err := g.check(withGateStory(cctx, itemID), g.repoRoot, command, payload)
+	out, err := g.check(withGateItem(cctx, item), g.repoRoot, command, payload)
 	dec := verb.GateDecision{Gated: true, Skill: skill}
 	if err != nil {
 		dec.Accept = false
 		var notes string
 		if g.checkLogCompressor != nil {
-			notes = g.checkLogCompressor(ctx, itemID, out)
+			notes = g.checkLogCompressor(ctx, item.ID, out)
 		} else {
 			notes = compact.CompressLog(out, compact.LogConfig{}, nil)
 		}

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/agentartifact"
@@ -100,15 +101,26 @@ func (g *Engine) deliverInLoopSkills(ctx context.Context, item workitem.Item, to
 	if len(names) == 0 && perf.target.Skill != "" {
 		names = []string{perf.target.Skill}
 	}
+	// An in-loop session is already running, so its run's typed inputs cannot be
+	// set in its environment: they are handed over with the rubric instead. A step
+	// that names no skill still delivers them.
+	inputs := inLoopInputs(item)
 	if len(names) == 0 {
-		return verb.DispatchResult{}, nil
+		if inputs == "" {
+			return verb.DispatchResult{}, nil
+		}
+		return verb.DispatchResult{Kind: perf.Kind, InLoopRubric: inputs}, nil
 	}
 	c, err := g.composeSkills(ctx, names, false)
 	if err != nil {
 		return verb.DispatchResult{}, err
 	}
+	rubric := c.Rubric
+	if inputs != "" {
+		rubric += "\n\n" + inputs
+	}
 	res := verb.DispatchResult{
-		Kind: perf.Kind, Skills: c.Manifest, InLoopRubric: c.Rubric,
+		Kind: perf.Kind, Skills: c.Manifest, InLoopRubric: rubric,
 		StrictSkills: g.skillEvidenceMode(ctx) == verb.SkillEvidenceReject,
 	}
 	for _, d := range c.evidence {
@@ -116,6 +128,29 @@ func (g *Engine) deliverInLoopSkills(ctx context.Context, item workitem.Item, to
 		res.TraceTools = res.TraceTools || len(d.Evidence.Tools) > 0
 	}
 	return res, nil
+}
+
+// inLoopInputs renders an item's input values for the in-loop session: the JSON
+// object, then one export line per SATELLE_INPUT_<NAME> variable a dispatched
+// performer would have had in its environment. "" when the item has none.
+func inLoopInputs(item workitem.Item) string {
+	env := workitem.InputEnv(item.InputValues)
+	if len(env) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString("## Inputs\n\n")
+	b.WriteString(workitem.EncodeInputValues(item.InputValues))
+	b.WriteString("\n\n")
+	for _, k := range keys {
+		fmt.Fprintf(&b, "export %s='%s'\n", k, strings.ReplaceAll(env[k], "'", `'\''`))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // undeliveredRefusal is the refusal for a dispatched step whose declared skill

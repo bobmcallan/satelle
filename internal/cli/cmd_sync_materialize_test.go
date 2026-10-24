@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -67,6 +68,29 @@ func TestWorkstateItemRoundTripPreservesParkOrigin(t *testing.T) {
 	}
 	if got.ParkOrigin != "in_progress" {
 		t.Errorf("round-trip park_origin = %q", got.ParkOrigin)
+	}
+}
+
+// A task's declared inputs and an execution's values ride the workstate wire
+// (inputs_decl / inputs), and the values come back typed.
+func TestWorkstateItemRoundTripKeepsInputs(t *testing.T) {
+	decls, _ := workitem.ParseInputDecls("story_id:string:required, retries:int")
+	for _, it := range []workitem.Item{
+		{ID: "tsk_in", Kind: workitem.KindTask, Title: "T", Status: "active", Inputs: decls},
+		{ID: "exe_in", Kind: workitem.KindExecution, Title: "T", Status: "backlog",
+			InputValues: map[string]any{"story_id": "sty_1", "retries": int64(3), "on": true}},
+	} {
+		raw, err := marshalWorkstateItem(it)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := parseWorkstateItem(hosted.WorkstateItem{ID: it.ID, Kind: string(it.Kind), Record: raw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got.Inputs, it.Inputs) || !reflect.DeepEqual(got.InputValues, it.InputValues) {
+			t.Errorf("%s: got decls %+v values %#v", it.ID, got.Inputs, got.InputValues)
+		}
 	}
 }
 

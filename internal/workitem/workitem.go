@@ -72,6 +72,13 @@ type Item struct {
 	// (sty_8ccaa906). Empty means unassigned. Machine-set, not authored
 	// markdown — omitempty keeps it off file views.
 	Assignee string `json:"assignee,omitempty"`
+	// Inputs are the typed inputs a TASK declares (inputs_decl: in its file);
+	// InputValues are the values an EXECUTION was created with (inputs: in its
+	// file). satelle declares, validates and passes them on, and never interprets
+	// them (see inputs.go). Both are omitempty, so an item without inputs is
+	// byte-identical to one from before they existed.
+	Inputs      []InputDecl    `json:"inputs_decl,omitempty"`
+	InputValues map[string]any `json:"inputs,omitempty"`
 }
 
 // idPrefix returns the id prefix for a kind: sty_ for stories, tsk_ for tasks,

@@ -25,6 +25,11 @@ import (
 // delivers nothing and records nothing.
 func recordInLoopDelivery(ctx context.Context, current workitem.Item, to, attempt string, res DispatchResult, run *performerRun, now time.Time) {
 	if len(res.Skills) == 0 {
+		// No skill to record, but a run's typed inputs still reach the session.
+		if strings.TrimSpace(res.InLoopRubric) != "" {
+			fmt.Fprintf(os.Stderr, "satelle: %s — inputs for step %q (delivered to this session; perform the step with them):\n\n%s\n",
+				current.ID, to, strings.TrimSpace(res.InLoopRubric))
+		}
 		return
 	}
 	var delivered []string

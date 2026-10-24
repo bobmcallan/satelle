@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // sty_ab93f9a6: a functional check runs in the main tree (the process of record)
@@ -24,7 +25,7 @@ func TestRunCheckKeepsRepoRootAndNamesStory(t *testing.T) {
 		gotDir, gotStory = dir, gateStoryFrom(ctx)
 		return "", nil
 	}
-	if dec := g.runCheck(context.Background(), "sty_wt", "satelle-x-check", "true", "{}"); !dec.Accept {
+	if dec := g.runCheck(context.Background(), workitem.Item{ID: "sty_wt"}, "satelle-x-check", "true", "{}"); !dec.Accept {
 		t.Fatalf("check should accept: %+v", dec)
 	}
 	if gotDir != g.repoRoot {
@@ -42,7 +43,7 @@ func TestExecCheckExportsGateStory(t *testing.T) {
 	want, _ := filepath.EvalSymlinks(dir)
 	script := `echo "story=${` + verb.GateStoryEnv + `:-none}"; pwd -P`
 
-	out, err := execCheck(withGateStory(context.Background(), "sty_wt"), dir, script, "")
+	out, err := execCheck(withGateItem(context.Background(), workitem.Item{ID: "sty_wt"}), dir, script, "")
 	if err != nil {
 		t.Fatalf("execCheck: %v\n%s", err, out)
 	}

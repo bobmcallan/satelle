@@ -18,6 +18,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // Expect selects the post-run contract for Invoke (sty_ba860c8a / design §4).
@@ -369,6 +370,11 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	// dispatch.
 	env := make(map[string]string, len(inv.env)+3)
 	for k, v := range inv.env {
+		env[k] = v
+	}
+	// The judged or performed item's typed inputs (SATELLE_INPUT_<NAME>); the
+	// reserved markers below are overlaid after them.
+	for k, v := range workitem.InputEnv(payloadInputs(req.Payload)) {
 		env[k] = v
 	}
 	env[config.DispatchAgentEnv] = section
@@ -1119,6 +1125,20 @@ func referencedWorkItem(req InvokeRequest) (transitionPayload, *reviewerMaterial
 	default:
 		return transitionPayload{}, nil, false
 	}
+}
+
+// payloadInputs reports the input values of the item a transition payload
+// carries; a payload of any other shape carries none.
+func payloadInputs(payload any) map[string]any {
+	switch p := payload.(type) {
+	case transitionPayload:
+		return p.Story.InputValues
+	case *transitionPayload:
+		if p != nil {
+			return p.Story.InputValues
+		}
+	}
+	return nil
 }
 
 // executorCharter is the charter for an isolated named executor performing a step.

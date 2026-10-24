@@ -19,6 +19,11 @@ func TestCheckTask(t *testing.T) {
 		{"wrong type", "---\nid: tsk_1\ntype: story\nstatus: backlog\n---\n\n# T\n\nb", false},
 		{"legacy kind rejected", "---\nid: tsk_1\nkind: task\nstatus: backlog\n---\n\n# T\n\nb", false},
 		{"missing status", "---\nid: tsk_1\ntype: task\n---\n\n# T\n\nb", false},
+		{"valid inputs", "---\nid: tsk_1\ntype: task\nstatus: backlog\ninputs_decl: a:string:required, b:int, c:bool\n---\n\n# T\n\nb", true},
+		{"input bad type", "---\nid: tsk_1\ntype: task\nstatus: backlog\ninputs_decl: n:float\n---\n\n# T\n\nb", false},
+		{"input bad name", "---\nid: tsk_1\ntype: task\nstatus: backlog\ninputs_decl: Bad-Name:int\n---\n\n# T\n\nb", false},
+		{"input duplicate", "---\nid: tsk_1\ntype: task\nstatus: backlog\ninputs_decl: a:int, a:string\n---\n\n# T\n\nb", false},
+		{"input bad flag", "---\nid: tsk_1\ntype: task\nstatus: backlog\ninputs_decl: a:int:sometimes\n---\n\n# T\n\nb", false},
 		{"no title heading", "---\nid: tsk_1\ntype: task\nstatus: backlog\n---\n\njust prose, no heading", false},
 	}
 	for _, c := range cases {

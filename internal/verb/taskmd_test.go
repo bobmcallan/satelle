@@ -269,3 +269,63 @@ func TestSyncTasksSkipsUnupsertableFileByName(t *testing.T) {
 		t.Errorf("a sibling valid task must still index: %v", gerr)
 	}
 }
+
+// Typed task inputs: the task file's inputs_decl: line is the source of truth, so
+// editing it re-indexes once and removing it clears the stored declaration; an
+// execution's values survive a reindex typed, whichever file is read first.
+func TestSyncTasksInputsDeclFollowsFile(t *testing.T) {
+	db, dir, ctx := syncTasksFixture(t)
+	now := time.Now().UTC()
+	task := filepath.Join(dir, "tsk_inp01.md")
+	head := "---\nid: tsk_inp01\ntype: task\nstatus: backlog\n"
+	writeTaskFile(t, task, head+"inputs_decl: story_id:string:required, retries:int\n---\n\n# Inputs\n\nDo; verify.\n")
+	if _, _, _, err := verb.SyncTasks(ctx, db.Stories, now); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := db.Stories.Get(ctx, "tsk_inp01")
+	if workitem.FormatInputDecls(got.Inputs) != "story_id:string:required, retries:int:optional" {
+		t.Fatalf("declaration not ingested: %+v", got.Inputs)
+	}
+
+	// Edited: re-indexed once, then stable.
+	writeTaskFile(t, task, head+"inputs_decl: story_id:string:required\n---\n\n# Inputs\n\nDo; verify.\n")
+	if idx, _, _, _ := verb.SyncTasks(ctx, db.Stories, now.Add(time.Second)); idx != 1 {
+		t.Fatalf("edited declaration indexed = %d, want 1", idx)
+	}
+	if idx, _, _, _ := verb.SyncTasks(ctx, db.Stories, now.Add(2*time.Second)); idx != 0 {
+		t.Fatalf("re-sync churned: indexed = %d", idx)
+	}
+
+	// Removed: the stored declaration clears.
+	writeTaskFile(t, task, head+"---\n\n# Inputs\n\nDo; verify.\n")
+	if idx, _, _, _ := verb.SyncTasks(ctx, db.Stories, now.Add(3*time.Second)); idx != 1 {
+		t.Fatalf("removed declaration indexed = %d, want 1", idx)
+	}
+	if got, _ = db.Stories.Get(ctx, "tsk_inp01"); len(got.Inputs) != 0 {
+		t.Fatalf("declaration survived its removal: %+v", got.Inputs)
+	}
+}
+
+func TestSyncTasksExecutionInputsSurviveReindex(t *testing.T) {
+	db, dir, ctx := syncTasksFixture(t)
+	now := time.Now().UTC()
+	exe := workitem.Item{ID: "exe_inp01", Kind: workitem.KindExecution, Title: "run", Status: "backlog",
+		ParentID: "tsk_inp02", InputValues: map[string]any{"story_id": "a, b=c\n---\n x ", "retries": int64(3)}}
+	// The run file is read before its task file (tsk_inp02/ sorts before tsk_inp02.md).
+	writeTaskFile(t, filepath.Join(dir, "tsk_inp02", "exe_inp01.md"), string(workitem.Marshal(exe)))
+	writeTaskFile(t, filepath.Join(dir, "tsk_inp02.md"),
+		"---\nid: tsk_inp02\ntype: task\nstatus: backlog\ninputs_decl: story_id:string:required, retries:int\n---\n\n# T\n\nDo; verify.\n")
+	if _, _, skipped, err := verb.SyncTasks(ctx, db.Stories, now); err != nil || len(skipped) != 0 {
+		t.Fatalf("sync: %v %v", err, skipped)
+	}
+	got, err := db.Stories.Get(ctx, "exe_inp01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.InputValues["story_id"] != "a, b=c\n---\n x " || got.InputValues["retries"] != int64(3) {
+		t.Fatalf("values after reindex = %#v", got.InputValues)
+	}
+	if idx, _, _, _ := verb.SyncTasks(ctx, db.Stories, now.Add(time.Second)); idx != 0 {
+		t.Fatalf("re-sync churned: indexed = %d", idx)
+	}
+}

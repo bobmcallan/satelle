@@ -22,6 +22,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // kebab matches a lower-kebab-case slug (the universal artifact-name shape).
@@ -196,6 +197,11 @@ func CheckTask(body string) []string {
 	}
 	if !strings.Contains(rest, "# ") {
 		p = append(p, "body missing a `# Title` heading")
+	}
+	// Declared inputs (name:type[:required|optional], comma list): a malformed
+	// declaration would silently declare nothing, so name it here.
+	if _, err := workitem.ParseInputDecls(fmScalar(fm, "inputs_decl")); err != nil {
+		p = append(p, "inputs_decl: "+err.Error())
 	}
 	return p
 }

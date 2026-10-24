@@ -31,6 +31,14 @@ func Marshal(it Item) []byte {
 	if len(it.Tags) > 0 {
 		fmt.Fprintf(&b, "tags: %s\n", strings.Join(it.Tags, ", "))
 	}
+	// A task's declaration is a comma list the line parser reads as is; an
+	// execution's values are one JSON line, so any string survives the round trip.
+	if len(it.Inputs) > 0 {
+		fmt.Fprintf(&b, "inputs_decl: %s\n", FormatInputDecls(it.Inputs))
+	}
+	if len(it.InputValues) > 0 {
+		fmt.Fprintf(&b, "inputs: %s\n", EncodeInputValues(it.InputValues))
+	}
 	if !it.CreatedAt.IsZero() {
 		fmt.Fprintf(&b, "created: %s\n", it.CreatedAt.UTC().Format(time.RFC3339))
 	}
@@ -94,6 +102,12 @@ func Parse(data []byte) (Item, error) {
 					it.Tags = append(it.Tags, t)
 				}
 			}
+		case "inputs_decl":
+			// A malformed declaration leaves Inputs nil; the line stays in the file
+			// for structure.CheckTask to report.
+			it.Inputs, _ = ParseInputDecls(v)
+		case "inputs":
+			it.InputValues = DecodeInputValues(v)
 		case "created":
 			it.CreatedAt, _ = time.Parse(time.RFC3339, v)
 		case "updated":
