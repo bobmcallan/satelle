@@ -1,6 +1,6 @@
 // Package devtest is a stand-in for the routes satelle.dev serves to a remote
-// node, for tests: GET /api/v1/remote-nodes/{id}/definition,
-// POST .../secrets/{key} and POST .../end, all keyed by the node's id and taking
+// node, for tests: GET /api/v1/remote-nodes/{id}/definition, GET .../run,
+// PUT .../status, POST .../secrets/{key} and POST .../end, all keyed by the node's id and taking
 // the node token as a bearer (satelle-server sty_c9013137). A call under any other
 // id is a 404; a bad token, or one an end call or Revoke has ended, is a 401. It
 // records every request. It is for tests only: nothing in the product imports it.
@@ -39,6 +39,12 @@ type Node struct {
 	// the version header off: a server that does not keep its contract.
 	ETag        string
 	OmitVersion bool
+	// Run is what GET .../run answers, as the JSON of the server's run descriptor;
+	// nil answers {"mode":"node"}, a node started by hand.
+	Run any
+	// LostAfterSeconds is the window every PUT .../status reply reports; 0 reports
+	// none.
+	LostAfterSeconds int
 
 	srv     *httptest.Server
 	id      string
@@ -49,6 +55,7 @@ type Node struct {
 	token   string
 	revoked bool
 	calls   []Call
+	status  []map[string]string
 }
 
 // NewNode starts a fake for node id whose token is token, serving bundle as the
@@ -86,6 +93,13 @@ func (n *Node) Calls() []Call {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return append([]Call(nil), n.calls...)
+}
+
+// Statuses is the body of every PUT .../status received, in order.
+func (n *Node) Statuses() []map[string]string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]map[string]string(nil), n.status...)
 }
 
 // Count is how many requests ended with tail (for example "/end" or
@@ -141,6 +155,23 @@ func (n *Node) answer(w http.ResponseWriter, r *http.Request) int {
 			return reply(w, http.StatusForbidden, `{"error":"secret_refused","reason":"the key is not declared by this definition or not granted to it"}`)
 		}
 		raw, _ := json.Marshal(map[string]string{"value": value})
+		return reply(w, http.StatusOK, string(raw))
+	case r.Method == http.MethodGet && tail == "run":
+		run := n.Run
+		if run == nil {
+			run = map[string]string{"mode": "node"}
+		}
+		raw, _ := json.Marshal(run)
+		return reply(w, http.StatusOK, string(raw))
+	case r.Method == http.MethodPut && tail == "status":
+		var in map[string]string
+		if json.NewDecoder(r.Body).Decode(&in) != nil {
+			return reply(w, http.StatusBadRequest, `{"error":"invalid_body"}`)
+		}
+		n.mu.Lock()
+		n.status = append(n.status, in)
+		n.mu.Unlock()
+		raw, _ := json.Marshal(map[string]int{"lost_after_seconds": n.LostAfterSeconds})
 		return reply(w, http.StatusOK, string(raw))
 	case r.Method == http.MethodPost && tail == "end":
 		n.Revoke()

@@ -143,6 +143,8 @@ type rig struct {
 	client   *hosted.Client
 	clock    *fakeClock
 	chanOpts []remotechan.Option
+	// serve, when set, serves the node instead of Node.Serve.
+	serve func(ctx context.Context, node *Node, sess *remotechan.Session, report Report) error
 }
 
 const rigServer = "https://satelle.test"
@@ -195,6 +197,10 @@ func (r *rig) open(node *Node, report Report, clock remotechan.Clock) (*remotech
 			h.sess = sess
 			h.mu.Unlock()
 			defer sess.Close()
+			if r.serve != nil {
+				h.done <- r.serve(ctx, node, sess, report)
+				return
+			}
 			h.done <- node.Serve(ctx, sess, report)
 		}()
 		return id.Public(), nil

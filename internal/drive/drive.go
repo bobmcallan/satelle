@@ -69,6 +69,10 @@ type Options struct {
 	Rework Reworker
 	// Out receives one line per move and per rejection; nil discards them.
 	Out io.Writer
+	// OnMove, when set, is called after each status move is recorded in
+	// Result.Moves, so a caller can watch the drive live (a remote node reports
+	// the step it is on). It runs on the drive's goroutine and must not block.
+	OnMove func(Move)
 	// Location / LocationLabel are this node's location identity
 	// (hosted.KnownLocationID, hosted.LocationLabel). They are stamped on every
 	// park and drive-stopped row so the server can tell a park made by a remote's
@@ -177,8 +181,11 @@ func (d *driver) run(ctx context.Context) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if item.Kind != workitem.KindStory {
-		return Result{}, fmt.Errorf("drive: %s is not a story", d.id)
+	// An execution is walked as a story is: its route comes from the execution
+	// kind, and the set and get verbs the drive uses are kind-agnostic. A task
+	// header has no lifecycle to walk.
+	if item.Kind != workitem.KindStory && item.Kind != workitem.KindExecution {
+		return Result{}, fmt.Errorf("drive: %s is not a story or execution", d.id)
 	}
 	d.route, err = verb.GoverningRoute(ctx, item)
 	if err != nil {
@@ -377,7 +384,11 @@ func (d *driver) advance(ctx context.Context, item workitem.Item, next string) (
 	default:
 		return moved, &halt{step: next, what: fmt.Sprintf("presenting %s → %s left the story at %q", from, next, moved.Status)}
 	}
-	d.res.Moves = append(d.res.Moves, Move{From: from, To: next})
+	move := Move{From: from, To: next}
+	d.res.Moves = append(d.res.Moves, move)
+	if d.opts.OnMove != nil {
+		d.opts.OnMove(move)
+	}
 	d.res.Status = next
 	d.res.Terminal = d.route.Spec.IsTerminalState(next)
 	return moved, d.performEntered(ctx, moved, next)

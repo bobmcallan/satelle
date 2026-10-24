@@ -309,7 +309,7 @@ func refreshStoryBacklog(cmd *cobra.Command) {
 // workflow's exit-gate rubric instructs it to). Output comes from --output or,
 // when absent, stdin — so a run's captured log can be piped in.
 func executionRecordCommand() *cobra.Command {
-	var output string
+	var output, outcome string
 	cmd := &cobra.Command{
 		Use:   "record <exe_id>",
 		Short: "Record a task execution's run output as an OKF doc under its task folder",
@@ -318,7 +318,11 @@ folder — the evidence half of an execution.
 
 --output takes the text; with the flag absent it reads STDIN, so a captured log
 pipes straight in. Reach for it before closing the run: the after-validator
-judges what the run did, and an unrecorded run leaves it nothing to read.`,
+judges what the run did, and an unrecorded run leaves it nothing to read.
+
+--outcome says how the run ended (accept, reject, performed or no-op) and is
+written into the same document; a run that found nothing to do records no-op. A
+record without --outcome keeps the outcome already on the document.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -328,10 +332,13 @@ judges what the run did, and an unrecorded run leaves it nothing to read.`,
 					out = string(data)
 				}
 			}
-			return dispatch(cmd, "execution-record", map[string]any{"id": args[0], "output": out})
+			req := map[string]any{"id": args[0], "output": out}
+			putIf(req, "outcome", outcome)
+			return dispatch(cmd, "execution-record", req)
 		},
 	}
 	cmd.Flags().StringVar(&output, "output", "", "run output text (default: read from stdin)")
+	cmd.Flags().StringVar(&outcome, "outcome", "", "how the run ended: accept, reject, performed or no-op")
 	return cmd
 }
 

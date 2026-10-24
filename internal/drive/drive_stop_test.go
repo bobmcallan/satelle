@@ -282,7 +282,8 @@ func TestDriveOfAnUnknownStoryRecordsNothing(t *testing.T) {
 	e.wantLedgerDelta(before)
 }
 
-// AC8: a drive over an id that is not a story is refused and leaves the ledger as it was.
+// AC8: a drive over an id that is neither a story nor an execution (a task header
+// has no lifecycle) is refused and leaves the ledger as it was.
 func TestDriveOfANonStoryRecordsNothing(t *testing.T) {
 	e := newEnv(t, routeDone, workRoute)
 	raw, err := verb.Dispatch(context.Background(), "task-create", mustJSON(map[string]any{"title": "not a story"}))
@@ -295,8 +296,8 @@ func TestDriveOfANonStoryRecordsNothing(t *testing.T) {
 	}
 	before := e.ledgerIDs()
 	_, err = drive.Story(context.Background(), task.ID, opts(&fakePerformers{}))
-	if err == nil || !strings.Contains(err.Error(), "is not a story") {
-		t.Fatalf("want a refusal naming that %s is not a story, got %v", task.ID, err)
+	if err == nil || !strings.Contains(err.Error(), "is not a story or execution") {
+		t.Fatalf("want a refusal naming that %s is not a story or execution, got %v", task.ID, err)
 	}
 	e.wantLedgerDelta(before)
 }

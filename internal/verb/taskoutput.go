@@ -24,6 +24,58 @@ func init() {
 // okfRunOutputType is the OKF `type` carried by a run-output document.
 const okfRunOutputType = "task-execution-output"
 
+// The outcomes a run's performer or validator may record on its run-output doc:
+// the same vocabulary satelle-server accepts for a step verdict. The binary
+// computes none of them; "no-op" is how the task's own substrate says there was
+// nothing to do.
+const (
+	OutcomeAccept    = "accept"
+	OutcomeReject    = "reject"
+	OutcomePerformed = "performed"
+	OutcomeNoOp      = "no-op"
+)
+
+// ValidOutcome reports whether o is one of the recordable outcomes.
+func ValidOutcome(o string) bool {
+	switch o {
+	case OutcomeAccept, OutcomeReject, OutcomePerformed, OutcomeNoOp:
+		return true
+	}
+	return false
+}
+
+// runOutputPath is where an execution's run-output doc lives.
+func runOutputPath(exec workitem.Item) string {
+	return filepath.Join(execDir(exec.ParentID), runOutputFileName(exec.ID))
+}
+
+// RunOutcome reads the outcome recorded on exec's run-output doc: the one record
+// a run's result is read from. It is "" when no doc was written or the doc
+// records no outcome.
+func RunOutcome(exec workitem.Item) string {
+	if taskDir == "" || exec.ParentID == "" {
+		return ""
+	}
+	body, err := os.ReadFile(runOutputPath(exec))
+	if err != nil {
+		return ""
+	}
+	const key = "outcome: "
+	inFront := false
+	for _, ln := range strings.Split(string(body), "\n") {
+		switch {
+		case strings.TrimSpace(ln) == "---":
+			if inFront {
+				return ""
+			}
+			inFront = true
+		case inFront && strings.HasPrefix(ln, key):
+			return strings.TrimSpace(strings.TrimPrefix(ln, key))
+		}
+	}
+	return ""
+}
+
 // runOutputFileName is the per-run output doc name under the parent task folder.
 // The execution id is unique per run, so a new run never overwrites a prior run's
 // output (sty_890b86cb). The `output-` prefix keeps it out of the exe_*.md
@@ -38,8 +90,10 @@ func runOutputFileName(execID string) string { return "output-" + execID + ".md"
 // use — the DISPATCHED path (the named agent's stdout written through
 // mechanically from the dispatch site) and the IN-LOOP path (the
 // execution-record verb the orchestrator calls). No-op when taskDir is unset;
-// idempotent for the same run.
-func recordRunOutput(exec workitem.Item, output string, now time.Time) (string, error) {
+// idempotent for the same run. A recorded outcome is written into the doc's
+// frontmatter; a record that carries none keeps the outcome already on the doc, so
+// a performer that records its output after its outcome does not lose it.
+func recordRunOutput(exec workitem.Item, output, outcome string, now time.Time) (string, error) {
 	if taskDir == "" {
 		return "", nil
 	}
@@ -50,10 +104,16 @@ func recordRunOutput(exec workitem.Item, output string, now time.Time) (string, 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("record: run-output dir: %w", err)
 	}
+	if outcome == "" {
+		outcome = RunOutcome(exec)
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "---\ntype: %s\ngenerated: satelle\nexecution: %s\ntask: %s\ntimestamp: %s\n---\n\n# Run output — %s\n\n%s\n",
-		okfRunOutputType, exec.ID, exec.ParentID, now.UTC().Format(time.RFC3339),
-		exec.ID, strings.TrimRight(output, "\n"))
+	fmt.Fprintf(&b, "---\ntype: %s\ngenerated: satelle\nexecution: %s\ntask: %s\ntimestamp: %s\n",
+		okfRunOutputType, exec.ID, exec.ParentID, now.UTC().Format(time.RFC3339))
+	if outcome != "" {
+		fmt.Fprintf(&b, "outcome: %s\n", outcome)
+	}
+	fmt.Fprintf(&b, "---\n\n# Run output — %s\n\n%s\n", exec.ID, strings.TrimRight(output, "\n"))
 	path := filepath.Join(dir, runOutputFileName(exec.ID))
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
 		return "", fmt.Errorf("record: write run output: %w", err)
@@ -67,6 +127,9 @@ func recordRunOutput(exec workitem.Item, output string, now time.Time) (string, 
 type executionRecordReq struct {
 	ID     string `json:"id"`
 	Output string `json:"output"`
+	// Outcome is optional: one of the Outcome* values, which the run's result is
+	// read as (a remote node reports it).
+	Outcome string `json:"outcome,omitempty"`
 }
 
 func executionRecord(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
@@ -81,16 +144,25 @@ func executionRecord(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	if req.ID == "" {
 		return nil, fmt.Errorf("verb: id required")
 	}
+	if req.Outcome != "" && !ValidOutcome(req.Outcome) {
+		return nil, fmt.Errorf("verb: outcome %q must be accept, reject, performed or no-op", req.Outcome)
+	}
 	exec, err := store.Get(ctx, req.ID)
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now()
-	path, werr := recordRunOutput(exec, req.Output, now)
+	path, werr := recordRunOutput(exec, req.Output, req.Outcome, now)
 	if werr != nil {
 		return nil, werr
 	}
-	appendLedger(ctx, req.ID, ledger.KindTaskUpdated, "recorded run output", now)
+	// The ledger row mirrors the outcome for history; the run-output doc is the
+	// record it is read from.
+	note := "recorded run output"
+	if req.Outcome != "" {
+		note += " (outcome " + req.Outcome + ")"
+	}
+	appendLedger(ctx, req.ID, ledger.KindTaskUpdated, note, now)
 	appendOpLog("execution-record", req.ID, "run output → "+path, now)
 	notifyChange(TopicTasks)
 	return json.Marshal(map[string]string{"execution": req.ID, "path": path})

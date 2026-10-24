@@ -132,6 +132,9 @@ type nodeRig struct {
 	// tokenStdin makes join hand over the token on stdin (--token-stdin) rather
 	// than in argv.
 	tokenStdin bool
+	// fakeSetup, when set, configures the satelle.dev fake as serve creates it,
+	// before the node asks it anything.
+	fakeSetup func(*devtest.Node)
 }
 
 // newNodeRig sets the environment of a fresh machine with a fake agent on its PATH
@@ -208,6 +211,9 @@ func (r *nodeRig) serve(id, token string, bundle []byte) *devtest.Node {
 	r.t.Helper()
 	fake := devtest.NewNode(r.t, id, token, bundle, "v7")
 	fake.Secrets["CLAUDE_CODE_OAUTH_TOKEN"] = devtest.SecretValue
+	if r.fakeSetup != nil {
+		r.fakeSetup(fake)
+	}
 	nodeServer = func() string { return fake.URL }
 	nodeHTTP = fake.Client()
 	return fake
@@ -266,6 +272,17 @@ func (r *nodeRig) launcher(fakeCh chan<- *devtest.Node, joined chan<- error) rem
 // open brings a node up through the relay and returns the controller's run.
 func (r *nodeRig) open(t *testing.T) (run *remotenode.Run, fake *devtest.Node, joined chan error, spec remotechan.LaunchSpec) {
 	t.Helper()
+	run, fake, joined, spec, err := r.tryOpen(t)
+	if err != nil {
+		t.Fatalf("Attach: %v\nnode log:\n%s", err, r.log)
+	}
+	return run, fake, joined, spec
+}
+
+// tryOpen is open that returns the controller's Attach error (a node that is not
+// ready) instead of failing the test.
+func (r *nodeRig) tryOpen(t *testing.T) (run *remotenode.Run, fake *devtest.Node, joined chan error, spec remotechan.LaunchSpec, attachErr error) {
+	t.Helper()
 	fakeCh := make(chan *devtest.Node, 1)
 	joined = make(chan error, 1)
 	client := hosted.NewClient("https://satelle.test", &nodeTestStore{cred: hosted.Credential{ServerURL: "https://satelle.test", AccessToken: "access-1"}}, nil)
@@ -281,10 +298,7 @@ func (r *nodeRig) open(t *testing.T) (run *remotenode.Run, fake *devtest.Node, j
 		t.Fatalf("Open: %v\nnode log:\n%s", err, r.log)
 	}
 	run, err = remotenode.Attach(ctx, sess, 60*time.Second)
-	if err != nil {
-		t.Fatalf("Attach: %v\nnode log:\n%s", err, r.log)
-	}
-	return run, <-fakeCh, joined, got
+	return run, <-fakeCh, joined, got, err
 }
 
 // files is every file under dir, by slash path.

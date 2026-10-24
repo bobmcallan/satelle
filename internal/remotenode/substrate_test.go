@@ -33,6 +33,7 @@ func definitionFiles(t *testing.T) map[string]string {
 		"workflows/agents.toml":        "agents",
 		"skills/remote-work.md":        "skill",
 		"principles/remote-conduct.md": "principle",
+		"tasks/tsk_nightly-sweep.md":   "task",
 	}
 }
 
@@ -147,7 +148,7 @@ func TestInstallDefinitionRefusesAndInstallsNothing(t *testing.T) {
 		{"not a bundle", []byte(`<html>`), "invalid character"},
 		{"path escapes", bundleOf(t, with("../x", "x")), "escapes"},
 		{"path outside the roots", bundleOf(t, with("notes/x.md", "x")), "outside the bundle's roots"},
-		{"a file where a root dir should be", bundleOf(t, with("workflows", "x")), "outside workflows, skills, principles"},
+		{"a file where a root dir should be", bundleOf(t, with("workflows", "x")), "outside workflows, skills, principles, tasks"},
 		{"no remote.toml", bundleOf(t, without("remote.toml")), "no remote.toml"},
 		{"malformed remote.toml", bundleOf(t, with("remote.toml", "[[secret\nkey = 1")), "remote.toml"},
 		{"wrong-typed allow", bundleOf(t, with("remote.toml", "[network]\nallow = \"x\"\n")), "remote.toml"},

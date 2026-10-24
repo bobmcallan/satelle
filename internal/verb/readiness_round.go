@@ -301,7 +301,7 @@ func dispatchPerformer(ctx context.Context, current workitem.Item, to, attempt s
 	// write seam the in-loop execution-record verb uses. Best-effort: a write
 	// failure is recorded, not fatal (the run already happened).
 	if current.Kind == workitem.KindExecution && res.Output != "" {
-		if _, werr := recordRunOutput(current, res.Output, now); werr != nil {
+		if _, werr := recordRunOutput(current, res.Output, "", now); werr != nil {
 			appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "executor",
 				"run-output record failed: "+werr.Error(),
 				attemptPayload(current.Status, to, res.Skill, attempt), now)

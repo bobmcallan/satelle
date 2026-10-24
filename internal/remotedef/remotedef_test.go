@@ -96,6 +96,41 @@ func TestParseOfNothingIsAnEmptyDefinition(t *testing.T) {
 	}
 }
 
+// A [drive] kind = "task" definition names the task a wake runs, as its bare
+// name; the node finds it under the tsk_ id SyncTasks ingests it as.
+func TestParseReadsTheTaskARemoteDrives(t *testing.T) {
+	raw, err := os.ReadFile("testdata/task.remote.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !d.RunsTask() || d.Drive.Kind != DriveTask || d.Drive.Task != "nightly-sweep" {
+		t.Errorf("drive = %+v, want a task remote for nightly-sweep", d.Drive)
+	}
+	if got, want := d.TaskID(), "tsk_nightly-sweep"; got != want {
+		t.Errorf("TaskID() = %q, want %q", got, want)
+	}
+}
+
+// A definition with no [drive] table, or kind = "story", drives stories as before.
+func TestAStoryOrUndeclaredDriveRunsNoTask(t *testing.T) {
+	for name, body := range map[string]string{
+		"no drive table": string(fixture(t)),
+		"story kind":     "[drive]\nkind = \"story\"\n",
+	} {
+		d, err := Parse([]byte(body))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if d.RunsTask() {
+			t.Errorf("%s: RunsTask() = true, want false (drive = %+v)", name, d.Drive)
+		}
+	}
+}
+
 func TestRepoName(t *testing.T) {
 	for url, want := range map[string]string{
 		"https://github.com/acme/widgets.git": "widgets",

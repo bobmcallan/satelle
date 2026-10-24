@@ -491,6 +491,39 @@ func TestStoryReportsAStoryThatIsAlreadyStopped(t *testing.T) {
 	}
 }
 
+// A drive walks an execution of a task as it walks a story, and OnMove reports
+// each move as it is made.
+func TestStoryDrivesAnExecutionAndReportsEachMove(t *testing.T) {
+	e := newEnv(t, routeDone, workRoute)
+	ctx := context.Background()
+	create := func(name string, req map[string]any) workitem.Item {
+		t.Helper()
+		raw, err := verb.Dispatch(ctx, name, mustJSON(req))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var it workitem.Item
+		if err := json.Unmarshal(raw, &it); err != nil || it.ID == "" {
+			t.Fatalf("%s: %v %q", name, err, raw)
+		}
+		return it
+	}
+	task := create("task-create", map[string]any{"title": "sweep"})
+	exec := create("execution-create", map[string]any{"title": "one sweep", "parent_id": task.ID})
+	perf := &fakePerformers{kinds: map[string]verb.PerformerKind{"in_progress": verb.PerformerExecutor}, executor: headless()}
+	var seen []drive.Move
+	res, err := drive.Story(ctx, exec.ID, drive.Options{Performers: perf, OnMove: func(m drive.Move) { seen = append(seen, m) }})
+	if err != nil {
+		t.Fatalf("drive: %v", err)
+	}
+	if !res.Terminal || res.Parked || e.status(exec.ID) != "done" {
+		t.Fatalf("want the execution done, got %+v (stored %q)", res, e.status(exec.ID))
+	}
+	if len(seen) != 2 || len(seen) != len(res.Moves) || seen[0] != res.Moves[0] || seen[1].To != "done" {
+		t.Errorf("OnMove saw %+v, want the drive's own moves %+v", seen, res.Moves)
+	}
+}
+
 func TestStoryRequiresIDAndPerformers(t *testing.T) {
 	if _, err := drive.Story(context.Background(), " ", drive.Options{Performers: &fakePerformers{}}); err == nil {
 		t.Error("an empty id must be refused")

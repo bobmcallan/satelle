@@ -51,6 +51,42 @@ func TestExecutionRecordWritesOKFOutput(t *testing.T) {
 	}
 }
 
+// The outcome a performer or validator records is written into the run-output
+// doc, read back from it, kept by a later record that carries none, and refused
+// when it is not one of the recordable outcomes.
+func TestExecutionRecordWritesTheOutcomeIntoTheRunOutputDoc(t *testing.T) {
+	_, taskDir := wireTasks(t)
+	var task, run workitem.Item
+	json.Unmarshal(call(t, "task-create", map[string]any{"title": "Runnable"}), &task)
+	json.Unmarshal(call(t, "execution-create", map[string]any{"title": "r1", "parent_id": task.ID}), &run)
+
+	if got := verb.RunOutcome(run); got != "" {
+		t.Fatalf("a run with no doc has outcome %q, want none", got)
+	}
+	call(t, "execution-record", map[string]any{"id": run.ID, "output": "nothing to do", "outcome": "no-op"})
+	if got := verb.RunOutcome(run); got != verb.OutcomeNoOp {
+		t.Fatalf("outcome = %q, want no-op", got)
+	}
+	doc, err := os.ReadFile(filepath.Join(taskDir, task.ID, "output-"+run.ID+".md"))
+	if err != nil || !strings.Contains(string(doc), "\noutcome: no-op\n") {
+		t.Fatalf("the outcome is not in the doc's frontmatter: %v\n%s", err, doc)
+	}
+
+	call(t, "execution-record", map[string]any{"id": run.ID, "output": "more detail"})
+	if got := verb.RunOutcome(run); got != verb.OutcomeNoOp {
+		t.Errorf("a record with no outcome dropped it: %q", got)
+	}
+	call(t, "execution-record", map[string]any{"id": run.ID, "output": "changed my mind", "outcome": "performed"})
+	if got := verb.RunOutcome(run); got != verb.OutcomePerformed {
+		t.Errorf("outcome = %q, want the newly recorded performed", got)
+	}
+
+	bad, _ := json.Marshal(map[string]any{"id": run.ID, "output": "x", "outcome": "done"})
+	if _, err := verb.Dispatch(t.Context(), "execution-record", bad); err == nil || !strings.Contains(err.Error(), "outcome") {
+		t.Errorf("an unknown outcome must be refused naming it, got %v", err)
+	}
+}
+
 // TestAttachRootResolvesByKind proves the attachment root resolves by KIND
 // (sty_890b86cb): attaching to a TASK materialises under .satelle/tasks/<tsk_id>/,
 // never under .satelle/stories/, while a story attaches under stories/ as before.

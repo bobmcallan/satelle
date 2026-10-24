@@ -47,12 +47,40 @@ type Network struct {
 	Allow []string `toml:"allow"`
 }
 
+// What a wake of the remote drives (Drive.Kind). satelle-server validates the
+// field; a node only reads it.
+const (
+	// DriveStory: each wake drives a story through host.story_command. It is the
+	// meaning of a definition that declares no [drive] table.
+	DriveStory = "story"
+	// DriveTask: each wake runs one execution of the task Drive.Task names.
+	DriveTask = "task"
+)
+
+// TaskIDPrefix prefixes a task's bare name to make its item id, the convention
+// verb.SyncTasks ingests task files under (tasks/tsk_<name>.md).
+const TaskIDPrefix = "tsk_"
+
+// Drive is the [drive] table: what a wake of the remote runs. Task is the bare
+// name of the task, as satelle-server validates it, not its item id.
+type Drive struct {
+	Kind string `toml:"kind"`
+	Task string `toml:"task"`
+}
+
 // Definition is the part of remote.toml a node reads.
 type Definition struct {
 	Secret  []SecretDecl `toml:"secret"`
 	Repos   []Repo       `toml:"repo"`
 	Network Network      `toml:"network"`
+	Drive   Drive        `toml:"drive"`
 }
+
+// RunsTask reports whether a wake of the remote runs a task.
+func (d Definition) RunsTask() bool { return d.Drive.Kind == DriveTask }
+
+// TaskID is the item id of the task a wake runs: TaskIDPrefix + Drive.Task.
+func (d Definition) TaskID() string { return TaskIDPrefix + d.Drive.Task }
 
 // Allow is the egress allowlist the definition declares.
 func (d Definition) Allow() []string { return d.Network.Allow }

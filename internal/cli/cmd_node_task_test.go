@@ -1,0 +1,419 @@
+//go:build !windows
+
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/drive"
+	"github.com/bobmcallan/satelle/internal/remotenode/devtest"
+	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/workitem"
+)
+
+// nodeTaskDone and nodeTaskStep are a task remote's own route for its executions:
+// the run step is the executor's, so a test's stub performer does it, and neither
+// the run nor its close names a validator, so nothing needs a reviewer agent. A
+// real remote authors its validators here; the shipped execution route's would
+// run a reviewer the test node does not have.
+const nodeTaskDone = `[meta]
+name = "done"
+type = "workflow"
+scope = "project"
+tags = ["type:workflow"]
+description = "The task node's declaration of done."
+
+["*"]
+obligations = ["raised", "coded", "closed"]
+
+[execution]
+obligations = ["raised", "run", "run-verified"]
+cancel = { state = "cancelled" }
+`
+
+const nodeTaskStep = `[meta]
+name = "step"
+type = "workflow"
+scope = "project"
+tags = ["type:workflow"]
+description = "The task node's step catalogue."
+
+[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "worker"
+skills = ["remote-work"]
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+
+[run]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[run-verified]
+status = "done"
+terminal = true
+requires = ["run"]
+
+# Declaring any always-on gate replaces the shipped ones, so a run is judged by
+# nothing here.
+[[gate]]
+skill = "satelle-step-summary"
+for = ["unused"]
+`
+
+// nodeTaskFile is a task that declares two of the run descriptor's fields as inputs.
+const nodeTaskFile = `---
+id: tsk_nightly-sweep
+type: task
+status: backlog
+inputs_decl: story_id:string:required, trigger:string
+---
+
+# Nightly sweep
+
+Sweep what the story names; record no-op when there is nothing to do.
+`
+
+// taskPerformers is the headless performer a task node's execution is driven with.
+// step runs as the executor's performance of the working step; entered sees each
+// step the drive enters.
+type taskPerformers struct {
+	step    func(item workitem.Item) error
+	entered func(item workitem.Item, step string)
+}
+
+func (p *taskPerformers) StepPerformer(_ context.Context, item workitem.Item, step string) (verb.PerformerResolution, error) {
+	if p.entered != nil {
+		p.entered(item, step)
+	}
+	if step == "in_progress" {
+		return verb.PerformerResolution{Kind: verb.PerformerExecutor}, nil
+	}
+	return verb.PerformerResolution{Kind: verb.PerformerNone}, nil
+}
+
+func (p *taskPerformers) ExecutorBinding() (config.AgentBinding, bool) {
+	return config.AgentBinding{Command: "fake-cli -p {system}"}, true
+}
+
+func (p *taskPerformers) PerformExecutorStep(_ context.Context, item workitem.Item, _, _ string) (verb.DispatchResult, error) {
+	res := verb.DispatchResult{Dispatched: true, Agent: "executor", Command: "fake-cli", Skill: "s"}
+	if p.step != nil {
+		return res, p.step(item)
+	}
+	return res, nil
+}
+
+// useTaskNode points a task node's drive at perf and its heartbeat resend at every.
+func useTaskNode(t *testing.T, perf drive.Performers, every time.Duration) {
+	t.Helper()
+	prevOpts, prevEvery := nodeDriveOptions, nodeStatusResend
+	nodeDriveOptions = func(*cobra.Command) (drive.Options, error) { return drive.Options{Performers: perf}, nil }
+	nodeStatusResend = every
+	t.Cleanup(func() { nodeDriveOptions, nodeStatusResend = prevOpts, prevEvery })
+}
+
+// taskRig is a node rig whose definition drives the task named task, and whose
+// wake is the descriptor the fake serves.
+func taskRig(t *testing.T, task string, withTaskFile bool) (*nodeRig, *subjectStory) {
+	t.Helper()
+	// Read before newNodeRig changes the working directory.
+	remote, err := os.ReadFile(filepath.Join("..", "remotedef", "testdata", "task.remote.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newNodeRig(t)
+	r.bundle["remote.toml"] = strings.ReplaceAll(string(remote), "nightly-sweep", task)
+	r.bundle["workflows/done.toml"] = nodeTaskDone
+	r.bundle["workflows/step.toml"] = nodeTaskStep
+	if withTaskFile {
+		r.bundle["tasks/tsk_"+task+".md"] = nodeTaskFile
+	}
+	subject := &subjectStory{}
+	r.fakeSetup = func(f *devtest.Node) {
+		f.Run = subject
+		f.LostAfterSeconds = 3
+	}
+	return r, subject
+}
+
+// subjectStory is the story a wake names: a real story in the node's own store,
+// made when the node reads its run, so the test can show the run leaves it alone.
+// Its JSON is the run descriptor the fake serves.
+type subjectStory struct {
+	mu   sync.Mutex
+	item workitem.Item
+	err  error
+}
+
+func (s *subjectStory) MarshalJSON() ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.item.ID == "" && s.err == nil {
+		s.err = dispatchInto(context.Background(), "story-create", map[string]any{
+			"title": "subject", "body": "the story a task wake names, which the run must not move", "category": "chore",
+		}, &s.item)
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
+	return json.Marshal(map[string]string{"mode": "node", "story_id": s.item.ID, "trigger": "nightly", "trigger_source": "schedule"})
+}
+
+// ID is the subject's id, "" until the node has read its run.
+func (s *subjectStory) ID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.item.ID
+}
+
+// Created is the subject's id and the status it was made with.
+func (s *subjectStory) Created() (id, status string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.item.ID, s.item.Status
+}
+
+// Status is the subject's status in the node's store now, and what it was when the
+// wake's subject was made.
+func (s *subjectStory) Status() (now, created string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var cur workitem.Item
+	if err := dispatchInto(context.Background(), "story-get", map[string]any{"id": s.item.ID}, &cur); err != nil {
+		return "", s.item.Status, err
+	}
+	return cur.Status, s.item.Status, nil
+}
+
+// runSteps is the heartbeats the fake received as run_state/step/outcome, with
+// adjacent repeats collapsed, and fails the test on one that is not the node's
+// running state for the wake's subject.
+func runSteps(t *testing.T, fake *devtest.Node, subject string) []string {
+	t.Helper()
+	var out []string
+	for _, s := range fake.Statuses() {
+		if s["state"] != "running" || s["story_id"] != subject {
+			t.Errorf("heartbeat %+v is not the running state for the wake's subject", s)
+		}
+		line := s["run_state"] + "/" + s["step"] + "/" + s["outcome"]
+		if len(out) == 0 || out[len(out)-1] != line {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// A definition that declares [drive] kind = "task" with a task its bundle does
+// not carry is refused at prepare, naming the task; the node reports not ready and
+// ends once.
+func TestNodePrepareRefusesATaskItDoesNotHave(t *testing.T) {
+	r, _ := taskRig(t, "missing", false)
+	useTaskNode(t, &taskPerformers{}, 0)
+	_, fake, joined, _, err := r.tryOpen(t)
+	if err == nil || !strings.Contains(err.Error(), "missing") || !strings.Contains(err.Error(), "tsk_missing") {
+		t.Fatalf("Attach = %v, want a not-ready error naming the task missing (tsk_missing)", err)
+	}
+	if jerr := waitJoin(t, joined); jerr == nil || !strings.Contains(jerr.Error(), "which the node does not have") {
+		t.Errorf("join ended with %v, want the task refusal", jerr)
+	}
+	if n := fake.Count(http.MethodPost, "/end"); n != 1 {
+		t.Errorf("end calls = %d, want 1", n)
+	}
+	if n := fake.Count(http.MethodGet, "/run"); n != 0 {
+		t.Errorf("a node that cannot prepare read its run (%d), want none", n)
+	}
+}
+
+// A wake of a task node: one execution of the task, its inputs the descriptor's
+// fields the task declares, driven through the task's own route without delaying
+// the ready report, reported as queued, running with the step (and re-sent while
+// the step runs, at an interval under the server's lost-after window) and
+// concluded with the outcome; the subject story is not touched and the node ends
+// after its run.
+func TestNodeWakeRunsOneExecutionAndReportsIt(t *testing.T) {
+	r, subject := taskRig(t, "nightly-sweep", true)
+	var (
+		mu      sync.Mutex
+		inStep  []workitem.Item
+		movedTo string
+		entered = make(chan struct{})
+		release = make(chan struct{})
+		once    sync.Once
+	)
+	perf := &taskPerformers{
+		step: func(item workitem.Item) error {
+			mu.Lock()
+			if err := dispatchInto(context.Background(), "execution-list", map[string]any{"parent_id": "tsk_nightly-sweep"}, &inStep); err != nil {
+				t.Errorf("execution-list: %v", err)
+			}
+			mu.Unlock()
+			once.Do(func() { close(entered) })
+			<-release
+			// The performer's verdict: an outcome the code would not default to.
+			return dispatchInto(context.Background(), "execution-record",
+				map[string]any{"id": item.ID, "output": "swept", "outcome": verb.OutcomeAccept}, &struct{}{})
+		},
+		entered: func(item workitem.Item, step string) {
+			if step != "done" || item.Kind != workitem.KindExecution {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if now, _, err := subject.Status(); err == nil {
+				movedTo = now
+			}
+		},
+	}
+	useTaskNode(t, perf, 10*time.Millisecond)
+
+	// Attach returning is the ready report arriving: it must not wait for the run,
+	// which is held in its step until the test lets it go.
+	run, fake, joined, spec := r.open(t)
+	_ = run
+	select {
+	case <-entered:
+	case <-time.After(30 * time.Second):
+		t.Fatalf("the drive never reached the working step\nnode log:\n%s", r.log)
+	}
+
+	// The step is running: the heartbeat is re-sent while it does.
+	deadline := time.Now().Add(30 * time.Second)
+	count := func() int {
+		n := 0
+		for _, s := range fake.Statuses() {
+			if s["run_state"] == "running" && s["step"] == "in_progress" {
+				n++
+			}
+		}
+		return n
+	}
+	for count() < 3 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := count(); n < 3 {
+		t.Fatalf("running heartbeats during the step = %d, want the first plus at least two re-sends", n)
+	}
+	mu.Lock()
+	execs := append([]workitem.Item(nil), inStep...)
+	mu.Unlock()
+	if len(execs) != 1 {
+		t.Fatalf("executions of the task = %d, want exactly one: %+v", len(execs), execs)
+	}
+	if !reflect.DeepEqual(execs[0].InputValues, map[string]any{"story_id": subject.ID(), "trigger": "nightly"}) {
+		t.Errorf("inputs = %v, want the descriptor's declared fields only", execs[0].InputValues)
+	}
+	if want := "remote-node:" + spec.Session; !containsTag(execs[0].Tags, want) {
+		t.Errorf("execution tags = %v, want %s", execs[0].Tags, want)
+	}
+
+	close(release)
+	if err := waitJoin(t, joined); err != nil {
+		t.Fatalf("node join ended with %v\nnode log:\n%s", err, r.log)
+	}
+
+	if got, want := runSteps(t, fake, subject.ID()), []string{"queued//", "running/in_progress/", "running/done/", "concluded//accept"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("heartbeats = %v, want %v", got, want)
+	}
+	// The concluded outcome is the one the performer recorded on the run-output doc,
+	// not the code's fallback.
+	docs, _ := filepath.Glob(filepath.Join(r.nodeRoot, ".satelle", "tasks", "tsk_nightly-sweep", "output-exe_*.md"))
+	if len(docs) != 1 {
+		t.Fatalf("run-output docs = %v, want one", docs)
+	}
+	if body, err := os.ReadFile(docs[0]); err != nil || !strings.Contains(string(body), "\noutcome: accept\n") {
+		t.Errorf("the run-output doc does not record the performer's outcome: %v\n%s", err, body)
+	}
+	// The subject is the story the wake named, and the run left its status as it was:
+	// read when the drive entered its last step, the node's store is gone after.
+	mu.Lock()
+	if _, created := subject.Created(); created == "" || movedTo != created {
+		t.Errorf("the subject story went from %q to %q over the run, want it unchanged", created, movedTo)
+	}
+	mu.Unlock()
+	// One end call, and nothing was sent after it or after the concluded heartbeat.
+	if n := fake.Count(http.MethodPost, "/end"); n != 1 {
+		t.Errorf("end calls = %d, want 1", n)
+	}
+	calls := fake.Calls()
+	if last := calls[len(calls)-1]; last.Method != http.MethodPost || !strings.HasSuffix(last.Path, "/end") {
+		t.Errorf("the last call = %+v, want the end call", last)
+	}
+	if st := fake.Statuses(); st[len(st)-1]["run_state"] != "concluded" {
+		t.Errorf("the last heartbeat = %+v, want concluded", st[len(st)-1])
+	}
+}
+
+// A task whose performer records outcome no-op concludes without error, and the
+// node reports concluded with outcome no-op. The run ends instantly, so this is
+// also the proof that a run which concludes before the ready report is on the wire
+// cannot pre-empt it: the controller still attaches, and the node ends once.
+func TestNodeWakeThatFindsNothingToDoConcludesNoOp(t *testing.T) {
+	r, subject := taskRig(t, "nightly-sweep", true)
+	perf := &taskPerformers{step: func(item workitem.Item) error {
+		return dispatchInto(context.Background(), "execution-record",
+			map[string]any{"id": item.ID, "output": "nothing to do", "outcome": "no-op"}, &struct{}{})
+	}}
+	useTaskNode(t, perf, 0)
+
+	run, fake, joined, _ := r.open(t)
+	if run.Report.Error != "" {
+		t.Fatalf("report = %+v", run.Report)
+	}
+	if err := waitJoin(t, joined); err != nil {
+		t.Fatalf("node join ended with %v\nnode log:\n%s", err, r.log)
+	}
+	if got, want := runSteps(t, fake, subject.ID()), []string{"queued//", "running/in_progress/", "running/done/", "concluded//no-op"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("heartbeats = %v, want %v", got, want)
+	}
+	if n := fake.Count(http.MethodPost, "/end"); n != 1 {
+		t.Errorf("end calls = %d, want 1", n)
+	}
+	docs, _ := filepath.Glob(filepath.Join(r.nodeRoot, ".satelle", "tasks", "tsk_nightly-sweep", "output-exe_*.md"))
+	if len(docs) != 1 {
+		t.Fatalf("run-output docs = %v, want one", docs)
+	}
+	if body, err := os.ReadFile(docs[0]); err != nil || !strings.Contains(string(body), "\noutcome: no-op\n") {
+		t.Errorf("the run-output doc does not record the outcome: %v\n%s", err, body)
+	}
+}
+
+// dispatchInto runs a verb in this process and decodes its answer into out.
+func dispatchInto(ctx context.Context, name string, req map[string]any, out any) error {
+	raw, _ := json.Marshal(req)
+	ans, err := verb.Dispatch(ctx, name, raw)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(ans, out)
+}
+
+func containsTag(tags []string, want string) bool {
+	for _, t := range tags {
+		if t == want {
+			return true
+		}
+	}
+	return false
+}

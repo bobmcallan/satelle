@@ -44,6 +44,44 @@ func TestDefinitionIsFetchedWithTheNodeToken(t *testing.T) {
 	}
 }
 
+// The run descriptor is read from GET .../run with the node token, and a heartbeat
+// goes out as PUT .../status carrying only the fields it sets, the reply's
+// lost_after_seconds coming back.
+func TestRunAndStatusUseTheNodeRoutes(t *testing.T) {
+	fake, client, _ := newFake(t)
+	fake.Run = map[string]string{"mode": "node", "story_id": "sty_1", "trigger": "nightly", "trigger_source": "schedule"}
+	fake.LostAfterSeconds = 90
+
+	d, err := client.Run(context.Background())
+	if err != nil || d != (RunDescriptor{Mode: "node", StoryID: "sty_1", Trigger: "nightly", TriggerSource: "schedule"}) {
+		t.Fatalf("Run = %+v, %v", d, err)
+	}
+	reply, err := client.Status(context.Background(), NodeStatus{State: StateRunning, StoryID: "sty_1", RunState: RunQueued})
+	if err != nil || reply.LostAfterSeconds != 90 {
+		t.Fatalf("Status = %+v, %v", reply, err)
+	}
+	if _, err := client.Status(context.Background(), NodeStatus{State: StateRunning, RunState: RunConcluded, Outcome: "no-op"}); err != nil {
+		t.Fatal(err)
+	}
+
+	st := fake.Statuses()
+	if len(st) != 2 || st[0]["run_state"] != "queued" || st[0]["story_id"] != "sty_1" || st[0]["step"] != "" || st[0]["outcome"] != "" ||
+		st[1]["run_state"] != "concluded" || st[1]["outcome"] != "no-op" {
+		t.Errorf("statuses = %v, want the fields each heartbeat set and no others", st)
+	}
+	for _, c := range fake.Calls() {
+		if c.Auth != "Bearer "+testNodeToken {
+			t.Errorf("call %+v is not under the node token", c)
+		}
+	}
+	if n := fake.Count(http.MethodGet, "/run"); n != 1 {
+		t.Errorf("run reads = %d, want 1", n)
+	}
+	if n := fake.Count(http.MethodPut, "/status"); n != 2 {
+		t.Errorf("status heartbeats = %d, want 2", n)
+	}
+}
+
 // AC3: a body that does not hash to its ETag, or an answer without the headers
 // the contract promises, is not a definition.
 func TestDefinitionRefusesWhatIsNotTheStoredBundle(t *testing.T) {

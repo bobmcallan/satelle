@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/drive"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -49,20 +51,7 @@ func runStoryDrive(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	out := cmd.OutOrStdout()
-	res, err := drive.Story(cmd.Context(), id, drive.Options{
-		Performers: eng,
-		// The node's identity, so the server can tell this drive's park from a person's.
-		Location:      hosted.KnownLocationID(a.RepoRoot),
-		LocationLabel: hosted.LocationLabel(a.RepoRoot),
-		Rework: func(ctx context.Context, id string) (drive.Rework, error) {
-			var relay reworkResult
-			err := runRework(cmd, id, 0, "", &relay)
-			return drive.Rework{
-				Converged: relay.Converged, Outcome: relay.Outcome, Rounds: relay.Rounds, LastObjection: relay.LastObjection,
-			}, err
-		},
-		Out: out,
-	})
+	res, err := drive.Story(cmd.Context(), id, driveOptions(cmd, eng, a, out))
 	var stopped *drive.Stopped
 	if errors.As(err, &stopped) {
 		// The drive ended short of its exit and could not park the story: the stop
@@ -82,6 +71,26 @@ func runStoryDrive(cmd *cobra.Command, args []string) error {
 		return &ExitError{Code: exitParked, Err: fmt.Errorf("%s", summary), Quiet: true}
 	}
 	return nil
+}
+
+// driveOptions is what a drive in this process runs with: the engine's performers,
+// this machine's identity (so the server can tell this drive's park from a
+// person's), and the declared rework relay. `story drive` and a task-kind node's
+// wake share it.
+func driveOptions(cmd *cobra.Command, eng drive.Performers, a *app.App, out io.Writer) drive.Options {
+	return drive.Options{
+		Performers:    eng,
+		Location:      hosted.KnownLocationID(a.RepoRoot),
+		LocationLabel: hosted.LocationLabel(a.RepoRoot),
+		Rework: func(ctx context.Context, id string) (drive.Rework, error) {
+			var relay reworkResult
+			err := runRework(cmd, id, 0, "", &relay)
+			return drive.Rework{
+				Converged: relay.Converged, Outcome: relay.Outcome, Rounds: relay.Rounds, LastObjection: relay.LastObjection,
+			}, err
+		},
+		Out: out,
+	}
 }
 
 // driveSummary is the one line a drive ends on.

@@ -77,9 +77,9 @@ func (c *NodeClient) path(tail string) string {
 
 // do sends one request with the node token. A 401 is the token's refusal: it is
 // remembered, so call asks nothing further.
-func (c *NodeClient) do(ctx context.Context, method, tail string) ([]byte, http.Header, error) {
+func (c *NodeClient) do(ctx context.Context, method, tail string, reqBody any) ([]byte, http.Header, error) {
 	route := method + " " + c.path(tail)
-	body, h, err := c.client.SignedDo(ctx, hosted.SignedRequest{Method: method, Path: c.path(tail), Bearer: c.token})
+	body, h, err := c.client.SignedDo(ctx, hosted.SignedRequest{Method: method, Path: c.path(tail), Bearer: c.token, Body: reqBody})
 	var ae *hosted.APIError
 	if errors.As(err, &ae) && ae.Status == http.StatusUnauthorized {
 		c.mu.Lock()
@@ -91,22 +91,22 @@ func (c *NodeClient) do(ctx context.Context, method, tail string) ([]byte, http.
 }
 
 // call is do unless the token has already been refused, in which case it makes no
-// request.
-func (c *NodeClient) call(ctx context.Context, method, tail string) ([]byte, http.Header, error) {
+// request. A non-nil reqBody is sent as JSON.
+func (c *NodeClient) call(ctx context.Context, method, tail string, reqBody any) ([]byte, http.Header, error) {
 	c.mu.Lock()
 	refused := c.refused
 	c.mu.Unlock()
 	if refused {
 		return nil, nil, &TokenRefusedError{Route: method + " " + c.path(tail)}
 	}
-	return c.do(ctx, method, tail)
+	return c.do(ctx, method, tail, reqBody)
 }
 
 // Definition fetches the stored bundle of the definition the node runs and the
 // version it was stored as. The bytes are exactly the stored bundle, and they must
 // hash to the ETag the server sent with them.
 func (c *NodeClient) Definition(ctx context.Context) (bundle []byte, version string, err error) {
-	body, h, err := c.call(ctx, http.MethodGet, "/definition")
+	body, h, err := c.call(ctx, http.MethodGet, "/definition", nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("definition: %w", err)
 	}
@@ -128,7 +128,7 @@ func (c *NodeClient) Definition(ctx context.Context) (bundle []byte, version str
 // Secret reads one secret's value. A key satelle.dev refuses (not declared by the
 // definition, or not granted to it) is a *SecretRefusal.
 func (c *NodeClient) Secret(ctx context.Context, key string) (string, error) {
-	raw, _, err := c.call(ctx, http.MethodPost, "/secrets/"+url.PathEscape(key))
+	raw, _, err := c.call(ctx, http.MethodPost, "/secrets/"+url.PathEscape(key), nil)
 	if err != nil {
 		var ae *hosted.APIError
 		if errors.As(err, &ae) {
@@ -163,12 +163,73 @@ func (c *NodeClient) Secrets(ctx context.Context, decls []remotedef.SecretDecl) 
 	return out, nil
 }
 
+// RunDescriptor is what GET .../run tells a node about its run. Only the wake's
+// subject is read: StoryID is the story the node was woken for, Trigger the
+// declared trigger that woke it and TriggerSource how (mcp, api, status or
+// schedule). A node started by hand carries none of the three.
+type RunDescriptor struct {
+	Mode          string `json:"mode"`
+	StoryID       string `json:"story_id,omitempty"`
+	Trigger       string `json:"trigger,omitempty"`
+	TriggerSource string `json:"trigger_source,omitempty"`
+}
+
+// Run reads the node's run descriptor.
+func (c *NodeClient) Run(ctx context.Context) (RunDescriptor, error) {
+	raw, _, err := c.call(ctx, http.MethodGet, "/run", nil)
+	if err != nil {
+		return RunDescriptor{}, fmt.Errorf("run: %w", err)
+	}
+	var d RunDescriptor
+	if err := json.Unmarshal(raw, &d); err != nil {
+		return RunDescriptor{}, errors.New("run: the answer is malformed")
+	}
+	return d, nil
+}
+
+// The run states a node reports for its task run, and the heartbeat state it is
+// reported under (satelle-server remotes.NodeRunning).
+const (
+	RunQueued    = "queued"
+	RunRunning   = "running"
+	RunConcluded = "concluded"
+
+	StateRunning = "running"
+)
+
+// NodeStatus is the node's heartbeat, PUT to .../status. RunState and Outcome are
+// sent only when set, and Outcome only with RunConcluded.
+type NodeStatus struct {
+	State    string `json:"state"`
+	StoryID  string `json:"story_id,omitempty"`
+	Step     string `json:"step,omitempty"`
+	RunState string `json:"run_state,omitempty"`
+	Outcome  string `json:"outcome,omitempty"`
+}
+
+// StatusReply is what the server says back to a heartbeat that the node uses:
+// LostAfterSeconds is how long it may go unheard before the server lists it lost.
+type StatusReply struct {
+	LostAfterSeconds int `json:"lost_after_seconds"`
+}
+
+// Status sends one heartbeat.
+func (c *NodeClient) Status(ctx context.Context, s NodeStatus) (StatusReply, error) {
+	raw, _, err := c.call(ctx, http.MethodPut, "/status", s)
+	if err != nil {
+		return StatusReply{}, fmt.Errorf("status: %w", err)
+	}
+	var r StatusReply
+	_ = json.Unmarshal(raw, &r) // a reply without the window falls back to the default cadence
+	return r, nil
+}
+
 // End tells satelle.dev the node's run is over, which revokes the node token. It
 // sends the request once however often it is called; a 401 means the token is
 // already gone, which is what End wanted.
 func (c *NodeClient) End(ctx context.Context) error {
 	c.endOnce.Do(func() {
-		_, _, err := c.do(ctx, http.MethodPost, "/end")
+		_, _, err := c.do(ctx, http.MethodPost, "/end", nil)
 		var tr *TokenRefusedError
 		if err != nil && !errors.As(err, &tr) {
 			c.endErr = fmt.Errorf("end: %w", err)

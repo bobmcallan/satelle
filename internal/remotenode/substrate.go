@@ -9,8 +9,10 @@ import (
 )
 
 // SubstrateDirs are the directories of a remote definition that become the node's
-// substrate, relative to the definition and to the node's data dir alike.
-var SubstrateDirs = []string{"workflows", "skills", "principles"}
+// substrate, relative to the definition and to the node's data dir alike. tasks
+// carries the task a task-kind remote runs (tasks/tsk_<name>.md, the file
+// verb.SyncTasks ingests from the node's task dir).
+var SubstrateDirs = []string{"workflows", "skills", "principles", "tasks"}
 
 // DefinitionFile is the definition's own file in the bundle. The node reads it
 // (remotedef.Parse) and does not install it: host commands are satelle-server's

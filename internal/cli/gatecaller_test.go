@@ -565,8 +565,10 @@ func TestHandOff_ReworkRelayIsHandedOff(t *testing.T) {
 
 // A CLI command that builds its own reviewer engine (engineForCmd) bypasses the
 // verb registry, so it must reach the hand-off itself. Guard: every non-test file
-// that does so — other than the wiring in app.go — also calls handOffGate, so a
-// new reviewer-running command cannot skip the contract (sty_c4b92c9e AC6).
+// that does so — other than the wiring in app.go and cmd_node.go — also calls
+// handOffGate, so a new reviewer-running command cannot skip the contract
+// (sty_c4b92c9e AC6). cmd_node.go is skipped: node join is launched by
+// satelle.dev, never by an agent, and must hold its process.
 func TestEveryEngineBuildingCommandHandsOff(t *testing.T) {
 	files, err := os.ReadDir(".")
 	if err != nil {
@@ -574,7 +576,7 @@ func TestEveryEngineBuildingCommandHandsOff(t *testing.T) {
 	}
 	for _, f := range files {
 		name := f.Name()
-		if f.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == "app.go" {
+		if f.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == "app.go" || name == "cmd_node.go" {
 			continue
 		}
 		b, _ := os.ReadFile(name)

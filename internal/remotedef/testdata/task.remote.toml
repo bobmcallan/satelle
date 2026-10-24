@@ -1,0 +1,15 @@
+# A task-kind remote: each wake runs one execution of the named task. The shape
+# of [drive] is satelle-server's internal/remotedef (kind = "task" with the bare
+# task name in task, and no host.story_command).
+satelle_version = "0.0.702"
+remote_id = "rmt_task01"
+wake_key = "REMOTE_WAKE_KEY"
+lifecycle = "idle"
+
+[drive]
+kind = "task"
+task = "nightly-sweep"
+
+[[repo]]
+url = "https://github.com/acme/widgets.git"
+ref = "main"

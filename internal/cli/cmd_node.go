@@ -3,7 +3,9 @@
 // satelle.dev with its node token, installs and reindexes its substrate, joins
 // the relay session, fetches the declared repos read-only, reports ready and
 // serves the controller's jobs. It reads its secrets and ends its run through
-// satelle.dev with the same token. It is a node mode, not a developer command:
+// satelle.dev with the same token. A node of a task-kind remote (remote.toml
+// [drive] kind = "task") also runs its wake: one execution of the remote's task,
+// reported on satelle.dev's status route and followed by the node's end. It is a node mode, not a developer command:
 // remotes are defined, published, secreted and launched through satelle-server,
 // whose launcher builds this argv.
 package cli
@@ -21,6 +23,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -31,10 +34,13 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/drive"
 	"github.com/bobmcallan/satelle/internal/remotechan"
 	"github.com/bobmcallan/satelle/internal/remotedef"
 	"github.com/bobmcallan/satelle/internal/remotenode"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // Seams a test replaces; production leaves them alone.
@@ -49,6 +55,19 @@ var (
 	nodeHTTP *http.Client
 	// nodeFetchEnv is added to git's environment when the node fetches its repos.
 	nodeFetchEnv []string
+	// nodeDriveOptions is how a task-kind node drives its execution: the engine's
+	// performers and the declared rework relay, as `story drive` has them.
+	nodeDriveOptions = func(cmd *cobra.Command) (drive.Options, error) {
+		eng, a, err := engineForCmd(cmd)
+		if err != nil {
+			return drive.Options{}, err
+		}
+		return driveOptions(cmd, eng, a, cmd.ErrOrStderr()), nil
+	}
+	// nodeStatusResend, when set, replaces the interval a running task's heartbeat
+	// is re-sent at (remotenode.DefaultStatusResendInterval, or a third of the
+	// window the server reports).
+	nodeStatusResend time.Duration
 )
 
 // nodeEndTimeout bounds the one end call a stopping node makes.
@@ -180,7 +199,58 @@ func runNodeJoin(cmd *cobra.Command, root, relay, session, token string) error {
 	if perr != nil {
 		report = remotenode.Report{Error: perr.Error()}
 	}
+	if perr == nil && def.RunsTask() {
+		return serveTaskWake(ctx, cmd, node, sess, report, client, session, def)
+	}
 	return node.Serve(ctx, sess, report)
+}
+
+// serveTaskWake serves a task-kind remote's node with its wake run beside Serve
+// (Node.ServeWithRun): the ready report is not delayed by the run, and the node
+// ends with its single run. A run that cannot be made or driven is logged; it has
+// already reported itself concluded as rejected.
+func serveTaskWake(ctx context.Context, cmd *cobra.Command, node *remotenode.Node, sess *remotechan.Session,
+	report remotenode.Report, client *remotenode.NodeClient, session string, def remotedef.Definition) error {
+	opts, desc, err := prepareTaskWake(ctx, cmd, client)
+	if err != nil {
+		return node.Serve(ctx, sess, remotenode.Report{Error: err.Error()})
+	}
+	return node.ServeWithRun(ctx, sess, report, func(runCtx context.Context) {
+		res, rerr := remotenode.RunTask(runCtx, remotenode.TaskRun{
+			Def: def, Desc: desc, NodeID: session, Client: client, Drive: opts, ResendEvery: nodeStatusResend,
+		})
+		if rerr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "join: the task run %s: %v\n", res.Execution, rerr)
+		}
+	})
+}
+
+// prepareTaskWake reads the wake's subject and builds how its execution is driven.
+// Either failing means the node cannot do its one job, so it is reported not ready.
+func prepareTaskWake(ctx context.Context, cmd *cobra.Command, client *remotenode.NodeClient) (drive.Options, remotenode.RunDescriptor, error) {
+	desc, err := client.Run(ctx)
+	if err != nil {
+		return drive.Options{}, desc, fmt.Errorf("join: %w", err)
+	}
+	opts, err := nodeDriveOptions(cmd)
+	if err != nil {
+		return drive.Options{}, desc, fmt.Errorf("join: driving the task: %w", err)
+	}
+	return opts, desc, nil
+}
+
+// checkNodeTask refuses a task-kind definition whose task the node does not have:
+// the bundle's tasks/tsk_<name>.md, ingested when the substrate was reindexed.
+func checkNodeTask(ctx context.Context, def remotedef.Definition) error {
+	raw, err := verb.Dispatch(ctx, "task-get", []byte(`{"id":`+strconv.Quote(def.TaskID())+`}`))
+	var task workitem.Item
+	if err == nil {
+		err = json.Unmarshal(raw, &task)
+	}
+	if err != nil || task.Kind != workitem.KindTask || task.Archived {
+		return fmt.Errorf("remote definition names task %q (%s), which the node does not have", def.Drive.Task, def.TaskID())
+	}
+	return nil
 }
 
 // installNodeDefinition fetches the node's definition with its node token,
@@ -223,10 +293,16 @@ func expandNodeRoot(root string) (string, error) {
 	return filepath.Abs(root)
 }
 
-// prepareNode readies the node from the definition it installed, in order: fetch
-// the repos and resolve every binding. Anything that fails is the node's error,
+// prepareNode readies the node from the definition it installed, in order: a
+// task-kind definition's task is found in the store, the repos are fetched and
+// every binding is resolved. Anything that fails is the node's error,
 // which the controller reports.
 func prepareNode(ctx context.Context, root, dataDir string, def remotedef.Definition, version string) (remotenode.Report, error) {
+	if def.RunsTask() {
+		if err := checkNodeTask(ctx, def); err != nil {
+			return remotenode.Report{}, err
+		}
+	}
 	repos, err := remotenode.FetchRepos(ctx, filepath.Join(root, "repos"), def.Repos, nodeFetchEnv)
 	if err != nil {
 		return remotenode.Report{}, err
