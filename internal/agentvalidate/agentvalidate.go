@@ -59,6 +59,9 @@ type Grant struct {
 	IdleTimeout string
 	// BusyTimeout is the raw busy_timeout= (sty_db62a3b9), empty when unset.
 	BusyTimeout string
+	// Placement is where the binding's work runs (sty_7028d996): "local",
+	// "remote" or "team:<path>". Advisory — the loaders refuse any other value.
+	Placement string
 	// Isolation is the raw isolation= (sty_ef3efb51): "operator-attested" or empty.
 	Isolation         string
 	Tools             string
@@ -1012,6 +1015,7 @@ func checkBinding(section string, b config.AgentBinding, vars map[string]string)
 		IdleTimeout:       b.IdleTimeout,
 		BusyTimeout:       b.BusyTimeout,
 		Isolation:         b.Isolation,
+		Placement:         b.PlacementLabel(),
 		InjectsPrinciples: b.InjectsPrinciples(),
 		Role:              role,
 		Principles:        b.ResolvedPrinciples(),

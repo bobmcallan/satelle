@@ -95,18 +95,33 @@ func resolveReworkPlan(d wfgovern.DerivedRoute, status string) (reworkPlan, erro
 // launches a fresh cloud session carrying the reviewers' findings. The refusal
 // is ledgered. A child placed local — including the not-signed-in fallback —
 // passes: its performer really is local.
-func refuseRemoteRework(ctx context.Context, d wfgovern.DerivedRoute, it workitem.Item) error {
+//
+// A binding's own placement (sty_7028d996) is refused the same way: a binding
+// placed remote or team runs its work off this machine, so it cannot be one side
+// of a local relay either. bindings is how Decide reads it; nil reads none.
+func refuseRemoteRework(ctx context.Context, d wfgovern.DerivedRoute, it workitem.Item, bindings placement.Bindings) error {
 	step, ok := d.Spec.StateNamed(it.Status)
 	if !ok {
 		return nil
 	}
-	placed := placement.Decide(ctx, it, step)
-	if !placed.Remote {
+	placed := placement.Decide(ctx, it, step, bindings)
+	var err error
+	switch {
+	case placed.Team != "":
+		err = fmt.Errorf(
+			"satelle story rework: %s is placed team:%s (binding %q on step %q) — a team remote runs its own task and cannot be a relay partner; re-present the edge instead to wake it with the reviewers' findings",
+			it.ID, placed.Team, placed.Agent, it.Status)
+	case placed.Channel:
+		err = fmt.Errorf(
+			"satelle story rework: %s is placed remote (binding %q on step %q) — a remote performer cannot be a relay partner; re-present the edge instead to dispatch it with the reviewers' findings",
+			it.ID, placed.Agent, it.Status)
+	case placed.Remote:
+		err = fmt.Errorf(
+			"satelle story rework: %s is placed remote (remote_agent %q on step %q) — a cloud session cannot be a relay partner; re-present the edge instead to dispatch a fresh cloud session with the reviewers' findings",
+			it.ID, placed.Agent, it.Status)
+	default:
 		return nil
 	}
-	err := fmt.Errorf(
-		"satelle story rework: %s is placed remote (remote_agent %q on step %q) — a cloud session cannot be a relay partner; re-present the edge instead to dispatch a fresh cloud session with the reviewers' findings",
-		it.ID, placed.Agent, it.Status)
 	_ = verb.AppendTelemetry(ctx, it.ID, "orchestrator", "rework_refused", map[string]any{
 		"placement": placement.Remote, "step": it.Status, "agent": placed.Agent, "reason": err.Error(),
 	})
@@ -157,7 +172,13 @@ func runRework(cmd *cobra.Command, id string, roundsFlag int, modelFlag string, 
 	if err != nil {
 		return err
 	}
-	if err := refuseRemoteRework(ctx, d, it); err != nil {
+	if err := refuseRemoteRework(ctx, d, it, func(name string) (config.AgentBinding, bool) {
+		eff, aerr := requireAgents(a)
+		if aerr != nil {
+			return config.AgentBinding{}, false
+		}
+		return eff.Agents.NamedBinding(name)
+	}); err != nil {
 		return err
 	}
 	// The budget is CONFIGURATION. --rounds is an operator saying "spend less

@@ -184,6 +184,23 @@ func runNodeJoin(cmd *cobra.Command, root, relay, session, token string) error {
 		return fmt.Errorf("join: %w", err)
 	}
 
+	// A node a starter asked satelle.dev for to perform a step (mode=performer)
+	// publishes its channel key before it dials, once, so the starter pins it from
+	// satelle.dev rather than from this node's stdout (sty_7028d996). Every other
+	// mode prints the key line above and publishes nothing; a task-kind node reads
+	// its own run later, so it is not asked here.
+	if !def.RunsTask() {
+		desc, rerr := client.Run(ctx)
+		if rerr != nil {
+			return fmt.Errorf("join: %w", rerr)
+		}
+		if desc.Mode == remotenode.ModePerformer {
+			if perr := client.PublishChannelKey(ctx, id.Public()); perr != nil {
+				return fmt.Errorf("join: %w", perr)
+			}
+		}
+	}
+
 	sess, err := remotechan.Join(ctx, relay, session, id, token, nodeChannelOptions...)
 	if err != nil {
 		var refused *remotechan.RelayStatusError
@@ -453,8 +470,11 @@ func agentJobHandler(dataDir, root string, client *remotenode.NodeClient, decls 
 		if err != nil {
 			return nil, err
 		}
-		b, name, ok := talkBinding(cfg)
+		b, name, ok := talkBinding(cfg, req.Binding)
 		if !ok {
+			if req.Binding != "" {
+				return nil, fmt.Errorf("remote defines no runnable binding %q", req.Binding)
+			}
 			return nil, errors.New("the remote defines no agent binding that runs a command")
 		}
 		runner, err := agentstep.LookupRunner(b.ResolvedInterface(), b.CommandTemplate())
@@ -465,8 +485,12 @@ func agentJobHandler(dataDir, root string, client *remotenode.NodeClient, decls 
 		if err != nil {
 			return nil, err
 		}
+		system := "You are the agent on a remote node. Answer the developer's message."
+		if req.SystemPrompt != "" {
+			system = req.SystemPrompt
+		}
 		raw, err := runner.Run(ctx, agentcli.Request{
-			SystemPrompt: "You are the agent on a remote node. Answer the developer's message.",
+			SystemPrompt: system,
 			Payload:      req.Text, AllowedTools: b.Tools, Model: b.Model, Dir: root,
 			Env: secrets,
 		})
@@ -478,11 +502,25 @@ func agentJobHandler(dataDir, root string, client *remotenode.NodeClient, decls 
 	}
 }
 
-// talkBinding picks the binding that answers a message.
-func talkBinding(cfg config.AgentsConfig) (config.AgentBinding, string, bool) {
+// talkBinding picks the binding that answers a message. When want names a
+// binding (a performed step's allocated binding, sty_7028d996) that binding
+// answers, if the node's agents.toml defines it and it runs; otherwise there is
+// none, and the caller reports it. With no want it is the executor if it runs,
+// else the first runnable binding by name.
+func talkBinding(cfg config.AgentsConfig, want string) (config.AgentBinding, string, bool) {
 	runs := func(b config.AgentBinding) bool {
 		return b.CommandTemplate() != "" && !config.IsInLoopCommand(b.CommandTemplate()) &&
 			b.ResolvedInterface() != config.InterfaceCloud
+	}
+	if want != "" {
+		b, found := cfg.Agents[want]
+		if want == "executor" {
+			b, found = cfg.Executor, true
+		}
+		if found && runs(b) {
+			return b, want, true
+		}
+		return config.AgentBinding{}, "", false
 	}
 	if runs(cfg.Executor) {
 		return cfg.Executor, "executor", true

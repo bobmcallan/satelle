@@ -11,6 +11,7 @@ package remotenode
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -185,6 +186,24 @@ func (c *NodeClient) Run(ctx context.Context) (RunDescriptor, error) {
 		return RunDescriptor{}, errors.New("run: the answer is malformed")
 	}
 	return d, nil
+}
+
+// ModePerformer is the run mode of a node a starter asked satelle.dev for to
+// perform one step of its story over the paired channel (sty_7028d996).
+const ModePerformer = "performer"
+
+// PublishChannelKey publishes the node's channel public key (PUT .../channel-key,
+// standard base64) so the starter that asked for this node can pin it before it
+// trusts a message. The key is write-once: a second write is refused by the
+// server and returned here.
+func (c *NodeClient) PublishChannelKey(ctx context.Context, pub []byte) error {
+	body := struct {
+		PublicKey string `json:"public_key"`
+	}{PublicKey: base64.StdEncoding.EncodeToString(pub)}
+	if _, _, err := c.call(ctx, http.MethodPut, "/channel-key", body); err != nil {
+		return fmt.Errorf("channel-key: %w", err)
+	}
+	return nil
 }
 
 // The run states a node reports for its task run, and the heartbeat state it is

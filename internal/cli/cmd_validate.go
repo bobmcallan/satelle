@@ -97,13 +97,27 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 		}
 		// Per-gate effective model surface (sty_19456622) — same allocation view as
 		// `satelle agent validate`, informational (not a hard fail).
-		if eff, aerr := config.LoadEffectiveAgents(dataDir, a.PlaneConfig().Vars); aerr == nil {
+		//
+		// An agents layer that does not load is a failure, not a silent skip
+		// (sty_7028d996): a binding declaring an unknown placement is refused at
+		// load, and this is where an author sees it.
+		eff, aerr := config.LoadEffectiveAgents(dataDir, a.PlaneConfig().Vars)
+		if aerr != nil {
+			failed++
+			fmt.Fprintf(out, "FAIL  agents — %v\n", aerr)
+		} else {
 			report := agentvalidate.Validate(eff.Agents, eff.Vars, doctor.GoverningWorkflows(dataDir))
 			if len(report.Gates) > 0 {
 				fmt.Fprintln(out, "Gate/node effective models:")
 				for _, ga := range report.Gates {
 					fmt.Fprintf(out, "  NODE [%s] %s gate=%s agent=%s effective_model=%q\n",
 						ga.Workflow, ga.Node, ga.Skill, ga.Agent, ga.EffectiveModel)
+				}
+			}
+			if len(report.Grants) > 0 {
+				fmt.Fprintln(out, "Bindings:")
+				for _, g := range report.Grants {
+					fmt.Fprintf(out, "  BINDING [%s] placement=%s\n", g.Name, g.Placement)
 				}
 			}
 		}

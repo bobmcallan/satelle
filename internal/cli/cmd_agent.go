@@ -315,8 +315,8 @@ syncs, so keep profile= and use_global_roles there, not in shared agents.toml.`,
 				if g.InterfaceReason != "" {
 					ifaceNote = fmt.Sprintf("%s (%s)", g.Interface, g.InterfaceReason)
 				}
-				fmt.Fprintf(out, "  GRANT [%s] role=%s principles=%s constitution=%s interface=%s backend=%s %s tools=%q model=%q effort=%q timeout=%q inject_principles=%v\n",
-					g.Name, roleNote, g.Principles, consti, ifaceNote, g.Backend, ro, g.Tools, g.Model, g.Effort, g.Timeout, g.InjectsPrinciples)
+				fmt.Fprintf(out, "  GRANT [%s] role=%s principles=%s constitution=%s interface=%s placement=%s backend=%s %s tools=%q model=%q effort=%q timeout=%q inject_principles=%v\n",
+					g.Name, roleNote, g.Principles, consti, ifaceNote, g.Placement, g.Backend, ro, g.Tools, g.Model, g.Effort, g.Timeout, g.InjectsPrinciples)
 				if g.Notes != "" {
 					fmt.Fprintf(out, "         notes: %s\n", g.Notes)
 				}

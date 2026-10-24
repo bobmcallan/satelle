@@ -95,7 +95,12 @@ func showDerivedRoute(out io.Writer, a *app.App, category string, tags []string)
 	if !ok {
 		return fmt.Errorf("workflow show %q: no workflow document of that name, and no derived route governs that category — see `satelle workflow list`", category)
 	}
-	return renderWorkflowRoute(out, rs, category, tags)
+	grants, _, _ := hookGrantIndex(a, a.PlaneDir())
+	placements := make(map[string]string, len(grants))
+	for name, g := range grants {
+		placements[name] = g.Placement
+	}
+	return renderWorkflowRouteWith(out, rs, category, tags, placements)
 }
 
 // renderWorkflowShow writes the whole view. Split from the cobra wiring — and
@@ -183,6 +188,7 @@ func renderHook(out io.Writer, h wfhook.Hook, grants map[string]agentvalidate.Gr
 	}
 	fmt.Fprintf(out, "    binding:    %s\n", bindingOrigin(g, h.Agent))
 	fmt.Fprintf(out, "    interface:  %s (backend %s)\n", g.Interface, g.Backend)
+	fmt.Fprintf(out, "    placement:  %s\n", g.Placement)
 	fmt.Fprintf(out, "    model:      %s\n", orNone(g.Model))
 	fmt.Fprintf(out, "    effort:     %s\n", orNone(g.Effort))
 	fmt.Fprintf(out, "    ceiling:    %s\n", ceilingLabel(g))

@@ -29,6 +29,14 @@ import (
 // route SOURCE rather than the app so it is unit-testable without a store, the
 // same shape renderWorkflowShow already has.
 func renderWorkflowRoute(out io.Writer, rs wfgovern.RouteSource, category string, tags []string) error {
+	return renderWorkflowRouteWith(out, rs, category, tags, nil)
+}
+
+// renderWorkflowRouteWith is renderWorkflowRoute that also names, under each
+// step's performer, where that performer's binding runs (sty_7028d996).
+// placements maps a binding name to its placement label; a nil map, or a
+// performer with no binding in it, prints no placement line.
+func renderWorkflowRouteWith(out io.Writer, rs wfgovern.RouteSource, category string, tags []string, placements map[string]string) error {
 	d, err := wfgovern.RouteSpecFor(rs, category, tags)
 	if err != nil {
 		return err
@@ -51,7 +59,7 @@ func renderWorkflowRoute(out io.Writer, rs wfgovern.RouteSource, category string
 	fmt.Fprintln(out)
 
 	route := wfroute.Build(d.Spec, wfgovern.DerivedRouteName, tags, d.Advisors, d.Reworks)
-	renderRouteSteps(out, route, d.List)
+	renderRouteSteps(out, route, d.List, placements)
 	renderRouteGateScope(out, d)
 	renderSynthesised(out, route, d.List)
 	return nil
@@ -59,7 +67,7 @@ func renderWorkflowRoute(out io.Writer, rs wfgovern.RouteSource, category string
 
 // renderRouteSteps prints the obligations in route order with what discharges
 // each and what admits it.
-func renderRouteSteps(out io.Writer, route wfroute.Route, l wfdot.List) {
+func renderRouteSteps(out io.Writer, route wfroute.Route, l wfdot.List, placements map[string]string) {
 	fmt.Fprintln(out, "Steps (order derived from requires:, never authored):")
 	if len(route.Steps) == 0 {
 		fmt.Fprintln(out, "  (none — the section declares no obligation any step discharges)")
@@ -82,6 +90,9 @@ func renderRouteSteps(out io.Writer, route wfroute.Route, l wfdot.List) {
 			performer += " under @skill:" + strings.Join(st.Skills, ", @skill:")
 		}
 		fmt.Fprintf(out, "       performer:  %s\n", performer)
+		if p := placements[st.Agent]; p != "" {
+			fmt.Fprintf(out, "       placement:  %s\n", p)
+		}
 		if len(st.Reviewers) > 0 {
 			fmt.Fprintf(out, "       entry gates: %s\n", reviewerList(st.Reviewers))
 			cap := "serial"

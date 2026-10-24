@@ -321,6 +321,13 @@ type Engine struct {
 	// reach a cloud (a local test run of a remote definition) installs a refusal
 	// instead of relying on every binding being checked first.
 	cloudDispatch cloudDispatchFunc
+	// remoteChannel pairs a placement = "remote" binding with its performer, and
+	// teamRunner wakes a placement = "team:<path>" binding's remote and reads its
+	// run (sty_7028d996). Nil refuses the dispatch; there is no local fallback.
+	// teamClock is the time the team wait reads (nil: the real clock).
+	remoteChannel RemoteChannel
+	teamRunner    TeamRunner
+	teamClock     teamClock
 }
 
 // scrubValues is every value satelle resolved into a performer's environment —
@@ -2329,7 +2336,26 @@ func (g *Engine) resolvePerformer(ctx context.Context, item workitem.Item, toSta
 	// Placement (sty_dde8b6a4): a parallel epic child's step may be declared to
 	// run in a cloud session (step.toml remote_agent). Otherwise, or when the
 	// session is not signed in, the step's own agent performs, unchanged.
-	placed := placement.Decide(ctx, item, *target)
+	//
+	// A binding's own placement (sty_7028d996) is read through the same lookup the
+	// dispatch uses, resolved once per name.
+	var lookup placement.Bindings
+	if g.namedAgents != nil {
+		type found struct {
+			b  config.AgentBinding
+			ok bool
+		}
+		seen := map[string]found{}
+		lookup = func(name string) (config.AgentBinding, bool) {
+			f, hit := seen[name]
+			if !hit {
+				f.b, f.ok = g.namedAgents(name)
+				seen[name] = f
+			}
+			return f.b, f.ok
+		}
+	}
+	placed := placement.Decide(ctx, item, *target, lookup)
 	dispatchAgent := placed.Agent
 	if placed.Note != "" && emit {
 		g.telemetryEvent(ctx, item.ID, "executor", "placement", map[string]any{
@@ -2340,7 +2366,7 @@ func (g *Engine) resolvePerformer(ctx context.Context, item workitem.Item, toSta
 		return performerResolution{}, fmt.Errorf(
 			"workflow %q allocates state %q to named agent %q but no agents layer is wired", wfName, toStatus, dispatchAgent)
 	}
-	binding, found := g.namedAgents(dispatchAgent)
+	binding, found := lookup(dispatchAgent)
 	if !found {
 		return performerResolution{}, fmt.Errorf(
 			"workflow %q allocates state %q to agent %q but .satelle/workflows/agents.toml defines no [%s] binding — define it, or reassign the step",
@@ -2353,6 +2379,15 @@ func (g *Engine) resolvePerformer(ctx context.Context, item workitem.Item, toSta
 		return performerResolution{}, fmt.Errorf(
 			"workflow %q allocates performing state %q to agent %q with role=reviewer — judges advance status only via gates; use a gated edge or scoped on= node",
 			wfName, toStatus, dispatchAgent)
+	}
+	// A team placement (sty_7028d996) wakes a remote rather than running a
+	// command, so its binding needs none: it is dispatched before the named-
+	// performer and in-loop checks, which read the command.
+	if placed.Team != "" {
+		return performerResolution{
+			PerformerResolution: verb.PerformerResolution{Agent: dispatchAgent, Dispatched: true, Kind: verb.PerformerDispatched},
+			spec:                spec, wfName: wfName, target: target, placed: placed, binding: binding,
+		}, nil
 	}
 	if !isNamedPerformer(dispatchAgent, binding) {
 		return none(fmt.Sprintf("step %q agent %q is not a named performer", toStatus, dispatchAgent))
@@ -2435,6 +2470,11 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if dispatchSkill == "" {
 		dispatchSkill = target.Skill
 	}
+	// A team placement wakes its remote and waits on the run: no performer is
+	// dispatched, so none of the below applies (sty_7028d996).
+	if placed.Team != "" {
+		return g.dispatchTeam(ctx, item, toStatus, dispatchAgent, dispatchSkill, placed.Team, binding)
+	}
 	// Model selection (sty_7069bced): binding.Model wins outright when set;
 	// otherwise the step's own model= (target.Model) is a per-dispatch
 	// override, then the inherited/creator session tiers, else cli-default.
@@ -2466,7 +2506,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		}
 		return launch(g, ctx, item, toStatus, wfName, dispatchAgent, binding, composed, dispatchSkill, placed.Remote)
 	}
-	if placed.Remote {
+	if placed.Remote && !placed.Channel {
 		return verb.DispatchResult{}, fmt.Errorf(
 			"workflow %q places state %q remote on agent %q but its [%s] binding is not interface=cloud — fix remote_agent in step.toml",
 			wfName, toStatus, dispatchAgent, dispatchAgent)
@@ -2501,26 +2541,44 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	// gates read the lease, not committed FROM status — so a code-writing named
 	// agent may edit during dispatch without the FROM state itself being
 	// performing. The prior FROM-performing band-aid (sty_f5bd176f) is removed.
-	runner, err := g.newRunner(binding.ResolvedInterface(), binding.CommandTemplate())
-	if err != nil {
-		var enf *ExecutableNotFoundError
-		if errors.As(err, &enf) {
-			// Local resolution refused (sty_01949949 AC3): same voice as the
-			// missing-binding refusal above, and the same posture — the caller
-			// rejects the transition; nothing is performed in-loop instead.
-			return verb.DispatchResult{}, fmt.Errorf(
-				"workflow %q allocates state %q to agent %q but its command %q is not executable on this machine (%v) — install it or rebind the agent",
-				wfName, toStatus, dispatchAgent, enf.Token, enf.Err)
+	var runner agentcli.Runner
+	if placed.Channel {
+		// A remote-placed binding (sty_7028d996): the same dispatch with its
+		// transport swapped for the paired remote channel. The performer is the
+		// node's own binding of this name, so nothing below that reads the local
+		// command, worktree wiring or tool grant applies.
+		rr, rerr := g.remoteRunnerFor(dispatchAgent, binding, item.ID)
+		if rerr != nil {
+			return verb.DispatchResult{}, fmt.Errorf("workflow %q places state %q remote: %w", wfName, toStatus, rerr)
 		}
-		return verb.DispatchResult{}, fmt.Errorf("named agent %q: broken command in .satelle/workflows/agents.toml: %w", dispatchAgent, err)
-	}
-	if runner == nil {
-		return verb.DispatchResult{}, nil // command "in-loop": the orchestrator performs the step
-	}
-	// A performer that would run in a linked worktree without its gate wiring
-	// is refused before it starts (or visibly allowed under fail-open).
-	if err := g.wiringGuard(ctx, dispatchAgent, binding.CommandTemplate(), item.ID); err != nil {
-		return verb.DispatchResult{}, err
+		defer func() { _ = rr.Close() }()
+		runner = rr
+		g.telemetryEvent(ctx, item.ID, "executor", "remote_dispatch", map[string]any{
+			"agent": dispatchAgent, "step": toStatus, "placement": config.PlacementRemote, "remote": binding.Remote,
+		})
+	} else {
+		r, rerr := g.newRunner(binding.ResolvedInterface(), binding.CommandTemplate())
+		if rerr != nil {
+			var enf *ExecutableNotFoundError
+			if errors.As(rerr, &enf) {
+				// Local resolution refused (sty_01949949 AC3): same voice as the
+				// missing-binding refusal above, and the same posture — the caller
+				// rejects the transition; nothing is performed in-loop instead.
+				return verb.DispatchResult{}, fmt.Errorf(
+					"workflow %q allocates state %q to agent %q but its command %q is not executable on this machine (%v) — install it or rebind the agent",
+					wfName, toStatus, dispatchAgent, enf.Token, enf.Err)
+			}
+			return verb.DispatchResult{}, fmt.Errorf("named agent %q: broken command in .satelle/workflows/agents.toml: %w", dispatchAgent, rerr)
+		}
+		if r == nil {
+			return verb.DispatchResult{}, nil // command "in-loop": the orchestrator performs the step
+		}
+		runner = r
+		// A performer that would run in a linked worktree without its gate wiring
+		// is refused before it starts (or visibly allowed under fail-open).
+		if err := g.wiringGuard(ctx, dispatchAgent, binding.CommandTemplate(), item.ID); err != nil {
+			return verb.DispatchResult{}, err
+		}
 	}
 	// A dispatched executor starts fresh and reconstructs its context by PULLING the
 	// story, its documents, and the ledger — either via the read-only satelle CLI
@@ -2530,7 +2588,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	// context channel the agent is silently context-starved. Refuse the dispatch
 	// with an actionable fix rather than run a blind agent — the no-silent-fallback
 	// style the engine uses for a missing binding.
-	if config.NeedsContextChannel(binding) && !config.BindingGrantsContextChannel(binding) {
+	if !placed.Channel && config.NeedsContextChannel(binding) && !config.BindingGrantsContextChannel(binding) {
 		return verb.DispatchResult{}, fmt.Errorf(
 			"named agent %q cannot perform step %q: its .satelle/workflows/agents.toml [%s] tools grant has no context channel (add `Bash(satelle:*)` for the satelle CLI, or %s under ~/.satelle/<repo-key>/stories/<id>/)",
 			dispatchAgent, toStatus, dispatchAgent, agentcli.ContextChannelHint(agentcli.AdapterName(binding.CommandTemplate())))

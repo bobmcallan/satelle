@@ -1,6 +1,6 @@
 // Package devtest is a stand-in for the routes satelle.dev serves to a remote
 // node, for tests: GET /api/v1/remote-nodes/{id}/definition, GET .../run,
-// PUT .../status, POST .../secrets/{key}, POST .../workstate and POST .../end, all keyed by the node's id and taking
+// PUT .../status, PUT .../channel-key, POST .../secrets/{key}, POST .../workstate and POST .../end, all keyed by the node's id and taking
 // the node token as a bearer (satelle-server sty_c9013137). A call under any other
 // id is a 404; a bad token, or one an end call or Revoke has ended, is a 401. It
 // records every request. It is for tests only: nothing in the product imports it.
@@ -8,6 +8,7 @@ package devtest
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -80,6 +81,8 @@ type Node struct {
 	calls   []Call
 	status  []map[string]string
 	pushed  []Batch
+
+	channelKey []byte
 }
 
 // NewNode starts a fake for node id whose token is token, serving bundle as the
@@ -117,6 +120,14 @@ func (n *Node) Calls() []Call {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return append([]Call(nil), n.calls...)
+}
+
+// ChannelKey is the key the node published with PUT .../channel-key, nil until it
+// does; it is what the starter's GET of the node would report as public_key.
+func (n *Node) ChannelKey() []byte {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]byte(nil), n.channelKey...)
 }
 
 // Statuses is the body of every PUT .../status received, in order.
@@ -194,6 +205,25 @@ func (n *Node) answer(w http.ResponseWriter, r *http.Request) int {
 		}
 		raw, _ := json.Marshal(run)
 		return reply(w, http.StatusOK, string(raw))
+	case r.Method == http.MethodPut && tail == "channel-key":
+		// Write-once: the second write is refused, as the server does.
+		var in struct {
+			PublicKey string `json:"public_key"`
+		}
+		if json.NewDecoder(r.Body).Decode(&in) != nil {
+			return reply(w, http.StatusBadRequest, `{"error":"invalid_body"}`)
+		}
+		key, derr := base64.StdEncoding.DecodeString(in.PublicKey)
+		if derr != nil || len(key) == 0 {
+			return reply(w, http.StatusBadRequest, `{"error":"invalid_public_key"}`)
+		}
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		if n.channelKey != nil {
+			return reply(w, http.StatusConflict, `{"error":"already_published"}`)
+		}
+		n.channelKey = key
+		return reply(w, http.StatusNoContent, ``)
 	case r.Method == http.MethodPut && tail == "status":
 		var in map[string]string
 		if json.NewDecoder(r.Body).Decode(&in) != nil {

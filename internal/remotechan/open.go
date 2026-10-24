@@ -113,10 +113,32 @@ func Open(ctx context.Context, client *hosted.Client, relayURL string, launch La
 	if err != nil {
 		return nil, err
 	}
+	conn, err := dialLocal(ctx, client, o, relayURL, session)
+	if err != nil {
+		return nil, err
+	}
 
+	token, err := o.tokens.Mint()
+	if err == nil {
+		var pinned []byte
+		if pinned, err = launch.Launch(ctx, LaunchSpec{RelayURL: relayURL, Session: session, Token: token}); err == nil {
+			var s *Session
+			redeem := func(m appMsg) error { return o.tokens.Redeem(m.Token) }
+			if s, err = acceptRemote(ctx, conn, session, pinned, o, redeem); err == nil {
+				return s, nil
+			}
+		}
+	}
+	conn.Close(websocket.StatusPolicyViolation, "open failed")
+	return nil, err
+}
+
+// dialLocal dials the relay as local with the satelle.dev bearer, refreshing it
+// once on a 401. It is the one local dial, shared by Open and AttachServerSession.
+func dialLocal(ctx context.Context, client *hosted.Client, o *options, relayURL, session string) (*websocket.Conn, error) {
 	var conn *websocket.Conn
 	var status int
-	err = client.WithBearer(ctx, func(ctx context.Context, bearer string) (int, []byte, error) {
+	err := client.WithBearer(ctx, func(ctx context.Context, bearer string) (int, []byte, error) {
 		c, resp, err := dialRelay(ctx, o.http, relayURL, session, RoleLocal, bearer)
 		if err != nil {
 			if resp != nil {
@@ -134,25 +156,87 @@ func Open(ctx context.Context, client *hosted.Client, relayURL string, launch La
 	if conn == nil {
 		return nil, &RelayStatusError{Status: status}
 	}
+	return conn, nil
+}
 
-	token, err := o.tokens.Mint()
-	if err == nil {
-		var pinned []byte
-		if pinned, err = launch.Launch(ctx, LaunchSpec{RelayURL: relayURL, Session: session, Token: token}); err == nil {
-			var s *Session
-			if s, err = acceptRemote(ctx, conn, session, pinned, o); err == nil {
-				return s, nil
-			}
+// ErrKeyUnpublished is returned by AttachServerSession when the node never
+// published its channel key within the bound, so there is nothing to pin.
+var ErrKeyUnpublished = errors.New("remotechan: the node published no channel key")
+
+// keyPollInterval is how often AttachServerSession asks for the node's key while
+// it is not yet published.
+const keyPollInterval = time.Second
+
+// AttachServerSession is local's end of a session satelle.dev minted: the
+// session id is the node id the server started, and the relay has already
+// authenticated both ends (the starter as local, the node by its node token).
+// There is no local mint and no enroll token — TokenBook is never consulted.
+//
+// Admission is by key. keyFn reads the key the node published (nil until it
+// does); it is asked until a key is present, for at most EnrollTTL on the
+// options clock, and a node that never publishes one is refused
+// (ErrKeyUnpublished, recorded as key_unpublished) with the session closed. The
+// handshake then runs pinned to that key: a node holding any other key cannot
+// derive the session keys and is refused as key_mismatch. No frame is trusted
+// before the key is present and matches, and there is no trust on first use.
+//
+// The node side is unchanged: Join sends its bearer as the enroll value, which
+// this path ignores.
+func AttachServerSession(ctx context.Context, client *hosted.Client, relayURL, session string, keyFn func(context.Context) ([]byte, error), opts ...Option) (*Session, error) {
+	o := newOptions(opts)
+	conn, err := dialLocal(ctx, client, o, relayURL, session)
+	if err != nil {
+		return nil, err
+	}
+	pinned, err := awaitKey(ctx, o, keyFn)
+	if err != nil {
+		if errors.Is(err, ErrKeyUnpublished) {
+			err = o.refused(ctx, session, "key_unpublished", err)
+		}
+		conn.Close(websocket.StatusPolicyViolation, "attach failed")
+		return nil, err
+	}
+	admitByKey := func(appMsg) error { return nil } // the pinned key already authenticated the node
+	s, err := acceptRemote(ctx, conn, session, pinned, o, admitByKey)
+	if err != nil {
+		conn.Close(websocket.StatusPolicyViolation, "attach failed")
+		return nil, err
+	}
+	return s, nil
+}
+
+// awaitKey asks keyFn for the node's published key until one is present.
+func awaitKey(ctx context.Context, o *options, keyFn func(context.Context) ([]byte, error)) ([]byte, error) {
+	deadline := o.clock.Now().Add(EnrollTTL)
+	tick, stop := o.clock.Tick(keyPollInterval)
+	defer stop()
+	for {
+		key, err := keyFn(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("remotechan: reading the node's published key: %w", err)
+		}
+		if len(key) > 0 {
+			return key, nil
+		}
+		if !o.clock.Now().Before(deadline) {
+			return nil, ErrKeyUnpublished
+		}
+		select {
+		case <-tick:
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
-	conn.Close(websocket.StatusPolicyViolation, "open failed")
-	return nil, err
 }
 
 // acceptRemote runs local's half of the handshake on an already-dialed
 // connection: read the remote's key half, answer with ours, derive the keys
-// against the pinned node key, open the remote's enrollment, redeem its token.
-func acceptRemote(ctx context.Context, conn *websocket.Conn, session string, pinned []byte, o *options) (*Session, error) {
+// against the pinned node key, open the remote's enrollment, then ask admit
+// whether to let it in. Open admits by redeeming the enrollment's single-use
+// token; AttachServerSession admits by the key the keys were already derived
+// from. The handshake, the key_mismatch refusal and the refusal recorder are the
+// same for both.
+func acceptRemote(ctx context.Context, conn *websocket.Conn, session string, pinned []byte, o *options, admit func(appMsg) error) (*Session, error) {
 	conn.SetReadLimit(maxFrameBytes)
 	hctx, cancel := context.WithTimeout(ctx, EnrollTTL)
 	defer cancel()
@@ -192,13 +276,13 @@ func acceptRemote(ctx context.Context, conn *websocket.Conn, session string, pin
 		return nil, fmt.Errorf("%w: expected enrollment", ErrFrame)
 	}
 
-	if rErr := o.tokens.Redeem(m.Token); rErr != nil {
+	if rErr := admit(m); rErr != nil {
 		reply, _ := json.Marshal(appMsg{T: msgRefuse, Reason: rErr.Error()})
 		_ = conn.Write(hctx, websocket.MessageBinary, send.seal(reply))
 		return nil, o.refused(ctx, session, tokenReason(rErr), rErr)
 	}
-	admit, _ := json.Marshal(appMsg{T: msgAdmit})
-	if err := conn.Write(hctx, websocket.MessageBinary, send.seal(admit)); err != nil {
+	admitted, _ := json.Marshal(appMsg{T: msgAdmit})
+	if err := conn.Write(hctx, websocket.MessageBinary, send.seal(admitted)); err != nil {
 		return nil, err
 	}
 	return newSession(ctx, RoleLocal, conn, send, recv, o.clock), nil

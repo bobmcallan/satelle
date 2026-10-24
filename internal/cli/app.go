@@ -326,6 +326,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// agent=<name> allocation runs that binding's harness at the transition.
 			// agents.toml defines WHO, the DOT defines WHERE, the binary only runs it.
 			rev.SetNamedAgents(agents.NamedBinding)
+			// A binding's declared placement (sty_7028d996): remote and team:<path>
+			// reach satelle.dev when signed in; otherwise such a step refuses.
+			wirePlacement(rev)
 			// Spend budgets (sty_a7914904): [defaults] backs the engine's dispatch
 			// resolution, and the verb layer's engage-time context check reads the
 			// same binding → [defaults] ladder. Both are the repo's own numbers;

@@ -465,6 +465,9 @@ type DispatchResult struct {
 	Dispatched bool   `json:"dispatched"`
 	Agent      string `json:"agent,omitempty"`
 	Command    string `json:"command,omitempty"`
+	// RunID is the id of the remote run a team-placed step woke and waited on
+	// (placement = "team:<path>", sty_7028d996); empty for every other dispatch.
+	RunID string `json:"run_id,omitempty"`
 	// Model is the binding's configured model alias ({model}), recorded on the
 	// agent_invocation so the ledger shows WHICH model was asked to run a step —
 	// the audit signal for per-step model mixing (e.g. a GLM planner vs an opus

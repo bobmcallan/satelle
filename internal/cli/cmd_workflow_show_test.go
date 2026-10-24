@@ -159,3 +159,41 @@ func TestWorkflowShowNoHooksSaysSo(t *testing.T) {
 		t.Errorf("missing the no-hooks line:\n%s", out)
 	}
 }
+
+// A hook's binding shows where it runs (sty_7028d996): local by default, remote or
+// team:<path> when the binding declares it.
+func TestWorkflowShowRendersEachBindingsPlacement(t *testing.T) {
+	const cmd = `command = "claude -p --disallowedTools Write,Edit --append-system-prompt {system}"` + "\n" + `tools = "Read,Grep,Glob"` + "\n"
+	a := showFixture(t, "[reviewer]\nrole = \"reviewer\"\n"+cmd+
+		"\n[far]\nrole = \"reviewer\"\n"+cmd+"placement = \"remote\"\nremote = \"r1\"\n"+
+		"\n[team]\nrole = \"reviewer\"\n"+cmd+"placement = \"team:acme/ops\"\n")
+	for agent, want := range map[string]string{
+		"reviewer": "placement:  local",
+		"far":      "placement:  remote",
+		"team":     "placement:  team:acme/ops",
+	} {
+		doc := showDoc("hooks:\n  - operation: create_review\n    skill: s\n    agent: " + agent + "\n")
+		if out := render(t, a, doc, func(string) bool { return true }); !strings.Contains(out, want) {
+			t.Errorf("[%s]: want %q in:\n%s", agent, want, out)
+		}
+	}
+}
+
+// The derived route names where each step's performer binding runs.
+func TestWorkflowShowRouteRendersThePerformersPlacement(t *testing.T) {
+	var b strings.Builder
+	placements := map[string]string{"executor": "team:acme/ops"}
+	if err := renderWorkflowRouteWith(&b, routeSourceFixture(), "feature", nil, placements); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "placement:  team:acme/ops") {
+		t.Errorf("route lacks the performer's placement:\n%s", b.String())
+	}
+	b.Reset()
+	if err := renderWorkflowRoute(&b, routeSourceFixture(), "feature", nil); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(b.String(), "placement:") {
+		t.Errorf("a route rendered without placements printed one:\n%s", b.String())
+	}
+}

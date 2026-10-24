@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/placement"
 	"github.com/bobmcallan/satelle/internal/placement/placementtest"
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -52,10 +53,71 @@ func TestDecide(t *testing.T) {
 			if tc.orphan {
 				item = placementtest.Orphan(t, db, tc.tags...)
 			}
-			got := placement.Decide(context.Background(), item, tc.step)
+			got := placement.Decide(context.Background(), item, tc.step, nil)
 			if got.Agent != tc.wantAgent || got.Remote != tc.wantRemote || got.Note != tc.wantNote {
 				t.Fatalf("Decide = %+v, want agent %q remote %v note %q", got, tc.wantAgent, tc.wantRemote, tc.wantNote)
 			}
 		})
+	}
+}
+
+// A binding's own placement (sty_7028d996) places the step when the step's
+// remote_agent rule does not; a binding declaring none is placed as before.
+func TestDecideReadsTheBindingPlacement(t *testing.T) {
+	bindings := func(name string) (config.AgentBinding, bool) {
+		switch name {
+		case "far":
+			return config.AgentBinding{Placement: "remote", Remote: "r1"}, true
+		case "team":
+			return config.AgentBinding{Placement: "team:acme/ops"}, true
+		case "plain":
+			return config.AgentBinding{}, true
+		}
+		return config.AgentBinding{}, false
+	}
+	cases := []struct {
+		name  string
+		step  wfdot.State
+		binds placement.Bindings
+		want  placement.Decision
+	}{
+		{name: "remote binding is a channel placement", step: wfdot.State{Agent: "far"}, binds: bindings,
+			want: placement.Decision{Agent: "far", Remote: true, Channel: true}},
+		{name: "team binding names its team", step: wfdot.State{Agent: "team"}, binds: bindings,
+			want: placement.Decision{Agent: "team", Team: "acme/ops"}},
+		{name: "no placement is local", step: wfdot.State{Agent: "plain"}, binds: bindings,
+			want: placement.Decision{Agent: "plain"}},
+		{name: "unresolved binding is local", step: wfdot.State{Agent: "ghost"}, binds: bindings,
+			want: placement.Decision{Agent: "ghost"}},
+		{name: "executor is never placed", step: wfdot.State{Agent: "executor"}, binds: bindings,
+			want: placement.Decision{Agent: "executor"}},
+		{name: "no resolver is local", step: wfdot.State{Agent: "far"}, binds: nil,
+			want: placement.Decision{Agent: "far"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := placementtest.Wire(t, "parallel")
+			item := placementtest.Child(t, db, placementtest.Epic(t, db))
+			if got := placement.Decide(context.Background(), item, tc.step, tc.binds); got != tc.want {
+				t.Fatalf("Decide = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// AC5: a binding that declares no placement yields the same Decision whether or
+// not a resolver is supplied, for a remote_agent step and a plain one.
+func TestDecideWithoutPlacementIsUnchanged(t *testing.T) {
+	plain := func(string) (config.AgentBinding, bool) { return config.AgentBinding{}, true }
+	for _, step := range []wfdot.State{declared, {Agent: "coder"}} {
+		db := placementtest.Wire(t, "parallel")
+		epic := placementtest.Epic(t, db)
+		placementtest.SignIn(t)
+		item := placementtest.Child(t, db, epic)
+		with := placement.Decide(context.Background(), item, step, plain)
+		without := placement.Decide(context.Background(), item, step, nil)
+		if with != without {
+			t.Errorf("step %+v: with resolver %+v, without %+v", step, with, without)
+		}
 	}
 }

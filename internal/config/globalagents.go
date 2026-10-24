@@ -83,6 +83,8 @@ var globalAgentsBindingKeys = map[string]bool{
 	"secondary":    true,
 	"isolation":    true,
 	"auth":         true,
+	"placement":    true,
+	"remote":       true,
 }
 
 // globalAgentsRetiredKeys are profile keys satelle once declared and no longer
@@ -280,6 +282,9 @@ func (g GlobalAgentsConfig) validate() error {
 		if err := checkBindingAuth(GlobalAgentsLabel, section, b); err != nil {
 			return err
 		}
+		if err := checkBindingPlacement(GlobalAgentsLabel, section, b); err != nil {
+			return err
+		}
 		if err := checkBindingTimeout(GlobalAgentsLabel, section, b); err != nil {
 			return err
 		}
@@ -385,6 +390,31 @@ func checkBindingAuth(file, section string, b AgentBinding) error {
 		return nil
 	default:
 		return fmt.Errorf("%s [%s] auth %q: want %q, %q or %q", file, section, raw, AuthSubscription, AuthAPIKey, AuthOrg)
+	}
+}
+
+// checkBindingPlacement is the shared placement= check (see checkBindingInterface):
+// empty, local, remote or team:<path> — nothing else. A remote placement must name
+// the published remote it starts and cannot ride interface=cloud (that transport
+// is already its own remote session); remote= is refused on any other placement.
+func checkBindingPlacement(file, section string, b AgentBinding) error {
+	kind, _ := b.ResolvedPlacement()
+	switch kind {
+	case PlacementLocal, PlacementTeam:
+		if strings.TrimSpace(b.Remote) != "" {
+			return fmt.Errorf("%s [%s] remote %q: only a placement=%s binding names a remote", file, section, b.Remote, PlacementRemote)
+		}
+		return nil
+	case PlacementRemote:
+		if strings.TrimSpace(b.Remote) == "" {
+			return fmt.Errorf("%s [%s] placement=remote names no remote: set remote = \"<published remote id>\"", file, section)
+		}
+		if b.ResolvedInterface() == InterfaceCloud {
+			return fmt.Errorf("%s [%s] placement=remote cannot be combined with interface=%s", file, section, InterfaceCloud)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%s [%s]: placement=%s is not local|remote|team:<path>", file, section, strings.TrimSpace(b.Placement))
 	}
 }
 

@@ -334,6 +334,16 @@ type AgentBinding struct {
 	// them, and [defaults] backs them. See Budget.
 	ContextBudget int `toml:"context_budget"`
 	TurnBudget    int `toml:"turn_budget"`
+	// Placement declares where this binding's work runs (sty_7028d996): "local"
+	// (default, the dispatching session's machine), "remote" (an ephemeral remote
+	// performer paired with the local session over the remote channel) or
+	// "team:<path>" (the team remote at <path> on satelle.dev, woken for the story
+	// instead of dispatching a performer). Placement is configured here, never in
+	// step.toml. Empty means local; any other value fails at load.
+	Placement string `toml:"placement"`
+	// Remote names the published satelle.dev remote a placement="remote" binding
+	// starts a performer node of. Required by, and refused without, that placement.
+	Remote string `toml:"remote"`
 }
 
 // IsolationOperatorAttested is the one valid isolation= value.
@@ -459,6 +469,45 @@ func parsePositiveDuration(raw, field string, def time.Duration) (time.Duration,
 // runtime fallback (breaking surface: run `satelle init` to MigrateAgents).
 func (b AgentBinding) CommandTemplate() string {
 	return b.Command
+}
+
+// The placement= values a binding may declare (sty_7028d996). PlacementTeamPrefix
+// introduces the team form, "team:<path>".
+const (
+	PlacementLocal      = "local"
+	PlacementRemote     = "remote"
+	PlacementTeam       = "team"
+	PlacementTeamPrefix = PlacementTeam + ":"
+)
+
+// ResolvedPlacement returns the effective placement kind and, for a team
+// placement, its path. Empty resolves to local. A "team:" with no path, or an
+// unknown value, is returned lowercased as its own kind so checkBindingPlacement
+// (the one refusal) and display surfaces see the raw declaration.
+func (b AgentBinding) ResolvedPlacement() (kind, path string) {
+	raw := strings.TrimSpace(b.Placement)
+	lower := strings.ToLower(raw)
+	switch {
+	case lower == "" || lower == PlacementLocal:
+		return PlacementLocal, ""
+	case lower == PlacementRemote:
+		return PlacementRemote, ""
+	case strings.HasPrefix(lower, PlacementTeamPrefix):
+		if p := strings.TrimSpace(raw[len(PlacementTeamPrefix):]); p != "" {
+			return PlacementTeam, p
+		}
+	}
+	return lower, ""
+}
+
+// PlacementLabel is ResolvedPlacement as one string for display: "local",
+// "remote" or "team:<path>".
+func (b AgentBinding) PlacementLabel() string {
+	kind, path := b.ResolvedPlacement()
+	if kind == PlacementTeam {
+		return PlacementTeamPrefix + path
+	}
+	return kind
 }
 
 // ResolvedInterface returns the effective dispatch transport: command (default),
@@ -1200,6 +1249,9 @@ func (a AgentsConfig) validateInterfaces() error {
 			return err
 		}
 		if err := checkBindingAuth(AgentsConfigName, section, b); err != nil {
+			return err
+		}
+		if err := checkBindingPlacement(AgentsConfigName, section, b); err != nil {
 			return err
 		}
 		return checkBindingInterface(AgentsConfigName, section, b)
