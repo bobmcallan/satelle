@@ -1,3 +1,11 @@
+## [0.0.740] - 2026-10-24
+
+### Added
+- Agents and people can leave messages on a story for the story, a role or a named session: `satelle story message --to <story|role|session|*>`. `satelle story messages` lists a story's messages, `satelle story message-mark` marks one delivered, answered or undeliverable, and `satelle board` lists messages across stories with filters for state, overdue, session and story. A performer's payload delivers the messages addressed to it and marks them delivered; reviewers' and chat payloads leave them waiting. The board is local and needs no connection. `api/board.proto` (`satelle.board.v1` Board: Post, Fetch, Mark) is the contract for the hosted board. The mirror's story page shows a Messages panel. (sty_73c9aa10)
+
+### Fixed
+- `satelle sync workstate push --help` is back under the help-length ceiling. (sty_73c9aa10)
+
 ## [0.0.739] - 2026-10-24
 
 The local-first-team epic (sty_340f3ae3) is complete. The CLI is local first, story events are a linked chain published by compare-and-append, no story is held across machines, and remotes are run only through satelle.dev.
