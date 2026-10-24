@@ -68,12 +68,21 @@ type Drive struct {
 	Task string `toml:"task"`
 }
 
+// Host is the [host] table as far as a node reads it: the commands the node runs
+// once, after it has read its definition and before it works a run. The server's
+// own host commands (start, network, run, stop) are not the node's and are not
+// decoded.
+type Host struct {
+	Bootstrap [][]string `toml:"bootstrap"`
+}
+
 // Definition is the part of remote.toml a node reads.
 type Definition struct {
 	Secret  []SecretDecl `toml:"secret"`
 	Repos   []Repo       `toml:"repo"`
 	Network Network      `toml:"network"`
 	Drive   Drive        `toml:"drive"`
+	Host    Host         `toml:"host"`
 }
 
 // RunsTask reports whether a wake of the remote runs a task.

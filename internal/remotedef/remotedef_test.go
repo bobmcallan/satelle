@@ -131,6 +131,21 @@ func TestAStoryOrUndeclaredDriveRunsNoTask(t *testing.T) {
 	}
 }
 
+// The node reads the [host] bootstrap argvs, in order, and no other [host] key.
+func TestParseReadsTheHostBootstrap(t *testing.T) {
+	d, err := Parse(fixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := [][]string{{"host-cli", "setup"}}; !reflect.DeepEqual(d.Host.Bootstrap, want) {
+		t.Errorf("bootstrap = %v, want %v", d.Host.Bootstrap, want)
+	}
+	none, err := Parse([]byte("[host]\nstart = [\"x\"]\n"))
+	if err != nil || len(none.Host.Bootstrap) != 0 {
+		t.Errorf("a definition with no bootstrap = %+v, %v, want none", none.Host, err)
+	}
+}
+
 func TestRepoName(t *testing.T) {
 	for url, want := range map[string]string{
 		"https://github.com/acme/widgets.git": "widgets",

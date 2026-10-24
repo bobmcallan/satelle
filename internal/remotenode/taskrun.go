@@ -272,6 +272,13 @@ func dispatchJSON(ctx context.Context, name string, req map[string]any, out any)
 	return nil
 }
 
+// ReportStartFailure tells satelle.dev a node could not start the run for storyID:
+// one concluded heartbeat with outcome reject and the findings, sent even when ctx
+// has ended. It is the failed-start counterpart of RunTask's concluded heartbeat.
+func ReportStartFailure(ctx context.Context, client StatusSender, storyID, findings string, out io.Writer) {
+	newStatusReporter(client, storyID, 0, out).conclude(ctx, verb.OutcomeReject, findings)
+}
+
 // statusReporter sends a run's heartbeat and, until the run concludes, re-sends
 // the latest one so satelle.dev does not list the node lost while a long step
 // runs. Sends are serialised, so the server sees them in the order they were made

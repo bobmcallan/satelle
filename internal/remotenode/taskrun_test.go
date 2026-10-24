@@ -407,3 +407,20 @@ func TestRunTaskSurvivesARefusedHeartbeat(t *testing.T) {
 		t.Errorf("result = %+v, %v, want the run unaffected", res, err)
 	}
 }
+
+// A node that could not start its run reports it once, concluded and rejected,
+// with the findings, even when the context that stopped it has been cancelled.
+func TestReportStartFailureSendsOneConcludedRejectEvenAfterCancel(t *testing.T) {
+	log := &statusLog{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ReportStartFailure(ctx, log, "sty_subject", "bootstrap command 2: exit status 3", nil)
+	got := log.all()
+	if len(got) != 1 {
+		t.Fatalf("heartbeats = %+v, want exactly one", got)
+	}
+	want := NodeStatus{State: StateRunning, StoryID: "sty_subject", RunState: runstatus.Concluded, Outcome: verb.OutcomeReject, Findings: "bootstrap command 2: exit status 3"}
+	if got[0] != want {
+		t.Errorf("heartbeat = %+v, want %+v", got[0], want)
+	}
+}

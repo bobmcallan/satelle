@@ -184,6 +184,9 @@ func newNodeRig(t *testing.T) *nodeRig {
 	for rel, body := range nodeDefinition {
 		r.bundle[rel] = body
 	}
+	// The fixture's bootstrap names a host-only command the test node does not
+	// have; a rig starts without one, and a test that wants one sets it.
+	r.setBootstrap(nil)
 	return r
 }
 

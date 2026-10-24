@@ -70,6 +70,8 @@ var (
 	// is re-sent at (remotenode.DefaultStatusResendInterval, or a third of the
 	// window the server reports).
 	nodeStatusResend time.Duration
+	// nodeBootstrapTimeout bounds each [host] bootstrap command.
+	nodeBootstrapTimeout = 10 * time.Minute
 )
 
 // nodeEndTimeout bounds the one end call a stopping node makes.
@@ -184,6 +186,13 @@ func runNodeJoin(cmd *cobra.Command, root, relay, session, token string) error {
 		return fmt.Errorf("join: %w", err)
 	}
 
+	// The definition's [host] bootstrap runs here: once for the node, after its
+	// definition is read and before it joins the relay or works a run.
+	if err := remotenode.RunBootstrap(ctx, root, def.Host.Bootstrap, nodeBootstrapTimeout, cmd.ErrOrStderr()); err != nil {
+		reportNodeStartFailure(ctx, cmd, client, err)
+		return fmt.Errorf("join: %w", err)
+	}
+
 	// A node a starter asked satelle.dev for to perform a step (mode=performer)
 	// publishes its channel key before it dials, once, so the starter pins it from
 	// satelle.dev rather than from this node's stdout (sty_7028d996). Every other
@@ -222,6 +231,22 @@ func runNodeJoin(cmd *cobra.Command, root, relay, session, token string) error {
 		return serveTaskWake(ctx, cmd, node, sess, report, client, session, def)
 	}
 	return node.Serve(ctx, sess, report)
+}
+
+// reportNodeStartFailure tells satelle.dev why the node could not start, on the
+// status of the run it was started for. It reads the run only now, on the failure
+// path, so the success path reads it exactly where it did. Both calls outlive a
+// cancelled ctx, as a SIGTERM that stopped the bootstrap is still reported. A run
+// that cannot be read is logged; the failure is returned by the caller regardless.
+func reportNodeStartFailure(ctx context.Context, cmd *cobra.Command, client *remotenode.NodeClient, cause error) {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeEndTimeout)
+	defer cancel()
+	desc, err := client.Run(rctx)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "join: reading the run to report the failed start: %v\n", err)
+		return
+	}
+	remotenode.ReportStartFailure(ctx, client, desc.StoryID, cause.Error(), cmd.ErrOrStderr())
 }
 
 // serveTaskWake serves a task-kind remote's node with its wake run beside Serve
