@@ -1,3 +1,13 @@
+## [0.0.741] - 2026-10-24
+
+### Fixed
+- satelled is rebuilt and released as serve-v0.0.201, catching up the serve-path changes shipped since serve-v0.0.200 that the 0.0.737–0.0.740 releases did not bump. (sty_73c9aa10)
+
+## [serve-v0.0.201] - 2026-10-24
+
+### Changed
+- The service binary carries the serve-path changes since serve-v0.0.200: no hosted holds (sty_40853d02), the local-first-team epic (sty_340f3ae3), and the story page's Messages panel (sty_73c9aa10).
+
 ## [0.0.740] - 2026-10-24
 
 ### Added
