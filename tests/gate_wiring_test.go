@@ -58,6 +58,14 @@ var gateCoverageWaiver = map[string]string{
 	"docs/satelle-story-blocked-triage": "orchestrator-consulted advisor, not a status-advancing gate",
 	"docs/satelle-step-summary":         "summariser, not accept/reject gate",
 	"docs/satelle-docs-only-check":      "coded check; accept/reject goldens live in fenceFixtures",
+	// The epic-branch lane (sty_b9d9a3df): both checks are wired and driven through
+	// the governed transition in epic_branch_lane_test.go, and golden-tabled in
+	// fenceFixtures; the merge skill is a step performer's rubric, not a gate.
+	"*/satelle-epic-branch-check":           "coded check; accept/reject goldens in fenceFixtures, governed close in TestEpicBranchLaneOnTheShippedRoute",
+	"epic-parent/satelle-epic-merged-check": "coded check; goldens in fenceFixtures, governed close in TestEpicBranchLaneOnTheShippedRoute",
+	"parent/satelle-epic-merged-check":      "same check as the epic-parent section, exercised there",
+	"epic-parent/satelle-epic-merge":        "merging-step performer rubric, not a gate; the step is covered by TestShippedContainerRouteMergesBeforeTheClose",
+	"parent/satelle-epic-merge":             "merging-step performer rubric, not a gate; the step is covered by TestShippedContainerRouteMergesBeforeTheClose",
 	// Workflow-change is n/a-fast on slices that touch no workflow file — hard to force reject hermetically without content.
 	"*/satelle-workflow-change-review": "n/a-fast when no workflow files change; seam shared with intent",
 }

@@ -91,7 +91,7 @@ requires = ["authored"]
 
 # ================================================================
 # THE CONTAINER CLOSE — selected by "epic-parent" and "parent"
-# raised -> ready -> children-resolved
+# raised -> ready -> merged -> children-resolved
 # ================================================================
 
 [ready]
@@ -115,15 +115,30 @@ mark = "ready"
 propose = true
 apply_changes = { ops = ["add-tags", "create-child"], tags = ["order:", "surface:", "lane:", "depends-on:"] }
 
+[merged]
+# The epic-branch lane's landing. A child with no `lane:trunk` tag commits on
+# `epic/<child-id>` and closes without touching trunk (satelle-epic-branch-check
+# gates that); this step merges those branches and publishes trunk once. It
+# waits (`after_children`) for every member to discharge "closed", the working
+# lane's terminal obligation, so it never starts over unfinished children.
+# `satelle-epic-merge` is the shipped rubric; a repo that lands the epic through
+# a pull request overrides that skill by name.
+status = "merging"
+agent = "executor"
+skills = ["satelle-epic-merge"]
+after_children = "closed"
+requires = ["ready"]
+
 [children-resolved]
 # Nothing performs on this lane, so `agent = "reviewer"` marks it as judging
-# only; the gate is handed a snapshot of the children to judge from. It requires
-# "ready", the round that sequenced those children.
+# only; the gates are handed a snapshot of the children to judge from. It
+# requires "merged", the step that put the children's branches on trunk;
+# satelle-epic-merged-check refuses the close while one is not there.
 status = "done"
 agent = "reviewer"
-reviewers = ["satelle-story-done-review"]
+reviewers = ["satelle-story-done-review", "satelle-epic-merged-check"]
 terminal = true
-requires = ["ready"]
+requires = ["merged"]
 
 # ================================================================
 # THE TASK RUN — selected by "execution" and "task"
@@ -183,6 +198,17 @@ for = ["*", "docs", "epic-parent", "parent"]
 # estimating a prose change costs more than the estimate is worth.
 skill = "satelle-estimate-actual-review"
 on = ["in_progress", "done"]
+for = ["*"]
+
+[[gate]]
+# The epic-branch lane's close check: a member of a container with no
+# `lane:trunk` tag closes only once its slice sits on a pushed `epic/<child-id>`
+# branch that is not yet on trunk. The lane is read INSIDE the check because a
+# route is selected by category and a gate's `applies_to` matches tags only
+# positively, so no table can say "a story without this tag". A story in no
+# container, or tagged `lane:trunk`, passes untouched.
+skill = "satelle-epic-branch-check"
+on = ["done"]
 for = ["*"]
 
 [[gate]]

@@ -317,6 +317,9 @@ func BuildRoute(l List, cat Catalogue, tags []string) (Spec, error) {
 	if err != nil {
 		return Spec{}, err
 	}
+	if err := checkAfterChildrenRoute(l.Category, ordered, cat); err != nil {
+		return Spec{}, err
+	}
 	return assemble(ordered, cat.Gates, l)
 }
 

@@ -43,11 +43,28 @@ configuration another child sets, or is independent.
   likely merge conflict, is never a reason for an edge.
 - Keep the `depends-on` edges that already exist. Do not add an edge that makes a
   cycle. Do not remove an edge a raiser recorded.
-- `order:`, `surface:` and `lane:` tags: add one only where the repo's vocabulary or
+- `order:` and `surface:` tags: add one only where the repo's vocabulary or
   release process reads it and sibling stories of the same kind already carry it.
-  Do not renumber tags that already exist.
+  Do not renumber tags that already exist. `lane:` is decided separately, below.
 - A child that only holds an acceptance criterion the parent already states and
   that no child owns may be created. Do not add an outcome the parent did not state.
+
+## Choose each child's lane
+
+The container's children land by one of two lanes, and you set it:
+
+- **Branch lane (the default): no `lane:` tag.** The child commits on its own
+  `epic/<child-id>` branch from its worktree and closes without touching trunk.
+  The container's `merged` step merges every such branch and publishes trunk once.
+  Leave every child un-laned unless it must be on trunk first.
+- **Trunk lane: `lane:trunk`.** The child releases itself and lands on trunk ahead
+  of the others. Report an `add-tags` op of `lane:trunk` for each child that must
+  land on trunk before the parallel children can be built or judged: one the
+  others depend on, or one that sets configuration or substrate the others run
+  under. Never tag a child `lane:trunk` only to avoid a merge.
+
+Record the `lane:trunk` ids in your artifact body. A child you leave un-laned is
+on the branch lane; you need not name it.
 
 Do not rewrite a title, a body, or an acceptance criterion.
 

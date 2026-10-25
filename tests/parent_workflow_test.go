@@ -87,8 +87,10 @@ func TestParentWorkflowSelectedAndValid(t *testing.T) {
 				t.Errorf("category %s must have no %q step — a container has no slice of its own (states %v)", cat, absent, names)
 			}
 		}
-		if !spec.HasEdge("backlog", "ready") || !spec.HasEdge("ready", "done") {
-			t.Errorf("category %s must run backlog → ready → done (states %v)", cat, names)
+		// ready → merging → done: the epic-branch lane's landing sits between the
+		// readiness round and the close (sty_b9d9a3df).
+		if !spec.HasEdge("backlog", "ready") || !spec.HasEdge("ready", "merging") || !spec.HasEdge("merging", "done") {
+			t.Errorf("category %s must run backlog → ready → merging → done (states %v)", cat, names)
 		}
 	}
 }

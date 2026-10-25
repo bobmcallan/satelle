@@ -110,9 +110,38 @@ func TestAfterChildrenIsRefusedWhenItWouldBeASilentNoOp(t *testing.T) {
 
 func TestAfterChildrenRefusedOffAContainerRoute(t *testing.T) {
 	body := strings.Replace(afterChildrenSteps(`after_children = "coded"`), `requires = ["ready"]`, `requires = ["raised"]`, 1)
-	_, err := ParseSteps(body)
+	_, err := ParseRoute(afterChildrenDone, body, "epic-parent", nil)
 	if err == nil || !strings.Contains(err.Error(), "waits_on_children") || !strings.Contains(err.Error(), `"merged"`) {
-		t.Fatalf("a step no waits_on_children step precedes must be refused naming it: %v", err)
+		t.Fatalf("a route listing a step no waits_on_children step precedes must be refused naming it: %v", err)
+	}
+}
+
+// A repo overlay that restates `ready` without the wait still inherits the
+// shipped after_children step by name (mergeRouteHalf). The catalogue is valid
+// and a route that does not list the step builds; a route that lists it is
+// refused, because the step would be a silent no-op there.
+func TestAfterChildrenWithoutAWaitIsJudgedByTheRoutesThatListIt(t *testing.T) {
+	body := strings.Replace(afterChildrenSteps(`after_children = "coded"`), "waits_on_children = true", "", 1)
+	if _, err := ParseSteps(body); err != nil {
+		t.Fatalf("the catalogue alone is not at fault: %v", err)
+	}
+	if _, err := ParseRoute(afterChildrenDone, body, "*", nil); err != nil {
+		t.Fatalf("a route that does not list the step must build: %v", err)
+	}
+	_, err := ParseRoute(afterChildrenDone, body, "epic-parent", nil)
+	if err == nil || !strings.Contains(err.Error(), `"merged"`) || !strings.Contains(err.Error(), "waits_on_children") {
+		t.Fatalf("a route listing the step with no wait before it must be refused: %v", err)
+	}
+	lists, err := ParseDone(afterChildrenDone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat, err := ParseSteps(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errs := RouteErrors(lists, cat); len(errs) == 0 {
+		t.Fatal("validate's route sweep must report the refused route")
 	}
 }
 

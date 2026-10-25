@@ -68,8 +68,10 @@ func TestEmbeddedRouteCarriesTheInstructionGateWhereWorkIsEdited(t *testing.T) {
 	}
 	for _, category := range []string{"epic-parent", "parent"} {
 		spec := embeddedRouteFor(t, category)
-		if len(spec.EditCapableStates()) != 0 {
-			t.Fatalf("category %q unexpectedly has editable steps: %v", category, spec.EditCapableStates())
+		// The only step a container can edit under is `merging`, where it lands its
+		// children's branches (satelle-epic-merge); it authors no instruction text.
+		if got := spec.EditCapableStates(); len(got) != 1 || got[0] != "merging" {
+			t.Fatalf("category %q editable steps = %v, want only [merging]", category, got)
 		}
 		if gateNamed(spec, instructionReviewSkill, "done") != nil {
 			t.Errorf("container %q performs no work; it must not carry the gate", category)

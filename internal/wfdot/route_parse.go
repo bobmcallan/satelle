@@ -753,18 +753,16 @@ func parseRemoteWait(step string, w *remoteWaitWire, agent string) (*RemoteWait,
 }
 
 // checkAfterChildren refuses the after_children declarations that would be
-// silent no-ops: a name no step provides, a step that is itself the wait, and a
-// step no waits_on_children step precedes — which is not a container route. The
-// precedence test is the step's own requires chain, so it is decided on the
-// catalogue and never on a category or status name.
+// silent no-ops whichever route lists the step: a name no step provides, a step
+// that is itself the wait, and a step that names its own obligation. That a
+// waits_on_children step precedes it is judged per route, by
+// checkAfterChildrenRoute: a repo overlay that restates the readiness step
+// without the wait still inherits the shipped after_children step by name
+// (mergeRouteHalf), and is refused only for a category whose route lists it —
+// an inherited container route does, so such a repo restores the wait or
+// restates that category in its own done.toml.
 func checkAfterChildren(cat Catalogue) error {
 	provided := providedSet(cat)
-	byProvides := map[string]Step{}
-	for _, st := range cat.Steps {
-		if st.Provides != "" {
-			byProvides[st.Provides] = st
-		}
-	}
 	for _, st := range cat.Steps {
 		if st.AfterChildren == "" {
 			continue
@@ -776,8 +774,25 @@ func checkAfterChildren(cat Catalogue) error {
 			return fmt.Errorf("step.toml: step %q: after_children %q names an obligation no step provides", st.Provides, st.AfterChildren)
 		case st.AfterChildren == st.Provides:
 			return fmt.Errorf("step.toml: step %q: after_children names the step's own obligation", st.Provides)
-		case !requiresWait(st, byProvides, map[string]bool{}):
-			return fmt.Errorf("step.toml: step %q: after_children is a container declaration — the step must require, directly or through other steps, a waits_on_children step", st.Provides)
+		}
+	}
+	return nil
+}
+
+// checkAfterChildrenRoute refuses a route that lists an after_children step no
+// waits_on_children step precedes — not a container route, so the declaration
+// would be a silent no-op. The precedence test is the step's own requires chain,
+// so it is decided on the catalogue and never on a category or status name.
+func checkAfterChildrenRoute(category string, ordered []Step, cat Catalogue) error {
+	byProvides := map[string]Step{}
+	for _, st := range cat.Steps {
+		if st.Provides != "" {
+			byProvides[st.Provides] = st
+		}
+	}
+	for _, st := range ordered {
+		if st.AfterChildren != "" && !requiresWait(st, byProvides, map[string]bool{}) {
+			return fmt.Errorf("step.toml: step %q: after_children is a container declaration — the step must require, directly or through other steps, a waits_on_children step (category %q lists it without one)", st.Provides, category)
 		}
 	}
 	return nil
