@@ -1,6 +1,7 @@
 package remotechan
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -23,7 +24,12 @@ var ErrRelayRefused = errors.New("remotechan: relay refused the connection")
 
 // RelayStatusError is ErrRelayRefused with the status the relay answered the
 // upgrade with, so a caller can tell a refused credential (401) from the rest.
-type RelayStatusError struct{ Status int }
+// Body is the bounded text the relay answered with, which names bad_session or
+// slot_taken when it refuses a redial for that reason.
+type RelayStatusError struct {
+	Status int
+	Body   string
+}
 
 func (e *RelayStatusError) Error() string {
 	return fmt.Sprintf("%s (HTTP %d)", ErrRelayRefused.Error(), e.Status)
@@ -67,6 +73,7 @@ type options struct {
 	clock  Clock
 	tokens *TokenBook
 	rec    Recorder
+	window time.Duration
 }
 
 // Option configures Open or Join.
@@ -83,13 +90,21 @@ func WithClock(c Clock) Option { return func(o *options) { o.clock = c } }
 // fresh one per Open).
 func WithTokens(b *TokenBook) Option { return func(o *options) { o.tokens = b } }
 
-// WithRecorder sets where refused enrollments are recorded (default: nowhere).
+// WithRecorder sets where refused enrollments, and channel resumes, are recorded
+// (default: nowhere).
 func WithRecorder(r Recorder) Option { return func(o *options) { o.rec = r } }
+
+// WithResumeWindow sets how long a server-minted session (AttachServerSession,
+// Join) keeps redialling after the relay drops it (default: ResumeWindow).
+func WithResumeWindow(d time.Duration) Option { return func(o *options) { o.window = d } }
 
 func newOptions(opts []Option) *options {
 	o := &options{}
 	for _, f := range opts {
 		f(o)
+	}
+	if o.window <= 0 {
+		o.window = ResumeWindow
 	}
 	if o.clock == nil {
 		o.clock = RealClock()
@@ -124,7 +139,7 @@ func Open(ctx context.Context, client *hosted.Client, relayURL string, launch La
 		if pinned, err = launch.Launch(ctx, LaunchSpec{RelayURL: relayURL, Session: session, Token: token}); err == nil {
 			var s *Session
 			redeem := func(m appMsg) error { return o.tokens.Redeem(m.Token) }
-			if s, err = acceptRemote(ctx, conn, session, pinned, o, redeem); err == nil {
+			if s, err = acceptRemote(ctx, conn, session, pinned, o, redeem, nil); err == nil { // an Open session never resumes: its token is single use
 				return s, nil
 			}
 		}
@@ -138,12 +153,14 @@ func Open(ctx context.Context, client *hosted.Client, relayURL string, launch La
 func dialLocal(ctx context.Context, client *hosted.Client, o *options, relayURL, session string) (*websocket.Conn, error) {
 	var conn *websocket.Conn
 	var status int
+	var refusal []byte
 	err := client.WithBearer(ctx, func(ctx context.Context, bearer string) (int, []byte, error) {
 		c, resp, err := dialRelay(ctx, o.http, relayURL, session, RoleLocal, bearer)
 		if err != nil {
 			if resp != nil {
 				status = resp.StatusCode
-				return status, hosted.BoundAuthBody(resp.Body), nil
+				refusal = hosted.BoundAuthBody(resp.Body)
+				return status, refusal, nil
 			}
 			return 0, nil, fmt.Errorf("remotechan: dial relay: %w", err)
 		}
@@ -154,7 +171,7 @@ func dialLocal(ctx context.Context, client *hosted.Client, o *options, relayURL,
 		return nil, err
 	}
 	if conn == nil {
-		return nil, &RelayStatusError{Status: status}
+		return nil, &RelayStatusError{Status: status, Body: string(refusal)}
 	}
 	return conn, nil
 }
@@ -182,6 +199,11 @@ const keyPollInterval = time.Second
 //
 // The node side is unchanged: Join sends its bearer as the enroll value, which
 // this path ignores.
+//
+// The session resumes: when the relay drops the connection in a way a restart
+// explains, it redials the same session with backoff, for at most the resume
+// window, and handshakes again against the same pinned key (the key is not asked
+// for again).
 func AttachServerSession(ctx context.Context, client *hosted.Client, relayURL, session string, keyFn func(context.Context) ([]byte, error), opts ...Option) (*Session, error) {
 	o := newOptions(opts)
 	conn, err := dialLocal(ctx, client, o, relayURL, session)
@@ -197,7 +219,22 @@ func AttachServerSession(ctx context.Context, client *hosted.Client, relayURL, s
 		return nil, err
 	}
 	admitByKey := func(appMsg) error { return nil } // the pinned key already authenticated the node
-	s, err := acceptRemote(ctx, conn, session, pinned, o, admitByKey)
+	res := &resumer{
+		session: session, window: o.window, rec: o.rec,
+		redial: func(ctx context.Context) (*websocket.Conn, *sealer, *opener, error) {
+			conn, err := dialLocal(ctx, client, o, relayURL, session)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			send, recv, err := handshakeLocal(ctx, conn, session, pinned, o, admitByKey)
+			if err != nil {
+				conn.CloseNow()
+				return nil, nil, nil, err
+			}
+			return conn, send, recv, nil
+		},
+	}
+	s, err := acceptRemote(ctx, conn, session, pinned, o, admitByKey, res)
 	if err != nil {
 		conn.Close(websocket.StatusPolicyViolation, "attach failed")
 		return nil, err
@@ -236,56 +273,79 @@ func awaitKey(ctx context.Context, o *options, keyFn func(context.Context) ([]by
 // token; AttachServerSession admits by the key the keys were already derived
 // from. The handshake, the key_mismatch refusal and the refusal recorder are the
 // same for both.
-func acceptRemote(ctx context.Context, conn *websocket.Conn, session string, pinned []byte, o *options, admit func(appMsg) error) (*Session, error) {
-	conn.SetReadLimit(maxFrameBytes)
+//
+// res, when set, lets the returned Session redial after the relay drops it.
+func acceptRemote(ctx context.Context, conn *websocket.Conn, session string, pinned []byte, o *options, admit func(appMsg) error, res *resumer) (*Session, error) {
 	hctx, cancel := context.WithTimeout(ctx, EnrollTTL)
 	defer cancel()
+	send, recv, err := handshakeLocal(hctx, conn, session, pinned, o, admit)
+	if err != nil {
+		return nil, err
+	}
+	return newSession(ctx, RoleLocal, conn, send, recv, o.clock, res), nil
+}
 
-	frame, err := readFrame(hctx, conn)
-	if err != nil {
-		return nil, fmt.Errorf("remotechan: waiting for the remote: %w", err)
-	}
-	if len(frame) != 1+pubLen || frame[0] != frameHelloRemote {
-		return nil, fmt.Errorf("%w: expected the remote's key half", ErrFrame)
-	}
-	eL, err := newEphemeral()
-	if err != nil {
-		return nil, err
-	}
-	send, recv, err := localKeys(session, eL, frame[1:], pinned)
-	if err != nil {
-		return nil, err
-	}
-	if err := conn.Write(hctx, websocket.MessageBinary, append([]byte{frameHelloLocal}, eL.PublicKey().Bytes()...)); err != nil {
-		return nil, err
-	}
+// handshakeLocal is local's half of the handshake, bounded by ctx. The remote may
+// re-send its key half while it waits for ours (a redial), so a key half already
+// answered is ignored, and a different one is a fresh attempt by the remote and is
+// answered afresh: this end never waits on an attempt the remote has abandoned.
+func handshakeLocal(ctx context.Context, conn *websocket.Conn, session string, pinned []byte, o *options, admit func(appMsg) error) (*sealer, *opener, error) {
+	conn.SetReadLimit(maxFrameBytes)
+	var send *sealer
+	var recv *opener
+	var answered []byte // the remote key half the keys were derived from
+	for {
+		frame, err := readFrame(ctx, conn)
+		if err != nil {
+			if send == nil {
+				return nil, nil, fmt.Errorf("remotechan: waiting for the remote: %w", err)
+			}
+			return nil, nil, fmt.Errorf("remotechan: waiting for enrollment: %w", err)
+		}
+		if len(frame) == 1+pubLen && frame[0] == frameHelloRemote {
+			if answered != nil && bytes.Equal(frame[1:], answered) {
+				continue
+			}
+			eL, err := newEphemeral()
+			if err != nil {
+				return nil, nil, err
+			}
+			if send, recv, err = localKeys(session, eL, frame[1:], pinned); err != nil {
+				return nil, nil, err
+			}
+			if err := conn.Write(ctx, websocket.MessageBinary, append([]byte{frameHelloLocal}, eL.PublicKey().Bytes()...)); err != nil {
+				return nil, nil, err
+			}
+			answered = frame[1:]
+			continue
+		}
+		if send == nil {
+			return nil, nil, fmt.Errorf("%w: expected the remote's key half", ErrFrame)
+		}
 
-	first, err := readFrame(hctx, conn)
-	if err != nil {
-		return nil, fmt.Errorf("remotechan: waiting for enrollment: %w", err)
-	}
-	plain, err := recv.open(first)
-	if errors.Is(err, errOpen) {
-		return nil, o.refused(ctx, session, "key_mismatch", ErrKeyMismatch)
-	}
-	if err != nil {
-		return nil, err
-	}
-	var m appMsg
-	if json.Unmarshal(plain, &m) != nil || m.T != msgEnroll {
-		return nil, fmt.Errorf("%w: expected enrollment", ErrFrame)
-	}
+		plain, err := recv.open(frame)
+		if errors.Is(err, errOpen) {
+			return nil, nil, o.refused(ctx, session, "key_mismatch", ErrKeyMismatch)
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		var m appMsg
+		if json.Unmarshal(plain, &m) != nil || m.T != msgEnroll {
+			return nil, nil, fmt.Errorf("%w: expected enrollment", ErrFrame)
+		}
 
-	if rErr := admit(m); rErr != nil {
-		reply, _ := json.Marshal(appMsg{T: msgRefuse, Reason: rErr.Error()})
-		_ = conn.Write(hctx, websocket.MessageBinary, send.seal(reply))
-		return nil, o.refused(ctx, session, tokenReason(rErr), rErr)
+		if rErr := admit(m); rErr != nil {
+			reply, _ := json.Marshal(appMsg{T: msgRefuse, Reason: rErr.Error()})
+			_ = conn.Write(ctx, websocket.MessageBinary, send.seal(reply))
+			return nil, nil, o.refused(ctx, session, tokenReason(rErr), rErr)
+		}
+		admitted, _ := json.Marshal(appMsg{T: msgAdmit})
+		if err := conn.Write(ctx, websocket.MessageBinary, send.seal(admitted)); err != nil {
+			return nil, nil, err
+		}
+		return send, recv, nil
 	}
-	admitted, _ := json.Marshal(appMsg{T: msgAdmit})
-	if err := conn.Write(hctx, websocket.MessageBinary, send.seal(admitted)); err != nil {
-		return nil, err
-	}
-	return newSession(ctx, RoleLocal, conn, send, recv, o.clock), nil
 }
 
 func tokenReason(err error) string {
@@ -321,71 +381,135 @@ func (o *options) refused(ctx context.Context, session, reason string, cause err
 // satelle refused the token, a *RelayStatusError (401 for a token the relay does
 // not accept) if the relay refused the upgrade, or an error if the channel closed
 // first (as it does for a key local did not pin).
+//
+// The session resumes: when the relay drops the connection in a way a restart
+// explains, the node redials the same session with the same identity and token,
+// for at most the resume window, and re-sends its key half until local answers, so
+// the handshake completes whichever end the relay admits first.
 func Join(ctx context.Context, relayURL, session string, id *Identity, token string, opts ...Option) (*Session, error) {
 	o := newOptions(opts)
-	conn, resp, err := dialRelay(ctx, o.http, relayURL, session, RoleRemote, token)
+	conn, err := dialRemote(ctx, o, relayURL, session, token)
 	if err != nil {
-		if resp != nil {
-			hosted.BoundAuthBody(resp.Body)
-			return nil, &RelayStatusError{Status: resp.StatusCode}
-		}
-		return nil, fmt.Errorf("remotechan: dial relay: %w", err)
+		return nil, err
 	}
-	s, err := joinHandshake(ctx, conn, session, id, token, o)
+	hctx, cancel := context.WithTimeout(ctx, EnrollTTL)
+	defer cancel()
+	send, recv, err := joinHandshake(hctx, conn, session, id, token, o, 0)
 	if err != nil {
 		conn.Close(websocket.StatusPolicyViolation, "join failed")
 		return nil, err
 	}
-	return s, nil
+	res := &resumer{
+		session: session, window: o.window, rec: o.rec,
+		redial: func(ctx context.Context) (*websocket.Conn, *sealer, *opener, error) {
+			conn, err := dialRemote(ctx, o, relayURL, session, token)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			send, recv, err := joinHandshake(ctx, conn, session, id, token, o, HelloResend)
+			if err != nil {
+				conn.CloseNow()
+				return nil, nil, nil, err
+			}
+			return conn, send, recv, nil
+		},
+	}
+	return newSession(ctx, RoleRemote, conn, send, recv, o.clock, res), nil
 }
 
-func joinHandshake(ctx context.Context, conn *websocket.Conn, session string, id *Identity, token string, o *options) (*Session, error) {
+// dialRemote dials the relay as the remote with the node token as the bearer.
+func dialRemote(ctx context.Context, o *options, relayURL, session, token string) (*websocket.Conn, error) {
+	conn, resp, err := dialRelay(ctx, o.http, relayURL, session, RoleRemote, token)
+	if err != nil {
+		if resp != nil {
+			return nil, &RelayStatusError{Status: resp.StatusCode, Body: string(hosted.BoundAuthBody(resp.Body))}
+		}
+		return nil, fmt.Errorf("remotechan: dial relay: %w", err)
+	}
+	return conn, nil
+}
+
+// joinHandshake is the remote's half of the handshake, bounded by ctx. With
+// resend > 0 it re-sends the same key half every resend on the options clock
+// until local's arrives: a frame sent while the relay has no local end may be
+// dropped, so the remote asks again rather than wait on one that was lost.
+func joinHandshake(ctx context.Context, conn *websocket.Conn, session string, id *Identity, token string, o *options, resend time.Duration) (*sealer, *opener, error) {
 	conn.SetReadLimit(maxFrameBytes)
-	hctx, cancel := context.WithTimeout(ctx, EnrollTTL)
-	defer cancel()
 
 	eR, err := newEphemeral()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if err := conn.Write(hctx, websocket.MessageBinary, append([]byte{frameHelloRemote}, eR.PublicKey().Bytes()...)); err != nil {
-		return nil, err
+	hello := append([]byte{frameHelloRemote}, eR.PublicKey().Bytes()...)
+	if err := conn.Write(ctx, websocket.MessageBinary, hello); err != nil {
+		return nil, nil, err
 	}
-	frame, err := readFrame(hctx, conn)
+	frame, err := awaitLocalHello(ctx, conn, o.clock, hello, resend)
 	if err != nil {
-		return nil, fmt.Errorf("remotechan: waiting for local satelle: %w", err)
+		return nil, nil, fmt.Errorf("remotechan: waiting for local satelle: %w", err)
 	}
 	if len(frame) != 1+pubLen || frame[0] != frameHelloLocal {
-		return nil, fmt.Errorf("%w: expected local's key half", ErrFrame)
+		return nil, nil, fmt.Errorf("%w: expected local's key half", ErrFrame)
 	}
 	send, recv, err := remoteKeys(session, id, eR, frame[1:])
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	enroll, _ := json.Marshal(appMsg{T: msgEnroll, Token: token})
-	if err := conn.Write(hctx, websocket.MessageBinary, send.seal(enroll)); err != nil {
-		return nil, err
+	if err := conn.Write(ctx, websocket.MessageBinary, send.seal(enroll)); err != nil {
+		return nil, nil, err
 	}
 
-	reply, err := readFrame(hctx, conn)
+	reply, err := readFrame(ctx, conn)
 	if err != nil {
-		return nil, fmt.Errorf("remotechan: channel closed before admission: %w", err)
+		return nil, nil, fmt.Errorf("remotechan: channel closed before admission: %w", err)
 	}
 	plain, err := recv.open(reply)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var m appMsg
 	if json.Unmarshal(plain, &m) != nil {
-		return nil, fmt.Errorf("%w: malformed reply", ErrFrame)
+		return nil, nil, fmt.Errorf("%w: malformed reply", ErrFrame)
 	}
 	switch m.T {
 	case msgAdmit:
-		return newSession(ctx, RoleRemote, conn, send, recv, o.clock), nil
+		return send, recv, nil
 	case msgRefuse:
-		return nil, fmt.Errorf("%w: %s", ErrEnrollRefused, m.Reason)
+		return nil, nil, fmt.Errorf("%w: %s", ErrEnrollRefused, m.Reason)
 	}
-	return nil, fmt.Errorf("%w: expected admission", ErrFrame)
+	return nil, nil, fmt.Errorf("%w: expected admission", ErrFrame)
+}
+
+// awaitLocalHello reads local's key half, re-writing hello every resend (when
+// resend > 0) until it arrives.
+func awaitLocalHello(ctx context.Context, conn *websocket.Conn, clock Clock, hello []byte, resend time.Duration) ([]byte, error) {
+	if resend <= 0 {
+		return readFrame(ctx, conn)
+	}
+	type read struct {
+		frame []byte
+		err   error
+	}
+	got := make(chan read, 1)
+	go func() {
+		f, err := readFrame(ctx, conn)
+		got <- read{f, err}
+	}()
+	tick, stop := clock.Tick(resend)
+	defer stop()
+	for {
+		select {
+		case r := <-got:
+			return r.frame, r.err
+		case <-tick:
+			if err := conn.Write(ctx, websocket.MessageBinary, hello); err != nil {
+				conn.CloseNow()
+				<-got // the read ends with the connection
+				return nil, err
+			}
+		}
+	}
 }
 
 // dialRelay opens the WebSocket to <relayURL>/<session>?role=<role>. A bearer

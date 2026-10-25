@@ -85,7 +85,7 @@ func TestRelayInteropProduction(t *testing.T) {
 	// HeartbeatInterval): the job is still not lost only if its heartbeats arrived.
 	wait := LostAfter + HeartbeatInterval + 2*time.Second
 	local.Expect("interop")
-	job := remote.StartJob("interop")
+	job := remote.StartJob(context.Background(), "interop")
 	select {
 	case l := <-local.Lost():
 		t.Fatalf("job %s reported lost while beating", l.Job)

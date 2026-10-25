@@ -24,6 +24,7 @@ type fakeClock struct {
 	mu      sync.Mutex
 	now     time.Time
 	tickers []*fakeTicker
+	log     []time.Duration // the period of every ticker ever registered, in order
 }
 
 type fakeTicker struct {
@@ -46,11 +47,19 @@ func (f *fakeClock) Tick(d time.Duration) (<-chan time.Time, func()) {
 	defer f.mu.Unlock()
 	t := &fakeTicker{d: d, next: f.now.Add(d), c: make(chan time.Time, 1)}
 	f.tickers = append(f.tickers, t)
+	f.log = append(f.log, d)
 	return t.c, func() {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		t.stopped = true
 	}
+}
+
+// tickLog is the period of every ticker registered so far, in order.
+func (f *fakeClock) tickLog() []time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]time.Duration(nil), f.log...)
 }
 
 // waitTickers waits until n tickers are registered. A session starts its loss

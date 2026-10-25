@@ -286,6 +286,14 @@ const (
 	// with reason one of token_used | token_expired | token_unknown |
 	// key_mismatch. The token itself is never recorded. Enumeration only.
 	KindRemoteEnrollRefused = "remote_enroll_refused"
+	// KindRemoteChannelResumed records that an end of the sealed channel redialled
+	// the relay after it dropped the connection and the channel resumed
+	// (sty_ee78148f): Payload is {session, role, attempts}. Enumeration only.
+	KindRemoteChannelResumed = "remote_channel_resumed"
+	// KindRemoteChannelResumeFailed records that an end of the sealed channel gave
+	// up redialling (sty_ee78148f): Payload is {session, role, reason, attempts}
+	// with reason one of refused | expired | failed. Enumeration only.
+	KindRemoteChannelResumeFailed = "remote_channel_resume_failed"
 	// KindChainFork records that two or more events of one story deliberately
 	// share a base (sty_41f61669): Refs is the JSON array of the forking event
 	// ids. VerifyChain accepts a shared base only when such a record names every

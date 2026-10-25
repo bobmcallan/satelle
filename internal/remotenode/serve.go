@@ -157,7 +157,8 @@ func (n *Node) ServeWithRun(ctx context.Context, sess *remotechan.Session, repor
 func (n *Node) serveJob(ctx context.Context, sess *remotechan.Session, m remotechan.Message, stop context.CancelCauseFunc) {
 	n.active.Add(1)
 	defer n.active.Add(-1)
-	job := sess.StartJob(m.Job)
+	job := sess.StartJob(ctx, m.Job)
+	jctx := job.Context() // also cancelled, ErrRelayRestarted, when the relay drops under the job
 	var r reply
 	var refused *TokenRefusedError
 	env, err := decode(m.Body)
@@ -170,12 +171,17 @@ func (n *Node) serveJob(ctx context.Context, sess *remotechan.Session, m remotec
 			r.Error = fmt.Sprintf("unsupported job type %q", env.Type)
 			break
 		}
-		if body, herr := h(ctx, env.Body); herr != nil {
+		if body, herr := h(jctx, env.Body); herr != nil {
 			r.Error = herr.Error()
 			_ = errors.As(herr, &refused)
 		} else {
 			r.Body = body
 		}
+	}
+	if errors.Is(context.Cause(jctx), remotechan.ErrRelayRestarted) {
+		// The waiting end already failed this job, naming the restart: no reply, no done.
+		_ = job.Done()
+		return
 	}
 	if out, merr := encode(typeReply, r); merr == nil {
 		_ = sess.Send(ctx, m.Job, out)

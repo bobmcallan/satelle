@@ -16,6 +16,14 @@
 // and the enrollment token, not to the relay. Every binary message from one end
 // is forwarded unchanged to the other; the relay never needs to parse one.
 //
+// A relay restart closes every session and keeps none. The two ends of a
+// server-minted session (AttachServerSession, Join) therefore redial the same
+// session id with backoff, for at most ResumeWindow, and handshake again; the
+// relay admits either end first. A going-away or abnormal close, or a network
+// error, is a restart; a 4401 close, a bad_session or slot_taken answer, or a
+// 401, 403, 404 or 409 on the upgrade is a refusal and is never retried (see
+// classifyClose). A job open at the drop is failed, not resumed.
+//
 // # Wire protocol
 //
 // Binary messages only. remote → local: [1][remote ephemeral X25519 public
@@ -40,6 +48,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/coder/websocket"
 )
@@ -98,19 +107,24 @@ var ErrClosed = errors.New("remotechan: session closed")
 // concurrent use.
 type Session struct {
 	role  Role
-	conn  *websocket.Conn
+	conn  atomic.Pointer[websocket.Conn] // swapped under wmu by a resume
 	clock Clock
+	res   *resumer // nil: the session ends with its connection
 
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	wmu  sync.Mutex // serialises seal + write so sequence numbers reach the relay in order
+	wmu  sync.Mutex // serialises seal + write so sequence numbers reach the relay in order; guards send, gate and the conn swap
 	send *sealer
-	recv *opener
+	gate chan struct{} // non-nil while a resume is in flight; closed when it ends
+	recv *opener       // read by readLoop only
 
 	inbox chan Message
 	jobs  *jobTable
 	lost  chan JobLost
+
+	jmu  sync.Mutex
+	open map[*Job]struct{} // sending-end jobs in flight, cut off by a resume
 
 	done    chan struct{}
 	errOnce sync.Once
@@ -119,16 +133,18 @@ type Session struct {
 
 // newSession wraps an admitted connection and starts its loops. The session
 // outlives the ctx of the call that opened it (a per-call timeout must not end
-// it); Close ends it.
-func newSession(ctx context.Context, role Role, conn *websocket.Conn, send *sealer, recv *opener, clock Clock) *Session {
+// it); Close ends it. res, when set, lets it redial the same session after the
+// relay drops the connection.
+func newSession(ctx context.Context, role Role, conn *websocket.Conn, send *sealer, recv *opener, clock Clock, res *resumer) *Session {
 	conn.SetReadLimit(maxFrameBytes)
 	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	s := &Session{
-		role: role, conn: conn, clock: clock, ctx: ctx, cancel: cancel,
+		role: role, clock: clock, ctx: ctx, cancel: cancel, res: res,
 		send: send, recv: recv,
 		inbox: make(chan Message, 64), jobs: newJobTable(), lost: make(chan JobLost, 16),
-		done: make(chan struct{}),
+		open: map[*Job]struct{}{}, done: make(chan struct{}),
 	}
+	s.conn.Store(conn)
 	go s.readLoop()
 	go s.monitor()
 	return s
@@ -186,7 +202,7 @@ func (s *Session) Err() error {
 // Close ends the session.
 func (s *Session) Close() error {
 	s.finish(ErrClosed)
-	return s.conn.Close(websocket.StatusNormalClosure, "")
+	return s.conn.Load().Close(websocket.StatusNormalClosure, "")
 }
 
 // finish records why the session ended, once, and wakes everything waiting on it.
@@ -198,47 +214,81 @@ func (s *Session) finish(err error) {
 	})
 }
 
-// sendApp seals one application message and writes it.
+// sendApp seals one application message and writes it. While the session is
+// redialling it waits for the resume, bounded by ctx and by the session's end:
+// it never writes to a connection the relay has dropped.
 func (s *Session) sendApp(ctx context.Context, m appMsg) error {
 	plain, err := json.Marshal(m)
 	if err != nil {
 		return err
 	}
-	s.wmu.Lock()
-	defer s.wmu.Unlock()
-	select {
-	case <-s.done:
-		return ErrClosed
-	default:
+	for {
+		s.wmu.Lock()
+		select {
+		case <-s.done:
+			s.wmu.Unlock()
+			return ErrClosed
+		default:
+		}
+		if gate := s.gate; gate != nil {
+			s.wmu.Unlock()
+			select {
+			case <-gate:
+				continue
+			case <-s.done:
+				return ErrClosed
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		err := s.conn.Load().Write(ctx, websocket.MessageBinary, s.send.seal(plain))
+		s.wmu.Unlock()
+		return err
 	}
-	return s.conn.Write(ctx, websocket.MessageBinary, s.send.seal(plain))
 }
 
+// readLoop reads the session's frames and, when the relay drops the connection
+// in a way a restart explains, redials and reads on.
 func (s *Session) readLoop() {
 	for {
-		_, frame, err := s.conn.Read(s.ctx)
-		if err != nil {
-			s.finish(fmt.Errorf("%w: %v", ErrClosed, err))
+		err := s.readFrames()
+		if err == nil || !s.resume(err) {
 			return
+		}
+	}
+}
+
+// readFrames reads the current connection until it fails. A nil return means
+// the session itself ended (a bad frame, or its ctx); a non-nil one is the
+// connection's own failure.
+func (s *Session) readFrames() error {
+	conn := s.conn.Load()
+	for {
+		_, frame, err := conn.Read(s.ctx)
+		if err != nil {
+			return err
+		}
+		if s.role == RoleLocal && len(frame) == 1+pubLen && frame[0] == frameHelloRemote {
+			continue // a hello the remote re-sent while it waited for us
 		}
 		plain, err := s.recv.open(frame)
 		if err != nil {
 			s.finish(err)
-			s.conn.Close(websocket.StatusPolicyViolation, "bad frame")
-			return
+			conn.Close(websocket.StatusPolicyViolation, "bad frame")
+			return nil
 		}
 		var m appMsg
 		if json.Unmarshal(plain, &m) != nil {
 			s.finish(fmt.Errorf("%w: malformed message", ErrFrame))
-			s.conn.Close(websocket.StatusPolicyViolation, "bad message")
-			return
+			conn.Close(websocket.StatusPolicyViolation, "bad message")
+			return nil
 		}
 		switch m.T {
 		case msgData:
 			select {
 			case s.inbox <- Message{Job: m.Job, Body: m.Body}:
 			case <-s.ctx.Done():
-				return
+				return nil
 			}
 		case msgHeartbeat:
 			s.jobs.beat(m.Job, s.clock.Now())

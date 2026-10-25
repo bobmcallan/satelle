@@ -135,6 +135,14 @@ type nodeRig struct {
 	// fakeSetup, when set, configures the satelle.dev fake as serve creates it,
 	// before the node asks it anything.
 	fakeSetup func(*devtest.Node)
+
+	// joinCtx is the context every join in this rig runs under, and joins counts
+	// the joins still running. A node redials a dropped relay for its resume window,
+	// so a join whose test ends without ending it would run on past the test, into
+	// its cleanup; the rig's cleanup cancels joinCtx and waits for the joins instead.
+	joinCtx   context.Context
+	stopJoins context.CancelFunc
+	joins     sync.WaitGroup
 }
 
 // newNodeRig sets the environment of a fresh machine with a fake agent on its PATH
@@ -146,6 +154,7 @@ func newNodeRig(t *testing.T) *nodeRig {
 		t.Skip("the fake agent is a shell script")
 	}
 	r := &nodeRig{t: t, log: &nodeLog{}, relay: relaytest.New(t), repo: gittest.New(t)}
+	r.joinCtx, r.stopJoins = context.WithCancel(context.Background())
 	// Read before the working directory changes: it is the fixture satelle-server
 	// accepts, committed with the remotedef package.
 	remoteToml, err := os.ReadFile(filepath.Join("..", "remotedef", "testdata", "remote.toml"))
@@ -187,7 +196,24 @@ func newNodeRig(t *testing.T) *nodeRig {
 	// The fixture's bootstrap names a host-only command the test node does not
 	// have; a rig starts without one, and a test that wants one sets it.
 	r.setBootstrap(nil)
+	// Registered last, so it runs first: before the relay closes its connections
+	// (which a node would answer by redialling), before the temp directories the
+	// node works in go, and before the seams above are put back.
+	t.Cleanup(r.endJoins)
 	return r
+}
+
+// endJoins stops every join the rig started and waits for each to return, so none
+// outlives its test.
+func (r *nodeRig) endJoins() {
+	r.stopJoins()
+	done := make(chan struct{})
+	go func() { r.joins.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		r.t.Error("a node join did not stop when its test ended")
+	}
 }
 
 // encode is the stored bundle: the rig's files as a format-1 bundle, in path order.
@@ -224,8 +250,11 @@ func (r *nodeRig) serve(id, token string, bundle []byte) *devtest.Node {
 
 // join runs `satelle node join` in this process and returns its error.
 func (r *nodeRig) join(stdout io.Writer, relayURL, session, token string) error {
+	r.joins.Add(1)
+	defer r.joins.Done()
 	root := NewRootCmd()
 	resetFlagState(root)
+	root.SetContext(r.joinCtx)
 	root.SetOut(stdout)
 	root.SetErr(r.log)
 	args := []string{"node", "join", "--root", r.nodeRoot, "--relay", relayURL, "--session", session}

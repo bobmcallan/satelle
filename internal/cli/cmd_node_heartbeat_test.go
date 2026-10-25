@@ -3,6 +3,8 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/remotechan"
 	"github.com/bobmcallan/satelle/internal/remotenode"
 	"github.com/bobmcallan/satelle/internal/remotenode/devtest"
 )
@@ -188,6 +192,76 @@ func TestNodeJoinPerformerHeartbeatsWhileIdleAndStillEnds(t *testing.T) {
 		t.Errorf("end calls = %d, want 1", n)
 	}
 	// Stopped before the end call: no heartbeat is sent once the node has ended.
+	after := len(fake.Statuses())
+	time.Sleep(100 * time.Millisecond)
+	if n := len(fake.Statuses()); n != after {
+		t.Errorf("status calls grew from %d to %d after the node ended", after, n)
+	}
+}
+
+// A performer node whose relay restarts keeps sending status to satelle.dev for as
+// long as it redials, and tells satelle.dev once when it gives up (sty_ee78148f):
+// the redial happens beside the heartbeat, not in place of it, and the node still
+// ends itself.
+func TestNodeHeartbeatsThroughRedialAndEnds(t *testing.T) {
+	r := newNodeRig(t)
+	r.fakeSetup = func(f *devtest.Node) {
+		f.Run = map[string]string{"mode": remotenode.ModePerformer, "story_id": "sty_redial"}
+	}
+	prev := nodeStatusResend
+	nodeStatusResend = 20 * time.Millisecond
+	t.Cleanup(func() { nodeStatusResend = prev })
+	// A short window, so the node gives up inside the test.
+	nodeChannelOptions = append(nodeChannelOptions, remotechan.WithResumeWindow(time.Second))
+
+	const session = "nod_redial"
+	fake := r.serve(session, "node-token", r.encode())
+	joined := make(chan error, 1)
+	go func() { joined <- r.joinNow(r.relay.URL(), session, "node-token") }()
+
+	// The starter's end: attached by the key the node published, as satelle.dev's
+	// starter does.
+	client := hosted.NewClient("https://satelle.test", &nodeTestStore{cred: hosted.Credential{ServerURL: "https://satelle.test", AccessToken: "access-1"}}, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	t.Cleanup(cancel)
+	sess, err := remotechan.AttachServerSession(ctx, client, r.relay.URL(), session,
+		func(context.Context) ([]byte, error) { return fake.ChannelKey(), nil },
+		remotechan.WithHTTPClient(r.relay.Client()))
+	if err != nil {
+		t.Fatalf("AttachServerSession: %v\nnode log:\n%s", err, r.log)
+	}
+	run, err := remotenode.Attach(ctx, sess, 60*time.Second)
+	if err != nil {
+		t.Fatalf("Attach: %v\nnode log:\n%s", err, r.log)
+	}
+	t.Cleanup(func() { _ = run.End() })
+
+	// The relay goes down and stays down. The node redials, and keeps heartbeating.
+	r.relay.Down()
+	during := fake.Count(http.MethodPut, "/status")
+	deadline := time.Now().Add(30 * time.Second)
+	for fake.Count(http.MethodPut, "/status") < during+3 {
+		select {
+		case err := <-joined:
+			t.Fatalf("the node ended (%v) before heartbeating through the redial", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("status calls = %d, want at least 3 more than %d while the node redials", fake.Count(http.MethodPut, "/status"), during)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := fake.Count(http.MethodPost, "/end"); n != 0 {
+		t.Errorf("end calls = %d while the node was still redialling, want 0", n)
+	}
+
+	// The window passes: the node gives up, naming why, and tells satelle.dev once.
+	if err := waitJoin(t, joined); !errors.Is(err, remotechan.ErrResumeExpired) {
+		t.Errorf("node join ended with %v, want ErrResumeExpired\nnode log:\n%s", err, r.log)
+	}
+	if n := fake.Count(http.MethodPost, "/end"); n != 1 {
+		t.Errorf("end calls = %d, want 1", n)
+	}
 	after := len(fake.Statuses())
 	time.Sleep(100 * time.Millisecond)
 	if n := len(fake.Statuses()); n != after {

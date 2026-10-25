@@ -268,3 +268,148 @@ func TestAttachFailsNamingTheCause(t *testing.T) {
 		t.Error("a failed attach left the channel open")
 	}
 }
+
+// sty_ee78148f: the relay restarts mid-session; both ends redial the same
+// session and a new job completes over the resumed channel.
+func TestRelayRestartRepairsAndJobCompletes(t *testing.T) {
+	r := newRig(t)
+	run, h := r.attachServer(echoNode(), ready("1.2.3"))
+	if _, err := run.Request(testCtx(t), AgentJob, AgentRequest{Text: "before"}); err != nil {
+		t.Fatalf("Request before the restart: %v", err)
+	}
+	before := r.relay.Upgrades()
+
+	r.relay.Restart()
+	var got requested
+	res := r.request(run, AgentJob, AgentRequest{Text: "after"})
+	r.driveUntil("the request over the resumed channel", settled(res, &got))
+
+	if got.err != nil {
+		t.Fatalf("Request after the restart: %v", got.err)
+	}
+	if rep, err := DecodeAgentReply(got.body); err != nil || rep.Text != "echo: after" {
+		t.Errorf("reply = %+v, %v", rep, err)
+	}
+	if n := r.relay.Upgrades(); n < before+2 {
+		t.Errorf("upgrades = %d, want both ends to have redialled (at least %d)", n, before+2)
+	}
+	select {
+	case err := <-h.done:
+		t.Fatalf("the node stopped serving: %v", err)
+	default:
+	}
+}
+
+// sty_ee78148f: both ends redial at the same backoff step but the relay admits the
+// node first and local a second later, so the node's key half reaches a relay with
+// no local end and is dropped. The node asks again, the channel resumes inside the
+// window with exactly one redial per end, and a job completes. The relay's delay is
+// real time, which is what makes the order deterministic.
+func TestRelayRestartRepairsNodeFirstSimultaneous(t *testing.T) {
+	r := newRig(t)
+	run, _ := r.attachServer(echoNode(), ready("1.2.3"))
+	before, attempts, dropped := r.relay.Upgrades(), r.relay.Attempts(), r.relay.Dropped()
+
+	r.relay.DelayAdmit("local", 600*time.Millisecond)
+	r.relay.Restart()
+	var got requested
+	res := r.request(run, AgentJob, AgentRequest{Text: "after"})
+	r.driveUntil("the request over the resumed channel", settled(res, &got))
+
+	if got.err != nil {
+		t.Fatalf("Request after the restart: %v", got.err)
+	}
+	if n := r.relay.Dropped(); n <= dropped {
+		t.Errorf("dropped = %d (was %d): the node's key half should have reached a relay with no local end", n, dropped)
+	}
+	if n := r.relay.Upgrades(); n != before+2 {
+		t.Errorf("upgrades = %d, want exactly one redial per end (%d)", n, before+2)
+	}
+	if n := r.relay.Attempts(); n != attempts+2 {
+		t.Errorf("attempts = %d, want exactly one per end (%d): the redial must not livelock", n, attempts+2)
+	}
+}
+
+// sty_ee78148f: a close that means refusal is not retried, and both ends end naming
+// it.
+func TestRelayRefusalNotRetried(t *testing.T) {
+	cases := []struct {
+		name   string
+		refuse func(r *rig)
+	}{
+		{"4401 signed out", func(r *rig) { r.relay.CloseWith(rigSession, 4401, "signed out") }},
+		{"404 bad_session", func(r *rig) {
+			r.relay.RefuseSession(rigSession, 404, `{"error":"bad_session"}`)
+			r.relay.Restart()
+		}},
+		{"409 slot_taken", func(r *rig) {
+			r.relay.RefuseSession(rigSession, 409, `{"error":"slot_taken"}`)
+			r.relay.Restart()
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRig(t)
+			run, h := r.attachServer(echoNode(), ready("1.2.3"))
+			base := r.relay.Attempts()
+
+			c.refuse(r)
+			select {
+			case err := <-h.done:
+				if !errors.Is(err, remotechan.ErrResumeRefused) {
+					t.Errorf("node Serve = %v, want ErrResumeRefused", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("the node kept waiting after a refusal")
+			}
+			select {
+			case <-run.sess.Done():
+			case <-time.After(10 * time.Second):
+				t.Fatal("the controller kept waiting after a refusal")
+			}
+			if err := run.sess.Err(); !errors.Is(err, remotechan.ErrResumeRefused) {
+				t.Errorf("controller Err = %v, want ErrResumeRefused", err)
+			}
+			after := r.relay.Attempts()
+			if after-base > 2 {
+				t.Errorf("the refusal cost %d upgrade requests, want at most one per end", after-base)
+			}
+			for i := 0; i < 20; i++ { // past the window
+				r.clock.Advance(15 * time.Second)
+			}
+			time.Sleep(100 * time.Millisecond)
+			if n := r.relay.Attempts(); n != after {
+				t.Errorf("attempts went from %d to %d: the refusal was retried", after, n)
+			}
+			if _, err := run.Request(testCtx(t), AgentJob, AgentRequest{Text: "x"}); !errors.Is(err, ErrJobLost) {
+				t.Errorf("a request on a refused channel = %v, want ErrJobLost", err)
+			}
+		})
+	}
+}
+
+// sty_ee78148f: a job open when the relay restarts is failed on the controller
+// naming the restart, not left to time out.
+func TestRequestFailsNamedOnRelayRestart(t *testing.T) {
+	r := newRig(t)
+	started := make(chan struct{})
+	node := NewNode()
+	node.Handle(AgentJob, func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+	run, _ := r.attachServer(node, ready("1.2.3"))
+	res := r.request(run, AgentJob, AgentRequest{Text: "work"})
+	<-started
+
+	r.relay.Restart()
+	select {
+	case o := <-res:
+		if !errors.Is(o.err, ErrJobLost) || !strings.Contains(o.err.Error(), "relay restarted mid-job") {
+			t.Errorf("err = %v, want ErrJobLost naming the relay restart", o.err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the request was left hanging by the restart")
+	}
+}

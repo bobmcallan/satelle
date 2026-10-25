@@ -1,6 +1,7 @@
 package remotechan
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -44,9 +45,9 @@ func TestStalledJobReportedLost(t *testing.T) {
 	local.Expect("healthy")
 	local.Expect("stalls")
 	local.Expect("finishes")
-	healthy := remote.StartJob("healthy")
-	stalls := remote.StartJob("stalls")
-	finishes := remote.StartJob("finishes")
+	healthy := remote.StartJob(context.Background(), "healthy")
+	stalls := remote.StartJob(context.Background(), "stalls")
+	finishes := remote.StartJob(context.Background(), "finishes")
 	for _, j := range []string{"healthy", "stalls", "finishes"} {
 		waitBeat(t, local, h.clock, j)
 	}

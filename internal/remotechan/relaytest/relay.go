@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -49,12 +50,26 @@ type Relay struct {
 
 	holdArmed bool
 	holds     map[string]chan struct{}
+
+	down    bool
+	delay   map[string]time.Duration
+	refuse  map[string]refusal
+	dropped int
+}
+
+// refusal is a scripted answer to every upgrade of one session.
+type refusal struct {
+	status int
+	body   string
 }
 
 // New starts a relay for the life of t.
 func New(t testing.TB) *Relay {
 	t.Helper()
-	r := &Relay{slots: map[string]*slot{}, holds: map[string]chan struct{}{}}
+	r := &Relay{
+		slots: map[string]*slot{}, holds: map[string]chan struct{}{},
+		delay: map[string]time.Duration{}, refuse: map[string]refusal{},
+	}
 	r.srv = httptest.NewTLSServer(http.HandlerFunc(r.serve))
 	t.Cleanup(func() {
 		r.mu.Lock()
@@ -129,6 +144,97 @@ func (r *Relay) RemoteBearers() []string {
 	return append([]string(nil), r.remoteBearers...)
 }
 
+// Dropped counts the messages the relay read while the session's other end was
+// absent and so could not forward.
+func (r *Relay) Dropped() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.dropped
+}
+
+// Restart is a relay restart that is back at once: it closes every connection
+// with going-away "server shutting down" and forgets every session, so each end
+// that redials is admitted afresh. Upgrades keep being answered on the same URL.
+func (r *Relay) Restart() {
+	r.closeAll(false)
+}
+
+// Down is a restart that has not finished: it closes every connection as Restart
+// does, and answers every upgrade 503 until Up.
+func (r *Relay) Down() {
+	r.closeAll(true)
+}
+
+// Up ends Down.
+func (r *Relay) Up() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.down = false
+}
+
+func (r *Relay) closeAll(down bool) {
+	r.mu.Lock()
+	r.down = down
+	conns := r.conns
+	r.conns = nil
+	r.slots = map[string]*slot{}
+	r.mu.Unlock()
+	var wg sync.WaitGroup
+	for _, c := range conns {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.Close(websocket.StatusGoingAway, "server shutting down")
+		}()
+	}
+	wg.Wait()
+}
+
+// DelayAdmit holds every upgrade for role ("local" or "remote") for d before the
+// relay admits it, whatever the other end is doing; d of 0 ends the delay. It
+// fixes which end a simultaneous redial reaches the relay first.
+func (r *Relay) DelayAdmit(role string, d time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.delay[role] = d
+}
+
+// CloseWith closes both ends of session with the given close code and reason, as
+// a relay refusing the session does.
+func (r *Relay) CloseWith(session string, code websocket.StatusCode, reason string) {
+	r.mu.Lock()
+	var conns []*websocket.Conn
+	if sl := r.slots[session]; sl != nil {
+		conns = append(conns, sl.local, sl.remote)
+	}
+	r.mu.Unlock()
+	var wg sync.WaitGroup
+	for _, c := range conns {
+		if c == nil {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.Close(code, reason)
+		}()
+	}
+	wg.Wait()
+}
+
+// RefuseSession answers every following upgrade of session with status and body,
+// as a relay does for a session it does not know (404 bad_session) or a slot
+// another user holds. A status of 0 ends the refusal.
+func (r *Relay) RefuseSession(session string, status int, body string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if status == 0 {
+		delete(r.refuse, session)
+		return
+	}
+	r.refuse[session] = refusal{status: status, body: body}
+}
+
 // Frames is a copy of every message the relay forwarded, in arrival order.
 func (r *Relay) Frames() []Frame {
 	r.mu.Lock()
@@ -163,6 +269,25 @@ func (r *Relay) serve(w http.ResponseWriter, req *http.Request) {
 
 	r.mu.Lock()
 	r.attempts++
+	down, refused, delay := r.down, r.refuse[session], r.delay[role]
+	r.mu.Unlock()
+	if down {
+		http.Error(w, "relay restarting", http.StatusServiceUnavailable)
+		return
+	}
+	if refused.status != 0 {
+		http.Error(w, refused.body, refused.status)
+		return
+	}
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-req.Context().Done():
+			return
+		}
+	}
+
+	r.mu.Lock()
 	if role == "local" {
 		bearer := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
 		r.bearers = append(r.bearers, bearer)
@@ -269,7 +394,7 @@ func (r *Relay) serve(w http.ResponseWriter, req *http.Request) {
 	}
 	r.mu.Unlock()
 
-	r.pump(req.Context(), c, sl, role)
+	err = r.pump(req.Context(), c, sl, role)
 
 	r.mu.Lock()
 	peer := sl.remote
@@ -282,7 +407,13 @@ func (r *Relay) serve(w http.ResponseWriter, req *http.Request) {
 	r.mu.Unlock()
 	c.CloseNow()
 	if peer != nil {
-		peer.CloseNow()
+		if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
+			// An end that left on purpose is passed on as such, so the other end can
+			// tell it from a relay that went away.
+			go peer.Close(websocket.StatusNormalClosure, "peer left")
+		} else {
+			peer.CloseNow()
+		}
 	}
 }
 
@@ -301,18 +432,22 @@ func (r *Relay) release(session string, sl *slot) {
 }
 
 // pump reads c until it ends, tapping each message and forwarding it to the
-// other end if that end is present.
-func (r *Relay) pump(ctx context.Context, c *websocket.Conn, sl *slot, role string) {
+// other end if that end is present (a message with no peer is dropped). It
+// returns the error that ended the read.
+func (r *Relay) pump(ctx context.Context, c *websocket.Conn, sl *slot, role string) error {
 	for {
 		typ, data, err := c.Read(ctx)
 		if err != nil {
-			return
+			return err
 		}
 		r.mu.Lock()
 		r.frames = append(r.frames, Frame{From: role, Data: append([]byte(nil), data...)})
 		peer := sl.remote
 		if role == "remote" {
 			peer = sl.local
+		}
+		if peer == nil {
+			r.dropped++
 		}
 		r.mu.Unlock()
 		if peer != nil {

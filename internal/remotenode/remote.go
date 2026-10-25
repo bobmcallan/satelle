@@ -148,7 +148,11 @@ func (r *Run) watchLost() {
 	for {
 		select {
 		case l := <-r.sess.Lost():
-			r.deliver(l.Job, result{err: fmt.Errorf("%w: no heartbeat since %s", ErrJobLost, l.LastBeat.UTC().Format(time.RFC3339))})
+			err := fmt.Errorf("%w: no heartbeat since %s", ErrJobLost, l.LastBeat.UTC().Format(time.RFC3339))
+			if l.Reason == remotechan.LostRelayRestarted {
+				err = fmt.Errorf("%w: relay restarted mid-job", ErrJobLost)
+			}
+			r.deliver(l.Job, result{err: err})
 		case <-r.sess.Done():
 			return
 		}
