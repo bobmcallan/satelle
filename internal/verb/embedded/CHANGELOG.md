@@ -1,3 +1,16 @@
+## [0.0.755] - 2026-10-25
+
+### Added
+- `[engagement] parallel` accepts a third mode, `"worktree"`: any number of stories hold seats at once, from different epics or none, each from its own git working tree. A second engagement from a tree that already holds a seat is refused, naming the holder. A seat lease now records whether it is tree-scoped and whether its key is exclusive, so a worktree-mode claim co-holds with every other tree-scoped claim whatever its key, while the children of a sequential epic share the epic's key, exclude each other and still admit one at a time. Worktree mode refuses an engagement when the lease store is unavailable rather than guessing. `none` and `epic` behave as before. This repo now runs `parallel = "worktree"`. (sty_69ec7fbc)
+
+### Fixed
+- Under `epic` and `worktree`, a child's seat key comes from the same membership rule the wave and readiness use: its `parent_id`, or the container of an `epic:<theme>` set it carries, falling back to the plain `parent_id` when no epic container resolves. Before, the key read only `parent_id`, so a sibling joined to its epic by tag alone was refused while another sibling held the seat (sty_9e3520c2). (sty_69ec7fbc)
+
+## [serve-v0.0.212] - 2026-10-25
+
+### Changed
+- The service binary carries the `worktree` seat mode, its settings enum entry and the updated epic-wave help topic. (sty_69ec7fbc)
+
 ## [0.0.754] - 2026-10-25
 
 ### Added
