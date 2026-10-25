@@ -33,14 +33,24 @@ func wantEpicNotReady(t *testing.T, err error, epicID string) {
 	wantContains(t, err, epicID, "has not been readied", "satelle story ready "+epicID)
 }
 
+// wantEpicNotReadyCannotRun is the refusal when `story ready` cannot run on the
+// epic's route: it says why instead of sending the caller to the command.
+func wantEpicNotReadyCannotRun(t *testing.T, err error, epicID string) {
+	t.Helper()
+	wantContains(t, err, epicID, "has not been readied", "cannot run")
+	if strings.Contains(err.Error(), "run satelle story ready") {
+		t.Errorf("the refusal must not send the caller to a command that cannot run: %v", err)
+	}
+}
+
 // AC1: a child on a route with no propose step is refused its first engaging
-// move, the refusal names the epic and the readying command, and nothing moves.
+// move, the refusal names the epic and why it cannot be readied, and nothing moves.
 func TestEngageChildRefusedWhileEpicNotReady(t *testing.T) {
 	db := wireAfterChildren(t, true)
 	epic := waveEpic(t)
 	c := acChild(t, epic, "fix")
 
-	wantEpicNotReady(t, setStatus(t, c.ID, "plan"), epic.ID)
+	wantEpicNotReadyCannotRun(t, setStatus(t, c.ID, "plan"), epic.ID)
 	if _, held := leaseRow(t, db, c.ID); held {
 		t.Error("a refused engagement must not take a seat")
 	}
@@ -58,7 +68,7 @@ func TestCreateChildIntoEngagingRefusedWhileEpicNotReady(t *testing.T) {
 	_, err := dispatchRaw(t, "story-create", map[string]any{
 		"title": "x", "category": "fix", "tags": []string{"epic:w"}, "status": "plan",
 	})
-	wantEpicNotReady(t, err, epic.ID)
+	wantEpicNotReadyCannotRun(t, err, epic.ID)
 	if got := string(call(t, "story-list", map[string]any{"tag": "epic:w"})); strings.Contains(got, `"category":"fix"`) {
 		t.Errorf("a refused create must leave no row: %s", got)
 	}
@@ -69,7 +79,7 @@ func TestEngageChildAllowedWhenEpicReady(t *testing.T) {
 	db := wireAfterChildren(t, true)
 	epic := waveEpic(t)
 	c := acChild(t, epic, "fix")
-	wantEpicNotReady(t, setStatus(t, c.ID, "plan"), epic.ID)
+	wantEpicNotReadyCannotRun(t, setStatus(t, c.ID, "plan"), epic.ID)
 
 	acceptEpicReadiness(t, db, epic.ID, "backlog", "ready")
 	if err := setStatus(t, c.ID, "plan"); err != nil {

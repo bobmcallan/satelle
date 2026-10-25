@@ -108,6 +108,12 @@ func refuseUnreadiedEpic(ctx context.Context, item workitem.Item, fromStatus, ta
 		if subject == "" {
 			subject = "new story"
 		}
+		// Advise `story ready` only when it could run: a caller sent to a command
+		// that refuses would be sent round in a circle.
+		if _, runnable, res := checkReadyable(ctx, container); !runnable {
+			return fmt.Errorf("satelle: refusing to move %s out of %q (-> %q) — its epic %s has not been readied (no accepted readiness round%s): satelle story ready %s cannot run — %s",
+				subject, fromStatus, targetStatus, container.ID, markClause(edge), container.ID, res.Reason)
+		}
 		return fmt.Errorf("satelle: refusing to move %s out of %q (-> %q) — its epic %s has not been readied (no accepted readiness round%s): run satelle story ready %s first, which sequences the epic's children",
 			subject, fromStatus, targetStatus, container.ID, markClause(edge), container.ID)
 	}

@@ -77,8 +77,8 @@ func TestStoryReadyPrintsOneLinePerStoryAndExitsNonZero(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("want one line per story, got %d:\n%s", len(lines), stdout)
 	}
-	if !strings.HasPrefix(lines[0], backlog+" refused: ") || !strings.Contains(lines[0], "mark") {
-		t.Errorf("a step with no mark is refused naming the key: %q", lines[0])
+	if strings.Contains(lines[0], "declares no mark") {
+		t.Errorf("a step with no mark is not refused for it: %q", lines[0])
 	}
 	if !strings.HasPrefix(lines[1], started+" refused: ") || !strings.Contains(lines[1], "start status") {
 		t.Errorf("a started story is refused naming the start status: %q", lines[1])

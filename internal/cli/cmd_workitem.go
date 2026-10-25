@@ -1595,9 +1595,9 @@ mark key declares; the work starts later. An epic readies its backlog children
 first, then runs its own step, and is marked only when every child is.
 
 A story is refused, and the others still run, when it is not at the route's start
-status, its round budget is spent, or its step declares no mark or has no
-dispatched performer. One line per story: <id> marked|not-accepted|refused[: why];
-exit is non-zero unless every story was marked. See 'satelle help workflow-convert'.`,
+status, its round budget is spent, or its step has no dispatched performer. A
+step with no mark records the round but applies no tag.
+One line per story: <id> marked|not-accepted|refused[: why]; exit is non-zero unless every story was marked. See 'satelle help workflow-convert'.`,
 		Args:        cobra.MinimumNArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {

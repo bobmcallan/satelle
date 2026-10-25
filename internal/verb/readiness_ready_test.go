@@ -524,17 +524,60 @@ func TestAcceptedThenPerformerRejectedRoundCountsOnceEach(t *testing.T) {
 	}
 }
 
-// AC5: the mark comes from the route; a step that declares none is refused before
-// any dispatch, naming the missing key.
-func TestStoryReadyWithoutAMarkIsRefusedBeforeDispatch(t *testing.T) {
+// A readiness step that declares no mark still runs the round and records it on
+// the ledger; only the display tag is absent.
+func TestNoMarkReadinessRecordsRound(t *testing.T) {
 	r := newReadyRig(t, "", readyReviewers)
 	a := newStoryOf(t, "feature", "a")
 	res := readyCall(t, a.ID)[0]
-	if res.Outcome != verb.ReadyRefused || !strings.Contains(res.Reason, "mark") || !strings.Contains(res.Reason, `"readied"`) {
-		t.Fatalf("want a refusal naming the missing mark on the step, got %+v", res)
+	if res.Outcome != verb.ReadyMarked || !res.NoMark {
+		t.Fatalf("want a round that holds with no mark configured, got %+v", res)
 	}
-	if r.d.total() != 0 || r.g.total() != 0 {
-		t.Errorf("nothing may be dispatched")
+	if !strings.Contains(res.Line(), "no mark configured") {
+		t.Errorf("the line must say no mark is configured: %q", res.Line())
+	}
+	if got := ledgerRows(t, a.ID, ledger.KindReadinessAccept); len(got) != 1 {
+		t.Errorf("want one accepted readiness round on the ledger, got %d", len(got))
+	}
+	if !holds(t, a.ID) {
+		t.Error("readiness must hold from the ledger")
+	}
+	if len(statusOf(t, a.ID).Tags) != len(a.Tags) {
+		t.Errorf("no tag may be applied: %v -> %v", a.Tags, statusOf(t, a.ID).Tags)
+	}
+	if r.d.total() == 0 {
+		t.Error("the round must have been dispatched")
+	}
+}
+
+// A markless epic's own round opens the gate for its children.
+func TestMarklessEpicReadyAdmitsChild(t *testing.T) {
+	_, epic, kids := epicRig(t, 1, "")
+	err := setStatus(t, kids[0].ID, "plan")
+	if err == nil || !strings.Contains(err.Error(), "has not been readied") {
+		t.Fatalf("before the epic is readied the child is refused: %v", err)
+	}
+	res := readyCall(t, epic.ID)[0]
+	if res.Outcome != verb.ReadyMarked || !res.NoMark {
+		t.Fatalf("epic: %+v", res)
+	}
+	if got := ledgerRows(t, epic.ID, ledger.KindReadinessAccept); len(got) == 0 {
+		t.Error("the epic's accepted round must be on the ledger")
+	}
+	if hasMark(t, epic.ID) {
+		t.Error("no mark is configured, so none may be applied")
+	}
+	if err := setStatus(t, kids[0].ID, "plan"); err != nil && strings.Contains(err.Error(), "has not been readied") {
+		t.Errorf("a child of the readied epic must pass the gate: %v", err)
+	}
+}
+
+// When `story ready` can run, the gate sends the caller to it.
+func TestUnreadiedEpicGateAdvisesStoryReadyWhenRunnable(t *testing.T) {
+	_, epic, kids := epicRig(t, 1, "")
+	err := setStatus(t, kids[0].ID, "plan")
+	if err == nil || !strings.Contains(err.Error(), "run satelle story ready "+epic.ID) || strings.Contains(err.Error(), "cannot run") {
+		t.Fatalf("want the runnable advice, got %v", err)
 	}
 }
 
@@ -716,9 +759,9 @@ func TestPresentedEpicReadyStepAlwaysRuns(t *testing.T) {
 }
 
 // AC8: epics.
-func epicRig(t *testing.T, kids int) (*readyRig, workitem.Item, []workitem.Item) {
+func epicRig(t *testing.T, kids int, mark string) (*readyRig, workitem.Item, []workitem.Item) {
 	t.Helper()
-	r := newReadyRig(t, "ready", readyReviewers)
+	r := newReadyRig(t, mark, readyReviewers)
 	epic := newStoryOf(t, "epic-parent", "epic", "epic:rr")
 	var children []workitem.Item
 	for i := 0; i < kids; i++ {
@@ -734,9 +777,9 @@ func epicRig(t *testing.T, kids int) (*readyRig, workitem.Item, []workitem.Item)
 }
 
 func TestReadyEpicReadiesChildrenThenMarksIt(t *testing.T) {
-	r, epic, kids := epicRig(t, 2)
+	r, epic, kids := epicRig(t, 2, "ready")
 	res := readyCall(t, epic.ID)[0]
-	if res.Outcome != verb.ReadyMarked {
+	if res.Outcome != verb.ReadyMarked || res.NoMark {
 		t.Fatalf("epic: %+v", res)
 	}
 	if statusOf(t, epic.ID).Status != "backlog" || !hasMark(t, epic.ID) {
@@ -758,7 +801,7 @@ func TestReadyEpicReadiesChildrenThenMarksIt(t *testing.T) {
 // sty_a476b913: an epic's own readiness round, which readies its children, is not
 // refused for the epic being un-readied; once it ran, its children may engage.
 func TestStoryReadyOnUnreadiedEpicWithChildrenNotRefused(t *testing.T) {
-	_, epic, kids := epicRig(t, 2)
+	_, epic, kids := epicRig(t, 2, "ready")
 	res := readyCall(t, epic.ID)[0]
 	if res.Outcome != verb.ReadyMarked || strings.Contains(res.Reason, "has not been readied") {
 		t.Fatalf("the epic's own round must not be refused: %+v", res)
@@ -777,7 +820,7 @@ func TestStoryReadyOnUnreadiedEpicWithChildrenNotRefused(t *testing.T) {
 }
 
 func TestReadyEpicWithARejectedChildIsNotMarked(t *testing.T) {
-	r, epic, kids := epicRig(t, 2)
+	r, epic, kids := epicRig(t, 2, "ready")
 	bad := kids[1].ID
 	r.g.verd = func(it workitem.Item, to string) verb.GateDecision {
 		switch {
@@ -809,7 +852,7 @@ func TestReadyEpicWithARejectedChildIsNotMarked(t *testing.T) {
 // A child rejected in the first pass that the epic-level judgement fixed is
 // accepted on the one re-check, and the epic is then marked.
 func TestReadyEpicMarksWhenARejectedChildIsAcceptedOnTheRecheck(t *testing.T) {
-	r, epic, kids := epicRig(t, 2)
+	r, epic, kids := epicRig(t, 2, "ready")
 	bad := kids[1].ID
 	r.g.verd = func(it workitem.Item, to string) verb.GateDecision {
 		switch {
@@ -842,7 +885,7 @@ func TestReadyEpicMarksWhenARejectedChildIsAcceptedOnTheRecheck(t *testing.T) {
 }
 
 func TestReadyEpicReadiesAChildCreatedDuringTheEpicJudgement(t *testing.T) {
-	r, epic, _ := epicRig(t, 1)
+	r, epic, _ := epicRig(t, 1, "ready")
 	var created workitem.Item
 	r.d.perform = func(it workitem.Item, to string) (verb.DispatchResult, error) {
 		if it.ID == epic.ID && created.ID == "" {

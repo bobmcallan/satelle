@@ -47,7 +47,10 @@ type ReadyResult struct {
 	Attempt string `json:"attempt,omitempty"`
 	Reason  string `json:"reason,omitempty"`
 	// Reused is true when the readiness already held and no round was run.
-	Reused   bool          `json:"reused,omitempty"`
+	Reused bool `json:"reused,omitempty"`
+	// NoMark is true when the round holds but the readiness step declares no mark,
+	// so no tag was applied: the ledger's accepted round is the whole record.
+	NoMark   bool          `json:"no_mark,omitempty"`
 	Children []ReadyResult `json:"children,omitempty"`
 }
 
@@ -56,6 +59,9 @@ func (r ReadyResult) Line() string {
 	line := r.ID + " " + r.Outcome
 	if r.Outcome == ReadyMarked && r.Reused {
 		line += " (readiness already holds, attempt " + r.Attempt + ")"
+	}
+	if r.Outcome == ReadyMarked && r.NoMark {
+		line += " (readiness holds; no mark configured)"
 	}
 	if r.Reason != "" {
 		line += ": " + r.Reason
@@ -135,9 +141,10 @@ func readyOne(ctx context.Context, id string) ReadyResult {
 
 // checkReadyable applies the refusals common to a story and an epic, in the order
 // that spares the most work: the route must declare a readiness step, the story
-// must still be at the route's start status, that step must declare its mark, its
-// round budget must not be spent, and its performer must be one the engine
-// dispatches. Nothing has been dispatched when it refuses.
+// must still be at the route's start status, its round budget must not be spent,
+// and its performer must be one the engine dispatches. A step with no mark is
+// readyable: the round is recorded on the ledger and only the display tag is
+// absent. Nothing has been dispatched when it refuses.
 func checkReadyable(ctx context.Context, item workitem.Item) (readinessEdge, bool, ReadyResult) {
 	edge, err := readinessEdgeFor(ctx, item)
 	if err != nil {
@@ -145,9 +152,6 @@ func checkReadyable(ctx context.Context, item workitem.Item) (readinessEdge, boo
 	}
 	if item.Status != edge.From {
 		return edge, false, refused(item.ID, "status is %q, not the route's start status %q — only a story that has not started can be readied without engagement", item.Status, edge.From)
-	}
-	if edge.Step.Mark == "" {
-		return edge, false, refused(item.ID, "readiness step %q declares no mark: set mark = \"<tag>\" on that step in the workflow (step.toml), so an accepted round has a tag to put on the story", edge.name())
 	}
 	if err := refuseSpentRejectBudget(ctx, item, edge.To); err != nil {
 		return edge, false, refused(item.ID, "%v", err)
@@ -177,7 +181,7 @@ func readyStory(ctx context.Context, item workitem.Item, edge readinessEdge) Rea
 		if err := markReady(ctx, item.ID, edge.Step.Mark); err != nil {
 			return refused(item.ID, "readiness holds (attempt %s) but marking it failed: %v", attempt, err)
 		}
-		return ReadyResult{ID: item.ID, Outcome: ReadyMarked, Attempt: attempt, Reused: true}
+		return ReadyResult{ID: item.ID, Outcome: ReadyMarked, Attempt: attempt, Reused: true, NoMark: edge.Step.Mark == ""}
 	}
 	round := runReadinessRound(ctx, item, edge)
 	if !round.Accepted {
@@ -186,7 +190,7 @@ func readyStory(ctx context.Context, item workitem.Item, edge readinessEdge) Rea
 	if err := markReady(ctx, item.ID, edge.Step.Mark); err != nil {
 		return ReadyResult{ID: item.ID, Outcome: ReadyNotAccepted, Attempt: round.Attempt, Reason: fmt.Sprintf("the round was accepted but marking the story failed: %v", err)}
 	}
-	return ReadyResult{ID: item.ID, Outcome: ReadyMarked, Attempt: round.Attempt}
+	return ReadyResult{ID: item.ID, Outcome: ReadyMarked, Attempt: round.Attempt, NoMark: edge.Step.Mark == ""}
 }
 
 // readyEpic readies an epic-parent: each backlog child whose readiness does not
@@ -280,7 +284,7 @@ func readyEpic(ctx context.Context, store *workitem.Store, epic workitem.Item, e
 			res.Outcome, res.Reason = ReadyNotAccepted, fmt.Sprintf("every child is ready and the round was accepted but marking the epic failed: %v", err)
 			return res
 		}
-		res.Outcome = ReadyMarked
+		res.Outcome, res.NoMark = ReadyMarked, edge.Step.Mark == ""
 	}
 	return res
 }
