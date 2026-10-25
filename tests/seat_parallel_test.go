@@ -153,6 +153,67 @@ func TestSeatParallelEpicAcrossWorktrees(t *testing.T) {
 	}
 }
 
+// TestSeatParallelWorktreeAcrossEpics (sty_69ec7fbc AC1/AC4) drives the real
+// binary: with parallel = "worktree", a child of one epic, a child of another and
+// a parentless story engage at once from three git working trees, each holding
+// its own seat; a second engagement from an occupied tree is refused naming that
+// tree's holder; and the same story engages from a free tree.
+func TestSeatParallelWorktreeAcrossEpics(t *testing.T) {
+	repo := t.TempDir()
+	gitInitRepo(t, repo)
+	mustRun(t, testBin, repo, "init")
+	writeSpineFixture(t, repo, "", "", "", "in_progress|executor|||", "done||||")
+	mustRun(t, testBin, repo, "reindex")
+	setEngagementMode(t, repo, "worktree")
+	treeB := addWorktree(t, repo)
+	treeC := filepath.Join(t.TempDir(), "tree-c")
+	gitIn(t, repo, "worktree", "add", "-b", "tree-c", treeC)
+	treeD := filepath.Join(t.TempDir(), "tree-d")
+	gitIn(t, repo, "worktree", "add", "-b", "tree-d", treeD)
+
+	newStory := func(title, parent string) string {
+		args := []string{"story", "create", "--title", title,
+			"--body", "goal for " + title, "--acceptance", "1. engages", "--category", "chore"}
+		if parent != "" {
+			args = append(args, "--parent", parent)
+		}
+		id := extractID(mustRun(t, testBin, repo, args...), "sty_")
+		if id == "" {
+			t.Fatalf("no story id for %s", title)
+		}
+		return id
+	}
+	epic1 := newStory("Epic one", "")
+	epic2 := newStory("Epic two", "")
+	inEpic1 := newStory("In epic one", epic1)
+	inEpic2 := newStory("In epic two", epic2)
+	lone := newStory("No epic", "")
+	extra := newStory("Extra", "")
+
+	mustRun(t, testBin, repo, "story", "set", inEpic1, "--status", "in_progress")
+	mustRun(t, testBin, treeB, "story", "set", inEpic2, "--status", "in_progress")
+	mustRun(t, testBin, treeC, "story", "set", lone, "--status", "in_progress")
+
+	seat := mustRun(t, testBin, repo, "story", "seat")
+	for _, id := range []string{inEpic1, inEpic2, lone} {
+		if !strings.Contains(seat, id) {
+			t.Fatalf("seat listing missing %s:\n%s", id, seat)
+		}
+	}
+
+	// An occupied tree refuses a fourth story and names who holds it.
+	out, err := run(t, testBin, treeB, "story", "set", extra, "--status", "in_progress")
+	if err == nil {
+		t.Fatalf("a second engagement from an occupied tree must be refused:\n%s", out)
+	}
+	if !strings.Contains(out, inEpic2) || !strings.Contains(out, "working tree") {
+		t.Errorf("refusal should name the holder %s and the tree rule:\n%s", inEpic2, out)
+	}
+
+	// A free tree admits it: the tree, not the story, was the obstacle.
+	mustRun(t, testBin, treeD, "story", "set", extra, "--status", "in_progress")
+}
+
 // TestSeatParallelDefaultAndValidation (sty_c098dc2d AC1/AC6): with no
 // [engagement] section a sibling is refused exactly as any second story is; and
 // an unsupported mode is refused at config load, naming the supported ones.
@@ -192,7 +253,7 @@ func TestSeatParallelDefaultAndValidation(t *testing.T) {
 	if err == nil {
 		t.Fatalf("unsupported mode must be refused at load:\n%s", out)
 	}
-	for _, want := range []string{"none", "epic"} {
+	for _, want := range []string{"none", "epic", "worktree"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("load refusal should name mode %q:\n%s", want, out)
 		}

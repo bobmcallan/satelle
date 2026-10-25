@@ -1554,6 +1554,9 @@ func formatSeatAge(d time.Duration) string {
 // turn to it. Nothing here says when a repo should choose a mode: that opinion is
 // the repo's own substrate, and satelle polices no sibling contention.
 func seatModeLine(mode string) string {
+	if mode == config.ParallelWorktree {
+		return "seat mode: worktree — any story may engage alongside the holders, from a DISTINCT git working tree; a second engagement from a tree that already holds a seat is refused (the children of a sequential epic still go one at a time)."
+	}
 	if mode == config.ParallelEpic {
 		return "seat mode: epic — a sibling under the SAME parent may engage alongside the holder, from a DISTINCT git working tree; a story under another parent (or none) is refused while that seat is held."
 	}

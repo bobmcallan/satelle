@@ -897,7 +897,7 @@ func undecodedCommandRuleKeys(md toml.MetaData, path string) error {
 }
 
 // Seat concurrency modes for [engagement] parallel (sty_c098dc2d). The set is
-// CLOSED — Load refuses anything else, naming these two.
+// CLOSED — Load refuses anything else, naming these three.
 const (
 	// ParallelNone is the default: one performing story per project. Every
 	// engagement is keyed uniquely by its own id, so any other live seat
@@ -910,6 +910,13 @@ const (
 	// declares a step with after_children: the epic id is an arbitration KEY, and
 	// a container waiting on its children holds no lease.
 	ParallelEpic = "epic"
+	// ParallelWorktree lets any number of stories hold seats at once — from
+	// different epics, or none — each from its OWN git working tree (sty_69ec7fbc).
+	// Tree identity is the arbitration: a second engagement from a tree that
+	// already holds a seat is refused, naming the holder. Epic membership still
+	// matters in one place only: the children of a sequential epic admit one at
+	// a time, exactly as under epic.
+	ParallelWorktree = "worktree"
 )
 
 // EngagementConfig selects the per-project seat concurrency mode.
@@ -1058,12 +1065,12 @@ func (c Config) ResolveEngagementParallel() string {
 // fails through this ordinary unknown-value path.
 func ValidateEngagement(c Config, path string) error {
 	v := strings.TrimSpace(c.Engagement.Parallel)
-	if v == "" || v == ParallelNone || v == ParallelEpic {
+	if v == "" || v == ParallelNone || v == ParallelEpic || v == ParallelWorktree {
 		return nil
 	}
 	return fmt.Errorf(
-		"config: %s: [engagement] parallel = %q is not a seat concurrency mode — supported modes are %q (one performing story at a time) and %q (sibling children of one epic, one working tree per lease)",
-		path, v, ParallelNone, ParallelEpic)
+		"config: %s: [engagement] parallel = %q is not a seat concurrency mode — supported modes are %q (one performing story at a time), %q (sibling children of one epic, one working tree per lease) and %q (any stories at once, one working tree per lease)",
+		path, v, ParallelNone, ParallelEpic, ParallelWorktree)
 }
 
 // ResolveConstitution returns the absolute path to the repo's project

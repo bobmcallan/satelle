@@ -210,6 +210,13 @@ func TestEngagementParallelValidation(t *testing.T) {
 	if got := cfg.ResolveEngagementParallel(); got != ParallelEpic {
 		t.Errorf("epic mode = %q", got)
 	}
+	cfg, err = writeConfig(t, "[engagement]\nparallel = \"worktree\"\n")
+	if err != nil {
+		t.Fatalf("worktree must load: %v", err)
+	}
+	if got := cfg.ResolveEngagementParallel(); got != ParallelWorktree {
+		t.Errorf("worktree mode = %q", got)
+	}
 	// Matching is exact — case variants are refused so the configured surface
 	// stays the one the docs name.
 	for _, bad := range []string{"all", "EPIC", "Epic", "sibling", "true"} {
@@ -219,8 +226,8 @@ func TestEngagementParallelValidation(t *testing.T) {
 			continue
 		}
 		msg := err.Error()
-		if !strings.Contains(msg, ParallelNone) || !strings.Contains(msg, ParallelEpic) {
-			t.Errorf("refusal for %q must name both modes: %v", bad, err)
+		if !strings.Contains(msg, ParallelNone) || !strings.Contains(msg, ParallelEpic) || !strings.Contains(msg, ParallelWorktree) {
+			t.Errorf("refusal for %q must name all three modes: %v", bad, err)
 		}
 		if !strings.Contains(msg, bad) {
 			t.Errorf("refusal for %q must quote the offending value: %v", bad, err)

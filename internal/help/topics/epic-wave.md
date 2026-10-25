@@ -103,13 +103,18 @@ one-engagement-per-worktree rule, so two eligible siblings co-engage only from
 distinct worktrees. Only a *new* engagement is checked; a child already
 mid-flight keeps moving.
 
-**Seats.** `[engagement] parallel = "epic"` is the only switch that lets siblings
-hold seats alongside each other; with the parallel default they do, from distinct
-worktrees. `sequential = true` narrows the same mode: the epic's children then
-key on their own ids, so only one of them holds a seat at a time. Under
-`parallel = "none"` the schedule changes nothing about seats. Stories that are
-not children of an epic are unaffected. See `satelle help workflow-convert` for
-`sequential` and `depends-on`.
+**Seats.** `[engagement] parallel = "epic"` lets siblings hold seats alongside
+each other (and nothing else); `"worktree"` lets any stories do, from different
+epics or none, one seat per git working tree. With the parallel default siblings
+do, from distinct worktrees. A child's epic is the one the wave places it under —
+its `parent_id`, or the container of an `epic:<theme>` it carries — so siblings
+joined by tag alone share the epic's seat key. `sequential = true` narrows both
+modes: the epic's children then go one at a time (under `epic` they key on their
+own ids; under `worktree` they share the epic's key and exclude each other, while
+unrelated stories still co-hold). Under `parallel = "none"` the schedule changes
+nothing about seats. Stories that are not children of an epic are unaffected
+under `epic`. See `satelle help workflow-convert` for `sequential` and
+`depends-on`.
 
 ## A container step that waits on a child obligation
 

@@ -226,7 +226,27 @@ func holds(t *testing.T, id string) bool {
 	return ok
 }
 
-func seatList(t *testing.T) string { return string(call(t, "story-seat-list", map[string]any{})) }
+// seatList is the seat listing with its time-derived fields (every *_age)
+// dropped, so two reads compare equal whenever the seats themselves do.
+func seatList(t *testing.T) string {
+	t.Helper()
+	var rows []map[string]any
+	if err := json.Unmarshal(call(t, "story-seat-list", map[string]any{}), &rows); err != nil {
+		t.Fatalf("decode seat list: %v", err)
+	}
+	for _, row := range rows {
+		for k := range row {
+			if strings.HasSuffix(k, "_age") {
+				delete(row, k)
+			}
+		}
+	}
+	out, err := json.Marshal(rows)
+	if err != nil {
+		t.Fatalf("encode seat list: %v", err)
+	}
+	return string(out)
+}
 
 // AC1 + AC3 + AC5: two backlog stories are readied in one call while a third
 // story holds the seat; each round ran, no status moved, the seat holder is

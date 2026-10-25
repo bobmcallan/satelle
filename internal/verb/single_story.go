@@ -2,6 +2,7 @@ package verb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -60,6 +61,12 @@ func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatu
 	}
 	ls, err := requireLease()
 	if err != nil {
+		// Under worktree the lease row's tree IS the arbitration, and the derived
+		// scan reads committed statuses and has no tree: refuse rather than admit
+		// every story on a rule that cannot see the one thing that keeps them apart.
+		if engagementParallel == config.ParallelWorktree {
+			return false, false, fmt.Errorf("satelle: refusing to engage %s (→ %s): [engagement] parallel = %q requires the lease store, which is not available", item.ID, targetStatus, config.ParallelWorktree)
+		}
 		// Lease store not wired (tests that only need status): fall back to the
 		// derived status scan so existing tests keep working until they wire leases.
 		return false, false, refuseSecondEngagingStoryDerived(ctx, item.ID, targetStatus, item)
@@ -74,17 +81,23 @@ func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatu
 	if sessionID != "" {
 		_ = os.Setenv(config.SessionEnv, sessionID)
 	}
+	policy := seatPolicyFor(ctx, item)
 	l, outcome, holder, err := ls.AcquireWith(ctx, lease.AcquireOpts{
-		ItemID:    item.ID,
-		Kind:      string(item.Kind),
-		Owner:     owner,
-		State:     targetStatus,
-		StorySeat: occupiesSeat,
-		SeatKey:   seatKeyFor(ctx, item),
-		Worktree:  engagementWorktree(),
-		SessionID: sessionID,
-		StampLive: config.SessionLive,
+		ItemID:     item.ID,
+		Kind:       string(item.Kind),
+		Owner:      owner,
+		State:      targetStatus,
+		StorySeat:  occupiesSeat,
+		SeatKey:    policy.Key,
+		TreeScoped: policy.TreeScoped,
+		Exclusive:  policy.Exclusive,
+		Worktree:   engagementWorktree(),
+		SessionID:  sessionID,
+		StampLive:  config.SessionLive,
 	})
+	if errors.Is(err, lease.ErrTreeRequired) {
+		return false, false, fmt.Errorf("satelle: refusing to engage %s (→ %s): [engagement] parallel = %q arbitrates by git working tree and this directory is not in one — engage from a git working tree (`satelle story worktree`)", item.ID, targetStatus, config.ParallelWorktree)
+	}
 	if err != nil {
 		return false, false, err
 	}
@@ -386,7 +399,7 @@ func refuseSecondEngagingStoryDerived(ctx context.Context, excludeID, targetStat
 	// right after the probe), and the two would disagree the moment a repo
 	// admitted co-holders. Both keys are derived by seatKeyFor, each from its own
 	// item, so the default mode (unique key per item) still refuses everything.
-	selfKey := seatKeyFor(ctx, item)
+	selfPolicy := seatPolicyFor(ctx, item)
 	for _, other := range others {
 		if other.ID == excludeID {
 			continue
@@ -396,8 +409,9 @@ func refuseSecondEngagingStoryDerived(ctx context.Context, excludeID, targetStat
 			continue
 		}
 		if engaged {
-			otherKey := seatKeyFor(ctx, other)
-			if selfKey != "" && otherKey != "" && selfKey == otherKey {
+			otherPolicy := seatPolicyFor(ctx, other)
+			otherKey := otherPolicy.Key
+			if lease.CoHolds(selfPolicy, otherPolicy) {
 				continue // admitted co-holder; the lease path owns the tree rule
 			}
 			who := other.ID
@@ -449,10 +463,15 @@ func refuseSecondEngagingStory(ctx context.Context, excludeID, targetStatus stri
 		// still refused.
 		probeID := "__seat_probe__"
 		owner := lease.ResolveOwner()
+		policy := seatPolicyFor(ctx, item)
 		_, outcome, holder, aerr := ls.AcquireWith(ctx, lease.AcquireOpts{
 			ItemID: probeID, Kind: "story", Owner: owner, State: targetStatus,
-			StorySeat: true, SeatKey: seatKeyFor(ctx, item), Worktree: engagementWorktree(),
+			StorySeat: true, SeatKey: policy.Key, TreeScoped: policy.TreeScoped, Exclusive: policy.Exclusive,
+			Worktree: engagementWorktree(),
 		})
+		if errors.Is(aerr, lease.ErrTreeRequired) {
+			return fmt.Errorf("satelle: refusing to engage new story (→ %s): [engagement] parallel = %q arbitrates by git working tree and this directory is not in one", targetStatus, config.ParallelWorktree)
+		}
 		if aerr != nil {
 			return aerr
 		}
