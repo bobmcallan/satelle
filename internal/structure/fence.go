@@ -48,6 +48,18 @@ func CheckCommand(body string) string {
 	return fmScalar(fm, "check")
 }
 
+// CheckReuse returns the `check_reuse:` frontmatter value of a functional-check
+// skill — the skill's own declaration that a green run may stand for later runs
+// of the same check on the same tree (sty_dc554488). "tree" is the only mode;
+// anything else is returned verbatim for the caller to ignore.
+func CheckReuse(body string) string {
+	fm, _, ok := splitFM(body)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(fmScalar(fm, "check_reuse"))
+}
+
 // Independent reports whether a reviewer skill's frontmatter carries
 // `independent: true` — the rubric's own declaration that it must judge in its
 // own session and never share one with another rubric (sty_23e10d92). The

@@ -291,6 +291,12 @@ type Engine struct {
 	// shows up in `satelle story cost` and the web timeline the same way a
 	// one-shot dispatch does. Nil-safe: an unwired recorder writes no rows.
 	invocationRecorder func(ctx context.Context, itemID string, payload map[string]any) error
+	// suiteRecord and suiteLookup are the ledger seam behind check_reuse: tree
+	// (sty_dc554488): record appends one check run as a suite_run row, lookup
+	// finds a green row for the same story, check, command and tree. Both nil
+	// (unwired) means a check always runs and nothing is recorded.
+	suiteRecord func(ctx context.Context, storyID string, ev verb.SuiteEvidence) (string, error)
+	suiteLookup func(ctx context.Context, storyID, check, commandSHA, tree string) (verb.SuiteEvidence, bool)
 	// wiring is the gate-wiring policy a performer dispatch is held to in a
 	// linked worktree (sty_f141c77f). Nil means unguarded; the CLI always wires it.
 	wiring *WiringGuard
@@ -785,6 +791,16 @@ func (g *Engine) SetModelOrder(fn func(executable string) []config.ModelRank) {
 // through. Nil-safe: an unwired recorder writes no rows.
 func (g *Engine) SetInvocationRecorder(fn func(ctx context.Context, itemID string, payload map[string]any) error) {
 	g.invocationRecorder = fn
+}
+
+// SetSuiteEvidence wires the seam a check_reuse: tree gate records its runs
+// through and finds a reusable one by (sty_dc554488). Nil-safe: unwired, every
+// check runs each time.
+func (g *Engine) SetSuiteEvidence(
+	record func(ctx context.Context, storyID string, ev verb.SuiteEvidence) (string, error),
+	lookup func(ctx context.Context, storyID, check, commandSHA, tree string) (verb.SuiteEvidence, bool),
+) {
+	g.suiteRecord, g.suiteLookup = record, lookup
 }
 
 // recordInvocation calls the wired invocation recorder, if any. Best-effort:
@@ -3682,7 +3698,7 @@ func (g *Engine) decideReviewer(ctx context.Context, item workitem.Item, toStatu
 	// output tail as notes. No LLM (the command IS the decision). This is the
 	// constitution's "skill + functional check" gate. Stays OUTSIDE Invoke (design §4.2).
 	if command := skillCheck(prep.body); command != "" {
-		return g.runCheck(ctx, item, skill, command, string(prep.payload)), nil
+		return g.runCheck(ctx, item, skill, command, string(prep.payload), structure.CheckReuse(prep.body)), nil
 	}
 	// LLM path: shared Invoke (sty_ba860c8a / sty_e21cbc08). Pre-flight (skill,
 	// structure, functional-check, missing-rubric advisory) stays above.
@@ -4849,14 +4865,45 @@ func referencedWorkflowSkills(body string) []string {
 // verdict: exit 0 accepts, any non-zero (or a run error / timeout) rejects
 // with the command's output — reduced by the wired log compressor
 // (sty_ef930f81) — as actionable notes.
-func (g *Engine) runCheck(ctx context.Context, item workitem.Item, skill, command, payload string) verb.GateDecision {
+//
+// reuse is the skill's check_reuse value. "tree" (with the evidence seam wired
+// and a git tree to hash) records every run as a suite_run row and accepts
+// without running when a green row already proves the same story, check,
+// command and tree (sty_dc554488). Any other value runs the command every time.
+func (g *Engine) runCheck(ctx context.Context, item workitem.Item, skill, command, payload, reuse string) verb.GateDecision {
+	var tree, head, cmdSHA string
+	if reuse == "tree" && g.suiteRecord != nil && g.suiteLookup != nil {
+		var terr error
+		if tree, head, terr = verb.GitContentTree(g.repoRoot); terr != nil {
+			tree = "" // no tree to prove: run, record nothing
+		} else {
+			cmdSHA = verb.CommandDigest(command)
+			if ev, ok := g.suiteLookup(ctx, item.ID, skill, cmdSHA, tree); ok {
+				return verb.GateDecision{Gated: true, Skill: skill, Accept: true, Notes: fmt.Sprintf(
+					"functional check passed (%s) — reused suite_run %s: tree %s proven %s (%s), not re-run",
+					skill, ev.ID, verb.ShortTree(tree), ev.RecordedAt.UTC().Format(time.RFC3339),
+					(time.Duration(ev.DurationMS) * time.Millisecond).String())}
+			}
+		}
+	}
 	timeout := g.checkTimeout
 	if timeout <= 0 {
 		timeout = defaultCheckTimeout
 	}
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	started := time.Now()
 	out, err := g.check(withGateItem(cctx, item), g.repoRoot, command, payload)
+	if tree != "" {
+		outcome := verb.SuiteGreen
+		if err != nil {
+			outcome = verb.SuiteRed
+		}
+		_, _ = g.suiteRecord(ctx, item.ID, verb.SuiteEvidence{
+			Check: skill, Tree: tree, SHA: head, Command: command, CommandSHA: cmdSHA,
+			Outcome: outcome, DurationMS: time.Since(started).Milliseconds(),
+		})
+	}
 	dec := verb.GateDecision{Gated: true, Skill: skill}
 	if err != nil {
 		dec.Accept = false

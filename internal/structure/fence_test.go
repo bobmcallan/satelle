@@ -18,6 +18,18 @@ func TestCheckFence(t *testing.T) {
 	}
 }
 
+func TestCheckReuse(t *testing.T) {
+	if got := CheckReuse("---\nname: x\ncheck_reuse: tree\n---\n```check\nexit 0\n```\n"); got != "tree" {
+		t.Errorf("declared: got %q", got)
+	}
+	if got := CheckReuse("---\nname: x\n---\n```check\nexit 0\n```\n"); got != "" {
+		t.Errorf("undeclared: got %q", got)
+	}
+	if got := CheckReuse("no frontmatter"); got != "" {
+		t.Errorf("no frontmatter: got %q", got)
+	}
+}
+
 func TestIsCodedCheck(t *testing.T) {
 	if !IsCodedCheck("---\nname: x\n---\n```check\nexit 0\n```\n") {
 		t.Error("fenced check must be coded")

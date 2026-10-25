@@ -139,7 +139,8 @@ func carryRound[R any](carried, fresh []int, dispatch func(idx []int) (R, error)
 // is an accept with a complete, non-stale quotation that quotationCarries
 // finds in the current material, and the indexes that must be dispatched. A reject, a missing
 // or truncated or stale quotation, a changed quotation, a partial verdict, a
-// functional check and a panel are always dispatched.
+// functional check and a panel are always dispatched (a check may then be
+// satisfied by runCheck from a green suite_run on the same tree — sty_dc554488).
 func (g *Engine) carryable(ctx context.Context, item workitem.Item, toStatus string, ordered []reviewerRef, sysStart int) (carried []carriedRef, fresh []int) {
 	all := make([]int, len(ordered))
 	for i := range ordered {
@@ -173,6 +174,9 @@ func (g *Engine) carryable(ctx context.Context, item workitem.Item, toStatus str
 			fresh = append(fresh, i)
 			continue
 		}
+		// A functional check is never carried; it is always dispatched to
+		// runCheck, which may satisfy it from a green suite_run on the same tree
+		// when the skill declares check_reuse: tree (sty_dc554488).
 		body, err := g.skillBody(ctx, ref.skill)
 		if err != nil || skillCheck(body) != "" {
 			fresh = append(fresh, i)

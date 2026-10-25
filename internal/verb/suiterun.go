@@ -49,6 +49,12 @@ type suiteRunPayload struct {
 	Outcome    string `json:"outcome"`
 	StartedAt  string `json:"started_at,omitempty"`
 	FinishedAt string `json:"finished_at,omitempty"`
+	// Set only by a functional-check gate that declares check_reuse: tree
+	// (sty_dc554488); absent on a run recorded by ledger-record-run.
+	Check      string `json:"check,omitempty"`
+	Tree       string `json:"tree,omitempty"`
+	CommandSHA string `json:"command_sha,omitempty"`
+	DurationMS int64  `json:"duration_ms,omitempty"`
 }
 
 // suiteRunRefs is the Refs shape of a KindSuiteCitation row — the first write

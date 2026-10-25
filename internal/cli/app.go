@@ -341,6 +341,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// explicit/step/agent model falls straight to cli-default.
 			rev.SetSessionModelsResolver(verb.SessionModels)
 			rev.SetInvocationRecorder(verb.AppendAgentInvocation)
+			rev.SetSuiteEvidence(verb.RecordCheckRun, verb.FindCheckRun)
 			// Leftover-file sweep config (sty_e7aaf8b1): what a coder/driving
 			// session leaves in the tree that this repo wants moved to scratch
 			// (or flagged) at session close. Unset by default — the binary ships
@@ -477,6 +478,7 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 	rev.SetOneShotAgents(eff.Agents.OneShotBinding)
 	rev.SetSessionModelsResolver(verb.SessionModels)
 	rev.SetInvocationRecorder(verb.AppendAgentInvocation)
+	rev.SetSuiteEvidence(verb.RecordCheckRun, verb.FindCheckRun)
 	rev.SetLeftoverRule(a.ProcessConfig.Dispatch.Leftovers)
 	// The live sessions this engine opens (the rework relay) ledger
 	// a denied ask-the-user through this sink (sty_ff50f788); unwired, the row

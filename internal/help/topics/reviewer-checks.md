@@ -122,6 +122,18 @@ A gate is either:
   rejects** with the output tail as notes. No LLM — the command is the decision.
   Like the push gate, a functional check may run real mechanism.
 
+A functional-check skill may declare `check_reuse: tree` in its frontmatter. Each
+run is then recorded as a `suite_run` row (check, story, command digest, outcome,
+duration) naming the **tree** it proved: the git tree of HEAD plus every
+working-tree change, untracked files included and ignored files not. When the
+same check runs again on the same story with the same command and the same tree,
+and a **green** row exists, the gate accepts without running the command and its
+notes cite that row; any change to the tree, or a prior failure, runs the
+command. A red run is recorded but never reused. Opt in only for a check whose
+result is a function of the tree (a build or test suite), never one that reads
+remote state. This is distinct from `reviewer_carry`, which carries an LLM
+reviewer's verdict: a check is never carried, only reused through this evidence.
+
 ## Shared suite evidence — record a run once, cite it from siblings
 
 When a repo's verification suite is expensive (long integration runs, image

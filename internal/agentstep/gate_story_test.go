@@ -25,7 +25,7 @@ func TestRunCheckKeepsRepoRootAndNamesStory(t *testing.T) {
 		gotDir, gotStory = dir, gateStoryFrom(ctx)
 		return "", nil
 	}
-	if dec := g.runCheck(context.Background(), workitem.Item{ID: "sty_wt"}, "satelle-x-check", "true", "{}"); !dec.Accept {
+	if dec := g.runCheck(context.Background(), workitem.Item{ID: "sty_wt"}, "satelle-x-check", "true", "{}", ""); !dec.Accept {
 		t.Fatalf("check should accept: %+v", dec)
 	}
 	if gotDir != g.repoRoot {
