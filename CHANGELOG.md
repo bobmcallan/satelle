@@ -1,3 +1,13 @@
+## [0.0.754] - 2026-10-25
+
+### Added
+- The default substrate's epic and parent routes offer the epic-branch lane. A child of an epic or parent with no `lane:trunk` tag commits on its own pushed branch `epic/<child-id>` from its own worktree and never touches trunk; a child tagged `lane:trunk` keeps the full release route. The new shipped functional check `satelle-epic-branch-check`, on every working-lane close, accepts a branch-lane member only when its branch is pushed and not yet on trunk, and accepts a `lane:trunk` story or a story in no container (read straight from the transition payload, so no CLI call is needed). The container routes gain a `merged` step after the children close, performed by the shipped `satelle-epic-merge` skill, which merges every un-laned child's branch with `--no-ff` and puts trunk on the remote once through `satelle trunk publish`; the shipped `satelle-epic-merged-check` refuses the container's close until every such branch is on the pushed trunk. The route validator now judges an `after_children` step per route that lists it, rather than refusing it across the whole catalogue. (sty_b9d9a3df)
+
+## [serve-v0.0.211] - 2026-10-25
+
+### Changed
+- The service binary carries the default substrate's epic-branch lane: the `merged` container step, the epic-branch and epic-merged checks, and the per-route `after_children` validation. (sty_b9d9a3df)
+
 ## [0.0.753] - 2026-10-25
 
 ### Fixed
