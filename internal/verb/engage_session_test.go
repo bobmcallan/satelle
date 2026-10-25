@@ -176,6 +176,7 @@ func TestEngageFreshSessionNoSessionIsNoop(t *testing.T) {
 	// A session may also be published on this pid or an ancestor; point the
 	// publish directory at an empty temp home so none resolves.
 	t.Setenv(config.SessionEnv, "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("SATELLE_HOME", t.TempDir())
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	h := newEngageHarness(t, "")

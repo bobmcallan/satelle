@@ -187,6 +187,25 @@ type AcquireOpts struct {
 	// SessionID is the acquiring session identity. Empty if the caller
 	// could not establish one. The lease package does not read the env.
 	SessionID string
+	// StampLive says whether a seat's recorded session id still names a live
+	// session (sty_36d6f155). A same-owner re-acquire re-stamps a seat whose
+	// stamp is not live to SessionID, so the seat's holder can edit again; a
+	// live stamp is never overwritten. Nil treats every non-empty stamp as live.
+	StampLive func(sessionID string) bool
+}
+
+// restamp returns the session id a same-owner re-acquire leaves on a seat that
+// carries cur: opts.SessionID when it is set, differs, and cur is empty or no
+// longer live; otherwise cur.
+func (o AcquireOpts) restamp(cur string) string {
+	next := strings.TrimSpace(o.SessionID)
+	if next == "" || next == cur {
+		return cur
+	}
+	if cur == "" || (o.StampLive != nil && !o.StampLive(cur)) {
+		return next
+	}
+	return cur
 }
 
 // seatKey returns the effective arbitration key (empty falls back to ItemID so
@@ -410,9 +429,10 @@ func (s *Store) AcquireWith(ctx context.Context, opts AcquireOpts) (Lease, Outco
 			if strings.TrimSpace(worktree) == "" {
 				worktree = opts.Worktree
 			}
+			sessionID := opts.restamp(cur.SessionID)
 			if _, err := tx.ExecContext(ctx,
-				`UPDATE engagement_lease SET in_flight = 1, in_flight_at = ?, in_flight_pid = ?, heartbeat_at = ?, kind = ?, story_seat = ?, seat_key = ?, worktree = ?
-				 WHERE item_id = ?`, nowS, pid, nowS, kind, boolInt(occupiesStorySeat), seatKey, worktree, itemID); err != nil {
+				`UPDATE engagement_lease SET in_flight = 1, in_flight_at = ?, in_flight_pid = ?, heartbeat_at = ?, kind = ?, story_seat = ?, seat_key = ?, worktree = ?, session_id = ?
+				 WHERE item_id = ?`, nowS, pid, nowS, kind, boolInt(occupiesStorySeat), seatKey, worktree, sessionID, itemID); err != nil {
 				return Lease{}, 0, nil, fmt.Errorf("lease: mark in_flight: %w", err)
 			}
 			if err := tx.Commit(); err != nil {
@@ -426,6 +446,7 @@ func (s *Store) AcquireWith(ctx context.Context, opts AcquireOpts) (Lease, Outco
 			cur.StorySeat = occupiesStorySeat
 			cur.SeatKey = seatKey
 			cur.Worktree = worktree
+			cur.SessionID = sessionID
 			return cur, OutcomeAlreadyHeld, nil, nil
 		}
 		// Different owner: stale → steal; live → conflict.

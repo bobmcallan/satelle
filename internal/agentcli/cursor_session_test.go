@@ -48,11 +48,12 @@ func TestCursorHookSessionID(t *testing.T) {
 	}
 }
 
-// Nothing but the cursor adapter answers from the environment.
-func TestSessionIDFromEnvOnlyCursorAnswers(t *testing.T) {
+// Only the cursor and claude adapters answer from the environment; cursor is
+// asked first.
+func TestSessionIDFromEnvAdapters(t *testing.T) {
 	for name, env := range map[string][]string{
 		"none":          nil,
-		"claude":        {"CLAUDECODE=1", "CLAUDE_CODE_SESSION_ID=abc"},
+		"claude marker": {"CLAUDECODE=1"},
 		"grok":          {"GROK_AGENT=1", "GROK_SESSION_ID=abc"},
 		"pi":            {"PI_CODING_AGENT=1", "PI_SESSION_ID=abc"},
 		"cursor marker": {"CURSOR_AGENT=1", "CURSOR_INVOKED_AS=cursor-agent"},
@@ -64,6 +65,12 @@ func TestSessionIDFromEnvOnlyCursorAnswers(t *testing.T) {
 	}
 	if got := SessionIDFromEnv([]string{"PATH=/usr/bin", "CURSOR_CONVERSATION_ID= abc "}); got != "abc" {
 		t.Errorf("SessionIDFromEnv = %q, want the trimmed id", got)
+	}
+	if got := SessionIDFromEnv([]string{"CLAUDECODE=1", "CLAUDE_CODE_SESSION_ID= abc "}); got != "abc" {
+		t.Errorf("claude: SessionIDFromEnv = %q, want the trimmed id", got)
+	}
+	if got := SessionIDFromEnv([]string{"CLAUDE_CODE_SESSION_ID=claude-id", "CURSOR_CONVERSATION_ID=cursor-id"}); got != "cursor-id" {
+		t.Errorf("both: SessionIDFromEnv = %q, want cursor first", got)
 	}
 }
 

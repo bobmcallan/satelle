@@ -83,6 +83,9 @@ func TestOSProbe_LinuxOwnProcess(t *testing.T) {
 	if live != Alive || start == "" {
 		t.Fatalf("own process: probe = %v %q", live, start)
 	}
+	if live2, start2 := ProbeIdentity(os.Getpid()); live2 != live || start2 != start {
+		t.Fatalf("ProbeIdentity = %v %q, want %v %q", live2, start2, live, start)
+	}
 	if live, _ := osProbe(0x7ffffff0); live != Gone {
 		t.Fatalf("a pid nothing holds probes %v, want gone", live)
 	}

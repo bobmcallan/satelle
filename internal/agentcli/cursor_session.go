@@ -14,14 +14,21 @@ import (
 // name (6-hook-env-names.txt): the payload is their only source.
 const cursorConversationIDEnv = "CURSOR_CONVERSATION_ID"
 
+// claudeCodeSessionIDEnv is the session id Claude Code exports to its Bash tool's
+// shell (sty_36d6f155). Its hook processes do not see it either — the payload
+// session_id is theirs — but the two name one session, so a satelle CLI run from
+// the shell stamps the same id the edit hook later binds.
+const claudeCodeSessionIDEnv = "CLAUDE_CODE_SESSION_ID"
+
 // sessionEnvKeys are the environment variables an adapter publishes its session
 // id in, in the order they are asked. A harness absent here has none, which
 // SessionIDFromEnv reports as no answer — nothing unrecognised is assumed to be
-// cursor or claude.
-var sessionEnvKeys = []string{cursorConversationIDEnv}
+// cursor or claude. Cursor is asked first: a cursor agent started from a Claude
+// shell inherits the CLAUDE_* names, and the nearer harness is the cursor one.
+var sessionEnvKeys = []string{cursorConversationIDEnv, claudeCodeSessionIDEnv}
 
 // SessionIDFromEnv returns the session id an adapter publishes in environ
-// (KEY=VALUE entries), "" when none does. Only the cursor adapter answers.
+// (KEY=VALUE entries), "" when none does. The cursor and claude adapters answer.
 func SessionIDFromEnv(environ []string) string {
 	for _, want := range sessionEnvKeys {
 		for _, e := range environ {

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/gatehandle"
 )
 
 // SessionEnv is the process identity SATELLE_SESSION. Acquire stamps it on the
@@ -22,7 +23,9 @@ func SessionFromEnv() string {
 // PublishSession records id against this process and its parent so a later
 // satelle CLI in the same harness tree (story set, etc.) can ResolveSession
 // without the env being set yet. The harness session_id is the value; we do
-// not invent one.
+// not invent one. Each file records the process's creation identity beside the
+// id, so a later process that reuses the pid cannot be mistaken for the one that
+// published it (sty_36d6f155).
 func PublishSession(id string) {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -36,7 +39,8 @@ func PublishSession(id string) {
 		if pid <= 1 {
 			continue
 		}
-		_ = os.WriteFile(filepath.Join(dir, strconv.Itoa(pid)), []byte(id+"\n"), 0o600)
+		_, identity := gatehandle.ProbeIdentity(pid)
+		_ = os.WriteFile(filepath.Join(dir, strconv.Itoa(pid)), []byte(id+"\t"+identity+"\n"), 0o600)
 	}
 }
 
@@ -164,10 +168,8 @@ func publishedSession() string {
 	pid := os.Getpid()
 	for i := 0; i < 16 && pid > 1 && !seen[pid]; i++ {
 		seen[pid] = true
-		if b, err := os.ReadFile(filepath.Join(dir, strconv.Itoa(pid))); err == nil {
-			if id := strings.TrimSpace(string(b)); id != "" {
-				return id
-			}
+		if id := readPublishedPID(dir, pid); id != "" {
+			return id
 		}
 		next, ok := readParentPID(pid)
 		if !ok {
@@ -180,6 +182,87 @@ func publishedSession() string {
 		pid = next
 	}
 	return ""
+}
+
+// readPublishedPID returns the id published for pid, "" when there is none or the
+// file no longer speaks for that process. A file for a process that has gone, or
+// whose pid another process now holds, is removed as it is found: nothing else
+// cleans the directory.
+func readPublishedPID(dir string, pid int) string {
+	path := filepath.Join(dir, strconv.Itoa(pid))
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	id, identity, _ := strings.Cut(strings.TrimSpace(string(b)), "\t")
+	id, identity = strings.TrimSpace(id), strings.TrimSpace(identity)
+	if id == "" {
+		return ""
+	}
+	switch publishedFileSpeaks(pid, identity) {
+	case fileSpeaks:
+		return id
+	case fileStale:
+		_ = os.Remove(path)
+	}
+	return ""
+}
+
+type publishedVerdict int
+
+const (
+	// fileSpeaks: the file's process is the one that published it.
+	fileSpeaks publishedVerdict = iota
+	// fileStale: the process has gone or the pid was reused — safe to delete.
+	fileStale
+	// fileUnverifiable: the platform can tell processes apart but the file
+	// recorded no identity (written before it did), so it is not trusted yet.
+	fileUnverifiable
+)
+
+// publishedFileSpeaks judges one pid file by the process probe gatehandle owns.
+// A platform that yields no identity (or cannot probe) accepts a file on
+// liveness alone, as before.
+func publishedFileSpeaks(pid int, recorded string) publishedVerdict {
+	live, current := gatehandle.ProbeIdentity(pid)
+	switch {
+	case live == gatehandle.Gone:
+		return fileStale
+	case current == "":
+		return fileSpeaks
+	case recorded == "":
+		return fileUnverifiable
+	case recorded != current:
+		return fileStale
+	}
+	return fileSpeaks
+}
+
+// SessionLive reports whether a live process still publishes id as its session.
+// A seat stamped with an id nothing publishes is a ghost: its session is gone,
+// or the stamp never was a session (sty_36d6f155). It scans the publish
+// directory, removing the stale files it passes, so call it on the deny and
+// re-acquire paths only.
+func SessionLive(id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	dir := sessionPublishDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || e.IsDir() {
+			continue
+		}
+		if readPublishedPID(dir, pid) == id {
+			return true
+		}
+	}
+	return false
 }
 
 // readParentPID reads PPid from /proc/<pid>/stat. The comm field may contain

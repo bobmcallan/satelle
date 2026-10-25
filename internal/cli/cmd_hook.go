@@ -2025,12 +2025,28 @@ func seatMismatchEditReason(s seatInfo, sessionID, tree string) string {
 		seatSess = "unstamped"
 	}
 	var hint string
+	held := " The seat is held; it does not need re-acquiring."
 	switch {
 	case tree == s.Worktree:
 		// Already in the seat's worktree: only the id can differ.
 		hint = fmt.Sprintf("this session is already in that worktree; its session id (%s) does not match the seat's (%s)", sess, seatSess)
-		if s.SessionID != "" {
+		switch {
+		case s.SessionID == "":
+		case strings.TrimSpace(sessionID) == "":
+			// No id resolved for the caller, so there is nothing to re-stamp the
+			// seat to: the stamp has to come from an environment the hook reads.
 			hint += fmt.Sprintf(" — stamp SATELLE_SESSION=%s", s.SessionID)
+		case config.SessionLive(s.SessionID):
+			hint += " — another live session holds the seat; inspect with `satelle story seat`, and use `satelle story stop-request` to preempt it"
+		case s.Owner == lease.ResolveOwner():
+			// A ghost stamp: no live session publishes it, and this caller drove
+			// the story. The hook cannot see an exported SATELLE_SESSION, so the
+			// remedy is the command that re-stamps the seat to the caller
+			// (sty_36d6f155).
+			hint += fmt.Sprintf(" and no live session holds it — re-stamp the seat to this session with `satelle story set %s --status %s` (same status), then retry the edit", s.ItemID, s.StoryStatus)
+			held = ""
+		default:
+			hint += " and no live session holds it, but this caller did not engage the story; inspect with `satelle story seat`"
 		}
 	case s.SessionID != "":
 		hint = fmt.Sprintf("stamp SATELLE_SESSION=%s or run from that seat's worktree", s.SessionID)
@@ -2038,8 +2054,8 @@ func seatMismatchEditReason(s seatInfo, sessionID, tree string) string {
 		hint = "run from that seat's worktree"
 	}
 	return fmt.Sprintf(
-		"satelle: story %s (status %q) holds the live engagement seat — seat: %s — but this session is %s in worktree %q, so the edit is not attributed to it; %s. The seat is held; it does not need re-acquiring.",
-		s.ItemID, s.StoryStatus, seatToken(s), sess, tree, hint)
+		"satelle: story %s (status %q) holds the live engagement seat — seat: %s — but this session is %s in worktree %q, so the edit is not attributed to it; %s.%s",
+		s.ItemID, s.StoryStatus, seatToken(s), sess, tree, hint, held)
 }
 
 // ambiguousPerformingReason is the deny when several stories are performing and

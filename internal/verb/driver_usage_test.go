@@ -429,6 +429,7 @@ func TestRecordDriverUsageNoSessionIsNoop(t *testing.T) {
 	db := wireDU(t)
 	t.Setenv("SATELLE_HOME", t.TempDir())
 	t.Setenv(config.SessionEnv, "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	item := workitem.Item{ID: "sty_du_nosess", Kind: workitem.KindStory, Status: "plan"}
 	recordDriverUsage(context.Background(), item, "backlog", "plan", time.Now())
 	rows := driverUsageRows(t, db, "sty_du_nosess")

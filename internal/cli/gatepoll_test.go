@@ -114,8 +114,12 @@ func TestNoSurfaceLetsTheDriverPollAHandle(t *testing.T) {
 // first step toward a status command.
 func TestOnlyDeliveryAndReplayReadAHandle(t *testing.T) {
 	allowed := map[string]bool{
-		filepath.Join("internal", "gatehandle"):            true,
-		filepath.Join("internal", "cli", "gatecaller.go"):  true,
+		filepath.Join("internal", "gatehandle"):           true,
+		filepath.Join("internal", "cli", "gatecaller.go"): true,
+		// Imports only the process probe (ProbeIdentity), to tell a session's pid
+		// file from one a later process wrote on a reused pid (sty_36d6f155); it
+		// reads no handle.
+		filepath.Join("internal", "config", "session.go"):  true,
 		filepath.Join("internal", "cli", "gatedeliver.go"): true,
 		filepath.Join("internal", "cli", "gateresume.go"):  true,
 		// Where delivery looks for a session's handles across repos (sty_8f10499d):

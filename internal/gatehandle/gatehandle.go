@@ -311,6 +311,13 @@ func ProbePID(pid int) Liveness {
 	return l
 }
 
+// ProbeIdentity is ProbePID with the process's creation identity beside it ("" when
+// the platform cannot read one). A pid file that recorded the identity can then
+// tell its process from a later one that reused the pid (sty_36d6f155).
+func ProbeIdentity(pid int) (Liveness, string) {
+	return probe(pid)
+}
+
 // Reasons a handle Died, and why liveness is unverified. They are delivered, so
 // each says what happened.
 const (

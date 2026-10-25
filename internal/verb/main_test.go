@@ -23,5 +23,8 @@ func TestMain(m *testing.M) {
 		}
 	}
 	startWiring.parallel = engagementParallel
+	// The suite may run inside a harness shell; ResolveSession reads the session
+	// id it exports (sty_36d6f155), which no test here expects to be ambient.
+	_ = os.Unsetenv("CLAUDE_CODE_SESSION_ID")
 	os.Exit(m.Run())
 }

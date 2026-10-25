@@ -83,6 +83,7 @@ func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatu
 		SeatKey:   seatKeyFor(ctx, item),
 		Worktree:  engagementWorktree(),
 		SessionID: sessionID,
+		StampLive: config.SessionLive,
 	})
 	if err != nil {
 		return false, false, err

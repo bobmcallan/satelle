@@ -357,6 +357,50 @@ func TestLeaseSessionColumnMigration(t *testing.T) {
 	}
 }
 
+// sty_36d6f155 AC4: a same-owner re-acquire re-stamps a seat whose stamp no live
+// session holds, and never overwrites a live one.
+func TestSameOwnerReacquireRestampsGhostStamp(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		first, second string
+		live          func(string) bool
+		want          string
+	}{
+		"ghost stamp is replaced":      {"ghost", "driver", func(string) bool { return false }, "driver"},
+		"live stamp is kept":           {"other", "driver", func(string) bool { return true }, "other"},
+		"nil keeps a non-empty stamp":  {"other", "driver", nil, "other"},
+		"nil fills an empty stamp":     {"", "driver", nil, "driver"},
+		"empty caller keeps the stamp": {"ghost", "", func(string) bool { return false }, "ghost"},
+		"same id is a no-op":           {"driver", "driver", func(string) bool { return false }, "driver"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := openTestDB(t)
+			opts := AcquireOpts{ItemID: "sty_r", Kind: "story", Owner: "alice", State: "release", StorySeat: true, SessionID: tc.first}
+			if _, out, _, err := s.AcquireWith(ctx, opts); err != nil || out != OutcomeAcquired {
+				t.Fatalf("acquire: out=%v err=%v", out, err)
+			}
+			if err := s.Confirm(ctx, "sty_r", "release"); err != nil {
+				t.Fatal(err)
+			}
+			opts.SessionID, opts.StampLive = tc.second, tc.live
+			l, out, _, err := s.AcquireWith(ctx, opts)
+			if err != nil || out != OutcomeAlreadyHeld {
+				t.Fatalf("re-acquire: out=%v err=%v", out, err)
+			}
+			if l.SessionID != tc.want {
+				t.Errorf("returned SessionID = %q, want %q", l.SessionID, tc.want)
+			}
+			got, err := s.Get(ctx, "sty_r")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.SessionID != tc.want {
+				t.Errorf("stored SessionID = %q, want %q", got.SessionID, tc.want)
+			}
+		})
+	}
+}
+
 // TestListAliveReap: List returns rows; Alive rejects aged heartbeats; Reap
 // deletes them so a subsequent seat-occupying acquire succeeds (sty_1738f973 AC3).
 func TestListAliveReap(t *testing.T) {

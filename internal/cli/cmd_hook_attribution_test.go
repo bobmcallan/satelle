@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/store"
@@ -376,15 +377,59 @@ func TestSeatMismatchEditReasonAdvice(t *testing.T) {
 	if strings.Contains(same, "run from that seat's worktree") {
 		t.Errorf("same-worktree reason tells the caller to go where it already is: %s", same)
 	}
-	for _, want := range []string{"already in that worktree", "sess-x", "sess-kid", "SATELLE_SESSION=sess-kid"} {
+	for _, want := range []string{"already in that worktree", "sess-x", "sess-kid"} {
 		if !strings.Contains(same, want) {
 			t.Errorf("same-worktree reason missing %q: %s", want, same)
 		}
+	}
+	if strings.Contains(same, "SATELLE_SESSION") {
+		t.Errorf("a caller with a resolved id must not be told to export a variable the hook cannot see: %s", same)
 	}
 
 	elsewhere := seatMismatchEditReason(seat, "sess-x", "/w/other")
 	if !strings.Contains(elsewhere, "run from that seat's worktree") || strings.Contains(elsewhere, "already in that worktree") {
 		t.Errorf("different-worktree reason must advise the seat's worktree: %s", elsewhere)
+	}
+}
+
+// sty_36d6f155 AC3: a seat stamped with an id no live session publishes, in the
+// caller's own worktree and engaged by the caller, is denied with the command that
+// re-stamps it — not an environment variable — and never also says it need not be
+// re-acquired. A live holder's stamp keeps the "held" sentence.
+func TestSeatMismatchEditReasonGhostStamp(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	owner := lease.ResolveOwner()
+	ghost := seatInfo{ItemID: "sty_kid", StoryStatus: "release", Engaged: true, Worktree: "/w/kid", SessionID: "ghost-id", Owner: owner}
+
+	got := seatMismatchEditReason(ghost, "driver-id", "/w/kid")
+	for _, want := range []string{"satelle story set sty_kid --status release", "no live session holds it"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("ghost-stamp reason missing %q: %s", want, got)
+		}
+	}
+	for _, bad := range []string{"SATELLE_SESSION", "does not need re-acquiring"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("ghost-stamp reason must not contain %q: %s", bad, got)
+		}
+	}
+
+	notDriver := ghost
+	notDriver.Owner = "someone-else"
+	if got := seatMismatchEditReason(notDriver, "driver-id", "/w/kid"); strings.Contains(got, "satelle story set") || !strings.Contains(got, "did not engage") {
+		t.Errorf("a ghost seat engaged by another owner must not offer the re-stamp: %s", got)
+	}
+
+	config.PublishSession("live-holder")
+	live := ghost
+	live.SessionID = "live-holder"
+	got = seatMismatchEditReason(live, "driver-id", "/w/kid")
+	if strings.Contains(got, "satelle story set") || strings.Contains(got, "SATELLE_SESSION") || !strings.Contains(got, "does not need re-acquiring") || !strings.Contains(got, "another live session") {
+		t.Errorf("a live foreign stamp must name the holder and keep the held sentence: %s", got)
+	}
+
+	// With no id resolved for the caller there is nothing to re-stamp to.
+	if got := seatMismatchEditReason(ghost, "", "/w/kid"); !strings.Contains(got, "SATELLE_SESSION=ghost-id") {
+		t.Errorf("an unresolved caller keeps the stamp hint: %s", got)
 	}
 }
 

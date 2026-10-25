@@ -64,6 +64,10 @@ func TestMain(m *testing.M) {
 	for _, k := range []string{
 		config.DispatchAgentEnv, config.DispatchStepEnv, config.DispatchItemEnv,
 		config.RelayBindingEnv, config.RelayItemEnv, config.SpawnEnv,
+		// The session id a harness exports to its shell: the suite runs inside
+		// one, and ResolveSession now reads it (sty_36d6f155), so an unrelated
+		// test that expects no ambient session would otherwise resolve ours.
+		"CLAUDE_CODE_SESSION_ID",
 	} {
 		_ = os.Unsetenv(k)
 	}

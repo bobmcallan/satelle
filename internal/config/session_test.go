@@ -2,9 +2,82 @@ package config
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 )
+
+// sty_36d6f155 AC1: the claude adapter's shell env names the session, ahead of
+// the pid lookup and behind SATELLE_SESSION.
+func TestResolveSessionTakesTheClaudeEnvironmentID(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	t.Setenv("CURSOR_CONVERSATION_ID", "")
+	t.Setenv(SessionEnv, "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "drv")
+	PublishSession("published-elsewhere")
+	if got := ResolveSession(); got != "drv" {
+		t.Errorf("ResolveSession = %q, want the claude env id", got)
+	}
+}
+
+// sty_36d6f155 AC1: a pid file written by another process that held this pid
+// earlier, or by a build that recorded no identity, does not speak for this one.
+func TestPublishedSessionIgnoresAFileForAReusedPid(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	t.Setenv("CURSOR_CONVERSATION_ID", "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv(SessionEnv, "")
+	if runtime.GOOS != "linux" {
+		t.Skip("process identity is asserted on /proc")
+	}
+	dir := sessionPublishDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	own := filepath.Join(dir, strconv.Itoa(os.Getpid()))
+	if err := os.WriteFile(own, []byte("performer-id\tsome-earlier-process\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveSession(); got != "" {
+		t.Errorf("a reused pid's file resolved %q, want none", got)
+	}
+	if _, err := os.Stat(own); !os.IsNotExist(err) {
+		t.Errorf("the mismatched file must be removed: %v", err)
+	}
+
+	if err := os.WriteFile(own, []byte("performer-id\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveSession(); got != "" {
+		t.Errorf("a legacy file with no identity resolved %q, want none", got)
+	}
+}
+
+func TestSessionLive(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	if SessionLive("sess-A") || SessionLive("") {
+		t.Fatal("nothing published: no session is live")
+	}
+	PublishSession("sess-A")
+	if !SessionLive("sess-A") {
+		t.Error("a session this live process published must be live")
+	}
+	if SessionLive("sess-B") {
+		t.Error("an id nothing publishes must not be live")
+	}
+	// A file for a pid nothing holds is stale: it neither counts nor stays.
+	gone := filepath.Join(sessionPublishDir(), "2147483000")
+	if err := os.WriteFile(gone, []byte("sess-gone\tx\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if SessionLive("sess-gone") {
+		t.Error("a dead process's session must not be live")
+	}
+	if _, err := os.Stat(gone); !os.IsNotExist(err) {
+		t.Errorf("the stale file must be removed: %v", err)
+	}
+}
 
 // sty_2439f4fd AC1: a cursor Shell child names its session through the cursor
 // adapter's environment variable, ahead of the pid lookup and behind
@@ -12,6 +85,7 @@ import (
 func TestResolveSessionTakesTheAdapterEnvironmentID(t *testing.T) {
 	const conv = "17e98b90-f524-4ba9-a53e-eddfcff87713" // testdata/cursor/21-shell-env.txt
 	t.Setenv("SATELLE_HOME", t.TempDir())
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	PublishSession("sess-published")
 
 	t.Setenv(SessionEnv, "")
@@ -34,6 +108,7 @@ func TestResolveSessionTakesTheAdapterEnvironmentID(t *testing.T) {
 func TestPublishSessionResolvesWithoutEnv(t *testing.T) {
 	t.Setenv("SATELLE_HOME", t.TempDir())
 	t.Setenv("CURSOR_CONVERSATION_ID", "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv(SessionEnv, "")
 	_ = os.Unsetenv(SessionEnv)
 
@@ -57,6 +132,7 @@ func TestResolveSessionPrefersEnvOverPublished(t *testing.T) {
 
 func TestPublishSessionIgnoresEmpty(t *testing.T) {
 	t.Setenv("SATELLE_HOME", t.TempDir())
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	_ = os.Unsetenv(SessionEnv)
 	PublishSession("  ")
 	if got := ResolveSession(); got != "" {
