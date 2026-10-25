@@ -1,3 +1,13 @@
+## [0.0.759] - 2026-10-25
+
+### Added
+- A remote channel now survives a relay restart. When the relay connection closes for a restart-class reason (going away, an abnormal close, a network error, or a 5xx answer), the performer node (`satelle node join`) and the local starter each redial the same relay session, backing off from 500ms to 15s, for up to two minutes. They then take a fresh key exchange against the same pinned node key, and the channel resumes. Either end may arrive first: the node re-sends its hello every 250ms until the local end answers, so a hello the relay drops while the node waits alone is not lost. A job running when the connection dropped fails with the named reason `relay_restarted`. The node cancels its handler and stops that job's heartbeat, so the job is reported once and never left hanging. A close that means refusal is never retried: signed out (4401), `bad_session`, `slot_taken`, or a refused sign-in. The node keeps sending its status heartbeat while it redials, and it still posts `/end` when it gives up. Each resume, and each time an end gives up, is recorded in the ledger as `remote_channel_resumed` or `remote_channel_resume_failed`. (sty_ee78148f)
+
+## [serve-v0.0.214] - 2026-10-25
+
+### Changed
+- The service binary carries the ledger kinds for a resumed or abandoned remote channel. (sty_ee78148f)
+
 ## [0.0.758] - 2026-10-25
 
 ### Added
