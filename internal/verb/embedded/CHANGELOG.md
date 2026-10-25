@@ -1,3 +1,8 @@
+## [0.0.756] - 2026-10-25
+
+### Fixed
+- `satelle story ready` now runs and records a readiness round when the route's readiness step declares no `mark`. Before, it refused such a step, while the epic gate still demanded an accepted round before any child could engage, so a repo whose readiness step omitted `mark` could never start an epic's children. The accepted round is written to the ledger as usual and no tag is applied; the result line says the round holds and that no mark is configured, and the JSON result carries `no_mark`. A route that declares a mark behaves as before: the tag is applied and the guard on the mark still holds. When an epic has not been readied and `story ready` cannot run for it, the epic gate's refusal now says why, instead of telling the caller to run a command that would refuse. (sty_6172eb76)
+
 ## [0.0.755] - 2026-10-25
 
 ### Added
