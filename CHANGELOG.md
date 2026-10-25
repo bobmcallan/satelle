@@ -1,3 +1,8 @@
+## [0.0.757] - 2026-10-25
+
+### Fixed
+- `satelle story diff --json` now reports `engagement_sha`, the HEAD a story first engaged at. Parking and resuming a story never changes it. `baseline_sha` keeps its meaning: it is the point the diff is taken from, and it moves to the resume point, so a park does not pick up other stories' commits. The version-stamp check now compares `.version` against `engagement_sha`. Before, a story parked after its release commit and then resumed was compared against the release commit itself, and was rejected for a version it had already bumped. (sty_1168e79f)
+
 ## [0.0.756] - 2026-10-25
 
 ### Fixed
