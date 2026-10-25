@@ -162,13 +162,19 @@ type storyDiffReq struct {
 // StoryDiffResult is the deterministic enumeration result (no verdict).
 // Shared by `satelle story diff` and the reviewer-payload Diff field (sty_a125b440).
 type StoryDiffResult struct {
-	StoryID  string   `json:"story_id"`
-	Baseline string   `json:"baseline_sha"`
-	DirtyAt  bool     `json:"baseline_dirty"`
-	Files    []string `json:"files"`
-	Stat     string   `json:"stat"`
-	Patch    string   `json:"patch,omitempty"`
-	Note     string   `json:"note,omitempty"`
+	StoryID string `json:"story_id"`
+	// Baseline is the diff anchor: the engagement baseline, or the latest resume
+	// re-anchor once the story has been parked and resumed (it moves on resume).
+	Baseline string `json:"baseline_sha"`
+	// EngagementSHA is the HEAD the story first engaged at. It never moves, so a
+	// check that judges "since engagement" (the version stamp) reads this, not
+	// Baseline (sty_1168e79f).
+	EngagementSHA string   `json:"engagement_sha,omitempty"`
+	DirtyAt       bool     `json:"baseline_dirty"`
+	Files         []string `json:"files"`
+	Stat          string   `json:"stat"`
+	Patch         string   `json:"patch,omitempty"`
+	Note          string   `json:"note,omitempty"`
 	// Source is "live" (git re-derive) or "recorded" (change_record union).
 	Source  string `json:"source,omitempty"`
 	Records int    `json:"records,omitempty"`
@@ -374,13 +380,14 @@ func liveStoryDiff(ctx context.Context, it workitem.Item, wantPatch, includeSubs
 		StoryID: it.ID,
 		// The anchor actually used, so the surface never claims to have diffed
 		// from a point it did not.
-		Baseline: sl.SinceSHA,
-		DirtyAt:  sl.Base.Dirty,
-		Files:    files,
-		Stat:     stat,
-		Patch:    patch,
-		Source:   "live",
-		Note:     note,
+		Baseline:      sl.SinceSHA,
+		EngagementSHA: sl.Base.HeadSHA,
+		DirtyAt:       sl.Base.Dirty,
+		Files:         files,
+		Stat:          stat,
+		Patch:         patch,
+		Source:        "live",
+		Note:          note,
 
 		ProcessRoot:      processRoot,
 		ProcessRootFiles: processFiles,

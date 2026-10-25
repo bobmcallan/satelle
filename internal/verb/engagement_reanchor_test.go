@@ -239,3 +239,46 @@ func TestEngagedParkResumeReanchorsNextChangeRecord(t *testing.T) {
 		t.Errorf("next change_record holds the park-window commit: %v", last.Files)
 	}
 }
+
+// Resuming a parked story moves the diff anchor (baseline_sha) to the resume
+// point but never the engagement baseline: engagement_sha stays the HEAD of the
+// first engagement, which is what the version-stamp check judges "since" against
+// (sty_1168e79f AC1).
+func TestResumeKeepsEngagementSHAWhileBaselineMoves(t *testing.T) {
+	s := newReanchorScenario(t)
+	it := s.create()
+	shaA := s.commit("a_engage.txt")
+	s.set(it.ID, "in_progress")
+	s.set(it.ID, "blocked")
+	shaB := s.commit("b_release.txt")
+
+	readDiff := func() (anchor, engaged string) {
+		var res struct {
+			Baseline      string `json:"baseline_sha"`
+			EngagementSHA string `json:"engagement_sha"`
+		}
+		json.Unmarshal(call(t, "story-diff", map[string]any{"id": it.ID}), &res)
+		return res.Baseline, res.EngagementSHA
+	}
+
+	// Parked: nothing re-anchored yet, both name the engagement.
+	if anchor, engaged := readDiff(); anchor != shaA || engaged != shaA {
+		t.Fatalf("parked: baseline_sha=%q engagement_sha=%q want both %q", anchor, engaged, shaA)
+	}
+
+	s.set(it.ID, "in_progress")
+	anchor, engaged := readDiff()
+	if engaged != shaA {
+		t.Errorf("engagement_sha=%q after resume want first engagement %q", engaged, shaA)
+	}
+	if anchor != shaB {
+		t.Errorf("baseline_sha=%q after resume want resume diff anchor %q", anchor, shaB)
+	}
+
+	// A second park/resume at the same HEAD still leaves the engagement untouched.
+	s.set(it.ID, "blocked")
+	s.set(it.ID, "in_progress")
+	if anchor, engaged := readDiff(); engaged != shaA || anchor != shaB {
+		t.Errorf("second resume: baseline_sha=%q engagement_sha=%q want %q / %q", anchor, engaged, shaB, shaA)
+	}
+}
