@@ -28,11 +28,17 @@ type PerformerNode struct {
 }
 
 // StartPerformerNode asks the server to start a performer-mode node of remoteID
-// for storyID, to perform binding (POST /api/v1/remotes/{id}/nodes). 201 carries
+// for storyID, to perform binding (POST /api/v1/remotes/{id}/nodes). A non-empty
+// path names the accepted definition (remotes/<name>) to start from; empty omits
+// it and the server takes the remote's default. 201 carries
 // the node; any other answer is an error with the server's reason. A 404 names
 // the dependency that has not shipped.
-func (c *Client) StartPerformerNode(ctx context.Context, remoteID, storyID, binding string) (nodeID, relayURL string, err error) {
-	payload, err := json.Marshal(map[string]string{"mode": "performer", "story_id": storyID, "binding": binding})
+func (c *Client) StartPerformerNode(ctx context.Context, remoteID, storyID, binding, path string) (nodeID, relayURL string, err error) {
+	req := map[string]string{"mode": "performer", "story_id": storyID, "binding": binding}
+	if path != "" {
+		req["path"] = path
+	}
+	payload, err := json.Marshal(req)
 	if err != nil {
 		return "", "", err
 	}

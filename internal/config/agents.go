@@ -344,6 +344,10 @@ type AgentBinding struct {
 	// Remote names the published satelle.dev remote a placement="remote" binding
 	// starts a performer node of. Required by, and refused without, that placement.
 	Remote string `toml:"remote"`
+	// RemotePath names the accepted definition (its remotes/<name> path) the
+	// performer node starts from, when the remote's default is not wanted.
+	// Optional; valid only with placement="remote".
+	RemotePath string `toml:"remote_path"`
 }
 
 // IsolationOperatorAttested is the one valid isolation= value.

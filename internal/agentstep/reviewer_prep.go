@@ -246,12 +246,30 @@ func (g *Engine) reviewerSeatFor(ctx context.Context, item workitem.Item, toStat
 				"reviewer: transition %s→%s is gated by %q but no agent runner is configured", item.Status, toStatus, skill)
 		}
 		gateRunner = g.runner
+	} else if kind, _ := binding.ResolvedPlacement(); kind == config.PlacementRemote {
+		// A gate judged by a remote performer (sty_f5cae2e5): the binding's own
+		// same-named node binding runs the harness, so the seat carries the
+		// channel runner. It opens lazily — building a seat only to key it starts
+		// no node — and the seat's caller closes it after the verdict.
+		rr, rerr := g.remoteRunnerFor(section, binding, item.ID)
+		if rerr != nil {
+			return reviewerSeat{}, fmt.Errorf("gate refused: reviewer binding [%s]: %w", section, rerr)
+		}
+		gateRunner = rr
 	}
 	idle, ierr := g.idleTimeoutFor(section, binding)
 	if ierr != nil {
 		return reviewerSeat{}, fmt.Errorf("reviewer: invalid idle_timeout in .satelle/workflows/agents.toml [%s]: %w", section, ierr)
 	}
 	return reviewerSeat{binding: binding, section: section, modelSource: modelSource, runner: gateRunner, idle: idle}, nil
+}
+
+// closeSeat ends what the seat's runner holds open once its gate has been judged:
+// a remote seat's performer node ends with the verdict. A local runner holds nothing.
+func closeSeat(seat reviewerSeat) {
+	if rr, ok := seat.runner.(*remoteRunner); ok {
+		_ = rr.Close()
+	}
 }
 
 // stampInvocation copies what one Invoke run measured about itself onto the

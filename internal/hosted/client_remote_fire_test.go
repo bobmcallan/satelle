@@ -117,29 +117,40 @@ func TestStartPerformerNode(t *testing.T) {
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(reply))
 	}))
-	id, relay, err := c.StartPerformerNode(context.Background(), "r1", "sty_1", "coder")
+	id, relay, err := c.StartPerformerNode(context.Background(), "r1", "sty_1", "coder", "")
 	if err != nil || id != "nod_7" || relay != "wss://relay.example/relay" {
 		t.Fatalf("got (%q, %q, %v)", id, relay, err)
 	}
 	if gotMethod != http.MethodPost || gotBody["mode"] != "performer" || gotBody["story_id"] != "sty_1" || gotBody["binding"] != "coder" {
 		t.Errorf("request = %s %v", gotMethod, gotBody)
 	}
+	if _, has := gotBody["path"]; has {
+		t.Errorf("an empty path must be omitted from the request: %v", gotBody)
+	}
+
+	gotBody = nil
+	if _, _, err = c.StartPerformerNode(context.Background(), "r1", "sty_1", "coder", "remotes/step-pi"); err != nil {
+		t.Fatalf("with a path: %v", err)
+	}
+	if gotBody["mode"] != "performer" || gotBody["story_id"] != "sty_1" || gotBody["binding"] != "coder" || gotBody["path"] != "remotes/step-pi" {
+		t.Errorf("request with a path = %v", gotBody)
+	}
 
 	status, reply = http.StatusNotFound, `{"error":"not_found"}`
-	_, _, err = c.StartPerformerNode(context.Background(), "r1", "sty_1", "coder")
+	_, _, err = c.StartPerformerNode(context.Background(), "r1", "sty_1", "coder", "")
 	if err == nil || !strings.Contains(err.Error(), "sty_e272c46f") {
 		t.Fatalf("404: err = %v, want it to name satelle-server#sty_e272c46f", err)
 	}
 
 	status, reply = http.StatusConflict, `{"error":"limit_spend","reason":"cap"}`
-	_, _, err = c.StartPerformerNode(context.Background(), "r1", "sty_1", "coder")
+	_, _, err = c.StartPerformerNode(context.Background(), "r1", "sty_1", "coder", "")
 	var ae *APIError
 	if !errors.As(err, &ae) || ae.Code != "limit_spend" {
 		t.Fatalf("409: err = %v, want the server's code", err)
 	}
 
 	status, reply = http.StatusCreated, `{}`
-	if _, _, err = c.StartPerformerNode(context.Background(), "r1", "sty_1", "coder"); err == nil {
+	if _, _, err = c.StartPerformerNode(context.Background(), "r1", "sty_1", "coder", ""); err == nil {
 		t.Fatal("a 201 naming no node must be an error")
 	}
 }

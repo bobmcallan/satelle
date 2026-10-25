@@ -398,6 +398,7 @@ func bindingTable(b AgentBinding) map[string]any {
 	set("collect_doc", b.CollectDoc)
 	set("placement", b.Placement)
 	set("remote", b.Remote)
+	set("remote_path", b.RemotePath)
 	set("profile", b.Profile)
 	if b.ContextBudget != 0 {
 		out["context_budget"] = b.ContextBudget

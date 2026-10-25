@@ -349,7 +349,7 @@ func TestNodeJoinRunsFromTheDefinitionItFetches(t *testing.T) {
 
 	// AC1: the definition came from the fake with the node bearer, under the
 	// session as node id, and the report carries the version header.
-	calls := fake.Calls()
+	calls := nonStatusCalls(fake)
 	if len(calls) == 0 || calls[0].Method != http.MethodGet || calls[0].Path != "/api/v1/remote-nodes/"+spec.Session+"/definition" ||
 		calls[0].Auth != "Bearer "+spec.Token {
 		t.Fatalf("first call = %+v, want the authenticated definition fetch", calls)
@@ -553,7 +553,7 @@ func TestNodeJoinWithAnotherSessionThanTheServersIDIsNotFound(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "definition") {
 		t.Fatalf("join = %v, want the definition fetch to fail", err)
 	}
-	calls := fake.Calls()
+	calls := nonStatusCalls(fake)
 	if len(calls) == 0 || calls[0].Path != "/api/v1/remote-nodes/nod_b/definition" || calls[0].Status != http.StatusNotFound {
 		t.Errorf("calls = %+v, want a 404 for the definition fetch under nod_b", calls)
 	}
@@ -605,7 +605,7 @@ func TestNodeJoinTokenStdin(t *testing.T) {
 	r.tokenStdin = true
 	run, fake, joined, spec := r.open(t)
 
-	calls := fake.Calls()
+	calls := nonStatusCalls(fake)
 	if len(calls) == 0 || calls[0].Path != "/api/v1/remote-nodes/"+spec.Session+"/definition" || calls[0].Auth != "Bearer "+spec.Token {
 		t.Fatalf("first call = %+v, want the definition fetch with the token read from stdin", calls)
 	}

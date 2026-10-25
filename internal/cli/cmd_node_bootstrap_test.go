@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/remotenode"
 	"github.com/bobmcallan/satelle/internal/remotenode/devtest"
 )
 
@@ -62,11 +63,15 @@ func TestNodeJoinRunsTheHostBootstrapInOrderBeforeTheRun(t *testing.T) {
 	fakes := make(chan *devtest.Node, 1)
 	r.fakeSetup = func(f *devtest.Node) { fakes <- f }
 
-	type result struct{ err error }
+	type result struct {
+		run    *remotenode.Run
+		joined chan error
+		err    error
+	}
 	opened := make(chan result, 1)
 	go func() {
-		_, _, _, _, err := r.tryOpen(t)
-		opened <- result{err}
+		run, _, joined, _, err := r.tryOpen(t)
+		opened <- result{run, joined, err}
 	}()
 	fake := <-fakes
 	deadline := time.Now().Add(30 * time.Second)
@@ -80,11 +85,17 @@ func TestNodeJoinRunsTheHostBootstrapInOrderBeforeTheRun(t *testing.T) {
 	if got := fake.Count(http.MethodGet, "/definition"); got != 1 {
 		t.Errorf("definition fetches = %d, want 1", got)
 	}
-	for _, tail := range []string{"/run", "/status", "/end"} {
+	for _, tail := range []string{"/run", "/end"} {
 		for _, m := range []string{http.MethodGet, http.MethodPut, http.MethodPost} {
 			if n := fake.Count(m, tail); n != 0 {
 				t.Errorf("%s %s called %d times before the bootstrap finished", m, tail, n)
 			}
+		}
+	}
+	// Only the node's own heartbeat: no status reports a run while it bootstraps.
+	for _, s := range fake.Statuses() {
+		if s["run_state"] != "" || s["outcome"] != "" {
+			t.Errorf("status %v reports a run during the bootstrap", s)
 		}
 	}
 	if got := readFile(t, order); got != "one\n" {
@@ -93,8 +104,16 @@ func TestNodeJoinRunsTheHostBootstrapInOrderBeforeTheRun(t *testing.T) {
 	if err := os.WriteFile(release, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if res := <-opened; res.err != nil {
+	res := <-opened
+	if res.err != nil {
 		t.Fatalf("Attach: %v\nnode log:\n%s", res.err, r.log)
+	}
+	// End the node and wait for its join, so it does not outlive the test.
+	if err := res.run.End(); err != nil {
+		t.Fatalf("End: %v", err)
+	}
+	if err := waitJoin(t, res.joined); err != nil {
+		t.Fatalf("join: %v\nnode log:\n%s", err, r.log)
 	}
 	if got := readFile(t, order); got != "one\ntwo\n" {
 		t.Errorf("order = %q, want each command once, in order", got)
@@ -125,18 +144,28 @@ func TestNodeJoinFailingBootstrapFailsTheStartAndReportsIt(t *testing.T) {
 		t.Errorf("order = %q, want the commands up to the failing one", got)
 	}
 
+	// The join heartbeat may lead; the one concluded reject is the last status.
 	st := fake.Statuses()
-	if len(st) != 1 || st[0]["run_state"] != "concluded" || st[0]["outcome"] != "reject" ||
-		!strings.Contains(st[0]["findings"], "bootstrap command 2: exit status 3") {
-		t.Fatalf("statuses = %+v, want one concluded reject carrying the failing command", st)
+	if len(st) == 0 {
+		t.Fatal("no status was sent")
 	}
-	for k, v := range st[0] {
+	last := st[len(st)-1]
+	if last["run_state"] != "concluded" || last["outcome"] != "reject" ||
+		!strings.Contains(last["findings"], "bootstrap command 2: exit status 3") {
+		t.Fatalf("statuses = %+v, want a concluded reject carrying the failing command last", st)
+	}
+	for _, s := range st[:len(st)-1] {
+		if s["run_state"] != "" {
+			t.Errorf("status %v reports a run before the failed start", s)
+		}
+	}
+	for k, v := range last {
 		if strings.Contains(v, "SENTINEL") || strings.Contains(v, devtest.SecretValue) {
 			t.Errorf("status %s = %q holds output, argv or a secret", k, v)
 		}
 	}
-	if strings.Contains(st[0]["findings"], "sh") && strings.Contains(st[0]["findings"], "echo") {
-		t.Errorf("findings = %q names the command", st[0]["findings"])
+	if strings.Contains(last["findings"], "sh") && strings.Contains(last["findings"], "echo") {
+		t.Errorf("findings = %q names the command", last["findings"])
 	}
 	// No run was worked: the relay was never joined, no workstate, no channel key.
 	if r.relay.Attempts() != 0 {
@@ -173,8 +202,11 @@ func TestNodeJoinWithNoBootstrapStartsUnchanged(t *testing.T) {
 	if err := waitJoin(t, joined); err != nil {
 		t.Errorf("node join ended with %v\nnode log:\n%s", err, r.log)
 	}
-	if n := len(fake.Statuses()); n != 0 {
-		t.Errorf("statuses = %d, want none from a start that did not fail", n)
+	// The node's own heartbeat is not a start failure: no status concludes a run.
+	for _, s := range fake.Statuses() {
+		if s["run_state"] != "" || s["outcome"] != "" {
+			t.Errorf("status %v reports a run from a start that did not fail", s)
+		}
 	}
 	if n := fake.Count(http.MethodPost, "/end"); n != 1 {
 		t.Errorf("end calls = %d, want 1", n)

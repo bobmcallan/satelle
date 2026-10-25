@@ -34,7 +34,7 @@ func (p hostedPlacement) TeamRunStatus(ctx context.Context, remoteID, storyID st
 // published) and waits for its ready report. Until satelle-server ships the
 // nodes route the first call is refused with an error naming that dependency.
 func (p hostedPlacement) Open(ctx context.Context, bindingName string, binding config.AgentBinding, storyID string) (agentstep.RemoteRun, error) {
-	nodeID, relayURL, err := p.client.StartPerformerNode(ctx, binding.Remote, storyID, bindingName)
+	nodeID, relayURL, err := p.client.StartPerformerNode(ctx, binding.Remote, storyID, bindingName, binding.RemotePath)
 	if err != nil {
 		return nil, err
 	}

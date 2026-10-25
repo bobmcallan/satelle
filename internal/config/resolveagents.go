@@ -484,6 +484,7 @@ func overlayBinding(base AgentBinding, baseSrc map[string]string, top AgentBindi
 	setScalar("collect_doc", &out.CollectDoc, top.CollectDoc)
 	setScalar("placement", &out.Placement, top.Placement)
 	setScalar("remote", &out.Remote, top.Remote)
+	setScalar("remote_path", &out.RemotePath, top.RemotePath)
 	// Budgets are the REPO's (never a catalog profile's), so only the top tier
 	// carries them; a non-zero value overlays whatever sits beneath.
 	if top.ContextBudget != 0 {

@@ -141,6 +141,7 @@ type invocation struct {
 	env        map[string]string
 	scratch    string // this dispatch's scratch dir; "" → no scratch briefing (sty_e7aaf8b1)
 	judging    bool   // Expect judges: the work item is paths, the briefing says so
+	inline     bool   // judging, but the runner reads no local paths: the work item stays inline
 	shell      bool   // the grant admits a shell, so the judging briefing keeps the CLI lines
 	section    string // agents.toml section the seat runs under; names its budget
 	storyID    string // the story the dispatch serves; keys the originals of condensed documents
@@ -154,6 +155,7 @@ type promptParts struct {
 	scratch string // this dispatch's scratch dir
 	rubric  string // the skill body
 	judging bool   // use the judging briefing instead of the pull-context call to action
+	inline  bool   // judging with the work item inline: the verdict rules ride, the path briefing does not
 	shell   bool   // judging briefing also names the three CLI lines
 	verdict string // the shared verdict rules (ReviewerVerdictDoc); written only when judging
 }
@@ -180,7 +182,11 @@ func composeSystemPrompt(p promptParts) string {
 	// agent still gets the pull-context call to action, including the step
 	// summariser (SeatSystemPrompt leaves judging unset).
 	if p.judging {
-		b.WriteString(judgingContextBriefing(p.shell))
+		if p.inline {
+			b.WriteString(pullContextCallToAction)
+		} else {
+			b.WriteString(judgingContextBriefing(p.shell))
+		}
 		// The verdict rules every judging reviewer obeys ride once, ahead of the
 		// rubric that owns only its own verdict shape.
 		if v := strings.TrimSpace(p.verdict); v != "" {
@@ -205,7 +211,7 @@ func composeSystemPrompt(p promptParts) string {
 func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Request, error) {
 	in := SeatPayloadInput{
 		Charter: inv.charter, Scratch: inv.scratch, Rubric: inv.rubric,
-		Judging: inv.judging, Shell: inv.shell,
+		Judging: inv.judging, Inline: inv.inline, Shell: inv.shell,
 	}
 	if inv.judging {
 		in.Verdict = ReviewerVerdictDoc(ctx, g.docs)
@@ -395,6 +401,7 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	inv.scratch = scratchDir
 	inv.env = overlayScratchEnv(inv.env, scratchDir)
 	inv.judging = expect.judges()
+	inv.inline = inv.judging && !readsLocalPaths(req.Runner)
 	inv.shell = agentcli.GrantAdmitsShell(inv.tools)
 
 	// The swap is only the judging path, and only when the caller handed over
@@ -1111,7 +1118,7 @@ func judgingContextBriefing(shell bool) string {
 // into paths. Anything else — a performer, a check, a bare map — stays as the
 // caller passed it.
 func referencedWorkItem(req InvokeRequest) (transitionPayload, *reviewerMaterial, bool) {
-	if !req.Expect.judges() || req.Material == nil {
+	if !req.Expect.judges() || req.Material == nil || !readsLocalPaths(req.Runner) {
 		return transitionPayload{}, nil, false
 	}
 	switch p := req.Payload.(type) {
@@ -1125,6 +1132,17 @@ func referencedWorkItem(req InvokeRequest) (transitionPayload, *reviewerMaterial
 	default:
 		return transitionPayload{}, nil, false
 	}
+}
+
+// pathless is implemented by a runner that cannot open this machine's scratch
+// paths (a remote performer), so the work item it judges stays inline.
+type pathless interface{ localPathsUnreadable() }
+
+// readsLocalPaths reports whether the runner performs on this machine, where the
+// dispatch's scratch paths are readable. A nil runner is built locally.
+func readsLocalPaths(r agentcli.Runner) bool {
+	_, remote := r.(pathless)
+	return !remote
 }
 
 // payloadInputs reports the input values of the item a transition payload

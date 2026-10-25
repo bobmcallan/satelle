@@ -61,6 +61,10 @@ type remoteRunner struct {
 
 func (r *remoteRunner) Name() string { return "remote" }
 
+// localPathsUnreadable marks the performer as unable to read this machine's
+// scratch files, so a judging payload is sent inline (see referencedWorkItem).
+func (r *remoteRunner) localPathsUnreadable() {}
+
 func (r *remoteRunner) Command() string { return "remote:" + r.binding.Remote + "/" + r.name }
 
 func (r *remoteRunner) Run(ctx context.Context, req agentcli.Request) ([]byte, error) {

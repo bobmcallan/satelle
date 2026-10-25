@@ -34,6 +34,7 @@ type SeatPayloadInput struct {
 	Scratch      string         // this dispatch's scratch dir; "" omits the briefing
 	Rubric       string         // the skill body
 	Judging      bool           // the judging briefing replaces the pull-context call to action
+	Inline       bool           // judging with the work item inline: the pull-context call to action stays
 	Shell        bool           // the judging briefing also names the CLI lines
 	Verdict      string         // the shared verdict rules (ReviewerVerdictDoc); delivered only when Judging
 
@@ -64,7 +65,7 @@ type SeatPayload struct {
 // rubric — the instructions the seat acts on — are always delivered as written.
 func BuildSeatPayload(in SeatPayloadInput) (SeatPayload, error) {
 	tail := composeSystemPrompt(promptParts{
-		charter: in.Charter, scratch: in.Scratch, rubric: in.Rubric, judging: in.Judging, shell: in.Shell, verdict: in.Verdict,
+		charter: in.Charter, scratch: in.Scratch, rubric: in.Rubric, judging: in.Judging, inline: in.Inline, shell: in.Shell, verdict: in.Verdict,
 	})
 	var items []condense.Item
 	if c := strings.TrimSpace(in.Constitution); c != "" {

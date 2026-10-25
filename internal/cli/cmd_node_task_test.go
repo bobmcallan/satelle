@@ -18,6 +18,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/drive"
+	"github.com/bobmcallan/satelle/internal/remotenode"
 	"github.com/bobmcallan/satelle/internal/remotenode/devtest"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -214,6 +215,14 @@ func runSteps(t *testing.T, fake *devtest.Node, subject string) []string {
 	t.Helper()
 	var out []string
 	for _, s := range fake.Statuses() {
+		// The node's own join heartbeat (no story) covers the install and ends before
+		// the run's stream starts: it may lead, and none follows the run's first.
+		if s["story_id"] == "" && s["run_state"] == "" && s["step"] == remotenode.StepWaiting {
+			if len(out) != 0 {
+				t.Errorf("join heartbeat %+v follows the run's own heartbeat", s)
+			}
+			continue
+		}
 		if s["state"] != "running" || s["story_id"] != subject {
 			t.Errorf("heartbeat %+v is not the running state for the wake's subject", s)
 		}

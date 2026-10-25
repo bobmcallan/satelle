@@ -155,6 +155,21 @@ func runNodeJoin(cmd *cobra.Command, root, relay, session, token string) error {
 		}
 	}()
 
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// The node heartbeats on satelle.dev's status route from the moment it joins, so
+	// a slow definition install or [host] bootstrap (each command may run for
+	// nodeBootstrapTimeout, far past the window after which satelle.dev lists a
+	// silent node lost) does not end it. The status says whether a job is in flight.
+	// The beat stops before the end call (this defer is registered after it), so no
+	// heartbeat follows the end, and before a failed start is reported, so that
+	// report is the last status. A task-kind node hands over to its run's own
+	// heartbeat once its definition shows it runs a task.
+	node := remotenode.NewNode()
+	beat := remotenode.StartHeartbeat(ctx, client, nodeStatusResend, node.Status, cmd.ErrOrStderr())
+	defer beat.Stop()
+
 	root, err := expandNodeRoot(root)
 	if err != nil {
 		return err
@@ -177,19 +192,20 @@ func runNodeJoin(cmd *cobra.Command, root, relay, session, token string) error {
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), remotenode.KeyLinePrefix+base64.StdEncoding.EncodeToString(id.Public()))
 
-	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	dataDir := filepath.Join(root, config.DefaultDataDir)
 	def, version, err := installNodeDefinition(ctx, cmd, client, dataDir)
 	if err != nil {
+		reportNodeStartFailure(ctx, cmd, client, beat, err)
 		return fmt.Errorf("join: %w", err)
+	}
+	if def.RunsTask() {
+		beat.Stop()
 	}
 
 	// The definition's [host] bootstrap runs here: once for the node, after its
 	// definition is read and before it joins the relay or works a run.
 	if err := remotenode.RunBootstrap(ctx, root, def.Host.Bootstrap, nodeBootstrapTimeout, cmd.ErrOrStderr()); err != nil {
-		reportNodeStartFailure(ctx, cmd, client, err)
+		reportNodeStartFailure(ctx, cmd, client, beat, err)
 		return fmt.Errorf("join: %w", err)
 	}
 
@@ -220,7 +236,6 @@ func runNodeJoin(cmd *cobra.Command, root, relay, session, token string) error {
 	}
 	defer sess.Close()
 
-	node := remotenode.NewNode()
 	node.Handle(remotenode.AgentJob, agentJobHandler(dataDir, root, client, def.Secret))
 	node.Handle(remotenode.StoryReportJob, remotenode.StoryReportHandler(nodeProcess))
 	report, perr := prepareNode(ctx, root, dataDir, def, version)
@@ -238,7 +253,10 @@ func runNodeJoin(cmd *cobra.Command, root, relay, session, token string) error {
 // path, so the success path reads it exactly where it did. Both calls outlive a
 // cancelled ctx, as a SIGTERM that stopped the bootstrap is still reported. A run
 // that cannot be read is logged; the failure is returned by the caller regardless.
-func reportNodeStartFailure(ctx context.Context, cmd *cobra.Command, client *remotenode.NodeClient, cause error) {
+// It stops beat first, so the concluded status is the last one satelle.dev hears
+// and no running re-send follows it.
+func reportNodeStartFailure(ctx context.Context, cmd *cobra.Command, client *remotenode.NodeClient, beat *remotenode.Heartbeat, cause error) {
+	beat.Stop()
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeEndTimeout)
 	defer cancel()
 	desc, err := client.Run(rctx)

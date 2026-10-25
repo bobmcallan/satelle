@@ -166,7 +166,7 @@ func TestWorkflowShowRendersEachBindingsPlacement(t *testing.T) {
 	const cmd = `command = "claude -p --disallowedTools Write,Edit --append-system-prompt {system}"` + "\n" + `tools = "Read,Grep,Glob"` + "\n"
 	a := showFixture(t, "[reviewer]\nrole = \"reviewer\"\n"+cmd+
 		"\n[far]\nrole = \"reviewer\"\n"+cmd+"placement = \"remote\"\nremote = \"r1\"\n"+
-		"\n[team]\nrole = \"reviewer\"\n"+cmd+"placement = \"team:acme/ops\"\n")
+		"\n[team]\nrole = \"agent\"\n"+cmd+"placement = \"team:acme/ops\"\n")
 	for agent, want := range map[string]string{
 		"reviewer": "placement:  local",
 		"far":      "placement:  remote",

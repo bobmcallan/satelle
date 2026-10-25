@@ -3724,6 +3724,7 @@ func (g *Engine) decideReviewer(ctx context.Context, item workitem.Item, toStatu
 // and each panel seat. The payload is the prepared transition, never another
 // seat's stdout.
 func (g *Engine) invokeReviewerSeat(ctx context.Context, item workitem.Item, toStatus, skill string, prep reviewerPrep, seat reviewerSeat) InvokeResult {
+	defer closeSeat(seat)
 	return g.Invoke(ctx, InvokeRequest{
 		Binding:     seat.binding,
 		Section:     seat.section,

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/bobmcallan/satelle/internal/remotechan"
 )
@@ -19,6 +20,7 @@ type Node struct {
 	mu       sync.Mutex
 	handlers map[string]Handler
 	onReady  func()
+	active   atomic.Int32 // jobs whose handler is running
 }
 
 // OnReady registers f to be called once, by Serve, right after the ready report
@@ -30,6 +32,22 @@ func (n *Node) OnReady(f func()) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.onReady = f
+}
+
+// What a node reports as its heartbeat step while it waits for a job and while a
+// job's handler runs.
+const (
+	StepWaiting = "waiting"
+	StepWorking = "working"
+)
+
+// Status is the node's heartbeat now: running, with a step that says whether a job
+// is in flight. It is what StartHeartbeat reports.
+func (n *Node) Status() NodeStatus {
+	if n.active.Load() > 0 {
+		return NodeStatus{State: StateRunning, Step: StepWorking}
+	}
+	return NodeStatus{State: StateRunning, Step: StepWaiting}
 }
 
 // NewNode returns a Node with no job types.
@@ -137,6 +155,8 @@ func (n *Node) ServeWithRun(ctx context.Context, sess *remotechan.Session, repor
 // reply, announce the job done, and stop the node if the handler found its token
 // refused.
 func (n *Node) serveJob(ctx context.Context, sess *remotechan.Session, m remotechan.Message, stop context.CancelCauseFunc) {
+	n.active.Add(1)
+	defer n.active.Add(-1)
 	job := sess.StartJob(m.Job)
 	var r reply
 	var refused *TokenRefusedError

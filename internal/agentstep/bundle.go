@@ -386,6 +386,7 @@ func (g *Engine) runReviewerBundle(ctx context.Context, item workitem.Item, toSt
 	tp.Waivers = mergeWaivers(preps)
 	mat.Waivers = append([]WaiverItem(nil), tp.Waivers...)
 	tp.Citations, mat.Citations = bundleCitations(preps)
+	defer closeSeat(seat)
 	res := g.Invoke(ctx, InvokeRequest{
 		Binding:     seat.binding,
 		Section:     seat.section,

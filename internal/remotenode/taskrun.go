@@ -288,6 +288,9 @@ type statusReporter struct {
 	storyID  string
 	override time.Duration
 	log      func(error)
+	// refresh, when set, makes each re-send report the status it returns now rather
+	// than the last one sent: a node-lifetime heartbeat whose step changes.
+	refresh func() NodeStatus
 
 	sendMu sync.Mutex // serialises sends; held across the PUT
 	mu     sync.Mutex // guards the fields below
@@ -363,6 +366,10 @@ func (r *statusReporter) resend() {
 		}
 		r.sendMu.Lock()
 		r.mu.Lock()
+		if r.refresh != nil && !r.done {
+			r.last = r.refresh()
+			r.last.State, r.last.StoryID = StateRunning, r.storyID
+		}
 		last, done := r.last, r.done
 		r.mu.Unlock()
 		if !done {
@@ -383,6 +390,32 @@ func (r *statusReporter) conclude(ctx context.Context, outcome, findings string)
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), concludeGrace)
 	defer cancel()
 	r.put(cctx, NodeStatus{State: StateRunning, StoryID: r.storyID, RunState: runstatus.Concluded, Outcome: outcome, Findings: findings})
+}
+
+// Heartbeat is the heartbeat of a node that runs no task: it keeps satelle.dev
+// hearing from the node for as long as the node lives, whether or not a job is in
+// flight or the channel is attached. It is the task run's status mechanism
+// (statusReporter), started on the node rather than on a run.
+type Heartbeat struct{ r *statusReporter }
+
+// StartHeartbeat sends state() as the node's status now, then re-sends it, re-read
+// each time, until Stop. every is the resend interval; 0 is
+// DefaultStatusResendInterval, or a third of the window the server reports. A
+// refused heartbeat is logged to out and does not stop the node.
+func StartHeartbeat(ctx context.Context, client StatusSender, every time.Duration, state func() NodeStatus, out io.Writer) *Heartbeat {
+	r := newStatusReporter(client, "", every, out)
+	r.refresh = state
+	r.send(ctx, state())
+	return &Heartbeat{r: r}
+}
+
+// Stop ends the re-sends and waits for one in flight; nothing is sent after it.
+// It is safe to call more than once.
+func (h *Heartbeat) Stop() {
+	h.r.mu.Lock()
+	h.r.done = true
+	h.r.mu.Unlock()
+	h.r.stop()
 }
 
 // stop ends the resend loop and waits for it.

@@ -58,6 +58,26 @@ func TestPlacementLoadsInTheRepoFile(t *testing.T) {
 	}
 }
 
+func TestRemotePathAcceptedWithARemotePlacement(t *testing.T) {
+	ac, err := loadAgentsText(t, "[far]\nplacement = \"remote\"\nremote = \"r1\"\nremote_path = \"remotes/step-pi\"\n"+placementCmd)
+	if err != nil {
+		t.Fatalf("remote_path with placement=remote must load: %v", err)
+	}
+	if got := ac.Agents["far"].RemotePath; got != "remotes/step-pi" {
+		t.Errorf("remote_path = %q, want remotes/step-pi", got)
+	}
+	if _, err := ParseGlobalAgents("[profiles.p]\nrole = \"agent\"\nplacement = \"remote\"\nremote = \"r\"\nremote_path = \"remotes/x\"\n"); err != nil {
+		t.Errorf("a catalog profile may declare remote_path: %v", err)
+	}
+	if _, err := ParseGlobalAgents("[profiles.p]\nrole = \"agent\"\nremote_path = \"remotes/x\"\n"); err == nil {
+		t.Error("a catalog remote_path without placement=remote must be refused")
+	}
+	out, _ := overlayBinding(AgentBinding{}, nil, AgentBinding{Placement: "remote", Remote: "r1", RemotePath: "remotes/x"}, "T")
+	if out.RemotePath != "remotes/x" {
+		t.Errorf("overlay dropped remote_path: %+v", out)
+	}
+}
+
 func TestPlacementRefusedInTheRepoFile(t *testing.T) {
 	cases := map[string]struct{ body, want string }{
 		"unknown value":        {"placement = \"bogus\"\n", "placement=bogus is not local|remote|team:<path>"},
@@ -66,12 +86,34 @@ func TestPlacementRefusedInTheRepoFile(t *testing.T) {
 		"remote on the cloud":  {"placement = \"remote\"\nremote = \"r1\"\ninterface = \"cloud\"\n", "cannot be combined with interface=cloud"},
 		"remote= on a local":   {"remote = \"r1\"\n", "only a placement=remote binding names a remote"},
 		"remote= on a team":    {"placement = \"team:a/b\"\nremote = \"r1\"\n", "only a placement=remote binding names a remote"},
+		"remote_path on local": {"remote_path = \"remotes/step-pi\"\n", "only a placement=remote binding names a remote definition path"},
+		"remote_path on team":  {"placement = \"team:a/b\"\nremote_path = \"remotes/step-pi\"\n", "only a placement=remote binding names a remote definition path"},
 	}
 	for name, tc := range cases {
 		_, err := loadAgentsText(t, "[coder]\nrole = \"agent\"\n"+placementCmd+tc.body)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want it to contain %q", name, err, tc.want)
 		}
+	}
+}
+
+// A team placement runs a task and carries no verdict, so a reviewer binding that
+// declares one is refused at load, naming the binding (sty_f5cae2e5); a reviewer
+// uses placement = remote, and a team placement stays valid for a performer.
+func TestTeamPlacementRefusedForAReviewerBinding(t *testing.T) {
+	_, err := loadAgentsText(t, "[step-pi]\nrole = \"reviewer\"\nplacement = \"team:acme/ops\"\n"+placementCmd)
+	if err == nil || !strings.Contains(err.Error(), "[step-pi]") || !strings.Contains(err.Error(), "carries no verdict") {
+		t.Fatalf("err = %v, want a refusal naming [step-pi] and that a team placement carries no verdict", err)
+	}
+	if _, err := loadAgentsText(t, "[step-pi]\nrole = \"reviewer\"\nplacement = \"remote\"\nremote = \"rmt_1\"\n"+placementCmd); err != nil {
+		t.Errorf("a reviewer with placement = remote must load: %v", err)
+	}
+	if _, err := loadAgentsText(t, "[worker]\nrole = \"agent\"\nplacement = \"team:acme/ops\"\n"+placementCmd); err != nil {
+		t.Errorf("a performer with a team placement must load: %v", err)
+	}
+	_, err = ParseGlobalAgents("[profiles.p]\nrole = \"reviewer\"\nplacement = \"team:acme/ops\"\n")
+	if err == nil || !strings.Contains(err.Error(), "carries no verdict") {
+		t.Errorf("catalog reviewer with a team placement: err = %v, want the same refusal", err)
 	}
 }
 

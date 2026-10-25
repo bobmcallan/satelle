@@ -85,6 +85,7 @@ var globalAgentsBindingKeys = map[string]bool{
 	"auth":         true,
 	"placement":    true,
 	"remote":       true,
+	"remote_path":  true,
 }
 
 // globalAgentsRetiredKeys are profile keys satelle once declared and no longer
@@ -399,10 +400,16 @@ func checkBindingAuth(file, section string, b AgentBinding) error {
 // is already its own remote session); remote= is refused on any other placement.
 func checkBindingPlacement(file, section string, b AgentBinding) error {
 	kind, _ := b.ResolvedPlacement()
+	if kind == PlacementTeam && ResolvedRole(section, b) == RoleReviewer {
+		return fmt.Errorf("%s [%s]: a team placement carries no verdict; a reviewer uses placement = %q with remote = \"<published remote id>\"", file, section, PlacementRemote)
+	}
 	switch kind {
 	case PlacementLocal, PlacementTeam:
 		if strings.TrimSpace(b.Remote) != "" {
 			return fmt.Errorf("%s [%s] remote %q: only a placement=%s binding names a remote", file, section, b.Remote, PlacementRemote)
+		}
+		if strings.TrimSpace(b.RemotePath) != "" {
+			return fmt.Errorf("%s [%s] remote_path %q: only a placement=%s binding names a remote definition path", file, section, b.RemotePath, PlacementRemote)
 		}
 		return nil
 	case PlacementRemote:
