@@ -1,3 +1,13 @@
+## [0.0.753] - 2026-10-25
+
+### Fixed
+- The default substrate's epic and parent routes now carry the readiness round: a `ready` step entered from the start, which waits on the children, carries the `ready` mark, and may add `order:`, `surface:`, `lane:` and `depends-on:` tags or create a child. It is performed by the shipped read-only `ready-reviewer` seat with a new repo-agnostic `ready` skill. Before, in a repo with no workflow of its own, the epic readiness gate skipped every epic, `satelle story ready <epic>` failed with "declares no readiness step", and children started with no dependency edges. Now a child of an un-readied epic is refused with text naming `satelle story ready <epic>`, and that command runs the round. A repo whose own workflow already declares the step resolves the same route as before. `satelle help epic-wave` now says the gate applies when the epic's route declares a readiness step, and that the default substrate's epic route declares one. (sty_25064a6c)
+
+## [serve-v0.0.210] - 2026-10-25
+
+### Changed
+- The service binary carries the default substrate's readiness step for epic and parent routes. (sty_25064a6c)
+
 ## [0.0.752] - 2026-10-25
 
 ### Added
