@@ -1542,12 +1542,14 @@ func storyWaveCommand() *cobra.Command {
 		Long: `Print the runnable child ids of an epic-parent, one per line. Read-only: it
 writes no status, lease or tag, and engages or dispatches nothing.
 
-A dependency is satisfied only when that story's own route says done — a
-cancelled one does not satisfy it, and the omitted child is listed (# omitted)
-with the dependency named. The schedule is parallel by default (every runnable
-child); a container's route opts out with sequential = true, and then more than
-one runnable child exits non-zero and prints no id — it never picks by order: or
-created_at.
+A dependency is satisfied only when that story's own route says done; an
+unsatisfied child is listed (# omitted) with the dependency named. The schedule
+is parallel by default; a container's route opts out with sequential = true, and
+then more than one runnable child exits non-zero and prints no id.
+
+Then one '# delivery' line per open child: its order, lane, delivering step,
+where that step runs (in-loop, dispatched, executor, team:<path>), its agent and
+the orchestrator's recorded reason.
 
 See 'satelle help epic-wave' for the full contract; --json prints the response.`,
 		Args:        cobra.ExactArgs(1),
@@ -1575,9 +1577,41 @@ See 'satelle help epic-wave' for the full contract; --json prints the response.`
 			for _, o := range res.Omitted {
 				fmt.Fprintf(out, "# omitted %s: %s\n", o.ID, o.Reason)
 			}
+			for _, d := range res.Delivery {
+				fmt.Fprintln(out, formatWaveDelivery(d))
+			}
 			return nil
 		},
 	}
+}
+
+// formatWaveDelivery is one "# delivery" line of `satelle story wave`: how a
+// child runs, as the verb resolved it. It only lays out what the verb returns.
+func formatWaveDelivery(d verb.WaveDelivery) string {
+	parts := []string{d.Order}
+	if d.Lane != "" {
+		parts = append(parts, "lane="+d.Lane)
+	}
+	if d.Step != "" {
+		parts = append(parts, "step="+d.Step)
+	}
+	switch {
+	case d.Error != "":
+		parts = append(parts, "error: "+d.Error)
+	case d.Placement != "":
+		parts = append(parts, d.Placement)
+	}
+	if d.Agent != "" {
+		parts = append(parts, "agent="+d.Agent)
+	}
+	line := fmt.Sprintf("# delivery %s: %s", d.ID, strings.Join(parts, ", "))
+	if d.Note != "" {
+		line += " (" + d.Note + ")"
+	}
+	if d.Reason != "" {
+		line += " — " + d.Reason
+	}
+	return line
 }
 
 // storyReadyCommand builds `satelle story ready <id> [<id>...]`: ready backlog

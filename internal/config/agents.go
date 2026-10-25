@@ -487,17 +487,54 @@ const (
 func (b AgentBinding) ResolvedPlacement() (kind, path string) {
 	raw := strings.TrimSpace(b.Placement)
 	lower := strings.ToLower(raw)
-	switch {
-	case lower == "" || lower == PlacementLocal:
-		return PlacementLocal, ""
-	case lower == PlacementRemote:
+	if lower == PlacementRemote {
 		return PlacementRemote, ""
-	case strings.HasPrefix(lower, PlacementTeamPrefix):
-		if p := strings.TrimSpace(raw[len(PlacementTeamPrefix):]); p != "" {
-			return PlacementTeam, p
-		}
+	}
+	if kind, path, ok := parseLocalOrTeam(raw); ok {
+		return kind, path
 	}
 	return lower, ""
+}
+
+// parseLocalOrTeam is the placement grammar a binding and a child pin share:
+// "" or "local" is local, "team:<path>" is a team placement with its path. ok is
+// false for any other value, including a "team:" with no path.
+func parseLocalOrTeam(raw string) (kind, path string, ok bool) {
+	raw = strings.TrimSpace(raw)
+	lower := strings.ToLower(raw)
+	switch {
+	case lower == "" || lower == PlacementLocal:
+		return PlacementLocal, "", true
+	case strings.HasPrefix(lower, PlacementTeamPrefix):
+		if p := strings.TrimSpace(raw[len(PlacementTeamPrefix):]); p != "" {
+			return PlacementTeam, p, true
+		}
+	}
+	return "", "", false
+}
+
+// PlacementInLoop is the pin value that makes the driving session perform a
+// step. It is a pin only: a binding's placement= never declares it (the
+// binding's command being in-loop is config.IsInLoopCommand's question).
+const PlacementInLoop = "in-loop"
+
+// ParsePin parses the value of a child's placement pin (the tag under a step's
+// placement_tag prefix): "in-loop", "local" or "team:<path>". It returns the
+// kind (PlacementInLoop, PlacementLocal or PlacementTeam) and, for a team, its
+// path. "remote", an empty value and any unknown value are an error: remote
+// placement is binding configuration, never a per-child pin.
+func ParsePin(value string) (kind, path string, err error) {
+	v := strings.TrimSpace(value)
+	if strings.EqualFold(v, PlacementInLoop) {
+		return PlacementInLoop, "", nil
+	}
+	if v != "" {
+		if kind, path, ok := parseLocalOrTeam(v); ok {
+			return kind, path, nil
+		}
+	}
+	return "", "", fmt.Errorf("placement pin %q is not one of: %s, %s, %s<path> (remote placement is binding configuration, not a pin)",
+		value, PlacementInLoop, PlacementLocal, PlacementTeamPrefix)
 }
 
 // PlacementLabel is ResolvedPlacement as one string for display: "local",

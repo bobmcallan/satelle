@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
+	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/epicset"
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -40,13 +44,48 @@ type WaveOmitted struct {
 	Reason    string        `json:"reason"`
 }
 
+// WaveDelivery is how one non-terminal child will be delivered: whether it runs
+// alongside its siblings, its lane, and where the step that delivers it runs, as
+// the engine's performer rule answers (PerformerResolver.StepPerformer) — the
+// same answer a dispatch acts on. Reason is the orchestrator's, as the readiness
+// round recorded it.
+type WaveDelivery struct {
+	ID string `json:"id"`
+	// Order is "parallel", "sequential" (the container's schedule), or
+	// "after <ids>" for a child with depends-on edges.
+	Order string `json:"order"`
+	// Lane is the value of the child's tag under the readiness step's lane_tag
+	// prefix; empty when it carries none.
+	Lane string `json:"lane,omitempty"`
+	// Step is the child's delivering step: the first step from its status that
+	// honours a placement pin (declares placement_tag) and has a performer, else
+	// the first step with a performer. Empty with Placement "none" when no step
+	// has one.
+	Step string `json:"step,omitempty"`
+	// Placement is the engine's resolution of Step, rendered by renderPlacement.
+	Placement string `json:"placement,omitempty"`
+	// Agent is the binding that performs Step.
+	Agent string `json:"agent,omitempty"`
+	// Note is the placement note (a remote declaration that fell back to local).
+	Note string `json:"note,omitempty"`
+	// Reason is the orchestrator's recorded reason for the choice.
+	Reason string `json:"reason,omitempty"`
+	// Error is why the placement could not be resolved (an invalid pin, a missing
+	// binding); Placement is empty then.
+	Error string `json:"error,omitempty"`
+}
+
 // WaveResult is the story-wave response.
 type WaveResult struct {
-	Container string        `json:"container"`
-	Theme     string        `json:"theme"`
-	Schedule  string        `json:"schedule"`
-	Runnable  []string      `json:"runnable"`
-	Omitted   []WaveOmitted `json:"omitted,omitempty"`
+	Container string         `json:"container"`
+	Theme     string         `json:"theme"`
+	Schedule  string         `json:"schedule"`
+	Runnable  []string       `json:"runnable"`
+	Omitted   []WaveOmitted  `json:"omitted,omitempty"`
+	Delivery  []WaveDelivery `json:"delivery,omitempty"`
+	// children are the container's members as assessWave read them, so story wave
+	// can describe their delivery without resolving the set twice.
+	children []workitem.Item
 }
 
 // waveState is what the route says about one story: finished (the route's
@@ -241,6 +280,7 @@ func storyWave(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 		}
 		return nil, fmt.Errorf("story-wave: %s: %w", container.ID, err)
 	}
+	res.Delivery = waveDelivery(ctx, wfs, container, res.Schedule, res.children)
 	return json.Marshal(res)
 }
 
@@ -311,5 +351,143 @@ func assessWave(ctx context.Context, store *workitem.Store, wfs []docindex.Doc, 
 	if runnable == nil {
 		runnable = []string{}
 	}
-	return WaveResult{Container: container.ID, Theme: set.Theme, Schedule: schedule, Runnable: runnable, Omitted: omitted}, nil
+	return WaveResult{Container: container.ID, Theme: set.Theme, Schedule: schedule, Runnable: runnable, Omitted: omitted, children: children}, nil
+}
+
+// waveDelivery describes how each non-terminal child of container will be
+// delivered. It reads, and writes nothing. The placement of a child is its
+// delivering step's StepPerformer answer; with no resolver wired the placement
+// fields stay empty.
+func waveDelivery(ctx context.Context, wfs []docindex.Doc, container workitem.Item, schedule string, children []workitem.Item) []WaveDelivery {
+	var laneTag string
+	var reasons map[string]string
+	edge, err := readinessEdgeFor(ctx, container)
+	if err == nil {
+		laneTag = edge.Step.LaneTag
+		reasons = deliveryReasons(ctx, container, edge)
+	}
+	resolver, _ := executorDispatcher.(PerformerResolver)
+	kids := append([]workitem.Item(nil), children...)
+	sort.Slice(kids, func(i, j int) bool { return kids[i].ID < kids[j].ID })
+	var out []WaveDelivery
+	for _, c := range kids {
+		if own := waveStateOf(wfs, c); own.Done || own.Cancelled {
+			continue
+		}
+		d := WaveDelivery{ID: c.ID, Order: waveOrder(schedule, c), Reason: reasons[c.ID]}
+		if laneTag != "" {
+			d.Lane = tagValue(c.Tags, laneTag)
+		}
+		if resolver != nil {
+			resolveDelivery(ctx, resolver, wfs, c, &d)
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+// waveOrder says how a child is sequenced: after its depends-on targets, else by
+// the container's schedule.
+func waveOrder(schedule string, c workitem.Item) string {
+	if deps := dependsOnTargets(c.Tags); len(deps) > 0 {
+		return "after " + strings.Join(deps, ", ")
+	}
+	if schedule == wfdot.SchedSequential {
+		return wfdot.SchedSequential
+	}
+	return wfdot.SchedParallel
+}
+
+// tagValue is the text after prefix on the first tag of tags that starts with it.
+func tagValue(tags []string, prefix string) string {
+	for _, t := range tags {
+		if v, ok := strings.CutPrefix(t, prefix); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+// resolveDelivery fills d's step and placement fields from the engine's
+// performer rule, over c's route from its current status on.
+func resolveDelivery(ctx context.Context, resolver PerformerResolver, wfs []docindex.Doc, c workitem.Item, d *WaveDelivery) {
+	spec, _, _, err := wfgovern.SpecFor(wfs, c)
+	if err != nil {
+		d.Error = err.Error()
+		return
+	}
+	steps := spec.SpineSteps()
+	if at := slices.Index(steps, c.Status); at > 0 {
+		steps = steps[at:]
+	}
+	var chosen *PerformerResolution
+	step := ""
+	for _, name := range steps {
+		perf, perr := resolver.StepPerformer(ctx, c, name)
+		if perr != nil {
+			d.Step, d.Error = name, perr.Error()
+			return
+		}
+		if perf.Kind != PerformerDispatched && perf.Kind != PerformerInLoop && perf.Kind != PerformerExecutor {
+			continue
+		}
+		if chosen == nil {
+			chosen, step = &perf, name
+		}
+		if st, ok := spec.StateNamed(name); ok && st.PlacementTag != "" {
+			chosen, step = &perf, name
+			break
+		}
+	}
+	if chosen == nil {
+		d.Placement = "none"
+		return
+	}
+	d.Step, d.Placement, d.Agent, d.Note = step, renderPlacement(*chosen), chosen.Agent, chosen.PlacementNote
+}
+
+// renderPlacement is the one rendering of an engine resolution for display:
+// "team:<path>" for a team remote, "remote" for a remote performer, else the
+// Kind itself, with an executor step saying whether the [executor] binding is
+// the driving session or headless. No Kind is mapped to another.
+func renderPlacement(p PerformerResolution) string {
+	switch {
+	case p.Team != "":
+		return "team:" + p.Team
+	case p.Remote:
+		return "remote"
+	case p.Kind == PerformerExecutor && p.ExecutorInLoop:
+		return string(p.Kind) + " (in-loop)"
+	case p.Kind == PerformerExecutor:
+		return string(p.Kind) + " (headless)"
+	}
+	return string(p.Kind)
+}
+
+// deliveryReasons reads the orchestrator's per-child reasons the readiness round
+// recorded: one "<child id>: <reason>" line per child under the readiness step's
+// delivery_heading in its performer's document. An absent heading, document or
+// line gives no reason and no error — the round may not have run.
+func deliveryReasons(ctx context.Context, container workitem.Item, edge readinessEdge) map[string]string {
+	heading := edge.Step.DeliveryHeading
+	if heading == "" {
+		return nil
+	}
+	doc := readinessDocName(ctx, container, edge.To)
+	file, dir := safeName(doc), attachmentDir(container)
+	if doc == "" || file == "" || dir == "" {
+		return nil
+	}
+	data, err := os.ReadFile(filepath.Join(dir, file))
+	if err != nil {
+		return nil
+	}
+	reasons := map[string]string{}
+	for _, line := range strings.Split(agentartifact.Section(string(data), heading), "\n") {
+		line = strings.TrimLeft(strings.TrimSpace(line), "-*• \t")
+		if id, reason, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(reason) != "" {
+			reasons[strings.TrimSpace(id)] = strings.TrimSpace(reason)
+		}
+	}
+	return reasons
 }

@@ -220,6 +220,13 @@ type stepWire struct {
 	// step's own agent (sty_dde8b6a4).
 	RemoteAgent string   `toml:"remote_agent"`
 	LocalTags   []string `toml:"local_tags"`
+	// PlacementTag is the tag prefix a child's placement pin is written under;
+	// DeliveryHeading is the readiness-document heading that records the reason
+	// for each child's delivery choice (sty_c931cd90).
+	// LaneTag is the tag prefix of a child's landing lane, which wave prints.
+	PlacementTag    string `toml:"placement_tag"`
+	DeliveryHeading string `toml:"delivery_heading"`
+	LaneTag         string `toml:"lane_tag"`
 	// RemoteWait declares that the story waits here on a team remote's run for
 	// it, and maps each outcome the run concludes with to the status it moves
 	// the story to. A POINTER so an absent key stays distinguishable from an
@@ -560,6 +567,9 @@ func ParseSteps(body string) (Catalogue, error) {
 			AfterChildren:   strings.TrimSpace(s.AfterChildren),
 			RemoteAgent:     strings.TrimSpace(s.RemoteAgent),
 			LocalTags:       s.LocalTags,
+			PlacementTag:    strings.TrimSpace(s.PlacementTag),
+			DeliveryHeading: strings.TrimSpace(s.DeliveryHeading),
+			LaneTag:         strings.TrimSpace(s.LaneTag),
 			ContextBudget:   s.ContextBudget,
 			TurnBudget:      s.TurnBudget,
 		}

@@ -179,6 +179,19 @@ type Step struct {
 	// step never runs remotely.
 	RemoteAgent string
 	LocalTags   []string
+	// PlacementTag is the tag prefix under which a child carries its placement
+	// pin ("in-loop", "local" or "team:<path>"), chosen by the orchestrator at
+	// readiness. Empty means the step honours no pin. The prefix is the repo's
+	// vocabulary; the binary only reads the value after it.
+	PlacementTag string
+	// DeliveryHeading is the heading, in the readiness document, under which the
+	// performer records the orchestrator's reason for each child's delivery
+	// choice. Empty means the step records none.
+	DeliveryHeading string
+	// LaneTag is the tag prefix under which a child carries its landing lane;
+	// `satelle story wave` prints the value after it. The prefix is the repo's
+	// vocabulary, so the binary names none. Empty means no lane is printed.
+	LaneTag string
 	// RemoteWait declares that a story holding this step waits on a team
 	// remote's run for it and maps the run's outcomes to edges. Nil when the step
 	// waits on no remote.
@@ -577,6 +590,9 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			AfterChildren:   st.AfterChildren,
 			RemoteAgent:     st.RemoteAgent,
 			LocalTags:       st.LocalTags,
+			PlacementTag:    st.PlacementTag,
+			DeliveryHeading: st.DeliveryHeading,
+			LaneTag:         st.LaneTag,
 			RemoteWait:      st.RemoteWait,
 		})
 	}

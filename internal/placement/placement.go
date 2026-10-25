@@ -10,6 +10,8 @@ package placement
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -42,6 +44,16 @@ type Decision struct {
 	Team string
 	// Note explains a local placement that was declared remote ("" otherwise).
 	Note string
+	// Pinned is true when the child carries a placement pin that decided this
+	// placement (the pin value is then Team, InLoop, or neither for local).
+	Pinned bool
+	// InLoop is true when the child is pinned in-loop: the driving session
+	// performs the step, whatever the binding says.
+	InLoop bool
+	// PinErr is set when the child carries a placement pin that cannot be
+	// honoured (an unknown value, "remote", or two pins that disagree). The
+	// caller refuses to resolve the step rather than fall back silently.
+	PinErr error
 }
 
 // Bindings resolves a named agents.toml binding. It is how Decide reads a
@@ -59,8 +71,17 @@ type Bindings func(name string) (config.AgentBinding, bool)
 // binding with placement = "remote" or "team:<path>" is placed accordingly, and
 // one declaring none (or local) is placed as before. Placement lives on the
 // binding, never in step.toml; remote_agent stays for the cloud path.
+//
+// A child the orchestrator pinned (a tag under the step's placement_tag prefix,
+// written at readiness — sty_c931cd90) is placed by its pin before anything
+// else: the pin replaces the binding's own placement and the remote_agent path is
+// never reached. A pin never places a child remote; that stays the binding's
+// placement = "remote" and the step's remote_agent.
 func Decide(ctx context.Context, item workitem.Item, step wfdot.State, bindings Bindings) Decision {
 	local := bindingPlacement(step.Agent, bindings)
+	if pinned, ok := applyPin(local, item, step); ok {
+		return pinned
+	}
 	if step.RemoteAgent == "" {
 		return local
 	}
@@ -79,6 +100,47 @@ func Decide(ctx context.Context, item workitem.Item, step wfdot.State, bindings 
 		return local
 	}
 	return Decision{Agent: step.RemoteAgent, Remote: true}
+}
+
+// applyPin places item by its placement pin, over base (the binding's own
+// placement). ok is false when the step declares no placement_tag or item carries
+// no tag under it, so the caller decides as before. An unparsable or conflicting
+// pin returns ok with PinErr set.
+func applyPin(base Decision, item workitem.Item, step wfdot.State) (Decision, bool) {
+	if step.PlacementTag == "" {
+		return base, false
+	}
+	var value string
+	found := false
+	for _, tag := range item.Tags {
+		v, has := strings.CutPrefix(tag, step.PlacementTag)
+		if !has {
+			continue
+		}
+		if found && v != value {
+			base.PinErr = fmt.Errorf("%s carries conflicting placement pins %q and %q", item.ID, step.PlacementTag+value, tag)
+			return base, true
+		}
+		value, found = v, true
+	}
+	if !found {
+		return base, false
+	}
+	kind, path, err := config.ParsePin(value)
+	if err != nil {
+		base.PinErr = fmt.Errorf("%s: tag %q: %w", item.ID, step.PlacementTag+value, err)
+		return base, true
+	}
+	// The pin replaces the binding's placement: a pinned child is never remote.
+	base.Pinned = true
+	base.Remote, base.Channel, base.Team, base.InLoop = false, false, "", false
+	switch kind {
+	case config.PlacementTeam:
+		base.Team = path
+	case config.PlacementInLoop:
+		base.InLoop = true
+	}
+	return base, true
 }
 
 // bindingPlacement places agent by its own binding's declared placement. An

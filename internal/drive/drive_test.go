@@ -166,10 +166,11 @@ func (f *fakePerformers) StepPerformer(_ context.Context, _ workitem.Item, step 
 	if !ok {
 		k = verb.PerformerNone
 	}
-	return verb.PerformerResolution{Kind: k, Agent: f.agents[step], Dispatched: k == verb.PerformerDispatched}, nil
+	return verb.PerformerResolution{
+		Kind: k, Agent: f.agents[step], Dispatched: k == verb.PerformerDispatched,
+		ExecutorInLoop: k == verb.PerformerExecutor && config.IsInLoopCommand(f.executor.CommandTemplate()),
+	}, nil
 }
-
-func (f *fakePerformers) ExecutorBinding() (config.AgentBinding, bool) { return f.executor, true }
 
 func (f *fakePerformers) PerformExecutorStep(_ context.Context, item workitem.Item, step, notes string) (verb.DispatchResult, error) {
 	res := verb.DispatchResult{Dispatched: true, Agent: "executor", Command: "fake-executor", Skill: "s", Output: f.output, LastMessage: verb.LastMessage(f.output)}

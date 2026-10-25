@@ -610,6 +610,19 @@ type PerformerResolution struct {
 	// numbered acceptance criteria inside its output document
 	// (output_criteria_section); empty when it declares none (sty_99d3162b).
 	CriteriaSection string
+	// Team, Remote, Channel and PlacementNote are where the step runs, as the
+	// engine's placement rule decided (internal/placement.Decide, which verb
+	// cannot import): a team remote path, a cloud or channel remote, and the
+	// note for a remote declaration that fell back to local. All empty for a
+	// local performer.
+	Team          string
+	Remote        bool
+	Channel       bool
+	PlacementNote string
+	// ExecutorInLoop answers, for Kind == PerformerExecutor, whether the
+	// [executor] binding is the in-loop session (the driving session performs)
+	// or a headless command. False for every other Kind.
+	ExecutorInLoop bool
 }
 
 // PerformerKind classifies a PerformerResolution.

@@ -152,9 +152,23 @@ these hold:
 
 A step with no `remote_agent` is unchanged, and the epic's merge never moves: a
 container step (`waits_on_children` or `after_children`) cannot declare
-`remote_agent`, so integration and release stay local. Which children run remote
-and which run local is therefore declared configuration, never a decision of the
-agent driving the epic.
+`remote_agent`, so integration and release stay local. Whether a step *can* run
+remote is therefore declared configuration (`remote_agent`, or a binding's
+`placement = "remote"`), never a decision of the agent driving the epic.
+
+**The orchestrator places each child.** Where each child runs is the
+orchestrator's choice, made at the epic's readiness round: `in-loop` (the driving
+session), `local` (a headless subagent) or `team:<path>` (a team remote). It
+sends the ready performer one line per child with its reason
+(`satelle story message <epic> --from orchestrator --to ready --body …`); the
+round records the reason under the ready step's `delivery_heading` and the
+placement as a tag under its `placement_tag` prefix (`placement:in-loop`,
+`placement:local`, `placement:team:<path>`). The delivering steps declare the same
+`placement_tag`, so a pinned child is placed by its pin at dispatch, ahead of
+`local_tags` and `remote_agent`. `remote` is not a pin: the round refuses it, and
+a dispatch fails naming a pin it cannot honour. `satelle story wave` prints what
+the engine resolves for each open child — `# delivery <id>: <order>, lane=…,
+step=…, <placement>, agent=… — <reason>` — so the choice is read, not guessed.
 
 **The driver pushes first.** A cloud session is based on the child's pushed
 branch, and satelle never pushes for you. Before presenting a remote child's

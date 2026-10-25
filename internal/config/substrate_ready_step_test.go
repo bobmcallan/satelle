@@ -48,8 +48,15 @@ func TestEmbeddedContainerRouteDeclaresReadiness(t *testing.T) {
 		if got, want := ready.ApplyChangeOps, []string{"add-tags", "create-child"}; !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: apply_changes ops = %v, want %v", category, got, want)
 		}
-		if got, want := ready.ApplyChangeTags, []string{"order:", "surface:", "lane:", "depends-on:"}; !reflect.DeepEqual(got, want) {
+		if got, want := ready.ApplyChangeTags, []string{"order:", "surface:", "lane:", "depends-on:", "placement:"}; !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: apply_changes tags = %v, want %v", category, got, want)
+		}
+		// The orchestrator's per-child delivery choice (sty_c931cd90): the pin
+		// prefix, the heading its reasons are recorded under, and the lane prefix
+		// wave prints.
+		if ready.PlacementTag != "placement:" || ready.DeliveryHeading != "Delivery" || ready.LaneTag != "lane:" {
+			t.Errorf("%s: placement_tag/delivery_heading/lane_tag = %q/%q/%q, want placement:/Delivery/lane:",
+				category, ready.PlacementTag, ready.DeliveryHeading, ready.LaneTag)
 		}
 		if ready.Agent != "ready-reviewer" {
 			t.Errorf("%s: performer = %q, want ready-reviewer", category, ready.Agent)
