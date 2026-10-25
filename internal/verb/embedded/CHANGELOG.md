@@ -1,3 +1,13 @@
+## [0.0.751] - 2026-10-25
+
+### Fixed
+- An engagement seat taken from a Claude Code session is now stamped with that session's id, so the session that drove a story can edit at its executor steps (integration, release). satelle now reads `CLAUDE_CODE_SESSION_ID`. Before, it fell back to a per-process file under `$XDG_RUNTIME_DIR/satelle-sessions`, and those files were never cleaned up, so a reused process id could stamp the seat with an unrelated session. The edit hook then refused every edit and asked for a `SATELLE_SESSION` stamp that Claude Code's hook cannot see. Each published session file now records the process's start-time identity: a file whose process is gone or was replaced is removed and never trusted. When a seat's stamp matches no live session and the caller engaged the story, the refusal now names a remedy that works, re-stamping with `satelle story set <id> --status <same>`, and that same-status set does re-stamp such a seat. (sty_36d6f155)
+
+## [serve-v0.0.208] - 2026-10-25
+
+### Fixed
+- The service binary carries the session and seat attribution fix. (sty_36d6f155)
+
 ## [0.0.750] - 2026-10-25
 
 ### Fixed
