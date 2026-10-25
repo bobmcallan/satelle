@@ -1,3 +1,13 @@
+## [0.0.752] - 2026-10-25
+
+### Added
+- A functional-check skill can declare `check_reuse: tree` in its frontmatter to run once per tree. When such a check passes, the ledger records a `suite_run` entry with the check, the story, the tree it proved (a content hash of HEAD plus working-tree changes, untracked files included), the command, the outcome and the duration. When the same check meets the same story, command and tree again, for example on an edge presented a second time after another gate refused it, it accepts without running the command and its notes cite the recorded pass. Any change to the tree, or a recorded failure, runs it again. A check that does not declare the key runs every time, as before. Functional checks are still never carried like reviewer verdicts: each presentation still dispatches the check, which may be satisfied from the evidence. `satelle help reviewer-checks` describes the key. This repo's own suite gates opt in through a separate substrate story. (sty_dc554488)
+
+## [serve-v0.0.209] - 2026-10-25
+
+### Changed
+- The service binary carries the check-reuse mechanism. (sty_dc554488)
+
 ## [0.0.751] - 2026-10-25
 
 ### Fixed
