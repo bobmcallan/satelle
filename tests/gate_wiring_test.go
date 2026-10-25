@@ -38,7 +38,13 @@ var gateCoverageWaiver = map[string]string{
 	// gate reviewer — nothing dispatches it and it advances no status.
 	"*/satelle-story-blocked-triage": "orchestrator-consulted advisor, not a status-advancing gate",
 	// Step summary is mandatory post-transition narration, not accept/reject gating.
-	"*/satelle-step-summary":                  "summariser, not accept/reject gate",
+	"*/satelle-step-summary": "summariser, not accept/reject gate",
+	// The container readiness round's executor rubric is the performer's skill on
+	// the shipped [ready] step, not an accept/reject gate; the step and its round
+	// are covered by internal/config/substrate_ready_step_test.go and
+	// internal/verb/engage_epic_ready_default_test.go (sty_25064a6c).
+	"epic-parent/ready":                       "readiness-round performer rubric, not a gate; covered by the embedded ready-step and default-epic engage tests",
+	"parent/ready":                            "readiness-round performer rubric, not a gate; covered by the embedded ready-step and default-epic engage tests",
 	"parent/satelle-step-summary":             "summariser, not accept/reject gate",
 	"epic-parent/satelle-step-summary":        "summariser, not accept/reject gate",
 	"epic-parent/satelle-story-cancel-review": "container cancel; the wildcard cancel fixture covers the stub seam",

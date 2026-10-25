@@ -109,9 +109,10 @@ gate satelle-estimate-actual-review on=in_progress+done
 gate satelle-instruction-change-review on=done
 `,
 		"epic-parent": `step backlog [start] agent=- skill=- provides=raised admits=[]
+step ready agent=ready-reviewer skill=ready provides=ready admits=[]
 step done [terminal] agent=reviewer skill=- provides=children-resolved admits=[satelle-story-done-review]
 step gate_satelle-step-summary agent=reviewer skill=satelle-step-summary provides=- admits=[]
-step cancelled agent=reviewer skill=satelle-story-cancel-review provides=- admits=[satelle-story-cancel-review]
+step cancelled agent=reviewer skill=satelle-story-cancel-review provides=- admits=[satelle-story-cancel-review,satelle-story-cancel-review]
 `,
 	}
 	for category, expect := range golden {

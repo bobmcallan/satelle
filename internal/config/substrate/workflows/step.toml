@@ -17,8 +17,11 @@ description = "Order-zero step catalogue every repo inherits — the steps and a
 # done.toml table names its key, so adding a step does not put it on any route
 # until an obligation asks for it.
 #
-# A step carries no executor rubric: the binary ships no opinion about how work
-# is done. A repo names one with `skills` when it authors one.
+# A working step carries no executor rubric: the binary ships no opinion about
+# how work is done, and a repo names one with `skills` when it authors one. The
+# one exception is the container readiness round (see [ready]), which ships the
+# `ready` skill because a repo with no workflow of its own still needs a rubric
+# for it.
 #
 # Optional rework loop on a performing step:
 #   rework = { consult = "<binding>", rounds = N }
@@ -40,8 +43,8 @@ status = "backlog"
 start = true
 
 [coded]
-# Selected by "*". Carries no `skills` — the binary ships no executor rubric, so
-# a repo names its own here when it authors one.
+# Selected by "*". Carries no `skills` — the binary ships no executor rubric for
+# this step, so a repo names its own here when it authors one.
 status = "in_progress"
 agent = "executor"
 reviewers = ["satelle-story-intent-review"]
@@ -67,7 +70,8 @@ requires = ["coded"]
 [authored]
 # The same `in_progress` stage as `coded`, and deliberately a separate step:
 # stage names repeat, obligations do not — authoring prose is not coding. Like
-# `coded` it carries no `skills`; the binary ships no executor rubric.
+# `coded` it carries no `skills`; the binary ships no executor rubric for this
+# step.
 status = "in_progress"
 agent = "executor"
 requires = ["raised"]
@@ -87,18 +91,39 @@ requires = ["authored"]
 
 # ================================================================
 # THE CONTAINER CLOSE — selected by "epic-parent" and "parent"
-# raised -> children-resolved
+# raised -> ready -> children-resolved
 # ================================================================
+
+[ready]
+# The readiness round of a container: its children are sequenced here, before
+# any of them first engages. A step entered from the start that declares
+# `waits_on_children` is what the epic readiness gate looks for — without one the
+# gate skips the epic and `satelle story ready` has no round to run.
+#
+# `ready-reviewer` is the shipped read-only seat. Its performer runs BEFORE the
+# step's gates (`propose`) and reports story repairs in its artifact; satelle
+# applies them within `apply_changes` and records the readiness `mark`. It carries
+# no reviewers: the performer judges the round. The container then waits here for
+# its children (`waits_on_children`); children run in parallel unless a real
+# `depends-on:` edge holds one back.
+status = "ready"
+agent = "ready-reviewer"
+skills = ["ready"]
+requires = ["raised"]
+waits_on_children = true
+mark = "ready"
+propose = true
+apply_changes = { ops = ["add-tags", "create-child"], tags = ["order:", "surface:", "lane:", "depends-on:"] }
 
 [children-resolved]
 # Nothing performs on this lane, so `agent = "reviewer"` marks it as judging
 # only; the gate is handed a snapshot of the children to judge from. It requires
-# just "raised", which is why a container route is two steps long.
+# "ready", the round that sequenced those children.
 status = "done"
 agent = "reviewer"
 reviewers = ["satelle-story-done-review"]
 terminal = true
-requires = ["raised"]
+requires = ["ready"]
 
 # ================================================================
 # THE TASK RUN — selected by "execution" and "task"

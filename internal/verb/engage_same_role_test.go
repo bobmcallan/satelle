@@ -17,7 +17,11 @@ func TestEngageAllowsExecutorAndOrchestratorBothInLoop(t *testing.T) {
 	verb.SetAgentsConfig(config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
 		Reviewer: config.AgentBinding{Command: config.DefaultReviewerCommand},
-		Agents:   map[string]config.AgentBinding{"orchestrator": {Command: "in-loop"}},
+		Agents: map[string]config.AgentBinding{
+			"orchestrator": {Command: "in-loop"},
+			// The shipped container route allocates its readiness step here.
+			"ready-reviewer": {Command: config.DefaultReviewerCommand, Tools: config.DefaultReviewerTools},
+		},
 	}, nil)
 
 	var created workitem.Item

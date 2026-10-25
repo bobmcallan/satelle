@@ -68,6 +68,8 @@ func TestEngageAllowsHealthyAgents(t *testing.T) {
 	verb.SetAgentsConfig(config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
 		Reviewer: config.AgentBinding{Command: config.DefaultReviewerCommand},
+		// The shipped container route allocates its readiness step here.
+		Agents: map[string]config.AgentBinding{"ready-reviewer": {Command: config.DefaultReviewerCommand, Tools: config.DefaultReviewerTools}},
 	}, nil)
 
 	var created workitem.Item

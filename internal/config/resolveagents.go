@@ -237,6 +237,13 @@ func ResolveAgentsBaseline(baseline AgentsConfig, layers AgentLayers, global Glo
 		if err != nil {
 			return AgentBinding{}, err
 		}
+		// The embedded tier of the ladder: a seat the shipped route allocates and
+		// no tier gave a grant still gets the read-only one, so a repo that runs the
+		// shipped route unconfigured can dispatch it (sty_25064a6c).
+		if grant, ok := embeddedSeatTools[section]; ok && strings.TrimSpace(merged.Tools) == "" {
+			merged.Tools = grant
+			src["tools"] = SourceEmbedded
+		}
 		markEmbedded(section, merged, src)
 		prov[section] = src
 		return merged, nil
@@ -509,6 +516,16 @@ func mapSource(baseContributed bool, topSrc, baseSrc string) string {
 	return topSrc
 }
 
+// embeddedSeatTools is the tools grant the embedded tier gives a baseline seat
+// whose resolved binding has none, beyond the [reviewer] default the *Binding
+// resolvers apply. ready-reviewer is the performer of the shipped container
+// readiness step; it reports changes that satelle applies, so it only reads, and
+// Read is the pull-context channel a dispatched agent needs. A profile or an
+// inline grant on the seat wins over this.
+var embeddedSeatTools = map[string]string{
+	"ready-reviewer": DefaultReviewerTools,
+}
+
 // markEmbedded records the embedded fallback as the source for fields no tier
 // supplied but that the *Binding resolvers fill from the binary's defaults, so
 // a display surface attributes them honestly rather than showing them unsourced.
@@ -517,8 +534,10 @@ func markEmbedded(section string, b AgentBinding, src map[string]string) {
 	if strings.TrimSpace(b.Command) == "" {
 		src["command"] = SourceEmbedded
 	}
-	// Only [reviewer] gets an embedded tools grant (DefaultReviewerTools); named
-	// bindings resolve a command but keep an empty grant.
+	// Only [reviewer] gets an embedded tools grant (DefaultReviewerTools) from the
+	// *Binding resolvers, and ResolveAgentsBaseline adds the seats in
+	// embeddedSeatTools; other named bindings resolve a command but keep an empty
+	// grant.
 	if section == "reviewer" && strings.TrimSpace(b.Tools) == "" {
 		src["tools"] = SourceEmbedded
 	}

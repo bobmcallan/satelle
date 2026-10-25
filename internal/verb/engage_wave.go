@@ -68,7 +68,8 @@ func refuseOffWave(ctx context.Context, item workitem.Item, targetStatus string)
 // sequences its children — depends-on edges, lane tags — so engaging a child
 // before it ran leaves them unset. It keys on the child's entry state, not on a
 // readiness step of the child, so a child on a route with no propose step (a
-// substrate or docs route) is covered too.
+// substrate or docs route) is covered too. What it needs is a readiness step on
+// the EPIC's route; the shipped epic route declares one, an overlay may omit it.
 //
 // fromStatus is the child's status before the move: the stored status on a
 // transition, the route's entry state for a create. Passes (nil):

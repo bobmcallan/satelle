@@ -31,6 +31,18 @@ func byID(fs health.Findings, id string) health.Findings {
 	return out
 }
 
+// seatOnly keeps the findings about exactly this seat label. mentioning matches a
+// substring, so "reviewer[claude/command]" would also pick up ready-reviewer's.
+func seatOnly(fs health.Findings, label string) health.Findings {
+	var out health.Findings
+	for _, f := range fs {
+		if strings.HasPrefix(f.Detail, label) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 func mentioning(fs health.Findings, parts ...string) health.Findings {
 	var out health.Findings
 next:
@@ -120,7 +132,7 @@ func TestDoctorSessionUnavailableWhenAHarnessHasNoTable(t *testing.T) {
 func TestDoctorSeatWithNoBudgetIsReportedUnbudgeted(t *testing.T) {
 	f := newCtxFixture(t, "")
 	f.write("workflows/agents.toml", f.claudeAgents())
-	got := mentioning(byID(checksFor(f), health.IDContextDispatchUnbudgeted), "reviewer[claude/command]")
+	got := seatOnly(byID(checksFor(f), health.IDContextDispatchUnbudgeted), "reviewer[claude/command]")
 	if len(got) != 1 || got[0].Severity != health.SeverityInfo || !strings.Contains(got[0].Detail, "no budget is configured") {
 		t.Fatalf("an unbudgeted seat is INFO, never a silent pass, got %+v", got)
 	}
@@ -140,7 +152,7 @@ func TestDoctorSeatOverBudgetWarnsAndWithinBudgetIsQuiet(t *testing.T) {
 	f.write("satelle.toml", "[validate.injected.budget]\nreviewer = 1000000\n")
 	all := checksFor(f)
 	for _, id := range []string{health.IDContextDispatchOverBudget, health.IDContextDispatchUnbudgeted} {
-		if got := mentioning(byID(all, id), "reviewer[claude/command]"); len(got) != 0 {
+		if got := seatOnly(byID(all, id), "reviewer[claude/command]"); len(got) != 0 {
 			t.Fatalf("a seat within its budget is quiet, got %s %+v", id, got)
 		}
 	}

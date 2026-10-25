@@ -835,10 +835,17 @@ func TestEpicWaveHelpStatesEpicReadinessRule(t *testing.T) {
 		"cannot leave backlog into an engaging status",
 		"satelle\nstory ready <epic>",
 		"`cancel`",
+		// sty_25064a6c: the gate needs a readiness step on the epic's route, and the
+		// default substrate's epic route declares one.
+		"only when the epic's own route declares a readiness step",
+		"default\nsubstrate's epic route declares one",
 	} {
 		if !strings.Contains(wave.Body, want) {
 			t.Errorf("epic-wave topic missing %q", want)
 		}
+	}
+	if strings.Contains(wave.Body, "a child on a\nroute with no readiness step is covered too") {
+		t.Error("epic-wave topic still says a child on a route with no readiness step is covered")
 	}
 }
 

@@ -137,6 +137,17 @@ func shipsClaimProblems(kind, name, body string, states, skills map[string]bool,
 	return problems
 }
 
+// shippedExecutorSkills names the bare-verb executor rubrics the embed tree
+// ships on purpose. The list is closed: a new entry is a deliberate decision that
+// the binary carries a performer's rubric, not something that appears silently.
+//
+//   - ready: the shipped epic/parent readiness step (step.toml [ready]) names it,
+//     so a repo with no workflow of its own has a rubric for the round
+//     (sty_25064a6c).
+var shippedExecutorSkills = map[string]bool{
+	"ready": true,
+}
+
 func TestEmbeddedShipsSelfConsistent(t *testing.T) {
 	states := embeddedLifecycleStates()
 	skills := embeddedSkillNames()
@@ -148,13 +159,16 @@ func TestEmbeddedShipsSelfConsistent(t *testing.T) {
 	}
 
 	// AC1: no skill named code; every embedded skill is a reviewer/system skill
-	// (prefixed satelle-). No embedded executor rubric ships today — the
-	// satelle-skill-naming bare-verb exception applies to repo-authored rubrics,
-	// not the embed tree (sty_01f49dd5 architecture note).
+	// (prefixed satelle-), bar the named executor rubrics in shippedExecutorSkills.
+	// The satelle-skill-naming bare-verb exception applies to repo-authored
+	// rubrics, not the embed tree (sty_01f49dd5 architecture note).
 	if skills["code"] {
 		t.Error("embedded skill `code` must not ship (sty_01f49dd5)")
 	}
 	for name := range skills {
+		if shippedExecutorSkills[name] {
+			continue
+		}
 		if !strings.HasPrefix(name, "satelle-") {
 			t.Errorf("embedded skill %q has no satelle- prefix — embed tree ships only reviewer/system skills; repo-authored executor rubrics stay under .satelle/skills (satelle-skill-naming)", name)
 		}
