@@ -1,3 +1,13 @@
+## [0.0.758] - 2026-10-25
+
+### Added
+- A step placed on a remote now runs there. A reviewer gate whose binding declares `placement = "remote"` runs through a performer node over the relay channel instead of locally: its payload is sent inline, and the node is ended once the verdict is in, including when the run fails. With no channel the gate is refused with an error naming the binding, and a reviewer binding with a team placement is refused when agents.toml loads. A binding may also declare `remote_path`, allowed only with `placement = "remote"`; the performer start sends it as `path` so satelle.dev resolves the definition by path, and omits the key when it is unset. A performer or plain node now sends a `running` status at the task path's interval for its whole life, from the moment it joins, through definition install and the `[host]` bootstrap, idle on the channel or working a job. The beat stops before a failed start is reported, so the concluded status is the last one, and before `/end`, which is sent on every exit. Before, a node fell silent after joining and satelle.dev ended it as lost mid-step. (sty_2ebb8200)
+
+## [serve-v0.0.213] - 2026-10-25
+
+### Changed
+- The service binary carries the remote reviewer placement, the `remote_path` binding key and the whole-life node heartbeat. (sty_2ebb8200)
+
 ## [0.0.757] - 2026-10-25
 
 ### Fixed
