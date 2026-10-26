@@ -3,7 +3,6 @@
 package tests
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,10 +39,12 @@ func TestRetiredAliasesFailClosed(t *testing.T) {
 }
 
 // TestDeployedVersionStampAndBreakingDrift: init stamps deployed.version; a stamp
-// behind a ### Breaking changelog entry whose migrations are manual (no
-// `init-heals:` marker — every shipped Breaking entry) lets store-backed verbs run
-// and prints the entry's remediation on stderr; an UNSTAMPED repo still fails
-// closed naming satelle init; re-init heals both (sty_6e143870).
+// behind a shipped ### Breaking release that declares `init-heals:` (0.0.761,
+// sty_642275eb) refuses store-backed verbs naming the release and satelle init; an
+// UNSTAMPED repo still fails closed naming satelle init; re-init heals both
+// (sty_6e143870). The warn-once path for manual-only ranges is a unit test
+// (internal/cli/drift_test.go): the shipped changelog's newest Breaking release
+// is init-healable, so an end-to-end stamp behind it always refuses.
 //
 // Requires a release-stamped testBin (sty_4c986ed8). TestMain stamps by default;
 // SATELLE_BIN=dev builds skip loudly via isReleaseTestBin.
@@ -62,46 +63,13 @@ func TestDeployedVersionStampAndBreakingDrift(t *testing.T) {
 		t.Fatalf("stamp content: %q", body)
 	}
 
-	// Plant older stamp + CHANGELOG with Breaking between stamp and the binary's version.
-	// Use the binary's stamped version so the "behind Breaking" path stays real as
-	// .version advances (do not hardcode a fixed "modern" number).
-	binVer := repoVersion(t)
+	// A stamp behind the shipped init-heals Breaking release refuses store-backed
+	// verbs, naming the release and satelle init; the CombinedOutput carries stderr.
 	if err := os.WriteFile(stamp, []byte("satelle.version: 0.0.100\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cl := fmt.Sprintf(`# Changelog
-
-## [%s] - 2026-07-13
-
-### Breaking
-- test break for drift gate
-
-## [0.0.100] - 2020-01-01
-
-### Fixed
-- ancient
-`, binVer)
-	if err := os.WriteFile(filepath.Join(repo, "CHANGELOG.md"), []byte(cl), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// Store-backed verbs run (the shipped Breaking entries are manual migrations,
-	// so init cannot heal them and refusing would only block work) and print the
-	// remediation; the CombinedOutput carries stderr.
-	out, err := run(t, testBin, repo, "story", "list")
-	if err != nil {
-		t.Fatalf("story list must run when the stamp is behind a manual-migration Breaking release: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, "BREAKING release") || !strings.Contains(out, "satelle init") {
-		t.Errorf("must warn naming the breaking release and satelle init:\n%s", out)
-	}
-	// Once per session: with a session identity the second command is quiet.
-	sess := []string{"SATELLE_SESSION=sess-breaking-warn"}
-	first, err := runEnv(t, testBin, repo, sess, "story", "list")
-	if err != nil || !strings.Contains(first, "BREAKING release") {
-		t.Fatalf("first command in a session must warn: err=%v\n%s", err, first)
-	}
-	if again, err := runEnv(t, testBin, repo, sess, "story", "list"); err != nil || strings.Contains(again, "BREAKING release") {
-		t.Fatalf("second command in the same session must run silently: err=%v\n%s", err, again)
+	if out, err := run(t, testBin, repo, "story", "list"); err == nil || !strings.Contains(out, "BREAKING release") || !strings.Contains(out, "satelle init") {
+		t.Fatalf("story list must refuse behind an init-heals Breaking release, naming it and satelle init: err=%v\n%s", err, out)
 	}
 	// An unstamped repo still fails closed: init is the heal.
 	if err := os.Remove(stamp); err != nil {
