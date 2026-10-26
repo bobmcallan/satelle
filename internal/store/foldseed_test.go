@@ -78,7 +78,7 @@ func TestSeedGivesALegacyStoryOneSnapshotAndNoMore(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		st, breaks := storyfold.Fold(chain, nil)
+		st, breaks := storyfold.Fold(chain, storyfold.Route{})
 		if len(breaks) != 0 {
 			t.Errorf("chain breaks after seeding: %+v", breaks)
 		}
@@ -146,7 +146,7 @@ func TestSeedMakesTheFoldEqualTheRowWhateverTheLegacyTransitionsSay(t *testing.T
 		// Folding with the route's park classifier (reconcile and push do) gives the
 		// same answer: the snapshot, not the older transitions, decides park origin.
 		chain, _ := db.Ledger.StoryChain(ctx, id)
-		withPark, _ := storyfold.Fold(chain, func(s string) bool { return s == "blocked" })
+		withPark, _ := storyfold.Fold(chain, storyfold.Route{Park: func(s string) bool { return s == "blocked" }})
 		if drifts := storyfold.Compare(row, withPark); len(drifts) != 0 {
 			t.Errorf("%s: fold with a park classifier differs from the row: %+v", id, drifts)
 		}
@@ -169,6 +169,6 @@ func foldOf(t *testing.T, db *DB, id string) storyfold.State {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, _ := storyfold.Fold(chain, nil)
+	st, _ := storyfold.Fold(chain, storyfold.Route{})
 	return st
 }

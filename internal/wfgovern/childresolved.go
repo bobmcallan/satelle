@@ -16,7 +16,7 @@ func ChildResolved(workflows []docindex.Doc, child workitem.Item) (resolved, kno
 	if err != nil {
 		return false, false
 	}
-	return spec.IsTerminalState(child.Status) || (spec.IsParkState(child.Status) && !spec.IsResumePark(child.Status)), true
+	return spec.IsFinal(child.Status), true
 }
 
 // ChildDischarged reports whether a container's member has discharged

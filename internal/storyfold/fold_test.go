@@ -33,6 +33,11 @@ func transition(from, to string) ledger.Entry {
 
 func parks(status string) bool { return status == "blocked" || status == "cancelled" }
 
+// ends is the route's final states: done, and the park that does not resume.
+func ends(status string) bool { return status == "done" || status == "cancelled" }
+
+var testRoute = Route{Park: parks, Final: ends}
+
 func created() ledger.Entry {
 	return ledger.Entry{Kind: ledger.KindStoryCreated, Payload: CreatedPayloadOf(workitem.Item{
 		Kind: workitem.KindStory, Title: "T", Body: "B", AcceptanceCriteria: "1. a", Category: "feature",
@@ -89,7 +94,7 @@ func TestFoldTable(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, breaks := Fold(c.events, parks)
+			got, breaks := Fold(c.events, testRoute)
 			if len(breaks) != 0 {
 				t.Fatalf("breaks = %+v", breaks)
 			}
@@ -108,7 +113,7 @@ func TestFoldTable(t *testing.T) {
 // A field no event set is not empty, it is unknown: Compare leaves it alone and
 // Overlay keeps the row's value.
 func TestFoldLeavesUndefinedFieldsToTheRow(t *testing.T) {
-	st, _ := Fold(chain(transition("backlog", "plan")), nil)
+	st, _ := Fold(chain(transition("backlog", "plan")), Route{})
 	if len(st.Defined) != 1 || !st.Defined[FieldStatus] {
 		t.Fatalf("defined = %v, want only status", st.Defined)
 	}
@@ -127,7 +132,7 @@ func TestFoldLeavesUndefinedFieldsToTheRow(t *testing.T) {
 func TestFoldFollowsTheChainNotTheListing(t *testing.T) {
 	in := chain(created(), transition("backlog", "plan"), transition("plan", "in_progress"))
 	shuffled := []ledger.Entry{in[2], in[0], in[1]}
-	got, _ := Fold(shuffled, nil)
+	got, _ := Fold(shuffled, Route{})
 	if got.Status != "in_progress" {
 		t.Errorf("status = %q, want in_progress from the last link of the chain", got.Status)
 	}
@@ -135,31 +140,33 @@ func TestFoldFollowsTheChainNotTheListing(t *testing.T) {
 
 // A fork is reported, never merged by guessing: the fold falls back to the given
 // order and returns the ledger's own break. The forked transition's from is not
-// the status the listing had reached, so it does not move the status.
+// the status the listing had reached: it is reported as stale, and as the story
+// had not ended it applies out of order.
 func TestFoldReportsAForkAndFallsBackToListingOrder(t *testing.T) {
 	in := chain(created(), transition("backlog", "plan"))
 	fork := transition("backlog", "cancelled")
 	fork.ID, fork.StoryID, fork.BaseID = "evt_fork", "sty_a", in[0].ID
 	in = append(in, fork)
-	got, breaks := Fold(in, nil)
+	got, breaks := Fold(in, testRoute)
 	if len(breaks) != 1 || breaks[0].Kind != ledger.BreakFork {
 		t.Fatalf("breaks = %+v, want one fork", breaks)
 	}
-	if got.Status != "plan" {
-		t.Errorf("status = %q, want plan: the forked transition is stale", got.Status)
+	if len(got.StaleTransitions) != 1 || got.StaleTransitions[0].EventID != "evt_fork" || got.StaleTransitions[0].Skipped {
+		t.Errorf("stale = %+v, want the forked event, applied", got.StaleTransitions)
 	}
-	if len(got.StaleTransitions) != 1 || got.StaleTransitions[0].EventID != "evt_fork" {
-		t.Errorf("stale = %+v, want the forked event", got.StaleTransitions)
+	if got.Status != "cancelled" {
+		t.Errorf("status = %q, want cancelled: plan is not final, so the forked event applies", got.Status)
 	}
 }
 
 // sty_6f952dd0 AC1/AC2: an earlier attempt's events linked after the story's done
 // carry a plan → in_progress whose from is not the status the chain had reached.
-// It never becomes the latest status; it is recorded, and Head still advances.
+// It never becomes the latest status; it is recorded as skipped, and Head still
+// advances (the sty_41f61669 shape).
 func TestFoldSkipsAStaleTransitionAfterDone(t *testing.T) {
 	in := chain(created(), transition("backlog", "plan"), transition("plan", "in_progress"), transition("in_progress", "done"),
 		transition("plan", "in_progress"), transition("in_progress", "integration"))
-	got, _ := Fold(in, nil)
+	got, _ := Fold(in, testRoute)
 	if got.Status != "done" {
 		t.Fatalf("status = %q, want done", got.Status)
 	}
@@ -172,7 +179,50 @@ func TestFoldSkipsAStaleTransitionAfterDone(t *testing.T) {
 	if len(got.StaleTransitions) != 2 || got.StaleTransitions[0].EventID != in[4].ID || got.StaleTransitions[1].EventID != in[5].ID {
 		t.Fatalf("stale = %+v, want both late events", got.StaleTransitions)
 	}
-	if r := got.StaleTransitions[0]; r.Reason != ReplayStaleFrom || r.From != "plan" || r.To != "in_progress" {
+	if r := got.StaleTransitions[0]; r.Reason != ReplayStaleFrom || r.From != "plan" || r.To != "in_progress" || !r.Skipped {
 		t.Errorf("stale[0] = %+v", r)
+	}
+}
+
+// sty_5c9b295d AC1: a story cancelled at the place of a stale transition is skipped
+// too — cancelled is final on the route, as done is.
+func TestFoldSkipsAStaleTransitionAfterCancelled(t *testing.T) {
+	in := chain(created(), transition("backlog", "plan"), transition("plan", "cancelled"), transition("plan", "in_progress"))
+	got, _ := Fold(in, testRoute)
+	if got.Status != "cancelled" {
+		t.Fatalf("status = %q, want cancelled", got.Status)
+	}
+	if len(got.StaleTransitions) != 1 || !got.StaleTransitions[0].Skipped {
+		t.Errorf("stale = %+v, want the late event skipped", got.StaleTransitions)
+	}
+}
+
+// sty_5c9b295d AC1: a legacy chain linked once in insertion order (the
+// sty_df21b2db shape) holds in_progress → integration before the blocked →
+// in_progress that precedes it in time. The stale from is at a place where the
+// story was parked, which is not final, so the transitions apply and the story
+// folds to done; the breaks are still reported, none of them skipped.
+func TestFoldAppliesOutOfOrderTransitionsOfALegacyChain(t *testing.T) {
+	in := chain(created(), transition("backlog", "plan"), transition("plan", "in_progress"), transition("in_progress", "blocked"),
+		transition("in_progress", "integration"), transition("blocked", "in_progress"),
+		transition("integration", "release"), transition("release", "done"))
+	got, _ := Fold(in, testRoute)
+	if got.Status != "done" {
+		t.Fatalf("status = %q, want done", got.Status)
+	}
+	if got.StatusEvent != in[7].ID {
+		t.Errorf("status event = %q, want the done transition %q", got.StatusEvent, in[7].ID)
+	}
+	if len(got.StaleTransitions) == 0 {
+		t.Fatal("the out-of-order transitions must still be reported")
+	}
+	for _, r := range got.StaleTransitions {
+		if r.Reason != ReplayStaleFrom || r.Skipped {
+			t.Errorf("stale = %+v, want a stale_from that applied", r)
+		}
+	}
+	// With no route resolved nothing is known to be final, so nothing is skipped.
+	if bare, _ := Fold(in, Route{}); bare.Status != got.Status {
+		t.Errorf("no-route status = %q, want %q", bare.Status, got.Status)
 	}
 }

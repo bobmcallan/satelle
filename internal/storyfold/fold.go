@@ -50,16 +50,25 @@ type State struct {
 	Head string
 	// StatusEvent is the id of the event that last set the status.
 	StatusEvent string
-	// StaleTransitions are the status_transitions the fold skipped because their
-	// from is not the status the chain had reached at their place. Such an event
-	// is a chain break: it never becomes the latest status.
+	// StaleTransitions are the status_transitions whose from is not the status the
+	// chain had reached at their place. Each is a chain break, always reported;
+	// ReplayBreak.Skipped says whether the fold ignored it (the story had already
+	// ended) or applied it out of order.
 	StaleTransitions []ReplayBreak
 	Defined          map[string]bool
 }
 
-// ParkFunc says whether a status is a park state of the story's governing route.
-// A nil ParkFunc leaves ParkOrigin untouched by transitions.
-type ParkFunc func(status string) bool
+// Route is what the fold needs of the story's governing route. A zero Route is no
+// route resolved.
+type Route struct {
+	// Park says whether a status is a park state. Nil leaves ParkOrigin untouched
+	// by transitions.
+	Park func(status string) bool
+	// Final says whether a status ends the story for good (terminal, or a park
+	// that does not resume). Nil means nothing is known to be final, so no stale
+	// transition is skipped.
+	Final func(status string) bool
+}
 
 // CreatedPayload is the payload of a story's story_created event: the whole
 // definition and the status the create committed, beside the optional source.
@@ -139,12 +148,12 @@ type FieldChange struct {
 // Fold folds a story's chain. Entries come in insertion order; the fold follows
 // the chain's base links when they form one line and the given order otherwise
 // (a fork is reported, never merged by guessing). The ledger's own chain breaks
-// are returned unchanged. park classifies park states for ParkOrigin; nil leaves
-// it to the events that carry one.
-func Fold(entries []ledger.Entry, park ParkFunc) (State, []ledger.ChainBreak) {
+// are returned unchanged. route classifies park and final states; a zero Route
+// leaves park origin to the events that carry one and skips no stale transition.
+func Fold(entries []ledger.Entry, route Route) (State, []ledger.ChainBreak) {
 	st := newState()
 	for _, e := range chainOrder(entries) {
-		st.apply(e, park)
+		st.apply(e, route)
 	}
 	return st, ledger.VerifyChain(entries)
 }
@@ -195,7 +204,7 @@ func chainOrder(entries []ledger.Entry) []ledger.Entry {
 }
 
 // apply folds one event into the state.
-func (st *State) apply(e ledger.Entry, park ParkFunc) {
+func (st *State) apply(e ledger.Entry, route Route) {
 	st.Head = e.ID
 	switch e.Kind {
 	case ledger.KindStoryCreated, ledger.KindDefinitionSnapshot:
@@ -235,7 +244,7 @@ func (st *State) apply(e ledger.Entry, park ParkFunc) {
 			st.setTags(appendMissing(st.Tags, p.TagsAdded))
 		}
 	case ledger.KindStatusTransition:
-		st.transition(e, park)
+		st.transition(e, route)
 	}
 }
 
@@ -303,10 +312,13 @@ func (st *State) setTags(tags []string) {
 
 // transition folds a status_transition: the destination becomes the status, and a
 // move into a park state records where it came from, a move out of one clears it.
-// A transition that names a from other than the status the fold has reached is
-// stale — an event made before the chain moved on, linked after it — and changes
-// nothing: it is recorded in StaleTransitions instead.
-func (st *State) transition(e ledger.Entry, park ParkFunc) {
+// A transition that names a from other than the status the fold has reached is a
+// chain break — an event made before the chain moved on, or linked out of time
+// order — and is always recorded in StaleTransitions. It is skipped only when the
+// status the fold has reached is final on the route: a story that ended is never
+// moved by a late event. Anywhere else it applies, so a legacy chain linked once
+// in insertion order still folds to the status its transitions reached.
+func (st *State) transition(e ledger.Entry, route Route) {
 	to := TransitionTo(e)
 	if to == "" {
 		return
@@ -316,14 +328,20 @@ func (st *State) transition(e ledger.Entry, park ParkFunc) {
 		from = st.Status
 	}
 	if st.Status != "" && from != st.Status {
+		skip := route.Final != nil && route.Final(st.Status)
+		detail := fmt.Sprintf("the story was %s at this place in the chain, so a transition from %s applied out of order", st.Status, from)
+		if skip {
+			detail = fmt.Sprintf("the story was %s at this place in the chain, so a transition from %s does not apply", st.Status, from)
+		}
 		st.StaleTransitions = append(st.StaleTransitions, ReplayBreak{
 			StoryID: e.StoryID, EventID: e.ID, From: from, To: to, WorkflowHash: e.WorkflowHash,
-			Reason: ReplayStaleFrom,
-			Detail: fmt.Sprintf("the story was %s at this place in the chain, so a transition from %s does not apply", st.Status, from),
+			Reason: ReplayStaleFrom, Skipped: skip, Detail: detail,
 		})
-		return
+		if skip {
+			return
+		}
 	}
-	if park != nil {
+	if park := route.Park; park != nil {
 		switch {
 		case park(to) && !park(from):
 			st.setField(FieldParkOrigin, from)

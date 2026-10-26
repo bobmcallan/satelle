@@ -759,6 +759,13 @@ func (s Spec) IsResumePark(name string) bool {
 	return false
 }
 
+// IsFinal reports whether name ends the story for good on this route: a terminal
+// state, or a park that does not resume (cancelled). A resuming park (blocked) is
+// not final — the story comes back from it.
+func (s Spec) IsFinal(name string) bool {
+	return s.IsTerminalState(name) || (s.IsParkState(name) && !s.IsResumePark(name))
+}
+
 // Advance is one offered onward transition from a performing state — target
 // status and the reviewer gate skills the route declares on entry to it
 // (sty_e16a2cd7). Gates is Transition.Skills.

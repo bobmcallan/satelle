@@ -50,7 +50,7 @@ func SeedItem(ctx context.Context, led *ledger.Store, it workitem.Item, src Stat
 	if err != nil {
 		return false, err
 	}
-	if st, _ := Fold(chain, nil); st.Defined[FieldTitle] {
+	if st, _ := Fold(chain, Route{}); st.Defined[FieldTitle] {
 		return false, nil
 	}
 	withStatus := true

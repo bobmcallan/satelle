@@ -112,14 +112,14 @@ func TestReplayJudgesEachTransitionByItsRecordedVersion(t *testing.T) {
 		b,
 		under(hashB, transition("in_progress", "done")), // an edge of both
 	)
-	rep := Replay(events)
+	rep := Replay(events, Route{})
 	if len(rep.Breaks) != 0 || rep.Transitions != 2 || rep.Checked != 2 {
 		t.Fatalf("replay = %+v, want both transitions valid against their own versions", rep)
 	}
 
 	// The same edge recorded under the newer version is not one it declares.
 	rep = Replay(chain(created(), a, b,
-		under(hashB, transition("backlog", "in_progress"))))
+		under(hashB, transition("backlog", "in_progress"))), Route{})
 	if len(rep.Breaks) != 1 || rep.Breaks[0].Reason != ReplayNoEdge || rep.Breaks[0].WorkflowHash != hashB {
 		t.Fatalf("replay = %+v, want one no_edge break under version B", rep)
 	}
@@ -127,7 +127,7 @@ func TestReplayJudgesEachTransitionByItsRecordedVersion(t *testing.T) {
 	// An edge neither version declares.
 	rep = Replay(chain(created(), a, b,
 		under(hashA, transition("backlog", "done")),
-		under(hashB, transition("done", "backlog"))))
+		under(hashB, transition("done", "backlog"))), Route{})
 	if len(rep.Breaks) != 2 {
 		t.Fatalf("replay = %+v, want a break under each version", rep)
 	}
@@ -142,15 +142,43 @@ func TestReplayJudgesEachTransitionByItsRecordedVersion(t *testing.T) {
 // sty_6f952dd0 AC2: a transition whose from is not the status the chain had
 // reached at its place — an earlier attempt's event pulled after the story was
 // done — does not change the fold, and replay reports it as a stale_from break.
+// These transitions record no workflow hash, so the governing route classifies
+// them: with it, the break is skipped, exactly as FoldStory's fold skips it.
 func TestReplayReportsAStaleTransitionAsABreak(t *testing.T) {
 	events := chain(created(), transition("backlog", "in_progress"), transition("in_progress", "done"),
 		transition("plan", "in_progress"))
-	rep := Replay(events)
+	rep := Replay(events, testRoute)
 	if len(rep.Breaks) != 1 || rep.Breaks[0].Reason != ReplayStaleFrom || rep.Breaks[0].From != "plan" || rep.Breaks[0].To != "in_progress" {
 		t.Fatalf("replay = %+v, want one stale_from break for plan → in_progress", rep)
 	}
 	if rep.Breaks[0].EventID != events[3].ID {
 		t.Errorf("break names %q, want the stale event %q", rep.Breaks[0].EventID, events[3].ID)
+	}
+	if !rep.Breaks[0].Skipped {
+		t.Errorf("break = %+v, want it skipped: the story was done at its place", rep.Breaks[0])
+	}
+}
+
+// sty_5c9b295d AC1: the sty_df21b2db shape under replay. Its transitions carry no
+// workflow hash, so the governing route decides, and the out-of-order ones are
+// reported as breaks that applied rather than skipped.
+func TestReplayReportsAnOutOfOrderTransitionAsAnAppliedBreak(t *testing.T) {
+	events := chain(created(), transition("backlog", "plan"), transition("plan", "in_progress"), transition("in_progress", "blocked"),
+		transition("in_progress", "integration"), transition("blocked", "in_progress"),
+		transition("integration", "release"), transition("release", "done"))
+	rep := Replay(events, testRoute)
+	if len(rep.Breaks) == 0 {
+		t.Fatal("the out-of-order transitions must be reported")
+	}
+	for _, b := range rep.Breaks {
+		if b.Reason != ReplayStaleFrom || b.Skipped {
+			t.Errorf("break = %+v, want a stale_from that applied", b)
+		}
+	}
+	// Replay and the fold of the same story agree on what each break did.
+	st, _ := Fold(events, testRoute)
+	if len(st.StaleTransitions) != len(rep.Breaks) {
+		t.Errorf("fold reports %d stale transitions, replay %d", len(st.StaleTransitions), len(rep.Breaks))
 	}
 }
 
@@ -158,12 +186,12 @@ func TestReplayReportsWhatItCannotCheckInsteadOfInventingIt(t *testing.T) {
 	a := versionEvent(replayDoneA, replayStepA)
 
 	// A transition that records a hash the chain holds no version for.
-	rep := Replay(chain(created(), under("deadbeef", transition("backlog", "in_progress"))))
+	rep := Replay(chain(created(), under("deadbeef", transition("backlog", "in_progress"))), Route{})
 	if len(rep.Breaks) != 1 || rep.Breaks[0].Reason != ReplayNoVersion {
 		t.Errorf("unknown version: %+v", rep)
 	}
 	// A transition from before the hash was recorded is counted, not checked.
-	rep = Replay(chain(created(), transition("backlog", "in_progress")))
+	rep = Replay(chain(created(), transition("backlog", "in_progress")), Route{})
 	if len(rep.Breaks) != 0 || rep.Unrecorded != 1 || rep.Checked != 0 {
 		t.Errorf("unrecorded: %+v", rep)
 	}
@@ -171,7 +199,7 @@ func TestReplayReportsWhatItCannotCheckInsteadOfInventingIt(t *testing.T) {
 	forged := a
 	forged.WorkflowHash = "feedface"
 	forged.Payload, _ = json.Marshal(ledger.WorkflowSource{Hash: "feedface", Done: replayDoneA, Step: replayStepA})
-	rep = Replay(chain(created(), forged, under("feedface", transition("backlog", "in_progress"))))
+	rep = Replay(chain(created(), forged, under("feedface", transition("backlog", "in_progress"))), Route{})
 	if len(rep.Breaks) != 1 || rep.Breaks[0].Reason != ReplayBadVersion {
 		t.Errorf("forged source: %+v", rep)
 	}
@@ -179,7 +207,7 @@ func TestReplayReportsWhatItCannotCheckInsteadOfInventingIt(t *testing.T) {
 	legacy, _ := json.Marshal(ledger.WorkflowSource{Hash: wfgovern.LegacyHash("digraph {}"), Legacy: "digraph {}"})
 	rep = Replay(chain(created(),
 		ledger.Entry{Kind: ledger.KindWorkflowVersion, Payload: legacy},
-		under(wfgovern.LegacyHash("digraph {}"), transition("backlog", "in_progress"))))
+		under(wfgovern.LegacyHash("digraph {}"), transition("backlog", "in_progress"))), Route{})
 	if len(rep.Breaks) != 0 || rep.Unreplayable != 1 {
 		t.Errorf("legacy: %+v", rep)
 	}

@@ -62,6 +62,10 @@ func TestPullOfALateEarlierAttemptDoesNotReopenADoneStory(t *testing.T) {
 
 	db := openScopeDB(t)
 	defer func() { _ = db.Close() }()
+	// The fold chooses its stale-transition rule from the story's route, which the
+	// verb layer reads from the doc index.
+	withVerbWiring(t)
+	verb.SetDocIndexStore(db.DocIndex)
 	row, err := db.Stories.Get(context.Background(), id)
 	if err != nil {
 		t.Fatal(err)
@@ -209,5 +213,46 @@ func TestReconcileReportsAndRepairsAStaleTransitionAfterDone(t *testing.T) {
 	}
 	if items, _ := postedRows(f); !slices.Contains(items, id) {
 		t.Errorf("the repaired story did not publish: %v", items)
+	}
+}
+
+// sty_5c9b295d AC2: reconcile reports no drift for the sty_df21b2db shape — a
+// shipped story whose legacy chain was linked in insertion order, so its
+// in_progress → integration precedes the blocked → in_progress that came first in
+// time. The chain folds to done, the done row is clean, and --repair leaves it
+// done; the out-of-order transitions are listed as applied, not skipped.
+func TestReconcileReportsNoDriftForALegacyChainLinkedOutOfTimeOrder(t *testing.T) {
+	workstateRepo(t, holdOffToml)
+	id := createStoryID(t, "shipped with a legacy chain")
+	now := time.Now().UTC()
+	db := openScopeDB(t)
+	seq := 0
+	for _, tr := range [][2]string{
+		{"backlog", "plan"}, {"plan", "in_progress"}, {"in_progress", "blocked"},
+		{"in_progress", "integration"}, {"blocked", "in_progress"},
+		{"integration", "release"}, {"release", "done"},
+	} {
+		seq++
+		if _, err := db.Ledger.Append(context.Background(), ledger.AppendInput{
+			StoryID: id, Kind: ledger.KindStatusTransition, Body: tr[0] + " → " + tr[1],
+			Payload: mustJSON(transitionPayload(tr[0], tr[1])),
+		}, now.Add(time.Duration(seq)*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = db.Close()
+	corruptRow(t, id, "status", "done")
+
+	for _, args := range [][]string{{"story", "reconcile"}, {"story", "reconcile", "--repair"}} {
+		out, err := runRoot(t, args...)
+		if err != nil || !strings.Contains(out, "status: clean") {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+		if !strings.Contains(out, "applied out of order") || strings.Contains(out, " skipped ") {
+			t.Errorf("%v: the out-of-order transitions must be listed as applied:\n%s", args, out)
+		}
+	}
+	if got := localStatus(t, id); got != "done" {
+		t.Errorf("status = %q, want done", got)
 	}
 }

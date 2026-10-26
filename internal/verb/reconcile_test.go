@@ -217,6 +217,54 @@ func TestReconcileReportsATerminalTransitionFollowedByAStaleOne(t *testing.T) {
 	}
 }
 
+// sty_5c9b295d AC2: the sty_df21b2db shape — a shipped story whose legacy chain was
+// linked once in insertion order, so its in_progress → integration precedes the
+// blocked → in_progress that came first in time — folds to done. Its done row is no
+// drift, repair leaves it done, and the out-of-order transitions stay listed as
+// applied rather than skipped.
+func TestReconcileReportsNoDriftForALegacyChainLinkedOutOfTimeOrder(t *testing.T) {
+	db := wire(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	it, err := db.Stories.Create(ctx, workitem.CreateInput{Kind: workitem.KindStory, Title: "shipped", Status: workitem.StatusDone}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seq := 0
+	for _, tr := range [][2]string{
+		{"backlog", "plan"}, {"plan", "in_progress"}, {"in_progress", "blocked"},
+		{"in_progress", "integration"}, {"blocked", "in_progress"},
+		{"integration", "release"}, {"release", "done"},
+	} {
+		seq++
+		payload, _ := json.Marshal(map[string]string{"from": tr[0], "to": tr[1]})
+		if _, err := db.Ledger.Append(ctx, ledger.AppendInput{
+			StoryID: it.ID, Kind: ledger.KindStatusTransition, Body: tr[0] + " → " + tr[1], Payload: payload,
+		}, now.Add(time.Duration(seq)*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if drifts, err := verb.DetectDrift(ctx, db.Stories, db.Ledger); err != nil || len(drifts) != 0 {
+		t.Fatalf("drift = %+v, %v; want none for a done row whose chain folds to done", drifts, err)
+	}
+	if repaired, err := verb.RepairDrift(ctx, db.Stories, db.Ledger, now.Add(time.Minute)); err != nil || len(repaired) != 0 {
+		t.Fatalf("repaired = %+v, %v; want nothing repaired", repaired, err)
+	}
+	if got, _ := db.Stories.Get(ctx, it.ID); got.Status != workitem.StatusDone {
+		t.Errorf("row after repair = %q, want done", got.Status)
+	}
+	reported, err := verb.DetectStaleTransitions(ctx, db.Stories, db.Ledger)
+	if err != nil || len(reported) == 0 {
+		t.Fatalf("stale = %+v, %v; want the out-of-order transitions still reported", reported, err)
+	}
+	for _, b := range reported {
+		if b.Skipped {
+			t.Errorf("stale = %+v, want applied out of order, not skipped", b)
+		}
+	}
+}
+
 func TestTransitionToPrefersPayload(t *testing.T) {
 	e := ledger.Entry{
 		Body:    "backlog → cancelled",

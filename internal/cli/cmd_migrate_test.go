@@ -960,7 +960,7 @@ func TestMigrateRewritesFilePairWorkflowStamps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := storyfold.Fold(chain, nil); len(storyfold.Compare(md, st)) != 0 {
+	if st, _ := storyfold.Fold(chain, storyfold.Route{}); len(storyfold.Compare(md, st)) != 0 {
 		t.Errorf("the fold of the chain differs from the restamped row: %+v", storyfold.Compare(md, st))
 	}
 	tm, err := after.Stories.Get(ctx, staleTOML.ID)

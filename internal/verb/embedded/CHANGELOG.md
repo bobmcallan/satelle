@@ -1,3 +1,13 @@
+## [0.0.764] - 2026-10-27
+
+### Fixed
+- A status transition whose `from` is not the story's status at its place in the chain is skipped only when the story is already done or cancelled at that place; anywhere else it applies, as it did before 0.0.763. 0.0.763 skipped every such transition, so a shipped story whose legacy chain was linked once in insertion order (its transitions out of time order, sty_df21b2db) stopped folding at the first mismatch and read `in_progress` although it was done, and `satelle story reconcile --repair` would have moved its row back. The transition is still reported either way: `satelle ledger verify` lists it as a `stale_from` break, and `satelle story reconcile` says whether the fold skipped it or applied it out of order. The sty_41f61669 shape, a stale transition after `done`, still stays done. (sty_5c9b295d)
+
+## [serve-v0.0.217] - 2026-10-27
+
+### Changed
+- The service binary carries the corrected fold: an out-of-order transition is skipped only at a final state, so a legacy chain folds to the status its transitions reached. (sty_5c9b295d)
+
 ## [0.0.763] - 2026-10-26
 
 ### Fixed

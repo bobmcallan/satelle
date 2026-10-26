@@ -30,23 +30,30 @@ func TransitionFrom(e ledger.Entry) string { return storyfold.TransitionFrom(e) 
 // a task's file and an execution's run are read from their rows as before.
 func foldable(item workitem.Item) bool { return item.Kind == workitem.KindStory }
 
-// parkFor classifies park states for item from its governing route; nil when no
-// route resolves, in which case the fold leaves park origin to the events that
-// carry one.
-func parkFor(ctx context.Context, item workitem.Item) storyfold.ParkFunc {
+// routeFor classifies park and final states for item from its governing route;
+// the zero Route when none resolves, in which case the fold leaves park origin to
+// the events that carry one and skips no stale transition.
+func routeFor(ctx context.Context, item workitem.Item) storyfold.Route {
 	idx, err := requireDocIndex()
 	if err != nil {
-		return nil
+		return storyfold.Route{}
 	}
 	wfs, err := idx.List(ctx, "workflows")
 	if err != nil {
-		return nil
+		return storyfold.Route{}
 	}
 	spec, _, _, serr := wfgovern.SpecFor(wfs, item)
 	if serr != nil {
-		return nil
+		return storyfold.Route{}
 	}
-	return spec.IsParkState
+	return storyfold.Route{Park: spec.IsParkState, Final: spec.IsFinal}
+}
+
+// foldRoute is routeFor for a story known by its chain: the route is chosen from
+// the category and tags the chain says it has, not the row's.
+func foldRoute(ctx context.Context, row workitem.Item, chain []ledger.Entry) storyfold.Route {
+	st, _ := storyfold.Fold(chain, storyfold.Route{})
+	return routeFor(ctx, storyfold.Overlay(row, st))
 }
 
 // FoldStory folds row's chain read from led. The route that classifies park
@@ -57,10 +64,7 @@ func FoldStory(ctx context.Context, led *ledger.Store, row workitem.Item) (story
 	if err != nil {
 		return storyfold.State{}, nil, err
 	}
-	st, breaks := storyfold.Fold(chain, nil)
-	if park := parkFor(ctx, storyfold.Overlay(row, st)); park != nil {
-		st, breaks = storyfold.Fold(chain, park)
-	}
+	st, breaks := storyfold.Fold(chain, foldRoute(ctx, row, chain))
 	return st, breaks, nil
 }
 

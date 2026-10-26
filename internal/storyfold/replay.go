@@ -24,7 +24,8 @@ const (
 	ReplayNoEdge = "no_edge"
 	// ReplayStaleFrom: the transition's from is not the status the chain had
 	// reached at its place — an event made before the chain moved on (an earlier
-	// attempt's, pulled late) — so the fold skips it.
+	// attempt's, pulled late) or linked out of time order. The fold skips it only
+	// when the story had already ended (ReplayBreak.Skipped).
 	ReplayStaleFrom = "stale_from"
 )
 
@@ -38,6 +39,9 @@ type ReplayBreak struct {
 	WorkflowHash string `json:"workflow_hash"`
 	Reason       string `json:"reason"`
 	Detail       string `json:"detail"`
+	// Skipped is set on a ReplayStaleFrom break the fold ignored; false means the
+	// transition applied out of order.
+	Skipped bool `json:"skipped,omitempty"`
 }
 
 // ReplayReport is the outcome of replaying one story's transitions.
@@ -62,8 +66,11 @@ type ReplayReport struct {
 // is derived from that version's archived source by the same derivation the engine
 // uses (wfgovern.RouteSpecFor), for the category and tags the story had at that
 // event, so two developers whose workflows differ can work one story and each
-// transition is judged by the workflow it was made under. Pure.
-func Replay(entries []ledger.Entry) ReplayReport {
+// transition is judged by the workflow it was made under. A transition whose
+// version cannot be derived (no hash, or a legacy one) is classified by governing,
+// the story's own route, so a stale transition is skipped or applied exactly as
+// the fold of the story does. Pure.
+func Replay(entries []ledger.Entry, governing Route) ReplayReport {
 	rep := ReplayReport{Breaks: []ReplayBreak{}}
 	versions := map[string]ledger.WorkflowSource{}
 	for _, e := range entries {
@@ -77,14 +84,14 @@ func Replay(entries []ledger.Entry) ReplayReport {
 	}
 	st := newState()
 	for _, e := range chainOrder(entries) {
-		var park ParkFunc
+		route := governing
 		if e.Kind == ledger.KindStatusTransition && TransitionTo(e) != "" {
 			rep.Transitions++
 			if spec := replayOne(&rep, e, st, versions); spec != nil {
-				park = spec.IsParkState
+				route = Route{Park: spec.IsParkState, Final: spec.IsFinal}
 			}
 		}
-		st.apply(e, park)
+		st.apply(e, route)
 	}
 	rep.Breaks = append(rep.Breaks, st.StaleTransitions...)
 	return rep

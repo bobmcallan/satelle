@@ -553,10 +553,10 @@ story is not published by 'satelle sync workstate push' until repaired.
 Default is a dry-run report that exits non-zero on drift. --repair rebuilds
 each drifted row from the chain and records a status_reconcile event.
 
-A transition whose from is not the status the chain had reached (an earlier
-attempt's event pulled after the story moved on) is skipped by the fold and
-listed as a stale transition. No repair removes it, so it does not fail
-reconcile; 'satelle ledger verify' reports it as a stale_from break.`,
+A transition whose from is not the status the chain had reached is listed as
+stale: skipped when the story had already ended (done or cancelled), applied out
+of order otherwise. It never fails reconcile; 'satelle ledger verify' reports
+it as a stale_from break.`,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := appFrom(cmd)
@@ -623,17 +623,22 @@ reconcile; 'satelle ledger verify' reports it as a stale_from break.`,
 	return cmd
 }
 
-// printStaleTransitions names each transition a fold skips because its from was
-// not the story's status at its place in the chain. They are append-only facts of
-// the chain that no repair removes, so they never fail reconcile: `satelle ledger
-// verify` is the check that does.
+// printStaleTransitions names each transition whose from was not the story's
+// status at its place in the chain, and says whether the fold skipped it or
+// applied it out of order. They are append-only facts of the chain that no repair
+// removes, so they never fail reconcile: `satelle ledger verify` is the check
+// that does.
 func printStaleTransitions(out io.Writer, stale []storyfold.ReplayBreak) {
 	if len(stale) == 0 {
 		return
 	}
-	fmt.Fprintf(out, "%d stale transition(s) the fold skips:\n", len(stale))
+	fmt.Fprintf(out, "%d stale transition(s) in the chain:\n", len(stale))
 	for _, b := range stale {
-		fmt.Fprintf(out, "  %s  stale transition %s %s → %s (%s)\n", b.StoryID, b.EventID, b.From, b.To, b.Detail)
+		how := "applied out of order"
+		if b.Skipped {
+			how = "skipped"
+		}
+		fmt.Fprintf(out, "  %s  stale transition %s %s → %s %s (%s)\n", b.StoryID, b.EventID, b.From, b.To, how, b.Detail)
 	}
 }
 

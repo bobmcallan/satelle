@@ -9,6 +9,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/storyfold"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 func init() {
@@ -66,7 +67,7 @@ func ledgerVerify(ctx context.Context, raw json.RawMessage) (json.RawMessage, er
 		if err != nil {
 			return nil, err
 		}
-		replay := storyfold.Replay(chain)
+		replay := storyfold.Replay(chain, foldRoute(ctx, workitem.Item{ID: id, Kind: workitem.KindStory}, chain))
 		out.ReplayBreaks = append(out.ReplayBreaks, replay.Breaks...)
 		out.ReplayUnchecked += replay.Unrecorded + replay.Unreplayable
 	}

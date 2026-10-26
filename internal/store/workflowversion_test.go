@@ -136,7 +136,7 @@ func TestAPulledChainReplaysAgainstTheSourceItCarries(t *testing.T) {
 		t.Fatal(err)
 	}
 	chain, _ := db.Ledger.StoryChain(ctx, story.ID)
-	rep := storyfold.Replay(chain)
+	rep := storyfold.Replay(chain, storyfold.Route{})
 	if len(rep.Breaks) != 0 || rep.Checked != 1 {
 		t.Errorf("replay = %+v, want the transition checked against its archived version", rep)
 	}
