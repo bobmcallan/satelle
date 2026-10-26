@@ -18,29 +18,43 @@ import (
 // to a second, empty checkout.
 func publishedElsewhere(t *testing.T) (ts *httptest.Server, f *fakeWorkstateServer, id string, want []ledger.Entry, repo string) {
 	t.Helper()
+	ts, f, ids, wants, repo := publishedStories(t, "pulled")
+	return ts, f, ids[0], wants[ids[0]], repo
+}
+
+// publishedStories is publishedElsewhere for several stories, one per title.
+func publishedStories(t *testing.T, titles ...string) (ts *httptest.Server, f *fakeWorkstateServer, ids []string, wants map[string][]ledger.Entry, repo string) {
+	t.Helper()
 	ts, f = newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
 	workstateRepo(t, holdOffToml)
-	id = createStoryID(t, "pulled")
+	for _, title := range titles {
+		ids = append(ids, createStoryID(t, title))
+	}
 	withRepoStore(t, func(db *store.DB) {
-		for _, body := range []string{"one", "two", "three"} {
-			if _, err := db.Ledger.Append(context.Background(), ledger.AppendInput{StoryID: id, Kind: ledger.KindComment, Actor: "bob", Body: body}, time.Now()); err != nil {
-				t.Fatal(err)
+		for _, id := range ids {
+			for _, body := range []string{"one", "two", "three"} {
+				if _, err := db.Ledger.Append(context.Background(), ledger.AppendInput{StoryID: id, Kind: ledger.KindComment, Actor: "bob", Body: body}, time.Now()); err != nil {
+					t.Fatal(err)
+				}
 			}
 		}
 	})
 	if out, err := pushRaw(t, ts.URL); err != nil {
 		t.Fatalf("push: %v\n%s", err, out)
 	}
-	want = localChain(t, id)
-	if len(want) < 4 {
-		t.Fatalf("published chain has %d events, want several", len(want))
+	wants = map[string][]ledger.Entry{}
+	for _, id := range ids {
+		wants[id] = localChain(t, id)
+		if len(wants[id]) < 4 {
+			t.Fatalf("published chain of %s has %d events, want several", id, len(wants[id]))
+		}
 	}
 	f.mu.Lock()
 	f.ledgerByID = map[string]map[string]any{}
 	f.mu.Unlock()
 	repo = workstateRepo(t, holdOffToml)
-	return ts, f, id, want, repo
+	return ts, f, ids, wants, repo
 }
 
 func pullRaw(t *testing.T, server string) (string, error) {

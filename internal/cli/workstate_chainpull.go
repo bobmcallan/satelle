@@ -198,6 +198,47 @@ func (c *chainPull) materializeStory(ctx context.Context, a *app.App, rd chainRe
 	if latest == "" {
 		return false, nil // the server holds no events of it
 	}
+	fresh, perr := takePlan(local, events)
+	var unlinked unlinkedError
+	switch {
+	case errors.Is(perr, errTakeForked):
+		c.forked(id, local, events, after, out)
+		return false, nil
+	case errors.As(perr, &unlinked):
+		fmt.Fprintf(c.errw, "workstate: the hosted chain of %s %v; left as it is\n", id, perr)
+		return false, nil
+	}
+	if err := takeEvents(ctx, a, id, fresh, now); err != nil {
+		return false, err
+	}
+	// The head moves only when the chain now ends where the server's does; a story
+	// with later local work keeps its head, and those events publish from it.
+	chain, err := a.Store.Ledger.StoryChain(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("read the chain of %s: %w", id, err)
+	}
+	if order, oerr := chainOrder(chain); oerr == nil && len(order) > 0 && order[len(order)-1].ID == latest {
+		c.pending[id] = latest
+	}
+	return true, nil
+}
+
+// errTakeForked is takePlan declining: a hosted event builds on an event of the
+// local chain that already has another local child.
+var errTakeForked = errors.New("a hosted event builds on an event the local chain builds on differently")
+
+// unlinkedError is takePlan declining: a hosted event builds on neither the local
+// chain nor an event before it.
+type unlinkedError struct{ event string }
+
+func (e unlinkedError) Error() string { return "does not link at " + e.event }
+
+// takePlan decides whether a hosted chain can be brought under a local chain and
+// returns the hosted events the local chain lacks, in chain order. It declines when
+// one does not link, or when one builds on an event the local chain already builds
+// on differently: nothing merges. It reads nothing and writes nothing, so a pull
+// and a rechain judge a take by the same rule.
+func takePlan(local []ledger.Entry, events []hosted.ChainEvent) ([]hosted.ChainEvent, error) {
 	held := make(map[string]bool, len(local))
 	children := map[string][]string{} // base -> local events built on it
 	for _, e := range local {
@@ -212,37 +253,32 @@ func (c *chainPull) materializeStory(ctx context.Context, a *app.App, rd chainRe
 			continue
 		}
 		if !linked[e.BaseID] && !held[e.BaseID] {
-			fmt.Fprintf(c.errw, "workstate: the hosted chain of %s does not link at %s; left as it is\n", id, e.ID)
-			return false, nil
+			return nil, unlinkedError{event: e.ID}
 		}
 		fresh = append(fresh, e)
 		linked[e.ID] = true
 	}
 	for _, e := range fresh {
 		if other := slices.IndexFunc(children[e.BaseID], func(x string) bool { return x != e.ID }); other >= 0 {
-			c.forked(id, local, events, after, out)
-			return false, nil
+			return nil, errTakeForked
 		}
 	}
+	return fresh, nil
+}
+
+// takeEvents writes the hosted events takePlan returned, keeping each base it
+// arrived with.
+func takeEvents(ctx context.Context, a *app.App, id string, fresh []hosted.ChainEvent, now time.Time) error {
 	for _, e := range fresh {
 		entry, err := ledgerEntryOf(id, e)
 		if err != nil {
-			return false, fmt.Errorf("decode the hosted event %s of %s: %w — re-run is safe", e.ID, id, err)
+			return fmt.Errorf("decode the hosted event %s of %s: %w — re-run is safe", e.ID, id, err)
 		}
 		if _, err := a.Store.Ledger.Upsert(ctx, entry, now); err != nil {
-			return false, fmt.Errorf("take the hosted event %s of %s: %w — re-run is safe", e.ID, id, err)
+			return fmt.Errorf("take the hosted event %s of %s: %w — re-run is safe", e.ID, id, err)
 		}
 	}
-	// The head moves only when the chain now ends where the server's does; a story
-	// with later local work keeps its head, and those events publish from it.
-	chain, err := a.Store.Ledger.StoryChain(ctx, id)
-	if err != nil {
-		return false, fmt.Errorf("read the chain of %s: %w", id, err)
-	}
-	if order, oerr := chainOrder(chain); oerr == nil && len(order) > 0 && order[len(order)-1].ID == latest {
-		c.pending[id] = latest
-	}
-	return true, nil
+	return nil
 }
 
 // forked reports a story whose local events and hosted chain disagree. A local

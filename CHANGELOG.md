@@ -1,3 +1,9 @@
+## [0.0.762] - 2026-10-26
+
+### Fixed
+- `satelle sync workstate rechain` repairs a story whose seeded events sit anywhere in its local chain, and its `--dry-run` applies exactly the checks the real run does. The chain is compared with the hosted one: the longest start the two share event for event is kept, everything after it is removed and the hosted events are taken in its place, so the local chain ends as the hosted chain with its ids, bases and order, and the push head is the hosted latest. Before, only a seeded genesis at the very start was repairable; a seeded pair a multi-page pull had linked later hosted events onto was refused by the real run ("remove refused: ... builds on ...", "the hosted chain could not be taken") after the dry run had listed it as repairable. The dry run and the real run now share one decision, so each story gets the same outcome and reason in both: `rechained`/`would rechain` or `refused`/`would refuse`, one line each, and the exit status is non-zero when a story was refused. (sty_8fc70019)
+- `rechain` with no ids now also takes every story whose chain differs from its hosted one, not only those recorded in conflict, which includes a story whose events are all on the hosted chain but linked in another order. Stories the hosted project holds nothing of, and stories that are only the hosted chain plus unpushed local events, are skipped. A story with a local event the hosted chain lacks that is not a seeded genesis is still refused by name and left unchanged. (sty_8fc70019)
+
 ## [0.0.761] - 2026-10-26
 
 ### Breaking
