@@ -302,7 +302,7 @@ const maxDirtyClosePaths = 20
 // and every uncertainty (no probe, no lease, dead lease, no recorded tree, probe
 // error) fails open.
 func refuseDirtyClose(ctx context.Context, item workitem.Item, target string) error {
-	if dirtyPathsProbe == nil || !targetEndsEngagementForGood(ctx, item, target) {
+	if dirtyPathsProbe == nil || !EndsEngagementForGood(ctx, item, target) {
 		return nil
 	}
 	ls, err := requireLease()
@@ -351,12 +351,12 @@ func targetIsTerminalStateOnly(ctx context.Context, item workitem.Item, status s
 	return clk.Terminal(status)
 }
 
-// targetEndsEngagementForGood reports an exit the story does not resume from: a
+// EndsEngagementForGood reports an exit the story does not resume from: a
 // terminal state, or a park state that is not the resuming park (the cancel
 // sink, which the route synthesises without a terminal shape). Both release the
 // seat via targetIsExitState; only the resuming park (blocked) keeps the way
 // back to the same tree.
-func targetEndsEngagementForGood(ctx context.Context, item workitem.Item, status string) bool {
+func EndsEngagementForGood(ctx context.Context, item workitem.Item, status string) bool {
 	if targetIsTerminalStateOnly(ctx, item, status) {
 		return true
 	}

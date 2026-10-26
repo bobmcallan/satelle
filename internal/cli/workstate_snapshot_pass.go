@@ -65,6 +65,15 @@ const (
 type storyOutcome struct {
 	Conflicts map[string]string
 	Cleared   []string
+	// Moved lines name a done or cancelled story a pull rebuilt to a non-terminal
+	// status; the pass prints each as it lands.
+	Moved []string
+}
+
+func (o *storyOutcome) moved(line string) {
+	if o != nil {
+		o.Moved = append(o.Moved, line)
+	}
 }
 
 func (o *storyOutcome) conflict(id, reason string) {
@@ -292,6 +301,10 @@ func (p *snapshotPass) apply(ctx context.Context, pg hosted.SnapshotPage) error 
 	p.rep.Items += nItems
 	p.rep.Ledger += nLedger
 	p.rep.Kept += nKept
+	for _, line := range p.rep.Stories.Moved {
+		fmt.Fprintf(p.errw, "workstate: %s\n", line)
+	}
+	p.rep.Stories.Moved = nil
 	if err != nil {
 		return err
 	}

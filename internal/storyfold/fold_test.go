@@ -134,7 +134,8 @@ func TestFoldFollowsTheChainNotTheListing(t *testing.T) {
 }
 
 // A fork is reported, never merged by guessing: the fold falls back to the given
-// order and returns the ledger's own break.
+// order and returns the ledger's own break. The forked transition's from is not
+// the status the listing had reached, so it does not move the status.
 func TestFoldReportsAForkAndFallsBackToListingOrder(t *testing.T) {
 	in := chain(created(), transition("backlog", "plan"))
 	fork := transition("backlog", "cancelled")
@@ -144,7 +145,34 @@ func TestFoldReportsAForkAndFallsBackToListingOrder(t *testing.T) {
 	if len(breaks) != 1 || breaks[0].Kind != ledger.BreakFork {
 		t.Fatalf("breaks = %+v, want one fork", breaks)
 	}
-	if got.Status != "cancelled" {
-		t.Errorf("status = %q, want the listing order's last (cancelled)", got.Status)
+	if got.Status != "plan" {
+		t.Errorf("status = %q, want plan: the forked transition is stale", got.Status)
+	}
+	if len(got.StaleTransitions) != 1 || got.StaleTransitions[0].EventID != "evt_fork" {
+		t.Errorf("stale = %+v, want the forked event", got.StaleTransitions)
+	}
+}
+
+// sty_6f952dd0 AC1/AC2: an earlier attempt's events linked after the story's done
+// carry a plan → in_progress whose from is not the status the chain had reached.
+// It never becomes the latest status; it is recorded, and Head still advances.
+func TestFoldSkipsAStaleTransitionAfterDone(t *testing.T) {
+	in := chain(created(), transition("backlog", "plan"), transition("plan", "in_progress"), transition("in_progress", "done"),
+		transition("plan", "in_progress"), transition("in_progress", "integration"))
+	got, _ := Fold(in, nil)
+	if got.Status != "done" {
+		t.Fatalf("status = %q, want done", got.Status)
+	}
+	if got.StatusEvent != in[3].ID {
+		t.Errorf("status event = %q, want the done transition %q", got.StatusEvent, in[3].ID)
+	}
+	if got.Head != in[5].ID {
+		t.Errorf("head = %q, want the last event %q", got.Head, in[5].ID)
+	}
+	if len(got.StaleTransitions) != 2 || got.StaleTransitions[0].EventID != in[4].ID || got.StaleTransitions[1].EventID != in[5].ID {
+		t.Fatalf("stale = %+v, want both late events", got.StaleTransitions)
+	}
+	if r := got.StaleTransitions[0]; r.Reason != ReplayStaleFrom || r.From != "plan" || r.To != "in_progress" {
+		t.Errorf("stale[0] = %+v", r)
 	}
 }

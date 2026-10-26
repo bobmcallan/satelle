@@ -116,12 +116,18 @@ func putInState(t *testing.T, id, status, tree, head string, baseline bool) {
 	defer a.Close()
 	ctx := context.Background()
 	now := time.Now().UTC()
+	row, err := a.Store.Stories.Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := a.Store.Stories.SetStatus(ctx, id, status, now); err != nil {
 		t.Fatal(err)
 	}
-	payload, _ := json.Marshal(map[string]string{"from": "plan", "to": status})
+	// from is the status the chain is at: a transition from any other is stale
+	// and the fold skips it.
+	payload, _ := json.Marshal(map[string]string{"from": row.Status, "to": status})
 	if _, err := a.Store.Ledger.Append(ctx, ledger.AppendInput{
-		StoryID: id, Kind: ledger.KindStatusTransition, Actor: "executor", Body: "plan → " + status, Payload: payload,
+		StoryID: id, Kind: ledger.KindStatusTransition, Actor: "executor", Body: row.Status + " → " + status, Payload: payload,
 	}, now); err != nil {
 		t.Fatal(err)
 	}

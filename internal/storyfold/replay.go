@@ -22,6 +22,10 @@ const (
 	// ReplayNoEdge: the workflow version the transition recorded declares no edge
 	// from its source to its destination.
 	ReplayNoEdge = "no_edge"
+	// ReplayStaleFrom: the transition's from is not the status the chain had
+	// reached at its place — an event made before the chain moved on (an earlier
+	// attempt's, pulled late) — so the fold skips it.
+	ReplayStaleFrom = "stale_from"
 )
 
 // ReplayBreak is one transition that does not replay against the workflow version
@@ -82,6 +86,7 @@ func Replay(entries []ledger.Entry) ReplayReport {
 		}
 		st.apply(e, park)
 	}
+	rep.Breaks = append(rep.Breaks, st.StaleTransitions...)
 	return rep
 }
 

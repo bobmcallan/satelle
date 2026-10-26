@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/storyfold"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -117,5 +119,41 @@ func TestLedgerVerifyVerbReportsBreaksAndModifiesNothing(t *testing.T) {
 		if before[i].BaseID != after[i].BaseID || before[i].ID != after[i].ID {
 			t.Errorf("verify repaired entry %s: base %q -> %q", before[i].ID, before[i].BaseID, after[i].BaseID)
 		}
+	}
+}
+
+// sty_6f952dd0 AC2: a status transition whose from is not the status its chain had
+// reached at its place — an earlier attempt's event linked after the story's done —
+// is reported by ledger-verify as a stale_from replay break, and the fold stays done.
+func TestLedgerVerifyReportsAStaleTransitionAsABreak(t *testing.T) {
+	db := wire(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	var stale ledger.Entry
+	for i, tr := range [][2]string{{"backlog", "in_progress"}, {"in_progress", "done"}, {"plan", "in_progress"}} {
+		payload, _ := json.Marshal(map[string]string{"from": tr[0], "to": tr[1]})
+		e, err := db.Ledger.Append(ctx, ledger.AppendInput{
+			StoryID: "sty_late", Kind: ledger.KindStatusTransition, Body: tr[0] + " → " + tr[1], Payload: payload,
+		}, now.Add(time.Duration(i)*time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		stale = e
+	}
+
+	var rep verb.LedgerVerifyReport
+	if err := json.Unmarshal(call(t, "ledger-verify", map[string]any{"story_id": "sty_late"}), &rep); err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.ReplayBreaks) != 1 || rep.ReplayBreaks[0].Reason != storyfold.ReplayStaleFrom ||
+		rep.ReplayBreaks[0].EventID != stale.ID || rep.ReplayBreaks[0].From != "plan" {
+		t.Fatalf("replay_breaks = %+v, want one stale_from on %s", rep.ReplayBreaks, stale.ID)
+	}
+	if len(rep.Breaks) != 0 {
+		t.Errorf("the chain's links are sound, got breaks %+v", rep.Breaks)
+	}
+	chain, _ := db.Ledger.StoryChain(ctx, "sty_late")
+	if st, _ := storyfold.Fold(chain, nil); st.Status != "done" {
+		t.Errorf("fold = %q, want done", st.Status)
 	}
 }

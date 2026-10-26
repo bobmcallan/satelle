@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/storyfold"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -146,6 +147,73 @@ func TestReconcileRepairsEveryDriftedFieldAndLeavesTasksAlone(t *testing.T) {
 	}
 	if again, _ := verb.DetectDrift(ctx, db.Stories, db.Ledger); len(again) != 0 {
 		t.Errorf("drift after repair: %+v", again)
+	}
+}
+
+// sty_6f952dd0 AC4: a story whose chain holds a terminal transition followed by a
+// stale non-terminal one, with the seeded definition_snapshot (status done) between
+// them as on sty_41f61669, is reported — its row, which a pull rebuilt from the wrong
+// fold, shows as drift, and the stale event is named — and the repair brings the row
+// back to done while the append-only stale event stays listed.
+func TestReconcileReportsATerminalTransitionFollowedByAStaleOne(t *testing.T) {
+	db := wire(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	it, err := db.Stories.Create(ctx, workitem.CreateInput{Kind: workitem.KindStory, Title: "late", Status: workitem.StatusBacklog}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The sty_41f61669 shape: the done transition, the seeded definition_snapshot
+	// (status done) pulled in after it, then an earlier killed attempt's events,
+	// among them its plan → in_progress, linked after the snapshot.
+	snap := it
+	snap.Status = workitem.StatusDone
+	seq := 0
+	appendEv := func(kind, body string, payload json.RawMessage) ledger.Entry {
+		seq++
+		e, err := db.Ledger.Append(ctx, ledger.AppendInput{StoryID: it.ID, Kind: kind, Body: body, Payload: payload}, now.Add(time.Duration(seq)*time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return e
+	}
+	transition := func(from, to string) ledger.Entry {
+		payload, _ := json.Marshal(map[string]string{"from": from, "to": to})
+		return appendEv(ledger.KindStatusTransition, from+" → "+to, payload)
+	}
+	note := json.RawMessage(`{"note":"earlier attempt"}`)
+	transition("backlog", "in_progress")
+	transition("in_progress", "done")
+	appendEv(ledger.KindDefinitionSnapshot, "definition snapshot", storyfold.SnapshotPayloadOf(snap, true))
+	appendEv(ledger.KindWorkingOn, "earlier attempt", note)
+	appendEv(ledger.KindStepSummary, "earlier attempt", note)
+	stale := transition("plan", "in_progress")
+	appendEv(ledger.KindStepSummary, "earlier attempt", note)
+	// The row sty_41f61669 showed: what a rebuild from the stale-last fold wrote.
+	if _, err := db.SQL().Exec(`UPDATE work_items SET status = 'in_progress' WHERE id = ?`, it.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	drifts, err := verb.DetectDrift(ctx, db.Stories, db.Ledger)
+	if err != nil || len(drifts) != 1 || drifts[0].Field != "status" || drifts[0].Row != "in_progress" || drifts[0].Chain != "done" {
+		t.Fatalf("drift = %+v, %v; want status in_progress → done", drifts, err)
+	}
+	reported, err := verb.DetectStaleTransitions(ctx, db.Stories, db.Ledger)
+	if err != nil || len(reported) != 1 || reported[0].EventID != stale.ID || reported[0].StoryID != it.ID {
+		t.Fatalf("stale = %+v, %v; want the late event %s", reported, err, stale.ID)
+	}
+
+	if _, err := verb.RepairDrift(ctx, db.Stories, db.Ledger, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := db.Stories.Get(ctx, it.ID); got.Status != workitem.StatusDone {
+		t.Errorf("repaired status = %q, want done", got.Status)
+	}
+	if again, _ := verb.DetectDrift(ctx, db.Stories, db.Ledger); len(again) != 0 {
+		t.Errorf("drift after repair: %+v", again)
+	}
+	if again, _ := verb.DetectStaleTransitions(ctx, db.Stories, db.Ledger); len(again) != 1 {
+		t.Errorf("the stale event is a fact of the chain and stays listed: %+v", again)
 	}
 }
 

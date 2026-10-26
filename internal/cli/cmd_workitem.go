@@ -18,6 +18,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/costview"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/storyfold"
 	"github.com/bobmcallan/satelle/internal/verb"
 )
 
@@ -545,15 +546,17 @@ func storyReconcileCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reconcile",
 		Short: "Detect (and optionally repair) story rows that disagree with their ledger chain",
-		Long: `Compare each story row's status, title, body, acceptance criteria,
-category, tags and park origin to the fold of its ledger chain. The chain is the
-source of truth and the row a cache of it: a field on which they disagree is
-drift, and the chain's value is the one that is right. A story whose row has
-drifted is not published by 'satelle sync workstate push' until it is repaired.
+		Long: `Compare each story row's fields to the fold of its ledger chain. The chain is
+the source of truth: a field on which they disagree is drift, and a drifted
+story is not published by 'satelle sync workstate push' until repaired.
 
-Default is a dry-run report. --repair rebuilds each drifted row from the chain,
-names each repaired field, and records a status_reconcile event. Dry-run exits
-non-zero when drift is found so the check is scriptable.`,
+Default is a dry-run report that exits non-zero on drift. --repair rebuilds
+each drifted row from the chain and records a status_reconcile event.
+
+A transition whose from is not the status the chain had reached (an earlier
+attempt's event pulled after the story moved on) is skipped by the fold and
+listed as a stale transition. No repair removes it, so it does not fail
+reconcile; 'satelle ledger verify' reports it as a stale_from break.`,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := appFrom(cmd)
@@ -562,6 +565,10 @@ non-zero when drift is found so the check is scriptable.`,
 			}
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
+			stale, serr := verb.DetectStaleTransitions(ctx, a.Store.Stories, a.Store.Ledger)
+			if serr != nil {
+				return serr
+			}
 			if repair {
 				repaired, rerr := verb.RepairDrift(ctx, a.Store.Stories, a.Store.Ledger, time.Now())
 				if rerr != nil {
@@ -570,16 +577,17 @@ non-zero when drift is found so the check is scriptable.`,
 				if asJSON {
 					enc := json.NewEncoder(out)
 					enc.SetIndent("", "  ")
-					return enc.Encode(map[string]any{"repaired": repaired, "count": len(repaired)})
+					return enc.Encode(map[string]any{"repaired": repaired, "count": len(repaired), "stale_transitions": stale})
 				}
 				if len(repaired) == 0 {
 					fmt.Fprintln(out, "status: clean — no row disagrees with its ledger chain")
-					return nil
+				} else {
+					fmt.Fprintf(out, "repaired %d field(s) from the ledger chain:\n", len(repaired))
+					for _, d := range repaired {
+						fmt.Fprintf(out, "  %s  %s: %q → %q\n", d.ID, d.Field, d.Row, d.Chain)
+					}
 				}
-				fmt.Fprintf(out, "repaired %d field(s) from the ledger chain:\n", len(repaired))
-				for _, d := range repaired {
-					fmt.Fprintf(out, "  %s  %s: %q → %q\n", d.ID, d.Field, d.Row, d.Chain)
-				}
+				printStaleTransitions(out, stale)
 				return nil
 			}
 			drifts, derr := verb.DetectDrift(ctx, a.Store.Stories, a.Store.Ledger)
@@ -589,7 +597,7 @@ non-zero when drift is found so the check is scriptable.`,
 			if asJSON {
 				enc := json.NewEncoder(out)
 				enc.SetIndent("", "  ")
-				if err := enc.Encode(map[string]any{"drift": drifts, "count": len(drifts)}); err != nil {
+				if err := enc.Encode(map[string]any{"drift": drifts, "count": len(drifts), "stale_transitions": stale}); err != nil {
 					return err
 				}
 			} else if len(drifts) == 0 {
@@ -601,6 +609,9 @@ non-zero when drift is found so the check is scriptable.`,
 				}
 				fmt.Fprintln(out, "re-run with --repair to rebuild each row from the chain")
 			}
+			if !asJSON {
+				printStaleTransitions(out, stale)
+			}
 			if len(drifts) > 0 {
 				return fmt.Errorf("story reconcile: %d drifted", len(drifts))
 			}
@@ -610,6 +621,20 @@ non-zero when drift is found so the check is scriptable.`,
 	cmd.Flags().BoolVar(&repair, "repair", false, "rebuild drifted rows from their ledger chain")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit machine-readable JSON")
 	return cmd
+}
+
+// printStaleTransitions names each transition a fold skips because its from was
+// not the story's status at its place in the chain. They are append-only facts of
+// the chain that no repair removes, so they never fail reconcile: `satelle ledger
+// verify` is the check that does.
+func printStaleTransitions(out io.Writer, stale []storyfold.ReplayBreak) {
+	if len(stale) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "%d stale transition(s) the fold skips:\n", len(stale))
+	for _, b := range stale {
+		fmt.Fprintf(out, "  %s  stale transition %s %s → %s (%s)\n", b.StoryID, b.EventID, b.From, b.To, b.Detail)
+	}
 }
 
 // storyDiffCommand builds `satelle story diff [id]`: enumerate files changed

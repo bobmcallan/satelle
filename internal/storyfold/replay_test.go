@@ -126,15 +126,31 @@ func TestReplayJudgesEachTransitionByItsRecordedVersion(t *testing.T) {
 
 	// An edge neither version declares.
 	rep = Replay(chain(created(), a, b,
-		under(hashA, transition("done", "backlog")),
+		under(hashA, transition("backlog", "done")),
 		under(hashB, transition("done", "backlog"))))
 	if len(rep.Breaks) != 2 {
 		t.Fatalf("replay = %+v, want a break under each version", rep)
 	}
-	for _, br := range rep.Breaks {
-		if br.Reason != ReplayNoEdge || br.From != "done" || br.To != "backlog" || br.StoryID != "sty_a" || br.EventID == "" {
+	for i, br := range rep.Breaks {
+		want := []string{hashA, hashB}[i]
+		if br.Reason != ReplayNoEdge || br.WorkflowHash != want || br.StoryID != "sty_a" || br.EventID == "" {
 			t.Errorf("break = %+v", br)
 		}
+	}
+}
+
+// sty_6f952dd0 AC2: a transition whose from is not the status the chain had
+// reached at its place — an earlier attempt's event pulled after the story was
+// done — does not change the fold, and replay reports it as a stale_from break.
+func TestReplayReportsAStaleTransitionAsABreak(t *testing.T) {
+	events := chain(created(), transition("backlog", "in_progress"), transition("in_progress", "done"),
+		transition("plan", "in_progress"))
+	rep := Replay(events)
+	if len(rep.Breaks) != 1 || rep.Breaks[0].Reason != ReplayStaleFrom || rep.Breaks[0].From != "plan" || rep.Breaks[0].To != "in_progress" {
+		t.Fatalf("replay = %+v, want one stale_from break for plan → in_progress", rep)
+	}
+	if rep.Breaks[0].EventID != events[3].ID {
+		t.Errorf("break names %q, want the stale event %q", rep.Breaks[0].EventID, events[3].ID)
 	}
 }
 

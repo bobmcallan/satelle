@@ -1,3 +1,8 @@
+## [0.0.763] - 2026-10-26
+
+### Fixed
+- A status transition whose `from` is not the story's status at its place in the chain no longer sets the story's status. Before, an earlier attempt's events that reached a machine after the story was done (they arrive without a base and are linked to the tail) put a stale `plan → in_progress` after `done`, the fold took it, and the story reopened silently (sty_41f61669 read `in_progress` although shipped). Such a transition is now skipped by the fold and reported by `satelle ledger verify` as a stale transition; `satelle story reconcile` reports a row it disagrees with and `--repair` rebuilds that row from the corrected fold. A pull, plain or `--force`, that moves a done or cancelled story's row to a non-terminal status now names the story, both statuses and the event, and `--force` no longer writes a story's status around its chain. To heal a story already reopened this way, run `satelle story reconcile --repair`. (sty_6f952dd0)
+
 ## [0.0.762] - 2026-10-26
 
 ### Fixed

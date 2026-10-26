@@ -14,6 +14,7 @@ package storyfold
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -46,8 +47,14 @@ type State struct {
 	Tags               []string
 	ParkOrigin         string
 	// Head is the id of the last event folded.
-	Head    string
-	Defined map[string]bool
+	Head string
+	// StatusEvent is the id of the event that last set the status.
+	StatusEvent string
+	// StaleTransitions are the status_transitions the fold skipped because their
+	// from is not the status the chain had reached at their place. Such an event
+	// is a chain break: it never becomes the latest status.
+	StaleTransitions []ReplayBreak
+	Defined          map[string]bool
 }
 
 // ParkFunc says whether a status is a park state of the story's governing route.
@@ -192,7 +199,9 @@ func (st *State) apply(e ledger.Entry, park ParkFunc) {
 	st.Head = e.ID
 	switch e.Kind {
 	case ledger.KindStoryCreated, ledger.KindDefinitionSnapshot:
-		st.applyFields(e.Payload)
+		if st.applyFields(e.Payload) {
+			st.StatusEvent = e.ID
+		}
 	case ledger.KindDefinitionEdited:
 		var c FieldChange
 		if json.Unmarshal(e.Payload, &c) == nil {
@@ -231,8 +240,9 @@ func (st *State) apply(e ledger.Entry, park ParkFunc) {
 }
 
 // applyFields sets every field a story_created or definition_snapshot payload
-// carries; a field the payload omits is left as it is.
-func (st *State) applyFields(payload json.RawMessage) {
+// carries; a field the payload omits is left as it is. It reports whether the
+// payload carried a status.
+func (st *State) applyFields(payload json.RawMessage) bool {
 	var p struct {
 		Title      *string   `json:"title"`
 		Body       *string   `json:"body"`
@@ -243,7 +253,7 @@ func (st *State) applyFields(payload json.RawMessage) {
 		ParkOrigin *string   `json:"park_origin"`
 	}
 	if json.Unmarshal(payload, &p) != nil {
-		return
+		return false
 	}
 	set := func(field string, v *string) {
 		if v != nil {
@@ -259,6 +269,7 @@ func (st *State) applyFields(payload json.RawMessage) {
 	if p.Tags != nil {
 		st.setTags(*p.Tags)
 	}
+	return p.Status != nil
 }
 
 // setField sets one named field; a name the fold does not track is ignored.
@@ -292,6 +303,9 @@ func (st *State) setTags(tags []string) {
 
 // transition folds a status_transition: the destination becomes the status, and a
 // move into a park state records where it came from, a move out of one clears it.
+// A transition that names a from other than the status the fold has reached is
+// stale — an event made before the chain moved on, linked after it — and changes
+// nothing: it is recorded in StaleTransitions instead.
 func (st *State) transition(e ledger.Entry, park ParkFunc) {
 	to := TransitionTo(e)
 	if to == "" {
@@ -300,6 +314,14 @@ func (st *State) transition(e ledger.Entry, park ParkFunc) {
 	from := TransitionFrom(e)
 	if from == "" {
 		from = st.Status
+	}
+	if st.Status != "" && from != st.Status {
+		st.StaleTransitions = append(st.StaleTransitions, ReplayBreak{
+			StoryID: e.StoryID, EventID: e.ID, From: from, To: to, WorkflowHash: e.WorkflowHash,
+			Reason: ReplayStaleFrom,
+			Detail: fmt.Sprintf("the story was %s at this place in the chain, so a transition from %s does not apply", st.Status, from),
+		})
+		return
 	}
 	if park != nil {
 		switch {
@@ -310,6 +332,7 @@ func (st *State) transition(e ledger.Entry, park ParkFunc) {
 		}
 	}
 	st.setField(FieldStatus, to)
+	st.StatusEvent = e.ID
 }
 
 func appendMissing(have, add []string) []string {

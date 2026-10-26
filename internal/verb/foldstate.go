@@ -231,6 +231,29 @@ func StoryDrifts(ctx context.Context, led *ledger.Store, row workitem.Item) ([]S
 	return out, nil
 }
 
+// DetectStaleTransitions lists, across every story, the status transitions the
+// fold skips because their from is not the status their chain had reached at
+// their place. They are facts of an append-only chain, not drift: no row rebuild
+// removes them, so DetectDrift does not carry them.
+func DetectStaleTransitions(ctx context.Context, stories *workitem.Store, led *ledger.Store) ([]storyfold.ReplayBreak, error) {
+	if stories == nil || led == nil {
+		return nil, fmt.Errorf("verb: detect stale transitions needs stories and ledger stores")
+	}
+	items, err := stories.List(ctx, workitem.ListFilter{Kind: workitem.KindStory, Limit: 2000, IncludeArchived: true})
+	if err != nil {
+		return nil, err
+	}
+	var out []storyfold.ReplayBreak
+	for _, it := range items {
+		st, _, err := FoldStory(ctx, led, it)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, st.StaleTransitions...)
+	}
+	return out, nil
+}
+
 // RepairDrift rebuilds every drifted story's row from its fold and appends a
 // status_reconcile event naming each repaired field. It returns what it repaired.
 func RepairDrift(ctx context.Context, stories *workitem.Store, led *ledger.Store, now time.Time) (repaired []StoryDrift, err error) {
