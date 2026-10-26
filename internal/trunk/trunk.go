@@ -350,6 +350,31 @@ func trunkName(ctx context.Context, top, remote, fallback string) string {
 	return fallback
 }
 
+// RemoteTrunkRef names dir's remote-tracking trunk ref ("refs/remotes/origin/main")
+// for a caller that reads which commits are already published, or "" when none can
+// be named: no remote, no trunk resolvable from the remote's HEAD ref or branch, or
+// no such ref fetched. It makes no network call, so the ref may lag the remote; a
+// caller that uses it to EXCLUDE published commits then excludes fewer, never more.
+func RemoteTrunkRef(ctx context.Context, dir, branch string) string {
+	if !HasRemote(ctx, dir, "") {
+		return ""
+	}
+	top, err := worktree.TopLevel(ctx, dir)
+	if err != nil {
+		return ""
+	}
+	rep := Report{Remote: DefaultRemote}
+	name, stop := resolveTrunk(ctx, top, rep, Options{Branch: branch})
+	if stop != nil || name == "" {
+		return ""
+	}
+	ref := "refs/remotes/" + rep.Remote + "/" + name
+	if _, err := git(ctx, top, "rev-parse", "--verify", "--quiet", ref); err != nil {
+		return ""
+	}
+	return ref
+}
+
 // trunkCheckout is the working tree that has localRef checked out ("" if none),
 // read from `git worktree list`, symlink-resolved like worktree.TopLevel.
 func trunkCheckout(ctx context.Context, top, localRef string) string {

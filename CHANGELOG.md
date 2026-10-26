@@ -1,3 +1,8 @@
+## [0.0.765] - 2026-10-27
+
+### Fixed
+- A story's change set no longer counts the commits other stories landed on the trunk while it ran. When a tree fast-forwards over another story's merge, `satelle story diff` (live and recorded), the substrate-only check, the scope review and every other gate that reads the change set listed that merge's files as the story's, so a story that changed only the gitignored `.satelle/` was refused for `.github/workflows/ci.yml`, `Makefile`, `.version` and the rest of another story's pull request (id4me sty_d9904629). A commit between the engagement point and HEAD is now left out when the remote trunk already holds it and its subject does not name the story; the story's own commits, a commit that names it even if published, and its uncommitted and untracked changes stay. Without a remote trunk ref, nothing is left out, as before. Change records written before this release are not rewritten. (sty_659c4133)
+
 ## [0.0.764] - 2026-10-27
 
 ### Fixed

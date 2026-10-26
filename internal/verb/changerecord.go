@@ -110,7 +110,7 @@ func recordChangeSet(ctx context.Context, item workitem.Item, from, to string, n
 	sinceTime, hasSinceTime := changeRecordSinceTime(ctx, item.ID)
 
 	if sinceSHA != "" && payload.Unavailable != "no-git" {
-		f, _, p, derr := gitDiffSince(dir, sinceSHA, true)
+		f, _, p, derr := storyChangeSince(ctx, dir, sinceSHA, item.ID, true)
 		if derr != nil {
 			if payload.Unavailable == "" {
 				payload.Unavailable = "enumeration-error: " + derr.Error()

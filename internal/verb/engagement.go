@@ -15,6 +15,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/trunk"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -461,7 +462,7 @@ func resolveEngagementSlice(ctx context.Context, it workitem.Item, wantPatch boo
 	if aerr := refuseForeignTreeDiff(ctx, it.ID, base.Worktree, dir); aerr != nil {
 		return engagementSlice{}, fmt.Errorf("%w: %v", errForeignTree, aerr)
 	}
-	files, stat, patch, derr := gitDiffSince(dir, sinceSHA, wantPatch)
+	files, stat, patch, derr := storyChangeSince(ctx, dir, sinceSHA, it.ID, wantPatch)
 	if derr != nil {
 		return engagementSlice{}, fmt.Errorf("%w: %v", errNoGit, derr)
 	}
@@ -558,10 +559,94 @@ func refuseForeignTreeDiff(ctx context.Context, storyID, baselineTree, invokedTr
 // worktree (includes uncommitted tracked edits and untracked files). Optional
 // full patch. File list is sorted deterministically.
 func gitDiffSince(dir, baseline string, wantPatch bool) (files []string, stat, patch string, err error) {
-	// name-only (includes renames as "old => new" lines — still deterministic)
-	nameOut, err := exec.Command("git", "-C", dir, "diff", "--name-only", baseline).Output()
+	files, stat, patch, err = gitDiffLeg(dir, []string{baseline}, wantPatch)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("git diff --name-only %s: %w", baseline, err)
+		return nil, "", "", err
+	}
+	return withUntracked(dir, files, stat, patch)
+}
+
+// storyChangeSince is a story's change set from sinceSHA to the current tree: what
+// gitDiffSince lists, minus the commits other stories landed on the trunk and that a
+// fast-forward put between sinceSHA and HEAD (sty_659c4133). A commit is excluded
+// only when the remote trunk already holds it AND its subject does not name
+// storyID — the convention satelle-substrate-only-check's channel 3 reads — so the
+// story's own commits and uncommitted changes always stay. With no remote trunk to
+// compare with, or no such commit in range, it is exactly gitDiffSince.
+func storyChangeSince(ctx context.Context, dir, sinceSHA, storyID string, wantPatch bool) (files []string, stat, patch string, err error) {
+	own, foreign := splitRangeByTrunk(ctx, dir, sinceSHA, storyID)
+	if !foreign {
+		return gitDiffSince(dir, sinceSHA, wantPatch)
+	}
+	// The change set is composed from its own parts, so files, stat and patch stay
+	// consistent: each own commit against its first parent, then what is not committed.
+	legs := make([][]string, 0, len(own)+1)
+	for _, c := range own {
+		legs = append(legs, []string{c + "^", c})
+	}
+	legs = append(legs, []string{"HEAD"})
+	seen := map[string]bool{}
+	var stats, patches strings.Builder
+	for _, revs := range legs {
+		f, s, p, lerr := gitDiffLeg(dir, revs, wantPatch)
+		if lerr != nil {
+			return nil, "", "", lerr
+		}
+		for _, name := range f {
+			if !seen[name] {
+				seen[name] = true
+				files = append(files, name)
+			}
+		}
+		stats.WriteString(s)
+		patches.WriteString(p)
+	}
+	return withUntracked(dir, files, stats.String(), patches.String())
+}
+
+// splitRangeByTrunk walks sinceSHA..HEAD along the first parent and returns the
+// commits that stay in the story's change set, oldest first, and whether any
+// commit in range was left out as another story's published work.
+func splitRangeByTrunk(ctx context.Context, dir, sinceSHA, storyID string) (own []string, foreign bool) {
+	ref := trunk.RemoteTrunkRef(ctx, dir, trunkCfg.Branch)
+	if ref == "" || storyID == "" {
+		return nil, false
+	}
+	out, err := exec.CommandContext(ctx, "git", "-C", dir, "log", "--first-parent", "--reverse",
+		"--format=%H%x00%s", sinceSHA+"..HEAD").Output()
+	if err != nil {
+		return nil, false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		sha, subject, ok := strings.Cut(line, "\x00")
+		if !ok {
+			continue
+		}
+		if !strings.Contains(subject, storyID) && onTrunk(ctx, dir, sha, ref) {
+			foreign = true
+			continue
+		}
+		own = append(own, sha)
+	}
+	return own, foreign
+}
+
+// onTrunk reports whether commit is reachable from ref. An error from git is
+// "not on trunk": the commit then stays in the change set rather than vanishing.
+func onTrunk(ctx context.Context, dir, commit, ref string) bool {
+	return exec.CommandContext(ctx, "git", "-C", dir, "merge-base", "--is-ancestor", commit, ref).Run() == nil
+}
+
+// gitDiffLeg is one tracked-files leg of a change set: name-only, --stat and
+// (optionally) the patch of `git diff <revs...>`. Files are deduplicated, in git's order.
+func gitDiffLeg(dir string, revs []string, wantPatch bool) (files []string, stat, patch string, err error) {
+	diff := func(args ...string) ([]byte, error) {
+		return exec.Command("git", append(append([]string{"-C", dir}, args...), revs...)...).Output()
+	}
+	// name-only (includes renames as "old => new" lines — still deterministic)
+	nameOut, err := diff("diff", "--name-only")
+	if err != nil {
+		return nil, "", "", fmt.Errorf("git diff --name-only %s: %w", strings.Join(revs, " "), err)
 	}
 	seen := map[string]bool{}
 	for _, line := range strings.Split(string(nameOut), "\n") {
@@ -571,10 +656,37 @@ func gitDiffSince(dir, baseline string, wantPatch bool) (files []string, stat, p
 			files = append(files, line)
 		}
 	}
-	// Untracked (not in index): pure-new-file slices must appear (AC2).
-	untracked, uerr := exec.Command("git", "-C", dir, "ls-files", "--others", "--exclude-standard").Output()
-	if uerr != nil {
-		return nil, "", "", fmt.Errorf("git ls-files --others: %w", uerr)
+	statOut, err := diff("diff", "--stat")
+	if err != nil {
+		return nil, "", "", fmt.Errorf("git diff --stat %s: %w", strings.Join(revs, " "), err)
+	}
+	stat = string(statOut)
+
+	if wantPatch {
+		// Force a/ b/ headers regardless of the operator's git config: compact.CompactPatch's
+		// noise/whitespace offload keys off "diff --git a/X b/Y" and the ---/+++ paths, so a
+		// machine with diff.mnemonicPrefix or diff.noprefix set must not change the header shape
+		// underneath it (sty_75b76691 AC2).
+		patchOut, err := diff("-c", "diff.mnemonicPrefix=false", "-c", "diff.noprefix=false",
+			"diff", "--src-prefix=a/", "--dst-prefix=b/")
+		if err != nil {
+			return nil, "", "", fmt.Errorf("git diff %s: %w", strings.Join(revs, " "), err)
+		}
+		patch = string(patchOut)
+	}
+	return files, stat, patch, nil
+}
+
+// withUntracked adds the untracked, non-ignored files to a change set's tracked
+// legs (AC2: pure-new-file slices must appear) and sorts the file list.
+func withUntracked(dir string, files []string, stat, patch string) ([]string, string, string, error) {
+	untracked, err := exec.Command("git", "-C", dir, "ls-files", "--others", "--exclude-standard").Output()
+	if err != nil {
+		return nil, "", "", fmt.Errorf("git ls-files --others: %w", err)
+	}
+	seen := make(map[string]bool, len(files))
+	for _, f := range files {
+		seen[f] = true
 	}
 	for _, line := range strings.Split(string(untracked), "\n") {
 		line = strings.TrimSpace(line)
@@ -584,30 +696,9 @@ func gitDiffSince(dir, baseline string, wantPatch bool) (files []string, stat, p
 		}
 	}
 	sort.Strings(files)
-
-	statOut, err := exec.Command("git", "-C", dir, "diff", "--stat", baseline).Output()
-	if err != nil {
-		return nil, "", "", fmt.Errorf("git diff --stat %s: %w", baseline, err)
-	}
-	stat = string(statOut)
 	if len(bytes.TrimSpace(untracked)) > 0 {
 		// Append untracked summary so stat alone is not empty when only new files.
 		stat = strings.TrimRight(stat, "\n") + "\n# untracked:\n" + string(untracked)
-	}
-
-	if wantPatch {
-		// Force a/ b/ headers regardless of the operator's git config: compact.CompactPatch's
-		// noise/whitespace offload keys off "diff --git a/X b/Y" and the ---/+++ paths, so a
-		// machine with diff.mnemonicPrefix or diff.noprefix set must not change the header shape
-		// underneath it (sty_75b76691 AC2).
-		patchOut, err := exec.Command("git", "-C", dir,
-			"-c", "diff.mnemonicPrefix=false",
-			"-c", "diff.noprefix=false",
-			"diff", "--src-prefix=a/", "--dst-prefix=b/", baseline).Output()
-		if err != nil {
-			return nil, "", "", fmt.Errorf("git diff %s: %w", baseline, err)
-		}
-		patch = string(patchOut)
 	}
 	return files, stat, patch, nil
 }
