@@ -154,6 +154,7 @@ Story or epic ids scope it as for pull.`,
 	snap.Flags().StringVar(&snapServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	snap.Flags().BoolVar(&snapForce, "force", false, "Upsert hosted rows even when the local copy or ledger is newer.")
 	group.AddCommand(snap)
+	group.AddCommand(newSyncWorkstateRechainCmd())
 
 	return group
 }
@@ -892,7 +893,7 @@ func orderLedgerRows(rows []hosted.WorkstateLedgerRow) []hosted.WorkstateLedgerR
 	return out
 }
 
-func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool, items []hosted.WorkstateItem, ledgerRows []hosted.WorkstateLedgerRow, force bool, now time.Time, out *storyOutcome) (applied []workitem.Item, nItems, nLedger, nKept int, err error) {
+func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool, items []hosted.WorkstateItem, ledgerRows []hosted.WorkstateLedgerRow, force bool, now time.Time, out *storyOutcome, chain *chainPull) (applied []workitem.Item, nItems, nLedger, nKept int, err error) {
 	for _, hi := range items {
 		area := workstateAreaForKind(hi.Kind)
 		if area == "" || !optIn[area] {
@@ -952,8 +953,15 @@ func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool,
 			nLedger++
 		}
 	}
+	// The events of a story are not on the page: the hosted chain of each story it
+	// applied is read before the rows are folded, so none is seeded with a genesis
+	// the hosted chain does not hold.
+	hostedChain, cerr := chain.materialize(ctx, a, optIn, applied, out, now)
+	if cerr != nil {
+		return applied, nItems, nLedger, nKept, fmt.Errorf("%w — re-run is safe (upsert-by-id)", cerr)
+	}
 	// The page's events are in: the rows it applied are now a cache of their chains.
-	if err := foldPulledStories(ctx, a, applied, force, now); err != nil {
+	if err := foldPulledStories(ctx, a, applied, hostedChain, force, now); err != nil {
 		return applied, nItems, nLedger, nKept, fmt.Errorf("%w — re-run is safe (upsert-by-id)", err)
 	}
 	return applied, nItems, nLedger, nKept, nil
@@ -970,13 +978,18 @@ func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool,
 // machine made (a ledger row is never rewritten), so the definition and tags the
 // hosted row carries are set back by an event of their own, after which the
 // rebuild lands them on the row.
-func foldPulledStories(ctx context.Context, a *app.App, applied []workitem.Item, force bool, now time.Time) error {
+//
+// A story whose hosted chain was read (hostedChain) is never seeded: its chain is
+// the hosted one, and a seed would fork it.
+func foldPulledStories(ctx context.Context, a *app.App, applied []workitem.Item, hostedChain map[string]bool, force bool, now time.Time) error {
 	for _, hosted := range applied {
 		if hosted.Kind != workitem.KindStory {
 			continue
 		}
-		if _, err := storyfold.SeedItem(ctx, a.Store.Ledger, hosted, storyfold.StatusFromChain, now); err != nil {
-			return fmt.Errorf("seed %s from the hosted row: %w", hosted.ID, err)
+		if !hostedChain[hosted.ID] {
+			if _, err := storyfold.SeedItem(ctx, a.Store.Ledger, hosted, storyfold.StatusFromChain, now); err != nil {
+				return fmt.Errorf("seed %s from the hosted row: %w", hosted.ID, err)
+			}
 		}
 		row, err := a.Store.Stories.Get(ctx, hosted.ID)
 		if err != nil {

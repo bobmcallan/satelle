@@ -48,12 +48,18 @@ type fakeChain struct {
 	// bareStale refuses a stale base without the StaleBase detail, as the server
 	// does when the detail is too large for the HTTP/2 trailers.
 	bareStale bool
+	// unreadable makes Read answer Unimplemented, as a server that predates the
+	// Read RPC does: a pull then has no hosted chain to take.
+	unreadable bool
 }
 
 // Read serves the events after after_id, and the story's latest id.
 func (c *fakeChain) Read(_ context.Context, req *syncpb.ReadRequest) (*syncpb.ReadResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.unreadable {
+		return nil, status.Error(codes.Unimplemented, "method Read not implemented")
+	}
 	chain := c.chains[chainKey(req.GetProject(), req.GetStoryId())]
 	events := chain
 	if after := req.GetAfterId(); after != "" {

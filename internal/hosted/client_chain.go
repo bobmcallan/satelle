@@ -210,20 +210,50 @@ func bareStaleBase(err error) bool {
 	return ok && st.Code() == codes.FailedPrecondition && staleBaseFromStatus(err) == nil
 }
 
+// ErrChainUnsupported is a server that has no Chain service (or no Read on it).
+var ErrChainUnsupported = errors.New("hosted: the server has no story chain service")
+
+// read is one Chain/Read of the events after after (the whole chain when empty).
+func (cc *ChainConn) read(ctx context.Context, project, storyID, after string) (*syncpb.ReadResponse, error) {
+	var out *syncpb.ReadResponse
+	err := cc.c.withGRPCAuth(ctx, func(ctx context.Context) error {
+		return retryTransient(ctx, func() (rpcErr error) {
+			out, rpcErr = cc.cli.Read(ctx, &syncpb.ReadRequest{Project: project, StoryId: storyID, AfterId: after}, chainCallOpts()...)
+			return rpcErr
+		})
+	})
+	return out, err
+}
+
+// ReadStory returns the story's hosted events after the event after, in chain
+// order (the whole chain when after is empty), and the story's latest event id,
+// empty for a story the server holds no events of. A server without the Chain
+// service is ErrChainUnsupported; an after the server does not know is the
+// server's refusal, for the caller to read again from the start.
+func (cc *ChainConn) ReadStory(ctx context.Context, project, storyID, after string) ([]ChainEvent, string, error) {
+	out, err := cc.read(ctx, project, storyID, after)
+	if err != nil {
+		if status.Code(err) == codes.Unimplemented {
+			return nil, "", ErrChainUnsupported
+		}
+		return nil, "", cc.c.mapSyncErr("Read", err)
+	}
+	events := make([]ChainEvent, 0, len(out.GetEvents()))
+	for _, e := range out.GetEvents() {
+		events = append(events, ChainEvent{ID: e.GetId(), BaseID: e.GetBaseId(), WorkflowVersion: e.GetWorkflowVersion(), Payload: e.GetPayload()})
+	}
+	latest := out.GetLatestId()
+	if latest == "" && len(events) > 0 {
+		latest = events[len(events)-1].ID
+	}
+	return events, latest, nil
+}
+
 // staleBaseByRead learns where the story stands by reading the events after base.
 // It returns nil when the story is still at base, so the refusal was not a stale
 // base. A base the server does not know is read again from the start.
 func (cc *ChainConn) staleBaseByRead(ctx context.Context, project, storyID, base string) (*StaleBaseError, error) {
-	read := func(after string) (*syncpb.ReadResponse, error) {
-		var out *syncpb.ReadResponse
-		err := cc.c.withGRPCAuth(ctx, func(ctx context.Context) error {
-			return retryTransient(ctx, func() (rpcErr error) {
-				out, rpcErr = cc.cli.Read(ctx, &syncpb.ReadRequest{Project: project, StoryId: storyID, AfterId: after}, chainCallOpts()...)
-				return rpcErr
-			})
-		})
-		return out, err
-	}
+	read := func(after string) (*syncpb.ReadResponse, error) { return cc.read(ctx, project, storyID, after) }
 	out, err := read(base)
 	missing := 0
 	if err == nil {

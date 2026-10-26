@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -12,10 +13,12 @@ import (
 )
 
 // schema is the evidence table, self-migrating (CREATE IF NOT EXISTS). No
-// UPDATE/DELETE path exists, so the log is append-only by construction — the one
-// exception is linkLegacyChains, which writes base_id once on rows that predate
-// the column and touches nothing else. base_id and workflow_hash are added to an
-// older table by Migrate (addColumns), so they are not part of any index here.
+// UPDATE path exists and the one DELETE is RemoveEvents, so the log is append-only
+// by construction — the exceptions are linkLegacyChains, which writes base_id once
+// on rows that predate the column and touches nothing else, and RemoveEvents,
+// which drops events a caller's guard names, to repair a seeded fork that was
+// never published. base_id and workflow_hash are added to an older table by
+// Migrate (addColumns), so they are not part of any index here.
 const schema = `
 CREATE TABLE IF NOT EXISTS evidence (
     id            TEXT PRIMARY KEY,
@@ -269,6 +272,20 @@ func versionInput(storyID string, src WorkflowSource) AppendInput {
 func versionRefs(storyID, hash string) json.RawMessage {
 	b, _ := json.Marshal(map[string]string{"workflow_version": storyID + ":" + hash})
 	return b
+}
+
+// IsVersionEvent reports whether e is a workflow_version event: the identity
+// versionRefs gives one, so the shape is written once, here.
+func IsVersionEvent(e Entry) bool {
+	if e.Kind != KindWorkflowVersion {
+		return false
+	}
+	var refs map[string]string
+	if json.Unmarshal(e.Refs, &refs) != nil {
+		return false
+	}
+	_, ok := refs["workflow_version"]
+	return ok
 }
 
 // recordVersion appends the version event for src to storyID's chain unless one
@@ -526,6 +543,66 @@ func (s *Store) Upsert(ctx context.Context, e Entry, now time.Time) (Entry, erro
 		e.BaseID = linked
 	}
 	return e, nil
+}
+
+// ErrRemoveRefused is RemoveEvents declining: nothing was removed.
+var ErrRemoveRefused = errors.New("ledger: remove refused")
+
+// RemoveEvents deletes the named events of a story and nothing else: the one
+// exception to the log being append-only, for repairing a chain that forked from
+// events never published (a seeded genesis the hosted chain has already moved
+// past). It runs in one transaction and removes nothing, returning
+// ErrRemoveRefused, when an id is not an event of the story, guard declines any of
+// them, or an event that stays builds on one that would go. The push cursor
+// needs no repair: its anchor check resets it when the row it names is gone, and
+// the events removed were never sent.
+func (s *Store) RemoveEvents(ctx context.Context, storyID string, ids []string, guard func(Entry) bool) error {
+	if strings.TrimSpace(storyID) == "" || len(ids) == 0 || guard == nil {
+		return fmt.Errorf("%w: a story, events and a guard are required", ErrRemoveRefused)
+	}
+	db, ok := s.db.(*sql.DB)
+	if !ok {
+		return fmt.Errorf("%w: not available inside a transaction", ErrRemoveRefused)
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("ledger: remove: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	inTx := s.WithTx(tx)
+	chain, err := inTx.storyEvents(ctx, storyID)
+	if err != nil {
+		return err
+	}
+	byID := make(map[string]Entry, len(chain))
+	for _, e := range chain {
+		byID[e.ID] = e
+	}
+	gone := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		e, found := byID[id]
+		if !found {
+			return fmt.Errorf("%w: %s is not an event of %s", ErrRemoveRefused, id, storyID)
+		}
+		if !guard(e) {
+			return fmt.Errorf("%w: %s (%s) is not an event the caller may remove", ErrRemoveRefused, id, e.Kind)
+		}
+		gone[id] = true
+	}
+	for _, e := range chain {
+		if !gone[e.ID] && gone[e.BaseID] {
+			return fmt.Errorf("%w: %s builds on %s", ErrRemoveRefused, e.ID, e.BaseID)
+		}
+	}
+	for id := range gone {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM evidence WHERE id = ? AND story_id = ?`, id, storyID); err != nil {
+			return fmt.Errorf("ledger: remove %s: %w", id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("ledger: remove: %w", err)
+	}
+	return nil
 }
 
 // ListByStory returns every entry for a story, oldest-first, optionally
@@ -809,7 +886,8 @@ type SeqEntry struct {
 // log is append-only and INSERT OR IGNORE, so within one database file rowid
 // grows with every insert whatever the row's created_at says — a row stamped
 // earlier than a previous push's high-water mark is still found
-// (sty_4a31e1ed). A position is only meaningful for the database file it was
+// (sty_4a31e1ed). RemoveEvents is the one deletion: a saved position whose anchor
+// row it removed fails the anchor check (IDAtSeq) and is dropped. A position is only meaningful for the database file it was
 // read from; pair a saved one with InstanceID and IDAtSeq. limit defaults to
 // 1000, hard-capped at 5000.
 func (s *Store) ListInsertedAfter(ctx context.Context, afterSeq int64, limit int) ([]SeqEntry, error) {

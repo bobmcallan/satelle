@@ -133,6 +133,9 @@ type snapshotPass struct {
 	keep  string
 	since string
 
+	// chain reads the hosted chain of each story a page applies; the caller closes it.
+	chain *chainPull
+
 	rep passReport
 }
 
@@ -156,7 +159,9 @@ func runPagedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer, 
 		a: a, errw: errw, server: server, project: project,
 		optIn: optIn, force: force, mode: mode, areas: areas, storeID: storeID,
 		keep: stored.Token, rep: passReport{Kind: passFull},
+		chain: newChainPull(client, server, project, a.RepoRoot, errw),
 	}
+	defer p.chain.close()
 	var opts hosted.SnapshotOptions
 	positioned := stored.Token != "" || stored.ResumePageToken != ""
 	discard := ""
@@ -283,7 +288,7 @@ func (p *snapshotPass) apply(ctx context.Context, pg hosted.SnapshotPage) error 
 		}
 	}
 	now := time.Now().UTC()
-	_, nItems, nLedger, nKept, err := upsertWorkstatePage(ctx, p.a, p.optIn, items, ledgerRows, p.force, now, &p.rep.Stories)
+	_, nItems, nLedger, nKept, err := upsertWorkstatePage(ctx, p.a, p.optIn, items, ledgerRows, p.force, now, &p.rep.Stories, p.chain)
 	p.rep.Items += nItems
 	p.rep.Ledger += nLedger
 	p.rep.Kept += nKept

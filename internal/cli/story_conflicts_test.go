@@ -41,7 +41,7 @@ func TestUpsertPageRecordsStoryConflictsNotIdenticalRows(t *testing.T) {
 	}
 
 	var out storyOutcome
-	_, nItems, _, nKept, err := upsertWorkstatePage(ctx, a, optIn, page, nil, false, newer, &out)
+	_, nItems, _, nKept, err := upsertWorkstatePage(ctx, a, optIn, page, nil, false, newer, &out, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestUpsertPageRecordsStoryConflictsNotIdenticalRows(t *testing.T) {
 	}
 
 	// A nil outcome is a caller with nowhere to record: it must not panic.
-	if _, _, _, _, err := upsertWorkstatePage(ctx, a, optIn, page, nil, false, newer, nil); err != nil {
+	if _, _, _, _, err := upsertWorkstatePage(ctx, a, optIn, page, nil, false, newer, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 }

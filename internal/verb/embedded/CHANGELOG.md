@@ -1,3 +1,16 @@
+## [0.0.760] - 2026-10-26
+
+### Fixed
+- A story pulled from the hosted project now arrives with its hosted event chain. `satelle sync workstate pull` reads each pulled story's chain from the server's Chain service and stores its events in chain order, keeping their ids and bases, before the story is folded. A pull therefore no longer seeds a local `workflow_version` and `definition_snapshot` for a story whose hosted chain has events, and the next push sends nothing for it. Before, a story created on one machine and pulled to another was given its own two-event history on the second machine, and every later push was refused with "moved since its start: re-read and decide". A server without the Chain service is skipped with one warning, and pulls behave as before. (sty_9b1dcf4b)
+
+### Added
+- `satelle sync workstate rechain [id...]` repairs a story that an earlier pull forked: when its only local-only events are the ones seeding made, it removes exactly those, takes the hosted chain, rebuilds the story and clears its conflict. A story with any other local-only event is refused by name and left unchanged. With no ids it checks every story recorded in conflict; `--dry-run` lists what it would do. It never pushes. A pull that finds such a fork names the story for `rechain`. The ledger's append-only rule has this one guarded exception: only events the caller's guard confirms as seeded, and on which no remaining event builds, can be removed. (sty_9b1dcf4b)
+
+## [serve-v0.0.215] - 2026-10-26
+
+### Changed
+- The service binary carries the ledger's guarded removal of seeded events. (sty_9b1dcf4b)
+
 ## [0.0.759] - 2026-10-25
 
 ### Added

@@ -4,8 +4,9 @@
 //
 // Ported from satellites' internal/ledger, reimplemented against sqlite
 // (modernc.org/sqlite, no cgo) with the Postgres-specific surface dropped:
-// no append-only triggers (no UPDATE/DELETE methods exist, so the table is
-// append-only by construction), no AppendMany/EngagementSeqExists (server-sync
+// no append-only triggers (no UPDATE method exists and the one deletion is
+// Store.RemoveEvents, a guarded repair of a seeded fork that was never published,
+// so the table is append-only by construction), no AppendMany/EngagementSeqExists (server-sync
 // concerns, off in the MVP), and `?` placeholders instead of `$N`. SQL is kept
 // libSQL-compatible so a future driver swap is mechanical.
 package ledger

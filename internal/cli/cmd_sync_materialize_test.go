@@ -31,7 +31,7 @@ func testApp(t *testing.T) *app.App {
 // story views.
 func materializeWorkstate(ctx context.Context, a *app.App, optIn map[string]bool, items []hosted.WorkstateItem, ledgerRows []hosted.WorkstateLedgerRow, force bool) (nItems, nLedger, nKept int, err error) {
 	now := time.Now().UTC()
-	_, nItems, nLedger, nKept, err = upsertWorkstatePage(ctx, a, optIn, items, ledgerRows, force, now, nil)
+	_, nItems, nLedger, nKept, err = upsertWorkstatePage(ctx, a, optIn, items, ledgerRows, force, now, nil, nil)
 	if err != nil {
 		return nItems, nLedger, nKept, err
 	}

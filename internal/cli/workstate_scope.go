@@ -203,8 +203,10 @@ func runScopedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer,
 	p := &snapshotPass{
 		a: a, errw: errw, server: server, project: project,
 		optIn: optIn, force: force, mode: mode,
-		rep: passReport{Kind: passScoped},
+		rep:   passReport{Kind: passScoped},
+		chain: newChainPull(client, server, project, a.RepoRoot, errw),
 	}
+	defer p.chain.close()
 	// fetchScoped asks the server for ids and holds every page, refusing a server
 	// that ignores the scope, a rejected page token and an id the server lacks.
 	fetchScoped := func(sc scopeResolution) ([]hosted.SnapshotPage, map[string]hosted.WorkstateItem, error) {

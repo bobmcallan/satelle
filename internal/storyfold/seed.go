@@ -74,6 +74,41 @@ func SeedItem(ctx context.Context, led *ledger.Store, it workitem.Item, src Stat
 	return added, nil
 }
 
+// IsSeededEvent reports whether e is an event SeedItem makes: the definition
+// snapshot it appends, or the workflow_version event the ledger puts ahead of it.
+func IsSeededEvent(e ledger.Entry) bool {
+	if ledger.IsVersionEvent(e) {
+		return true
+	}
+	if e.Kind != ledger.KindDefinitionSnapshot || e.Actor != snapshotActor {
+		return false
+	}
+	var refs map[string]string
+	return json.Unmarshal(e.Refs, &refs) == nil && refs[ledger.KindDefinitionSnapshot] == e.StoryID
+}
+
+// SeededEvents names the events of a chain that are only a seeded genesis: the
+// ones localOnly marks (events the hosted copy of the story does not hold), in
+// chain order. ok is false when there are none, when any of them is not one
+// SeedItem makes, or when they carry no definition snapshot — a workflow_version
+// event alone is real work's, never a seed's.
+func SeededEvents(chain []ledger.Entry, localOnly map[string]bool) (ids []string, ok bool) {
+	snapshot := false
+	for _, e := range chain {
+		if !localOnly[e.ID] {
+			continue
+		}
+		if !IsSeededEvent(e) {
+			return nil, false
+		}
+		if e.Kind == ledger.KindDefinitionSnapshot {
+			snapshot = true
+		}
+		ids = append(ids, e.ID)
+	}
+	return ids, snapshot
+}
+
 // unseededStories finds the stories whose chain defines no title: none of their
 // events is a definition_snapshot or a story_created that carries one. One
 // indexed query, so a database with nothing to seed pays no write lock.
