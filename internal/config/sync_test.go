@@ -34,6 +34,28 @@ func TestHoldUnpushed(t *testing.T) {
 	}
 }
 
+// A satelle.toml still carrying the retired [sync] hold_stale_after key (hosted
+// holds are gone, sty_40853d02) loads without error, the key disturbs no area
+// and is never minted as one.
+func TestRetiredHoldKeyLoadsSilently(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "satelle.toml")
+	if err := os.WriteFile(path, []byte("[sync]\nstale_after = \"24h\"\nhold_stale_after = \"2h\"\nstories = \"personal\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatalf("a config carrying the retired key must load: %v", err)
+	}
+	if sc, err := ScopeFor(cfg, "stories"); err != nil || sc == LocalScope {
+		t.Errorf("stories scope = %v, %v; the retired key must not disturb the areas", sc, err)
+	}
+	for _, a := range SyncAreas {
+		if a == "hold_stale_after" {
+			t.Error("hold_stale_after minted as a sync area")
+		}
+	}
+}
+
 // A bare TOML boolean loads, the overlay wins per key, and hold_unpushed is a
 // reserved key rather than a sync area.
 func TestSyncTableAcceptsBareBoolean(t *testing.T) {

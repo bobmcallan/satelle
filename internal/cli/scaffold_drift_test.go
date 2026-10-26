@@ -301,46 +301,21 @@ func TestOrdinaryCommandsWarnOnStaleScaffolding(t *testing.T) {
 		}
 	})
 
-	// sty_6e143870: the shipped Breaking releases (0.0.385, 0.0.401, 0.0.568) all
-	// need manual migration and none declares `init-heals:`, so a stamp behind them
-	// warns once per session and every ordinary command runs.
-	t.Run("warns once per session and runs across a manual-migration Breaking release", func(t *testing.T) {
-		driftedRepo(t, "0.0.100") // the shipped 0.0.385 Breaking entry is in range
-		t.Setenv(config.SessionEnv, "sess-breaking")
-		stdout, stderr, err := runRootSplit(t, "", "story", "create", "--title", "behind", "--tags", "a")
-		if err != nil {
-			t.Fatalf("story create must run behind a manual-migration Breaking release: %v\n%s", err, stderr)
+	// sty_642275eb: 0.0.761 is the shipped Breaking release that declares
+	// `init-heals:` (`satelle init` deletes the retired [sync] key), so a stamp
+	// behind it is refused with init as the heal. The warn-once path for manual
+	// migrations is covered on synthetic entries in breaking_warn_test.go and
+	// drift_test.go; the shipped corpus no longer reaches it from an old stamp.
+	t.Run("refuses behind an init-heals Breaking release — init is the heal", func(t *testing.T) {
+		driftedRepo(t, "0.0.100") // the shipped 0.0.761 Breaking entry is in range
+		stdout, _, err := runRootSplit(t, "", "story", "create", "--title", "behind", "--tags", "a")
+		if err == nil {
+			t.Fatalf("story create must refuse behind an init-heals Breaking release:\n%s", stdout)
 		}
-		id := storyIDFromJSON(t, stdout)
-		for _, want := range []string{"BREAKING release", "0.0.385", "satelle migrate", "Commands still run", "re-stamps"} {
-			if !strings.Contains(stderr, want) {
-				t.Errorf("first command in the session must print the remediation, missing %q:\n%s", want, stderr)
+		for _, want := range []string{"BREAKING release 0.0.761", "init-heals:", "Run `satelle init` to heal."} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("refusal missing %q: %v", want, err)
 			}
-		}
-		if strings.Contains(stdout, "BREAKING release") {
-			t.Errorf("the warning must stay off stdout:\n%s", stdout)
-		}
-		for _, args := range [][]string{
-			{"story", "list"},
-			{"story", "get", id},
-			{"story", "set", id, "--priority", "high"},
-			{"ledger", "list", "--story", id},
-			{"sync"},
-		} {
-			_, stderr, err := runRootSplit(t, "", args...)
-			if err != nil {
-				t.Errorf("%v must run behind a manual-migration Breaking release: %v\n%s", args, err, stderr)
-				continue
-			}
-			if strings.Contains(stderr, "BREAKING release") {
-				t.Errorf("%v: the warning must print once per session, saw it again:\n%s", args, stderr)
-			}
-		}
-		// A fresh session is told again.
-		t.Setenv(config.SessionEnv, "sess-other")
-		_, stderr, err = runRootSplit(t, "", "story", "list")
-		if err != nil || !strings.Contains(stderr, "BREAKING release") {
-			t.Errorf("a new session must be warned again: err=%v\n%s", err, stderr)
 		}
 	})
 

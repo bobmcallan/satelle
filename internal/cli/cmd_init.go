@@ -241,6 +241,13 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 		if ferr != nil {
 			return fmt.Errorf("init: seed [fix_lane]: %w", ferr)
 		}
+		retiredChanged, rerr := removeRetiredSyncKey(dataDir)
+		if rerr != nil {
+			return fmt.Errorf("init: remove retired [sync] key: %w", rerr)
+		}
+		if retiredChanged {
+			fmt.Fprintf(out, "~ %s (removed a retired [sync] key)\n", config.DefaultDataDir+"/"+config.ConfigName)
+		}
 		if fixLaneChanged {
 			fmt.Fprintf(out, "~ %s ([fix_lane] seeded — product_surface is empty, so the fix lane is closed until you declare it)\n", config.DefaultDataDir+"/"+config.ConfigName)
 		}

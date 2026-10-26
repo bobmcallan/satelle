@@ -399,12 +399,49 @@ func TestHealStaleAfterSeedsMissingKey(t *testing.T) {
 	}
 }
 
-// sty_40853d02: [sync] hold_stale_after is retired. A fresh init scaffold does not
-// write it, and migrate removes it from an existing config, leaving every other
-// line (comments and the other [sync] keys) as it was.
-func TestInitScaffoldDoesNotSeedHoldStaleAfter(t *testing.T) {
-	if strings.Contains(scaffoldToml, "hold_stale_after") {
-		t.Error("a fresh init scaffold must not mention the retired hold_stale_after")
+// sty_642275eb: [sync] hold_stale_after is retired. init on an empty repo never
+// writes it, and init over an existing config removes it, leaving every other
+// line (comments and the other [sync] keys) as it was; migrate does the same.
+func TestInitEmptyRepoWritesNoRetiredSyncKey(t *testing.T) {
+	repo := t.TempDir()
+	if err := runInitTest(t, io.Discard, repo); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "hold_stale_after") {
+		t.Errorf("init wrote the retired key:\n%s", got)
+	}
+}
+
+func TestInitRemovesRetiredHoldStaleAfter(t *testing.T) {
+	repo := t.TempDir()
+	dataDir := filepath.Join(repo, ".satelle")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dataDir, "satelle.toml")
+	before := "# keep me\n[sync]\nstale_after = \"24h\"\nhold_stale_after = \"30m\"\nstories = \"personal\"\n\n[review]\ngate_create = false\n"
+	if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := runInitTest(t, &out, repo); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	if strings.Contains(string(got), "hold_stale_after") {
+		t.Fatalf("init left the retired key in place:\n%s", got)
+	}
+	for _, keep := range []string{"# keep me\n", "stale_after = \"24h\"\n", "stories = \"personal\"\n", "[review]\ngate_create = false\n"} {
+		if !strings.Contains(string(got), keep) {
+			t.Errorf("init disturbed %q:\n%s", keep, got)
+		}
+	}
+	if !strings.Contains(out.String(), "removed a retired [sync] key") {
+		t.Errorf("init output does not report the removal:\n%s", out.String())
 	}
 }
 
@@ -417,14 +454,14 @@ func TestMigrateRemovesRetiredHoldStaleAfter(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := planMigrate(config.Config{}, t.TempDir(), dir)
-	if !p.HoldStaleAfterRetire || p.StaleAfter {
-		t.Fatalf("plan = StaleAfter %v HoldStaleAfterRetire %v; want only the retired key to remove", p.StaleAfter, p.HoldStaleAfterRetire)
+	if !p.RetiredSyncKeyRemove || p.StaleAfter {
+		t.Fatalf("plan = StaleAfter %v RetiredSyncKeyRemove %v; want only the retired key to remove", p.StaleAfter, p.RetiredSyncKeyRemove)
 	}
 	if p.empty() {
 		t.Fatal("plan must not be empty while the retired key is set")
 	}
 
-	changed, err := retireHoldStaleAfter(dir)
+	changed, err := removeRetiredSyncKey(dir)
 	if err != nil || !changed {
 		t.Fatalf("expected the key removed: changed=%v err=%v", changed, err)
 	}
@@ -433,10 +470,10 @@ func TestMigrateRemovesRetiredHoldStaleAfter(t *testing.T) {
 	if string(got) != want {
 		t.Fatalf("config after migrate:\n%s\nwant:\n%s", got, want)
 	}
-	if changed, err = retireHoldStaleAfter(dir); err != nil || changed {
+	if changed, err = removeRetiredSyncKey(dir); err != nil || changed {
 		t.Fatalf("second run must change nothing: changed=%v err=%v", changed, err)
 	}
-	if p := planMigrate(config.Config{}, t.TempDir(), dir); p.HoldStaleAfterRetire {
+	if p := planMigrate(config.Config{}, t.TempDir(), dir); p.RetiredSyncKeyRemove {
 		t.Error("the plan still asks to remove a key that is gone")
 	}
 }

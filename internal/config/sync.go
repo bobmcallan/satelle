@@ -87,20 +87,6 @@ const syncStaleAfterKey = "stale_after"
 // not published. Reserved so it is never treated as an area.
 const syncHoldUnpushedKey = "hold_unpushed"
 
-// RetiredSyncHoldStaleAfterKey is the [sync] key that once set how long a story's
-// hosted holder could go unseen before it was presumed dead (sty_6e5fc41c).
-// Hosted holds are gone (sty_40853d02) and nothing reads it. It stays a reserved
-// key so a config still carrying it loads — it is never minted as a sync area —
-// and `satelle doctor` names it as retired; `satelle migrate` removes it.
-const RetiredSyncHoldStaleAfterKey = "hold_stale_after"
-
-// RetiredSyncKeyPresent reports whether cfg's [sync] table still carries the
-// retired hold_stale_after key.
-func RetiredSyncKeyPresent(cfg Config) bool {
-	_, ok := cfg.Sync[RetiredSyncHoldStaleAfterKey]
-	return ok
-}
-
 // WorkstateAreas are the [sync] areas that form the work-state kind.
 var WorkstateAreas = []string{"stories", "executions", "ledger"}
 
@@ -108,7 +94,7 @@ var WorkstateAreas = []string{"stories", "executions", "ledger"}
 // never looks them up; they must never be minted as SyncAreas.
 var reservedSyncKeys = map[string]bool{
 	syncAllKey: true, syncServerKey: true, syncProjectKey: true, syncWorkspaceKey: true,
-	syncStaleAfterKey: true, syncHoldUnpushedKey: true, RetiredSyncHoldStaleAfterKey: true,
+	syncStaleAfterKey: true, syncHoldUnpushedKey: true,
 }
 
 // SyncTable is the [sync] table: area name -> scope, plus the reserved

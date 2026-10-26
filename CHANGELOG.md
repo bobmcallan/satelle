@@ -1,3 +1,14 @@
+## [0.0.761] - 2026-10-26
+
+### Breaking
+- **Location holds are removed from the client entirely, and `satelle doctor` no longer reports the retired `[sync] hold_stale_after` key.** The key has been ignored since hosted holds went in 0.0.737. A `satelle.toml` that still carries it loads without error and without a finding. The server counterpart, removing the hold refusal from Apply, is satelle-server sty_595b95bc. (sty_642275eb)
+- init-heals: `satelle init` (or `satelle migrate --yes`) deletes the retired key and leaves every other line of `satelle.toml` as it was.
+
+## [serve-v0.0.216] - 2026-10-26
+
+### Changed
+- The service binary no longer carries the retired `[sync] hold_stale_after` key or its doctor finding. (sty_642275eb)
+
 ## [0.0.760] - 2026-10-26
 
 ### Fixed

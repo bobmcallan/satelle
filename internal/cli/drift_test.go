@@ -292,27 +292,37 @@ func TestShippedChangelogMarksDOTRetirement(t *testing.T) {
 // accounting for who it reaches.
 //
 // The expectations MOVE with each Breaking release, and they must — a `###
-// Breaking` marker exists to tell the repos below it. NONE declares
-// `init-heals:`, because every migration they name is manual — so no stamp is
-// refused, and the ones below the newest marker are warned:
+// Breaking` marker exists to tell the repos below it. Only 0.0.761 declares
+// `init-heals:` (it removes a config key init deletes itself), so every stamp
+// below it is refused with init as the heal; the earlier releases' migrations
+// are manual, and are named in that refusal:
+//
+//   - 0.0.761, location holds removed from the client (sty_642275eb). Healed:
+//     `satelle init` deletes the retired [sync] hold_stale_after key.
 //
 //   - 0.0.385, the DOT retirement. RETROACTIVE (sty_b36c051c) — added after the
 //     fact, so it can only reach repos that were already broken.
+//
 //   - 0.0.401, the route source becoming TOML (sty_81bb0dde). A REAL breaking
 //     release: every repo whose route source is still markdown stops resolving
 //     on upgrade, and being told so on the next command — rather than at work
 //     time, three gates in — is the entire point of the marker.
+//
 //   - 0.0.568, the removal of every harness but claude and grok (sty_941e60cb):
 //     a repo still carrying scaffolding or bindings for a removed harness must
 //     be told to clean them up by hand.
+//
 //   - 0.0.575, reviewer isolation (sty_ef3efb51). Manual: change the reviewer
 //     binding; init does not rewrite it.
+//
 //   - 0.0.607, story estimate no longer accepts --usd (sty_2f6c7df5). Manual:
 //     pass --fresh-input/--output (or legacy --tokens/--time). Init does not
 //     rewrite scripts or stored tags.
+//
 //   - 0.0.665, configuration validated before push (sty_89b9df20). Manual:
 //     move machine-specific agent fields into agents.local.toml; init does not
 //     move them.
+//
 //   - 0.0.676, satelle no longer manages cloud identity (sty_c00782a3). Manual:
 //     delete a `cloud` table from the catalog or a repo binding; init does not
 //     edit them.
@@ -325,7 +335,7 @@ func TestShippedChangelogSparesCurrentRepos(t *testing.T) {
 	const future = "9.9.9"
 	cases := []struct {
 		deployed string
-		warned   bool
+		refused  bool
 		why      string
 	}{
 		{"0.0.380", true, "predates the DOT retirement — already broken, must be told"},
@@ -345,8 +355,11 @@ func TestShippedChangelogSparesCurrentRepos(t *testing.T) {
 		{"0.0.675", true, "the release just before the cloud table removal"},
 		{"0.0.676", true, "stamped at the cloud table removal, but predates the pattern syntax at 0.0.678"},
 		{"0.0.677", true, "the release just before the pattern syntax"},
-		{"0.0.678", false, "stamped AT the newest Breaking release"},
-		{"0.0.679", false, "past it"},
+		{"0.0.678", true, "stamped at the pattern syntax, but predates the location-hold removal at 0.0.761"},
+		{"0.0.759", true, "predates the location-hold removal"},
+		{"0.0.760", true, "the release just before the location-hold removal — released without it, so it must be refused until init"},
+		{"0.0.761", false, "stamped AT the newest Breaking release"},
+		{"0.0.762", false, "past it"},
 	}
 	for _, c := range cases {
 		entries, err := verb.ChangelogRange(c.deployed, future)
@@ -354,14 +367,14 @@ func TestShippedChangelogSparesCurrentRepos(t *testing.T) {
 			t.Fatal(err)
 		}
 		bw, derr := breakingDrift(c.deployed, future, entries)
-		if derr != nil {
-			t.Errorf("stamp %s (%s): no shipped release declares init-heals, so nothing may refuse:\n%v", c.deployed, c.why, derr)
+		if bw != nil {
+			t.Errorf("stamp %s (%s): a range with an init-heals release refuses, never warns:\n%s", c.deployed, c.why, bw.Text)
 		}
-		if c.warned && bw == nil {
-			t.Errorf("stamp %s (%s): want a warning, got none", c.deployed, c.why)
+		if c.refused && (derr == nil || !strings.Contains(derr.Error(), "Run `satelle init` to heal.")) {
+			t.Errorf("stamp %s (%s): want a refusal naming `satelle init` as the heal, got %v", c.deployed, c.why, derr)
 		}
-		if !c.warned && bw != nil {
-			t.Errorf("stamp %s (%s): must be quiet:\n%s", c.deployed, c.why, bw.Text)
+		if !c.refused && derr != nil {
+			t.Errorf("stamp %s (%s): must be quiet:\n%v", c.deployed, c.why, derr)
 		}
 	}
 }

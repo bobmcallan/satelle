@@ -220,16 +220,6 @@ func TestApplyOmitsLocationWhenUnset(t *testing.T) {
 	}
 }
 
-// sty_40853d02: a "held by location" refusal from a server that still has holds
-// is an ordinary Apply failure — the client has no hold concept to map it to.
-func TestMapGRPCErrHeldRefusalIsPlainError(t *testing.T) {
-	st := status.New(codes.FailedPrecondition, "workstate: sty_h held by location loc_other_bbbb (desk), last seen 2026-09-01T00:00:00Z")
-	err := mapGRPCErr("Apply", st.Err())
-	if err == nil || !strings.Contains(err.Error(), "held by location loc_other_bbbb") {
-		t.Fatalf("err = %v, want the server's message carried through", err)
-	}
-}
-
 func TestApplyTransportError(t *testing.T) {
 	store := &memStore{}
 	_ = store.Save(Credential{ServerURL: "http://hosted.example", AccessToken: "tok", RefreshToken: "r"})
