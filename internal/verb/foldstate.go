@@ -56,6 +56,14 @@ func foldRoute(ctx context.Context, row workitem.Item, chain []ledger.Entry) sto
 	return routeFor(ctx, storyfold.Overlay(row, st))
 }
 
+// FoldChain folds a chain that is not the local one (a hosted chain decoded to
+// entries) with the route FoldStory would choose, so the status it reports is the
+// status the story would have if that chain were its own.
+func FoldChain(ctx context.Context, row workitem.Item, chain []ledger.Entry) storyfold.State {
+	st, _ := storyfold.Fold(chain, foldRoute(ctx, row, chain))
+	return st
+}
+
 // FoldStory folds row's chain read from led. The route that classifies park
 // states is chosen from the story as its chain says it is, not as the row says,
 // so a corrupted row cannot steer its own fold.

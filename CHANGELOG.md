@@ -1,3 +1,8 @@
+## [0.0.766] - 2026-10-27
+
+### Fixed
+- `satelle sync workstate rechain` discards a local `status_reconcile` event when the status it set is the status the hosted chain folds to, so a story whose row `satelle story reconcile --repair` repaired can still be put on its hosted chain. Before, that event was a local event the hosted chain lacks that is not a seeded genesis, and the story was refused ("local events the hosted chain lacks are not only a seeded genesis: evt_… (status_reconcile)", backelle sty_4be32144) although the event's only effect is a status the hosted fold already reaches; its push stayed refused as moved since its start. The hosted chain is folded with the same route the local fold uses. A `status_reconcile` that set a different status is refused by name with both statuses (`local status_reconcile evt_… sets status in_progress but the hosted chain folds to done`) and the chain is left unchanged; one that repaired no status is still local work. `--dry-run` reports the same outcome as the real run, and the report line counts the reconcile events removed beside the seeded ones. (sty_7f977031)
+
 ## [0.0.765] - 2026-10-27
 
 ### Fixed

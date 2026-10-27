@@ -10,6 +10,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/verb"
 )
 
 // publishedElsewhere has one checkout create a story with a multi-event chain and push
@@ -25,6 +26,13 @@ func publishedElsewhere(t *testing.T) (ts *httptest.Server, f *fakeWorkstateServ
 // publishedStories is publishedElsewhere for several stories, one per title.
 func publishedStories(t *testing.T, titles ...string) (ts *httptest.Server, f *fakeWorkstateServer, ids []string, wants map[string][]ledger.Entry, repo string) {
 	t.Helper()
+	return publishedStoriesWith(t, nil, titles...)
+}
+
+// publishedStoriesWith is publishedStories with extra events appended to each
+// story's chain, after its comments, before it is published.
+func publishedStoriesWith(t *testing.T, extra func(id string) []ledger.AppendInput, titles ...string) (ts *httptest.Server, f *fakeWorkstateServer, ids []string, wants map[string][]ledger.Entry, repo string) {
+	t.Helper()
 	ts, f = newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
 	workstateRepo(t, holdOffToml)
@@ -37,6 +45,21 @@ func publishedStories(t *testing.T, titles ...string) (ts *httptest.Server, f *f
 				if _, err := db.Ledger.Append(context.Background(), ledger.AppendInput{StoryID: id, Kind: ledger.KindComment, Actor: "bob", Body: body}, time.Now()); err != nil {
 					t.Fatal(err)
 				}
+			}
+			if extra == nil {
+				continue
+			}
+			for _, in := range extra(id) {
+				if _, err := db.Ledger.Append(context.Background(), in, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			row, err := db.Stories.Get(context.Background(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := verb.RebuildRow(context.Background(), db.Stories, db.Ledger, row, time.Now()); err != nil {
+				t.Fatal(err)
 			}
 		}
 	})

@@ -171,6 +171,80 @@ func TestRechainRefusesMidChainLocalWork(t *testing.T) {
 	}
 }
 
+// reconciledFork is the sty_4be32144 shape: a story whose hosted chain folds to
+// done, forked by an old pull (a seeded pair in the middle of its local chain) and
+// then repaired by "story reconcile --repair", which left a status_reconcile to
+// reconciledTo after the pair.
+func reconciledFork(t *testing.T, reconciledTo string) (ts *httptest.Server, id string, want []ledger.Entry, repo string) {
+	t.Helper()
+	ts, f, ids, wants, repo := publishedStoriesWith(t, func(id string) []ledger.AppendInput {
+		return []ledger.AppendInput{{StoryID: id, Kind: ledger.KindStatusTransition, Actor: "bob", Body: "backlog → done", Payload: json.RawMessage(`{"from":"backlog","to":"done"}`)}}
+	}, "reconciled")
+	forkAll(t, ts, f)
+	id, want = ids[0], wants[ids[0]]
+	r := reconcile("evt_reconcile", "status", reconciledTo)
+	r.StoryID = id
+	setLocalChain(t, id, relinked(spliced(want[:2], localChain(t, id), []ledger.Entry{r}, want[2:])...))
+	if got := localChain(t, id); !slices.Contains(idsOf(got), r.ID) || len(got) <= len(want)+1 {
+		t.Fatalf("fixture chain = %v, want the seeded pair and the reconcile among the hosted events", idsOf(got))
+	}
+	return ts, id, want, repo
+}
+
+// sty_7f977031 AC1, AC3: a local status_reconcile to the status the hosted chain
+// folds to is discarded with the seeded pair; the dry run reports what the run does
+// and changes nothing, and the story then pushes nothing.
+func TestRechainDiscardsMatchingStatusReconcile(t *testing.T) {
+	ts, id, want, repo := reconciledFork(t, "done")
+	before := chainShape(localChain(t, id))
+
+	dryOut, err := runRoot(t, "sync", "workstate", "rechain", id, "--dry-run", "--server", ts.URL)
+	if err != nil || !strings.Contains(dryOut, "would rechain "+id) {
+		t.Fatalf("rechain --dry-run = %v\n%s", err, dryOut)
+	}
+	if got := chainShape(localChain(t, id)); !slices.Equal(got, before) {
+		t.Fatalf("--dry-run changed the chain: %v, want %v", got, before)
+	}
+	runOut, err := runRoot(t, "sync", "workstate", "rechain", id, "--server", ts.URL)
+	if err != nil || !strings.Contains(runOut, "rechained "+id) || !strings.Contains(runOut, "1 reconcile") {
+		t.Fatalf("rechain = %v\n%s, want the reconcile counted", err, runOut)
+	}
+	if dry, run := rechainOutcomes(t, dryOut), rechainOutcomes(t, runOut); dry[id] != run[id] {
+		t.Errorf("dry run says %q, run says %q", dry[id], run[id])
+	}
+	sameChain(t, localChain(t, id), want)
+	if g, w := chainShape(localChain(t, id)), chainShape(want); !slices.Equal(g, w) {
+		t.Errorf("bases after rechain = %v, want %v", g, w)
+	}
+	if c := storyConflicts(t, repo); len(c) != 0 {
+		t.Errorf("conflicts after rechain = %v, want none", c)
+	}
+}
+
+// sty_7f977031 AC2, AC3: a local status_reconcile to a status the hosted chain does
+// not fold to refuses the story by name with both statuses and leaves its chain as
+// it was, whether run or dry-run, and each says the same.
+func TestRechainRefusesMismatchedStatusReconcile(t *testing.T) {
+	ts, id, _, _ := reconciledFork(t, "in_progress")
+	before := chainShape(localChain(t, id))
+
+	var reasons []string
+	for _, args := range [][]string{{"--dry-run"}, {}} {
+		out, err := runRoot(t, append([]string{"sync", "workstate", "rechain", id, "--server", ts.URL}, args...)...)
+		reason := rechainOutcomes(t, out)[id]
+		if err == nil || !strings.HasPrefix(reason, "refuse: ") || !strings.Contains(reason, "evt_reconcile sets status in_progress but the hosted chain folds to done") {
+			t.Fatalf("rechain %v = %v\n%s, want the story refused naming both statuses", args, err, out)
+		}
+		reasons = append(reasons, reason)
+		if got := chainShape(localChain(t, id)); !slices.Equal(got, before) {
+			t.Errorf("rechain %v changed the chain: %v, want %v", args, got, before)
+		}
+	}
+	if reasons[0] != reasons[1] {
+		t.Errorf("dry run says %q, run says %q", reasons[0], reasons[1])
+	}
+}
+
 // sty_8fc70019 AC3, AC4: over one set of stories in every shape, the dry run reports
 // each story as the real run then does, each exactly once, and exits non-zero for
 // the refusals in both.
@@ -330,6 +404,15 @@ func seedEvents(version, snapshot, base string) []ledger.Entry {
 	return []ledger.Entry{v, s}
 }
 
+// reconcile is the status_reconcile event "story reconcile --repair" appends: the
+// one field it repaired and the chain value it rebuilt the row to.
+func reconcile(id, field, chain string) ledger.Entry {
+	e := ent(id, "", ledger.KindStatusReconcile)
+	e.Actor = "reconcile"
+	e.Payload = json.RawMessage(`{"fields":[{"field":"` + field + `","row":"in_progress","chain":"` + chain + `"}]}`)
+	return e
+}
+
 func hev(id, base string) hosted.ChainEvent { return hosted.ChainEvent{ID: id, BaseID: base} }
 
 func hostedOf(ids ...string) []hosted.ChainEvent {
@@ -360,8 +443,41 @@ func TestPlanRechain(t *testing.T) {
 		outcome      string
 		remove, take []string
 		seeded       int
+		reconciled   int
+		hostedStatus string // what the hosted chain folds to
 		reason       string
 	}{
+		{
+			// sty_7f977031 AC1: the seeded pair mid-chain, a status_reconcile to done
+			// after it, and a hosted chain that folds to done.
+			name:         "mid-chain seed and a status_reconcile to the hosted status",
+			local:        relinked(spliced([]ledger.Entry{a, b}, seeds, []ledger.Entry{reconcile("r", "status", "done")}, []ledger.Entry{ent("c", "", ledger.KindComment), ent("d", "", ledger.KindComment)})...),
+			hosted:       hostedOf("a", "b", "c", "d"),
+			hostedStatus: "done",
+			outcome:      rechainDo, remove: []string{"v", "s", "r", "c", "d"}, take: []string{"c", "d"}, seeded: 2, reconciled: 1,
+		},
+		{
+			name:         "a status_reconcile to the hosted status alone",
+			local:        relinked(a, b, reconcile("r", "status", "done")),
+			hosted:       hostedOf("a", "b"),
+			hostedStatus: "done",
+			outcome:      rechainDo, remove: []string{"r"}, reconciled: 1,
+		},
+		{
+			// sty_7f977031 AC2: a different status is refused with both.
+			name:         "a status_reconcile to another status is refused with both",
+			local:        relinked(spliced([]ledger.Entry{a, b}, seeds, []ledger.Entry{reconcile("r", "status", "in_progress")})...),
+			hosted:       hostedOf("a", "b"),
+			hostedStatus: "done",
+			outcome:      rechainRefused, reason: "local status_reconcile r sets status in_progress but the hosted chain folds to done",
+		},
+		{
+			name:         "a status_reconcile that repaired no status is local work",
+			local:        relinked(a, b, reconcile("r", "title", "t")),
+			hosted:       hostedOf("a", "b"),
+			hostedStatus: "done",
+			outcome:      rechainRefused, reason: "not only a seeded genesis: r (status_reconcile)",
+		},
 		{
 			// The seeded pair sits after the first hosted events and a hosted event is
 			// linked onto it, with a child whose base is the hosted one.
@@ -421,15 +537,15 @@ func TestPlanRechain(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := planRechain(tc.local, tc.hosted)
+			got := planRechain(tc.local, tc.hosted, func() (string, error) { return tc.hostedStatus, nil })
 			if got.outcome != tc.outcome || !strings.Contains(got.reason, tc.reason) {
 				t.Fatalf("plan = %q %q, want %q containing %q", got.outcome, got.reason, tc.outcome, tc.reason)
 			}
 			if got.outcome == rechainRefused {
 				return
 			}
-			if !slices.Equal(got.remove, tc.remove) || !slices.Equal(hostedIDs(got.take), tc.take) || got.seeded != tc.seeded {
-				t.Errorf("remove %v take %v seeded %d, want %v %v %d", got.remove, hostedIDs(got.take), got.seeded, tc.remove, tc.take, tc.seeded)
+			if !slices.Equal(got.remove, tc.remove) || !slices.Equal(hostedIDs(got.take), tc.take) || got.seeded != tc.seeded || len(got.reconciled) != tc.reconciled {
+				t.Errorf("remove %v take %v seeded %d reconciled %d, want %v %v %d %d", got.remove, hostedIDs(got.take), got.seeded, len(got.reconciled), tc.remove, tc.take, tc.seeded, tc.reconciled)
 			}
 			// Nothing that stays builds on an event that goes, so the ledger cannot
 			// refuse the removal.

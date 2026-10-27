@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/storyfold"
 	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 func newSyncWorkstateRechainCmd() *cobra.Command {
@@ -32,8 +34,9 @@ of it is refused.
 
 It keeps the start of the local chain the hosted chain shares event for event,
 replaces the rest with the hosted events, moves the push head to the hosted
-latest and clears the conflict. It never pushes. A story with a local event the
-hosted chain lacks that is not seeded is local work: refused by name, untouched.
+latest and clears the conflict. It never pushes. A local event the hosted chain
+lacks is dropped when seeded, or a status_reconcile of the status the hosted chain
+folds to; any other is local work: refused by name, untouched.
 
 With no ids it takes every story in conflict or differing from its hosted chain.
 --dry-run applies the same checks and changes nothing.`,
@@ -99,8 +102,8 @@ func runSyncWorkstateRechain(cmd *cobra.Command, serverArg string, dryRun bool, 
 				continue
 			}
 		}
-		fmt.Fprintf(out, "%s %s: remove %d event(s) (%d seeded), take %d hosted event(s)\n",
-			word("rechained", "would rechain"), c.id, len(c.plan.remove), c.plan.seeded, len(c.plan.take))
+		fmt.Fprintf(out, "%s %s: remove %d event(s) (%d seeded, %d reconcile), take %d hosted event(s)\n",
+			word("rechained", "would rechain"), c.id, len(c.plan.remove), c.plan.seeded, len(c.plan.reconciled), len(c.plan.take))
 	}
 	if failed > 0 {
 		return fmt.Errorf("%d stor(y/ies) not rechained — see above", failed)
@@ -180,7 +183,7 @@ func readRechainCase(ctx context.Context, a *app.App, chain *chainPull, rd chain
 	if latest == "" || len(events) == 0 {
 		return refuse(false, "the hosted project holds no events of it")
 	}
-	c.plan = planRechain(local, events)
+	c.plan = planRechain(local, events, func() (string, error) { return hostedStatus(ctx, a, id, events) })
 	return c
 }
 
@@ -197,6 +200,51 @@ type rechainPlan struct {
 	remove  []string            // local events to remove, in chain order
 	seeded  int                 // of remove, the ones that are a seeded genesis
 	take    []hosted.ChainEvent // hosted events to take, in chain order
+
+	reconciled map[string]bool // of remove, the status_reconcile events whose status the hosted chain folds to
+}
+
+// hostedStatus is the status the hosted chain folds to, by the fold the local one
+// uses: the story's row picks the route, and a hosted event that cannot be decoded
+// is an error, never a guess.
+func hostedStatus(ctx context.Context, a *app.App, id string, events []hosted.ChainEvent) (string, error) {
+	entries := make([]ledger.Entry, 0, len(events))
+	for _, ev := range events {
+		e, err := ledgerEntryOf(id, ev)
+		if err != nil {
+			return "", fmt.Errorf("decode hosted event %s: %w", ev.ID, err)
+		}
+		entries = append(entries, e)
+	}
+	row, err := a.Store.Stories.Get(ctx, id)
+	if err != nil {
+		row = workitem.Item{ID: id}
+	}
+	return verb.FoldChain(ctx, row, entries).Status, nil
+}
+
+// reconciledStatus is the status a status_reconcile event set: the chain value
+// "story reconcile --repair" rebuilt the row to. ok is false for any other event,
+// and for a reconcile that repaired no status.
+func reconciledStatus(e ledger.Entry) (status string, ok bool) {
+	if e.Kind != ledger.KindStatusReconcile {
+		return "", false
+	}
+	var p struct {
+		Fields []struct {
+			Field string `json:"field"`
+			Chain string `json:"chain"`
+		} `json:"fields"`
+	}
+	if json.Unmarshal(e.Payload, &p) != nil {
+		return "", false
+	}
+	for _, f := range p.Fields {
+		if f.Field == storyfold.FieldStatus {
+			return f.Chain, true
+		}
+	}
+	return "", false
 }
 
 // planRechain decides what putting a local chain on its hosted chain does, and
@@ -204,9 +252,12 @@ type rechainPlan struct {
 //
 // The local chain keeps its longest start the hosted chain has event for event
 // (same id, same base, same place) and gives up everything after it, so the events
-// removed are closed under the events built on them. Each must be a seeded event or
-// one the hosted chain holds; any other is local work and the story is refused.
-func planRechain(local []ledger.Entry, events []hosted.ChainEvent) rechainPlan {
+// removed are closed under the events built on them. Each must be a seeded event, a
+// status_reconcile that set the status the hosted chain folds to (hostedStatus folds
+// it, and is called only when one is there), or one the hosted chain holds. A
+// status_reconcile that set another status is refused with both statuses; any other
+// event is local work and the story is refused.
+func planRechain(local []ledger.Entry, events []hosted.ChainEvent, hostedStatus func() (string, error)) rechainPlan {
 	refuse := func(format string, args ...any) rechainPlan {
 		return rechainPlan{outcome: rechainRefused, reason: fmt.Sprintf(format, args...)}
 	}
@@ -218,15 +269,28 @@ func planRechain(local []ledger.Entry, events []hosted.ChainEvent) rechainPlan {
 	for _, e := range events {
 		onHosted[e.ID] = true
 	}
-	localOnly := map[string]bool{}
-	var lacking, work []string // the events the hosted chain lacks; of those, the ones that are not seeded
+	localOnly, reconciled := map[string]bool{}, map[string]bool{} // the seeded-or-work events the hosted chain lacks; the reconciles it lacks that set its status
+	var lacking, work []string                                    // the events the hosted chain lacks; of those, the ones that are not seeded
+	var folded string
 	for _, e := range order {
 		if onHosted[e.ID] {
 			continue
 		}
-		localOnly[e.ID] = true
 		named := fmt.Sprintf("%s (%s)", e.ID, e.Kind)
 		lacking = append(lacking, named)
+		if status, ok := reconciledStatus(e); ok {
+			if folded == "" {
+				if folded, err = hostedStatus(); err != nil {
+					return refuse("the hosted chain cannot be folded: %v", err)
+				}
+			}
+			if status != folded {
+				return refuse("local status_reconcile %s sets status %s but the hosted chain folds to %s", e.ID, status, folded)
+			}
+			reconciled[e.ID] = true
+			continue
+		}
+		localOnly[e.ID] = true
 		if !storyfold.IsSeededEvent(e) {
 			work = append(work, named)
 		}
@@ -244,7 +308,7 @@ func planRechain(local []ledger.Entry, events []hosted.ChainEvent) rechainPlan {
 	if err != nil {
 		return refuse("the hosted chain cannot be taken: %v", err)
 	}
-	plan := rechainPlan{outcome: rechainDo, take: take}
+	plan := rechainPlan{outcome: rechainDo, take: take, reconciled: reconciled}
 	for _, e := range order[n:] {
 		plan.remove = append(plan.remove, e.ID)
 		if localOnly[e.ID] {
@@ -291,7 +355,9 @@ func (c rechainCase) apply(ctx context.Context, a *app.App, chain *chainPull, no
 		onHosted[e.ID] = true
 	}
 	if len(c.plan.remove) > 0 {
-		guard := func(e ledger.Entry) bool { return storyfold.IsSeededEvent(e) || onHosted[e.ID] }
+		guard := func(e ledger.Entry) bool {
+			return storyfold.IsSeededEvent(e) || c.plan.reconciled[e.ID] || onHosted[e.ID]
+		}
 		if err := a.Store.Ledger.RemoveEvents(ctx, c.id, c.plan.remove, guard); err != nil {
 			return err
 		}
