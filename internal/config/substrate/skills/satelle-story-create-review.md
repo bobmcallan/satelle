@@ -3,7 +3,7 @@ name: satelle-story-create-review
 scope: system
 type: skill
 tags: [type:skill, type:reviewer]
-description: Content/alignment create gate after the deterministic structural check. Judges ACs vs goal, coherence, scope, solution prescription, a DEAD premise only, AND category/tag classification. Read-only; rejects with specifics for the agent to fix and retry. A re-presented edge follows [[satelle-reviewer-verdict]].
+description: Content/alignment create gate after the deterministic structural check. Judges ACs vs goal, coherence, scope, that the card states desired behavior independent of any implementation, a DEAD premise only, AND category/tag classification. Read-only; rejects with specifics for the agent to fix and retry. A re-presented edge follows [[satelle-reviewer-verdict]].
 ---
 
 # Story create — content, alignment, and classification review
@@ -15,8 +15,8 @@ edit. Pull the taxonomy on demand: [[satelle-story-classification]].
 
 The deterministic structural check has already passed (title, goal body, and
 category — acceptance criteria are not part of that check), so structure is
-guaranteed — do not re-check it. Judge content, alignment, solution
-prescription, premise, and **classification**:
+guaranteed — do not re-check it. Judge content, alignment, stated behavior,
+premise, and **classification**:
 
 ## How to judge
 
@@ -24,8 +24,8 @@ prescription, premise, and **classification**:
 
 Empty or unnumbered acceptance criteria are not a reject. When
 `acceptance_criteria` is empty or has no numbered item, judge coherence of the
-body, solution prescription in the body and in any acceptance-criteria text,
-the dead-premise check, and classification. Alignment and scope
+body, the behavior the body states, the dead-premise check, and
+classification. Alignment and scope
 apply once numbered criteria are present.
 
 - **Coherence** — is the goal a real, singular outcome (what "done" looks
@@ -43,15 +43,27 @@ and those ACs must verify the goal:
  a draft that is clearly several stories in one, or whose ACs describe work
  far beyond the goal.
 
-### Solution prescription
+### Behavior and solution
 
-- **Reject** when the body or the acceptance criteria require a particular
-  implementation, including when acceptance criteria are empty or unnumbered
-  and the body is what prescribes it: a function, type, or file to write, an
-  exact code change, or a mechanism the draft says must be built. Notes name each prescriptive part and say to state what should be true and the evidence for it.
-- **Not a prescription:** a draft that states what should be true, and does not require a particular implementation, passes this check.
-  Naming a file, symbol, or mechanism only to show what exists today, or what
-  is missing, is evidence, not a prescription.
+A card must state **desired behavior**: what is true when the work is done,
+observable, and true whichever implementation produces it. That statement is
+what a later check validates, so it must be checkable without the
+implementation in hand.
+
+- **Reject** when the submission states no desired behavior that holds
+  whichever implementation produces it, including when acceptance criteria are empty or unnumbered
+  and the body is all there is. A submission that contains
+  only a solution (a function, type, or file to write, an exact code change, a
+  build-this directive) states no behavior. The notes
+  name the behavior that is missing: say what should be true when the work is
+  done, in terms of what a user or operator can observe.
+- **Not a reject ground:** a technical decision or partial solution recorded
+  alongside stated behavior is context. It stays on the card, is not removed,
+  and is not judged as the behavior. Naming a file, symbol, or mechanism to
+  show what exists today, or what is missing, is evidence, also context.
+- **Accept notes open with `Behavior:`** and one sentence restating the stated
+  behavior independent of any implementation, so a later check has the
+  behavior to validate. Recorded solution context is not part of that sentence.
 
 ### Premise (dead, not unverified)
 
@@ -113,13 +125,14 @@ only**, and never reject a value for being unknown.
 Fair gate, not perfectionist: a clear leaf story with a fitting category
 accepts. When numbered criteria are present, they must plausibly verify the goal.
 
-- **Accept** when the goal is coherent, the premise is not falsified by
- named repo evidence, the draft does not prescribe the implementation, and
- category/tags fit the taxonomy. When numbered criteria are present, also
+- **Accept** when the goal is coherent, the submission states desired behavior
+ that holds whichever implementation produces it, the premise is not falsified
+ by named repo evidence, and category/tags fit the taxonomy. When numbered criteria are present, also
  require that those ACs verify the goal.
 - **Reject** when numbered criteria are present and fail alignment or scope,
- when coherence fails, when the body or the acceptance criteria prescribe the
- implementation whether or not those criteria are numbered (name each prescriptive part), when the premise is falsified with cited evidence, OR
+ when coherence fails, when the submission states no desired behavior and contains
+ only a solution, whether or not criteria are numbered (the notes name the
+ behavior that is missing), when the premise is falsified with cited evidence, OR
  classification is wrong (epic as feature, doc-only slice on a code lane,
  invented `kind:*`) — name the specific problem and the fix (e.g. "use category
  epic-parent"; "use category docs"; "premise false: contradicted by
@@ -129,9 +142,9 @@ accepts. When numbered criteria are present, they must plausibly verify the goal
 ## Verdict
 
 ```json
-{"decision": "accept", "notes": "", "reviewed": "<exact words this verdict rests on>"}
+{"decision": "accept", "notes": "Behavior: <one-sentence restatement>", "reviewed": "<exact words this verdict rests on>"}
 ```
 
-`decision` is `"accept"` or `"reject"`; `notes` names the alignment, scope,
-prescription, dead-premise, or classification problem on reject (may be empty
-on accept).
+`decision` is `"accept"` or `"reject"`; on reject `notes` names the alignment,
+scope, missing-behavior, dead-premise, or classification problem; on accept
+`notes` open with `Behavior:`.

@@ -317,13 +317,13 @@ func TestCreateAcceptsStoryWithoutAcceptance(t *testing.T) {
 // shipped create-review skill does not treat missing criteria as a reject, and
 // numbered criteria that are present still have to verify the goal. It must
 // not name a readiness step: the embedded default route has none, so naming
-// one would ship this repo's process to every other repo. It also rejects a
-// draft that prescribes the implementation and names those parts, including
-// when acceptance criteria are empty or unnumbered and the body is what
-// prescribes it. A draft that states what should be true, and does not require
-// a particular implementation, passes the prescription check, including when a
-// mechanism is named only to show what exists today. The skill text must not
-// contain "discovery".
+// one would ship this repo's process to every other repo. It also states the
+// behavior rule: a story is created only when the submission states desired
+// behavior that holds whichever implementation produces it, including when
+// acceptance criteria are empty or unnumbered and the body is what states it.
+// A technical decision or partial solution recorded alongside that behavior is
+// context kept on the card, not a reject ground; a submission that contains
+// only a solution is rejected. The skill text must not contain "discovery".
 func TestCreateReviewSkillAllowsAbsentCriteria(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
@@ -358,15 +358,13 @@ func TestCreateReviewSkillAllowsAbsentCriteria(t *testing.T) {
 		t.Error("numbered criteria that are present must still be required to verify the goal")
 	}
 	for _, want := range []string{
-		"name each prescriptive part",
-		"states what should be true, and does not require a particular implementation, passes this check",
-		"does not prescribe the implementation",
-		"only to show what exists today",
-		"is evidence, not a prescription",
+		"desired behavior",
+		"is context",
+		"only a solution",
 		"including when acceptance criteria are empty or unnumbered",
 	} {
 		if !strings.Contains(s, want) {
-			t.Errorf("skill must state the prescription rule %q", want)
+			t.Errorf("skill must state the behavior rule %q", want)
 		}
 	}
 	if strings.Contains(s, "discovery") {

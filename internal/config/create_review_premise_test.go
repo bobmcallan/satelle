@@ -5,6 +5,42 @@ import (
 	"testing"
 )
 
+// TestCreateReviewBehaviorRule (sty_37c762f5): the embedded create gate requires
+// stated behavior that holds whichever implementation produces it, restates it
+// on accept, and treats a recorded solution beside that behavior as context.
+func TestCreateReviewBehaviorRule(t *testing.T) {
+	var body string
+	for _, d := range EmbeddedDefaults() {
+		if d.Kind == "skills" && d.Name == "satelle-story-create-review" {
+			body = d.Body
+			break
+		}
+	}
+	if body == "" {
+		t.Fatal("embedded create-review skill missing")
+	}
+	for _, want := range []string{
+		"desired behavior",
+		"whichever implementation",
+		"name the behavior that is missing",
+		"open with `Behavior:`",
+		"is context",
+		"only a solution",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("create-review missing behavior-rule phrase %q", want)
+		}
+	}
+	for _, gone := range []string{
+		"a mechanism the draft says must be built",
+		"Not a prescription",
+	} {
+		if strings.Contains(body, gone) {
+			t.Errorf("create-review still carries the retired reject-on-any-mechanism wording %q", gone)
+		}
+	}
+}
+
 // TestCreateReviewPremiseFalsification (sty_b9692e1f): the embedded create gate
 // carries the premise-falsification rule, bounded against opinion, and aligned
 // with plan-review falsification (cross-link, not a second discipline).

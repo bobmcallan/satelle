@@ -1,3 +1,13 @@
+## [0.0.770] - 2026-10-27
+
+### Changed
+- The default create review (`satelle-story-create-review`) creates a story only when its card states desired behavior that holds whichever implementation produces it, because that behavior is what a later check validates. An accepted submission's notes open with `Behavior:` and a one-sentence restatement of the stated behavior, independent of implementation. A technical decision or partial solution recorded alongside stated behavior stays on the card as context and is not a reject ground. A submission that contains only a solution, with no behavior, is refused, and the refusal names the behavior that is missing. Empty or unnumbered acceptance criteria are still not a reject ground at create. Before, the rubric rejected any submission that required a particular function, type or file, and did not restate a submission as behavior. (sty_37c762f5)
+
+## [serve-v0.0.219] - 2026-10-27
+
+### Changed
+- The service binary embeds the updated default create review (behavior-first story cards). (sty_37c762f5)
+
 ## [0.0.769] - 2026-10-27
 
 ### Fixed
