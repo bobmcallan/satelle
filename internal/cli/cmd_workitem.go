@@ -1637,7 +1637,8 @@ child); a container's route opts out with sequential = true, and then more than
 one runnable child exits non-zero and prints no id — it never picks by order: or
 created_at.
 
-See 'satelle help epic-wave' for the full contract; --json prints the response.`,
+See 'satelle help epic-wave' for the full contract. --json prints one object:
+runnable ids and omitted entries (id, cause, waiting_on, reason), both arrays.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {

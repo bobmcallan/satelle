@@ -33,9 +33,18 @@ type WaveBlocker struct {
 	Cancelled bool `json:"cancelled,omitempty"`
 }
 
-// WaveOmitted is a non-terminal child held back, and why.
+// The causes a child is held back, machine-readable beside the prose Reason.
+const (
+	WaveCauseDependency = "waiting_on_dependency"
+	WaveCauseNoRoute    = "no_route"
+)
+
+// WaveOmitted is a non-terminal child held back, and why. Cause is the
+// machine-readable reason (a WaveCause* constant); Reason is the prose the text
+// output and engagement quote.
 type WaveOmitted struct {
 	ID        string        `json:"id"`
+	Cause     string        `json:"cause"`
 	WaitingOn []WaveBlocker `json:"waiting_on,omitempty"`
 	Reason    string        `json:"reason"`
 }
@@ -46,7 +55,7 @@ type WaveResult struct {
 	Theme     string        `json:"theme"`
 	Schedule  string        `json:"schedule"`
 	Runnable  []string      `json:"runnable"`
-	Omitted   []WaveOmitted `json:"omitted,omitempty"`
+	Omitted   []WaveOmitted `json:"omitted"`
 }
 
 // waveState is what the route says about one story: finished (the route's
@@ -85,7 +94,7 @@ func computeWave(schedule string, children []workitem.Item, state func(id string
 	for _, c := range kids {
 		own, ok := state(c.ID)
 		if !ok || !own.Known {
-			omitted = append(omitted, WaveOmitted{ID: c.ID, Reason: fmt.Sprintf("no route resolves for %s (status %s)", c.ID, c.Status)})
+			omitted = append(omitted, WaveOmitted{ID: c.ID, Cause: WaveCauseNoRoute, Reason: fmt.Sprintf("no route resolves for %s (status %s)", c.ID, c.Status)})
 			continue
 		}
 		if own.Done || own.Cancelled {
@@ -115,7 +124,7 @@ func computeWave(schedule string, children []workitem.Item, state func(id string
 			}
 			parts = append(parts, p)
 		}
-		omitted = append(omitted, WaveOmitted{ID: c.ID, WaitingOn: waiting, Reason: "waiting on " + strings.Join(parts, ", ")})
+		omitted = append(omitted, WaveOmitted{ID: c.ID, Cause: WaveCauseDependency, WaitingOn: waiting, Reason: "waiting on " + strings.Join(parts, ", ")})
 	}
 	if schedule == wfdot.SchedSequential && len(runnable) > 1 {
 		return nil, omitted, errWaveTooWide{fmt.Sprintf("schedule is %s but %d children are runnable: %s — add %s edges so exactly one is eligible (a sequential wave never picks by order: or created_at)",
@@ -310,6 +319,9 @@ func assessWave(ctx context.Context, store *workitem.Store, wfs []docindex.Doc, 
 	}
 	if runnable == nil {
 		runnable = []string{}
+	}
+	if omitted == nil {
+		omitted = []WaveOmitted{}
 	}
 	return WaveResult{Container: container.ID, Theme: set.Theme, Schedule: schedule, Runnable: runnable, Omitted: omitted}, nil
 }

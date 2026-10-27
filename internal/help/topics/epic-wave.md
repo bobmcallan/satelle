@@ -3,7 +3,16 @@
 `satelle story wave <epic-parent-id>` prints the children of an epic that may
 start now, one id per line. It is an **assessment only**: it writes no status,
 lease or tag, and it does not engage, dispatch, open a worktree or spawn an
-agent. `--json` prints the full response (`runnable`, `omitted`, `schedule`).
+agent.
+
+`--json` prints the same response as one object, for a script. `runnable` is the
+list of child ids that may start (the ids the text form prints) and `omitted`
+lists every other non-terminal child; both are always present, as empty arrays
+when nothing qualifies. Each `omitted` entry has `id`, `cause`
+(`waiting_on_dependency` or `no_route`), `waiting_on` (for a dependency hold,
+each blocker's `id`, `status` and `cancelled` flag) and the prose `reason`.
+`container`, `theme` and `schedule` name the epic. A refusal still exits
+non-zero and prints no object.
 
 ## What it reads
 

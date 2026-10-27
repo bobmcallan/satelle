@@ -1,3 +1,13 @@
+## [0.0.774] - 2026-10-28
+
+### Added
+- `satelle story wave <epic> --json` is a documented contract a script can read without parsing text. `runnable` lists exactly the children the text form prints as startable. Every held child appears in `omitted` with its `id`, a machine-readable `cause` (`waiting_on_dependency` or `no_route`), its prose `reason`, and for a dependency hold the `waiting_on` blockers with their id, status and cancelled flag. Both `runnable` and `omitted` are always present as arrays, empty when nothing qualifies. The text and JSON forms render the same verb response, so they cannot disagree. A sequential refusal still exits non-zero with nothing on stdout. `satelle help epic-wave` and the command help name the fields. (sty_6d6cf69d)
+
+## [serve-v0.0.223] - 2026-10-28
+
+### Changed
+- The service binary embeds the updated `epic-wave` help topic, which documents the wave's JSON fields. (sty_6d6cf69d)
+
 ## [0.0.773] - 2026-10-27
 
 ### Changed
