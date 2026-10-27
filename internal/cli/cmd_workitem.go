@@ -137,6 +137,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 	// list
 	var lStatus, lParent, lTag string
 	var lLimit int
+	var lArchived bool
 	list := &cobra.Command{
 		Use:         "list",
 		Short:       "List " + plural,
@@ -150,6 +151,9 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 			if lLimit > 0 {
 				req["limit"] = lLimit
 			}
+			if lArchived {
+				req["archived"] = true
+			}
 			if group == "story" {
 				return dispatchWithWorking(cmd, group+"-list", req)
 			}
@@ -160,6 +164,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 	list.Flags().StringVar(&lParent, "parent", "", "filter by parent id")
 	list.Flags().StringVar(&lTag, "tag", "", "filter by exact tag (ANY-match in multi-value namespaces)")
 	list.Flags().IntVar(&lLimit, "limit", 0, "max rows (default 500)")
+	list.Flags().BoolVar(&lArchived, "archived", false, "list only archived "+plural+" (the default list hides them)")
 
 	// set (partial update — only flags the user changed are sent)
 	set := &cobra.Command{
@@ -276,6 +281,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyReworkCommand())
 		parent.AddCommand(storyWaiveCommand())
 		parent.AddCommand(storyDriveCommand())
+		parent.AddCommand(storyArchiveCommand(), storyUnarchiveCommand())
 	}
 	if group == "task" {
 		// tasks are authored substrate → `satelle task validate` runs the
@@ -365,6 +371,58 @@ recoverable from the backup tree.`,
 			return dispatch(cmd, "task-archive", map[string]any{"id": args[0]})
 		},
 	}
+}
+
+// storyArchiveCommand builds `satelle story archive <id>...` (sty_28665836): the
+// way a story leaves the backlog without running its workflow's cancel route.
+func storyArchiveCommand() *cobra.Command {
+	var reason string
+	cmd := &cobra.Command{
+		Use:   "archive <id>...",
+		Short: "Archive stories at their workflow's start state (hidden from the default list, no workflow run)",
+		Long: `Archive stories: the record drops out of the default story list, the web
+story board and the epic wave; story get still returns it.
+
+Archive is record DISPOSITION, not a status. The story keeps its status and
+chain; the one event added is a story_updated changing archived false to true,
+with --reason and the actor, so the flag travels with the chain through sync.
+No gate or reviewer runs.
+
+Only a story at its workflow's start state may be archived. Any other is
+refused by id and status, and one refusal archives nothing. Naming an epic also
+archives its children at their start state; the rest are listed as skipped.
+story unarchive reverses it; story list --archived shows what is archived.`,
+		Args:        cobra.MinimumNArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := map[string]any{"ids": args}
+			putIf(req, "reason", reason)
+			return dispatch(cmd, "story-archive", req)
+		},
+	}
+	cmd.Flags().StringVar(&reason, "reason", "", "why the stories are archived (recorded on the event)")
+	return cmd
+}
+
+// storyUnarchiveCommand builds `satelle story unarchive <id>...`.
+func storyUnarchiveCommand() *cobra.Command {
+	var reason string
+	cmd := &cobra.Command{
+		Use:   "unarchive <id>...",
+		Short: "Unarchive stories: they return to the default story list",
+		Long: `Reverse story archive: a story_updated event changes archived from true to
+false, with --reason and the actor, and the story reappears in the default list.
+Status and chain are untouched. A story that is not archived is left as it is.`,
+		Args:        cobra.MinimumNArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := map[string]any{"ids": args}
+			putIf(req, "reason", reason)
+			return dispatch(cmd, "story-unarchive", req)
+		},
+	}
+	cmd.Flags().StringVar(&reason, "reason", "", "why the stories are unarchived (recorded on the event)")
+	return cmd
 }
 
 // attachBody resolves the document body for `story attach`: --file reads it

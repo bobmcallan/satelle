@@ -399,6 +399,8 @@ type listReq struct {
 	ParentID string `json:"parent_id,omitempty"`
 	Tag      string `json:"tag,omitempty"` // exact tag; multi-value ANY-match (sty_f7115cd2)
 	Limit    int    `json:"limit,omitempty"`
+	// Archived lists only archived items (sty_28665836); the default list hides them.
+	Archived bool `json:"archived,omitempty"`
 }
 
 func workItemList(kind workitem.Kind) func(context.Context, json.RawMessage) (json.RawMessage, error) {
@@ -417,6 +419,8 @@ func workItemList(kind workitem.Kind) func(context.Context, json.RawMessage) (js
 			ParentID: req.ParentID,
 			Tag:      req.Tag,
 			Limit:    req.Limit,
+
+			ArchivedOnly: req.Archived,
 		})
 		if err != nil {
 			return nil, err

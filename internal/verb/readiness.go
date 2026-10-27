@@ -325,6 +325,8 @@ type storyUpdatedPayload struct {
 	Tags *storyfold.TagsChange `json:"tags,omitempty"`
 	// Source names the writer when it is not a story-set (a forced pull).
 	Source string `json:"source,omitempty"`
+	// Reason is the operator's stated reason for an archive or unarchive.
+	Reason string `json:"reason,omitempty"`
 }
 
 // storyUpdatedPayloadFor renders the story_updated payload for one committed

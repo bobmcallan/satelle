@@ -317,6 +317,9 @@ type ListFilter struct {
 	// excludes them — archive is a terminal disposition kept out of the working
 	// list (sty_cd209b8a).
 	IncludeArchived bool
+	// ArchivedOnly returns only archived items (sty_28665836); it wins over
+	// IncludeArchived.
+	ArchivedOnly bool
 }
 
 // List returns items matching the filter, newest-updated first.
@@ -341,7 +344,10 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]Item, error) {
 	add("kind", string(f.Kind))
 	add("status", f.Status)
 	add("parent_id", f.ParentID)
-	if !f.IncludeArchived {
+	switch {
+	case f.ArchivedOnly:
+		conds = append(conds, "archived = 1")
+	case !f.IncludeArchived:
 		conds = append(conds, "archived = 0")
 	}
 	// Tag filter (sty_f7115cd2): tags are a JSON array of strings. json_each
@@ -388,6 +394,10 @@ type UpdateInput struct {
 	Tags               *[]string
 	ParkOrigin         *string
 	Assignee           *string
+	// Archived sets the record disposition (sty_28665836): a story's archived flag
+	// is projected from its chain, so the fold rebuild writes it here. Task archive
+	// keeps using Store.Archive.
+	Archived *bool
 	// ExpectStatus makes the write a COMPARE-AND-SET: the UPDATE only applies
 	// while the row still holds this status. A caller that read the row, spent
 	// time deciding (a reviewer gate, a dispatched agent run), and then writes
@@ -425,6 +435,14 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput, now time.
 	addStr("acceptance_criteria", in.AcceptanceCriteria)
 	addStr("park_origin", in.ParkOrigin)
 	addStr("assignee", in.Assignee)
+	if in.Archived != nil {
+		archived := 0
+		if *in.Archived {
+			archived = 1
+		}
+		sets = append(sets, "archived = ?")
+		args = append(args, archived)
+	}
 	if in.Tags != nil {
 		tagsJSON, _ := json.Marshal(nonNilTags(*in.Tags))
 		sets = append(sets, "tags = ?")

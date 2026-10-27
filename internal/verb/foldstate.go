@@ -160,6 +160,8 @@ func updateFromFold(drifts []storyfold.Drift, st storyfold.State) workitem.Updat
 			in.Tags = &tags
 		case storyfold.FieldParkOrigin:
 			in.ParkOrigin = &st.ParkOrigin
+		case storyfold.FieldArchived:
+			in.Archived = &st.Archived
 		}
 	}
 	return in

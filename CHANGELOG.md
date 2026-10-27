@@ -1,3 +1,13 @@
+## [0.0.767] - 2026-10-27
+
+### Added
+- `satelle story archive <id>... [--reason <text>]` and `satelle story unarchive <id>...` dispose of stories without running a workflow route, so a backlog is cleared without a cancel review per story. Archive is record disposition, not a status: the story keeps its status and chain, drops out of the default `satelle story list`, the web story board and `satelle story wave`, and `satelle story get <id>` still returns it. Each story gets one `story_updated` event changing `archived` from `false` to `true` (and back on unarchive) with the reason and the actor, and the flag is folded from the chain, so it reaches another machine on a pull and a cleared row is restored by the fold rebuild. Only a story at its workflow's start state may be archived; any other is refused by id and status and one refusal archives nothing. Naming an epic also archives its children at their start state and lists the others as skipped. `satelle story list --archived` lists only archived stories. (sty_28665836)
+
+## [serve-v0.0.218] - 2026-10-27
+
+### Changed
+- The service binary folds a story's archived flag from its chain and hides archived stories from the board by default. (sty_28665836)
+
 ## [0.0.766] - 2026-10-27
 
 ### Fixed

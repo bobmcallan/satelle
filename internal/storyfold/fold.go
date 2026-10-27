@@ -15,6 +15,7 @@ package storyfold
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -30,9 +31,15 @@ const (
 	FieldCategory   = "category"
 	FieldTags       = "tags"
 	FieldParkOrigin = "park_origin"
+	// FieldArchived is the record disposition (sty_28665836): "true" or "false".
+	// Only a story_updated field change sets it, so a chain that never archived
+	// the story leaves it undefined and the row's value stands; it is therefore
+	// not in Fields, which names what every chain defines.
+	FieldArchived = "archived"
 )
 
-// Fields lists the folded fields in the order a report names them.
+// Fields lists the fields every story's chain defines, in the order a report
+// names them.
 var Fields = []string{FieldStatus, FieldTitle, FieldBody, FieldAcceptance, FieldCategory, FieldTags, FieldParkOrigin}
 
 // State is what folding a story's chain yields. Defined records which fields some
@@ -46,6 +53,7 @@ type State struct {
 	Category           string
 	Tags               []string
 	ParkOrigin         string
+	Archived           bool
 	// Head is the id of the last event folded.
 	Head string
 	// StatusEvent is the id of the event that last set the status.
@@ -296,6 +304,8 @@ func (st *State) setField(field, v string) {
 		st.Category = v
 	case FieldParkOrigin:
 		st.ParkOrigin = v
+	case FieldArchived:
+		st.Archived = v == "true"
 	default:
 		return
 	}
@@ -427,6 +437,7 @@ func Compare(row workitem.Item, st State) []Drift {
 	add(FieldCategory, row.Category, st.Category)
 	add(FieldTags, strings.Join(row.Tags, ","), strings.Join(st.Tags, ","))
 	add(FieldParkOrigin, row.ParkOrigin, st.ParkOrigin)
+	add(FieldArchived, strconv.FormatBool(row.Archived), strconv.FormatBool(st.Archived))
 	return out
 }
 
@@ -454,6 +465,9 @@ func Overlay(row workitem.Item, st State) workitem.Item {
 	}
 	if st.Defined[FieldParkOrigin] {
 		row.ParkOrigin = st.ParkOrigin
+	}
+	if st.Defined[FieldArchived] {
+		row.Archived = st.Archived
 	}
 	return row
 }
