@@ -1,3 +1,13 @@
+## [0.0.772] - 2026-10-27
+
+### Changed
+- The default plan review (`satelle-story-plan-review`) accepts a plan only when its acceptance criteria and its implementation produce the behavior the story card states. Every criterion must cite the card behavior it proves; a set of criteria narrower than the card is refused, with the uncovered card text quoted; an implementation that drops or contradicts a partial solution or technical decision the card records as context is refused; and the criteria do not replace the card. The default review also judges the criteria named by the payload's `criteria_source` (each traced to the plan's recorded evidence, testable, outcome rather than mechanism, faithful to the card), the proof path and root cause of each criterion, and defers to the reviewer verdict skill in fail-fast mode. Before, the default judged only that each criterion the planner wrote had a plan claim, so criteria narrower than the card were accepted and a repo had to carry its own override of the rubric to get the stricter judgments. A route with no plan step is unchanged: its result is still judged against the card. (sty_97c88302)
+
+## [serve-v0.0.221] - 2026-10-27
+
+### Changed
+- The service binary embeds the updated default plan review (criteria judged against the story card's behavior). (sty_97c88302)
+
 ## [0.0.771] - 2026-10-27
 
 ### Changed

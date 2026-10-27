@@ -27,13 +27,6 @@ var leftoverSkills = []struct {
 	rel     string
 	phrases []string
 }{
-	{".satelle/skills/satelle-story-plan-review.md", []string{
-		"later rounds verify prior findings",
-		"verify prior findings",
-		"number your findings so the next round can answer each one",
-		"verify every prior blocking finding",
-		"a criterion or plan section that changed",
-	}},
 	{"internal/config/substrate/skills/satelle-story-plan-review.md", []string{
 		"later rounds verify prior findings",
 		"verify prior findings",

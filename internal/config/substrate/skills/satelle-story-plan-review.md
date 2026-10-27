@@ -3,7 +3,7 @@ name: satelle-story-plan-review
 scope: system
 type: skill
 tags: [type:skill, type:reviewer]
-description: Plan gate — on plan → in_progress, or backlog → plan when the readiness step proposes its plan before its gates. Read-only reviewer validates the ATTACHED plan against the story's numbered ACs, never inventing a competing plan. Raises every blocking finding in the first pass; a re-presented edge follows [[satelle-reviewer-verdict]].
+description: Plan gate — on plan → in_progress, or backlog → plan when readiness proposes its plan first. Read-only reviewer validates the ATTACHED plan against the behavior the story card states: each criterion cites the card behavior it proves, the criteria are not narrower than the card, recorded partial solutions are kept. Never invents a competing plan; re-presented edge follows [[satelle-reviewer-verdict]].
 payload_citations: plan
 ---
 
@@ -11,7 +11,7 @@ payload_citations: plan
 
 ## Primary objective
 
-Validate the **presented** plan against the **story**. Answer only: may the
+Validate the **presented** plan against the **story card**. Answer only: may the
 story advance across this edge (`from` → `to` in the payload)? Do **not**
 create-and-complete this step. Do **not** invent a competing plan and match
 against it.
@@ -32,23 +32,85 @@ Do **not** look under in-repo `.satelle/stories/` (obsolete post-relocation).
 
 - **No plan artifact → reject**.
 
-## 2. Judge the presented plan only
+## 2. The criteria being judged
 
-Every numbered AC must have a concrete claim **in the attached plan**
-(approach and/or files, and what evidence will prove it).
+- When the payload carries `criteria_source` (the binary supplies it, with
+  `criteria_state`, when the step applies the plan's criteria to the story),
+  the criteria are the ones that field names. Judge them, and judge coverage
+  against them. Content under that heading that is not a numbered criterion
+  would be applied as a criterion — a finding.
+- Otherwise the story's own numbered criteria are the criteria.
 
-- **Accept** when every AC is covered by the presented plan without
- contradicting the story.
-- **Reject** when an AC is unplanned, hand-waved, or contradicted — name it.
- Falsify checkable plan claims against the repo only when the plan asserts
- something already exists; do not rewrite the plan.
+The plan may author the criteria when the story has none. Where the story
+arrived with raiser draft criteria and the plan replaces or changes them, the
+plan must say which and why, citing evidence. Replacing a draft for evidence is
+not weakening; narrowing the card is.
 
-## 3. First pass: every blocking finding, once
+## 3. Judge against the card
+
+The reference is the behavior the **story card's body** states — not the
+criteria. The criteria are a derivation of the card; they
+**do not replace the card**: a plan is accepted only when its criteria and its implementation still
+produce the behavior on the card.
+
+- **Each criterion must cite the card behavior it proves**, by quoting or naming
+  it. A criterion that cites none is a finding.
+- **Not narrower than the card.** Taken together the criteria must prove all of
+  the behavior the card states. A set **narrower than the card** — one that
+  leaves part of that behavior unproven — is refused; quote the card text left
+  uncovered.
+- **Kept constraints.** A partial solution or technical decision the card records
+  as context constrains the plan. A plan whose implementation drops, replaces or
+  contradicts one is refused; name the constraint and the plan text that breaks it.
+
+## 4. Judge the criteria
+
+Each criterion must be:
+
+- **Traced** — it follows from the evidence the plan records for its premise
+  (file, symbol, behaviour, observed output). A criterion no evidence supports
+  is a finding.
+- **Testable** — it names an observable outcome and how it is proven.
+- **Outcome, not mechanism** — it says what must be true, not which function to
+  write, unless the mechanism is itself the card's behavior.
+- **Faithful to the card** — together they deliver what the body asks for (§3).
+
+## 5. Judge the plan
+
+Every criterion (per section 2) must have a concrete claim **in the attached
+plan** (approach and/or files, and what evidence will prove it).
+
+- **Proof path** — for each criterion the plan names how it is proven: a test
+  (unit and/or integration, at a site that exists or that the plan creates), a
+  gate dogfood, or a deterministic check. A docs or substrate slice may prove by
+  validate or dogfood when the plan says so. The proof must be able to fail on
+  the unfixed code: a test whose fixture cannot reach the defect, or whose
+  assertion holds either way, is no proof. A test whose expected value comes
+  from the code under test, or that asserts only on data it built, is no proof.
+  Name every criterion without one.
+- **Root cause** — for a fix, the premise evidence must locate where the wrong
+  state is produced, not only where it surfaced; a plan that guards the symptom
+  site is a finding.
+
+- **Accept** when the criteria pass sections 3 and 4 and every one is covered
+  without contradicting the card.
+- **Reject** when a criterion is untraced, untestable, unfaithful or cites no
+  card behavior, the set is narrower than the card, the implementation drops a
+  recorded constraint, or a criterion is unplanned, hand-waved, contradicted or
+  without a proof path — name it. Falsify checkable plan claims against the repo
+  only when the plan asserts something already exists; do not rewrite the plan.
+
+## 6. First pass: every blocking finding, once
 
 On the **first** presentation of this edge (the payload has no
 `prior_verdicts`), enumerate **every** blocking finding — read the whole plan
-against every AC and stop nowhere early. A blocker held back for a later pass
-is a defect of the review, not of the plan: it costs a full round to surface.
+against every criterion and stop nowhere early. A blocker held back for a later
+pass is a defect of the review, not of the plan: it costs a full round to
+surface.
+
+**Fail-fast mode.** When the payload's `review_mode` is `"fail-fast"`, this
+section does not apply; [[satelle-reviewer-verdict]] governs the stop and
+`coverage`.
 
 ## Verdict
 
@@ -56,4 +118,6 @@ is a defect of the review, not of the plan: it costs a full round to surface.
 {"decision": "accept", "notes": "", "reviewed": "<exact words this verdict rests on>", "criteria": [{"criterion": 1, "status": "accept", "finding": "", "reviewed": "<exact words this entry rests on>"}]}
 ```
 
-`criteria` is optional.
+Return one `criteria` entry per acceptance criterion you judged
+([[satelle-reviewer-verdict]]), so an accepted criterion whose text is unchanged
+settles on the next presentation instead of being judged again.
