@@ -1,3 +1,8 @@
+## [0.0.775] - 2026-10-28
+
+### Fixed
+- A story that commits, parks and resumes keeps the commits it made before the park in its change set (`satelle story diff`, `story proof` and every reviewer's diff). Before, the resume re-anchored the change set at the resume head, so a story's own pre-park work dropped out of review. Commits that other stories landed while it was parked still stay out, unless their subject names the story. A trunk merge into the story's branch after resume contributes only that merge's own conflict resolutions, never the files the trunk brought in. The same applies to a never-parked story that merges the trunk. `story diff` reports the engagement baseline and names each excluded park interval in its note. Seen in id4me: a reviewer judged only what main brought in, not the story's 9 files. (sty_666e6110)
+
 ## [0.0.774] - 2026-10-28
 
 ### Added

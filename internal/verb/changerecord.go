@@ -110,7 +110,7 @@ func recordChangeSet(ctx context.Context, item workitem.Item, from, to string, n
 	sinceTime, hasSinceTime := changeRecordSinceTime(ctx, item.ID)
 
 	if sinceSHA != "" && payload.Unavailable != "no-git" {
-		f, _, p, derr := storyChangeSince(ctx, dir, sinceSHA, item.ID, true)
+		f, _, p, derr := storyChangeSince(ctx, dir, sinceSHA, item.ID, nil, true)
 		if derr != nil {
 			if payload.Unavailable == "" {
 				payload.Unavailable = "enumeration-error: " + derr.Error()
@@ -229,6 +229,52 @@ func engagedRows(ctx context.Context, storyID string, recs []ledger.Entry) []led
 func latestResumeReanchor(ctx context.Context, storyID string) (sha string, at time.Time, ok bool) {
 	start, _ := engagementStart(ctx, storyID)
 	return latestResumeReanchorSince(ctx, storyID, "", start)
+}
+
+// parkWindow is one park interval of an engaged story: the commits between the
+// head it parked at (From) and the head it resumed at (To). Another story's commits
+// land there, so only a commit naming the story is kept. All marks a window whose
+// park-entry head was not recorded: nothing in it is kept, the degradation to the
+// resume point (sty_526d6a68) that applied before windows existed.
+type parkWindow struct {
+	From, To string
+	All      bool
+}
+
+// parkWindows pairs every resume re-anchor since engagement with the head of the
+// full row written on entering that park, oldest first. A window whose two heads
+// are equal holds no commit and is left out. baseSHA stands in for From when the
+// park-entry row carried no head, with All set.
+func parkWindows(ctx context.Context, storyID, baseSHA string) []parkWindow {
+	ls, err := requireLedger()
+	if err != nil {
+		return nil
+	}
+	recs, err := ls.ListByStory(ctx, storyID, ledger.KindChangeRecord)
+	if err != nil {
+		return nil
+	}
+	var out []parkWindow
+	parkHead := ""
+	for _, r := range engagedRows(ctx, storyID, recs) {
+		var p changeRecordPayload
+		if json.Unmarshal(r.Payload, &p) != nil {
+			continue
+		}
+		switch {
+		case p.ReanchorResume:
+			switch {
+			case p.HeadSHA == "":
+			case parkHead == "":
+				out = append(out, parkWindow{From: baseSHA, To: p.HeadSHA, All: true})
+			case parkHead != p.HeadSHA:
+				out = append(out, parkWindow{From: parkHead, To: p.HeadSHA})
+			}
+		case !p.PartialEnumeration:
+			parkHead = p.HeadSHA
+		}
+	}
+	return out
 }
 
 // latestResumeReanchorExcept is latestResumeReanchor ignoring re-anchors that

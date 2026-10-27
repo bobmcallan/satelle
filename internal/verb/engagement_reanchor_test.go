@@ -69,6 +69,16 @@ func (s *reanchorScenario) commit(name string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// head is the current HEAD of the scenario repo.
+func (s *reanchorScenario) head() string {
+	s.t.Helper()
+	out, err := exec.Command("git", "-C", s.dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func (s *reanchorScenario) create() workitem.Item {
 	s.t.Helper()
 	var it workitem.Item
@@ -208,13 +218,15 @@ func TestBacklogReanchorDoesNotOverrideEngagementBaseline(t *testing.T) {
 	}
 }
 
-// Parking and resuming an ENGAGED story keeps re-anchoring at the resume point:
-// the diff, the next change_record and the park-window exclusion are unchanged
-// by the pre-engagement filter (AC3).
+// Parking and resuming an ENGAGED story keeps re-anchoring the next change_record
+// at the resume point, while the diff spans the whole engagement minus the park
+// interval: the story's pre-park commit stays, the commit another story landed
+// during the park does not (AC3, sty_666e6110).
 func TestEngagedParkResumeReanchorsNextChangeRecord(t *testing.T) {
 	s := newReanchorScenario(t)
 	it := s.create()
 	s.set(it.ID, "in_progress")
+	engagedAt := s.head()
 	s.commit("mine_before.txt")
 	s.set(it.ID, "blocked")
 	foreignSHA := s.commit("foreign_during_park.txt")
@@ -222,11 +234,11 @@ func TestEngagedParkResumeReanchorsNextChangeRecord(t *testing.T) {
 	s.commit("mine_after.txt")
 
 	baseline, files := s.diff(it.ID)
-	if baseline != foreignSHA {
-		t.Errorf("diff baseline_sha=%q want resume re-anchor %q", baseline, foreignSHA)
+	if baseline != engagedAt {
+		t.Errorf("diff baseline_sha=%q want engagement baseline %q", baseline, engagedAt)
 	}
-	if containsStr(files, "foreign_during_park.txt") || !containsStr(files, "mine_after.txt") {
-		t.Errorf("diff files=%v want mine_after.txt and not foreign_during_park.txt", files)
+	if containsStr(files, "foreign_during_park.txt") || !containsStr(files, "mine_after.txt") || !containsStr(files, "mine_before.txt") {
+		t.Errorf("diff files=%v want mine_before.txt and mine_after.txt, not foreign_during_park.txt", files)
 	}
 
 	s.set(it.ID, "done")
@@ -240,10 +252,10 @@ func TestEngagedParkResumeReanchorsNextChangeRecord(t *testing.T) {
 	}
 }
 
-// Resuming a parked story moves the diff anchor (baseline_sha) to the resume
-// point but never the engagement baseline: engagement_sha stays the HEAD of the
-// first engagement, which is what the version-stamp check judges "since" against
-// (sty_1168e79f AC1).
+// Resuming a parked story keeps the diff anchor (baseline_sha) at the engagement
+// baseline and names the park interval it left out in the note: engagement_sha
+// stays the HEAD of the first engagement, which is what the version-stamp check
+// judges "since" against (sty_1168e79f AC1, sty_666e6110 AC4).
 func TestResumeKeepsEngagementSHAWhileBaselineMoves(t *testing.T) {
 	s := newReanchorScenario(t)
 	it := s.create()
@@ -252,33 +264,37 @@ func TestResumeKeepsEngagementSHAWhileBaselineMoves(t *testing.T) {
 	s.set(it.ID, "blocked")
 	shaB := s.commit("b_release.txt")
 
-	readDiff := func() (anchor, engaged string) {
+	readDiff := func() (anchor, engaged, note string) {
 		var res struct {
 			Baseline      string `json:"baseline_sha"`
 			EngagementSHA string `json:"engagement_sha"`
+			Note          string `json:"note"`
 		}
 		json.Unmarshal(call(t, "story-diff", map[string]any{"id": it.ID}), &res)
-		return res.Baseline, res.EngagementSHA
+		return res.Baseline, res.EngagementSHA, res.Note
 	}
 
 	// Parked: nothing re-anchored yet, both name the engagement.
-	if anchor, engaged := readDiff(); anchor != shaA || engaged != shaA {
+	if anchor, engaged, _ := readDiff(); anchor != shaA || engaged != shaA {
 		t.Fatalf("parked: baseline_sha=%q engagement_sha=%q want both %q", anchor, engaged, shaA)
 	}
 
 	s.set(it.ID, "in_progress")
-	anchor, engaged := readDiff()
+	anchor, engaged, note := readDiff()
 	if engaged != shaA {
 		t.Errorf("engagement_sha=%q after resume want first engagement %q", engaged, shaA)
 	}
-	if anchor != shaB {
-		t.Errorf("baseline_sha=%q after resume want resume diff anchor %q", anchor, shaB)
+	if anchor != shaA {
+		t.Errorf("baseline_sha=%q after resume want engagement baseline %q", anchor, shaA)
+	}
+	if want := "excluded park interval " + shaA + ".." + shaB; !strings.Contains(note, want) {
+		t.Errorf("note=%q want it to name %q", note, want)
 	}
 
 	// A second park/resume at the same HEAD still leaves the engagement untouched.
 	s.set(it.ID, "blocked")
 	s.set(it.ID, "in_progress")
-	if anchor, engaged := readDiff(); engaged != shaA || anchor != shaB {
-		t.Errorf("second resume: baseline_sha=%q engagement_sha=%q want %q / %q", anchor, engaged, shaB, shaA)
+	if anchor, engaged, _ := readDiff(); engaged != shaA || anchor != shaA {
+		t.Errorf("second resume: baseline_sha=%q engagement_sha=%q want both %q", anchor, engaged, shaA)
 	}
 }

@@ -21,7 +21,11 @@ type trunkStory struct {
 }
 
 // engageInTrunkClone engages a story in the subject clone of a fresh remote.
-func engageInTrunkClone(t *testing.T) *trunkStory {
+func engageInTrunkClone(t *testing.T) *trunkStory { return engageTrunkClone(t, "") }
+
+// engageTrunkClone is engageInTrunkClone for a workflow that also declares park
+// (a line of the done half, e.g. `park = { state = "blocked" }`).
+func engageTrunkClone(t *testing.T, park string) *trunkStory {
 	t.Helper()
 	withWiring(t)
 	r := testutil.NewTrunkRepos(t)
@@ -33,6 +37,7 @@ func engageInTrunkClone(t *testing.T) *trunkStory {
 	wireWithWorkflows(t, routeHalves(
 		`["*"]
 obligations = ["raised", "coded", "closed"]
+`+park+`
 `,
 		`[raised]
 status = "backlog"
@@ -87,9 +92,11 @@ func (ts *trunkStory) fastForward() {
 }
 
 type diffView struct {
-	Files []string `json:"files"`
-	Stat  string   `json:"stat"`
-	Patch string   `json:"patch"`
+	Files    []string `json:"files"`
+	Stat     string   `json:"stat"`
+	Patch    string   `json:"patch"`
+	Baseline string   `json:"baseline_sha"`
+	Note     string   `json:"note"`
 }
 
 func (ts *trunkStory) live() diffView {
@@ -206,4 +213,164 @@ func TestStoryDiffKeepsOwnCommitOnTrunk(t *testing.T) {
 		ts.fastForward()
 		wantFiles(t, "live", ts.live().Files, []string{"merged.go"}, []string{"other.go"})
 	})
+}
+
+const parkBlocked = `park = { state = "blocked" }`
+
+// set moves the story to status.
+func (ts *trunkStory) set(status string) {
+	ts.t.Helper()
+	json.Unmarshal(call(ts.t, "story-set", map[string]any{"id": ts.it.ID, "status": status}), &ts.it)
+}
+
+// park and resume leave and re-enter the engaged state through the blocked park.
+func (ts *trunkStory) park()   { ts.t.Helper(); ts.set("blocked") }
+func (ts *trunkStory) resume() { ts.t.Helper(); ts.set("in_progress") }
+
+// mergeTrunk merges the remote trunk into the story's branch the way a branch
+// brings main in for an up-to-date requirement: a merge commit only the story holds.
+func (ts *trunkStory) mergeTrunk() {
+	ts.t.Helper()
+	ts.r.Git(ts.t, ts.r.Subject, "fetch", "--quiet", "origin")
+	ts.r.Git(ts.t, ts.r.Subject, "merge", "--quiet", "--no-ff", "-m", "Merge main into the branch", "origin/main")
+}
+
+// A story that commits, parks and resumes keeps its pre-park commits in story diff
+// and story proof alongside the ones made after the resume (sty_666e6110 AC1).
+func TestResumedStoryKeepsPreParkCommits(t *testing.T) {
+	ts := engageTrunkClone(t, parkBlocked)
+	ts.commit(ts.r.Subject, "a.go", "add a.go")
+	if err := os.WriteFile(filepath.Join(ts.r.Subject, "a_test.go"), []byte("package p\n\nfunc TestA(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ts.r.Git(t, ts.r.Subject, "add", "a_test.go")
+	ts.r.Git(t, ts.r.Subject, "commit", "--quiet", "-m", "add a_test.go")
+	ts.park()
+	ts.resume()
+	ts.commit(ts.r.Subject, "b.go", "add b.go")
+
+	wantFiles(t, "live", ts.live().Files, []string{"a.go", "a_test.go", "b.go"}, nil)
+
+	raw, err := dispatchRaw(t, "story-proof", map[string]any{"id": ts.it.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof := decodeProof(t, raw)
+	if len(proof.Tests) != 1 || proof.Tests[0].Path != "a_test.go" {
+		t.Errorf("story proof tests=%#v want the pre-park a_test.go", proof.Tests)
+	}
+}
+
+// Commits another story lands while this one is parked stay out of its change set
+// whether the remote trunk holds them or not, unless their subject names the story
+// (sty_666e6110 AC2).
+func TestResumedStoryExcludesParkTimeForeignCommits(t *testing.T) {
+	for _, published := range []bool{false, true} {
+		name := "local only"
+		if published {
+			name = "pushed"
+		}
+		t.Run(name, func(t *testing.T) {
+			ts := engageTrunkClone(t, parkBlocked)
+			ts.own("a.go")
+			ts.park()
+			ts.commit(ts.r.Subject, "foreign.go", "feat: foreign (sty_other)")
+			if published {
+				ts.r.Git(t, ts.r.Subject, "push", "--quiet", "origin", "main")
+			}
+			ts.own("named.go")
+			ts.resume()
+			ts.commit(ts.r.Subject, "b.go", "add b.go")
+
+			v := ts.live()
+			wantFiles(t, "live", v.Files, []string{"a.go", "named.go", "b.go"}, []string{"foreign.go"})
+			if strings.Contains(v.Patch, "foreign.go") || strings.Contains(v.Stat, "foreign.go") {
+				t.Errorf("patch/stat must not mention the foreign file:\n%s\n%s", v.Stat, v.Patch)
+			}
+		})
+	}
+}
+
+// Merging the trunk into a resumed story's branch adds only the merge's own
+// conflict resolutions, never the files the trunk brought in (sty_666e6110 AC3).
+func TestResumedStoryTrunkMergeContributesOnlyResolutions(t *testing.T) {
+	t.Run("clean merge", func(t *testing.T) {
+		ts := engageTrunkClone(t, parkBlocked)
+		ts.commit(ts.r.Subject, "a.go", "add a.go")
+		ts.park()
+		ts.resume()
+		ts.commit(ts.r.Subject, "b.go", "add b.go")
+		ts.land("trunk_only.go", "feat: other (sty_other)")
+		ts.mergeTrunk()
+		wantFiles(t, "live", ts.live().Files, []string{"a.go", "b.go"}, []string{"trunk_only.go"})
+	})
+	t.Run("conflict resolution", func(t *testing.T) {
+		ts := engageTrunkClone(t, parkBlocked)
+		ts.commit(ts.r.Subject, "a.go", "add a.go")
+		ts.park()
+		ts.resume()
+		ts.r.Commit(t, ts.r.Subject, "shared.go", "mine\n")
+		ts.r.Git(t, ts.r.Pusher, "pull", "--quiet", "--ff-only")
+		ts.r.Commit(t, ts.r.Pusher, "shared.go", "theirs\n")
+		ts.r.Git(t, ts.r.Pusher, "push", "--quiet", "origin", "main")
+		ts.land("trunk_only.go", "feat: other too (sty_other)")
+		ts.r.Git(t, ts.r.Subject, "fetch", "--quiet", "origin")
+		if out, err := ts.r.GitErr(ts.r.Subject, "merge", "--no-ff", "-m", "Merge main into the branch", "origin/main"); err == nil {
+			t.Fatalf("setup: want a conflict on shared.go, merged cleanly:\n%s", out)
+		}
+		if err := os.WriteFile(filepath.Join(ts.r.Subject, "shared.go"), []byte("resolved\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		ts.r.Git(t, ts.r.Subject, "add", "shared.go")
+		ts.r.Git(t, ts.r.Subject, "commit", "--quiet", "--no-edit")
+
+		v := ts.live()
+		wantFiles(t, "live", v.Files, []string{"a.go", "shared.go"}, []string{"trunk_only.go"})
+		if !strings.Contains(v.Patch, "+resolved") || strings.Contains(v.Patch, "trunk_only.go") {
+			t.Errorf("patch must carry the resolution and not the trunk's file:\n%s", v.Patch)
+		}
+	})
+}
+
+// The id4me shape — commit, park (another story's commit lands), resume, trunk
+// merge — hands the reviewer exactly the story's own files, measured from the
+// engagement baseline, with the park interval named in the note (sty_666e6110 AC4).
+func TestId4meResumeMergeShape(t *testing.T) {
+	ts := engageTrunkClone(t, parkBlocked)
+	engaged := ts.r.Head(t, ts.r.Subject)
+	var own []string
+	for i := 1; i <= 9; i++ {
+		f := "check_contacts_" + string(rune('0'+i)) + ".go"
+		own = append(own, f)
+		ts.commit(ts.r.Subject, f, "add "+f)
+	}
+	parked := ts.r.Head(t, ts.r.Subject)
+	ts.park()
+	ts.commit(ts.r.Subject, "infisical.go", "feat: infisical (sty_other)")
+	resumed := ts.r.Head(t, ts.r.Subject)
+	ts.resume()
+	ts.land("infisical_remote.go", "feat: infisical remote (sty_other)")
+	ts.mergeTrunk()
+
+	v := ts.live()
+	wantFiles(t, "live", v.Files, own, []string{"infisical.go", "infisical_remote.go"})
+	if len(v.Files) != len(own) {
+		t.Errorf("files=%v want exactly the story's %d own files", v.Files, len(own))
+	}
+	if v.Baseline != engaged {
+		t.Errorf("baseline_sha=%q want engagement baseline %q", v.Baseline, engaged)
+	}
+	if want := "excluded park interval " + parked + ".." + resumed; !strings.Contains(v.Note, want) {
+		t.Errorf("note=%q want it to name %q", v.Note, want)
+	}
+}
+
+// A story that never parked and merges the trunk into its branch drops the files
+// the trunk brought in and keeps its own (sty_666e6110 AC5).
+func TestNeverParkedTrunkMergeKeepsOnlyOwn(t *testing.T) {
+	ts := engageInTrunkClone(t)
+	ts.commit(ts.r.Subject, "o.go", "add o.go")
+	ts.land("trunk_only.go", "feat: other (sty_other)")
+	ts.mergeTrunk()
+	wantFiles(t, "live", ts.live().Files, []string{"o.go"}, []string{"trunk_only.go"})
 }

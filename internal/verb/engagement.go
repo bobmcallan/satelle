@@ -296,6 +296,9 @@ func liveStoryDiff(ctx context.Context, it workitem.Item, wantPatch, includeSubs
 	files := sl.Files
 	stat, patch := sl.Stat, sl.Patch
 	note := "enumeration only — no pass/fail; gates decide scope"
+	for _, w := range sl.Windows {
+		note += fmt.Sprintf("; excluded park interval %s..%s", w.From, w.To)
+	}
 	var processRoot string
 	var processFiles []string
 	// Opt-in substrate leg only (--include-substrate). Default live path stays
@@ -440,6 +443,8 @@ type engagementSlice struct {
 	Files    []string
 	Stat     string
 	Patch    string
+	// Windows are the park intervals left out of the slice.
+	Windows []parkWindow
 }
 
 func resolveEngagementSlice(ctx context.Context, it workitem.Item, wantPatch bool) (engagementSlice, error) {
@@ -450,19 +455,21 @@ func resolveEngagementSlice(ctx context.Context, it workitem.Item, wantPatch boo
 	if base.HeadSHA == "" {
 		return engagementSlice{}, fmt.Errorf("%w: story-diff: engagement baseline for %s has empty head_sha (git was unavailable at engage)", errEmptyHead, it.ID)
 	}
-	// A story resumed from a park enumerates from the RESUME point, not from its
-	// first engagement — otherwise every commit another story landed during the
-	// park is attributed to this one (sty_526d6a68). This moves WHEN only: the
-	// worktree anchor and DirtyAt still come from the engagement baseline.
+	// A story resumed from a park enumerates its whole engagement minus the park
+	// intervals: commits another story landed while this one sat parked are not its
+	// work (sty_526d6a68), the commits it made before parking still are. The
+	// worktree anchor and DirtyAt come from the engagement baseline; the substrate
+	// walk (BaseAt) still starts at the resume time.
 	sinceSHA := base.HeadSHA
-	if sha, at, ok := latestResumeReanchor(ctx, it.ID); ok {
-		sinceSHA, baseAt = sha, at
+	windows := parkWindows(ctx, it.ID, sinceSHA)
+	if _, at, ok := latestResumeReanchor(ctx, it.ID); ok {
+		baseAt = at
 	}
 	dir := engagementTreeDir(ctx, it.ID, base.Worktree)
 	if aerr := refuseForeignTreeDiff(ctx, it.ID, base.Worktree, dir); aerr != nil {
 		return engagementSlice{}, fmt.Errorf("%w: %v", errForeignTree, aerr)
 	}
-	files, stat, patch, derr := storyChangeSince(ctx, dir, sinceSHA, it.ID, wantPatch)
+	files, stat, patch, derr := storyChangeSince(ctx, dir, sinceSHA, it.ID, windows, wantPatch)
 	if derr != nil {
 		return engagementSlice{}, fmt.Errorf("%w: %v", errNoGit, derr)
 	}
@@ -474,6 +481,7 @@ func resolveEngagementSlice(ctx context.Context, it workitem.Item, wantPatch boo
 		Files:    files,
 		Stat:     stat,
 		Patch:    patch,
+		Windows:  windows,
 	}, nil
 }
 
@@ -567,22 +575,36 @@ func gitDiffSince(dir, baseline string, wantPatch bool) (files []string, stat, p
 }
 
 // storyChangeSince is a story's change set from sinceSHA to the current tree: what
-// gitDiffSince lists, minus the commits other stories landed on the trunk and that a
-// fast-forward put between sinceSHA and HEAD (sty_659c4133). A commit is excluded
-// only when the remote trunk already holds it AND its subject does not name
-// storyID — the convention satelle-substrate-only-check's channel 3 reads — so the
-// story's own commits and uncommitted changes always stay. With no remote trunk to
-// compare with, or no such commit in range, it is exactly gitDiffSince.
-func storyChangeSince(ctx context.Context, dir, sinceSHA, storyID string, wantPatch bool) (files []string, stat, patch string, err error) {
-	own, foreign := splitRangeByTrunk(ctx, dir, sinceSHA, storyID)
-	if !foreign {
+// gitDiffSince lists, minus what is not the story's work (sty_659c4133, sty_666e6110):
+//   - a commit the remote trunk already holds whose subject does not name storyID —
+//     the convention satelle-substrate-only-check's channel 3 reads — that a
+//     fast-forward put in range;
+//   - a commit in a park window whose subject does not name storyID: another story
+//     landed it while this one sat parked;
+//   - what a merge of the trunk into the story's own branch brought in, other than
+//     the merge's own conflict resolutions.
+//
+// The story's own commits and uncommitted changes always stay. With nothing to
+// leave out it is exactly gitDiffSince.
+func storyChangeSince(ctx context.Context, dir, sinceSHA, storyID string, windows []parkWindow, wantPatch bool) (files []string, stat, patch string, err error) {
+	own, composed := walkStoryRange(ctx, dir, sinceSHA, storyID, windows)
+	if !composed {
 		return gitDiffSince(dir, sinceSHA, wantPatch)
 	}
 	// The change set is composed from its own parts, so files, stat and patch stay
 	// consistent: each own commit against its first parent, then what is not committed.
 	legs := make([][]string, 0, len(own)+1)
 	for _, c := range own {
-		legs = append(legs, []string{c + "^", c})
+		revs := []string{c.SHA + "^", c.SHA}
+		if c.Narrowed {
+			paths := mergeResolvedPaths(dir, c.SHA)
+			if len(paths) == 0 {
+				continue
+			}
+			revs = append(revs, "--")
+			revs = append(revs, paths...)
+		}
+		legs = append(legs, revs)
 	}
 	legs = append(legs, []string{"HEAD"})
 	seen := map[string]bool{}
@@ -604,37 +626,117 @@ func storyChangeSince(ctx context.Context, dir, sinceSHA, storyID string, wantPa
 	return withUntracked(dir, files, stats.String(), patches.String())
 }
 
+// rangeCommit is a first-parent commit that stays in a story's change set.
+// Narrowed marks a merge of the trunk into the story's branch: only the paths the
+// merge itself resolved stay, not what the trunk brought in.
+type rangeCommit struct {
+	SHA      string
+	Narrowed bool
+}
+
 // splitRangeByTrunk walks sinceSHA..HEAD along the first parent and returns the
 // commits that stay in the story's change set, oldest first, and whether any
-// commit in range was left out as another story's published work.
+// commit in range was left out as another story's published work or narrowed to
+// its own resolutions.
 func splitRangeByTrunk(ctx context.Context, dir, sinceSHA, storyID string) (own []string, foreign bool) {
+	commits, foreign := walkStoryRange(ctx, dir, sinceSHA, storyID, nil)
+	for _, c := range commits {
+		own = append(own, c.SHA)
+	}
+	return own, foreign
+}
+
+// walkStoryRange is splitRangeByTrunk with park windows: a commit inside a window
+// stays only when its subject names the story, and never when the window is All.
+// With no remote trunk and no windows there is nothing to classify.
+func walkStoryRange(ctx context.Context, dir, sinceSHA, storyID string, windows []parkWindow) (own []rangeCommit, composed bool) {
 	ref := trunk.RemoteTrunkRef(ctx, dir, trunkCfg.Branch)
-	if ref == "" || storyID == "" {
+	if (ref == "" && len(windows) == 0) || storyID == "" {
 		return nil, false
 	}
 	out, err := exec.CommandContext(ctx, "git", "-C", dir, "log", "--first-parent", "--reverse",
-		"--format=%H%x00%s", sinceSHA+"..HEAD").Output()
+		"--format=%H%x00%P%x00%s", sinceSHA+"..HEAD").Output()
 	if err != nil {
 		return nil, false
 	}
 	for _, line := range strings.Split(string(out), "\n") {
-		sha, subject, ok := strings.Cut(line, "\x00")
-		if !ok {
+		parts := strings.SplitN(line, "\x00", 3)
+		if len(parts) != 3 {
 			continue
 		}
-		if !strings.Contains(subject, storyID) && onTrunk(ctx, dir, sha, ref) {
-			foreign = true
+		sha, parents, named := parts[0], strings.Fields(parts[1]), strings.Contains(parts[2], storyID)
+		if inWindow, all := inParkWindow(ctx, dir, sha, windows); inWindow {
+			if !named || all {
+				composed = true
+				continue
+			}
+		} else if ref != "" && trunkMergeIntoStory(ctx, dir, sha, parents, ref) {
+			composed = true
+			own = append(own, rangeCommit{SHA: sha, Narrowed: true})
+			continue
+		} else if ref != "" && !named && onTrunk(ctx, dir, sha, ref) {
+			composed = true
 			continue
 		}
-		own = append(own, sha)
+		own = append(own, rangeCommit{SHA: sha})
 	}
-	return own, foreign
+	return own, composed
+}
+
+// inParkWindow reports whether sha lies in a park interval — reachable from its
+// resume head but not from its park head — and whether that interval is All.
+func inParkWindow(ctx context.Context, dir, sha string, windows []parkWindow) (in, all bool) {
+	for _, w := range windows {
+		if isAncestor(ctx, dir, sha, w.To) && !isAncestor(ctx, dir, sha, w.From) {
+			in = true
+			all = all || w.All
+		}
+	}
+	return in, all
+}
+
+// trunkMergeIntoStory reports whether sha is a merge the story made of the trunk
+// into its own branch: the trunk does not hold the merge itself, yet holds every
+// parent it merged in. A merge already on the trunk is another story's PR landing
+// and keeps the subject rule.
+func trunkMergeIntoStory(ctx context.Context, dir, sha string, parents []string, ref string) bool {
+	if len(parents) < 2 || onTrunk(ctx, dir, sha, ref) {
+		return false
+	}
+	for _, p := range parents[1:] {
+		if !onTrunk(ctx, dir, p, ref) {
+			return false
+		}
+	}
+	return true
+}
+
+// mergeResolvedPaths lists the paths where the merge differs from every parent —
+// its own conflict resolutions.
+func mergeResolvedPaths(dir, merge string) []string {
+	out, err := exec.Command("git", "-C", dir, "diff-tree", "--no-commit-id", "-r", "--cc", "--name-only", merge).Output()
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			paths = append(paths, line)
+		}
+	}
+	return paths
 }
 
 // onTrunk reports whether commit is reachable from ref. An error from git is
 // "not on trunk": the commit then stays in the change set rather than vanishing.
 func onTrunk(ctx context.Context, dir, commit, ref string) bool {
-	return exec.CommandContext(ctx, "git", "-C", dir, "merge-base", "--is-ancestor", commit, ref).Run() == nil
+	return isAncestor(ctx, dir, commit, ref)
+}
+
+// isAncestor reports whether commit is reachable from tip. An error from git
+// (an unknown or unrelated commit) answers false.
+func isAncestor(ctx context.Context, dir, commit, tip string) bool {
+	return exec.CommandContext(ctx, "git", "-C", dir, "merge-base", "--is-ancestor", commit, tip).Run() == nil
 }
 
 // gitDiffLeg is one tracked-files leg of a change set: name-only, --stat and
