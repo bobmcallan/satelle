@@ -165,8 +165,14 @@ func newReadyRig(t *testing.T, mark, reviewers string) *readyRig {
 // newRigFor is newReadyRig over an arbitrary step catalogue.
 func newRigFor(t *testing.T, stepToml string) *readyRig {
 	t.Helper()
+	return newRigWith(t, readyDoneToml, stepToml)
+}
+
+// newRigWith is newRigFor over an arbitrary lifecycle declaration too.
+func newRigWith(t *testing.T, doneToml, stepToml string) *readyRig {
+	t.Helper()
 	withWiring(t)
-	wireWithWorkflows(t, routeHalves(readyDoneToml, stepToml))
+	wireWithWorkflows(t, routeHalves(doneToml, stepToml))
 	verb.SetStoryDir(t.TempDir())
 	r := &readyRig{
 		d: &roundDispatcher{t: t, calls: map[string]int{}, docName: "plan"},
@@ -795,6 +801,71 @@ func TestReadyEpicReadiesChildrenThenMarksIt(t *testing.T) {
 	}
 	if len(res.Children) != 2 {
 		t.Errorf("both child results are reported: %+v", res.Children)
+	}
+}
+
+// sty_4cbe00aa: a child on a route with no readiness step has nothing to ready, so
+// it does not hold its epic back; it is reported no-readiness-step, not refused.
+func TestReadyEpicMarksWithAChildOnARouteWithNoReadinessStep(t *testing.T) {
+	noStepLane := `
+[substrate]
+obligations = ["raised", "sub-coded", "sub-closed"]
+`
+	noStepSteps := `
+[sub-coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[sub-closed]
+status = "done"
+terminal = true
+requires = ["sub-coded"]
+`
+	r := newRigWith(t, readyDoneToml+noStepLane, readyStepToml("ready", readyReviewers)+noStepSteps)
+	epic := newStoryOf(t, "epic-parent", "epic", "epic:rr")
+	story := newStoryOf(t, "feature", "story", "epic:rr")
+	sub := newStoryOf(t, "substrate", "sub", "epic:rr")
+	r.g.verd = func(it workitem.Item, to string) verb.GateDecision {
+		if to == "ready" {
+			return verb.GateDecision{}
+		}
+		return acceptAll()
+	}
+	res := readyCall(t, epic.ID)[0]
+	if res.Outcome != verb.ReadyMarked || !res.Marked() || !hasMark(t, epic.ID) {
+		t.Fatalf("the epic is marked despite the child with no readiness step: %+v", res)
+	}
+	if strings.Contains(res.Reason, sub.ID) {
+		t.Errorf("the child with no readiness step must not hold the epic back: %q", res.Reason)
+	}
+	byID := map[string]verb.ReadyResult{}
+	for _, c := range res.Children {
+		byID[c.ID] = c
+	}
+	if c := byID[story.ID]; c.Outcome != verb.ReadyMarked {
+		t.Errorf("the child with a readiness step is readied: %+v", c)
+	}
+	c := byID[sub.ID]
+	if c.Outcome != verb.ReadyNoStep || !strings.Contains(c.Reason, "declares no readiness step") {
+		t.Errorf("the substrate child is reported no-readiness-step: %+v", c)
+	}
+	if hasMark(t, sub.ID) || r.d.calls[sub.ID] != 0 {
+		t.Errorf("nothing runs for a child with no readiness step")
+	}
+}
+
+func TestReadyResultMarkedIgnoresNoReadinessStepChildren(t *testing.T) {
+	res := verb.ReadyResult{ID: "e", Outcome: verb.ReadyMarked, Children: []verb.ReadyResult{
+		{ID: "a", Outcome: verb.ReadyMarked},
+		{ID: "b", Outcome: verb.ReadyNoStep},
+	}}
+	if !res.Marked() {
+		t.Error("a no-readiness-step child counts as ready")
+	}
+	res.Children[1].Outcome = verb.ReadyRefused
+	if res.Marked() {
+		t.Error("a refused child still holds the epic back")
 	}
 }
 

@@ -84,8 +84,13 @@ func readinessEdgeFor(ctx context.Context, item workitem.Item) (readinessEdge, e
 	if container {
 		knob = "waits_on_children"
 	}
-	return readinessEdge{}, fmt.Errorf("the route of %s declares no readiness step: no step entered from %q declares %s", item.ID, from, knob)
+	return readinessEdge{}, fmt.Errorf("the route of %s %w: no step entered from %q declares %s", item.ID, errNoReadinessStep, from, knob)
 }
+
+// errNoReadinessStep is what readinessEdgeFor wraps when the route has no step
+// entered from its start that declares the readiness knob, so a caller can tell
+// that case from a lookup that failed.
+var errNoReadinessStep = errors.New("declares no readiness step")
 
 // gateRound is what one gate run recorded: the reviewers' verdicts and the gate
 // skills that did not resolve.

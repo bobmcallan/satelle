@@ -1,3 +1,8 @@
+## [0.0.769] - 2026-10-27
+
+### Fixed
+- `satelle story ready <epic>` marks an epic when its readiness round is accepted and every child that has a readiness step is ready. A child on a route with no readiness step (a substrate or docs route) has nothing to ready, so it no longer holds the epic back; it is reported as having no readiness step, not as refused. Before, the epic was reported "children not ready" forever and none of its children could leave backlog. A child whose readiness lookup fails for any other reason still holds the epic back. (sty_4cbe00aa)
+
 ## [0.0.768] - 2026-10-27
 
 ### Fixed

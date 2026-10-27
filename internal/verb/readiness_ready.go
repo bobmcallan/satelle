@@ -3,6 +3,7 @@ package verb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -36,6 +37,10 @@ const (
 	ReadyMarked      = "marked"
 	ReadyNotAccepted = "not-accepted"
 	ReadyRefused     = "refused"
+	// ReadyNoStep is a child whose route declares no readiness step: there is
+	// nothing to ready, and its epic's readiness covers it, as it does for the wave
+	// guard (refuseUnreadiedEpic).
+	ReadyNoStep = "no-readiness-step"
 )
 
 // ReadyResult is the outcome for one story of a `story ready` call. Children is
@@ -54,7 +59,10 @@ type ReadyResult struct {
 	Children []ReadyResult `json:"children,omitempty"`
 }
 
-// Line is the one-line report of the story: `<id> marked|not-accepted|refused[: reason]`.
+// Line is the one-line report of the story:
+// `<id> marked|not-accepted|refused|no-readiness-step[: reason]`. no-readiness-step
+// is only ever a child of an epic: its route declares no readiness step, so it does
+// not hold the epic back.
 func (r ReadyResult) Line() string {
 	line := r.ID + " " + r.Outcome
 	if r.Outcome == ReadyMarked && r.Reused {
@@ -70,13 +78,14 @@ func (r ReadyResult) Line() string {
 }
 
 // Marked reports whether every story in the result — an epic's children included
-// — was marked.
+// — was marked. A child with no readiness step has nothing to mark and counts as
+// ready.
 func (r ReadyResult) Marked() bool {
 	if r.Outcome != ReadyMarked {
 		return false
 	}
 	for _, c := range r.Children {
-		if !c.Marked() {
+		if c.Outcome != ReadyNoStep && !c.Marked() {
 			return false
 		}
 	}
@@ -113,6 +122,17 @@ func flattenReady(r ReadyResult) []string {
 		lines = append(lines, flattenReady(c)...)
 	}
 	return lines
+}
+
+// classifyChildEdgeErr decides what a failed readiness lookup for an epic's child
+// means: a route with no readiness step leaves the child covered by the epic's
+// readiness (ReadyNoStep, which does not hold the epic back); any other failure is
+// refused and holds the epic back.
+func classifyChildEdgeErr(err error) (outcome string, holdsEpic bool) {
+	if errors.Is(err, errNoReadinessStep) {
+		return ReadyNoStep, false
+	}
+	return ReadyRefused, true
 }
 
 func refused(id, format string, args ...any) ReadyResult {
@@ -197,7 +217,9 @@ func readyStory(ctx context.Context, item workitem.Item, edge readinessEdge) Rea
 // hold, then the epic's own readiness step (its judgement of order, parallelism
 // and whether it can be achieved), then the children once more — the judgement may
 // have filed one — and marks the epic only when every non-terminal child is ready
-// and the epic-level round was accepted. The epic's status is never changed.
+// and the epic-level round was accepted. A child whose route declares no readiness
+// step has nothing to ready: it is reported ReadyNoStep and does not hold the epic
+// back. The epic's status is never changed.
 func readyEpic(ctx context.Context, store *workitem.Store, epic workitem.Item, edge readinessEdge) ReadyResult {
 	res := ReadyResult{ID: epic.ID}
 	idx, err := requireDocIndex()
@@ -226,11 +248,14 @@ func readyEpic(ctx context.Context, store *workitem.Store, epic workitem.Item, e
 			}
 			kidEdge, err := readinessEdgeFor(ctx, kid)
 			if err != nil {
+				outcome, holdsEpic := classifyChildEdgeErr(err)
 				if _, seen := outcomes[kid.ID]; !seen {
-					outcomes[kid.ID] = ReadyRefused
-					res.Children = append(res.Children, refused(kid.ID, "%v", err))
+					outcomes[kid.ID] = outcome
+					res.Children = append(res.Children, ReadyResult{ID: kid.ID, Outcome: outcome, Reason: err.Error()})
 				}
-				notReady = append(notReady, kid.ID)
+				if holdsEpic {
+					notReady = append(notReady, kid.ID)
+				}
 				continue
 			}
 			if kid.Status != kidEdge.From {

@@ -1676,16 +1676,17 @@ func storyReadyCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "ready <id> [<id>...]",
 		Short: "Ready backlog stories or epics without engaging them",
-		Long: `Run each story's readiness step — its performer, then its reviewers — and
-record the verdicts on the story, without changing its status or taking the
-engagement seat. A story whose readiness gates accept gets the tag the step's
-mark key declares; the work starts later. An epic readies its backlog children
-first, then runs its own step, and is marked only when every child is.
+		Long: `Run each story's readiness step — performer, then reviewers — and
+record its verdicts, without changing status or taking the seat. A story whose
+gates accept gets the tag the step's mark key declares; the work starts later. An
+epic readies its backlog children, then its own step; it is marked when every
+child with a readiness step is ready. A child whose route declares no readiness
+step is reported no-readiness-step, not holding the epic back.
 
-A story is refused, and the others still run, when it is not at the route's start
-status, its round budget is spent, or its step has no dispatched performer. A
-step with no mark records the round but applies no tag.
-One line per story: <id> marked|not-accepted|refused[: why]; exit is non-zero unless every story was marked. See 'satelle help workflow-convert'.`,
+A story is refused (the others still run) when not at the route's start status,
+its round budget is spent, or it has no dispatched performer. A step with no mark
+records the round but applies no tag.
+One line per story: <id> marked|not-accepted|refused|no-readiness-step[: why]; non-zero exit unless all marked. See 'satelle help workflow-convert'.`,
 		Args:        cobra.MinimumNArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
