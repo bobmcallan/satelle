@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -495,4 +496,271 @@ func TestMultiSeatGitDashCFenceAndAttribution(t *testing.T) {
 			t.Errorf("the refusal must be B's: %s", reason)
 		}
 	})
+}
+
+// sty_68a4d071 — real linked worktrees. The fixtures above fake a tree with a
+// .git marker; these run `git worktree add`, so a branch really is checked out in a
+// worktree and the hook, running in the main tree under the default fence, has to
+// attribute by the tree an event targets.
+
+func resolvedPath(t *testing.T, p string) string {
+	t.Helper()
+	r, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// linkedSeats is the main tree (repo, which holds no seat and is where the hook
+// runs) and two linked worktrees, wtX on feat/x and wtY on feat/y, each seating one
+// story under multiSeatSession.
+type linkedSeats struct {
+	repo, wtX, wtY string
+	x, y           workitem.Item
+}
+
+// multiSeatLinked seats X (xStatus, wtX) and Y (yStatus, wtY). xFirst picks which
+// seat the store lists first. yInFlight leaves Y's transition unconfirmed.
+func multiSeatLinked(t *testing.T, xStatus, yStatus string, xFirst, yInFlight bool, gateExtra string) linkedSeats {
+	t.Helper()
+	f := multiSeatRepo(t, xStatus, "feature", yStatus, true, gateExtra)
+	// multiSeatRepo's fake markers give way to a real repository and real worktrees.
+	_ = os.Remove(filepath.Join(f.repo, ".git"))
+	if err := os.RemoveAll(f.wtB); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, f.repo, "init", "-q", "-b", "main")
+	gitIn(t, f.repo, "commit", "-q", "--allow-empty", "-m", "init")
+	wtX, err := os.MkdirTemp("/var/tmp", "satelle-linked-x-")
+	if err != nil {
+		t.Skipf("cannot place a linked tree outside the temp roots: %v", err)
+	}
+	if err := os.Remove(wtX); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(wtX) })
+	gitIn(t, f.repo, "worktree", "add", "-q", "-b", "feat/x", wtX)
+	gitIn(t, f.repo, "worktree", "add", "-q", "-b", "feat/y", f.wtB)
+	wtX, wtY := resolvedPath(t, wtX), resolvedPath(t, f.wtB)
+
+	db, err := store.Open(runtimeDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	ctx := context.Background()
+	type seat struct {
+		it     workitem.Item
+		status string
+		tree   string
+		flight bool
+	}
+	seats := []seat{{f.a, xStatus, wtX, false}, {f.b, yStatus, wtY, yInFlight}}
+	if !xFirst {
+		seats[0], seats[1] = seats[1], seats[0]
+	}
+	for _, s := range seats {
+		if err := db.Leases.ForceRelease(ctx, s.it.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, s := range seats {
+		if _, _, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
+			ItemID: s.it.ID, Kind: "story", Owner: "alice", State: s.status, StorySeat: true,
+			SeatKey: "epic-parent", Worktree: s.tree, SessionID: multiSeatSession,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if !s.flight {
+			if err := db.Leases.Confirm(ctx, s.it.ID, s.status); err != nil {
+				t.Fatal(err)
+			}
+		}
+		time.Sleep(5 * time.Millisecond) // time-subject: distinct acquired_at, the store order is the acquisition order
+	}
+	live, err := db.Leases.List(ctx)
+	if err != nil || len(live) != 2 {
+		t.Fatalf("fixture must hold two live seats: %v n=%d", err, len(live))
+	}
+	if first := live[0].ItemID; (first == f.a.ID) != xFirst {
+		t.Fatalf("store lists %s first, xFirst=%v", first, xFirst)
+	}
+	return linkedSeats{repo: f.repo, wtX: wtX, wtY: wtY, x: f.a, y: f.b}
+}
+
+const pushInProgressOnly = "\n[gate.command_allow]\ncommit = [\"in_progress\"]\npush = [\"in_progress\"]\n"
+
+// AC1: from the main tree, with the default fence, an Edit into each linked
+// worktree is judged against that worktree's seat.
+func TestMultiSeatLinkedEditJudgedAgainstWorktreeSeat(t *testing.T) {
+	bothOrders(t, func(t *testing.T, xFirst bool) {
+		l := multiSeatLinked(t, "plan", "in_progress", xFirst, false, "")
+		if out, err := runRootIn(t, multiSeatEdit(filepath.Join(l.wtY, "a.go")), "hook", "gate"); err != nil {
+			t.Fatalf("Y is at in_progress and holds the target tree, so the edit is allowed: %v\n%s", err, out)
+		}
+		out, err := runRootIn(t, multiSeatEdit(filepath.Join(l.wtX, "a.go")), "hook", "gate")
+		if err == nil {
+			t.Fatalf("X is at plan and holds the target tree, so the edit is refused:\n%s", out)
+		}
+		if reason := denyReasonOf(t, out); !strings.Contains(reason, l.x.ID) || strings.Contains(reason, l.y.ID) {
+			t.Errorf("the refusal must be X's alone: %s", reason)
+		}
+	})
+	bothOrders(t, func(t *testing.T, xFirst bool) {
+		l := multiSeatLinked(t, "in_progress", "plan", xFirst, false, "")
+		if out, err := runRootIn(t, multiSeatEdit(filepath.Join(l.wtX, "a.go")), "hook", "gate"); err != nil {
+			t.Fatalf("X is at in_progress and holds the target tree, so the edit is allowed: %v\n%s", err, out)
+		}
+		if out, err := runRootIn(t, multiSeatEdit(filepath.Join(l.wtY, "a.go")), "hook", "gate"); err == nil {
+			t.Fatalf("Y is at plan and holds the target tree, so the edit is refused:\n%s", out)
+		}
+	})
+}
+
+// AC1: a commit a cd moved into a linked worktree is judged against its seat.
+func TestMultiSeatLinkedCommitJudgedAgainstWorktreeSeat(t *testing.T) {
+	bothOrders(t, func(t *testing.T, xFirst bool) {
+		l := multiSeatLinked(t, "plan", "in_progress", xFirst, false, pushInProgressOnly)
+		if out, err := runRootIn(t, multiSeatBash("cd "+l.wtY+" && git commit -m x"), "hook", "commitgate"); err != nil {
+			t.Fatalf("Y is at in_progress and the commit runs in its worktree: %v\n%s", err, out)
+		}
+		out, err := runRootIn(t, multiSeatBash("cd "+l.wtX+" && git commit -m x"), "hook", "commitgate")
+		if err == nil {
+			t.Fatalf("X is at plan and the commit runs in its worktree:\n%s", out)
+		}
+		if reason := denyReasonOf(t, out); !strings.Contains(reason, l.x.ID) {
+			t.Errorf("the refusal must be X's: %s", reason)
+		}
+	})
+}
+
+// AC1: an unmoved push from the main tree is judged against the seat of the
+// worktree that has the pushed branch checked out.
+func TestMultiSeatLinkedPushAttributedByBranch(t *testing.T) {
+	bothOrders(t, func(t *testing.T, xFirst bool) {
+		l := multiSeatLinked(t, "plan", "in_progress", xFirst, false, pushInProgressOnly)
+		for _, command := range []string{"git push origin feat/y", "git push -u origin feat/y:feat/y", "git push origin +refs/heads/feat/y"} {
+			if out, err := runRootIn(t, multiSeatBash(command), "hook", "commitgate"); err != nil {
+				t.Fatalf("%q: feat/y is checked out in Y's worktree and Y is at in_progress: %v\n%s", command, err, out)
+			}
+		}
+		for _, command := range []string{"git push origin feat/x", "git push -u origin feat/x:feat/x"} {
+			out, err := runRootIn(t, multiSeatBash(command), "hook", "commitgate")
+			if err == nil {
+				t.Fatalf("%q: feat/x is checked out in X's worktree and X is at plan:\n%s", command, out)
+			}
+			if reason := denyReasonOf(t, out); !strings.Contains(reason, l.x.ID) || strings.Contains(reason, l.y.ID) {
+				t.Errorf("%q: the refusal must be X's alone: %s", command, reason)
+			}
+		}
+	})
+}
+
+// An explicit cd still beats the branch: a moved push is decided by its directory.
+func TestMultiSeatLinkedMovedPushKeepsItsDirectory(t *testing.T) {
+	l := multiSeatLinked(t, "plan", "in_progress", true, false, pushInProgressOnly)
+	if out, err := runRootIn(t, multiSeatBash("cd "+l.wtY+" && git push origin feat/x"), "hook", "commitgate"); err != nil {
+		t.Fatalf("the push runs in Y's worktree, which decides it: %v\n%s", err, out)
+	}
+}
+
+// AC2: what targets no seat's worktree keeps today's refusal.
+func TestMultiSeatLinkedUnattributableStillRefused(t *testing.T) {
+	bothOrders(t, func(t *testing.T, xFirst bool) {
+		l := multiSeatLinked(t, "in_progress", "in_progress", xFirst, false, pushInProgressOnly)
+		type event struct{ label, command, edit string }
+		for _, ev := range []event{
+			{"unmoved commit", "git commit -m x", ""},
+			{"push of a branch no worktree has", "git push origin no-such-branch", ""},
+			{"push of the main tree's branch", "git push origin main", ""},
+			{"bare push", "git push", ""},
+			{"push of HEAD", "git push origin HEAD", ""},
+			{"push of two trees' branches", "git push origin feat/x feat/y", ""},
+			{"unmoved commit then push of a seat's branch", "git commit -m x && git push origin feat/y", ""},
+			{"shell mutation in the main tree", "echo x > " + filepath.Join(l.repo, "internal", "foo.go"), ""},
+			{"edit in the main tree", "", filepath.Join(l.repo, "internal", "foo.go")},
+		} {
+			var out string
+			var err error
+			if ev.edit != "" {
+				out, err = runRootIn(t, multiSeatEdit(ev.edit), "hook", "gate")
+			} else {
+				out, err = runRootIn(t, multiSeatBash(ev.command), "hook", "commitgate")
+			}
+			if err == nil {
+				t.Fatalf("%s must be refused:\n%s", ev.label, out)
+			}
+			reason := denyReasonOf(t, out)
+			for _, want := range []string{"none is in the tree this event runs in", l.x.ID, l.y.ID} {
+				if !strings.Contains(reason, want) {
+					t.Errorf("%s: refusal missing %q: %s", ev.label, want, reason)
+				}
+			}
+		}
+	})
+}
+
+// AC3: scratch paths outside every repo tree stay ungated while the session holds
+// two seats and one has a transition in flight.
+func TestMultiSeatLinkedScratchAllowedWhileTransitionInFlight(t *testing.T) {
+	bothOrders(t, func(t *testing.T, xFirst bool) {
+		l := multiSeatLinked(t, "plan", "in_progress", xFirst, true, "")
+		scratch := filepath.Join(t.TempDir(), "scratchpad", "brief.md")
+		if out, err := runRootIn(t, multiSeatEdit(scratch), "hook", "gate"); err != nil {
+			t.Fatalf("an Edit to scratch %s is allowed: %v\n%s", scratch, err, out)
+		}
+		write := multiSeatEvent("Write", map[string]any{"file_path": scratch, "content": "x"})
+		if out, err := runRootIn(t, write, "hook", "gate"); err != nil {
+			t.Fatalf("a Write to scratch is allowed: %v\n%s", err, out)
+		}
+		redirect := multiSeatBash("echo x > " + scratch)
+		if out, err := runRootIn(t, redirect, "hook", "gate"); err != nil {
+			t.Fatalf("a shell redirect to scratch is allowed by the gate: %v\n%s", err, out)
+		}
+		if out, err := runRootIn(t, redirect, "hook", "commitgate"); err != nil {
+			t.Fatalf("a shell redirect to scratch is allowed by the commitgate: %v\n%s", err, out)
+		}
+		// The in-flight seat still fences its own tree.
+		if out, err := runRootIn(t, multiSeatEdit(filepath.Join(l.wtY, "a.go")), "hook", "gate"); err == nil {
+			t.Fatalf("an edit into the in-flight seat's tree is still refused:\n%s", out)
+		}
+	})
+}
+
+func TestGitPushBranches(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{"git push origin feat/x", []string{"refs/heads/feat/x"}},
+		{"git push -u origin feat/x", []string{"refs/heads/feat/x"}},
+		{"git push --force-with-lease origin feat/x", []string{"refs/heads/feat/x"}},
+		{"git push origin feat/x:release", []string{"refs/heads/feat/x"}},
+		{"git push origin +feat/x:feat/x", []string{"refs/heads/feat/x"}},
+		{"git push origin refs/heads/feat/x", []string{"refs/heads/feat/x"}},
+		{"git push -o ci.skip origin feat/x", []string{"refs/heads/feat/x"}},
+		{"git push origin a b", []string{"refs/heads/a", "refs/heads/b"}},
+		{"git -C /w push origin feat/x", []string{"refs/heads/feat/x"}},
+		{"git push origin feat/x && git push origin feat/y", []string{"refs/heads/feat/x", "refs/heads/feat/y"}},
+		{"git push origin feat/x && git push", nil},
+		{"git commit -m x && git push origin feat/x", nil},
+		{"git status && git push origin feat/x", nil},
+		{"git push", nil},
+		{"git push origin", nil},
+		{"git push origin HEAD", nil},
+		{"git push origin HEAD:feat/x", nil},
+		{"git push --all origin", nil},
+		{"git push --tags origin v1", nil},
+		{"git push --mirror origin", nil},
+		{"git push origin --delete feat/x", nil},
+		{"git push origin :feat/x", nil},
+		{"git push origin refs/tags/v1", nil},
+		{"git commit -m x", nil},
+		{"echo git push origin feat/x", nil},
+	} {
+		if got := gitPushBranches(tc.command); !slices.Equal(got, tc.want) {
+			t.Errorf("gitPushBranches(%q) = %v, want %v", tc.command, got, tc.want)
+		}
+	}
 }

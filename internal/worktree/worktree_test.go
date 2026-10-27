@@ -65,6 +65,38 @@ func TestIsLinked(t *testing.T) {
 	}
 }
 
+// CheckoutOf names the tree that has a branch checked out — the linked worktree's
+// branch from the main tree and the reverse — and "" for a branch no tree has, a
+// non-repository, or no ref.
+func TestCheckoutOf(t *testing.T) {
+	main, wt := fixture(t)
+	ctx := context.Background()
+	wantWt, err := TopLevel(ctx, wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMain, err := TopLevel(ctx, main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trunk := "refs/heads/" + run(t, main, "branch", "--show-current")
+	for _, tc := range []struct {
+		name, dir, ref, want string
+	}{
+		{"linked branch from the main tree", main, "refs/heads/work/one", wantWt},
+		{"linked branch from its own tree", wt, "refs/heads/work/one", wantWt},
+		{"main branch from a linked tree", wt, trunk, wantMain},
+		{"branch no tree has", main, "refs/heads/nope", ""},
+		{"short name is not a ref", main, "work/one", ""},
+		{"no ref", main, "", ""},
+		{"not a repository", t.TempDir(), "refs/heads/work/one", ""},
+	} {
+		if got := CheckoutOf(ctx, tc.dir, tc.ref); got != tc.want {
+			t.Errorf("%s: CheckoutOf(%q) = %q, want %q", tc.name, tc.ref, got, tc.want)
+		}
+	}
+}
+
 func TestCarryLinksIgnoredPathsAndStaysClean(t *testing.T) {
 	main, wt := fixture(t)
 	rep, err := Carry(context.Background(), main, wt, []string{".toolA", ".env", ".absent"})

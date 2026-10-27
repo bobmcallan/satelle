@@ -142,6 +142,33 @@ func TopLevel(ctx context.Context, dir string) (string, error) {
 	return filepath.Clean(out), nil
 }
 
+// CheckoutOf is the working tree of dir's repository that has ref (a full ref
+// such as refs/heads/main) checked out, symlink-resolved like TopLevel; "" when
+// none has it or git cannot say. It reads `git worktree list`, so it sees the main
+// tree and every linked worktree.
+func CheckoutOf(ctx context.Context, dir, ref string) string {
+	if ref == "" {
+		return ""
+	}
+	out, err := git(ctx, dir, "worktree", "list", "--porcelain")
+	if err != nil {
+		return ""
+	}
+	var path string
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			path = strings.TrimPrefix(line, "worktree ")
+		case line == "branch "+ref && path != "":
+			if resolved, rerr := filepath.EvalSymlinks(path); rerr == nil {
+				path = resolved
+			}
+			return filepath.Clean(path)
+		}
+	}
+	return ""
+}
+
 // Open creates a worktree at path on a NEW branch cut from base. base must
 // resolve to a commit and is never defaulted; an existing branch is refused and
 // never reused or reset. Nothing is created unless every check passes.

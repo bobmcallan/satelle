@@ -1,3 +1,8 @@
+## [0.0.768] - 2026-10-27
+
+### Fixed
+- An unmoved `git push <remote> <branch>` is attributed to the seat of the worktree that has `<branch>` checked out, so a session holding seats in several worktrees can publish from the main tree without `EnterWorktree`. Before, only an edit or a commit a `cd` or `-C` moved was attributed by the tree it targeted; a push that moved nothing fell back to the tree the hook runs in, which holds no seat, and was refused ("this session holds N seats … none is in the tree this event runs in"). The refspec's source side names the branch (`feat/x`, `feat/x:release`, `+refs/heads/feat/x`); a bare `git push`, `HEAD`, `--all`, `--mirror`, `--tags`, a delete, a branch no worktree has checked out, branches in different worktrees, or a payload that runs any git command other than a push (`git commit … && git push …` commits in the hook's own tree) stay attributed to the hook's own tree and are refused as before. An explicit `cd` or `-C` still decides first. Edits and moved commits were already attributed by target and are now proven from the main tree against real `git worktree add` trees under the default foreign-tree fence; a scratch path outside every repo tree stays allowed while another seat's transition is in flight. (sty_68a4d071)
+
 ## [0.0.767] - 2026-10-27
 
 ### Added

@@ -51,6 +51,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/wfroute"
 	"github.com/bobmcallan/satelle/internal/workitem"
+	"github.com/bobmcallan/satelle/internal/worktree"
 )
 
 // sessionTag is the sole system-residency marker (taxonomy: system|ondemand).
@@ -331,8 +332,8 @@ Substrate lock: a command whose target or interpreter arguments
 name locked substrate is refused, even if it only READS. Not seen: python3
 tool.py and '.sat'+'elle'. See 'hook gate --help'.
 
-Attribution: a commit/push goes to the seat of the worktree it runs in (each cd,
-then its own -C), else the hook's own tree's seat.`,
+Attribution: a commit/push goes to the seat of its worktree (each cd, then -C;
+an unmoved push, its branch's), else the hook's tree's.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) (rerr error) {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
@@ -497,6 +498,8 @@ then its own -C), else the hook's own tree's seat.`,
 			}
 			if d := gitCommandDir(command, base); d != "" {
 				commitTree = treeOf(d)
+			} else {
+				commitTree = pushBranchTree(command, base)
 			}
 			if !seatResolved || commitTree != "" {
 				var err error
@@ -1067,6 +1070,30 @@ func sessionSeats(live []seatInfo, sessionID string) []seatInfo {
 		}
 	}
 	return mine
+}
+
+// pushBranchTree is the working tree an unmoved `git push <remote> <branch>`
+// publishes from: the worktree of base's repository that has the pushed branch
+// checked out, so a session holding seats in several worktrees attributes the push
+// to the seat of the one it publishes. "" when the push names no branch, several
+// that sit in different trees, or one no worktree has checked out, so the tree the
+// hook runs in decides as it always did.
+func pushBranchTree(command, base string) string {
+	branches := gitPushBranches(command)
+	if len(branches) == 0 || strings.TrimSpace(base) == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tree := ""
+	for _, ref := range branches {
+		co := worktree.CheckoutOf(ctx, base, ref)
+		if co == "" || (tree != "" && !sameTree(tree, co)) {
+			return ""
+		}
+		tree = co
+	}
+	return treeOf(tree)
 }
 
 // sameTree reports whether two git working-tree paths name one directory.

@@ -187,7 +187,7 @@ func Check(ctx context.Context, dir string, opts Options) Report {
 	remoteRef := "refs/remotes/" + rep.Remote + "/" + rep.Trunk
 
 	// Dirty first: decided from the checkout that holds trunk, before any fetch.
-	checkout := trunkCheckout(ctx, top, localRef)
+	checkout := worktree.CheckoutOf(ctx, top, localRef)
 	if checkout != "" {
 		status, serr := git(ctx, checkout, "status", "--porcelain")
 		if serr != nil {
@@ -373,28 +373,6 @@ func RemoteTrunkRef(ctx context.Context, dir, branch string) string {
 		return ""
 	}
 	return ref
-}
-
-// trunkCheckout is the working tree that has localRef checked out ("" if none),
-// read from `git worktree list`, symlink-resolved like worktree.TopLevel.
-func trunkCheckout(ctx context.Context, top, localRef string) string {
-	out, err := git(ctx, top, "worktree", "list", "--porcelain")
-	if err != nil {
-		return ""
-	}
-	var path string
-	for _, line := range strings.Split(out, "\n") {
-		switch {
-		case strings.HasPrefix(line, "worktree "):
-			path = strings.TrimPrefix(line, "worktree ")
-		case line == "branch "+localRef && path != "":
-			if resolved, rerr := filepath.EvalSymlinks(path); rerr == nil {
-				path = resolved
-			}
-			return filepath.Clean(path)
-		}
-	}
-	return ""
 }
 
 func sameDir(a, b string) bool { return filepath.Clean(a) == filepath.Clean(b) }

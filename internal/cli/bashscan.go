@@ -411,14 +411,21 @@ func segmentGitSubcommand(words []string) (string, bool) {
 // (lowercased) and the -C DIR operands that precede it, in order; ok is false when
 // the words are not a git invocation with a subcommand.
 func gitInvocation(words []string) (sub string, dirs []string, ok bool) {
+	sub, dirs, _, ok = gitInvocationArgs(words)
+	return sub, dirs, ok
+}
+
+// gitInvocationArgs is gitInvocation that also returns the words after the
+// subcommand.
+func gitInvocationArgs(words []string) (sub string, dirs, args []string, ok bool) {
 	if len(words) == 0 {
-		return "", nil, false
+		return "", nil, nil, false
 	}
 	cmd := words[0]
 	base := filepath.Base(cmd)
 	// Strip a trailing path form: /usr/bin/git or ./git
 	if base != "git" && cmd != "git" {
-		return "", nil, false
+		return "", nil, nil, false
 	}
 	i := 1
 	for i < len(words) {
@@ -454,10 +461,10 @@ func gitInvocation(words []string) (sub string, dirs []string, ok bool) {
 			continue
 		default:
 			// First non-option word is the subcommand.
-			return strings.ToLower(w), dirs, true
+			return strings.ToLower(w), dirs, words[i+1:], true
 		}
 	}
-	return "", nil, false
+	return "", nil, nil, false
 }
 
 // segmentIsGitCommitOrPush classifies one segment's word list.
@@ -744,6 +751,64 @@ func gitCommandDir(command, base string) string {
 		return ""
 	}
 	return dir
+}
+
+// gitPushBranches is the local branches (as full refs/heads/ names) every
+// `git push` in a payload names, for a push that gitCommandDir did not move: `git
+// push <remote> <branch>` or `<src>:<dst>` refspecs, where the source side is what
+// is pushed. It is nil when the push does not name its branches outright — a bare
+// `git push`, HEAD, --all, --mirror, --tags, a delete or a non-branch ref — so the
+// caller keeps attributing it to the tree it runs in. It is also nil when any other
+// git command shares the payload: a `git commit && git push` commits in the tree the
+// hook runs in, which the pushed branch's seat must not stand in for.
+func gitPushBranches(command string) []string {
+	for _, sub := range gitSubcommands(command) {
+		if sub != "push" {
+			return nil
+		}
+	}
+	var branches []string
+	unnamed := false
+	forEachSegment(command, "", func(s bashSegment) {
+		sub, _, args, ok := gitInvocationArgs(s.Words)
+		if unnamed || !ok || sub != "push" {
+			return
+		}
+		var pos []string
+		for i := 0; i < len(args); i++ {
+			a := args[i]
+			switch {
+			case a == "--all" || a == "--mirror" || a == "--tags" || a == "--delete" || a == "-d":
+				unnamed = true
+				return
+			case a == "-o" || a == "--push-option" || a == "--repo" || a == "--receive-pack" || a == "--exec":
+				i++ // takes a following argument
+			case strings.HasPrefix(a, "-"):
+			default:
+				pos = append(pos, a)
+			}
+		}
+		if len(pos) < 2 { // a remote alone pushes the tree's current branch
+			unnamed = true
+			return
+		}
+		for _, spec := range pos[1:] {
+			src, _, _ := strings.Cut(strings.TrimPrefix(spec, "+"), ":")
+			switch {
+			case strings.HasPrefix(src, "refs/heads/"):
+			case src == "" || src == "HEAD" || strings.HasPrefix(src, "refs/"):
+				unnamed = true
+				return
+			default:
+				src = "refs/heads/" + src
+			}
+			branches = append(branches, src)
+		}
+	})
+	if unnamed {
+		return nil
+	}
+	return branches
 }
 
 // bashAttributionTree is the git working tree a Bash command's first mutation
