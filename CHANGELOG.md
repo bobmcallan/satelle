@@ -1,3 +1,13 @@
+## [0.0.771] - 2026-10-27
+
+### Changed
+- The default create review (`satelle-story-create-review`) admits a story only when its behavior moves the repo's constitution forward. It judges the story against the constitution delivered in its briefing and the principles that constitution links, and an accepted submission's notes name the constitutional goal or linked principle the behavior advances, and how. A story that advances none is refused even when it contradicts nothing, and the refusal says that no constitutional goal is advanced. A story whose behavior contradicts the constitution, a linked principle, or architecture recorded on the card is refused, and the refusal quotes the rule it works against; a decision absent from the card and the principles is never cited, and a decision recorded on the card is context with the behavior still required beside it. A technical story is judged on the same terms: it is admitted when it names the constitutional goal its system property serves, with no customer scenario or acceptance criteria. The create review is the one gate that makes this judgment; no workflow binds a separate admission reviewer. Before, no default rubric judged whether a story advances the constitution, so a harmless story that served no goal was admitted. (sty_d3898554)
+
+## [serve-v0.0.220] - 2026-10-27
+
+### Changed
+- The service binary embeds the updated default create review (constitutional admission of story cards). (sty_d3898554)
+
 ## [0.0.770] - 2026-10-27
 
 ### Changed

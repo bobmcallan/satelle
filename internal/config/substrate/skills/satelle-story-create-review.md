@@ -3,7 +3,7 @@ name: satelle-story-create-review
 scope: system
 type: skill
 tags: [type:skill, type:reviewer]
-description: Content/alignment create gate after the deterministic structural check. Judges ACs vs goal, coherence, scope, that the card states desired behavior independent of any implementation, a DEAD premise only, AND category/tag classification. Read-only; rejects with specifics for the agent to fix and retry. A re-presented edge follows [[satelle-reviewer-verdict]].
+description: Content/alignment create gate after the deterministic structural check. Judges ACs vs goal, coherence, scope, that the card states desired behavior independent of any implementation, that the behavior advances the repo's constitution and contradicts none of it, a DEAD premise only, AND category/tag classification. Read-only; rejects with specifics for the agent to fix and retry. A re-presented edge follows [[satelle-reviewer-verdict]].
 ---
 
 # Story create — content, alignment, and classification review
@@ -65,6 +65,38 @@ implementation in hand.
   behavior independent of any implementation, so a later check has the
   behavior to validate. Recorded solution context is not part of that sentence.
 
+### Constitutional admission
+
+A story is admitted only when its behavior moves the repo's constitution
+forward. Judge it against the constitution delivered in your briefing under
+`# Project constitution`, and the principles that constitution links as
+`[[name]]`, as delivered under `# Always-resident principles`. Name no path and
+run no command to find them. When a linked principle arrives only as a condensed
+pointer, or is not delivered, you may locate its text by name with Glob
+(`**/<name>.md`); if you still cannot read it, judge on the constitution's own
+line linking that principle and never cite text you have not read. When no
+`# Project constitution` section is delivered, accept and say in the notes that
+no constitution was delivered.
+
+- **Accept** only when the notes can name the constitutional goal or linked
+  principle the behavior advances, and how. Being harmless is not enough.
+- **Reject** a story that advances no constitutional goal or linked principle,
+  even when it contradicts nothing. The notes say that no constitutional goal is
+  advanced.
+- **Reject** a story whose behavior works against the constitution, a linked
+  principle, or architecture recorded on the card. The notes quote the rule
+  worked against.
+- **Never invent a rule.** Cite only text present in the delivered
+  constitution, in a linked principle you have read, or on the card. A decision
+  absent from all three is never cited.
+- **A decision recorded on the card is context.** It does not stand in for the
+  behavior; the behavior is still required beside it.
+- **A technical story is judged on the same terms.** Its behavior is a property
+  of the system, and it must name the constitutional goal that property serves.
+  It needs no customer scenario and no acceptance criteria.
+
+Priority and value stay out of scope; constitutional advancement is in scope.
+
 ### Premise (dead, not unverified)
 
 One narrow check: does the story ask for something that **does not exist, or
@@ -78,6 +110,8 @@ story — and it is decidable from the draft plus one file read.
   work is not worthwhile. That is create-and-match — out of scope for this gate.
 - **Out of scope** (not this gate's business): future outcomes, value, priority,
   whether the operator should do the work, and whether the work is worthwhile.
+  Whether the behavior advances the constitution is not a worth judgment; it is
+  judged under Constitutional admission above.
 
 **Not grounds at create, each of these.** They are plan-time questions and
 `satelle-story-plan-review` owns them, with the plan in hand:
@@ -127,12 +161,15 @@ accepts. When numbered criteria are present, they must plausibly verify the goal
 
 - **Accept** when the goal is coherent, the submission states desired behavior
  that holds whichever implementation produces it, the premise is not falsified
- by named repo evidence, and category/tags fit the taxonomy. When numbered criteria are present, also
+ by named repo evidence, the behavior advances a constitutional goal or linked
+ principle the notes name, and category/tags fit the taxonomy. When numbered criteria are present, also
  require that those ACs verify the goal.
 - **Reject** when numbered criteria are present and fail alignment or scope,
  when coherence fails, when the submission states no desired behavior and contains
  only a solution, whether or not criteria are numbered (the notes name the
- behavior that is missing), when the premise is falsified with cited evidence, OR
+ behavior that is missing), when the behavior advances no constitutional goal or
+ contradicts the constitution (the notes quote the rule or say no goal is
+ advanced), when the premise is falsified with cited evidence, OR
  classification is wrong (epic as feature, doc-only slice on a code lane,
  invented `kind:*`) — name the specific problem and the fix (e.g. "use category
  epic-parent"; "use category docs"; "premise false: contradicted by
@@ -146,5 +183,6 @@ accepts. When numbered criteria are present, they must plausibly verify the goal
 ```
 
 `decision` is `"accept"` or `"reject"`; on reject `notes` names the alignment,
-scope, missing-behavior, dead-premise, or classification problem; on accept
-`notes` open with `Behavior:`.
+scope, missing-behavior, constitutional-admission, dead-premise, or
+classification problem; on accept `notes` open with `Behavior:` and name the
+constitutional goal or principle the behavior advances, and how.
