@@ -58,8 +58,8 @@ type rawCriterion struct {
 	ReviewedTruncated bool        `json:"reviewed_truncated,omitempty"`
 }
 
-// parseCriteria normalises a reviewer's criteria[]: a status that is not accept
-// or reject is unchecked, a number below zero is dropped, a repeated number keeps
+// parseCriteria normalises a reviewer's criteria[]: a status that is not accept,
+// reject or unmet is unchecked, a number below zero is dropped, a repeated number keeps
 // its last entry, each quotation is bounded by applyReviewed, and the list is
 // capped at maxCriteria. Text is not set here — the binary stamps it from the
 // criteria judged (criteriaPrep.apply), never from the reviewer.
@@ -101,6 +101,8 @@ func normaliseStatus(s string) string {
 		return verb.CriterionAccepted
 	case verb.CriterionRejected:
 		return verb.CriterionRejected
+	case verb.CriterionUnmet:
+		return verb.CriterionUnmet
 	}
 	return verb.CriterionUnchecked
 }
@@ -448,6 +450,9 @@ func (c criteriaPrep) apply(dec *verb.GateDecision) {
 	case !top && accept:
 		dec.Notes = prefixNotes("criteria accepted; top-level reject cleared by carried criteria", dec.Notes)
 	}
+	if unmet := verb.CriteriaUnmet(entries, c.numbers()); accept && len(unmet) > 0 {
+		dec.Notes = prefixNotes("criteria recorded unmet, behavior holds: "+verb.CriteriaFailure(unmet), dec.Notes)
+	}
 }
 
 func prefixNotes(prefix, notes string) string {
@@ -471,12 +476,14 @@ func carriedCriteria(entries []verb.CriterionVerdict, attempt int) []verb.Criter
 }
 
 // criterionCombine is one criterion's tally across a panel's seats, for the
-// combine check: how many seats accepted, rejected or left it unchecked.
+// combine check: how many seats accepted, rejected, recorded it unmet or left it
+// unchecked.
 type criterionCombine struct {
 	Criterion int `json:"criterion"`
 	Accepts   int `json:"accepts"`
 	Rejects   int `json:"rejects"`
 	Unchecked int `json:"unchecked"`
+	Unmet     int `json:"unmet,omitempty"`
 }
 
 // combineCriteria tallies the seats' entries by criterion, ascending. Seats that
@@ -495,6 +502,8 @@ func combineCriteria(seats [][]verb.CriterionVerdict) []criterionCombine {
 				t.Accepts++
 			case verb.CriterionRejected:
 				t.Rejects++
+			case verb.CriterionUnmet:
+				t.Unmet++
 			default:
 				t.Unchecked++
 			}

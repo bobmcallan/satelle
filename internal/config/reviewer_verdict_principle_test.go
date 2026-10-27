@@ -35,7 +35,7 @@ func TestEmbeddedReviewerVerdictStatesCriteria(t *testing.T) {
 	body := embeddedBody(t, "principles", "satelle-reviewer-verdict")
 	for _, want := range []string{
 		"## Criteria",
-		`"status": "accept"|"reject"|"unchecked"`,
+		`"status": "accept"|"reject"|"unmet"|"unchecked"`,
 		"An unchecked or omitted criterion never accepts",
 		"whatever the top-level `decision` says",
 		"An objection that belongs to no single criterion is criterion `0`",
@@ -53,6 +53,54 @@ func TestEmbeddedReviewerVerdictStatesCriteria(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("satelle-reviewer-verdict does not state %q", want)
+		}
+	}
+}
+
+// TestEmbeddedReviewerVerdictStatesUnmet (sty_3b789fa5): a reviewer is told that
+// the numbered criteria derive from the card's behavior, and that a criterion
+// which cannot be met while the behavior holds is recorded unmet beside a
+// criterion 0 accept rather than amended or waived. Without that text a reviewer
+// can only reject such a criterion or pass it unrecorded.
+func TestEmbeddedReviewerVerdictStatesUnmet(t *testing.T) {
+	body := embeddedBody(t, "principles", "satelle-reviewer-verdict")
+	for _, want := range []string{
+		"The numbered criteria derive from the card's behavior; they are not a second spec.",
+		"A criterion that cannot be met while the behavior holds is recorded `unmet` beside a criterion `0` accept — not amended, not waived.",
+		"`unmet` is never carried and accepts only beside that criterion `0` accept",
+		"without it, it fails like `unchecked`",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("satelle-reviewer-verdict does not state %q", want)
+		}
+	}
+}
+
+// TestEmbeddedDoneReviewJudgesTheCardBehavior (sty_3b789fa5): the spine's done
+// rubric judges a non-parent story against the behavior its body states before
+// its numbered criteria, rejects a failed behavior as a criterion 0 reject that
+// quotes it even when every criterion is met, judges a story with no criteria
+// against the card directly, and records an unmeetable criterion as unmet beside
+// the criterion 0 accept. Without that text a technical criterion that passes
+// while the behavior does not is accepted.
+func TestEmbeddedDoneReviewJudgesTheCardBehavior(t *testing.T) {
+	body := strings.Join(strings.Fields(embeddedBody(t, "skills", "satelle-story-done-review")), " ")
+	for _, want := range []string{
+		"The numbered criteria derive from the card's behavior; they are not a second spec.",
+		"Read the story body",
+		`{"criterion": 0, "status": "reject", "finding": "<the behavior, quoted>"}`,
+		"even when every numbered AC is met",
+		"the refusal names the behavior",
+		`{"criterion": 0, "status": "accept", "finding": "behavior holds:`,
+		"**No numbered criteria** (a route with no plan step)",
+		"compare the change to the card's behavior directly",
+		"The absence of criteria is not acceptance and not rejection",
+		`"status": "unmet"`,
+		"It is not amended, not waived",
+		"With no criterion `0` accept, `unmet` fails like `unchecked`",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("satelle-story-done-review does not state %q", want)
 		}
 	}
 }

@@ -999,3 +999,83 @@ func TestCriterionNumberForms(t *testing.T) {
 		}
 	}
 }
+
+// ---- sty_3b789fa5: a criterion unmet while the behavior holds -----------------
+
+func TestParseDecisionKeepsUnmet(t *testing.T) {
+	dec, err := parseDecision([]byte(`{"decision":"accept","criteria":[{"criterion":0,"status":"accept"},{"criterion":2,"status":" Unmet ","finding":"proof could only be captured earlier"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dec.Criteria) != 2 || dec.Criteria[1].Status != verb.CriterionUnmet || dec.Criteria[1].Finding != "proof could only be captured earlier" {
+		t.Errorf("criteria = %+v, want AC2 recorded unmet with its finding", dec.Criteria)
+	}
+}
+
+// A recorded verdict shaped like sty_28665836's release → done: six criteria, the
+// behavior on the card holds, and AC6's proof could only have been captured
+// earlier. It accepts with AC6 recorded unmet, named in the notes.
+func TestGateAcceptsAnUnmetCriterionWhenTheBehaviorHolds(t *testing.T) {
+	six := []string{"1. one", "2. two", "3. three", "4. four", "5. five", "6. six"}
+	entries := []map[string]any{critEntry(0, "accept", "behavior holds: no FAIL or warning was introduced")}
+	for n := 1; n <= 5; n++ {
+		entries = append(entries, critEntry(n, "accept", "met"))
+	}
+	entries = append(entries, critEntry(6, "unmet", "the proof could only have been captured before the change"))
+	f := newCritFixture(t, critOpts{plan: critPlan(six...), solo: verdictJSON("accept", entries...)})
+	dec, rv := f.gate(t)
+	if !dec.Accept || !rv.Accept {
+		t.Fatalf("a behavior accept with AC6 unmet must accept: %+v", rv)
+	}
+	if e := entryOf(t, rv.Criteria, 6); e.Status != verb.CriterionUnmet || e.Text != "six" || e.Finding == "" {
+		t.Errorf("AC6 must stay in the record as unmet with its text and finding: %+v", e)
+	}
+	if e := entryOf(t, rv.Criteria, 0); e.Status != verb.CriterionAccepted {
+		t.Errorf("the behavior accept must stay in the record: %+v", e)
+	}
+	for _, want := range []string{"unmet", "AC6", "NOTES"} {
+		if !strings.Contains(rv.Notes, want) {
+			t.Errorf("notes %q should contain %q", rv.Notes, want)
+		}
+	}
+}
+
+func TestGateRejectsAnUnmetCriterionWithoutABehaviorAccept(t *testing.T) {
+	acc := func(n int) map[string]any { return critEntry(n, "accept", "ok") }
+	unmet := critEntry(3, "unmet", "cannot be met")
+	cases := []struct {
+		name    string
+		out     string
+		failing string
+	}{
+		{"no general entry", verdictJSON("accept", acc(1), acc(2), unmet), "AC3"},
+		{"a general reject", verdictJSON("accept", critEntry(0, "reject", "the behavior does not hold"), acc(1), acc(2), unmet), "the general objection, AC3"},
+		{"another criterion rejected", verdictJSON("accept", acc(0), critEntry(1, "reject", "bad"), acc(2), unmet), "AC1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCritFixture(t, critOpts{plan: critPlan(critLines...), solo: tc.out})
+			dec, rv := f.gate(t)
+			if dec.Accept || rv.Accept {
+				t.Fatalf("must not accept: %+v", rv)
+			}
+			if !strings.Contains(rv.Notes, "criteria not accepted: "+tc.failing) {
+				t.Errorf("notes %q should name %q", rv.Notes, tc.failing)
+			}
+		})
+	}
+}
+
+func TestCombineCriteriaTalliesUnmetApart(t *testing.T) {
+	got := combineCriteria([][]verb.CriterionVerdict{
+		{{Criterion: 1, Status: verb.CriterionUnmet}, {Criterion: 2, Status: verb.CriterionUnchecked}},
+		{{Criterion: 1, Status: verb.CriterionAccepted}, {Criterion: 2, Status: verb.CriterionUnmet}},
+	})
+	want := []criterionCombine{
+		{Criterion: 1, Accepts: 1, Unmet: 1},
+		{Criterion: 2, Unchecked: 1, Unmet: 1},
+	}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("criteria_combined = %+v, want %+v", got, want)
+	}
+}

@@ -1,3 +1,14 @@
+## [0.0.773] - 2026-10-27
+
+### Changed
+- The default done review (`satelle-story-done-review`) accepts a finished change only when the behavior stated on the story card holds. For a non-parent story it compares the change to that behavior, and when the behavior does not hold it rejects with a criterion-0 entry whose finding quotes the behavior, even if every numbered criterion is met. For a story with no numbered criteria (a route with no plan step) it judges the story body directly and does not accept for lack of criteria. The numbered criteria are a derivation of the card's behavior, not a second spec (the `satelle-reviewer-verdict` principle says so too).
+- A reviewer verdict may record a numbered criterion `unmet`, for a criterion that cannot be met while the behavior on the card holds (for example a proof that could only have been captured earlier). The gate accepts such a verdict only when it also carries a criterion-0 accept entry and every other judged criterion is accepted; the `unmet` entry stays in the recorded criteria and is named in the gate notes ("criteria recorded unmet, behavior holds: AC6"), so it is recorded rather than silently passed, and needs neither a criterion amendment nor a waiver to close. Without a criterion-0 accept, `unmet` fails like `unchecked`. A panel's combine tally counts `unmet` entries separately. Before, a criterion that could not be met could only be closed by amending it. (sty_3b789fa5)
+
+## [serve-v0.0.222] - 2026-10-27
+
+### Changed
+- The service binary embeds the updated default done review and reviewer-verdict principle (behavior-first judgment, criteria recorded `unmet`). (sty_3b789fa5)
+
 ## [0.0.772] - 2026-10-27
 
 ### Changed

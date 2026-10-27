@@ -64,6 +64,7 @@ func TestCriteriaAccept(t *testing.T) {
 	acc := func(n int) CriterionVerdict { return CriterionVerdict{Criterion: n, Status: CriterionAccepted} }
 	rej := func(n int) CriterionVerdict { return CriterionVerdict{Criterion: n, Status: CriterionRejected} }
 	unc := func(n int) CriterionVerdict { return CriterionVerdict{Criterion: n, Status: CriterionUnchecked} }
+	unm := func(n int) CriterionVerdict { return CriterionVerdict{Criterion: n, Status: CriterionUnmet} }
 	cases := []struct {
 		name    string
 		top     bool
@@ -82,6 +83,14 @@ func TestCriteriaAccept(t *testing.T) {
 		{"a top-level reject with every criterion accepted", false, []CriterionVerdict{acc(1), acc(2)}, []int{1, 2}, true, nil},
 		{"a general accept is no obstacle", true, []CriterionVerdict{acc(0), acc(1)}, []int{1}, true, nil},
 		{"an entry for a criterion not judged is ignored", true, []CriterionVerdict{acc(1), rej(9)}, []int{1}, true, nil},
+		// sty_3b789fa5: unmet stands in for an accept only beside a general accept.
+		{"an unmet criterion beside a general accept", true, []CriterionVerdict{acc(0), acc(1), unm(2)}, []int{1, 2}, true, nil},
+		{"an unmet criterion beside a general accept ignores a top-level reject", false, []CriterionVerdict{acc(0), acc(1), unm(2)}, []int{1, 2}, true, nil},
+		{"an unmet criterion with no general entry fails", true, []CriterionVerdict{acc(1), unm(2)}, []int{1, 2}, false, []int{2}},
+		{"an unmet criterion beside a general reject fails with the general objection", true, []CriterionVerdict{rej(0), acc(1), unm(2)}, []int{1, 2}, false, []int{0, 2}},
+		{"an unmet criterion beside a general unchecked fails", true, []CriterionVerdict{unc(0), acc(1), unm(2)}, []int{1, 2}, false, []int{2}},
+		{"an unmet criterion beside another unchecked one fails", true, []CriterionVerdict{acc(0), unc(1), unm(2)}, []int{1, 2}, false, []int{1}},
+		{"an unmet criterion beside a rejected one fails", true, []CriterionVerdict{acc(0), rej(1), unm(2)}, []int{1, 2}, false, []int{1}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -98,6 +107,20 @@ func TestCriteriaAccept(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCriteriaUnmetNamesTheUnmetJudgedCriteria(t *testing.T) {
+	entries := []CriterionVerdict{
+		{Criterion: 0, Status: CriterionAccepted},
+		{Criterion: 1, Status: CriterionAccepted},
+		{Criterion: 2, Status: CriterionUnmet},
+		{Criterion: 4, Status: CriterionUnmet},
+		{Criterion: 9, Status: CriterionUnmet},
+	}
+	got := CriteriaUnmet(entries, []int{1, 2, 3, 4})
+	if len(got) != 2 || got[0] != 2 || got[1] != 4 {
+		t.Errorf("CriteriaUnmet = %v, want [2 4]", got)
 	}
 }
 

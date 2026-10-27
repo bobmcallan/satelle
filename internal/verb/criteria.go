@@ -7,12 +7,15 @@ import "fmt"
 // hoped for. The rubric for judging a criterion stays in the repo's skills; the
 // binary records, carries and combines the entries.
 
-// Criterion statuses. Anything a reviewer sends that is not accept or reject is
-// recorded as unchecked, and unchecked never counts as accept.
+// Criterion statuses. Anything a reviewer sends that is not accept, reject or
+// unmet is recorded as unchecked, and unchecked never counts as accept.
+// CriterionUnmet records a criterion that cannot be met while the behavior on the
+// card holds; it does not block only beside a general (criterion 0) accept.
 const (
 	CriterionAccepted  = "accept"
 	CriterionRejected  = "reject"
 	CriterionUnchecked = "unchecked"
+	CriterionUnmet     = "unmet"
 )
 
 // GeneralCriterion is the entry number for an objection that belongs to no
@@ -40,8 +43,12 @@ type CriterionVerdict struct {
 // decides. With no entries it is the top-level decision, unchanged. Otherwise
 // the verdict accepts only when every judged criterion has an accept entry and
 // no general (criterion 0) entry rejects; the top-level decision is recorded but
-// does not decide. The second result is the judged criteria that do not have an
-// accept entry, in judged order, plus 0 when a general entry rejects.
+// does not decide. A criterion recorded unmet stands in for an accept only when
+// the general entry accepts: the behavior on the card holds, so the criterion is
+// the derivation that could not be met, not the change that failed. The second
+// result is the judged criteria that do not have an accept entry (or an unmet
+// one beside a general accept), in judged order, plus 0 when a general entry
+// rejects.
 func CriteriaAccept(top bool, entries []CriterionVerdict, judged []int) (bool, []int) {
 	if len(entries) == 0 {
 		return top, nil
@@ -50,16 +57,35 @@ func CriteriaAccept(top bool, entries []CriterionVerdict, judged []int) (bool, [
 	for _, e := range entries {
 		status[e.Criterion] = e.Status
 	}
+	behaviorHolds := status[GeneralCriterion] == CriterionAccepted
 	var failing []int
 	if status[GeneralCriterion] == CriterionRejected {
 		failing = append(failing, GeneralCriterion)
 	}
 	for _, n := range judged {
-		if status[n] != CriterionAccepted {
-			failing = append(failing, n)
+		if status[n] == CriterionAccepted || (status[n] == CriterionUnmet && behaviorHolds) {
+			continue
 		}
+		failing = append(failing, n)
 	}
 	return len(failing) == 0, failing
+}
+
+// CriteriaUnmet is the judged criteria the entries record as unmet, in judged
+// order, for the gate's notes. It says nothing about whether they block: that is
+// CriteriaAccept's rule.
+func CriteriaUnmet(entries []CriterionVerdict, judged []int) []int {
+	status := make(map[int]string, len(entries))
+	for _, e := range entries {
+		status[e.Criterion] = e.Status
+	}
+	var unmet []int
+	for _, n := range judged {
+		if status[n] == CriterionUnmet {
+			unmet = append(unmet, n)
+		}
+	}
+	return unmet
 }
 
 // CriteriaFailure names the failing criteria for a verdict's notes: "AC2, AC5",
