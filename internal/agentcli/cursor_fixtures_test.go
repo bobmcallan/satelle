@@ -165,6 +165,41 @@ func TestCursorFixturesPresentWithProvenance(t *testing.T) {
 	}
 }
 
+// TestCursorFixturesMatchCapturedVersion: the build the fixtures were captured on
+// has one owner, agentcli.CapturedVersions, and every fixture's metadata agrees
+// with it. A re-capture on a newer cursor-agent fails here until the owner moves
+// with it, so the drift warnings never compare against a stale build.
+func TestCursorFixturesMatchCapturedVersion(t *testing.T) {
+	want, ok := CapturedVersion(HarnessCursor)
+	if !ok {
+		t.Fatal("CapturedVersions has no cursor entry")
+	}
+	metas, err := filepath.Glob(filepath.Join(cursorDir, "*.json"))
+	if err != nil || len(metas) == 0 {
+		t.Fatalf("no cursor fixture metadata found: %v", err)
+	}
+	checked := 0
+	for _, path := range metas {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var meta struct {
+			Version string `json:"cursor_agent_version"`
+		}
+		if json.Unmarshal(raw, &meta) != nil || meta.Version == "" {
+			continue // a json fixture that is not capture metadata (hooks config, cli dump)
+		}
+		checked++
+		if meta.Version != want {
+			t.Errorf("%s records cursor-agent %s, CapturedVersions has %s", filepath.Base(path), meta.Version, want)
+		}
+	}
+	if checked < len(cursorRuns) {
+		t.Errorf("checked %d capture metadata files, want at least %d (one per run)", checked, len(cursorRuns))
+	}
+}
+
 func TestCursorFixturesListedAndRedacted(t *testing.T) {
 	readme := cursorRead(t, "README.md")
 	entries, err := os.ReadDir(cursorDir)

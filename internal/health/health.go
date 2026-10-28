@@ -155,6 +155,7 @@ const (
 	IDLiveTimeout      = "live.timeout"       // the probe exceeded its deadline
 	IDLiveSpawn        = "live.spawn"         // the provider process could not be started
 	IDLiveACPHandshake = "live.acp.handshake" // an ACP peer accepted the pipe but never completed initialize
+	IDLiveVersionDrift = "live.version_drift" // a CLI's version differs from the one satelle's measured behavior was captured against, or is unknown
 )
 
 // ids is the registry every constant above belongs to — the uniqueness test
@@ -176,7 +177,7 @@ var ids = []string{
 	IDContextDispatchUnbudgeted, IDContextDispatchUnavailable, IDContextDuplicateVerbatim,
 	IDContextDuplicateSemantic, IDContextRefUnresolved, IDContextRefUnwired, IDContextIndexStale,
 	IDContextReviewUnavailable,
-	IDLiveOK, IDLiveAuth, IDLiveTimeout, IDLiveSpawn, IDLiveACPHandshake,
+	IDLiveOK, IDLiveAuth, IDLiveTimeout, IDLiveSpawn, IDLiveACPHandshake, IDLiveVersionDrift,
 }
 
 // IDs returns every declared finding identifier, sorted.
