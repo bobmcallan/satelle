@@ -30,18 +30,19 @@ another. Children run one at a time when the user has set the sequential
 override, `sequential = true` on the container's `waits_on_children` step; that
 key is the user's and you never set it. `satelle story wave` reads only
 `depends-on:` edges, so an edge you add is the only thing that holds a child back.
-When the children must in fact run one at a time, chain them with `depends-on:`
-edges (each child on the one before it): exactly one is then eligible, the same
-effect, and you report it as an `add-tags` change rather than asking.
 
 **Assess the whole container first**, before adding any edge. For each child,
 decide whether it consumes another child's change, must be judged under
 configuration another child sets, or is independent.
 
-- Add `depends-on:<id>` only for a real dependency of one of two kinds:
+- Add `depends-on:<id>` only for a real dependency of one of three kinds:
   - the child **builds on** that child's change: it uses a field, function,
     record or behaviour that child adds;
-  - the child must be **judged under configuration** that child sets.
+  - the child must be **judged under configuration** that child sets;
+  - the container **states an order**: its own body or acceptance criteria say
+    its children land one at a time or in a named order. Then
+    chain them with `depends-on:` edges, each child on the one before it, in
+    that order. This fixes an order, which `sequential = true` does not.
 - **Shared files are not a dependency.** Two children editing the same files, or a
   likely merge conflict, is never a reason for an edge.
 - Keep the `depends-on` edges that already exist. Do not add an edge that makes a
@@ -56,12 +57,13 @@ configuration another child sets, or is independent.
 
 For each non-terminal child, decide whether its body's intent can be achieved in
 **one pass** once its `depends-on` targets have landed. Judge the intent, not a
-plan: do not plan the child. A child's plan is written when `satelle story wave`
-lets it start, against what its dependencies actually delivered.
+plan: do not plan the child. When the step declares `ready_children = false`, a
+child's plan is written when `satelle story wave` lets it start; otherwise
+satelle readies each child in this same round.
 
-- When the gap is a missing order or `depends-on` edge, a missing child, or a
-  need for one-at-a-time running, **repair it yourself** with `add-tags` or
-  `create-child` (chaining children with `depends-on:` tags for the last). Do not
+- When the gap is a missing `order:` tag, a missing `depends-on` edge of a kind
+  above (a stated order included), or a missing child, **repair it yourself** with
+  `add-tags` or `create-child`. Do not
   ask the developer first.
 - Reject, with `notes` naming the child and the evidence, only when no repair
   this step allows can make the intent achievable.

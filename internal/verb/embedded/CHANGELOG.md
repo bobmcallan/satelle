@@ -1,3 +1,13 @@
+## [0.0.777] - 2026-10-28
+
+### Fixed
+- The shipped `ready` skill no longer tells a ready-reviewer that child plans wait for the wave when its route plans them in the same round. That claim now holds only when the step declares `ready_children = false`. Chaining children with `depends-on:` edges is now a named third kind of real dependency, used when the container's own body or criteria state an order, so it no longer conflicts with the "only for a real dependency" rule. The repair is stated once. (sty_2b737ed5)
+
+## [serve-v0.0.225] - 2026-10-28
+
+### Changed
+- The service binary embeds the corrected `ready` skill text. (sty_2b737ed5)
+
 ## [0.0.776] - 2026-10-28
 
 ### Added
