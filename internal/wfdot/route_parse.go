@@ -202,6 +202,11 @@ type stepWire struct {
 	// stories are driven: it holds the status, but nothing performs on the
 	// container itself (sty_7f3e6fd3).
 	WaitsOnChildren bool `toml:"waits_on_children"`
+	// ReadyChildren declares whether `satelle story ready` on a container also
+	// readies each of its children before it marks the container. A pointer so
+	// an absent key stays today's behaviour (true); legal only on a
+	// waits_on_children step. Read through Step.ReadiesChildren.
+	ReadyChildren *bool `toml:"ready_children"`
 	// Schedule is the DEPRECATED container-step child schedule key: SchedParallel
 	// or SchedSequential. A plain string, so an absent key stays "". It keeps its
 	// meaning for existing repos; validate names it deprecated (LegacyScheduleSteps).
@@ -555,6 +560,7 @@ func ParseSteps(body string) (Catalogue, error) {
 
 			UntrustedInput:  s.UntrustedInput,
 			WaitsOnChildren: s.WaitsOnChildren,
+			ReadyChildren:   s.ReadyChildren,
 			Schedule:        s.Schedule,
 			Sequential:      s.Sequential,
 			AfterChildren:   strings.TrimSpace(s.AfterChildren),
@@ -714,6 +720,8 @@ func ParseSteps(body string) (Catalogue, error) {
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: schedule %q is invalid — schedule must be one of: %s, %s", st.Provides, st.Schedule, SchedParallel, SchedSequential)
 		case st.Schedule != "" && !st.WaitsOnChildren:
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: schedule is a container declaration — it needs waits_on_children = true", st.Provides)
+		case st.ReadyChildren != nil && !st.WaitsOnChildren:
+			return Catalogue{}, fmt.Errorf("step.toml: step %q: ready_children is a container declaration — it needs waits_on_children = true", st.Provides)
 		case st.Sequential && !st.WaitsOnChildren:
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: sequential is a container declaration — it needs waits_on_children = true", st.Provides)
 		case st.Sequential && st.Schedule == SchedParallel:

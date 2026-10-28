@@ -98,7 +98,7 @@ does not make obvious, and the one every conversion gets wrong.**
 Step keys: `status`, `agent`, `skills`, `reviewers`, `reviewer_agent`,
 `parallel`, `bundle`, `reviewer_carry`, `fail_fast`, `requires`, `applies_to`, `advise`, `rework`, `propose`,
 `freeze`, `reject_budget`, `answer_progress`, `mark`, `apply_changes`, `untrusted_input`,
-`waits_on_children`, `sequential`, `schedule` (deprecated), `after_children`,
+`waits_on_children`, `ready_children`, `sequential`, `schedule` (deprecated), `after_children`,
 `start`, `terminal`.
 
 `untrusted_input = true` declares the step reads text from an external raiser. It
@@ -154,6 +154,15 @@ performs nothing, so while any child is not yet terminal (or cancelled) the edit
 gate, the Stop hook and the deny messages do not count it as a performing seat.
 It counts again once every child is resolved. A story at a dispatched-performer
 step is not affected by having children — only the route's declaration waits.
+
+`ready_children = false` on a `waits_on_children` readiness step makes `satelle
+story ready` run only the container's own round: no child is planned or reviewed
+there, and the container is marked on its accepted round. Each child is then
+planned at its own engagement, when `satelle story wave` lets it start. Absent
+(or `true`) keeps the default: every child not yet ready is readied before and
+after the container's round, and the container is marked only when all are. A
+non-boolean value, or the key on a step that is not a `waits_on_children` step,
+is refused naming `ready_children`.
 
 A container's children run in **parallel by default** — declare nothing. The
 override is `sequential = true`, which runs one child at a time. It is legal only

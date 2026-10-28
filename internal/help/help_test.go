@@ -822,6 +822,26 @@ func TestEpicWaveDocumentsCrossRepoDependsOn(t *testing.T) {
 	}
 }
 
+// TestReadyChildrenDocumented (sty_2b737ed5): the key is documented in
+// workflow-convert and epic-wave says children are planned when the wave lets
+// them start under it.
+func TestReadyChildrenDocumented(t *testing.T) {
+	for topic, wants := range map[string][]string{
+		"workflow-convert": {"`ready_children = false`", "planned at its own engagement", "refused naming `ready_children`"},
+		"epic-wave":        {"`ready_children = false`", "children are planned when the wave lets them start"},
+	} {
+		got, ok := Get(topic)
+		if !ok {
+			t.Fatalf("%s topic not found", topic)
+		}
+		for _, want := range wants {
+			if !strings.Contains(got.Body, want) {
+				t.Errorf("%s does not carry %q", topic, want)
+			}
+		}
+	}
+}
+
 // TestEpicWaveHelpStatesEpicReadinessRule (sty_a476b913): a child cannot engage
 // before its epic is ready, the refusal names the readying command, and cancel
 // stays open.

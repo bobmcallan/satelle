@@ -106,3 +106,24 @@ func TestEmbeddedReadinessSetsLanes(t *testing.T) {
 		}
 	}
 }
+
+// sty_2b737ed5: the shipped ready rubric judges whether each child's intent is
+// achievable in one pass, repairs without asking (chaining children with depends-on
+// tags when they must run one at a time, never setting the user's sequential key),
+// and rejects naming the child only when no repair can make it achievable.
+func TestShippedReadySkillJudgesAchievabilityAndRepairsWithoutAsking(t *testing.T) {
+	body := embeddedSkillBody(t, "ready")
+	for _, want := range []string{
+		"## Judge each child's intent",
+		"achieved in\n**one pass**",
+		"chain them with `depends-on:`",
+		"**repair it yourself**",
+		"Do not\n  ask the developer first",
+		"naming the child",
+		"you never set it",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("skill ready does not carry %q", want)
+		}
+	}
+}

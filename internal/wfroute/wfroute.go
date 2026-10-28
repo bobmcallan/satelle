@@ -177,6 +177,9 @@ type Step struct {
 	// WaitsOnChildren: a container idles at this step while its children are
 	// driven, so it does not count as performing (sty_7f3e6fd3).
 	WaitsOnChildren bool `json:"waits_on_children,omitempty"`
+	// ReadyChildren is set (to false) only when the container step declares
+	// ready_children = false: readying the container then plans no child.
+	ReadyChildren *bool `json:"ready_children,omitempty"`
 	// Schedule is the container's declared child schedule ("parallel" or
 	// "sequential"); absent when the step declares none.
 	Schedule string `json:"schedule,omitempty"`
@@ -301,6 +304,10 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 		WaitsOnChildren: st.WaitsOnChildren,
 		Schedule:        st.Schedule,
 		AfterChildren:   st.AfterChildren,
+	}
+	if st.WaitsOnChildren && !st.ReadyChildren {
+		off := false
+		step.ReadyChildren = &off
 	}
 	// Edge-named gates: the reviewers on any inbound edge. A step is entered from
 	// one place on the spine and from recovery edges, which repeat the same gate
@@ -527,6 +534,9 @@ func renderKnobs(s Step) string {
 	}
 	if s.WaitsOnChildren {
 		parts = append(parts, "the container waits here while its children are driven; it is not performing")
+	}
+	if s.ReadyChildren != nil && !*s.ReadyChildren {
+		parts = append(parts, "readying the container plans no child; each child is planned when the wave lets it start")
 	}
 	if s.AfterChildren != "" {
 		parts = append(parts, fmt.Sprintf("entry is refused until every child has discharged %q", s.AfterChildren))

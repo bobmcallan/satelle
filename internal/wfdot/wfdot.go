@@ -234,6 +234,10 @@ type State struct {
 	// WaitsOnChildren: a container idles here while its children are driven
 	// (sty_7f3e6fd3). Read through Spec.WaitsOnChildren.
 	WaitsOnChildren bool
+	// ReadyChildren: `satelle story ready` on a container readies each child
+	// before marking it (Step.ReadiesChildren); false only when the step
+	// declares ready_children = false.
+	ReadyChildren bool
 	// Schedule is the container's child schedule (Step.ChildSchedule): parallel
 	// unless the step says sequential; empty on a step that waits on no children.
 	Schedule string
@@ -1007,6 +1011,11 @@ func (s Step) ChildSchedule() string {
 	}
 	return DefaultSchedule()
 }
+
+// ReadiesChildren reports whether readying this container step also readies each
+// child: true unless the step declares ready_children = false. The one place the
+// default is named.
+func (s Step) ReadiesChildren() bool { return s.ReadyChildren == nil || *s.ReadyChildren }
 
 // LegacyScheduleSteps lists the steps that still author the deprecated
 // `schedule` key, in catalogue order, for validate to name.
