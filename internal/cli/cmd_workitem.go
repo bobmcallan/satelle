@@ -1678,15 +1678,15 @@ func storyReadyCommand() *cobra.Command {
 		Use:   "ready <id> [<id>...]",
 		Short: "Ready backlog stories or epics without engaging them",
 		Long: `Run each story's readiness step — performer, then reviewers — and
-record its verdicts, without changing status or taking the seat. A story whose
-gates accept gets the tag the step's mark key declares; the work starts later. An
-epic readies its backlog children, then its own step; it is marked when every
-child with a readiness step is ready. A child whose route declares no readiness
-step is reported no-readiness-step, not holding the epic back.
+record its verdicts. A round never changes status: an accepted story gets only the
+step's mark tag and stays in backlog; 'satelle story set <id> --status plan' takes
+backlog → plan. An epic round judges the epic; with ready_children unset or true it
+also runs each backlog child's round (each stays in backlog), and a child with no
+readiness step is reported no-readiness-step. With ready_children = false each
+child is planned when 'satelle story wave' lets it start.
 
 A story is refused (the others still run) when not at the route's start status,
-its round budget is spent, or it has no dispatched performer. A step with no mark
-records the round but applies no tag.
+its budget is spent, or it has no dispatched performer.
 One line per story: <id> marked|not-accepted|refused|no-readiness-step[: why]; non-zero exit unless all marked. See 'satelle help workflow-convert'.`,
 		Args:        cobra.MinimumNArgs(1),
 		Annotations: needsStore(),

@@ -89,8 +89,9 @@ A child cannot leave backlog into an engaging status (`satelle story set <child>
 round holds. That round is what sequences the children — it adds the
 `depends-on` edges and the `lane:` tags — so a child engaged before it runs gets
 neither. The refusal names the epic and the command that readies it, `satelle
-story ready <epic>`, which readies the epic's children as part of its round and is
-not refused itself. The check keys on the child's entry state, so a child on any
+story ready <epic>`, which judges the epic and, unless its readiness step declares
+`ready_children = false`, also runs each backlog child's readiness round (no round
+changes a status), and is not refused itself. The check keys on the child's entry state, so a child on any
 route is covered, but only when the epic's own route declares a readiness step: a
 step entered from its start that declares `waits_on_children`. The default
 substrate's epic route declares one (`ready`, performed by `ready-reviewer`), so a

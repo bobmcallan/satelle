@@ -45,8 +45,12 @@ Intermediate stages are waypoints, not hand-back points.
 
 ## Driving an epic
 
-**Drive epic `<id>` to ready** walks only the container to ready. It does not
-engage children.
+**Drive epic `<id>` to ready** walks only the container to ready; it engages no
+child. Its round is the epic's own judgement of order, parallelism and
+achievability and changes no child's status. With `ready_children` absent or true
+it also runs each backlog child's readiness round (each stays in backlog); with
+`ready_children = false` each child is planned through its own backlog → plan step
+when `satelle story wave` lets it start.
 
 **Drive epic `<id>` to done** requires the container at its waiting step.
 `satelle story wave <id>` returns the set that may be engaged. Drive each child
@@ -59,10 +63,10 @@ by the sprint, or by title; `satelle story wave` alone says who may start.
 
 You open the worktrees. Cut an independent child from the epic base, the branch
 the container was engaged on. Cut a child whose `depends-on` target is done and
-already on trunk from trunk (the epic still merges once); so too a done target
+already on trunk from trunk; so too a done target
 with no branch of its own — never cut from a branch that does not exist. Cut a
 child whose target is done but not yet on trunk from that target's branch, not
-from main, so the dependent tree holds the change it was written against. A
+from main. A
 cancelled dependency is a stop: cut no worktree from it, do not retarget the edge.
 
 ## When an engaged story cannot satisfy its ACs

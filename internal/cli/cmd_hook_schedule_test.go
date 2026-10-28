@@ -106,7 +106,7 @@ func TestAgentGoalsDriveEpicText(t *testing.T) {
 	}
 	flat := strings.Join(strings.Fields(body), " ")
 	for _, want := range []string{
-		"Drive epic `<id>` to ready** walks only the container to ready. It does not engage children.",
+		"Drive epic `<id>` to ready** walks only the container to ready; it engages no child.",
 		"Drive epic `<id>` to done** requires the container at its waiting step",
 		"`satelle story wave <id>` returns the set that may be engaged",
 		"only after the wave is empty because every child is terminal",

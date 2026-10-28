@@ -521,13 +521,13 @@ func renderKnobs(s Step) string {
 		parts = append(parts, fmt.Sprintf("a re-presentation that answers or changes fewer than %d prior blocking finding(s) is refused before its gates run", s.MinProgress))
 	}
 	if s.Mark != "" {
-		parts = append(parts, fmt.Sprintf("an accepted readiness round marks the story with the tag %q", s.Mark))
+		parts = append(parts, fmt.Sprintf("an accepted readiness round marks the story with the tag %q and changes no status; the edge is taken by `satelle story set`", s.Mark))
 	}
 	if s.Freeze {
 		parts = append(parts, "the definition freezes on entry")
 	}
 	if s.ApplyCriteriaDoc != "" && s.ApplyCriteriaHeading != "" {
-		parts = append(parts, fmt.Sprintf("entry applies the criteria authored under %q in the %s document", s.ApplyCriteriaHeading, s.ApplyCriteriaDoc))
+		parts = append(parts, fmt.Sprintf("entry applies the criteria authored under %q in the %s document; the driver does not copy them by hand", s.ApplyCriteriaHeading, s.ApplyCriteriaDoc))
 	}
 	if len(s.ApplyChangeOps) > 0 {
 		parts = append(parts, fmt.Sprintf("the performer's reported changes (%s, tags %s) are applied to the record before the gates", strings.Join(s.ApplyChangeOps, ", "), strings.Join(s.ApplyChangeTags, ", ")))
@@ -535,8 +535,12 @@ func renderKnobs(s Step) string {
 	if s.WaitsOnChildren {
 		parts = append(parts, "the container waits here while its children are driven; it is not performing")
 	}
-	if s.ReadyChildren != nil && !*s.ReadyChildren {
-		parts = append(parts, "readying the container plans no child; each child is planned when the wave lets it start")
+	if s.WaitsOnChildren {
+		if s.ReadyChildren != nil && !*s.ReadyChildren {
+			parts = append(parts, "readying the container plans no child; each child is planned when the wave lets it start")
+		} else {
+			parts = append(parts, "readying the container also readies each backlog child; each child stays in backlog")
+		}
 	}
 	if s.AfterChildren != "" {
 		parts = append(parts, fmt.Sprintf("entry is refused until every child has discharged %q", s.AfterChildren))
