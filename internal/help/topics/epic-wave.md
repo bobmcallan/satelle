@@ -101,6 +101,10 @@ already mid-flight keeps moving. Leaving
 backlog without engaging stays open: you can still `cancel` (or park) a child of
 an epic that is not ready.
 
+When the epic's readiness step declares `ready_children = false`, `satelle story
+ready <epic>` plans no child: children are planned when the wave lets them start,
+one wave at a time, each against the code its dependencies delivered.
+
 ## Engagement honours the wave
 
 Entering an engaging status (`satelle story set <child> --status plan`) is

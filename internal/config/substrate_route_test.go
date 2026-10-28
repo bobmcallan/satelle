@@ -14,6 +14,38 @@ import (
 // shipped lifecycle have, what skills does it bind) off the route grammar, so
 // there is one place that knows the shipped representation.
 
+// sty_2b737ed5: the shipped route leaves `ready_children` absent, so readying an
+// epic here still readies each child; the choice is a repo's own configuration.
+func TestEmbeddedReadyStepReadiesChildren(t *testing.T) {
+	_, step := embeddedRouteHalves()
+	if strings.Contains(step, "\nready_children") {
+		t.Error("the shipped step.toml must leave ready_children absent")
+	}
+	cat, err := wfdot.ParseSteps(step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, st := range cat.Steps {
+		if st.Provides == "ready" {
+			found = true
+			if !st.ReadiesChildren() {
+				t.Error("the shipped [ready] step must resolve ready_children to true")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the shipped route has no [ready] step")
+	}
+	spec, ok := embeddedRouteSpecs()["epic-parent"]
+	if !ok {
+		t.Fatal("no epic-parent route")
+	}
+	if st, ok := spec.StateNamed("ready"); !ok || !st.ReadyChildren {
+		t.Errorf("the epic-parent ready state must resolve ReadyChildren == true: %+v", st)
+	}
+}
+
 // embeddedRouteHalves returns the two shipped halves, empty when either is
 // absent.
 func embeddedRouteHalves() (done, step string) {

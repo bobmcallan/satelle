@@ -1,3 +1,13 @@
+## [0.0.776] - 2026-10-28
+
+### Added
+- An epic's readiness step can declare `ready_children = false`. With it, `satelle story ready <epic>` runs only the epic's own judgement: dependency order, parallel versus sequential running, and whether each child's intent can be achieved. It writes and reviews no plan for any child. Each child is planned through its own backlog → plan step when `satelle story wave` lets it start, so its plan is written against what its dependencies actually delivered. With the key absent or `true`, epic readiness still readies every backlog child, as before, and the shipped route leaves the key absent. The route parser and `satelle validate` refuse the key on a step that does not declare `waits_on_children`, or with a non-boolean value. The shipped `ready` skill now judges each child's achievability. It repairs order, depends-on edges, a missing child and a needed one-at-a-time run (by chaining children with depends-on tags, never by setting the user's `sequential` key) without asking, and rejects only when no allowed repair makes an intent achievable. `satelle help workflow-convert` and `satelle help epic-wave` document the key. (sty_2b737ed5)
+
+## [serve-v0.0.224] - 2026-10-28
+
+### Changed
+- The service binary embeds the route rendering and help topics that name `ready_children`. (sty_2b737ed5)
+
 ## [0.0.775] - 2026-10-28
 
 ### Fixed

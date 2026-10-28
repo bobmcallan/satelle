@@ -159,6 +159,9 @@ type Step struct {
 	// the edit gate and Stop hook do not count it while children are open
 	// (sty_7f3e6fd3). Authored in step.toml; the binary never names the status.
 	WaitsOnChildren bool
+	// ReadyChildren is the authored `ready_children` key; nil when absent. Read
+	// through ReadiesChildren, never this field.
+	ReadyChildren *bool
 	// Schedule is the DEPRECATED authored child-schedule key (SchedParallel or
 	// SchedSequential), kept as written so validate can name it
 	// (LegacyScheduleSteps). Empty when absent. Read the resolved schedule
@@ -573,6 +576,7 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			ApplyChangeTags:      st.ApplyChangeTags,
 
 			WaitsOnChildren: st.WaitsOnChildren,
+			ReadyChildren:   st.ReadiesChildren(),
 			Schedule:        st.ChildSchedule(),
 			AfterChildren:   st.AfterChildren,
 			RemoteAgent:     st.RemoteAgent,

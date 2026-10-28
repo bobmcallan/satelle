@@ -219,7 +219,9 @@ func readyStory(ctx context.Context, item workitem.Item, edge readinessEdge) Rea
 // have filed one — and marks the epic only when every non-terminal child is ready
 // and the epic-level round was accepted. A child whose route declares no readiness
 // step has nothing to ready: it is reported ReadyNoStep and does not hold the epic
-// back. The epic's status is never changed.
+// back. A readiness step that declares ready_children = false skips both child
+// passes: the epic is marked on its own round alone. The epic's status is never
+// changed.
 func readyEpic(ctx context.Context, store *workitem.Store, epic workitem.Item, edge readinessEdge) ReadyResult {
 	res := ReadyResult{ID: epic.ID}
 	idx, err := requireDocIndex()
@@ -288,16 +290,25 @@ func readyEpic(ctx context.Context, store *workitem.Store, epic workitem.Item, e
 		}
 		return notReady, nil
 	}
-	if _, err := readyChildren(false); err != nil {
-		return refused(epic.ID, "%v", err)
+	// A step declaring ready_children = false plans no child here: the epic's own
+	// round is the whole readiness, and each child is planned at its own
+	// engagement, when the wave lets it start.
+	perChild := edge.Step.ReadyChildren
+	if perChild {
+		if _, err := readyChildren(false); err != nil {
+			return refused(epic.ID, "%v", err)
+		}
 	}
 	round := runReadinessRound(ctx, epic, edge)
 	res.Attempt = round.Attempt
 	// A child created during the epic-level judgement is readied before the epic
 	// can be marked.
-	notReady, err := readyChildren(true)
-	if err != nil {
-		return refused(epic.ID, "%v", err)
+	var notReady []string
+	if perChild {
+		notReady, err = readyChildren(true)
+		if err != nil {
+			return refused(epic.ID, "%v", err)
+		}
 	}
 	switch {
 	case !round.Accepted:

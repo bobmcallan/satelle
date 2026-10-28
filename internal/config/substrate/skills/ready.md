@@ -8,7 +8,7 @@ output_type: review
 output_required: true
 output_schema: body
 evidence_tools: Read
-description: Read-only performer for a container's readiness round (the shipped epic and parent `ready` step). Sequences the children before any of them engages by reporting depends-on and lane tags, which satelle applies before the step's gates judge. A wrong premise is a reject that carries the same repairs.
+description: Read-only performer for a container's readiness round (the shipped epic and parent `ready` step). Sequences the children by reporting depends-on and lane tags, judges whether each child's intent is achievable in one pass, and repairs without asking. A wrong premise, or an intent no repair can fix, is a reject carrying the same repairs.
 ---
 
 # Ready (a container's readiness round)
@@ -26,10 +26,13 @@ views with the read tools your seat carries.
 ## Sequence the children
 
 **Parallel is the default**: every child runs at once unless it truly depends on
-another. Children run one at a time only when the user has set the sequential
-override, `sequential = true` on the container's `waits_on_children` step; you
-never choose sequential yourself. `satelle story wave` reads only `depends-on:`
-edges, so an edge you add is the only thing that holds a child back.
+another. Children run one at a time when the user has set the sequential
+override, `sequential = true` on the container's `waits_on_children` step; that
+key is the user's and you never set it. `satelle story wave` reads only
+`depends-on:` edges, so an edge you add is the only thing that holds a child back.
+When the children must in fact run one at a time, chain them with `depends-on:`
+edges (each child on the one before it): exactly one is then eligible, the same
+effect, and you report it as an `add-tags` change rather than asking.
 
 **Assess the whole container first**, before adding any edge. For each child,
 decide whether it consumes another child's change, must be judged under
@@ -48,6 +51,20 @@ configuration another child sets, or is independent.
   Do not renumber tags that already exist. `lane:` is decided separately, below.
 - A child that only holds an acceptance criterion the parent already states and
   that no child owns may be created. Do not add an outcome the parent did not state.
+
+## Judge each child's intent
+
+For each non-terminal child, decide whether its body's intent can be achieved in
+**one pass** once its `depends-on` targets have landed. Judge the intent, not a
+plan: do not plan the child. A child's plan is written when `satelle story wave`
+lets it start, against what its dependencies actually delivered.
+
+- When the gap is a missing order or `depends-on` edge, a missing child, or a
+  need for one-at-a-time running, **repair it yourself** with `add-tags` or
+  `create-child` (chaining children with `depends-on:` tags for the last). Do not
+  ask the developer first.
+- Reject, with `notes` naming the child and the evidence, only when no repair
+  this step allows can make the intent achievable.
 
 ## Choose each child's lane
 
