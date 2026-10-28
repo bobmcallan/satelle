@@ -38,7 +38,8 @@ func (g *Engine) ExecutorBinding() (config.AgentBinding, bool) {
 // work of a step the workflow allocates to agent=executor — the work the driving
 // session does by hand when the binding is in-loop. step is the status the story
 // is in; its composed executor skills are the rubric, and notes (the reviewers'
-// findings from a rejected edge, or "") are appended to it.
+// findings from a rejected edge, or "") are appended to it unless the payload
+// already carries that exit's findings as findings_to_answer.
 //
 // It is the executor-allocated counterpart of DispatchExecutor, which performs a
 // NAMED agent's step on entry: the same payload, invoke path, transport, budget
@@ -95,11 +96,6 @@ func (g *Engine) PerformExecutorStep(ctx context.Context, item workitem.Item, st
 	if rerr := g.undeliveredRefusal(ctx, delivered, wfName, step, "executor"); rerr != nil {
 		return verb.DispatchResult{Skills: delivered.Manifest, Agent: "executor", Skill: skill}, rerr
 	}
-	rubric := delivered.Rubric
-	if n := strings.TrimSpace(notes); n != "" {
-		rubric = strings.TrimSpace(rubric + "\n\n## Findings from the last presentation of this step's exit\n\n" +
-			"The reviewers rejected the work this step produced. Address these, then stop:\n\n" + n)
-	}
 	modelResolved, modelSource := g.selectModel(ctx, binding, item.ID, target.Model, config.ModelSourceStep)
 	mc := ModelChoice{Model: modelResolved, Source: modelSource}
 	budget := config.ResolveBudget(
@@ -140,6 +136,11 @@ func (g *Engine) PerformExecutorStep(ctx context.Context, item workitem.Item, st
 	if consumed != nil {
 		g.recordDocConsumed(ctx, item.ID, "executor", step, *consumed, 1)
 	}
+	rubric := delivered.Rubric
+	if n := strings.TrimSpace(notes); n != "" && len(execPayload.Findings) == 0 {
+		rubric = strings.TrimSpace(rubric + "\n\n## Findings from the last presentation of this step's exit\n\n" +
+			"The reviewers rejected the work this step produced. Address these, then stop:\n\n" + n)
+	}
 	invRes := g.Invoke(ctx, InvokeRequest{
 		Binding:     invokeBinding,
 		Section:     "executor",
@@ -166,7 +167,7 @@ func (g *Engine) PerformExecutorStep(ctx context.Context, item workitem.Item, st
 		}, invRes.Err))
 		return res, fmt.Errorf("the [executor] binding failed performing step %q: %w", step, invRes.Err)
 	}
-	if aerr := RecordFindingAnswers(&res, execPayload.Findings, invRes.Stdout); aerr != nil {
+	if aerr := RecordFindingAnswers(&res, execPayload.Findings, execPayload.FindingsEdgeTo, invRes.Stdout); aerr != nil {
 		return res, fmt.Errorf("the [executor] binding reported answers for step %q that cannot be read: %w", step, aerr)
 	}
 	if dec, derr := parseDecision(invRes.Stdout); derr == nil && !dec.Accept {

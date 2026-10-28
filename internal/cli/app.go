@@ -276,6 +276,8 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// Prior-verdict injection (sty_0f5e600c): a re-reviewed edge carries
 			// what it already judged, so the gate judges the delta.
 			rev.SetPriorVerdictsResolver(priorVerdictsResolver())
+			// A performer run at the step it is in answers the exit that rejected it.
+			rev.SetExitRejectResolver(verb.LatestExitReject)
 			// Definition-edit injection (sty_5262592e): the intent reviewer judges
 			// each edited acceptance criterion against the story's purpose.
 			rev.SetDefinitionEditsResolver(definitionEditsResolver())
@@ -461,6 +463,7 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 	// deliberately wires no docs resolver — that omission is this site's own
 	// question, out of scope here.
 	rev.SetPriorVerdictsResolver(priorVerdictsResolver())
+	rev.SetExitRejectResolver(verb.LatestExitReject)
 	rev.SetMessagesResolver(messagesResolver()) // create-path engine; harmless, never fills a transition payload
 	// The store a seat's condensed documents are kept in (sty_df21b2db): the
 	// rework relay opens its sessions on this engine.

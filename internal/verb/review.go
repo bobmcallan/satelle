@@ -525,6 +525,10 @@ type DispatchResult struct {
 	// run's agent_invocation row so the gates can be told which went unanswered.
 	FindingsOffered []string               `json:"-"`
 	Answers         []agentartifact.Answer `json:"-"`
+	// FindingsEdgeTo is the exit the findings were taken from when the performer
+	// ran at the step it is already in (a same-status re-dispatch): the gate of
+	// FindingsEdgeTo reads these answers. Empty on a re-presented edge.
+	FindingsEdgeTo string `json:"-"`
 	// Progress is which of the offered blocking findings the output answers or
 	// changes (sty_73224b86); nil when none was offered. An enumeration, computed
 	// where the output is final: dispatchPerformer applies the step's

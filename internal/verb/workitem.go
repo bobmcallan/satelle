@@ -679,6 +679,16 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 				recordSeatTaken(ctx, current, *req.Status, now)
 			}
 			// inFlight / AlreadyHeld: seat already held — good enough for AC2.
+			// A named performer whose step's exit was rejected since it last ran
+			// is run once more, with the findings, before anything else applies.
+			if reDispatchOwed(ctx, current) {
+				park := func(state, notes string, res DispatchResult) (json.RawMessage, error, bool) {
+					return parkStory(ctx, current, raw, "", state, notes, res, now)
+				}
+				if out, derr := redispatchStep(ctx, current, now, park); out != nil || derr != nil {
+					return out, derr
+				}
+			}
 			// Fall through so title/tags/etc. updates still apply when combined.
 			if !transitioning && req.Title == nil && req.Body == nil && req.Priority == nil &&
 				req.Category == nil && req.ParentID == nil && req.AcceptanceCriteria == nil &&
@@ -809,29 +819,9 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	// agent never advances status itself — the state's exit gate still governs the
 	// next edge. agent=executor and agent-less states dispatch nothing (the
 	// in-loop orchestrator performs, today's behaviour).
-	// parkWith parks the story at park with notes on the timeline: the set
-	// re-enters for the park edge, so blocked-review, park origin and the seat
-	// run as for any other park (sty_b8a0d062). handled is false when the
-	// request could not be re-issued, leaving the caller to refuse.
+	// parkWith is parkStory under this presentation's attempt.
 	parkWith := func(park, notes string, res DispatchResult) (out json.RawMessage, err error, handled bool) {
-		author := res.Agent
-		if author == "" {
-			author = "executor"
-		}
-		appendLedgerEntry(ctx, current.ID, ledger.KindComment, author,
-			notes, attemptPayload(current.Status, park, res.Skill, attempt), now)
-		var parked map[string]json.RawMessage
-		if json.Unmarshal(raw, &parked) != nil {
-			return nil, nil, false
-		}
-		parked["status"], _ = json.Marshal(park)
-		reraw, merr := json.Marshal(parked)
-		if merr != nil {
-			return nil, nil, false
-		}
-		// The park transition names the readiness round it ends (sty_a32bd6a9).
-		out, err = workItemSetCore(withParkAttempt(ctx, attempt), reraw) // the outer workItemSet annotates once
-		return out, err, true
+		return parkStory(ctx, current, raw, attempt, park, notes, res, now)
 	}
 	performStep := func() (json.RawMessage, error) {
 		if !(transitioning && executorDispatcher != nil) {
@@ -2161,6 +2151,32 @@ func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.R
 	return b
 }
 
+// parkStory parks current at park with notes on the timeline: the set request raw
+// re-enters for the park edge, so blocked-review, park origin and the seat run as
+// for any other park (sty_b8a0d062). attempt is the readiness round the park ends,
+// "" for none. handled is false when the request could not be re-issued, leaving
+// the caller to refuse.
+func parkStory(ctx context.Context, current workitem.Item, raw json.RawMessage, attempt, park, notes string, res DispatchResult, now time.Time) (out json.RawMessage, err error, handled bool) {
+	author := res.Agent
+	if author == "" {
+		author = "executor"
+	}
+	appendLedgerEntry(ctx, current.ID, ledger.KindComment, author,
+		notes, attemptPayload(current.Status, park, res.Skill, attempt), now)
+	var parked map[string]json.RawMessage
+	if json.Unmarshal(raw, &parked) != nil {
+		return nil, nil, false
+	}
+	parked["status"], _ = json.Marshal(park)
+	reraw, merr := json.Marshal(parked)
+	if merr != nil {
+		return nil, nil, false
+	}
+	// The park transition names the readiness round it ends (sty_a32bd6a9).
+	out, err = workItemSetCore(withParkAttempt(ctx, attempt), reraw) // the outer workItemSet annotates once
+	return out, err, true
+}
+
 // dispatchPayload stamps a named-executor agent_invocation row with its model and
 // token/wall-time cost (sty_a699ad14), so the per-gate cost view can roll up a
 // dispatched step (planner, coder) the same way it does a reviewer gate.
@@ -2207,6 +2223,7 @@ func dispatchPayload(from, to string, res DispatchResult, attempt string) json.R
 		// gate payload reads them back as a fact.
 		FindingsOffered []string               `json:"findings_offered,omitempty"`
 		FindingAnswers  []agentartifact.Answer `json:"finding_answers,omitempty"`
+		FindingsEdgeTo  string                 `json:"findings_edge_to,omitempty"`
 		// Skills is the manifest of the step skills delivered to the performer —
 		// name and content hash, or undelivered with the reason (sty_23ceeca2).
 		Skills []SkillDelivery `json:"skills,omitempty"`
@@ -2221,7 +2238,8 @@ func dispatchPayload(from, to string, res DispatchResult, attempt string) json.R
 		CostUSD: res.CostUSD, CostUnavailableReason: res.CostUnavailableReason,
 		SystemPromptBytes: res.SystemPromptBytes, PayloadBytes: res.PayloadBytes,
 		ArtifactName: res.ArtifactName, ArtifactType: res.ArtifactType, Budget: res.Budget, Cloud: res.Cloud,
-		LastMessage: LastMessage(res.LastMessage), FindingsOffered: res.FindingsOffered, FindingAnswers: res.Answers}
+		LastMessage: LastMessage(res.LastMessage), FindingsOffered: res.FindingsOffered, FindingAnswers: res.Answers,
+		FindingsEdgeTo: res.FindingsEdgeTo}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil

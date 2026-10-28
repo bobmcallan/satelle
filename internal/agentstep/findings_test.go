@@ -233,3 +233,111 @@ func TestGatePayloadReportsMissingAnswer(t *testing.T) {
 		t.Errorf("no offered findings must add nothing: %s", r2.got.Payload)
 	}
 }
+
+// sty_4470bb38: a performer run at the step the story is already in is offered
+// the findings of the step's exit that was rejected most recently, and its
+// answers are read back by that exit's gate.
+
+// edgeResolver returns rows only for the edge from→to, as the ledger resolver does.
+func edgeResolver(from, to string, rows ...PriorVerdict) func(context.Context, string, string, string, verb.StaleExemption) []PriorVerdict {
+	return func(_ context.Context, _, f, t string, _ verb.StaleExemption) []PriorVerdict {
+		if f != from || t != to {
+			return nil
+		}
+		return append([]PriorVerdict(nil), rows...)
+	}
+}
+
+func exitRejectOf(from, to string) func(context.Context, string, string) string {
+	return func(_ context.Context, _, f string) string {
+		if f == from {
+			return to
+		}
+		return ""
+	}
+}
+
+func TestSameStatusDispatchOffersTheRejectedExitsFindingsAndMessages(t *testing.T) {
+	wf := spineWF("", "", "",
+		"in_progress|coder|planning-rubric",
+		"integration",
+		"done")
+	const rubric = "---\nname: planning-rubric\ntype: skill\ndescription: test rubric\n---\nDo the work."
+	g, _ := newEngine(t, "", fakeDocs{workflow: wf, skillBody: rubric, skillFound: true})
+	r := &fakeRunner{out: `{"answers":[{"finding":"code-review#2","answer":"adopted","evidence":"guard refuses a -dev downgrade"}]}`}
+	g.newRunner = func(string, string) (agentcli.Runner, error) { return r, nil }
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "read_file,grep,list_dir"}, true
+	})
+	g.SetPriorVerdictsResolver(edgeResolver("in_progress", "integration",
+		PriorVerdict{Skill: "code-review", Decision: "reject", Notes: "first look"},
+		PriorVerdict{Skill: "code-review", Decision: "reject", Notes: "deploy-guard allows a downgrade over a -dev build"},
+	))
+	g.SetExitRejectResolver(exitRejectOf("in_progress", "integration"))
+	g.SetMessagesResolver(stateResolver([]MessageState{
+		{ID: "msg_00000009", From: "orchestrator", To: "coder", Body: "ORCH-DECISION: keep the guard in deploy.go", State: "waiting"},
+	}))
+
+	res, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_f", Status: "in_progress"}, "in_progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var top struct {
+		Findings []Finding      `json:"findings_to_answer"`
+		EdgeTo   string         `json:"findings_edge_to"`
+		Messages []MessageState `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(r.got.Payload), &top); err != nil {
+		t.Fatalf("payload: %v\n%s", err, r.got.Payload)
+	}
+	// Numbered over the exit edge's full history: the latest is attempt 2.
+	if len(top.Findings) != 1 || top.Findings[0].ID != "code-review#2" || !top.Findings[0].Blocking ||
+		top.Findings[0].Notes != "deploy-guard allows a downgrade over a -dev build" {
+		t.Errorf("findings_to_answer = %+v, want the exit reviewer's latest verdict as code-review#2", top.Findings)
+	}
+	if top.EdgeTo != "integration" {
+		t.Errorf("findings_edge_to = %q, want integration", top.EdgeTo)
+	}
+	if len(top.Messages) != 1 || top.Messages[0].Body != "ORCH-DECISION: keep the guard in deploy.go" {
+		t.Errorf("messages = %+v, want the waiting orchestrator→coder message", top.Messages)
+	}
+	if len(res.FindingsOffered) != 1 || res.FindingsOffered[0] != "code-review#2" || res.FindingsEdgeTo != "integration" ||
+		len(res.Answers) != 1 || res.Answers[0].Finding != "code-review#2" {
+		t.Errorf("result = offered %v edge %q answers %+v", res.FindingsOffered, res.FindingsEdgeTo, res.Answers)
+	}
+
+	// With no rejected exit, a same-status run is offered nothing.
+	g.SetExitRejectResolver(func(context.Context, string, string) string { return "" })
+	if _, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_f", Status: "in_progress"}, "in_progress"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(r.got.Payload, "findings_to_answer") || strings.Contains(r.got.Payload, "findings_edge_to") {
+		t.Errorf("no rejected exit must add no findings: %s", r.got.Payload)
+	}
+}
+
+func TestFindingAnswersFromReadsAStepRunByTheExitItAnswered(t *testing.T) {
+	t0 := time.Date(2026, 10, 28, 22, 0, 0, 0, time.UTC)
+	entries := []ledger.Entry{
+		dispatchRow(t, t0, "in_progress", "in_progress", map[string]any{
+			"findings_offered": []string{"code-review#2"}, "findings_edge_to": "integration",
+			"finding_answers": []agentartifact.Answer{{Finding: "code-review#2", Answer: "adopted"}}}),
+		// Newer runs answering another exit, and a row with no source edge: the
+		// integration gate reads neither.
+		dispatchRow(t, t0.Add(time.Hour), "in_progress", "in_progress", map[string]any{
+			"findings_offered": []string{"blocked-review#1"}, "findings_edge_to": "blocked"}),
+		dispatchRow(t, t0.Add(2*time.Hour), "in_progress", "in_progress", map[string]any{
+			"findings_offered": []string{"old#1"}}),
+	}
+	fa, ok := FindingAnswersFrom(entries, "in_progress", "integration")
+	if !ok || len(fa.Answered) != 1 || fa.Answered[0].Finding != "code-review#2" || len(fa.Missing) != 0 {
+		t.Errorf("integration gate read %+v (%v), want code-review#2 answered", fa, ok)
+	}
+	fa, ok = FindingAnswersFrom(entries, "in_progress", "blocked")
+	if !ok || len(fa.Missing) != 1 || fa.Missing[0] != "blocked-review#1" {
+		t.Errorf("blocked gate read %+v (%v), want its own run's offer", fa, ok)
+	}
+	if _, ok := FindingAnswersFrom(entries, "in_progress", "done"); ok {
+		t.Error("an exit no run answered must report nothing")
+	}
+}

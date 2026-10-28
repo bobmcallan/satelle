@@ -63,14 +63,36 @@ func numberAttempts(all []PriorVerdict) []PriorVerdict {
 
 // fillFindings attaches, to the payload of a performer about to re-present the
 // edge item.Status → toStatus, the latest verdict of every gate seat on that
-// edge. Nothing is attached on a first presentation, or when the latest round of
-// every gate accepted: there is nothing to answer. It runs AFTER fillPayloadDocs
-// and never touches that counter.
+// edge. A performer run at the step the story is already in (toStatus ==
+// item.Status) is offered instead the findings of the step's exit that was
+// rejected most recently, named in FindingsEdgeTo. Nothing is attached on a
+// first presentation, or when the latest round of every gate accepted: there is
+// nothing to answer. It runs AFTER fillPayloadDocs and never touches that
+// counter.
 func (g *Engine) fillFindings(ctx context.Context, item workitem.Item, toStatus string, tp *transitionPayload) {
 	if g.priorVerdicts == nil || item.ID == "" {
 		return
 	}
-	tp.Findings = FindingsFrom(item.ID, g.priorVerdicts(ctx, item.ID, item.Status, toStatus, g.staleExemption(ctx, item, toStatus)))
+	edgeTo := toStatus
+	if toStatus == item.Status {
+		if g.exitReject == nil {
+			return
+		}
+		if edgeTo = g.exitReject(ctx, item.ID, item.Status); edgeTo == "" {
+			return
+		}
+	}
+	tp.Findings = FindingsFrom(item.ID, g.priorVerdicts(ctx, item.ID, item.Status, edgeTo, g.staleExemption(ctx, item, edgeTo)))
+	if edgeTo != toStatus && tp.Findings != nil {
+		tp.FindingsEdgeTo = edgeTo
+	}
+}
+
+// SetExitRejectResolver wires the resolver that names the exit of a step whose
+// gate rejected most recently (verb.LatestExitReject). Nil-safe: unwired, a
+// performer run at the step it is in is offered no findings.
+func (g *Engine) SetExitRejectResolver(fn func(ctx context.Context, itemID, from string) string) {
+	g.exitReject = fn
 }
 
 // FindingsFrom is the findings a performer re-presenting the edge is offered,
@@ -272,11 +294,12 @@ func blockingFindingIDs(findings []Finding) []string {
 	return ids
 }
 
-// RecordFindingAnswers carries the findings a performer was offered, and the
-// answers it gave in stdout, onto its dispatch result, where dispatchPayload
-// records them on the run's ledger row. A malformed answers block is an error
-// like a malformed changes block. A performer with nothing to answer is a no-op.
-func RecordFindingAnswers(res *verb.DispatchResult, offered []Finding, stdout []byte) error {
+// RecordFindingAnswers carries the findings a performer was offered, the exit
+// they were taken from (edgeTo, the payload's FindingsEdgeTo) and the answers it
+// gave in stdout onto its dispatch result, where dispatchPayload records them on
+// the run's ledger row. A malformed answers block is an error like a malformed
+// changes block. A performer with nothing to answer is a no-op.
+func RecordFindingAnswers(res *verb.DispatchResult, offered []Finding, edgeTo string, stdout []byte) error {
 	ids := blockingFindingIDs(offered)
 	if len(ids) == 0 {
 		return nil
@@ -285,15 +308,17 @@ func RecordFindingAnswers(res *verb.DispatchResult, offered []Finding, stdout []
 	if err != nil {
 		return err
 	}
-	res.FindingsOffered, res.Answers = ids, answers
+	res.FindingsOffered, res.Answers, res.FindingsEdgeTo = ids, answers, edgeTo
 	return nil
 }
 
 // FindingAnswersFrom reads, from a story's agent_invocation rows, the answers the
-// latest dispatch of the edge from→to gave to the findings it was offered. The
-// latest row by creation time wins; a row that offered no finding is not a
-// dispatch of a re-presented edge and is skipped. Missing lists the offered ids
-// with no answer. ok is false when no dispatch of the edge offered findings.
+// latest dispatch of the edge from→to gave to the findings it was offered: a
+// dispatch of that edge, or a run at step from whose findings were taken from the
+// exit to (findings_edge_to). The latest row by creation time wins; a row that
+// offered no finding is not a dispatch of a re-presented edge and is skipped.
+// Missing lists the offered ids with no answer. ok is false when no dispatch of
+// the edge offered findings.
 func FindingAnswersFrom(entries []ledger.Entry, from, to string) (fa FindingAnswers, ok bool) {
 	var best *ledger.Entry
 	var offered []string
@@ -304,11 +329,15 @@ func FindingAnswersFrom(entries []ledger.Entry, from, to string) (fa FindingAnsw
 			continue
 		}
 		var row struct {
-			From string `json:"from"`
-			To   string `json:"to"`
+			From   string `json:"from"`
+			To     string `json:"to"`
+			EdgeTo string `json:"findings_edge_to"`
 			agentartifact.FindingAnswersRecord
 		}
-		if json.Unmarshal(e.Payload, &row) != nil || row.From != from || row.To != to || len(row.Offered) == 0 {
+		if json.Unmarshal(e.Payload, &row) != nil || row.From != from || len(row.Offered) == 0 {
+			continue
+		}
+		if row.To != to && (row.To != from || row.EdgeTo != to) {
 			continue
 		}
 		if best == nil || !e.CreatedAt.Before(best.CreatedAt) {

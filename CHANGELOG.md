@@ -1,3 +1,8 @@
+## [0.0.782] - 2026-10-29
+
+### Fixed
+- A story whose exit gate rejects is no longer stranded when its performer is a one-shot command seat, such as a pi coder. Re-presenting the step with `satelle story set <id> --status <its current status>` re-dispatches the step's named performer once, with the exit gate's findings to answer and any messages waiting for it in its payload. Before, `satelle story rework` refused a command seat as not live-capable, re-presenting the same status dispatched nothing, and the edit gate rightly kept the driver out, so the only way out was park/resume or rebinding the coder. One owner decides who re-runs after a rejection, for both `satelle story set` and `satelle story drive`; the headless executor's re-run stays with drive. (sty_4470bb38)
+
 ## [0.0.781] - 2026-10-29
 
 ### Added

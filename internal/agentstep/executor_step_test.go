@@ -62,6 +62,25 @@ func TestPerformExecutorStepRunsTheBindingWithTheSkillAndTheFindings(t *testing.
 	}
 }
 
+// sty_4470bb38: when the payload already carries the rejected exit's findings as
+// findings_to_answer, the notes are not appended to the rubric a second time.
+func TestPerformExecutorStepDeliversExitFindingsOnce(t *testing.T) {
+	g, fr := executorEngine(t, "fake -p {system}", "ok")
+	g.SetPriorVerdictsResolver(edgeResolver("exec", "plain",
+		PriorVerdict{Skill: "exit-review", Decision: "reject", Notes: "EXIT-FINDING: the slice has no test"}))
+	g.SetExitRejectResolver(exitRejectOf("exec", "plain"))
+	item := workitem.Item{ID: "sty_1", Status: "exec"}
+	if _, err := g.PerformExecutorStep(context.Background(), item, "exec", "EXIT-FINDING: the slice has no test"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(fr.got.Payload, "findings_to_answer") || !strings.Contains(fr.got.Payload, "exit-review#1") {
+		t.Errorf("the exit's findings must ride the payload:\n%s", fr.got.Payload)
+	}
+	if strings.Contains(fr.got.SystemPrompt, "Findings from the last presentation") {
+		t.Errorf("findings already in findings_to_answer must not be appended to the rubric:\n%s", fr.got.SystemPrompt)
+	}
+}
+
 // An in-loop [executor] is never a quiet no-op, and a step not allocated to the
 // executor is not this method's to perform.
 func TestPerformExecutorStepRefusesWhatItCannotPerform(t *testing.T) {

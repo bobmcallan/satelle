@@ -626,23 +626,14 @@ func (d *driver) perform(ctx context.Context, item workitem.Item, step, notes st
 	return nil
 }
 
-// rejectionTarget is who acts on a rejected edge into to: the performer of the
-// destination step when entering it dispatches one (it is re-dispatched with the
-// findings on re-presentation), otherwise the step being left, whose work the
-// reviewers judged. step is the step that performer belongs to.
+// rejectionTarget is verb.RejectionTarget over the drive's performers, with a
+// performer that cannot be resolved stopping the drive at its step.
 func (d *driver) rejectionTarget(ctx context.Context, item workitem.Item, to string) (step string, target, fromPerf verb.PerformerResolution, err error) {
-	toPerf, err := d.opts.Performers.StepPerformer(ctx, item, to)
+	step, target, fromPerf, err = verb.RejectionTarget(ctx, d.opts.Performers, item, to)
 	if err != nil {
-		return "", target, fromPerf, &halt{step: to, err: err, what: err.Error()}
+		return "", target, fromPerf, &halt{step: step, err: err, what: err.Error()}
 	}
-	fromPerf, err = d.opts.Performers.StepPerformer(ctx, item, item.Status)
-	if err != nil {
-		return "", target, fromPerf, &halt{step: item.Status, err: err, what: err.Error()}
-	}
-	if toPerf.Kind == verb.PerformerDispatched {
-		return to, toPerf, fromPerf, nil
-	}
-	return item.Status, fromPerf, fromPerf, nil
+	return step, target, fromPerf, nil
 }
 
 // blame names the step and performer a rejected edge into to is held against, for

@@ -15,6 +15,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/agentstep"
+	"github.com/bobmcallan/satelle/internal/agentvalidate"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -196,6 +197,13 @@ func runRework(cmd *cobra.Command, id string, roundsFlag int, modelFlag string, 
 	coderBinding, found := eff.Agents.NamedBinding(rw.CoderBinding)
 	if !found {
 		return fmt.Errorf("satelle story rework: no [%s] binding in .satelle/workflows/agents.toml — the step allocates it as the performer", rw.CoderBinding)
+	}
+	if reason := agentvalidate.NotLiveCapable(rw.CoderBinding, coderBinding); reason != "" {
+		if config.IsInLoopCommand(coderBinding.CommandTemplate()) {
+			return fmt.Errorf("satelle story rework: %s", reason)
+		}
+		return fmt.Errorf("satelle story rework: %s — a one-shot performer is re-dispatched with the findings by: satelle story set %s --status %s",
+			reason, it.ID, it.Status)
 	}
 	consultBinding, found := eff.Agents.NamedBinding(rw.ConsultBinding)
 	if !found {

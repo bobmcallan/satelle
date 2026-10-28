@@ -452,7 +452,7 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 					WithRemediation("add a live-capable [" + w.Consult + "] binding (interface=acp or stream) to .satelle/workflows/agents.toml, or drop the rework key"))
 				continue
 			}
-			if reason := notLiveCapable(w.Consult, b); reason != "" {
+			if reason := NotLiveCapable(w.Consult, b); reason != "" {
 				r.record(health.Warn(health.IDNodeAlloc, "Rework consult binding not live-capable", fmt.Sprintf(
 					"workflow %q step %q declares rework consult=%s rounds=%d but %s — the rework relay opens it as a live session",
 					doc.Name, w.Step, w.Consult, w.Rounds, reason)).About(w.Consult).
@@ -703,12 +703,12 @@ func liveUsedSections(workflows []docindex.Doc) map[string]bool {
 	return live
 }
 
-// notLiveCapable reports, in prose, why a binding cannot be opened as a live
+// NotLiveCapable reports, in prose, why a binding cannot be opened as a live
 // session — "" when it can. It asks the runtime's OWN two questions in the
 // runtime's order (agentstep.OpenSessionAs): is the command in-loop, and does
 // the interface resolve to a session opener. Validate and the relay therefore
 // cannot disagree about what "live-capable" means (sty_8e0b29a0).
-func notLiveCapable(name string, b config.AgentBinding) string {
+func NotLiveCapable(name string, b config.AgentBinding) string {
 	if config.IsInLoopCommand(b.CommandTemplate()) {
 		return fmt.Sprintf("[%s] is command=in-loop — the hook channel cannot be relayed", name)
 	}

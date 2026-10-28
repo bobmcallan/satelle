@@ -140,6 +140,10 @@ type Engine struct {
 	// was offered (sty_f948d345); fillFindingAnswers hands the gate the fact.
 	// Nil-safe: an unwired resolver injects nothing.
 	findingAnswers func(ctx context.Context, itemID, from, to string) (FindingAnswers, bool)
+	// exitReject names the exit of a step whose gate rejected most recently, ""
+	// when none did, so a performer run at the step it is in is offered that
+	// exit's findings. Nil-safe: unwired, such a run is offered none.
+	exitReject func(ctx context.Context, itemID, from string) string
 	// itemDiff resolves the live engagement slice for a reviewer payload
 	// (sty_a125b440). Nil-safe: an unwired resolver injects no Diff. The
 	// resolver itself must never error — map missing baseline / git failure to
@@ -1089,6 +1093,10 @@ type transitionPayload struct {
 	// each blocking one — adopted, or rebutted with evidence — in its output.
 	// Enumeration, not verdict.
 	Findings []Finding `json:"findings_to_answer,omitempty"`
+	// FindingsEdgeTo is the exit Findings were taken from when the performer runs
+	// at the step the story is already in: the exit gate that rejected it. Empty
+	// on a re-presented edge, whose own findings they are.
+	FindingsEdgeTo string `json:"findings_edge_to,omitempty"`
 	// FindingAnswers is present ONLY on a gate payload whose edge's performer was
 	// offered findings: which it answered and which it left unanswered. A fact the
 	// gate's rubric weighs; Go never rejects on it.
@@ -2729,7 +2737,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		return res, fmt.Errorf("named agent %q reported changes for step %q that cannot be read: %w", dispatchAgent, toStatus, cerr)
 	}
 	res.Changes = changes
-	if aerr := RecordFindingAnswers(&res, execPayload.Findings, invRes.Stdout); aerr != nil {
+	if aerr := RecordFindingAnswers(&res, execPayload.Findings, execPayload.FindingsEdgeTo, invRes.Stdout); aerr != nil {
 		return res, fmt.Errorf("named agent %q reported answers for step %q that cannot be read: %w", dispatchAgent, toStatus, aerr)
 	}
 	if dec, derr := parseDecision(invRes.Stdout); derr == nil && !dec.Accept {
