@@ -1,3 +1,16 @@
+## [0.0.780] - 2026-10-28
+
+### Added
+- A developer is told when the installed cursor-agent differs from the version satelle's Cursor behavior was captured against. A Cursor session start whose `cursor_version` differs carries a line naming both versions. `satelle doctor --live` reports a WARN `live.version_drift` for a cursor binding whose `--version` differs, naming both versions and the resolved binary path. Both list the captured contracts that may no longer hold, each with its basis: stop cap, hook timeout handling, envelope shapes, ACP methods and usage fields. Both name `satelle agent recheck cursor`, which reports each contract as holds, changed or unverifiable against the installed CLI and exits non-zero on any change. No warning is raised when the versions match, nothing uses Cursor, or an adapter has no captured version. The captured version has one owner, which the fixture metadata is tested against. (sty_32c61e68)
+
+### Fixed
+- satelle's ACP client never answers a denied permission with an allow option. With no reject option offered, it answers cancelled instead of falling back to the first option. It no longer advertises `fs.readTextFile`, which it does not serve. Cursor's `cursor/ask_question` gets the reply Cursor's protocol defines, and `cursor/create_plan` gets a rejected outcome instead of -32601 "method not found". This holds for every ACP adapter, Cursor and Grok alike. (sty_23e42627)
+
+## [serve-v0.0.228] - 2026-10-28
+
+### Changed
+- The service binary embeds the updated agent-dispatch help topic and health checks. (sty_32c61e68, sty_23e42627)
+
 ## [0.0.779] - 2026-10-28
 
 ### Fixed
