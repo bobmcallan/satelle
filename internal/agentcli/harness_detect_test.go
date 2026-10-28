@@ -78,3 +78,50 @@ func TestHarnessFromHookEvent(t *testing.T) {
 		}
 	}
 }
+
+// TestIsSessionEnvKeyCoversEveryMarker proves the predicate every test scrub
+// rides on matches each key the code reads — marker, session id and anchor pin,
+// with prefix variants — and nothing a desktop environment merely resembles it with.
+func TestIsSessionEnvKeyCoversEveryMarker(t *testing.T) {
+	var keys []string
+	for _, m := range sessionMarkers {
+		keys = append(keys, m.key)
+		if m.prefix {
+			keys = append(keys, m.key+"PROBE")
+		}
+	}
+	keys = append(keys, sessionEnvKeys...)
+	keys = append(keys, sessionAnchorEnvKeys...)
+	keys = append(keys, "CLAUDE_CODE_SSE_PORT", "PI_SESSION_FILE")
+	for _, k := range keys {
+		if !IsSessionEnvKey(k) {
+			t.Errorf("IsSessionEnvKey(%q) = false, want true", k)
+		}
+	}
+	for _, k := range SessionMarkerEnvNames() {
+		if !IsSessionEnvKey(k) {
+			t.Errorf("SessionMarkerEnvNames lists %q but IsSessionEnvKey does not match it", k)
+		}
+	}
+	for _, k := range []string{"XCURSOR_SIZE", "HYPRCURSOR_SIZE", "PATH", "HOME", "CURSOR_RIPGREP_PATH", "MY_CLAUDECODE", ""} {
+		if IsSessionEnvKey(k) {
+			t.Errorf("IsSessionEnvKey(%q) = true, want false", k)
+		}
+	}
+}
+
+func TestScrubSessionEnvUnsetsOnlySessionKeys(t *testing.T) {
+	for _, k := range []string{"CURSOR_CONVERSATION_ID", "CLAUDE_CODE_SSE_PORT", "PI_SESSION_FILE", "CLAUDE_PROJECT_DIR", "GROK_AGENT"} {
+		t.Setenv(k, "x")
+	}
+	t.Setenv("XCURSOR_SIZE", "24")
+	ScrubSessionEnv()
+	for _, e := range os.Environ() {
+		if k, _, _ := strings.Cut(e, "="); IsSessionEnvKey(k) {
+			t.Errorf("%s survived ScrubSessionEnv", k)
+		}
+	}
+	if os.Getenv("XCURSOR_SIZE") != "24" {
+		t.Error("ScrubSessionEnv unset a key that is not session evidence")
+	}
+}

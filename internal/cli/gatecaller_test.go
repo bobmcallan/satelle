@@ -122,18 +122,12 @@ func init() {
 // otherwise look dispatched to every in-loop hook path.
 func clearHarnessEnv(t *testing.T) {
 	t.Helper()
-	markers := agentcli.SessionMarkerEnvNames()
 	for _, e := range os.Environ() {
 		k, v, _ := strings.Cut(e, "=")
 		match := k == config.ScratchEnv || k == config.SessionEnv ||
 			k == config.DispatchAgentEnv || k == config.DispatchStepEnv ||
-			k == config.DispatchItemEnv || k == config.SpawnEnv
-		for _, m := range markers {
-			if k == m || strings.HasPrefix(k, m) {
-				match = true
-				break
-			}
-		}
+			k == config.DispatchItemEnv || k == config.SpawnEnv ||
+			agentcli.IsSessionEnvKey(k)
 		if match {
 			key, val := k, v
 			_ = os.Unsetenv(key)

@@ -115,18 +115,10 @@ func TestCompactModeMatrix(t *testing.T) {
 // names come from agentcli so this cannot drift when a harness is added.
 func scrubAgentEnv(t *testing.T) {
 	t.Helper()
-	markers := agentcli.SessionMarkerEnvNames()
 	keys := []string{"SATELLE_SCRATCH", "SATELLE_SESSION"}
 	for _, e := range os.Environ() {
-		k, _, _ := strings.Cut(e, "=")
-		// Markers are either an exact env name or a PREFIX (CLAUDE_CODE_*,
-		// PI_SESSION_*), so match both — clearing only the literal marker name
-		// would leave the prefixed children in place.
-		for _, m := range markers {
-			if k == m || strings.HasPrefix(k, m) {
-				keys = append(keys, k)
-				break
-			}
+		if k, _, _ := strings.Cut(e, "="); agentcli.IsSessionEnvKey(k) {
+			keys = append(keys, k)
 		}
 	}
 	for _, k := range keys {

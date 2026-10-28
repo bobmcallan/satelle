@@ -2,6 +2,7 @@ package agentcli
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 )
 
@@ -60,18 +61,66 @@ func HarnessOf(command string) string {
 	return AdapterName(command)
 }
 
-// SessionMarkerEnvNames lists the environment keys DetectSessionHarnesses
-// looks at, so a caller that must neutralise harness detection (a test that
-// wants a bare shell) can clear exactly what the code reads instead of
-// hardcoding a list that silently drifts every time a harness is added.
+// sessionAnchorEnvKeys are the variables that pin which repo a session is
+// anchored in, in precedence order. CLAUDE_PROJECT_DIR is also set by cursor's
+// Claude-compat shim, so it is evidence of no harness, but it changes what the
+// anchor resolves to, so a bare shell clears it with the markers.
+var sessionAnchorEnvKeys = []string{"SATELLE_PROJECT_DIR", "CLAUDE_PROJECT_DIR"}
+
+// SessionAnchorEnvKeys lists the anchor-pin variables in the order they are read.
+func SessionAnchorEnvKeys() []string {
+	return append([]string(nil), sessionAnchorEnvKeys...)
+}
+
+// SessionMarkerEnvNames lists every environment key that carries the running
+// harness's session identity: the in-loop markers DetectSessionHarnesses reads
+// (a prefix marker is listed by its prefix), the session-id variables
+// SessionIDFromEnv reads and the anchor pins. A caller that must neutralise
+// harness detection (a test that wants a bare shell) clears exactly what the
+// code reads instead of hardcoding a list that silently drifts every time a
+// harness is added. Match a live key with IsSessionEnvKey, not by equality.
 func SessionMarkerEnvNames() []string {
-	out := make([]string, 0, len(sessionMarkers)+len(sessionEnvKeys))
+	out := make([]string, 0, len(sessionMarkers)+len(sessionEnvKeys)+len(sessionAnchorEnvKeys))
 	for _, m := range sessionMarkers {
 		out = append(out, m.key)
 	}
-	// The session-id variables change what ResolveSession returns, so a caller
-	// that wants a bare shell clears them with the markers.
-	return append(out, sessionEnvKeys...)
+	out = append(out, sessionEnvKeys...)
+	return append(out, sessionAnchorEnvKeys...)
+}
+
+// IsSessionEnvKey reports whether key is one SessionMarkerEnvNames lists: an
+// exact name, or a name beginning with a prefix marker (CLAUDE_CODE_*,
+// PI_SESSION_*). It is the one place that prefix matching lives. Exact markers
+// are exact, so XCURSOR_SIZE and PATH never match.
+func IsSessionEnvKey(key string) bool {
+	for _, m := range sessionMarkers {
+		if key == m.key || (m.prefix && strings.HasPrefix(key, m.key)) {
+			return true
+		}
+	}
+	for _, k := range sessionEnvKeys {
+		if key == k {
+			return true
+		}
+	}
+	for _, k := range sessionAnchorEnvKeys {
+		if key == k {
+			return true
+		}
+	}
+	return false
+}
+
+// ScrubSessionEnv unsets every environment variable IsSessionEnvKey names, so
+// the process looks like a bare shell whichever harness launched it. It is for
+// a test package's TestMain: a test must never judge itself against the session
+// identity of the harness that happens to run it.
+func ScrubSessionEnv() {
+	for _, e := range os.Environ() {
+		if k, _, _ := strings.Cut(e, "="); IsSessionEnvKey(k) {
+			_ = os.Unsetenv(k)
+		}
+	}
 }
 
 // DetectSessionHarnesses reports which harnesses' session markers appear in

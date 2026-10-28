@@ -1798,7 +1798,7 @@ func sessionAnchor() string {
 // the working directory: a gate hand-off uses it to tell the repo whose hooks
 // serve the session from the repo the command happens to act on (sty_8f10499d).
 func anchorFromEnv(getenv func(string) string) string {
-	for _, key := range []string{"SATELLE_PROJECT_DIR", "CLAUDE_PROJECT_DIR"} {
+	for _, key := range agentcli.SessionAnchorEnvKeys() {
 		if p := strings.TrimSpace(getenv(key)); p != "" {
 			if abs, err := filepath.Abs(p); err == nil {
 				return filepath.Clean(abs)

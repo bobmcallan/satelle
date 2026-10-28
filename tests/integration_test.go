@@ -66,21 +66,12 @@ var testHomes sync.Map
 // runs inside a harness session or a dispatched step, so children inherit a bare
 // shell whatever launched the suite.
 func scrubAmbientHarnessEnv() {
-	markers := agentcli.SessionMarkerEnvNames()
-	for _, e := range os.Environ() {
-		k, _, _ := strings.Cut(e, "=")
-		match := k == config.ScratchEnv || k == config.SessionEnv ||
-			k == config.DispatchAgentEnv || k == config.DispatchStepEnv ||
-			k == config.DispatchItemEnv || k == config.SpawnEnv
-		for _, m := range markers {
-			if k == m || strings.HasPrefix(k, m) {
-				match = true
-				break
-			}
-		}
-		if match {
-			_ = os.Unsetenv(k)
-		}
+	agentcli.ScrubSessionEnv()
+	for _, k := range []string{
+		config.ScratchEnv, config.SessionEnv, config.DispatchAgentEnv,
+		config.DispatchStepEnv, config.DispatchItemEnv, config.SpawnEnv,
+	} {
+		_ = os.Unsetenv(k)
 	}
 }
 

@@ -19,13 +19,9 @@ import (
 // the command sees the developer's shell, whatever harness the suite runs under.
 func plainCaller(t *testing.T) {
 	t.Helper()
-	drop := map[string]bool{config.ScratchEnv: true}
-	for _, k := range agentcli.SessionMarkerEnvNames() {
-		drop[k] = true
-	}
 	for _, e := range os.Environ() {
 		k, _, _ := strings.Cut(e, "=")
-		if drop[k] || strings.HasPrefix(k, "CLAUDE_CODE_") || strings.HasPrefix(k, "PI_SESSION_") {
+		if k == config.ScratchEnv || agentcli.IsSessionEnvKey(k) {
 			t.Setenv(k, "")
 			_ = os.Unsetenv(k)
 		}

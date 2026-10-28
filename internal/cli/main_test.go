@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
 )
@@ -67,10 +68,13 @@ func TestMain(m *testing.M) {
 		// The session id a harness exports to its shell: the suite runs inside
 		// one, and ResolveSession now reads it (sty_36d6f155), so an unrelated
 		// test that expects no ambient session would otherwise resolve ours.
-		"CLAUDE_CODE_SESSION_ID",
+		config.SessionEnv, config.ScratchEnv,
 	} {
 		_ = os.Unsetenv(k)
 	}
+	// Every harness's own session identity (markers, session ids, anchor pins):
+	// the suite must give one answer whichever agent session runs it.
+	agentcli.ScrubSessionEnv()
 	os.Exit(runIsolated(m))
 }
 
