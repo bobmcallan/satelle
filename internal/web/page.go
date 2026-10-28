@@ -356,9 +356,16 @@ const templatesSrc = `
      handles 0↔n. Count = non-stale story_seat rows. */}}
 {{define "engagementBadge"}}{{$n := .EngagementCount}}{{$ids := .EngagedStoryIDs}}{{if gt $n 0}}{{$title := printf "engaged: %s" (join $ids ", ")}}<span class="n-engaged has-engaged" data-engagement-count="{{$n}}" title="{{$title}}" aria-label="{{$n}} story engaged">{{if eq $n 1}}{{with index $ids 0}}<a class="n-engaged-link" href="story/{{.}}">1 engaged</a>{{end}}{{else}}{{$n}} engaged{{end}}</span>{{end}}{{end}}
 
+{{/* dispatchIndicator: the running indicator of one in-flight dispatch (nil → nothing).
+     One rendering for a story row and an epic's member row (sty_a42f4add). */}}
+{{define "dispatchIndicator"}}{{with .}}<div class="dispatch-indicator{{if .Warn}} dispatch-warn{{end}}" title="{{if .LastEvent}}last activity: {{.LastEvent}}{{end}}">{{.Agent}}{{if .Model}} ({{.Model}}){{end}} running · {{reltime .StartedAt}}{{if not .LastEventAt.IsZero}} · last activity {{reltime .LastEventAt}}{{if .LastEvent}}: {{.LastEvent}}{{end}}{{end}}</div>{{end}}{{end}}
+
+{{/* epicRollup: an epic's roll-up of its children's running indicators — nothing at 0. */}}
+{{define "epicRollup"}}{{if gt . 0}}<div class="dispatch-indicator epic-rollup">agent work in progress · {{.}} {{if eq . 1}}child{{else}}children{{end}}</div>{{end}}{{end}}
+
 {{define "workitemRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-status="{{.Status}}" data-priority="{{.Priority}}" data-category="{{.Category}}" data-tags="{{join .Tags ","}}" data-title="{{lower .Title}}" data-updated="{{.UpdatedAt.Format "2006-01-02T15:04:05"}}" data-created="{{.CreatedAt.Format "2006-01-02T15:04:05"}}" data-search="{{printf "%s %s %s" .Title .ID (join .Tags " ") | lower}}" data-expand-url="fragment/{{.Kind}}/{{.ID}}">
   <td class="id"><span class="id-copy" role="button" tabindex="0" data-id="{{.ID}}" title="Copy id to clipboard">{{.ID}}</span></td>
-  <td><div class="wi-title">{{.Title}}</div>{{if or .Category .Tags}}<div class="wi-tags">{{if .Category}}{{tagchip (printf "category:%s" .Category)}}{{end}}{{range .Tags}}{{tagchip .}}{{end}}</div>{{end}}{{with .Dispatch}}<div class="dispatch-indicator{{if .Warn}} dispatch-warn{{end}}" title="{{if .LastEvent}}last activity: {{.LastEvent}}{{end}}">{{.Agent}}{{if .Model}} ({{.Model}}){{end}} running · {{reltime .StartedAt}}{{if not .LastEventAt.IsZero}} · last activity {{reltime .LastEventAt}}{{if .LastEvent}}: {{.LastEvent}}{{end}}{{end}}</div>{{end}}</td>
+  <td><div class="wi-title">{{.Title}}</div>{{if or .Category .Tags}}<div class="wi-tags">{{if .Category}}{{tagchip (printf "category:%s" .Category)}}{{end}}{{range .Tags}}{{tagchip .}}{{end}}</div>{{end}}{{template "dispatchIndicator" .Dispatch}}{{template "epicRollup" .ChildrenInFlight}}</td>
   <td><span class="badge s-{{.Status}}">{{.Status}}</span></td>
   <td class="col-reviews">{{range .Stages}}<span class="stage-chip stage-{{.State}}" title="{{.Title}}">{{.Name}}{{if .Accepted}} <b class="ok">{{.Accepted}}</b>{{end}}{{if .Rejected}} <b class="rej">{{.Rejected}}</b>{{end}}{{if .Parked}} <b class="blk">{{.Parked}}</b>{{end}}{{with .Pending}} <span class="pending-gate" title="{{.Title}}">→{{if .Accepted}} <b class="ok">{{.Accepted}}</b>{{end}}{{if .Rejected}} <b class="rej">{{.Rejected}}</b>{{end}}</span>{{end}}</span>{{end}}</td>
   <td>{{if .Priority}}{{.Priority}}{{else}}—{{end}}</td>
@@ -411,11 +418,13 @@ const templatesSrc = `
     {{if .Item.Tags}}<dt>Tags</dt><dd class="wi-tags">{{range .Item.Tags}}{{tagchip .}}{{end}}</dd>{{end}}
     <dt>Updated</dt><dd>{{ftime .Item.UpdatedAt}}</dd>
   </dl>
+  {{template "epicRollup" .ChildrenInFlight}}
   {{if .Item.Body}}<h4>{{if $isTask}}Work definition{{else}}Description{{end}}</h4><pre class="prose">{{.Item.Body}}</pre>{{end}}
   {{if .Item.AcceptanceCriteria}}<h4>Acceptance criteria</h4><pre class="prose">{{.Item.AcceptanceCriteria}}</pre>{{end}}
   {{if or .Members .MembersNote}}<h4>Members</h4>
   {{if .MembersNote}}<div class="meta">{{.MembersNote}} — the container does not close</div>{{end}}
-  {{if .Members}}<table class="panel-table epic-members"><tbody>{{range .Members}}<tr><td class="id"><a href="story/{{.ID}}">{{.ID}}</a></td><td><span class="badge s-{{.Status}}">{{.Status}}</span></td></tr>{{end}}</tbody></table>{{end}}{{end}}
+  {{if .WaveError}}<div class="meta epic-wave-error">wave: {{.WaveError}}</div>{{else if .WaveSchedule}}<div class="meta epic-wave-schedule">wave schedule: {{.WaveSchedule}}</div>{{end}}
+  {{if .Members}}<table class="panel-table epic-members"><tbody>{{range .Members}}<tr><td class="id"><a href="story/{{.ID}}">{{.ID}}</a></td><td><span class="badge s-{{.Status}}">{{.Status}}</span></td><td class="epic-wave">{{if eq .Wave "runnable"}}<span class="wave-runnable">startable now</span>{{else if eq .Wave "held"}}<span class="wave-held">held{{if .Cause}} ({{.Cause}}){{end}}{{if .Reason}} — {{.Reason}}{{end}}</span>{{range .WaitingOn}} <a class="wave-blocker" href="story/{{.ID}}">{{.ID}}</a> <span class="badge s-{{.Status}}">{{.Status}}</span>{{if .Cancelled}} <span class="wave-cancelled">cancelled</span>{{end}}{{end}}{{end}}{{template "dispatchIndicator" .Dispatch}}</td></tr>{{end}}</tbody></table>{{end}}{{end}}
   {{if $isTask}}<h4>Runs</h4>
   {{if .Executions}}<ol class="run-list">{{range .Executions}}<li class="run run-s-{{.Status}}">
     <div class="run-head"><span class="run-id">{{.ID}}</span> <span class="badge s-{{.Status}}">{{.Status}}</span></div>

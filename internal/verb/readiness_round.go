@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/epicset"
+	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -526,14 +527,50 @@ type roundResult struct {
 	Reason string
 }
 
+// flagReadinessInFlight makes item's seat row effectively in flight for the length
+// of a readiness round, so the page's running indicator shows the dispatch
+// (sty_a42f4add) — and returns the undo the round defers. It claims no seat and
+// takes none over: a story holding no row gets a non-story-seat one the undo
+// deletes; a row that is settled (the seat kept after a refused engagement, or an
+// engaged child readied from the epic) has only its in-flight columns flagged, and
+// the undo settles them again and clears the activity the dispatch stamped; a row
+// already effectively in flight belongs to the dispatch running on it and is left
+// alone. A row's owner, story_seat, seat_key and state are never written, and a
+// row the round did not insert is never deleted. Best-effort: observability must
+// not fail a readiness round, so any store error just means no indicator.
+func flagReadinessInFlight(ctx context.Context, item workitem.Item, state string) func() {
+	ls, err := requireLease()
+	if err != nil {
+		return func() {}
+	}
+	// A cancelled round must still put the seat back as it found it.
+	done := context.WithoutCancel(ctx)
+	owner := lease.ResolveOwner()
+	inserted, err := ls.InsertIfAbsent(ctx, lease.AcquireOpts{
+		ItemID: item.ID, Kind: string(item.Kind), Owner: owner, State: state, SeatKey: item.ID,
+	})
+	if err != nil {
+		return func() {}
+	}
+	if inserted {
+		return func() { _ = ls.Release(done, item.ID, owner) }
+	}
+	if marked, err := ls.MarkInFlightIfSettled(ctx, item.ID, time.Now()); err == nil && marked {
+		return func() { _ = ls.ClearInFlight(done, item.ID) }
+	}
+	return func() {}
+}
+
 // runReadinessRound runs one readiness round for item on edge without engaging
 // it: the performer, then the step's reviewers, under one attempt id created
-// here. It writes no status and takes no seat, and it never parks — a rejected
-// round is recorded on the ledger with its notes and the story stays where it is.
-// The round is accepted when no row of its attempt rejects, and only then is the
-// readiness_accept row written.
+// here. It writes no status and claims no seat — it only shows its dispatch in
+// flight on the seat row the story has or, briefly, a row of its own — and it
+// never parks: a rejected round is recorded on the ledger with its notes and the
+// story stays where it is. The round is accepted when no row of its attempt
+// rejects, and only then is the readiness_accept row written.
 func runReadinessRound(ctx context.Context, item workitem.Item, edge readinessEdge) roundResult {
 	now := time.Now()
+	defer flagReadinessInFlight(ctx, item, edge.From)()
 	attempt := ledger.NewAttemptID()
 	res := roundResult{Attempt: attempt}
 	reject := func(reason string) roundResult {

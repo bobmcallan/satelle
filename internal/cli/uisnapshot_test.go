@@ -220,7 +220,7 @@ func TestBuildUIDrainSnapshotIsLight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantKinds := map[string]bool{"story": true, "task": true, "execution": true, "seat": true, "identity": true}
+	wantKinds := map[string]bool{"story": true, "task": true, "execution": true, "seat": true, "wave": true, "identity": true}
 	if len(drain.Kinds) != len(wantKinds) {
 		t.Fatalf("drain Kinds = %v", drain.Kinds)
 	}

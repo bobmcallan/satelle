@@ -129,6 +129,10 @@ type rowVM struct {
 	// so a refused earlier attempt's red count is never the only signal on a
 	// story a live agent is currently working.
 	Dispatch *dispatchVM
+	// ChildrenInFlight is, for an epic-parent, how many of its children have a
+	// dispatch in flight right now — the epic's roll-up of the per-story
+	// indicator (sty_a42f4add). Zero for every other story.
+	ChildrenInFlight int
 }
 
 type lightPayload struct {
@@ -177,11 +181,30 @@ type detailData struct {
 	// Members is a container's member set (id + status) — epicset's answer, the
 	// same set the close guard and the other surfaces report (sty_9f4f8e12).
 	// MembersNote carries the reason when an epic-parent's set cannot be fixed.
-	Members     []epicset.Ref
+	Members     []memberVM
 	MembersNote string
+	// WaveSchedule and WaveError are the epic's wave as the story-wave verb
+	// answered it (sty_a42f4add): the schedule it applied, or the verb's refusal
+	// text. ChildrenInFlight rolls the members' running indicators up to the epic.
+	WaveSchedule     string
+	WaveError        string
+	ChildrenInFlight int
 	// Messages is a story's board: each message with its sender, addressee,
 	// state and overdue flag, folded by board.Fold (sty_73c9aa10).
 	Messages []messageVM
+}
+
+// memberVM is one member of a container: its id and status plus, for an
+// epic-parent, what the story-wave verb reported for it and whether a dispatch is
+// running on it (sty_a42f4add). Wave is "runnable" (startable now), "held", or ""
+// when the verb lists the member in neither (finished) or no wave was pushed.
+type memberVM struct {
+	epicset.Ref
+	Wave      string
+	Cause     string
+	Reason    string
+	WaitingOn []waveBlockerVM
+	Dispatch  *dispatchVM
 }
 
 // messageVM is one message on a story's Messages panel. State is the folded

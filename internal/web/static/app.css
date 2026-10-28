@@ -106,6 +106,12 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; border-top: 1px
 .dispatch-indicator { margin-top: 4px; font-size: 10.5px; color: var(--accent); }
 .dispatch-indicator::before { content: "● "; }
 .dispatch-warn { color: var(--warn); font-weight: 600; }
+/* Epic wave (sty_a42f4add): the epic's roll-up of its children's indicators and the
+   wave column of its members table. */
+.epic-rollup { font-weight: 600; }
+.epic-members .epic-wave { font-size: 11px; color: var(--muted); }
+.epic-members .wave-runnable { color: var(--accent); font-weight: 600; }
+.epic-members .wave-cancelled { color: var(--warn); }
 .tagchip { font-size: 10.5px; color: var(--muted); background: var(--chip); border-radius: 0; padding: 0 6px; line-height: 1.6; }
 /* Key:value tag chip (e.g. epic:summariser) — the satellites language (sty_aed93a00):
    ONE uniform, low-contrast chip, not a loud filled-key/tinted-value split. A single
