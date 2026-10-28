@@ -1,6 +1,7 @@
 # cursor-agent captures
 
-Real runs of `cursor-agent` 2026.10.01-e373342, captured 2026-10-10 on linux by
+Real runs of `cursor-agent` (the build `agentcli.CapturedVersions` records, which
+`cursor_fixtures_test.go` checks every `.meta.json` against), captured 2026-10-10 on linux by
 the driving session of sty_383ff068 (probe scripts and raw output were kept in
 that session's scratchpad). They are evidence for the cursor stories under epic
 sty_ba302c1b and are read by `cursor_fixtures_test.go`; no adapter code uses them

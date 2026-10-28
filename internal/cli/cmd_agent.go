@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -110,8 +111,54 @@ selection pointing at a missing binary.`,
 		},
 	}
 
-	agent.AddCommand(show, set, detect, agentValidateCmd(), agentProfilesCmd(), agentMigrateCmd())
+	agent.AddCommand(show, set, detect, agentValidateCmd(), agentRecheckCmd(), agentProfilesCmd(), agentMigrateCmd())
 	register(agent)
+}
+
+// agentRecheckCmd is `satelle agent recheck <harness>` (sty_32c61e68): the way to
+// find out which captured contracts a CLI update actually changed.
+func agentRecheckCmd() *cobra.Command {
+	var timeout time.Duration
+	cmd := &cobra.Command{
+		Use:   "recheck <harness>",
+		Short: "Re-check a harness's captured contracts against the installed CLI (cursor)",
+		Long: `Some adapter behavior (for cursor: stop cap, hook timeout handling, envelope
+shapes, ACP methods, usage fields) was measured on one CLI build. When satelle
+says the installed build differs, recheck prints both versions, then one line per
+contract: holds, changed, or unverifiable. unverifiable names the fixture to
+re-capture; those need a live session, which recheck never opens. It reads
+--version and --help, plus one ACP initialize. Exits 1 if any contract changed.
+A harness with no captured version says so and exits 0.`,
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			harness := strings.ToLower(strings.TrimSpace(args[0]))
+			switch harness {
+			case agentcli.HarnessCursor, agentcli.HarnessClaude, agentcli.HarnessGrok, agentcli.HarnessPi:
+			default:
+				return fmt.Errorf("unknown harness %q — one of cursor, claude, grok, pi", args[0])
+			}
+			a, err := appFrom(cmd)
+			if err != nil {
+				return err
+			}
+			res := doctor.Recheck(cmd.Context(), doctor.Opts{
+				RepoRoot:    a.RepoRoot,
+				DataDir:     a.PlaneDir(),
+				LiveTimeout: timeout,
+				Process:     &a.ProcessConfig,
+				ProcessRoot: a.ProcessRoot,
+			}, harness)
+			out := cmd.OutOrStdout()
+			res.Render(out)
+			if res.Changed() {
+				return &ExitError{Code: 1, Quiet: true, Err: fmt.Errorf("a captured %s contract no longer holds against the installed CLI", harness)}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().DurationVar(&timeout, "timeout", doctor.DefaultLiveTimeout, "bound on each spawn of the CLI")
+	return cmd
 }
 
 func agentMigrateCmd() *cobra.Command {

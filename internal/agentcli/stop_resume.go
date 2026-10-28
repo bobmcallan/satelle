@@ -46,7 +46,7 @@ var stopResumes = map[string]StopResume{
 	// there is no headless resume path to record: no Argv.
 	HarnessCursor: {
 		Cap:   4,
-		Basis: "cursor-agent 2026.10.01 probe 20-cap (testdata/cursor/20-cap-hooks.log): loop_limit unset, stop fired at loop_count 0-4; a followup at 0-3 produced another turn, the followup at 4 produced none",
+		Basis: "cursor-agent " + capturedCursorVersion + " " + capturedBasis(HarnessCursor, ContractStopCap),
 	},
 	HarnessGrok: {
 		Cap:   8,
