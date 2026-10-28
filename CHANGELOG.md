@@ -1,3 +1,13 @@
+## [0.0.779] - 2026-10-28
+
+### Fixed
+- An agent driving an epic gets one account of what readiness does to its children. The satelle-agent-goals principle, `satelle story ready` help, `satelle story route` and `satelle help epic-wave` say that readying an epic is its own judgement of order, parallelism and achievability, changes no child's status, readies each backlog child only when the readiness step leaves `ready_children` on, and that a ready round takes no edge: backlog → plan is taken only by `satelle story set <id> --status plan`. (sty_87403c0e)
+
+## [serve-v0.0.227] - 2026-10-28
+
+### Changed
+- The service binary embeds the updated route text and epic-wave help topic. (sty_87403c0e)
+
 ## [0.0.778] - 2026-10-28
 
 ### Added
