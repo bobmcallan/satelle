@@ -358,9 +358,18 @@ func checkBindingInterface(file, section string, b AgentBinding) error {
 				file, section, raw, RoleAgent, ResolvedRole(section, b))
 		}
 		return nil
+	case InterfacePiRPC:
+		// A command a profile supplies later is judged when its runner is built.
+		if strings.TrimSpace(b.Command) != "" {
+			if adapter := agentcli.AdapterName(b.Command); adapter != agentcli.HarnessPi {
+				return fmt.Errorf("%s [%s] interface %q: only a pi command runs in pi's RPC mode, and this command is the %s adapter",
+					file, section, raw, adapter)
+			}
+		}
+		return checkCollectDoc(file, section, b)
 	default:
-		return fmt.Errorf("%s [%s] interface %q: want %q, %q, %q, or %q",
-			file, section, raw, InterfaceCommand, InterfaceACP, InterfaceStream, InterfaceCloud)
+		return fmt.Errorf("%s [%s] interface %q: want %q, %q, %q, %q, or %q",
+			file, section, raw, InterfaceCommand, InterfaceACP, InterfaceStream, InterfaceCloud, InterfacePiRPC)
 	}
 }
 

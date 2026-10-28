@@ -1077,10 +1077,10 @@ func checkBinding(section string, b config.AgentBinding, vars map[string]string)
 	}
 
 	// Unknown interface (LoadAgents also rejects; keep validate defensive).
-	if iface != config.InterfaceCommand && iface != config.InterfaceACP && iface != config.InterfaceStream && iface != config.InterfaceCloud {
+	if iface != config.InterfaceCommand && iface != config.InterfaceACP && iface != config.InterfaceStream && iface != config.InterfaceCloud && iface != config.InterfacePiRPC {
 		bindingProblem(fmt.Sprintf(
-			"agents.toml [%s] interface %q: want %q, %q, %q, or %q",
-			section, b.Interface, config.InterfaceCommand, config.InterfaceACP, config.InterfaceStream, config.InterfaceCloud))
+			"agents.toml [%s] interface %q: want %q, %q, %q, %q, or %q",
+			section, b.Interface, config.InterfaceCommand, config.InterfaceACP, config.InterfaceStream, config.InterfaceCloud, config.InterfacePiRPC))
 		g.Backend = "invalid"
 		return g, problems, warnings, fs
 	}
@@ -1186,7 +1186,9 @@ func checkBinding(section string, b config.AgentBinding, vars map[string]string)
 			"agents.toml [%s] command %q: bare CLI presets removed — use a full command template or run satelle init to migrate",
 			section, fields[0]))
 	default:
-		runner, err := agentcli.RunnerFromCommand(cmd)
+		// command or pi-rpc: both spawn the template's argv; pi-rpc's builder
+		// also refuses a template that would not start cold.
+		runner, err := agentcli.RunnerFromBinding(iface, cmd)
 		if err != nil {
 			bindingProblem(fmt.Sprintf("agents.toml [%s] command: %v", section, err))
 			g.Backend = "invalid"

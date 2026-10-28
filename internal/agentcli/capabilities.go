@@ -96,6 +96,13 @@ func CapabilityTable() []AdapterCapabilities {
 			OfferedTools: no("grok agent stdio neither trims nor reports offered tools"),
 			TurnBudget:   no(acpTurnBudgetReason),
 		},
+		{
+			Adapter: piRPCLabel, Usage: yes(), CacheSplit: yes(), ResolvedModel: yes(),
+			ModelInheritance: no("pi's hook payload carries no model, so the in-loop tier is unknown"),
+			LiveSession:      no("interface=" + InterfacePiRPC + " runs one-shot dispatches only"),
+			ToolTrim:         yes(), OfferedTools: yes(),
+			TurnBudget: TurnBudgetSupport(InterfacePiRPC, PiRPCCommand),
+		},
 	}
 	for i := range rows {
 		rows[i].CloudLaunch = cloudLaunchCapability(rows[i].Adapter)

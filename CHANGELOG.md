@@ -1,3 +1,13 @@
+## [0.0.781] - 2026-10-29
+
+### Added
+- A pi seat can run in pi's RPC mode: bind it with `interface = "pi-rpc"` and satelle drives `pi --mode rpc` over its JSONL event stream instead of waiting for `pi -p` to print and exit. The seat ends as soon as pi settles after its answer: satelle takes the answer, closes pi's stdin and ends the seat's whole process group, even if pi would stay alive. Every turn, message and tool call reaches satelle as a real event, so a stalled model stream is ended by `idle_timeout` like any other seat, not held by CPU liveness until `busy_timeout`. A seat with a turn budget is aborted when it starts a request beyond it and recorded as over budget. Turns, tokens and cost come from the run itself, with no pi session file. The binding is refused at validate and dispatch unless its command keeps the seat cold (`--mode rpc --no-session --no-extensions --no-skills --no-prompt-templates --no-context-files --no-mcp`) and passes the system prompt as a startup flag. Any extension dialog is answered cancelled, so none can hold a seat open. satelle's pi extension treats an RPC run as non-interactive. Existing `pi -p` command bindings are unchanged. (sty_79ce4858)
+
+## [serve-v0.0.229] - 2026-10-29
+
+### Changed
+- The service binary embeds the pi-rpc interface's validation and the updated agent-dispatch help topic. (sty_79ce4858)
+
 ## [0.0.780] - 2026-10-28
 
 ### Added

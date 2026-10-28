@@ -159,11 +159,14 @@ const (
 // cloud = the step runs once in a provider cloud session whose pushed branch is
 // collected into the story worktree (sty_82cffd60). Cloud is a performer-only,
 // one-shot transport: it is never a live interface.
+// pi-rpc = a pi command run in pi's RPC mode, one-shot (sty_79ce4858); only a
+// pi command may use it.
 const (
 	InterfaceCommand = "command"
 	InterfaceACP     = "acp"
 	InterfaceStream  = "stream"
 	InterfaceCloud   = "cloud"
+	InterfacePiRPC   = agentcli.InterfacePiRPC
 
 	// Dispatch marker environment keys identify an isolated performing step to
 	// harness hooks. They let the dispatched child use its authored tool grant
@@ -527,6 +530,8 @@ func (b AgentBinding) ResolvedInterface() string {
 		return InterfaceStream
 	case InterfaceCloud:
 		return InterfaceCloud
+	case InterfacePiRPC:
+		return InterfacePiRPC
 	default:
 		return strings.ToLower(strings.TrimSpace(b.Interface))
 	}

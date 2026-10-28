@@ -6,7 +6,7 @@
 // usage: node --experimental-strip-types pi_driver.mjs <extension.ts> <steps.json>
 //
 // steps.json is an array of
-//   { "event": "<pi event>", "arg": {...}, "ctx": { "cwd": "...", "idle": true, "hasUI": true } }
+//   { "event": "<pi event>", "arg": {...}, "ctx": { "cwd": "...", "idle": true, "hasUI": true, "mode": "rpc" } }
 //   { "wait_messages": N, "timeout_ms": T }   (see below)
 //   { "connect": "<host:port>" }               (see below)
 // and the driver prints one JSON document:
@@ -80,6 +80,7 @@ for (const step of steps) {
 	const ctx = {
 		cwd: c.cwd,
 		hasUI: c.hasUI ?? true,
+		mode: c.mode,
 		isIdle: () => c.idle ?? true,
 		ui: { notify: (msg, level) => notices.push({ msg, level }) },
 		sessionManager: { getSessionId: () => c.sessionId ?? "pi-session-1" },

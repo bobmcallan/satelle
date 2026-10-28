@@ -597,6 +597,8 @@ func PreflightRunner(r Runner, grant string) []IsolationGap {
 		return preflight(InterfaceStream, v.binary, v.args, grant)
 	case acpRunner:
 		return preflight(InterfaceACP, v.binary, v.args, grant)
+	case piRPCRunner:
+		return preflight(InterfacePiRPC, v.binary, v.args, grant)
 	}
 	return nil
 }
@@ -612,6 +614,8 @@ func UnrecognisedRunner(r Runner) bool {
 		return adapterOf(v.binary, v.args) == HarnessUnknown
 	case acpRunner:
 		return adapterOf(v.binary, v.args) == HarnessUnknown
+	case piRPCRunner:
+		return false
 	}
 	return false
 }
@@ -842,6 +846,9 @@ func DescribeReviewer(r Runner, req Request) ReviewerIsolation {
 	case acpRunner:
 		binary, transport = v.binary, InterfaceACP
 		args = v.args
+	case piRPCRunner:
+		binary, transport = v.binary, InterfacePiRPC
+		args = v.spawnArgs(req)
 	default:
 		return ReviewerIsolation{}
 	}
@@ -863,7 +870,7 @@ func DescribeReviewer(r Runner, req Request) ReviewerIsolation {
 		// owner of what that leaves.
 		tools, restricted := piEffectiveTools(args)
 		if !restricted {
-			iso.OfferedSource = "unavailable: pi command binding carries no tool restriction"
+			iso.OfferedSource = "unavailable: pi " + transport + " binding carries no tool restriction"
 			return iso
 		}
 		iso.OfferedTools = append([]string{}, tools...)

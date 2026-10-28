@@ -120,7 +120,7 @@ runtime refusal and validate, so they cannot disagree.
   (`satelle story set`, `story get`, …). Small local surface — not an MCP tool
   dump of every verb. Status and engagement change only through satelle.
 - **Out** (satelle → isolated worker): subprocess configured in
-  `.satelle/workflows/agents.toml`. Three **transports**, one binding shape
+  `.satelle/workflows/agents.toml`. Four local **transports**, one binding shape
   (epic:agent-dispatch-transport):
 
 | `interface` | Meaning |
@@ -128,8 +128,9 @@ runtime refusal and validate, so they cannot disagree.
 | **`command`** (default for a one-shot use) | Full multi-token argv template; any CLI (Claude Code, `grok -p`, wrappers, custom). One-shot stdin/argv; reviewers stay here. |
 | **`acp`** | Agent Client Protocol over stdio; `command` is the **spawn line only** (e.g. `grok agent stdio`). System/payload ride the session, not `{placeholders}`. |
 | **`stream`** | Stream-json live session (Claude preset, opt-in: `DefaultClaudeStreamCommand`). `{system}`/`{payload}` are rejected — they ride the first user message; `{tools}`/`{model}`/`{effort}` remain argv. For the orchestrator binding (live turns), not reviewers. |
+| **`pi-rpc`** | A pi command run in pi's RPC mode, one-shot (`agentcli.PiRPCCommand`). The payload is sent as pi's one `prompt` command; satelle reads every turn, message and tool call as an event, ends the seat (stdin closed, process group killed) once pi reports `agent_settled`, aborts it when it starts a turn beyond `turn_budget`, and records usage from `get_session_stats`. Building the runner refuses a template without `--mode rpc`, `--no-session`, `--no-extensions`, `--no-skills`, `--no-prompt-templates`, `--no-context-files`, `--no-mcp` and `--system-prompt {system}`. Only a pi command may use it. |
 
-Shared fields on all three: `role`, `tools`, `model`, `effort`, `secondary`,
+Shared fields on all four: `role`, `tools`, `model`, `effort`, `secondary`,
 `principles`, `env`, `timeout`, `idle_timeout`, `settings`, and — reviewers
 only — `isolation = "operator-attested"` (see *Reviewer tool isolation*). Reviewers keep Claude on
 `interface = command` (cold one-shot, verdict contract). `stream` is the
@@ -1372,11 +1373,13 @@ this table and a test checks every cell against the code that produces it.
 | claude stream | yes | yes | yes | yes | yes | yes | yes | yes | yes |
 | grok command | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | unavailable: interface=command is one-shot only | yes | yes | yes | unavailable: grok command has no cloud runner |
 | grok acp | yes | yes | yes | unavailable: grok's hook payload carries no model, so the in-loop tier is unknown | yes | unavailable: grok agent stdio has no tool-list flag and reports no permission mode, so a grok acp reviewer runs with a warning that its tools are not held to the grant | unavailable: grok agent stdio neither trims nor reports offered tools | unavailable: grok agent stdio has no turn-limit argv or session option, so a turn_budget is recorded and checked against reported turns only | unavailable: grok acp has no cloud runner |
+| pi pi-rpc | yes | yes | yes | unavailable: pi's hook payload carries no model, so the in-loop tier is unknown | unavailable: interface=pi-rpc runs one-shot dispatches only | yes | yes | yes | unavailable: pi pi-rpc has no cloud runner |
 
 **turn budget** means the harness itself is handed the repo's `turn_budget`
 through the `{max_turns}` placeholder in the binding's command template and
 stops the run; it is only "yes" for a binding whose template carries the
-placeholder (see *Spend budgets* below).
+placeholder, or for `interface = "pi-rpc"`, where satelle itself aborts the run
+when it starts a turn beyond the budget (see *Spend budgets* below).
 
 **cloud launch** means a binding with `interface = "cloud"` can run its step in
 a cloud session of the harness (see *Cloud performer* below). Only claude has a

@@ -214,6 +214,7 @@ func TestCapabilityTable_ToolCellsMatchCode(t *testing.T) {
 		"claude stream":  {InterfaceStream, DefaultClaudeStreamCommand},
 		"grok command":   {InterfaceCommand, DefaultGrokCommand},
 		"grok acp":       {InterfaceACP, "grok agent stdio"},
+		"pi pi-rpc":      {InterfacePiRPC, PiRPCCommand},
 	}
 	for _, row := range CapabilityTable() {
 		r, err := RunnerFromBinding(spawn[row.Adapter][0], spawn[row.Adapter][1])

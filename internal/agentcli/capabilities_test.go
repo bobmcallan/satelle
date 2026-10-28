@@ -27,6 +27,8 @@ func capabilityProbe(t *testing.T, adapter string) UsageResult {
 		return u
 	case "grok acp":
 		return *acpUsageFromResult(acpFixtureResult(t), "", "grok acp")
+	case "pi pi-rpc":
+		return piRPCRecordedUsage(t, piRPCRecordedRun)
 	}
 	t.Fatalf("no probe for adapter %q", adapter)
 	return UsageResult{}
@@ -38,16 +40,17 @@ func liveOpenable(adapter string) bool {
 		"claude stream":  {InterfaceStream, DefaultClaudeStreamCommand},
 		"grok command":   {InterfaceCommand, DefaultGrokCommand},
 		"grok acp":       {InterfaceACP, "grok agent stdio"},
+		"pi pi-rpc":      {InterfacePiRPC, PiRPCCommand},
 	}
 	c := commands[adapter]
 	_, err := OpenerFromBinding(c[0], c[1])
 	return err == nil
 }
 
-// The table names the four adapters satelle supports, each once, and every cell
-// is either available (no reason) or unavailable with a reason.
+// The table names the adapters satelle supports, each once, and every cell is
+// either available (no reason) or unavailable with a reason.
 func TestCapabilityTable_ShapeIsExplicit(t *testing.T) {
-	want := []string{"claude command", "claude stream", "grok command", "grok acp"}
+	want := []string{"claude command", "claude stream", "grok command", "grok acp", "pi pi-rpc"}
 	table := CapabilityTable()
 	if len(table) != len(want) {
 		t.Fatalf("table has %d rows, want %d", len(table), len(want))

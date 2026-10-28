@@ -481,6 +481,7 @@ const (
 	InterfaceCommand = "command"
 	InterfaceACP     = "acp"
 	InterfaceStream  = "stream"
+	InterfacePiRPC   = "pi-rpc"
 )
 
 // RunnerFromBinding resolves an agents.toml transport + command to a Runner
@@ -492,6 +493,8 @@ const (
 //     protocol carries system/payload. Does not silently fall back to command.
 //   - stream: Claude-style stream-json spawn; {system}/{payload} rejected (they
 //     ride the first user message) while {tools}/{model}/{effort} remain argv.
+//   - pi-rpc: a pi command run in pi's RPC mode (pi_rpc.go); the payload is
+//     the prompt command, and a template that would not start cold is refused.
 func RunnerFromBinding(iface, command string) (Runner, error) {
 	switch strings.ToLower(strings.TrimSpace(iface)) {
 	case "", InterfaceCommand:
@@ -500,8 +503,10 @@ func RunnerFromBinding(iface, command string) (Runner, error) {
 		return newACPRunner(command)
 	case InterfaceStream:
 		return newStreamRunner(command)
+	case InterfacePiRPC:
+		return newPiRPCRunner(command)
 	default:
-		return nil, fmt.Errorf("agentcli: unknown interface %q (want %q, %q, or %q)", iface, InterfaceCommand, InterfaceACP, InterfaceStream)
+		return nil, fmt.Errorf("agentcli: unknown interface %q (want %q, %q, %q, or %q)", iface, InterfaceCommand, InterfaceACP, InterfaceStream, InterfacePiRPC)
 	}
 }
 
@@ -529,6 +534,8 @@ func OpenerFromBinding(iface, command string) (SessionOpener, error) {
 		return r.(streamRunner).Open, nil
 	case "", InterfaceCommand:
 		return nil, ErrNotLiveCapable
+	case InterfacePiRPC:
+		return nil, errPiRPCNotLive
 	default:
 		return nil, fmt.Errorf("agentcli: unknown interface %q (want %q, %q, or %q)", iface, InterfaceCommand, InterfaceACP, InterfaceStream)
 	}

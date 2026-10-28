@@ -206,3 +206,29 @@ func TestPiTrace_NonInteractiveSettleRecordsALimitation(t *testing.T) {
 		t.Error("the catch-up did not claim the handle")
 	}
 }
+
+// sty_79ce4858 AC7: an RPC-mode run reports a UI (pi's ctx.hasUI is true in RPC
+// mode) but ctx.mode is "rpc", and the client ends it once it settles, so the
+// settle takes the non-interactive path: stopcheck --no-wake, which waits for
+// nothing and records the limitation, and no re-prompt.
+func TestPiTrace_RPCModeSettleIsNonInteractive(t *testing.T) {
+	r := newPiRig(t)
+	store := r.useRealSatelle("30s")
+	g := runningGate(t, store, "sty_rpc")
+
+	start := time.Now()
+	out := r.drive(true,
+		piStep{Event: "agent_settled", Ctx: map[string]any{"idle": true, "hasUI": true, "mode": "rpc"}},
+	)
+	if elapsed := time.Since(start); elapsed > 20*time.Second {
+		t.Errorf("an RPC-mode settle waited for its gate (%s)", elapsed)
+	}
+	r.trace(out)
+
+	if len(out.Messages) != 0 {
+		t.Errorf("an RPC-mode settle re-prompted the seat: %+v", out.Messages)
+	}
+	if !store.Limited(g.ID) || store.Delivered(g.ID) {
+		t.Fatalf("limited=%v delivered=%v — stopcheck must have run with --no-wake", store.Limited(g.ID), store.Delivered(g.ID))
+	}
+}

@@ -27,14 +27,20 @@ func (claudeTranscriptFS) ModTime(string) (int64, error)     { return 0, errors.
 // available when that tier is applied. A table cell that disagrees fails.
 func TestCapabilityTable_ModelInheritanceMatchesCode(t *testing.T) {
 	const claudeTranscript = `{"message":{"model":"claude-opus-5-5","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash"}]}}`
+	// A pi shape carries no captured hook file: the pi extension builds the
+	// payload itself (claudeEvent in satelle_pi_extension.ts.tmpl) and names its
+	// harness with --harness pi, so the payload and the flag are given here.
 	type shape struct {
 		hook, iface, command string
+		payload, harnessFlag string
 	}
 	shapes := map[string]shape{
 		"claude command": {hook: "claude_bash.json", iface: agentcli.InterfaceCommand, command: agentcli.DefaultClaudeCommand},
 		"claude stream":  {hook: "claude_bash.json", iface: agentcli.InterfaceStream, command: agentcli.DefaultClaudeStreamCommand},
 		"grok command":   {hook: "grok_bash.json", iface: agentcli.InterfaceCommand, command: agentcli.DefaultGrokCommand},
 		"grok acp":       {hook: "grok_bash.json", iface: agentcli.InterfaceACP, command: "grok agent stdio"},
+		"pi pi-rpc": {iface: agentcli.InterfacePiRPC, command: agentcli.PiRPCCommand, harnessFlag: agentcli.HarnessPi,
+			payload: `{"hook_event_name":"PreToolUse","cwd":"/repo","tool_name":"Bash","tool_input":{"command":"ls"},"session_id":"pi-session-1"}`},
 	}
 	for _, row := range agentcli.CapabilityTable() {
 		t.Run(row.Adapter, func(t *testing.T) {
@@ -42,16 +48,23 @@ func TestCapabilityTable_ModelInheritanceMatchesCode(t *testing.T) {
 			if !ok {
 				t.Fatalf("no inheritance probe for adapter %q", row.Adapter)
 			}
-			raw, err := os.ReadFile(filepath.Join("..", "agentcli", "testdata", "hooks", s.hook))
-			if err != nil {
-				t.Fatal(err)
+			raw := []byte(s.payload)
+			if s.hook != "" {
+				var err error
+				if raw, err = os.ReadFile(filepath.Join("..", "agentcli", "testdata", "hooks", s.hook)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			harness := s.harnessFlag
+			if harness == "" {
+				harness = harnessFromEvent(raw)
 			}
 			// In-loop tier: what publishInLoopModel records for this harness.
 			model := resolveCaller(raw, claudeTranscriptFS{claudeTranscript}).Model
 			if model == "" {
 				model = "unknown"
 			}
-			inLoop := config.SessionModel{Model: model, Executable: harnessFromEvent(raw)}
+			inLoop := config.SessionModel{Model: model, Executable: harness}
 
 			b := config.AgentBinding{Interface: s.iface, Command: s.command}
 			_, source := config.SelectModel(config.SelectInput{

@@ -40,8 +40,9 @@
 // hook and the prompt hook (before_agent_start, additionalContext) reaches it
 // first.
 //
-// A non-interactive run (print or JSON mode: no UI, so ctx.hasUI is false) ends
-// at agent_settled and nothing can send it a later message. It asks stopcheck
+// A non-interactive run (print or JSON mode: no UI, so ctx.hasUI is false; or RPC
+// mode, where ctx.hasUI is true but ctx.mode is "rpc" and the client ends the run
+// once it settles) ends at agent_settled and nothing can send it a later message. It asks stopcheck
 // with --no-wake, which waits for nothing and records an adapter-named limitation
 // for each gate left undelivered; those verdicts stay unclaimed, so the next
 // session's prompt still delivers them.
@@ -334,7 +335,7 @@ export default function (pi: ExtensionAPI) {
 
 	// Stop -> stopcheck. See the header: a re-prompt, not a veto.
 	pi.on("agent_settled", async (_event: any, ctx: any) => {
-		const interactive = Boolean(ctx?.hasUI);
+		const interactive = Boolean(ctx?.hasUI) && ctx?.mode !== "rpc";
 		const q = await stopQuestion(ctx, !interactive);
 		stopActive = q.block !== undefined;
 		if (q.block !== undefined) sendBlock(ctx, q.block);
