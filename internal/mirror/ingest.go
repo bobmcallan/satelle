@@ -42,7 +42,11 @@ type Snapshot struct {
 	LedgerEvents []json.RawMessage `json:"ledger_events,omitempty"`
 	StoryDocs    []json.RawMessage `json:"story_docs,omitempty"` // id = story_id/name
 	Seats        []json.RawMessage `json:"seats,omitempty"`
-	Settings     json.RawMessage   `json:"settings,omitempty"` // single settings blob
+	// Waves carries, per epic-parent, the story-wave verb's own JSON response (or
+	// {"container": id, "error": text} when the verb refuses) — id = container.
+	// The web renders it and never recomputes the wave (sty_a42f4add).
+	Waves    []json.RawMessage `json:"waves,omitempty"`
+	Settings json.RawMessage   `json:"settings,omitempty"` // single settings blob
 	// Identity is the per-partition meta blob (project name, repo path, footer email).
 	// Ingested as kind "identity" id "meta" (sty_400c022b / epic:mirror-ui-parity).
 	Identity json.RawMessage `json:"identity,omitempty"`
@@ -267,6 +271,7 @@ func snapshotKindRows(snap Snapshot) (replace, merge []KindRows) {
 		{"ledger_event", rawToRows(snap.LedgerEvents, "id"), !full && mergeOK("ledger_event")},
 		{"story_doc", rawToRows(snap.StoryDocs, "id"), false},
 		{"seat", rawToRows(snap.Seats, "id"), false},
+		{"wave", rawToRows(snap.Waves, "container"), false},
 	}
 	for _, c := range candidates {
 		if c.merge {

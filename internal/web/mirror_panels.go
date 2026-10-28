@@ -154,6 +154,8 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 	if syncSt.PushReason != "" {
 		logPath = displayedSyncLogPath()
 	}
+	storyRows := attachStagesFrom(entriesByStory, stories, liveSeat, dispatches, catStepOf, specOf)
+	attachChildrenInFlight(storyRows, stories, dispatches)
 	return pageData{
 		RepoRoot:        repoRoot,
 		ProjectName:     projectName,
@@ -162,7 +164,7 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 		SyncReason:      syncSt.PushReason,
 		SyncLocal:       syncSt.Scope == "local",
 		SyncLogPath:     logPath,
-		Stories:         attachStagesFrom(entriesByStory, stories, liveSeat, dispatches, catStepOf, specOf),
+		Stories:         storyRows,
 		BacklogCount:    backlog,
 		EngagementCount: len(engagedIDs),
 		EngagedStoryIDs: engagedIDs,
@@ -522,10 +524,21 @@ func mirrorLoadDetail(ctx context.Context, s *mirror.Store, repoKey, group, id s
 		}
 	}
 
-	var members []epicset.Ref
+	var members []memberVM
 	var membersNote string
+	var wave *waveVM
+	childrenInFlight := 0
 	if group != "task" {
-		members, membersNote = mirrorBuildMembers(ctx, s, repoKey, item)
+		var refs []epicset.Ref
+		refs, membersNote = mirrorBuildMembers(ctx, s, repoKey, item)
+		dispatches, _ := decodeDispatchSeats(ctx, s, repoKey)
+		wave = mirrorWave(ctx, s, repoKey, item)
+		members = annotateMembers(refs, wave, dispatches)
+		childrenInFlight = rollupDispatch(refs, dispatches)
+	}
+	waveSchedule, waveError := "", ""
+	if wave != nil {
+		waveSchedule, waveError = wave.Schedule, wave.Error
 	}
 
 	idMeta := mirrorIdentity(ctx, s, repoKey)
@@ -533,6 +546,7 @@ func mirrorLoadDetail(ctx context.Context, s *mirror.Store, repoKey, group, id s
 		Item: item, Events: evs, Route: route, Docs: docs, Executions: executions,
 		TopBar: mirrorTopBar("", idMeta.FooterEmail), Cost: cost,
 		Members: members, MembersNote: membersNote, Messages: messages,
+		WaveSchedule: waveSchedule, WaveError: waveError, ChildrenInFlight: childrenInFlight,
 	}, idMeta, nil
 }
 
@@ -585,6 +599,101 @@ func mirrorBuildMembers(ctx context.Context, s *mirror.Store, repoKey string, it
 		return nil, err.Error()
 	}
 	return epicset.Refs(members), ""
+}
+
+// waveVM is the web-local shape of the story-wave verb's JSON response as the CLI
+// pushed it (sty_a42f4add) — the same keys as verb.WaveResult, plus the refusal
+// text a refused verb is pushed as. The web renders it and never recomputes it;
+// it imports no verb, as the cost view below.
+type waveVM struct {
+	Schedule string          `json:"schedule"`
+	Runnable []string        `json:"runnable"`
+	Omitted  []waveOmittedVM `json:"omitted"`
+	Error    string          `json:"error"`
+}
+
+type waveOmittedVM struct {
+	ID        string          `json:"id"`
+	Cause     string          `json:"cause"`
+	Reason    string          `json:"reason"`
+	WaitingOn []waveBlockerVM `json:"waiting_on"`
+}
+
+type waveBlockerVM struct {
+	ID        string `json:"id"`
+	Status    string `json:"status"`
+	Cancelled bool   `json:"cancelled"`
+}
+
+// mirrorWave reads the pushed wave row of an epic-parent; nil when the item is not
+// one, or no wave was pushed for it.
+func mirrorWave(ctx context.Context, s *mirror.Store, repoKey string, item workitem.Item) *waveVM {
+	if !epicset.IsEpicParent(item) {
+		return nil
+	}
+	payload, err := s.GetItem(ctx, repoKey, "wave", item.ID)
+	if err != nil {
+		return nil
+	}
+	var w waveVM
+	if json.Unmarshal([]byte(payload), &w) != nil {
+		return nil
+	}
+	return &w
+}
+
+// annotateMembers joins what the verb said (wave) and which dispatches run onto
+// the container's member set. The member set stays epicset's; wave only
+// annotates it, and a nil wave or a refusal annotates nothing.
+func annotateMembers(refs []epicset.Ref, wave *waveVM, dispatches map[string]*dispatchVM) []memberVM {
+	runnable := map[string]bool{}
+	omitted := map[string]waveOmittedVM{}
+	if wave != nil && wave.Error == "" {
+		for _, id := range wave.Runnable {
+			runnable[id] = true
+		}
+		for _, o := range wave.Omitted {
+			omitted[o.ID] = o
+		}
+	}
+	out := make([]memberVM, 0, len(refs))
+	for _, r := range refs {
+		m := memberVM{Ref: r, Dispatch: dispatches[r.ID]}
+		if runnable[r.ID] {
+			m.Wave = "runnable"
+		} else if o, ok := omitted[r.ID]; ok {
+			m.Wave, m.Cause, m.Reason, m.WaitingOn = "held", o.Cause, o.Reason, o.WaitingOn
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// rollupDispatch counts the members with a dispatch in flight — the epic's
+// roll-up of the per-story running indicator.
+func rollupDispatch(members []epicset.Ref, dispatches map[string]*dispatchVM) int {
+	n := 0
+	for _, m := range members {
+		if dispatches[m.ID] != nil {
+			n++
+		}
+	}
+	return n
+}
+
+// attachChildrenInFlight sets ChildrenInFlight on every epic-parent row of rows,
+// over the member set epicset reports for it.
+func attachChildrenInFlight(rows []rowVM, stories []workitem.Item, dispatches map[string]*dispatchVM) {
+	for i := range rows {
+		if !epicset.IsEpicParent(rows[i].Item) {
+			continue
+		}
+		members, err := epicset.MembersFromItems(stories, rows[i].Item)
+		if err != nil {
+			continue
+		}
+		rows[i].ChildrenInFlight = rollupDispatch(epicset.Refs(members), dispatches)
+	}
 }
 
 // mirrorBuildCostVM computes item's costview headline plus its family

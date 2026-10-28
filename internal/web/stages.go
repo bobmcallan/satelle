@@ -213,6 +213,10 @@ func buildStages(entries []ledger.Entry, status string, seatHeld bool, stepOf fu
 	// ledger is missing, a cancel sink) gets its own chip. A finished story never
 	// pulses — its last chip is simply done.
 	entered := len(ts) > 0
+	var pending *gateRoundsVM
+	if !fin {
+		pending = pendingGate(es, ts, status)
+	}
 	if i, ok := at[status]; ok {
 		if !fin {
 			stages[i].State = "current"
@@ -225,18 +229,21 @@ func buildStages(entries []ledger.Entry, status string, seatHeld bool, stepOf fu
 		stages = append(stages, stageVM{Name: status, State: "current"})
 	} else if seatHeld {
 		stages = append(stages, stageVM{Name: status, State: "current", Title: "starting"})
+	} else if pending != nil {
+		// A story still at its start status that has only been readied (`satelle
+		// story ready` holds no seat and takes no edge) has no transition, step or
+		// seat — its readiness rounds are the only trace it is under way.
+		stages = append(stages, stageVM{Name: status, State: "current", Title: "readying"})
 	}
 	for i := range stages {
 		if stages[i].Title == "" {
 			stages[i].Title = stageTitle(stages[i])
 		}
 	}
-	if !fin {
-		if p := pendingGate(es, ts, status); p != nil {
-			for i := range stages {
-				if stages[i].State == "current" {
-					stages[i].Pending = p
-				}
+	if pending != nil {
+		for i := range stages {
+			if stages[i].State == "current" {
+				stages[i].Pending = pending
 			}
 		}
 	}

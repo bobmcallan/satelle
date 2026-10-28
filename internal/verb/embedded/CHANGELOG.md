@@ -1,3 +1,14 @@
+## [0.0.778] - 2026-10-28
+
+### Added
+- An epic's page in the web UI shows, for every child, what `satelle story wave` reports for it: "startable now", or "held" with its cause, reason and each blocker's id and status. When the verb refuses, the page shows its refusal text instead. The UI snapshot carries the verb's own JSON response, so the page and the CLI cannot disagree. Each child with a dispatch in flight shows the same running indicator as the story list (agent, model, elapsed time, warning). While any child has agent work in flight, the epic's page and its story-list row say so and name how many children are being worked. (sty_a42f4add)
+- A story or epic still in backlog shows its readiness work. While `satelle story ready` runs its dispatch, the story's seat is marked in flight with the dispatch's agent detail, so the running indicator shows. The round inserts and releases a seat when the story holds none, marks a settled existing seat in flight and settles it again afterwards, and leaves an already in-flight seat alone. Once rounds are recorded, the story shows a current chip with the readiness gate's accepted and rejected rounds (for example `[plan ✗2]`), as a story past its first transition already does. Before, a backlog story being planned showed nothing. (sty_a42f4add)
+
+## [serve-v0.0.226] - 2026-10-28
+
+### Added
+- The service renders the epic wave, the per-child and epic in-flight indicators, and the readiness chip for backlog stories. (sty_a42f4add)
+
 ## [0.0.777] - 2026-10-28
 
 ### Fixed

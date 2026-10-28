@@ -628,6 +628,79 @@ func insertLease(ctx context.Context, tx *sql.Tx, opts AcquireOpts, nowS string)
 	}, nil
 }
 
+// InsertIfAbsent inserts a new in-flight lease for opts.ItemID and reports whether
+// it did. A row already there — live or stale, any owner — is left byte for byte
+// as it was: this never updates, steals or deletes, which is what AcquireWith's
+// same-owner and stale branches do. It is for a caller that only needs the page to
+// see its work in flight (a readiness round, sty_a42f4add) and must never
+// take over a seat another step holds. The caller releases only a row it inserted.
+func (s *Store) InsertIfAbsent(ctx context.Context, opts AcquireOpts) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, errors.New("lease: store not configured")
+	}
+	if strings.TrimSpace(opts.ItemID) == "" || strings.TrimSpace(opts.Owner) == "" {
+		return false, fmt.Errorf("lease: item_id and owner required")
+	}
+	nowS := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO engagement_lease (item_id, kind, story_seat, seat_key, worktree, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid, session_id, tree_scoped, exclusive)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', 1, ?, ?, ?, ?, ?)
+		 ON CONFLICT(item_id) DO NOTHING`,
+		opts.ItemID, opts.Kind, boolInt(opts.StorySeat), opts.seatKey(), opts.Worktree,
+		opts.Owner, opts.State, nowS, nowS, nowS, currentInFlightPid(), strings.TrimSpace(opts.SessionID),
+		boolInt(opts.TreeScoped), boolInt(opts.Exclusive))
+	if err != nil {
+		return false, fmt.Errorf("lease: insert if absent: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
+// MarkInFlightIfSettled flags the existing lease for itemID in flight, and reports
+// whether it did, only when EffectiveInFlight judges it settled. A row already
+// effectively in flight, or no row, is left alone. It writes the in-flight columns
+// alone — never owner, story_seat, seat_key, state, worktree or heartbeat — and
+// only if they still hold the values just read, so a concurrent mark is not
+// overwritten. The caller that gets true settles the row again with ClearInFlight
+// (sty_a42f4add).
+func (s *Store) MarkInFlightIfSettled(ctx context.Context, itemID string, now time.Time) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, errors.New("lease: store not configured")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("lease: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var inFlight, pid int
+	var at string
+	err = tx.QueryRowContext(ctx,
+		`SELECT in_flight, in_flight_at, in_flight_pid FROM engagement_lease WHERE item_id = ?`, itemID).
+		Scan(&inFlight, &at, &pid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("lease: read in_flight: %w", err)
+	}
+	if EffectiveInFlight(Lease{InFlight: inFlight != 0, InFlightAt: parseLeaseTime(at), InFlightPid: pid}, now) {
+		return false, nil
+	}
+	res, err := tx.ExecContext(ctx,
+		`UPDATE engagement_lease SET in_flight = 1, in_flight_at = ?, in_flight_pid = ?
+		 WHERE item_id = ? AND in_flight = ? AND in_flight_at = ? AND in_flight_pid = ?`,
+		now.UTC().Format(time.RFC3339Nano), currentInFlightPid(), itemID, inFlight, at, pid)
+	if err != nil {
+		return false, fmt.Errorf("lease: mark in_flight: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
 // Confirm settles an in-flight transition: records committed engaging state and
 // clears in_flight. Called after store.Update succeeds for an engaging target.
 func (s *Store) Confirm(ctx context.Context, itemID, committedState string) error {

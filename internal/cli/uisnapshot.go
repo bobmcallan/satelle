@@ -18,6 +18,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/epicset"
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/substrate"
@@ -187,6 +188,8 @@ func buildUISnapshotOpts(ctx context.Context, a *app.App, drain bool) (*mirror.S
 		}
 	}
 
+	snap.Waves = listWavesJSON(ctx, items)
+
 	if !drain {
 		// Settings blob — display rows the RO settings page renders.
 		if cfgBytes, err := marshalSettingsBlob(a); err == nil {
@@ -223,11 +226,34 @@ func buildUISnapshotOpts(ctx context.Context, a *app.App, drain bool) (*mirror.S
 
 	if drain {
 		// Explicit partition set: omitted kinds stay untouched on the mirror.
-		snap.Kinds = []string{"story", "task", "execution", "seat", "identity"}
+		snap.Kinds = []string{"story", "task", "execution", "seat", "wave", "identity"}
 		snap.MergeKinds = []string{"ledger_event"}
 	}
 
 	return snap, nil
+}
+
+// listWavesJSON emits one wave row per epic-parent: the story-wave verb's own
+// response, byte for byte, so the web renders the CLI's answer and never
+// recomputes it (sty_a42f4add). A verb refusal is pushed as its error text so the
+// page shows the same refusal the CLI prints.
+func listWavesJSON(ctx context.Context, items []workitem.Item) []json.RawMessage {
+	var out []json.RawMessage
+	for _, it := range items {
+		if it.Kind != workitem.KindStory || !epicset.IsEpicParent(it) {
+			continue
+		}
+		req, err := json.Marshal(map[string]any{"id": it.ID})
+		if err != nil {
+			continue
+		}
+		resp, err := verb.Dispatch(ctx, "story-wave", req)
+		if err != nil {
+			resp, _ = json.Marshal(map[string]any{"container": it.ID, "error": err.Error()})
+		}
+		out = append(out, resp)
+	}
+	return out
 }
 
 // listStoryDocsJSON walks the runtime stories/ attachment tree and emits
