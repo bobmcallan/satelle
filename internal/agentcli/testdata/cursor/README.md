@@ -183,6 +183,10 @@ and 17 also names `/tmp/claude-1000/.../sb19-plan`, which cursor itself abbrevia
 skills) and every `agent_thought_chunk` frame are removed or replaced by the string
 `"elided"`; frame order, ids and every other frame are verbatim. In 17 the peer's
 `cursor/create_plan` request (id 0) was never answered by the probe client, and its
-turn-4 prompt was ended `cancelled` by the next `session/prompt`; satelle answers an
-unknown peer request with JSON-RPC "method not found" (acp.go handleUnknownRequest).
+turn-4 prompt was ended `cancelled` by the next `session/prompt`; satelle answers it
+with Cursor's documented plan rejection, `{outcome: {outcome: "rejected", reason}}`
+(cursor.com/docs/cli/acp; acp.go askReplyBuilders), and `cursor/ask_question` with
+`{outcome: {outcome: "skipped", reason}}`. Neither shape was captured against real
+Cursor: both follow the documentation. `TestACPClient_CursorCreatePlanIsRejected`
+replays this capture's request.
 The 15-*/16-* `.err` files are only the exit line (`exit=0`).

@@ -454,6 +454,26 @@ func (s *acpSession) Close() error {
 	return err
 }
 
+// acpClientCapabilities is what satelle tells a peer it can serve. Every entry
+// advertised true must have a handler in acpServedMethods: a peer that plans
+// around a capability the client then answers with "method not found" is
+// misled. satelle serves none of fs/terminal (a client-side file read would
+// bypass the reviewer grant classification handlePermission performs), so all
+// are false, matching every recorded real-agent capture.
+func acpClientCapabilities() map[string]any {
+	return map[string]any{
+		"fs":       map[string]any{"readTextFile": false, "writeTextFile": false},
+		"terminal": false,
+	}
+}
+
+// acpServedMethods maps each peer-initiated request the client has a dedicated
+// handler for to that handler; readLoop dispatches from it. Any other request
+// falls to handleUnknownRequest.
+var acpServedMethods = map[string]func(c *acpClient, id int64, params json.RawMessage){
+	"session/request_permission": (*acpClient).handlePermission,
+}
+
 func (s *acpSession) handshake(ctx context.Context, req Request) error {
 	c := s.client
 	cwd := req.Dir
@@ -462,12 +482,9 @@ func (s *acpSession) handshake(ctx context.Context, req Request) error {
 	}
 
 	initRes, err := c.request(ctx, "initialize", map[string]any{
-		"protocolVersion": 1,
-		"clientInfo":      map[string]any{"name": "satelle", "version": "0"},
-		"clientCapabilities": map[string]any{
-			"fs":       map[string]any{"readTextFile": true, "writeTextFile": false},
-			"terminal": false,
-		},
+		"protocolVersion":    1,
+		"clientInfo":         map[string]any{"name": "satelle", "version": "0"},
+		"clientCapabilities": acpClientCapabilities(),
 	})
 	if err != nil {
 		return fmt.Errorf("initialize: %w", err)
@@ -833,8 +850,8 @@ func (c *acpClient) readLoop(r io.Reader) {
 		if msg.Method != "" && msg.ID != nil {
 			traceACPRequest(msg.Method, *msg.ID, msg.Params)
 		}
-		if msg.Method == "session/request_permission" && msg.ID != nil {
-			c.handlePermission(*msg.ID, msg.Params)
+		if serve, ok := acpServedMethods[msg.Method]; ok && msg.ID != nil {
+			serve(c, *msg.ID, msg.Params)
 			continue
 		}
 		if msg.Method != "" && msg.ID != nil {
@@ -1072,17 +1089,25 @@ func questionText(raw json.RawMessage, fallback string) string {
 		Question string `json:"question"`
 		Prompt   string `json:"prompt"`
 		Message  string `json:"message"`
+		// Name and Overview title a plan request (cursor/create_plan).
+		Name     string `json:"name"`
+		Overview string `json:"overview"`
 		// Questions is the AskUserQuestion shape: questions[].question.
 		Questions []struct {
 			Question string `json:"question"`
+			// Prompt is the same field in Cursor's cursor/ask_question.
+			Prompt string `json:"prompt"`
 		} `json:"questions"`
 	}
 	_ = json.Unmarshal(raw, &in)
 	var first string
 	if len(in.Questions) > 0 {
 		first = in.Questions[0].Question
+		if first == "" {
+			first = in.Questions[0].Prompt
+		}
 	}
-	for _, s := range []string{in.Question, in.Prompt, in.Message, first, fallback} {
+	for _, s := range []string{in.Question, in.Prompt, in.Message, first, in.Name, in.Overview, fallback} {
 		if strings.TrimSpace(s) != "" {
 			return s
 		}
@@ -1143,6 +1168,18 @@ var askReplyBuilders = map[string]func(params json.RawMessage) any{
 		}
 		return map[string]any{"outcome": "accepted", "answers": answers}
 	},
+	// Cursor (cursor.com/docs/cli/acp, "cursor/ask_question"): the result is
+	// {outcome: {outcome: answered|skipped|cancelled}}. No user is present, so
+	// the question is skipped with the reason, never answered on anyone's behalf.
+	"cursor/ask_question": func(json.RawMessage) any {
+		return map[string]any{"outcome": map[string]any{"outcome": "skipped", "reason": noUserAnswer}}
+	},
+	// Cursor (cursor.com/docs/cli/acp, "cursor/create_plan"): the result is
+	// {outcome: {outcome: accepted|rejected|cancelled}}. No user is present to
+	// approve a plan, so it is rejected with the reason.
+	"cursor/create_plan": func(json.RawMessage) any {
+		return map[string]any{"outcome": map[string]any{"outcome": "rejected", "reason": "no user is available to approve the plan; proceed without plan approval and state your assumptions"}}
+	},
 }
 
 // askReply builds the auto-answer for an ask method. The generic fallback
@@ -1158,9 +1195,10 @@ func askReply(method string, params json.RawMessage) any {
 // handleUnknownRequest answers a peer-initiated request the client has no
 // handler for. An ask/elicitation is auto-answered (declined, with the fixed
 // no-user text); anything else gets JSON-RPC "method not found". Either way the
-// peer is unblocked.
+// peer is unblocked. A method with a defined reply in askReplyBuilders is an ask
+// whatever its name.
 func (c *acpClient) handleUnknownRequest(id int64, method string, params json.RawMessage) {
-	if !isInteractiveAskMethod(method) {
+	if _, defined := askReplyBuilders[method]; !defined && !isInteractiveAskMethod(method) {
 		_ = c.respondError(id, -32601, "Method not found: "+method)
 		return
 	}
@@ -1224,6 +1262,8 @@ func (c *acpClient) handlePermission(id int64, params json.RawMessage) {
 	} else {
 		deny = isMutatorToolKind(p.ToolCall.Kind) && !c.allowMutators()
 	}
+	// A deny answers only with a reject option; with none offered it cancels.
+	// It never falls back to another option, which may be an allow.
 	optionID := ""
 	for _, o := range p.Options {
 		if deny && (o.Kind == "reject_once" || o.Kind == "reject_always") {
@@ -1235,11 +1275,17 @@ func (c *acpClient) handlePermission(id int64, params json.RawMessage) {
 			break
 		}
 	}
-	if optionID == "" && len(p.Options) > 0 {
-		optionID = p.Options[0].OptionID
+	if optionID == "" && !deny {
+		// No recognised allow kind: take the first option that is not a reject.
+		for _, o := range p.Options {
+			if o.Kind != "reject_once" && o.Kind != "reject_always" {
+				optionID = o.OptionID
+				break
+			}
+		}
 	}
 	var result any
-	if deny && optionID == "" {
+	if optionID == "" {
 		result = map[string]any{"outcome": map[string]any{"outcome": "cancelled"}}
 	} else {
 		result = map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": optionID}}
