@@ -1,3 +1,8 @@
+## [0.0.791] - 2026-10-29
+
+### Fixed
+- `satelle story archive` accepts an epic or parent waiting at a step that waits on its children (the readiness step), when none of its members is performing, and archives its start-state members with it. Before, only a story at its start state could be archived, so an epic deferred by archiving its children stayed at `ready` with no open member, and the edit gate named it in every refusal as performing with a dropped seat. A waiting container with a performing member is refused, naming that member; any other story outside its start state is refused as before; `satelle story unarchive` returns it at its waiting status. (sty_2f836c56)
+
 ## [0.0.790] - 2026-10-29
 
 ### Added

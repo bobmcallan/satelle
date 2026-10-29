@@ -391,13 +391,13 @@ func storyArchiveCommand() *cobra.Command {
 story board and the epic wave; story get still returns it.
 
 Archive is record DISPOSITION, not a status. The story keeps its status and
-chain; the one event added is a story_updated changing archived false to true,
-with --reason and the actor, so the flag travels with the chain through sync.
-No gate or reviewer runs.
+chain; one story_updated event flips archived, with --reason and the actor, so
+the flag travels with the chain through sync. No gate or reviewer runs.
 
-Only a story at its workflow's start state may be archived. Any other is
-refused by id and status, and one refusal archives nothing. Naming an epic also
-archives its children at their start state; the rest are listed as skipped.
+Only a story at its workflow's start state may be archived, or a container
+waiting on children while none of its members performs. Any other is refused
+by id and status, and one refusal archives nothing. Naming an epic or such a
+container also archives its start-state members; the rest are listed as skipped.
 story unarchive reverses it; story list --archived shows what is archived.`,
 		Args:        cobra.MinimumNArgs(1),
 		Annotations: needsStore(),

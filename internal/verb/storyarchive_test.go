@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -263,5 +264,157 @@ func TestRebuildRowRestoresArchivedFromTheChain(t *testing.T) {
 	row, _ = db.Stories.Get(ctx, a.ID)
 	if got, err := verb.RebuildRow(ctx, db.Stories, db.Ledger, row, time.Now()); err != nil || got.Archived {
 		t.Errorf("RebuildRow after unarchive: archived %v err %v, want false", got.Archived, err)
+	}
+}
+
+// waitingArchiveWF is a route whose container lanes idle at a step declaring
+// waits_on_children (sty_2f836c56); the held lane walks that step too, so a
+// story with no members can stand at it.
+var waitingArchiveWF = routeHalves(
+	`["*"]
+obligations = ["raised", "coded", "closed"]
+
+[epic-parent]
+obligations = ["raised", "ready", "wrapped"]
+
+[parent]
+obligations = ["raised", "ready", "wrapped"]
+
+[held]
+obligations = ["raised", "ready", "wrapped"]
+`,
+	`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+
+[ready]
+status = "ready"
+agent = "executor"
+waits_on_children = true
+requires = ["raised"]
+
+[wrapped]
+status = "done"
+terminal = true
+requires = ["ready"]
+`)
+
+// moveChain appends a backlog → to transition to id's chain, so a fixture stands
+// at a status without the engagement the story-set edge would take.
+func moveChain(t *testing.T, db *store.DB, id, to string) {
+	t.Helper()
+	if _, err := db.Ledger.Append(context.Background(), ledger.AppendInput{
+		StoryID: id, Kind: ledger.KindStatusTransition, Actor: "executor",
+		Payload: json.RawMessage(`{"from":"backlog","to":"` + to + `"}`),
+	}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// sty_2f836c56 AC1: an epic-parent, and a parent linked by parent_id, each at a
+// waits_on_children step with no member performing, are archived with their
+// start-state members.
+func TestArchiveWaitingContainer(t *testing.T) {
+	db := wireWithWorkflowsStore(t, waitingArchiveWF)
+
+	epic := createFolded(t, map[string]any{"title": "deferred epic", "category": "epic-parent", "tags": []string{"epic:defer"}})
+	moveChain(t, db, epic.ID, "ready")
+	a := createFolded(t, map[string]any{"title": "a", "category": "feature", "tags": []string{"epic:defer"}})
+	b := createFolded(t, map[string]any{"title": "b", "category": "feature", "tags": []string{"epic:defer"}})
+	res := archiveStories(t, "vision:defer", epic.ID)
+	for _, id := range []string{epic.ID, a.ID, b.ID} {
+		if !slices.Contains(res.Changed, id) || !getItem(t, id).Archived {
+			t.Errorf("epic archive: changed = %v, want %s archived", res.Changed, id)
+		}
+	}
+	if got := getItem(t, epic.ID); got.Status != "ready" {
+		t.Errorf("epic status = %q, want it left at ready", got.Status)
+	}
+
+	parent := createFolded(t, map[string]any{"title": "parent", "category": "parent"})
+	moveChain(t, db, parent.ID, "ready")
+	c := createChild(t, "c", parent.ID)
+	d := createChild(t, "d", parent.ID)
+	res = archiveStories(t, "", parent.ID)
+	for _, id := range []string{parent.ID, c.ID, d.ID} {
+		if !slices.Contains(res.Changed, id) || !getItem(t, id).Archived {
+			t.Errorf("parent archive: changed = %v, want %s archived", res.Changed, id)
+		}
+	}
+}
+
+// sty_2f836c56 AC1: a waiting container whose members were all archived first is
+// still a container, so it can follow them.
+func TestArchiveWaitingContainerAfterItsMembers(t *testing.T) {
+	db := wireWithWorkflowsStore(t, waitingArchiveWF)
+	parent := createFolded(t, map[string]any{"title": "parent", "category": "parent"})
+	moveChain(t, db, parent.ID, "ready")
+	c := createChild(t, "c", parent.ID)
+	archiveStories(t, "", c.ID)
+	if res := archiveStories(t, "", parent.ID); !slices.Equal(res.Changed, []string{parent.ID}) {
+		t.Errorf("changed = %v, want only the parent", res.Changed)
+	}
+}
+
+// sty_2f836c56 AC2: a waiting container with a performing member is refused by
+// that member and nothing is archived; a non-container at the waiting step is
+// still refused; a start-state parent still archives only itself.
+func TestArchiveWaitingContainerRefusals(t *testing.T) {
+	db := wireWithWorkflowsStore(t, waitingArchiveWF)
+
+	epic := createFolded(t, map[string]any{"title": "epic", "category": "epic-parent", "tags": []string{"epic:busy"}})
+	moveChain(t, db, epic.ID, "ready")
+	idle := createFolded(t, map[string]any{"title": "idle", "category": "feature", "tags": []string{"epic:busy"}})
+	busy := createFolded(t, map[string]any{"title": "busy", "category": "feature", "tags": []string{"epic:busy"}})
+	moveChain(t, db, busy.ID, "in_progress")
+	err := dispatchErr(t, "story-archive", map[string]any{"ids": []string{epic.ID}})
+	if !strings.Contains(err.Error(), busy.ID) || !strings.Contains(err.Error(), "performing") {
+		t.Errorf("refusal = %v, want it to name the performing member %s", err, busy.ID)
+	}
+	for _, id := range []string{epic.ID, idle.ID, busy.ID} {
+		if getItem(t, id).Archived {
+			t.Errorf("%s archived although the request was refused", id)
+		}
+	}
+
+	held := createFolded(t, map[string]any{"title": "held", "category": "held"})
+	moveChain(t, db, held.ID, "ready")
+	err = dispatchErr(t, "story-archive", map[string]any{"ids": []string{held.ID}})
+	if !strings.Contains(err.Error(), held.ID) || !strings.Contains(err.Error(), "start state") {
+		t.Errorf("refusal = %v, want the start-state refusal for the non-container %s", err, held.ID)
+	}
+
+	parent := createFolded(t, map[string]any{"title": "parent", "category": "parent"})
+	child := createChild(t, "child", parent.ID)
+	if res := archiveStories(t, "", parent.ID); !slices.Equal(res.Changed, []string{parent.ID}) {
+		t.Errorf("start-state parent: changed = %v, want only the parent", res.Changed)
+	}
+	if getItem(t, child.ID).Archived {
+		t.Error("a start-state parent's archive took its child")
+	}
+}
+
+// sty_2f836c56 AC4: unarchive restores the waiting epic at its waiting status.
+func TestUnarchiveRestoresWaitingContainer(t *testing.T) {
+	db := wireWithWorkflowsStore(t, waitingArchiveWF)
+	epic := createFolded(t, map[string]any{"title": "epic", "category": "epic-parent", "tags": []string{"epic:back"}})
+	moveChain(t, db, epic.ID, "ready")
+	archiveStories(t, "", epic.ID)
+	call(t, "story-unarchive", map[string]any{"ids": []string{epic.ID}})
+	if got := getItem(t, epic.ID); got.Archived || got.Status != "ready" {
+		t.Errorf("unarchived epic = archived %v status %q, want false at ready", got.Archived, got.Status)
+	}
+	if !slices.Contains(listIDs(t, map[string]any{}), epic.ID) {
+		t.Error("the epic is not back in the default list")
 	}
 }

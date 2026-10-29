@@ -544,6 +544,98 @@ func TestGateVerdictsUnchanged(t *testing.T) {
 	}
 }
 
+// TestGateForgetsAnArchivedWaitingEpic (sty_2f836c56 AC3): an epic at a
+// waits_on_children step whose members were all archived is named as a dropped
+// seat; once story archive takes the epic too, the gate gives the generic
+// no-engaged-story deny.
+func TestGateForgetsAnArchivedWaitingEpic(t *testing.T) {
+	repo := tempRepo(t)
+	t.Chdir(repo)
+	wfDir := filepath.Join(repo, ".satelle", "workflows")
+	writeRoute(t, wfDir,
+		`["*"]
+obligations = ["raised", "coded", "closed"]
+
+[epic-parent]
+obligations = ["raised", "ready", "wrapped"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+
+[ready]
+status = "ready"
+agent = "executor"
+waits_on_children = true
+requires = ["raised"]
+
+[wrapped]
+status = "done"
+terminal = true
+requires = ["ready"]
+`)
+	_ = os.MkdirAll(filepath.Join(repo, "internal"), 0o755)
+	_ = os.WriteFile(filepath.Join(repo, "internal", "foo.go"), []byte("package internal\n"), 0o644)
+
+	db, err := store.Open(runtimeDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := db.DocIndex.Sync(ctx, map[string]string{"workflows": wfDir}, time.Now().UTC()); err != nil {
+		_ = db.Close()
+		t.Fatalf("doc sync: %v", err)
+	}
+	create := func(title, category, status string) string {
+		t.Helper()
+		it, err := db.Stories.Create(ctx, workitem.CreateInput{
+			Kind: workitem.KindStory, Title: title, Body: "goal", AcceptanceCriteria: "1. ok",
+			Status: status, Category: category, Tags: []string{"epic:defer"},
+		}, time.Now().UTC())
+		if err != nil {
+			t.Fatalf("create %s: %v", title, err)
+		}
+		return it.ID
+	}
+	epic := create("deferred epic", "epic-parent", "ready")
+	child := create("deferred child", "feature", "backlog")
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runRoot(t, "story", "archive", child); err != nil {
+		t.Fatalf("archive child: %v\n%s", err, out)
+	}
+
+	out, err := runRootIn(t, editEvent("internal/foo.go"), "hook", "gate")
+	if err == nil || !denyReasonContains(out, droppedSeatEditReason(epic, "ready")) {
+		t.Fatalf("before the epic is archived the gate must name it as a dropped seat:\n%s", out)
+	}
+
+	if out, err := runRoot(t, "story", "archive", epic); err != nil {
+		t.Fatalf("archive waiting epic: %v\n%s", err, out)
+	}
+	out, err = runRootIn(t, editEvent("internal/foo.go"), "hook", "gate")
+	if err == nil {
+		t.Fatalf("expected gate deny with no story:\n%s", out)
+	}
+	if !denyReasonContains(out, noEngagedStoryEditReason) {
+		t.Errorf("gate deny missing noEngagedStoryEditReason.\ngot: %s", out)
+	}
+	if strings.Contains(out, "engagement seat was dropped") || strings.Contains(out, epic) {
+		t.Errorf("gate deny still names the archived epic:\n%s", out)
+	}
+}
+
 // denyReasonContains reports whether the JSON deny payload's reason contains
 // the canonical text (accounting for JSON escaping of quotes and < >).
 func denyReasonContains(payload, reason string) bool {

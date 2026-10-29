@@ -17,7 +17,7 @@ import (
 func init() {
 	Register(&Verb{
 		Name:        "story-archive",
-		Description: "Archive stories at their workflow's start state: mark the record archived (hidden from the default list) without running a route",
+		Description: "Archive stories at their workflow's start state, or a container waiting on children none of which performs: mark the record archived (hidden from the default list) without running a route",
 		Invoke:      storyArchive,
 	})
 	Register(&Verb{
@@ -52,10 +52,12 @@ type ArchiveResult struct {
 // Archive is record disposition, not a status: the story keeps its status and its
 // chain, and the one event it adds is a story_updated field change of archived,
 // which the fold projects to the row — so the flag travels with the chain. Only a
-// story at its workflow's start state may be archived; one that is performing,
-// parked or terminal is refused, and a refusal anywhere in the request archives
-// nothing. Naming an epic also archives its children at their start state; those
-// elsewhere are reported in Skipped and do not block.
+// story at its workflow's start state may be archived, or a container idling at a
+// step that waits on children while no member performs (sty_2f836c56); one that is
+// performing, parked or terminal is refused, and a refusal anywhere in the request
+// archives nothing. Naming an epic, or a waiting container, also archives its
+// members at their start state; those elsewhere are reported in Skipped and do
+// not block.
 func storyArchive(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	return setArchived(ctx, raw, true)
 }
@@ -108,24 +110,21 @@ func setArchived(ctx context.Context, raw json.RawMessage, archive bool) (json.R
 		if it.Kind != workitem.KindStory {
 			return nil, fmt.Errorf("verb: %s is a %s — only a story can be archived", id, it.Kind)
 		}
+		waiting := false
 		if archive && !it.Archived {
-			if err := requireAtStart(ctx, it); err != nil {
+			if waiting, err = requireArchivable(ctx, store, it); err != nil {
 				return nil, err
 			}
 		}
 		add(it)
-		if !archive || !epicset.IsEpicParent(it) {
+		if !archive || (!waiting && !epicset.IsEpicParent(it)) {
 			continue
 		}
-		set, err := epicset.Resolve(ctx, store, it)
+		members, err := foldedMembers(ctx, store, it)
 		if err != nil {
 			return nil, err
 		}
-		children, err := overlayFold(ctx, set.Children)
-		if err != nil {
-			return nil, err
-		}
-		for _, c := range children {
+		for _, c := range members {
 			if requireAtStart(ctx, c) != nil {
 				res.Skipped = append(res.Skipped, ArchiveSkip{ID: c.ID, Status: c.Status})
 				continue
@@ -170,6 +169,63 @@ func setArchived(ctx context.Context, raw json.RawMessage, archive bool) (json.R
 		notifyChange(TopicStories)
 	}
 	return json.Marshal(res)
+}
+
+// requireArchivable refuses a story archive may not take. A story at its start
+// state passes; so does a container at a step its route declares
+// waits_on_children while none of its members is at an engaging status, and then
+// waiting is true so the caller archives the start-state members with it. Every
+// other story gets requireAtStart's refusal. it carries the folded status, and
+// the members are folded, so a stale row cannot let a performing story through.
+func requireArchivable(ctx context.Context, store *workitem.Store, it workitem.Item) (waiting bool, err error) {
+	atStart := requireAtStart(ctx, it)
+	if atStart == nil {
+		return false, nil
+	}
+	spec, _, _, ok := governingSpec(ctx, it)
+	if !ok || !spec.WaitsOnChildren(it.Status) {
+		return false, atStart
+	}
+	container, err := isContainer(ctx, store, it)
+	if err != nil {
+		return false, err
+	}
+	if !container {
+		return false, atStart
+	}
+	members, err := foldedMembers(ctx, store, it)
+	if err != nil {
+		return false, err
+	}
+	for _, m := range members {
+		if engaging, _ := storyStatusIsEngaging(ctx, m, m.Status); engaging {
+			return false, fmt.Errorf("verb: %s is %s — member %s is performing (%s); a waiting container can be archived only when no member performs", it.ID, it.Status, m.ID, m.Status)
+		}
+	}
+	return true, nil
+}
+
+// isContainer reports whether it holds members: an epic-parent, or a story some
+// other story names as its parent. Archived children count, so a container whose
+// members were all archived first is still one.
+func isContainer(ctx context.Context, store *workitem.Store, it workitem.Item) (bool, error) {
+	if epicset.IsEpicParent(it) {
+		return true, nil
+	}
+	children, err := store.List(ctx, workitem.ListFilter{Kind: workitem.KindStory, ParentID: it.ID, IncludeArchived: true, Limit: 1})
+	if err != nil {
+		return false, err
+	}
+	return len(children) > 0, nil
+}
+
+// foldedMembers is the container's unarchived members with their folded status.
+func foldedMembers(ctx context.Context, store *workitem.Store, it workitem.Item) ([]workitem.Item, error) {
+	members, err := epicset.Members(ctx, store, it)
+	if err != nil {
+		return nil, err
+	}
+	return overlayFold(ctx, members)
 }
 
 // requireAtStart refuses a story that is not at its governing workflow's start
