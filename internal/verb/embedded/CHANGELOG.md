@@ -1,3 +1,20 @@
+## [0.0.785] - 2026-10-29
+
+### Added
+- `satelle stats` reports how good the work is, for the same window and scope as its throughput figures: the share of each gate's verdicts accepted on first presentation, per step and per gate; the mean and maximum plan and integration rejection rounds per story; coder re-dispatches after an exit rejection; reviewer dissents that name no criterion; and work that came back, meaning a story created after another reached done that cites it. Each figure names the stories behind it. (sty_ffe74f1c)
+- `satelle story release-record <id>... --commit <sha> --release <id> [--field k=v ...]` records one release against a list of stories, done ones included. Each story gets one `release_record` ledger row with the commit, the release identifier, any extra fields and the recording session. It takes no seat and changes no status, so a release task can run it from any session. A story can also refer back to the story it follows with a tag in a namespace the repo lists in `[tags] back_reference_namespaces` (for example `follows:<id>`); the tag must name a story that exists. (sty_5201507b)
+
+### Fixed
+- A story can be closed by id from a session and tree that are not its own, and every gate on the edge still judges the story's own change set. `satelle story set` refuses to move a story out of a terminal state, even along an edge the route declares; new work on a done story is a new story carrying a back-reference tag. (sty_5201507b)
+- `satelle agent validate` and `satelle doctor` fail a binding whose command loads a pi extension (`-e <path>`) that does not exist in the repo, naming `satelle agents install pi` as the fix. `satelle agents install pi` keeps the scaffold's `.pi/` out of git. (sty_d15f6713)
+- A performer seat bound to a profile passes sync's context-channel check on the profile's grant, so the shared agents.toml needs no placeholder `tools` key and the profile's grant is the one that runs. (sty_50dae450)
+- No test registers its temporary repo in the machine's real workspace registry; tests point satelle at a temporary home. (sty_e3a1c1d5)
+
+## [serve-v0.0.232] - 2026-10-29
+
+### Changed
+- The service binary embeds the quality figures, release records and the updated agent validation and doctor checks. (sty_ffe74f1c, sty_5201507b, sty_d15f6713, sty_50dae450)
+
 ## [0.0.784] - 2026-10-29
 
 ### Added
