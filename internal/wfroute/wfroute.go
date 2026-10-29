@@ -206,11 +206,21 @@ type Exit struct {
 	Advisor *Advisor `json:"advisor,omitempty"`
 }
 
-// Route is the whole artifact's PLAN half: the ordered spine plus the exits.
+// Recover is a declared way back along the spine: a story at any status in From
+// may move back to Status. Read off the Spec's edges, so it covers a derived
+// route's `recover` declarations and an authored graph's backward edges alike.
+type Recover struct {
+	Status string   `json:"status"`
+	From   []string `json:"from"`
+}
+
+// Route is the whole artifact's PLAN half: the ordered spine, the ways back
+// along it, and the exits.
 type Route struct {
-	Workflow string `json:"workflow,omitempty"`
-	Steps    []Step `json:"steps"`
-	Exits    []Exit `json:"exits,omitempty"`
+	Workflow string    `json:"workflow,omitempty"`
+	Steps    []Step    `json:"steps"`
+	Recovers []Recover `json:"recovers,omitempty"`
+	Exits    []Exit    `json:"exits,omitempty"`
 }
 
 // Build derives the route a story with these tags will walk under spec.
@@ -273,6 +283,7 @@ func Build(spec wfdot.Spec, workflow string, tags []string, advisors []Advisor, 
 		}
 		r.Steps = append(r.Steps, step)
 	}
+	r.Recovers = buildRecovers(spec, spine, dist)
 	r.Exits = buildExits(spec, onSpine)
 	for i := range r.Exits {
 		if a, ok := byStep[r.Exits[i].Status]; ok {
@@ -386,6 +397,43 @@ func buildExits(spec wfdot.Spec, onSpine map[string]bool) []Exit {
 	return out
 }
 
+// buildRecovers lists the spine edges that move a story further from done than
+// it was — the route's ways back — grouped by destination, both sides in spine
+// order.
+func buildRecovers(spec wfdot.Spec, spine []wfdot.State, dist map[string]int) []Recover {
+	index := map[string]int{}
+	for i, st := range spine {
+		index[st.Name] = i
+	}
+	from := map[string]map[string]bool{}
+	for _, tr := range spec.Transitions {
+		_, toOn := index[tr.To]
+		_, fromOn := index[tr.From]
+		if !toOn || !fromOn || dist[tr.To] <= dist[tr.From] {
+			continue
+		}
+		if from[tr.To] == nil {
+			from[tr.To] = map[string]bool{}
+		}
+		from[tr.To][tr.From] = true
+	}
+	var out []Recover
+	for _, st := range spine {
+		src := from[st.Name]
+		if len(src) == 0 {
+			continue
+		}
+		rc := Recover{Status: st.Name}
+		for _, s := range spine {
+			if src[s.Name] {
+				rc.From = append(rc.From, s.Name)
+			}
+		}
+		out = append(out, rc)
+	}
+	return out
+}
+
 // appliesTo returns the applies_to a scoped gate carries, so a tag-scoped gate
 // can say WHICH tag put it on the route. Empty means it is on by default.
 func appliesTo(spec wfdot.Spec, skill string) []string {
@@ -444,13 +492,17 @@ func (r Route) Render(at string) string {
 		b.WriteString("(no route — the governing workflow declares no path to a terminal success state)\n")
 		return b.String()
 	}
+	back := map[string][]string{}
+	for _, rc := range r.Recovers {
+		back[rc.Status] = rc.From
+	}
 	for i, s := range r.Steps {
 		marker := " "
 		if s.Status == at {
 			marker = "*"
 		}
-		fmt.Fprintf(&b, "%s %d. **%s**%s%s%s\n", marker, i+1, s.Status,
-			renderObligation(s), renderPerformer(s), renderGates(s))
+		fmt.Fprintf(&b, "%s %d. **%s**%s%s%s%s\n", marker, i+1, s.Status,
+			renderObligation(s), renderPerformer(s), renderGates(s), renderRecover(back[s.Status]))
 		if line := renderAdvisor(s.Advisor); line != "" {
 			b.WriteString(line)
 		}
@@ -483,6 +535,15 @@ func (r Route) Render(at string) string {
 		}
 	}
 	return b.String()
+}
+
+// renderRecover suffixes a step's line with the later steps that may move back
+// to it, so the way back costs the legibility budget no line.
+func renderRecover(from []string) string {
+	if len(from) == 0 {
+		return ""
+	}
+	return " · recover: back here from " + strings.Join(from, ", ")
 }
 
 // renderAdvisor writes the CONSULT line. It is addressed to the orchestrator on

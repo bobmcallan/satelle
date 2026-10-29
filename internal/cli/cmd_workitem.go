@@ -207,6 +207,10 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 				rm, _ := f.GetStringSlice("remove-tags")
 				req["remove_tags"] = rm
 			}
+			if group == "story" && f.Changed("release") {
+				rel, _ := f.GetStringSlice("release")
+				req["release"] = rel
+			}
 			if err := dispatch(cmd, group+"-set", req); err != nil {
 				return err
 			}
@@ -255,6 +259,9 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 	set.Flags().StringSlice("tags", nil, "replace entire tag set (comma-separated); exclusive of --add-tags/--remove-tags")
 	set.Flags().StringSlice("add-tags", nil, "add tags without dropping existing ones (comma-separated)")
 	set.Flags().StringSlice("remove-tags", nil, "remove tags: exact match, or namespace group (sprint: / sprint:*)")
+	if group == "story" {
+		set.Flags().StringSlice("release", nil, `with --status naming a container step that declares after_children: "all" releases every member that has discharged it, or comma-separated member ids release just those`)
+	}
 
 	parent.AddCommand(create, get, list, set)
 	if group == "story" {

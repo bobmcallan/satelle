@@ -470,6 +470,9 @@ type setReq struct {
 	Tags               *[]string `json:"tags,omitempty"`
 	AddTags            []string  `json:"add_tags,omitempty"`
 	RemoveTags         []string  `json:"remove_tags,omitempty"`
+	// Release selects which members an entry into an after_children step
+	// releases: ReleaseAll, or member ids (refuseUndischargedChildren).
+	Release []string `json:"release,omitempty"`
 }
 
 // workItemSet is the update verb. A refused status change is annotated with the
@@ -592,6 +595,9 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	}
 
 	transitioning := req.Status != nil && *req.Status != current.Status
+	if len(req.Release) > 0 && !transitioning {
+		return nil, fmt.Errorf("verb: release selects the children a status change releases — pass it with --status naming the step to enter")
+	}
 	// Same-status re-engage (sty_4f74d01f): when the story is already performing
 	// but its seat lease was dropped, `story set --status <same>` must claim a
 	// lease (or refuse loudly) — never report plain success with no seat.
@@ -602,6 +608,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		}
 	}
 
+	var releaseSelection []string
 	// Edge fence (sty_ebd3d666): refuse status jumps that skip a required DOT
 	// step (e.g. backlog→in_progress when only backlog→plan exists). Runs before
 	// engage/lease so a skip is never partially acquired. Declared recovery,
@@ -617,9 +624,11 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		}
 		// A container's merge-style step waits on its children's own obligation;
 		// refused here, before any gate is paid for or seat taken.
-		if err := refuseUndischargedChildren(ctx, current, *req.Status); err != nil {
+		sel, err := refuseUndischargedChildren(ctx, current, *req.Status, req.Release)
+		if err != nil {
 			return nil, err
 		}
+		releaseSelection = sel
 	}
 
 	// Engage precondition (sty_93eec36d): when a story leaves its workflow entry
@@ -824,6 +833,12 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		return parkStory(ctx, current, raw, attempt, park, notes, res, now)
 	}
 	performStep := func() (json.RawMessage, error) {
+		// The step's performer reads which members this entry releases.
+		if transitioning {
+			if err := recordReleaseSelection(ctx, current, *req.Status, releaseSelection, len(req.Release) > 0, now); err != nil {
+				return nil, err
+			}
+		}
 		if !(transitioning && executorDispatcher != nil) {
 			return nil, nil
 		}
@@ -920,7 +935,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		if err := refuseOpenEpicChildren(ctx, current, *req.Status); err != nil {
 			return nil, err
 		}
-		if err := refuseUndischargedChildren(ctx, current, *req.Status); err != nil {
+		if _, err := refuseUndischargedChildren(ctx, current, *req.Status, req.Release); err != nil {
 			return nil, err
 		}
 	}

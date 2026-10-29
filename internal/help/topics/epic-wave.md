@@ -151,6 +151,25 @@ holds no seat. Without `after_children`, container engagement is unchanged, and
 The binary only gates the entry and the seat. It runs no git command; a merge is
 a skill the step names.
 
+### Releasing on demand
+
+`satelle story set <container> --status <step> --release all` enters the step
+once at least one member has discharged its obligation, and releases just the
+members that have. `--release <id>,<id>` releases just those members; each must
+be a member of the container's set and must have discharged the obligation, or
+the entry is refused naming it. On every entry into the step, with or without
+`--release`, satelle writes the selection to the container's `release` document
+(`satelle story doc <container> release`), replacing the last one; the step's
+merge skill merges the members it names and no other. Releasing never changes a
+member's status.
+
+A release that leaves members out needs a way back into the step for a later
+release: a `recover = [{ step = "<step status>", from = ["<later status>"] }]`
+edge on the container's table in `done.toml`. Without one, the entry is refused
+with "no way back into <step> for a later release", so a partial release cannot
+strand the rest. The way back never re-enters the readiness step, and the
+container still closes only when every member is terminal.
+
 ## Where a child runs
 
 A child's step runs locally unless its step declares otherwise. A performer step

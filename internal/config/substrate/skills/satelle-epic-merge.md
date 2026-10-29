@@ -4,13 +4,13 @@ scope: system
 type: skill
 tags: [type:skill, type:executor]
 evidence_commands: satelle trunk sync, satelle trunk publish
-description: In-loop executor skill for a container's `merged` step on the epic-branch lane. Syncs trunk, merges every branch-lane member's `epic/<child-id>` branch with `--no-ff`, and puts trunk on origin once through `satelle trunk publish`. Skips `lane:trunk` and cancelled members, and never advances status. A repo using pull requests overrides it by name.
+description: In-loop executor skill for a container's `merged` step on the epic-branch lane. Syncs trunk, merges the `epic/<child-id>` branch of each branch-lane member the container's release document names with `--no-ff`, and puts trunk on origin once through `satelle trunk publish`. Skips `lane:trunk` and cancelled members, and never advances status. A repo using pull requests overrides it by name.
 ---
 
 # Epic merge (in-loop executor step)
 
-You are the **executor** for the container's `merged` step. Every member has
-closed (`after_children` held the step back until then). A member on the **branch
+You are the **executor** for the container's `merged` step. Every member this
+entry releases has closed (`after_children` held the step back until then). A member on the **branch
 lane** — one with no `lane:trunk` tag — closed with its slice on a pushed
 `epic/<child-id>` branch and **nothing on trunk**. This step is what puts those
 branches on trunk, **once**, for the whole container. You do not advance status:
@@ -28,11 +28,14 @@ any other branch.
    diverged, ahead (unpushed commits), cannot be moved, is unreachable or
    unresolved: stop, report its line verbatim, and do not merge onto a stale base.
    `satelle trunk sync --json` names the trunk and the remote (`trunk`, `remote`).
-1. **List the members.** `satelle story route <container-id>` prints a `## Members`
-   section of `- <id> — <status>` lines: that is the container's set, the same one
-   the close gate judges. Drop every `cancelled` member. Read each remaining
-   member's tags with `satelle story get <id> --json` and drop every one tagged
-   `lane:trunk`: it releases itself.
+1. **List the members this entry releases.** `satelle story doc <container-id> release`
+   lists them, one `- <id>` line each. satelle writes it on every entry into this
+   step: every member, or the subset `satelle story set <container-id> --status
+   merging --release all|<id>,<id>` selected. Merge those and no other member; a
+   member left out keeps its status and waits for a later release. Drop every
+   `cancelled` one. Read each remaining member's tags with `satelle story get <id>
+   --json` and drop every one tagged `lane:trunk`: it releases itself. Skip a
+   member whose branch trunk already contains: an earlier release merged it.
 2. **Fetch each remaining member's branch**, `epic/<child-id>`:
    `git fetch <remote> epic/<child-id>`. If a member has no such branch, stop and
    say which id. Do not invent a branch from trunk.
@@ -57,7 +60,8 @@ any other branch.
   the proof and the moved-trunk handling.
 - Do not bump `.version` or edit a changelog: a repo that stamps a release
   declares it in `[trunk] stamp`, which publish runs.
-- Do not `satelle story set` the container or a member.
+- Do not `satelle story set` the container or a member. Releasing a member never
+  changes its status.
 - Do not cancel a member to make the merge smaller.
 
 ## A repo that merges through a pull request

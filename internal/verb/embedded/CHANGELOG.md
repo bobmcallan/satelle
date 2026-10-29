@@ -1,3 +1,8 @@
+## [Unreleased]
+
+### Added
+- An epic can release on demand through its merging step. `satelle story set <epic> --status merging --release all` enters the step once at least one child has discharged the step's `after_children` obligation and releases just those children; `--release <id>,<id>` releases just the named children, and is refused for an id that is not a member or has not discharged the obligation. The selection is written to the epic's `release` document, which the merge skill reads, and children left out keep their status. A release that leaves children out is refused unless the epic's route declares a recover edge back into the merging step, so the rest stay eligible for a later release without re-entering readiness. Without `--release` entry is unchanged, and the epic still closes only when every child is terminal. (sty_50357766)
+
 ## [0.0.784] - 2026-10-29
 
 ### Added
