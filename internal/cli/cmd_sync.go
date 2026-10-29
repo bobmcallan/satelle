@@ -261,7 +261,13 @@ func runSync(cmd *cobra.Command, serverArg string, dryRun bool) error {
 // team version and never publishes a stray local edit. Under --dry-run it lists
 // what it would write and writes nothing.
 func syncTeamWriteDown(cmd *cobra.Command, a *app.App, dryRun bool) error {
-	res, err := writeDownProjectTier(a.ProcessConfig, a.ProcessRoot, a.RuntimeDir, a.RepoRoot, a.Config, dryRun)
+	return writeDownAndReport(cmd, a.ProcessConfig, a.ProcessRoot, a.RuntimeDir, a.RepoRoot, a.Config, dryRun)
+}
+
+// writeDownAndReport runs writeDownProjectTier and reports what it wrote: each
+// warning to stderr, the count (or, under dryRun, the paths) to stdout.
+func writeDownAndReport(cmd *cobra.Command, process config.Config, processRoot, runtimeDir, repoRoot string, tree config.Config, dryRun bool) error {
+	res, err := writeDownProjectTier(process, processRoot, runtimeDir, repoRoot, tree, dryRun)
 	for _, w := range res.Warnings() {
 		fmt.Fprintln(cmd.ErrOrStderr(), w)
 	}
@@ -520,16 +526,52 @@ func runSyncConfigPushLeg(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	if note := sharedSyncNote(files); note != "" {
 		fmt.Fprintln(out, note)
 	}
+	return pushConfigFileSet(cmd, cfg, repoRoot, dataDir, ign, server, files, pushSetOpts{
+		Verb: "sync config push", DryRun: dryRun, withheldLocal: printWithheldLocal,
+	})
+}
+
+// pushRefusal is a push its checks refused before any upload: the
+// configuration itself must be fixed.
+type pushRefusal struct{ error }
+
+func (r pushRefusal) Unwrap() error { return r.error }
+
+// pushSetOpts is how pushConfigFileSet sends its set.
+type pushSetOpts struct {
+	// Verb names the command in a refusal.
+	Verb   string
+	DryRun bool
+	// IgnoreScope sends the whole set as plain files, outside every area's
+	// snapshot, whatever each area's [sync] scope: a project's first publish of
+	// its substrate, which has no snapshot to be behind.
+	IgnoreScope bool
+	// withheldLocal reports what the bundle left out; nil reports nothing.
+	withheldLocal func()
+}
+
+// pushConfigFileSet is the one upload tail of every publish of configuration to
+// the bound project: the transport and deployed-system checks first, then the
+// holder gate, then the snapshot push or the plain upload. It returns the
+// team-owned files the holder gate or the server kept local.
+func pushConfigFileSet(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir string, ign config.Ignore, server string, files []config.ConfigFile, opts pushSetOpts) (holderRefusal, error) {
+	var ref holderRefusal
+	out := cmd.OutOrStdout()
+	printWithheldLocal := func() {
+		if opts.withheldLocal != nil {
+			opts.withheldLocal()
+		}
+	}
 	// Refuse before anything else — a dry run included — so a configuration that
 	// would not work on another machine is never published (sty_89b9df20).
-	if err := checkPushFiles("sync config push", files); err != nil {
-		return ref, err
+	if err := checkPushFiles(opts.Verb, files); err != nil {
+		return ref, pushRefusal{err}
 	}
 	if err := preflightPush(out, dataDir); err != nil {
-		return ref, err
+		return ref, pushRefusal{err}
 	}
 	printWithheldBinding(out, files)
-	if dryRun {
+	if opts.DryRun {
 		fmt.Fprintf(out, "Would push %d config file(s) to the bound project on %s:\n", len(files), server)
 		for _, f := range files {
 			fmt.Fprintf(out, "  %-40s -> personal\n", f.Path)
@@ -563,7 +605,7 @@ func runSyncConfigPushLeg(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	if err != nil {
 		return ref, err
 	}
-	if merr == nil {
+	if merr == nil && !opts.IgnoreScope {
 		// A push publishes each area's whole state as a snapshot (sty_fe5a8ed4):
 		// refused when this machine is behind, so it never overwrites a newer
 		// push from another machine. A server that cannot hold snapshots falls

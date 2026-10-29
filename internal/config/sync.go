@@ -373,9 +373,8 @@ func ConfigFiles(cfg Config, repoRoot string, ign Ignore) (Bundle, error) {
 // as plain files, outside every area's snapshot.
 const TeamArea = "team"
 
-// teamExtraFiles walks the repo's [team] paths for the files no config area
-// owns. The [team] table is settings, so they are pushed when the settings area
-// is; init-owned and .local files are never team-owned (TeamSet.Owns).
+// teamExtraFiles is the push's share of the [team] files no config area owns.
+// The [team] table is settings, so they are pushed when the settings area is.
 func teamExtraFiles(cfg Config, repoRoot string) ([]ConfigFile, error) {
 	scope, err := ScopeFor(cfg, "settings")
 	if err != nil {
@@ -384,6 +383,23 @@ func teamExtraFiles(cfg Config, repoRoot string) ([]ConfigFile, error) {
 	if scope == LocalScope {
 		return nil, nil
 	}
+	return walkTeamExtraFiles(cfg, repoRoot, scope)
+}
+
+// TeamExtraFiles reads the [team] files no config area owns as a push would
+// bundle them, without consulting the settings area's [sync] scope — what a
+// project's first publish of its substrate sends whatever this machine syncs.
+func TeamExtraFiles(cfg Config, repoRoot string, ign Ignore) ([]ConfigFile, error) {
+	files, err := walkTeamExtraFiles(cfg, repoRoot, PersonalScope)
+	if err != nil {
+		return nil, err
+	}
+	return assemble(files, ign).Files, nil
+}
+
+// walkTeamExtraFiles walks the repo's [team] paths for the files no config area
+// owns; init-owned and .local files are never team-owned (TeamSet.Owns).
+func walkTeamExtraFiles(cfg Config, repoRoot string, scope Scope) ([]ConfigFile, error) {
 	team := NewTeamSet(cfg.Team.Paths)
 	dataDir := cfg.ResolveDataDir(repoRoot)
 	seen := map[string]bool{}

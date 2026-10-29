@@ -77,7 +77,13 @@ bound to.`,
 		Long: `bind records which hosted project this repo's personal sync
 (config / documents / workstate) targets. The slug is written to the committed
 .satelle/satelle.toml [sync] project key — secret-free, since tokens live only
-in the per-user credential store. "satelle project show" prints the binding.`,
+in the per-user credential store. "satelle project show" prints the binding.
+
+A project the server reports with no substrate is seeded by its substrate
+holder: bind publishes the repo's team-owned substrate as the project's first
+hosted version, or the embedded defaults when the repo has none of its own. A
+project that already has substrate is not reseeded; bind deploys it and writes
+its team-owned files into the tree.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runProjectBind(cmd, args[0])
@@ -145,7 +151,7 @@ func runProjectBind(cmd *cobra.Command, slug string) error {
 		return fmt.Errorf("stamp deployed.version: %w", err)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Bound this repo to project %q (recorded in %s).\n", slug, cfgPath)
-	return nil
+	return seedProjectSubstrate(cmd, slug)
 }
 
 func runProjectShow(cmd *cobra.Command, serverArg string) error {

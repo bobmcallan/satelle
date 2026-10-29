@@ -46,6 +46,11 @@ func (r holderRefusal) message() string {
 		}
 	}
 	sort.Strings(paths)
+	return fmt.Sprintf("team substrate not published: %s — only the project's substrate holder %s can publish it; your copy stays local", strings.Join(paths, ", "), r.holderName())
+}
+
+// holderName is the holder's email, else user id, else why it is unknown.
+func (r holderRefusal) holderName() string {
 	who := r.Holder.Email
 	if who == "" {
 		who = r.Holder.UserID
@@ -56,7 +61,16 @@ func (r holderRefusal) message() string {
 	case who == "":
 		who = "unknown"
 	}
-	return fmt.Sprintf("team substrate not published: %s — only the project's substrate holder %s can publish it; your copy stays local", strings.Join(paths, ", "), who)
+	return who
+}
+
+// isSubstrateHolder reports whether the caller signed in to server is holder.
+// No holder, or no known caller, is not a match.
+func isSubstrateHolder(server, repoRoot string, holder *hosted.SubstrateHolder) bool {
+	if holder == nil || holder.UserID == "" {
+		return false
+	}
+	return resolveUserFor(server, repoRoot).PrincipalID == holder.UserID
 }
 
 // holderGate is the files a config push may send. A caller who is not the
@@ -87,7 +101,7 @@ func holderGate(ctx context.Context, client *hosted.Client, cfg config.Config, r
 		if p.Substrate.Holder != nil {
 			ref.Holder = *p.Substrate.Holder
 		}
-		if id := resolveUserFor(server, repoRoot).PrincipalID; id != "" && id == ref.Holder.UserID {
+		if isSubstrateHolder(server, repoRoot, p.Substrate.Holder) {
 			return files, ref, nil
 		}
 	}

@@ -51,6 +51,13 @@ type Project struct {
 // lives in the hosted store and is published by its one holder.
 const SubstrateHosted = "hosted"
 
+// SubstrateNone is the source of a project that has no substrate yet; its
+// holder seeds it. SubstrateRepo is the source of one read from a repo.
+const (
+	SubstrateNone = "none"
+	SubstrateRepo = "repo"
+)
+
 // ProjectSubstrate is a project's substrate source: "repo", "hosted" or
 // "none", and for a hosted one the holder who alone publishes it.
 type ProjectSubstrate struct {

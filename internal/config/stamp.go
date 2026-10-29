@@ -47,6 +47,18 @@ func embeddedBodyByRel() map[string]string {
 	return embeddedByRel
 }
 
+// EmbeddedDefaultFiles is every embedded default as the config file a push
+// would send, labelled by its kind and sorted by path.
+func EmbeddedDefaultFiles() []ConfigFile {
+	var out []ConfigFile
+	for rel, body := range embeddedBodyByRel() {
+		kind, _, _ := strings.Cut(rel, "/")
+		out = append(out, ConfigFile{Area: kind, Path: rel, Tier: PersonalTier, Content: []byte(body)})
+	}
+	sortConfigFiles(out)
+	return out
+}
+
 // UneditedDefault reports whether the file at server-relative path rel with the
 // given bytes is an unedited embedded default: a copy whose stamp matches its
 // stripped body (of the current or an older default), or a stampless copy

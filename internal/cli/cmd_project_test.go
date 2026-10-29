@@ -249,6 +249,7 @@ func TestResolveBoundProjectEmpty(t *testing.T) {
 // TestProjectBindCreatesTomlWhenAbsent: empty-tree bind writes .satelle/satelle.toml
 // without requiring a prior satelle init (workspace-rehydrate order:4).
 func TestProjectBindCreatesTomlWhenAbsent(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir()) // bind's seed step reads the machine config
 	repo := t.TempDir()
 	t.Chdir(repo)
 	t.Setenv("SATELLE_CONFIG", "") // ensure Load walks CWD

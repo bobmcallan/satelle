@@ -1,3 +1,13 @@
+## [0.0.796] - 2026-10-30
+
+### Changed
+- `satelle project bind` seeds a project that has no substrate. When the hosted project reports source `none` and the caller is its substrate holder, bind publishes the repo's team-owned files as the project's first version, whatever the repo's `[sync]` scope, team-owned files outside the config areas such as `scripts/*.sh` included. When the repo has none, it publishes the embedded defaults the team set owns. The seed passes the same validation as `satelle sync config push`, and a refused seed fails the bind. A project that already has substrate is not reseeded, and the repo takes its project tier. A non-holder, an older server that does not report substrate, or a signed-out user seeds nothing: the bind still succeeds, and its output names the holder or the reason. (sty_6d43eb74)
+
+## [serve-v0.0.240] - 2026-10-30
+
+### Changed
+- The service binary embeds the scope-free team-owned file collection used to seed a project. (sty_6d43eb74)
+
 ## [0.0.795] - 2026-10-30
 
 ### Changed
