@@ -1,3 +1,8 @@
+## [0.0.795] - 2026-10-30
+
+### Changed
+- In a bound project, only the substrate holder publishes team-owned substrate. satelle reads the holder from the hosted project. A member's `satelle sync config push` with an edited team-owned file exits non-zero, naming the holder and each withheld path, and uploads none of them. A server refusal (403) is reported the same way, naming the holder from its body. A member's bare `satelle sync` withholds the same files with one warning naming the holder and the files, exits 0, and still pushes everything else, documents and work state included. Files outside the team-owned set push as before. A server that does not report a holder is pushed to as before. (sty_40c41d91)
+
 ## [0.0.794] - 2026-10-30
 
 ### Changed

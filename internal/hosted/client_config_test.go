@@ -162,6 +162,34 @@ func TestClientConfigFileContent(t *testing.T) {
 	}
 }
 
+// TestClientPushConfigFileNotHolder: a 403 whose body carries a holder is a
+// *NotHolderError naming the holder's email; a 403 without one keeps the
+// server's own message.
+func TestClientPushConfigFileNotHolder(t *testing.T) {
+	_, c := configTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		if strings.HasSuffix(r.URL.Path, "/skills/x.md") {
+			_, _ = w.Write([]byte(`{"error":"not_holder","holder":{"user_id":"usr_h","email":"holder@example.com"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"error":"forbidden"}`))
+	})
+
+	_, err := c.PushConfigFile(context.Background(), "probe", "skills/x.md", []byte("b"))
+	var nh *NotHolderError
+	if !errors.As(err, &nh) {
+		t.Fatalf("err = %v, want *NotHolderError", err)
+	}
+	if nh.Path != "skills/x.md" || nh.Holder.Email != "holder@example.com" || !strings.Contains(err.Error(), "holder@example.com") {
+		t.Errorf("refusal = %+v (%v)", nh, err)
+	}
+
+	_, err = c.PushConfigFile(context.Background(), "probe", "skills/y.md", []byte("b"))
+	if err == nil || errors.As(err, &nh) || !strings.Contains(err.Error(), "HTTP 403: forbidden") {
+		t.Errorf("a 403 with no holder = %v, want the server's message", err)
+	}
+}
+
 // TestClientPushConfigFileNoCredential: no credential -> ErrLoginRequired.
 func TestClientPushConfigFileNoCredential(t *testing.T) {
 	_, err := NewClient("https://example", &memStore{}, nil).PushConfigFile(context.Background(), "probe", "x", []byte("b"))

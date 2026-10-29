@@ -37,10 +37,33 @@ type Principal struct {
 // Project is a hosted project as returned by the projects API. Role is only
 // populated by responses that carry the caller's membership role.
 type Project struct {
-	ID   string `json:"id"`
-	Slug string `json:"slug"`
-	Name string `json:"name"`
-	Role string `json:"role,omitempty"`
+	ID     string `json:"id"`
+	Slug   string `json:"slug"`
+	Name   string `json:"name"`
+	Role   string `json:"role,omitempty"`
+	TeamID string `json:"team_id,omitempty"`
+	// Substrate is where the project's substrate comes from. Nil when the
+	// server does not report it (an older server).
+	Substrate *ProjectSubstrate `json:"substrate,omitempty"`
+}
+
+// SubstrateHosted is the ProjectSubstrate.Source of a project whose substrate
+// lives in the hosted store and is published by its one holder.
+const SubstrateHosted = "hosted"
+
+// ProjectSubstrate is a project's substrate source: "repo", "hosted" or
+// "none", and for a hosted one the holder who alone publishes it.
+type ProjectSubstrate struct {
+	Source string           `json:"source"`
+	Repo   string           `json:"repo,omitempty"`
+	Ref    string           `json:"ref,omitempty"`
+	Holder *SubstrateHolder `json:"holder,omitempty"`
+}
+
+// SubstrateHolder is the one user who publishes a project's hosted substrate.
+type SubstrateHolder struct {
+	UserID string `json:"user_id"`
+	Email  string `json:"email"`
 }
 
 // Workspace is a hosted workspace as returned by the workspaces API. Kind is
@@ -106,6 +129,35 @@ func (c *Client) ListProjects(ctx context.Context) ([]Project, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// ErrProjectNotFound is returned when GET /api/v1/projects/{project} answers
+// 404: the project is unknown, or the server predates the route.
+var ErrProjectNotFound = errors.New("project not found on the server")
+
+// GetProject returns one project, its substrate included, via
+// GET /api/v1/projects/{project}. project is an id or slug.
+func (c *Client) GetProject(ctx context.Context, project string) (Project, error) {
+	resp, err := c.doAuthed(ctx, http.MethodGet, "/api/v1/projects/"+url.PathEscape(project), nil, "")
+	if err != nil {
+		return Project{}, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var p Project
+		if err := json.Unmarshal(body, &p); err != nil {
+			return Project{}, fmt.Errorf("hosted: decode project %s: %w", project, err)
+		}
+		return p, nil
+	case http.StatusNotFound:
+		return Project{}, ErrProjectNotFound
+	case http.StatusUnauthorized:
+		return Project{}, ErrLoginRequired
+	default:
+		return Project{}, fmt.Errorf("hosted: GET project %s: %s", project, serverError(resp.StatusCode, body))
+	}
 }
 
 // Workspaces returns the caller's workspaces via GET /api/v1/workspaces. A
@@ -248,6 +300,11 @@ func (c *Client) PushConfigFile(ctx context.Context, project, path string, conte
 		return res, nil
 	case http.StatusUnauthorized:
 		return ConfigPushResult{}, ErrLoginRequired
+	case http.StatusForbidden:
+		if e, ok := decodeAPIError(body); ok && e.Holder != nil {
+			return ConfigPushResult{}, &NotHolderError{Path: path, Holder: *e.Holder}
+		}
+		return ConfigPushResult{}, fmt.Errorf("hosted: PUT config %s: %s", path, serverError(resp.StatusCode, body))
 	default:
 		return ConfigPushResult{}, fmt.Errorf("hosted: PUT config %s: %s", path, serverError(resp.StatusCode, body))
 	}
@@ -346,12 +403,13 @@ func serverError(code int, body []byte) string {
 }
 
 // apiError is the server's JSON error body: a machine code in error, an
-// optional human sentence in message and, on a refused request, the reason
-// code in reason.
+// optional human sentence in message, on a refused request the reason code in
+// reason and, on a refused substrate publish, the holder who may publish.
 type apiError struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
-	Reason  string `json:"reason"`
+	Error   string           `json:"error"`
+	Message string           `json:"message"`
+	Reason  string           `json:"reason"`
+	Holder  *SubstrateHolder `json:"holder"`
 }
 
 // decodeAPIError parses body as an apiError; ok is false when it is not JSON.

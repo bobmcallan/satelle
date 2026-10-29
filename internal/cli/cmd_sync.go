@@ -304,8 +304,12 @@ func syncOptedIn(cfg config.Config) (bool, error) {
 // both run it; between documents and work-state it calls between (bare sync's
 // pulls, nil for a push, which pulls nothing), so bare sync's order is unchanged.
 func runSyncPushLegs(cmd *cobra.Command, serverArg string, dryRun bool, between func() error) error {
-	if err := runSyncConfigPush(cmd, serverArg, "", dryRun); err != nil {
+	ref, err := runSyncConfigPushLeg(cmd, serverArg, "", dryRun)
+	if err != nil {
 		return err
+	}
+	if ref.refused() {
+		fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+ref.message())
 	}
 	if err := runSyncDocumentsPush(cmd, serverArg, "", dryRun); err != nil {
 		return err
@@ -388,7 +392,9 @@ the deployed system must validate, as for 'satelle init'. Never uploaded: .local
 files, config/.env, paths in <data dir>/.satelleignore. Team is not a sync
 destination (use satelle publish). Requires "satelle project bind <slug>".
 
-Pushes publish each area as one snapshot (deletes propagate), refused when another machine pushed since your last sync: deploy first, or pass --force.`,
+Pushes publish each area as one snapshot (deletes propagate), refused when another machine pushed since your last sync: deploy first, or pass --force.
+
+Only the substrate holder publishes team-owned files; a member's stay local.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncConfigPush(cmd, pushServer, pushWorkspace, dryRun)
 		},
@@ -465,23 +471,39 @@ func resolveDeploySourceName(cfg config.Config, workspaceArg string) string {
 	return cfg.ResolveActiveWorkspace().Name
 }
 
+// runSyncConfigPush is `satelle sync config push`, the publish: team-owned
+// files the holder gate kept local fail it, naming the holder.
 func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRun bool) error {
-	cfg, repoRoot, dataDir, err := loadRepoConfig()
+	ref, err := runSyncConfigPushLeg(cmd, serverArg, workspaceArg, dryRun)
 	if err != nil {
 		return err
+	}
+	if ref.refused() {
+		return errors.New(ref.message())
+	}
+	return nil
+}
+
+// runSyncConfigPushLeg is the config push, returning the team-owned files the
+// holder gate or the server kept local for the caller to report.
+func runSyncConfigPushLeg(cmd *cobra.Command, serverArg, workspaceArg string, dryRun bool) (holderRefusal, error) {
+	var ref holderRefusal
+	cfg, repoRoot, dataDir, err := loadRepoConfig()
+	if err != nil {
+		return ref, err
 	}
 	_ = workspaceArg // sync is personal-only (epic:sync-publish)
 	server := resolveServer(serverArg)
 	if server == "" {
-		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
+		return ref, fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
 	ign, err := config.LoadIgnore(dataDir)
 	if err != nil {
-		return err
+		return ref, err
 	}
 	bundle, err := config.ConfigFiles(cfg, repoRoot, ign)
 	if err != nil {
-		return err
+		return ref, err
 	}
 	files := bundle.Files
 	out := cmd.OutOrStdout()
@@ -490,10 +512,10 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 		if n := bundle.ExcludedCount(); n > 0 {
 			printWithheldLocal()
 			fmt.Fprintf(out, "nothing to push (%d withheld)\n", n)
-			return nil
+			return ref, nil
 		}
 		fmt.Fprintln(out, "No config to push — every config area is local. Set [sync] <area> = personal to opt in.")
-		return nil
+		return ref, nil
 	}
 	if note := sharedSyncNote(files); note != "" {
 		fmt.Fprintln(out, note)
@@ -501,10 +523,10 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 	// Refuse before anything else — a dry run included — so a configuration that
 	// would not work on another machine is never published (sty_89b9df20).
 	if err := checkPushFiles("sync config push", files); err != nil {
-		return err
+		return ref, err
 	}
 	if err := preflightPush(out, dataDir); err != nil {
-		return err
+		return ref, err
 	}
 	printWithheldBinding(out, files)
 	if dryRun {
@@ -513,63 +535,76 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 			fmt.Fprintf(out, "  %-40s -> personal\n", f.Path)
 		}
 		printWithheldLocal()
-		return nil
+		return ref, nil
 	}
 	// Bound project before any network (AC5).
 	project, err := resolveBoundProject(cfg, repoRoot)
 	if err != nil {
-		return err
+		return ref, err
 	}
 	client := newHostedClient(cmd.Context(), server, repoRoot)
 	// Prefer skipping unchanged bytes via server manifest (sty_88e83180 AC6).
 	// On manifest failure: degrade to full upload with a printed note.
 	headSHA := map[string]string{}
-	if manifest, merr := client.ConfigManifest(cmd.Context(), project); merr != nil {
+	manifest, merr := client.ConfigManifest(cmd.Context(), project)
+	if merr != nil {
 		if errors.Is(merr, hosted.ErrLoginRequired) {
-			return merr
+			return ref, merr
 		}
 		if snapshotOnlyRequested(cmd) {
-			return snapshotOnlyRefusal(merr)
+			return ref, snapshotOnlyRefusal(merr)
 		}
 		fmt.Fprintf(out, "config manifest unavailable (%v) — uploading every file.\n", merr)
 	} else {
 		headSHA = headSHAByPath(manifest)
+	}
+	// Every upload below sends only what the holder gate lets through.
+	files, ref, err = holderGate(cmd.Context(), client, cfg, repoRoot, server, project, files, headSHA)
+	if err != nil {
+		return ref, err
+	}
+	if merr == nil {
 		// A push publishes each area's whole state as a snapshot (sty_fe5a8ed4):
 		// refused when this machine is behind, so it never overwrites a newer
 		// push from another machine. A server that cannot hold snapshots falls
 		// through to the plain upload below.
 		snap, handled, serr := pushConfigSnapshots(cmd, cfg, repoRoot, dataDir, ign, client, server, project, manifest, files)
 		if serr != nil {
-			return serr
+			var nh *hosted.NotHolderError
+			if !errors.As(serr, &nh) {
+				return ref, serr
+			}
+			ref.add(nh.Path, nh.Holder)
 		}
 		if handled {
 			// Team-owned files no area holds (scripts, hooks) are in no snapshot:
 			// they go up as plain files beside it.
-			c, u, n, perr := pushPlainConfigFiles(cmd, client, project, headSHA, teamAreaFiles(files))
+			c, u, n, perr := pushPlainConfigFiles(cmd, client, project, headSHA, teamAreaFiles(files), &ref)
 			if perr != nil {
-				return perr
+				return ref, perr
 			}
 			snap.created, snap.unchanged, snap.notUploaded = snap.created+c, snap.unchanged+u, snap.notUploaded+n
 			printWithheldLocal()
 			fmt.Fprintf(out, "Pushed %d of %d config file(s) to project %q on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
 				snap.created+snap.unchanged, len(files), project, server, snap.created, snap.unchanged, snap.notUploaded)
-			return nil
+			return ref, nil
 		}
 	}
-	created, unchanged, notUploaded, err := pushPlainConfigFiles(cmd, client, project, headSHA, files)
+	created, unchanged, notUploaded, err := pushPlainConfigFiles(cmd, client, project, headSHA, files, &ref)
 	if err != nil {
-		return err
+		return ref, err
 	}
 	printWithheldLocal()
 	uploaded := created + unchanged
 	fmt.Fprintf(out, "Pushed %d of %d config file(s) to project %q on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
 		uploaded, len(files), project, server, created, unchanged, notUploaded)
-	return nil
+	return ref, nil
 }
 
 // pushPlainConfigFiles uploads each file whose bytes the hosted head does not
-// already hold, with no snapshot check.
-func pushPlainConfigFiles(cmd *cobra.Command, client *hosted.Client, project string, headSHA map[string]string, files []config.ConfigFile) (created, unchanged, notUploaded int, err error) {
+// already hold, with no snapshot check. A path the server refuses because the
+// caller is not the substrate holder is recorded in ref, and the rest still go.
+func pushPlainConfigFiles(cmd *cobra.Command, client *hosted.Client, project string, headSHA map[string]string, files []config.ConfigFile, ref *holderRefusal) (created, unchanged, notUploaded int, err error) {
 	for _, f := range files {
 		if contentMatchesSHA(headSHA[f.Path], f.Content) {
 			notUploaded++
@@ -577,6 +612,11 @@ func pushPlainConfigFiles(cmd *cobra.Command, client *hosted.Client, project str
 		}
 		res, perr := client.PushConfigFile(cmd.Context(), project, f.Path, f.Content)
 		if perr != nil {
+			var nh *hosted.NotHolderError
+			if errors.As(perr, &nh) {
+				ref.add(nh.Path, nh.Holder)
+				continue
+			}
 			if errors.Is(perr, hosted.ErrLoginRequired) {
 				return created, unchanged, notUploaded, perr
 			}
