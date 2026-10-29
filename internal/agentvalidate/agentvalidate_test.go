@@ -971,6 +971,35 @@ func TestValidate_ClaudeContextChannel(t *testing.T) {
 	}
 }
 
+// A performer seat completed by a profile whose grant is empty still has no
+// channel once every layer is visible (sty_50dae450): the refusal is deferred to
+// the machine only when the machine's layers were left out, never waived.
+func TestValidate_EmptyProfileGrantStillRefusedWithAllLayers(t *testing.T) {
+	global, err := config.ParseGlobalAgents("[profiles.empty]\nrole = \"agent\"\ncommand = \"pi -p {system} {payload}\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := config.AgentsConfig{
+		Executor: config.AgentBinding{Role: config.RoleAgent, Command: "in-loop"},
+		Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
+		Agents:   map[string]config.AgentBinding{"coder": {Role: config.RoleAgent}},
+	}
+	local := config.AgentsConfig{Agents: map[string]config.AgentBinding{"coder": {Profile: "empty"}}}
+
+	r := ValidateEffectiveLayered(config.AgentLayers{Repo: repo, Local: local}, global, nil, channelWF("coder"), nil)
+	if got := findingWith(r.Problems, "no context channel"); got == "" || r.OK() {
+		t.Fatalf("an empty profile grant must still be refused with every layer visible: %v", r.Problems)
+	}
+
+	r = ValidateEffectiveLayered(config.AgentLayers{Repo: repo, MachineLayersExcluded: true}, global, nil, channelWF("coder"), nil)
+	if !r.OK() {
+		t.Fatalf("with the machine layers left out, a role-only seat must not be refused: %v", r.Problems)
+	}
+	if w := findingWith(r.Warnings, "agents.local.toml or its profile"); w == "" {
+		t.Errorf("want the per-machine grant warning, got %v", r.Warnings)
+	}
+}
+
 // TestValidate_ReviewerShellGrantIsUnusedCapability — AC2/AC4: reviewers are fed
 // their documents in the transition payload, so a shell grant is never consulted.
 // Reported as a WARNING (report stays OK → exit 0) because keeping it is the

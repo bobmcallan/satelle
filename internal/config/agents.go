@@ -72,6 +72,11 @@ func LocalAgentsPath(dataDir string) string {
 type AgentLayers struct {
 	Repo, Workspace, Local          AgentsConfig
 	RepoErr, WorkspaceErr, LocalErr error
+	// MachineLayersExcluded marks layers judged as ANOTHER machine would load
+	// them (a push): Local and Workspace were left out on purpose, so a seat the
+	// repo writes no command or tools for is completed by each machine's own
+	// layer, and its grant can only be judged there.
+	MachineLayersExcluded bool
 }
 
 // LoadAgentLayers is the ONE reader of the authored agents layers: every surface

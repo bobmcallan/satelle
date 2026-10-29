@@ -13,7 +13,10 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/agentvalidate"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/doctor"
+	"github.com/bobmcallan/satelle/internal/health"
 	"github.com/bobmcallan/satelle/internal/hosted"
 )
 
@@ -385,6 +388,165 @@ func TestPushValidationExcludesMachineAgentLayers(t *testing.T) {
 			}
 			if !strings.Contains(buf.String(), "node.alloc") {
 				t.Errorf("the refusal must print the node.alloc finding:\n%s", buf.String())
+			}
+			if n := requests(); n != 0 {
+				t.Fatalf("a refused push contacted the server %d time(s)", n)
+			}
+		})
+	}
+}
+
+// coderPushRepo is a repo whose route allocates its coded step to the performer
+// seat "coder", with shared as the shared agents layer.
+func coderPushRepo(t *testing.T, shared string) (repo, dataDir string) {
+	t.Helper()
+	repo = agentsPushRepo(t, configPushToml, shared)
+	writeRoute(t, filepath.Join(repo, ".satelle", "workflows"),
+		"[\"*\"]\nobligations = [\"raised\", \"coded\", \"closed\"]\n",
+		"[raised]\nstatus = \"backlog\"\nstart = true\n\n"+
+			"[coded]\nstatus = \"in_progress\"\nagent = \"coder\"\nrequires = [\"raised\"]\n\n"+
+			"[closed]\nstatus = \"done\"\nterminal = true\nrequires = [\"coded\"]\n")
+	return repo, filepath.Join(repo, ".satelle")
+}
+
+const (
+	piPerformerCommand = "pi -p {system} {payload}"
+	// roleOnlyCoder is a shared [coder] that writes no command and no tools: its
+	// grant comes from each machine's agents.local.toml or profile.
+	roleOnlyCoder = executorOnlyAgents + "\n[coder]\nrole = \"agent\"\n"
+)
+
+// nodeAllocFindings returns the node.alloc findings of one severity.
+func nodeAllocFindings(rep doctor.Report, sev health.Severity) []health.Finding {
+	var out []health.Finding
+	for _, f := range rep.Findings.WithSeverity(sev) {
+		if f.ID == health.IDNodeAlloc {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// AC1/AC2 (sty_50dae450): a shared performer seat that writes no tools and no
+// command is completed per machine, so a push is not refused for its missing
+// context channel and prints no adapter's read tool; judged as another machine
+// loads it, doctor reports it as a warning naming agents.local.toml.
+func TestPushDefersRoleOnlyPerformerGrantToTheMachine(t *testing.T) {
+	useRealPushValidator(t)
+	ts, requests := newCountingServer(t)
+	seedCred(t, ts.URL)
+	repo, dataDir := coderPushRepo(t, roleOnlyCoder)
+
+	cmd, buf := testCmd()
+	if err := runSyncConfigPush(cmd, ts.URL, "", true); err != nil {
+		t.Fatalf("a role-only performer seat was refused: %v\n%s", err, buf.String())
+	}
+	if n := requests(); n != 0 {
+		t.Fatalf("a dry run contacted the server %d time(s)", n)
+	}
+
+	var out strings.Builder
+	if failed := validateSystem(&out, dataDir, true); failed != 0 {
+		t.Fatalf("push validation failed %d time(s):\n%s", failed, out.String())
+	}
+	for _, banned := range []string{"FAIL  [node.alloc]", "`Read`", "`read`"} {
+		if strings.Contains(out.String(), banned) {
+			t.Errorf("push output carries %q:\n%s", banned, out.String())
+		}
+	}
+
+	rep := doctor.Check(context.Background(), doctor.Opts{RepoRoot: repo, DataDir: dataDir, ExcludeMachineAgentLayers: true})
+	if errs := nodeAllocFindings(rep, health.SeverityError); len(errs) != 0 {
+		t.Fatalf("want no error-severity node.alloc, got %v", errs)
+	}
+	warns := nodeAllocFindings(rep, health.SeverityWarn)
+	if len(warns) != 1 {
+		t.Fatalf("want one warn-severity node.alloc finding, got %v", rep.Findings)
+	}
+	d := warns[0].Detail
+	if !strings.Contains(d, "agent=coder") || !strings.Contains(d, "agents.local.toml") || !strings.Contains(d, "profile") {
+		t.Errorf("the warning must name the seat and say the grant comes from agents.local.toml or a profile: %q", d)
+	}
+	if strings.Contains(d, "`Read`") || strings.Contains(d, "`read`") {
+		t.Errorf("the warning must name no single adapter's read tool: %q", d)
+	}
+}
+
+// AC3 (sty_50dae450): the same shared file passes the push, and on a machine
+// whose agents.local.toml names a profile, the coder's grant is the profile's.
+func TestRoleOnlyCoderPushesAndRunsTheProfileGrant(t *testing.T) {
+	useRealPushValidator(t)
+	repo, dataDir := coderPushRepo(t, roleOnlyCoder)
+	const profileTools = "read,write,edit,bash"
+	writeRepoFile(t, repo, ".satelle/workflows/"+config.LocalAgentsName, "[coder]\nprofile = \"p\"\n")
+	if err := os.MkdirAll(config.GlobalDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	catalog := "[profiles.p]\nrole = \"agent\"\ncommand = \"" + piPerformerCommand + "\"\ntools = \"" + profileTools + "\"\n"
+	if err := os.WriteFile(config.GlobalAgentsPath(), []byte(catalog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out strings.Builder
+	if failed := validateSystem(&out, dataDir, true); failed != 0 {
+		t.Fatalf("the push refused a coder with no shared tools key (%d failed):\n%s", failed, out.String())
+	}
+
+	layers, err := config.LoadAgentLayers(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	global, err := config.LoadGlobalAgents()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := agentvalidate.ValidateEffectiveLayered(layers, global, nil, doctor.GoverningWorkflows(dataDir), doctor.SkillBodyResolver(dataDir))
+	var coder *agentvalidate.Grant
+	for i := range r.Grants {
+		if r.Grants[i].Name == "coder" {
+			coder = &r.Grants[i]
+		}
+	}
+	if coder == nil {
+		t.Fatalf("no coder grant: %+v", r.Grants)
+	}
+	if coder.Tools != profileTools {
+		t.Errorf("coder tools = %q, want the profile's %q", coder.Tools, profileTools)
+	}
+	if got := coder.Sources["tools"]; got != config.SourceProfile("p") {
+		t.Errorf("coder tools sourced %q, want %q", got, config.SourceProfile("p"))
+	}
+	for _, p := range r.Problems {
+		if strings.Contains(p, "no context channel") {
+			t.Errorf("the profile grant carries a channel, yet: %s", p)
+		}
+	}
+
+	agentOut, _ := runRoot(t, "agent", "validate")
+	if !strings.Contains(agentOut, "GRANT [coder]") || !strings.Contains(agentOut, `tools="`+profileTools+`"`) {
+		t.Errorf("satelle agent validate must report the profile's coder grant:\n%s", agentOut)
+	}
+}
+
+// AC5 (sty_50dae450): a shared [coder] that writes its own command or tools is
+// judged strictly, so a push is still refused when that grant has no channel.
+func TestPushRefusesSharedPerformerGrantWithoutChannel(t *testing.T) {
+	useRealPushValidator(t)
+	for name, coder := range map[string]string{
+		"shared command, no tools": "[coder]\nrole = \"agent\"\ncommand = \"" + piPerformerCommand + "\"\n",
+		"shared tools, no channel": "[coder]\nrole = \"agent\"\ntools = \"Write\"\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			ts, requests := newCountingServer(t)
+			seedCred(t, ts.URL)
+			coderPushRepo(t, executorOnlyAgents+"\n"+coder)
+			cmd, buf := testCmd()
+			err := runSyncConfigPush(cmd, ts.URL, "", true)
+			if err == nil {
+				t.Fatalf("a shared grant with no context channel was pushed:\n%s", buf.String())
+			}
+			if !strings.Contains(buf.String(), "FAIL  [node.alloc]") || !strings.Contains(buf.String(), "context channel") {
+				t.Errorf("the refusal must print the node.alloc context-channel finding:\nerr: %v\nout: %s", err, buf.String())
 			}
 			if n := requests(); n != 0 {
 				t.Fatalf("a refused push contacted the server %d time(s)", n)
