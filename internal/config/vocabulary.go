@@ -26,6 +26,11 @@ type TagsConfig struct {
 	// Vocabulary maps a tag namespace (without trailing colon) to the allowed
 	// values for that namespace. Empty map / unset = no controlled namespaces.
 	Vocabulary map[string][]string `toml:"vocabulary"`
+	// BackReferenceNamespaces names the tag namespaces whose value is the id of
+	// another story this one refers back to (e.g. follows, regression-of). A
+	// tag in one of them must name a story that exists, done or not. Empty =
+	// no back-reference namespace; the binary declares none of its own.
+	BackReferenceNamespaces []string `toml:"back_reference_namespaces"`
 }
 
 // CanonicaliseTags validates tags against the configured vocabulary and

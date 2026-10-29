@@ -280,6 +280,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storySessionCommand())
 		parent.AddCommand(storyReworkCommand())
 		parent.AddCommand(storyWaiveCommand())
+		parent.AddCommand(storyReleaseRecordCommand())
 		parent.AddCommand(storyDriveCommand())
 		parent.AddCommand(storyArchiveCommand(), storyUnarchiveCommand())
 	}
@@ -766,6 +767,43 @@ the tree the story was engaged from and refuses elsewhere.`,
 	cmd.Flags().BoolVar(&recorded, "recorded", false, "union change_record file lists instead of live git re-derive (sty_948ad5df)")
 	cmd.Flags().BoolVar(&includeSubstrate, "include-substrate", false, "opt-in: union substrate mtime leg (authored dirs + data dir); default live path stays git-only")
 	cmd.Flags().BoolVar(&full, "full", false, "skip compact rendering (noise-strip and ranking) and print the raw patch (sty_918e2086)")
+	return cmd
+}
+
+// storyReleaseRecordCommand builds `satelle story release-record <id>...`:
+// record one release against stories by id, from any session.
+func storyReleaseRecordCommand() *cobra.Command {
+	var commit, release string
+	var fields []string
+	cmd := &cobra.Command{
+		Use:   "release-record <id>... --commit <sha> --release <id> [--field k=v ...]",
+		Short: "Record a release against stories by id, done ones included; changes no status",
+		Long: `Append one release_record ledger row to each named story: the commit and the
+release identifier that shipped it, plus any --field metadata. It takes no seat
+and changes no status, so it runs from any session and on a story already done.
+
+The keys --field may carry are the repo's [release] fields in satelle.toml; an
+undeclared key is refused when that list is set. Every id and key is checked
+before anything is written, so a refusal records nothing.`,
+		Args:        cobra.MinimumNArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			kv := map[string]string{}
+			for _, f := range fields {
+				k, v, ok := strings.Cut(f, "=")
+				if !ok {
+					return fmt.Errorf("story release-record: --field %q is not k=v", f)
+				}
+				kv[strings.TrimSpace(k)] = v
+			}
+			return dispatch(cmd, "story-release-record", map[string]any{
+				"ids": args, "commit": commit, "release": release, "fields": kv,
+			})
+		},
+	}
+	cmd.Flags().StringVar(&commit, "commit", "", "the commit the release shipped (required)")
+	cmd.Flags().StringVar(&release, "release", "", "the release identifier, e.g. a version (required)")
+	cmd.Flags().StringArrayVar(&fields, "field", nil, "extra release metadata as k=v (repeatable; keys from [release] fields)")
 	return cmd
 }
 

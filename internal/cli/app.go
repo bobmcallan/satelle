@@ -190,6 +190,8 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// satelle.toml [tags.vocabulary] at story/task create and set. Independent of
 	// the agent CLI — must work with no harness installed.
 	verb.SetTagVocabulary(a.Config)
+	// [release] fields: the metadata keys `story release-record` accepts.
+	verb.SetReleaseFields(a.Config.Release.Fields)
 	// Assignee holder (sty_8ccaa906): local credstore PrincipalID only — no
 	// hosted.Client.Me, no network. Local-only (no credential) means
 	// unassigned (offline team-of-1). The one user rule is resolveUser
@@ -300,7 +302,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 			rev.SetDiffResolver(diffResolver())
 			// Plan-citation excerpts: the tree a gate judges, resolved without
 			// requiring the engagement baseline the readiness edge lacks.
-			rev.SetCitationTreeResolver(verb.StoryGateTree)
+			rev.SetCitationTreeResolver(func(ctx context.Context, itemID string) (string, error) {
+				return verb.StoryGateTree(verb.WithGateStory(ctx, itemID), itemID)
+			})
 			// Ranked diff compressor (sty_918e2086): noise-strip then ranked hunk
 			// selection are the gate payload's PRIMARY patch reducer; the backstop
 			// offloader keeps the diffPayloadCeiling ceiling's overflow recoverable
@@ -632,13 +636,14 @@ func definitionEditsResolver() func(ctx context.Context, itemID string) []agents
 // injection (sty_a125b440). verb.StoryDiff is the same derivation as
 // `satelle story diff`; ANY error (no baseline, empty sha, foreign tree, git
 // unavailable) becomes a no-baseline marker so the transition cannot fail on
-// enumeration.
+// enumeration. It runs for a gate judging itemID, so it reads that story's own
+// tree from whichever tree the transition is presented (verb.WithGateStory).
 func diffResolver() func(ctx context.Context, itemID string) *agentstep.DiffState {
 	return func(ctx context.Context, itemID string) *agentstep.DiffState {
 		if itemID == "" {
 			return &agentstep.DiffState{NoBaseline: true, Note: "empty item id"}
 		}
-		res, err := verb.StoryDiff(ctx, itemID, verb.StoryDiffOpts{Patch: true, IncludeSubstrate: true})
+		res, err := verb.StoryDiff(verb.WithGateStory(ctx, itemID), itemID, verb.StoryDiffOpts{Patch: true, IncludeSubstrate: true})
 		if err != nil {
 			return &agentstep.DiffState{NoBaseline: true, Note: err.Error()}
 		}

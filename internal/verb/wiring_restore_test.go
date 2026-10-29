@@ -143,6 +143,7 @@ func wiringCases() []wiringCase {
 		{fn: "ClearTrunkConfig", pair: "SetTrunkConfig", pre: func() { SetTrunkConfig(config.TrunkConfig{Check: new(bool)}, "wiring-sentinel") }, call: ClearTrunkConfig, want: []string{"trunkCfg", "trunkRepo"}},
 		{fn: "SetTrunkOutput", call: func() { SetTrunkOutput(new(strings.Builder)) }, want: []string{"trunkOut"}},
 		{fn: "SetApplyOutput", call: func() { SetApplyOutput(new(strings.Builder)) }, want: []string{"applyOut"}},
+		{fn: "SetReleaseFields", call: func() { SetReleaseFields([]string{"wiring-sentinel"}) }, want: []string{"releaseFields"}},
 	}
 }
 

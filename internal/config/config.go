@@ -179,6 +179,17 @@ type Config struct {
 	// Trunk declares the start-of-work trunk check (sty_9f3e51d1): whether it
 	// runs at engage, and which states it refuses on. See TrunkConfig.
 	Trunk TrunkConfig `toml:"trunk"`
+	// Release declares the metadata a recorded release may carry beyond its
+	// commit and release identifier (`satelle story release-record`). See
+	// ReleaseConfig.
+	Release ReleaseConfig `toml:"release"`
+}
+
+// ReleaseConfig is the [release] table. Fields lists the extra metadata keys a
+// release record may carry (--field k=v); a key outside it is refused. Empty =
+// any key is accepted. The binary names no field of its own.
+type ReleaseConfig struct {
+	Fields []string `toml:"fields"`
 }
 
 // OutputConfig is the [output] table: which verbs get compact rendering, when

@@ -125,6 +125,20 @@ Amend never moves status. It runs from a performing state and from the parked
 resumed in place. Terminal and cancelled stories are refused: their record is
 history — raise a new story carrying `supersedes:<id>`.
 
+A done story is never reopened: `satelle story set` refuses any move out of a
+terminal state, even along an edge the route declares. New work on it is a new
+story carrying a back-reference tag. The namespaces that count as
+back-references are repo configuration, `[tags] back_reference_namespaces` in
+satelle.toml (for example `follows` and `regression-of`); a tag in one of them
+must name a story that exists, done or not.
+
+A release is recorded against stories by id, from any session and on stories
+already done, without changing their status:
+
+    satelle story release-record <id>... --commit <sha> --release <id> [--field k=v ...]
+
+The `--field` keys allowed are the repo's `[release] fields`.
+
 ## 5. Cancel (any → cancelled)
 
 To abandon an item, record why:
