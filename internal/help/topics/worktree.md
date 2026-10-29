@@ -112,8 +112,10 @@ gate_wiring = [".mybot/hooks.json"]  # tree-relative paths this harness needs
   (`.claude/settings.json`), grok (`.grok/hooks/satelle.json`), pi
   (`.pi/extensions/satelle.ts`) and cursor (`.cursor/hooks.json`); a repo's table
   overrides them. A harness with none declared is treated as having absent
-  wiring. To carry cursor's wiring into a worktree, add `.cursor/hooks.json` to
-  `[worktree] include` (the path must be gitignored in the main tree).
+  wiring. `satelle story worktree` (and `--existing`) also carries every
+  harness's `gate_wiring` path the main tree has and gitignores, without an
+  `include` entry; an absent or tracked path is skipped, and a path an `include`
+  entry already covers is carried once.
 - A present wiring file is also scanned for the hook wrapper script it calls
   (`.satelle/hooks/satelle-hook.sh`, comment lines ignored). That script must
   exist where the call points; a missing one counts as missing wiring.

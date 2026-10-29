@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/config"
@@ -19,22 +20,23 @@ import (
 // SetEngagementMode. Both come from the process plane, so a worktree reads the
 // main tree's declaration (sty_ddbe2669), never a copy of its own.
 var (
-	worktreeCfg   config.WorktreeConfig
+	worktreeCfg   config.Config
 	worktreeRoot  string
 	worktreeWired bool
 )
 
-// SetWorktreeConfig wires the repo's [worktree] declaration and the canonical
-// (main) tree root worktrees are cut from and carried from.
+// SetWorktreeConfig wires the repo's [worktree] declaration, the [harness.*]
+// tables whose gate wiring a worktree also carries, and the canonical (main)
+// tree root worktrees are cut from and carried from.
 func SetWorktreeConfig(cfg config.Config, mainRoot string) {
-	worktreeCfg = cfg.Worktree
+	worktreeCfg = cfg
 	worktreeRoot = mainRoot
 	worktreeWired = true
 }
 
 // ClearWorktreeConfig resets the wiring (tests).
 func ClearWorktreeConfig() {
-	worktreeCfg, worktreeRoot, worktreeWired = config.WorktreeConfig{}, "", false
+	worktreeCfg, worktreeRoot, worktreeWired = config.Config{}, "", false
 }
 
 func init() {
@@ -76,9 +78,10 @@ type WorktreeResult struct {
 var worktreeIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 // storyWorktree opens a worktree for a story the way satelle directs and
-// carries the declared gitignored paths into it. What is carried, and how the
-// branch and location are named, is the repo's [worktree] declaration — this
-// verb holds no convention of its own.
+// carries the declared gitignored paths into it, together with every harness's
+// gate wiring the main tree has and ignores. What is carried, and how the
+// branch and location are named, is the repo's [worktree] and [harness.*]
+// declaration — this verb holds no convention of its own.
 func storyWorktree(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var req worktreeReq
 	if err := decode(raw, &req); err != nil {
@@ -106,11 +109,11 @@ func storyWorktree(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 		if strings.TrimSpace(req.Base) == "" {
 			return nil, errors.New("verb: --base <ref> is required — name the ref the worktree is cut from (for a child of an epic, the epic's base branch; for a dependent, trunk or its dependency's branch — see satelle help worktree); satelle never defaults to HEAD")
 		}
-		branch, err := resolveTemplate("branch", req.Branch, worktreeCfg.Branch, req.ID)
+		branch, err := resolveTemplate("branch", req.Branch, worktreeCfg.Worktree.Branch, req.ID)
 		if err != nil {
 			return nil, err
 		}
-		path, err := resolveTemplate("path", req.Path, worktreeCfg.Path, req.ID)
+		path, err := resolveTemplate("path", req.Path, worktreeCfg.Worktree.Path, req.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -129,7 +132,12 @@ func storyWorktree(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 		res.Path, res.Branch, res.Base = path, branch, req.Base
 	}
 
-	rep, err := worktree.Carry(ctx, main, res.Path, worktreeCfg.Include)
+	wiring, err := wiringToCarry(ctx, main, worktreeCfg.Worktree.Include, worktreeCfg)
+	if err != nil {
+		return nil, err
+	}
+	include := append(append([]string(nil), worktreeCfg.Worktree.Include...), wiring...)
+	rep, err := worktree.Carry(ctx, main, res.Path, include)
 	res.Entries = rep.Entries
 	res.Missing = rep.Names(worktree.StatusAbsent)
 	if res.Entries == nil {
@@ -145,6 +153,44 @@ func storyWorktree(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 			err, res.Path, res.Branch, res.Path, res.Branch, req.ID, res.Path)
 	}
 	return json.Marshal(res)
+}
+
+// wiringToCarry is every harness's gate wiring the main tree holds and git
+// ignores there, minus what an include entry already covers (itself or an
+// ancestor directory). Absent wiring is no evidence the harness runs here, and
+// tracked wiring arrives with the checkout, so both are left out rather than
+// reported.
+func wiringToCarry(ctx context.Context, main string, include []string, cfg config.Config) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	for _, h := range cfg.Harnesses() {
+		for _, p := range cfg.PresentGateWiring(main, h) {
+			entry := filepath.Clean(filepath.FromSlash(p))
+			if seen[entry] || !filepath.IsLocal(entry) || coveredBy(entry, include) {
+				continue
+			}
+			seen[entry] = true
+			ignored, err := worktree.Ignored(ctx, main, entry)
+			if err != nil {
+				return nil, fmt.Errorf("worktree gate wiring %q: %w", entry, err)
+			}
+			if ignored {
+				out = append(out, entry)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// coveredBy reports whether entry is an include entry or lies beneath one.
+func coveredBy(entry string, include []string) bool {
+	for _, raw := range include {
+		if rel, err := filepath.Rel(filepath.Clean(raw), entry); err == nil && filepath.IsLocal(rel) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveTemplate picks a flag value over the repo's template and substitutes

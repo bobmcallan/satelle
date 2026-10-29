@@ -275,6 +275,12 @@ func sameTarget(dst, src string) bool {
 	return err1 == nil && err2 == nil && a == b
 }
 
+// Ignored reports whether git ignores rel in the tree at root; a tracked path
+// is not ignored.
+func Ignored(ctx context.Context, root, rel string) (bool, error) {
+	return checkIgnore(ctx, root, rel)
+}
+
 // checkIgnore reports whether git ignores entry in the tree at root.
 func checkIgnore(ctx context.Context, root, entry string) (bool, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", root, "check-ignore", "-q", "--", entry)

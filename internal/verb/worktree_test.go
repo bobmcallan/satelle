@@ -324,3 +324,175 @@ func TestWorktreeCodeNamesNoRepoConvention(t *testing.T) {
 		}
 	}
 }
+
+// wiringRepo is a main tree holding files (path -> content) beside gitignore;
+// `git add -A` commits whatever the gitignore does not cover. The user's global
+// excludes file is masked so it cannot decide what the fixture tracks.
+func wiringRepo(t *testing.T, gitignore string, files map[string]string) string {
+	t.Helper()
+	main := filepath.Join(t.TempDir(), "main")
+	files[".gitignore"] = gitignore
+	files["README.md"] = "r\n"
+	for p, s := range files {
+		full := filepath.Join(main, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wtGit(t, main, "init", "-q", "-b", "main")
+	wtGit(t, main, "config", "user.email", "t@example.com")
+	wtGit(t, main, "config", "user.name", "t")
+	wtGit(t, main, "config", "core.excludesFile", os.DevNull)
+	wtGit(t, main, "add", "-A")
+	wtGit(t, main, "commit", "-q", "-m", "A")
+	return main
+}
+
+func entryStatus(res verb.WorktreeResult) map[string]string {
+	out := map[string]string{}
+	for _, e := range res.Entries {
+		out[e.Entry] = e.Status
+	}
+	return out
+}
+
+// sty_0dca3223 AC1: a gitignored pi extension is carried with no include entry.
+func TestStoryWorktreeCarriesPiGateWiringUnlisted(t *testing.T) {
+	main := wiringRepo(t, ".pi/\n", map[string]string{".pi/extensions/satelle.ts": "ext\n"})
+	declare(t, main, tmplFor(t))
+
+	res, err := openWT(t, map[string]any{"id": "sty_1", "base": "main"})
+	if err != nil {
+		t.Fatalf("story-worktree: %v", err)
+	}
+	link := filepath.Join(res.Path, ".pi", "extensions", "satelle.ts")
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("%s is not a link (err %v)", link, err)
+	}
+	if b, _ := os.ReadFile(link); string(b) != "ext\n" {
+		t.Errorf("carried extension = %q, want the main tree's content", b)
+	}
+	if got := entryStatus(res)[filepath.FromSlash(".pi/extensions/satelle.ts")]; got != "carried" {
+		t.Errorf("entries = %+v, want .pi/extensions/satelle.ts carried", res.Entries)
+	}
+	if st := wtGit(t, res.Path, "status", "--porcelain"); st != "" {
+		t.Errorf("worktree is not clean:\n%s", st)
+	}
+}
+
+// sty_0dca3223 AC2: every harness's resolved gate_wiring is carried, embedded
+// and operator-declared alike.
+func TestStoryWorktreeCarriesEachHarnessGateWiring(t *testing.T) {
+	for _, tc := range []struct{ harness, path string }{
+		{"claude", ".claude/settings.json"},
+		{"grok", ".grok/hooks/satelle.json"},
+		{"pi", ".pi/extensions/satelle.ts"},
+		{"cursor", ".cursor/hooks.json"},
+		{"mybot", ".mybot/hooks.json"},
+	} {
+		t.Run(tc.harness, func(t *testing.T) {
+			dir := strings.SplitN(tc.path, "/", 2)[0]
+			main := wiringRepo(t, dir+"/\n", map[string]string{tc.path: "w\n"})
+			withWiring(t)
+			verb.SetWorktreeConfig(config.Config{
+				Worktree: tmplFor(t),
+				Harness:  map[string]config.HarnessConfig{"mybot": {GateWiring: []string{".mybot/hooks.json"}}},
+			}, main)
+
+			res, err := openWT(t, map[string]any{"id": "sty_1", "base": "main"})
+			if err != nil {
+				t.Fatalf("story-worktree: %v", err)
+			}
+			if got := entryStatus(res)[filepath.FromSlash(tc.path)]; got != "carried" {
+				t.Errorf("entries = %+v, want %s carried", res.Entries, tc.path)
+			}
+			if b, _ := os.ReadFile(filepath.Join(res.Path, filepath.FromSlash(tc.path))); string(b) != "w\n" {
+				t.Errorf("%s in worktree = %q", tc.path, b)
+			}
+		})
+	}
+}
+
+// sty_0dca3223 AC2: a repo's [harness.<name>] gate_wiring overrides the
+// embedded path for what is carried.
+func TestStoryWorktreeCarriesOverriddenGateWiring(t *testing.T) {
+	main := wiringRepo(t, ".claude/\n", map[string]string{
+		".claude/settings.json":    "default\n",
+		".claude/custom-hook.json": "custom\n",
+	})
+	withWiring(t)
+	verb.SetWorktreeConfig(config.Config{
+		Worktree: tmplFor(t),
+		Harness:  map[string]config.HarnessConfig{"claude": {GateWiring: []string{".claude/custom-hook.json"}}},
+	}, main)
+	res, err := openWT(t, map[string]any{"id": "sty_1", "base": "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := entryStatus(res)
+	if st[filepath.FromSlash(".claude/custom-hook.json")] != "carried" {
+		t.Errorf("entries = %+v, want the override carried", res.Entries)
+	}
+	if _, ok := st[filepath.FromSlash(".claude/settings.json")]; ok {
+		t.Errorf("entries = %+v, the overridden embedded path was carried", res.Entries)
+	}
+}
+
+// sty_0dca3223 AC3: absent wiring is skipped and not reported missing.
+func TestStoryWorktreeSkipsAbsentGateWiring(t *testing.T) {
+	main := wiringRepo(t, ".pi/\n", map[string]string{})
+	declare(t, main, tmplFor(t))
+	res, err := openWT(t, map[string]any{"id": "sty_1", "base": "main"})
+	if err != nil {
+		t.Fatalf("story-worktree: %v", err)
+	}
+	if len(res.Entries) != 0 || len(res.Missing) != 0 {
+		t.Errorf("entries = %+v, missing = %v, want both empty", res.Entries, res.Missing)
+	}
+}
+
+// sty_0dca3223 AC3: tracked wiring arrives through git and is not carried.
+func TestStoryWorktreeSkipsTrackedGateWiring(t *testing.T) {
+	main := wiringRepo(t, "", map[string]string{".claude/settings.json": "tracked\n"})
+	declare(t, main, tmplFor(t))
+	res, err := openWT(t, map[string]any{"id": "sty_1", "base": "main"})
+	if err != nil {
+		t.Fatalf("story-worktree: %v", err)
+	}
+	if len(res.Entries) != 0 || len(res.Missing) != 0 {
+		t.Errorf("entries = %+v, missing = %v, want both empty", res.Entries, res.Missing)
+	}
+	p := filepath.Join(res.Path, ".claude", "settings.json")
+	if fi, err := os.Lstat(p); err != nil || fi.Mode()&os.ModeSymlink != 0 {
+		t.Errorf("%s should be the checked-out file, not a link (err %v)", p, err)
+	}
+}
+
+// sty_0dca3223 AC3: an include entry that covers the wiring (itself or an
+// ancestor directory) carries it once.
+func TestStoryWorktreeIncludeCoversGateWiringOnce(t *testing.T) {
+	main := wiringRepo(t, ".claude/\n", map[string]string{".claude/settings.json": "w\n"})
+	declare(t, main, tmplFor(t, ".claude"))
+	res, err := openWT(t, map[string]any{"id": "sty_1", "base": "main"})
+	if err != nil {
+		t.Fatalf("story-worktree: %v", err)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].Entry != ".claude" || res.Entries[0].Status != "carried" {
+		t.Errorf("entries = %+v, want exactly .claude carried", res.Entries)
+	}
+	if fi, err := os.Lstat(filepath.Join(res.Path, ".claude")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf(".claude should be the one link (err %v)", err)
+	}
+
+	declare(t, main, tmplFor(t, ".claude/settings.json"))
+	res, err = openWT(t, map[string]any{"id": "sty_2", "base": "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Entries) != 1 {
+		t.Errorf("entries = %+v, want the exact include entry alone", res.Entries)
+	}
+}

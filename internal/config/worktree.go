@@ -17,7 +17,8 @@ type WorktreeConfig struct {
 	// Include lists repo-relative paths the main tree gitignores and a worktree
 	// needs (harness wiring, local tool config, env files). Each is carried into
 	// the worktree as a link to the main tree's path, so nothing drifts and no
-	// secret is copied. A path names a file or directory, never a harness.
+	// secret is copied. A path names a file or directory, never a harness. Each
+	// harness's present, ignored gate_wiring is carried without being listed.
 	Include []string `toml:"include"`
 	// Branch and Path are templates for the branch and the location of a new
 	// worktree. {id} is the only placeholder. A relative Path resolves against

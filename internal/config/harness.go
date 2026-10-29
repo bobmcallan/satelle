@@ -7,6 +7,9 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -150,6 +153,44 @@ func (c Config) GateWiring(harness string) []string {
 	return append([]string(nil), EmbeddedHarness()[name].GateWiring...)
 }
 
+// PresentGateWiring returns the GateWiring paths of harness that exist under
+// root — the evidence that a session of that harness runs in that tree.
+func (c Config) PresentGateWiring(root, harness string) []string {
+	var out []string
+	for _, p := range c.GateWiring(harness) {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(p))); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// Harnesses is every harness with a [harness.<name>] table, embedded or the
+// repo's, sorted, without the neutral unknown fallback (which is a budget, not a
+// harness).
+func (c Config) Harnesses() []string {
+	set := map[string]bool{}
+	for k := range EmbeddedHarness() {
+		set[k] = true
+	}
+	for k := range c.Harness {
+		set[k] = true
+	}
+	delete(set, unknownHarness)
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// BudgetHarnesses is Harnesses plus the unknown fallback, last — the set a
+// caller budgeting session context resolves.
+func (c Config) BudgetHarnesses() []string {
+	return append(c.Harnesses(), unknownHarness)
+}
+
 // validateHarness refuses a malformed [harness.<name>] gate_wiring entry at
 // load time, naming the table and key. It only reads.
 func validateHarness(cfg Config, path string) error {
@@ -184,13 +225,7 @@ func undecodedGovernedKeys(md toml.MetaData, path string) error {
 // a resident set must fit for at least one harness to receive it inline.
 func (c Config) MaxContextLimit(harnesses ...string) int {
 	if len(harnesses) == 0 {
-		harnesses = []string{unknownHarness}
-		for k := range EmbeddedHarness() {
-			harnesses = append(harnesses, k)
-		}
-		for k := range c.Harness {
-			harnesses = append(harnesses, k)
-		}
+		harnesses = c.BudgetHarnesses()
 	}
 	high := 0
 	for _, h := range harnesses {
