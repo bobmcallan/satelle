@@ -43,6 +43,7 @@ var wiringVars = []wiringVar{
 	// Config-derived policy.
 	{"tagVocabCfg", &tagVocabCfg},
 	{"tagVocabWired", &tagVocabWired},
+	{"releaseFields", &releaseFields},
 	{"agentsLayer", &agentsLayer},
 	{"agentsVars", &agentsVars},
 	{"agentsWired", &agentsWired},

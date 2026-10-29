@@ -607,6 +607,9 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	// engage/lease so a skip is never partially acquired. Declared recovery,
 	// park, and cancel edges still pass.
 	if transitioning {
+		if err := refuseReopen(ctx, current, *req.Status); err != nil {
+			return nil, err
+		}
 		if err := refuseSkippedStep(ctx, current, *req.Status); err != nil {
 			return nil, err
 		}

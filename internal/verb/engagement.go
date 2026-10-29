@@ -492,6 +492,25 @@ func resolveEngagementSlice(ctx context.Context, it workitem.Item, wantPatch boo
 // set. `story diff` honours it for the named story alone — see gateTreeOverride.
 const GateStoryEnv = config.GateStoryEnv
 
+type gateStoryKey struct{}
+
+// WithGateStory marks ctx as judging storyID on a gate's behalf: the in-process
+// counterpart of GateStoryEnv, for enumeration the gating process itself runs
+// (the reviewer payload's diff). A context value rather than the environment, so
+// the mark never outlives the call or reaches another story's enumeration.
+func WithGateStory(ctx context.Context, storyID string) context.Context {
+	return context.WithValue(ctx, gateStoryKey{}, storyID)
+}
+
+// gateStoryNamed reports whether GateStoryEnv or a WithGateStory mark names storyID.
+func gateStoryNamed(ctx context.Context, storyID string) bool {
+	if strings.TrimSpace(os.Getenv(GateStoryEnv)) == storyID {
+		return true
+	}
+	marked, _ := ctx.Value(gateStoryKey{}).(string)
+	return marked != "" && marked == storyID
+}
+
 // storyAnchor is the working tree a story is engaged from: the live lease's tree
 // when one exists, else the engagement baseline's. Empty when unanchored.
 func storyAnchor(ctx context.Context, storyID, baselineTree string) string {
@@ -506,13 +525,14 @@ func storyAnchor(ctx context.Context, storyID, baselineTree string) string {
 
 // gateTreeOverride resolves the tree `story diff` should read when it runs under
 // a gate's functional check (sty_ab93f9a6). It returns the story's own anchor —
-// not the invoking tree — only when ALL hold: GateStoryEnv names this very story,
+// not the invoking tree — only when ALL hold: GateStoryEnv or a WithGateStory
+// mark names this very story,
 // the story is anchored, the anchor still exists, and it is a working tree of the
 // same repository as the invoking tree. Otherwise "", and the ordinary refusal
 // stands, so the variable cannot redirect a diff to another story's tree or to an
 // unrelated repository.
 func gateTreeOverride(ctx context.Context, storyID, baselineTree, invokedTree string) string {
-	if strings.TrimSpace(os.Getenv(GateStoryEnv)) != storyID {
+	if !gateStoryNamed(ctx, storyID) {
 		return ""
 	}
 	anchor := storyAnchor(ctx, storyID, baselineTree)

@@ -3,6 +3,8 @@ package verb_test
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -68,6 +70,57 @@ func TestStoryDiffGateTreeOverride(t *testing.T) {
 		d, _ := f.diff(t, map[string]any{"include_substrate": true})
 		if !has(d.Files, mainSkill) {
 			t.Errorf("main-tree story must list its substrate: %v", d.Files)
+		}
+	})
+}
+
+// The in-process gate mark (WithGateStory) lifts the refusal exactly as
+// GateStoryEnv does, with no environment variable set: for the story it names,
+// inside the same repository, and nowhere else.
+func TestStoryDiffWithGateStoryMark(t *testing.T) {
+	commitInWorktree := func(t *testing.T, f substrateFixture) {
+		t.Helper()
+		gitIn := func(args ...string) {
+			if out, err := exec.Command("git", append([]string{"-C", f.wt}, args...)...).CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v\n%s", args, err, out)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(f.wt, "slice.go"), []byte("package a\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gitIn("add", "slice.go")
+		gitIn("commit", "-qm", "slice")
+	}
+
+	t.Run("mark for this story reads its worktree", func(t *testing.T) {
+		f := newSubstrateFixture(t, true, wireProbeCfg)
+		commitInWorktree(t, f)
+		chdir(t, f.main)
+		t.Setenv(verb.GateStoryEnv, "")
+		d, err := verb.StoryDiff(verb.WithGateStory(context.Background(), f.story.ID), f.story.ID, verb.StoryDiffOpts{})
+		if err != nil || !has(d.Files, "slice.go") {
+			t.Fatalf("the marked diff must read the story's own worktree: files %v, err %v", d.Files, err)
+		}
+		if _, err := diffErr(t, f.story.ID); err == nil || !strings.Contains(err.Error(), foreignTreeRefusal) {
+			t.Errorf("an unmarked diff from the same tree must still be refused: %v", err)
+		}
+	})
+
+	t.Run("mark for a different story refuses", func(t *testing.T) {
+		f := newSubstrateFixture(t, true, wireProbeCfg)
+		chdir(t, f.main)
+		_, err := verb.StoryDiff(verb.WithGateStory(context.Background(), "sty_someoneelse"), f.story.ID, verb.StoryDiffOpts{})
+		if err == nil || !strings.Contains(err.Error(), foreignTreeRefusal) {
+			t.Fatalf("a mark naming another story must not lift the refusal: %v", err)
+		}
+	})
+
+	t.Run("mark cannot reach another repository", func(t *testing.T) {
+		f := newSubstrateFixture(t, false, wireProbeCfg)
+		chdir(t, gitRepo(t))
+		_, err := verb.StoryDiff(verb.WithGateStory(context.Background(), f.story.ID), f.story.ID, verb.StoryDiffOpts{})
+		if err == nil || !strings.Contains(err.Error(), foreignTreeRefusal) {
+			t.Fatalf("the mark must not reach a tree of another repository: %v", err)
 		}
 	})
 }

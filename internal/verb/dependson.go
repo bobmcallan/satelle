@@ -116,6 +116,48 @@ func dependsOnCycle(self string, graph map[string][]string) []string {
 	return nil
 }
 
+// backReferenceNamespaces is the repo's [tags] back_reference_namespaces:
+// namespaces whose value names the story this one refers back to. Unwired = none.
+func backReferenceNamespaces() []string {
+	if !tagVocabWired {
+		return nil
+	}
+	return tagVocabCfg.Tags.BackReferenceNamespaces
+}
+
+// checkBackReferences refuses a tag in a back-reference namespace whose value
+// names no story. The target's status is not judged: a follow-up usually refers
+// back to a story already done.
+func checkBackReferences(ctx context.Context, store dependsOnStore, tags []string) error {
+	namespaces := backReferenceNamespaces()
+	if len(namespaces) == 0 {
+		return nil
+	}
+	for _, t := range tags {
+		ns, id, ok := strings.Cut(t, ":")
+		if !ok {
+			continue
+		}
+		declared := false
+		for _, want := range namespaces {
+			declared = declared || strings.EqualFold(strings.TrimSpace(want), ns)
+		}
+		if !declared {
+			continue
+		}
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return fmt.Errorf("%s names no story: a back-reference tag is %s:<story id>", t, ns)
+		}
+		if _, err := store.Get(ctx, id); errors.Is(err, workitem.ErrNotFound) {
+			return fmt.Errorf("%s does not name a story", t)
+		} else if err != nil {
+			return fmt.Errorf("verb: read %s: %w", t, err)
+		}
+	}
+	return nil
+}
+
 // dependsOnStore is the slice of the work-item store the check reads.
 type dependsOnStore interface {
 	epicset.Lister
@@ -134,6 +176,9 @@ func checkDependsOn(ctx context.Context, store dependsOnStore, self, parentID st
 // which replace their stored edges, so a cycle that only closes across the
 // batch's own changes is found (sty_af0b1761).
 func checkDependsOnPending(ctx context.Context, store dependsOnStore, self, parentID string, tags []string, pending map[string][]string) error {
+	if err := checkBackReferences(ctx, store, tags); err != nil {
+		return err
+	}
 	var targets []string
 	for _, t := range dependsOnTargets(tags) {
 		if repo, id, cross := splitDependsOnTarget(t); cross {

@@ -119,6 +119,11 @@ const (
 	// (sty_6af229f1): body is the published line, payload the publish report
 	// with the pushed and combined heads. Never a verdict.
 	KindTrunkPublish = "trunk_publish"
+	// KindReleaseRecord records that a release shipped a story (`satelle story
+	// release-record`): body is "release <release> @ <commit>", payload the
+	// commit, release, configured fields and recording session. Written against
+	// any story, done included, and never changes its status. Never a verdict.
+	KindReleaseRecord = "release_record"
 	// KindSuiteRun records ONE run of an expensive verification suite as
 	// SHA-keyed evidence: {sha, command, outcome, started_at, finished_at} in
 	// Payload, StoryID being the recording story (sty_183a0510). Sibling stories

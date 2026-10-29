@@ -328,6 +328,20 @@ func refuseDirtyClose(ctx context.Context, item workitem.Item, target string) er
 		item.Status, target, l.Worktree, strings.Join(shown, "\n  "), more, item.ID, target)
 }
 
+// refuseReopen refuses any move out of a terminal state, even along an edge the
+// route declares: a closed story's record is history, and new work on it is a
+// new story carrying a back-reference tag. Terminal is the governing workflow's
+// own classification (targetIsTerminalStateOnly), so a park such as the cancel
+// sink is not covered.
+func refuseReopen(ctx context.Context, item workitem.Item, target string) error {
+	if target == item.Status || !targetIsTerminalStateOnly(ctx, item, item.Status) {
+		return nil
+	}
+	return fmt.Errorf(
+		"satelle: refusing to reopen %s (%s → %s) — %s is terminal and its record is closed history; raise a new story carrying a back-reference tag (e.g. follows:%s) instead",
+		item.ID, item.Status, target, item.Status, item.ID)
+}
+
 // targetIsExitState reports terminal or park via the governing workflow DOT.
 func targetIsExitState(ctx context.Context, item workitem.Item, status string) bool {
 	spec, _, _, ok := governingSpec(ctx, item)
