@@ -96,6 +96,7 @@ var wiringExempt = map[string]string{
 	"errForeignTree":        "error sentinel, assigned once at init and compared by identity",
 	"errNoGit":              "error sentinel, assigned once at init and compared by identity",
 	"errNoReadinessStep":    "error sentinel, assigned once at init and matched with errors.Is",
+	"errEpicAcceptFound":    "error sentinel, assigned once at init to stop a ledger scan",
 
 	"retrieveHashRE":    "compiled regexp, immutable",
 	"summaryStoryID":    "compiled regexp, immutable",

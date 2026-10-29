@@ -258,14 +258,15 @@ func repoRootFromTest(t *testing.T) string {
 // retired form here misleads every author and misjudges every real edit.
 // wants names the halves that file must still talk about, so the guard cannot
 // pass by a rewrite that simply stops mentioning the form. The advisor reasons
-// about steps and their bindings only, so it owes step.toml alone.
+// about steps, their bindings and the lanes a category table declares, so it
+// owes both halves.
 var routeReferenceSubstrate = []struct {
 	kind, name string
 	wants      []string
 }{
 	{"principles", "satelle-route-standard", []string{"done.toml", "step.toml"}},
 	{"skills", "satelle-workflow-change-review", []string{"done.toml", "step.toml"}},
-	{"skills", "satelle-workflow-advisor", []string{"step.toml"}},
+	{"skills", "satelle-workflow-advisor", []string{"done.toml", "step.toml"}},
 }
 
 // TestRouteReferenceSubstrateTeachesTheTOMLForm keeps the reference cluster on

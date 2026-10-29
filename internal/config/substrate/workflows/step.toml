@@ -113,6 +113,11 @@ requires = ["authored"]
 # no reviewers: the performer judges the round. The container then waits here for
 # its children (`waits_on_children`); children run in parallel unless a real
 # `depends-on:` edge holds one back.
+#
+# `advise` names the rubric the orchestrator is prompted to run when the repo's
+# first epic readiness round is accepted: the route-shape review, at the moment
+# the epic's order and lanes have just been judged. satelle prints the prompt and
+# runs nothing.
 status = "ready"
 agent = "ready-reviewer"
 skills = ["ready"]
@@ -121,6 +126,7 @@ waits_on_children = true
 mark = "ready"
 propose = true
 apply_changes = { ops = ["add-tags", "create-child"], tags = ["order:", "surface:", "lane:", "depends-on:"] }
+advise = { agent = "orchestrator", skill = "satelle-workflow-advisor" }
 
 [merged]
 # The epic-branch lane's landing. A child with no `lane:trunk` tag commits on

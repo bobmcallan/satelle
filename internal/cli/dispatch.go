@@ -18,11 +18,18 @@ import (
 // indented JSON unless the verb opts into compact mode (render, in
 // render.go) — configuration, not this function's concern.
 func dispatch(cmd *cobra.Command, name string, req any) error {
+	_, err := dispatchResponse(cmd, name, req)
+	return err
+}
+
+// dispatchResponse is dispatch that also returns the verb's response, nil when
+// the call was handed to a detached run.
+func dispatchResponse(cmd *cobra.Command, name string, req any) (json.RawMessage, error) {
 	var body json.RawMessage
 	if req != nil {
 		b, err := json.Marshal(req)
 		if err != nil {
-			return fmt.Errorf("encode request: %w", err)
+			return nil, fmt.Errorf("encode request: %w", err)
 		}
 		body = b
 	}
@@ -32,14 +39,14 @@ func dispatch(cmd *cobra.Command, name string, req any) error {
 	// progress, exactly as before.
 	if verb.DispatchesReviewer(name, body) {
 		if handled, herr := handOffGate(cmd, name, requestStoryID(req)); handled {
-			return herr
+			return nil, herr
 		}
 	}
 	resp, err := verb.Dispatch(cmd.Context(), name, body)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return renderResponse(cmd, name, requestStoryID(req), resp)
+	return resp, renderResponse(cmd, name, requestStoryID(req), resp)
 }
 
 // requestStoryID extracts the id/story_id a request body already names, so a

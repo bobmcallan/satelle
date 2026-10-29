@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/wfroute"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -50,6 +52,9 @@ type readinessEdge struct {
 	From string
 	To   string
 	Step wfdot.State
+	// Advisors are the advisors the governing route declares, as governingSpec
+	// resolved them for the item; epicAdvice picks the readiness step's own.
+	Advisors []wfroute.Advisor
 }
 
 // name is the step's obligation (its key in step.toml), falling back to its
@@ -66,7 +71,7 @@ func readinessEdgeFor(ctx context.Context, item workitem.Item) (readinessEdge, e
 	if item.Kind != workitem.KindStory {
 		return readinessEdge{}, fmt.Errorf("%s is a %s: only a story or an epic-parent has a readiness step", item.ID, item.Kind)
 	}
-	spec, _, _, ok := governingSpec(ctx, item)
+	spec, _, advisors, ok := governingSpec(ctx, item)
 	if !ok {
 		return readinessEdge{}, fmt.Errorf("cannot resolve the route that governs %s", item.ID)
 	}
@@ -78,7 +83,7 @@ func readinessEdgeFor(ctx context.Context, item workitem.Item) (readinessEdge, e
 			continue
 		}
 		if (container && st.WaitsOnChildren) || (!container && st.Propose) {
-			return readinessEdge{From: from, To: to, Step: st}, nil
+			return readinessEdge{From: from, To: to, Step: st, Advisors: advisors}, nil
 		}
 	}
 	knob := "propose"
@@ -361,7 +366,7 @@ func refuseUnansweredFindings(ctx context.Context, current workitem.Item, to str
 	if p == nil || len(p.Offered) == 0 {
 		return nil
 	}
-	st, found := destinationStep(ctx, current, to)
+	st, _, found := destinationStep(ctx, current, to)
 	if !found || !st.AnswerProgress {
 		return nil
 	}
@@ -669,6 +674,56 @@ func markReady(ctx context.Context, id, mark string) error {
 	}
 	_, err := workItemSetCore(ctx, tagRequest(setReq{ID: id, AddTags: []string{mark}}))
 	return err
+}
+
+// errEpicAcceptFound stops firstEpicReadiness's ledger scan at the first match.
+var errEpicAcceptFound = errors.New("an epic-parent readiness accept exists")
+
+// firstEpicReadiness reports whether an accepted readiness round on item would be
+// the repo's first on an epic-parent: item is one, and no epic-parent, item
+// included, has a readiness_accept row yet. The ledger row decides, never the
+// mark, which syncReadyMark removes when readiness stops holding. A caller reads
+// it before the round runs, since the round writes the row it would find.
+func firstEpicReadiness(ctx context.Context, item workitem.Item) bool {
+	if !epicset.IsEpicParent(item) {
+		return false
+	}
+	led, err := requireLedger()
+	if err != nil {
+		return false
+	}
+	store, err := requireWorkItem()
+	if err != nil {
+		return false
+	}
+	seen := map[string]bool{}
+	err = led.ForEachKind(ctx, "", ledger.KindReadinessAccept, func(e ledger.Entry) error {
+		if seen[e.StoryID] {
+			return nil
+		}
+		seen[e.StoryID] = true
+		if e.StoryID == item.ID {
+			return errEpicAcceptFound
+		}
+		if it, gerr := store.Get(ctx, e.StoryID); gerr == nil && epicset.IsEpicParent(it) {
+			return errEpicAcceptFound
+		}
+		return nil
+	})
+	return err == nil
+}
+
+// epicAdvice is the skill of each advisor the route declares on the readiness
+// step entered at status to, in declared order and deduplicated: what an accepted
+// first epic readiness round prompts the orchestrator to run.
+func epicAdvice(to string, advisors []wfroute.Advisor) []string {
+	var out []string
+	for _, ad := range advisors {
+		if ad.Step == to && ad.Skill != "" && !slices.Contains(out, ad.Skill) {
+			out = append(out, ad.Skill)
+		}
+	}
+	return out
 }
 
 func hasTag(tags []string, tag string) bool {

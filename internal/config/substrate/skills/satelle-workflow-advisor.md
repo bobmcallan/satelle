@@ -3,7 +3,7 @@ name: satelle-workflow-advisor
 type: skill
 scope: system
 tags: [type:skill, type:executor]
-description: Semantic workflow review run AFTER `satelle workflow validate` passes — judges per-step agent/model allocation, reviewer coverage, grant scoping, and dispatched-step self-sufficiency, then ADVISES the operator. Advisory only; the structural check remains the only hard rule.
+description: Semantic workflow review run AFTER `satelle workflow validate` passes — judges per-step agent/model allocation, reviewer coverage, grant scoping, dispatched-step self-sufficiency, and route shape (single-story, epic-child and epic-parent lanes), then ADVISES the operator. Advisory only; the structural check remains the only hard rule.
 ---
 
 # Workflow advisor (executor rubric)
@@ -91,11 +91,48 @@ skips: is this lifecycle **well configured**? Report findings as advice; you do 
 
 7. **Binding form (a step table's `reviewers` vs an always-on gate entry).** Judged fully by [[satelle-workflow-change-review]] — do not restate it here. Flag a gate that admits ONE step but is authored as an always-on `[[gate]]` entry in `step.toml`, and point the author at that gate's rewrite guidance (and `satelle help workflows`).
 
+8. **Route shape fits the work's shape.** Judge the GOVERNING routes: read
+ the repo's `.satelle/workflows/done.toml` and `step.toml` over the shipped
+ ones. A repo table overlays the shipped table of the same name whole; a name
+ the repo does not mention keeps the shipped table. `satelle workflow show
+ <category> --category` renders the route a category actually walks (add
+ `--tags lane:<name>` for a lane tag). Then classify three lanes:
+ - the **single-story lane** — the `["*"]` table and every other working
+ category's table, walked by a story that belongs to no epic;
+ - the **epic-child lane** — the lane a child tagged `epic:<id>` walks: its
+ own category's table, unless a `lane:` tag selects another;
+ - the **epic-parent lane** — the `[epic-parent]` (and `[parent]`) table.
+
+ Flag a **release obligation on the lane every epic child walks** — a step
+ that releases, publishes, pushes or merges to trunk (a `released` obligation
+ and the like) on the table the children select. Each child then pays the
+ release on its own. The optimisation to name is the **epic-branch lane**:
+ children commit on `epic/<id>` from their own worktrees and stop at commit
+ (gated by `satelle-epic-branch-check`), and the epic parent merges once in
+ the shipped `[merged]` step (`satelle-epic-merge`) and releases once. A child
+ that must land on trunk on its own carries `lane:trunk`. The single-story
+ lane keeps its release: a story outside an epic still ships itself.
+
+ Flag an **epic-parent lane with no readiness step** — no obligation before
+ `children-resolved` whose step declares `waits_on_children`. Without one
+ the children are never sequenced before they engage and `satelle story
+ ready <epic>` has no round to run; name the shipped `[ready]` step.
+
+ Every route-shape finding cites the workflow file, the category table and
+ the obligation or step key, e.g. `workflows/done.toml ["*"] obligation
+ released` or `workflows/step.toml [released]`.
+
 ## How to report
 
 One line per finding, naming the step or gate, the concern, and the concrete fix
 (the binding to add, the gate to declare, the grant to narrow). End with what
 is well configured, so the operator sees the review was complete, not just
 critical.
+
+Your findings are advice only. The orchestrator files each optimisation it
+accepts as its own story with `satelle story create` — category `substrate`
+when the repo declares that category, otherwise the repo's default — and the
+change is made under that story's gates. The advisor never edits workflow
+files itself: nothing under `.satelle/workflows/` is written by this review.
 
 See [[satelle-route-standard]], [[satelle-agent-model]] for the authored form and the agent model.

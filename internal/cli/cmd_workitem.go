@@ -207,12 +207,16 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 				rm, _ := f.GetStringSlice("remove-tags")
 				req["remove_tags"] = rm
 			}
-			if err := dispatch(cmd, group+"-set", req); err != nil {
+			resp, err := dispatchResponse(cmd, group+"-set", req)
+			if err != nil {
 				return err
 			}
 			// Story-only: keep the backlog view current after set (sty_d0950127).
 			if group == "story" {
 				refreshStoryBacklog(cmd)
+				// On stderr, like the other transition-time notices, so the record
+				// on stdout stays parseable.
+				emitAdvice(cmd, cmd.ErrOrStderr(), setAdvice(resp))
 			}
 			// Entering a performing state is the point a developer is about to
 			// work: say so when their substrate is not in step with the hosted
@@ -1762,6 +1766,7 @@ One line per story: <id> marked|not-accepted|refused|no-readiness-step[: why]; n
 					}
 				}
 			}
+			emitAdvice(cmd, cmd.OutOrStdout(), readyAdvice(results))
 			unmarked := 0
 			for _, r := range results {
 				if !r.Marked() {
