@@ -57,6 +57,9 @@ agent = "executor"
 reviewers = ["satelle-story-intent-review"]
 reviewer_agent = "reviewer"
 requires = ["raised"]
+# A child the orchestrator pinned at readiness (tag `placement:<in-loop|local|team:<path>>`)
+# is performed where its pin says. See the [ready] step.
+placement_tag = "placement:"
 
 [closed]
 # Selected by "*". Three reviewers judge entry, and `parallel = 0` is authored
@@ -82,6 +85,7 @@ requires = ["coded"]
 status = "in_progress"
 agent = "executor"
 requires = ["raised"]
+placement_tag = "placement:"
 
 [docs-verified]
 # The whole close: one functional check that the slice stayed inside doc-typed
@@ -113,6 +117,14 @@ requires = ["authored"]
 # no reviewers: the performer judges the round. The container then waits here for
 # its children (`waits_on_children`); children run in parallel unless a real
 # `depends-on:` edge holds one back.
+#
+# The orchestrator owns each child's delivery. It tells the performer, by
+# `satelle story message`, where each child should run (`in-loop`, `local` for a
+# subagent, or `team:<path>`) and why. The performer records the reason under
+# `delivery_heading` in its artifact and reports the choice as an `add-tags`
+# change under `placement_tag`, the prefix the delivering steps read. A value
+# other than those three, `remote` included, is refused. `satelle story wave`
+# prints the recorded choice.
 status = "ready"
 agent = "ready-reviewer"
 skills = ["ready"]
@@ -120,7 +132,10 @@ requires = ["raised"]
 waits_on_children = true
 mark = "ready"
 propose = true
-apply_changes = { ops = ["add-tags", "create-child"], tags = ["order:", "surface:", "lane:", "depends-on:"] }
+apply_changes = { ops = ["add-tags", "create-child"], tags = ["order:", "surface:", "lane:", "depends-on:", "placement:"] }
+placement_tag = "placement:"
+delivery_heading = "Delivery"
+lane_tag = "lane:"
 
 [merged]
 # The epic-branch lane's landing. A child with no `lane:trunk` tag commits on

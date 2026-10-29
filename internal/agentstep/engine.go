@@ -2352,11 +2352,7 @@ func (g *Engine) resolvePerformer(ctx context.Context, item workitem.Item, toSta
 	case "":
 		return none(fmt.Sprintf("step %q allocates no performer (agent is empty)", toStatus))
 	case "executor":
-		pr, _ := answer(verb.PerformerExecutor, fmt.Sprintf("step %q is allocated to agent=%s, which is not a dispatched performer", toStatus, target.Agent))
-		// The route rides on the answer so DispatchExecutor can name the skills
-		// the driving session is handed (sty_23ceeca2).
-		pr.spec, pr.wfName, pr.target = spec, wfName, target
-		return pr, nil
+		return g.resolveExecutorStep(ctx, item, toStatus, spec, wfName, target)
 	case "reviewer":
 		return none(fmt.Sprintf("step %q is allocated to agent=%s, which is not a dispatched performer", toStatus, target.Agent))
 	}
@@ -2383,6 +2379,9 @@ func (g *Engine) resolvePerformer(ctx context.Context, item workitem.Item, toSta
 		}
 	}
 	placed := placement.Decide(ctx, item, *target, lookup)
+	if placed.PinErr != nil {
+		return performerResolution{}, fmt.Errorf("step %q: %w", toStatus, placed.PinErr)
+	}
 	dispatchAgent := placed.Agent
 	if placed.Note != "" && emit {
 		g.telemetryEvent(ctx, item.ID, "executor", "placement", map[string]any{
@@ -2410,25 +2409,40 @@ func (g *Engine) resolvePerformer(ctx context.Context, item workitem.Item, toSta
 	// A team placement (sty_7028d996) wakes a remote rather than running a
 	// command, so its binding needs none: it is dispatched before the named-
 	// performer and in-loop checks, which read the command.
-	if placed.Team != "" {
+	dispatched := func() performerResolution {
 		return performerResolution{
-			PerformerResolution: verb.PerformerResolution{Agent: dispatchAgent, Dispatched: true, Kind: verb.PerformerDispatched},
-			spec:                spec, wfName: wfName, target: target, placed: placed, binding: binding,
-		}, nil
+			PerformerResolution: verb.PerformerResolution{
+				Agent: dispatchAgent, Dispatched: true, Kind: verb.PerformerDispatched,
+				Team: placed.Team, Remote: placed.Remote, Channel: placed.Channel, PlacementNote: placed.Note,
+			},
+			spec: spec, wfName: wfName, target: target, placed: placed, binding: binding,
+		}
+	}
+	inLoop := func(why string) performerResolution {
+		pr, _ := answer(verb.PerformerInLoop, fmt.Sprintf("step %q agent %q %s: the driving session performs it", toStatus, dispatchAgent, why))
+		pr.Agent = dispatchAgent
+		pr.spec, pr.wfName, pr.target = spec, wfName, target
+		return pr
+	}
+	if placed.Team != "" {
+		return dispatched(), nil
+	}
+	// A child the orchestrator pinned in-loop (sty_c931cd90) is performed by the
+	// driving session whatever its binding's command is.
+	if placed.InLoop {
+		return inLoop("is pinned in-loop"), nil
 	}
 	if !isNamedPerformer(dispatchAgent, binding) {
 		return none(fmt.Sprintf("step %q agent %q is not a named performer", toStatus, dispatchAgent))
 	}
 	if config.IsInLoopCommand(binding.CommandTemplate()) {
-		pr, _ := answer(verb.PerformerInLoop, fmt.Sprintf("step %q agent %q is bound in-loop: the driving session performs it", toStatus, dispatchAgent))
-		pr.Agent = dispatchAgent
-		pr.spec, pr.wfName, pr.target = spec, wfName, target
-		return pr, nil
+		if placed.Pinned {
+			return performerResolution{}, fmt.Errorf(
+				"step %q is pinned local but the [%s] command in .satelle/workflows/agents.toml is in-loop: bind a headless CLI, or pin the child in-loop", toStatus, dispatchAgent)
+		}
+		return inLoop("is bound in-loop"), nil
 	}
-	return performerResolution{
-		PerformerResolution: verb.PerformerResolution{Agent: dispatchAgent, Dispatched: true, Kind: verb.PerformerDispatched},
-		spec:                spec, wfName: wfName, target: target, placed: placed, binding: binding,
-	}, nil
+	return dispatched(), nil
 }
 
 // StepPerformer implements verb.PerformerResolver: whether entering toStatus

@@ -251,6 +251,13 @@ type State struct {
 	// (Step.RemoteAgent / Step.LocalTags); empty when undeclared.
 	RemoteAgent string
 	LocalTags   []string
+	// PlacementTag / DeliveryHeading: the tag prefix of a child's placement pin
+	// and the readiness-document heading recording the delivery reasons
+	// (Step.PlacementTag / Step.DeliveryHeading); empty when undeclared.
+	PlacementTag    string
+	DeliveryHeading string
+	// LaneTag: the tag prefix of a child's landing lane (Step.LaneTag).
+	LaneTag string
 	// RemoteWait is the step's declared wait on a team remote's run
 	// (Step.RemoteWait); nil when undeclared. Read through Spec.RemoteWaitOf.
 	RemoteWait *RemoteWait

@@ -27,7 +27,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/runstatus"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -40,10 +39,10 @@ import (
 // the one performer the engine cannot dispatch on entry. *agentstep.Engine
 // implements it.
 type Performers interface {
-	// StepPerformer is the engine's one rule for who performs a step.
+	// StepPerformer is the engine's one rule for who performs a step. For an
+	// executor-allocated step it also says whether the [executor] binding is the
+	// in-loop session (PerformerResolution.ExecutorInLoop).
 	verb.PerformerResolver
-	// ExecutorBinding is the [executor] binding as a one-shot run uses it.
-	ExecutorBinding() (config.AgentBinding, bool)
 	// PerformExecutorStep runs that binding headless over an executor-allocated
 	// step, with notes (reviewer findings, or "") appended to its prompt.
 	PerformExecutorStep(ctx context.Context, item workitem.Item, step, notes string) (verb.DispatchResult, error)
@@ -501,8 +500,7 @@ func (d *driver) preflight(ctx context.Context, item workitem.Item) error {
 				continue
 			}
 			executorChecked = true
-			b, ok := d.opts.Performers.ExecutorBinding()
-			if !ok || config.IsInLoopCommand(b.CommandTemplate()) {
+			if perf.ExecutorInLoop {
 				return fmt.Errorf(
 					"drive: step %q is allocated to agent=executor and .satelle/workflows/agents.toml [executor] command is in-loop — bind a headless CLI to drive unattended",
 					step)

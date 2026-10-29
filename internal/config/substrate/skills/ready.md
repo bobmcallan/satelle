@@ -87,6 +87,24 @@ on the branch lane; you need not name it.
 
 Do not rewrite a title, a body, or an acceptance criterion.
 
+## Record each child's delivery
+
+The orchestrator owns where each child runs, and it tells you in a message
+(`messages` in your input): per child, a placement and a reason. The placement is
+one of `in-loop` (the driving session), `local` (a headless subagent) or
+`team:<path>` (a team remote). You record that choice; you never make it.
+
+- For each child the orchestrator placed, report an `add-tags` change with the tag
+  `placement:<placement>`, e.g. `placement:team:/teams/x`. `remote` is not a
+  placement; a value other than the three above is refused. A child it did not
+  place gets no tag: it runs where its step's binding says.
+- Put the reasons in your artifact body under a `## Delivery` heading, one line per
+  child, `<child id>: <reason>`. Use `no orchestrator choice recorded` for a child
+  with no message. Do not invent a reason.
+
+`satelle story wave <container>` prints the placement each child resolves to,
+beside this reason.
+
 Record it in your artifact body: `parallel: <ids>; edges: <child> → <dependency>
 (<builds on what | judged under what>)`, one entry per edge you added, plus any
 `lane:` tags you added.
@@ -100,7 +118,8 @@ entry is outside it:
 
 - `{"op":"add-tags","story":"<id>","tags":["depends-on:sty_…"]}`: add
   tags to this story or one of its children. Only the `order:`, `surface:`,
-  `lane:` and `depends-on:` prefixes are allowed. Tags are never removed.
+  `lane:`, `depends-on:` and `placement:` prefixes are allowed. Tags are never
+  removed.
 - `{"op":"create-child","title":"…","body":"…","acceptance":"…","category":"…","tags":["…"]}`:
   create a child of this container. It passes the same create rules as a story
   raised by hand. Its `tags` hold only the allowed prefixes above: satelle makes it
@@ -116,7 +135,7 @@ End your reply with exactly one JSON line and nothing after it. The body records
 what you repaired, or `none`:
 
 ```json
-{"artifact":{"name":"ready","type":"review","body":"parallel: ...; edges: ...; lanes: ..."},"changes":[...]}
+{"artifact":{"name":"ready","type":"review","body":"parallel: ...; edges: ...; lanes: ...\n\n## Delivery\n<child id>: <reason>"},"changes":[...]}
 ```
 
 Satelle applies the changes, attaches that artifact, runs the step's gates on the

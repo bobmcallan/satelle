@@ -8,6 +8,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/epicset"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -65,11 +66,20 @@ func hasDeclaredPrefix(tag string, prefixes []string) bool {
 	return false
 }
 
-// checkPerformerTags refuses a reported tag outside the declared prefixes.
-func checkPerformerTags(tags, prefixes []string) error {
+// checkPerformerTags refuses a reported tag outside the declared prefixes, and a
+// tag under the step's placement_tag prefix whose value is not a placement pin
+// the engine can honour (config.ParsePin) — a pin refused here never reaches a
+// dispatch that would have to fail on it.
+func checkPerformerTags(tags, prefixes []string, placementTag string) error {
 	for _, t := range tags {
 		if !hasDeclaredPrefix(t, prefixes) {
 			return fmt.Errorf("tag %q has no declared prefix (apply_changes allows: %s)", t, strings.Join(prefixes, ", "))
+		}
+		if placementTag == "" || !strings.HasPrefix(t, placementTag) {
+			continue
+		}
+		if _, _, err := config.ParsePin(strings.TrimPrefix(t, placementTag)); err != nil {
+			return fmt.Errorf("tag %q: %w", t, err)
 		}
 	}
 	return nil
@@ -77,7 +87,7 @@ func checkPerformerTags(tags, prefixes []string) error {
 
 // planPerformerChanges checks the whole batch against the step's declaration and
 // the limits above and returns what to write. Nothing is written here.
-func planPerformerChanges(ctx context.Context, store dependsOnStore, container workitem.Item, ops, prefixes []string, changes []agentartifact.Change) (changePlan, error) {
+func planPerformerChanges(ctx context.Context, store dependsOnStore, container workitem.Item, ops, prefixes []string, placementTag string, changes []agentartifact.Change) (changePlan, error) {
 	var plan changePlan
 	members, err := epicset.Members(ctx, store, container)
 	if err != nil {
@@ -119,7 +129,7 @@ func planPerformerChanges(ctx context.Context, store dependsOnStore, container w
 			if len(c.Tags) == 0 {
 				return plan, refuseChange(i, c, "adds no tags")
 			}
-			if err := checkPerformerTags(c.Tags, prefixes); err != nil {
+			if err := checkPerformerTags(c.Tags, prefixes, placementTag); err != nil {
 				return plan, refuseChange(i, c, err.Error())
 			}
 			merged := applyTagMutation(cur.Tags, c.Tags, nil)
@@ -151,7 +161,7 @@ func planPerformerChanges(ctx context.Context, store dependsOnStore, container w
 				return plan, refuseChange(i, c, fmt.Sprintf("duplicates the title of %s", dup))
 			}
 			titles[strings.ToLower(title)] = "an earlier change"
-			if err := checkPerformerTags(c.Tags, prefixes); err != nil {
+			if err := checkPerformerTags(c.Tags, prefixes, placementTag); err != nil {
 				return plan, refuseChange(i, c, err.Error())
 			}
 			tags := append(append([]string{}, c.Tags...), themesOfEpicParent(container, themes)...)
@@ -220,7 +230,7 @@ func applyPerformerChanges(ctx context.Context, container workitem.Item, to stri
 	if err != nil {
 		return container, err
 	}
-	plan, err := planPerformerChanges(ctx, store, container, step.ApplyChangeOps, step.ApplyChangeTags, changes)
+	plan, err := planPerformerChanges(ctx, store, container, step.ApplyChangeOps, step.ApplyChangeTags, step.PlacementTag, changes)
 	if err != nil {
 		return container, fmt.Errorf("performer changes refused, none applied: %w", err)
 	}

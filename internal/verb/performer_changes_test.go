@@ -52,7 +52,13 @@ func newChangesWorld(t *testing.T) changesWorld { return newChangesWorldMark(t, 
 // newChangesWorldMark is newChangesWorld over readiness steps marking with mark.
 func newChangesWorldMark(t *testing.T, mark string) changesWorld {
 	t.Helper()
-	r := newRigFor(t, changesStepMark(mark))
+	return newChangesWorldFor(t, changesStepMark(mark))
+}
+
+// newChangesWorldFor is newChangesWorld over the step catalogue stepToml.
+func newChangesWorldFor(t *testing.T, stepToml string) changesWorld {
+	t.Helper()
+	r := newRigFor(t, stepToml)
 	t.Setenv("SATELLE_HOME", t.TempDir())
 	verb.SetWorkflowResolver(stubWorkflow{})
 	w := changesWorld{r: r}

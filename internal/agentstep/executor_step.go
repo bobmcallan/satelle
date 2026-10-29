@@ -8,7 +8,9 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/placement"
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -30,6 +32,46 @@ func (g *Engine) ExecutorBinding() (config.AgentBinding, bool) {
 		return config.AgentBinding{}, false
 	}
 	return g.oneShotAgents("executor")
+}
+
+// resolveExecutorStep is resolvePerformer's answer for a step allocated to
+// agent=executor. Unpinned, whoever the [executor] binding names performs it, and
+// ExecutorInLoop says whether that is the driving session. A child pinned by the
+// orchestrator (sty_c931cd90) is placed by its pin through placement.Decide: a
+// team pin wakes that remote, in-loop pins the driving session, and local pins
+// the headless [executor] command — an error when that binding is in-loop, the
+// refusal PerformExecutorStep itself gives. A pin that cannot be honoured is an
+// error, never a quiet fallback. A missing [executor] resolver counts as in-loop:
+// nothing headless can perform the step.
+func (g *Engine) resolveExecutorStep(ctx context.Context, item workitem.Item, toStatus string,
+	spec wfdot.Spec, wfName string, target *wfdot.State) (performerResolution, error) {
+	binding, bound := g.ExecutorBinding()
+	inLoop := !bound || config.IsInLoopCommand(binding.CommandTemplate())
+	placed := placement.Decide(ctx, item, *target, nil)
+	if placed.PinErr != nil {
+		return performerResolution{}, fmt.Errorf("step %q: %w", toStatus, placed.PinErr)
+	}
+	pr := performerResolution{spec: spec, wfName: wfName, target: target, placed: placed, binding: binding}
+	pr.Agent = target.Agent
+	pr.Team, pr.PlacementNote = placed.Team, placed.Note
+	switch {
+	case placed.Team != "":
+		pr.Kind, pr.Dispatched = verb.PerformerDispatched, true
+		pr.Reason = fmt.Sprintf("step %q is allocated to agent=executor and pinned to team remote %s", toStatus, placed.Team)
+	case placed.InLoop:
+		pr.Kind = verb.PerformerInLoop
+		pr.Reason = fmt.Sprintf("step %q is pinned in-loop: the driving session performs it", toStatus)
+	case placed.Pinned && inLoop:
+		return performerResolution{}, fmt.Errorf(
+			"step %q is pinned local but the [executor] command in .satelle/workflows/agents.toml is in-loop: bind a headless CLI, or pin the child in-loop", toStatus)
+	default:
+		// The route rides on the answer so DispatchExecutor can name the skills
+		// the driving session is handed (sty_23ceeca2).
+		pr.Kind = verb.PerformerExecutor
+		pr.ExecutorInLoop = inLoop
+		pr.Reason = fmt.Sprintf("step %q is allocated to agent=%s, which is not a dispatched performer", toStatus, target.Agent)
+	}
+	return pr, nil
 }
 
 // PerformExecutorStep runs the [executor] binding once, headless, to perform the
