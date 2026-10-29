@@ -162,6 +162,7 @@ func Check(ctx context.Context, o Opts) Report {
 	if o.ExcludeMachineAgentLayers {
 		layers.Workspace, layers.WorkspaceErr = config.AgentsConfig{}, nil
 		layers.Local, layers.LocalErr = config.AgentsConfig{}, nil
+		layers.MachineLayersExcluded = true
 	}
 	if agentsErr := layers.RepoErr; agentsErr != nil {
 		rep.Findings = append(rep.Findings, health.Error(health.IDAgentsLoad, "Unreadable agents layer",

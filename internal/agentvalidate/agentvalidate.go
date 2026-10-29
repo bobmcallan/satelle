@@ -254,7 +254,20 @@ func validateEffectiveBaseline(baseline config.AgentsConfig, layers config.Agent
 			shipped[n] = true
 		}
 	}
-	r := validateShipped(eff.Agents, eff.Vars, workflows, eff.Provenance, skills, shipped)
+	// Judged as another machine loads it (a push), a seat the shared file writes
+	// no command or tools for gets both from each machine's agents.local.toml or
+	// profile — layers this judgement left out — so its channel is judged there.
+	var machineSupplied map[string]bool
+	if layers.MachineLayersExcluded {
+		machineSupplied = map[string]bool{}
+		for n := range eff.Agents.Agents {
+			rb := layers.Repo.Agents[n]
+			if strings.TrimSpace(rb.Command) == "" && strings.TrimSpace(rb.Tools) == "" {
+				machineSupplied[n] = true
+			}
+		}
+	}
+	r := validateShipped(eff.Agents, eff.Vars, workflows, eff.Provenance, skills, shipped, machineSupplied)
 	if f, ok := sameRoleFinding(eff.Agents); ok {
 		r.record(f)
 	}
@@ -306,12 +319,13 @@ func ValidateEffectiveWithSkills(repo config.AgentsConfig, global config.GlobalA
 }
 
 func validate(agents config.AgentsConfig, vars map[string]string, workflows []docindex.Doc, prov config.Provenance, skills SkillBody) Report {
-	return validateShipped(agents, vars, workflows, prov, skills, nil)
+	return validateShipped(agents, vars, workflows, prov, skills, nil, nil)
 }
 
 // validateShipped is validate with the set of baseline-only seats, which are
-// exempt from the orphan advisory.
-func validateShipped(agents config.AgentsConfig, vars map[string]string, workflows []docindex.Doc, prov config.Provenance, skills SkillBody, shipped map[string]bool) Report {
+// exempt from the orphan advisory, and the set of seats whose grant each machine
+// supplies, whose missing context channel is a warning rather than a refusal.
+func validateShipped(agents config.AgentsConfig, vars map[string]string, workflows []docindex.Doc, prov config.Provenance, skills SkillBody, shipped, machineSupplied map[string]bool) Report {
 	var r Report
 	r.Provenance = prov
 
@@ -539,7 +553,11 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 					// An untrusted step's seats are judged by checkUntrustedSteps, whose
 					// channel finding replaces this one for the same binding.
 					if p := performerChannelProblem(doc.Name, st.Name, st.Agent, b); p != "" && !st.UntrustedInput {
-						r.allocProblem(p)
+						if machineSupplied[st.Agent] {
+							r.record(machineGrantFinding(doc.Name, st.Name, st.Agent))
+						} else {
+							r.allocProblem(p)
+						}
 					}
 					r.Gates = append(r.Gates, gateAlloc(doc.Name, st.Name, st.Skill, st.Agent, b.Model, st.Model))
 				}
@@ -961,6 +979,19 @@ func performerChannelProblem(workflow, node, section string, b config.AgentBindi
 	return fmt.Sprintf(
 		"workflow %q node %q allocates performer agent=%s whose agents.toml [%s] tools grant has no context channel — a dispatched agent starts with no history and must pull the story; add `Bash(satelle:*)` for the satelle CLI, or %s under ~/.satelle/<repo-key>/stories/<id>/. Dispatch will otherwise be refused",
 		workflow, node, section, section, agentcli.ContextChannelHint(agentcli.AdapterName(b.CommandTemplate())))
+}
+
+// machineGrantFinding is the advisory that replaces performerChannelProblem for a
+// seat whose shared binding writes no command or tools, judged without this
+// machine's layers: the adapter, and so its read tool, is each machine's choice,
+// so the text names none. Dispatch and the full-layer checks still refuse a
+// merged binding with no channel.
+func machineGrantFinding(workflow, node, section string) health.Finding {
+	return health.Warn(health.IDNodeAlloc, "Performer grant supplied per machine", fmt.Sprintf(
+		"workflow %q node %q allocates performer agent=%s whose shared [%s] writes no tools or command; each machine must give it a context channel in agents.local.toml or its profile, and dispatch refuses it otherwise",
+		workflow, node, section, section)).
+		About(section).
+		WithRemediation("set the [" + section + "] grant per machine: " + config.MoveToLocalAgents)
 }
 
 // checkBinding validates one binding and builds its Grant. It reports the same
