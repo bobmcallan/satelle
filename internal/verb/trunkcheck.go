@@ -105,7 +105,7 @@ func checkTrunkAtEngage(ctx context.Context, item workitem.Item, to, edge string
 // dirtyTreeOwner answers trunk.Options.DirtyOwner for an engage of selfID
 // (sty_f1db1260): the IDs of the other stories in flight whose engagement was
 // taken in the dirty checkout, comma-joined, or "" when none is. A story is in
-// flight when its route is unresolved or neither terminal nor parked; one with
+// flight when its route is unresolved or it is not at rest; one with
 // no anchored engagement baseline cannot claim a tree. Only a dirty trunk
 // checkout other than the invoking tree asks, so the story listing and ledger
 // reads are off the common path.
@@ -125,7 +125,7 @@ func dirtyTreeOwner(ctx context.Context, selfID string) func(string) string {
 			if it.ID == selfID {
 				continue
 			}
-			if rest := StoryRouteRest(ctx, it); rest.Known && (rest.Terminal || rest.Parked) {
+			if rest := StoryRouteRest(ctx, it); rest.Known && rest.AtRest() {
 				continue
 			}
 			base, _, _, berr := firstEngagementBaseline(ctx, it.ID)

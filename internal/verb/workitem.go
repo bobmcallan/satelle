@@ -780,6 +780,18 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		}
 		current = applied
 	}
+	// Entering a wait step queues the story at the branch and head sha its tree
+	// stands at. Read before the gates, so the entry names what they judged and an
+	// unreadable tree refuses before any reviewer is paid for; appended with the
+	// transition below.
+	var queued *ledger.QueueEnqueuedPayload
+	if transitioning && targetIsWaitState(ctx, current, *req.Status) {
+		entry, qerr := resolveQueueEntry(ctx, current, *req.Status)
+		if qerr != nil {
+			return nil, qerr
+		}
+		queued = &entry
+	}
 	// Propose (sty_5262592e): a destination step that declares `propose` runs
 	// its performer BEFORE the entry gates, on the source status, so the gates
 	// judge what the performer produced. The route declares the order; this only
@@ -954,6 +966,10 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 				Body:    fmt.Sprintf("%s → %s", current.Status, *req.Status),
 				Payload: attemptPayload(current.Status, *req.Status, "", parkAttemptFrom(ctx)),
 			}, commitNow)
+			if aerr != nil || queued == nil {
+				return aerr
+			}
+			_, aerr = ledgerStore.WithTx(tx).Append(ctx, queueEnqueuedInput(*queued), commitNow)
 			return aerr
 		})
 		if err != nil {
@@ -1037,6 +1053,9 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			appendLedgerEntry(ctx, it.ID, ledger.KindStatusTransition, "executor",
 				fmt.Sprintf("%s → %s", current.Status, *req.Status),
 				attemptPayload(current.Status, *req.Status, "", parkAttemptFrom(ctx)), commitNow)
+			if queued != nil && ledgerStore != nil {
+				_, _ = ledgerStore.Append(ctx, queueEnqueuedInput(*queued), commitNow)
+			}
 		}
 		// First entry into an engaging state: record engagement baseline once
 		// (sty_da169e03). Enumerates git HEAD for later satelle story diff;

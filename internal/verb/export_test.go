@@ -15,6 +15,9 @@ var SeatPolicyFor = seatPolicyFor
 // RefuseSecondEngagingStoryDerived exposes the committed-status seat scan.
 var RefuseSecondEngagingStoryDerived = refuseSecondEngagingStoryDerived
 
+// DirtyTreeOwner exposes the trunk check's tree-ownership answer.
+var DirtyTreeOwner = dirtyTreeOwner
+
 // StubSiblingRegistry stands a workspace registry in for the real one: registry
 // maps a repo name to the roots registered under it, and current is the invoking
 // repo's root. The real lookups return on cleanup.

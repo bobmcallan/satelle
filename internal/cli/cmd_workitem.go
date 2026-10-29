@@ -270,6 +270,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyRestampCommand())
 		parent.AddCommand(storyAmendCommand())
 		parent.AddCommand(storyStopRequestCommand())
+		parent.AddCommand(storyQueueCommand())
 		parent.AddCommand(storyWorktreeCommand())
 		parent.AddCommand(storyRecoverCommand())
 		parent.AddCommand(storySeatCommands()...)
@@ -2056,6 +2057,74 @@ Never cancel a healthy story to free the seat — cancelled is terminal.`,
 		},
 	}
 	cmd.Flags().StringVar(&reason, "reason", "", "why the stop is requested")
+	return cmd
+}
+
+// storyQueueCommand builds `satelle story queue` and `satelle story queue
+// withdraw <id> --reason …`: the queue of stories resting at a route wait step,
+// read in the order the entries were recorded. Merging an entry is the repo's
+// configured release task; this lists and withdraws only.
+func storyQueueCommand() *cobra.Command {
+	var state string
+	cmd := &cobra.Command{
+		Use:   "queue",
+		Short: "List the open queue entries — stories resting at a wait step — oldest first (read-only)",
+		Long: `List the open queue entries, oldest first: one line per story, with the wait
+step it rests at, the branch and head sha its tree stood at on entry, and when.
+
+A story is queued when it enters a step its route declares wait = true; the
+entry is an event in the story's own history, so the queue needs no remote and
+no second store. A release task reads this list in order, merges an entry with
+whatever the repo configures, and withdraws it with 'satelle story queue
+withdraw <id> --reason "…"'. --json prints {entries: [...]}.`,
+		Args:        cobra.NoArgs,
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			body, err := json.Marshal(map[string]any{"state": state})
+			if err != nil {
+				return err
+			}
+			resp, err := verb.Dispatch(cmd.Context(), "story-queue", body)
+			if err != nil {
+				return err
+			}
+			if v, _ := cmd.Flags().GetBool("json"); v {
+				return printJSON(cmd, resp)
+			}
+			var res struct {
+				Entries []verb.QueueEntry `json:"entries"`
+			}
+			if err := json.Unmarshal(resp, &res); err != nil {
+				return fmt.Errorf("story queue: decode response: %w", err)
+			}
+			out := cmd.OutOrStdout()
+			if len(res.Entries) == 0 {
+				fmt.Fprintln(out, "# queue is empty")
+				return nil
+			}
+			for _, e := range res.Entries {
+				fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%s\n", e.Story, e.State, e.Branch, e.HeadSHA, e.EnqueuedAt.UTC().Format(time.RFC3339))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&state, "state", "", "only entries resting at this wait step")
+
+	var reason string
+	withdraw := &cobra.Command{
+		Use:   "withdraw <id> --reason \"…\"",
+		Short: "Withdraw a story's open queue entry; the reason is recorded on the story",
+		Long: `Close a story's open queue entry. The reason is required and is recorded as an
+event in the story's history. The story's status is untouched: moving it on
+from the wait step is the workflow's job.`,
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return dispatch(cmd, "story-queue-withdraw", map[string]any{"id": args[0], "reason": reason})
+		},
+	}
+	withdraw.Flags().StringVar(&reason, "reason", "", "why the entry is withdrawn (required)")
+	cmd.AddCommand(withdraw)
 	return cmd
 }
 

@@ -254,6 +254,9 @@ type State struct {
 	// RemoteWait is the step's declared wait on a team remote's run
 	// (Step.RemoteWait); nil when undeclared. Read through Spec.RemoteWaitOf.
 	RemoteWait *RemoteWait
+	// Wait: a story rests here between performing steps (Step.Wait). Read
+	// through Spec.IsWaitState.
+	Wait bool
 	// When is a gate node's optional enqueue precondition: the functional-check
 	// skill the engine runs before enqueuing it (RouteGate.When). Empty means the
 	// gate is unconditional.
@@ -274,6 +277,20 @@ type State struct {
 func (s Spec) WaitsOnChildren(status string) bool {
 	st, ok := s.StateNamed(status)
 	return ok && st.WaitsOnChildren
+}
+
+// IsWaitState reports whether the route declares status as a wait step
+// (`wait = true` in step.toml): a story resting there is neither parked nor
+// terminal and holds no seat. Unknown names do not wait.
+func (s Spec) IsWaitState(status string) bool {
+	st, ok := s.StateNamed(status)
+	return ok && st.Wait
+}
+
+// IsAtRest reports whether a story at name is somewhere nothing performs and no
+// engagement is held: a terminal state, a park, or a wait step.
+func (s Spec) IsAtRest(name string) bool {
+	return s.IsTerminalState(name) || s.IsParkState(name) || s.IsWaitState(name)
 }
 
 // IsPRState reports whether the route marks status as the step that raises the
@@ -721,6 +738,10 @@ func (s Spec) isEngaging(st State) bool {
 	}
 	// Augmentation annotations are not lifecycle statuses (sty_8225d8a5).
 	if st.IsAugmentation() {
+		return false
+	}
+	// A wait step is a rest: the story there holds no engagement.
+	if st.Wait {
 		return false
 	}
 	return true

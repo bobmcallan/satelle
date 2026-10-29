@@ -190,6 +190,11 @@ type Step struct {
 	// remote's run for it and maps the run's outcomes to edges. Nil when the step
 	// waits on no remote.
 	RemoteWait *RemoteWait
+	// Wait marks a step at which a story rests between performing steps — for
+	// example finished work waiting for its release. It is neither parked nor
+	// terminal: entering it frees the seat and the tree and records a queue
+	// entry, and nothing performs there. The step names no agent.
+	Wait bool
 	// ContextBudget / TurnBudget are this step's own spend bounds for its
 	// performer (sty_a7914904): input tokens and model turns. They override the
 	// allocated binding's, which override [defaults]. Zero means unset — nothing
@@ -587,6 +592,7 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			RemoteAgent:     st.RemoteAgent,
 			LocalTags:       st.LocalTags,
 			RemoteWait:      st.RemoteWait,
+			Wait:            st.Wait,
 		})
 	}
 
@@ -680,7 +686,31 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 	if err := checkRemoteWaits(spec, ordered); err != nil {
 		return Spec{}, err
 	}
+	if err := checkWaitExits(spec, ordered, l); err != nil {
+		return Spec{}, err
+	}
 	return spec, nil
+}
+
+// checkWaitExits refuses a wait step with no way onward on this route. Park and
+// cancel abandon the wait rather than end it, so they do not count: a story
+// resting at the step must have an edge that takes it on.
+func checkWaitExits(spec Spec, ordered []Step, l List) error {
+	for _, st := range ordered {
+		if !st.Wait {
+			continue
+		}
+		onward := false
+		for _, to := range spec.Successors(st.Name) {
+			if to != l.Park && to != l.Cancel {
+				onward = true
+			}
+		}
+		if !onward {
+			return fmt.Errorf("step %q: wait = true, but the route declares no edge onward from it (declared from %s: %v) — a story resting there could only be parked or cancelled", st.Name, st.Name, spec.Successors(st.Name))
+		}
+	}
+	return nil
 }
 
 // checkRemoteWaits refuses a remote_wait outcome mapped to a status the route

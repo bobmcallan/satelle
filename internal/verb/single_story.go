@@ -342,13 +342,20 @@ func refuseReopen(ctx context.Context, item workitem.Item, target string) error 
 		item.ID, item.Status, target, item.Status, item.ID)
 }
 
-// targetIsExitState reports terminal or park via the governing workflow DOT.
+// targetIsExitState reports terminal, park or wait via the governing workflow:
+// every state at which the story stops holding its engagement.
 func targetIsExitState(ctx context.Context, item workitem.Item, status string) bool {
 	spec, _, _, ok := governingSpec(ctx, item)
 	if !ok {
 		return false
 	}
-	return spec.IsTerminalState(status) || spec.IsParkState(status)
+	return spec.IsAtRest(status)
+}
+
+// targetIsWaitState reports whether status is a wait step of item's workflow.
+func targetIsWaitState(ctx context.Context, item workitem.Item, status string) bool {
+	spec, _, _, ok := governingSpec(ctx, item)
+	return ok && spec.IsWaitState(status)
 }
 
 // targetIsTerminalStateOnly reports terminal (never park) via the governing

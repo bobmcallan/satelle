@@ -233,8 +233,12 @@ type stepWire struct {
 	// the story to. A POINTER so an absent key stays distinguishable from an
 	// authored empty table, which is refused.
 	RemoteWait *remoteWaitWire `toml:"remote_wait"`
-	Start      bool            `toml:"start"`
-	Terminal   bool            `toml:"terminal"`
+	// Wait marks a step at which a story rests between performing steps: it is
+	// neither parked nor terminal, holds no seat or tree, and nothing performs
+	// on it until a move takes it onward.
+	Wait     bool `toml:"wait"`
+	Start    bool `toml:"start"`
+	Terminal bool `toml:"terminal"`
 	// ContextBudget and TurnBudget are the step's own spend bounds for its
 	// performer (sty_a7914904), overriding the allocated binding's. Zero or
 	// absent means unset; a negative value is refused. The numbers are the
@@ -570,6 +574,7 @@ func ParseSteps(body string) (Catalogue, error) {
 			AfterChildren:   strings.TrimSpace(s.AfterChildren),
 			RemoteAgent:     strings.TrimSpace(s.RemoteAgent),
 			LocalTags:       s.LocalTags,
+			Wait:            s.Wait,
 			ContextBudget:   s.ContextBudget,
 			TurnBudget:      s.TurnBudget,
 		}
@@ -732,10 +737,44 @@ func ParseSteps(body string) (Catalogue, error) {
 			return Catalogue{}, fmt.Errorf("step.toml: step %q: sequential = true contradicts schedule = %q — drop the deprecated schedule key (parallel is the default)", st.Provides, SchedParallel)
 		}
 	}
+	for _, st := range cat.Steps {
+		if err := checkWaitStep(st); err != nil {
+			return Catalogue{}, err
+		}
+	}
 	if err := checkAfterChildren(cat); err != nil {
 		return Catalogue{}, err
 	}
 	return cat, nil
+}
+
+// checkWaitStep refuses a wait step that would contradict itself: one that is
+// also the start or a terminal, a container's wait or a remote's wait, or one
+// that names a performer — a story resting there frees its agent, so there is
+// nobody to run. Whether the step has a way onward is decided per route, at
+// assembly, where its edges exist.
+func checkWaitStep(st Step) error {
+	if !st.Wait {
+		return nil
+	}
+	clash := ""
+	switch {
+	case st.Start:
+		clash = "start"
+	case st.Terminal:
+		clash = "terminal"
+	case st.WaitsOnChildren:
+		clash = "waits_on_children"
+	case st.RemoteWait != nil:
+		clash = "remote_wait"
+	}
+	if clash != "" {
+		return fmt.Errorf("step.toml: step %q: wait and %s are contradictory — a wait step is a rest between performing steps, neither the route's entry, its end, nor another kind of wait", st.Provides, clash)
+	}
+	if agent := strings.TrimSpace(st.Agent); agent != "" {
+		return fmt.Errorf("step.toml: step %q: wait and agent = %q are contradictory — a story resting at a wait step frees its agent, so the step has no performer", st.Provides, agent)
+	}
+	return nil
 }
 
 // parseRemoteWait shapes a step's remote_wait declaration, refusing the forms

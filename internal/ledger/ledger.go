@@ -280,6 +280,14 @@ const (
 	// {execution, task, remote, outcome}. It is written once, when the run
 	// concludes, so it carries the outcome. Enumeration only.
 	KindExecutionLink = "execution_link"
+	// KindQueueEnqueued opens a story's queue entry: written when the story enters
+	// a route wait step, in the same commit as the transition. StoryID is the
+	// story; Payload is QueueEnqueuedPayload. The queue is these events, in the
+	// order they were recorded; there is no other store.
+	KindQueueEnqueued = "queue_enqueued"
+	// KindQueueWithdrawn closes a story's open queue entry with a reason. StoryID
+	// is the story; Payload is QueueWithdrawnPayload. Status is untouched.
+	KindQueueWithdrawn = "queue_withdrawn"
 	// KindExecutionStopped is the alert a drive writes on an execution's subject
 	// story when the execution ended short of its route's exit (refused, failed,
 	// timed out, or a performer that ended on a question): StoryID is the subject
@@ -352,6 +360,21 @@ type RemoteRunPayload struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// QueueEnqueuedPayload is the payload of a KindQueueEnqueued row: the wait step
+// entered, and the branch and head sha of the story's engagement tree at entry.
+type QueueEnqueuedPayload struct {
+	Story   string `json:"story"`
+	State   string `json:"state"`
+	Branch  string `json:"branch"`
+	HeadSHA string `json:"head_sha"`
+}
+
+// QueueWithdrawnPayload is the payload of a KindQueueWithdrawn row.
+type QueueWithdrawnPayload struct {
+	Story  string `json:"story"`
+	Reason string `json:"reason"`
+}
+
 // ExecutionLinkPayload is the payload of a KindExecutionLink row: the one shape the
 // node writes and the route reads.
 type ExecutionLinkPayload struct {
@@ -413,7 +436,7 @@ func NewID() string { return fmt.Sprintf("evt_%s", uuid.NewV4().String()[:8]) }
 // so refused by the generic `ledger append` verb (sty_bef97244). Reading it
 // (`ledger list --kind`) is unaffected.
 func IsReservedKind(kind string) bool {
-	return kind == KindGateWaiver
+	return kind == KindGateWaiver || kind == KindQueueEnqueued || kind == KindQueueWithdrawn
 }
 
 // AppendInput is the typed shape of one ledger insert. Kind is required; every

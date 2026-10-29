@@ -141,10 +141,11 @@ type Result struct {
 	// is what was recorded on it.
 	Parked bool
 	Reason string
-	// Waiting: the story is at a step that waits on a team remote's run, and the
-	// run has not concluded (or concluded where this drive already took its edge).
-	// Reason is where the run stands. Nothing is parked or recorded; a later
-	// drive reads the run again.
+	// Waiting: the story stands at a waiting step and is neither parked nor
+	// terminal. Either the step waits on a team remote's run that has not
+	// concluded (or concluded where this drive already took its edge), or it is a
+	// route wait step, where the story rests until a move takes it onward. Reason
+	// says which. Nothing is parked or recorded; a later drive reads it again.
 	Waiting bool
 	// Moves are the status moves this drive made, in order.
 	Moves []Move
@@ -430,9 +431,9 @@ func (d *driver) fail(ctx context.Context, item workitem.Item, err error) (Resul
 }
 
 // stopped reports whether the story is somewhere the drive does not move it from:
-// a terminal step, or a park.
+// a terminal step, a park, or a wait step.
 func (d *driver) stopped(item workitem.Item) bool {
-	return d.route.Spec.IsTerminalState(item.Status) || d.route.Spec.IsParkState(item.Status)
+	return d.route.Spec.IsAtRest(item.Status)
 }
 
 // finish reports a story that is already stopped.
@@ -440,6 +441,11 @@ func (d *driver) finish(ctx context.Context, item workitem.Item) Result {
 	d.res.Status = item.Status
 	if d.route.Spec.IsTerminalState(item.Status) {
 		d.res.Terminal = true
+		return d.res
+	}
+	if d.route.Spec.IsWaitState(item.Status) {
+		d.res.Waiting = true
+		d.res.Reason = "the route's wait step; the story rests here until a move takes it onward"
 		return d.res
 	}
 	d.res.Parked = true

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,6 +43,9 @@ type driveOpts struct {
 	coderCommand    string
 	// noPark drops the route's park state.
 	noPark bool
+	// wait puts a wait step (awaiting_release) between integration and done, and
+	// makes the repo a git repository with no remote, the tree it queues from.
+	wait bool
 }
 
 const driveIntegrateSkill = `---
@@ -88,9 +92,25 @@ func newDriveFixture(t *testing.T, o driveOpts) *driveFixture {
 	if o.rejectBudget > 0 {
 		budget = fmt.Sprintf("reject_budget = %d\n", o.rejectBudget)
 	}
+	queued, closedAfter := "", "integrated"
+	if o.wait {
+		for _, args := range [][]string{
+			{"init"}, {"config", "user.email", "t@t"}, {"config", "user.name", "t"},
+			{"commit", "--allow-empty", "-m", "init"},
+		} {
+			if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v\n%s", args, err, out)
+			}
+		}
+		queued, closedAfter = "\n[queued]\nstatus = \"awaiting_release\"\nwait = true\nrequires = [\"integrated\"]\n", "queued"
+	}
+	obligations := `"raised", "readied", "coded", "integrated", "closed"`
+	if o.wait {
+		obligations = `"raised", "readied", "coded", "integrated", "queued", "closed"`
+	}
 	writeRoute(t, wfDir,
 		`["*"]
-obligations = ["raised", "readied", "coded", "integrated", "closed"]
+obligations = [`+obligations+`]
 `+park+`cancel = { state = "cancelled" }
 `,
 		`[raised]
@@ -115,11 +135,11 @@ status = "integration"
 agent = "executor"
 skills = ["drv-integrate"]
 requires = ["coded"]
-
+`+queued+`
 [closed]
 status = "done"
 terminal = true
-requires = ["integrated"]
+requires = ["`+closedAfter+`"]
 `)
 	skills := filepath.Join(repo, ".satelle", "skills")
 	if err := os.MkdirAll(skills, 0o755); err != nil {
@@ -381,6 +401,55 @@ func TestStoryDriveParksOnASpentRejectBudgetAndExitsThree(t *testing.T) {
 	}
 	if reason == "" {
 		t.Errorf("the objection must be on the timeline as the park reason; rows: %v", f.edges(id))
+	}
+}
+
+// A drive that reaches a wait step ends there waiting: it exits 0, not with the
+// parked code, and its summary says waiting, never parked.
+func TestStoryDriveEndsWaitingAtAWaitStep(t *testing.T) {
+	f := newDriveFixture(t, driveOpts{wait: true})
+	id := f.create()
+	out, err := runRoot(t, "story", "drive", id)
+	if err != nil || ExitCodeOf(err) == exitParked {
+		t.Fatalf("a drive that stops at a wait step succeeds, got %v (exit %d)\n%s", err, ExitCodeOf(err), out)
+	}
+	if got := storyStatus(t, id); got != "awaiting_release" {
+		t.Fatalf("status = %q, want awaiting_release\n%s", got, out)
+	}
+	if !strings.Contains(out, id+" waiting at awaiting_release: ") || strings.Contains(out, "parked") {
+		t.Errorf("the summary must say waiting at the wait step and never parked:\n%s", out)
+	}
+}
+
+// `story queue` lists the story the drive left at the wait step, and `story
+// queue withdraw` closes the entry only when given a reason.
+func TestStoryQueueCommandsListAndWithdraw(t *testing.T) {
+	f := newDriveFixture(t, driveOpts{wait: true})
+	id := f.create()
+	if out, err := runRoot(t, "story", "drive", id); err != nil {
+		t.Fatalf("drive: %v\n%s", err, out)
+	}
+	out, err := runRoot(t, "story", "queue")
+	if err != nil || !strings.HasPrefix(out, id+"\tawaiting_release\t") {
+		t.Fatalf("story queue must list the waiting story first: %v\n%s", err, out)
+	}
+	if out, err := runRoot(t, "story", "queue", "withdraw", id); err == nil {
+		t.Fatalf("a withdrawal with no --reason is refused:\n%s", out)
+	}
+	if out, err := runRoot(t, "story", "queue", "withdraw", id, "--reason", "release postponed"); err != nil {
+		t.Fatalf("withdraw: %v\n%s", err, out)
+	}
+	if out, err := runRoot(t, "story", "queue"); err != nil || !strings.Contains(out, "# queue is empty") {
+		t.Fatalf("the withdrawn entry leaves the queue: %v\n%s", err, out)
+	}
+	var reason string
+	for _, e := range f.rows(id) {
+		if e.Kind == ledger.KindQueueWithdrawn {
+			reason = e.Body
+		}
+	}
+	if !strings.Contains(reason, "release postponed") {
+		t.Errorf("the reason must be recorded on the story, got %q", reason)
 	}
 }
 

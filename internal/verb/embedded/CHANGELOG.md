@@ -1,3 +1,13 @@
+## [0.0.789] - 2026-10-29
+
+### Added
+- A route can end a story at a waiting step that is neither blocked nor terminal: a step declared with `wait = true` in `step.toml`, such as finished work waiting for its release. A story entering it gives up its engagement seat and its working tree, so another story can engage from that tree, and nothing performs on it there. `satelle story drive` stops at the step and reports the story as waiting (exit 0), not parked. A wait step names no agent, cannot also be the start, a terminal, a container wait or a remote wait, and must have an edge onward other than park or cancel; `satelle validate` refuses each of these by name. Entering the step records a queue entry in the story's own history, naming the story, its branch and its head sha as read from its tree with local git, so it works with no remote. A tree with no branch (a detached HEAD) refuses the move. `satelle story queue` lists the open entries in the order they were recorded (`--state` narrows to one wait step, `--json` for the structured form), and `satelle story queue withdraw <id> --reason "…"` closes an entry and records the reason on the story without changing its status. Merging an entry is left to the release task the repo configures. (sty_b53b1b98)
+
+## [serve-v0.0.236] - 2026-10-29
+
+### Changed
+- The service binary embeds wait steps (`wait = true`) and the `queue_enqueued` / `queue_withdrawn` ledger kinds. (sty_b53b1b98)
+
 ## [0.0.788] - 2026-10-29
 
 ### Fixed
