@@ -283,6 +283,38 @@ func TestConfigFilesCarriesTeamFilesOutsideConfigAreas(t *testing.T) {
 	}
 }
 
+// The write-down record round-trips, survives a deploy, and an absent record
+// reads empty.
+func TestTeamWrittenRoundTrip(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "runtime")
+	if got := ReadTeamWritten(dir); len(got) != 0 {
+		t.Fatalf("absent record = %v, want empty", got)
+	}
+	want := map[string]string{AgentsRel: "aa", "skills/s.md": "bb"}
+	if err := WriteTeamWritten(dir, want); err != nil {
+		t.Fatal(err)
+	}
+	if got := ReadTeamWritten(dir); !reflect.DeepEqual(got, want) {
+		t.Errorf("record = %v, want %v", got, want)
+	}
+	if err := WriteProjectTier(dir, ProjectTierStamp{Project: "probe"}, map[string][]byte{AgentsRel: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := ReadTeamWritten(dir); !reflect.DeepEqual(got, want) {
+		t.Errorf("a deploy must keep the record, got %v", got)
+	}
+}
+
+// A team file starting with "#!" is executable; any other is not.
+func TestTeamFileMode(t *testing.T) {
+	if m := TeamFileMode([]byte("#!/bin/sh\n")); m != 0o755 {
+		t.Errorf("script mode = %o, want 755", m)
+	}
+	if m := TeamFileMode([]byte("# skill\n")); m != 0o644 {
+		t.Errorf("file mode = %o, want 644", m)
+	}
+}
+
 // A [team] entry that escapes the data dir fails at load.
 func TestTeamPathsRefuseEscape(t *testing.T) {
 	testutil.IsolateHome(t)

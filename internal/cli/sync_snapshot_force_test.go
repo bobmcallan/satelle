@@ -112,6 +112,10 @@ func TestSnapshotForceDocumentsAndBareSync(t *testing.T) {
 	ts, f := newSnapServer(t)
 	seedCred(t, ts.URL)
 	a, b := newSnapMachine(t, ts.URL), newSnapMachine(t, ts.URL)
+	// B's edit of skills/s.md is what bare sync --force must publish, so B owns
+	// no team set: with one, bare sync would first write the project tier's copy
+	// over that edit.
+	b.write(config.LocalConfigName, "[team]\npaths = []\n")
 	if err := config.SaveGlobalHostedServer(ts.URL); err != nil {
 		t.Fatal(err)
 	}

@@ -2715,6 +2715,10 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 			return nil
 		}
 	}
+	// The team line (sty_4cc971f7): a bound repo's tree is brought to the
+	// project tier before the context renders, and each replaced local edit is
+	// named with its backup. Fail open: an error is a warning line, never a block.
+	teamLine := sessionTeamWriteDown(a)
 	// The release line rides in model context AND, through the harness's own
 	// user channel, to the user (agentcli.SessionContextOutput below).
 	releaseLine := releaseAdvisoryFor(a)
@@ -2732,7 +2736,7 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 	// other than the one satelle's measured behavior was captured against. Read
 	// from the payload alone, so it spawns nothing and costs the hook nothing.
 	driftLine := agentcli.SessionDriftLine(harness, raw)
-	content, omitted := assembleSessionContext(a, harness, limit, unit, releaseLine, substrateLine, storyLine, policyLine, driftLine)
+	content, omitted := assembleSessionContext(a, harness, limit, unit, teamLine, releaseLine, substrateLine, storyLine, policyLine, driftLine)
 	if len(omitted) > 0 {
 		fmt.Fprintf(stderr,
 			"satelle hook context: %s exceeded the %s harness limit (%d %s) — indexed with a read instruction: %s\n",
@@ -2741,7 +2745,7 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 	if strings.TrimSpace(content) == "" {
 		return nil
 	}
-	fmt.Fprintln(out, string(agentcli.SessionContextOutput(harness, emitEvent, content, joinNotice(releaseLine, substrateLine, storyLine, policyLine, driftLine))))
+	fmt.Fprintln(out, string(agentcli.SessionContextOutput(harness, emitEvent, content, joinNotice(teamLine, releaseLine, substrateLine, storyLine, policyLine, driftLine))))
 	// The marker is written only after a channel-matching emit of non-empty
 	// additionalContext. A non-matching event (including SessionStart when the
 	// channel is elsewhere) writes nothing. Marker errors are swallowed.
@@ -2754,13 +2758,14 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 // assembleSessionContext renders the session principle set — constitution,
 // principles:session docs, advisories, seat — under the budget the caller
 // resolved. unit is "bytes" (len, the SessionStart path) or "characters"
-// (runes, a tool-event clip). releaseLine is the release-currency advisory
+// (runes, a tool-event clip). teamLine is the project-tier write-down warning;
+// releaseLine is the release-currency advisory
 // ("" when none), placed beside the version-drift line; substrateLine is the
 // substrate-currency advisory, likewise, and storyLine the story-sync advisory
 // (held and conflicted stories), and policyLine the subscribed command-policy
 // advisory, and driftLine the captured-CLI-version advisory. Fail-open: a list
 // error returns empty content.
-func assembleSessionContext(a *app.App, harness string, limit int, unit, releaseLine, substrateLine, storyLine, policyLine, driftLine string) (string, []string) {
+func assembleSessionContext(a *app.App, harness string, limit int, unit, teamLine, releaseLine, substrateLine, storyLine, policyLine, driftLine string) (string, []string) {
 	if a == nil || a.Store == nil || a.Store.DocIndex == nil {
 		return "", nil
 	}
@@ -2812,6 +2817,7 @@ func assembleSessionContext(a *app.App, harness string, limit int, unit, release
 		content = prependContextLine(content, policyLine)
 		content = prependContextLine(content, driftLine)
 		content = prependContextLine(content, docStoryLine)
+		content = prependContextLine(content, teamLine)
 		return appendSeatToContext(content, seat, 0)
 	}
 
@@ -2996,6 +3002,17 @@ func systemDocStoryAdvisory(refs []docstory.Ref) string {
 // always-resident cost stays a line, and an empty line is a no-op so every
 // caller can hand it a value that is silent on the common path. Pure, for unit
 // tests.
+// sessionTeamWriteDown runs the project-tier write-down for session start and
+// returns its warnings as one line ("" when there are none).
+func sessionTeamWriteDown(a *app.App) string {
+	res, err := writeDownProjectTier(a.ProcessConfig, a.ProcessRoot, a.RuntimeDir, a.RepoRoot, a.Config, false)
+	warnings := res.Warnings()
+	if err != nil {
+		warnings = append(warnings, "team substrate: "+err.Error())
+	}
+	return strings.Join(warnings, "\n")
+}
+
 func prependContextLine(content, line string) string {
 	if strings.TrimSpace(line) == "" {
 		return content

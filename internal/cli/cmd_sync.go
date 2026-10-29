@@ -40,7 +40,8 @@ git keeps a branch with its remote:
   reconcile   choose a side per change when both machines changed the same thing
   status      where each area stands, and the next command
 
-Bare "satelle sync" runs the whole configured sync at once. Otherwise: rehydrate is
+Bare "satelle sync" first writes the project tier's team-owned files into
+.satelle, backing up local edits, then runs the configured sync. Otherwise: rehydrate is
 the full-tree recovery of a wiped .satelle and overwrites local files; config,
 documents, workstate and bindings drive one area; config deploy --version
 materialises a pinned version.
@@ -50,8 +51,7 @@ Every area defaults to local — nothing leaves the machine until you set
 set [sync] all = personal (a per-area <area> = ... still overrides it).
 Files whose name carries a .local segment (satelle.local.toml, notes.local.md)
 never leave the machine at any scope — unconditional, not a setting.
-Personal opt-in targets this repo's bound hosted project only (never a shared
-dump across all personal projects under your account). Bind with "satelle
+Personal opt-in targets this repo's bound hosted project only. Bind with "satelle
 project bind <slug>" (or set [sync] project in .satelle/satelle.toml). Team
 catalogs are a separate verb: satelle publish.`,
 		Args:        cobra.NoArgs,
@@ -242,6 +242,9 @@ func runSync(cmd *cobra.Command, serverArg string, dryRun bool) error {
 		return err
 	}
 	out := cmd.OutOrStdout()
+	if err := syncTeamWriteDown(cmd, a, dryRun); err != nil {
+		return err
+	}
 	if optedIn, err := syncOptedIn(a.Config); err != nil {
 		return err
 	} else if !optedIn {
@@ -251,6 +254,29 @@ func runSync(cmd *cobra.Command, serverArg string, dryRun bool) error {
 	return runSyncPushLegs(cmd, serverArg, dryRun, func() error {
 		return runSyncPullsOfBareSync(cmd, a.Config, serverArg, dryRun)
 	})
+}
+
+// syncTeamWriteDown is bare sync's first, local step (sty_4cc971f7): the tree is
+// brought to the project tier before any push leg, so the config push sends the
+// team version and never publishes a stray local edit. Under --dry-run it lists
+// what it would write and writes nothing.
+func syncTeamWriteDown(cmd *cobra.Command, a *app.App, dryRun bool) error {
+	res, err := writeDownProjectTier(a.ProcessConfig, a.ProcessRoot, a.RuntimeDir, a.RepoRoot, a.Config, dryRun)
+	for _, w := range res.Warnings() {
+		fmt.Fprintln(cmd.ErrOrStderr(), w)
+	}
+	if err != nil {
+		return err
+	}
+	if len(res.Written) == 0 {
+		return nil
+	}
+	if dryRun {
+		fmt.Fprintf(cmd.OutOrStdout(), "team substrate: would write %d file(s) from the project tier: %s\n", len(res.Written), strings.Join(res.Written, ", "))
+		return nil
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "team substrate: %d file(s) written from the project tier\n", len(res.Written))
+	return nil
 }
 
 // syncOptedIn is the pre-flight both the bare sync and `sync push` share: with

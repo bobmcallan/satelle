@@ -23,6 +23,11 @@ import (
 const (
 	ProjectTierDirName   = "project-tier"
 	ProjectTierStampName = ".project-tier.json"
+	// ProjectTierWrittenName records, beside the tier dir and not in it, the
+	// sha256 of each team-owned file satelle last wrote into the tree from the
+	// tier (sty_4cc971f7), so a deploy's whole-dir swap keeps it and a tree copy
+	// that no longer matches it is known to be a local edit.
+	ProjectTierWrittenName = "project-tier-written.json"
 )
 
 // ProjectTierStamp records what a deploy wrote into the tier.
@@ -224,6 +229,44 @@ func ResolveTeamPath(repoRoot, rel string) string {
 	return filepath.Join(loc.ResolveDataDir(repoRoot), filepath.FromSlash(rel))
 }
 
+// TeamFileMode is the mode a team-owned file is written with, in the tier and in
+// the tree: executable when its bytes start with "#!", so a team script runs.
+func TeamFileMode(body []byte) os.FileMode {
+	if bytes.HasPrefix(body, []byte("#!")) {
+		return 0o755
+	}
+	return 0o644
+}
+
+// ReadTeamWritten reads the record of what was last written into the tree from
+// the tier: data-dir-relative path to sha256 hex. Absent or unreadable is empty.
+func ReadTeamWritten(runtimeDir string) map[string]string {
+	out := map[string]string{}
+	b, err := os.ReadFile(filepath.Join(runtimeDir, ProjectTierWrittenName))
+	if err != nil {
+		return out
+	}
+	if json.Unmarshal(b, &out) != nil || out == nil {
+		return map[string]string{}
+	}
+	return out
+}
+
+// WriteTeamWritten replaces that record.
+func WriteTeamWritten(runtimeDir string, written map[string]string) error {
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		return fmt.Errorf("project tier: %w", err)
+	}
+	b, err := json.MarshalIndent(written, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, ProjectTierWrittenName), append(b, '\n'), 0o644); err != nil {
+		return fmt.Errorf("project tier: write record: %w", err)
+	}
+	return nil
+}
+
 // WriteProjectTier replaces the tier under runtimeDir with files (keyed by
 // data-dir-relative path) and its stamp. The new tier is written beside the old
 // and swapped in, so a failed write leaves the old tier whole. With no file the
@@ -255,11 +298,7 @@ func WriteProjectTier(runtimeDir string, stamp ProjectTierStamp, files map[strin
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return fmt.Errorf("project tier: %w", err)
 		}
-		mode := os.FileMode(0o644)
-		if bytes.HasPrefix(body, []byte("#!")) {
-			mode = 0o755
-		}
-		if err := os.WriteFile(dest, body, mode); err != nil {
+		if err := os.WriteFile(dest, body, TeamFileMode(body)); err != nil {
 			return fmt.Errorf("project tier: write %s: %w", rel, err)
 		}
 		stamp.Files = append(stamp.Files, rel)

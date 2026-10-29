@@ -35,6 +35,10 @@ const (
 	// BackupKindSyncReplaced holds the copy of a file a `sync reconcile` choice
 	// replaced: sync-replaced/{local,hosted}/<area>/<path> (sty_b0873ec3).
 	BackupKindSyncReplaced BackupKind = "sync-replaced"
+	// BackupKindTeamReplaced holds a locally edited team-owned file that session
+	// start or bare sync replaced from the project tier: team-replaced/<rel>
+	// (sty_4cc971f7).
+	BackupKindTeamReplaced BackupKind = "team-replaced"
 )
 
 // BackupResult describes where a pre-mutation copy landed.

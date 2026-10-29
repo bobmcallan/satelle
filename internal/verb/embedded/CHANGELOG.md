@@ -1,3 +1,13 @@
+## [0.0.794] - 2026-10-30
+
+### Changed
+- At session start and at bare `satelle sync`, a bound repo's team-owned files are written into the tree from the project tier. A tree copy satelle did not write there is first backed up to `<runtime>/backups/team-replaced/<path>` and named, with its backup, in a warning; a file whose backup fails is left as it is. `agents.local.toml` and `satelle.local.toml` are never written, an unbound repo is untouched, and `satelle sync --dry-run` lists what it would write. To make a tree edit the team version instead, run `satelle sync config push && satelle sync config deploy`. (sty_4cc971f7)
+
+## [serve-v0.0.239] - 2026-10-30
+
+### Changed
+- The service binary embeds the project tier's written-file record and team file mode. (sty_4cc971f7)
+
 ## [0.0.793] - 2026-10-30
 
 ### Breaking
