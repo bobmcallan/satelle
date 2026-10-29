@@ -67,7 +67,10 @@ harness to avoid that.
 
 Idempotent: re-running converges rather than duplicating. It writes only the
 files satelle marks as its own, so a hook you authored by hand is never
-overwritten — which is also why remove leaves yours in place.`,
+overwritten — which is also why remove leaves yours in place.
+
+Install also adds each scaffold directory to the managed .gitignore block,
+unless git already tracks files under it or .gitignore already has a rule for it.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home := config.GlobalDir()
@@ -137,6 +140,12 @@ overwritten — which is also why remove leaves yours in place.`,
 					}
 					printScaffoldOutcome(out, "cursor", cursorHooksRel, added, updated, incomplete)
 				}
+			}
+			// After the scaffolds, so a harness dir created on this run is seen.
+			if added, gerr := ensureGitignore(repoRoot); gerr != nil {
+				return gerr
+			} else if len(added) > 0 {
+				fmt.Fprintf(out, "updated .gitignore (added: %s)\n", strings.Join(added, ", "))
 			}
 			fmt.Fprintln(out, "No default reviewer or [agent] cli was changed.")
 			fmt.Fprintln(out, "Compliance: governed code edits/commits require an engaged satelle story (hook gate/commitgate).")

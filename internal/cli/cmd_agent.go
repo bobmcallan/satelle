@@ -411,6 +411,10 @@ syncs, so keep profile= and use_global_roles there, not in shared agents.toml.`,
 			if report.OK() {
 				fmt.Fprintln(out, "PASS  agents.toml + workflow agent= bindings")
 			}
+			for _, f := range doctor.BindingWiring(a.RepoRoot, a.PlaneConfig(), report.Grants) {
+				failed++
+				fmt.Fprintf(out, "FAIL  %s — %s\n", f.Detail, f.Remediation)
+			}
 
 			// Structural workflow checks + consistency (owned elsewhere; re-run so
 			// one verb covers the mechanical agent↔workflow surface). Disk-backed

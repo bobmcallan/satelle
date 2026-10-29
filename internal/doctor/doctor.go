@@ -134,6 +134,20 @@ func (o Opts) workflowsDir(dataDir string) string {
 	return filepath.Join(dataDir, "workflows")
 }
 
+// wiringConfig is the configuration BindingWiring resolves gate wiring from:
+// the process of record when set (the source the dispatch guard uses), else the
+// repo's own satelle.toml, else the zero config, which still yields the
+// embedded wiring.
+func (o Opts) wiringConfig(dataDir string) config.Config {
+	if o.Process != nil {
+		return *o.Process
+	}
+	if cfg, _, err := config.Load(filepath.Join(dataDir, config.ConfigName)); err == nil {
+		return cfg
+	}
+	return config.Config{}
+}
+
 // Check runs the deterministic readiness pass for one repository, plus the
 // opt-in live probes when Opts.Live is set. It never returns an error: an
 // unreadable input is itself a finding, because a diagnostic that refuses to
@@ -198,6 +212,7 @@ func Check(ctx context.Context, o Opts) Report {
 	av := agentvalidate.ValidateEffectiveLayered(layers, global, vars, governing, SkillBodyResolver(dataDir))
 	rep.Findings = append(rep.Findings, av.Findings...)
 	rep.Grants = av.Grants
+	rep.Findings = append(rep.Findings, BindingWiring(o.RepoRoot, o.wiringConfig(dataDir), av.Grants)...)
 	rep.Gates = av.Gates
 	rep.Sources = av.Provenance
 	rep.Env = envKeys(layers.Authored(), config.LayerVars(global.Vars, vars))

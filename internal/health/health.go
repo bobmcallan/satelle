@@ -61,6 +61,10 @@ const (
 	IDAgentsProfileBroken = "agents.profile.broken" // a machine-wide profile reference does not resolve
 	IDEnvUnresolved       = "env.unresolved"        // a ${VAR} in env/settings resolves to nothing
 	IDAgentsSameRole      = "agents.same_role"      // the executor and orchestrator seats both resolve to in-loop
+	// IDAgentsWiringAbsent: a binding's command names a gate-wiring path its
+	// harness declares (e.g. pi's -e .pi/extensions/satelle.ts) that is absent
+	// from the repo, so its first dispatch fails on the load.
+	IDAgentsWiringAbsent = "agents.wiring_absent"
 	// IDAgentsSharedProfile / IDAgentsSharedGlobalRoles: the SHARED agents.toml
 	// carries a reference into this machine's ~/.satelle catalog (a profile= or
 	// use_global_roles), which does not travel — it belongs in agents.local.toml.
@@ -162,7 +166,7 @@ const (
 // reads it, so a copy-pasted duplicate fails the build's tests rather than
 // silently collapsing two defects into one identifier.
 var ids = []string{
-	IDAgentsLoad, IDAgentsBinding, IDAgentsProfileBroken, IDAgentsSameRole, IDEnvUnresolved,
+	IDAgentsLoad, IDAgentsBinding, IDAgentsProfileBroken, IDAgentsSameRole, IDAgentsWiringAbsent, IDEnvUnresolved,
 	IDAgentsSharedProfile, IDAgentsSharedGlobalRoles, IDAgentsSharedMachineValue,
 	IDReviewerUnsafe, IDReviewerIsolation, IDStepUntrusted, IDNodeAlloc, IDHookAlloc,
 	IDBinaryMissing, IDBinaryMalformed,
