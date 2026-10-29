@@ -1215,6 +1215,27 @@ func (b AgentBinding) ExecutableToken() string {
 	return ExecutableToken(b.CommandTemplate())
 }
 
+// SpawnedExecutables returns the lowercased base names of the programs the
+// executor, the reviewer and every named binding would spawn, read through the
+// seat resolvers so an unset command counts as its default. Call it on an
+// already-resolved layer (LoadEffectiveAgents) so profile= commands are filled.
+func (a AgentsConfig) SpawnedExecutables() map[string]bool {
+	out := map[string]bool{}
+	add := func(b AgentBinding) {
+		if tok := b.ExecutableToken(); tok != "" {
+			out[strings.ToLower(filepath.Base(tok))] = true
+		}
+	}
+	add(a.ExecutorBinding())
+	add(a.ReviewerBinding())
+	for name := range a.Agents {
+		if b, ok := a.NamedBinding(name); ok {
+			add(b)
+		}
+	}
+	return out
+}
+
 // validateTimeouts fails fast on a malformed or non-positive [<section>] timeout
 // so a typo is caught at load — consistent with the rest of agents.toml's
 // fail-fast bootstrap — rather than surfacing only when that binding dispatches
