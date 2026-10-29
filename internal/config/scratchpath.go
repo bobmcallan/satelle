@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ScratchRepoKey is a short, stable, filesystem-safe stand-in for the repo
@@ -29,6 +30,32 @@ func scratchBase() string {
 		}
 	}
 	return os.TempDir()
+}
+
+// ScratchRoot is the shared scratch tree, <tmp>/satelle, every story's scratch
+// hangs off. It is disposable by construction: dispatches and `runtime reap`
+// remove what lies under it.
+func ScratchRoot() string {
+	return filepath.Join(scratchBase(), "satelle")
+}
+
+// IsScratchPath reports whether p is ScratchRoot or lies under it. Both sides
+// resolve symlinks where they exist (a /tmp that is a link must still match),
+// falling back to the cleaned path.
+func IsScratchPath(p string) bool {
+	root := resolvedPath(ScratchRoot())
+	path := resolvedPath(p)
+	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
+}
+
+func resolvedPath(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Clean(p)
 }
 
 // StoryScratchDir is the story-level scratch parent, <tmp>/satelle/<repo-key>/

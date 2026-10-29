@@ -2347,6 +2347,13 @@ func ensureWorkspaceRegistration(out io.Writer, repoRoot string, noWorkspace boo
 		printWorkspaceMembership(out, "", absErr)
 		return
 	}
+	// A repo inside the scratch tree is reaped with it; registering it would
+	// leave a dangling registry entry behind (sty_e3a1c1d5).
+	if config.IsScratchPath(abs) {
+		fmt.Fprintf(out, "  = workspace registry (skipped: scratch repo under %s)\n", config.ScratchRoot())
+		printWorkspaceMembership(out, "", nil)
+		return
+	}
 	gc, err := config.LoadGlobal()
 	if err != nil {
 		fmt.Fprintf(out, "  ! workspace registry (skipped: %v)\n", err)
