@@ -68,6 +68,9 @@ func TestMain(m *testing.M) {
 		// one, and ResolveSession now reads it (sty_36d6f155), so an unrelated
 		// test that expects no ambient session would otherwise resolve ours.
 		"CLAUDE_CODE_SESSION_ID",
+		// A parent dispatch's scratch dir would put every t.TempDir() under the
+		// scratch root, where init skips workspace registration (sty_e3a1c1d5).
+		config.ScratchEnv,
 	} {
 		_ = os.Unsetenv(k)
 	}

@@ -56,3 +56,34 @@ func TestStoryScratchDirWithoutDispatchUsesTempDir(t *testing.T) {
 		t.Errorf("got %s want %s", got, want)
 	}
 }
+
+// IsScratchPath matches the scratch root and what lies under it, never a
+// sibling that merely shares its name as a prefix (sty_e3a1c1d5).
+func TestIsScratchPath(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv(ScratchEnv, "")
+	t.Setenv("TMPDIR", tmp)
+	dispatch := filepath.Join(tmp, "satelle", "abcdef012345", "sty_x", "1234abcd")
+	if got, want := ScratchRoot(), filepath.Join(tmp, "satelle"); got != want {
+		t.Fatalf("ScratchRoot = %s, want %s", got, want)
+	}
+	for p, want := range map[string]bool{
+		filepath.Join(tmp, "satelle"):            true,
+		filepath.Join(dispatch, "repo"):          true,
+		filepath.Join(tmp, "satelle-other", "r"): false,
+		filepath.Join(tmp, "repo"):               false,
+		"/elsewhere/repo":                        false,
+	} {
+		if got := IsScratchPath(p); got != want {
+			t.Errorf("IsScratchPath(%s) = %v, want %v", p, got, want)
+		}
+	}
+
+	// Inside a dispatch TMPDIR is the dispatch dir; the root is recovered from
+	// SATELLE_SCRATCH, so the dispatch's own repo still counts as scratch.
+	t.Setenv(ScratchEnv, dispatch)
+	t.Setenv("TMPDIR", dispatch)
+	if !IsScratchPath(filepath.Join(dispatch, "repo")) {
+		t.Errorf("in-dispatch repo %s must be scratch", filepath.Join(dispatch, "repo"))
+	}
+}

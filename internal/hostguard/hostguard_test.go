@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/config"
 )
 
 func write(t *testing.T, path, body string) {
@@ -187,6 +189,32 @@ func TestCaptureAndDiff(t *testing.T) {
 				t.Fatalf("diff = %v, want [%s]", d, tc.want)
 			}
 		})
+	}
+}
+
+// The guard make test and make integration run catches a repo added to the
+// machine workspace registry (sty_e3a1c1d5).
+func TestCaptureDetectsRegistryAdd(t *testing.T) {
+	root := t.TempDir()
+	r := Roots{Home: root, SatelleHome: filepath.Join(root, ".satelle"), BinDir: filepath.Join(root, ".local", "bin")}
+	t.Setenv("SATELLE_HOME", r.SatelleHome)
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveGlobal(gc); err != nil {
+		t.Fatal(err)
+	}
+	before := capture(t, r)
+
+	if !gc.Workspace.AddRepo("/tmp/satelle/abcdef012345/sty_x/1234abcd/repo") {
+		t.Fatal("AddRepo reported the repo already registered")
+	}
+	if err := config.SaveGlobal(gc); err != nil {
+		t.Fatal(err)
+	}
+	if d := Diff(before, capture(t, r)); len(d) != 1 || d[0] != "changed file config.toml" {
+		t.Fatalf("diff = %v, want [changed file config.toml]", d)
 	}
 }
 
