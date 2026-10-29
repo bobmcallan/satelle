@@ -5,6 +5,7 @@ package cli
 // recognised, and the lock-root scan matches whole tokens only.
 
 import (
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -120,6 +121,13 @@ func TestInterpreterPathRefs(t *testing.T) {
 		{"script file not named", `python3 tool.py`, nil},
 		{"assembled", `python3 -c "open('.sat'+'elle/x')"`, nil},
 		{"other name", `python3 -c "print('.satellerc')"`, nil},
+		// sty_ca667036: a shell -c program is classified, not scanned.
+		{"shell program that only reads", `bash -c 'cat .satelle/x'`, nil},
+		{"positional argument of a shell program is scanned", `bash -c 'rm -f "$1"' _ .satelle/x`, []string{"/repo/.satelle/x"}},
+		{"nested interpreter in a shell program", `bash -c 'python3 -c "open(\".satelle/x\")"'`, []string{"/repo/.satelle/x"}},
+		{"nested interpreter after a cd in a shell program", `bash -c 'cd /elsewhere && python3 -c "open(\".satelle/x\")"'`, []string{"/elsewhere/.satelle/x", "/repo/.satelle/x"}},
+		{"unreadable shell program is scanned", `bash -c "$P .satelle/x"`, []string{"/repo/.satelle/x"}},
+		{"shell program assignment alone is no ref", `bash -c 'D=.satelle/x; echo hi'`, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -133,6 +141,118 @@ func TestInterpreterPathRefs(t *testing.T) {
 	}
 	if _, asg := interpreterPathRefs(`D=.satelle; ls $D`, "/repo", lock); !reflect.DeepEqual(asg, []string{"/repo/.satelle"}) {
 		t.Errorf("assignment words are returned apart: %v", asg)
+	}
+	// A shell program's own assignments travel back to resolve its unexpanded
+	// target (/repo/$D/x), as the bare command's do.
+	if _, asg := interpreterPathRefs(`bash -c 'D=.satelle; echo x > $D/x'`, "/repo", lock); !reflect.DeepEqual(asg, []string{"/repo/.satelle"}) {
+		t.Errorf("a shell program's assignments are returned in assigned: %v", asg)
+	}
+}
+
+// lastSegment is the last command segment of cmd, walked from cwd.
+func lastSegment(cmd, cwd string) bashSegment {
+	var last bashSegment
+	forEachSegment(cmd, cwd, func(s bashSegment) { last = s })
+	return last
+}
+
+// sty_ca667036 AC2: shellProgram reads a shell -c program only when it is exactly
+// what the shell will run, and every command word in it is one the classifier can
+// name.
+func TestShellProgram(t *testing.T) {
+	ok := map[string]string{
+		`bash -c 'echo x > f'`:                "echo x > f",
+		`bash -lc 'git status 2>&1'`:          "git status 2>&1",
+		`bash -c 'D=.satelle; echo x > $D/x'`: "D=.satelle; echo x > $D/x",
+		`sh -c "satelle story list"`:          "satelle story list",
+		`bash -c 'ls &>/dev/null'`:            "ls &>/dev/null",
+		`env bash -c ls`:                      "ls",
+		`bash -o pipefail -c 'ls'`:            "ls",
+		`bash -c -- 'ls'`:                     "ls",
+		`bash -c 'echo hi' 2>&1`:              "echo hi",
+		`bash -c "satelle story create --title t --body 'note .satelle/satelle.toml'"`: "satelle story create --title t --body 'note .satelle/satelle.toml'",
+	}
+	for cmd, want := range ok {
+		if got, isOK := shellProgram(lastSegment(cmd, "/repo")); !isOK || got != want {
+			t.Errorf("shellProgram(%q) = %q, %v; want %q, true", cmd, got, isOK, want)
+		}
+	}
+	for _, cmd := range []string{
+		// Dynamic command words, including quoted ones read from the raw tokens.
+		`bash -c '$CMD'`, `bash -c '"$CMD"'`, `bash -c '"$CMD" x'`, `bash -c 'exec "$@"' _ rm -rf src`,
+		`bash -c 'command $X'`, `bash -c "'rm' x"`,
+		// eval, source and ., seen through a prefix word too.
+		`bash -c 'eval "$X"'`, `bash -c 'command eval "$X"'`, `bash -c '. ./x.sh'`, `bash -c 'source x'`,
+		// Command substitution anywhere.
+		`bash -c 'echo $(eval "$X")'`, "bash -c 'echo `id`'",
+		// Quoting the classifier cannot read exactly.
+		`bash -c "$PROG"`, `bash -c "$(cat x)"`, `bash -c 'echo x '\''y'\'' > .satelle/x'`,
+		`bash -c "echo \"a b\" > .satelle/x"`, `bash -c $'ls'`, `bash -c ls*`, `bash -c'ls'`,
+		// A stdin program.
+		`echo "open('src/a.go','w')" | bash -c python3`,
+		"bash -c python3 <<'EOF'\nopen('src/a.go','w')\nEOF",
+		`bash -c sh < x.sh`, `bash -c sh <<< x`, `bash -s -c ls`,
+		// Command words the classifier cannot see past.
+		`bash -c 'sudo rm x'`, `bash -c 'exec rm x'`, `bash -c '(rm x)'`, `bash -c '{ rm x; }'`,
+		`bash -c 'if true; then rm x; fi'`, `bash -c 'echo x & rm x'`, `bash -c 'r\m x'`, `bash -c '> f rm x'`,
+		// Not a shell -c program.
+		`bash script.sh -c ls`, `bash -c`, `python3 -c 'ls'`, `ls -c x`,
+	} {
+		if got, isOK := shellProgram(lastSegment(cmd, "/repo")); isOK {
+			t.Errorf("shellProgram(%q) = %q, true; want not ok", cmd, got)
+		}
+	}
+}
+
+// sty_ca667036 AC3: a read-only command with fd redirects, bare or inside a shell
+// -c wrapper, has no lock candidate and is no tree write; a wrapper that writes is.
+func TestFdRedirectsNoCandidateNoWrite(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SATELLE_PROJECT_DIR", root)
+	cfg := lockConfig{root: root, lockPaths: []string{".satelle/"}}
+	for _, c := range []string{"git status 2>&1", "ls </dev/null", "echo hi >&2", "satelle story list 2>&1-"} {
+		for _, cmd := range []string{c, "bash -lc '" + c + "'"} {
+			if got := bashLockCandidates(cmd, cfg); len(got) != 0 {
+				t.Errorf("bashLockCandidates(%q) = %v, want none", cmd, got)
+			}
+			if bashMutatesTreeWith(cmd, inlineAnchor, inlineChecker) {
+				t.Errorf("bashMutatesTree(%q) = true, want false", cmd)
+			}
+		}
+	}
+	for _, cmd := range []string{
+		`bash -lc 'echo x > f'`,
+		`echo "open('src/a.go','w')" | bash -c python3`,
+		"bash -c python3 <<'EOF'\nopen('src/a.go','w')\nEOF",
+		`echo "open('src/a.go','w')" | python3`,
+		"python3 <<'EOF'\nopen('src/a.go','w')\nEOF",
+	} {
+		if !bashMutatesTreeWith(cmd, inlineAnchor, inlineChecker) {
+			t.Errorf("bashMutatesTree(%q) = false, want true", cmd)
+		}
+	}
+	if got := bashLockCandidates("bash -lc 'echo x > .satelle/x 2>&1'", cfg); !reflect.DeepEqual(got, []string{filepath.Join(root, ".satelle", "x")}) {
+		t.Errorf("a wrapped write keeps its one candidate, got %v", got)
+	}
+}
+
+// sty_ca667036 AC5: a shell -c program shellProgram cannot read keeps today's
+// rule — a write wherever it runs in the tree.
+func TestBashMutatesTreeUnreadableShellProgram(t *testing.T) {
+	for _, c := range []string{
+		`bash -c "$PROG"`, `bash -c "$(cat x)"`,
+		`bash -c '$CMD'`, `bash -c '"$CMD"'`, `bash -c '"$CMD" x'`, `bash -c 'exec "$@"' _ rm -rf src`,
+		`CMD='rm .satelle/x' bash -c '"$CMD"'`,
+		`bash -c 'eval "$X"'`, `bash -c 'command eval "$X"'`,
+		`bash -c 'echo $(eval "$X")'`, "bash -c 'echo `eval x`'",
+		`bash -c 'source ./x'`, `bash -c '. ./x'`,
+		`echo "open('src/a.go','w')" | bash -c python3`,
+		"bash -c python3 <<'EOF'\nopen('src/a.go','w')\nEOF",
+		`bash -c sh < x.sh`,
+	} {
+		if !bashMutatesTreeWith(c, inlineAnchor, inlineChecker) {
+			t.Errorf("bashMutatesTree(%q) = false, want true", c)
+		}
 	}
 }
 

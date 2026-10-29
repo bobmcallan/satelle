@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/help"
 	"github.com/bobmcallan/satelle/internal/ledger"
 )
 
@@ -350,6 +351,112 @@ func TestSubstrateLockBashHelpStatesLimits(t *testing.T) {
 			if !strings.Contains(flat, want) {
 				t.Errorf("hook %s --help missing %q", handler, want)
 			}
+		}
+	}
+}
+
+// sty_ca667036 AC1: a satelle verb whose --body names a substrate file writes
+// nothing, bare or wrapped in a shell -c program, so the lock refuses none of them.
+func TestSubstrateLockBashBodyNamingSubstrateAllowed(t *testing.T) {
+	var cmds []string
+	for _, bare := range []string{
+		"satelle story create --title t --body 'note .satelle/satelle.toml here'",
+		"satelle story set sty_x --body 'note .satelle/satelle.toml here'",
+		"satelle story message sty_x --from a --to b --body 'note .satelle/satelle.toml here'",
+	} {
+		cmds = append(cmds, bare, `bash -c "`+bare+`"`, `bash -lc "`+bare+`"`, `sh -c "`+bare+`"`)
+	}
+	cmds = append(cmds, "satelle story create --title t --body \"$(cat <<'B'\nnote .satelle/satelle.toml here\nB\n)\"")
+	for _, handler := range bashHandlers {
+		for _, cmd := range cmds {
+			t.Run(handler+"/"+cmd, func(t *testing.T) {
+				lockRepo(t, "feature", "")
+				out, _ := runRootIn(t, bashEvent(cmd), "hook", handler)
+				if strings.Contains(out, "substrate lock") {
+					t.Errorf("%q: refused by the substrate lock:\n%s", cmd, out)
+				}
+				if rows := ledgerRows(t, ledger.KindSubstrateLockDeny); len(rows) != 0 {
+					t.Errorf("%q: want no %s row, got %d", cmd, ledger.KindSubstrateLockDeny, len(rows))
+				}
+			})
+		}
+	}
+}
+
+// sty_ca667036 AC2 + AC5: a shell -c program that writes locked substrate is
+// refused as its bare form is, and one the classifier cannot read keeps the text
+// scan — including the stated limits a wrapped --body falls into.
+func TestSubstrateLockBashShellProgramRefused(t *testing.T) {
+	cases := []struct{ name, cmd string }{
+		{"redirect", `bash -lc 'echo x > .satelle/satelle.toml'`},
+		{"sed -i", `sh -c "sed -i s/a/b/ .satelle/workflows/x.toml"`},
+		{"tee with a here-string", `bash -c 'tee .satelle/x <<<y'`},
+		{"nested interpreter", `bash -c "python3 -c 'open(\".satelle/x\",\"w\")'"`},
+		{"program assignment", `bash -c 'D=.satelle; echo x > $D/x'`},
+		{"positional redirect", `bash -c 'echo x > "$1"' _ .satelle/satelle.toml`},
+		{"positional rm", `bash -c 'rm -f "$1"' _ .satelle/satelle.toml`},
+		{"assignment, dynamic command word", `CMD='rm .satelle/x' bash -c '$CMD'`},
+		{"assignment, quoted dynamic command word", `CMD='rm .satelle/x' bash -c '"$CMD"'`},
+		{"stdin program", `echo "open('.satelle/x','w')" | bash -c python3`},
+		{"glued quoting", `bash -c 'echo x '\''y'\'' > .satelle/x'`},
+		{"double-quoted escapes", `bash -c "echo \"a b\" > .satelle/x"`},
+		{"unexpanded program", `bash -c "$P .satelle/x"`},
+		{"eval", `bash -c 'eval "rm .satelle/x"'`},
+		{"source", `bash -c 'source .satelle/x'`},
+		{"dot", `bash -c '. .satelle/x'`},
+		{"limit: wrapped heredoc body", "bash -c \"satelle story create --title t --body \\\"$(cat <<'B'\nnote .satelle/satelle.toml\nB\n)\\\"\""},
+		{"limit: wrapped glued body", `bash -lc 'satelle story create --title t --body '\''note .satelle/satelle.toml'\'''`},
+	}
+	for _, handler := range bashHandlers {
+		for _, tc := range cases {
+			t.Run(handler+"/"+tc.name, func(t *testing.T) {
+				_, id := lockRepo(t, "feature", "")
+				out, err := runRootIn(t, bashEvent(tc.cmd), "hook", handler)
+				if err == nil {
+					t.Fatalf("%q must be refused while %s holds a performing seat:\n%s", tc.cmd, id, out)
+				}
+				if reason := denyReasonOf(t, out); !strings.Contains(reason, "substrate lock") {
+					t.Errorf("%q: want the substrate lock, got: %s", tc.cmd, reason)
+				}
+				if got := len(ledgerRows(t, ledger.KindSubstrateLockDeny)); got != 1 {
+					t.Errorf("%q: want one %s row, got %d", tc.cmd, ledger.KindSubstrateLockDeny, got)
+				}
+			})
+		}
+	}
+}
+
+// sty_ca667036 AC6: the help says a shell -c program is classified as shell, and
+// the topic it points at names what is still text-scanned.
+func TestSubstrateLockBashHelpShellProgram(t *testing.T) {
+	for handler, wants := range map[string][]string{
+		"gate":       {"shell -c program is classified as shell unless not plain", "satelle help substrate"},
+		"commitgate": {"shell -c program is classified as shell"},
+	} {
+		out, err := runRoot(t, "hook", handler, "--help")
+		if err != nil {
+			t.Fatal(err)
+		}
+		flat := strings.Join(strings.Fields(out), " ")
+		for _, want := range wants {
+			if !strings.Contains(flat, want) {
+				t.Errorf("hook %s --help missing %q", handler, want)
+			}
+		}
+	}
+	topic, ok := help.Get("substrate")
+	if !ok {
+		t.Fatal("help topic substrate missing")
+	}
+	flat := strings.Join(strings.Fields(topic.Body), " ")
+	for _, want := range []string{
+		"A shell -c program is classified as shell",
+		"Only non-shell interpreter text (python, node, perl, ruby) is text-scanned",
+		"text-scanned like it when it is not plain",
+		"NAME=value words and positional arguments are always text-scanned",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("help substrate missing %q", want)
 		}
 	}
 }
