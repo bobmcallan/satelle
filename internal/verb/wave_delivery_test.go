@@ -2,6 +2,7 @@ package verb_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -54,10 +55,22 @@ requires = ["ready"]
 `)
 }
 
+// summaryGate is the always-on step-summary gate as this repo declares it: an
+// edge-less node bound to a role=reviewer seat, so it sits on the route's spine.
+const summaryGate = `
+[[gate]]
+skill = "satelle-step-summary"
+agent = "reviewer-summary"
+mandatory = true
+for = ["*", "epic-parent"]
+`
+
 // waveResolver is the wired performer rule. The container's ready step is
 // performed by a dispatched agent whose skill names the document "ready"; a
 // child's `in_progress` step answers by the child's placement pin, the way the
-// engine does, and an unpinned child falls to an in-loop [executor].
+// engine does, and an unpinned child falls to an in-loop [executor]. Asked for
+// the step-summary node, it refuses it the way the engine refuses a reviewer on
+// a performing state.
 type waveResolver struct{}
 
 func (waveResolver) DispatchExecutor(context.Context, workitem.Item, string) (verb.DispatchResult, error) {
@@ -66,6 +79,8 @@ func (waveResolver) DispatchExecutor(context.Context, workitem.Item, string) (ve
 
 func (waveResolver) StepPerformer(_ context.Context, it workitem.Item, to string) (verb.PerformerResolution, error) {
 	switch to {
+	case "gate_satelle-step-summary":
+		return verb.PerformerResolution{}, errors.New(`workflow "default" allocates performing state "gate_satelle-step-summary" to agent "reviewer-summary" with role=reviewer`)
 	case "ready":
 		return verb.PerformerResolution{Kind: verb.PerformerDispatched, Dispatched: true, Agent: "ready-reviewer", OutputName: "ready"}, nil
 	case "in_progress":
@@ -79,6 +94,8 @@ func (waveResolver) StepPerformer(_ context.Context, it workitem.Item, to string
 				return verb.PerformerResolution{Kind: verb.PerformerDispatched, Dispatched: true, Agent: "coder", Team: "/teams/x"}, nil
 			case "placement:remote":
 				return verb.PerformerResolution{}, context.DeadlineExceeded
+			case "placement:unbound":
+				return verb.PerformerResolution{}, errors.New(`step "in_progress" names agent "ghost" but agents.toml defines no [ghost] binding`)
 			}
 		}
 		return verb.PerformerResolution{Kind: verb.PerformerExecutor, Agent: "executor", ExecutorInLoop: true}, nil
@@ -159,6 +176,39 @@ func TestWaveDeliveryShowsAResolverErrorPerChild(t *testing.T) {
 	}
 	if d := deliveryByID(t, res, ok.ID); d.Error != "" || d.Placement != "executor (in-loop)" {
 		t.Errorf("ok child = %+v, want its placement", d)
+	}
+}
+
+// The step-summary gate node judges and has no performer: the wave passes over
+// it, so each child's delivery is its first performing step with no error,
+// while a performing step the engine really cannot resolve still reports.
+func TestWaveDeliverySkipsSummariserNode(t *testing.T) {
+	wf := deliveryWF("", "")
+	wf["step"] += summaryGate
+	wireWithWorkflows(t, wf)
+	verb.SetExecutorDispatcher(waveResolver{})
+	epic := waveEpic(t)
+	plain := waveChild(t)
+	pinned := waveChild(t, "placement:local")
+	unbound := waveChild(t, "placement:unbound")
+
+	res, err := wave(t, epic.ID)
+	if err != nil {
+		t.Fatalf("wave: %v", err)
+	}
+	for _, c := range []struct {
+		id               workitem.Item
+		placement, agent string
+	}{
+		{plain, "executor (in-loop)", "executor"},
+		{pinned, "dispatched", "coder"},
+	} {
+		if d := deliveryByID(t, res, c.id.ID); d.Error != "" || d.Step != "in_progress" || d.Placement != c.placement || d.Agent != c.agent {
+			t.Errorf("%s delivery = %+v, want step in_progress placement %q agent %q and no error", c.id.ID, d, c.placement, c.agent)
+		}
+	}
+	if d := deliveryByID(t, res, unbound.ID); !strings.Contains(d.Error, "no [ghost] binding") || d.Step != "in_progress" || d.Placement != "" {
+		t.Errorf("unbound child = %+v, want the binding error on step in_progress and no placement", d)
 	}
 }
 

@@ -1,3 +1,8 @@
+## [0.0.792] - 2026-10-30
+
+### Fixed
+- `satelle story wave` resolves each child's delivery from the performing steps of its route. Since 0.0.790 it also asked the engine for a performer at the always-on step-summary gate node, which judges and has none, and printed that refusal as every child's delivery (`step=gate_satelle-step-summary, error: … role=reviewer`). The node is now passed over; a performing step that really cannot be resolved still reports its error. (sty_b40c1657)
+
 ## [0.0.791] - 2026-10-29
 
 ### Fixed

@@ -421,7 +421,9 @@ func tagValue(tags []string, prefix string) string {
 }
 
 // resolveDelivery fills d's step and placement fields from the engine's
-// performer rule, over c's route from its current status on.
+// performer rule, over the performing steps of c's route from its current
+// status on. The edge-less step-summary node sits on the spine but judges and
+// has no performer, so it is passed over rather than asked.
 func resolveDelivery(ctx context.Context, resolver PerformerResolver, wfs []docindex.Doc, c workitem.Item, d *WaveDelivery) {
 	spec, _, _, err := wfgovern.SpecFor(wfs, c)
 	if err != nil {
@@ -435,6 +437,10 @@ func resolveDelivery(ctx context.Context, resolver PerformerResolver, wfs []doci
 	var chosen *PerformerResolution
 	step := ""
 	for _, name := range steps {
+		st, named := spec.StateNamed(name)
+		if named && st.IsSummariser() {
+			continue
+		}
 		perf, perr := resolver.StepPerformer(ctx, c, name)
 		if perr != nil {
 			d.Step, d.Error = name, perr.Error()
@@ -446,7 +452,7 @@ func resolveDelivery(ctx context.Context, resolver PerformerResolver, wfs []doci
 		if chosen == nil {
 			chosen, step = &perf, name
 		}
-		if st, ok := spec.StateNamed(name); ok && st.PlacementTag != "" {
+		if named && st.PlacementTag != "" {
 			chosen, step = &perf, name
 			break
 		}
