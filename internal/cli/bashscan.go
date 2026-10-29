@@ -29,6 +29,10 @@ type bashTok struct {
 	// Value collapses to a placeholder. Text scans that must see what an
 	// interpreter is fed (interpreterPathRefs) read it; word classifiers never do.
 	Raw string
+	// Start and End are the token's byte offsets in the tokenized text. Two
+	// tokens with no gap between them (End == next Start) are one shell word
+	// built from pieces (`'a'\''b'`), which shellProgram must not read as one.
+	Start, End int
 }
 
 // tokenizeBash splits a Bash payload into tokens. Quoted spans and heredoc
@@ -36,6 +40,10 @@ type bashTok struct {
 // cannot contribute matching word tokens to commit/push detection.
 func tokenizeBash(command string) []bashTok {
 	var out []bashTok
+	emit := func(t bashTok, start, end int) {
+		t.Start, t.End = start, end
+		out = append(out, t)
+	}
 	i := 0
 	n := len(command)
 	for i < n {
@@ -46,41 +54,43 @@ func tokenizeBash(command string) []bashTok {
 		}
 		// Newline segment boundary.
 		if command[i] == '\n' {
-			out = append(out, bashTok{Kind: "op", Op: "\n"})
+			emit(bashTok{Kind: "op", Op: "\n"}, i, i+1)
 			i++
 			continue
 		}
 		// Operators: && || ; |
 		if command[i] == '&' && i+1 < n && command[i+1] == '&' {
-			out = append(out, bashTok{Kind: "op", Op: "&&"})
+			emit(bashTok{Kind: "op", Op: "&&"}, i, i+2)
 			i += 2
 			continue
 		}
 		if command[i] == '|' && i+1 < n && command[i+1] == '|' {
-			out = append(out, bashTok{Kind: "op", Op: "||"})
+			emit(bashTok{Kind: "op", Op: "||"}, i, i+2)
 			i += 2
 			continue
 		}
 		if command[i] == ';' {
-			out = append(out, bashTok{Kind: "op", Op: ";"})
+			emit(bashTok{Kind: "op", Op: ";"}, i, i+1)
 			i++
 			continue
 		}
 		if command[i] == '|' {
-			out = append(out, bashTok{Kind: "op", Op: "|"})
+			emit(bashTok{Kind: "op", Op: "|"}, i, i+1)
 			i++
 			continue
 		}
 		// Heredoc: <<[-]['"]WORD['"] … WORD
 		if command[i] == '<' && i+1 < n && command[i+1] == '<' {
-			end, rest, ok := consumeHeredoc(command, i)
+			end, restStart, rest, ok := consumeHeredoc(command, i)
 			if ok {
-				out = append(out, bashTok{Kind: "string", Value: "HEREDOC", Raw: command[i:end]})
+				emit(bashTok{Kind: "string", Value: "HEREDOC", Raw: command[i:end]}, i, restStart)
 				// What follows the delimiter on the opener line (`<<EOF > f`,
 				// `<<EOF | python3 -`) is ordinary shell and is classified as such;
 				// the line after the closing delimiter starts a new command.
-				out = append(out, tokenizeBash(rest)...)
-				out = append(out, bashTok{Kind: "op", Op: "\n"})
+				for _, t := range tokenizeBash(rest) {
+					emit(t, t.Start+restStart, t.End+restStart)
+				}
+				emit(bashTok{Kind: "op", Op: "\n"}, end, end)
 				i = end
 				continue
 			}
@@ -94,7 +104,7 @@ func tokenizeBash(command string) []bashTok {
 			if j < n {
 				j++ // closing quote
 			}
-			out = append(out, bashTok{Kind: "string", Value: command[i:j]})
+			emit(bashTok{Kind: "string", Value: command[i:j]}, i, j)
 			i = j
 			continue
 		}
@@ -102,7 +112,7 @@ func tokenizeBash(command string) []bashTok {
 		// substitution inside it nests its own quotes and heredocs).
 		if command[i] == '"' {
 			j := skipDoubleQuoted(command, i+1)
-			out = append(out, bashTok{Kind: "string", Value: command[i:j]})
+			emit(bashTok{Kind: "string", Value: command[i:j]}, i, j)
 			i = j
 			continue
 		}
@@ -120,7 +130,7 @@ func tokenizeBash(command string) []bashTok {
 				}
 				j++
 			}
-			out = append(out, bashTok{Kind: "string", Value: command[i:j]})
+			emit(bashTok{Kind: "string", Value: command[i:j]}, i, j)
 			i = j
 			continue
 		}
@@ -147,12 +157,12 @@ func tokenizeBash(command string) []bashTok {
 			j++
 		}
 		if j > i {
-			out = append(out, bashTok{Kind: "word", Value: command[i:j]})
+			emit(bashTok{Kind: "word", Value: command[i:j]}, i, j)
 			i = j
 			continue
 		}
 		// Fallback: single unknown char as word.
-		out = append(out, bashTok{Kind: "word", Value: string(command[i])})
+		emit(bashTok{Kind: "word", Value: string(command[i])}, i, i+1)
 		i++
 	}
 	return out
@@ -203,7 +213,7 @@ func skipSubstitution(s string, i int) (int, bool) {
 		case c == '"':
 			i = skipDoubleQuoted(s, i+1)
 		case c == '<' && i+1 < n && s[i+1] == '<' && !(i+2 < n && s[i+2] == '<'):
-			end, rest, ok := consumeHeredoc(s, i)
+			end, _, rest, ok := consumeHeredoc(s, i)
 			if !ok {
 				i += 2
 				continue
@@ -247,9 +257,10 @@ func parenDelta(text string) int {
 }
 
 // consumeHeredoc advances past a heredoc opener and its body. Returns the index
-// after the terminating delimiter line and the rest of the opener line after the
-// delimiter word, or (start, "", false) if it cannot parse.
-func consumeHeredoc(s string, start int) (int, string, bool) {
+// after the terminating delimiter line, the offset and text of the rest of the
+// opener line after the delimiter word, or (start, start, "", false) if it cannot
+// parse.
+func consumeHeredoc(s string, start int) (int, int, string, bool) {
 	// start points at first '<' of <<
 	i := start + 2
 	n := len(s)
@@ -261,7 +272,7 @@ func consumeHeredoc(s string, start int) (int, string, bool) {
 		i++
 	}
 	if i >= n {
-		return start, "", false
+		return start, start, "", false
 	}
 	delim := ""
 	if s[i] == '\'' || s[i] == '"' {
@@ -285,7 +296,7 @@ func consumeHeredoc(s string, start int) (int, string, bool) {
 		i = j
 	}
 	if delim == "" {
-		return start, "", false
+		return start, start, "", false
 	}
 	// The rest of the opener line, up to the newline that starts the body.
 	restStart := i
@@ -307,13 +318,13 @@ func consumeHeredoc(s string, start int) (int, string, bool) {
 			if i < n {
 				i++ // consume newline after delimiter
 			}
-			return i, rest, true
+			return i, restStart, rest, true
 		}
 		if i < n {
 			i++
 		}
 	}
-	return i, rest, true // unterminated: consume rest
+	return i, restStart, rest, true // unterminated: consume rest
 }
 
 // pipedSegment is one command segment with whether a pipe feeds it.
@@ -572,7 +583,16 @@ func bashMutationTargets(command, anchor string) (inHome, foreign []string) {
 // bashTargets is bashMutationTargets with the one question the substrate lock
 // asks differently: gitReads keeps the -C dir of a read-only git subcommand as a
 // target, because the lock refuses even a read of locked substrate.
+//
+// A shell segment whose -c program is parseable (shellProgram) contributes the
+// targets of that program, walked from the segment's working dir.
 func bashTargets(command, anchor string, gitReads bool) (inHome, foreign []string) {
+	return bashTargetsFrom(command, anchor, anchor, gitReads, 0)
+}
+
+// bashTargetsFrom is bashTargets with the walk starting in cwd, at shell-program
+// nesting depth depth.
+func bashTargetsFrom(command, anchor, cwd string, gitReads bool, depth int) (inHome, foreign []string) {
 	anchor = filepath.Clean(anchor)
 	if anchor == "" || anchor == "." {
 		return nil, nil
@@ -591,7 +611,12 @@ func bashTargets(command, anchor string, gitReads bool) (inHome, foreign []strin
 		foreign = append(foreign, abs)
 	}
 
-	forEachSegment(command, anchor, func(sg bashSegment) {
+	var classifySegment func(sg bashSegment, depth int)
+	var walk func(command, start string, depth int)
+	walk = func(command, start string, depth int) {
+		forEachSegment(command, start, func(sg bashSegment) { classifySegment(sg, depth) })
+	}
+	classifySegment = func(sg bashSegment, depth int) {
 		seg, words, idx, cwd := sg.Tokens, sg.Words, sg.Idx, sg.Cwd
 		// Redirect targets on the full segment text (spaced and glued forms),
 		// against the cwd in effect before this segment — cd and env-only
@@ -601,6 +626,12 @@ func bashTargets(command, anchor string, gitReads bool) (inHome, foreign []strin
 		}
 		if len(words) == 0 {
 			return // env assignments only
+		}
+		if depth < maxShellProgramDepth {
+			if prog, ok := shellProgram(sg); ok {
+				walk(prog, cwd, depth+1)
+				return
+			}
 		}
 		cmd := filepath.Base(words[0])
 
@@ -658,7 +689,8 @@ func bashTargets(command, anchor string, gitReads bool) (inHome, foreign []strin
 				add(p)
 			}
 		}
-	})
+	}
+	walk(command, filepath.Clean(cwd), depth)
 	return inHome, foreign
 }
 
@@ -704,21 +736,29 @@ func forEachSegment(command, base string, fn func(s bashSegment)) {
 			continue
 		}
 		// Strip env assignments: FOO=bar cmd …
-		idx := 0
-		for idx < len(all) && strings.Contains(all[idx], "=") && !strings.HasPrefix(all[idx], "-") {
-			// Only treat as assignment if it looks like NAME=value before command.
-			eq := strings.IndexByte(all[idx], '=')
-			if eq <= 0 || !isShellIdent(all[idx][:eq]) {
-				break
-			}
-			idx++
-		}
+		idx := leadingAssignments(all)
 		words := all[idx:]
 		fn(bashSegment{Tokens: seg, Words: words, Idx: idx, Cwd: cwd, Piped: ps.Piped})
 		if len(words) >= 2 && filepath.Base(words[0]) == "cd" {
 			cwd = resolvePath(cwd, words[1])
 		}
 	}
+}
+
+// leadingAssignments is the number of NAME=value words that open a segment's word
+// list, before its command word.
+func leadingAssignments(words []string) int {
+	n := 0
+	for n < len(words) && isAssignmentWord(words[n]) {
+		n++
+	}
+	return n
+}
+
+// isAssignmentWord reports whether w reads as a NAME=value shell assignment.
+func isAssignmentWord(w string) bool {
+	eq := strings.IndexByte(w, '=')
+	return eq > 0 && !strings.HasPrefix(w, "-") && isShellIdent(w[:eq])
 }
 
 // gitCommandDir is the directory the first `git … commit|push` in a payload runs
@@ -841,7 +881,8 @@ func bashAttributionTree(command, anchor string) string {
 // a command can do: an interpreter running inline program text (a code flag, `-`,
 // or stdin fed by a heredoc or pipe; interpreterInlineProgram) is a write wherever
 // its working dir is in the tree, because its writes are invisible to the command
-// line. The classifier never stats: isFile is the injected "is this an existing
+// line. A shell -c program shellProgram can read is not invisible, so it is judged
+// by what it writes (inlineProgramWrites). The classifier never stats: isFile is the injected "is this an existing
 // regular file" check that tells a named script from a stray word; nil means no
 // file exists, which fails closed. bashMutationTargets, mutationTargets (the
 // cross-repo fence) and bashLockCandidates (the substrate lock) do not see this.
@@ -868,10 +909,29 @@ func bashMutatesTreeWith(command, anchor string, isFile func(string) bool) bool 
 	if anchor == "" || anchor == "." {
 		return false
 	}
+	return inlineProgramWrites(command, anchor, anchor, isFile, 0)
+}
+
+// inlineProgramWrites is the inline-interpreter half of bashMutatesTreeWith, walked
+// from cwd at shell-program nesting depth depth. A shell segment whose -c program
+// shellProgram can read is judged by that program — its classified targets are
+// already among bashMutationTargets' — rather than as a write wherever it runs.
+func inlineProgramWrites(command, cwd, anchor string, isFile func(string) bool, depth int) bool {
 	var segs []bashSegment
-	forEachSegment(command, anchor, func(s bashSegment) { segs = append(segs, s) })
+	forEachSegment(command, cwd, func(s bashSegment) { segs = append(segs, s) })
 	for j, s := range segs {
-		if len(s.Words) == 0 || filepath.Base(s.Words[0]) == "satelle" || !interpreterInlineProgram(s, isFile) {
+		if len(s.Words) == 0 || filepath.Base(s.Words[0]) == "satelle" {
+			continue
+		}
+		if depth < maxShellProgramDepth {
+			if prog, ok := shellProgram(s); ok {
+				if inlineProgramWrites(prog, s.Cwd, anchor, isFile, depth+1) {
+					return true
+				}
+				continue
+			}
+		}
+		if !interpreterInlineProgram(s, isFile) {
 			continue
 		}
 		// In the tree (the root or any subdirectory), or in a linked worktree of
@@ -1126,6 +1186,157 @@ func interpreterInlineProgram(seg bashSegment, isFile func(string) bool) bool {
 	return false
 }
 
+// maxShellProgramDepth bounds how many shell -c programs nested in one another are
+// classified as shell; a deeper one is read as unparseable.
+const maxShellProgramDepth = 4
+
+// shellOpaqueWords are command words behind which the classifier cannot see the
+// command that runs: wrappers that run their arguments as a command, and reserved
+// words that open a compound command. A shell -c program that has one as a command
+// word is not parseable.
+var shellOpaqueWords = map[string]bool{
+	"command": true, "builtin": true, "exec": true, "env": true, "nohup": true, "time": true,
+	"sudo": true, "doas": true, "xargs": true, "nice": true, "timeout": true, "stdbuf": true, "setsid": true,
+	"if": true, "then": true, "else": true, "elif": true, "fi": true, "do": true, "done": true,
+	"while": true, "until": true, "for": true, "case": true, "esac": true, "select": true,
+	"function": true, "coproc": true, "!": true, "{": true, "}": true, "[[": true,
+}
+
+// shellProgram returns the program of a shell segment run as `sh|bash|zsh|dash|ksh
+// [opts] -c PROGRAM` when the classifier reads it exactly as the shell will run it,
+// so the program can be judged as shell — by what it writes — rather than as
+// opaque interpreter text. ok is false, and the caller keeps the conservative rule,
+// unless all of these hold:
+//   - the segment has no stdin program: no pipe feeds it, and it carries no heredoc,
+//     here-string or `<` redirect;
+//   - the program word is one complete token, not glued to another piece (a
+//     quote spliced into it), and is single-quoted, or double-quoted or bare with no
+//     backslash, `$` or backtick (a bare word also has no glob or brace);
+//   - the program has no `$(` or backtick anywhere;
+//   - every command word in it is a bare word with no `$`, backslash, paren, brace
+//     or redirect, is not `.` and is not in shellOpaqueWords; no word is eval or
+//     source; and no `&` runs a command in the background.
+func shellProgram(seg bashSegment) (string, bool) {
+	_, prog, ok := shellProgramToken(seg)
+	return prog, ok
+}
+
+// shellProgramToken is shellProgram that also returns the index of the program
+// token in seg.Tokens, so a text scan can skip exactly that token.
+func shellProgramToken(seg bashSegment) (int, string, bool) {
+	if seg.Piped {
+		return -1, "", false
+	}
+	for _, t := range seg.Tokens {
+		if (t.Kind == "string" && t.Raw != "") || (t.Kind == "word" && strings.Contains(t.Value, "<")) {
+			return -1, "", false
+		}
+	}
+	toks := commandTokens(seg.Tokens, seg.Idx)
+	off := len(seg.Tokens) - len(toks)
+	var words []string
+	var at []int // index in seg.Tokens of each word
+	for k, t := range toks {
+		switch {
+		case t.Kind == "word" && t.Value != "":
+			words = append(words, t.Value)
+		case t.Kind == "string":
+			words = append(words, unquoteTok(t.Value))
+		default:
+			continue
+		}
+		at = append(at, off+k)
+	}
+	family, rest, ok := interpreterBase(words)
+	if !ok || family != "shell" {
+		return -1, "", false
+	}
+	coded := false
+	for i := len(words) - len(rest); i < len(words); i++ {
+		w := words[i]
+		switch {
+		case w == "-o" || w == "+o" || w == "-O" || w == "+O" || w == "--rcfile" || w == "--init-file":
+			i++ // takes a value
+		case w == "-":
+			return -1, "", false
+		case strings.HasPrefix(w, "--"):
+		case len(w) > 1 && (w[0] == '-' || w[0] == '+'):
+			if strings.ContainsAny(w[1:], "soO") {
+				return -1, "", false
+			}
+			coded = coded || interpreterCodeFlag(family, w)
+		case !coded:
+			return -1, "", false // a script, or a word the classifier cannot place
+		default:
+			return readShellProgram(seg.Tokens, at[i])
+		}
+	}
+	return -1, "", false
+}
+
+// readShellProgram reads the program token at k of toks under shellProgram's
+// quoting and parse rules.
+func readShellProgram(toks []bashTok, k int) (int, string, bool) {
+	t := toks[k]
+	if (k > 0 && toks[k-1].End == t.Start) || (k+1 < len(toks) && toks[k+1].Start == t.End) {
+		return -1, "", false
+	}
+	v, prog := t.Value, ""
+	switch {
+	case t.Kind == "word":
+		if strings.ContainsAny(v, "\\$`*?[{~") {
+			return -1, "", false
+		}
+		prog = v
+	case len(v) >= 2 && v[0] == '\'' && v[len(v)-1] == '\'':
+		prog = v[1 : len(v)-1]
+	case len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' && !strings.ContainsAny(v[1:len(v)-1], "\\$`"):
+		prog = v[1 : len(v)-1]
+	default:
+		return -1, "", false
+	}
+	if strings.Contains(prog, "$(") || strings.Contains(prog, "`") || !shellProgramPlain(prog) {
+		return -1, "", false
+	}
+	return k, prog, true
+}
+
+// shellProgramPlain reports whether every command word of prog is one the
+// classifier can name (see shellProgram).
+func shellProgramPlain(prog string) bool {
+	for _, ps := range splitSegments(tokenizeBash(prog)) {
+		toks := ps.Toks
+		for j, t := range toks {
+			if t.Kind != "word" {
+				continue
+			}
+			if t.Value == "eval" || t.Value == "source" {
+				return false
+			}
+			// A lone & is a background separator unless it is glued into a
+			// redirect (2>&1, &>f).
+			if t.Value == "&" && !(j > 0 && toks[j-1].End == t.Start && strings.HasSuffix(toks[j-1].Value, ">")) &&
+				!(j+1 < len(toks) && toks[j+1].Start == t.End && strings.HasPrefix(toks[j+1].Value, ">")) {
+				return false
+			}
+		}
+		i := 0
+		for i < len(toks) && toks[i].Kind == "word" && isAssignmentWord(toks[i].Value) {
+			for i++; i < len(toks) && toks[i].Start == toks[i-1].End; i++ {
+			}
+		}
+		if i == len(toks) {
+			continue // assignments only
+		}
+		c := toks[i]
+		if c.Kind != "word" || c.Value == "." || shellOpaqueWords[c.Value] || strings.HasPrefix(c.Value, "-") ||
+			strings.ContainsAny(c.Value, "$`\\(){}<>") || (i+1 < len(toks) && toks[i+1].Start == c.End) {
+			return false
+		}
+	}
+	return true
+}
+
 // isNameByte is a byte that continues a file or identifier name. A lock-root token
 // is a whole token only when neither neighbour is one (`.satellerc` and
 // `my.satelle` are other names).
@@ -1197,38 +1408,59 @@ func lockPathRefs(text string, lockPaths []string) []string {
 // unexpanded `$D/x`, never on their own (`D=.satelle; ls $D` is a read). A relative run resolves against the segment's
 // working dir and against base, so a cd cannot move the reference out of the lock.
 //
+// A shell -c program is shell text, so when shellProgram can read it, it is
+// classified as shell instead of scanned: its program word contributes the write
+// targets the classifier finds in it that fall under a lock path, plus what
+// interpreterPathRefs finds in it in turn (a nested `python3 -c`). Its own NAME=value
+// words are returned in assigned, to resolve an unexpanded target, and never join
+// refs here. The segment's other tokens (positional arguments, its assignment
+// values) are still scanned. Only non-shell interpreter text, and a shell program
+// shellProgram cannot read, are pattern-scanned.
+//
 // Honest limits, stated where the lock is documented: a script file whose body and
 // target are not in the command text (`python3 tool.py`) and a path assembled from
 // fragments that never spell the lock root (`'.sat'+'elle'`) are invisible here.
 // The scan is conservative — an interpreter command that only READS a locked path
 // is also a candidate; reads have the read tools and `satelle doc get`.
 func interpreterPathRefs(command, base string, lockPaths []string) (refs, assigned []string) {
+	return interpreterPathRefsFrom(command, base, base, lockPaths, 0)
+}
+
+// interpreterPathRefsFrom is interpreterPathRefs with the walk starting in cwd, at
+// shell-program nesting depth depth; a run still resolves against base as well.
+func interpreterPathRefsFrom(command, cwd, base string, lockPaths []string, depth int) (refs, assigned []string) {
 	if len(lockPaths) == 0 {
 		return nil, nil
 	}
 	var segs []bashSegment
-	forEachSegment(command, base, func(s bashSegment) { segs = append(segs, s) })
+	forEachSegment(command, cwd, func(s bashSegment) { segs = append(segs, s) })
 	seenRefs, seenAssigned := map[string]bool{}, map[string]bool{}
+	addTo := func(dst *[]string, seen map[string]bool, abs string) {
+		if abs != "" && !seen[abs] {
+			seen[abs] = true
+			*dst = append(*dst, abs)
+		}
+	}
 	scanTo := func(dst *[]string, seen map[string]bool, text, cwd string) {
 		for _, run := range lockPathRefs(text, lockPaths) {
 			for _, b := range []string{cwd, base} {
-				if abs := resolvePath(b, run); abs != "" && !seen[abs] {
-					seen[abs] = true
-					*dst = append(*dst, abs)
-				}
+				addTo(dst, seen, resolvePath(b, run))
 			}
 		}
 	}
-	scan := func(text, cwd string) { scanTo(&refs, seenRefs, text, cwd) }
-	scanSegment := func(s bashSegment) {
-		for _, t := range s.Tokens {
+	scanSegment := func(s bashSegment, skip int) {
+		for k, t := range s.Tokens {
+			if k == skip {
+				continue
+			}
 			text := t.Value
 			if t.Raw != "" {
 				text = t.Raw
 			}
-			scan(text, s.Cwd)
+			scanTo(&refs, seenRefs, text, s.Cwd)
 		}
 	}
+	var progAssigned []string
 	interp := false
 	for j, s := range segs {
 		for _, a := range wordsOnly(s.Tokens)[:s.Idx] {
@@ -1238,17 +1470,34 @@ func interpreterPathRefs(command, base string, lockPaths []string) (refs, assign
 			continue
 		}
 		interp = true
+		if depth < maxShellProgramDepth {
+			if k, prog, ok := shellProgramToken(s); ok {
+				scanSegment(s, k)
+				inHome, foreign := bashTargetsFrom(prog, base, s.Cwd, true, depth+1)
+				for _, t := range append(inHome, foreign...) {
+					if len(lockPathRefs(t, lockPaths)) > 0 {
+						addTo(&refs, seenRefs, t)
+					}
+				}
+				pr, pa := interpreterPathRefsFrom(prog, s.Cwd, base, lockPaths, depth+1)
+				for _, r := range pr {
+					addTo(&refs, seenRefs, r)
+				}
+				progAssigned = append(progAssigned, pa...)
+				continue
+			}
+		}
 		for _, p := range programSegments(segs, j) {
-			scanSegment(p)
+			scanSegment(p, -1)
 		}
 	}
 	if interp {
 		for _, a := range assigned {
-			if !seenRefs[a] {
-				seenRefs[a] = true
-				refs = append(refs, a)
-			}
+			addTo(&refs, seenRefs, a)
 		}
+	}
+	for _, a := range progAssigned {
+		addTo(&assigned, seenAssigned, a)
 	}
 	return refs, assigned
 }

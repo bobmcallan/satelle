@@ -502,10 +502,12 @@ func TestBashMutatesTreeInlineInterpreter(t *testing.T) {
 		"cat script | sh",
 		"bash -s",
 		"sh -",
-		`bash -o pipefail -c "echo"`,
-		`bash --rcfile ~/.bashrc -c "echo"`,
-		`bash --login -c "echo"`,
-		`bash --noprofile --norc -c "echo"`,
+		// The program is one shellProgram cannot read, so the flags before -c
+		// are what is walked; a readable one is judged by what it writes.
+		`bash -o pipefail -c "$P"`,
+		`bash --rcfile ~/.bashrc -c "$P"`,
+		`bash --login -c "$P"`,
+		`bash --noprofile --norc -c "$P"`,
 		`node -r ./setup.js -e "1"`,
 		`node --no-warnings -e "1"`,
 		`python3 -W ignore -c "1"`,

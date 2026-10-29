@@ -138,7 +138,7 @@ the operator owns the lists.
 Lock precedence over edit_exempt_paths: see 'satelle help substrate'. A path
 under a [gate] lock_substrate_paths prefix (default .satelle/ when the key is
 absent) is judged before the exemption is consulted, so no edit can rewrite the
-workflows, skills and bindings that judge the work.
+substrate that judges the work.
 One harness-neutral predicate decides it for Claude, Grok and pi. The deny names
 each holder (status, category), the path, the condition and fix, and lands on
 that ledger. A substrate-lane story (category "substrate", judged by
@@ -147,12 +147,12 @@ they get substrate_change_note. Never locked:
 temp dirs, edit_exempt_globs matches, and the deployed footprint (.gitignore,
 .claude/, .grok/, .pi/). lock_substrate_paths = [] opts out; 'satelle doctor' reports it.
 
-The lock covers Bash too, here and in 'hook commitgate', with the same text and
-ledger row: a redirect, tee, rm/mv/cp/sed -i or git -C target in locked
-substrate, or an interpreter command (python, node, perl, ruby, sh/bash/zsh -c)
-whose arguments, heredoc or NAME=value assignment name a locked path or the bare
-root (.satelle) — even if it only READS. Not seen, so allowed: python3 tool.py
-and '.sat'+'elle'.
+The lock covers Bash, here and in commitgate, with the same text and ledger
+row: a redirect, tee, rm/mv/cp/sed -i or git -C target in locked substrate, or
+an interpreter (python, node, perl, ruby) whose text names a locked path or the
+bare root (.satelle) — even if it only READS. A shell -c program is classified
+as shell unless not plain ('satelle help substrate'). Unseen, so allowed:
+python3 tool.py, '.sat'+'elle'.
 
 Fails closed: a store or listing error, unresolvable workflow, or
 workflow declaring no route blocks the edit.`,
@@ -316,9 +316,9 @@ workflow declaring no route blocks the edit.`,
 		Short: "PreToolUse Bash gate — foreign-tree containment + engaged-story commit/push",
 		Long: `commitgate is the PreToolUse handler for Bash. It first applies foreign-tree
 containment: a command mutating a git working tree other than the session
-anchor's is denied unless [gate] allow_outside_tree_edits is true. Then, for git
-commit/push only, it denies unless a story is engaged. It
-fails closed on store/listing/workflow-resolution errors.
+anchor's is denied unless [gate] allow_outside_tree_edits is true. Then it
+denies git commit/push unless a story is engaged, failing closed on
+store/listing/workflow-resolution errors.
 
 Step policy: [gate.command_allow] (push = ["release"]) limits a git subcommand
 to the listed story statuses.
@@ -328,9 +328,9 @@ ships none ('help command-rules'). Best-effort: wrappers, eval and scripts
 bypass them. satelle manages no identity or rights: the tool's own permissions
 and the account it runs as enforce what a command may do.
 
-Substrate lock: a command whose target or interpreter arguments
-name locked substrate is refused, even if it only READS. Not seen: python3
-tool.py and '.sat'+'elle'. See 'hook gate --help'.
+Substrate lock: a command whose target or interpreter text names locked
+substrate is refused, even if it only READS; a shell -c program is classified
+as shell. Not seen: python3 tool.py, '.sat'+'elle'.
 
 Attribution: a commit/push goes to the seat of its worktree (each cd, then -C;
 an unmoved push, its branch's), else the hook's tree's.`,

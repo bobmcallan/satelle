@@ -50,6 +50,15 @@ else is performing. This overrides the `.satelle/` entry `satelle init` seeds in
 edit_exempt_paths; non-locked exempt paths stay exempt. The refusal is the same
 through Edit/Write and a shell mutation, with a story performing or with none.
 
+A shell command is judged by what it writes. A shell -c program is classified as
+shell, as the same command run bare is, so a `--body` naming `.satelle/` inside
+`bash -lc` is not an edit. Only non-shell interpreter text (python, node, perl,
+ruby) is text-scanned, conservatively, and a shell -c program is text-scanned like
+it when it is not plain: glued quoting, a double-quoted `$`, backslash or
+backtick, a `$(` or backtick anywhere, a dynamic command word, `eval`, `source`
+or `.`, or a pipe, heredoc or `<` redirect feeding the shell. The shell's own
+NAME=value words and positional arguments are always text-scanned.
+
 ## Pre-mutation backup
 
 Before init/restore/rebase **overwrites** an existing file under `.satelle/`,

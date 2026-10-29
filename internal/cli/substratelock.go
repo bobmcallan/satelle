@@ -497,7 +497,9 @@ func bashLockCandidates(command string, cfg lockConfig) []string {
 // conservative the other way: an interpreter command whose text, or a NAME=value
 // assignment in the same command, names a locked path or the bare lock root is a
 // candidate even if it only reads it — reads have the
-// read tools and `satelle doc get`. A substrate-lane story's change is never refused; any other
+// read tools and `satelle doc get`. A shell -c program is classified as shell,
+// by what it writes, as the same command run bare is; only non-shell interpreter
+// text, and a shell program shellProgram cannot read, is pattern-scanned. A substrate-lane story's change is never refused; any other
 // change to locked substrate is, with a seat held or not (sty_66abc0e3). The
 // backstop for the invisible cases is unchanged: substrate diffs are seen at the
 // commit and at integration review.
