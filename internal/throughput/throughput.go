@@ -33,6 +33,13 @@ type Phases struct {
 	Boundary time.Time
 	// End is the final entry to a terminal state.
 	End time.Time
+	// Queued is true when the item's rows hold a queue entry (queue_enqueued):
+	// its route ended it at a wait step for a release task to take on, so its
+	// phase 2 runs to that release rather than to its own terminal state.
+	Queued bool
+	// Release is the first release a task recorded against the item
+	// (release_record) at or after Boundary; zero when none is recorded.
+	Release time.Time
 	// Phase2Applicable is false when the route marks no pr_step state: the whole
 	// start-to-terminal time is then phase 1.
 	Phase2Applicable bool
@@ -51,11 +58,18 @@ func (p Phases) Phase1() (time.Duration, bool) {
 	return end.Sub(p.Start), true
 }
 
-// Phase2 is the time from the pull-request step to the terminal state, and
-// whether it is recorded. It is never recorded on a route with no pr_step.
+// Phase2 is the time from the pull-request step to the terminal state — or,
+// for a Queued item, to its Release — and whether it is recorded. It is never
+// recorded on a route with no pr_step, nor for a Queued item with no release.
 func (p Phases) Phase2() (time.Duration, bool) {
 	if !p.Phase2Applicable || p.Boundary.IsZero() {
 		return 0, false
+	}
+	if p.Queued {
+		if p.Release.IsZero() {
+			return 0, false
+		}
+		return p.Release.Sub(p.Boundary), true
 	}
 	return p.End.Sub(p.Boundary), true
 }
@@ -74,8 +88,13 @@ func Cycle(entries []ledger.Entry, spec wfdot.Spec) (Phases, bool) {
 	p := Phases{Phase2Applicable: spec.HasPRState()}
 	var last string
 	var lastAt time.Time
+	var releases []time.Time
 	for _, e := range es {
 		switch e.Kind {
+		case ledger.KindQueueEnqueued:
+			p.Queued = true
+		case ledger.KindReleaseRecord:
+			releases = append(releases, e.CreatedAt)
 		case ledger.KindStoryCreated:
 			if p.Start.IsZero() && createdIn(e) == start {
 				p.Start = e.CreatedAt
@@ -95,6 +114,14 @@ func Cycle(entries []ledger.Entry, spec wfdot.Spec) (Phases, bool) {
 		return Phases{}, false
 	}
 	p.End = lastAt
+	if !p.Boundary.IsZero() {
+		for _, at := range releases {
+			if !at.Before(p.Boundary) {
+				p.Release = at
+				break
+			}
+		}
+	}
 	return p, true
 }
 

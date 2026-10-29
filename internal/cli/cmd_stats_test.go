@@ -215,13 +215,13 @@ func TestStatsReportsPerRepoAndTotal(t *testing.T) {
 			"2026-10-27  stories 0  epics 1",
 			"2026-10-23  stories 0  epics 0",
 			"phase 1 (start to PR step, or to terminal): median 25h0m0s  p90 216h0m0s  (3 items)",
-			"phase 2 (PR step to terminal): median n/a  p90 n/a  (0 items)",
+			"phase 2 (PR step to terminal, or to release when the story ended at its PR): median n/a  p90 n/a  (0 items)",
 			"in_progress      24h0m0s  (1 items)",
 		}},
 		{"repo beta", []string{
 			"finished: stories 1  epics 0",
 			"phase 1 (start to PR step, or to terminal): median 24h0m0s  p90 24h0m0s  (1 items)",
-			"phase 2 (PR step to terminal): median 72h0m0s  p90 72h0m0s  (1 items)",
+			"phase 2 (PR step to terminal, or to release when the story ended at its PR): median 72h0m0s  p90 72h0m0s  (1 items)",
 		}},
 		{"repo gamma", []string{
 			"error: ",
@@ -230,7 +230,7 @@ func TestStatsReportsPerRepoAndTotal(t *testing.T) {
 		}},
 		{"total (excluded, unreadable: gamma)", []string{
 			"finished: stories 3  epics 1",
-			"phase 2 (PR step to terminal): median 72h0m0s  p90 72h0m0s  (1 items)",
+			"phase 2 (PR step to terminal, or to release when the story ended at its PR): median 72h0m0s  p90 72h0m0s  (1 items)",
 		}},
 	}
 	for i, w := range want {
@@ -438,6 +438,56 @@ func statsAppend(t *testing.T, db *store.DB, id, kind string, at time.Time, payl
 	p, _ := json.Marshal(payload)
 	if _, err := db.Ledger.Append(context.Background(), ledger.AppendInput{StoryID: id, Kind: kind, Payload: p}, at); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A repo's queue entry and the release a task recorded against a story reach
+// its cycle: beta's queued story measures phase 2 from its PR step to that
+// release, and a story beside it with a release row but no queue entry keeps PR
+// step to terminal. stats reports the queued figure.
+func TestStatsPhaseTwoRunsToTheReleaseOfAQueuedStory(t *testing.T) {
+	_, beta, _ := statsFixture(t)
+	ctx := context.Background()
+	days := func(d float64) float64 { return d * 24 }
+
+	bdb, err := store.Open(config.Config{}.ResolveDB(beta))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stray, err := bdb.Stories.Create(ctx, workitem.CreateInput{Kind: workitem.KindStory, Title: "unqueued", Category: "feature"}, ago(days(5)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	statsAppend(t, bdb, stray.ID, ledger.KindStoryCreated, ago(days(5)), map[string]any{"status": "backlog"})
+	statsAppend(t, bdb, stray.ID, ledger.KindStatusTransition, ago(days(4)), map[string]any{"from": "backlog", "to": "in_progress"})
+	statsAppend(t, bdb, stray.ID, ledger.KindReleaseRecord, ago(days(4)-6), map[string]any{"release": "0.0.1", "commit": "abc"})
+	statsAppend(t, bdb, stray.ID, ledger.KindStatusTransition, ago(days(1)), map[string]any{"from": "in_progress", "to": "done"})
+	// beta's own story entered its PR step 4 days ago: it is queued there and a
+	// task records its release 6h later.
+	statsAppend(t, bdb, statsCost.beta, ledger.KindQueueEnqueued, ago(days(4)), map[string]any{"story": statsCost.beta, "state": "in_progress", "branch": "b", "head_sha": "abc"})
+	statsAppend(t, bdb, statsCost.beta, ledger.KindReleaseRecord, ago(days(4)-6), map[string]any{"release": "0.0.1", "commit": "abc"})
+	bdb.Close()
+
+	repo, err := throughput.ReadRepo(ctx, beta, throughput.Window{Since: ago(days(7)), Until: statsClock}, throughput.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	phase2 := map[string]string{}
+	for _, it := range repo.Items {
+		d, ok := it.Phases.Phase2()
+		phase2[it.ID] = fmt.Sprintf("%v/%v/%v", it.Phases.Queued, d, ok)
+	}
+	want := map[string]string{statsCost.beta: "true/6h0m0s/true", stray.ID: "false/72h0m0s/true"}
+	if fmt.Sprint(phase2) != fmt.Sprint(want) {
+		t.Errorf("phase 2 per story (queued/figure/recorded) = %v, want %v", phase2, want)
+	}
+
+	out, err := runRoot(t, "stats")
+	if err != nil {
+		t.Fatalf("stats: %v\n%s", err, out)
+	}
+	if l := "phase 2 (PR step to terminal, or to release when the story ended at its PR): median 6h0m0s  p90 72h0m0s  (2 items)"; !strings.Contains(out, l) {
+		t.Errorf("stats missing %q:\n%s", l, out)
 	}
 }
 

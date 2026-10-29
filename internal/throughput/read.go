@@ -32,6 +32,16 @@ func qualityRow(kind string) bool {
 	return false
 }
 
+// cycleRow reports whether a row of kind is one Cycle reads.
+func cycleRow(kind string) bool {
+	switch kind {
+	case ledger.KindStoryCreated, ledger.KindStatusTransition,
+		ledger.KindQueueEnqueued, ledger.KindReleaseRecord:
+		return true
+	}
+	return false
+}
+
 // Options is what the report reads besides the repos and the window.
 type Options struct {
 	// Pricing prices each item's measured tokens at read time
@@ -80,7 +90,7 @@ func ReadRepo(ctx context.Context, root string, w Window, opt Options) (Repo, er
 			}
 			for _, e := range es {
 				switch {
-				case e.Kind == ledger.KindStoryCreated || e.Kind == ledger.KindStatusTransition:
+				case cycleRow(e.Kind):
 					chains[id] = append(chains[id], e)
 				case qualityRow(e.Kind):
 					rows[id] = append(rows[id], e)

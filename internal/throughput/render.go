@@ -35,7 +35,7 @@ func section(w io.Writer, r RepoReport) {
 	fmt.Fprintln(w, "per week:")
 	buckets(w, r.Weeks)
 	phase(w, "phase 1 (start to PR step, or to terminal)", r.Phase1)
-	phase(w, "phase 2 (PR step to terminal)", r.Phase2)
+	phase(w, "phase 2 (PR step to terminal, or to release when the story ended at its PR)", r.Phase2)
 	fmt.Fprintln(w, "median time in step:")
 	if r.Steps.Reason != "" {
 		fmt.Fprintf(w, "  unavailable (%s)\n", r.Steps.Reason)

@@ -33,6 +33,7 @@ func init() {
 		Long: `Report, per registered repo and in total, the stories and epics finished per
 UTC day and ISO week, the median and p90 of each phase, and the median time in
 each status. Phase 1 ends at the step marked pr_step = true (none: phase 2 n/a).
+A story queued at its PR step ends phase 2 at its recorded release.
 
 Quality: first-pass acceptance per step and gate, rejected rounds per edge,
 re-dispatches, rejects naming no criterion, and work that came back.

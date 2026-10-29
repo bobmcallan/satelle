@@ -164,6 +164,118 @@ func TestMissingStartAndBoundaryAreNotRecorded(t *testing.T) {
 	}
 }
 
+// queuedRoute ends a story at its PR step: pr_raising leads to a wait step,
+// where the story rests in the queue until a release task takes it on.
+func queuedRoute(t *testing.T) wfdot.Spec {
+	t.Helper()
+	steps := strings.Replace(prSteps("pr_step = true\n"), "terminal = true\nrequires = [\"pr-raised\"]", "terminal = true\nrequires = [\"awaiting-release\"]", 1) + `
+[awaiting-release]
+status = "awaiting_release"
+wait = true
+requires = ["pr-raised"]
+`
+	const obligations = "[feature]\nobligations = [\"raised\", \"coded\", \"pr-raised\", \"awaiting-release\", \"closed\"]\n"
+	spec, err := wfdot.ParseRoute(obligations, steps, "feature", nil)
+	if err != nil {
+		t.Fatalf("ParseRoute: %v", err)
+	}
+	if !spec.IsWaitState("awaiting_release") || !spec.IsPRState("pr_raising") {
+		t.Fatalf("fixture route = %+v, want pr_raising marked pr_step and awaiting_release a wait step", spec)
+	}
+	return spec
+}
+
+// queued is the queue entry a story's move into a wait step records.
+func queued(at time.Time) ledger.Entry {
+	return ledger.Entry{ID: "evt_q", Kind: ledger.KindQueueEnqueued, Payload: json.RawMessage(`{"state":"awaiting_release"}`), CreatedAt: at}
+}
+
+// released is a release a task recorded against the story.
+func released(n int, at time.Time) ledger.Entry {
+	return ledger.Entry{ID: fmt.Sprintf("evt_r%d", n), Kind: ledger.KindReleaseRecord, Payload: json.RawMessage(`{"release":"0.0.1","commit":"abc"}`), CreatedAt: at}
+}
+
+// queuedStory is a story that reached its PR step at hour 3, entered the wait
+// step and was queued at hour 4, and was closed at hour 20, with extra rows.
+func queuedStory(extra ...ledger.Entry) []ledger.Entry {
+	return append([]ledger.Entry{
+		created(t0),
+		moved(1, hours(1), "backlog", "in_progress"),
+		moved(2, hours(3), "in_progress", "pr_raising"),
+		moved(3, hours(4), "pr_raising", "awaiting_release"),
+		queued(hours(4)),
+		moved(4, hours(20), "awaiting_release", "done"),
+	}, extra...)
+}
+
+// AC1: a story whose route ends at its PR step measures phase 2 from that step
+// to the first release a task recorded against it, not to its own terminal.
+func TestCycleMeasuresAQueuedStoryToItsRelease(t *testing.T) {
+	spec := queuedRoute(t)
+	// A release recorded before the PR step is not this story's release.
+	p, ok := throughput.Cycle(queuedStory(released(1, hours(2)), released(3, hours(12)), released(2, hours(8))), spec)
+	if !ok || !p.Queued {
+		t.Fatalf("Cycle = %+v, %v; want a finished, queued item", p, ok)
+	}
+	if d, ok := p.Phase1(); !ok || d != 3*time.Hour {
+		t.Errorf("phase 1 = %v, %v; want 3h (backlog to pr_raising)", d, ok)
+	}
+	if d, ok := p.Phase2(); !ok || d != 5*time.Hour {
+		t.Errorf("phase 2 = %v, %v; want 5h (pr_raising to the first release after it)", d, ok)
+	}
+}
+
+// AC1: a queued story with no release yet has no phase 2 figure, never 0.
+func TestAQueuedStoryWithNoReleaseHasNoPhaseTwo(t *testing.T) {
+	p, ok := throughput.Cycle(queuedStory(released(1, hours(2))), queuedRoute(t))
+	if !ok || !p.Queued || !p.Release.IsZero() {
+		t.Fatalf("Cycle = %+v, %v; want finished, queued, no release after the PR step", p, ok)
+	}
+	if d, rec := p.Phase2(); rec {
+		t.Errorf("phase 2 = %v recorded with no release", d)
+	}
+	r := throughput.Summarise("r", "", []throughput.Item{{Finished: p.End, Phases: p}}, window(), throughput.Returns{})
+	if r.Phase2.Items != 0 || r.Phase2.Median.Seconds != nil || r.Phase2.Median.NotApplicable || r.Phase2.Median.Reason != throughput.ReasonNotRecorded {
+		t.Errorf("phase 2 = %+v, want unavailable: %s", r.Phase2, throughput.ReasonNotRecorded)
+	}
+}
+
+// AC1: the report's phase 2 figures over queued stories are their PR-to-release
+// times.
+func TestReportPhaseTwoOverQueuedStoriesIsPRToRelease(t *testing.T) {
+	spec := queuedRoute(t)
+	var items []throughput.Item
+	for _, at := range []time.Time{hours(10), hours(8)} {
+		p, ok := throughput.Cycle(queuedStory(released(1, at)), spec)
+		if !ok {
+			t.Fatal("want finished")
+		}
+		items = append(items, throughput.Item{Finished: p.End, Phases: p})
+	}
+	r := throughput.Summarise("r", "", items, window(), throughput.Returns{})
+	if r.Phase2.Items != 2 || throughput.DurationText(r.Phase2.Median) != "5h0m0s" || throughput.DurationText(r.Phase2.P90) != "7h0m0s" {
+		t.Errorf("phase 2 = %+v, want 2 items, median 5h, p90 7h", r.Phase2)
+	}
+}
+
+// AC2: a story on a single route, whose PR step leads straight to its terminal
+// state, keeps PR step to terminal even with a release recorded against it.
+func TestAnUnqueuedStoryIgnoresAReleaseRow(t *testing.T) {
+	p, ok := throughput.Cycle([]ledger.Entry{
+		created(t0),
+		moved(1, hours(1), "backlog", "in_progress"),
+		moved(2, hours(3), "in_progress", "pr_raising"),
+		released(1, hours(4)),
+		moved(3, hours(9), "pr_raising", "done"),
+	}, route(t, "pr_step = true\n"))
+	if !ok || p.Queued {
+		t.Fatalf("Cycle = %+v, %v; want finished, not queued", p, ok)
+	}
+	if d, ok := p.Phase2(); !ok || d != 6*time.Hour {
+		t.Errorf("phase 2 = %v, %v; want 6h (pr_raising to done)", d, ok)
+	}
+}
+
 func TestPercentileIsNearestRank(t *testing.T) {
 	var ds []time.Duration
 	for i := 10; i >= 1; i-- {

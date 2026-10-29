@@ -1,3 +1,8 @@
+## [0.0.790] - 2026-10-29
+
+### Changed
+- `satelle stats` measures phase 2 of a story that ended at its PR step and was queued for a release task (a `queue_enqueued` row) from that step to the first release a task recorded against it (`release_record`), not to the story's own terminal state. Such a story with no release recorded yet has no phase 2 figure (`unavailable (not recorded)`), never 0. Every other story keeps PR step to terminal, a release row notwithstanding, and the phase 2 line reads "PR step to terminal, or to release when the story ended at its PR". (sty_039333a7)
+
 ## [0.0.789] - 2026-10-29
 
 ### Added
