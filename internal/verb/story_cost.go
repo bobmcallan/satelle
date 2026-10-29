@@ -203,6 +203,44 @@ func buildCostRow(e ledger.Entry) (StoryCostRow, bool) {
 	return costview.DecodeRow(e)
 }
 
+// dwellClock is the occupancy rule: a story holds a state from the row that
+// put it there (its story_created row, or the transition into it) until the
+// transition out of it. The final state never accrues — no later transition
+// closes it, and it did no post-entry work.
+type dwellClock struct {
+	prevAt  time.Time
+	prevSet bool
+}
+
+// observe advances the clock by one ledger row, oldest-first. For a
+// status_transition it returns the state the story left and how long it held it.
+func (c *dwellClock) observe(e ledger.Entry) (state string, held time.Duration, ok bool) {
+	switch e.Kind {
+	case ledger.KindStoryCreated:
+		c.prevAt, c.prevSet = e.CreatedAt, true
+	case ledger.KindStatusTransition:
+		if from := TransitionFrom(e); c.prevSet && from != "" {
+			state, held, ok = from, e.CreatedAt.Sub(c.prevAt), true
+		}
+		c.prevAt, c.prevSet = e.CreatedAt, true
+	}
+	return state, held, ok
+}
+
+// StateDwell sums, per state, the wall time a story held it across every
+// re-entry. entries must be the story's rows oldest-first (ledger.SortEntries);
+// a park and its recover count as time in the park state, as recorded.
+func StateDwell(entries []ledger.Entry) map[string]time.Duration {
+	out := map[string]time.Duration{}
+	var clock dwellClock
+	for _, e := range entries {
+		if state, held, ok := clock.observe(e); ok {
+			out[state] += held
+		}
+	}
+	return out
+}
+
 // ComputeStoryCost reads the story's ledger and builds two complementary views:
 //   - Rows: the dispatched/reviewer agent_invocation cost (precise tokens + agent
 //     wall-time). Token totals and usage availability come solely from
@@ -272,26 +310,13 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 	}
 
 	var gateRows []costview.DriverRow
-	var prevAt time.Time
-	prevSet := false
+	var clock dwellClock
 	for _, e := range entries {
+		if state, held, ok := clock.observe(e); ok {
+			wall[state] += held.Milliseconds()
+			addStep(state)
+		}
 		switch e.Kind {
-		case ledger.KindStoryCreated:
-			prevAt, prevSet = e.CreatedAt, true
-		case ledger.KindStatusTransition:
-			var p struct {
-				From string `json:"from"`
-				To   string `json:"to"`
-			}
-			_ = json.Unmarshal(e.Payload, &p)
-			// The story occupied p.From over [prevAt, this transition]; attribute that
-			// wall-time to the From step. The final terminal state (no later transition)
-			// never accrues here — correct, it did no post-entry work.
-			if prevSet && p.From != "" {
-				wall[p.From] += e.CreatedAt.Sub(prevAt).Milliseconds()
-				addStep(p.From)
-			}
-			prevAt, prevSet = e.CreatedAt, true
 		case ledger.KindAgentInvocation:
 			row, ok := buildCostRow(e)
 			if !ok {

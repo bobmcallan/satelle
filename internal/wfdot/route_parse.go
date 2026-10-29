@@ -198,6 +198,9 @@ type stepWire struct {
 	// (an external raiser's story): validate then refuses a seat on the step that
 	// is not held read-only.
 	UntrustedInput bool `toml:"untrusted_input"`
+	// PRStep marks the step that raises the pull request: `satelle stats` splits
+	// a finished item's cycle time at its first entry here.
+	PRStep bool `toml:"pr_step"`
 	// WaitsOnChildren marks a step at which a container idles while its child
 	// stories are driven: it holds the status, but nothing performs on the
 	// container itself (sty_7f3e6fd3).
@@ -559,6 +562,7 @@ func ParseSteps(body string) (Catalogue, error) {
 			Freeze:        s.Freeze,
 
 			UntrustedInput:  s.UntrustedInput,
+			PRStep:          s.PRStep,
 			WaitsOnChildren: s.WaitsOnChildren,
 			ReadyChildren:   s.ReadyChildren,
 			Schedule:        s.Schedule,

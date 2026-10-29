@@ -131,6 +131,10 @@ type Step struct {
 	// refuses a performer or reviewer on the step whose grant is not read-only.
 	// The step's author declares it; the binary never keys it on a step name.
 	UntrustedInput bool
+	// PRStep marks the step that raises the pull request. It splits a finished
+	// item's cycle time into the time to reach it and the time from it to the
+	// terminal state; a route that marks none has no second phase.
+	PRStep bool
 	// ApplyCriteriaDoc / ApplyCriteriaHeading declare that entry to this step
 	// applies the acceptance criteria authored under "## <heading>" in the story
 	// document <doc> to the story. Mechanism only: the binary copies the section
@@ -569,6 +573,7 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			MinProgress:    st.MinProgress,
 
 			UntrustedInput: st.UntrustedInput,
+			PRStep:         st.PRStep,
 
 			ApplyCriteriaDoc:     st.ApplyCriteriaDoc,
 			ApplyCriteriaHeading: st.ApplyCriteriaHeading,

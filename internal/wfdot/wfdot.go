@@ -222,6 +222,9 @@ type State struct {
 	// then refuses any seat on the step that is not held read-only; nothing at
 	// runtime reads it.
 	UntrustedInput bool
+	// PRStep: the step raises the pull request (Step.PRStep). Read through
+	// Spec.IsPRState.
+	PRStep bool
 	// ApplyCriteriaDoc / ApplyCriteriaHeading: entry to this step applies the
 	// criteria authored under "## <heading>" in the story document <doc>
 	// (sty_4d9df9a0).
@@ -271,6 +274,23 @@ type State struct {
 func (s Spec) WaitsOnChildren(status string) bool {
 	st, ok := s.StateNamed(status)
 	return ok && st.WaitsOnChildren
+}
+
+// IsPRState reports whether the route marks status as the step that raises the
+// pull request (`pr_step` in step.toml). Unknown names are not.
+func (s Spec) IsPRState(status string) bool {
+	st, ok := s.StateNamed(status)
+	return ok && st.PRStep
+}
+
+// HasPRState reports whether any step on the route is marked `pr_step`.
+func (s Spec) HasPRState() bool {
+	for _, st := range s.States {
+		if st.PRStep {
+			return true
+		}
+	}
+	return false
 }
 
 // RemoteWaitOf returns the team-remote wait the route declares at status, and

@@ -1,3 +1,13 @@
+## [0.0.784] - 2026-10-29
+
+### Added
+- `satelle stats` reports how much work each repo finished and how long each phase took, per registered repo and in total, for a window set with `--since` (default 7 days). It counts stories and epics that reached a terminal state per day and per week, gives the median and 90th-percentile cycle time for phase 1 (backlog to the step that raises a pull request) and phase 2 (that step to the terminal state), and gives the median time spent in each step. A route marks its PR step with `pr_step = true`; a route that marks none reports phase 2 as not applicable and counts the whole cycle as phase 1. A figure satelle has no rows for is shown as `unavailable` (or `null` with a reason in `--json`), never as 0. The figures come only from recorded status transitions and story records, and no repo is written to. (sty_7a2be7da)
+
+## [serve-v0.0.231] - 2026-10-29
+
+### Changed
+- The service binary embeds the throughput computation and the step catalogue's `pr_step` marker. (sty_7a2be7da)
+
 ## [0.0.783] - 2026-10-29
 
 ### Added

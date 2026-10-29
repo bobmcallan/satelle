@@ -130,7 +130,7 @@ func parseEdge(e ledger.Entry) lightPayload {
 // on-route status from an unstarted one when the ledger is empty.
 func buildStages(entries []ledger.Entry, status string, seatHeld bool, stepOf func(state string) int, spec wfdot.Spec) []stageVM {
 	es := append([]ledger.Entry(nil), entries...)
-	sortLedger(es)
+	ledger.SortEntries(es)
 	ts := classifyTransitions(es, spec)
 	fin := finished(spec, status)
 

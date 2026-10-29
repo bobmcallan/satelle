@@ -256,19 +256,10 @@ func decodeLedgerByStory(ctx context.Context, s *mirror.Store, repoKey string) (
 	// ListAll is newest-first under the export budget (sty_c5065d05);
 	// ReplaceKind order is not guaranteed — sort each story's strip by CreatedAt.
 	for sid, es := range out {
-		sortLedger(es)
+		ledger.SortEntries(es)
 		out[sid] = es
 	}
 	return out, nil
-}
-
-func sortLedger(es []ledger.Entry) {
-	sort.SliceStable(es, func(i, j int) bool {
-		if es[i].CreatedAt.Equal(es[j].CreatedAt) {
-			return es[i].ID < es[j].ID
-		}
-		return es[i].CreatedAt.Before(es[j].CreatedAt)
-	})
 }
 
 func decodeLiveSeats(ctx context.Context, s *mirror.Store, repoKey string) (map[string]bool, error) {

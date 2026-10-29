@@ -186,6 +186,9 @@ type Step struct {
 	// AfterChildren is the obligation every child must have discharged before the
 	// container may enter this step; absent when the step declares none.
 	AfterChildren string `json:"after_children,omitempty"`
+	// PRStep: the step raises the pull request; `satelle stats` splits cycle time
+	// at entry to it.
+	PRStep bool `json:"pr_step,omitempty"`
 }
 
 // Exit is an off-route destination — a park or cancel state the story may leave
@@ -304,6 +307,7 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 		WaitsOnChildren: st.WaitsOnChildren,
 		Schedule:        st.Schedule,
 		AfterChildren:   st.AfterChildren,
+		PRStep:          st.PRStep,
 	}
 	if st.WaitsOnChildren && !st.ReadyChildren {
 		off := false
@@ -544,6 +548,9 @@ func renderKnobs(s Step) string {
 	}
 	if s.AfterChildren != "" {
 		parts = append(parts, fmt.Sprintf("entry is refused until every child has discharged %q", s.AfterChildren))
+	}
+	if s.PRStep {
+		parts = append(parts, "the step that raises the pull request; cycle time splits at entry here")
 	}
 	if len(parts) == 0 {
 		return ""

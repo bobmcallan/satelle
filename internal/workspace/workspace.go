@@ -14,6 +14,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/epicset"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -81,6 +82,9 @@ var registered = func() ([]string, error) {
 	return gc.Workspace.Repos, nil
 }
 
+// Registered returns the workspace registry's repo paths as written.
+func Registered() ([]string, error) { return registered() }
+
 // FindRegistered returns the canonical roots of the registered repos named name
 // (config.RepoName), each once. Zero roots means no registered repo has the name;
 // more than one means the name is ambiguous — the caller refuses either rather
@@ -116,10 +120,9 @@ func FindRegistered(name string) ([]string, error) {
 // Without ids, Stories is the newest storyPage stories.
 func LoadRepoReadOnly(ctx context.Context, root string, ids ...string) (RepoView, error) {
 	rv := RepoView{Path: root, Name: config.RepoName(root)}
-	if _, ok := config.FindDataDir(root); !ok {
-		return rv, fmt.Errorf("%s is not a satelle repo (no .satelle/)", root)
+	if err := requireRepo(root); err != nil {
+		return rv, err
 	}
-	cfg, _, _ := config.Load(filepath.Join(root, config.DefaultDataDir, config.ConfigName))
 	process, processRoot, _, err := config.LoadRepoProcess(root)
 	if err != nil {
 		return rv, fmt.Errorf("load process: %w", err)
@@ -129,8 +132,7 @@ func LoadRepoReadOnly(ctx context.Context, root string, ids ...string) (RepoView
 	if path, reason, bad := docindex.UnreadableOf(rv.Workflows); bad {
 		return rv, fmt.Errorf("workflows %s unreadable: %s", path, reason)
 	}
-	dbPath := cfg.ResolveDB(root)
-	db, err := store.OpenReadOnly(dbPath)
+	db, err := openReadOnly(root)
 	if err != nil {
 		return rv, err
 	}
@@ -145,6 +147,33 @@ func LoadRepoReadOnly(ctx context.Context, root string, ids ...string) (RepoView
 	}
 	rv.Stories = stories
 	return rv, nil
+}
+
+// ReadLedgerReadOnly hands read the ledger of root's database, opened exactly as
+// LoadRepoReadOnly opens it: no create, no migrate, closed when read returns.
+func ReadLedgerReadOnly(ctx context.Context, root string, read func(context.Context, *ledger.Store) error) error {
+	if err := requireRepo(root); err != nil {
+		return err
+	}
+	db, err := openReadOnly(root)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return read(ctx, db.Ledger)
+}
+
+func requireRepo(root string) error {
+	if _, ok := config.FindDataDir(root); !ok {
+		return fmt.Errorf("%s is not a satelle repo (no .satelle/)", root)
+	}
+	return nil
+}
+
+// openReadOnly opens root's database where app.Open would resolve it, read-only.
+func openReadOnly(root string) (*store.DB, error) {
+	cfg, _, _ := config.Load(filepath.Join(root, config.DefaultDataDir, config.ConfigName))
+	return store.OpenReadOnly(cfg.ResolveDB(root))
 }
 
 // readContainment reads ids and every container above them by id.

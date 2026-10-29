@@ -30,6 +30,13 @@ description = "Order-zero step catalogue every repo inherits — the steps and a
 # runs cold and one-shot; the consultant's READY is a signal, never a verdict.
 # This shipped catalogue declares no rework key (an in-loop performer cannot be
 # relayed). See satelle help agent-dispatch (Converge then gate).
+#
+# Optional pull-request marker on the step that raises the PR:
+#   pr_step = true
+# `satelle stats` splits a finished item's cycle time at its first entry to that
+# step: phase 1 is backlog to there, phase 2 is there to the terminal state. A
+# route that marks no step reports phase 2 as not applicable. This shipped
+# catalogue raises no pull request, so it marks none.
 
 # ================================================================
 # THE WORKING LANE — selected by done.toml category "*"

@@ -14,6 +14,7 @@ package ledger
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 	"uuid"
 )
@@ -358,6 +359,18 @@ type Entry struct {
 	// against the exact workflow that produced it. Empty when none applied or when
 	// the event predates the field — an unknown version is never invented.
 	WorkflowHash string `json:"workflow_hash,omitempty"`
+}
+
+// SortEntries orders es oldest-first in place: by CreatedAt, then by ID for rows
+// stamped at the same instant — the order List returns, for rows read from
+// anywhere else.
+func SortEntries(es []Entry) {
+	sort.SliceStable(es, func(i, j int) bool {
+		if es[i].CreatedAt.Equal(es[j].CreatedAt) {
+			return es[i].ID < es[j].ID
+		}
+		return es[i].CreatedAt.Before(es[j].CreatedAt)
+	})
 }
 
 // EXEMPTION (sty_7db2ed7d): the ledger's Actor field is the event-AUTHOR (who
