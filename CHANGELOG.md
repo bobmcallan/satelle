@@ -1,3 +1,19 @@
+## [0.0.783] - 2026-10-29
+
+### Added
+- A dispatch's log records what the agent was given as well as what it did: the system prompt, the payload and the named sections a gate or rework relies on (findings to answer, messages delivered, acceptance criteria, material paths), then its progress and its final answer. A developer can check from the log alone that an agent received what satelle meant to give it. Material satelle already stores in a file is referenced by path, and secrets expanded from `[vars]` are never written. (sty_2b89feab)
+
+### Fixed
+- A story worktree carries the gate wiring of every harness the repo uses (for example `.pi/extensions/satelle.ts` as well as `.claude`), so a repo whose seats run on pi can enter in_progress from a worktree instead of being refused with "worktree lacks gate wiring for harness pi". (sty_0dca3223)
+- The substrate lock judges what a Bash command writes, not path text anywhere in its arguments. Naming a substrate file in a story body or reading one is no longer refused as an edit, and a write is still caught when it is wrapped in `bash -c`, routed through a variable, or written by a redirection. (sty_ca667036)
+- `satelle validate` and `satelle principle validate` no longer fail on a config bundle that satelle generated into a story's attachment directory. The bundle embeds workflow TOML, and a TOML array-of-tables header such as `[[gate]]` was reported as a dangling wikilink. The wikilink scan now skips any attachment whose frontmatter declares `type: config-bundle`, whatever its file name. Every other attachment is still scanned, so a genuine dangling reference in a plan or note still fails. (sty_b48df715)
+- `satelle init` does not add a model order naming a harness the repo no longer uses. It keeps a repo's own `[model_order]` and seeds lists only for executables the repo's bindings use, so init no longer re-adds `grok = ["grok-4.7"]` to a repo that removed Grok. (sty_a4b90ede)
+
+## [serve-v0.0.230] - 2026-10-29
+
+### Changed
+- The service binary embeds the updated harness and worktree configuration and the substrate and worktree help topics. (sty_0dca3223, sty_ca667036, sty_a4b90ede, sty_2b89feab)
+
 ## [0.0.782] - 2026-10-29
 
 ### Fixed
