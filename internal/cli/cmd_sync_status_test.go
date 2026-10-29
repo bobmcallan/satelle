@@ -487,13 +487,19 @@ type storyEnv struct {
 // a story from it. SATELLE_CONFIG must already name the repo's config.
 func engageSyncStory(t *testing.T, tree string) *storyEnv {
 	t.Helper()
+	return engageSyncStoryIn(t, tree, filepath.Join(t.TempDir(), "satelle.db"))
+}
+
+// engageSyncStoryIn is engageSyncStory over the database at dbPath.
+func engageSyncStoryIn(t *testing.T, tree, dbPath string) *storyEnv {
+	t.Helper()
 	withVerbWiring(t)
 	cfg, cfgPath, err := config.Load("")
 	if err != nil {
 		t.Fatal(err)
 	}
 	repo := config.RepoRootFromConfigPath(cfgPath)
-	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
+	db, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}

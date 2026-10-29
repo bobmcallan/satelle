@@ -251,6 +251,24 @@ const (
 	// StoryID is the noted story; Payload is {path, substrate_story, status}.
 	// Enumeration only — the lock list is configuration.
 	KindSubstrateChangeNote = "substrate_change_note"
+	// KindSubstrateWritten records one locked-substrate write the edit gate
+	// allowed for an engaged substrate-lane story, before the write runs: StoryID
+	// is the writing story; Payload is verb.SubstrateWrittenPayload {root, path,
+	// before_sha256}. It is what lets another story's change set leave out a file
+	// that story provably did not write. Enumeration only.
+	KindSubstrateWritten = "substrate_written"
+	// KindSubstrateSeeded records the substrate files one `satelle init` run
+	// created or changed, in the target repo's own ledger. It has no StoryID: init
+	// runs under no story. Payload is verb.SubstrateSeedPayload {verb, root,
+	// files:[{path, before_sha256, sha256, before_mtime}]}. A story's change set
+	// leaves out bytes init wrote that the story did not touch. Enumeration only.
+	KindSubstrateSeeded = "substrate_seeded"
+	// KindSubstrateBaseline records the content hash of every substrate file at a
+	// story's first engagement: Payload is verb.SubstrateBaselinePayload {root,
+	// files:{path: sha256}}. A gate-recorded write by another story is measured
+	// against it, so an unrecorded change made before that write keeps the file in
+	// this story's change set. Enumeration only.
+	KindSubstrateBaseline = "substrate_baseline"
 	// KindRemoteRun records one step a remote ran on its host (sty_2f3baf0a): the
 	// join between a story and whatever the step changed. StoryID is the story;
 	// Refs is {fire_id, story, run_id}; Payload is {remote, version, host, label,

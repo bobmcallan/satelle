@@ -1,3 +1,13 @@
+## [0.0.788] - 2026-10-29
+
+### Fixed
+- A story's change set no longer claims main-tree substrate that `satelle init` rewrote during its engagement, or that another engaged story wrote through the edit gate. Every substrate file init creates or changes (including `init --all` heals and `satelle node`) is recorded in one `substrate_seeded` row in that repo's ledger with its pre-write mtime and its content hashes before and after, and each substrate write the edit gate allows under the default substrate lock is recorded as a `substrate_written` row naming the story and path. `satelle story diff --include-substrate` and the transition-time change record leave out a file whose only changes since engagement are init's writes or another story's gate writes, and keep it when this story also changed it, when it was changed outside the gate, or when the substrate lock is turned off. (sty_ce858cb3)
+
+## [serve-v0.0.235] - 2026-10-29
+
+### Changed
+- The service binary embeds the `substrate_seeded` and `substrate_written` ledger kinds and the change-set exclusion. (sty_ce858cb3)
+
 ## [0.0.787] - 2026-10-29
 
 ### Added

@@ -13,6 +13,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/spf13/cobra"
 )
 
@@ -330,12 +331,11 @@ func substrateLockGate(cmd *cobra.Command, raw []byte, target string, seats *loc
 // substrateLockGateWith is substrateLockGate over an already-loaded config, so a
 // Bash command with several candidate targets reads the config once.
 func substrateLockGateWith(cfg lockConfig, cmd *cobra.Command, raw []byte, target string, seats *lockSeats) error {
-	notes, err := substrateLockJudge(cfg, cmd, raw, target, seats)
+	al, err := substrateLockJudge(cfg, cmd, raw, target, seats)
 	if err != nil {
 		return err
 	}
-	recordSubstrateChangeNotes(notes)
-	return nil
+	return recordLockAllowance(cmd, raw, al)
 }
 
 // pendingChangeNote is a substrate_change_note an allowed change owes a sibling.
@@ -346,10 +346,37 @@ type pendingChangeNote struct {
 	rel              string
 }
 
+// pendingWrite is the substrate_written row an allowed change owes the
+// substrate-lane story making it, written on the same terms as a change note.
+type pendingWrite struct {
+	story, root, rel string
+}
+
+// lockAllowance is what an allowed call owes the ledger once it has passed.
+type lockAllowance struct {
+	notes  []pendingChangeNote
+	writes []pendingWrite
+}
+
+// recordSubstrateWritesFn records an allowed call's writes; a var so a test can
+// make the append fail.
+var recordSubstrateWritesFn = recordSubstrateWrites
+
+// recordLockAllowance writes what an allowed call owes. A write that cannot be
+// recorded refuses the call: another story's change set leaves the file out on
+// the strength of that row, so the write must not run without it.
+func recordLockAllowance(cmd *cobra.Command, raw []byte, al lockAllowance) error {
+	if err := recordSubstrateWritesFn(al.writes); err != nil {
+		return denyPreToolUse(cmd, raw, "satelle: substrate lock — the substrate-lane write could not be recorded, so it is refused: "+err.Error())
+	}
+	recordSubstrateChangeNotes(al.notes)
+	return nil
+}
+
 // substrateLockJudge is the decision behind substrateLockGateWith: a deny error to
-// refuse, or nil with the change notes the caller records once the call as a whole
-// is allowed. A refusal writes its own substrate_lock_deny rows.
-func substrateLockJudge(cfg lockConfig, cmd *cobra.Command, raw []byte, target string, seats *lockSeats) ([]pendingChangeNote, error) {
+// refuse, or nil with what the caller records once the call as a whole is
+// allowed. A refusal writes its own substrate_lock_deny rows.
+func substrateLockJudge(cfg lockConfig, cmd *cobra.Command, raw []byte, target string, seats *lockSeats) (lockAllowance, error) {
 	root, globs, lockPaths := cfg.root, cfg.globs, cfg.lockPaths
 	abs := resolveAbsTarget(root, target)
 	// The lock list is repo-relative, so it must be resolved against the tree the
@@ -370,7 +397,7 @@ func substrateLockJudge(cfg lockConfig, cmd *cobra.Command, raw []byte, target s
 		footprint[i] = resolveAbsTarget(lockBase, f)
 	}
 	if !substrateLocked(lockRoots, footprint, globs, lockBase, abs) {
-		return nil, nil
+		return lockAllowance{}, nil
 	}
 	rel := abs
 	if r, rerr := filepath.Rel(lockBase, abs); rerr == nil {
@@ -378,11 +405,11 @@ func substrateLockJudge(cfg lockConfig, cmd *cobra.Command, raw []byte, target s
 	}
 	a, oerr := app.Open()
 	if errors.Is(oerr, app.ErrNotInitialised) {
-		return nil, nil // a repo satelle does not govern has no substrate to lock
+		return lockAllowance{}, nil // a repo satelle does not govern has no substrate to lock
 	}
 	if oerr != nil {
 		// Cannot read the store to confirm the lane: refuse, and say why.
-		return nil, denyPreToolUse(cmd, raw, substrateLockReason(seats.live, rel, lockLane{}, nil, lockBase)+" (the substrate lane could not be confirmed: "+oerr.Error()+")")
+		return lockAllowance{}, denyPreToolUse(cmd, raw, substrateLockReason(seats.live, rel, lockLane{}, nil, lockBase)+" (the substrate lane could not be confirmed: "+oerr.Error()+")")
 	}
 	defer func() { _ = a.Close() }()
 	ctx := context.Background()
@@ -405,13 +432,13 @@ func substrateLockJudge(cfg lockConfig, cmd *cobra.Command, raw []byte, target s
 		// A substrate-lane story is making the change: siblings performing now do
 		// not block it; their ledger records that their judge changed, once the
 		// caller knows the change is allowed.
-		var notes []pendingChangeNote
+		al := lockAllowance{writes: []pendingWrite{{story: lane.Lane.ItemID, root: lockBase, rel: rel}}}
 		for _, n := range lane.Noted {
 			if !isSub(n.ItemID) {
-				notes = append(notes, pendingChangeNote{noted: n, substrate: *lane.Lane, rel: rel})
+				al.notes = append(al.notes, pendingChangeNote{noted: n, substrate: *lane.Lane, rel: rel})
 			}
 		}
-		return notes, nil
+		return al, nil
 	}
 	var outside []seatInfo
 	for _, h := range lane.Holders {
@@ -425,7 +452,7 @@ func substrateLockJudge(cfg lockConfig, cmd *cobra.Command, raw []byte, target s
 		// ambiguous pair of its own): locked substrate needs an engaged
 		// substrate-lane story whether or not anything else is performing. No
 		// holder is at fault, so no ledger row is written.
-		return nil, denyPreToolUse(cmd, raw, substrateLockReason(nil, rel, lane, cats, lockBase))
+		return lockAllowance{}, denyPreToolUse(cmd, raw, substrateLockReason(nil, rel, lane, cats, lockBase))
 	}
 	reason := substrateLockReason(outside, rel, lane, cats, lockBase)
 	if cerr != nil {
@@ -434,7 +461,7 @@ func substrateLockJudge(cfg lockConfig, cmd *cobra.Command, raw []byte, target s
 	for _, h := range outside {
 		recordSubstrateLockDeny(ctx, a, h, rel)
 	}
-	return nil, denyPreToolUse(cmd, raw, reason)
+	return lockAllowance{}, denyPreToolUse(cmd, raw, reason)
 }
 
 // bashLockCandidates is every absolute path a Bash command could change that the
@@ -514,7 +541,7 @@ func bashSubstrateLockGate(cmd *cobra.Command, raw []byte, command string, gp ga
 	// change to one seat's own worktree substrate judged as if it were unattributed.
 	// The notes of an allowed candidate wait for the others: a command refused on
 	// any candidate does not run, so it leaves no note claiming a change.
-	var notes []pendingChangeNote
+	var all lockAllowance
 	byTree := map[string]*lockSeats{}
 	for _, c := range cands {
 		tree := treeOf(c)
@@ -526,13 +553,38 @@ func bashSubstrateLockGate(cmd *cobra.Command, raw []byte, command string, gp ga
 			}
 			byTree[tree] = ss
 		}
-		n, err := substrateLockJudge(cfg, cmd, raw, c, ss)
+		al, err := substrateLockJudge(cfg, cmd, raw, c, ss)
 		if err != nil {
 			return err
 		}
-		notes = append(notes, n...)
+		all.notes = append(all.notes, al.notes...)
+		all.writes = append(all.writes, al.writes...)
 	}
-	recordSubstrateChangeNotes(notes)
+	return recordLockAllowance(cmd, raw, all)
+}
+
+// recordSubstrateWrites appends one substrate_written row per (story, path) of
+// an allowed call, hashing each file before the write runs.
+func recordSubstrateWrites(writes []pendingWrite) error {
+	if len(writes) == 0 {
+		return nil
+	}
+	a, err := app.Open()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = a.Close() }()
+	ctx := context.Background()
+	done := map[pendingWrite]bool{}
+	for _, w := range writes {
+		if done[w] {
+			continue
+		}
+		done[w] = true
+		if err := verb.RecordSubstrateWritten(ctx, a.Store.Ledger, w.story, w.root, w.rel); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

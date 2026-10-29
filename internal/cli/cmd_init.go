@@ -11,7 +11,9 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -215,7 +217,48 @@ func initRepoRoot(configArg string) string {
 // noWorkspace skips registration in the machine-local workspace registry
 // (sty_3bdbdc38); default is false (register).
 // forcedHarness is from --harness (nil/empty = dirs only, no PATH default).
+//
+// Every substrate file the run creates or changes is recorded in one
+// substrate_seeded row in repoRoot's own ledger (sty_ce858cb3), so a story
+// engaged meanwhile does not count init's bytes as its own change. init runs
+// under no store-backed command and `init --all` targets other repos, so the
+// row goes to the ledger opened here, never the wired one.
 func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []string) error {
+	before := initSubstrateHashes(repoRoot)
+	err := runInitBody(out, repoRoot, noWorkspace, forcedHarness)
+	changed := verb.SeededChanges(before, initSubstrateHashes(repoRoot))
+	if len(changed) == 0 {
+		return err
+	}
+	if rerr := recordInitSeed(repoRoot, changed); rerr != nil {
+		return errors.Join(err, fmt.Errorf("init: record substrate written: %w", rerr))
+	}
+	return err
+}
+
+// initSubstrateHashes is the substrate under repoRoot as its own config places it.
+func initSubstrateHashes(repoRoot string) map[string]verb.FileState {
+	cfg, _, _ := config.Load(filepath.Join(repoRoot, config.DefaultDataDir, config.ConfigName))
+	return verb.SubstrateHashes(repoRoot, cfg.ResolveAuthoredDirs(repoRoot), cfg.ResolveDataDir(repoRoot))
+}
+
+// recordInitSeed appends the run's substrate_seeded row to repoRoot's database.
+func recordInitSeed(repoRoot string, files []verb.SeededFile) error {
+	cfg, _, _ := config.Load(filepath.Join(repoRoot, config.DefaultDataDir, config.ConfigName))
+	db, err := store.Open(filepath.Join(cfg.ResolveRuntimeDir(repoRoot).Dir, config.DefaultDBName))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+	return verb.RecordSubstrateSeed(context.Background(), db.Ledger, repoRoot, files)
+}
+
+// initTomlHealHook, when set, rewrites satelle.toml after the built-in heals; nil
+// in production. Every built-in heal reads its trigger from the file itself, so
+// a test can make a second run rewrite init's own bytes only through this seam.
+var initTomlHealHook func([]byte) []byte
+
+func runInitBody(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []string) error {
 	// 1. .satelle/ directory.
 	dataDir := filepath.Join(repoRoot, config.DefaultDataDir)
 	created, err := ensureDir(dataDir)
@@ -244,6 +287,15 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 		retiredChanged, rerr := removeRetiredSyncKey(dataDir)
 		if rerr != nil {
 			return fmt.Errorf("init: remove retired [sync] key: %w", rerr)
+		}
+		if initTomlHealHook != nil {
+			raw, rerr := os.ReadFile(tomlPath)
+			if rerr != nil {
+				return fmt.Errorf("init: read %s: %w", tomlPath, rerr)
+			}
+			if werr := os.WriteFile(tomlPath, initTomlHealHook(raw), 0o644); werr != nil {
+				return fmt.Errorf("init: write %s: %w", tomlPath, werr)
+			}
 		}
 		if retiredChanged {
 			fmt.Fprintf(out, "~ %s (removed a retired [sync] key)\n", config.DefaultDataDir+"/"+config.ConfigName)

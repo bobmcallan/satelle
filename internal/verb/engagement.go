@@ -101,6 +101,7 @@ func maybeRecordEngagementBaseline(ctx context.Context, item workitem.Item, from
 		SubstrateManifest: substrateManifest(manifestRoot, authoredDirs, substrateConfigDir),
 	})
 	appendLedgerEntry(ctx, item.ID, ledger.KindEngagementBaseline, "executor", body, payload, now)
+	recordSubstrateBaseline(ctx, item.ID, manifestRoot, now)
 }
 
 func hasEngagementBaseline(ctx context.Context, storyID string) bool {
@@ -316,6 +317,8 @@ func liveStoryDiff(ctx context.Context, it workitem.Item, wantPatch, includeSubs
 		} else {
 			if !sl.BaseAt.IsZero() {
 				local, procRel, root = substrateChangedFilesSplit(sl.Dir, authoredDirs, substrateConfigDir, sl.BaseAt)
+				local = withoutForeignWrites(ctx, it.ID, sl.Dir, local, sl.BaseAt)
+				procRel = withoutForeignWrites(ctx, it.ID, root, procRel, sl.BaseAt)
 			}
 			// Deletions are measured against the FIRST engagement baseline's manifest,
 			// not the resume re-anchor above: the manifest says what existed when the

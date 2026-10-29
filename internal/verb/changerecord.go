@@ -128,9 +128,9 @@ func recordChangeSet(ctx context.Context, item workitem.Item, from, to string, n
 	if hasSinceTime && payload.Unavailable != "no-baseline" {
 		// Process-root paths ride in the same flat list: the recorded channel is a
 		// union of repo-relative strings (sty_92e4cdbe).
-		local, procRel, _ := substrateChangedFilesSplit(dir, authoredDirs, substrateConfigDir, sinceTime)
-		files = append(files, local...)
-		files = append(files, procRel...)
+		local, procRel, procRoot := substrateChangedFilesSplit(dir, authoredDirs, substrateConfigDir, sinceTime)
+		files = append(files, withoutForeignWrites(ctx, item.ID, dir, local, sinceTime)...)
+		files = append(files, withoutForeignWrites(ctx, item.ID, procRoot, procRel, sinceTime)...)
 	}
 
 	files = uniqueSorted(files)
