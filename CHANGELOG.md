@@ -1,3 +1,14 @@
+## [0.0.790] - 2026-10-29
+
+### Added
+- The orchestrator readies an epic first, unprompted, and records each child's delivery choice: it messages the epic's ready performer a line per child (`in-loop`, `local` for a subagent, or `team:<path>`, and why), the performer records the reasons under the readiness step's `delivery_heading` and reports each choice as a `placement:` tag (the step's `placement_tag`), the delivering steps honour that pin, and `satelle story wave <epic>` prints each child's order, lane, step, placement and reason. A value other than those three, `remote` included, is refused. (sty_c931cd90)
+- The workflow advisor judges route shape: it tells the single-story, epic-child and epic-parent lanes apart, flags a release on the lane every epic child walks (naming the epic-branch lane, where children commit on `epic/<id>` and the parent merges and releases once) and an epic-parent lane with no readiness step, citing the route file and step. satelle prints one line naming `satelle-workflow-advisor`, and runs nothing, at the end of `satelle init`, of a passing `satelle validate` or `satelle workflow validate`, and when the repo's first epic-parent readiness round is accepted under a readiness step that declares `advise` (the shipped `[ready]` step does). Each optimisation the orchestrator accepts is filed as a substrate story. (sty_36b91fd1)
+
+## [serve-v0.0.237] - 2026-10-29
+
+### Changed
+- The service binary embeds the readiness step's placement, delivery and lane keys and the route-shape advisor prompt. (sty_c931cd90, sty_36b91fd1)
+
 ## [0.0.789] - 2026-10-29
 
 ### Added
