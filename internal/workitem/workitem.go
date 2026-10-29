@@ -79,6 +79,10 @@ type Item struct {
 	// byte-identical to one from before they existed.
 	Inputs      []InputDecl    `json:"inputs_decl,omitempty"`
 	InputValues map[string]any `json:"inputs,omitempty"`
+	// Triggers are the local triggers a TASK declares (triggers: in its file),
+	// each running one execution of it when it fires (see triggers.go). Omitempty,
+	// so a task without them is unchanged.
+	Triggers []TriggerDecl `json:"triggers,omitempty"`
 }
 
 // idPrefix returns the id prefix for a kind: sty_ for stories, tsk_ for tasks,

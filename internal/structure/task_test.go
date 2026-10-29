@@ -24,6 +24,11 @@ func TestCheckTask(t *testing.T) {
 		{"input bad name", "---\nid: tsk_1\ntype: task\nstatus: backlog\ninputs_decl: Bad-Name:int\n---\n\n# T\n\nb", false},
 		{"input duplicate", "---\nid: tsk_1\ntype: task\nstatus: backlog\ninputs_decl: a:int, a:string\n---\n\n# T\n\nb", false},
 		{"input bad flag", "---\nid: tsk_1\ntype: task\nstatus: backlog\ninputs_decl: a:int:sometimes\n---\n\n# T\n\nb", false},
+		{"valid triggers", "---\nid: tsk_1\ntype: task\nstatus: backlog\ntriggers: nightly=schedule:24h, release=count:awaiting_merge>=3\n---\n\n# T\n\nb", true},
+		{"trigger bad kind", "---\nid: tsk_1\ntype: task\nstatus: backlog\ntriggers: a=cron:daily\n---\n\n# T\n\nb", false},
+		{"trigger bad duration", "---\nid: tsk_1\ntype: task\nstatus: backlog\ntriggers: a=schedule:daily\n---\n\n# T\n\nb", false},
+		{"trigger bad op", "---\nid: tsk_1\ntype: task\nstatus: backlog\ntriggers: a=count:done>3\n---\n\n# T\n\nb", false},
+		{"trigger duplicate", "---\nid: tsk_1\ntype: task\nstatus: backlog\ntriggers: a=schedule:1h, a=schedule:2h\n---\n\n# T\n\nb", false},
 		{"no title heading", "---\nid: tsk_1\ntype: task\nstatus: backlog\n---\n\njust prose, no heading", false},
 	}
 	for _, c := range cases {

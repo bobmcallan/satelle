@@ -1,3 +1,13 @@
+## [0.0.786] - 2026-10-29
+
+### Added
+- Tasks can declare local triggers (`triggers:` schedule or story-count condition); `satelle task trigger run-once|watch` runs them locally. A task file's `triggers:` line holds a comma list of `name=schedule:<duration>` (fires when the trigger has made no execution within that interval) or `name=count:<status>>=<n>` (fires when at least n stories sit at that status and the trigger's previous run has concluded). Each firing creates one execution of the task, tagged `trigger:<task>:<name>`, with the trigger's name and source in its `trigger` and `trigger_source` inputs when the task declares them, and drives it along the task's route in the local process with no placement or remote. `satelle task validate` reports a malformed `triggers:` line. (sty_0f11c304)
+
+## [serve-v0.0.233] - 2026-10-29
+
+### Changed
+- The service binary embeds the task trigger fields: a task's `triggers:` line is parsed and stored with the task, and trigger-fired executions carry their `trigger` and `trigger_source` inputs. (sty_0f11c304)
+
 ## [0.0.785] - 2026-10-29
 
 ### Added

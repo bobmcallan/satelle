@@ -49,8 +49,8 @@ const ExecutionTag = "remote-node:"
 // Input names a run descriptor fills, when the task declares them.
 const (
 	InputStoryID       = workitem.InputStoryID
-	InputTrigger       = "trigger"
-	InputTriggerSource = "trigger_source"
+	InputTrigger       = workitem.InputTrigger
+	InputTriggerSource = workitem.InputTriggerSource
 )
 
 // StatusSender is the heartbeat call; *NodeClient is the real one.
@@ -220,13 +220,12 @@ func executionFor(ctx context.Context, tr TaskRun) (workitem.Item, error) {
 	}
 	var exec workitem.Item
 	// A node's repo gates creation on the story structure check, which asks every
-	// kind for a body that is not its title and a category; the category does not
-	// select the execution's workflow (an execution is resolved by its kind).
+	// kind for a body that is not its title and a category (workitem.RunCategory).
 	err = dispatchJSON(ctx, "execution-create", map[string]any{
 		"title": "wake of " + task.Title + " on " + tr.NodeID,
 		"body": fmt.Sprintf("One run of %s for the wake of node %s: subject %q, trigger %q, source %q.",
 			taskID, tr.NodeID, tr.Desc.StoryID, tr.Desc.Trigger, tr.Desc.TriggerSource),
-		"category":  wakeCategory,
+		"category":  workitem.RunCategory,
 		"parent_id": taskID,
 		"tags":      []string{tag},
 		"inputs":    wakeInputs(task.Inputs, tr.Desc),
@@ -234,21 +233,10 @@ func executionFor(ctx context.Context, tr TaskRun) (workitem.Item, error) {
 	return exec, err
 }
 
-// wakeCategory is the category a wake's execution is created under.
-const wakeCategory = "chore"
-
-// wakeInputs maps the run descriptor onto the inputs the task declares: a field
-// the task does not declare is dropped, and a declared one the wake has no value
-// for is left unset, so the create refuses it only if the task requires it.
+// wakeInputs maps the run descriptor onto the inputs the task declares
+// (workitem.MapInputs).
 func wakeInputs(decls []workitem.InputDecl, d RunDescriptor) map[string]string {
-	have := map[string]string{InputStoryID: d.StoryID, InputTrigger: d.Trigger, InputTriggerSource: d.TriggerSource}
-	out := map[string]string{}
-	for _, decl := range decls {
-		if v := have[decl.Name]; v != "" {
-			out[decl.Name] = v
-		}
-	}
-	return out
+	return workitem.MapInputs(decls, map[string]string{InputStoryID: d.StoryID, InputTrigger: d.Trigger, InputTriggerSource: d.TriggerSource})
 }
 
 // getItem reads one work item through the get verb of its group ("task" or
@@ -260,17 +248,7 @@ func getItem(ctx context.Context, group, id string) (workitem.Item, error) {
 }
 
 // dispatchJSON runs a verb and decodes its answer into out.
-func dispatchJSON(ctx context.Context, name string, req map[string]any, out any) error {
-	raw, _ := json.Marshal(req)
-	ans, err := verb.Dispatch(ctx, name, raw)
-	if err != nil {
-		return fmt.Errorf("%s: %w", name, err)
-	}
-	if err := json.Unmarshal(ans, out); err != nil {
-		return fmt.Errorf("%s: decode the answer: %w", name, err)
-	}
-	return nil
-}
+var dispatchJSON = verb.DispatchJSON
 
 // ReportStartFailure tells satelle.dev a node could not start the run for storyID:
 // one concluded heartbeat with outcome reject and the findings, sent even when ctx

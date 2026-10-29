@@ -39,6 +39,9 @@ func Marshal(it Item) []byte {
 	if len(it.InputValues) > 0 {
 		fmt.Fprintf(&b, "inputs: %s\n", EncodeInputValues(it.InputValues))
 	}
+	if len(it.Triggers) > 0 {
+		fmt.Fprintf(&b, "triggers: %s\n", FormatTriggers(it.Triggers))
+	}
 	if !it.CreatedAt.IsZero() {
 		fmt.Fprintf(&b, "created: %s\n", it.CreatedAt.UTC().Format(time.RFC3339))
 	}
@@ -108,6 +111,10 @@ func Parse(data []byte) (Item, error) {
 			it.Inputs, _ = ParseInputDecls(v)
 		case "inputs":
 			it.InputValues = DecodeInputValues(v)
+		case "triggers":
+			// As inputs_decl: a malformed line leaves Triggers nil for
+			// structure.CheckTask to report.
+			it.Triggers, _ = ParseTriggers(v)
 		case "created":
 			it.CreatedAt, _ = time.Parse(time.RFC3339, v)
 		case "updated":

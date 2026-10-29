@@ -289,6 +289,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		// deterministic task structure check (ACTION+VERIFICATION contract).
 		parent.AddCommand(authoredValidateCmd("tasks"))
 		parent.AddCommand(taskArchiveCommand())
+		parent.AddCommand(taskTriggerCommand())
 	}
 	if group == "execution" {
 		parent.AddCommand(executionRecordCommand())

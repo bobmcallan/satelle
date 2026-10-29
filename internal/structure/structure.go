@@ -203,6 +203,11 @@ func CheckTask(body string) []string {
 	if _, err := workitem.ParseInputDecls(fmScalar(fm, "inputs_decl")); err != nil {
 		p = append(p, "inputs_decl: "+err.Error())
 	}
+	// Local triggers (name=schedule:<duration> | name=count:<status>>=<n>): a
+	// malformed line would silently declare none, so name it here too.
+	if _, err := workitem.ParseTriggers(fmScalar(fm, "triggers")); err != nil {
+		p = append(p, "triggers: "+err.Error())
+	}
 	return p
 }
 

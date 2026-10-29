@@ -80,3 +80,20 @@ func Dispatch(ctx context.Context, name string, req json.RawMessage) (json.RawMe
 	}
 	return v.Invoke(ctx, req)
 }
+
+// DispatchJSON is Dispatch for an in-process caller: it encodes req, runs the verb
+// and decodes its answer into out.
+func DispatchJSON(ctx context.Context, name string, req any, out any) error {
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("%s: encode the request: %w", name, err)
+	}
+	ans, err := Dispatch(ctx, name, raw)
+	if err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	if err := json.Unmarshal(ans, out); err != nil {
+		return fmt.Errorf("%s: decode the answer: %w", name, err)
+	}
+	return nil
+}

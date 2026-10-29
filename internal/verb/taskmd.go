@@ -357,6 +357,7 @@ func taskContentEqual(a, b workitem.Item) bool {
 		a.ParentID == b.ParentID && a.AcceptanceCriteria == b.AcceptanceCriteria &&
 		strings.Join(a.Tags, ",") == strings.Join(b.Tags, ",") &&
 		workitem.FormatInputDecls(a.Inputs) == workitem.FormatInputDecls(b.Inputs) &&
+		workitem.FormatTriggers(a.Triggers) == workitem.FormatTriggers(b.Triggers) &&
 		// a is the stored row, b the file: Upsert keeps stored values when the file
 		// has none, so a file without them is equal (else it would re-upsert each sync).
 		(len(b.InputValues) == 0 || workitem.InputsEqual(a.InputValues, b.InputValues))

@@ -91,7 +91,8 @@ func Migrate(db *sql.DB) error {
 	}
 	// input_decls / input_values hold a task's declared inputs and an execution's
 	// values as JSON; '' = none, so existing rows are unchanged.
-	for _, col := range []string{"input_decls", "input_values"} {
+	// triggers holds a task's declared triggers in their canonical line form.
+	for _, col := range []string{"input_decls", "input_values", "triggers"} {
 		if _, err := db.Exec(`ALTER TABLE work_items ADD COLUMN ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil &&
 			!strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("workitem: migrate %s column: %w", col, err)
@@ -146,6 +147,7 @@ type CreateInput struct {
 	Assignee           string
 	Inputs             []InputDecl
 	InputValues        map[string]any
+	Triggers           []TriggerDecl
 }
 
 // Create inserts a new item and returns it with its assigned id and timestamps.
@@ -180,16 +182,17 @@ func (s *Store) Create(ctx context.Context, in CreateInput, now time.Time) (Item
 		Assignee:           in.Assignee,
 		Inputs:             in.Inputs,
 		InputValues:        in.InputValues,
+		Triggers:           in.Triggers,
 	}
 	tagsJSON, _ := json.Marshal(it.Tags)
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO work_items
-            (id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, assignee, input_decls, input_values)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, assignee, input_decls, input_values, triggers)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		it.ID, string(it.Kind), it.Title, it.Body, it.Status, it.Priority, it.Category,
 		it.ParentID, it.AcceptanceCriteria, string(tagsJSON),
 		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), it.Assignee,
-		encodeDecls(it.Inputs), EncodeInputValues(it.InputValues))
+		encodeDecls(it.Inputs), EncodeInputValues(it.InputValues), FormatTriggers(it.Triggers))
 	if err != nil {
 		return Item{}, fmt.Errorf("workitem: create: %w", err)
 	}
@@ -278,12 +281,12 @@ func (s *Store) upsert(ctx context.Context, it Item, now time.Time, force bool) 
 	// OR REPLACE deletes+reinserts, so omitting a column would reset it to DEFAULT.
 	_, err := s.db.ExecContext(ctx, `
         INSERT OR REPLACE INTO work_items
-            (id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived, park_origin, assignee, input_decls, input_values)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived, park_origin, assignee, input_decls, input_values, triggers)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		it.ID, string(it.Kind), it.Title, it.Body, it.Status, it.Priority, it.Category,
 		it.ParentID, it.AcceptanceCriteria, string(tagsJSON),
 		it.CreatedAt.UTC().Format(time.RFC3339Nano), it.UpdatedAt.UTC().Format(time.RFC3339Nano), archived, it.ParkOrigin, it.Assignee,
-		encodeDecls(it.Inputs), EncodeInputValues(it.InputValues))
+		encodeDecls(it.Inputs), EncodeInputValues(it.InputValues), FormatTriggers(it.Triggers))
 	if err != nil {
 		return Item{}, fmt.Errorf("workitem: upsert: %w", err)
 	}
@@ -592,7 +595,7 @@ func (s *Store) ListChangedSince(ctx context.Context, kind Kind, since time.Time
 
 // selectCols is the shared SELECT prefix for Get/List, fixing column order so
 // one scan() serves both.
-const selectCols = `SELECT id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived, park_origin, assignee, input_decls, input_values FROM work_items`
+const selectCols = `SELECT id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived, park_origin, assignee, input_decls, input_values, triggers FROM work_items`
 
 // scanner is satisfied by both *sql.Row and *sql.Rows.
 type scanner interface{ Scan(dest ...any) error }
@@ -604,10 +607,11 @@ func scan(sc scanner) (Item, error) {
 		created, updated string
 		archived         int
 		decls, values    string
+		triggers         string
 	)
 	if err := sc.Scan(&it.ID, &kind, &it.Title, &it.Body, &it.Status,
 		&it.Priority, &it.Category, &it.ParentID, &it.AcceptanceCriteria,
-		&tags, &created, &updated, &archived, &it.ParkOrigin, &it.Assignee, &decls, &values); err != nil {
+		&tags, &created, &updated, &archived, &it.ParkOrigin, &it.Assignee, &decls, &values, &triggers); err != nil {
 		return Item{}, err
 	}
 	it.Kind = Kind(kind)
@@ -620,6 +624,7 @@ func scan(sc scanner) (Item, error) {
 		_ = json.Unmarshal([]byte(decls), &it.Inputs)
 	}
 	it.InputValues = DecodeInputValues(values)
+	it.Triggers, _ = ParseTriggers(triggers)
 	return it, nil
 }
 
