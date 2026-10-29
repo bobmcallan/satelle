@@ -16,6 +16,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/costview"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/storyfold"
 	"github.com/bobmcallan/satelle/internal/trunk"
@@ -1332,7 +1333,7 @@ func storyEstimate(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 		if perr != nil {
 			return nil, perr
 		}
-		kv["estimate-minutes"] = strconv.Itoa(costMinutes(d))
+		kv["estimate-minutes"] = strconv.Itoa(costview.WholeMinutes(d))
 	}
 	if req.FreshInput > 0 {
 		kv["estimate-fresh-input"] = strconv.Itoa(req.FreshInput)
@@ -1430,23 +1431,20 @@ func recordActual(ctx context.Context, current workitem.Item, at time.Time) (wor
 		return workitem.Item{}, err
 	}
 	tot := actual.Total
+	// The summary token tag records its sum even when no row measured usage.
+	tokens, _ := costview.ActualFor(costview.UnitTokens, tot)
 	kv := map[string]string{
 		"actual-output":      strconv.Itoa(tot.Output),
 		"actual-cache-read":  strconv.Itoa(tot.CacheRead),
 		"actual-cache-write": strconv.Itoa(tot.CacheWrite),
-		// The summary token tag: fresh input + unsplit input + output + cache
-		// write, cache read excluded — reused context is not new work
-		// (sty_8eae81ac purpose note). Unsplit input folds in so a legacy row
-		// with no fresh/cache split never silently vanishes from the total.
-		"actual-tokens": strconv.Itoa(tot.FreshInput + tot.UnsplitTokens + tot.Output + tot.CacheWrite),
+		"actual-tokens":      strconv.Itoa(tokens),
 	}
-	// ElapsedMs is a negative sentinel (never a measured span) when the story
-	// never entered an engaging state at all — "unavailable", never a bogus
-	// negative minute count (sty_b8542a3a rework).
-	if tot.ElapsedMs < 0 {
-		kv["actual-minutes"] = "unavailable"
+	// A story that never entered an engaging state has no span: "unavailable",
+	// never a bogus negative minute count (sty_b8542a3a rework).
+	if minutes, ok := costview.ActualFor(costview.UnitMinutes, tot); ok {
+		kv["actual-minutes"] = strconv.Itoa(minutes)
 	} else {
-		kv["actual-minutes"] = strconv.Itoa(costMinutes(time.Duration(tot.ElapsedMs) * time.Millisecond))
+		kv["actual-minutes"] = "unavailable"
 	}
 	// A band is written only when tokens were measured. CostBand is empty when
 	// no row reported usage; a measured zero is low. Dollars and elapsed time
@@ -1727,17 +1725,6 @@ func parseCostDuration(s string) (time.Duration, error) {
 		return 0, invalid()
 	}
 	return d, nil
-}
-
-// costMinutes converts a parsed --time to the whole minutes the tag stores.
-// Truncating alone would record real work as "0 minutes" for anything under a
-// minute, so any positive duration is worth at least 1 (sty_ef8a896b).
-func costMinutes(d time.Duration) int {
-	m := int(d.Minutes())
-	if m == 0 && d > 0 {
-		m = 1
-	}
-	return m
 }
 
 // applyTagMutation applies remove then add against existing tags (sty_033d4611).

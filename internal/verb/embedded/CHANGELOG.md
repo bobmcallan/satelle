@@ -1,3 +1,13 @@
+## [0.0.787] - 2026-10-29
+
+### Added
+- `satelle stats` reports what each story finished in the window cost, beside its throughput and quality figures: fresh input, cache read, cache write and output tokens and the derived [pricing] cost, from the story's whole ledger folded as `satelle story cost` does, broken down by seat (agent) and by model, per repo and in total. For each estimated unit it shows estimate, actual and actual÷estimate per story, and per repo the spread of actual÷estimate (count, median, p90, min, max), counting the stories left out. A seat that recorded no usage, an unpriced model and a story with no estimate read `unavailable` (null with a reason in `--json`), never 0, and an unreadable repo's figures are excluded from the total as its other figures are. (sty_e6f6d0dd)
+
+## [serve-v0.0.234] - 2026-10-29
+
+### Changed
+- The service binary embeds the cost and estimate figures of `satelle stats`. (sty_e6f6d0dd)
+
 ## [0.0.786] - 2026-10-29
 
 ### Added

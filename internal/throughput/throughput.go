@@ -1,16 +1,20 @@
 // Package throughput computes what `satelle stats` reports: how many stories and
-// epics finished in a window, how long each phase of their cycle took, and how
-// long they held each status. Every figure is derived from rows satelle already
-// records — a story's story_created and status_transition ledger rows and its
-// record — and a figure those rows cannot support is unavailable, never zero.
+// epics finished in a window, how long each phase of their cycle took, how long
+// they held each status, what each cost in tokens and money by seat and model,
+// and how close its estimate was. Every figure is derived from rows satelle
+// already records — a story's ledger chain (transitions, dispatch and driver
+// usage) and its record — and a figure those rows cannot support is
+// unavailable, never zero.
 package throughput
 
 import (
+	"cmp"
 	"encoding/json"
 	"math"
-	"sort"
+	"slices"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/costview"
 	"github.com/bobmcallan/satelle/internal/epicset"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/storyfold"
@@ -116,7 +120,10 @@ func terminal(spec wfdot.Spec, status string) bool {
 
 // Item is one finished story or epic, reduced to what the report aggregates.
 type Item struct {
-	ID       string
+	ID    string
+	Title string
+	// Repo names the repo the item was read from.
+	Repo     string
 	Epic     bool
 	Finished time.Time
 	Phases   Phases
@@ -127,6 +134,9 @@ type Item struct {
 	// Rows are the item's verdict and agent_invocation ledger rows, oldest
 	// first: what the quality figures are counted from.
 	Rows []ledger.Entry
+	// Own is the item's own cost (costview.Own) with no child rolled in, so a
+	// parent and its children are never counted twice in a total.
+	Own costview.Story
 }
 
 // Finish reduces a story's rows to an Item, and reports whether it finished.
@@ -139,6 +149,7 @@ func Finish(it workitem.Item, entries []ledger.Entry, spec wfdot.Spec) (Item, bo
 	ledger.SortEntries(es)
 	return Item{
 		ID:       it.ID,
+		Title:    it.Title,
 		Epic:     epicset.IsEpicParent(it),
 		Finished: p.End,
 		Phases:   p,
@@ -150,9 +161,13 @@ func Finish(it workitem.Item, entries []ledger.Entry, spec wfdot.Spec) (Item, bo
 // Percentile is the nearest-rank p-th percentile (0 < p <= 1) of ds: the
 // smallest value at least p of the population does not exceed. ds must be
 // non-empty; it is not modified.
-func Percentile(ds []time.Duration, p float64) time.Duration {
-	s := append([]time.Duration(nil), ds...)
-	sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
+func Percentile(ds []time.Duration, p float64) time.Duration { return nearestRank(ds, p) }
+
+// nearestRank is the one nearest-rank rule every percentile here uses, over
+// durations and ratios alike.
+func nearestRank[T cmp.Ordered](xs []T, p float64) T {
+	s := slices.Clone(xs)
+	slices.Sort(s)
 	rank := int(math.Ceil(p * float64(len(s))))
 	return s[min(max(rank, 1), len(s))-1]
 }

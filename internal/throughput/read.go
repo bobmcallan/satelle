@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/costview"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -31,17 +32,27 @@ func qualityRow(kind string) bool {
 	return false
 }
 
+// Options is what the report reads besides the repos and the window.
+type Options struct {
+	// Pricing prices each item's measured tokens at read time
+	// (costview.WithPricing); the zero value reads every cost unavailable.
+	Pricing costview.Pricing
+}
+
 // ReadRepo returns the stories and epics of the repo at root that finished in w,
 // and the stories created in w with the done times of the stories they cite,
 // reading it read-only: its ledger through workspace.ReadLedgerReadOnly, its
 // stories and routes through workspace.LoadRepoReadOnly. An item is found by its
 // status_transition rows inside w, so one created long before the window and
-// finished inside it is never dropped by a page bound.
-func ReadRepo(ctx context.Context, root string, w Window) (Repo, error) {
+// finished inside it is never dropped by a page bound. Each finished item's
+// whole chain is folded by costview.Own, so its cost covers the whole story,
+// not only the rows dated inside w.
+func ReadRepo(ctx context.Context, root string, w Window, opt Options) (Repo, error) {
 	var finished, created []string
 	createdAt := map[string]time.Time{}
 	chains := map[string][]ledger.Entry{}
 	rows := map[string][]ledger.Entry{}
+	whole := map[string][]ledger.Entry{}
 	err := workspace.ReadLedgerReadOnly(ctx, root, func(ctx context.Context, ls *ledger.Store) error {
 		seen := map[string]bool{}
 		if err := ls.ForEachKind(ctx, "", ledger.KindStatusTransition, func(e ledger.Entry) error {
@@ -75,6 +86,7 @@ func ReadRepo(ctx context.Context, root string, w Window) (Repo, error) {
 					rows[id] = append(rows[id], e)
 				}
 			}
+			whole[id] = es
 		}
 		return nil
 	})
@@ -103,6 +115,8 @@ func ReadRepo(ctx context.Context, root string, w Window) (Repo, error) {
 		spec, _, _, _ := wfgovern.SpecFor(rv.Workflows, it)
 		if fi, ok := Finish(it, es, spec); ok && w.Contains(fi.Finished) {
 			fi.Rows = rows[it.ID]
+			clk, _ := wfgovern.ClockFor(rv.Workflows, it)
+			fi.Own = costview.Own(it, whole[it.ID], clk, w.Until, costview.WithPricing(opt.Pricing))
 			out.Items = append(out.Items, fi)
 		}
 	}
@@ -160,20 +174,23 @@ func DoneTimes(ctx context.Context, root string, ids []string) (map[string]time.
 // total over every repo that could be read. A repo that cannot be read is
 // reported with its error and named in the total's Excluded. Work that came
 // back in one repo citing a story done in another counts in the total only.
-func Build(ctx context.Context, roots []string, w Window) Report {
+func Build(ctx context.Context, roots []string, w Window, opt Options) Report {
 	rep := Report{Window: w, Repos: []RepoReport{}}
 	var all []Item
 	var excluded, readable []string
 	total := Returns{Done: map[string]time.Time{}}
 	for _, root := range roots {
 		name := config.RepoName(root)
-		repo, err := ReadRepo(ctx, root, w)
+		repo, err := ReadRepo(ctx, root, w, opt)
 		if err != nil {
 			r := Unavailable(name, root, "repo unreadable: "+err.Error(), w)
 			r.Error = err.Error()
 			rep.Repos = append(rep.Repos, r)
 			excluded = append(excluded, name)
 			continue
+		}
+		for i := range repo.Items {
+			repo.Items[i].Repo = name
 		}
 		readable = append(readable, root)
 		all = append(all, repo.Items...)

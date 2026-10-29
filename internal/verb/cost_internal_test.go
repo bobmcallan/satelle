@@ -43,24 +43,3 @@ func TestParseCostDuration(t *testing.T) {
 		}
 	}
 }
-
-// Rounding is pinned rather than accidental: whole minutes truncate, but any
-// positive duration under a minute records as 1 rather than 0 (sty_ef8a896b).
-func TestCostMinutes(t *testing.T) {
-	cases := []struct {
-		in   time.Duration
-		want int
-	}{
-		{38 * time.Minute, 38},
-		{2 * time.Hour, 120},
-		{90 * time.Second, 1},
-		{45 * time.Second, 1},
-		{time.Nanosecond, 1},
-		{0, 0},
-	}
-	for _, c := range cases {
-		if got := costMinutes(c.in); got != c.want {
-			t.Errorf("costMinutes(%v) = %d, want %d", c.in, got, c.want)
-		}
-	}
-}

@@ -3,8 +3,11 @@ package throughput
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/costview"
 )
 
 // Text writes rep as the text `satelle stats` prints.
@@ -41,6 +44,68 @@ func section(w io.Writer, r RepoReport) {
 		fmt.Fprintf(w, "  %-16s %s  (%d items)\n", s.Status, DurationText(s.Median), s.Items)
 	}
 	qualityText(w, r.Quality)
+	costSection(w, r.Cost)
+	fmt.Fprintln(w, "estimate spread (actual ÷ estimate, nearest rank):")
+	for _, s := range r.Spread {
+		fmt.Fprintf(w, "  %-11s  items %s  unavailable %s  median %s  p90 %s  min %s  max %s\n", s.Unit,
+			CountText(s.Stories), CountText(s.Unavailable), RatioText(s.Median, "%.2f"), RatioText(s.P90, "%.2f"), RatioText(s.Min, "%.2f"), RatioText(s.Max, "%.2f"))
+	}
+}
+
+func costSection(w io.Writer, c CostSection) {
+	fmt.Fprintf(w, "cost (each finished item's own rows): %s\n", UsageText(c.Usage))
+	breakdown(w, "  ", c.BySeat, c.ByModel)
+	for _, s := range c.Stories {
+		fmt.Fprintf(w, "  item %s %q", s.ID, s.Title)
+		if s.Repo != "" {
+			fmt.Fprintf(w, " (repo %s)", s.Repo)
+		}
+		fmt.Fprintf(w, ": %s\n", UsageText(s.Usage))
+		breakdown(w, "    ", s.BySeat, s.ByModel)
+		if s.EstimatesReason != "" {
+			fmt.Fprintf(w, "    estimate: unavailable (%s)\n", s.EstimatesReason)
+		}
+		for _, e := range s.Estimates {
+			fmt.Fprintf(w, "    estimate %-11s  est %s  actual %s  actual÷estimate %s\n", e.Unit,
+				strconv.FormatFloat(e.Estimate, 'f', -1, 64), actualText(e), RatioText(Ratio{Value: e.Ratio, Reason: e.Reason}, "%.2f"))
+		}
+	}
+}
+
+func breakdown(w io.Writer, indent string, bySeat, byModel []Breakdown) {
+	for _, b := range bySeat {
+		fmt.Fprintf(w, "%sby seat %-12s %s\n", indent, b.Name, UsageText(b.Usage))
+	}
+	for _, b := range byModel {
+		fmt.Fprintf(w, "%sby model %-11s %s\n", indent, b.Name, UsageText(b.Usage))
+	}
+}
+
+func actualText(e EstimateVsActual) string {
+	if e.Actual == nil {
+		return fmt.Sprintf("unavailable (%s)", e.Reason)
+	}
+	return strconv.Itoa(*e.Actual)
+}
+
+// UsageText is how a Usage reads in text: each token class and the cost, a
+// figure that was not measured or priced reading unavailable and why.
+func UsageText(u Usage) string {
+	s := fmt.Sprintf("fresh input %s  cache read %s  cache write %s  output %s",
+		CountText(u.FreshInput), CountText(u.CacheRead), CountText(u.CacheWrite), CountText(u.Output))
+	if u.UnsplitInput != nil {
+		s += "  unsplit input " + CountText(*u.UnsplitInput)
+	}
+	return s + "  cost " + CostText(u.Cost)
+}
+
+// CostText is how a Cost reads in text: costview's derived-cost rendering, or
+// unavailable and why.
+func CostText(c Cost) string {
+	if c.USD == nil {
+		return fmt.Sprintf("unavailable (%s)", c.Reason)
+	}
+	return costview.FormatDerived(c.Derived)
 }
 
 func buckets(w io.Writer, bs []Bucket) {

@@ -29,19 +29,20 @@ func init() {
 	)
 	c := &cobra.Command{
 		Use:   "stats",
-		Short: "Report finished stories and epics, and cycle times, across registered repos",
-		Long: `Report, for each repo in the workspace registry and in total, how many stories
-and epics reached a terminal state per UTC day and ISO week, the median and p90
-cycle time of each phase, and the median time spent in each status.
+		Short: "Report finished stories and epics, cycle times, cost and estimate accuracy, across registered repos",
+		Long: `Report, per registered repo and in total, the stories and epics finished per
+UTC day and ISO week, the median and p90 of each phase, and the median time in
+each status. Phase 1 ends at the step marked pr_step = true (none: phase 2 n/a).
 
-Phase 1 runs from the start state to the step the route marks pr_step = true;
-phase 2 from there to the terminal state. A route that marks none reports phase
-2 as n/a. A figure the ledger does not record reads "unavailable" (null with a
-reason in --json), never 0. Every repo is opened read-only.
+Quality: first-pass acceptance per step and gate, rejected rounds per edge,
+re-dispatches, rejects naming no criterion, and work that came back.
 
-A quality section adds first-pass acceptance per step and gate, rejected rounds
-per gated edge, re-dispatches after exit rejections, rejects naming no criterion
-and work that came back, naming the stories.`,
+Cost: each finished item's own tokens and [pricing] cost, by seat (agent) and by
+model.
+Estimate: actual÷estimate per item and unit, and its spread per repo.
+
+A figure not recorded or not priced reads "unavailable" (null with a reason in
+--json), never 0. Repos are opened read-only.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			window, err := parseStatsSince(since)
@@ -53,7 +54,8 @@ and work that came back, naming the stories.`,
 				return err
 			}
 			until := statsNow().UTC()
-			rep := throughput.Build(cmd.Context(), roots, throughput.Window{Since: until.Add(-window), Until: until})
+			rep := throughput.Build(cmd.Context(), roots, throughput.Window{Since: until.Add(-window), Until: until},
+				throughput.Options{Pricing: config.LoadPricing()})
 			if asJSON {
 				enc := json.NewEncoder(cmd.OutOrStdout())
 				enc.SetIndent("", "  ")

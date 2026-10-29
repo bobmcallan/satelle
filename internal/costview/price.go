@@ -105,14 +105,11 @@ func foldDerived(a, b DerivedCost) DerivedCost {
 // FormatDerived renders a derived cost for any surface: the priced figure, with
 // an explicit unavailable note for any part that could not be priced.
 func FormatDerived(d DerivedCost) string {
+	if why := d.UnavailableReason(); why != "" {
+		return "unavailable (" + why + ")"
+	}
 	notes := strings.Join(d.Unavailable, "; ")
 	switch {
-	case d.Mode == ModeNone && notes == "":
-		return "unavailable (no pricing configured)"
-	case d.PricedParts == 0 && notes == "":
-		return "unavailable (no usage measured)"
-	case d.PricedParts == 0:
-		return "unavailable (" + notes + ")"
 	case d.Mode == ModeSubscription:
 		return fmt.Sprintf("$%.4f (%s)", d.USD, SubscriptionShareLabel)
 	case notes == "":
@@ -120,6 +117,21 @@ func FormatDerived(d DerivedCost) string {
 	default:
 		return fmt.Sprintf("$%.4f + unavailable (%s)", d.USD, notes)
 	}
+}
+
+// UnavailableReason is why d priced nothing at all, or "" when some part of it
+// was priced.
+func (d DerivedCost) UnavailableReason() string {
+	notes := strings.Join(d.Unavailable, "; ")
+	switch {
+	case d.PricedParts > 0:
+		return ""
+	case d.Mode == ModeNone && notes == "":
+		return "no pricing configured"
+	case notes == "":
+		return "no usage measured"
+	}
+	return notes
 }
 
 // split is a measured row's tokens by class. known is false when the class
@@ -261,6 +273,11 @@ func (pr *pricer) result(f Figures) DerivedCost {
 // is driver@model — plain driver when its model was not recorded.
 type SeatLine struct {
 	Seat string `json:"seat"`
+	// Agent and Model are the two halves seatOf joined into Seat, so a consumer
+	// grouping by either never parses the label; Model is empty when the rows
+	// recorded none.
+	Agent string `json:"agent"`
+	Model string `json:"model,omitempty"`
 	// Auth is the auth mode of the seat's rows (ledger.AuthLabel; unrecorded for a
 	// row that recorded none and for the driving session). A seat whose rows ran
 	// under different modes lists them, comma-joined and sorted. It is separate
@@ -303,27 +320,30 @@ func recordedModel(model, resolved string) string {
 func BySeat(rows []Row, drivers []DriverRow, p Pricing) []SeatLine {
 	accs := map[string]*accumulator{}
 	auths := map[string]string{}
-	get := func(seat, auth string) *accumulator {
+	halves := map[string][2]string{}
+	get := func(agent, model, auth string) *accumulator {
+		seat := seatOf(agent, model)
 		a, ok := accs[seat]
 		if !ok {
 			a = &accumulator{price: newPricer(p)}
 			accs[seat] = a
+			halves[seat] = [2]string{agent, model}
 		}
 		auths[seat] = mergeAuth(auths[seat], auth)
 		return a
 	}
 	for _, row := range rows {
-		get(seatOf(row.Agent, recordedModel(row.Model, row.ModelResolved)), ledger.AuthLabel(row.AuthMode)).addDispatchRow(row)
+		get(row.Agent, recordedModel(row.Model, row.ModelResolved), ledger.AuthLabel(row.AuthMode)).addDispatchRow(row)
 	}
 	for _, d := range MarkSuperseded(append([]DriverRow(nil), drivers...)) {
 		// The driving session is not a binding, so it declares no auth.
-		get(seatOf(DriverSeat, recordedModel(d.Model, "")), ledger.AuthUnrecorded).addDriverRow(d)
+		get(DriverSeat, recordedModel(d.Model, ""), ledger.AuthUnrecorded).addDriverRow(d)
 	}
 	lines := make([]SeatLine, 0, len(accs))
 	for seat, a := range accs {
 		f := a.figures()
 		lines = append(lines, SeatLine{
-			Seat: seat, Auth: auths[seat], FreshInput: f.FreshInput, CacheRead: f.CacheRead, CacheWrite: f.CacheWrite, Output: f.Output,
+			Seat: seat, Agent: halves[seat][0], Model: halves[seat][1], Auth: auths[seat], FreshInput: f.FreshInput, CacheRead: f.CacheRead, CacheWrite: f.CacheWrite, Output: f.Output,
 			UnsplitTokens: f.UnsplitTokens, UsageRows: f.UsageRows, UnsplitRows: f.UnsplitRows,
 			UsageUnavailableRows: f.UsageUnavailableRows, Derived: f.Derived,
 		})

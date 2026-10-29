@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,9 +54,9 @@ type statsMove struct {
 func ago(h float64) time.Time { return statsClock.Add(-time.Duration(h * float64(time.Hour))) }
 
 // seedStatsRepo writes a repo at root holding stories, each with its
-// story_created and status_transition rows at the given times. stepToml, when
-// set, is the repo's own step catalogue.
-func seedStatsRepo(t *testing.T, root, stepToml string, stories ...statsStory) {
+// story_created and status_transition rows at the given times, and returns
+// their ids in order. stepToml, when set, is the repo's own step catalogue.
+func seedStatsRepo(t *testing.T, root, stepToml string, stories ...statsStory) []string {
 	t.Helper()
 	dataDir := filepath.Join(root, config.DefaultDataDir)
 	if err := os.MkdirAll(filepath.Join(dataDir, "workflows"), 0o755); err != nil {
@@ -75,6 +76,7 @@ func seedStatsRepo(t *testing.T, root, stepToml string, stories ...statsStory) {
 	}
 	defer db.Close()
 	ctx := context.Background()
+	var ids []string
 	for i, s := range stories {
 		it, err := db.Stories.Create(ctx, workitem.CreateInput{
 			Kind: workitem.KindStory, Title: fmt.Sprintf("story %d", i), Category: s.category,
@@ -82,6 +84,7 @@ func seedStatsRepo(t *testing.T, root, stepToml string, stories ...statsStory) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		ids = append(ids, it.ID)
 		if _, err := db.Ledger.Append(ctx, ledger.AppendInput{
 			StoryID: it.ID, Kind: ledger.KindStoryCreated, Payload: json.RawMessage(`{"status":"backlog"}`),
 		}, ago(s.created)); err != nil {
@@ -94,6 +97,32 @@ func seedStatsRepo(t *testing.T, root, stepToml string, stories ...statsStory) {
 			}, ago(m.ago)); err != nil {
 				t.Fatal(err)
 			}
+		}
+	}
+	return ids
+}
+
+// seedStatsCost tags the story id in the repo at root and appends one measured
+// dispatch row per usage payload.
+func seedStatsCost(t *testing.T, root, id string, tags []string, usage ...map[string]any) {
+	t.Helper()
+	db, err := store.Open(config.Config{}.ResolveDB(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.Stories.Update(ctx, id, workitem.UpdateInput{Tags: &tags}, statsClock.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range usage {
+		p := map[string]any{"adapter": "claude", "usage_available": true}
+		for k, v := range u {
+			p[k] = v
+		}
+		raw, _ := json.Marshal(p)
+		if _, err := db.Ledger.Append(ctx, ledger.AppendInput{StoryID: id, Kind: ledger.KindAgentInvocation, Payload: raw}, statsClock.Add(-time.Hour)); err != nil {
+			t.Fatal(err)
 		}
 	}
 }
@@ -112,8 +141,15 @@ func statsLedgerCount(t *testing.T, root string) int {
 	return n
 }
 
+// statsCostIDs are the stories statsFixture gives usage rows: alpha's story
+// finished in the window, alpha's story finished before it, and beta's.
+type statsCostIDs struct{ alphaIn, alphaOld, beta string }
+
+var statsCost statsCostIDs
+
 // statsFixture registers three repos: alpha on the shipped route (no PR step),
 // beta whose own route marks a PR step, and gamma, which is not a satelle repo.
+// The operator's [pricing] rates m-big (priceRatesToml).
 func statsFixture(t *testing.T) (alpha, beta, gamma string) {
 	t.Helper()
 	t.Setenv("SATELLE_HOME", t.TempDir())
@@ -123,8 +159,11 @@ func statsFixture(t *testing.T) (alpha, beta, gamma string) {
 	if err := os.MkdirAll(gamma, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("SATELLE_HOME"), config.GlobalConfigName), []byte(priceRatesToml), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	days := func(d float64) float64 { return d * 24 }
-	seedStatsRepo(t, alpha, "",
+	alphaIDs := seedStatsRepo(t, alpha, "",
 		// Created before the window, finished inside it.
 		statsStory{"feature", days(10), []statsMove{{days(2), "backlog", "in_progress"}, {days(1), "in_progress", "done"}}},
 		statsStory{"epic-parent", days(3), []statsMove{{days(3) - 1, "backlog", "ready"}, {days(2), "ready", "merging"}, {days(2) - 1, "merging", "done"}}},
@@ -135,9 +174,18 @@ func statsFixture(t *testing.T) (alpha, beta, gamma string) {
 		// Finished before the window.
 		statsStory{"feature", days(20), []statsMove{{days(19), "backlog", "in_progress"}, {days(18), "in_progress", "done"}}},
 	)
-	seedStatsRepo(t, beta, statsPRStep,
+	betaIDs := seedStatsRepo(t, beta, statsPRStep,
 		statsStory{"feature", days(5), []statsMove{{days(4), "backlog", "in_progress"}, {days(1), "in_progress", "done"}}},
 	)
+	statsCost = statsCostIDs{alphaIn: alphaIDs[0], alphaOld: alphaIDs[4], beta: betaIDs[0]}
+	// $3 + $1.50; actual fresh input is 2x its estimate.
+	seedStatsCost(t, alpha, statsCost.alphaIn, []string{"estimate-fresh-input:500000"},
+		map[string]any{"agent": "coder", "model_resolved": "m-big", "tokens_in_fresh": 1_000_000, "tokens_in": 1_000_000, "tokens_out": 100_000})
+	seedStatsCost(t, alpha, statsCost.alphaOld, nil,
+		map[string]any{"agent": "coder", "model_resolved": "m-big", "tokens_in_fresh": 7, "tokens_in": 7, "tokens_out": 7})
+	// $0.60 + $0.75; actual output is half its estimate.
+	seedStatsCost(t, beta, statsCost.beta, []string{"estimate-output:100000"},
+		map[string]any{"agent": "reviewer", "model_resolved": "m-big", "tokens_in_fresh": 200_000, "tokens_in": 200_000, "tokens_out": 50_000})
 	prevReg, prevNow := statsRegistry, statsNow
 	statsRegistry = func() ([]string, error) { return []string{alpha, beta, gamma, alpha}, nil }
 	statsNow = func() time.Time { return statsClock }
@@ -243,6 +291,115 @@ func TestStatsJSONCarriesTheTextFigures(t *testing.T) {
 	}
 	if rep.Total.Stories.Value == nil || *rep.Total.Stories.Value != 3 || len(rep.Total.Excluded) != 1 {
 		t.Errorf("total = %+v, want 3 stories with gamma excluded", rep.Total)
+	}
+}
+
+func costItem(t *testing.T, r throughput.RepoReport, id string) (throughput.StoryCost, bool) {
+	t.Helper()
+	for _, s := range r.Cost.Stories {
+		if s.ID == id {
+			return s, true
+		}
+	}
+	return throughput.StoryCost{}, false
+}
+
+func spreadOf(r throughput.RepoReport, unit string) throughput.Spread {
+	for _, s := range r.Spread {
+		if s.Unit == unit {
+			return s
+		}
+	}
+	return throughput.Spread{}
+}
+
+func countIs(c throughput.Count, n int) bool { return c.Value != nil && *c.Value == n }
+
+func usdIs(c throughput.Cost, usd float64) bool {
+	return c.USD != nil && math.Abs(*c.USD-usd) < 1e-9
+}
+
+// Cost and estimate figures cover every registered repo, the total sums the
+// readable ones with each item labelled by repo, an item finished before the
+// window is absent, and the text carries the figures --json does.
+func TestStatsCostAndEstimatesAcrossRepos(t *testing.T) {
+	statsFixture(t)
+	raw, err := runRoot(t, "stats", "--json", "--since", "7d")
+	if err != nil {
+		t.Fatalf("stats --json: %v\n%s", err, raw)
+	}
+	var rep throughput.Report
+	if err := json.Unmarshal([]byte(raw), &rep); err != nil {
+		t.Fatalf("decode: %v\n%s", err, raw)
+	}
+	alpha, beta, gamma := rep.Repos[0], rep.Repos[1], rep.Repos[2]
+
+	for _, sec := range []throughput.RepoReport{alpha, rep.Total} {
+		s, ok := costItem(t, sec, statsCost.alphaIn)
+		if !ok {
+			t.Fatalf("%s cost has no item %s: %+v", sec.Name, statsCost.alphaIn, sec.Cost.Stories)
+		}
+		if !countIs(s.FreshInput, 1_000_000) || !countIs(s.CacheRead, 0) || !countIs(s.CacheWrite, 0) || !countIs(s.Output, 100_000) || !usdIs(s.Cost, 4.5) {
+			t.Errorf("%s item %s usage = %+v, want 1000000 / 0 / 0 / 100000 at $4.50", sec.Name, s.ID, s.Usage)
+		}
+		if len(s.Estimates) != 1 || s.Estimates[0].Ratio == nil || *s.Estimates[0].Ratio != 2 {
+			t.Errorf("%s item %s estimates = %+v, want fresh-input at 2.0", sec.Name, s.ID, s.Estimates)
+		}
+		if _, old := costItem(t, sec, statsCost.alphaOld); old {
+			t.Errorf("%s cost carries %s, which finished before the window", sec.Name, statsCost.alphaOld)
+		}
+	}
+	if s, ok := costItem(t, rep.Total, statsCost.alphaIn); !ok || s.Repo != "alpha" {
+		t.Errorf("total item %s repo = %q, want alpha", statsCost.alphaIn, s.Repo)
+	}
+	if s, ok := costItem(t, rep.Total, statsCost.beta); !ok || s.Repo != "beta" || !usdIs(s.Cost, 1.35) {
+		t.Errorf("total item %s = %+v, want beta's at $1.35", statsCost.beta, s)
+	}
+	if !usdIs(alpha.Cost.Cost, 4.5) || !usdIs(beta.Cost.Cost, 1.35) || !usdIs(rep.Total.Cost.Cost, 5.85) {
+		t.Errorf("repo costs = %+v / %+v / %+v, want $4.50, $1.35 and a $5.85 total", alpha.Cost.Cost, beta.Cost.Cost, rep.Total.Cost.Cost)
+	}
+	if len(rep.Total.Cost.BySeat) != 2 || rep.Total.Cost.BySeat[0].Name != "coder" || !usdIs(rep.Total.Cost.BySeat[1].Cost, 1.35) {
+		t.Errorf("total by seat = %+v, want coder $4.50 then reviewer $1.35", rep.Total.Cost.BySeat)
+	}
+	if len(rep.Total.Cost.ByModel) != 1 || rep.Total.Cost.ByModel[0].Name != "m-big" || !usdIs(rep.Total.Cost.ByModel[0].Cost, 5.85) {
+		t.Errorf("total by model = %+v, want m-big at $5.85", rep.Total.Cost.ByModel)
+	}
+
+	// Four items finished across the readable repos; one ratio per unit.
+	for unit, sp := range map[string]throughput.Spread{"fresh-input": spreadOf(rep.Total, "fresh-input"), "output": spreadOf(rep.Total, "output")} {
+		if !countIs(sp.Stories, 1) || !countIs(sp.Unavailable, 3) || sp.Median.Value == nil {
+			t.Errorf("total %s spread = %+v, want 1 item and 3 unavailable", unit, sp)
+		}
+	}
+	if gamma.Cost.Cost.USD != nil || gamma.Cost.FreshInput.Value != nil || spreadOf(gamma, "output").Stories.Value != nil {
+		t.Errorf("unreadable gamma cost = %+v, want unavailable", gamma.Cost)
+	}
+
+	text, err := runRoot(t, "stats", "--since", "7d")
+	if err != nil {
+		t.Fatalf("stats: %v\n%s", err, text)
+	}
+	for _, want := range []string{
+		fmt.Sprintf("item %s \"story 0\" (repo alpha): fresh input 1000000  cache read 0  cache write 0  output 100000  cost $4.5000", statsCost.alphaIn),
+		"estimate output       est 100000  actual 50000  actual÷estimate 0.50",
+		"by seat reviewer     fresh input 200000",
+		"by model m-big       fresh input 1200000  cache read 0  cache write 0  output 150000  cost $5.8500",
+		"fresh-input  items 1  unavailable 3  median 2.00  p90 2.00  min 2.00  max 2.00",
+		"cost (each finished item's own rows): fresh input unavailable (repo unreadable: ",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("text missing %q:\n%s", want, text)
+		}
+	}
+
+	help, err := runRoot(t, "stats", "--help")
+	if err != nil {
+		t.Fatalf("stats --help: %v", err)
+	}
+	for _, want := range []string{"Cost:", "by seat (agent) and by", "Estimate:", "actual÷estimate", "spread"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("stats --help does not name %q:\n%s", want, help)
+		}
 	}
 }
 

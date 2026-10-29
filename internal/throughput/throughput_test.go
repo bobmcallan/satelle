@@ -3,10 +3,12 @@ package throughput_test
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/costview"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/throughput"
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -256,6 +258,331 @@ func TestAnUnreadableRepoIsUnavailableNotZero(t *testing.T) {
 	for _, b := range r.Days {
 		if b.Stories.Value != nil {
 			t.Errorf("day %s of an unreadable repo = %d, want unavailable", b.Key, *b.Stories.Value)
+		}
+	}
+
+	// Its cost and estimate figures are unavailable for the same reason.
+	if !strings.Contains(string(raw), `"cost":{"usd":null,"reason":"repo unreadable: boom"`) {
+		t.Errorf("JSON cost is not null with the repo's reason:\n%s", raw)
+	}
+	if u := r.Cost.Usage; u.FreshInput.Value != nil || u.Output.Value != nil || u.Cost.USD != nil || len(r.Cost.Stories) != 0 {
+		t.Errorf("cost of an unreadable repo = %+v, want unavailable and no items", r.Cost)
+	}
+	if len(r.Spread) != len(costview.EstimateUnits()) {
+		t.Fatalf("spread = %+v, want one row per estimate unit", r.Spread)
+	}
+	for _, s := range r.Spread {
+		if s.Stories.Value != nil || s.Unavailable.Value != nil || s.Median.Value != nil || s.Median.Reason != "repo unreadable: boom" {
+			t.Errorf("spread %s of an unreadable repo = %+v, want unavailable", s.Unit, s)
+		}
+	}
+	var text strings.Builder
+	throughput.Text(&text, throughput.Report{Window: window(), Repos: []throughput.RepoReport{r}, Total: r})
+	if !strings.Contains(text.String(), "cost unavailable (repo unreadable: boom)") {
+		t.Errorf("text cost of an unreadable repo is not unavailable:\n%s", text.String())
+	}
+}
+
+// Hand-priced fixtures, USD per million tokens. m-free has no rate.
+var pricing = costview.Pricing{Models: map[string]costview.Rates{
+	"m-big":   {FreshInput: 3, CacheRead: 0.3, CacheWrite: 3.75, Output: 15},
+	"m-small": {FreshInput: 1, CacheRead: 0.1, CacheWrite: 1.25, Output: 5},
+}}
+
+var engageToDone = costview.Clock{
+	Engaging: func(s string) bool { return s == "in_progress" },
+	Terminal: func(s string) bool { return s == workitem.StatusDone },
+}
+
+// usage is a measured dispatch row of agent on model.
+func usage(agent, model string, fresh, read, write, out int, extra ...string) ledger.Entry {
+	p := map[string]any{
+		"agent": agent, "model_resolved": model, "adapter": "claude", "usage_available": true,
+		"tokens_in_fresh": fresh, "tokens_cache_read": read, "tokens_cache_write": write,
+		"tokens_in": fresh + read + write, "tokens_out": out,
+	}
+	for i := 0; i+1 < len(extra); i += 2 {
+		p[extra[i]] = extra[i+1]
+	}
+	raw, _ := json.Marshal(p)
+	return ledger.Entry{ID: "evt_u", Kind: ledger.KindAgentInvocation, Payload: raw, CreatedAt: hours(2)}
+}
+
+// unreported is a dispatch row whose seat reported no usage, as a pi command
+// seat before pi-rpc does.
+func unreported(agent, model string) ledger.Entry {
+	raw, _ := json.Marshal(map[string]any{"agent": agent, "model": model, "adapter": "pi", "usage_available": false})
+	return ledger.Entry{ID: "evt_n", Kind: ledger.KindAgentInvocation, Payload: raw, CreatedAt: hours(2)}
+}
+
+// finished is an item engaged at hour 1 and done at doneAt, carrying tags and
+// the extra rows, with its own cost folded as ReadRepo folds it.
+func finished(t *testing.T, id string, doneAt time.Time, tags []string, extra ...ledger.Entry) throughput.Item {
+	t.Helper()
+	rows := append([]ledger.Entry{
+		created(t0),
+		moved(1, hours(1), "backlog", "in_progress"),
+		moved(2, doneAt, "in_progress", workitem.StatusDone),
+	}, extra...)
+	it := workitem.Item{ID: id, Title: "title " + id, Tags: tags}
+	fi, ok := throughput.Finish(it, rows, wfdot.Spec{})
+	if !ok {
+		t.Fatalf("%s did not finish", id)
+	}
+	fi.Own = costview.Own(it, rows, engageToDone, doneAt, costview.WithPricing(pricing))
+	return fi
+}
+
+func value(t *testing.T, what string, c throughput.Count) int {
+	t.Helper()
+	if c.Value == nil {
+		t.Fatalf("%s unavailable (%s), want a figure", what, c.Reason)
+	}
+	return *c.Value
+}
+
+func usd(t *testing.T, what string, c throughput.Cost) float64 {
+	t.Helper()
+	if c.USD == nil {
+		t.Fatalf("%s cost unavailable (%s), want a figure", what, c.Reason)
+	}
+	return *c.USD
+}
+
+func near(t *testing.T, what string, got, want float64) {
+	t.Helper()
+	if math.Abs(got-want) > 1e-9 {
+		t.Errorf("%s = %v, want %v", what, got, want)
+	}
+}
+
+func named(t *testing.T, bs []throughput.Breakdown, name string) throughput.Breakdown {
+	t.Helper()
+	for _, b := range bs {
+		if b.Name == name {
+			return b
+		}
+	}
+	t.Fatalf("no breakdown %q in %+v", name, bs)
+	return throughput.Breakdown{}
+}
+
+// AC1/AC2: each finished item's own tokens and cost, and its seat and model
+// breakdowns, whose sums equal the item's total; a bundled reviewer session
+// counts once.
+func TestCostPerItemBySeatAndModel(t *testing.T) {
+	it := finished(t, "sty_a", hours(3), nil,
+		usage("coder", "m-big", 1_000_000, 2_000_000, 0, 100_000),               // $3 + $0.60 + $1.50
+		usage("coder", "m-small", 100_000, 0, 100_000, 10_000),                  // $0.10 + $0.125 + $0.05
+		usage("reviewer", "m-small", 500_000, 0, 0, 200_000, "bundle_id", "b1"), // $0.50 + $1.00
+	)
+	r := throughput.Summarise("r", "/r", []throughput.Item{it}, window(), throughput.Returns{})
+	if len(r.Cost.Stories) != 1 {
+		t.Fatalf("cost items = %+v, want one", r.Cost.Stories)
+	}
+	s := r.Cost.Stories[0]
+	if s.ID != "sty_a" || s.Title != "title sty_a" {
+		t.Errorf("item = %s %q", s.ID, s.Title)
+	}
+	want := map[string]int{"fresh input": 1_600_000, "cache read": 2_000_000, "cache write": 100_000, "output": 310_000}
+	got := map[string]int{
+		"fresh input": value(t, "fresh input", s.FreshInput), "cache read": value(t, "cache read", s.CacheRead),
+		"cache write": value(t, "cache write", s.CacheWrite), "output": value(t, "output", s.Output),
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("item tokens = %v, want %v", got, want)
+	}
+	near(t, "item cost", usd(t, "item", s.Cost), 6.875)
+
+	for label, bs := range map[string][]throughput.Breakdown{"seat": s.BySeat, "model": s.ByModel} {
+		var fresh, read, write, out int
+		var cost float64
+		for _, b := range bs {
+			fresh += value(t, b.Name, b.FreshInput)
+			read += value(t, b.Name, b.CacheRead)
+			write += value(t, b.Name, b.CacheWrite)
+			out += value(t, b.Name, b.Output)
+			cost += usd(t, b.Name, b.Cost)
+		}
+		if fresh != want["fresh input"] || read != want["cache read"] || write != want["cache write"] || out != want["output"] {
+			t.Errorf("by %s sums = %d/%d/%d/%d, want the item total", label, fresh, read, write, out)
+		}
+		near(t, "by "+label+" cost", cost, 6.875)
+	}
+	if len(s.BySeat) != 2 || s.BySeat[0].Name != "coder" {
+		t.Errorf("by seat = %+v, want coder then reviewer, highest cost first", s.BySeat)
+	}
+	near(t, "coder", usd(t, "coder", named(t, s.BySeat, "coder").Cost), 5.375)
+	if rev := named(t, s.BySeat, "reviewer"); value(t, "reviewer", rev.FreshInput) != 500_000 {
+		t.Errorf("bundled reviewer fresh input = %+v, want counted once", rev.FreshInput)
+	}
+	near(t, "m-big", usd(t, "m-big", named(t, s.ByModel, "m-big").Cost), 5.1)
+	near(t, "m-small", usd(t, "m-small", named(t, s.ByModel, "m-small").Cost), 1.775)
+
+	// The repo section sums its items the same way.
+	near(t, "repo cost", usd(t, "repo", r.Cost.Cost), 6.875)
+	near(t, "repo coder", usd(t, "repo coder", named(t, r.Cost.BySeat, "coder").Cost), 5.375)
+	near(t, "repo m-small", usd(t, "repo m-small", named(t, r.Cost.ByModel, "m-small").Cost), 1.775)
+}
+
+// AC3: a seat that reported no usage and a model with no rate read unavailable
+// in JSON (null with a reason) and in text, never 0.
+func TestUnmeasuredSeatAndUnpricedModelAreUnavailable(t *testing.T) {
+	it := finished(t, "sty_b", hours(3), nil,
+		unreported("pi-coder", "m-pi"),
+		usage("reviewer", "m-free", 1000, 0, 0, 100),
+	)
+	r := throughput.Summarise("r", "/r", []throughput.Item{it}, window(), throughput.Returns{})
+	s := r.Cost.Stories[0]
+
+	pi := named(t, s.BySeat, "pi-coder")
+	for _, c := range []throughput.Count{pi.FreshInput, pi.CacheRead, pi.CacheWrite, pi.Output} {
+		if c.Value != nil || !strings.Contains(c.Reason, throughput.ReasonNotRecorded) {
+			t.Errorf("unmeasured seat figure = %+v, want null: not recorded", c)
+		}
+	}
+	if pi.Cost.USD != nil || pi.Cost.Reason == "" {
+		t.Errorf("unmeasured seat cost = %+v, want null with a reason", pi.Cost)
+	}
+	if m := named(t, s.ByModel, "m-pi"); m.Output.Value != nil {
+		t.Errorf("unmeasured model output = %d, want unavailable", *m.Output.Value)
+	}
+
+	free := named(t, s.ByModel, "m-free")
+	if value(t, "m-free output", free.Output) != 100 {
+		t.Errorf("m-free output = %+v, want the measured 100", free.Output)
+	}
+	if free.Cost.USD != nil || !strings.Contains(free.Cost.Reason, "m-free has no rate") {
+		t.Errorf("unpriced model cost = %+v, want null: no rate", free.Cost)
+	}
+
+	raw, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"name":"pi-coder","fresh_input":{"value":null,"reason":"not recorded`) {
+		t.Errorf("JSON of the unmeasured seat is not null with a reason:\n%s", raw)
+	}
+	var text strings.Builder
+	throughput.Text(&text, throughput.Report{Window: window(), Repos: []throughput.RepoReport{r}, Total: r})
+	for _, line := range strings.Split(text.String(), "\n") {
+		if strings.Contains(line, "by seat pi-coder") {
+			if !strings.Contains(line, "fresh input unavailable") || !strings.Contains(line, "cost unavailable") || strings.Contains(line, " 0 ") {
+				t.Errorf("text of the unmeasured seat = %q, want unavailable figures", line)
+			}
+		}
+		if strings.Contains(line, "by model m-free") && !strings.Contains(line, "cost unavailable (model m-free has no rate)") {
+			t.Errorf("text of the unpriced model = %q", line)
+		}
+	}
+}
+
+func estimate(t *testing.T, s throughput.StoryCost, unit string) throughput.EstimateVsActual {
+	t.Helper()
+	for _, e := range s.Estimates {
+		if e.Unit == unit {
+			return e
+		}
+	}
+	t.Fatalf("%s has no %s estimate in %+v", s.ID, unit, s.Estimates)
+	return throughput.EstimateVsActual{}
+}
+
+// AC4: an estimated item shows estimate, actual and actual÷estimate per unit; an
+// unestimated item and an unmeasured actual read unavailable.
+func TestEstimateAgainstActualPerItem(t *testing.T) {
+	// Engaged at hour 1, done 2m30s later: recordActual writes 2 whole minutes.
+	estimated := finished(t, "sty_e", hours(1).Add(2*time.Minute+30*time.Second),
+		[]string{"estimate-fresh-input:800", "estimate-output:400", "estimate-tokens:2000", "estimate-minutes:4", "estimate-usd:9"},
+		usage("coder", "m-big", 1000, 5000, 200, 100))
+	unestimated := finished(t, "sty_u", hours(3), nil, usage("coder", "m-big", 10, 0, 0, 10))
+	unmeasured := finished(t, "sty_n", hours(3), []string{"estimate-output:400"}, unreported("pi-coder", "m-pi"))
+	r := throughput.Summarise("r", "", []throughput.Item{estimated, unestimated, unmeasured}, window(), throughput.Returns{})
+	by := map[string]throughput.StoryCost{}
+	for _, s := range r.Cost.Stories {
+		by[s.ID] = s
+	}
+
+	e := by["sty_e"]
+	if len(e.Estimates) != 4 {
+		t.Errorf("estimates = %+v, want fresh-input, output, minutes and tokens (usd is not an estimate)", e.Estimates)
+	}
+	for unit, w := range map[string]struct {
+		actual int
+		ratio  float64
+	}{
+		costview.UnitFreshInput: {1000, 1.25},
+		costview.UnitOutput:     {100, 0.25},
+		costview.UnitTokens:     {1300, 0.65}, // fresh + output + cache write, cache read excluded
+		costview.UnitMinutes:    {2, 0.5},
+	} {
+		ev := estimate(t, e, unit)
+		if ev.Actual == nil || *ev.Actual != w.actual || ev.Ratio == nil {
+			t.Errorf("%s = %+v, want actual %d and a ratio", unit, ev, w.actual)
+			continue
+		}
+		near(t, unit+" ratio", *ev.Ratio, w.ratio)
+	}
+
+	if u := by["sty_u"]; len(u.Estimates) != 0 || u.EstimatesReason != throughput.ReasonNoEstimate {
+		t.Errorf("unestimated = %+v / %q, want none: no estimate", u.Estimates, u.EstimatesReason)
+	}
+	if n := estimate(t, by["sty_n"], costview.UnitOutput); n.Actual != nil || n.Ratio != nil || n.Reason != throughput.ReasonNotRecorded {
+		t.Errorf("unmeasured = %+v, want actual and ratio unavailable: not recorded", n)
+	}
+
+	var text strings.Builder
+	throughput.Text(&text, throughput.Report{Window: window(), Repos: []throughput.RepoReport{r}, Total: r})
+	for _, want := range []string{
+		"estimate minutes      est 4  actual 2  actual÷estimate 0.50",
+		"estimate: unavailable (no estimate)",
+		"estimate output       est 400  actual unavailable (not recorded)  actual÷estimate unavailable (not recorded)",
+	} {
+		if !strings.Contains(text.String(), want) {
+			t.Errorf("text missing %q:\n%s", want, text.String())
+		}
+	}
+}
+
+// AC5: the nearest-rank spread of actual÷estimate over the items with both
+// figures, with the items left out counted.
+func TestEstimateSpreadIsNearestRank(t *testing.T) {
+	var items []throughput.Item
+	for i, out := range []int{4000, 500, 2000, 1000} {
+		items = append(items, finished(t, fmt.Sprintf("sty_%d", i), hours(3), []string{"estimate-output:1000"}, usage("coder", "m-big", 1, 0, 0, out)))
+	}
+	items = append(items,
+		finished(t, "sty_u", hours(3), nil, usage("coder", "m-big", 1, 0, 0, 1)),
+		finished(t, "sty_n", hours(3), []string{"estimate-output:1000"}, unreported("pi-coder", "m-pi")),
+	)
+	r := throughput.Summarise("r", "", items, window(), throughput.Returns{})
+	var out throughput.Spread
+	for _, s := range r.Spread {
+		if s.Unit == costview.UnitOutput {
+			out = s
+		}
+	}
+	if value(t, "items", out.Stories) != 4 || value(t, "unavailable", out.Unavailable) != 2 {
+		t.Errorf("output spread counts = %+v / %+v, want 4 and 2", out.Stories, out.Unavailable)
+	}
+	for what, w := range map[string]struct {
+		r    throughput.Ratio
+		want float64
+	}{
+		"median": {out.Median, 1.0}, // lower middle of 0.5, 1, 2, 4
+		"p90":    {out.P90, 4.0},
+		"min":    {out.Min, 0.5},
+		"max":    {out.Max, 4.0},
+	} {
+		if w.r.Value == nil {
+			t.Errorf("%s unavailable (%s)", what, w.r.Reason)
+			continue
+		}
+		near(t, what, *w.r.Value, w.want)
+	}
+	for _, s := range r.Spread {
+		if s.Unit == costview.UnitFreshInput && (s.Median.Value != nil || s.Median.Reason != throughput.ReasonNoRatio || value(t, "fresh unavailable", s.Unavailable) != 6) {
+			t.Errorf("fresh-input spread = %+v, want no ratio and all 6 left out", s)
 		}
 	}
 }
