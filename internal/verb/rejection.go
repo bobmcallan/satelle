@@ -37,14 +37,14 @@ func RejectionTarget(ctx context.Context, r PerformerResolver, item workitem.Ite
 // ever rejected.
 func LatestExitRejectFrom(entries []ledger.Entry, from string) (to string, at time.Time, ok bool) {
 	for _, e := range entries {
-		if e.Kind != ledger.KindReviewReject {
+		if !ledger.IsExitReject(e) {
 			continue
 		}
 		var row struct {
 			From string `json:"from"`
 			To   string `json:"to"`
 		}
-		if json.Unmarshal(e.Payload, &row) != nil || row.From != from || row.To == "" || row.To == from {
+		if json.Unmarshal(e.Payload, &row) != nil || row.From != from {
 			continue
 		}
 		if !ok || !e.CreatedAt.Before(at) {

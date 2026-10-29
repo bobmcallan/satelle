@@ -107,6 +107,34 @@ func TestEdgeRoundsDoNotResetAtTransitions(t *testing.T) {
 	}
 }
 
+// A performer run at a step counts as a re-dispatch only once an exit of that
+// step was rejected; the entry dispatch, a run before any reject, a reviewer's
+// row and a run at another step do not.
+func TestRedispatchesFollowAnExitReject(t *testing.T) {
+	invoke := func(agent, from, to string) Entry {
+		return row(KindAgentInvocation, map[string]string{"agent": agent, "from": from, "to": to})
+	}
+	exitReject := row(KindReviewReject, map[string]string{"from": "in_progress", "to": "integration", "skill": "scope"})
+	entries := []Entry{
+		invoke("coder", "plan", "in_progress"),        // 0: entry dispatch
+		invoke("coder", "in_progress", "in_progress"), // 1: before any reject
+		exitReject, // 2
+		invoke("reviewer", "in_progress", "in_progress"),
+		invoke("coder", "plan", "plan"),
+		invoke("coder", "in_progress", "in_progress"), // 5: the re-dispatch
+	}
+	if got := Redispatches(entries); len(got) != 1 || got[0] != 5 {
+		t.Fatalf("Redispatches = %v, want [5]", got)
+	}
+	if !IsExitReject(exitReject) {
+		t.Error("a reject of in_progress→integration is an exit reject")
+	}
+	if IsExitReject(row(KindReviewReject, map[string]string{"from": "in_progress", "to": "in_progress"})) ||
+		IsExitReject(row(KindReviewAccept, map[string]string{"from": "in_progress", "to": "integration"})) {
+		t.Error("a same-step reject and an accept are not exit rejects")
+	}
+}
+
 func TestObjectionLineIsOneLine(t *testing.T) {
 	r := RejectedRounds{LastSkill: "satelle-story-plan-review", LastNotes: "AC1\n  contradicts   AC2"}
 	if got := r.ObjectionLine(); got != "satelle-story-plan-review: AC1 contradicts AC2" || strings.Contains(got, "\n") {
