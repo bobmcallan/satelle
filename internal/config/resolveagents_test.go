@@ -490,3 +490,30 @@ func TestProfileSelectionIsConfigurationNotCode(t *testing.T) {
 		t.Error("a fixture-only change must flip the effective binding")
 	}
 }
+
+// TestSpawnedExecutablesReadsResolvedSeats (sty_a4b90ede AC2): the executables
+// come from the resolved seats — an unset reviewer command counts as its claude
+// default, a profile= command counts by its base name, and an in-loop executor
+// spawns nothing.
+func TestSpawnedExecutablesReadsResolvedSeats(t *testing.T) {
+	global := catalog(t, "[profiles.codex]\nrole = \"agent\"\ncommand = \"/opt/bin/Codex exec {system}\"\n")
+	repo := repoAgents(t, "[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n[reviewer]\nrole = \"reviewer\"\n\n[coder]\nrole = \"agent\"\nprofile = \"codex\"\n")
+	eff, err := ResolveEffectiveAgents(repo, global, nil)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	got := eff.Agents.SpawnedExecutables()
+	want := map[string]bool{"claude": true, "codex": true}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("SpawnedExecutables = %v, want %v", got, want)
+	}
+
+	inLoop := repoAgents(t, "[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n[reviewer]\nrole = \"reviewer\"\ncommand = \"in-loop\"\n")
+	eff, err = ResolveEffectiveAgents(inLoop, GlobalAgentsConfig{}, nil)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got := eff.Agents.SpawnedExecutables(); len(got) != 0 {
+		t.Errorf("all in-loop SpawnedExecutables = %v, want none", got)
+	}
+}

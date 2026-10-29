@@ -312,13 +312,29 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 			fmt.Fprintln(out, initLine(false, agentsRel))
 		} else if migrated, notes, merr := config.MigrateAgents(string(raw)); merr != nil {
 			fmt.Fprintf(out, "= %s (left intact: %v)\n", agentsRel, merr)
-		} else if migrated, notes = withModelOrder(migrated, notes); len(notes) > 0 {
-			if werr := os.WriteFile(agentsPath, []byte(migrated), 0o644); werr != nil {
-				return fmt.Errorf("init: write migrated %s: %w", agentsPath, werr)
-			}
-			fmt.Fprintf(out, "~ %s (migrated: %s)\n", agentsRel, strings.Join(notes, "; "))
 		} else {
-			fmt.Fprintln(out, initLine(false, agentsRel))
+			// The migrated file is written before the heal so the effective
+			// resolver reads the bindings as migrated; a resolve error skips the
+			// heal rather than guess which executables the repo spawns.
+			migratedNotes := len(notes)
+			if migratedNotes > 0 {
+				if werr := os.WriteFile(agentsPath, []byte(migrated), 0o644); werr != nil {
+					return fmt.Errorf("init: write migrated %s: %w", agentsPath, werr)
+				}
+			}
+			if eff, lerr := config.LoadEffectiveAgents(dataDir, nil); lerr == nil {
+				var healed string
+				if healed, notes = withModelOrder(migrated, eff.Agents.SpawnedExecutables(), notes); len(notes) > migratedNotes {
+					if werr := os.WriteFile(agentsPath, []byte(healed), 0o644); werr != nil {
+						return fmt.Errorf("init: write migrated %s: %w", agentsPath, werr)
+					}
+				}
+			}
+			if len(notes) > 0 {
+				fmt.Fprintf(out, "~ %s (migrated: %s)\n", agentsRel, strings.Join(notes, "; "))
+			} else {
+				fmt.Fprintln(out, initLine(false, agentsRel))
+			}
 		}
 	case os.IsNotExist(statErr) && legacyErr == nil:
 		// Legacy actors.toml present: leave it; report it rather than scaffolding.
@@ -2151,29 +2167,57 @@ MODEL_ORDER_BLOCK
 `)
 
 // withModelOrder appends the scaffold [model_order] block to an existing
-// agents.toml that does not declare the table, and records it in notes. A file
-// that already has the table is returned untouched, so an
-// operator's edited order is never overwritten.
-func withModelOrder(content string, notes []string) (string, []string) {
+// agents.toml that does not declare the table, and records it in notes. Only the
+// lists for executables in uses (the programs the repo's bindings spawn) are
+// seeded; when none survives, nothing is appended. A file that already has the
+// table is returned untouched, so an operator's edited order is never
+// overwritten.
+func withModelOrder(content string, uses map[string]bool, notes []string) (string, []string) {
 	for _, ln := range strings.Split(content, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(ln), "[model_order]") {
 			return content, notes
 		}
 	}
+	block, ok := renderModelOrder(func(exe string) bool { return uses[exe] })
+	if !ok {
+		return content, notes
+	}
 	sep := "\n"
 	if !strings.HasSuffix(content, "\n") {
 		sep = "\n\n"
 	}
-	return content + sep + scaffoldModelOrderToml, append(notes, "added [model_order]")
+	return content + sep + block, append(notes, "added [model_order]")
 }
 
-// scaffoldModelOrderToml is the [model_order] block init writes into a fresh
-// agents.toml and appends to an existing one that lacks the table
-// (sty_4fde0a50). It is the single source of the seeded lists: the names are
-// configuration, and the ids come from captured fixtures under
-// internal/agentcli/testdata/usage (grok ACP modelId) and the
+// scaffoldModelOrders are the seeded [model_order] lists, one per executable, in
+// the order they are written (sty_4fde0a50). They are the single source of the
+// seeded lists: the names are configuration, and the ids come from captured
+// fixtures under internal/agentcli/testdata/usage (grok ACP modelId) and the
 // claude CLI's own aliases.
-const scaffoldModelOrderToml = `# [model_order] — the order an UNSET model follows (sty_4fde0a50), one list per
+var scaffoldModelOrders = []struct{ exe, line string }{
+	{"claude", `claude = ["opus", "sonnet", "haiku"]`},
+	{"grok", `grok   = ["grok-4.7"]`},
+}
+
+// renderModelOrder renders the [model_order] block with the lists keep admits;
+// ok is false when it admits none.
+func renderModelOrder(keep func(exe string) bool) (block string, ok bool) {
+	var b strings.Builder
+	b.WriteString(scaffoldModelOrderHeader)
+	for _, o := range scaffoldModelOrders {
+		if keep(o.exe) {
+			b.WriteString(o.line + "\n")
+			ok = true
+		}
+	}
+	return b.String(), ok
+}
+
+// scaffoldModelOrderToml is the full [model_order] block init writes into a
+// fresh agents.toml — every seeded list, as the agent-dispatch help lists them.
+var scaffoldModelOrderToml, _ = renderModelOrder(func(string) bool { return true })
+
+const scaffoldModelOrderHeader = `# [model_order] — the order an UNSET model follows (sty_4fde0a50), one list per
 # executable (claude, grok). A binding that leaves model= empty and has no
 # same-executable inherited or creator session model takes the FIRST entry of ITS
 # OWN executable's list; a name from one list is never applied to another
@@ -2182,8 +2226,6 @@ const scaffoldModelOrderToml = `# [model_order] — the order an UNSET model fol
 # applied. An executable with no list falls back to the CLI's own default. A
 # binding's model= pin always wins. See "satelle help agent-dispatch" § Model selection.
 [model_order]
-claude = ["opus", "sonnet", "haiku"]
-grok   = ["grok-4.7"]
 `
 
 // scaffoldConstitution is the project-constitution template a fresh init writes to
