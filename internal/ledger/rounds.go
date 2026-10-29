@@ -251,6 +251,38 @@ func performerInvocation(e Entry) (edgeRow, bool) {
 	return r, ok && r.Agent != "" && r.Agent != "reviewer" && r.Operation == "" && !r.StepSummary
 }
 
+// IsExitReject reports whether e is a reviewer reject of an exit of a step: a
+// review_reject row on an edge from→to with a destination other than from. A
+// reject of the step's own re-presentation (to = from) is not an exit reject.
+func IsExitReject(e Entry) bool {
+	if e.Kind != KindReviewReject {
+		return false
+	}
+	r, ok := decodeEdgeRow(e)
+	return ok && r.To != "" && r.To != r.From
+}
+
+// Redispatches returns the indexes in entries (oldest first) of the performer
+// agent_invocation rows that re-ran a step at the status it was already in
+// (from = to = the step) after an exit of that step was rejected. An invocation
+// at a step before any exit of it was rejected is not a re-dispatch.
+func Redispatches(entries []Entry) []int {
+	rejected := map[string]bool{}
+	var out []int
+	for i, e := range entries {
+		if IsExitReject(e) {
+			if r, ok := decodeEdgeRow(e); ok {
+				rejected[r.From] = true
+			}
+			continue
+		}
+		if r, ok := performerInvocation(e); ok && r.From != "" && r.From == r.To && rejected[r.From] {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
 // EdgePresentations enumerates the presentations of the from→to edge in entries,
 // oldest first: the attempts edgeAttempts finds from verdict rows, plus the
 // attempts only a reviewer invocation row evidences, so a presentation whose

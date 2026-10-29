@@ -274,3 +274,110 @@ func TestStatsRepoFlagAndSince(t *testing.T) {
 		}
 	}
 }
+
+// statsAppend writes one ledger row for story id in the repo at root.
+func statsAppend(t *testing.T, db *store.DB, id, kind string, at time.Time, payload map[string]any) {
+	t.Helper()
+	p, _ := json.Marshal(payload)
+	if _, err := db.Ledger.Append(context.Background(), ledger.AppendInput{StoryID: id, Kind: kind, Payload: p}, at); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The quality section is part of each repo's report and the total: beta's gate
+// rejected its story once, and a story alpha created after beta's story was done
+// cites it, so it came back in the total only. A cited story that was cancelled
+// never came back.
+func TestStatsQualitySection(t *testing.T) {
+	alpha, beta, _ := statsFixture(t)
+	ctx := context.Background()
+
+	bdb, err := store.Open(config.Config{}.ResolveDB(beta))
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed, err := bdb.Stories.List(ctx, workitem.ListFilter{Kind: workitem.KindStory})
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("beta stories = %v, %v; want one", listed, err)
+	}
+	betaID := listed[0].ID
+	statsAppend(t, bdb, betaID, ledger.KindReviewReject, ago(24*3), map[string]any{"from": "backlog", "to": "in_progress", "attempt": "att_1", "skill": "satelle-story-intent-review"})
+	statsAppend(t, bdb, betaID, ledger.KindReviewAccept, ago(24*3-1), map[string]any{"from": "backlog", "to": "in_progress", "attempt": "att_2", "skill": "satelle-story-intent-review"})
+	gone, err := bdb.Stories.Create(ctx, workitem.CreateInput{Kind: workitem.KindStory, Title: "dropped", Category: "feature"}, ago(24*3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	statsAppend(t, bdb, gone.ID, ledger.KindStoryCreated, ago(24*3), map[string]any{"status": "backlog"})
+	statsAppend(t, bdb, gone.ID, ledger.KindStatusTransition, ago(24*3-1), map[string]any{"from": "backlog", "to": "in_progress"})
+	statsAppend(t, bdb, gone.ID, ledger.KindStatusTransition, ago(24*2), map[string]any{"from": "in_progress", "to": workitem.StatusCancelled})
+	bdb.Close()
+
+	adb, err := store.Open(config.Config{}.ResolveDB(alpha))
+	if err != nil {
+		t.Fatal(err)
+	}
+	redo, err := adb.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "redo", Category: "feature",
+		Body: "fix what " + betaID + " shipped; " + gone.ID + " was dropped",
+	}, ago(12))
+	if err != nil {
+		t.Fatal(err)
+	}
+	statsAppend(t, adb, redo.ID, ledger.KindStoryCreated, ago(12), map[string]any{"status": "backlog"})
+	adb.Close()
+
+	text, err := runRoot(t, "stats")
+	if err != nil {
+		t.Fatalf("stats: %v\n%s", err, text)
+	}
+	sections := strings.Split(text, "\n== ")
+	if len(sections) != 5 {
+		t.Fatalf("want a window line, three repo sections and a total, got:\n%s", text)
+	}
+	for i, want := range [][]string{
+		{"work that came back: 0\n"},
+		{
+			"in_progress                          0/1 (0%)  accepted: none  rejected: " + betaID,
+			"satelle-story-intent-review          0/1 (0%)  accepted: none  rejected: " + betaID,
+			"backlog → in_progress        mean 1.0  max 1  (1 stories)  at max: " + betaID,
+			"coder re-dispatches after an exit rejection: 0  stories: none",
+			"rejects naming no criterion: 1 of 1  stories: " + betaID,
+		},
+		{"first-pass acceptance by step:\n    unavailable (repo unreadable: "},
+		{"work that came back: 1\n    " + redo.ID + " cites " + betaID + "\n"},
+	} {
+		for _, l := range want {
+			if !strings.Contains(sections[i+1], l) {
+				t.Errorf("section %q missing %q:\n%s", firstLine(sections[i+1]), l, sections[i+1])
+			}
+		}
+	}
+
+	raw, err := runRoot(t, "stats", "--json")
+	if err != nil {
+		t.Fatalf("stats --json: %v\n%s", err, raw)
+	}
+	var rep throughput.Report
+	if err := json.Unmarshal([]byte(raw), &rep); err != nil {
+		t.Fatalf("decode: %v\n%s", err, raw)
+	}
+	var again bytes.Buffer
+	throughput.Text(&again, rep)
+	if again.String() != text {
+		t.Errorf("text from the JSON differs from the text output:\n--- json\n%s\n--- text\n%s", again.String(), text)
+	}
+	bq := rep.Repos[1].Quality
+	if len(bq.FirstPassByStep.Rows) != 1 || fmt.Sprint(bq.FirstPassByStep.Rows[0].RejectedStories) != "["+betaID+"]" {
+		t.Errorf("beta first pass = %+v, want %s rejected", bq.FirstPassByStep, betaID)
+	}
+	if fmt.Sprint(bq.NoCriterion.Stories) != "["+betaID+"]" {
+		t.Errorf("beta no-criterion stories = %v", bq.NoCriterion.Stories)
+	}
+	cb := rep.Total.Quality.CameBack
+	if cb.Count.Value == nil || *cb.Count.Value != 1 || len(cb.Pairs) != 1 || cb.Pairs[0] != (throughput.CameBackPair{Story: redo.ID, Cites: betaID}) {
+		t.Errorf("total came back = %+v, want %s citing %s", cb, redo.ID, betaID)
+	}
+	if !strings.Contains(raw, `"quality"`) || !strings.Contains(raw, `"came_back"`) {
+		t.Errorf("JSON missing the quality section:\n%s", raw)
+	}
+}

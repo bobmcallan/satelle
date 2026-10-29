@@ -40,6 +40,7 @@ func section(w io.Writer, r RepoReport) {
 	for _, s := range r.Steps.Rows {
 		fmt.Fprintf(w, "  %-16s %s  (%d items)\n", s.Status, DurationText(s.Median), s.Items)
 	}
+	qualityText(w, r.Quality)
 }
 
 func buckets(w io.Writer, bs []Bucket) {

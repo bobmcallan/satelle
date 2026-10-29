@@ -12,6 +12,11 @@ const (
 	ReasonNotRecorded = "not recorded"
 	ReasonNoPRStep    = "no step on the route is marked pr_step"
 	ReasonNoRepo      = "no readable repo"
+
+	ReasonNoPresentation = "no gated presentation recorded"
+	ReasonNoExitReject   = "no exit rejection recorded"
+	ReasonNoReject       = "no reviewer reject recorded"
+	ReasonNoCreated      = "no story created in window"
 )
 
 // Window is the reporting window, in UTC.
@@ -77,14 +82,15 @@ type RepoReport struct {
 	Error string `json:"error,omitempty"`
 	// Excluded names the repos left out of the total because they could not be
 	// read. Set on the total only.
-	Excluded []string `json:"excluded,omitempty"`
-	Stories  Count    `json:"stories"`
-	Epics    Count    `json:"epics"`
-	Days     []Bucket `json:"days"`
-	Weeks    []Bucket `json:"weeks"`
-	Phase1   Phase    `json:"phase1"`
-	Phase2   Phase    `json:"phase2"`
-	Steps    Steps    `json:"steps"`
+	Excluded []string      `json:"excluded,omitempty"`
+	Stories  Count         `json:"stories"`
+	Epics    Count         `json:"epics"`
+	Days     []Bucket      `json:"days"`
+	Weeks    []Bucket      `json:"weeks"`
+	Phase1   Phase         `json:"phase1"`
+	Phase2   Phase         `json:"phase2"`
+	Steps    Steps         `json:"steps"`
+	Quality  QualityReport `json:"quality"`
 }
 
 // Report is everything `satelle stats` prints. The text renderer and the JSON
@@ -107,8 +113,8 @@ func unavailable(reason string) Duration { return Duration{Reason: reason} }
 func notApplicable() Duration { return Duration{NotApplicable: true, Reason: ReasonNoPRStep} }
 
 // Summarise aggregates the finished items of one repo (or of every readable
-// repo, for the total) over w.
-func Summarise(name, path string, items []Item, w Window) RepoReport {
+// repo, for the total) over w, and counts work that came back from ret.
+func Summarise(name, path string, items []Item, w Window, ret Returns) RepoReport {
 	r := RepoReport{Name: name, Path: path}
 	stories, epics := 0, 0
 	day, week := map[string][2]int{}, map[string][2]int{}
@@ -138,6 +144,7 @@ func Summarise(name, path string, items []Item, w Window) RepoReport {
 	}
 	r.Phase1, r.Phase2 = phases(items)
 	r.Steps = steps(items)
+	r.Quality = Quality(items, ret)
 	return r
 }
 
@@ -208,7 +215,8 @@ func Unavailable(name, path, reason string, w Window) RepoReport {
 		Name: name, Path: path,
 		Stories: none, Epics: none,
 		Phase1: phase, Phase2: phase,
-		Steps: Steps{Rows: []Step{}, Reason: reason},
+		Steps:   Steps{Rows: []Step{}, Reason: reason},
+		Quality: unavailableQuality(reason),
 	}
 	for _, k := range dayKeys(w) {
 		r.Days = append(r.Days, Bucket{Key: k, Stories: none, Epics: none})

@@ -122,6 +122,11 @@ type Item struct {
 	Phases   Phases
 	// Dwell is the wall time the item held each status (verb.StateDwell).
 	Dwell map[string]time.Duration
+	// Spec is the item's governing route; it orders the quality rows.
+	Spec wfdot.Spec
+	// Rows are the item's verdict and agent_invocation ledger rows, oldest
+	// first: what the quality figures are counted from.
+	Rows []ledger.Entry
 }
 
 // Finish reduces a story's rows to an Item, and reports whether it finished.
@@ -138,6 +143,7 @@ func Finish(it workitem.Item, entries []ledger.Entry, spec wfdot.Spec) (Item, bo
 		Finished: p.End,
 		Phases:   p,
 		Dwell:    verb.StateDwell(es),
+		Spec:     spec,
 	}, true
 }
 

@@ -101,7 +101,7 @@ func TestCycleWithNoPRStepIsAllPhaseOne(t *testing.T) {
 		t.Error("phase 2 recorded on a route with no pr_step")
 	}
 
-	r := throughput.Summarise("r", "", []throughput.Item{{Finished: p.End, Phases: p}}, window())
+	r := throughput.Summarise("r", "", []throughput.Item{{Finished: p.End, Phases: p}}, window(), throughput.Returns{})
 	if !r.Phase2.Median.NotApplicable || throughput.DurationText(r.Phase2.Median) != "n/a" {
 		t.Errorf("phase 2 median = %+v, want n/a", r.Phase2.Median)
 	}
@@ -149,7 +149,7 @@ func TestMissingStartAndBoundaryAreNotRecorded(t *testing.T) {
 	r := throughput.Summarise("r", "", []throughput.Item{
 		{Finished: noStart.End, Phases: noStart},
 		{Finished: noBoundary.End, Phases: noBoundary},
-	}, window())
+	}, window(), throughput.Returns{})
 	if r.Phase1.Median.Seconds != nil || r.Phase1.Median.Reason != throughput.ReasonNotRecorded {
 		t.Errorf("phase 1 median = %+v, want unavailable: not recorded", r.Phase1.Median)
 	}
@@ -194,7 +194,7 @@ func TestSummariseCountsBucketsAndStepMedians(t *testing.T) {
 		{ID: "c", Finished: hours(30), Dwell: map[string]time.Duration{"backlog": 5 * time.Hour, "blocked": 7 * time.Hour}},
 		{ID: "e", Epic: true, Finished: hours(30), Dwell: map[string]time.Duration{"ready": 9 * time.Hour}},
 	}
-	r := throughput.Summarise("r", "/r", items, w)
+	r := throughput.Summarise("r", "/r", items, w, throughput.Returns{})
 	if *r.Stories.Value != 3 || *r.Epics.Value != 1 {
 		t.Errorf("stories, epics = %d, %d; want 3, 1", *r.Stories.Value, *r.Epics.Value)
 	}
@@ -220,7 +220,7 @@ func TestSummariseCountsBucketsAndStepMedians(t *testing.T) {
 }
 
 func TestAnEmptyWindowCountsZeroAndTimesNothing(t *testing.T) {
-	r := throughput.Summarise("r", "", nil, window())
+	r := throughput.Summarise("r", "", nil, window(), throughput.Returns{})
 	if r.Stories.Value == nil || *r.Stories.Value != 0 || throughput.CountText(r.Epics) != "0" {
 		t.Errorf("counts = %+v / %+v, want a real 0", r.Stories, r.Epics)
 	}

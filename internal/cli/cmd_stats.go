@@ -37,7 +37,11 @@ cycle time of each phase, and the median time spent in each status.
 Phase 1 runs from the start state to the step the route marks pr_step = true;
 phase 2 from there to the terminal state. A route that marks none reports phase
 2 as n/a. A figure the ledger does not record reads "unavailable" (null with a
-reason in --json), never 0. Every repo is opened read-only.`,
+reason in --json), never 0. Every repo is opened read-only.
+
+A quality section adds first-pass acceptance per step and gate, rejected rounds
+per gated edge, re-dispatches after exit rejections, rejects naming no criterion
+and work that came back, naming the stories.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			window, err := parseStatsSince(since)
