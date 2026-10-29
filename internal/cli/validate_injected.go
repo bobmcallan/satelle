@@ -219,22 +219,8 @@ func skillKindRows(ctx context.Context, env injectedEnv) []injectedRow {
 // SessionStart assembly under that harness's own limit, the same function the
 // hook calls, minus the volatile lines (web probe, drift advisories, seat).
 func driverRows(env injectedEnv, always []docindex.Doc) []injectedRow {
-	names := map[string]bool{}
-	for k := range config.EmbeddedHarness() {
-		names[k] = true
-	}
-	for k := range env.Cfg.Harness {
-		names[k] = true
-	}
-	delete(names, "unknown")
-	harnesses := make([]string, 0, len(names))
-	for k := range names {
-		harnesses = append(harnesses, k)
-	}
-	sort.Strings(harnesses)
-
 	var rows []injectedRow
-	for _, h := range harnesses {
+	for _, h := range env.Cfg.Harnesses() {
 		limit := env.Cfg.ContextLimit(h)
 		content, omitted := sessionAssembly(env.Constitution, always, env.ConstPath, h, limit, 0, env.Rules)
 		row := injectedRow{Group: "seat", Label: "driver[" + h + "]", Bytes: len(content)}

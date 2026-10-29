@@ -74,25 +74,6 @@ func hasHarnessTable(cfg config.Config, name string) bool {
 	return ok
 }
 
-// configuredHarnesses is every harness with a [harness.<name>] table, sorted,
-// without the neutral unknown fallback (which is a budget, not a harness).
-func configuredHarnesses(cfg config.Config) []string {
-	set := map[string]bool{}
-	for k := range config.EmbeddedHarness() {
-		set[k] = true
-	}
-	for k := range cfg.Harness {
-		set[k] = true
-	}
-	delete(set, agentcli.HarnessUnknown)
-	out := make([]string, 0, len(set))
-	for k := range set {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
 // seatBinding resolves one agents.toml seat the way dispatch does.
 func seatBinding(a config.AgentsConfig, seat string) (config.AgentBinding, bool) {
 	switch seat {
@@ -172,8 +153,8 @@ func boundHarnesses(dataDir, repoRoot string) ([]harnessBinding, []harnessGap) {
 			}
 		}
 		if inLoop != "" {
-			for _, h := range configuredHarnesses(cfg) {
-				if harnessInstalled(cfg, h, repoRoot) {
+			for _, h := range cfg.Harnesses() {
+				if len(cfg.PresentGateWiring(repoRoot, h)) > 0 {
 					bind(h, "in-loop ["+inLoop+"]")
 				}
 			}
@@ -181,7 +162,7 @@ func boundHarnesses(dataDir, repoRoot string) ([]harnessBinding, []harnessGap) {
 	}
 
 	if len(bound) == 0 && len(gaps) == 0 {
-		for _, h := range configuredHarnesses(cfg) {
+		for _, h := range cfg.Harnesses() {
 			bind(h, "every configured harness")
 		}
 	}
@@ -198,17 +179,6 @@ func boundHarnesses(dataDir, repoRoot string) ([]harnessBinding, []harnessGap) {
 		out = append(out, *bound[n])
 	}
 	return out, gaps
-}
-
-// harnessInstalled reports whether a harness's gate wiring is present in the
-// repo — the evidence that a driving session of that harness runs here.
-func harnessInstalled(cfg config.Config, harness, repoRoot string) bool {
-	for _, p := range cfg.GateWiring(harness) {
-		if _, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(p))); err == nil {
-			return true
-		}
-	}
-	return false
 }
 
 // fsDocs reads principles and skills from the authored plane, falling back to

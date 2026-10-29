@@ -2,6 +2,8 @@ package config
 
 import (
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -127,5 +129,56 @@ func TestLoad_AcceptsWiringDeclarations(t *testing.T) {
 	}
 	if got := cfg.GateWiring("mybot"); len(got) != 1 || got[0] != ".mybot/hooks.json" {
 		t.Errorf("GateWiring(mybot) = %v", got)
+	}
+}
+
+// sty_0dca3223: the configured-harness set is the embedded tables plus the
+// repo's, sorted, without the unknown fallback; the budget set adds it last.
+func TestHarnesses(t *testing.T) {
+	got := Config{}.Harnesses()
+	if !slices.IsSorted(got) || slices.Contains(got, unknownHarness) {
+		t.Errorf("Harnesses() = %v, want sorted without %q", got, unknownHarness)
+	}
+	for name := range EmbeddedHarness() {
+		if name != unknownHarness && !slices.Contains(got, name) {
+			t.Errorf("Harnesses() = %v lacks embedded %q", got, name)
+		}
+	}
+	c := Config{Harness: map[string]HarnessConfig{"mybot": {GateWiring: []string{".mybot/hooks.json"}}}}
+	with := c.Harnesses()
+	if !slices.Contains(with, "mybot") || len(with) != len(got)+1 || !slices.IsSorted(with) {
+		t.Errorf("Harnesses() with mybot = %v", with)
+	}
+	budget := c.BudgetHarnesses()
+	if len(budget) != len(with)+1 || budget[len(budget)-1] != unknownHarness {
+		t.Errorf("BudgetHarnesses() = %v, want Harnesses() then %q", budget, unknownHarness)
+	}
+}
+
+// sty_0dca3223: PresentGateWiring is the resolved gate_wiring that exists under
+// root; a repo override replaces the embedded path.
+func TestPresentGateWiring(t *testing.T) {
+	root := t.TempDir()
+	if got := (Config{}).PresentGateWiring(root, "claude"); len(got) != 0 {
+		t.Errorf("empty root: %v", got)
+	}
+	for _, p := range []string{".claude/settings.json", ".claude/custom.json"} {
+		full := filepath.Join(root, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := (Config{}).PresentGateWiring(root, "claude"); !slices.Equal(got, []string{".claude/settings.json"}) {
+		t.Errorf("embedded claude: %v", got)
+	}
+	if got := (Config{}).PresentGateWiring(root, "pi"); len(got) != 0 {
+		t.Errorf("absent pi wiring: %v", got)
+	}
+	c := Config{Harness: map[string]HarnessConfig{"claude": {GateWiring: []string{".claude/custom.json", ".claude/gone.json"}}}}
+	if got := c.PresentGateWiring(root, "claude"); !slices.Equal(got, []string{".claude/custom.json"}) {
+		t.Errorf("overridden claude: %v", got)
 	}
 }

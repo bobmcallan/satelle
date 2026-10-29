@@ -81,14 +81,7 @@ func sessionContextHelpBody(body string) string {
 // applySessionContextFacts records each harness's resolved session-context
 // channel and clip on the adapter row. agentcli does not read config.
 func applySessionContextFacts(cfg config.Config) {
-	names := map[string]bool{}
-	for k := range config.EmbeddedHarness() {
-		names[k] = true
-	}
-	for k := range cfg.Harness {
-		names[k] = true
-	}
-	for name := range names {
+	for _, name := range cfg.BudgetHarnesses() {
 		agentcli.SetSessionContext(name, cfg.SessionContextEvent(name), cfg.ToolContextLimitChars(name))
 	}
 }
