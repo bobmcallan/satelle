@@ -315,6 +315,9 @@ type referencedDoc struct {
 	Name string `json:"name"`
 	Type string `json:"type"`
 	Path string `json:"path"`
+	// source is the persistent file the scratch copy was made from, "" when
+	// none; the dispatch log names it instead of the copy's content.
+	source string
 }
 
 type referencedDiff struct {
@@ -383,7 +386,7 @@ func writeReviewerMaterial(scratch string, mat *reviewerMaterial, tp transitionP
 			if err != nil {
 				return referencedPayload{}, err
 			}
-			ref.Docs = append(ref.Docs, referencedDoc{Name: d.Name, Type: d.Type, Path: abs})
+			ref.Docs = append(ref.Docs, referencedDoc{Name: d.Name, Type: d.Type, Path: abs, source: d.Path})
 		}
 	}
 	if mat.Diff != nil {

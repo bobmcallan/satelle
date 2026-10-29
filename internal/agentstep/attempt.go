@@ -32,6 +32,7 @@ func (g *Engine) runArtifactAttempts(
 	timeout, idle time.Duration,
 	sink io.Writer,
 	onEvent agentcli.EventHandler,
+	dlog *dispatchLog,
 	contract agentartifact.Contract,
 	policy agentartifact.AttemptPolicy,
 	beforeAttempt func(attempt int),
@@ -98,7 +99,7 @@ func (g *Engine) runArtifactAttempts(
 			Payload: payload,
 			Charter: charter,
 			Expect:  ExpectPerform, Timeout: attemptTimeout, IdleTimeout: runIdle, Runner: runner,
-			Sink: sink, OnEvent: onEvent, StoryID: item.ID, Step: toStatus,
+			Sink: sink, OnEvent: onEvent, Log: dlog, StoryID: item.ID, Step: toStatus,
 			Skill: skill, Actor: "executor",
 		})
 		totalUsage.Duration += lastResult.Usage.Duration

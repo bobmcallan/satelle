@@ -387,6 +387,8 @@ func (g *Engine) runReviewerBundle(ctx context.Context, item workitem.Item, toSt
 	mat.Waivers = append([]WaiverItem(nil), tp.Waivers...)
 	tp.Citations, mat.Citations = bundleCitations(preps)
 	defer closeSeat(seat)
+	dlog, _, closeLog := g.openDispatchLog(seat.section, item.ID, seat.binding)
+	defer closeLog()
 	res := g.Invoke(ctx, InvokeRequest{
 		Binding:     seat.binding,
 		Section:     seat.section,
@@ -398,6 +400,8 @@ func (g *Engine) runReviewerBundle(ctx context.Context, item workitem.Item, toSt
 		Timeout:     g.agentTimeout,
 		IdleTimeout: seat.idle,
 		Runner:      seat.runner,
+		OnEvent:     dlog.handler(),
+		Log:         dlog,
 		Attempts:    g.attempts,
 		StoryID:     item.ID,
 		Step:        toStatus,

@@ -250,9 +250,7 @@ func gatherRecovery(ctx context.Context, it workitem.Item, now time.Time) recove
 		if f, ok, err := logsread.Select(dir, it.ID, ""); err == nil && ok {
 			log := &recoveryLog{Path: f.Path, Agent: f.Agent, StartNS: f.Nano, Mtime: f.Mtime}
 			if raw, rerr := os.ReadFile(f.Path); rerr == nil {
-				if lines := logsread.LastNLines(string(raw), 1); len(lines) == 1 {
-					log.LastLine = lines[0]
-				}
+				log.LastLine = agentcli.LastEventLine(string(raw))
 			}
 			in.Log = log
 		}

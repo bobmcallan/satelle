@@ -79,13 +79,17 @@ func setupStreamingRepo(t *testing.T, script string, extraAgentsToml string) (re
 	return repo, storyID
 }
 
-// dispatchLogFile globs for the single per-dispatch live log file under
-// .satelle/logs/dispatch/ — the sink DispatchExecutor wires into the runner.
+// architectLogGlob matches the architect's per-dispatch logs; every other
+// dispatch (a gate's reviewer) writes its own log beside them.
+const architectLogGlob = "dispatch-architect-*.log"
+
+// dispatchLogFile globs for the architect's single per-dispatch live log file
+// under .satelle/logs/dispatch/ — the sink DispatchExecutor wires into the runner.
 func dispatchLogFile(t *testing.T, repo string) string {
 	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(runtimeRoot(t, repo), "logs", "dispatch", "dispatch-*.log"))
+	matches, err := filepath.Glob(filepath.Join(runtimeRoot(t, repo), "logs", "dispatch", architectLogGlob))
 	if err != nil || len(matches) != 1 {
-		t.Fatalf("expected exactly one dispatch log file under runtime logs/dispatch, got %v (err %v)", matches, err)
+		t.Fatalf("expected exactly one architect dispatch log file under runtime logs/dispatch, got %v (err %v)", matches, err)
 	}
 	return matches[0]
 }
@@ -115,10 +119,12 @@ func TestDispatchStreamsLiveOutputBeforeExit(t *testing.T) {
 	deadline := time.Now().Add(testutil.WaitBudget)
 	logDir := filepath.Join(runtimeRoot(t, repo), "logs", "dispatch")
 	for time.Now().Before(deadline) {
-		matches, _ := filepath.Glob(filepath.Join(logDir, "dispatch-*.log"))
+		matches, _ := filepath.Glob(filepath.Join(logDir, architectLogGlob))
 		if len(matches) == 1 {
 			data, _ := os.ReadFile(matches[0])
-			if strings.Contains(string(data), "line-one") && !strings.Contains(string(data), "done") {
+			// The agent's own message events, not the input block written before
+			// the run, which may carry either word.
+			if strings.Contains(string(data), "\tmessage\tline-one") && !strings.Contains(string(data), "\tmessage\tdone") {
 				sawPartial = true
 				break
 			}
@@ -154,8 +160,8 @@ func TestDispatchStreamsLiveOutputBeforeExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"line-one", "line-two", "done"} {
-		if !strings.Contains(string(data), want) {
+	for _, line := range []string{"line-one", "line-two", "done"} {
+		if want := "\tmessage\t" + line; !strings.Contains(string(data), want) {
 			t.Errorf("dispatch log missing %q:\n%s", want, data)
 		}
 	}
@@ -182,7 +188,7 @@ func TestDispatchTimeoutRetainsStreamedOutputOnKill(t *testing.T) {
 	if rerr != nil {
 		t.Fatalf("dispatch log not written: %v", rerr)
 	}
-	if !strings.Contains(string(data), "partial-line") {
+	if !strings.Contains(string(data), "\tmessage\tpartial-line") {
 		t.Errorf("dispatch log should retain the line streamed before the kill: %q", data)
 	}
 }

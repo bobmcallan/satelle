@@ -115,3 +115,34 @@ func TestRunProcessEventsHeartbeatAndFinalStdout(t *testing.T) {
 		t.Fatalf("no heartbeat in %v", kinds)
 	}
 }
+
+// An input or summary event renders as a fenced block, its text kept whole.
+func TestFormatEventFencesInputAndSummaryBlocks(t *testing.T) {
+	at := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
+	long := strings.Repeat("x", 500)
+	got := FormatEvent(Event{Kind: EventInput, At: at, Text: "line one\n" + long + "\n", Meta: map[string]string{EventMetaBlock: "payload"}})
+	want := "2026-10-29T00:00:00Z\tinput\tinput: payload\n=== input: payload ===\nline one\n" + long + "\n=== end input: payload ===\n"
+	if got != want {
+		t.Errorf("input block = %q, want %q", got, want)
+	}
+	if got := FormatEvent(Event{Kind: EventSummary, At: at, Text: "turns: 1"}); !strings.Contains(got, "=== summary ===\nturns: 1\n=== end summary ===\n") {
+		t.Errorf("summary block = %q", got)
+	}
+}
+
+// The last own event of a run is found past the engine's blocks, and a line
+// inside a block is never taken for one.
+func TestLastEventLineSkipsTheEngineBlocks(t *testing.T) {
+	at := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
+	var b strings.Builder
+	w := func(ev Event) { ev.At = at; b.WriteString(FormatEvent(ev)) }
+	w(Event{Kind: EventInput, Text: "payload", Meta: map[string]string{EventMetaBlock: "payload"}})
+	w(Event{Kind: EventMessage, Text: "hi"})
+	w(Event{Kind: EventSummary, Text: "2026-10-29T00:00:00Z\tcompleted\tfake\noutcome: ok"})
+	if got := LastEventLine(b.String()); !strings.Contains(got, "\tmessage\thi") {
+		t.Errorf("LastEventLine = %q, want the message event", got)
+	}
+	if got := LastEventLine(FormatEvent(Event{Kind: EventSummary, At: at, Text: "outcome: ok"})); got != "" {
+		t.Errorf("a log of blocks only has no event line, got %q", got)
+	}
+}

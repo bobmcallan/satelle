@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -14,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
@@ -87,6 +90,10 @@ type InvokeRequest struct {
 	// OnEvent observes provider-neutral progressive events. It is composed with
 	// the engine's interactive stderr progress consumer.
 	OnEvent agentcli.EventHandler
+	// Log, when set, is the dispatch log Invoke writes what it sent the agent to
+	// before the run and a closing summary to after it (sty_2b89feab). The run's
+	// own events reach the log through OnEvent, as the caller wires them.
+	Log *dispatchLog
 
 	// Telemetry / progress context for the verdict retry loop (design note:
 	// Invoke needs labels beyond the minimal design sketch so retry telemetry
@@ -281,6 +288,13 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 // secondary (per-binding secondary= or [defaults] secondary) when configured
 // (sty_5bf61f89).
 func (g *Engine) Invoke(ctx context.Context, req InvokeRequest) InvokeResult {
+	// A secret the secondary resolves is kept out of the log from the first
+	// line, before the primary's own input is written.
+	if req.Log != nil {
+		if sec, _, ok := g.secondaryFor(req); ok {
+			req.Log.addSecrets(g.scrubValues(sec.Env))
+		}
+	}
 	res := g.invokePrimary(ctx, req)
 	if res.Err == nil {
 		return res
@@ -288,16 +302,13 @@ func (g *Engine) Invoke(ctx context.Context, req InvokeRequest) InvokeResult {
 	if !IsRateLimitOrUnavailable(res.Err, res.Stdout) {
 		return res
 	}
-	if g.resolveSecondary == nil {
+	sec, secName, ok := g.secondaryFor(req)
+	if !ok {
 		return res
 	}
 	section := req.Section
 	if section == "" {
 		section = "agent"
-	}
-	sec, secName, ok := g.resolveSecondary(section, req.Binding)
-	if !ok {
-		return res
 	}
 	g.telemetryEvent(ctx, req.StoryID, req.Actor, "agent-secondary-failover", map[string]any{
 		"primary": section, "secondary": secName, "outcome": "rate-limit",
@@ -309,6 +320,19 @@ func (g *Engine) Invoke(ctx context.Context, req InvokeRequest) InvokeResult {
 	secReq.Section = secName
 	secReq.Runner = nil // rebuild runner from secondary binding
 	return g.invokePrimary(ctx, secReq)
+}
+
+// secondaryFor is the binding req fails over to on a rate limit, and its name;
+// false when none is configured.
+func (g *Engine) secondaryFor(req InvokeRequest) (config.AgentBinding, string, bool) {
+	if g.resolveSecondary == nil {
+		return config.AgentBinding{}, "", false
+	}
+	section := req.Section
+	if section == "" {
+		section = "agent"
+	}
+	return g.resolveSecondary(section, req.Binding)
 }
 
 // invokePrimary runs one binding without secondary failover.
@@ -363,6 +387,9 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	if len(inv.env) == 0 {
 		inv.env = g.reviewerEnv
 	}
+	// The values this run's environment resolved, before any dispatch marker or
+	// scratch path is overlaid, are what its log never writes.
+	req.Log.addSecrets(g.scrubValues(inv.env))
 	// Mark every isolated dispatch — perform AND verdict alike (sty_719c4a7b
 	// AC4): a verdict reviewer's child process inherits the driver's
 	// SATELLE_SESSION from the OS environment exactly as a performer's does
@@ -408,8 +435,9 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	// the pre-cap material. A functional check never reaches Invoke. A direct
 	// Invoke of a map payload (no Material) stays inline.
 	swapped := false
+	var ref *referencedPayload
 	if tp, mat, ok := referencedWorkItem(req); ok {
-		ref, werr := writeReviewerMaterial(scratchDir, mat, tp)
+		r, werr := writeReviewerMaterial(scratchDir, mat, tp)
 		if werr != nil {
 			g.recordInvocation(ctx, req.StoryID, map[string]any{
 				"phase": "scratch_kept", "scratch_dir": scratchDir, "agent": section,
@@ -417,7 +445,8 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 			finishScratch(scratchDir, true)
 			return InvokeResult{Err: werr}
 		}
-		inv.payload = ref
+		inv.payload = r
+		ref = &r
 		swapped = true
 	}
 
@@ -567,6 +596,10 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		leftoverBefore, _ = untrackedSnapshot(g.repoRoot)
 	}
 
+	if req.Log != nil {
+		logInput(req.Log, agentReq.SystemPrompt, agentReq.Payload, req.Payload, scratchDir, ref)
+	}
+
 	var res InvokeResult
 	switch expect {
 	case ExpectPerform:
@@ -579,13 +612,29 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		}
 	default: // ExpectVerdict, ExpectVerdicts
 		res = g.invokeVerdict(ctx, req, runner, agentReq, cmdStr, timeout, idle, busy, tally)
-		// The run's turns and tool calls, on every outcome: a failed attempt
-		// measured them too. A decision carries them only on the verdict it
-		// produced; a bundle puts them on its first verdict.
-		res.Counts = tally.counts(res.Usage, binding.ResolvedInterface(), cmdStr)
+	}
+	// The run's turns and tool calls, on every outcome: a failed attempt
+	// measured them too. A judging run records them; a decision carries them
+	// only on the verdict it produced, and a bundle puts them on its first verdict.
+	counts := tally.counts(res.Usage, binding.ResolvedInterface(), cmdStr)
+	if expect.judges() {
+		res.Counts = counts
 		if res.Decision != nil {
-			res.Decision.RunCounts = res.Counts
+			res.Decision.RunCounts = counts
 		}
+	}
+	if req.Log != nil {
+		s := dispatchSummary{
+			Turns:     countLine(counts.Turns, counts.TurnsUnavailableReason),
+			ToolCalls: countLine(counts.ToolCalls, counts.ToolCallsUnavailableReason),
+			Usage:     usageLine(res.Usage, noUsageReason(runner)),
+			Outcome:   "ok",
+			Answer:    g.finalAnswer(expect, res),
+		}
+		if res.Err != nil {
+			s.Outcome, s.Error = classifyOutcome(res.Err), res.Err.Error()
+		}
+		req.Log.summary(s)
 	}
 	// Byte lengths of what satelle actually sent (sty_363eaf55) — lengths only,
 	// never content. Stamped uniformly regardless of outcome (success, failure,
@@ -697,6 +746,247 @@ func (g *Engine) stallResult(ctx context.Context, req InvokeRequest, cmdStr stri
 	})
 	return InvokeResult{Command: cmdStr, Err: fmt.Errorf(
 		"agent %q %w — the transition was NOT enacted", name, se)}
+}
+
+// logInput writes what a dispatch was sent, before it runs: the system prompt
+// and payload as delivered, the sections a gate or rework relies on, and the
+// content of each scratch material file, which is deleted after the run. A
+// persistent story document is written as its path, never copied. sent is the
+// payload before any swap to scratch paths; ref is the swapped work item, nil
+// when the payload went inline.
+func logInput(l *dispatchLog, prompt, payload string, sent any, scratch string, ref *referencedPayload) {
+	tp, _ := transitionOf(sent)
+	material := inputMaterial(tp, scratch, ref)
+	l.input("system prompt", substituteDocPaths(prompt, tp.Docs))
+	l.input("payload", substituteDocPaths(payload, tp.Docs))
+	l.input("sections", renderInputSections(tp, material))
+	for _, m := range material {
+		if !m.inline {
+			continue
+		}
+		b, err := os.ReadFile(m.path)
+		if err != nil {
+			l.input("material "+m.path, "unreadable: "+err.Error())
+			continue
+		}
+		l.input("material "+m.path, string(b))
+	}
+}
+
+// substituteDocPaths replaces, in text, the JSON-encoded body of each document
+// read from a persistent file with that file's path. Matching the encoded form
+// keeps every other byte of the payload as it was sent.
+func substituteDocPaths(text string, docs []DocState) string {
+	for _, d := range docs {
+		if d.Path == "" || d.Body == "" {
+			continue
+		}
+		body, berr := json.Marshal(d.Body)
+		path, perr := json.Marshal(d.Path)
+		if berr != nil || perr != nil {
+			continue
+		}
+		for _, key := range []string{`"body":`, `"body": `} {
+			text = strings.ReplaceAll(text, key+string(body), key+string(path))
+		}
+	}
+	return text
+}
+
+// materialFile is one file a dispatch's material names. inline marks a file
+// that will not outlive the dispatch, whose content the log therefore carries.
+type materialFile struct {
+	path, note string
+	inline     bool
+}
+
+// inputMaterial lists the files a dispatch was handed: each scratch file of a
+// swapped work item (a scratch copy of a persistent document names the
+// original), or else each persistent document the inline payload carries.
+func inputMaterial(tp transitionPayload, scratch string, ref *referencedPayload) []materialFile {
+	var out []materialFile
+	if ref == nil {
+		for _, d := range tp.Docs {
+			if d.Path != "" && d.Body != "" {
+				out = append(out, materialFile{path: d.Path, note: d.Name})
+			}
+		}
+		return out
+	}
+	sources := map[string]string{}
+	for _, d := range ref.Docs {
+		if d.source != "" {
+			sources[d.Path] = d.source
+		}
+	}
+	_ = filepath.WalkDir(filepath.Join(scratch, "material"), func(p string, e fs.DirEntry, err error) error {
+		if err != nil || e.IsDir() {
+			return nil
+		}
+		if abs, aerr := filepath.Abs(p); aerr == nil {
+			p = abs
+		}
+		if src := sources[p]; src != "" {
+			out = append(out, materialFile{path: p, note: "scratch copy of " + src + ", removed after dispatch"})
+			return nil
+		}
+		out = append(out, materialFile{path: p, note: "scratch, removed after dispatch; content below", inline: true})
+		return nil
+	})
+	return out
+}
+
+// renderInputSections names, under the payload's own field names, the parts of
+// a payload a gate or rework relies on, each "none" when the payload has none.
+func renderInputSections(tp transitionPayload, material []materialFile) string {
+	var b strings.Builder
+	section := func(label string, lines []string) {
+		if len(lines) == 0 {
+			fmt.Fprintf(&b, "%s: none\n", label)
+			return
+		}
+		fmt.Fprintf(&b, "%s:\n", label)
+		for _, l := range lines {
+			fmt.Fprintf(&b, "  %s\n", l)
+		}
+	}
+	var findings []string
+	for _, f := range tp.Findings {
+		line := "- " + f.ID
+		if f.Seat != "" {
+			line += " seat=" + f.Seat
+		}
+		line += " decision=" + f.Decision
+		if f.Blocking {
+			line += " blocking"
+		}
+		findings = append(findings, line)
+	}
+	section("findings_to_answer", findings)
+	var messages []string
+	for _, m := range tp.Messages {
+		first, _, _ := strings.Cut(strings.TrimSpace(m.Body), "\n")
+		messages = append(messages, fmt.Sprintf("- %s %s → %s: %s", m.ID, m.From, m.To, first))
+	}
+	section("messages", messages)
+	var criteria []string
+	for _, l := range strings.Split(tp.Story.AcceptanceCriteria, "\n") {
+		if strings.TrimSpace(l) != "" {
+			criteria = append(criteria, l)
+		}
+	}
+	section("acceptance_criteria", criteria)
+	var files []string
+	for _, m := range material {
+		files = append(files, fmt.Sprintf("- %s (%s)", m.path, m.note))
+	}
+	section("material", files)
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// dispatchSummary closes a dispatch log: the run's progress, each figure a
+// number or the adapter-named reason it is unavailable, then its final answer.
+type dispatchSummary struct {
+	Turns, ToolCalls, Usage, Outcome, Error, Answer string
+}
+
+func (s dispatchSummary) String() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "turns: %s\ntool_calls: %s\nusage: %s\noutcome: %s\n", s.Turns, s.ToolCalls, s.Usage, s.Outcome)
+	if s.Error != "" {
+		fmt.Fprintf(&b, "error: %s\n", s.Error)
+	}
+	answer := s.Answer
+	if strings.TrimSpace(answer) == "" {
+		answer = "none"
+	}
+	b.WriteString("final_answer:\n" + answer)
+	return b.String()
+}
+
+// countLine is a measured count, or the reason it was not measured.
+func countLine(n *int, reason string) string {
+	if n != nil {
+		return strconv.Itoa(*n)
+	}
+	return reason
+}
+
+// usageLine is the run's reported usage, or why it has none (fallback when the
+// result carries no reason of its own).
+func usageLine(u agentcli.UsageResult, fallback string) string {
+	if !u.Available {
+		if u.UnavailableReason != "" {
+			return u.UnavailableReason
+		}
+		return fallback
+	}
+	s := fmt.Sprintf("input=%d output=%d total=%d", u.InputTokens, u.OutputTokens, u.TotalTokens)
+	if u.ModelResolved != "" {
+		s += " model=" + u.ModelResolved
+	}
+	return s
+}
+
+// noUsageReason names the adapter of a run that reported no usage.
+func noUsageReason(r agentcli.Runner) string {
+	return r.Name() + " adapter: transport reported no usage"
+}
+
+// verdictAnswer is a decision as a dispatch summary writes it.
+type verdictAnswer struct {
+	Skill    string `json:"skill,omitempty"`
+	Decision string `json:"decision"`
+	Notes    string `json:"notes,omitempty"`
+}
+
+func verdictOf(skill string, d verb.GateDecision) verdictAnswer {
+	word := "reject"
+	if d.Accept {
+		word = "accept"
+	}
+	return verdictAnswer{Skill: skill, Decision: word, Notes: d.Notes}
+}
+
+// finalAnswer is the decoded answer of a run — its verdict(s), its artifact, or
+// its decision — and, when nothing decodes, the tail of its output and where
+// the whole of it is logged.
+func (g *Engine) finalAnswer(expect Expect, res InvokeResult) string {
+	var v any
+	switch {
+	case len(res.Decisions) > 0:
+		vs := make([]verdictAnswer, len(res.Decisions))
+		for i, d := range res.Decisions {
+			vs[i] = verdictOf(d.Skill, d)
+		}
+		v = vs
+	case res.Decision != nil:
+		v = verdictOf("", *res.Decision)
+	}
+	if v == nil {
+		if len(bytes.TrimSpace(res.Stdout)) == 0 {
+			return ""
+		}
+		if a, err := agentartifact.Decode(res.Stdout); err == nil {
+			return fmt.Sprintf("artifact %s (%s):\n%s", a.Name, a.Type, a.Body)
+		}
+		if d, err := parseDecision(res.Stdout); err == nil {
+			v = verdictOf("", d)
+		}
+	}
+	if v != nil {
+		b, _ := json.MarshalIndent(v, "", "  ")
+		return string(b)
+	}
+	tail := verb.LastMessage(strings.TrimSpace(string(res.Stdout)))
+	if g.logDir != "" {
+		full := "executor.log"
+		if expect.judges() {
+			full = "reviewer.log"
+		}
+		tail += "\nfull output: " + filepath.Join(g.logDir, full)
+	}
+	return tail
 }
 
 func progressLabel(s string) string {
@@ -899,7 +1189,7 @@ func (g *Engine) runOnceBusy(ctx context.Context, runner agentcli.Runner, req ag
 		// An adapter that knows why names it; every other unreported run still
 		// names the adapter (the runner's CLI) rather than a bare false
 		// (sty_c8d45201).
-		usage.UnavailableReason = runner.Name() + " adapter: transport reported no usage"
+		usage.UnavailableReason = noUsageReason(runner)
 	}
 	return out, usage, err
 }
@@ -1121,17 +1411,25 @@ func referencedWorkItem(req InvokeRequest) (transitionPayload, *reviewerMaterial
 	if !req.Expect.judges() || req.Material == nil || !readsLocalPaths(req.Runner) {
 		return transitionPayload{}, nil, false
 	}
-	switch p := req.Payload.(type) {
-	case transitionPayload:
-		return p, req.Material, true
-	case *transitionPayload:
-		if p == nil {
-			return transitionPayload{}, nil, false
-		}
-		return *p, req.Material, true
-	default:
+	tp, ok := transitionOf(req.Payload)
+	if !ok {
 		return transitionPayload{}, nil, false
 	}
+	return tp, req.Material, true
+}
+
+// transitionOf is payload as a transition payload, false when it is another
+// shape (a check's bare map, a nil pointer).
+func transitionOf(payload any) (transitionPayload, bool) {
+	switch p := payload.(type) {
+	case transitionPayload:
+		return p, true
+	case *transitionPayload:
+		if p != nil {
+			return *p, true
+		}
+	}
+	return transitionPayload{}, false
 }
 
 // pathless is implemented by a runner that cannot open this machine's scratch
@@ -1148,15 +1446,8 @@ func readsLocalPaths(r agentcli.Runner) bool {
 // payloadInputs reports the input values of the item a transition payload
 // carries; a payload of any other shape carries none.
 func payloadInputs(payload any) map[string]any {
-	switch p := payload.(type) {
-	case transitionPayload:
-		return p.Story.InputValues
-	case *transitionPayload:
-		if p != nil {
-			return p.Story.InputValues
-		}
-	}
-	return nil
+	tp, _ := transitionOf(payload)
+	return tp.Story.InputValues
 }
 
 // executorCharter is the charter for an isolated named executor performing a step.

@@ -144,28 +144,63 @@ func (g *Engine) dispatchCloud(ctx context.Context, item workitem.Item, toStatus
 		return res, fmt.Errorf("cloud dispatch refused: %w", err)
 	}
 
-	prompt, err := g.cloudPrompt(ctx, item, toStatus, agent, binding, delivered.Rubric, skill, branch, nonce)
+	prompt, sent, err := g.cloudPrompt(ctx, item, toStatus, agent, binding, delivered.Rubric, skill, branch, nonce)
 	if err != nil {
 		return res, err
 	}
+
+	// The log opens once there is a prompt to record; its summary is registered
+	// before the launch, so a launch that fails still ends the log with one.
+	dlog, _, closeLog := g.openDispatchLog(agent, item.ID, binding)
+	defer closeLog()
+	if dlog != nil {
+		pj, _ := cloudPayloadJSON(sent)
+		logInput(dlog, prompt, string(pj), sent, "", nil)
+	}
+	usageReason := harness + " cloud: usage unavailable"
+	outcome := "failed"
+	var failure error
+	rec := &verb.CloudDispatch{Branch: branch, Doc: binding.CollectDoc}
+	docPath := ""
+	defer func() {
+		if dlog == nil {
+			return
+		}
+		if outcome == "collected" {
+			dlog.write(agentcli.Event{Kind: agentcli.EventCompleted})
+		} else {
+			dlog.write(agentcli.Event{Kind: agentcli.EventFailed, Error: outcome})
+		}
+		s := dispatchSummary{
+			Turns:     agentcli.TurnsUnavailableReason(binding.ResolvedInterface(), binding.CommandTemplate()),
+			ToolCalls: agentcli.ToolCallsUnavailableReason(binding.ResolvedInterface(), binding.CommandTemplate()),
+			Usage:     usageReason,
+			Outcome:   outcome,
+			Answer:    cloudAnswer(rec, docPath),
+		}
+		if failure != nil {
+			s.Error = failure.Error()
+		}
+		dlog.summary(s)
+	}()
 
 	g.emitActivity(item.ID, "dispatch:"+toStatus, 1, 1)
 	g.emitProgress("dispatching step %s to a %s cloud session (waits up to %s for its branch %s)…", toStatus, harness, deadline, branch)
 	session, err := agentcli.LaunchCloud(ctx, harness, g.repoRoot, prompt)
 	if err != nil {
-		return res, fmt.Errorf("named agent %q failed performing step %q: %w", agent, toStatus, err)
+		failure = fmt.Errorf("named agent %q failed performing step %q: %w", agent, toStatus, err)
+		return res, failure
 	}
-	rec := &verb.CloudDispatch{SessionID: session.ID, URL: session.URL, Branch: branch, Doc: binding.CollectDoc}
+	rec.SessionID, rec.URL = session.ID, session.URL
 	if remotePlaced {
 		rec.Placement = placement.Remote
 	}
 	res.Command, res.Cloud = session.URL, rec
 	g.emitProgress("cloud session started: %s — waiting up to %s for branch %s…", session.URL, deadline, branch)
 	res.UsageNote = verb.UsageNote{
-		UsageUnavailableReason: harness + " cloud: usage unavailable",
+		UsageUnavailableReason: usageReason,
 		CacheSplitUnavailable:  true,
 	}
-	outcome := "failed"
 	defer func() {
 		data := map[string]any{
 			"agent": agent, "step": toStatus, "outcome": outcome, "session_id": rec.SessionID, "url": rec.URL,
@@ -177,8 +212,9 @@ func (g *Engine) dispatchCloud(ctx context.Context, item workitem.Item, toStatus
 		g.telemetryEvent(ctx, item.ID, "executor", "cloud_dispatch", data)
 	}()
 	fail := func(format string, a ...any) (verb.DispatchResult, error) {
-		return res, fmt.Errorf("named agent %q failed performing step %q: %s (cloud session %s); the story worktree is unchanged",
+		failure = fmt.Errorf("named agent %q failed performing step %q: %s (cloud session %s); the story worktree is unchanged",
 			agent, toStatus, fmt.Sprintf(format, a...), session.URL)
+		return res, failure
 	}
 
 	tip, err := worktree.WaitTrailerBranch(ctx, g.repoRoot, remote, branch, cloudNonceTrailer, nonce, g.cloudPoll, deadline)
@@ -198,30 +234,66 @@ func (g *Engine) dispatchCloud(ctx context.Context, item workitem.Item, toStatus
 	}
 	rec.Commit = tip.Commit
 	if binding.CollectDoc != "" {
-		if _, _, err := g.attachArtifact(ctx, item, binding.CollectDoc, cloudDocType, tip.Body); err != nil {
-			return res, fmt.Errorf("named agent %q collected %.8s for step %q but could not attach %q: %w (cloud session %s)",
+		name, _, err := g.attachArtifact(ctx, item, binding.CollectDoc, cloudDocType, tip.Body)
+		if err != nil {
+			failure = fmt.Errorf("named agent %q collected %.8s for step %q but could not attach %q: %w (cloud session %s)",
 				agent, tip.Commit, toStatus, binding.CollectDoc, err, session.URL)
+			return res, failure
 		}
+		docPath = g.docPath(ctx, item.ID, name)
 	}
 	outcome = "collected"
 	return res, nil
+}
+
+// cloudAnswer is what a cloud session returned: where it ran, the branch, the
+// commit collected from it, and the path of the document its body was attached
+// as.
+func cloudAnswer(rec *verb.CloudDispatch, docPath string) string {
+	var b strings.Builder
+	for _, kv := range [][2]string{{"session", rec.URL}, {"branch", rec.Branch}, {"commit", rec.Commit}, {"doc", docPath}} {
+		if kv[1] != "" {
+			fmt.Fprintf(&b, "%s: %s\n", kv[0], kv[1])
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// docPath is the persistent file of the item's document name, or name itself
+// when the resolver gives no path.
+func (g *Engine) docPath(ctx context.Context, itemID, name string) string {
+	if g.itemDocs != nil {
+		for _, d := range g.itemDocs(ctx, itemID) {
+			if d.Name == name && d.Path != "" {
+				return d.Path
+			}
+		}
+	}
+	return name
+}
+
+// cloudPayloadJSON is the payload as the cloud prompt embeds it.
+func cloudPayloadJSON(tp transitionPayload) ([]byte, error) {
+	return json.MarshalIndent(tp, "", "  ")
 }
 
 // cloudPrompt composes what the session is told: the step rubric, then the
 // cloud-performer skill, then the mechanism contract — data only. It refuses a
 // prompt that would carry the hosted service's address or its session-token
 // variable name: a cloud session reaches neither, and must not be told of them.
+// It returns the payload the prompt embeds, built once: building it marks the
+// messages it carries delivered.
 func (g *Engine) cloudPrompt(ctx context.Context, item workitem.Item, toStatus, agent string,
-	binding config.AgentBinding, rubric, skill, branch, nonce string) (string, error) {
+	binding config.AgentBinding, rubric, skill, branch, nonce string) (string, transitionPayload, error) {
 	performer, err := g.skillBody(ctx, cloudPerformerSkill)
 	if err != nil {
-		return "", fmt.Errorf("cloud dispatch needs the %q skill: %w", cloudPerformerSkill, err)
+		return "", transitionPayload{}, fmt.Errorf("cloud dispatch needs the %q skill: %w", cloudPerformerSkill, err)
 	}
 	performer = stripFrontmatter(performer)
 	payload, _ := g.performerPayload(ctx, item, toStatus, skill, agent, binding, "")
-	pj, err := json.MarshalIndent(payload, "", "  ")
+	pj, err := cloudPayloadJSON(payload)
 	if err != nil {
-		return "", fmt.Errorf("cloud dispatch payload: %w", err)
+		return "", transitionPayload{}, fmt.Errorf("cloud dispatch payload: %w", err)
 	}
 	// The harness takes the prompt as one argv token, so it must never start with
 	// '-' (a YAML frontmatter fence would be parsed as an option): lead with a
@@ -236,10 +308,10 @@ func (g *Engine) cloudPrompt(ctx context.Context, item workitem.Item, toStatus, 
 	prompt := b.String()
 	for _, secret := range cloudForbidden() {
 		if strings.Contains(prompt, secret) {
-			return "", fmt.Errorf("cloud dispatch refused: the composed prompt contains %q — a cloud session must not be told of the hosted service or its session token", secret)
+			return "", transitionPayload{}, fmt.Errorf("cloud dispatch refused: the composed prompt contains %q — a cloud session must not be told of the hosted service or its session token", secret)
 		}
 	}
-	return prompt, nil
+	return prompt, payload, nil
 }
 
 // cloudForbidden lists the strings a cloud prompt must never carry.

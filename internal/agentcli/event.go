@@ -45,15 +45,31 @@ const (
 	// may count it as bounded liveness for a silent one-shot binding, never as
 	// agent output. Stream and ACP never emit it.
 	EventProgress EventKind = "progress"
+	// EventInput is one block of what satelle sent a dispatched agent — its
+	// system prompt, its payload, the sections a gate or rework relies on, or a
+	// material file — written to the dispatch log before the run (sty_2b89feab).
+	// No transport emits it: the engine does, with Meta[EventMetaBlock] naming
+	// the block and Text holding it whole, already redacted.
+	EventInput EventKind = "input"
+	// EventSummary closes a dispatch log: the run's turns, tool calls, usage,
+	// outcome and final answer, one "key: value" per line in Text. Emitted by
+	// the engine after the run, never by a transport.
+	EventSummary EventKind = "summary"
 )
 
 // EventMetaResponse is the Meta key on EventInteractiveDenied naming what the
 // transport did with the question.
 const EventMetaResponse = "response"
 
+// EventMetaBlock is the Meta key on EventInput naming the block it carries.
+const EventMetaBlock = "block"
+
 // Event is the normalized execution record emitted by command and ACP runners.
 // Text and Error are sanitized and bounded before emission. Metadata must contain
 // only non-sensitive transport labels, never prompts, payloads, settings, or env.
+// EventInput and EventSummary are the one exception: their Text is a whole,
+// multi-line block of the dispatch's input or closing summary, unbounded, and
+// the engine redacts it before it is emitted.
 type Event struct {
 	Kind   EventKind         `json:"kind"`
 	At     time.Time         `json:"at"`
@@ -113,11 +129,17 @@ func RedactSecrets(s string) string {
 	return bearerPattern.ReplaceAllString(s, "Bearer [REDACTED]")
 }
 
-// FormatEvent renders one readable normalized diagnostic line.
+// FormatEvent renders one readable normalized diagnostic line. An input or
+// summary event renders as a fenced block under its own header line, its text
+// kept whole.
 func FormatEvent(ev Event) string {
 	at := ev.At
 	if at.IsZero() {
 		at = time.Now()
+	}
+	if label := blockLabel(ev); label != "" {
+		return fmt.Sprintf("%s\t%s\t%s\n=== %s ===\n%s\n=== end %s ===\n",
+			at.UTC().Format(time.RFC3339Nano), ev.Kind, label, label, strings.TrimRight(ev.Text, "\n"), label)
 	}
 	var details []string
 	if ev.Tool != "" {
@@ -136,6 +158,42 @@ func FormatEvent(ev Event) string {
 		details = append(details, fmt.Sprintf("tokens=%d", ev.Usage.TotalTokens))
 	}
 	return fmt.Sprintf("%s\t%s\t%s\n", at.UTC().Format(time.RFC3339Nano), ev.Kind, strings.Join(details, " "))
+}
+
+// LastEventLine is the last line of a normalized dispatch log that records one
+// of the run's own events — the input and summary blocks the engine writes around
+// the run are skipped, fence and content alike. "" when the log has none.
+func LastEventLine(log string) string {
+	last, fence := "", ""
+	for _, line := range strings.Split(log, "\n") {
+		switch {
+		case fence != "":
+			if line == fence {
+				fence = ""
+			}
+		case strings.TrimSpace(line) == "":
+		default:
+			parts := strings.SplitN(line, "\t", 3)
+			if len(parts) == 3 && (parts[1] == string(EventInput) || parts[1] == string(EventSummary)) {
+				fence = "=== end " + parts[2] + " ==="
+				continue
+			}
+			last = line
+		}
+	}
+	return last
+}
+
+// blockLabel is the fence label of an input or summary event, "" for every
+// other kind.
+func blockLabel(ev Event) string {
+	switch ev.Kind {
+	case EventInput:
+		return "input: " + ev.Meta[EventMetaBlock]
+	case EventSummary:
+		return "summary"
+	}
+	return ""
 }
 
 // toolCommand extracts the shell command from a tool call's input object — a

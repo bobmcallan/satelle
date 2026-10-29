@@ -370,9 +370,12 @@ func storyDocGet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 // Binary attachments set Binary=true with an empty Body (sty_40e5a305) so gates
 // learn a binary exists without consuming docsPayloadCeiling.
 type DocBody struct {
-	Name        string
-	Type        string
-	Body        string
+	Name string
+	Type string
+	Body string
+	// Path is the file the body was read from, so a dispatch log can name the
+	// document instead of copying it (sty_2b89feab). Empty for a binary entry.
+	Path        string
 	Binary      bool
 	ContentType string
 	Size        int64
@@ -403,7 +406,8 @@ func ItemDocs(ctx context.Context, id string) ([]DocBody, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
-		data, rerr := os.ReadFile(filepath.Join(dir, e.Name()))
+		path := filepath.Join(dir, e.Name())
+		data, rerr := os.ReadFile(path)
 		if rerr != nil {
 			continue
 		}
@@ -411,7 +415,7 @@ func ItemDocs(ctx context.Context, id string) ([]DocBody, error) {
 		if name == "" {
 			name = strings.TrimSuffix(e.Name(), ".md")
 		}
-		out = append(out, DocBody{Name: name, Type: typ, Body: string(data)})
+		out = append(out, DocBody{Name: name, Type: typ, Body: string(data), Path: path})
 	}
 	// Reference-only binary entries (no body) — fillPayloadDocs skips them
 	// before the budget accumulator (sty_40e5a305 AC4).

@@ -17,6 +17,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/testutil"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -561,8 +562,102 @@ func TestCloudDispatchLaunchFailure(t *testing.T) {
 	c := &fakeCloud{err: errors.New("boom")}
 	installCloud(t, agentcli.HarnessClaude, c)
 	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), cloudBinding("claude -p {system}", "", ""))
+	dir := t.TempDir()
+	ce.SetLogDir(dir, logfile.Config{})
 	if _, err := ce.dispatch(t); err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("err = %v, want the launcher's error", err)
+	}
+	// sty_2b89feab: the log still ends with a summary of the failed launch.
+	log := readDispatchLog(t, dir, "cloudy", cloudStoryID)
+	if !strings.HasSuffix(strings.TrimSpace(log), "=== end summary ===") {
+		t.Fatalf("the log must end with the summary:\n%s", log)
+	}
+	summary := logBlock(t, log, "summary")
+	for _, want := range []string{"outcome: failed\n", "boom"} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("summary missing %q:\n%s", want, summary)
+		}
+	}
+	if strings.Contains(summary, "session: ") {
+		t.Errorf("a failed launch names no session:\n%s", summary)
+	}
+}
+
+// sty_2b89feab: a cloud performer's log holds the prompt it was told, with a
+// persistent document's body replaced by its path; the findings and messages
+// its payload carried under their own labels; and a summary naming the cloud's
+// unavailable figures and the branch and commit it collected.
+func TestCloudDispatchLogRecordsInputSectionsAndSummary(t *testing.T) {
+	f := newCloudFix(t)
+	c := &fakeCloud{}
+	c.act = func(branch, nonce string) {
+		f.session(t, branch, tipMessage(cloudEvidenceBody, nonce), map[string]string{"b.txt": "b\n"})
+	}
+	installCloud(t, agentcli.HarnessClaude, c)
+	b := cloudBinding("claude -p {system}", cloudDocName, cloudTestLongLimit)
+	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), b)
+	dir := t.TempDir()
+	ce.SetLogDir(dir, logfile.Config{})
+	docFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(docFile, []byte(cloudPlanBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ce.SetDocsResolver(func(context.Context, string) []DocState {
+		return []DocState{{Name: "plan", Type: "plan", Body: cloudPlanBody, Path: docFile}}
+	})
+	ce.SetPriorVerdictsResolver(priorResolver(PriorVerdict{Skill: "code-review", Decision: "reject", Notes: "CLOUD-FINDING"}))
+	ce.SetMessagesResolver(stateResolver([]MessageState{
+		{ID: "msg_c1", From: "orchestrator", To: "cloudy", Body: "CLOUD-MESSAGE: keep a.txt", State: "waiting"},
+	}))
+	res, err := ce.dispatch(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := readDispatchLog(t, dir, "cloudy", cloudStoryID)
+
+	encBody, _ := json.Marshal(cloudPlanBody)
+	encPath, _ := json.Marshal(docFile)
+	if !strings.Contains(c.prompt, `"body": `+string(encBody)) {
+		t.Fatalf("fixture: the prompt must embed the plan body:\n%s", c.prompt)
+	}
+	want := strings.ReplaceAll(c.prompt, `"body": `+string(encBody), `"body": `+string(encPath))
+	if got := logBlock(t, log, "input: system prompt"); got != strings.TrimRight(want, "\n") {
+		t.Errorf("logged prompt differs from the sent one after the doc substitution:\n got %s\nwant %s", got, want)
+	}
+	if strings.Contains(log, cloudPlanBody) {
+		t.Errorf("a persistent document's body was copied into the log:\n%s", log)
+	}
+	sections := logBlock(t, log, "input: sections")
+	for _, w := range []string{
+		"findings_to_answer:\n  - code-review#1 decision=reject blocking",
+		"messages:\n  - msg_c1 orchestrator → cloudy: CLOUD-MESSAGE: keep a.txt",
+		"acceptance_criteria:\n  1. first criterion\n  2. second criterion",
+		"material:\n  - " + docFile + " (plan)",
+	} {
+		if !strings.Contains(sections, w) {
+			t.Errorf("sections missing %q:\n%s", w, sections)
+		}
+	}
+	summary := logBlock(t, log, "summary")
+	for _, w := range []string{
+		"turns: " + agentcli.TurnsUnavailableReason("cloud", b.Command) + "\n",
+		"tool_calls: " + agentcli.ToolCallsUnavailableReason("cloud", b.Command) + "\n",
+		"usage: claude cloud: usage unavailable\n",
+		"outcome: collected\n",
+		"session: " + cloudSessionURL,
+		"branch: " + c.branch,
+		"commit: " + res.Cloud.Commit,
+		"doc: " + cloudDocName,
+	} {
+		if !strings.Contains(summary, w) {
+			t.Errorf("summary missing %q:\n%s", w, summary)
+		}
+	}
+	if res.Cloud.Commit == "" {
+		t.Fatal("fixture: the dispatch collected no commit")
+	}
+	if last := agentcli.LastEventLine(log); !strings.Contains(last, "\tcompleted\t") {
+		t.Errorf("a collected cloud run reads as completed, last event = %q", last)
 	}
 }
 
@@ -654,7 +749,7 @@ func TestCloudPromptPayloadCarriesChildren(t *testing.T) {
 	ce := newCloudEngine(t, f, cloudDocs(cloudStepSkill), b)
 	want := []ChildState{{ID: "sty_child1", Status: "done"}, {ID: "sty_child2", Status: "backlog"}}
 	ce.SetChildrenResolver(func(context.Context, workitem.Item) []ChildState { return want })
-	p, err := ce.cloudPrompt(context.Background(), cloudItem(), "plan", "cloudy", b, "rubric text", "cloud-step", "branch-x", "nonce-x")
+	p, _, err := ce.cloudPrompt(context.Background(), cloudItem(), "plan", "cloudy", b, "rubric text", "cloud-step", "branch-x", "nonce-x")
 	if err != nil {
 		t.Fatal(err)
 	}

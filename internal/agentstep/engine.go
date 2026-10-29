@@ -1216,6 +1216,9 @@ type DocState struct {
 	ContentType string `json:"content_type,omitempty"`
 	Size        int64  `json:"size,omitempty"`
 	SHA256      string `json:"sha256,omitempty"`
+	// Path is the persistent file the body was read from. It never rides a
+	// payload; the dispatch log writes it in place of the body (sty_2b89feab).
+	Path string `json:"-"`
 }
 
 // judgeableDoc reports whether an attachment rides the material a gate judges:
@@ -2646,24 +2649,14 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if ierr != nil {
 		return verb.DispatchResult{}, fmt.Errorf("named agent %q: invalid idle_timeout in .satelle/workflows/agents.toml [%s]: %w", dispatchAgent, dispatchAgent, ierr)
 	}
-	eventSink, sinkPath, closeSink := g.dispatchSink(dispatchAgent, item.ID)
-	if closeSink != nil {
-		defer closeSink()
-	}
+	dlog, sinkPath, closeLog := g.openDispatchLog(dispatchAgent, item.ID, binding)
+	defer closeLog()
 	rawSink, closeRaw := g.dispatchRawSink(sinkPath)
 	if closeRaw != nil {
 		defer closeRaw()
 	}
-	var eventSinkMu sync.Mutex
 	trace := &runTrace{}
-	onEvent := trace.handler(func(ev agentcli.Event) {
-		if eventSink == nil {
-			return
-		}
-		eventSinkMu.Lock()
-		_, _ = io.WriteString(eventSink, agentcli.FormatEvent(ev))
-		eventSinkMu.Unlock()
-	})
+	onEvent := trace.handler(dlog.handler())
 	g.emitActivity(item.ID, "dispatch:"+toStatus, 1, 1)
 	if sinkPath != "" {
 		g.emitProgress("dispatching step %s to named agent %s (may take several minutes)… live output: %s", toStatus, dispatchAgent, sinkPath)
@@ -2684,7 +2677,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		invRes, finalArtifact, attemptErr = g.runArtifactAttempts(
 			ctx, item, toStatus, dispatchSkill, dispatchAgent, rubric,
 			execPayload, charter, binding, modelChoice, target.Model, config.ModelSourceStep,
-			runner, timeout, idle, rawSink, onEvent,
+			runner, timeout, idle, rawSink, onEvent, dlog,
 			outputContract, attemptPolicy, recordConsumed)
 		if attemptErr != nil {
 			invRes.Err = attemptErr
@@ -2705,6 +2698,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			Runner:      runner,
 			Sink:        rawSink,
 			OnEvent:     onEvent,
+			Log:         dlog,
 			StoryID:     item.ID,
 			Step:        toStatus,
 			Skill:       dispatchSkill,
@@ -2911,6 +2905,8 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item, spec verb.R
 	// inherited/creator session tiers apply, else cli-default.
 	retroModelResolvedInput, retroModelSource := g.selectModel(ctx, binding, item.ID, modelOverride, config.ModelSourceAgent)
 	binding.Model = retroModelResolvedInput
+	dlog, _, closeLog := g.openDispatchLog(retrospectAgent, item.ID, binding)
+	defer closeLog()
 	invRes := g.Invoke(ctx, InvokeRequest{
 		Binding:     binding,
 		Section:     retrospectAgent,
@@ -2921,6 +2917,8 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item, spec verb.R
 		Timeout:     retroTimeout,
 		IdleTimeout: retroIdle,
 		Runner:      runner,
+		OnEvent:     dlog.handler(),
+		Log:         dlog,
 		StoryID:     item.ID,
 		Step:        "retrospect",
 		Skill:       retrospectSkill,
@@ -3516,6 +3514,75 @@ func (g *Engine) dispatchSink(agent, itemID string) (io.Writer, string, func()) 
 	return f, path, func() { _ = f.Close() }
 }
 
+// dispatchLog is one dispatch's log under <data_dir>/logs/dispatch/: the run's
+// events as they arrive, and around them what the engine writes itself — the
+// input it sent before the run, a closing summary after it (sty_2b89feab).
+// Every line is scrubbed of the secrets resolved into the dispatch's
+// environment before it is written. A nil *dispatchLog writes nothing.
+type dispatchLog struct {
+	mu      sync.Mutex
+	w       io.Writer
+	secrets map[string]string
+}
+
+// openDispatchLog opens the log of agent's dispatch for itemID, scrubbing the
+// values binding resolved into its environment. With no log dir, or a file that
+// cannot be created, the log is nil and the dispatch runs unchanged. The closer
+// is never nil.
+func (g *Engine) openDispatchLog(agent, itemID string, binding config.AgentBinding) (*dispatchLog, string, func()) {
+	w, path, closeFn := g.dispatchSink(agent, itemID)
+	if w == nil {
+		return nil, "", func() {}
+	}
+	return &dispatchLog{w: w, secrets: g.scrubValues(binding.Env)}, path, closeFn
+}
+
+// addSecrets widens the scrub to env's values — the binding a secondary
+// failover runs under, or the reviewer env a binding without its own falls back to.
+func (l *dispatchLog) addSecrets(env map[string]string) {
+	if l == nil || len(env) == 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for k, v := range env {
+		if _, ok := l.secrets[k]; !ok {
+			l.secrets[k] = v
+		}
+	}
+}
+
+// write formats ev and appends it, scrubbed.
+func (l *dispatchLog) write(ev agentcli.Event) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	ev.Text = verb.RedactEnv(ev.Text, l.secrets)
+	ev.Error = verb.RedactEnv(ev.Error, l.secrets)
+	line := agentcli.RedactSecrets(verb.RedactEnv(agentcli.FormatEvent(ev), l.secrets))
+	_, _ = io.WriteString(l.w, line)
+}
+
+// handler is the OnEvent that writes the run's events to the log; nil for a nil log.
+func (l *dispatchLog) handler() agentcli.EventHandler {
+	if l == nil {
+		return nil
+	}
+	return l.write
+}
+
+// input writes one named block of what the dispatch was sent.
+func (l *dispatchLog) input(block, text string) {
+	l.write(agentcli.Event{Kind: agentcli.EventInput, Text: text, Meta: map[string]string{agentcli.EventMetaBlock: block}})
+}
+
+// summary closes the log with the run's progress and final answer.
+func (l *dispatchLog) summary(s dispatchSummary) {
+	l.write(agentcli.Event{Kind: agentcli.EventSummary, Text: s.String()})
+}
+
 // logExecutorRun appends a named-agent run's output (or failure) to
 // <data_dir>/logs/executor.log — the run log that makes an isolated executor's
 // work reviewable (sty_fd427546). Best-effort, like the reviewer log.
@@ -3733,6 +3800,8 @@ func (g *Engine) decideReviewer(ctx context.Context, item workitem.Item, toStatu
 // seat's stdout.
 func (g *Engine) invokeReviewerSeat(ctx context.Context, item workitem.Item, toStatus, skill string, prep reviewerPrep, seat reviewerSeat) InvokeResult {
 	defer closeSeat(seat)
+	dlog, _, closeLog := g.openDispatchLog(seat.section, item.ID, seat.binding)
+	defer closeLog()
 	return g.Invoke(ctx, InvokeRequest{
 		Binding:     seat.binding,
 		Section:     seat.section,
@@ -3744,6 +3813,8 @@ func (g *Engine) invokeReviewerSeat(ctx context.Context, item workitem.Item, toS
 		Timeout:     g.agentTimeout,
 		IdleTimeout: seat.idle,
 		Runner:      seat.runner,
+		OnEvent:     dlog.handler(),
+		Log:         dlog,
 		Attempts:    g.attempts,
 		StoryID:     item.ID,
 		Step:        toStatus,

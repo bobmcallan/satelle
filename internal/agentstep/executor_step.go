@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
-	"sync"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
@@ -110,20 +108,10 @@ func (g *Engine) PerformExecutorStep(ctx context.Context, item workitem.Item, st
 	if err != nil {
 		return verb.DispatchResult{}, fmt.Errorf("[executor]: invalid idle_timeout in .satelle/workflows/agents.toml: %w", err)
 	}
-	eventSink, sinkPath, closeSink := g.dispatchSink("executor", item.ID)
-	if closeSink != nil {
-		defer closeSink()
-	}
-	var sinkMu sync.Mutex
+	dlog, sinkPath, closeLog := g.openDispatchLog("executor", item.ID, binding)
+	defer closeLog()
 	trace := &runTrace{}
-	onEvent := trace.handler(func(ev agentcli.Event) {
-		if eventSink == nil {
-			return
-		}
-		sinkMu.Lock()
-		_, _ = io.WriteString(eventSink, agentcli.FormatEvent(ev))
-		sinkMu.Unlock()
-	})
+	onEvent := trace.handler(dlog.handler())
 	g.emitActivity(item.ID, "perform:"+step, 1, 1)
 	if sinkPath != "" {
 		g.emitProgress("performing step %s with the executor binding (may take several minutes)… live output: %s", step, sinkPath)
@@ -152,6 +140,7 @@ func (g *Engine) PerformExecutorStep(ctx context.Context, item workitem.Item, st
 		IdleTimeout: idle,
 		Runner:      runner,
 		OnEvent:     onEvent,
+		Log:         dlog,
 		StoryID:     item.ID,
 		Step:        step,
 		Skill:       skill,

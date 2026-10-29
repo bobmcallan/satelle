@@ -554,6 +554,7 @@ func docsResolver(a *app.App) func(ctx context.Context, itemID string) []agentst
 				Name:        d.Name,
 				Type:        d.Type,
 				Body:        d.Body,
+				Path:        d.Path,
 				Binary:      d.Binary,
 				ContentType: d.ContentType,
 				Size:        d.Size,
