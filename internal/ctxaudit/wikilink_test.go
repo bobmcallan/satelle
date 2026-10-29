@@ -68,6 +68,36 @@ func TestAuditWikilinksFindsDanglerAndPassesClean(t *testing.T) {
 	}
 }
 
+func TestAuditWikilinksSkipsConfigBundlesByDeclaredType(t *testing.T) {
+	const toml = "[[gate]]\nskill = \"x\"\n"
+	for _, c := range []struct {
+		name     string
+		file     string
+		docType  string
+		reported bool
+	}{
+		{"bundle-shaped name, not a bundle", "config-111111111111-222222222222.md", "plan", true},
+		{"other name, declared bundle", "bundle.md", "config-bundle", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			data := filepath.Join(t.TempDir(), ".satelle")
+			p := filepath.Join(data, "tasks", "tsk_y", c.file)
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			body := "---\nstory: tsk_y\ntype: " + c.docType + "\nname: n\n---\n\n" + toml
+			if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			probs := AuditWikilinks(data, nil)
+			got := len(probs) == 1 && strings.Contains(probs[0], c.file) && strings.Contains(probs[0], "[[gate]]")
+			if got != c.reported || (!c.reported && len(probs) != 0) {
+				t.Fatalf("reported = %v, want %v: %v", got, c.reported, probs)
+			}
+		})
+	}
+}
+
 func TestAuditWikilinksRepoAgnostic(t *testing.T) {
 	// Source must not hardcode concrete this-repo story ids (only the sty_/tsk_
 	// prefix filter, which is a universal id shape).

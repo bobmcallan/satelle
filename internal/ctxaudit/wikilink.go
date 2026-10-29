@@ -13,7 +13,9 @@
 // `[[` tests are excluded (target must start with an alphanumeric — character
 // classes like [[:space:]] do not match). Quoted code — fenced blocks and
 // inline spans — is masked before the scan: a doc that SHOWS `[[gate]]` is
-// naming a TOML array-of-tables header, not referring to a document.
+// naming a TOML array-of-tables header, not referring to a document. A
+// generated config bundle (frontmatter `type: config-bundle`) is skipped whole:
+// it is serialized substrate, TOML included, not authored prose.
 package ctxaudit
 
 import (
@@ -25,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/sessionconfig"
 )
 
 // WikiLinkRe matches markdown wikilinks [[target]] or [[target|label]] /
@@ -53,6 +56,10 @@ func AuditWikilinks(dataDir string, embedded []config.EmbeddedDefault) []string 
 			// Skip generated / reserved keep files? README is fine to scan.
 			body, rerr := os.ReadFile(path)
 			if rerr != nil {
+				return nil
+			}
+			// A config bundle is generated serialized substrate (TOML included), not authored prose.
+			if sessionconfig.IsBundle(body) {
 				return nil
 			}
 			rel, _ := filepath.Rel(dataDir, path)

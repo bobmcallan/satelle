@@ -107,6 +107,23 @@ func TestBundleRoundTripKeepsHeadingsAndRecomputesTheRecordedDigests(t *testing.
 	}
 }
 
+func TestIsBundleReadsTheDeclaredType(t *testing.T) {
+	bundle := `{"format":1,"files":[{"path":"workflows/default/step.toml","content":"[[gate]]\nskill = \"x\"\n"}]}`
+	for _, c := range []struct {
+		name string
+		file string
+		want bool
+	}{
+		{"render output", Render("sty_x", BundleName("a", "b"), "a", "b", []byte(bundle)), true},
+		{"no frontmatter", bundle + "\n", false},
+		{"another type", "---\nstory: sty_x\ntype: plan\nname: config-aaaaaaaaaaaa-bbbbbbbbbbbb\n---\n\n" + bundle + "\n", false},
+	} {
+		if got := IsBundle([]byte(c.file)); got != c.want {
+			t.Errorf("%s: IsBundle = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestParseRefusesAnUnsafePath(t *testing.T) {
 	for _, p := range []string{"../x", "skills/../../x", "/etc/x", "skills/x.local.md", "documents/n.md", "bare.md"} {
 		file := "---\nstory: s\ntype: config-bundle\nname: n\n---\n\n" + `{"format":1,"files":[{"path":"` + p + `","content":"a"}]}` + "\n"

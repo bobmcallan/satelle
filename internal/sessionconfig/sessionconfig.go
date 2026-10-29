@@ -258,6 +258,23 @@ func Render(storyID, name, substrateDigest, bindingsDigest string, bundle []byte
 		storyID, DocType, name, KeySubstrate, substrateDigest, KeyBindings, bindingsDigest, bundle)
 }
 
+// IsBundle reports whether file is a configuration bundle attachment: its
+// frontmatter declares `type: config-bundle`. The type, not the file name, is
+// the bundle's identity.
+func IsBundle(file []byte) bool {
+	lines, ok := docindex.Frontmatter(string(file))
+	if !ok {
+		return false
+	}
+	for _, line := range lines {
+		k, v, found := strings.Cut(line, ":")
+		if found && strings.TrimSpace(k) == "type" && strings.EqualFold(strings.TrimSpace(v), DocType) {
+			return true
+		}
+	}
+	return false
+}
+
 // Parse reads an attachment file written by Render and decodes its bundle
 // through filebundle (every path checked). The digests are recomputed from the
 // entries; Bundle.Verified says whether they match what the file recorded.
