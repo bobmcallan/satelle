@@ -148,7 +148,7 @@ func TestCheckAbsentWarningNamesTheResolvedWorkflowsDir(t *testing.T) {
 		DataDir:        "cfg/satelle",
 		SubstrateRoots: map[string]string{"workflows": "elsewhere"},
 	}
-	want := config.ResolveProcessAuthoredDirs(process, root)["workflows"]
+	want := config.ResolveAuthoredRoots(process, root, "").Dirs["workflows"]
 	if want == filepath.Join(dataDir, "workflows") {
 		t.Fatalf("fixture must relocate workflows, got %s", want)
 	}
@@ -180,7 +180,7 @@ func TestCheckReportsAnUnreadableRelocatedWorkflowsDir(t *testing.T) {
 		DataDir:        "cfg/satelle",
 		SubstrateRoots: map[string]string{"workflows": "elsewhere"},
 	}
-	wfPath := config.ResolveProcessAuthoredDirs(process, root)["workflows"]
+	wfPath := config.ResolveAuthoredRoots(process, root, "").Dirs["workflows"]
 	if wfPath == filepath.Join(dataDir, "workflows") {
 		t.Fatalf("fixture must relocate workflows, got %s", wfPath)
 	}

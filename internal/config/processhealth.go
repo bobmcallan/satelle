@@ -50,9 +50,10 @@ type ProcessFinding struct {
 
 // ProcessFindings classifies the workflows dir the process config resolves, with
 // docindex.ProbeDir — the one predicate every loader of that dir uses. It
-// returns nothing for a readable dir.
+// returns nothing for a readable dir. With a project tier that owns workflows,
+// the dir classified is the tier's: the repo's copy does not govern.
 func ProcessFindings(process Config, processRoot string) []ProcessFinding {
-	dir := ResolveProcessAuthoredDirs(process, processRoot)["workflows"]
+	dir := ResolveAuthoredRoots(process, processRoot, "").WorkflowsDir()
 	switch state, err := docindex.ProbeDir(dir); state {
 	case docindex.DirAbsent:
 		return []ProcessFinding{{Kind: ProcessAbsent, Path: dir}}
@@ -69,7 +70,7 @@ func ProcessFindings(process Config, processRoot string) []ProcessFinding {
 // (its process data dir exists) — a main tree, a zero-config tree, and a
 // worktree with no copy all report nothing.
 //
-// Every location comes from ResolveProcessAuthoredDirs / ResolveProcessConstitution
+// Every location comes from ResolveAuthoredRoots / ResolveProcessConstitution
 // resolved at processRoot, then re-anchored at invokingRoot; a path outside
 // processRoot (an absolute substrate root) is shared by both trees and is not
 // compared. It is cheap but not free, so callers run it only at the surfaces
@@ -86,7 +87,7 @@ func ProcessDivergence(invokingRoot, processRoot string, process Config) []Proce
 }
 
 // ProcessHashes maps every file of the authored process at processRoot — each
-// ResolveProcessAuthoredDirs dir and the ResolveProcessConstitution file — to its
+// ResolveAuthoredRoots repo dir and the ResolveProcessConstitution file — to its
 // SHA-256, keyed by a slash-separated path relative to processRoot. A location
 // outside processRoot (an absolute substrate root) is left out. It is the one
 // walk of the process: ProcessDivergence compares two of these maps, and a remote
@@ -99,7 +100,8 @@ func ProcessHashes(process Config, processRoot string) map[string]string {
 // re-anchored at anchor before it is read; the keys stay relative to processRoot.
 func hashesAt(process Config, processRoot, anchor string) map[string]string {
 	out := map[string]string{}
-	for _, dir := range ResolveProcessAuthoredDirs(process, processRoot) {
+	// The trees are compared: a project tier is not part of either tree.
+	for _, dir := range ResolveAuthoredRoots(process, processRoot, "").Dirs {
 		rel, ok := plainRelUnder(processRoot, dir)
 		if !ok {
 			continue

@@ -217,8 +217,8 @@ func OpenLoaded(loc config.Config, locPath string, proc config.Config, procRoot 
 	}
 	// One resolution feeds both the document index and the configuration stamp,
 	// so the stamp's paths are relative to the very roots the index scanned.
-	authored := config.ResolveProcessAuthoredDirs(proc, named)
-	st.DocIndex.SetRoots(authored)
+	authored := config.ResolveAuthoredRoots(proc, named, rt.Dir)
+	st.DocIndex.SetAuthoredRoots(authored.Index())
 	a := &App{
 		Config:         loc,
 		ProcessConfig:  proc,
@@ -238,10 +238,11 @@ func OpenLoaded(loc config.Config, locPath string, proc config.Config, procRoot 
 // configuration the run used, and keeps that configuration on the story
 // (internal/sessionconfig). The bindings are read from the layered agents
 // config on each stamp, with no cache, like the document set.
-func (a *App) installConfigStamp(authored map[string]string) {
+func (a *App) installConfigStamp(authored config.AuthoredRoots) {
 	src := &sessionconfig.Source{
 		Docs:  a.Store.DocIndex,
-		Roots: authored,
+		Roots: authored.Dirs,
+		Tier:  authored.Tier,
 		Bindings: func() ([]byte, error) {
 			eff, err := config.LoadEffectiveAgents(a.PlaneDir(), a.PlaneConfig().Vars)
 			if err != nil {
@@ -256,17 +257,17 @@ func (a *App) installConfigStamp(authored map[string]string) {
 	a.Store.Ledger.SetInvocationStamper(src.Stamp)
 }
 
-// AuthoredDirs returns the kind→dir map the directory monitor watches/indexes,
-// anchored at the process of record. A hand-built App with no ProcessRoot
-// keeps the location resolution it was given.
-func (a *App) AuthoredDirs() map[string]string {
+// AuthoredDirs returns the authored roots the directory monitor indexes,
+// anchored at the process of record, project tier included. A hand-built App
+// with no ProcessRoot keeps the location resolution it was given.
+func (a *App) AuthoredDirs() config.AuthoredRoots {
 	if a == nil {
-		return nil
+		return config.AuthoredRoots{}
 	}
 	if strings.TrimSpace(a.ProcessRoot) != "" {
-		return config.ResolveProcessAuthoredDirs(a.ProcessConfig, a.ProcessRoot)
+		return config.ResolveAuthoredRoots(a.ProcessConfig, a.ProcessRoot, a.RuntimeDir)
 	}
-	return a.Config.ResolveAuthoredDirs(a.RepoRoot)
+	return config.AuthoredRoots{Dirs: a.Config.ResolveAuthoredDirs(a.RepoRoot)}
 }
 
 // Close releases the database handle.

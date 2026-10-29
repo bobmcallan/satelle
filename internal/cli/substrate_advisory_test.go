@@ -29,10 +29,12 @@ func skillsMachine(t *testing.T, url string) *snapMachine {
 
 // engagingMachine adds a route whose in_progress step is performed by the
 // in-loop executor, so `story set --status in_progress` engages without
-// dispatching anything.
+// dispatching anything. The machine's team set is skills only, so the project
+// tier its deploy writes leaves the repo route and agents governing.
 func engagingMachine(t *testing.T, url string) *snapMachine {
 	t.Helper()
 	m := skillsMachine(t, url)
+	m.write("satelle.local.toml", "[team]\npaths = [\"skills/**\"]\n")
 	writeRoute(t, filepath.Join(m.repo, ".satelle", "workflows"),
 		`["*"]
 obligations = ["raised", "coded", "closed"]

@@ -77,16 +77,30 @@ type AgentLayers struct {
 	// repo writes no command or tools for is completed by each machine's own
 	// layer, and its grant can only be judged there.
 	MachineLayersExcluded bool
+	// ProjectTier is the project tier's agents.toml when it is the Repo layer
+	// (sty_8dedc0a4): the team owns agents.toml and the tier is present, so the
+	// repo's agents.toml and the workspace layer are not read. Empty otherwise.
+	ProjectTier string
 }
 
 // LoadAgentLayers is the ONE reader of the authored agents layers: every surface
 // that resolves or validates agents loads them here, so none can drop the local
 // layer. All three are read even when one fails; the returned error joins the
 // per-layer failures (nil when all loaded). An absent file is the zero layer.
+//
+// When the team owns agents.toml and the project tier is present, the tier's
+// file is the Repo layer and there is no Workspace layer: a seat or field
+// written only in the repo's copy or in agents.workspace.toml cannot govern.
+// agents.local.toml stays on top either way.
 func LoadAgentLayers(dataDir string) (AgentLayers, error) {
 	var l AgentLayers
-	l.Repo, l.RepoErr = LoadAgents(dataDir)
-	l.Workspace, l.WorkspaceErr = LoadWorkspaceAgents(dataDir)
+	if path, ok := ProjectTierAgentsPath(dataDir); ok {
+		l.ProjectTier = path
+		l.Repo, l.RepoErr = loadAgentsFile(path)
+	} else {
+		l.Repo, l.RepoErr = LoadAgents(dataDir)
+		l.Workspace, l.WorkspaceErr = LoadWorkspaceAgents(dataDir)
+	}
 	l.Local, l.LocalErr = LoadLocalAgents(dataDir)
 	return l, errors.Join(l.RepoErr, l.WorkspaceErr, l.LocalErr)
 }
@@ -1170,6 +1184,11 @@ func (a AgentsConfig) ExecutorBinding() AgentBinding {
 // zero-config bootstrap.
 func LoadAgents(dataDir string) (AgentsConfig, error) {
 	path, _ := AgentsPath(dataDir)
+	return loadAgentsFile(path)
+}
+
+// loadAgentsFile reads one agents.toml; an absent file is the zero layer.
+func loadAgentsFile(path string) (AgentsConfig, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

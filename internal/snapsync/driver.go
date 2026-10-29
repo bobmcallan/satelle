@@ -516,6 +516,10 @@ func (d *Driver) PlanPull(ctx context.Context, area string, local map[string]str
 	return &PullJob{Area: area, Version: version, Plan: PlanPull(base, rec, version, local, heads, set), base: base, remote: rec, heads: heads, set: set}, nil
 }
 
+// Snapshot is the hosted snapshot the job pulls: each path it names, with its
+// sha. A path it does not name was deleted from the area.
+func (j *PullJob) Snapshot() map[string]string { return j.remote.Files }
+
 // choose applies the job's choices to a plan, naming every path it refuses.
 func (j *PullJob) choose(plan *PullPlan) error {
 	paths := make([]string, 0, len(j.Choices))

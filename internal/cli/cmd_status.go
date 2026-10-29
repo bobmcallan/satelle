@@ -102,7 +102,7 @@ login: no network call, no sign-in needed, and never a credential.`,
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(w, "indexed %s\t%d  (%s)\n", kind, n, dirs[kind])
+				fmt.Fprintf(w, "indexed %s\t%d  (%s)\n", kind, n, dirs.Dirs[kind])
 			}
 			// Scaffold drift (sty_ac25b787): status is exempt from fail-closed refuse
 			// so it can report here. Clean when no harness scaffolding is deployed

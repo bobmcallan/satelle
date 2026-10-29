@@ -73,12 +73,20 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 	// index lags an authored edit, and validating right after an edit is exactly
 	// what an author does.
 	resolve := doctor.SkillResolver(dataDir)
-	dir := a.AuthoredDirs()[kind]
+	roots := a.AuthoredDirs()
+	dir := roots.Dirs[kind]
 	if kind == "tasks" {
 		// Tasks are authored substrate under DataDir — never RuntimeDir (sty_4660bbe1).
 		dir = filepath.Join(dataDir, "tasks")
 	}
-	validated, failed, exempt := validateAuthoredDir(out, kind, dir, nameFilter, resolve)
+	// With a project tier, the files the team owns are validated where they
+	// govern — the tier — and the repo's copies of them are not.
+	owned := func(fn string) bool { return roots.Owns(kind + "/" + fn) }
+	validated, failed, exempt := validateAuthoredFiles(out, kind, dir, nameFilter, resolve, owned)
+	if tierDir := roots.Index().TierDir(kind); tierDir != "" && kind != "tasks" {
+		v, f, e := validateAuthoredFiles(out, kind, tierDir, nameFilter, resolve, func(fn string) bool { return !owned(fn) })
+		validated, failed, exempt = validated+v, failed+f, exempt+e
+	}
 
 	// A default task is virtual — init writes no header for it — so a named check
 	// with no such file on disk validates the copy the binary ships. That is how the
@@ -250,6 +258,12 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 // moment it became TOML: `workflow validate` reported "validated 0" on a
 // perfectly good route, which reads as a clean pass (sty_81bb0dde).
 func validateAuthoredDir(out io.Writer, kind, dir, nameFilter string, resolve func(skill string) bool) (validated, failed, exempt int) {
+	return validateAuthoredFiles(out, kind, dir, nameFilter, resolve, nil)
+}
+
+// validateAuthoredFiles is validateAuthoredDir skipping every file name skip
+// reports; nil skips none.
+func validateAuthoredFiles(out io.Writer, kind, dir, nameFilter string, resolve func(skill string) bool, skip func(fn string) bool) (validated, failed, exempt int) {
 	// A dir that exists and cannot be read is a FAILURE, not an empty kind
 	// (sty_d6e209aa). For workflows it is the named message every surface prints:
 	// the embedded route would otherwise govern, and its gates are not the repo's.
@@ -267,7 +281,7 @@ func validateAuthoredDir(out io.Writer, kind, dir, nameFilter string, resolve fu
 	}
 	for _, e := range entries {
 		fn := e.Name()
-		if e.IsDir() || !docindex.Indexable(fn) {
+		if e.IsDir() || !docindex.Indexable(fn) || (skip != nil && skip(fn)) {
 			continue
 		}
 		if kind == "tasks" && !strings.HasPrefix(fn, "tsk_") {

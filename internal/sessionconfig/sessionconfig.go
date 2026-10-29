@@ -69,6 +69,12 @@ func short(d string) string {
 // kind→dir map the index was given (docindex SetRoots), so a disk document's
 // path is relative to its kind's resolved root. Items are sorted by path.
 func Collect(ctx context.Context, docs *docindex.Store, roots map[string]string) ([]Item, error) {
+	return CollectIn(ctx, docs, roots, "")
+}
+
+// CollectIn is Collect for an index that also reads a project tier: a document
+// under tier is named by its path there, which is already <kind>/<rel>.
+func CollectIn(ctx context.Context, docs *docindex.Store, roots map[string]string, tier string) ([]Item, error) {
 	if docs == nil {
 		return nil, errors.New("sessionconfig: no document index")
 	}
@@ -81,7 +87,7 @@ func Collect(ctx context.Context, docs *docindex.Store, roots map[string]string)
 		if d.Unreadable != "" || d.Kind == documentsKind {
 			continue
 		}
-		p := entryPath(d, roots)
+		p := entryPath(d, roots, tier)
 		if config.LocalOnlyPath(p) {
 			continue
 		}
@@ -95,9 +101,14 @@ func Collect(ctx context.Context, docs *docindex.Store, roots map[string]string)
 // text after "embedded:"; a disk document is its path under its kind's root,
 // prefixed with the kind, so data_dir and [substrate_roots] overrides give the
 // same path on every machine.
-func entryPath(d docindex.Doc, roots map[string]string) string {
+func entryPath(d docindex.Doc, roots map[string]string, tier string) string {
 	if rest, ok := strings.CutPrefix(d.Path, "embedded:"); ok {
 		return rest
+	}
+	if tier != "" {
+		if rel, err := filepath.Rel(tier, d.Path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return filepath.ToSlash(rel)
+		}
 	}
 	if root := roots[d.Kind]; root != "" {
 		if rel, err := filepath.Rel(root, d.Path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -168,6 +179,8 @@ var (
 type Source struct {
 	Docs  *docindex.Store
 	Roots map[string]string
+	// Tier is the project tier root the index also reads, or empty.
+	Tier string
 	// Bindings returns the canonical resolved-bindings JSON (BindingsJSON).
 	Bindings func() ([]byte, error)
 	// Has and Put default to DefaultHas and DefaultPut.
@@ -180,7 +193,7 @@ type Source struct {
 // Stamp is a ledger.InvocationStamper. It always returns both digests when they
 // can be computed; keeping the bundle is best-effort and reported through Warn.
 func (s *Source) Stamp(ctx context.Context, in ledger.AppendInput) (map[string]string, error) {
-	items, err := Collect(ctx, s.Docs, s.Roots)
+	items, err := CollectIn(ctx, s.Docs, s.Roots, s.Tier)
 	if err != nil {
 		return nil, err
 	}

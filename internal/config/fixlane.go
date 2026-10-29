@@ -122,13 +122,35 @@ func (c Config) substrateClasses(repoRoot string) FixLaneConfig {
 	// process of record. relUnder stays on the invoking root: re-anchoring it
 	// at main would drop every in-tree class. Paths outside the worktree are
 	// added as absolute globs.
-	extra := c.outOfTreeProcessClasses(repoRoot)
-	local.GateSkills = append(local.GateSkills, extra.GateSkills...)
-	local.Workflows = append(local.Workflows, extra.Workflows...)
-	local.Principles = append(local.Principles, extra.Principles...)
-	local.ReviewerRubrics = append(local.ReviewerRubrics, extra.ReviewerRubrics...)
-	local.RepoConfig = append(local.RepoConfig, extra.RepoConfig...)
+	for _, extra := range []FixLaneConfig{c.outOfTreeProcessClasses(repoRoot), c.projectTierClasses(repoRoot)} {
+		local.GateSkills = append(local.GateSkills, extra.GateSkills...)
+		local.Workflows = append(local.Workflows, extra.Workflows...)
+		local.Principles = append(local.Principles, extra.Principles...)
+		local.ReviewerRubrics = append(local.ReviewerRubrics, extra.ReviewerRubrics...)
+		local.RepoConfig = append(local.RepoConfig, extra.RepoConfig...)
+	}
 	return local
+}
+
+// projectTierClasses adds the project tier's copies of the substrate as absolute
+// globs: the tier is out of the tree, and it is what governs the paths the team
+// owns, so a lane may no more edit them there than in the tree.
+func (c Config) projectTierClasses(repoRoot string) FixLaneConfig {
+	proc, procRoot, _, err := LoadProcess(c, filepath.Join(repoRoot, DefaultDataDir, ConfigName))
+	if err != nil {
+		return FixLaneConfig{}
+	}
+	roots := ResolveAuthoredRoots(proc, procRoot, "")
+	if roots.Tier == "" {
+		return FixLaneConfig{}
+	}
+	idx := roots.Index()
+	return FixLaneConfig{
+		GateSkills:      absClass(repoRoot, idx.TierDir("skills"), true),
+		Workflows:       absClass(repoRoot, idx.TierDir("workflows"), true),
+		Principles:      absClass(repoRoot, idx.TierDir("principles"), true),
+		ReviewerRubrics: absClass(repoRoot, filepath.Join(roots.Tier, filepath.FromSlash(AgentsRel)), false),
+	}
 }
 
 func (c Config) substrateClassesInTree(repoRoot string) FixLaneConfig {
@@ -176,7 +198,7 @@ func (c Config) outOfTreeProcessClasses(repoRoot string) FixLaneConfig {
 	if err != nil || sameResolvedPath(procRoot, repoRoot) {
 		return FixLaneConfig{}
 	}
-	dirs := ResolveProcessAuthoredDirs(proc, procRoot)
+	dirs := ResolveAuthoredRoots(proc, procRoot, "").Dirs
 	data := ResolveProcessDataDir(proc, procRoot)
 	tree := func(abs string) []string {
 		return absClass(repoRoot, abs, true)

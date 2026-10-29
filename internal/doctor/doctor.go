@@ -121,17 +121,17 @@ func (o Opts) resolveDataDir() string {
 	return filepath.Join(o.RepoRoot, config.DefaultDataDir)
 }
 
-// workflowsDir is the authored workflows dir the process config resolves — the
-// same path the other loaders of it read, so a [substrate_roots] override is
-// honoured rather than assumed to be <data dir>/workflows. With no process config
-// it falls back to <data dir>/workflows.
-func (o Opts) workflowsDir(dataDir string) string {
+// authoredRoots is the authored roots the process config resolves — the same
+// owner the other loaders read, so a [substrate_roots] override and a project
+// tier are honoured rather than assumed to be <data dir>/<kind>. With no process
+// config it falls back to <data dir>/<kind> and that repo's tier.
+func (o Opts) authoredRoots(dataDir string) config.AuthoredRoots {
 	if o.Process != nil && strings.TrimSpace(o.ProcessRoot) != "" {
-		if d := config.ResolveProcessAuthoredDirs(*o.Process, o.ProcessRoot)["workflows"]; d != "" {
-			return d
+		if r := config.ResolveAuthoredRoots(*o.Process, o.ProcessRoot, ""); r.Dirs["workflows"] != "" {
+			return r
 		}
 	}
-	return filepath.Join(dataDir, "workflows")
+	return config.AuthoredRootsOf(dataDir)
 }
 
 // wiringConfig is the configuration BindingWiring resolves gate wiring from:
@@ -201,16 +201,18 @@ func Check(ctx context.Context, o Opts) Report {
 	// on-disk wildcard workflow legitimately overrides the embedded wildcard
 	// baseline, so feeding both to the ambiguity check would report every repo as
 	// misconfigured for doing the normal thing.
-	wfDir := o.workflowsDir(dataDir)
-	authored := WorkflowDocsAt(wfDir)
-	governing := GoverningWorkflowsAt(wfDir)
-	resolve := SkillResolver(dataDir)
+	roots := o.authoredRoots(dataDir)
+	wfDir := roots.WorkflowsDir()
+	authored := WorkflowDocsIn(roots)
+	governing := governingFrom(authored)
+	skillBody := SkillBodyResolver(dataDir)
+	resolve := func(skill string) bool { _, ok := skillBody(skill); return ok }
 	vars := RepoVars(dataDir)
 
 	// Skill BODIES ride along: a check that judges a deployed repo can see whether
 	// a reviewer's rubric shells `satelle`, and so whether a shell grant is live
 	// rather than idle (sty_338a53f8).
-	av := agentvalidate.ValidateEffectiveLayered(layers, global, vars, governing, SkillBodyResolver(dataDir))
+	av := agentvalidate.ValidateEffectiveLayered(layers, global, vars, governing, skillBody)
 	rep.Findings = append(rep.Findings, av.Findings...)
 	rep.Grants = av.Grants
 	rep.Findings = append(rep.Findings, BindingWiring(o.RepoRoot, o.wiringConfig(dataDir), av.Grants)...)
@@ -245,6 +247,9 @@ func Check(ctx context.Context, o Opts) Report {
 				About(o.RepoRoot).
 				WithRemediation("make the change in the main tree (it governs), or discard the worktree's copy"))
 		}
+	}
+	if o.Process != nil && strings.TrimSpace(o.ProcessRoot) != "" {
+		rep.Findings = append(rep.Findings, CheckProjectTier(*o.Process, o.ProcessRoot)...)
 	}
 	rep.Findings = dedupeFindings(rep.Findings)
 
@@ -541,7 +546,34 @@ func envKeys(agents config.AgentsConfig, vars map[string]string) map[string][]En
 // reads it as "no workflows" and falls back to the embedded route
 // (sty_d6e209aa). An absent dir stays nil.
 func WorkflowDocs(dataDir string) []docindex.Doc {
-	return WorkflowDocsAt(filepath.Join(dataDir, "workflows"))
+	return WorkflowDocsIn(config.AuthoredRootsOf(dataDir))
+}
+
+// WorkflowDocsIn is WorkflowDocs over authored roots: with a project tier, the
+// tier's workflows replace the repo's for every path the team owns.
+func WorkflowDocsIn(r config.AuthoredRoots) []docindex.Doc {
+	repo := WorkflowDocsAt(r.Dirs["workflows"])
+	if strings.TrimSpace(r.Tier) == "" {
+		return repo
+	}
+	tier := WorkflowDocsAt(r.Index().TierDir("workflows"))
+	for _, set := range [][]docindex.Doc{repo, tier} {
+		if _, _, unreadable := docindex.UnreadableOf(set); unreadable {
+			return set
+		}
+	}
+	var out []docindex.Doc
+	for _, d := range repo {
+		if !r.Owns("workflows/" + filepath.Base(d.Path)) {
+			out = append(out, d)
+		}
+	}
+	for _, d := range tier {
+		if r.Owns("workflows/" + filepath.Base(d.Path)) {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // WorkflowDocsAt is WorkflowDocs for an explicit workflows dir — the one the
@@ -595,13 +627,17 @@ func WorkflowDocsAt(dir string) []docindex.Doc {
 // same union is what the resolution surfaces see once the substrate is indexed;
 // doctor computes it store-free so it also works before the first reindex.
 func GoverningWorkflows(dataDir string) []docindex.Doc {
-	return GoverningWorkflowsAt(filepath.Join(dataDir, "workflows"))
+	return governingFrom(WorkflowDocs(dataDir))
 }
 
 // GoverningWorkflowsAt is GoverningWorkflows for an explicit workflows dir; see
 // WorkflowDocsAt.
 func GoverningWorkflowsAt(dir string) []docindex.Doc {
-	docs := WorkflowDocsAt(dir)
+	return governingFrom(WorkflowDocsAt(dir))
+}
+
+// governingFrom is the authored docs plus the embedded workflows none shadows.
+func governingFrom(docs []docindex.Doc) []docindex.Doc {
 	// An unreadable authored dir governs nothing: overlaying the embedded
 	// workflows here would make every consumer judge a route that is not the
 	// repository's as if it were (sty_d6e209aa).
@@ -635,6 +671,12 @@ func GoverningWorkflowsAt(dir string) []docindex.Doc {
 // SkillResolver is derived from it, so "does this skill resolve" and "what does
 // it say" can never answer from different sources (sty_338a53f8).
 func SkillBodyResolver(dataDir string) func(string) (string, bool) {
+	return SkillBodyResolverIn(config.AuthoredRootsOf(dataDir))
+}
+
+// SkillBodyResolverIn is SkillBodyResolver over authored roots: a skill the
+// team owns reads from the project tier, never from the repo's copy.
+func SkillBodyResolverIn(r config.AuthoredRoots) func(string) (string, bool) {
 	emb := map[string]string{}
 	for _, d := range config.EmbeddedDefaults() {
 		if d.Kind == "skills" {
@@ -642,7 +684,11 @@ func SkillBodyResolver(dataDir string) func(string) (string, bool) {
 		}
 	}
 	return func(skill string) (string, bool) {
-		if b, err := os.ReadFile(filepath.Join(dataDir, "skills", skill+".md")); err == nil {
+		path := filepath.Join(r.Dirs["skills"], skill+".md")
+		if rel := "skills/" + skill + ".md"; r.Owns(rel) {
+			path = filepath.Join(r.Tier, filepath.FromSlash(rel))
+		}
+		if b, err := os.ReadFile(path); err == nil {
 			return string(b), true
 		}
 		body, ok := emb[skill]

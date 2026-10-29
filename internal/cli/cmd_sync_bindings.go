@@ -128,6 +128,9 @@ func runSyncBindingsPush(cmd *cobra.Command, serverArg, workspaceArg string, dry
 		return err
 	}
 	out := cmd.OutOrStdout()
+	if tier, owned := config.ProjectTierAgentsPath(dataDir); owned {
+		return fmt.Errorf("sync bindings push: %s is team-owned and resolves from the project tier (%s) — change it through the project's config store (satelle sync config push), not the team bindings", config.AgentsRel, tier)
+	}
 	server, team, ok := bindingsTarget(cfg, serverArg, workspaceArg)
 	if !ok {
 		fmt.Fprintln(out, "sync bindings: nothing to do — this repo is not bound to a team workspace (no hosted call).")
@@ -183,6 +186,10 @@ func runSyncBindingsPull(cmd *cobra.Command, serverArg, workspaceArg string) err
 		return err
 	}
 	out := cmd.OutOrStdout()
+	if tier, owned := config.ProjectTierAgentsPath(dataDir); owned {
+		fmt.Fprintf(out, "sync bindings: skipped — %s is team-owned and resolves from the project tier (%s); the team bindings do not apply (no hosted call).\n", config.AgentsRel, tier)
+		return nil
+	}
 	server, team, ok := bindingsTarget(cfg, serverArg, workspaceArg)
 	if !ok {
 		fmt.Fprintln(out, "sync bindings: nothing to do — this repo is not bound to a team workspace (no hosted call).")

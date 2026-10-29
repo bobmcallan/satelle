@@ -129,6 +129,9 @@ type Config struct {
 	// defaults; satelle.local.toml overrides per-area for a single developer, the
 	// same per-key overlay merge as Vars (sty_a2d2e057).
 	Sync SyncTable `toml:"sync"`
+	// Team declares the team-owned paths a bound repo resolves from its project
+	// tier (see TeamConfig).
+	Team TeamConfig `toml:"team"`
 	// Tags holds the optional controlled-vocabulary table for work-item tags
 	// (sty_034d843c / epic:surface-scoped-steps). Declared namespaces reject
 	// unknown values at story/task create and set; absent/empty means every tag
@@ -1243,6 +1246,9 @@ func Load(explicitPath string) (Config, string, error) {
 		return Config{}, path, err
 	}
 	if err := validateHarness(cfg, path); err != nil {
+		return Config{}, path, err
+	}
+	if err := validateTeam(cfg, path); err != nil {
 		return Config{}, path, err
 	}
 	return cfg, path, nil

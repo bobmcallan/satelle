@@ -82,21 +82,25 @@ func Migrate(db *sql.DB) error {
 type Store struct {
 	db       *sql.DB
 	defaults []Doc // embedded canonical defaults, normalised; keyed by (Kind, Name)
-	// roots is the authored kind→dir map. When set, List("workflows")
-	// best-effort Syncs that dir first so a corrected file is visible to
+	// roots is where each authored kind is read from. When set, List("workflows")
+	// best-effort Syncs that kind first so a corrected file is visible to
 	// gating without a manual reindex (sty_5b88aa1b).
-	roots map[string]string
+	roots Roots
 }
 
 // New returns a Store bound to db.
 func New(db *sql.DB) *Store { return &Store{db: db} }
 
 // SetRoots records the authored-dir map used by List to refresh workflows.
-func (s *Store) SetRoots(dirs map[string]string) {
+func (s *Store) SetRoots(dirs map[string]string) { s.SetAuthoredRoots(DirRoots(dirs)) }
+
+// SetAuthoredRoots records the authored roots, project tier included, used by
+// List to refresh workflows.
+func (s *Store) SetAuthoredRoots(r Roots) {
 	if s == nil {
 		return
 	}
-	s.roots = dirs
+	s.roots = r
 }
 
 // SetDefaults installs the embedded canonical defaults overlaid under the disk
@@ -149,27 +153,41 @@ type DocRef struct {
 // that disappeared. A missing dir is not an error — its rows are pruned (the
 // kind simply has no authored content yet).
 func (s *Store) Sync(ctx context.Context, dirs map[string]string, now time.Time) (SyncResult, error) {
+	return s.SyncRoots(ctx, DirRoots(dirs), now)
+}
+
+// SyncRoots is Sync over Roots: for each kind it indexes the repo files no team
+// path owns and the project tier's files one does, and prunes every other row —
+// so a repo copy of a team-owned file never enters the index.
+func (s *Store) SyncRoots(ctx context.Context, roots Roots, now time.Time) (SyncResult, error) {
 	if now.IsZero() {
 		now = time.Now()
 	}
 	now = now.UTC()
+	dirs := roots.Dirs
 	var res SyncResult
 	for _, kind := range sortedKeys(dirs) {
 		dir := dirs[kind]
+		tierDir := roots.TierDir(kind)
 		// Documents are normalised to the OKF standard BEFORE the skip-unchanged
 		// check, so a frontmatter-less or type-less concept file is back-filled
 		// with OKF frontmatter (required `type` + recommended fields) even when it
 		// was indexed by an earlier build. Idempotent; reserved index.md/log.md and
 		// already-conformant docs are left untouched.
-		if kind == "documents" {
-			normalizeOKFDir(dir)
-		} else if t := authoredType(kind); t != "" {
-			// Authored substrate (skills/workflows/principles) is normalised to the
-			// OKF `type` key BEFORE the skip-unchanged check, migrating a legacy
-			// `kind:` and back-filling a missing one — idempotently, in place.
-			normalizeTypeDir(dir, t)
+		for _, d := range []string{dir, tierDir} {
+			if d == "" {
+				continue
+			}
+			if kind == "documents" {
+				normalizeOKFDir(d)
+			} else if t := authoredType(kind); t != "" {
+				// Authored substrate (skills/workflows/principles) is normalised to the
+				// OKF `type` key BEFORE the skip-unchanged check, migrating a legacy
+				// `kind:` and back-filling a missing one — idempotently, in place.
+				normalizeTypeDir(d, t)
+			}
 		}
-		onDisk, err := walkMarkdown(dir)
+		onDisk, err := roots.kindFiles(kind)
 		if err != nil {
 			return res, fmt.Errorf("docindex: scan %s: %w", dir, err)
 		}
@@ -249,20 +267,20 @@ func (s *Store) Watch(ctx context.Context, dirs map[string]string, interval time
 func (s *Store) List(ctx context.Context, kind string) ([]Doc, error) {
 	// Best-effort: a workflows List is what every gating path reads. Refresh
 	// that kind from disk so a corrected done.toml is visible without reindex.
-	if strings.TrimSpace(kind) == "workflows" && s.roots != nil {
-		if dir := strings.TrimSpace(s.roots["workflows"]); dir != "" {
+	if strings.TrimSpace(kind) == "workflows" && s.roots.Dirs != nil {
+		if dir := strings.TrimSpace(s.roots.Dirs["workflows"]); dir != "" {
 			// An unreadable workflows dir is an authored process that exists and
 			// cannot be read — never an absent one. Return ONLY the sentinel: no
 			// stale index rows and no embedded overlay, so no precedence rule can
 			// silently govern by the binary's default (sty_d6e209aa).
-			if state, perr := ProbeDir(dir); state == DirUnreadable {
-				return []Doc{UnreadableDoc("workflows", dir, perr)}, nil
+			if bad, perr, ok := s.roots.probeUnreadable("workflows"); ok {
+				return []Doc{UnreadableDoc("workflows", bad, perr)}, nil
 			}
 			// A file or subdirectory inside a readable dir that cannot be read is
 			// the same fact one level down: the authored process cannot be seen,
 			// so it must not be silently replaced by the embedded half of that
 			// name. Any other Sync error (the index itself) stays best-effort.
-			_, serr := s.Sync(ctx, map[string]string{"workflows": dir}, time.Now())
+			_, serr := s.SyncRoots(ctx, s.roots.Only("workflows"), time.Now())
 			var rerr *ReadError
 			if errors.As(serr, &rerr) {
 				return []Doc{UnreadableDoc("workflows", rerr.Path, rerr.Err)}, nil
@@ -354,13 +372,19 @@ func overlayDefaults(disk, defaults []Doc, kind string) []Doc {
 // cannot be seen is never silently replaced by the binary's default
 // (sty_d6e209aa). An absent or empty dir yields the defaults alone.
 func ReadWorkflowDocs(dir string, defaults []Doc) []Doc {
-	dir = strings.TrimSpace(dir)
+	return ReadWorkflowDocsIn(DirRoots(map[string]string{"workflows": dir}), defaults)
+}
+
+// ReadWorkflowDocsIn is ReadWorkflowDocs over Roots, so a project tier's
+// workflows replace the repo's for every path the team owns.
+func ReadWorkflowDocsIn(roots Roots, defaults []Doc) []Doc {
+	dir := strings.TrimSpace(roots.Dirs["workflows"])
 	disk := []Doc{}
 	if dir != "" {
-		if state, perr := ProbeDir(dir); state == DirUnreadable {
-			return []Doc{UnreadableDoc("workflows", dir, perr)}
+		if bad, perr, ok := roots.probeUnreadable("workflows"); ok {
+			return []Doc{UnreadableDoc("workflows", bad, perr)}
 		}
-		files, err := walkMarkdown(dir)
+		files, err := roots.kindFiles("workflows")
 		if err != nil {
 			return []Doc{unreadableFrom(dir, err)}
 		}

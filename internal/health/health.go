@@ -103,6 +103,12 @@ const (
 	IDProcessAbsent     = "process.absent"     // the authored workflows dir is absent; the embedded backstop governs
 	IDProcessDivergent  = "process.divergent"  // a linked worktree's own copy of the process differs from the main tree's
 
+	// The project tier (sty_8dedc0a4): a bound repo's team-owned paths resolve
+	// from the project's deployed version, not the tree.
+	IDTeamTreeDiffers   = "team.tree_differs"   // a team-owned path in the tree differs from the project tier, which governs
+	IDTeamInitOwned     = "team.init_owned"     // a [team] paths glob names a file satelle init owns; it stays with init
+	IDTeamLiteralScript = "team.literal_script" // substrate names a team-owned script by its tree path, not `satelle team path`
+
 	// Deployment.
 	IDScaffoldStale   = "scaffold.stale"   // deployed harness scaffolding differs from the binary's canonical form
 	IDScaffoldMissing = "scaffold.missing" // canonical harness scaffolding is absent

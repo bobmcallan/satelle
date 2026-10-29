@@ -295,7 +295,11 @@ func TestShippedChangelogMarksDOTRetirement(t *testing.T) {
 // Breaking` marker exists to tell the repos below it. Only 0.0.761 declares
 // `init-heals:` (it removes a config key init deletes itself), so every stamp
 // below it is refused with init as the heal; the earlier releases' migrations
-// are manual, and are named in that refusal:
+// are manual, and are named in that refusal. A stamp at or after 0.0.761 but
+// below a later manual release is warned, not refused:
+//
+//   - 0.0.793, team-owned paths govern from the project tier (sty_8dedc0a4).
+//     Manual: publish or move local edits; init cannot do either.
 //
 //   - 0.0.761, location holds removed from the client (sty_642275eb). Healed:
 //     `satelle init` deletes the retired [sync] hold_stale_after key.
@@ -337,29 +341,32 @@ func TestShippedChangelogSparesCurrentRepos(t *testing.T) {
 		deployed string
 		refused  bool
 		why      string
+		warned   bool
 	}{
-		{"0.0.380", true, "predates the DOT retirement — already broken, must be told"},
-		{"0.0.385", true, "converted off DOT, but its route source is still markdown"},
-		{"0.0.395", true, "same — every pre-TOML stamp is warned across 0.0.401"},
-		{"0.0.401", true, "converted to TOML, but still predates the harness removal at 0.0.568"},
-		{"0.0.567", true, "the release just before the harness removal"},
-		{"0.0.568", true, "stamped at the harness removal, but predates reviewer isolation at 0.0.575"},
-		{"0.0.574", true, "the release just before reviewer isolation"},
-		{"0.0.575", true, "stamped at reviewer isolation, but predates the estimate flag removal at 0.0.607"},
-		{"0.0.576", true, "past reviewer isolation, but still predates 0.0.607"},
-		{"0.0.606", true, "the release just before the estimate flag removal"},
-		{"0.0.607", true, "stamped at the estimate flag removal, but predates the push check at 0.0.665"},
-		{"0.0.608", true, "past 0.0.607, but still predates 0.0.665"},
-		{"0.0.664", true, "the release just before the push check"},
-		{"0.0.665", true, "stamped at the push check, but predates the cloud table removal at 0.0.676"},
-		{"0.0.675", true, "the release just before the cloud table removal"},
-		{"0.0.676", true, "stamped at the cloud table removal, but predates the pattern syntax at 0.0.678"},
-		{"0.0.677", true, "the release just before the pattern syntax"},
-		{"0.0.678", true, "stamped at the pattern syntax, but predates the location-hold removal at 0.0.761"},
-		{"0.0.759", true, "predates the location-hold removal"},
-		{"0.0.760", true, "the release just before the location-hold removal — released without it, so it must be refused until init"},
-		{"0.0.761", false, "stamped AT the newest Breaking release"},
-		{"0.0.762", false, "past it"},
+		{"0.0.380", true, "predates the DOT retirement — already broken, must be told", false},
+		{"0.0.385", true, "converted off DOT, but its route source is still markdown", false},
+		{"0.0.395", true, "same — every pre-TOML stamp is warned across 0.0.401", false},
+		{"0.0.401", true, "converted to TOML, but still predates the harness removal at 0.0.568", false},
+		{"0.0.567", true, "the release just before the harness removal", false},
+		{"0.0.568", true, "stamped at the harness removal, but predates reviewer isolation at 0.0.575", false},
+		{"0.0.574", true, "the release just before reviewer isolation", false},
+		{"0.0.575", true, "stamped at reviewer isolation, but predates the estimate flag removal at 0.0.607", false},
+		{"0.0.576", true, "past reviewer isolation, but still predates 0.0.607", false},
+		{"0.0.606", true, "the release just before the estimate flag removal", false},
+		{"0.0.607", true, "stamped at the estimate flag removal, but predates the push check at 0.0.665", false},
+		{"0.0.608", true, "past 0.0.607, but still predates 0.0.665", false},
+		{"0.0.664", true, "the release just before the push check", false},
+		{"0.0.665", true, "stamped at the push check, but predates the cloud table removal at 0.0.676", false},
+		{"0.0.675", true, "the release just before the cloud table removal", false},
+		{"0.0.676", true, "stamped at the cloud table removal, but predates the pattern syntax at 0.0.678", false},
+		{"0.0.677", true, "the release just before the pattern syntax", false},
+		{"0.0.678", true, "stamped at the pattern syntax, but predates the location-hold removal at 0.0.761", false},
+		{"0.0.759", true, "predates the location-hold removal", false},
+		{"0.0.760", true, "the release just before the location-hold removal — released without it, so it must be refused until init", false},
+		{"0.0.761", false, "stamped at the location-hold removal, but predates the manual project tier at 0.0.793", true},
+		{"0.0.792", false, "the release just before the project tier", true},
+		{"0.0.793", false, "stamped AT the newest Breaking release", false},
+		{"0.0.794", false, "past it", false},
 	}
 	for _, c := range cases {
 		entries, err := verb.ChangelogRange(c.deployed, future)
@@ -367,8 +374,14 @@ func TestShippedChangelogSparesCurrentRepos(t *testing.T) {
 			t.Fatal(err)
 		}
 		bw, derr := breakingDrift(c.deployed, future, entries)
-		if bw != nil {
+		if c.refused && bw != nil {
 			t.Errorf("stamp %s (%s): a range with an init-heals release refuses, never warns:\n%s", c.deployed, c.why, bw.Text)
+		}
+		if c.warned && (bw == nil || bw.Version != "0.0.793") {
+			t.Errorf("stamp %s (%s): want a warning across the manual 0.0.793, got %+v", c.deployed, c.why, bw)
+		}
+		if !c.refused && !c.warned && bw != nil {
+			t.Errorf("stamp %s (%s): must be quiet:\n%s", c.deployed, c.why, bw.Text)
 		}
 		if c.refused && (derr == nil || !strings.Contains(derr.Error(), "Run `satelle init` to heal.")) {
 			t.Errorf("stamp %s (%s): want a refusal naming `satelle init` as the heal, got %v", c.deployed, c.why, derr)

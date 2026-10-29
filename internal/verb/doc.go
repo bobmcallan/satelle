@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/config"
 )
 
 func init() {
@@ -87,11 +89,11 @@ func docGet(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	return json.Marshal(doc)
 }
 
-// docSyncReq carries the kind→dir map to sync. The CLI supplies it from the
-// resolved config (substrate roots); a web caller would do the same.
-type docSyncReq struct {
-	Dirs map[string]string `json:"dirs"`
-}
+// docSyncReq carries the authored roots to sync: the kind→dir map and, in a
+// repo with a project tier, the tier and its team globs. The CLI supplies it
+// from the resolved config (config.ResolveAuthoredRoots); a web caller would do
+// the same.
+type docSyncReq = config.AuthoredRoots
 
 func docSync(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	store, err := requireDocIndex()
@@ -102,7 +104,7 @@ func docSync(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) 
 	if err := decode(raw, &req); err != nil {
 		return nil, err
 	}
-	res, err := store.Sync(ctx, req.Dirs, time.Now())
+	res, err := store.SyncRoots(ctx, req.Index(), time.Now())
 	if err != nil {
 		return nil, err
 	}

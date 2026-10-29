@@ -1,3 +1,17 @@
+## [0.0.793] - 2026-10-30
+
+### Breaking
+- **In a repo bound to a project whose hosted store holds substrate, team-owned paths govern from the project's deployed version, not from the in-tree copy.** The team-owned set is `[team] paths` in `satelle.toml`: globs relative to `.satelle/`, by default `workflows/agents.toml`, `workflows/**` and `skills/**`. `satelle sync config deploy` writes the deployed version's team-owned files to the project tier, `<runtime>/project-tier/`, and every read of workflows, skills, agents and the other authored kinds takes them from there. A repo file a team glob matches no longer governs, including a file that exists only in the tree. Deploy still writes the tree copy, but that copy is ignored. For a team-owned `agents.toml`, the tier file replaces the repo `agents.toml`, `agents.workspace.toml` is ignored, `sync bindings push` refuses to publish it, naming the project tier, and `sync bindings pull` (and bare `satelle sync`) skips writing `agents.workspace.toml`. `agents.local.toml` and `satelle.local.toml` still override the tier, and every settings key other than `[team]` still comes from the repo `satelle.toml`. `[team] paths` can name files outside the config sync areas, such as `scripts/*.sh` and `hooks/*`. Push carries them, and deploy writes them to the tier; files `satelle init` writes, such as `hooks/satelle-hook.sh`, are never team-owned. `satelle team path <rel>` prints where a `.satelle/`-relative path resolves, so substrate runs a team script as `"$(satelle team path scripts/<name>)"`. An unbound repo, and a bound project whose deployed version holds no team-owned file, resolve as before. `satelle init` does not migrate this, because it cannot publish or preserve a local edit:
+  - To see what differs, run `satelle doctor`. It reports each tree copy that differs from the tier (`team.tree_differs`), each init-written file a team glob names (`team.init_owned`), and each substrate file that runs a team script by its literal `.satelle/` path (`team.literal_script`).
+  - To keep a local agents or settings edit, move the keys into `agents.local.toml` or `satelle.local.toml`.
+  - To make a tree edit the team version, run `satelle sync config push && satelle sync config deploy`.
+  - To refresh the tier, run `satelle sync config deploy`. (sty_8dedc0a4)
+
+## [serve-v0.0.238] - 2026-10-30
+
+### Changed
+- The service binary embeds the project-tier resolution of team-owned workflows, skills and agents. (sty_8dedc0a4)
+
 ## [0.0.792] - 2026-10-30
 
 ### Fixed

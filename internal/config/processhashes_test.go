@@ -31,7 +31,7 @@ func findingPaths(fs []ProcessFinding) map[string]string {
 func TestProcessHashesAndDiffTreeHashes(t *testing.T) {
 	root := t.TempDir()
 	var cfg Config
-	dirs := ResolveProcessAuthoredDirs(cfg, root)
+	dirs := ResolveAuthoredRoots(cfg, root, "").Dirs
 	skill := filepath.Join(dirs["skills"], "plan.md")
 	principle := filepath.Join(dirs["principles"], "p.md")
 	constitution := ResolveProcessConstitution(cfg, root)

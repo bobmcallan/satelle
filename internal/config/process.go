@@ -94,13 +94,6 @@ func ResolveProcessDataDir(process Config, processRoot string) string {
 	return process.ResolveDataDir(processRoot)
 }
 
-// ResolveProcessAuthoredDirs is ResolveAuthoredDirs for the process-of-record
-// config, anchored at the process root. A relative substrate root is joined
-// to that root; an absolute one passes through.
-func ResolveProcessAuthoredDirs(process Config, processRoot string) map[string]string {
-	return process.ResolveAuthoredDirs(processRoot)
-}
-
 // ResolveProcessConstitution is ResolveConstitution for the process-of-record
 // config, anchored at the process root.
 func ResolveProcessConstitution(process Config, processRoot string) string {

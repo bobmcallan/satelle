@@ -361,7 +361,78 @@ func ConfigFiles(cfg Config, repoRoot string, ign Ignore) (Bundle, error) {
 		}
 		out = append(out, files...)
 	}
-	return assemble(out, ign), nil
+	extra, err := teamExtraFiles(cfg, repoRoot)
+	if err != nil {
+		return Bundle{}, err
+	}
+	return assemble(append(out, extra...), ign), nil
+}
+
+// TeamArea labels the team-owned files no config area holds ([team] paths such
+// as scripts/*.sh or hooks/*, sty_8dedc0a4). They ride the project's config push
+// as plain files, outside every area's snapshot.
+const TeamArea = "team"
+
+// teamExtraFiles walks the repo's [team] paths for the files no config area
+// owns. The [team] table is settings, so they are pushed when the settings area
+// is; init-owned and .local files are never team-owned (TeamSet.Owns).
+func teamExtraFiles(cfg Config, repoRoot string) ([]ConfigFile, error) {
+	scope, err := ScopeFor(cfg, "settings")
+	if err != nil {
+		return nil, fmt.Errorf("sync area %q: %w", "settings", err)
+	}
+	if scope == LocalScope {
+		return nil, nil
+	}
+	team := NewTeamSet(cfg.Team.Paths)
+	dataDir := cfg.ResolveDataDir(repoRoot)
+	seen := map[string]bool{}
+	var out []ConfigFile
+	for _, g := range team.Globs() {
+		root := filepath.Join(dataDir, filepath.FromSlash(literalGlobPrefix(g)))
+		walkErr := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				if os.IsNotExist(err) && p == root {
+					return nil
+				}
+				return err
+			}
+			if !d.Type().IsRegular() {
+				return nil
+			}
+			rel, rerr := filepath.Rel(dataDir, p)
+			if rerr != nil {
+				return rerr
+			}
+			rel = filepath.ToSlash(rel)
+			if seen[rel] || isReservedView(filepath.Base(rel)) || !team.Owns(rel) || SyncAreaOf(cfg, repoRoot, rel, Ignore{}) != "" {
+				return nil
+			}
+			seen[rel] = true
+			cf, ok, rerr := readConfigFile(TeamArea, p, rel, scope)
+			if rerr == nil && ok {
+				out = append(out, cf)
+			}
+			return rerr
+		})
+		if walkErr != nil {
+			return nil, fmt.Errorf("sync [team] paths %q: %w", g, walkErr)
+		}
+	}
+	return out, nil
+}
+
+// literalGlobPrefix is the leading segments of a glob before its first
+// wildcard segment: the one dir (or file) a walk for it needs to visit.
+func literalGlobPrefix(g string) string {
+	var keep []string
+	for _, seg := range strings.Split(g, "/") {
+		if strings.ContainsAny(seg, "*?[\\") {
+			break
+		}
+		keep = append(keep, seg)
+	}
+	return strings.Join(keep, "/")
 }
 
 // DocumentFiles walks the documents area under repoRoot with the same scope/

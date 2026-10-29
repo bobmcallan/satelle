@@ -62,7 +62,7 @@ starts serve loses nothing if these three paths fire.`,
 // story for each changed doc that fails its structure reviewer.
 func reindexSubstrate(cmd *cobra.Command, a *app.App, validate bool) error {
 	// Sync through the verb seam (CLI and web refresh via the same path).
-	body, _ := json.Marshal(map[string]any{"dirs": a.AuthoredDirs()})
+	body, _ := json.Marshal(a.AuthoredDirs())
 	resp, err := verb.Dispatch(cmd.Context(), "doc-sync", body)
 	if err != nil {
 		return err

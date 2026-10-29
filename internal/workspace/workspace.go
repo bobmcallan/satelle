@@ -127,8 +127,8 @@ func LoadRepoReadOnly(ctx context.Context, root string, ids ...string) (RepoView
 	if err != nil {
 		return rv, fmt.Errorf("load process: %w", err)
 	}
-	dir := config.ResolveProcessAuthoredDirs(process, processRoot)["workflows"]
-	rv.Workflows = docindex.ReadWorkflowDocs(dir, store.EmbeddedDefaultDocs())
+	roots := config.ResolveAuthoredRoots(process, processRoot, "")
+	rv.Workflows = docindex.ReadWorkflowDocsIn(roots.Index(), store.EmbeddedDefaultDocs())
 	if path, reason, bad := docindex.UnreadableOf(rv.Workflows); bad {
 		return rv, fmt.Errorf("workflows %s unreadable: %s", path, reason)
 	}

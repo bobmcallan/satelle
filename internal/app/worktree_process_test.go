@@ -194,12 +194,12 @@ func TestWorktreeProcessPlaneUsesRelocatedDataDir(t *testing.T) {
 		t.Fatalf("filepath.Dir(ProcessDataDir) = %q, want %q", filepath.Dir(resolved(t, a.ProcessDataDir)), filepath.Join(resolved(t, main), "cfg"))
 	}
 	for _, kind := range []string{"workflows", "skills", "principles", "documents"} {
-		dir := a.AuthoredDirs()[kind]
+		dir := a.AuthoredDirs().Dirs[kind]
 		if resolved(t, dir) != filepath.Join(wantData, kind) {
 			t.Errorf("authored %s = %q, want it under %q", kind, dir, wantData)
 		}
 	}
-	if _, err := a.Store.DocIndex.Sync(context.Background(), a.AuthoredDirs(), time.Now()); err != nil {
+	if _, err := a.Store.DocIndex.SyncRoots(context.Background(), a.AuthoredDirs().Index(), time.Now()); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	for _, tc := range []struct{ kind, name, marker string }{
@@ -386,7 +386,7 @@ func TestWorktreeOwnDataDirIsNotTheProcess(t *testing.T) {
 	if got, ok := config.FindDataDir(wt); !ok || resolved(t, got) != filepath.Join(resolved(t, wt), config.DefaultDataDir) {
 		t.Fatalf("FindDataDir(worktree) = %q, %v; want the worktree's own %s", got, ok, config.DefaultDataDir)
 	}
-	if _, err := a.Store.DocIndex.Sync(context.Background(), a.AuthoredDirs(), time.Now()); err != nil {
+	if _, err := a.Store.DocIndex.SyncRoots(context.Background(), a.AuthoredDirs().Index(), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	doc, err := a.Store.DocIndex.Get(context.Background(), "workflows", "done")

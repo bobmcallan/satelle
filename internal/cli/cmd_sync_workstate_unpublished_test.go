@@ -474,7 +474,7 @@ requires = ["coded"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Store.DocIndex.Sync(context.Background(), a.AuthoredDirs(), time.Now().UTC()); err != nil {
+	if _, err := a.Store.DocIndex.SyncRoots(context.Background(), a.AuthoredDirs().Index(), time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	a.Close()

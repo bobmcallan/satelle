@@ -76,7 +76,7 @@ func TestWorktreeDecoyIsNotTheProcessOfRecord(t *testing.T) {
 	if filepath.Clean(decoyWorkflows) != filepath.Join(wt, "decoy-wf", "workflows") {
 		t.Fatalf("location authored workflows = %q, want the decoy substrate root", decoyWorkflows)
 	}
-	if filepath.Clean(a.AuthoredDirs()["workflows"]) == filepath.Clean(decoyWorkflows) {
+	if filepath.Clean(a.AuthoredDirs().Dirs["workflows"]) == filepath.Clean(decoyWorkflows) {
 		t.Fatal("process authored workflows followed the decoy substrate root")
 	}
 	if got, ok := config.FindDataDir(wt); !ok || got != filepath.Join(wt, config.DefaultDataDir) {

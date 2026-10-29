@@ -119,7 +119,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetLedgerStore(a.Store.Ledger)
 	verb.SetTxRunner(a.Store.InTx)
 	verb.SetDocIndexStore(a.Store.DocIndex)
-	verb.SetAuthoredDirs(a.AuthoredDirs())
+	verb.SetAuthoredDirs(a.AuthoredDirs().Dirs)
 	verb.SetSubstrateConfigDir(a.ProcessDataDir)
 	verb.SetLeaseStore(a.Store.Leases)
 	verb.SetRetrieveStore(a.Store.Retrieve)
@@ -777,7 +777,7 @@ func requireAgents(a *app.App) (config.EffectiveAgents, error) {
 	// be read, the cause is the dir, not the file: say so by name, and say that the
 	// embedded route would otherwise govern, rather than blaming a broken
 	// agents.toml (sty_d6e209aa).
-	if wf := a.AuthoredDirs()["workflows"]; wf != "" {
+	if wf := a.AuthoredDirs().WorkflowsDir(); wf != "" {
 		if state, perr := docindex.ProbeDir(wf); state == docindex.DirUnreadable {
 			return config.EffectiveAgents{}, fmt.Errorf("%w: %s",
 				wfgovern.ErrAuthoredProcessUnreadable, wfgovern.UnreadableMessage(wf, perr.Error()))

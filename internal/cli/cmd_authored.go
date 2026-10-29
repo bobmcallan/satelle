@@ -89,7 +89,7 @@ func authoredCreateCmd(kind string) *cobra.Command {
 				return err
 			}
 			// Sync so the new doc is immediately queryable.
-			_, _ = a.Store.DocIndex.Sync(context.Background(), a.AuthoredDirs(), time.Now())
+			_, _ = a.Store.DocIndex.SyncRoots(context.Background(), a.AuthoredDirs().Index(), time.Now())
 
 			fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (passed the %s structure check)\n", path, kind)
 

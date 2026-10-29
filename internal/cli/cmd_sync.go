@@ -517,13 +517,33 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 			return serr
 		}
 		if handled {
+			// Team-owned files no area holds (scripts, hooks) are in no snapshot:
+			// they go up as plain files beside it.
+			c, u, n, perr := pushPlainConfigFiles(cmd, client, project, headSHA, teamAreaFiles(files))
+			if perr != nil {
+				return perr
+			}
+			snap.created, snap.unchanged, snap.notUploaded = snap.created+c, snap.unchanged+u, snap.notUploaded+n
 			printWithheldLocal()
 			fmt.Fprintf(out, "Pushed %d of %d config file(s) to project %q on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
 				snap.created+snap.unchanged, len(files), project, server, snap.created, snap.unchanged, snap.notUploaded)
 			return nil
 		}
 	}
-	var created, unchanged, notUploaded int
+	created, unchanged, notUploaded, err := pushPlainConfigFiles(cmd, client, project, headSHA, files)
+	if err != nil {
+		return err
+	}
+	printWithheldLocal()
+	uploaded := created + unchanged
+	fmt.Fprintf(out, "Pushed %d of %d config file(s) to project %q on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
+		uploaded, len(files), project, server, created, unchanged, notUploaded)
+	return nil
+}
+
+// pushPlainConfigFiles uploads each file whose bytes the hosted head does not
+// already hold, with no snapshot check.
+func pushPlainConfigFiles(cmd *cobra.Command, client *hosted.Client, project string, headSHA map[string]string, files []config.ConfigFile) (created, unchanged, notUploaded int, err error) {
 	for _, f := range files {
 		if contentMatchesSHA(headSHA[f.Path], f.Content) {
 			notUploaded++
@@ -532,9 +552,9 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 		res, perr := client.PushConfigFile(cmd.Context(), project, f.Path, f.Content)
 		if perr != nil {
 			if errors.Is(perr, hosted.ErrLoginRequired) {
-				return perr
+				return created, unchanged, notUploaded, perr
 			}
-			return fmt.Errorf("push %s: %w", f.Path, perr)
+			return created, unchanged, notUploaded, fmt.Errorf("push %s: %w", f.Path, perr)
 		}
 		if res.Created {
 			created++
@@ -542,11 +562,18 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 			unchanged++
 		}
 	}
-	printWithheldLocal()
-	uploaded := created + unchanged
-	fmt.Fprintf(out, "Pushed %d of %d config file(s) to project %q on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
-		uploaded, len(files), project, server, created, unchanged, notUploaded)
-	return nil
+	return created, unchanged, notUploaded, nil
+}
+
+// teamAreaFiles is the files of the bundle labelled config.TeamArea.
+func teamAreaFiles(files []config.ConfigFile) []config.ConfigFile {
+	var out []config.ConfigFile
+	for _, f := range files {
+		if f.Area == config.TeamArea {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // printBundleExclusions names every path a push left out of the bundle, each
@@ -702,9 +729,17 @@ func runSyncConfigDeployWith(cmd *cobra.Command, serverArg, workspaceArg string,
 		return deployOutcome{}, fmt.Errorf("fetch manifest: %w", err)
 	}
 	out := cmd.OutOrStdout()
+	// A deploy also refreshes the project tier the team-owned substrate resolves
+	// from; a reconcile is scoped to its chosen areas and leaves it alone.
+	writeTier := func(snaps *configDeploySnapshots) error {
+		if rc != nil {
+			return nil
+		}
+		return materialiseProjectTier(cmd, cfg, repoRoot, dataDir, client, server, manifest, version, snaps)
+	}
 	if len(manifest) == 0 {
 		fmt.Fprintf(out, "No config in workspace %q project %q on %s.\n", sourceName, project, server)
-		return deployOutcome{}, nil
+		return deployOutcome{}, writeTier(nil)
 	}
 	// Areas the hosted copy holds a snapshot for deploy what the snapshot names —
 	// a file deleted or renamed elsewhere stays gone — and a file changed on both
@@ -765,7 +800,7 @@ func runSyncConfigDeployWith(cmd *cobra.Command, serverArg, workspaceArg string,
 			return deployOutcome{}, nil
 		}
 		fmt.Fprintf(out, "Nothing to deploy — version %d matched no files in workspace %q.\n", version, sourceName)
-		return deployOutcome{}, nil
+		return deployOutcome{}, writeTier(snaps)
 	}
 	// The agents layer is written as hosted — a push sends the file's bytes — so
 	// one that carries machine-specific content is refused, never altered. The
@@ -794,6 +829,9 @@ func runSyncConfigDeployWith(cmd *cobra.Command, serverArg, workspaceArg string,
 			return deployOutcome{}, fmt.Errorf("deploy: record synced snapshot: %w", err)
 		}
 		snaps.recordStates(cmd.Context(), cfg, repoRoot)
+	}
+	if err := writeTier(snaps); err != nil {
+		return deployOutcome{}, fmt.Errorf("deploy: %w", err)
 	}
 	outcome := deployOutcome{
 		Written:      res.Written,
