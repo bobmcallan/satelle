@@ -270,7 +270,11 @@ implementation step self-sufficient (an isolated agent sees only the item and it
 rubric, never the conversation); is each gate bound where it belongs — is the
 **agent's** review, guided by the embedded `satelle-workflow-advisor` skill
 (`satelle doc get skills satelle-workflow-advisor`). Its findings are ADVICE to
-the operator; the coded structural check stays the only hard rule.
+the operator; the coded structural check stays the only hard rule. satelle
+prints a one-line prompt to run it at the end of `satelle init` and of a passing
+`satelle validate` or `satelle workflow validate`, and when the repo's first
+epic readiness round is accepted under a readiness step that declares `advise`
+(the shipped `[ready]` step does). It runs nothing.
 
 For the full contract a dispatched (`agent: <name>`) step runs under — how it is
 briefed, how it pulls the story/documents/ledger by id, what makes it

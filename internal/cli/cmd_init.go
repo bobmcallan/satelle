@@ -559,6 +559,7 @@ func runInitBody(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness
 	}
 
 	fmt.Fprintln(out, "\nReady. Try: satelle status · satelle story create --title \"…\" · satelle serve")
+	fmt.Fprintln(out, advisorPrompt())
 	return nil
 }
 

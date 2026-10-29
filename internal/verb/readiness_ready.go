@@ -57,6 +57,10 @@ type ReadyResult struct {
 	// so no tag was applied: the ledger's accepted round is the whole record.
 	NoMark   bool          `json:"no_mark,omitempty"`
 	Children []ReadyResult `json:"children,omitempty"`
+	// Advise names the advisor skills the readiness step declares, set only on the
+	// result whose epic-level round was the repo's first accepted epic readiness,
+	// whether or not its children then let it be marked. Nothing runs them.
+	Advise []string `json:"advise,omitempty"`
 }
 
 // Line is the one-line report of the story:
@@ -299,15 +303,21 @@ func readyEpic(ctx context.Context, store *workitem.Store, epic workitem.Item, e
 			return refused(epic.ID, "%v", err)
 		}
 	}
+	first := firstEpicReadiness(ctx, epic)
 	round := runReadinessRound(ctx, epic, edge)
 	res.Attempt = round.Attempt
+	if round.Accepted && first {
+		res.Advise = epicAdvice(edge.To, edge.Advisors)
+	}
 	// A child created during the epic-level judgement is readied before the epic
 	// can be marked.
 	var notReady []string
 	if perChild {
 		notReady, err = readyChildren(true)
 		if err != nil {
-			return refused(epic.ID, "%v", err)
+			r := refused(epic.ID, "%v", err)
+			r.Advise = res.Advise
+			return r
 		}
 	}
 	switch {

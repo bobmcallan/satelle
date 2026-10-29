@@ -18,6 +18,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/storyfold"
 	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/wfroute"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -40,19 +41,20 @@ func init() {
 // resolved: an unresolvable route keeps the default order, and the gate itself
 // refuses on it.
 func stepProposes(ctx context.Context, current workitem.Item, to string) bool {
-	st, found := destinationStep(ctx, current, to)
+	st, _, found := destinationStep(ctx, current, to)
 	return found && st.Propose
 }
 
 // destinationStep resolves the step the story is moving INTO over the declared
 // current→to edge. Not found when the route cannot be resolved or declares no
 // such edge.
-func destinationStep(ctx context.Context, current workitem.Item, to string) (wfdot.State, bool) {
-	spec, _, _, ok := governingSpec(ctx, current)
+func destinationStep(ctx context.Context, current workitem.Item, to string) (wfdot.State, []wfroute.Advisor, bool) {
+	spec, _, advisors, ok := governingSpec(ctx, current)
 	if !ok || !spec.HasEdge(current.Status, to) {
-		return wfdot.State{}, false
+		return wfdot.State{}, nil, false
 	}
-	return spec.StateNamed(to)
+	st, found := spec.StateNamed(to)
+	return st, advisors, found
 }
 
 // planCriteriaActor is the actor on the definition_edited row written when an

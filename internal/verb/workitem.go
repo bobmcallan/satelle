@@ -809,6 +809,9 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	// the transition has committed (sty_a32bd6a9); empty when none was accepted or
 	// the step declares no mark.
 	readinessMark := ""
+	// readinessAdvise is the advisors an accepted readiness round that was the
+	// repo's first on an epic-parent prompts the orchestrator to run.
+	var readinessAdvise []string
 	runGate := func() error {
 		if !(transitioning && transitionGater != nil) {
 			return nil
@@ -881,15 +884,19 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		// nor the reviewers run again (sty_a32bd6a9).
 		recordReadinessReuse(ctx, current, current.Status, *req.Status, readinessReused)
 	} else if proposeFirst {
+		first := firstEpicReadiness(ctx, current)
 		if out, perr := performStep(); out != nil || perr != nil {
 			return out, perr
 		}
 		if gerr := runGate(); gerr != nil {
 			return nil, gerr
 		}
-		step, _ := destinationStep(ctx, current, *req.Status)
+		step, advisors, _ := destinationStep(ctx, current, *req.Status)
 		if recordReadinessAccept(ctx, current, current.Status, *req.Status, attempt, readinessEdge{To: *req.Status, Step: step}.name()) {
 			readinessMark = step.Mark
+			if first {
+				readinessAdvise = epicAdvice(*req.Status, advisors)
+			}
 		}
 	} else {
 		if gerr := runGate(); gerr != nil {
@@ -1163,7 +1170,18 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		return nil, fmt.Errorf("write item file: %w", err)
 	}
 	notifyChange(panelTopic(it.Kind))
+	if len(readinessAdvise) > 0 {
+		return json.Marshal(SetResult{Item: it, Advise: readinessAdvise})
+	}
 	return json.Marshal(it)
+}
+
+// SetResult is a story-set response that carries advice: the record, plus the
+// advisor skills the step declares when the transition was the repo's first
+// accepted epic readiness round. Without advice the response is the record alone.
+type SetResult struct {
+	workitem.Item
+	Advise []string `json:"advise,omitempty"`
 }
 
 // staleWriteError turns a losing compare-and-set into an actionable refusal

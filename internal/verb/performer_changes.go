@@ -221,7 +221,7 @@ func applyPerformerChanges(ctx context.Context, container workitem.Item, to stri
 	if len(changes) == 0 {
 		return container, nil
 	}
-	step, _ := destinationStep(ctx, container, to)
+	step, _, _ := destinationStep(ctx, container, to)
 	stepName := readinessEdge{To: to, Step: step}.name()
 	if len(step.ApplyChangeOps) == 0 {
 		return container, fmt.Errorf("step %s declares no apply_changes; performer reported %d change(s), none applied", stepName, len(changes))

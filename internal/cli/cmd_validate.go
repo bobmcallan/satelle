@@ -50,7 +50,13 @@ binary loads that substrate, so a green result here is what loading expects.`,
 			if err != nil {
 				return err
 			}
-			return validateKind(cmd, a, kind, name)
+			if err := validateKind(cmd, a, kind, name); err != nil {
+				return err
+			}
+			if kind == "workflows" {
+				fmt.Fprintln(cmd.OutOrStdout(), advisorPrompt())
+			}
+			return nil
 		},
 	}
 }

@@ -92,6 +92,7 @@ silently. Read-only, deterministic, no agent — run it after any substrate edit
 			if failed > 0 {
 				return fmt.Errorf("validate failed")
 			}
+			fmt.Fprintln(out, advisorPrompt())
 			return nil
 		},
 	}

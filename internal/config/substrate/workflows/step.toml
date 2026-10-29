@@ -125,6 +125,11 @@ requires = ["authored"]
 # change under `placement_tag`, the prefix the delivering steps read. A value
 # other than those three, `remote` included, is refused. `satelle story wave`
 # prints the recorded choice.
+#
+# `advise` names the rubric the orchestrator is prompted to run when the repo's
+# first epic readiness round is accepted: the route-shape review, at the moment
+# the epic's order and lanes have just been judged. satelle prints the prompt and
+# runs nothing.
 status = "ready"
 agent = "ready-reviewer"
 skills = ["ready"]
@@ -136,6 +141,7 @@ apply_changes = { ops = ["add-tags", "create-child"], tags = ["order:", "surface
 placement_tag = "placement:"
 delivery_heading = "Delivery"
 lane_tag = "lane:"
+advise = { agent = "orchestrator", skill = "satelle-workflow-advisor" }
 
 [merged]
 # The epic-branch lane's landing. A child with no `lane:trunk` tag commits on
