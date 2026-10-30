@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -405,6 +406,59 @@ func TestProgressCellShowsPendingGate(t *testing.T) {
 		ev(ledger.KindStatusTransition, "plan", "done")), "done", false, noStep, routeSpec()))
 	if strings.Contains(progress, "pending-gate") {
 		t.Errorf("done story's progress cell carries a pending gate: %q", progress)
+	}
+}
+
+// sty_434d2fd9 AC1: the rows of ledger.ProgressKinds — all a snapshot sends
+// of a story's old history — are enough for the fold. Each fixture is
+// interleaved with edge-shaped rows of other kinds; dropping them must not
+// change a stage, so the test fails if buildStages starts reading another kind.
+func TestProgressKindsCoverBuildStages(t *testing.T) {
+	fixtures := map[string]struct {
+		status  string
+		entries []ledger.Entry
+	}{
+		"ddbe": {"in_progress", ddbeLedger()},
+		"parked": {"blocked", []ledger.Entry{
+			evA(ledger.KindReviewAccept, "backlog", "plan", "p1"),
+			ev(ledger.KindStatusTransition, "backlog", "plan"),
+			evA(ledger.KindReviewReject, "plan", "in_progress", "p2"),
+			ev(ledger.KindStatusTransition, "plan", "blocked"),
+		}},
+		"sink": {"cancelled", []ledger.Entry{
+			evA(ledger.KindReviewAccept, "backlog", "plan", "c1"),
+			ev(ledger.KindStatusTransition, "backlog", "plan"),
+			evA(ledger.KindPerformerReject, "plan", "in_progress", "c2"),
+			ev(ledger.KindStatusTransition, "plan", "cancelled"),
+		}},
+		"mid-gate": {"plan", []ledger.Entry{
+			evA(ledger.KindReadinessAccept, "backlog", "plan", "g1"),
+			ev(ledger.KindStatusTransition, "backlog", "plan"),
+			evA(ledger.KindReviewReject, "plan", "in_progress", "g2"),
+		}},
+	}
+	other := []string{ledger.KindComment, ledger.KindStatusReconcile, ledger.KindAgentInvocation,
+		ledger.KindReadinessReuse, ledger.KindGateSkipped, ledger.KindStepSummary, ledger.KindStoryDocAttached}
+	for name, f := range fixtures {
+		var noisy, kept []ledger.Entry
+		for i, e := range f.entries {
+			lp := parseEdge(e)
+			noisy = append(noisy, e, evA(other[i%len(other)], lp.From, lp.To, "n"))
+		}
+		for _, e := range noisy {
+			if slices.Contains(ledger.ProgressKinds, e.Kind) {
+				kept = append(kept, e)
+			}
+		}
+		for _, spec := range []wfdot.Spec{routeSpec(), {}} {
+			all := buildStages(noisy, f.status, false, noStep, spec)
+			if len(all) == 0 {
+				t.Fatalf("%s: no stages from the fixture", name)
+			}
+			if got := buildStages(kept, f.status, false, noStep, spec); !reflect.DeepEqual(got, all) {
+				t.Errorf("%s (route %v): progress-kind rows give %+v, every row gives %+v", name, len(spec.States) > 0, got, all)
+			}
+		}
 	}
 }
 

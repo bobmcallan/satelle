@@ -95,6 +95,13 @@ func isVerdictKind(kind string) bool {
 	return isRejectKind(kind) || kind == KindReviewAccept || kind == KindReadinessAccept
 }
 
+// ProgressKinds are the kinds a story's progress (its stages and gate rounds) is
+// built from: its status transitions and every verdict kind. A reader that has
+// all of a story's rows of these kinds has all it needs to fold its progress, so
+// an export can send them whatever their age. A superset of isVerdictKind, kept
+// apart from it: a status_transition is never a verdict.
+var ProgressKinds = []string{KindStatusTransition, KindReviewAccept, KindReviewReject, KindPerformerReject, KindReadinessAccept}
+
 // edgeAttempts enumerates the from→to edge's attempts in entries, oldest first,
 // grouped by the attempt id their verdict rows carry. A step with reviewers and a
 // step with a performer only are read the same way: the rows of an attempt are

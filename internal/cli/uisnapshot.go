@@ -20,6 +20,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/epicset"
 	"github.com/bobmcallan/satelle/internal/lease"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/substrate"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -177,8 +178,16 @@ func buildUISnapshotOpts(ctx context.Context, a *app.App, drain bool) (*mirror.S
 		if drain {
 			limit = drainLedgerLimit
 		}
-		if led, err := listLedgerJSONLimit(ctx, a, limit); err == nil {
+		led, have, err := listLedgerJSONLimit(ctx, a, limit)
+		if err == nil {
 			snap.LedgerEvents = led
+		}
+		if !drain {
+			// A full push replaces the mirror's ledger set, so the window alone would
+			// drop the progress of every story whose rows are older than it.
+			if prog, err := listProgressJSON(ctx, a, items, have); err == nil {
+				snap.LedgerEvents = append(snap.LedgerEvents, prog...)
+			}
 		}
 	}
 
@@ -319,24 +328,60 @@ func listStoryDocsJSON(a *app.App) ([]json.RawMessage, error) {
 
 func listLedgerJSON(ctx context.Context, a *app.App) ([]json.RawMessage, error) {
 	// Full snapshot path: newest-first under the 10k budget (sty_c5065d05).
-	return listLedgerJSONLimit(ctx, a, 10000)
+	out, _, err := listLedgerJSONLimit(ctx, a, 10000)
+	return out, err
 }
 
-func listLedgerJSONLimit(ctx context.Context, a *app.App, limit int) ([]json.RawMessage, error) {
+// listLedgerJSONLimit emits the newest limit ledger rows and the set of their ids.
+func listLedgerJSONLimit(ctx context.Context, a *app.App, limit int) ([]json.RawMessage, map[string]bool, error) {
 	if a.Store.Ledger == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	entries, err := a.Store.Ledger.ListAll(ctx, limit)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out := make([]json.RawMessage, 0, len(entries))
+	ids := make(map[string]bool, len(entries))
 	for _, e := range entries {
 		b, err := json.Marshal(e)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, b)
+		ids[e.ID] = true
+	}
+	return out, ids, nil
+}
+
+// listProgressJSON emits every ledger.ProgressKinds row of the exported items
+// that is not already in have, whatever its age: the rows the mirror folds a
+// story's PROGRESS from, so it never depends on the recent window (sty_434d2fd9).
+// Its size grows with the items' progress events, not with the ledger.
+func listProgressJSON(ctx context.Context, a *app.App, items []workitem.Item, have map[string]bool) ([]json.RawMessage, error) {
+	if a.Store.Ledger == nil {
+		return nil, nil
+	}
+	exported := make(map[string]bool, len(items))
+	for _, it := range items {
+		exported[it.ID] = true
+	}
+	var out []json.RawMessage
+	for _, kind := range ledger.ProgressKinds {
+		err := a.Store.Ledger.ForEachKind(ctx, "", kind, func(e ledger.Entry) error {
+			if !exported[e.StoryID] || have[e.ID] {
+				return nil
+			}
+			b, err := json.Marshal(e)
+			if err != nil {
+				return err
+			}
+			out = append(out, b)
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }

@@ -1,3 +1,13 @@
+## [0.0.797] - 2026-10-30
+
+### Fixed
+- The local web UI shows every story's PROGRESS stages in a repo whose ledger is larger than the mirror export budget. A full push to the mirror now carries each exported story's progress rows (its status transitions and gate verdicts) beside the newest-10,000-row window, so a deep ledger or a burst of newer rows on other stories no longer empties a story's PROGRESS cell. The export stays bounded by the number of stories and their progress rows, not by the total ledger. (sty_434d2fd9)
+
+## [serve-v0.0.241] - 2026-10-30
+
+### Changed
+- The service binary carries the ledger's progress-kind set used to build each story's PROGRESS stages from its own rows. (sty_434d2fd9)
+
 ## [0.0.796] - 2026-10-30
 
 ### Changed
