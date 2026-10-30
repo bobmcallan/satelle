@@ -1,3 +1,8 @@
+## [0.0.809] - 2026-10-30
+
+### Fixed
+- When a repo's deployed stamp is behind a breaking release, the session-start notice you see names that release and `satelle init`, ahead of any sync notice. It no longer reports only "settings unpushed" while the next store-backed command is about to refuse the repo. (sty_34808cbe)
+
 ## [0.0.808] - 2026-10-30
 
 ### Changed

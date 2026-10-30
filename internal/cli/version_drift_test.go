@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/verb"
 )
@@ -227,5 +228,50 @@ func TestHookContextVersionDriftAdvisoryNeverRefuses(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "STOP BLOCKED") || strings.Contains(out.String(), "\"decision\":\"block\"") {
 		t.Errorf("hook context emitted a refusal:\n%s", out.String())
+	}
+}
+
+// TestHookContextNoticeNamesBreakingStamp (sty_34808cbe): a repo stamped behind
+// a release whose ### Breaking declares init-heals is refused by its next
+// store-backed command, so the session-start notice the user reads — not only
+// the model context — names that release and `satelle init`. The binary is
+// pinned to 0.0.761, the embedded CHANGELOG's init-heals release, so the range
+// holds exactly that release however many land after it.
+func TestHookContextNoticeNamesBreakingStamp(t *testing.T) {
+	old := buildinfo.Version
+	buildinfo.Version = "0.0.761"
+	t.Cleanup(func() { buildinfo.Version = old })
+
+	for _, tc := range []struct {
+		name, stamp string
+		wantLine    bool
+	}{
+		{"behind the breaking release", "0.0.760", true},
+		{"stamp current", "0.0.761", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := sessionContextRepo(t)
+			stamp := filepath.Join(repo, config.DefaultDataDir, deployedVersionName)
+			if err := os.WriteFile(stamp, []byte("satelle.version: "+tc.stamp+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			notice, context := sessionNotice(t, "", "stamp-"+tc.stamp)
+			if !tc.wantLine {
+				if strings.Contains(notice, deployedVersionName) || strings.Contains(context, deployedVersionName) {
+					t.Errorf("a current stamp must add no version line, notice %q", notice)
+				}
+				return
+			}
+			for _, where := range []struct{ name, text string }{{"notice", notice}, {"model context", context}} {
+				for _, want := range []string{"BREAKING release 0.0.761", "commands refuse until init runs", "satelle init"} {
+					if !strings.Contains(where.text, want) {
+						t.Errorf("%s does not carry %q:\n%s", where.name, want, where.text)
+					}
+				}
+			}
+			if first := strings.SplitN(notice, "\n", 2)[0]; !strings.Contains(first, "BREAKING release 0.0.761") {
+				t.Errorf("the stamp gate must lead the notice, first line %q", first)
+			}
+		})
 	}
 }
