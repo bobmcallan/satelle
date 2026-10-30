@@ -73,7 +73,7 @@ func (f *substrateFixture) base(area string, files, unmerged map[string]string) 
 
 func (f *substrateFixture) record(area, state string, at time.Time) {
 	f.t.Helper()
-	if err := syncstate.RecordSubstrate(f.home, f.repo, map[string]string{area: state}, at); err != nil {
+	if err := syncstate.RecordSubstrate(f.home, f.repo, map[string]syncstate.AreaCheck{area: {State: state}}, at); err != nil {
 		f.t.Fatal(err)
 	}
 }
@@ -337,5 +337,38 @@ func TestSubstrateUnreadableIgnoreIsNotJudged(t *testing.T) {
 	}
 	if got := f.check(); len(find(got, health.IDSyncConfig)) == 0 {
 		t.Fatalf("want a sync config warning for an unreadable %s: %v", config.IgnoreFileName, got)
+	}
+}
+
+// sty_1481ac31 AC2, AC4: a hosted check's recorded files reach doctor. An area
+// whose files match its base but which the last hosted check found unpushed is
+// unpushed, with the file and the push named; a recorded diverged area names the
+// files that differ.
+func TestSubstrateRecordedCheckNamesItsFiles(t *testing.T) {
+	for _, c := range []struct {
+		state, id, remedy string
+	}{
+		{snapsync.StateUnpushed, health.IDSyncSubstrateUnpushed, "satelle sync push"},
+		{snapsync.StateDiverged, health.IDSyncSubstrateBehind, "satelle sync reconcile"},
+	} {
+		t.Run(c.state, func(t *testing.T) {
+			f := newSubstrateFixture(t, ".satelle", substrateToml)
+			f.write("skills/x.md", "x\n")
+			f.base("skills", map[string]string{"skills/x.md": "x\n"}, nil)
+			check := map[string]syncstate.AreaCheck{"skills": {State: c.state, Paths: []string{"skills/x.md"}}}
+			if err := syncstate.RecordSubstrate(f.home, f.repo, check, f.now.Add(-time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			got := find(f.check(), c.id)
+			if len(got) != 1 {
+				t.Fatalf("want one %s finding, got %v", c.id, f.check())
+			}
+			if !strings.Contains(got[0].Detail, "skills/x.md") || !strings.Contains(got[0].Detail, c.state) || !strings.Contains(got[0].Remediation, c.remedy) {
+				t.Errorf("finding = %+v, want %s naming skills/x.md and %q", got[0], c.state, c.remedy)
+			}
+			if f.check().OK() {
+				t.Error("the finding must fail doctor")
+			}
+		})
 	}
 }

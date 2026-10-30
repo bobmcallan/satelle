@@ -90,6 +90,12 @@ type Driver struct {
 	// feeds the DefaultSet that every comparison of local with the base or the
 	// snapshot goes through. Nil holds nothing.
 	Defaults func(area string) (map[string]map[string]bool, error)
+	// StampOnly is one area's stamp-only defaults by path, with their bytes
+	// (config.AreaStampOnlyDefaults): files the local view drops that only their
+	// own stamp calls unedited. Every plan reads local through WithStampOnly over
+	// them, so one that differs from the base or the snapshot is this machine's
+	// change, and a push sends it. Nil holds none.
+	StampOnly func(area string) (map[string][]byte, error)
 	// Ignore is the command's loaded .satelleignore. Owns drops the hosted heads
 	// of a path it matches; the driver drops it from the base and the snapshot
 	// record the same way, once, as they enter (loadBase, effective) — so Status,
@@ -238,19 +244,27 @@ func copyExistsIn(dataDir, area string) func(string) bool {
 }
 
 // loadBase loads this checkout's base for the area, clearing any unmerged marker
-// whose conflict copy has been deleted (the operator saying "merged").
-func (d *Driver) loadBase(area string) (*hosted.AreaBase, error) {
+// whose conflict copy has been deleted (the operator saying "merged"), and
+// reports whether a push or pull recorded it (sealed). Clearing a marker reseals
+// only a base that was sealed, so it never vouches for one the driver did not
+// write.
+func (d *Driver) loadBase(area string) (*hosted.AreaBase, bool, error) {
 	b, ok, err := hosted.LoadAreaBase(d.Server, d.Project, d.RepoRoot, area)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if !ok {
-		return nil, nil
+		return nil, false, nil
 	}
+	isSealed := sealed(area, b)
 	b, changed := Resolve(b, d.conflictCopyExists(area))
 	if changed {
-		if err := hosted.SaveAreaBase(d.Server, d.Project, d.RepoRoot, area, b); err != nil {
-			return nil, err
+		save := hosted.SaveAreaBase(d.Server, d.Project, d.RepoRoot, area, b)
+		if isSealed {
+			save = d.saveBase(area, b)
+		}
+		if save != nil {
+			return nil, false, save
 		}
 	}
 	// Only the copy handed to callers drops ignored paths; what was saved above
@@ -258,7 +272,32 @@ func (d *Driver) loadBase(area string) (*hosted.AreaBase, error) {
 	b.Files = d.dropIgnored(b.Files)
 	b.Unmerged = d.dropIgnored(b.Unmerged)
 	b.Defaults = d.dropIgnored(b.Defaults)
-	return &b, nil
+	return &b, isSealed, nil
+}
+
+// localView is local as the area's plans read it (WithStampOnly over the base and
+// the hosted snapshot), with the bytes of each stamp-only default it added.
+func (d *Driver) localView(area string, local map[string]string, base *hosted.AreaBase, eff Record) (map[string]string, map[string][]byte, error) {
+	if d.StampOnly == nil {
+		return local, nil, nil
+	}
+	files, err := d.StampOnly(area)
+	if err != nil {
+		return nil, nil, err
+	}
+	shas := make(map[string]string, len(files))
+	for p, body := range files {
+		shas[p] = SHA(body)
+	}
+	view, added := WithStampOnly(local, shas, baseFiles(base), eff.Files)
+	var bodies map[string][]byte
+	for _, p := range added {
+		if bodies == nil {
+			bodies = map[string][]byte{}
+		}
+		bodies[p] = files[p]
+	}
+	return view, bodies, nil
 }
 
 // effective reads the record head and walks to the effective snapshot. It also
@@ -345,6 +384,10 @@ func (d *Driver) PreparePush(ctx context.Context, area string, files []PushFile)
 	if err != nil {
 		return nil, err
 	}
+	for path, body := range p.added {
+		job.files[path] = body
+	}
+	job.local = p.local
 	job.effVersion, job.eff, job.plan, job.base, job.set = p.effVersion, p.eff, p.plan, p.base, p.set
 	return job, nil
 }
@@ -352,6 +395,10 @@ func (d *Driver) PreparePush(ctx context.Context, area string, files []PushFile)
 // plannedPush is what the shared push-planning path decided, with the inputs it
 // decided from.
 type plannedPush struct {
+	// local is the local view the plan was made over (localView), added the
+	// bytes of the stamp-only defaults that view gained.
+	local      map[string]string
+	added      map[string][]byte
 	base       *hosted.AreaBase
 	effVersion int
 	eff        Record
@@ -365,12 +412,16 @@ type plannedPush struct {
 // Status both run it, so what a push would refuse and what status reports can
 // never disagree. On a refusal the inputs read so far come back with the error.
 func (d *Driver) planPush(ctx context.Context, area string, local map[string]string, force bool) (plannedPush, error) {
-	var p plannedPush
+	p := plannedPush{local: local}
 	var err error
-	if p.base, err = d.loadBase(area); err != nil {
+	var isSealed bool
+	if p.base, isSealed, err = d.loadBase(area); err != nil {
 		return p, err
 	}
 	if p.base, p.effVersion, p.eff, err = d.effective(ctx, area, p.base); err != nil {
+		return p, err
+	}
+	if p.local, p.added, err = d.localView(area, local, p.base, p.eff); err != nil {
 		return p, err
 	}
 	heads, err := d.areaHeads(ctx, area)
@@ -381,7 +432,12 @@ func (d *Driver) planPush(ctx context.Context, area string, local map[string]str
 	if p.set, err = d.defaultSet(area, p.base); err != nil {
 		return p, err
 	}
-	p.plan, err = PlanPush(area, d.PullCmd, d.DivergedCmd, d.By, d.Prune, force, p.base, p.effVersion, p.eff, local, heads, p.set, d.conflictCopyExists(area))
+	if !force {
+		if e := unrecordedBase(area, p.base, isSealed, p.effVersion, p.eff, p.set, d.DivergedCmd); e != nil {
+			return p, e
+		}
+	}
+	p.plan, err = PlanPush(area, d.PullCmd, d.DivergedCmd, d.By, d.Prune, force, p.base, p.effVersion, p.eff, p.local, heads, p.set, d.conflictCopyExists(area))
 	return p, err
 }
 
@@ -418,7 +474,7 @@ func (d *Driver) Push(ctx context.Context, job *PushJob) (PushResult, error) {
 		// The base is what THIS tree holds, not the record: a first claim may carry
 		// forward hosted files this tree lacks, and the next pull must fetch those
 		// rather than read them as files this machine deleted.
-		if err := hosted.SaveAreaBase(d.Server, d.Project, d.RepoRoot, job.Area, hosted.AreaBase{Version: v, Files: job.local}); err != nil {
+		if err := d.saveBase(job.Area, hosted.AreaBase{Version: v, Files: job.local}); err != nil {
 			return res, err
 		}
 		if job.plan.Forced {
@@ -427,7 +483,7 @@ func (d *Driver) Push(ctx context.Context, job *PushJob) (PushResult, error) {
 			d.printf("%s: snapshot %d (parent %d)\n", job.Area, v, job.effVersion)
 		}
 	} else if job.effVersion > 0 {
-		if err := hosted.SaveAreaBase(d.Server, d.Project, d.RepoRoot, job.Area, hosted.AreaBase{Version: job.effVersion, Files: job.local}); err != nil {
+		if err := d.saveBase(job.Area, hosted.AreaBase{Version: job.effVersion, Files: job.local}); err != nil {
 			return res, err
 		}
 		d.printf("%s: snapshot %d (unchanged)\n", job.Area, job.effVersion)
@@ -494,7 +550,7 @@ type SavedFile struct {
 // snapshot for the area (the caller falls back to restoring every head), and
 // *UnavailableError when snapshots cannot be read.
 func (d *Driver) PlanPull(ctx context.Context, area string, local map[string]string) (*PullJob, error) {
-	base, err := d.loadBase(area)
+	base, _, err := d.loadBase(area)
 	if err != nil {
 		return nil, err
 	}
@@ -504,6 +560,9 @@ func (d *Driver) PlanPull(ctx context.Context, area string, local map[string]str
 	}
 	if version == 0 {
 		return nil, nil
+	}
+	if local, _, err = d.localView(area, local, base, rec); err != nil {
+		return nil, err
 	}
 	heads, err := d.areaHeads(ctx, area)
 	if err != nil {
@@ -846,7 +905,7 @@ func (d *Driver) Commit(job *PullJob, failed map[string]bool) error {
 			delete(job.Plan.Base.Files, e.Path)
 		}
 	}
-	if err := hosted.SaveAreaBase(d.Server, d.Project, d.RepoRoot, job.Area, job.Plan.Base); err != nil {
+	if err := d.saveBase(job.Area, job.Plan.Base); err != nil {
 		return err
 	}
 	d.printf("%s: synced to snapshot %d\n", job.Area, job.Version)

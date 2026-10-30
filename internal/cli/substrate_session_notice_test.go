@@ -51,7 +51,7 @@ func sessionNotice(t *testing.T, release, session string) (notice, context strin
 func TestHookContextSubstrateLineJoinsReleaseNotice(t *testing.T) {
 	repo := substrateHookRepo(t, "edited\n", "x\n") // unpushed
 	// ...and the last hosted check found it behind.
-	if err := syncstate.RecordSubstrate(config.GlobalDir(), repo, map[string]string{"skills": snapsync.StateBehind}, time.Now()); err != nil {
+	if err := syncstate.RecordSubstrate(config.GlobalDir(), repo, map[string]syncstate.AreaCheck{"skills": {State: snapsync.StateBehind}}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	notice, context := sessionNotice(t, releaseNoticeLine, "sub-join")
@@ -190,7 +190,7 @@ func TestSubstrateAdvisoryAt(t *testing.T) {
 func TestSubstrateAdvisoryRefreshesThroughTheSeamOncePerWindow(t *testing.T) {
 	repo := substrateHookRepo(t, "x\n", "x\n")
 	old := time.Now().Add(-48 * time.Hour)
-	if err := syncstate.RecordSubstrate(config.GlobalDir(), repo, map[string]string{"skills": snapsync.StateInStep}, old); err != nil {
+	if err := syncstate.RecordSubstrate(config.GlobalDir(), repo, map[string]syncstate.AreaCheck{"skills": {State: snapsync.StateInStep}}, old); err != nil {
 		t.Fatal(err)
 	}
 	spawned := 0

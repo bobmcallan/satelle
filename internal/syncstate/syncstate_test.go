@@ -95,10 +95,10 @@ func TestRecordSubstrateMergesOnlyItsGroupAndTheGivenAreas(t *testing.T) {
 	if err := RecordPush(home, "/repo", true, "", "personal", pushAt); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordSubstrate(home, "/repo", map[string]string{"skills": "behind", "documents": "in step"}, first); err != nil {
+	if err := RecordSubstrate(home, "/repo", map[string]AreaCheck{"skills": {State: "behind"}, "documents": {State: "in step"}}, first); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordSubstrate(home, "/repo", map[string]string{"skills": "in step"}, second); err != nil {
+	if err := RecordSubstrate(home, "/repo", map[string]AreaCheck{"skills": {State: "in step"}}, second); err != nil {
 		t.Fatal(err)
 	}
 	if err := RecordSubstrate(home, "/repo", nil, second); err != nil {

@@ -9,7 +9,7 @@ func TestMarkSubstrateAttemptMergesOnlyItsStamp(t *testing.T) {
 	home := t.TempDir()
 	checked := time.Date(2026, 8, 1, 11, 0, 0, 0, time.UTC)
 	attempt := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
-	if err := RecordSubstrate(home, "/repo", map[string]string{"skills": "behind"}, checked); err != nil {
+	if err := RecordSubstrate(home, "/repo", map[string]AreaCheck{"skills": {State: "behind"}}, checked); err != nil {
 		t.Fatal(err)
 	}
 	if err := MarkSubstrateAttempt(home, "/repo", attempt); err != nil {
@@ -24,7 +24,7 @@ func TestMarkSubstrateAttemptMergesOnlyItsStamp(t *testing.T) {
 	}
 	// A later verified record leaves the stamp alone: it debounces the refresh,
 	// it says nothing about the areas.
-	if err := RecordSubstrate(home, "/repo", map[string]string{"skills": "in step"}, attempt.Add(time.Hour)); err != nil {
+	if err := RecordSubstrate(home, "/repo", map[string]AreaCheck{"skills": {State: "in step"}}, attempt.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if got, _, _ = Load(home, "/repo"); !got.SubstrateCheckedAttempt.Equal(attempt) {

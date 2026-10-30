@@ -243,6 +243,10 @@ type ErrBehind struct {
 	// Diverged is set when this machine also changed the area since it last
 	// synced (the same test Driver.Status reports it with), so a pull is not safe.
 	Diverged bool
+	// Unrecorded is set when the base names the effective snapshot but no push or
+	// pull recorded it, and Pending lists the paths where its files differ from
+	// that snapshot's (unrecordedBase).
+	Unrecorded bool
 	// PullCmd is the command that resolves the refused push: the pull for a
 	// behind area, the reconcile for a diverged one.
 	PullCmd string
@@ -264,6 +268,9 @@ func newErrBehind(area string, base *hosted.AreaBase, effVersion int, pending []
 }
 
 func (e *ErrBehind) Error() string {
+	if e.Unrecorded {
+		return fmt.Sprintf("sync %s: this machine's base names snapshot %d, but no push or pull recorded it and %s differ from that snapshot — run %q first", e.Area, e.Base, joinMax(e.Pending, 3), e.PullCmd)
+	}
 	if len(e.Pending) > 0 {
 		return fmt.Sprintf("sync %s: hosted changes not yet applied here (%s) — run %q first", e.Area, joinMax(e.Pending, 3), e.PullCmd)
 	}

@@ -1,3 +1,13 @@
+## [0.0.807] - 2026-10-30
+
+### Fixed
+- `satelle sync status` and `satelle doctor` report a substrate area as unpushed when one of its files changed since the last push, naming the file and the push to run, instead of reporting it in step because the local base and hosted snapshot numbers match. This holds when the edited file carries a self-consistent `embedded_sha` stamp and the hosted copy is a kept binary default, and doctor keeps reporting an area the last hosted check found unpushed. A base marker naming a snapshot this machine never pushed or pulled is now detected (its files do not match that hosted snapshot) and the area is reported diverged, naming the differing files. `satelle sync push --dry-run` reads areas the same way. (sty_1481ac31)
+
+## [serve-v0.0.247] - 2026-10-30
+
+### Changed
+- The service binary carries the work-state sync state's substrate area record, which now lists the files each area's state is about. (sty_1481ac31)
+
 ## [0.0.806] - 2026-10-30
 
 ### Fixed

@@ -526,7 +526,7 @@ func runSyncConfigPushLeg(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	files := bundle.Files
 	out := cmd.OutOrStdout()
 	printWithheldLocal := func() { printBundleExclusions(out, bundle) }
-	if len(files) == 0 {
+	if len(files) == 0 && !holdsStampOnly(cfg, repoRoot, ign) {
 		if n := bundle.ExcludedCount(); n > 0 {
 			printWithheldLocal()
 			fmt.Fprintf(out, "nothing to push (%d withheld)\n", n)
@@ -541,6 +541,18 @@ func runSyncConfigPushLeg(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	return pushConfigFileSet(cmd, cfg, repoRoot, dataDir, ign, server, files, pushSetOpts{
 		Verb: "sync config push", DryRun: dryRun, withheldLocal: printWithheldLocal,
 	})
+}
+
+// holdsStampOnly reports whether any config area holds a stamp-only default
+// (config.AreaStampOnlyDefaults). The snapshot push still publishes one that
+// differs from what was synced, so a bundle without it is not nothing to push.
+func holdsStampOnly(cfg config.Config, repoRoot string, ign config.Ignore) bool {
+	for _, area := range config.ConfigAreas {
+		if files, err := config.AreaStampOnlyDefaults(cfg, repoRoot, area, ign); err == nil && len(files) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // pushRefusal is a push its checks refused before any upload: the
@@ -749,9 +761,13 @@ func printDryRunChanges(out io.Writer, cfg config.Config, server, repoRoot, data
 		if err == nil {
 			defaults, err = config.AreaDefaultShas(cfg, repoRoot, area, ign)
 		}
+		var stampOnly map[string]string
+		if err == nil {
+			stampOnly, err = snapsync.StampOnlyShas(cfg, repoRoot, area, ign)
+		}
 		var drift snapsync.Drift
 		if err == nil {
-			drift, err = snapsync.OfflineDrift(server, project, abs, dataDir, area, local, defaults, ign)
+			drift, err = snapsync.OfflineDrift(server, project, abs, dataDir, area, local, stampOnly, defaults, ign)
 		}
 		switch {
 		case err != nil:

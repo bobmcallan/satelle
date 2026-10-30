@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -184,6 +185,7 @@ func runSyncStatusForStory(cmd *cobra.Command, serverArg, storyID string) error 
 	if err := w.Flush(); err != nil {
 		return err
 	}
+	printAreaPaths(out, statuses)
 	if len(refused) > 0 {
 		return fmt.Errorf("story %s changed substrate that is not on the hosted copy of project %q on %s:\n  %s",
 			storyID, project, server, strings.Join(refused, "\n  "))
@@ -229,10 +231,32 @@ func runSyncStatus(cmd *cobra.Command, serverArg string) error {
 	if err := w.Flush(); err != nil {
 		return err
 	}
+	printAreaPaths(out, statuses)
 	if notInStep > 0 {
 		return fmt.Errorf("%d of %d area(s) not in step with project %q on %s", notInStep, len(statuses), project, server)
 	}
 	return nil
+}
+
+// areaPaths is the files an area's state is about: what a push would publish
+// (unpushed), or where it differs from the hosted copy (behind, diverged).
+func areaPaths(st snapsync.AreaStatus) []string {
+	switch st.State {
+	case snapsync.StateUnpushed:
+		return st.Changed
+	case snapsync.StateBehind, snapsync.StateDiverged:
+		return st.Pending
+	}
+	return nil
+}
+
+// printAreaPaths names, after the status table, the files behind each area's state.
+func printAreaPaths(out io.Writer, statuses []snapsync.AreaStatus) {
+	for _, st := range statuses {
+		if paths := areaPaths(st); len(paths) > 0 {
+			fmt.Fprintf(out, "%s: %s — %s\n", st.Area, st.State, strings.Join(paths, ", "))
+		}
+	}
 }
 
 func versionLabel(v int) string {
@@ -344,10 +368,10 @@ func areaStatus(ctx context.Context, cfg config.Config, repoRoot string, d *snap
 // offline machine must not look freshly checked. Recording is best effort — a
 // state file that cannot be written never fails the command that asked.
 func recordSubstrateStates(repoRoot string, statuses []snapsync.AreaStatus) {
-	states := map[string]string{}
+	states := map[string]syncstate.AreaCheck{}
 	for _, st := range statuses {
 		if st.State != snapsync.StateUnavailable {
-			states[st.Area] = st.State
+			states[st.Area] = syncstate.AreaCheck{State: st.State, Paths: areaPaths(st)}
 		}
 	}
 	_ = syncstate.RecordSubstrate(config.GlobalDir(), repoRoot, states, time.Now())

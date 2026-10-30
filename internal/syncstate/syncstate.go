@@ -66,10 +66,20 @@ type StoryConflict struct {
 	Source       string    `json:"source,omitempty"`
 }
 
-// SubstrateArea is one area's recorded state and when it was verified.
+// SubstrateArea is one area's recorded state, the files that state is about
+// (what a push would publish, or where the hosted copy differs) and when it was
+// verified. A record written before Paths existed loads with none.
 type SubstrateArea struct {
 	State     string    `json:"state"`
+	Paths     []string  `json:"paths,omitempty"`
 	CheckedAt time.Time `json:"checked_at"`
+}
+
+// AreaCheck is what one check verified for an area: its state and the files
+// that state is about.
+type AreaCheck struct {
+	State string
+	Paths []string
 }
 
 var mu sync.Mutex
@@ -148,9 +158,9 @@ func RecordScope(globalDir, repoPath, scope string) error {
 	return record(globalDir, repoPath, scope, func(*State) {})
 }
 
-// RecordSubstrate merges the verified state of the given areas (area -> state)
-// into the substrate group, leaving every other area's record as it was.
-func RecordSubstrate(globalDir, repoPath string, areas map[string]string, now time.Time) error {
+// RecordSubstrate merges the verified check of the given areas into the
+// substrate group, leaving every other area's record as it was.
+func RecordSubstrate(globalDir, repoPath string, areas map[string]AreaCheck, now time.Time) error {
 	if len(areas) == 0 {
 		return nil
 	}
@@ -158,8 +168,8 @@ func RecordSubstrate(globalDir, repoPath string, areas map[string]string, now ti
 		if s.SubstrateAreas == nil {
 			s.SubstrateAreas = map[string]SubstrateArea{}
 		}
-		for area, state := range areas {
-			s.SubstrateAreas[area] = SubstrateArea{State: state, CheckedAt: now}
+		for area, check := range areas {
+			s.SubstrateAreas[area] = SubstrateArea{State: check.State, Paths: check.Paths, CheckedAt: now}
 		}
 	})
 }

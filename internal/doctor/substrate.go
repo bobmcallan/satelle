@@ -100,7 +100,12 @@ func judgeSubstrateArea(cfg config.Config, repoRoot, dataDir, abs, server, proje
 		return health.Findings{health.Warn(health.IDSyncConfig, title,
 			fmt.Sprintf("%s: cannot read the local files (%v); not judged", area, err)).About(repoRoot)}
 	}
-	drift, err := snapsync.OfflineDrift(server, project, abs, dataDir, area, local, defaults, ign)
+	stampOnly, err := snapsync.StampOnlyShas(cfg, repoRoot, area, ign)
+	if err != nil {
+		return health.Findings{health.Warn(health.IDSyncConfig, title,
+			fmt.Sprintf("%s: cannot read the local files (%v); not judged", area, err)).About(repoRoot)}
+	}
+	drift, err := snapsync.OfflineDrift(server, project, abs, dataDir, area, local, stampOnly, defaults, ign)
 	if err != nil {
 		return health.Findings{health.Warn(health.IDSyncConfig, title,
 			fmt.Sprintf("%s: cannot read the synced base (%v); not judged", area, err)).About(repoRoot)}
@@ -126,8 +131,14 @@ func judgeSubstrateArea(cfg config.Config, repoRoot, dataDir, abs, server, proje
 	switch {
 	case checked && (rec.State == snapsync.StateBehind || rec.State == snapsync.StateDiverged):
 		out = append(out, health.Error(health.IDSyncSubstrateBehind, "Substrate "+rec.State,
-			fmt.Sprintf("%s: the last hosted check (%s) found it %s", area, rec.CheckedAt.UTC().Format(time.RFC3339), rec.State)).
+			fmt.Sprintf("%s: the last hosted check (%s) found it %s%s", area, rec.CheckedAt.UTC().Format(time.RFC3339), rec.State, recordedPaths(rec.Paths))).
 			About(area).WithRemediation(substrateRemediation(rec.State)))
+	case checked && rec.State == snapsync.StateUnpushed && len(drift.Changed) == 0:
+		// The offline comparison sees nothing, but the hosted check found what a push
+		// would publish: the base matches the files, the hosted copy does not.
+		out = append(out, health.Error(health.IDSyncSubstrateUnpushed, "Substrate "+snapsync.StateUnpushed,
+			fmt.Sprintf("%s: the last hosted check (%s) found it %s%s", area, rec.CheckedAt.UTC().Format(time.RFC3339), rec.State, recordedPaths(rec.Paths))).
+			About(area).WithRemediation("run `satelle sync push`"))
 	case !judged:
 	case !checked:
 		out = append(out, health.Error(health.IDSyncSubstrateUnchecked, "Substrate unchecked",
@@ -148,6 +159,14 @@ func substrateRemediation(state string) string {
 		return "run `satelle sync reconcile` and choose a side per change, then `satelle sync push`"
 	}
 	return "run `satelle sync pull`"
+}
+
+// recordedPaths is the files a recorded check named, as a suffix of its finding.
+func recordedPaths(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	return " (" + pathList(paths) + ")"
 }
 
 func pathList(paths []string) string {

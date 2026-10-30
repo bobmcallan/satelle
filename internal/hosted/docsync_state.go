@@ -118,6 +118,10 @@ type AreaBase struct {
 	// predict from its own embedded bodies (an older stamp). Such a path is never
 	// written to the tree, so its sha is kept here to be recognised without a fetch.
 	Defaults map[string]string `json:"defaults,omitempty"`
+	// Seal is the sync driver's proof that it wrote this base (snapsync): a base
+	// set or moved by anything else carries none, or one that no longer matches.
+	// SaveAreaBase stores it as given.
+	Seal string `json:"seal,omitempty"`
 }
 
 func areaBaseKey(server, project, repoRoot, area string) string {

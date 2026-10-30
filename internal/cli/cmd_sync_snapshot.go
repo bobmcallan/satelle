@@ -139,6 +139,17 @@ func newSnapDriver(cfg config.Config, client *hosted.Client, out io.Writer, serv
 		Defaults: func(area string) (map[string]map[string]bool, error) {
 			return config.AreaDefaultShas(cfg, repoRoot, area, ign)
 		},
+		StampOnly: func(area string) (map[string][]byte, error) {
+			files, err := config.AreaStampOnlyDefaults(cfg, repoRoot, area, ign)
+			if err != nil {
+				return nil, err
+			}
+			out := make(map[string][]byte, len(files))
+			for _, f := range files {
+				out[f.Path] = f.Content
+			}
+			return out, nil
+		},
 		Ignore: ign,
 	}
 }

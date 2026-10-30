@@ -542,6 +542,40 @@ func AreaDefaultShas(cfg Config, repoRoot, area string, ign Ignore) (map[string]
 	return out, nil
 }
 
+// AreaStampOnlyDefaults is the files of one area the push view (AreaFiles) drops
+// as unedited embedded defaults on the strength of their own stamp alone: a
+// stamped copy whose stamp matches its body but whose bytes are neither the
+// current embedded body nor its current stamped form. Nothing can tell such a
+// file from one edited and re-stamped, so the sync comparisons count it as a
+// local file wherever the synced base or the hosted snapshot records other bytes
+// for its path.
+func AreaStampOnlyDefaults(cfg Config, repoRoot, area string, ign Ignore) ([]ConfigFile, error) {
+	files, err := walkAreaFiles(cfg, repoRoot, area, PersonalScope)
+	if err != nil {
+		return nil, err
+	}
+	var out []ConfigFile
+	for _, f := range files {
+		if !LocalOnlyPath(f.Path) && !ign.Match(f.Path) && UneditedDefault(f.Path, f.Content) && stampOnlyDefault(f.Path, f.Content) {
+			out = append(out, f)
+		}
+	}
+	sortConfigFiles(out)
+	return out, nil
+}
+
+// stampOnlyDefault reports whether an unedited default (UneditedDefault) is one
+// only its own stamp vouches for: its bytes are neither the current embedded
+// body for the path nor that body's current stamped form.
+func stampOnlyDefault(rel string, body []byte) bool {
+	emb, ok := embeddedBodyByRel()[rel]
+	if !ok {
+		return true
+	}
+	text := string(body)
+	return text != emb && text != ApplyStamp(emb, SHA(emb))
+}
+
 // PlaceholderSettings reports whether the settings area on disk holds nothing a
 // push would send: no satelle.toml, or one carrying only what push withholds — the
 // repo binding `project bind` writes into a fresh clone. Such a file is a
