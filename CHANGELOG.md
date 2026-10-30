@@ -1,3 +1,8 @@
+## [0.0.799] - 2026-10-30
+
+### Fixed
+- A work-state push whose stories were all published no longer fails when it cannot check some stories' reachability because their engagement tree was recorded on another machine. The push exits 0 and prints one informational line counting the stories not checked, and `--verbose` (now on bare `satelle sync`, `satelle sync push` and `satelle sync workstate push`) lists them. Doctor no longer reports `FAIL [sync.failing]` after such a push. A push the server refuses still exits non-zero and names the refused story on stdout as well as stderr. (sty_906870a6)
+
 ## [0.0.798] - 2026-10-30
 
 ### Fixed

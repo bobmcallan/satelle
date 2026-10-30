@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/app"
@@ -133,8 +134,8 @@ func chainEvents(entries []ledger.Entry) ([]hosted.ChainEvent, error) {
 
 // publishStoryEvents appends each planned story that is not withheld and returns
 // how many stories it published. A story the server refused or that cannot be sent
-// is reported on w and does not stop the others; the returned error counts them so
-// the push exits non-zero.
+// is reported on w and does not stop the others; the returned error counts and
+// names them so the push exits non-zero and says which.
 func publishStoryEvents(ctx context.Context, w io.Writer, a *app.App, client *hosted.Client, server, project string, plan []storyAppend, held map[string]string) (published int, err error) {
 	var conn *hosted.ChainConn
 	heads := &headSaver{server: server, project: project, root: a.RepoRoot, pending: map[string]string{}}
@@ -149,14 +150,15 @@ func publishStoryEvents(ctx context.Context, w io.Writer, a *app.App, client *ho
 			err = serr
 		}
 	}()
-	failed, sent := 0, 0
+	var failed []string
+	sent := 0
 	for _, p := range plan {
 		if _, withheld := held[p.id]; withheld {
 			continue
 		}
 		if p.err != nil {
 			fmt.Fprintf(w, "the story %s was not published: %v\n", p.id, p.err)
-			failed++
+			failed = append(failed, p.id)
 			continue
 		}
 		if conn == nil {
@@ -174,7 +176,7 @@ func publishStoryEvents(ctx context.Context, w io.Writer, a *app.App, client *ho
 		case errors.Is(err, hosted.ErrLoginRequired):
 			return published, err
 		case err != nil:
-			failed++
+			failed = append(failed, p.id)
 		default:
 			published++
 		}
@@ -182,8 +184,8 @@ func publishStoryEvents(ctx context.Context, w io.Writer, a *app.App, client *ho
 			_ = heads.flush(io.Discard) // kept pending on failure; the final flush reports it
 		}
 	}
-	if failed > 0 {
-		return published, fmt.Errorf("%d stor(y/ies) not published — see above", failed)
+	if len(failed) > 0 {
+		return published, fmt.Errorf("%d stor(y/ies) not published (%s) — see the reasons on stderr", len(failed), strings.Join(failed, ", "))
 	}
 	return published, nil
 }

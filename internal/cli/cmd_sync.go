@@ -64,6 +64,7 @@ catalogs are a separate verb: satelle publish.`,
 	syncCmd.Flags().BoolVar(&syncDryRun, "dry-run", false, "Preview what each opted-in area would push without contacting the server (documents pull is not previewed).")
 	syncCmd.Flags().Bool("prune", false, pruneFlagUsage)
 	syncCmd.Flags().Bool("force", false, forceFlagUsage)
+	syncCmd.Flags().Bool("verbose", false, verboseReachabilityUsage)
 	syncCmd.AddCommand(&cobra.Command{
 		Use:   "scopes",
 		Short: "Print each .satelle area's resolved scope, and shared files within a personal area",
@@ -306,7 +307,7 @@ func syncOptedIn(cfg config.Config) (bool, error) {
 // runSyncPushLegs is the one push composition (sty_0fa4f732): the push of every
 // opted-in area, in a fixed order — authored config, documents, then work-state.
 // Each leg self-gates on its own [sync] scope and reads --dry-run, --force,
-// --prune and --server as the per-area pushes do. Bare `sync` and `sync push`
+// --prune, --verbose and --server as the per-area pushes do. Bare `sync` and `sync push`
 // both run it; between documents and work-state it calls between (bare sync's
 // pulls, nil for a push, which pulls nothing), so bare sync's order is unchanged.
 func runSyncPushLegs(cmd *cobra.Command, serverArg string, dryRun bool, between func() error) error {
@@ -325,7 +326,7 @@ func runSyncPushLegs(cmd *cobra.Command, serverArg string, dryRun bool, between 
 			return err
 		}
 	}
-	return runSyncWorkstatePush(cmd, serverArg, dryRun, false)
+	return runSyncWorkstatePush(cmd, serverArg, dryRun, false, verboseRequested(cmd))
 }
 
 // runSyncPullsOfBareSync is the pulling half of bare `satelle sync`, run between

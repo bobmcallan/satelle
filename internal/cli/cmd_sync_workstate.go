@@ -66,7 +66,7 @@ remote reads. Skipped entirely unless the workstate area is opted in.`,
 	}
 
 	var pushServer string
-	var dryRun, full bool
+	var dryRun, full, pushVerbose bool
 	push := &cobra.Command{
 		Use:         "push [story-or-epic-id...]",
 		Short:       "Replicate opted-in work-state areas to the bound hosted project",
@@ -87,12 +87,13 @@ Given story ids or an epic id it pushes only those, whole, leaving the cursor.
 A story in progress is held until its engagement tree is clean and HEAD is on a
 remote-tracking ref ([sync] hold_unpushed = false turns this off).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSyncWorkstatePush(cmd, pushServer, dryRun, full, args...)
+			return runSyncWorkstatePush(cmd, pushServer, dryRun, full, pushVerbose, args...)
 		},
 	}
 	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	push.Flags().BoolVar(&dryRun, "dry-run", false, "List which areas would be pushed, and which stories would be held, without contacting the server.")
 	push.Flags().BoolVar(&full, "full", false, "Ignore the stored cursor and push the complete set (then advance the cursor).")
+	push.Flags().BoolVar(&pushVerbose, "verbose", false, verboseReachabilityUsage)
 	group.AddCommand(push)
 
 	var pullServer string
@@ -243,7 +244,18 @@ var (
 	workstateLedgerChunk = 1000
 )
 
-func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full bool, ids ...string) (retErr error) {
+// verboseReachabilityUsage is the one help text every push that reaches the
+// work-state leg gives --verbose.
+const verboseReachabilityUsage = "List every story whose code reachability could not be checked, not just a count."
+
+// verboseRequested reads --verbose from the command that is running. A command
+// that does not define it (a test's bare command) reads as false.
+func verboseRequested(cmd *cobra.Command) bool {
+	f := cmd.Flags().Lookup("verbose")
+	return f != nil && f.Value.String() == "true"
+}
+
+func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, verbose bool, ids ...string) (retErr error) {
 	a, err := appFrom(cmd)
 	if err != nil {
 		return err
@@ -437,7 +449,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 			if res, herr = classifyHolds(cmd.Context(), a, batch.Items, classifyRows); herr != nil {
 				return herr
 			}
-			for _, l := range res.lines() {
+			for _, l := range res.lines(verbose) {
 				fmt.Fprintln(out, l)
 			}
 		}
@@ -469,6 +481,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 			recordWorkstatePush(a.RepoRoot, false, appendErr.Error())
 			return appendErr
 		}
+		fmt.Fprintln(out, appendErr.Error())
 		recordOK = func() { recordWorkstatePush(a.RepoRoot, false, appendErr.Error()) }
 		defer func() {
 			if retErr == nil {
@@ -1380,7 +1393,7 @@ func dryRunHolds(cmd *cobra.Command, a *app.App, optIn map[string]bool, out io.W
 		fmt.Fprintln(out, "No story would be held.")
 		return nil
 	}
-	for _, l := range res.lines() {
+	for _, l := range res.lines(true) {
 		fmt.Fprintln(out, l)
 	}
 	return nil

@@ -40,8 +40,8 @@ nothing; to bring in what only the hosted copy changed, run "satelle sync pull".
 A push is refused while the hosted copy is ahead of this machine (the refusal
 names "satelle sync pull" for an area that is only behind and "satelle sync
 reconcile" for one changed on both machines) or while a conflict copy is
-unmerged. --dry-run, --force, --prune and --server mean what they mean on the
-per-area pushes.`,
+unmerged. --dry-run, --force, --prune, --verbose and --server mean what they
+mean on the per-area pushes.`,
 		Args:        cobra.NoArgs,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -52,6 +52,7 @@ per-area pushes.`,
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview what each opted-in area would push without contacting the server.")
 	cmd.Flags().Bool("prune", false, pruneFlagUsage)
 	cmd.Flags().Bool("force", false, forceFlagUsage)
+	cmd.Flags().Bool("verbose", false, verboseReachabilityUsage)
 	return cmd
 }
 
