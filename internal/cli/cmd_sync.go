@@ -584,9 +584,10 @@ func pushConfigFileSet(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir 
 	}
 	printWithheldBinding(out, files)
 	if opts.DryRun {
-		fmt.Fprintf(out, "Would push %d config file(s) to the bound project on %s:\n", len(files), server)
-		for _, f := range files {
-			fmt.Fprintf(out, "  %-40s -> personal\n", f.Path)
+		if opts.IgnoreScope {
+			printDryRunAll(out, server, "config file(s)", files)
+		} else {
+			printDryRunChanges(out, cfg, server, repoRoot, dataDir, ign, files, "config file(s)")
 		}
 		printWithheldLocal()
 		return ref, nil
@@ -694,6 +695,94 @@ func teamAreaFiles(files []config.ConfigFile) []config.ConfigFile {
 		}
 	}
 	return out
+}
+
+// printDryRunAll is a dry run's listing of every file of the set, for a push
+// with no last push to compare it with. noun names the set ("document(s)").
+func printDryRunAll(out io.Writer, server, noun string, files []config.ConfigFile) {
+	fmt.Fprintf(out, "Would push %d %s to the bound project on %s:\n", len(files), noun, server)
+	for _, f := range files {
+		fmt.Fprintf(out, "  %-40s -> personal\n", f.Path)
+	}
+}
+
+// printDryRunChanges is a dry run's listing of what a push would send, read from
+// disk alone: per snapshot area, every file when this checkout never pushed the
+// area, else only the paths changed since its recorded base — the comparison
+// doctor and `sync status` make (snapsync.OfflineDrift). Team files ride no
+// snapshot and the hosted head decides them, so they are listed apart. noun
+// names the set ("config file(s)", "document(s)").
+func printDryRunChanges(out io.Writer, cfg config.Config, server, repoRoot, dataDir string, ign config.Ignore, files []config.ConfigFile, noun string) {
+	project, err := resolveBoundProject(cfg, repoRoot)
+	if err != nil {
+		fmt.Fprintln(out, "(no bound project — cannot compare with the last push; listing every file)")
+		printDryRunAll(out, server, noun, files)
+		return
+	}
+	abs, err := filepath.Abs(repoRoot)
+	if err != nil {
+		abs = repoRoot
+	}
+	var areas []string
+	byArea := map[string][]config.ConfigFile{}
+	for _, f := range files {
+		if _, seen := byArea[f.Area]; !seen {
+			areas = append(areas, f.Area)
+		}
+		byArea[f.Area] = append(byArea[f.Area], f)
+	}
+	var body strings.Builder
+	listAll := func(area, note string) int {
+		fmt.Fprintf(&body, "  %s: %d changed (%s)\n", area, len(byArea[area]), note)
+		for _, f := range byArea[area] {
+			fmt.Fprintf(&body, "    %-40s -> personal (%s)\n", f.Path, note)
+		}
+		return len(byArea[area])
+	}
+	n := 0
+	for _, area := range areas {
+		if area == config.TeamArea {
+			continue
+		}
+		local, err := snapsync.LocalShas(cfg, repoRoot, area, ign)
+		var defaults map[string]map[string]bool
+		if err == nil {
+			defaults, err = config.AreaDefaultShas(cfg, repoRoot, area, ign)
+		}
+		var drift snapsync.Drift
+		if err == nil {
+			drift, err = snapsync.OfflineDrift(server, project, abs, dataDir, area, local, defaults, ign)
+		}
+		switch {
+		case err != nil:
+			n += listAll(area, fmt.Sprintf("cannot compare with the last push: %v", err))
+		case !drift.Synced:
+			n += listAll(area, "never synced")
+		case len(drift.Changed) > 0:
+			fmt.Fprintf(&body, "  %s: %d changed\n", area, len(drift.Changed))
+			for _, p := range drift.Changed {
+				if _, ok := local[p]; ok {
+					fmt.Fprintf(&body, "    %-40s -> personal\n", p)
+				} else {
+					fmt.Fprintf(&body, "    %-40s (deleted)\n", p)
+				}
+			}
+			n += len(drift.Changed)
+		}
+	}
+	team := byArea[config.TeamArea]
+	if len(team) > 0 {
+		fmt.Fprintln(&body, "  team files (sent only if the hosted bytes differ):")
+		for _, f := range team {
+			fmt.Fprintf(&body, "    %-40s -> personal\n", f.Path)
+		}
+	}
+	if n == 0 && len(team) == 0 {
+		fmt.Fprintln(out, "nothing to push — every area matches its last push")
+		return
+	}
+	fmt.Fprintf(out, "Would push %d %s to the bound project on %s — changed since each area's last push:\n", n, noun, server)
+	fmt.Fprint(out, body.String())
 }
 
 // printBundleExclusions names every path a push left out of the bundle, each

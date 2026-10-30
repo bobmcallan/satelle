@@ -1,3 +1,8 @@
+## [0.0.806] - 2026-10-30
+
+### Fixed
+- `satelle sync push --dry-run` lists only the files a push would send, matching what `satelle sync status` reports as unpushed. Per area it lists only the paths changed since that area's last push, an area this checkout has never pushed in full, and team files apart. It still contacts no server. (sty_18273486)
+
 ## [0.0.805] - 2026-10-30
 
 ### Fixed

@@ -115,10 +115,7 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 		fmt.Fprintln(out, note)
 	}
 	if dryRun {
-		fmt.Fprintf(out, "Would push %d document(s) to the bound project on %s:\n", len(files), server)
-		for _, f := range files {
-			fmt.Fprintf(out, "  %-40s -> personal\n", f.Path)
-		}
+		printDryRunChanges(out, cfg, server, repoRoot, dataDir, ign, files, "document(s)")
 		printWithheldLocal()
 		return nil
 	}

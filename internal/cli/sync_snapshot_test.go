@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -782,5 +783,145 @@ func TestSnapshotFirstPullWithNoBase(t *testing.T) {
 	}
 	if !strings.Contains(out, "conflict (changed on both sides): workflows/keep.md") {
 		t.Errorf("the conflict is not named:\n%s", out)
+	}
+}
+
+// dryRunPush runs `satelle sync push --dry-run` as machine m.
+func (m *snapMachine) dryRunPush() string {
+	m.t.Helper()
+	m.use()
+	out, err := runRoot(m.t, "sync", "push", "--dry-run", "--server", m.url)
+	if err != nil {
+		m.t.Fatalf("sync push --dry-run: %v\n%s", err, out)
+	}
+	return out
+}
+
+// livePush runs `satelle sync push` as machine m.
+func (m *snapMachine) livePush() {
+	m.t.Helper()
+	m.use()
+	if out, err := runRoot(m.t, "sync", "push", "--server", m.url, "--dry-run=false"); err != nil {
+		m.t.Fatalf("sync push: %v\n%s", err, out)
+	}
+}
+
+// dryRunAreas is the set of areas a dry run names with a changed-file header.
+func dryRunAreas(out string) map[string]bool {
+	got := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(line); len(f) >= 3 && strings.HasSuffix(f[0], ":") && f[2] == "changed" && f[1] != "0" {
+			got[strings.TrimSuffix(f[0], ":")] = true
+		}
+	}
+	return got
+}
+
+// linesNaming is every line of out that names path.
+func linesNaming(out, path string) []string {
+	var got []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, path) {
+			got = append(got, line)
+		}
+	}
+	return got
+}
+
+// sty_18273486: a dry run should name what a push would actually send — every
+// file of an area this checkout never pushed, and after a push only the changed
+// one — and contacts no server.
+func TestSyncPushDryRunListsOnlyChangedArea(t *testing.T) {
+	ts, f := newSnapServer(t)
+	seedCred(t, ts.URL)
+	a := newSnapMachine(t, ts.URL)
+	paths := []string{"skills/x.md", "skills/y.md", "workflows/w.md", "documents/d.md"}
+	for _, p := range paths {
+		a.write(p, p+"\n")
+	}
+
+	out := a.dryRunPush()
+	for _, p := range paths {
+		lines := linesNaming(out, p)
+		if len(lines) != 1 || !strings.Contains(lines[0], "-> personal (never synced)") {
+			t.Errorf("never-synced %s not listed as sent in full: %v\n%s", p, lines, out)
+		}
+	}
+	if puts := f.putLog(); len(puts) != 0 {
+		t.Errorf("--dry-run PUT %v", puts)
+	}
+	for _, area := range []string{"skills", "workflows", "documents"} {
+		if _, ok := a.base(area); ok {
+			t.Errorf("--dry-run recorded a %s base", area)
+		}
+	}
+
+	a.livePush()
+	a.write("skills/x.md", "edited\n")
+	before := len(f.putLog())
+	out = a.dryRunPush()
+	if lines := linesNaming(out, "skills/x.md"); len(lines) != 1 || !strings.Contains(lines[0], "-> personal") {
+		t.Errorf("the edited file is not listed: %v\n%s", lines, out)
+	}
+	for _, p := range paths[1:] {
+		if lines := linesNaming(out, p); len(lines) != 0 {
+			t.Errorf("unchanged %s listed: %v\n%s", p, lines, out)
+		}
+	}
+	if !strings.Contains(out, "Would push 1 config file(s)") {
+		t.Errorf("config leg should count only the changed file:\n%s", out)
+	}
+	if n := len(f.putLog()) - before; n != 0 {
+		t.Errorf("--dry-run made %d PUT(s): %v", n, f.putLog()[before:])
+	}
+}
+
+// sty_18273486: on areas every one of which has been pushed, the dry run names
+// exactly the areas matching what sync status reports as unpushed.
+func TestSyncPushDryRunAgreesWithStatus(t *testing.T) {
+	ts, f := newSnapServer(t)
+	seedCred(t, ts.URL)
+	a := newSnapMachine(t, ts.URL)
+	a.write("skills/x.md", "x\n")
+	a.write("workflows/w.md", "w\n")
+	a.write("documents/d.md", "d\n")
+	a.livePush()
+	before := len(f.putLog())
+
+	areas := []string{"skills", "workflows", "documents"}
+	for _, step := range []struct {
+		edit string
+		want []string
+	}{
+		{"", nil},
+		{"skills/x.md", []string{"skills"}},
+		{"documents/d.md", []string{"skills", "documents"}},
+		{"workflows/w.md", []string{"skills", "workflows", "documents"}},
+	} {
+		if step.edit != "" {
+			a.write(step.edit, "edited\n")
+		}
+		statusOut, _ := a.status()
+		unpushed := map[string]bool{}
+		for _, area := range areas {
+			if row(t, statusOut, area)[1] == snapsync.StateUnpushed {
+				unpushed[area] = true
+			}
+		}
+		dry := a.dryRunPush()
+		named := dryRunAreas(dry)
+		want := map[string]bool{}
+		for _, area := range step.want {
+			want[area] = true
+		}
+		if !reflect.DeepEqual(named, unpushed) || !reflect.DeepEqual(named, want) {
+			t.Errorf("after editing %q: dry run named %v, status unpushed %v, want %v\ndry run:\n%s\nstatus:\n%s", step.edit, named, unpushed, want, dry, statusOut)
+		}
+		if len(want) == 0 && !strings.Contains(dry, "nothing to push — every area matches its last push") {
+			t.Errorf("a clean tree's dry run does not say nothing to push:\n%s", dry)
+		}
+	}
+	if n := len(f.putLog()) - before; n != 0 {
+		t.Errorf("--dry-run made %d PUT(s): %v", n, f.putLog()[before:])
 	}
 }
