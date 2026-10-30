@@ -55,7 +55,13 @@ type Pusher struct {
 	// Record persists a push-leg outcome (sty_30696eeb). Called on every flush,
 	// including the ones Log suppresses. nil discards.
 	Record func(repoPath string, success bool, reason string)
+	// PushOff reports the machine-local push switch and names it; true makes a
+	// flush drop its dirty set without pushing or recording. nil means push on.
+	PushOff func() (off bool, setting string)
 
+	// wasOff is the last PushOff answer, so the switch logs on a transition only.
+	// Touched only from Run's goroutine.
+	wasOff  bool
 	mu      sync.Mutex
 	dirty   map[string]bool
 	wake    chan struct{}
@@ -95,6 +101,15 @@ func (p *Pusher) logf(format string, args ...any) {
 	if p.Log != nil {
 		p.Log(format, args...)
 	}
+}
+
+// OnIngest is the mirror's ingest hook. A change materialised from the hosted
+// project is never pushed back to it, so a hosted-origin ingest marks nothing.
+func (p *Pusher) OnIngest(repoKey string, origin mirror.IngestOrigin) {
+	if origin == mirror.OriginHosted {
+		return
+	}
+	p.Notify(repoKey)
 }
 
 // Notify marks repoKey dirty and wakes the worker. Never blocks: a full wake
@@ -187,6 +202,9 @@ func (p *Pusher) Run(ctx context.Context) {
 
 func (p *Pusher) flush(ctx context.Context) {
 	keys := p.takeDirty()
+	if p.pushOff() {
+		return
+	}
 	push := p.Push
 	if push == nil {
 		push = pushViaCLI
@@ -220,6 +238,23 @@ func (p *Pusher) flush(ctx context.Context) {
 	for _, k := range leftover {
 		p.markDirty(k)
 	}
+}
+
+// pushOff asks the machine-local switch, logging once on each transition.
+func (p *Pusher) pushOff() bool {
+	if p.PushOff == nil {
+		return false
+	}
+	off, setting := p.PushOff()
+	if off != p.wasOff {
+		if off {
+			p.logf("hosted push off by %s", setting)
+		} else {
+			p.logf("hosted push back on")
+		}
+		p.wasOff = off
+	}
+	return off
 }
 
 // report logs on failure-reason transition and recovered, never on a repeat.

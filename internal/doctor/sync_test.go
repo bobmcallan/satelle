@@ -103,6 +103,38 @@ func TestCheckSyncHealthStandingFailure(t *testing.T) {
 	}
 }
 
+// sty_a21d9c07 AC5: with [hosted] push = false in the machine config, a standing
+// push failure and a stale last success are reported as one informational
+// push-off finding, never sync.failing or sync.unbacked.
+func TestCheckSyncHealthPushOffIsInfo(t *testing.T) {
+	repo, data := writeRepoTOML(t, t.TempDir(), "[sync]\nstories = \"personal\"\nstale_after = \"1h\"\n")
+	home := t.TempDir()
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	if err := syncstate.RecordPush(home, repo, true, "", "", now.Add(-48*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncstate.RecordPush(home, repo, false, "boom", "", now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if on := checkSyncHealth(repo, data, home, now); on.OK() {
+		t.Fatalf("control: with push on the failure must not PASS: %v", on)
+	}
+
+	if err := os.WriteFile(filepath.Join(home, config.GlobalConfigName), []byte("[hosted]\npush = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := checkSyncHealth(repo, data, home, now)
+	if !got.OK() {
+		t.Fatalf("push off must PASS: %v", got)
+	}
+	if len(got) != 1 || got[0].ID != health.IDSyncPushOff || got[0].Severity != health.SeverityInfo {
+		t.Fatalf("want one info %s finding, got %v", health.IDSyncPushOff, got)
+	}
+	if !containsAll(got[0].Detail, "[hosted] push = false", config.GlobalConfigName) {
+		t.Errorf("finding does not name the setting: %q", got[0].Detail)
+	}
+}
+
 func TestCheckSyncHealthMissingThresholdWarns(t *testing.T) {
 	repo, data := writeRepoTOML(t, t.TempDir(), "[sync]\nstories = \"personal\"\n")
 	got := checkSyncHealth(repo, data, t.TempDir(), time.Now())

@@ -130,6 +130,7 @@ const (
 	IDSyncFailing  = "sync.failing"       // standing hosted-push failure
 	IDSyncUnbacked = "sync.unbacked"      // last successful push older than stale_after
 	IDSyncConfig   = "sync.config"        // stale_after missing or unparseable
+	IDSyncPushOff  = "sync.push_off"      // the machine config turns hosted push off (sty_a21d9c07)
 	IDStatusDrift  = "story.status.drift" // work-item row disagrees with last status_transition
 
 	// Substrate sync health (sty_7562055c): the authored areas and documents
@@ -179,7 +180,7 @@ var ids = []string{
 	IDWorkflowStructure, IDWorkflowConsistency, IDCommandRuleAllow,
 	IDProcessUnreadable, IDProcessAbsent, IDProcessDivergent,
 	IDScaffoldStale, IDScaffoldMissing, IDRepoUnreadable, IDConfigStray, IDSubstrateUnlocked, IDBreakingUnacknowledged,
-	IDSyncLocal, IDSyncOk, IDSyncFailing, IDSyncUnbacked, IDSyncConfig,
+	IDSyncLocal, IDSyncOk, IDSyncFailing, IDSyncUnbacked, IDSyncConfig, IDSyncPushOff,
 	IDSyncSubstrateOk, IDSyncSubstrateUnpushed, IDSyncSubstrateUnmerged, IDSyncSubstrateBehind,
 	IDSyncSubstrateUnchecked, IDSyncSubstrateUnbound,
 	IDStatusDrift,

@@ -63,8 +63,9 @@ func Run(ctx context.Context, opts Options) error {
 		Keys:    pushKeys(ms),
 		Log:     logLine,
 		Record:  recordPushFunc(home),
+		PushOff: config.MachinePushOff,
 	}
-	webSrv := web.NewMirrorHooks(ms, config.SafeCurrentInstanceID(), pusher.Notify)
+	webSrv := web.NewMirrorHooks(ms, config.SafeCurrentInstanceID(), pusher.OnIngest)
 	publishLogs = func() { webSrv.Publish("logs") }
 	handler := web.RequestLog(webSrv.Handler, serverLog, logCfg, publishLogs)
 
@@ -89,6 +90,7 @@ func Run(ctx context.Context, opts Options) error {
 		Targets: mirrorTargets(ms, home),
 		Log:     logLine,
 		Record:  recordSnapshotFunc(home),
+		PushOff: config.MachinePushOff,
 	}
 	go rec.Loop(ctx)
 	go pusher.Run(ctx)

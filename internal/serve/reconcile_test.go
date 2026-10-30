@@ -595,3 +595,25 @@ func waitFor(t *testing.T, budget time.Duration, cond func() bool) {
 	t.Helper()
 	testutil.Eventually(t, budget, cond, "condition not met")
 }
+
+// TestReconcilerPushOffSkipsPushLegs proves sty_a21d9c07 AC4 for the backstop:
+// with push off a pass still re-seeds and snapshots (the UI stays fed) and runs
+// neither push leg.
+func TestReconcilerPushOffSkipsPushLegs(t *testing.T) {
+	var reseeds, snaps, pushes, substrates int
+	count := func(n *int) func(context.Context, string) error {
+		return func(context.Context, string) error { *n++; return nil }
+	}
+	r := &Reconciler{
+		Targets:       func(context.Context) []string { return []string{"/repo"} },
+		Reseed:        count(&reseeds),
+		Snapshot:      count(&snaps),
+		Push:          count(&pushes),
+		SubstratePush: count(&substrates),
+		PushOff:       func() (bool, string) { return true, "[hosted] push = false" },
+	}
+	r.pass(context.Background())
+	if reseeds != 1 || snaps != 1 || pushes != 0 || substrates != 0 {
+		t.Fatalf("reseed %d snapshot %d push %d substrate %d, want 1 1 0 0", reseeds, snaps, pushes, substrates)
+	}
+}

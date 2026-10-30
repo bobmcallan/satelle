@@ -2,16 +2,21 @@ package serve
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/testutil"
+	"github.com/bobmcallan/satelle/internal/web"
 )
 
 func freePort(t *testing.T) int {
@@ -101,5 +106,57 @@ func TestServeAddrUsesGlobalWhenEmpty(t *testing.T) {
 	select {
 	case <-errc:
 	case <-time.After(waitBudget):
+	}
+}
+
+// TestPushOffServesUIAndNeverPushes proves sty_a21d9c07 AC4: with [hosted] push =
+// false in the machine config, satelled's UI routes answer and a local mutation's
+// ingest lands in the mirror, while its Pusher flushes without ever pushing.
+func TestPushOffServesUIAndNeverPushes(t *testing.T) {
+	// Not IsolateHome: its endpoint off-switch would stop the Pusher before the
+	// machine setting is ever asked.
+	home := t.TempDir()
+	t.Setenv("SATELLE_HOME", home)
+	if err := os.WriteFile(filepath.Join(home, config.GlobalConfigName), []byte("[hosted]\npush = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ms, err := mirror.Open(filepath.Join(t.TempDir(), "mirror.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ms.Close() })
+	var asked atomic.Int32
+	p := &Pusher{PushOff: func() (bool, string) {
+		asked.Add(1)
+		return config.MachinePushOff()
+	}}
+	_, rec := testPusher(t, p)
+	srv := httptest.NewServer(web.NewMirrorHooks(ms, "test", p.OnIngest).Handler)
+	t.Cleanup(srv.Close)
+
+	get := func(path string) int {
+		t.Helper()
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := get("/"); code != http.StatusOK {
+		t.Fatalf("GET / = %d", code)
+	}
+	postIngest(t, srv, "/ingest/snapshot", mirror.Snapshot{
+		RepoKey: "rk",
+		Slug:    "probe",
+		Stories: []json.RawMessage{[]byte(`{"id":"sty_a","title":"Hello"}`)},
+	})
+	if code := get("/r/probe/"); code != http.StatusOK {
+		t.Fatalf("GET /r/probe/ after ingest = %d", code)
+	}
+
+	waitFor(t, waitBudget, func() bool { return asked.Load() >= 1 && p.dirtyCount() == 0 })
+	if n := rec.count(); n != 0 {
+		t.Fatalf("push off: %d push(es), want 0: %v", n, rec.snapshot())
 	}
 }

@@ -32,6 +32,12 @@ func checkWorkstatePush(cfg config.Config, cfgPath, repoRoot, globalDir string, 
 		return health.Findings{health.Info(health.IDSyncLocal, "Work state is local-only",
 			"work-state areas are local; not flagged as unbacked").About(repoRoot)}
 	}
+	// A machine that turned push off is not failing to push: the recorded push
+	// state is not judged while the switch holds.
+	if off, setting := config.MachinePushOffIn(globalDir); off {
+		return health.Findings{health.Info(health.IDSyncPushOff, "Hosted push is off",
+			fmt.Sprintf("%s; pulls and the local web UI still run, push failures and staleness are not judged", setting)).About(repoRoot)}
+	}
 
 	st, _, lerr := syncstate.Load(globalDir, repoRoot)
 	if lerr != nil {

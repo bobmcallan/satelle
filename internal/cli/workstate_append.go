@@ -29,7 +29,11 @@ type storyAppend struct {
 	id    string
 	order []ledger.Entry // the whole local chain, first event to last
 	from  int            // index of the first event the server has not accepted
-	err   error          // the local chain cannot be sent as it is
+	// headKnown is true when the saved head is an event of order. Without it
+	// (no head saved, or a rebuilt store) the hosted chain is read first, so no
+	// event the server already holds is sent again.
+	headKnown bool
+	err       error // the local chain cannot be sent as it is
 }
 
 // base is the event the unpublished events build on; empty when none was published.
@@ -73,14 +77,14 @@ func planStoryAppends(ctx context.Context, a *app.App, scope scopeSet, heads map
 		// treated as none: the server compares the base and either resumes from its
 		// own prefix of this chain or reports the story as moved, so nothing is
 		// guessed and nothing is stuck.
-		from := 0
+		from, known := 0, false
 		if head := heads[id]; head != "" {
 			if i := slices.IndexFunc(order, func(e ledger.Entry) bool { return e.ID == head }); i >= 0 {
-				from = i + 1
+				from, known = i+1, true
 			}
 		}
 		if from < len(order) {
-			plan = append(plan, storyAppend{id: id, order: order, from: from})
+			plan = append(plan, storyAppend{id: id, order: order, from: from, headKnown: known})
 		}
 	}
 	return plan, nil
@@ -175,6 +179,7 @@ func publishStoryEvents(ctx context.Context, w io.Writer, a *app.App, client *ho
 		switch {
 		case errors.Is(err, hosted.ErrLoginRequired):
 			return published, err
+		case errors.Is(err, errUpToDate):
 		case err != nil:
 			failed = append(failed, p.id)
 		default:
@@ -218,6 +223,30 @@ func withoutStoryEntries(raws []json.RawMessage) []json.RawMessage {
 // part-way through is handled as at the start, from the batch it refused.
 func appendStory(ctx context.Context, w io.Writer, a *app.App, conn *hosted.ChainConn, project string, p storyAppend, heads *headSaver) error {
 	from, resumed := p.from, false
+	if !p.headKnown {
+		latest, missing, err := hostedLatest(ctx, conn, project, p)
+		switch {
+		case errors.Is(err, hosted.ErrChainUnsupported):
+			// No Read to ask: the stale-base resume below finds the prefix instead.
+		case err != nil:
+			fmt.Fprintf(w, "the story %s was not published: %v\n", p.id, err)
+			return err
+		case latest == "":
+		default:
+			i := slices.IndexFunc(p.order, func(e ledger.Entry) bool { return e.ID == latest })
+			if i < 0 {
+				return reportMoved(w, a, &hosted.StaleBaseError{StoryID: p.id, Base: p.base(), LatestID: latest, Missing: missing})
+			}
+			heads.set(p.id, latest)
+			if i+1 == len(p.order) {
+				fmt.Fprintf(w, "the story %s is already published up to %s: nothing to send\n", p.id, latest)
+				_ = syncstate.RecordStoryConflicts(config.GlobalDir(), a.RepoRoot, nil, []string{p.id}, time.Now().UTC())
+				return errUpToDate
+			}
+			fmt.Fprintf(w, "the story %s is already published up to %s: resuming from it\n", p.id, latest)
+			from, resumed = i+1, true
+		}
+	}
 	// events are the encoded events of p.order[start:], made once and again only
 	// when a resume reaches back before them.
 	start := from
@@ -246,9 +275,7 @@ func appendStory(ctx context.Context, w io.Writer, a *app.App, conn *hosted.Chai
 		}
 		i := slices.IndexFunc(p.order, func(e ledger.Entry) bool { return e.ID == stale.LatestID })
 		if resumed || i < 0 {
-			reason := fmt.Sprintf("moved since %s: re-read and decide (server is at %s, %d event(s) not seen)", stale.Since(), stale.LatestID, stale.Missing)
-			fmt.Fprintf(w, "the story %s %s\n", p.id, reason)
-			_ = syncstate.RecordStoryConflicts(config.GlobalDir(), a.RepoRoot, map[string]string{p.id: reason}, nil, time.Now().UTC())
+			reportMoved(w, a, stale)
 			return err
 		}
 		fmt.Fprintf(w, "the story %s is already published up to %s: resuming from it\n", p.id, stale.LatestID)
@@ -264,6 +291,34 @@ func appendStory(ctx context.Context, w io.Writer, a *app.App, conn *hosted.Chai
 	}
 	_ = syncstate.RecordStoryConflicts(config.GlobalDir(), a.RepoRoot, nil, []string{p.id}, time.Now().UTC())
 	return nil
+}
+
+// errUpToDate is appendStory's answer for a story the server already holds whole:
+// nothing was sent, and nothing failed.
+var errUpToDate = errors.New("already published")
+
+// hostedLatest reads the story's hosted chain: its latest event, and how many of
+// its events the local chain does not hold.
+func hostedLatest(ctx context.Context, conn *hosted.ChainConn, project string, p storyAppend) (latest string, missing int, err error) {
+	events, latest, err := conn.ReadStory(ctx, project, p.id, "")
+	if err != nil {
+		return "", 0, err
+	}
+	for _, e := range events {
+		if !slices.ContainsFunc(p.order, func(l ledger.Entry) bool { return l.ID == e.ID }) {
+			missing++
+		}
+	}
+	return latest, missing, nil
+}
+
+// reportMoved tells the agent the story moved on the server and records the
+// conflict; it returns stale so a caller can hand it back as the story's error.
+func reportMoved(w io.Writer, a *app.App, stale *hosted.StaleBaseError) error {
+	reason := fmt.Sprintf("moved since %s: re-read and decide (server is at %s, %d event(s) not seen)", stale.Since(), stale.LatestID, stale.Missing)
+	fmt.Fprintf(w, "the story %s %s\n", stale.StoryID, reason)
+	_ = syncstate.RecordStoryConflicts(config.GlobalDir(), a.RepoRoot, map[string]string{stale.StoryID: reason}, nil, time.Now().UTC())
+	return stale
 }
 
 // appendBatchBytes caps the encoded size of one Append: well under the server's

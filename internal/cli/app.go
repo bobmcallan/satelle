@@ -22,6 +22,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/logfile"
+	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/oplog"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/waiver"
@@ -59,6 +60,28 @@ type uiDrainCtxKey struct{}
 
 // needsStore returns a cobra annotations map flagging a store-backed command.
 func needsStore() map[string]string { return map[string]string{storeAnnotation: "1"} }
+
+// hostedOriginAnnotation marks a verb whose store change is materialised from
+// the hosted project (pull, snapshot, rechain, rehydrate). Its end-of-verb UI
+// drain stamps mirror.OriginHosted so satelled never pushes that change back.
+const hostedOriginAnnotation = "hosted-origin"
+
+// hostedOrigin adds hostedOriginAnnotation to ann (nil starts a new map).
+func hostedOrigin(ann map[string]string) map[string]string {
+	if ann == nil {
+		ann = map[string]string{}
+	}
+	ann[hostedOriginAnnotation] = "1"
+	return ann
+}
+
+// ingestOrigin is the mirror origin cmd's UI drain stamps.
+func ingestOrigin(cmd *cobra.Command) mirror.IngestOrigin {
+	if cmd != nil && cmd.Annotations[hostedOriginAnnotation] != "" {
+		return mirror.OriginHosted
+	}
+	return mirror.OriginLocal
+}
 
 // openAppForCmd opens the bootstrap and stashes it on the command's context.
 // Called from the root's PersistentPreRunE for store-backed commands.
@@ -138,6 +161,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 			endpoint: ep,
 			repoKey:  config.RepoKey(a.RepoRoot),
 			app:      a,
+			origin:   ingestOrigin(cmd),
 		}
 		verb.AddChangeNotifier(drain.mark)
 	}

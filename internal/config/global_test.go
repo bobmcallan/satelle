@@ -115,6 +115,50 @@ func TestResolveEndpointPrecedence(t *testing.T) {
 	}
 }
 
+// sty_a21d9c07: [hosted] push is on when absent or true and off only when false;
+// MachinePushOff re-reads the file and names the key and its path; SaveGlobal
+// keeps the setting.
+func TestMachinePushOff(t *testing.T) {
+	home := testutil.IsolateHome(t)
+	path := filepath.Join(home, GlobalConfigName)
+	for _, c := range []struct {
+		name, body string
+		off        bool
+	}{
+		{"absent", "[hosted]\nserver = \"https://x\"\n", false},
+		{"true", "[hosted]\npush = true\n", false},
+		{"false", "[hosted]\npush = false\n", true},
+	} {
+		if err := os.WriteFile(path, []byte(c.body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		off, setting := MachinePushOff()
+		if off != c.off {
+			t.Errorf("%s: off = %v, want %v", c.name, off, c.off)
+		}
+		if !strings.Contains(setting, "[hosted] push = false") || !strings.Contains(setting, path) {
+			t.Errorf("%s: setting = %q, want the key and %s", c.name, setting, path)
+		}
+	}
+
+	gc, err := LoadGlobal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveGlobal(gc); err != nil {
+		t.Fatal(err)
+	}
+	if off, _ := MachinePushOff(); !off {
+		t.Error("SaveGlobal dropped push = false")
+	}
+	if err := SaveGlobal(GlobalConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if off, _ := MachinePushOff(); off {
+		t.Error("an unset push saved as off")
+	}
+}
+
 func TestGlobalConfigHasNoSyncField(t *testing.T) {
 	rt := reflect.TypeOf(GlobalConfig{})
 	if _, ok := rt.FieldByName("Sync"); ok {

@@ -402,8 +402,8 @@ func TestPushReportsAStaleBaseAndClearsItOnceAccepted(t *testing.T) {
 			t.Errorf("report missing %q:\n%s", want, out)
 		}
 	}
-	if n := len(f.chain.appendsFor(moved)); n != 1 {
-		t.Errorf("the refused story was sent %d times, want once", n)
+	if n := len(f.chain.appendsFor(moved)); n != 0 {
+		t.Errorf("the moved story was sent %d times, want none: its hosted chain is read first", n)
 	}
 	if got := f.chain.stored("probe", moved); !slices.Equal(got, []string{"evt_foreign"}) {
 		t.Errorf("the server's chain was changed: %v", got)
@@ -437,8 +437,9 @@ func TestPushReportsAStaleBaseAndClearsItOnceAccepted(t *testing.T) {
 	}
 }
 
-// sty_9bdf08c4 AC4: the server holding a prefix of this checkout's own chain is
-// resumed from, said so, with only the later events sent and none resent.
+// sty_9bdf08c4 AC4: the server holding a prefix of this checkout's own chain past
+// its saved head (a head lost to an interrupted push) is resumed from, said so,
+// with only the later events sent and none resent.
 func TestPushResumesFromItsOwnPrefix(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
@@ -450,6 +451,9 @@ func TestPushResumesFromItsOwnPrefix(t *testing.T) {
 	}
 	for _, e := range local[:2] {
 		f.chain.seed("probe", id, &syncpb.Event{Id: e.ID, StoryId: id, BaseId: e.BaseID})
+	}
+	if err := hosted.SaveStoryHead(ts.URL, "probe", repo, id, local[0].ID); err != nil {
+		t.Fatal(err)
 	}
 
 	out, err := pushRaw(t, ts.URL)
@@ -482,11 +486,14 @@ func TestPushResumesFromItsOwnPrefix(t *testing.T) {
 func TestPushReportsASecondRefusalOnTheResume(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, holdOffToml)
+	repo := workstateRepo(t, holdOffToml)
 	id := createStoryID(t, "alpha")
 	local := localChain(t, id)
 	for _, e := range local[:2] {
 		f.chain.seed("probe", id, &syncpb.Event{Id: e.ID, StoryId: id, BaseId: e.BaseID})
+	}
+	if err := hosted.SaveStoryHead(ts.URL, "probe", repo, id, local[0].ID); err != nil {
+		t.Fatal(err)
 	}
 	calls := 0
 	f.chain.before = func(req *syncpb.AppendRequest, chain *[]*syncpb.Event) {
@@ -865,5 +872,70 @@ func TestPushResolvesADetaillessRefusalAsAMovedStory(t *testing.T) {
 	}
 	if _, ok := storyConflicts(t, repo)[id]; !ok {
 		t.Errorf("no conflict recorded for %s", id)
+	}
+}
+
+// sty_a21d9c07 AC2: a push after its cursor was reset (the store was rebuilt, so
+// no story head is known) sends no event the hosted chain already holds — none for
+// a story the server holds whole, only the rest for one it holds a prefix of.
+func TestPushAfterCursorResetSendsNoHeldEvent(t *testing.T) {
+	ts, f := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	repo := workstateRepo(t, holdOffToml)
+	whole, part := createStoryID(t, "whole"), createStoryID(t, "part")
+	if out, err := pushRaw(t, ts.URL); err != nil {
+		t.Fatalf("first push: %v\n%s", err, out)
+	}
+	wholeLocal, partLocal := localChain(t, whole), localChain(t, part)
+	if len(partLocal) < 2 {
+		t.Fatalf("need at least 2 local events, have %d", len(partLocal))
+	}
+	const k = 1
+	f.chain.mu.Lock()
+	f.chain.chains[chainKey("probe", part)] = f.chain.chains[chainKey("probe", part)][:k]
+	f.chain.appends = nil
+	f.chain.mu.Unlock()
+	if err := hosted.SaveWorkstateCursor(ts.URL, "probe", repo, hosted.WorkstateCursor{StoryHeads: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	if heads := storyHeads(t, ts.URL, "probe", repo); len(heads) != 0 {
+		t.Fatalf("the reset left heads %v", heads)
+	}
+	before := f.chain.eventCount("probe")
+
+	out, err := pushRaw(t, ts.URL)
+	if err != nil {
+		t.Fatalf("push after the reset: %v\n%s", err, out)
+	}
+	sent := 0
+	for _, r := range f.chain.appendsFor(whole) {
+		sent += len(r.GetEvents())
+	}
+	if sent != 0 {
+		t.Errorf("the story the server holds whole sent %d event(s), want 0", sent)
+	}
+	if want := "the story " + whole + " is already published up to " + wholeLocal[len(wholeLocal)-1].ID + ": nothing to send"; !strings.Contains(out, want) {
+		t.Errorf("report missing %q:\n%s", want, out)
+	}
+	reqs := f.chain.appendsFor(part)
+	if len(reqs) != 1 {
+		t.Fatalf("the prefixed story: %d Appends, want one", len(reqs))
+	}
+	var rest []string
+	for _, e := range partLocal[k:] {
+		rest = append(rest, e.ID)
+	}
+	if reqs[0].GetBaseId() != partLocal[k-1].ID || !slices.Equal(eventIDs(reqs[0].GetEvents()), rest) {
+		t.Errorf("Append = base %q events %v, want base %q events %v", reqs[0].GetBaseId(), eventIDs(reqs[0].GetEvents()), partLocal[k-1].ID, rest)
+	}
+	if got, want := f.chain.eventCount("probe"), before+len(rest); got != want {
+		t.Errorf("server holds %d events, want %d", got, want)
+	}
+	heads := storyHeads(t, ts.URL, "probe", repo)
+	if heads[whole] != wholeLocal[len(wholeLocal)-1].ID || heads[part] != partLocal[len(partLocal)-1].ID {
+		t.Errorf("heads = %v, want each story at its last event", heads)
+	}
+	if strings.Contains(out, "Published the events of 2") {
+		t.Errorf("the story with nothing to send was counted as published:\n%s", out)
 	}
 }

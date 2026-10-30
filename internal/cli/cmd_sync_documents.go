@@ -75,6 +75,9 @@ them byte-for-byte into this repo's documents area. Up-to-date trees report
 }
 
 func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRun bool) error {
+	if err := refuseIfPushOff("sync documents push"); err != nil {
+		return err
+	}
 	cfg, repoRoot, dataDir, err := loadRepoConfig()
 	if err != nil {
 		return err

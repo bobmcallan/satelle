@@ -1,3 +1,16 @@
+## [0.0.803] - 2026-10-30
+
+### Fixed
+- The local web service no longer pushes as a side effect of a pull, snapshot, rehydrate or stale-machine align: a store change those make does not trigger the service's hosted push. A push that runs after its cursor was reset sends no event the hosted chain already holds.
+
+### Added
+- `[hosted] push = false` in `~/.satelle/config.toml` turns hosted push off for this machine (machine-local, never synced). `satelle sync push` and `satelle sync workstate push` then refuse, naming the setting, and make no hosted write. Pulls still run, and satelled keeps serving the UI without ever running a push. `satelle doctor` reports push off as an informational finding, not a `sync.failing` or `sync.unbacked` FAIL. (sty_a21d9c07)
+
+## [serve-v0.0.244] - 2026-10-30
+
+### Changed
+- The service binary's pusher ignores ingest notifications from pull, snapshot, rehydrate and align, and honours `[hosted] push = false`: its pusher and repair loop skip every push while the UI keeps serving. (sty_a21d9c07)
+
 ## [0.0.802] - 2026-10-30
 
 ### Fixed

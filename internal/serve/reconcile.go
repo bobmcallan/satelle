@@ -77,6 +77,9 @@ type Reconciler struct {
 	// Record persists a snapshot-leg outcome (sty_30696eeb). Called on every
 	// pass, including the ones Log suppresses. nil discards.
 	Record func(repoPath string, success bool, reason string)
+	// PushOff reports the machine-local push switch; true skips the Push and
+	// SubstratePush legs while Reseed and Snapshot keep the UI fed. nil means on.
+	PushOff func() (off bool, setting string)
 
 	// failing remembers, per repo, the reason it last failed and how many
 	// consecutive passes have produced that same reason. It exists so silence
@@ -189,6 +192,12 @@ func (r *Reconciler) pass(ctx context.Context) {
 			substrate = substratePushViaCLI
 		} else {
 			// Tests inject Reseed; do not exec the CLI unless they also set SubstratePush.
+			substrate = func(context.Context, string) error { return nil }
+		}
+	}
+	if r.PushOff != nil {
+		if off, _ := r.PushOff(); off {
+			push = func(context.Context, string) error { return nil }
 			substrate = func(context.Context, string) error { return nil }
 		}
 	}

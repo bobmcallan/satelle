@@ -91,7 +91,7 @@ func NewMirrorWithInstance(m *mirror.Store, instanceID string) *MirrorServer {
 
 // NewMirrorHooks is NewMirrorWithInstance plus an optional OnIngest hook
 // (satelled hosted push; sty_c526753a). Tests and NewMirror pass nil.
-func NewMirrorHooks(m *mirror.Store, instanceID string, onIngest func(string)) *MirrorServer {
+func NewMirrorHooks(m *mirror.Store, instanceID string, onIngest func(string, mirror.IngestOrigin)) *MirrorServer {
 	serverStart = time.Now()
 	h := newHub()
 	mux := http.NewServeMux()

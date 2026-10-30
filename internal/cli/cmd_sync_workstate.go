@@ -30,6 +30,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/storyfold"
 	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -101,7 +102,7 @@ remote-tracking ref ([sync] hold_unpushed = false turns this off).`,
 	pull := &cobra.Command{
 		Use:         "pull [story-or-epic-id...]",
 		Short:       "Restore opted-in work-state from the bound hosted project into the local store",
-		Annotations: needsStore(),
+		Annotations: hostedOrigin(needsStore()),
 		Args:        cobra.ArbitraryArgs,
 		Long: `pull fetches the bound hosted project's stories, executions and ledger
 entries for opted-in [sync] areas, and merges them into the local DB by
@@ -132,7 +133,7 @@ With story ids or an epic id it pulls only those. Requires "satelle project bind
 	snap := &cobra.Command{
 		Use:         "snapshot [story-or-epic-id...]",
 		Short:       "Pull current hosted work-state into the local store (lazy Snapshot)",
-		Annotations: needsStore(),
+		Annotations: hostedOrigin(needsStore()),
 		Args:        cobra.ArbitraryArgs,
 		Long: `snapshot fetches the bound project's work-state via gRPC Sync/Snapshot and
 materializes opted-in areas into the local store. Local-only areas are a no-op.
@@ -235,6 +236,7 @@ func pushMirrorAfterWorkstate(ctx context.Context, a *app.App, upserted int) err
 	if snap == nil {
 		return nil
 	}
+	snap.Origin = mirror.OriginHosted
 	return postUISnapshotContext(pushCtx, ep, snap)
 }
 
@@ -256,6 +258,9 @@ func verboseRequested(cmd *cobra.Command) bool {
 }
 
 func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, verbose bool, ids ...string) (retErr error) {
+	if err := refuseIfPushOff("sync workstate push"); err != nil {
+		return err
+	}
 	a, err := appFrom(cmd)
 	if err != nil {
 		return err

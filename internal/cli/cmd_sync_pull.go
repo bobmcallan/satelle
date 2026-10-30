@@ -56,6 +56,16 @@ mean on the per-area pushes.`,
 	return cmd
 }
 
+// refuseIfPushOff is the one guard every hosted push verb calls first, before
+// it resolves a server or opens a client: a machine whose global config turns
+// push off makes no hosted write. Pulls never call it.
+func refuseIfPushOff(verb string) error {
+	if off, setting := config.MachinePushOff(); off {
+		return fmt.Errorf("%s refused: hosted push is off for this machine (%s); pulls still run", verb, setting)
+	}
+	return nil
+}
+
 func runSyncPush(cmd *cobra.Command, serverArg string, dryRun bool) error {
 	a, err := appFrom(cmd)
 	if err != nil {

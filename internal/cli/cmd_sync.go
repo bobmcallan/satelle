@@ -102,8 +102,9 @@ func newSyncRehydrateCmd() *cobra.Command {
 	var server string
 	var force, verbose bool
 	cmd := &cobra.Command{
-		Use:   "rehydrate",
-		Short: "Full-tree recover: config deploy + documents pull + workstate pull, overwriting local files (no push)",
+		Use:         "rehydrate",
+		Annotations: hostedOrigin(nil),
+		Short:       "Full-tree recover: config deploy + documents pull + workstate pull, overwriting local files (no push)",
 		Long: `rehydrate is the empty-tree / wiped-.satelle recover path for personal opt-in.
 
 Full operator path (pinned so scopes return before scope-gated pulls):
@@ -311,6 +312,13 @@ func syncOptedIn(cfg config.Config) (bool, error) {
 // both run it; between documents and work-state it calls between (bare sync's
 // pulls, nil for a push, which pulls nothing), so bare sync's order is unchanged.
 func runSyncPushLegs(cmd *cobra.Command, serverArg string, dryRun bool, between func() error) error {
+	if off, setting := config.MachinePushOff(); off {
+		if between == nil {
+			return refuseIfPushOff("sync push")
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), "push skipped: hosted push is off for this machine ("+setting+")")
+		return between()
+	}
 	ref, err := runSyncConfigPushLeg(cmd, serverArg, "", dryRun)
 	if err != nil {
 		return err
@@ -495,6 +503,9 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 // holder gate or the server kept local for the caller to report.
 func runSyncConfigPushLeg(cmd *cobra.Command, serverArg, workspaceArg string, dryRun bool) (holderRefusal, error) {
 	var ref holderRefusal
+	if err := refuseIfPushOff("sync config push"); err != nil {
+		return ref, err
+	}
 	cfg, repoRoot, dataDir, err := loadRepoConfig()
 	if err != nil {
 		return ref, err

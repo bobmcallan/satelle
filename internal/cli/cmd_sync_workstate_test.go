@@ -1159,6 +1159,11 @@ func TestPushMirrorAfterWorkstate(t *testing.T) {
 	if !bytes.Contains(gotBody, []byte(sty.ID)) {
 		t.Fatalf("posted snapshot missing story id %s: %s", sty.ID, gotBody)
 	}
+	// sty_a21d9c07 AC1: a change materialised from the hosted project says so,
+	// so satelled never pushes it back.
+	if !bytes.Contains(gotBody, []byte(`"origin":"hosted"`)) {
+		t.Fatalf("posted snapshot does not carry the hosted origin: %s", gotBody)
+	}
 
 	mu.Lock()
 	hits = 0
