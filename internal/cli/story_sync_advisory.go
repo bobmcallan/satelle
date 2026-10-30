@@ -7,7 +7,9 @@ package cli
 // and never dials, so a session start never waits on the server. The line is
 // marked unverified when the last good snapshot it rests on is older than the
 // mirror freshness window. It is information: nothing is blocked by a story
-// another location is on.
+// another location is on. Conflicts are reported only while some work-state area
+// syncs: once every area resolves local they are dropped from the state file, so
+// turning sync back on starts from a fresh check (sty_c45cb8d5).
 
 import (
 	"context"
@@ -42,6 +44,12 @@ func storySyncAdvisory(a *app.App) string {
 	var snapshotAt time.Time
 	if st, ok, _ := syncstate.Load(config.GlobalDir(), a.RepoRoot); ok {
 		conflicts, snapshotAt = st.StoryConflicts, st.SnapshotLastSuccess
+	}
+	// An unreadable scope keeps the recorded state: it must not be destroyed on a
+	// config error.
+	if optIn, err := workstateOptIn(a.Config); err == nil && len(optIn) == 0 && len(conflicts) > 0 {
+		_ = syncstate.RecordStoryConflicts(config.GlobalDir(), a.RepoRoot, nil, slices.Sorted(maps.Keys(conflicts)), time.Now().UTC())
+		conflicts = nil
 	}
 	return storySyncLine(conflicts, otherWorking(context.Background(), a), snapshotAt, time.Now())
 }

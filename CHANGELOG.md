@@ -1,3 +1,8 @@
+## [0.0.801] - 2026-10-30
+
+### Fixed
+- The session-start story-sync line respects the repo's sync scope. When every work-state area resolves to local (for example `[sync] all = "local"`), it no longer lists hosted story conflicts, and the recorded conflicts are dropped from the work-state sync file, so turning sync back on starts from a fresh check. Stories another location last worked on are still named from the local ledger. While any work-state area still syncs, conflicts are reported as before. (sty_c45cb8d5)
+
 ## [0.0.800] - 2026-10-30
 
 ### Fixed
