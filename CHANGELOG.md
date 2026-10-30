@@ -1,3 +1,13 @@
+## [0.0.805] - 2026-10-30
+
+### Fixed
+- No sync pass appends an event to a story's chain. A conflict or overlap that a pull, snapshot, rehydrate or push finds between a story's local and hosted chains is recorded in the work-state sync state only, never as an `overlap`, `workflow_version` or `definition_snapshot` event, so a pull no longer forks the chain it is reconciling and a later push sends nothing a sync pass wrote. After a rehydrate each local chain equals the hosted one event for event. The session-start advisory and `satelle sync status` still report the recorded conflicts, respecting the repo's sync scope. (sty_199ad82b)
+
+## [serve-v0.0.246] - 2026-10-30
+
+### Changed
+- The service binary carries the work-state sync state's story conflict record, which now names the local and remote holders and the pass that found it. (sty_199ad82b)
+
 ## [0.0.804] - 2026-10-30
 
 ### Fixed

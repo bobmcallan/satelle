@@ -34,6 +34,13 @@ func publishedStories(t *testing.T, titles ...string) (ts *httptest.Server, f *f
 func publishedStoriesWith(t *testing.T, extra func(id string) []ledger.AppendInput, titles ...string) (ts *httptest.Server, f *fakeWorkstateServer, ids []string, wants map[string][]ledger.Entry, repo string) {
 	t.Helper()
 	ts, f = newFakeWorkstateServer(t)
+	ids, wants, repo = publishedStoriesOn(t, ts, f, extra, titles...)
+	return ts, f, ids, wants, repo
+}
+
+// publishedStoriesOn is publishedStoriesWith against a server the caller built.
+func publishedStoriesOn(t *testing.T, ts *httptest.Server, f *fakeWorkstateServer, extra func(id string) []ledger.AppendInput, titles ...string) (ids []string, wants map[string][]ledger.Entry, repo string) {
+	t.Helper()
 	seedCred(t, ts.URL)
 	workstateRepo(t, holdOffToml)
 	for _, title := range titles {
@@ -77,7 +84,7 @@ func publishedStoriesWith(t *testing.T, extra func(id string) []ledger.AppendInp
 	f.ledgerByID = map[string]map[string]any{}
 	f.mu.Unlock()
 	repo = workstateRepo(t, holdOffToml)
-	return ts, f, ids, wants, repo
+	return ids, wants, repo
 }
 
 func pullRaw(t *testing.T, server string) (string, error) {

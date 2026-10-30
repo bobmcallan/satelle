@@ -55,10 +55,15 @@ type State struct {
 }
 
 // StoryConflict is one story the local and hosted copies disagree on: why the
-// pass left it, and when.
+// pass left it, and when. The holders name this location and the other one that
+// last worked the story ("unknown" when none is known); Source is what found it.
+// A conflict is local sync state only: no pass writes it onto the story's chain.
 type StoryConflict struct {
-	Reason string    `json:"reason"`
-	At     time.Time `json:"at"`
+	Reason       string    `json:"reason"`
+	At           time.Time `json:"at"`
+	LocalHolder  string    `json:"local_holder,omitempty"`
+	RemoteHolder string    `json:"remote_holder,omitempty"`
+	Source       string    `json:"source,omitempty"`
 }
 
 // SubstrateArea is one area's recorded state and when it was verified.
@@ -170,6 +175,17 @@ func MarkSubstrateAttempt(globalDir, repoPath string, now time.Time) error {
 // story's record is left as it was. Nothing is written when there is nothing to
 // change, so an in-step repo gains no state file.
 func RecordStoryConflicts(globalDir, repoPath string, conflicts map[string]string, cleared []string, now time.Time) error {
+	detailed := make(map[string]StoryConflict, len(conflicts))
+	for id, reason := range conflicts {
+		detailed[id] = StoryConflict{Reason: reason}
+	}
+	return RecordStoryConflictDetails(globalDir, repoPath, detailed, cleared, now)
+}
+
+// RecordStoryConflictDetails is RecordStoryConflicts with the holders and source
+// of each conflict. A conflict's At is set here; a story still in conflict for
+// the same reason keeps the time it was first found.
+func RecordStoryConflictDetails(globalDir, repoPath string, conflicts map[string]StoryConflict, cleared []string, now time.Time) error {
 	if len(conflicts) == 0 && len(cleared) == 0 {
 		return nil
 	}
@@ -183,15 +199,18 @@ func RecordStoryConflicts(globalDir, repoPath string, conflicts map[string]strin
 		for _, id := range cleared {
 			delete(s.StoryConflicts, id)
 		}
-		for id, reason := range conflicts {
+		for id, c := range conflicts {
 			if s.StoryConflicts == nil {
 				s.StoryConflicts = map[string]StoryConflict{}
 			}
-			// A story still in conflict keeps the time it was first found.
-			if prev, ok := s.StoryConflicts[id]; ok && prev.Reason == reason {
-				continue
+			c.At = now
+			if prev, ok := s.StoryConflicts[id]; ok && prev.Reason == c.Reason {
+				c.At = prev.At
+				if c.LocalHolder == "" && c.RemoteHolder == "" && c.Source == "" {
+					c = prev
+				}
 			}
-			s.StoryConflicts[id] = StoryConflict{Reason: reason, At: now}
+			s.StoryConflicts[id] = c
 		}
 		if len(s.StoryConflicts) == 0 {
 			s.StoryConflicts = nil

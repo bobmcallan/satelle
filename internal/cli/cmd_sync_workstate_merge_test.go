@@ -76,11 +76,13 @@ func TestSyncWorkstatePullMergesLocalOnly(t *testing.T) {
 }
 
 // AC2: a same-id story the local side changed since hosted refuses, names the
-// id and area, and --force lets hosted win.
+// id and area, and --force lets hosted win on the row. The chain keeps the local
+// edit — the pull makes no event to set it back (sty_199ad82b) — so the
+// disagreement is recorded as a conflict.
 func TestSyncWorkstatePullConflictFails(t *testing.T) {
 	ts, _ := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, mergeToml)
+	repo := workstateRepo(t, mergeToml)
 
 	id := createStoryID(t, "Original title")
 	if out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL); err != nil {
@@ -113,9 +115,11 @@ func TestSyncWorkstatePullConflictFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("forced pull: %v\n%s", err, out)
 	}
-	got, _ = runRoot(t, "story", "get", id)
-	if !strings.Contains(got, "Original title") {
-		t.Errorf("--force did not let hosted win: %s", got)
+	if row := passRow(t, id); row.Title != "Original title" {
+		t.Errorf("--force did not let hosted win on the row: %+v", row)
+	}
+	if c := storyConflicts(t, repo)[id]; c.Reason != conflictForcedHostedWins {
+		t.Errorf("conflict = %+v, want %q recorded", c, conflictForcedHostedWins)
 	}
 }
 

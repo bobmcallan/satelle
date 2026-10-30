@@ -3,12 +3,15 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // seedHostedFull is seedHostedStory with the definition fields a story carries.
@@ -31,11 +34,27 @@ func localDrift(t *testing.T) []verb.StoryDrift {
 	return drifts
 }
 
-// sty_d84be8bc AC5: a story pulled whose chain predates the fold (a story_created
-// that names only its source, never transitioned) is seeded from the hosted row:
-// the local row keeps the hosted title, body, criteria, tags and status, the chain
-// gains one definition_snapshot, and a following push finds no drift.
-func TestPullSeedsAPulledLegacyStoryFromTheHostedRow(t *testing.T) {
+// passRow is a story's cached row as the last sync pass left it, read without the
+// seeding store.Open does.
+func passRow(t *testing.T, id string) workitem.Item {
+	t.Helper()
+	db, err := store.OpenReadOnly(runtimeDBPath(t))
+	if err != nil {
+		t.Fatalf("open db read-only: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	row, err := db.Stories.Get(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return row
+}
+
+// sty_199ad82b AC2: a story pulled whose chain predates the fold (a story_created
+// that names only its source, never transitioned) is not seeded by the pull: the
+// local row keeps the hosted title, body, criteria, tags and status, and the
+// chain holds the hosted events and nothing the pull made.
+func TestPullSeedsNothingOntoAPulledLegacyStory(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
 	workstateRepo(t, holdOffToml)
@@ -46,26 +65,13 @@ func TestPullSeedsAPulledLegacyStoryFromTheHostedRow(t *testing.T) {
 	if out, err := runRoot(t, "sync", "workstate", "pull", "--server", ts.URL); err != nil {
 		t.Fatalf("pull: %v\n%s", err, out)
 	}
-	db := openScopeDB(t)
-	row, err := db.Stories.Get(context.Background(), "sty_legacy01")
-	if err != nil {
-		t.Fatal(err)
-	}
-	snaps, _ := db.Ledger.ListByStory(context.Background(), "sty_legacy01", ledger.KindDefinitionSnapshot)
-	_ = db.Close()
+	row := passRow(t, "sty_legacy01")
 	if row.Title != "Hosted legacy" || row.Body != "Hosted body" || row.AcceptanceCriteria != "1. hosted" ||
 		row.Status != "plan" || len(row.Tags) != 2 || row.Category != "feature" {
 		t.Errorf("row after the pull = %+v, want the hosted row's definition and status kept", row)
 	}
-	if len(snaps) != 1 {
-		t.Fatalf("definition_snapshot events = %d, want 1 seeded from the hosted row", len(snaps))
-	}
-	if d := localDrift(t); len(d) != 0 {
-		t.Errorf("drift after the pull: %+v", d)
-	}
-	out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL)
-	if err != nil || strings.Contains(out, "withheld") {
-		t.Errorf("the push after the pull reported drift: %v\n%s", err, out)
+	if got := idsOf(passChain(t, "sty_legacy01")); !slices.Equal(got, []string{"led_created01"}) {
+		t.Errorf("chain after the pull = %v, want only the hosted led_created01", got)
 	}
 }
 
@@ -97,13 +103,13 @@ func TestPullRebuildsTheRowFromThePulledChain(t *testing.T) {
 	}
 }
 
-// A forced pull lets the hosted copy win over an edit only this machine made: the
-// local edit stays in the chain (a ledger row is never rewritten), and an event of
-// its own sets the hosted definition back.
-func TestForcedPullRecordsTheHostedCopyWinning(t *testing.T) {
+// sty_199ad82b AC1: a forced pull lets the hosted copy win on the row over an edit
+// only this machine made, and makes no event to set it back: the chain is left as
+// it was and the disagreement is recorded in the sync state.
+func TestForcedPullLetsTheHostedCopyWinOnTheRowAndRecordsTheConflict(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, holdOffToml)
+	repo := workstateRepo(t, holdOffToml)
 	id := createStoryID(t, "Original title")
 	if out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL); err != nil {
 		t.Fatalf("push: %v\n%s", err, out)
@@ -113,28 +119,25 @@ func TestForcedPullRecordsTheHostedCopyWinning(t *testing.T) {
 	if out, err := runRoot(t, "story", "set", id, "--title", "Local edit"); err != nil {
 		t.Fatalf("set: %v\n%s", err, out)
 	}
+	before := passChain(t, id)
 	if out, err := runRoot(t, "sync", "workstate", "pull", "--server", ts.URL, "--force"); err != nil {
 		t.Fatalf("forced pull: %v\n%s", err, out)
 	}
-	db := openScopeDB(t)
-	defer func() { _ = db.Close() }()
-	row, _ := db.Stories.Get(context.Background(), id)
-	if row.Title != "Original title" {
+	if row := passRow(t, id); row.Title != "Original title" {
 		t.Errorf("title = %q, want the hosted copy's", row.Title)
 	}
-	rows, _ := db.Ledger.ListByStory(context.Background(), id, ledger.KindStoryUpdated)
-	var won bool
-	for _, r := range rows {
+	after := passChain(t, id)
+	sameEvents(t, "the forced pull", before, after)
+	for _, r := range after {
 		var p struct {
 			Source string `json:"source"`
 		}
 		_ = json.Unmarshal(r.Payload, &p)
-		won = won || strings.Contains(p.Source, "--force")
+		if r.Kind == ledger.KindStoryUpdated && strings.Contains(p.Source, "--force") {
+			t.Errorf("the forced pull made %s to set the hosted copy back", r.ID)
+		}
 	}
-	if !won {
-		t.Errorf("no story_updated records the hosted copy winning: %+v", rows)
-	}
-	if d := localDrift(t); len(d) != 0 {
-		t.Errorf("drift after the forced pull: %+v", d)
+	if c := storyConflicts(t, repo)[id]; c.Reason != conflictForcedHostedWins {
+		t.Errorf("conflict = %+v, want %q recorded", c, conflictForcedHostedWins)
 	}
 }

@@ -989,61 +989,61 @@ func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool,
 		}
 	}
 	// The events of a story are not on the page: the hosted chain of each story it
-	// applied is read before the rows are folded, so none is seeded with a genesis
-	// the hosted chain does not hold.
-	hostedChain, cerr := chain.materialize(ctx, a, optIn, applied, out, now)
-	if cerr != nil {
+	// applied is read before the rows are folded.
+	if cerr := chain.materialize(ctx, a, optIn, applied, out, now); cerr != nil {
 		return applied, nItems, nLedger, nKept, fmt.Errorf("%w — re-run is safe (upsert-by-id)", cerr)
 	}
 	// The page's events are in: the rows it applied are now a cache of their chains.
-	if err := foldPulledStories(ctx, a, applied, hostedChain, priorStatus, out, force, now); err != nil {
+	if err := foldPulledStories(ctx, a, applied, priorStatus, out, force, now); err != nil {
 		return applied, nItems, nLedger, nKept, fmt.Errorf("%w — re-run is safe (upsert-by-id)", err)
 	}
 	return applied, nItems, nLedger, nKept, nil
 }
 
 // foldPulledStories brings the stories a pull applied under their chains
-// (sty_d84be8bc): a story whose chain predates the fold is seeded from the
-// hosted row it arrived with, then its cached row is rebuilt from the fold. The
+// (sty_d84be8bc): each cached row is rebuilt from the fold of its chain. The
 // chain decides status — a transition that disagrees with the hosted row's status
 // moves the row, and a story with no transition takes the hosted row's — so no
 // separate status forwarding exists. A task or execution is not folded.
 //
-// A forced pull lets the hosted copy win. The chain keeps any event only this
-// machine made (a ledger row is never rewritten), so the definition and tags the
-// hosted row carries are set back by an event of their own, after which the
-// rebuild lands them on the row.
+// The pass appends nothing to a chain (sty_199ad82b): a chain moves only by the
+// hosted events it took. A story whose hosted chain was not read is
+// left as its row, never seeded here; a seed would be a local-only event that
+// forks the chain and blocks the next push.
 //
-// A story whose hosted chain was read (hostedChain) is never seeded: its chain is
-// the hosted one, and a seed would fork it.
+// A forced pull lets the hosted copy win on the row. When the chain's definition
+// or tags disagree with the hosted row, the row keeps the hosted copy UpsertForce
+// wrote, the chain is left as it is, and the disagreement is recorded as a
+// conflict rather than an event made up to set the hosted copy back.
 //
 // A story that was done or cancelled here and whose rebuild leaves it in a
 // non-terminal status is named in out — the story, both statuses and the event
 // that set the new one — whichever path wrote the row first (priorStatus is read
 // before either), so a pull never moves a closed story silently.
-func foldPulledStories(ctx context.Context, a *app.App, applied []workitem.Item, hostedChain map[string]bool, priorStatus map[string]string, out *storyOutcome, force bool, now time.Time) error {
+func foldPulledStories(ctx context.Context, a *app.App, applied []workitem.Item, priorStatus map[string]string, out *storyOutcome, force bool, now time.Time) error {
 	for _, hosted := range applied {
 		if hosted.Kind != workitem.KindStory {
 			continue
-		}
-		if !hostedChain[hosted.ID] {
-			if _, err := storyfold.SeedItem(ctx, a.Store.Ledger, hosted, storyfold.StatusFromChain, now); err != nil {
-				return fmt.Errorf("seed %s from the hosted row: %w", hosted.ID, err)
-			}
 		}
 		row, err := a.Store.Stories.Get(ctx, hosted.ID)
 		if err != nil {
 			return fmt.Errorf("read %s after pull: %w", hosted.ID, err)
 		}
+		st, _, ferr := verb.FoldStory(ctx, a.Store.Ledger, row)
+		if ferr != nil {
+			return fmt.Errorf("fold %s: %w", hosted.ID, ferr)
+		}
 		if force {
-			st, _, ferr := verb.FoldStory(ctx, a.Store.Ledger, row)
-			if ferr != nil {
-				return fmt.Errorf("fold %s: %w", hosted.ID, ferr)
+			if _, differs := verb.HostedWinsInput(st, hosted, "sync workstate pull --force"); differs {
+				out.conflict(hosted.ID, conflictForcedHostedWins)
+				continue
 			}
-			if in, ok := verb.HostedWinsInput(st, hosted, "sync workstate pull --force"); ok {
-				if _, aerr := a.Store.Ledger.Append(ctx, in, now); aerr != nil {
-					return fmt.Errorf("record the hosted copy winning on %s: %w", hosted.ID, aerr)
-				}
+		}
+		// A chain that sets no status leaves the row's to the cache: it takes the
+		// hosted row's, which Upsert kept off an existing row.
+		if !st.Defined[storyfold.FieldStatus] && hosted.Status != "" && row.Status != hosted.Status {
+			if row, err = a.Store.Stories.SetStatus(ctx, hosted.ID, hosted.Status, now); err != nil {
+				return fmt.Errorf("take the hosted status of %s: %w", hosted.ID, err)
 			}
 		}
 		rebuilt, err := verb.RebuildRow(ctx, a.Store.Stories, a.Store.Ledger, row, now)
@@ -1054,11 +1054,15 @@ func foldPulledStories(ctx context.Context, a *app.App, applied []workitem.Item,
 		if !had || prior == rebuilt.Status || !verb.EndsEngagementForGood(ctx, rebuilt, prior) || verb.EndsEngagementForGood(ctx, rebuilt, rebuilt.Status) {
 			continue
 		}
-		st, _, ferr := verb.FoldStory(ctx, a.Store.Ledger, rebuilt)
+		st, _, ferr = verb.FoldStory(ctx, a.Store.Ledger, rebuilt)
 		if ferr != nil {
 			return fmt.Errorf("fold %s: %w", hosted.ID, ferr)
 		}
-		out.moved(fmt.Sprintf("%s was %s and the pull moved it to %s (set by event %s)", hosted.ID, prior, rebuilt.Status, st.StatusEvent))
+		by := "the hosted row"
+		if st.StatusEvent != "" {
+			by = "event " + st.StatusEvent
+		}
+		out.moved(fmt.Sprintf("%s was %s and the pull moved it to %s (set by %s)", hosted.ID, prior, rebuilt.Status, by))
 	}
 	return nil
 }

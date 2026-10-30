@@ -11,6 +11,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/storyfold"
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 func transitionPayload(from, to string) map[string]any {
@@ -110,7 +111,11 @@ func TestPullNamesATerminalStoryItMovesToANonTerminalStatus(t *testing.T) {
 			at := time.Now().Add(time.Hour).UTC()
 			const id = "sty_move01"
 			seedHostedFull(f, id, "Reopened", "B", "1. x", "in_progress", []string{"x"}, at)
-			seedHostedLedger(f, "led_c", id, ledger.KindStoryCreated, map[string]any{"source": "legacy"}, at)
+			// A chain that defines the story itself, so no seed decides its status: the
+			// pull appends none (sty_199ad82b).
+			created := storyfold.CreatedPayloadOf(workitem.Item{Title: "Reopened", Body: "B", AcceptanceCriteria: "1. x",
+				Category: "feature", Tags: []string{"x"}, Status: "backlog"}, "cli")
+			seedHostedLedger(f, "led_c", id, ledger.KindStoryCreated, created, at)
 			seedHostedLedger(f, "led_t1", id, ledger.KindStatusTransition, transitionPayload("backlog", "in_progress"), at.Add(time.Second))
 			if out, err := runRoot(t, "sync", "workstate", "pull", "--server", ts.URL); err != nil {
 				t.Fatalf("first pull: %v\n%s", err, out)

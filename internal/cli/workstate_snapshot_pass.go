@@ -56,6 +56,8 @@ type passReport struct {
 const (
 	conflictLocalAhead  = "local copy is ahead of hosted"
 	conflictPullRefused = "pull refused: local and hosted differ"
+	// A forced pull wrote the hosted copy onto the row and left the chain alone.
+	conflictForcedHostedWins = "forced pull: the local chain disagrees with the hosted row; the row takes the hosted copy, the chain is unchanged"
 )
 
 // storyOutcome is the story disagreements one pass found: Conflicts maps a story
