@@ -9,6 +9,7 @@ package config
 // part of this story.
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -93,6 +94,12 @@ const syncHoldUnpushedKey = "hold_unpushed"
 // never treated as an area; its default is substrate/config/sync.toml.
 const syncRecentWindowKey = "recent_window"
 
+// syncPullOnlyKey is the [sync] switch that makes this machine pull from its
+// bound project and never push to it (sty_07eefabe). It is machine state: only
+// PullOnly reads it, from satelle.local.toml alone. Reserved so it is never
+// treated as an area.
+const syncPullOnlyKey = "pull_only"
+
 // WorkstateAreas are the [sync] areas that form the work-state kind.
 var WorkstateAreas = []string{"stories", "executions", "ledger"}
 
@@ -100,7 +107,7 @@ var WorkstateAreas = []string{"stories", "executions", "ledger"}
 // never looks them up; they must never be minted as SyncAreas.
 var reservedSyncKeys = map[string]bool{
 	syncAllKey: true, syncServerKey: true, syncProjectKey: true, syncWorkspaceKey: true,
-	syncStaleAfterKey: true, syncHoldUnpushedKey: true, syncRecentWindowKey: true,
+	syncStaleAfterKey: true, syncHoldUnpushedKey: true, syncRecentWindowKey: true, syncPullOnlyKey: true,
 }
 
 const syncDefaultsFile = "substrate/config/sync.toml"
@@ -197,6 +204,46 @@ func HoldUnpushed(cfg Config) (bool, error) {
 		return false, fmt.Errorf("sync: hold_unpushed %q is not a boolean (want true|false)", raw)
 	}
 	return b, nil
+}
+
+// PullOnly reads [sync] pull_only from the repo's satelle.local.toml only: the
+// committed and hosted satelle.toml never mark a machine pull-only, so the mark
+// cannot travel as repo config. An absent file or key is false; a value that is
+// not a boolean is a config error.
+func PullOnly(repoRoot string) (bool, error) {
+	path := LocalConfigPath(repoRoot)
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("config: read %s: %w", path, err)
+	}
+	var local struct {
+		Sync map[string]any `toml:"sync"`
+	}
+	if _, err := toml.Decode(string(b), &local); err != nil {
+		return false, &ParseError{Path: path, Err: err}
+	}
+	v, ok := local.Sync[syncPullOnlyKey]
+	if !ok {
+		return false, nil
+	}
+	on, ok := v.(bool)
+	if !ok {
+		return false, fmt.Errorf("sync: pull_only in %s is %v, not a boolean (want true|false)", path, v)
+	}
+	return on, nil
+}
+
+// LocalConfigPath is the repo's gitignored satelle.local.toml.
+func LocalConfigPath(repoRoot string) string {
+	return filepath.Join(repoRoot, DefaultDataDir, LocalConfigName)
+}
+
+// PullOnlyEdit is the single write of the pull-only mark, into LocalConfigPath.
+func PullOnlyEdit(on bool) KeyEdit {
+	return KeyEdit{Section: "sync", Key: syncPullOnlyKey, Value: strconv.FormatBool(on)}
 }
 
 // WorkstateStaleAfter reads [sync] stale_after. ok=false when the key is

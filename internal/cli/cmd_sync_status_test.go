@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -915,4 +916,24 @@ func TestStoryTouchedPathsReadsUnengagedAndRefusesUnreadable(t *testing.T) {
 	if _, err := storyTouchedPaths(context.Background(), "sty_00000000"); err == nil {
 		t.Error("an unknown story must be an error, not an empty change set")
 	}
+}
+
+// sync status prints the machine's push mode: enabled, or disabled when this
+// machine is marked pull-only (sty_07eefabe).
+func TestSyncStatusShowsPullOnly(t *testing.T) {
+	ts, _ := newSnapServer(t)
+	seedCred(t, ts.URL)
+	a := publishedMachine(t, ts.URL)
+	out, err := a.status()
+	if err != nil || !strings.Contains(out, "push: enabled") || strings.Contains(out, "pull-only") {
+		t.Fatalf("unmarked machine: err=%v, want push: enabled\n%s", err, out)
+	}
+	if err := setPullOnly(io.Discard, a.repo, true); err != nil {
+		t.Fatal(err)
+	}
+	out, err = a.status()
+	if err != nil || !strings.Contains(out, "push: disabled — pull-only ([sync] pull_only in .satelle/satelle.local.toml)") {
+		t.Fatalf("pull-only machine: err=%v, want the pull-only push line\n%s", err, out)
+	}
+	wantState(t, out, "skills", "in step")
 }

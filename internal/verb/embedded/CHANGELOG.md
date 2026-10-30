@@ -1,3 +1,13 @@
+## [0.0.811] - 2026-10-30
+
+### Added
+- A machine can be marked pull-only for its bound project: `satelle project pull-only on|off`, or `satelle project bind --pull-only` / `--no-pull-only`, stored as `[sync] pull_only = true` in the repo's machine-local `.satelle/satelle.local.toml` (never synced). On a pull-only machine `satelle sync push`, `satelle sync workstate push`, `satelle sync documents push` refuse with a message naming the setting and how to clear it, and so do the pushes that run through them (the web service's background push, node runs), while pulls still run; `satelle sync status` and `satelle project show` show the machine as pull-only. This is per repo binding; `[hosted] push = false` (0.0.803) still turns push off for every repo on the machine. (sty_07eefabe)
+
+## [serve-v0.0.250] - 2026-10-30
+
+### Changed
+- The service binary reads `[sync] pull_only` as a reserved switch, never as a sync area. (sty_07eefabe)
+
 ## [0.0.810] - 2026-10-30
 
 ### Fixed

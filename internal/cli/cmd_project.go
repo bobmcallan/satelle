@@ -83,13 +83,40 @@ A project the server reports with no substrate is seeded by its substrate
 holder: bind publishes the repo's team-owned substrate as the project's first
 hosted version, or the embedded defaults when the repo has none of its own. A
 project that already has substrate is not reseeded; bind deploys it and writes
-its team-owned files into the tree.`,
+its team-owned files into the tree.
+
+--pull-only marks this machine never to push (see "satelle project
+pull-only"), before any seed; --no-pull-only clears it.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runProjectBind(cmd, args[0])
 		},
 	}
+	bind.Flags().Bool("pull-only", false, "Mark this machine pull-only: it pulls from the project and never pushes to it.")
+	bind.Flags().Bool("no-pull-only", false, "Clear the pull-only mark, so this machine pushes again.")
+	bind.MarkFlagsMutuallyExclusive("pull-only", "no-pull-only")
 	project.AddCommand(bind)
+
+	pullOnly := &cobra.Command{
+		Use:   "pull-only on|off",
+		Short: "Mark this machine to pull from its bound project and never push (on), or clear it (off)",
+		Long: `pull-only on marks this machine to read its bound project and never publish
+to it: satelle sync push and every implicit push (bare sync, the per-area
+pushes, the serve daemon's push, a bind seed, a task node's workstate push)
+refuse with a message naming the setting, while every pull still works. off
+clears it.
+
+The mark is machine state, written to the gitignored
+.satelle/satelle.local.toml as [sync] pull_only; a pull_only key in the
+committed or hosted satelle.toml marks nothing. satelle sync status and
+satelle project show print the push mode.`,
+		Args:      cobra.ExactArgs(1),
+		ValidArgs: []string{"on", "off"},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runProjectPullOnly(cmd, args[0])
+		},
+	}
+	project.AddCommand(pullOnly)
 
 	var showServer string
 	show := &cobra.Command{
@@ -151,7 +178,42 @@ func runProjectBind(cmd *cobra.Command, slug string) error {
 		return fmt.Errorf("stamp deployed.version: %w", err)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Bound this repo to project %q (recorded in %s).\n", slug, cfgPath)
+	if on, set := bindPullOnlyFlag(cmd); set {
+		if err := setPullOnly(cmd.OutOrStdout(), config.RepoRootFromConfigPath(cfgPath), on); err != nil {
+			return err
+		}
+	}
 	return seedProjectSubstrate(cmd, slug)
+}
+
+// bindPullOnlyFlag is the pull-only mark bind was asked to write, and whether it
+// was asked at all.
+func bindPullOnlyFlag(cmd *cobra.Command) (on, set bool) {
+	for _, f := range []struct {
+		name string
+		on   bool
+	}{{"pull-only", true}, {"no-pull-only", false}} {
+		if fl := cmd.Flags().Lookup(f.name); fl != nil && fl.Changed && fl.Value.String() == "true" {
+			return f.on, true
+		}
+	}
+	return false, false
+}
+
+func runProjectPullOnly(cmd *cobra.Command, mode string) error {
+	var on bool
+	switch strings.TrimSpace(mode) {
+	case "on":
+		on = true
+	case "off":
+	default:
+		return fmt.Errorf("pull-only takes on or off, got %q", mode)
+	}
+	_, repoRoot, _, err := loadRepoConfig()
+	if err != nil {
+		return err
+	}
+	return setPullOnly(cmd.OutOrStdout(), repoRoot, on)
 }
 
 func runProjectShow(cmd *cobra.Command, serverArg string) error {
@@ -177,6 +239,9 @@ func runProjectShow(cmd *cobra.Command, serverArg string) error {
 		fmt.Fprintln(out, "bound project: (none — run \"satelle project bind <slug>\")")
 	} else {
 		fmt.Fprintf(out, "bound project: %s\n", slug)
+	}
+	if root != "" {
+		fmt.Fprintln(out, pushModeLine(root))
 	}
 	signed := "signed out"
 	switch u := resolveUserFor(server, root); {

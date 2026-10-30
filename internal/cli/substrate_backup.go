@@ -63,6 +63,9 @@ type BackupOpts struct {
 	Now time.Time
 	// HostedPush is an optional override for tests (nil → real hosted client).
 	HostedPush func(ctx context.Context, relPath string, body []byte) (dest string, err error)
+	// pushRefused, when set, is why the hosted push may not run (refusePullOnly);
+	// the copy stays local and the notice names it.
+	pushRefused error
 	// BackupsDir is the parent of the backups/ tree (the runtime plane —
 	// sty_4660bbe1). When empty, backupExistingFile uses its dataDir argument
 	// as that parent (tests / single-tree fixtures).
@@ -79,6 +82,7 @@ func ResolveBackupOpts(cfg config.Config, repoRoot string) BackupOpts {
 	if cfg.Backup.Hosted {
 		opts.HostedServer = config.ResolveHostedServer(cfg)
 		opts.HostedProject = config.ResolveBoundProject(cfg, repoRoot)
+		opts.pushRefused = refusePullOnly(repoRoot)
 	}
 	return opts
 }
@@ -134,6 +138,9 @@ func backupExistingFile(dataDir string, kind BackupKind, relPath string, body []
 func pushHostedBackup(opts BackupOpts, relPath string, body []byte) (string, error) {
 	if config.LocalOnlyPath(relPath) {
 		return "", errLocalOnlyBackup
+	}
+	if opts.pushRefused != nil {
+		return "", opts.pushRefused
 	}
 	if opts.HostedPush != nil {
 		return opts.HostedPush(context.Background(), relPath, body)

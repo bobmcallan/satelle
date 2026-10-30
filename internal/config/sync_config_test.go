@@ -569,3 +569,58 @@ func TestStripRepoBindingLeavesAgentsAlone(t *testing.T) {
 		t.Fatalf("agents area must pass through unchanged:\n%s\nwithheld %v", got, withheld)
 	}
 }
+
+// The pull-only mark is read from satelle.local.toml alone: a committed
+// satelle.toml carrying it marks nothing, and the key is never an area.
+func TestPullOnlyReadsLocalFileOnly(t *testing.T) {
+	repo := t.TempDir()
+	if on, err := PullOnly(repo); err != nil || on {
+		t.Fatalf("no local file: PullOnly = %v, %v; want false, nil", on, err)
+	}
+
+	writeFile(t, repo, ".satelle/satelle.toml", "[sync]\nskills = \"personal\"\npull_only = true\n")
+	if on, err := PullOnly(repo); err != nil || on {
+		t.Errorf("committed pull_only only: PullOnly = %v, %v; want false, nil", on, err)
+	}
+	cfg, _, err := Load(filepath.Join(repo, ".satelle", "satelle.toml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reservedSyncKeys[syncPullOnlyKey] {
+		t.Error("pull_only must be a reserved [sync] key")
+	}
+	for _, a := range SyncAreas {
+		if a == syncPullOnlyKey {
+			t.Error("pull_only minted as a sync area")
+		}
+	}
+	if areas, err := SubstrateAreas(cfg); err != nil || len(areas) != 1 || areas[0] != "skills" {
+		t.Errorf("SubstrateAreas = %v, %v; want only skills", areas, err)
+	}
+
+	writeFile(t, repo, ".satelle/satelle.local.toml", "[sync]\npull_only = true\n")
+	if on, err := PullOnly(repo); err != nil || !on {
+		t.Errorf("local pull_only = true: PullOnly = %v, %v; want true, nil", on, err)
+	}
+	writeFile(t, repo, ".satelle/satelle.local.toml", "[sync]\npull_only = false\n")
+	if on, err := PullOnly(repo); err != nil || on {
+		t.Errorf("local pull_only = false: PullOnly = %v, %v; want false, nil", on, err)
+	}
+	writeFile(t, repo, ".satelle/satelle.local.toml", "[sync]\npull_only = \"yes\"\n")
+	if _, err := PullOnly(repo); err == nil || !strings.Contains(err.Error(), "pull_only") {
+		t.Errorf("non-boolean local pull_only: err = %v, want a config error naming pull_only", err)
+	}
+}
+
+// PullOnlyEdit writes into the [sync] table the reader reads.
+func TestPullOnlyEditRoundTrips(t *testing.T) {
+	repo := t.TempDir()
+	for _, on := range []bool{true, false} {
+		if err := SaveConfigValues(LocalConfigPath(repo), []KeyEdit{PullOnlyEdit(on)}); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := PullOnly(repo); err != nil || got != on {
+			t.Errorf("after PullOnlyEdit(%v): PullOnly = %v, %v", on, got, err)
+		}
+	}
+}

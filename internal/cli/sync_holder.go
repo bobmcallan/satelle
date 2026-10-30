@@ -9,12 +9,53 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 )
+
+// errPullOnly is the refusal of every push from a machine marked pull-only.
+var errPullOnly = errors.New(`this machine is pull-only ([sync] pull_only = true in .satelle/satelle.local.toml); run "satelle project pull-only off" to push`)
+
+// refusePullOnly is errPullOnly when the machine is marked pull-only, the error
+// reading the mark when it cannot be read, and nil otherwise. Every push to the
+// bound project calls it before anything else; a path that skips its push
+// instead tells errPullOnly apart with errors.Is.
+func refusePullOnly(repoRoot string) error {
+	on, err := config.PullOnly(repoRoot)
+	if err != nil {
+		return err
+	}
+	if on {
+		return errPullOnly
+	}
+	return nil
+}
+
+// pushModeLine is the machine's push mode as sync status and project show
+// print it.
+func pushModeLine(repoRoot string) string {
+	switch err := refusePullOnly(repoRoot); {
+	case errors.Is(err, errPullOnly):
+		return "push: disabled — pull-only ([sync] pull_only in .satelle/satelle.local.toml)"
+	case err != nil:
+		return "push: unknown — " + err.Error()
+	}
+	return "push: enabled"
+}
+
+// setPullOnly writes the pull-only mark into the repo's satelle.local.toml, the
+// one file PullOnly reads, and prints the push mode it leaves.
+func setPullOnly(out io.Writer, repoRoot string, on bool) error {
+	if err := config.SaveConfigValues(config.LocalConfigPath(repoRoot), []config.KeyEdit{config.PullOnlyEdit(on)}); err != nil {
+		return fmt.Errorf("record pull-only in %s: %w", config.LocalConfigName, err)
+	}
+	fmt.Fprintln(out, pushModeLine(repoRoot))
+	return nil
+}
 
 // holderRefusal is the team-owned files a config push kept local because the
 // caller is not the project's substrate holder, and who may publish them.

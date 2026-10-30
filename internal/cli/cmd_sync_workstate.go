@@ -270,6 +270,9 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, ve
 	if err != nil {
 		return err
 	}
+	if err := refusePullOnly(a.RepoRoot); err != nil {
+		return err
+	}
 	server := resolveServer(serverArg)
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")

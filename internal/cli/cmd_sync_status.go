@@ -203,6 +203,7 @@ func runSyncStatus(cmd *cobra.Command, serverArg string) error {
 		return err
 	}
 	out := cmd.OutOrStdout()
+	fmt.Fprintln(out, pushModeLine(repoRoot))
 	if len(areas) == 0 {
 		fmt.Fprintln(out, "Nothing to check — every config area and documents is local. Set [sync] <area> = personal (or [sync] all = personal) to opt in.")
 		return nil

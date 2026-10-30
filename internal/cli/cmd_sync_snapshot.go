@@ -178,6 +178,9 @@ func (o *pushOutcome) mark(set *map[string]bool, area string) {
 // upload is the one path that cannot tell a behind or diverged machine from an
 // in-step one, and an unattended caller must never overwrite on doubt.
 func runSnapshotPush(ctx context.Context, d *snapsync.Driver, areaFiles map[string][]snapsync.PushFile, areas []string, snapshotOnly bool) (out pushOutcome, handled bool, err error) {
+	if err := refusePullOnly(d.RepoRoot); err != nil {
+		return out, true, err
+	}
 	var jobs []*snapsync.PushJob
 	var refusals []error
 	for _, area := range areas {

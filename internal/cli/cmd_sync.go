@@ -253,6 +253,12 @@ func runSync(cmd *cobra.Command, serverArg string, dryRun bool) error {
 		fmt.Fprintln(out, "Nothing to sync — every .satelle area is local. Set [sync] <area> = personal (or [sync] all = personal) to opt in.")
 		return nil
 	}
+	if err := refusePullOnly(a.RepoRoot); errors.Is(err, errPullOnly) {
+		fmt.Fprintf(out, "push skipped: %v\n", err)
+		return runSyncPullsOfBareSync(cmd, a.Config, serverArg, dryRun)
+	} else if err != nil {
+		return err
+	}
 	return runSyncPushLegs(cmd, serverArg, dryRun, func() error {
 		return runSyncPullsOfBareSync(cmd, a.Config, serverArg, dryRun)
 	})
@@ -510,6 +516,9 @@ func runSyncConfigPushLeg(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	if err != nil {
 		return ref, err
 	}
+	if err := refusePullOnly(repoRoot); err != nil {
+		return ref, err
+	}
 	_ = workspaceArg // sync is personal-only (epic:sync-publish)
 	server := resolveServer(serverArg)
 	if server == "" {
@@ -580,6 +589,9 @@ type pushSetOpts struct {
 // team-owned files the holder gate or the server kept local.
 func pushConfigFileSet(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir string, ign config.Ignore, server string, files []config.ConfigFile, opts pushSetOpts) (holderRefusal, error) {
 	var ref holderRefusal
+	if err := refusePullOnly(repoRoot); err != nil {
+		return ref, err
+	}
 	out := cmd.OutOrStdout()
 	printWithheldLocal := func() {
 		if opts.withheldLocal != nil {

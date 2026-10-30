@@ -82,6 +82,9 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	if err != nil {
 		return err
 	}
+	if err := refusePullOnly(repoRoot); err != nil {
+		return err
+	}
 	_ = workspaceArg // sync is personal-only (epic:sync-publish)
 	server := resolveServer(serverArg)
 	if server == "" {

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/remotenode/devtest"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -160,5 +161,24 @@ func TestNodeWorkstatePushNeedsNoLogin(t *testing.T) {
 				t.Errorf("the node's config binds a project: %q", ln)
 			}
 		}
+	}
+}
+
+// A task node whose root is marked pull-only (sty_07eefabe) runs its task and
+// pushes no workstate, saying why.
+func TestPullOnlyNodeWorkstatePushSkipped(t *testing.T) {
+	r, _ := taskRig(t, "nightly-sweep", true)
+	writeRepoFile(t, r.nodeRoot, ".satelle/"+config.LocalConfigName, "[sync]\npull_only = true\n")
+	useTaskNode(t, recordingPerformers(), 0)
+
+	_, fake, joined, _ := r.open(t)
+	if err := waitJoin(t, joined); err != nil {
+		t.Fatalf("node join ended with %v\nnode log:\n%s", err, r.log)
+	}
+	if n := fake.Count(http.MethodPost, "/workstate"); n != 0 {
+		t.Errorf("workstate pushes = %d from a pull-only node, want 0\nnode log:\n%s", n, r.log)
+	}
+	if log := r.log.String(); !strings.Contains(log, "workstate push skipped") || !strings.Contains(log, "pull_only") {
+		t.Errorf("node log does not report the skipped push naming pull_only:\n%s", log)
 	}
 }
