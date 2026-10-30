@@ -1,3 +1,13 @@
+## [0.0.802] - 2026-10-30
+
+### Fixed
+- The local web UI's remote status reads `local` for a repo whose work state is local. The repo header no longer shows `push failing` with an older failure's reason and log path, or `pushed` from an older success, and the landing row drops its `Push Failing` tag. A push or snapshot pass now records the work-state scope it resolved in the repo's sync state, including when every area is local, and a push skipped because the work state is local is no longer recorded as a successful hosted push. With work state opted in, the header and landing row show push failing or pushed as before. (sty_3df5f95a)
+
+## [serve-v0.0.243] - 2026-10-30
+
+### Changed
+- The service binary records the resolved work-state scope with each background push and snapshot pass, and renders a local repo's remote status as `local`. (sty_3df5f95a)
+
 ## [0.0.801] - 2026-10-30
 
 ### Fixed

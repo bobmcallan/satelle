@@ -258,7 +258,7 @@ const templatesSrc = `
 
 {{/* syncfailtag: landing-only status chip. No reason, no log path — those
      stay on the project page (sty_a447695e). */}}
-{{define "syncfailtag"}}{{if .SyncReason}}<span class="sync-tag-fail" title="hosted push is failing — see the project page">Push Failing</span>{{end}}{{end}}
+{{define "syncfailtag"}}{{if and .SyncReason (not .SyncLocal)}}<span class="sync-tag-fail" title="hosted push is failing — see the project page">Push Failing</span>{{end}}{{end}}
 
 {{define "footer"}}<footer class="site-footer"><span class="footer-version">{{product}} {{version}}</span></footer>{{end}}
 
@@ -284,7 +284,7 @@ const templatesSrc = `
   <header class="app">
     <h1>{{.ProjectName}}</h1>
     <div class="meta">{{.RepoRoot}} · <a href="help">help →</a> · <a href="settings">settings →</a> · {{template "freshness" .}} · {{template "syncstate" .}}</div>
-    {{if .SyncReason}}{{template "syncfail" .}}{{end}}
+    {{if and .SyncReason (not .SyncLocal)}}{{template "syncfail" .}}{{end}}
   </header>
 
   <div class="tabs" role="tablist">

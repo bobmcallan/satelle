@@ -133,6 +133,16 @@ func RecordSnapshot(globalDir, repoPath string, success bool, reason, scope stri
 	})
 }
 
+// RecordScope records the work-state scope a pass resolved and nothing else, so
+// a pass skipped because the work state is local writes neither a success nor a
+// failure. An empty scope writes nothing.
+func RecordScope(globalDir, repoPath, scope string) error {
+	if scope == "" {
+		return nil
+	}
+	return record(globalDir, repoPath, scope, func(*State) {})
+}
+
 // RecordSubstrate merges the verified state of the given areas (area -> state)
 // into the substrate group, leaving every other area's record as it was.
 func RecordSubstrate(globalDir, repoPath string, areas map[string]string, now time.Time) error {

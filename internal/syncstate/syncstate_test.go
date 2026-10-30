@@ -118,3 +118,37 @@ func TestRecordSubstrateMergesOnlyItsGroupAndTheGivenAreas(t *testing.T) {
 		t.Fatalf("documents must keep its own record: %+v", a)
 	}
 }
+
+// RecordScope writes only Scope: a local pass neither clears an older failure
+// nor records a success, and an empty scope writes nothing (sty_3df5f95a).
+func TestRecordScopeSetsOnlyScope(t *testing.T) {
+	home := t.TempDir()
+	okAt := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	failAt := time.Date(2026, 8, 1, 11, 0, 0, 0, time.UTC)
+	if err := RecordPush(home, "/repo", true, "", "personal", okAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordPush(home, "/repo", false, "hosted 505", "", failAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordScope(home, "/repo", "local"); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := Load(home, "/repo")
+	if err != nil || !ok {
+		t.Fatalf("load: ok=%v err=%v", ok, err)
+	}
+	if got.Scope != "local" {
+		t.Fatalf("Scope = %q, want local", got.Scope)
+	}
+	if got.PushReason != "hosted 505" || !got.PushLastFailure.Equal(failAt) || !got.PushLastSuccess.Equal(okAt) || got.PushPasses != 1 {
+		t.Fatalf("push leg changed: %+v", got)
+	}
+
+	if err := RecordScope(home, "/fresh", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := Load(home, "/fresh"); err != nil || ok {
+		t.Fatalf("empty scope wrote state: ok=%v err=%v", ok, err)
+	}
+}

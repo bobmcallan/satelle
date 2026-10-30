@@ -24,19 +24,11 @@ func checkSyncHealth(repoRoot, dataDir, globalDir string, now time.Time) health.
 
 // checkWorkstatePush judges the recorded work-state push against cfg.
 func checkWorkstatePush(cfg config.Config, cfgPath, repoRoot, globalDir string, now time.Time) health.Findings {
-
-	allLocal := true
-	for _, area := range config.WorkstateAreas {
-		sc, serr := config.ScopeFor(cfg, area)
-		if serr != nil {
-			return health.Findings{health.Error(health.IDSyncConfig, "Workstate sync config", serr.Error()).About(cfgPath)}
-		}
-		if sc != config.LocalScope {
-			allLocal = false
-			break
-		}
+	ws, serr := config.WorkstateScope(cfg)
+	if serr != nil {
+		return health.Findings{health.Error(health.IDSyncConfig, "Workstate sync config", serr.Error()).About(cfgPath)}
 	}
-	if allLocal {
+	if ws == config.LocalScope {
 		return health.Findings{health.Info(health.IDSyncLocal, "Work state is local-only",
 			"work-state areas are local; not flagged as unbacked").About(repoRoot)}
 	}

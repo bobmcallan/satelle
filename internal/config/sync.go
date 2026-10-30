@@ -189,6 +189,21 @@ func ScopeFor(cfg Config, area string) (Scope, error) {
 	return LocalScope, nil
 }
 
+// WorkstateScope folds ScopeFor over WorkstateAreas into the repo's one
+// work-state scope: LocalScope only when every area is local, else the widest
+// area scope on the ladder. An area's ScopeFor error is returned as is.
+func WorkstateScope(cfg Config) (Scope, error) {
+	widest := LocalScope
+	for _, area := range WorkstateAreas {
+		sc, err := ScopeFor(cfg, area)
+		if err != nil {
+			return LocalScope, err
+		}
+		widest = max(widest, sc)
+	}
+	return widest, nil
+}
+
 // sharedFrontmatterKey is the OKF frontmatter key marking an individual file,
 // inside a personal-scope area, for promotion to the shared tier.
 const sharedFrontmatterKey = "shared"

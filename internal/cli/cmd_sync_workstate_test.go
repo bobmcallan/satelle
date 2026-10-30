@@ -25,8 +25,10 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/hosted/syncpb"
+	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -383,6 +385,44 @@ func TestSyncWorkstatePushSkipsLocal(t *testing.T) {
 	}
 	if f.postCount("probe") != 0 {
 		t.Error("local-scope push contacted the server")
+	}
+}
+
+// A push records the work-state scope it resolved: an all-local push records
+// local and leaves the seeded success as it was, and an opted-in push records
+// its own scope (sty_3df5f95a).
+func TestSyncWorkstatePushRecordsScope(t *testing.T) {
+	ts, _ := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	repo := workstateRepo(t, "[sync]\nall = \"local\"\n\n[hosted]\nproject = \"probe\"\n")
+	t0 := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	if err := syncstate.RecordPush(config.GlobalDir(), repo, true, "", "personal", t0); err != nil {
+		t.Fatal(err)
+	}
+
+	if out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL); err != nil {
+		t.Fatalf("local push: %v\n%s", err, out)
+	}
+	st, _, err := syncstate.Load(config.GlobalDir(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Scope != "local" || !st.PushLastSuccess.Equal(t0) {
+		t.Fatalf("all-local push: Scope %q, push_last_success %v; want local, %v", st.Scope, st.PushLastSuccess, t0)
+	}
+
+	cfg := "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n"
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runRoot(t, "story", "create", "--title", "Scope probe", "--body", "A story to push.", "--acceptance", "1. pushed"); err != nil {
+		t.Fatalf("story create: %v\n%s", err, out)
+	}
+	if out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL); err != nil {
+		t.Fatalf("personal push: %v\n%s", err, out)
+	}
+	if st, _, _ = syncstate.Load(config.GlobalDir(), repo); st.Scope != "personal" || !st.PushLastSuccess.After(t0) {
+		t.Fatalf("opted-in push: Scope %q, push_last_success %v; want personal, after %v", st.Scope, st.PushLastSuccess, t0)
 	}
 }
 

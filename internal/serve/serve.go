@@ -15,7 +15,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/mirror"
-	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/web"
 )
 
@@ -63,9 +62,7 @@ func Run(ctx context.Context, opts Options) error {
 		Resolve: resolvePushPath(ms, home),
 		Keys:    pushKeys(ms),
 		Log:     logLine,
-		Record: func(repoPath string, success bool, reason string) {
-			_ = syncstate.RecordPush(home, repoPath, success, reason, "", time.Now())
-		},
+		Record:  recordPushFunc(home),
 	}
 	webSrv := web.NewMirrorHooks(ms, config.SafeCurrentInstanceID(), pusher.Notify)
 	publishLogs = func() { webSrv.Publish("logs") }
@@ -91,9 +88,7 @@ func Run(ctx context.Context, opts Options) error {
 	rec := &Reconciler{
 		Targets: mirrorTargets(ms, home),
 		Log:     logLine,
-		Record: func(repoPath string, success bool, reason string) {
-			_ = syncstate.RecordSnapshot(home, repoPath, success, reason, "", time.Now())
-		},
+		Record:  recordSnapshotFunc(home),
 	}
 	go rec.Loop(ctx)
 	go pusher.Run(ctx)

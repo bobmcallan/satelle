@@ -270,7 +270,12 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, ve
 	if err != nil {
 		return err
 	}
+	ws, err := config.WorkstateScope(a.Config)
+	if err != nil {
+		return err
+	}
 	if len(optIn) == 0 {
+		_ = syncstate.RecordScope(config.GlobalDir(), a.RepoRoot, ws.String())
 		fmt.Fprintln(out, "No work-state to push — every work-state area is local. Set [sync] stories|ledger|executions = personal|shared to opt in.")
 		return nil
 	}
@@ -334,7 +339,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, ve
 	// make the repo "pushed".
 	recordOK := func() {
 		if scope == nil {
-			recordWorkstatePush(a.RepoRoot, true, "")
+			recordWorkstatePush(a.RepoRoot, true, "", ws.String())
 		}
 	}
 	// A scoped push sends its stories whole and reads no cursor: the stored cursor
@@ -397,7 +402,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, ve
 	if len(batch.Items) == 0 && len(batch.Ledger) == 0 && len(plan) == 0 {
 		if hadCursor && !full {
 			fmt.Fprintf(out, "Work-state up to date on %s — no records changed since the last push.\n", server)
-			recordWorkstatePush(a.RepoRoot, true, "")
+			recordWorkstatePush(a.RepoRoot, true, "", ws.String())
 			return nil
 		}
 		fmt.Fprintln(out, "No work-state rows to push (opted-in areas are empty).")
@@ -478,11 +483,11 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, ve
 	}
 	if appendErr != nil {
 		if errors.Is(appendErr, hosted.ErrLoginRequired) {
-			recordWorkstatePush(a.RepoRoot, false, appendErr.Error())
+			recordWorkstatePush(a.RepoRoot, false, appendErr.Error(), ws.String())
 			return appendErr
 		}
 		fmt.Fprintln(out, appendErr.Error())
-		recordOK = func() { recordWorkstatePush(a.RepoRoot, false, appendErr.Error()) }
+		recordOK = func() { recordWorkstatePush(a.RepoRoot, false, appendErr.Error(), ws.String()) }
 		defer func() {
 			if retErr == nil {
 				retErr = appendErr
@@ -511,7 +516,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, ve
 		}
 		res, perr := client.Apply(cmd.Context(), project, hosted.WorkstateIngest{Items: items, Ledger: ledgerRaw})
 		if perr != nil {
-			recordWorkstatePush(a.RepoRoot, false, perr.Error())
+			recordWorkstatePush(a.RepoRoot, false, perr.Error(), ws.String())
 			if errors.Is(perr, hosted.ErrLoginRequired) {
 				return perr
 			}
@@ -574,8 +579,8 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, ve
 	return nil
 }
 
-func recordWorkstatePush(repoPath string, success bool, reason string) {
-	_ = syncstate.RecordPush(config.GlobalDir(), repoPath, success, reason, "", time.Now())
+func recordWorkstatePush(repoPath string, success bool, reason, scope string) {
+	_ = syncstate.RecordPush(config.GlobalDir(), repoPath, success, reason, scope, time.Now())
 }
 
 func chunkRaw(in []json.RawMessage, size int) [][]json.RawMessage {
