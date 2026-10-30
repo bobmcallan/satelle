@@ -1,3 +1,8 @@
+## [0.0.800] - 2026-10-30
+
+### Fixed
+- `satelle sync workstate pull` no longer reports a story as stranded, or counts it among the stories that left work with no recorded head, when a commit on the remote trunk branch names the story's id in its subject. A story whose head was rebased or squashed onto trunk, or never recorded, has its code on the remote, and the reconcile report now says so by leaving it out. A story with neither a recorded head nor such a trunk commit is still reported. (sty_e5cba77e)
+
 ## [0.0.799] - 2026-10-30
 
 ### Fixed

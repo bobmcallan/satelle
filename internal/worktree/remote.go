@@ -56,6 +56,26 @@ func HasCommit(dir, sha string) (bool, error) {
 	return true, nil
 }
 
+// TrunkCommitNames reports whether a commit reachable from ref has a subject
+// that contains id, so code that reached the trunk under the story's name can be
+// told apart from code that never left a machine. A ref that does not resolve
+// holds no such commit.
+func TrunkCommitNames(dir, ref, id string) (bool, error) {
+	if _, err := gitOutput(dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err != nil {
+		return false, nil
+	}
+	out, err := gitOutput(dir, "log", "--fixed-strings", "--grep="+id, "--format=%s", ref, "--")
+	if err != nil {
+		return false, err
+	}
+	for _, subject := range strings.Split(out, "\n") {
+		if strings.Contains(subject, id) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func gitOutput(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	out, err := cmd.Output()

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/worktree"
 )
 
 // After a work-state pull, each pulled story whose status claims code the git
@@ -123,6 +125,59 @@ func TestPullReportsStoriesWhoseCodeTheRemoteCannotShow(t *testing.T) {
 		if strings.Contains(out, silent) {
 			t.Errorf("%s must not be named without --verbose:\n%s", silent, out)
 		}
+	}
+}
+
+// A commit on the remote trunk whose subject names a story is that story's code
+// on the remote, whatever head was or was not recorded for it (sty_e5cba77e).
+func TestReconcileTrunkCommitNamingStoryIsNotStranded(t *testing.T) {
+	w := newReconcileWorld(t, true)
+	gitIn(t, w.repo, "remote", "set-head", "origin", "main")
+
+	for _, id := range []string{"sty_x1", "sty_x2"} {
+		seedHostedStory(w.f, id, id, w.exec, step(10))
+		seedTransition(w.f, id, "plan", w.exec, 1)
+		seedChange(w.f, id, "plan", w.exec, w.onOrigin, 2)
+		seedBaseline(w.f, id, "/elsewhere/"+id, 1)
+	}
+	w.worked("sty_x3", w.localOnly)
+	w.worked("sty_x4", absentHead)
+	w.worked("sty_x5", "")
+
+	// Another machine lands the trunk commits; this clone only fetches them, so
+	// its local main keeps the commit no remote ref contains.
+	other := cloneOf(t, gitIn(t, w.repo, "remote", "get-url", "origin"))
+	for _, id := range []string{"sty_x1", "sty_x3", "sty_x4", "sty_x5"} {
+		gitIn(t, other, "commit", "--allow-empty", "-m", "fix: thing ("+id+")")
+	}
+	gitIn(t, other, "commit", "--allow-empty", "-m", "chore: unrelated", "-m", "mentions sty_x2 only in the body")
+	gitIn(t, other, "push", "origin", "HEAD:main")
+	gitIn(t, w.repo, "fetch", "origin")
+
+	if has, err := worktree.HasCommit(w.repo, w.localOnly); err != nil || !has {
+		t.Fatalf("precondition: %s must be in the repo (%v)", w.localOnly, err)
+	}
+	if on, err := worktree.OnRemote(w.repo, w.localOnly); err != nil || on {
+		t.Fatalf("precondition: %s must be on no remote branch (%v)", w.localOnly, err)
+	}
+	if has, err := worktree.HasCommit(w.repo, absentHead); err != nil || has {
+		t.Fatalf("precondition: %s must not be in the repo (%v)", absentHead, err)
+	}
+
+	out := w.pull(t, "--verbose")
+
+	want := "stranded sty_x2 (" + w.exec + "): in " + w.exec + " since " + step(1).Format(time.RFC3339) +
+		" — no commit recorded after work started; its code may exist only in /elsewhere/sty_x2"
+	if !strings.Contains(out, want) {
+		t.Errorf("a story no trunk subject names must still be stranded; missing %q:\n%s", want, out)
+	}
+	for _, id := range []string{"sty_x1", "sty_x3", "sty_x4", "sty_x5"} {
+		if strings.Contains(out, id) {
+			t.Errorf("%s is named by a trunk commit and must not be reported:\n%s", id, out)
+		}
+	}
+	if strings.Contains(out, "no recorded head") {
+		t.Errorf("a no-head story a trunk commit names must not be counted:\n%s", out)
 	}
 }
 
