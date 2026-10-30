@@ -28,8 +28,11 @@ func HostedMode(cfg config.Config) bool {
 
 // MachineSet returns the stories this machine engaged: those with a KindWorkingOn
 // row naming location. An empty location is this machine's own location as the
-// location resolver names it. The row is read to choose what stays cached, never
-// to refuse an engage.
+// location resolver names it. A row with no location is counted too: a story
+// worktree engaged before its checkout resolved to the main tree's location wrote
+// one (sty_9ece9394), and the ledger is append-only, so those rows stay as they
+// are. A row naming another location is not this machine's. The row is read to
+// choose what stays cached, never to refuse an engage.
 func MachineSet(ctx context.Context, led *ledger.Store, location string) (map[string]bool, error) {
 	if led == nil {
 		return nil, fmt.Errorf("verb: machine set needs a ledger")
@@ -40,7 +43,7 @@ func MachineSet(ctx context.Context, led *ledger.Store, location string) (map[st
 	out := map[string]bool{}
 	err := led.ForEachKind(ctx, "", ledger.KindWorkingOn, func(e ledger.Entry) error {
 		var p WorkingOnPayload
-		if json.Unmarshal(e.Payload, &p) == nil && p.Location == location && e.StoryID != "" {
+		if json.Unmarshal(e.Payload, &p) == nil && (p.Location == location || p.Location == "") && e.StoryID != "" {
 			out[e.StoryID] = true
 		}
 		return nil

@@ -96,7 +96,7 @@ func senderIdentity() (id, name, location string) {
 	root := initRepoRoot("")
 	id = config.ResolveSession()
 	name = currentSessionName(root)
-	if loc, err := hosted.LocationID(root); err == nil {
+	if loc, err := hosted.LocationID(config.CanonicalRepoRoot(root)); err == nil {
 		location = loc
 	}
 	return id, name, location

@@ -97,9 +97,11 @@ type pageData struct {
 	Hosted *hostedLinksVM
 }
 
-// hostedLinksVM is where the server shows what a hosted-mode page leaves out.
+// hostedLinksVM is where the server shows what a hosted-mode page leaves out:
+// its project page, which lists every story. Only pages the server serves are
+// linked (sty_9ece9394).
 type hostedLinksVM struct {
-	AllStories, Progress, Epics, Members string
+	Project string
 }
 
 type crumbProject struct {

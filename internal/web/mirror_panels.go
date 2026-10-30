@@ -182,8 +182,8 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 }
 
 // hostedView narrows a hosted-mode partition's stories to those this machine
-// engaged and names the server views for the rest. A local partition is shown
-// whole, with no links.
+// engaged and links the server's project page for the rest. A local partition is
+// shown whole, with no links.
 func hostedView(h *mirror.HostedMeta, stories []workitem.Item) ([]workitem.Item, *hostedLinksVM) {
 	if h == nil || h.Server == "" || h.Project == "" {
 		return stories, nil
@@ -198,13 +198,7 @@ func hostedView(h *mirror.HostedMeta, stories []workitem.Item) ([]workitem.Item,
 			out = append(out, st)
 		}
 	}
-	base := strings.TrimRight(h.Server, "/") + "/" + url.PathEscape(h.Project)
-	return out, &hostedLinksVM{
-		AllStories: base + "/stories",
-		Progress:   base + "/progress",
-		Epics:      base + "/epics",
-		Members:    base + "/members",
-	}
+	return out, &hostedLinksVM{Project: strings.TrimRight(h.Server, "/") + "/app/p/" + url.PathEscape(h.Project)}
 }
 
 // attachStagesFrom is the mirror-side stage attach: ledger rows already loaded.

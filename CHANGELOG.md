@@ -1,3 +1,13 @@
+## [0.0.810] - 2026-10-30
+
+### Fixed
+- In hosted mode the local web UI lists every story this machine is working, including stories engaged from a story worktree (`satelle story worktree`). Those engagements had recorded no location, so 0.0.808 dropped every in-flight worktree story from "This machine's stories" and from the held set. A worktree engagement now records this machine's location, and existing rows written without one count as this machine's. The page's server links now go to the project page that exists on satelle.dev (`/app/p/<project>`), and the progress, epics and members links are not shown until the server serves those pages. (sty_9ece9394)
+
+## [serve-v0.0.249] - 2026-10-30
+
+### Changed
+- The service binary lists worktree-engaged stories in hosted mode and links only to server pages that exist. (sty_9ece9394)
+
 ## [0.0.809] - 2026-10-30
 
 ### Fixed
