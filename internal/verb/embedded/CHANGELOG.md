@@ -1,3 +1,13 @@
+## [0.0.804] - 2026-10-30
+
+### Fixed
+- A story's recorded change set leaves out other stories' trunk commits when it is read, not only when a record is written. Each change_record's files are reduced by the files of commits in its `since_sha..head_sha` range that the remote trunk holds and whose subject does not name the story, unless the story's own commits in that range or its uncommitted changes also touched the file. A record written before 0.0.765, such as one from a park that spanned another story's trunk commit, therefore no longer drags that story's files into `satelle story diff --recorded`, `satelle-substrate-only-check` or `satelle-docs-only-check`. No row is rewritten. A record whose range git cannot show is used as recorded and named in `unresolved_records`, the `--recorded` note, and the output of both checks. (sty_5a6c06d3)
+
+## [serve-v0.0.245] - 2026-10-30
+
+### Changed
+- The service binary carries the embedded `satelle-substrate-only-check` and `satelle-docs-only-check` skills that name a change record's unresolved range. (sty_5a6c06d3)
+
 ## [0.0.803] - 2026-10-30
 
 ### Fixed

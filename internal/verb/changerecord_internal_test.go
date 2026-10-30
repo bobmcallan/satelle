@@ -284,7 +284,7 @@ func TestRecordPathMutationRecordsDeletedPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	files, records, err := recordedChangeSet(ctx, it.ID)
+	files, records, _, err := recordedChangeSet(ctx, it.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func TestRecordPathMutationRecordsDeletedPaths(t *testing.T) {
 	if err := RecordPathMutation(ctx, it.ID, []string{"/elsewhere/x.md"}, "in", "in", now); err != nil {
 		t.Fatal(err)
 	}
-	if _, records, _ = recordedChangeSet(ctx, it.ID); records != 1 {
+	if _, records, _, _ = recordedChangeSet(ctx, it.ID); records != 1 {
 		t.Errorf("empty/out-of-root mutations must append no row, got %d records", records)
 	}
 }

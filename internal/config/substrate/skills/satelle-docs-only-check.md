@@ -84,18 +84,18 @@ if [ -z "$sid" ]; then
 fi
 
 extract_files() {
-  # stdin: story-diff JSON; stdout: one path per line
-  local raw
+  # stdin: story-diff JSON; $1: the list key (default files); stdout: one entry per line
+  local raw key="${1:-files}"
   raw=$(cat)
   [ -z "$raw" ] && return 0
   if command -v python3 >/dev/null 2>&1; then
     printf '%s' "$raw" | python3 -c "import json,sys
 try:
- print('\n'.join(json.load(sys.stdin).get('files') or []))
+ print('\n'.join(json.load(sys.stdin).get(sys.argv[1]) or []))
 except Exception:
- pass" 2>/dev/null || true
+ pass" "$key" 2>/dev/null || true
   else
-    printf '%s' "$raw" | tr -d ' \n' | sed -n 's/.*\"files\":\[\([^]]*\)\].*/\1/p' | tr ',' '\n' | tr -d '"' | grep -v '^$' || true
+    printf '%s' "$raw" | tr -d '\n' | grep -oE "\"$key\":[[:space:]]*\\[[^]]*\\]" | head -1 | sed 's/^"[^"]*":[[:space:]]*//' | tr ',' '\n' | grep -oE '"[^"]+"' | tr -d '"' | grep -v '^$' || true
   fi
 }
 
@@ -134,9 +134,12 @@ sys.exit(0 if b.strip() else 1)" 2>/dev/null
   fi
 }
 
+# A recorded row whose range git cannot show is used as recorded; unres names it.
 rec=""
+unres=""
 if recorded=$(satelle story diff "$sid" --recorded 2>/dev/null); then
   rec=$(printf '%s' "$recorded" | extract_files)
+  unres=$(printf '%s' "$recorded" | extract_files unresolved_records)
 fi
 
 liv=""
@@ -160,6 +163,10 @@ if [ -n "$owned" ]; then
 fi
 
 changed=$(printf '%s\n%s\n%s\n' "$rec" "$liv" "$com" | grep -v '^$' | sort -u)
+if [ -n "$unres" ]; then
+  echo "recorded rows used as recorded (range unresolved):"
+  printf '%s\n' "$unres"
+fi
 if [ -n "$changed" ]; then
   # A non-doc repo path is rejected whether or not external evidence is attached.
   offenders=$(printf '%s\n' "$changed" | grep -vE "$doc_paths" || true)

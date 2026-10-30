@@ -62,26 +62,29 @@ if [ -z "$sid" ]; then
 fi
 
 extract_files() {
-  # stdin: story-diff JSON; stdout: one path per line
-  local raw
+  # stdin: story-diff JSON; $1: the list key (default files); stdout: one entry per line
+  local raw key="${1:-files}"
   raw=$(cat)
   [ -z "$raw" ] && return 0
   if command -v python3 >/dev/null 2>&1; then
     printf '%s' "$raw" | python3 -c "import json,sys
 try:
  d=json.load(sys.stdin)
- print('\n'.join(d.get('files') or []))
+ print('\n'.join(d.get(sys.argv[1]) or []))
 except Exception:
- pass" 2>/dev/null || true
+ pass" "$key" 2>/dev/null || true
   else
-    printf '%s' "$raw" | grep -oE '"files":\[[^]]*\]' | head -1 | tr ',' '\n' | grep -oE '"[^"]+"' | tr -d '"' | grep -v '^$' || true
+    printf '%s' "$raw" | grep -oE "\"$key\":\\[[^]]*\\]" | head -1 | sed 's/^"[^"]*"://' | tr ',' '\n' | grep -oE '"[^"]+"' | tr -d '"' | grep -v '^$' || true
   fi
 }
 
-# Channel 1: recorded change_record union
+# Channel 1: recorded change_record union. A row whose range git cannot show is
+# used as recorded; unres names it.
 rec=""
+unres=""
 if recorded=$(satelle story diff "$sid" --recorded 2>/dev/null); then
   rec=$(printf '%s' "$recorded" | extract_files)
+  unres=$(printf '%s' "$recorded" | extract_files unresolved_records)
 fi
 
 # Channel 2: live git + opt-in substrate mtime (empty-tolerant: no baseline → empty)
@@ -107,6 +110,11 @@ if [ -n "$owned" ]; then
 fi
 
 changed=$(printf '%s\n%s\n%s\n' "$rec" "$liv" "$com" | grep -v '^$' | sort -u)
+
+if [ -n "$unres" ]; then
+  echo "recorded rows used as recorded (range unresolved):"
+  printf '%s\n' "$unres"
+fi
 
 # Allowed prefixes: authored substrate, managed footprint, edit_exempt_paths.
 allow='\.satelle/|docs/|\.gitignore$|\.claude/|\.grok/'

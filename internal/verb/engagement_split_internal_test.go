@@ -102,25 +102,25 @@ func TestWalkStoryRangeParkWindows(t *testing.T) {
 	}
 
 	t.Run("park window keeps a commit naming the story", func(t *testing.T) {
-		own, composed := walkStoryRange(ctx, r.Subject, base, id, []parkWindow{{From: parked, To: resumed}})
+		own, composed := walkStoryRange(ctx, r.Subject, base, "", id, []parkWindow{{From: parked, To: resumed}})
 		if !composed || shas(own) != before+","+named+","+after {
 			t.Fatalf("own=%v composed=%v, want [%s %s %s] true (not %s)", shas(own), composed, before, named, after, foreign)
 		}
 	})
 	t.Run("an All window keeps nothing before the resume head", func(t *testing.T) {
-		own, composed := walkStoryRange(ctx, r.Subject, base, id, []parkWindow{{From: base, To: resumed, All: true}})
+		own, composed := walkStoryRange(ctx, r.Subject, base, "", id, []parkWindow{{From: base, To: resumed, All: true}})
 		if !composed || shas(own) != after {
 			t.Fatalf("own=%v composed=%v, want [%s] true", shas(own), composed, after)
 		}
 	})
 	t.Run("no window and no remote trunk leaves the range to gitDiffSince", func(t *testing.T) {
-		own, composed := walkStoryRange(ctx, r.Subject, base, id, nil)
+		own, composed := walkStoryRange(ctx, r.Subject, base, "", id, nil)
 		if len(own) != 0 || composed {
 			t.Fatalf("own=%v composed=%v", shas(own), composed)
 		}
 	})
 	t.Run("a window that holds nothing leaves the range to gitDiffSince", func(t *testing.T) {
-		own, composed := walkStoryRange(ctx, r.Subject, base, id, []parkWindow{{From: after, To: after}})
+		own, composed := walkStoryRange(ctx, r.Subject, base, "", id, []parkWindow{{From: after, To: after}})
 		if composed || shas(own) != before+","+foreign+","+named+","+after {
 			t.Fatalf("own=%v composed=%v", shas(own), composed)
 		}
