@@ -22,7 +22,7 @@ import (
 // stageVM is one entry of the PROGRESS cell.
 type stageVM struct {
 	Name     string
-	State    string // done | current
+	State    string // done | current | performing
 	Accepted int    // accepted gate rounds on the edges into this stage
 	Rejected int    // rejected gate rounds on the edges into this stage
 	Parked   int    // parks taken while this stage's gate was in flight
@@ -31,6 +31,8 @@ type stageVM struct {
 	// Pending is the outgoing gate the story has presented and not yet passed:
 	// its rounds since the story entered the stage. Set only on the current chip.
 	Pending *gateRoundsVM
+	// Performer is the agent binding working on a performing chip's step.
+	Performer string
 }
 
 // gateRoundsVM is one gate's round counts, named by the edge they are for.
@@ -250,6 +252,33 @@ func buildStages(entries []ledger.Entry, status string, seatHeld bool, stepOf fu
 	return stages
 }
 
+// applyPerforming shows the step a dispatched performer is working on. The
+// recorded status stays at the origin until the performer hands back, so the
+// ledger alone would keep the origin live: with a dispatch for another step in
+// flight, the origin chip is done (its outgoing gate has passed) and the
+// dispatched step is the performing chip. Read-side only — no status changes.
+func applyPerforming(stages []stageVM, status string, d *dispatchVM) []stageVM {
+	if d == nil || d.Step == "" || d.Step == status {
+		return stages
+	}
+	for i := range stages {
+		if stages[i].Name == status && stages[i].State == "current" {
+			stages[i].State, stages[i].Pending = "done", nil
+			stages[i].Title = stageTitle(stages[i])
+		}
+	}
+	for i := range stages {
+		if stages[i].Name == d.Step {
+			stages[i].State, stages[i].Performer = "performing", d.Agent
+			stages[i].Title = stageTitle(stages[i])
+			return stages
+		}
+	}
+	s := stageVM{Name: d.Step, State: "performing", Performer: d.Agent}
+	s.Title = stageTitle(s)
+	return append(stages, s)
+}
+
 // routeEdgeOff reports whether a review edge is a park, recover or sink edge of
 // the resolved route — its rounds belong to no stage's gate.
 func routeEdgeOff(spec wfdot.Spec, from, to string) bool {
@@ -305,8 +334,11 @@ func stageTitle(s stageVM) string {
 		parts = append(parts, fmt.Sprintf("%s %d times", s.ParkName, s.Parked))
 	}
 	title := s.Name
-	if s.State == "current" {
+	switch s.State {
+	case "current":
 		title += " (current stage)"
+	case "performing":
+		title += " (performing: " + s.Performer + ")"
 	}
 	if len(parts) > 0 {
 		title += ": " + strings.Join(parts, ", ")

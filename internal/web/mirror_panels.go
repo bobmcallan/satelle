@@ -184,6 +184,7 @@ func attachStagesFrom(entriesByStory map[string][]ledger.Entry, items []workitem
 	for i, it := range items {
 		stepOf := func(s string) int { return catStepOf(it.Category, s) }
 		stages := buildStages(entriesByStory[it.ID], it.Status, liveSeat[it.ID], stepOf, specOf(it.Category))
+		stages = applyPerforming(stages, it.Status, dispatches[it.ID])
 		out[i] = rowVM{Item: it, Stages: stages, Dispatch: dispatches[it.ID]}
 	}
 	return out
@@ -301,6 +302,9 @@ type seatPayload struct {
 	LastEventAt       time.Time `json:"last_event_at,omitempty"`
 	ActivityStartedAt time.Time `json:"activity_started_at,omitempty"`
 	IdleTimeoutNs     int64     `json:"idle_timeout_ns,omitempty"`
+	// Activity is the seat's phase label; a performer dispatch stamps
+	// "dispatch:<step>" (agentstep emitActivity).
+	Activity string `json:"activity,omitempty"`
 }
 
 // dispatchVM is the web story row's running indicator (sty_752c4ef2 AC6):
@@ -315,6 +319,10 @@ type dispatchVM struct {
 	LastEventAt time.Time
 	StartedAt   time.Time
 	Warn        bool
+	// Step is the workflow step the dispatched performer is working on, from
+	// the seat's "dispatch:<step>" activity label; empty for any other phase
+	// (a gate review, a summariser).
+	Step string
 }
 
 // buildDispatchIndicator returns the running indicator for an in-flight,
@@ -330,6 +338,9 @@ func buildDispatchIndicator(seat seatPayload, now time.Time) *dispatchVM {
 	vm := &dispatchVM{
 		Agent: seat.Agent, Model: seat.Model, LastEvent: seat.LastEvent,
 		LastEventAt: seat.LastEventAt, StartedAt: seat.ActivityStartedAt,
+	}
+	if step, ok := strings.CutPrefix(seat.Activity, "dispatch:"); ok {
+		vm.Step = step
 	}
 	if seat.IdleTimeoutNs > 0 && !seat.LastEventAt.IsZero() {
 		idle := now.Sub(seat.LastEventAt)

@@ -512,13 +512,23 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 				harnessTools = append([]string(nil), ev.Tools...)
 			}
 		}
-		if trackActivity && isRealEvent(ev.Kind) {
-			actCount++
+		// A text-less EventProgress is the command transport's report that the
+		// performer's process tree did work while its CLI printed nothing — the
+		// only activity that transport can expose. It refreshes the last-activity
+		// time as "working" but is not counted as a real event, so the idle-warn
+		// count and the stall detector keep their semantics.
+		realEv := isRealEvent(ev.Kind)
+		if trackActivity && (realEv || (ev.Kind == agentcli.EventProgress && ev.Text == "")) {
+			label := "working"
+			if realEv {
+				actCount++
+				label = eventLabel(ev)
+			}
 			now := time.Now()
-			if actCount == 1 || now.Sub(lastActivityPush) >= activityDetailThrottle {
+			if (realEv && actCount == 1) || now.Sub(lastActivityPush) >= activityDetailThrottle {
 				lastActivityPush = now
 				g.activityDetail(req.StoryID, ActivityDetail{
-					Agent: section, Model: agentReq.Model, Pid: actPid, EventLabel: eventLabel(ev),
+					Agent: section, Model: agentReq.Model, Pid: actPid, EventLabel: label,
 					EventAt: now, EventCount: actCount,
 				})
 			}

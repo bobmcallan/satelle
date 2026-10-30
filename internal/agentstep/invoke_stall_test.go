@@ -674,3 +674,141 @@ func containsStalled(s string) bool {
 func containsDeadlineExceeded(s string) bool {
 	return strings.Contains(strings.ToLower(s), "deadline exceeded")
 }
+
+// scriptStep is one event an eventScriptRunner emits, after waiting wait.
+type scriptStep struct {
+	wait time.Duration
+	ev   agentcli.Event
+}
+
+// eventScriptRunner emits a fixed event script, then returns "DONE".
+type eventScriptRunner struct{ steps []scriptStep }
+
+func (r *eventScriptRunner) Name() string    { return "event-script" }
+func (r *eventScriptRunner) Command() string { return "event-script" }
+func (r *eventScriptRunner) Run(ctx context.Context, req agentcli.Request) ([]byte, error) {
+	for _, s := range r.steps {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(s.wait):
+		}
+		if req.OnEvent != nil {
+			req.OnEvent(s.ev)
+		}
+	}
+	return []byte("DONE"), nil
+}
+
+// dispatchActivity runs one ExpectPerform dispatch of r with the activity
+// throttle set to throttle and returns every ActivityDetail pushed.
+func dispatchActivity(t *testing.T, r agentcli.Runner, throttle time.Duration) []ActivityDetail {
+	t.Helper()
+	old := activityDetailThrottle
+	activityDetailThrottle = throttle
+	t.Cleanup(func() { activityDetailThrottle = old })
+
+	g := New(r, fakeDocs{}, "/repo", "")
+	g.idleTimeout = time.Minute
+	var mu sync.Mutex
+	var pushes []ActivityDetail
+	g.SetActivityDetail(func(_ string, d ActivityDetail) {
+		mu.Lock()
+		defer mu.Unlock()
+		pushes = append(pushes, d)
+	})
+	res := g.Invoke(context.Background(), InvokeRequest{
+		Binding: config.AgentBinding{Command: "cursor", Principles: config.PrinciplesNone},
+		Section: "coder",
+		Rubric:  "do it",
+		Payload: map[string]string{},
+		Expect:  ExpectPerform,
+		Runner:  r,
+		StoryID: "sty_1",
+	})
+	if res.Err != nil {
+		t.Fatalf("dispatch failed: %v", res.Err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	return append([]ActivityDetail(nil), pushes...)
+}
+
+func pushLabels(ps []ActivityDetail) []string {
+	out := make([]string, len(ps))
+	for i, p := range ps {
+		out[i] = p.EventLabel
+	}
+	return out
+}
+
+// TestActivityDetailFollowsCommandTransportProgress (sty_5650fbcc AC3): the
+// observed cursor run — a command-transport performer whose CLI prints
+// nothing, so after EventStart the only thing it reports is the liveness
+// probe's EventProgress as its process tree works. The last activity must
+// advance past the start, labelled "working", while the real-event count stays
+// at the one start event.
+//
+// time-subject: the 20ms throttle is the subject; progress arrives 60ms apart,
+// three throttle windows, so each one is past the throttle on any runner.
+func TestActivityDetailFollowsCommandTransportProgress(t *testing.T) {
+	r := &eventScriptRunner{steps: []scriptStep{
+		{0, agentcli.Event{Kind: agentcli.EventStart}},
+		{60 * time.Millisecond, agentcli.Event{Kind: agentcli.EventProgress}},
+		{60 * time.Millisecond, agentcli.Event{Kind: agentcli.EventProgress}},
+	}}
+	pushes := dispatchActivity(t, r, 20*time.Millisecond)
+	if len(pushes) < 2 {
+		t.Fatalf("pushes = %v, want the start then the performer's later activity", pushLabels(pushes))
+	}
+	first, last := pushes[0], pushes[len(pushes)-1]
+	if first.EventLabel != "start" {
+		t.Errorf("first push = %q, want start", first.EventLabel)
+	}
+	if last.EventLabel != "working" {
+		t.Errorf("last push = %q, want working", last.EventLabel)
+	}
+	if !last.EventAt.After(first.EventAt) {
+		t.Errorf("last activity %v did not advance past the start %v", last.EventAt, first.EventAt)
+	}
+	if last.EventCount != 1 {
+		t.Errorf("EventCount = %d, want 1: progress is not a real event", last.EventCount)
+	}
+}
+
+// TestActivityDetailIdlePerformerStaysAtStart (sty_5650fbcc AC3, negative): a
+// performer that reports nothing after starting — no progress, only the
+// probe's text-carrying "unavailable" note — keeps its start as the last
+// activity, so an idle tree never looks alive.
+func TestActivityDetailIdlePerformerStaysAtStart(t *testing.T) {
+	r := &eventScriptRunner{steps: []scriptStep{
+		{0, agentcli.Event{Kind: agentcli.EventStart}},
+		{60 * time.Millisecond, agentcli.Event{Kind: agentcli.EventProgress, Text: "liveness probe unavailable on plan9"}},
+		{60 * time.Millisecond, agentcli.Event{Kind: agentcli.EventHeartbeat}},
+	}}
+	pushes := dispatchActivity(t, r, 20*time.Millisecond)
+	if got := pushLabels(pushes); len(got) != 1 || got[0] != "start" {
+		t.Errorf("pushes = %v, want only the start", got)
+	}
+}
+
+// TestActivityDetailToolEventNotOverwrittenByProgress (sty_5650fbcc AC3): on a
+// transport that reports tool calls, the tool call is the last activity, and a
+// progress tick inside the throttle window does not replace its label.
+//
+// time-subject: the 50ms throttle is the subject; the tool call lands 100ms
+// after the start and the progress immediately after it.
+func TestActivityDetailToolEventNotOverwrittenByProgress(t *testing.T) {
+	r := &eventScriptRunner{steps: []scriptStep{
+		{0, agentcli.Event{Kind: agentcli.EventStart}},
+		{100 * time.Millisecond, agentcli.Event{Kind: agentcli.EventToolStart, Tool: "Write"}},
+		{0, agentcli.Event{Kind: agentcli.EventProgress}},
+	}}
+	pushes := dispatchActivity(t, r, 50*time.Millisecond)
+	if got := pushLabels(pushes); len(got) != 2 || got[0] != "start" || got[1] != "tool: Write" {
+		t.Fatalf("pushes = %v, want [start tool: Write]", got)
+	}
+	if !pushes[1].EventAt.After(pushes[0].EventAt) {
+		t.Errorf("tool activity %v did not advance past the start %v", pushes[1].EventAt, pushes[0].EventAt)
+	}
+}

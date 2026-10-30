@@ -1,3 +1,13 @@
+## [0.0.798] - 2026-10-30
+
+### Fixed
+- While a step's performer runs, the local web UI's story list shows that step as the story's live step, pulsing as in flight, and the step it came from as completed, instead of leaving the row on the origin step until the performer hands back. The recorded status is unchanged. The row's last activity now follows the performer: on the command transport (pi and cursor seats), CPU-liveness progress from the performer's process tree refreshes the activity time, labelled `working`, so a coder that is writing files no longer reads "last activity 34 mins ago: start". An idle performer still shows its start, and the stall detector is unchanged. (sty_5650fbcc)
+
+## [serve-v0.0.242] - 2026-10-30
+
+### Changed
+- The service binary renders a dispatched step as a performing chip from the seat's `dispatch:<step>` activity label. (sty_5650fbcc)
+
 ## [0.0.797] - 2026-10-30
 
 ### Fixed
