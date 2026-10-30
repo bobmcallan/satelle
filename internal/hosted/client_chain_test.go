@@ -37,6 +37,11 @@ func (s *stubChain) Append(_ context.Context, req *syncpb.AppendRequest) (*syncp
 
 func openStubChain(t *testing.T, stub *stubChain) *ChainConn {
 	t.Helper()
+	return openStubChainServer(t, stub)
+}
+
+func openStubChainServer(t *testing.T, stub syncpb.ChainServer) *ChainConn {
+	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	gs := grpc.NewServer()
 	syncpb.RegisterChainServer(gs, stub)

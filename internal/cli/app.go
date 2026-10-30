@@ -236,7 +236,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// location, empty when no server or no bound project. Read from local state
 	// only — no network, and nothing is claimed or refused.
 	verb.SetLocationResolver(func() (string, string) {
-		if config.ResolveHostedServer(a.Config) == "" || a.Config.SyncProject() == "" {
+		if !verb.RepoBound(a.Config) {
 			return "", ""
 		}
 		return hosted.KnownLocationID(a.RepoRoot), hosted.LocationLabel(a.RepoRoot)

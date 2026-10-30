@@ -80,6 +80,17 @@ type IdentityMeta struct {
 	ProjectName string `json:"project_name"`
 	RepoRoot    string `json:"repo_root"`
 	FooterEmail string `json:"footer_email"`
+	// Hosted is set when the server is the repo's store of record (sty_0dc600e1):
+	// the page then lists this machine's stories and links the rest to the server.
+	Hosted *HostedMeta `json:"hosted,omitempty"`
+}
+
+// HostedMeta names the hosted project a partition syncs with and the stories this
+// machine engaged.
+type HostedMeta struct {
+	Server         string   `json:"server"`
+	Project        string   `json:"project"`
+	MachineStories []string `json:"machine_stories"`
 }
 
 // IngestHandler serves POST /ingest/change and POST /ingest/snapshot.

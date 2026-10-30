@@ -173,6 +173,9 @@ func runPagedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer, 
 		chain: newChainPull(client, server, project, a.RepoRoot, errw),
 	}
 	defer p.chain.close()
+	if err := holdHosted(ctx, a, p.chain, time.Now().UTC()); err != nil {
+		return passReport{}, err
+	}
 	var opts hosted.SnapshotOptions
 	positioned := stored.Token != "" || stored.ResumePageToken != ""
 	discard := ""
@@ -230,6 +233,10 @@ func runPagedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer, 
 	now := time.Now().UTC()
 	if err := p.settle(ctx, now); err != nil {
 		return p.rep, err
+	}
+	p.chain.flush()
+	if _, err := trimHostedHistory(ctx, a, server, project, now); err != nil {
+		return p.rep, fmt.Errorf("trim the local history: %w", err)
 	}
 	if res.SyncToken == "" {
 		// The server issued no token (it does not page yet): nothing to send

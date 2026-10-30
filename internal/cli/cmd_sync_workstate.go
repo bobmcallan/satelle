@@ -157,6 +157,8 @@ Story or epic ids scope it as for pull.`,
 	snap.Flags().BoolVar(&snapForce, "force", false, "Upsert hosted rows even when the local copy or ledger is newer.")
 	group.AddCommand(snap)
 	group.AddCommand(newSyncWorkstateRechainCmd())
+	group.AddCommand(newSyncWorkstateFetchCmd())
+	group.AddCommand(newSyncWorkstateFollowCmd())
 
 	return group
 }
@@ -172,6 +174,9 @@ func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string, force bool, 
 	}
 	if len(optIn) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "workstate snapshot: all areas local, nothing to pull")
+		return nil
+	}
+	if repoNotBound(cmd.OutOrStdout(), a, "workstate snapshot") {
 		return nil
 	}
 	sc, err := resolveScope(cmd.Context(), a, ids, false)
@@ -311,6 +316,9 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, ve
 		}
 		return dryRunHolds(cmd, a, optIn, out, server)
 	}
+	if repoNotBound(out, a, "workstate push") {
+		return nil
+	}
 
 	project, err := resolveBoundProject(a.Config, a.RepoRoot)
 	if err != nil {
@@ -400,6 +408,15 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, ve
 			return fmt.Errorf("load workstate cursor: %w", lerr)
 		}
 		if plan, err = planStoryAppends(cmd.Context(), a, scope, stored.StoryHeads); err != nil {
+			return err
+		}
+	}
+	// In hosted mode a story's row leaves only when this machine authored it
+	// (sty_0dc600e1): a row rewritten by a pull, or one whose updated_at moved with
+	// no local append, is the server's copy and is not sent back.
+	hostedMode := verb.HostedMode(a.Config)
+	if hostedMode && optIn["stories"] {
+		if batch.Items, err = authoredItems(cmd.Context(), a, batch.Items, plan, scope); err != nil {
 			return err
 		}
 	}
@@ -508,7 +525,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, ve
 	// Chunked push; cursor advances only after every chunk confirms (AC3).
 	// Prefer a single POST when both sides fit in one chunk (preserves the
 	// small-batch shape tests and production already rely on).
-	if len(batch.Items) > 0 && earliestHeld.IsZero() {
+	if len(batch.Items) > 0 && earliestHeld.IsZero() && !hostedMode {
 		maxItems = maxItemUpdatedAt(batch.Items)
 	}
 	var totalItems, totalLedger int
@@ -557,6 +574,11 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, ve
 	for _, p := range parts {
 		if err := apply(p.items, p.ledger); err != nil {
 			return err
+		}
+		if hostedMode {
+			if err := clearAuthored(cmd.Context(), a, p.items); err != nil {
+				return fmt.Errorf("clear pushed story marks: %w", err)
+			}
 		}
 	}
 	if scope != nil {
@@ -663,6 +685,9 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 		if sc.scoped() {
 			fmt.Fprintf(out, "  scoped to %d id(s): %s\n", len(sc.IDs), strings.Join(sc.IDs, ", "))
 		}
+		return nil
+	}
+	if repoNotBound(out, a, "workstate pull") {
 		return nil
 	}
 
@@ -932,7 +957,7 @@ func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool,
 			if kerr != nil {
 				return applied, nItems, nLedger, nKept, fmt.Errorf("compare item %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hi.ID, nItems, nLedger, kerr)
 			}
-			if keep {
+			if keep && chain.keepsLocal(it) {
 				nKept++
 				if it.Kind == workitem.KindStory {
 					if workstateItemsDiffer(local, it) {
@@ -949,7 +974,8 @@ func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool,
 		// Upsert, which preserves stored status (sty_38915987); status is
 		// applied below after the hosted ledger lands.
 		upsert := a.Store.Stories.Upsert
-		if force {
+		if force || chain.remote(it) {
+			// A story whose history stays on the server is the server's row.
 			upsert = a.Store.Stories.UpsertForce
 		}
 		// The status the row holds now, before UpsertForce can replace it: the
@@ -993,8 +1019,12 @@ func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool,
 	if cerr := chain.materialize(ctx, a, optIn, applied, out, now); cerr != nil {
 		return applied, nItems, nLedger, nKept, fmt.Errorf("%w — re-run is safe (upsert-by-id)", cerr)
 	}
+	folded, rerr := leaveRemote(ctx, a, chain, applied)
+	if rerr != nil {
+		return applied, nItems, nLedger, nKept, fmt.Errorf("%w — re-run is safe (upsert-by-id)", rerr)
+	}
 	// The page's events are in: the rows it applied are now a cache of their chains.
-	if err := foldPulledStories(ctx, a, applied, priorStatus, out, force, now); err != nil {
+	if err := foldPulledStories(ctx, a, folded, priorStatus, out, force, now); err != nil {
 		return applied, nItems, nLedger, nKept, fmt.Errorf("%w — re-run is safe (upsert-by-id)", err)
 	}
 	return applied, nItems, nLedger, nKept, nil

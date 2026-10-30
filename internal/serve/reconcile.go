@@ -57,16 +57,25 @@ type Reconciler struct {
 	Targets func(ctx context.Context) []string
 	// Reseed re-requests one repo's snapshot; nil means reseedViaCLI.
 	Reseed func(ctx context.Context, repoPath string) error
+	// Bound reports whether the repo at a path names its hosted project; nil means
+	// config.RepoBoundAt. An unbound repo syncs nothing, so neither Snapshot nor
+	// Follow runs for it (sty_0dc600e1).
+	Bound func(repoPath string) bool
 	// Snapshot execs the CLI workstate snapshot verb; nil means snapshotViaCLI.
-	// Always invoked (opt-in is the CLI's decision).
+	// It runs for a bound repo whose Follow is not running: the backstop for a
+	// server without the subscription, or a follow that died.
 	Snapshot func(ctx context.Context, repoPath string) error
-	// Push execs the CLI workstate push verb; nil means pushViaCLI.
-	// Always invoked (opt-in is the CLI's decision). Periodic backstop for a
-	// Notify dropped between ingest and debounce fire (sty_c526753a AC4).
-	Push func(ctx context.Context, repoPath string) error
+	// Follow execs the long-running CLI workstate follow verb; nil means
+	// followViaCLI. It is started for a bound repo after a pass's snapshot and
+	// runs until it ends or ctx does; while it runs, no snapshot is taken.
+	//
+	// No pass pushes. A bound repo's changes leave by the Pusher, which local
+	// appends drive, and the push sends only the rows this machine authored; the
+	// periodic whole-repo push sent a stale machine's state (sty_0dc600e1).
+	Follow func(ctx context.Context, repoPath string) error
 	// SubstratePush execs the CLI config and documents push verbs
 	// (substratepush.go); nil means substratePushViaCLI. Always invoked (opt-in,
-	// binding and refusal are the verbs' decisions). Run after Push. Its outcome
+	// binding and refusal are the verbs' decisions). Its outcome
 	// is logged on its own streak and never reaches Record, which persists the
 	// snapshot leg.
 	SubstratePush func(ctx context.Context, repoPath string) error
@@ -77,8 +86,8 @@ type Reconciler struct {
 	// Record persists a snapshot-leg outcome (sty_30696eeb). Called on every
 	// pass, including the ones Log suppresses. nil discards.
 	Record func(repoPath string, success bool, reason string)
-	// PushOff reports the machine-local push switch; true skips the Push and
-	// SubstratePush legs while Reseed and Snapshot keep the UI fed. nil means on.
+	// PushOff reports the machine-local push switch; true skips the SubstratePush
+	// leg while Reseed, Snapshot and Follow keep the UI fed. nil means on.
 	PushOff func() (off bool, setting string)
 
 	// failing remembers, per repo, the reason it last failed and how many
@@ -88,6 +97,40 @@ type Reconciler struct {
 	// ever called from Loop's single goroutine, so there is no lock here
 	// because there is no concurrency to guard.
 	failing map[string]*repoFailure
+	// follows holds, per repo, the done channel of its running Follow. Only
+	// pass() touches the map; the Follow goroutine only closes its channel.
+	follows map[string]chan struct{}
+}
+
+// following reports whether the repo's Follow is still running.
+func (r *Reconciler) following(path string) bool {
+	done, ok := r.follows[path]
+	if !ok {
+		return false
+	}
+	select {
+	case <-done:
+		delete(r.follows, path)
+		return false
+	default:
+		return true
+	}
+}
+
+// startFollow runs follow for the repo until it ends or ctx does. A follow that
+// ends with an error is logged; the next pass takes a snapshot and starts it again.
+func (r *Reconciler) startFollow(ctx context.Context, path string, follow func(context.Context, string) error) {
+	if r.follows == nil {
+		r.follows = map[string]chan struct{}{}
+	}
+	done := make(chan struct{})
+	r.follows[path] = done
+	go func() {
+		defer close(done)
+		if err := follow(ctx, path); err != nil && ctx.Err() == nil {
+			r.logf("workstate follow %s: %v", path, err)
+		}
+	}()
 }
 
 // repoFailure is one repo's current failure streak.
@@ -177,14 +220,18 @@ func (r *Reconciler) pass(ctx context.Context) {
 			snapshot = func(context.Context, string) error { return nil }
 		}
 	}
-	push := r.Push
-	if push == nil {
+	follow := r.Follow
+	if follow == nil {
 		if r.Reseed == nil {
-			push = pushViaCLI
+			follow = followViaCLI
 		} else {
-			// Tests inject Reseed; do not exec the CLI unless they also set Push.
-			push = func(context.Context, string) error { return nil }
+			// Tests inject Reseed; do not exec the CLI unless they also set Follow.
+			follow = func(context.Context, string) error { return nil }
 		}
+	}
+	bound := r.Bound
+	if bound == nil {
+		bound = config.RepoBoundAt
 	}
 	substrate := r.SubstratePush
 	if substrate == nil {
@@ -197,7 +244,6 @@ func (r *Reconciler) pass(ctx context.Context) {
 	}
 	if r.PushOff != nil {
 		if off, _ := r.PushOff(); off {
-			push = func(context.Context, string) error { return nil }
 			substrate = func(context.Context, string) error { return nil }
 		}
 	}
@@ -210,19 +256,15 @@ func (r *Reconciler) pass(ctx context.Context) {
 		seen[path+substrateKeySuffix] = true
 		runCtx, cancel := context.WithTimeout(ctx, r.timeout())
 		err := reseed(runCtx, path)
-		if serr := snapshot(runCtx, path); serr != nil {
-			if err != nil {
-				err = fmt.Errorf("%v; snapshot: %w", err, serr)
-			} else {
-				err = serr
+		if bound(path) && !r.following(path) {
+			if serr := snapshot(runCtx, path); serr != nil {
+				if err != nil {
+					err = fmt.Errorf("%v; snapshot: %w", err, serr)
+				} else {
+					err = serr
+				}
 			}
-		}
-		if perr := push(runCtx, path); perr != nil {
-			if err != nil {
-				err = fmt.Errorf("%v; push: %w", err, perr)
-			} else {
-				err = perr
-			}
+			r.startFollow(ctx, path, follow)
 		}
 		serr := substrate(runCtx, path)
 		cancel()
@@ -382,6 +424,44 @@ func snapshotViaCLI(ctx context.Context, repoPath string) error {
 	}
 	return nil
 }
+
+// followViaCLI runs `satelle sync workstate follow` inside repoPath until it
+// ends or ctx does. The CLI exits non-zero for a server without the subscription.
+func followViaCLI(ctx context.Context, repoPath string) error {
+	bin, err := satelleBinary()
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, bin, "sync", "workstate", "follow")
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s sync workstate follow: %w: %s", bin, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// fetchViaCLI runs `satelle sync workstate fetch <id>` inside repoPath, which
+// brings back a story's history the checkout left on the server and refreshes
+// the mirror. The CLI no-ops for a held story and a local-only checkout.
+func fetchViaCLI(ctx context.Context, repoPath, id string) error {
+	bin, err := satelleBinary()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "sync", "workstate", "fetch", id)
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s sync workstate fetch: %w: %s", bin, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// fetchTimeout bounds a story page's wait on a fetch.
+const fetchTimeout = 20 * time.Second
 
 // satelleBinary resolves the CLI as a sibling of this executable first — the
 // service runs the installed satelled and its satelle is installed beside

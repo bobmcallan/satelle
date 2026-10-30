@@ -1,3 +1,17 @@
+## [0.0.808] - 2026-10-30
+
+### Changed
+- Once you are signed in and the repo is bound (an explicit `[sync] project`), the server is the store of record. The local store keeps full history only for the stories this machine has engaged and those changed within `[sync] recent_window` (default `168h`); other stories stay as rows, and their history is fetched from the server when you open one (`satelle story get`, `satelle story route`, the web UI story page). Changes from other machines arrive through the story chain subscription instead of a periodic full pull, and a snapshot pass reads the hosted chain only for held stories. In hosted mode the local web UI lists this machine's stories and links the full story list, progress, epics and members views to the server. Not signed in, or unbound: the full local store and UI are unchanged.
+- In hosted mode the web service's repair pass issues no work-state push, and a push sends item rows only for stories with a local append the server has not confirmed. A row whose Apply failed is resent, and a story changed only by pulled events is never sent.
+
+### Fixed
+- Work done while the server is unreachable is kept: on reconnect, a story the server moved on since this machine last published is rebased. The server's new events are applied locally and the local ones re-appended after the server's head, with no conflict recorded. A story that moves again during the rebase is reported, as before. (sty_0dc600e1)
+
+## [serve-v0.0.248] - 2026-10-30
+
+### Changed
+- The service binary follows each bound repo's story chains live instead of pushing on every repair pass, fetches a story's history from the server for the story page, and in hosted mode lists only this machine's stories with links to the server for the rest. (sty_0dc600e1)
+
 ## [0.0.807] - 2026-10-30
 
 ### Fixed

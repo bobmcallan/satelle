@@ -44,6 +44,11 @@ type Pusher struct {
 	Now func() time.Time
 	// Keys lists repo_keys to mark dirty on Run entry (catch-up). nil seeds nothing.
 	Keys func(ctx context.Context) []string
+	// Bound reports whether the repo at a path names its hosted project; nil
+	// means config.RepoBoundAt. A bound repo gets no catch-up push: it is pushed
+	// only when a local append notifies it, and that push sends only the rows
+	// this machine authored (sty_0dc600e1).
+	Bound func(repoPath string) bool
 	// Resolve maps a repo_key to a path this home can answer for. Missing,
 	// not-a-dir, or no store here → ok=false and the key is dropped.
 	Resolve func(ctx context.Context, repoKey string) (repoPath string, ok bool)
@@ -161,14 +166,24 @@ func (p *Pusher) dirtyCount() int {
 
 // Run owns the worker goroutine. Honours SATELLE_SERVER_ENDPOINT=none so
 // hermetic tests never spawn satelle sync. Marks every current target dirty
-// on entry so a down-window of mutations rides the first flush.
+// on entry, but a bound repo, so a down-window of mutations rides the first
+// flush.
 func (p *Pusher) Run(ctx context.Context) {
 	if _, disabled, set := config.ServerEndpointEnv(); set && disabled {
 		p.logf("hosted push disabled by %s", config.EnvServerEndpoint)
 		return
 	}
 	if p.Keys != nil {
+		bound := p.Bound
+		if bound == nil {
+			bound = config.RepoBoundAt
+		}
 		for _, k := range p.Keys(ctx) {
+			if p.Resolve != nil {
+				if path, ok := p.Resolve(ctx, k); ok && bound(path) {
+					continue
+				}
+			}
 			p.Notify(k)
 		}
 	}

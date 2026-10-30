@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -87,6 +88,11 @@ const syncStaleAfterKey = "stale_after"
 // not published. Reserved so it is never treated as an area.
 const syncHoldUnpushedKey = "hold_unpushed"
 
+// syncRecentWindowKey is the [sync] duration a story stays held with its full
+// history in hosted mode after its newest event (sty_0dc600e1). Reserved so it is
+// never treated as an area; its default is substrate/config/sync.toml.
+const syncRecentWindowKey = "recent_window"
+
 // WorkstateAreas are the [sync] areas that form the work-state kind.
 var WorkstateAreas = []string{"stories", "executions", "ledger"}
 
@@ -94,7 +100,59 @@ var WorkstateAreas = []string{"stories", "executions", "ledger"}
 // never looks them up; they must never be minted as SyncAreas.
 var reservedSyncKeys = map[string]bool{
 	syncAllKey: true, syncServerKey: true, syncProjectKey: true, syncWorkspaceKey: true,
-	syncStaleAfterKey: true, syncHoldUnpushedKey: true,
+	syncStaleAfterKey: true, syncHoldUnpushedKey: true, syncRecentWindowKey: true,
+}
+
+const syncDefaultsFile = "substrate/config/sync.toml"
+
+var (
+	embeddedSyncOnce sync.Once
+	embeddedSync     SyncTable
+	embeddedSyncErr  error
+)
+
+// EmbeddedSync returns the embedded default [sync] keys, parsed once; empty on a
+// parse failure, which EmbeddedSyncErr reports.
+func EmbeddedSync() SyncTable {
+	embeddedSyncOnce.Do(func() {
+		raw, err := substrateFS.ReadFile(syncDefaultsFile)
+		if err != nil {
+			embeddedSyncErr = err
+			return
+		}
+		var file struct {
+			Sync SyncTable `toml:"sync"`
+		}
+		if _, err := toml.Decode(string(raw), &file); err != nil {
+			embeddedSyncErr = err
+			return
+		}
+		embeddedSync = file.Sync
+	})
+	return embeddedSync
+}
+
+// EmbeddedSyncErr is non-nil when the embedded [sync] defaults failed to load.
+func EmbeddedSyncErr() error {
+	_ = EmbeddedSync()
+	return embeddedSyncErr
+}
+
+// RecentWindow reads [sync] recent_window, else the embedded default. An
+// unparseable or non-positive value is a config error.
+func RecentWindow(cfg Config) (time.Duration, error) {
+	raw := strings.TrimSpace(cfg.Sync[syncRecentWindowKey])
+	if raw == "" {
+		raw = strings.TrimSpace(EmbeddedSync()[syncRecentWindowKey])
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("sync: recent_window %q is not a duration: %w", raw, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("sync: recent_window must be positive, got %s", d)
+	}
+	return d, nil
 }
 
 // SyncTable is the [sync] table: area name -> scope, plus the reserved

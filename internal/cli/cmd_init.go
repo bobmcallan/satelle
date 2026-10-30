@@ -288,6 +288,13 @@ func runInitBody(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness
 		if rerr != nil {
 			return fmt.Errorf("init: remove retired [sync] key: %w", rerr)
 		}
+		boundSlug, berr := healBindSyncProject(dataDir, repoRoot)
+		if berr != nil {
+			return fmt.Errorf("init: bind [sync] project: %w", berr)
+		}
+		if boundSlug != "" {
+			fmt.Fprintf(out, "~ %s ([sync] project = %q — the project this checkout already syncs under)\n", config.DefaultDataDir+"/"+config.ConfigName, boundSlug)
+		}
 		if initTomlHealHook != nil {
 			raw, rerr := os.ReadFile(tomlPath)
 			if rerr != nil {

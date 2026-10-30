@@ -128,6 +128,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			req := map[string]any{"id": args[0]}
 			if group == "story" {
+				fetchBeforeRead(cmd, args[0])
 				return dispatchWithWorking(cmd, group+"-get", req)
 			}
 			return dispatch(cmd, group+"-get", req)
@@ -2046,6 +2047,7 @@ Read-only, and answerable without opening any workflow file.`,
 			if _, err := appFrom(cmd); err != nil {
 				return err
 			}
+			fetchBeforeRead(cmd, args[0])
 			body, err := verb.StoryRoute(cmd.Context(), args[0])
 			if err != nil {
 				return err

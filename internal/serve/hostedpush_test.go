@@ -200,6 +200,25 @@ func TestPusherCatchUpOnRun(t *testing.T) {
 	}
 }
 
+// sty_0dc600e1 AC8: a bound repo gets no catch-up push on Run; it is pushed when
+// a local append notifies it.
+func TestPusherSkipsCatchUpForABoundRepo(t *testing.T) {
+	p := &Pusher{
+		Keys:  func(context.Context) []string { return []string{"bound", "unbound"} },
+		Bound: func(path string) bool { return path == "/repo/bound" },
+	}
+	_, rec := testPusher(t, p)
+	waitFor(t, waitBudget, func() bool { return rec.count() == 1 })
+	if got := rec.snapshot(); got[0] != "/repo/unbound" {
+		t.Fatalf("catch-up pushes = %v, want the unbound repo only", got)
+	}
+	p.Notify("bound")
+	waitFor(t, waitBudget, func() bool { return rec.count() == 2 })
+	if got := rec.snapshot(); got[1] != "/repo/bound" {
+		t.Fatalf("pushes = %v, want the notified bound repo", got)
+	}
+}
+
 // TestPusherHonoursOffSwitch proves hermetic SATELLE_SERVER_ENDPOINT=none
 // never starts the worker (risk 2).
 func TestPusherHonoursOffSwitch(t *testing.T) {

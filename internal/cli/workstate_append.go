@@ -15,6 +15,8 @@ import (
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/syncstate"
+	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // A story's ledger events leave a push by compare-and-append (sty_9bdf08c4): one
@@ -214,7 +216,12 @@ func withoutStoryEntries(raws []json.RawMessage) []json.RawMessage {
 // appendStory sends one story's unpublished events. When the server's latest event
 // is one this checkout already holds — its own earlier publish, whose head was
 // never saved — it resumes from that event once; the same chain is continued, not
-// merged. Any other stale base is the agent's to read and decide.
+// merged. When the server holds events this checkout has not seen (another
+// machine's, made while this one was offline) after an event published from
+// here, they are applied locally and the unpublished events re-appended after
+// them, once (sty_0dc600e1): events are
+// append-only and status is the fold of chain order, so nothing is merged. A base
+// stale again after that is the agent's to read and decide.
 //
 // The events go in batches of about appendBatchBytes, in chain order, each built on
 // the latest event the server accepted before it; the head is handed to the saver
@@ -222,7 +229,7 @@ func withoutStoryEntries(raws []json.RawMessage) []json.RawMessage {
 // by the resume above on the next one. A stale base
 // part-way through is handled as at the start, from the batch it refused.
 func appendStory(ctx context.Context, w io.Writer, a *app.App, conn *hosted.ChainConn, project string, p storyAppend, heads *headSaver) error {
-	from, resumed := p.from, false
+	from, resumed, rebased := p.from, false, false
 	if !p.headKnown {
 		latest, missing, err := hostedLatest(ctx, conn, project, p)
 		switch {
@@ -274,8 +281,33 @@ func appendStory(ctx context.Context, w io.Writer, a *app.App, conn *hosted.Chai
 			return err
 		}
 		i := slices.IndexFunc(p.order, func(e ledger.Entry) bool { return e.ID == stale.LatestID })
-		if resumed || i < 0 {
-			reportMoved(w, a, stale)
+		var rebaseErr error
+		// A story nothing was published from here is no rebase: its local chain
+		// starts a fork of its own, which is `sync workstate rechain`'s to repair.
+		if i < 0 && from > 0 && !resumed && !rebased {
+			order, at, rerr := rebaseStory(ctx, a, conn, project, p.id, p.order, from)
+			if errors.Is(rerr, hosted.ErrLoginRequired) {
+				return rerr
+			}
+			rebaseErr = rerr
+			if rerr == nil {
+				fmt.Fprintf(w, "the story %s moved on the server: %d event(s) applied here, %d re-appended after %s\n", p.id, at-from, len(order)-at, order[at-1].ID)
+				heads.set(p.id, order[at-1].ID)
+				p.order, from, start, rebased = order, at, at, true
+				if events, err = chainEvents(p.order[start:]); err != nil {
+					fmt.Fprintf(w, "the story %s was not published: %v\n", p.id, err)
+					return err
+				}
+				continue
+			}
+		}
+		if resumed || rebased || i < 0 {
+			reason := fmt.Sprintf("moved since %s: re-read and decide (server is at %s, %d event(s) not seen)", stale.Since(), stale.LatestID, stale.Missing)
+			if rebaseErr != nil {
+				reason += fmt.Sprintf("; not rebased: %v", rebaseErr)
+			}
+			fmt.Fprintf(w, "the story %s %s\n", p.id, reason)
+			_ = syncstate.RecordStoryConflicts(config.GlobalDir(), a.RepoRoot, map[string]string{p.id: reason}, nil, time.Now().UTC())
 			return err
 		}
 		fmt.Fprintf(w, "the story %s is already published up to %s: resuming from it\n", p.id, stale.LatestID)
@@ -319,6 +351,77 @@ func reportMoved(w io.Writer, a *app.App, stale *hosted.StaleBaseError) error {
 	fmt.Fprintf(w, "the story %s %s\n", stale.StoryID, reason)
 	_ = syncstate.RecordStoryConflicts(config.GlobalDir(), a.RepoRoot, map[string]string{stale.StoryID: reason}, nil, time.Now().UTC())
 	return stale
+}
+
+// rebaseStory reads the server's events after order[from-1] that this checkout has
+// not seen, applies them, and moves order[from:] (the unpublished events) after
+// them. It returns the new local chain and the index of its first unpublished
+// event. A base the server does not know is read again from the start, keeping
+// only the events not already held.
+func rebaseStory(ctx context.Context, a *app.App, conn *hosted.ChainConn, project, storyID string, order []ledger.Entry, from int) ([]ledger.Entry, int, error) {
+	base := ""
+	if from > 0 {
+		base = order[from-1].ID
+	}
+	remote, latest, err := conn.ReadStory(ctx, project, storyID, base)
+	if err != nil && base != "" && !errors.Is(err, hosted.ErrChainUnsupported) && !errors.Is(err, hosted.ErrLoginRequired) {
+		remote, latest, err = conn.ReadStory(ctx, project, storyID, "")
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	held := make(map[string]bool, len(order))
+	for _, e := range order {
+		held[e.ID] = true
+	}
+	var seen []ledger.Entry
+	for _, ev := range remote {
+		if held[ev.ID] {
+			continue
+		}
+		e, perr := ledgerEntryOf(storyID, ev)
+		if perr != nil {
+			return nil, 0, perr
+		}
+		seen = append(seen, e)
+	}
+	if len(seen) == 0 || latest == "" || seen[len(seen)-1].ID != latest {
+		return nil, 0, fmt.Errorf("the server's events after %s do not end at its latest %s", forkLabel(base), latest)
+	}
+	if seen[0].BaseID != base {
+		return nil, 0, fmt.Errorf("the server's chain does not build on %s, the last event published from here", forkLabel(base))
+	}
+	unpublished := make([]string, 0, len(order)-from)
+	for _, e := range order[from:] {
+		unpublished = append(unpublished, e.ID)
+	}
+	if err := a.Store.Ledger.RebaseEvents(ctx, storyID, seen, unpublished, latest); err != nil {
+		return nil, 0, err
+	}
+	out := make([]ledger.Entry, 0, len(order)+len(seen))
+	out = append(append(out, order[:from]...), seen...)
+	at := len(out)
+	out = append(out, order[from:]...)
+	out[at].BaseID = latest
+	if err := rebuildRebased(ctx, a, storyID); err != nil {
+		return nil, 0, err
+	}
+	return out, at, nil
+}
+
+// rebuildRebased brings a rebased story's row under its new chain.
+func rebuildRebased(ctx context.Context, a *app.App, storyID string) error {
+	row, err := a.Store.Stories.Get(ctx, storyID)
+	if errors.Is(err, workitem.ErrNotFound) {
+		return nil
+	}
+	if err != nil || row.Kind != workitem.KindStory {
+		return err
+	}
+	if _, err := verb.RebuildRow(ctx, a.Store.Stories, a.Store.Ledger, row, time.Now().UTC()); err != nil {
+		return fmt.Errorf("rebuild %s from its rebased chain: %w", storyID, err)
+	}
+	return nil
 }
 
 // appendBatchBytes caps the encoded size of one Append: well under the server's

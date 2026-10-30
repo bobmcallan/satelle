@@ -221,6 +221,7 @@ func buildUISnapshotOpts(ctx context.Context, a *app.App, drain bool) (*mirror.S
 		ProjectName: config.RepoName(a.RepoRoot),
 		RepoRoot:    canon,
 		FooterEmail: resolveUser(a.Config, a.RepoRoot).Display(),
+		Hosted:      hostedIdentity(ctx, a),
 	}
 	if b, err := json.Marshal(id); err == nil {
 		snap.Identity = b

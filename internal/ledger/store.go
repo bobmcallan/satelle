@@ -15,9 +15,11 @@ import (
 // schema is the evidence table, self-migrating (CREATE IF NOT EXISTS). No
 // UPDATE path exists and the one DELETE is RemoveEvents, so the log is append-only
 // by construction — the exceptions are linkLegacyChains, which writes base_id once
-// on rows that predate the column and touches nothing else, and RemoveEvents,
+// on rows that predate the column and touches nothing else, RemoveEvents,
 // which drops events a caller's guard names, to repair a seeded fork that was
-// never published. base_id and workflow_hash are added to an older table by
+// never published, and the two in marks.go: DropStoryHistory, which drops a
+// story's events the server already holds, and RebaseEvents, which writes a
+// story's unpublished events again after events the server has. base_id and workflow_hash are added to an older table by
 // Migrate (addColumns), so they are not part of any index here.
 const schema = `
 CREATE TABLE IF NOT EXISTS evidence (
@@ -65,6 +67,9 @@ func Migrate(db *sql.DB) error {
 	}
 	if _, err := db.Exec(metaSchema); err != nil {
 		return fmt.Errorf("ledger: migrate: %w", err)
+	}
+	if _, err := db.Exec(marksSchema); err != nil {
+		return fmt.Errorf("ledger: migrate marks: %w", err)
 	}
 	if err := linkLegacyChains(db); err != nil {
 		return err
@@ -442,14 +447,28 @@ func (s *Store) Append(ctx context.Context, in AppendInput, now time.Time) (Entr
 	args := append([]any{e.ID, e.StoryID, e.ProjectID, e.Kind, e.Actor, e.Body,
 		string(payload), string(refs), now.Format(time.RFC3339Nano)}, baseArgs...)
 	args = append(args, e.WorkflowHash)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.write(ctx, func(ex execer) error {
+		if err := ex.QueryRowContext(ctx, `
         INSERT INTO evidence (id, story_id, project_id, kind, actor, body, payload, refs, created_at, base_id, workflow_hash)
         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, `+base+`, ?
-        RETURNING base_id`, args...).Scan(&e.BaseID)
+        RETURNING base_id`, args...).Scan(&e.BaseID); err != nil {
+			return err
+		}
+		return markAuthored(ctx, ex, e.StoryID)
+	})
 	if err != nil {
 		return Entry{}, fmt.Errorf("ledger: append: %w", err)
 	}
 	return e, nil
+}
+
+// markAuthored records that this machine appended to storyID's chain
+// (MarkItemPending). Upsert, which only pulls use, never calls it.
+func markAuthored(ctx context.Context, ex execer, storyID string) error {
+	if storyID == "" {
+		return nil
+	}
+	return setMark(ctx, ex, storyID, MarkItemPending)
 }
 
 // AppendOnce appends in ONLY when no row of the same kind already carries the
@@ -483,11 +502,16 @@ func (s *Store) AppendOnce(ctx context.Context, in AppendInput, now time.Time) (
 	args := append([]any{e.ID, e.StoryID, e.ProjectID, e.Kind, e.Actor, e.Body,
 		string(payload), string(in.Refs), now.Format(time.RFC3339Nano)}, baseArgs...)
 	args = append(args, e.WorkflowHash, in.Kind, string(in.Refs))
-	err := s.db.QueryRowContext(ctx, `
+	err := s.write(ctx, func(ex execer) error {
+		if err := ex.QueryRowContext(ctx, `
         INSERT INTO evidence (id, story_id, project_id, kind, actor, body, payload, refs, created_at, base_id, workflow_hash)
         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, `+base+`, ?
         WHERE NOT EXISTS (SELECT 1 FROM evidence WHERE kind = ? AND refs = ?)
-        RETURNING base_id`, args...).Scan(&e.BaseID)
+        RETURNING base_id`, args...).Scan(&e.BaseID); err != nil {
+			return err
+		}
+		return markAuthored(ctx, ex, e.StoryID)
+	})
 	if err == sql.ErrNoRows {
 		return e, false, nil
 	}

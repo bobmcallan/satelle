@@ -66,6 +66,7 @@ func Run(ctx context.Context, opts Options) error {
 		PushOff: config.MachinePushOff,
 	}
 	webSrv := web.NewMirrorHooks(ms, config.SafeCurrentInstanceID(), pusher.OnIngest)
+	webSrv.FetchStory = fetchViaCLI
 	publishLogs = func() { webSrv.Publish("logs") }
 	handler := web.RequestLog(webSrv.Handler, serverLog, logCfg, publishLogs)
 

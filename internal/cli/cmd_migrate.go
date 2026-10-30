@@ -21,6 +21,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -1140,6 +1141,35 @@ func healHostedBinding(dataDir string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// healBindSyncProject is the bind-sync-project heal (sty_0dc600e1). Sync needs
+// an explicit [sync] project; a checkout that synced under the directory slug
+// without one would stop syncing. When [sync] project is empty and this checkout
+// holds saved hosted state for the slug (a work-state cursor or story heads), it
+// writes [sync] project = <slug>. A checkout with no saved state stays unbound.
+func healBindSyncProject(dataDir, repoRoot string) (string, error) {
+	path := filepath.Join(dataDir, config.ConfigName)
+	cfg, _, err := config.Load(path)
+	if err != nil || cfg.SyncProject() != "" {
+		return "", nil
+	}
+	slug := config.ResolveBoundProject(cfg, repoRoot)
+	server := config.ResolveHostedServer(cfg)
+	if slug == "" || server == "" {
+		return "", nil
+	}
+	cur, err := hosted.LoadWorkstateCursor(server, slug, repoRoot)
+	if err != nil {
+		return "", err
+	}
+	if cur.ItemsUpdatedAt.IsZero() && cur.LedgerSeq == 0 && len(cur.StoryHeads) == 0 {
+		return "", nil
+	}
+	if err := config.SaveConfigValues(path, []config.KeyEdit{config.BoundProjectEdit(slug)}); err != nil {
+		return "", err
+	}
+	return slug, nil
 }
 
 func syncKeyMissing(dataDir, key string) bool {

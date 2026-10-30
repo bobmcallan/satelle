@@ -302,6 +302,7 @@ const templatesSrc = `
   </div>
 
   <section class="panel" data-topic="stories" id="panel-stories">
+    {{with .Hosted}}<p class="hosted-links">This machine's stories. On the server: <a href="{{.AllStories}}">all stories</a> · <a href="{{.Progress}}">progress</a> · <a href="{{.Epics}}">epics</a> · <a href="{{.Members}}">members</a></p>{{end}}
     <div class="filterbar">
       <div class="filter-input">
         <input type="text" placeholder="filter… e.g. status:open priority:high tags:epic:foo order:updated" aria-label="filter stories">
