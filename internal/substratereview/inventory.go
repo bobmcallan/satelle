@@ -40,7 +40,37 @@ const (
 	KindStep      = "step"
 	KindGate      = "gate"
 	KindAgent     = "agent"
+	KindTask      = "task"
 )
+
+// Areas, in the order the review judges them: each is its own dispatch.
+const (
+	AreaPrinciples = "principles"
+	AreaSkills     = "skills"
+	AreaWorkflows  = "workflows"
+	AreaAgents     = "agents"
+	AreaTasks      = "tasks"
+)
+
+// Areas lists every area in judging order.
+var Areas = []string{AreaPrinciples, AreaSkills, AreaWorkflows, AreaAgents, AreaTasks}
+
+// AreaOf is the area an item of kind is judged in.
+func AreaOf(kind string) string {
+	switch kind {
+	case KindPrinciple:
+		return AreaPrinciples
+	case KindSkill:
+		return AreaSkills
+	case KindStep, KindGate:
+		return AreaWorkflows
+	case KindAgent:
+		return AreaAgents
+	case KindTask:
+		return AreaTasks
+	}
+	return kind
+}
 
 // Item is one substrate item under review.
 type Item struct {
@@ -85,6 +115,9 @@ type InventoryInput struct {
 	// AgentsTeam is true when the project tier owns agents.toml.
 	AgentsTeam bool
 	Agents     []Agent
+	// Tasks are the effective task documents, classified by
+	// substrate.ClassifyTask.
+	Tasks []substrate.Row
 }
 
 // OriginOf resolves a document's origin.
@@ -121,7 +154,7 @@ func agentOrigin(source string, team bool) string {
 	return OriginEmbedded
 }
 
-// Inventory lists every substrate item: each principle and skill, each
+// Inventory lists every substrate item: each principle, skill and task, each
 // workflow step and gate of the derived routes, and each agent seat, sorted by
 // key.
 func Inventory(in InventoryInput) []Item {
@@ -186,6 +219,10 @@ func Inventory(in InventoryInput) []Item {
 					Source: routeSource, Seats: []string{"reviewer"}, Selector: Selector{State: x.Status, Skill: g}})
 			}
 		}
+	}
+	for _, t := range in.Tasks {
+		items = append(items, Item{Key: "tasks/" + t.Name, Kind: KindTask, Name: t.Name,
+			Origin: OriginOf(t, in.TierRoot), Source: t.Source})
 	}
 	for _, a := range in.Agents {
 		items = append(items, Item{Key: "agents/" + a.Name, Kind: KindAgent, Name: a.Name,

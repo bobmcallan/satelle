@@ -10,6 +10,7 @@ package substrate
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -66,6 +67,49 @@ func EmbeddedBodies() map[string]string {
 		emb[d.Kind+"\x00"+d.Name] = d.Body
 	}
 	return emb
+}
+
+// ClassifyTask returns default|edited|authored for one task document, against
+// the embedded task defaults List and EmbeddedBodies leave out. It is the same
+// rule Classify applies to the process kinds.
+func ClassifyTask(d docindex.Doc) string {
+	return Classify(d, taskBodies())
+}
+
+func taskBodies() map[string]string {
+	emb := map[string]string{}
+	for _, e := range config.EmbeddedDefaults() {
+		if e.Kind == "tasks" {
+			emb[e.Kind+"\x00"+e.Name] = e.Body
+		}
+	}
+	return emb
+}
+
+// ListTasks returns the effective task documents, which the doc index does not
+// hold: every tsk_*.md work-definition file under dir, and every embedded task
+// default with no file there, each classified by ClassifyTask, sorted by name.
+func ListTasks(dir string) ([]Row, error) {
+	byName := map[string]docindex.Doc{}
+	for _, e := range config.EmbeddedDefaults() {
+		if e.Kind == "tasks" {
+			byName[e.Name] = docindex.Doc{Kind: "tasks", Name: e.Name, Path: "embedded:tasks/" + e.Name + e.Ext, Embedded: true}
+		}
+	}
+	files, err := filepath.Glob(filepath.Join(dir, "tsk_*.md"))
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range files {
+		name := strings.TrimSuffix(filepath.Base(p), ".md")
+		byName[name] = docindex.Doc{Kind: "tasks", Name: name, Path: p}
+	}
+	rows := make([]Row, 0, len(byName))
+	for _, d := range byName {
+		rows = append(rows, Row{Kind: d.Kind, Name: d.Name, Source: d.Path, Provenance: ClassifyTask(d), Embedded: d.Embedded})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+	return rows, nil
 }
 
 // Classify returns default|edited|authored for one List row.

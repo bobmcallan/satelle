@@ -59,6 +59,10 @@ type Options struct {
 	// concurrent judgements (default 1).
 	Runs    int
 	Workers int
+	// Dispositions reads the item → disposition map out of a judge's notes, for
+	// cases that declare ExpectedDispositions. The caller supplies the parser
+	// (substrate review owns it); nil scores such a case a disposition miss.
+	Dispositions func(notes string) (map[string]string, error)
 }
 
 // Finding match states of one row.
@@ -79,6 +83,10 @@ const (
 	// OutcomeUnfaithful marks a replay case that lacks material its recorded
 	// reviewer judged: it is not judged and counts in no rate.
 	OutcomeUnfaithful = "unfaithful"
+	// OutcomeDispositionMiss marks a case with expected dispositions whose
+	// judgement missed one: an item absent, mismatched, or an answer that does
+	// not parse.
+	OutcomeDispositionMiss = "disposition_miss"
 )
 
 // RowResult is one judged case-run.
@@ -120,6 +128,9 @@ type Metrics struct {
 	Escapes       int `json:"escapes"`
 	NoVerdict     int `json:"no_verdict"`
 	FalseBlockers int `json:"false_blockers"`
+	// DispositionMisses counts case-runs whose expected dispositions the
+	// judgement missed.
+	DispositionMisses int `json:"disposition_misses,omitempty"`
 
 	// FindingScored is the defect case-runs that declare markers; FindingMatched
 	// the ones rejected with a note that cites one. FindingUnscored counts the
@@ -212,7 +223,7 @@ func Score(ctx context.Context, cases []Case, judge Judge, opts Options) Report 
 		go func(i int, t task) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			rows[i] = judgeRow(ctx, judge, t.c, t.run)
+			rows[i] = judgeRow(ctx, judge, t.c, t.run, opts.Dispositions)
 		}(i, t)
 	}
 	wg.Wait()
@@ -246,7 +257,7 @@ func Score(ctx context.Context, cases []Case, judge Judge, opts Options) Report 
 	return rep
 }
 
-func judgeRow(ctx context.Context, judge Judge, c Case, run int) RowResult {
+func judgeRow(ctx context.Context, judge Judge, c Case, run int, dispositions func(string) (map[string]string, error)) RowResult {
 	row := RowResult{
 		ID: c.ID, Rubric: c.Rubric, Skill: c.Skill, Source: c.Origin, PayloadSource: c.PayloadSource,
 		Run: run, Label: c.Label, Expected: c.ExpectedVerdict,
@@ -283,8 +294,30 @@ func judgeRow(ctx context.Context, judge Judge, c Case, run int) RowResult {
 		}
 	}
 	row.Outcome = classify(c.ExpectedVerdict, row.Got)
+	if len(c.ExpectedDispositions) > 0 && row.Outcome == OutcomeOK && !dispositionsMatch(c.ExpectedDispositions, row.Notes, dispositions) {
+		row.Outcome = OutcomeDispositionMiss
+	}
 	row.FindingMatch = findingMatch(c, row.Got, row.Notes)
 	return row
+}
+
+// dispositionsMatch reports whether every expected item's disposition parsed
+// from notes matches. A missing item, a mismatch, an unparseable answer or no
+// parser is a miss, so a keep-everything judge misses every cut.
+func dispositionsMatch(want map[string]string, notes string, parse func(string) (map[string]string, error)) bool {
+	if parse == nil {
+		return false
+	}
+	got, err := parse(notes)
+	if err != nil {
+		return false
+	}
+	for item, d := range want {
+		if got[item] != d {
+			return false
+		}
+	}
+	return true
 }
 
 func classify(expected, got Verdict) string {
@@ -350,6 +383,8 @@ func Aggregate(rows []RowResult) Metrics {
 			m.NoVerdict++
 		case OutcomeFalseBlocker:
 			m.FalseBlockers++
+		case OutcomeDispositionMiss:
+			m.DispositionMisses++
 		}
 		switch r.FindingMatch {
 		case FindingMatched:

@@ -71,6 +71,14 @@ func (r Report) Render(w io.Writer) {
 			}
 		}
 	}
+	if r.Total.DispositionMisses > 0 {
+		fmt.Fprintf(w, "%d case-run(s) missed an expected disposition (an item absent, mismatched, or an answer that does not parse):\n", r.Total.DispositionMisses)
+		for _, c := range r.Cases {
+			if c.Outcome == OutcomeDispositionMiss {
+				fmt.Fprintf(w, "  %s/%s\n", c.Rubric, c.ID)
+			}
+		}
+	}
 	if errs > 0 {
 		fmt.Fprintf(w, "%d case-run(s) produced no verdict because the judge failed; see the \"error\" field in the JSON report\n", errs)
 	}

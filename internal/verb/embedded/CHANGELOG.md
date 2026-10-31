@@ -1,3 +1,14 @@
+## [0.0.824] - 2026-11-01
+
+### Changed
+- `satelle substrate review` judges each override against its default, the code and the repo's own baseline, and dispatches by manifest: each area's batch carries the instruction and file paths, never item text, and is sized to the judging seat's budget (prompt plus payload). The judge reads each item, its embedded default and its history for itself. With no `--binding`, the driving agent's own adapter judges in the loop; `--binding <seat>` picks a seat. Each item gets remove, reduce (with the replacement text), keep (only for what is repo-specific) or conflict (naming the code it contradicts). Tasks are reviewed too. An item the judge leaves out reads "not judged", and a batch whose answer does not parse keeps its raw answer beside the report while the other batches still report. `--apply` carries the replacement and evidence into the story it raises. (sty_b8ae7a1e)
+- `satelle review score` scores a case's expected dispositions as well as its verdict. Seven substrate-review replay cases (one per rule, plus a mixed case) fail a judge that keeps everything; Gemini and Opus each score 14/14. (sty_b8ae7a1e)
+
+## [serve-v0.0.262] - 2026-11-01
+
+### Changed
+- The service binary carries the manifest-dispatched substrate review and disposition scoring. (sty_b8ae7a1e)
+
 ## [0.0.823] - 2026-11-01
 
 ### Breaking

@@ -18,6 +18,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
@@ -281,45 +282,139 @@ func runSubstratePrune(ctx context.Context, out io.Writer, in io.Reader, dataDir
 // substrateReviewSkill is the embedded rubric the review's judge runs under.
 const substrateReviewSkill = "satelle-substrate-review"
 
-// substrateJudge judges a review's input: one dispatch per run.
-type substrateJudge func(ctx context.Context, in substratereview.JudgeInput) (substratereview.Judgement, error)
+// substrateManifestDoc names the document each judge dispatch carries.
+const substrateManifestDoc = "substrate-review-manifest"
 
-// newSubstrateJudge builds the judge `substrate review` runs a binding through.
-// It is a seam so tests judge with a stub and never start a model; the default
-// goes through newCaseJudge — the isolated reviewer path a real gate uses —
-// under the satelle-substrate-review rubric, with the input as a document.
-var newSubstrateJudge = func(cmd *cobra.Command, binding string) (substrateJudge, error) {
+// substrateJudge judges one batch: its judgement, and the seat's raw answer,
+// kept beside the report when the answer does not parse.
+type substrateJudge func(ctx context.Context, in substratereview.JudgeInput) (substratereview.Judgement, string, error)
+
+// newSubstrateJudge builds the judge `substrate review` runs each batch
+// through. It is a seam so tests judge with a stub and never start a model; the
+// default goes through newCaseJudge — the isolated reviewer path a real gate
+// uses — under the satelle-substrate-review rubric, with the batch's manifest
+// (pointers, never the items' text or history) as its one document. With no
+// --binding the judge is the repo's in-loop model (substrateJudgeSeat).
+var newSubstrateJudge = func(cmd *cobra.Command, binding string, hist substratereview.History) (substrateJudge, error) {
 	a, err := appFrom(cmd)
 	if err != nil {
 		return nil, err
 	}
-	j, err := newCaseJudge(a, binding, a.Config.Validate.Injected)
+	name, resolve, err := substrateJudgeSeat(a, binding, hist)
 	if err != nil {
 		return nil, err
 	}
-	return func(ctx context.Context, in substratereview.JudgeInput) (substratereview.Judgement, error) {
-		b, err := json.MarshalIndent(in, "", "  ")
+	j, err := newCaseJudge(a, name, a.Config.Validate.Injected, resolve)
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context, in substratereview.JudgeInput) (substratereview.Judgement, string, error) {
+		b, err := json.MarshalIndent(substratereview.ManifestOf(in), "", "  ")
 		if err != nil {
-			return substratereview.Judgement{}, err
+			return substratereview.Judgement{}, "", err
 		}
 		res, err := j.Judge(ctx, reviewscore.Case{
-			ID: "substrate-review", Skill: substrateReviewSkill, StoryID: "substrate-review",
+			ID: "substrate-review-" + in.Area, Skill: substrateReviewSkill, StoryID: "substrate-review",
 			From: "backlog", To: "plan",
 			Payload: &reviewscore.ReplayPayload{
-				Title:    "Review this repo's substrate",
-				Body:     "Judge every item and every constitution rule in the substrate-review-input document under the satelle-substrate-review rubric.",
+				Title: "Review this repo's substrate: " + in.Area,
+				Body: fmt.Sprintf("Judge every item, and every constitution rule it names, in the %s document under the satelle-substrate-review rubric. Area: %s. "+
+					"The document carries pointers only: every path in it is an absolute file (under %s, or in this repo) — read each with your read tools.",
+					substrateManifestDoc, in.Area, in.Scratch),
 				Category: substratereview.ApplyCategory, NoPatch: true,
-				Docs: []reviewscore.ReplayDoc{{Name: "substrate-review-input", Type: "document", Body: string(b)}},
+				Docs: []reviewscore.ReplayDoc{{Name: substrateManifestDoc, Type: "document", Body: string(b)}},
 			},
 		})
 		if err != nil {
-			return substratereview.Judgement{}, err
+			return substratereview.Judgement{}, res.Notes, err
 		}
 		if res.Verdict != reviewscore.VerdictAccept {
-			return substratereview.Judgement{}, fmt.Errorf("the reviewer rejected the input: %s", strings.TrimSpace(res.Notes))
+			return substratereview.Judgement{}, res.Notes, fmt.Errorf("the judge did not accept the batch: %s", judgeNoteLine(res.Notes))
 		}
-		return substratereview.ParseJudgement(res.Notes)
+		jd, err := substratereview.ParseJudgement(res.Notes)
+		return jd, res.Notes, err
 	}, nil
+}
+
+// substrateJudgeSeat is the seat a review judges under. A named --binding is
+// used as agents.toml has it. With none, the judge is the repo's in-loop
+// (orchestrator) model: the reviewer seat — its grant, role and budget row —
+// re-pointed at the preset one-shot command of the in-loop agent CLI and the
+// model the latest in-loop session_model row names.
+func substrateJudgeSeat(a *app.App, binding string, hist substratereview.History) (string, func(string) (config.AgentBinding, bool), error) {
+	if binding != "" {
+		return binding, nil, nil
+	}
+	eff, err := requireAgents(a)
+	if err != nil {
+		return "", nil, err
+	}
+	base, _ := eff.Agents.LiveRawBinding("reviewer")
+	judge, err := orchestratorJudgeBinding(base, hist.OrchestratorAgent, hist.Orchestrator)
+	if err != nil {
+		return "", nil, err
+	}
+	return "reviewer", func(name string) (config.AgentBinding, bool) {
+		if name == "reviewer" {
+			return judge, true
+		}
+		b, ok := eff.Agents.RawBinding(name)
+		if !ok {
+			return config.AgentBinding{}, false
+		}
+		return eff.Agents.EffectiveBinding(b, config.UseOneShot), true
+	}, nil
+}
+
+// orchestratorJudgeBinding is base re-pointed at agent's preset one-shot
+// command (the same agent → command mapping config.StarterGlobalAgents uses)
+// and model. It keeps base's grant, role, principles, env and timeouts, and
+// nothing that would route the judge back to base's own agent (its command,
+// interface, effort, settings, secondary, profile or placement). An agent with
+// no preset, or no recorded in-loop model, has no one-shot judge.
+func orchestratorJudgeBinding(base config.AgentBinding, agent, model string) (config.AgentBinding, error) {
+	const stop = "substrate review: no in-loop model recorded for a one-shot judge"
+	if strings.TrimSpace(agent) == "" || strings.TrimSpace(model) == "" {
+		return config.AgentBinding{}, fmt.Errorf("%s — pass --binding", stop)
+	}
+	r, err := agentcli.NewRunner(agent)
+	if err != nil {
+		return config.AgentBinding{}, fmt.Errorf("%s (the in-loop agent %q has no one-shot runner) — pass --binding", stop, agent)
+	}
+	command := r.Command()
+	if strings.EqualFold(strings.TrimSpace(agent), agentcli.CLIGrok) {
+		command = agentcli.GrokCommandFor(config.RoleReviewer)
+	}
+	return config.AgentBinding{
+		Interface: config.InterfaceCommand, Command: command, Model: model,
+		Tools: base.Tools, Role: base.Role, Principles: base.Principles, InjectPrinciples: base.InjectPrinciples,
+		Env: base.Env, Timeout: base.Timeout, IdleTimeout: base.IdleTimeout, BusyTimeout: base.BusyTimeout,
+	}, nil
+}
+
+// substrateManifestMax is the manifest size above which an area is split: half
+// the judging seat's dispatch budget, the other half headroom for the system
+// prompt and the instruction. The judge always runs as seat "reviewer", so its
+// row is the one checkDispatchBudget measures. No row means no split.
+func substrateManifestMax(inj config.InjectedConfig) int {
+	tokens, ok := inj.BudgetFor("reviewer")
+	if !ok {
+		return 0
+	}
+	return tokens * inj.ResolveBytesPerToken() / 2
+}
+
+// judgeNoteLine is the first line of a judge's notes, bounded, for an error;
+// the whole answer is kept in the raw file beside the report.
+func judgeNoteLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if len(s) > 300 {
+		s = s[:300] + "…"
+	}
+	return s
 }
 
 func newSubstrateReviewCmd() *cobra.Command {
@@ -328,18 +423,18 @@ func newSubstrateReviewCmd() *cobra.Command {
 	var apply []string
 	cmd := &cobra.Command{
 		Use:   "review",
-		Short: "Judge every substrate item against this repo's story history and the constitution; --apply raises the cuts you choose",
-		Long: `Report every principle, skill, workflow step and gate, and agent seat with
-its origin and the evidence this repo's story history holds for it (rejections
-and their reasons, amendments, parks, rework, flaky reruns, panel dissent, per
-model), plus every constitution rule. One reviewer dispatch (--binding) gives
-each item a disposition and each rule a finding; anything it omits reads "not
-judged". Changes no file in the tree: the JSON report goes to --out or the OS
-temp dir.
+		Short: "Judge every substrate item against its default, the code and the BDD baseline; --apply raises the cuts you choose",
+		Long: `Give every principle, skill, task, workflow step and gate, agent seat and
+constitution rule a disposition (remove, reduce, keep, conflict) or "not
+judged", one judge dispatch per area, each sent a manifest of file paths, never
+the items' text or history.
 
---apply <item> raises one category-substrate story per chosen item and edits
-nothing; embedded and team items are refused. --from <report.json> applies a
-saved report without judging again. See satelle help substrate.`,
+The judge is the repo's in-loop model on the reviewer seat; --binding names an
+agents.toml section instead. Changes no file in the tree: the JSON report goes
+to --out or the OS temp dir.
+
+--apply <item> raises one category-substrate story per chosen item; --from
+<report.json> applies a saved report. See satelle help substrate.`,
 		Args:        cobra.NoArgs,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -356,11 +451,11 @@ saved report without judging again. See satelle help substrate.`,
 					return err
 				}
 			} else {
-				if rep, err = runSubstrateReview(cmd, a, binding); err != nil {
-					return err
-				}
 				path, err := substrateReportPath(a.RepoRoot, out)
 				if err != nil {
+					return err
+				}
+				if rep, err = runSubstrateReview(cmd, a, binding, path); err != nil {
 					return err
 				}
 				if err := rep.WriteJSON(path); err != nil {
@@ -376,6 +471,13 @@ saved report without judging again. See satelle help substrate.`,
 					rep.Render(cmd.OutOrStdout())
 				}
 				fmt.Fprintf(cmd.ErrOrStderr(), "report: %s\n", path)
+				for _, f := range rep.Failures {
+					fmt.Fprintf(cmd.ErrOrStderr(), "substrate review: batch %s returned no judgement (%s); its items read %q — raw answer: %s\n",
+						f.Label(), f.Err, substratereview.NotJudged, f.RawPath)
+				}
+				if rep.Batches > 0 && len(rep.Failures) == rep.Batches {
+					return fmt.Errorf("substrate review: every batch (%d) returned no judgement — the raw answers are named above", rep.Batches)
+				}
 			}
 			if len(apply) == 0 {
 				return nil
@@ -384,7 +486,7 @@ saved report without judging again. See satelle help substrate.`,
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the report as JSON instead of markdown")
-	cmd.Flags().StringVar(&binding, "binding", "reviewer", "agents.toml section that judges")
+	cmd.Flags().StringVar(&binding, "binding", "", "agents.toml section that judges (default: the repo's in-loop model on the reviewer seat)")
 	cmd.Flags().StringVar(&out, "out", "", "JSON report path, outside the repo tree (default: a file under the OS temp dir)")
 	cmd.Flags().StringArrayVar(&apply, "apply", nil, "item key from the report to raise a substrate story for (repeatable)")
 	cmd.Flags().StringVar(&from, "from", "", "apply from this saved JSON report instead of judging again")
@@ -409,52 +511,83 @@ func substrateReportPath(repoRoot, out string) (string, error) {
 	return abs, nil
 }
 
-// runSubstrateReview gathers the inventory, its evidence and the rules, makes
-// the one judge dispatch, and joins the three into the report.
-func runSubstrateReview(cmd *cobra.Command, a *app.App, binding string) (substratereview.Report, error) {
-	in, bound, err := gatherSubstrateReview(cmd.Context(), a)
+// runSubstrateReview gathers the inventory, its evidence and the rules, judges
+// each area batch, and joins them into the report. A batch whose judge fails or
+// whose answer does not parse keeps the raw answer at
+// <reportPath>.raw-<area>[-<part>].txt and its items read not judged; the other
+// batches are reported all the same.
+func runSubstrateReview(cmd *cobra.Command, a *app.App, binding, reportPath string) (substratereview.Report, error) {
+	ctx := cmd.Context()
+	in, bound, hist, err := gatherSubstrateReview(ctx, a)
 	if err != nil {
 		return substratereview.Report{}, err
 	}
-	judge, err := newSubstrateJudge(cmd, binding)
+	judge, err := newSubstrateJudge(cmd, binding, hist)
 	if err != nil {
 		return substratereview.Report{}, err
 	}
-	j, err := judge(cmd.Context(), in)
-	if err != nil {
-		return substratereview.Report{}, fmt.Errorf("substrate review: the %s seat returned no judgement: %w", binding, err)
+	label := binding
+	if label == "" {
+		label = fmt.Sprintf("orchestrator:%s/%s", hist.OrchestratorAgent, hist.Orchestrator)
 	}
-	rep := substratereview.Build(in, j)
-	rep.GeneratedAt, rep.Binding, rep.SeatModels = time.Now().UTC(), binding, bound
+	batches := substratereview.Batches(in, substrateManifestMax(a.Config.Validate.Injected))
+	var judged []substratereview.Judgement
+	var failures []substratereview.BatchFailure
+	for _, b := range batches {
+		j, raw, err := judge(ctx, b)
+		if err == nil {
+			judged = append(judged, j)
+			continue
+		}
+		f := substratereview.BatchFailure{Area: b.Area, Chunk: b.Chunk, Err: err.Error()}
+		rawPath := fmt.Sprintf("%s.raw-%s.txt", reportPath, f.Label())
+		if werr := os.WriteFile(rawPath, []byte(raw), 0o644); werr != nil {
+			f.Err += "; the raw answer could not be kept: " + werr.Error()
+		} else {
+			f.RawPath = rawPath
+		}
+		failures = append(failures, f)
+	}
+	rep := substratereview.Build(in, substratereview.Merge(judged...))
+	rep.GeneratedAt, rep.Binding, rep.SeatModels = time.Now().UTC(), label, bound
+	rep.Failures, rep.Batches = failures, len(batches)
 	return rep, nil
 }
 
-// gatherSubstrateReview resolves everything the judge receives from the repo:
-// the effective documents and their origins, the derived routes, the agents
-// layer, every story's ledger rows, the constitution and the session set.
-func gatherSubstrateReview(ctx context.Context, a *app.App) (substratereview.JudgeInput, map[string]string, error) {
+// gatherSubstrateReview resolves everything the judges point at from the repo:
+// the effective documents and tasks and their origins, the derived routes, the
+// agents layer, every story's ledger rows, the constitution and the session
+// set. It writes each item's history (and the text of an item with no file,
+// and the current default of an edited copy) under a scratch directory outside
+// the tree, so the manifests carry paths, never content.
+func gatherSubstrateReview(ctx context.Context, a *app.App) (substratereview.JudgeInput, map[string]string, substratereview.History, error) {
+	var none substratereview.History
 	idx := a.Store.DocIndex
 	rows, err := substrate.List(ctx, idx)
 	if err != nil {
-		return substratereview.JudgeInput{}, nil, err
+		return substratereview.JudgeInput{}, nil, none, err
+	}
+	tasks, err := substrate.ListTasks(filepath.Join(a.ProcessDataDir, "tasks"))
+	if err != nil {
+		return substratereview.JudgeInput{}, nil, none, err
 	}
 	wfs, err := idx.List(ctx, "workflows")
 	if err != nil {
-		return substratereview.JudgeInput{}, nil, err
+		return substratereview.JudgeInput{}, nil, none, err
 	}
 	var routes []wfroute.Route
 	if rs := wfgovern.RouteSourceOf(wfs); rs.Present() {
 		for _, cat := range wfgovern.RouteCategories(rs.Done) {
 			d, err := wfgovern.RouteSpecFor(rs, cat, nil)
 			if err != nil {
-				return substratereview.JudgeInput{}, nil, err
+				return substratereview.JudgeInput{}, nil, none, err
 			}
 			routes = append(routes, wfroute.Build(d.Spec, wfgovern.DerivedRouteName, nil, d.Advisors, d.Reworks))
 		}
 	}
 	eff, err := requireAgents(a)
 	if err != nil {
-		return substratereview.JudgeInput{}, nil, err
+		return substratereview.JudgeInput{}, nil, none, err
 	}
 	names := []string{"executor", "reviewer"}
 	for n := range eff.Agents.Agents {
@@ -475,18 +608,18 @@ func gatherSubstrateReview(ctx context.Context, a *app.App) (substratereview.Jud
 	_, agentsTeam := config.ProjectTierAgentsPath(a.PlaneDir())
 	items := substratereview.Inventory(substratereview.InventoryInput{
 		Docs: rows, TierRoot: a.AuthoredDirs().Tier, Workflow: wfgovern.DerivedRouteName,
-		Routes: routes, AgentsTeam: agentsTeam, Agents: agents,
+		Routes: routes, AgentsTeam: agentsTeam, Agents: agents, Tasks: tasks,
 	})
 
 	entries := map[string][]ledger.Entry{}
 	ids, err := a.Store.Ledger.StoryIDs(ctx)
 	if err != nil {
-		return substratereview.JudgeInput{}, nil, err
+		return substratereview.JudgeInput{}, nil, none, err
 	}
 	for _, id := range ids {
 		es, err := a.Store.Ledger.ListByStory(ctx, id, "")
 		if err != nil {
-			return substratereview.JudgeInput{}, nil, err
+			return substratereview.JudgeInput{}, nil, none, err
 		}
 		entries[id] = es
 	}
@@ -512,7 +645,71 @@ func gatherSubstrateReview(ctx context.Context, a *app.App) (substratereview.Jud
 	for _, it := range items {
 		in.Items = append(in.Items, substratereview.JudgeItem{Item: it, Evidence: hist.For(it.Selector, it.Seats)})
 	}
-	return in, bound, nil
+	scratch, err := os.MkdirTemp(substrateScratchRoot, "satelle-substrate-review-")
+	if err != nil {
+		return substratereview.JudgeInput{}, nil, none, err
+	}
+	if err := substratereview.Materialise(scratch, &in, substrateBodies(ctx, idx, eff.Agents)); err != nil {
+		return substratereview.JudgeInput{}, nil, none, err
+	}
+	return in, bound, hist, nil
+}
+
+// substrateScratchRoot is where a review's scratch directory is made: "" is the
+// OS temp dir. A seam so tests keep it inside their own temp dir.
+var substrateScratchRoot = ""
+
+// substrateBodies resolves the text Materialise writes: an item's effective
+// text when it has no file (the docindex serves the embedded fallback; an agent
+// seat is its effective binding as TOML), and the current embedded default of
+// an edited or seeded copy.
+func substrateBodies(ctx context.Context, idx *docindex.Store, agents config.AgentsConfig) substratereview.Bodies {
+	return substratereview.Bodies{
+		Text: func(it substratereview.Item) (string, string, bool) {
+			if it.Kind == substratereview.KindAgent {
+				b, ok := agents.RawBinding(it.Name)
+				if !ok {
+					return "", "", false
+				}
+				var buf strings.Builder
+				if err := toml.NewEncoder(&buf).Encode(map[string]config.AgentBinding{it.Name: b}); err != nil {
+					return "", "", false
+				}
+				return buf.String(), it.Name + ".toml", true
+			}
+			kind, name := substrateDocOf(it)
+			if d, err := idx.Get(ctx, kind, name); err == nil && d.Body != "" {
+				return d.Body, name + config.EmbeddedExt(kind, name), true
+			}
+			// Tasks are not in the doc index: an embedded one is its default.
+			return embeddedDefaultOf(kind, name)
+		},
+		Default: func(it substratereview.Item) (string, string, bool) {
+			return embeddedDefaultOf(substrateDocOf(it))
+		},
+	}
+}
+
+// embeddedDefaultOf is the binary's default document kind/name and the file
+// name to write it under.
+func embeddedDefaultOf(kind, name string) (string, string, bool) {
+	for _, d := range config.EmbeddedDefaults() {
+		if d.Kind == kind && d.Name == name {
+			return d.Body, name + d.Ext, true
+		}
+	}
+	return "", "", false
+}
+
+// substrateDocOf is the document kind and name an item's text lives in: a
+// workflow step or gate is authored in the step catalogue.
+func substrateDocOf(it substratereview.Item) (kind, name string) {
+	switch it.Kind {
+	case substratereview.KindStep, substratereview.KindGate:
+		return "workflows", "step"
+	}
+	kind, _, _ = strings.Cut(it.Key, "/")
+	return kind, it.Name
 }
 
 // applySubstrateCuts raises one substrate story per chosen item through the

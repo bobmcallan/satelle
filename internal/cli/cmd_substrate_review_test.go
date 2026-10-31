@@ -108,17 +108,17 @@ func substrateReviewFixture(t *testing.T) string {
 	return repo
 }
 
-// stubSubstrateJudge swaps the judge for one returning j, and records the input
-// it was handed.
+// stubSubstrateJudge swaps the judge for one returning j for every batch, and
+// records the items of every batch it was handed.
 func stubSubstrateJudge(t *testing.T, j substratereview.Judgement) *substratereview.JudgeInput {
 	t.Helper()
 	prev := newSubstrateJudge
 	t.Cleanup(func() { newSubstrateJudge = prev })
 	var got substratereview.JudgeInput
-	newSubstrateJudge = func(*cobra.Command, string) (substrateJudge, error) {
-		return func(_ context.Context, in substratereview.JudgeInput) (substratereview.Judgement, error) {
-			got = in
-			return j, nil
+	newSubstrateJudge = func(*cobra.Command, string, substratereview.History) (substrateJudge, error) {
+		return func(_ context.Context, in substratereview.JudgeInput) (substratereview.Judgement, string, error) {
+			got.Items = append(got.Items, in.Items...)
+			return j, "", nil
 		}, nil
 	}
 	return &got
@@ -128,10 +128,10 @@ func TestSubstrateReviewReportsEveryItemAndRuleAndAppliesChosenCuts(t *testing.T
 	repo := substrateReviewFixture(t)
 	input := stubSubstrateJudge(t, substratereview.Judgement{
 		Items: []substratereview.ItemJudgement{
-			{Item: "skills/satelle-panel-majority", Disposition: "remove", Reason: "the embedded default covers it"},
-			{Item: "skills/repo-cut", Disposition: "reduce", KeptLines: []string{"keep me"}, Reason: "rejected once for length"},
-			{Item: "skills/satelle-story-cancel-review", Disposition: "keep", Rule: "names the cancel reason"},
-			{Item: "agents/executor", Disposition: "conflict", Rule: "satelle-agent-agnostic"},
+			{Item: "skills/satelle-panel-majority", Disposition: "remove", Reason: "the embedded default covers it", Evidence: "skills/satelle-panel-majority (embedded)"},
+			{Item: "skills/repo-cut", Disposition: "reduce", KeptLines: []string{"keep me"}, Reason: "rejected once for length", Evidence: "repo-cut.md:9", Replacement: "# repo cut\n\nkeep me\n"},
+			{Item: "skills/satelle-story-cancel-review", Disposition: "keep", Rule: "names the cancel reason", Reason: "no default names it", Evidence: "satelle-story-cancel-review.md:3"},
+			{Item: "agents/executor", Disposition: "conflict", Rule: "satelle-agent-agnostic", Reason: "names a vendor", Evidence: "agents.toml:2"},
 			// skills/team-skill is omitted: it must read "not judged".
 		},
 		Constitution: []substratereview.RuleFinding{

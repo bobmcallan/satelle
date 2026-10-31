@@ -138,18 +138,28 @@ artifact. List with `satelle doc list`; read one with `satelle doc get <kind>
 ## Reviewing the substrate
 
 `satelle substrate review` judges whether each item earns its cost. It lists
-every principle, skill, workflow step and gate, and agent seat with its origin
-(`embedded`, `seeded`, `edited`, `repo`, `team`, `local`) and the evidence this
-repo's ledger holds for it, broken down by the model that ran each seat: gate
-rejections and their reasons, how many were amended, reversed or re-presented to
-accept, reject-budget parks, rework rounds, flaky reruns, and panel dissent
-(`dissent: not recorded` where the ledger holds no per-seat verdicts). It also
-lists every constitution rule. A single reviewer dispatch (`--binding`, default
-`reviewer`, under `satelle-substrate-review`) gives each item a disposition
-(remove, reduce, keep, conflict) and each rule a `file:line` finding or "no
-finding". Anything the reviewer leaves out is shown as "not judged". The report
-is printed (`--json` for JSON), and its JSON is written to `--out` (outside the
-tree) or to a file under the OS temp dir. No file in the tree changes.
+every principle, skill, task, workflow step and gate, and agent seat with its
+origin (`embedded`, `seeded`, `edited`, `repo`, `team`, `local`) and the
+evidence this repo's ledger holds for it, broken down by the model that ran each
+seat: gate rejections and their reasons, how many were amended, reversed or
+re-presented to accept, reject-budget parks, rework rounds, flaky reruns, and
+panel dissent (`dissent: not recorded` where the ledger holds no per-seat
+verdicts). It also lists every constitution rule.
+
+Judging runs under `satelle-substrate-review`, one dispatch per area
+(principles with the constitution rules, skills, workflows, agents, tasks),
+split further only when an area's manifest outgrows the seat's
+`[validate.injected.budget]`. Each judge gets a manifest of paths: the item's
+file, the current embedded default of an edited or seeded copy, and a file of
+its history. It reads them itself, and gives each item a disposition (remove,
+reduce, keep, conflict) with its reason and evidence, and each rule a
+`file:line` finding or "no finding". The judge is the repo's in-loop model on
+the reviewer seat; `--binding` names another agents.toml section. An item left
+out, or returned without its reason and evidence, is shown as "not judged". A
+batch whose answer does not parse keeps the raw answer beside the report, and
+the other batches are still reported. The report is printed (`--json` for
+JSON), and its JSON is written to `--out` (outside the tree) or to a file under
+the OS temp dir. No file in the tree changes.
 
 `satelle substrate review --apply <item>` (repeatable) raises one story of
 category `substrate` for each item you choose. The story carries the item's

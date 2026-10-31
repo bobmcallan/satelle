@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/bobmcallan/satelle/internal/verb"
 )
@@ -85,6 +86,11 @@ type Case struct {
 	// DefectMarkers are the phrases a reviewer's notes cite when it names this
 	// case's known defect; empty means finding match is not scored for the case.
 	DefectMarkers []string `json:"defect_markers,omitempty"`
+
+	// ExpectedDispositions, on a substrate-review case, map each item key to
+	// the disposition the judge must return for it (remove, reduce, conflict or
+	// keep). A case that declares them is OK only when every one matches.
+	ExpectedDispositions map[string]string `json:"expected_dispositions,omitempty"`
 
 	// From/To/OriginalNotes/PayloadSource describe a replay case: the edge the
 	// recorded row judged, the reviewer's original notes, and how the payload
@@ -244,11 +250,23 @@ func loadReplayCase(dir string) (Case, error) {
 	if err := dec.Decode(&p); err != nil {
 		return Case{}, fmt.Errorf("decode %s/payload.json: %w", dir, err)
 	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return Case{}, err
+	}
+	for i := range p.Docs {
+		p.Docs[i].Body = strings.ReplaceAll(p.Docs[i].Body, CaseDirToken, abs)
+	}
 	c.Dir = dir
 	c.Payload = &p
 	c.Digest = digest(raw, pb)
 	return c, nil
 }
+
+// CaseDirToken in a replay document body is replaced with the case's absolute
+// directory when the case loads, so a document can point the judge at fixture
+// files the case carries (a substrate-review manifest's paths).
+const CaseDirToken = "{{case_dir}}"
 
 func digest(parts ...[]byte) string {
 	h := sha256.New()

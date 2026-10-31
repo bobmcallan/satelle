@@ -421,8 +421,10 @@ func (s Selector) matchRework(rw reworkFact) bool {
 type History struct {
 	stories []storyFacts
 	opt     EvidenceOptions
-	// Orchestrator is the model the latest in-loop session_model row names.
-	Orchestrator string
+	// Orchestrator is the model the latest in-loop session_model row names, and
+	// OrchestratorAgent the agent CLI the same row names ("" when it names none).
+	Orchestrator      string
+	OrchestratorAgent string
 }
 
 // Fold reads every story's rows once. entries maps a story id to its ledger
@@ -447,7 +449,8 @@ func Fold(entries map[string][]ledger.Entry, opt EvidenceOptions) History {
 		}
 	}
 	if latest.Kind != "" {
-		h.Orchestrator = decode(latest).Model
+		r := decode(latest)
+		h.Orchestrator, h.OrchestratorAgent = r.Model, r.Agent
 	}
 	return h
 }

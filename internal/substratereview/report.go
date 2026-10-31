@@ -11,16 +11,25 @@ import (
 
 // Dispositions the judge may return for an item.
 const (
-	// DispRemove: the default covers it.
+	// DispRemove: an embedded default covers it, or nothing reads it.
 	DispRemove = "remove"
-	// DispReduce: keep only the named lines.
+	// DispReduce: keep only the lines no default carries; Replacement is the
+	// whole text it is reduced to.
 	DispReduce = "reduce"
 	// DispKeep: it carries a named quality rule the default lacks.
 	DispKeep = "keep"
-	// DispConflict: it contradicts the constitution or the BDD baseline.
+	// DispConflict: it contradicts the code, a default, the constitution or the
+	// BDD baseline; Evidence cites where.
 	DispConflict = "conflict"
-	// NotJudged is rendered for an item or rule the judge returned nothing for.
+	// NotJudged is rendered for an item or rule the judge returned nothing for,
+	// or returned without the reason and evidence a disposition needs.
 	NotJudged = "not judged"
+)
+
+// Notes recorded on an item a judgement came back for but could not count.
+const (
+	NoteNoReason      = "returned without reason/evidence"
+	NoteNoReplacement = "reduce returned without replacement text"
 )
 
 func validDisposition(d string) bool {
@@ -34,6 +43,14 @@ type ItemJudgement struct {
 	KeptLines   []string `json:"kept_lines,omitempty"`
 	Rule        string   `json:"rule,omitempty"`
 	Reason      string   `json:"reason,omitempty"`
+	// Evidence is what the disposition rests on: a file:line, a story id, or
+	// the default that covers the item.
+	Evidence string `json:"evidence,omitempty"`
+	// Replacement is the full text a reduce leaves.
+	Replacement string `json:"replacement,omitempty"`
+	// MissedDefaults are the improvements the current embedded default carries
+	// that an edited or seeded copy lacks.
+	MissedDefaults []string `json:"missed_defaults,omitempty"`
 }
 
 // RuleFinding is the judge's finding against one constitution rule: a file and
@@ -50,6 +67,16 @@ type RuleFinding struct {
 type Judgement struct {
 	Items        []ItemJudgement `json:"items"`
 	Constitution []RuleFinding   `json:"constitution_findings"`
+}
+
+// Merge joins the judgements of several batches into one.
+func Merge(js ...Judgement) Judgement {
+	var out Judgement
+	for _, j := range js {
+		out.Items = append(out.Items, j.Items...)
+		out.Constitution = append(out.Constitution, j.Constitution...)
+	}
+	return out
 }
 
 // ParseJudgement reads the judgement out of a reviewer's notes: the first JSON
@@ -70,28 +97,82 @@ func ParseJudgement(notes string) (Judgement, error) {
 	return Judgement{}, fmt.Errorf("the reviewer's notes carry no judgement object {\"items\":[…],\"constitution_findings\":[…]}")
 }
 
-// JudgeInput is the material the judge receives.
-type JudgeInput struct {
-	Items             []JudgeItem `json:"items"`
-	Rules             []Rule      `json:"rules"`
-	ConstitutionPath  string      `json:"constitution_path,omitempty"`
-	OrchestratorModel string      `json:"orchestrator_model,omitempty"`
+// Dispositions is the item → disposition map of a judgement in notes, the form
+// `satelle review score` checks a substrate-review case's expected
+// dispositions against. A judgement the report would read as not judged maps to
+// NotJudged.
+func Dispositions(notes string) (map[string]string, error) {
+	j, err := ParseJudgement(notes)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, ij := range j.Items {
+		d, _ := judged(ij)
+		out[ij.Item] = d
+	}
+	return out, nil
 }
 
-// JudgeItem is one item with its evidence, as the judge sees it.
+// judged is the disposition an item judgement counts as, and the note when it
+// does not count: an unknown disposition, or one returned without its reason
+// and evidence (or a reduce without its replacement), is NotJudged — never
+// keep.
+func judged(ij ItemJudgement) (string, string) {
+	switch {
+	case !validDisposition(ij.Disposition):
+		return NotJudged, ""
+	case strings.TrimSpace(ij.Reason) == "" || strings.TrimSpace(ij.Evidence) == "":
+		return NotJudged, NoteNoReason
+	case ij.Disposition == DispReduce && strings.TrimSpace(ij.Replacement) == "":
+		return NotJudged, NoteNoReplacement
+	}
+	return ij.Disposition, ""
+}
+
+// JudgeInput is what the review knows about the items of one judge dispatch
+// (or of the whole review, before Batches splits it by area). It is never sent
+// as it stands: the judge receives ManifestOf it — pointers, not content.
+type JudgeInput struct {
+	// Area is the area this batch judges ("" for the whole review), and Chunk
+	// its 1-based part when the area was split (0 when it was not).
+	Area  string
+	Chunk int
+	// Scratch is the directory outside the tree the item, history and default
+	// files were written under.
+	Scratch           string
+	Items             []JudgeItem
+	Rules             []Rule
+	ConstitutionPath  string
+	OrchestratorModel string
+}
+
+// JudgeItem is one item with its evidence and the files the judge reads it
+// through.
 type JudgeItem struct {
 	Item
-	Evidence Evidence `json:"evidence"`
+	Evidence Evidence
+	// Path is a readable file holding the item's text; DefaultPath the current
+	// embedded default of an edited or seeded copy; HistoryPath the item's
+	// matched ledger rows (rejection reasons, dissent notes).
+	Path        string
+	DefaultPath string
+	HistoryPath string
 }
 
 // ReportItem is one item's row in the report.
 type ReportItem struct {
 	Item
-	Disposition string   `json:"disposition"`
-	KeptLines   []string `json:"kept_lines,omitempty"`
-	Rule        string   `json:"rule,omitempty"`
-	Reason      string   `json:"reason,omitempty"`
-	Evidence    Evidence `json:"evidence"`
+	Disposition    string   `json:"disposition"`
+	KeptLines      []string `json:"kept_lines,omitempty"`
+	Rule           string   `json:"rule,omitempty"`
+	Reason         string   `json:"reason,omitempty"`
+	Citation       string   `json:"citation,omitempty"`
+	Replacement    string   `json:"replacement,omitempty"`
+	MissedDefaults []string `json:"missed_defaults,omitempty"`
+	// Note says why a returned judgement was not counted.
+	Note     string   `json:"note,omitempty"`
+	Evidence Evidence `json:"evidence"`
 }
 
 // ReportRule is one constitution rule's row in the report.
@@ -104,6 +185,15 @@ type ReportRule struct {
 	Note    string `json:"note,omitempty"`
 }
 
+// BatchFailure is one judge dispatch that returned no usable judgement: its
+// items read NotJudged and the seat's raw answer is kept at RawPath.
+type BatchFailure struct {
+	Area    string `json:"area"`
+	Chunk   int    `json:"chunk,omitempty"`
+	RawPath string `json:"raw_path,omitempty"`
+	Err     string `json:"error"`
+}
+
 // Report is the whole review.
 type Report struct {
 	GeneratedAt       time.Time         `json:"generated_at"`
@@ -112,11 +202,15 @@ type Report struct {
 	SeatModels        map[string]string `json:"seat_models,omitempty"`
 	Items             []ReportItem      `json:"items"`
 	Rules             []ReportRule      `json:"constitution"`
+	// Batches is how many judge dispatches the review made, and Failures the
+	// ones that returned no usable judgement.
+	Batches  int            `json:"batches,omitempty"`
+	Failures []BatchFailure `json:"failures,omitempty"`
 }
 
 // Build joins the inventory, its evidence and the judgement. Every item and
-// every rule appears; one the judge omitted (or gave an unknown disposition)
-// renders NotJudged.
+// every rule appears; one the judge omitted, gave an unknown disposition, or
+// returned without its reason and evidence renders NotJudged.
 func Build(in JudgeInput, j Judgement) Report {
 	byItem := map[string]ItemJudgement{}
 	for _, ij := range j.Items {
@@ -129,8 +223,12 @@ func Build(in JudgeInput, j Judgement) Report {
 	rep := Report{OrchestratorModel: in.OrchestratorModel}
 	for _, it := range in.Items {
 		ri := ReportItem{Item: it.Item, Evidence: it.Evidence, Disposition: NotJudged}
-		if ij, ok := byItem[it.Key]; ok && validDisposition(ij.Disposition) {
-			ri.Disposition, ri.KeptLines, ri.Rule, ri.Reason = ij.Disposition, ij.KeptLines, ij.Rule, ij.Reason
+		if ij, ok := byItem[it.Key]; ok {
+			ri.Disposition, ri.Note = judged(ij)
+			ri.Reason, ri.Citation = ij.Reason, ij.Evidence
+			if ri.Disposition != NotJudged {
+				ri.KeptLines, ri.Rule, ri.Replacement, ri.MissedDefaults = ij.KeptLines, ij.Rule, ij.Replacement, ij.MissedDefaults
+			}
 		}
 		rep.Items = append(rep.Items, ri)
 	}
@@ -204,8 +302,14 @@ func (r Report) Render(out io.Writer) {
 	for _, it := range r.Items {
 		fmt.Fprintf(out, "\n### %s — %s\n\n", it.Key, it.Disposition)
 		fmt.Fprintf(out, "- origin: %s (%s)\n", it.Origin, it.Source)
+		if it.Note != "" {
+			fmt.Fprintf(out, "- not counted: %s\n", it.Note)
+		}
 		if it.Reason != "" {
 			fmt.Fprintf(out, "- reason: %s\n", oneLine(it.Reason))
+		}
+		if it.Citation != "" {
+			fmt.Fprintf(out, "- evidence: %s\n", oneLine(it.Citation))
 		}
 		if it.Rule != "" {
 			fmt.Fprintf(out, "- rule: %s\n", it.Rule)
@@ -213,8 +317,26 @@ func (r Report) Render(out io.Writer) {
 		for _, l := range it.KeptLines {
 			fmt.Fprintf(out, "- kept: %s\n", oneLine(l))
 		}
+		for _, m := range it.MissedDefaults {
+			fmt.Fprintf(out, "- default improvement not carried: %s\n", oneLine(m))
+		}
+		if it.Replacement != "" {
+			fmt.Fprintf(out, "- replacement:\n\n%s\n\n", indent(it.Replacement))
+		}
 		for _, l := range it.Evidence.Lines() {
 			fmt.Fprintf(out, "- %s\n", l)
+		}
+	}
+
+	if len(r.Failures) > 0 {
+		fmt.Fprintln(out, "\n## Batches not judged")
+		fmt.Fprintln(out)
+		for _, f := range r.Failures {
+			fmt.Fprintf(out, "- %s: %s", f.Label(), oneLine(f.Err))
+			if f.RawPath != "" {
+				fmt.Fprintf(out, " (raw answer: %s)", f.RawPath)
+			}
+			fmt.Fprintln(out)
 		}
 	}
 
@@ -234,6 +356,23 @@ func (r Report) Render(out io.Writer) {
 		}
 		fmt.Fprintln(out, line)
 	}
+}
+
+// Label names a batch: its area, and its part when the area was split.
+func (f BatchFailure) Label() string {
+	if f.Chunk > 0 {
+		return fmt.Sprintf("%s-%d", f.Area, f.Chunk)
+	}
+	return f.Area
+}
+
+// indent renders text as an indented markdown block.
+func indent(text string) string {
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	for i, l := range lines {
+		lines[i] = "    " + l
+	}
+	return strings.Join(lines, "\n")
 }
 
 // Lines renders the evidence as report lines.

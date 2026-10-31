@@ -10,11 +10,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/reviewscore"
+	"github.com/bobmcallan/satelle/internal/substratereview"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -28,36 +30,46 @@ var newReviewJudge = func(cmd *cobra.Command, binding string) (reviewscore.Judge
 	if err != nil {
 		return nil, "", err
 	}
-	j, err := newCaseJudge(a, binding, scoreInjected(a.Config.Validate.Injected, binding, scoreSeatBudget))
+	j, err := newCaseJudge(a, binding, scoreInjected(a.Config.Validate.Injected, binding, scoreSeatBudget), nil)
 	if err != nil {
 		return nil, "", err
 	}
 	return j, j.Adapter(), nil
 }
 
+// caseJudgeRunner is the runner seam of every case judge: nil starts the
+// binding's real agent CLI; a test captures the assembled request instead.
+var caseJudgeRunner func(iface, command string) (agentcli.Runner, error)
+
 // newCaseJudge builds the isolated reviewer path a real gate uses for one
 // agents.toml binding, under the injected config given. `review score` and
-// `substrate review` both judge through it.
-func newCaseJudge(a *app.App, binding string, injected config.InjectedConfig) (*agentstep.CaseJudge, error) {
-	eff, err := requireAgents(a)
-	if err != nil {
-		return nil, err
-	}
-	rules, _ := condenseRules(a.PlaneDir())
-	return agentstep.NewCaseJudge(agentstep.CaseJudgeOptions{
-		Root:     a.RepoRoot,
-		Binding:  binding,
-		Docs:     a.Store.DocIndex,
-		Injected: injected,
-		Rules:    rules,
-		Offload:  diffOffloader(a),
-		Resolve: func(name string) (config.AgentBinding, bool) {
+// `substrate review` both judge through it. resolve overrides how a binding
+// name resolves (substrate review's default judge re-points the reviewer seat);
+// nil reads agents.toml.
+func newCaseJudge(a *app.App, binding string, injected config.InjectedConfig, resolve func(string) (config.AgentBinding, bool)) (*agentstep.CaseJudge, error) {
+	if resolve == nil {
+		eff, err := requireAgents(a)
+		if err != nil {
+			return nil, err
+		}
+		resolve = func(name string) (config.AgentBinding, bool) {
 			b, ok := eff.Agents.RawBinding(name)
 			if !ok {
 				return config.AgentBinding{}, false
 			}
 			return eff.Agents.EffectiveBinding(b, config.UseOneShot), true
-		},
+		}
+	}
+	rules, _ := condenseRules(a.PlaneDir())
+	return agentstep.NewCaseJudge(agentstep.CaseJudgeOptions{
+		Root:      a.RepoRoot,
+		Binding:   binding,
+		Docs:      a.Store.DocIndex,
+		Injected:  injected,
+		Rules:     rules,
+		Offload:   diffOffloader(a),
+		Resolve:   resolve,
+		NewRunner: caseJudgeRunner,
 	})
 }
 
@@ -145,6 +157,7 @@ and workers default to 1.`,
 			}
 			rep := reviewscore.Score(cmd.Context(), cases, judge, reviewscore.Options{
 				Binding: scoreArm(sBinding, scoreSeatBudget), Adapter: adapter, Runs: sRuns, Workers: sWorkers,
+				Dispositions: substratereview.Dispositions,
 			})
 			out := sOut
 			if out == "" {

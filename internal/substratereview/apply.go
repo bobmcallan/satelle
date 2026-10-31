@@ -42,8 +42,17 @@ func StoryFor(it ReportItem) (title, body, criteria string) {
 	if it.Rule != "" {
 		fmt.Fprintf(&b, "- rule: %s\n", it.Rule)
 	}
+	if it.Citation != "" {
+		fmt.Fprintf(&b, "- evidence: %s\n", oneLine(it.Citation))
+	}
 	for _, l := range it.KeptLines {
 		fmt.Fprintf(&b, "- kept: %s\n", oneLine(l))
+	}
+	for _, m := range it.MissedDefaults {
+		fmt.Fprintf(&b, "- default improvement not carried: %s\n", oneLine(m))
+	}
+	if it.Replacement != "" {
+		fmt.Fprintf(&b, "\n## Replacement\n\n%s\n", indent(it.Replacement))
 	}
 	b.WriteString("\n## Evidence\n\n")
 	for _, l := range it.Evidence.Lines() {
@@ -57,6 +66,10 @@ func StoryFor(it ReportItem) (title, body, criteria string) {
 	case DispRemove:
 		first = fmt.Sprintf("%s is removed from %s, and the default that covers it governs in its place (evidence: %s).", it.Key, it.Source, evidence)
 	case DispReduce:
+		if it.Replacement != "" && len(it.KeptLines) == 0 {
+			first = fmt.Sprintf("%s is reduced to the text under Replacement in this story's body (evidence: %s).", it.Key, evidence)
+			break
+		}
 		first = fmt.Sprintf("%s keeps only these lines: %s (evidence: %s).", it.Key, quoteLines(it.KeptLines), evidence)
 	case DispKeep:
 		first = fmt.Sprintf("%s is kept, and the quality rule it carries that the default lacks (%s) is named beside it (evidence: %s).", it.Key, nonEmpty(it.Rule, oneLine(it.Reason)), evidence)
