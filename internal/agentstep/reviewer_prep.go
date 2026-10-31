@@ -367,28 +367,11 @@ func writeReviewerMaterial(scratch string, mat *reviewerMaterial, tp transitionP
 		CriteriaState:  tp.CriteriaState,
 		PeerFindings:   tp.PeerFindings,
 	}
-	if len(mat.Docs) > 0 {
-		docsDir := filepath.Join(dir, "docs")
-		if err := os.MkdirAll(docsDir, 0o700); err != nil {
-			return referencedPayload{}, err
-		}
-		used := map[string]int{}
-		for _, d := range mat.Docs {
-			name, ok := materialDocFile(d.Name, used)
-			if !ok {
-				continue
-			}
-			path := filepath.Join(docsDir, name)
-			if err := os.WriteFile(path, []byte(d.Body), 0o600); err != nil {
-				return referencedPayload{}, err
-			}
-			abs, err := filepath.Abs(path)
-			if err != nil {
-				return referencedPayload{}, err
-			}
-			ref.Docs = append(ref.Docs, referencedDoc{Name: d.Name, Type: d.Type, Path: abs, source: d.Path})
-		}
+	docs, err := writeMaterialDocs(dir, mat.Docs)
+	if err != nil {
+		return referencedPayload{}, err
 	}
+	ref.Docs = docs
 	if mat.Diff != nil {
 		abs, err := writeMaterialJSON(dir, "diff.json", mat.Diff)
 		if err != nil {
@@ -466,6 +449,36 @@ func writeReviewerMaterial(scratch string, mat *reviewerMaterial, tp transitionP
 		ref.Ledger = ledgerRef{Unavailable: reason}
 	}
 	return ref, nil
+}
+
+// writeMaterialDocs writes each document's full body under dir/docs and returns
+// the references that stand for them in a payload: name, type and path.
+func writeMaterialDocs(dir string, docs []DocState) ([]referencedDoc, error) {
+	if len(docs) == 0 {
+		return nil, nil
+	}
+	docsDir := filepath.Join(dir, "docs")
+	if err := os.MkdirAll(docsDir, 0o700); err != nil {
+		return nil, err
+	}
+	used := map[string]int{}
+	var out []referencedDoc
+	for _, d := range docs {
+		name, ok := materialDocFile(d.Name, used)
+		if !ok {
+			continue
+		}
+		path := filepath.Join(docsDir, name)
+		if err := os.WriteFile(path, []byte(d.Body), 0o600); err != nil {
+			return nil, err
+		}
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, referencedDoc{Name: d.Name, Type: d.Type, Path: abs, source: d.Path})
+	}
+	return out, nil
 }
 
 func writeMaterialJSON(dir, name string, v any) (string, error) {

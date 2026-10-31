@@ -36,10 +36,18 @@ no running the suite (that is a later gate).
    step output, or attached note). Do **not** invent a better design and reject
    against it. No plan attachment → skip this check (ACs alone).
 
+5. **Dispatch pointers** ([[satelle-dispatch-pointers]]). When the slice
+   assembles what an agent receives (a prompt, a stdin payload, a dispatch
+   request), the receiver gets its instruction and pointers (ids, paths,
+   retrieval commands). A slice that embeds readable content in a dispatch —
+   reading item bodies, documents or history the receiving seat can fetch
+   itself and copying them into its payload — is rejected whatever its size;
+   bounding or batching that content is the same defect.
+
 - **Accept** when every AC is met by presented evidence, test requirements
   hold (or exempt), and plan fidelity holds when a plan exists.
-- **Reject** when an AC is unmet/stubbed, required tests are missing, or plan
-  fidelity fails — name the gap for the **executor** (use "plan fidelity" when
+- **Reject** when an AC is unmet/stubbed, required tests are missing, a
+  dispatch embeds readable content, or plan fidelity fails — name the gap for the **executor** (use "plan fidelity" when
   that is the reason).
 
 Fair gate: judge ACs **as written**. Do not add requirements the story never

@@ -36,6 +36,7 @@ Read the repository (Read/Grep/Glob) to ground the plan in the real code, then w
 
 - **Covers every acceptance criterion.** For EACH numbered AC, name concretely how it will be satisfied — files/functions to change, the approach, and the test that proves it. An AC with no plan entry is a gap the plan-review gate will reject.
 - **Names the slice.** Files to add/change and briefly why each.
+- **Names what each dispatch's receiver reads for itself.** For every dispatch the plan designs (a seat, a reviewer, a summariser, any agent the change hands work to), name the receiving seat, its grant, and what it reads for itself (the CLI, the files on disk); send it the instruction and pointers (ids, paths, retrieval commands), never content it can fetch ([[satelle-dispatch-pointers]]).
 - **Calls out risks / decisions.** Anything the implementer shouldn't have to re-derive (a seam, an ordering constraint, a config knob, a migration).
 - Stays a PLAN — no code, just the shape of the change and the evidence each AC needs.
 

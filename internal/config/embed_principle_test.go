@@ -284,3 +284,44 @@ func TestStartSmallPrinciple(t *testing.T) {
 		"[[satelle-story-shape]]",
 	})
 }
+
+// TestDispatchPointersPrinciple (sty_73a2dc68 AC1): before designing how work
+// reaches an agent, establish what it can already read and run; send it the
+// instruction and pointers, never content it can fetch; a design that copies
+// readable content into a prompt is wrong whatever its size. The prose is at
+// most four sentences — applied thinking, not description.
+func TestDispatchPointersPrinciple(t *testing.T) {
+	const name = "satelle-dispatch-pointers"
+	embeddedPrincipleShape(t, name, []string{
+		"Before designing how work or evidence reaches an agent",
+		"establish what that agent can already read and run",
+		"its grant, the CLI, the files on disk",
+		"Send it the instruction and pointers (ids, paths, retrieval commands)",
+		"never content it can fetch",
+		"A design that copies readable content into a prompt is wrong whatever its size",
+	})
+	_, prose, ok := splitFrontmatter(embeddedPrinciples()[name])
+	if !ok {
+		t.Fatalf("%s has no frontmatter", name)
+	}
+	if n := proseSentences(prose); n == 0 || n > 4 {
+		t.Errorf("%s states its rule in %d sentences, want 1..4:\n%s", name, n, prose)
+	}
+}
+
+// proseSentences counts the sentences in a principle's prose: wikilinks are
+// pointers, not sentences, and a sentence ends at '.', '!' or '?' followed by
+// whitespace or the end of the text.
+func proseSentences(prose string) int {
+	flat := strings.TrimSpace(strings.Join(strings.Fields(wikilinkRe.ReplaceAllString(prose, "")), " "))
+	n := 0
+	for i, r := range flat {
+		if r != '.' && r != '!' && r != '?' {
+			continue
+		}
+		if i == len(flat)-1 || flat[i+1] == ' ' {
+			n++
+		}
+	}
+	return n
+}

@@ -1,3 +1,17 @@
+## [0.0.820] - 2026-11-01
+
+### Added
+- An embedded seat-resident principle, `satelle-dispatch-pointers` (`principles:seat`), for the planner, coder and reviewer seats: before designing how work reaches an agent, establish what that agent can already read and run, and send it the instruction and pointers, never content it can fetch. The embedded `plan` skill names what each designed dispatch's seat reads for itself. `satelle-story-plan-review` and `satelle-code-ac-review` reject a plan or slice that embeds readable content in a dispatch, and review-corpus cases cover both rubrics. (sty_73a2dc68)
+
+### Changed
+- An isolated dispatch over its seat's budget is refused. Every dispatch (performer, live session, step summariser, review text) measures its system prompt plus payload against the seat's `[validate.injected.budget]` row. Over budget, it is refused with an error naming the seat, the step and both sizes, and nothing is truncated. A seat with no row is not measured. No migration is needed where the dispatches fit; this repo's budget rows were measured to fit. If one is refused, send the content as a pointer, or raise or remove that seat's row in `satelle.toml` `[validate.injected.budget]`. (sty_73a2dc68)
+- Local performers and live sessions receive the story's documents as scratch-file paths instead of inline bodies. A coder or planner payload on a large story drops from about 77 KB to about 10 KB. The principle condensing leaves room for the payload instead of filling the whole budget. (sty_73a2dc68)
+
+## [serve-v0.0.258] - 2026-11-01
+
+### Changed
+- The service binary carries the dispatch budget backstop and the documents-by-path payload. (sty_73a2dc68)
+
 ## [0.0.819] - 2026-11-01
 
 ### Fixed

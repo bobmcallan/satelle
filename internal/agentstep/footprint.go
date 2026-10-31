@@ -43,6 +43,9 @@ type SeatPayloadInput struct {
 	// resident document is delivered as written.
 	Section     string
 	BudgetBytes int
+	// PayloadBytes is the size of the stdin payload sent beside the prompt. The
+	// seat's budget covers both (sty_73a2dc68), so the fitting leaves room for it.
+	PayloadBytes int
 	// Rules is how a resident document is condensed (zero means the embedded
 	// defaults). Offload keeps the originals of condensed documents; nil sizes the
 	// markers without storing anything, which makes the result an estimate.
@@ -98,7 +101,7 @@ func BuildSeatPayload(in SeatPayloadInput) (SeatPayload, error) {
 	}
 	budget := 0
 	if in.BudgetBytes > 0 {
-		budget = max(in.BudgetBytes-len(tail), 1)
+		budget = max(in.BudgetBytes-in.PayloadBytes-len(tail), 1)
 	}
 	frame := condense.Frame{PointerHeader: "OMITTED FOR THE " + strings.ToUpper(in.Section) + " CONTEXT BUDGET (" +
 		strconv.Itoa(in.BudgetBytes) + " bytes): the following are not inlined — read each now with the command shown, before doing any work."}

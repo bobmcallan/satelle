@@ -7,19 +7,20 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 )
 
-// TestBaselineStoryPrinciplesReachPlanningSeats (sty_bcd344fd AC1, AC2): the
-// shipped planner and ready-reviewer seats are handed satelle-story-shape and
-// satelle-start-small. The bindings come from the embedded baseline seat list
+// TestBaselineStoryPrinciplesReachPlanningSeats (sty_bcd344fd AC1, AC2;
+// sty_73a2dc68 AC1): the shipped planner, ready-reviewer, coder and reviewer
+// seats are handed satelle-story-shape, satelle-start-small and
+// satelle-dispatch-pointers. The bindings come from the embedded baseline seat list
 // and the documents from the embedded defaults, so the test proves the product
 // baseline, not a fixture: each seat's resolved selector, through
-// ResidentPrincipleDocs, must deliver both principles.
+// ResidentPrincipleDocs, must deliver every one of them.
 func TestBaselineStoryPrinciplesReachPlanningSeats(t *testing.T) {
 	agents, err := config.BaselineAgents()
 	if err != nil {
 		t.Fatal(err)
 	}
 	docs := embeddedPrincipleDocs()
-	for _, seat := range []string{"planner", "ready-reviewer"} {
+	for _, seat := range []string{"planner", "ready-reviewer", "coder", "reviewer"} {
 		b, ok := agents.RawBinding(seat)
 		if !ok {
 			t.Fatalf("baseline has no [%s] seat", seat)
@@ -28,7 +29,7 @@ func TestBaselineStoryPrinciplesReachPlanningSeats(t *testing.T) {
 		for _, d := range ResidentPrincipleDocs(context.Background(), docs, b.ResolvedPrinciples()) {
 			got[d.Name] = true
 		}
-		for _, want := range []string{"satelle-story-shape", "satelle-start-small"} {
+		for _, want := range []string{"satelle-story-shape", "satelle-start-small", "satelle-dispatch-pointers"} {
 			if !got[want] {
 				t.Errorf("seat [%s] (principles %q) is not handed %s", seat, b.ResolvedPrinciples(), want)
 			}

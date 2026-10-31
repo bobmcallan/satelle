@@ -1101,6 +1101,11 @@ type transitionPayload struct {
 	// offered findings: which it answered and which it left unanswered. A fact the
 	// gate's rubric weighs; Go never rejects on it.
 	FindingAnswers *FindingAnswers `json:"finding_answers,omitempty"`
+	// docBodies is every judgeable document with its full body, set on a
+	// performer payload only. A local performer is sent these as paths to
+	// scratch copies instead of the bodies in Docs (sty_73a2dc68); never
+	// marshalled, so the inline and cloud payloads are unchanged.
+	docBodies []DocState
 }
 
 // MessageState is one agent_message as injected into a transition payload.
@@ -1477,6 +1482,7 @@ func (g *Engine) performerPayload(ctx context.Context, item workitem.Item, toSta
 	tp := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: skill}
 	var mat reviewerMaterial
 	g.fillPayloadDocs(ctx, item.ID, &tp, &mat)
+	tp.docBodies = mat.Docs
 	var consumed *DocState
 	if consumes != "" {
 		for i := range mat.Docs {
@@ -2979,7 +2985,9 @@ func (g *Engine) ChatPayload(ctx context.Context, item workitem.Item, binding st
 	if g.children != nil {
 		tp.Children = g.children(ctx, item)
 	}
-	g.fillPayloadDocs(ctx, item.ID, &tp, nil)
+	var mat reviewerMaterial
+	g.fillPayloadDocs(ctx, item.ID, &tp, &mat)
+	tp.docBodies = mat.Docs
 	g.fillMessages(ctx, item.ID, []string{strings.TrimSpace(binding)}, &tp, nil)
 	return tp, nil
 }
@@ -3018,6 +3026,15 @@ const (
 	// its read-only grant (sty_a0372443).
 	SessionRoleConsult
 )
+
+// liveSessionStep names a live session's dispatch for a budget refusal: the
+// status it opens on and whether it drives or is consulted.
+func liveSessionStep(role SessionRole, status string) string {
+	if role == SessionRoleConsult {
+		return status + " (consult session)"
+	}
+	return status + " (live session)"
+}
 
 // OpenSessionAs opens a live Session for a named binding under the given
 // charter role. in-loop / command / missing bindings return a clear error;
@@ -3097,9 +3114,20 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 	if screrr != nil {
 		return nil, screrr
 	}
+	// A live session runs on this machine, so a grant that can open a file is
+	// sent the documents as paths into its scratch (sty_73a2dc68).
+	var sent any = payload
+	if readsDocsByPath(payload, binding.Tools) {
+		p, derr := docsByPath(scratchDir, payload)
+		if derr != nil {
+			finishScratch(scratchDir, false)
+			return nil, derr
+		}
+		sent = p
+	}
 	req, err := g.buildRequest(ctx, invocation{
 		charter:    charter,
-		payload:    payload,
+		payload:    sent,
 		tools:      binding.Tools,
 		model:      binding.Model,
 		effort:     binding.Effort,
@@ -3108,6 +3136,7 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 		principles: binding.ResolvedPrinciples(),
 		scratch:    scratchDir,
 		section:    name,
+		step:       liveSessionStep(role, item.Status),
 		storyID:    item.ID,
 	})
 	if err != nil {
@@ -4287,6 +4316,8 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 		settings:   binding.Settings,
 		env:        scratchedEnv,
 		scratch:    scratchDir,
+		section:    section,
+		step:       "summarise",
 	})
 	if err != nil {
 		return verb.SummaryResult{}, err

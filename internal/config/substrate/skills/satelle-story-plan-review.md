@@ -101,12 +101,20 @@ plan** (approach and/or files, and what evidence will prove it).
 - **Root cause** — for a fix, the premise evidence must locate where the wrong
   state is produced, not only where it surfaced; a plan that guards the symptom
   site is a finding.
+- **Dispatch pointers** ([[satelle-dispatch-pointers]]) — for every dispatch
+  the plan designs, it must name what the receiving seat reads for itself (its
+  grant, the CLI, the files on disk). A plan that embeds readable content in a
+  dispatch — items, documents or history the seat can fetch, copied into its
+  prompt or payload instead of sent as ids, paths and retrieval commands — is
+  rejected whatever its size; bounding or batching that content is the same
+  defect.
 
 - **Accept** when the criteria pass sections 3 and 4 and every one is covered
   without contradicting the card.
 - **Reject** when a criterion is untraced, untestable, unfaithful or cites no
   card behavior, the set is narrower than the card, the story shape fails (§3),
-  the implementation drops a recorded constraint, or a criterion is unplanned, hand-waved, contradicted or
+  the implementation drops a recorded constraint, a dispatch embeds readable
+  content, or a criterion is unplanned, hand-waved, contradicted or
   without a proof path — name it. Falsify checkable plan claims against the repo
   only when the plan asserts something already exists; do not rewrite the plan.
 

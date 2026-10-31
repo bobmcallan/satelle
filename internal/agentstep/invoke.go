@@ -151,6 +151,7 @@ type invocation struct {
 	inline     bool   // judging, but the runner reads no local paths: the work item stays inline
 	shell      bool   // the grant admits a shell, so the judging briefing keeps the CLI lines
 	section    string // agents.toml section the seat runs under; names its budget
+	step       string // the verb or step the dispatch performs; names it in a budget refusal
 	storyID    string // the story the dispatch serves; keys the originals of condensed documents
 }
 
@@ -216,6 +217,10 @@ func composeSystemPrompt(p promptParts) string {
 // grant/model/dir. It is the single insertion point for anything satelle wants
 // EVERY isolated agent to receive.
 func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Request, error) {
+	payload, err := json.Marshal(inv.payload)
+	if err != nil {
+		return agentcli.Request{}, err
+	}
 	in := SeatPayloadInput{
 		Charter: inv.charter, Scratch: inv.scratch, Rubric: inv.rubric,
 		Judging: inv.judging, Inline: inv.inline, Shell: inv.shell,
@@ -235,6 +240,7 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 			if off := g.seatOffloader(ctx, inv.storyID); off != nil {
 				in.Section, in.Offload, in.Rules = inv.section, off, g.condenseRules
 				in.BudgetBytes = tokens * g.injected.ResolveBytesPerToken()
+				in.PayloadBytes = len(payload)
 			}
 		}
 	}
@@ -243,8 +249,7 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 		return agentcli.Request{}, err
 	}
 	systemPrompt := seat.SystemPrompt
-	payload, err := json.Marshal(inv.payload)
-	if err != nil {
+	if err := g.checkDispatchBudget(inv, len(systemPrompt), len(payload)); err != nil {
 		return agentcli.Request{}, err
 	}
 	var settings string
@@ -256,9 +261,9 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 		settings = string(sb)
 	}
 	// Every request buildRequest assembles is satelle's own spawn, never the
-	// in-loop driving session (sty_719c4a7b AC4) — invoke.go, OpenSessionAs and
-	// Summarise are its only three callers, and none of them build the
-	// interactive session itself. Stamped here, the one seam all three share,
+	// in-loop driving session (sty_719c4a7b AC4) — invoke.go, OpenSessionAs,
+	// Summarise and ReviewText are its only callers, and none of them build the
+	// interactive session itself. Stamped here, the one seam they all share,
 	// so a caller that forgets its own SATELLE_DISPATCH_* markers (the step
 	// summariser has no agent/step/item three-tuple to carry) still marks
 	// itself. Copy before writing: inv.env may be a shared map (g.reviewerEnv,
@@ -279,6 +284,33 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 		Env:          env,
 		Dir:          g.repoRoot,
 	}, nil
+}
+
+// checkDispatchBudget is the backstop on what one isolated dispatch sends
+// (sty_73a2dc68 AC3): the assembled system prompt plus the stdin payload,
+// measured against the seat's [validate.injected.budget] row. Over budget is
+// refused with the seat, the step and both sizes — never trimmed or batched,
+// since content a seat can read for itself belongs behind a pointer
+// (satelle-dispatch-pointers). A seat with no budget row, or a bare invocation
+// naming no seat, is not measured.
+func (g *Engine) checkDispatchBudget(inv invocation, promptBytes, payloadBytes int) error {
+	if inv.section == "" {
+		return nil
+	}
+	tokens, ok := g.injected.BudgetFor(inv.section)
+	if !ok {
+		return nil
+	}
+	budget := tokens * g.injected.ResolveBytesPerToken()
+	if size := promptBytes + payloadBytes; size > budget {
+		step := inv.step
+		if step == "" {
+			step = "(unnamed)"
+		}
+		return fmt.Errorf("dispatch payload over budget: seat %q, step %q sends %d bytes (system prompt %d + payload %d) > budget %d bytes ([validate.injected.budget] %s = %d tokens) — send the instruction and pointers, not content the seat can read (satelle-dispatch-pointers)",
+			inv.section, step, size, promptBytes, payloadBytes, budget, inv.section, tokens)
+	}
+	return nil
 }
 
 // Invoke is the ONLY path that calls agentcli.Runner.Run for LLM gate/dispatch
@@ -373,6 +405,7 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		settings:   binding.Settings,
 		env:        binding.Env,
 		section:    section,
+		step:       req.Step,
 		storyID:    req.StoryID,
 	}
 	// Fall back to engine reviewer caches when the binding leaves grant fields
@@ -431,9 +464,10 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	inv.inline = inv.judging && !readsLocalPaths(req.Runner)
 	inv.shell = agentcli.GrantAdmitsShell(inv.tools)
 
-	// The swap is only the judging path, and only when the caller handed over
-	// the pre-cap material. A functional check never reaches Invoke. A direct
-	// Invoke of a map payload (no Material) stays inline.
+	// The full swap is only the judging path, and only when the caller handed
+	// over the pre-cap material; a local performer swaps its documents alone. A
+	// functional check never reaches Invoke. A direct Invoke of a map payload
+	// (no Material) stays inline.
 	swapped := false
 	var ref *referencedPayload
 	if tp, mat, ok := referencedWorkItem(req); ok {
@@ -448,6 +482,14 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		inv.payload = r
 		ref = &r
 		swapped = true
+	} else if tp, ok := performerDocsByPath(req, inv.tools); ok {
+		p, werr := docsByPath(scratchDir, tp)
+		if werr != nil {
+			finishScratch(scratchDir, true)
+			return InvokeResult{Err: werr}
+		}
+		inv.payload = p
+		ref = &referencedPayload{Docs: p.Docs}
 	}
 
 	agentReq, err := g.buildRequest(ctx, inv)
@@ -1373,7 +1415,8 @@ const pullContextCallToAction = "## Reconstruct your context (you start fresh)\n
 	"payload `docs` for the plan and step summaries — that is how a Bash-less " +
 	"reviewer reads what it judges. The payload `diff` object (when present) is " +
 	"the engagement slice (`files`, `stat`, `patch`) — enumeration, not a verdict. " +
-	"When `truncated: true` on a doc, the body is " +
+	"A doc that carries a `path` instead of a `body` was written there for this " +
+	"dispatch: read it at that path. When `truncated: true` on a doc, the body is " +
 	"omitted; pull the full text with the CLI when your grant includes shell:\n\n" +
 	"- `satelle story get <id>` — the full current record.\n" +
 	"- `satelle story docs <id>`, then `satelle story doc <id> <name>` — attachments " +
@@ -1426,6 +1469,45 @@ func referencedWorkItem(req InvokeRequest) (transitionPayload, *reviewerMaterial
 		return transitionPayload{}, nil, false
 	}
 	return tp, req.Material, true
+}
+
+// docsReferenced is a payload with its documents sent as paths (sty_73a2dc68,
+// satelle-dispatch-pointers): every field of the transition payload as it was,
+// except docs, which this shallower field shadows.
+type docsReferenced struct {
+	transitionPayload
+	Docs []referencedDoc `json:"docs,omitempty"`
+}
+
+// docsByPath writes tp's documents, full bodies, under the dispatch scratch and
+// returns the payload that names each one by path in place of its body.
+func docsByPath(scratch string, tp transitionPayload) (docsReferenced, error) {
+	docs, err := writeMaterialDocs(filepath.Join(scratch, "material"), tp.docBodies)
+	if err != nil {
+		return docsReferenced{}, err
+	}
+	return docsReferenced{transitionPayload: tp, Docs: docs}, nil
+}
+
+// readsDocsByPath reports whether a seat that runs on this machine can be sent
+// tp's documents as paths: it carries some, and the grant can open a file.
+func readsDocsByPath(tp transitionPayload, tools string) bool {
+	return len(tp.docBodies) > 0 && agentcli.GrantAdmitsRead(tools)
+}
+
+// performerDocsByPath reports the performer payload whose documents should go as
+// paths: a perform dispatch on a runner that reads this machine's scratch, which
+// readsDocsByPath admits. A remote performer, the cloud prompt and a grant with
+// no read tool keep the bodies inline.
+func performerDocsByPath(req InvokeRequest, tools string) (transitionPayload, bool) {
+	if req.Expect != ExpectPerform || !readsLocalPaths(req.Runner) {
+		return transitionPayload{}, false
+	}
+	tp, ok := transitionOf(req.Payload)
+	if !ok || !readsDocsByPath(tp, tools) {
+		return transitionPayload{}, false
+	}
+	return tp, true
 }
 
 // transitionOf is payload as a transition payload, false when it is another

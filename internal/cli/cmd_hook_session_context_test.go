@@ -447,7 +447,8 @@ func TestHookContext_DiagnosisPrincipleInlined(t *testing.T) {
 	assertDiagnosisInlined(t, "grok", event, "PostToolUse", content, emitted)
 }
 
-// TestHookContext_SeatPrinciplesStayOutOfSessionStart (sty_bcd344fd AC1, AC2):
+// TestHookContext_SeatPrinciplesStayOutOfSessionStart (sty_bcd344fd AC1, AC2;
+// sty_73a2dc68 AC1):
 // the seat-resident baseline principles are handed to dispatched seats only.
 // The SessionStart render names neither — not inlined, not as a read pointer —
 // so they cost the in-loop session's byte budget nothing.
@@ -457,12 +458,12 @@ func TestHookContext_SeatPrinciplesStayOutOfSessionStart(t *testing.T) {
 	if !emitted {
 		t.Fatal("claude emitted nothing")
 	}
-	for _, name := range []string{"satelle-story-shape", "satelle-start-small"} {
+	for _, name := range []string{"satelle-story-shape", "satelle-start-small", "satelle-dispatch-pointers"} {
 		if strings.Contains(content, name) {
 			t.Errorf("SessionStart render carries seat-only principle %s:\n%s", name, content)
 		}
 	}
-	for _, phrase := range []string{"The card states a behaviour", "Ship the smallest slice"} {
+	for _, phrase := range []string{"The card states a behaviour", "Ship the smallest slice", "never content it can fetch"} {
 		if strings.Contains(content, phrase) {
 			t.Errorf("SessionStart render carries seat-only text %q", phrase)
 		}

@@ -2,7 +2,6 @@ package agentstep
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -207,14 +206,13 @@ func TestDispatchLogRecordsTheInputAsSent(t *testing.T) {
 	log := readDispatchLog(t, dir, "planner", "sty_in1")
 
 	red := func(s string) string { return strings.ReplaceAll(s, secret, "[redacted:SECRET]") }
-	encBody, _ := json.Marshal(docBody)
-	encPath, _ := json.Marshal(docFile)
-	if !strings.Contains(r.got.Payload, `"body":`+string(encBody)) {
-		t.Fatalf("fixture: the sent payload must carry the doc body:\n%s", r.got.Payload)
+	// A local performer is sent the document as a path to a scratch copy
+	// (sty_73a2dc68), so the payload carries no body to substitute.
+	if strings.Contains(r.got.Payload, "DOC-BODY-SENTINEL") {
+		t.Fatalf("fixture: a local performer's payload must name the document by path:\n%s", r.got.Payload)
 	}
-	wantPayload := red(strings.ReplaceAll(r.got.Payload, `"body":`+string(encBody), `"body":`+string(encPath)))
-	if got := logBlock(t, log, "input: payload"); got != wantPayload {
-		t.Errorf("logged payload differs from the sent one after the two substitutions:\n got %s\nwant %s", got, wantPayload)
+	if got, want := logBlock(t, log, "input: payload"), red(r.got.Payload); got != want {
+		t.Errorf("logged payload differs from the sent one after redaction:\n got %s\nwant %s", got, want)
 	}
 	if got, want := logBlock(t, log, "input: system prompt"), red(r.got.SystemPrompt); got != want {
 		t.Errorf("logged system prompt differs from the sent one after redaction:\n got %s\nwant %s", got, want)
@@ -229,8 +227,8 @@ func TestDispatchLogRecordsTheInputAsSent(t *testing.T) {
 	if strings.Contains(log, "DOC-BODY-SENTINEL") {
 		t.Errorf("a persistent document's body was copied into the log:\n%s", log)
 	}
-	if !strings.Contains(logBlock(t, log, "input: sections"), "material:\n  - "+docFile+" (plan)") {
-		t.Errorf("the persistent document must be named by its path:\n%s", log)
+	if !strings.Contains(logBlock(t, log, "input: sections"), "(scratch copy of "+docFile+", removed after dispatch)") {
+		t.Errorf("the scratch copy must name the persistent document it was made from:\n%s", log)
 	}
 	scratch := r.got.Env[config.ScratchEnv]
 	for _, want := range []string{scratch, `"sty_in1"`, `performing step "plan"`} {
@@ -481,5 +479,19 @@ func TestDispatchLogSummaryNamesWhyToolCallsAreUncounted(t *testing.T) {
 	}
 	if !strings.Contains(summary, "final_answer:\nplain answer\nfull output: "+filepath.Join(dir, "executor.log")) {
 		t.Errorf("an undecoded answer is its tail plus where the whole output is:\n%s", summary)
+	}
+}
+
+// A payload that still carries a persistent document's body inline (a remote
+// performer, which cannot read the scratch copies) is logged with the body
+// replaced by the document's path, every other byte as sent.
+func TestDispatchLogNamesAnInlineDocumentByPath(t *testing.T) {
+	docs := []DocState{{Name: "plan", Type: "plan", Body: "DOC-BODY-SENTINEL", Path: "/store/plan.md"}}
+	sent := `{"docs":[{"name":"plan","type":"plan","body":"DOC-BODY-SENTINEL"}]}`
+	if got, want := substituteDocPaths(sent, docs), `{"docs":[{"name":"plan","type":"plan","body":"/store/plan.md"}]}`; got != want {
+		t.Errorf("logged payload:\n got %s\nwant %s", got, want)
+	}
+	if got := inputMaterial(transitionPayload{Docs: docs}, "", nil); len(got) != 1 || got[0].path != "/store/plan.md" || got[0].inline {
+		t.Errorf("an inline persistent document is named by its path, never copied: %+v", got)
 	}
 }

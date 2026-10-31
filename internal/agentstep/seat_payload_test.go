@@ -124,10 +124,22 @@ func TestPayloadOfASeatWithNoBudgetIsUnchanged(t *testing.T) {
 	}
 }
 
+// With nowhere to keep the originals nothing is condensed; a prompt left over
+// the seat's budget is then refused by the dispatch backstop (sty_73a2dc68 AC3),
+// never trimmed. Under a budget it fits, it is delivered in full.
 func TestPayloadWithoutAStoreStaysInFull(t *testing.T) {
 	g, _, _ := seatEngine(t, 1500)
 	g.diffOffload = nil
-	if got := seatPrompt(t, g, "reviewer"); strings.Contains(got, "Retrieve more") || strings.Contains(got, "OMITTED") {
+	_, err := g.buildRequest(context.Background(), invocation{
+		charter: reviewerCharter(), rubric: "RUBRIC-BODY", principles: config.PrinciplesSession,
+		payload: map[string]string{}, section: "reviewer", storyID: "sty_seat",
+	})
+	if err == nil || !strings.Contains(err.Error(), `seat "reviewer"`) {
+		t.Errorf("an uncondensable prompt over the seat's budget must be refused, got %v", err)
+	}
+	roomy, _, _ := seatEngine(t, 100000)
+	roomy.diffOffload = nil
+	if got := seatPrompt(t, roomy, "reviewer"); strings.Contains(got, "Retrieve more") || strings.Contains(got, "OMITTED") {
 		t.Errorf("with nowhere to keep the originals nothing is condensed:\n%s", got)
 	}
 }
