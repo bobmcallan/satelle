@@ -654,25 +654,15 @@ func runInitBody(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness
 
 	// Stamp the binary version this repo is aligned to (breaking-surface
 	// baseline) BEFORE validating, so nothing validation reports is about the
-	// stamp being replaced. The stamp still means aligned and validated: a failed
-	// validation puts the previous bytes back (or removes a new file).
-	stampPath := filepath.Join(dataDir, deployedVersionName)
-	prevStamp, prevErr := os.ReadFile(stampPath)
+	// stamp being replaced. The stamp means "every migration up to this binary
+	// applied" — every migration above returns before this line when it fails —
+	// not "validates green": a validation failure below is reported as its own
+	// finding, which doctor and the engage precondition keep reporting, and the
+	// stamp stays so the story that fixes it can run (sty_7ef14c27).
 	stamped, err := writeDeployedVersion(dataDir)
 	if err != nil {
 		return fmt.Errorf("init: write deployed.version: %w", err)
 	}
-	validated := false
-	defer func() {
-		if validated || !stamped {
-			return
-		}
-		if prevErr == nil {
-			_ = os.WriteFile(stampPath, prevStamp, 0o644)
-		} else {
-			_ = os.Remove(stampPath)
-		}
-	}()
 	fmt.Fprintln(out, initLine(stamped, config.DefaultDataDir+"/"+deployedVersionName))
 	clearStampRefusal(out, repoRoot, dataDir)
 
@@ -682,9 +672,11 @@ func runInitBody(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness
 	//    failing validation exits non-zero: the runtime refuses to run broken
 	//    configuration, so init must not report success over it.
 	if verr := validateDeployment(out, dataDir); verr != nil {
+		if ver := readDeployedVersion(dataDir); ver != "" {
+			return fmt.Errorf("%w; the repo is stamped %s, so a story can run to fix them", verr, ver)
+		}
 		return verr
 	}
-	validated = true
 
 	// Point half-upgraded repos at the compose verb (sty_a3915840).
 	if note := cfg.LegacyRuntimeNote(repoRoot); note != "" {

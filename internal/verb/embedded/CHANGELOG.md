@@ -1,3 +1,8 @@
+## [0.0.818] - 2026-10-31
+
+### Fixed
+- A repo whose `satelle init` fails deployed-system validation on a problem the release's migrations do not touch (for example a seat with no context channel, `node.alloc`) is no longer locked out by an init-heals release. Init applies every migration, stamps `deployed.version` at the binary, and then reports the validation failure as its own FAIL and exits non-zero, naming the stamp so a story can run to fix it. Store-backed commands stop refusing with the stamp marker, a fix story engages, and `satelle doctor` keeps reporting the finding. A migration that itself fails still leaves the stamp as it was. (sty_7ef14c27)
+
 ## [0.0.817] - 2026-10-31
 
 ### Added

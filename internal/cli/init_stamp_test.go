@@ -57,10 +57,12 @@ func fakeRelease(t *testing.T, v string) {
 	t.Cleanup(func() { buildinfo.Version = old })
 }
 
-// TestInitRestoresStampWhenValidationFails: the stamp is written before
-// validation, and still means aligned and validated — a failed init leaves the
-// previous stamp, or none, exactly as it found it.
-func TestInitRestoresStampWhenValidationFails(t *testing.T) {
+// TestInitKeepsStampWhenValidationFails (sty_7ef14c27): the stamp records that
+// every migration up to the binary applied, not that the repo validates green — a
+// validation failure on a problem the migrations do not touch still fails init,
+// and the stamp stays current, behind or unstamped before, so the story that
+// fixes the problem can run.
+func TestInitKeepsStampWhenValidationFails(t *testing.T) {
 	fakeRelease(t, "0.0.900")
 	for name, prev := range map[string]string{"behind": "satelle.version: 0.0.100\n", "unstamped": ""} {
 		t.Run(name, func(t *testing.T) {
@@ -78,15 +80,15 @@ func TestInitRestoresStampWhenValidationFails(t *testing.T) {
 			if err := os.WriteFile(broken, []byte("---\nname: broken\n---\n# broken\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if err := runInit(io.Discard, repo, false, nil); err == nil || !strings.Contains(err.Error(), "failed validation") {
+			err := runInit(io.Discard, repo, false, nil)
+			if err == nil || !strings.Contains(err.Error(), "failed validation") {
 				t.Fatalf("init over broken substrate must fail validation: %v", err)
 			}
-			got, rerr := os.ReadFile(stamp)
-			switch {
-			case prev == "" && !os.IsNotExist(rerr):
-				t.Errorf("a failed init must not leave a new stamp: %q %v", got, rerr)
-			case prev != "" && string(got) != prev:
-				t.Errorf("a failed init must restore the previous stamp: got %q, want %q", got, prev)
+			if !strings.Contains(err.Error(), "stamped 0.0.900") {
+				t.Errorf("the failure must say the repo is stamped current: %v", err)
+			}
+			if got, rerr := os.ReadFile(stamp); rerr != nil || string(got) != "satelle.version: 0.0.900\n" {
+				t.Errorf("a validation failure must leave the stamp current: got %q %v", got, rerr)
 			}
 		})
 	}
