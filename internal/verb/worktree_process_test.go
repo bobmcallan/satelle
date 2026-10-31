@@ -1,21 +1,17 @@
 package verb
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/app"
-	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // Opening a linked worktree and wiring SetEngagementMode from the process
-// config yields the main tree's seat key. The decoy mode would key the child
-// by its own id.
-func TestWorktreeSeatKeyUsesProcessConfig(t *testing.T) {
+// config yields the main tree's engagement limit, not the worktree decoy's.
+func TestWorktreeEngagementLimitUsesProcessConfig(t *testing.T) {
 	t.Setenv("SATELLE_HOME", t.TempDir())
 	t.Setenv("SATELLE_CONFIG", "")
 	t.Setenv("SATELLE_SERVER_ENDPOINT", "none")
@@ -46,16 +42,16 @@ func TestWorktreeSeatKeyUsesProcessConfig(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(main, ".satelle"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	toml := "[engagement]\nparallel = \"epic\"\n"
+	toml := "[engagement]\nlimit = 2\n"
 	if err := os.WriteFile(filepath.Join(main, ".satelle", "satelle.toml"), []byte(toml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	wt := filepath.Join(base, "wt", "sty_seat")
+	wt := filepath.Join(base, "wt", "sty_wt")
 	if err := os.MkdirAll(filepath.Dir(wt), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	git(main, "worktree", "add", "-q", "-b", "sty_seat", wt, "HEAD")
-	decoy := "[engagement]\nparallel = \"none\"\n"
+	git(main, "worktree", "add", "-q", "-b", "sty_wt", wt, "HEAD")
+	decoy := "[engagement]\nlimit = 1\n"
 	if err := os.MkdirAll(filepath.Join(wt, ".satelle"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -68,12 +64,11 @@ func TestWorktreeSeatKeyUsesProcessConfig(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = a.Close() })
-	if a.ProcessConfig.ResolveEngagementParallel() != config.ParallelEpic {
-		t.Fatalf("process mode = %q", a.ProcessConfig.ResolveEngagementParallel())
+	if got := a.ProcessConfig.ResolveEngagementLimit(); got != 2 {
+		t.Fatalf("process limit = %d, want the main tree's 2", got)
 	}
 	SetEngagementMode(a.ProcessConfig)
-	got := seatKeyFor(context.Background(), workitem.Item{ID: "sty_child", ParentID: "sty_epic", Category: "feature"})
-	if got != "sty_epic" {
-		t.Fatalf("seat key = %q, want the parent id from the main tree's epic mode", got)
+	if engagementLimit != 2 {
+		t.Fatalf("wired limit = %d, want the main tree's 2", engagementLimit)
 	}
 }

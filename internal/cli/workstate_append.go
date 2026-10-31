@@ -14,6 +14,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/syncstate"
+	"github.com/bobmcallan/satelle/internal/verb"
 )
 
 // A story's ledger events leave a push by compare-and-append (sty_9bdf08c4): one
@@ -245,6 +246,9 @@ func appendStory(ctx context.Context, w io.Writer, a *app.App, conn *hosted.Chai
 		i := slices.IndexFunc(p.order, func(e ledger.Entry) bool { return e.ID == stale.LatestID })
 		if resumed || i < 0 {
 			reason := fmt.Sprintf("moved since %s: re-read and decide (server is at %s, %d event(s) not seen)", stale.Since(), stale.LatestID, stale.Missing)
+			if who := stalePresence(ctx, a, conn, project, p.id, base); who != "" {
+				reason += " — " + who
+			}
 			fmt.Fprintf(w, "the story %s %s\n", p.id, reason)
 			_ = syncstate.RecordStoryConflicts(config.GlobalDir(), a.RepoRoot, map[string]string{p.id: reason}, nil, time.Now().UTC())
 			return err
@@ -262,6 +266,42 @@ func appendStory(ctx context.Context, w io.Writer, a *app.App, conn *hosted.Chai
 	}
 	_ = syncstate.RecordStoryConflicts(config.GlobalDir(), a.RepoRoot, nil, []string{p.id}, time.Now().UTC())
 	return nil
+}
+
+// stalePresence names who moved a story this checkout's append was refused for
+// (sty_9c782f0e): the newest working_on row of another location among the
+// events after base this checkout has not seen, else among the rows it holds.
+// It is advisory — the base check already refused; "" when none is known.
+func stalePresence(ctx context.Context, a *app.App, conn *hosted.ChainConn, project, storyID, base string) string {
+	self := hosted.KnownLocationID(a.RepoRoot)
+	var row *workingOnRow
+	consider := func(e ledger.Entry) {
+		var p verb.WorkingOnPayload
+		if e.Kind != ledger.KindWorkingOn || json.Unmarshal(e.Payload, &p) != nil || p.Location == "" || p.Location == self {
+			return
+		}
+		if row == nil || !e.CreatedAt.Before(row.At) {
+			row = &workingOnRow{WorkingOnPayload: p, At: e.CreatedAt}
+		}
+	}
+	if events, _, err := conn.ReadStory(ctx, project, storyID, base); err == nil {
+		for _, ev := range events {
+			if e, err := ledgerEntryOf(storyID, ev); err == nil {
+				consider(e)
+			}
+		}
+	}
+	if row == nil && a.Store != nil && a.Store.Ledger != nil {
+		if rows, _, err := a.Store.Ledger.ListNewest(ctx, ledger.ListFilter{StoryID: storyID, Kind: ledger.KindWorkingOn, Limit: 50}); err == nil {
+			for _, e := range rows {
+				consider(e)
+			}
+		}
+	}
+	if row == nil {
+		return ""
+	}
+	return verb.WorkingOnText(row.WorkingOnPayload) + " since " + row.At.UTC().Format(time.RFC3339)
 }
 
 // appendBatchBytes caps the encoded size of one Append: well under the server's

@@ -379,3 +379,43 @@ func TestNoDriftingDocsPrincipleOverlayAndShadow(t *testing.T) {
 		t.Errorf("shadow List = %d entries, want the authored principle once", len(bodies))
 	}
 }
+
+// TestMigrateDropsEngagementLease (sty_9c782f0e AC1): a database an earlier
+// binary left with the engagement_lease table loses it on Open, and a second
+// Open is a no-op.
+func TestMigrateDropsEngagementLease(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".satelle", "satelle.db")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE engagement_lease (item_id TEXT PRIMARY KEY, story_seat INTEGER NOT NULL DEFAULT 0, seat_key TEXT NOT NULL DEFAULT '')`,
+		`CREATE INDEX idx_engagement_lease_seat ON engagement_lease(story_seat)`,
+		`CREATE INDEX idx_engagement_lease_seat_key ON engagement_lease(seat_key)`,
+		`INSERT INTO engagement_lease (item_id) VALUES ('sty_old')`,
+	} {
+		if _, err := raw.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	raw.Close()
+
+	for round := 1; round <= 2; round++ {
+		db, err := Open(path)
+		if err != nil {
+			t.Fatalf("Open round %d: %v", round, err)
+		}
+		var n int
+		if err := db.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '%engagement_lease%'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+		if n != 0 {
+			t.Fatalf("round %d: %d engagement_lease objects remain, want none", round, n)
+		}
+	}
+}

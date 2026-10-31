@@ -67,7 +67,7 @@ func TestReviewerSeatCanReachRetrieve(t *testing.T) {
 
 	// (d) satelle's own containment/engagement classification does not flag
 	// `satelle retrieve <hash>` as a mutation, so a wired PreToolUse hook would
-	// not need (and must not require) an engaged seat to let it through.
+	// not need (and must not require) an engaged story to let it through.
 	repo := tempRepo(t)
 	const cmd = "satelle retrieve 0123456789abcdef01234567"
 	if bashMutatesTree(cmd, repo) {
@@ -81,7 +81,7 @@ func TestReviewerSeatCanReachRetrieve(t *testing.T) {
 	}
 
 	// End-to-end: the commitgate hook allows it with NO engaged story at all —
-	// a read-only verb needs no seat.
+	// a read-only verb needs no engagement.
 	out, err := runRootIn(t, bashEvent(cmd), "hook", "commitgate")
 	if err != nil {
 		t.Fatalf("hook commitgate denied a read-only retrieve with no engaged story: %v\n%s", err, out)

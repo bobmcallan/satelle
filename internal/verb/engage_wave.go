@@ -14,7 +14,7 @@ import (
 // scheduled epic would not return (sty_54004fbd). The wave is the single answer
 // to "who may start": story wave reports it, this enforces it, both through
 // assessWave, so they cannot disagree. It reads the store and the workflow index
-// and writes nothing, so a refusal takes no seat and leaves no ledger row.
+// and writes nothing, so a refusal starts no transition and leaves no ledger row.
 //
 // Everything that is not an unambiguous off-wave child passes (nil):
 //   - a story with no epic container, or one that is itself an epic-parent;
@@ -28,9 +28,8 @@ import (
 //     an engaged child non-terminal, so re-checking every later transition would
 //     refuse the very story the wave let in.
 //
-// Seat mode and the one-engagement-per-tree rule are not decided here; they run
-// afterwards in acquireEngagementLease, so a wave-eligible child still meets
-// lease.ErrTreeConflict in a worktree that is already leased.
+// The concurrency limit is not decided here; it runs afterwards in
+// engageCheck, so a wave-eligible child still meets the limit.
 func refuseOffWave(ctx context.Context, item workitem.Item, targetStatus string) error {
 	if item.ID == "" || item.Kind != workitem.KindStory || epicset.IsEpicParent(item) {
 		return nil
@@ -80,7 +79,7 @@ func refuseOffWave(ctx context.Context, item workitem.Item, targetStatus string)
 //   - an epic whose route declares no readiness step, and any store, index or
 //     route lookup that fails (fail open, like refuseOffWave).
 //
-// It reads the ledger and writes nothing, so a refusal takes no seat.
+// It reads the ledger and writes nothing, so a refusal starts no transition.
 func refuseUnreadiedEpic(ctx context.Context, item workitem.Item, fromStatus, targetStatus string) error {
 	if item.Kind != workitem.KindStory || epicset.IsEpicParent(item) {
 		return nil

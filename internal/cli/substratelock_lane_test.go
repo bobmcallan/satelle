@@ -1,10 +1,11 @@
 package cli
 
-// sty_08569de9 — a substrate-lane story may change the substrate it was filed
-// for while sibling epic children perform, and the refusal names the condition
-// that actually applies. The lock is decided by substrateLane over the seats a
-// hook call resolved (resolveSeatsFor → pickSessionSeatFor); these tests drive
-// real leases in real linked worktrees through the gate functions.
+// sty_08569de9, sty_9c782f0e — a substrate-lane story may change the substrate
+// it was filed for while sibling epic children perform, and the refusal names the
+// condition that actually applies. The lock is decided by substrateLane over the
+// engagements a hook call resolved (resolveEngagementsFor → pickEngagementFor, by
+// the tree the edit lands in); these tests engage real stories from real linked
+// worktrees and drive the gate functions.
 
 import (
 	"bytes"
@@ -16,23 +17,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/workitem"
 	"github.com/spf13/cobra"
 )
 
-// laneSpec is one seat of a laneEnv: a story of a category engaged from its own
-// linked worktree by a session (stale: its heartbeat is past the TTL).
+// laneSpec is one story of a laneEnv: a story of a category engaged from its own
+// linked worktree.
 type laneSpec struct {
-	key, category, session string
-	stale                  bool
+	key, category string
 }
 
+// laneSession is the session every laneEnv story is engaged by. The tree an edit
+// lands in decides its story; the session decides nothing.
+const laneSession = "sess"
+
 // laneEnv is a git repo (the main tree M) with the lock config written and one
-// live seat per spec, each engaged from its own linked worktree. The hook's own
-// tree is stubbed to none of them, so a session holding several seats has none
-// bound to the target.
+// performing story per spec, each engaged from its own linked worktree. The
+// hook's own tree is stubbed to none of them, so an edit in the main tree is
+// attributed to no story.
 type laneEnv struct {
 	repo  string
 	ids   map[string]string // spec key → story id
@@ -63,43 +66,30 @@ func newLaneEnv(t *testing.T, specs []laneSpec) *laneEnv {
 			t.Fatal(err)
 		}
 		tree := linkedWorktree(t, repo)
-		if _, _, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
-			ItemID: it.ID, Kind: "story", Owner: "alice", State: "in_progress", StorySeat: true,
-			SeatKey: "epic-parent", Worktree: tree, SessionID: s.session,
-		}); err != nil {
-			t.Fatal(err)
-		}
-		if err := db.Leases.Confirm(ctx, it.ID, "in_progress"); err != nil {
-			t.Fatal(err)
-		}
+		recordEngagementOn(t, db, it.ID, "in_progress", tree, laneSession)
 		e.ids[s.key], e.trees[s.key] = it.ID, tree
-	}
-	// Aged only once every seat is held: a later acquire under the shared SeatKey
-	// would steal a lease that is already stale.
-	for _, s := range specs {
-		if s.stale {
-			if err := db.Leases.SetHeartbeat(ctx, e.ids[s.key], now.Add(-lease.HeartbeatTTL-time.Minute)); err != nil {
-				t.Fatal(err)
-			}
-		}
 	}
 	return e
 }
 
-// seats is what a hook call resolves for session sid editing target.
-func (e *laneEnv) seats(sid, target string) *lockSeats {
-	info, engaged, live, err := resolveSeatsFor(false, sid, treeOf(target))
+// engagements is what a hook call resolves for an edit of target.
+func (e *laneEnv) engagements(target string) *lockEngagements {
+	return laneResolve(treeOf(target))
+}
+
+// laneResolve is the per-tree resolution the production call sites make.
+func laneResolve(tree string) *lockEngagements {
+	info, engaged, live, err := resolveEngagementsFor(laneSession, tree)
 	if err != nil {
 		panic(err)
 	}
-	return &lockSeats{info: info, engaged: engaged, live: live, sid: sid}
+	return &lockEngagements{info: info, engaged: engaged, live: live}
 }
 
 // gate runs the lock on target through the Edit gate or a Bash redirect. The
 // Edit gate is handed s (resolved for the target's tree, as `hook gate` does);
-// the Bash gate resolves its own seats per candidate tree through the same
-// resolveSeatsFor the production call sites use, for s's session.
-func (e *laneEnv) gate(t *testing.T, via, target string, s *lockSeats) (error, string) {
+// the Bash gate resolves per candidate tree through the same resolution.
+func (e *laneEnv) gate(t *testing.T, via, target string, s *lockEngagements) (error, string) {
 	t.Helper()
 	cmd := &cobra.Command{}
 	var out bytes.Buffer
@@ -107,9 +97,8 @@ func (e *laneEnv) gate(t *testing.T, via, target string, s *lockSeats) (error, s
 	cmd.SetErr(&out)
 	raw := []byte(claudeEditEvent(target))
 	if via == "bash" {
-		return bashSubstrateLockGate(cmd, raw, "echo x > "+target, loadGateProcess(), func(tree string) (*lockSeats, error) {
-			info, engaged, live, err := resolveSeatsFor(false, s.sid, tree)
-			return &lockSeats{info: info, engaged: engaged, live: live, sid: s.sid}, err
+		return bashSubstrateLockGate(cmd, raw, "echo x > "+target, loadGateProcess(), func(tree string) (*lockEngagements, error) {
+			return laneResolve(tree), nil
 		}), out.String()
 	}
 	return substrateLockGate(cmd, raw, target, s), out.String()
@@ -128,23 +117,23 @@ func rowsByStory(t *testing.T, kind string) (map[string]int, []ledger.Entry) {
 
 const laneRel = ".satelle/workflows/agents.toml"
 
-// AC1 + AC2: a session holding a substrate seat and non-substrate epic siblings,
-// each from its own worktree, may change the main tree's substrate when the edit
-// is attributed to none of them; the non-substrate live seats are noted, once per
-// hook call, and nothing is refused.
-func TestSubstrateLockLaneAmbiguousSessionSiblings(t *testing.T) {
+// AC1 + AC2: a substrate-lane story and non-substrate epic siblings, each
+// engaged from its own worktree: an edit in the substrate story's worktree is the
+// substrate story's change, so it passes and the other performing stories are
+// noted, once per hook call — nothing is refused.
+func TestSubstrateLockLaneFromTheSubstrateStorysTree(t *testing.T) {
 	for _, via := range []string{"edit", "bash"} {
 		t.Run(via, func(t *testing.T) {
 			e := newLaneEnv(t, []laneSpec{
-				{key: "S", category: "substrate", session: "sess"},
-				{key: "F1", category: "fix", session: "sess"},
-				{key: "F2", category: "fix", session: "sess"},
-				{key: "X", category: "feature", session: "other"},
+				{key: "S", category: "substrate"},
+				{key: "F1", category: "fix"},
+				{key: "F2", category: "fix"},
+				{key: "X", category: "feature"},
 			})
-			target := filepath.Join(e.repo, laneRel)
-			s := e.seats("sess", target)
-			if pick, _ := pickSessionSeatFor(s.live, nil, "sess", treeOf(target)); pick.ItemID != "" || s.engaged || s.info.ItemID != "" {
-				t.Fatalf("fixture: the edit must be unresolved for the session, pick=%q info=%q engaged=%v", pick.ItemID, s.info.ItemID, s.engaged)
+			target := filepath.Join(e.trees["S"], laneRel)
+			s := e.engagements(target)
+			if !s.engaged || s.info.ItemID != e.ids["S"] {
+				t.Fatalf("fixture: the edit must be attributed to S by its tree, got %q engaged=%v", s.info.ItemID, s.engaged)
 			}
 			if err, out := e.gate(t, via, target, s); err != nil {
 				t.Fatalf("a substrate-lane story's change must pass (%s): %v\n%s", via, err, out)
@@ -169,37 +158,19 @@ func TestSubstrateLockLaneAmbiguousSessionSiblings(t *testing.T) {
 			}
 		})
 	}
-
-	t.Run("one seat resolves", func(t *testing.T) {
-		e := newLaneEnv(t, []laneSpec{
-			{key: "S", category: "substrate", session: "sess"},
-			{key: "F1", category: "fix", session: "other"},
-		})
-		target := filepath.Join(e.repo, laneRel)
-		s := e.seats("sess", target)
-		if !s.engaged || s.info.ItemID != e.ids["S"] {
-			t.Fatalf("fixture: a session holding one seat resolves to it, got %q engaged=%v", s.info.ItemID, s.engaged)
-		}
-		if err, out := e.gate(t, "edit", target, s); err != nil {
-			t.Fatalf("the single substrate seat must pass: %v\n%s", err, out)
-		}
-		if n, _ := rowsByStory(t, ledger.KindSubstrateChangeNote); n[e.ids["F1"]] != 1 || len(n) != 1 {
-			t.Errorf("only the sibling is noted, once: %v", n)
-		}
-	})
 }
 
-// AC3: an edit attributed to a story of the session that is not substrate is
-// refused even though the session also holds a substrate seat.
+// AC3: an edit attributed by its tree to a story that is not substrate is
+// refused even though a substrate story is also performing.
 func TestSubstrateLockAttributedNonSubstrateRefused(t *testing.T) {
 	for _, via := range []string{"edit", "bash"} {
 		t.Run(via, func(t *testing.T) {
 			e := newLaneEnv(t, []laneSpec{
-				{key: "S", category: "substrate", session: "sess"},
-				{key: "F", category: "fix", session: "sess"},
+				{key: "S", category: "substrate"},
+				{key: "F", category: "fix"},
 			})
 			target := filepath.Join(e.trees["F"], laneRel)
-			s := e.seats("sess", target)
+			s := e.engagements(target)
 			if !s.engaged || s.info.ItemID != e.ids["F"] {
 				t.Fatalf("fixture: the edit must be attributed to F by tree, got %q engaged=%v", s.info.ItemID, s.engaged)
 			}
@@ -208,8 +179,8 @@ func TestSubstrateLockAttributedNonSubstrateRefused(t *testing.T) {
 				t.Fatalf("an edit attributed to a non-substrate story must be refused:\n%s", out)
 			}
 			reason := denyReasonOf(t, out)
-			if !strings.Contains(reason, e.ids["F"]) || strings.Contains(reason, e.ids["S"]) {
-				t.Errorf("the deny names F and not the substrate seat: %s", reason)
+			if !strings.Contains(reason, e.ids["F"]+` (status`) || strings.Contains(reason, e.ids["S"]+` (status`) {
+				t.Errorf("the deny names F, and not S, as the holder: %s", reason)
 			}
 			if n, _ := rowsByStory(t, ledger.KindSubstrateLockDeny); n[e.ids["F"]] != 1 || len(n) != 1 {
 				t.Errorf("one refusal, on F: %v", n)
@@ -222,24 +193,23 @@ func TestSubstrateLockAttributedNonSubstrateRefused(t *testing.T) {
 }
 
 // AC2: change notes record an allowed change only. A Bash command with one
-// candidate the lane passes (the main tree, attributed to none of the session's
-// seats) and a later one it refuses (F's own worktree) does not run, so it leaves
-// no substrate_change_note — only the refusal.
+// candidate the lane passes (S's own worktree) and a later one it refuses (F's
+// own worktree) does not run, so it leaves no substrate_change_note — only the
+// refusal.
 func TestSubstrateLockRefusedCommandLeavesNoChangeNotes(t *testing.T) {
 	e := newLaneEnv(t, []laneSpec{
-		{key: "S", category: "substrate", session: "sess"},
-		{key: "F", category: "fix", session: "sess"},
-		{key: "X", category: "feature", session: "other"},
+		{key: "S", category: "substrate"},
+		{key: "F", category: "fix"},
+		{key: "X", category: "feature"},
 	})
-	passes := filepath.Join(e.repo, laneRel)
+	passes := filepath.Join(e.trees["S"], laneRel)
 	refused := filepath.Join(e.trees["F"], laneRel)
 	cmd := &cobra.Command{}
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	err := bashSubstrateLockGate(cmd, []byte(claudeEditEvent(passes)), "echo x > "+passes+" && echo y > "+refused, loadGateProcess(), func(tree string) (*lockSeats, error) {
-		info, engaged, live, err := resolveSeatsFor(false, "sess", tree)
-		return &lockSeats{info: info, engaged: engaged, live: live, sid: "sess"}, err
+	err := bashSubstrateLockGate(cmd, []byte(claudeEditEvent(passes)), "echo x > "+passes+" && echo y > "+refused, loadGateProcess(), func(tree string) (*lockEngagements, error) {
+		return laneResolve(tree), nil
 	})
 	if err == nil {
 		t.Fatalf("a command that rewrites F's own worktree substrate must be refused:\n%s", out.String())
@@ -253,124 +223,65 @@ func TestSubstrateLockRefusedCommandLeavesNoChangeNotes(t *testing.T) {
 }
 
 // AC4 + AC5: every condition that is not the lane is still refused while a
-// non-substrate seat performs, and the deny names the holder (id, status,
-// category), the condition and its fix — never "re-engage" for a lease that is
-// not this session's, and no file-a-substrate-story advice when the session
-// already holds a substrate seat.
+// non-substrate story performs, and the deny names the holder (id, status,
+// category), the condition and its fix — and no file-a-substrate-story advice
+// when a substrate story is already performing.
 func TestSubstrateLockRefusalNamesTheCondition(t *testing.T) {
 	const advice = "make the change under a substrate-lane story"
 	cases := []struct {
 		name  string
-		sid   string
 		specs []laneSpec
 		// target: the key whose worktree is edited ("" = the main tree)
 		target string
-		// holders are the spec keys the deny must name; absent the ones it must not
+		// holders are the spec keys the deny must name
 		holders []string
 		want    func(ids map[string]string) []string
 		not     []string
 	}{
 		{
-			name: "no seat attributed to this session",
-			sid:  "sess", specs: []laneSpec{{key: "F1", category: "feature", session: "other"}},
+			name:    "nothing engaged from this tree",
+			specs:   []laneSpec{{key: "F1", category: "feature"}},
 			holders: []string{"F1"},
 			want: func(map[string]string) []string {
-				return []string{"No performing seat is attributed to this session", "Engage the substrate story in this session", advice}
+				return []string{"No performing story is engaged from", "Engage the substrate story from this tree", advice}
 			},
-			not: []string{"re-engage", "seat release"},
+			not: []string{"re-engage", "attributed to story"},
 		},
 		{
-			name: "own seat stale",
-			sid:  "sess",
+			name: "nothing engaged from this tree, a substrate story elsewhere",
 			specs: []laneSpec{
-				{key: "F0", category: "feature", session: "sess", stale: true},
-				{key: "F1", category: "feature", session: "other"},
+				{key: "S", category: "substrate"},
+				{key: "F1", category: "feature"},
 			},
 			holders: []string{"F1"},
-			want: func(ids map[string]string) []string {
-				return []string{"own seat " + ids["F0"] + " (session sess) is stale", "re-engage it (`satelle story set " + ids["F0"] + " --status in_progress`)", advice}
+			want: func(map[string]string) []string {
+				return []string{"No performing story is engaged from", "edit from its worktree"}
 			},
-			not: []string{"seat release"},
-		},
-		{
-			name: "stale lease of another session",
-			sid:  "sess",
-			specs: []laneSpec{
-				{key: "F0", category: "feature", session: "other2", stale: true},
-				{key: "F1", category: "feature", session: "other"},
-			},
-			holders: []string{"F1"},
-			want: func(ids map[string]string) []string {
-				return []string{"No performing seat is attributed to this session", "Stale lease " + ids["F0"] + " belongs to another session", "`satelle story seat release " + ids["F0"] + "`", advice}
-			},
-			not: []string{"re-engage", "is stale, so it was not counted"},
-		},
-		{
-			name: "stale lease stamped by no session",
-			sid:  "sess",
-			specs: []laneSpec{
-				{key: "F0", category: "feature", session: "", stale: true},
-				{key: "F1", category: "feature", session: "other"},
-			},
-			holders: []string{"F1"},
-			want: func(ids map[string]string) []string {
-				return []string{"Stale lease " + ids["F0"] + " belongs to no session", "`satelle story seat release " + ids["F0"] + "`"}
-			},
-			not: []string{"re-engage", "is stale, so it was not counted"},
-		},
-		{
-			name: "ambiguous, none substrate",
-			sid:  "sess",
-			specs: []laneSpec{
-				{key: "F1", category: "feature", session: "sess"},
-				{key: "F2", category: "fix", session: "sess"},
-			},
-			holders: []string{"F1", "F2"},
-			want: func(ids map[string]string) []string {
-				return []string{"This session holds seats " + ids["F1"] + ", " + ids["F2"], "and none of them is in the substrate lane", "Make it from the substrate story's worktree", advice}
-			},
-			not: []string{"re-engage"},
-		},
-		{
-			name: "ambiguous, several substrate",
-			sid:  "sess",
-			specs: []laneSpec{
-				{key: "S1", category: "substrate", session: "sess"},
-				{key: "S2", category: "substrate", session: "sess"},
-				{key: "F1", category: "feature", session: "sess"},
-			},
-			holders: []string{"F1"},
-			want: func(ids map[string]string) []string {
-				return []string{"and more than one of them is in the substrate lane", "release the seats that are not substrate"}
-			},
-			// the session already holds a substrate seat: no file-a-substrate-story advice
+			// a substrate story is performing: no file-a-substrate-story advice
 			not: []string{advice, "file one"},
 		},
 		{
-			name: "attributed, session also holds a substrate seat",
-			sid:  "sess",
+			name: "attributed, a substrate story elsewhere",
 			specs: []laneSpec{
-				{key: "S", category: "substrate", session: "sess"},
-				{key: "F", category: "fix", session: "sess"},
+				{key: "S", category: "substrate"},
+				{key: "F", category: "fix"},
 			},
 			target:  "F",
 			holders: []string{"F"},
 			want: func(ids map[string]string) []string {
-				return []string{"attributed to your story " + ids["F"], "worktree of your substrate-lane story"}
+				return []string{"attributed to story " + ids["F"], "worktree of substrate-lane story " + ids["S"]}
 			},
 			not: []string{advice},
 		},
 		{
-			name: "attributed, no substrate seat",
-			sid:  "sess",
-			specs: []laneSpec{
-				{key: "F", category: "fix", session: "sess"},
-			},
+			name:    "attributed, no substrate story",
+			specs:   []laneSpec{{key: "F", category: "fix"}},
+			target:  "F",
 			holders: []string{"F"},
 			want: func(ids map[string]string) []string {
-				return []string{"attributed to your story " + ids["F"], advice, "finish or park " + ids["F"]}
+				return []string{"attributed to story " + ids["F"], advice, "finish or park " + ids["F"]}
 			},
-			not: []string{"worktree of your substrate-lane story"},
+			not: []string{"worktree of substrate-lane story"},
 		},
 	}
 	for _, via := range []string{"edit", "bash"} {
@@ -382,10 +293,10 @@ func TestSubstrateLockRefusalNamesTheCondition(t *testing.T) {
 					dir = e.trees[tc.target]
 				}
 				target := filepath.Join(dir, laneRel)
-				s := e.seats(tc.sid, target)
+				s := e.engagements(target)
 				err, out := e.gate(t, via, target, s)
 				if err == nil {
-					t.Fatalf("the lock must still refuse while a non-substrate seat performs:\n%s", out)
+					t.Fatalf("the lock must still refuse while a non-substrate story performs:\n%s", out)
 				}
 				reason := denyReasonOf(t, out)
 				for _, k := range tc.holders {
@@ -417,18 +328,18 @@ func TestSubstrateLockRefusalNamesTheCondition(t *testing.T) {
 	}
 }
 
-// substrateLane is pure over the seats and the category answer: a category the
-// store could not give is "not substrate", so a doubt refuses.
+// substrateLane is pure over the engagements and the category answer: a
+// category the store could not give is "not substrate", so a doubt refuses.
 func TestSubstrateLaneDoubtIsNotTheLane(t *testing.T) {
-	s := &lockSeats{
-		info: seatInfo{ItemID: "sty_a", SessionID: "sess"}, engaged: true, sid: "sess",
-		live: []seatInfo{{ItemID: "sty_a", SessionID: "sess"}, {ItemID: "sty_b", SessionID: "other"}},
+	s := &lockEngagements{
+		info: engagement{ItemID: "sty_a", SessionID: "sess"}, engaged: true,
+		live: []engagement{{ItemID: "sty_a", SessionID: "sess"}, {ItemID: "sty_b", SessionID: "other"}},
 	}
 	if lane := substrateLane(s, func(string) bool { return false }); lane.Lane != nil || lane.Why != laneOwnNotSubstrate {
 		t.Errorf("an unreadable category is not the lane: %+v", lane)
 	}
 	lane := substrateLane(s, func(id string) bool { return id == "sty_a" })
 	if lane.Lane == nil || lane.Lane.ItemID != "sty_a" || len(lane.Noted) != 1 || lane.Noted[0].ItemID != "sty_b" {
-		t.Errorf("the attributed substrate seat is the lane and its sibling is noted: %+v", lane)
+		t.Errorf("the attributed substrate story is the lane and its sibling is noted: %+v", lane)
 	}
 }

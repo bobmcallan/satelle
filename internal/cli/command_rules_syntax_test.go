@@ -16,7 +16,7 @@ func syntaxRules(pattern string) string {
 
 // AC1: a program matches by name however it is invoked.
 func TestCommandRuleProgramAnyInvocation(t *testing.T) {
-	ruleRepo(t, seatNone, syntaxRules("**/orbctl"))
+	ruleRepo(t, engagedNowhere, syntaxRules("**/orbctl"))
 	denied := []string{
 		"orbctl status",
 		"/opt/x/bin/orbctl status",
@@ -48,7 +48,7 @@ func TestCommandRuleProgramAnyInvocation(t *testing.T) {
 
 // AC2: text inside an argument, at any position after the program.
 func TestCommandRuleArgumentAnywhere(t *testing.T) {
-	ruleRepo(t, seatNone, syntaxRules("**/fetchy ** *api.example.test*"))
+	ruleRepo(t, engagedNowhere, syntaxRules("**/fetchy ** *api.example.test*"))
 	denied := []string{
 		"fetchy https://api.example.test/v1",
 		"fetchy -s https://api.example.test/v1 -o out",
@@ -189,10 +189,10 @@ func newSyntaxBenchRules() []config.CommandRule {
 func BenchmarkCommandRulesNewSyntax(b *testing.B) {
 	rules := newSyntaxBenchRules()
 	const command = "cd /srv/app && git status --short | grep -v x; ls -la internal/cli"
-	seat := func() (seatInfo, bool, error) { return seatInfo{}, false, nil }
+	resolve := func() (engagement, bool, error) { return engagement{}, false, nil }
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		evalCommandRules(rules, command, seat)
+		evalCommandRules(rules, command, resolve)
 	}
 }
 
@@ -200,8 +200,8 @@ func BenchmarkCommandRulesNewSyntax(b *testing.B) {
 func TestCommandRulesRelativeCostNewSyntax(t *testing.T) {
 	rules := newSyntaxBenchRules()
 	const command = "cd /srv/app && git status --short | grep -v x; ls -la internal/cli"
-	seat := func() (seatInfo, bool, error) { return seatInfo{}, false, nil }
+	resolve := func() (engagement, bool, error) { return engagement{}, false, nil }
 	checkRelativeCost(t,
-		func() { evalCommandRules(rules, command, seat) },
+		func() { evalCommandRules(rules, command, resolve) },
 		func() { gitSubcommands(command) })
 }

@@ -42,26 +42,25 @@ func TestHookContextInjectsSessionSet(t *testing.T) {
 	}
 }
 
-// TestHookContextNamesSeatMode: the SessionStart inject states the seat
-// concurrency mode the session is actually running under (sty_050f3a19 AC3).
-// Under the default it stays silent about an unheld seat — that is the whole
-// rule, and a line per session would be a token toll for nothing. Under `epic`
-// it names the mode and BOTH preconditions before the agent meets them in a
-// refusal.
-func TestHookContextNamesSeatMode(t *testing.T) {
+// TestHookContextNamesConcurrencyLimit: the SessionStart inject states the
+// concurrency limit the session is actually running under (sty_050f3a19 AC3,
+// sty_9c782f0e). Under the default — unlimited, nothing performing — it stays
+// silent: a line per session would be a token toll for nothing. With a limit
+// set it names the limit before the agent meets it in a refusal.
+func TestHookContextNamesConcurrencyLimit(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	// Default mode, no seat held: no seat block at all.
-	if out := mustRun(t, testBin, repo, "hook", "context"); strings.Contains(out, "seat mode") {
-		t.Errorf("default mode with no seat must not inject a seat block:\n%s", out)
+	// Default, nothing performing: no engaged-stories block at all.
+	if out := mustRun(t, testBin, repo, "hook", "context"); strings.Contains(out, "concurrency:") {
+		t.Errorf("the default with nothing performing must not inject a concurrency line:\n%s", out)
 	}
 
-	mustRun(t, testBin, repo, "settings", "engagement.parallel", "epic")
+	mustRun(t, testBin, repo, "settings", "engagement.limit", "1")
 	out := mustRun(t, testBin, repo, "hook", "context")
-	for _, want := range []string{"seat mode: epic", "parent", "working tree"} {
+	for _, want := range []string{"## Engaged stories", "[engagement] limit = 1", "sequential epic"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("epic-mode inject missing %q:\n%s", want, out)
+			t.Errorf("limited inject missing %q:\n%s", want, out)
 		}
 	}
 }

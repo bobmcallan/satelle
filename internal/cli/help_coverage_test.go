@@ -49,7 +49,7 @@ var longWordWaiver = map[string]int{
 	"satelle hook prompt":     135, // what the per-prompt reminder injects and when
 	// Operator procedures: destructive, converging, or recovery paths where the
 	// steps and the refusals are the documentation.
-	"satelle migrate":         420, // structural convergence per area, with the refusal paths
+	"satelle migrate":         379, // structural convergence per area, with the refusal paths
 	"satelle agents":          234, // per-harness launcher + hook install matrix
 	"satelle workspace add":   284, // registration + machine-scope seed target
 	"satelle doctor":          280, // the readiness checklist it runs, item by item

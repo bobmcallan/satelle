@@ -50,17 +50,17 @@ requires = ["coded"]
 `)
 }
 
-// TestSeatScheduleInject: a scheduled epic container in context puts its
-// schedule and the wave command in the session inject; an unscheduled one adds
-// nothing, and the worktree clause rides only the parallel schedule (sty_4aefd2a9).
-func TestSeatScheduleInject(t *testing.T) {
+// TestScheduleInject: a scheduled epic container in context puts its schedule
+// and the wave command in the session inject; an unscheduled one adds nothing,
+// and the worktree clause rides only the parallel schedule (sty_4aefd2a9).
+func TestScheduleInject(t *testing.T) {
 	epic := workitem.Item{ID: "sty_epic", Category: "epic-parent", Status: "ready"}
 	child := workitem.Item{ID: "sty_kid", Category: "fix", Status: "in_progress", ParentID: "sty_epic"}
 	other := workitem.Item{ID: "sty_other", Category: "fix", Status: "in_progress"}
 	items := []workitem.Item{epic, child, other}
 
-	par := seatScheduleLines([]string{"sty_kid"}, items, scheduleFixtureWFs("parallel"))
-	for _, want := range []string{"parallel", "satelle story wave sty_epic", "stop", "worktree per child", "same-tree engagement is refused"} {
+	par := scheduleLines([]string{"sty_kid"}, items, scheduleFixtureWFs("parallel"))
+	for _, want := range []string{"parallel", "satelle story wave sty_epic", "stop", "worktree per child", "attributed to the story engaged from its tree"} {
 		if !strings.Contains(par, want) {
 			t.Errorf("parallel inject missing %q: %q", want, par)
 		}
@@ -68,12 +68,12 @@ func TestSeatScheduleInject(t *testing.T) {
 	if strings.Contains(par, "sty_kid") {
 		t.Errorf("the inject must not name a child: %q", par)
 	}
-	// The container itself holding the seat is also in context.
-	if got := seatScheduleLines([]string{"sty_epic"}, items, scheduleFixtureWFs("parallel")); got != par {
-		t.Errorf("container holder: %q want %q", got, par)
+	// The container itself engaged is also in context.
+	if got := scheduleLines([]string{"sty_epic"}, items, scheduleFixtureWFs("parallel")); got != par {
+		t.Errorf("engaged container: %q want %q", got, par)
 	}
 
-	seq := seatScheduleLines([]string{"sty_kid"}, items, scheduleFixtureWFs("sequential"))
+	seq := scheduleLines([]string{"sty_kid"}, items, scheduleFixtureWFs("sequential"))
 	if !strings.Contains(seq, "sequential") || !strings.Contains(seq, "satelle story wave") {
 		t.Errorf("sequential inject: %q", seq)
 	}
@@ -82,16 +82,16 @@ func TestSeatScheduleInject(t *testing.T) {
 	}
 
 	// Nothing declared is parallel: the same inject as the deprecated key.
-	if got := seatScheduleLines([]string{"sty_kid"}, items, scheduleFixtureWFs("")); got != par {
+	if got := scheduleLines([]string{"sty_kid"}, items, scheduleFixtureWFs("")); got != par {
 		t.Errorf("an unscheduled container is parallel by default: %q want %q", got, par)
 	}
 	// sequential = true is the override.
-	over := seatScheduleLines([]string{"sty_kid"}, items, scheduleFixtureWFsLine("sequential = true\n"))
+	over := scheduleLines([]string{"sty_kid"}, items, scheduleFixtureWFsLine("sequential = true\n"))
 	if over != seq {
 		t.Errorf("sequential = true inject: %q want %q", over, seq)
 	}
-	if got := seatScheduleLines([]string{"sty_other"}, items, scheduleFixtureWFs("parallel")); got != "" {
-		t.Errorf("a holder outside any epic container must add nothing: %q", got)
+	if got := scheduleLines([]string{"sty_other"}, items, scheduleFixtureWFs("parallel")); got != "" {
+		t.Errorf("a story outside any epic container must add nothing: %q", got)
 	}
 }
 

@@ -2,7 +2,7 @@ package verb
 
 // Internal tests for the driver-usage recorder (sty_81caa41b). Covers AC1
 // (payload shape), AC3 (per-session high-water mark isolates two stories),
-// AC4 (unreadable record dedup), AC5 (mid-turn kill via reaped lease), AC6
+// AC4 (unreadable record dedup), AC5 (mid-turn kill of a dead session), AC6
 // (late-become-readable usage caught up onto the story it belongs to), AC7
 // (idempotent retry) and AC8's same-session-id resume case. AC8's
 // forked-session-id resume case remains unimplemented — see the doc comment
@@ -20,27 +20,14 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-// plantedHoldersDead makes the pid probe say the process behind every seat these
-// tests plant is gone. A planted lease is stamped with this test process's own
-// (live) pid, and a live in-flight pid keeps a seat Alive whatever its
-// heartbeat — so the kill these tests simulate needs the probe to agree.
-func plantedHoldersDead(t *testing.T) {
-	t.Helper()
-	prev := lease.PidAlive
-	lease.PidAlive = func(int) bool { return false }
-	t.Cleanup(func() { lease.PidAlive = prev })
-}
-
 func wireDU(t *testing.T) *store.DB {
 	t.Helper()
 	withWiring(t)
-	plantedHoldersDead(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +36,6 @@ func wireDU(t *testing.T) *store.DB {
 	SetLedgerStore(db.Ledger)
 	SetTxRunner(db.InTx)
 	SetDocIndexStore(db.DocIndex)
-	SetLeaseStore(db.Leases)
 	t.Cleanup(func() { db.Close() })
 	return db
 }
@@ -511,284 +497,6 @@ func TestRecordDriverUsageLateCatchupAttributesToClosedStory(t *testing.T) {
 	}
 }
 
-// TestRecordDriverUsageOnReapWritesKillRow pins AC5: a driving session found
-// dead by story-seat-list's stale-lease reap gets a final driver_usage row
-// carrying whatever usage the harness record already contains plus the wall
-// time, attributed to the story its seat lease was for — the row a session
-// killed mid-turn (crash, Ctrl-C, OOM) could never write for itself.
-func TestRecordDriverUsageOnReapWritesKillRow(t *testing.T) {
-	db := wireDU(t)
-	ctx := context.Background()
-	item := workitem.Item{ID: "sty_du_kill", Kind: workitem.KindStory, Status: "plan"}
-
-	t.Setenv(config.SessionEnv, "sess-du-kill")
-	t.Setenv("CLAUDECODE", "1")
-	stubSnapshotter(t, agentcli.DriverSnapshot{Available: true, Model: "claude-sonnet-5", FreshInputTokens: 100, OutputTokens: 10})
-	recordDriverUsage(ctx, item, "backlog", "plan", time.Unix(1_700_000_000, 0))
-
-	// Plant a stale story-seat lease for the same session/story — the process
-	// was killed mid-turn: no park/close transition, so no driver_usage row
-	// beyond the engage snapshot above ever gets written through the normal path.
-	_, out, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
-		ItemID: item.ID, Kind: "story", Owner: "local@host:99999",
-		State: "plan", StorySeat: true, SessionID: "sess-du-kill",
-	})
-	if err != nil || out != lease.OutcomeAcquired {
-		t.Fatalf("plant dead lease: out=%v err=%v", out, err)
-	}
-	staleAt := time.Now().UTC().Add(-lease.HeartbeatTTL - time.Minute)
-	if err := db.Leases.SetHeartbeat(ctx, item.ID, staleAt); err != nil {
-		t.Fatalf("freeze heartbeat: %v", err)
-	}
-
-	// The reap-time read: the harness record already has more usage than the
-	// engage snapshot saw — "whatever usage that record already contains" (AC5).
-	stubSnapshotter(t, agentcli.DriverSnapshot{Available: true, Model: "claude-sonnet-5", FreshInputTokens: 175, OutputTokens: 22})
-
-	if _, err := storySeatList(ctx, nil); err != nil {
-		t.Fatalf("story-seat-list: %v", err)
-	}
-
-	rows := driverUsageRows(t, db, item.ID)
-	if len(rows) != 2 {
-		t.Fatalf("driver_usage rows = %d, want 2 (engage + kill): %+v", len(rows), rows)
-	}
-	kill := rows[1]
-	if kill.Trigger != DriverTriggerKill {
-		t.Fatalf("trigger = %q, want %q", kill.Trigger, DriverTriggerKill)
-	}
-	if !kill.Available || kill.FreshInput != 75 || kill.Output != 12 {
-		t.Fatalf("kill row = %+v, want available delta fresh=75 out=12", kill)
-	}
-	if kill.WallSeconds <= 0 {
-		t.Fatalf("kill row WallSeconds = %v, want > 0", kill.WallSeconds)
-	}
-
-	remaining, err := db.Leases.List(ctx)
-	if err != nil {
-		t.Fatalf("list leases: %v", err)
-	}
-	if len(remaining) != 0 {
-		t.Fatalf("leases remaining after reap = %d, want 0 (dead lease must be reaped): %+v", len(remaining), remaining)
-	}
-}
-
-// TestRecordDriverUsageOnReapNoPartialTurnIsUnavailable pins AC5's other
-// branch: when the harness record has no partial turn to report at reap time
-// (still Available=false), the row is adapter-named unavailable plus the wall
-// time — never a fabricated token figure.
-func TestRecordDriverUsageOnReapNoPartialTurnIsUnavailable(t *testing.T) {
-	db := wireDU(t)
-	ctx := context.Background()
-	item := workitem.Item{ID: "sty_du_kill_noturn", Kind: workitem.KindStory, Status: "plan"}
-
-	_, out, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
-		ItemID: item.ID, Kind: "story", Owner: "local@host:99999",
-		State: "plan", StorySeat: true, SessionID: "sess-du-kill-noturn",
-	})
-	if err != nil || out != lease.OutcomeAcquired {
-		t.Fatalf("plant dead lease: out=%v err=%v", out, err)
-	}
-	staleAt := time.Now().UTC().Add(-lease.HeartbeatTTL - time.Minute)
-	if err := db.Leases.SetHeartbeat(ctx, item.ID, staleAt); err != nil {
-		t.Fatalf("freeze heartbeat: %v", err)
-	}
-
-	stubSnapshotter(t, agentcli.DriverSnapshot{Available: false, UnavailableReason: "claude: session transcript carries no assistant usage yet"})
-
-	if _, err := storySeatList(ctx, nil); err != nil {
-		t.Fatalf("story-seat-list: %v", err)
-	}
-
-	rows := driverUsageRows(t, db, item.ID)
-	if len(rows) != 1 {
-		t.Fatalf("driver_usage rows = %d, want 1: %+v", len(rows), rows)
-	}
-	kill := rows[0]
-	if kill.Available {
-		t.Fatalf("kill row must be Available=false: %+v", kill)
-	}
-	if kill.FreshInput != 0 || kill.CacheRead != 0 || kill.CacheWrite != 0 || kill.Output != 0 {
-		t.Fatalf("kill row token fields must stay zero, not invented: %+v", kill)
-	}
-	if kill.WallSeconds <= 0 {
-		t.Fatalf("kill row WallSeconds = %v, want > 0", kill.WallSeconds)
-	}
-	if kill.UnavailableReason == "" {
-		t.Fatalf("kill row must carry an adapter-named unavailable reason: %+v", kill)
-	}
-}
-
-// TestRecordDriverUsageOnReapNoProgressSincePriorRowIsUnavailable pins the
-// review-round-3 fix: a reap-time read that comes back Available=true but
-// with NO progress past the story's own last available snapshot (the record
-// simply has nothing new to report — the in-flight turn never got as far as
-// its first token) must never be written as an available row of invented
-// zeros. It is indistinguishable from "no partial turn to report" and must
-// be written the same way (sty_81caa41b AC5).
-func TestRecordDriverUsageOnReapNoProgressSincePriorRowIsUnavailable(t *testing.T) {
-	db := wireDU(t)
-	ctx := context.Background()
-	item := workitem.Item{ID: "sty_du_kill_noprogress", Kind: workitem.KindStory, Status: "plan"}
-
-	t.Setenv(config.SessionEnv, "sess-du-kill-noprogress")
-	t.Setenv("CLAUDECODE", "1")
-	stubSnapshotter(t, agentcli.DriverSnapshot{Available: true, Model: "claude-sonnet-5", FreshInputTokens: 100, OutputTokens: 10})
-	recordDriverUsage(ctx, item, "backlog", "plan", time.Unix(1_700_000_000, 0))
-
-	_, out, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
-		ItemID: item.ID, Kind: "story", Owner: "local@host:99999",
-		State: "plan", StorySeat: true, SessionID: "sess-du-kill-noprogress",
-	})
-	if err != nil || out != lease.OutcomeAcquired {
-		t.Fatalf("plant dead lease: out=%v err=%v", out, err)
-	}
-	staleAt := time.Now().UTC().Add(-lease.HeartbeatTTL - time.Minute)
-	if err := db.Leases.SetHeartbeat(ctx, item.ID, staleAt); err != nil {
-		t.Fatalf("freeze heartbeat: %v", err)
-	}
-
-	// Reap-time read: Available=true, but the SAME cumulative the engage
-	// snapshot already saw — no new usage at all, not even a partial turn.
-	stubSnapshotter(t, agentcli.DriverSnapshot{Available: true, Model: "claude-sonnet-5", FreshInputTokens: 100, OutputTokens: 10})
-
-	if _, err := storySeatList(ctx, nil); err != nil {
-		t.Fatalf("story-seat-list: %v", err)
-	}
-
-	rows := driverUsageRows(t, db, item.ID)
-	if len(rows) != 2 {
-		t.Fatalf("driver_usage rows = %d, want 2 (engage + kill): %+v", len(rows), rows)
-	}
-	kill := rows[1]
-	if kill.Available {
-		t.Fatalf("kill row must be Available=false, not an available row of invented zeros: %+v", kill)
-	}
-	if kill.FreshInput != 0 || kill.CacheRead != 0 || kill.CacheWrite != 0 || kill.Output != 0 {
-		t.Fatalf("kill row token fields must stay zero: %+v", kill)
-	}
-	if kill.UnavailableReason == "" {
-		t.Fatalf("kill row must carry an adapter-named unavailable reason: %+v", kill)
-	}
-}
-
-// TestRecordDriverUsageOnReapWithNoPriorRowIsUnavailable covers the OTHER
-// no-progress case: the reaped session never wrote a driver_usage row at all
-// (it died before its first transition), so there is no baseline to diff
-// against — the base is trivially the current cumulative, and the delta is
-// therefore always zero regardless of what the record contains. That must
-// also be written unavailable, never a fabricated available zero-row
-// (sty_81caa41b AC5).
-func TestRecordDriverUsageOnReapWithNoPriorRowIsUnavailable(t *testing.T) {
-	db := wireDU(t)
-	ctx := context.Background()
-	item := workitem.Item{ID: "sty_du_kill_nopriorrow", Kind: workitem.KindStory, Status: "plan"}
-
-	_, out, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
-		ItemID: item.ID, Kind: "story", Owner: "local@host:99999",
-		State: "plan", StorySeat: true, SessionID: "sess-du-kill-nopriorrow",
-	})
-	if err != nil || out != lease.OutcomeAcquired {
-		t.Fatalf("plant dead lease: out=%v err=%v", out, err)
-	}
-	staleAt := time.Now().UTC().Add(-lease.HeartbeatTTL - time.Minute)
-	if err := db.Leases.SetHeartbeat(ctx, item.ID, staleAt); err != nil {
-		t.Fatalf("freeze heartbeat: %v", err)
-	}
-
-	stubSnapshotter(t, agentcli.DriverSnapshot{Available: true, Model: "claude-sonnet-5", FreshInputTokens: 250, OutputTokens: 25})
-
-	if _, err := storySeatList(ctx, nil); err != nil {
-		t.Fatalf("story-seat-list: %v", err)
-	}
-
-	rows := driverUsageRows(t, db, item.ID)
-	if len(rows) != 1 {
-		t.Fatalf("driver_usage rows = %d, want 1: %+v", len(rows), rows)
-	}
-	kill := rows[0]
-	if kill.Available {
-		t.Fatalf("kill row must be Available=false, not an invented zero-delta available row: %+v", kill)
-	}
-	if kill.FreshInput != 0 || kill.CacheRead != 0 || kill.CacheWrite != 0 || kill.Output != 0 {
-		t.Fatalf("kill row token fields must stay zero: %+v", kill)
-	}
-	if kill.UnavailableReason == "" {
-		t.Fatalf("kill row must carry an adapter-named unavailable reason: %+v", kill)
-	}
-}
-
-// TestRecordDriverUsageOnReapBaseUsesLatestAvailableRowAfterUnavailable pins
-// the Revision 4 fix: when the session's LATEST driver_usage row is itself
-// unavailable (a prior reap already wrote a no-partial-turn row for this same
-// dead session), a SECOND reap's base must diff against the latest AVAILABLE
-// row, not the current cumulative — real usage that accrued since that last
-// known-good point must still be recorded, exactly the fix
-// recordLateDriverUsageCatchup's lateBase already applies to the ordinary
-// late-catchup path.
-func TestRecordDriverUsageOnReapBaseUsesLatestAvailableRowAfterUnavailable(t *testing.T) {
-	db := wireDU(t)
-	ctx := context.Background()
-	item := workitem.Item{ID: "sty_du_kill_afterunavail", Kind: workitem.KindStory, Status: "plan"}
-
-	t.Setenv(config.SessionEnv, "sess-du-kill-afterunavail")
-	t.Setenv("CLAUDECODE", "1")
-	stubSnapshotter(t, agentcli.DriverSnapshot{Available: true, Model: "claude-sonnet-5", FreshInputTokens: 100, OutputTokens: 10})
-	recordDriverUsage(ctx, item, "backlog", "plan", time.Unix(1_700_000_000, 0))
-
-	_, out, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
-		ItemID: item.ID, Kind: "story", Owner: "local@host:99999",
-		State: "plan", StorySeat: true, SessionID: "sess-du-kill-afterunavail",
-	})
-	if err != nil || out != lease.OutcomeAcquired {
-		t.Fatalf("plant dead lease: out=%v err=%v", out, err)
-	}
-	staleAt := time.Now().UTC().Add(-lease.HeartbeatTTL - time.Minute)
-	if err := db.Leases.SetHeartbeat(ctx, item.ID, staleAt); err != nil {
-		t.Fatalf("freeze heartbeat: %v", err)
-	}
-
-	// First reap: the record cannot be read at all — writes an unavailable row,
-	// NOT diffed from the engage row's cumulative (100/10).
-	stubSnapshotter(t, agentcli.DriverSnapshot{Available: false, UnavailableReason: "claude: session transcript unreadable: no such file"})
-	if _, err := storySeatList(ctx, nil); err != nil {
-		t.Fatalf("story-seat-list (first reap): %v", err)
-	}
-	rows := driverUsageRows(t, db, item.ID)
-	if len(rows) != 2 || rows[1].Available {
-		t.Fatalf("rows after first reap = %+v, want 2 with the second Available=false", rows)
-	}
-
-	// Re-plant a stale lease (the first reap removed it) and let the record
-	// become readable again with genuine NEW usage past the engage row.
-	_, out, _, err = db.Leases.AcquireWith(ctx, lease.AcquireOpts{
-		ItemID: item.ID, Kind: "story", Owner: "local@host:99999",
-		State: "plan", StorySeat: true, SessionID: "sess-du-kill-afterunavail",
-	})
-	if err != nil || out != lease.OutcomeAcquired {
-		t.Fatalf("re-plant dead lease: out=%v err=%v", out, err)
-	}
-	if err := db.Leases.SetHeartbeat(ctx, item.ID, staleAt); err != nil {
-		t.Fatalf("freeze heartbeat (2nd): %v", err)
-	}
-	stubSnapshotter(t, agentcli.DriverSnapshot{Available: true, Model: "claude-sonnet-5", FreshInputTokens: 250, OutputTokens: 30})
-	if _, err := storySeatList(ctx, nil); err != nil {
-		t.Fatalf("story-seat-list (second reap): %v", err)
-	}
-
-	rows = driverUsageRows(t, db, item.ID)
-	if len(rows) != 3 {
-		t.Fatalf("rows after second reap = %d, want 3 (engage, unavailable kill, available kill): %+v", len(rows), rows)
-	}
-	kill := rows[2]
-	if !kill.Available {
-		t.Fatalf("second kill row must be Available=true: %+v", kill)
-	}
-	if kill.FreshInput != 150 || kill.Output != 20 {
-		t.Fatalf("second kill row delta = %+v, want fresh=150 out=20 (250-100, 30-10: diffed against the last AVAILABLE row, not the current cumulative)", kill)
-	}
-}
-
 // TestSessionDriverUsageStateScansPastPageBoundary is a regression test for
 // the bug the reviewer flagged: the old lookup used
 // ledgerStore.List(...,Limit:2000), which orders OLDEST-first — once total
@@ -847,7 +555,7 @@ func TestSessionDriverUsageStateScansPastPageBoundary(t *testing.T) {
 // the closed story." Story A closes (Pending read, possibly undercounting its
 // own turn on grok) and the session NEVER drives another story — no
 // transition will ever call back in to confirm it. sweepPendingDriverUsage is
-// the standalone entry point (wired into story-seat-list) that confirms it
+// the standalone entry point (wired into the UI snapshot) that confirms it
 // anyway.
 func TestSweepPendingDriverUsageSettlesTailWithNoFollowingTransition(t *testing.T) {
 	db := wireDU(t)
@@ -870,7 +578,7 @@ func TestSweepPendingDriverUsageSettlesTailWithNoFollowingTransition(t *testing.
 	// No further transition ever happens for this session — instead, the
 	// close's own turn finally flushes (Turns advances by exactly 1, proving
 	// it is that one turn and nothing more), and a LATER sweep (e.g. from an
-	// unrelated `satelle story seat` call) is what discovers it.
+	// unrelated UI snapshot) is what discovers it.
 	// TurnBreakdown[4] (index == the close row's Turns) is the one confirmed
 	// in-flight turn the sweep credits back to the story.
 	stubSnapshotter(t, agentcli.DriverSnapshot{Available: true, MayUndercountInFlightTurn: true, FreshInputTokens: 480, OutputTokens: 48, Turns: 5,
@@ -1048,7 +756,7 @@ func TestOrdinaryDeltaAndLateCreditNeverBothClaimSameTurn(t *testing.T) {
 
 // wireDUWithEngagingWorkflow is wireDU plus a minimal DOT workflow synced
 // into DocIndex, so storyStatusIsEngaging (and therefore
-// acquireEngagementLease's story-seat path) resolves instead of falling back
+// the engagement path) resolves instead of falling back
 // to "no governing workflow". Duplicates the shape of the verb_test package's
 // singleStoryWF/wireWithWorkflowsStore fixture (internal/verb/single_story_test.go
 // via definition_freeze_test.go) rather than importing it — this file is
@@ -1065,7 +773,6 @@ func wireDUWithEngagingWorkflow(t *testing.T) *store.DB {
 func wireDUWithWorkflow(t *testing.T, doneTable, stepStates string) *store.DB {
 	t.Helper()
 	withWiring(t)
-	plantedHoldersDead(t)
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -1091,63 +798,8 @@ func wireDUWithWorkflow(t *testing.T, doneTable, stepStates string) *store.DB {
 	SetLedgerStore(db.Ledger)
 	SetTxRunner(db.InTx)
 	SetDocIndexStore(db.DocIndex)
-	SetLeaseStore(db.Leases)
 	t.Cleanup(func() { db.Close() })
 	return db
-}
-
-// TestAcquireEngagementLeaseRecordsKillRowOnSteal pins the OTHER AC5 wiring
-// point named by the review-round-3 fix: acquireEngagementLease's OWN steal
-// path (single_story.go) — the one every real `satelle story set` call goes
-// through — must record the replaced holder's final usage itself, not rely
-// on story-seat-list's Reap sweep ever running first. Without this, a
-// session that steals a stale seat before anyone runs `satelle story seat`
-// would silently drop the dead holder's tail forever.
-func TestAcquireEngagementLeaseRecordsKillRowOnSteal(t *testing.T) {
-	db := wireDUWithEngagingWorkflow(t)
-	ctx := context.Background()
-	item := workitem.Item{ID: "sty_du_steal", Kind: workitem.KindStory, Status: "backlog"}
-
-	// Plant a dead holder: a different owner/session already holds the seat,
-	// but its heartbeat is stale. Its own engage snapshot establishes the
-	// baseline the steal's reap-time read diffs against.
-	t.Setenv(config.SessionEnv, "sess-du-steal")
-	stubSnapshotter(t, agentcli.DriverSnapshot{Available: true, Model: "claude-sonnet-5", FreshInputTokens: 60, OutputTokens: 6})
-	recordDriverUsage(ctx, item, "backlog", "plan", time.Unix(1_700_000_000, 0))
-	_, out, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
-		ItemID: item.ID, Kind: "story", Owner: "dead-owner", State: "plan",
-		StorySeat: true, SessionID: "sess-du-steal",
-	})
-	if err != nil || out != lease.OutcomeAcquired {
-		t.Fatalf("plant dead lease: out=%v err=%v", out, err)
-	}
-	staleAt := time.Now().UTC().Add(-lease.HeartbeatTTL - time.Minute)
-	if err := db.Leases.SetHeartbeat(ctx, item.ID, staleAt); err != nil {
-		t.Fatalf("freeze heartbeat: %v", err)
-	}
-
-	// The stealing call's own reap-time read of the dead holder's session.
-	stubSnapshotter(t, agentcli.DriverSnapshot{Available: true, Model: "claude-sonnet-5", FreshInputTokens: 90, OutputTokens: 9})
-
-	acquired, alreadyInFlight, err := acquireEngagementLease(ctx, item, "plan")
-	if err != nil {
-		t.Fatalf("acquireEngagementLease: %v", err)
-	}
-	if !acquired || alreadyInFlight {
-		t.Fatalf("acquired=%v alreadyInFlight=%v, want acquired=true alreadyInFlight=false (steal)", acquired, alreadyInFlight)
-	}
-
-	rows := driverUsageRows(t, db, item.ID)
-	if len(rows) != 2 {
-		t.Fatalf("driver_usage rows = %d, want 2 (the dead holder's own engage row + its kill row): %+v", len(rows), rows)
-	}
-	kill := rows[1]
-	if kill.Trigger != DriverTriggerKill {
-		t.Fatalf("trigger = %q, want %q", kill.Trigger, DriverTriggerKill)
-	}
-	if !kill.Available || kill.FreshInput != 30 || kill.Output != 3 {
-		t.Fatalf("kill row = %+v, want available delta fresh=30 out=3 (90-60, 9-6)", kill)
-	}
 }
 
 // fakeTurnSession simulates a grok-style session record whose turns are
@@ -1244,80 +896,6 @@ func assertTurnCreditInvariant(t *testing.T, ctx context.Context, sessionID stri
 	}
 	if recon.UnattributedAvailable && (recon.Unattributed.FreshInput < 0 || recon.Unattributed.Output < 0) {
 		t.Fatalf("(c) unattributed remainder negative: %+v", recon.Unattributed)
-	}
-}
-
-// TestTurnCreditPropertySequence_ReapClaimsSharedTurnBeforeSweepCanDoubleCredit
-// is Revision 5's mandatory sequence (i): A closes Pending at turn index N; B
-// engages inside that SAME still-open turn (so A's own inline catch-up cannot
-// resolve yet — the harness has nothing past index N to read); the turn then
-// flushes; B's own seat is found stale and reaped by story-seat-list BEFORE
-// anything resolves A's Pending row. Reap runs its kill-row recorder before
-// its own trailing sweep (seat.go: recordDriverUsageOnReap, then
-// sweepPendingDriverUsage) — the kill row is the FIRST writer to observe the
-// flushed turn and claims it; the trailing sweep, which would otherwise
-// credit A's still-open Pending row for the very same turn, must find it
-// already claimed and back off. The turn is counted exactly once — the
-// invariant holds after every step, not just at the end.
-func TestTurnCreditPropertySequence_ReapClaimsSharedTurnBeforeSweepCanDoubleCredit(t *testing.T) {
-	db := wireDU(t)
-	ctx := context.Background()
-	sessionID := "sess-prop-reap-then-sweep"
-	fake := &fakeTurnSession{}
-	stubSessionSnapshotter(t, map[string]*fakeTurnSession{sessionID: fake})
-	t.Setenv(config.SessionEnv, sessionID)
-	t.Setenv("GROK_AGENT", "1")
-
-	a := workitem.Item{ID: "sty_prop_reapA", Kind: workitem.KindStory, Status: "plan"}
-	b := workitem.Item{ID: "sty_prop_reapB", Kind: workitem.KindStory, Status: "plan"}
-	now := time.Unix(1_700_000_000, 0)
-
-	recordDriverUsage(ctx, a, "backlog", "plan", now)
-	assertTurnCreditInvariant(t, ctx, sessionID)
-	recordDriverUsage(ctx, a, "plan", "done", now.Add(time.Second))
-	assertTurnCreditInvariant(t, ctx, sessionID)
-	aRows := driverUsageRows(t, db, a.ID)
-	if len(aRows) != 2 || !aRows[1].Pending {
-		t.Fatalf("A rows = %+v, want engage + Pending close (turn still open)", aRows)
-	}
-
-	// B engages inside the same still-open turn — the harness has not
-	// flushed it yet, so B's own engage row is a clean zero-delta baseline.
-	_, out, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
-		ItemID: b.ID, Kind: "story", Owner: "local@host:prop", State: "plan",
-		StorySeat: true, SessionID: sessionID,
-	})
-	if err != nil || out != lease.OutcomeAcquired {
-		t.Fatalf("plant B's lease: out=%v err=%v", out, err)
-	}
-	recordDriverUsage(ctx, b, "backlog", "plan", now.Add(2*time.Second))
-	assertTurnCreditInvariant(t, ctx, sessionID)
-
-	// The turn finally flushes — no writer has looked at it yet.
-	fake.flushTurn(80, 8)
-	assertTurnCreditInvariant(t, ctx, sessionID)
-
-	// B's seat goes stale and gets reaped by story-seat-list.
-	staleAt := time.Now().UTC().Add(-lease.HeartbeatTTL - time.Minute)
-	if err := db.Leases.SetHeartbeat(ctx, b.ID, staleAt); err != nil {
-		t.Fatalf("freeze B's heartbeat: %v", err)
-	}
-	if _, err := storySeatList(ctx, nil); err != nil {
-		t.Fatalf("story-seat-list: %v", err)
-	}
-	assertTurnCreditInvariant(t, ctx, sessionID)
-
-	bRows := driverUsageRows(t, db, b.ID)
-	if len(bRows) != 2 || bRows[1].Trigger != DriverTriggerKill || !bRows[1].Available {
-		t.Fatalf("B rows = %+v, want engage + an available kill row", bRows)
-	}
-	if bRows[1].FreshInput != 80 || bRows[1].Output != 8 {
-		t.Fatalf("B kill row = %+v, want fresh=80 out=8 (the flushed turn)", bRows[1])
-	}
-
-	aRows = driverUsageRows(t, db, a.ID)
-	if len(aRows) != 2 {
-		t.Fatalf("A rows after reap+sweep = %d, want STILL 2 (the turn was already claimed by B's kill row; A's Pending row stays open, uncredited): %+v", len(aRows), aRows)
 	}
 }
 

@@ -134,9 +134,10 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 	}
 
 	entriesByStory, _ := decodeLedgerByStory(ctx, s, repoKey)
-	liveSeat, _ := decodeLiveSeats(ctx, s, repoKey)
-	engagedIDs, _ := decodeEngagedStorySeats(ctx, s, repoKey)
-	dispatches, _ := decodeDispatchSeats(ctx, s, repoKey)
+	inFlight, _ := decodeInFlight(ctx, s, repoKey)
+	engs, _ := decodeEngagements(ctx, s, repoKey)
+	engagedIDs := engagedStoryIDs(engs)
+	dispatches, _ := decodeDispatches(ctx, s, repoKey)
 	catStepOf := categoryStepOf(byKind["workflows"])
 	specOf := categorySpecOf(byKind["workflows"])
 
@@ -154,7 +155,7 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 	if syncSt.PushReason != "" {
 		logPath = displayedSyncLogPath()
 	}
-	storyRows := attachStagesFrom(entriesByStory, stories, liveSeat, dispatches, catStepOf, specOf)
+	storyRows := attachStagesFrom(entriesByStory, stories, inFlight, dispatches, catStepOf, specOf)
 	attachChildrenInFlight(storyRows, stories, dispatches)
 	return pageData{
 		RepoRoot:        repoRoot,
@@ -168,7 +169,7 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 		BacklogCount:    backlog,
 		EngagementCount: len(engagedIDs),
 		EngagedStoryIDs: engagedIDs,
-		Tasks:           attachStagesFrom(entriesByStory, tasks, liveSeat, dispatches, catStepOf, specOf),
+		Tasks:           attachStagesFrom(entriesByStory, tasks, inFlight, dispatches, catStepOf, specOf),
 		DocKinds:        kinds,
 		DocCount:        len(docs),
 		Workflows:       workflowRows(byKind["workflows"], prov, src),
@@ -179,11 +180,11 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 }
 
 // attachStagesFrom is the mirror-side stage attach: ledger rows already loaded.
-func attachStagesFrom(entriesByStory map[string][]ledger.Entry, items []workitem.Item, liveSeat map[string]bool, dispatches map[string]*dispatchVM, catStepOf func(category, state string) int, specOf func(category string) wfdot.Spec) []rowVM {
+func attachStagesFrom(entriesByStory map[string][]ledger.Entry, items []workitem.Item, inFlight map[string]bool, dispatches map[string]*dispatchVM, catStepOf func(category, state string) int, specOf func(category string) wfdot.Spec) []rowVM {
 	out := make([]rowVM, len(items))
 	for i, it := range items {
 		stepOf := func(s string) int { return catStepOf(it.Category, s) }
-		stages := buildStages(entriesByStory[it.ID], it.Status, liveSeat[it.ID], stepOf, specOf(it.Category))
+		stages := buildStages(entriesByStory[it.ID], it.Status, inFlight[it.ID], stepOf, specOf(it.Category))
 		stages = applyPerforming(stages, it.Status, dispatches[it.ID])
 		out[i] = rowVM{Item: it, Stages: stages, Dispatch: dispatches[it.ID]}
 	}
@@ -263,48 +264,59 @@ func decodeLedgerByStory(ctx context.Context, s *mirror.Store, repoKey string) (
 	return out, nil
 }
 
-func decodeLiveSeats(ctx context.Context, s *mirror.Store, repoKey string) (map[string]bool, error) {
-	rows, err := s.ListItems(ctx, repoKey, "seat")
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]bool{}
-	for _, r := range rows {
-		var seat struct {
-			ID       string `json:"id"`
-			InFlight bool   `json:"in_flight"`
-			Stale    bool   `json:"stale"`
-		}
-		if err := json.Unmarshal([]byte(r.Payload), &seat); err != nil {
-			continue
-		}
-		if seat.ID == "" {
-			seat.ID = r.ID
-		}
-		if seat.InFlight && !seat.Stale {
-			out[seat.ID] = true
-		}
-	}
-	return out, nil
-}
-
-// seatPayload is the mirror seat row shape pushed by listSeatsJSON.
-type seatPayload struct {
-	ID        string `json:"id"`
-	StorySeat bool   `json:"story_seat"`
-	InFlight  bool   `json:"in_flight"`
-	Stale     bool   `json:"stale"`
+// engagementPayload is the mirror engagement row shape pushed by
+// listEngagementsJSON: one item the repo is performing (sty_9c782f0e).
+type engagementPayload struct {
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`
+	InFlight bool   `json:"in_flight"`
 	// In-flight DISPATCH metadata (sty_752c4ef2 AC6) — omitted on the wire
-	// when no dispatch has stamped detail on this seat yet.
+	// when no dispatch is recorded on the open transition yet.
 	Agent             string    `json:"agent,omitempty"`
 	Model             string    `json:"model,omitempty"`
 	LastEvent         string    `json:"last_event,omitempty"`
 	LastEventAt       time.Time `json:"last_event_at,omitempty"`
 	ActivityStartedAt time.Time `json:"activity_started_at,omitempty"`
 	IdleTimeoutNs     int64     `json:"idle_timeout_ns,omitempty"`
-	// Activity is the seat's phase label; a performer dispatch stamps
-	// "dispatch:<step>" (agentstep emitActivity).
+	// Activity is the open transition's phase label; a performer dispatch
+	// records "dispatch:<step>" (agentstep emitActivity).
 	Activity string `json:"activity,omitempty"`
+}
+
+// decodeEngagements reads the mirror's engagement partition.
+func decodeEngagements(ctx context.Context, s *mirror.Store, repoKey string) ([]engagementPayload, error) {
+	rows, err := s.ListItems(ctx, repoKey, "engagement")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]engagementPayload, 0, len(rows))
+	for _, r := range rows {
+		var e engagementPayload
+		if err := json.Unmarshal([]byte(r.Payload), &e); err != nil {
+			continue
+		}
+		if e.ID == "" {
+			e.ID = r.ID
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+// decodeInFlight is the set of items with a transition in flight, for the
+// progress lights.
+func decodeInFlight(ctx context.Context, s *mirror.Store, repoKey string) (map[string]bool, error) {
+	engs, err := decodeEngagements(ctx, s, repoKey)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, e := range engs {
+		if e.InFlight {
+			out[e.ID] = true
+		}
+	}
+	return out, nil
 }
 
 // dispatchVM is the web story row's running indicator (sty_752c4ef2 AC6):
@@ -320,96 +332,65 @@ type dispatchVM struct {
 	StartedAt   time.Time
 	Warn        bool
 	// Step is the workflow step the dispatched performer is working on, from
-	// the seat's "dispatch:<step>" activity label; empty for any other phase
-	// (a gate review, a summariser).
+	// the transition's "dispatch:<step>" activity label; empty for any other
+	// phase (a gate review, a summariser).
 	Step string
 }
 
-// buildDispatchIndicator returns the running indicator for an in-flight,
-// non-stale seat that has stamped agent/model detail, or nil when there is
-// nothing to show (not in flight, stale, or no dispatch detail yet — a
-// gate-only phase stamp with no ActivityDetail). Warn fires once idle time
-// (now - LastEventAt) passes half the seat's resolved idle_timeout; a seat
-// with no known idle_timeout (agents layer unresolved) never warns.
-func buildDispatchIndicator(seat seatPayload, now time.Time) *dispatchVM {
-	if !seat.InFlight || seat.Stale || seat.Agent == "" {
+// buildDispatchIndicator returns the running indicator for an in-flight
+// engagement with a recorded dispatch, or nil when there is nothing to show (not
+// in flight, or a gate-only phase with no dispatch). Warn fires once idle time
+// (now - LastEventAt) passes half the binding's resolved idle_timeout; with no
+// known idle_timeout (agents layer unresolved) it never warns.
+func buildDispatchIndicator(e engagementPayload, now time.Time) *dispatchVM {
+	if !e.InFlight || e.Agent == "" {
 		return nil
 	}
 	vm := &dispatchVM{
-		Agent: seat.Agent, Model: seat.Model, LastEvent: seat.LastEvent,
-		LastEventAt: seat.LastEventAt, StartedAt: seat.ActivityStartedAt,
+		Agent: e.Agent, Model: e.Model, LastEvent: e.LastEvent,
+		LastEventAt: e.LastEventAt, StartedAt: e.ActivityStartedAt,
 	}
-	if step, ok := strings.CutPrefix(seat.Activity, "dispatch:"); ok {
+	if step, ok := strings.CutPrefix(e.Activity, "dispatch:"); ok {
 		vm.Step = step
 	}
-	if seat.IdleTimeoutNs > 0 && !seat.LastEventAt.IsZero() {
-		idle := now.Sub(seat.LastEventAt)
-		vm.Warn = idle >= time.Duration(seat.IdleTimeoutNs)/2
+	if e.IdleTimeoutNs > 0 && !e.LastEventAt.IsZero() {
+		idle := now.Sub(e.LastEventAt)
+		vm.Warn = idle >= time.Duration(e.IdleTimeoutNs)/2
 	}
 	return vm
 }
 
-// decodeDispatchSeats builds the id → running-indicator map for every
-// in-flight, non-stale seat carrying dispatch detail (sty_752c4ef2 AC6).
-func decodeDispatchSeats(ctx context.Context, s *mirror.Store, repoKey string) (map[string]*dispatchVM, error) {
-	rows, err := s.ListItems(ctx, repoKey, "seat")
+// decodeDispatches builds the id → running-indicator map for every in-flight
+// engagement carrying dispatch detail (sty_752c4ef2 AC6).
+func decodeDispatches(ctx context.Context, s *mirror.Store, repoKey string) (map[string]*dispatchVM, error) {
+	engs, err := decodeEngagements(ctx, s, repoKey)
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
 	out := map[string]*dispatchVM{}
-	for _, r := range rows {
-		var seat seatPayload
-		if err := json.Unmarshal([]byte(r.Payload), &seat); err != nil {
-			continue
-		}
-		if seat.ID == "" {
-			seat.ID = r.ID
-		}
-		if vm := buildDispatchIndicator(seat, now); vm != nil {
-			out[seat.ID] = vm
+	for _, e := range engs {
+		if vm := buildDispatchIndicator(e, now); vm != nil {
+			out[e.ID] = vm
 		}
 	}
 	return out, nil
 }
 
-// engagedStorySeatIDs returns non-stale story seats (story_seat && !stale).
-// Distinct from decodeLiveSeats (in_flight && !stale) used only for progress
-// lights — a settled engaged lease still counts as engaged (sty_01ba9482).
-func engagedStorySeatIDs(seats []seatPayload) []string {
+// engagedStoryIDs returns the performing stories (kind story), sorted. Distinct
+// from decodeInFlight, used only for progress lights — a settled performing
+// story still counts as engaged (sty_01ba9482).
+func engagedStoryIDs(engs []engagementPayload) []string {
 	var ids []string
-	for _, seat := range seats {
-		if !seat.StorySeat || seat.Stale {
-			continue
-		}
-		id := strings.TrimSpace(seat.ID)
-		if id == "" {
+	for _, e := range engs {
+		id := strings.TrimSpace(e.ID)
+		if e.Kind != string(workitem.KindStory) || id == "" {
 			continue
 		}
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 	return ids
-}
-
-// decodeEngagedStorySeats lists non-stale story-seat holders for engagement chrome.
-func decodeEngagedStorySeats(ctx context.Context, s *mirror.Store, repoKey string) ([]string, error) {
-	rows, err := s.ListItems(ctx, repoKey, "seat")
-	if err != nil {
-		return nil, err
-	}
-	seats := make([]seatPayload, 0, len(rows))
-	for _, r := range rows {
-		var seat seatPayload
-		if err := json.Unmarshal([]byte(r.Payload), &seat); err != nil {
-			continue
-		}
-		if seat.ID == "" {
-			seat.ID = r.ID
-		}
-		seats = append(seats, seat)
-	}
-	return engagedStorySeatIDs(seats), nil
 }
 
 // mirrorLoadDetail builds the expand/detail VM from mirror kinds only.
@@ -533,7 +514,7 @@ func mirrorLoadDetail(ctx context.Context, s *mirror.Store, repoKey, group, id s
 	if group != "task" {
 		var refs []epicset.Ref
 		refs, membersNote = mirrorBuildMembers(ctx, s, repoKey, item)
-		dispatches, _ := decodeDispatchSeats(ctx, s, repoKey)
+		dispatches, _ := decodeDispatches(ctx, s, repoKey)
 		wave = mirrorWave(ctx, s, repoKey, item)
 		members = annotateMembers(refs, wave, dispatches)
 		childrenInFlight = rollupDispatch(refs, dispatches)

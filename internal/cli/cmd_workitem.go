@@ -277,7 +277,6 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyQueueCommand())
 		parent.AddCommand(storyWorktreeCommand())
 		parent.AddCommand(storyRecoverCommand())
-		parent.AddCommand(storySeatCommands()...)
 		parent.AddCommand(storyTidyCommands()...)
 		parent.AddCommand(storyMessageCommand())
 		parent.AddCommand(storyMessagesCommand())
@@ -785,8 +784,8 @@ func storyReleaseRecordCommand() *cobra.Command {
 		Use:   "release-record <id>... --commit <sha> --release <id> [--field k=v ...]",
 		Short: "Record a release against stories by id, done ones included; changes no status",
 		Long: `Append one release_record ledger row to each named story: the commit and the
-release identifier that shipped it, plus any --field metadata. It takes no seat
-and changes no status, so it runs from any session and on a story already done.
+release identifier that shipped it, plus any --field metadata. It engages
+nothing and changes no status, so it runs from any session and on a story already done.
 
 The keys --field may carry are the repo's [release] fields in satelle.toml; an
 undeclared key is refused when that list is set. Every id and key is checked
@@ -1672,7 +1671,7 @@ func storyWaveCommand() *cobra.Command {
 		Use:   "wave <epic-parent-id>",
 		Short: "Print the children of an epic that may start now (read-only)",
 		Long: `Print the runnable child ids of an epic-parent, one per line. Read-only: it
-writes no status, lease or tag, and engages or dispatches nothing.
+writes no status or tag, and engages or dispatches nothing.
 
 A dependency is satisfied only when that story's own route says done; an
 unsatisfied child is listed (# omitted) with the dependency named. The schedule
@@ -2076,19 +2075,19 @@ artifacts are never session-injected, so nothing surfaces them unless you ask.`,
 }
 
 // storyStopRequestCommand builds `satelle story stop-request <id> --reason …`
-// (sty_8426b9c0 AC5; sty_7b69954a names this as the LIVE-seat preemption path).
-// Annotates the engagement lease; never kills a process.
+// (sty_8426b9c0 AC5; sty_7b69954a names this as the preemption path).
+// Records a stop_requested row on the story's ledger; never kills a process.
 func storyStopRequestCommand() *cobra.Command {
 	var reason string
 	cmd := &cobra.Command{
 		Use:   "stop-request <id>",
-		Short: "Request stop of another agent's engaged story (LIVE seat preemption; arbitrated at next step edge)",
-		Long: `Request that another agent stop advancing an engaged story so the engagement seat can free.
+		Short: "Request stop of another agent's engaged story (preemption; arbitrated at next step edge)",
+		Long: `Request that another agent stop advancing an engaged story so other work can engage
+under the concurrency limit.
 
-This is the preemption path for a LIVE seat held by another agent — not for a stale seat
-(use "satelle story seat release <id>" for that). The holder is refused forward engaging
-moves at the next step edge and may park (blocked) or terminate; parking frees the seat.
-Never cancel a healthy story to free the seat — cancelled is terminal.`,
+The driver is refused forward engaging moves at the next step edge and may park
+(blocked) or terminate; a parked story no longer performs. Never cancel a healthy
+story to get under the limit — cancelled is terminal.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -2256,45 +2255,6 @@ See: satelle help agent-dispatch`,
 	return cmd
 }
 
-// storySeatCommands builds `satelle story seat` (list) and
-// `satelle story seat release <id>` — the agent/operator surface for the
-// engagement seat (sty_1738f973 AC4).
-func storySeatCommands() []*cobra.Command {
-	seat := &cobra.Command{
-		Use:   "seat",
-		Short: "List engagement seat leases (reaps stale rows first)",
-		Long: `List the engagement seat leases: who holds one, from which working tree, and how
-old the heartbeat is. Stale rows are reaped before the list is rendered, so what
-you see is live.
-
-Reach for it when an engagement is refused. The heartbeat age is the reading
-that matters: a LIVE holder is another agent still working, and the path is
-stop-request; a STALE one is nobody, and the path is seat release.`,
-		Args:        cobra.NoArgs,
-		Annotations: needsStore(),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return dispatch(cmd, "story-seat-list", map[string]any{})
-		},
-	}
-	release := &cobra.Command{
-		Use:   "release <id>",
-		Short: "Force-release an engagement seat by story/task id",
-		Long: `Force-release an engagement seat by the id holding it.
-
-For a STALE seat — no live agent behind it, which the heartbeat age in satelle
-story seat shows. Releasing a LIVE holder's seat abandons work another agent
-believes it is still doing: ask for it with stop-request instead, which lets the
-holder park itself. Never cancel a healthy story to free a seat.`,
-		Args:        cobra.ExactArgs(1),
-		Annotations: needsStore(),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return dispatch(cmd, "story-seat-release", map[string]any{"id": args[0]})
-		},
-	}
-	seat.AddCommand(release)
-	return []*cobra.Command{seat}
-}
-
 // storyMessageCommand is `satelle story message <id> --from <role> [--to <addressee>] --body <text>`.
 func storyMessageCommand() *cobra.Command {
 	var from, to, body, deadline, replyTo string
@@ -2393,7 +2353,7 @@ For every story at once, see satelle board.`,
 
 // Help for the shared story/task/execution surface. One factory builds the three
 // groups, so their help is written once and PARAMETERISED — the constraints that
-// genuinely differ (seat arbitration and the definition freeze are story-only,
+// genuinely differ (the concurrency limit and the definition freeze are story-only,
 // --parent is execution-only) are named per group rather than repeated three
 // times with two of them wrong (sty_a499e7f5).
 
@@ -2477,7 +2437,7 @@ rewrites the body by accident.
 REFUSE it, and a status that skips a step is refused before any gate. Called by
 an agent, a gate that outlasts the call returns a handle and delivers its verdict
 by notification: never poll (satelle help agent-dispatch). Engaging statuses
-also take the engagement seat, which is arbitrated per project.
+also meet the concurrency limit, counted per project ([engagement] limit).
 title/body/acceptance/category are FROZEN once the story leaves its entry
 state; status, tags, priority, estimate and actual stay mutable. --tags
 replaces the whole set, while --add-tags/--remove-tags are additive and may not

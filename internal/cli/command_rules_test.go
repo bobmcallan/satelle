@@ -31,11 +31,11 @@ import (
 
 const ruleGateBase = "[review]\ngate_create = false\n\n[gate]\nedit_exempt_paths = [\".satelle/\"]\n"
 
-// ruleRepo is a governed repo with the given seat and the given rules appended
+// ruleRepo is a governed repo with the given engagement and the given rules appended
 // to its [gate] table.
-func ruleRepo(t *testing.T, seat stopcheckSeatState, rules string) (repo, storyID string) {
+func ruleRepo(t *testing.T, fix engagementFixture, rules string) (repo, storyID string) {
 	t.Helper()
-	repo, storyID = stopcheckRepo(t, seat)
+	repo, storyID = stopcheckRepo(t, fix)
 	writeRuleConfig(t, repo, rules)
 	return repo, storyID
 }
@@ -96,9 +96,9 @@ func setStoryStatus(t *testing.T, id, status string) {
 
 // AC1: nothing is denied or warned with no rules authored.
 func TestCommandRulesNoDefault(t *testing.T) {
-	for _, seat := range []stopcheckSeatState{seatNone, seatMine} {
-		t.Run(string(seat), func(t *testing.T) {
-			ruleRepo(t, seat, "")
+	for _, fix := range []engagementFixture{engagedNowhere, engagedHere} {
+		t.Run(string(fix), func(t *testing.T) {
+			ruleRepo(t, fix, "")
 			for _, cmd := range []string{"rm -rf /", "kubectl delete x", "gh pr merge 1", "orbctl apply -f x", "ls"} {
 				out, err := commitgateOn(t, "claude", cmd)
 				if err != nil || strings.TrimSpace(out) != "" {
@@ -138,7 +138,7 @@ func TestCommandRulesExampleSet(t *testing.T) {
 	mutating := []string{"orbctl apply -f x.yaml", "orbctl delete pod/x", "cd /tmp && orbctl apply -f x", "FOO=1 orbctl delete y", "orbctl 'apply' -f x"}
 
 	t.Run("unengaged", func(t *testing.T) {
-		ruleRepo(t, seatNone, exampleRules(t))
+		ruleRepo(t, engagedNowhere, exampleRules(t))
 		for _, c := range readOnly {
 			if out, err := commitgateOn(t, "claude", c); err != nil || out != "" {
 				t.Errorf("%q must pass: %v %q", c, err, out)
@@ -160,7 +160,7 @@ func TestCommandRulesExampleSet(t *testing.T) {
 		}
 	})
 	t.Run("engaged at in_progress", func(t *testing.T) {
-		ruleRepo(t, seatMine, exampleRules(t))
+		ruleRepo(t, engagedHere, exampleRules(t))
 		for _, c := range append(append([]string{}, readOnly...), mutating...) {
 			if out, err := commitgateOn(t, "claude", c); err != nil || out != "" {
 				t.Errorf("%q must pass at in_progress: %v %q", c, err, out)
@@ -168,8 +168,10 @@ func TestCommandRulesExampleSet(t *testing.T) {
 		}
 	})
 	t.Run("engaged elsewhere", func(t *testing.T) {
-		_, id := ruleRepo(t, seatMine, exampleRules(t))
+		_, id := ruleRepo(t, engagedHere, exampleRules(t))
 		setStoryStatus(t, id, "plan")
+		// a story set to plan records the engagement at plan from this tree
+		recordEngagement(t, id, "plan", sessionWorktreeUncached(), thisSession)
 		for _, c := range readOnly {
 			if out, err := commitgateOn(t, "claude", c); err != nil || out != "" {
 				t.Errorf("%q must pass at plan: %v %q", c, err, out)
@@ -181,7 +183,7 @@ func TestCommandRulesExampleSet(t *testing.T) {
 		}
 	})
 	t.Run("scale warns", func(t *testing.T) {
-		ruleRepo(t, seatMine, exampleRules(t))
+		ruleRepo(t, engagedHere, exampleRules(t))
 		out, err := commitgateOn(t, "claude", "orbctl scale deploy/x 3")
 		if err != nil {
 			t.Fatalf("a warned command runs: %v\n%s", err, out)
@@ -199,7 +201,7 @@ func TestCommandRulesExampleSet(t *testing.T) {
 
 // A deny after a warn leaves one answer on stdout, not two.
 func TestCommandRulesWarnThenLaterDenyEmitsOneDocument(t *testing.T) {
-	_, _ = ruleRepo(t, seatNone, `
+	_, _ = ruleRepo(t, engagedNowhere, `
 [[gate.command_rule]]
 pattern = "git push"
 action = "warn"
@@ -216,7 +218,7 @@ push = ["release"]
 }
 
 // AC9: a deny with no allow list refuses in every status, release included,
-// and never reads the seat.
+// and never reads the engagement.
 func TestCommandRuleDenyWithNoAllowRefusesEverywhere(t *testing.T) {
 	const rules = `
 [[gate.command_rule]]
@@ -225,7 +227,7 @@ action = "deny"
 message = "orbctl nuke is never run by an agent"
 `
 	statuses := []string{"backlog", "plan", "in_progress", "integration", "release", "done", "blocked"}
-	_, id := ruleRepo(t, seatMine, rules)
+	_, id := ruleRepo(t, engagedHere, rules)
 	for _, st := range statuses {
 		setStoryStatus(t, id, st)
 		out, err := commitgateOn(t, "claude", "orbctl nuke --all")
@@ -237,15 +239,15 @@ message = "orbctl nuke is never run by an agent"
 		}
 	}
 	t.Run("unengaged", func(t *testing.T) {
-		ruleRepo(t, seatNone, rules)
+		ruleRepo(t, engagedNowhere, rules)
 		if _, err := commitgateOn(t, "claude", "orbctl nuke"); err == nil {
 			t.Fatal("unengaged: must refuse")
 		}
 	})
-	t.Run("no seat read", func(t *testing.T) {
-		d := evalCommandRules(mustRules(t, rules), "orbctl nuke", func() (seatInfo, bool, error) {
-			t.Fatal("a deny with no allow list must not read the seat")
-			return seatInfo{}, false, nil
+	t.Run("no engagement read", func(t *testing.T) {
+		d := evalCommandRules(mustRules(t, rules), "orbctl nuke", func() (engagement, bool, error) {
+			t.Fatal("a deny with no allow list must not read the engagement")
+			return engagement{}, false, nil
 		})
 		if d.Decision != commandRuleDenied {
 			t.Fatalf("decision = %+v", d)
@@ -271,17 +273,17 @@ action = "deny"
 allow = ["Coded", "release"]
 message = "m"
 `)
-	deny := func(info seatInfo) bool {
-		d := evalCommandRules(rules, "orbctl apply", func() (seatInfo, bool, error) { return info, true, nil })
+	deny := func(info engagement) bool {
+		d := evalCommandRules(rules, "orbctl apply", func() (engagement, bool, error) { return info, true, nil })
 		return d.Decision == commandRuleDenied
 	}
-	if deny(seatInfo{ItemID: "sty_1", StoryStatus: "in_progress", State: "coded"}) {
-		t.Error("the seat's step name is in the allow list (case-insensitive)")
+	if deny(engagement{ItemID: "sty_1", StoryStatus: "in_progress", State: "coded"}) {
+		t.Error("the story's step name is in the allow list (case-insensitive)")
 	}
-	if deny(seatInfo{ItemID: "sty_1", StoryStatus: "release", State: "released"}) {
+	if deny(engagement{ItemID: "sty_1", StoryStatus: "release", State: "released"}) {
 		t.Error("the story status is in the allow list")
 	}
-	if !deny(seatInfo{ItemID: "sty_1", StoryStatus: "plan", State: "readied"}) {
+	if !deny(engagement{ItemID: "sty_1", StoryStatus: "plan", State: "readied"}) {
 		t.Error("neither name is listed")
 	}
 }
@@ -404,10 +406,10 @@ func BenchmarkCommandRules(b *testing.B) {
 		rules = append(rules, config.CommandRule{Pattern: "tool" + string(rune('a'+i%26)) + " sub * --flag", Action: "deny", Message: "m"})
 	}
 	const command = "cd /srv/app && git status --short | grep -v x; ls -la internal/cli"
-	seat := func() (seatInfo, bool, error) { return seatInfo{}, false, nil }
+	resolve := func() (engagement, bool, error) { return engagement{}, false, nil }
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		evalCommandRules(rules, command, seat)
+		evalCommandRules(rules, command, resolve)
 	}
 }
 
@@ -502,9 +504,9 @@ func TestCommandRulesRelativeCost(t *testing.T) {
 		rules = append(rules, config.CommandRule{Pattern: "tool" + string(rune('a'+i%26)) + " sub * --flag", Action: "deny", Message: "m"})
 	}
 	const command = "cd /srv/app && git status --short | grep -v x; ls -la internal/cli"
-	seat := func() (seatInfo, bool, error) { return seatInfo{}, false, nil }
+	resolve := func() (engagement, bool, error) { return engagement{}, false, nil }
 	checkRelativeCost(t,
-		func() { evalCommandRules(rules, command, seat) },
+		func() { evalCommandRules(rules, command, resolve) },
 		func() { gitSubcommands(command) })
 }
 
@@ -547,12 +549,12 @@ func TestRelativeCostCatchesRegression(t *testing.T) {
 		rules = append(rules, config.CommandRule{Pattern: "tool" + string(rune('a'+i%26)) + " sub * --flag", Action: "deny", Message: "m"})
 	}
 	const command = "cd /srv/app && git status --short | grep -v x; ls -la internal/cli"
-	seat := func() (seatInfo, bool, error) { return seatInfo{}, false, nil }
+	resolve := func() (engagement, bool, error) { return engagement{}, false, nil }
 	slow := func() {
 		for range rules {
 			gitSubcommands(command)
 		}
-		evalCommandRules(rules, command, seat)
+		evalCommandRules(rules, command, resolve)
 	}
 	evalNs, scanNs := relativeCostN(slow, func() { gitSubcommands(command) }, 100)
 	ratio, err := relativeCostVerdict(evalNs, scanNs, relativeCostBound)
@@ -568,19 +570,19 @@ func TestRelativeCostCatchesRegression(t *testing.T) {
 	}
 }
 
-// AC5: no seat is read with no rules, or when no rule matches.
-func TestCommandRulesReadNoSeatUnlessMatched(t *testing.T) {
-	seat := func() (seatInfo, bool, error) {
-		t.Fatal("the seat must not be read")
-		return seatInfo{}, false, nil
+// AC5: no engagement is read with no rules, or when no rule matches.
+func TestCommandRulesReadNoEngagementUnlessMatched(t *testing.T) {
+	resolve := func() (engagement, bool, error) {
+		t.Fatal("the engagement must not be read")
+		return engagement{}, false, nil
 	}
-	evalCommandRules(nil, "orbctl apply", seat)
-	evalCommandRules(mustRules(t, exampleRules(t)), "orbctl get pods", seat)
+	evalCommandRules(nil, "orbctl apply", resolve)
+	evalCommandRules(mustRules(t, exampleRules(t)), "orbctl get pods", resolve)
 }
 
 // AC6: a command a rule matched and let run is on the engaged story's ledger.
 func TestCommandRulesRecordedOnLedger(t *testing.T) {
-	_, id := ruleRepo(t, seatMine, exampleRules(t))
+	_, id := ruleRepo(t, engagedHere, exampleRules(t))
 	if out, err := commitgateOn(t, "claude", "orbctl apply -f x"); err != nil || out != "" {
 		t.Fatalf("allowed at in_progress: %v %q", err, out)
 	}
@@ -619,7 +621,7 @@ func TestCommandRulesRecordedOnLedger(t *testing.T) {
 }
 
 func TestCommandRuleWarnWithNoStoryDeliversAndRecordsNothing(t *testing.T) {
-	ruleRepo(t, seatNone, exampleRules(t))
+	ruleRepo(t, engagedNowhere, exampleRules(t))
 	out, err := commitgateOn(t, "claude", "orbctl scale web 2")
 	if err != nil || !strings.Contains(out, "orbctl scale changes capacity") {
 		t.Fatalf("warn must still be delivered: %v %q", err, out)
@@ -634,7 +636,7 @@ func TestCommandRuleWarnWithNoStoryDeliversAndRecordsNothing(t *testing.T) {
 func TestCommandRuleWarnPerHarness(t *testing.T) {
 	for _, h := range []string{"claude", "grok", "pi", "cursor"} {
 		t.Run(h, func(t *testing.T) {
-			_, id := ruleRepo(t, seatMine, exampleRules(t))
+			_, id := ruleRepo(t, engagedHere, exampleRules(t))
 			out, err := commitgateOn(t, h, "orbctl scale web 2")
 			if err != nil {
 				t.Fatalf("a warned command runs on %s: %v\n%s", h, err, out)
@@ -667,7 +669,7 @@ func TestCommandRuleWarnPerHarness(t *testing.T) {
 func TestCommandRuleDenyReachesEveryHarness(t *testing.T) {
 	for _, h := range []string{"claude", "grok", "pi", "cursor"} {
 		t.Run(h, func(t *testing.T) {
-			ruleRepo(t, seatNone, exampleRules(t))
+			ruleRepo(t, engagedNowhere, exampleRules(t))
 			out, err := commitgateOn(t, h, "orbctl delete x")
 			if err == nil {
 				t.Fatalf("%s: deny expected:\n%s", h, out)
@@ -681,12 +683,12 @@ func TestCommandRuleDenyReachesEveryHarness(t *testing.T) {
 
 // AC10 (a): a dispatched agent and a rework relay take the same path.
 func TestCommandRulesApplyToDispatchedAgents(t *testing.T) {
-	_, id := ruleRepo(t, seatMine, exampleRules(t))
+	_, id := ruleRepo(t, engagedHere, exampleRules(t))
 	t.Setenv(config.DispatchAgentEnv, "planner")
 	t.Setenv(config.DispatchStepEnv, "plan")
 	t.Setenv(config.DispatchItemEnv, id)
-	// The seat is at in_progress, which the example allows, so orbctl delete runs;
-	// the dispatched agent reaches the rule and the seat all the same.
+	// The story is at in_progress, which the example allows, so orbctl delete runs;
+	// the dispatched agent reaches the rule and the engagement all the same.
 	if out, err := commitgateOn(t, "claude", "orbctl delete x"); err != nil || strings.TrimSpace(out) != "" {
 		t.Errorf("dispatched agent at an allowed status: %v %q", err, out)
 	}
@@ -723,7 +725,7 @@ message = "never"
 }
 
 // AC10 (c): a fresh clone has only the synced satelle.toml, no runtime store and
-// no seat, and the rules still apply.
+// no engagement, and the rules still apply.
 func TestCommandRulesApplyOnFreshClone(t *testing.T) {
 	repo := tempRepo(t)
 	t.Chdir(repo)
@@ -754,7 +756,7 @@ message = "careful"
 // command_allow is unchanged: engaged-only, so with no story engaged a tag
 // passes though tag = [] lists it.
 func TestCommandAllowNoStoryUnchanged(t *testing.T) {
-	ruleRepo(t, seatNone, "\n[gate.command_allow]\npush = [\"release\"]\ntag = []\n")
+	ruleRepo(t, engagedNowhere, "\n[gate.command_allow]\npush = [\"release\"]\ntag = []\n")
 	if out, err := commitgateOn(t, "claude", "git tag v1"); err != nil || out != "" {
 		t.Fatalf("git tag with no story engaged must pass as before: %v %q", err, out)
 	}
@@ -803,7 +805,7 @@ func TestCommitgateHelpStatesScopeAndNoIdentity(t *testing.T) {
 func TestCommandRulesLoadFailClosed(t *testing.T) {
 	const badAction = "\n[[gate.command_rule]]\npattern = \"orbctl apply\"\naction = \"block\"\nmessage = \"m\"\n"
 	t.Run("malformed rule", func(t *testing.T) {
-		repo, _ := ruleRepo(t, seatMine, "")
+		repo, _ := ruleRepo(t, engagedHere, "")
 		path := filepath.Join(repo, ".satelle", "satelle.toml")
 		writeRuleConfig(t, repo, badAction)
 		out, err := commitgateOn(t, "claude", "ls")
@@ -830,7 +832,7 @@ func TestCommandRulesLoadFailClosed(t *testing.T) {
 		}
 	})
 	t.Run("overlay only", func(t *testing.T) {
-		repo, _ := ruleRepo(t, seatMine, "")
+		repo, _ := ruleRepo(t, engagedHere, "")
 		local := filepath.Join(repo, ".satelle", config.LocalConfigName)
 		if err := os.WriteFile(local, []byte(badAction), 0o644); err != nil {
 			t.Fatal(err)
@@ -841,7 +843,7 @@ func TestCommandRulesLoadFailClosed(t *testing.T) {
 		}
 	})
 	t.Run("syntax error", func(t *testing.T) {
-		repo, _ := ruleRepo(t, seatMine, "")
+		repo, _ := ruleRepo(t, engagedHere, "")
 		path := filepath.Join(repo, ".satelle", "satelle.toml")
 		if err := os.WriteFile(path, []byte("[gate\n"), 0o644); err != nil {
 			t.Fatal(err)
@@ -856,7 +858,7 @@ func TestCommandRulesLoadFailClosed(t *testing.T) {
 		}
 	})
 	t.Run("unknown key", func(t *testing.T) {
-		repo, _ := ruleRepo(t, seatMine, "")
+		repo, _ := ruleRepo(t, engagedHere, "")
 		writeRuleConfig(t, repo, "\n[[gate.command_rule]]\npattern = \"a\"\naction = \"deny\"\nalow = [\"x\"]\nmessage = \"m\"\n")
 		out, err := commitgateOn(t, "claude", "ls")
 		if err == nil || !strings.Contains(ruleDenyReason(t, out), "alow") {
@@ -864,7 +866,7 @@ func TestCommandRulesLoadFailClosed(t *testing.T) {
 		}
 	})
 	t.Run("no rules unaffected", func(t *testing.T) {
-		ruleRepo(t, seatMine, "")
+		ruleRepo(t, engagedHere, "")
 		if out, err := commitgateOn(t, "claude", "ls"); err != nil || out != "" {
 			t.Fatalf("a config with no rules is unaffected: %v %q", err, out)
 		}

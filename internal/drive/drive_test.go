@@ -14,7 +14,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/drive"
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/testutil"
@@ -102,7 +101,6 @@ func newEnv(t *testing.T, done, step string) *env {
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetTxRunner(db.InTx)
 	verb.SetDocIndexStore(db.DocIndex)
-	verb.SetLeaseStore(db.Leases)
 	verb.SetStoryDir(filepath.Join(dir, "stories"))
 	g := &scriptedGater{rejects: map[string]int{}, always: map[string]bool{}, seen: map[string]int{}, errs: map[string]error{}}
 	verb.SetTransitionGater(g)
@@ -247,22 +245,22 @@ func TestStoryDrivesAGrokShapedBindingToTheTerminalStep(t *testing.T) {
 }
 
 // AC5: inside the drive's process every gate runs in the foreground (the story is
-// at the next status as soon as Story returns) and the seat lease and the ledger
-// carry the resolved session, not a fresh one.
+// at the next status as soon as Story returns) and the working_on presence row,
+// each transition_started row and the ledger carry the resolved session, not a
+// fresh one.
 func TestStoryRunsUnderTheResolvedSession(t *testing.T) {
 	e := newEnv(t, routeDone, workRoute)
 	t.Setenv(config.SessionEnv, "sess-drive-test")
-	t.Setenv("SATELLE_OWNER", "owner-drive-test")
 	id := e.story()
-	var held lease.Lease
+	var presence verb.WorkingOnRow
 	perf := &fakePerformers{
 		kinds: map[string]verb.PerformerKind{"in_progress": verb.PerformerExecutor}, executor: headless(),
 		onPerform: func(item workitem.Item, _, _ string) error {
-			l, err := e.db.Leases.Get(context.Background(), item.ID)
-			if err != nil {
-				return fmt.Errorf("the seat must be held while the step is performed: %w", err)
+			p, ok := verb.LatestLocalWorkingOn(context.Background(), item.ID)
+			if !ok {
+				return fmt.Errorf("the story must carry a working_on row while the step is performed")
 			}
-			held = l
+			presence = p
 			return nil
 		},
 	}
@@ -270,11 +268,19 @@ func TestStoryRunsUnderTheResolvedSession(t *testing.T) {
 	if err != nil || !res.Terminal {
 		t.Fatalf("drive: %v %+v", err, res)
 	}
-	if want := config.ResolveSession(); want != "sess-drive-test" || held.SessionID != want {
-		t.Errorf("lease session = %q, want the resolved session %q", held.SessionID, want)
+	want := config.ResolveSession()
+	if want != "sess-drive-test" || presence.Session != want {
+		t.Errorf("working_on session = %q, want the resolved session %q", presence.Session, want)
 	}
-	if held.Owner != lease.ResolveOwner() || held.Owner != "owner-drive-test" {
-		t.Errorf("lease owner = %q, want %q", held.Owner, lease.ResolveOwner())
+	starts := e.rows(id, ledger.KindTransitionStarted)
+	if len(starts) == 0 {
+		t.Fatal("no transition_started row recorded")
+	}
+	for _, row := range starts {
+		var p ledger.TransitionStartedPayload
+		if err := json.Unmarshal(row.Payload, &p); err != nil || p.Session != want {
+			t.Errorf("transition_started %s session = %q (%v), want %q", row.ID, p.Session, err, want)
+		}
 	}
 	var carrying int
 	for _, row := range e.rows(id, "") {

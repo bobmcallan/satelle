@@ -1344,7 +1344,7 @@ func TestGate_emitsProgress(t *testing.T) {
 	}
 }
 
-// A gated edge stamps structured activity (label + index/total) for seat
+// A gated edge stamps structured activity (label + index/total) for in-flight
 // observability (sty_598a8e1b AC1).
 func TestGate_emitsActivity(t *testing.T) {
 	g, _ := newEngine(t, `{"decision":"accept"}`,
@@ -2329,8 +2329,8 @@ var coderWF = spineWF("", "", "",
 	"in_progress|coder|code",
 	"done")
 
-// TestDispatchExecutorCodeWriterFromNonPerformingProceeds: with the engagement
-// lease (sty_8426b9c0) acquired at-start for the TARGET engaging state, edit
+// TestDispatchExecutorCodeWriterFromNonPerformingProceeds: with the transition
+// (sty_8426b9c0) marked in flight at its start toward the TARGET engaging state, edit
 // gates no longer depend on the FROM state being performing — so a code-writing
 // named agent may dispatch from backlog into plan. The prior FROM-performing
 // band-aid (sty_f5bd176f) is removed.
@@ -2344,7 +2344,7 @@ func TestDispatchExecutorCodeWriterFromNonPerformingProceeds(t *testing.T) {
 	})
 	res, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan")
 	if err != nil {
-		t.Fatalf("code-writer from non-performing FROM should proceed under lease model: %v", err)
+		t.Fatalf("code-writer from non-performing FROM should proceed while its transition is in flight: %v", err)
 	}
 	if !res.Dispatched {
 		t.Fatalf("expected dispatched, got %+v", res)

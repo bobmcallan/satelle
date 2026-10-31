@@ -11,7 +11,6 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/logsread"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -19,7 +18,7 @@ import (
 
 // story-recover (sty_f0ed2473) answers "what did a dispatch that died leave?".
 // It REPORTS and never VOUCHES: everything it prints is read from evidence the
-// store already holds (the dispatch log, the lease, the engagement anchor's git
+// store already holds (the dispatch log, the transition rows, the engagement anchor's git
 // slice, an agent-stalled row) and none of it is a claim that the work is
 // coherent. With --choice it records the driver's recovery decision as one
 // ledger row and stops — it never dispatches, transitions or parks. No live
@@ -39,7 +38,7 @@ var recoveryChoices = []string{recoverRedispatch, recoverFinish, recoverPark}
 const (
 	recoverStateNone     = "none"                     // no dispatch log, or it ends in a completion
 	recoverStateEnded    = "ended-without-completion" // the log stops short of a completed event
-	recoverStateInFlight = "in-flight"                // the lease says the transition is still running
+	recoverStateInFlight = "in-flight"                // the ledger says the transition is still running
 )
 
 // recoverHeader is the fixed first line of every report about a dispatch that
@@ -115,8 +114,10 @@ type recoveryInput struct {
 	Now     time.Time
 	Log     *recoveryLog
 	Stall   *recoveryStall
-	Lease   *lease.Lease
-	Files   []string
+	// Transition is the story's newest unended transition_started row, nil
+	// when every one is closed.
+	Transition *ledger.Transition
+	Files      []string
 	// Anchor is the git sha the file list is measured from; FilesErr is why the
 	// list is unavailable (no baseline, no git, foreign tree).
 	Anchor   string
@@ -160,7 +161,7 @@ func recoveryState(in recoveryInput) string {
 	if in.Log == nil || !isUnfinished(in.Log.LastLine) {
 		return recoverStateNone
 	}
-	if in.Lease != nil && lease.EffectiveInFlight(*in.Lease, in.Now) {
+	if in.Transition != nil && in.Transition.Open(in.Now) {
 		return recoverStateInFlight
 	}
 	return recoverStateEnded
@@ -181,7 +182,7 @@ func renderRecoveryReport(in recoveryInput) string {
 		return b.String()
 	case recoverStateInFlight:
 		fmt.Fprintf(&b, "dispatch %s is still in flight (pid %d); nothing has ended, so there is nothing to recover yet\n",
-			in.Log.Agent, in.Lease.InFlightPid)
+			in.Log.Agent, in.Transition.Pid)
 		writeRecoveryEvent(&b, in)
 		return b.String()
 	}
@@ -193,15 +194,13 @@ func renderRecoveryReport(in recoveryInput) string {
 	if s := in.Stall; s != nil {
 		fmt.Fprintf(&b, "  watchdog: agent-stalled after %s idle (last event %q at %s)\n", s.Idle, s.LastEvent, s.LastEventAt)
 	}
-	if l := in.Lease; l != nil {
-		switch {
-		case !l.InFlight:
-			b.WriteString("  lease: not in flight\n")
-		case l.InFlightPid > 0:
-			fmt.Fprintf(&b, "  lease: in flight, pid %d not running\n", l.InFlightPid)
-		default:
-			fmt.Fprintf(&b, "  lease: in flight, heartbeat aged %s\n", in.Now.Sub(l.HeartbeatAt).Round(time.Second))
-		}
+	switch t := in.Transition; {
+	case t == nil:
+		b.WriteString("  transition: not in flight\n")
+	case t.Pid > 0 && t.Host == ledger.Hostname():
+		fmt.Fprintf(&b, "  transition: %s → %s never ended, pid %d not running\n", t.From, t.To, t.Pid)
+	default:
+		fmt.Fprintf(&b, "  transition: %s → %s never ended, started %s ago\n", t.From, t.To, in.Now.Sub(t.StartedAt).Round(time.Second))
 	}
 
 	b.WriteString("\nfiles present since the engagement anchor\n")
@@ -255,9 +254,11 @@ func gatherRecovery(ctx context.Context, it workitem.Item, now time.Time) recove
 			in.Log = log
 		}
 	}
-	if ls, err := requireLease(); err == nil {
-		if l, gerr := ls.Get(ctx, it.ID); gerr == nil {
-			in.Lease = &l
+	if led, err := requireLedger(); err == nil {
+		if rows, rerr := led.TransitionRows(ctx, it.ID); rerr == nil {
+			if t, ok := ledger.LatestUnended(rows); ok {
+				in.Transition = &t
+			}
 		}
 	}
 	if in.Log != nil {

@@ -35,8 +35,8 @@ type commandRuleDecision struct {
 	Decision string
 	// Reason is the deny text (Decision denied) or the warn text (warned).
 	Reason string
-	// Engaged is whether a story was engaged when the rule consulted the seat;
-	// ItemID, Status and Step describe it. All empty when the seat was not
+	// Engaged is whether a story was engaged when the rule consulted it;
+	// ItemID, Status and Step describe it. All empty when it was not
 	// consulted (a deny rule with no allow list never reads it).
 	Engaged bool
 	ItemID  string
@@ -232,9 +232,9 @@ func matchCommandRule(rules []config.CommandRule, command string) (int, bool) {
 }
 
 // commandRuleAllows reports whether the engaged story's status or step name is
-// in the rule's allow list. The hook loads no workflow: the seat already carries
+// in the rule's allow list. The hook loads no workflow: the engagement already carries
 // both names.
-func commandRuleAllows(allow []string, info seatInfo) bool {
+func commandRuleAllows(allow []string, info engagement) bool {
 	for _, a := range allow {
 		a = strings.ToLower(strings.TrimSpace(a))
 		if a == "" {
@@ -247,11 +247,11 @@ func commandRuleAllows(allow []string, info seatInfo) bool {
 	return false
 }
 
-// evalCommandRules judges command against rules. seat resolves the engaged story
+// evalCommandRules judges command against rules. resolve resolves the engaged story
 // and is called only when a rule matched and its verdict depends on the story,
-// so with no rules, or no match, no seat is read. A deny rule with an empty
-// allow list refuses without reading the seat, in every status.
-func evalCommandRules(rules []config.CommandRule, command string, seat func() (seatInfo, bool, error)) commandRuleDecision {
+// so with no rules, or no match, no engagement is read. A deny rule with an empty
+// allow list refuses without reading the engagement, in every status.
+func evalCommandRules(rules []config.CommandRule, command string, resolve func() (engagement, bool, error)) commandRuleDecision {
 	idx, ok := matchCommandRule(rules, command)
 	if !ok {
 		return commandRuleDecision{}
@@ -263,7 +263,7 @@ func evalCommandRules(rules []config.CommandRule, command string, seat func() (s
 		d.Reason = commandRuleDenyText(rule, nil, "")
 		return d
 	}
-	info, engaged, err := seat()
+	info, engaged, err := resolve()
 	if err != nil {
 		if rule.Action == config.CommandRuleDeny {
 			d.Decision = commandRuleDenied
@@ -273,7 +273,7 @@ func evalCommandRules(rules []config.CommandRule, command string, seat func() (s
 		engaged = false
 	}
 	if engaged {
-		d.Engaged, d.ItemID, d.Status, d.Step = true, info.ItemID, seatStatus(info), info.State
+		d.Engaged, d.ItemID, d.Status, d.Step = true, info.ItemID, engagementStatus(info), info.State
 		if commandRuleAllows(rule.Allow, info) {
 			d.Decision = commandRuleAllowed
 			return d
@@ -290,7 +290,7 @@ func evalCommandRules(rules []config.CommandRule, command string, seat func() (s
 	d.Decision = commandRuleDenied
 	engagedAt := ""
 	if engaged {
-		engagedAt = seatStatus(info)
+		engagedAt = engagementStatus(info)
 	}
 	d.Reason = commandRuleDenyText(rule, rule.Allow, engagedAt)
 	return d

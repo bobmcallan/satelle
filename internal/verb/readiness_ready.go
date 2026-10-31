@@ -15,8 +15,8 @@ import (
 // engaging them: it runs the readiness step the story's route declares — the
 // performer, then the step's reviewers — records every verdict on the story's
 // ledger, and marks the story only when the round was accepted. It changes no
-// status and takes no engagement seat, so a scheduled or watched pass can ready
-// many stories at once while another story holds the seat.
+// status and does not engage the story, so a scheduled or watched pass can ready
+// many stories at once, whatever else performs.
 //
 // It is the repo's own readiness, not a copy of it: the step, its performer, its
 // reviewers, its reject budget and the tag that marks an accepted round are all

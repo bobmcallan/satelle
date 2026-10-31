@@ -45,7 +45,7 @@ func TestAnOverrideChangesTheOutput(t *testing.T) {
 func TestDefaultProtectedPatternsHoldNegationsNumbersPathsAndCommands(t *testing.T) {
 	r := embeddedRules(t)
 	for _, protected := range []string{
-		"never skip a gate", "do not edit", "no schedule", "it cannot run", "without a seat", "it doesn't write", "it doesn’t write",
+		"never skip a gate", "do not edit", "no schedule", "it cannot run", "without a story", "it doesn't write", "it doesn’t write",
 		"step 3", "edit internal/cli/app.go", "run `satelle story set`", "satelle story wave exits",
 	} {
 		if !holdsProtected(protected, r) {

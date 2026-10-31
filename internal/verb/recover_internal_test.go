@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bobmcallan/satelle/internal/lease"
+	"github.com/bobmcallan/satelle/internal/ledger"
 )
 
 // deadPid is the pid of a process that has run and exited.
@@ -30,13 +30,13 @@ func recoveryLogAt(now time.Time, ago time.Duration, line string) *recoveryLog {
 
 func TestRenderRecoveryReportHeaderOnEveryUnfinishedReport(t *testing.T) {
 	now := time.Now()
-	dead := lease.Lease{InFlight: true, InFlightPid: deadPid(t), InFlightAt: now.Add(-time.Hour)}
+	dead := ledger.Transition{StartedAt: now.Add(-time.Hour), TransitionStartedPayload: ledger.TransitionStartedPayload{Pid: deadPid(t), Host: ledger.Hostname()}}
 	cases := map[string]recoveryInput{
-		"files":         {Files: []string{"a.go", "b.go"}, Anchor: "0123456789abcdef"},
-		"no files":      {Anchor: "0123456789abcdef"},
-		"files unknown": {FilesErr: "no engagement baseline"},
-		"dead lease":    {Lease: &dead, Files: []string{"a.go"}, Anchor: "0123456789abcdef"},
-		"empty log":     {Anchor: "0123456789abcdef"},
+		"files":           {Files: []string{"a.go", "b.go"}, Anchor: "0123456789abcdef"},
+		"no files":        {Anchor: "0123456789abcdef"},
+		"files unknown":   {FilesErr: "no engagement baseline"},
+		"dead transition": {Transition: &dead, Files: []string{"a.go"}, Anchor: "0123456789abcdef"},
+		"empty log":       {Anchor: "0123456789abcdef"},
 	}
 	for name, in := range cases {
 		in.StoryID, in.Now = "sty_x", now
@@ -77,12 +77,12 @@ func TestRenderRecoveryReportNeverVouches(t *testing.T) {
 	}
 }
 
-// A live transition also has no completed line yet; the lease decides, and the
+// A live transition also has no completed line yet; the ledger decides, and the
 // report then says nothing ended rather than framing a recovery.
 func TestRecoveryStateInFlightIsNotARecovery(t *testing.T) {
 	now := time.Now()
-	live := lease.Lease{InFlight: true, InFlightPid: os.Getpid(), InFlightAt: now}
-	in := recoveryInput{StoryID: "sty_x", Now: now, Lease: &live, Log: recoveryLogAt(now, time.Second, "tool_start\ttool=Bash")}
+	live := ledger.Transition{StartedAt: now, TransitionStartedPayload: ledger.TransitionStartedPayload{Pid: os.Getpid(), Host: ledger.Hostname()}}
+	in := recoveryInput{StoryID: "sty_x", Now: now, Transition: &live, Log: recoveryLogAt(now, time.Second, "tool_start\ttool=Bash")}
 	if got := recoveryState(in); got != recoverStateInFlight {
 		t.Fatalf("state = %q, want in-flight", got)
 	}
@@ -91,8 +91,8 @@ func TestRecoveryStateInFlightIsNotARecovery(t *testing.T) {
 		t.Errorf("in-flight report:\n%s", got)
 	}
 
-	live.InFlightPid = deadPid(t)
-	in.Lease = &live
+	live.Pid = deadPid(t)
+	in.Transition = &live
 	if got := recoveryState(in); got != recoverStateEnded {
 		t.Errorf("a dead in-flight pid is an ended dispatch, got %q", got)
 	}

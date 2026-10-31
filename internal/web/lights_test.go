@@ -294,16 +294,17 @@ func TestBuildStagesUnstartedHasNoStage(t *testing.T) {
 	}
 }
 
-// TestBuildStagesStartingSeat: a pre-transition seat emits a single current chip
-// titled "starting"; without a seat the cell stays blank; once a transition lands
+// TestBuildStagesStartingInFlight: a transition in flight before its first
+// status_transition emits a single current chip titled "starting"; without one
+// the cell stays blank; once a transition lands
 // the real current stage takes over (sty_e1314fe3).
-func TestBuildStagesStartingSeat(t *testing.T) {
+func TestBuildStagesStartingInFlight(t *testing.T) {
 	stages := buildStages(nil, "backlog", true, projStep, wfdot.Spec{})
 	if len(stages) != 1 || stages[0].State != "current" || stages[0].Title != "starting" {
-		t.Fatalf("seat-held unentered = %+v, want one current chip titled starting", stages)
+		t.Fatalf("in-flight unentered = %+v, want one current chip titled starting", stages)
 	}
 	if got := buildStages(nil, "backlog", false, projStep, wfdot.Spec{}); len(got) != 0 {
-		t.Fatalf("no-seat backlog: want no stages, got %v", got)
+		t.Fatalf("settled backlog: want no stages, got %v", got)
 	}
 	chrono := []ledger.Entry{
 		ev(ledger.KindReviewAccept, "backlog", "in_progress"),
@@ -311,7 +312,7 @@ func TestBuildStagesStartingSeat(t *testing.T) {
 	}
 	stages = buildStages(chrono, "in_progress", true, projStep, wfdot.Spec{})
 	if len(stages) != 1 || stages[0].Name != "in_progress" || stages[0].Title == "starting" {
-		t.Fatalf("entered with seat: want one real in_progress stage, got %+v", stages)
+		t.Fatalf("entered while in flight: want one real in_progress stage, got %+v", stages)
 	}
 }
 
@@ -507,14 +508,14 @@ func TestBuildStagesRejectPastCurrentIsPending(t *testing.T) {
 }
 
 // TestBuildStagesStatusAloneCurrentStage: empty ledger + on-route status yields a
-// current stage independent of seat (sty_c5065d05 AC4/AC5).
+// current stage independent of in-flight state (sty_c5065d05 AC4/AC5).
 func TestBuildStagesStatusAloneCurrentStage(t *testing.T) {
-	noSeat := buildStages(nil, "in_progress", false, projStep, wfdot.Spec{})
-	withSeat := buildStages(nil, "in_progress", true, projStep, wfdot.Spec{})
-	if len(noSeat) != 1 || noSeat[0].State != "current" || noSeat[0].Name != "in_progress" {
-		t.Fatalf("status alone: want one current in_progress, got %v", noSeat)
+	settled := buildStages(nil, "in_progress", false, projStep, wfdot.Spec{})
+	inFlight := buildStages(nil, "in_progress", true, projStep, wfdot.Spec{})
+	if len(settled) != 1 || settled[0].State != "current" || settled[0].Name != "in_progress" {
+		t.Fatalf("status alone: want one current in_progress, got %v", settled)
 	}
-	if !reflect.DeepEqual(noSeat, withSeat) {
-		t.Fatalf("seat flicker: noSeat=%v withSeat=%v", noSeat, withSeat)
+	if !reflect.DeepEqual(settled, inFlight) {
+		t.Fatalf("in-flight flicker: settled=%v inFlight=%v", settled, inFlight)
 	}
 }

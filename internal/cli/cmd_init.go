@@ -288,6 +288,10 @@ func runInitBody(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness
 		if rerr != nil {
 			return fmt.Errorf("init: remove retired [sync] key: %w", rerr)
 		}
+		parallelChanged, perr := rewriteEngagementParallel(dataDir)
+		if perr != nil {
+			return fmt.Errorf("init: rewrite retired [engagement] parallel: %w", perr)
+		}
 		if initTomlHealHook != nil {
 			raw, rerr := os.ReadFile(tomlPath)
 			if rerr != nil {
@@ -299,6 +303,9 @@ func runInitBody(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness
 		}
 		if retiredChanged {
 			fmt.Fprintf(out, "~ %s (removed a retired [sync] key)\n", config.DefaultDataDir+"/"+config.ConfigName)
+		}
+		if parallelChanged {
+			fmt.Fprintf(out, "~ %s (rewrote retired [engagement] parallel as [engagement] limit)\n", config.DefaultDataDir+"/"+config.ConfigName)
 		}
 		if fixLaneChanged {
 			fmt.Fprintf(out, "~ %s ([fix_lane] seeded — product_surface is empty, so the fix lane is closed until you declare it)\n", config.DefaultDataDir+"/"+config.ConfigName)
@@ -1882,7 +1889,7 @@ const scaffoldTomlAfterExempt = `
 # work, and the change would leave no trace in its engagement diff. The deny
 # names the locked path and the lane out — a story in the substrate lane
 # (category "substrate", judged by satelle-workflow-change-review) may change
-# substrate under its own seat. See 'satelle help substrate'.
+# substrate it was engaged for. See 'satelle help substrate'.
 # The key is left commented on purpose: ABSENT means the default lock
 # (".satelle/"), so a repo is locked without it. Uncomment to pin or widen the
 # list. Never locked, whatever is listed: the process temp dir and /tmp,
@@ -1924,18 +1931,16 @@ const scaffoldTomlAfterExempt = `
 # SATELLE_GATE_MODE=interactive|agent overrides it. See satelle help agent-dispatch.
 # handoff = "auto"
 
-# [engagement] — SEAT CONCURRENCY: how many stories may perform at once.
-# "none" (default, and what you get with no section) is single occupancy: one
-# performing story, everything else refused. "epic" keys the seat on the story's
-# PARENT, so children of one parent may engage concurrently — each from its OWN
-# git working tree (a second engagement from an already-leased tree is refused,
-# and story diff is anchored to the tree its story was engaged from). A story
-# under a different parent, or none, is refused while such a seat is held.
-# Satelle arbitrates ENGAGEMENT only: how concurrent work converges (merge order,
-# suite runs, one push) is this repo's workflow, and satelle polices no
-# sibling contention. Only these two values are accepted.
+# [engagement] — CONCURRENCY: how many stories may perform at once, counted
+# from the stories whose status folds to a performing step. Absent or 0 (the
+# default) is unlimited; limit = 1 admits one performing story at a time. An
+# epic whose container step sets sequential = true admits one performing child
+# whatever the limit. Nothing is held: two locations driving one story are told
+# apart by the chain's base check, and the edit gate attributes each edit to the
+# story engaged from the worktree it lands in. How concurrent work converges
+# (merge order, suite runs, one push) is this repo's workflow.
 # [engagement]
-# parallel = "epic"
+# limit = 1
 
 # [worktree] — what a worktree opened with 'satelle story worktree <id> --base
 # <ref>' needs. git worktree add carries only tracked content, so list the

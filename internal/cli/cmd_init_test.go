@@ -1323,3 +1323,46 @@ func TestRunInitWorkspaceWriteFailureNonFatal(t *testing.T) {
 		}
 	}
 }
+
+// sty_9c782f0e AC6: the retired [engagement] parallel key is rewritten as
+// [engagement] limit — "none" (one performing story at a time) becomes limit = 1,
+// "epic" and "worktree" (several at once, now the default) are only removed, and
+// a limit already set is kept. A second run changes nothing.
+func TestMigrateRewritesEngagementParallelToLimit(t *testing.T) {
+	testutil.IsolateHome(t)
+	const head = "# keep me\n[review]\ngate_create = false\n\n"
+	for _, tc := range []struct {
+		name, before, want string
+	}{
+		{"none", head + "[engagement]\nparallel = \"none\"\n", head + "[engagement]\nlimit = 1\n"},
+		{"epic", head + "[engagement]\nparallel = \"epic\"\n", head + "[engagement]\n"},
+		{"worktree", head + "[engagement]\nparallel = \"worktree\"\n", head + "[engagement]\n"},
+		{"none with a limit set", head + "[engagement]\nlimit = 3\nparallel = \"none\"\n", head + "[engagement]\nlimit = 3\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "satelle.toml")
+			if err := os.WriteFile(path, []byte(tc.before), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			p := planMigrate(config.Config{}, t.TempDir(), dir)
+			if !p.EngagementParallelRewrite || p.empty() {
+				t.Fatalf("plan must rewrite the retired key: rewrite=%v empty=%v", p.EngagementParallelRewrite, p.empty())
+			}
+			changed, err := rewriteEngagementParallel(dir)
+			if err != nil || !changed {
+				t.Fatalf("expected the key rewritten: changed=%v err=%v", changed, err)
+			}
+			got, _ := os.ReadFile(path)
+			if string(got) != tc.want {
+				t.Fatalf("config after migrate:\n%s\nwant:\n%s", got, tc.want)
+			}
+			if changed, err = rewriteEngagementParallel(dir); err != nil || changed {
+				t.Fatalf("second run must change nothing: changed=%v err=%v", changed, err)
+			}
+			if p := planMigrate(config.Config{}, t.TempDir(), dir); p.EngagementParallelRewrite {
+				t.Error("the plan still asks to rewrite a key that is gone")
+			}
+		})
+	}
+}

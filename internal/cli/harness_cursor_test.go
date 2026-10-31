@@ -15,7 +15,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -466,7 +465,7 @@ func TestStopcheckCursorAnswersWithFollowup(t *testing.T) {
 	}
 
 	t.Run("ungated tree", func(t *testing.T) {
-		repo, _ := stopcheckRepo(t, seatNone)
+		repo, _ := stopcheckRepo(t, engagedNowhere)
 		dirtyTree(t, repo)
 		var buf bytes.Buffer
 		if err := runHookStopcheck(stop(0), &buf); err != nil {
@@ -492,22 +491,22 @@ func TestStopcheckCursorAnswersWithFollowup(t *testing.T) {
 		}
 	})
 	t.Run("clean tree", func(t *testing.T) {
-		stopcheckRepo(t, seatNone)
+		stopcheckRepo(t, engagedNowhere)
 		var buf bytes.Buffer
 		if err := runHookStopcheck(stop(0), &buf); err != nil || buf.Len() != 0 {
 			t.Fatalf("a clean stop must print nothing that re-prompts: out=%q err=%v", buf.String(), err)
 		}
 	})
 	t.Run("already continued", func(t *testing.T) {
-		repo, _ := stopcheckRepo(t, seatNone)
+		repo, _ := stopcheckRepo(t, engagedNowhere)
 		dirtyTree(t, repo)
 		var buf bytes.Buffer
 		if err := runHookStopcheck(stop(1), &buf); err != nil || buf.Len() != 0 {
 			t.Fatalf("a stop after a followup must not re-block: out=%q err=%v", buf.String(), err)
 		}
 	})
-	t.Run("sibling's seat is not a re-prompt", func(t *testing.T) {
-		repo, _ := stopcheckRepo(t, seatOther)
+	t.Run("a sibling's engagement is not a re-prompt", func(t *testing.T) {
+		repo, _ := stopcheckRepo(t, engagedBySibling)
 		dirtyTree(t, repo)
 		var buf bytes.Buffer
 		if err := runHookStopcheck(stop(0), &buf); err != nil || buf.Len() != 0 {
@@ -620,8 +619,8 @@ func TestCursorWiringCarriedIntoWorktree(t *testing.T) {
 	}
 
 	// The gate, invoked with the worktree as CLAUDE_PROJECT_DIR and cwd, governs
-	// against the worktree's story: an executor-state seat there allows a Write
-	// inside the worktree.
+	// against the worktree's story: a story at an executor state engaged there
+	// allows a Write inside the worktree.
 	wfDir := filepath.Join(repo, ".satelle", "workflows")
 	writeRoute(t, wfDir,
 		`["*"]
@@ -656,29 +655,21 @@ requires = ["coded"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The seat records the worktree it was engaged from — the git toplevel the hook
-	// resolves in that tree — not CanonicalRepoRoot(wt), which names the MAIN tree.
+	// The engagement records the worktree it was made from — the git toplevel the
+	// hook resolves in that tree — not CanonicalRepoRoot(wt), which names the MAIN
+	// tree.
 	wtTree, err := filepath.EvalSymlinks(wt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
-		ItemID: sty.ID, Kind: "story", Owner: lease.ResolveOwner(), State: "in_progress",
-		StorySeat: true, Worktree: wtTree,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Leases.Confirm(ctx, sty.ID, "in_progress"); err != nil {
-		t.Fatal(err)
-	}
+	recordEngagementOn(t, db, sty.ID, "in_progress", wtTree, "")
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Setenv("SATELLE_PROJECT_DIR", "")
-	// A stamped session routes an unstamped seat by tree (pickSessionSeatFor), so the
-	// seat in the worktree governs the worktree and not the main tree. An unstamped
-	// session with one live seat would be handed that seat from either tree.
+	// The gate attributes by tree, so the story engaged from the worktree governs
+	// the worktree and not the main tree.
 	t.Setenv(config.SessionEnv, "cursor-worktree-session")
 	prev := hookHarnessFlag
 	t.Cleanup(func() { hookHarnessFlag = prev })
@@ -689,9 +680,9 @@ requires = ["coded"]
 		t.Errorf("gate cursor in the worktree denied a Write while its story is in an executor state:\n%s", out)
 	}
 
-	// The control: while the worktree's seat is still held, the main tree has no
-	// engaged story of its own and the same Write there is denied. It runs before
-	// the seat is released, so the denial is the main tree's, not a released seat's.
+	// The control: while the worktree's story is still performing, the main tree
+	// has no engaged story of its own and the same Write there is denied, so the
+	// denial is the main tree's, not an ended engagement's.
 	t.Chdir(repo)
 	t.Setenv("CLAUDE_PROJECT_DIR", repo)
 	inMain := cursorEnvelope("Write", map[string]any{"file_path": filepath.Join(repo, "internal", "foo.go")}, repo)

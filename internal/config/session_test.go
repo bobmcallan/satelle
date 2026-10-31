@@ -54,31 +54,6 @@ func TestPublishedSessionIgnoresAFileForAReusedPid(t *testing.T) {
 	}
 }
 
-func TestSessionLive(t *testing.T) {
-	t.Setenv("SATELLE_HOME", t.TempDir())
-	if SessionLive("sess-A") || SessionLive("") {
-		t.Fatal("nothing published: no session is live")
-	}
-	PublishSession("sess-A")
-	if !SessionLive("sess-A") {
-		t.Error("a session this live process published must be live")
-	}
-	if SessionLive("sess-B") {
-		t.Error("an id nothing publishes must not be live")
-	}
-	// A file for a pid nothing holds is stale: it neither counts nor stays.
-	gone := filepath.Join(sessionPublishDir(), "2147483000")
-	if err := os.WriteFile(gone, []byte("sess-gone\tx\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if SessionLive("sess-gone") {
-		t.Error("a dead process's session must not be live")
-	}
-	if _, err := os.Stat(gone); !os.IsNotExist(err) {
-		t.Errorf("the stale file must be removed: %v", err)
-	}
-}
-
 // sty_2439f4fd AC1: a cursor Shell child names its session through the cursor
 // adapter's environment variable, ahead of the pid lookup and behind
 // SATELLE_SESSION; without it nothing changes.

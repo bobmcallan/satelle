@@ -41,7 +41,7 @@ type Snapshot struct {
 	Docs         []json.RawMessage `json:"docs,omitempty"`
 	LedgerEvents []json.RawMessage `json:"ledger_events,omitempty"`
 	StoryDocs    []json.RawMessage `json:"story_docs,omitempty"` // id = story_id/name
-	Seats        []json.RawMessage `json:"seats,omitempty"`
+	Engagements  []json.RawMessage `json:"engagements,omitempty"`
 	// Waves carries, per epic-parent, the story-wave verb's own JSON response (or
 	// {"container": id, "error": text} when the verb refuses) — id = container.
 	// The web renders it and never recomputes the wave (sty_a42f4add).
@@ -270,7 +270,7 @@ func snapshotKindRows(snap Snapshot) (replace, merge []KindRows) {
 		{"doc", docRows(snap.Docs), false},
 		{"ledger_event", rawToRows(snap.LedgerEvents, "id"), !full && mergeOK("ledger_event")},
 		{"story_doc", rawToRows(snap.StoryDocs, "id"), false},
-		{"seat", rawToRows(snap.Seats, "id"), false},
+		{"engagement", rawToRows(snap.Engagements, "id"), false},
 		{"wave", rawToRows(snap.Waves, "container"), false},
 	}
 	for _, c := range candidates {

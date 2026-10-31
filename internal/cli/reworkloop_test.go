@@ -366,8 +366,8 @@ func TestParseReadyMarker(t *testing.T) {
 
 // --- AC4: permission policy per side ----------------------------------------
 
-func performingSeat() seatInfo {
-	return seatInfo{
+func performingEngagement() engagement {
+	return engagement{
 		ItemID:         "sty_1",
 		State:          "in_progress",
 		StoryStatus:    "in_progress",
@@ -386,7 +386,7 @@ func performingSeat() seatInfo {
 // binding a relay can actually open (OpenSession refuses in-loop). The relay
 // needs the route's own allocation instead.
 func TestDispatchedPerformerPermittedNamedBinding(t *testing.T) {
-	info := performingSeat()
+	info := performingEngagement()
 	if editPermitted(info, dispatchMarker{}) {
 		t.Fatalf("editPermitted unexpectedly allows a named live coder — this test encodes why the relay needs its own predicate")
 	}
@@ -402,20 +402,19 @@ func TestDispatchedPerformerPermittedNamedBinding(t *testing.T) {
 
 	for _, tc := range []struct {
 		name  string
-		mutar func(*seatInfo)
+		mutar func(*engagement)
 	}{
-		{"stale seat", func(i *seatInfo) { i.Stale = true }},
-		{"not engaged", func(i *seatInfo) { i.Engaged = false }},
-		{"mid-transition", func(i *seatInfo) { i.InFlight = true }},
-		{"no seat", func(i *seatInfo) { i.ItemID = "" }},
-		{"another step's allocation", func(i *seatInfo) {
+		{"not engaged", func(i *engagement) { i.Engaged = false }},
+		{"mid-transition", func(i *engagement) { i.InFlight = true }},
+		{"no item", func(i *engagement) { i.ItemID = "" }},
+		{"another step's allocation", func(i *engagement) {
 			i.StoryStatus = "integration"
 			i.State = "integration"
 			i.StateAgent = "executor"
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			bad := performingSeat()
+			bad := performingEngagement()
 			tc.mutar(&bad)
 			if dispatchedPerformerPermitted(bad, "coder") {
 				t.Errorf("%s must not permit a mutator", tc.name)
@@ -428,7 +427,7 @@ func TestDispatchedPerformerPermittedNamedBinding(t *testing.T) {
 // executor the new branch and the old one say the same thing, which is what
 // keeps the existing PreToolUse policy unchanged.
 func TestDispatchedPerformerPermittedAgreesWithEditCapable(t *testing.T) {
-	info := seatInfo{
+	info := engagement{
 		ItemID: "sty_1", State: "in_progress", StoryStatus: "in_progress",
 		StateAgent: "executor", DispatchAgents: map[string][]string{"in_progress": {"executor"}},
 		Engaged: true, EditCapable: true,
@@ -453,33 +452,33 @@ func recordDecisions(into *[]decision) func(agentcli.PermissionRequest, bool, st
 	}
 }
 
-func TestReworkCoderPolicyNeedsGrantAndSeat(t *testing.T) {
+func TestReworkCoderPolicyNeedsGrantAndStatus(t *testing.T) {
 	const mutatorGrant = "Read,Grep,Glob,Edit,Write,Bash(go:*)"
 	const readOnlyGrant = "Read,Grep,Glob,Bash(satelle:*)"
-	permitted := func() (seatInfo, bool, error) { return performingSeat(), true, nil }
-	denied := func() (seatInfo, bool, error) {
-		i := performingSeat()
+	permitted := func() (engagement, bool, error) { return performingEngagement(), true, nil }
+	denied := func() (engagement, bool, error) {
+		i := performingEngagement()
 		i.InFlight = true
 		return i, true, nil
 	}
 
 	for _, tc := range []struct {
 		name, grant string
-		seat        func() (seatInfo, bool, error)
+		resolve     func() (engagement, bool, error)
 		tool        string
 		wantAllow   bool
 		wantBy      string
 	}{
-		{"grant and seat allow the edit", mutatorGrant, permitted, "Edit", true, "policy"},
-		{"grant and seat allow the shell", mutatorGrant, permitted, "Bash", true, "policy"},
+		{"grant and status allow the edit", mutatorGrant, permitted, "Edit", true, "policy"},
+		{"grant and status allow the shell", mutatorGrant, permitted, "Bash", true, "policy"},
 		{"read is never a mutator", readOnlyGrant, permitted, "Read", true, "policy"},
 		{"a read-only grant denies the edit", readOnlyGrant, permitted, "Edit", false, "grant"},
-		{"a non-performing seat denies the edit", mutatorGrant, denied, "Edit", false, "policy"},
-		{"no seat resolver denies the edit", mutatorGrant, nil, "Edit", false, "policy"},
+		{"a non-performing story denies the edit", mutatorGrant, denied, "Edit", false, "policy"},
+		{"no engagement resolver denies the edit", mutatorGrant, nil, "Edit", false, "policy"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var got []decision
-			pol := reworkCoderPolicy("coder", tc.grant, tc.seat, recordDecisions(&got))
+			pol := reworkCoderPolicy("coder", tc.grant, tc.resolve, recordDecisions(&got))
 			d := pol(agentcli.PermissionRequest{ToolName: tc.tool})
 			if d.Allow != tc.wantAllow {
 				t.Errorf("allow = %v, want %v", d.Allow, tc.wantAllow)
@@ -491,7 +490,7 @@ func TestReworkCoderPolicyNeedsGrantAndSeat(t *testing.T) {
 	}
 }
 
-func TestReworkConsultPolicyDeniesMutatorsWhateverTheSeat(t *testing.T) {
+func TestReworkConsultPolicyDeniesMutatorsWhateverTheStatus(t *testing.T) {
 	var got []decision
 	pol := reworkConsultPolicy(recordDecisions(&got))
 	for _, tool := range []string{"Edit", "Write", "Bash", "NotebookEdit"} {

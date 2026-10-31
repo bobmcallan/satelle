@@ -102,8 +102,8 @@ type Config struct {
 	Review ReviewConfig `toml:"review"`
 	// Gate tunes the PreToolUse edit gate (the `satelle hook gate` handler).
 	Gate GateConfig `toml:"gate"`
-	// Engagement selects this project's SEAT CONCURRENCY MODE (sty_c098dc2d).
-	// Absent = "none", today's single-occupancy seat. See EngagementConfig.
+	// Engagement bounds how many stories may perform at once (sty_9c782f0e).
+	// Absent = unlimited. See EngagementConfig.
 	Engagement EngagementConfig `toml:"engagement"`
 	// Hosted records the hosted-server binding for `satelle login` — the server
 	// URL and the project slug. Both are committed (secret-free); the OAuth
@@ -608,11 +608,8 @@ type ReviewConfig struct {
 // of EditExemptPaths — prefix semantics stay exact. Init seeds story-reference
 // dump names; the operator owns the list.
 //
-// How MANY stories may perform at once is NOT a gate concern: it is the seat
-// concurrency mode, [engagement] parallel (sty_c098dc2d), whose default "none"
-// is the single performing story this repo has always enforced (sty_c7149f8a).
-// The removed allow_parallel bool (sty_a614a0ea) is not coming back — the mode
-// is a closed named set, see EngagementConfig.
+// How MANY stories may perform at once is NOT a gate concern: it is the
+// concurrency limit, [engagement] limit (sty_9c782f0e), see EngagementConfig.
 //
 // AllowOutsideTreeEdits opts INTO Bash/Edit mutations whose targets resolve
 // inside another git working tree (root differs from the session-home anchor;
@@ -910,43 +907,19 @@ func undecodedCommandRuleKeys(md toml.MetaData, path string) error {
 	return nil
 }
 
-// Seat concurrency modes for [engagement] parallel (sty_c098dc2d). The set is
-// CLOSED — Load refuses anything else, naming these three.
-const (
-	// ParallelNone is the default: one performing story per project. Every
-	// engagement is keyed uniquely by its own id, so any other live seat
-	// holder conflicts.
-	ParallelNone = "none"
-	// ParallelEpic keys the seat on the story's PARENT id, so sibling children
-	// of one epic may hold sub-leases concurrently — each from a distinct git
-	// working tree. A story under a different parent (or none) is refused while
-	// an epic-keyed seat is held. The parent is not engaged unless its route
-	// declares a step with after_children: the epic id is an arbitration KEY, and
-	// a container waiting on its children holds no lease.
-	ParallelEpic = "epic"
-	// ParallelWorktree lets any number of stories hold seats at once — from
-	// different epics, or none — each from its OWN git working tree (sty_69ec7fbc).
-	// Tree identity is the arbitration: a second engagement from a tree that
-	// already holds a seat is refused, naming the holder. Epic membership still
-	// matters in one place only: the children of a sequential epic admit one at
-	// a time, exactly as under epic.
-	ParallelWorktree = "worktree"
-)
-
-// EngagementConfig selects the per-project seat concurrency mode.
+// EngagementConfig bounds concurrent engagement (sty_9c782f0e).
 //
 //	[engagement]
-//	parallel = "none"   # default — one performing story at a time
-//	parallel = "epic"   # siblings of one epic, one working tree per lease
+//	limit = 1   # at most one performing story in this project
 //
-// Satelle arbitrates concurrent ENGAGEMENT only. How siblings converge (merge
-// order, batch-head suite runs, one push) is the repo's own substrate — the
-// binary performs no sibling-contention policing (sty_c098dc2d).
+// Absent or 0 means unlimited. An epic whose waits_on_children step sets
+// sequential = true admits one performing child at a time whatever the limit.
+// The count is taken from the stories whose chain folds to a performing state.
 //
-// A value outside the closed set is refused at load (Load → ValidateEngagement).
-// Note bare toml decoding ignores unknown keys, so a MISSPELLED section name
-// silently yields the default "none" — failing closed to today's behaviour.
+// Parallel is the retired concurrency mode key. It is read only so `satelle
+// init` can rewrite it to Limit; nothing else consults it.
 type EngagementConfig struct {
+	Limit    int    `toml:"limit"`
 	Parallel string `toml:"parallel"`
 }
 
@@ -1058,33 +1031,22 @@ func (c Config) ResolveNoImplementExemptGlobs() []string {
 	return out
 }
 
-// ResolveEngagementParallel returns the seat concurrency mode, defaulting an
-// absent/blank value to ParallelNone. Load has already refused anything outside
-// the closed set, so callers may switch on the result without re-validating.
-func (c Config) ResolveEngagementParallel() string {
-	if s := strings.TrimSpace(c.Engagement.Parallel); s != "" {
-		return s
+// ResolveEngagementLimit returns the most stories that may perform at once; 0
+// means unlimited.
+func (c Config) ResolveEngagementLimit() int {
+	if c.Engagement.Limit > 0 {
+		return c.Engagement.Limit
 	}
-	return ParallelNone
+	return 0
 }
 
-// ValidateEngagement refuses a seat concurrency mode outside the closed set,
-// naming the supported modes. Matching is EXACT — no case folding — so the
-// configured surface stays the one the docs state. Blank/absent is valid (it
-// means the default). path is named in the message so a multi-file overlay says
-// which file to fix.
-//
-// "all" is deliberately NOT special-cased: it was removed as an option
-// (sty_a614a0ea) and is a recorded non-goal, not reserved semantics, so it
-// fails through this ordinary unknown-value path.
+// ValidateEngagement refuses a negative [engagement] limit. path is named in the
+// message so a multi-file overlay says which file to fix.
 func ValidateEngagement(c Config, path string) error {
-	v := strings.TrimSpace(c.Engagement.Parallel)
-	if v == "" || v == ParallelNone || v == ParallelEpic || v == ParallelWorktree {
+	if c.Engagement.Limit >= 0 {
 		return nil
 	}
-	return fmt.Errorf(
-		"config: %s: [engagement] parallel = %q is not a seat concurrency mode — supported modes are %q (one performing story at a time), %q (sibling children of one epic, one working tree per lease) and %q (any stories at once, one working tree per lease)",
-		path, v, ParallelNone, ParallelEpic, ParallelWorktree)
+	return fmt.Errorf("config: %s: [engagement] limit = %d is negative — use 0 (or omit it) for unlimited, or a positive number of performing stories", path, c.Engagement.Limit)
 }
 
 // ResolveConstitution returns the absolute path to the repo's project
@@ -1216,8 +1178,7 @@ func Load(explicitPath string) (Config, string, error) {
 	} else if !errors.Is(lerr, os.ErrNotExist) {
 		return Config{}, path, fmt.Errorf("config: read %s: %w", localPath, lerr)
 	}
-	// Closed-set values are refused HERE so every caller of Load shares one
-	// answer — a bad mode must not reach the seat as a silent default.
+	// Refused HERE so every caller of Load shares one answer.
 	if err := ValidateEngagement(cfg, path); err != nil {
 		return Config{}, path, err
 	}

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -139,30 +140,30 @@ func TestReleaseRecordUndeclaredFieldRefused(t *testing.T) {
 	mustContain(t, err, "commit and release")
 }
 
-// AC1: a session that is not the story's own — another owner, while the story's
-// seat is held — still records the release, and the seat is left alone.
+// AC1: a session that is not the story's own — another owner, while the story
+// performs — still records the release, and the story's presence is left alone.
 func TestReleaseRecordFromAnotherSession(t *testing.T) {
 	db := releaseEnv(t, changeWF)
 	t.Setenv("SATELLE_OWNER", "owner-a")
+	t.Setenv(config.SessionEnv, "sess-a")
 	it := routeStory(t, "engaged elsewhere")
 	if _, err := dispatchRaw(t, "story-set", map[string]any{"id": it.ID, "status": "in_progress"}); err != nil {
 		t.Fatalf("engage: %v", err)
 	}
-	before, err := db.Leases.Get(context.Background(), it.ID)
-	if err != nil || before.Owner != "owner-a" {
-		t.Fatalf("seat = %+v, %v", before, err)
+	if before, ok := presenceRow(t, it.ID); !ok || before.Session != "sess-a" {
+		t.Fatalf("working_on = %+v, %v", before, ok)
 	}
 
 	t.Setenv("SATELLE_OWNER", "release-task")
+	t.Setenv(config.SessionEnv, "sess-release")
 	call(t, "story-release-record", map[string]any{"ids": []string{it.ID}, "commit": "abc", "release": "v1"})
 
 	rows := releaseRows(t, db, it.ID)
 	if len(rows) != 1 || !strings.Contains(string(rows[0].Payload), `"owner":"release-task"`) {
 		t.Fatalf("release rows = %+v, want one recorded by release-task", rows)
 	}
-	after, err := db.Leases.Get(context.Background(), it.ID)
-	if err != nil || after.Owner != "owner-a" {
-		t.Errorf("the story's seat must stay with its own session: %+v, %v", after, err)
+	if after, ok := presenceRow(t, it.ID); !ok || after.Session != "sess-a" {
+		t.Errorf("recording a release must not move the story's presence: %+v, %v", after, ok)
 	}
 	if got := storyByID(t, it.ID).Status; got != "in_progress" {
 		t.Errorf("status = %s, want in_progress", got)

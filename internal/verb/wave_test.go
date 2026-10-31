@@ -353,26 +353,21 @@ func TestWaveRefusals(t *testing.T) {
 
 // AC1: the assessment writes nothing — every story and the ledger are unchanged.
 func TestWaveWritesNothing(t *testing.T) {
-	db := wireWithWorkflowsStore(t, waveWF("parallel"))
+	wireWithWorkflowsStore(t, waveWF("parallel"))
 	epic, a, b, c, d := fourChildEpic(t)
 	snap := func() string {
 		out := []string{string(call(t, "story-list", map[string]any{"tag": "epic:w"}))}
 		for _, id := range []string{epic.ID, a.ID, b.ID, c.ID, d.ID} {
 			out = append(out, string(call(t, "ledger-list", map[string]any{"story_id": id, "limit": 1000})))
 		}
-		leases, err := db.Leases.List(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
-		lb, _ := json.Marshal(leases)
-		return strings.Join(append(out, string(lb)), "\n")
+		return strings.Join(out, "\n")
 	}
 	before := snap()
 	if _, err := wave(t, epic.ID); err != nil {
 		t.Fatalf("wave: %v", err)
 	}
 	if after := snap(); after != before {
-		t.Errorf("story wave changed the store (stories, ledger or leases):\nbefore %s\nafter  %s", before, after)
+		t.Errorf("story wave changed the store (stories or ledger):\nbefore %s\nafter  %s", before, after)
 	}
 }
 

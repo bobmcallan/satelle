@@ -8,8 +8,8 @@ import (
 
 // ClockFor resolves the workflow governing item through the one front door
 // (SpecFor) and returns the costview.Clock built from its shape: Engaging is
-// item's NonTerminalEngagingStates (the same rule the edit-gate and the
-// single-story lease use), Terminal is IsTerminalState alone — never
+// item's NonTerminalEngagingStates (the same rule the edit gate and the
+// concurrency count use), Terminal is IsTerminalState alone — never
 // IsParkState, since a park/blocked transition leaves the story open. ok is
 // false when no workflow resolves or its lifecycle does not parse; the caller
 // then falls back to its own degraded clock rather than guessing at status

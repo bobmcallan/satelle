@@ -264,11 +264,11 @@ one left:
 
 It reports the newest dispatch log's last recorded event and the wall time since,
 the files present since the engagement anchor, the `agent-stalled` row when the
-watchdog wrote one, and the lease. It reports and never vouches: every report says
+watchdog wrote one, and the open `transition_started` row. It reports and never vouches: every report says
 the transition did NOT commit and the work is UNVERIFIED, and the file list is an
 enumeration, not a coherence check (git cannot say which dispatch wrote a file).
 A log that ends in a `completed` event is not an unfinished dispatch; the report
-says so and lists nothing. A dispatch whose lease is still in flight is reported as
+says so and lists nothing. A dispatch whose transition is still in flight is reported as
 running, not as a recovery.
 
 The decision stays yours. Record it, then act through the normal verbs:
@@ -445,7 +445,7 @@ the excerpts.
 Satelle decodes command and ACP results through the same seam, validates the
 declared fields and optional acceptance-criterion coverage, and attaches the
 typed document before committing the workflow transition. A decode, validation,
-or attachment failure refuses the transition and releases its in-flight lease.
+or attachment failure refuses the transition and closes its `transition_started` row.
 Because Satelle owns the write, a contracted planner can use only read-only
 repository tools.
 
@@ -673,7 +673,7 @@ claude -p --input-format stream-json --output-format stream-json --verbose --dis
 `{system}` and `{payload}` are rejected on the spawn line; `{tools}` /
 `{model}` / `{effort}` stay argv (empty drops the preceding flag). **Reviewers
 stay `command`** — a live channel does not help a cold one-shot verdict.
-`stream` exists for live seats such as a rework relay's coder or consult binding.
+`stream` exists for live bindings such as a rework relay's coder or consult binding.
 
 #### Who performs a step
 
@@ -805,17 +805,18 @@ ready, or after a declared number of gate rejections on the same edge — parks 
 
 | Side | Charter | Mutator tools |
 | --- | --- | --- |
-| coder (step's `agent`) | executor — it is driving its own edits | allowed **iff** its own binding's `tools` grant admits mutators **and** the seat is live, not mid-transition, and its committed status is a performing state the route allocates to **that binding** |
-| consultant (`consult`) | consulting — reply is context, not a verdict | **denied by policy**, whatever the seat says |
+| coder (step's `agent`) | executor — it is driving its own edits | allowed **iff** its own binding's `tools` grant admits mutators **and** the story is performing, not mid-transition, and its committed status is a performing state the route allocates to **that binding** |
+| consultant (`consult`) | consulting — reply is context, not a verdict | **denied by policy**, whatever the story's status |
 
-The coder's rule is the route's own allocation, read from the seat — not a state
-name compiled into the binary. The consultant's grant is already read-only; the
+The coder's rule is the route's own allocation, read from the story's committed
+status — not a state name compiled into the binary. The consultant's grant is already read-only; the
 policy is the second, non-negotiable refusal, because a consultant that can edit
 is a reviewer marking its own work. PreToolUse `gate` / `commitgate` honour the
 same allocated-binding rule when the rework verb marks the coder spawn with
-`SATELLE_RELAY_BINDING` / `SATELLE_RELAY_ITEM` (and exports the lease's session
-id so the hook binds that seat); unmarked sessions stay on the driving-session
-and in-flight dispatch branches.
+`SATELLE_RELAY_BINDING` / `SATELLE_RELAY_ITEM` (and exports the session the
+story's latest `working_on` row names); the hook judges the marked item at its
+status, whatever the session. Unmarked sessions are judged by the story engaged
+from the tree they act in, and dispatches by their in-flight transition.
 
 #### Headless drive — `satelle story drive` (sty_c0c795df)
 
@@ -863,8 +864,8 @@ route) parks and records nothing.
 status and the recorded reason are printed); `1` the drive refused before it
 began, or stopped and could not park (`<id> stopped at <status>: <reason>`). An agent caller's drive is
 handed off as one gated run, like `story rework`; inside that process every gate
-runs in the foreground, and the seat lease and ledger rows carry the resolved
-session.
+runs in the foreground, and the `working_on` and other ledger rows carry the
+resolved session.
 
 ### Workspace bindings layer — `satelle sync bindings` (sty_01949949)
 

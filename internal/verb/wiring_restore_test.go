@@ -17,7 +17,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/oplog"
 	"github.com/bobmcallan/satelle/internal/retrieve"
@@ -83,7 +82,7 @@ func wiringCases() []wiringCase {
 	loc := func() (string, string) { return "loc_sentinel", "" }
 	note := func(string) {}
 	vocab := config.Config{Tags: config.TagsConfig{Vocabulary: map[string][]string{"wiring": {"sentinel"}}}}
-	epic := config.Config{Engagement: config.EngagementConfig{Parallel: config.ParallelEpic}}
+	limited := config.Config{Engagement: config.EngagementConfig{Limit: 2}}
 	wt := config.Config{Worktree: config.WorktreeConfig{Branch: "wiring-sentinel"}}
 	agents := config.AgentsConfig{Agents: map[string]config.AgentBinding{"wiring-sentinel": {}}}
 	vars := map[string]string{"wiring": "sentinel"}
@@ -102,8 +101,8 @@ func wiringCases() []wiringCase {
 		{fn: "SetActorResolver", call: func() { SetActorResolver(f) }, want: []string{"actorResolver"}},
 		{fn: "SetAuthoredDirs", call: func() { SetAuthoredDirs(map[string]string{"wiring": "sentinel"}) }, want: []string{"authoredDirs"}},
 		{fn: "SetSubstrateConfigDir", call: func() { SetSubstrateConfigDir("wiring-sentinel") }, want: []string{"substrateConfigDir"}},
-		{fn: "SetEngagementMode", pre: ClearEngagementMode, call: func() { SetEngagementMode(epic) }, want: []string{"engagementParallel"}},
-		{fn: "ClearEngagementMode", pair: "SetEngagementMode", pre: func() { SetEngagementMode(epic) }, call: ClearEngagementMode, want: []string{"engagementParallel"}},
+		{fn: "SetEngagementMode", pre: ClearEngagementMode, call: func() { SetEngagementMode(limited) }, want: []string{"engagementLimit"}},
+		{fn: "ClearEngagementMode", pair: "SetEngagementMode", pre: func() { SetEngagementMode(limited) }, call: ClearEngagementMode, want: []string{"engagementLimit"}},
 		{fn: "SetAgentBudgets", call: func() { SetAgentBudgets(func(string) config.Budget { return config.Budget{} }) }, want: []string{"agentBudgets"}},
 		{fn: "SetAgentsConfig", pre: ClearAgentsConfig, call: func() { SetAgentsConfig(agents, vars) }, want: []string{"agentsLayer", "agentsVars", "agentsWired"}},
 		{fn: "ClearAgentsConfig", pair: "SetAgentsConfig", pre: func() { SetAgentsConfig(agents, vars) }, call: ClearAgentsConfig, want: []string{"agentsLayer", "agentsVars", "agentsWired"}},
@@ -132,7 +131,6 @@ func wiringCases() []wiringCase {
 		{fn: "SetLedgerStore", call: func() { SetLedgerStore(new(ledger.Store)) }, want: []string{"ledgerStore"}},
 		{fn: "SetTxRunner", call: func() { SetTxRunner(func(context.Context, func(*sql.Tx) error) error { return nil }) }, want: []string{"txRunner"}},
 		{fn: "SetDocIndexStore", call: func() { SetDocIndexStore(new(docindex.Store)) }, want: []string{"docIndexStore"}},
-		{fn: "SetLeaseStore", call: func() { SetLeaseStore(new(lease.Store)) }, want: []string{"leaseStore"}},
 		{fn: "SetRetrieveStore", call: func() { SetRetrieveStore(new(retrieve.Store)) }, want: []string{"retrieveStore"}},
 		{fn: "SetChangeNotifier", pre: clear0, call: func() { SetChangeNotifier(note) }, want: []string{"changeNotifiers"}},
 		{fn: "AddChangeNotifier", pre: clear0, call: func() { AddChangeNotifier(note) }, want: []string{"changeNotifiers"}},
@@ -464,13 +462,13 @@ func TestProductionWiringDefaults(t *testing.T) {
 		if win.Available || !strings.Contains(win.UnavailableReason, agentcli.HarnessUnknown) {
 			t.Errorf("%s: driverWindowReader with no harness/session = %+v, want unavailable naming %q", when, win, agentcli.HarnessUnknown)
 		}
-		if engagementParallel != config.ParallelNone {
-			t.Errorf("%s: engagementParallel = %q, want %q", when, engagementParallel, config.ParallelNone)
+		if engagementLimit != 0 {
+			t.Errorf("%s: engagementLimit = %d, want 0 (unlimited)", when, engagementLimit)
 		}
 	}
 
-	if startWiring.parallel != config.ParallelNone {
-		t.Errorf("at process start engagementParallel = %q, want %q", startWiring.parallel, config.ParallelNone)
+	if startWiring.limit != 0 {
+		t.Errorf("at process start engagementLimit = %d, want 0 (unlimited)", startWiring.limit)
 	}
 	for _, name := range []string{"verdictRecord", "dispatchLogsDir", "changelogPath", "driverWindowReader", "driverSnapshotter"} {
 		if startWiring.funcs[name] == nil {
@@ -483,7 +481,7 @@ func TestProductionWiringDefaults(t *testing.T) {
 		restore, changed := SnapshotWiring()
 		t.Cleanup(restore)
 		SetVerdictRecorder(nil)
-		SetEngagementMode(config.Config{Engagement: config.EngagementConfig{Parallel: config.ParallelEpic}})
+		SetEngagementMode(config.Config{Engagement: config.EngagementConfig{Limit: 2}})
 		dispatchLogsDir = func() string { return "x" }
 		changelogPath = func() string { return "x" }
 		driverWindowReader = func(string, string, string, time.Time, time.Time) agentcli.DriverWindowUsage {

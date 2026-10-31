@@ -1,15 +1,11 @@
 package verb_test
 
 import (
-	"errors"
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/store"
-	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -89,12 +85,11 @@ func wireAfterChildren(t *testing.T, afterChildren bool) *store.DB {
 	t.Helper()
 	withWiring(t)
 	db := wireWithWorkflowsStore(t, afterChildrenWF(afterChildren))
-	verb.SetEngagementMode(config.Config{Engagement: config.EngagementConfig{Parallel: config.ParallelEpic}})
 	return db
 }
 
 // acChild files a child of the epic: tagged into the set and linked by parent_id,
-// so both set membership and the seat key see it.
+// so both set membership and the wave see it.
 func acChild(t *testing.T, epic workitem.Item, category string, tags ...string) workitem.Item {
 	t.Helper()
 	return mkEpicStory(t, map[string]any{
@@ -105,7 +100,7 @@ func acChild(t *testing.T, epic workitem.Item, category string, tags ...string) 
 }
 
 // afterChildrenScenario builds the shared scene: the epic waits at ready; child
-// done is terminal, child coded sits at in_progress holding a seat in treeB,
+// done is terminal, child coded sits at in_progress engaged from treeB,
 // child cancelled is cancelled, and child open is still in backlog. It leaves
 // the working directory in treeA.
 type afterChildrenScene struct {
@@ -122,7 +117,7 @@ func afterChildrenScenario(t *testing.T) afterChildrenScene {
 	s.db = wireAfterChildren(t, true)
 	s.epic = waveEpic(t)
 	// Children first: a container with no open child is not waiting, so it would
-	// take a seat at ready and hold the very tree its children engage from.
+	// perform at ready rather than wait on them.
 	s.done = acChild(t, s.epic, "fix")
 	s.coded = acChild(t, s.epic, "fix")
 	s.cancelled = acChild(t, s.epic, "fix")
@@ -164,8 +159,8 @@ func TestAfterChildrenRefusesNamingUndischargedChildren(t *testing.T) {
 	if got := statusOf(t, s.epic.ID).Status; got != "ready" {
 		t.Errorf("a refused container stays at ready, got %q", got)
 	}
-	if _, held := leaseRow(t, s.db, s.epic.ID); held {
-		t.Error("a refused transition must take no seat")
+	if p, ok := presenceRow(t, s.epic.ID); ok && p.State == "merging" {
+		t.Error("a refused transition must record no working_on row")
 	}
 }
 
@@ -197,51 +192,48 @@ func TestAfterChildrenRefusesAnUndeterminedSet(t *testing.T) {
 	}
 }
 
-// AC2: while the container only waits it holds no seat; once every child has
-// discharged (done, at/past the step, or cancelled) the transition proceeds and
-// the performing step takes a seat under the epic key, in the engaged tree.
-func TestAfterChildrenEntryTakesTheParentSeat(t *testing.T) {
+// AC2: while the container only waits it is not performing; once every child
+// has discharged (done, at/past the step, or cancelled) the transition proceeds
+// and the performing step records its presence in the engaged tree.
+func TestAfterChildrenEntryPerformsTheParent(t *testing.T) {
 	s := afterChildrenScenario(t)
 
-	if _, held := leaseRow(t, s.db, s.epic.ID); held {
-		t.Fatal("a container only waiting at ready must hold no lease")
+	if isPerforming(t, s.epic.ID) {
+		t.Fatal("a container only waiting at ready must not be performing")
 	}
 	moveTo(t, s.open.ID, "cancelled")
 
 	moveTo(t, s.epic.ID, "merging")
-	l, held := leaseRow(t, s.db, s.epic.ID)
-	if !held {
-		t.Fatal("entering a performing after_children step must acquire the parent's seat")
+	if !isPerforming(t, s.epic.ID) {
+		t.Fatal("entering a performing after_children step must perform the parent")
 	}
-	if l.State != "merging" || l.Worktree != s.treeA || l.SeatKey != s.epic.ID {
-		t.Errorf("parent lease must record the step, tree and its own id as the key: %+v", l)
+	if p, ok := presenceRow(t, s.epic.ID); !ok || p.State != "merging" || p.Worktree != s.treeA {
+		t.Errorf("parent working_on must record the step and tree: %+v %v", p, ok)
 	}
-	if child, ok := leaseRow(t, s.db, s.coded.ID); !ok || child.SeatKey != s.epic.ID {
-		t.Errorf("the child shares the parent's key, so both hold: %+v %v", child, ok)
+	if !isPerforming(t, s.coded.ID) {
+		t.Error("the child keeps performing beside the parent")
 	}
 }
 
 // AC3: a child that has discharged the obligation engages its next step from its
-// own worktree while the parent holds the seat; a second child in the parent's
-// tree meets the ordinary tree conflict; a child the wave omits meets the wave's
-// own refusal.
-func TestAfterChildrenParentSeatLeavesDischargedChildFree(t *testing.T) {
+// own worktree while the parent performs; a second child engages from the
+// parent's tree, since nothing holds a tree; a child the wave omits meets the
+// wave's own refusal.
+func TestAfterChildrenPerformingParentLeavesDischargedChildFree(t *testing.T) {
 	s := afterChildrenScenario(t)
 	moveTo(t, s.open.ID, "cancelled")
 	moveTo(t, s.epic.ID, "merging")
 
 	chdir(t, s.treeB)
 	moveTo(t, s.coded.ID, "integration")
-	if l, ok := leaseRow(t, s.db, s.coded.ID); !ok || l.State != "integration" || l.Worktree != s.treeB {
-		t.Errorf("the discharged child keeps moving from its own tree: %+v %v", l, ok)
+	if p, ok := presenceRow(t, s.coded.ID); !ok || p.State != "integration" || p.Worktree != s.treeB {
+		t.Errorf("the discharged child keeps moving from its own tree: %+v %v", p, ok)
 	}
 
-	// A child filed late, from the parent's own tree: the tree rule, nothing new.
+	// A child filed late engages from the parent's own tree: no tree is held.
 	late := acChild(t, s.epic, "fix")
 	chdir(t, s.treeA)
-	if _, err := dispatchRaw(t, "story-set", map[string]any{"id": late.ID, "status": "plan"}); !errors.Is(err, lease.ErrTreeConflict) {
-		t.Fatalf("a second story in the parent's tree must hit the tree conflict: %v", err)
-	}
+	moveTo(t, late.ID, "plan")
 
 	// A late child that waits on an unfinished sibling is off the wave: refused by
 	// the wave's own rule and wording, never an after_children message.
@@ -259,41 +251,41 @@ func TestAfterChildrenParentSeatLeavesDischargedChildFree(t *testing.T) {
 // AC2: nothing waits on a child that is already past the obligation or cancelled.
 func TestAfterChildrenAllResolvedOrPastProceeds(t *testing.T) {
 	_, _ = twoWorktrees(t)
-	db := wireAfterChildren(t, true)
+	wireAfterChildren(t, true)
 	epic := waveEpic(t)
 	c := acChild(t, epic, "fix")
 	moveTo(t, epic.ID, "ready")
-	moveTo(t, c.ID, "cancelled")
-	if _, held := leaseRow(t, db, epic.ID); held {
-		t.Fatal("a container only waiting at ready must hold no lease")
+	if isPerforming(t, epic.ID) {
+		t.Fatal("a container only waiting at ready must not be performing")
 	}
+	moveTo(t, c.ID, "cancelled")
 
 	moveTo(t, epic.ID, "merging")
-	if _, held := leaseRow(t, db, epic.ID); !held {
-		t.Fatal("the performing step must take the seat")
+	if !isPerforming(t, epic.ID) {
+		t.Fatal("the performing step must perform the container")
 	}
 }
 
 // AC4: with no after_children the container's route behaves as it did — the
-// performing step is entered over open children and takes the lease it took
-// before; the waiting step still holds none.
-func TestNoAfterChildrenKeepsTheWaitsOnChildrenLeaseRule(t *testing.T) {
+// performing step is entered over open children and performs; the waiting step
+// still does not.
+func TestNoAfterChildrenKeepsTheWaitsOnChildrenRule(t *testing.T) {
 	_, _ = twoWorktrees(t)
-	db := wireAfterChildren(t, false)
+	wireAfterChildren(t, false)
 	epic := waveEpic(t)
 	acChild(t, epic, "fix")
 
 	moveTo(t, epic.ID, "ready")
-	if _, held := leaseRow(t, db, epic.ID); held {
-		t.Fatal("a container waiting on an open child holds no lease")
+	if isPerforming(t, epic.ID) {
+		t.Fatal("a container waiting on an open child is not performing")
 	}
 	moveTo(t, epic.ID, "merging")
-	if l, held := leaseRow(t, db, epic.ID); !held || l.State != "merging" {
-		t.Fatalf("the performing step takes the lease it always took: %+v %v", l, held)
+	if p, ok := presenceRow(t, epic.ID); !isPerforming(t, epic.ID) || !ok || p.State != "merging" {
+		t.Fatalf("the performing step performs as it always did: %+v %v", p, ok)
 	}
 }
 
-// AC5: the step only gates entry and the seat. No production file this story
+// AC5: the step only gates entry. No production file this story
 // added runs git, merges, pushes or bumps a version.
 func TestAfterChildrenRunsNoGitMergePushOrVersionBump(t *testing.T) {
 	forbidden := []string{"os/exec", "exec.Command", "git merge", "git push", "git commit", ".version"}

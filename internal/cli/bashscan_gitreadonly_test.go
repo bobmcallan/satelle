@@ -3,7 +3,7 @@ package cli
 // sty_56d50bf6 — `git -C DIR <read-only subcommand>` mutates nothing in DIR, so the
 // Bash edit gate must not judge it as a mutation of DIR's tree; a git subcommand
 // that writes still is one. A shell mutation of a linked worktree is judged against
-// the seat of THAT worktree.
+// the story engaged from THAT worktree.
 
 import (
 	"os"
@@ -72,12 +72,12 @@ func TestBashMutatesTreeGitReadOnlyLinkedWorktree(t *testing.T) {
 	}
 }
 
-// twoSeatsInLinkedWorktrees is multiSeatRepo with real git: the anchor tree is a
+// twoStoriesInLinkedWorktrees is multiTreeRepo with real git: the anchor tree is a
 // repository and wtB a linked worktree of it, so the foreign-tree fence lets a
-// command at wtB through to the seat gate.
-func twoSeatsInLinkedWorktrees(t *testing.T, aStatus, bStatus string, aFirst bool) multiSeat {
+// command at wtB through to the engagement gate.
+func twoStoriesInLinkedWorktrees(t *testing.T, aStatus, bStatus string, aFirst bool) multiTree {
 	t.Helper()
-	f := multiSeatRepo(t, aStatus, "feature", bStatus, aFirst, "")
+	f := multiTreeRepo(t, aStatus, "feature", bStatus, aFirst, "")
 	// Swap the fake .git markers for a real repository and a real linked worktree.
 	if err := os.Remove(filepath.Join(f.repo, ".git")); err != nil {
 		t.Fatal(err)
@@ -86,45 +86,45 @@ func twoSeatsInLinkedWorktrees(t *testing.T, aStatus, bStatus string, aFirst boo
 		t.Fatal(err)
 	}
 	gitInitCommit(t, f.repo)
-	gitIn(t, f.repo, "worktree", "add", "-q", "-b", "seat-b", f.wtB)
+	gitIn(t, f.repo, "worktree", "add", "-q", "-b", "story-b", f.wtB)
 	return f
 }
 
-// AC2: a shell mutation of a linked worktree is refused by the seat of THAT
-// worktree, in both hooks and whichever order the store lists the seats in. The
-// anchor's seat would allow it.
-func TestMultiSeatBashMutationDenyNamesTargetWorktreeSeat(t *testing.T) {
+// AC2: a shell mutation of a linked worktree is refused by the story engaged
+// from THAT worktree, in both hooks and whichever order they were engaged in.
+// The anchor's story would allow it.
+func TestMultiTreeBashMutationDenyNamesTargetWorktreeStory(t *testing.T) {
 	for _, hook := range []string{"gate", "commitgate"} {
 		bothOrders(t, func(t *testing.T, aFirst bool) {
-			f := twoSeatsInLinkedWorktrees(t, "in_progress", "plan", aFirst)
-			out, err := runRootIn(t, multiSeatBash("git -C "+f.wtB+" commit -m x"), "hook", hook)
+			f := twoStoriesInLinkedWorktrees(t, "in_progress", "plan", aFirst)
+			out, err := runRootIn(t, multiTreeBash("git -C "+f.wtB+" commit -m x"), "hook", hook)
 			if err == nil {
-				t.Fatalf("%s: B is at plan and holds the worktree, so the commit must be refused:\n%s", hook, out)
+				t.Fatalf("%s: B is at plan and engaged from the worktree, so the commit must be refused:\n%s", hook, out)
 			}
 			reason := denyReasonOf(t, out)
 			if !strings.Contains(reason, f.b.ID) {
-				t.Errorf("%s: the refusal must name B's seat %s: %s", hook, f.b.ID, reason)
+				t.Errorf("%s: the refusal must name B's story %s: %s", hook, f.b.ID, reason)
 			}
 			if strings.Contains(reason, f.a.ID) {
-				t.Errorf("%s: the refusal must not name the anchor's seat %s: %s", hook, f.a.ID, reason)
+				t.Errorf("%s: the refusal must not name the anchor's story %s: %s", hook, f.a.ID, reason)
 			}
 		})
 	}
 }
 
-// AC3 (in-process): with two live seats, both at a step the route allocates to a
+// AC3 (in-process): with two performing stories, both at a step the route allocates to a
 // non-executor agent (plan, planner), a read-only git -C into the other worktree
 // runs without a deny. This is the observed failure: before the fix the -C operand
-// was a mutation target, so the command was judged by a seat that may not edit and
+// was a mutation target, so the command was judged by a story that may not edit and
 // denied; the same command spelled `git -C <wt> commit` still is, as the control.
-func TestMultiSeatGitReadOnlyIntoWorktreeNotDenied(t *testing.T) {
+func TestMultiTreeGitReadOnlyIntoWorktreeNotDenied(t *testing.T) {
 	for _, hook := range []string{"gate", "commitgate"} {
 		bothOrders(t, func(t *testing.T, aFirst bool) {
-			f := twoSeatsInLinkedWorktrees(t, "plan", "plan", aFirst)
-			if out, err := runRootIn(t, multiSeatBash("git -C "+f.wtB+" diff main --stat"), "hook", hook); err != nil {
+			f := twoStoriesInLinkedWorktrees(t, "plan", "plan", aFirst)
+			if out, err := runRootIn(t, multiTreeBash("git -C "+f.wtB+" diff main --stat"), "hook", hook); err != nil {
 				t.Fatalf("%s: a read-only git -C into a sibling worktree must not be denied: %v\n%s", hook, err, out)
 			}
-			if out, err := runRootIn(t, multiSeatBash("git -C "+f.wtB+" commit -m x"), "hook", hook); err == nil {
+			if out, err := runRootIn(t, multiTreeBash("git -C "+f.wtB+" commit -m x"), "hook", hook); err == nil {
 				t.Fatalf("%s: control — a writing git -C into the same worktree must still be refused:\n%s", hook, out)
 			}
 		})

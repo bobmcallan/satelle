@@ -12,7 +12,7 @@
 // not required for the engine to behave identically; diffing the structs would
 // manufacture divergence and make the checker useless. What matters is what
 // PerformingStates, ScopedReviewersSplit, ExecutorSkillsFor and friends RETURN,
-// because that is what the engine, the seat and the edit gate consume.
+// because that is what the engine, the concurrency check and the edit gate consume.
 package wfequiv
 
 import (

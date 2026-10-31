@@ -176,7 +176,7 @@ func cursorScenarios() []cursorScenario {
 			return pin(t, repo)
 		}, false},
 		{"executor state", func(t *testing.T) string {
-			repo, _ := liveSeatRepo(t)
+			repo, _ := engagedRepo(t)
 			return pin(t, repo)
 		}, true},
 		{"planning state", func(t *testing.T) string {

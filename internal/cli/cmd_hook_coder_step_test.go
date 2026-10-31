@@ -3,10 +3,9 @@ package cli
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/bobmcallan/satelle/internal/docindex"
-	"github.com/bobmcallan/satelle/internal/lease"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfroute"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -16,8 +15,7 @@ import (
 // loop; otherwise the one-shot coder dispatch is named. An executor step keeps
 // permitting the driver's edit.
 func TestEditPermissionDenyReasonCoderStep(t *testing.T) {
-	now := time.Now().UTC()
-	coder := seatInfo{
+	coder := engagement{
 		ItemID: "sty_x", State: "in_progress", StoryStatus: "in_progress",
 		StateAgent: "coder", Engaged: true, EditCapable: false,
 		EditStates: []string{"integration", "release"},
@@ -25,14 +23,14 @@ func TestEditPermissionDenyReasonCoderStep(t *testing.T) {
 
 	withRework := coder
 	withRework.StateRework = true
-	got := editPermissionDenyReason(withRework, nil, "", now)
+	got := editPermissionDenyReason(withRework, nil, "")
 	for _, want := range []string{"sty_x", `"coder"`, "story rework sty_x", "Do not edit in-loop"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("rework step reason missing %q: %s", want, got)
 		}
 	}
 
-	got = editPermissionDenyReason(coder, nil, "", now)
+	got = editPermissionDenyReason(coder, nil, "")
 	for _, want := range []string{"one-shot coder dispatch", `"coder"`, "Do not edit in-loop"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("non-rework step reason missing %q: %s", want, got)
@@ -42,7 +40,7 @@ func TestEditPermissionDenyReasonCoderStep(t *testing.T) {
 		t.Errorf("non-rework step must not name `story rework`: %s", got)
 	}
 
-	exec := seatInfo{
+	exec := engagement{
 		ItemID: "sty_x", State: "integration", StoryStatus: "integration",
 		StateAgent: "executor", Engaged: true, EditCapable: true,
 		EditStates: []string{"integration", "release"},
@@ -76,12 +74,12 @@ requires = ["coded"]
 `)
 }
 
-// TestSeatFillsStateReworkFromTheRoute: both seat derivations read the rework
+// TestEngagementFillsStateReworkFromTheRoute: the engagement reads the rework
 // key off the derived route, and the deny text follows it end to end.
-func TestSeatFillsStateReworkFromTheRoute(t *testing.T) {
+func TestEngagementFillsStateReworkFromTheRoute(t *testing.T) {
 	t.Chdir(tempRepo(t)) // the deny text consults the repo for exemptions
-	now := time.Now().UTC()
 	story := workitem.Item{ID: "sty_work", Kind: workitem.KindStory, Status: "in_progress", Category: "feature"}
+	none := func(string) (verb.WorkingOnRow, bool) { return verb.WorkingOnRow{}, false }
 	for _, tc := range []struct {
 		name       string
 		rework     string
@@ -92,28 +90,19 @@ func TestSeatFillsStateReworkFromTheRoute(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wfs := codedStepWFs(tc.rework)
-			live, _, err := evaluateSeat([]lease.Lease{liveLease("sty_work", "in_progress", now)},
-				[]workitem.Item{story}, wfs, now)
+			live, err := evaluateEngagements([]workitem.Item{story}, wfs, nil, none)
 			if err != nil || len(live) != 1 {
-				t.Fatalf("evaluateSeat: live=%+v err=%v", live, err)
+				t.Fatalf("evaluateEngagements: live=%+v err=%v", live, err)
 			}
 			if live[0].StateAgent != "coder" || live[0].StateRework != tc.wantRework {
-				t.Errorf("seat = agent %q rework %v, want coder / %v", live[0].StateAgent, live[0].StateRework, tc.wantRework)
+				t.Errorf("engagement = agent %q rework %v, want coder / %v", live[0].StateAgent, live[0].StateRework, tc.wantRework)
 			}
-			got := editPermissionDenyReason(live[0], live, "", now)
+			got := editPermissionDenyReason(live[0], live, "")
 			if has := strings.Contains(got, "story rework"); has != tc.wantRework {
 				t.Errorf("deny text names `story rework` = %v, want %v: %s", has, tc.wantRework, got)
 			}
 			if !tc.wantRework && !strings.Contains(got, "one-shot coder dispatch") {
 				t.Errorf("a non-rework coder step must name the one-shot dispatch: %s", got)
-			}
-
-			derived, engaged, err := derivedSeat([]workitem.Item{story}, wfs)
-			if err != nil || !engaged {
-				t.Fatalf("derivedSeat: engaged=%v err=%v", engaged, err)
-			}
-			if derived.StateRework != tc.wantRework {
-				t.Errorf("derivedSeat StateRework = %v, want %v", derived.StateRework, tc.wantRework)
 			}
 		})
 	}

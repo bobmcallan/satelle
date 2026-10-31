@@ -23,12 +23,12 @@ import (
 func TestGateRecordsSubstrateWrite(t *testing.T) {
 	t.Run("allowed", func(t *testing.T) {
 		e := newLaneEnv(t, []laneSpec{
-			{key: "S", category: "substrate", session: "sess"},
-			{key: "F", category: "fix", session: "other"},
+			{key: "S", category: "substrate"},
+			{key: "F", category: "fix"},
 		})
-		target := filepath.Join(e.repo, laneRel)
-		if err, out := e.gate(t, "edit", target, e.seats("sess", target)); err != nil {
-			t.Fatalf("the substrate seat's write must pass: %v\n%s", err, out)
+		target := filepath.Join(e.trees["S"], laneRel)
+		if err, out := e.gate(t, "edit", target, e.engagements(target)); err != nil {
+			t.Fatalf("the substrate story's write must pass: %v\n%s", err, out)
 		}
 		n, rows := rowsByStory(t, ledger.KindSubstrateWritten)
 		if len(rows) != 1 || n[e.ids["S"]] != 1 {
@@ -42,11 +42,11 @@ func TestGateRecordsSubstrateWrite(t *testing.T) {
 
 	t.Run("refused", func(t *testing.T) {
 		e := newLaneEnv(t, []laneSpec{
-			{key: "S", category: "substrate", session: "sess"},
-			{key: "F", category: "fix", session: "sess"},
+			{key: "S", category: "substrate"},
+			{key: "F", category: "fix"},
 		})
 		target := filepath.Join(e.trees["F"], laneRel)
-		if err, out := e.gate(t, "edit", target, e.seats("sess", target)); err == nil {
+		if err, out := e.gate(t, "edit", target, e.engagements(target)); err == nil {
 			t.Fatalf("an edit attributed to F must be refused:\n%s", out)
 		}
 		if rows := ledgerRows(t, ledger.KindSubstrateWritten); len(rows) != 0 {
@@ -56,15 +56,15 @@ func TestGateRecordsSubstrateWrite(t *testing.T) {
 
 	t.Run("append fails", func(t *testing.T) {
 		e := newLaneEnv(t, []laneSpec{
-			{key: "S", category: "substrate", session: "sess"},
-			{key: "F", category: "fix", session: "other"},
+			{key: "S", category: "substrate"},
+			{key: "F", category: "fix"},
 		})
 		orig := recordSubstrateWritesFn
 		t.Cleanup(func() { recordSubstrateWritesFn = orig })
 		recordSubstrateWritesFn = func([]pendingWrite) error { return errors.New("ledger unavailable") }
-		target := filepath.Join(e.repo, laneRel)
+		target := filepath.Join(e.trees["S"], laneRel)
 		for _, via := range []string{"edit", "bash"} {
-			if err, out := e.gate(t, via, target, e.seats("sess", target)); err == nil {
+			if err, out := e.gate(t, via, target, e.engagements(target)); err == nil {
 				t.Errorf("%s: a write that cannot be recorded must be refused:\n%s", via, out)
 			}
 		}
@@ -93,7 +93,7 @@ func TestLockOptOutForeignWriteListed(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	if err := substrateLockGate(cmd, []byte(claudeEditEvent(target)), target, &lockSeats{}); err != nil {
+	if err := substrateLockGate(cmd, []byte(claudeEditEvent(target)), target, &lockEngagements{}); err != nil {
 		t.Fatalf("the opt-out locks nothing: %v\n%s", err, out.String())
 	}
 	editAfterEngage(t, repo, rel, "# b by another story\n")

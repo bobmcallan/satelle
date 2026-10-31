@@ -13,14 +13,12 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-// A close releases the engagement seat, and with it the permission to commit the
-// slice. These tests drive the real story-set verb over a real store and a real
+// A close ends the engagement, and with it the permission to commit the slice. These tests drive the real story-set verb over a real store and a real
 // git tree, with the verb's dirty-path probe wired to the edit gate's own
 // classifier (dirtyGatedPaths), the way app.go wires it.
 
@@ -99,7 +97,6 @@ func closeGuardEnv(t *testing.T) *closeEnv {
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetTxRunner(db.InTx)
 	verb.SetDocIndexStore(db.DocIndex)
-	verb.SetLeaseStore(db.Leases)
 	verb.SetStoryDir(filepath.Join(t.TempDir(), "stories"))
 	verb.SetAuthoredDirs(cfg.ResolveAuthoredDirs(root))
 	verb.SetSubstrateConfigDir(cfg.ResolveDataDir(root))
@@ -152,16 +149,10 @@ func (e *closeEnv) status(id string) string {
 	return it.Status
 }
 
-// seatHeld reports whether the story still holds a live seat.
-func (e *closeEnv) seatHeld(id string) bool {
-	l, err := e.db.Leases.Get(context.Background(), id)
-	if errors.Is(err, lease.ErrNotFound) {
-		return false
-	}
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return lease.Alive(l, time.Now())
+// engaged reports whether the story is performing from a recorded tree here.
+func (e *closeEnv) engaged(id string) bool {
+	w, ok := verb.LatestLocalWorkingOn(context.Background(), id)
+	return ok && w.Worktree != "" && e.status(id) == "in_progress"
 }
 
 func (e *closeEnv) write(rel, body string) {
@@ -184,15 +175,15 @@ func (e *closeEnv) engage() string {
 	if err := e.set(id, "in_progress"); err != nil {
 		e.t.Fatalf("engage: %v", err)
 	}
-	if !e.seatHeld(id) {
-		e.t.Fatal("engage did not take the seat")
+	if !e.engaged(id) {
+		e.t.Fatal("engage did not record the tree it was engaged from")
 	}
 	return id
 }
 
 // AC1, AC3, AC6: a close with a gated uncommitted file is refused with the file
 // named, nothing changes and no gate runs; after the commit the same close is
-// accepted and releases the seat. The route declares no gate of its own, so the
+// accepted and ends the engagement. The route declares no gate of its own, so the
 // refusal does not lean on one.
 func TestTerminalCloseRefusedWhileGatedChangesUncommitted(t *testing.T) {
 	e := closeGuardEnv(t)
@@ -213,8 +204,8 @@ func TestTerminalCloseRefusedWhileGatedChangesUncommitted(t *testing.T) {
 	if got := e.status(id); got != "in_progress" {
 		t.Errorf("status after a refused close = %q, want in_progress", got)
 	}
-	if !e.seatHeld(id) {
-		t.Error("a refused close must leave the seat held")
+	if !e.engaged(id) {
+		t.Error("a refused close must leave the story engaged")
 	}
 	if n := e.gater.calls.Load(); n != 0 {
 		t.Errorf("a refused close must dispatch no gate, ran %d", n)
@@ -228,15 +219,15 @@ func TestTerminalCloseRefusedWhileGatedChangesUncommitted(t *testing.T) {
 	if got := e.status(id); got != "done" {
 		t.Errorf("status = %q, want done", got)
 	}
-	if e.seatHeld(id) {
-		t.Error("the accepted close must release the seat")
+	if e.engaged(id) {
+		t.Error("the accepted close must end the engagement")
 	}
 	if n := e.gater.calls.Load(); n != 1 {
 		t.Errorf("the accepted close runs the gate once, ran %d", n)
 	}
 }
 
-// AC1: a cancel releases the seat just as done does, but the route synthesises
+// AC1: a cancel ends the engagement just as done does, but the route synthesises
 // the cancel sink without a terminal shape. It is refused the same way.
 func TestCancelRefusedWhileGatedChangesUncommitted(t *testing.T) {
 	e := closeGuardEnv(t)
@@ -253,8 +244,8 @@ func TestCancelRefusedWhileGatedChangesUncommitted(t *testing.T) {
 	if got := e.status(id); got != "in_progress" {
 		t.Errorf("status after a refused cancel = %q, want in_progress", got)
 	}
-	if !e.seatHeld(id) {
-		t.Error("a refused cancel must leave the seat held")
+	if !e.engaged(id) {
+		t.Error("a refused cancel must leave the story engaged")
 	}
 }
 
@@ -327,8 +318,8 @@ func TestTerminalCloseUnchangedWhenCleanOrExemptOnly(t *testing.T) {
 			if got := e.status(id); got != "done" {
 				t.Errorf("status = %q, want done", got)
 			}
-			if e.seatHeld(id) {
-				t.Error("the close must release the seat")
+			if e.engaged(id) {
+				t.Error("the close must end the engagement")
 			}
 		})
 	}
@@ -391,36 +382,28 @@ func TestDirtyCloseGuardLeavesParkNonExitAndProbeErrorAlone(t *testing.T) {
 	})
 }
 
-// AC5: a story with no live seat of its own names no paths, even while another
-// story's seat sits on a dirty tree in the same checkout.
-func TestSeatlessTerminalMoveIgnoresAnotherStoriesDirtyTree(t *testing.T) {
+// AC5: a story whose engagement here recorded no tree names no paths, even while
+// another story engaged from this checkout sits on a dirty tree.
+func TestTreelessTerminalMoveIgnoresAnotherStoriesDirtyTree(t *testing.T) {
 	e := closeGuardEnv(t)
-	// B is engaged and then loses its seat, so the terminal move below is one
-	// the guard classifies as a close, made by a story with no seat of its own.
-	// A repo-root or other-seat fallback would refuse it on A's dirty file.
+	// B's latest engagement records no tree, so the terminal move below is one the
+	// guard classifies as a close, made by a story engaged from no tree here. A
+	// repo-root or other-story fallback would refuse it on A's dirty file.
 	b := e.engage()
-	if err := e.db.Leases.ForceRelease(context.Background(), b); err != nil {
-		t.Fatal(err)
-	}
+	recordEngagementOn(t, e.db, b, "in_progress", "", "")
 	a := e.engage()
 	e.write("foo.go", "package foo\n")
-	before, err := e.db.Leases.Get(context.Background(), a)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before, _ := verb.LatestLocalWorkingOn(context.Background(), a)
 
 	if err := e.set(b, "done"); err != nil {
-		t.Fatalf("closing a story with no seat of its own: %v", err)
+		t.Fatalf("closing a story engaged from no tree here: %v", err)
 	}
 	if got := e.status(b); got != "done" {
 		t.Errorf("status = %q, want done", got)
 	}
-	after, err := e.db.Leases.Get(context.Background(), a)
-	if err != nil {
-		t.Fatalf("A's seat must be untouched: %v", err)
-	}
-	if after.Worktree != before.Worktree || !lease.Alive(after, time.Now()) {
-		t.Errorf("A's seat changed: %+v -> %+v", before, after)
+	after, _ := verb.LatestLocalWorkingOn(context.Background(), a)
+	if after.Worktree != before.Worktree || !e.engaged(a) {
+		t.Errorf("A's engagement changed: %+v -> %+v", before, after)
 	}
 }
 

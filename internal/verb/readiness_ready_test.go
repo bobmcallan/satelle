@@ -232,32 +232,26 @@ func holds(t *testing.T, id string) bool {
 	return ok
 }
 
-// seatList is the seat listing with its time-derived fields (every *_age)
-// dropped, so two reads compare equal whenever the seats themselves do.
-func seatList(t *testing.T) string {
+// performingList is the performing stories' ids and their presence rows, so two
+// reads compare equal whenever no engagement moved.
+func performingList(t *testing.T) string {
 	t.Helper()
-	var rows []map[string]any
-	if err := json.Unmarshal(call(t, "story-seat-list", map[string]any{}), &rows); err != nil {
-		t.Fatalf("decode seat list: %v", err)
-	}
-	for _, row := range rows {
-		for k := range row {
-			if strings.HasSuffix(k, "_age") {
-				delete(row, k)
-			}
-		}
-	}
-	out, err := json.Marshal(rows)
+	performing, err := verb.PerformingStories(context.Background())
 	if err != nil {
-		t.Fatalf("encode seat list: %v", err)
+		t.Fatal(err)
 	}
-	return string(out)
+	var out []string
+	for _, it := range performing {
+		p, _ := verb.LatestLocalWorkingOn(context.Background(), it.ID)
+		out = append(out, it.ID+"@"+p.State)
+	}
+	return strings.Join(out, ",")
 }
 
 // AC1 + AC3 + AC5: two backlog stories are readied in one call while a third
-// story holds the seat; each round ran, no status moved, the seat holder is
+// story performs; each round ran, no status moved, the performing story is
 // unchanged, every row of a round shares one attempt id and the story is marked.
-func TestStoryReadyReadiesWithoutTheSeat(t *testing.T) {
+func TestStoryReadyReadiesWithoutEngaging(t *testing.T) {
 	r := newReadyRig(t, "ready", readyReviewers)
 	holder := newStoryOf(t, "feature", "holder")
 	a := newStoryOf(t, "feature", "a")
@@ -265,9 +259,9 @@ func TestStoryReadyReadiesWithoutTheSeat(t *testing.T) {
 	if _, err := dispatchRaw(t, "story-set", map[string]any{"id": holder.ID, "status": "plan"}); err != nil {
 		t.Fatalf("engage the holder: %v", err)
 	}
-	seatBefore := seatList(t)
-	if !strings.Contains(seatBefore, holder.ID) {
-		t.Fatalf("the holder must hold the seat: %s", seatBefore)
+	performingBefore := performingList(t)
+	if performingBefore != holder.ID+"@plan" {
+		t.Fatalf("only the holder must be performing: %s", performingBefore)
 	}
 	dispatchesBefore, gatesBefore := r.d.total(), r.g.total()
 
@@ -289,8 +283,8 @@ func TestStoryReadyReadiesWithoutTheSeat(t *testing.T) {
 	if r.d.total()-dispatchesBefore != 2 || r.g.total()-gatesBefore != 2 {
 		t.Errorf("both rounds must have run")
 	}
-	if got := seatList(t); got != seatBefore {
-		t.Errorf("the seat must be untouched\nbefore: %s\nafter:  %s", seatBefore, got)
+	if got := performingList(t); got != performingBefore {
+		t.Errorf("the performing stories must be untouched\nbefore: %s\nafter:  %s", performingBefore, got)
 	}
 
 	// One attempt id covers the round: dispatch row, every reviewer row, accept row.

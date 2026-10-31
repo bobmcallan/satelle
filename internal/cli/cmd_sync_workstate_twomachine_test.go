@@ -188,7 +188,6 @@ func TestTwoMachineStoryArrivesWithTransitionsAndChangeRecords(t *testing.T) {
 	verb.SetLedgerStore(a.db.Ledger)
 	verb.SetTxRunner(a.db.InTx)
 	verb.SetDocIndexStore(a.db.DocIndex)
-	verb.SetLeaseStore(a.db.Leases)
 	verb.SetStoryDir(filepath.Join(a.repo, "stories"))
 	// Only the gater is wired: this test drives the verb layer on its own
 	// stores, with no reviewer engine behind the other seams.

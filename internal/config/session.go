@@ -10,8 +10,8 @@ import (
 	"github.com/bobmcallan/satelle/internal/gatehandle"
 )
 
-// SessionEnv is the process identity SATELLE_SESSION. Acquire stamps it on the
-// lease; hooks prefer it over the harness payload so a dispatched performer
+// SessionEnv is the process identity SATELLE_SESSION. The working_on row records
+// it; hooks prefer it over the harness payload so a dispatched performer
 // inherits the driver's stamp rather than its own session UUID.
 const SessionEnv = "SATELLE_SESSION"
 
@@ -238,33 +238,6 @@ func publishedFileSpeaks(pid int, recorded string) publishedVerdict {
 	return fileSpeaks
 }
 
-// SessionLive reports whether a live process still publishes id as its session.
-// A seat stamped with an id nothing publishes is a ghost: its session is gone,
-// or the stamp never was a session (sty_36d6f155). It scans the publish
-// directory, removing the stale files it passes, so call it on the deny and
-// re-acquire paths only.
-func SessionLive(id string) bool {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return false
-	}
-	dir := sessionPublishDir()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil || e.IsDir() {
-			continue
-		}
-		if readPublishedPID(dir, pid) == id {
-			return true
-		}
-	}
-	return false
-}
-
 // readParentPID reads PPid from /proc/<pid>/stat. The comm field may contain
 // spaces and parentheses, so parse from the last ')' (same rule as supervisor).
 func readParentPID(pid int) (int, bool) {
@@ -285,4 +258,17 @@ func readParentPID(pid int) (int, bool) {
 		return 0, false
 	}
 	return ppid, true
+}
+
+// ResolveOwner names who is acting on this machine, for a stop request or a
+// release record: SATELLE_OWNER (trimmed) when set, else local@hostname.
+func ResolveOwner() string {
+	if v := strings.TrimSpace(os.Getenv("SATELLE_OWNER")); v != "" {
+		return v
+	}
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown"
+	}
+	return "local@" + host
 }

@@ -118,7 +118,7 @@ func TestPlanStepDispatchesFableAndCapturesArtifact(t *testing.T) {
 	}
 }
 
-func TestStructuredPlanFailureClearsLeaseAndRetryAttaches(t *testing.T) {
+func TestStructuredPlanFailureClosesTheTransitionAndRetryAttaches(t *testing.T) {
 	repo, id, script := setupStructuredPlanRepo(t, "#!/bin/sh\ncat >/dev/null\necho malformed\n")
 	out, err := run(t, testBin, repo, "story", "set", id, "--status", "plan")
 	if err == nil || !strings.Contains(out, "no structured") {
@@ -128,8 +128,12 @@ func TestStructuredPlanFailureClearsLeaseAndRetryAttaches(t *testing.T) {
 	if !strings.Contains(got, `"status": "backlog"`) {
 		t.Fatalf("failed attachment path advanced status:\n%s", got)
 	}
-	if seats := mustRun(t, testBin, repo, "story", "seat"); strings.TrimSpace(seats) != "[]" {
-		t.Fatalf("failed structured result left an in-flight lease:\n%s", seats)
+	// The refused transition closed its in-flight mark: a transition_ended row
+	// answers the transition_started row it opened.
+	started := mustRun(t, testBin, repo, "ledger", "list", "--story", id, "--kind", "transition_started")
+	ended := mustRun(t, testBin, repo, "ledger", "list", "--story", id, "--kind", "transition_ended")
+	if strings.Count(started, `"kind": "transition_started"`) != 1 || strings.Count(ended, `"kind": "transition_ended"`) != 1 {
+		t.Fatalf("failed structured result left a transition in flight:\nstarted:\n%s\nended:\n%s", started, ended)
 	}
 	if err := os.WriteFile(script, []byte(validStructuredPlannerScript), 0o755); err != nil {
 		t.Fatal(err)

@@ -272,24 +272,24 @@ func prepareCreate(ctx context.Context, kind workitem.Kind, req createReq, origi
 		}
 	}
 
-	// Single-story process rule (sty_c7149f8a): refuse creating a story already
-	// in an engaging status when another story occupies that seat. Default
-	// create status is backlog (not engaging) — no-op unless create opts a
+	// Concurrency (sty_9c782f0e): refuse creating a story already in an
+	// engaging status the configured limit does not admit. Default create
+	// status is backlog (not engaging) — no-op unless create opts a
 	// non-default status.
 	if kind == workitem.KindStory {
 		status := req.Status
 		if status == "" {
 			status = workitem.StatusBacklog
 		}
-		// ParentID rides along because the seat arbitration key may be
-		// derived from it (sty_c098dc2d) — a provisional without it would
-		// probe under the wrong key.
+		// ParentID rides along because a sequential epic is found from it.
 		provisional := workitem.Item{
 			Kind: workitem.KindStory, Status: status, Category: req.Category, Tags: tags,
 			Title: req.Title, ParentID: req.ParentID,
 		}
-		if err := refuseSecondEngagingStory(ctx, "", status, provisional); err != nil {
-			return nil, err
+		if eng, ok := storyStatusIsEngaging(ctx, provisional, status); ok && eng {
+			if err := checkConcurrency(ctx, provisional, status); err != nil {
+				return nil, err
+			}
 		}
 		// A child created straight into an engaging status needs its epic
 		// readied first (sty_a476b913), refused before the row exists.
@@ -299,7 +299,7 @@ func prepareCreate(ctx context.Context, kind workitem.Kind, req createReq, origi
 			}
 		}
 		// Start-of-work trunk check (sty_9f3e51d1): before the story row, the
-		// lease and the baseline, so a refusal leaves nothing behind and the
+		// working_on row and the baseline, so a refusal leaves nothing behind and the
 		// baseline records the fast-forwarded HEAD.
 		var terr error
 		if p.trunkRep, terr = checkTrunkAtEngage(ctx, provisional, status, fmt.Sprintf("create into %s", status)); terr != nil {
@@ -343,10 +343,10 @@ func (p *preparedCreate) finish(ctx context.Context, it workitem.Item) (json.Raw
 	now := p.at
 	kind := p.kind
 	recordLifecycleReview(ctx, it.ID, "create_review", "create", it.Status, p.createDec, now)
-	// Create-into-engaging: claim the seat now that the id exists (sty_8426b9c0).
-	seated, _, aerr := acquireEngagementLease(ctx, it, it.Status)
+	// Create-into-engaging: the admission rules that need the id (sty_8426b9c0).
+	engaged, _, aerr := engageCheck(ctx, it, it.Status)
 	if aerr != nil {
-		// Best-effort: item was created; surface the seat error so the operator
+		// Best-effort: item was created; surface the refusal so the operator
 		// knows the create raced — rare (pre-check already refused when possible).
 		return nil, aerr
 	}
@@ -354,8 +354,8 @@ func (p *preparedCreate) finish(ctx context.Context, it workitem.Item) (json.Raw
 		// A story's creation carries its whole definition and initial status: the
 		// fold starts from it (sty_d84be8bc).
 		_ = AppendStoryCreated(ctx, ledgerStore, it, p.origin.Actor, p.origin.Source, now)
-		if seated {
-			recordSeatTaken(ctx, it, it.Status, now)
+		if engaged {
+			recordWorkingOn(ctx, it, it.Status, now)
 		}
 	} else {
 		var createdPayload json.RawMessage
@@ -593,9 +593,9 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	}
 
 	transitioning := req.Status != nil && *req.Status != current.Status
-	// Same-status re-engage (sty_4f74d01f): when the story is already performing
-	// but its seat lease was dropped, `story set --status <same>` must claim a
-	// lease (or refuse loudly) — never report plain success with no seat.
+	// Same-status re-engage (sty_4f74d01f): `story set --status <same>` on a
+	// performing story runs the admission rules again and records the tree it
+	// was re-engaged from (working_on), without a gate or dispatch.
 	sameStatusReengage := false
 	if !transitioning && req.Status != nil && (current.Kind == workitem.KindStory || current.Kind == workitem.KindTask) {
 		if eng, ok := storyStatusIsEngaging(ctx, current, *req.Status); ok && eng {
@@ -605,7 +605,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 
 	// Edge fence (sty_ebd3d666): refuse status jumps that skip a required DOT
 	// step (e.g. backlog→in_progress when only backlog→plan exists). Runs before
-	// engage/lease so a skip is never partially acquired. Declared recovery,
+	// engaging so a skip never leaves a transition marked in flight. Declared recovery,
 	// park, and cancel edges still pass.
 	if transitioning {
 		if err := refuseReopen(ctx, current, *req.Status); err != nil {
@@ -620,7 +620,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			return nil, err
 		}
 		// A container's merge-style step waits on its children's own obligation;
-		// refused here, before any gate is paid for or seat taken.
+		// refused here, before any gate is paid for or a transition started.
 		if err := refuseUndischargedChildren(ctx, current, *req.Status); err != nil {
 			return nil, err
 		}
@@ -636,17 +636,14 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		}
 	}
 
-	// Engagement lease (sty_8426b9c0 / sty_1738f973): acquire the seat BEFORE
-	// gate+dispatch so concurrent engages and edit/commit gates see the holder
-	// during the whole window. Shape still decides engaging; the lease is WHO
-	// holds it. A deferred abort guard releases a NEWLY acquired seat (or clears
-	// in_flight on sequential continuation) on ANY return path that does not
-	// settle — gate reject, dispatch abort, panic-recoverable exit, Update error.
-	// SIGKILL still cannot run defers; HeartbeatTTL + lease.Alive covers that residual.
-	// settled is set only after force-release (exit) or Confirm (engaging commit).
-	// sameStatusReengage also acquires (sty_4f74d01f) without running gate/dispatch.
-	acquiredThisCall := false
-	settled := true // non-transitioning / non-lease paths never need abort release
+	// An engaging transition is marked in flight on the story's ledger BEFORE
+	// gate+dispatch (sty_9c782f0e), so the edit gate and the page see it during
+	// the whole window. A deferred guard closes the mark on ANY return path that
+	// does not commit — gate reject, dispatch abort, Update error. SIGKILL cannot
+	// run defers; the dead pid (or InFlightTTL) closes that one.
+	// sameStatusReengage runs the admission rules without gate or dispatch.
+	startID := ""
+	settled := true
 	if (transitioning || sameStatusReengage) && (current.Kind == workitem.KindStory || current.Kind == workitem.KindTask) {
 		// Step-edge stop arbitration (AC5): a pending stop request refuses forward
 		// engaging moves; park/terminal remain open.
@@ -654,10 +651,9 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			if err := stopRequestBlocksForward(ctx, current, *req.Status); err != nil {
 				return nil, err
 			}
-			// A close releases the seat that permits committing the slice: refuse it
-			// while this story's own tree holds gated uncommitted changes. Before the
-			// lease, the abort guard, the gate and the dispatch, so a refusal changes
-			// nothing.
+			// A close ends the engagement that permits committing the slice: refuse
+			// it while this story's own tree holds gated uncommitted changes. Before
+			// the mark, the gate and the dispatch, so a refusal changes nothing.
 			if err := refuseDirtyClose(ctx, current, *req.Status); err != nil {
 				return nil, err
 			}
@@ -671,18 +667,16 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			}
 			noticeOtherAssignee(os.Stderr, current, resolveAssignee())
 		}
-		acq, inFlight, aerr := acquireEngagementLease(ctx, current, *req.Status)
+		engaging, inFlight, aerr := engageCheck(ctx, current, *req.Status)
 		if aerr != nil {
 			return nil, aerr
 		}
 		if sameStatusReengage {
-			// Re-seat path: grant lease (or keep existing) and settle immediately —
-			// no gate, no dispatch. Other field updates may still apply below.
-			if acq {
-				confirmEngagementLease(ctx, current.ID, *req.Status)
-				recordSeatTaken(ctx, current, *req.Status, now)
+			// Re-engage path: record where the story is now engaged from — no
+			// gate, no dispatch. Other field updates may still apply below.
+			if engaging {
+				recordWorkingOn(ctx, current, *req.Status, now)
 			}
-			// inFlight / AlreadyHeld: seat already held — good enough for AC2.
 			// A named performer whose step's exit was rejected since it last ran
 			// is run once more, with the findings, before anything else applies.
 			if reDispatchOwed(ctx, current) {
@@ -708,30 +702,20 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 				return json.Marshal(it)
 			}
 		} else if inFlight {
-			// Same-owner already leased at this target (AC3): return current
-			// record without re-running gate+dispatch.
+			// This host already runs the transition to this target: return the
+			// current record without re-running gate+dispatch.
 			return json.Marshal(current)
-		} else {
-			acquiredThisCall = acq
-			settled = false
-			// The gate and any dispatched performer fire no hook of their own, so
-			// nothing else refreshes the heartbeat while they run.
-			defer keepEngagementAlive(ctx, current.ID)()
-		}
-	}
-	// releaseOnAbort: newly acquired seats are deleted; sequential continuations
-	// only clear in_flight so a retry can re-enter (state stays last-committed).
-	// Idempotent with Release/ClearInFlight no-ops on a missing row.
-	releaseOnAbort := func() {
-		if acquiredThisCall {
-			releaseEngagementLease(ctx, current.ID)
-		} else {
-			clearEngagementInFlight(ctx, current.ID)
+		} else if engaging {
+			sid, berr := beginTransition(ctx, current, current.Status, *req.Status)
+			if berr != nil {
+				return nil, berr
+			}
+			startID, settled = sid, false
 		}
 	}
 	defer func() {
 		if !settled {
-			releaseOnAbort()
+			endTransition(ctx, current.ID, startID, "aborted")
 		}
 	}()
 
@@ -763,10 +747,10 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 			}
 		}
 		// Start-of-work trunk check (sty_9f3e51d1): on the first entry into an
-		// engaging state, with the seat held and before any performer or gate
-		// runs, so a fast-forward cannot race a reviewer and the baseline
-		// recorded at the commit below is the updated HEAD. A refusal returns
-		// here, so the abort guard frees the seat and the story stays put.
+		// engaging state, with the transition marked in flight and before any
+		// performer or gate runs, so a fast-forward cannot race a reviewer and the
+		// baseline recorded at the commit below is the updated HEAD. A refusal
+		// returns here, so the abort guard closes the mark and the story stays put.
 		if _, err := checkTrunkAtEngage(ctx, current, *req.Status,
 			fmt.Sprintf("transition %s→%s", current.Status, *req.Status)); err != nil {
 			return nil, err
@@ -878,7 +862,7 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	// Order is the step's declaration: gates then performer (the default), or —
 	// for a `propose` step — performer then gates, so the gate payload carries the
 	// artifact the performer just attached. A failure at either call leaves the
-	// story at its source status, and the deferred guard frees the seat.
+	// story at its source status, and the deferred guard closes the in-flight mark.
 	if proposeFirst && readinessReused != "" {
 		// The readiness accepted in that attempt still holds: neither the performer
 		// nor the reviewers run again (sty_a32bd6a9).
@@ -1020,38 +1004,9 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	if readinessMark != "" {
 		_ = markReady(ctx, it.ID, readinessMark)
 	}
-	// Release the seat on transition into terminal (Msquare) or park (agent=reviewer).
-	// Force-release: exit is config-driven and must free the seat even when the
-	// exit CLI process is not the acquire-time owner (default owner is stable
-	// per host, but ForceRelease covers any residual owner mismatch).
-	if transitioning && targetIsExitState(ctx, it, *req.Status) {
-		forceReleaseEngagementLease(ctx, it.ID)
-		settled = true
-	} else if transitioning {
-		// Engaging (or other non-exit) commit: settle lease state + clear in_flight.
-		engaging, ok := storyStatusIsEngaging(ctx, it, *req.Status)
-		if ok && engaging {
-			// A container waiting on open children took no lease
-			// (acquireEngagementLease, sty_56648ae5): there is no row to confirm.
-			if !waitsOnOpenChildrenAt(ctx, it, *req.Status) {
-				confirmEngagementLease(ctx, it.ID, *req.Status)
-			}
-			settled = true
-		} else {
-			// Non-engaging, non-exit target (a declared move back out of the
-			// performing states, e.g. plan → backlog): the engagement is over,
-			// so free the seat the story held. ForceRelease for the same
-			// owner-mismatch reason as the exit branch. When governance did not
-			// resolve (!ok) nothing was classed, so keep the fail-open: settle
-			// without releasing. Either way the committed status is not rolled back.
-			if ok {
-				forceReleaseEngagementLease(ctx, it.ID)
-			}
-			settled = true
-		}
-	} else {
-		settled = true
-	}
+	// The move committed: close its in-flight mark.
+	endTransition(ctx, it.ID, startID, "committed")
+	settled = true
 	if transitioning {
 		// An enacted status change records a transition row (feeds the progress
 		// column), regardless of whether the edge was gated. When the write ran
@@ -1068,11 +1023,11 @@ func workItemSetCore(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 		// (sty_da169e03). Enumerates git HEAD for later satelle story diff;
 		// never a verdict. Idempotent across park/resume.
 		maybeRecordEngagementBaseline(ctx, it, current.Status, *req.Status, commitNow)
-		// A seat this move newly took is visible on the ledger (sty_40853d02): one
-		// working_on row, after the transition that engaged it. A step under a seat
-		// already held, and a move that did not commit, write none.
-		if acquiredThisCall {
-			recordSeatTaken(ctx, it, *req.Status, commitNow)
+		// An engaging move is visible on the ledger (sty_40853d02, sty_9c782f0e):
+		// one working_on row per state and place, after the transition that
+		// engaged it. A move that did not commit writes none.
+		if eng, ok := storyStatusIsEngaging(ctx, it, *req.Status); ok && eng && !waitsOnOpenChildrenAt(ctx, it, *req.Status) {
+			recordWorkingOn(ctx, it, *req.Status, commitNow)
 		}
 		// The engaging session's model is the in-loop tier config.SelectModel's
 		// inherited resolution reads (sty_7069bced). Recorded on every engaging
@@ -2179,7 +2134,7 @@ func reviewerPayload(from, to string, rv ReviewerVerdict, attempt string) json.R
 }
 
 // parkStory parks current at park with notes on the timeline: the set request raw
-// re-enters for the park edge, so blocked-review, park origin and the seat run as
+// re-enters for the park edge, so blocked-review, park origin and the in-flight mark run as
 // for any other park (sty_b8a0d062). attempt is the readiness round the park ends,
 // "" for none. handled is false when the request could not be re-issued, leaving
 // the caller to refuse.

@@ -58,11 +58,11 @@ func init() {
 Dry-run by default: prints the full plan and applies nothing. Pass --yes to apply.
 Idempotent: a converged repo reports "already on current structure".
 
-LIVE RUNTIME (sty_5308eb60): if the legacy DB holds a fresh engagement lease
+LIVE RUNTIME (sty_5308eb60): if the legacy DB holds a transition in flight
 or a satelle serve is responding on this repo's web port, migrate REFUSES to
 relocate/remove unless --allow-live is set. Relocating under a live session
 strands every write made after the VACUUM INTO snapshot. Prefer waiting for
-the session to park/finish (satelle story seat) and stopping serve.
+the transition to finish and stopping serve.
 
 Edited/authored substrate is never touched. Runtime migrate leaves the legacy
 DB in place until residue removal (only after a successful home-keyed copy).
@@ -92,7 +92,7 @@ See decision-substrate-planes-local-first and sty_a3915840 / sty_f115e6bf.
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "apply the migration (default is dry-run)")
-	cmd.Flags().BoolVar(&allowLive, "allow-live", false, "UNSAFE: relocate even when a live engagement lease or satelle serve is detected (strands post-snapshot writes)")
+	cmd.Flags().BoolVar(&allowLive, "allow-live", false, "UNSAFE: relocate even when a transition in flight or satelle serve is detected (strands post-snapshot writes)")
 	register(cmd)
 }
 
@@ -122,6 +122,10 @@ type migratePlan struct {
 	// RetiredSyncKeyRemove is true when [sync] hold_stale_after is still set:
 	// hosted holds are gone and migrate removes the key (sty_40853d02).
 	RetiredSyncKeyRemove bool
+	// EngagementParallelRewrite is true when the retired [engagement] parallel
+	// key is still set: it no longer governs and migrate rewrites it to
+	// [engagement] limit (sty_9c782f0e).
+	EngagementParallelRewrite bool
 	// WorkflowRetire lists DOT workflow files superseded by an authored,
 	// PARSEABLE done.toml + step.toml (sty_9835070d). Actionable work: migrate
 	// removes them.
@@ -292,6 +296,7 @@ func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
 	p.HostedTableDrop = hasHostedTable(dataDir)
 	p.StaleAfter = syncKeyMissing(dataDir, "stale_after")
 	p.RetiredSyncKeyRemove = syncKeyPresent(dataDir, retiredHoldStaleAfterKey)
+	p.EngagementParallelRewrite = retiredParallelPresent(dataDir)
 	p.WorkflowRetire, p.WorkflowConvertPending = workflowConversionState(dataDir)
 	p.RetiredRefs = planRetiredRefs(dataDir)
 	p.MachineStrays = config.MachineScopeStrays(dataDir)
@@ -627,7 +632,7 @@ func printConversionPending(out io.Writer, pending []string) {
 
 func (p migratePlan) empty() bool {
 	return !p.RuntimeRelocate && len(p.Residue) == 0 && len(p.PruneSeeds) == 0 &&
-		!p.Gitignore && len(p.ExemptManaged) == 0 && len(p.ExemptGlobsManaged) == 0 && len(p.HostedToSync) == 0 && !p.HostedTableDrop && !p.StaleAfter && !p.RetiredSyncKeyRemove && len(p.WorkflowRetire) == 0 &&
+		!p.Gitignore && len(p.ExemptManaged) == 0 && len(p.ExemptGlobsManaged) == 0 && len(p.HostedToSync) == 0 && !p.HostedTableDrop && !p.StaleAfter && !p.RetiredSyncKeyRemove && !p.EngagementParallelRewrite && len(p.WorkflowRetire) == 0 &&
 		len(p.StampRewrite) == 0 && len(p.RetiredRefs) == 0 && len(p.MachineStrays) == 0
 }
 
@@ -721,6 +726,9 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 	}
 	if plan.RetiredSyncKeyRemove {
 		fmt.Fprintln(out, "  config:           remove retired [sync] hold_stale_after (hosted holds are gone)")
+	}
+	if plan.EngagementParallelRewrite {
+		fmt.Fprintln(out, "  config:           rewrite retired [engagement] parallel as [engagement] limit")
 	}
 	if len(plan.WorkflowRetire) == 0 {
 		fmt.Fprintln(out, "  workflows:        (none superseded)")
@@ -926,6 +934,11 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 		return fmt.Errorf("migrate: [sync] hold_stale_after: %w", err)
 	} else if changed {
 		fmt.Fprintln(out, "  removed retired [sync] hold_stale_after")
+	}
+	if changed, err := rewriteEngagementParallel(dataDir); err != nil {
+		return fmt.Errorf("migrate: [engagement] parallel: %w", err)
+	} else if changed {
+		fmt.Fprintln(out, "  rewrote retired [engagement] parallel as [engagement] limit")
 	}
 
 	if len(plan.MachineStrays) > 0 {
@@ -1186,6 +1199,55 @@ func removeRetiredSyncKey(dataDir string) (bool, error) {
 		return false, err
 	}
 	content := config.RemoveKey(string(raw), "sync", retiredHoldStaleAfterKey)
+	if content == string(raw) {
+		return false, nil
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// retiredParallelKey is the one place the retired [engagement] parallel key is
+// named (sty_9c782f0e): it chose how concurrent engagements were arbitrated,
+// and that arbitration is gone. `satelle init` and `satelle migrate` both rewrite it via
+// rewriteEngagementParallel.
+const retiredParallelKey = "parallel"
+
+// retiredParallelPresent reports whether [engagement] parallel is set in the
+// repo config.
+func retiredParallelPresent(dataDir string) bool {
+	cfg, _, err := config.Load(filepath.Join(dataDir, config.ConfigName))
+	return err == nil && strings.TrimSpace(cfg.Engagement.Parallel) != ""
+}
+
+// rewriteEngagementParallel rewrites the retired [engagement] parallel key as
+// [engagement] limit (sty_9c782f0e). "none" (one performing story per project)
+// becomes limit = 1 unless a limit is already set; "epic" and "worktree" allowed
+// several stories at once, which is now the default, so the key is only
+// removed. Nothing else in the file is touched.
+func rewriteEngagementParallel(dataDir string) (bool, error) {
+	path := filepath.Join(dataDir, config.ConfigName)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	cfg, _, err := config.Load(path)
+	if err != nil {
+		return false, err
+	}
+	mode := strings.ToLower(strings.TrimSpace(cfg.Engagement.Parallel))
+	if mode == "" {
+		return false, nil
+	}
+	content := string(raw)
+	if mode == "none" && cfg.Engagement.Limit == 0 {
+		content = config.UpsertKey(content, "engagement", "limit", "1")
+	}
+	content = config.RemoveKey(content, "engagement", retiredParallelKey)
 	if content == string(raw) {
 		return false, nil
 	}

@@ -44,7 +44,7 @@ func countGitSpawns(t *testing.T) func() []string {
 // is cleared because, when set, the load never resolves a root and spawns
 // nothing, which would make the count vacuous.
 //
-// That includes a matched command: one that reads the seat or writes the ledger
+// That includes a matched command: one that reads the engagement or writes the ledger
 // opens the store, and the store opens from the same load and resolves its
 // runtime dir from the same memoised identity, so it starts no further git. Each
 // matched case also checks the ledger row, so the count is not vacuous.
@@ -52,18 +52,18 @@ func TestCommitgateLoadsConfigOncePerCall(t *testing.T) {
 	const denyEverywhere = "\n[[gate.command_rule]]\npattern = \"orbctl nuke\"\naction = \"deny\"\nmessage = \"never\"\n"
 	for _, tc := range []struct {
 		name, rules, command string
-		seat                 stopcheckSeatState
+		fix                  engagementFixture
 		rows                 int // command_rule ledger rows the call must write
 	}{
-		{"no rules", "", "ls", seatMine, 0},
-		{"rules, no match", exampleRules(t), "ls", seatMine, 0},
-		{"rules, deny match without allow list (no seat read, no row)", denyEverywhere, "orbctl nuke", seatMine, 0},
-		{"allowed match, story at an allowed status", exampleRules(t), "orbctl apply -f x", seatMine, 1},
-		{"warned match, story engaged", exampleRules(t), "orbctl scale web 2", seatMine, 1},
-		{"warned match, no story engaged", exampleRules(t), "orbctl scale web 2", seatNone, 0},
+		{"no rules", "", "ls", engagedHere, 0},
+		{"rules, no match", exampleRules(t), "ls", engagedHere, 0},
+		{"rules, deny match without allow list (no engagement read, no row)", denyEverywhere, "orbctl nuke", engagedHere, 0},
+		{"allowed match, story at an allowed status", exampleRules(t), "orbctl apply -f x", engagedHere, 1},
+		{"warned match, story engaged", exampleRules(t), "orbctl scale web 2", engagedHere, 1},
+		{"warned match, no story engaged", exampleRules(t), "orbctl scale web 2", engagedNowhere, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo, _ := ruleRepo(t, tc.seat, tc.rules)
+			repo, _ := ruleRepo(t, tc.fix, tc.rules)
 			if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
 				t.Fatalf("git init: %v\n%s", err, out)
 			}
@@ -89,28 +89,28 @@ func TestCommitgateLoadsConfigOncePerCall(t *testing.T) {
 
 // AC5, every git process: against the spawns the same fixture makes with a
 // command no rule matches (the no-rule baseline), a matched command that reads
-// the seat starts no git process the baseline did not, and none more often than
+// the engagement starts no git process the baseline did not, and none more often than
 // the baseline made it. That includes the session worktree (unstamped,
-// unmatched and multi-seat sessions all ask for it): it comes from the one
+// and multi-tree sessions all ask for it): it comes from the one
 // `--git-common-dir` the call already made, not from its own `--show-toplevel`.
 func TestCommitgateMatchedPathSpawnsAgainstNoRuleBaseline(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
-		seat    stopcheckSeatState
+		fix     engagementFixture
 		session string // "" = an unstamped session
 		command string
 	}{
-		{"stamped, mine, allowed", seatMine, thisSession, "orbctl apply -f x"},
-		{"stamped, mine, warned", seatMine, thisSession, "orbctl scale web 2"},
-		{"stamped, no seat, warned", seatNone, thisSession, "orbctl scale web 2"},
-		{"stamped, sibling's seat (unmatched), warned", seatOther, thisSession, "orbctl scale web 2"},
-		{"stamped, sibling's seat (unmatched), denied", seatOther, thisSession, "orbctl apply -f x"},
-		{"unstamped, mine, allowed", seatMine, "", "orbctl apply -f x"},
-		{"unstamped, mine, warned", seatMine, "", "orbctl scale web 2"},
-		{"unstamped, no seat, denied", seatNone, "", "orbctl apply -f x"},
+		{"stamped, mine, allowed", engagedHere, thisSession, "orbctl apply -f x"},
+		{"stamped, mine, warned", engagedHere, thisSession, "orbctl scale web 2"},
+		{"stamped, nothing engaged, warned", engagedNowhere, thisSession, "orbctl scale web 2"},
+		{"stamped, engaged by a sibling session, warned", engagedBySibling, thisSession, "orbctl scale web 2"},
+		{"stamped, engaged by a sibling session, denied", engagedBySibling, thisSession, "orbctl apply -f x"},
+		{"unstamped, mine, allowed", engagedHere, "", "orbctl apply -f x"},
+		{"unstamped, mine, warned", engagedHere, "", "orbctl scale web 2"},
+		{"unstamped, nothing engaged, denied", engagedNowhere, "", "orbctl apply -f x"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo, _ := ruleRepo(t, tc.seat, exampleRules(t))
+			repo, _ := ruleRepo(t, tc.fix, exampleRules(t))
 			if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
 				t.Fatalf("git init: %v\n%s", err, out)
 			}
@@ -145,7 +145,7 @@ func TestCommitgateMatchedPathSpawnsAgainstNoRuleBaseline(t *testing.T) {
 // invoking root the memo holds: exactly one spawn, and the list still applies.
 func TestCommitgateSubscribedListInLinkedWorktreeStartsOneGitIdentity(t *testing.T) {
 	const src = "https://example.com/p.toml"
-	repo, _ := ruleRepo(t, seatNone, "\n[[gate.command_policy]]\nname = \"cloud\"\nurl = \""+src+"\"\n")
+	repo, _ := ruleRepo(t, engagedNowhere, "\n[[gate.command_policy]]\nname = \"cloud\"\nurl = \""+src+"\"\n")
 	wt := filepath.Join(t.TempDir(), "wt")
 	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "-q", "-b", "policy-wt", wt, "HEAD").CombinedOutput(); err != nil {
 		t.Fatalf("git worktree add: %v\n%s", err, out)

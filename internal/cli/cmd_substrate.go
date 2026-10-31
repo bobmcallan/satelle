@@ -22,7 +22,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/substrate"
 	"github.com/bobmcallan/satelle/internal/verb"
-	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 func init() {
@@ -102,9 +101,10 @@ is why this cannot quietly discard your work.`,
 			}
 			opts := ResolveBackupOpts(a.Config, a.RepoRoot)
 			opts.BackupsDir = a.RuntimeDir
-			// Resolve the seat off the app handle this command already opened —
-			// currentSeat() would app.Open() a second handle on the same DB.
-			storyID, state := pruneSeat(cmd.Context(), a)
+			// Resolve the engagement off the app handle this command already
+			// opened — currentEngagement() would app.Open() a second handle on the
+			// same DB.
+			storyID, state := pruneEngagement(a)
 			return runSubstratePrune(cmd.Context(), cmd.OutOrStdout(), cmd.InOrStdin(),
 				a.DataDir, opts, yes, storyID, state)
 		},
@@ -203,31 +203,18 @@ func runSubstrateEdit(out io.Writer, dataDir string, idx *docindex.Store, kind, 
 // the CLI test can observe the call without a live ledger).
 var recordPruneChange = verb.RecordPathMutation
 
-// pruneSeat reports the engaged story and the status it is engaged at, using the
-// already-open app handle. Fail-open: no seat, or an unreadable one, means prune
-// records nothing — pruning outside a story is legitimate.
-func pruneSeat(ctx context.Context, a *app.App) (storyID, state string) {
-	if a.Store == nil || a.Store.Leases == nil {
+// pruneEngagement reports the story engaged from this tree and the status it is
+// at, using the already-open app handle. Fail-open: none, or an unreadable store,
+// means prune records nothing — pruning outside a story is legitimate.
+func pruneEngagement(a *app.App) (storyID, state string) {
+	if a.Store == nil {
 		return "", ""
 	}
-	wfs, err := a.Store.DocIndex.List(ctx, "workflows")
-	if err != nil {
+	info, engaged, _, err := resolveEngagementsOn(a, config.ResolveSession(), "")
+	if err != nil || !engaged {
 		return "", ""
 	}
-	items, err := a.Store.Stories.List(ctx, workitem.ListFilter{})
-	if err != nil {
-		return "", ""
-	}
-	leases, err := a.Store.Leases.List(ctx)
-	if err != nil {
-		return "", ""
-	}
-	live, _, err := evaluateSeat(leases, items, wfs, time.Now().UTC())
-	if err != nil || len(live) == 0 {
-		return "", ""
-	}
-	seat, _ := pickSessionSeat(live, nil, config.ResolveSession())
-	return seat.ItemID, seat.StoryStatus
+	return info.ItemID, info.StoryStatus
 }
 
 func runSubstratePrune(ctx context.Context, out io.Writer, in io.Reader, dataDir string, opts BackupOpts, yes bool, storyID, storyState string) error {

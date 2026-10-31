@@ -165,7 +165,7 @@ func TestCommandPolicy_NoSubscriptionAppliesNothing(t *testing.T) {
 
 // AC2: a malformed subscription fails `satelle validate`.
 func TestCommandPolicy_ValidateRejectsMalformedSubscription(t *testing.T) {
-	repo, _ := ruleRepo(t, seatNone, "\n[[gate.command_policy]]\nname = \"a\"\n")
+	repo, _ := ruleRepo(t, engagedNowhere, "\n[[gate.command_policy]]\nname = \"a\"\n")
 	_ = repo
 	out, err := runRootIn(t, "", "validate")
 	if err == nil {
@@ -241,17 +241,17 @@ func TestCommandPolicy_RepoRuleWinsOverSubscribedRule(t *testing.T) {
 	if refuse != "" || len(rules) != 3 {
 		t.Fatalf("rules = %+v refuse %q, want the repo rule then both subscribed rules", rules, refuse)
 	}
-	noSeat := func() (seatInfo, bool, error) { return seatInfo{}, false, nil }
+	unengaged := func() (engagement, bool, error) { return engagement{}, false, nil }
 
-	d := evalCommandRules(rules, "aws s3 rm s3://bucket --recursive", noSeat)
+	d := evalCommandRules(rules, "aws s3 rm s3://bucket --recursive", unengaged)
 	if d.Decision != commandRuleWarned || d.Rule.Source != "" || !strings.Contains(d.Reason, "repo: s3 rm") {
 		t.Fatalf("a repo warn must beat a subscribed deny for the same pattern: %+v", d)
 	}
-	d = evalCommandRules(rules, "gcloud compute instances delete vm1", noSeat)
+	d = evalCommandRules(rules, "gcloud compute instances delete vm1", unengaged)
 	if d.Decision != commandRuleDenied || d.Rule.Source != "cloud" || !strings.Contains(d.Reason, "subscribed: gcloud delete") || !strings.Contains(d.Reason, "(command policy cloud)") {
 		t.Fatalf("a subscribed deny must still apply to a command no repo rule matches: %+v", d)
 	}
-	if d = evalCommandRules(rules, "ls", noSeat); d.Matched {
+	if d = evalCommandRules(rules, "ls", unengaged); d.Matched {
 		t.Fatalf("an unrelated command matched: %+v", d)
 	}
 }
@@ -261,7 +261,7 @@ func TestCommandPolicy_RepoRuleWinsOverSubscribedRule(t *testing.T) {
 // without refusing anything.
 func TestCommandPolicy_CommitgateAppliesSubscribedList(t *testing.T) {
 	const src = "https://example.com/p.toml"
-	repo, _ := ruleRepo(t, seatNone, "\n[[gate.command_policy]]\nname = \"cloud\"\nurl = \""+src+"\"\n")
+	repo, _ := ruleRepo(t, engagedNowhere, "\n[[gate.command_policy]]\nname = \"cloud\"\nurl = \""+src+"\"\n")
 	if out, err := commitgateOn(t, "claude", "aws s3 rm s3://b"); err != nil || out != "" {
 		t.Fatalf("no cache yet must pass: %v %q", err, out)
 	}
@@ -293,7 +293,7 @@ func TestCommandPolicy_CommitgateAppliesSubscribedList(t *testing.T) {
 func TestCommandPolicy_LedgerRowNamesTheSubscription(t *testing.T) {
 	const src = "https://example.com/p.toml"
 	list := "[[command_rule]]\npattern = \"orbctl apply\"\naction = \"deny\"\nallow = [\"in_progress\"]\nmessage = \"apply\"\n"
-	repo, _ := ruleRepo(t, seatMine, "\n[[gate.command_policy]]\nname = \"cloud\"\nurl = \""+src+"\"\n")
+	repo, _ := ruleRepo(t, engagedHere, "\n[[gate.command_policy]]\nname = \"cloud\"\nurl = \""+src+"\"\n")
 	seedPolicy(t, repo, "cloud", src, "url", list, time.Now())
 	if out, err := commitgateOn(t, "claude", "orbctl apply -f x"); err != nil {
 		t.Fatalf("allowed at in_progress: %v\n%s", err, out)
@@ -307,7 +307,7 @@ func TestCommandPolicy_LedgerRowNamesTheSubscription(t *testing.T) {
 // AC3: a malformed subscription refuses every shell command, like a malformed
 // rule, instead of silently dropping the repo's denies.
 func TestCommandPolicy_MalformedSubscriptionFailsClosed(t *testing.T) {
-	ruleRepo(t, seatNone, "\n[[gate.command_policy]]\nname = \"a\"\n")
+	ruleRepo(t, engagedNowhere, "\n[[gate.command_policy]]\nname = \"a\"\n")
 	out, err := commitgateOn(t, "claude", "ls")
 	if err == nil {
 		t.Fatalf("a malformed subscription must refuse shell commands:\n%s", out)

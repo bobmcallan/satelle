@@ -288,7 +288,7 @@ func (s Spec) WaitsOnChildren(status string) bool {
 
 // IsWaitState reports whether the route declares status as a wait step
 // (`wait = true` in step.toml): a story resting there is neither parked nor
-// terminal and holds no seat. Unknown names do not wait.
+// terminal and does not perform. Unknown names do not wait.
 func (s Spec) IsWaitState(status string) bool {
 	st, ok := s.StateNamed(status)
 	return ok && st.Wait
@@ -633,8 +633,8 @@ func (s Spec) PerformingStates() []string {
 
 // EditCapableStates returns spine performing states allocated to the in-loop
 // executor. This is deliberately distinct from PerformingStates (which includes
-// isolated named agents) and NonTerminalEngagingStates (which controls lease
-// ownership): only the workflow's driving executor may authorize source edits
+// isolated named agents) and NonTerminalEngagingStates (which decides what
+// performs): only the workflow's driving executor may authorize source edits
 // from the parent harness. The policy remains authored in the route; no state
 // name is compiled into the hook.
 func (s Spec) EditCapableStates() []string {
@@ -778,8 +778,8 @@ func (s Spec) IsTerminalState(name string) bool {
 }
 
 // IsParkState reports whether name is a reviewer-role non-start state (cancel
-// sinks, blocked/park steps). Shape/role-derived so lease release keys to the
-// route rather than status string literals (sty_8426b9c0).
+// sinks, blocked/park steps). Shape/role-derived so "no longer performing" keys
+// to the route rather than status string literals (sty_8426b9c0).
 func (s Spec) IsParkState(name string) bool {
 	for _, st := range s.States {
 		if st.Name == name {
@@ -791,7 +791,7 @@ func (s Spec) IsParkState(name string) bool {
 
 // IsResumePark reports whether name is the synthesised park (from="*") —
 // the off-route state whose route text may say "resumes to origin".
-// Cancel sinks are IsParkState (they release the seat) but are not resume
+// Cancel sinks are IsParkState (the story stops performing) but are not resume
 // parks, even when they grow an outbound edge (sty_524f091d).
 func (s Spec) IsResumePark(name string) bool {
 	for _, st := range s.States {

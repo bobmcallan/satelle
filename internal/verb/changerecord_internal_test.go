@@ -28,7 +28,6 @@ func wireCR(t *testing.T) {
 	SetLedgerStore(db.Ledger)
 	SetTxRunner(db.InTx)
 	SetDocIndexStore(db.DocIndex)
-	SetLeaseStore(db.Leases)
 	t.Cleanup(func() { db.Close() })
 }
 

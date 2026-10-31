@@ -48,7 +48,7 @@ type amendReq struct {
 // remains the exit. That is the opposite of create_review, whose absence keeps a
 // bare create legal — a create needs no permission, piercing a freeze does.
 //
-// Amend never touches status: no transition, no seat, no dispatch. It runs
+// Amend never touches status: no transition, no engagement, no dispatch. It runs
 // wherever the story sits — a performing state, or PARKED in blocked, which is
 // the case that used to force cancel-and-re-raise on a story stuck behind a
 // wrong definition. Terminal and cancel states are refused: a closed record is

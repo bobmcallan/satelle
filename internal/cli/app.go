@@ -121,7 +121,6 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetDocIndexStore(a.Store.DocIndex)
 	verb.SetAuthoredDirs(a.AuthoredDirs().Dirs)
 	verb.SetSubstrateConfigDir(a.ProcessDataDir)
-	verb.SetLeaseStore(a.Store.Leases)
 	verb.SetRetrieveStore(a.Store.Retrieve)
 	// UI push drain (sty_9ba3d709 / sty_126228b2 / sty_21a7d16d): machine
 	// [service] endpoint (env > config > derived localhost:port). SATELLE_SERVER_ENDPOINT=none
@@ -159,11 +158,8 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetAttachmentPolicy(a.Config.ResolveAttachmentMaxBytes(), a.Config.ResolveAttachmentAllowTypes())
 	// Backups root is also runtime (sibling of stories/, not of tasks/).
 	verb.SetBackupsDir(filepath.Join(a.RuntimeDir, "backups"))
-	// Seat concurrency mode (sty_c098dc2d): [engagement] parallel selects the
-	// arbitration KEY a story claims the engagement seat under — "none" (the
-	// default, and what this repo has always enforced: one performing story) or
-	// "epic" (sibling children of one epic, one working tree per lease). Unwired
-	// is "none", so a repo with no [engagement] section is unaffected.
+	// Concurrency limit (sty_9c782f0e): [engagement] limit bounds how many
+	// stories perform at once. Unwired is unlimited.
 	verb.SetEngagementMode(a.ProcessConfig)
 	// Worktree declaration (sty_804c566b): the process-of-record [worktree] table
 	// and the main tree it carries from, so a worktree reads the main tree's
@@ -202,7 +198,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// otherwise pass the wrong-holder guard unnoticed.
 	verb.SetEngageGuard(func(ctx context.Context) error { return ensureSessionPrincipal(ctx, a.Config, a.RepoRoot) })
 	// Close guard: a terminal move names the gated uncommitted paths of the
-	// story's seat tree before the seat is released. The classification stays
+	// tree the story was engaged from before it stops performing. The classification stays
 	// with the edit gate's dirtyGatedPaths.
 	verb.SetDirtyPathsProbe(func(_ context.Context, tree string) ([]string, error) { return dirtyGatedPaths(tree) })
 	// Person actor for ledger rows that name the satelle user: the account
@@ -245,24 +241,21 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// An agent-facing call keeps it off the agent's stream (sty_c4b92c9e):
 			// the sink is stderr only for a person at a terminal.
 			rev.SetProgress(gateProgressSink(a.Config, a.RepoRoot, a.RuntimeDir))
-			// Queryable gate progress on the engagement lease (sty_598a8e1b).
-			// Best-effort: a SetActivity failure must never fail a transition.
-			leases := a.Store.Leases
+			// Queryable gate progress on the open transition (sty_598a8e1b,
+			// sty_9c782f0e): one row per phase. Best-effort: it must never fail a
+			// transition.
 			rev.SetActivity(func(itemID string, act agentstep.Activity) {
-				if leases == nil || itemID == "" {
-					return
-				}
-				_ = leases.SetActivity(context.Background(), itemID, act.Label, act.Index, act.Total)
+				verb.RecordTransitionActivity(context.Background(), itemID, ledger.TransitionActivityPayload{
+					Label: act.Label, Index: act.Index, Total: act.Total,
+				})
 			})
-			// In-flight dispatch metadata on the SAME lease row (sty_752c4ef2):
-			// agent, model, pid, and the last real event, refreshed throttled
-			// (agentstep.activityDetailThrottle) rather than once per phase.
-			// Pushed to the local serve mirror on the same throttled beat
-			// (activityDetailSink) so a running dispatch's web indicator
-			// (AC6) and `satelle story seat` (AC7) stay fresh WHILE it runs.
+			// In-flight dispatch metadata on the open transition (sty_752c4ef2):
+			// agent, model and pid, one row per dispatch, pushed to the local serve
+			// mirror on the throttled beat (activityDetailSink) so a running
+			// dispatch's web indicator stays fresh WHILE it runs.
 			pushEndpoint := gc.Service.ResolveEndpoint()
 			rev.SetActivityDetail(func(itemID string, d agentstep.ActivityDetail) {
-				activityDetailSink(leases, a, pushEndpoint, itemID, d)
+				activityDetailSink(a, pushEndpoint, itemID, d)
 			})
 			if aerr := applyAgentGrants(rev, a, agents); aerr != nil {
 				_ = a.Close()
@@ -366,8 +359,8 @@ func openAppForCmd(cmd *cobra.Command) error {
 			})
 			// Idle-stall bound resolution (sty_752c4ef2): a binding's own
 			// idle_timeout= wins over [defaults] idle_timeout, which wins over
-			// the shipped default — the same ladder listSeatsJSON and
-			// `satelle story seat` already display, so a gate, dispatch,
+			// the shipped default — the same ladder the web and CLI
+			// already display, so a gate, dispatch,
 			// retrospective or summary actually stalls where the web/CLI say
 			// it will.
 			rev.SetIdleTimeoutResolver(func(section string, b config.AgentBinding) (time.Duration, error) {

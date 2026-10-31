@@ -11,7 +11,7 @@ import (
 )
 
 // TestNamedLauncherCarriesTheSessionName (sty_88603414 AC3) drives the real
-// binary end to end: from a linked worktree that holds a live seat, the
+// binary end to end: from a linked worktree a story is engaged from, the
 // installed satelle-claude launcher execs claude with `--name` equal to what
 // `satelle session name` prints there, and that name carries the worktree
 // directory and the engaged story. claude is a stub that records its argv.
@@ -21,7 +21,6 @@ func TestNamedLauncherCarriesTheSessionName(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 	writeSpineFixture(t, repo, "", "", "", "in_progress|executor|||", "done||||")
 	mustRun(t, testBin, repo, "reindex")
-	setEngagementMode(t, repo, "epic")
 	tree := addWorktree(t, repo)
 
 	epic := extractID(mustRun(t, testBin, repo, "story", "create", "--title", "Container",

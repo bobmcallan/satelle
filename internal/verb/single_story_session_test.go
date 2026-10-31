@@ -1,8 +1,8 @@
 package verb
 
-// sty_36d6f155: the seat a story-set takes is stamped with the id the driving
-// shell resolves, never one a dispatched performer's hooks left in the publish
-// directory, and a same-status re-set re-stamps a seat nobody live speaks for.
+// sty_36d6f155: the working_on row a story-set writes names the session the
+// driving shell resolves, never one a dispatched performer's hooks left in the
+// publish directory, and a same-status re-set from another session records it.
 
 import (
 	"context"
@@ -25,19 +25,19 @@ func clearSessionEnv(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 }
 
-func seatStamp(t *testing.T, db *store.DB, id string) string {
+func engagementStamp(t *testing.T, _ *store.DB, id string) string {
 	t.Helper()
-	l, err := db.Leases.Get(context.Background(), id)
-	if err != nil {
-		t.Fatalf("lease %s: %v", id, err)
+	p, ok := LatestLocalWorkingOn(context.Background(), id)
+	if !ok {
+		t.Fatalf("no working_on row for %s", id)
 	}
-	return l.SessionID
+	return p.Session
 }
 
 // AC1/AC2: a performer's hooks publish their own session id on pids the CLI's
 // walk reaches (and a pid file left by an earlier process may carry the CLI's own
-// pid); the seat is still stamped with the driver's id from its shell.
-func TestSeatIsStampedWithTheDriversSessionNotAPerformers(t *testing.T) {
+// pid); the working_on row still names the driver's id from its shell.
+func TestEngagementIsStampedWithTheDriversSessionNotAPerformers(t *testing.T) {
 	clearSessionEnv(t)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "driver-id")
 	h := newEngageHarness(t, "")
@@ -45,22 +45,22 @@ func TestSeatIsStampedWithTheDriversSessionNotAPerformers(t *testing.T) {
 	config.PublishSession("performer-id") // a dispatched performer's hook, before the transition
 	story := h.create("driven")
 	h.set(story.ID, "in_progress")
-	if got := seatStamp(t, h.db, story.ID); got != "driver-id" {
-		t.Fatalf("seat stamp = %q, want the driver's session", got)
+	if got := engagementStamp(t, h.db, story.ID); got != "driver-id" {
+		t.Fatalf("working_on session = %q, want the driver's session", got)
 	}
 
 	// A gate or performer run during the next transition publishes again; the
 	// driver's re-set must not adopt it.
 	config.PublishSession("performer-id")
 	h.set(story.ID, "in_progress")
-	if got := seatStamp(t, h.db, story.ID); got != "driver-id" {
-		t.Fatalf("seat stamp after a performer published = %q, want the driver's session", got)
+	if got := engagementStamp(t, h.db, story.ID); got != "driver-id" {
+		t.Fatalf("working_on session after a performer published = %q, want the driver's session", got)
 	}
 }
 
 // AC1/AC2: with no harness env, a pid file left by a process that held this pid
-// before (pid reuse) must not become the seat's stamp.
-func TestSeatIsNotStampedFromAReusedPidFile(t *testing.T) {
+// before (pid reuse) must not become the working_on session.
+func TestEngagementIsNotStampedFromAReusedPidFile(t *testing.T) {
 	clearSessionEnv(t)
 	if runtime.GOOS != "linux" {
 		t.Skip("process identity is asserted on /proc")
@@ -75,21 +75,21 @@ func TestSeatIsNotStampedFromAReusedPidFile(t *testing.T) {
 	}
 	story := h.create("unstamped")
 	h.set(story.ID, "in_progress")
-	if got := seatStamp(t, h.db, story.ID); got != "" {
-		t.Fatalf("seat stamp = %q, want none (the pid file belongs to another process)", got)
+	if got := engagementStamp(t, h.db, story.ID); got != "" {
+		t.Fatalf("working_on session = %q, want none (the pid file belongs to another process)", got)
 	}
 }
 
-// AC3/AC4: a seat stamped with an id no live session holds is re-stamped to the
-// caller by the same-status story-set; a live holder's stamp is left alone.
-func TestSameStatusSetRestampsAGhostSeat(t *testing.T) {
+// AC3/AC4: a same-status story-set from another session records that session;
+// presence is advisory, so the newest engagement names its caller.
+func TestSameStatusSetRecordsTheCallersSession(t *testing.T) {
 	clearSessionEnv(t)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "ghost-id")
 	h := newEngageHarness(t, "")
 	story := h.create("ghosted")
 	h.set(story.ID, "in_progress")
-	if got := seatStamp(t, h.db, story.ID); got != "ghost-id" {
-		t.Fatalf("seat stamp = %q, want ghost-id", got)
+	if got := engagementStamp(t, h.db, story.ID); got != "ghost-id" {
+		t.Fatalf("working_on session = %q, want ghost-id", got)
 	}
 
 	// The caller is another session now (a new CLI process: acquire exports
@@ -99,15 +99,8 @@ func TestSameStatusSetRestampsAGhostSeat(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "driver-id")
 	config.PublishSession("driver-id")
 	h.set(story.ID, "in_progress")
-	if got := seatStamp(t, h.db, story.ID); got != "driver-id" {
-		t.Fatalf("seat stamp = %q, want re-stamped to the caller", got)
+	if got := engagementStamp(t, h.db, story.ID); got != "driver-id" {
+		t.Fatalf("working_on session = %q, want re-stamped to the caller", got)
 	}
 
-	// driver-id is published by this live process: a third caller does not take it.
-	t.Setenv(config.SessionEnv, "")
-	t.Setenv("CLAUDE_CODE_SESSION_ID", "thief-id")
-	h.set(story.ID, "in_progress")
-	if got := seatStamp(t, h.db, story.ID); got != "driver-id" {
-		t.Fatalf("seat stamp = %q, a live holder's stamp must not be overwritten", got)
-	}
 }

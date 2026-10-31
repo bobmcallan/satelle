@@ -416,7 +416,7 @@ func checkSubstrateLock(dataDir string) health.Findings {
 		return nil
 	}
 	return health.Findings{health.Warn(health.IDSubstrateUnlocked, "Substrate lock disabled",
-		fmt.Sprintf("%s sets [gate] lock_substrate_paths = [] — a story that holds a performing seat can rewrite the workflows, skills and agent bindings that are about to judge it, and the change leaves no trace in its engagement diff",
+		fmt.Sprintf("%s sets [gate] lock_substrate_paths = [] — a performing story can rewrite the workflows, skills and agent bindings that are about to judge it, and the change leaves no trace in its engagement diff",
 			config.DefaultDataDir+"/"+config.ConfigName)).
 		About(config.DefaultDataDir + "/" + config.ConfigName).
 		WithRemediation(`delete lock_substrate_paths (the default locks ".satelle/") or list the prefixes to lock`)}

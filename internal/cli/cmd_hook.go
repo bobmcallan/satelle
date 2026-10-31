@@ -44,8 +44,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/docstory"
-	"github.com/bobmcallan/satelle/internal/epicset"
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
@@ -160,27 +158,24 @@ workflow declaring no route blocks the edit.`,
 		RunE: func(cmd *cobra.Command, args []string) (rerr error) {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
 			// One git identity lookup and one store for the whole call (as
-			// commitgate holds them, sty_a74551d6 AC5): the seat read and the
+			// commitgate holds them, sty_a74551d6 AC5): the engagement read and the
 			// in-loop run trace below share them. The store opens lazily, so a call
-			// that resolves no seat never opens it.
+			// that resolves no engagement never opens it.
 			defer config.MemoGitIdentity()()
 			gs := &gateStore{load: true}
 			defer gs.close()
 			// The in-loop run trace (sty_23ceeca2): a call this gate let through is
 			// recorded on the engaged story, while its step declares evidence a
-			// trace could show; a denied one never ran. The seat is the one the
-			// call resolved below, not a second resolution.
-			var seat traceSeat
+			// trace could show; a denied one never ran. The engagement is the one
+			// the call resolved below, not a second resolution.
+			var traced traceEngagement
 			defer func() {
 				if rerr == nil {
-					recordToolTrace(gs, raw, seat)
+					recordToolTrace(gs, raw, traced)
 				}
 			}()
-			// currentSeatTouch is resolved once so deny reasons can name a non-live
-			// holder without a second store open (sty_1738f973 AC6). A live
-			// owner-held seat is also heartbeated (sty_3bb1d8be). resolveSeats
-			// (not resolveSeat) so a marked relay coder can name a live seat the
-			// session did not bind (sty_7567f047 AC5).
+			// The engagement is resolved once, by the tree the call lands in, so
+			// every check below and the deny reason read one answer.
 			sid := bindSessionID(raw)
 			resumeWakeFor(raw).activity() // a tool call: the session is mid-turn
 			p := filePathFromEvent(raw)
@@ -198,16 +193,20 @@ workflow declaring no route blocks the edit.`,
 			case routeJudge:
 				command = "" // an edit-class payload: the target alone is judged
 			}
-			// A session holding seats in several worktrees is attributed by the
-			// tree the edit targets (sty_42231b74); the fence below decides
-			// whether that tree may be edited at all.
+			// An edit is attributed by the tree it targets (sty_42231b74,
+			// sty_9c782f0e); the fence below decides whether that tree may be
+			// edited at all.
 			// A shell command has no path; its first mutation target's tree stands in.
 			attribution := treeOf(p)
 			if p == "" && command != "" {
 				attribution = bashAttributionTree(command, sessionAnchor())
 			}
-			info, engaged, live, engErr := gs.seatsFor(true, sid, attribution)
-			seat = traceSeat{info: info, engaged: engaged, resolved: true}
+			info, engaged, live, engErr := gs.engagementsFor(sid, attribution)
+			traced = traceEngagement{info: info, engaged: engaged, resolved: true}
+			denyTree := attribution
+			if denyTree == "" {
+				denyTree = sessionWorktree()
+			}
 			if p != "" {
 				// Foreign-tree fence (sty_a8454d10 / sty_aadd4d6c): refuse edits
 				// that land in ANOTHER git working tree unless the operator opts
@@ -242,7 +241,7 @@ workflow declaring no route blocks the edit.`,
 				// the exemption, whether or not any story is performing, by the
 				// same harness-neutral predicate for every harness (sty_992cffc6,
 				// sty_66abc0e3).
-				if err := substrateLockGate(cmd, raw, p, &lockSeats{info: info, engaged: engaged, live: live, sid: sid}); err != nil {
+				if err := substrateLockGate(cmd, raw, p, &lockEngagements{info: info, engaged: engaged, live: live}); err != nil {
 					return err
 				}
 				if exemptTarget(p) {
@@ -263,13 +262,13 @@ workflow declaring no route blocks the edit.`,
 				// Edit: a classified target, or an interpreter's command text,
 				// under a locked prefix is refused before the exemption is
 				// consulted (sty_dc77e118).
-				seats := &lockSeats{info: info, engaged: engaged, live: live, sid: sid}
-				if err := bashSubstrateLockGate(cmd, raw, command, loadGateProcess(), func(tree string) (*lockSeats, error) {
+				anchored := &lockEngagements{info: info, engaged: engaged, live: live}
+				if err := bashSubstrateLockGate(cmd, raw, command, loadGateProcess(), func(tree string) (*lockEngagements, error) {
 					if tree == "" {
-						return seats, nil
+						return anchored, nil
 					}
-					ti, te, tl, err := resolveSeatsFor(true, sid, tree)
-					return &lockSeats{info: ti, engaged: te, live: tl, sid: sid}, err
+					ti, te, tl, err := resolveEngagementsFor(sid, tree)
+					return &lockEngagements{info: ti, engaged: te, live: tl}, err
 				}); err != nil {
 					return err
 				}
@@ -291,10 +290,7 @@ workflow declaring no route blocks the edit.`,
 				// No story is performing: a tool nothing classifies cannot be shown
 				// read-only, so it is refused, with the way in appended.
 				return denyPreToolUse(cmd, raw, unrecognisedToolReason(raw, unknownTool)+" "+
-					hookDenyReason(info, live, dm, rm, sid, time.Now().UTC()))
-			}
-			if reason, ok := sessionSeatsUnmatched(engaged, live, sid, dm, rm); ok {
-				return denyPreToolUse(cmd, raw, reason)
+					hookDenyReason(info, live, dm, rm, denyTree))
 			}
 			// The scoped in-loop fix lane (sty_4b694872) is a second look at a
 			// PATH edit the ordinary rule refused: one recorded, in-bound claim
@@ -307,7 +303,7 @@ workflow declaring no route blocks the edit.`,
 					return nil
 				}
 			}
-			return denyPreToolUse(cmd, raw, hookDenyReason(info, live, dm, rm, sid, time.Now().UTC())+note)
+			return denyPreToolUse(cmd, raw, hookDenyReason(info, live, dm, rm, denyTree)+note)
 		},
 	}
 
@@ -332,8 +328,8 @@ Substrate lock: a command whose target or interpreter text names locked
 substrate is refused, even if it only READS; a shell -c program is classified
 as shell. Not seen: python3 tool.py, '.sat'+'elle'.
 
-Attribution: a commit/push goes to the seat of its worktree (each cd, then -C;
-an unmoved push, its branch's), else the hook's tree's.`,
+Attribution: a commit/push goes to the story engaged from its worktree (each cd,
+then -C; an unmoved push, its branch's), else the hook's.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) (rerr error) {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
@@ -350,8 +346,8 @@ an unmoved push, its branch's), else the hook's tree's.`,
 			// ask for it, and none of them may start git again (sty_a74551d6 AC5).
 			defer config.MemoGitIdentity()()
 			defer holdSessionWorktree()()
-			// The one store this call opens for command rules, shared by the seat
-			// read and the ledger row. Opened lazily, so a call no rule matched
+			// The one store this call opens for command rules, shared by the
+			// engagement read and the ledger row. Opened lazily, so a call no rule matched
 			// never opens it. Deferred first, so it closes after the record below.
 			gs := &gateStore{}
 			defer gs.close()
@@ -382,7 +378,7 @@ an unmoved push, its branch's), else the hook's tree's.`,
 			// matcher-less harness's gate has already seen this call.
 			defer func() {
 				if rerr == nil && !invokingNoToolMatcher(raw) {
-					recordToolTrace(gs, raw, traceSeat{})
+					recordToolTrace(gs, raw, traceEngagement{})
 				}
 			}()
 			if !allowOutsideTreeEditsFrom(gp) {
@@ -391,63 +387,64 @@ an unmoved push, its branch's), else the hook's tree's.`,
 					return denyPreToolUse(cmd, raw, outsideAnchorBashReason(path, foreignRoot))
 				}
 			}
-			var info seatInfo
+			var info engagement
 			var engaged bool
-			var live []seatInfo
-			var seatResolved bool
+			var live []engagement
+			var resolved bool
 			var sid string
 			// The substrate lock before the mutation gate: a command whose target
 			// is locked substrate is refused even though .satelle/ is exempt from
-			// the engaged-story gate (sty_dc77e118). Seats resolve only when the
-			// command has a lockable candidate.
+			// the engaged-story gate (sty_dc77e118). Engagements resolve only when
+			// the command has a lockable candidate.
 			// Each candidate is attributed by its own tree; the answer for a
 			// candidate with no tree is the anchor-tree one the mutation gate
 			// below reuses.
-			if err := bashSubstrateLockGate(cmd, raw, command, gp, func(tree string) (*lockSeats, error) {
+			if err := bashSubstrateLockGate(cmd, raw, command, gp, func(tree string) (*lockEngagements, error) {
 				sid = bindSessionID(raw)
 				if tree != "" {
-					ti, te, tl, err := resolveSeatsFor(true, sid, tree)
-					return &lockSeats{info: ti, engaged: te, live: tl, sid: sid}, err
+					ti, te, tl, err := resolveEngagementsFor(sid, tree)
+					return &lockEngagements{info: ti, engaged: te, live: tl}, err
 				}
 				var err error
-				info, engaged, live, err = resolveSeats(true, sid)
-				seatResolved = true
-				return &lockSeats{info: info, engaged: engaged, live: live, sid: sid}, err
+				info, engaged, live, err = resolveEngagements(sid)
+				resolved = true
+				return &lockEngagements{info: info, engaged: engaged, live: live}, err
 			}); err != nil {
 				return err
 			}
 			if bashMutatesTree(command, sessionAnchor()) {
-				// The mutation is judged against the seat of the tree it lands in.
-				// That answer stays local unless it is the anchor-tree one the
+				// The mutation is judged against the engagement of the tree it lands
+				// in. That answer stays local unless it is the anchor-tree one the
 				// commit gate below reuses.
-				mInfo, mEngaged, mLive := info, engaged, live
-				if tree := bashAttributionTree(command, sessionAnchor()); tree != "" {
+				mInfo, mLive := info, live
+				mTree := bashAttributionTree(command, sessionAnchor())
+				if tree := mTree; tree != "" {
 					var err error
 					sid = bindSessionID(raw)
-					mInfo, mEngaged, mLive, err = resolveSeatsFor(true, sid, tree)
+					mInfo, _, mLive, err = resolveEngagementsFor(sid, tree)
 					if err != nil {
 						return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
 					}
-				} else if !seatResolved {
+				} else if !resolved {
 					var err error
 					sid = bindSessionID(raw)
-					info, engaged, live, err = resolveSeats(true, sid)
-					seatResolved = true
-					mInfo, mEngaged, mLive = info, engaged, live
+					info, engaged, live, err = resolveEngagements(sid)
+					resolved = true
+					mInfo, mLive = info, live
 					if err != nil {
 						return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
 					}
 				}
 				dm, rm := currentDispatchMarker(), currentRelayMarker()
 				if !hookEditPermitted(mInfo, dm, rm) {
-					if reason, ok := sessionSeatsUnmatched(mEngaged, mLive, sid, dm, rm); ok {
-						return denyPreToolUse(cmd, raw, reason)
+					if mTree == "" {
+						mTree = sessionWorktree()
 					}
-					return denyPreToolUse(cmd, raw, hookDenyReason(mInfo, mLive, dm, rm, sid, time.Now().UTC()))
+					return denyPreToolUse(cmd, raw, hookDenyReason(mInfo, mLive, dm, rm, mTree))
 				}
 			}
 			// Repo-authored command rules (sty_a74551d6), before command_allow. The
-			// seat is read only for a command a rule matched, so with no rules, or
+			// engagement is read only for a command a rule matched, so with no rules, or
 			// no match, this adds nothing but the config load. Rules that fail to
 			// load refuse every shell command: dropping them would turn every
 			// authored deny off without a signal.
@@ -456,11 +453,11 @@ an unmoved push, its branch's), else the hook's tree's.`,
 				return denyPreToolUse(cmd, raw, refuse)
 			}
 			if len(rules) > 0 {
-				ruled = evalCommandRules(rules, command, func() (seatInfo, bool, error) {
-					if seatResolved {
+				ruled = evalCommandRules(rules, command, func() (engagement, bool, error) {
+					if resolved {
 						return info, engaged, nil
 					}
-					return gs.seat(bindSessionID(raw))
+					return gs.resolve(bindSessionID(raw))
 				})
 				if ruled.Decision == commandRuleDenied {
 					recordCommandRule(gs, ruled, command, commandHarness(raw))
@@ -482,15 +479,13 @@ an unmoved push, its branch's), else the hook's tree's.`,
 			if !needsEngage && !commandAllowRestrictsWith(allowPolicy, subs) {
 				return nil // not a gated command — allow
 			}
-			// Heartbeat only for gated commands (after the early return above) —
-			// activity on commit/push keeps the seat alive (sty_3bb1d8be).
 			// A commit/push a leading cd or its own -C moved into another tree is
-			// attributed to the seat in that tree (sty_3a9b06fe); an unmoved one
-			// passes no tree, so the hook's own tree decides as it always did. The
-			// shell starts where the hook runs, so that is where a relative cd
-			// resolves from. A seat resolved above judged an anchor-tree mutation;
-			// a moved commit is decided by its own tree's seat, so it resolves
-			// again.
+			// attributed to the story engaged from that tree (sty_3a9b06fe); an
+			// unmoved one passes no tree, so the hook's own tree decides as it
+			// always did. The shell starts where the hook runs, so that is where a
+			// relative cd resolves from. An engagement resolved above judged an
+			// anchor-tree mutation; a moved commit is decided by its own tree's
+			// engagement, so it resolves again.
 			commitTree := ""
 			base := sessionWorktree()
 			if base == "" {
@@ -501,33 +496,30 @@ an unmoved push, its branch's), else the hook's tree's.`,
 			} else {
 				commitTree = pushBranchTree(command, base)
 			}
-			if !seatResolved || commitTree != "" {
+			if !resolved || commitTree != "" {
 				var err error
 				sid = bindSessionID(raw)
-				info, engaged, live, err = resolveSeatsFor(true, sid, commitTree)
+				info, engaged, live, err = resolveEngagementsFor(sid, commitTree)
 				if err != nil {
 					return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
 				}
 			}
 			if needsEngage && !engaged {
-				if reason, ok := sessionSeatsUnmatched(engaged, live, sid, currentDispatchMarker(), currentRelayMarker()); ok {
-					return denyPreToolUse(cmd, raw, reason)
-				}
-				// An unstamped session facing several performing stories is not
-				// "unengaged" — it is unattributable. Say so instead of sending it
-				// to engage another story (sty_fbbb4aee AC2). The fused form keeps
-				// its split-the-call text.
-				if !isFusedEngageAndCommit(command) {
-					if dropped := droppedPerformingSeats(); unstampedAmbiguous(live, dropped, sid) {
-						performing := append(append([]seatInfo{}, live...), dropped...)
-						return denyPreToolUse(cmd, raw, ambiguousPerformingReason(performing, sid))
+				// Stories performing from other trees make this one unattributed,
+				// not unengaged: say so instead of sending it to engage another
+				// story (sty_fbbb4aee AC2). The fused form keeps its split-the-call
+				// text.
+				if len(live) > 0 && !isFusedEngageAndCommit(command) {
+					tree := commitTree
+					if tree == "" {
+						tree = sessionWorktree()
 					}
+					return denyPreToolUse(cmd, raw, unattributedEditReason(live, tree))
 				}
 				// Deny only — never allow a fused engage+commit form. PreToolUse cannot
 				// know the engage line would succeed; pick the message that teaches the
-				// recovery path (sty_577d292f). Name a non-live seat when present so
-				// the agent can inspect/release without digging (sty_1738f973 AC6).
-				return denyPreToolUse(cmd, raw, commitDenyReason(command)+seatSuffix(info, time.Now().UTC()))
+				// recovery path (sty_577d292f).
+				return denyPreToolUse(cmd, raw, commitDenyReason(command))
 			}
 			// Step-scoped policy (opt-in): engaged story must be at an allowed status.
 			if engaged {
@@ -536,7 +528,9 @@ an unmoved push, its branch's), else the hook's tree's.`,
 					st = info.State
 				}
 				if reason, deny := commandAllowDenyWith(allowPolicy, subs, st); deny {
-					return denyPreToolUse(cmd, raw, reason+seatSuffix(info, time.Now().UTC()))
+					// Name the story the command was judged against: with several
+					// stories performing, the tree decided which (sty_42231b74).
+					return denyPreToolUse(cmd, raw, reason+" — "+formatEngagement(info))
 				}
 			}
 			return nil
@@ -546,10 +540,10 @@ an unmoved push, its branch's), else the hook's tree's.`,
 	prompt := &cobra.Command{
 		Use:   "prompt",
 		Short: "UserPromptSubmit reinforcement — re-inject the edits-require-a-story rule + a gate-liveness self-check",
-		Long: `prompt is the UserPromptSubmit handler. With no live engagement seat it
-re-injects a CONCISE reminder that tree edits require an engaged story (the full
-principle rides at SessionStart). With a LIVE seat that has a forward route
-advance, that reminder is REPLACED by the engaged form — story id, status, next
+		Long: `prompt is the UserPromptSubmit handler. With no story engaged from this
+tree it re-injects a CONCISE reminder that edits require an engaged story
+(the full principle rides at SessionStart). With an engaged story with a
+forward route advance, that reminder is REPLACED by the engaged form — story id, status, next
 gate(s) and the satelle story set command — derived from the governing route
 (sty_e16a2cd7). It ALSO runs a gate-liveness SELF-CHECK: it reads the repo's
 committed hook settings (.claude/settings.json / .grok/hooks/satelle.json) and,
@@ -575,16 +569,12 @@ additionalContext envelope for both harnesses (AC7 finding on sty_e16a2cd7).`,
 		Short: "Stop post-hoc detector — block finishing when the tree was edited ungated (no engaged story)",
 		Long: `stopcheck is the Stop handler. It catches the incident the PreToolUse gate is
 meant to prevent even if that gate never fired this session: on Stop, if the tree
-has uncommitted, NON-EXEMPT changes while NO live seat exists anywhere in this
-repo, it emits a Stop block ({"decision":"block","reason":…}) naming the ungated
-files (sty_949e8739; top-level decision/reason, sty_5e4bc568 AC6).
-
-The dirty check is repo-wide, so the seat question is too (sty_211d8419): a live
-seat held by a SIBLING session attributes the dirty tree to that holder, and
-stopcheck allows the stop with a systemMessage naming the holding story and
-session. It honours stop_hook_active (never re-blocks its own block) and fails
-OPEN when git is absent, the tree is clean, only exempt paths changed, or this
-session holds the seat.`,
+has uncommitted, NON-EXEMPT changes while NO story is engaged from this tree, it
+emits a Stop block ({"decision":"block","reason":…}) naming the ungated files
+(sty_949e8739; top-level decision/reason, sty_5e4bc568 AC6). It honours
+stop_hook_active (never re-blocks its own block) and fails OPEN when git is
+absent, the tree is clean, only exempt paths changed, or a story is engaged
+from this tree.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
@@ -636,7 +626,7 @@ dispatched process, are left alone.`,
 		Short: "Show how the PreToolUse model rule would decide for a payload",
 		Long: `explain is read-only: it prints which transcript was chosen, by which key,
 the model found, the matched glob, any no-implement carve-out, and the decision.
-It does not touch the engagement seat. A denied agent can run it to see why.`,
+It changes nothing. A denied agent can run it to see why.`,
 		Args: cobra.NoArgs,
 		RunE: runHookExplain,
 	}
@@ -682,78 +672,6 @@ var hookHarnessFlag string
 // gate and records a limitation for each undelivered one instead.
 var hookNoWakeFlag bool
 
-// seatInfo is a single engagement-lease view for gate denials and session inject
-// (sty_1738f973). Empty ItemID means no lease row was relevant.
-type seatInfo struct {
-	ItemID      string
-	State       string // lease target / in-flight target (messaging)
-	TargetState string // immutable lease target used to authenticate a dispatched performer
-	StoryStatus string // committed work-item status (step policy; sty_c21490cc)
-	StateAgent  string // agent allocated to lease target / State
-	// StateRework is true when the route step StateAgent performs declares a
-	// rework loop (rework = { consult, rounds }). It decides whether the deny
-	// text may name `satelle story rework` (sty_a7914904).
-	StateRework bool
-	Owner       string
-	// Worktree is the git working tree the lease was engaged from, when
-	// recorded (sty_c098dc2d). It is how a session picks ITS seat out of
-	// several: the default owner is pid-less local@host, so co-held sibling
-	// leases are indistinguishable by owner.
-	Worktree    string
-	SessionID   string
-	Mine        bool
-	AcquiredAt  time.Time
-	HeartbeatAt time.Time
-	Stale       bool
-	InFlight    bool
-	// Waiting is true for a container idling at a route-declared
-	// waits_on_children step with open children (sty_7f3e6fd3). evaluateSeat
-	// never returns such a seat as live or as the naming pick; the flag is set
-	// for callers that build a descriptor themselves.
-	Waiting bool
-	// EditCapable is true only when the committed status is a spine performing
-	// step the route allocates to agent=executor. It is intentionally narrower
-	// than Engaged, which also includes isolated-agent planning states.
-	EditCapable bool
-	EditStates  []string
-	// DispatchAgents is the route-authored performer identity by target state.
-	// Lease.State intentionally remains the last committed state across a new
-	// transition, so an in-flight child marker must be checked against the spec,
-	// not mistaken for that prior state.
-	DispatchAgents map[string][]string
-	// Engaged is true when this row qualifies as live engagement (performing
-	// committed status, or fresh in-flight mid-transition).
-	Engaged bool
-	// Advance are route-declared forward transitions from the seat's committed
-	// status — terminal, park, and back-edges excluded (sty_e16a2cd7). Empty when
-	// the seat is live only via InFlight, or when no forward target survives.
-	Advance []wfdot.Advance
-}
-
-// storyEngaged reports whether a LIVE engagement seat is active (sty_8426b9c0 /
-// sty_1738f973). A bare engagement_lease row is not enough: stale heartbeats and
-// leases whose committed story is not in a performing state do NOT open the gate.
-// Fails CLOSED on store open/query errors. Does NOT heartbeat (Stop is out of
-// scope for sty_3bb1d8be).
-func storyEngaged() (bool, error) {
-	_, engaged, err := currentSeat()
-	return engaged, err
-}
-
-// currentSeat resolves the engagement seat for gate/session surfaces without
-// refreshing the lease heartbeat. Prefer currentSeatTouch from hook handlers
-// that observe ongoing work (gate, commitgate, prompt).
-func currentSeat() (info seatInfo, engaged bool, err error) {
-	return resolveSeat(false, config.ResolveSession())
-}
-
-// currentSeatTouch is currentSeat plus a fail-open heartbeat of a live
-// owner-held seat (sty_3bb1d8be). Activity keeps the seat alive; the write
-// never changes a verdict.
-func currentSeatTouch() (info seatInfo, engaged bool, err error) {
-	return resolveSeat(true, config.ResolveSession())
-}
-
 func sessionIDFromHook(raw []byte) string {
 	if id := agentcli.HookSessionID(raw); id != "" {
 		return id
@@ -774,11 +692,11 @@ func sessionIDFromHook(raw []byte) string {
 }
 
 // bindSessionID is the hook identity: prefer SATELLE_SESSION (dispatch and
-// operator stamp) so a performer inherits the lease stamp; otherwise take the
-// harness payload and publish it for a later Acquire in this process tree.
+// operator stamp) so a performer inherits the driver's session; otherwise take
+// the harness payload and publish it for a later engage in this process tree.
 //
-// The identity is always bound — a dispatched performer still needs the lease
-// stamp — but the in-loop MODEL publish is skipped for a dispatched process
+// The identity is always bound — a dispatched performer still needs the
+// session — but the in-loop MODEL publish is skipped for a dispatched process
 // (sty_719c4a7b AC4): SATELLE_SESSION is inherited from the driver that
 // dispatched it, so an unguarded publish here would overwrite the DRIVER's own
 // in-loop file with the dispatch's harness/model instead of recording
@@ -857,225 +775,10 @@ func resolveInLoopModel(raw []byte, harness string) (model, reason string) {
 	return "unknown", agentcli.ReasonForNoModel(harness)
 }
 
-// resolveSeat is the shared seat lookup. When touch is true and a seat is
-// bound (stamped-other returns empty), heartbeat_at is refreshed (fail-open)
-// so unstamped tree-routed seats still stay alive.
-//
-// This is the SESSION-scoped answer every gate uses. Do not widen it: a
-// repo-wide allow in runHookGate would let any session edit under a sibling's
-// story. The repo-wide set is exposed separately by resolveSeats for the ONE
-// surface whose question is repo-wide — stopcheck (sty_211d8419).
-func resolveSeat(touch bool, sessionID string) (info seatInfo, engaged bool, err error) {
-	info, engaged, _, err = resolveSeats(touch, sessionID)
-	return info, engaged, err
-}
-
-// resolveSeats is resolveSeat plus the repo-wide LIVE seat set the same
-// computation already produced (sty_211d8419): every qualifying seat in this
-// repo, whoever holds it, before pickSessionSeat narrows to this session. live
-// is nil on the derived-status fallback and the ungoverned-repo early return.
-func resolveSeats(touch bool, sessionID string) (info seatInfo, engaged bool, live []seatInfo, err error) {
-	return resolveSeatsFor(touch, sessionID, "")
-}
-
-// resolveSeatsFor is resolveSeats for an event with a target: when the session
-// holds seats in several worktrees, targetTree (the git root of the path being
-// edited, "" when it has none) picks among them. It is the ONE body behind every
-// seat lookup, so no caller attributes by store order (sty_42231b74).
-func resolveSeatsFor(touch bool, sessionID, targetTree string) (info seatInfo, engaged bool, live []seatInfo, err error) {
-	a, openErr := app.Open()
-	if openErr != nil {
-		return seatOpenFailed(openErr)
-	}
-	defer func() { _ = a.Close() }()
-	return resolveSeatsOn(a, touch, sessionID, targetTree)
-}
-
-// seatOpenFailed is the seat answer for a store that would not open.
-func seatOpenFailed(openErr error) (info seatInfo, engaged bool, live []seatInfo, err error) {
-	// An ungoverned repo has no seat to determine — a session opened in an
-	// ordinary non-satelle directory must go INERT, not error (sty_20a7824c).
-	// This is strictly quieter than before: previously such a session paid
-	// for a materialised runtime plane and then got a "fix config and retry"
-	// it could not act on. Any other open failure still reports.
-	if errors.Is(openErr, app.ErrNotInitialised) {
-		return seatInfo{}, false, nil, nil
-	}
-	return seatInfo{}, false, nil, fmt.Errorf("cannot determine engagement (store open failed: %w) — fix config and retry", openErr)
-}
-
-// resolveSeatsOn is resolveSeatsFor on an App the caller opened and closes.
-func resolveSeatsOn(a *app.App, touch bool, sessionID, targetTree string) (info seatInfo, engaged bool, live []seatInfo, err error) {
-	ctx := context.Background()
-	wfs, werr := a.Store.DocIndex.List(ctx, "workflows")
-	if werr != nil {
-		return seatInfo{}, false, nil, fmt.Errorf("cannot determine engagement (workflow list failed: %w) — fix config and retry", werr)
-	}
-	items, lerr := a.Store.Stories.List(ctx, workitem.ListFilter{})
-	if lerr != nil {
-		return seatInfo{}, false, nil, fmt.Errorf("cannot determine engagement (story list failed: %w) — fix config and retry", lerr)
-	}
-	if a.Store.Leases == nil {
-		// Pre-migration or incomplete bootstrap: fall back to derived status scan.
-		info, engaged, err = derivedSeat(items, wfs)
-		return info, engaged, nil, err
-	}
-	leases, qerr := a.Store.Leases.List(ctx)
-	if qerr != nil {
-		return seatInfo{}, false, nil, fmt.Errorf("cannot determine engagement (lease query failed: %w) — fix config and retry", qerr)
-	}
-	live, other, eerr := evaluateSeat(leases, items, wfs, time.Now().UTC())
-	if eerr != nil {
-		return seatInfo{}, false, nil, eerr
-	}
-	if len(live) > 0 {
-		// The seatless performing stories only matter to an unstamped session
-		// (sty_fbbb4aee AC2): a stamped one resolves by id or worktree alone.
-		var dropped []seatInfo
-		if strings.TrimSpace(sessionID) == "" {
-			dropped = droppedSeatsFrom(items, wfs, leases, time.Now().UTC())
-		}
-		// A dispatched performer is attributed to its own dispatch (sty_8d7d1c45):
-		// the item its marker names, before any session or worktree guess.
-		pick, mine := dispatchSeat(live, currentDispatchMarker())
-		if pick.ItemID == "" {
-			pick, mine = pickSessionSeatFor(live, dropped, sessionID, targetTree)
-		}
-		if pick.ItemID == "" {
-			return other, false, live, nil
-		}
-		pick.Mine = mine
-		if touch {
-			touchSeat(ctx, a.Store.Leases, pick)
-		}
-		return pick, true, live, nil
-	}
-	return other, false, live, nil
-}
-
-// stopcheckSeat is the repo-wide engagement answer stopcheck compares against
-// its repo-wide dirty check (sty_211d8419): mine when THIS session holds a live
-// seat (engaged, today's allow); otherwise the first live seat held elsewhere
-// in this repo with the count of any further ones; otherwise none. It never
-// touches a heartbeat — Stop observes, it does not work.
-func stopcheckSeat() (mine bool, other seatInfo, extra int, err error) {
-	_, engaged, live, err := resolveSeats(false, config.ResolveSession())
-	if err != nil {
-		return false, seatInfo{}, 0, err
-	}
-	if engaged {
-		return true, seatInfo{}, 0, nil
-	}
-	if len(live) == 0 {
-		return false, seatInfo{}, 0, nil
-	}
-	return false, live[0], len(live) - 1, nil
-}
-
-// dispatchSeat selects the live seat a dispatched performer is running under,
-// by the one identity the dispatch carries: the item it was spawned for. It
-// inherits the driver's session id, so pickSessionSeat can hand it a sibling's
-// seat or — for an unstamped ambiguous session — none at all; the marker names
-// the item outright, so there is nothing to disambiguate. It only SELECTS the
-// performer's own lease: permission still needs that lease in flight on exactly
-// this item and a route allocation to the marked agent (editPermitted). No
-// marker, or no live seat for its item, returns the zero seat and the caller
-// falls through to the session pick.
-func dispatchSeat(live []seatInfo, marker dispatchMarker) (seatInfo, bool) {
-	if marker.Item == "" {
-		return seatInfo{}, false
-	}
-	for _, s := range live {
-		if s.ItemID == marker.Item {
-			return s, false
-		}
-	}
-	return seatInfo{}, false
-}
-
-// pickSessionSeat chooses which live seat is THIS session's. A matching
-// SessionID is identity (mine=true). A different non-empty SessionID is
-// skipped. Unstamped seats still tree-route with mine=false — that is
-// today's permission path, not ownership. An UNSTAMPED session that no
-// worktree binds, facing more than one performing story — live seats plus the
-// performing stories that hold none (dropped) — gets no pick at all
-// (sty_fbbb4aee AC2): live[0] would attribute the edit to whichever seat the
-// store listed first, so the caller reports the ambiguity instead. dropped may
-// be nil where the caller has no seatless set to offer.
-func pickSessionSeat(live, dropped []seatInfo, sessionID string) (seatInfo, bool) {
-	return pickSessionSeatFor(live, dropped, sessionID, "")
-}
-
-// pickSessionSeatFor is pickSessionSeat for an event with a target tree. One
-// session may hold stamped seats in several worktrees (one per epic child); the
-// store lists them in no meaningful order, so with two or more the seat is chosen
-// by tree, never by position: the seat whose worktree is targetTree (when the
-// target sits in a git tree), else the seat whose worktree is the session's own
-// tree, else none — the caller reports the session's seats instead of guessing
-// (sty_42231b74). Exactly one stamped seat resolves as it always did.
-func pickSessionSeatFor(live, dropped []seatInfo, sessionID, targetTree string) (seatInfo, bool) {
-	if len(live) == 0 {
-		return seatInfo{}, false
-	}
-	id := strings.TrimSpace(sessionID)
-	if id != "" {
-		switch mine := sessionSeats(live, id); len(mine) {
-		case 0:
-		case 1:
-			return mine[0], true
-		default:
-			for _, tree := range []string{targetTree, sessionWorktree()} {
-				for _, s := range mine {
-					if tree != "" && sameTree(s.Worktree, tree) {
-						return s, true
-					}
-				}
-			}
-			return seatInfo{}, false
-		}
-		tree := sessionWorktree()
-		for _, s := range live {
-			if s.SessionID != "" && s.SessionID != id {
-				continue
-			}
-			if tree != "" && s.Worktree == tree {
-				return s, false
-			}
-		}
-		return seatInfo{}, false
-	}
-	if tree := sessionWorktree(); tree != "" {
-		for _, s := range live {
-			if s.Worktree == tree {
-				return s, false
-			}
-		}
-	}
-	if unstampedAmbiguous(live, dropped, sessionID) {
-		return seatInfo{}, false
-	}
-	return live[0], false
-}
-
-// sessionSeats is the live seats stamped with this session id, in store order.
-func sessionSeats(live []seatInfo, sessionID string) []seatInfo {
-	id := strings.TrimSpace(sessionID)
-	if id == "" {
-		return nil
-	}
-	var mine []seatInfo
-	for _, s := range live {
-		if s.SessionID == id {
-			mine = append(mine, s)
-		}
-	}
-	return mine
-}
-
 // pushBranchTree is the working tree an unmoved `git push <remote> <branch>`
 // publishes from: the worktree of base's repository that has the pushed branch
-// checked out, so a session holding seats in several worktrees attributes the push
-// to the seat of the one it publishes. "" when the push names no branch, several
+// checked out, so a session driving stories in several worktrees attributes the
+// push to the story engaged from the one it publishes. "" when the push names no branch, several
 // that sit in different trees, or one no worktree has checked out, so the tree the
 // hook runs in decides as it always did.
 func pushBranchTree(command, base string) string {
@@ -1110,57 +813,9 @@ func sameTree(a, b string) bool {
 	return errA == nil && errB == nil && ra == rb
 }
 
-// sessionSeatsUnmatched is the deny for a session that holds two or more live
-// seats when none of them is in the tree the event targets or the tree the
-// session runs in: it names every seat instead of attributing the event to one
-// (sty_42231b74 AC3). ok is false when the session was attributed, holds fewer
-// than two seats, or the event belongs to a dispatched performer or a rework
-// relay (their own denials already name their identity).
-func sessionSeatsUnmatched(engaged bool, live []seatInfo, sessionID string, dm dispatchMarker, rm relayMarker) (string, bool) {
-	if engaged || dm.Item != "" || rm.Binding != "" {
-		return "", false
-	}
-	mine := sessionSeats(live, sessionID)
-	if len(mine) < 2 {
-		return "", false
-	}
-	return sessionSeatsAmbiguousReason(mine, sessionWorktree()), true
-}
-
-// sessionSeatsAmbiguousReason names each of a session's seats with its status and
-// worktree, and the tree the event was attributed against.
-func sessionSeatsAmbiguousReason(seats []seatInfo, tree string) string {
-	parts := make([]string, 0, len(seats))
-	for _, s := range seats {
-		parts = append(parts, fmt.Sprintf("%s (status %q) in worktree %q", s.ItemID, s.StoryStatus, s.Worktree))
-	}
-	return fmt.Sprintf(
-		"satelle: this session holds %d seats — %s — and none is in the tree this event runs in (%q), so it is not attributed to any of them; act from the worktree of the seat you mean. Inspect with `satelle story seat`.",
-		len(seats), strings.Join(parts, "; "), tree)
-}
-
-// unstampedAmbiguous reports whether nothing binds this session to one
-// performing story: no session id, no live seat for this worktree, and more than
-// one performing story (live plus seatless). One definition shared by the
-// chooser and every deny that must report the ambiguity rather than a pick
-// (sty_fbbb4aee AC2).
-func unstampedAmbiguous(live, dropped []seatInfo, sessionID string) bool {
-	if strings.TrimSpace(sessionID) != "" {
-		return false
-	}
-	if tree := sessionWorktree(); tree != "" {
-		for _, s := range live {
-			if s.Worktree == tree {
-				return false
-			}
-		}
-	}
-	return len(live)+len(dropped) > 1
-}
-
 // sessionWorktreeMemo holds sessionWorktree's answer for one hook call. The
-// seat read asks for it several times (unstamped, unmatched or multi-seat
-// sessions), and each ask would otherwise start `git rev-parse --show-toplevel`.
+// engagement read asks for it several times (once per tree it attributes),
+// and each ask would otherwise start `git rev-parse --show-toplevel`.
 // Off unless held, so nothing outside a hook call sees a stale answer.
 var sessionWorktreeMemo struct {
 	mu      sync.Mutex
@@ -1214,7 +869,7 @@ func sessionWorktreeUncached() string {
 	}
 	// Inside a hook call the repo identity is already resolved by the one
 	// `git rev-parse --git-common-dir`; the toplevel comes from it and the
-	// `.git` entry above dir, so the seat read starts no process of its own. Only
+	// `.git` entry above dir, so the engagement read starts no process of its own. Only
 	// a tree that identity cannot confirm asks git.
 	if tree, ok := config.WorktreeOfMemoised(dir); ok {
 		return tree
@@ -1224,160 +879,6 @@ func sessionWorktreeUncached() string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
-}
-
-// touchSeat refreshes heartbeat_at for a live, owner-held seat (sty_3bb1d8be).
-// Activity keeps the seat alive; the write is a side effect of observation.
-// Never revives a stale lease (callers pass evaluateSeat's live pick, which is
-// non-stale by construction) and never touches another owner's row. Fail-open
-// by construction: every error is discarded.
-func touchSeat(ctx context.Context, ls *lease.Store, info seatInfo) {
-	if ls == nil || info.ItemID == "" || info.Stale {
-		return
-	}
-	owner := lease.ResolveOwner()
-	if info.Owner != owner {
-		return
-	}
-	_ = seatHeartbeat(ctx, ls, info.ItemID, owner)
-}
-
-// seatHeartbeat is the heartbeat write, injectable so the fail-open path is
-// testable (same idiom as lease.PidAlive / healthzOK).
-var seatHeartbeat = func(ctx context.Context, ls *lease.Store, itemID, owner string) error {
-	return ls.Heartbeat(ctx, itemID, owner)
-}
-
-// evaluateSeat is the pure engagement predicate (sty_1738f973 AC2). A lease L is
-// a live seat iff lease.Alive(L) AND (committed status is a NonTerminalEngaging
-// state of the item's governing workflow OR (L.InFlight AND non-stale)). The
-// InFlight+fresh disjunct preserves the acquire-at-start window for a legit
-// first-transition dispatch; the residual sub-TTL orphan gap is the documented
-// cost (Acquire steals after HeartbeatTTL).
-//
-// Returns (live, other, err): live is EVERY qualifying seat (Engaged=true), in
-// lease order — a project may hold more than one under a shared arbitration key
-// (sty_c098dc2d), and "is work in flight?" is len(live) > 0 whether that is one
-// lease or five. other is the most relevant non-qualifying lease for messaging
-// (stale first, else any row), with Engaged=false. err is non-nil when a leased
-// item has no resolving workflow (fail-closed, same as anyEngaged).
-func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Doc, now time.Time) (live []seatInfo, other seatInfo, err error) {
-	byID := make(map[string]workitem.Item, len(items))
-	for _, it := range items {
-		byID[it.ID] = it
-	}
-	// The front door resolves the lifecycle per item, because a DERIVED route
-	// depends on the item's category and tags, not only on a workflow name — a
-	// name-keyed cache would hand one story another's route (sty_9835070d).
-	var otherPick seatInfo
-	for _, l := range leases {
-		stale := !lease.Alive(l, now)
-		info := seatInfo{
-			ItemID:      l.ItemID,
-			State:       l.State,
-			Owner:       l.Owner,
-			AcquiredAt:  l.AcquiredAt,
-			HeartbeatAt: l.HeartbeatAt,
-			Stale:       stale,
-			// EffectiveInFlight ages stuck flags; raw InFlight would wedge the
-			// edit gate forever when hooks keep the heartbeat fresh (sty_bf797fa9).
-			InFlight: lease.EffectiveInFlight(l, now),
-		}
-		info.Worktree = l.Worktree
-		info.SessionID = l.SessionID
-		if stale {
-			// Prefer naming a stale holder in deny/session text.
-			if otherPick.ItemID == "" || (!otherPick.Stale && stale) {
-				otherPick = info
-			}
-			continue
-		}
-		it, ok := byID[l.ItemID]
-		if !ok {
-			// Leased id not in stories/tasks list — treat as non-performing residue.
-			if otherPick.ItemID == "" {
-				otherPick = info
-			}
-			continue
-		}
-		// Prefer the committed item status for the performing check; fall back to
-		// the lease's last-committed state when the item row is somehow missing a
-		// status (should not happen for real rows).
-		status := it.Status
-		if status == "" {
-			status = l.State
-		}
-		info.StoryStatus = status
-		// Surface lease.State (last committed engaging target / in-flight target)
-		// in the seat descriptor when more informative than committed backlog.
-		if l.State != "" {
-			info.State = l.State
-		}
-		// Also expose the committed status when it differs (e.g. lease state=plan
-		// while story is still backlog mid-transition) by preferring lease state
-		// for messaging, but judging on committed status.
-		route, wfName, serr := wfgovern.RouteFor(wfs, it)
-		if serr != nil {
-			return nil, seatInfo{}, fmt.Errorf("item %s: %w — cannot determine engagement", it.ID, serr)
-		}
-		spec := route.Spec
-		if _, known := spec.StateAgent(status); !known {
-			return nil, seatInfo{}, fmt.Errorf(
-				"item %s status %q is not declared by workflow %s — cannot classify edit permission",
-				it.ID, status, wfName)
-		}
-		info.EditCapable = spec.IsEditCapableState(status)
-		info.EditStates = spec.EditCapableStates()
-		info.DispatchAgents = dispatchAgents(spec)
-		target := info.State
-		if target == "" {
-			target = status
-		}
-		info.TargetState = target
-		var targetKnown bool
-		info.StateAgent, targetKnown = spec.StateAgent(target)
-		info.StateRework = stepDeclaresRework(route.Reworks, target)
-		if !targetKnown {
-			return nil, seatInfo{}, fmt.Errorf(
-				"lease for item %s targets state %q not declared by workflow %s — cannot classify edit permission",
-				it.ID, target, wfName)
-		}
-		engaging := map[string]bool{}
-		for _, s := range spec.NonTerminalEngagingStates() {
-			engaging[s] = true
-		}
-		// A container waiting on its children is not performing: leave it out of
-		// live AND out of the deny/session naming (sty_7f3e6fd3). A transition in
-		// flight on it is real work, so that case still counts.
-		if !info.InFlight && waitsOnOpenChildren(it, status, spec, items, wfs) {
-			info.Waiting = true
-			continue
-		}
-		// Live seat: committed status is performing, OR effective in-flight mid-transition.
-		// Use info.InFlight (EffectiveInFlight) not raw l.InFlight — a dead
-		// transitioning pid must not keep the seat "engaged" via residue
-		// (sty_bf797fa9 AC3).
-		// Effective in-flight covers the acquire-at-start window when status is
-		// still the start state (backlog) — without this, mid-dispatch edits
-		// would be denied.
-		if engaging[status] || info.InFlight {
-			info.Engaged = true
-			// Prefer the committed status in the descriptor when it is performing;
-			// otherwise keep lease.State (target of the in-flight transition).
-			if engaging[status] {
-				info.State = status
-				// Advance only when committed status is genuinely performing —
-				// in-flight-only seats sit at a not-yet-committed state (sty_e16a2cd7).
-				info.Advance = spec.AdvanceOptions(status)
-			}
-			live = append(live, info)
-			continue
-		}
-		if otherPick.ItemID == "" {
-			otherPick = info
-		}
-	}
-	return live, otherPick, nil
 }
 
 // dispatchMarker identifies an isolated performer spawned by the workflow.
@@ -1419,19 +920,19 @@ func currentRelayMarker() relayMarker {
 // committed status (dispatchedPerformerPermitted); otherwise today's
 // editPermitted branches apply unchanged for the driving session and for
 // in-flight dispatch.
-func hookEditPermitted(info seatInfo, dm dispatchMarker, rm relayMarker) bool {
+func hookEditPermitted(info engagement, dm dispatchMarker, rm relayMarker) bool {
 	if rm.Binding != "" {
 		return info.ItemID == rm.Item && dispatchedPerformerPermitted(info, rm.Binding)
 	}
 	return editPermitted(info, dm)
 }
 
-// editPermitted separates lease engagement from source-edit authorization.
+// editPermitted separates engagement from source-edit authorization.
 // A dispatched performer is allowed only for the exact in-flight item/target
 // and authored agent allocation. The driving session is allowed only in a
 // committed route step allocated to the in-loop executor, never mid-transition.
-func editPermitted(info seatInfo, marker dispatchMarker) bool {
-	if info.ItemID == "" || info.Stale || !info.Engaged {
+func editPermitted(info engagement, marker dispatchMarker) bool {
+	if info.ItemID == "" || !info.Engaged {
 		return false
 	}
 	if marker.Agent != "" || marker.Step != "" || marker.Item != "" {
@@ -1454,8 +955,8 @@ func editPermitted(info seatInfo, marker dispatchMarker) bool {
 			return slices.Contains(agents, marker.Agent)
 		}
 		// Not mid-transition: the dispatch entered its step and the status has
-		// committed (or the in-flight mark aged out under a long run). The seat is
-		// correct, so the performer the route allocates to that committed step may
+		// committed (or the in-flight mark aged out under a long run). The status is
+		// settled, so the performer the route allocates to that committed step may
 		// edit — the same rule the rework relay's coder gets (sty_7f3e6fd3).
 		status := info.StoryStatus
 		if status == "" {
@@ -1467,7 +968,7 @@ func editPermitted(info seatInfo, marker dispatchMarker) bool {
 }
 
 // dispatchedPerformerPermitted reports whether BINDING may mutate the tree from
-// a live session satelle itself opened on the seat — the rework relay's coder
+// a live session satelle itself opened on the story — the rework relay's coder
 // (sty_8e0b29a0). It is a third branch of the same policy, not a fork of it.
 //
 // editPermitted cannot answer this question. With an empty marker it takes the
@@ -1477,13 +978,13 @@ func editPermitted(info seatInfo, marker dispatchMarker) bool {
 // in exactly the configuration the relay exists for. With a marker it requires
 // InFlight, and the relay runs at a committed status, not mid-transition.
 //
-// So the rule is stated directly: a live, non-stale seat that is NOT
+// So the rule is stated directly: a performing story that is NOT
 // mid-transition, whose COMMITTED status the route allocates to that binding.
 // The allocation is read from info.DispatchAgents — route-authored, never
 // compiled in — and for binding "executor" it agrees with EditCapable by
 // construction, so the in-loop policy is unchanged.
-func dispatchedPerformerPermitted(info seatInfo, binding string) bool {
-	if binding == "" || info.ItemID == "" || info.Stale || !info.Engaged || info.InFlight {
+func dispatchedPerformerPermitted(info engagement, binding string) bool {
+	if binding == "" || info.ItemID == "" || !info.Engaged || info.InFlight {
 		return false
 	}
 	status := info.StoryStatus
@@ -1502,8 +1003,8 @@ func dispatchedPerformerPermitted(info seatInfo, binding string) bool {
 // waitsOnOpenChildren reports whether it is a container idling at a step its
 // route declares `waits_on_children` while at least one child is still open
 // (sty_7f3e6fd3). Such a story holds a status but performs nothing, so it is
-// not a performing seat holder: no edit is allowed under it, and its seat must
-// not stop an unrelated session, nor be named in a deny message.
+// not performing: no edit is allowed under it, it counts against no
+// concurrency limit, and it is not named in a deny message.
 //
 // A child is resolved when its OWN route says terminal, or that it sits in a
 // cancel sink; a parked child (blocked) is still open. A child whose workflow
@@ -1526,70 +1027,6 @@ func dispatchAgents(spec wfdot.Spec) map[string][]string {
 	return out
 }
 
-// seatSuffix appends a discoverable seat descriptor to a gate deny reason when
-// a non-live lease row exists (sty_1738f973 AC6). Empty when no row to name.
-func seatSuffix(info seatInfo, now time.Time) string {
-	if info.ItemID == "" {
-		return ""
-	}
-	return " — " + formatSeat(info, now) + "; inspect with `satelle story seat`, release with `satelle story seat release " + info.ItemID + "`"
-}
-
-// formatSeat renders a one-line seat descriptor for deny reasons and session inject.
-func formatSeat(info seatInfo, now time.Time) string {
-	if info.ItemID == "" {
-		return ""
-	}
-	state := info.State
-	if state == "" {
-		state = "?"
-	}
-	age := formatSeatAge(now.Sub(info.HeartbeatAt))
-	if info.Stale {
-		return fmt.Sprintf("seat held by %s (%s, stale %s)", info.ItemID, state, age)
-	}
-	acq := formatSeatAge(now.Sub(info.AcquiredAt))
-	return fmt.Sprintf("seat held by %s (%s, owner %s, acquired %s, heartbeat %s)",
-		info.ItemID, state, info.Owner, acq, age)
-}
-
-// formatSeatAge rounds a duration to a short human age for seat messaging.
-func formatSeatAge(d time.Duration) string {
-	if d < 0 {
-		d = 0
-	}
-	if d < time.Minute {
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	}
-	if d < time.Hour {
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	}
-	if d < 24*time.Hour {
-		h := int(d.Hours())
-		m := int(d.Minutes()) % 60
-		if m == 0 {
-			return fmt.Sprintf("%dh", h)
-		}
-		return fmt.Sprintf("%dh%dm", h, m)
-	}
-	return fmt.Sprintf("%dd", int(d.Hours())/24)
-}
-
-// seatModeLine states the ACTIVE seat concurrency mode as mechanism: what the
-// mode is, and — for a grouped seat — the two preconditions a second engagement
-// must satisfy. An agent that only meets the mode in a refusal has already lost a
-// turn to it. Nothing here says when a repo should choose a mode: that opinion is
-// the repo's own substrate, and satelle polices no sibling contention.
-func seatModeLine(mode string) string {
-	if mode == config.ParallelWorktree {
-		return "seat mode: worktree — any story may engage alongside the holders, from a DISTINCT git working tree; a second engagement from a tree that already holds a seat is refused (the children of a sequential epic still go one at a time)."
-	}
-	if mode == config.ParallelEpic {
-		return "seat mode: epic — a sibling under the SAME parent may engage alongside the holder, from a DISTINCT git working tree; a story under another parent (or none) is refused while that seat is held."
-	}
-	return "seat mode: none — one performing story at a time."
-}
-
 // scheduleLine names the child schedule of an epic container and the
 // command that answers who may start. It formats a string only: it never reads
 // children, never derives a wave and never names a child — which child starts is
@@ -1601,142 +1038,9 @@ func scheduleLine(id, schedule string) string {
 	}
 	line := fmt.Sprintf("epic %s schedule: %s — the set that may be engaged is `satelle story wave %s`; a non-zero wave is a stop, not a licence to choose a child.", id, schedule, id)
 	if schedule == wfdot.SchedParallel {
-		line += " A parallel wave is one worktree per child; same-tree engagement is refused."
+		line += " A parallel wave is one worktree per child; an edit is attributed to the story engaged from its tree."
 	}
 	return line
-}
-
-// seatScheduleLines names the schedule of every scheduled epic container in
-// context: a seat holder that is itself an epic-parent, or whose parent is one.
-// A container that declares nothing is parallel by default and is named so.
-// Silent (empty) when no holder is in an epic container.
-func seatScheduleLines(holders []string, items []workitem.Item, wfs []docindex.Doc) string {
-	byID := make(map[string]workitem.Item, len(items))
-	for _, it := range items {
-		byID[it.ID] = it
-	}
-	seen := map[string]bool{}
-	var lines []string
-	for _, id := range holders {
-		c, ok := byID[id]
-		if ok && !epicset.IsEpicParent(c) {
-			c, ok = byID[c.ParentID]
-		}
-		if !ok || !epicset.IsEpicParent(c) || seen[c.ID] {
-			continue
-		}
-		seen[c.ID] = true
-		if l := scheduleLine(c.ID, verb.ContainerSchedule(wfs, c)); l != "" {
-			lines = append(lines, l)
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-// formatSeatBlock is the SessionStart / prompt multi-line seat inject body.
-func formatSeatBlock(info seatInfo, now time.Time, mode string) string {
-	if info.ItemID == "" {
-		return ""
-	}
-	return "## Engagement seat\n" + formatSeat(info, now) + "\n" + seatModeLine(mode) +
-		"\nInspect: `satelle story seat` · Release: `satelle story seat release " + info.ItemID + "`"
-}
-
-// appendSeatToContext merges a seat block into SessionStart content when room
-// remains under ceiling (sty_1738f973 AC6). Pure — unit-tested so removing the
-// inject path fails a test rather than leaving the suite green.
-func appendSeatToContext(content, seatBlock string, ceiling int) string {
-	if strings.TrimSpace(seatBlock) == "" {
-		return content
-	}
-	if content == "" {
-		return seatBlock
-	}
-	if ceiling > 0 && len(content)+2+len(seatBlock) > ceiling {
-		return content // prefer principles over a truncated seat line
-	}
-	return content + "\n\n" + seatBlock
-}
-
-// appendSeatToPrompt appends a one-line seat descriptor to the UserPromptSubmit
-// reminder when a lease exists (sty_1738f973 AC6). Pure for unit tests.
-func appendSeatToPrompt(msg string, info seatInfo, now time.Time) string {
-	if info.ItemID == "" {
-		return msg
-	}
-	return msg + "\n" + formatSeat(info, now) + " — inspect: `satelle story seat`"
-}
-
-// anyEngaged reports whether any work item sits in a non-terminal engaging state
-// of the workflow that governs IT — the stamped workflow, else its category-selected
-// one (wfgovern.GoverningWorkflow). A "non-terminal engaging state" is one that
-// is neither start (Shape Mdiamond) nor terminal (Shape Msquare) nor cancel/exception
-// (agent=reviewer with no outgoing edges) — read from the Spec's own markers,
-// not hardcoded (sty_f3d5d4b8).
-//
-// Returns (engaged, err): err is non-nil when an item has NO resolving workflow
-// or the workflow does not yield a Spec — fail-closed, not a silent allow. Pure
-// core, split for testing.
-func anyEngaged(items []workitem.Item, wfs []docindex.Doc) (bool, error) {
-	for _, it := range items {
-		spec, _, _, serr := wfgovern.SpecFor(wfs, it)
-		if serr != nil {
-			return false, fmt.Errorf("item %s: %w — cannot determine engagement", it.ID, serr)
-		}
-		engaging := map[string]bool{}
-		for _, s := range spec.NonTerminalEngagingStates() {
-			engaging[s] = true
-		}
-		if engaging[it.Status] {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// derivedSeat is the pre-lease-store compatibility path. It derives both the
-// broad engagement predicate and the narrower edit-capable predicate from the
-// governing route, so an old store never re-opens planning/reviewer states merely
-// because they are non-terminal.
-func derivedSeat(items []workitem.Item, wfs []docindex.Doc) (seatInfo, bool, error) {
-	var other seatInfo
-	for _, it := range items {
-		route, wfName, serr := wfgovern.RouteFor(wfs, it)
-		if serr != nil {
-			return seatInfo{}, false, fmt.Errorf("item %s: %w — cannot determine engagement", it.ID, serr)
-		}
-		spec := route.Spec
-		agent, known := spec.StateAgent(it.Status)
-		if !known {
-			return seatInfo{}, false, fmt.Errorf(
-				"item %s status %q is not declared by workflow %s — cannot classify edit permission",
-				it.ID, it.Status, wfName)
-		}
-		info := seatInfo{
-			ItemID: it.ID, State: it.Status, StoryStatus: it.Status,
-			StateAgent: agent, EditCapable: spec.IsEditCapableState(it.Status),
-			StateRework: stepDeclaresRework(route.Reworks, it.Status),
-			EditStates:  spec.EditCapableStates(),
-		}
-		engaging := false
-		for _, state := range spec.NonTerminalEngagingStates() {
-			if state == it.Status {
-				engaging = true
-				break
-			}
-		}
-		if engaging && waitsOnOpenChildren(it, it.Status, spec, items, wfs) {
-			continue // a container waiting on its children is neither a seat nor a name to cite
-		}
-		if engaging {
-			info.Engaged = true
-			return info, true, nil
-		}
-		if other.ItemID == "" {
-			other = info
-		}
-	}
-	return other, false, nil
 }
 
 // filePathFromEvent pulls the edit target out of a PreToolUse edit event.
@@ -1913,7 +1217,7 @@ func loadGateProcess() gateProcess {
 }
 
 // gateStore is the one store a commitgate call opens for command rules, from the
-// gateProcess already loaded: the seat read and the ledger row share it, so a
+// gateProcess already loaded: the engagement read and the ledger row share it, so a
 // matched command adds store I/O and no second config load or process.
 type gateStore struct {
 	gp gateProcess
@@ -1940,31 +1244,26 @@ func (g *gateStore) open() (*app.App, error) {
 	return g.a, g.err
 }
 
+// engagementsFor is resolveEngagementsFor on the shared store.
+func (g *gateStore) engagementsFor(sessionID, targetTree string) (info engagement, engaged bool, live []engagement, err error) {
+	a, oerr := g.open()
+	if oerr != nil {
+		return engagementOpenFailed(oerr)
+	}
+	return resolveEngagementsOn(a, sessionID, targetTree)
+}
+
+// resolve is resolveEngagements on the shared store.
+func (g *gateStore) resolve(sessionID string) (engagement, bool, error) {
+	info, engaged, _, err := g.engagementsFor(sessionID, "")
+	return info, engaged, err
+}
+
 func (g *gateStore) close() {
 	if g.a != nil {
 		_ = g.a.Close()
 		g.a = nil
 	}
-}
-
-// seatsFor is resolveSeatsFor on the shared store.
-func (g *gateStore) seatsFor(touch bool, sessionID, targetTree string) (info seatInfo, engaged bool, live []seatInfo, err error) {
-	a, oerr := g.open()
-	if oerr != nil {
-		return seatOpenFailed(oerr)
-	}
-	return resolveSeatsOn(a, touch, sessionID, targetTree)
-}
-
-// seat is resolveSeats(false, ...) on the shared store.
-func (g *gateStore) seat(sessionID string) (seatInfo, bool, error) {
-	a, err := g.open()
-	if err != nil {
-		info, engaged, _, serr := seatOpenFailed(err)
-		return info, engaged, serr
-	}
-	info, engaged, _, serr := resolveSeatsOn(a, false, sessionID, "")
-	return info, engaged, serr
 }
 
 func commandAllowFrom(gp gateProcess) map[string][]string {
@@ -2011,139 +1310,6 @@ const noEngagedStoryEditReason = "satelle: you're mutating the tree without a pe
 	"Open a story session before editing code: satelle story create …, then satelle story set <id> --status plan. " +
 	"That session stays open through your edits until the story reaches a terminal or parked state (done, cancelled, or blocked) — finishing an edit does NOT close it. " +
 	"For research, use read tools (Read/read_file/grep/Glob) — not Edit/Write/search_replace."
-
-// droppedSeatEditReason is the deny when a story is still in a performing
-// status but its engagement lease is missing (sty_4f74d01f). Distinct from
-// noEngagedStoryEditReason so agents re-acquire instead of creating a new story.
-func droppedSeatEditReason(id, status string) string {
-	return fmt.Sprintf(
-		"satelle: story %s is performing (status %q, seat: none) but its engagement seat was dropped — re-acquire with `satelle story set %s --status %s` (same status is intentional; it grants a seat without inventing a new step), then retry the edit. Inspect with `satelle story seat`.",
-		id, status, id, status)
-}
-
-// seatToken names a performing story's seat in one phrase for deny text
-// (sty_fbbb4aee AC3): "stale", "none" (no lease — a dropped seat), or the live
-// lease's session and worktree.
-func seatToken(s seatInfo) string {
-	switch {
-	case s.Stale:
-		return "stale"
-	case s.Engaged:
-		sess, tree := s.SessionID, s.Worktree
-		if sess == "" {
-			sess = "unstamped"
-		}
-		if tree == "" {
-			tree = "unrecorded"
-		}
-		return fmt.Sprintf("live (session %s, worktree %s)", sess, tree)
-	}
-	return "none"
-}
-
-// seatMismatchEditReason is the deny when the story that would hold this edit
-// has a live seat this session is not bound to (sty_fbbb4aee AC1/AC3). It names
-// that story, its state and its seat, and points at the stamp or worktree that
-// binds the session — never at re-acquiring a seat that is already held.
-func seatMismatchEditReason(s seatInfo, sessionID, tree string) string {
-	sess := strings.TrimSpace(sessionID)
-	if sess == "" {
-		sess = "unstamped"
-	}
-	seatSess := s.SessionID
-	if seatSess == "" {
-		seatSess = "unstamped"
-	}
-	var hint string
-	held := " The seat is held; it does not need re-acquiring."
-	switch {
-	case tree == s.Worktree:
-		// Already in the seat's worktree: only the id can differ.
-		hint = fmt.Sprintf("this session is already in that worktree; its session id (%s) does not match the seat's (%s)", sess, seatSess)
-		switch {
-		case s.SessionID == "":
-		case strings.TrimSpace(sessionID) == "":
-			// No id resolved for the caller, so there is nothing to re-stamp the
-			// seat to: the stamp has to come from an environment the hook reads.
-			hint += fmt.Sprintf(" — stamp SATELLE_SESSION=%s", s.SessionID)
-		case config.SessionLive(s.SessionID):
-			hint += " — another live session holds the seat; inspect with `satelle story seat`, and use `satelle story stop-request` to preempt it"
-		case s.Owner == lease.ResolveOwner():
-			// A ghost stamp: no live session publishes it, and this caller drove
-			// the story. The hook cannot see an exported SATELLE_SESSION, so the
-			// remedy is the command that re-stamps the seat to the caller
-			// (sty_36d6f155).
-			hint += fmt.Sprintf(" and no live session holds it — re-stamp the seat to this session with `satelle story set %s --status %s` (same status), then retry the edit", s.ItemID, s.StoryStatus)
-			held = ""
-		default:
-			hint += " and no live session holds it, but this caller did not engage the story; inspect with `satelle story seat`"
-		}
-	case s.SessionID != "":
-		hint = fmt.Sprintf("stamp SATELLE_SESSION=%s or run from that seat's worktree", s.SessionID)
-	default:
-		hint = "run from that seat's worktree"
-	}
-	return fmt.Sprintf(
-		"satelle: story %s (status %q) holds the live engagement seat — seat: %s — but this session is %s in worktree %q, so the edit is not attributed to it; %s.%s",
-		s.ItemID, s.StoryStatus, seatToken(s), sess, tree, hint, held)
-}
-
-// ambiguousPerformingReason is the deny when several stories are performing and
-// nothing binds this session to one of them (sty_fbbb4aee AC2): it says so and
-// lists each with its state and seat, instead of picking one.
-func ambiguousPerformingReason(performing []seatInfo, sessionID string) string {
-	lead := "more than one performing story, no session stamped"
-	if sess := strings.TrimSpace(sessionID); sess != "" {
-		lead = fmt.Sprintf("more than one performing story, none holds a seat for session %s", sess)
-	}
-	parts := make([]string, 0, len(performing))
-	for _, s := range performing {
-		parts = append(parts, fmt.Sprintf("%s (status %q, seat: %s)", s.ItemID, s.StoryStatus, seatToken(s)))
-	}
-	return fmt.Sprintf(
-		"satelle: %s — %s; stamp the session (SATELLE_SESSION=<the seat's session id>) or run from the seat's worktree. Inspect with `satelle story seat`.",
-		lead, strings.Join(parts, ", "))
-}
-
-// attributedDenyReason is the pure half of editGateDenyReason: given the live
-// seats and the performing stories that hold none, it names the story the edit
-// would have been attributed to (sty_fbbb4aee). ok is false when nothing is
-// performing. Order: the live seat for this worktree; else the only performing
-// story; else the ambiguity report. It never prefers a seatless story over a
-// seated one for this worktree.
-func attributedDenyReason(live, dropped []seatInfo, sessionID, tree string) (reason string, ok bool) {
-	if tree != "" {
-		for _, s := range live {
-			if s.Worktree == tree {
-				return seatMismatchEditReason(s, sessionID, tree), true
-			}
-		}
-	}
-	performing := make([]seatInfo, 0, len(live)+len(dropped))
-	performing = append(performing, live...)
-	performing = append(performing, dropped...)
-	switch len(performing) {
-	case 0:
-		return "", false
-	case 1:
-		if performing[0].Engaged {
-			return seatMismatchEditReason(performing[0], sessionID, tree), true
-		}
-		return droppedSeatEditReason(performing[0].ItemID, performing[0].StoryStatus), true
-	}
-	return ambiguousPerformingReason(performing, sessionID), true
-}
-
-// editGateDenyReason picks the agent-facing text when this session resolved no
-// engaged seat (sty_4f74d01f): name the performing story the edit belongs to —
-// seated for this worktree first, seatless only when it is the sole candidate —
-// over the generic "open a story" message.
-func editGateDenyReason(info seatInfo, live []seatInfo, sessionID string, now time.Time) string {
-	if reason, ok := attributedDenyReason(live, droppedPerformingSeats(), sessionID, sessionWorktree()); ok {
-		return reason
-	}
-	return noEngagedStoryEditReason + seatSuffix(info, now)
-}
 
 const readOnlyPreflightBase = "Read-only preflight remains available: use Read/read_file/Grep/Glob or non-mutating shell commands, and record approved context with `satelle story attach` or `satelle story log`; advance through the workflow gate before editing."
 
@@ -2196,10 +1362,10 @@ func readOnlyPreflightReasonFrom(load func() (config.Config, string, error)) str
 	return readOnlyPreflightBase + " Story-reference copies belong in " + strings.Join(locs, ", ") + "."
 }
 
-func editPermissionDenyReason(info seatInfo, live []seatInfo, sessionID string, now time.Time) string {
+func editPermissionDenyReason(info engagement, live []engagement, tree string) string {
 	pre := readOnlyPreflightReason()
-	if info.ItemID == "" || !info.Engaged || info.Stale {
-		return editGateDenyReason(info, live, sessionID, now) + " " + pre
+	if info.ItemID == "" || !info.Engaged {
+		return editGateDenyReason(live, tree) + " " + pre
 	}
 	if info.InFlight {
 		target := info.State
@@ -2222,8 +1388,8 @@ func editPermissionDenyReason(info seatInfo, live []seatInfo, sessionID string, 
 	}
 	if agent == "" {
 		return fmt.Sprintf(
-			"satelle: story %s is at %q (seat: %s), which its workflow allocates to %q; source edits are permitted only in route steps allocated to agent=executor (%s). Do not work ahead. %s",
-			info.ItemID, info.StoryStatus, seatToken(info), "no in-loop executor", states, pre)
+			"satelle: story %s is at %q, which its workflow allocates to %q; source edits are permitted only in route steps allocated to agent=executor (%s). Do not work ahead. %s",
+			info.ItemID, info.StoryStatus, "no in-loop executor", states, pre)
 	}
 	// A named performer owns this step: the driver's own edit is refused, and
 	// the text names the one path that reaches that performer. The relay is
@@ -2234,8 +1400,8 @@ func editPermissionDenyReason(info seatInfo, live []seatInfo, sessionID string, 
 		path = fmt.Sprintf("relay the change through the dispatched coder %q with `satelle story rework %s`", agent, info.ItemID)
 	}
 	return fmt.Sprintf(
-		"satelle: story %s is at %q (seat: %s), which its workflow allocates to %q; source edits are permitted only in route steps allocated to agent=executor (%s). Do not edit in-loop — %s. Do not work ahead. %s",
-		info.ItemID, info.StoryStatus, seatToken(info), agent, states, path, pre)
+		"satelle: story %s is at %q, which its workflow allocates to %q; source edits are permitted only in route steps allocated to agent=executor (%s). Do not edit in-loop — %s. Do not work ahead. %s",
+		info.ItemID, info.StoryStatus, agent, states, path, pre)
 }
 
 // stepDeclaresRework reports whether the derived route declares a rework loop
@@ -2252,155 +1418,25 @@ func stepDeclaresRework(reworks []wfroute.Rework, step string) bool {
 // hookDenyReason selects the agent-facing deny text for gate/commitgate.
 // A marked relay coder gets relayDenyReason; unmarked sessions keep
 // editPermissionDenyReason byte-for-byte (sty_7567f047 AC5).
-func hookDenyReason(info seatInfo, live []seatInfo, dm dispatchMarker, rm relayMarker, sessionID string, now time.Time) string {
+func hookDenyReason(info engagement, live []engagement, dm dispatchMarker, rm relayMarker, tree string) string {
 	if rm.Binding != "" {
-		return relayDenyReason(info, live, rm, sessionID, now)
+		return relayDenyReason(info, rm)
 	}
-	// A dispatched performer whose item holds no live seat is refused for THAT,
+	// A dispatched performer whose item is not performing is refused for THAT,
 	// not for whichever other story the session happens to resolve
 	// (sty_8d7d1c45). It never borrows a sibling's permission.
 	if dm.Item != "" && info.ItemID != dm.Item {
 		return dispatchDenyReason(dm)
 	}
-	return editPermissionDenyReason(info, live, sessionID, now)
+	return editPermissionDenyReason(info, live, tree)
 }
 
-// dispatchDenyReason names a dispatched performer whose item holds no live
-// in-flight lease: the dispatch is the identity, so the reason names it.
+// dispatchDenyReason names a dispatched performer whose item is not performing:
+// the dispatch is the identity, so the reason names it.
 func dispatchDenyReason(dm dispatchMarker) string {
 	return fmt.Sprintf(
-		"satelle: dispatch %s/%s (agent %q) has no live in-flight lease — a dispatched performer may edit only under the seat of the item it was dispatched for, and only while that transition is in flight. %s",
+		"satelle: dispatch %s/%s (agent %q) has no open transition — a dispatched performer may edit only for the item it was dispatched for, while that item performs the step it was dispatched to. %s",
 		dm.Item, dm.Step, dm.Agent, readOnlyPreflightReason())
-}
-
-// relayDenyReason names why a marked rework-relay coder was refused. It never
-// uses the unmarked "without a performing story" or "allocated to agent=executor"
-// wording — those mis-diagnose the 23:04 / 23:08 auctelle failures.
-func relayDenyReason(info seatInfo, live []seatInfo, rm relayMarker, sessionID string, now time.Time) string {
-	pre := readOnlyPreflightReason()
-	item := strings.TrimSpace(rm.Item)
-	binding := strings.TrimSpace(rm.Binding)
-	sid := strings.TrimSpace(sessionID)
-
-	if item != "" && info.ItemID != "" && info.ItemID != item {
-		return fmt.Sprintf(
-			"satelle: rework relay marker names story %s but this session resolved seat %s — the marker must match the live seat the relay is driving. %s",
-			item, info.ItemID, pre)
-	}
-
-	if info.ItemID == "" || !info.Engaged {
-		// Prefer naming a live seat for the marked item that this session did
-		// not bind (the 23:04 pickSessionSeat mismatch) over the generic
-		// "without a performing story" text.
-		for _, s := range live {
-			if s.ItemID == item && !s.Stale {
-				leaseSID := strings.TrimSpace(s.SessionID)
-				return fmt.Sprintf(
-					"satelle: rework relay for story %s did not bind the live seat (lease session %q, this session %q) — the rework relay exports the lease's session id to its coder so pickSessionSeat can select it. %s",
-					item, leaseSID, sid, pre)
-			}
-		}
-		return fmt.Sprintf(
-			"satelle: rework relay for story %s requires a live, non-stale seat at a committed status allocated to the binding — none is bound for this session. %s",
-			item, pre)
-	}
-	if info.Stale {
-		return fmt.Sprintf(
-			"satelle: rework relay for story %s requires a live, non-stale seat at a committed status allocated to the binding — the seat is stale. %s%s",
-			info.ItemID, pre, seatSuffix(info, now))
-	}
-	if info.InFlight {
-		target := info.State
-		if target == "" {
-			target = "the next state"
-		}
-		return fmt.Sprintf(
-			"satelle: rework relay coder cannot edit while story %s has a transition to %q in flight. %s",
-			info.ItemID, target, pre)
-	}
-
-	status := info.StoryStatus
-	if status == "" {
-		status = info.State
-	}
-	agents := info.DispatchAgents[status]
-	if len(agents) == 0 && status == info.State && info.StateAgent != "" {
-		agents = []string{info.StateAgent}
-	}
-	allocated := strings.Join(agents, ", ")
-	if allocated == "" {
-		allocated = "(none)"
-	}
-	if !slices.Contains(agents, binding) {
-		return fmt.Sprintf(
-			"satelle: story %s is at %q, which its route allocates to [%s]; the rework relay permits edits only from the binding allocated to the committed status (this session is marked %q). %s",
-			info.ItemID, status, allocated, binding, pre)
-	}
-	// Seat resolved and binding allocated — caller should have allowed. Keep a
-	// precise fallback that still names the relay rule.
-	return fmt.Sprintf(
-		"satelle: rework relay for story %s refused a mutator under the live, non-stale, committed-status allocation rule for binding %q. %s",
-		info.ItemID, binding, pre)
-}
-
-// droppedPerformingSeats finds every story/task whose committed status is
-// performing but that has no live (non-stale) engagement lease, in store order
-// (sty_4f74d01f). It returns all of them, not the first: which one an edit
-// belongs to is attributedDenyReason's decision (sty_fbbb4aee).
-func droppedPerformingSeats() []seatInfo {
-	a, err := app.Open()
-	if err != nil {
-		return nil
-	}
-	defer func() { _ = a.Close() }()
-	ctx := context.Background()
-	wfs, err := a.Store.DocIndex.List(ctx, "workflows")
-	if err != nil {
-		return nil
-	}
-	items, err := a.Store.Stories.List(ctx, workitem.ListFilter{})
-	if err != nil {
-		return nil
-	}
-	var leases []lease.Lease
-	if a.Store.Leases != nil {
-		if ls, lerr := a.Store.Leases.List(ctx); lerr == nil {
-			leases = ls
-		}
-	}
-	return droppedSeatsFrom(items, wfs, leases, time.Now().UTC())
-}
-
-// droppedSeatsFrom is droppedPerformingSeats over an already-read store view, so
-// resolveSeats can count the seatless performing stories without a second open.
-func droppedSeatsFrom(items []workitem.Item, wfs []docindex.Doc, leases []lease.Lease, now time.Time) []seatInfo {
-	leased := map[string]bool{}
-	for _, l := range leases {
-		if lease.Alive(l, now) {
-			leased[l.ItemID] = true
-		}
-	}
-	var dropped []seatInfo
-	for _, it := range items {
-		if leased[it.ID] {
-			continue
-		}
-		spec, _, _, serr := wfgovern.SpecFor(wfs, it)
-		if serr != nil {
-			continue
-		}
-		engaging := false
-		for _, s := range spec.NonTerminalEngagingStates() {
-			if s == it.Status {
-				engaging = true
-				break
-			}
-		}
-		if engaging && !waitsOnOpenChildren(it, it.Status, spec, items, wfs) {
-			dropped = append(dropped, seatInfo{ItemID: it.ID, StoryStatus: it.Status, State: it.Status})
-		}
-	}
-	return dropped
 }
 
 // noEngagedStoryCommitReason is the agent-facing deny for git commit/push without
@@ -2756,7 +1792,7 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 }
 
 // assembleSessionContext renders the session principle set — constitution,
-// principles:session docs, advisories, seat — under the budget the caller
+// principles:session docs, advisories, engaged stories — under the budget the caller
 // resolved. unit is "bytes" (len, the SessionStart path) or "characters"
 // (runes, a tool-event clip). teamLine is the project-tier write-down warning;
 // releaseLine is the release-currency advisory
@@ -2777,7 +1813,7 @@ func assembleSessionContext(a *app.App, harness string, limit int, unit, teamLin
 	constPath := a.PlaneConstitution()
 	constitution := readConstitution(constPath)
 
-	// Everything that rides around the principles (advisories, seat) is measured
+	// Everything that rides around the principles (advisories, engaged stories) is measured
 	// first, so the principles are rendered into what is LEFT of the harness
 	// limit and the whole injection lands inside it (sty_ce1a2733).
 	//
@@ -2798,9 +1834,9 @@ func assembleSessionContext(a *app.App, harness string, limit int, unit, teamLin
 	// indexer has filed a high-priority system story about an authored document
 	// that fails its structure check, name it here. Silent when there is none.
 	docStoryLine := systemDocStoryAdvisory(openDocStories(a))
-	// Seat inject: prefer a live seat; else name any non-live residue so the agent
-	// can release a stuck holder. Fail open — a seat-read error injects nothing.
-	seat := sessionSeatBlock(a)
+	// The items this repo is performing and the concurrency rule. Fail open — a
+	// read error injects nothing.
+	engagedBlock := sessionEngagementBlock(a)
 	wrap := func(body string) string {
 		content := prependContextLine(body, webLine)
 		if scaffoldWarn != "" {
@@ -2818,7 +1854,7 @@ func assembleSessionContext(a *app.App, harness string, limit int, unit, teamLin
 		content = prependContextLine(content, driftLine)
 		content = prependContextLine(content, docStoryLine)
 		content = prependContextLine(content, teamLine)
-		return appendSeatToContext(content, seat, 0)
+		return appendBlockToContext(content, engagedBlock, 0)
 	}
 
 	measure := contextMeasure(unit)
@@ -2924,7 +1960,7 @@ func contextUnitName(unit string) string {
 // sessionAssembly renders the deterministic body of a SessionStart injection —
 // constitution, then session principles, degraded to index lines past the
 // harness limit — and is the one place that rule is applied. overhead is what
-// the volatile lines around it (web probe, drift advisories, seat block) will
+// the volatile lines around it (web probe, drift advisories, engaged-stories block) will
 // add; `satelle validate` passes 0 to size the stable part, so the hook and the
 // report cannot disagree about what a harness receives.
 func sessionAssembly(constitution string, always []docindex.Doc, constPath, harness string, limit, overhead int, rules condense.Rules) (string, []string) {
@@ -3021,83 +2057,6 @@ func prependContextLine(content, line string) string {
 		return line
 	}
 	return line + "\n\n" + content
-}
-
-// sessionSeatBlock returns the SessionStart seat inject for a, or "" when no
-// lease exists / store is incomplete. Fail-open helper for runHookContext.
-func sessionSeatBlock(a *app.App) string {
-	if a == nil || a.Store == nil || a.Store.Leases == nil {
-		return ""
-	}
-	ctx := context.Background()
-	mode := a.PlaneConfig().ResolveEngagementParallel()
-	leases, err := a.Store.Leases.List(ctx)
-	if err != nil || len(leases) == 0 {
-		// No seat to describe. Under the default mode that is the whole story and
-		// the inject stays silent; under a NON-default mode the agent still has to
-		// know the rule it will be engaging under, and a refusal is too late to
-		// learn it.
-		if mode != config.ParallelNone {
-			return "## Engagement seat\nseat free.\n" + seatModeLine(mode)
-		}
-		return ""
-	}
-	wfs, _ := a.Store.DocIndex.List(ctx, "workflows")
-	items, _ := a.Store.Stories.List(ctx, workitem.ListFilter{})
-	now := time.Now().UTC()
-	live, other, eerr := evaluateSeat(leases, items, wfs, now)
-	// An unreadable authored process is said, not read as "no seat to describe":
-	// the seat's route cannot be resolved while the process cannot be read
-	// (sty_d6e209aa).
-	if errors.Is(eerr, wfgovern.ErrAuthoredProcessUnreadable) {
-		return "## Engagement seat\n" + eerr.Error()
-	}
-	// Several live seats: lead with this session's own (by working tree) but
-	// render them ALL — an operator joining a project where work is in flight
-	// under a shared key must see every holder, not just one.
-	if len(live) > 0 {
-		holders := make([]string, 0, len(live))
-		for _, s := range live {
-			holders = append(holders, s.ItemID)
-		}
-		block := renderSeatBlocks(live, now, mode)
-		if sched := seatScheduleLines(holders, items, wfs); sched != "" {
-			block += "\n\n" + sched
-		}
-		return block
-	}
-	info := other
-	// No evaluateSeat pick (e.g. empty items+wfs): still name the first raw row.
-	if info.ItemID == "" {
-		l := leases[0]
-		info = seatInfo{
-			ItemID: l.ItemID, State: l.State, Owner: l.Owner, Worktree: l.Worktree,
-			AcquiredAt: l.AcquiredAt, HeartbeatAt: l.HeartbeatAt,
-			Stale: !lease.Alive(l, now), InFlight: lease.EffectiveInFlight(l, now),
-		}
-	}
-	return formatSeatBlock(info, now, mode)
-}
-
-// renderSeatBlocks formats every live seat for the SessionStart inject, leading
-// with this session's own (sty_c098dc2d). A project may hold more than one, and
-// an operator joining that work must see all of it — the old leases[0] pick
-// would have shown one and hidden the rest.
-func renderSeatBlocks(live []seatInfo, now time.Time, mode string) string {
-	if len(live) == 0 {
-		return ""
-	}
-	mine, _ := pickSessionSeat(live, nil, config.ResolveSession())
-	if mine.ItemID == "" {
-		mine = live[0]
-	}
-	blocks := []string{formatSeatBlock(mine, now, mode)}
-	for _, s := range live {
-		if s.ItemID != mine.ItemID {
-			blocks = append(blocks, formatSeatBlock(s, now, mode))
-		}
-	}
-	return strings.Join(blocks, "\n\n")
 }
 
 // selectAlwaysDocs returns the SESSION set — every principle carrying the
@@ -3404,17 +2363,17 @@ const gateWaitNote = "A slow gate returns a handle and its verdict is delivered 
 // with no signal.
 const gateNotWiredWarning = "⚠️ satelle: the edit gate is NOT wired into this repo's hooks — code edits are currently UNGATED. Do NOT edit code until enforcement is live: run `satelle init` to (re)install the PreToolUse gate, then restart the session so the harness loads it."
 
-// promptEngagedCeiling is the byte budget for the live-seat replacement text.
+// promptEngagedCeiling is the byte budget for the engaged replacement text.
 // The engaged form replaces the static reminder, so it must never be longer
 // (sty_e16a2cd7 AC4).
 var promptEngagedCeiling = len(hookPromptReminder)
 
-// formatEngagedPrompt builds the live-seat UserPromptSubmit body: story id,
+// formatEngagedPrompt builds the engaged UserPromptSubmit body: story id,
 // status, forward target(s) + gates from the route, and the story set
 // command (sty_e16a2cd7). Returns "" when there is nothing useful to say
-// (no id, no advance options) so the caller keeps today's reminder+seat path.
+// (no id, no advance options) so the caller keeps the reminder path.
 // Never includes the static create-and-engage reminder — it REPLACES it.
-func formatEngagedPrompt(info seatInfo, now time.Time) string {
+func formatEngagedPrompt(info engagement) string {
 	if info.ItemID == "" || len(info.Advance) == 0 {
 		return ""
 	}
@@ -3422,7 +2381,6 @@ func formatEngagedPrompt(info seatInfo, now time.Time) string {
 	if state == "" {
 		state = "?"
 	}
-	hb := formatSeatAge(now.Sub(info.HeartbeatAt))
 
 	// Build advance clauses and gate lists; degrade under the ceiling.
 	type targetView struct {
@@ -3434,7 +2392,7 @@ func formatEngagedPrompt(info seatInfo, now time.Time) string {
 		views = append(views, targetView{to: a.To, gates: append([]string(nil), a.Gates...)})
 	}
 
-	build := func(capGates int, withGates, withSeat bool) string {
+	build := func(capGates int, withGates bool) string {
 		var advParts []string
 		var gateParts []string
 		for _, v := range views {
@@ -3450,29 +2408,24 @@ func formatEngagedPrompt(info seatInfo, now time.Time) string {
 			}
 			gateParts = append(gateParts, strings.Join(g, ", ")+suffix)
 		}
-		msg := fmt.Sprintf("satelle: %s ENGAGED (%s, hb %s) — advance: %s",
-			info.ItemID, state, hb, strings.Join(advParts, " | "))
+		msg := fmt.Sprintf("satelle: %s ENGAGED (%s) — advance: %s",
+			info.ItemID, state, strings.Join(advParts, " | "))
 		if withGates && len(gateParts) > 0 {
 			msg += "; gates: " + strings.Join(gateParts, " | ")
-		}
-		if withSeat {
-			msg += ". Seat: `satelle story seat`"
 		}
 		return msg + ". " + gateWaitNote
 	}
 
-	// Degradation ladder: full → cap gates at 3 → drop gates → drop seat → give up.
+	// Degradation ladder: full → cap gates at 3 → drop gates → give up.
 	for _, try := range []struct {
 		capGates  int
 		withGates bool
-		withSeat  bool
 	}{
-		{0, true, true},  // full (0 = no cap)
-		{3, true, true},  // cap gates
-		{0, false, true}, // drop gates
-		{0, false, false},
+		{0, true},  // full (0 = no cap)
+		{3, true},  // cap gates
+		{0, false}, // drop gates
 	} {
-		out := build(try.capGates, try.withGates, try.withSeat)
+		out := build(try.capGates, try.withGates)
 		if len(out) <= promptEngagedCeiling {
 			return out
 		}
@@ -3482,11 +2435,10 @@ func formatEngagedPrompt(info seatInfo, now time.Time) string {
 
 // runHookPrompt is the UserPromptSubmit handler: it re-injects the concise
 // edits-require-a-story reminder and, when a gate-liveness self-check confidently
-// finds no wired edit gate, prepends the LOUD not-wired warning. With a LIVE
-// seat that has forward route advances, the reminder is REPLACED by the engaged
-// form (id, status, next gate, story set) (sty_e16a2cd7). Otherwise a seat line
-// is appended as before (sty_1738f973 AC6). Fails open — a resolve/read failure
-// injects only the reminder.
+// finds no wired edit gate, prepends the LOUD not-wired warning. With a story
+// engaged from this tree that has forward route advances, the reminder is
+// REPLACED by the engaged form (id, status, next gate, story set)
+// (sty_e16a2cd7). Fails open — a resolve/read failure injects only the reminder.
 func runHookPrompt(out io.Writer) error {
 	return runHookPromptWith(out, true)
 }
@@ -3497,22 +2449,16 @@ func runHookPrompt(out io.Writer) error {
 // resume (sty_eac9b28d).
 func runHookPromptWith(out io.Writer, gatesInContext bool) error {
 	body := hookPromptReminder
-	now := time.Now().UTC()
-	// Seat + heartbeat: fail-open (resolve error leaves the static reminder;
-	// heartbeat write failures never block the prompt) (sty_3bb1d8be, sty_e16a2cd7 AC6).
-	if info, engaged, err := currentSeatTouch(); err == nil {
-		if engaged {
-			if eng := formatEngagedPrompt(info, now); eng != "" {
-				body = eng // REPLACE the create-and-engage reminder
-			} else {
-				// Live seat but no forward advance (e.g. release after AC5, or a
-				// baseline workflow whose only next is terminal): keep today's
-				// reminder + seat line so the turn still names the holder
-				// (architecture note on sty_e16a2cd7 plan).
-				body = appendSeatToPrompt(body, info, now)
-			}
+	// Engagement: fail-open (a resolve error leaves the static reminder)
+	// (sty_e16a2cd7 AC6).
+	if info, engaged, err := currentEngagement(); err == nil && engaged {
+		if eng := formatEngagedPrompt(info); eng != "" {
+			body = eng // REPLACE the create-and-engage reminder
 		} else {
-			body = appendSeatToPrompt(body, info, now)
+			// Engaged but no forward advance (e.g. a baseline workflow whose only
+			// next is terminal): keep the reminder plus the engagement line so the
+			// turn still names the story (architecture note on sty_e16a2cd7 plan).
+			body = appendEngagementToPrompt(body, info)
 		}
 	}
 	if root, ok := repoRootForHook(); ok {
@@ -3534,21 +2480,13 @@ func runHookPromptWith(out io.Writer, gatesInContext bool) error {
 
 // runHookStopcheck is the Stop handler: a post-hoc detector for the exact
 // incident the PreToolUse gate prevents. It blocks finishing when the tree has
-// uncommitted non-exempt in-repo changes while NO live seat exists anywhere in
-// this repo — so an ungated edit cannot be silently finished even if the
-// PreToolUse hook never fired. Honours stop_hook_active (never re-blocks its own
-// block) and fails open (git absent, clean tree, only exempt changes, or a story
-// engaged by this session → allow).
-//
-// The dirty check is repo-wide, so the engagement question must be too
-// (sty_211d8419): a live seat held by a SIBLING session attributes the dirty
-// tree to that holder — the edits were gated, in that session — so this session
-// is allowed to stop and told who holds the seat, instead of being blocked with
-// a demand it cannot satisfy (engaging would claim another session's work;
-// reverting would destroy it). Branch order is a decision: `mine` short-circuits
-// before the git call (today's cost profile for the common case), and the dirty
-// check runs before the other-holder note so a sibling session that edited
-// nothing gets no chatter on every Stop.
+// uncommitted non-exempt in-repo changes while NO story is engaged from this
+// tree — so an ungated edit cannot be silently finished even if the PreToolUse
+// hook never fired. Honours stop_hook_active (never re-blocks its own block) and
+// fails open (git absent, clean tree, only exempt changes, or a story engaged
+// from this tree → allow). A story engaged from this tree owns its dirty files
+// whichever session engaged it, so a sibling session is never blocked with a
+// demand it cannot satisfy (sty_211d8419, sty_9c782f0e).
 func runHookStopcheck(raw []byte, out io.Writer) error {
 	stopEmitHarness = stopHarness(raw)
 	// Scoped to this answer: a later emitter in the same process (in-process
@@ -3616,7 +2554,7 @@ func runHookStopcheck(raw []byte, out io.Writer) error {
 			}
 		}
 	}
-	block, note, err := stopcheckEdits(raw)
+	block, err := stopcheckEdits(raw)
 	if err != nil {
 		return err
 	}
@@ -3624,11 +2562,7 @@ func runHookStopcheck(raw []byte, out io.Writer) error {
 		return wake.block(out, block) // counted where the harness caps continuations
 	}
 	if settle != nil && settle.SystemMessage != "" {
-		settle.SystemMessage = joinNonEmpty("\n", note, settle.SystemMessage)
 		return emitStopAllow(out, *settle)
-	}
-	if note != "" {
-		return wake.note(out, note)
 	}
 	return nil
 }
@@ -3653,39 +2587,35 @@ func joinNonEmpty(sep string, parts ...string) string {
 }
 
 // stopcheckEdits is the ungated-edit half of the Stop hook: the block reason when
-// the tree has uncommitted non-exempt changes and no live seat, or the note when
-// a sibling session holds the seat; both empty when nothing is wrong or nothing
-// can be known. It judges only the driving session: a process satelle dispatched
-// (a reviewer, planner, coder or any other seat) holds no seat of its own, and a
-// block would run another turn whose output replaces the final output satelle
+// this tree has uncommitted non-exempt changes and no item is engaged from it;
+// empty when nothing is wrong or nothing can be known. It judges only the
+// driving session: a block in a process satelle dispatched (a reviewer, planner,
+// coder) would run another turn whose output replaces the final output satelle
 // reads as its verdict. The driving session's own Stop still flags the tree.
-func stopcheckEdits(raw []byte) (block, note string, err error) {
+func stopcheckEdits(raw []byte) (block string, err error) {
 	if stopHookActive(raw) {
-		return "", "", nil // anti-loop: never re-block a stop we already blocked
+		return "", nil // anti-loop: never re-block a stop we already blocked
 	}
 	if isDispatchedProcess() {
-		return "", "", nil // not the driver: its final output is a verdict, never to be displaced
+		return "", nil // not the driver: its final output is a verdict, never to be displaced
 	}
 	root, ok := repoRootForHook()
 	if !ok {
-		return "", "", nil // fail open — unresolvable repo blocks nothing
+		return "", nil // fail open — unresolvable repo blocks nothing
 	}
-	mine, other, extra, err := stopcheckSeat()
-	if err != nil || mine {
-		// This session holds a live seat (edits are legitimate) OR engagement is
+	engaged, err := stopcheckEngaged()
+	if err != nil || engaged {
+		// An item is engaged from this tree (edits are legitimate) OR engagement is
 		// unknowable — stopcheck is a secondary detector, so it fails OPEN rather
 		// than blocking a finish on a broken deployment (the PreToolUse gate is the
 		// fail-closed one).
-		return "", "", nil
+		return "", nil
 	}
 	gated, derr := dirtyGatedPaths(root)
 	if derr != nil || len(gated) == 0 {
-		return "", "", nil // git absent / clean / only exempt (.satelle) changes — nothing to flag
+		return "", nil // git absent / clean / only exempt (.satelle) changes — nothing to flag
 	}
-	if other.ItemID != "" {
-		return "", stopcheckSiblingNote(other, extra, gated, time.Now().UTC()), nil
-	}
-	return stopcheckReason(gated), "", nil
+	return stopcheckReason(gated), nil
 }
 
 // repoRootForHook resolves this repo's root from the committed config, or
@@ -3814,24 +2744,6 @@ func stopcheckReason(paths []string) string {
 	return "satelle: STOP BLOCKED — the tree has uncommitted, non-exempt changes but NO story is engaged, so these edits were made UNGATED: " +
 		strings.Join(shown, ", ") + suffix + ". This is exactly what the edit gate exists to prevent. " +
 		"Engage a story now (satelle story create … then satelle story set <id> --status plan) so the change is tracked through its workflow, or revert the ungated edits."
-}
-
-// stopcheckSiblingNote is the informational line stopcheck emits when the dirty
-// tree is attributed to a live seat held by ANOTHER session (sty_211d8419). It
-// names the holding story and session so the reader can tell the edits were
-// gated elsewhere, and it never reads as a demand: this session holds no seat
-// and is not blocked.
-func stopcheckSiblingNote(holder seatInfo, extra int, paths []string, now time.Time) string {
-	session := strings.TrimSpace(holder.SessionID)
-	if session == "" {
-		session = "unstamped"
-	}
-	more := ""
-	if extra > 0 {
-		more = fmt.Sprintf(" (+%d more live seat(s))", extra)
-	}
-	return fmt.Sprintf("satelle: %d uncommitted non-exempt change(s) in this tree are attributed to a live seat held elsewhere — %s, session %s%s. This session holds no seat and is not blocked; those edits were gated in the holding session. Inspect: satelle story seat.",
-		len(paths), formatSeat(holder, now), session, more)
 }
 
 // emitStopNote writes the allow-with-note JSON (one line) and returns nil. The

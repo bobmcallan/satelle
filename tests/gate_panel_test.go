@@ -336,7 +336,7 @@ func TestPanelMajorityFollowsTheDeclaredCheck(t *testing.T) {
 	}
 
 	// One accept and two rejects is not a strict majority. A fresh repo, so the
-	// accepted story above does not hold the engagement seat.
+	// accepted story above is not performing there.
 	repo2 := t.TempDir()
 	record2 := filepath.Join(repo2, "panel-record")
 	writePanelFixture(t, repo2, record2, `["seat-a", "seat-b", "seat-c"]`, "satelle-panel-majority", "", []string{"seat-a", "seat-b", "seat-c"})

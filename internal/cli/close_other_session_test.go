@@ -132,7 +132,7 @@ func TestDiffResolverReadsTheStoriesTreeFromAnotherSession(t *testing.T) {
 }
 
 // AC2: a close by id from another tree and session is judged by the edge's gate
-// on the story's own change set, accepted, and frees the story's seat.
+// on the story's own change set, accepted, and ends the story's engagement.
 func TestCloseByIDFromAnotherSessionIsJudged(t *testing.T) {
 	e, id, r := otherSessionClose(t, "close-diff-review")
 	if err := e.set(id, "done"); err != nil {
@@ -145,8 +145,8 @@ func TestCloseByIDFromAnotherSessionIsJudged(t *testing.T) {
 	if len(seen) != 1 || !hasString(seen[0].Files, "slice.go") {
 		t.Errorf("the gate must judge the story's change set, payload diffs = %+v", seen)
 	}
-	if e.seatHeld(id) {
-		t.Error("the accepted close must release the story's seat")
+	if e.engaged(id) {
+		t.Error("the accepted close must end the story's engagement")
 	}
 }
 

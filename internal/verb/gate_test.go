@@ -377,7 +377,7 @@ func TestStorySetSurfacesDecisionNotesReasoning(t *testing.T) {
 
 	// Accept path: status enacts; acceptBody format is covered by the reject shape
 	// and the pure formatReasoningSuffix internal test in workitem_internal_test.
-	// Park the first story first so the single-story seat does not block engage.
+	// Park the first story first so it is not performing when the next engages.
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
 		Gated: true, Accept: true, Skill: "satelle-story-done-review",
 		Notes: "close", Reasoning: "park",

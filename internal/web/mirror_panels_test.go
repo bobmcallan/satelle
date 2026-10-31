@@ -55,7 +55,7 @@ func TestMirrorLoadPanelsFromKindsOnly(t *testing.T) {
 		"created_at": now, "payload": map[string]string{"from": "backlog", "to": "plan"},
 	}
 	lb, _ := json.Marshal(led)
-	seat, _ := json.Marshal(map[string]any{"id": "sty_x", "in_flight": true, "stale": false})
+	eng, _ := json.Marshal(map[string]any{"id": "sty_x", "in_flight": true})
 	ident, _ := json.Marshal(mirror.IdentityMeta{
 		ProjectName: "demo", RepoRoot: "/tmp/demo", FooterEmail: "op@example.com",
 	})
@@ -68,7 +68,7 @@ func TestMirrorLoadPanelsFromKindsOnly(t *testing.T) {
 		{"task", []mirror.ItemRow{{ID: "tsk_x", Payload: string(tb)}}},
 		{"doc", []mirror.ItemRow{{ID: "toy", Payload: string(db)}}},
 		{"ledger_event", []mirror.ItemRow{{ID: "evt_1", Payload: string(lb)}}},
-		{"seat", []mirror.ItemRow{{ID: "sty_x", Payload: string(seat)}}},
+		{"engagement", []mirror.ItemRow{{ID: "sty_x", Payload: string(eng)}}},
 		{"identity", []mirror.ItemRow{{ID: "meta", Payload: string(ident)}}},
 	} {
 		if err := s.ReplaceKind(ctx, rk, r.kind, r.rows, now); err != nil {
@@ -95,9 +95,9 @@ func TestMirrorLoadPanelsFromKindsOnly(t *testing.T) {
 	if len(data.Tasks) != 1 {
 		t.Errorf("tasks = %d", len(data.Tasks))
 	}
-	// AC2: stages assembled from mirror ledger + seat (not empty for engaged backlog).
+	// AC2: stages assembled from mirror ledger + engagement (not empty for engaged backlog).
 	if len(data.Stories[0].Stages) == 0 {
-		t.Errorf("expected progress stages from mirror ledger/seat, got none: %+v", data.Stories[0])
+		t.Errorf("expected progress stages from mirror ledger/engagement, got none: %+v", data.Stories[0])
 	}
 	if len(data.DocKinds) == 0 {
 		t.Error("expected DocKinds groups")
@@ -109,35 +109,34 @@ func TestMirrorLoadPanelsFromKindsOnly(t *testing.T) {
 	if data.TopBar.MirrorRO != true || data.TopBar.IdentityEmail != "op@example.com" {
 		t.Errorf("topbar RO/identity: %+v", data.TopBar)
 	}
-	// Existing fixture seat is in_flight+!stale but does not set story_seat — engagement
-	// requires explicit story_seat (sty_01ba9482). Stages still use decodeLiveSeats.
+	// The fixture engagement is in flight but names no kind — the count is of
+	// stories only (sty_01ba9482). Stages still read its in-flight flag.
 	if data.EngagementCount != 0 {
-		t.Errorf("EngagementCount = %d without story_seat, want 0", data.EngagementCount)
+		t.Errorf("EngagementCount = %d without kind story, want 0", data.EngagementCount)
 	}
 }
 
-// TestEngagedStorySeatIDsPredicate (sty_01ba9482): engagement counts non-stale
-// story_seat only — not task seats, not stale rows, not missing story_seat.
-func TestEngagedStorySeatIDsPredicate(t *testing.T) {
-	got := engagedStorySeatIDs([]seatPayload{
-		{ID: "sty_live", StorySeat: true, Stale: false},
-		{ID: "sty_stale", StorySeat: true, Stale: true},
-		{ID: "tsk_1", StorySeat: false, Stale: false, InFlight: true},
-		{ID: "sty_nofield", StorySeat: false, Stale: false, InFlight: true},
-		{ID: "", StorySeat: true, Stale: false}, // empty id skipped
+// TestEngagedStoryIDsPredicate (sty_01ba9482): engagement counts performing
+// stories only — not tasks, not rows that name no kind.
+func TestEngagedStoryIDsPredicate(t *testing.T) {
+	got := engagedStoryIDs([]engagementPayload{
+		{ID: "sty_live", Kind: "story"},
+		{ID: "tsk_1", Kind: "task", InFlight: true},
+		{ID: "sty_nofield", InFlight: true},
+		{ID: "", Kind: "story"}, // empty id skipped
 	})
 	if len(got) != 1 || got[0] != "sty_live" {
 		t.Fatalf("engaged ids = %v, want [sty_live]", got)
 	}
-	// Settled engaged lease (story_seat, !in_flight, !stale) still counts.
-	got2 := engagedStorySeatIDs([]seatPayload{
-		{ID: "sty_settled", StorySeat: true, InFlight: false, Stale: false},
+	// A settled performing story (not in flight) still counts.
+	got2 := engagedStoryIDs([]engagementPayload{
+		{ID: "sty_settled", Kind: "story", InFlight: false},
 	})
 	if len(got2) != 1 || got2[0] != "sty_settled" {
 		t.Fatalf("settled engaged = %v, want [sty_settled]", got2)
 	}
-	if n := len(engagedStorySeatIDs(nil)); n != 0 {
-		t.Fatalf("nil seats count = %d", n)
+	if n := len(engagedStoryIDs(nil)); n != 0 {
+		t.Fatalf("nil engagements count = %d", n)
 	}
 }
 
@@ -197,7 +196,7 @@ func TestEngagementCountAndChrome(t *testing.T) {
 		t.Fatal(err)
 	}
 	if data0.EngagementCount != 0 || len(data0.EngagedStoryIDs) != 0 {
-		t.Errorf("empty seats: count=%d ids=%v", data0.EngagementCount, data0.EngagedStoryIDs)
+		t.Errorf("no engagements: count=%d ids=%v", data0.EngagementCount, data0.EngagedStoryIDs)
 	}
 
 	// Seed a backlog story so both chips render together (sty_c7ab5180 AC3).
@@ -214,12 +213,11 @@ func TestEngagementCountAndChrome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Non-stale story_seat → count 1 + identity/link; chip present.
-	liveSeat, _ := json.Marshal(map[string]any{
-		"id": "sty_e1", "kind": "story", "story_seat": true,
-		"in_flight": false, "stale": false,
+	// A performing story → count 1 + identity/link; chip present.
+	performing, _ := json.Marshal(map[string]any{
+		"id": "sty_e1", "kind": "story", "in_flight": false,
 	})
-	if err := s.ReplaceKind(ctx, rk, "seat", []mirror.ItemRow{{ID: "sty_e1", Payload: string(liveSeat)}}, now); err != nil {
+	if err := s.ReplaceKind(ctx, rk, "engagement", []mirror.ItemRow{{ID: "sty_e1", Payload: string(performing)}}, now); err != nil {
 		t.Fatal(err)
 	}
 	data1, _, err := mirrorLoadPanels(ctx, s, rk, "eng")
@@ -227,9 +225,9 @@ func TestEngagementCountAndChrome(t *testing.T) {
 		t.Fatal(err)
 	}
 	if data1.EngagementCount != 1 || len(data1.EngagedStoryIDs) != 1 || data1.EngagedStoryIDs[0] != "sty_e1" {
-		t.Fatalf("live seat: count=%d ids=%v", data1.EngagementCount, data1.EngagedStoryIDs)
+		t.Fatalf("performing story: count=%d ids=%v", data1.EngagementCount, data1.EngagedStoryIDs)
 	}
-	// Stages predicate unchanged: settled !in_flight does not set seatHeld stages path —
+	// Stages predicate unchanged: settled !in_flight does not take the inFlight stages path —
 	// still no regression: load still succeeds and stories present.
 	if len(data1.Stories) != 2 {
 		t.Fatalf("stories = %d", len(data1.Stories))
@@ -264,29 +262,11 @@ func TestEngagementCountAndChrome(t *testing.T) {
 		t.Errorf("engaged fragment: %s", oneFrag)
 	}
 
-	// Stale story_seat does not count → chip absent again.
-	staleSeat, _ := json.Marshal(map[string]any{
-		"id": "sty_e1", "story_seat": true, "in_flight": true, "stale": true,
-	})
-	_ = s.ReplaceKind(ctx, rk, "seat", []mirror.ItemRow{{ID: "sty_e1", Payload: string(staleSeat)}}, now)
-	dataStale, _, _ := mirrorLoadPanels(ctx, s, rk, "eng")
-	if dataStale.EngagementCount != 0 {
-		t.Errorf("stale seat counted: %d", dataStale.EngagementCount)
-	}
-	stalePage := httpGetBody(t, srv.URL+"/r/eng/")
-	if strings.Contains(stalePage, `class="n-engaged"`) || strings.Contains(stalePage, "0 engaged") {
-		t.Error("stale seat must hide engagement chip")
-	}
-	staleFrag := httpGetBody(t, srv.URL+"/r/eng/fragment/engagement")
-	if strings.TrimSpace(staleFrag) != "" {
-		t.Errorf("stale fragment must be empty, got: %q", staleFrag)
-	}
-
-	// Clear seats → 0; chip still absent.
-	_ = s.ReplaceKind(ctx, rk, "seat", nil, now)
+	// No performing story → 0; chip absent again.
+	_ = s.ReplaceKind(ctx, rk, "engagement", nil, now)
 	dataClear, _, _ := mirrorLoadPanels(ctx, s, rk, "eng")
 	if dataClear.EngagementCount != 0 {
-		t.Errorf("cleared seats: %d", dataClear.EngagementCount)
+		t.Errorf("cleared engagements: %d", dataClear.EngagementCount)
 	}
 	clearPage := httpGetBody(t, srv.URL+"/r/eng/")
 	if strings.Contains(clearPage, `class="n-engaged"`) || strings.Contains(clearPage, `data-engagement-count`) {

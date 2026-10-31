@@ -14,7 +14,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/fixlane"
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
@@ -40,29 +39,9 @@ func laneRepo(t *testing.T) string {
 	t.Cleanup(func() { sessionWorktree = origTree })
 	sessionWorktree = func() string { return repo }
 
-	// Stamp the seat to THIS session so the hook and the claim verb both resolve
-	// it as the driver's (same shape as TestHookGatePrefersEnvStampOverPayload).
-	db, err := store.Open(runtimeDBPath(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = db.Close() }()
-	ctx := context.Background()
-	leases, err := db.Leases.List(ctx)
-	if err != nil || len(leases) != 1 {
-		t.Fatalf("leases: %v n=%d", err, len(leases))
-	}
-	storyID := leases[0].ItemID
-	_ = db.Leases.ForceRelease(ctx, storyID)
-	if _, _, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
-		ItemID: storyID, Kind: "story", Owner: lease.ResolveOwner(),
-		State: "plan", StorySeat: true, Worktree: repo, SessionID: "sess-lane",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Leases.Confirm(ctx, storyID, "plan"); err != nil {
-		t.Fatal(err)
-	}
+	// Engage the story from this tree by THIS session so the hook and the claim
+	// verb both resolve it as the driver's.
+	recordEngagement(t, onlyStoryID(t), "plan", repo, "sess-lane")
 	t.Setenv(config.SessionEnv, "sess-lane")
 	return repo
 }

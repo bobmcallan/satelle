@@ -59,7 +59,7 @@ func isRealEvent(kind agentcli.EventKind) bool {
 
 // eventLabel renders a short, stable label for a real event — "tool: Bash",
 // "message", "usage", "start" — used in the StallError, the refusal text, and
-// (order:B, not yet wired) the lease activity record's last-event label.
+// (order:B, not yet wired) the transition activity record's last-event label.
 func eventLabel(ev agentcli.Event) string {
 	switch ev.Kind {
 	case agentcli.EventToolStart, agentcli.EventToolEnd:
@@ -217,7 +217,7 @@ func (w *Watchdog) TouchEvent(ev agentcli.Event) {
 
 // Snapshot reports the watchdog's current idle state — the last real event's
 // label and timestamp, and how many real events it has seen. Used by the
-// lease activity refresher (order:B) to report agent progress mid-dispatch.
+// transition activity refresher (order:B) to report agent progress mid-dispatch.
 type WatchdogSnapshot struct {
 	LastEvent   string
 	LastEventAt time.Time

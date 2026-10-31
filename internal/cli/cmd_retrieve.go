@@ -19,7 +19,7 @@ leaves a marker (<<ccr:HASH>>, or a "Retrieve more: satelle retrieve HASH" line)
 in its condensed output. This command prints the exact original bytes for that
 hash to stdout — no trailing newline, no formatting.
 
-Read-only: it never appends to the ledger and never touches an engagement seat,
+Read-only: it never appends to the ledger and never engages a story,
 so a read-only reviewer whose grant is Bash(satelle:*) can run it. See
 satelle help retrieve.`,
 		Args:        cobra.ExactArgs(1),

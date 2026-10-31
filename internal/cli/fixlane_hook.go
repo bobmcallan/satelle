@@ -24,11 +24,11 @@ import (
 // so the agent learns why the lane did not open (empty when it has nothing to
 // add). Every doubt — an unreadable ledger, an edit whose size cannot be
 // measured — is a refusal: the lane fails closed.
-func fixLaneEdit(info seatInfo, dm dispatchMarker, rm relayMarker, raw []byte, target string) (allowed bool, note string) {
+func fixLaneEdit(info engagement, dm dispatchMarker, rm relayMarker, raw []byte, target string) (allowed bool, note string) {
 	if dm != (dispatchMarker{}) || rm != (relayMarker{}) {
 		return false, ""
 	}
-	if info.ItemID == "" || !info.Engaged || info.Stale || info.InFlight {
+	if info.ItemID == "" || !info.Engaged || info.InFlight {
 		return false, ""
 	}
 	a, err := app.Open()

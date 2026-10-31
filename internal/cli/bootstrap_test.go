@@ -107,10 +107,10 @@ func resetFlag(f *pflag.Flag) {
 // at it, so config resolution lands there without a process-global chdir.
 // Isolates SATELLE_HOME so the home-keyed runtime plane (sty_4660bbe1) does not
 // write into the developer's real ~/.satelle during tests.
-// Also scrubs SATELLE_SESSION: fixtures acquire seats without a session stamp,
+// Also scrubs SATELLE_SESSION: fixtures engage stories without a session stamp,
 // and an ambient value — inherited whenever the suite runs as a child of an
 // engaged `satelle story set` (the build-unit-check gate does exactly that) —
-// would make those seats read as foreign-session. Tests that need a session
+// would make those engagements read as another session's. Tests that need a session
 // identity set it themselves after the fixture.
 func tempRepo(t *testing.T) string {
 	t.Helper()

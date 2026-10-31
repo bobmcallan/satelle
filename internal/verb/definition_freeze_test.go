@@ -45,7 +45,6 @@ func wireWithWorkflowsStore(t *testing.T, workflows map[string]string) *store.DB
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetTxRunner(db.InTx)
 	verb.SetDocIndexStore(db.DocIndex)
-	verb.SetLeaseStore(db.Leases)
 	t.Cleanup(func() {
 		db.Close()
 	})

@@ -47,7 +47,7 @@ and dies at the story's next transition.`,
 			if currentDispatchMarker() != (dispatchMarker{}) || currentRelayMarker() != (relayMarker{}) {
 				return errors.New("fix lane: only the driving session may record a claim, not a dispatched performer")
 			}
-			info, engaged, err := resolveSeat(true, config.ResolveSession())
+			info, engaged, _, err := resolveEngagements(config.ResolveSession())
 			if err != nil {
 				return err
 			}
@@ -62,9 +62,9 @@ and dies at the story's next transition.`,
 			in := fixlane.Input{
 				Path: target, Reason: reason, BoundLines: lines, ProvingTest: provingTest,
 			}
-			// Live seat only: an unengaged claim has no edge to judge the fix, so
+			// Engaged only: an unengaged claim has no edge to judge the fix, so
 			// it is recorded as a refusal (no story) and never granted.
-			if engaged && info.Engaged && !info.Stale && !info.InFlight {
+			if engaged && info.Engaged && !info.InFlight {
 				in.StoryID, in.Status = info.ItemID, info.StoryStatus
 			}
 			c, err := fixlane.Record(cmd.Context(), a.Store.Ledger, a.Config, a.RepoRoot, in, time.Now())

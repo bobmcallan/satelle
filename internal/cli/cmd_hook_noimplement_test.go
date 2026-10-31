@@ -108,7 +108,7 @@ func TestEvaluateNoImplement_UnresolvedSkip(t *testing.T) {
 }
 
 func TestHookGate_NoImplementDenyAndGrokSkip(t *testing.T) {
-	repo, _ := liveSeatRepo(t)
+	repo, _ := engagedRepo(t)
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
 	body, err := os.ReadFile(cfgPath)
 	if err != nil {
@@ -129,11 +129,11 @@ func TestHookGate_NoImplementDenyAndGrokSkip(t *testing.T) {
 		t.Fatalf("deny must use configured message, got %q", out)
 	}
 
-	// Grok-shaped payload: no resolvable model → no model deny. Seat is live so
-	// engagement allows.
+	// Grok-shaped payload: no resolvable model → no model deny. The story is
+	// engaged from this tree, so engagement allows.
 	out, err = runRootIn(t, `{"toolInput":{"filePath":"internal/foo.go"}}`, "hook", "gate")
 	if err != nil {
-		t.Fatalf("grok payload with live seat must not model-deny: %v\n%s", err, out)
+		t.Fatalf("grok payload with an engaged story must not model-deny: %v\n%s", err, out)
 	}
 }
 
@@ -166,7 +166,7 @@ func TestHookGate_NoImplementSkipStillRequiresEngagement(t *testing.T) {
 }
 
 func TestHookGate_NoModelPayloadSkip(t *testing.T) {
-	repo, _ := liveSeatRepo(t)
+	repo, _ := engagedRepo(t)
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
 	body, _ := os.ReadFile(cfgPath)
 	body = append(body, []byte("\n[gate]\nno_implement_models = [\"claude-fable*\"]\nno_implement_message = \"nope\"\n")...)

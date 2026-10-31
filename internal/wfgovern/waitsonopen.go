@@ -10,7 +10,7 @@ import (
 // WaitsOnOpenChildren reports whether container is idling at a step its route
 // declares `waits_on_children` while at least one member is still open
 // (sty_7f3e6fd3). Such a story holds a status but performs nothing, so neither
-// the edit gate nor the engagement lease treats it as a performing seat — one
+// the edit gate nor the concurrency count treats it as performing — one
 // owner for the rule, shared by the hook and the verb layer (sty_56648ae5).
 //
 // A child is resolved by ChildResolved; a child whose workflow cannot be

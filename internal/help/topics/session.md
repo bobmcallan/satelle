@@ -18,7 +18,7 @@ prints the one identity:
 - the short host is the hostname up to its first dot;
 - the repo name is the same for a worktree and its main tree;
 - the worktree directory appears only for a linked worktree;
-- the story id appears only when this tree holds a live engagement seat, and
+- the story id appears only when a performing story was engaged from this tree, and
   once: a worktree directory already named after the engaged story carries
   the id as its worktree segment alone.
 

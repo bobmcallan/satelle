@@ -179,3 +179,44 @@ func storyHead(t *testing.T, fx *holdFixture, id string) string {
 	}
 	return c.StoryHeads[id]
 }
+
+// sty_9c782f0e AC2: two locations drive the same story. Exclusivity is the
+// chain's compare-and-append on its base, not a lock: the second location's
+// next append is refused by the base check, and the refusal names the other
+// location's latest working_on presence. Engaging was never refused.
+func TestTwoCheckoutsSecondAppendRefusedNamesPresence(t *testing.T) {
+	ts, f := newFakeWorkstateServerWith(t, noHoldRoutes(t))
+	a := workingMachine(t, ts, f, "sess_machine_a")
+	b := workingMachine(t, ts, f, "sess_machine_b")
+
+	a.use(t)
+	id := createStoryID(t, "driven from two locations")
+	if out, err := engageStory(t, id); err != nil {
+		t.Fatalf("A engage: %v\n%s", err, out)
+	}
+	a.push(t)
+
+	b.use(t)
+	b.pull(t)
+	if out, err := engageStory(t, id); err != nil {
+		t.Fatalf("B engage must not be refused: %v\n%s", err, out)
+	}
+
+	// A moves on and publishes first; B's next append builds on the old base.
+	a.use(t)
+	if out, err := runRoot(t, "ledger", "append", "--story", id, "--kind", "comment", "--actor", "executor", "--body", "A moves on"); err != nil {
+		t.Fatalf("A append: %v\n%s", err, out)
+	}
+	a.push(t)
+
+	b.use(t)
+	out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL)
+	if err == nil {
+		t.Fatalf("B's append on a stale base must be refused:\n%s", out)
+	}
+	for _, want := range []string{"the story " + id, "moved since", "working on at " + a.loc, "session sess_machine_a"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("B's refusal lacks %q:\n%s", want, out)
+		}
+	}
+}

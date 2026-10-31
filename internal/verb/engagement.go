@@ -404,7 +404,7 @@ func liveStoryDiff(ctx context.Context, it workitem.Item, wantPatch, includeSubs
 // engagementTreeDir is the working tree a gate judges: the invoking directory's
 // git toplevel, replaced by the story's own anchor under GateStoryEnv
 // (gateTreeOverride). baselineTree may be empty — the anchor then comes from the
-// lease alone, or the invoking tree stands.
+// working_on row alone, or the invoking tree stands.
 func engagementTreeDir(ctx context.Context, storyID, baselineTree string) string {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -422,8 +422,8 @@ func engagementTreeDir(ctx context.Context, storyID, baselineTree string) string
 // StoryGateTree is the working tree a gate judges the story in, resolved the way
 // resolveEngagementSlice resolves it but without requiring an engagement
 // baseline: the readiness edge runs before one exists. A recorded baseline's
-// worktree is the anchor fallback; without one the invoking tree (or the lease
-// anchor under GateStoryEnv) stands.
+// worktree is the anchor fallback; without one the invoking tree (or the
+// working_on anchor under GateStoryEnv) stands.
 func StoryGateTree(ctx context.Context, storyID string) (string, error) {
 	baselineTree := ""
 	if base, _, _, err := firstEngagementBaseline(ctx, storyID); err == nil {
@@ -514,14 +514,13 @@ func gateStoryNamed(ctx context.Context, storyID string) bool {
 	return marked != "" && marked == storyID
 }
 
-// storyAnchor is the working tree a story is engaged from: the live lease's tree
-// when one exists, else the engagement baseline's. Empty when unanchored.
+// storyAnchor is the working tree a story is engaged from: the tree its latest
+// working_on row at this location names, else the engagement baseline's. Empty
+// when unanchored.
 func storyAnchor(ctx context.Context, storyID, baselineTree string) string {
 	anchor := strings.TrimSpace(baselineTree)
-	if ls, err := requireLease(); err == nil {
-		if l, gerr := ls.Get(ctx, storyID); gerr == nil && strings.TrimSpace(l.Worktree) != "" {
-			anchor = strings.TrimSpace(l.Worktree)
-		}
+	if w, ok := LatestLocalWorkingOn(ctx, storyID); ok && strings.TrimSpace(w.Worktree) != "" {
+		anchor = strings.TrimSpace(w.Worktree)
 	}
 	return anchor
 }
@@ -566,14 +565,13 @@ func gitCommonDir(dir string) string {
 	return p
 }
 
-// refuseForeignTreeDiff enforces the lease's working-tree anchor (sty_c098dc2d).
+// refuseForeignTreeDiff enforces the story's working-tree anchor (sty_c098dc2d).
 // A story engaged from tree A diffs against a baseline taken in A; run from tree
 // B it would enumerate B's unrelated changes and attribute them to the story —
-// which is exactly the mis-attribution per-worktree leases exist to prevent.
+// which is exactly the mis-attribution per-worktree engagement exists to prevent.
 //
-// The LIVE lease is the authority when one exists (it is where the engagement
-// actually sits); the ledger baseline is the fallback for a story whose lease
-// has since been released. Either anchor absent → UNANCHORED, and the diff
+// The latest working_on row here is the authority when one exists (it is the
+// tree the story was last engaged from); the ledger baseline is the fallback. Either anchor absent → UNANCHORED, and the diff
 // proceeds as it always did, so pre-upgrade baselines and non-git checkouts are
 // unaffected.
 func refuseForeignTreeDiff(ctx context.Context, storyID, baselineTree, invokedTree string) error {

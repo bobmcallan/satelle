@@ -24,7 +24,6 @@ func wire(t *testing.T) *store.DB {
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetTxRunner(db.InTx)
 	verb.SetDocIndexStore(db.DocIndex)
-	verb.SetLeaseStore(db.Leases)
 	t.Cleanup(func() {
 		db.Close()
 	})

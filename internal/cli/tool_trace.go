@@ -28,11 +28,11 @@ const toolTraceCommandMax = 240
 // toolTracePayload is a tool_trace row's payload.
 type toolTracePayload = verb.ToolTracePayload
 
-// traceSeat is the seat a hook already resolved for its call, so recording does
+// traceEngagement is the engagement a hook already resolved for its call, so recording does
 // not resolve it again. resolved false makes recordToolTrace resolve it on the
 // store the call holds.
-type traceSeat struct {
-	info     seatInfo
+type traceEngagement struct {
+	info     engagement
 	engaged  bool
 	resolved bool
 }
@@ -44,9 +44,9 @@ type traceSeat struct {
 // when no story is engaged, or while the engaged step's skills declare no
 // evidence a trace could show; a store error is dropped.
 //
-// gs is the store the hook call already holds and seat the seat it already
-// resolved: recording opens no second store and starts no second git lookup.
-func recordToolTrace(gs *gateStore, raw []byte, seat traceSeat) {
+// gs is the store the hook call already holds and resolved the engagement it
+// already resolved: recording opens no second store and starts no second git lookup.
+func recordToolTrace(gs *gateStore, raw []byte, resolved traceEngagement) {
 	if gs == nil || isDispatchedProcess() {
 		return
 	}
@@ -54,10 +54,10 @@ func recordToolTrace(gs *gateStore, raw []byte, seat traceSeat) {
 	if tool == "" {
 		return
 	}
-	info, engaged := seat.info, seat.engaged
-	if !seat.resolved {
+	info, engaged := resolved.info, resolved.engaged
+	if !resolved.resolved {
 		var err error
-		if info, engaged, err = gs.seat(bindSessionID(raw)); err != nil {
+		if info, engaged, err = gs.resolve(bindSessionID(raw)); err != nil {
 			return
 		}
 	}
@@ -91,7 +91,7 @@ func recordToolTrace(gs *gateStore, raw []byte, seat traceSeat) {
 // whether its skills declare commands or tools: a shell call is wanted for
 // either, any other tool only for a declared tool. A step with no entry row
 // declares nothing.
-func stepWantsTrace(ctx context.Context, l *ledger.Store, info seatInfo, isShell bool) bool {
+func stepWantsTrace(ctx context.Context, l *ledger.Store, info engagement, isShell bool) bool {
 	if l == nil {
 		return false
 	}

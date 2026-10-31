@@ -105,12 +105,29 @@ const (
 	// diff-since-engagement (sty_da169e03 / epic:scope-integrity). Enumeration
 	// only — no pass/fail in Go.
 	KindEngagementBaseline = "engagement_baseline"
-	// KindWorkingOn records that a location took a fresh engagement seat on a
-	// story (sty_40853d02): Payload {location, label, session, worktree, state}.
-	// It is visibility only — shown on `story get`/`story list` and the
-	// session-start advisory so other machines and team members see who is on a
-	// story. No code path reads it to refuse anything.
+	// KindWorkingOn records that a location engaged a story (sty_40853d02,
+	// sty_9c782f0e): Payload {location, label, session, worktree, state}. It is
+	// advisory presence — shown on `story get`/`story list` and the session-start
+	// advisory so other machines and team members see who is on a story. Its
+	// worktree is how the edit gate finds the story engaged from a tree; no code
+	// path reads it to refuse anything.
 	KindWorkingOn = "working_on"
+	// KindTransitionStarted records that an engaging transition began its gates
+	// and dispatch (sty_9c782f0e): Payload TransitionStartedPayload. It is open
+	// until a KindTransitionEnded row names it, its process dies, or InFlightTTL
+	// passes — see InFlight.
+	KindTransitionStarted = "transition_started"
+	// KindTransitionEnded closes one KindTransitionStarted row: Payload
+	// TransitionEndedPayload.
+	KindTransitionEnded = "transition_ended"
+	// KindTransitionActivity records the phase (gate or dispatch) an open
+	// transition is running, and the agent and model a dispatch runs: Payload
+	// TransitionActivityPayload. Written once per phase, never per event.
+	KindTransitionActivity = "transition_activity"
+	// KindStopRequested asks the story's driver to stop (`satelle story
+	// stop-request`): Payload {by, reason}. The next forward engaging move is
+	// refused until the story parks or ends.
+	KindStopRequested = "stop_requested"
 	// KindTrunkCheck records what the start-of-work trunk check found when a
 	// story first entered an engaging state (sty_9f3e51d1): body is the line
 	// shown to the operator, payload the trunk report. Never a verdict.
@@ -240,11 +257,11 @@ const (
 	KindGateWaiver = "gate_waiver"
 	// KindSubstrateLockDeny records one edit the edit gate refused under the
 	// substrate lock (sty_992cffc6): a story outside the substrate lane tried to
-	// change locked substrate while it held a performing seat. Payload is
+	// change locked substrate while it was performing. Payload is
 	// {path, status, lane}; nothing in it is harness-specific. Enumeration only —
 	// the lock list is configuration.
 	KindSubstrateLockDeny = "substrate_lock_deny"
-	// KindSubstrateChangeNote records, on a story that held a performing seat, one
+	// KindSubstrateChangeNote records, on a story that was performing, one
 	// locked-substrate change a substrate-lane story made while it performed: the
 	// lock exists so a story cannot rewrite its OWN judge, and a sibling's judge
 	// changing mid-step is noted on the sibling rather than blocking the change.

@@ -388,9 +388,9 @@
     }
   }
 
-  // refreshEngagementBadge reloads the story-seat count chip from the server
+  // refreshEngagementBadge reloads the performing-story count chip from the server
   // (sty_01ba9482 / sty_e4632f45). Engagement is not derivable from story rows
-  // alone — seats live in a separate mirror kind. At count 0 the fragment is
+  // alone — performing stories live in a separate mirror kind. At count 0 the fragment is
   // empty and the chip is absent; handle swap, insert (0→n), and remove (n→0).
   function refreshEngagementBadge() {
     fetch("fragment/engagement")

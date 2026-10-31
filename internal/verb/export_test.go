@@ -6,15 +6,6 @@ import (
 	"time"
 )
 
-// SeatKeyFor exposes the seat arbitration key to the black-box seat tests.
-var SeatKeyFor = seatKeyFor
-
-// SeatPolicyFor exposes the full seat claim (key + co-hold flags).
-var SeatPolicyFor = seatPolicyFor
-
-// RefuseSecondEngagingStoryDerived exposes the committed-status seat scan.
-var RefuseSecondEngagingStoryDerived = refuseSecondEngagingStoryDerived
-
 // DirtyTreeOwner exposes the trunk check's tree-ownership answer.
 var DirtyTreeOwner = dirtyTreeOwner
 

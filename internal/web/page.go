@@ -351,9 +351,9 @@ const templatesSrc = `
 </body>
 </html>{{end}}
 
-{{/* engagementBadge: story-seat count chip when EngagementCount > 0; emits nothing
+{{/* engagementBadge: performing-story count chip when EngagementCount > 0; emits nothing
      at 0 (sty_e4632f45). Live-refreshed via GET fragment/engagement — JS insert/remove
-     handles 0↔n. Count = non-stale story_seat rows. */}}
+     handles 0↔n. Count = performing stories in the engagement kind. */}}
 {{define "engagementBadge"}}{{$n := .EngagementCount}}{{$ids := .EngagedStoryIDs}}{{if gt $n 0}}{{$title := printf "engaged: %s" (join $ids ", ")}}<span class="n-engaged has-engaged" data-engagement-count="{{$n}}" title="{{$title}}" aria-label="{{$n}} story engaged">{{if eq $n 1}}{{with index $ids 0}}<a class="n-engaged-link" href="story/{{.}}">1 engaged</a>{{end}}{{else}}{{$n}} engaged{{end}}</span>{{end}}{{end}}
 
 {{/* dispatchIndicator: the running indicator of one in-flight dispatch (nil → nothing).

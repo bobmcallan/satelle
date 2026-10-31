@@ -18,20 +18,20 @@ import (
 )
 
 // TestBuildDispatchIndicatorRunning (sty_752c4ef2 AC6, rendering 1: running):
-// an in-flight, non-stale seat with agent/model dispatch detail produces a
-// running indicator carrying that detail — not shown when the seat is stale,
-// not in flight, or has no dispatch metadata (a gate-only phase stamp).
+// an in-flight engagement with agent/model dispatch detail produces a running
+// indicator carrying that detail — not shown when it is not in flight or has no
+// dispatch metadata (a gate-only phase).
 func TestBuildDispatchIndicatorRunning(t *testing.T) {
 	now := time.Now().UTC()
-	seat := seatPayload{
-		ID: "sty_1", InFlight: true, Stale: false,
+	eng := engagementPayload{
+		ID: "sty_1", InFlight: true,
 		Agent: "coder", Model: "sonnet", LastEvent: "tool: Bash",
 		LastEventAt: now.Add(-10 * time.Second), ActivityStartedAt: now.Add(-18 * time.Minute),
 		IdleTimeoutNs: int64(5 * time.Minute),
 	}
-	vm := buildDispatchIndicator(seat, now)
+	vm := buildDispatchIndicator(eng, now)
 	if vm == nil {
-		t.Fatal("expected a running indicator for an in-flight seat with dispatch detail")
+		t.Fatal("expected a running indicator for an in-flight engagement with dispatch detail")
 	}
 	if vm.Agent != "coder" || vm.Model != "sonnet" || vm.LastEvent != "tool: Bash" {
 		t.Errorf("indicator = %+v", vm)
@@ -40,10 +40,9 @@ func TestBuildDispatchIndicatorRunning(t *testing.T) {
 		t.Error("10s idle against a 5m idle_timeout must not warn")
 	}
 
-	for _, bad := range []seatPayload{
-		{ID: "x", InFlight: false, Agent: "coder"},             // not in flight
-		{ID: "x", InFlight: true, Stale: true, Agent: "coder"}, // stale
-		{ID: "x", InFlight: true, Stale: false},                // no dispatch detail
+	for _, bad := range []engagementPayload{
+		{ID: "x", InFlight: false, Agent: "coder"}, // not in flight
+		{ID: "x", InFlight: true},                  // no dispatch detail
 	} {
 		if buildDispatchIndicator(bad, now) != nil {
 			t.Errorf("expected no indicator for %+v", bad)
@@ -53,12 +52,12 @@ func TestBuildDispatchIndicatorRunning(t *testing.T) {
 
 // TestBuildDispatchIndicatorWarnsPastHalfIdleTimeout (sty_752c4ef2 AC6,
 // rendering 2: warning): the indicator turns to warn once idle time (since
-// the last real event) crosses HALF of the seat's resolved idle_timeout —
+// the last real event) crosses HALF of the binding's resolved idle_timeout —
 // not before.
 func TestBuildDispatchIndicatorWarnsPastHalfIdleTimeout(t *testing.T) {
 	now := time.Now().UTC()
-	base := seatPayload{
-		ID: "sty_1", InFlight: true, Stale: false, Agent: "coder",
+	base := engagementPayload{
+		ID: "sty_1", InFlight: true, Agent: "coder",
 		ActivityStartedAt: now.Add(-time.Minute), IdleTimeoutNs: int64(5 * time.Minute),
 	}
 	justUnder := base
@@ -129,8 +128,8 @@ func TestMirrorRowShowsRunningDispatchBesideEarlierRefusal(t *testing.T) {
 		"created_at": now.Add(-5 * time.Minute), "payload": map[string]string{"from": "plan", "to": "in_progress"},
 	}
 	rlb, _ := json.Marshal(rejectLed)
-	seat, _ := json.Marshal(map[string]any{
-		"id": "sty_7069bced", "in_flight": true, "stale": false,
+	eng, _ := json.Marshal(map[string]any{
+		"id": "sty_7069bced", "kind": "story", "in_flight": true,
 		"agent": "coder", "model": "sonnet", "last_event": "tool: Bash",
 		"last_event_at": now.Add(-10 * time.Second), "activity_started_at": now.Add(-2 * time.Minute),
 		"idle_timeout_ns": int64(5 * time.Minute),
@@ -140,7 +139,7 @@ func TestMirrorRowShowsRunningDispatchBesideEarlierRefusal(t *testing.T) {
 	_ = s.ReplaceKind(ctx, rk, "ledger_event", []mirror.ItemRow{
 		{ID: "evt_entry", Payload: string(elb)}, {ID: "evt_reject", Payload: string(rlb)},
 	}, now)
-	_ = s.ReplaceKind(ctx, rk, "seat", []mirror.ItemRow{{ID: "sty_7069bced", Payload: string(seat)}}, now)
+	_ = s.ReplaceKind(ctx, rk, "engagement", []mirror.ItemRow{{ID: "sty_7069bced", Payload: string(eng)}}, now)
 	_ = s.ReplaceKind(ctx, rk, "identity", []mirror.ItemRow{{ID: "meta", Payload: string(ident)}}, now)
 
 	data, _, err := mirrorLoadPanels(ctx, s, rk, "rec")
@@ -217,15 +216,15 @@ func TestMirrorRendersDispatchIndicatorAndWarn(t *testing.T) {
 		Status: workitem.StatusInProgress, Category: "chore", UpdatedAt: now, CreatedAt: now,
 	}
 	sb, _ := json.Marshal(story)
-	seat, _ := json.Marshal(map[string]any{
-		"id": "sty_running", "in_flight": true, "stale": false,
+	eng, _ := json.Marshal(map[string]any{
+		"id": "sty_running", "kind": "story", "in_flight": true,
 		"agent": "coder", "model": "sonnet", "last_event": "tool: Bash",
 		"last_event_at": now.Add(-3 * time.Minute), "activity_started_at": now.Add(-20 * time.Minute),
 		"idle_timeout_ns": int64(5 * time.Minute), // warn: 3m idle > half of 5m
 	})
 	ident, _ := json.Marshal(mirror.IdentityMeta{ProjectName: "disp", RepoRoot: "/d", FooterEmail: "a@b.c"})
 	_ = s.ReplaceKind(ctx, rk, "story", []mirror.ItemRow{{ID: "sty_running", Payload: string(sb)}}, now)
-	_ = s.ReplaceKind(ctx, rk, "seat", []mirror.ItemRow{{ID: "sty_running", Payload: string(seat)}}, now)
+	_ = s.ReplaceKind(ctx, rk, "engagement", []mirror.ItemRow{{ID: "sty_running", Payload: string(eng)}}, now)
 	_ = s.ReplaceKind(ctx, rk, "identity", []mirror.ItemRow{{ID: "meta", Payload: string(ident)}}, now)
 
 	data, _, err := mirrorLoadPanels(ctx, s, rk, "disp")

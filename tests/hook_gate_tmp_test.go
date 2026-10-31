@@ -39,7 +39,7 @@ func TestHookGateTmpDraftAllowed(t *testing.T) {
 
 // TestHookGateTmpDraftAllowedWithCustomExemptList (sty_e33f78fe): a custom
 // [gate] edit_exempt_paths that omits /tmp/ still allows a process-temp draft
-// with no seat and with a live seat on a non-edit-capable plan step. In-repo
+// with nothing engaged and with a story engaged at a non-edit-capable plan step. In-repo
 // product stays denied. The test repo is t.TempDir(), so the repo-under-temp
 // containment case is exercised by construction.
 func TestHookGateTmpDraftAllowedWithCustomExemptList(t *testing.T) {
@@ -64,13 +64,13 @@ func TestHookGateTmpDraftAllowedWithCustomExemptList(t *testing.T) {
 	// AC2 + AC3 (no engaged story): temp draft allows on both envelopes;
 	// in-repo product is denied. Basename is not sty_* so no glob can pass it.
 	if !gateEvent(t, repo, draft) {
-		t.Errorf("no-seat: Claude envelope blocked process-temp %s", draft)
+		t.Errorf("unengaged: Claude envelope blocked process-temp %s", draft)
 	}
 	if !gateEventRaw(t, repo, grok) {
-		t.Errorf("no-seat: Grok envelope blocked process-temp %s", draft)
+		t.Errorf("unengaged: Grok envelope blocked process-temp %s", draft)
 	}
 	if gateEvent(t, repo, code) {
-		t.Error("no-seat: edit gate allowed in-repo product path")
+		t.Error("unengaged: edit gate allowed in-repo product path")
 	}
 
 	// Gate-free route: plan is planner-allocated (not edit-capable) and
@@ -98,14 +98,14 @@ func TestHookGateTmpDraftAllowedWithCustomExemptList(t *testing.T) {
 	}
 	mustRun(t, testBin, repo, "story", "set", id, "--status", "plan")
 
-	// AC1 + AC3 (live seat on plan): same allow / deny.
+	// AC1 + AC3 (engaged at plan): same allow / deny.
 	if !gateEvent(t, repo, draft) {
-		t.Errorf("plan seat: Claude envelope blocked process-temp %s", draft)
+		t.Errorf("at plan: Claude envelope blocked process-temp %s", draft)
 	}
 	if !gateEventRaw(t, repo, grok) {
-		t.Errorf("plan seat: Grok envelope blocked process-temp %s", draft)
+		t.Errorf("at plan: Grok envelope blocked process-temp %s", draft)
 	}
 	if gateEvent(t, repo, code) {
-		t.Error("plan seat: edit gate allowed in-repo product path")
+		t.Error("at plan: edit gate allowed in-repo product path")
 	}
 }

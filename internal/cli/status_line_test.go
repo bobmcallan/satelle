@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/testutil"
 )
@@ -34,7 +34,7 @@ func withHyperlinks(t *testing.T) {
 func TestStatusLineCarriesLinkAndStoryStage(t *testing.T) {
 	noHyperlinks(t)
 	live := webAvailability{Port: 8787, Live: true, Resolved: true}
-	info := seatInfo{ItemID: "sty_abc123", StoryStatus: "in_progress", State: "integration"}
+	info := engagement{ItemID: "sty_abc123", StoryStatus: "in_progress", State: "integration"}
 
 	got := formatStatusLine(live, info, true)
 	if !strings.Contains(got, "http://localhost:8787") {
@@ -43,10 +43,10 @@ func TestStatusLineCarriesLinkAndStoryStage(t *testing.T) {
 	if !strings.Contains(got, "sty_abc123::in_progress") {
 		t.Fatalf("line must carry <story_id>::<stage>: %q", got)
 	}
-	// The COMMITTED status is the stage, not the lease's in-flight target —
+	// The COMMITTED status is the stage, not the in-flight transition's target —
 	// so the line agrees with `satelle story get`.
 	if strings.Contains(got, "::integration") {
-		t.Fatalf("stage must be the committed status, not the lease target: %q", got)
+		t.Fatalf("stage must be the committed status, not the transition target: %q", got)
 	}
 	if strings.Count(got, "\n") != 0 {
 		t.Fatalf("must be a single line: %q", got)
@@ -86,11 +86,11 @@ func TestStatusLineNoStoryIsPlain(t *testing.T) {
 	noHyperlinks(t)
 	for _, tc := range []struct {
 		name    string
-		info    seatInfo
+		info    engagement
 		engaged bool
 	}{
-		{"no lease at all", seatInfo{}, false},
-		{"stale residue not engaged", seatInfo{ItemID: "sty_old", StoryStatus: "plan"}, false},
+		{"no engagement at all", engagement{}, false},
+		{"stale residue not engaged", engagement{ItemID: "sty_old", StoryStatus: "plan"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := storySegment(tc.info, tc.engaged)
@@ -109,7 +109,7 @@ func TestStatusLineNoStoryIsPlain(t *testing.T) {
 func TestStatusLineDegradesWithoutOSC8(t *testing.T) {
 	noHyperlinks(t)
 	got := formatStatusLine(webAvailability{Port: 8787, Live: true, Resolved: true},
-		seatInfo{ItemID: "sty_abc123", StoryStatus: "plan"}, true)
+		engagement{ItemID: "sty_abc123", StoryStatus: "plan"}, true)
 
 	if strings.ContainsRune(got, '\x1b') {
 		t.Fatalf("no escape sequence may reach a terminal without OSC 8 support: %q", got)
@@ -124,7 +124,7 @@ func TestStatusLineDegradesWithoutOSC8(t *testing.T) {
 func TestStatusLineHyperlinkWrapsOnlyTheURL(t *testing.T) {
 	withHyperlinks(t)
 	got := formatStatusLine(webAvailability{Port: 8787, Live: true, Resolved: true},
-		seatInfo{ItemID: "sty_abc123", StoryStatus: "plan"}, true)
+		engagement{ItemID: "sty_abc123", StoryStatus: "plan"}, true)
 
 	if !strings.Contains(got, "\x1b]8;;http://localhost:8787\x1b\\") {
 		t.Fatalf("want OSC 8 open around the URL: %q", got)
@@ -158,13 +158,13 @@ func TestHyperlinkDefaultsOffForUnknownTerminal(t *testing.T) {
 	}
 }
 
-// TestStatusLineRenderIsReadOnly (AC1): rendering must not mutate lease state —
-// in particular it must never trigger the stale-lease reaping `satelle story
-// seat` performs. The lease rows are compared byte-for-byte across a render.
+// TestStatusLineRenderIsReadOnly (AC1): rendering must not write. The story's
+// ledger rows — its engagement record — are compared byte-for-byte across a
+// render.
 func TestStatusLineRenderIsReadOnly(t *testing.T) {
 	noHyperlinks(t)
 	stubHealthz(t, false)
-	_, storyID := liveSeatRepo(t)
+	_, storyID := engagedRepo(t)
 
 	snapshot := func() string {
 		db, err := store.Open(runtimeDBPath(t))
@@ -172,7 +172,7 @@ func TestStatusLineRenderIsReadOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer func() { _ = db.Close() }()
-		rows, err := db.Leases.List(context.Background())
+		rows, _, err := db.Ledger.ListNewest(context.Background(), ledger.ListFilter{StoryID: storyID, Limit: 500})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -185,7 +185,7 @@ func TestStatusLineRenderIsReadOnly(t *testing.T) {
 
 	before := snapshot()
 	if !strings.Contains(before, storyID) {
-		t.Fatalf("fixture should hold a live seat for %s: %s", storyID, before)
+		t.Fatalf("fixture should record an engagement for %s: %s", storyID, before)
 	}
 
 	line := renderStatusLine()
@@ -194,42 +194,7 @@ func TestStatusLineRenderIsReadOnly(t *testing.T) {
 	}
 
 	if after := snapshot(); after != before {
-		t.Fatalf("render mutated lease state:\n before=%s\n after =%s", before, after)
-	}
-}
-
-// TestStatusLineReapsNothingEvenWhenStale (AC1): the sharpest form of the same
-// rule — a STALE lease is exactly what `satelle story seat` would delete. The
-// renderer must leave it, and say no story is engaged.
-func TestStatusLineReapsNothingEvenWhenStale(t *testing.T) {
-	noHyperlinks(t)
-	stubHealthz(t, false)
-	_, storyID := liveSeatRepo(t)
-	ageLease(t, storyID, 72*time.Hour)
-
-	countRows := func() int {
-		db, err := store.Open(runtimeDBPath(t))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = db.Close() }()
-		rows, err := db.Leases.List(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
-		return len(rows)
-	}
-
-	before := countRows()
-	if before != 1 {
-		t.Fatalf("fixture should hold one lease, got %d", before)
-	}
-	line := renderStatusLine()
-	if got := countRows(); got != before {
-		t.Fatalf("renderer reaped a stale lease (%d → %d rows) — it must never write", before, got)
-	}
-	if strings.Contains(line, storyID+"::") {
-		t.Fatalf("a stale seat is not engaged work: %q", line)
+		t.Fatalf("render wrote to the story's record:\n before=%s\n after =%s", before, after)
 	}
 }
 

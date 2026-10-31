@@ -1,18 +1,16 @@
 package cli
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/lease"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
 )
 
@@ -23,8 +21,8 @@ func disableServeProbe(t *testing.T) {
 	t.Cleanup(func() { serveProbeEnabled = prev })
 }
 
-// liveLegacyFixture builds a legacy-layout repo with a fresh engagement lease
-// in the in-repo DB. Owner is pid-less so only heartbeat governs Alive.
+// liveLegacyFixture builds a legacy-layout repo whose in-repo DB holds a
+// transition in flight, started by this (live) process.
 func liveLegacyFixture(t *testing.T) (home, repo, dataDir, legacyDB string, a *app.App) {
 	t.Helper()
 	disableServeProbe(t)
@@ -47,12 +45,7 @@ func liveLegacyFixture(t *testing.T) (home, repo, dataDir, legacyDB string, a *a
 	if err != nil {
 		t.Fatal(err)
 	}
-	// pid-less owner: only heartbeat staleness applies (not dead-pid steal).
-	_, _, _, err = db.Leases.Acquire(context.Background(), "sty_livetest", "story", "local@test-host", "in_progress", true)
-	if err != nil {
-		_ = db.Close()
-		t.Fatal(err)
-	}
+	startTransitionOn(t, db, "sty_livetest", "integration")
 	_ = db.Close()
 
 	a = &app.App{
@@ -65,10 +58,10 @@ func liveLegacyFixture(t *testing.T) (home, repo, dataDir, legacyDB string, a *a
 	return home, repo, dataDir, legacyDB, a
 }
 
-// TestMigrateRefusesLiveLease (sty_5308eb60 AC1+AC2): a fresh-heartbeat lease
-// in the legacy DB causes migrate --yes to exit non-zero without creating the
-// home-keyed DB or removing residue.
-func TestMigrateRefusesLiveLease(t *testing.T) {
+// TestMigrateRefusesOpenTransition (sty_5308eb60 AC1+AC2): a transition in
+// flight in the legacy DB causes migrate --yes to exit non-zero without creating
+// the home-keyed DB or removing residue.
+func TestMigrateRefusesOpenTransition(t *testing.T) {
 	home, _, dataDir, legacyDB, a := liveLegacyFixture(t)
 	// Residue bait: logs/ under dataDir must survive a refused migrate.
 	if err := os.MkdirAll(filepath.Join(dataDir, "logs"), 0o755); err != nil {
@@ -81,7 +74,7 @@ func TestMigrateRefusesLiveLease(t *testing.T) {
 		t.Fatalf("expected refuse, got nil\n%s", out.String())
 	}
 	msg := err.Error()
-	for _, want := range []string{"LIVE", "sty_livetest", "local@test-host", "satelle story seat"} {
+	for _, want := range []string{"LIVE", "sty_livetest", "transition in flight", "integration"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("refusal missing %q:\n%s", want, msg)
 		}
@@ -98,8 +91,9 @@ func TestMigrateRefusesLiveLease(t *testing.T) {
 	}
 }
 
-// TestRuntimeMigrateRefusesLiveLease covers the public runtime migrate entrypoint.
-func TestRuntimeMigrateRefusesLiveLease(t *testing.T) {
+// TestRuntimeMigrateRefusesOpenTransition covers the public runtime migrate
+// entrypoint.
+func TestRuntimeMigrateRefusesOpenTransition(t *testing.T) {
 	home, _, _, _, a := liveLegacyFixture(t)
 	var out strings.Builder
 	err := runRuntimeMigrate(&out, a, false, false, false)
@@ -107,7 +101,7 @@ func TestRuntimeMigrateRefusesLiveLease(t *testing.T) {
 		t.Fatalf("expected refuse, got nil\n%s", out.String())
 	}
 	if !strings.Contains(err.Error(), "sty_livetest") {
-		t.Errorf("refusal should name lease: %v", err)
+		t.Errorf("refusal should name the transition's story: %v", err)
 	}
 	homeDB := filepath.Join(home, config.RepoKey(a.RepoRoot), config.DefaultDBName)
 	if fileExists(homeDB) {
@@ -115,46 +109,34 @@ func TestRuntimeMigrateRefusesLiveLease(t *testing.T) {
 	}
 }
 
-// holdersGone makes the pid probe say the process that stamped a planted seat's
-// in-flight mark is gone: a planted lease carries this test process's own (live)
-// pid, and a live in-flight pid keeps a seat Alive whatever its heartbeat, so a
-// simulated kill needs the probe to agree.
+// holdersGone makes the pid probe say the process that started a planted
+// transition is gone: a planted transition carries this test process's own
+// (live) pid, so a simulated kill needs the probe to agree.
 func holdersGone(t *testing.T) {
 	t.Helper()
-	prev := lease.PidAlive
-	lease.PidAlive = func(int) bool { return false }
-	t.Cleanup(func() { lease.PidAlive = prev })
+	prev := ledger.PidAlive
+	ledger.PidAlive = func(int) bool { return false }
+	t.Cleanup(func() { ledger.PidAlive = prev })
 }
 
-// TestMigrateProceedsWhenLeaseStale: guard keys on liveness, not row presence.
-func TestMigrateProceedsWhenLeaseStale(t *testing.T) {
+// TestMigrateProceedsWhenTransitionDead: the guard keys on liveness, not row
+// presence — a transition whose process died is not in flight.
+func TestMigrateProceedsWhenTransitionDead(t *testing.T) {
 	holdersGone(t)
-	home, _, dataDir, legacyDB, a := liveLegacyFixture(t)
-	// Freeze heartbeat past TTL.
-	db, err := store.Open(legacyDB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	old := time.Now().UTC().Add(-lease.HeartbeatTTL - time.Minute)
-	if err := db.Leases.SetHeartbeat(context.Background(), "sty_livetest", old); err != nil {
-		_ = db.Close()
-		t.Fatal(err)
-	}
-	_ = db.Close()
+	home, _, _, legacyDB, a := liveLegacyFixture(t)
 
 	var out strings.Builder
 	if err := runMigrate(&out, a, true, false); err != nil {
-		t.Fatalf("stale lease must not refuse: %v\n%s", err, out.String())
+		t.Fatalf("a dead transition must not refuse: %v\n%s", err, out.String())
 	}
 	homeDB := filepath.Join(home, config.RepoKey(a.RepoRoot), config.DefaultDBName)
 	if !fileExists(homeDB) {
-		t.Fatalf("home DB missing after migrate with stale lease\n%s", out.String())
+		t.Fatalf("home DB missing after migrate with a dead transition\n%s", out.String())
 	}
 	// Residue removed once home exists.
 	if fileExists(legacyDB) {
 		t.Error("legacy DB should be removed as residue after successful migrate")
 	}
-	_ = dataDir
 }
 
 // TestMigrateAllowLiveWarnsAndProceeds (AC3): --allow-live proceeds and states risk.
@@ -178,8 +160,8 @@ func TestMigrateAllowLiveWarnsAndProceeds(t *testing.T) {
 
 // TestMigrateHelpDocumentsSplitBrainRecovery (AC4).
 func TestMigrateHelpDocumentsSplitBrainRecovery(t *testing.T) {
-	if !strings.Contains(migrateSplitBrainHelp, "satelle story seat") {
-		t.Error("split-brain help must name satelle story seat")
+	if !strings.Contains(migrateSplitBrainHelp, "satelle ledger list --story") {
+		t.Error("split-brain help must name satelle ledger list")
 	}
 	if !strings.Contains(migrateSplitBrainHelp, "through the workflow") {
 		t.Error("split-brain help must tell operators to re-drive through gates")
@@ -235,20 +217,20 @@ func TestProbeServeViaHealthz(t *testing.T) {
 	}
 }
 
-// TestScanLiveLeasesMissingTable: pre-lease DB (no engagement_lease) is quiet.
-func TestScanLiveLeasesMissingTable(t *testing.T) {
+// TestScanOpenTransitionsMissingTable: a DB that predates the ledger is quiet.
+func TestScanOpenTransitionsMissingTable(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "empty.db")
 	db, err := store.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.SQL().Exec(`DROP TABLE engagement_lease`); err != nil {
+	if _, err := db.SQL().Exec(`DROP TABLE evidence`); err != nil {
 		_ = db.Close()
 		t.Fatal(err)
 	}
 	_ = db.Close()
-	holders, err := scanLiveLeases(path)
+	holders, err := scanOpenTransitions(path)
 	if err != nil {
 		t.Fatalf("missing table should be quiet: %v", err)
 	}

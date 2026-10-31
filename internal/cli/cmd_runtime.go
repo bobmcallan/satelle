@@ -70,8 +70,8 @@ legacy tree in place and prints an rm suggestion — satelle never deletes the
 operator's only ledger copy. Refuses if the target already has a database
 unless --force is set.
 
-LIVE RUNTIME (sty_5308eb60): refuses when the legacy DB holds a fresh
-engagement lease or a satelle serve is responding — relocating under a live
+LIVE RUNTIME (sty_5308eb60): refuses when the legacy DB holds a transition
+in flight or a satelle serve is responding — relocating under a live
 session strands post-snapshot writes. Pass --allow-live to override (UNSAFE).
 --force only means "overwrite an existing home-keyed DB"; it does NOT bypass
 the liveness check.
@@ -109,7 +109,7 @@ Does not open the store for writes — the source DB is free for VACUUM INTO.`,
 	migrateCmd.Flags().BoolVar(&force, "force", false, "overwrite an existing home-keyed database")
 	migrateCmd.Flags().BoolVar(&yes, "yes", false, "apply the relocation (default is dry-run)")
 	migrateCmd.Flags().BoolVar(&dryRun, "dry-run", false, "print plan only (default; kept for scripts)")
-	migrateCmd.Flags().BoolVar(&allowLive, "allow-live", false, "UNSAFE: relocate even when a live engagement lease or satelle serve is detected")
+	migrateCmd.Flags().BoolVar(&allowLive, "allow-live", false, "UNSAFE: relocate even when a transition in flight or satelle serve is detected")
 
 	var orphansOnly bool
 	listCmd := &cobra.Command{

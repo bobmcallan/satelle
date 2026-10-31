@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/waiver"
 )
 
@@ -36,16 +34,7 @@ func waiveRepo(t *testing.T) (storyID string) {
 	t.Helper()
 	editStateRepo(t, "plan", "plan", false)
 	plainCaller(t)
-	db, err := store.Open(runtimeDBPath(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = db.Close() }()
-	leases, err := db.Leases.List(context.Background())
-	if err != nil || len(leases) != 1 {
-		t.Fatalf("leases: %v n=%d", err, len(leases))
-	}
-	return leases[0].ItemID
+	return onlyStoryID(t)
 }
 
 func useWaiveConfirmer(t *testing.T, c waiver.Confirmer) {

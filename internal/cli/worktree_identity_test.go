@@ -265,7 +265,7 @@ func TestWorktreeSnapshotKeepsPartitionIdentity(t *testing.T) {
 	}
 }
 
-// The mid-dispatch seat push is a SECOND snapshot builder, and it fires from inside
+// The mid-dispatch engagement push is a SECOND snapshot builder, and it fires from inside
 // a worktree on every throttled dispatch event. The mirror overwrites a partition's
 // slug from whichever snapshot lands last, so a builder that slugs the raw root
 // relabels the parent's partition even when every other sink is canonical. Found by
@@ -283,15 +283,15 @@ func TestWorktreeMidDispatchPushKeepsPartitionSlug(t *testing.T) {
 	if a.RepoRoot == f.canon {
 		t.Fatalf("precondition: the app must be rooted in the worktree, got %q", a.RepoRoot)
 	}
-	snap, err := buildSeatSnapshot(context.Background(), a)
+	snap, err := buildEngagementSnapshot(context.Background(), a)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if snap.Slug != "proj" {
-		t.Fatalf("seat snapshot slug = %q, want the main tree's %q", snap.Slug, "proj")
+		t.Fatalf("engagement snapshot slug = %q, want the main tree's %q", snap.Slug, "proj")
 	}
 
-	pushSeatSnapshot(a, f.srv.URL)
+	pushEngagementSnapshot(a, f.srv.URL)
 
 	parts := partitionDetails(t, f.ms)
 	if len(parts) != 1 || parts[0].Slug != "proj" {

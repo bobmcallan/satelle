@@ -26,14 +26,16 @@ instructions with no legal transition.
 
 ## Preemption is not blockage either
 
-Higher-priority work needing the engagement seat is **preemption**, not
-blockage: the held story is healthy, nothing is impeding it. The path is
+Higher-priority work that cannot engage while this story performs — a
+concurrency refusal (`[engagement] limit`, a sequential epic) or another
+location's newer append on the chain — is **preemption**, not blockage: the
+performing story is healthy, nothing is impeding it. The path is
 `satelle story stop-request <holder> --reason "…"` — the holder is refused
 forward moves, parks itself (`blocked`) with the reason on record and a
 `preempted-by:<id>` tag, and resumes later on the same ACs.
 
-**Never cancel a healthy story to free the seat.** `cancelled` is terminal;
-revival is a NEW story tagged `supersedes:<id>`, so a seat-motivated cancel
+**Never cancel a healthy story to get under the concurrency limit.** `cancelled` is terminal;
+revival is a NEW story tagged `supersedes:<id>`, so a limit-motivated cancel
 destroys the record permanently. No declared `cancel-reason` value means
 "preempted".
 
@@ -81,7 +83,7 @@ escape. Sequence tidy-up **before** the last `done` transition, never after.
 - Silently abandoning the story
 - Closing the last engaged story while residual commit/push work remains
 - Treating a missing engagement as blockage instead of engaging a story
-- Cancelling a healthy story to free the engagement seat
+- Cancelling a healthy story to get under the concurrency limit
 
 See [[satelle-agent-goals]], [[satelle-edits-require-a-story]],
 [[satelle-story-blocked-triage]], [[satelle-agent-model]].

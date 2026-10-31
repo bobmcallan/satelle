@@ -6,7 +6,6 @@ import (
 	"errors"
 
 	"github.com/bobmcallan/satelle/internal/docindex"
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/oplog"
 	"github.com/bobmcallan/satelle/internal/retrieve"
@@ -25,7 +24,6 @@ var (
 	workItemStore *workitem.Store
 	ledgerStore   *ledger.Store
 	docIndexStore *docindex.Store
-	leaseStore    *lease.Store
 	retrieveStore *retrieve.Store
 	// txRunner runs a func inside one sqlite transaction spanning Stories and
 	// Ledger. Required whenever ledgerStore is set: a missing runner refuses
@@ -54,9 +52,6 @@ func SetTxRunner(r TxRunner) { txRunner = r }
 
 // SetDocIndexStore wires the authored-doc index store.
 func SetDocIndexStore(s *docindex.Store) { docIndexStore = s }
-
-// SetLeaseStore wires the engagement-lease store (sty_8426b9c0).
-func SetLeaseStore(s *lease.Store) { leaseStore = s }
 
 // SetRetrieveStore wires the CCR retrieval store (sty_b0577532).
 func SetRetrieveStore(s *retrieve.Store) { retrieveStore = s }
@@ -122,13 +117,6 @@ func requireDocIndex() (*docindex.Store, error) {
 		return nil, ErrStoreNotConfigured
 	}
 	return docIndexStore, nil
-}
-
-func requireLease() (*lease.Store, error) {
-	if leaseStore == nil {
-		return nil, ErrStoreNotConfigured
-	}
-	return leaseStore, nil
 }
 
 func requireRetrieve() (*retrieve.Store, error) {

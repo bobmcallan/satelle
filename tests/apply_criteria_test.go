@@ -53,8 +53,6 @@ func TestApplyCriteriaOnEntryThroughTheBinary(t *testing.T) {
 	if got := criteriaOf(withCriteria); got != planned {
 		t.Fatalf("criteria = %q, want the plan's section verbatim %q", got, planned)
 	}
-	// One performing story holds the seat; free it so the second story can engage.
-	mustRun(t, testBin, repo, "story", "seat", "release", withCriteria)
 	edits := mustRun(t, testBin, repo, "story", "definition-edits", withCriteria, "--json")
 	for _, want := range []string{`"field": "acceptance_criteria"`, `"actor": "accepted-plan"`, `"source": "plan#Acceptance criteria"`} {
 		if !strings.Contains(strings.ReplaceAll(edits, `":"`, `": "`), want) {

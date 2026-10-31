@@ -7,9 +7,9 @@
 //   - dispatched from a PERFORMING state (plan), the coder's edit to a product .go
 //     file is ALLOWED by the edit gate during dispatch — the story sits in `plan`,
 //     a performing/engaged state, so `satelle hook gate` exits 0 legitimately;
-//   - dispatched from backlog under the engagement lease (sty_8426b9c0): the
-//     lease is claimed at-start so the edit gate allows during dispatch without
-//     the old FROM-performing band-aid.
+//   - dispatched from backlog (sty_8426b9c0, sty_9c782f0e): the transition is
+//     marked in flight at its start, so the edit gate allows the dispatched
+//     coder during dispatch without the old FROM-performing band-aid.
 package tests
 
 import (
@@ -30,8 +30,8 @@ func writeCoderPerformingRoute(t *testing.T, repo string) {
 		"done||||")
 }
 
-// writeCoderFromBacklogRoute reaches the coder directly from backlog. Under the
-// engagement lease (sty_8426b9c0) this proceeds — the prior FROM-performing
+// writeCoderFromBacklogRoute reaches the coder directly from backlog. With the
+// in-flight transition (sty_8426b9c0) this proceeds — the prior FROM-performing
 // refusal is gone (sty_f5bd176f band-aid removed).
 func writeCoderFromBacklogRoute(t *testing.T, repo string) {
 	t.Helper()
@@ -141,11 +141,11 @@ func TestCoderDispatchEditGateAllowsFromPerformingState(t *testing.T) {
 	}
 }
 
-// TestCoderDispatchFromBacklogUnderLease: with the engagement lease
-// (sty_8426b9c0) acquired at-start for the TARGET engaging state, a code-writer
+// TestCoderDispatchFromBacklogInFlight: with the transition marked in flight
+// (sty_8426b9c0) at its start toward the TARGET engaging state, a code-writer
 // may dispatch from backlog. The prior FROM-performing band-aid is removed; the
-// lease (not FROM status) authorises the edit gate during dispatch.
-func TestCoderDispatchFromBacklogUnderLease(t *testing.T) {
+// open transition (not FROM status) authorises the edit gate during dispatch.
+func TestCoderDispatchFromBacklogInFlight(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	seedCodeSkill(t, repo)
@@ -165,7 +165,7 @@ func TestCoderDispatchFromBacklogUnderLease(t *testing.T) {
 	mustRun(t, testBin, repo, "reindex")
 
 	out := mustRun(t, testBin, repo, "story", "create", "--category", "chore",
-		"--title", "Coder from backlog under lease", "--body", "lease authorises edit gate", "--acceptance", "1. coded")
+		"--title", "Coder from backlog in flight", "--body", "the open transition authorises the edit gate", "--acceptance", "1. coded")
 	id := extractID(out, "sty_")
 	if id == "" {
 		t.Fatalf("no story id in:\n%s", out)
@@ -173,7 +173,7 @@ func TestCoderDispatchFromBacklogUnderLease(t *testing.T) {
 
 	got, err := run(t, testBin, repo, "story", "set", id, "--status", "in_progress")
 	if err != nil {
-		t.Fatalf("coder from backlog must proceed under lease model:\n%s\nerr=%v", got, err)
+		t.Fatalf("coder from backlog must proceed while its transition is in flight:\n%s\nerr=%v", got, err)
 	}
 	if _, err := os.Stat(filepath.Join(repo, ".satelle", "coder-ran.json")); err != nil {
 		t.Fatalf("coder must run: %v", err)
@@ -183,7 +183,7 @@ func TestCoderDispatchFromBacklogUnderLease(t *testing.T) {
 		t.Fatalf("gate exit not recorded: %v", err)
 	}
 	if !strings.Contains(string(gate), "gate_exit=0") {
-		t.Errorf("edit gate must ALLOW during dispatch via lease (status still backlog): %s", gate)
+		t.Errorf("edit gate must ALLOW during dispatch via the open transition (status still backlog): %s", gate)
 	}
 }
 

@@ -33,7 +33,7 @@ Prints the exact original bytes to stdout â€” no trailing newline, no framing â€
 or exits non-zero with `retrieve: no stored original for hash <hash>` when the
 hash is unknown or malformed (not 24 lowercase hex characters; the two cases
 are indistinguishable to the caller on purpose). The verb never appends to the
-ledger and never touches an engagement seat: it is pure read.
+ledger and never engages a story: it is pure read.
 
 ## Retention
 

@@ -8,132 +8,46 @@
 package cli
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/lease"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
 	_ "modernc.org/sqlite"
 )
 
 // liveHolder is one reason migrate should refuse (or warn under --allow-live).
 type liveHolder struct {
-	Kind   string // "lease" | "serve"
+	Kind   string // "transition" | "serve"
 	Detail string // one-line description naming the holder
 }
 
-// detectLiveRuntime reports live engagement leases in the legacy DB and a
+// detectLiveRuntime reports transitions in flight in the legacy DB and a
 // responding satelle serve on this repo's resolved web port. The legacy DB is
 // opened read-only with the same DSN shape vacuumInto uses — never store.Open,
 // which would create wal/shm and fight VACUUM INTO.
 //
-// An in-flight dispatch is covered by freshness: a live dispatch heartbeats, so
-// lease.Alive already refuses it. in_flight only decorates the message. Refusing
-// on a stale in_flight row would permanently wedge migrate after process death.
+// A transition whose process died, or that outlived ledger.InFlightTTL, is not
+// open, so a dead dispatch never wedges migrate.
 func detectLiveRuntime(cfg config.Config, repoRoot, legacyDB string) ([]liveHolder, error) {
 	var out []liveHolder
 	if fileExists(legacyDB) {
-		leases, err := scanLiveLeases(legacyDB)
+		open, err := scanOpenTransitions(legacyDB)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, leases...)
+		out = append(out, open...)
 	}
 	if h, ok := probeServe(cfg, repoRoot); ok {
 		out = append(out, h)
-	}
-	return out, nil
-}
-
-// scanLiveLeases opens legacyDB read-only and returns non-stale engagement
-// leases. A missing engagement_lease table (pre-lease DB) yields no holders.
-func scanLiveLeases(legacyDB string) ([]liveHolder, error) {
-	db, err := sql.Open("sqlite", store.ReadOnlyDSN(legacyDB))
-	if err != nil {
-		return nil, fmt.Errorf("live-runtime: open legacy db: %w", err)
-	}
-	defer db.Close()
-
-	// Prefer the full column set (post sty_bf797fa9). Fall back for pre-upgrade DBs.
-	rows, err := db.Query(
-		`SELECT item_id, kind, owner, state, acquired_at, heartbeat_at, in_flight, in_flight_at, in_flight_pid
-		 FROM engagement_lease`)
-	if err != nil && strings.Contains(err.Error(), "no such column") {
-		rows, err = db.Query(
-			`SELECT item_id, kind, owner, state, acquired_at, heartbeat_at, in_flight
-			 FROM engagement_lease`)
-	}
-	if err != nil {
-		// Missing table on pre-lease DBs is not an error — nothing to refuse on.
-		if strings.Contains(err.Error(), "no such table") {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("live-runtime: list leases: %w", err)
-	}
-	defer rows.Close()
-
-	now := time.Now().UTC()
-	var out []liveHolder
-	for rows.Next() {
-		var itemID, kind, owner, state, acq, beat, inflightAt string
-		var inflight, inflightPid int
-		// Try full scan first via column count from query shape.
-		cols, _ := rows.Columns()
-		var scanErr error
-		if len(cols) >= 9 {
-			scanErr = rows.Scan(&itemID, &kind, &owner, &state, &acq, &beat, &inflight, &inflightAt, &inflightPid)
-		} else {
-			scanErr = rows.Scan(&itemID, &kind, &owner, &state, &acq, &beat, &inflight)
-		}
-		if scanErr != nil {
-			return nil, fmt.Errorf("live-runtime: scan lease: %w", scanErr)
-		}
-		l := lease.Lease{
-			ItemID:      itemID,
-			Kind:        kind,
-			Owner:       owner,
-			State:       state,
-			InFlight:    inflight != 0,
-			InFlightPid: inflightPid,
-		}
-		l.AcquiredAt, _ = time.Parse(time.RFC3339Nano, acq)
-		if l.AcquiredAt.IsZero() {
-			l.AcquiredAt, _ = time.Parse(time.RFC3339, acq)
-		}
-		l.HeartbeatAt, _ = time.Parse(time.RFC3339Nano, beat)
-		if l.HeartbeatAt.IsZero() {
-			l.HeartbeatAt, _ = time.Parse(time.RFC3339, beat)
-		}
-		if inflightAt != "" {
-			if t, perr := time.Parse(time.RFC3339Nano, inflightAt); perr == nil {
-				l.InFlightAt = t
-			} else if t, perr := time.Parse(time.RFC3339, inflightAt); perr == nil {
-				l.InFlightAt = t
-			}
-		}
-		if !lease.Alive(l, now) {
-			continue
-		}
-		age := "unknown"
-		if !l.HeartbeatAt.IsZero() {
-			age = formatAge(now.Sub(l.HeartbeatAt))
-		}
-		detail := fmt.Sprintf("engagement lease  %s  owner %s  state %s  heartbeat %s ago",
-			itemID, owner, state, age)
-		// EffectiveInFlight: decorate only when the flag is live for gate purposes.
-		if lease.EffectiveInFlight(l, now) {
-			detail += " (dispatch in flight)"
-		}
-		out = append(out, liveHolder{Kind: "lease", Detail: detail})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("live-runtime: list leases: %w", err)
 	}
 	return out, nil
 }
@@ -203,6 +117,37 @@ func defaultHealthzOK(url string) bool {
 	return strings.Contains(strings.ToLower(string(buf[:n])), "ok")
 }
 
+// scanOpenTransitions opens legacyDB read-only and returns each item with a
+// transition in flight there: a dispatch still writing to it. A database that
+// predates the ledger yields none.
+func scanOpenTransitions(legacyDB string) ([]liveHolder, error) {
+	db, err := sql.Open("sqlite", store.ReadOnlyDSN(legacyDB))
+	if err != nil {
+		return nil, fmt.Errorf("live-runtime: open legacy db: %w", err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	open, err := ledger.New(db).ListOpenTransitions(context.Background(), "", now)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such table") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("live-runtime: list transitions: %w", err)
+	}
+	ids := make([]string, 0, len(open))
+	for id := range open {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]liveHolder, 0, len(ids))
+	for _, id := range ids {
+		t := open[id]
+		out = append(out, liveHolder{Kind: "transition", Detail: fmt.Sprintf("transition in flight  %s  %s → %s  started %s ago",
+			id, t.From, t.To, formatAge(now.Sub(t.StartedAt)))})
+	}
+	return out, nil
+}
+
 func formatAge(d time.Duration) string {
 	if d < 0 {
 		d = 0
@@ -228,7 +173,7 @@ func refuseLiveRuntimeError(holders []liveHolder) error {
 		b.WriteString(h.Detail)
 		b.WriteByte('\n')
 	}
-	b.WriteString("Wait for that session to reach a terminal/park state (inspect: satelle story seat), stop satelle serve, then re-run. If the holder is not really satelle, override with --allow-live (UNSAFE — see satelle migrate --help).")
+	b.WriteString("Wait for that transition to finish (inspect: satelle story get <id>), stop satelle serve, then re-run. If the holder is not really satelle, override with --allow-live (UNSAFE — see satelle migrate --help).")
 	return fmt.Errorf("%s", strings.TrimRight(b.String(), "\n"))
 }
 
@@ -238,7 +183,7 @@ func warnAllowLive(out io.Writer, holders []liveHolder) {
 	fmt.Fprintln(out, "  Every write the live session commits AFTER this snapshot is STRANDED: it")
 	fmt.Fprintln(out, "  lands in the legacy database this migration then removes (or on a deleted")
 	fmt.Fprintln(out, "  inode), while new processes read the home-keyed copy immediately. Status")
-	fmt.Fprintln(out, "  transitions, ledger rows, lease heartbeats, and attachments written in")
+	fmt.Fprintln(out, "  transitions, ledger rows and attachments written in")
 	fmt.Fprintln(out, "  that window will silently vanish. Holders:")
 	for _, h := range holders {
 		fmt.Fprintf(out, "    %s\n", h.Detail)
@@ -264,17 +209,14 @@ const migrateSplitBrainHelp = `
 If a migration already raced a live session (split brain):
 
   1. satelle runtime path — confirm the home-keyed DB is now authoritative.
-  2. satelle story seat — the snapshot froze the seat table. A seat whose owner
-     process is gone is a PHANTOM: release it (or wait for the heartbeat TTL,
-     30m, to reap it). Inspect with satelle story seat.
-  3. satelle story get <id> and satelle ledger list --story <id> — compare against
+  2. satelle story get <id> and satelle ledger list --story <id> — compare against
      what the working session believes it did. Anything missing was written into
      the removed legacy DB and is gone.
-  4. RE-DRIVE lost transitions through the workflow (satelle story set <id>
+  3. RE-DRIVE lost transitions through the workflow (satelle story set <id>
      --status <state>) so every gate runs again — never hand-patch status forward
      to catch up; the reviews that vanished did not happen on record.
-  5. Re-attach documents written in the window (satelle story attach).
-  6. If residue removal failed and the legacy DB survives, it is the ONLY record
+  4. Re-attach documents written in the window (satelle story attach).
+  5. If residue removal failed and the legacy DB survives, it is the ONLY record
      of the lost window — read it before removing anything.
 `
 

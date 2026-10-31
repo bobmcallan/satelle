@@ -46,13 +46,13 @@ func wantEpicNotReadyCannotRun(t *testing.T, err error, epicID string) {
 // AC1: a child on a route with no propose step is refused its first engaging
 // move, the refusal names the epic and why it cannot be readied, and nothing moves.
 func TestEngageChildRefusedWhileEpicNotReady(t *testing.T) {
-	db := wireAfterChildren(t, true)
+	wireAfterChildren(t, true)
 	epic := waveEpic(t)
 	c := acChild(t, epic, "fix")
 
 	wantEpicNotReadyCannotRun(t, setStatus(t, c.ID, "plan"), epic.ID)
-	if _, held := leaseRow(t, db, c.ID); held {
-		t.Error("a refused engagement must not take a seat")
+	if isPerforming(t, c.ID) {
+		t.Error("a refused engagement must not perform")
 	}
 	if got := statusOf(t, c.ID).Status; got != "backlog" {
 		t.Errorf("a refused child stays in backlog, got %q", got)

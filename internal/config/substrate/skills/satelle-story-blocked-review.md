@@ -10,10 +10,10 @@ description: Gate for parking an engaged story (in_progress → blocked). Isolat
 
 Isolated reviewer deciding whether a story may move to **blocked** — parked
 because the world is not ready (dependency, external gap) **or** because higher-
-priority work needs the engagement seat (preemption), not because the ACs are
+priority work cannot engage while it performs (preemption), not because the ACs are
 wrong. Input on stdin: `{story, from, to}` — `story` carries title, body,
 acceptance_criteria, tags. Parking is legitimate when work cannot proceed yet
-**or** must yield the seat; the ACs stay frozen and the story resumes later with
+**or** must yield to other work; the ACs stay frozen and the story resumes later with
 the same definition.
 
 ## Accept when
@@ -23,7 +23,7 @@ recent ledger entry, or an explicit statement of why. Legitimate reasons include
 
 - **World not ready** — waiting on dependency `blocked-by:<id>`, external
   capability missing
-- **Preemption** — higher-priority work needs the engagement seat; ideally
+- **Preemption** — higher-priority work cannot engage under the concurrency limit; ideally
   tagged `preempted-by:<id>` naming the story that needs it. Preemption needs
   **no impediment** — the held story may be healthy. It arrives by
   `satelle story stop-request`, which [[satelle-recognise-blockage]] derives

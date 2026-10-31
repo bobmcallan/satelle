@@ -10,12 +10,12 @@ import (
 // waitsOnOpenChildrenAt reports whether item entering status is a container
 // idling at a step its route declares `waits_on_children` while a child is still
 // open (sty_56648ae5). Such a story holds a status but performs nothing, so it
-// takes no engagement lease: the seat it would hold is the very tree its
-// children must engage from. The rule is wfgovern.WaitsOnOpenChildren — the one
+// counts against no concurrency limit and claims no tree: the tree it would
+// claim is the very tree its children must engage from. The rule is wfgovern.WaitsOnOpenChildren — the one
 // owner the edit gate's hook also reads — and the wait is the route's
 // declaration, never a status or category name here.
 //
-// Fails open (false, an ordinary seat) when governance, the doc index or the
+// Fails open (false, an ordinary performing story) when governance, the doc index or the
 // store cannot resolve, matching the hook: an unresolved route is never wrongly
 // treated as waiting.
 func waitsOnOpenChildrenAt(ctx context.Context, item workitem.Item, status string) bool {

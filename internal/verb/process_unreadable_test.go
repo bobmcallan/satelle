@@ -31,7 +31,6 @@ func TestUnreadableWorkflowsDirRefusesTheVerbs(t *testing.T) {
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetTxRunner(db.InTx)
 	verb.SetDocIndexStore(db.DocIndex)
-	verb.SetLeaseStore(db.Leases)
 	verb.SetStoryDir(filepath.Join(dir, "stories"))
 	t.Cleanup(func() {
 		db.Close()

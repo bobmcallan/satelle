@@ -1,8 +1,8 @@
 # Epic wave: which children may start now
 
 `satelle story wave <epic-parent-id>` prints the children of an epic that may
-start now, one id per line. It is an **assessment only**: it writes no status,
-lease or tag, and it does not engage, dispatch, open a worktree or spawn an
+start now, one id per line. It is an **assessment only**: it writes no status
+or tag, and it does not engage, dispatch, open a worktree or spawn an
 agent.
 
 `--json` prints the same response as one object, for a script. `runnable` is the
@@ -112,23 +112,17 @@ Entering an engaging status (`satelle story set <child> --status plan`) is
 refused for a child of an epic that the wave would not return, and the refusal
 quotes the wave's reason: the dependency that is not done, the sequential wave
 that is wider than one (add `depends-on`), or that the story is not in the epic
-set. A child the wave returns still meets the seat mode and the
-one-engagement-per-worktree rule, so two eligible siblings co-engage only from
-distinct worktrees. Only a *new* engagement is checked; a child already
-mid-flight keeps moving.
+set. A child the wave returns still meets the concurrency rule. Only a *new*
+engagement is checked; a child already mid-flight keeps moving.
 
-**Seats.** `[engagement] parallel = "epic"` lets siblings hold seats alongside
-each other (and nothing else); `"worktree"` lets any stories do, from different
-epics or none, one seat per git working tree. With the parallel default siblings
-do, from distinct worktrees. A child's epic is the one the wave places it under —
-its `parent_id`, or the container of an `epic:<theme>` it carries — so siblings
-joined by tag alone share the epic's seat key. `sequential = true` narrows both
-modes: the epic's children then go one at a time (under `epic` they key on their
-own ids; under `worktree` they share the epic's key and exclude each other, while
-unrelated stories still co-hold). Under `parallel = "none"` the schedule changes
-nothing about seats. Stories that are not children of an epic are unaffected
-under `epic`. See `satelle help workflow-convert` for `sequential` and
-`depends-on`.
+**Concurrency.** Nothing is held: siblings perform together by default, each
+engaged from its own worktree so the edit gate attributes each tree's edits to
+its story. `sequential = true` admits one performing child of the epic at a
+time, and `[engagement] limit` bounds the performing stories of the whole
+project; both count the stories whose status folds to a performing step. A
+child's epic is the one the wave places it under — its `parent_id`, or the
+container of an `epic:<theme>` it carries. See `satelle help workflow-convert`
+for `sequential` and `depends-on`.
 
 ## A container step that waits on a child obligation
 
@@ -139,16 +133,14 @@ has discharged it when it is done or cancelled, or sits at or past the step of
 its own route that provides the obligation. A child whose route has no such step
 holds the container back, and the refusal says so.
 
-The step may name a performer. Entering it takes a seat for the container, under
-the epic key its children already share, so a child that has discharged the
-obligation can still engage its later steps from another worktree while the
-container holds it — still one worktree per lease. That needs
-`[engagement] parallel = "epic"`: in `none` mode the container and a child hold
-different keys and conflict. The container's `waits_on_children` step still
-holds no seat. Without `after_children`, container engagement is unchanged, and
+The step may name a performer, which performs the container while a child that
+has discharged the obligation still engages its later steps from its own
+worktree. Under `[engagement] limit` the container counts as one performing
+story. The container's `waits_on_children` step is still not performing.
+Without `after_children`, container engagement is unchanged, and
 `children-resolved` still requires every child terminal.
 
-The binary only gates the entry and the seat. It runs no git command; a merge is
+The binary only gates the entry. It runs no git command; a merge is
 a skill the step names.
 
 ## Where a child runs

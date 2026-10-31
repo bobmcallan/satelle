@@ -77,7 +77,6 @@ func newEnv(t *testing.T, triggers string) *env {
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetTxRunner(db.InTx)
 	verb.SetDocIndexStore(db.DocIndex)
-	verb.SetLeaseStore(db.Leases)
 	verb.SetStoryDir(filepath.Join(dir, "stories"))
 	verb.SetTaskDir(filepath.Join(dir, "tasks"))
 

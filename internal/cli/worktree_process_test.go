@@ -94,12 +94,9 @@ func TestWorktreeDrivesMainRouteAndKeepsEditsInTheWorktree(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(main, "wt-driven-place")); !os.IsNotExist(err) {
 		t.Fatalf("worktree gate wrote into the main tree: %v", err)
 	}
-	// plan is a performing state, so this story keeps the one engagement seat.
-	// Release it so a second story can walk the same gate from the main tree.
-	if out, err := runRoot(t, "story", "seat", "release", id); err != nil {
-		t.Fatalf("release seat: %v\n%s", err, out)
-	}
-
+	// plan is a performing state and this story stays there: with no
+	// concurrency limit configured a second story walks the same gate from the
+	// main tree alongside it.
 	t.Chdir(main)
 	mainID := createFeatureStory(t, "driven from the main tree")
 	if out, err := runRoot(t, "story", "set", mainID, "--status", "in_progress"); err == nil {

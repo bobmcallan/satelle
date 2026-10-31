@@ -432,7 +432,7 @@ func piHookEvent(tool, key, val string) string {
 // state: the only story sits in backlog, so nothing is engaged or engageable.
 func noPerformingStoryRepo(t *testing.T) string {
 	t.Helper()
-	repo, id := stopcheckRepo(t, seatNone)
+	repo, id := stopcheckRepo(t, engagedNowhere)
 	db, err := store.Open(runtimeDBPath(t))
 	if err != nil {
 		t.Fatal(err)
@@ -487,7 +487,7 @@ func TestHookGate_PiHarness_HonoursExemptions(t *testing.T) {
 
 // AC4 (allow): an engaged story's edit passes the gate.
 func TestHookGate_PiHarness_AllowsEngagedEdit(t *testing.T) {
-	stopcheckRepo(t, seatMine)
+	stopcheckRepo(t, engagedHere)
 	if out, err := runRootIn(t, piHookEvent("Edit", "file_path", "internal/foo.go"), "hook", "gate", "--harness", "pi"); err != nil {
 		t.Fatalf("an engaged story's edit must be allowed: %v\n%s", err, out)
 	}
@@ -500,21 +500,23 @@ func TestHookCommitgate_PiHarness(t *testing.T) {
 		return runRootIn(t, piHookEvent("Bash", "command", command), "hook", "commitgate", "--harness", "pi")
 	}
 	t.Run("engaged commit allowed", func(t *testing.T) {
-		stopcheckRepo(t, seatMine)
+		stopcheckRepo(t, engagedHere)
 		if out, err := commit(t, "git commit -m x"); err != nil {
 			t.Fatalf("engaged commit refused: %v\n%s", err, out)
 		}
 	})
 	t.Run("no story refused", func(t *testing.T) {
-		stopcheckRepo(t, seatNone)
+		// The story performs but was never engaged from this tree: the commit is
+		// attributed to nothing and refused, naming the performing story.
+		_, id := stopcheckRepo(t, engagedNowhere)
 		out, err := commit(t, "git commit -m x")
-		if err == nil || !strings.Contains(out, `"permissionDecision":"deny"`) || !strings.Contains(out, "no engaged story") {
-			t.Fatalf("ungated commit must be refused with the commit rule: %v\n%s", err, out)
+		if err == nil || !strings.Contains(out, `"permissionDecision":"deny"`) || !strings.Contains(out, "no performing story was engaged from this tree") || !strings.Contains(out, id) {
+			t.Fatalf("ungated commit must be refused as unattributed: %v\n%s", err, out)
 		}
 	})
 	t.Run("foreign tree refused", func(t *testing.T) {
 		fenceTempRootsElsewhere(t)
-		stopcheckRepo(t, seatMine)
+		stopcheckRepo(t, engagedHere)
 		foreign := t.TempDir()
 		if o, err := exec.Command("git", "-C", foreign, "init", "-q").CombinedOutput(); err != nil {
 			t.Fatalf("git init: %v\n%s", err, o)
@@ -528,7 +530,7 @@ func TestHookCommitgate_PiHarness(t *testing.T) {
 		}
 	})
 	t.Run("step-scoped git policy refuses push", func(t *testing.T) {
-		repo, _ := stopcheckRepo(t, seatMine)
+		repo, _ := stopcheckRepo(t, engagedHere)
 		cfg := "[review]\ngate_create = false\n\n[gate]\nedit_exempt_paths = [\".satelle/\"]\n\n[gate.command_allow]\npush = [\"release\"]\n"
 		if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"), []byte(cfg), 0o644); err != nil {
 			t.Fatal(err)
@@ -546,7 +548,7 @@ func TestHookCommitgate_PiHarness(t *testing.T) {
 // AC5 (Go side): the context and prompt hooks answer a pi caller with the
 // injected context and the edits-require-a-story reminder.
 func TestHookContextAndPrompt_PiHarness(t *testing.T) {
-	stopcheckRepo(t, seatNone)
+	stopcheckRepo(t, engagedNowhere)
 	out, err := runRootIn(t, `{"hook_event_name":"SessionStart","source":"startup"}`, "hook", "context", "--harness", "pi")
 	if err != nil {
 		t.Fatalf("hook context: %v\n%s", err, out)
@@ -574,7 +576,7 @@ func TestHookContextAndPrompt_PiHarness(t *testing.T) {
 // AC6 (Go side): stopcheck refuses to finish on an ungated edit, and honours
 // stop_hook_active so a re-prompt cannot loop.
 func TestHookStopcheck_PiHarness_RefusesUngatedEdit(t *testing.T) {
-	repo, _ := stopcheckRepo(t, seatNone)
+	repo, _ := stopcheckRepo(t, engagedNowhere)
 	dirtyTree(t, repo)
 	out, err := runRootIn(t, `{"hook_event_name":"Stop","stop_hook_active":false}`, "hook", "stopcheck", "--harness", "pi")
 	if err != nil {

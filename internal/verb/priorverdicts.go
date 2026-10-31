@@ -55,7 +55,7 @@ type EvidenceSince struct {
 const maxEvidenceSince = 20
 
 // isSelfLedgerKind reports whether kind is a ledger kind the binary writes about
-// its own review, dispatch, engagement or start-of-work bookkeeping. These are
+// its own review, dispatch, engagement, presence or start-of-work bookkeeping. These are
 // never evidence a rubric could be waiting on, so they never mark a verdict
 // stale — even when written after the cycle ended. Every re-presentation re-engages
 // the story, which writes trunk_check and engagement_baseline; counting them
@@ -66,7 +66,8 @@ func isSelfLedgerKind(kind string) bool {
 		ledger.KindSessionModel, ledger.KindToolPermission, ledger.KindToolTrace, ledger.KindSkillDelivery, ledger.KindSessionAdvisory,
 		ledger.KindBudgetOverrun, ledger.KindGateSkipped, ledger.KindCommandRule,
 		ledger.KindReviewAccept, ledger.KindReviewReject, ledger.KindMessageMark,
-		ledger.KindTrunkCheck, ledger.KindEngagementBaseline:
+		ledger.KindTrunkCheck, ledger.KindEngagementBaseline, ledger.KindWorkingOn,
+		ledger.KindTransitionStarted, ledger.KindTransitionEnded, ledger.KindTransitionActivity:
 		return true
 	}
 	return false

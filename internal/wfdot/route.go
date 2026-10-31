@@ -3,7 +3,7 @@
 // This is now the ONLY constructor onto Spec. BuildRoute reads a declaration of
 // done (done.toml) and a step catalogue (step.toml) and DERIVES the lifecycle. Every
 // consumer downstream — Validate, the reachability predicates,
-// ScopedReviewersSplit, ExecutorSkillsFor, the engine, the seat, the edit gate —
+// ScopedReviewersSplit, ExecutorSkillsFor, the engine, the concurrency check, the edit gate —
 // sees a normal Spec. That is the whole point: the graph stopped being authored
 // without the machinery that reads it changing at all (sty_d953c5d8).
 //
@@ -159,8 +159,8 @@ type Step struct {
 	AnswerProgress bool
 	MinProgress    int
 	// WaitsOnChildren marks a step at which a container idles while its child
-	// stories are driven. The seat holder there is not performing anything, so
-	// the edit gate and Stop hook do not count it while children are open
+	// stories are driven. The container there is not performing anything, so
+	// the edit gate, Stop hook and concurrency count do not count it while children are open
 	// (sty_7f3e6fd3). Authored in step.toml; the binary never names the status.
 	WaitsOnChildren bool
 	// ReadyChildren is the authored `ready_children` key; nil when absent. Read
@@ -176,7 +176,7 @@ type Step struct {
 	Sequential bool
 	// AfterChildren is the obligation every child must have discharged on its own
 	// route before a container may enter this step. The step may name a performer
-	// like any other; the binary only gates entry and the seat. Empty means the
+	// like any other; the binary only gates entry. Empty means the
 	// step has no such wait.
 	AfterChildren string
 	// RemoteAgent names the agents.toml cloud binding that performs this step for
@@ -205,7 +205,7 @@ type Step struct {
 	RemoteWait *RemoteWait
 	// Wait marks a step at which a story rests between performing steps — for
 	// example finished work waiting for its release. It is neither parked nor
-	// terminal: entering it frees the seat and the tree and records a queue
+	// terminal: entering it stops the story performing and records a queue
 	// entry, and nothing performs there. The step names no agent.
 	Wait bool
 	// ContextBudget / TurnBudget are this step's own spend bounds for its

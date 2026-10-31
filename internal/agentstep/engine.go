@@ -219,8 +219,8 @@ type Engine struct {
 	// warnOut receives the one-line isolation warnings of a reviewer dispatch the
 	// binding cannot hold to its grant (sty_2d5e583a). New defaults it to stderr.
 	warnOut io.Writer
-	// activity, when set, receives structured gate/phase progress so seat can
-	// expose which gate is running without the dispatching terminal (sty_598a8e1b).
+	// activity, when set, receives structured gate/phase progress so the story
+	// can expose which gate is running without the dispatching terminal (sty_598a8e1b).
 	// Callback includes the story id so the sink stays stateless.
 	activity func(itemID string, a Activity)
 	// activityDetail, when set, receives throttled in-flight DISPATCH metadata
@@ -519,14 +519,15 @@ type Activity struct {
 	Total int
 }
 
-// SetActivity wires the structured progress sink (CLI stamps the lease row).
+// SetActivity wires the structured progress sink (the CLI records a
+// transition_activity row on the open transition).
 func (g *Engine) SetActivity(fn func(itemID string, a Activity)) { g.activity = fn }
 
 // ActivityDetail is in-flight DISPATCH metadata (sty_752c4ef2), distinct from
 // the phase-level Activity above: which agent binding and model are running,
-// the last real event's label, and how many real events have been seen. It
-// rides the SAME lease row (extended, not duplicated) — the CLI wiring folds
-// it into lease.Store.SetActivityDetail.
+// the last real event's label, and how many real events have been seen. The
+// CLI records it as a transition_activity row on the same open transition as
+// the phase above.
 type ActivityDetail struct {
 	Agent      string
 	Model      string
@@ -539,8 +540,8 @@ type ActivityDetail struct {
 // SetActivityDetail wires the throttled in-flight dispatch sink (sty_752c4ef2).
 // Invoke calls it on real events (tool start/end, message, usage) during an
 // ExpectPerform dispatch, throttled to activityDetailThrottle, so a long
-// dispatch's lease row — and the mirror push the wired sink performs — stays
-// fresh without a write per event. Nil (the default) disables it.
+// dispatch's web indicator — fed by the mirror push the wired sink performs —
+// stays fresh without a write per event. Nil (the default) disables it.
 func (g *Engine) SetActivityDetail(fn func(itemID string, d ActivityDetail)) { g.activityDetail = fn }
 
 // activityDetailThrottle bounds how often SetActivityDetail's sink is called
@@ -2577,9 +2578,9 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			}
 		}
 	}
-	// Engagement lease (sty_8426b9c0) is acquired for the TARGET engaging state
-	// BEFORE this dispatch runs (verb/workitem.go acquire-at-start). Edit/commit
-	// gates read the lease, not committed FROM status — so a code-writing named
+	// The transition is marked in flight toward the TARGET engaging state
+	// BEFORE this dispatch runs (verb/workitem.go transition_started). Edit/commit
+	// gates read that open transition, not committed FROM status — so a code-writing named
 	// agent may edit during dispatch without the FROM state itself being
 	// performing. The prior FROM-performing band-aid (sty_f5bd176f) is removed.
 	var runner agentcli.Runner

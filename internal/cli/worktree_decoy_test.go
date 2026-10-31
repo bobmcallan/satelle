@@ -93,8 +93,8 @@ func TestWorktreeDecoyIsNotTheProcessOfRecord(t *testing.T) {
 	if gotData != wantData {
 		t.Fatalf("ProcessDataDir = %q, want %q", gotData, wantData)
 	}
-	if a.ProcessConfig.Engagement.Parallel != config.ParallelEpic {
-		t.Fatalf("process engagement = %q, want epic", a.ProcessConfig.Engagement.Parallel)
+	if a.ProcessConfig.Engagement.Limit != 2 {
+		t.Fatalf("process engagement limit = %d, want the main tree's 2", a.ProcessConfig.Engagement.Limit)
 	}
 	if a.ProcessConfig.Vars["PROCESS_MARK"] != "main-overlay-mark" {
 		t.Fatalf("process var PROCESS_MARK = %q, want the main overlay", a.ProcessConfig.Vars["PROCESS_MARK"])
@@ -136,9 +136,8 @@ func TestWorktreeDecoyIsNotTheProcessOfRecord(t *testing.T) {
 		t.Fatalf("explain applied the decoy message:\n%s", explained.String())
 	}
 
-	seat := sessionSeatBlock(a)
-	if !strings.Contains(seat, "seat mode: epic") {
-		t.Fatalf("sessionSeatBlock = %q, want the main tree's epic mode", seat)
+	if block := sessionEngagementBlock(a); !strings.Contains(block, "limit = 2") {
+		t.Fatalf("sessionEngagementBlock = %q, want the main tree's limit", block)
 	}
 
 	var validated bytes.Buffer
@@ -184,7 +183,7 @@ func TestWorktreeDecoyIsNotTheProcessOfRecord(t *testing.T) {
 	lockCmd.SetOut(&locked)
 	lockCmd.SetErr(&locked)
 	lerr := substrateLockGate(lockCmd, []byte(`{"tool_input":{"file_path":".satelle/workflows/agents.toml"}}`),
-		".satelle/workflows/agents.toml", &lockSeats{live: []seatInfo{{ItemID: "sty_holder", StoryStatus: "in_progress"}}})
+		".satelle/workflows/agents.toml", &lockEngagements{live: []engagement{{ItemID: "sty_holder", StoryStatus: "in_progress"}}})
 	if lerr == nil || !strings.Contains(lerr.Error(), "substrate lock") {
 		t.Fatalf("substrate lock did not refuse the worktree data dir (the decoy opts out): %v\n%s", lerr, locked.String())
 	}
@@ -208,7 +207,7 @@ func TestWorktreeDecoyIsNotTheProcessOfRecord(t *testing.T) {
 }
 
 const mainProcessToml = `[engagement]
-parallel = "epic"
+limit = 2
 
 [gate]
 allow_outside_tree_edits = false
@@ -264,7 +263,7 @@ principles = "decoy-principles"
 documents = "decoy-documents"
 
 [engagement]
-parallel = "none"
+limit = 1
 
 [review]
 gate_create = true

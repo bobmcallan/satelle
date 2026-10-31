@@ -17,7 +17,7 @@ import (
 // still holding the step back, so the driver knows whom to drive.
 //
 // This is entry arbitration only. The step it guards may name a performer, and
-// that performer acquires a seat through the ordinary engaging rule; nothing here
+// that performer engages through the ordinary engaging rule; nothing here
 // runs git, merges, or decides what the performer does. Which obligation to wait
 // for is the route's declaration, and "discharged" is wfgovern.ChildDischarged —
 // never a status or category name here.

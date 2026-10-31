@@ -22,7 +22,6 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/retrieve"
 	"github.com/bobmcallan/satelle/internal/storyfold"
@@ -37,7 +36,6 @@ type DB struct {
 	Ledger   *ledger.Store
 	Stories  *workitem.Store // stories and tasks share one store; filter by Kind
 	DocIndex *docindex.Store
-	Leases   *lease.Store    // engagement seats (sty_8426b9c0)
 	Retrieve *retrieve.Store // CCR originals of condensed content (sty_b0577532)
 }
 
@@ -71,7 +69,7 @@ func Open(path string) (*DB, error) {
 		ledger.Migrate,
 		workitem.Migrate,
 		docindex.Migrate,
-		lease.Migrate,
+		dropEngagementLease,
 		retrieve.Migrate,
 	} {
 		if err := migrate(sqldb); err != nil {
@@ -104,9 +102,24 @@ func wire(sqldb *sql.DB) *DB {
 		Ledger:   led,
 		Stories:  workitem.New(sqldb),
 		DocIndex: di,
-		Leases:   lease.New(sqldb),
 		Retrieve: retrieve.New(sqldb),
 	}
+}
+
+// dropEngagementLease removes the engagement_lease table an earlier binary
+// created (sty_9c782f0e): nothing is held while a story performs, so nothing
+// reads or writes it. Idempotent: a database without the table is unchanged.
+func dropEngagementLease(db *sql.DB) error {
+	for _, stmt := range []string{
+		`DROP INDEX IF EXISTS idx_engagement_lease_seat`,
+		`DROP INDEX IF EXISTS idx_engagement_lease_seat_key`,
+		`DROP TABLE IF EXISTS engagement_lease`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("store: drop engagement_lease: %w", err)
+		}
+	}
+	return nil
 }
 
 // workflowVersion is the ledger's resolver for the workflow a story is judged

@@ -108,7 +108,7 @@ func TestIngestChangeAndSnapshot(t *testing.T) {
 		Tasks:        []json.RawMessage{[]byte(`{"id":"tsk_a","title":"Task"}`)},
 		Docs:         []json.RawMessage{[]byte(`{"name":"wf","kind":"workflows","body":"x","mod_time":"2026-01-01T00:00:00Z","provenance":"authored","source":"/x"}`)},
 		LedgerEvents: []json.RawMessage{[]byte(`{"id":"evt_1","story_id":"sty_a","kind":"status_transition"}`)},
-		Seats:        []json.RawMessage{[]byte(`{"id":"sty_a","in_flight":true,"stale":false}`)},
+		Engagements:  []json.RawMessage{[]byte(`{"id":"sty_a","in_flight":true}`)},
 		Identity:     json.RawMessage(`{"project_name":"demo","repo_root":"/tmp/demo","footer_email":"op@example.com"}`),
 		Settings:     json.RawMessage(`{"repo_root":"/tmp/demo","rows":[]}`),
 	}
@@ -129,7 +129,7 @@ func TestIngestChangeAndSnapshot(t *testing.T) {
 	if !bytes.Contains([]byte(stories[0].Payload), []byte("Hello")) {
 		t.Errorf("payload %s", stories[0].Payload)
 	}
-	for _, kind := range []string{"doc", "ledger_event", "seat", "identity", "settings"} {
+	for _, kind := range []string{"doc", "ledger_event", "engagement", "identity", "settings"} {
 		items, err := s.ListItems(t.Context(), "rk1", kind)
 		if err != nil || len(items) == 0 {
 			t.Errorf("kind %s: items=%v err=%v", kind, items, err)
@@ -141,7 +141,7 @@ func TestIngestChangeAndSnapshot(t *testing.T) {
 	}
 	// Capture per-kind counts, then re-push — AC3: counts stable (ReplaceKind).
 	counts := map[string]int{}
-	for _, kind := range []string{"story", "task", "doc", "ledger_event", "seat", "identity", "settings"} {
+	for _, kind := range []string{"story", "task", "doc", "ledger_event", "engagement", "identity", "settings"} {
 		items, err := s.ListItems(t.Context(), "rk1", kind)
 		if err != nil {
 			t.Fatal(err)
@@ -161,7 +161,7 @@ func TestIngestChangeAndSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	for _, kind := range []string{"story", "task", "doc", "ledger_event", "seat", "identity", "settings"} {
+	for _, kind := range []string{"story", "task", "doc", "ledger_event", "engagement", "identity", "settings"} {
 		items, err := s.ListItems(t.Context(), "rk1", kind)
 		if err != nil {
 			t.Fatal(err)
@@ -290,7 +290,7 @@ func TestIngestPartialSnapshotLeavesOtherKinds(t *testing.T) {
 	light := mirror.Snapshot{
 		RepoKey:      "rk-partial",
 		Slug:         "partial",
-		Kinds:        []string{"story", "task", "execution", "seat", "identity"},
+		Kinds:        []string{"story", "task", "execution", "engagement", "identity"},
 		MergeKinds:   []string{"ledger_event"},
 		Stories:      []json.RawMessage{[]byte(`{"id":"sty_new","title":"New"}`)},
 		LedgerEvents: []json.RawMessage{[]byte(`{"id":"evt_1","story_id":"sty_new","kind":"status_transition"}`)},

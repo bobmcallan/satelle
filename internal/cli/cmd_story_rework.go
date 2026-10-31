@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -17,7 +16,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/agentvalidate"
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/placement"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -221,39 +219,32 @@ func runRework(cmd *cobra.Command, id string, roundsFlag int, modelFlag string, 
 		return fmt.Errorf("satelle story rework: invalid idle_timeout in .satelle/workflows/agents.toml [%s]: %w", rw.ConsultBinding, ierr)
 	}
 
-	// Adopt the lease's stamped session so the coder's hook and the relay
-	// policy resolve the same live seat (sty_7567f047). Set only on this
-	// process env — do not PublishSession an adopted lease id, or the parent
-	// shell's later CLI calls would re-bind to it.
+	// Adopt the session the story was engaged from so the coder's hook and the
+	// relay policy resolve the same engagement (sty_7567f047). Set only on this
+	// process env — do not PublishSession an adopted id, or the parent shell's
+	// later CLI calls would re-bind to it.
 	fallbackSID := config.ResolveSession()
-	var leaseRow lease.Lease
-	leaseFound := false
-	if a.Store.Leases != nil {
-		if l, lerr := a.Store.Leases.Get(ctx, it.ID); lerr == nil {
-			leaseRow, leaseFound = l, true
-		} else if !errors.Is(lerr, lease.ErrNotFound) {
-			return fmt.Errorf("satelle story rework: lease lookup: %w", lerr)
-		}
+	engagedSID := ""
+	if w, ok := verb.LatestLocalWorkingOn(ctx, it.ID); ok {
+		engagedSID = w.Session
 	}
-	sid := reworkSessionID(leaseRow, leaseFound, fallbackSID)
+	sid := reworkSessionID(engagedSID, fallbackSID)
 	if sid != "" {
 		_ = os.Setenv(config.SessionEnv, sid)
 		if sid == fallbackSID {
 			config.PublishSession(sid)
 		}
 	}
-	seat := func() (seatInfo, bool, error) { return resolveSeat(true, sid) }
-	// A long relay round between edits fires no hook, so nothing else refreshes
-	// the seat's heartbeat while it waits on a model (sty_7f3e6fd3).
-	if leaseFound {
-		defer lease.KeepAlive(ctx, a.Store.Leases, it.ID, lease.ResolveOwner())()
+	resolve := func() (engagement, bool, error) {
+		info, engaged, _, err := resolveEngagements(sid)
+		return info, engaged, err
 	}
 
 	out := cmd.OutOrStdout()
 	coderLedger := &storeSessionLedger{ctx: ctx, storyID: it.ID, ls: a.Store.Ledger, actor: rw.CoderBinding}
 	consultLedger := &storeSessionLedger{ctx: ctx, storyID: it.ID, ls: a.Store.Ledger, actor: rw.ConsultBinding}
 
-	// The coder DRIVES its own edits (executor charter, own grant, seat-checked);
+	// The coder DRIVES its own edits (executor charter, own grant, status-checked);
 	// the consultant is ASKED (consult charter, mutators refused outright). The
 	// role is stated, not inferred from the binding name — a repo may name its
 	// coder anything (sty_8e0b29a0). The relay marker rides only the coder
@@ -263,7 +254,7 @@ func runRework(cmd *cobra.Command, id string, roundsFlag int, modelFlag string, 
 	err = withRelayMarker(rw.CoderBinding, it.ID, func() error {
 		var openErr error
 		coder, openErr = reworkSessionOpener(ctx, eng, rw.CoderBinding, agentstep.SessionRoleDriving, it,
-			reworkCoderPolicy(rw.CoderBinding, coderBinding.Tools, seat, invocationRecorder(coderLedger)),
+			reworkCoderPolicy(rw.CoderBinding, coderBinding.Tools, resolve, invocationRecorder(coderLedger)),
 			reworkEventHandler(coderLedger), modelFlag)
 		return openErr
 	})
@@ -421,7 +412,7 @@ READY is not a verdict and does not advance anything. The reviewer that gates th
 
 // reworkCoderSeed is the coder's first-turn briefing: what the relay is, and
 // the one thing it must not do. Its charter is the executor's — it edits under
-// its own grant inside the seat — so this says only what the relay adds.
+// its own grant at the story's allocated status — so this says only what the relay adds.
 func reworkCoderSeed(rw reworkPlan) string {
 	return fmt.Sprintf(`You are in a bounded REWORK RELAY with the %q session, which is reviewing your slice against this story's acceptance criteria. The budget is %d round(s).
 
@@ -535,14 +526,11 @@ func reworkEventHandler(l sessionLedger) agentcli.EventHandler {
 }
 
 // reworkSessionID returns the session identity the rework relay exports into
-// its children. A stamped lease wins so pickSessionSeat binds the seat the
-// relay is driving; an unstamped or absent lease keeps today's ResolveSession
-// fallback (tree-routing still works).
-func reworkSessionID(l lease.Lease, found bool, fallback string) string {
-	if found {
-		if id := strings.TrimSpace(l.SessionID); id != "" {
-			return id
-		}
+// its children: the session the story was engaged from when its working_on row
+// names one, else today's ResolveSession fallback.
+func reworkSessionID(engaged, fallback string) string {
+	if id := strings.TrimSpace(engaged); id != "" {
+		return id
 	}
 	return strings.TrimSpace(fallback)
 }

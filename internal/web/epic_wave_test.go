@@ -16,7 +16,7 @@ import (
 )
 
 // epicFixture is a mirror partition holding an epic-parent, three children and
-// whatever wave / seat rows a test seeds. Children: a (startable), b (held on a),
+// whatever wave / engagement rows a test seeds. Children: a (startable), b (held on a),
 // c (in flight).
 type epicFixture struct {
 	srv *httptest.Server
@@ -25,7 +25,7 @@ type epicFixture struct {
 	now time.Time
 }
 
-func newEpicFixture(t *testing.T, wave map[string]any, seats ...map[string]any) *epicFixture {
+func newEpicFixture(t *testing.T, wave map[string]any, engagements ...map[string]any) *epicFixture {
 	t.Helper()
 	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
 	if err != nil {
@@ -61,12 +61,12 @@ func newEpicFixture(t *testing.T, wave map[string]any, seats ...map[string]any) 
 			t.Fatal(err)
 		}
 	}
-	var seatRows []mirror.ItemRow
-	for _, seat := range seats {
-		b, _ := json.Marshal(seat)
-		seatRows = append(seatRows, mirror.ItemRow{ID: seat["id"].(string), Payload: string(b)})
+	var engRows []mirror.ItemRow
+	for _, e := range engagements {
+		b, _ := json.Marshal(e)
+		engRows = append(engRows, mirror.ItemRow{ID: e["id"].(string), Payload: string(b)})
 	}
-	if err := s.ReplaceKind(ctx, rk, "seat", seatRows, now); err != nil {
+	if err := s.ReplaceKind(ctx, rk, "engagement", engRows, now); err != nil {
 		t.Fatal(err)
 	}
 	ident, _ := json.Marshal(mirror.IdentityMeta{ProjectName: "epicp", RepoRoot: "/e", FooterEmail: "a@b.c"})
@@ -101,9 +101,9 @@ func memberRow(t *testing.T, body, id string) string {
 	return row
 }
 
-func inFlightSeat(id string, now time.Time) map[string]any {
+func inFlightEngagement(id string, now time.Time) map[string]any {
 	return map[string]any{
-		"id": id, "in_flight": true, "stale": false,
+		"id": id, "kind": "story", "in_flight": true,
 		"agent": "coder", "model": "sonnet", "last_event": "tool: Bash",
 		"last_event_at": now.Add(-time.Minute), "activity_started_at": now.Add(-5 * time.Minute),
 	}
@@ -175,7 +175,7 @@ func TestEpicPageWithoutAWaveRowRendersMembersOnly(t *testing.T) {
 // sty_a42f4add AC3: a child with an in-flight dispatch shows the story list's
 // running indicator on the epic's page; a sibling without one shows none.
 func TestEpicPageShowsEachChildsRunningIndicator(t *testing.T) {
-	f := newEpicFixture(t, waveRow(), inFlightSeat("sty_c", time.Now().UTC()))
+	f := newEpicFixture(t, waveRow(), inFlightEngagement("sty_c", time.Now().UTC()))
 	body := f.get(t, "/r/epicp/story/sty_epic")
 	c := memberRow(t, body, "sty_c")
 	for _, want := range []string{`class="dispatch-indicator"`, "coder (sonnet) running", "tool: Bash"} {
@@ -188,12 +188,12 @@ func TestEpicPageShowsEachChildsRunningIndicator(t *testing.T) {
 			t.Errorf("%s has no dispatch yet shows an indicator: %s", id, row)
 		}
 	}
-	// A stale seat is not a running dispatch.
-	stale := inFlightSeat("sty_a", time.Now().UTC())
-	stale["stale"] = true
-	g := newEpicFixture(t, waveRow(), stale)
+	// A settled engagement is not a running dispatch.
+	settled := inFlightEngagement("sty_a", time.Now().UTC())
+	settled["in_flight"] = false
+	g := newEpicFixture(t, waveRow(), settled)
 	if row := memberRow(t, g.get(t, "/r/epicp/story/sty_epic"), "sty_a"); strings.Contains(row, "dispatch-indicator") {
-		t.Errorf("a stale seat rendered a running indicator: %s", row)
+		t.Errorf("a settled engagement rendered a running indicator: %s", row)
 	}
 }
 
@@ -203,18 +203,18 @@ func TestEpicPageShowsEachChildsRunningIndicator(t *testing.T) {
 func TestEpicRollupOnDetailAndListRow(t *testing.T) {
 	const marker = "agent work in progress"
 	cases := []struct {
-		name  string
-		seats []map[string]any
-		want  string // "" = no roll-up
+		name        string
+		engagements []map[string]any
+		want        string // "" = no roll-up
 	}{
 		{"none", nil, ""},
-		{"one", []map[string]any{inFlightSeat("sty_a", time.Now().UTC())}, "1 child"},
-		{"two", []map[string]any{inFlightSeat("sty_a", time.Now().UTC()), inFlightSeat("sty_c", time.Now().UTC())}, "2 children"},
-		{"an unrelated story's dispatch does not count", []map[string]any{inFlightSeat("sty_plain", time.Now().UTC())}, ""},
+		{"one", []map[string]any{inFlightEngagement("sty_a", time.Now().UTC())}, "1 child"},
+		{"two", []map[string]any{inFlightEngagement("sty_a", time.Now().UTC()), inFlightEngagement("sty_c", time.Now().UTC())}, "2 children"},
+		{"an unrelated story's dispatch does not count", []map[string]any{inFlightEngagement("sty_plain", time.Now().UTC())}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newEpicFixture(t, waveRow(), tc.seats...)
+			f := newEpicFixture(t, waveRow(), tc.engagements...)
 
 			detail := f.get(t, "/r/epicp/story/sty_epic")
 			list := f.get(t, "/r/epicp/")
@@ -228,7 +228,7 @@ func TestEpicRollupOnDetailAndListRow(t *testing.T) {
 					t.Errorf("roll-up text shown with nothing in flight")
 				}
 				if strings.Contains(detail, "epic-rollup") || strings.Contains(epicRow, "epic-rollup") {
-					t.Errorf("roll-up shown with %d in-flight children", len(tc.seats))
+					t.Errorf("roll-up shown with %d in-flight children", len(tc.engagements))
 				}
 				return
 			}

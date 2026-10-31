@@ -345,30 +345,20 @@ func TestGrokFirstStopOfATurnResetsTheCount(t *testing.T) {
 	}
 }
 
-// Every Stop emission the harness counts is counted: the dirty-tree block and
-// the sibling-seat note, not only the gate verdict.
-func TestGrokStopNotesAndBlocksAreCounted(t *testing.T) {
-	for name, tc := range map[string]struct {
-		seat stopcheckSeatState
-		want string
-	}{
-		"block": {seatNone, `"decision":"block"`},
-		"note":  {seatOther, `"systemMessage"`},
-	} {
-		t.Run(name, func(t *testing.T) {
-			repo, _ := stopcheckRepo(t, tc.seat)
-			dirtyTree(t, repo)
-			store := gateStoreForTest(t)
-			// The first Stop of a turn: stopcheck only speaks there (it never
-			// re-blocks a continuation), and the count starts from zero.
-			out := stopOut(t, grokStopEvent(t, false))
-			if !strings.Contains(out, tc.want) {
-				t.Fatalf("stopcheck emitted %q, want %s", out, tc.want)
-			}
-			if got := store.StopCount(grokSession); got != 1 {
-				t.Errorf("count = %d, want 1: the emission was not counted", got)
-			}
-		})
+// Every Stop emission the harness counts is counted: the dirty-tree block, not
+// only the gate verdict.
+func TestGrokStopBlocksAreCounted(t *testing.T) {
+	repo, _ := stopcheckRepo(t, engagedNowhere)
+	dirtyTree(t, repo)
+	store := gateStoreForTest(t)
+	// The first Stop of a turn: stopcheck only speaks there (it never re-blocks a
+	// continuation), and the count starts from zero.
+	out := stopOut(t, grokStopEvent(t, false))
+	if !strings.Contains(out, `"decision":"block"`) {
+		t.Fatalf("stopcheck emitted %q, want a block", out)
+	}
+	if got := store.StopCount(grokSession); got != 1 {
+		t.Errorf("count = %d, want 1: the emission was not counted", got)
 	}
 }
 

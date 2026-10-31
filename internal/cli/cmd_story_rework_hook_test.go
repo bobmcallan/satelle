@@ -11,43 +11,23 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/lease"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 func TestReworkSessionID(t *testing.T) {
-	leaseA := "a4de0ec7-5809-4d35-8356-9f7c01769098"
+	engagedA := "a4de0ec7-5809-4d35-8356-9f7c01769098"
 	fallbackB := "31261381-b59d-49af-8306-a8a2c925a9fe"
-	if got := reworkSessionID(lease.Lease{SessionID: leaseA}, true, fallbackB); got != leaseA {
-		t.Fatalf("stamped lease = %q, want %q", got, leaseA)
+	if got := reworkSessionID(engagedA, fallbackB); got != engagedA {
+		t.Fatalf("engaged session = %q, want %q", got, engagedA)
 	}
-	if got := reworkSessionID(lease.Lease{}, true, fallbackB); got != fallbackB {
-		t.Fatalf("unstamped lease = %q, want fallback %q", got, fallbackB)
+	if got := reworkSessionID("", fallbackB); got != fallbackB {
+		t.Fatalf("no engaged session = %q, want fallback %q", got, fallbackB)
 	}
-	if got := reworkSessionID(lease.Lease{SessionID: leaseA}, false, fallbackB); got != fallbackB {
-		t.Fatalf("absent lease = %q, want fallback %q", got, fallbackB)
-	}
-}
-
-func TestPickSessionSeatReworkIdentity(t *testing.T) {
-	leaseA := "a4de0ec7-5809-4d35-8356-9f7c01769098"
-	fallbackB := "31261381-b59d-49af-8306-a8a2c925a9fe"
-	live := []seatInfo{{
-		ItemID: "sty_9134015e", SessionID: leaseA, Engaged: true,
-		State: "in_progress", StoryStatus: "in_progress", StateAgent: "coder",
-	}}
-	origTree := sessionWorktree
-	t.Cleanup(func() { sessionWorktree = origTree })
-	sessionWorktree = func() string { return "" }
-
-	if pick, mine := pickSessionSeat(live, nil, fallbackB); pick.ItemID != "" || mine {
-		t.Fatalf("23:04 failure: session B must drop lease stamped A; got item=%q mine=%v", pick.ItemID, mine)
-	}
-	adopted := reworkSessionID(lease.Lease{SessionID: leaseA}, true, fallbackB)
-	pick, mine := pickSessionSeat(live, nil, adopted)
-	if pick.ItemID != "sty_9134015e" || !mine {
-		t.Fatalf("reworkSessionID must select the stamped lease; got item=%q mine=%v", pick.ItemID, mine)
+	if got := reworkSessionID("  ", fallbackB); got != fallbackB {
+		t.Fatalf("blank engaged session = %q, want fallback %q", got, fallbackB)
 	}
 }
 
@@ -157,7 +137,8 @@ func (nopSession) Cancel() error    { return nil }
 func (nopSession) Captured() []byte { return nil }
 
 // coderAllocatedRepo builds a repo whose in_progress step allocates agent=coder
-// and acquires a live seat stamped with sessionID (sty_7567f047 AC1 fixture).
+// and records the story engaged from the repo's tree by sessionID (sty_7567f047
+// AC1 fixture).
 func coderAllocatedRepo(t *testing.T, sessionID string) (repo, storyID string) {
 	t.Helper()
 	repo = tempRepo(t)
@@ -213,22 +194,17 @@ requires = ["coded"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
-		ItemID: story.ID, Kind: "story", Owner: lease.ResolveOwner(),
-		State: "in_progress", StorySeat: true, Worktree: repo, SessionID: sessionID,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Leases.Confirm(ctx, story.ID, "in_progress"); err != nil {
-		t.Fatal(err)
-	}
+	recordEngagementOn(t, db, story.ID, "in_progress", repo, sessionID)
 	return repo, story.ID
 }
 
-func TestReworkSeatResolvesStampedLease(t *testing.T) {
-	leaseA := "a4de0ec7-5809-4d35-8356-9f7c01769098"
+// TestReworkAdoptsTheEngagedSession: the relay adopts the session the story was
+// engaged from (its working_on row), so the coder's hook resolves that story as
+// its own. The tree decides the engagement; the session only decides Mine.
+func TestReworkAdoptsTheEngagedSession(t *testing.T) {
+	engagedA := "a4de0ec7-5809-4d35-8356-9f7c01769098"
 	fallbackB := "31261381-b59d-49af-8306-a8a2c925a9fe"
-	repo, storyID := coderAllocatedRepo(t, leaseA)
+	repo, storyID := coderAllocatedRepo(t, engagedA)
 
 	origTree := sessionWorktree
 	t.Cleanup(func() { sessionWorktree = origTree })
@@ -238,36 +214,35 @@ func TestReworkSeatResolvesStampedLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l, err := db.Leases.Get(context.Background(), storyID)
+	rows, _, err := db.Ledger.ListNewest(context.Background(), ledger.ListFilter{StoryID: storyID, Kind: ledger.KindWorkingOn, Limit: 50})
 	_ = db.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
-	sid := reworkSessionID(l, true, fallbackB)
-	if sid != leaseA {
-		t.Fatalf("reworkSessionID = %q, want lease %q", sid, leaseA)
+	w, ok := verb.LatestWorkingOn(rows, "")
+	if !ok {
+		t.Fatal("no working_on row recorded")
+	}
+	sid := reworkSessionID(w.Session, fallbackB)
+	if sid != engagedA {
+		t.Fatalf("reworkSessionID = %q, want engaged %q", sid, engagedA)
 	}
 
 	t.Setenv(config.SessionEnv, sid)
-	info, engaged, err := resolveSeat(false, bindSessionID(nil))
+	info, engaged, _, err := resolveEngagements(bindSessionID(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !engaged || info.ItemID != storyID || !info.Mine {
 		t.Fatalf("hook with adopted session: engaged=%v item=%q mine=%v", engaged, info.ItemID, info.Mine)
 	}
-	// Verb seat closure uses the same id.
-	info2, engaged2, err := resolveSeat(true, sid)
-	if err != nil || !engaged2 || info2.ItemID != storyID {
-		t.Fatalf("verb seat with adopted session: engaged=%v item=%q err=%v", engaged2, info2.ItemID, err)
-	}
 
 	t.Setenv(config.SessionEnv, fallbackB)
-	_, engagedB, err := resolveSeat(false, bindSessionID(nil))
+	info, engaged, _, err = resolveEngagements(bindSessionID(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if engagedB {
-		t.Fatal("old behaviour (session B): must not engage a lease stamped with session A")
+	if !engaged || info.ItemID != storyID || info.Mine {
+		t.Fatalf("another session in the same tree resolves the tree's story, not as its own: engaged=%v item=%q mine=%v", engaged, info.ItemID, info.Mine)
 	}
 }

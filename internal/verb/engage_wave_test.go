@@ -2,12 +2,9 @@ package verb_test
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
-	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -63,9 +60,7 @@ requires = ["coded"]
 `)
 }
 
-// wireEngageWave wires the fixture workflow with leases and the epic seat mode
-// (seat key = parent_id), so wave-eligible siblings can co-engage from distinct
-// worktrees. It returns the store for lease assertions.
+// wireEngageWave wires the fixture workflow. It returns the store.
 func wireEngageWave(t *testing.T, schedule string) *store.DB {
 	t.Helper()
 	return wireEngageWaveWith(t, engageWaveWF(schedule))
@@ -75,14 +70,12 @@ func wireEngageWave(t *testing.T, schedule string) *store.DB {
 func wireEngageWaveWith(t *testing.T, wf map[string]string) *store.DB {
 	t.Helper()
 	withWiring(t)
-	db := wireWithWorkflowsStore(t, wf)
-	verb.SetEngagementMode(config.Config{Engagement: config.EngagementConfig{Parallel: config.ParallelEpic}})
-	return db
+	return wireWithWorkflowsStore(t, wf)
 }
 
 // engageEpic makes the container and returns a child factory: each child carries
-// the epic: theme tag AND parent_id, so wave membership and seat arbitration both
-// see it.
+// the epic: theme tag AND parent_id, so wave membership and the sequential
+// check both see it.
 func engageWaveEpic(t *testing.T) (workitem.Item, func(tags ...string) workitem.Item) {
 	t.Helper()
 	epic := waveEpic(t)
@@ -93,20 +86,6 @@ func engageWaveEpic(t *testing.T) (workitem.Item, func(tags ...string) workitem.
 			"tags":      append([]string{"epic:w"}, tags...),
 		})
 	}
-}
-
-func leaseHeld(t *testing.T, db *store.DB, id string) bool {
-	t.Helper()
-	leases, err := db.Leases.List(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, l := range leases {
-		if l.ItemID == id {
-			return true
-		}
-	}
-	return false
 }
 
 func wantContains(t *testing.T, err error, parts ...string) {
@@ -122,17 +101,17 @@ func wantContains(t *testing.T, err error, parts ...string) {
 }
 
 // AC1: under schedule=parallel a child waiting on a non-terminal dependency is
-// refused, the error names the dependency, and the refusal takes no seat.
+// refused, the error names the dependency, and the refused child does not perform.
 func TestEngageRefusesChildWaitingOnDependency(t *testing.T) {
-	db := wireEngageWave(t, "parallel")
+	wireEngageWave(t, "parallel")
 	_, child := engageWaveEpic(t)
 	dep := child()
 	waiting := child("depends-on:" + dep.ID)
 
 	err := setStatus(t, waiting.ID, "plan")
 	wantContains(t, err, dep.ID, "not in the wave")
-	if leaseHeld(t, db, waiting.ID) {
-		t.Errorf("a refused engagement must not take a seat")
+	if isPerforming(t, waiting.ID) {
+		t.Errorf("a refused engagement must not perform")
 	}
 	got, _ := verb.Dispatch(context.Background(), "story-get", []byte(`{"id":"`+waiting.ID+`"}`))
 	if !strings.Contains(string(got), `"status":"backlog"`) {
@@ -145,25 +124,28 @@ func TestEngageRefusesChildWaitingOnDependency(t *testing.T) {
 	}
 }
 
-// AC1: two wave-eligible siblings engage from two worktrees; the second from the
-// first's worktree is still the one-engagement-per-tree error.
-func TestEngageWaveEligibleSiblingsNeedDistinctWorktrees(t *testing.T) {
+// AC1: two wave-eligible siblings both engage, from one tree or two: nothing
+// holds a tree.
+func TestEngageWaveEligibleSiblingsBothPerform(t *testing.T) {
 	treeA, treeB := twoWorktrees(t)
 	chdir(t, treeA)
 	wireEngageWave(t, "parallel")
 	_, child := engageWaveEpic(t)
-	a, b := child(), child()
+	a, b, c := child(), child(), child()
 
-	if err := setStatus(t, a.ID, "plan"); err != nil {
-		t.Fatalf("first sibling: %v", err)
-	}
-	err := setStatus(t, b.ID, "plan")
-	if !errors.Is(err, lease.ErrTreeConflict) {
-		t.Fatalf("second sibling from the first's tree: want ErrTreeConflict, got %v", err)
+	for _, id := range []string{a.ID, b.ID} {
+		if err := setStatus(t, id, "plan"); err != nil {
+			t.Fatalf("sibling %s from the first tree: %v", id, err)
+		}
 	}
 	chdir(t, treeB)
-	if err := setStatus(t, b.ID, "plan"); err != nil {
-		t.Fatalf("second sibling from its own tree: %v", err)
+	if err := setStatus(t, c.ID, "plan"); err != nil {
+		t.Fatalf("sibling from its own tree: %v", err)
+	}
+	for _, id := range []string{a.ID, b.ID, c.ID} {
+		if !isPerforming(t, id) {
+			t.Errorf("%s must be performing", id)
+		}
 	}
 }
 
@@ -235,9 +217,9 @@ func TestEngageUnscheduledContainerIsParallelByDefault(t *testing.T) {
 	}
 }
 
-// AC1 (seat): with no schedule setting, under [engagement] parallel = "epic",
-// siblings of an epic hold seats alongside each other from distinct worktrees.
-func TestEngageUnscheduledSiblingsHoldSeatsFromDistinctWorktrees(t *testing.T) {
+// AC1: with no schedule setting, siblings of an epic perform alongside each
+// other from distinct worktrees.
+func TestEngageUnscheduledSiblingsPerformFromDistinctWorktrees(t *testing.T) {
 	treeA, treeB := twoWorktrees(t)
 	chdir(t, treeA)
 	wireEngageWave(t, "")
@@ -249,50 +231,7 @@ func TestEngageUnscheduledSiblingsHoldSeatsFromDistinctWorktrees(t *testing.T) {
 	}
 	chdir(t, treeB)
 	if err := setStatus(t, b.ID, "plan"); err != nil {
-		t.Fatalf("an unscheduled epic's second sibling must hold a seat from its own worktree: %v", err)
-	}
-}
-
-// AC1/AC2 (seat key): [engagement] parallel stays the only switch that lets
-// siblings share a seat, and the route schedule only narrows it — a child of a
-// sequential epic keys on its own id even under epic mode, so siblings conflict.
-func TestSeatKeyFollowsTheContainerSchedule(t *testing.T) {
-	cases := []struct {
-		name       string
-		wf         map[string]string
-		mode       string
-		keyIsEpic  bool
-		lookupMiss bool
-	}{
-		{"default parallel, epic mode", engageWaveWFLine(""), config.ParallelEpic, true, false},
-		{"deprecated parallel, epic mode", engageWaveWF("parallel"), config.ParallelEpic, true, false},
-		{"sequential = true, epic mode", engageWaveWFLine("sequential = true\n"), config.ParallelEpic, false, false},
-		{"deprecated sequential, epic mode", engageWaveWF("sequential"), config.ParallelEpic, false, false},
-		{"default parallel, none mode", engageWaveWFLine(""), config.ParallelNone, false, false},
-		{"unresolvable container keeps the parent key", engageWaveWFLine("sequential = true\n"), config.ParallelEpic, true, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			withWiring(t)
-			wireWithWorkflows(t, tc.wf)
-			verb.SetEngagementMode(config.Config{Engagement: config.EngagementConfig{Parallel: tc.mode}})
-			epic, child := engageWaveEpic(t)
-			c := child()
-			if tc.lookupMiss {
-				// A parent_id the store cannot resolve to an epic container: the
-				// schedule lookup fails and the key stays the mode's own.
-				c.ParentID = "sty_missing0"
-				c.Tags = nil
-				epic.ID = c.ParentID
-			}
-			want := c.ID
-			if tc.keyIsEpic {
-				want = epic.ID
-			}
-			if got := verb.SeatKeyFor(context.Background(), c); got != want {
-				t.Errorf("seat key = %q, want %q", got, want)
-			}
-		})
+		t.Fatalf("an unscheduled epic's second sibling must engage from its own worktree: %v", err)
 	}
 }
 

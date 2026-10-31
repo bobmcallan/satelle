@@ -19,7 +19,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/epicset"
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/substrate"
@@ -75,7 +74,7 @@ func buildUISnapshot(ctx context.Context, a *app.App) (*mirror.Snapshot, error) 
 }
 
 // buildUIDrainSnapshot is the end-of-verb light push (sty_3562c820): stories /
-// tasks / executions / seats / identity plus a merge of recent ledger events.
+// tasks / executions / engagements / identity plus a merge of recent ledger events.
 // Doc and story-doc bodies are omitted so the payload fits uiDrainBudget; the
 // 5-minute reconcile (full snapshot via workspace add) remains the repair path.
 func buildUIDrainSnapshot(ctx context.Context, a *app.App) (*mirror.Snapshot, error) {
@@ -191,10 +190,8 @@ func buildUISnapshotOpts(ctx context.Context, a *app.App, drain bool) (*mirror.S
 		}
 	}
 
-	if a.Store.Leases != nil {
-		if seats, err := listSeatsJSON(ctx, a); err == nil {
-			snap.Seats = seats
-		}
+	if rows, err := listEngagementsJSON(ctx, a); err == nil {
+		snap.Engagements = rows
 	}
 
 	snap.Waves = listWavesJSON(ctx, items)
@@ -235,7 +232,7 @@ func buildUISnapshotOpts(ctx context.Context, a *app.App, drain bool) (*mirror.S
 
 	if drain {
 		// Explicit partition set: omitted kinds stay untouched on the mirror.
-		snap.Kinds = []string{"story", "task", "execution", "seat", "wave", "identity"}
+		snap.Kinds = []string{"story", "task", "execution", "engagement", "wave", "identity"}
 		snap.MergeKinds = []string{"ledger_event"}
 	}
 
@@ -386,70 +383,66 @@ func listProgressJSON(ctx context.Context, a *app.App, items []workitem.Item, ha
 	return out, nil
 }
 
-func listSeatsJSON(ctx context.Context, a *app.App) ([]json.RawMessage, error) {
-	if a.Store.Leases == nil {
-		return nil, nil
-	}
+// listEngagementsJSON is the mirror's engagement partition: one row per item this
+// repo is performing, with the tree it was engaged from and, while a transition
+// is open, its phase and the dispatch running it (sty_9c782f0e).
+func listEngagementsJSON(ctx context.Context, a *app.App) ([]json.RawMessage, error) {
 	now := time.Now().UTC()
-	reaped, _ := a.Store.Leases.Reap(ctx)
-	// AC5/AC6 (sty_81caa41b): this is the web-push mirror's OWN seat listing,
-	// straight off a.Store rather than the verb dispatch seam story-seat-list
-	// uses — so a lease this call reaps (a driving session found dead) would
-	// otherwise never get a final driver_usage row, and a session's still-open
-	// Pending row would never get swept, if the operator only ever looks at
-	// the web UI and never runs `satelle story seat`.
-	verb.RecordDriverUsageOnReap(ctx, reaped, now)
 	verb.SweepPendingDriverUsage(ctx, now)
-	all, err := a.Store.Leases.List(ctx)
+	view, err := readEngagements(ctx, a)
 	if err != nil {
 		return nil, err
+	}
+	open, err := a.Store.Ledger.ListOpenTransitions(ctx, "", now)
+	if err != nil {
+		return nil, err
+	}
+	kinds := make(map[string]string, len(view.Items))
+	for _, it := range view.Items {
+		kinds[it.ID] = string(it.Kind)
 	}
 	// Best-effort idle_timeout resolution per dispatched binding (sty_752c4ef2
 	// AC6): the mirror-side render needs it to decide the warn threshold, and
 	// the push-fed web has no other access to this repo's agents.toml. A
-	// missing/broken agents layer must never fail a seat push — it just omits
-	// idle_timeout on every row.
-	dataDir := a.PlaneDir()
-	agentsLayer, agentsErr := config.LoadAgents(dataDir)
-	out := make([]json.RawMessage, 0, len(all))
-	for _, l := range all {
+	// missing/broken agents layer omits idle_timeout on every row.
+	agentsLayer, agentsErr := config.LoadAgents(a.PlaneDir())
+	out := make([]json.RawMessage, 0, len(view.Live))
+	for _, e := range view.Live {
 		row := map[string]any{
-			"id":         l.ItemID,
-			"kind":       l.Kind,
-			"story_seat": l.StorySeat,
-			// Arbitration key + tree anchor, so the UI seat surface shows the
-			// same grouping as `satelle story seat` (sty_c098dc2d).
-			"seat_key":  l.SeatKey,
-			"worktree":  l.Worktree,
-			"owner":     l.Owner,
-			"state":     l.State,
-			"in_flight": lease.EffectiveInFlight(l, now),
-			"stale":     !lease.Alive(l, now),
+			"id":        e.ItemID,
+			"kind":      kinds[e.ItemID],
+			"worktree":  e.Worktree,
+			"session":   e.SessionID,
+			"state":     e.State,
+			"status":    e.StoryStatus,
+			"in_flight": e.InFlight,
 		}
-		// In-flight DISPATCH metadata (sty_752c4ef2 AC6): which agent binding
-		// and model are running, the OS pid, and the last real event — the web
-		// story row's running indicator renders straight from these, the same
-		// fields `satelle story seat` (AC7) prints.
-		if d, ok := lease.EffectiveActivityDetail(l, now); ok {
-			row["agent"] = d.Agent
-			row["model"] = d.Model
-			row["pid"] = d.Pid
-			row["last_event"] = d.EventLabel
-			row["last_event_at"] = d.EventAt
-			row["event_count"] = d.EventCount
-			if agentsErr == nil {
-				if b, ok := agentsLayer.NamedBinding(d.Agent); ok {
-					if idle, ierr := agentsLayer.ResolveIdleTimeout(b, config.DefaultIdleTimeout); ierr == nil {
-						row["idle_timeout_ns"] = int64(idle)
+		if t, ok := open[e.ItemID]; ok {
+			if t.Agent != "" {
+				row["agent"] = t.Agent
+				row["model"] = t.Model
+				row["pid"] = t.AgentPid
+				row["last_event_at"] = t.AgentAt
+				if d, ok := latestDispatchEvent(e.ItemID, t.Agent); ok {
+					row["last_event"] = d.EventLabel
+					if d.EventAt.After(t.AgentAt) {
+						row["last_event_at"] = d.EventAt
+					}
+				}
+				if agentsErr == nil {
+					if b, ok := agentsLayer.NamedBinding(t.Agent); ok {
+						if idle, ierr := agentsLayer.ResolveIdleTimeout(b, config.DefaultIdleTimeout); ierr == nil {
+							row["idle_timeout_ns"] = int64(idle)
+						}
 					}
 				}
 			}
-		}
-		if label, idx, total, elapsed, ok := lease.EffectiveActivity(l, now); ok {
-			row["activity"] = label
-			row["activity_index"] = idx
-			row["activity_total"] = total
-			row["activity_started_at"] = now.Add(-elapsed)
+			if t.Label != "" {
+				row["activity"] = t.Label
+				row["activity_index"] = t.Index
+				row["activity_total"] = t.Total
+				row["activity_started_at"] = t.PhaseAt
+			}
 		}
 		b, err := json.Marshal(row)
 		if err != nil {

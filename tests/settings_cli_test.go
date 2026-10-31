@@ -67,29 +67,30 @@ func TestSettingsRepoCLIEndToEnd(t *testing.T) {
 		t.Fatalf("unknown key should fail: err=%v out=%s", err, out)
 	}
 
-	// The seat concurrency mode is on the surface an agent enumerates, and its
+	// The concurrency limit is on the surface an agent enumerates, and its
 	// section is one `satelle init` does not seed — so the write must CREATE
-	// [engagement], not silently drop the edit (sty_050f3a19 AC1/AC2).
-	if out, _ := run("settings", "engagement.parallel"); strings.TrimSpace(out) != "none" {
-		t.Fatalf("unset engagement.parallel must resolve to the default: %q", out)
+	// [engagement], not silently drop the edit (sty_050f3a19 AC1/AC2,
+	// sty_9c782f0e).
+	if out, _ := run("settings", "engagement.limit"); strings.TrimSpace(out) != "0" {
+		t.Fatalf("unset engagement.limit must resolve to the default (unlimited, 0): %q", out)
 	}
-	if !strings.Contains(mustList(t, run), "engagement.parallel = none") {
-		t.Fatalf("list must carry engagement.parallel:\n%s", mustList(t, run))
+	if !strings.Contains(mustList(t, run), "engagement.limit = 0") {
+		t.Fatalf("list must carry engagement.limit:\n%s", mustList(t, run))
 	}
-	if out, err := run("settings", "engagement.parallel", "epic"); err != nil {
-		t.Fatalf("write engagement.parallel: %v\n%s", err, out)
+	if out, err := run("settings", "engagement.limit", "1"); err != nil {
+		t.Fatalf("write engagement.limit: %v\n%s", err, out)
 	}
 	saved, _ = os.ReadFile(cfgPath)
-	if !strings.Contains(string(saved), "[engagement]") || !strings.Contains(string(saved), `parallel = "epic"`) {
+	if !strings.Contains(string(saved), "[engagement]") || !strings.Contains(string(saved), "limit = 1") {
 		t.Fatalf("engagement write did not create the section:\n%s", saved)
 	}
-	if out, _ := run("settings", "engagement.parallel"); strings.TrimSpace(out) != "epic" {
+	if out, _ := run("settings", "engagement.limit"); strings.TrimSpace(out) != "1" {
 		t.Fatalf("read back after write: %q", out)
 	}
-	// A value outside the closed set is refused, and the file is left alone.
+	// A value that is not a number is refused, and the file is left alone.
 	before, _ := os.ReadFile(cfgPath)
-	if out, err := run("settings", "engagement.parallel", "all"); err == nil || !strings.Contains(out, "none | epic") {
-		t.Fatalf("bogus mode must be refused naming the modes: err=%v out=%s", err, out)
+	if _, err := run("settings", "engagement.limit", "all"); err == nil {
+		t.Fatal("a non-numeric limit must be refused")
 	}
 	if after, _ := os.ReadFile(cfgPath); string(after) != string(before) {
 		t.Fatalf("refused write must not touch the file:\n%s", after)

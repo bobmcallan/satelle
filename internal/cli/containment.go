@@ -182,8 +182,8 @@ func foreignTreeTarget(anchor string, candidates []string) (path string, foreign
 
 // treeOf is the git working tree an edit target lives in, "" when it is in none
 // (temp, scratch) or there is no target (a Bash event). It is how a session that
-// holds seats in several worktrees attributes an edit to the seat of the tree
-// the edit lands in (sty_42231b74); gitRootOf already walks up from the nearest
+// drives stories in several worktrees attributes an edit to the story engaged
+// from the tree the edit lands in (sty_42231b74); gitRootOf already walks up from the nearest
 // existing directory, so a file not yet created still resolves.
 func treeOf(target string) string {
 	root := sessionAnchor()

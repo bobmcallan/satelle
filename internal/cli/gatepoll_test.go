@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/bobmcallan/satelle/internal/gatehandle"
 	"github.com/bobmcallan/satelle/internal/help"
@@ -63,7 +62,7 @@ func TestNoSurfaceLetsTheDriverPollAHandle(t *testing.T) {
 
 	reads := [][]string{
 		{"story", "get", id}, {"story", "list"}, {"story", "route", id}, {"story", "docs", id},
-		{"story", "messages", id}, {"story", "seat"}, {"story", "cost", id}, {"story", "diff", id},
+		{"story", "messages", id}, {"story", "cost", id}, {"story", "diff", id},
 		{"story", "proof", id}, {"task", "list"}, {"execution", "list"}, {"ledger", "list"},
 		{"ledger", "list", "--story", id}, {"status"}, {"doctor"}, {"runtime", "list"},
 		{"workflow", "list"}, {"doc", "list"},
@@ -76,7 +75,7 @@ func TestNoSurfaceLetsTheDriverPollAHandle(t *testing.T) {
 	}
 
 	// Every registered read verb, asked about the story and about nothing.
-	readSuffixes := []string{"-get", "-list", "-docs", "-doc", "-messages", "-route", "-seat", "-diff", "-cost", "-proof", "-actual"}
+	readSuffixes := []string{"-get", "-list", "-docs", "-doc", "-messages", "-route", "-diff", "-cost", "-proof", "-actual"}
 	for _, name := range verb.Catalog() {
 		isRead := false
 		for _, s := range readSuffixes {
@@ -183,12 +182,11 @@ func TestGateWaitTextNamesNotificationPathAndForbidsPolling(t *testing.T) {
 
 func engagedFormForTest(t *testing.T) string {
 	t.Helper()
-	now := time.Now().UTC()
-	info := seatInfo{
-		ItemID: "sty_x", State: "in_progress", HeartbeatAt: now.Add(-6 * time.Second), Engaged: true,
+	info := engagement{
+		ItemID: "sty_x", State: "in_progress", Engaged: true,
 		Advance: []wfdot.Advance{{To: "integration", Gates: []string{"satelle-code-ac-review"}}},
 	}
-	out := formatEngagedPrompt(info, now)
+	out := formatEngagedPrompt(info)
 	if out == "" {
 		t.Fatal("the engaged form degraded to nothing: the note must survive the ceiling ladder")
 	}

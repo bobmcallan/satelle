@@ -381,10 +381,10 @@ next:
 }
 
 // reworkCoderPolicy is the coder side's permission gate: a mutator passes only
-// when the coder's OWN grant admits mutators AND the seat is live in a
-// performing state the route allocates to that binding. Both clauses are
+// when the coder's OWN grant admits mutators AND the story performs at a
+// committed status the route allocates to that binding. Both clauses are
 // satelle's — there is no human at this prompt to ask.
-func reworkCoderPolicy(binding, tools string, seat func() (seatInfo, bool, error), onDecision func(agentcli.PermissionRequest, bool, string)) agentcli.PermissionPolicy {
+func reworkCoderPolicy(binding, tools string, resolve func() (engagement, bool, error), onDecision func(agentcli.PermissionRequest, bool, string)) agentcli.PermissionPolicy {
 	grantAllows := agentcli.GrantAllowsMutators(tools)
 	if onDecision == nil {
 		onDecision = func(agentcli.PermissionRequest, bool, string) {}
@@ -398,11 +398,11 @@ func reworkCoderPolicy(binding, tools string, seat func() (seatInfo, bool, error
 			onDecision(req, false, "grant")
 			return agentcli.PermissionDecision{Allow: false}
 		}
-		if seat == nil {
+		if resolve == nil {
 			onDecision(req, false, "policy")
 			return agentcli.PermissionDecision{Allow: false}
 		}
-		info, _, err := seat()
+		info, _, err := resolve()
 		if err != nil || !dispatchedPerformerPermitted(info, binding) {
 			onDecision(req, false, "policy")
 			return agentcli.PermissionDecision{Allow: false}
@@ -413,7 +413,7 @@ func reworkCoderPolicy(binding, tools string, seat func() (seatInfo, bool, error
 }
 
 // reworkConsultPolicy is the consultant side's ceiling: mutators are denied
-// outright, whatever the seat says. Its binding grant is already read-only; the
+// outright, whatever the story's status. Its binding grant is already read-only; the
 // policy is the second, non-negotiable refusal, because a consultant that can
 // edit is a reviewer marking its own work.
 func reworkConsultPolicy(onDecision func(agentcli.PermissionRequest, bool, string)) agentcli.PermissionPolicy {

@@ -139,7 +139,7 @@ harness wiring, and 14-transcript.md records `absent .claude/settings.json; abse
 .grok/hooks/satelle.json; absent .pi/extensions/satelle.ts` ahead of every pass.
 The engaged pass set the story and ran cursor-agent under one shared
 `SATELLE_SESSION` (`dogfood-cursor-sty_7d098d50`), so cursor's hook processes saw
-the seat the story set. Ordering: context, stop (pty), the four refusals, engaged.
+the story it engaged. Ordering: context, stop (pty), the four refusals, engaged.
 Redaction as above (including cursor's own `Co-authored-by` trailer address in
 14-refuse-git-commit.out, which cursor-agent appended to the `git commit` it ran);
 the dogfood sandbox's `repo-1791624060` directory name is kept.

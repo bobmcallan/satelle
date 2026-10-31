@@ -156,16 +156,16 @@ func reworkRepo(t *testing.T, rounds, consultReplies, coderReplies string) (repo
 }
 
 // reworkRepoWith is reworkRepo with a pluggable peer writer and an optional
-// lease session stamped at engage (tempRepo clears SATELLE_SESSION, so a
-// caller cannot set the lease id before the helper runs).
-func reworkRepoWith(t *testing.T, rounds, consultReplies, coderReplies string, writePeer func(*testing.T, string, string), leaseSession string) (repo, id string) {
+// session the story is engaged under (tempRepo clears SATELLE_SESSION, so a
+// caller cannot set the session before the helper runs).
+func reworkRepoWith(t *testing.T, rounds, consultReplies, coderReplies string, writePeer func(*testing.T, string, string), engagedSession string) (repo, id string) {
 	t.Helper()
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not available")
 	}
 	repo = tempRepo(t)
-	if leaseSession != "" {
-		t.Setenv(config.SessionEnv, leaseSession)
+	if engagedSession != "" {
+		t.Setenv(config.SessionEnv, engagedSession)
 	}
 	t.Chdir(repo)
 	wfDir := filepath.Join(repo, ".satelle", "workflows")
@@ -384,17 +384,17 @@ func TestStoryReworkRefusesAStepWithNoLoop(t *testing.T) {
 	}
 }
 
-// TestStoryReworkExportsLeaseSessionAndRelayMarkerOnlyOnCoder drives the real
-// verb (sty_7567f047 AC1/AC3): lease stamped sess-lease at engage, process
+// TestStoryReworkExportsEngagedSessionAndRelayMarkerOnlyOnCoder drives the real
+// verb (sty_7567f047 AC1/AC3): the story engaged under sess-engaged, process
 // SATELLE_SESSION switched to sess-other before rework, env-echo peers prove
-// the coder spawn got relay=coder + session=sess-lease and the consultant got
+// the coder spawn got relay=coder + session=sess-engaged and the consultant got
 // an empty relay marker.
-func TestStoryReworkExportsLeaseSessionAndRelayMarkerOnlyOnCoder(t *testing.T) {
+func TestStoryReworkExportsEngagedSessionAndRelayMarkerOnlyOnCoder(t *testing.T) {
 	_, id := reworkRepoWith(t, "1",
 		"NOT READY: need env proof",
-		"fixed under adopted seat",
+		"fixed under the adopted session",
 		reworkEnvEchoPeer,
-		"sess-lease",
+		"sess-engaged",
 	)
 	t.Setenv(config.SessionEnv, "sess-other")
 
@@ -416,8 +416,8 @@ func TestStoryReworkExportsLeaseSessionAndRelayMarkerOnlyOnCoder(t *testing.T) {
 	if coderBody == "" || consultBody == "" {
 		t.Fatalf("want both roles in messages, got: %+v", rows)
 	}
-	if !strings.Contains(coderBody, "relay=coder") || !strings.Contains(coderBody, "session=sess-lease") {
-		t.Fatalf("coder must inherit relay marker and adopted lease session, got: %q", coderBody)
+	if !strings.Contains(coderBody, "relay=coder") || !strings.Contains(coderBody, "session=sess-engaged") {
+		t.Fatalf("coder must inherit relay marker and the adopted engaged session, got: %q", coderBody)
 	}
 	if !strings.Contains(consultBody, "relay= ") {
 		t.Fatalf("consultant must show empty relay marker (relay= ), got: %q", consultBody)

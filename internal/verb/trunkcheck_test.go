@@ -357,8 +357,8 @@ func TestTrunkTransitionStates(t *testing.T) {
 			if len(e.gater.seen) != 0 {
 				t.Fatal("a refused engage still dispatched a gate")
 			}
-			if active, _ := e.db.Leases.AnyActive(context.Background()); active {
-				t.Fatal("a refused engage left the seat held")
+			if len(e.rows(t, it.ID, ledger.KindWorkingOn)) != 0 {
+				t.Fatal("a refused engage recorded presence")
 			}
 			if len(e.rows(t, it.ID, ledger.KindEngagementBaseline)) != 0 {
 				t.Fatal("a refused engage recorded a baseline")
@@ -444,9 +444,6 @@ func TestTrunkCreateRefusalLeavesNothingBehind(t *testing.T) {
 	}
 	if len(list) != 0 {
 		t.Fatalf("a refused create inserted %d story row(s)", len(list))
-	}
-	if active, _ := e.db.Leases.AnyActive(context.Background()); active {
-		t.Fatal("a refused create took a lease")
 	}
 	if n, _ := e.db.Ledger.Count(context.Background()); n != ledgerBefore {
 		t.Fatalf("a refused create wrote %d ledger row(s)", n-ledgerBefore)

@@ -164,74 +164,51 @@ func writeConfig(t *testing.T, committed string) (Config, error) {
 	return cfg, err
 }
 
-// TestEngagementParallelDefault (sty_c098dc2d AC1): an absent [engagement]
-// section, and an explicit "none", both resolve to single occupancy. The zero
-// value matters most — every repo that never heard of the mode keeps today's
-// behaviour with no config change.
-func TestEngagementParallelDefault(t *testing.T) {
+// TestEngagementLimitDefault (sty_9c782f0e AC4): an absent [engagement]
+// section, an explicit 0, and a misspelled section all resolve to unlimited.
+// The zero value matters most — a repo that never configured a limit performs
+// any number of stories at once.
+func TestEngagementLimitDefault(t *testing.T) {
 	var zero Config
-	if got := zero.ResolveEngagementParallel(); got != ParallelNone {
-		t.Errorf("zero Config mode = %q, want %q", got, ParallelNone)
+	if got := zero.ResolveEngagementLimit(); got != 0 {
+		t.Errorf("zero Config limit = %d, want 0 (unlimited)", got)
 	}
-	cfg, err := writeConfig(t, "log_level = \"info\"\n")
-	if err != nil {
-		t.Fatalf("absent [engagement] must load: %v", err)
-	}
-	if got := cfg.ResolveEngagementParallel(); got != ParallelNone {
-		t.Errorf("absent section mode = %q, want %q", got, ParallelNone)
-	}
-	cfg, err = writeConfig(t, "[engagement]\nparallel = \"none\"\n")
-	if err != nil {
-		t.Fatalf("explicit none must load: %v", err)
-	}
-	if got := cfg.ResolveEngagementParallel(); got != ParallelNone {
-		t.Errorf("explicit none = %q", got)
-	}
-	// A MISSPELLED section is ignored by bare toml decoding and so fails closed
-	// to the default — a documented property, pinned so it cannot silently
-	// become "unknown mode" or, worse, an accidental opt-in.
-	cfg, err = writeConfig(t, "[engagment]\nparallel = \"epic\"\n")
-	if err != nil {
-		t.Fatalf("typo'd section must not error: %v", err)
-	}
-	if got := cfg.ResolveEngagementParallel(); got != ParallelNone {
-		t.Errorf("typo'd section mode = %q, want %q (fail closed)", got, ParallelNone)
+	for _, src := range []string{
+		"log_level = \"info\"\n",
+		"[engagement]\nlimit = 0\n",
+		"[engagment]\nlimit = 2\n",
+	} {
+		cfg, err := writeConfig(t, src)
+		if err != nil {
+			t.Fatalf("%q must load: %v", src, err)
+		}
+		if got := cfg.ResolveEngagementLimit(); got != 0 {
+			t.Errorf("%q limit = %d, want 0 (unlimited)", src, got)
+		}
 	}
 }
 
-// TestEngagementParallelValidation (sty_c098dc2d AC6): the mode set is CLOSED.
-// "epic" loads; anything else — including "all", a recorded non-goal, and a
-// case variant — is refused at load naming the supported modes.
-func TestEngagementParallelValidation(t *testing.T) {
-	cfg, err := writeConfig(t, "[engagement]\nparallel = \"epic\"\n")
+// TestEngagementLimitValidation (sty_9c782f0e AC4): a positive limit loads as
+// written; a negative one is refused at load naming the offending value. The
+// retired parallel key still loads, so `satelle init` can rewrite it.
+func TestEngagementLimitValidation(t *testing.T) {
+	cfg, err := writeConfig(t, "[engagement]\nlimit = 3\n")
 	if err != nil {
-		t.Fatalf("epic must load: %v", err)
+		t.Fatalf("limit = 3 must load: %v", err)
 	}
-	if got := cfg.ResolveEngagementParallel(); got != ParallelEpic {
-		t.Errorf("epic mode = %q", got)
+	if got := cfg.ResolveEngagementLimit(); got != 3 {
+		t.Errorf("limit = %d, want 3", got)
 	}
-	cfg, err = writeConfig(t, "[engagement]\nparallel = \"worktree\"\n")
+	_, err = writeConfig(t, "[engagement]\nlimit = -1\n")
+	if err == nil || !strings.Contains(err.Error(), "-1") || !strings.Contains(err.Error(), "limit") {
+		t.Errorf("limit = -1 must be refused naming the value, got %v", err)
+	}
+	cfg, err = writeConfig(t, "[engagement]\nparallel = \"epic\"\n")
 	if err != nil {
-		t.Fatalf("worktree must load: %v", err)
+		t.Fatalf("a retired parallel key must still load for the heal: %v", err)
 	}
-	if got := cfg.ResolveEngagementParallel(); got != ParallelWorktree {
-		t.Errorf("worktree mode = %q", got)
-	}
-	// Matching is exact — case variants are refused so the configured surface
-	// stays the one the docs name.
-	for _, bad := range []string{"all", "EPIC", "Epic", "sibling", "true"} {
-		_, err := writeConfig(t, "[engagement]\nparallel = \""+bad+"\"\n")
-		if err == nil {
-			t.Errorf("parallel = %q must be refused at load", bad)
-			continue
-		}
-		msg := err.Error()
-		if !strings.Contains(msg, ParallelNone) || !strings.Contains(msg, ParallelEpic) || !strings.Contains(msg, ParallelWorktree) {
-			t.Errorf("refusal for %q must name all three modes: %v", bad, err)
-		}
-		if !strings.Contains(msg, bad) {
-			t.Errorf("refusal for %q must quote the offending value: %v", bad, err)
-		}
+	if cfg.Engagement.Parallel != "epic" || cfg.ResolveEngagementLimit() != 0 {
+		t.Errorf("retired parallel = %q limit = %d, want epic and unlimited", cfg.Engagement.Parallel, cfg.ResolveEngagementLimit())
 	}
 }
 

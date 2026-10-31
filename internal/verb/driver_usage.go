@@ -12,7 +12,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/costview"
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -37,12 +36,6 @@ const (
 	DriverTriggerPark       = "park"
 	DriverTriggerClose      = "close"
 	DriverTriggerLate       = "late"
-	// DriverTriggerKill marks a row synthesised from a REAPED story-seat lease
-	// (sty_81caa41b AC5) — the driving session never ran its own park/close
-	// snapshot because it was killed (crash, Ctrl-C, OOM) rather than
-	// transitioning cleanly. Written by recordDriverUsageOnReap, not by the
-	// dead session itself.
-	DriverTriggerKill = "kill"
 )
 
 // driverCumulative is the harness-reported running total at one snapshot — the
@@ -204,7 +197,7 @@ type DriverUsagePayload struct {
 
 // driverUsageTrigger classifies the enacted transition from → to for
 // DriverUsagePayload.Trigger, reusing the same shape-derived predicates the
-// lease/engagement code already applies (statusIsParkState, targetIsExitState,
+// engagement code already applies (statusIsParkState, targetIsExitState,
 // storyStatusIsEngaging) rather than a second status-literal classification.
 // Engage means entering an engaged state from one that was not engaged; a move
 // between two engaged states (in_progress → integration) is a transition.
@@ -230,9 +223,9 @@ func driverUsageTrigger(ctx context.Context, item workitem.Item, from, to string
 // session or reading the record land as an available:false row via the
 // snapshotter, not a Go error the caller has to handle.
 //
-// A seat acquired with no transition ever following it (round 1's named gap)
-// is DELIBERATELY left unseeded: a coder-round-2 attempt at a seat-acquire
-// baseline hook (called from acquireEngagementLease, single_story.go, before
+// An engagement with no transition ever following it (round 1's named gap)
+// is DELIBERATELY left unseeded: a coder-round-2 attempt at an engage-time
+// baseline hook (called from the engagement path in single_story.go, before
 // any guarded transition write) broke TestTransitionAppendFailureRollsBackRow
 // — a pre-commit best-effort Append there shares the same ledgerStore as the
 // guarded transition write, so it can consume a transient failure meant for
@@ -243,12 +236,11 @@ func driverUsageTrigger(ctx context.Context, item workitem.Item, from, to string
 // reconciliation reports as unattributed rather than losing it silently.
 // Closing the round-1 gap exactly as named would need a write path that
 // cannot compete with the guarded transition's own append — worth a
-// dedicated design, not a bolt-on on the lease-acquire hot path.
+// dedicated design, not a bolt-on on the engage hot path.
 //
-// AC5 (mid-turn kill) is handled by recordDriverUsageOnReap, called from
-// story-seat-list's Reap sweep, not from this function — a killed session
-// cannot call back into its own transition path, so the row has to come from
-// whoever next reaps its dead lease. AC6 (late-become-readable usage) covers
+// A killed session cannot call back into its own transition path, so its last
+// stretch is recorded only when a later snapshot of the same session reads it.
+// AC6 (late-become-readable usage) covers
 // TWO distinct gaps, both handled below via the same Late-row mechanism, but
 // with different confidence bounds:
 //   - a record that failed to read outright (Available=false) and later
@@ -595,8 +587,8 @@ func recordLateDriverUsageCatchup(ctx context.Context, sessionID, harness string
 // Rule T, generalised (sty_81caa41b Revision 5): a turn index a fast-moving
 // driving session can also close a SIBLING story inside the same underlying
 // harness turn — two Pending rows, from two different stories, both naming
-// the same idx — or have it claimed first by a kill row (a dead seat reaped
-// before this resolution ran) or a gap-late row. Before crediting, this
+// the same idx — or have it claimed first by a kill row (a dead session's
+// usage closed before this resolution ran) or a gap-late row. Before crediting, this
 // checks the ONE shared claimed-turn set every delta-carrying row consults
 // (sessionClaimedTurns: the union of every AVAILABLE row's own
 // [BaseTurns,Turns) range, ordinary/Pending/Late/Kill alike). Whichever
@@ -723,7 +715,7 @@ func adjustBaseForClaimedTurns(base driverCumulative, breakdown []agentcli.Drive
 // so a Pending row buried under later rows would be invisible to it forever.
 // Scanning for every Pending row without a matching "<window_key>|late" row,
 // rather than only each session's latest row, finds it regardless. Called
-// from story-seat-list — an existing, frequently-invoked touchpoint — so a
+// from the UI snapshot — an existing, frequently-invoked touchpoint — so a
 // real "no next transition" tail still gets swept given enough ordinary
 // `satelle` usage, without a dedicated scheduler. Idempotent: once a Pending
 // row gains a matching late row (or is found to have no further growth yet),
@@ -775,139 +767,9 @@ func sweepPendingDriverUsage(ctx context.Context, now time.Time) {
 	}
 }
 
-// recordDriverUsageOnReap writes a final driver_usage row for each REAPED
-// story-seat lease (sty_81caa41b AC5): a driving session found dead by its
-// stale heartbeat/pid never ran its own park/close snapshot, so a session
-// killed mid-turn (crash, Ctrl-C, OOM) would otherwise leave its last
-// stretch of usage and wall time unrecorded entirely. Called from
-// story-seat-list right after Reap, which may run in a DIFFERENT process
-// than the dead session — this function cannot read that other process's
-// env to learn its harness, so it reads the harness off the session's own
-// most recent driver_usage row (the only place a dead session's executable
-// choice survives it); with no prior row at all there is nothing to name it
-// from, and the row is written adapter-unknown-unavailable rather than
-// guessed.
-func recordDriverUsageOnReap(ctx context.Context, reaped []lease.Lease, now time.Time) {
-	if ledgerStore == nil {
-		return
-	}
-	for _, l := range reaped {
-		if !l.StorySeat || strings.TrimSpace(l.ItemID) == "" || strings.TrimSpace(l.SessionID) == "" {
-			continue
-		}
-		sessionID := l.SessionID
-		prev, prevFound, prevAvail, prevAvailFound := sessionDriverUsageState(ctx, sessionID)
-
-		harness := agentcli.HarnessUnknown
-		if prevFound {
-			harness = prev.payload.Executable
-		}
-		repoRoot := l.Worktree
-		if strings.TrimSpace(repoRoot) == "" {
-			repoRoot = changeRecordRepoRoot()
-		}
-		snap := driverSnapshotter(harness, sessionID, repoRoot)
-
-		// The wall clock for a kill row runs from the latest of: this session's
-		// last recorded snapshot, or the lease's own heartbeat/acquire time — the
-		// best evidence of when the session was last known to be alive.
-		at := l.HeartbeatAt
-		if at.IsZero() {
-			at = l.AcquiredAt
-		}
-		if prevFound && prev.at.After(at) {
-			at = prev.at
-		}
-
-		payload := DriverUsagePayload{
-			SessionID: sessionID, Executable: harness, Model: snap.Model,
-			Trigger: DriverTriggerKill, From: l.State, To: l.State,
-			WindowKey:   fmt.Sprintf("%s|%s|%s", l.ItemID, sessionID, DriverTriggerKill),
-			WallSeconds: now.Sub(at).Seconds(),
-		}
-
-		if !snap.Available {
-			// AC5: no partial turn in the record either — unavailable plus the
-			// wall time, never a fabricated token figure.
-			payload.UnavailableReason = snap.UnavailableReason
-			payload.CostUnavailableReason = snap.CostUnavailableReason
-			appendDriverUsageRow(ctx, l.ItemID, payload, now)
-			continue
-		}
-
-		cum := cumulativeFromSnap(snap)
-		// The base to diff against is the session's latest AVAILABLE row, not
-		// necessarily its literal latest row: when the latest row is itself
-		// unavailable (e.g. a prior reap already wrote a no-partial-turn row
-		// for this same dead session), diffing against the current cumulative
-		// would either fabricate a huge delta (if this read's `cum` differs
-		// from a stale zero-base) or wrongly report "no partial turn" for
-		// real usage that accrued since the last KNOWN-GOOD point
-		// (sty_81caa41b Revision 4) — the same fix recordLateDriverUsageCatchup's
-		// lateBase already applies.
-		base := cum
-		baseTurns := snap.Turns
-		switch {
-		case prevFound && prev.payload.Available:
-			base = prev.payload.Cumulative
-			baseTurns = prev.payload.Turns
-		case prevAvailFound:
-			base = prevAvail.payload.Cumulative
-			baseTurns = prevAvail.payload.Turns
-		}
-		if len(snap.TurnBreakdown) > 0 {
-			// sty_81caa41b Revision 5: this kill row's range may span a turn
-			// index some OTHER delta-carrying row (a sibling story's ordinary
-			// delta, a Late row) has already claimed — exclude it rather than
-			// counting it a second time onto this dead session's tail.
-			base = adjustBaseForClaimedTurns(base, snap.TurnBreakdown, baseTurns, snap.Turns, sessionClaimedTurns(ctx, sessionID))
-		}
-		fresh := snap.FreshInputTokens - base.FreshInput
-		cacheRead := snap.CacheReadInputTokens - base.CacheRead
-		cacheWrite := snap.CacheCreationInputTokens - base.CacheWrite
-		output := snap.OutputTokens - base.Output
-		if fresh == 0 && cacheRead == 0 && cacheWrite == 0 && output == 0 {
-			// AC5: the record read successfully but reports nothing PAST the
-			// session's high-water mark (or, with no previous row at all,
-			// base is trivially the current cumulative) — no partial turn to
-			// attribute. An available row of invented zeros would read as a
-			// real measurement; this never is one.
-			payload.UnavailableReason = fmt.Sprintf("%s: no partial-turn usage in session record", harness)
-			payload.CostUnavailableReason = payload.UnavailableReason
-			appendDriverUsageRow(ctx, l.ItemID, payload, now)
-			continue
-		}
-		payload.Available = true
-		payload.AttributionReason = snap.SubagentNote
-		payload.Cumulative = cum
-		payload.BaseTurns, payload.Turns = baseTurns, snap.Turns
-		payload.FreshInput, payload.CacheRead, payload.CacheWrite, payload.Output = fresh, cacheRead, cacheWrite, output
-		stampModelCalls(&payload, snap, cum, base)
-		if cum.CostUSD != nil {
-			c := *cum.CostUSD
-			if base.CostUSD != nil {
-				c -= *base.CostUSD
-			}
-			payload.CostUSD = &c
-		} else {
-			payload.CostUnavailableReason = snap.CostUnavailableReason
-		}
-		appendDriverUsageRow(ctx, l.ItemID, payload, now)
-	}
-}
-
-// RecordDriverUsageOnReap is the exported entry point for callers outside
-// package verb that reap dead leases through their OWN store handle rather
-// than the verb dispatch seam (sty_81caa41b AC5) — e.g. the web-push seat
-// snapshot (internal/cli), which lists seats straight off app.App.Store.
-func RecordDriverUsageOnReap(ctx context.Context, reaped []lease.Lease, now time.Time) {
-	recordDriverUsageOnReap(ctx, reaped, now)
-}
-
-// SweepPendingDriverUsage is RecordDriverUsageOnReap's companion for AC6: a
-// caller outside package verb that reaps its own seats should also give any
-// still-open Pending driver_usage row a chance to settle at the same
-// touchpoint (see sweepPendingDriverUsage's doc comment).
+// SweepPendingDriverUsage gives any still-open Pending driver_usage row a
+// chance to settle (AC6) from a caller outside package verb (see
+// sweepPendingDriverUsage's doc comment).
 func SweepPendingDriverUsage(ctx context.Context, now time.Time) {
 	sweepPendingDriverUsage(ctx, now)
 }

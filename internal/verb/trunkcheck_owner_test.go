@@ -11,12 +11,11 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-// wireTrunkEpic is wireTrunk with the epic seat mode and a parent the stories
-// under test share, so two of them can be in flight from distinct trees.
+// wireTrunkEpic is wireTrunk with a parent the stories under test share, so two
+// of them can be in flight from distinct trees.
 func wireTrunkEpic(t *testing.T) (trunkEnv, string) {
 	t.Helper()
 	e := wireTrunk(t, config.TrunkConfig{}, "", false)
-	verb.SetEngagementMode(config.Config{Engagement: config.EngagementConfig{Parallel: config.ParallelEpic}})
 	var parent workitem.Item
 	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "Container", "category": "feature"}), &parent); err != nil {
 		t.Fatal(err)

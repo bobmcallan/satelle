@@ -49,7 +49,10 @@ func (r *piRig) useRealSatelle(stopWait string) *gatehandle.Store {
 		}
 	}
 	env := map[string]string{
-		"SATELLE_HOME":            home,
+		"SATELLE_HOME": home,
+		// The hook reads this location's id when it resolves engagements; keep
+		// the credentials file it lives beside under SATELLE_HOME.
+		"XDG_CONFIG_HOME":         filepath.Join(home, "xdg"),
 		"SATELLE_CONFIG":          cfgPath,
 		"SATELLE_SERVER_ENDPOINT": "none",
 		stopGateWaitEnv:           stopWait,

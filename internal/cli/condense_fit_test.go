@@ -24,7 +24,7 @@ import (
 
 // The sty_df21b2db fit tests. The session set is built from the embedded
 // defaults the binary ships plus the repo-authored resident principles at the
-// sizes `satelle validate` measured for them, with a seat held and the
+// sizes `satelle validate` measured for them, with a story engaged and the
 // version-drift advisory present, and is delivered through the real hook.
 
 // residentSpec is one repo-authored session principle and its measured size.
@@ -66,11 +66,11 @@ func principleFile(name, body string) string {
 		"\ntags: [type:principle, principles:session]\n---\n\n" + body + "\n"
 }
 
-// residentRepo builds the held-seat repo with the measured resident set, and
+// residentRepo builds the engaged-story repo with the measured resident set, and
 // returns the path of each authored file it wrote.
 func residentRepo(t *testing.T, pad func(spec residentSpec, body string) string) (repo string, files map[string]string) {
 	t.Helper()
-	repo, _ = liveSeatRepo(t)
+	repo, _ = engagedRepo(t)
 	files = map[string]string{}
 	write := func(rel, body string) string {
 		p := filepath.Join(repo, ".satelle", filepath.FromSlash(rel))
@@ -198,8 +198,8 @@ func assertEveryHarnessFits(t *testing.T, files map[string]string) {
 					}
 				}
 			}
-			if !strings.Contains(content, "seat held by") || !strings.Contains(content, "binary 0.0.900") {
-				t.Errorf("the fixture must carry the held seat and the drift advisory:\n%s", content)
+			if !strings.Contains(content, "## Engaged stories") || !strings.Contains(content, "binary 0.0.900") {
+				t.Errorf("the fixture must carry the engaged story and the drift advisory:\n%s", content)
 			}
 			// Every condensed body carries a marker that returns the authored text.
 			db, err := store.Open(runtimeDBPath(t))

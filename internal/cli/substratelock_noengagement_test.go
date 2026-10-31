@@ -19,7 +19,7 @@ import (
 const lockedTarget = ".satelle/workflows/step.toml"
 
 // noEngagement is the sentence the no-engagement refusal opens its condition with.
-const noEngagement = "no engaged story in the substrate lane"
+const noEngagement = "no story in the substrate lane is engaged from this tree"
 
 // lockedChange is one way to change lockedTarget: an Edit through `hook gate`, or
 // a shell command through each Bash handler.
@@ -41,9 +41,9 @@ func lockedChanges() []lockedChange {
 	}
 }
 
-// noSeatRepo is a seeded-config repo with no story engaged; extraExempt joins the
+// unengagedRepo is a seeded-config repo with no story engaged; extraExempt joins the
 // edit_exempt_paths list.
-func noSeatRepo(t *testing.T, extraExempt string) string {
+func unengagedRepo(t *testing.T, extraExempt string) string {
 	t.Helper()
 	repo := tempRepo(t)
 	t.Chdir(repo)
@@ -63,7 +63,7 @@ func TestSubstrateLockRefusesWithNoStoryEngaged(t *testing.T) {
 	for _, c := range lockedChanges() {
 		for _, handler := range c.handlers {
 			t.Run(handler+"/"+c.name, func(t *testing.T) {
-				repo := noSeatRepo(t, "")
+				repo := unengagedRepo(t, "")
 				out, err := runRootIn(t, c.event(repo), "hook", handler)
 				if err == nil {
 					t.Fatalf("with no story engaged %s must be refused:\n%s", c.name, out)
@@ -87,7 +87,7 @@ func TestSubstrateLockNoEngagementTextIsRouteIndependent(t *testing.T) {
 	var want string
 	for _, c := range lockedChanges() {
 		for _, handler := range c.handlers {
-			repo := noSeatRepo(t, "")
+			repo := unengagedRepo(t, "")
 			out, err := runRootIn(t, c.event(repo), "hook", handler)
 			if err == nil {
 				t.Fatalf("%s/%s must be refused:\n%s", handler, c.name, out)
@@ -102,10 +102,10 @@ func TestSubstrateLockNoEngagementTextIsRouteIndependent(t *testing.T) {
 	}
 }
 
-// AC2: a substrate-lane story engaged in the tree allows the change on every
+// AC2: a substrate-lane story engaged from the tree allows the change on every
 // route; a non-substrate story performing refuses it with the holder text; a
-// session engaged in nothing is refused even while another session's
-// substrate-lane seat is live.
+// tree nothing is engaged from is refused even while substrate-lane stories
+// perform from other trees.
 func TestSubstrateLockLaneOnEveryRoute(t *testing.T) {
 	for _, c := range lockedChanges() {
 		for _, handler := range c.handlers {
@@ -122,17 +122,17 @@ func TestSubstrateLockLaneOnEveryRoute(t *testing.T) {
 					t.Fatalf("a non-substrate story must be refused:\n%s", out)
 				}
 				reason := denyReasonOf(t, out)
-				for _, want := range []string{id, "holds a performing seat", "finish or park " + id} {
+				for _, want := range []string{id, "is performing", "finish or park " + id} {
 					if !strings.Contains(reason, want) {
 						t.Errorf("deny missing %q: %s", want, reason)
 					}
 				}
 			})
-			t.Run(handler+"/"+c.name+"/another session's substrate seat", func(t *testing.T) {
+			t.Run(handler+"/"+c.name+"/substrate stories engaged from other trees", func(t *testing.T) {
 				repo, a, b := holdersRepo(t, "substrate", "substrate")
 				out, err := runRootIn(t, c.event(repo), "hook", handler)
 				if err == nil {
-					t.Fatalf("a session engaged in nothing must be refused:\n%s", out)
+					t.Fatalf("a tree nothing is engaged from must be refused:\n%s", out)
 				}
 				reason := denyReasonOf(t, out)
 				if !strings.Contains(reason, noEngagement) || strings.Contains(reason, a.ID) || strings.Contains(reason, b.ID) {
@@ -153,13 +153,13 @@ func TestSubstrateLockLeavesNonLockedExemptPathsExempt(t *testing.T) {
 		{"Edit", []string{"gate"}, func(repo string) string { return claudeEditEvent(filepath.Join(repo, "scratch", "x.txt")) }},
 		{"redirect", bashHandlers, func(string) string { return bashEvent("echo x > scratch/x.txt") }},
 		{"tmp redirect", bashHandlers, func(string) string { return bashEvent("echo x > /tmp/x") }},
-		{"tmp Edit", []string{"gate"}, func(string) string { return claudeEditEvent("/tmp/satelle-noseat-scratch.md") }},
+		{"tmp Edit", []string{"gate"}, func(string) string { return claudeEditEvent("/tmp/satelle-unengaged-scratch.md") }},
 	}
 	for _, c := range cases {
 		name, ev := c.name, c.event
 		for _, handler := range c.handlers {
 			t.Run(handler+"/"+name, func(t *testing.T) {
-				repo := noSeatRepo(t, "scratch/")
+				repo := unengagedRepo(t, "scratch/")
 				if out, err := runRootIn(t, ev(repo), "hook", handler); err != nil {
 					t.Fatalf("an exempt path outside the lock must stay writable with nothing engaged: %v\n%s", err, out)
 				}
@@ -173,7 +173,7 @@ func TestSubstrateLockNoEngagementRefusalSaysHowToProceed(t *testing.T) {
 	for _, c := range lockedChanges() {
 		for _, handler := range c.handlers {
 			t.Run(handler+"/"+c.name, func(t *testing.T) {
-				repo := noSeatRepo(t, "")
+				repo := unengagedRepo(t, "")
 				out, err := runRootIn(t, c.event(repo), "hook", handler)
 				if err == nil {
 					t.Fatalf("must be refused:\n%s", out)

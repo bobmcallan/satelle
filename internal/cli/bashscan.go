@@ -800,7 +800,7 @@ func gitCommandDir(command, base string) string {
 // `git push`, HEAD, --all, --mirror, --tags, a delete or a non-branch ref — so the
 // caller keeps attributing it to the tree it runs in. It is also nil when any other
 // git command shares the payload: a `git commit && git push` commits in the tree the
-// hook runs in, which the pushed branch's seat must not stand in for.
+// hook runs in, which the pushed branch's story must not stand in for.
 func gitPushBranches(command string) []string {
 	for _, sub := range gitSubcommands(command) {
 		if sub != "push" {
@@ -854,8 +854,8 @@ func gitPushBranches(command string) []string {
 // bashAttributionTree is the git working tree a Bash command's first mutation
 // target lives in: an in-tree target first, then one in a linked worktree of the
 // session's repository. "" when it has none, so the session's own tree decides. It
-// is how a session holding seats in several worktrees attributes a shell mutation
-// to the seat of the tree it lands in, as treeOf does for an edit (sty_42231b74).
+// is how a session driving stories in several worktrees attributes a shell mutation
+// to the story engaged from the tree it lands in, as treeOf does for an edit (sty_42231b74).
 func bashAttributionTree(command, anchor string) string {
 	inHome, foreign := bashMutationTargets(command, anchor)
 	for _, t := range inHome {
@@ -1542,7 +1542,7 @@ func foreignSatelleVerb(words []string, cwd string) (string, bool) {
 	}
 	// Read-ish verbs: no target.
 	switch verb {
-	case "get", "list", "show", "docs", "doc", "cost", "lessons", "seat", "log":
+	case "get", "list", "show", "docs", "doc", "cost", "lessons", "log":
 		return "", false
 	}
 	// Progress: story/task set with --status — if an absolute/relative path

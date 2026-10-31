@@ -130,7 +130,7 @@ func parseEdge(e ledger.Entry) lightPayload {
 // route depth — so a story whose category resolved no route reads the same as
 // one that did, and no stage appears twice. stepOf is consulted only to tell an
 // on-route status from an unstarted one when the ledger is empty.
-func buildStages(entries []ledger.Entry, status string, seatHeld bool, stepOf func(state string) int, spec wfdot.Spec) []stageVM {
+func buildStages(entries []ledger.Entry, status string, inFlight bool, stepOf func(state string) int, spec wfdot.Spec) []stageVM {
 	es := append([]ledger.Entry(nil), entries...)
 	ledger.SortEntries(es)
 	ts := classifyTransitions(es, spec)
@@ -229,12 +229,11 @@ func buildStages(entries []ledger.Entry, status string, seatHeld bool, stepOf fu
 		}
 	} else if entered || (stepOf != nil && stepOf(status) > 0) {
 		stages = append(stages, stageVM{Name: status, State: "current"})
-	} else if seatHeld {
+	} else if inFlight {
 		stages = append(stages, stageVM{Name: status, State: "current", Title: "starting"})
 	} else if pending != nil {
 		// A story still at its start status that has only been readied (`satelle
-		// story ready` holds no seat and takes no edge) has no transition, step or
-		// seat — its readiness rounds are the only trace it is under way.
+		// story ready` takes no edge) has no transition or step — its readiness rounds are the only trace it is under way.
 		stages = append(stages, stageVM{Name: status, State: "current", Title: "readying"})
 	}
 	for i := range stages {

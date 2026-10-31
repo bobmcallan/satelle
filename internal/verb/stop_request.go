@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
-	"github.com/bobmcallan/satelle/internal/lease"
+	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/ledger"
 )
 
 func init() {
@@ -16,8 +18,9 @@ func init() {
 	})
 }
 
-// storyStopRequest annotates the holder's lease with a stop request (AC5).
-// Never releases; the owner arbitrates at the next step edge.
+// storyStopRequest records a stop request on the story's ledger (AC5). It
+// changes no status; the driver arbitrates at the next step edge
+// (stopRequestBlocksForward).
 func storyStopRequest(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var req struct {
 		ID     string `json:"id"`
@@ -29,12 +32,23 @@ func storyStopRequest(ctx context.Context, raw json.RawMessage) (json.RawMessage
 	if req.ID == "" {
 		return nil, fmt.Errorf("verb: id required")
 	}
-	ls, err := requireLease()
+	led, err := requireLedger()
 	if err != nil {
 		return nil, err
 	}
-	requester := lease.ResolveOwner()
-	if err := ls.RequestStop(ctx, req.ID, requester, req.Reason); err != nil {
+	it, err := storyState(ctx, req.ID)
+	if err != nil {
+		return nil, err
+	}
+	if engaging, ok := storyStatusIsEngaging(ctx, it, it.Status); !ok || !engaging {
+		return nil, fmt.Errorf("verb: %s is not performing (status %q) — nothing to stop", it.ID, it.Status)
+	}
+	requester := config.ResolveOwner()
+	payload, _ := json.Marshal(ledger.StopRequestedPayload{By: requester, Reason: req.Reason})
+	if _, err := led.Append(ctx, ledger.AppendInput{
+		StoryID: it.ID, Kind: ledger.KindStopRequested, Actor: requester,
+		Body: fmt.Sprintf("stop requested by %s: %s", requester, req.Reason), Payload: payload,
+	}, time.Now()); err != nil {
 		return nil, err
 	}
 	return json.Marshal(map[string]any{

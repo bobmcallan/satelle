@@ -13,11 +13,9 @@ import (
 // CANCELS an in-flight command when a new trigger arrives. Three properties
 // follow from that and are the whole design:
 //
-//   - READ-ONLY. The engaged story comes from currentSeat (cmd_hook.go), which
-//     is Leases.List + the pure evaluateSeat — no Reap, no Heartbeat. Never
-//     route this through `satelle story seat` / the story-seat-list verb: those
-//     reap stale leases, i.e. WRITE, and reaping under a 300ms debounce would
-//     thrash lease state against a live session's seat.
+//   - READ-ONLY. The engaged story comes from currentEngagement (engagement.go),
+//     a pure read of the story rows, their working_on rows and the open
+//     transitions — it writes nothing, so a 300ms debounce cannot thrash state.
 //   - NEVER FAILS LOUDLY. Every error becomes one degraded, well-formed line
 //     and exit 0. A statusline that printed a stack trace or a partial line
 //     would corrupt the operator's status area.
@@ -81,9 +79,9 @@ func serverSegment(a webAvailability) string {
 
 // storySegment renders the engaged half as <story_id>::<stage>, or a plain
 // statement that nothing is engaged. stage is the COMMITTED work-item status,
-// so the line agrees with `satelle story get` rather than showing a lease
-// target mid-transition.
-func storySegment(info seatInfo, engaged bool) string {
+// so the line agrees with `satelle story get` rather than showing a
+// transition's target mid-transition.
+func storySegment(info engagement, engaged bool) string {
 	if !engaged || strings.TrimSpace(info.ItemID) == "" {
 		return noStorySegment
 	}
@@ -98,16 +96,16 @@ func storySegment(info seatInfo, engaged bool) string {
 }
 
 // formatStatusLine joins the two halves into the single line. Pure.
-func formatStatusLine(a webAvailability, info seatInfo, engaged bool) string {
+func formatStatusLine(a webAvailability, info engagement, engaged bool) string {
 	return serverSegment(a) + "  " + storySegment(info, engaged)
 }
 
 // renderStatusLine builds the line from live state. It never returns an error:
-// a seat lookup failure degrades the story half only, so a reachable server is
+// an engagement lookup failure degrades the story half only, so a reachable server is
 // still reported, and a total failure still yields one well-formed line.
 func renderStatusLine() string {
 	avail := probeWebAvailability()
-	info, engaged, err := currentSeat()
+	info, engaged, err := currentEngagement()
 	if err != nil {
 		// Store unopenable / workflow unresolvable: say nothing about the story
 		// rather than guess, but keep the server fact we do have.

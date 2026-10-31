@@ -60,7 +60,7 @@ func TestSubstrateLockBashClassifiedTargetsRefused(t *testing.T) {
 				before := len(ledgerRows(t, ledger.KindSubstrateLockDeny))
 				out, err := runRootIn(t, bashEvent(cmd), "hook", handler)
 				if err == nil {
-					t.Fatalf("%q must be refused while %s holds a performing seat:\n%s", cmd, id, out)
+					t.Fatalf("%q must be refused while %s performs:\n%s", cmd, id, out)
 				}
 				if got := denyReasonOf(t, out); got != want {
 					t.Errorf("deny text differs from the Edit's:\nbash: %s\nedit: %s", got, want)
@@ -140,7 +140,7 @@ func TestSubstrateLockBashInterpreterRefused(t *testing.T) {
 				before := len(ledgerRows(t, ledger.KindSubstrateLockDeny))
 				out, err := runRootIn(t, bashEvent(cmd), "hook", handler)
 				if err == nil {
-					t.Fatalf("%q must be refused while %s holds a performing seat:\n%s", cmd, id, out)
+					t.Fatalf("%q must be refused while %s performs:\n%s", cmd, id, out)
 				}
 				reason := denyReasonOf(t, out)
 				for _, want := range []string{id, "substrate lock", `category "substrate"`, "finish or park " + id} {
@@ -190,7 +190,7 @@ func TestSubstrateLockBashLinkedWorktree(t *testing.T) {
 				cmd := strings.ReplaceAll(tc.cmd, "WT", wt)
 				out, err := runRootIn(t, bashEvent(cmd), "hook", handler)
 				if err == nil {
-					t.Fatalf("%q must be refused while %s holds a performing seat:\n%s", cmd, id, out)
+					t.Fatalf("%q must be refused while %s performs:\n%s", cmd, id, out)
 				}
 				if reason := denyReasonOf(t, out); !strings.Contains(reason, "substrate lock") || strings.Contains(reason, "another repo's tree") {
 					t.Errorf("want the substrate lock, not the fence: %s", reason)
@@ -209,14 +209,14 @@ func TestSubstrateLockBashAllowed(t *testing.T) {
 		name, cmd string
 		gate      string // [gate] extra
 		category  string
-		noSeat    bool
+		unengaged bool
 		// editGate: the edit gate, not the lock, may refuse this one: an inline
 		// interpreter write needs an executor engagement like an Edit does.
 		editGate bool
 	}
 	cases := []tc{
-		{name: "no live seat: footprint redirect", cmd: "echo x > .claude/settings.json", noSeat: true},
-		{name: "no live seat: temp redirect", cmd: "echo x > /tmp/x", noSeat: true},
+		{name: "nothing engaged: footprint redirect", cmd: "echo x > .claude/settings.json", unengaged: true},
+		{name: "nothing engaged: temp redirect", cmd: "echo x > /tmp/x", unengaged: true},
 		{name: "substrate lane: redirect", cmd: "echo x > .satelle/skills/x.md", category: "substrate"},
 		{name: "substrate lane: rm", cmd: "rm .satelle/skills/x.md", category: "substrate"},
 		{name: "substrate lane: interpreter", cmd: `python3 -c "open('.satelle/x','w')"`, category: "substrate"},
@@ -249,7 +249,7 @@ func TestSubstrateLockBashAllowed(t *testing.T) {
 		for _, c := range cases {
 			t.Run(handler+"/"+c.name, func(t *testing.T) {
 				var repo string
-				if c.noSeat {
+				if c.unengaged {
 					repo = tempRepo(t)
 					t.Chdir(repo)
 					if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"), []byte(lockExemptToml), 0o644); err != nil {
@@ -263,7 +263,7 @@ func TestSubstrateLockBashAllowed(t *testing.T) {
 					repo, _ = lockRepo(t, cat, c.gate)
 				}
 				_ = repo
-				// `git commit` also needs the engaged-story gate; the seat is
+				// `git commit` also needs the engaged-story gate; the story is
 				// engaged so it passes, and what is asserted is only that no lock
 				// refusal appears.
 				out, err := runRootIn(t, bashEvent(c.cmd), "hook", handler)
@@ -294,7 +294,7 @@ func TestSubstrateLockBashReadsConfigOnce(t *testing.T) {
 			}
 		})
 	}
-	t.Run("gate with no seat reads once and still locks", func(t *testing.T) {
+	t.Run("gate with nothing engaged reads once and still locks", func(t *testing.T) {
 		repo := tempRepo(t)
 		t.Chdir(repo)
 		if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"), []byte(lockExemptToml), 0o644); err != nil {
@@ -302,7 +302,7 @@ func TestSubstrateLockBashReadsConfigOnce(t *testing.T) {
 		}
 		n := countLockConfigReads(t, nil)
 		if out, err := runRootIn(t, bashEvent("echo x > .satelle/skills/x.md"), "hook", "gate"); err == nil {
-			t.Fatalf("no seat: locked substrate must be refused (sty_66abc0e3):\n%s", out)
+			t.Fatalf("nothing engaged: locked substrate must be refused (sty_66abc0e3):\n%s", out)
 		}
 		if *n != 1 {
 			t.Fatalf("lock config reads = %d, want 1", *n)
@@ -321,17 +321,18 @@ func TestSubstrateLockBashUnreadableConfigFailsClosed(t *testing.T) {
 	}
 }
 
-// A session that matches no seat is not thereby free of the lock, for Bash either.
-func TestSubstrateLockBashHeldAgainstSessionThatMatchesNoSeat(t *testing.T) {
+// An edit in a tree no story is engaged from is not thereby free of the lock,
+// for Bash either.
+func TestSubstrateLockBashHeldAgainstAnUnengagedTree(t *testing.T) {
 	repo, a, b := holdersRepo(t, "feature", "feature")
 	_ = repo
 	for _, handler := range bashHandlers {
 		out, err := runRootIn(t, bashEvent("echo x > .satelle/skills/x.md"), "hook", handler)
 		if err == nil {
-			t.Fatalf("%s: a session bound to no seat must not slip the lock:\n%s", handler, out)
+			t.Fatalf("%s: an edit attributed to no story must not slip the lock:\n%s", handler, out)
 		}
 		reason := denyReasonOf(t, out)
-		for _, want := range []string{a.ID, b.ID, "hold performing seats", "substrate lock"} {
+		for _, want := range []string{a.ID, b.ID, "are performing", "substrate lock"} {
 			if !strings.Contains(reason, want) {
 				t.Errorf("%s: deny missing %q: %s", handler, want, reason)
 			}
@@ -413,7 +414,7 @@ func TestSubstrateLockBashShellProgramRefused(t *testing.T) {
 				_, id := lockRepo(t, "feature", "")
 				out, err := runRootIn(t, bashEvent(tc.cmd), "hook", handler)
 				if err == nil {
-					t.Fatalf("%q must be refused while %s holds a performing seat:\n%s", tc.cmd, id, out)
+					t.Fatalf("%q must be refused while %s performs:\n%s", tc.cmd, id, out)
 				}
 				if reason := denyReasonOf(t, out); !strings.Contains(reason, "substrate lock") {
 					t.Errorf("%q: want the substrate lock, got: %s", tc.cmd, reason)

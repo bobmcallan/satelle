@@ -31,7 +31,7 @@ to the harness at launch. See: satelle help session.`,
 		Short: "Print this session's name: <host> · <repo>[ · <worktree>][ · <story>]",
 		Long: `Print the one identity an agent session in this tree goes by: the short host,
 the repo name, the worktree directory (only for a linked worktree) and the
-engaged story (only when this tree holds a live seat), joined by " · ".
+engaged story (only when a performing story was engaged from this tree), joined by " · ".
 
 The launcher written by ` + "`satelle agents install claude`" + ` passes it to the harness
 as its session name. With --harness, a harness that declares no launch name flag
@@ -53,14 +53,13 @@ prints "title: unavailable" naming it instead. See: satelle help session.`,
 }
 
 // currentSessionName is hosted.SessionName for the tree at repoRoot. The story
-// segment is added only for a seat that resolveSeatsFor reports as this session's
-// AND that was engaged from this tree: with one live seat resolveSeatsOn answers
-// for any tree, so a launch from the main tree must not take the story a sibling
-// worktree holds. A seat that cannot be read leaves the name without a story: the
-// name is a label, never a reason to fail a launch.
+// segment is added only for a performing story engaged from this tree, so a
+// launch from the main tree never takes the story a sibling worktree performs.
+// An engagement that cannot be read leaves the name without a story: the name
+// is a label, never a reason to fail a launch.
 func currentSessionName(repoRoot string) string {
 	story := ""
-	if info, engaged, _, err := resolveSeatsFor(false, config.ResolveSession(), repoRoot); err == nil &&
+	if info, engaged, _, err := resolveEngagementsFor(config.ResolveSession(), repoRoot); err == nil &&
 		engaged && sameTree(info.Worktree, repoRoot) {
 		story = info.ItemID
 	}

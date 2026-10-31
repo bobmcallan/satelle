@@ -16,7 +16,7 @@ import (
 
 // sty_4470bb38: after a step's exit gate rejects, `story set <id> --status
 // <current>` re-dispatches the step's named one-shot performer once, instead of
-// only re-seating the lease.
+// only re-recording the engagement.
 
 // redispatchStub resolves each step's performer from perf (PerformerNone when
 // absent) and records every dispatch as "<status>><to>".
@@ -160,7 +160,7 @@ func TestSameStatusSetRedispatchesTheNamedPerformerAfterAnExitReject(t *testing.
 	}
 }
 
-// AC4: where nothing is owed the same-status set only re-seats. (a) no exit was
+// AC4: where nothing is owed the same-status set only re-engages. (a) no exit was
 // rejected; (c) the step's performer is in-loop; (d) the step is the headless
 // [executor] binding's, which the drive re-runs, not this set. Status never moves.
 func TestSameStatusSetDispatchesNothingWhenNothingIsOwed(t *testing.T) {

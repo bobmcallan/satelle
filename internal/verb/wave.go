@@ -254,7 +254,7 @@ func EpicChildSchedule(ctx context.Context, item workitem.Item) string {
 }
 
 // storyWave assesses an epic-parent's children. It reads the store and the
-// workflow index and writes nothing: no status, no lease, no tag, no dispatch.
+// workflow index and writes nothing: no status, no tag, no dispatch.
 func storyWave(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	store, err := requireWorkItem()
 	if err != nil {

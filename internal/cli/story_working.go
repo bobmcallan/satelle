@@ -1,11 +1,12 @@
 package cli
 
-// Who last worked on a story (sty_40853d02). Taking an engagement seat appends a
+// Who last worked on a story (sty_40853d02). Engaging a story appends a
 // working_on row to the story's ledger (verb.recordWorkingOn); it travels with
 // the story's other events, so another machine sees it after a pull. `story get`,
 // `story list` and the session-start advisory show the latest row — from the
 // local ledger only, so reading a story never dials the server. This is
-// visibility: nothing here, or anywhere, reads a working_on row to refuse a move.
+// visibility: nothing here, or anywhere, reads a working_on row to refuse a move
+// (the hooks read it only to find the story engaged from a tree).
 
 import (
 	"context"

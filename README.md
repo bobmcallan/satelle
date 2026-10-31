@@ -190,43 +190,41 @@ permitted story statuses while engaged. Opt-in only — unset leaves the
 commitgate as engage-only. See `satelle hook commitgate --help` and the init
 scaffold comments.
 
-### Seat concurrency — who may engage at once
+### Concurrency — who may engage at once
 
-A story in a performing state holds the project's **engagement seat**. By
-default the seat is single-occupancy: one performing story, everything else
-refused. That default is what makes "is work in flight?" a one-lease question.
-
-A repo may widen it per project:
+Nothing is held while a story performs. A story is performing when its status,
+folded from its chain, is a performing step of its route. By default any number
+of stories may perform at once; a repo may bound that per project:
 
 ```toml
 [engagement]
-parallel = "none"   # default — one performing story at a time
-parallel = "epic"   # children of one parent may engage concurrently
+limit = 1   # at most one performing story at a time; absent or 0 is unlimited
 ```
 
-Under `epic` the seat is claimed at the **parent**, not the story: the first
-engagement keys the seat on its `parent_id`, and further engagements are
-admitted only if they share that parent **and** run from a **distinct git
-working tree**. A story under a different parent — or none — is refused while
-that seat is held, and the refusal names the parent holding it. A parentless
-story engaging first claims the seat as a singleton, which is `none` for its
-duration. The seat frees when the last sub-lease frees.
+An epic whose container step sets `sequential = true` admits one performing
+child at a time, whatever the limit. Both counts come from the stories' chain
+folds, so a story another location drives counts too, and a refusal names the
+stories it counted.
 
-Two rules follow, and both are load-bearing:
+Three things follow, and all are load-bearing:
 
-- **One working tree per lease.** Each lease records the tree it was engaged
-  from; a second engagement from an already-leased tree is refused, even for a
-  valid sibling — two engaged stories sharing a tree would attribute each
-  other's edits. `satelle story diff` is anchored to the recorded tree for the
-  same reason: run it elsewhere and it refuses, naming where to run it.
-- **The parent is not engaged unless its route says so.** Its id is the
-  arbitration key, not a lease, and a container idling at a `waits_on_children`
-  step holds none. A container step may declare `after_children = "<obligation>"`:
-  entry is refused until every child has discharged that obligation on its own
-  route, and the step may name a performer, which then takes a seat under the
-  same key so parent and children co-hold from distinct worktrees. The binary
-  only gates that entry and seat; what the step does, a merge included, is a
-  skill the route names.
+- **Exclusivity is the chain's base check.** Two locations may drive the same
+  story; the second one's next append builds on a base the first has moved,
+  and the server refuses it. The refusal names the other location's latest
+  `working_on` presence. Re-read and decide.
+- **Presence is advisory.** Engaging a story writes a `working_on` row naming
+  the location, session and worktree it was engaged from. `satelle story get`
+  and session start show another location's row; nothing refuses on it.
+- **The worktree decides the edit.** The edit, commit and push gates judge an
+  event by the story engaged from the tree it lands in, at that story's status
+  and route allocation. `satelle story diff` is anchored to the recorded tree
+  for the same reason: run it elsewhere and it refuses, naming where to run it.
+
+A container idling at a `waits_on_children` step is not performing. A container
+step may declare `after_children = "<obligation>"`: entry is refused until every
+child has discharged that obligation on its own route, and the step may name a
+performer. The binary only gates that entry; what the step does, a merge
+included, is a skill the route names.
 
 **What satelle does not own.** Satelle arbitrates concurrent *engagement*. It
 does not define how concurrent work *converges* — merge order, whether a batch

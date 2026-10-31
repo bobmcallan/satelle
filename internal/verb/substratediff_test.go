@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -226,29 +225,22 @@ func TestSharedAttributionLabel(t *testing.T) {
 		e.append(b.ID, ledger.KindStatusTransition, "done", base.Add(3*time.Microsecond))
 	}
 
-	t.Run("sibling holds a lease", func(t *testing.T) {
+	t.Run("sibling still performing", func(t *testing.T) {
 		e, a, b := engagedA(t)
-		// Same seat key as the judged story: the co-holder an epic admits.
-		_, out, _, err := e.db.Leases.AcquireWith(context.Background(), lease.AcquireOpts{
-			ItemID: b.ID, Kind: "story", Owner: "other", State: "in_progress",
-			StorySeat: true, SeatKey: a.ID,
-		})
-		if err != nil || out != lease.OutcomeAcquired {
-			t.Fatalf("seed lease: outcome %v, err %v", out, err)
-		}
+		e.set(b.ID, "in_progress")
 		if p := patchOf(e, a.ID); !strings.Contains(p, label+b.ID) {
-			t.Errorf("a live co-holder must be named:\n%s", p)
+			t.Errorf("a performing sibling must be named:\n%s", p)
 		}
 	})
 
-	t.Run("sibling closed and released its lease", func(t *testing.T) {
+	t.Run("sibling closed", func(t *testing.T) {
 		e, a, b := engagedA(t)
 		releasedSibling(e, a, b)
-		if held, _ := e.db.Leases.List(context.Background()); len(held) != 1 {
-			t.Fatalf("only the judged story may hold a lease, got %d", len(held))
+		if isPerforming(t, b.ID) {
+			t.Fatal("the closed sibling must not be performing")
 		}
 		if p := patchOf(e, a.ID); !strings.Contains(p, label+b.ID) {
-			t.Errorf("a released sibling's overlap is read from the ledger, not the lease store:\n%s", p)
+			t.Errorf("a closed sibling's overlap is read from the ledger:\n%s", p)
 		}
 	})
 

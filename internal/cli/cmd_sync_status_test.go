@@ -520,7 +520,6 @@ func engageSyncStoryIn(t *testing.T, tree, dbPath string) *storyEnv {
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetTxRunner(db.InTx)
 	verb.SetDocIndexStore(db.DocIndex)
-	verb.SetLeaseStore(db.Leases)
 	verb.SetStoryDir(filepath.Join(t.TempDir(), "stories"))
 	verb.SetAuthoredDirs(cfg.ResolveAuthoredDirs(repo))
 	verb.SetSubstrateConfigDir(cfg.ResolveDataDir(repo))

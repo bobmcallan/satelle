@@ -241,7 +241,7 @@ type stepWire struct {
 	// authored empty table, which is refused.
 	RemoteWait *remoteWaitWire `toml:"remote_wait"`
 	// Wait marks a step at which a story rests between performing steps: it is
-	// neither parked nor terminal, holds no seat or tree, and nothing performs
+	// neither parked nor terminal, claims no tree, and nothing performs
 	// on it until a move takes it onward.
 	Wait     bool `toml:"wait"`
 	Start    bool `toml:"start"`

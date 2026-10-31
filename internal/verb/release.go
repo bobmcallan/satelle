@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -54,7 +53,7 @@ type releaseRecordRow struct {
 }
 
 // storyReleaseRecord appends one release_record row to each named story. It is
-// a record, not a transition: it takes no seat, writes no status and runs no
+// a record, not a transition: it engages nothing, writes no status and runs no
 // definition check, so it works from any session and on a story already done.
 // Every id and field key is judged before the first row is written, and the
 // rows land in one transaction, so a refusal writes nothing.
@@ -102,7 +101,7 @@ func storyReleaseRecord(ctx context.Context, raw json.RawMessage) (json.RawMessa
 
 	payload, err := json.Marshal(releaseRecordPayload{
 		Commit: req.Commit, Release: req.Release, Fields: req.Fields,
-		Session: config.ResolveSession(), Owner: lease.ResolveOwner(),
+		Session: config.ResolveSession(), Owner: config.ResolveOwner(),
 	})
 	if err != nil {
 		return nil, err

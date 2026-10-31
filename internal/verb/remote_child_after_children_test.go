@@ -3,9 +3,6 @@ package verb_test
 import (
 	"strings"
 	"testing"
-
-	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/verb"
 )
 
 // A step that places its parallel children remote (sty_dde8b6a4) changes where a
@@ -24,7 +21,6 @@ func TestAfterChildrenHoldsTheMergeForAFailedRemoteChild(t *testing.T) {
 	}
 	wf["step"] = stepBody
 	wireWithWorkflowsStore(t, wf)
-	verb.SetEngagementMode(config.Config{Engagement: config.EngagementConfig{Parallel: config.ParallelEpic}})
 
 	epic := waveEpic(t)
 	remote := acChild(t, epic, "fix")

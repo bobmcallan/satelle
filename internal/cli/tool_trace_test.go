@@ -56,7 +56,7 @@ func editOn(t *testing.T, repo string) error {
 // A step whose skills declare no evidence costs its edits and commands no ledger
 // write: neither hook records a tool_trace row.
 func TestStepWithoutEvidenceDeclarationsWritesNoToolTraceRow(t *testing.T) {
-	repo, _ := ruleRepo(t, seatMine, "")
+	repo, _ := ruleRepo(t, engagedHere, "")
 	if _, err := commitgateOn(t, "claude", "go test ./..."); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestStepWithoutEvidenceDeclarationsWritesNoToolTraceRow(t *testing.T) {
 // A declared command is traced for a shell call; an edit is traced only when a
 // tool is declared.
 func TestGateRecordsAnEditOnlyWhenAToolIsDeclared(t *testing.T) {
-	repo, id := ruleRepo(t, seatMine, "")
+	repo, id := ruleRepo(t, engagedHere, "")
 	declareTrace(t, id, true, false)
 	if err := editOn(t, repo); err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestGateRecordsAnEditOnlyWhenAToolIsDeclared(t *testing.T) {
 }
 
 func TestCommitgateRecordsAToolTraceRowForTheEngagedStory(t *testing.T) {
-	_, id := ruleRepo(t, seatMine, "")
+	_, id := ruleRepo(t, engagedHere, "")
 	declareTrace(t, id, true, false)
 	if _, err := commitgateOn(t, "claude", "cd x && go test ./..."); err != nil {
 		t.Fatal(err)
@@ -105,7 +105,7 @@ func TestCommitgateRecordsAToolTraceRowForTheEngagedStory(t *testing.T) {
 }
 
 func TestToolTraceIsWrittenOnlyWhileAStoryIsEngaged(t *testing.T) {
-	ruleRepo(t, seatNone, "")
+	ruleRepo(t, engagedNowhere, "")
 	if _, err := commitgateOn(t, "claude", "ls"); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestToolTraceIsWrittenOnlyWhileAStoryIsEngaged(t *testing.T) {
 }
 
 func TestToolTraceIsNotWrittenByADispatchedProcess(t *testing.T) {
-	ruleRepo(t, seatMine, "")
+	ruleRepo(t, engagedHere, "")
 	t.Setenv("SATELLE_DISPATCH_AGENT", "coder")
 	t.Setenv("SATELLE_DISPATCH_STEP", "in_progress")
 	t.Setenv("SATELLE_DISPATCH_ITEM", "sty_x")
@@ -130,7 +130,7 @@ func TestToolTraceIsNotWrittenByADispatchedProcess(t *testing.T) {
 // The resolver reads only the rows after the story last entered the step, so an
 // earlier step's commands cannot satisfy a later step's evidence.
 func TestToolTraceResolverReadsSinceTheStepWasEntered(t *testing.T) {
-	_, id := ruleRepo(t, seatMine, "")
+	_, id := ruleRepo(t, engagedHere, "")
 	db, err := store.Open(runtimeDBPath(t))
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestToolTraceResolverReadsSinceTheStepWasEntered(t *testing.T) {
 // step's evidence; one attached after is. A headless run's recorded stream reads
 // back with the coverage it had.
 func TestToolTraceResolverScopesDocumentsAndReadsAStreamRow(t *testing.T) {
-	_, id := ruleRepo(t, seatMine, "")
+	_, id := ruleRepo(t, engagedHere, "")
 	db, err := store.Open(runtimeDBPath(t))
 	if err != nil {
 		t.Fatal(err)

@@ -42,7 +42,6 @@ func TestArchivedFlagTravelsWithTheChainBetweenMachines(t *testing.T) {
 	verb.SetLedgerStore(a.db.Ledger)
 	verb.SetTxRunner(a.db.InTx)
 	verb.SetDocIndexStore(a.db.DocIndex)
-	verb.SetLeaseStore(a.db.Leases)
 	verb.SetStoryDir(filepath.Join(a.repo, "stories"))
 
 	dispatch := func(name string, req map[string]any) json.RawMessage {

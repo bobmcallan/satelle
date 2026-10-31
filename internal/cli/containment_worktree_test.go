@@ -203,7 +203,7 @@ func TestHookBash_LinkedWorktreeReadIsAllowed(t *testing.T) {
 
 // AC1: the fence stepping aside for a linked worktree must not open its
 // substrate. The lock list is repo-relative, so it is resolved against the tree
-// the target lives in: under a performing seat, an edit of the sibling tree's
+// the target lives in: while a story performs, an edit of the sibling tree's
 // .satelle/ is refused by the substrate lock (a story may not rewrite its own
 // judge), not waved through and not refused as a foreign tree.
 func TestSubstrateLock_LinkedWorktreeSubstrateStaysLocked(t *testing.T) {
@@ -216,7 +216,7 @@ func TestSubstrateLock_LinkedWorktreeSubstrateStaysLocked(t *testing.T) {
 	for _, rel := range []string{".satelle/skills/x.md", ".satelle/workflows/agents.toml", ".satelle/satelle.toml"} {
 		out, err := runRootIn(t, claudeEditEvent(filepath.Join(wt, rel)), "hook", "gate")
 		if err == nil {
-			t.Fatalf("%s in the linked worktree must be substrate-locked while %s holds a seat:\n%s", rel, id, out)
+			t.Fatalf("%s in the linked worktree must be substrate-locked while %s performs:\n%s", rel, id, out)
 		}
 		reason := denyReasonOf(t, out)
 		if strings.Contains(reason, "another repo's tree") {

@@ -112,7 +112,6 @@ func reDispatchOwed(ctx context.Context, current workitem.Item) bool {
 // run is recorded and refused.
 func redispatchStep(ctx context.Context, current workitem.Item, now time.Time,
 	park func(state, notes string, res DispatchResult) (json.RawMessage, error, bool)) (json.RawMessage, error) {
-	defer keepEngagementAlive(ctx, current.ID)()
 	step := current.Status
 	run := dispatchPerformer(ctx, current, step, "", false, now)
 	current = run.rebind(current)

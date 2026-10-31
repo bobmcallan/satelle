@@ -65,10 +65,10 @@ type pageData struct {
 	DBPath       string
 	Stories      []rowVM
 	BacklogCount int
-	// EngagementCount is the number of non-stale story seats (typically 0 or 1).
+	// EngagementCount is the number of performing stories.
 	// Always rendered in project chrome — 0 is visible, not hidden (sty_01ba9482).
 	EngagementCount int
-	// EngagedStoryIDs lists those seat item ids (sorted); empty when count is 0.
+	// EngagedStoryIDs lists those story ids (sorted); empty when count is 0.
 	EngagedStoryIDs []string
 	Tasks           []rowVM
 	DocKinds        []kindGroup
@@ -152,12 +152,6 @@ type docRowVM struct {
 type kindGroup struct {
 	Kind string
 	Docs []docRowVM
-}
-
-type seatRowVM struct {
-	ID       string `json:"id"`
-	InFlight bool   `json:"in_flight"`
-	Stale    bool   `json:"stale"`
 }
 
 type detailData struct {

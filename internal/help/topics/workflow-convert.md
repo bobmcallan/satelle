@@ -151,7 +151,7 @@ satelle carries only the declaration and the record.
 `waits_on_children = true` marks the step a **container** (a parent or epic)
 idles at while its child stories are driven. The container holds the status but
 performs nothing, so while any child is not yet terminal (or cancelled) the edit
-gate, the Stop hook and the deny messages do not count it as a performing seat.
+gate, the Stop hook and the deny messages do not count it as performing.
 It counts again once every child is resolved. A story at a dispatched-performer
 step is not affected by having children — only the route's declaration waits.
 
@@ -183,8 +183,8 @@ obligation: entry is refused until every child in the epic set has discharged
 that obligation on its own route, and the refusal names the children that have
 not (`satelle help epic-wave`). The name must be an obligation some step
 provides, the step must require a `waits_on_children` step, and the two keys
-cannot sit on one step. The step may name an `agent`, which then takes the
-container's seat on entry. Absent, nothing changes.
+cannot sit on one step. The step may name an `agent`, which then performs it
+for the container on entry. Absent, nothing changes.
 
 `apply_changes = { ops = [...], tags = [...] }` lets a `propose` step's read-only
 performer report story-configuration changes for satelle to apply before the

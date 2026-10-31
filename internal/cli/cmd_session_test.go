@@ -1,22 +1,18 @@
 package cli
 
 import (
-	"context"
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
-	"github.com/bobmcallan/satelle/internal/lease"
 )
 
-// seatForName creates a repo (cwd), files a performing story and seats it from
-// tree ("" = the repo itself), optionally aged past the heartbeat TTL (stale). It
-// returns the story id.
-func seatForName(t *testing.T, tree string, stale bool) string {
+// engagedForName creates a repo (cwd) and files a performing story engaged from
+// tree ("" = the repo itself). It returns the story id.
+func engagedForName(t *testing.T, tree string) string {
 	t.Helper()
 	db, create := attributionRepo(t)
 	if tree == "" {
@@ -27,38 +23,21 @@ func seatForName(t *testing.T, tree string, stale bool) string {
 		tree = repo
 	}
 	story := create("named", "in_progress")
-	ctx := context.Background()
-	if _, _, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
-		ItemID: story.ID, Kind: "story", Owner: lease.ResolveOwner(), State: "in_progress",
-		StorySeat: true, Worktree: tree,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Leases.Confirm(ctx, story.ID, "in_progress"); err != nil {
-		t.Fatal(err)
-	}
-	if stale {
-		if err := db.Leases.SetHeartbeat(ctx, story.ID, time.Now().UTC().Add(-2*lease.HeartbeatTTL)); err != nil {
-			t.Fatal(err)
-		}
-	}
+	recordEngagementOn(t, db, story.ID, "in_progress", tree, "")
 	return story.ID
 }
 
-// The story segment needs a LIVE seat held FROM THIS TREE: a stale seat names no
-// story, and neither does a single live seat held in another worktree — with one
-// live seat resolveSeatsFor answers "engaged" for any tree, so only sameTree keeps
-// the other tree's story out of this tree's name.
+// The story segment names the story engaged FROM THIS TREE: a story engaged from
+// another worktree is not this tree's, so sameTree keeps it out of this tree's
+// name.
 func TestSessionNameStorySegment(t *testing.T) {
 	cases := []struct {
 		name      string
 		otherTree bool
-		stale     bool
 		wantStory bool
 	}{
-		{"live seat in this tree", false, false, true},
-		{"stale seat in this tree", false, true, false},
-		{"single live seat in a different worktree", true, false, false},
+		{"engaged from this tree", false, true},
+		{"engaged from a different worktree", true, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -66,7 +45,7 @@ func TestSessionNameStorySegment(t *testing.T) {
 			if c.otherTree {
 				tree = t.TempDir()
 			}
-			id := seatForName(t, tree, c.stale)
+			id := engagedForName(t, tree)
 			repo, err := os.Getwd()
 			if err != nil {
 				t.Fatal(err)

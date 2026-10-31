@@ -1,11 +1,11 @@
 package verb_test
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -38,39 +38,34 @@ terminal = true
 requires = ["coded"]
 `)
 
+// limitOne wires [engagement] limit = 1: one performing story at a time.
+func limitOne(t *testing.T) {
+	t.Helper()
+	verb.SetEngagementMode(config.Config{Engagement: config.EngagementConfig{Limit: 1}})
+}
+
+// sty_9c782f0e AC4: under [engagement] limit = 1 a second story's engaging move
+// is refused naming the performing one and how to proceed; nothing moves.
 func TestSingleStorySecondEngageRefused(t *testing.T) {
 	wireWithWorkflows(t, singleStoryWF)
+	limitOne(t)
 
 	var a, b workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "First", "category": "feature"}), &a)
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Second", "category": "feature"}), &b)
 
-	// Engage A.
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "plan"}), &a)
 	if a.Status != "plan" {
 		t.Fatalf("A status = %q", a.Status)
 	}
 
-	// Engaging B while A is engaged must fail.
 	_, err := dispatchRaw(t, "story-set", map[string]any{"id": b.ID, "status": "plan"})
-	if err == nil || !strings.Contains(err.Error(), "one performing story") {
-		t.Fatalf("expected second engage refused, got err=%v", err)
+	if err == nil {
+		t.Fatal("expected second engage refused under limit = 1")
 	}
-	if !strings.Contains(err.Error(), a.ID) {
-		t.Errorf("error should name occupying story: %v", err)
-	}
-	// sty_7b69954a AC1: LIVE seat → stop-request; STALE → seat release; never cancel.
-	msg := err.Error()
-	for _, want := range []string{
-		"engagement seat",
-		"stop-request",
-		"seat release",
-		"LIVE",
-		"STALE",
-		"Never cancel",
-	} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("seat-refusal message missing %q: %s", want, msg)
+	for _, want := range []string{a.ID, "[engagement] limit = 1", "park", "Never cancel"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("limit refusal missing %q: %v", want, err)
 		}
 	}
 
@@ -83,6 +78,7 @@ func TestSingleStorySecondEngageRefused(t *testing.T) {
 
 func TestSingleStorySameStoryProgressAllowed(t *testing.T) {
 	wireWithWorkflows(t, singleStoryWF)
+	limitOne(t)
 
 	var a workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Solo", "category": "feature"}), &a)
@@ -93,30 +89,24 @@ func TestSingleStorySameStoryProgressAllowed(t *testing.T) {
 	}
 }
 
-func TestSingleStoryBlockedFreesSeat(t *testing.T) {
+// Parking a story stops it performing, so under limit = 1 the next one engages.
+func TestSingleStoryParkStopsPerforming(t *testing.T) {
 	wireWithWorkflows(t, singleStoryWF)
+	limitOne(t)
 
 	var a, b workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Parked", "category": "feature"}), &a)
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Next", "category": "feature"}), &b)
 
-	// Engage via legal edges (sty_ebd3d666), then park.
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "plan"}), &a)
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "in_progress"}), &a)
-	// Park A (agent=reviewer → not engaging).
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "blocked"}), &a)
 	if a.Status != "blocked" {
 		t.Fatalf("park failed: %q", a.Status)
 	}
-	// sty_7b69954a AC6: park releases the engagement seat (not only status).
-	seats, serr := verb.Dispatch(context.Background(), "story-seat-list", nil)
-	if serr != nil {
-		t.Fatalf("story-seat-list: %v", serr)
+	if isPerforming(t, a.ID) {
+		t.Fatalf("parked story %s still performing", a.ID)
 	}
-	if strings.Contains(string(seats), a.ID) {
-		t.Fatalf("parked story %s still holds a seat: %s", a.ID, seats)
-	}
-	// B can engage while A is parked.
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": b.ID, "status": "plan"}), &b)
 	if b.Status != "plan" {
 		t.Fatalf("B should engage while A parked: %q", b.Status)
@@ -131,10 +121,11 @@ var recoverStoryWF = map[string]string{
 }
 
 // A declared move back from a performing state to a non-performing, non-exit
-// one (plan → backlog) ends the engagement: the seat is freed and the next
-// story engages with no manual `seat release`.
-func TestSingleStoryBackToEntryFreesSeat(t *testing.T) {
+// one (plan → backlog) ends the engagement: under limit = 1 the next story
+// engages with nothing to release.
+func TestSingleStoryBackToEntryStopsPerforming(t *testing.T) {
 	wireWithWorkflows(t, recoverStoryWF)
+	limitOne(t)
 
 	var a, b workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Returned", "category": "feature"}), &a)
@@ -145,12 +136,8 @@ func TestSingleStoryBackToEntryFreesSeat(t *testing.T) {
 	if a.Status != "backlog" {
 		t.Fatalf("move back failed: %q", a.Status)
 	}
-	seats, serr := verb.Dispatch(context.Background(), "story-seat-list", nil)
-	if serr != nil {
-		t.Fatalf("story-seat-list: %v", serr)
-	}
-	if strings.Contains(string(seats), a.ID) {
-		t.Fatalf("story %s returned to backlog still holds a seat: %s", a.ID, seats)
+	if isPerforming(t, a.ID) {
+		t.Fatalf("story %s returned to backlog still performing", a.ID)
 	}
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": b.ID, "status": "plan"}), &b)
 	if b.Status != "plan" {
@@ -158,8 +145,11 @@ func TestSingleStoryBackToEntryFreesSeat(t *testing.T) {
 	}
 }
 
+// The create path counts the same way: under limit = 1 a create straight into
+// a performing state is refused while another story performs.
 func TestSingleStoryCreateIntoEngagingRefused(t *testing.T) {
 	wireWithWorkflows(t, singleStoryWF)
+	limitOne(t)
 
 	var a workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature", "status": "in_progress"}), &a)
@@ -167,27 +157,23 @@ func TestSingleStoryCreateIntoEngagingRefused(t *testing.T) {
 		t.Fatalf("first create engage: %q", a.Status)
 	}
 	_, err := dispatchRaw(t, "story-create", map[string]any{"title": "B", "category": "feature", "status": "plan"})
-	if err == nil || !strings.Contains(err.Error(), "one performing story") {
-		t.Fatalf("expected create-into-engage refused, got err=%v", err)
-	}
-	// sty_7b69954a AC1: second call site (create-path probe) must name stop-request.
-	msg := err.Error()
-	for _, want := range []string{"stop-request", "seat release", "LIVE", "STALE"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("create-path seat refusal missing %q: %s", want, msg)
-		}
+	if err == nil || !strings.Contains(err.Error(), "[engagement] limit = 1") || !strings.Contains(err.Error(), a.ID) {
+		t.Fatalf("expected create-into-engage refused by the limit naming %s, got err=%v", a.ID, err)
 	}
 }
 
-func TestSingleStoryDefaultIsEnforce(t *testing.T) {
+// sty_9c782f0e AC4: with no [engagement] limit any number of stories perform.
+func TestEngagementDefaultIsUnlimited(t *testing.T) {
 	wireWithWorkflows(t, singleStoryWF)
 
 	var a, b workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "B", "category": "feature"}), &b)
 	call(t, "story-set", map[string]any{"id": a.ID, "status": "plan"})
-	_, err := dispatchRaw(t, "story-set", map[string]any{"id": b.ID, "status": "in_progress"})
-	if err == nil {
-		t.Fatal("default must enforce single story")
+	if _, err := dispatchRaw(t, "story-set", map[string]any{"id": b.ID, "status": "plan"}); err != nil {
+		t.Fatalf("the default must admit a second performing story: %v", err)
+	}
+	if !isPerforming(t, a.ID) || !isPerforming(t, b.ID) {
+		t.Error("both stories must be performing")
 	}
 }

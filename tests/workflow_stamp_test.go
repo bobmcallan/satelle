@@ -110,8 +110,8 @@ requires = ["raised"]
 	if out, err := run(t, testBin, repo, "story", "set", idX, "--status", "in_progress"); err != nil {
 		t.Fatalf("a feature story must engage (its lane declares backlog->in_progress): %v\n%s", err, out)
 	}
-	// Free the single-story seat so the next engage is judged by the lane, not the
-	// one-performing-story process rule (sty_c7149f8a).
+	// Finish the first story so the next engage is judged by the lane alone
+	// (sty_c7149f8a).
 	mustRun(t, testBin, repo, "story", "set", idX, "--status", "done")
 
 	// The chore lane closes straight out of backlog — there is no engage edge.

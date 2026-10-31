@@ -168,14 +168,18 @@ func TestOrderLedgerRowsPutsABaseBeforeItsEvent(t *testing.T) {
 	}
 }
 
-// The working_on kind has one writer (the seat claim in package verb) and its
-// readers are display only (sty_40853d02): no other code references the kind, so
-// nothing can read it to refuse a move.
+// The working_on kind has one writer (the engagement edge in package verb) and
+// its readers show it or look up a tree's story with it (sty_40853d02,
+// sty_9c782f0e): no other code references the kind, so nothing can read it to
+// refuse a move.
 func TestWorkingOnKindIsReferencedOnlyWhereItIsWrittenAndShown(t *testing.T) {
 	allowed := map[string]bool{
-		"ledger/ledger.go":     true, // the constant
-		"verb/working_on.go":   true, // the one writer
-		"cli/story_working.go": true, // `story get|list` and the advisory read it, to show it
+		"ledger/ledger.go":        true, // the constant
+		"verb/working_on.go":      true, // the one writer
+		"cli/story_working.go":    true, // `story get|list` and the advisory read it, to show it
+		"cli/engagement.go":       true, // the hooks find the story engaged from a tree; presence never refuses
+		"verb/priorverdicts.go":   true, // presence is the binary's own bookkeeping, never evidence
+		"cli/workstate_append.go": true, // a stale-base refusal names who moved the story; the base check refused
 	}
 	var found []string
 	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {

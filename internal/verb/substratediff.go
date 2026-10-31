@@ -171,12 +171,11 @@ func closedAt(ctx context.Context, it workitem.Item) time.Time {
 // [from, to], so a reviewer is told the mtime walk cannot say which of them wrote
 // a substrate file. The ledger owns the windows: a story's engagement_baseline
 // opens one and its first later status_transition into a terminal or park state
-// closes it, and a change_record inside [from, to] counts on its own. Released
-// leases leave no row, so a lease read alone would miss every sibling that has
-// already closed. The scan is the time-bounded ListChangedSince, oldest first
-// from `from`, paged until a short page or a row past `to`; a sibling whose
-// baseline precedes `from` either closes or writes inside the window (both are
-// read) or is still open and therefore holds a live lease, which is added last.
+// closes it, and a change_record inside [from, to] counts on its own. The scan
+// is the time-bounded ListChangedSince, oldest first from `from`, paged until a
+// short page or a row past `to`; a sibling whose baseline precedes `from` either
+// closes or writes inside the window (both are read) or is still performing,
+// which is added last.
 // Over-warning (a sibling in its own worktree, or one that touched only code)
 // is deliberate: the label warns, it never excludes.
 func concurrentEngagements(ctx context.Context, it workitem.Item, from, to time.Time) []string {
@@ -255,13 +254,16 @@ func concurrentEngagements(ctx context.Context, it workitem.Item, from, to time.
 			}
 		}
 	}
-	if ls, err := requireLease(); err == nil {
-		if all, lerr := ls.List(ctx); lerr == nil {
-			for _, l := range all {
-				if l.StorySeat && l.ItemID != it.ID && !l.AcquiredAt.After(to) {
-					found[l.ItemID] = true
-				}
+	// A story still performing whose window opened before the scan reached it.
+	if performing, perr := PerformingStories(ctx); perr == nil {
+		for _, p := range performing {
+			if p.ID == it.ID {
+				continue
 			}
+			if _, _, at, berr := firstEngagementBaseline(ctx, p.ID); berr == nil && at.After(to) {
+				continue
+			}
+			found[p.ID] = true
 		}
 	}
 	ids := make([]string, 0, len(found))

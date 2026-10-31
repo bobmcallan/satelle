@@ -3,13 +3,11 @@ package verb_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os/exec"
 	"strings"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -46,7 +44,7 @@ requires = ["queued"]
 
 // localRepo is a git repository with one commit and no remote, the process
 // working in it, and the wait workflow wired.
-func localRepo(t *testing.T, mode string) (*store.DB, string) {
+func localRepo(t *testing.T, limit int) (*store.DB, string) {
 	t.Helper()
 	dir := gitRepo(t)
 	if out := gitOut(t, dir, "remote"); out != "" {
@@ -54,8 +52,8 @@ func localRepo(t *testing.T, mode string) (*store.DB, string) {
 	}
 	chdir(t, dir)
 	db := wireWithWorkflowsStore(t, waitWF)
-	if mode != "" {
-		verb.SetEngagementMode(config.Config{Engagement: config.EngagementConfig{Parallel: mode}})
+	if limit > 0 {
+		verb.SetEngagementMode(config.Config{Engagement: config.EngagementConfig{Limit: limit}})
 	}
 	return db, gitOut(t, dir, "rev-parse", "--show-toplevel")
 }
@@ -99,20 +97,21 @@ func queueStories(t *testing.T, state string) []string {
 	return ids
 }
 
-// AC1, AC2, AC4: entering the wait step frees the seat and the tree — a second
-// story engages from the same tree, which it could not while the first was in
-// progress — and records one queue entry naming the story, its branch and its
-// head sha, all in a repository with no remote.
-func TestWaitStepFreesSeatAndTreeAndQueuesTheStory(t *testing.T) {
-	db, tree := localRepo(t, config.ParallelWorktree)
+// AC1, AC2, AC4: under [engagement] limit = 1, entering the wait step stops the
+// story performing and frees its tree — a second story engages from the same
+// tree, which the limit refused while the first was in progress — and records
+// one queue entry naming the story, its branch and its head sha, all in a
+// repository with no remote.
+func TestWaitStepStopsPerformingAndQueuesTheStory(t *testing.T) {
+	db, tree := localRepo(t, 1)
 	ctx := context.Background()
 	first, second := queuedStory(t, "first"), queuedStory(t, "second")
 
 	if err := enterStatus(t, first, "in_progress"); err != nil {
 		t.Fatalf("engage first: %v", err)
 	}
-	if err := enterStatus(t, second, "in_progress"); !errors.Is(err, lease.ErrTreeConflict) {
-		t.Fatalf("a second story in the same tree is refused while the first holds it: %v", err)
+	if err := enterStatus(t, second, "in_progress"); err == nil || !strings.Contains(err.Error(), "[engagement] limit = 1") {
+		t.Fatalf("a second story is refused by the limit while the first performs: %v", err)
 	}
 	if got := verb.DirtyTreeOwner(ctx, second)(tree); got != first {
 		t.Fatalf("the in-progress story owns the tree: owner = %q, want %q", got, first)
@@ -121,8 +120,8 @@ func TestWaitStepFreesSeatAndTreeAndQueuesTheStory(t *testing.T) {
 	if err := enterStatus(t, first, "awaiting_release"); err != nil {
 		t.Fatalf("enter the wait step: %v", err)
 	}
-	if _, err := db.Leases.Get(ctx, first); err == nil {
-		t.Fatal("a story at a wait step holds no lease (seat or tree)")
+	if isPerforming(t, first) {
+		t.Fatal("a story at a wait step is not performing")
 	}
 	if got := verb.DirtyTreeOwner(ctx, second)(tree); got != "" {
 		t.Fatalf("a waiting story no longer owns its tree: owner = %q", got)
@@ -163,9 +162,9 @@ func TestWaitStepFreesSeatAndTreeAndQueuesTheStory(t *testing.T) {
 
 // AC3, AC4: the queue lists open entries in the order they were recorded; a
 // withdrawal needs a reason, records it on the story and drops the entry, and
-// moves no status. Default seat mode: each wait frees the one seat for the next.
+// moves no status. Under limit = 1 each wait frees the slot for the next.
 func TestStoryQueueListsInOrderAndWithdrawsWithAReason(t *testing.T) {
-	db, _ := localRepo(t, "")
+	db, _ := localRepo(t, 1)
 	ctx := context.Background()
 	var ids []string
 	for _, title := range []string{"one", "two", "three"} {
@@ -221,7 +220,7 @@ func TestStoryQueueListsInOrderAndWithdrawsWithAReason(t *testing.T) {
 // A tree with no branch to name refuses the move: the story stays where it was
 // and nothing is queued.
 func TestWaitStepRefusesATreeWithNoBranch(t *testing.T) {
-	db, tree := localRepo(t, "")
+	db, tree := localRepo(t, 0)
 	id := queuedStory(t, "detached")
 	if err := enterStatus(t, id, "in_progress"); err != nil {
 		t.Fatal(err)

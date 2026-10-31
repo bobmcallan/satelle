@@ -7,8 +7,8 @@ import (
 )
 
 // sty_a42f4add AC6: a story or epic still at its start status that has only been
-// readied — review rounds on its first edge, no transition, no step above 0, no
-// seat — shows a current chip carrying those rounds; one with no review rows still
+// readied — review rounds on its first edge, no transition, no step above 0,
+// nothing in flight — shows a current chip carrying those rounds; one with no review rows still
 // shows nothing.
 func TestStagesReadinessRoundsOnAnUnstartedStory(t *testing.T) {
 	for _, to := range []string{"plan", "ready"} {

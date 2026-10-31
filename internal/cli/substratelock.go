@@ -24,7 +24,7 @@ import (
 const substrateLaneCategory = "substrate"
 
 // substrateLockDenyActor is the ledger actor for a lock refusal — the gate, not
-// a seat's agent, made the decision.
+// a performer, made the decision.
 const substrateLockDenyActor = "edit-gate"
 
 // substrateLockFootprint is the set of prefixes the lock never applies to: the
@@ -61,128 +61,86 @@ func substrateLocked(lockRoots, footprint, exemptGlobs []string, root, abs strin
 	return editExempt(lockRoots, root, abs)
 }
 
-// seatStatus is the committed status a seat's story is performing at.
-func seatStatus(s seatInfo) string {
+// engagementStatus is the committed status an engaged story is performing at.
+func engagementStatus(s engagement) string {
 	if s.StoryStatus != "" {
 		return s.StoryStatus
 	}
 	return s.State
 }
 
-// lockSeats is what one hook call knows about the seats: the answer
-// resolveSeatsFor gave (info, engaged — the seat pickSessionSeatFor attributed
-// this edit to, when it could), every live performing seat in the repo, and the
-// session id.
-type lockSeats struct {
-	info    seatInfo
+// lockEngagements is what one hook call knows about the engagements: the answer
+// resolveEngagementsFor gave (info, engaged — the story engaged from the tree
+// this edit lands in, when there is one) and every performing item in the repo.
+type lockEngagements struct {
+	info    engagement
 	engaged bool
-	live    []seatInfo
-	sid     string
+	live    []engagement
 }
 
 // Why a refused edit was refused — the condition the deny text names.
 const (
-	laneOwnNotSubstrate = "own-not-substrate" // the edit is attributed to this session's story, which is not substrate
-	laneAmbiguous       = "ambiguous"         // several of this session's seats, none bound to the target, not exactly one substrate
-	laneStale           = "stale"             // this session's own seat is stale
-	laneUnresolved      = "unresolved"        // no seat is attributed to this session
+	laneOwnNotSubstrate = "own-not-substrate" // the edit is attributed to a story that is not substrate
+	laneUnresolved      = "unresolved"        // no story is engaged from the edited tree
 )
 
-// lockLane is the partition of the live seats for one edit of locked substrate.
-// Lane, when set, is the substrate-lane seat making the change: the edit passes
-// and Noted (the other live seats) get a ledger note instead of a refusal.
-// Otherwise Holders are the seats the lock is held against and Why says which
-// condition applied. Mine are this session's own live seats; Stale is the stale
-// lease the session was left naming (its own, or a foreign one it must take over).
+// lockLane is the partition of the performing items for one edit of locked
+// substrate. Lane, when set, is the substrate-lane story making the change: the
+// edit passes and Noted (the other performing items) get a ledger note instead
+// of a refusal. Otherwise Holders are the items the lock is held against and Why
+// says which condition applied. Substrate is a performing substrate-lane story
+// the edit could have been made under instead, when one exists.
 type lockLane struct {
-	Lane          *seatInfo
-	Noted         []seatInfo
-	Holders       []seatInfo
-	Why           string
-	Stale         *seatInfo
-	Mine          []seatInfo
-	MineSubstrate bool
-	Session       string
+	Lane      *engagement
+	Noted     []engagement
+	Holders   []engagement
+	Why       string
+	Substrate *engagement
 }
 
 // substrateLane decides which story is making a change to locked substrate. The
-// decision is whether the substrate story is the one making it — never which
-// tree's path is edited, and never what a sibling happens to be doing. isSub
-// answers whether a story is in the substrate lane; a doubt about it is "no".
+// decision is whether the substrate story is the one making it — never what a
+// sibling happens to be doing. isSub answers whether a story is in the substrate
+// lane; a doubt about it is "no".
 //
-//  1. The edit is attributed to one of this session's seats (the pick the caller
-//     resolved): that story decides. A substrate seat of the same session never
-//     overrides an attribution to a story that is not.
-//  2. No seat is attributed but the session holds several (one per worktree),
-//     none bound to the target: exactly one substrate seat among them is the
-//     lane; otherwise the session is ambiguous.
-//  3. Otherwise every live seat holds the lock, and the condition is this
-//     session's own stale seat, or none attributed. A stale lease stamped by
-//     another session, or by none, is the second: it is not this session's.
-func substrateLane(s *lockSeats, isSub func(id string) bool) lockLane {
-	sid := strings.TrimSpace(s.sid)
-	lane := lockLane{Mine: sessionSeats(s.live, sid), Session: sid}
-	for _, m := range lane.Mine {
-		if isSub(m.ItemID) {
-			lane.MineSubstrate = true
+//  1. The edit is attributed to the story engaged from the tree it lands in:
+//     that story decides. A substrate story engaged from another tree never
+//     overrides it.
+//  2. Otherwise every performing item holds the lock.
+func substrateLane(s *lockEngagements, isSub func(id string) bool) lockLane {
+	var lane lockLane
+	for i := range s.live {
+		if isSub(s.live[i].ItemID) {
+			lane.Substrate = &s.live[i]
 			break
 		}
 	}
-	others := func(except string) []seatInfo {
-		var out []seatInfo
-		for _, l := range s.live {
-			if l.ItemID != except {
-				out = append(out, l)
-			}
-		}
-		return out
-	}
 	info := s.info
-	switch {
-	case s.engaged && info.ItemID != "" && !info.Stale:
+	if s.engaged && info.ItemID != "" {
 		if isSub(info.ItemID) {
-			lane.Lane, lane.Noted = &info, others(info.ItemID)
-		} else {
-			lane.Holders, lane.Why = []seatInfo{info}, laneOwnNotSubstrate
-		}
-	case len(lane.Mine) >= 2:
-		var subs []seatInfo
-		for _, m := range lane.Mine {
-			if isSub(m.ItemID) {
-				subs = append(subs, m)
+			var noted []engagement
+			for _, l := range s.live {
+				if l.ItemID != info.ItemID {
+					noted = append(noted, l)
+				}
 			}
+			lane.Lane, lane.Noted = &info, noted
+			return lane
 		}
-		if len(subs) == 1 {
-			lane.Lane, lane.Noted = &subs[0], others(subs[0].ItemID)
-		} else {
-			lane.Holders, lane.Why = s.live, laneAmbiguous
-		}
-	case info.Stale && sid != "" && info.SessionID == sid:
-		lane.Holders, lane.Why, lane.Stale = s.live, laneStale, &info
-	default:
-		lane.Holders, lane.Why = s.live, laneUnresolved
-		if info.Stale && info.ItemID != "" {
-			lane.Stale = &info
-		}
+		lane.Holders, lane.Why = []engagement{info}, laneOwnNotSubstrate
+		return lane
 	}
+	lane.Holders, lane.Why = s.live, laneUnresolved
 	return lane
 }
 
 // laneHolderDesc is one outside holder as the deny text names it.
-func laneHolderDesc(h seatInfo, cats map[string]string) string {
+func laneHolderDesc(h engagement, cats map[string]string) string {
 	cat := cats[h.ItemID]
 	if cat == "" {
 		cat = "unknown"
 	}
-	return fmt.Sprintf("%s (status %q, category %q)", h.ItemID, seatStatus(h), cat)
-}
-
-func laneIDs(seats []seatInfo) string {
-	ids := make([]string, 0, len(seats))
-	for _, s := range seats {
-		ids = append(ids, s.ItemID)
-	}
-	return strings.Join(ids, ", ")
+	return fmt.Sprintf("%s (status %q, category %q)", h.ItemID, engagementStatus(h), cat)
 }
 
 // substrateLockReason is the deny text: it names each outside holder with its
@@ -190,57 +148,39 @@ func laneIDs(seats []seatInfo) string {
 // for that condition. cats maps a story id to its category as the gate read it;
 // tree is the tree the lock list was resolved against. A lane with no Why (the
 // store could not be opened) names the holders only.
-func substrateLockReason(outside []seatInfo, relPath string, lane lockLane, cats map[string]string, tree string) string {
+func substrateLockReason(outside []engagement, relPath string, lane lockLane, cats map[string]string, tree string) string {
 	if len(outside) == 0 {
 		return fmt.Sprintf(
-			"satelle: substrate lock — %s is locked substrate and this session has no engaged story in the substrate lane: the workflows, skills and agent bindings under it are what judge the work, so it is changed only under a substrate-lane story, whether or not anything else is performing. "+
-				"Lane out: file a story with --category %s (judged by satelle-workflow-change-review) and engage it in this session. "+
+			"satelle: substrate lock — %s is locked substrate and no story in the substrate lane is engaged from this tree: the workflows, skills and agent bindings under it are what judge the work, so it is changed only under a substrate-lane story, whether or not anything else is performing. "+
+				"Lane out: file a story with --category %s (judged by satelle-workflow-change-review) and engage it from this tree. "+
 				"If the substrate itself prevents engagement (for example an invalid .satelle/workflows/step.toml), ask the developer to repair it outside the agent session. "+
 				"[gate] lock_substrate_paths sets which prefixes are locked; an empty list is the documented opt-out and `satelle doctor` reports it.",
 			relPath, substrateLaneCategory)
 	}
 	var who, finish string
 	if len(outside) == 1 {
-		who = "story " + laneHolderDesc(outside[0], cats) + " holds a performing seat"
+		who = "story " + laneHolderDesc(outside[0], cats) + " is performing"
 		finish = "finish or park " + outside[0].ItemID
 	} else {
 		parts := make([]string, 0, len(outside))
 		for _, h := range outside {
 			parts = append(parts, laneHolderDesc(h, cats))
 		}
-		who = "stories " + strings.Join(parts, ", ") + " hold performing seats"
+		who = "stories " + strings.Join(parts, ", ") + " are performing"
 		finish = "finish or park them"
 	}
 	var cond string
 	switch lane.Why {
 	case laneOwnNotSubstrate:
-		cond = fmt.Sprintf("This edit is attributed to your story %s, which is not in the substrate lane. ", outside[0].ItemID)
-		if lane.MineSubstrate {
-			cond += "Make it from the worktree of your substrate-lane story instead. "
+		cond = fmt.Sprintf("This edit is attributed to story %s, engaged from %s, which is not in the substrate lane. ", outside[0].ItemID, tree)
+		if lane.Substrate != nil {
+			cond += fmt.Sprintf("Make it from the worktree of substrate-lane story %s instead. ", lane.Substrate.ItemID)
 		}
-	case laneAmbiguous:
-		n := "none"
-		if lane.MineSubstrate {
-			n = "more than one"
-		}
-		cond = fmt.Sprintf("This session holds seats %s and none is bound to %s, and %s of them is in the substrate lane, so the edit cannot be attributed. "+
-			"Make it from the substrate story's worktree, or release the seats that are not substrate. ", laneIDs(lane.Mine), tree, n)
-	case laneStale:
-		cond = fmt.Sprintf("This session's own seat %s (session %s) is stale, so it was not counted — re-engage it (`satelle story set %s --status %s`) to refresh its heartbeat. ",
-			lane.Stale.ItemID, lane.Session, lane.Stale.ItemID, seatStatus(*lane.Stale))
 	case laneUnresolved:
-		cond = "No performing seat is attributed to this session, so none counted. "
-		if lane.Stale != nil {
-			owner := "no session"
-			if lane.Stale.SessionID != "" {
-				owner = "another session"
-			}
-			cond += fmt.Sprintf("Stale lease %s belongs to %s (owner %s) — if its holder is gone, `satelle story seat release %s`. ", lane.Stale.ItemID, owner, lane.Stale.Owner, lane.Stale.ItemID)
-		}
-		cond += "Engage the substrate story in this session; if it is engaged, edit from its worktree. "
+		cond = fmt.Sprintf("No performing story is engaged from %s, so none counted. Engage the substrate story from this tree; if it is engaged, edit from its worktree. ", tree)
 	}
 	laneOut := "Lane out: "
-	if !lane.MineSubstrate {
+	if lane.Substrate == nil {
 		laneOut += fmt.Sprintf("make the change under a substrate-lane story (category %q, judged by satelle-workflow-change-review) — file one, or re-file this change as one — or ", substrateLaneCategory)
 	}
 	laneOut += finish + " first. "
@@ -318,20 +258,20 @@ func lockConfigFrom(gp gateProcess) lockConfig {
 // The lock is a function of who is making the change (substrateLane), never of
 // the harness or the model: a substrate-lane story's change passes whatever
 // siblings are performing (they get a ledger note, recordSubstrateChangeNotes, once the change is allowed),
-// and any other change to locked substrate is refused — whether a seat outside
-// the lane is held or nothing is engaged at all. The caller runs the gate on
+// and any other change to locked substrate is refused — whether a story outside
+// the lane is performing or nothing is engaged at all. The caller runs the gate on
 // every edit; a path that is not locked (an exempt path outside the lock list)
 // is passed without reading the store. A holder's category is read from the store
 // and every doubt about it refuses — a lock that fails open is not a lock. The
 // committed config is read ONCE (loadSubstrateLockConfig).
-func substrateLockGate(cmd *cobra.Command, raw []byte, target string, seats *lockSeats) error {
-	return substrateLockGateWith(loadSubstrateLockConfig(), cmd, raw, target, seats)
+func substrateLockGate(cmd *cobra.Command, raw []byte, target string, engs *lockEngagements) error {
+	return substrateLockGateWith(loadSubstrateLockConfig(), cmd, raw, target, engs)
 }
 
 // substrateLockGateWith is substrateLockGate over an already-loaded config, so a
 // Bash command with several candidate targets reads the config once.
-func substrateLockGateWith(cfg lockConfig, cmd *cobra.Command, raw []byte, target string, seats *lockSeats) error {
-	al, err := substrateLockJudge(cfg, cmd, raw, target, seats)
+func substrateLockGateWith(cfg lockConfig, cmd *cobra.Command, raw []byte, target string, engs *lockEngagements) error {
+	al, err := substrateLockJudge(cfg, cmd, raw, target, engs)
 	if err != nil {
 		return err
 	}
@@ -342,7 +282,7 @@ func substrateLockGateWith(cfg lockConfig, cmd *cobra.Command, raw []byte, targe
 // It is written only once the whole call has passed: a Bash command refused on
 // any candidate never ran, so it changed nothing to note.
 type pendingChangeNote struct {
-	noted, substrate seatInfo
+	noted, substrate engagement
 	rel              string
 }
 
@@ -376,7 +316,7 @@ func recordLockAllowance(cmd *cobra.Command, raw []byte, al lockAllowance) error
 // substrateLockJudge is the decision behind substrateLockGateWith: a deny error to
 // refuse, or nil with what the caller records once the call as a whole is
 // allowed. A refusal writes its own substrate_lock_deny rows.
-func substrateLockJudge(cfg lockConfig, cmd *cobra.Command, raw []byte, target string, seats *lockSeats) (lockAllowance, error) {
+func substrateLockJudge(cfg lockConfig, cmd *cobra.Command, raw []byte, target string, engs *lockEngagements) (lockAllowance, error) {
 	root, globs, lockPaths := cfg.root, cfg.globs, cfg.lockPaths
 	abs := resolveAbsTarget(root, target)
 	// The lock list is repo-relative, so it must be resolved against the tree the
@@ -409,7 +349,7 @@ func substrateLockJudge(cfg lockConfig, cmd *cobra.Command, raw []byte, target s
 	}
 	if oerr != nil {
 		// Cannot read the store to confirm the lane: refuse, and say why.
-		return lockAllowance{}, denyPreToolUse(cmd, raw, substrateLockReason(seats.live, rel, lockLane{}, nil, lockBase)+" (the substrate lane could not be confirmed: "+oerr.Error()+")")
+		return lockAllowance{}, denyPreToolUse(cmd, raw, substrateLockReason(engs.live, rel, lockLane{}, nil, lockBase)+" (the substrate lane could not be confirmed: "+oerr.Error()+")")
 	}
 	defer func() { _ = a.Close() }()
 	ctx := context.Background()
@@ -427,7 +367,7 @@ func substrateLockJudge(cfg lockConfig, cmd *cobra.Command, raw []byte, target s
 		cats[id] = strings.ToLower(strings.TrimSpace(it.Category))
 		return cats[id] == substrateLaneCategory
 	}
-	lane := substrateLane(seats, isSub)
+	lane := substrateLane(engs, isSub)
 	if lane.Lane != nil {
 		// A substrate-lane story is making the change: siblings performing now do
 		// not block it; their ledger records that their judge changed, once the
@@ -440,7 +380,7 @@ func substrateLockJudge(cfg lockConfig, cmd *cobra.Command, raw []byte, target s
 		}
 		return al, nil
 	}
-	var outside []seatInfo
+	var outside []engagement
 	for _, h := range lane.Holders {
 		if !isSub(h.ItemID) {
 			outside = append(outside, h)
@@ -448,8 +388,8 @@ func substrateLockJudge(cfg lockConfig, cmd *cobra.Command, raw []byte, target s
 	}
 	if len(outside) == 0 {
 		// Nothing outside the lane holds the lock, but this session is not in the
-		// lane either (no seat anywhere, another session's substrate seat, or an
-		// ambiguous pair of its own): locked substrate needs an engaged
+		// lane either (nothing engaged from the edited tree, or a substrate story
+		// engaged from another one): locked substrate needs an engaged
 		// substrate-lane story whether or not anything else is performing. No
 		// holder is at fault, so no ledger row is written.
 		return lockAllowance{}, denyPreToolUse(cmd, raw, substrateLockReason(nil, rel, lane, cats, lockBase))
@@ -512,7 +452,7 @@ func bashLockCandidates(command string, cfg lockConfig) []string {
 // same predicate, deny text and ledger row as an Edit of the path
 // (substrateLockGateWith). It runs before the exempt-path filter and in both Bash
 // handlers (`hook gate`, `hook commitgate`), because the exemption of .satelle/ is
-// what let a shell command rewrite the substrate that judges the story. seats is
+// what let a shell command rewrite the substrate that judges the story. engs is
 // called only once the command has a candidate, with the git root of that
 // candidate ("" when it has none), so a command that touches nothing lockable
 // opens no store; the config is read once.
@@ -527,28 +467,28 @@ func bashLockCandidates(command string, cfg lockConfig) []string {
 // read tools and `satelle doc get`. A shell -c program is classified as shell,
 // by what it writes, as the same command run bare is; only non-shell interpreter
 // text, and a shell program shellProgram cannot read, is pattern-scanned. A substrate-lane story's change is never refused; any other
-// change to locked substrate is, with a seat held or not (sty_66abc0e3). The
+// change to locked substrate is, with a story performing or not (sty_66abc0e3). The
 // backstop for the invisible cases is unchanged: substrate diffs are seen at the
 // commit and at integration review.
-func bashSubstrateLockGate(cmd *cobra.Command, raw []byte, command string, gp gateProcess, seats func(tree string) (*lockSeats, error)) error {
+func bashSubstrateLockGate(cmd *cobra.Command, raw []byte, command string, gp gateProcess, engs func(tree string) (*lockEngagements, error)) error {
 	cfg := lockConfigFrom(gp)
 	cands := bashLockCandidates(command, cfg)
 	if len(cands) == 0 {
 		return nil
 	}
 	// Each candidate is attributed by its own tree, exactly as the Edit path does
-	// with treeOf(target): a session holding a seat per worktree must not have a
-	// change to one seat's own worktree substrate judged as if it were unattributed.
+	// with treeOf(target): a change to one worktree.s substrate is judged by the story engaged from that
+	// worktree, never as if it were unattributed.
 	// The notes of an allowed candidate wait for the others: a command refused on
 	// any candidate does not run, so it leaves no note claiming a change.
 	var all lockAllowance
-	byTree := map[string]*lockSeats{}
+	byTree := map[string]*lockEngagements{}
 	for _, c := range cands {
 		tree := treeOf(c)
 		ss, ok := byTree[tree]
 		if !ok {
 			var err error
-			if ss, err = seats(tree); err != nil {
+			if ss, err = engs(tree); err != nil {
 				return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
 			}
 			byTree[tree] = ss
@@ -588,7 +528,7 @@ func recordSubstrateWrites(writes []pendingWrite) error {
 	return nil
 }
 
-// recordSubstrateChangeNotes appends, to each story that held a performing seat
+// recordSubstrateChangeNotes appends, to each story that was performing
 // while a substrate-lane story changed locked substrate, a note naming that story
 // and the path: the lane does not wait for its siblings, so each sibling's ledger
 // records that its judge changed. One note per (noted story, substrate story,
@@ -610,13 +550,13 @@ func recordSubstrateChangeNotes(notes []pendingChangeNote) {
 			continue
 		}
 		done[key] = true
-		payload, err := json.Marshal(substrateChangePayload{Path: n.rel, SubstrateStory: n.substrate.ItemID, Status: seatStatus(n.noted)})
+		payload, err := json.Marshal(substrateChangePayload{Path: n.rel, SubstrateStory: n.substrate.ItemID, Status: engagementStatus(n.noted)})
 		if err != nil {
 			continue
 		}
 		_, _ = a.Store.Ledger.Append(ctx, ledger.AppendInput{
 			StoryID: n.noted.ItemID, Kind: ledger.KindSubstrateChangeNote, Actor: substrateLockDenyActor,
-			Body:    fmt.Sprintf("substrate story %s changed %s while %s held a performing seat (status %s); the judge of this story's work may have changed", n.substrate.ItemID, n.rel, n.noted.ItemID, seatStatus(n.noted)),
+			Body:    fmt.Sprintf("substrate story %s changed %s while %s was performing (status %s); the judge of this story's work may have changed", n.substrate.ItemID, n.rel, n.noted.ItemID, engagementStatus(n.noted)),
 			Payload: payload,
 		}, time.Now().UTC())
 	}
@@ -625,14 +565,14 @@ func recordSubstrateChangeNotes(notes []pendingChangeNote) {
 // recordSubstrateLockDeny appends the refusal to the holder's ledger so it is
 // auditable after the fact. A failure to record never lifts the refusal: the
 // caller denies either way.
-func recordSubstrateLockDeny(ctx context.Context, a *app.App, holder seatInfo, rel string) {
-	payload, err := json.Marshal(substrateLockPayload{Path: rel, Status: seatStatus(holder), Lane: substrateLaneCategory})
+func recordSubstrateLockDeny(ctx context.Context, a *app.App, holder engagement, rel string) {
+	payload, err := json.Marshal(substrateLockPayload{Path: rel, Status: engagementStatus(holder), Lane: substrateLaneCategory})
 	if err != nil {
 		return
 	}
 	_, _ = a.Store.Ledger.Append(ctx, ledger.AppendInput{
 		StoryID: holder.ItemID, Kind: ledger.KindSubstrateLockDeny, Actor: substrateLockDenyActor,
-		Body:    fmt.Sprintf("substrate lock refused an edit to %s while %s held a performing seat (status %s)", rel, holder.ItemID, seatStatus(holder)),
+		Body:    fmt.Sprintf("substrate lock refused an edit to %s while %s was performing (status %s)", rel, holder.ItemID, engagementStatus(holder)),
 		Payload: payload,
 	}, time.Now().UTC())
 }

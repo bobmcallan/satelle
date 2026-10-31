@@ -22,7 +22,7 @@ import (
 
 // TestBuildUISnapshotEmitsAllKinds proves sty_400c022b AC1/AC4: the sender
 // emits full docs (mod_time + provenance + source), non-stub ledger events,
-// seats, settings, and identity meta.
+// engagements, settings, and identity meta.
 func TestBuildUISnapshotEmitsAllKinds(t *testing.T) {
 	t.Setenv("SATELLE_HOME", t.TempDir())
 	repo := t.TempDir()
@@ -37,9 +37,14 @@ func TestBuildUISnapshotEmitsAllKinds(t *testing.T) {
 
 	ctx := context.Background()
 	now := time.Now().UTC()
+	wfDir := filepath.Join(repo, ".satelle", "workflows")
+	writeRoute(t, wfDir, wildcardRouteDone, wildcardRouteStep)
+	if _, err := db.DocIndex.Sync(ctx, map[string]string{"workflows": wfDir}, now); err != nil {
+		t.Fatal(err)
+	}
 	sty, err := db.Stories.Create(ctx, workitem.CreateInput{
 		Kind: workitem.KindStory, Title: "Snap Story", Body: "goal",
-		AcceptanceCriteria: "1. x", Category: "chore", Status: workitem.StatusBacklog,
+		AcceptanceCriteria: "1. x", Category: "chore", Status: workitem.StatusInProgress,
 	}, now)
 	if err != nil {
 		t.Fatal(err)
@@ -50,16 +55,14 @@ func TestBuildUISnapshotEmitsAllKinds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Acquire a seat so seats appear in the snapshot.
-	if _, _, _, err := db.Leases.Acquire(ctx, sty.ID, "story", "test@local", "backlog", true); err != nil {
-		t.Fatal(err)
-	}
+	// Engage the story so the engagement partition carries it.
+	recordEngagementOn(t, db, sty.ID, "in_progress", repo, "")
 
 	// Seed an authored doc with mod time via the doc index if possible.
 	if db.DocIndex != nil {
 		// Write a workflow-ish markdown into a data dir and index if API allows.
 		// Fallback: insert is via reindex; for unit scope, empty docs still OK —
-		// we assert identity/ledger/seats always, and docs when present.
+		// we assert identity/ledger/engagements always, and docs when present.
 	}
 
 	a := &app.App{
@@ -84,15 +87,15 @@ func TestBuildUISnapshotEmitsAllKinds(t *testing.T) {
 	if led["story_id"] != sty.ID {
 		t.Errorf("ledger story_id = %v, want %s", led["story_id"], sty.ID)
 	}
-	if len(snap.Seats) == 0 {
-		t.Fatal("expected seats in snapshot")
+	if len(snap.Engagements) == 0 {
+		t.Fatal("expected engagements in snapshot")
 	}
-	var seat map[string]any
-	if err := json.Unmarshal(snap.Seats[0], &seat); err != nil {
+	var eng map[string]any
+	if err := json.Unmarshal(snap.Engagements[0], &eng); err != nil {
 		t.Fatal(err)
 	}
-	if seat["id"] != sty.ID {
-		t.Errorf("seat id = %v, want %s", seat["id"], sty.ID)
+	if eng["id"] != sty.ID || eng["worktree"] != repo {
+		t.Errorf("engagement = %v, want %s engaged from %s", eng, sty.ID, repo)
 	}
 	if len(snap.Identity) == 0 {
 		t.Fatal("expected identity meta blob")
@@ -220,7 +223,7 @@ func TestBuildUIDrainSnapshotIsLight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantKinds := map[string]bool{"story": true, "task": true, "execution": true, "seat": true, "wave": true, "identity": true}
+	wantKinds := map[string]bool{"story": true, "task": true, "execution": true, "engagement": true, "wave": true, "identity": true}
 	if len(drain.Kinds) != len(wantKinds) {
 		t.Fatalf("drain Kinds = %v", drain.Kinds)
 	}

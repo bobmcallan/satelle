@@ -3,8 +3,8 @@ package verb_test
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"testing"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -30,11 +30,11 @@ func workingOnRows(t *testing.T, db *store.DB, id string) []verb.WorkingOnPayloa
 	return out
 }
 
-// Taking a fresh engagement seat appends one working_on row naming the location,
-// session and state (sty_40853d02 AC4). A step that moves on while the seat is held
-// appends none, a refused engage appends none, and a seat taken again after it was
-// released appends another.
-func TestFreshSeatAppendsOneWorkingOnRow(t *testing.T) {
+// Engaging a story appends one working_on row naming the location, session and
+// state (sty_40853d02 AC4, sty_9c782f0e AC3). Each new performing state appends
+// another; a same-status re-set from the same place appends none; a second story
+// engaging alongside writes its own row and is not refused.
+func TestEngagingAppendsWorkingOnRows(t *testing.T) {
 	db := wireWithWorkflowsStore(t, singleStoryWF)
 	verb.SetLocationResolver(func() (string, string) { return "loc_unit", "unit box" })
 	t.Setenv(config.SessionEnv, "sess_unit")
@@ -55,28 +55,49 @@ func TestFreshSeatAppendsOneWorkingOnRow(t *testing.T) {
 		t.Errorf("row = %+v, want loc_unit / unit box / sess_unit / plan", r)
 	}
 
-	// The next step while the seat is held re-seats nothing.
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "in_progress"}), &a)
-	if rows := workingOnRows(t, db, a.ID); len(rows) != 1 {
-		t.Fatalf("a step under a held seat wrote a row: %+v", rows)
-	}
-
-	// A refused engage leaves no row: the seat was never taken.
-	if _, err := dispatchRaw(t, "story-set", map[string]any{"id": b.ID, "status": "plan"}); err == nil || !strings.Contains(err.Error(), "engagement seat") {
-		t.Fatalf("second engage should be refused on the seat, got %v", err)
-	}
-	if rows := workingOnRows(t, db, b.ID); len(rows) != 0 {
-		t.Fatalf("a refused engage wrote working_on rows: %+v", rows)
-	}
-
-	// A seat taken again after the first was released is a fresh seat.
-	if err := db.Leases.ForceRelease(context.Background(), a.ID); err != nil {
-		t.Fatal(err)
+	if rows := workingOnRows(t, db, a.ID); len(rows) != 2 || rows[1].State != "in_progress" {
+		t.Fatalf("the next performing state: rows = %+v, want a second row at in_progress", rows)
 	}
 	call(t, "story-set", map[string]any{"id": a.ID, "status": "in_progress"})
-	rows = workingOnRows(t, db, a.ID)
-	if len(rows) != 2 || rows[1].State != "in_progress" {
-		t.Fatalf("re-engaging after a release: rows = %+v, want a second row at in_progress", rows)
+	if rows := workingOnRows(t, db, a.ID); len(rows) != 2 {
+		t.Fatalf("a same-status re-set from the same place wrote a row: %+v", rows)
+	}
+
+	if _, err := dispatchRaw(t, "story-set", map[string]any{"id": b.ID, "status": "plan"}); err != nil {
+		t.Fatalf("a second story must engage alongside the first: %v", err)
+	}
+	if rows := workingOnRows(t, db, b.ID); len(rows) != 1 {
+		t.Fatalf("the second story's engagement: rows = %+v, want one", rows)
+	}
+}
+
+// TestWorkingOnNeverRefuses (sty_9c782f0e AC3): presence is advisory. A story
+// whose newest working_on row names another location and session is still
+// engaged, moved and closed from here, and this location's row is added beside
+// it rather than replacing it.
+func TestWorkingOnNeverRefuses(t *testing.T) {
+	db := wireWithWorkflowsStore(t, singleStoryWF)
+	verb.SetLocationResolver(func() (string, string) { return "loc_here", "here" })
+	t.Setenv(config.SessionEnv, "sess_here")
+
+	var a workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Shared", "category": "feature"}), &a)
+	other, _ := json.Marshal(verb.WorkingOnPayload{Location: "loc_there", Label: "there", Session: "sess_there", Worktree: "/elsewhere", State: "plan"})
+	if _, err := db.Ledger.Append(context.Background(), ledger.AppendInput{
+		StoryID: a.ID, Kind: ledger.KindWorkingOn, Actor: "executor", Body: "working_on there", Payload: other,
+	}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, st := range []string{"plan", "in_progress", "done"} {
+		if _, err := dispatchRaw(t, "story-set", map[string]any{"id": a.ID, "status": st}); err != nil {
+			t.Fatalf("%s → %s with another location's presence: %v", a.ID, st, err)
+		}
+	}
+	rows := workingOnRows(t, db, a.ID)
+	if len(rows) != 3 || rows[0].Location != "loc_there" || rows[1].Location != "loc_here" || rows[2].State != "in_progress" {
+		t.Fatalf("rows = %+v, want the other location's row kept and this one's added per performing state", rows)
 	}
 }
 

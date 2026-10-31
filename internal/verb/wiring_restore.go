@@ -21,7 +21,6 @@ var wiringVars = []wiringVar{
 	{"workItemStore", &workItemStore},
 	{"ledgerStore", &ledgerStore},
 	{"docIndexStore", &docIndexStore},
-	{"leaseStore", &leaseStore},
 	{"retrieveStore", &retrieveStore},
 	{"txRunner", &txRunner},
 	{"opLog", &opLog},
@@ -47,7 +46,7 @@ var wiringVars = []wiringVar{
 	{"agentsLayer", &agentsLayer},
 	{"agentsVars", &agentsVars},
 	{"agentsWired", &agentsWired},
-	{"engagementParallel", &engagementParallel},
+	{"engagementLimit", &engagementLimit},
 	{"storyKeepClosed", &storyKeepClosed},
 	{"storyKeepDays", &storyKeepDays},
 	{"retrieveKeepDays", &retrieveKeepDays},
@@ -108,6 +107,9 @@ var wiringExempt = map[string]string{
 	"terminalStoryStates":     "immutable lookup table, never written after init",
 	"terminalExecutionStates": "immutable lookup table, never written after init",
 
+	"openStarts":   "this process's open transition ids; each entry is deleted when its transition ends",
+	"activitySeen": "this process's dedupe of transition_activity rows, keyed by the start row id, so no test can collide with another",
+
 	"wiringVars":   "the snapshot table itself",
 	"wiringExempt": "the exemption table itself",
 }
@@ -122,7 +124,7 @@ var wiringExempt = map[string]string{
 // next test finds the package as it was. Restoring the snapshot — not nil or a
 // zero value — is what keeps the production defaults (verdictRecord,
 // dispatchLogsDir, changelogPath, driverWindowReader, driverSnapshotter,
-// engagementParallel) alive.
+// engagementLimit) alive.
 //
 // Func variables are compared by closure identity: two closures built from one
 // literal over different captures are different values, which is how the

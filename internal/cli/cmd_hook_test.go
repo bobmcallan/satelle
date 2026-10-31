@@ -17,21 +17,26 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
-	"github.com/bobmcallan/satelle/internal/lease"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-// evaluateFirstSeat collapses evaluateSeat's live SET to the single seat these
-// cases were written against — each drives exactly one lease, so "the live one"
-// is unambiguous. Co-holding cases call evaluateSeat directly (sty_c098dc2d).
-func evaluateFirstSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Doc, now time.Time) (seatInfo, seatInfo, error) {
-	live, other, err := evaluateSeat(leases, items, wfs, now)
-	if len(live) == 0 {
-		return seatInfo{}, other, err
+// anyPerforming reports whether any item performs under its own governing
+// route. engagedHere records each item engaged from this tree at its committed
+// status, so a route that cannot classify it fails closed instead of skipping.
+func anyPerforming(items []workitem.Item, wfs []docindex.Doc, engagedHere bool) (bool, error) {
+	status := map[string]string{}
+	for _, it := range items {
+		status[it.ID] = it.Status
 	}
-	return live[0], other, err
+	presence := func(id string) (verb.WorkingOnRow, bool) {
+		return verb.WorkingOnRow{WorkingOnPayload: verb.WorkingOnPayload{State: status[id]}}, engagedHere
+	}
+	live, err := evaluateEngagements(items, wfs, nil, presence)
+	return len(live) > 0, err
 }
 
 func doc(name, body string) docindex.Doc {
@@ -858,7 +863,7 @@ func routeWFs(done, step string) []docindex.Doc {
 	}
 }
 
-func TestAnyEngagedCountsTasks(t *testing.T) {
+func TestAnyPerformingCountsTasks(t *testing.T) {
 	// One wildcard workflow governs both the story and the task; commit_push is a
 	// performing named-agent node.
 	wfs := routeWFs(
@@ -891,10 +896,10 @@ terminal = true
 requires = ["pushed"]
 `)
 	// A task in a performing state counts as engaged, exactly like a story.
-	engaged, err := anyEngaged([]workitem.Item{
+	engaged, err := anyPerforming([]workitem.Item{
 		{Kind: workitem.KindTask, Status: "commit_push"},
 		{Kind: workitem.KindStory, Status: "backlog"},
-	}, wfs)
+	}, wfs, false)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -902,10 +907,10 @@ requires = ["pushed"]
 		t.Error("a task in a performing state should count as engaged")
 	}
 	// Nothing engaged when no item is in a performing state.
-	engaged, err = anyEngaged([]workitem.Item{
+	engaged, err = anyPerforming([]workitem.Item{
 		{Kind: workitem.KindTask, Status: "backlog"},
 		{Kind: workitem.KindStory, Status: "done"},
-	}, wfs)
+	}, wfs, false)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -914,12 +919,12 @@ requires = ["pushed"]
 	}
 }
 
-// TestAnyEngagedPerStoryWorkflow: engagement is judged against the story's OWN
+// TestAnyPerformingPerStoryWorkflow: engagement is judged against the story's OWN
 // governing workflow, not one global "primary" workflow (sty_f5bd176f). A feature
 // story in a feature-workflow's performing `plan` state is engaged even though the
 // wildcard workflow has no `plan` node — the exact gap that blocked a dispatched
 // coder reached from `plan`.
-func TestAnyEngagedPerStoryWorkflow(t *testing.T) {
+func TestAnyPerformingPerStoryWorkflow(t *testing.T) {
 	wfs := routeWFs(
 		`["*"]
 obligations = ["raised", "coded", "closed"]
@@ -958,7 +963,7 @@ terminal = true
 requires = ["feat-coded"]
 `)
 	// A feature story in plan is engaged via the feature workflow (plan performs).
-	engaged, err := anyEngaged([]workitem.Item{{Kind: workitem.KindStory, Category: "feature", Status: "plan"}}, wfs)
+	engaged, err := anyPerforming([]workitem.Item{{Kind: workitem.KindStory, Category: "feature", Status: "plan"}}, wfs, false)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -967,7 +972,7 @@ requires = ["feat-coded"]
 	}
 	// The same status under the wildcard workflow (no plan node) is NOT engaged —
 	// engagement follows the governing workflow, not a global state list.
-	engaged, err = anyEngaged([]workitem.Item{{Kind: workitem.KindStory, Category: "chore", Status: "plan"}}, wfs)
+	engaged, err = anyPerforming([]workitem.Item{{Kind: workitem.KindStory, Category: "chore", Status: "plan"}}, wfs, false)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -976,35 +981,35 @@ requires = ["feat-coded"]
 	}
 }
 
-// TestAnyEngagedFailClosedNoWorkflow: anyEngaged returns (false, error) — NOT
+// TestAnyPerformingFailClosedNoWorkflow: anyPerforming returns (false, error) — NOT
 // (false, nil) — when an item has NO resolving workflow (AC3 fail-closed). With
 // no workflow docs at all nothing governs the item, so the hook blocks the edit
 // rather than silently allowing it. (A repo route file overlays the shipped route
 // by name, so a partial file can no longer leave a category unresolved.)
-func TestAnyEngagedFailClosedNoWorkflow(t *testing.T) {
+func TestAnyPerformingFailClosedNoWorkflow(t *testing.T) {
 	var wfs []docindex.Doc
-	engaged, err := anyEngaged([]workitem.Item{{Kind: workitem.KindStory, Category: "chore", Status: "in_progress"}}, wfs)
+	engaged, err := anyPerforming([]workitem.Item{{Kind: workitem.KindStory, Category: "chore", Status: "in_progress"}}, wfs, true)
 	if engaged {
 		t.Error("a chore item with no resolving workflow must not be engaged")
 	}
 	if err == nil {
-		t.Fatal("anyEngaged must return an error when an item has no resolving workflow (fail-closed)")
+		t.Fatal("anyPerforming must return an error when an item has no resolving workflow (fail-closed)")
 	}
 }
 
-// TestAnyEngagedFailClosedNoDOT: anyEngaged returns (false, error) when the
+// TestAnyPerformingFailClosedNoDOT: anyPerforming returns (false, error) when the
 // governing workflow body carries no DOT block (AC3 fail-closed) — a non-DOT
 // workflow cannot be parsed for shape markers, so the hook blocks rather than guess.
-func TestAnyEngagedFailClosedNoDOT(t *testing.T) {
+func TestAnyPerformingFailClosedNoDOT(t *testing.T) {
 	// A wildcard workflow (governs any item) whose body has no ```dot block.
 	noDotBody := "---\nname: wild\napplies_to: [\"*\"]\n---\n# wild\n\nno dot block here\n"
 	wfs := []docindex.Doc{{Kind: "workflows", Name: "wild", Body: noDotBody}}
-	engaged, err := anyEngaged([]workitem.Item{{Kind: workitem.KindStory, Status: "in_progress"}}, wfs)
+	engaged, err := anyPerforming([]workitem.Item{{Kind: workitem.KindStory, Status: "in_progress"}}, wfs, true)
 	if engaged {
 		t.Error("an item governed by a non-DOT workflow must not be engaged")
 	}
 	if err == nil {
-		t.Fatal("anyEngaged must return an error when the governing workflow has no DOT (fail-closed)")
+		t.Fatal("anyPerforming must return an error when the governing workflow has no DOT (fail-closed)")
 	}
 }
 
@@ -1185,9 +1190,10 @@ func mkfile(t *testing.T, path, body string) {
 	}
 }
 
-// TestEvaluateSeatPerformingAndStale: the pure engagement predicate
-// (sty_1738f973 AC2/AC5/AC6).
-func TestEvaluateSeatPerformingAndStale(t *testing.T) {
+// TestEvaluateEngagementsPerformingAndInFlight: the pure engagement predicate.
+// An item performs when its committed status is a performing step of its route,
+// or when a transition on it is open; the working_on row only says where from.
+func TestEvaluateEngagementsPerformingAndInFlight(t *testing.T) {
 	wfs := routeWFs(
 		`["*"]
 obligations = ["raised", "planned", "coded", "closed"]
@@ -1217,254 +1223,151 @@ requires = ["coded"]
 		{ID: "sty_backlog", Kind: workitem.KindStory, Status: "backlog", Category: "feature"},
 		{ID: "sty_done", Kind: workitem.KindStory, Status: "done", Category: "feature"},
 	}
+	none := func(string) (verb.WorkingOnRow, bool) { return verb.WorkingOnRow{}, false }
 
-	// Settled live lease on in_progress → engaged.
-	live, other, err := evaluateFirstSeat([]lease.Lease{{
-		ItemID: "sty_live", State: "in_progress", Owner: "alice",
-		AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute),
-	}}, items, wfs, now)
+	// Committed performing status → engaged; backlog and done are not.
+	live, err := evaluateEngagements(items, wfs, nil, none)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if live.ItemID != "sty_live" || !live.Engaged {
-		t.Fatalf("live seat: %+v", live)
-	}
-	if other.ItemID != "" {
-		t.Fatalf("unexpected other: %+v", other)
+	if len(live) != 1 || live[0].ItemID != "sty_live" || !live[0].Engaged || live[0].InFlight {
+		t.Fatalf("live = %+v, want only sty_live, settled", live)
 	}
 
-	// Settled lease on done → not engaged.
-	live, other, err = evaluateFirstSeat([]lease.Lease{{
-		ItemID: "sty_done", State: "done", Owner: "alice",
-		AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute),
-	}}, items, wfs, now)
-	if err != nil {
-		t.Fatal(err)
+	// The working_on row names the tree and session it was engaged from.
+	here := func(id string) (verb.WorkingOnRow, bool) {
+		if id != "sty_live" {
+			return verb.WorkingOnRow{}, false
+		}
+		return verb.WorkingOnRow{WorkingOnPayload: verb.WorkingOnPayload{Session: "s1", Worktree: "/tree/a", State: "in_progress"}, At: now}, true
 	}
-	if live.ItemID != "" {
-		t.Fatalf("done lease must not be live: %+v", live)
+	live, err = evaluateEngagements(items, wfs, nil, here)
+	if err != nil || len(live) != 1 {
+		t.Fatalf("live = %+v err = %v", live, err)
 	}
-	if other.ItemID != "sty_done" {
-		t.Fatalf("other should name residue: %+v", other)
-	}
-
-	// Stale orphan (in_flight, committed backlog, heartbeat past TTL) → not engaged.
-	staleHB := now.Add(-lease.HeartbeatTTL - time.Minute)
-	live, other, err = evaluateFirstSeat([]lease.Lease{{
-		ItemID: "sty_backlog", State: "plan", Owner: "dead", InFlight: true,
-		AcquiredAt: staleHB, HeartbeatAt: staleHB,
-	}}, items, wfs, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if live.ItemID != "" {
-		t.Fatalf("stale orphan must not be live: %+v", live)
-	}
-	if other.ItemID != "sty_backlog" || !other.Stale {
-		t.Fatalf("other must name stale orphan: %+v", other)
-	}
-	// formatSeat / seatSuffix name the holder + inspect path.
-	desc := formatSeat(other, now)
-	if !strings.Contains(desc, "sty_backlog") || !strings.Contains(desc, "stale") {
-		t.Fatalf("formatSeat = %q", desc)
-	}
-	suf := seatSuffix(other, now)
-	if !strings.Contains(suf, "satelle story seat") || !strings.Contains(suf, "seat release sty_backlog") {
-		t.Fatalf("seatSuffix = %q", suf)
+	if live[0].Worktree != "/tree/a" || live[0].SessionID != "s1" || !live[0].EngagedAt.Equal(now) {
+		t.Fatalf("presence not carried: %+v", live[0])
 	}
 
-	// Fresh in-flight at start state (backlog) → engaged (acquire-at-start window).
-	// Must set InFlightAt + live InFlightPid so EffectiveInFlight is true
-	// (sty_bf797fa9: raw InFlight alone is not enough).
-	live, _, err = evaluateFirstSeat([]lease.Lease{{
-		ItemID: "sty_backlog", State: "plan", Owner: "alice", InFlight: true,
-		InFlightAt: now.Add(-time.Second), InFlightPid: os.Getpid(),
-		AcquiredAt: now.Add(-time.Minute), HeartbeatAt: now.Add(-time.Second),
-	}}, items, wfs, now)
+	// An open transition out of backlog engages the item, in flight toward its
+	// target, with no forward options yet.
+	open := map[string]ledger.Transition{"sty_backlog": {
+		ID: "led_x", StoryID: "sty_backlog", StartedAt: now,
+		TransitionStartedPayload: ledger.TransitionStartedPayload{From: "backlog", To: "plan", Pid: os.Getpid()},
+	}}
+	live, err = evaluateEngagements(items, wfs, open, none)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if live.ItemID != "sty_backlog" || !live.Engaged || !live.InFlight {
-		t.Fatalf("fresh in-flight at start state must be live: %+v", live)
+	var moving engagement
+	for _, e := range live {
+		if e.ItemID == "sty_backlog" {
+			moving = e
+		}
+	}
+	if !moving.Engaged || !moving.InFlight || moving.TargetState != "plan" || moving.StoryStatus != "backlog" || len(moving.Advance) != 0 {
+		t.Fatalf("in-flight engagement = %+v", moving)
+	}
+	if editPermitted(moving, dispatchMarker{}) {
+		t.Fatalf("an edit must be refused while a transition is in flight: %+v", moving)
 	}
 
-	// Dead transitioning pid → not in-flight for gate purposes (sty_bf797fa9 AC3).
-	// Heartbeat is still fresh (hook-refresh shape); InFlightAt is young — only
-	// the dead pid makes EffectiveInFlight false.
-	deadPID := 1<<30 - 1
-	live, other, err = evaluateFirstSeat([]lease.Lease{{
-		ItemID: "sty_backlog", State: "plan", Owner: "alice", InFlight: true,
-		InFlightAt: now, InFlightPid: deadPID,
-		AcquiredAt: now.Add(-time.Minute), HeartbeatAt: now,
-	}}, items, wfs, now)
-	if err != nil {
-		t.Fatal(err)
+	// A performing, edit-capable status with nothing in flight permits the edit.
+	live, err = evaluateEngagements([]workitem.Item{{ID: "sty_plan", Status: "plan", Kind: workitem.KindStory}}, wfs, nil, none)
+	if err != nil || len(live) != 1 {
+		t.Fatalf("live = %+v err = %v", live, err)
 	}
-	if live.ItemID != "" {
-		t.Fatalf("dead InFlightPid must not keep seat live mid-transition: %+v", live)
-	}
-	if other.ItemID != "sty_backlog" || other.InFlight {
-		t.Fatalf("other must name residue with InFlight=false: %+v", other)
-	}
-	// Edit gate: dead-pid residue on an edit-capable state must permit the owner.
-	// Plant a settled-shaped lease on plan (edit-capable in this fixture) that
-	// only looked in-flight via a dead pid — EffectiveInFlight clears it so
-	// Engaged falls through to performing-status check.
-	live, _, err = evaluateFirstSeat([]lease.Lease{{
-		ItemID: "sty_plan", State: "plan", Owner: "alice", InFlight: true,
-		InFlightAt: now, InFlightPid: deadPID,
-		AcquiredAt: now.Add(-time.Minute), HeartbeatAt: now,
-	}}, []workitem.Item{{ID: "sty_plan", Status: "plan", Kind: workitem.KindStory}}, wfs, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// status=plan is performing → live seat; InFlight effective false → editPermitted.
-	if live.ItemID != "sty_plan" || !live.Engaged {
-		t.Fatalf("performing status with dead-pid in_flight residue must still engage: %+v", live)
-	}
-	if live.InFlight {
-		t.Fatalf("dead InFlightPid must surface InFlight=false on seatInfo: %+v", live)
-	}
-	if !editPermitted(live, dispatchMarker{}) {
-		t.Fatalf("edit must be permitted when effective in_flight is false: %+v", live)
+	if live[0].InFlight || !editPermitted(live[0], dispatchMarker{}) {
+		t.Fatalf("edit must be permitted at a settled performing status: %+v", live[0])
 	}
 }
 
-// TestSeatInjectHelpers: SessionStart / prompt seat inject pure paths
-// (sty_1738f973 AC6). Removing appendSeatToContext / appendSeatToPrompt /
-// formatSeatBlock would fail these — the discoverability path the AC names.
-func TestSeatInjectHelpers(t *testing.T) {
+// TestEngagementInjectHelpers: SessionStart / prompt engagement inject pure
+// paths. Removing appendBlockToContext / appendEngagementToPrompt /
+// formatEngagement would fail these.
+func TestEngagementInjectHelpers(t *testing.T) {
 	now := time.Now().UTC()
-	stale := seatInfo{
-		ItemID: "sty_2db78343", State: "plan", Owner: "dead",
-		AcquiredAt: now.Add(-40 * time.Minute), HeartbeatAt: now.Add(-40 * time.Minute),
-		Stale: true,
+	e := engagement{
+		ItemID: "sty_2db78343", State: "plan", StoryStatus: "plan",
+		Worktree: "/work/tree", SessionID: "sess-1", EngagedAt: now, Engaged: true,
 	}
-	block := formatSeatBlock(stale, now, config.ParallelNone)
-	if !strings.Contains(block, "## Engagement seat") {
-		t.Fatalf("block missing heading: %q", block)
+	desc := formatEngagement(e)
+	for _, want := range []string{"sty_2db78343", "plan", "/work/tree", "sess-1"} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("formatEngagement missing %q: %q", want, desc)
+		}
 	}
-	if !strings.Contains(block, "sty_2db78343") || !strings.Contains(block, "stale") {
-		t.Fatalf("block missing seat id/stale: %q", block)
+	if formatEngagement(engagement{}) != "" {
+		t.Fatal("no engagement must format empty")
 	}
-	if !strings.Contains(block, "satelle story seat release sty_2db78343") {
-		t.Fatalf("block missing release path: %q", block)
+	moving := e
+	moving.InFlight, moving.TargetState = true, "in_progress"
+	if !strings.Contains(formatEngagement(moving), `transition to "in_progress" in flight`) {
+		t.Fatalf("in-flight engagement must say so: %q", formatEngagement(moving))
 	}
 
-	merged := appendSeatToContext("principles here", block, 16384)
-	if !strings.Contains(merged, "## Engagement seat") || !strings.HasPrefix(merged, "principles here") {
-		t.Fatalf("appendSeatToContext = %q", merged)
+	block := "## Engaged stories\n" + desc
+	merged := appendBlockToContext("principles here", block, 16384)
+	if !strings.Contains(merged, "## Engaged stories") || !strings.HasPrefix(merged, "principles here") {
+		t.Fatalf("appendBlockToContext = %q", merged)
 	}
-	// Ceiling too tight: keep content, drop seat.
-	tight := appendSeatToContext("already long content that fills budget", block, 40)
-	if strings.Contains(tight, "## Engagement seat") {
-		t.Fatalf("ceiling should drop seat: %q", tight)
+	// Ceiling too tight: keep content, drop the block.
+	if tight := appendBlockToContext("already long content that fills budget", block, 40); strings.Contains(tight, "## Engaged stories") {
+		t.Fatalf("ceiling should drop the block: %q", tight)
 	}
-	// Empty content still injects seat.
-	only := appendSeatToContext("", block, 16384)
-	if only != block {
+	// Empty content still injects the block.
+	if only := appendBlockToContext("", block, 16384); only != block {
 		t.Fatalf("empty content: %q", only)
 	}
 
-	prompt := appendSeatToPrompt("edits require an ENGAGED story", stale, now)
-	if !strings.Contains(prompt, "sty_2db78343") || !strings.Contains(prompt, "stale") {
-		t.Fatalf("prompt seat line: %q", prompt)
+	prompt := appendEngagementToPrompt("edits require an ENGAGED story", e)
+	if !strings.Contains(prompt, "sty_2db78343") || !strings.Contains(prompt, "/work/tree") {
+		t.Fatalf("prompt engagement line: %q", prompt)
 	}
-	if !strings.Contains(prompt, "satelle story seat") {
-		t.Fatalf("prompt missing inspect: %q", prompt)
-	}
-	// Empty seatInfo is a no-op.
-	if got := appendSeatToPrompt("base", seatInfo{}, now); got != "base" {
+	if got := appendEngagementToPrompt("base", engagement{}); got != "base" {
 		t.Fatalf("empty info: %q", got)
 	}
+}
 
-	// Live seat (no STALE) still injects owner+ages.
-	live := seatInfo{
-		ItemID: "sty_live", State: "in_progress", Owner: "alice",
-		AcquiredAt: now.Add(-10 * time.Minute), HeartbeatAt: now.Add(-time.Minute),
-		Engaged: true,
+// TestConcurrencyLine: the session inject names the configured concurrency
+// rule, so an agent meets it before a refusal does.
+func TestConcurrencyLine(t *testing.T) {
+	unlimited := concurrencyLine(0)
+	if !strings.Contains(unlimited, "unlimited") || !strings.Contains(unlimited, "sequential epic") {
+		t.Errorf("unlimited line: %q", unlimited)
 	}
-	liveBlock := formatSeatBlock(live, now, config.ParallelNone)
-	if strings.Contains(liveBlock, "STALE") || strings.Contains(strings.ToLower(liveBlock), "stale ") {
-		// formatSeat uses "stale Nm" only when Stale=true; live must not.
-		if strings.Contains(liveBlock, ", stale ") {
-			t.Fatalf("live seat must not say stale: %q", liveBlock)
+	one := concurrencyLine(1)
+	for _, want := range []string{"[engagement] limit = 1", "at most 1 performing", "sequential epic"} {
+		if !strings.Contains(one, want) {
+			t.Errorf("limit line missing %q: %q", want, one)
 		}
-	}
-	if !strings.Contains(liveBlock, "alice") || !strings.Contains(liveBlock, "sty_live") {
-		t.Fatalf("live block: %q", liveBlock)
 	}
 }
 
-// TestSeatModeInject: the seat inject names the ACTIVE concurrency mode, and under
-// a non-default mode says what a second engagement requires. An agent that only
-// meets the mode in a refusal has already lost a turn to it (sty_050f3a19 AC3).
-func TestSeatModeInject(t *testing.T) {
-	// Default mode: one short factual line, no preconditions to state.
-	none := seatModeLine(config.ParallelNone)
-	if !strings.Contains(none, "none") || !strings.Contains(none, "one performing story at a time") {
-		t.Errorf("none mode line: %q", none)
+// TestEditGateDenyReasonNamesPerformingTrees: with nothing performing the deny
+// is the generic open-a-story text; with stories performing from other trees it
+// names each with its tree instead of attributing the edit to one.
+func TestEditGateDenyReasonNamesPerformingTrees(t *testing.T) {
+	if got := editGateDenyReason(nil, "/here"); got != noEngagedStoryEditReason {
+		t.Fatalf("nothing performing should use the generic reason: %q", got)
 	}
-	// Unset resolves to the default rather than an empty line.
-	if seatModeLine("") != none {
-		t.Errorf("unset mode must render as none: %q", seatModeLine(""))
-	}
-	// Epic states BOTH preconditions — same parent, distinct working tree.
-	epic := seatModeLine(config.ParallelEpic)
-	for _, want := range []string{"epic", "parent", "working tree"} {
-		if !strings.Contains(epic, want) {
-			t.Errorf("epic mode line missing %q: %q", want, epic)
-		}
-	}
-	// The mode rides the seat block, so a held seat carries it.
-	now := time.Now().UTC()
-	held := seatInfo{ItemID: "sty_held", State: "in_progress", Owner: "alice",
-		AcquiredAt: now.Add(-time.Minute), HeartbeatAt: now, Engaged: true}
-	if b := formatSeatBlock(held, now, config.ParallelEpic); !strings.Contains(b, "working tree") {
-		t.Errorf("held-seat block must carry the mode: %q", b)
-	}
-}
-
-func TestDroppedSeatEditReason(t *testing.T) {
-	got := droppedSeatEditReason("sty_abc", "plan")
-	for _, want := range []string{"sty_abc", "plan", "engagement seat was dropped", "story set sty_abc --status plan"} {
+	live := []engagement{{ItemID: "sty_x", StoryStatus: "in_progress", Worktree: "/there", Engaged: true}}
+	got := editGateDenyReason(live, "/here")
+	for _, want := range []string{"sty_x", "/there", "/here", "no performing story was engaged from this tree"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in %q", want, got)
 		}
 	}
-	if strings.Contains(got, "Open a story session") {
-		t.Error("dropped-seat reason must not use generic create-story message")
-	}
-}
-
-func TestEditGateDenyReasonPrefersDroppedSeat(t *testing.T) {
-	// Pure string path when firstDroppedPerformingSeat finds nothing uses generic.
-	// We cannot open real store without isolation; unit-test droppedSeatEditReason
-	// content was covered. Here: editGateDenyReason with empty info and no store
-	// home falls through to noEngagedStoryEditReason.
-	t.Setenv("SATELLE_HOME", t.TempDir())
-	got := editGateDenyReason(seatInfo{}, nil, "", time.Now().UTC())
-	if !strings.Contains(got, "without a performing story") {
-		t.Fatalf("empty store should use generic no-story reason: %q", got)
-	}
-	// droppedSeatEditReason must differ from generic.
-	drop := droppedSeatEditReason("sty_x", "in_progress")
-	if strings.Contains(drop, "without a performing story") {
-		t.Fatal("dropped reason must not use generic phrase")
-	}
-	if !strings.Contains(drop, "seat was dropped") {
-		t.Fatalf("want dropped: %q", drop)
-	}
-	if drop == noEngagedStoryEditReason {
-		t.Fatal("dropped and generic must differ")
+	if strings.Contains(got, "without a performing story") {
+		t.Fatal("a performing story elsewhere must not get the generic reason")
 	}
 }
 
 // --- sty_e16a2cd7: per-turn engaged prompt injection ---
 
-// TestPromptNoSeatIsUnchanged: no live seat → body is byte-identical to today's
-// static reminder (AC1). Gate-not-wired warning path also unchanged.
-func TestPromptNoSeatIsUnchanged(t *testing.T) {
+// TestPromptNoEngagementIsUnchanged: nothing engaged → body is byte-identical to
+// today's static reminder (AC1). Gate-not-wired warning path also unchanged.
+func TestPromptNoEngagementIsUnchanged(t *testing.T) {
 	t.Setenv("SATELLE_HOME", t.TempDir())
 	var buf bytes.Buffer
 	if err := runHookPrompt(&buf); err != nil {
@@ -1475,24 +1378,22 @@ func TestPromptNoSeatIsUnchanged(t *testing.T) {
 		t.Fatalf("prompt output not valid JSON: %v (%s)", err, buf.String())
 	}
 	if got.HookSpecificOutput.AdditionalContext != hookPromptReminder {
-		t.Errorf("no-seat body not byte-identical to hookPromptReminder:\n got %q\nwant %q",
+		t.Errorf("unengaged body not byte-identical to hookPromptReminder:\n got %q\nwant %q",
 			got.HookSpecificOutput.AdditionalContext, hookPromptReminder)
 	}
 }
 
 // TestFormatEngagedPromptNamesNextGate: AC2 — id, status, gates, story set; no static reminder.
 func TestFormatEngagedPromptNamesNextGate(t *testing.T) {
-	now := time.Now().UTC()
-	info := seatInfo{
-		ItemID:      "sty_live",
-		State:       "in_progress",
-		HeartbeatAt: now.Add(-6 * time.Second),
-		Engaged:     true,
+	info := engagement{
+		ItemID:  "sty_live",
+		State:   "in_progress",
+		Engaged: true,
 		Advance: []wfdot.Advance{
 			{To: "integration", Gates: []string{"satelle-code-ac-review", "satelle-story-scope-review"}},
 		},
 	}
-	out := formatEngagedPrompt(info, now)
+	out := formatEngagedPrompt(info)
 	if out == "" {
 		t.Fatal("formatEngagedPrompt returned empty")
 	}
@@ -1564,38 +1465,28 @@ status = "verify"
 terminal = true
 requires = ["built"]
 `)
-	now := time.Now().UTC()
-	items := []workitem.Item{
-		{ID: "sty_a", Kind: workitem.KindStory, Status: "draft", Category: "cat-a"},
-		{ID: "sty_b", Kind: workitem.KindStory, Status: "triage", Category: "cat-b"},
-	}
-	leases := []lease.Lease{
-		{ItemID: "sty_a", State: "draft", Owner: "alice", AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute)},
-		{ItemID: "sty_b", State: "triage", Owner: "bob", AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute)},
-	}
-	// evaluateSeat returns every live seat; probe each lease alone.
+	none := func(string) (verb.WorkingOnRow, bool) { return verb.WorkingOnRow{}, false }
 	for _, c := range []struct {
-		lease    lease.Lease
 		item     workitem.Item
 		wantTo   string
 		wantGate string
 		notGate  string
 		notState string
 	}{
-		{leases[0], items[0], "work", "wfa-work-gate", "wfb-build-gate", "build"},
-		{leases[1], items[1], "build", "wfb-build-gate", "wfa-work-gate", "work"},
+		{workitem.Item{ID: "sty_a", Kind: workitem.KindStory, Status: "draft", Category: "cat-a"}, "work", "wfa-work-gate", "wfb-build-gate", "build"},
+		{workitem.Item{ID: "sty_b", Kind: workitem.KindStory, Status: "triage", Category: "cat-b"}, "build", "wfb-build-gate", "wfa-work-gate", "work"},
 	} {
-		live, _, err := evaluateFirstSeat([]lease.Lease{c.lease}, []workitem.Item{c.item}, wfs, now)
+		live, err := evaluateEngagements([]workitem.Item{c.item}, wfs, nil, none)
 		if err != nil {
-			t.Fatalf("%s: evaluateSeat: %v", c.item.ID, err)
+			t.Fatalf("%s: evaluateEngagements: %v", c.item.ID, err)
 		}
-		if !live.Engaged || live.ItemID != c.item.ID {
+		if len(live) != 1 || !live[0].Engaged || live[0].ItemID != c.item.ID {
 			t.Fatalf("%s: live=%+v", c.item.ID, live)
 		}
-		if len(live.Advance) != 1 || live.Advance[0].To != c.wantTo {
-			t.Fatalf("%s: Advance=%+v, want [{%s …}]", c.item.ID, live.Advance, c.wantTo)
+		if len(live[0].Advance) != 1 || live[0].Advance[0].To != c.wantTo {
+			t.Fatalf("%s: Advance=%+v, want [{%s …}]", c.item.ID, live[0].Advance, c.wantTo)
 		}
-		out := formatEngagedPrompt(live, now)
+		out := formatEngagedPrompt(live[0])
 		if !strings.Contains(out, c.wantGate) || !strings.Contains(out, c.wantTo) {
 			t.Errorf("%s: engaged form missing own edge/gate:\n%s", c.item.ID, out)
 		}
@@ -1610,30 +1501,28 @@ requires = ["built"]
 
 // TestEngagedPromptWithinCeiling: AC4 — pathological DOT still ≤ ceiling or "".
 func TestEngagedPromptWithinCeiling(t *testing.T) {
-	now := time.Now().UTC()
 	// Five long gate names + long id — force degradation ladder.
 	longGates := make([]string, 5)
 	for i := range longGates {
 		longGates[i] = fmt.Sprintf("very-long-gate-name-number-%02d-xxxxxxxx", i)
 	}
-	info := seatInfo{
-		ItemID:      "sty_pathologically_long_identifier_xx",
-		State:       "in_progress_with_a_very_long_state_name",
-		HeartbeatAt: now,
-		Engaged:     true,
+	info := engagement{
+		ItemID:  "sty_pathologically_long_identifier_xx",
+		State:   "in_progress_with_a_very_long_state_name",
+		Engaged: true,
 		Advance: []wfdot.Advance{
 			{To: "next_state_also_quite_long_name_aa", Gates: longGates},
 			{To: "next_state_also_quite_long_name_bb", Gates: longGates},
 		},
 	}
-	out := formatEngagedPrompt(info, now)
+	out := formatEngagedPrompt(info)
 	if out != "" && len(out) > promptEngagedCeiling {
 		t.Errorf("length %d > ceiling %d:\n%s", len(out), promptEngagedCeiling, out)
 	}
 }
 
-// TestEvaluateSeatAdvanceSkipsTerminalPark: AC5 at evaluateSeat level.
-func TestEvaluateSeatAdvanceSkipsTerminalPark(t *testing.T) {
+// TestEvaluateEngagementsAdvanceSkipsTerminalPark: AC5 at evaluateEngagements level.
+func TestEvaluateEngagementsAdvanceSkipsTerminalPark(t *testing.T) {
 	wfs := routeWFs(
 		`["*"]
 obligations = ["raised", "coded", "integrated", "released", "closed"]
@@ -1670,38 +1559,33 @@ reviewer_agent = "reviewer"
 terminal = true
 requires = ["released"]
 `)
-	now := time.Now().UTC()
+	none := func(string) (verb.WorkingOnRow, bool) { return verb.WorkingOnRow{}, false }
 	// release: only terminal + back-edge → Advance empty.
-	live, _, err := evaluateFirstSeat([]lease.Lease{{
-		ItemID: "sty_rel", State: "release", Owner: "a",
-		AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute),
-	}}, []workitem.Item{{ID: "sty_rel", Kind: workitem.KindStory, Status: "release", Category: "feature"}}, wfs, now)
+	live, err := evaluateEngagements([]workitem.Item{{ID: "sty_rel", Kind: workitem.KindStory, Status: "release", Category: "feature"}}, wfs, nil, none)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !live.Engaged {
-		t.Fatal("release seat should be engaged")
+	if len(live) != 1 || !live[0].Engaged {
+		t.Fatalf("release should be engaged: %+v", live)
 	}
-	if len(live.Advance) != 0 {
-		t.Fatalf("release Advance = %+v, want empty", live.Advance)
+	if len(live[0].Advance) != 0 {
+		t.Fatalf("release Advance = %+v, want empty", live[0].Advance)
 	}
 	// in_progress → integration only.
-	live, _, err = evaluateFirstSeat([]lease.Lease{{
-		ItemID: "sty_ip", State: "in_progress", Owner: "a",
-		AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute),
-	}}, []workitem.Item{{ID: "sty_ip", Kind: workitem.KindStory, Status: "in_progress", Category: "feature"}}, wfs, now)
-	if err != nil {
-		t.Fatal(err)
+	live, err = evaluateEngagements([]workitem.Item{{ID: "sty_ip", Kind: workitem.KindStory, Status: "in_progress", Category: "feature"}}, wfs, nil, none)
+	if err != nil || len(live) != 1 {
+		t.Fatalf("live = %+v err = %v", live, err)
 	}
-	if len(live.Advance) != 1 || live.Advance[0].To != "integration" {
-		t.Fatalf("in_progress Advance = %+v", live.Advance)
+	if len(live[0].Advance) != 1 || live[0].Advance[0].To != "integration" {
+		t.Fatalf("in_progress Advance = %+v", live[0].Advance)
 	}
 }
 
-// TestPromptFailsOpen: AC6 — when evaluateSeat cannot resolve the governing
-// workflow DOT, runHookPrompt still emits the static reminder and returns nil.
-// Empty SATELLE_HOME is the clean no-seat path (covered by TestPromptNoSeatIsUnchanged);
-// this forces a real resolve error via a DOT-less workflow doc.
+// TestPromptFailsOpen: AC6 — when the engagement cannot resolve the governing
+// workflow, runHookPrompt still emits the static reminder and returns nil.
+// Empty SATELLE_HOME is the clean unengaged path (covered by
+// TestPromptNoEngagementIsUnchanged); this forces a real resolve error via a
+// DOT-less workflow doc and a story engaged here at its status.
 func TestPromptFailsOpen(t *testing.T) {
 	repo := tempRepo(t)
 	t.Chdir(repo)
@@ -1710,7 +1594,7 @@ func TestPromptFailsOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Workflow with applies_to but NO fenced dot block — GoverningWorkflow finds
-	// it, Parse fails, evaluateSeat returns an error.
+	// it, Parse fails, evaluateEngagements returns an error.
 	wfBody := "---\nname: broken-wf\ntype: workflow\napplies_to: [\"*\"]\n---\n\nNo DOT here.\n"
 	if err := os.WriteFile(filepath.Join(wfDir, "broken-wf.md"), []byte(wfBody), 0o644); err != nil {
 		t.Fatal(err)
@@ -1732,15 +1616,7 @@ func TestPromptFailsOpen(t *testing.T) {
 		_ = db.Close()
 		t.Fatal(err)
 	}
-	owner := lease.ResolveOwner()
-	if _, _, _, err := db.Leases.Acquire(ctx, sty.ID, "story", owner, "in_progress", true); err != nil {
-		_ = db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Leases.Confirm(ctx, sty.ID, "in_progress"); err != nil {
-		_ = db.Close()
-		t.Fatal(err)
-	}
+	recordEngagementOn(t, db, sty.ID, "in_progress", sessionWorktreeUncached(), config.ResolveSession())
 	_ = db.Close()
 
 	out, err := runRootIn(t, `{}`, "hook", "prompt")

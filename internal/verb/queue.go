@@ -66,13 +66,12 @@ func resolveQueueEntry(ctx context.Context, item workitem.Item, state string) (l
 	return ledger.QueueEnqueuedPayload{Story: item.ID, State: state, Branch: branch, HeadSHA: sha}, nil
 }
 
-// queueTree is the tree a story is queued from: the one its live seat records,
-// else the one its engagement baseline was taken in, else the invoking tree.
+// queueTree is the tree a story is queued from: the one its latest working_on
+// row at this location records, else the one its engagement baseline was taken
+// in, else the invoking tree.
 func queueTree(ctx context.Context, item workitem.Item) string {
-	if ls, err := requireLease(); err == nil {
-		if l, err := ls.Get(ctx, item.ID); err == nil && l.Worktree != "" {
-			return l.Worktree
-		}
+	if w, ok := LatestLocalWorkingOn(ctx, item.ID); ok && w.Worktree != "" {
+		return w.Worktree
 	}
 	if base, _, _, err := firstEngagementBaseline(ctx, item.ID); err == nil && base.Worktree != "" {
 		return base.Worktree
