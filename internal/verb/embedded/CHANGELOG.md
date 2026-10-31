@@ -1,3 +1,14 @@
+## [0.0.815] - 2026-10-31
+
+### Added
+- `satelle substrate review` gives any repo a review of its substrate, changing no file: every principle, skill, workflow step and gate, and agent seat is listed with its origin and the evidence the repo's story history holds for it — rejections and their reasons, amendments, parks, rework, flaky (no-verdict) reruns, panel dissent, per model — plus every constitution rule. One reviewer dispatch (`--binding`, default `reviewer`) gives each item a disposition (remove, reduce, keep or conflict) and each rule a finding; anything it omits reads "not judged". The report prints as markdown (or `--json`) and is saved outside the tree (`--out`). (sty_08f747ad)
+- `satelle substrate review --apply <item>` raises one substrate story per chosen item in the reviewed repo, so every change goes through its substrate lane; it edits nothing and refuses embedded and team items. `--from <report.json>` applies a saved report without judging again. (sty_08f747ad)
+
+## [serve-v0.0.254] - 2026-10-31
+
+### Changed
+- The service binary carries the substrate review inventory and help. (sty_08f747ad)
+
 ## [0.0.814] - 2026-10-31
 
 ### Added
