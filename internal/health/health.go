@@ -155,6 +155,7 @@ const (
 	IDContextDispatchUnavailable = "context.dispatch.unavailable" // a seat's context cannot be sized
 	IDContextDuplicateVerbatim   = "context.duplicate.verbatim"   // a passage is copied word-for-word between two documents
 	IDContextDuplicateSemantic   = "context.duplicate.semantic"   // a reviewer judged one document to restate another (opt-in)
+	IDContextBaselineOverride    = "context.baseline.override"    // a repo principle or skill shadows a baseline principle by name with another body, or restates a passage of one
 	IDContextRefUnresolved       = "context.ref.unresolved"       // a satelle reference names nothing that resolves, or a retired name
 	IDContextRefUnwired          = "context.ref.unwired"          // a named skill exists but no route, gate, hook, summary or task wires it
 	IDContextIndexStale          = "context.index.stale"          // documents/index.md lists a document that does not exist
@@ -199,7 +200,7 @@ var ids = []string{
 	IDStatusDrift,
 	IDContextSessionOverflow, IDContextSessionUnavailable, IDContextDispatchOverBudget,
 	IDContextDispatchUnbudgeted, IDContextDispatchUnavailable, IDContextDuplicateVerbatim,
-	IDContextDuplicateSemantic, IDContextRefUnresolved, IDContextRefUnwired, IDContextIndexStale,
+	IDContextDuplicateSemantic, IDContextBaselineOverride, IDContextRefUnresolved, IDContextRefUnwired, IDContextIndexStale,
 	IDContextReviewUnavailable,
 	IDLiveOK, IDLiveAuth, IDLiveTimeout, IDLiveSpawn, IDLiveACPHandshake, IDLiveVersionDrift,
 }

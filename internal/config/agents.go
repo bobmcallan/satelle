@@ -238,6 +238,16 @@ const (
 	PrinciplesNone    = "none"
 )
 
+// Principle residency tags (frontmatter `tags:`). SessionResidencyTag puts a
+// principle in the SessionStart context and in every seat whose selector
+// includes the session set. SeatResidencyTag puts it in those seats only: a
+// cold-start dispatched agent receives it, the in-loop session does not, so it
+// costs nothing against a harness's SessionStart byte limit.
+const (
+	SessionResidencyTag = "principles:session"
+	SeatResidencyTag    = "principles:seat"
+)
+
 // AgentBinding binds one agent to a backend (how/where it runs) and its grant
 // (the tool allowance, and an optional model). Empty fields take the defaults.
 //

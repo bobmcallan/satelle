@@ -24,15 +24,16 @@ Like every authored kind, principles resolve in two layers:
 List them with `satelle doc list --kind principles`; read one with
 `satelle doc get principles <name>`.
 
-## Residency: two tiers — system and ondemand
+## Residency: three tiers — system, seat and ondemand
 
 Residency is the **single injection axis** for principles (see the ondemand
 reference principle `satelle-residency`). One classifier — the frontmatter tag
-`principles:session`. There is no `scope:` axis on principles.
+`principles:session` or `principles:seat`. There is no `scope:` axis on principles.
 
 | Tier | Marker | Behaviour |
 | --- | --- | --- |
-| **system** | carries `principles:session` | injected at every SessionStart |
+| **system** | carries `principles:session` | injected at every SessionStart, and into every seat whose selector includes the session set |
+| **seat** | carries `principles:seat` | injected into every seat whose selector includes the session set; never at SessionStart |
 | **ondemand** | no marker (default) | pull with `satelle doc get principles <name>` when referenced |
 
 Keep the system set **minimal** under the SessionStart limit of the harness in use

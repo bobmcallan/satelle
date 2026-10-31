@@ -143,8 +143,8 @@ func conformProblems(kind, name, body string) []string {
 			p = append(p, "principle tags must include type:principle")
 		}
 		for _, t := range tags {
-			if strings.HasPrefix(t, "principles:") && t != "principles:session" {
-				p = append(p, fmt.Sprintf("illegal principles: namespace tag %q (only principles:session is legal)", t))
+			if strings.HasPrefix(t, "principles:") && t != SessionResidencyTag && t != SeatResidencyTag {
+				p = append(p, fmt.Sprintf("illegal principles: namespace tag %q (only %s and %s are legal)", t, SessionResidencyTag, SeatResidencyTag))
 			}
 		}
 	case "workflows":

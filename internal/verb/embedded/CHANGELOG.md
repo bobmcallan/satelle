@@ -1,3 +1,16 @@
+## [0.0.814] - 2026-10-31
+
+### Added
+- Two embedded principles make behaviour-driven stories satelle's baseline. `satelle-story-shape`: a story card states one behaviour (role, context, outcome), its acceptance criteria are the technical requirements that meet it, each provable at the gate that judges it, and evidence that exists only after release is an AC of the release step, never of the code step. `satelle-start-small`: a change ships as the smallest slice that proves its behaviour, and scope, concurrency or rules grow only once the ledger shows the smaller form held. (sty_bcd344fd)
+- A third principle residency, `principles:seat`: such a principle is injected into every dispatched seat whose principles selector includes the session set (planner, coder, reviewers and every other cold-start agent) and never into the SessionStart context, so it costs nothing against the harness's SessionStart limit. Both new principles are seat-resident. (sty_bcd344fd)
+- The embedded `satelle-story-plan-review` and `ready` skills reject a story whose card is not a behaviour, whose ACs are not each traceable to it and provable at their gate, or whose slice is not the smallest that proves it. (sty_bcd344fd)
+- `satelle doctor` reports a repo principle or skill that shadows `satelle-story-shape` or `satelle-start-small` by name with a different body, or restates a passage of either. (sty_bcd344fd)
+
+## [serve-v0.0.253] - 2026-10-31
+
+### Changed
+- The service binary carries the seat-residency tier and the updated embedded principles, skills and help. (sty_bcd344fd)
+
 ## [0.0.813] - 2026-10-31
 
 ### Fixed

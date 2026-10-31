@@ -67,6 +67,14 @@ satelle readies each child in this same round.
   ask the developer first.
 - Reject, with `notes` naming the child and the evidence, only when no repair
   this step allows can make the intent achievable.
+- Judge each child's shape against [[satelle-story-shape]] and
+  [[satelle-start-small]]. Reject, naming the child, when its card is
+  **not a behaviour** (it states no role, context or outcome, just a mechanism
+  or task list); when a criterion is not **traceable** to that behaviour or not
+  **provable at** its gate, such as release-time evidence placed in a code-step
+  criterion; or when the child is not the **smallest slice** that proves its
+  behaviour. You cannot rewrite a card or a criterion, so these are rejects,
+  never repairs.
 
 ## Choose each child's lane
 

@@ -3,7 +3,7 @@ name: satelle-residency
 type: principle
 tags: [type:principle]
 applies_to: ["*"]
-description: Residency is the single injection axis — system (principles:session marker, always injected) vs ondemand (no marker, pull on reference). Ownership (embedded_sha) is orthogonal.
+description: Residency is the single injection axis — system (principles:session marker, always injected), seat (principles:seat marker, dispatched seats only) or ondemand (no marker, pull on reference). Ownership (embedded_sha) is orthogonal.
 ---
 
 # Principle residency
@@ -11,20 +11,26 @@ description: Residency is the single injection axis — system (principles:sessi
 Residency is the **only** axis that controls whether a principle is auto-injected
 into session context. There is no second classifier.
 
-## The two tiers
+## The three tiers
 
 | Tier | Meaning | Marker |
 | --- | --- | --- |
 | **system** | Always injected at SessionStart | carries the `principles:session` tag |
-| **ondemand** | Discoverable; pulled on reference | absence of that tag (the default) |
+| **seat** | Injected into dispatched seats only | carries the `principles:seat` tag |
+| **ondemand** | Discoverable; pulled on reference | neither tag (the default) |
 
 - **system** — `satelle hook context` injects the body every session (bounded by
- the SessionStart byte ceiling). Keep this set minimal.
+ the SessionStart byte ceiling). Keep this set minimal. Every seat whose
+ principles selector includes the session set receives it too.
+- **seat** — every seat whose principles selector includes the session set
+ receives it; the SessionStart context never does. Use it for guidance a
+ cold-start agent needs that the in-loop session can pull on reference.
 - **ondemand** — pull with `satelle doc get principles <name>` when a skill,
  workflow, or the constitution references it. Do not preload.
 
-The on-disk **system-residency marker is the `principles:session` tag**. One
-classifier — not a `scope:` field, not a second frontmatter key.
+The on-disk **system-residency marker is the `principles:session` tag**, and the
+seat marker is `principles:seat`. One classifier — the `principles:` tag — not a
+`scope:` field, not a second frontmatter key.
 
 ## Ownership is orthogonal
 

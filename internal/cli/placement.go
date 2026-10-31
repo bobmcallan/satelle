@@ -4,7 +4,8 @@
 // Guards four post-order-1–5 invariants so placement cannot silently drift:
 //  1. embedded-owned on-disk copies that still match the embedded body carry
 //     embedded_sha (order:1 provenance)
-//  2. the only legal principles:* tag is principles:session (order:3 residency)
+//  2. the only legal principles:* tags are principles:session and
+//     principles:seat (order:3 residency)
 //  3. no inert scope: key on principles (order:3 removed that axis)
 //
 // The resident-set CEILING is not among them: how large the set may be depends
@@ -46,7 +47,7 @@ func auditPlacement(dataDir string, embedded []config.EmbeddedDefault) []string 
 // or invented and must be flagged (init substrate analysis AC2).
 var legalPrincipleTagAxes = map[string]bool{
 	"type":       true,
-	"principles": true, // only principles:session is legal; value checked separately
+	"principles": true, // only principles:session and principles:seat are legal; value checked separately
 }
 
 // checkUnknownTagAxes flags principle tags whose axis (prefix before first `:`)
@@ -99,7 +100,8 @@ func checkEmbeddedStamps(dataDir string, embedded []config.EmbeddedDefault) []st
 	return out
 }
 
-// checkResidencyMarkers: only principles:session is a legal principles:* tag.
+// checkResidencyMarkers: only principles:session and principles:seat are legal
+// principles:* tags.
 func checkResidencyMarkers(dataDir string) []string {
 	var out []string
 	for _, path := range principleFiles(dataDir) {
@@ -109,10 +111,10 @@ func checkResidencyMarkers(dataDir string) []string {
 		}
 		name := strings.TrimSuffix(filepath.Base(path), ".md")
 		for _, tag := range frontmatterTags(string(body)) {
-			if strings.HasPrefix(tag, "principles:") && tag != sessionTag {
+			if strings.HasPrefix(tag, "principles:") && tag != sessionTag && tag != config.SeatResidencyTag {
 				out = append(out, fmt.Sprintf(
-					"principles/%s: illegal residency-ish tag %q (only %q is the system marker)",
-					name, tag, sessionTag))
+					"principles/%s: illegal residency-ish tag %q (only %q, the system marker, and %q, the seat-only marker, are legal)",
+					name, tag, sessionTag, config.SeatResidencyTag))
 			}
 		}
 	}
