@@ -8,7 +8,7 @@ import (
 
 // holdOffToml syncs stories and ledger to the probe project with the unpushed-code
 // hold off, so a story can only be withheld for the reason this file tests.
-const holdOffToml = "[sync]\nstories = \"personal\"\nledger = \"personal\"\nhold_unpushed = false\n\n[hosted]\nproject = \"probe\"\n"
+const holdOffToml = "[sync]\nhold_unpushed = false\n\n[hosted]\nproject = \"probe\"\n"
 
 func (f *fakeWorkstateServer) resetPosts() {
 	f.mu.Lock()

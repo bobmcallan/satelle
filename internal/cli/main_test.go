@@ -99,6 +99,9 @@ func runIsolated(m *testing.M) int {
 	// validation call useRealPushValidator.
 	realPushValidator = pushValidator
 	pushValidator = func(io.Writer, string) int { return 0 }
+	// A scope resolve asks the account service; the suite answers from
+	// suiteAccount instead of a hosted server.
+	installSuiteAccount()
 	return m.Run()
 }
 

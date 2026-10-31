@@ -24,7 +24,12 @@ const fileName = "workstate-sync.json"
 // State is one repo's last recorded workstate-sync outcome.
 type State struct {
 	RepoPath string `json:"repo_path"`
-	Scope    string `json:"scope,omitempty"`
+	// Scope is the sync scope the last resolve found (local|personal|team) and
+	// Binding the [sync] project it resolved for. The offline checks read them
+	// through RecordedScope; a resolve is the only writer.
+	Scope   string    `json:"scope,omitempty"`
+	Binding string    `json:"binding,omitempty"`
+	ScopeAt time.Time `json:"scope_at,omitempty"`
 
 	PushLastSuccess time.Time `json:"push_last_success,omitempty"`
 	PushLastFailure time.Time `json:"push_last_failure,omitempty"`
@@ -131,6 +136,43 @@ func RecordSnapshot(globalDir, repoPath string, success bool, reason, scope stri
 			s.SnapshotPasses = 1
 		}
 	})
+}
+
+// RecordScope records the scope a resolve found for binding, leaving every
+// other field as it was. A resolve that finds what is already recorded writes
+// nothing, so a read-only command leaves the state as it was; ScopeAt is when
+// the recorded scope was first resolved.
+func RecordScope(globalDir, repoPath string, scope config.Scope, binding string, now time.Time) error {
+	binding = strings.TrimSpace(binding)
+	mu.Lock()
+	s, ok, err := loadLocked(globalDir, repoPath)
+	mu.Unlock()
+	if err == nil && ok && s.Scope == scope.String() && s.Binding == binding && !s.ScopeAt.IsZero() {
+		return nil
+	}
+	return record(globalDir, repoPath, scope.String(), func(s *State) {
+		s.Binding = binding
+		s.ScopeAt = now
+	})
+}
+
+// RecordedScope is the scope the offline checks judge sync from: the last
+// resolve's, when it was made for the current binding. An empty binding, no
+// record, or a record for another binding (a rebind since) is local.
+func RecordedScope(globalDir, repoPath, binding string) config.Scope {
+	binding = strings.TrimSpace(binding)
+	if binding == "" {
+		return config.LocalScope
+	}
+	s, ok, err := Load(globalDir, repoPath)
+	if err != nil || !ok || s.Binding != binding {
+		return config.LocalScope
+	}
+	scope, err := config.ParseScope(s.Scope)
+	if err != nil {
+		return config.LocalScope
+	}
+	return scope
 }
 
 // RecordSubstrate merges the verified state of the given areas (area -> state)

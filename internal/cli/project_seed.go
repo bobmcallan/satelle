@@ -101,7 +101,7 @@ func seedProjectSubstrate(cmd *cobra.Command, slug string) error {
 }
 
 // seedSet is what a seed publishes, and where it came from: the repo's
-// team-owned files, read whatever each area's [sync] scope, else the embedded
+// team-owned files, read whatever the resolved scope, else the embedded
 // defaults the team-owned set owns.
 func seedSet(cfg config.Config, repoRoot string, ign config.Ignore) ([]config.ConfigFile, string, error) {
 	team := config.NewTeamSet(cfg.Team.Paths)

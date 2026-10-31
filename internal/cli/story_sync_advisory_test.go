@@ -116,7 +116,7 @@ func storySyncHookRepo(t *testing.T) (calls *atomic.Int32) {
 	if err := os.WriteFile(config.GlobalConfigPath(), []byte("[hosted]\nserver = \""+ts.URL+"\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	writeHarnessTOML(t, repo, "[sync]\nproject = \"probe\"\nstories = \"personal\"\n")
+	writeHarnessTOML(t, repo, "[sync]\nproject = \"probe\"\n")
 	a, err := app.Open()
 	if err != nil {
 		t.Fatal(err)

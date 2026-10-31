@@ -272,6 +272,12 @@ func runInitBody(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness
 	tomlPath := filepath.Join(dataDir, config.ConfigName)
 	switch _, statErr := os.Stat(tomlPath); {
 	case statErr == nil:
+		// First: the heals below load the config, and a load refuses a removed
+		// [sync] scope key that this one deletes on raw bytes.
+		retiredChanged, rerr := removeRetiredSyncKey(dataDir)
+		if rerr != nil {
+			return fmt.Errorf("init: remove retired [sync] keys: %w", rerr)
+		}
 		hostedChanged, herr := healHostedBinding(dataDir)
 		if herr != nil {
 			return fmt.Errorf("init: fold [hosted] into [sync]: %w", herr)
@@ -284,10 +290,6 @@ func runInitBody(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness
 		if ferr != nil {
 			return fmt.Errorf("init: seed [fix_lane]: %w", ferr)
 		}
-		retiredChanged, rerr := removeRetiredSyncKey(dataDir)
-		if rerr != nil {
-			return fmt.Errorf("init: remove retired [sync] key: %w", rerr)
-		}
 		if initTomlHealHook != nil {
 			raw, rerr := os.ReadFile(tomlPath)
 			if rerr != nil {
@@ -298,7 +300,7 @@ func runInitBody(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness
 			}
 		}
 		if retiredChanged {
-			fmt.Fprintf(out, "~ %s (removed a retired [sync] key)\n", config.DefaultDataDir+"/"+config.ConfigName)
+			fmt.Fprintf(out, "~ %s (removed retired [sync] keys)\n", config.DefaultDataDir+"/"+config.ConfigName)
 		}
 		if fixLaneChanged {
 			fmt.Fprintf(out, "~ %s ([fix_lane] seeded — product_surface is empty, so the fix lane is closed until you declare it)\n", config.DefaultDataDir+"/"+config.ConfigName)
@@ -1956,29 +1958,23 @@ const scaffoldTomlAfterExempt = `
 # documents = "."                # → ./documents
 # skills = "."                   # → ./skills
 
-# [sync] — each .satelle area on the local|personal|shared ladder (scoped-sync).
-# Unset = local: nothing leaves the machine until an area is opted in.
+# [sync] — the repo's binding to a hosted project. The repo holds the binding
+# alone; the sync scope comes from your account: unbound or signed out = local
+# (nothing leaves the machine), a project of your personal team = personal, a
+# project of a team you belong to = team. Bind with 'satelle project bind <slug>'
+# (no binding is taken from the directory name); 'satelle sync status' names the
+# scope and where it came from.
 # Never syncs, at any scope: files with a .local segment (satelle.local.toml,
 # notes.local.md). Unconditional — no setting enables it; secrets stay put.
-# personal = this repo's hosted project (default: this directory's name).
-# shared = team catalog eligibility; use 'satelle publish' for the team catalog
-# (sync itself does not write to a team workspace). Inspect with 'satelle sync scopes'.
-# Continuity: local = your disk; personal = push backup + sync-down rehydrate for
-# the bound project. Whether .satelle process is git-tracked is the operator's
-# choice — satelle does not require it. Git is for the application repo.
-# Areas: documents, workflows, principles, skills, constitution, agents, tasks,
-# settings (satelle.toml, including [sync]), stories, ledger, executions.
-# Reserved keys: 'all' (blanket default), server, project, workspace, stale_after.
-# Unset server = https://satelle.dev. Unset project = this repo's directory name.
-# satelle login records the machine-wide server; satelle project bind <slug>
-# writes [sync] project when the directory name is not the slug you want.
+# Team catalogs are a separate verb: 'satelle publish'. Whether .satelle process
+# is git-tracked is the operator's choice — satelle does not require it.
+# Keys: project, workspace, stale_after, hold_unpushed. Unset server =
+# https://satelle.dev; satelle login records the machine-wide server.
 [sync]
 stale_after = "24h"
-# >>> satelle-example: enable sync (uncomment to opt in)
+# >>> satelle-example: bind to a hosted project (uncomment, or run satelle project bind)
 # [sync]
-# all = "personal"               # every area personal unless overridden below
-# documents = "personal"         # per-area override wins over 'all'
-# project = "my-project-slug"    # default: this repo's directory name
+# project = "my-project-slug"    # written by satelle project bind <slug>
 # workspace = "team-name"        # per-developer; usually satelle.local.toml
 # [vars]
 # MODEL_BASE_URL = "https://example.invalid"  # non-secret; secrets → satelle.local.toml

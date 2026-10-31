@@ -443,7 +443,6 @@ func TestAdoptedCopyMutationDoesNotClobberCanonical(t *testing.T) {
 project = "probe"
 workspace = "Acme"
 [sync]
-skills = "personal"
 `)
 	pointAt(t, dst)
 	cmdA, _ := testCmd()

@@ -570,10 +570,14 @@ workspace = "Legacy Team"
 	}
 	got, _ := os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
 	s := string(got)
-	for _, want := range []string{`all = "personal"`, `project = "legacy-proj"`, `workspace = "Legacy Team"`} {
+	for _, want := range []string{`project = "legacy-proj"`, `workspace = "Legacy Team"`} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing %q in:\n%s", want, s)
 		}
+	}
+	// The removed scope key is dropped before the fold loads the config.
+	if strings.Contains(s, `all = `) {
+		t.Errorf("migrate left the removed [sync] all key:\n%s", s)
 	}
 	if strings.Contains(s, `server = "https://legacy.example"`) {
 		t.Errorf("legacy [hosted] server must not be folded onto [sync]:\n%s", s)
@@ -614,9 +618,9 @@ server = "https://legacy.example"
 		t.Errorf("hosted residue remains:\n%s", got)
 	}
 
-	// Collector-sdk shape: [sync] all + leftover [hosted] project.
+	// Collector-sdk shape: [sync] + leftover [hosted] project.
 	collector := `[sync]
-all = "personal"
+stale_after = "24h"
 
 [hosted]
 project = "solidsafe-collector-sdk-go"
@@ -631,7 +635,7 @@ project = "solidsafe-collector-sdk-go"
 	if strings.Contains(string(got), "[hosted]") {
 		t.Errorf("collector shape still has [hosted]:\n%s", got)
 	}
-	if !strings.Contains(string(got), `all = "personal"`) || !strings.Contains(string(got), `project = "solidsafe-collector-sdk-go"`) {
+	if !strings.Contains(string(got), `stale_after = "24h"`) || !strings.Contains(string(got), `project = "solidsafe-collector-sdk-go"`) {
 		t.Errorf("collector binding not folded onto [sync]:\n%s", got)
 	}
 

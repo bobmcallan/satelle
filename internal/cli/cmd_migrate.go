@@ -119,8 +119,11 @@ type migratePlan struct {
 	HostedTableDrop bool
 	// StaleAfter is true when [sync] stale_after is absent (sty_30696eeb).
 	StaleAfter bool
-	// RetiredSyncKeyRemove is true when [sync] hold_stale_after is still set:
-	// hosted holds are gone and migrate removes the key (sty_40853d02).
+	// RetiredSyncKeys lists the retired [sync] keys still set: hold_stale_after
+	// (hosted holds are gone, sty_40853d02) and the removed scope keys (scope
+	// comes from the account, sty_b336c2b0). Migrate removes them.
+	RetiredSyncKeys []string
+	// RetiredSyncKeyRemove is true when RetiredSyncKeys is not empty.
 	RetiredSyncKeyRemove bool
 	// WorkflowRetire lists DOT workflow files superseded by an authored,
 	// PARSEABLE done.toml + step.toml (sty_9835070d). Actionable work: migrate
@@ -291,7 +294,8 @@ func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
 	p.HostedToSync = hostedBindingMissingOnSync(dataDir)
 	p.HostedTableDrop = hasHostedTable(dataDir)
 	p.StaleAfter = syncKeyMissing(dataDir, "stale_after")
-	p.RetiredSyncKeyRemove = syncKeyPresent(dataDir, retiredHoldStaleAfterKey)
+	p.RetiredSyncKeys = retiredSyncKeys(dataDir)
+	p.RetiredSyncKeyRemove = len(p.RetiredSyncKeys) > 0
 	p.WorkflowRetire, p.WorkflowConvertPending = workflowConversionState(dataDir)
 	p.RetiredRefs = planRetiredRefs(dataDir)
 	p.MachineStrays = config.MachineScopeStrays(dataDir)
@@ -720,7 +724,7 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 		fmt.Fprintln(out, "  config:           seed [sync] stale_after = \"24h\"")
 	}
 	if plan.RetiredSyncKeyRemove {
-		fmt.Fprintln(out, "  config:           remove retired [sync] hold_stale_after (hosted holds are gone)")
+		fmt.Fprintf(out, "  config:           remove retired [sync] %s\n", strings.Join(plan.RetiredSyncKeys, ", "))
 	}
 	if len(plan.WorkflowRetire) == 0 {
 		fmt.Fprintln(out, "  workflows:        (none superseded)")
@@ -882,6 +886,13 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 
 	if len(plan.ExemptManaged) > 0 || len(plan.ExemptGlobsManaged) > 0 || len(plan.HostedToSync) > 0 || plan.HostedTableDrop || plan.StaleAfter || plan.RetiredSyncKeyRemove {
 		fmt.Fprintln(out, "\n→ config converge")
+		// First: the heals below load the config, which refuses a removed [sync]
+		// scope key.
+		if changed, err := removeRetiredSyncKey(dataDir); err != nil {
+			return fmt.Errorf("migrate: retired [sync] keys: %w", err)
+		} else if changed {
+			fmt.Fprintf(out, "  removed retired [sync] %s\n", strings.Join(plan.RetiredSyncKeys, ", "))
+		}
 		if len(plan.ExemptManaged) > 0 {
 			changed, err := ensureEditExemptManaged(dataDir)
 			if err != nil {
@@ -921,11 +932,6 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 		return fmt.Errorf("migrate: [sync] stale_after: %w", err)
 	} else if changed {
 		fmt.Fprintln(out, "  seeded [sync] stale_after = \"24h\"")
-	}
-	if changed, err := removeRetiredSyncKey(dataDir); err != nil {
-		return fmt.Errorf("migrate: [sync] hold_stale_after: %w", err)
-	} else if changed {
-		fmt.Fprintln(out, "  removed retired [sync] hold_stale_after")
 	}
 
 	if len(plan.MachineStrays) > 0 {
@@ -1157,15 +1163,24 @@ func healStaleAfter(dataDir string) (bool, error) {
 	return healSyncKey(dataDir, "stale_after", "24h")
 }
 
-// syncKeyPresent reports whether [sync] sets key in the repo config.
-func syncKeyPresent(dataDir, key string) bool {
-	path := filepath.Join(dataDir, config.ConfigName)
-	cfg, _, err := config.Load(path)
-	if err != nil {
-		return false
+// retiredSyncKeys names the retired [sync] keys the repo's config files still
+// set, read from the raw bytes because a load refuses the removed scope keys.
+func retiredSyncKeys(dataDir string) []string {
+	var keys []string
+	if raw, err := os.ReadFile(filepath.Join(dataDir, config.ConfigName)); err == nil && config.HasKey(string(raw), "sync", retiredHoldStaleAfterKey) {
+		keys = append(keys, retiredHoldStaleAfterKey)
 	}
-	_, ok := cfg.Sync[key]
-	return ok
+	found, _ := config.FindSyncScopeKeys(dataDir)
+	seen := map[string]bool{}
+	for _, name := range []string{config.ConfigName, config.LocalConfigName} {
+		for _, k := range found[name] {
+			if !seen[k] {
+				seen[k] = true
+				keys = append(keys, k)
+			}
+		}
+	}
+	return keys
 }
 
 // retiredHoldStaleAfterKey is the one place the retired [sync] hold_stale_after
@@ -1173,26 +1188,43 @@ func syncKeyPresent(dataDir, key string) bool {
 // `satelle init` and `satelle migrate` both remove it via removeRetiredSyncKey.
 const retiredHoldStaleAfterKey = "hold_stale_after"
 
-// removeRetiredSyncKey removes [sync] hold_stale_after when it is set
-// (sty_40853d02): the key judged how long a hosted hold's holder could go
-// unseen, and hosted holds are gone. Nothing else in the file is touched.
+// removeRetiredSyncKey removes the retired [sync] keys: hold_stale_after from
+// satelle.toml (sty_40853d02: it judged how long a hosted hold's holder could go
+// unseen, and hosted holds are gone), and every config.RemovedSyncScopeKeys key
+// from satelle.toml and satelle.local.toml (sync scope comes from the account's
+// binding now). It edits raw bytes and never loads the config, whose load refuses
+// those keys, so it runs before any heal that does. Nothing else is touched.
 func removeRetiredSyncKey(dataDir string) (bool, error) {
-	path := filepath.Join(dataDir, config.ConfigName)
-	raw, err := os.ReadFile(path)
+	found, err := config.FindSyncScopeKeys(dataDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
+		return false, err
+	}
+	changed := false
+	for _, name := range []string{config.ConfigName, config.LocalConfigName} {
+		if name != config.ConfigName && len(found[name]) == 0 {
+			continue
 		}
-		return false, err
+		path := filepath.Join(dataDir, name)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return changed, err
+		}
+		content, _ := config.RemoveSyncScopeKeys(string(raw))
+		if name == config.ConfigName {
+			content = config.RemoveKey(content, "sync", retiredHoldStaleAfterKey)
+		}
+		if content == string(raw) {
+			continue
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			return changed, err
+		}
+		changed = true
 	}
-	content := config.RemoveKey(string(raw), "sync", retiredHoldStaleAfterKey)
-	if content == string(raw) {
-		return false, nil
-	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		return false, err
-	}
-	return true, nil
+	return changed, nil
 }
 
 // healSyncKey writes [sync] key = value when the key is absent.

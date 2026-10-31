@@ -13,7 +13,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/store"
 )
 
-const ledgerPushToml = "[sync]\nstories = \"personal\"\nledger = \"personal\"\n\n[hosted]\nproject = \"probe\"\n"
+const ledgerPushToml = "[sync]\n\n[hosted]\nproject = \"probe\"\n"
 
 func (f *fakeWorkstateServer) hasLedger(project, id string) bool {
 	f.mu.Lock()

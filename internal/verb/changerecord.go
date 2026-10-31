@@ -20,7 +20,7 @@ import (
 
 // Caps (package vars so tests may shrink them). type:change attachments are
 // excluded from gate payloads (sty_948ad5df). sty_948ad5df also kept the patch off
-// the sync wire; sty_4d42e13e REVERSES that: with [sync] stories opted in, the
+// the sync wire; sty_4d42e13e REVERSES that: under a syncing scope, the
 // patch travels as a story attachment through the personal documents collection
 // (never inside the workstate Apply), so another machine can read what a story
 // changed. The cap above still bounds what is retained, hence what is uploaded.

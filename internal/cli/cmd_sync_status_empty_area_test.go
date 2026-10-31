@@ -17,7 +17,7 @@ import (
 // to push and nothing hosted, so it is in step — in `sync status`, in doctor and
 // in the session-start warning — and no area's NEXT is a push that cannot act.
 
-const scaffoldOnlyToml = "[sync]\nall = \"personal\"\n" + boundProjectToml
+const scaffoldOnlyToml = "[sync]\n" + boundProjectToml
 
 // scaffoldOnlyMachine is a checkout opted in to every area whose only content is
 // unedited embedded defaults (which a push withholds), with a signed-in server.

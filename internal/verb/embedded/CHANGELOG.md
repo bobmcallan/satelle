@@ -1,3 +1,9 @@
+## [Unreleased]
+
+### Breaking
+- **`[sync]` scope keys removed — `all`, `workflows`, `principles`, `skills`, `constitution`, `agents`, `tasks`, `settings`, `documents`, `stories`, `ledger`, `executions`.** Sync scope now comes from the signed-in account and the repo's explicit `[sync] project` binding: an unbound repo or a signed-out machine is local and makes no hosted call, a project of the account's personal team is personal, and a project of a team the account belongs to is team. A project whose team the account does not belong to is local. A repo that synced through the directory-name default is local until `satelle project bind`. `satelle project bind`, a rebind, or joining or leaving the project's team changes the scope on the next sync with no file edit. A `satelle.toml` or `satelle.local.toml` that carries one of the keys fails to load, naming the key. The settings area no longer carries scope: a push withholds the keys, and a rehydrate or deploy that restores `satelle.toml` strips them, so another machine's file never sets this machine's scope. `satelle sync status` shows the resolved scope and where it came from (account, team, project). `satelle doctor` and the session substrate advisory judge from the scope the last sync resolved for the current binding. `*.local.*` files never leave the machine under any scope.
+- init-heals: `satelle init` (or `satelle init --all --yes` for every registered repo) removes the keys from `satelle.toml` and `satelle.local.toml` and leaves every other line as it was. (sty_b336c2b0)
+
 ## [0.0.798] - 2026-10-30
 
 ### Fixed

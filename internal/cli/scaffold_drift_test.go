@@ -16,6 +16,16 @@ import (
 
 func TestDetectScaffoldDrift_CleanAfterWrite(t *testing.T) {
 	repo := t.TempDir()
+	writeCanonicalHooks(t, repo)
+	if fs := DetectScaffoldDrift(repo); len(fs) != 0 {
+		t.Fatalf("canonical deploy must be clean: %v", fs)
+	}
+}
+
+// writeCanonicalHooks deploys the hook scripts and both harnesses' canonical
+// settings, so the repo carries no hook drift.
+func writeCanonicalHooks(t *testing.T, repo string) {
+	t.Helper()
 	if err := writeHookScripts(repo); err != nil {
 		t.Fatal(err)
 	}
@@ -32,8 +42,44 @@ func TestDetectScaffoldDrift_CleanAfterWrite(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, filepath.FromSlash(grokHooksRel)), buildGrokHookSettings(repo), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// AC9 (sty_b336c2b0): with current hooks, a removed [sync] scope key in either
+// config file is a finding naming the file, the key and the heal; once removed
+// there is none.
+func TestDetectScaffoldDriftReportsSyncScopeKeys(t *testing.T) {
+	repo := t.TempDir()
+	writeCanonicalHooks(t, repo)
+	data := filepath.Join(repo, config.DefaultDataDir)
+	if err := os.MkdirAll(data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(data, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(config.ConfigName, "[sync]\nall = \"personal\"\nproject = \"p\"\n[substrate_roots]\nskills = \".\"\n")
+	write(config.LocalConfigName, "[sync]\ndocuments = \"local\"\n")
+	fs := DetectScaffoldDrift(repo)
+	want := map[string]string{
+		config.DefaultDataDir + "/" + config.ConfigName:      "[sync] all is removed — run satelle init",
+		config.DefaultDataDir + "/" + config.LocalConfigName: "[sync] documents is removed — run satelle init",
+	}
+	if len(fs) != len(want) {
+		t.Fatalf("findings = %v, want one per removed key", fs)
+	}
+	for _, f := range fs {
+		if f.Kind != "config" || want[f.Path] != f.Detail {
+			t.Errorf("finding %+v, want config %q for %s", f, want[f.Path], f.Path)
+		}
+	}
+
+	write(config.ConfigName, "[sync]\nproject = \"p\"\n")
+	write(config.LocalConfigName, "")
 	if fs := DetectScaffoldDrift(repo); len(fs) != 0 {
-		t.Fatalf("canonical deploy must be clean: %v", fs)
+		t.Errorf("no scope key left, yet findings: %v", fs)
 	}
 }
 

@@ -18,21 +18,22 @@ import (
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/snapsync"
 	"github.com/bobmcallan/satelle/internal/subsync"
+	"github.com/bobmcallan/satelle/internal/syncscope"
 )
 
 // `satelle sync` is the scoped-sync command group (epic:scoped-sync): scopes
 // inspection, config push/deploy, and documents push/pull. Bare `satelle sync`
 // is the default execute verb — it runs the configured sync across every
-// opted-in area (config push, documents push+pull, work-state push) by composing
-// the per-kind handlers; each self-gates on its [sync] scope. The per-kind
+// area (config push, documents push+pull, work-state push) by composing the
+// per-kind handlers under the one resolved scope (resolveSyncScope). The per-kind
 // subcommands remain for driving one area (or a one-way direction) on its own.
 func init() {
 	var syncServer string
 	var syncDryRun bool
 	syncCmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Run the configured sync for every opted-in area (config, documents, workstate)",
-		Long: `sync keeps the opted-in .satelle areas in step with the bound hosted project, as
+		Short: "Run the sync for every area the resolved scope covers (config, documents, workstate)",
+		Long: `sync keeps the synced .satelle areas in step with the bound hosted project, as
 git keeps a branch with its remote:
 
   push        publish this machine's changes (config, documents, work-state)
@@ -46,14 +47,13 @@ the full-tree recovery of a wiped .satelle and overwrites local files; config,
 documents, workstate and bindings drive one area; config deploy --version
 materialises a pinned version.
 
-Every area defaults to local — nothing leaves the machine until you set
-[sync] <area> = personal. To opt the whole .satelle tree in with one key,
-set [sync] all = personal (a per-area <area> = ... still overrides it).
-Files whose name carries a .local segment (satelle.local.toml, notes.local.md)
-never leave the machine at any scope — unconditional, not a setting.
-Personal opt-in targets this repo's bound hosted project only. Bind with "satelle
-project bind <slug>" (or set [sync] project in .satelle/satelle.toml). Team
-catalogs are a separate verb: satelle publish.`,
+The scope comes from your account and the repo's binding, never from a config
+key: unbound or signed out is local (nothing leaves the machine), a project of
+your personal team is personal, a project of a team you belong to is team. Bind
+with "satelle project bind <slug>"; "satelle sync status" names the scope and
+where it came from. Files whose name carries a .local segment
+(satelle.local.toml, notes.local.md) never leave the machine at any scope —
+unconditional, not a setting. Team catalogs are a separate verb: satelle publish.`,
 		Args:        cobra.NoArgs,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -61,14 +61,15 @@ catalogs are a separate verb: satelle publish.`,
 		},
 	}
 	syncCmd.Flags().StringVar(&syncServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
-	syncCmd.Flags().BoolVar(&syncDryRun, "dry-run", false, "Preview what each opted-in area would push without contacting the server (documents pull is not previewed).")
+	syncCmd.Flags().BoolVar(&syncDryRun, "dry-run", false, "Preview what each area would push; only the scope is asked of the account (documents pull is not previewed).")
 	syncCmd.Flags().Bool("prune", false, pruneFlagUsage)
 	syncCmd.Flags().Bool("force", false, forceFlagUsage)
 	syncCmd.AddCommand(&cobra.Command{
 		Use:   "scopes",
-		Short: "Print each .satelle area's resolved scope, and shared files within a personal area",
-		Long: `Print the resolved sync scope for every .satelle area — off, personal or team —
-and, inside a personal area, which files are nonetheless shared.
+		Short: "Print the resolved sync scope, each .satelle area under it, and shared files within a personal scope",
+		Long: `Print the resolved sync scope — local, personal or team, and the account,
+team and project it came from — then each .satelle area under it and, under a
+personal scope, which files are nonetheless shared.
 
 Read this before a sync, not after: scope is what decides whether a file leaves
 the machine, and the per-file exceptions inside a personal area are exactly what
@@ -103,25 +104,25 @@ func newSyncRehydrateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rehydrate",
 		Short: "Full-tree recover: config deploy + documents pull + workstate pull, overwriting local files (no push)",
-		Long: `rehydrate is the empty-tree / wiped-.satelle recover path for personal opt-in.
+		Long: `rehydrate is the empty-tree / wiped-.satelle recover path.
 
-Full operator path (pinned so scopes return before scope-gated pulls):
+Full operator path:
   1. install satelle          — binary on PATH
   2. satelle login            — global credentials
   3. satelle project bind <slug>
        creates .satelle/satelle.toml with [sync] project when absent
   4. satelle sync rehydrate   — this command, which runs:
        a. config deploy       — restores substrate AND satelle.toml (the settings
-          area, including [sync] scopes) from the bound project's personal config
-          collection; the local [sync] project binding is preserved (never
-          taken from the deployed file)
+          area) from the bound project's personal config collection; the local
+          [sync] project binding is preserved (never taken from the deployed
+          file)
        b. documents pull
        c. workstate pull      — stories/executions/ledger into the local store
 
-Scopes live in satelle.toml and are restored by step 4a when a machine that had
-[sync] settings (or all) = personal previously pushed. If the hosted project has
-no satelle.toml yet (never pushed from a post-0.0.330 binary with settings
-opted in), areas stay local and rehydrate names the fix.
+The scope is resolved from your account and the binding, never restored from
+another machine's satelle.toml: a deployed file's scope keys are dropped. A
+local scope (unbound, signed out, or not a member of the project's team) pulls
+nothing, and rehydrate names why.
 
 Does not push; on a healthy machine use "satelle sync pull". Optional --force and --verbose are passed to workstate pull only.`,
 		RunE: func(c *cobra.Command, args []string) error {
@@ -141,11 +142,15 @@ func runSyncRehydrate(cmd *cobra.Command, serverArg string, force, verbose bool)
 	if err != nil {
 		return err
 	}
-	// After deploy, if every sync area is still local, explain the real cause
-	// (settings not restored vs restored-but-all-local).
-	if note := rehydrateAllLocalNote(outcome.SettingsRestored); note != "" {
-		fmt.Fprintln(out, note)
+	cfg, repoRoot, _, err := loadRepoConfig()
+	if err != nil {
+		return err
 	}
+	res, err := resolveSyncScope(cmd, cfg, repoRoot, resolveServer(serverArg))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "rehydrate: "+res.Line())
 	fmt.Fprintln(out, "rehydrate: documents pull…")
 	if err := runSyncDocumentsPull(cmd, serverArg, ""); err != nil {
 		return err
@@ -159,64 +164,19 @@ func runSyncRehydrate(cmd *cobra.Command, serverArg string, force, verbose bool)
 	if err := runSyncWorkstatePull(cmd, serverArg, false, force, verbose); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, rehydrateDoneSummary(outcome))
+	fmt.Fprintln(out, rehydrateDoneSummary(outcome, res))
 	return nil
 }
 
 // rehydrateDoneSummary is the truthful closing line for rehydrate: what was
-// and was not restored (AC4).
-func rehydrateDoneSummary(o deployOutcome) string {
+// and was not restored, and the scope the account resolved.
+func rehydrateDoneSummary(o deployOutcome, res syncscope.Resolution) string {
 	settings := "settings: not restored"
 	if o.SettingsRestored {
 		settings = "settings: restored"
-		if scopes := scopeSummary(); scopes != "" {
-			settings += " (scopes now: " + scopes + ")"
-		}
 	}
-	return fmt.Sprintf("rehydrate: done — %s | config files: %d | (documents + workstate reported above)",
-		settings, o.Written)
-}
-
-// scopeSummary renders non-local areas as "area=scope, …" for the rehydrate
-// closing line. Empty when load fails or every area is local.
-func scopeSummary() string {
-	cfg, _, _, err := loadRepoConfig()
-	if err != nil {
-		return ""
-	}
-	var parts []string
-	for _, area := range config.SyncAreas {
-		scope, serr := config.ScopeFor(cfg, area)
-		if serr != nil || scope == config.LocalScope {
-			continue
-		}
-		parts = append(parts, area+"="+scope.String())
-	}
-	return strings.Join(parts, ", ")
-}
-
-// rehydrateAllLocalNote returns an operator-facing explanation when every
-// [sync] area is still local after config deploy. Empty when at least one area
-// is personal|shared. Wording distinguishes "settings not restored from hosted"
-// from "restored and genuinely all-local" (AC5).
-func rehydrateAllLocalNote(settingsRestored bool) string {
-	cfg, _, _, err := loadRepoConfig()
-	if err != nil {
-		return ""
-	}
-	for _, area := range config.SyncAreas {
-		scope, serr := config.ScopeFor(cfg, area)
-		if serr != nil {
-			return ""
-		}
-		if scope != config.LocalScope {
-			return ""
-		}
-	}
-	if !settingsRestored {
-		return "rehydrate: note — satelle.toml was not restored from hosted (the bound project's settings area holds no `satelle.toml`, or it was never pushed from a machine with [sync] settings or all = personal; `satelle sync status` shows what the project holds). Documents and workstate pulls will no-op until you push config from a machine that has content (`satelle sync config push`) or hand-set [sync] here once."
-	}
-	return "rehydrate: note — satelle.toml was restored and every area is still local (the hosted scopes genuinely opt nothing in). Documents and workstate pulls will no-op until [sync] opts an area into personal."
+	return fmt.Sprintf("rehydrate: done — %s | %s | config files: %d | (documents + workstate reported above)",
+		res.Line(), settings, o.Written)
 }
 
 // deployOutcome is the structured result of a config deploy so rehydrate can
@@ -229,10 +189,10 @@ type deployOutcome struct {
 }
 
 // runSync is the bare `satelle sync` default action: run the configured sync
-// across every opted-in area by composing the per-kind handlers, in a fixed
-// order — authored config up, documents both ways, work-state up. Each handler
-// self-gates on its own [sync] scope and prints its own result; a local area is
-// a no-op. `sync config deploy` is intentionally NOT part of the bundle — it
+// across every area by composing the per-kind handlers, in a fixed order —
+// authored config up, documents both ways, work-state up. Each handler runs
+// under the one resolved scope and prints its own result; a local scope is a
+// no-op. `sync config deploy` is intentionally NOT part of the bundle — it
 // materialises a whole partition over local files ("set up X like Y"), which is
 // a deliberate operation, not a routine sync. Any handler error stops the run
 // (fail-fast) so a partial sync surfaces rather than hides.
@@ -241,18 +201,14 @@ func runSync(cmd *cobra.Command, serverArg string, dryRun bool) error {
 	if err != nil {
 		return err
 	}
-	out := cmd.OutOrStdout()
 	if err := syncTeamWriteDown(cmd, a, dryRun); err != nil {
 		return err
 	}
-	if optedIn, err := syncOptedIn(a.Config); err != nil {
+	if scope, err := syncScopeGate(cmd, a.Config, a.RepoRoot, resolveServer(serverArg), "Nothing to sync"); err != nil || scope == config.LocalScope {
 		return err
-	} else if !optedIn {
-		fmt.Fprintln(out, "Nothing to sync — every .satelle area is local. Set [sync] <area> = personal (or [sync] all = personal) to opt in.")
-		return nil
 	}
 	return runSyncPushLegs(cmd, serverArg, dryRun, func() error {
-		return runSyncPullsOfBareSync(cmd, a.Config, serverArg, dryRun)
+		return runSyncPullsOfBareSync(cmd, serverArg, dryRun)
 	})
 }
 
@@ -285,27 +241,23 @@ func writeDownAndReport(cmd *cobra.Command, process config.Config, processRoot, 
 	return nil
 }
 
-// syncOptedIn is the pre-flight both the bare sync and `sync push` share: with
-// nothing opted in they emit one clean line instead of four per-verb skip
-// messages (and touch no network). An explicitly invalid scope still fails here,
-// matching `sync scopes`.
-func syncOptedIn(cfg config.Config) (bool, error) {
-	optedIn := false
-	for _, area := range config.SyncAreas {
-		scope, serr := config.ScopeFor(cfg, area)
-		if serr != nil {
-			return false, fmt.Errorf("sync area %q: %w", area, serr)
-		}
-		if scope != config.LocalScope {
-			optedIn = true
-		}
+// syncScopeGate is the pre-flight every sync verb shares: it resolves the
+// scope and, when it is local, prints one line — what skipped and why. The
+// caller stops on a local scope. Unbound or signed out touches no network.
+func syncScopeGate(cmd *cobra.Command, cfg config.Config, repoRoot, server, what string) (config.Scope, error) {
+	res, err := resolveSyncScope(cmd, cfg, repoRoot, server)
+	if err != nil {
+		return config.LocalScope, err
 	}
-	return optedIn, nil
+	if res.Scope == config.LocalScope {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s — %s\n", what, res.Line())
+	}
+	return res.Scope, nil
 }
 
 // runSyncPushLegs is the one push composition (sty_0fa4f732): the push of every
-// opted-in area, in a fixed order — authored config, documents, then work-state.
-// Each leg self-gates on its own [sync] scope and reads --dry-run, --force,
+// synced area, in a fixed order — authored config, documents, then work-state.
+// Each leg runs under the resolved scope and reads --dry-run, --force,
 // --prune and --server as the per-area pushes do. Bare `sync` and `sync push`
 // both run it; between documents and work-state it calls between (bare sync's
 // pulls, nil for a push, which pulls nothing), so bare sync's order is unchanged.
@@ -330,7 +282,7 @@ func runSyncPushLegs(cmd *cobra.Command, serverArg string, dryRun bool, between 
 
 // runSyncPullsOfBareSync is the pulling half of bare `satelle sync`, run between
 // its document and work-state pushes.
-func runSyncPullsOfBareSync(cmd *cobra.Command, cfg config.Config, serverArg string, dryRun bool) error {
+func runSyncPullsOfBareSync(cmd *cobra.Command, serverArg string, dryRun bool) error {
 	out := cmd.OutOrStdout()
 	// The documents PULL stays in bare sync — deliberately, unlike config deploy
 	// and workstate pull, which sit behind `sync rehydrate` (sty_4c3729e7 AC7).
@@ -349,19 +301,16 @@ func runSyncPullsOfBareSync(cmd *cobra.Command, cfg config.Config, serverArg str
 	} else if err := runSyncDocumentsPull(cmd, serverArg, ""); err != nil {
 		return err
 	}
-	// The workspace bindings layer (sty_01949949) rides the aggregate only when
-	// the agents area is opted in; it applies from the TEAM catalog and is a
-	// no-op for a repo with no team workspace. Pull, not push: the aggregate
+	// The workspace bindings layer (sty_01949949) rides the aggregate (its
+	// caller already refused a local scope); it applies from the TEAM catalog and
+	// is a no-op for a repo with no team workspace. Pull, not push: the aggregate
 	// converges this repo onto the workspace's decision; publishing bindings
 	// is an explicit `sync bindings push`.
-	if scope, serr := config.ScopeFor(cfg, "agents"); serr == nil && scope != config.LocalScope {
-		if dryRun {
-			fmt.Fprintln(out, "bindings pull: skipped under --dry-run (pull has no preview).")
-		} else if err := runSyncBindingsPull(cmd, serverArg, ""); err != nil {
-			return err
-		}
+	if dryRun {
+		fmt.Fprintln(out, "bindings pull: skipped under --dry-run (pull has no preview).")
+		return nil
 	}
-	return nil
+	return runSyncBindingsPull(cmd, serverArg, "")
 }
 
 // newSyncConfigCmd builds the `satelle sync config` group — the CLI counterpart
@@ -378,9 +327,9 @@ func newSyncConfigCmd() *cobra.Command {
 		Long: `Move authored config between this repo and its bound hosted project: push what
 you have, or deploy what the project holds.
 
-Nothing leaves the machine by default — a hosted write happens only when the
-area is opted in, so running this in a repo that never opted in is a no-op by
-design rather than an error. Deploy OVERWRITES the local authored copy.`,
+Nothing leaves the machine by default — a hosted write happens only under a
+personal or team scope, so running this in an unbound or signed-out repo is a
+no-op by design. Deploy OVERWRITES the local authored copy.`,
 	}
 
 	var pushServer, pushWorkspace string
@@ -389,10 +338,10 @@ design rather than an error. Deploy OVERWRITES the local authored copy.`,
 		Use:   "push",
 		Short: "Upload authored config to the versioned store (a new version per file)",
 		Long: `push walks the authored-config areas (workflows/principles/skills/constitution/
-agents/tasks/settings) per their resolved [sync] scope — skipping local areas — and uploads
+agents/tasks/settings) under the resolved scope — nothing when it is local — and uploads
 each file as a new version into this repo's bound hosted PROJECT only
 (epic:sync-publish). Files go as on disk, except satelle.toml
-loses [sync] project and [hosted] project. Before sending, a shared agents.toml
+loses its project binding. Before sending, a shared agents.toml
 with machine-specific content is refused (see 'satelle help agent-dispatch') and
 the deployed system must validate, as for 'satelle init'. Never uploaded: .local
 files, config/.env, paths in <data dir>/.satelleignore. Team is not a sync
@@ -407,7 +356,7 @@ Only the substrate holder publishes team-owned files; a member's stay local.`,
 	}
 	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	push.Flags().StringVar(&pushWorkspace, "workspace", "", "Ignored for push (sync is personal-only; kept for flag compatibility).")
-	push.Flags().BoolVar(&dryRun, "dry-run", false, "List what would be pushed, and run the refusal and validation checks, without contacting the server.")
+	push.Flags().BoolVar(&dryRun, "dry-run", false, "List what would be pushed, and run the refusal and validation checks; only the scope is asked of the account.")
 	push.Flags().Bool("prune", false, pruneFlagUsage)
 	push.Flags().Bool("force", false, forceFlagUsage)
 	push.Flags().Bool("snapshot-only", false, snapshotOnlyFlagUsage)
@@ -421,12 +370,12 @@ Only the substrate holder publishes team-owned files; a member's stay local.`,
 		Long: `deploy fetches this repo's bound hosted PROJECT's config
 (or an explicit --workspace when reading another developer's personal set) and
 writes every file byte-for-byte into this repo's data dir — including satelle.toml
-(settings) with its [sync] scopes when present. The local [sync] project
+(settings), less any removed scope key. The local [sync] project
 binding is preserved after restore (never taken from the deployed file).
 --version N pins a per-file version (default: latest). This is the "set up
 project X like project Y" operation for process config. Requires "satelle
-project bind <slug>". Local [sync] areas still default to writing nothing hosted
-on push; deploy always materializes from the bound project partition.`,
+project bind <slug>". Deploy always materializes from the bound project
+partition, whatever the resolved scope.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncConfigDeploy(cmd, deployServer, deployWorkspace, version)
 		},
@@ -456,12 +405,16 @@ func loadRepoConfig() (config.Config, string, string, error) {
 	return cfg, repoRoot, cfg.ResolveDataDir(repoRoot), nil
 }
 
-// sharedSyncNote warns when files would have used the old shared-tier team
-// destination. Sync is personal-only (epic:sync-publish); publish is the team path.
-func sharedSyncNote(files []config.ConfigFile) string {
+// sharedSyncNote warns, under a personal scope, when a file is frontmarked
+// shared:true: that flag does not route sync to a team (epic:sync-publish).
+// Under a team scope every file is the team's, and nothing needs saying.
+func sharedSyncNote(scope config.Scope, files []config.ConfigFile) string {
+	if scope != config.PersonalScope {
+		return ""
+	}
 	for _, f := range files {
 		if f.Tier == config.SharedTier {
-			return "note: [sync] shared / shared:true no longer routes sync to a team workspace — pushing to personal only. Use satelle publish to expose artifacts to a team catalog."
+			return "note: shared:true does not route sync to a team workspace — pushing to the bound personal project. Use satelle publish to expose artifacts to a team catalog."
 		}
 	}
 	return ""
@@ -507,12 +460,20 @@ func runSyncConfigPushLeg(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	if err != nil {
 		return ref, err
 	}
-	bundle, err := config.ConfigFiles(cfg, repoRoot, ign)
+	res, err := resolveSyncScope(cmd, cfg, repoRoot, server)
+	if err != nil {
+		return ref, err
+	}
+	out := cmd.OutOrStdout()
+	if res.Scope == config.LocalScope {
+		fmt.Fprintln(out, "No config to push — "+res.Line())
+		return ref, nil
+	}
+	bundle, err := config.ConfigFiles(cfg, res.Scope, repoRoot, ign)
 	if err != nil {
 		return ref, err
 	}
 	files := bundle.Files
-	out := cmd.OutOrStdout()
 	printWithheldLocal := func() { printBundleExclusions(out, bundle) }
 	if len(files) == 0 {
 		if n := bundle.ExcludedCount(); n > 0 {
@@ -520,10 +481,10 @@ func runSyncConfigPushLeg(cmd *cobra.Command, serverArg, workspaceArg string, dr
 			fmt.Fprintf(out, "nothing to push (%d withheld)\n", n)
 			return ref, nil
 		}
-		fmt.Fprintln(out, "No config to push — every config area is local. Set [sync] <area> = personal to opt in.")
+		fmt.Fprintln(out, "No config to push — the config areas are empty.")
 		return ref, nil
 	}
-	if note := sharedSyncNote(files); note != "" {
+	if note := sharedSyncNote(res.Scope, files); note != "" {
 		fmt.Fprintln(out, note)
 	}
 	return pushConfigFileSet(cmd, cfg, repoRoot, dataDir, ign, server, files, pushSetOpts{
@@ -543,7 +504,7 @@ type pushSetOpts struct {
 	Verb   string
 	DryRun bool
 	// IgnoreScope sends the whole set as plain files, outside every area's
-	// snapshot, whatever each area's [sync] scope: a project's first publish of
+	// snapshot, whatever the resolved scope: a project's first publish of
 	// its substrate, which has no snapshot to be behind.
 	IgnoreScope bool
 	// withheldLocal reports what the bundle left out; nil reports nothing.
@@ -957,12 +918,20 @@ func runSyncConfigDeployWith(cmd *cobra.Command, serverArg, workspaceArg string,
 		}
 		if settingsWritten {
 			outcome.SettingsRestored = true
+			removed, err := stripRestoredSyncScope(cfgPath)
+			if err != nil {
+				return outcome, fmt.Errorf("deploy: drop [sync] scope keys: %w", err)
+			}
 			if err := config.SaveConfigValues(cfgPath, []config.KeyEdit{
 				config.BoundProjectEdit(boundProject),
 			}); err != nil {
 				return outcome, fmt.Errorf("deploy: preserve [sync] project: %w", err)
 			}
-			fmt.Fprintf(out, "settings: satelle.toml restored; [sync] project preserved as %q (not taken from the deployed file).\n", boundProject)
+			note := ""
+			if len(removed) > 0 {
+				note = fmt.Sprintf("; removed [sync] scope keys %s (scope comes from the account)", strings.Join(removed, ", "))
+			}
+			fmt.Fprintf(out, "settings: satelle.toml restored; [sync] project preserved as %q (not taken from the deployed file)%s.\n", boundProject, note)
 		}
 	}
 	pinned := "latest"
@@ -988,11 +957,32 @@ func runSyncConfigDeployWith(cmd *cobra.Command, serverArg, workspaceArg string,
 	return outcome, nil
 }
 
+// stripRestoredSyncScope drops the removed [sync] scope keys an older hosted
+// satelle.toml carries from the file a deploy just wrote, so it still loads and
+// another machine's scope never lands here. It names the keys it removed.
+func stripRestoredSyncScope(cfgPath string) ([]string, error) {
+	b, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return nil, err
+	}
+	next, removed := config.RemoveSyncScopeKeys(string(b))
+	if len(removed) == 0 {
+		return nil, nil
+	}
+	return removed, os.WriteFile(cfgPath, []byte(next), 0o644)
+}
+
 func runSyncScopes(cmd *cobra.Command, args []string) error {
 	a, err := appFrom(cmd)
 	if err != nil {
 		return err
 	}
+	res, err := resolveSyncScope(cmd, a.Config, a.RepoRoot, resolveServer(""))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), res.Line())
+	scope := res.Scope
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	// What this checkout last synced for each area (sty_fe5a8ed4): shown only
 	// once an area has a recorded base, so an area never synced prints as before.
@@ -1006,10 +996,6 @@ func runSyncScopes(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	for _, area := range config.SyncAreas {
-		scope, err := config.ScopeFor(a.Config, area)
-		if err != nil {
-			return fmt.Errorf("sync area %q: %w", area, err)
-		}
 		if note := lastSynced[area]; note != "" && scope != config.LocalScope {
 			fmt.Fprintf(w, "%s\t%s\t%s\n", area, scope, note)
 		} else {

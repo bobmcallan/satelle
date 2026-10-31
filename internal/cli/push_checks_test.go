@@ -39,7 +39,7 @@ func newCountingServer(t *testing.T) (*httptest.Server, func() int) {
 }
 
 const (
-	configPushToml = "[sync]\nagents = \"personal\"\n" + boundProjectToml
+	configPushToml = "[sync]\n" + boundProjectToml
 	teamBoundToml  = "[hosted]\nworkspace = \"Acme\"\n"
 )
 
@@ -159,7 +159,7 @@ settings = { model = "opus", env = { CLAUDE_TOKEN = "${CLAUDE_TOKEN}" } }
 func TestSyncConfigPushSendsFileBytesAndNamesWithheldKeys(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
-	const toml = "[sync]\nagents = \"personal\"\nsettings = \"personal\"\n[hosted]\nproject = \"probe\"\n# stays\n"
+	const toml = "[sync]\n[hosted]\nproject = \"probe\"\n# stays\n"
 	agentsPushRepo(t, toml, pushableAgents)
 
 	cmd, buf := testCmd()
@@ -178,7 +178,7 @@ func TestSyncConfigPushSendsFileBytesAndNamesWithheldKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "[sync]\nagents = \"personal\"\nsettings = \"personal\"\n[hosted]\n# stays\n"; string(settings) != want {
+	if want := "[sync]\n[hosted]\n# stays\n"; string(settings) != want {
 		t.Errorf("hosted satelle.toml = %q, want the file less the project binding %q", settings, want)
 	}
 	if !strings.Contains(buf.String(), "settings: withheld [hosted] project from satelle.toml") {
@@ -186,7 +186,7 @@ func TestSyncConfigPushSendsFileBytesAndNamesWithheldKeys(t *testing.T) {
 	}
 
 	// Both keys are named; a dry run names them too.
-	both := "[sync]\nagents = \"personal\"\nsettings = \"personal\"\nproject = \"from-sync\"\n[hosted]\nproject = \"probe\"\n"
+	both := "[sync]\nproject = \"from-sync\"\n[hosted]\nproject = \"probe\"\n"
 	agentsPushRepo(t, both, pushableAgents)
 	cmdD, bufD := testCmd()
 	if err := runSyncConfigPush(cmdD, ts.URL, "", true); err != nil {
@@ -199,7 +199,7 @@ func TestSyncConfigPushSendsFileBytesAndNamesWithheldKeys(t *testing.T) {
 	}
 
 	// No binding in satelle.toml: nothing withheld, nothing said.
-	agentsPushRepo(t, "[sync]\nagents = \"personal\"\nsettings = \"personal\"\n", pushableAgents)
+	agentsPushRepo(t, "[sync]\n", pushableAgents)
 	cmdN, bufN := testCmd()
 	if err := runSyncConfigPush(cmdN, ts.URL, "", true); err != nil {
 		t.Fatalf("dry-run: %v\n%s", err, bufN.String())
@@ -251,7 +251,7 @@ func (m *snapMachine) pushUnchecked() {
 	if err != nil {
 		m.t.Fatal(err)
 	}
-	bundle, err := config.ConfigFiles(cfg, repoRoot, config.Ignore{})
+	bundle, err := config.ConfigFiles(cfg, config.PersonalScope, repoRoot, config.Ignore{})
 	if err != nil {
 		m.t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func (m *snapMachine) pushUnchecked() {
 func TestSyncStatusAndReconcileReadMachineSpecificAgentsAsIs(t *testing.T) {
 	ts, _ := newSnapServer(t)
 	seedCred(t, ts.URL)
-	m := &snapMachine{t: t, url: ts.URL, repo: syncConfigRepo(t, "[sync]\nagents = \"personal\"\n"+boundProjectToml), state: filepath.Join(t.TempDir(), "document-sync-state.json")}
+	m := &snapMachine{t: t, url: ts.URL, repo: syncConfigRepo(t, "[sync]\n"+boundProjectToml), state: filepath.Join(t.TempDir(), "document-sync-state.json")}
 	_ = os.Remove(filepath.Join(m.repo, ".satelle", "agents.toml"))
 	m.write("workflows/agents.toml", secretAgentsToml)
 

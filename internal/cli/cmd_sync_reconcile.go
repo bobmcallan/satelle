@@ -44,7 +44,7 @@ func newSyncReconcileCmd() *cobra.Command {
 		Long: `reconcile brings two machines whose substrate has diverged back in step
 deliberately, with what differs on each side visible.
 
-With no flag it only reads: for every opted-in area (or those named) it lists each
+With no flag it only reads: for every synced area (or those named) it lists each
 path whose local and hosted copies differ, how, and what a plain pull would do.
 --diff shows the two copies; --apply carries out the pull with your choices. A path
 nobody chose follows the plain pull (changed on both sides: kept here, hosted copy
@@ -145,19 +145,16 @@ func runSyncReconcile(cmd *cobra.Command, o reconcileOpts) error {
 	if err != nil {
 		return err
 	}
-	areas, err := config.SubstrateAreas(cfg)
+	out := cmd.OutOrStdout()
+	server := resolveServer(o.server)
+	scope, err := syncScopeGate(cmd, cfg, repoRoot, server, "Nothing to reconcile")
+	if err != nil || scope == config.LocalScope {
+		return err
+	}
+	areas, err := selectReconcileAreas(config.SubstrateAreas(scope), o.areas)
 	if err != nil {
 		return err
 	}
-	out := cmd.OutOrStdout()
-	if len(areas) == 0 {
-		fmt.Fprintln(out, "Nothing to reconcile — every config area and documents is local. Set [sync] <area> = personal (or [sync] all = personal) to opt in.")
-		return nil
-	}
-	if areas, err = selectReconcileAreas(areas, o.areas); err != nil {
-		return err
-	}
-	server := resolveServer(o.server)
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
@@ -194,15 +191,15 @@ func runSyncReconcile(cmd *cobra.Command, o reconcileOpts) error {
 	return reconcilePreview(out, areas, jobs)
 }
 
-// selectReconcileAreas narrows the opted-in areas to the ones named.
-func selectReconcileAreas(optedIn, named []string) ([]string, error) {
+// selectReconcileAreas narrows the synced areas to the ones named.
+func selectReconcileAreas(synced, named []string) ([]string, error) {
 	if len(named) == 0 {
-		return optedIn, nil
+		return synced, nil
 	}
 	var out []string
 	for _, n := range named {
 		found := false
-		for _, a := range optedIn {
+		for _, a := range synced {
 			if a == n {
 				found = true
 				out = append(out, a)
@@ -210,7 +207,7 @@ func selectReconcileAreas(optedIn, named []string) ([]string, error) {
 			}
 		}
 		if !found {
-			return nil, fmt.Errorf("area %q is not opted in for sync (opted in: %s)", n, strings.Join(optedIn, ", "))
+			return nil, fmt.Errorf("area %q is not synced under this scope (synced: %s)", n, strings.Join(synced, ", "))
 		}
 	}
 	return out, nil

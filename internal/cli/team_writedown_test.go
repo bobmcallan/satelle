@@ -21,7 +21,7 @@ func tierRepo(t *testing.T) (repo, server string) {
 	t.Helper()
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
-	repo = agentsPushRepo(t, "[sync]\nall = \"personal\"\n"+boundProjectToml, tierAgents("team-v1"))
+	repo = agentsPushRepo(t, "[sync]\n"+boundProjectToml, tierAgents("team-v1"))
 	writeRepoFile(t, repo, ".satelle/skills/team-skill.md", tierSkill("v1"))
 	tierPush(t, ts.URL)
 	tierDeploy(t, ts.URL)
@@ -94,7 +94,7 @@ func TestWriteDownSessionStartReplacesDiffering(t *testing.T) {
 func TestWriteDownSessionStartTeamScript(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
-	repo := agentsPushRepo(t, "[sync]\nall = \"personal\"\n[team]\npaths = [\"agents.toml\", \"skills/**\", \"scripts/*.sh\", \"hooks/*\"]\n"+boundProjectToml, tierAgents("team-v1"))
+	repo := agentsPushRepo(t, "[sync]\n[team]\npaths = [\"agents.toml\", \"skills/**\", \"scripts/*.sh\", \"hooks/*\"]\n"+boundProjectToml, tierAgents("team-v1"))
 	writeRepoFile(t, repo, ".satelle/scripts/reviewer-token.sh", "#!/bin/sh\necho team-token\n")
 	writeRepoFile(t, repo, ".satelle/hooks/satelle-hook.sh", "#!/bin/sh\necho init-hook\n")
 	tierPush(t, ts.URL)
@@ -119,7 +119,7 @@ func TestWriteDownSessionStartTeamScript(t *testing.T) {
 // carries the team version and not the local edit.
 func TestWriteDownBareSyncReplacesDiffering(t *testing.T) {
 	repo, server := tierRepo(t)
-	writeRepoFile(t, repo, ".satelle/satelle.toml", "[sync]\nskills = \"personal\"\n"+boundProjectToml)
+	writeRepoFile(t, repo, ".satelle/satelle.toml", "[sync]\n"+boundProjectToml)
 	localTierEdits(t, repo)
 	out, err := runRoot(t, "sync", "--server", server)
 	if err != nil {

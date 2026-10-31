@@ -12,8 +12,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/hosted/syncpb"
+	"google.golang.org/grpc"
 )
 
 // areaScopes parses `sync scopes` tabwriter output into area -> scope,
@@ -48,31 +50,39 @@ func TestSyncScopesDefaultsToLocal(t *testing.T) {
 	}
 }
 
-// TestSyncScopesConfiguredAndOverlay exercises AC1 (committed [sync] + a
-// satelle.local.toml per-dev override) end to end via the CLI, and AC4 (the
-// command is the resolver's production caller).
-func TestSyncScopesConfiguredAndOverlay(t *testing.T) {
+// TestSyncScopesFollowTheResolvedScope: every area takes the one scope the
+// account resolves for the bound project, with no file edit between the runs.
+func TestSyncScopesFollowTheResolvedScope(t *testing.T) {
 	repo := tempRepo(t)
-	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	committed := "[sync]\nskills = \"shared\"\ndocuments = \"personal\"\n"
-	if err := os.WriteFile(cfgPath, []byte(committed), 0o644); err != nil {
-		t.Fatal(err)
+	signInTo(t, config.DefaultHostedServer)
+	writeRepoFile(t, repo, ".satelle/satelle.toml", "[sync]\nproject = \"probe\"\n")
+	for _, c := range []struct{ kind, want string }{
+		{kindPersonal, "personal"}, {kindTeam, "team"}, {kindForeign, "local"},
+	} {
+		useScope(t, c.kind)
+		out, err := runRoot(t, "sync", "scopes")
+		if err != nil {
+			t.Fatalf("sync scopes: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "scope: "+c.want) {
+			t.Errorf("%s project: output does not name scope %s:\n%s", c.kind, c.want, out)
+		}
+		for area, got := range areaScopes(out) {
+			if got != c.want {
+				t.Errorf("%s project: area %q scope = %q, want %s", c.kind, area, got, c.want)
+			}
+		}
 	}
-	local := "[sync]\ndocuments = \"local\"\n"
-	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.local.toml"), []byte(local), 0o644); err != nil {
-		t.Fatal(err)
-	}
+}
 
+// TestSyncScopesRefusesARemovedOverlayKey: satelle.local.toml cannot carry a
+// per-area scope either; the refusal names the key and the heal.
+func TestSyncScopesRefusesARemovedOverlayKey(t *testing.T) {
+	repo := tempRepo(t)
+	writeRepoFile(t, repo, ".satelle/satelle.local.toml", "[sync]\ndocuments = \"local\"\n")
 	out, err := runRoot(t, "sync", "scopes")
-	if err != nil {
-		t.Fatalf("sync scopes: %v\n%s", err, out)
-	}
-	scopes := areaScopes(out)
-	if scopes["skills"] != "shared" {
-		t.Errorf("skills scope = %q, want shared (committed value, no overlay)", scopes["skills"])
-	}
-	if scopes["documents"] != "local" {
-		t.Errorf("documents scope = %q, want local (overlay override of committed personal)", scopes["documents"])
+	if err == nil || !strings.Contains(err.Error(), "[sync] documents is removed") || !strings.Contains(err.Error(), "satelle init") {
+		t.Fatalf("want the removed-key refusal naming satelle init, got %v\n%s", err, out)
 	}
 }
 
@@ -100,8 +110,10 @@ func TestSyncDefaultAllLocalNothingToSync(t *testing.T) {
 // short of contacting the server, so no fake server is needed.
 func TestSyncDefaultDryRunRunsOptedInAreasInOrder(t *testing.T) {
 	repo := tempRepo(t)
+	signInTo(t, "http://sync.example.invalid")
+	portableAgents(t, repo)
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	cfg := "[sync]\nskills = \"personal\"\ndocuments = \"personal\"\nstories = \"personal\"\n"
+	cfg := "[sync]\nproject = \"probe\"\n"
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +236,9 @@ func newFakeSyncServer(t *testing.T) (*httptest.Server, *fakeSyncServer) {
 	})
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
-	attachTestGRPC(t, &fakeSyncGRPC{f: f})
+	// A non-local scope publishes story events too, so the server takes them.
+	chain := newFakeChain(&fakeWorkstateServer{posts: map[string][]map[string]any{}, itemsByID: map[string]map[string]any{}, ledgerByID: map[string]map[string]any{}})
+	attachTestGRPC(t, &fakeSyncGRPC{f: f}, func(gs *grpc.Server) { syncpb.RegisterChainServer(gs, chain) })
 	return ts, f
 }
 
@@ -261,7 +275,7 @@ func TestSyncDefaultRunsFullBundleLive(t *testing.T) {
 	ts, f := newFakeSyncServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\ndocuments = \"personal\"\nstories = \"personal\"\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/skills/my-skill.md", "---\ntype: skill\n---\nbody\n")
 	writeRepoFile(t, repo, ".satelle/documents/local-doc.md", "# local\n")
 	pointAt(t, repo)
@@ -311,7 +325,7 @@ func TestSyncPoisonedPartitionDoesNotWedgeWorkstate(t *testing.T) {
 	ts, f := newFakeSyncServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\ndocuments = \"personal\"\nstories = \"personal\"\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/skills/my-skill.md", "---\ntype: skill\n---\nbody\n")
 	writeRepoFile(t, repo, ".satelle/documents/local-doc.md", "# local\n")
 	pointAt(t, repo)
@@ -349,9 +363,8 @@ func TestSyncPoisonedPartitionDoesNotWedgeWorkstate(t *testing.T) {
 	}
 }
 
-// TestSyncScopesInvalidScopeRefuses: an area explicitly set to a value outside
-// local|personal|shared refuses the command rather than silently coercing to
-// local (plan addendum #2).
+// TestSyncScopesInvalidScopeRefuses: a per-area key refuses the command whatever
+// its value, rather than silently coercing to local.
 func TestSyncScopesInvalidScopeRefuses(t *testing.T) {
 	repo := tempRepo(t)
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
@@ -364,12 +377,13 @@ func TestSyncScopesInvalidScopeRefuses(t *testing.T) {
 	}
 }
 
-// TestSyncScopesListsSharedFiles: a file with `shared: true` frontmatter inside
-// a personal-scope area is listed by the command (AC2, AC4).
+// TestSyncScopesListsSharedFiles: under a personal scope a file with
+// `shared: true` frontmatter is listed by the command (AC2, AC4).
 func TestSyncScopesListsSharedFiles(t *testing.T) {
 	repo := tempRepo(t)
+	signInTo(t, config.DefaultHostedServer)
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	if err := os.WriteFile(cfgPath, []byte("[sync]\nskills = \"personal\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("[sync]\nproject = \"probe\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	skillsDir := filepath.Join(repo, ".satelle", "skills")
@@ -397,11 +411,13 @@ func TestSyncScopesListsSharedFiles(t *testing.T) {
 	}
 }
 
-// TestSyncRehydrateLocalOnly: with no personal opt-in, rehydrate runs each step
-// as a local skip / empty deploy and exits 0 (order:4 AC4).
+// TestSyncRehydrateLocalOnly: when the account resolves the bound project local
+// (not a member of its team), rehydrate runs each step as a local skip / empty
+// deploy and exits 0 (order:4 AC4).
 func TestSyncRehydrateLocalOnly(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	repo := tempRepo(t)
+	useScope(t, kindForeign)
 	// Bound project so deploy can resolve; fake server returns empty manifest.
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
 	if err := os.WriteFile(cfgPath, []byte("[hosted]\nproject = \"probe\"\n"), 0o644); err != nil {
@@ -429,17 +445,19 @@ func TestSyncRehydrateLocalOnly(t *testing.T) {
 			t.Errorf("output missing %q:\n%s", want, out)
 		}
 	}
-	if !strings.Contains(out, "satelle.toml was not restored from hosted") {
-		t.Errorf("expected settings-not-restored note:\n%s", out)
+	if !strings.Contains(out, "scope: local — "+testAccountEmail+" is not a member of project probe's team") {
+		t.Errorf("expected the resolver's local reason:\n%s", out)
 	}
 	if !strings.Contains(out, "settings: not restored") {
 		t.Errorf("expected truthful done summary:\n%s", out)
 	}
 }
 
-// TestSyncRehydrateEmptyTreeHappyPath: bind-created toml + deploy restores
-// [sync] personal + documents path + workstate items (order:4 AC5 hermetic).
-func TestSyncRehydrateEmptyTreeHappyPath(t *testing.T) {
+// rehydrateEmptyTree binds a bare tree to project probe and rehydrates it from a
+// server whose settings snapshot is hostedToml, returning rehydrate's output and
+// the satelle.toml it left. The story the server holds must be restored.
+func rehydrateEmptyTree(t *testing.T, hostedToml string) (out, gotToml string) {
+	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("SATELLE_HOME", t.TempDir()) // home-keyed runtime (sty_c36c211f)
 	// Bare tree: no satelle.toml until bind.
@@ -451,7 +469,6 @@ func TestSyncRehydrateEmptyTreeHappyPath(t *testing.T) {
 	// Fake server serves config (satelle.toml with personal scopes + agents),
 	// empty docs changes, and workstate items/ledger from a prior push shape.
 	const project = "probe"
-	hostedToml := "[sync]\nall = \"personal\"\n\n[hosted]\nproject = \"probe\"\n"
 	agentsToml := "[executor]\nharness = \"in-loop\"\n"
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
@@ -513,26 +530,23 @@ func TestSyncRehydrateEmptyTreeHappyPath(t *testing.T) {
 	if !strings.Contains(out, "(full pass, 1 page(s))") {
 		t.Errorf("rehydrate's pull should name its pass kind and page count:\n%s", out)
 	}
-	// Deployed scopes should opt in — settings restored, no all-local note.
+	// The settings snapshot is restored; the scope is the account's.
 	if !strings.Contains(out, "settings: satelle.toml restored") {
 		t.Errorf("expected settings restored line:\n%s", out)
 	}
 	if !strings.Contains(out, "[sync] project preserved") {
 		t.Errorf("expected binding preservation line:\n%s", out)
 	}
-	if strings.Contains(out, "satelle.toml was not restored from hosted") {
-		t.Errorf("unexpected settings-not-restored note after deploy with personal scopes:\n%s", out)
+	if !strings.Contains(out, "rehydrate: done — scope: personal") {
+		t.Errorf("rehydrate's closing line must name the account's scope:\n%s", out)
 	}
-	// On-disk satelle.toml has scopes and preserves bind project.
-	gotToml, rerr := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.toml"))
+	// On-disk satelle.toml preserves the bind project.
+	gotBytes, rerr := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.toml"))
 	if rerr != nil {
 		t.Fatalf("read satelle.toml: %v", rerr)
 	}
-	if !strings.Contains(string(gotToml), `all = "personal"`) {
-		t.Errorf("scopes not restored: %s", gotToml)
-	}
-	if !strings.Contains(string(gotToml), `project = "probe"`) {
-		t.Errorf("local binding not preserved: %s", gotToml)
+	if !strings.Contains(string(gotBytes), `project = "probe"`) {
+		t.Errorf("local binding not preserved: %s", gotBytes)
 	}
 	// Story materialised.
 	got, gerr := runRoot(t, "story", "get", "sty_rehy1")
@@ -542,14 +556,46 @@ func TestSyncRehydrateEmptyTreeHappyPath(t *testing.T) {
 	if !strings.Contains(got, "Rehydrated") {
 		t.Errorf("story not restored: %s", got)
 	}
+	return out, string(gotBytes)
+}
+
+// TestSyncRehydrateEmptyTreeHappyPath: bind-created toml + deploy restores the
+// settings snapshot, the documents path and the workstate items (order:4 AC5
+// hermetic).
+func TestSyncRehydrateEmptyTreeHappyPath(t *testing.T) {
+	_, gotToml := rehydrateEmptyTree(t, "[sync]\nstale_after = \"6h\"\n\n[hosted]\nproject = \"probe\"\n")
+	if !strings.Contains(gotToml, `stale_after = "6h"`) {
+		t.Errorf("settings snapshot not restored: %s", gotToml)
+	}
+}
+
+// TestSyncRehydrateIgnoresHostedSyncScope (AC6): a hosted satelle.toml whose
+// [sync] block still carries scope keys — here saying local — decides nothing.
+// The account resolves personal, so the work state is still restored; the keys
+// are dropped from the restored file and named, and the file loads.
+func TestSyncRehydrateIgnoresHostedSyncScope(t *testing.T) {
+	out, gotToml := rehydrateEmptyTree(t, "[sync]\nall = \"local\"\nstories = \"local\"\nstale_after = \"6h\"\n\n[hosted]\nproject = \"probe\"\n")
+	if strings.Contains(gotToml, `all = `) || strings.Contains(gotToml, `stories = `) {
+		t.Errorf("the hosted scope keys were restored: %s", gotToml)
+	}
+	if !strings.Contains(gotToml, `stale_after = "6h"`) {
+		t.Errorf("the rest of the hosted [sync] block was not restored: %s", gotToml)
+	}
+	if !strings.Contains(out, "removed [sync] scope keys all, stories") {
+		t.Errorf("rehydrate must name the scope keys it dropped:\n%s", out)
+	}
+	if _, _, err := config.Load(""); err != nil {
+		t.Errorf("the restored satelle.toml does not load: %v", err)
+	}
 }
 
 // TestSyncScopesReportsWithheldFiles (sty_698e70b6 AC5): scopes lists withheld
 // .local files under non-local areas.
 func TestSyncScopesReportsWithheldFiles(t *testing.T) {
 	repo := tempRepo(t)
+	signInTo(t, config.DefaultHostedServer)
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	if err := os.WriteFile(cfgPath, []byte("[sync]\nskills = \"personal\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("[sync]\nproject = \"probe\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	skillsDir := filepath.Join(repo, ".satelle", "skills")
@@ -577,7 +623,7 @@ func TestSyncScopesReportsWithheldFiles(t *testing.T) {
 func TestSyncNoopMakesNoContentUploads(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	workstateRepo(t, "[sync]\n\n[hosted]\nproject = \"probe\"\n")
 	out, err := runRoot(t, "story", "create",
 		"--title", "Noop", "--body", "b", "--acceptance", "1. ok", "--category", "chore")
 	if err != nil {
@@ -687,7 +733,7 @@ func newCountingSyncServer(t *testing.T) (*httptest.Server, *countingSyncFake) {
 	})
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
-	attachTestGRPC(t, &countingSyncGRPC{f: f})
+	attachTestGRPC(t, &countingSyncGRPC{f: f}, func(gs *grpc.Server) { syncpb.RegisterChainServer(gs, newFakeChain(f.ws)) })
 	return ts, f
 }
 
@@ -709,7 +755,7 @@ func (s *countingSyncGRPC) Apply(ctx context.Context, req *syncpb.ApplyRequest) 
 func TestSyncNoopZeroContentUploads(t *testing.T) {
 	ts, f := newCountingSyncServer(t)
 	seedCred(t, ts.URL)
-	repo := syncConfigRepo(t, "[sync]\nprinciples = \"personal\"\ndocuments = \"personal\"\nstories = \"personal\"\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/principles/rule.md", "rule body\n")
 	writeRepoFile(t, repo, ".satelle/documents/note.md", "note body\n")
 	pointAt(t, repo)

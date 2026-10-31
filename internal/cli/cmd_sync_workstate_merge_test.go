@@ -16,7 +16,7 @@ import (
 // never seen is kept beside the hosted rows, and only a same-id row whose local
 // side changed (or a ledger row that differs) refuses without --force.
 
-const mergeToml = "[sync]\nstories = \"personal\"\nledger = \"personal\"\n\n[hosted]\nproject = \"probe\"\n"
+const mergeToml = "[sync]\n\n[hosted]\nproject = \"probe\"\n"
 
 func seedHostedStory(f *fakeWorkstateServer, id, title, status string, updated time.Time) {
 	f.mu.Lock()
@@ -197,6 +197,9 @@ func TestSyncRehydrateFreshInitNoForce(t *testing.T) {
 	})
 	mux.HandleFunc("GET /api/v1/projects/{project}/config", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode([]any{})
+	})
+	mux.HandleFunc("GET /api/v1/projects/{project}/documents", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}, "cursor": ""})
 	})
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
