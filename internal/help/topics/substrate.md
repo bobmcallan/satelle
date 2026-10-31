@@ -49,6 +49,10 @@ this session engaged in a substrate-lane story (category "substrate"), whatever
 else is performing. This overrides the `.satelle/` entry `satelle init` seeds in
 edit_exempt_paths; non-locked exempt paths stay exempt. The refusal is the same
 through Edit/Write and a shell mutation, with a story performing or with none.
+One narrower lane: a story of category "agents-repair" may edit the agents
+layer (`.satelle/workflows/agents*.toml`) and nothing else under the lock, and
+its close admits no other path — the way to repair a binding that refuses every
+other story's engagement.
 
 A shell command is judged by what it writes. A shell -c program is classified as
 shell, as the same command run bare is, so a `--body` naming `.satelle/` inside

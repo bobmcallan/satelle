@@ -85,12 +85,19 @@ func TestEmbeddedRouteGoldenFingerprint(t *testing.T) {
 
 	// The shipped route governs exactly these; a new one is a deliberate change
 	// that must update this list, not something that appears silently.
-	want := []string{"*", "docs", "epic-parent", "execution", "parent", "task"}
+	want := []string{"*", "agents-repair", "docs", "epic-parent", "execution", "parent", "task"}
 	if strings.Join(categories, ",") != strings.Join(want, ",") {
 		t.Fatalf("shipped categories = %v, want %v", categories, want)
 	}
 
 	golden := map[string]string{
+		"agents-repair": `step backlog [start] agent=- skill=- provides=raised admits=[]
+step in_progress agent=executor skill=- provides=authored admits=[]
+step done [terminal] agent=- skill=- provides=agents-verified admits=[satelle-agents-layer-only-check]
+step gate_satelle-step-summary agent=reviewer skill=satelle-step-summary provides=- admits=[]
+step cancelled agent=reviewer skill=satelle-story-cancel-review provides=- admits=[satelle-story-cancel-review,satelle-story-cancel-review,satelle-story-cancel-review]
+step blocked agent=reviewer skill=satelle-story-blocked-review provides=- admits=[satelle-story-blocked-review,satelle-story-blocked-review]
+`,
 		"docs": `step backlog [start] agent=- skill=- provides=raised admits=[]
 step in_progress agent=executor skill=- provides=authored admits=[]
 step done [terminal] agent=- skill=- provides=docs-verified admits=[satelle-docs-only-check]

@@ -76,7 +76,8 @@ func seedRouteSourceWith(t *testing.T, repo string, transform func(done, step st
 // section (sty_3795e7f6): the lane exists to let a markdown-only change skip a
 // heavier lane, and the default has exactly one working lane to skip. A repo
 // that wants the lane declares it — which is what these fixtures are, and why
-// the substrate-only check keeps being exercised for real here.
+// the substrate-only check keeps being exercised for real here. The shipped
+// `agents-repair` lane is not that lane: it admits the agents layer alone.
 const substrateLaneDone = `[meta]
 name = "done"
 type = "workflow"

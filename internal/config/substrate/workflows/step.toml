@@ -101,6 +101,20 @@ terminal = true
 requires = ["authored"]
 
 # ================================================================
+# THE AGENTS-REPAIR LANE — selected by done.toml category "agents-repair"
+# raised -> authored -> agents-verified
+# ================================================================
+
+[agents-verified]
+# The whole close: one functional check that the slice changed only
+# .satelle/workflows/agents*.toml. No `agent` — the check fence IS the decision,
+# so no LLM reviewer is dispatched through the bindings being repaired.
+status = "done"
+reviewers = ["satelle-agents-layer-only-check"]
+terminal = true
+requires = ["authored"]
+
+# ================================================================
 # THE CONTAINER CLOSE — selected by "epic-parent" and "parent"
 # raised -> ready -> merged -> children-resolved
 # ================================================================
@@ -216,7 +230,7 @@ requires = ["run"]
 skill = "satelle-step-summary"
 agent = "reviewer"
 mandatory = true
-for = ["*", "docs", "epic-parent", "parent"]
+for = ["*", "docs", "agents-repair", "epic-parent", "parent"]
 
 [[gate]]
 # Fences the estimate on entry to in_progress and the actual on entry to done.

@@ -23,6 +23,25 @@ import (
 // satelle could never ship a skill, a gate rubric or a workflow.
 const substrateLaneCategory = "substrate"
 
+// agentsRepairCategory is the embedded lane that repairs a broken agents layer.
+// Its story is in the substrate lane for an agents-layer path only
+// (config.IsAgentsLayerPath): the working lane's gates dispatch through those
+// bindings, so a broken one would otherwise leave no gated path to fix it.
+const agentsRepairCategory = "agents-repair"
+
+// inSubstrateLane is the lock's lane predicate for one target: a substrate story
+// may change any locked path, an agents-repair story only the agents layer. rel
+// is the target relative to the tree the lock list was resolved against.
+func inSubstrateLane(category, rel string) bool {
+	switch category {
+	case substrateLaneCategory:
+		return true
+	case agentsRepairCategory:
+		return config.IsAgentsLayerPath(rel)
+	}
+	return false
+}
+
 // substrateLockDenyActor is the ledger actor for a lock refusal — the gate, not
 // a seat's agent, made the decision.
 const substrateLockDenyActor = "edit-gate"
@@ -192,12 +211,16 @@ func laneIDs(seats []seatInfo) string {
 // store could not be opened) names the holders only.
 func substrateLockReason(outside []seatInfo, relPath string, lane lockLane, cats map[string]string, tree string) string {
 	if len(outside) == 0 {
+		escape := "If the substrate itself prevents engagement (for example an invalid .satelle/workflows/step.toml), ask the developer to repair it outside the agent session. "
+		if config.IsAgentsLayerPath(relPath) {
+			escape = fmt.Sprintf("If a broken agent binding refuses that story's engagement (node.alloc), file the repair with --category %s instead: its lane dispatches no planner or coder, and it may change .satelle/workflows/agents*.toml and nothing else. ", agentsRepairCategory)
+		}
 		return fmt.Sprintf(
 			"satelle: substrate lock — %s is locked substrate and this session has no engaged story in the substrate lane: the workflows, skills and agent bindings under it are what judge the work, so it is changed only under a substrate-lane story, whether or not anything else is performing. "+
 				"Lane out: file a story with --category %s (judged by satelle-workflow-change-review) and engage it in this session. "+
-				"If the substrate itself prevents engagement (for example an invalid .satelle/workflows/step.toml), ask the developer to repair it outside the agent session. "+
+				"%s"+
 				"[gate] lock_substrate_paths sets which prefixes are locked; an empty list is the documented opt-out and `satelle doctor` reports it.",
-			relPath, substrateLaneCategory)
+			relPath, substrateLaneCategory, escape)
 	}
 	var who, finish string
 	if len(outside) == 1 {
@@ -215,6 +238,9 @@ func substrateLockReason(outside []seatInfo, relPath string, lane lockLane, cats
 	switch lane.Why {
 	case laneOwnNotSubstrate:
 		cond = fmt.Sprintf("This edit is attributed to your story %s, which is not in the substrate lane. ", outside[0].ItemID)
+		if cats[outside[0].ItemID] == agentsRepairCategory {
+			cond = fmt.Sprintf("This edit is attributed to your story %s, whose %s lane covers only .satelle/workflows/agents*.toml, not %s. ", outside[0].ItemID, agentsRepairCategory, relPath)
+		}
 		if lane.MineSubstrate {
 			cond += "Make it from the worktree of your substrate-lane story instead. "
 		}
@@ -416,16 +442,17 @@ func substrateLockJudge(cfg lockConfig, cmd *cobra.Command, raw []byte, target s
 	cats := map[string]string{}
 	var cerr error
 	isSub := func(id string) bool {
-		if c, ok := cats[id]; ok {
-			return c == substrateLaneCategory
+		c, ok := cats[id]
+		if !ok {
+			it, gerr := a.Store.Stories.Get(ctx, id)
+			if gerr != nil {
+				cerr = gerr
+				return false
+			}
+			c = strings.ToLower(strings.TrimSpace(it.Category))
+			cats[id] = c
 		}
-		it, gerr := a.Store.Stories.Get(ctx, id)
-		if gerr != nil {
-			cerr = gerr
-			return false
-		}
-		cats[id] = strings.ToLower(strings.TrimSpace(it.Category))
-		return cats[id] == substrateLaneCategory
+		return inSubstrateLane(c, rel)
 	}
 	lane := substrateLane(seats, isSub)
 	if lane.Lane != nil {

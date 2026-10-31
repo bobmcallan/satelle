@@ -9,6 +9,6 @@
 #                                  TYPE, not a surface (satelle-story-classification).
 categories = [
   "feature", "improvement", "fix", "chore", "docs", "refactor", "test",
-  "tooling", "infrastructure", "architecture", "substrate",
+  "tooling", "infrastructure", "architecture", "substrate", "agents-repair",
   "epic-parent", "parent",
 ]

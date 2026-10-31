@@ -1,3 +1,13 @@
+## [0.0.817] - 2026-10-31
+
+### Added
+- A shipped `agents-repair` story category gives every repo a gated way to repair a broken agents layer, including a repo whose route declares no `[substrate]` lane. Its route (raised → authored → agents-verified) allocates no planner, coder or LLM reviewer, so a broken binding cannot refuse it; the edit gate's substrate lock admits it for `.satelle/workflows/agents*.toml` alone, and its close (`satelle-agents-layer-only-check`) admits no other path. A story governed by `*` that uses the broken seats is still refused with `node.alloc`. There is still no shipped `[substrate]` lane. (sty_32431a16)
+
+## [serve-v0.0.256] - 2026-10-31
+
+### Changed
+- The service binary carries the agents-repair category and route. (sty_32431a16)
+
 ## [0.0.816] - 2026-10-31
 
 ### Breaking

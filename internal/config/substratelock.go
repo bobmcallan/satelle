@@ -1,10 +1,27 @@
 package config
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 )
+
+// AgentsLayerPathPattern is the agents layer as a repo-relative path: the
+// agents*.toml bindings directly under .satelle/workflows/. It is the whole
+// surface of the agents-repair lane — the substrate lock admits that lane's
+// story for these paths alone, and the lane's close check
+// (satelle-agents-layer-only-check, which carries this exact string) admits no
+// other path.
+const AgentsLayerPathPattern = `^\.satelle/workflows/agents[^/]*\.toml$`
+
+var agentsLayerPath = regexp.MustCompile(AgentsLayerPathPattern)
+
+// IsAgentsLayerPath reports whether rel, a slash-separated path relative to the
+// repo root, is an agents-layer binding file.
+func IsAgentsLayerPath(rel string) bool {
+	return agentsLayerPath.MatchString(rel)
+}
 
 // DefaultLockSubstratePaths is the substrate lock list a repo gets when its
 // committed satelle.toml does not mention [gate] lock_substrate_paths at all:

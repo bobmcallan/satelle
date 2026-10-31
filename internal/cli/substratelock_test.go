@@ -611,3 +611,82 @@ func TestSubstrateLockLaneOutIsPerHolder(t *testing.T) {
 		}
 	})
 }
+
+// sty_32431a16 AC5 — the lane predicate is per target: a substrate story may
+// change any locked path, an agents-repair story the agents layer alone, and no
+// other category is in the lane.
+func TestInSubstrateLanePredicate(t *testing.T) {
+	for _, tc := range []struct {
+		cat, rel string
+		want     bool
+	}{
+		{"substrate", ".satelle/skills/x.md", true},
+		{"substrate", ".satelle/workflows/agents.local.toml", true},
+		{"agents-repair", ".satelle/workflows/agents.local.toml", true},
+		{"agents-repair", ".satelle/workflows/agents.toml", true},
+		{"agents-repair", ".satelle/skills/x.md", false},
+		{"agents-repair", ".satelle/workflows/step.toml", false},
+		{"bug", ".satelle/workflows/agents.local.toml", false},
+		{"feature", ".satelle/skills/x.md", false},
+	} {
+		if got := inSubstrateLane(tc.cat, tc.rel); got != tc.want {
+			t.Errorf("inSubstrateLane(%q, %q) = %v, want %v", tc.cat, tc.rel, got, tc.want)
+		}
+	}
+}
+
+// sty_32431a16 AC5 — an engaged agents-repair story is the substrate lane for
+// the agents layer and for nothing else under the lock; a substrate story still
+// is for both.
+func TestSubstrateLockAgentsRepairLane(t *testing.T) {
+	repo, id := lockRepo(t, "agents-repair", "")
+	for _, rel := range []string{".satelle/workflows/agents.local.toml", ".satelle/workflows/agents.toml"} {
+		if out, err := runRootIn(t, claudeEditEvent(filepath.Join(repo, rel)), "hook", "gate"); err != nil {
+			t.Fatalf("an agents-repair story must be able to change %s: %v\n%s", rel, err, out)
+		}
+	}
+	for _, rel := range []string{".satelle/skills/x.md", ".satelle/workflows/step.toml"} {
+		out, err := runRootIn(t, claudeEditEvent(filepath.Join(repo, rel)), "hook", "gate")
+		if err == nil {
+			t.Fatalf("an agents-repair story must be refused %s:\n%s", rel, out)
+		}
+		reason := denyReasonOf(t, out)
+		for _, want := range []string{"substrate lock", id, "agents-repair lane covers only .satelle/workflows/agents*.toml", rel} {
+			if !strings.Contains(reason, want) {
+				t.Errorf("deny for %s missing %q: %s", rel, want, reason)
+			}
+		}
+	}
+
+	sub, _ := lockRepo(t, "substrate", "")
+	for _, rel := range []string{".satelle/workflows/agents.local.toml", ".satelle/skills/x.md"} {
+		if out, err := runRootIn(t, claudeEditEvent(filepath.Join(sub, rel)), "hook", "gate"); err != nil {
+			t.Fatalf("a substrate story must still change %s: %v\n%s", rel, err, out)
+		}
+	}
+}
+
+// sty_32431a16 AC5 — with no story engaged, the refusal of an agents-layer path
+// names the agents-repair lane as the way out instead of a hand edit; any other
+// locked path keeps the old text.
+func TestSubstrateLockNoSeatNamesAgentsRepairForBindings(t *testing.T) {
+	repo := tempRepo(t)
+	t.Chdir(repo)
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"), []byte(lockExemptToml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runRootIn(t, claudeEditEvent(filepath.Join(repo, ".satelle", "workflows", "agents.local.toml")), "hook", "gate")
+	if err == nil {
+		t.Fatalf("with no story engaged a binding edit must be refused:\n%s", out)
+	}
+	if r := denyReasonOf(t, out); !strings.Contains(r, "--category agents-repair") || strings.Contains(r, "outside the agent session") {
+		t.Errorf("a binding refusal must name --category agents-repair, not a hand edit: %s", r)
+	}
+	out, err = runRootIn(t, claudeEditEvent(filepath.Join(repo, ".satelle", "skills", "x.md")), "hook", "gate")
+	if err == nil {
+		t.Fatalf("with no story engaged a skill edit must be refused:\n%s", out)
+	}
+	if r := denyReasonOf(t, out); strings.Contains(r, "agents-repair") {
+		t.Errorf("a non-binding refusal must not offer the agents-repair lane: %s", r)
+	}
+}

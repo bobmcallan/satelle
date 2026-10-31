@@ -203,3 +203,67 @@ func TestHookGateConfigDecidesSubstrate(t *testing.T) {
 		t.Error("edit gate allowed a .satelle/ edit with an empty edit_exempt_paths (data dir must not be hardcoded exempt)")
 	}
 }
+
+// gateEventOut is gateEvent with the gate's output, for a case that reads the
+// deny reason.
+func gateEventOut(t *testing.T, repo, filePath string) (string, bool) {
+	t.Helper()
+	return gateEventRawOut(t, repo, `{"tool_input":{"file_path":"`+filePath+`"}}`)
+}
+
+func gateEventRawOut(t *testing.T, repo, eventJSON string) (string, bool) {
+	t.Helper()
+	cmd := exec.Command(testBin, "hook", "gate")
+	cmd.Dir = repo
+	cmd.Env = isolatedEnv(t)
+	cmd.Stdin = strings.NewReader(eventJSON)
+	out, err := cmd.CombinedOutput()
+	return string(out), err == nil
+}
+
+// With the default lock, an engaged agents-repair story may change the agents
+// layer through `satelle hook gate` and no other locked substrate — by Edit or
+// by a Bash command that touches both; a bug story is refused the binding as
+// before (sty_32431a16 AC5).
+func TestHookGateAgentsRepairLane(t *testing.T) {
+	engage := func(t *testing.T, category string) string {
+		t.Helper()
+		repo := t.TempDir()
+		mustRun(t, testBin, repo, "init")
+		stubReviewerAccept(t, repo)
+		gitInit(t, repo)
+		gitCommitAll(t, repo, "initial scaffold")
+		args := []string{"story", "create", "--title", "Repair the bindings", "--category", category, "--body", "Repair the agents layer."}
+		if category != "agents-repair" {
+			args = append(args, "--acceptance", "1. repaired")
+		}
+		id := extractID(mustRun(t, testBin, repo, args...), "sty_")
+		if category != "agents-repair" {
+			// The * lane fences an estimate on entry to in_progress.
+			mustRun(t, testBin, repo, "story", "estimate", id, "--time", "10m", "--tokens", "1000")
+		}
+		mustRun(t, testBin, repo, "story", "set", id, "--status", "in_progress")
+		return repo
+	}
+
+	repo := engage(t, "agents-repair")
+	local := filepath.Join(repo, ".satelle", "workflows", "agents.local.toml")
+	if out, ok := gateEventOut(t, repo, local); !ok {
+		t.Fatalf("an agents-repair story must be allowed to edit agents.local.toml:\n%s", out)
+	}
+	for _, rel := range []string{".satelle/skills/x.md", ".satelle/workflows/step.toml"} {
+		out, ok := gateEventOut(t, repo, filepath.Join(repo, rel))
+		if ok || !strings.Contains(out, "substrate lock") {
+			t.Errorf("an agents-repair story must be refused %s with the substrate-lock reason:\n%s", rel, out)
+		}
+	}
+	bash := `{"tool_name":"Bash","tool_input":{"command":"echo a > .satelle/workflows/agents.local.toml && echo b > .satelle/skills/x.md"}}`
+	if out, ok := gateEventRawOut(t, repo, bash); ok || !strings.Contains(out, "substrate lock") {
+		t.Errorf("a Bash command touching the bindings and a skill must be refused:\n%s", out)
+	}
+
+	bug := engage(t, "bug")
+	if out, ok := gateEventOut(t, bug, filepath.Join(bug, ".satelle", "workflows", "agents.local.toml")); ok || !strings.Contains(out, "substrate lock") {
+		t.Errorf("a bug story must still be refused the binding edit:\n%s", out)
+	}
+}

@@ -528,6 +528,59 @@ echo '{"files":[".satelle/skills/satelle-example.md"]}'
 			wantStdout: "cmd/foo.go",
 		},
 	},
+	"satelle-agents-layer-only-check": {
+		{
+			name: "accepts an agents-layer-only slice",
+			sid:  "sty_a9e11111",
+			setup: func(t *testing.T, repo string) {
+				emptyRepoWithBaseline(t, repo)
+				mustWrite(t, filepath.Join(repo, ".satelle", "workflows", "agents.local.toml"), "[planner]\ntools = \"Read\"\n")
+				mustWrite(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"), "[reviewer]\ntools = \"Read\"\n")
+				gitCommitAll(t, repo, "restate the bindings (sty_a9e11111)")
+			},
+			wantExit:   0,
+			wantStdout: "agents-layer-only slice confirmed",
+		},
+		{
+			name: "rejects other substrate beside the bindings, naming it",
+			sid:  "sty_a9e22222",
+			setup: func(t *testing.T, repo string) {
+				emptyRepoWithBaseline(t, repo)
+				mustWrite(t, filepath.Join(repo, ".satelle", "workflows", "agents.local.toml"), "[planner]\ntools = \"Read\"\n")
+				mustWrite(t, filepath.Join(repo, ".satelle", "workflows", "step.toml"), "[raised]\n")
+				gitCommitAll(t, repo, "bindings plus a step (sty_a9e22222)")
+			},
+			wantExit:   1,
+			wantStdout: ".satelle/workflows/step.toml",
+		},
+		{
+			name: "rejects a nested agents.toml and code",
+			sid:  "sty_a9e33333",
+			setup: func(t *testing.T, repo string) {
+				emptyRepoWithBaseline(t, repo)
+				mustWrite(t, filepath.Join(repo, ".satelle", "workflows", "x", "agents.toml"), "[planner]\n")
+				mustWrite(t, filepath.Join(repo, "cmd", "foo.go"), "package main\n")
+				gitCommitAll(t, repo, "not the agents layer (sty_a9e33333)")
+			},
+			wantExit:   1,
+			wantStdout: ".satelle/workflows/x/agents.toml",
+		},
+		{
+			name: "rejects an empty change set",
+			sid:  "sty_a9e44444",
+			setup: func(t *testing.T, repo string) {
+				emptyRepoWithBaseline(t, repo)
+			},
+			wantExit:   1,
+			wantStdout: "no change set found",
+		},
+		{
+			name:       "rejects a payload that names no story",
+			stdin:      `{"from":"in_progress","to":"done"}`,
+			wantExit:   1,
+			wantStdout: "could not read the story id",
+		},
+	},
 	"satelle-substrate-only-check": {
 		{
 			name: "accepts managed footprint",

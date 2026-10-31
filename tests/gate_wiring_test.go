@@ -58,6 +58,14 @@ var gateCoverageWaiver = map[string]string{
 	"docs/satelle-story-blocked-triage": "orchestrator-consulted advisor, not a status-advancing gate",
 	"docs/satelle-step-summary":         "summariser, not accept/reject gate",
 	"docs/satelle-docs-only-check":      "coded check; accept/reject goldens live in fenceFixtures",
+	// The agents-repair lane reuses the docs lane's exits the same way; its close
+	// fence is golden-tabled in fenceFixtures and driven through the governed close
+	// in TestBrokenWildcardSeatsAgentsRepairLane / TestAgentsRepairLaneRefusesOtherPaths.
+	"agents-repair/satelle-story-blocked-review":    "park path; same reviewer command seam as the wildcard lane",
+	"agents-repair/satelle-story-cancel-review":     "same cancel gate as the wildcard lane, exercised there",
+	"agents-repair/satelle-story-blocked-triage":    "orchestrator-consulted advisor, not a status-advancing gate",
+	"agents-repair/satelle-step-summary":            "summariser, not accept/reject gate",
+	"agents-repair/satelle-agents-layer-only-check": "coded check; goldens in fenceFixtures, governed close in TestBrokenWildcardSeatsAgentsRepairLane",
 	// The epic-branch lane (sty_b9d9a3df): both checks are wired and driven through
 	// the governed transition in epic_branch_lane_test.go, and golden-tabled in
 	// fenceFixtures; the merge skill is a step performer's rubric, not a gate.

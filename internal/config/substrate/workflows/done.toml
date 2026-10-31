@@ -76,6 +76,27 @@ park = { state = "blocked", gate = "satelle-story-blocked-review", advisor = "bl
 cancel = { state = "cancelled", gate = "satelle-story-cancel-review" }
 
 # ================================================================
+# THE AGENTS-REPAIR LANE — a slice whose whole surface is the agents layer
+# raised -> authored -> agents-verified
+# ================================================================
+
+[agents-repair]
+# This lane exists only to repair a broken agents layer
+# (.satelle/workflows/agents*.toml). The working lane's gates dispatch through
+# those bindings, so a broken binding refuses every story that walks them —
+# including the story that would fix it. This lane allocates no planner or coder,
+# its close admits only agents-layer paths (satelle-agents-layer-only-check), and
+# the edit gate's substrate lock admits it for those paths alone.
+#
+# DECISION, not omission: this is NOT a substrate lane. The shipped route still
+# has none, by decision: a general one would only offer a way around the default
+# gates. This one is no way around them for anything but the file set they
+# depend on.
+obligations = ["raised", "authored", "agents-verified"]
+park = { state = "blocked", gate = "satelle-story-blocked-review", advisor = "blocked-triage", advisor_skill = "satelle-story-blocked-triage" }
+cancel = { state = "cancelled", gate = "satelle-story-cancel-review" }
+
+# ================================================================
 # CONTAINERS — closed by their children, not by work of their own
 # raised -> ready -> merged -> children-resolved
 # ================================================================

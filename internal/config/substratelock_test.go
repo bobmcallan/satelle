@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -66,5 +67,33 @@ func TestParseEditExemptGlobsSplitsDamagedFromEmpty(t *testing.T) {
 	}
 	if _, ok := ParseEditExemptGlobs("[gate\n"); ok {
 		t.Error("a syntax error must report ok=false")
+	}
+}
+
+// sty_32431a16 AC5 — the agents layer is the agents*.toml bindings directly under
+// .satelle/workflows/, and nothing else that happens to share the name.
+func TestIsAgentsLayerPath(t *testing.T) {
+	for rel, want := range map[string]bool{
+		".satelle/workflows/agents.toml":        true,
+		".satelle/workflows/agents.local.toml":  true,
+		".satelle/workflows/step.toml":          false,
+		".satelle/workflows/x/agents.toml":      false,
+		".satelle/skills/agents.toml":           false,
+		"agents.local.toml":                     false,
+		".satelle/workflows/agents.local.toml~": false,
+		"x/.satelle/workflows/agents.toml":      false,
+	} {
+		if got := IsAgentsLayerPath(rel); got != want {
+			t.Errorf("IsAgentsLayerPath(%q) = %v, want %v", rel, got, want)
+		}
+	}
+}
+
+// The lane's close check carries the lock's pattern verbatim: the two halves of
+// the agents-repair fence must not drift apart.
+func TestAgentsLayerOnlyCheckCarriesTheLockPattern(t *testing.T) {
+	body := embeddedBody(t, "skills", "satelle-agents-layer-only-check")
+	if !strings.Contains(body, AgentsLayerPathPattern) {
+		t.Fatalf("satelle-agents-layer-only-check must carry %q verbatim", AgentsLayerPathPattern)
 	}
 }
