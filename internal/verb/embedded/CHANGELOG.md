@@ -1,3 +1,13 @@
+## [0.0.821] - 2026-11-01
+
+### Fixed
+- The embedded `satelle-story-intent-review` no longer rejects a story for missing acceptance criteria on the edge that authors them. It judges the behaviour card (role, context, outcome). Where the step's planner authors criteria, it judges the plan's `## Acceptance criteria` section instead of the story's own field. It rejects a card with no behaviour, and a plan whose criteria section is missing or untestable. On a route with no plan step the card is the whole spec. `satelle-story-shape` now states this, and five intent-rubric review-corpus cases cover it (both reviewer families score 6/6 with no false blockers). Existing repos pick it up through `satelle init`; a repo that overrides the intent review keeps its own text. (sty_a3a5397a)
+
+## [serve-v0.0.259] - 2026-11-01
+
+### Changed
+- The service binary carries the revised embedded intent review and story-shape principle. (sty_a3a5397a)
+
 ## [0.0.820] - 2026-11-01
 
 ### Added

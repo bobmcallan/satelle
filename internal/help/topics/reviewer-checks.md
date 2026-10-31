@@ -240,8 +240,9 @@ swapped harness can never change what "valid" means.
 
 ## Begin-work gate — `satelle-story-intent-review` (→ in_progress)
 
-Judges readiness of **intent** before work starts — concrete title, clear goal,
-testable criteria. Unclear intent is rejected; the story stays in backlog.
+Judges readiness of **intent** before work starts: a behaviour card, with
+criteria from the story or, when it has none, the plan. The rubric is the skill
+itself: `satelle doc get skills satelle-story-intent-review`.
 
 ## Release step — `release` (in-loop executor)
 

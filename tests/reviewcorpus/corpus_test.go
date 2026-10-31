@@ -195,6 +195,7 @@ func TestCorpusDefectsCiteSource(t *testing.T) {
 // gates each transition in this repo's step.toml.
 var rubricSkill = map[string]string{
 	"create":         "satelle-story-create-review",
+	"intent":         "satelle-story-intent-review",
 	"ready":          "satelle-story-ready-review",
 	"start":          "satelle-story-plan-review",
 	"integration":    "satelle-integration-review",

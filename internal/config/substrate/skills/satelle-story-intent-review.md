@@ -3,7 +3,7 @@ name: satelle-story-intent-review
 scope: system
 type: skill
 tags: [type:skill, type:reviewer]
-description: Entry gate for begin-work (backlog → plan or in_progress). Isolated reviewer validates PRESENTED story text is well-formed (title, goal body, numbered testable ACs). Does not rewrite the story. A re-presented edge follows [[satelle-reviewer-verdict]].
+description: Entry gate for begin-work (backlog → plan or in_progress). Isolated reviewer validates PRESENTED story text is well-formed (title, a behaviour card, and testable criteria from the story or, when it has none, the plan's Acceptance criteria section). Does not rewrite the story. A re-presented edge follows [[satelle-reviewer-verdict]].
 ---
 
 # Intent review (begin-work gate)
@@ -18,15 +18,29 @@ You get `{story, from, to}` on stdin. You do not edit.
 ## Accept when
 
 1. The **title** names a concrete change.
-2. The **body** states a clear goal / what done looks like.
-3. **acceptance_criteria** lists at least one numbered, testable item.
+2. The **body** states a behaviour per [[satelle-story-shape]]: a role, the
+   context it acts in, and the outcome it gets.
+3. The criteria, by where they are authored:
+   - **The story carries criteria:** each is numbered and testable.
+   - **The story carries none and the payload `docs` hold a `plan` document:**
+     criteria are authored at planning, so judge that plan's
+     `## Acceptance criteria` section, not the story's own field. It must be
+     present, numbered and testable.
+   - **The story carries none and there is no plan document:** judge the card
+     alone. On a route with no plan step the card is the whole spec; absent
+     criteria are neither acceptance nor rejection.
 
 Whole bar. Do not demand a design, estimates, tags, or a particular style.
 
 ## Reject when
 
-Intent is unclear: no goal, or ACs are missing or untestable ("make it
-nicer"). On reject, name the failed check(s) only.
+- The card states no behaviour: no role, context or outcome (a title alone, or
+  a list of mechanism).
+- The story's own criteria are untestable ("make it nicer").
+- A plan document is present and its `## Acceptance criteria` section is
+  missing, unnumbered or untestable.
+
+On reject, name the failed check(s) only.
 
 ## First pass: every failed check, once
 

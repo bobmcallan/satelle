@@ -53,7 +53,7 @@ type Case = reviewscore.Case
 // Rubrics is the fixed set of proof rubrics the corpus must cover (AC3): a
 // const list, not derived from the data on disk, so a missing rubric
 // directory is caught rather than silently narrowing coverage.
-var Rubrics = []string{"create", "ready", "start", "integration", "implementation", "coverage", "done"}
+var Rubrics = []string{"create", "intent", "ready", "start", "integration", "implementation", "coverage", "done"}
 
 // Dir is the corpus root under this package's testdata, resolved relative to
 // this source file so a consumer outside tests/reviewcorpus can still find it
