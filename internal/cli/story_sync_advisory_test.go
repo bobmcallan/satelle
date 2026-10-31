@@ -106,6 +106,14 @@ func TestStorySyncLine(t *testing.T) {
 // holds one story in conflict and one another location last worked on.
 func storySyncHookRepo(t *testing.T) (calls *atomic.Int32) {
 	t.Helper()
+	_, calls = storySyncScopedRepo(t, "[sync]\nproject = \"probe\"\nstories = \"personal\"\n")
+	return calls
+}
+
+// storySyncScopedRepo is storySyncHookRepo with the repo's [sync] table given, so
+// a test can set the work-state scope the recorded state is read under.
+func storySyncScopedRepo(t *testing.T, syncTOML string) (root string, calls *atomic.Int32) {
+	t.Helper()
 	repo := sessionContextRepo(t)
 	calls = new(atomic.Int32)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -116,12 +124,12 @@ func storySyncHookRepo(t *testing.T) (calls *atomic.Int32) {
 	if err := os.WriteFile(config.GlobalConfigPath(), []byte("[hosted]\nserver = \""+ts.URL+"\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	writeHarnessTOML(t, repo, "[sync]\nproject = \"probe\"\nstories = \"personal\"\n")
+	writeHarnessTOML(t, repo, syncTOML)
 	a, err := app.Open()
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := a.RepoRoot
+	root = a.RepoRoot
 	now := time.Now().UTC()
 	appendWorkingOn(t, a, "sty_workedelsewhere", verb.WorkingOnPayload{Location: "loc_other_aaaaaaaa", Label: "desk", Session: "sess_other", State: "in_progress"}, now.Add(-3*time.Hour))
 	_ = a.Close()
@@ -131,7 +139,90 @@ func storySyncHookRepo(t *testing.T) (calls *atomic.Int32) {
 	if err := syncstate.RecordStoryConflicts(config.GlobalDir(), root, map[string]string{"sty_inconflict": conflictLocalAhead}, nil, now); err != nil {
 		t.Fatal(err)
 	}
-	return calls
+	return root, calls
+}
+
+// recordedConflicts is the story_conflicts group of root's work-state sync file.
+func recordedConflicts(t *testing.T, root string) map[string]syncstate.StoryConflict {
+	t.Helper()
+	st, _, err := syncstate.Load(config.GlobalDir(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st.StoryConflicts
+}
+
+// sty_c45cb8d5 AC1–AC3: a repo whose work state is all local reports no hosted
+// conflict, drops the recorded ones, and still names the stories another location
+// last worked on from its local ledger.
+func TestStorySyncAdvisoryLocalScopeHidesConflicts(t *testing.T) {
+	const local = "[sync]\nproject = \"probe\"\nall = \"local\"\n"
+	const workedElsewhere = "sty_workedelsewhere last worked at desk (sess_other)"
+
+	t.Run("advisory", func(t *testing.T) {
+		root, _ := storySyncScopedRepo(t, local)
+		if len(recordedConflicts(t, root)) == 0 {
+			t.Fatal("precondition: a conflict is recorded")
+		}
+		a, err := app.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		line := storySyncAdvisory(a)
+		_ = a.Close()
+		if strings.Contains(line, "in conflict") {
+			t.Errorf("a local repo must report no conflict: %s", line)
+		}
+		if !strings.Contains(line, workedElsewhere) {
+			t.Errorf("line missing %q: %s", workedElsewhere, line)
+		}
+		if got := recordedConflicts(t, root); len(got) != 0 {
+			t.Errorf("recorded conflicts must be dropped while local, got %v", got)
+		}
+	})
+
+	t.Run("session start", func(t *testing.T) {
+		root, calls := storySyncScopedRepo(t, local)
+		var out, errb bytes.Buffer
+		raw := []byte(`{"hook_event_name":"SessionStart","session_id":"story-sync-local"}`)
+		if err := runHookContext(&out, &errb, "claude", raw); err != nil {
+			t.Fatalf("the hook must exit 0, got %v", err)
+		}
+		var doc sessionDoc
+		if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+			t.Fatalf("not JSON: %v\n%s", err, out.String())
+		}
+		if strings.Contains(doc.SystemMessage, "in conflict") {
+			t.Errorf("a local repo must report no conflict: %s", doc.SystemMessage)
+		}
+		if !strings.Contains(doc.SystemMessage, workedElsewhere) {
+			t.Errorf("systemMessage missing %q: %s", workedElsewhere, doc.SystemMessage)
+		}
+		if got := recordedConflicts(t, root); len(got) != 0 {
+			t.Errorf("recorded conflicts must be dropped at session start, got %v", got)
+		}
+		if n := calls.Load(); n != 0 {
+			t.Errorf("session start made %d call(s) to the hosted server", n)
+		}
+	})
+}
+
+// sty_c45cb8d5 AC4: while any work-state area still syncs — here the ledger, which
+// is where story conflicts are found — the recorded conflicts are reported and kept.
+func TestStorySyncAdvisoryLedgerSyncedKeepsConflicts(t *testing.T) {
+	root, _ := storySyncScopedRepo(t, "[sync]\nproject = \"probe\"\nstories = \"local\"\nledger = \"personal\"\n")
+	a, err := app.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := storySyncAdvisory(a)
+	_ = a.Close()
+	if want := "sty_inconflict in conflict"; !strings.Contains(line, want) {
+		t.Errorf("line missing %q: %s", want, line)
+	}
+	if _, ok := recordedConflicts(t, root)["sty_inconflict"]; !ok {
+		t.Error("a repo still syncing its ledger must keep its recorded conflicts")
+	}
 }
 
 type sessionDoc struct {

@@ -24,21 +24,19 @@ func checkSyncHealth(repoRoot, dataDir, globalDir string, now time.Time) health.
 
 // checkWorkstatePush judges the recorded work-state push against cfg.
 func checkWorkstatePush(cfg config.Config, cfgPath, repoRoot, globalDir string, now time.Time) health.Findings {
-
-	allLocal := true
-	for _, area := range config.WorkstateAreas {
-		sc, serr := config.ScopeFor(cfg, area)
-		if serr != nil {
-			return health.Findings{health.Error(health.IDSyncConfig, "Workstate sync config", serr.Error()).About(cfgPath)}
-		}
-		if sc != config.LocalScope {
-			allLocal = false
-			break
-		}
+	ws, serr := config.WorkstateScope(cfg)
+	if serr != nil {
+		return health.Findings{health.Error(health.IDSyncConfig, "Workstate sync config", serr.Error()).About(cfgPath)}
 	}
-	if allLocal {
+	if ws == config.LocalScope {
 		return health.Findings{health.Info(health.IDSyncLocal, "Work state is local-only",
 			"work-state areas are local; not flagged as unbacked").About(repoRoot)}
+	}
+	// A machine that turned push off is not failing to push: the recorded push
+	// state is not judged while the switch holds.
+	if off, setting := config.MachinePushOffIn(globalDir); off {
+		return health.Findings{health.Info(health.IDSyncPushOff, "Hosted push is off",
+			fmt.Sprintf("%s; pulls and the local web UI still run, push failures and staleness are not judged", setting)).About(repoRoot)}
 	}
 
 	st, _, lerr := syncstate.Load(globalDir, repoRoot)
@@ -49,8 +47,13 @@ func checkWorkstatePush(cfg config.Config, cfgPath, repoRoot, globalDir string, 
 
 	var out health.Findings
 	if st.PushReason != "" {
+		fix := "run `satelle sync workstate push`"
+		if health.IsStampRefusal(st.PushReason) {
+			// Retrying the push meets the same drift gate; only init re-stamps past it.
+			fix = "run `satelle init` to heal the stamp, then `satelle sync push`"
+		}
 		out = append(out, health.Error(health.IDSyncFailing, "Workstate push failing",
-			st.PushReason).About(repoRoot).WithRemediation("run `satelle sync workstate push`"))
+			st.PushReason).About(repoRoot).WithRemediation(fix))
 	}
 
 	threshold, has, terr := config.WorkstateStaleAfter(cfg)

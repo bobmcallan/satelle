@@ -212,3 +212,75 @@ func TestAgentGoalsStopRuleIsStructural(t *testing.T) {
 		t.Error("satelle-agent-goals must not name a practice choice a human-only decision")
 	}
 }
+
+// embeddedPrincipleShape checks one baseline principle (sty_bcd344fd): embedded,
+// seat-resident (principles:seat, never principles:session, so SessionStart does
+// not carry it), states every rule in want, and links only embedded defaults so
+// it means the same in a repo that carries no repo documents.
+func embeddedPrincipleShape(t *testing.T, name string, want []string) {
+	t.Helper()
+	body, ok := embeddedPrinciples()[name]
+	if !ok || body == "" {
+		t.Fatalf("%s must be embedded", name)
+	}
+	if !docHasTag(body, SeatResidencyTag) {
+		t.Errorf("%s must carry %s", name, SeatResidencyTag)
+	}
+	if docHasTag(body, SessionResidencyTag) {
+		t.Errorf("%s must not carry %s (seat-resident only)", name, SessionResidencyTag)
+	}
+	flat := strings.Join(strings.Fields(body), " ")
+	for _, w := range want {
+		if !strings.Contains(flat, w) {
+			t.Errorf("%s must state %q", name, w)
+		}
+	}
+	idx := embeddedIndex()
+	links := wikilinkRe.FindAllStringSubmatch(stripQuotedCode(body), -1)
+	if len(links) == 0 {
+		t.Errorf("%s links nothing", name)
+	}
+	for _, m := range links {
+		if !resolveWikilink(idx, m[1]) {
+			t.Errorf("%s links [[%s]], which is not an embedded default", name, m[1])
+		}
+	}
+	if strings.Contains(body, "sty_") {
+		t.Errorf("%s must name no story (repo-agnostic)", name)
+	}
+}
+
+// docHasTag reports whether body's frontmatter tags line carries tag.
+func docHasTag(body, tag string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "tags:") {
+			return strings.Contains(line, tag)
+		}
+	}
+	return false
+}
+
+// TestStoryShapePrinciple (sty_bcd344fd AC1): a story is BDD — the card is a
+// behaviour, the ACs are the technical requirements that meet it, each provable
+// at its gate, and post-release evidence belongs to the release step.
+func TestStoryShapePrinciple(t *testing.T) {
+	embeddedPrincipleShape(t, "satelle-story-shape", []string{
+		"The card states a behaviour",
+		"a role, the context it acts in, and the outcome it gets",
+		"The ACs are the technical requirements that meet that behaviour",
+		"Each AC is provable by the gate that judges it",
+		"Evidence that exists only after release",
+		"an AC of the release step, never of the code step",
+		"[[satelle-start-small]]",
+	})
+}
+
+// TestStartSmallPrinciple (sty_bcd344fd AC2): ship the smallest slice that
+// proves the behaviour; grow scope, concurrency or rules only on ledger evidence.
+func TestStartSmallPrinciple(t *testing.T) {
+	embeddedPrincipleShape(t, "satelle-start-small", []string{
+		"Ship the smallest slice that proves the behaviour",
+		"Widen scope, run more work in parallel, or add rules only once the ledger shows the smaller form held",
+		"[[satelle-story-shape]]",
+	})
+}

@@ -7,7 +7,68 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/bobmcallan/satelle/internal/health"
+	"github.com/bobmcallan/satelle/internal/syncstate"
 )
+
+// TestInitSingleRunNoStaleStampWarning (sty_2e629e93 AC3, AC6): a push the drift
+// gate refused before the heal stays recorded until a push succeeds, so one init
+// used to replay it as a stale [sync.failing] 'across BREAKING' warning. init
+// re-stamps before validating and clears that record, so a single run prints
+// nothing about the stamp it replaces; doctor names init as the fix beforehand.
+func TestInitSingleRunNoStaleStampWarning(t *testing.T) {
+	if !isReleaseTestBin(t) {
+		t.Skip("testBin is not release-stamped (dev sentinel) — a dev binary never stamps or gates")
+	}
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	data := filepath.Join(repo, ".satelle")
+	// Non-local work state, so doctor reads the recorded push outcome.
+	tomlPath := filepath.Join(data, "satelle.toml")
+	raw, err := os.ReadFile(tomlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonLocal := strings.Replace(string(raw), "[sync]\n", "[sync]\nstories = \"personal\"\n", 1)
+	if nonLocal == string(raw) {
+		t.Fatal("fixture: scaffold [sync] table not found")
+	}
+	if err := os.WriteFile(tomlPath, []byte(nonLocal), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	binVer := readStamp(t, repo)
+	// The refusal a push behind the stamp records is the drift gate's own text.
+	writeStamp(t, repo, "0.0.1")
+	refusal, err := run(t, testBin, repo, "status")
+	if err == nil || !health.IsStampRefusal(refusal) {
+		t.Fatalf("guard: a stamp of 0.0.1 must refuse across an init-heals breaking release: err=%v\n%s", err, refusal)
+	}
+	reason := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(refusal), "Error:"))
+	if err := syncstate.RecordPush(isolatedHome(t), repo, false, reason, "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	// doctor is behind the same gate, so it reads the recorded refusal while the
+	// stamp is current — the state a background push leaves beside a later heal.
+	writeStamp(t, repo, binVer)
+	before, _ := run(t, testBin, repo, "doctor")
+	if !strings.Contains(before, health.IDSyncFailing) || !strings.Contains(before, "`satelle init` to heal the stamp") {
+		t.Fatalf("guard: doctor must replay the recorded refusal as sync.failing naming satelle init:\n%s", before)
+	}
+	writeStamp(t, repo, "0.0.1")
+
+	out := mustRun(t, testBin, repo, "init")
+	for _, bad := range []string{health.StampRefusalMarker, "[" + health.IDSyncFailing + "]"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("one init must print nothing about the stamp it replaced (%q):\n%s", bad, out)
+		}
+	}
+	if after, _ := run(t, testBin, repo, "doctor"); strings.Contains(after, health.IDSyncFailing) {
+		t.Errorf("the re-stamp must clear the recorded refusal:\n%s", after)
+	}
+}
 
 // isReleaseTestBin reports whether testBin carries a non-dev version so
 // refuseBreakingDrift / writeDeployedVersion are live.

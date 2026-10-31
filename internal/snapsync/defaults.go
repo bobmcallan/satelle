@@ -62,6 +62,39 @@ func (s DefaultSet) changedPaths(a, b map[string]string) []string {
 	return out
 }
 
+// WithStampOnly is local as every comparison of an area reads it: local plus each
+// stamp-only default (config.AreaStampOnlyDefaults, path -> sha) local lacks whose
+// path a recorded side — the synced base, the hosted snapshot — names with other
+// bytes. Such a file is not provably the binary's and differs from what was
+// synced, so it is this machine's change, not a default the binary supplies.
+// local is never modified; added lists, sorted, the paths it gained.
+func WithStampOnly(local, stampOnly map[string]string, recorded ...map[string]string) (map[string]string, []string) {
+	var added []string
+	for p, sha := range stampOnly {
+		if _, ok := local[p]; ok {
+			continue
+		}
+		for _, files := range recorded {
+			if other, ok := files[p]; ok && other != sha {
+				added = append(added, p)
+				break
+			}
+		}
+	}
+	if len(added) == 0 {
+		return local, nil
+	}
+	sort.Strings(added)
+	out := make(map[string]string, len(local)+len(added))
+	for p, sha := range local {
+		out[p] = sha
+	}
+	for _, p := range added {
+		out[p] = stampOnly[p]
+	}
+	return out, added
+}
+
 // sameFilesExcept reports whether a and b name the same files with the same shas,
 // not counting an entry only one side names whose sha is a held default.
 func (s DefaultSet) sameFilesExcept(a, b map[string]string) bool {

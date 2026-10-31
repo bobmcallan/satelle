@@ -101,7 +101,7 @@ func (m *machine) run(t *testing.T, fn func(*cobra.Command) error) {
 
 func (m *machine) push(t *testing.T, server string) {
 	t.Helper()
-	m.run(t, func(c *cobra.Command) error { return runSyncWorkstatePush(c, server, false, false) })
+	m.run(t, func(c *cobra.Command) error { return runSyncWorkstatePush(c, server, false, false, false) })
 }
 
 func (m *machine) pull(t *testing.T, server string) {

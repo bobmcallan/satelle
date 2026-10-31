@@ -24,6 +24,9 @@ type Event struct {
 	Topic   string `json:"topic"`  // coarse panel: stories | tasks | docs
 	Entity  string `json:"entity"` // story | task | doc | ledger (derived)
 	At      string `json:"at"`     // RFC3339 UTC
+	// Origin is "hosted" when the change was materialised from the hosted
+	// project (mirror.OriginHosted); satelled never pushes such a change back.
+	Origin string `json:"origin,omitempty"`
 }
 
 // Publisher posts change events to Endpoint. Safe for concurrent use.
@@ -40,6 +43,8 @@ type Publisher struct {
 	// OnPost is an optional test hook invoked just before the request is sent
 	// (after body marshal). Not used in production.
 	OnPost func(*http.Request)
+	// Origin is stamped on every event; see Event.Origin.
+	Origin string
 }
 
 // Active reports whether the publisher will attempt network I/O.
@@ -91,6 +96,7 @@ func (p *Publisher) PostContext(ctx context.Context, topic string) (err error) {
 		Topic:   topic,
 		Entity:  entityForTopic(topic),
 		At:      now().UTC().Format(time.RFC3339Nano),
+		Origin:  p.Origin,
 	}
 	body, err := json.Marshal(ev)
 	if err != nil {

@@ -27,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -76,6 +77,8 @@ func (a *contextAudit) toDoc(d docindex.Doc) ctxaudit.Doc {
 		out.Residency = "ondemand"
 		if docHasTag(d.Body, sessionTag) {
 			out.Residency = "session"
+		} else if docHasTag(d.Body, config.SeatResidencyTag) {
+			out.Residency = "seat"
 		}
 	}
 	return out
@@ -181,6 +184,7 @@ func contextChecks(ctx context.Context, repoRoot, dataDir string) health.Finding
 	out = append(out, a.sessionFindings()...)
 	out = append(out, a.dispatchFindings(ctx)...)
 	out = append(out, a.duplicateFindings()...)
+	out = append(out, a.baselineOverrideFindings(ctx)...)
 	out = append(out, a.referenceFindings(ctx)...)
 	return out
 }
@@ -336,6 +340,74 @@ func (a *contextAudit) duplicateFindings() health.Findings {
 			fmt.Sprintf("%s share %d words verbatim (seen in %s): %q", who, g.Words, g.Context, g.Quote)).
 			About(wheres[0]).
 			WithRemediation("keep the passage in one document and refer to it by [[name]] in the others (a paraphrase is found by `satelle doctor --context-review`)"))
+	}
+	return out
+}
+
+// baselinePrinciples are the embedded principles every repo's authored
+// principles and skills are checked against (sty_bcd344fd): the story shape and
+// start-small baselines a workflow is grounded in.
+var baselinePrinciples = []string{"satelle-story-shape", "satelle-start-small"}
+
+// baselineOverrideFindings — a repo document under principles or skills that
+// shadows a baseline principle by name with a different body, or restates a
+// passage of one word for word (the duplicate finder, at the configured
+// threshold). Whether an override CONTRADICTS a baseline is a judgement, not a
+// fact, so it is not decided here.
+func (a *contextAudit) baselineOverrideFindings(ctx context.Context) health.Findings {
+	baseline := map[string]ctxaudit.Doc{}
+	for _, d := range config.EmbeddedDefaults() {
+		if d.Kind == "principles" && slices.Contains(baselinePrinciples, d.Name) {
+			baseline[d.Name] = ctxaudit.Doc{Kind: d.Kind, Name: d.Name, Where: "embedded:" + d.RelPath(), Body: d.Body}
+		}
+	}
+	if len(baseline) == 0 {
+		return nil
+	}
+	norm := func(body string) string { return strings.TrimSpace(ctxaudit.StripFrontmatter(body)) }
+	var out health.Findings
+	overrides := ctxaudit.Context{Label: "repo overrides"}
+	for _, kind := range []string{"principles", "skills"} {
+		listed, _ := a.docs.List(ctx, kind)
+		for _, d := range listed {
+			if d.Embedded {
+				continue
+			}
+			doc := a.toDoc(d)
+			if b, ok := baseline[d.Name]; ok {
+				if norm(d.Body) != norm(b.Body) {
+					out = append(out, health.Warn(health.IDContextBaselineOverride, "Baseline principle overridden",
+						fmt.Sprintf("%s shadows %s with a different body", doc.Where, d.Name)).
+						About(doc.Where).
+						WithRemediation("delete the override so the embedded baseline applies, or keep only what differs in a document of another name that refers to [["+d.Name+"]]"))
+				}
+				continue // a shadow is reported as one; it is not also a restatement of itself
+			}
+			overrides.Parts = append(overrides.Parts, doc)
+		}
+	}
+	min := a.cfg.ResolveDuplicateMinWords()
+	if min <= 0 || len(overrides.Parts) == 0 {
+		return out
+	}
+	corpus := make([]ctxaudit.Doc, 0, len(baseline))
+	for _, name := range baselinePrinciples {
+		if b, ok := baseline[name]; ok {
+			corpus = append(corpus, b)
+		}
+	}
+	for _, dup := range ctxaudit.Duplicates([]ctxaudit.Context{overrides}, corpus, min) {
+		repo, base := dup.A, dup.B
+		if _, ok := baseline[repo.Name]; ok && repo.Kind == "principles" {
+			repo, base = base, repo
+		}
+		if _, ok := baseline[base.Name]; !ok || base.Kind != "principles" {
+			continue // two repo documents sharing a passage: duplicateFindings reports that
+		}
+		out = append(out, health.Warn(health.IDContextBaselineOverride, "Baseline principle restated",
+			fmt.Sprintf("%s restates %s: %q", repo.Where, base.Name, dup.Quote)).
+			About(repo.Where).
+			WithRemediation("refer to [["+base.Name+"]] instead of restating it, so the baseline is written once"))
 	}
 	return out
 }

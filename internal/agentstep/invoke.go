@@ -1261,7 +1261,7 @@ func (g *Engine) runOnceBusyRaw(ctx context.Context, runner agentcli.Runner, req
 
 // ResidentPrincipleDocs returns the principle documents a seat is handed for the
 // given selector (design §5.1), in the order it receives them: session =
-// principles:session-tagged (+ operating principle guarantee); system = embedded
+// principles:session- or principles:seat-tagged (+ operating principle guarantee); system = embedded
 // docs; project = non-embedded; all = every body; none = empty; comma-list =
 // union (name-sorted, deduped). Exported so the injected-size report and the
 // context audit measure exactly what a dispatch fits and sends.
@@ -1308,7 +1308,7 @@ func ResidentPrincipleDocs(ctx context.Context, docs DocGetter, selector string)
 		if want[config.PrinciplesProject] && !d.Embedded {
 			return true
 		}
-		if want[config.PrinciplesSession] && hasSessionTag(d.Body) {
+		if want[config.PrinciplesSession] && isSeatResident(d.Body) {
 			return true
 		}
 		return false

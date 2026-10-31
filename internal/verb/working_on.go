@@ -13,8 +13,9 @@ import (
 
 // WorkingOnPayload is the payload of a KindWorkingOn ledger row (sty_40853d02):
 // which location, session and working tree took a fresh engagement seat on the
-// story. Location and Label are empty for an unbound repo. It is visibility
-// only; nothing reads it to refuse an engage.
+// story. Location and Label are empty for an unbound repo. It is visibility,
+// and in hosted mode it decides which stories keep their history cached
+// (storyhistory.go); nothing reads it to refuse an engage.
 type WorkingOnPayload struct {
 	Location string `json:"location,omitempty"`
 	Label    string `json:"label,omitempty"`

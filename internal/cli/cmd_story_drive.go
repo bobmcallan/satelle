@@ -11,7 +11,6 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/drive"
-	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/verb"
 )
 
@@ -78,10 +77,11 @@ func runStoryDrive(cmd *cobra.Command, args []string) error {
 // person's), and the declared rework relay. `story drive` and a task-kind node's
 // wake share it.
 func driveOptions(cmd *cobra.Command, eng drive.Performers, a *app.App, out io.Writer) drive.Options {
+	location, label := thisLocation(a)
 	return drive.Options{
 		Performers:    eng,
-		Location:      hosted.KnownLocationID(a.RepoRoot),
-		LocationLabel: hosted.LocationLabel(a.RepoRoot),
+		Location:      location,
+		LocationLabel: label,
 		Rework: func(ctx context.Context, id string) (drive.Rework, error) {
 			var relay reworkResult
 			err := runRework(cmd, id, 0, "", &relay)

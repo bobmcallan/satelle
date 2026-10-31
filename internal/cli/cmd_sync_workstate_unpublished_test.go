@@ -10,8 +10,15 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/doctor"
+	"github.com/bobmcallan/satelle/internal/health"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 )
 
@@ -366,6 +373,19 @@ func TestWorkstatePushReachabilityUnavailableHoldsNothing(t *testing.T) {
 	if strings.Contains(out, "held ") {
 		t.Errorf("nothing may be held on unavailable reachability:\n%s", out)
 	}
+	if !strings.Contains(out, "reachability not checked for 2 stor(y/ies)") {
+		t.Errorf("want the two engaged stories counted as not checked, the terminal one not:\n%s", out)
+	}
+	for _, id := range []string{done, noGit, gone} {
+		if !f.hasItem("probe", id) {
+			t.Errorf("story %s should have published", id)
+		}
+	}
+
+	out, err = runRoot(t, "sync", "workstate", "push", "--server", ts.URL, "--full", "--verbose")
+	if err != nil {
+		t.Fatalf("verbose push: %v\n%s", err, out)
+	}
 	if strings.Contains(out, "reachability unavailable") && strings.Contains(out, done) {
 		t.Errorf("terminal story was checked:\n%s", out)
 	}
@@ -374,10 +394,120 @@ func TestWorkstatePushReachabilityUnavailableHoldsNothing(t *testing.T) {
 			t.Errorf("missing unavailable line for %s:\n%s", id, out)
 		}
 	}
-	for _, id := range []string{done, noGit, gone} {
-		if !f.hasItem("probe", id) {
-			t.Errorf("story %s should have published", id)
+}
+
+// unavailableWorld is a repo with hold on and two engaged stories whose recorded
+// engagement tree is not on this machine, as when they were engaged elsewhere.
+func unavailableWorld(t *testing.T) (f *fakeWorkstateServer, url, repo string, ids []string) {
+	t.Helper()
+	ts, f := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	repo = workstateRepo(t, holdSyncToml)
+	elsewhere := filepath.Join(t.TempDir(), "Development", "engaged-on-another-machine")
+	for _, title := range []string{"engaged elsewhere one", "engaged elsewhere two"} {
+		id := createStoryID(t, title)
+		exec, _ := executorStateFor(t, id)
+		putInState(t, id, exec, elsewhere, "abc123", true)
+		ids = append(ids, id)
+	}
+	return f, ts.URL, repo, ids
+}
+
+// syncFailing is what satelle doctor reports as sync.failing for repo.
+func syncFailing(repo string) health.Findings {
+	rep := doctor.Check(context.Background(), doctor.Opts{RepoRoot: repo})
+	return byID(rep.Findings, health.IDSyncFailing)
+}
+
+// sty_906870a6 AC1, AC2: a push whose only gap is reachability it could not
+// check succeeds, says so in one summary line naming no story (the ids only
+// under --verbose), and records a success doctor does not flag.
+func TestWorkstatePushUnavailableIsOneSummaryLine(t *testing.T) {
+	t.Run("plain", func(t *testing.T) {
+		f, url, repo, ids := unavailableWorld(t)
+		out, err := runRoot(t, "sync", "workstate", "push", "--server", url)
+		if err != nil {
+			t.Fatalf("push must exit zero: %v\n%s", err, out)
 		}
+		var summaries int
+		for _, l := range strings.Split(out, "\n") {
+			if strings.Contains(l, "reachability not checked for 2 stor(y/ies)") {
+				summaries++
+			}
+		}
+		if summaries != 1 {
+			t.Errorf("want exactly one summary line counting 2, got %d:\n%s", summaries, out)
+		}
+		for _, id := range ids {
+			if strings.Contains(out, id) {
+				t.Errorf("story %s named without --verbose:\n%s", id, out)
+			}
+			if !f.hasItem("probe", id) {
+				t.Errorf("story %s should have published", id)
+			}
+		}
+
+		st, _, lerr := syncstate.Load(config.GlobalDir(), repo)
+		if lerr != nil {
+			t.Fatal(lerr)
+		}
+		if st.PushReason != "" || st.PushLastSuccess.IsZero() {
+			t.Errorf("recorded push outcome = reason %q, last success %v; want a success", st.PushReason, st.PushLastSuccess)
+		}
+		if got := syncFailing(repo); len(got) != 0 {
+			t.Errorf("doctor reports sync.failing after a push that published everything: %+v", got)
+		}
+	})
+	t.Run("verbose", func(t *testing.T) {
+		_, url, _, ids := unavailableWorld(t)
+		out, err := runRoot(t, "sync", "workstate", "push", "--server", url, "--verbose")
+		if err != nil {
+			t.Fatalf("push must exit zero: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "reachability not checked for 2 stor(y/ies)") {
+			t.Errorf("missing summary line:\n%s", out)
+		}
+		for _, id := range ids {
+			if !strings.Contains(out, "): "+id+" not checked") {
+				t.Errorf("--verbose does not list %s:\n%s", id, out)
+			}
+		}
+	})
+}
+
+// sty_906870a6 AC3 (and AC2's control): a story the server refuses still fails
+// the push, and stdout names it beside the not-checked summary, so the refusal
+// reads as the cause; stderr keeps the reason, and doctor sees the failure.
+func TestWorkstatePushRefusalIsNamedOnStdoutBesideUnavailable(t *testing.T) {
+	f, url, repo, unavailable := unavailableWorld(t)
+	refused := createStoryID(t, "refused by the server")
+	f.chain.refuse[refused] = status.Error(codes.PermissionDenied, "viewers may not append")
+
+	stdout, stderr, err := runRootSplit(t, "", "sync", "workstate", "push", "--server", url)
+	if err == nil {
+		t.Fatalf("push must exit non-zero:\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if !strings.Contains(err.Error(), refused) {
+		t.Errorf("exit error %q does not name the refused story", err)
+	}
+	if !strings.Contains(stdout, "not published ("+refused+")") {
+		t.Errorf("stdout does not name the refused story:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "reachability not checked for 2 stor(y/ies)") {
+		t.Errorf("stdout lost the not-checked summary:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "the story "+refused+" was not published") || !strings.Contains(stderr, "viewers may not append") {
+		t.Errorf("stderr lost the refusal reason:\n%s", stderr)
+	}
+	for _, id := range unavailable {
+		if strings.Contains(err.Error(), id) {
+			t.Errorf("a story not checked was blamed for the failure: %v", err)
+		}
+	}
+
+	got := syncFailing(repo)
+	if len(got) != 1 || !strings.Contains(got[0].Detail, refused) {
+		t.Errorf("doctor sync.failing = %+v, want one naming %s", got, refused)
 	}
 }
 

@@ -1644,7 +1644,8 @@ func (g *Engine) excerptOffload(ctx context.Context, itemID, s string, limit int
 // alwaysPrinciples returns the bodies of the SESSION-resident (principles:session)
 // principles — the SAME set the SessionStart injector gives the in-loop session
 // (sty_46a40208), read via the SAME residency marker so the two never diverge —
-// frontmatter stripped and joined in a stable (name-sorted) order, so an isolated
+// plus the seat-only (principles:seat) principles a cold-start seat needs and the
+// in-loop session does not carry, frontmatter stripped and joined in a stable (name-sorted) order, so an isolated
 // reviewer judges with the session guardrails the executor also sees. The
 // operating principle (config.OperatingPrinciple) is guaranteed
 // even when it is embedded-only on a fresh repo, via Get's embedded fallback that
@@ -1687,7 +1688,7 @@ func sessionPrincipleDocs(ctx context.Context, docs DocGetter) []docindex.Doc {
 	if listed, err := docs.List(ctx, "principles"); err == nil {
 		sort.Slice(listed, func(i, j int) bool { return listed[i].Name < listed[j].Name })
 		for _, d := range listed {
-			if hasSessionTag(d.Body) {
+			if isSeatResident(d.Body) {
 				add(d)
 			}
 		}
@@ -1706,16 +1707,28 @@ func sessionPrincipleDocs(ctx context.Context, docs DocGetter) []docindex.Doc {
 // residency marker — checked only within the leading `---`…`---` block so prose
 // mentioning the tag never counts.
 func hasSessionTag(body string) bool {
-	s := strings.TrimLeft(body, "\n")
-	if !strings.HasPrefix(s, "---") {
+	return frontmatterContains(body, config.SessionResidencyTag)
+}
+
+// isSeatResident reports whether a seat with the session selector is handed the
+// doc: it carries principles:session, or principles:seat (seat-only residency,
+// never rendered at SessionStart).
+func isSeatResident(body string) bool {
+	return hasSessionTag(body) || frontmatterContains(body, config.SeatResidencyTag)
+}
+
+// frontmatterContains reports whether the leading `---`…`---` block contains s.
+func frontmatterContains(body, s string) bool {
+	t := strings.TrimLeft(body, "\n")
+	if !strings.HasPrefix(t, "---") {
 		return false
 	}
-	rest := s[len("---"):]
+	rest := t[len("---"):]
 	i := strings.Index(rest, "\n---")
 	if i < 0 {
 		return false
 	}
-	return strings.Contains(rest[:i], "principles:session")
+	return strings.Contains(rest[:i], s)
 }
 
 // stripFrontmatter drops a leading `---`…`---` YAML block, returning the markdown

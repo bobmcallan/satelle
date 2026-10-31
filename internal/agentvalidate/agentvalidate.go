@@ -28,6 +28,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/wfhook"
 	"github.com/bobmcallan/satelle/internal/wfroute"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // Grant is one agent's resolved, inspectable capability surface — what validate
@@ -267,12 +268,67 @@ func validateEffectiveBaseline(baseline config.AgentsConfig, layers config.Agent
 			}
 		}
 	}
-	r := validateShipped(eff.Agents, eff.Vars, workflows, eff.Provenance, skills, shipped, machineSupplied)
+	r := validateShipped(eff.Agents, eff.Vars, workflows, eff.Provenance, skills, shipped, machineSupplied, routeScope{})
 	if f, ok := sameRoleFinding(eff.Agents); ok {
 		r.record(f)
 	}
 	r.record(shared...)
+	r.record(foreignLayerTools(layers, eff.Agents)...)
 	return r
+}
+
+// foreignLayerTools warns on a machine layer (agents.local.toml, the synced
+// workspace bindings) that restates a seat's tools in another adapter's names
+// than the one the seat resolves to (sty_259572f6). It is how a profile change
+// in the machine-wide catalog that moves a seat to another harness shows up
+// before the missing context channel refuses every engagement: the finding
+// names the repo, the file, the seat and the names. A warning, not a refusal —
+// the allocation check already refuses the seat it breaks.
+func foreignLayerTools(layers config.AgentLayers, eff config.AgentsConfig) []health.Finding {
+	repo := layers.RepoRoot
+	if repo == "" {
+		repo = "this repo"
+	}
+	var out []health.Finding
+	for _, layer := range []struct {
+		file   string
+		agents config.AgentsConfig
+	}{
+		{config.DefaultDataDir + "/" + config.LocalAgentsRel, layers.Local},
+		{config.DefaultDataDir + "/" + config.WorkspaceAgentsRel, layers.Workspace},
+	} {
+		seats := map[string]config.AgentBinding{"executor": layer.agents.Executor, "reviewer": layer.agents.Reviewer}
+		for n, b := range layer.agents.Agents {
+			seats[n] = b
+		}
+		for _, seat := range sortedNames(seats) {
+			tools := strings.TrimSpace(seats[seat].Tools)
+			if tools == "" {
+				continue
+			}
+			var b config.AgentBinding
+			switch seat {
+			case "executor":
+				b = eff.ExecutorBinding()
+			case "reviewer":
+				b = eff.ReviewerBinding()
+			default:
+				b, _ = eff.NamedBinding(seat)
+			}
+			adapter := agentcli.AdapterName(b.CommandTemplate())
+			owner, names := agentcli.ForeignToolNames(adapter, tools)
+			if len(names) == 0 {
+				continue
+			}
+			out = append(out, health.Warn(health.IDAgentsBinding, "Tools named for another adapter", fmt.Sprintf(
+				"repo %s: %s [%s] restates tools in %s's names (%s), but the seat resolves to the %s adapter, which offers no such tools",
+				repo, layer.file, seat, owner, strings.Join(names, ","), adapter)).
+				About(seat).
+				WithRemediation(fmt.Sprintf("restate [%s] tools in %s in the %s adapter's names, or drop the override so the profile's grant applies",
+					seat, layer.file, adapter)))
+		}
+	}
+	return out
 }
 
 // sameRoleFinding is an advisory, never a refusal: when the executor seat and the
@@ -319,13 +375,48 @@ func ValidateEffectiveWithSkills(repo config.AgentsConfig, global config.GlobalA
 }
 
 func validate(agents config.AgentsConfig, vars map[string]string, workflows []docindex.Doc, prov config.Provenance, skills SkillBody) Report {
-	return validateShipped(agents, vars, workflows, prov, skills, nil, nil)
+	return validateShipped(agents, vars, workflows, prov, skills, nil, nil, routeScope{})
+}
+
+// ValidateGoverning is Validate narrowed to the route that governs item: the
+// engage precondition's form (sty_259572f6). A story walks one route, so a node
+// allocation on another category's lane — a broken planner or coder seat it
+// never dispatches — must not refuse it. Every binding-level check still runs
+// unscoped, so a broken binding refuses whatever route names it.
+//
+// The scope is the GOVERNING list's category, not the story's raw category: a
+// category with no table of its own falls to the wildcard list and is judged on
+// it. When the governing route does not resolve, the check runs unscoped — a
+// route that cannot be read is never a reason to judge less.
+func ValidateGoverning(agents config.AgentsConfig, vars map[string]string, workflows []docindex.Doc, item workitem.Item) Report {
+	return validateShipped(agents, vars, workflows, nil, nil, nil, nil, governingScope(workflows, item))
+}
+
+// routeScope narrows the allocation checks to one governing route. The zero
+// value is unscoped: every route and authored workflow is checked.
+type routeScope struct {
+	set bool
+	// name is the governing workflow's name as wfgovern.RouteFor reports it.
+	name string
+	// category is the governing list's category (a done.toml table, or "*").
+	category string
+}
+
+// governingScope resolves item's governing route through wfgovern.RouteFor, the
+// one owner of that answer; an unresolvable route is the unscoped zero value.
+func governingScope(workflows []docindex.Doc, item workitem.Item) routeScope {
+	d, name, err := wfgovern.RouteFor(workflows, item)
+	if err != nil {
+		return routeScope{}
+	}
+	return routeScope{set: true, name: name, category: d.List.Category}
 }
 
 // validateShipped is validate with the set of baseline-only seats, which are
-// exempt from the orphan advisory, and the set of seats whose grant each machine
-// supplies, whose missing context channel is a warning rather than a refusal.
-func validateShipped(agents config.AgentsConfig, vars map[string]string, workflows []docindex.Doc, prov config.Provenance, skills SkillBody, shipped, machineSupplied map[string]bool) Report {
+// exempt from the orphan advisory, the set of seats whose grant each machine
+// supplies, whose missing context channel is a warning rather than a refusal,
+// and the route scope (zero: every route) the allocation checks are held to.
+func validateShipped(agents config.AgentsConfig, vars map[string]string, workflows []docindex.Doc, prov config.Provenance, skills SkillBody, shipped, machineSupplied map[string]bool, scope routeScope) Report {
 	var r Report
 	r.Provenance = prov
 
@@ -414,7 +505,7 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 	// unchecked if this loop only read authored graphs. Expand it into one
 	// pseudo-workflow per declared category, so every agent= the route names is
 	// validated exactly as an authored node's would be (sty_9835070d).
-	for _, doc := range expandRouteSources(workflows) {
+	for _, doc := range expandRouteSources(workflows, scope) {
 		// Lifecycle hooks FIRST: they are frontmatter, so they must be checked even
 		// when the DOT below does not parse (sty_ede16f51).
 		r.tagged(health.IDHookAlloc, "Unusable lifecycle-hook allocation",
@@ -669,9 +760,11 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 
 	// With the workflows dir unreadable no route was expanded, so every binding
 	// would read as orphaned — a finding about the missing route, not the bindings.
+	// Scoped to one route, a seat only other routes allocate would read as
+	// orphaned too — the advisory is a whole-repo judgement, so it is skipped.
 	_, _, processUnreadable := docindex.UnreadableOf(workflows)
 	for _, name := range sortedNames(agents.Agents) {
-		if !usedNamed[name] && !shipped[name] && !processUnreadable {
+		if !usedNamed[name] && !shipped[name] && !processUnreadable && !scope.set {
 			// Advisory only: a binding may serve a non-workflow verb (e.g.
 			// [retrospective] for `satelle story retrospect`) without an agent=
 			// node. The satelle-workflow-drift skill judges semantics; validate
@@ -695,7 +788,7 @@ func validateShipped(agents config.AgentsConfig, vars map[string]string, workflo
 // Everything else in the agents layer resolves one-shot.
 func liveUsedSections(workflows []docindex.Doc) map[string]bool {
 	live := map[string]bool{}
-	for _, doc := range expandRouteSources(workflows) {
+	for _, doc := range expandRouteSources(workflows, routeScope{}) {
 		if len(doc.reworks) == 0 {
 			continue
 		}
@@ -1406,12 +1499,19 @@ func (e wfEntry) spec() (wfdot.Spec, bool) {
 // is frontmatter, and a route declares its hooks ONCE on done.toml for the whole
 // route — reporting them per category would list the same create gate five
 // times. It has no Spec, so the allocation loop skips straight past its states.
-func expandRouteSources(workflows []docindex.Doc) []wfEntry {
+//
+// A set scope keeps only the governing route: the derived entry for its list
+// category, an authored workflow only when it is the one that governs, and the
+// hooks-only entry always, so lifecycle hooks are still judged.
+func expandRouteSources(workflows []docindex.Doc, scope routeScope) []wfEntry {
 	var out []wfEntry
 	for _, w := range workflows {
 		// The unreadable-dir sentinel is a state, not a workflow; validateShipped
 		// reports it once, and the embedded route is never expanded in its place.
 		if wfgovern.IsRouteSource(w.Name) || w.IsUnreadable() {
+			continue
+		}
+		if scope.set && w.Name != scope.name {
 			continue
 		}
 		out = append(out, wfEntry{Doc: w})
@@ -1430,6 +1530,9 @@ func expandRouteSources(workflows []docindex.Doc) []wfEntry {
 		return out // structure validate owns an unparseable route source
 	}
 	for _, l := range lists {
+		if scope.set && l.Category != scope.category {
+			continue
+		}
 		if _, governs, _ := wfgovern.RouteGovernsErr(workflows, l.Category); !governs {
 			// An authored workflow outranks the shipped route for this category, so
 			// the route is not this repo's lifecycle there and has no allocation to

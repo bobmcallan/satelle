@@ -62,6 +62,16 @@ produce the behavior on the card.
 - **Kept constraints.** A partial solution or technical decision the card records
   as context constrains the plan. A plan whose implementation drops, replaces or
   contradicts one is refused; name the constraint and the plan text that breaks it.
+- **Story shape** ([[satelle-story-shape]], [[satelle-start-small]]). Refuse
+  when:
+  - the card is **not a behaviour**: it names no role, context and outcome,
+    only a mechanism, a file or a list of tasks;
+  - a criterion is not **traceable** to that behaviour, or not **provable at**
+    the gate that judges it, which includes a code-step criterion whose
+    evidence exists only after release;
+  - the planned slice is not the **smallest slice** that proves the behaviour:
+    it carries a criterion or a change the behaviour does not need, or grows
+    scope, parallelism or rules the ledger has not yet shown to hold.
 
 ## 4. Judge the criteria
 
@@ -95,8 +105,8 @@ plan** (approach and/or files, and what evidence will prove it).
 - **Accept** when the criteria pass sections 3 and 4 and every one is covered
   without contradicting the card.
 - **Reject** when a criterion is untraced, untestable, unfaithful or cites no
-  card behavior, the set is narrower than the card, the implementation drops a
-  recorded constraint, or a criterion is unplanned, hand-waved, contradicted or
+  card behavior, the set is narrower than the card, the story shape fails (§3),
+  the implementation drops a recorded constraint, or a criterion is unplanned, hand-waved, contradicted or
   without a proof path — name it. Falsify checkable plan claims against the repo
   only when the plan asserts something already exists; do not rewrite the plan.
 

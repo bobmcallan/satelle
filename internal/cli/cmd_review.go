@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/agentstep"
+	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/reviewscore"
@@ -27,16 +28,27 @@ var newReviewJudge = func(cmd *cobra.Command, binding string) (reviewscore.Judge
 	if err != nil {
 		return nil, "", err
 	}
-	eff, err := requireAgents(a)
+	j, err := newCaseJudge(a, binding, scoreInjected(a.Config.Validate.Injected, binding, scoreSeatBudget))
 	if err != nil {
 		return nil, "", err
 	}
+	return j, j.Adapter(), nil
+}
+
+// newCaseJudge builds the isolated reviewer path a real gate uses for one
+// agents.toml binding, under the injected config given. `review score` and
+// `substrate review` both judge through it.
+func newCaseJudge(a *app.App, binding string, injected config.InjectedConfig) (*agentstep.CaseJudge, error) {
+	eff, err := requireAgents(a)
+	if err != nil {
+		return nil, err
+	}
 	rules, _ := condenseRules(a.PlaneDir())
-	j, err := agentstep.NewCaseJudge(agentstep.CaseJudgeOptions{
+	return agentstep.NewCaseJudge(agentstep.CaseJudgeOptions{
 		Root:     a.RepoRoot,
 		Binding:  binding,
 		Docs:     a.Store.DocIndex,
-		Injected: scoreInjected(a.Config.Validate.Injected, binding, scoreSeatBudget),
+		Injected: injected,
 		Rules:    rules,
 		Offload:  diffOffloader(a),
 		Resolve: func(name string) (config.AgentBinding, bool) {
@@ -47,10 +59,6 @@ var newReviewJudge = func(cmd *cobra.Command, binding string) (reviewscore.Judge
 			return eff.Agents.EffectiveBinding(b, config.UseOneShot), true
 		},
 	})
-	if err != nil {
-		return nil, "", err
-	}
-	return j, j.Adapter(), nil
 }
 
 // scoreSeatBudget is `review score --seat-budget`: -1 judges the seat under the

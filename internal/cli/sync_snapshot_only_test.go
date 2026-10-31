@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/snapsync"
 )
 
 // `sync config push --snapshot-only` and `sync documents push --snapshot-only`
@@ -298,23 +298,23 @@ func TestRefusedPushNamesReconcile(t *testing.T) {
 // but the hosted copy holds a file this tree and its base lack — refuse the push.
 // This machine changed nothing against its base, so the pull is the way forward.
 func TestPendingPathsRefusalNamesPull(t *testing.T) {
-	ts, _ := newSnapServer(t)
+	ts, f := newSnapServer(t)
 	seedCred(t, ts.URL)
 	a := newSnapMachine(t, ts.URL)
 	a.write("skills/x.md", "x\n")
-	a.write("skills/y.md", "y\n")
 	a.pushConfig()
+	// A snapshot naming skills/y.md whose blob never landed: B's deploy leaves the
+	// path incomplete, so its recorded base is at the hosted version without it.
+	v := f.forgeRecord(t, "skills", 1, map[string]string{"skills/x.md": snapsync.SHA([]byte("x\n")), "skills/y.md": snapsync.SHA([]byte("y\n"))})
 
 	b := newSnapMachine(t, ts.URL)
 	b.deploy()
-	b.remove("skills/y.md")
 	base, ok := b.base("skills")
-	if !ok {
-		t.Fatal("B has no recorded base after its deploy")
+	if !ok || base.Version != v {
+		t.Fatalf("B's base = %+v (recorded %v), want version %d", base, ok, v)
 	}
-	delete(base.Files, "skills/y.md")
-	if err := hosted.SaveAreaBase(b.url, "probe", b.repo, "skills", base); err != nil {
-		t.Fatal(err)
+	if _, has := base.Files["skills/y.md"]; has || b.has("skills/y.md") {
+		t.Fatalf("test premise: the deploy took the incomplete skills/y.md: %+v", base)
 	}
 
 	_, err := b.tryPushConfig()

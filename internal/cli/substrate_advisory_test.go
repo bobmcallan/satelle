@@ -192,7 +192,7 @@ func substrateHookRepo(t *testing.T, skill, synced string) string {
 	if err := hosted.SaveAreaBase(config.DefaultHostedServer, "p", repo, "skills", base); err != nil {
 		t.Fatal(err)
 	}
-	if err := syncstate.RecordSubstrate(config.GlobalDir(), repo, map[string]string{"skills": snapsync.StateInStep}, time.Now()); err != nil {
+	if err := syncstate.RecordSubstrate(config.GlobalDir(), repo, map[string]syncstate.AreaCheck{"skills": {State: snapsync.StateInStep}}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	return repo

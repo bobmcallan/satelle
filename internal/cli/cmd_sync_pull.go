@@ -40,8 +40,8 @@ nothing; to bring in what only the hosted copy changed, run "satelle sync pull".
 A push is refused while the hosted copy is ahead of this machine (the refusal
 names "satelle sync pull" for an area that is only behind and "satelle sync
 reconcile" for one changed on both machines) or while a conflict copy is
-unmerged. --dry-run, --force, --prune and --server mean what they mean on the
-per-area pushes.`,
+unmerged. --dry-run, --force, --prune, --verbose and --server mean what they
+mean on the per-area pushes.`,
 		Args:        cobra.NoArgs,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -52,12 +52,26 @@ per-area pushes.`,
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview what each opted-in area would push without contacting the server.")
 	cmd.Flags().Bool("prune", false, pruneFlagUsage)
 	cmd.Flags().Bool("force", false, forceFlagUsage)
+	cmd.Flags().Bool("verbose", false, verboseReachabilityUsage)
 	return cmd
+}
+
+// refuseIfPushOff is the one guard every hosted push verb calls first, before
+// it resolves a server or opens a client: a machine whose global config turns
+// push off makes no hosted write. Pulls never call it.
+func refuseIfPushOff(verb string) error {
+	if off, setting := config.MachinePushOff(); off {
+		return fmt.Errorf("%s refused: hosted push is off for this machine (%s); pulls still run", verb, setting)
+	}
+	return nil
 }
 
 func runSyncPush(cmd *cobra.Command, serverArg string, dryRun bool) error {
 	a, err := appFrom(cmd)
 	if err != nil {
+		return err
+	}
+	if err := refusePullOnly(a.RepoRoot); err != nil {
 		return err
 	}
 	if optedIn, err := syncOptedIn(a.Config); err != nil {
@@ -137,13 +151,14 @@ func runSyncPull(cmd *cobra.Command, serverArg string, fastForwardOnly bool) err
 
 	rc := &reconcileApply{areas: map[string]bool{}, fastForward: true, refused: map[string]string{}}
 	refusedNext := map[string]string{}
-	if err := settleHeadsOnly(cmd, cfg, repoRoot, dataDir, server, project, client, statuses, rc, refusedNext); err != nil {
+	unsettled := map[string]bool{}
+	if err := settleHeadsOnly(cmd, cfg, repoRoot, dataDir, server, project, client, statuses, rc, refusedNext, unsettled); err != nil {
 		return fmt.Errorf("sync pull: %w", err)
 	}
 	var behind []string
 	documents := false
 	for _, st := range statuses {
-		if st.State != snapsync.StateBehind || rc.refused[st.Area] != "" {
+		if st.State != snapsync.StateBehind || rc.refused[st.Area] != "" || unsettled[st.Area] {
 			continue
 		}
 		behind = append(behind, st.Area)
@@ -185,6 +200,9 @@ func runSyncPull(cmd *cobra.Command, serverArg string, fastForwardOnly bool) err
 				noop("%s: %s — nothing to pull; next: %s", st.Area, st.State, nextCommand(st))
 			}
 		case snapsync.StateBehind:
+			if unsettled[st.Area] {
+				continue
+			}
 			if why := rc.refused[st.Area]; why != "" {
 				next := refusedNext[st.Area]
 				if next == "" {
@@ -237,11 +255,22 @@ func runSyncPull(cmd *cobra.Command, serverArg string, fastForwardOnly bool) err
 // local set is empty, so the pull that follows can overwrite nothing: a file that
 // appeared since the probe leaves the area untouched. An area it cannot settle is
 // recorded in rc.refused, with the command that moves it on in refusedNext.
-func settleHeadsOnly(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir, server, project string, client *hosted.Client, statuses []snapsync.AreaStatus, rc *reconcileApply, refusedNext map[string]string) error {
+//
+// A pull-only machine publishes no snapshot: each heads-only area is reported
+// and recorded in unsettled, and stays heads-only until a pushing machine
+// settles it.
+func settleHeadsOnly(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir, server, project string, client *hosted.Client, statuses []snapsync.AreaStatus, rc *reconcileApply, refusedNext map[string]string, unsettled map[string]bool) error {
 	var drivers *substrateDrivers
 	for _, st := range statuses {
 		if st.State != snapsync.StateBehind || st.Effective != 0 {
 			continue
+		}
+		if err := refusePullOnly(repoRoot); errors.Is(err, errPullOnly) {
+			fmt.Fprintf(cmd.OutOrStdout(), "heads-only area %s not settled: %v\n", st.Area, err)
+			unsettled[st.Area] = true
+			continue
+		} else if err != nil {
+			return err
 		}
 		if drivers == nil {
 			var err error

@@ -30,7 +30,12 @@ type MirrorServer struct {
 	InstanceID string
 	// LogPath is the satelled server.log shown next to a standing push failure.
 	LogPath string
-	hub     *hub
+	// FetchStory, when set, brings back the history of a story the checkout at
+	// repoRoot left on the server (sty_0dc600e1). A story page whose story the
+	// mirror holds no event of calls it, then reads the mirror again. satelled
+	// sets it; nil leaves the page to what the mirror holds.
+	FetchStory func(ctx context.Context, repoRoot, id string) error
+	hub        *hub
 }
 
 // partitionVM is one workspace row on the mirror landing. Counts mirror the
@@ -91,7 +96,7 @@ func NewMirrorWithInstance(m *mirror.Store, instanceID string) *MirrorServer {
 
 // NewMirrorHooks is NewMirrorWithInstance plus an optional OnIngest hook
 // (satelled hosted push; sty_c526753a). Tests and NewMirror pass nil.
-func NewMirrorHooks(m *mirror.Store, instanceID string, onIngest func(string)) *MirrorServer {
+func NewMirrorHooks(m *mirror.Store, instanceID string, onIngest func(string, mirror.IngestOrigin)) *MirrorServer {
 	serverStart = time.Now()
 	h := newHub()
 	mux := http.NewServeMux()
@@ -407,7 +412,7 @@ func (s *MirrorServer) itemFragment(group string) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		d, _, err := mirrorLoadDetail(r.Context(), s.Store, repoKey, group, id)
+		d, err := s.loadDetail(r.Context(), repoKey, group, id)
 		if err != nil {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
@@ -425,7 +430,7 @@ func (s *MirrorServer) itemDetail(group string) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		d, _, err := mirrorLoadDetail(r.Context(), s.Store, repoKey, group, id)
+		d, err := s.loadDetail(r.Context(), repoKey, group, id)
 		if err != nil {
 			http.Error(w, "not found: "+id, http.StatusNotFound)
 			return
@@ -433,6 +438,24 @@ func (s *MirrorServer) itemDetail(group string) http.HandlerFunc {
 		d.Standalone = true
 		mirrorRender(w, "detailPage", s.projectBase(slug), d)
 	}
+}
+
+// loadDetail is mirrorLoadDetail, with the history of a story the mirror holds no
+// event of fetched first when s.FetchStory is set. A fetch that fails leaves the
+// page to what the mirror holds.
+func (s *MirrorServer) loadDetail(ctx context.Context, repoKey, group, id string) (detailData, error) {
+	d, _, err := mirrorLoadDetail(ctx, s.Store, repoKey, group, id)
+	if err != nil || group != "story" || len(d.Events) > 0 || s.FetchStory == nil {
+		return d, err
+	}
+	root := mirrorIdentity(ctx, s.Store, repoKey).RepoRoot
+	if root == "" || s.FetchStory(ctx, root, id) != nil {
+		return d, nil
+	}
+	if fetched, _, ferr := mirrorLoadDetail(ctx, s.Store, repoKey, group, id); ferr == nil {
+		return fetched, nil
+	}
+	return d, nil
 }
 
 func (s *MirrorServer) workflowFragment(w http.ResponseWriter, r *http.Request) {

@@ -56,6 +56,8 @@ type passReport struct {
 const (
 	conflictLocalAhead  = "local copy is ahead of hosted"
 	conflictPullRefused = "pull refused: local and hosted differ"
+	// A forced pull wrote the hosted copy onto the row and left the chain alone.
+	conflictForcedHostedWins = "forced pull: the local chain disagrees with the hosted row; the row takes the hosted copy, the chain is unchanged"
 )
 
 // storyOutcome is the story disagreements one pass found: Conflicts maps a story
@@ -171,6 +173,9 @@ func runPagedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer, 
 		chain: newChainPull(client, server, project, a.RepoRoot, errw),
 	}
 	defer p.chain.close()
+	if err := holdHosted(ctx, a, p.chain, time.Now().UTC()); err != nil {
+		return passReport{}, err
+	}
 	var opts hosted.SnapshotOptions
 	positioned := stored.Token != "" || stored.ResumePageToken != ""
 	discard := ""
@@ -228,6 +233,10 @@ func runPagedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer, 
 	now := time.Now().UTC()
 	if err := p.settle(ctx, now); err != nil {
 		return p.rep, err
+	}
+	p.chain.flush()
+	if _, err := trimHostedHistory(ctx, a, server, project, now); err != nil {
+		return p.rep, fmt.Errorf("trim the local history: %w", err)
 	}
 	if res.SyncToken == "" {
 		// The server issued no token (it does not page yet): nothing to send

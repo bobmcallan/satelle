@@ -68,7 +68,9 @@ func refuseBrokenAgentsOnEngage(ctx context.Context, current workitem.Item, toSt
 	// command long before this point. The refusal is rendered from the shared
 	// finding vocabulary, so the identifiers and remediation an operator sees here
 	// are the SAME ones `satelle doctor` prints for the same repo (sty_e9da28e2).
-	report := agentvalidate.Validate(agentsLayer, agentsVars, wfs)
+	// Node allocations are judged on the story's own governing route only: a
+	// broken seat on a lane it never walks must not refuse it (sty_259572f6).
+	report := agentvalidate.ValidateGoverning(agentsLayer, agentsVars, wfs, current)
 	if report.OK() {
 		return nil
 	}

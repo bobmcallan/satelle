@@ -30,6 +30,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/storyfold"
 	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -66,7 +67,7 @@ remote reads. Skipped entirely unless the workstate area is opted in.`,
 	}
 
 	var pushServer string
-	var dryRun, full bool
+	var dryRun, full, pushVerbose bool
 	push := &cobra.Command{
 		Use:         "push [story-or-epic-id...]",
 		Short:       "Replicate opted-in work-state areas to the bound hosted project",
@@ -87,12 +88,13 @@ Given story ids or an epic id it pushes only those, whole, leaving the cursor.
 A story in progress is held until its engagement tree is clean and HEAD is on a
 remote-tracking ref ([sync] hold_unpushed = false turns this off).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSyncWorkstatePush(cmd, pushServer, dryRun, full, args...)
+			return runSyncWorkstatePush(cmd, pushServer, dryRun, full, pushVerbose, args...)
 		},
 	}
 	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	push.Flags().BoolVar(&dryRun, "dry-run", false, "List which areas would be pushed, and which stories would be held, without contacting the server.")
 	push.Flags().BoolVar(&full, "full", false, "Ignore the stored cursor and push the complete set (then advance the cursor).")
+	push.Flags().BoolVar(&pushVerbose, "verbose", false, verboseReachabilityUsage)
 	group.AddCommand(push)
 
 	var pullServer string
@@ -100,7 +102,7 @@ remote-tracking ref ([sync] hold_unpushed = false turns this off).`,
 	pull := &cobra.Command{
 		Use:         "pull [story-or-epic-id...]",
 		Short:       "Restore opted-in work-state from the bound hosted project into the local store",
-		Annotations: needsStore(),
+		Annotations: hostedOrigin(needsStore()),
 		Args:        cobra.ArbitraryArgs,
 		Long: `pull fetches the bound hosted project's stories, executions and ledger
 entries for opted-in [sync] areas, and merges them into the local DB by
@@ -131,7 +133,7 @@ With story ids or an epic id it pulls only those. Requires "satelle project bind
 	snap := &cobra.Command{
 		Use:         "snapshot [story-or-epic-id...]",
 		Short:       "Pull current hosted work-state into the local store (lazy Snapshot)",
-		Annotations: needsStore(),
+		Annotations: hostedOrigin(needsStore()),
 		Args:        cobra.ArbitraryArgs,
 		Long: `snapshot fetches the bound project's work-state via gRPC Sync/Snapshot and
 materializes opted-in areas into the local store. Local-only areas are a no-op.
@@ -155,6 +157,8 @@ Story or epic ids scope it as for pull.`,
 	snap.Flags().BoolVar(&snapForce, "force", false, "Upsert hosted rows even when the local copy or ledger is newer.")
 	group.AddCommand(snap)
 	group.AddCommand(newSyncWorkstateRechainCmd())
+	group.AddCommand(newSyncWorkstateFetchCmd())
+	group.AddCommand(newSyncWorkstateFollowCmd())
 
 	return group
 }
@@ -170,6 +174,9 @@ func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string, force bool, 
 	}
 	if len(optIn) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "workstate snapshot: all areas local, nothing to pull")
+		return nil
+	}
+	if repoNotBound(cmd.OutOrStdout(), a, "workstate snapshot") {
 		return nil
 	}
 	sc, err := resolveScope(cmd.Context(), a, ids, false)
@@ -234,6 +241,7 @@ func pushMirrorAfterWorkstate(ctx context.Context, a *app.App, upserted int) err
 	if snap == nil {
 		return nil
 	}
+	snap.Origin = mirror.OriginHosted
 	return postUISnapshotContext(pushCtx, ep, snap)
 }
 
@@ -243,9 +251,26 @@ var (
 	workstateLedgerChunk = 1000
 )
 
-func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full bool, ids ...string) (retErr error) {
+// verboseReachabilityUsage is the one help text every push that reaches the
+// work-state leg gives --verbose.
+const verboseReachabilityUsage = "List every story whose code reachability could not be checked, not just a count."
+
+// verboseRequested reads --verbose from the command that is running. A command
+// that does not define it (a test's bare command) reads as false.
+func verboseRequested(cmd *cobra.Command) bool {
+	f := cmd.Flags().Lookup("verbose")
+	return f != nil && f.Value.String() == "true"
+}
+
+func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, verbose bool, ids ...string) (retErr error) {
+	if err := refuseIfPushOff("sync workstate push"); err != nil {
+		return err
+	}
 	a, err := appFrom(cmd)
 	if err != nil {
+		return err
+	}
+	if err := refusePullOnly(a.RepoRoot); err != nil {
 		return err
 	}
 	server := resolveServer(serverArg)
@@ -258,7 +283,12 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	if err != nil {
 		return err
 	}
+	ws, err := config.WorkstateScope(a.Config)
+	if err != nil {
+		return err
+	}
 	if len(optIn) == 0 {
+		_ = syncstate.RecordScope(config.GlobalDir(), a.RepoRoot, ws.String())
 		fmt.Fprintln(out, "No work-state to push — every work-state area is local. Set [sync] stories|ledger|executions = personal|shared to opt in.")
 		return nil
 	}
@@ -288,6 +318,9 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 			fmt.Fprintf(out, "  scoped to %d id(s): %s\n", len(sc.IDs), strings.Join(sc.IDs, ", "))
 		}
 		return dryRunHolds(cmd, a, optIn, out, server)
+	}
+	if repoNotBound(out, a, "workstate push") {
+		return nil
 	}
 
 	project, err := resolveBoundProject(a.Config, a.RepoRoot)
@@ -322,7 +355,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	// make the repo "pushed".
 	recordOK := func() {
 		if scope == nil {
-			recordWorkstatePush(a.RepoRoot, true, "")
+			recordWorkstatePush(a.RepoRoot, true, "", ws.String())
 		}
 	}
 	// A scoped push sends its stories whole and reads no cursor: the stored cursor
@@ -381,11 +414,20 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 			return err
 		}
 	}
+	// In hosted mode a story's row leaves only when this machine authored it
+	// (sty_0dc600e1): a row rewritten by a pull, or one whose updated_at moved with
+	// no local append, is the server's copy and is not sent back.
+	hostedMode := verb.HostedMode(a.Config)
+	if hostedMode && optIn["stories"] {
+		if batch.Items, err = authoredItems(cmd.Context(), a, batch.Items, plan, scope); err != nil {
+			return err
+		}
+	}
 
 	if len(batch.Items) == 0 && len(batch.Ledger) == 0 && len(plan) == 0 {
 		if hadCursor && !full {
 			fmt.Fprintf(out, "Work-state up to date on %s — no records changed since the last push.\n", server)
-			recordWorkstatePush(a.RepoRoot, true, "")
+			recordWorkstatePush(a.RepoRoot, true, "", ws.String())
 			return nil
 		}
 		fmt.Fprintln(out, "No work-state rows to push (opted-in areas are empty).")
@@ -437,7 +479,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 			if res, herr = classifyHolds(cmd.Context(), a, batch.Items, classifyRows); herr != nil {
 				return herr
 			}
-			for _, l := range res.lines() {
+			for _, l := range res.lines(verbose) {
 				fmt.Fprintln(out, l)
 			}
 		}
@@ -466,10 +508,11 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	}
 	if appendErr != nil {
 		if errors.Is(appendErr, hosted.ErrLoginRequired) {
-			recordWorkstatePush(a.RepoRoot, false, appendErr.Error())
+			recordWorkstatePush(a.RepoRoot, false, appendErr.Error(), ws.String())
 			return appendErr
 		}
-		recordOK = func() { recordWorkstatePush(a.RepoRoot, false, appendErr.Error()) }
+		fmt.Fprintln(out, appendErr.Error())
+		recordOK = func() { recordWorkstatePush(a.RepoRoot, false, appendErr.Error(), ws.String()) }
 		defer func() {
 			if retErr == nil {
 				retErr = appendErr
@@ -485,7 +528,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	// Chunked push; cursor advances only after every chunk confirms (AC3).
 	// Prefer a single POST when both sides fit in one chunk (preserves the
 	// small-batch shape tests and production already rely on).
-	if len(batch.Items) > 0 && earliestHeld.IsZero() {
+	if len(batch.Items) > 0 && earliestHeld.IsZero() && !hostedMode {
 		maxItems = maxItemUpdatedAt(batch.Items)
 	}
 	var totalItems, totalLedger int
@@ -498,7 +541,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		}
 		res, perr := client.Apply(cmd.Context(), project, hosted.WorkstateIngest{Items: items, Ledger: ledgerRaw})
 		if perr != nil {
-			recordWorkstatePush(a.RepoRoot, false, perr.Error())
+			recordWorkstatePush(a.RepoRoot, false, perr.Error(), ws.String())
 			if errors.Is(perr, hosted.ErrLoginRequired) {
 				return perr
 			}
@@ -535,6 +578,11 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		if err := apply(p.items, p.ledger); err != nil {
 			return err
 		}
+		if hostedMode {
+			if err := clearAuthored(cmd.Context(), a, p.items); err != nil {
+				return fmt.Errorf("clear pushed story marks: %w", err)
+			}
+		}
 	}
 	if scope != nil {
 		fmt.Fprintf(out, "scoped push to project %q on %s: %d item(s), %d ledger entr(y/ies).\n",
@@ -561,8 +609,8 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	return nil
 }
 
-func recordWorkstatePush(repoPath string, success bool, reason string) {
-	_ = syncstate.RecordPush(config.GlobalDir(), repoPath, success, reason, "", time.Now())
+func recordWorkstatePush(repoPath string, success bool, reason, scope string) {
+	_ = syncstate.RecordPush(config.GlobalDir(), repoPath, success, reason, scope, time.Now())
 }
 
 func chunkRaw(in []json.RawMessage, size int) [][]json.RawMessage {
@@ -640,6 +688,9 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 		if sc.scoped() {
 			fmt.Fprintf(out, "  scoped to %d id(s): %s\n", len(sc.IDs), strings.Join(sc.IDs, ", "))
 		}
+		return nil
+	}
+	if repoNotBound(out, a, "workstate pull") {
 		return nil
 	}
 
@@ -909,7 +960,7 @@ func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool,
 			if kerr != nil {
 				return applied, nItems, nLedger, nKept, fmt.Errorf("compare item %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hi.ID, nItems, nLedger, kerr)
 			}
-			if keep {
+			if keep && chain.keepsLocal(it) {
 				nKept++
 				if it.Kind == workitem.KindStory {
 					if workstateItemsDiffer(local, it) {
@@ -926,7 +977,8 @@ func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool,
 		// Upsert, which preserves stored status (sty_38915987); status is
 		// applied below after the hosted ledger lands.
 		upsert := a.Store.Stories.Upsert
-		if force {
+		if force || chain.remote(it) {
+			// A story whose history stays on the server is the server's row.
 			upsert = a.Store.Stories.UpsertForce
 		}
 		// The status the row holds now, before UpsertForce can replace it: the
@@ -966,61 +1018,65 @@ func upsertWorkstatePage(ctx context.Context, a *app.App, optIn map[string]bool,
 		}
 	}
 	// The events of a story are not on the page: the hosted chain of each story it
-	// applied is read before the rows are folded, so none is seeded with a genesis
-	// the hosted chain does not hold.
-	hostedChain, cerr := chain.materialize(ctx, a, optIn, applied, out, now)
-	if cerr != nil {
+	// applied is read before the rows are folded.
+	if cerr := chain.materialize(ctx, a, optIn, applied, out, now); cerr != nil {
 		return applied, nItems, nLedger, nKept, fmt.Errorf("%w — re-run is safe (upsert-by-id)", cerr)
 	}
+	folded, rerr := leaveRemote(ctx, a, chain, applied)
+	if rerr != nil {
+		return applied, nItems, nLedger, nKept, fmt.Errorf("%w — re-run is safe (upsert-by-id)", rerr)
+	}
 	// The page's events are in: the rows it applied are now a cache of their chains.
-	if err := foldPulledStories(ctx, a, applied, hostedChain, priorStatus, out, force, now); err != nil {
+	if err := foldPulledStories(ctx, a, folded, priorStatus, out, force, now); err != nil {
 		return applied, nItems, nLedger, nKept, fmt.Errorf("%w — re-run is safe (upsert-by-id)", err)
 	}
 	return applied, nItems, nLedger, nKept, nil
 }
 
 // foldPulledStories brings the stories a pull applied under their chains
-// (sty_d84be8bc): a story whose chain predates the fold is seeded from the
-// hosted row it arrived with, then its cached row is rebuilt from the fold. The
+// (sty_d84be8bc): each cached row is rebuilt from the fold of its chain. The
 // chain decides status — a transition that disagrees with the hosted row's status
 // moves the row, and a story with no transition takes the hosted row's — so no
 // separate status forwarding exists. A task or execution is not folded.
 //
-// A forced pull lets the hosted copy win. The chain keeps any event only this
-// machine made (a ledger row is never rewritten), so the definition and tags the
-// hosted row carries are set back by an event of their own, after which the
-// rebuild lands them on the row.
+// The pass appends nothing to a chain (sty_199ad82b): a chain moves only by the
+// hosted events it took. A story whose hosted chain was not read is
+// left as its row, never seeded here; a seed would be a local-only event that
+// forks the chain and blocks the next push.
 //
-// A story whose hosted chain was read (hostedChain) is never seeded: its chain is
-// the hosted one, and a seed would fork it.
+// A forced pull lets the hosted copy win on the row. When the chain's definition
+// or tags disagree with the hosted row, the row keeps the hosted copy UpsertForce
+// wrote, the chain is left as it is, and the disagreement is recorded as a
+// conflict rather than an event made up to set the hosted copy back.
 //
 // A story that was done or cancelled here and whose rebuild leaves it in a
 // non-terminal status is named in out — the story, both statuses and the event
 // that set the new one — whichever path wrote the row first (priorStatus is read
 // before either), so a pull never moves a closed story silently.
-func foldPulledStories(ctx context.Context, a *app.App, applied []workitem.Item, hostedChain map[string]bool, priorStatus map[string]string, out *storyOutcome, force bool, now time.Time) error {
+func foldPulledStories(ctx context.Context, a *app.App, applied []workitem.Item, priorStatus map[string]string, out *storyOutcome, force bool, now time.Time) error {
 	for _, hosted := range applied {
 		if hosted.Kind != workitem.KindStory {
 			continue
-		}
-		if !hostedChain[hosted.ID] {
-			if _, err := storyfold.SeedItem(ctx, a.Store.Ledger, hosted, storyfold.StatusFromChain, now); err != nil {
-				return fmt.Errorf("seed %s from the hosted row: %w", hosted.ID, err)
-			}
 		}
 		row, err := a.Store.Stories.Get(ctx, hosted.ID)
 		if err != nil {
 			return fmt.Errorf("read %s after pull: %w", hosted.ID, err)
 		}
+		st, _, ferr := verb.FoldStory(ctx, a.Store.Ledger, row)
+		if ferr != nil {
+			return fmt.Errorf("fold %s: %w", hosted.ID, ferr)
+		}
 		if force {
-			st, _, ferr := verb.FoldStory(ctx, a.Store.Ledger, row)
-			if ferr != nil {
-				return fmt.Errorf("fold %s: %w", hosted.ID, ferr)
+			if _, differs := verb.HostedWinsInput(st, hosted, "sync workstate pull --force"); differs {
+				out.conflict(hosted.ID, conflictForcedHostedWins)
+				continue
 			}
-			if in, ok := verb.HostedWinsInput(st, hosted, "sync workstate pull --force"); ok {
-				if _, aerr := a.Store.Ledger.Append(ctx, in, now); aerr != nil {
-					return fmt.Errorf("record the hosted copy winning on %s: %w", hosted.ID, aerr)
-				}
+		}
+		// A chain that sets no status leaves the row's to the cache: it takes the
+		// hosted row's, which Upsert kept off an existing row.
+		if !st.Defined[storyfold.FieldStatus] && hosted.Status != "" && row.Status != hosted.Status {
+			if row, err = a.Store.Stories.SetStatus(ctx, hosted.ID, hosted.Status, now); err != nil {
+				return fmt.Errorf("take the hosted status of %s: %w", hosted.ID, err)
 			}
 		}
 		rebuilt, err := verb.RebuildRow(ctx, a.Store.Stories, a.Store.Ledger, row, now)
@@ -1031,11 +1087,15 @@ func foldPulledStories(ctx context.Context, a *app.App, applied []workitem.Item,
 		if !had || prior == rebuilt.Status || !verb.EndsEngagementForGood(ctx, rebuilt, prior) || verb.EndsEngagementForGood(ctx, rebuilt, rebuilt.Status) {
 			continue
 		}
-		st, _, ferr := verb.FoldStory(ctx, a.Store.Ledger, rebuilt)
+		st, _, ferr = verb.FoldStory(ctx, a.Store.Ledger, rebuilt)
 		if ferr != nil {
 			return fmt.Errorf("fold %s: %w", hosted.ID, ferr)
 		}
-		out.moved(fmt.Sprintf("%s was %s and the pull moved it to %s (set by event %s)", hosted.ID, prior, rebuilt.Status, st.StatusEvent))
+		by := "the hosted row"
+		if st.StatusEvent != "" {
+			by = "event " + st.StatusEvent
+		}
+		out.moved(fmt.Sprintf("%s was %s and the pull moved it to %s (set by %s)", hosted.ID, prior, rebuilt.Status, by))
 	}
 	return nil
 }
@@ -1380,7 +1440,7 @@ func dryRunHolds(cmd *cobra.Command, a *app.App, optIn map[string]bool, out io.W
 		fmt.Fprintln(out, "No story would be held.")
 		return nil
 	}
-	for _, l := range res.lines() {
+	for _, l := range res.lines(true) {
 		fmt.Fprintln(out, l)
 	}
 	return nil

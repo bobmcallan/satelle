@@ -1,3 +1,162 @@
+## [0.0.815] - 2026-10-31
+
+### Added
+- `satelle substrate review` gives any repo a review of its substrate, changing no file: every principle, skill, workflow step and gate, and agent seat is listed with its origin and the evidence the repo's story history holds for it — rejections and their reasons, amendments, parks, rework, flaky (no-verdict) reruns, panel dissent, per model — plus every constitution rule. One reviewer dispatch (`--binding`, default `reviewer`) gives each item a disposition (remove, reduce, keep or conflict) and each rule a finding; anything it omits reads "not judged". The report prints as markdown (or `--json`) and is saved outside the tree (`--out`). (sty_08f747ad)
+- `satelle substrate review --apply <item>` raises one substrate story per chosen item in the reviewed repo, so every change goes through its substrate lane; it edits nothing and refuses embedded and team items. `--from <report.json>` applies a saved report without judging again. (sty_08f747ad)
+
+## [serve-v0.0.254] - 2026-10-31
+
+### Changed
+- The service binary carries the substrate review inventory and help. (sty_08f747ad)
+
+## [0.0.814] - 2026-10-31
+
+### Added
+- Two embedded principles make behaviour-driven stories satelle's baseline. `satelle-story-shape`: a story card states one behaviour (role, context, outcome), its acceptance criteria are the technical requirements that meet it, each provable at the gate that judges it, and evidence that exists only after release is an AC of the release step, never of the code step. `satelle-start-small`: a change ships as the smallest slice that proves its behaviour, and scope, concurrency or rules grow only once the ledger shows the smaller form held. (sty_bcd344fd)
+- A third principle residency, `principles:seat`: such a principle is injected into every dispatched seat whose principles selector includes the session set (planner, coder, reviewers and every other cold-start agent) and never into the SessionStart context, so it costs nothing against the harness's SessionStart limit. Both new principles are seat-resident. (sty_bcd344fd)
+- The embedded `satelle-story-plan-review` and `ready` skills reject a story whose card is not a behaviour, whose ACs are not each traceable to it and provable at their gate, or whose slice is not the smallest that proves it. (sty_bcd344fd)
+- `satelle doctor` reports a repo principle or skill that shadows `satelle-story-shape` or `satelle-start-small` by name with a different body, or restates a passage of either. (sty_bcd344fd)
+
+## [serve-v0.0.253] - 2026-10-31
+
+### Changed
+- The service binary carries the seat-residency tier and the updated embedded principles, skills and help. (sty_bcd344fd)
+
+## [0.0.813] - 2026-10-31
+
+### Fixed
+- Engaging a story is no longer refused by a performer-seat allocation problem on a workflow lane the story never walks. The engage check now validates only the route that governs the story (the category's own `done.toml` table, else `*`), so a substrate story still engages and closes while the `*` lane's planner or coder has no context channel; a story governed by `*` is still refused, binding-level checks still run for every story, and `satelle doctor` and `satelle agent validate` still check every route. (sty_259572f6)
+
+### Added
+- `satelle doctor` and `satelle agent validate` warn when a repo's `agents.local.toml` (or workspace layer) restates a seat's `tools` in another adapter's tool names than the adapter its profile resolves to, e.g. pi's `read,grep` on a seat now running the Claude CLI. The warning names the repo, the layer file, the seat, both adapters and the mismatched names; the heal is to restate the tools in the resolved adapter's names or drop the override. (sty_259572f6)
+
+## [serve-v0.0.252] - 2026-10-31
+
+### Changed
+- The service binary carries the per-adapter tool vocabulary and the layered agents loader's repo root used by the foreign-tool-name warning. (sty_259572f6)
+
+## [0.0.812] - 2026-10-31
+
+### Fixed
+- `satelle init --all` counts a registered repo as stale whenever its deployed stamp is below the running binary, not only when its scaffolding changed, and `--yes` heals it exactly as a per-repo `satelle init` would, including the release's init-heals migration, so no repo is left refusing store-backed commands for a breaking-release stamp. Within `satelle init` the stamp is written before validation and sync push run, so one run no longer warns about the stamp it is replacing. Re-stamping clears a recorded push failure that was the breaking-stamp refusal, and `satelle doctor`'s fix line for such a `sync.failing` now names `satelle init`. When init changes synced substrate in a repo whose sync is not local, it publishes those areas with `satelle sync push` after re-stamping; if that push fails, its output ends with one line naming the changed areas and the push command. (sty_2e629e93)
+
+## [serve-v0.0.251] - 2026-10-31
+
+### Changed
+- The service binary carries the sync-state record and health finding changes that let a stamp-refusal push failure be cleared on re-stamp and point at `satelle init`. (sty_2e629e93)
+
+## [0.0.811] - 2026-10-30
+
+### Added
+- A machine can be marked pull-only for its bound project: `satelle project pull-only on|off`, or `satelle project bind --pull-only` / `--no-pull-only`, stored as `[sync] pull_only = true` in the repo's machine-local `.satelle/satelle.local.toml` (never synced). On a pull-only machine `satelle sync push`, `satelle sync workstate push`, `satelle sync documents push` refuse with a message naming the setting and how to clear it, and so do the pushes that run through them (the web service's background push, node runs), while pulls still run; `satelle sync status` and `satelle project show` show the machine as pull-only. This is per repo binding; `[hosted] push = false` (0.0.803) still turns push off for every repo on the machine. (sty_07eefabe)
+
+## [serve-v0.0.250] - 2026-10-30
+
+### Changed
+- The service binary reads `[sync] pull_only` as a reserved switch, never as a sync area. (sty_07eefabe)
+
+## [0.0.810] - 2026-10-30
+
+### Fixed
+- In hosted mode the local web UI lists every story this machine is working, including stories engaged from a story worktree (`satelle story worktree`). Those engagements had recorded no location, so 0.0.808 dropped every in-flight worktree story from "This machine's stories" and from the held set. A worktree engagement now records this machine's location, and existing rows written without one count as this machine's. The page's server links now go to the project page that exists on satelle.dev (`/app/p/<project>`), and the progress, epics and members links are not shown until the server serves those pages. (sty_9ece9394)
+
+## [serve-v0.0.249] - 2026-10-30
+
+### Changed
+- The service binary lists worktree-engaged stories in hosted mode and links only to server pages that exist. (sty_9ece9394)
+
+## [0.0.809] - 2026-10-30
+
+### Fixed
+- When a repo's deployed stamp is behind a breaking release, the session-start notice you see names that release and `satelle init`, ahead of any sync notice. It no longer reports only "settings unpushed" while the next store-backed command is about to refuse the repo. (sty_34808cbe)
+
+## [0.0.808] - 2026-10-30
+
+### Changed
+- Once you are signed in and the repo is bound (an explicit `[sync] project`), the server is the store of record. The local store keeps full history only for the stories this machine has engaged and those changed within `[sync] recent_window` (default `168h`); other stories stay as rows, and their history is fetched from the server when you open one (`satelle story get`, `satelle story route`, the web UI story page). Changes from other machines arrive through the story chain subscription instead of a periodic full pull, and a snapshot pass reads the hosted chain only for held stories. In hosted mode the local web UI lists this machine's stories and links the full story list, progress, epics and members views to the server. Not signed in, or unbound: the full local store and UI are unchanged.
+- In hosted mode the web service's repair pass issues no work-state push, and a push sends item rows only for stories with a local append the server has not confirmed. A row whose Apply failed is resent, and a story changed only by pulled events is never sent.
+
+### Fixed
+- Work done while the server is unreachable is kept: on reconnect, a story the server moved on since this machine last published is rebased. The server's new events are applied locally and the local ones re-appended after the server's head, with no conflict recorded. A story that moves again during the rebase is reported, as before. (sty_0dc600e1)
+
+## [serve-v0.0.248] - 2026-10-30
+
+### Changed
+- The service binary follows each bound repo's story chains live instead of pushing on every repair pass, fetches a story's history from the server for the story page, and in hosted mode lists only this machine's stories with links to the server for the rest. (sty_0dc600e1)
+
+## [0.0.807] - 2026-10-30
+
+### Fixed
+- `satelle sync status` and `satelle doctor` report a substrate area as unpushed when one of its files changed since the last push, naming the file and the push to run, instead of reporting it in step because the local base and hosted snapshot numbers match. This holds when the edited file carries a self-consistent `embedded_sha` stamp and the hosted copy is a kept binary default, and doctor keeps reporting an area the last hosted check found unpushed. A base marker naming a snapshot this machine never pushed or pulled is now detected (its files do not match that hosted snapshot) and the area is reported diverged, naming the differing files. `satelle sync push --dry-run` reads areas the same way. (sty_1481ac31)
+
+## [serve-v0.0.247] - 2026-10-30
+
+### Changed
+- The service binary carries the work-state sync state's substrate area record, which now lists the files each area's state is about. (sty_1481ac31)
+
+## [0.0.806] - 2026-10-30
+
+### Fixed
+- `satelle sync push --dry-run` lists only the files a push would send, matching what `satelle sync status` reports as unpushed. Per area it lists only the paths changed since that area's last push, an area this checkout has never pushed in full, and team files apart. It still contacts no server. (sty_18273486)
+
+## [0.0.805] - 2026-10-30
+
+### Fixed
+- No sync pass appends an event to a story's chain. A conflict or overlap that a pull, snapshot, rehydrate or push finds between a story's local and hosted chains is recorded in the work-state sync state only, never as an `overlap`, `workflow_version` or `definition_snapshot` event, so a pull no longer forks the chain it is reconciling and a later push sends nothing a sync pass wrote. After a rehydrate each local chain equals the hosted one event for event. The session-start advisory and `satelle sync status` still report the recorded conflicts, respecting the repo's sync scope. (sty_199ad82b)
+
+## [serve-v0.0.246] - 2026-10-30
+
+### Changed
+- The service binary carries the work-state sync state's story conflict record, which now names the local and remote holders and the pass that found it. (sty_199ad82b)
+
+## [0.0.804] - 2026-10-30
+
+### Fixed
+- A story's recorded change set leaves out other stories' trunk commits when it is read, not only when a record is written. Each change_record's files are reduced by the files of commits in its `since_sha..head_sha` range that the remote trunk holds and whose subject does not name the story, unless the story's own commits in that range or its uncommitted changes also touched the file. A record written before 0.0.765, such as one from a park that spanned another story's trunk commit, therefore no longer drags that story's files into `satelle story diff --recorded`, `satelle-substrate-only-check` or `satelle-docs-only-check`. No row is rewritten. A record whose range git cannot show is used as recorded and named in `unresolved_records`, the `--recorded` note, and the output of both checks. (sty_5a6c06d3)
+
+## [serve-v0.0.245] - 2026-10-30
+
+### Changed
+- The service binary carries the embedded `satelle-substrate-only-check` and `satelle-docs-only-check` skills that name a change record's unresolved range. (sty_5a6c06d3)
+
+## [0.0.803] - 2026-10-30
+
+### Fixed
+- The local web service no longer pushes as a side effect of a pull, snapshot, rehydrate or stale-machine align: a store change those make does not trigger the service's hosted push. A push that runs after its cursor was reset sends no event the hosted chain already holds.
+
+### Added
+- `[hosted] push = false` in `~/.satelle/config.toml` turns hosted push off for this machine (machine-local, never synced). `satelle sync push` and `satelle sync workstate push` then refuse, naming the setting, and make no hosted write. Pulls still run, and satelled keeps serving the UI without ever running a push. `satelle doctor` reports push off as an informational finding, not a `sync.failing` or `sync.unbacked` FAIL. (sty_a21d9c07)
+
+## [serve-v0.0.244] - 2026-10-30
+
+### Changed
+- The service binary's pusher ignores ingest notifications from pull, snapshot, rehydrate and align, and honours `[hosted] push = false`: its pusher and repair loop skip every push while the UI keeps serving. (sty_a21d9c07)
+
+## [0.0.802] - 2026-10-30
+
+### Fixed
+- The local web UI's remote status reads `local` for a repo whose work state is local. The repo header no longer shows `push failing` with an older failure's reason and log path, or `pushed` from an older success, and the landing row drops its `Push Failing` tag. A push or snapshot pass now records the work-state scope it resolved in the repo's sync state, including when every area is local, and a push skipped because the work state is local is no longer recorded as a successful hosted push. With work state opted in, the header and landing row show push failing or pushed as before. (sty_3df5f95a)
+
+## [serve-v0.0.243] - 2026-10-30
+
+### Changed
+- The service binary records the resolved work-state scope with each background push and snapshot pass, and renders a local repo's remote status as `local`. (sty_3df5f95a)
+
+## [0.0.801] - 2026-10-30
+
+### Fixed
+- The session-start story-sync line respects the repo's sync scope. When every work-state area resolves to local (for example `[sync] all = "local"`), it no longer lists hosted story conflicts, and the recorded conflicts are dropped from the work-state sync file, so turning sync back on starts from a fresh check. Stories another location last worked on are still named from the local ledger. While any work-state area still syncs, conflicts are reported as before. (sty_c45cb8d5)
+
+## [0.0.800] - 2026-10-30
+
+### Fixed
+- `satelle sync workstate pull` no longer reports a story as stranded, or counts it among the stories that left work with no recorded head, when a commit on the remote trunk branch names the story's id in its subject. A story whose head was rebased or squashed onto trunk, or never recorded, has its code on the remote, and the reconcile report now says so by leaving it out. A story with neither a recorded head nor such a trunk commit is still reported. (sty_e5cba77e)
+
+## [0.0.799] - 2026-10-30
+
+### Fixed
+- A work-state push whose stories were all published no longer fails when it cannot check some stories' reachability because their engagement tree was recorded on another machine. The push exits 0 and prints one informational line counting the stories not checked, and `--verbose` (now on bare `satelle sync`, `satelle sync push` and `satelle sync workstate push`) lists them. Doctor no longer reports `FAIL [sync.failing]` after such a push. A push the server refuses still exits non-zero and names the refused story on stdout as well as stderr. (sty_906870a6)
+
 ## [0.0.798] - 2026-10-30
 
 ### Fixed

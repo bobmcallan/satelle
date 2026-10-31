@@ -26,7 +26,7 @@ func newSyncWorkstateRechainCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:         "rechain [story-id...]",
 		Short:       "Put a story forked from its hosted chain onto that chain",
-		Annotations: needsStore(),
+		Annotations: hostedOrigin(needsStore()),
 		Args:        cobra.ArbitraryArgs,
 		Long: `rechain repairs a story an earlier pull forked from its hosted chain: it seeded
 a genesis of its own, or linked the hosted events in another order, so every push

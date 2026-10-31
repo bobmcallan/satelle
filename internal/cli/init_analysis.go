@@ -319,7 +319,7 @@ func placementFixChannel(defect string) string {
 		if strings.Contains(defect, "principles:always") {
 			return "re-run `satelle init` — it migrates principles:always → principles:session"
 		}
-		return "edit the principle: use only principles:session for system residency, or drop the principles:* tag for on-demand"
+		return "edit the principle: use only principles:session for system residency or principles:seat for seat-only residency, or drop the principles:* tag for on-demand"
 	case strings.Contains(defect, "scope:"):
 		return "re-run `satelle init` — it removes the inert scope: key on principles"
 	case strings.Contains(defect, "ceiling"):

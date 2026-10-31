@@ -1,0 +1,10 @@
+# Embedded [sync] defaults a repo overrides key by key in its own satelle.toml
+# [sync] table (sty_0dc600e1).
+#
+# recent_window — when the user is signed in and the repo bound, the server is
+#   the store of record and the local store keeps full history only for the
+#   stories this machine has engaged and those whose newest event is younger
+#   than this duration. The history of every other story is dropped once the
+#   server holds all of it, and fetched again when the story is opened.
+[sync]
+recent_window = "168h"

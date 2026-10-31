@@ -8,8 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -472,6 +474,7 @@ func TestPassInvokesSnapshot(t *testing.T) {
 	r := &Reconciler{
 		Targets: func(ctx context.Context) []string { return []string{"/repo"} },
 		Reseed:  func(ctx context.Context, repoPath string) error { return nil },
+		Bound:   func(string) bool { return true },
 		Snapshot: func(ctx context.Context, repoPath string) error {
 			snap = append(snap, repoPath)
 			return nil
@@ -480,6 +483,129 @@ func TestPassInvokesSnapshot(t *testing.T) {
 	r.pass(context.Background())
 	if len(snap) != 1 || snap[0] != "/repo" {
 		t.Fatalf("snapshot = %v", snap)
+	}
+}
+
+// sty_0dc600e1 AC6: a repo that names no hosted project syncs nothing: no
+// snapshot and no follow is launched for it.
+func TestPassLaunchesNothingForAnUnboundRepo(t *testing.T) {
+	var calls []string
+	r := &Reconciler{
+		Targets:  func(ctx context.Context) []string { return []string{"/repo"} },
+		Reseed:   func(ctx context.Context, repoPath string) error { return nil },
+		Bound:    func(string) bool { return false },
+		Snapshot: func(context.Context, string) error { calls = append(calls, "snapshot"); return nil },
+		Follow:   func(context.Context, string) error { calls = append(calls, "follow"); return nil },
+	}
+	r.pass(context.Background())
+	if len(calls) != 0 {
+		t.Fatalf("an unbound repo launched %v", calls)
+	}
+}
+
+// sty_0dc600e1 AC3: a bound repo's follow is started after the pass's snapshot,
+// and while it runs no snapshot is taken; once it has ended the next pass takes
+// one and starts it again.
+func TestPassSkipsTheSnapshotWhileFollowRuns(t *testing.T) {
+	var snaps int
+	var follows atomic.Int32
+	release := make(chan struct{})
+	r := &Reconciler{
+		Targets:  func(ctx context.Context) []string { return []string{"/repo"} },
+		Reseed:   func(ctx context.Context, repoPath string) error { return nil },
+		Bound:    func(string) bool { return true },
+		Snapshot: func(context.Context, string) error { snaps++; return nil },
+		Follow: func(ctx context.Context, _ string) error {
+			follows.Add(1)
+			<-release
+			return nil
+		},
+	}
+	ctx := context.Background()
+	r.pass(ctx)
+	r.pass(ctx)
+	if snaps != 1 {
+		t.Fatalf("snapshots = %d while follow runs, want only the first pass's", snaps)
+	}
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for r.following("/repo") {
+		if time.Now().After(deadline) {
+			t.Fatal("follow never ended")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	r.pass(ctx)
+	if snaps != 2 {
+		t.Fatalf("snapshots = %d after follow ended, want the backstop to run", snaps)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for r.following("/repo") {
+		if time.Now().After(deadline) {
+			t.Fatal("the restarted follow never ended")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if n := follows.Load(); n != 2 {
+		t.Fatalf("follow started %d time(s), want twice", n)
+	}
+}
+
+// fakeSatelle puts a satelle on PATH that records each argv it is run with and
+// answers `sync workstate follow` with followScript.
+func fakeSatelle(t *testing.T, followScript string) (argvLog string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX shell")
+	}
+	dir := t.TempDir()
+	argvLog = filepath.Join(dir, "argv")
+	script := "#!/bin/sh\necho \"$*\" >> " + argvLog + "\nif [ \"$*\" = \"sync workstate follow\" ]; then\n" + followScript + "\nfi\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "satelle"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return argvLog
+}
+
+func execedArgv(t *testing.T, argvLog string) []string {
+	t.Helper()
+	b, err := os.ReadFile(argvLog)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	return strings.Split(strings.TrimSpace(string(b)), "\n")
+}
+
+// sty_0dc600e1 AC8: a bound repo's passes exec no workstate push, both while its
+// follow runs and when the server has no subscription so follow exits at once.
+func TestPassNeverPushesABoundRepo(t *testing.T) {
+	for name, followScript := range map[string]string{
+		"follow running":     "exec sleep 30",
+		"follow unavailable": "echo 'workstate follow: the server has no story chain subscription' >&2\nexit 1",
+	} {
+		t.Run(name, func(t *testing.T) {
+			argvLog := fakeSatelle(t, followScript)
+			ctx, cancel := context.WithCancel(context.Background())
+			r := &Reconciler{
+				Targets: func(context.Context) []string { return []string{t.TempDir()} },
+				Bound:   func(string) bool { return true },
+			}
+			for range 3 {
+				r.pass(ctx)
+				time.Sleep(20 * time.Millisecond)
+			}
+			cancel()
+			argv := execedArgv(t, argvLog)
+			if !slices.Contains(argv, "sync workstate follow") {
+				t.Errorf("no follow was launched: %v", argv)
+			}
+			for _, a := range argv {
+				if strings.HasPrefix(a, "sync workstate push") {
+					t.Errorf("a pass pushed: %v", argv)
+				}
+			}
+		})
 	}
 }
 
@@ -507,22 +633,6 @@ func TestReportRecordsWithoutChangingLogRules(t *testing.T) {
 	}
 	if recs[len(recs)-1] != "/repo:" {
 		t.Fatalf("success recording = %q", recs[len(recs)-1])
-	}
-}
-
-func TestPassInvokesPush(t *testing.T) {
-	var pushed []string
-	r := &Reconciler{
-		Targets: func(ctx context.Context) []string { return []string{"/repo"} },
-		Reseed:  func(ctx context.Context, repoPath string) error { return nil },
-		Push: func(ctx context.Context, repoPath string) error {
-			pushed = append(pushed, repoPath)
-			return nil
-		},
-	}
-	r.pass(context.Background())
-	if len(pushed) != 1 || pushed[0] != "/repo" {
-		t.Fatalf("push = %v", pushed)
 	}
 }
 
@@ -594,4 +704,27 @@ const waitBudget = testutil.WaitBudget
 func waitFor(t *testing.T, budget time.Duration, cond func() bool) {
 	t.Helper()
 	testutil.Eventually(t, budget, cond, "condition not met")
+}
+
+// TestReconcilerPushOffSkipsPushLegs proves sty_a21d9c07 AC4 for the backstop:
+// with push off a pass still re-seeds and snapshots (the UI stays fed) and runs
+// no push leg. The pass has no work-state push of its own since sty_0dc600e1, so
+// the substrate push is the leg push off removes.
+func TestReconcilerPushOffSkipsPushLegs(t *testing.T) {
+	var reseeds, snaps, substrates int
+	count := func(n *int) func(context.Context, string) error {
+		return func(context.Context, string) error { *n++; return nil }
+	}
+	r := &Reconciler{
+		Targets:       func(context.Context) []string { return []string{"/repo"} },
+		Reseed:        count(&reseeds),
+		Snapshot:      count(&snaps),
+		Bound:         func(string) bool { return true },
+		SubstratePush: count(&substrates),
+		PushOff:       func() (bool, string) { return true, "[hosted] push = false" },
+	}
+	r.pass(context.Background())
+	if reseeds != 1 || snaps != 1 || substrates != 0 {
+		t.Fatalf("reseed %d snapshot %d substrate %d, want 1 1 0", reseeds, snaps, substrates)
+	}
 }

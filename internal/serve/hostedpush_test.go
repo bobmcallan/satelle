@@ -1,14 +1,19 @@
 package serve
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/mirror"
 )
 
 func testPusher(t *testing.T, p *Pusher) (context.CancelFunc, *pushRecorder) {
@@ -192,6 +197,25 @@ func TestPusherCatchUpOnRun(t *testing.T) {
 	}
 	if !got["/repo/a"] || !got["/repo/b"] {
 		t.Fatalf("catch-up pushes = %v", rec.snapshot())
+	}
+}
+
+// sty_0dc600e1 AC8: a bound repo gets no catch-up push on Run; it is pushed when
+// a local append notifies it.
+func TestPusherSkipsCatchUpForABoundRepo(t *testing.T) {
+	p := &Pusher{
+		Keys:  func(context.Context) []string { return []string{"bound", "unbound"} },
+		Bound: func(path string) bool { return path == "/repo/bound" },
+	}
+	_, rec := testPusher(t, p)
+	waitFor(t, waitBudget, func() bool { return rec.count() == 1 })
+	if got := rec.snapshot(); got[0] != "/repo/unbound" {
+		t.Fatalf("catch-up pushes = %v, want the unbound repo only", got)
+	}
+	p.Notify("bound")
+	waitFor(t, waitBudget, func() bool { return rec.count() == 2 })
+	if got := rec.snapshot(); got[1] != "/repo/bound" {
+		t.Fatalf("pushes = %v, want the notified bound repo", got)
 	}
 }
 
@@ -452,4 +476,69 @@ func TestBackoffDelayCaps(t *testing.T) {
 	if got := backoffDelay(20); got != pushBackoffCap {
 		t.Fatalf("attempt 20 = %s, want cap %s", got, pushBackoffCap)
 	}
+}
+
+// postIngest POSTs body to path on srv and returns the decoded reply; a non-200 fails.
+func postIngest(t *testing.T, srv *httptest.Server, path string, body any) map[string]any {
+	t.Helper()
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Post(srv.URL+path, "application/json", bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST %s = %d", path, resp.StatusCode)
+	}
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return out
+}
+
+// TestHostedOriginIngestNeverPushes proves sty_a21d9c07 AC1: the ingest a pull,
+// snapshot, rehydrate or align posts carries the hosted origin, and none of its
+// shapes — a full snapshot, its byte-identical re-post, a light drain, a change
+// event — becomes a push. The same snapshot with no origin still does.
+func TestHostedOriginIngestNeverPushes(t *testing.T) {
+	ms, err := mirror.Open(filepath.Join(t.TempDir(), "mirror.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ms.Close() })
+	p := &Pusher{}
+	_, rec := testPusher(t, p)
+	mux := http.NewServeMux()
+	(&mirror.IngestHandler{Store: ms, OnIngest: p.OnIngest}).Mount(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	full := mirror.Snapshot{
+		RepoKey: "rk",
+		Origin:  mirror.OriginHosted,
+		Stories: []json.RawMessage{[]byte(`{"id":"sty_a","title":"Hello"}`)},
+	}
+	postIngest(t, srv, "/ingest/snapshot", full)
+	if got := postIngest(t, srv, "/ingest/snapshot", full); got["unchanged"] != true {
+		t.Fatalf("re-post was not the unchanged path: %v", got)
+	}
+	postIngest(t, srv, "/ingest/snapshot", mirror.Snapshot{
+		RepoKey:    "rk",
+		Origin:     mirror.OriginHosted,
+		Kinds:      []string{"story"},
+		MergeKinds: []string{"ledger_event"},
+		Stories:    full.Stories,
+	})
+	postIngest(t, srv, "/ingest/change", mirror.ChangeEvent{RepoKey: "rk", Topic: "stories", Origin: mirror.OriginHosted})
+
+	settle(t, p, func() int { return rec.countPath(settlePath) })
+	if n := rec.countPath("/repo/rk"); n != 0 {
+		t.Fatalf("hosted-origin ingests pushed %d time(s), want 0: %v", n, rec.snapshot())
+	}
+
+	full.Origin = mirror.OriginLocal
+	postIngest(t, srv, "/ingest/snapshot", full)
+	waitFor(t, waitBudget, func() bool { return rec.countPath("/repo/rk") == 1 })
 }

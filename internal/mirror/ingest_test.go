@@ -185,7 +185,7 @@ func TestIngestFiresOnIngest(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 
 	var keys []string
-	h := &mirror.IngestHandler{Store: s, OnIngest: func(repoKey string) { keys = append(keys, repoKey) }}
+	h := &mirror.IngestHandler{Store: s, OnIngest: func(repoKey string, _ mirror.IngestOrigin) { keys = append(keys, repoKey) }}
 	mux := http.NewServeMux()
 	h.Mount(mux)
 	srv := httptest.NewServer(mux)

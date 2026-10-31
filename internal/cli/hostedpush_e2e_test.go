@@ -46,7 +46,7 @@ func TestMutatingCLIDoesNotDialHosted(t *testing.T) {
 			return nil
 		},
 	}
-	webSrv := web.NewMirrorHooks(ms, "test", pusher.Notify)
+	webSrv := web.NewMirrorHooks(ms, "test", pusher.OnIngest)
 	srv := httptest.NewServer(webSrv.Handler)
 	t.Cleanup(srv.Close)
 	t.Setenv(EnvServerEndpoint, srv.URL)

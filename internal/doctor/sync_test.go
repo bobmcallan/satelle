@@ -103,6 +103,71 @@ func TestCheckSyncHealthStandingFailure(t *testing.T) {
 	}
 }
 
+// sty_a21d9c07 AC5: with [hosted] push = false in the machine config, a standing
+// push failure and a stale last success are reported as one informational
+// push-off finding, never sync.failing or sync.unbacked.
+func TestCheckSyncHealthPushOffIsInfo(t *testing.T) {
+	repo, data := writeRepoTOML(t, t.TempDir(), "[sync]\nstories = \"personal\"\nstale_after = \"1h\"\n")
+	home := t.TempDir()
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	if err := syncstate.RecordPush(home, repo, true, "", "", now.Add(-48*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncstate.RecordPush(home, repo, false, "boom", "", now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if on := checkSyncHealth(repo, data, home, now); on.OK() {
+		t.Fatalf("control: with push on the failure must not PASS: %v", on)
+	}
+
+	if err := os.WriteFile(filepath.Join(home, config.GlobalConfigName), []byte("[hosted]\npush = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := checkSyncHealth(repo, data, home, now)
+	if !got.OK() {
+		t.Fatalf("push off must PASS: %v", got)
+	}
+	if len(got) != 1 || got[0].ID != health.IDSyncPushOff || got[0].Severity != health.SeverityInfo {
+		t.Fatalf("want one info %s finding, got %v", health.IDSyncPushOff, got)
+	}
+	if !containsAll(got[0].Detail, "[hosted] push = false", config.GlobalConfigName) {
+		t.Errorf("finding does not name the setting: %q", got[0].Detail)
+	}
+}
+
+// TestCheckSyncHealthStampRefusalNamesInit: a push the drift gate refused is
+// healed by `satelle init`, not by retrying the push, so the fix line says so;
+// any other standing failure keeps the push remediation.
+func TestCheckSyncHealthStampRefusalNamesInit(t *testing.T) {
+	refusal := "satelle: binary 0.0.761 is ahead of this repo's deployed stamp 0.0.705 " +
+		health.StampRefusalMarker + " 0.0.761 — that release says:\n  - init-heals: run init\nRun `satelle init` to heal."
+	for _, c := range []struct {
+		reason, wantFix, notFix string
+	}{
+		{refusal, "satelle init", "sync workstate push"},
+		{"hosted down", "satelle sync workstate push", "satelle init"},
+	} {
+		repo, data := writeRepoTOML(t, t.TempDir(), "[sync]\nstories = \"personal\"\nstale_after = \"24h\"\n")
+		home := t.TempDir()
+		if err := syncstate.RecordPush(home, repo, false, c.reason, "", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		var failing *health.Finding
+		for _, f := range checkSyncHealth(repo, data, home, time.Now()) {
+			if f.ID == health.IDSyncFailing {
+				f := f
+				failing = &f
+			}
+		}
+		if failing == nil {
+			t.Fatalf("%q: non-local work state must report sync.failing", c.reason)
+		}
+		if !strings.Contains(failing.Remediation, c.wantFix) || strings.Contains(failing.Remediation, c.notFix) {
+			t.Errorf("%q: fix = %q, want it to name %q and not %q", c.reason, failing.Remediation, c.wantFix, c.notFix)
+		}
+	}
+}
+
 func TestCheckSyncHealthMissingThresholdWarns(t *testing.T) {
 	repo, data := writeRepoTOML(t, t.TempDir(), "[sync]\nstories = \"personal\"\n")
 	got := checkSyncHealth(repo, data, t.TempDir(), time.Now())

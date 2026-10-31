@@ -51,12 +51,38 @@ type fakeChain struct {
 	// unreadable makes Read answer Unimplemented, as a server that predates the
 	// Read RPC does: a pull then has no hosted chain to take.
 	unreadable bool
+	// reads counts Read calls per story.
+	reads map[string]int
+	// feed is what Subscribe streams before it ends the stream; subscribes are the
+	// requests it received. noSubscribe answers Unimplemented, as a server that
+	// predates the subscription does.
+	feed        []*syncpb.Event
+	subscribes  []*syncpb.SubscribeRequest
+	noSubscribe bool
+}
+
+// Subscribe streams the feed, in order, and ends the stream.
+func (c *fakeChain) Subscribe(req *syncpb.SubscribeRequest, stream grpc.ServerStreamingServer[syncpb.SubscribeResponse]) error {
+	c.mu.Lock()
+	c.subscribes = append(c.subscribes, proto.Clone(req).(*syncpb.SubscribeRequest))
+	feed, unsupported := slices.Clone(c.feed), c.noSubscribe
+	c.mu.Unlock()
+	if unsupported {
+		return status.Error(codes.Unimplemented, "method Subscribe not implemented")
+	}
+	for _, e := range feed {
+		if err := stream.Send(&syncpb.SubscribeResponse{Event: e}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Read serves the events after after_id, and the story's latest id.
 func (c *fakeChain) Read(_ context.Context, req *syncpb.ReadRequest) (*syncpb.ReadResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.reads[req.GetStoryId()]++
 	if c.unreadable {
 		return nil, status.Error(codes.Unimplemented, "method Read not implemented")
 	}
@@ -77,7 +103,7 @@ func (c *fakeChain) Read(_ context.Context, req *syncpb.ReadRequest) (*syncpb.Re
 }
 
 func newFakeChain(f *fakeWorkstateServer) *fakeChain {
-	return &fakeChain{f: f, chains: map[string][]*syncpb.Event{}, refuse: map[string]error{}}
+	return &fakeChain{f: f, chains: map[string][]*syncpb.Event{}, refuse: map[string]error{}, reads: map[string]int{}}
 }
 
 func chainKey(project, story string) string { return project + "|" + story }
@@ -168,6 +194,12 @@ func (c *fakeChain) appendsFor(story string) []*syncpb.AppendRequest {
 		}
 	}
 	return out
+}
+
+func (c *fakeChain) readCount(story string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reads[story]
 }
 
 func (c *fakeChain) appendCount() int {
@@ -372,10 +404,10 @@ func TestPushStoresTheHeadPerProject(t *testing.T) {
 	}
 }
 
-// sty_9bdf08c4 AC3, AC9: a stale base is reported and recorded, nothing is sent or
-// changed for that story, the other story still publishes, push exits non-zero —
-// and once the story is accepted the conflict is cleared.
-func TestPushReportsAStaleBaseAndClearsItOnceAccepted(t *testing.T) {
+// sty_a21d9c07: a story this checkout has no head for and that the server moved
+// on is read first and reported moved without being sent; nothing of it is
+// stored, the other story still publishes and push exits non-zero.
+func TestPushReportsAMovedStoryUnsentWhenNoHeadIsKnown(t *testing.T) {
 	ts, f := newFakeWorkstateServerWith(t, func(mux *http.ServeMux, _ *fakeWorkstateServer) {
 		mux.HandleFunc("/api/v1/projects/", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodPost {
@@ -402,8 +434,8 @@ func TestPushReportsAStaleBaseAndClearsItOnceAccepted(t *testing.T) {
 			t.Errorf("report missing %q:\n%s", want, out)
 		}
 	}
-	if n := len(f.chain.appendsFor(moved)); n != 1 {
-		t.Errorf("the refused story was sent %d times, want once", n)
+	if n := len(f.chain.appendsFor(moved)); n != 0 {
+		t.Errorf("the moved story was sent %d times, want none: its hosted chain is read first", n)
 	}
 	if got := f.chain.stored("probe", moved); !slices.Equal(got, []string{"evt_foreign"}) {
 		t.Errorf("the server's chain was changed: %v", got)
@@ -418,13 +450,86 @@ func TestPushReportsAStaleBaseAndClearsItOnceAccepted(t *testing.T) {
 	if localLedgerTotal(t) != before || len(localChain(t, moved)) != chainBefore {
 		t.Error("a refusal changed the local events")
 	}
+}
+
+// sty_9bdf08c4 AC3, AC9, sty_0dc600e1 AC4: a published story the server moved on
+// is rebased once; when it is stale again after that, it is reported and recorded,
+// nothing of it is stored, the other story still publishes, push exits non-zero —
+// and once the story is accepted the conflict is cleared.
+func TestPushReportsAStaleBaseAndClearsItOnceAccepted(t *testing.T) {
+	ts, f := newFakeWorkstateServerWith(t, func(mux *http.ServeMux, _ *fakeWorkstateServer) {
+		mux.HandleFunc("/api/v1/projects/", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost {
+				t.Errorf("a refusal placed a hold: %s %s", r.Method, r.URL.Path)
+			}
+			http.NotFound(w, r)
+		})
+	})
+	seedCred(t, ts.URL)
+	repo := workstateRepo(t, holdOffToml)
+	moved, fine := createStoryID(t, "moved"), createStoryID(t, "fine")
+	if out, err := pushRaw(t, ts.URL); err != nil {
+		t.Fatalf("first push: %v\n%s", err, out)
+	}
+	published := f.chain.stored("probe", moved)
+	finePublished := len(f.chain.stored("probe", fine))
+	appendLocal(t, moved, "made here")
+	appendLocal(t, fine, "fine moves on")
+	now := time.Now().UTC()
+	foreign := func(id, base string) *syncpb.Event {
+		return hostedEvent(t, ledger.Entry{ID: id, StoryID: moved, BaseID: base, Kind: ledger.KindComment, Actor: "alice", Body: "made elsewhere", CreatedAt: now})
+	}
+	f.chain.seed("probe", moved, foreign("evt_foreign", published[len(published)-1]))
+	sentBefore := len(f.chain.appendsFor(moved))
+	// The story moves again between the rebase's read and its re-append.
+	sent := 0
+	f.chain.before = func(req *syncpb.AppendRequest, chain *[]*syncpb.Event) {
+		if req.GetStoryId() != moved {
+			return
+		}
+		if sent++; sent == 2 {
+			*chain = append(*chain, foreign("evt_foreign2", "evt_foreign"))
+		}
+	}
+	before := localLedgerTotal(t)
+	chainBefore := len(localChain(t, moved))
+
+	out, err := pushRaw(t, ts.URL)
+	if err == nil {
+		t.Fatalf("a base stale after the rebase must make push exit non-zero:\n%s", out)
+	}
+	for _, want := range []string{
+		"the story " + moved + " moved on the server: 1 event(s) applied here",
+		"the story " + moved + " moved since evt_foreign: re-read and decide", "evt_foreign2", "1 event",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report missing %q:\n%s", want, out)
+		}
+	}
+	if n := len(f.chain.appendsFor(moved)) - sentBefore; n != 2 {
+		t.Errorf("the refused story was sent %d times, want once and once after the rebase", n)
+	}
+	if got, want := f.chain.stored("probe", moved), append(slices.Clone(published), "evt_foreign", "evt_foreign2"); !slices.Equal(got, want) {
+		t.Errorf("the server's chain was changed by the refused story: %v, want %v", got, want)
+	}
+	if len(f.chain.stored("probe", fine)) != finePublished+1 {
+		t.Errorf("the other story was not published:\n%s", out)
+	}
+	heads := storyHeads(t, ts.URL, "probe", repo)
+	if heads[moved] != "evt_foreign" || heads[fine] == "" {
+		t.Errorf("heads = %v, want the event the rebase took for the refused story and one for the other", heads)
+	}
+	if localLedgerTotal(t) != before+1 || len(localChain(t, moved)) != chainBefore+1 {
+		t.Error("the rebase must add the one server event it read and lose none of the local ones")
+	}
 	if c, ok := storyConflicts(t, repo)[moved]; !ok || !strings.Contains(c.Reason, "re-read and decide") {
 		t.Errorf("no conflict recorded for %s: %v", moved, storyConflicts(t, repo))
 	}
 
-	// The story is read and the server's events are gone; the next push is accepted.
+	// The second move is undone on the server; the next push is accepted after it.
+	f.chain.before = nil
 	f.chain.mu.Lock()
-	delete(f.chain.chains, chainKey("probe", moved))
+	f.chain.chains[chainKey("probe", moved)] = f.chain.chains[chainKey("probe", moved)][:len(published)+1]
 	f.chain.mu.Unlock()
 	if out, err := pushRaw(t, ts.URL); err != nil {
 		t.Fatalf("push after the story was settled: %v\n%s", err, out)
@@ -432,13 +537,14 @@ func TestPushReportsAStaleBaseAndClearsItOnceAccepted(t *testing.T) {
 	if _, ok := storyConflicts(t, repo)[moved]; ok {
 		t.Errorf("the conflict outlived an accepted Append: %v", storyConflicts(t, repo))
 	}
-	if n := len(f.chain.stored("probe", moved)); n != chainBefore {
-		t.Errorf("the story published %d events, want %d", n, chainBefore)
+	if got, want := f.chain.stored("probe", moved), localIDs(t, moved); !slices.Equal(got, want) || len(want) != chainBefore+1 {
+		t.Errorf("the server holds %v, want the local chain %v: ours, the foreign event, then ours", got, want)
 	}
 }
 
-// sty_9bdf08c4 AC4: the server holding a prefix of this checkout's own chain is
-// resumed from, said so, with only the later events sent and none resent.
+// sty_9bdf08c4 AC4: the server holding a prefix of this checkout's own chain past
+// its saved head (a head lost to an interrupted push) is resumed from, said so,
+// with only the later events sent and none resent.
 func TestPushResumesFromItsOwnPrefix(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
@@ -450,6 +556,9 @@ func TestPushResumesFromItsOwnPrefix(t *testing.T) {
 	}
 	for _, e := range local[:2] {
 		f.chain.seed("probe", id, &syncpb.Event{Id: e.ID, StoryId: id, BaseId: e.BaseID})
+	}
+	if err := hosted.SaveStoryHead(ts.URL, "probe", repo, id, local[0].ID); err != nil {
+		t.Fatal(err)
 	}
 
 	out, err := pushRaw(t, ts.URL)
@@ -482,11 +591,14 @@ func TestPushResumesFromItsOwnPrefix(t *testing.T) {
 func TestPushReportsASecondRefusalOnTheResume(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, holdOffToml)
+	repo := workstateRepo(t, holdOffToml)
 	id := createStoryID(t, "alpha")
 	local := localChain(t, id)
 	for _, e := range local[:2] {
 		f.chain.seed("probe", id, &syncpb.Event{Id: e.ID, StoryId: id, BaseId: e.BaseID})
+	}
+	if err := hosted.SaveStoryHead(ts.URL, "probe", repo, id, local[0].ID); err != nil {
+		t.Fatal(err)
 	}
 	calls := 0
 	f.chain.before = func(req *syncpb.AppendRequest, chain *[]*syncpb.Event) {
@@ -865,5 +977,70 @@ func TestPushResolvesADetaillessRefusalAsAMovedStory(t *testing.T) {
 	}
 	if _, ok := storyConflicts(t, repo)[id]; !ok {
 		t.Errorf("no conflict recorded for %s", id)
+	}
+}
+
+// sty_a21d9c07 AC2: a push after its cursor was reset (the store was rebuilt, so
+// no story head is known) sends no event the hosted chain already holds — none for
+// a story the server holds whole, only the rest for one it holds a prefix of.
+func TestPushAfterCursorResetSendsNoHeldEvent(t *testing.T) {
+	ts, f := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	repo := workstateRepo(t, holdOffToml)
+	whole, part := createStoryID(t, "whole"), createStoryID(t, "part")
+	if out, err := pushRaw(t, ts.URL); err != nil {
+		t.Fatalf("first push: %v\n%s", err, out)
+	}
+	wholeLocal, partLocal := localChain(t, whole), localChain(t, part)
+	if len(partLocal) < 2 {
+		t.Fatalf("need at least 2 local events, have %d", len(partLocal))
+	}
+	const k = 1
+	f.chain.mu.Lock()
+	f.chain.chains[chainKey("probe", part)] = f.chain.chains[chainKey("probe", part)][:k]
+	f.chain.appends = nil
+	f.chain.mu.Unlock()
+	if err := hosted.SaveWorkstateCursor(ts.URL, "probe", repo, hosted.WorkstateCursor{StoryHeads: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	if heads := storyHeads(t, ts.URL, "probe", repo); len(heads) != 0 {
+		t.Fatalf("the reset left heads %v", heads)
+	}
+	before := f.chain.eventCount("probe")
+
+	out, err := pushRaw(t, ts.URL)
+	if err != nil {
+		t.Fatalf("push after the reset: %v\n%s", err, out)
+	}
+	sent := 0
+	for _, r := range f.chain.appendsFor(whole) {
+		sent += len(r.GetEvents())
+	}
+	if sent != 0 {
+		t.Errorf("the story the server holds whole sent %d event(s), want 0", sent)
+	}
+	if want := "the story " + whole + " is already published up to " + wholeLocal[len(wholeLocal)-1].ID + ": nothing to send"; !strings.Contains(out, want) {
+		t.Errorf("report missing %q:\n%s", want, out)
+	}
+	reqs := f.chain.appendsFor(part)
+	if len(reqs) != 1 {
+		t.Fatalf("the prefixed story: %d Appends, want one", len(reqs))
+	}
+	var rest []string
+	for _, e := range partLocal[k:] {
+		rest = append(rest, e.ID)
+	}
+	if reqs[0].GetBaseId() != partLocal[k-1].ID || !slices.Equal(eventIDs(reqs[0].GetEvents()), rest) {
+		t.Errorf("Append = base %q events %v, want base %q events %v", reqs[0].GetBaseId(), eventIDs(reqs[0].GetEvents()), partLocal[k-1].ID, rest)
+	}
+	if got, want := f.chain.eventCount("probe"), before+len(rest); got != want {
+		t.Errorf("server holds %d events, want %d", got, want)
+	}
+	heads := storyHeads(t, ts.URL, "probe", repo)
+	if heads[whole] != wholeLocal[len(wholeLocal)-1].ID || heads[part] != partLocal[len(partLocal)-1].ID {
+		t.Errorf("heads = %v, want each story at its last event", heads)
+	}
+	if strings.Contains(out, "Published the events of 2") {
+		t.Errorf("the story with nothing to send was counted as published:\n%s", out)
 	}
 }

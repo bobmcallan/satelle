@@ -109,7 +109,9 @@ const (
 	// story (sty_40853d02): Payload {location, label, session, worktree, state}.
 	// It is visibility only — shown on `story get`/`story list` and the
 	// session-start advisory so other machines and team members see who is on a
-	// story. No code path reads it to refuse anything.
+	// story. Hosted-mode cache retention also reads it, to keep the history of
+	// the stories this machine engaged (sty_0dc600e1). No code path reads it to
+	// refuse anything.
 	KindWorkingOn = "working_on"
 	// KindTrunkCheck records what the start-of-work trunk check found when a
 	// story first entered an engaging state (sty_9f3e51d1): body is the line

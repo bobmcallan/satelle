@@ -110,8 +110,10 @@ func SeededEvents(chain []ledger.Entry, localOnly map[string]bool) (ids []string
 }
 
 // unseededStories finds the stories whose chain defines no title: none of their
-// events is a definition_snapshot or a story_created that carries one. One
-// indexed query, so a database with nothing to seed pays no write lock.
+// events is a definition_snapshot or a story_created that carries one. A story
+// whose history was left on the server (ledger.MarkHistoryRemote) has a chain,
+// only not here, so it is never seeded. One indexed query, so a database with
+// nothing to seed pays no write lock.
 const unseededStories = `
 SELECT w.id FROM work_items w
 WHERE w.kind = 'story' AND NOT EXISTS (
@@ -119,6 +121,7 @@ WHERE w.kind = 'story' AND NOT EXISTS (
     WHERE e.story_id = w.id AND (
         e.kind = ? OR (e.kind = ? AND CASE WHEN json_valid(e.payload)
             THEN json_extract(e.payload, '$.title') END IS NOT NULL)))
+AND NOT EXISTS (SELECT 1 FROM story_marks m WHERE m.story_id = w.id AND m.mark = ?)
 ORDER BY w.id`
 
 // Seed seeds every story whose chain predates the fold, from its row, and
@@ -128,7 +131,7 @@ ORDER BY w.id`
 // gains the workflow_version event that archives it — which is also how a story
 // whose events recorded hashes before versions were archived gets one back.
 func Seed(ctx context.Context, db *sql.DB, led *ledger.Store, now time.Time) (int, error) {
-	rows, err := db.QueryContext(ctx, unseededStories, ledger.KindDefinitionSnapshot, ledger.KindStoryCreated)
+	rows, err := db.QueryContext(ctx, unseededStories, ledger.KindDefinitionSnapshot, ledger.KindStoryCreated, ledger.MarkHistoryRemote)
 	if err != nil {
 		return 0, fmt.Errorf("storyfold: seed: %w", err)
 	}

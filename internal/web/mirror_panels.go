@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -91,6 +92,7 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 	if err != nil {
 		return pageData{}, id, err
 	}
+	stories, links := hostedView(id.Hosted, stories)
 	tasks, err := decodeItems(ctx, s, repoKey, "task")
 	if err != nil {
 		return pageData{}, id, err
@@ -175,7 +177,28 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 		Uptime:          formatUptime(time.Since(serverStart)),
 		Theme:           "", // client localStorage only on the mirror
 		TopBar:          mirrorTopBar("", id.FooterEmail),
+		Hosted:          links,
 	}, id, nil
+}
+
+// hostedView narrows a hosted-mode partition's stories to those this machine
+// engaged and links the server's project page for the rest. A local partition is
+// shown whole, with no links.
+func hostedView(h *mirror.HostedMeta, stories []workitem.Item) ([]workitem.Item, *hostedLinksVM) {
+	if h == nil || h.Server == "" || h.Project == "" {
+		return stories, nil
+	}
+	mine := make(map[string]bool, len(h.MachineStories))
+	for _, id := range h.MachineStories {
+		mine[id] = true
+	}
+	out := make([]workitem.Item, 0, len(h.MachineStories))
+	for _, st := range stories {
+		if mine[st.ID] {
+			out = append(out, st)
+		}
+	}
+	return out, &hostedLinksVM{Project: strings.TrimRight(h.Server, "/") + "/app/p/" + url.PathEscape(h.Project)}
 }
 
 // attachStagesFrom is the mirror-side stage attach: ledger rows already loaded.

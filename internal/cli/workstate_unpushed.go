@@ -37,12 +37,22 @@ type holdResult struct {
 	unavailable map[string]string // story id -> why reachability could not be checked
 }
 
-// lines renders one line per held story, then one per story not checked.
-func (h holdResult) lines() []string {
+// lines renders one line per held story, then one summary line counting the
+// stories not checked; verbose follows it with one line per such story. A story
+// not checked is information: it is sent, and it never fails the push.
+func (h holdResult) lines(verbose bool) []string {
 	var out []string
 	for _, id := range slices.Sorted(maps.Keys(h.held)) {
 		out = append(out, fmt.Sprintf("held %s: %s", id, h.held[id]))
 	}
+	if len(h.unavailable) == 0 {
+		return out
+	}
+	summary := fmt.Sprintf("reachability not checked for %d stor(y/ies) (engagement tree not on this machine or not a git tree) — informational", len(h.unavailable))
+	if !verbose {
+		return append(out, summary+"; run with --verbose to list")
+	}
+	out = append(out, summary+":")
 	for _, id := range slices.Sorted(maps.Keys(h.unavailable)) {
 		out = append(out, fmt.Sprintf("reachability unavailable (%s): %s not checked", h.unavailable[id], id))
 	}

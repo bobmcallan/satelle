@@ -15,7 +15,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/mirror"
-	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/web"
 )
 
@@ -63,11 +62,11 @@ func Run(ctx context.Context, opts Options) error {
 		Resolve: resolvePushPath(ms, home),
 		Keys:    pushKeys(ms),
 		Log:     logLine,
-		Record: func(repoPath string, success bool, reason string) {
-			_ = syncstate.RecordPush(home, repoPath, success, reason, "", time.Now())
-		},
+		Record:  recordPushFunc(home),
+		PushOff: config.MachinePushOff,
 	}
-	webSrv := web.NewMirrorHooks(ms, config.SafeCurrentInstanceID(), pusher.Notify)
+	webSrv := web.NewMirrorHooks(ms, config.SafeCurrentInstanceID(), pusher.OnIngest)
+	webSrv.FetchStory = fetchViaCLI
 	publishLogs = func() { webSrv.Publish("logs") }
 	handler := web.RequestLog(webSrv.Handler, serverLog, logCfg, publishLogs)
 
@@ -91,9 +90,8 @@ func Run(ctx context.Context, opts Options) error {
 	rec := &Reconciler{
 		Targets: mirrorTargets(ms, home),
 		Log:     logLine,
-		Record: func(repoPath string, success bool, reason string) {
-			_ = syncstate.RecordSnapshot(home, repoPath, success, reason, "", time.Now())
-		},
+		Record:  recordSnapshotFunc(home),
+		PushOff: config.MachinePushOff,
 	}
 	go rec.Loop(ctx)
 	go pusher.Run(ctx)

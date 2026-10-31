@@ -12,12 +12,27 @@ import (
 	"time"
 )
 
+// IngestOrigin says where the store change an ingest body reports came from.
+// The mirror applies every origin alike; only the hosted push trigger reads it,
+// so a change materialised from the hosted project is never pushed back to it.
+type IngestOrigin string
+
+const (
+	// OriginLocal is a change made on this machine (and every body from an
+	// older CLI, which carries no origin).
+	OriginLocal IngestOrigin = ""
+	// OriginHosted is a store change materialised from the hosted project: a
+	// pull, snapshot, rehydrate or align.
+	OriginHosted IngestOrigin = "hosted"
+)
+
 // ChangeEvent is the body POSTed by the CLI push publisher (sty_126228b2).
 type ChangeEvent struct {
-	RepoKey string `json:"repo_key"`
-	Topic   string `json:"topic"`
-	Entity  string `json:"entity"`
-	At      string `json:"at"`
+	RepoKey string       `json:"repo_key"`
+	Topic   string       `json:"topic"`
+	Entity  string       `json:"entity"`
+	At      string       `json:"at"`
+	Origin  IngestOrigin `json:"origin,omitempty"`
 }
 
 // RemoveEvent is POSTed to /ingest/remove to purge a partition (sty_eb61be02).
@@ -55,6 +70,8 @@ type Snapshot struct {
 	Kinds []string `json:"kinds,omitempty"`
 	// MergeKinds are applied as upsert-without-delete (ledger is append-only).
 	MergeKinds []string `json:"merge_kinds,omitempty"`
+	// Origin is where the reported store change came from; see IngestOrigin.
+	Origin IngestOrigin `json:"origin,omitempty"`
 }
 
 // IdentityMeta is the JSON shape of Snapshot.Identity — what the mirror footer
@@ -63,14 +80,26 @@ type IdentityMeta struct {
 	ProjectName string `json:"project_name"`
 	RepoRoot    string `json:"repo_root"`
 	FooterEmail string `json:"footer_email"`
+	// Hosted is set when the server is the repo's store of record (sty_0dc600e1):
+	// the page then lists this machine's stories and links the rest to the server.
+	Hosted *HostedMeta `json:"hosted,omitempty"`
+}
+
+// HostedMeta names the hosted project a partition syncs with and the stories this
+// machine engaged.
+type HostedMeta struct {
+	Server         string   `json:"server"`
+	Project        string   `json:"project"`
+	MachineStories []string `json:"machine_stories"`
 }
 
 // IngestHandler serves POST /ingest/change and POST /ingest/snapshot.
-// OnChange is optional (SSE doorbell). OnIngest is optional (hosted push trigger).
+// OnChange is optional (SSE doorbell). OnIngest is optional (hosted push
+// trigger); it receives the body's origin so it can ignore hosted-origin changes.
 type IngestHandler struct {
 	Store    *Store
 	OnChange func(topic string)
-	OnIngest func(repoKey string)
+	OnIngest func(repoKey string, origin IngestOrigin)
 }
 
 // Mount registers ingest routes on mux.
@@ -129,7 +158,7 @@ func (h *IngestHandler) handleChange(w http.ResponseWriter, r *http.Request) {
 		h.OnChange("projects")
 	}
 	if h.OnIngest != nil {
-		h.OnIngest(ev.RepoKey)
+		h.OnIngest(ev.RepoKey, ev.Origin)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "seq": seq})
@@ -176,7 +205,7 @@ func (h *IngestHandler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 			// Unchanged bytes can still coincide with a hosted-side gap; the
 			// push is a cursor no-op when there is nothing to send (sty_c526753a).
 			if h.OnIngest != nil {
-				h.OnIngest(snap.RepoKey)
+				h.OnIngest(snap.RepoKey, snap.Origin)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "unchanged": true})
@@ -227,7 +256,7 @@ func (h *IngestHandler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		h.OnChange("projects")
 	}
 	if h.OnIngest != nil {
-		h.OnIngest(snap.RepoKey)
+		h.OnIngest(snap.RepoKey, snap.Origin)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})

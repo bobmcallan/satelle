@@ -92,6 +92,16 @@ type pageData struct {
 	SyncReason      string
 	SyncLocal       bool
 	SyncLogPath     string
+	// Hosted, set when the server is the repo's store of record, links the views
+	// this page does not hold to the server; Stories is then this machine's only.
+	Hosted *hostedLinksVM
+}
+
+// hostedLinksVM is where the server shows what a hosted-mode page leaves out:
+// its project page, which lists every story. Only pages the server serves are
+// linked (sty_9ece9394).
+type hostedLinksVM struct {
+	Project string
 }
 
 type crumbProject struct {

@@ -55,16 +55,31 @@ type State struct {
 }
 
 // StoryConflict is one story the local and hosted copies disagree on: why the
-// pass left it, and when.
+// pass left it, and when. The holders name this location and the other one that
+// last worked the story ("unknown" when none is known); Source is what found it.
+// A conflict is local sync state only: no pass writes it onto the story's chain.
 type StoryConflict struct {
-	Reason string    `json:"reason"`
-	At     time.Time `json:"at"`
+	Reason       string    `json:"reason"`
+	At           time.Time `json:"at"`
+	LocalHolder  string    `json:"local_holder,omitempty"`
+	RemoteHolder string    `json:"remote_holder,omitempty"`
+	Source       string    `json:"source,omitempty"`
 }
 
-// SubstrateArea is one area's recorded state and when it was verified.
+// SubstrateArea is one area's recorded state, the files that state is about
+// (what a push would publish, or where the hosted copy differs) and when it was
+// verified. A record written before Paths existed loads with none.
 type SubstrateArea struct {
 	State     string    `json:"state"`
+	Paths     []string  `json:"paths,omitempty"`
 	CheckedAt time.Time `json:"checked_at"`
+}
+
+// AreaCheck is what one check verified for an area: its state and the files
+// that state is about.
+type AreaCheck struct {
+	State string
+	Paths []string
 }
 
 var mu sync.Mutex
@@ -114,6 +129,24 @@ func RecordPush(globalDir, repoPath string, success bool, reason, scope string, 
 	})
 }
 
+// ClearPushReasonIf drops the recorded push failure when match accepts its
+// reason, leaving the failure and success times as they were: for a failure
+// something other than a successful push has healed, such as `satelle init`
+// re-stamping past the drift gate that refused it. Nothing is written when no
+// recorded reason matches, so a repo with no state gains no file.
+func ClearPushReasonIf(globalDir, repoPath string, match func(string) bool) error {
+	s, ok, err := Load(globalDir, repoPath)
+	if err != nil || !ok || s.PushReason == "" || !match(s.PushReason) {
+		return err
+	}
+	return record(globalDir, repoPath, "", func(s *State) {
+		if s.PushReason != "" && match(s.PushReason) {
+			s.PushReason = ""
+			s.PushPasses = 0
+		}
+	})
+}
+
 // RecordSnapshot merges the snapshot-leg fields and writes atomically.
 func RecordSnapshot(globalDir, repoPath string, success bool, reason, scope string, now time.Time) error {
 	return record(globalDir, repoPath, scope, func(s *State) {
@@ -133,9 +166,19 @@ func RecordSnapshot(globalDir, repoPath string, success bool, reason, scope stri
 	})
 }
 
-// RecordSubstrate merges the verified state of the given areas (area -> state)
-// into the substrate group, leaving every other area's record as it was.
-func RecordSubstrate(globalDir, repoPath string, areas map[string]string, now time.Time) error {
+// RecordScope records the work-state scope a pass resolved and nothing else, so
+// a pass skipped because the work state is local writes neither a success nor a
+// failure. An empty scope writes nothing.
+func RecordScope(globalDir, repoPath, scope string) error {
+	if scope == "" {
+		return nil
+	}
+	return record(globalDir, repoPath, scope, func(*State) {})
+}
+
+// RecordSubstrate merges the verified check of the given areas into the
+// substrate group, leaving every other area's record as it was.
+func RecordSubstrate(globalDir, repoPath string, areas map[string]AreaCheck, now time.Time) error {
 	if len(areas) == 0 {
 		return nil
 	}
@@ -143,8 +186,8 @@ func RecordSubstrate(globalDir, repoPath string, areas map[string]string, now ti
 		if s.SubstrateAreas == nil {
 			s.SubstrateAreas = map[string]SubstrateArea{}
 		}
-		for area, state := range areas {
-			s.SubstrateAreas[area] = SubstrateArea{State: state, CheckedAt: now}
+		for area, check := range areas {
+			s.SubstrateAreas[area] = SubstrateArea{State: check.State, Paths: check.Paths, CheckedAt: now}
 		}
 	})
 }
@@ -160,6 +203,17 @@ func MarkSubstrateAttempt(globalDir, repoPath string, now time.Time) error {
 // story's record is left as it was. Nothing is written when there is nothing to
 // change, so an in-step repo gains no state file.
 func RecordStoryConflicts(globalDir, repoPath string, conflicts map[string]string, cleared []string, now time.Time) error {
+	detailed := make(map[string]StoryConflict, len(conflicts))
+	for id, reason := range conflicts {
+		detailed[id] = StoryConflict{Reason: reason}
+	}
+	return RecordStoryConflictDetails(globalDir, repoPath, detailed, cleared, now)
+}
+
+// RecordStoryConflictDetails is RecordStoryConflicts with the holders and source
+// of each conflict. A conflict's At is set here; a story still in conflict for
+// the same reason keeps the time it was first found.
+func RecordStoryConflictDetails(globalDir, repoPath string, conflicts map[string]StoryConflict, cleared []string, now time.Time) error {
 	if len(conflicts) == 0 && len(cleared) == 0 {
 		return nil
 	}
@@ -173,15 +227,18 @@ func RecordStoryConflicts(globalDir, repoPath string, conflicts map[string]strin
 		for _, id := range cleared {
 			delete(s.StoryConflicts, id)
 		}
-		for id, reason := range conflicts {
+		for id, c := range conflicts {
 			if s.StoryConflicts == nil {
 				s.StoryConflicts = map[string]StoryConflict{}
 			}
-			// A story still in conflict keeps the time it was first found.
-			if prev, ok := s.StoryConflicts[id]; ok && prev.Reason == reason {
-				continue
+			c.At = now
+			if prev, ok := s.StoryConflicts[id]; ok && prev.Reason == c.Reason {
+				c.At = prev.At
+				if c.LocalHolder == "" && c.RemoteHolder == "" && c.Source == "" {
+					c = prev
+				}
 			}
-			s.StoryConflicts[id] = StoryConflict{Reason: reason, At: now}
+			s.StoryConflicts[id] = c
 		}
 		if len(s.StoryConflicts) == 0 {
 			s.StoryConflicts = nil

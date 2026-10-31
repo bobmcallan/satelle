@@ -9,12 +9,14 @@ package config
 // part of this story.
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -87,6 +89,17 @@ const syncStaleAfterKey = "stale_after"
 // not published. Reserved so it is never treated as an area.
 const syncHoldUnpushedKey = "hold_unpushed"
 
+// syncRecentWindowKey is the [sync] duration a story stays held with its full
+// history in hosted mode after its newest event (sty_0dc600e1). Reserved so it is
+// never treated as an area; its default is substrate/config/sync.toml.
+const syncRecentWindowKey = "recent_window"
+
+// syncPullOnlyKey is the [sync] switch that makes this machine pull from its
+// bound project and never push to it (sty_07eefabe). It is machine state: only
+// PullOnly reads it, from satelle.local.toml alone. Reserved so it is never
+// treated as an area.
+const syncPullOnlyKey = "pull_only"
+
 // WorkstateAreas are the [sync] areas that form the work-state kind.
 var WorkstateAreas = []string{"stories", "executions", "ledger"}
 
@@ -94,7 +107,59 @@ var WorkstateAreas = []string{"stories", "executions", "ledger"}
 // never looks them up; they must never be minted as SyncAreas.
 var reservedSyncKeys = map[string]bool{
 	syncAllKey: true, syncServerKey: true, syncProjectKey: true, syncWorkspaceKey: true,
-	syncStaleAfterKey: true, syncHoldUnpushedKey: true,
+	syncStaleAfterKey: true, syncHoldUnpushedKey: true, syncRecentWindowKey: true, syncPullOnlyKey: true,
+}
+
+const syncDefaultsFile = "substrate/config/sync.toml"
+
+var (
+	embeddedSyncOnce sync.Once
+	embeddedSync     SyncTable
+	embeddedSyncErr  error
+)
+
+// EmbeddedSync returns the embedded default [sync] keys, parsed once; empty on a
+// parse failure, which EmbeddedSyncErr reports.
+func EmbeddedSync() SyncTable {
+	embeddedSyncOnce.Do(func() {
+		raw, err := substrateFS.ReadFile(syncDefaultsFile)
+		if err != nil {
+			embeddedSyncErr = err
+			return
+		}
+		var file struct {
+			Sync SyncTable `toml:"sync"`
+		}
+		if _, err := toml.Decode(string(raw), &file); err != nil {
+			embeddedSyncErr = err
+			return
+		}
+		embeddedSync = file.Sync
+	})
+	return embeddedSync
+}
+
+// EmbeddedSyncErr is non-nil when the embedded [sync] defaults failed to load.
+func EmbeddedSyncErr() error {
+	_ = EmbeddedSync()
+	return embeddedSyncErr
+}
+
+// RecentWindow reads [sync] recent_window, else the embedded default. An
+// unparseable or non-positive value is a config error.
+func RecentWindow(cfg Config) (time.Duration, error) {
+	raw := strings.TrimSpace(cfg.Sync[syncRecentWindowKey])
+	if raw == "" {
+		raw = strings.TrimSpace(EmbeddedSync()[syncRecentWindowKey])
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("sync: recent_window %q is not a duration: %w", raw, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("sync: recent_window must be positive, got %s", d)
+	}
+	return d, nil
 }
 
 // SyncTable is the [sync] table: area name -> scope, plus the reserved
@@ -139,6 +204,46 @@ func HoldUnpushed(cfg Config) (bool, error) {
 		return false, fmt.Errorf("sync: hold_unpushed %q is not a boolean (want true|false)", raw)
 	}
 	return b, nil
+}
+
+// PullOnly reads [sync] pull_only from the repo's satelle.local.toml only: the
+// committed and hosted satelle.toml never mark a machine pull-only, so the mark
+// cannot travel as repo config. An absent file or key is false; a value that is
+// not a boolean is a config error.
+func PullOnly(repoRoot string) (bool, error) {
+	path := LocalConfigPath(repoRoot)
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("config: read %s: %w", path, err)
+	}
+	var local struct {
+		Sync map[string]any `toml:"sync"`
+	}
+	if _, err := toml.Decode(string(b), &local); err != nil {
+		return false, &ParseError{Path: path, Err: err}
+	}
+	v, ok := local.Sync[syncPullOnlyKey]
+	if !ok {
+		return false, nil
+	}
+	on, ok := v.(bool)
+	if !ok {
+		return false, fmt.Errorf("sync: pull_only in %s is %v, not a boolean (want true|false)", path, v)
+	}
+	return on, nil
+}
+
+// LocalConfigPath is the repo's gitignored satelle.local.toml.
+func LocalConfigPath(repoRoot string) string {
+	return filepath.Join(repoRoot, DefaultDataDir, LocalConfigName)
+}
+
+// PullOnlyEdit is the single write of the pull-only mark, into LocalConfigPath.
+func PullOnlyEdit(on bool) KeyEdit {
+	return KeyEdit{Section: "sync", Key: syncPullOnlyKey, Value: strconv.FormatBool(on)}
 }
 
 // WorkstateStaleAfter reads [sync] stale_after. ok=false when the key is
@@ -187,6 +292,21 @@ func ScopeFor(cfg Config, area string) (Scope, error) {
 		return scope, nil
 	}
 	return LocalScope, nil
+}
+
+// WorkstateScope folds ScopeFor over WorkstateAreas into the repo's one
+// work-state scope: LocalScope only when every area is local, else the widest
+// area scope on the ladder. An area's ScopeFor error is returned as is.
+func WorkstateScope(cfg Config) (Scope, error) {
+	widest := LocalScope
+	for _, area := range WorkstateAreas {
+		sc, err := ScopeFor(cfg, area)
+		if err != nil {
+			return LocalScope, err
+		}
+		widest = max(widest, sc)
+	}
+	return widest, nil
 }
 
 // sharedFrontmatterKey is the OKF frontmatter key marking an individual file,
@@ -525,6 +645,40 @@ func AreaDefaultShas(cfg Config, repoRoot, area string, ign Ignore) (map[string]
 		}
 	}
 	return out, nil
+}
+
+// AreaStampOnlyDefaults is the files of one area the push view (AreaFiles) drops
+// as unedited embedded defaults on the strength of their own stamp alone: a
+// stamped copy whose stamp matches its body but whose bytes are neither the
+// current embedded body nor its current stamped form. Nothing can tell such a
+// file from one edited and re-stamped, so the sync comparisons count it as a
+// local file wherever the synced base or the hosted snapshot records other bytes
+// for its path.
+func AreaStampOnlyDefaults(cfg Config, repoRoot, area string, ign Ignore) ([]ConfigFile, error) {
+	files, err := walkAreaFiles(cfg, repoRoot, area, PersonalScope)
+	if err != nil {
+		return nil, err
+	}
+	var out []ConfigFile
+	for _, f := range files {
+		if !LocalOnlyPath(f.Path) && !ign.Match(f.Path) && UneditedDefault(f.Path, f.Content) && stampOnlyDefault(f.Path, f.Content) {
+			out = append(out, f)
+		}
+	}
+	sortConfigFiles(out)
+	return out, nil
+}
+
+// stampOnlyDefault reports whether an unedited default (UneditedDefault) is one
+// only its own stamp vouches for: its bytes are neither the current embedded
+// body for the path nor that body's current stamped form.
+func stampOnlyDefault(rel string, body []byte) bool {
+	emb, ok := embeddedBodyByRel()[rel]
+	if !ok {
+		return true
+	}
+	text := string(body)
+	return text != emb && text != ApplyStamp(emb, SHA(emb))
 }
 
 // PlaceholderSettings reports whether the settings area on disk holds nothing a

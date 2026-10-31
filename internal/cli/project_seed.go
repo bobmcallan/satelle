@@ -69,6 +69,12 @@ func seedProjectSubstrate(cmd *cobra.Command, slug string) error {
 		fmt.Fprintf(out, "substrate: not seeded — only the project's substrate holder %s can seed it\n", who.holderName())
 		return nil
 	}
+	if err := refusePullOnly(repoRoot); errors.Is(err, errPullOnly) {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: substrate seed skipped: %v\n", err)
+		return nil
+	} else if err != nil {
+		return err
+	}
 
 	ign, err := config.LoadIgnore(dataDir)
 	if err != nil {

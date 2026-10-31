@@ -243,7 +243,7 @@ func runNodeJoin(cmd *cobra.Command, root, relay, session, token string) error {
 		report = remotenode.Report{Error: perr.Error()}
 	}
 	if perr == nil && def.RunsTask() {
-		return serveTaskWake(ctx, cmd, node, sess, report, client, session, def)
+		return serveTaskWake(ctx, cmd, node, sess, report, client, root, session, def)
 	}
 	return node.Serve(ctx, sess, report)
 }
@@ -270,17 +270,23 @@ func reportNodeStartFailure(ctx context.Context, cmd *cobra.Command, client *rem
 // serveTaskWake serves a task-kind remote's node with its wake run beside Serve
 // (Node.ServeWithRun): the ready report is not delayed by the run, and the node
 // ends with its single run. A run that cannot be made or driven is logged; it has
-// already reported itself concluded as rejected.
+// already reported itself concluded as rejected. A node at a pull-only root
+// (refusePullOnly) runs its task and pushes no workstate.
 func serveTaskWake(ctx context.Context, cmd *cobra.Command, node *remotenode.Node, sess *remotechan.Session,
-	report remotenode.Report, client *remotenode.NodeClient, session string, def remotedef.Definition) error {
+	report remotenode.Report, client *remotenode.NodeClient, root, session string, def remotedef.Definition) error {
 	opts, desc, err := prepareTaskWake(ctx, cmd, client)
 	if err != nil {
 		return node.Serve(ctx, sess, remotenode.Report{Error: err.Error()})
 	}
+	var pusher remotenode.WorkstatePusher = client
+	if err := refusePullOnly(root); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "workstate push skipped: %v\n", err)
+		pusher = nil
+	}
 	return node.ServeWithRun(ctx, sess, report, func(runCtx context.Context) {
 		res, rerr := remotenode.RunTask(runCtx, remotenode.TaskRun{
 			Def: def, Desc: desc, NodeID: session, Client: client, Drive: opts, ResendEvery: nodeStatusResend,
-			Pusher: client, Batch: nodeWorkstateBatch(cmd),
+			Pusher: pusher, Batch: nodeWorkstateBatch(cmd),
 		})
 		if rerr != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "join: the task run %s: %v\n", res.Execution, rerr)

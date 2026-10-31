@@ -22,6 +22,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/logfile"
+	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/oplog"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/waiver"
@@ -59,6 +60,28 @@ type uiDrainCtxKey struct{}
 
 // needsStore returns a cobra annotations map flagging a store-backed command.
 func needsStore() map[string]string { return map[string]string{storeAnnotation: "1"} }
+
+// hostedOriginAnnotation marks a verb whose store change is materialised from
+// the hosted project (pull, snapshot, rechain, rehydrate). Its end-of-verb UI
+// drain stamps mirror.OriginHosted so satelled never pushes that change back.
+const hostedOriginAnnotation = "hosted-origin"
+
+// hostedOrigin adds hostedOriginAnnotation to ann (nil starts a new map).
+func hostedOrigin(ann map[string]string) map[string]string {
+	if ann == nil {
+		ann = map[string]string{}
+	}
+	ann[hostedOriginAnnotation] = "1"
+	return ann
+}
+
+// ingestOrigin is the mirror origin cmd's UI drain stamps.
+func ingestOrigin(cmd *cobra.Command) mirror.IngestOrigin {
+	if cmd != nil && cmd.Annotations[hostedOriginAnnotation] != "" {
+		return mirror.OriginHosted
+	}
+	return mirror.OriginLocal
+}
 
 // openAppForCmd opens the bootstrap and stashes it on the command's context.
 // Called from the root's PersistentPreRunE for store-backed commands.
@@ -138,6 +161,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 			endpoint: ep,
 			repoKey:  config.RepoKey(a.RepoRoot),
 			app:      a,
+			origin:   ingestOrigin(cmd),
 		}
 		verb.AddChangeNotifier(drain.mark)
 	}
@@ -210,12 +234,13 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetActorResolver(func() string { return resolveUser(a.Config, a.RepoRoot).Actor() })
 	// The location a working_on row names (sty_40853d02): this machine's hosted
 	// location, empty when no server or no bound project. Read from local state
-	// only — no network, and nothing is claimed or refused.
+	// only — no network, and nothing is claimed or refused. A story worktree names
+	// its main checkout's location (sty_9ece9394).
 	verb.SetLocationResolver(func() (string, string) {
-		if config.ResolveHostedServer(a.Config) == "" || a.Config.SyncProject() == "" {
+		if !verb.RepoBound(a.Config) {
 			return "", ""
 		}
-		return hosted.KnownLocationID(a.RepoRoot), hosted.LocationLabel(a.RepoRoot)
+		return thisLocation(a)
 	})
 	// Engage precondition (sty_93eec36d): agents.toml + workflow agent= validation
 	// before a story leaves its entry state. agents already loaded by requireAgents.
@@ -442,6 +467,17 @@ func appFrom(cmd *cobra.Command) (*app.App, error) {
 		return nil, fmt.Errorf("internal: store not initialised for %q", cmd.CommandPath())
 	}
 	return a, nil
+}
+
+// thisLocation is this machine's hosted location for a's checkout: its persisted
+// id and its label. A linked git worktree is the same checkout as its main tree,
+// so both resolve through config.CanonicalRepoRoot — a story engaged from a
+// `satelle story worktree` tree names the location the main tree registered, not
+// none (sty_9ece9394). Every reader and writer of "this machine's location" goes
+// through here so they agree.
+func thisLocation(a *app.App) (id, label string) {
+	root := config.CanonicalRepoRoot(a.RepoRoot)
+	return hosted.KnownLocationID(root), hosted.LocationLabel(root)
 }
 
 // engineForCmd builds a agentstep.Engine over the opened store and the install-time

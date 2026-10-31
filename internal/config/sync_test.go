@@ -169,6 +169,34 @@ func TestScopeForAllFallthrough(t *testing.T) {
 	}
 }
 
+// WorkstateScope is local only when every work-state area is local, else the
+// widest area scope; a bad value in any area is an error (sty_3df5f95a).
+func TestWorkstateScope(t *testing.T) {
+	cases := []struct {
+		name string
+		sync map[string]string
+		want Scope
+	}{
+		{"unset", nil, LocalScope},
+		{"all local", map[string]string{"all": "local"}, LocalScope},
+		{"all personal", map[string]string{"all": "personal"}, PersonalScope},
+		{"one personal area", map[string]string{"all": "local", "stories": "personal"}, PersonalScope},
+		{"mixed with one shared", map[string]string{"stories": "personal", "ledger": "shared"}, SharedScope},
+		{"non-workstate area ignored", map[string]string{"skills": "shared"}, LocalScope},
+	}
+	for _, c := range cases {
+		got, err := WorkstateScope(Config{Sync: c.sync})
+		if err != nil || got != c.want {
+			t.Errorf("%s: WorkstateScope = %v, %v; want %v, nil", c.name, got, err, c.want)
+		}
+	}
+	// An invalid value in a later area errors even after a non-local one.
+	bad := Config{Sync: map[string]string{"stories": "personal", "ledger": "typo"}}
+	if _, err := WorkstateScope(bad); err == nil {
+		t.Error("WorkstateScope(invalid ledger) did not error")
+	}
+}
+
 func TestFileShared(t *testing.T) {
 	sharedFM := "---\ntype: skill\nshared: true\n---\nbody"
 	unsetFM := "---\ntype: skill\n---\nbody"

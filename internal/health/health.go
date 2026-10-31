@@ -130,6 +130,7 @@ const (
 	IDSyncFailing  = "sync.failing"       // standing hosted-push failure
 	IDSyncUnbacked = "sync.unbacked"      // last successful push older than stale_after
 	IDSyncConfig   = "sync.config"        // stale_after missing or unparseable
+	IDSyncPushOff  = "sync.push_off"      // the machine config turns hosted push off (sty_a21d9c07)
 	IDStatusDrift  = "story.status.drift" // work-item row disagrees with last status_transition
 
 	// Substrate sync health (sty_7562055c): the authored areas and documents
@@ -154,6 +155,7 @@ const (
 	IDContextDispatchUnavailable = "context.dispatch.unavailable" // a seat's context cannot be sized
 	IDContextDuplicateVerbatim   = "context.duplicate.verbatim"   // a passage is copied word-for-word between two documents
 	IDContextDuplicateSemantic   = "context.duplicate.semantic"   // a reviewer judged one document to restate another (opt-in)
+	IDContextBaselineOverride    = "context.baseline.override"    // a repo principle or skill shadows a baseline principle by name with another body, or restates a passage of one
 	IDContextRefUnresolved       = "context.ref.unresolved"       // a satelle reference names nothing that resolves, or a retired name
 	IDContextRefUnwired          = "context.ref.unwired"          // a named skill exists but no route, gate, hook, summary or task wires it
 	IDContextIndexStale          = "context.index.stale"          // documents/index.md lists a document that does not exist
@@ -168,6 +170,19 @@ const (
 	IDLiveVersionDrift = "live.version_drift" // a CLI's version differs from the one satelle's measured behavior was captured against, or is unknown
 )
 
+// StampRefusalMarker is the phrase every breaking-drift message carries, where
+// the binary is ahead of a repo's deployed stamp across a ### Breaking release.
+// The drift gate composes its messages from it and the surfaces that replay a
+// recorded refusal (doctor, init) recognise it by it, so the text has one owner.
+const StampRefusalMarker = "across BREAKING release"
+
+// IsStampRefusal reports whether reason is the drift gate's refusal of a repo
+// whose deployed stamp is behind a breaking release — a failure `satelle init`
+// heals, not a retry of the command that recorded it.
+func IsStampRefusal(reason string) bool {
+	return strings.Contains(reason, StampRefusalMarker) && strings.Contains(reason, "deployed stamp")
+}
+
 // ids is the registry every constant above belongs to — the uniqueness test
 // reads it, so a copy-pasted duplicate fails the build's tests rather than
 // silently collapsing two defects into one identifier.
@@ -179,13 +194,13 @@ var ids = []string{
 	IDWorkflowStructure, IDWorkflowConsistency, IDCommandRuleAllow,
 	IDProcessUnreadable, IDProcessAbsent, IDProcessDivergent,
 	IDScaffoldStale, IDScaffoldMissing, IDRepoUnreadable, IDConfigStray, IDSubstrateUnlocked, IDBreakingUnacknowledged,
-	IDSyncLocal, IDSyncOk, IDSyncFailing, IDSyncUnbacked, IDSyncConfig,
+	IDSyncLocal, IDSyncOk, IDSyncFailing, IDSyncUnbacked, IDSyncConfig, IDSyncPushOff,
 	IDSyncSubstrateOk, IDSyncSubstrateUnpushed, IDSyncSubstrateUnmerged, IDSyncSubstrateBehind,
 	IDSyncSubstrateUnchecked, IDSyncSubstrateUnbound,
 	IDStatusDrift,
 	IDContextSessionOverflow, IDContextSessionUnavailable, IDContextDispatchOverBudget,
 	IDContextDispatchUnbudgeted, IDContextDispatchUnavailable, IDContextDuplicateVerbatim,
-	IDContextDuplicateSemantic, IDContextRefUnresolved, IDContextRefUnwired, IDContextIndexStale,
+	IDContextDuplicateSemantic, IDContextBaselineOverride, IDContextRefUnresolved, IDContextRefUnwired, IDContextIndexStale,
 	IDContextReviewUnavailable,
 	IDLiveOK, IDLiveAuth, IDLiveTimeout, IDLiveSpawn, IDLiveACPHandshake, IDLiveVersionDrift,
 }

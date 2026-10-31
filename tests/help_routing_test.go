@@ -19,6 +19,12 @@ func TestHelpRouting(t *testing.T) {
 	if !strings.Contains(out, "Open Knowledge Format") {
 		t.Errorf("help substrate should print the topic:\n%s", out)
 	}
+	// The topic documents the review verb and its --apply (sty_08f747ad).
+	for _, want := range []string{"satelle substrate review", "--apply <item>", "not judged", "--from <report.json>"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("help substrate should document %q:\n%s", want, out)
+		}
+	}
 
 	// Command name → command help (not a flat error).
 	out = mustRun(t, testBin, repo, "help", "story")

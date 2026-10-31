@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -247,6 +248,61 @@ func (cc *ChainConn) ReadStory(ctx context.Context, project, storyID, after stri
 		latest = events[len(events)-1].ID
 	}
 	return events, latest, nil
+}
+
+// SubscribeStories follows the project's story chains (sty_0dc600e1): every event
+// appended to any of its stories after the subscription starts arrives, in
+// per-story chain order, and resume maps a story to the event this checkout last
+// saw, whose later events are replayed first. on is called for each event; its
+// error ends the subscription and is returned as it came. A transient failure is
+// retried from the last event on handled, so nothing is replayed twice. It returns
+// nil when the server ends the stream and ctx's error when ctx ends. A server
+// without Subscribe is ErrChainUnsupported.
+func (cc *ChainConn) SubscribeStories(ctx context.Context, project string, resume map[string]string, on func(storyID string, ev ChainEvent) error) error {
+	seen := make(map[string]string, len(resume))
+	for id, ev := range resume {
+		seen[id] = ev
+	}
+	var onErr error
+	err := cc.c.withGRPCAuth(ctx, func(ctx context.Context) error {
+		return retryTransient(ctx, func() error {
+			stream, err := cc.cli.Subscribe(ctx, &syncpb.SubscribeRequest{Project: project, Resume: seen}, chainCallOpts()...)
+			if err != nil {
+				return err
+			}
+			for {
+				resp, err := stream.Recv()
+				if errors.Is(err, io.EOF) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				e := resp.GetEvent()
+				if e == nil {
+					continue
+				}
+				ev := ChainEvent{ID: e.GetId(), BaseID: e.GetBaseId(), WorkflowVersion: e.GetWorkflowVersion(), Payload: e.GetPayload()}
+				if onErr = on(e.GetStoryId(), ev); onErr != nil {
+					return onErr
+				}
+				seen[e.GetStoryId()] = e.GetId()
+			}
+		})
+	})
+	switch {
+	case err == nil:
+		return nil
+	case onErr != nil:
+		return onErr
+	case ctx.Err() != nil:
+		return ctx.Err()
+	case status.Code(err) == codes.Unimplemented:
+		return ErrChainUnsupported
+	case errors.Is(err, ErrLoginRequired):
+		return err
+	}
+	return cc.c.mapSyncErr("Subscribe", err)
 }
 
 // staleBaseByRead learns where the story stands by reading the events after base.

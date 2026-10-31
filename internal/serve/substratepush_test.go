@@ -90,17 +90,14 @@ func TestSubstrateLegIsQuietWhenEveryVerbExitsZero(t *testing.T) {
 	}
 }
 
-// AC1: every pass invokes the substrate push for every target, after that
-// target's work-state push.
-func TestPassInvokesSubstratePushAfterPushForEveryTarget(t *testing.T) {
+// AC1: every pass invokes the substrate push for every target. No pass pushes
+// work-state (sty_0dc600e1), so it is the only push a pass makes.
+func TestPassInvokesSubstratePushForEveryTarget(t *testing.T) {
 	var calls []string
 	r := &Reconciler{
 		Targets: func(context.Context) []string { return []string{"/repo/a", "/repo/b"} },
 		Reseed:  func(context.Context, string) error { return nil },
-		Push: func(_ context.Context, p string) error {
-			calls = append(calls, "push "+p)
-			return nil
-		},
+		Bound:   func(string) bool { return false },
 		SubstratePush: func(_ context.Context, p string) error {
 			calls = append(calls, "substrate "+p)
 			return nil
@@ -108,10 +105,7 @@ func TestPassInvokesSubstratePushAfterPushForEveryTarget(t *testing.T) {
 	}
 	r.pass(context.Background())
 	r.pass(context.Background())
-	want := []string{
-		"push /repo/a", "substrate /repo/a", "push /repo/b", "substrate /repo/b",
-		"push /repo/a", "substrate /repo/a", "push /repo/b", "substrate /repo/b",
-	}
+	want := []string{"substrate /repo/a", "substrate /repo/b", "substrate /repo/a", "substrate /repo/b"}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %v, want %v", calls, want)
 	}

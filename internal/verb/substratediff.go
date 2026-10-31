@@ -112,7 +112,7 @@ func substrateStat(added []substrateFile, deleted []string) string {
 // under the process root (a worktree story's main-tree substrate) come back in
 // procRel with that root, the rest in local.
 func recordedSubstrate(ctx context.Context, storyID, sliceRoot string) (local, procRel []string, processRoot string) {
-	files, _, err := recordedChangeSet(ctx, storyID)
+	files, _, _, err := recordedChangeSet(ctx, storyID)
 	if err != nil || len(files) == 0 {
 		return nil, nil, ""
 	}

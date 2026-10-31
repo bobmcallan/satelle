@@ -2736,7 +2736,12 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 	// other than the one satelle's measured behavior was captured against. Read
 	// from the payload alone, so it spawns nothing and costs the hook nothing.
 	driftLine := agentcli.SessionDriftLine(harness, raw)
-	content, omitted := assembleSessionContext(a, harness, limit, unit, teamLine, releaseLine, substrateLine, storyLine, policyLine, driftLine)
+	// VERSION-STAMP drift (sty_8ecdae90): advisory only — versionDriftAdvisory
+	// has no error channel, so `hook context` keeps its fail-open contract. It
+	// leads the user notice (sty_34808cbe): a stamp behind an init-heals release
+	// is refused by the next store-backed command, which outranks a sync notice.
+	versionLine := versionDriftAdvisory(a.RepoRoot)
+	content, omitted := assembleSessionContext(a, harness, limit, unit, versionLine, teamLine, releaseLine, substrateLine, storyLine, policyLine, driftLine)
 	if len(omitted) > 0 {
 		fmt.Fprintf(stderr,
 			"satelle hook context: %s exceeded the %s harness limit (%d %s) — indexed with a read instruction: %s\n",
@@ -2745,7 +2750,7 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 	if strings.TrimSpace(content) == "" {
 		return nil
 	}
-	fmt.Fprintln(out, string(agentcli.SessionContextOutput(harness, emitEvent, content, joinNotice(teamLine, releaseLine, substrateLine, storyLine, policyLine, driftLine))))
+	fmt.Fprintln(out, string(agentcli.SessionContextOutput(harness, emitEvent, content, joinNotice(versionLine, teamLine, releaseLine, substrateLine, storyLine, policyLine, driftLine))))
 	// The marker is written only after a channel-matching emit of non-empty
 	// additionalContext. A non-matching event (including SessionStart when the
 	// channel is elsewhere) writes nothing. Marker errors are swallowed.
@@ -2758,14 +2763,15 @@ func runHookContext(out, stderr io.Writer, harness string, raw []byte) error {
 // assembleSessionContext renders the session principle set — constitution,
 // principles:session docs, advisories, seat — under the budget the caller
 // resolved. unit is "bytes" (len, the SessionStart path) or "characters"
-// (runes, a tool-event clip). teamLine is the project-tier write-down warning;
-// releaseLine is the release-currency advisory
+// (runes, a tool-event clip). versionLine is the version-stamp drift advisory,
+// placed beside the scaffold block; teamLine is the project-tier write-down
+// warning; releaseLine is the release-currency advisory
 // ("" when none), placed beside the version-drift line; substrateLine is the
 // substrate-currency advisory, likewise, and storyLine the story-sync advisory
 // (held and conflicted stories), and policyLine the subscribed command-policy
 // advisory, and driftLine the captured-CLI-version advisory. Fail-open: a list
 // error returns empty content.
-func assembleSessionContext(a *app.App, harness string, limit int, unit, teamLine, releaseLine, substrateLine, storyLine, policyLine, driftLine string) (string, []string) {
+func assembleSessionContext(a *app.App, harness string, limit int, unit, versionLine, teamLine, releaseLine, substrateLine, storyLine, policyLine, driftLine string) (string, []string) {
 	if a == nil || a.Store == nil || a.Store.DocIndex == nil {
 		return "", nil
 	}
@@ -2789,11 +2795,6 @@ func assembleSessionContext(a *app.App, harness string, limit int, unit, teamLin
 	// Scaffold drift (sty_ac25b787): fail-open warning — never blocks SessionStart.
 	// Names `satelle init` as the heal. DetectScaffoldDrift is pure comparison.
 	scaffoldWarn := formatScaffoldDriftWarning(DetectScaffoldDrift(a.RepoRoot))
-	// VERSION-STAMP drift (sty_8ecdae90): a separate, one-line advisory beside
-	// the scaffold block above — different trigger, different text, neither
-	// replacing the other. Advisory only: versionDriftAdvisory has no error
-	// channel, so `hook context` keeps its fail-open contract.
-	versionLine := versionDriftAdvisory(a.RepoRoot)
 	// An auto-raised diagnosis is worth nothing unread (sty_88d40a60): when the
 	// indexer has filed a high-priority system story about an authored document
 	// that fails its structure check, name it here. Silent when there is none.

@@ -180,6 +180,10 @@ type StoryDiffResult struct {
 	// Source is "live" (git re-derive) or "recorded" (change_record union).
 	Source  string `json:"source,omitempty"`
 	Records int    `json:"records,omitempty"`
+	// UnresolvedRecords names the recorded rows whose since..head range git
+	// cannot show, so their files were used as recorded (sty_5a6c06d3): one
+	// "<ledger entry id> <since>..<head>" per row.
+	UnresolvedRecords []string `json:"unresolved_records,omitempty"`
 	// ProcessRoot / ProcessRootFiles name the substrate a story engaged from a
 	// linked worktree changed in the MAIN tree (sty_92e4cdbe): the process of
 	// record lives there, not in the worktree. The same paths are also in Files;
@@ -233,19 +237,23 @@ func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 
 	// --recorded: union change_record file lists (sty_948ad5df). No git re-derive.
 	if req.Recorded {
-		files, n, rerr := recordedChangeSet(ctx, it.ID)
+		files, n, unresolved, rerr := recordedChangeSet(ctx, it.ID)
 		if rerr != nil {
 			return nil, rerr
 		}
 		res := StoryDiffResult{
-			StoryID: it.ID,
-			Files:   files,
-			Records: n,
-			Source:  "recorded",
-			Note:    "enumeration only — recorded change_record union; no pass/fail",
+			StoryID:           it.ID,
+			Files:             files,
+			Records:           n,
+			Source:            "recorded",
+			Note:              "enumeration only — recorded change_record union; no pass/fail",
+			UnresolvedRecords: unresolved,
 		}
 		if n == 0 {
 			res.Note = "no change_record rows yet — engage and transition to produce records"
+		}
+		if len(unresolved) > 0 {
+			res.Note += "; used as recorded (range unresolved): " + strings.Join(unresolved, ", ")
 		}
 		return json.Marshal(res)
 	}
@@ -610,26 +618,13 @@ func gitDiffSince(dir, baseline string, wantPatch bool) (files []string, stat, p
 // The story's own commits and uncommitted changes always stay. With nothing to
 // leave out it is exactly gitDiffSince.
 func storyChangeSince(ctx context.Context, dir, sinceSHA, storyID string, windows []parkWindow, wantPatch bool) (files []string, stat, patch string, err error) {
-	own, composed := walkStoryRange(ctx, dir, sinceSHA, storyID, windows)
+	own, composed := walkStoryRange(ctx, dir, sinceSHA, "", storyID, windows)
 	if !composed {
 		return gitDiffSince(dir, sinceSHA, wantPatch)
 	}
 	// The change set is composed from its own parts, so files, stat and patch stay
 	// consistent: each own commit against its first parent, then what is not committed.
-	legs := make([][]string, 0, len(own)+1)
-	for _, c := range own {
-		revs := []string{c.SHA + "^", c.SHA}
-		if c.Narrowed {
-			paths := mergeResolvedPaths(dir, c.SHA)
-			if len(paths) == 0 {
-				continue
-			}
-			revs = append(revs, "--")
-			revs = append(revs, paths...)
-		}
-		legs = append(legs, revs)
-	}
-	legs = append(legs, []string{"HEAD"})
+	legs := append(ownCommitLegs(dir, own), []string{"HEAD"})
 	seen := map[string]bool{}
 	var stats, patches strings.Builder
 	for _, revs := range legs {
@@ -649,6 +644,26 @@ func storyChangeSince(ctx context.Context, dir, sinceSHA, storyID string, window
 	return withUntracked(dir, files, stats.String(), patches.String())
 }
 
+// ownCommitLegs is the `git diff` revisions of each commit that stays in a story's
+// change set: the commit against its first parent, narrowed to the merge's own
+// resolutions for a trunk merge (a merge that resolved nothing has no leg).
+func ownCommitLegs(dir string, own []rangeCommit) [][]string {
+	legs := make([][]string, 0, len(own)+1)
+	for _, c := range own {
+		revs := []string{c.SHA + "^", c.SHA}
+		if c.Narrowed {
+			paths := mergeResolvedPaths(dir, c.SHA)
+			if len(paths) == 0 {
+				continue
+			}
+			revs = append(revs, "--")
+			revs = append(revs, paths...)
+		}
+		legs = append(legs, revs)
+	}
+	return legs
+}
+
 // rangeCommit is a first-parent commit that stays in a story's change set.
 // Narrowed marks a merge of the trunk into the story's branch: only the paths the
 // merge itself resolved stay, not what the trunk brought in.
@@ -662,7 +677,7 @@ type rangeCommit struct {
 // commit in range was left out as another story's published work or narrowed to
 // its own resolutions.
 func splitRangeByTrunk(ctx context.Context, dir, sinceSHA, storyID string) (own []string, foreign bool) {
-	commits, foreign := walkStoryRange(ctx, dir, sinceSHA, storyID, nil)
+	commits, foreign := walkStoryRange(ctx, dir, sinceSHA, "", storyID, nil)
 	for _, c := range commits {
 		own = append(own, c.SHA)
 	}
@@ -671,14 +686,18 @@ func splitRangeByTrunk(ctx context.Context, dir, sinceSHA, storyID string) (own 
 
 // walkStoryRange is splitRangeByTrunk with park windows: a commit inside a window
 // stays only when its subject names the story, and never when the window is All.
-// With no remote trunk and no windows there is nothing to classify.
-func walkStoryRange(ctx context.Context, dir, sinceSHA, storyID string, windows []parkWindow) (own []rangeCommit, composed bool) {
+// With no remote trunk and no windows there is nothing to classify. The range ends
+// at tip, HEAD when tip is "".
+func walkStoryRange(ctx context.Context, dir, sinceSHA, tip, storyID string, windows []parkWindow) (own []rangeCommit, composed bool) {
 	ref := trunk.RemoteTrunkRef(ctx, dir, trunkCfg.Branch)
 	if (ref == "" && len(windows) == 0) || storyID == "" {
 		return nil, false
 	}
+	if tip == "" {
+		tip = "HEAD"
+	}
 	out, err := exec.CommandContext(ctx, "git", "-C", dir, "log", "--first-parent", "--reverse",
-		"--format=%H%x00%P%x00%s", sinceSHA+"..HEAD").Output()
+		"--format=%H%x00%P%x00%s", sinceSHA+".."+tip).Output()
 	if err != nil {
 		return nil, false
 	}

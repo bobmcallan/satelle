@@ -131,4 +131,28 @@ writes through the deterministic structure check and refuses a non-conforming
 artifact. List with `satelle doc list`; read one with `satelle doc get <kind>
 <name>`.
 
+## Reviewing the substrate
+
+`satelle substrate review` judges whether each item earns its cost. It lists
+every principle, skill, workflow step and gate, and agent seat with its origin
+(`embedded`, `seeded`, `edited`, `repo`, `team`, `local`) and the evidence this
+repo's ledger holds for it, broken down by the model that ran each seat: gate
+rejections and their reasons, how many were amended, reversed or re-presented to
+accept, reject-budget parks, rework rounds, flaky reruns, and panel dissent
+(`dissent: not recorded` where the ledger holds no per-seat verdicts). It also
+lists every constitution rule. A single reviewer dispatch (`--binding`, default
+`reviewer`, under `satelle-substrate-review`) gives each item a disposition
+(remove, reduce, keep, conflict) and each rule a `file:line` finding or "no
+finding". Anything the reviewer leaves out is shown as "not judged". The report
+is printed (`--json` for JSON), and its JSON is written to `--out` (outside the
+tree) or to a file under the OS temp dir. No file in the tree changes.
+
+`satelle substrate review --apply <item>` (repeatable) raises one story of
+category `substrate` for each item you choose. The story carries the item's
+origin, disposition and evidence. No file changes here either; the cut is made
+when that story runs through the substrate lane. `--from <report.json>` applies
+from a saved report and skips a second judgement. An `embedded` item has no file
+in this repo to cut, and a `team` item belongs to the project tier, so both are
+refused with the reason.
+
 See also: `satelle help reviewer-checks`, `satelle help principles`.

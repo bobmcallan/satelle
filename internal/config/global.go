@@ -71,6 +71,35 @@ type GlobalConfig struct {
 // credential store outside any config (internal/hosted), never here.
 type GlobalHostedConfig struct {
 	Server string `toml:"server"`
+	// Push = false turns every hosted push off for this machine while pulls and
+	// the local web UI keep running (a stale machine that must not write). nil
+	// means on. Machine-local: this file is never part of a sync bundle.
+	Push *bool `toml:"push"`
+}
+
+// PushEnabled reports whether this machine may push to the hosted project.
+func (h GlobalHostedConfig) PushEnabled() bool {
+	return h.Push == nil || *h.Push
+}
+
+// MachinePushOff reports whether this machine's global config turns hosted push
+// off, and names the setting (with its resolved path) for refusal messages. It
+// re-reads the file on every call, so flipping the key needs no restart. An
+// unreadable config reports push on: the push verbs surface that error themselves.
+func MachinePushOff() (off bool, setting string) {
+	return MachinePushOffIn(GlobalDir())
+}
+
+// MachinePushOffIn is MachinePushOff for the global config under dir, for a
+// caller (doctor) that is handed the machine home rather than resolving it.
+func MachinePushOffIn(dir string) (off bool, setting string) {
+	path := filepath.Join(dir, GlobalConfigName)
+	setting = fmt.Sprintf("[hosted] push = false in %s", path)
+	gc, err := loadGlobalAt(path)
+	if err != nil {
+		return false, setting
+	}
+	return !gc.Hosted.PushEnabled(), setting
 }
 
 // ResolveServer returns the global hosted-server URL, trimmed of whitespace and a
@@ -243,7 +272,10 @@ func GlobalConfigPath() string {
 // resolves to defaults) when the file is absent. A present-but-malformed file is
 // an error.
 func LoadGlobal() (GlobalConfig, error) {
-	path := GlobalConfigPath()
+	return loadGlobalAt(GlobalConfigPath())
+}
+
+func loadGlobalAt(path string) (GlobalConfig, error) {
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return GlobalConfig{}, nil
@@ -280,6 +312,7 @@ func SaveGlobal(gc GlobalConfig) error {
 		repos = "[" + strings.Join(quoted, ", ") + "]"
 	}
 	body := fmt.Sprintf(globalTemplate, gc.Service.ResolvePort(), gc.Service.ResolveAddr(), strings.TrimSpace(gc.Service.Endpoint), gc.Service.Repo, gc.Agent.ResolveCLI(), repos, gc.UI.Theme, gc.Hosted.ResolveServer())
+	body += renderHostedPush(gc.Hosted.Push)
 	body += renderPricing(gc.Pricing)
 	path := GlobalConfigPath()
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
@@ -317,6 +350,17 @@ func ClearGlobalHostedServer() error {
 	}
 	gc.Hosted.Server = ""
 	return SaveGlobal(gc)
+}
+
+// renderHostedPush continues the template's [hosted] section with the push key,
+// commented out while it is unset so the default stays on.
+func renderHostedPush(push *bool) string {
+	const doc = "# push = false turns every hosted push off for this machine; pulls and the\n" +
+		"# local web UI keep running. Never synced.\n"
+	if push == nil {
+		return doc + "# push = false\n"
+	}
+	return doc + fmt.Sprintf("push = %t\n", *push)
 }
 
 // globalTemplate is the documented global config shape. Order/format are fixed

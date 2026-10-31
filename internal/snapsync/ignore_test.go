@@ -73,7 +73,7 @@ func TestLoadBaseFiltersACopyAndLeavesTheSavedBaseAlone(t *testing.T) {
 	d := ignoringDriver(t, newMemHosted(), "secret.md\n")
 	saveBase(t, d, map[string]string{keep: "a\n", secret: "s\n"})
 
-	b, err := d.loadBase("skills")
+	b, _, err := d.loadBase("skills")
 	if err != nil || b == nil {
 		t.Fatalf("loadBase = %v, %v", b, err)
 	}
@@ -81,7 +81,7 @@ func TestLoadBaseFiltersACopyAndLeavesTheSavedBaseAlone(t *testing.T) {
 		t.Errorf("loadBase Files = %v, want only %s", b.Files, keep)
 	}
 	d.Ignore = config.Ignore{}
-	again, err := d.loadBase("skills")
+	again, _, err := d.loadBase("skills")
 	if err != nil || again == nil {
 		t.Fatal(err)
 	}
@@ -135,14 +135,14 @@ func TestOfflineDriftIgnoresIgnoredPaths(t *testing.T) {
 	}
 
 	local := map[string]string{keep: "1"}
-	drift, err := OfflineDrift(server, project, repo, data, "skills", local, nil, config.Ignore{})
+	drift, err := OfflineDrift(server, project, repo, data, "skills", local, nil, nil, config.Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(drift.Changed) == 0 {
 		t.Fatal("without an ignore the deleted file is a change")
 	}
-	drift, err = OfflineDrift(server, project, repo, data, "skills", local, nil, config.ParseIgnore("secret.md\n"))
+	drift, err = OfflineDrift(server, project, repo, data, "skills", local, nil, nil, config.ParseIgnore("secret.md\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestOfflineDriftIgnoresIgnoredPaths(t *testing.T) {
 	}
 
 	// And a local copy that differs from the base (or has none) is not one either.
-	drift, err = OfflineDrift(server, project, repo, data, "skills", map[string]string{keep: "1", secret: "edited"}, nil, config.ParseIgnore("secret.md\n"))
+	drift, err = OfflineDrift(server, project, repo, data, "skills", map[string]string{keep: "1", secret: "edited"}, nil, nil, config.ParseIgnore("secret.md\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

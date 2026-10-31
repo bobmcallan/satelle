@@ -258,7 +258,7 @@ const templatesSrc = `
 
 {{/* syncfailtag: landing-only status chip. No reason, no log path — those
      stay on the project page (sty_a447695e). */}}
-{{define "syncfailtag"}}{{if .SyncReason}}<span class="sync-tag-fail" title="hosted push is failing — see the project page">Push Failing</span>{{end}}{{end}}
+{{define "syncfailtag"}}{{if and .SyncReason (not .SyncLocal)}}<span class="sync-tag-fail" title="hosted push is failing — see the project page">Push Failing</span>{{end}}{{end}}
 
 {{define "footer"}}<footer class="site-footer"><span class="footer-version">{{product}} {{version}}</span></footer>{{end}}
 
@@ -284,7 +284,7 @@ const templatesSrc = `
   <header class="app">
     <h1>{{.ProjectName}}</h1>
     <div class="meta">{{.RepoRoot}} · <a href="help">help →</a> · <a href="settings">settings →</a> · {{template "freshness" .}} · {{template "syncstate" .}}</div>
-    {{if .SyncReason}}{{template "syncfail" .}}{{end}}
+    {{if and .SyncReason (not .SyncLocal)}}{{template "syncfail" .}}{{end}}
   </header>
 
   <div class="tabs" role="tablist">
@@ -302,6 +302,7 @@ const templatesSrc = `
   </div>
 
   <section class="panel" data-topic="stories" id="panel-stories">
+    {{with .Hosted}}<p class="hosted-links">This machine's stories. On the server: <a href="{{.Project}}">all stories</a></p>{{end}}
     <div class="filterbar">
       <div class="filter-input">
         <input type="text" placeholder="filter… e.g. status:open priority:high tags:epic:foo order:updated" aria-label="filter stories">

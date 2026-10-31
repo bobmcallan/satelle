@@ -17,7 +17,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/app"
-	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
@@ -88,7 +87,7 @@ func otherWorking(ctx context.Context, a *app.App) map[string]workingOnRow {
 		}
 		return nil
 	})
-	self := hosted.KnownLocationID(a.RepoRoot)
+	self, _ := thisLocation(a)
 	out := map[string]workingOnRow{}
 	for id, r := range latest {
 		if r.Location == "" || r.Location == self {

@@ -29,8 +29,9 @@ type AreaStatus struct {
 	// effective snapshot; 0 means none.
 	Base, Effective int
 	// Pending lists the hosted changes this checkout has not applied (behind,
-	// diverged); Unmerged the paths a pull left for merging.
-	Pending, Unmerged []string
+	// diverged); Unmerged the paths a pull left for merging; Changed the paths
+	// this checkout changed that a push would publish (unpushed).
+	Pending, Unmerged, Changed []string
 	// Err says why the state is StateUnavailable.
 	Err error
 }
@@ -44,6 +45,7 @@ type AreaStatus struct {
 // status rather than an error; any other failure is returned.
 func (d *Driver) Status(ctx context.Context, area string, local map[string]string) (AreaStatus, error) {
 	p, err := d.planPush(ctx, area, local, false)
+	local = p.local
 	st := AreaStatus{Area: area, Effective: p.effVersion}
 	if p.base != nil {
 		st.Base = p.base.Version
@@ -95,11 +97,34 @@ func (d *Driver) Status(ctx context.Context, area string, local map[string]strin
 	case p.base == nil && p.effVersion == 0:
 		st.State = StateNeverSynced
 	case p.plan.Claim || len(p.plan.Uploads) > 0 || !p.set.sameFilesExcept(local, baseFiles(p.base)):
-		st.State = StateUnpushed
+		st.State, st.Changed = StateUnpushed, unpushedPaths(p)
 	default:
 		st.State = StateInStep
 	}
 	return st, nil
+}
+
+// unpushedPaths lists, sorted, what a push of the planned area would publish:
+// each path the local view holds differently from the hosted snapshot or the
+// synced base, and each file whose hosted head lacks its bytes.
+func unpushedPaths(p plannedPush) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(paths []string) {
+		for _, path := range paths {
+			if !seen[path] {
+				seen[path] = true
+				out = append(out, path)
+			}
+		}
+	}
+	if p.effVersion > 0 {
+		add(p.set.changedPaths(p.eff.Files, p.local))
+	}
+	add(p.set.changedPaths(baseFiles(p.base), p.local))
+	add(p.plan.Uploads)
+	sort.Strings(out)
+	return out
 }
 
 // hostedPaths lists, sorted, every path the hosted copy holds for the area: live
@@ -131,6 +156,20 @@ func baseFiles(b *hosted.AreaBase) map[string]string {
 		return nil
 	}
 	return b.Files
+}
+
+// StampOnlyShas is the sha of each of an area's stamp-only defaults
+// (config.AreaStampOnlyDefaults), the set WithStampOnly reads.
+func StampOnlyShas(cfg config.Config, repoRoot, area string, ign config.Ignore) (map[string]string, error) {
+	files, err := config.AreaStampOnlyDefaults(cfg, repoRoot, area, ign)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(files))
+	for _, f := range files {
+		out[f.Path] = SHA(f.Content)
+	}
+	return out, nil
 }
 
 // LocalShas is the sha of each file of an area as a push would send it.
@@ -165,8 +204,9 @@ type Drift struct {
 // area: a base file that is an unedited embedded default is not a deletion, since
 // the local view never holds one. A path ign matches is dropped from the base
 // and from local at entry — the offline twin of Driver.Ignore — so it is never
-// a difference.
-func OfflineDrift(server, project, repoRoot, dataDir, area string, local map[string]string, defaults map[string]map[string]bool, ign config.Ignore) (Drift, error) {
+// a difference. stampOnly is StampOnlyShas for the area: local is read through
+// WithStampOnly over the base, as the driver reads it.
+func OfflineDrift(server, project, repoRoot, dataDir, area string, local, stampOnly map[string]string, defaults map[string]map[string]bool, ign config.Ignore) (Drift, error) {
 	b, ok, err := hosted.LoadAreaBase(server, project, repoRoot, area)
 	if err != nil {
 		return Drift{}, err
@@ -178,6 +218,7 @@ func OfflineDrift(server, project, repoRoot, dataDir, area string, local map[str
 	b.Unmerged = DropIgnored(ign.Match, b.Unmerged)
 	b.Defaults = DropIgnored(ign.Match, b.Defaults)
 	local = DropIgnored(ign.Match, local)
+	local, _ = WithStampOnly(local, DropIgnored(ign.Match, stampOnly), b.Files)
 	d := Drift{Synced: ok, Version: b.Version, Changed: NewDefaultSet(defaults, &b).changedPaths(b.Files, local)}
 	for p := range b.Unmerged {
 		d.Unmerged = append(d.Unmerged, p)

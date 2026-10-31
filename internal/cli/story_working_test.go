@@ -169,13 +169,14 @@ func TestOrderLedgerRowsPutsABaseBeforeItsEvent(t *testing.T) {
 }
 
 // The working_on kind has one writer (the seat claim in package verb) and its
-// readers are display only (sty_40853d02): no other code references the kind, so
-// nothing can read it to refuse a move.
+// readers are display and cache retention only (sty_40853d02, sty_0dc600e1): no
+// other code references the kind, so nothing can read it to refuse a move.
 func TestWorkingOnKindIsReferencedOnlyWhereItIsWrittenAndShown(t *testing.T) {
 	allowed := map[string]bool{
 		"ledger/ledger.go":     true, // the constant
 		"verb/working_on.go":   true, // the one writer
 		"cli/story_working.go": true, // `story get|list` and the advisory read it, to show it
+		"verb/storyhistory.go": true, // hosted-mode cache retention reads it to choose what stays cached
 	}
 	var found []string
 	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {

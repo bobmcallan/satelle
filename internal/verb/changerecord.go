@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/trunk"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -597,15 +598,22 @@ func substrateRuntimeFile(name string) bool {
 	return false
 }
 
-// recordedChangeSet unions every change_record files list for a story.
-func recordedChangeSet(ctx context.Context, storyID string) (files []string, records int, err error) {
+// recordedChangeSet unions every change_record files list for a story, each
+// reduced by reduceRecord. unresolved names the rows whose range git cannot show
+// ("<ledger entry id> <since>..<head>"); their files are in the union as recorded.
+func recordedChangeSet(ctx context.Context, storyID string) (files []string, records int, unresolved []string, err error) {
 	ls, err := requireLedger()
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	recs, err := ls.ListByStory(ctx, storyID, ledger.KindChangeRecord)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
+	}
+	dir := changeRecordRepoRoot()
+	ref := ""
+	if len(recs) > 0 {
+		ref = trunk.RemoteTrunkRef(ctx, dir, trunkCfg.Branch)
 	}
 	var all []string
 	for _, e := range recs {
@@ -613,9 +621,110 @@ func recordedChangeSet(ctx context.Context, storyID string) (files []string, rec
 		if json.Unmarshal(e.Payload, &p) != nil {
 			continue
 		}
-		all = append(all, p.Files...)
+		f, resolved := reduceRecord(ctx, dir, ref, storyID, p)
+		if !resolved {
+			unresolved = append(unresolved, fmt.Sprintf("%s %s..%s", e.ID, p.SinceSHA, p.HeadSHA))
+		}
+		all = append(all, f...)
 	}
-	return uniqueSorted(all), len(recs), nil
+	return uniqueSorted(all), len(recs), unresolved, nil
+}
+
+// reduceRecord is one change_record row's files less what other stories' trunk
+// commits in its since..head range touched (sty_5a6c06d3). A row written before
+// sty_659c4133 listed everything a fast-forward put in that range, and rows are
+// append-only, so the exclusion is applied when the row is read. A commit is
+// another story's when ref (the remote trunk) holds it, its subject does not name
+// the story and walkStoryRange did not keep it; a merge of the trunk into the
+// story's branch brings such commits in off the first parent. A path also touched
+// by a commit the story keeps, or uncommitted in dir now, stays.
+//
+// A row that claims no range — no files, partial, a resume re-anchor, since equal
+// to head — or read with no remote trunk is returned as recorded. A row that
+// claims a range git cannot show is returned as recorded with resolved false.
+func reduceRecord(ctx context.Context, dir, ref, storyID string, p changeRecordPayload) (files []string, resolved bool) {
+	if len(p.Files) == 0 || p.PartialEnumeration || p.ReanchorResume || ref == "" {
+		return p.Files, true
+	}
+	if p.SinceSHA == "" || p.HeadSHA == "" {
+		return p.Files, false
+	}
+	if p.SinceSHA == p.HeadSHA {
+		return p.Files, true
+	}
+	if !gitHasCommit(ctx, dir, p.SinceSHA) || !gitHasCommit(ctx, dir, p.HeadSHA) {
+		return p.Files, false
+	}
+	foreign, err := foreignRangeFiles(ctx, dir, ref, storyID, p.SinceSHA, p.HeadSHA)
+	if err != nil {
+		return p.Files, false
+	}
+	if len(foreign) == 0 {
+		return p.Files, true
+	}
+	// What is uncommitted now: the tracked edits and the untracked files.
+	dirty, _, _, err := gitDiffLeg(dir, []string{"HEAD"}, false)
+	if err == nil {
+		dirty, _, _, err = withUntracked(dir, dirty, "", "")
+	}
+	if err != nil {
+		return p.Files, false
+	}
+	for _, f := range dirty {
+		delete(foreign, f)
+	}
+	for _, f := range p.Files {
+		if !foreign[f] {
+			files = append(files, f)
+		}
+	}
+	return files, true
+}
+
+// foreignRangeFiles is the paths other stories' trunk commits in since..head
+// touched that no commit the story keeps in that range also touched.
+func foreignRangeFiles(ctx context.Context, dir, ref, storyID, since, head string) (map[string]bool, error) {
+	own, _ := walkStoryRange(ctx, dir, since, head, storyID, nil)
+	kept := make(map[string]bool, len(own))
+	for _, c := range own {
+		kept[c.SHA] = true
+	}
+	out, err := exec.CommandContext(ctx, "git", "-C", dir, "log", "--no-renames", "--name-only",
+		"--format=%x01%H%x00%s", since+".."+head).Output()
+	if err != nil {
+		return nil, fmt.Errorf("git log %s..%s: %w", since, head, err)
+	}
+	foreign := map[string]bool{}
+	for _, rec := range strings.Split(string(out), "\x01") {
+		lines := strings.Split(rec, "\n")
+		sha, subject, ok := strings.Cut(lines[0], "\x00")
+		if !ok || kept[sha] || strings.Contains(subject, storyID) || !onTrunk(ctx, dir, sha, ref) {
+			continue
+		}
+		for _, f := range lines[1:] {
+			if f = strings.TrimSpace(f); f != "" {
+				foreign[f] = true
+			}
+		}
+	}
+	if len(foreign) == 0 {
+		return foreign, nil
+	}
+	for _, revs := range ownCommitLegs(dir, own) {
+		f, _, _, lerr := gitDiffLeg(dir, revs, false)
+		if lerr != nil {
+			return nil, lerr
+		}
+		for _, name := range f {
+			delete(foreign, name)
+		}
+	}
+	return foreign, nil
+}
+
+// gitHasCommit reports whether dir's repository holds sha as a commit.
+func gitHasCommit(ctx context.Context, dir, sha string) bool {
+	return exec.CommandContext(ctx, "git", "-C", dir, "cat-file", "-e", sha+"^{commit}").Run() == nil
 }
 
 func uniqueSorted(in []string) []string {

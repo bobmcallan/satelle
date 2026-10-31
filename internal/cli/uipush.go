@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/push"
 )
 
@@ -22,6 +23,7 @@ type uiDrain struct {
 	endpoint string
 	repoKey  string
 	app      *app.App
+	origin   mirror.IngestOrigin
 	topics   []string
 	seen     map[string]struct{}
 	once     sync.Once
@@ -58,13 +60,14 @@ func (d *uiDrain) flush() {
 		endpoint := d.endpoint
 		repoKey := d.repoKey
 		a := d.app
+		origin := d.origin
 		d.mu.Unlock()
 		if endpoint == "" || len(topics) == 0 {
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), uiDrainBudget)
 		defer cancel()
-		pub := &push.Publisher{Endpoint: endpoint, RepoKey: repoKey}
+		pub := &push.Publisher{Endpoint: endpoint, RepoKey: repoKey, Origin: string(origin)}
 		for _, t := range topics {
 			_ = pub.PostContext(ctx, t)
 		}
@@ -79,6 +82,7 @@ func (d *uiDrain) flush() {
 		if err != nil || snap == nil {
 			return
 		}
+		snap.Origin = origin
 		_ = postUISnapshotContext(ctx, endpoint, snap)
 	})
 }

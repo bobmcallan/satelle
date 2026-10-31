@@ -240,3 +240,73 @@ func TestLandingOmitsSyncMarkerWhenNoState(t *testing.T) {
 		t.Fatalf("no-state partition must not show a failure marker:\n%s", body)
 	}
 }
+
+// renderLocalAfter records push via record, then the local scope a skipped pass
+// writes, and renders path (sty_3df5f95a).
+func renderLocalAfter(t *testing.T, path string, record func(home, repo string) error) string {
+	t.Helper()
+	testutil.IsolateHome(t)
+	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := t.Context()
+	if _, err := s.TouchPartition(ctx, "rk", "demo", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	if err := s.ReplaceKind(ctx, "rk", "identity", []mirror.ItemRow{{
+		ID: "meta", Payload: `{"project_name":"demo","repo_root":"` + repo + `"}`,
+	}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := record(config.GlobalDir(), repo); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncstate.RecordScope(config.GlobalDir(), repo, "local"); err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	NewMirror(s).Handler.ServeHTTP(rr, httptest.NewRequest("GET", path, nil))
+	return rr.Body.String()
+}
+
+func recordFailure(home, repo string) error {
+	return syncstate.RecordPush(home, repo, false, "hosted 505", "", time.Now())
+}
+
+func TestProjectPageLocalHidesStaleFailure(t *testing.T) {
+	body := renderLocalAfter(t, "/r/demo/", recordFailure)
+	if !strings.Contains(body, `class="sync-local"`) {
+		t.Fatalf("project header must read local:\n%s", body)
+	}
+	for _, gone := range []string{"push failing", "sync-fail", ">hosted 505<", "logged to"} {
+		if strings.Contains(body, gone) {
+			t.Fatalf("local project page must not contain %q:\n%s", gone, body)
+		}
+	}
+}
+
+func TestProjectPageLocalHidesStaleSuccess(t *testing.T) {
+	body := renderLocalAfter(t, "/r/demo/", func(home, repo string) error {
+		return syncstate.RecordPush(home, repo, true, "", "", time.Now().Add(-time.Hour))
+	})
+	if !strings.Contains(body, `class="sync-local"`) {
+		t.Fatalf("project header must read local:\n%s", body)
+	}
+	for _, gone := range []string{">pushed <time", "sync-ok"} {
+		if strings.Contains(body, gone) {
+			t.Fatalf("local project page must not contain %q:\n%s", gone, body)
+		}
+	}
+}
+
+func TestLandingLocalHidesStaleFailure(t *testing.T) {
+	cell := updatedCell(t, renderLocalAfter(t, "/", recordFailure))
+	for _, gone := range []string{"Push Failing", "sync-tag-fail"} {
+		if strings.Contains(cell, gone) {
+			t.Fatalf("local landing Updated cell must not contain %q:\n%s", gone, cell)
+		}
+	}
+}

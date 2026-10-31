@@ -107,6 +107,20 @@ func ResolveBoundProject(c Config, repoRoot string) string {
 	return Slugify(base)
 }
 
+// RepoBound reports whether the repo names its hosted project explicitly and a
+// hosted server is configured (sty_0dc600e1). The slug ResolveBoundProject falls
+// back to does not bind a repo: it only names the project once one is bound.
+func RepoBound(repo Config) bool {
+	return repo.SyncProject() != "" && ResolveHostedServer(repo) != ""
+}
+
+// RepoBoundAt is RepoBound for the repo at root. A repo whose config cannot be
+// read is not bound.
+func RepoBoundAt(root string) bool {
+	cfg, _, err := Load(filepath.Join(root, DefaultDataDir, ConfigName))
+	return err == nil && RepoBound(cfg)
+}
+
 // BoundProjectEdit is the single write of the repo project binding.
 func BoundProjectEdit(slug string) KeyEdit {
 	return KeyEdit{Section: "sync", Key: syncProjectKey, Value: strconv.Quote(Slugify(slug))}

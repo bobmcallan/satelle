@@ -52,3 +52,34 @@ func TestRecordStoryConflicts(t *testing.T) {
 		t.Fatalf("cleared conflict still present: %+v", s.StoryConflicts)
 	}
 }
+
+// A conflict records the holders and source that found it (sty_199ad82b); seen
+// again it keeps its first time, and a reason-only record of it keeps its holders.
+func TestRecordStoryConflictDetails(t *testing.T) {
+	home := t.TempDir()
+	t0 := time.Date(2026, 10, 30, 8, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Hour)
+	c := StoryConflict{Reason: "forked", LocalHolder: "loc_a", RemoteHolder: "desk", Source: "conflict"}
+	if err := RecordStoryConflictDetails(home, "/repo", map[string]StoryConflict{"sty_a": c}, nil, t0); err != nil {
+		t.Fatal(err)
+	}
+	want := c
+	want.At = t0
+	if s, _, _ := Load(home, "/repo"); s.StoryConflicts["sty_a"] != want {
+		t.Fatalf("conflict = %+v, want %+v", s.StoryConflicts["sty_a"], want)
+	}
+	if err := RecordStoryConflicts(home, "/repo", map[string]string{"sty_a": "forked"}, nil, t1); err != nil {
+		t.Fatal(err)
+	}
+	if s, _, _ := Load(home, "/repo"); s.StoryConflicts["sty_a"] != want {
+		t.Fatalf("a reason-only record changed it to %+v, want %+v", s.StoryConflicts["sty_a"], want)
+	}
+	moved := StoryConflict{Reason: "forked", LocalHolder: "loc_a", RemoteHolder: "laptop", Source: "conflict"}
+	if err := RecordStoryConflictDetails(home, "/repo", map[string]StoryConflict{"sty_a": moved}, nil, t1); err != nil {
+		t.Fatal(err)
+	}
+	moved.At = t0
+	if s, _, _ := Load(home, "/repo"); s.StoryConflicts["sty_a"] != moved {
+		t.Fatalf("conflict = %+v, want the new holders with the first time %+v", s.StoryConflicts["sty_a"], moved)
+	}
+}

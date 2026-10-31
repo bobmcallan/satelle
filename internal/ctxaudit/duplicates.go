@@ -24,7 +24,7 @@ import (
 type Doc struct {
 	Kind      string // constitution | principles | skills
 	Name      string
-	Residency string // session | ondemand ("" for a non-principle)
+	Residency string // session | seat | ondemand ("" for a non-principle)
 	Where     string
 	Body      string
 }

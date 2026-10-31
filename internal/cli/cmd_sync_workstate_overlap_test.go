@@ -1,14 +1,18 @@
 package cli
 
-// Overlap is recorded, not arbitrated (sty_9914df10 AC5): a sync pass that finds
-// a story's copies disagreeing writes one `overlap` row onto the story's ledger,
-// and the row travels on the next push. The refusal and the exit code are the
-// ones the existing tests already pin. No story is held (sty_40853d02): the other
-// side is named from the latest working_on row another location wrote.
+// Overlap is recorded, not arbitrated (sty_9914df10), and never on the chain
+// (sty_199ad82b): a sync pass that finds a story's copies disagreeing records the
+// overlap in the work-state sync state, naming both sides, and the story's chain
+// gains no event. The refusal and the exit code are the ones the existing tests
+// already pin. No story is held (sty_40853d02): the other side is named from the
+// latest working_on row another location wrote.
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -17,63 +21,71 @@ import (
 	"github.com/bobmcallan/satelle/internal/verb"
 )
 
-type overlapRow struct {
-	LocalHolder  string `json:"local_holder"`
-	RemoteHolder string `json:"remote_holder"`
-	Reason       string `json:"reason"`
-	Source       string `json:"source"`
-}
-
-// overlapRows reads the overlap rows of a story from this repo's store.
-func overlapRows(t *testing.T, id string) []overlapRow {
+// passChain is a story's local chain as the last sync pass left it. It opens the
+// store read-only: store.Open seeds a story whose chain defines no title, which
+// would add events no pass made. A checkout with no store yet holds no chain.
+func passChain(t *testing.T, id string) []ledger.Entry {
 	t.Helper()
-	db, err := store.Open(runtimeDBPath(t))
-	if err != nil {
-		t.Fatalf("open db: %v", err)
+	path := runtimeDBPath(t)
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
-	defer db.Close()
-	entries, err := db.Ledger.ListByStory(context.Background(), id, ledger.KindOverlap)
+	db, err := store.OpenReadOnly(path)
+	if err != nil {
+		t.Fatalf("open db read-only: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	chain, err := db.Ledger.StoryChain(context.Background(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var rows []overlapRow
-	for _, e := range entries {
-		var r overlapRow
-		if err := json.Unmarshal(e.Payload, &r); err != nil {
-			t.Fatalf("overlap payload %s: %v", e.Payload, err)
-		}
-		rows = append(rows, r)
-	}
-	return rows
+	return chain
 }
 
-func TestSnapshotConflictRecordsAnOverlapRowOnce(t *testing.T) {
+// sameEvents fails when a pass changed a story's chain: the same events, by id,
+// before and after.
+func sameEvents(t *testing.T, what string, before, after []ledger.Entry) {
+	t.Helper()
+	b, a := idsOf(before), idsOf(after)
+	slices.Sort(b)
+	slices.Sort(a)
+	if !slices.Equal(a, b) {
+		t.Errorf("%s changed the chain: %d event(s) %v, want the %d before it %v", what, len(a), a, len(b), b)
+	}
+	for _, e := range after {
+		if e.Kind == ledger.KindOverlap {
+			t.Errorf("%s wrote an overlap event %s onto the chain", what, e.ID)
+		}
+	}
+}
+
+func TestSnapshotConflictRecordsTheOverlapInSyncStateNotOnTheChain(t *testing.T) {
 	fx := newHoldFixture(t, holdNoGit)
 	id := createStoryID(t, "diverges")
 	fx.push(t)
 	exec, _ := executorStateFor(t, id)
 	time.Sleep(1100 * time.Millisecond) // time-subject: the local row must be a second newer than the hosted one
 	putInState(t, id, exec, "", "", false)
+	before := passChain(t, id)
 
 	snapshotIn(t, fx)
-	if _, ok := fx.conflicts(t)[id]; !ok {
+	c, ok := fx.conflicts(t)[id]
+	if !ok {
 		t.Fatalf("precondition: a conflict is recorded, got %+v", fx.conflicts(t))
 	}
-	rows := overlapRows(t, id)
-	if len(rows) != 1 {
-		t.Fatalf("overlap rows = %+v, want exactly one for the conflict", rows)
+	if c.Source != "conflict" || c.RemoteHolder != "unknown" || c.Reason != conflictLocalAhead || c.LocalHolder != fx.loc {
+		t.Errorf("conflict = %+v, want source conflict, remote unknown (no other location worked it), reason %q, local %s", c, conflictLocalAhead, fx.loc)
 	}
-	if r := rows[0]; r.Source != "conflict" || r.RemoteHolder != "unknown" || r.Reason != conflictLocalAhead || r.LocalHolder != fx.loc {
-		t.Errorf("row = %+v, want source conflict, remote unknown (no other location worked it), reason %q", r, conflictLocalAhead)
-	}
+	sameEvents(t, "the snapshot", before, passChain(t, id))
 
-	snapshotIn(t, fx) // the conflict is still there: no second row
-	if n := len(overlapRows(t, id)); n != 1 {
-		t.Errorf("a repeated pass recorded %d rows", n)
+	snapshotIn(t, fx) // the conflict is still there: still nothing on the chain
+	sameEvents(t, "a repeated snapshot", before, passChain(t, id))
+	if again := fx.conflicts(t)[id]; !again.At.Equal(c.At) {
+		t.Errorf("a repeated pass moved the conflict's time from %v to %v", c.At, again.At)
 	}
 	fx.push(t)
-	if n := fx.f.ledgerKindCount("probe", id, ledger.KindOverlap); n != 1 {
-		t.Errorf("overlap rows on the server = %d, want 1", n)
+	if n := fx.f.ledgerKindCount("probe", id, ledger.KindOverlap); n != 0 {
+		t.Errorf("overlap rows on the server = %d, want none", n)
 	}
 }
 
@@ -102,12 +114,13 @@ func TestPullConflictNamesTheOtherLocationThatWorkedIt(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond) // time-subject: the local row must be a second newer than the hosted one
 	putInState(t, id, exec, "", "", false)
 	workedElsewhere(t, id, otherLoc, "desk")
+	before := passChain(t, id)
 
 	if _, err := runRoot(t, "sync", "workstate", "pull", "--server", fx.ts.URL); err == nil {
 		t.Fatal("precondition: the pull is refused for the differing story")
 	}
-	rows := overlapRows(t, id)
-	if len(rows) != 1 || rows[0].Source != "conflict" || rows[0].RemoteHolder != "desk" {
-		t.Errorf("rows = %+v, want one conflict row naming desk, the location that last worked it", rows)
+	if c := fx.conflicts(t)[id]; c.Source != "conflict" || c.RemoteHolder != "desk" || c.LocalHolder != fx.loc {
+		t.Errorf("conflict = %+v, want one naming desk, the location that last worked it", c)
 	}
+	sameEvents(t, "the refused pull", before, passChain(t, id))
 }

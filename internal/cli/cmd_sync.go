@@ -64,6 +64,7 @@ catalogs are a separate verb: satelle publish.`,
 	syncCmd.Flags().BoolVar(&syncDryRun, "dry-run", false, "Preview what each opted-in area would push without contacting the server (documents pull is not previewed).")
 	syncCmd.Flags().Bool("prune", false, pruneFlagUsage)
 	syncCmd.Flags().Bool("force", false, forceFlagUsage)
+	syncCmd.Flags().Bool("verbose", false, verboseReachabilityUsage)
 	syncCmd.AddCommand(&cobra.Command{
 		Use:   "scopes",
 		Short: "Print each .satelle area's resolved scope, and shared files within a personal area",
@@ -101,8 +102,9 @@ func newSyncRehydrateCmd() *cobra.Command {
 	var server string
 	var force, verbose bool
 	cmd := &cobra.Command{
-		Use:   "rehydrate",
-		Short: "Full-tree recover: config deploy + documents pull + workstate pull, overwriting local files (no push)",
+		Use:         "rehydrate",
+		Annotations: hostedOrigin(nil),
+		Short:       "Full-tree recover: config deploy + documents pull + workstate pull, overwriting local files (no push)",
 		Long: `rehydrate is the empty-tree / wiped-.satelle recover path for personal opt-in.
 
 Full operator path (pinned so scopes return before scope-gated pulls):
@@ -251,6 +253,12 @@ func runSync(cmd *cobra.Command, serverArg string, dryRun bool) error {
 		fmt.Fprintln(out, "Nothing to sync — every .satelle area is local. Set [sync] <area> = personal (or [sync] all = personal) to opt in.")
 		return nil
 	}
+	if err := refusePullOnly(a.RepoRoot); errors.Is(err, errPullOnly) {
+		fmt.Fprintf(out, "push skipped: %v\n", err)
+		return runSyncPullsOfBareSync(cmd, a.Config, serverArg, dryRun)
+	} else if err != nil {
+		return err
+	}
 	return runSyncPushLegs(cmd, serverArg, dryRun, func() error {
 		return runSyncPullsOfBareSync(cmd, a.Config, serverArg, dryRun)
 	})
@@ -306,10 +314,17 @@ func syncOptedIn(cfg config.Config) (bool, error) {
 // runSyncPushLegs is the one push composition (sty_0fa4f732): the push of every
 // opted-in area, in a fixed order — authored config, documents, then work-state.
 // Each leg self-gates on its own [sync] scope and reads --dry-run, --force,
-// --prune and --server as the per-area pushes do. Bare `sync` and `sync push`
+// --prune, --verbose and --server as the per-area pushes do. Bare `sync` and `sync push`
 // both run it; between documents and work-state it calls between (bare sync's
 // pulls, nil for a push, which pulls nothing), so bare sync's order is unchanged.
 func runSyncPushLegs(cmd *cobra.Command, serverArg string, dryRun bool, between func() error) error {
+	if off, setting := config.MachinePushOff(); off {
+		if between == nil {
+			return refuseIfPushOff("sync push")
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), "push skipped: hosted push is off for this machine ("+setting+")")
+		return between()
+	}
 	ref, err := runSyncConfigPushLeg(cmd, serverArg, "", dryRun)
 	if err != nil {
 		return err
@@ -325,7 +340,7 @@ func runSyncPushLegs(cmd *cobra.Command, serverArg string, dryRun bool, between 
 			return err
 		}
 	}
-	return runSyncWorkstatePush(cmd, serverArg, dryRun, false)
+	return runSyncWorkstatePush(cmd, serverArg, dryRun, false, verboseRequested(cmd))
 }
 
 // runSyncPullsOfBareSync is the pulling half of bare `satelle sync`, run between
@@ -494,8 +509,14 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 // holder gate or the server kept local for the caller to report.
 func runSyncConfigPushLeg(cmd *cobra.Command, serverArg, workspaceArg string, dryRun bool) (holderRefusal, error) {
 	var ref holderRefusal
+	if err := refuseIfPushOff("sync config push"); err != nil {
+		return ref, err
+	}
 	cfg, repoRoot, dataDir, err := loadRepoConfig()
 	if err != nil {
+		return ref, err
+	}
+	if err := refusePullOnly(repoRoot); err != nil {
 		return ref, err
 	}
 	_ = workspaceArg // sync is personal-only (epic:sync-publish)
@@ -514,7 +535,7 @@ func runSyncConfigPushLeg(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	files := bundle.Files
 	out := cmd.OutOrStdout()
 	printWithheldLocal := func() { printBundleExclusions(out, bundle) }
-	if len(files) == 0 {
+	if len(files) == 0 && !holdsStampOnly(cfg, repoRoot, ign) {
 		if n := bundle.ExcludedCount(); n > 0 {
 			printWithheldLocal()
 			fmt.Fprintf(out, "nothing to push (%d withheld)\n", n)
@@ -529,6 +550,18 @@ func runSyncConfigPushLeg(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	return pushConfigFileSet(cmd, cfg, repoRoot, dataDir, ign, server, files, pushSetOpts{
 		Verb: "sync config push", DryRun: dryRun, withheldLocal: printWithheldLocal,
 	})
+}
+
+// holdsStampOnly reports whether any config area holds a stamp-only default
+// (config.AreaStampOnlyDefaults). The snapshot push still publishes one that
+// differs from what was synced, so a bundle without it is not nothing to push.
+func holdsStampOnly(cfg config.Config, repoRoot string, ign config.Ignore) bool {
+	for _, area := range config.ConfigAreas {
+		if files, err := config.AreaStampOnlyDefaults(cfg, repoRoot, area, ign); err == nil && len(files) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // pushRefusal is a push its checks refused before any upload: the
@@ -556,6 +589,9 @@ type pushSetOpts struct {
 // team-owned files the holder gate or the server kept local.
 func pushConfigFileSet(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir string, ign config.Ignore, server string, files []config.ConfigFile, opts pushSetOpts) (holderRefusal, error) {
 	var ref holderRefusal
+	if err := refusePullOnly(repoRoot); err != nil {
+		return ref, err
+	}
 	out := cmd.OutOrStdout()
 	printWithheldLocal := func() {
 		if opts.withheldLocal != nil {
@@ -572,9 +608,10 @@ func pushConfigFileSet(cmd *cobra.Command, cfg config.Config, repoRoot, dataDir 
 	}
 	printWithheldBinding(out, files)
 	if opts.DryRun {
-		fmt.Fprintf(out, "Would push %d config file(s) to the bound project on %s:\n", len(files), server)
-		for _, f := range files {
-			fmt.Fprintf(out, "  %-40s -> personal\n", f.Path)
+		if opts.IgnoreScope {
+			printDryRunAll(out, server, "config file(s)", files)
+		} else {
+			printDryRunChanges(out, cfg, server, repoRoot, dataDir, ign, files, "config file(s)")
 		}
 		printWithheldLocal()
 		return ref, nil
@@ -682,6 +719,98 @@ func teamAreaFiles(files []config.ConfigFile) []config.ConfigFile {
 		}
 	}
 	return out
+}
+
+// printDryRunAll is a dry run's listing of every file of the set, for a push
+// with no last push to compare it with. noun names the set ("document(s)").
+func printDryRunAll(out io.Writer, server, noun string, files []config.ConfigFile) {
+	fmt.Fprintf(out, "Would push %d %s to the bound project on %s:\n", len(files), noun, server)
+	for _, f := range files {
+		fmt.Fprintf(out, "  %-40s -> personal\n", f.Path)
+	}
+}
+
+// printDryRunChanges is a dry run's listing of what a push would send, read from
+// disk alone: per snapshot area, every file when this checkout never pushed the
+// area, else only the paths changed since its recorded base — the comparison
+// doctor and `sync status` make (snapsync.OfflineDrift). Team files ride no
+// snapshot and the hosted head decides them, so they are listed apart. noun
+// names the set ("config file(s)", "document(s)").
+func printDryRunChanges(out io.Writer, cfg config.Config, server, repoRoot, dataDir string, ign config.Ignore, files []config.ConfigFile, noun string) {
+	project, err := resolveBoundProject(cfg, repoRoot)
+	if err != nil {
+		fmt.Fprintln(out, "(no bound project — cannot compare with the last push; listing every file)")
+		printDryRunAll(out, server, noun, files)
+		return
+	}
+	abs, err := filepath.Abs(repoRoot)
+	if err != nil {
+		abs = repoRoot
+	}
+	var areas []string
+	byArea := map[string][]config.ConfigFile{}
+	for _, f := range files {
+		if _, seen := byArea[f.Area]; !seen {
+			areas = append(areas, f.Area)
+		}
+		byArea[f.Area] = append(byArea[f.Area], f)
+	}
+	var body strings.Builder
+	listAll := func(area, note string) int {
+		fmt.Fprintf(&body, "  %s: %d changed (%s)\n", area, len(byArea[area]), note)
+		for _, f := range byArea[area] {
+			fmt.Fprintf(&body, "    %-40s -> personal (%s)\n", f.Path, note)
+		}
+		return len(byArea[area])
+	}
+	n := 0
+	for _, area := range areas {
+		if area == config.TeamArea {
+			continue
+		}
+		local, err := snapsync.LocalShas(cfg, repoRoot, area, ign)
+		var defaults map[string]map[string]bool
+		if err == nil {
+			defaults, err = config.AreaDefaultShas(cfg, repoRoot, area, ign)
+		}
+		var stampOnly map[string]string
+		if err == nil {
+			stampOnly, err = snapsync.StampOnlyShas(cfg, repoRoot, area, ign)
+		}
+		var drift snapsync.Drift
+		if err == nil {
+			drift, err = snapsync.OfflineDrift(server, project, abs, dataDir, area, local, stampOnly, defaults, ign)
+		}
+		switch {
+		case err != nil:
+			n += listAll(area, fmt.Sprintf("cannot compare with the last push: %v", err))
+		case !drift.Synced:
+			n += listAll(area, "never synced")
+		case len(drift.Changed) > 0:
+			fmt.Fprintf(&body, "  %s: %d changed\n", area, len(drift.Changed))
+			for _, p := range drift.Changed {
+				if _, ok := local[p]; ok {
+					fmt.Fprintf(&body, "    %-40s -> personal\n", p)
+				} else {
+					fmt.Fprintf(&body, "    %-40s (deleted)\n", p)
+				}
+			}
+			n += len(drift.Changed)
+		}
+	}
+	team := byArea[config.TeamArea]
+	if len(team) > 0 {
+		fmt.Fprintln(&body, "  team files (sent only if the hosted bytes differ):")
+		for _, f := range team {
+			fmt.Fprintf(&body, "    %-40s -> personal\n", f.Path)
+		}
+	}
+	if n == 0 && len(team) == 0 {
+		fmt.Fprintln(out, "nothing to push — every area matches its last push")
+		return
+	}
+	fmt.Fprintf(out, "Would push %d %s to the bound project on %s — changed since each area's last push:\n", n, noun, server)
+	fmt.Fprint(out, body.String())
 }
 
 // printBundleExclusions names every path a push left out of the bundle, each

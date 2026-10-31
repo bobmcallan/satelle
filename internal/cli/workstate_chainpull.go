@@ -44,6 +44,24 @@ type chainPull struct {
 	reads       int
 	heads       map[string]string // story -> last event this checkout holds that the server has
 	pending     map[string]string
+
+	// held, set in hosted mode, names the stories whose hosted chain a pass reads;
+	// every other story arrives as its row alone (sty_0dc600e1). Nil reads all.
+	held func(it workitem.Item) bool
+	// authored, set in hosted mode, names the stories whose row this machine wrote
+	// and the server has not yet accepted: only those keep a newer local row.
+	authored map[string]bool
+}
+
+// keepsLocal reports whether a newer local row of it may stand against the hosted
+// one. In hosted mode only a row this machine authored does.
+func (c *chainPull) keepsLocal(it workitem.Item) bool {
+	return c == nil || c.authored == nil || it.Kind != workitem.KindStory || c.authored[it.ID]
+}
+
+// remote reports a story whose history the pass leaves on the server.
+func (c *chainPull) remote(it workitem.Item) bool {
+	return c != nil && c.held != nil && it.Kind == workitem.KindStory && !c.held(it)
 }
 
 func newChainPull(client *hosted.Client, server, project, root string, errw io.Writer) *chainPull {
@@ -144,41 +162,37 @@ func (c *chainPull) readHosted(ctx context.Context, rd chainReader, id string, l
 }
 
 // materialize brings every story the page applied under its hosted chain, in chain
-// order, and returns the stories whose hosted chain has events: those are never
-// seeded. A story the server holds no events of is left to be seeded from its row.
+// order. A story the server holds no events of keeps the chain it has here; the
+// pull seeds nothing (sty_199ad82b).
 //
 // Nothing merges. A hosted chain that this machine's own events fork is left out
 // and, when the fork is more than a seeded genesis, recorded as a conflict; a
 // fork that is only a genesis an earlier pull seeded is named for
 // `sync workstate rechain` instead.
-func (c *chainPull) materialize(ctx context.Context, a *app.App, optIn map[string]bool, applied []workitem.Item, out *storyOutcome, now time.Time) (map[string]bool, error) {
+func (c *chainPull) materialize(ctx context.Context, a *app.App, optIn map[string]bool, applied []workitem.Item, out *storyOutcome, now time.Time) error {
 	if c == nil || !optIn["ledger"] || c.unsupported {
-		return nil, nil
+		return nil
 	}
-	have := map[string]bool{}
 	for _, it := range applied {
-		if it.Kind != workitem.KindStory {
+		if it.Kind != workitem.KindStory || c.remote(it) {
 			continue
 		}
 		rd, err := c.reader(ctx)
 		if err != nil {
-			return have, err
+			return err
 		}
-		took, err := c.materializeStory(ctx, a, rd, it.ID, out, now)
+		_, err = c.materializeStory(ctx, a, rd, it.ID, out, now)
 		if errors.Is(err, hosted.ErrChainUnsupported) {
 			c.unsupported = true
-			fmt.Fprintln(c.errw, "workstate: the server has no story chain service; pulled stories are seeded from their rows")
-			return have, nil
+			fmt.Fprintln(c.errw, "workstate: the server has no story chain service; pulled stories keep the chain they have here")
+			return nil
 		}
 		if err != nil {
-			return have, err
-		}
-		if took {
-			have[it.ID] = true
+			return err
 		}
 	}
 	c.flush()
-	return have, nil
+	return nil
 }
 
 // materializeStory reads one story's hosted chain into the local store. It reports

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -109,11 +110,11 @@ func TestTwoMachinesEngageTheSameStoryAndEachSeesBothWorkingOnRows(t *testing.T)
 	}
 }
 
-// When two machines both append to the same story, the second push reports the
-// compare-and-append conflict naming the story and the other machine's head — not
-// a hold refusal (sty_40853d02 AC6). Engaging is not what is refused: the second
-// machine engaged without a word, and the conflict is raised only at append time.
-func TestSecondMachinePushReportsTheCompareAndAppendConflict(t *testing.T) {
+// When two machines both append to the same story, the second push takes the
+// other machine's events and re-appends its own after them (sty_0dc600e1 AC4) —
+// not a hold refusal (sty_40853d02 AC6). Engaging is not what is refused: the
+// second machine engaged without a word, and nothing is refused at append time.
+func TestSecondMachinePushRebasesOntoTheOtherMachinesEvents(t *testing.T) {
 	ts, f := newFakeWorkstateServerWith(t, noHoldRoutes(t))
 	a := workingMachine(t, ts, f, "sess_machine_a")
 	b := workingMachine(t, ts, f, "sess_machine_b")
@@ -144,18 +145,25 @@ func TestSecondMachinePushReportsTheCompareAndAppendConflict(t *testing.T) {
 		t.Fatalf("B engage must not be refused: %v\n%s", err, out)
 	}
 	out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL)
-	if err == nil {
-		t.Fatalf("B's push should report the conflict and exit non-zero:\n%s", out)
+	if err != nil {
+		t.Fatalf("B's push should rebase onto A's events: %v\n%s", err, out)
 	}
-	for _, want := range []string{"the story " + id, "moved since", aHead} {
+	for _, want := range []string{"the story " + id + " moved on the server", "re-appended after " + aHead} {
 		if !strings.Contains(out, want) {
 			t.Errorf("B's push output lacks %q:\n%s", want, out)
 		}
 	}
-	for _, banned := range []string{"held", "takeover", "hold"} {
+	for _, banned := range []string{"held", "takeover", "hold", "re-read and decide"} {
 		if strings.Contains(out, banned) {
-			t.Errorf("B's push must report a conflict, not a hold (%q):\n%s", banned, out)
+			t.Errorf("B's push must rebase, not report a hold or a conflict (%q):\n%s", banned, out)
 		}
+	}
+	stored := f.chain.stored("probe", id)
+	if i := slices.Index(stored, aHead); i < 0 || i == len(stored)-1 {
+		t.Errorf("the server's chain %v must hold A's head %s with B's events after it", stored, aHead)
+	}
+	if got := storyHead(t, b, id); got != stored[len(stored)-1] {
+		t.Errorf("B saved head %s, want the server's latest %s", got, stored[len(stored)-1])
 	}
 }
 

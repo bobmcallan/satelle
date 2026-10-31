@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 )
 
@@ -33,6 +34,9 @@ func newHostedClient(ctx context.Context, server, repoRoot string) *hosted.Clien
 	if repoRoot == "" {
 		return c
 	}
+	// A story worktree is this machine's checkout: it sends and registers the
+	// main tree's location rather than minting one of its own (sty_9ece9394).
+	repoRoot = config.CanonicalRepoRoot(repoRoot)
 	id, err := hosted.LocationID(repoRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "satelle: checkout location: %v\n", err)
