@@ -663,9 +663,13 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
-	out := cmd.OutOrStdout()
-	ctx := cmd.Context()
+	return pullWorkstate(cmd.Context(), a, cmd.OutOrStdout(), cmd.ErrOrStderr(), server, dryRun, force, verbose, ids...)
+}
 
+// pullWorkstate is the pull for an app already open against server: the whole
+// project, or only ids when any are given. The cobra pull and the follower, which
+// lands the row of a story it has no row for (sty_dd594bb7), both run it.
+func pullWorkstate(ctx context.Context, a *app.App, out, errOut io.Writer, server string, dryRun, force, verbose bool, ids ...string) error {
 	optIn, err := workstateOptIn(a.Config)
 	if err != nil {
 		return err
@@ -704,12 +708,12 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 	var rep passReport
 	if sc.scoped() {
 		sc.ExpandRemoteEpics = true
-		rep, err = runScopedWorkstateSnapshot(ctx, a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModePull, sc)
+		rep, err = runScopedWorkstateSnapshot(ctx, a, errOut, client, server, project, optIn, force, snapshotModePull, sc)
 		if err == nil && rep.Scope.scoped() {
 			sc = rep.Scope // the members taken from the server, for the attachment step
 		}
 	} else {
-		rep, err = runPagedWorkstateSnapshot(ctx, a, cmd.ErrOrStderr(), client, server, project, optIn, force, snapshotModePull)
+		rep, err = runPagedWorkstateSnapshot(ctx, a, errOut, client, server, project, optIn, force, snapshotModePull)
 	}
 	recordStoryConflicts(ctx, a, client, project, rep)
 	if err != nil {
@@ -720,7 +724,7 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 	}
 	// The pulled stories' attachments follow them, whether or not any row moved.
 	if optIn["stories"] {
-		defer pullStoryAttachments(ctx, out, cmd.ErrOrStderr(), a, client, server, project, sc.Set, force)
+		defer pullStoryAttachments(ctx, out, errOut, a, client, server, project, sc.Set, force)
 	}
 	nItems, nLedger, nKept := rep.Items, rep.Ledger, rep.Kept
 	if nItems == 0 && nLedger == 0 && nKept == 0 {
@@ -732,7 +736,7 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 		return nil
 	}
 	if err := pushMirrorAfterWorkstate(ctx, a, nItems+nLedger); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "workstate: mirror push warning: %v\n", err)
+		fmt.Fprintf(errOut, "workstate: mirror push warning: %v\n", err)
 	}
 	fmt.Fprintf(out, "Pulled work-state from project %q on %s (%s): %d item(s), %d ledger entr(y/ies).\n",
 		project, server, rep.label(), nItems, nLedger)

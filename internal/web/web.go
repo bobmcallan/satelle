@@ -92,16 +92,6 @@ type pageData struct {
 	SyncReason      string
 	SyncLocal       bool
 	SyncLogPath     string
-	// Hosted, set when the server is the repo's store of record, links the views
-	// this page does not hold to the server; Stories is then this machine's only.
-	Hosted *hostedLinksVM
-}
-
-// hostedLinksVM is where the server shows what a hosted-mode page leaves out:
-// its project page, which lists every story. Only pages the server serves are
-// linked (sty_9ece9394).
-type hostedLinksVM struct {
-	Project string
 }
 
 type crumbProject struct {
@@ -143,6 +133,9 @@ type rowVM struct {
 	// dispatch in flight right now — the epic's roll-up of the per-story
 	// indicator (sty_a42f4add). Zero for every other story.
 	ChildrenInFlight int
+	// Mine marks a story this machine is working in a hosted-mode partition. It
+	// is a marker on the row, never a filter (sty_dd594bb7).
+	Mine bool
 }
 
 type lightPayload struct {

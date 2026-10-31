@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/store"
 )
 
 // otherMachineEvent is an event another machine appended to id after its head,
@@ -61,7 +63,8 @@ func TestFollowAppliesAnotherMachinesEventWithoutAPull(t *testing.T) {
 
 // sty_0dc600e1 AC1: a story the store need not hold is trimmed after the event the
 // subscription delivered for it; a story whose history is on the server is
-// fetched whole when it changes recently; a story with no local row is left alone.
+// fetched whole when it changes recently; an event for a story with no local row
+// that the server does not hold lands nothing.
 func TestFollowHoldsOnlyWhatTheStoreNeeds(t *testing.T) {
 	ts, f, repo := hostedModeRepo(t)
 	longAgo := time.Now().Add(-72 * time.Hour).UTC()
@@ -92,6 +95,63 @@ func TestFollowHoldsOnlyWhatTheStoreNeeds(t *testing.T) {
 	}
 	if localEvents(t, "sty_stranger") != 0 {
 		t.Error("an event for a story with no local row was applied")
+	}
+}
+
+// sty_dd594bb7 AC5: a story another machine created reaches this checkout while
+// follow runs. Follow lands the row of a story it has no row for through the pull
+// scoped to that story — not a snapshot of the project — and engages nothing.
+func TestFollowLandsAStoryCreatedElsewhere(t *testing.T) {
+	ts, f, repo := hostedModeRepo(t)
+	known := cacheStory(t, f, ts.URL, repo, "known here", "backlog", time.Now().UTC())
+	const id = "sty_elsewhere"
+	at := time.Now().UTC()
+	seedHostedStory(f, id, "created on another machine", "in_progress", at)
+	created := ledger.Entry{ID: ledger.NewID(), StoryID: id, Kind: ledger.KindComment, Actor: "alice", Body: "created elsewhere", CreatedAt: at}
+	ev := hostedEvent(t, created)
+	f.chain.seed("probe", id, ev)
+	f.chain.mu.Lock()
+	f.chain.feed = append(f.chain.feed, ev)
+	f.chain.mu.Unlock()
+	before := len(f.snapshotRequests())
+
+	out, err := runRoot(t, "sync", "workstate", "follow")
+	if err != nil {
+		t.Fatalf("follow: %v\n%s", err, out)
+	}
+	withRepoStore(t, func(db *store.DB) {
+		ctx := context.Background()
+		row, err := db.Stories.Get(ctx, id)
+		if err != nil {
+			t.Fatalf("the story created on another machine has no local row after follow: %v\n%s", err, out)
+		}
+		if row.Title != "created on another machine" || row.Status != "in_progress" {
+			t.Errorf("landed row = %q/%s, want the server's title and status", row.Title, row.Status)
+		}
+		chain, err := db.Ledger.StoryChain(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range chain {
+			if e.Kind == ledger.KindWorkingOn {
+				t.Errorf("follow engaged %s on this checkout: %+v", id, e)
+			}
+		}
+	})
+	if !strings.Contains(out, "1 stor(y/ies) landed") {
+		t.Errorf("the follow summary does not count the landed story:\n%s", out)
+	}
+	reqs := f.snapshotRequests()[before:]
+	if len(reqs) == 0 {
+		t.Fatal("follow made no request to bring the story in")
+	}
+	for _, r := range reqs {
+		if !slices.Equal(r.GetStoryIds(), []string{id}) {
+			t.Errorf("follow made a snapshot request scoped to %v, want only [%s] — no project snapshot", r.GetStoryIds(), id)
+		}
+	}
+	if localEvents(t, known) == 0 {
+		t.Error("the story this checkout already held lost its events")
 	}
 }
 

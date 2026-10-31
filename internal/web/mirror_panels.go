@@ -3,7 +3,6 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -92,7 +91,6 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 	if err != nil {
 		return pageData{}, id, err
 	}
-	stories, links := hostedView(id.Hosted, stories)
 	tasks, err := decodeItems(ctx, s, repoKey, "task")
 	if err != nil {
 		return pageData{}, id, err
@@ -158,6 +156,7 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 	}
 	storyRows := attachStagesFrom(entriesByStory, stories, liveSeat, dispatches, catStepOf, specOf)
 	attachChildrenInFlight(storyRows, stories, dispatches)
+	markMachineStories(storyRows, id.Hosted)
 	return pageData{
 		RepoRoot:        repoRoot,
 		ProjectName:     projectName,
@@ -177,28 +176,24 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 		Uptime:          formatUptime(time.Since(serverStart)),
 		Theme:           "", // client localStorage only on the mirror
 		TopBar:          mirrorTopBar("", id.FooterEmail),
-		Hosted:          links,
 	}, id, nil
 }
 
-// hostedView narrows a hosted-mode partition's stories to those this machine
-// engaged and links the server's project page for the rest. A local partition is
-// shown whole, with no links.
-func hostedView(h *mirror.HostedMeta, stories []workitem.Item) ([]workitem.Item, *hostedLinksVM) {
-	if h == nil || h.Server == "" || h.Project == "" {
-		return stories, nil
+// markMachineStories marks the rows of the stories this machine is working in a
+// hosted-mode partition. Every story row in the local store is listed whatever
+// engaged it; the mark only shows which are this machine's, and nothing filters
+// on it (sty_dd594bb7). A local partition marks nothing.
+func markMachineStories(rows []rowVM, h *mirror.HostedMeta) {
+	if h == nil {
+		return
 	}
 	mine := make(map[string]bool, len(h.MachineStories))
 	for _, id := range h.MachineStories {
 		mine[id] = true
 	}
-	out := make([]workitem.Item, 0, len(h.MachineStories))
-	for _, st := range stories {
-		if mine[st.ID] {
-			out = append(out, st)
-		}
+	for i := range rows {
+		rows[i].Mine = mine[rows[i].ID]
 	}
-	return out, &hostedLinksVM{Project: strings.TrimRight(h.Server, "/") + "/app/p/" + url.PathEscape(h.Project)}
 }
 
 // attachStagesFrom is the mirror-side stage attach: ledger rows already loaded.
